@@ -590,6 +590,19 @@ proc ase::ui::_theme_widget {w} {
     Scrollbar {
       catch {$w configure -background $panel}
     }
+    Canvas {
+      # ⚠ NEW IN ISSUE 1464, AND IT IS NOT DECORATION. The campaign result
+      # table's histogram and scatter are the first canvases ASE-L has ever
+      # drawn, and with no arm here they kept stock Tk's #d9d9d9 inside a
+      # window this walk had painted -- and under xschem's shipped
+      # `dark_gui_colorscheme 1` a light grey panel in a dark window, which is
+      # the same class of defect issue 1398 measured 58 widgets of. The ground
+      # is `table`, not `panel`: a plot is a data surface like an Entry or a
+      # Treeview, and its items are drawn in palette colours by the two
+      # `campres_*_draw` procs. `-highlightthickness 0` is set where the canvas
+      # is created, so no focus ring is inherited from the option database.
+      catch {$w configure -background $table -highlightbackground $panel}
+    }
   }
   foreach c [winfo children $w] { ase::ui::_theme_widget $c }
 }
@@ -958,6 +971,15 @@ proc ase::ui::build {key top} {
   # each other rather than in different menus.
   $top.mb.sim add command -label [ase::ui::lbl_conv_menu] \
     -command [list ase::ui::conv_dialog $key]
+  # ── STAGE 11 / issue 1464: `Simulation > Campaign…`. ─────────────────────
+  # LAST ON THIS MENU, below Convergence…, and the position is the argument:
+  # everything above it configures ONE run of this bench, and this is the entry
+  # that turns the bench into many runs. It is also the only entry here that can
+  # start a simulator without going through `Netlist and Run` -- which it does
+  # by calling `ase::campaign_run`, whose every shard goes through the same
+  # `ase::run_deck` those two doors share.
+  $top.mb.sim add command -label [ase::ui::lbl_camp_menu] \
+    -command [list ase::ui::campaign_dialog $key]
 
   # Results: Direct Plot is LIVE (item 13) — the Select-On-Design click mode
   # in the `plot` flavor: clicks queue traces, ESC opens/raises the session's
@@ -11400,18 +11422,27 @@ proc ase::ui::run_raised {key err} {
   return 1
 }
 
-# Simulation > Netlist and Run: re-netlist the design, then run.
-proc ase::ui::do_run {key} {
-  ## 1389: FIRST STATEMENT, above the design-window routing. A refused launch
-  ## must not withdraw+deiconify the schematic window on its way to saying no
-  ## (issue 0616's cost), and must not re-netlist.
-  set busy [ase::ui::run_busy $key]
-  if {$busy ne {}} { ase::run_refuse $busy ; return }
+# ⚠ ONE ROUTER, TWO DOORS (issue 1464). This block used to be inline in
+# `ase::ui::do_run`, and `Run Campaign` -- which netlists exactly as that door
+# does -- could not be written without either copying it or going without it.
+# Going without it was MEASURED on the dev display: `ase::netlist` answered
+# `ase: design glib/bench is not open in this window; open it via Session >
+# Design Window first` and the campaign never started, from a window where
+# `Netlist and Run` works perfectly. That is issue 0643's complaint reappearing
+# on a new button -- *"Where does this inane restriction come from? There is no
+# such limitation in Cadence's ADE-L"* -- and the reason it is a shared proc
+# rather than a second copy is the rule invariant I1 already states: two procs
+# each deciding what "reachable" means is how they come to disagree.
+#
+# Answers 1 when the design is on this window's hierarchy stack and the caller
+# may netlist; 0 when it is not, having already said the refusal and reddened
+# the status segment.
+proc ase::ui::route_design {key} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
     catch {::ase::echo "ase: cannot resolve the session's design cellview" error}
     ase::ui::set_status $key fail
-    return
+    return 0
   }
   ## THE DOOR ASKS "IS THE DESIGN REACHABLE", NOT "IS IT CURRENT" (issue 0643).
   ## The user, 2026-09-08: "I descend into x1 and again x1. Now, I click the N&>
@@ -11484,9 +11515,20 @@ proc ase::ui::do_run {key} {
         [ase::ui::design_cell_name $key] \
         "Session > Design Window did not open it"] error}
       ase::ui::set_status $key fail
-      return
+      return 0
     }
   }
+  return 1
+}
+
+# Simulation > Netlist and Run: re-netlist the design, then run.
+proc ase::ui::do_run {key} {
+  ## 1389: FIRST STATEMENT, above the design-window routing. A refused launch
+  ## must not withdraw+deiconify the schematic window on its way to saying no
+  ## (issue 0616's cost), and must not re-netlist.
+  set busy [ase::ui::run_busy $key]
+  if {$busy ne {}} { ase::run_refuse $busy ; return }
+  if {![ase::ui::route_design $key]} { return }
   if {[catch {ase::run [ase::session_state $key] [list ase::ui::run_finished $key]} id]} {
     ase::ui::run_raised $key $id
     return
@@ -12645,4 +12687,1464 @@ proc ase::ui::conv_op_note_paint {key type} {
   set txt [join [ase::ui::conv_op_notes $key $type] "\n"]
   catch {$w.opnote configure -text $txt}
   return $txt
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 11, task 2 / ISSUE 1464: THE CAMPAIGN DIALOG AND §11c's RESULT TABLE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Issue 1462 shipped the campaign RUNNER and the SAMPLER and built no widget, so
+# on the tree as it stood a `sweep` key could only be put on a bench by HAND-
+# EDITING a `.state` file: 44 core procs, five adapter hooks, an `index.tsv`
+# writer and a Monte Carlo sampler with **no door anywhere in the program**. And
+# the statistics §11c asks for -- histogram, mean, sigma, min/max, yield against
+# a spec limit, a scatter of any two columns -- did not exist at all, because
+# ngspice has no sort, no median, no percentile and no histogram to borrow them
+# from.
+#
+# ⚠ THE ONE IDEA IN THIS BLOCK. A campaign is not a new kind of run and this is
+# not a new kind of window: the dialog EDITS THE `sweep` STATE KEY and then
+# calls `ase::campaign_run`, whose every shard goes through `ase::run_deck` --
+# the body `ase::run` and `ase::run_existing` already share, and the invariant
+# row S12 of test_ase_simreg_0931 states. Nothing here composes a command, none
+# of it knows a simulator's word, and the Stop button below kills a shard
+# through the same `kill_running_cmds <id> -9` the Simulation > Stop entry uses.
+#
+# ⚠ EVERY FIELD ON THE AXIS FORM IS THE ADAPTER'S DECLARATION (D34/D36). The
+# kinds come from `ase::campaign_axis_kinds`, their labels and their per-kind
+# fields come with them, and the distributions come from `ase::mc_dists`. There
+# is no switch on `var`/`temp`/`corner`/`inst`/`model` anywhere below: a
+# simulator that declares four kinds gets four, and one that declares none is
+# told so in core's own words rather than shown an empty form.
+#
+# ⚠ AND THE PROGRESS READOUT NAMES THE POINT THAT IS RUNNING, NOT THE LAST ONE
+# THAT FINISHED. Issue 1463 is live and unfixed: a registered binary that never
+# answers the capability probe costs `ase::cap_budget_ms` -- 30 s -- on EVERY
+# shard, because a timed-out probe is not cached. A readout that said `0/100`
+# for fifty minutes would be a second defect stacked on that one, so the line is
+# set to "point k of N -- running" at the moment shard k STARTS. The seam is
+# `ase::campaign_run`'s own `onstep` callback, which fires after each point:
+# what it paints is the point that is about to begin, and the first one is
+# painted before the call.
+
+# --- THE COPY (⚖ R9 -- every string here is the USER'S to ratify) -----------
+proc ase::ui::lbl_camp_menu     {} { return "Campaign…" }
+proc ase::ui::lbl_camp_title    {} { return {Campaign} }
+proc ase::ui::lbl_camp_enabled  {} { return {Run this bench as a campaign} }
+proc ase::ui::lbl_camp_seed     {} { return {Seed} }
+# ⚠ THE SEED CAUTION IS SPLIT IN TWO ON PURPOSE. What a seed does NOT reproduce
+# is the ADAPTER's sentence (`ase::campaign_seed_notes`) and is shown verbatim;
+# what an ABSENT seed costs is ASE-L's own and is said here, because "there is
+# no seed" is a fact about the campaign rather than about the simulator.
+proc ase::ui::lbl_camp_seed_why {} {
+  return {leave it empty and anything the simulator draws for itself differs every run}
+}
+proc ase::ui::lbl_camp_axes     {} { return {Axes} }
+proc ase::ui::lbl_camp_c_kind   {} { return {Kind} }
+proc ase::ui::lbl_camp_c_name   {} { return {Column} }
+proc ase::ui::lbl_camp_c_values {} { return {Values} }
+proc ase::ui::lbl_camp_c_points {} { return {Points} }
+proc ase::ui::lbl_camp_add      {} { return "Add…" }
+proc ase::ui::lbl_camp_edit     {} { return "Edit…" }
+proc ase::ui::lbl_camp_del      {} { return {Delete} }
+proc ase::ui::lbl_camp_run      {} { return {Run Campaign} }
+proc ase::ui::lbl_camp_stop     {} { return {Stop} }
+proc ase::ui::lbl_camp_results  {} { return "Results…" }
+proc ase::ui::lbl_camp_noaxes   {} {
+  return {No axes yet. Without one this bench runs once, as it does today.}
+}
+proc ase::ui::lbl_camp_axis_title {} { return {Campaign Axis} }
+proc ase::ui::lbl_camp_axis_label {} { return {Column name} }
+proc ase::ui::lbl_camp_axis_auto  {} { return {(from the fields above)} }
+proc ase::ui::lbl_camp_src        {} { return {Points} }
+proc ase::ui::lbl_camp_src_list   {} { return {List} }
+proc ase::ui::lbl_camp_src_draw   {} { return {Distribution} }
+proc ase::ui::lbl_camp_dist       {} { return {Shape} }
+proc ase::ui::lbl_camp_samples    {} { return {Samples} }
+# ⚠ THE THREE DISTRIBUTION NAMES ARE CORE'S NEUTRAL ONES AND THE FORM DOES NOT
+# TRANSLATE THEM. `normal` / `uniform` / `bounded` express all five of ngspice's
+# netlist spellings (`agauss`, `gauss`, `aunif`, `unif`, `limit`) and D34 keeps a
+# simulator's word out of core -- offering the simulator's five here as a
+# convenience is a decision the user has not made, so the form offers three.
+proc ase::ui::lbl_camp_dist_of {kind} { return $kind }
+proc ase::ui::lbl_camp_idle     {} { return {not running} }
+proc ase::ui::lbl_camp_at {k n coords} {
+  if {$coords eq {}} { return "point $k of $n — running" }
+  return "point $k of $n — running   ($coords)"
+}
+proc ase::ui::lbl_camp_done {n ok bad} {
+  return "$n of $n done — $ok ran, $bad failed"
+}
+# ⚠ "EVERY COMPLETED POINT IS KEPT" IS A PROMISE, AND IT IS THE ONE §11a RANKS
+# THE SHARD RUNNER ABOVE A `.control` LOOP FOR. It is true by construction: each
+# point is its own process writing into its own directory, and `index.tsv` is
+# rewritten after every shard rather than once at the end.
+proc ase::ui::lbl_camp_stopped {ran n} {
+  return "stopped after $ran of $n — every completed point is kept"
+}
+proc ase::ui::lbl_camp_norun {} {
+  return {ase: no campaign is running}
+}
+proc ase::ui::lbl_camp_nopoints {} {
+  return {ase: this campaign has no points to run}
+}
+# --- the result table's copy ------------------------------------------------
+proc ase::ui::lbl_campres_title  {} { return {Campaign Results} }
+proc ase::ui::lbl_campres_none   {} {
+  return {No campaign has run in this bench's run directory yet.}
+}
+proc ase::ui::lbl_campres_col    {} { return {Column} }
+proc ase::ui::lbl_campres_dist   {} { return {Distribution} }
+proc ase::ui::lbl_campres_scatter {} { return {Scatter} }
+proc ase::ui::lbl_campres_x      {} { return {X} }
+proc ase::ui::lbl_campres_y      {} { return {Y} }
+proc ase::ui::lbl_campres_spec   {} { return {Spec} }
+proc ase::ui::lbl_campres_export {} { return "Export…" }
+proc ase::ui::lbl_campres_rerun  {} { return {Re-run Point} }
+proc ase::ui::lbl_campres_close  {} { return {Close} }
+proc ase::ui::lbl_campres_nostat {} { return {This column holds no numbers.} }
+# ⚠ `n of rows` IS SAID EVEN WHEN THEY ARE EQUAL. A campaign's `-` cells are
+# points that never ran and measurements that produced nothing -- and measured
+# on both binaries, a measurement that finds nothing exits 0 and prints NOTHING.
+# A mean over 28 of 30 points that presents itself as 30 is the silent half of
+# that defect; saying both numbers every time is what makes the gap visible
+# without the user having to know to look for it.
+proc ase::ui::lbl_campres_stats {s} {
+  set n    [dict get $s n]
+  set rows [dict get $s rows]
+  return "n = $n of $rows      mean [ase::stat_fmt [dict get $s mean]]\
+      sigma [ase::stat_fmt [dict get $s sigma]]\
+      min [ase::stat_fmt [dict get $s min]]\
+      max [ase::stat_fmt [dict get $s max]]\
+      median [ase::stat_fmt [dict get $s median]]"
+}
+proc ase::ui::lbl_campres_yield_none {} {
+  return {Yield: give a spec limit}
+}
+proc ase::ui::lbl_campres_yield {y} {
+  set pct [dict get $y pct]
+  if {$pct eq {}} { return [ase::ui::lbl_campres_yield_none] }
+  return "Yield: [dict get $y pass] of [dict get $y n]\
+ ([format %.1f $pct] %)"
+}
+proc ase::ui::lbl_campres_exported {path n} {
+  return "ase: exported $n [ase::sim_plural $n row rows] to $path"
+}
+proc ase::ui::lbl_campres_norow {} {
+  return {ase: select a point in the table first}
+}
+
+# --- READERS, ALL TOTAL ----------------------------------------------------
+proc ase::ui::camp_sim {key} { return [ase::ui::chana_sim $key] }
+proc ase::ui::camp_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].camp
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+proc ase::ui::campres_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].campres
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+# THE AXES THE FORM IS EDITING. Held in the dialog rather than in the state, so
+# Cancel really cancels -- the same shape `chana` uses for its per-type edits.
+proc ase::ui::camp_axes {key} {
+  variable dlg
+  if {![info exists dlg($key,camp,axes)]} { return {} }
+  return $dlg($key,camp,axes)
+}
+
+# THE STATE THIS FORM WOULD WRITE. One builder, read by the note line, by the
+# refusal evaluator, by Run and by OK -- so the sentence under the form and the
+# campaign that runs cannot describe different things.
+#
+# ⚠ AN EMPTY CAMPAIGN WRITES `{}`, AND THE 104 COMMITTED `.state` FILES DEPEND
+# ON IT. `sweep` is the ninth member of `ase::omit_if_empty` (⚖ R8's single named
+# exception to D3), so a `{}` here is omitted from the file entirely and a bench
+# that never had a campaign round-trips byte-identically through a dialog that
+# was opened and OK'd. "Empty" means all three: no axes, not enabled, no seed --
+# a seed the user typed before adding an axis is NOT silently dropped, because
+# a setting that is accepted and discarded is this batch's most-met defect.
+proc ase::ui::camp_form_state {key} {
+  variable dlg
+  set st [ase::session_state $key]
+  set axes [ase::ui::camp_axes $key]
+  set seed {}
+  set e [ase::ui::camp_seed_entry $key]
+  if {$e ne {} && [winfo exists $e]} { set seed [string trim [$e get]] }
+  set en 0
+  if {[info exists dlg($key,camp,enabled)] && $dlg($key,camp,enabled)} { set en 1 }
+  if {![llength $axes] && !$en && $seed eq {}} {
+    dict set st sweep {}
+    return $st
+  }
+  set sw [dict create enabled $en axes $axes]
+  if {$seed ne {}} { dict set sw seed $seed }
+  dict set st sweep $sw
+  return $st
+}
+
+# What this axis shows in the Values column -- the literal list, or the
+# distribution as the user wrote it. Never the DRAWN samples: a Monte Carlo axis
+# with 200 of them would fill the column and hide every other axis, and the
+# samples have a table of their own.
+proc ase::ui::camp_axis_values_text {axis} {
+  set vals [ase::state_get $axis values]
+  if {[llength $vals]} { return [join $vals { }] }
+  set spec [ase::state_get $axis draw]
+  if {$spec eq {}} { return {} }
+  set kind [string trim [ase::state_get $spec dist]]
+  set parts {}
+  foreach k [ase::ui::camp_dist_keys $kind] {
+    lappend parts "$k=[ase::state_get $spec $k]"
+  }
+  ## ⚠ `${kind}`, BRACED. `"$kind(...)"` is an ARRAY REFERENCE to Tcl and the
+  ## whole reader raised `variable isn't array` -- inside the axis table's
+  ## `catch`-free path, which is what made it visible at all.
+  return "${kind}([join $parts {, }]) x[ase::state_get $spec n]"
+}
+# The parameter names one distribution needs -- CORE's declaration, so a
+# distribution added there grows a form here and nothing has to be edited.
+proc ase::ui::camp_dist_keys {kind} {
+  set d {}
+  catch {set d [ase::mc_dists]}
+  if {$d eq {} || ![dict exists $d $kind]} { return {} }
+  return [dict get $d $kind]
+}
+proc ase::ui::camp_dist_kinds {} {
+  set d {}
+  catch {set d [ase::mc_dists]}
+  if {$d eq {}} { return {} }
+  return [lsort [dict keys $d]]
+}
+
+# HOW MANY POINTS THIS AXIS CONTRIBUTES, or `-` when it cannot say. A drawn axis
+# whose parameters are wrong raises in the sampler; that is a refusal the note
+# line below already prints, so the cell says `-` rather than a stack trace.
+proc ase::ui::camp_axis_points {key axis idx} {
+  set st [ase::ui::camp_form_state $key]
+  set seed [ase::campaign_seed $st]
+  set v {}
+  if {[catch {ase::campaign_axis_values $axis $seed $idx} v]} { return - }
+  return [llength $v]
+}
+
+# THE REFUSALS AND THE NOTES, AGAINST THE FORM'S OWN STATE. Both come from core;
+# this file spells neither, because a second wording of one refusal is exactly
+# the drift `ase::analysis_unrenderable_msg` was written to stop.
+proc ase::ui::camp_refusals {key {st {}}} {
+  if {$st eq {}} { set st [ase::ui::camp_form_state $key] }
+  set out {}
+  catch {set out [ase::campaign_refusals [ase::ui::camp_sim $key] $st]}
+  return $out
+}
+proc ase::ui::camp_notes {key {st {}}} {
+  if {$st eq {}} { set st [ase::ui::camp_form_state $key] }
+  set out {}
+  catch {set out [ase::campaign_notes [ase::ui::camp_sim $key] $st]}
+  return $out
+}
+
+# The note row: the refusals first (they are what stops a Run), then the notes.
+# ⚠ THE ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the button bar does not
+# jump as a refusal appears and goes -- issue 1435's rule, the same one the
+# Convergence form carries.
+proc ase::ui::camp_note {key {st {}}} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {}} { return {} }
+  if {$st eq {}} { set st [ase::ui::camp_form_state $key] }
+  set lines {}
+  foreach r [ase::ui::camp_refusals $key $st] { lappend lines [lindex $r 2] }
+  if {![llength $lines]} {
+    foreach n [ase::ui::camp_notes $key $st] { lappend lines $n }
+  }
+  if {![llength $lines] && ![llength [ase::ui::camp_axes $key]]} {
+    lappend lines [ase::ui::lbl_camp_noaxes]
+  }
+  set txt [join $lines "\n"]
+  catch {$w.note configure -text $txt}
+  return $txt
+}
+
+# REPAINT EVERYTHING THAT FOLLOWS FROM THE CONTROLS. One entry point, called
+# from every control's `-command` and from the build -- the same single-sync
+# shape `ase::ui::conv_sync` uses, and for the same reason: a form with two
+# repaint paths grows a state only one of them can reach.
+proc ase::ui::camp_sync {key} {
+  variable dlg
+  set w [ase::ui::camp_win $key]
+  if {$w eq {}} { return {} }
+  ase::ui::camp_fill $key
+  set st [ase::ui::camp_form_state $key]
+  ase::ui::camp_note $key $st
+  set running [expr {[info exists dlg($key,camp,running)] && $dlg($key,camp,running)}]
+  ## ⚠ A BUTTON THAT CAN ONLY SAY NO IS A BUTTON THAT LIES. `campaign_refusals`
+  ## is silent for a bench with NO campaign at all -- there is nothing to refuse
+  ## -- so refusals alone left Run live on an empty form, where pressing it
+  ## could do nothing but print "this campaign has no points to run". The point
+  ## count is the second half of the predicate, and it is asked through core's
+  ## odometer rather than by counting axes: an axis with an empty list
+  ## contributes nothing and empties the whole campaign.
+  set npts 0
+  catch {set npts [ase::campaign_count $st]}
+  set blocked [expr {[llength [ase::ui::camp_refusals $key $st]] > 0 || $npts < 1}]
+  catch {$w.btns2.run  configure -state [expr {$running || $blocked ? {disabled} : {normal}}]}
+  catch {$w.btns2.stop configure -state [expr {$running ? {normal} : {disabled}}]}
+  foreach b {add edit del} {
+    catch {$w.ax.b.$b configure -state [expr {$running ? {disabled} : {normal}}]}
+  }
+  return $st
+}
+
+# The axis table.
+proc ase::ui::camp_fill {key} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {} || ![winfo exists $w.ax.tv]} { return {} }
+  set sel [ase::ui::camp_selected $key]
+  catch {$w.ax.tv delete [$w.ax.tv children {}]}
+  set kinds {}
+  catch {set kinds [ase::campaign_axis_kinds [ase::ui::camp_sim $key]]}
+  set i 0
+  foreach a [ase::ui::camp_axes $key] {
+    set kind [string trim [ase::state_get $a kind]]
+    ## ⚠ THE KIND'S DISPLAY LABEL IS THE ADAPTER'S. A kind this simulator does
+    ## not declare keeps its raw name rather than being hidden -- a hand-edited
+    ## `.state` carrying a foreign kind must be VISIBLE in the table that offers
+    ## to delete it, and core's `badkind` refusal is what explains it below.
+    set klbl $kind
+    if {[dict exists $kinds $kind]} {
+      set l [string trim [ase::state_get [dict get $kinds $kind] label]]
+      if {$l ne {}} { set klbl $l }
+    }
+    $w.ax.tv insert {} end -id $i -values [list $klbl \
+      [ase::campaign_axis_label $a] [ase::ui::camp_axis_values_text $a] \
+      [ase::ui::camp_axis_points $key $a $i]]
+    incr i
+  }
+  if {$sel ne {} && $sel < $i} { catch {$w.ax.tv selection set $sel} }
+  return $i
+}
+proc ase::ui::camp_selected {key} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {} || ![winfo exists $w.ax.tv]} { return {} }
+  set s [$w.ax.tv selection]
+  if {![llength $s]} { return {} }
+  return [lindex $s 0]
+}
+
+# `Simulation > Campaign…`.
+proc ase::ui::campaign_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set st [ase::session_state $key]
+  set dlg($key,camp,axes)    [ase::campaign_axes $st]
+  set dlg($key,camp,enabled) [ase::campaign_enabled $st]
+  set dlg($key,camp,running) 0
+  set dlg($key,camp,stop)    0
+  set dlg($key,camp,at)      0
+  set w [ase::ui::dialog_frame [dict get $wins $key].camp [ase::ui::lbl_camp_title]]
+
+  checkbutton $w.on -text [ase::ui::lbl_camp_enabled] \
+    -variable ::ase::ui::dlg($key,camp,enabled) \
+    -command [list ase::ui::camp_sync $key]
+  grid $w.on -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {6 2}
+
+  frame $w.sd
+  label $w.sd.l -text [ase::ui::lbl_camp_seed] -font AseLabelFont
+  entry $w.sd.e -width 12 -font AseEntryFont
+  ## ⚠ THE ENTRY'S PATH IS SPELLED IN ONE PLACE, `ase::ui::camp_seed_entry`.
+  ## Tk widget names ARE the geometry, so an entry packed inside a frame is
+  ## `$w.sd.e` and not `$w.seed`; three readers each writing that path out is
+  ## how a form grows a control only two of them can see.
+  label $w.sd.why -text [ase::ui::lbl_camp_seed_why] -anchor w -font AseBodyFont
+  pack $w.sd.l $w.sd.e $w.sd.why -side left -padx {0 6}
+  grid $w.sd -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ## ⚠ `<KeyRelease>`, NOT ONLY `<FocusOut>` -- the note line under this form is
+  ## its promise about the campaign, and a seed typed and not tabbed away from
+  ## left the line describing the PREVIOUS value while Run used the new one.
+  ## Convergence's row GW9 is the same rule one dialog over.
+  bind $w.sd.e <KeyRelease> [list ase::ui::camp_sync $key]
+
+  labelframe $w.ax -text [ase::ui::lbl_camp_axes]
+  grid $w.ax -row 2 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady 2
+  set cols {kind name values points}
+  ttk::treeview $w.ax.tv -columns $cols -show headings -selectmode browse \
+    -height 5 -style Ase.Treeview -yscrollcommand [list $w.ax.sb set]
+  set heads [list [ase::ui::lbl_camp_c_kind] [ase::ui::lbl_camp_c_name] \
+                  [ase::ui::lbl_camp_c_values] [ase::ui::lbl_camp_c_points]]
+  set first 0
+  foreach c $cols h $heads {
+    $w.ax.tv heading $c -text $h
+    $w.ax.tv column $c -width [ase::ui::colw 16 $h] \
+      -minwidth [ase::ui::colw 0 $h] -anchor w \
+      -stretch [expr {$c eq {values} ? 1 : 0}]
+  }
+  scrollbar $w.ax.sb -orient vertical -command [list $w.ax.tv yview]
+  frame $w.ax.b
+  button $w.ax.b.add  -text [ase::ui::lbl_camp_add] \
+    -command [list ase::ui::camp_axis_editor $key -1]
+  button $w.ax.b.edit -text [ase::ui::lbl_camp_edit] \
+    -command [list ase::ui::camp_axis_edit_selected $key]
+  button $w.ax.b.del  -text [ase::ui::lbl_camp_del] \
+    -command [list ase::ui::camp_axis_delete $key]
+  pack $w.ax.b.add $w.ax.b.edit $w.ax.b.del -side left -padx 3
+  grid $w.ax.tv -row 0 -column 0 -sticky nsew -padx {6 0} -pady 2
+  grid $w.ax.sb -row 0 -column 1 -sticky ns   -padx {0 6} -pady 2
+  grid $w.ax.b  -row 1 -column 0 -columnspan 2 -sticky w -padx 6 -pady {0 4}
+  grid rowconfigure $w.ax 0 -weight 1
+  grid columnconfigure $w.ax 0 -weight 1
+  bind $w.ax.tv <Double-Button-1> [list ase::ui::camp_axis_edit_selected $key]
+  bind $w.ax.tv <Delete> [list ase::ui::camp_axis_delete $key]
+
+  label $w.note -text {} -anchor w -justify left -wraplength 600
+  grid $w.note -row 3 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+
+  frame $w.btns2
+  button $w.btns2.run  -text [ase::ui::lbl_camp_run] \
+    -command [list ase::ui::camp_run $key]
+  button $w.btns2.stop -text [ase::ui::lbl_camp_stop] \
+    -command [list ase::ui::camp_stop $key]
+  label  $w.btns2.prog -text [ase::ui::lbl_camp_idle] -anchor w -font AseMonoFont
+  button $w.btns2.res  -text [ase::ui::lbl_camp_results] \
+    -command [list ase::ui::campaign_results $key]
+  pack $w.btns2.run $w.btns2.stop -side left -padx 3
+  pack $w.btns2.res -side right -padx 3
+  pack $w.btns2.prog -side left -padx 10
+  grid $w.btns2 -row 4 -column 0 -columnspan 2 -sticky we -padx 8 -pady 4
+
+  ase::ui::dialog_buttons $w 5 [list ase::ui::camp_ok $key] \
+    [list ase::ui::camp_cancel $key]
+  grid rowconfigure $w 2 -weight 1
+  $w.sd.e insert 0 [ase::campaign_get $st seed]
+  ase::ui::camp_sync $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# The seed entry's canonical path, so every reader spells one name.
+proc ase::ui::camp_seed_entry {key} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {}} { return {} }
+  return $w.sd.e
+}
+
+proc ase::ui::camp_ok {key} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {}} { return }
+  ase::session_update $key [ase::ui::camp_form_state $key]
+  ase::ui::populate $key
+  ase::ui::camp_cancel $key
+}
+proc ase::ui::camp_cancel {key} {
+  variable dlg
+  ## ⚠ A CAMPAIGN THAT IS RUNNING IS NOT CANCELLED BY CLOSING THE WINDOW. The
+  ## flag is set so the loop below stops at the next point boundary; the shards
+  ## already on disk stay, which is the same promise the Stop button makes.
+  if {[info exists dlg($key,camp,running)] && $dlg($key,camp,running)} {
+    set dlg($key,camp,stop) 1
+  }
+  set w [ase::ui::camp_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+}
+
+proc ase::ui::camp_axis_delete {key} {
+  variable dlg
+  set i [ase::ui::camp_selected $key]
+  if {$i eq {}} { return {} }
+  set axes [ase::ui::camp_axes $key]
+  if {$i < 0 || $i >= [llength $axes]} { return {} }
+  set dlg($key,camp,axes) [lreplace $axes $i $i]
+  ase::ui::camp_sync $key
+  return [llength $dlg($key,camp,axes)]
+}
+proc ase::ui::camp_axis_edit_selected {key} {
+  set i [ase::ui::camp_selected $key]
+  if {$i eq {}} { return {} }
+  return [ase::ui::camp_axis_editor $key $i]
+}
+
+# --- THE AXIS EDITOR, BUILT ENTIRELY FROM DECLARATIONS ---------------------
+#
+# ⚠ NOT ONE `switch` ON A KIND. The kind list, each kind's display label and
+# each kind's fields all come from `ase::campaign_axis_kinds`, which is the
+# adapter's; the distribution list and each distribution's parameters come from
+# `ase::mc_dists`, which is core's. A simulator that declares a sixth kind
+# tomorrow gets a form for it with nothing edited here -- and one that declares
+# none gets core's own refusal instead of an empty picker.
+proc ase::ui::camp_axis_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].campax
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+proc ase::ui::camp_kind_labels {key} {
+  set out {}
+  set kinds {}
+  catch {set kinds [ase::campaign_axis_kinds [ase::ui::camp_sim $key]]}
+  if {$kinds eq {}} { return {} }
+  foreach k [lsort [dict keys $kinds]] {
+    set l [string trim [ase::state_get [dict get $kinds $k] label]]
+    if {$l eq {}} { set l $k }
+    lappend out $l
+  }
+  return $out
+}
+proc ase::ui::camp_kind_of_label {key lbl} {
+  set kinds {}
+  catch {set kinds [ase::campaign_axis_kinds [ase::ui::camp_sim $key]]}
+  if {$kinds eq {}} { return {} }
+  foreach k [lsort [dict keys $kinds]] {
+    set l [string trim [ase::state_get [dict get $kinds $k] label]]
+    if {$l eq {}} { set l $k }
+    if {$l eq $lbl} { return $k }
+  }
+  return {}
+}
+
+proc ase::ui::camp_axis_editor {key idx} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set kinds {}
+  catch {set kinds [ase::campaign_axis_kinds [ase::ui::camp_sim $key]]}
+  if {$kinds eq {} || ![dict size $kinds]} {
+    ## Core's own `nokinds` sentence, not a second one typed here.
+    set r [ase::ui::camp_refusals $key]
+    set msg {}
+    foreach x $r { if {[lindex $x 0] eq {nokinds}} { set msg [lindex $x 2] } }
+    if {$msg eq {}} { set msg [ase::ui::lbl_camp_noaxes] }
+    catch {::ase::echo "ase: $msg" error}
+    return {}
+  }
+  set axes [ase::ui::camp_axes $key]
+  set axis {}
+  if {$idx >= 0 && $idx < [llength $axes]} { set axis [lindex $axes $idx] }
+  set dlg($key,campax,idx) $idx
+  set kind [string trim [ase::state_get $axis kind]]
+  if {$kind eq {} || ![dict exists $kinds $kind]} {
+    set kind [lindex [lsort [dict keys $kinds]] 0]
+  }
+  set klbl $kind
+  set kl [string trim [ase::state_get [dict get $kinds $kind] label]]
+  if {$kl ne {}} { set klbl $kl }
+  set dlg($key,campax,kind) $klbl
+  set src list
+  if {[ase::state_get $axis draw] ne {} && ![llength [ase::state_get $axis values]]} {
+    set src draw
+  }
+  set dlg($key,campax,src) $src
+  set d [ase::state_get $axis draw]
+  set dk [string trim [ase::state_get $d dist]]
+  if {$dk eq {}} { set dk [lindex [ase::ui::camp_dist_kinds] 0] }
+  set dlg($key,campax,dist) $dk
+  set w [ase::ui::dialog_frame [dict get $wins $key].campax \
+           [ase::ui::lbl_camp_axis_title]]
+  label $w.lkind -text [ase::ui::lbl_camp_c_kind] -font AseLabelFont -anchor w
+  ttk::combobox $w.kind -state readonly -width 20 \
+    -values [ase::ui::camp_kind_labels $key] \
+    -textvariable ::ase::ui::dlg($key,campax,kind)
+  grid $w.lkind -row 0 -column 0 -sticky w  -padx {8 6} -pady 2
+  grid $w.kind  -row 0 -column 1 -sticky we -padx {0 8} -pady 2
+  bind $w.kind <<ComboboxSelected>> [list ase::ui::camp_axis_kind_changed $key]
+  ## The per-kind fields live in their own frame so a kind change rebuilds THEM
+  ## and nothing else -- the values the user has already typed for the list or
+  ## the distribution survive a change of mind about the kind.
+  frame $w.f
+  grid $w.f -row 1 -column 0 -columnspan 2 -sticky we -padx 0 -pady 0
+  grid columnconfigure $w.f 1 -weight 1
+  label $w.llabel -text [ase::ui::lbl_camp_axis_label] -font AseLabelFont -anchor w
+  entry $w.label -width 24 -font AseEntryFont
+  $w.label insert 0 [string trim [ase::state_get $axis label]]
+  label $w.labelhint -text [ase::ui::lbl_camp_axis_auto] -font AseBodyFont -anchor w
+  grid $w.llabel   -row 2 -column 0 -sticky w  -padx {8 6} -pady 2
+  grid $w.label    -row 2 -column 1 -sticky we -padx {0 8} -pady 2
+  grid $w.labelhint -row 3 -column 1 -sticky w -padx {0 8} -pady {0 4}
+
+  labelframe $w.src -text [ase::ui::lbl_camp_src]
+  grid $w.src -row 4 -column 0 -columnspan 2 -sticky we -padx 8 -pady 2
+  grid columnconfigure $w.src 1 -weight 1
+  radiobutton $w.src.rlist -text [ase::ui::lbl_camp_src_list] -value list \
+    -variable ::ase::ui::dlg($key,campax,src) \
+    -command [list ase::ui::camp_axis_sync $key]
+  entry $w.src.values -width 34 -font AseEntryFont
+  $w.src.values insert 0 [join [ase::state_get $axis values] { }]
+  grid $w.src.rlist  -row 0 -column 0 -sticky w  -padx 6 -pady 2
+  grid $w.src.values -row 0 -column 1 -sticky we -padx {0 6} -pady 2
+  radiobutton $w.src.rdraw -text [ase::ui::lbl_camp_src_draw] -value draw \
+    -variable ::ase::ui::dlg($key,campax,src) \
+    -command [list ase::ui::camp_axis_sync $key]
+  frame $w.src.d
+  ttk::combobox $w.src.d.dist -state readonly -width 10 \
+    -values [ase::ui::camp_dist_kinds] \
+    -textvariable ::ase::ui::dlg($key,campax,dist)
+  label $w.src.d.ln -text [ase::ui::lbl_camp_samples] -font AseLabelFont
+  entry $w.src.d.n -width 6 -font AseEntryFont
+  set nn [ase::state_get $d n]
+  $w.src.d.n insert 0 [expr {$nn eq {} ? 30 : $nn}]
+  pack $w.src.d.dist $w.src.d.ln $w.src.d.n -side left -padx {0 6}
+  bind $w.src.d.dist <<ComboboxSelected>> [list ase::ui::camp_axis_dist_changed $key]
+  grid $w.src.rdraw -row 1 -column 0 -sticky w  -padx 6 -pady 2
+  grid $w.src.d     -row 1 -column 1 -sticky w  -padx {0 6} -pady 2
+  frame $w.src.p
+  grid $w.src.p -row 2 -column 1 -sticky w -padx {0 6} -pady {0 4}
+  label $w.note -text {} -anchor w -justify left -wraplength 460
+  grid $w.note -row 5 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 6 [list ase::ui::camp_axis_ok $key] \
+    [list ase::ui::camp_axis_cancel $key]
+  ase::ui::camp_axis_fields $key $axis
+  ase::ui::camp_axis_params $key $d
+  ase::ui::camp_axis_sync $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# The per-kind fields, from the adapter's `fields` list. A field descriptor is
+# `{name <k> kind text|int required 0|1 label <L>}` -- the same shape the
+# analysis registry's fields already use, so nothing new is learned to read it.
+proc ase::ui::camp_axis_fields {key {axis {}}} {
+  variable dlg
+  set w [ase::ui::camp_axis_win $key]
+  if {$w eq {}} { return {} }
+  set dlg($key,campax,fields) {}
+  foreach c [winfo children $w.f] { catch {destroy $c} }
+  set kind [ase::ui::camp_kind_of_label $key [ase::ui::camp_axis_kind $key]]
+  set ent {}
+  catch {set ent [ase::campaign_kind_entry [ase::ui::camp_sim $key] $kind]}
+  set flds {}
+  if {$ent ne {}} { catch {set flds [ase::state_get $ent fields]} }
+  set r 0
+  set names {}
+  foreach fd $flds {
+    set nm [string trim [ase::state_get $fd name]]
+    if {$nm eq {}} { continue }
+    set lbl [string trim [ase::state_get $fd label]]
+    if {$lbl eq {}} { set lbl $nm }
+    label $w.f.l$nm -text $lbl -font AseLabelFont -anchor w
+    entry $w.f.e$nm -width 24 -font AseEntryFont
+    $w.f.e$nm insert 0 [string trim [ase::state_get $axis $nm]]
+    grid $w.f.l$nm -row $r -column 0 -sticky w  -padx {8 6} -pady 2
+    grid $w.f.e$nm -row $r -column 1 -sticky we -padx {0 8} -pady 2
+    bind $w.f.e$nm <KeyRelease> [list ase::ui::camp_axis_sync $key]
+    lappend names $nm
+    incr r
+  }
+  ## ⚠ THE NAMES ARE REMEMBERED, NOT RE-DERIVED FROM WIDGET PATHS. A reader that
+  ## recovered a field name by stripping a prefix off `$w.f.e<name>` would be a
+  ## second encoding of the adapter's declaration, and the first adapter to
+  ## declare a field called `l` or `e` would break it silently.
+  set dlg($key,campax,fields) $names
+  ## ⚠ A KIND WITH NO FIELDS IS A REAL ANSWER AND MUST LOOK LIKE ONE.
+  ## `temp` declares none -- a temperature axis is named by nothing but its
+  ## values -- so the frame is empty and the form is still complete. An empty
+  ## frame with nothing said is indistinguishable from a form that failed to
+  ## build, so the unit the adapter declares is shown where it has one.
+  if {![llength $names] && $ent ne {}} {
+    set u [string trim [ase::state_get $ent unit]]
+    set l [string trim [ase::state_get $ent label]]
+    if {$u ne {}} {
+      label $w.f.only -text "$l ($u)" -anchor w
+      grid $w.f.only -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+    }
+  }
+  return $names
+}
+proc ase::ui::camp_axis_kind {key} {
+  variable dlg
+  if {![info exists dlg($key,campax,kind)]} { return {} }
+  return $dlg($key,campax,kind)
+}
+proc ase::ui::camp_axis_kind_changed {key} {
+  ase::ui::camp_axis_fields $key
+  ase::ui::camp_axis_sync $key
+}
+proc ase::ui::camp_axis_dist_changed {key} {
+  ase::ui::camp_axis_params $key
+  ase::ui::camp_axis_sync $key
+}
+# The distribution's parameter entries, from CORE's `ase::mc_dists`.
+proc ase::ui::camp_axis_params {key {spec {}}} {
+  variable dlg
+  set w [ase::ui::camp_axis_win $key]
+  if {$w eq {}} { return {} }
+  set dlg($key,campax,params) {}
+  foreach c [winfo children $w.src.p] { catch {destroy $c} }
+  set kind {}
+  if {[info exists dlg($key,campax,dist)]} { set kind $dlg($key,campax,dist) }
+  set names {}
+  foreach k [ase::ui::camp_dist_keys $kind] {
+    label $w.src.p.l$k -text $k -font AseLabelFont
+    entry $w.src.p.e$k -width 10 -font AseEntryFont
+    $w.src.p.e$k insert 0 [string trim [ase::state_get $spec $k]]
+    pack $w.src.p.l$k $w.src.p.e$k -side left -padx {0 6}
+    bind $w.src.p.e$k <KeyRelease> [list ase::ui::camp_axis_sync $key]
+    lappend names $k
+  }
+  set dlg($key,campax,params) $names
+  return $names
+}
+
+# The axis this form describes, as a state row. ONE builder, read by the note
+# line and by OK.
+proc ase::ui::camp_axis_form_row {key} {
+  variable dlg
+  set w [ase::ui::camp_axis_win $key]
+  if {$w eq {}} { return {} }
+  set kind [ase::ui::camp_kind_of_label $key [ase::ui::camp_axis_kind $key]]
+  set row [dict create kind $kind]
+  set flds {}
+  if {[info exists dlg($key,campax,fields)]} { set flds $dlg($key,campax,fields) }
+  foreach nm $flds {
+    if {![winfo exists $w.f.e$nm]} { continue }
+    set v [string trim [$w.f.e$nm get]]
+    if {$v ne {}} { dict set row $nm $v }
+  }
+  set lbl [string trim [$w.label get]]
+  if {$lbl ne {}} { dict set row label $lbl }
+  if {$dlg($key,campax,src) eq {list}} {
+    dict set row values [$w.src.values get]
+  } else {
+    set spec [dict create dist $dlg($key,campax,dist) \
+                n [string trim [$w.src.d.n get]]]
+    set prm {}
+    if {[info exists dlg($key,campax,params)]} { set prm $dlg($key,campax,params) }
+    foreach k $prm {
+      if {![winfo exists $w.src.p.e$k]} { continue }
+      dict set spec $k [string trim [$w.src.p.e$k get]]
+    }
+    dict set row draw $spec
+  }
+  return $row
+}
+
+# What this one axis would be refused for, and what it would contribute. The
+# refusals are CORE's, evaluated against a one-axis campaign built from this
+# form, so the sentence the editor shows and the sentence the campaign shows are
+# produced by the same evaluator.
+proc ase::ui::camp_axis_sync {key} {
+  variable dlg
+  set w [ase::ui::camp_axis_win $key]
+  if {$w eq {}} { return {} }
+  set draw [expr {[info exists dlg($key,campax,src)] && $dlg($key,campax,src) eq {draw}}]
+  catch {$w.src.values configure -state [expr {$draw ? {disabled} : {normal}}]}
+  catch {$w.src.d.dist configure -state [expr {$draw ? {readonly} : {disabled}}]}
+  catch {$w.src.d.n configure -state [expr {$draw ? {normal} : {disabled}}]}
+  foreach c [winfo children $w.src.p] {
+    catch {$c configure -state [expr {$draw ? {normal} : {disabled}}]}
+  }
+  set row [ase::ui::camp_axis_form_row $key]
+  set st [ase::ui::camp_form_state $key]
+  dict set st sweep [dict create enabled 1 axes [list $row] \
+    seed [ase::campaign_seed $st]]
+  set lines {}
+  catch {
+    foreach r [ase::campaign_refusals [ase::ui::camp_sim $key] $st] {
+      if {[lindex $r 0] eq {sharedrundir} || [lindex $r 0] eq {noanalysis}} { continue }
+      lappend lines [lindex $r 2]
+    }
+  }
+  if {![llength $lines]} {
+    set n [ase::ui::camp_axis_points $key $row 0]
+    lappend lines "[ase::ui::lbl_camp_c_points]: $n"
+  }
+  catch {$w.note configure -text [join $lines "\n"]}
+  return [join $lines "\n"]
+}
+
+proc ase::ui::camp_axis_ok {key} {
+  variable dlg
+  set w [ase::ui::camp_axis_win $key]
+  if {$w eq {}} { return }
+  set row [ase::ui::camp_axis_form_row $key]
+  ## ⚠ OK IS A COMMIT DOOR AND IT ASKS CORE, NOT ITSELF. An axis that cannot be
+  ## sampled or has no values would otherwise land in the table with a `-` in
+  ## its Points column and stop the whole campaign from the note line of the
+  ## OTHER dialog, which is where the user is not looking.
+  set st [ase::ui::camp_form_state $key]
+  dict set st sweep [dict create enabled 1 axes [list $row] \
+    seed [ase::campaign_seed $st]]
+  set bad {}
+  catch {
+    foreach r [ase::campaign_refusals [ase::ui::camp_sim $key] $st] {
+      if {[lindex $r 0] eq {sharedrundir} || [lindex $r 0] eq {noanalysis}} { continue }
+      lappend bad [lindex $r 2]
+    }
+  }
+  if {[llength $bad]} {
+    catch {::ase::echo "ase: [lindex $bad 0]" error}
+    ase::ui::camp_axis_sync $key
+    return
+  }
+  set idx $dlg($key,campax,idx)
+  set axes [ase::ui::camp_axes $key]
+  if {$idx >= 0 && $idx < [llength $axes]} {
+    set axes [lreplace $axes $idx $idx $row]
+  } else {
+    lappend axes $row
+  }
+  set dlg($key,camp,axes) $axes
+  ase::ui::camp_axis_cancel $key
+  ase::ui::camp_sync $key
+}
+proc ase::ui::camp_axis_cancel {key} {
+  set w [ase::ui::camp_axis_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+}
+
+# --- RUNNING THE CAMPAIGN --------------------------------------------------
+
+# THE NETLIST THIS CAMPAIGN RUNS, AS TEXT. `ase::netlist` answers a PATH -- it
+# is the same artifact a single run uses -- and `ase::campaign_run` wants the
+# text, because every shard writes its own copy into its own directory.
+#
+# ⚠ `::open` AND `::close`, ABSOLUTELY QUALIFIED. This file shadows both
+# (`ase::ui::open`, `ase::ui::close`) and every proc in it runs in the namespace
+# that shadows them, so a bare `open` here would call the session opener and a
+# bare `close` would leak the channel -- issue 1461, and row SL1 of
+# test_ase_conv_gui_1460 is a lint over the whole file for exactly this.
+proc ase::ui::camp_netlist_text {key} {
+  set p [ase::netlist [ase::session_state $key]]
+  set f [::open $p r]
+  set t [read $f]
+  ::close $f
+  return $t
+}
+
+proc ase::ui::camp_progress {key text} {
+  set w [ase::ui::camp_win $key]
+  if {$w eq {} || ![winfo exists $w.btns2.prog]} { return {} }
+  catch {$w.btns2.prog configure -text $text}
+  return $text
+}
+
+# This point's coordinates, as `label=value` pairs, for the progress line. A
+# `k/N` with no coordinates tells the user how far along they are and nothing
+# about what is running.
+proc ase::ui::camp_coords {key st idx} {
+  set pts {}
+  if {[catch {ase::campaign_points $st} pts]} { return {} }
+  if {$idx < 0 || $idx >= [llength $pts]} { return {} }
+  set out {}
+  set i 0
+  foreach a [ase::campaign_axes $st] {
+    lappend out "[ase::campaign_axis_label $a]=[lindex [lindex $pts $idx] $i]"
+    incr i
+  }
+  return [join $out {, }]
+}
+
+# ⚠ THE CALLBACK PAINTS THE POINT THAT IS ABOUT TO START, NOT THE ONE THAT JUST
+# FINISHED, AND THAT IS ISSUE 1463 REACHING THE SCREEN. `onstep` fires after
+# shard `i`; the next shard begins the instant this returns, and it may take 30
+# seconds before it says anything of its own against a binary that cannot answer
+# the capability probe. A readout that reported the finished point would sit on
+# `1 of 100` through the whole of point 2.
+proc ase::ui::camp_step {key st i n r} {
+  variable dlg
+  if {[expr {$i + 1}] < $n} {
+    ase::ui::camp_progress $key [ase::ui::lbl_camp_at [expr {$i + 2}] $n \
+      [ase::ui::camp_coords $key $st [expr {$i + 1}]]]
+  }
+  set dlg($key,camp,at) [expr {$i + 1}]
+  if {[dict exists $r exit] && [dict get $r exit] != 0} {
+    incr dlg($key,camp,bad)
+  } else {
+    incr dlg($key,camp,ok)
+  }
+  ## The window must repaint while the campaign holds the stack, and the Stop
+  ## button must be able to fire. `ase::campaign_wait`'s own `vwait` already
+  ## dispatches events during a shard; this covers the gap between shards.
+  catch {update}
+  if {[info exists dlg($key,camp,stop)] && $dlg($key,camp,stop)} { return stop }
+  return {}
+}
+
+# STOP. Sets the flag the step callback reads AND kills the shard that is
+# running, so the campaign does not have to wait out a point the user has
+# already abandoned.
+#
+# ⚠ IT KILLS THROUGH THE RUN LOCK, WHICH IS THE SAME AUTHORITY `Simulation >
+# Stop` USES. The shard's results file is its lock key, so
+# `ase::run_in_flight` answers the execute id this campaign started and nothing
+# else -- there is no second id table and no pattern match on a command line.
+# What the killed shard keeps is whatever its checkpoint had written, exactly as
+# a stopped single run does.
+proc ase::ui::camp_stop {key} {
+  variable dlg
+  if {![info exists dlg($key,camp,running)] || !$dlg($key,camp,running)} {
+    catch {::ase::echo [ase::ui::lbl_camp_norun]}
+    return {}
+  }
+  set dlg($key,camp,stop) 1
+  set id {}
+  catch {
+    set st $dlg($key,camp,state)
+    set sst [ase::campaign_shard_state [ase::ui::camp_sim $key] $st \
+               $dlg($key,camp,at)]
+    set id [ase::run_in_flight [ase::run_lock_key $sst]]
+  }
+  if {$id ne {}} { catch {kill_running_cmds $id -9} }
+  return $id
+}
+
+# `Run Campaign`.
+# ⚠ EVERY PATH OUT OF THIS PROC ANSWERS A DICT WITH A `status`, AND THAT IS A
+# TEST-DESIGN RULE AS MUCH AS A CODE ONE. The first version returned `{}` from
+# its five early paths, and the suite's own end-to-end row -- `dict get $res
+# status` -- then **RAISED** rather than reddening: `--nogui --pipe` exits 0 on
+# an uncaught mid-script Tcl error, so the suite DIED after the row before it and
+# printed no `RESULT:` line at all. That is the failure shape the brief names,
+# met in this very task, and the repair belongs here rather than in the row: a
+# door whose refusal is indistinguishable from its success is hard to test
+# because it is hard to USE.
+proc ase::ui::camp_run {key} {
+  variable dlg
+  set w [ase::ui::camp_win $key]
+  if {$w eq {}} { return [dict create status nowindow ran 0 of 0] }
+  ## 1389's refusal, first statement and for the same reason the two run doors
+  ## carry it: a campaign that started while this bench's own run was in flight
+  ## would netlist under it.
+  set busy [ase::ui::run_busy $key]
+  if {$busy ne {}} {
+    ase::run_refuse $busy
+    return [dict create status busy ran 0 of 0]
+  }
+  ## ⚠ AND THE SAME DESIGN ROUTING `Netlist and Run` DOES, THROUGH THE SAME
+  ## PROC. MEASURED on the dev display before this line existed: a campaign
+  ## started from a window whose design was not on the hierarchy stack died on
+  ## `ase: design <lib>/<cell> is not open in this window`, from a window where
+  ## `Netlist and Run` works -- issue 0643's complaint on a new button. A
+  ## campaign netlists exactly as that door does, so it routes exactly as that
+  ## door does.
+  if {![ase::ui::route_design $key]} {
+    return [dict create status unreachable ran 0 of 0]
+  }
+  ## Everything the form is showing becomes the session's state BEFORE the
+  ## campaign runs: the campaign that runs is the one on screen, and the one
+  ## that is saved is the one that ran.
+  set st [ase::ui::camp_form_state $key]
+  ase::session_update $key $st
+  ase::ui::populate $key
+  set ref [ase::ui::camp_refusals $key $st]
+  if {[llength $ref]} {
+    catch {::ase::echo "ase: [lindex [lindex $ref 0] 2]" error}
+    ase::ui::camp_sync $key
+    return [dict create status refused ran 0 of 0 refusals $ref]
+  }
+  set n [ase::campaign_count $st]
+  if {$n < 1} {
+    catch {::ase::echo [ase::ui::lbl_camp_nopoints] error}
+    return [dict create status nopoints ran 0 of 0]
+  }
+  set nl {}
+  if {[catch {ase::ui::camp_netlist_text $key} nl]} {
+    catch {::ase::echo $nl error}
+    ase::ui::set_status $key fail
+    return [dict create status nonetlist ran 0 of 0]
+  }
+  set dlg($key,camp,running) 1
+  set dlg($key,camp,stop) 0
+  set dlg($key,camp,at) 0
+  set dlg($key,camp,ok) 0
+  set dlg($key,camp,bad) 0
+  set dlg($key,camp,state) $st
+  ase::ui::camp_sync $key
+  ase::ui::camp_progress $key \
+    [ase::ui::lbl_camp_at 1 $n [ase::ui::camp_coords $key $st 0]]
+  ase::ui::set_status $key running
+  set res {}
+  set rc [catch {ase::campaign_run [ase::ui::camp_sim $key] $st $nl \
+            [list ase::ui::camp_step $key $st]} res]
+  set dlg($key,camp,running) 0
+  ## ⚠ THE DIALOG MAY HAVE BEEN CLOSED WHILE THE CAMPAIGN RAN -- `camp_cancel`
+  ## sets the stop flag and destroys the window, and the loop then finishes its
+  ## current point and returns here with nothing to paint. Every write below
+  ## goes through readers that answer `{}` for a window that is gone.
+  if {$rc} {
+    catch {::ase::echo $res error}
+    ase::ui::set_status $key fail
+    ase::ui::camp_progress $key [ase::ui::lbl_camp_idle]
+    catch {ase::ui::camp_sync $key}
+    return [dict create status raised ran 0 of 0 why $res]
+  }
+  set ran 0 ; set of $n
+  catch {set ran [dict get $res ran]}
+  catch {set of  [dict get $res of]}
+  if {[dict exists $res status] && [dict get $res status] eq {stopped}} {
+    ase::ui::camp_progress $key [ase::ui::lbl_camp_stopped $ran $of]
+  } else {
+    ase::ui::camp_progress $key [ase::ui::lbl_camp_done $of \
+      $dlg($key,camp,ok) $dlg($key,camp,bad)]
+  }
+  ase::ui::set_status $key [expr {$dlg($key,camp,bad) ? {fail} : {ok}}]
+  catch {ase::ui::camp_sync $key}
+  return $res
+}
+
+# ═══ §11c: THE RESULT TABLE ════════════════════════════════════════════════
+#
+# ⚠ EVERY NUMBER IN THIS WINDOW IS COMPUTED IN Tcl BY `ase::stat_*`, BECAUSE THE
+# SIMULATOR CANNOT COMPUTE ANY OF THEM. ngspice has no sort, no median, no
+# percentile and no histogram; its vector functions are element-wise and the
+# nearest thing to an order statistic is `minimum`/`maximum`. That is a fact
+# about the tool, and it is why "the campaign ends with a NUMBER, not a
+# directory" has to be ASE-L's own arithmetic.
+#
+# ⚠ AND THE SAMPLES ARE VISIBLE, WHICH IS THE WHOLE CLAIM OF §11b. The table is
+# `index.tsv` in full -- one row per point, RUN OR NOT, with every axis
+# coordinate as its own column -- so a drawn Monte Carlo sample is a number the
+# user can read, sort past, export and re-run. "ADE-L cannot show you its
+# samples" is the sentence this window is written against.
+
+proc ase::ui::campres_rows {key} {
+  set r {}
+  catch {set r [ase::campaign_index_read [ase::session_state $key]]}
+  return $r
+}
+proc ase::ui::campres_cols {key} {
+  return [ase::stat_columns [ase::ui::campres_rows $key]]
+}
+# The SI suffix set this bench's simulator declares -- so `1k` in a swept axis
+# column is a number to the statistics. `{}` for a backend that declares none.
+proc ase::ui::campres_suffixes {key} {
+  set s {}
+  catch {set s [ase::stat_suffixes [ase::ui::camp_sim $key]]}
+  return $s
+}
+
+# ⚠ THE PANEL OPENS ON THE BENCH'S OWN DATA, AND A SURVIVING SABOTAGE IS WHY.
+# `index.tsv` is `shard`, the axes, `exit`, `raw`, then one column per enabled
+# measurement. The first version of this proc took the LAST column, reasoning
+# that it is the last MEASUREMENT whenever the bench has one. It is -- and when
+# the bench has NONE the last column is `raw`, a column of FILE PATHS, so the
+# result table opened on "This column holds no numbers." with a perfectly good
+# swept axis one place to its left, and the scatter defaulted to that axis
+# against `raw`, which is EMPTY.
+#
+# ⚠ THAT EMPTINESS ALSO MADE A ROW UNABLE TO DISCRIMINATE. Sabotage **w24**
+# drops the simulator's SI suffixes from the scatter, and it **SURVIVED**: a
+# scatter of `myres` against `raw` has zero points with the suffixes and zero
+# without them, so no row over the default columns could tell the two apart. A
+# default that is empty is a default that hides defects behind it.
+#
+# So the preference is the bench's OWN data -- its axis labels and its enabled
+# measurement names -- over the index's bookkeeping, and within that the columns
+# that actually hold numbers. ⚠ THE THREE BOOKKEEPING NAMES ARE NOT SPELLED
+# HERE: the data columns are derived from the state through the same readers
+# `ase::campaign_index_header` builds them from, so a fourth bookkeeping column
+# added to the index needs no edit in this file.
+proc ase::ui::campres_data_cols {key} {
+  set out {}
+  set st [ase::session_state $key]
+  catch {
+    foreach a [ase::campaign_axes $st] { lappend out [ase::campaign_axis_label $a] }
+  }
+  catch {
+    foreach r [ase::meas_rows $st] {
+      if {[ase::meas_enabled $r]} { lappend out [ase::meas_name $r] }
+    }
+  }
+  return $out
+}
+# The columns that hold at least one number, in index order.
+proc ase::ui::campres_numeric_cols {key {rows {}}} {
+  if {$rows eq {}} { set rows [ase::ui::campres_rows $key] }
+  set sufs [ase::ui::campres_suffixes $key]
+  set out {}
+  foreach c [ase::stat_columns $rows] {
+    if {[llength [ase::stat_numbers [ase::stat_column $rows $c] $sufs]]} {
+      lappend out $c
+    }
+  }
+  return $out
+}
+# The bench's own data columns that hold numbers, in index order -- what every
+# default below is chosen from.
+proc ase::ui::campres_pref_cols {key {rows {}}} {
+  if {$rows eq {}} { set rows [ase::ui::campres_rows $key] }
+  set data [ase::ui::campres_data_cols $key]
+  set out {}
+  foreach c [ase::ui::campres_numeric_cols $key $rows] {
+    if {[lsearch -exact $data $c] >= 0} { lappend out $c }
+  }
+  return $out
+}
+proc ase::ui::campres_default_col {key} {
+  set cols [ase::ui::campres_cols $key]
+  if {![llength $cols]} { return {} }
+  set pref [ase::ui::campres_pref_cols $key]
+  if {[llength $pref]} { return [lindex $pref end] }
+  set num [ase::ui::campres_numeric_cols $key]
+  if {[llength $num]} { return [lindex $num end] }
+  return [lindex $cols end]
+}
+# The scatter's two defaults. Y is what the histogram opened on -- the thing the
+# user is asking a yield question about -- and X is the first other column that
+# holds numbers, so the picture is never a column against itself.
+proc ase::ui::campres_default_xy {key {rows {}}} {
+  if {$rows eq {}} { set rows [ase::ui::campres_rows $key] }
+  set cols [ase::stat_columns $rows]
+  set y [ase::ui::campres_default_col $key]
+  if {$y eq {}} { return [list [lindex $cols 0] [lindex $cols end]] }
+  set cand {}
+  foreach c [concat [ase::ui::campres_pref_cols $key $rows] \
+                    [ase::ui::campres_numeric_cols $key $rows]] {
+    if {$c ne $y && [lsearch -exact $cand $c] < 0} { lappend cand $c }
+  }
+  set x [expr {[llength $cand] ? [lindex $cand 0] : $y}]
+  return [list $x $y]
+}
+
+proc ase::ui::campaign_results {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set rows [ase::ui::campres_rows $key]
+  set cols [ase::stat_columns $rows]
+  set w [ase::ui::dialog_frame [dict get $wins $key].campres \
+           [ase::ui::lbl_campres_title]]
+  if {![llength $rows]} {
+    label $w.none -text [ase::ui::lbl_campres_none] -anchor w -wraplength 420
+    grid $w.none -row 0 -column 0 -columnspan 2 -sticky w -padx 12 -pady 12
+    button $w.close -text [ase::ui::lbl_campres_close] -command [list destroy $w]
+    grid $w.close -row 1 -column 1 -sticky e -padx 8 -pady 6
+    ase::ui::bind_dialog_esc $w [list destroy $w]
+    ase::ui::apply_theme $w
+    return $w
+  }
+  if {![info exists dlg($key,campres,col)] ||
+      [lsearch -exact $cols $dlg($key,campres,col)] < 0} {
+    set dlg($key,campres,col) [ase::ui::campres_default_col $key]
+  }
+  lassign [ase::ui::campres_default_xy $key $rows] _dx _dy
+  foreach {v d} [list x $_dx y $_dy] {
+    if {![info exists dlg($key,campres,$v)] ||
+        [lsearch -exact $cols $dlg($key,campres,$v)] < 0} {
+      set dlg($key,campres,$v) $d
+    }
+  }
+  ## --- the table ----------------------------------------------------------
+  ttk::treeview $w.tv -columns $cols -show headings -selectmode browse \
+    -height 9 -style Ase.Treeview -yscrollcommand [list $w.sb set]
+  foreach c $cols {
+    $w.tv heading $c -text $c
+    $w.tv column $c -width [ase::ui::colw 10 $c] \
+      -minwidth [ase::ui::colw 0 $c] -anchor w -stretch 0
+  }
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  grid $w.tv -row 0 -column 0 -sticky nsew -padx {8 0} -pady 4
+  grid $w.sb -row 0 -column 1 -sticky ns   -padx {0 8} -pady 4
+
+  ## --- the distribution, with its numbers BESIDE it ------------------------
+  labelframe $w.hist -text [ase::ui::lbl_campres_dist]
+  grid $w.hist -row 1 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady 4
+  grid columnconfigure $w.hist 1 -weight 1
+  label $w.hist.lc -text [ase::ui::lbl_campres_col] -font AseLabelFont
+  ttk::combobox $w.hist.col -state readonly -width 16 -values $cols \
+    -textvariable ::ase::ui::dlg($key,campres,col)
+  bind $w.hist.col <<ComboboxSelected>> [list ase::ui::campres_refresh $key]
+  grid $w.hist.lc  -row 0 -column 0 -sticky w -padx {6 4} -pady 2
+  grid $w.hist.col -row 0 -column 1 -sticky w -padx {0 6} -pady 2
+  canvas $w.hist.c -width 360 -height 150 -highlightthickness 0
+  grid $w.hist.c -row 1 -column 0 -columnspan 2 -sticky nsew -padx 6 -pady 4
+  frame $w.hist.s
+  grid $w.hist.s -row 1 -column 2 -sticky nw -padx 6 -pady 4
+  label $w.hist.s.stats -text {} -anchor w -justify left -font AseMonoFont \
+    -wraplength 260
+  pack $w.hist.s.stats -side top -anchor w -pady {0 6}
+  frame $w.hist.s.sp
+  label $w.hist.s.sp.l -text [ase::ui::lbl_campres_spec] -font AseLabelFont
+  entry $w.hist.s.sp.min -width 8 -font AseEntryFont
+  label $w.hist.s.sp.d -text {..} -font AseLabelFont
+  entry $w.hist.s.sp.max -width 8 -font AseEntryFont
+  pack $w.hist.s.sp.l $w.hist.s.sp.min $w.hist.s.sp.d $w.hist.s.sp.max \
+    -side left -padx {0 4}
+  pack $w.hist.s.sp -side top -anchor w
+  bind $w.hist.s.sp.min <KeyRelease> [list ase::ui::campres_refresh $key]
+  bind $w.hist.s.sp.max <KeyRelease> [list ase::ui::campres_refresh $key]
+  label $w.hist.s.yield -text {} -anchor w -font AseBodyFont
+  pack $w.hist.s.yield -side top -anchor w -pady {6 0}
+
+  ## --- the scatter of any two columns --------------------------------------
+  labelframe $w.sc -text [ase::ui::lbl_campres_scatter]
+  grid $w.sc -row 2 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady 4
+  grid columnconfigure $w.sc 4 -weight 1
+  label $w.sc.lx -text [ase::ui::lbl_campres_x] -font AseLabelFont
+  ttk::combobox $w.sc.x -state readonly -width 14 -values $cols \
+    -textvariable ::ase::ui::dlg($key,campres,x)
+  label $w.sc.ly -text [ase::ui::lbl_campres_y] -font AseLabelFont
+  ttk::combobox $w.sc.y -state readonly -width 14 -values $cols \
+    -textvariable ::ase::ui::dlg($key,campres,y)
+  bind $w.sc.x <<ComboboxSelected>> [list ase::ui::campres_refresh $key]
+  bind $w.sc.y <<ComboboxSelected>> [list ase::ui::campres_refresh $key]
+  grid $w.sc.lx -row 0 -column 0 -sticky w -padx {6 4} -pady 2
+  grid $w.sc.x  -row 0 -column 1 -sticky w -padx {0 8} -pady 2
+  grid $w.sc.ly -row 0 -column 2 -sticky w -padx {0 4} -pady 2
+  grid $w.sc.y  -row 0 -column 3 -sticky w -padx {0 6} -pady 2
+  canvas $w.sc.c -width 360 -height 150 -highlightthickness 0
+  grid $w.sc.c -row 1 -column 0 -columnspan 5 -sticky nsew -padx 6 -pady 4
+
+  frame $w.btns
+  button $w.btns.export -text [ase::ui::lbl_campres_export] \
+    -command [list ase::ui::campres_export $key]
+  button $w.btns.rerun -text [ase::ui::lbl_campres_rerun] \
+    -command [list ase::ui::campres_rerun $key]
+  button $w.btns.close -text [ase::ui::lbl_campres_close] -command [list destroy $w]
+  pack $w.btns.export $w.btns.rerun -side left -padx 3
+  pack $w.btns.close -side right -padx 3
+  grid $w.btns -row 3 -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+  grid rowconfigure $w 0 -weight 2
+  grid columnconfigure $w 0 -weight 1
+  ase::ui::bind_dialog_esc $w [list destroy $w]
+  ase::ui::campres_refresh $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# The spec limit as a dict, from the two entries. An empty entry is an ABSENT
+# limit, not a zero -- a one-sided spec is the commoner kind.
+proc ase::ui::campres_spec {key} {
+  set w [ase::ui::campres_win $key]
+  if {$w eq {} || ![winfo exists $w.hist.s.sp.min]} { return {} }
+  set d [dict create]
+  set lo [string trim [$w.hist.s.sp.min get]]
+  set hi [string trim [$w.hist.s.sp.max get]]
+  if {$lo ne {}} { dict set d min $lo }
+  if {$hi ne {}} { dict set d max $hi }
+  return $d
+}
+
+# EVERYTHING THIS WINDOW SHOWS, REPAINTED FROM ONE PLACE.
+proc ase::ui::campres_refresh {key} {
+  variable dlg
+  set w [ase::ui::campres_win $key]
+  if {$w eq {} || ![winfo exists $w.tv]} { return {} }
+  set rows [ase::ui::campres_rows $key]
+  set sufs [ase::ui::campres_suffixes $key]
+  catch {$w.tv delete [$w.tv children {}]}
+  set i 0
+  foreach r [lrange $rows 1 end] {
+    $w.tv insert {} end -id $i -values $r
+    incr i
+  }
+  set col $dlg($key,campres,col)
+  set vals [ase::stat_column $rows $col]
+  set s [ase::stat_summary $vals $sufs]
+  if {[dict get $s n]} {
+    catch {$w.hist.s.stats configure -text [ase::ui::lbl_campres_stats $s]}
+  } else {
+    catch {$w.hist.s.stats configure -text [ase::ui::lbl_campres_nostat]}
+  }
+  set spec [ase::ui::campres_spec $key]
+  set y [ase::stat_yield $vals $spec $sufs]
+  catch {$w.hist.s.yield configure -text [ase::ui::lbl_campres_yield $y]}
+  ase::ui::campres_hist_draw $key $vals $spec $sufs
+  ase::ui::campres_scatter_draw $key $rows $sufs
+  return $i
+}
+
+# --- THE HISTOGRAM ---------------------------------------------------------
+#
+# ⚠ NOTHING ELSE IN ASE-L DRAWS ONE, so this is the whole of the drawing code
+# and it is deliberately plain: bars, a baseline, the range at both ends and the
+# tallest count at the top. The colours are the LOCKED palette's and no new one
+# is minted -- `accent` is the window's one accent surface, `disabledfg` is the
+# axis, `fieldfg` is the text. The spec limits are drawn ON the histogram,
+# because "yield" is a number about where those lines fall and a user who cannot
+# see them has to take it on trust.
+proc ase::ui::campres_hist_draw {key vals spec {sufs {}}} {
+  set w [ase::ui::campres_win $key]
+  if {$w eq {} || ![winfo exists $w.hist.c]} { return {} }
+  set c $w.hist.c
+  catch {$c delete all}
+  set pal [ase::palette]
+  set fg  [dict get $pal fieldfg]
+  set ax  [dict get $pal disabledfg]
+  set bar [dict get $pal accent]
+  set cw [winfo width $c] ; set ch [winfo height $c]
+  if {$cw <= 1} { set cw [$c cget -width] }
+  if {$ch <= 1} { set ch [$c cget -height] }
+  set bins [ase::stat_histogram $vals {} $sufs]
+  if {![llength $bins]} {
+    $c create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -fill $ax \
+      -text [ase::ui::lbl_campres_nostat] -font AseBodyFont
+    return 0
+  }
+  set l 34 ; set r 8 ; set t 12 ; set b 20
+  set pw [expr {$cw - $l - $r}] ; set ph [expr {$ch - $t - $b}]
+  if {$pw < 10 || $ph < 10} { return 0 }
+  set maxc 0
+  foreach bn $bins { if {[lindex $bn 2] > $maxc} { set maxc [lindex $bn 2] } }
+  if {$maxc < 1} { set maxc 1 }
+  set lo [lindex [lindex $bins 0] 0]
+  set hi [lindex [lindex $bins end] 1]
+  set span [expr {$hi - $lo}]
+  set n [llength $bins]
+  set bw [expr {double($pw) / $n}]
+  for {set i 0} {$i < $n} {incr i} {
+    set cnt [lindex [lindex $bins $i] 2]
+    set x0 [expr {$l + $i * $bw}]
+    set x1 [expr {$l + ($i + 1) * $bw - 1}]
+    if {$x1 <= $x0} { set x1 [expr {$x0 + 1}] }
+    set hgt [expr {double($cnt) / $maxc * $ph}]
+    set y0 [expr {$t + $ph - $hgt}]
+    ## ⚠ AN EMPTY BIN IS DRAWN AS NOTHING, NOT AS A ONE-PIXEL BAR. A floor under
+    ## the height would make a gap in the distribution look like a sample.
+    if {$cnt > 0} {
+      $c create rectangle $x0 $y0 $x1 [expr {$t + $ph}] -fill $bar -outline $bar
+    }
+  }
+  $c create line $l [expr {$t + $ph}] [expr {$l + $pw}] [expr {$t + $ph}] -fill $ax
+  $c create line $l $t $l [expr {$t + $ph}] -fill $ax
+  $c create text $l [expr {$t + $ph + 3}] -anchor nw -fill $fg \
+    -text [ase::stat_fmt $lo] -font AseBodyFont
+  $c create text [expr {$l + $pw}] [expr {$t + $ph + 3}] -anchor ne -fill $fg \
+    -text [ase::stat_fmt $hi] -font AseBodyFont
+  $c create text [expr {$l - 3}] $t -anchor ne -fill $fg -text $maxc \
+    -font AseBodyFont
+  ## The spec limits, where they fall inside the picture.
+  if {$span > 0} {
+    foreach k {min max} {
+      if {![dict exists $spec $k]} { continue }
+      set v [lindex [ase::stat_numbers [list [dict get $spec $k]] $sufs] 0]
+      if {$v eq {} || $v < $lo || $v > $hi} { continue }
+      set x [expr {$l + ($v - $lo) / $span * $pw}]
+      $c create line $x $t $x [expr {$t + $ph}] -fill $fg -dash {3 2}
+    }
+  }
+  return [llength $bins]
+}
+
+# --- THE SCATTER OF ANY TWO COLUMNS ----------------------------------------
+proc ase::ui::campres_scatter_draw {key rows {sufs {}}} {
+  variable dlg
+  set w [ase::ui::campres_win $key]
+  if {$w eq {} || ![winfo exists $w.sc.c]} { return {} }
+  set c $w.sc.c
+  catch {$c delete all}
+  set pal [ase::palette]
+  set fg  [dict get $pal fieldfg]
+  set ax  [dict get $pal disabledfg]
+  set dot [dict get $pal accent]
+  set cw [winfo width $c] ; set ch [winfo height $c]
+  if {$cw <= 1} { set cw [$c cget -width] }
+  if {$ch <= 1} { set ch [$c cget -height] }
+  set pts [ase::stat_pairs $rows $dlg($key,campres,x) $dlg($key,campres,y) $sufs]
+  if {![llength $pts]} {
+    $c create text [expr {$cw/2}] [expr {$ch/2}] -anchor center -fill $ax \
+      -text [ase::ui::lbl_campres_nostat] -font AseBodyFont
+    return 0
+  }
+  set l 44 ; set r 10 ; set t 10 ; set b 20
+  set pw [expr {$cw - $l - $r}] ; set ph [expr {$ch - $t - $b}]
+  if {$pw < 10 || $ph < 10} { return 0 }
+  set xs {} ; set ys {}
+  foreach p $pts { lappend xs [lindex $p 0] ; lappend ys [lindex $p 1] }
+  set xs2 [lsort -real $xs] ; set ys2 [lsort -real $ys]
+  set x0 [lindex $xs2 0] ; set x1 [lindex $xs2 end]
+  set y0 [lindex $ys2 0] ; set y1 [lindex $ys2 end]
+  ## ⚠ A DEGENERATE AXIS IS CENTRED, NOT DIVIDED BY. One x value for every point
+  ## is the ordinary picture of a corner sweep against a measurement, and a
+  ## division by zero there would throw inside a repaint.
+  set xspan [expr {$x1 - $x0}] ; set yspan [expr {$y1 - $y0}]
+  foreach p $pts {
+    set px [expr {$xspan > 0 ? $l + ([lindex $p 0] - $x0) / $xspan * $pw \
+                             : $l + $pw / 2.0}]
+    set py [expr {$yspan > 0 ? $t + $ph - ([lindex $p 1] - $y0) / $yspan * $ph \
+                             : $t + $ph / 2.0}]
+    $c create oval [expr {$px - 2}] [expr {$py - 2}] [expr {$px + 2}] \
+      [expr {$py + 2}] -fill $dot -outline $dot
+  }
+  $c create line $l [expr {$t + $ph}] [expr {$l + $pw}] [expr {$t + $ph}] -fill $ax
+  $c create line $l $t $l [expr {$t + $ph}] -fill $ax
+  $c create text $l [expr {$t + $ph + 3}] -anchor nw -fill $fg \
+    -text [ase::stat_fmt $x0] -font AseBodyFont
+  $c create text [expr {$l + $pw}] [expr {$t + $ph + 3}] -anchor ne -fill $fg \
+    -text [ase::stat_fmt $x1] -font AseBodyFont
+  $c create text [expr {$l - 3}] $t -anchor ne -fill $fg \
+    -text [ase::stat_fmt $y1] -font AseBodyFont
+  $c create text [expr {$l - 3}] [expr {$t + $ph}] -anchor se -fill $fg \
+    -text [ase::stat_fmt $y0] -font AseBodyFont
+  return [llength $pts]
+}
+
+# --- EXPORT: THE SAMPLES LEAVE THE PROGRAM (§11b) --------------------------
+#
+# ⚠ `::open` AND `::close` AGAIN -- issue 1461.
+proc ase::ui::campres_export_path {key} {
+  set init campaign.tsv
+  set dir {}
+  catch {set dir [ase::campaign_dir [ase::session_state $key]]}
+  set p {}
+  catch {
+    set p [tk_getSaveFile -title [ase::ui::lbl_campres_export] \
+             -initialfile $init -initialdir $dir \
+             -filetypes {{{Tab separated} .tsv} {{Comma separated} .csv} {{All files} *}}]
+  }
+  return $p
+}
+proc ase::ui::campres_export_fmt {path} {
+  if {[string tolower [file extension $path]] eq {.csv}} { return csv }
+  return tsv
+}
+proc ase::ui::campres_export_to {key path} {
+  set rows [ase::ui::campres_rows $key]
+  if {![llength $rows]} { return 0 }
+  set txt [ase::campaign_export_text $rows [ase::ui::campres_export_fmt $path]]
+  set f [::open $path w]
+  puts -nonewline $f $txt
+  ::close $f
+  catch {::ase::echo [ase::ui::lbl_campres_exported $path \
+    [expr {[llength $rows] - 1}]]}
+  return [expr {[llength $rows] - 1}]
+}
+proc ase::ui::campres_export {key} {
+  set p [ase::ui::campres_export_path $key]
+  if {$p eq {}} { return 0 }
+  return [ase::ui::campres_export_to $key $p]
+}
+
+# --- RE-RUN ONE POINT (§11b: "re-runnable point by point") -----------------
+#
+# ⚠ IT GOES THROUGH `ase::campaign_rerun`, WHICH GOES THROUGH
+# `ase::campaign_step`, WHICH GOES THROUGH `ase::run_deck`. There is no second
+# runner in this file and there must never be one: row S12 of
+# test_ase_simreg_0931 is a structural invariant that the running session's
+# choice is applied once, in that body, and a re-run that composed its own
+# command would be a fifth door past every guard it carries.
+proc ase::ui::campres_selected {key} {
+  set w [ase::ui::campres_win $key]
+  if {$w eq {} || ![winfo exists $w.tv]} { return {} }
+  set s [$w.tv selection]
+  if {![llength $s]} { return {} }
+  return [lindex $s 0]
+}
+proc ase::ui::campres_rerun {key} {
+  set idx [ase::ui::campres_selected $key]
+  if {$idx eq {}} {
+    catch {::ase::echo [ase::ui::lbl_campres_norow] error}
+    return {}
+  }
+  set busy [ase::ui::run_busy $key]
+  if {$busy ne {}} { ase::run_refuse $busy ; return {} }
+  set st [ase::session_state $key]
+  set nl {}
+  if {[catch {ase::ui::camp_netlist_text $key} nl]} {
+    catch {::ase::echo $nl error}
+    return {}
+  }
+  set res {}
+  if {[catch {ase::campaign_rerun [ase::ui::camp_sim $key] $st $nl $idx} res]} {
+    catch {::ase::echo $res error}
+    return {}
+  }
+  if {[dict get $res status] eq {refused}} {
+    catch {::ase::echo "ase: [lindex [lindex [dict get $res refusals] 0] 2]" error}
+    return $res
+  }
+  ase::ui::campres_refresh $key
+  return $res
 }

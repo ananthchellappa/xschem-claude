@@ -20666,6 +20666,373 @@ proc ase::campaign_schema_errors {{sim {}}} {
   return $out
 }
 
+# ─── §11c: THE CAMPAIGN ENDS WITH A NUMBER, AND THE NUMBER IS COMPUTED HERE ──
+#
+# ⚠ IN Tcl, BECAUSE THE SIMULATOR CANNOT DO IT. ngspice has no sort, no median,
+# no percentile and no histogram: `sort` is not a command (the 134-name
+# `spcp_coms[]` list has no such entry), the vector functions are element-wise,
+# and the nearest thing to an order statistic is `minimum`/`maximum`. So a
+# campaign's statistics are ASE-L's own arithmetic over `index.tsv`, and that is
+# not a workaround -- it is what makes the numbers the same on every simulator
+# and inspectable beside the samples that produced them.
+#
+# ⚠ AND THEY ARE CORE, NOT THE WINDOW'S. PLAN.md §11's *Files and procs* puts
+# "the Tcl statistics" in `src/ase.tcl`, and the reason is sharper than the
+# plan's: a mean computed inside `ase::ui::` can only be tested on an arm that
+# has a display, so the arithmetic that decides a YIELD NUMBER would be measured
+# by half as many rows as the widget that prints it. Nothing here is a fact
+# about any simulator (D34): these procs read a table of strings.
+#
+# ⚠ A `-` IS NOT A ZERO, AND THAT IS THE DEFECT THIS BLOCK IS SHAPED AROUND.
+# `ase::campaign_index_row` writes `-` for a point that never ran and for a
+# measurement that produced nothing -- and measured on both binaries, a
+# measurement that finds nothing exits 0, leaves `$sim_status` 0 and prints
+# NOTHING, so `-` is a common cell rather than an exotic one. A mean that read
+# it as 0 would pull a yield number toward the failing side without saying
+# anything, and a histogram would grow a phantom bar at the origin. So every
+# reader here DROPS non-numeric cells and every summary reports `n` -- how many
+# numbers it actually had -- beside the answer, so a surface can say
+# "28 of 30 points" instead of implying 30.
+
+# THE NUMERIC CELLS OF A LIST, IN ORDER, AS DOUBLES. Total: a list with nothing
+# numeric in it answers `{}`, which every proc below treats as "no data" rather
+# than as zero.
+#
+# ⚠ AND `1k` IS A NUMBER, WHICH IS THE DEFECT THE SECOND ARGUMENT EXISTS FOR. A
+# swept axis column holds the values the USER typed -- `1k 2k 4.7meg`, not
+# `1.000000e+03` -- so a reader that accepted only what `string is double` likes
+# gives a histogram of a swept axis NO BARS and a scatter of axis against
+# measurement NO POINTS, silently, on the commonest campaign there is. Measured
+# in this tree the moment the first scatter was asked for.
+#
+# ⚠ BUT WHICH SUFFIXES EXIST IS THE SIMULATOR'S FACT (D34), so they arrive as an
+# argument and core holds no set of its own. `{}` means "plain numbers only",
+# which is the right answer for a caller with no simulator in hand -- and it is
+# what makes the non-vacuity control possible: the same column, read with the
+# suffixes withheld, is EMPTY.
+proc ase::stat_suffixes {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim si_suffixes]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+proc ase::stat_numbers {vals {suffixes {}}} {
+  set out {}
+  foreach v $vals {
+    set t [string trim $v]
+    if {$t eq {} || $t eq {-}} { continue }
+    set d {}
+    ## ⚠ `string is double` IS NOT ENOUGH ON ITS OWN, MEASURED IN tclsh: it
+    ## answers 1 for `nan` and for `inf`, `expr {double("nan")}` RAISES, and
+    ## `double("1e400")` quietly answers `Inf`. Either one reaching a mean turns
+    ## every number in the panel into `NaN` or `Inf` with nothing saying which
+    ## point did it. So the conversion is caught and the answer must be FINITE.
+    if {[string is double -strict $t]} {
+      if {[catch {expr {double($t)}} d]} { set d {} }
+    } elseif {$suffixes ne {}} {
+      ## `ase::si_parse` is the tree's one suffix reader and it already carries
+      ## the longest-match rule that keeps `meg` from being read as `m` -- nine
+      ## orders of magnitude, silently. A second reader here would be the copy
+      ## that drifts. It answers `{bad <why>}`, `{ok <v>}` or `{warn <v> <why>}`;
+      ## a `warn` is a value with a caution attached, not a refusal.
+      set r {}
+      if {![catch {ase::si_parse $t $suffixes} r] && [llength $r] >= 2 &&
+          [lindex $r 0] ne {bad}} { set d [lindex $r 1] }
+    }
+    if {$d eq {}} { continue }
+    if {[catch {expr {abs($d) > 1.7976931348623157e308}} big] || $big} { continue }
+    lappend out $d
+  }
+  return $out
+}
+
+# THE COLUMN NAMED `name`, FROM THE ROWS `ase::campaign_index_read` ANSWERS.
+# Row 0 is the header. Total: an unknown name, an empty table or a short row
+# answers `{}`.
+#
+# ⚠ BY NAME AND NEVER BY POSITION. The index's columns are `shard`, one per
+# axis, `exit`, `raw`, then one per enabled measurement -- so a campaign that
+# gains an axis moves every measurement column to the right. A reader that
+# remembered "column 4" would go on reporting a yield from the wrong column
+# after an edit nobody connected to it.
+proc ase::stat_column {rows name} {
+  if {![llength $rows]} { return {} }
+  set hdr [lindex $rows 0]
+  set i [lsearch -exact $hdr $name]
+  if {$i < 0} { return {} }
+  set out {}
+  foreach r [lrange $rows 1 end] {
+    if {$i >= [llength $r]} { lappend out {-} ; continue }
+    lappend out [lindex $r $i]
+  }
+  return $out
+}
+# The header, or `{}`.
+proc ase::stat_columns {rows} {
+  if {![llength $rows]} { return {} }
+  return [lindex $rows 0]
+}
+
+# HOW A NUMBER IS PRINTED IN THE PANEL. Six significant digits, the same
+# decision and the same reason as `ase::mc_digits`: `sqrt` and `log` put their
+# last bits in libm's hands, and a panel that printed seventeen would show two
+# machines disagreeing about a campaign that is identical. An empty or
+# non-numeric input answers `-`, which is the table's own spelling for "no
+# answer" rather than a second one.
+proc ase::stat_fmt {v {suffixes {}}} {
+  set ns [ase::stat_numbers [list $v] $suffixes]
+  if {[llength $ns] != 1} { return {-} }
+  return [format %.6g [lindex $ns 0]]
+}
+
+proc ase::stat_mean {vals {suffixes {}}} {
+  set ns [ase::stat_numbers $vals $suffixes]
+  if {![llength $ns]} { return {} }
+  set s 0.0
+  foreach v $ns { set s [expr {$s + $v}] }
+  return [expr {$s / [llength $ns]}]
+}
+
+# ⚠ THE **SAMPLE** STANDARD DEVIATION, DIVIDING BY n-1, AND IT IS A DECISION.
+# A Monte Carlo campaign's column is a SAMPLE drawn from a process, not the
+# whole population, and dividing by n understates sigma by sqrt((n-1)/n) --
+# 1.7 % at n = 30, 5 % at n = 10. Understating sigma overstates yield, which is
+# the one direction an error in this number must not go: it is the number a user
+# reads to decide the circuit is good enough. `{}` for fewer than two numbers,
+# because one sample has no spread and a `0` there would read as "perfectly
+# repeatable".
+proc ase::stat_sigma {vals {suffixes {}}} {
+  set ns [ase::stat_numbers $vals $suffixes]
+  set n [llength $ns]
+  if {$n < 2} { return {} }
+  set m [ase::stat_mean $ns]
+  set s 0.0
+  foreach v $ns { set s [expr {$s + ($v - $m) * ($v - $m)}] }
+  return [expr {sqrt($s / ($n - 1))}]
+}
+
+# THE MEDIAN, WHICH NEEDS A SORT ngspice DOES NOT HAVE. Even n averages the
+# middle pair, which is the definition every spreadsheet uses.
+proc ase::stat_median {vals {suffixes {}}} {
+  set ns [lsort -real [ase::stat_numbers $vals $suffixes]]
+  set n [llength $ns]
+  if {!$n} { return {} }
+  if {$n % 2} { return [lindex $ns [expr {($n - 1) / 2}]] }
+  return [expr {([lindex $ns [expr {$n/2 - 1}]] + [lindex $ns [expr {$n/2}]]) / 2.0}]
+}
+
+# EVERYTHING THE PANEL SHOWS, IN ONE PASS, AS A DICT.
+# `n` is the count of NUMBERS and `rows` the count of CELLS it was given, so a
+# surface can say how many points contributed and how many did not. Every
+# statistic is `{}` when it has no answer; nothing here invents one.
+proc ase::stat_summary {vals {suffixes {}}} {
+  set ns [ase::stat_numbers $vals $suffixes]
+  set d [dict create n [llength $ns] rows [llength $vals] \
+           min {} max {} mean {} sigma {} median {}]
+  if {![llength $ns]} { return $d }
+  dict set d min [lindex [lsort -real $ns] 0]
+  dict set d max [lindex [lsort -real $ns] end]
+  dict set d mean   [ase::stat_mean $ns]
+  dict set d sigma  [ase::stat_sigma $ns]
+  dict set d median [ase::stat_median $ns]
+  return $d
+}
+
+# HOW MANY BINS. Square root of the sample count, clamped to 4..24 -- the rule a
+# person would draw by hand, and bounded at both ends for a reason: three points
+# in eleven bins is a picture of nothing, and forty bins over thirty samples is
+# a comb. A caller may name its own count; this is what it gets when it does not.
+proc ase::stat_bins {n} {
+  if {![string is integer -strict $n] || $n < 1} { return 1 }
+  set b [expr {int(ceil(sqrt(double($n))))}]
+  if {$b < 4} { set b 4 }
+  if {$b > 24} { set b 24 }
+  if {$b > $n} { set b $n }
+  return $b
+}
+
+# THE HISTOGRAM: a list of `{lo hi count}`, left-closed and right-open except
+# for the last bin, which is closed so the maximum is INSIDE the picture rather
+# than one pixel past its right edge.
+#
+# ⚠ A CONSTANT COLUMN IS ONE BIN, NOT A DIVISION BY ZERO. Measured shape, not a
+# hypothetical: a corner sweep whose measurement is identical at every corner is
+# the answer a user most wants to see, and `(hi-lo)/nbins` is 0 there. One bin
+# holding everything is the truthful picture and it says "no spread" at a
+# glance.
+proc ase::stat_histogram {vals {nbins {}} {suffixes {}}} {
+  set ns [lsort -real [ase::stat_numbers $vals $suffixes]]
+  set n [llength $ns]
+  if {!$n} { return {} }
+  set lo [lindex $ns 0]
+  set hi [lindex $ns end]
+  if {$hi <= $lo} { return [list [list $lo $hi $n]] }
+  if {$nbins eq {} || ![string is integer -strict $nbins] || $nbins < 1} {
+    set nbins [ase::stat_bins $n]
+  }
+  set w [expr {(double($hi) - $lo) / $nbins}]
+  set counts {}
+  for {set i 0} {$i < $nbins} {incr i} { lappend counts 0 }
+  foreach v $ns {
+    set k [expr {int(($v - $lo) / $w)}]
+    if {$k < 0} { set k 0 }
+    if {$k >= $nbins} { set k [expr {$nbins - 1}] }
+    lset counts $k [expr {[lindex $counts $k] + 1}]
+  }
+  set out {}
+  for {set i 0} {$i < $nbins} {incr i} {
+    lappend out [list [expr {$lo + $i * $w}] [expr {$lo + ($i + 1) * $w}] \
+                      [lindex $counts $i]]
+  }
+  return $out
+}
+
+# YIELD AGAINST A SPEC LIMIT. `spec` is `{min <v> max <v>}` and EITHER MAY BE
+# ABSENT, because a one-sided limit is the commoner case -- "phase margin at
+# least 45 degrees" has no upper bound and inventing one would fail points that
+# pass. Returns `{n <numbers> pass <k> fail <n-k> pct <percent>}`; `pct` is `{}`
+# when there is nothing to divide by, and `n` is 0 with `spec` empty rather than
+# a 100 % that was never measured.
+#
+# ⚠ THE LIMITS ARE INCLUSIVE. A spec written `max 1.8` is a promise the part
+# meets at exactly 1.8; an exclusive test would fail the nominal corner of a
+# design centred on its own limit, which is a very common bench.
+proc ase::stat_yield {vals spec {suffixes {}}} {
+  set ns [ase::stat_numbers $vals $suffixes]
+  set lo {} ; set hi {}
+  if {[dict exists $spec min]} { set lo [lindex [ase::stat_numbers [list [dict get $spec min]] $suffixes] 0] }
+  if {[dict exists $spec max]} { set hi [lindex [ase::stat_numbers [list [dict get $spec max]] $suffixes] 0] }
+  set d [dict create n [llength $ns] pass 0 fail 0 pct {} specified 0]
+  if {$lo eq {} && $hi eq {}} { return $d }
+  dict set d specified 1
+  if {![llength $ns]} { return $d }
+  set k 0
+  foreach v $ns {
+    if {$lo ne {} && $v < $lo} { continue }
+    if {$hi ne {} && $v > $hi} { continue }
+    incr k
+  }
+  dict set d pass $k
+  dict set d fail [expr {[llength $ns] - $k}]
+  dict set d pct [expr {100.0 * $k / [llength $ns]}]
+  return $d
+}
+
+# THE POINTS OF A SCATTER OF ANY TWO COLUMNS: `{x y}` pairs, and a row where
+# EITHER cell is not a number is dropped WHOLE. Dropping one coordinate and
+# keeping the other would silently pair point 7's x with point 8's y, which is a
+# picture of a correlation that does not exist.
+proc ase::stat_pairs {rows xname yname {suffixes {}}} {
+  set xs [ase::stat_column $rows $xname]
+  set ys [ase::stat_column $rows $yname]
+  set out {}
+  foreach x $xs y $ys {
+    set nx [ase::stat_numbers [list $x] $suffixes]
+    set ny [ase::stat_numbers [list $y] $suffixes]
+    if {[llength $nx] != 1 || [llength $ny] != 1} { continue }
+    lappend out [list [lindex $nx 0] [lindex $ny 0]]
+  }
+  return $out
+}
+
+# ─── THE SAMPLE SET AS SOMETHING YOU CAN TAKE AWAY (§11b) ───────────────────
+#
+# "ADE-L cannot show you its samples" is this stage's whole claim, so the table
+# leaves in a format a spreadsheet opens. TSV is `index.tsv` itself; CSV exists
+# because a double-clicked `.csv` opens in the tool most users have and a `.tsv`
+# often does not.
+#
+# ⚠ CSV QUOTING IS NOT OPTIONAL EVEN HERE. A corner section name, an axis label
+# or a refusal-free instance name may carry a comma, and one unquoted comma
+# shifts every column to its right with nothing downstream able to tell -- the
+# same defect `ase::campaign_index_cell` maps tabs out of the TSV for.
+proc ase::campaign_export_text {rows {fmt tsv}} {
+  if {$fmt eq {tsv}} {
+    set out {}
+    foreach r $rows {
+      set cells {}
+      foreach c $r { lappend cells [ase::campaign_index_cell $c] }
+      lappend out [join $cells \t]
+    }
+    return "[join $out \n]\n"
+  }
+  if {$fmt ne {csv}} { return -code error "ase: unknown export format '$fmt'" }
+  set out {}
+  foreach r $rows {
+    set cells {}
+    foreach c $r {
+      if {[regexp {[",\n\r]} $c]} {
+        lappend cells "\"[string map [list \" {""} \n { } \r { }] $c]\""
+      } else { lappend cells $c }
+    }
+    lappend out [join $cells ,]
+  }
+  return "[join $out \n]\n"
+}
+proc ase::campaign_export_formats {} { return {tsv csv} }
+
+# ─── RE-RUNNING ONE POINT (§11b: "re-runnable point by point") ──────────────
+#
+# ⚠ THE INDEX IS REBUILT FROM THE ODOMETER AND THE OLD EXIT CODES ARE CARRIED
+# ACROSS BY SHARD ID -- but ONLY when the old index describes the same campaign.
+# A user who re-runs point 7 after adding an axis would otherwise get an index
+# whose surviving rows are the old campaign's coordinates wearing the new
+# campaign's column headings, and nothing would say so. The header is the test:
+# it carries every axis label and every enabled measurement name, so any edit
+# that changes what a shard id MEANS changes it.
+proc ase::campaign_index_exits {sim state} {
+  set rows [ase::campaign_index_read $state]
+  if {[llength $rows] < 2} { return [dict create] }
+  set hdr [lindex $rows 0]
+  if {$hdr ne [ase::campaign_index_header $sim $state]} { return [dict create] }
+  set xi [lsearch -exact $hdr exit]
+  if {$xi < 0} { return [dict create] }
+  set out [dict create]
+  foreach r [lrange $rows 1 end] {
+    if {$xi >= [llength $r]} { continue }
+    set v [lindex $r $xi]
+    if {$v eq {-}} { continue }
+    dict set out [lindex $r 0] $v
+  }
+  return $out
+}
+
+# RUN ONE POINT AGAIN AND REWRITE THE INDEX AROUND IT. Returns
+# `{status done|refused idx <n> exit <rc> refusals <list>}`.
+#
+# ⚠ IT GOES THROUGH `ase::campaign_step`, WHICH GOES THROUGH `ase::run_deck`,
+# so a re-run point is the same run as a campaign point and as a single run --
+# the invariant row S12 of test_ase_simreg_0931 states. There is no second
+# runner here and there must never be one.
+#
+# ⚠ AND IT REFUSES FIRST, so a re-run against a campaign the bench can no longer
+# honour leaves the index it already had rather than a half-rewritten one.
+proc ase::campaign_rerun {sim state netlist_text idx} {
+  set ref [ase::campaign_refusals $sim $state]
+  if {[llength $ref]} {
+    return [dict create status refused idx $idx exit -1 refusals $ref]
+  }
+  set n [ase::campaign_count $state]
+  if {![string is integer -strict $idx] || $idx < 0 || $idx >= $n} {
+    return -code error "ase: campaign has no point $idx"
+  }
+  set old [ase::campaign_index_exits $sim $state]
+  set r [ase::campaign_step $sim $state $netlist_text $idx]
+  dict set old [ase::campaign_shard_id $idx] [dict get $r exit]
+  set rows {}
+  for {set i 0} {$i < $n} {incr i} {
+    set sid [ase::campaign_shard_id $i]
+    set ec {}
+    if {[dict exists $old $sid]} { set ec [dict get $old $sid] }
+    lappend rows [ase::campaign_index_row $sim $state $i $ec]
+  }
+  ase::campaign_index_write $sim $state $rows
+  return [dict create status done idx $idx exit [dict get $r exit] refusals {}]
+}
+
 namespace eval ase::backend::ngspice {
 
   # Render the simulation deck: the circuit netlist minus its trailing `.end`

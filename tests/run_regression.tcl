@@ -83,7 +83,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_sp_1452" \
                  "headless/test_ase_converge_1459" \
                  "headless/test_ase_conv_gui_1460" \
-                 "headless/test_ase_campaign_1462"]
+                 "headless/test_ase_campaign_1462" \
+                 "headless/test_ase_campaign_gui_1464"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -212,13 +213,38 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # schematic and asks `xschem hilight_netname` to light the nodes `CKTncDump`
 # starred; there is no canvas at all under `--nogui`, so a suite that ran only
 # headless would report the whole of §10a green while lighting nothing.
+#
+# ⚠ `test_ase_campaign_gui_1464` IS IN **BOTH** LISTS, AND THE MEASUREMENT SAYS
+# WHY. Stage 11 task 2 is the SURFACE -- the campaign dialog, the axis editor
+# built from the adapter's own field declarations, the `k/N` progress readout,
+# the Stop, and §11c's result table with its histogram, its statistics and its
+# scatter -- so its widget legs exist only under X and self-skip without one.
+# Measured 2026-09-14 from the `RESULT:` line: **78 checks headless, 156 on the
+# dev display**. The headless arm is not redundant: sections ST EX RD are where
+# §11c's ARITHMETIC is falsified (the sample sigma against the population one,
+# a `-` against a zero, `1k` against `string is double`), section RR drives the
+# runner through a `/bin/sh` stand-in, and section EE starts a real simulator on
+# BOTH binaries on BOTH arms.
+# ⚠ AND IT IS THE FOURTH SUITE IN `hcases` THAT REALLY STARTS A SIMULATOR, ON
+# BOTH BINARIES. Its section EE runs a three-point resistive-divider campaign on
+# apt 45.2 AND on the fork and checks the measurement column against PHYSICS --
+# v(out) = 1k/(rtop+1k), so 0.5 / 0.25 / 0.1 -- and then checks the panel's mean,
+# sigma, median, histogram and yield against THAT column rather than a fixture.
+# A binary that is not there SKIPS with its path printed.
+#
+# ⚠ AND THE DISPLAY ARM IS WHERE THE CANVAS IS, AGAIN AND MORE SO: the histogram
+# and the scatter are the first canvases ASE-L has ever drawn, and `--nogui` has
+# no canvas at all. Row GT5 is the one that measures them being THEMED, which is
+# a defect a headless arm cannot see and which a `_theme_widget` with no `Canvas`
+# arm shipped until this suite existed.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_optsheet_1441" \
-                 "headless/test_ase_conv_gui_1460"]
+                 "headless/test_ase_conv_gui_1460" \
+                 "headless/test_ase_campaign_gui_1464"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

@@ -19,6 +19,26 @@ A hundred-point campaign against such an entry would spend **fifty minutes** doi
 waiting for a program that is never going to reply, and the run budget the user set is irrelevant
 to every second of it.
 
+## ⚠ AND THE COUNT AGAINST A BINARY THAT *CAN* ANSWER — added 2026-09-14, issue 1464
+
+The measurement above is the cost when the probe never returns. Issue **1464**'s crew measured the
+other half, on a working binary:
+
+> **A three-point campaign invokes the simulator TEN times.**
+
+`ase::run_deck` asks `ase::cap_report` on every run, and the probe **runs the binary too**. So the
+per-shard probe is not only expensive when it hangs — it is a **multiplier on every campaign**, and
+it is invisible because each individual probe is the ≈ 5 ms healthy case.
+
+Two consequences beyond this issue:
+
+* **Any stand-in simulator that counts its invocations must filter for the probe**, or it is
+  measuring the probe rather than the campaign — which is a test defect waiting for the next crew
+  that writes one.
+* It sharpens option **A** below. Caching a verdict for the life of a campaign helps the dead-binary
+  case; **caching the healthy answer across shards** would take a three-point campaign from ten
+  invocations to four. Neither is done.
+
 ## ⚠ This is ASE-L's existing behaviour, not the campaign's
 
 The probe cache stores an **answer**. A timeout is not an answer, so there is nothing to store, and

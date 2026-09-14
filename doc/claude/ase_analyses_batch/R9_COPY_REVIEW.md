@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**518 strings, from 28 issues, grouped by where the user sees them** — not by
+**556 strings, from 29 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -7355,3 +7355,409 @@ inside a subcircuit
 
 
 *Note:* the one reason the string above currently gives.
+
+
+## Issue 1464 — the campaign dialog, the progress readout and the result table (stage 11, GUI half)
+
+*38 entries.* ⚠ **Everything core and the adapter already mint is CONSUMED here, not re-spelled**:
+the five axis-kind labels and their field labels are the **adapter's** and were minted under issue
+**1462**; the campaign refusals and run notes come from `ase::campaign_refusals` /
+`ase::campaign_notes` verbatim. What follows is only what a widget needs and a deck does not.
+
+⚠ **Two entries carry a decision the crew declined to take without you.** `normal` / `uniform` /
+`bounded` (R9-544) are core's neutral names and the form does not offer ngspice's five; and the
+seed caution is split between the adapter's sentence and ASE-L's own (R9-523). Both are flagged
+where they sit.
+
+**R9-519** · button
+
+```text
+Campaign…
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+
+*Note:* the `Simulation` menu entry. ⚠ **`test_ase_window`'s `W1m` pins that menu exactly, so every new entry moves it** — the row working, not a defect, but it is in no stage's *suites that move* list.
+
+**R9-520** · label
+
+```text
+Campaign
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+
+*Note:* the window title. ⚠ Bare, where the analysis dialogs title themselves `Analysis Ports (sp)` — §A8.
+
+**R9-521** · label
+
+```text
+Run this bench as a campaign
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-522** · label
+
+```text
+Seed
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-523** · caution
+
+```text
+leave it empty and anything the simulator draws for itself differs every run
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+
+*Note:* ⚠ **The seed caution is deliberately SPLIT.** What a seed does *not* reproduce is the **adapter's** sentence (`campaign_seed_notes`, minted under 1462) and is shown verbatim; what an **absent** seed costs is ASE-L's own, because *"there is no seed"* is a fact about the campaign and not about the simulator.
+
+**R9-524** · label
+
+```text
+Axes
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-525** · label
+
+```text
+Kind        Column        Values        Points
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+
+*Note:* the axis table's four headings.
+
+**R9-526** · button
+
+```text
+Add…        Edit…         Delete
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-527** · button
+
+```text
+Run Campaign
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-528** · button
+
+```text
+Stop
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-529** · button
+
+```text
+Results…
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-530** · status
+
+```text
+No axes yet. Without one this bench runs once, as it does today.
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+
+*Note:* ⚠ **An empty state that says what the empty state DOES**, rather than only that it is empty.
+
+**R9-531** · status
+
+```text
+not running
+```
+
+
+*Where:* the campaign dialog, `Simulation > Campaign…`.
+
+**R9-532** · status
+
+```text
+point 3 of 12 — running   (myres=2k, temp=125)
+```
+
+
+*Where:* the `k/N` progress readout, composed.
+
+
+*Note:* ⚠ **It names the point that is ABOUT TO START, with its coordinates.** That is issue **1463** reaching the screen: a campaign stalled on a binary that never answers the capability probe pays 30 s *per shard*, and a bare `0/100` would say nothing about which point it was stuck on.
+
+**R9-533** · status
+
+```text
+point 1 of 1 — running
+```
+
+
+*Where:* the `k/N` progress readout, composed.
+
+
+*Note:* the no-coordinates form: one axis, one value.
+
+**R9-534** · status
+
+```text
+12 of 12 done — 11 ran, 1 failed
+```
+
+
+*Where:* the `k/N` progress readout, composed.
+
+
+*Note:* ⚠ Separates *ran* from *succeeded*, which `index.tsv`'s exit column is the authority for.
+
+**R9-535** · status
+
+```text
+stopped after 4 of 12 — every completed point is kept
+```
+
+
+*Where:* the `k/N` progress readout, composed.
+
+
+*Note:* ⚠ **A PROMISE, and the one §11a ranks the shard runner above a `.control` loop for.** True by construction: each point is its own process writing into its own directory, and `index.tsv` is rewritten after **every** shard rather than once at the end.
+
+**R9-536** · label
+
+```text
+Campaign Axis
+```
+
+
+*Where:* the axis editor.
+
+
+*Note:* the window title.
+
+**R9-537** · label
+
+```text
+Kind
+```
+
+
+*Where:* the axis editor.
+
+**R9-538** · label
+
+```text
+Column name
+```
+
+
+*Where:* the axis editor.
+
+**R9-539** · label
+
+```text
+(from the fields above)
+```
+
+
+*Where:* the axis editor.
+
+**R9-540** · label
+
+```text
+Points
+```
+
+
+*Where:* the axis editor.
+
+**R9-541** · label
+
+```text
+List
+```
+
+
+*Where:* the axis editor.
+
+**R9-542** · label
+
+```text
+Distribution
+```
+
+
+*Where:* the axis editor.
+
+**R9-543** · label
+
+```text
+Samples
+```
+
+
+*Where:* the axis editor.
+
+**R9-544** · label
+
+```text
+normal / uniform / bounded
+```
+
+
+*Where:* the axis editor.
+
+
+*Note:* ⚠ **CORE's three neutral distribution names, and the form does NOT translate them.** They are deliberately not ngspice's five netlist spellings (`agauss`, `gauss`, `aunif`, `unif`, `limit`), which all five map onto them — **D34 keeps a simulator's word out of core**. ⚠ **Whether the form should ALSO offer the simulator's own five as a convenience is a decision the user has not made, so it offers three.** The crew names this as the one place it could have been more helpful and chose not to be without a ruling.
+
+**R9-545** · label
+
+```text
+Campaign Results
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* the window title.
+
+**R9-546** · status
+
+```text
+No campaign has run in this bench's run directory yet.
+```
+
+
+*Where:* the campaign result table.
+
+**R9-547** · label
+
+```text
+Column      Distribution      Scatter      X      Y      Spec
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* the table's controls.
+
+**R9-548** · button
+
+```text
+Export…     Re-run Point      Close
+```
+
+
+*Where:* the campaign result table.
+
+**R9-549** · status
+
+```text
+This column holds no numbers.
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* ⚠ **The sentence a SURVIVING sabotage exposed.** The panel used to open on `raw` — `index.tsv`'s last column, a column of file paths — so this was what a user saw with a perfectly good swept axis one place to its left, and the default scatter was empty and therefore could not discriminate. **An empty default is a default that hides every defect behind it.**
+
+**R9-550** · status
+
+```text
+n = 28 of 30      mean 1.234      sigma 0.056      min 1.1      max 1.4      median 1.23
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* ⚠ **`n = 28 of 30` is the honest half**: it says how many points the statistics are over, not just the statistics. ⚠ And computing any of this needed a **simulator-aware number reader** — `1k` is not a number to `string is double`, so §11c's *"pure Tcl statistics"* would have drawn a histogram with no bars.
+
+**R9-551** · status
+
+```text
+Yield: give a spec limit
+```
+
+
+*Where:* the campaign result table.
+
+**R9-552** · status
+
+```text
+Yield: 26 of 28 (92.9 %)
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* ⚠ **The number this stage exists to produce** — §11c's *"a campaign ends with a NUMBER, not a directory"*. It is computed in **core**, not in `ase::ui::`, for a reason worth keeping: **a yield computed in the window layer could only ever be falsified on a display arm.**
+
+**R9-553** · status
+
+```text
+ase: exported 30 rows to /path/to/campaign.tsv
+```
+
+
+*Where:* the campaign result table.
+
+**R9-554** · refusal
+
+```text
+ase: select a point in the table first
+```
+
+
+*Where:* the campaign result table.
+
+**R9-555** · refusal
+
+```text
+ase: no campaign is running
+```
+
+
+*Where:* the campaign result table.
+
+
+*Note:* one of only two refusals this dialog says for itself; every other sentence it shows is core's, minted under issue 1462.
+
+**R9-556** · refusal
+
+```text
+ase: this campaign has no points to run
+```
+
+
+*Where:* the campaign result table.

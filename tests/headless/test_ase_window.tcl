@@ -1186,9 +1186,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## writes overrides three rows of that sheet, silently, in the simulator --
   ## measured on both binaries, issue 1459. The label comes from
   ## `ase::ui::lbl_conv_menu`, not typed here, so a rename follows.
+  ## ⚠ `Campaign…` JOINED AT ISSUE 1464 (PLAN.md Stage 11 task 2) and it is LAST,
+  ## which is the argument for its position: everything above it configures ONE
+  ## run of this bench and it is the entry that turns the bench into many. It is
+  ## also the only entry here besides the two run doors that can start a
+  ## simulator -- which it does through `ase::campaign_run`, whose every shard
+  ## goes through the same `ase::run_deck` those two doors share.
   check "W1m Simulation menu entries" $slabels \
     [list Netlist {Netlist and Run} Run Stop Log "Options\u2026" \
-          [ase::ui::lbl_conv_menu]]
+          [ase::ui::lbl_conv_menu] [ase::ui::lbl_camp_menu]]
   set nlabels {}
   for {set i 0} {$i <= [$top.mb.sim.netlist index end]} {incr i} {
     lappend nlabels [$top.mb.sim.netlist entrycget $i -label]

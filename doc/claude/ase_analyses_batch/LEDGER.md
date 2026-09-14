@@ -34,14 +34,14 @@ vanishes gets re-opened by the next reader.
 | | |
 |---|---|
 | **Stages landed** | 0–**10**. Stage 10 as two commits: the deck half (issue **1459**, `e1eaa5d0`) and the GUI half (issue **1460**, `375a769e`). Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix), **1461** (a leaked channel from a shadowed `close`), **1458** filed |
-| **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
+| **Stages remaining** | **12** (event-driven results), 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on **Stage 11 task 2** — the campaign dialog, the `k/N` readout and §11c's result table (histogram, mean, sigma, yield, scatter, **all computed in Tcl** because ngspice has none of them). It owns `src/ase_window.tcl` and its own new suite |
+| **In flight** | nothing — **Stage 11 is COMPLETE** (issues **1462** and **1464**) |
 | **Next** | **Stage 12** — event-driven results (XSPICE, the VCD attach). ⚠ Debt **M9** is its gate and **M13** is a permanent caution with a reproducer and no root cause. Then 13, 14, 16, and ⚖ R10's adapter-author specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **556 strings from 29 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **176 rule / 66 look / 10 suite.** ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
+| **Debt queue** | **177 rule / 67 look / 11 suite.** ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -926,6 +926,223 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 11 task 2 — the campaign dialog and the result table, issue **1464**, collected 2026-09-14 — **STAGE 11 IS COMPLETE**
+
+| | |
+|---|---|
+| **what landed** | `src/ase_window.tcl` **+1520** — `Simulation > Campaign…` (enable, seed, axis table, Run/Stop, the `k/N` readout), an axis editor with **no `switch` on a kind**, and §11c's result table: histogram with the spec limits drawn on it, mean/sigma/min/max/median beside it, a **yield number**, a scatter of any two columns, TSV/CSV export and Re-run Point. Plus a `Canvas` arm for the theme walk and `route_design` extracted so both run doors share one answer. `src/ase.tcl` **+367** — twelve `ase::stat_*` procs, `campaign_export_text`, `campaign_index_exits`, `campaign_rerun`. |
+| **why the statistics are CORE** | ⚠ Not *"a reader had to grow"*. **A number computed in `ase::ui::` can only be falsified on a display arm**, and the number this one decides is a **yield**. |
+| **driver's own re-run** | **new** `test_ase_campaign_gui_1464` **77 headless / 155 display**. `test_ase_campaign_1462` **133**, `test_ase_window` **56**, `test_ase_persist` **49**, `test_ase_core` **638**. |
+| **byte identity** | **104 / zero**, both controls disagreeing — and the first measurement taken **through the shared helper** rather than a fifth hand-rolled copy. |
+| **sabotage** | **Sixty-three mutations, 63 killed by name, zero restore mismatches.** One survivor, correctly. |
+| **T1** | ⚠ **RED ON THE FIRST HAND-OVER — the DISPLAY arm, on an EXIT CODE rather than a check** (`exit=10, OVERALL_ok=1, died=0` under `ALL PASS (151)`). Sent back, **cause bisected to a single `xschem netlist` call**, repaired, and **✅ re-run solo clean afterwards**. Nothing was committed until it was. |
+| **ledger debts** | **176 / 66 / 10 → 177 / 67 / 11.** `rule 1464`, **`look`** and a `suite`. |
+| **receipt** | `receipts/39-stage-11-gui.md` — 907 lines. |
+
+## ⚠ T1 CAUGHT A SECOND ONE, AND IT IS THE ARM OF THE RULE NOBODY QUOTES
+
+```
+HARNESS: test_ase_campaign_gui_1464 (display arm) did not complete cleanly
+         (exit=10, OVERALL_ok=1, died=0)
+RESULT: ALL PASS (151 checks)
+OVERALL: ok
+```
+
+**Every check passed and the banner printed.** `banner_complete` is satisfied, `banner_died` is
+false — and `regression_case_failed` counts it anyway, because its **first** arm is
+`childcode != 0`. `CLAUDE.md` states the rule as *"exit 0 AND a whole-line completion banner AND no
+column-0 death marker"*, and this batch has spent two days on the **banner** clause while the
+**exit** clause sat unquoted. **A green suite that does not exit cleanly is still a failure.**
+
+**Measured by the driver**, both GUI suites on the dev display, same command, rc captured:
+
+```
+test_ase_campaign_gui_1464   rc=10
+test_ase_conv_gui_1460       rc=0
+```
+
+⚠ **Neither has an explicit `exit`**, so rc 10 is not simply *"a `dcases` suite with no `exit`"* —
+something this suite leaves behind makes the fall-through non-zero where the other's does not.
+`CLAUDE.md` calls rc 10 the *"benign fall-through"* (issue 0016 Part 4); **benign is exactly what it
+stops being once a case is in `dcases`.**
+
+⚠ **AND THE FOUR ESTABLISHED `dcases` SUITES ALL END WITH AN EXPLICIT `exit`** — `test_op_annot`,
+`test_annot_stale_0684`, `test_ase_simdlg_0937`, `test_ase_optsheet_1441`. **`test_ase_conv_gui_1460`
+is the only one that does not, and it exits 0 by luck rather than by construction.** It is committed
+and in `dcases`, so it is a **latent** red of exactly the shape issue 1456 spent a day untangling.
+The driver asked its crew to report that suite's rc rather than edit it — it is not theirs.
+
+**Sent back rather than fixed**, with the same demand S12 earned: **find out what makes it 10 before
+you make it 0.**
+
+### ✅ And the cause is one line, found by bisection rather than by argument
+
+The crew truncated the suite at section boundaries, then inside a section, down to **two scripts
+differing by one line**:
+
+```
+ase::ui::route_design $gkey                     ->  rc 0
+ase::ui::route_design $gkey ; xschem netlist    ->  rc 10
+```
+
+⚠ **A netlist flips the `-q` fall-through to 10 on the display arm** — headless stays 0, same suite,
+same binary. **And it is the ATTEMPT, not the success**: in the second script `xschem netlist`
+raised, and the exit code moved anyway.
+
+**Everything else was excluded by measurement, not by argument** — no leaked channel (`file
+channels` clean), the only pending timer being `scratch.tcl`'s own watchdog, **closing both sessions
+removed the toplevels and rc stayed 10**, semaphore 0, no `execute(pipe,*)`, no raw loaded,
+`run_deck` not required (removing it left rc 10), and `run_done` / `cap_report` /
+`sim_casemode_selectable` / `sim_apply_choice` / `preflight_gate` each stubbed → still 10. **There
+is no leak in this suite**, which is what makes the explicit `exit` a fix rather than a cover.
+
+**Why this suite and not `test_ase_conv_gui_1460`:** this is **the first GUI suite that netlists**,
+being the first to drive a real run door from a dialog. 1460 never calls `ase::run` / `run_deck` /
+`do_run`, and its end-to-end section uses a plain `exec`.
+
+⚠ **`test_ase_conv_gui_1460` is therefore LATENT, confirmed by measurement** — driver-re-measured
+on the dev display: **rc 0, ALL PASS (104)**. It exits 0 **only because it never netlists**, not by
+construction. One line makes it deterministic; the crew did not touch it, because it is not theirs.
+
+### ⚠ AND THEN T1 REDDENED THAT ROW — AND THE DRIVER'S EXPLANATION OF IT WAS WRONG
+
+`HY1` went red under T1 with `{file6}` while passing standalone. **The driver proposed `--logdir`**
+— T1's display arm passes it (`run_regression.tcl:461`, issue 1359) and a log directory plausibly
+means an open log channel — and asked the crew to identify the channel rather than pattern-match it.
+
+⚠ **The hypothesis was wrong, and the crew measured it instead of accepting it.** `--logdir` opens
+**no Tcl channel at all**: a session under it writes `Xschem.log` and `file channels` still holds
+exactly three. **The action log is a C-level `FILE*`** (`src/util.c`).
+
+**What it actually is**, found because a Tcl `fileN` channel is named for its descriptor and
+`/proc/self/fd/N` therefore names it:
+
+```
+DIAG extra chan=file6 path=pipe:[19098259]
+```
+
+⚠ **An `execute` pipe in ASYNCHRONOUS CLOSE.** `execute_fileevent` reaches EOF, finds the child not
+yet a zombie, and closes the pipe **without setting it blocking** — a deliberate choice with its own
+comment, so a simulator that closes stdout early cannot freeze the program. Tcl keeps such a channel
+in `file channels` **until the child is reaped**, while `execute(pipe,$id)` is already unset —
+**which is exactly why `HY2` and `HY4` stayed green while `HY1` went red.**
+
+⚠ **And the row was FLAKY, not merely wrong**: the same suite passed the check on one run and failed
+it on the next, with only the real-ngspice section between them. **By this batch's own rule that is
+worse than being wrong**, because a row that is sometimes right teaches the next reader to re-run
+rather than to look.
+
+**The corrected row asserts an IDENTITY, never a count**: no channel that is a **regular file**,
+classified through `/proc/self/fd`, with **nothing allow-listed** — a channel number is an
+allocation order, not a fact, and `file6` becomes `file7` the day the suite opens one more file. A
+pipe or socket is `execute`'s lifecycle and is `HY4`'s business while it is still a registered run.
+**The positive control lives inside the row** (`HY1a`): open a file, demand the detector *sees* it,
+close it, demand it stops — because a detector that saw nothing would pass for ever, which is the
+exact shape issue **1461** hid in.
+
+**All five rows were then sabotaged under `--logdir`**, the arm T1 runs and the arm they had not
+been tested on: a real file channel left open reds `HY1` with `{file7 /etc/hostname}`; the detector
+blinded reds `HY1a`; a stray `after` reds `HY2`; a skipped close reds `HY3` with `{.ase5}`; a
+planted pipe reds `HY4`.
+
+**Driver-verified:** headless **rc 0**, display **rc 0, ALL PASS (156)**, all five rows green.
+Floors **74 → 78** and **151 → 156**.
+
+⚠ **And `test_ase_conv_gui_1460` is green under `--logdir` too** — rc 0, ALL PASS (104), measured
+twice. So `--logdir` was never the variable there either; it is latent **only** for the netlist
+reason, and the one-line fix is the driver's to take.
+
+**C14, the crew's own generalisation, and it is the sharpest of the night:** *a hygiene row must
+assert an **identity**, never a **count** — and a guard against something hiding in the absence of a
+signal can fail in **both** directions. The gate in addendum 1 could not see a real absence; this
+row saw an absence that was not real. Both were mine, and both were caught by someone running it a
+different way.*
+
+### ⚠ AND THE ROW WORTH HAVING WAS WRITTEN, NOT JUST THE `exit`
+
+Section **HY**, four rows asserting the state a real leak would leave — **which the `exit` cannot,
+because once a suite exits explicitly its exit code stops carrying that information.** All four are
+sabotage-verified **by name**: a dangling `::open` reds `HY1` with `{file6}`; a stray `after 999999`
+reds `HY2` with `{after#22 list}`; skipping a close reds `HY3` with `{.ase5}`; a planted pipe reds
+`HY4`.
+
+**Driver-verified after the repair:** headless **rc 0, ALL PASS (77)**; display **rc 0, ALL PASS
+(155)**. Floors **74 → 77** and **151 → 155**.
+
+## ⚠ THE TWO SABOTAGES THAT EARNED THEIR KEEP
+
+**`w20` — the extraction, proved rather than asserted.** Breaking `route_design` reddens **eleven
+rows of `test_ase_window`**: `W6m2` / `W6m3` / `W6m5` from issue **0616** and `R7` / `R9` / `R10` /
+`R14` from issue **0643**. Those rows were written years earlier about a different feature, and all
+seven fire. ⚠ **They are display-only**, so a crew carrying its collateral column headlessly — the
+cheap and obvious thing — would have read a single-row kill and concluded the extraction was barely
+load-bearing.
+
+**`w24` SURVIVED, and was right to.** It exposed a **product** defect: `campres_default_col` took
+`index.tsv`'s **last** column, which on a bench with no measurement is `raw` — a column of **file
+paths**. The panel opened on *"This column holds no numbers."* with a perfectly good swept axis one
+place to its left, and the default scatter was that axis against `raw`: **zero points with the
+suffix reader and zero without it**, so **no row written over the defaults could discriminate at
+all.**
+
+> **An empty default is a default that hides every defect behind it.**
+
+Repaired to prefer the bench's **own** data columns — axis labels plus enabled measurement names,
+derived from the state, with the three bookkeeping names never spelled in `ase_window.tcl` — and
+`exit` is deliberately excluded **though it is perfectly numeric**, because a yield panel on exit
+codes answers no question the user asked. Four new rows, three new mutations, and `w24b` retries
+the original defect against the repair.
+
+## ⚠ AND THE CREW FOUND ITS OWN GUARD HAD THE HOLE IT WAS GUARDING AGAINST
+
+**A whole pass was discarded and re-run.** A `NORESULT` traced to three defects of the crew's own —
+a patch script that stopped one line early, two rows written against assumed shapes, and **a green
+gate that could not see an empty result**:
+
+```sh
+case "$h$d" in *FAIL*|*NORESULT*) ... ;; esac      # ← both empty matches NEITHER
+```
+
+**Every guard in this task is about a defect hiding in the absence of a signal, and the gate
+written to enforce that had the same hole.** The rule it earns is now in `CREW_BRIEF.md`: *a guard
+against absence must itself be tested against absence* — feed it the empty case before trusting it,
+prefer a positive assertion (*"I saw a `RESULT:` line and it said ALL PASS"*) to a negative match
+(*"I did not see FAIL"*), and ask of every check **what it does when handed nothing**.
+
+The same shape one layer down is correction **C7e**: **a pure-Tcl section with no `catch` turns any
+raise into a `NORESULT`**, and every suite in this batch has such sections. All five of this one's
+are now wrapped, so a raise is a **named** red (`ST0`/`EX0`/`RD0`/`DC0`/`RR0`) rather than silence.
+
+## Eleven corrections; four matter beyond this stage
+
+1. ⚠ **`ase::state_serialize` is not the byte-identity mechanism — `ase::state_save` is** — and the
+   crew's first harness reported **104 mismatches**, which looks exactly like catastrophe. **Third
+   crew to hit it.** The driver had already shipped `tests/headless/state_roundtrip.tcl` to end it,
+   and **took this correction against that helper too**: it now writes through `ase::state_save` and
+   compares bytes rather than reconstructing what `state_save` does.
+2. ⚠ **§11c's statistics cannot be a pure surface.** `1k` is not a number to `string is double`, so
+   an axis column needs a **simulator-aware** number reader — `ase::stat_suffixes` is an adapter
+   resolve in the middle of what the plan calls pure Tcl arithmetic. **A crew that read §11c and
+   wrote `expr` over `lsort` would ship a histogram with no bars.**
+3. ⚠ **A three-point campaign invokes the simulator TEN times**, because `ase::run_deck` asks
+   `ase::cap_report` on every run and the probe runs the binary too. Issue **1463** measures that
+   cost against a binary that *cannot* answer; this is the **count** against one that can, and a
+   stand-in's invocation tally must filter for it or it is measuring the probe.
+4. ⚠ **`_theme_widget` had no `Canvas` arm**, because nothing in ASE-L had ever drawn one. §11's
+   *"a histogram is a new drawing in this tree"* is more literal than it reads — **the widget class
+   is new too**, and the theme walk silently skipped it. Any later plot inherits the arm; any later
+   widget **class** will not.
+
+**Also: `PLAN.md` §11's sizing is out by ~2×** (budget +450/+700 for the stage; measured +1415/+367
+for this task alone, on top of task 1's +1191), and **`test_ase_window`'s `W1m` pins the Simulation
+menu exactly**, so every new entry there moves a row no stage's *suites that move* list names.
+
+## What needs a person
+
+⚠ **The `look` debt, and it is the first drawing ASE-L has ever made.** The histogram with
+mean/sigma/yield beside it, and the `k/N` readout. **Suites green on both arms; the pixels are
+unseen.** Filed, with a `suite` debt beside it.
 
 ### ✅ Stage 11 task 1 — the campaign runner and the sampler, issue **1462**, collected 2026-09-13
 
