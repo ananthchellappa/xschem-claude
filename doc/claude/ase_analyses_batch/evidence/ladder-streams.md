@@ -166,3 +166,41 @@ default and unkillable by the spellings above, the deck never reaches the failur
 it. `PLAN.md` §10's suite is specified to run on **canned log text** for determinism, so this does
 not block the stage — but the canned text still has to come from somewhere, and whoever writes it
 will meet this first.
+
+## 5. §10b's headline number, reproduced exactly on both binaries
+
+`PLAN.md` §10b says an `optran`-supplied operating point *"returns the TRANSIENT state at the stop
+time as your operating point — measured 0.9999550 instead of 1.0 on a 1 us RC"*. Re-measured
+2026-09-13 under the plan's own stated conditions:
+
+```
+v1 in 0 1
+r1 in out 1k
+c1 out 0 1n
+```
+
+| | apt 45.2 | the fork |
+|---|---|---|
+| plain `op` | `v(out) = 1.000000e+00` | `1.000000e+00` |
+| `.options noopiter gminsteps=0 srcsteps=0` → rung 4 supplies it | **`9.999550e-01`** | **`9.999550e-01`** |
+| what stderr said | `Note: Transient op started` / `finished successfully` | identical |
+
+**Identical to every digit on both binaries, and identical to the number the plan recorded.**
+
+⚠ **So the sentence §10b wants on the OP form is true, and it is true of a number the user is
+already looking at.** The operating point is wrong in the fifth digit on a *trivial* RC; the error
+is whatever the circuit's slowest time constant has left unsettled at optran's 10 µs stop, so a
+real bench is not bounded by anything this deck shows.
+
+⚠ **And the only signal that it happened is a line on stderr that no user ever sees** — folded into
+the log by `2>@1` and, per §1 above, printed out of order when it gets there. That is the whole
+argument for §10b's sentence existing.
+
+### A note on how this was got wrong once
+
+An earlier attempt in this batch tried to reproduce the plan's number with `option noopiter`
+**alone**, got `1.000000e+00`, and read it as a refutation. It was not: with only the first rung
+disabled, **gmin stepping succeeds at rung 2** and returns the true answer. The plan said
+`.options noopiter gminsteps=0 srcsteps=0` and meant all three. **A claim is not refuted until it
+has been re-run under its own stated conditions** — recorded here because the near-miss cost
+nothing this time and the same shape has cost this batch a day before.
