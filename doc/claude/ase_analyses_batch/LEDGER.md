@@ -962,18 +962,35 @@ $ HOME=<scratch> ./src/xschem -q --nolog -b <scratch>/probe_a.sp     ->  rc 0
   <scratch>/.xschem/  ->  geometry  recent_files  xschemrc
 ```
 
-**Three files, including `xschemrc`** — which the crew's list did not name. And the other half,
-which is what refuses option **C** outright:
+Three files — and the driver's first reading of that, *"including `xschemrc`"*, **was wrong and is
+corrected here before anyone built on it.** A scratch `HOME` has no `xschemrc`, so the child wrote a
+default one; that is creation, not damage. Re-measured against a `HOME` whose files already existed
+and carried markers:
+
+| | |
+|---|---|
+| `xschemrc` | **UNCHANGED** — only created when absent. The user's own is dated 2026-09-01 and is intact |
+| `geometry` | ⚠ **OVERWRITTEN** |
+| `recent_files` | ⚠ **REWRITTEN** |
+
+So the damage is **the recent list and the window geometry**, which is what the crew reported. And
+the other half, which is what refuses option **C** outright:
 
 ```
 $ HOME=<scratch2> ./src/xschem -q --nolog --norecent -b <deck>       ->  rc 0
-  <scratch2>/.xschem/ ->  geometry  xschemrc          (no recent_files)
+  <scratch2>/.xschem/ ->  geometry   (no recent_files)
 ```
 
 **`--norecent` removes the recent list and nothing else.** A second editor still starts and still
-overwrites **`geometry` and `xschemrc`** — so option C would have silenced the symptom the user
-noticed while leaving the two they had not noticed yet. It is refused on that ground as well as on
-D34–D36, which forbid putting one program's command-line spelling into ASE-L's source.
+overwrites **`geometry`** — so option C would have silenced the symptom the user noticed while
+leaving the one they had not. It is refused on that ground as well as on D34–D36, which forbid
+putting one program's command-line spelling into ASE-L's source.
+
+⚠ **And the fix is confirmed a third way, by a timestamp rather than a hash.**
+`~/.xschem/recent_files` is dated **18:53** — the crew's single pre-fix display sweep — and has not
+moved since, through the driver's own post-fix display run of `test_ase_dialogs` at 19:1x and two
+solo T1s. `geometry` **is** still being written (19:24), but by the display-arm suites' own GUI
+xschem sessions, which is what any interactive xschem does on exit and not this defect.
 
 ⚠ **Option A is REFUTED, not merely unchosen.** It presumed probe loads to wrap a flag around, and
 there are none. **Option B shipped.** The ruling stays open only on the wording and on the question
