@@ -37,10 +37,10 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`** — and this is the first honest zero the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on issue **1453** (ASE-L's capability probe took over the user's `File > Open Recent`); it owns `src/ase.tcl` and `tests/headless/test_ase_simcaps_0948.tcl` |
-| **Blocked behind it** | issue **1457**'s fix and **Stage 10 task 1** — both need `src/ase.tcl`, and two crews on one file is how a hardening gets silently reverted |
+| **In flight** | nothing — issue **1453** landed; `src/ase.tcl` is free |
+| **Next** | issue **1457**'s fix (the `Cy` family hidden above two ports), then **Stage 10 task 1** |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
-| **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453** (four options, A recommended, and the crew above is measuring the writer first because the filed mechanism did not survive reading the code) |
+| **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **170 rule / 63 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
@@ -193,7 +193,7 @@ before/after numbers **from its own run**, per arm, and the floor only ever goes
 | `test_ase_print_bracket_0167.tcl` | 125 | 13 | none declared |
 | `test_ase_result_case.tcl` | 484 | 29 | none declared |
 | `test_ase_savestate_adopt.tcl` | 245 | 27 | ux ledger: floor 26 → 27 |
-| `test_ase_simcaps_0948.tcl` | 3078 | 110 | ux ledger: `ALL PASS (110)` |
+| `test_ase_simcaps_0948.tcl` | 3078 | 110 | ux ledger: `ALL PASS (110)`. ⚠ **2026-09-13: 199 → 211** (section XE, issue 1453 — the `iseditor` guards) |
 | `test_ase_simchoice_1395.tcl` | 593 | 31 | header: **FLOOR: 31 checks, on either arm** |
 | `test_ase_simdlg_0937.tcl` | 2100 | 55 | header: **FLOOR: 55 on the display arm, 5 on the structural one** |
 | `test_ase_simreg_0931.tcl` | 3014 | 111 | header: **⚠ FLOOR, only ever goes up: 111 as of 2026-09-08** |
@@ -920,6 +920,87 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Issue 1453 — the probe was starting a SECOND XSCHEM, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | Two guards in `src/ase.tcl` and nothing else. `ase::sim_check` gains a **fifth ordered guard, `iseditor`** — last, so a path that is missing, a folder or not executable still gets the more specific answer — and `ase::sim_capabilities_at` refuses at the **probe funnel**, before the cache and before `cap_workdir`, with `known 0 unmeasured iseditor`. `ase::sim_is_editor` answers by **identity**: `file normalize` against `info nameofexecutable`, then **dev+inode**, never a basename. `src/ase_window.tcl` untouched. |
+| **the root cause, and it is not what the issue said** | ⚠ **The probing process never calls the recorder at all. The writer is a SECOND XSCHEM that ASE-L `exec`s** — because the user's registered *simulator* is the **xschem binary itself** (`ase::sim_register ng-cm3 /home/analog/dev/xschem-claude/src/xschem`, selected). `ase::cap_run` builds `timeout <secs> <prog> -b <deck>`; **`-b` is ngspice's *batch* and xschem's `--detach`** (`src/options.c:174`, driver-verified), so `<deck>` becomes `cli_opt_filename` → `xinit.c:3975`'s `update_recent_file` **in a child carrying no `--nogui`, no `--pipe` and no `--norecent`**. |
+| **driver's own re-run** | `test_ase_simcaps_0948` **199 → 211** headless. `test_ase_dialogs` **ALL PASS (37)** headless and **1 FAILED (382 passed)** on the dev display — the red is `G2sens`, issue 1436, standing, value-identical. `test_ase_core` **636**. |
+| **the end-to-end proof, re-taken by the driver on the user's own machine** | `md5sum ~/.xschem/recent_files` = `703cc965…` **before and after a full display-arm run of `test_ase_dialogs`, which contains G13's live probe** — byte-identical, still 20 entries, **no new pid**. Before the fix that same run added one. |
+| **byte identity** | 104 tracked `.state` files, zero not round-tripping, control disagrees. No schema change. |
+| **sabotage** | **Six, all red by name, all restored with an md5 match.** ⚠ **S2 reproduced the user's defect inside the suite's own throw-away HOME** — the funnel guard removed, and a `.ase_probe/…/probe_a.sp` appeared in a scratch recent list. **S5 is the control for the worse defect**: silencing `update_recent_file` itself reddens `XE11`, so nobody can "fix" this by breaking the 0119 gate. |
+| **T1** | ✅ **Run solo: 70 cases, ZERO counted lines in `tests/results.log`.** |
+| **ledger debts** | `rule 1453` **updated** (the driver's text kept and extended), `look open_recent_1453` new, `suite test_ase_simdlg_0937` updated. **170 / 63 / 10 → 170 / 64 / 10**, backup taken first, pre-image in `cleared.log`. |
+| **receipt** | `receipts/34-1453-probe-decks-in-open-recent.md` |
+
+**⚠ THE GATE WAS NEVER WRONG, IN EITHER PROCESS — AND THAT IS THE FINDING.** Issue 0119's
+`no_recent_files` is 1 for `--nogui`/`--pipe`/`--norecent` and restored before the event loop so a
+human's own loads record. Both processes obey it exactly. **A fix that touched the gate would have
+been a worse defect than the one being repaired**, and row **XE11** exists to keep that true for
+the next person: sabotage **S5** silences `update_recent_file` and reddens it.
+
+**Three drafts of this mechanism, and the first two were wrong in the same way.** The issue as
+filed said the probe *"loads a file from the event loop"*; the driver read the code, found no
+`xschem load` on the probe path at all, withdrew that and told the crew to **measure the writer**.
+The crew did exactly that — wrapped `update_recent_file`, `write_recent_file` and
+`update_recent_dir` so they logged their caller and **did not call through**, then drove a live
+probe under a scratch `HOME`. **The wrapper logged zero calls and the file was written anyway.**
+That negative result is what identified the writer. ⚠ **So the instrument was right and its
+stated expectation was wrong** — the brief's hedge (*"if `update_recent_file` turns out not to be
+the writer at all"*) is the clause that mattered, and the answer is that it **is** the writer, in
+**another process**.
+
+⚠ **AND THE DAMAGE WAS WIDER THAN THE RECENT LIST — DRIVER-REPRODUCED, AND WIDER STILL THAN THE
+CREW FOUND.** The crew's instrumented run came back with `ase_simulators`, **`geometry`**,
+`recent_files` and `simulations/` in its scratch `HOME`. The driver reproduced the root cause
+independently, one command in a throw-away `HOME`:
+
+```
+$ HOME=<scratch> ./src/xschem -q --nolog -b <scratch>/probe_a.sp     ->  rc 0
+  <scratch>/.xschem/  ->  geometry  recent_files  xschemrc
+```
+
+**Three files, including `xschemrc`** — which the crew's list did not name. And the other half,
+which is what refuses option **C** outright:
+
+```
+$ HOME=<scratch2> ./src/xschem -q --nolog --norecent -b <deck>       ->  rc 0
+  <scratch2>/.xschem/ ->  geometry  xschemrc          (no recent_files)
+```
+
+**`--norecent` removes the recent list and nothing else.** A second editor still starts and still
+overwrites **`geometry` and `xschemrc`** — so option C would have silenced the symptom the user
+noticed while leaving the two they had not noticed yet. It is refused on that ground as well as on
+D34–D36, which forbid putting one program's command-line spelling into ASE-L's source.
+
+⚠ **Option A is REFUTED, not merely unchosen.** It presumed probe loads to wrap a flag around, and
+there are none. **Option B shipped.** The ruling stays open only on the wording and on the question
+below.
+
+**⚠ A QUESTION FOR THE USER THAT THE CREW COULD NOT ANSWER, AND THE DRIVER COULD NOT EITHER.**
+`~/.xschem/ase_simulators` is dated **2026-09-13 02:29** and registers `src/xschem` as the
+simulator `ng-cm3`, selected. **No suite in this tree registers the xschem binary** —
+driver-verified by grep across `tests/` — so it was either typed by the user or written by
+something with a non-scratch `HOME` (issue **1397**'s shape). The entry stays in the registry and
+is now reported **unrunnable** with a sentence that says why; it is **theirs to repair**, like the
+recent list, and nothing here touched either.
+
+**Five corrections, of which two change what the issue says.** The issue's C-caller list was
+incomplete — `src/actions.c` has three more (`saveas()` and both arms of `ask_new_file()`), none of
+them the writer. And *"it renews whenever the display arm runs"* is right for the wrong reason:
+**the child records with or without a `DISPLAY`**, measured both ways; what is display-only is the
+**parent**, because G13 is a GUI leg. That is what let `XE11`/`XE12` be headless rows.
+
+**And the "three decks per pid" is explained rather than merely observed.** The child is an editor,
+so it never exits; deck A's run eats the entire probe budget (`elapsed_ms=30279`, `known 0
+unmeasured timeout`) and decks B and C are never reached. **Three workdirs per session, one
+recorded deck each — which is why every entry the user has is `probe_a.sp`.**
+
+**The crew renewed the pollution once** — one pid, three decks, in the single pre-fix display sweep
+it needed. What it displaced was already probe decks. **The driver's own post-fix verification
+added nothing**, which is the measurement above.
 
 ### ⚠ A STANDING RULE THIS BATCH HAS NOW EARNED FOUR TIMES: **ACCEPTED IS NOT HONOURED**
 
@@ -3496,7 +3577,7 @@ Decisions: **D6, D10**. Debt M12 belongs to this stage.
 |---|---|
 | status | ✅ **DONE, as two tasks** — the deck half (issue **1452**) and the GUI half (issue **1454**). ⚠ **§9b's Smith chart is NOT shipped and is named outstanding**, because this tree has no polar plot engine to draw it on. |
 | commit | `f438af90` (1452) · `3e316f7a` (1454) |
-| T1 | ⚠ Run solo after each. The second run is what exposed that **T1 had not been at zero since stage 7** — three of this batch's own suites emit no completion banner. Fixed separately; see *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7*. |
+| T1 | ⚠ Run solo after each. The second run is what exposed that **T1 had not been at zero since stage 7** — three of this batch's own suites emit no completion banner (issue **1456**). Fixed separately, and T1 has read **70 cases, zero counted lines** on every run since. |
 | suites moved | **new** `test_ase_sp_1452` **50** both arms (41 at task 1, 50 at task 2) · `test_ase_dialogs` 37 headless unmoved / **362 → 382** display, section **SP** · `test_ase_core` 636 unmoved |
 | sabotage | **39 across the two tasks** (12 + 27), **38 red by name**, one behaviour-preserving survivor, **zero kills**. Six found defects in the SUITES rather than in the product. |
 | ledger debts | `rule 1452`, `rule 1454`, `look ase_sp_ports_matrix_1454`. **M12 is PARTLY closed** — `wrs2p`'s output is measured on both binaries and is byte-identical to the documented `.csparam` route; nobody has opened it in a third-party Touchstone reader, and the debt stays open on that half. |

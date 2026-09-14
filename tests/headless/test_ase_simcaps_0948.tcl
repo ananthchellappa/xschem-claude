@@ -113,6 +113,17 @@
 #        `onoise_spectrum` has exactly the shape of a device total, and a reader
 #        that split on the first `_` would count the circuit as a device and
 #        double the table's sum.
+#   211  section XE, issue 1453: the capability probe must not START THE EDITOR.
+#        ⚠ THE ROWS ASSERT THE CALL AND NEVER THE FILE, because the mechanism
+#        was guessed twice and wrong both times -- the writer is not this
+#        process at all, it is a CHILD xschem the probe runs with the deck as a
+#        bare filename argument. XE8 and XE10 count the two procs that do the
+#        damage (the one that makes the folder, the one that starts the
+#        program); XE9 is the control a guard refusing EVERYTHING would fail;
+#        XE11 is the control a "fix" that silenced the recorder would fail.
+#        Split across the two guards on purpose, so a sabotage names one:
+#        XE1-XE7 are ase::sim_check's, XE8 is ase::sim_capabilities_at's, and
+#        XE10 can only redden when both are gone.
 #
 # ⚠ RAISED, NEVER LOWERED. If a change makes this number fall, that is the
 # finding -- say which rows went and why, per row, and do not edit the number
@@ -4027,6 +4038,230 @@ check {H3 the plot a report needs is the LAST one in the results file, and the\
         [expr {($H3BODY eq {NOPROC}) ? $H3BODY :
                ([a_count $H3BODY {seek $f}] >= 1 ? 1 : 0)}]] \
   [list [list {Transient Analysis} {Operating Point}] 8 1 0 1 1]
+
+# ============================================================================
+# XE. THE PROBE MUST NOT START THE EDITOR (issue 1453)
+# ============================================================================
+# WHAT WENT WRONG FOR THE USER. Their `File > Open Recent` held TEN entries and
+# not one of them was theirs -- every one an ASE-L capability-probe scratch deck
+# under `~/.xschem/simulations/.ase_probe/p<pid>_N/probe_a.sp`, from four
+# different process numbers, all pointing at folders that no longer exist. The
+# list caps at ten and a probing session records three, so FOUR sessions flush
+# it completely. Issue 0924 is the first time that file was destroyed, by a
+# stale binary on PATH; this is the second, and this one is this tree's own
+# code.
+#
+# ⚠ THE MECHANISM WAS GUESSED TWICE AND WRONG BOTH TIMES, WHICH IS WHY THESE
+# ROWS ASSERT THE CALL AND NEVER THE FILE. The first draft of 1453 said the
+# probe "loads a file from the event loop"; it does not -- there is no
+# `xschem load` anywhere on the probe path. MEASURED 2026-09-13 against a
+# scratch HOME: update_recent_file, write_recent_file and update_recent_dir were
+# renamed aside and wrapped in the PROBING session, and the wrapper logged NOT
+# ONE CALL -- while `<scratch>/.xschem/recent_files` appeared holding exactly
+# `<scratch>/.xschem/simulations/.ase_probe/p3644712_1/probe_a.sp`.
+#
+# THE WRITER IS A SECOND xschem PROCESS THE PROBE STARTS. The user had
+# registered the xschem binary itself as a simulator (`ase::sim_register ng-cm3
+# /home/analog/dev/xschem-claude/src/xschem`), ase::cap_run then runs
+# `<program> -b <deck>`, and `-b` is ngspice's "batch" but xschem's `--detach`
+# -- so `<deck>` is a bare filename argument, which xinit.c hands to
+# `tcl_call("update_recent_file", fname, …)` in a child carrying no
+# --nogui/--pipe/--norecent of its own. `no_recent_files` is 0 in THAT process.
+# The 0119 gate is behaving exactly as designed in both processes; nothing about
+# it is wrong, and a fix that touched it would have been a worse defect than the
+# one being repaired -- which is what XE10 and XE11 are here to keep true.
+#
+# ⚠ NOTHING HERE READS ~/.xschem. Rows XE10/XE11 drive a child against a
+# THROW-AWAY HOME inside this suite's scratch directory. The user's ten entries
+# are theirs to repair and no row, and no fix, touches them.
+#
+# THE FIX IS TWO GUARDS AND THE ROWS ARE SPLIT SO A SABOTAGE NAMES ONE:
+#   guard 1  ase::sim_check's fifth answer, `iseditor` -- XE1..XE7
+#   guard 2  ase::sim_capabilities_at's funnel refusal -- XE8
+#   both     XE9, which can only go red when neither is left
+set XE_BIN  [info nameofexecutable]
+set XE_NOEXEC [file join $BIN xe_not_a_program]
+a_wr $XE_NOEXEC "#!/bin/sh\nexit 0\n" 0644
+set XE_LINK [file join $BIN xe_editor_link]
+catch {file delete -force -- $XE_LINK}
+set XE_HASLINK 0
+if {![catch {file link -symbolic $XE_LINK $XE_BIN}]} { set XE_HASLINK 1 }
+
+## Did a probe actually happen? Counted at the two procs that do the damage --
+## the one that MAKES the folder and the one that STARTS the program -- so the
+## row says "no folder was made and nothing was run" rather than "the answer
+## looked empty". Both are renamed INSIDE ::ase on purpose: a proc moved to the
+## global namespace would resolve `variable cap_seq` against `::` and the
+## positive control would then be measuring a broken stand-in.
+proc a_xe_watch {script} {
+  set ::a_xe_wd 0 ; set ::a_xe_run 0
+  if {[info commands ::ase::cap_workdir] eq {} ||
+      [info commands ::ase::cap_run] eq {}} { return NOPROC }
+  rename ::ase::cap_workdir ::ase::a_xe_saved_wd
+  rename ::ase::cap_run     ::ase::a_xe_saved_run
+  proc ::ase::cap_workdir {} { incr ::a_xe_wd ; return [::ase::a_xe_saved_wd] }
+  proc ::ase::cap_run {exe exeargs workdir secs} {
+    incr ::a_xe_run
+    return [::ase::a_xe_saved_run $exe $exeargs $workdir $secs]
+  }
+  catch {uplevel #0 $script} zz
+  catch {rename ::ase::cap_workdir {}}
+  catch {rename ::ase::cap_run {}}
+  rename ::ase::a_xe_saved_wd  ::ase::cap_workdir
+  rename ::ase::a_xe_saved_run ::ase::cap_run
+  return [list $::a_xe_wd $::a_xe_run]
+}
+proc a_xe_cap_do {backend} { set ::a_xe_ans [a_cap $backend] }
+proc a_xe_at_do {backend path} {
+  set ::a_xe_ans [a_ans ase::sim_capabilities_at $backend $path {}]
+}
+
+check {XE1 the validator answers iseditor for the program this session is running from, by absolute path and through a symbolic link, and says nothing about an ordinary program} \
+  [list [a_ans ase::sim_check $XE_BIN] \
+        [expr {$XE_HASLINK ? [a_ans ase::sim_check $XE_LINK] : {iseditor}}] \
+        [a_ans ase::sim_check $S_GOOD] \
+        [a_ans ase::sim_check /bin/sh]] \
+  {iseditor iseditor {} {}}
+
+## ⚠ THE FIFTH GUARD IS LAST, AND THIS IS THE ROW THAT KEEPS IT LAST. A path
+## that is missing, a folder, or not executable is a fact about the file the
+## user typed, and it is what they need to hear first; a fifth guard that ran
+## before them would answer `iseditor` for none of these but would be free to
+## drift in front of them later. Empty stays `empty_path`.
+check {XE2 the four filesystem answers are unchanged and still come first} \
+  [list [a_ans ase::sim_check {}] \
+        [a_ans ase::sim_check [file join $scratch zz_no_such_program]] \
+        [a_ans ase::sim_check $scratch] \
+        [a_ans ase::sim_check $XE_NOEXEC]] \
+  {empty_path missing notfile notexec}
+
+## IDENTITY, NOT NAME. A copy of the editor under another name is still the
+## editor through a link; a DIFFERENT FILE that merely has the same basename is
+## not, and must not be refused -- that is the false positive a basename test
+## would buy. Both halves measured here so neither can drift into the other.
+set XE_NAMED [file join $BIN xschem]
+a_wr $XE_NAMED "#!/bin/sh\nexit 0\n" 0755
+check {XE3 the answer is the file's identity and not its name: a link to this program is refused, a different program called xschem is not} \
+  [list [expr {$XE_HASLINK ? [a_ans ase::sim_is_editor $XE_LINK] : 1}] \
+        [a_ans ase::sim_is_editor $XE_NAMED] \
+        [a_ans ase::sim_is_editor $XE_BIN] \
+        [a_ans ase::sim_is_editor {}] \
+        [a_ans ase::sim_is_editor [file join $scratch zz_no_such_program]]] \
+  {1 0 1 0 0}
+
+## THE SENTENCE, BYTE FOR BYTE. It is a new user-facing string and therefore the
+## user's to ratify (⚖ R9); pinning it here is what makes a silent reword show
+## up as a row rather than as a surprise in somebody's CIW.
+check {XE4 the refusal names the program, names the entry, says what starting it would do, and says what to do instead} \
+  [a_ans ase::sim_why iseditor ng-cm3 /opt/x/xschem] \
+  {/opt/x/xschem is xschem itself, not a simulator. It is registered as the simulator named ng-cm3. Starting it would open a second editor that overwrites your own recent files and window settings, so nothing was started. Point this entry at a simulator program such as ngspice.}
+
+## REGISTRATION IS WHERE THE USER'S GESTURE WAS, so registration is where they
+## hear about it. The entry is still recorded -- refusing to record it would
+## leave them with a Simulators window that forgets what they typed -- but it is
+## recorded UNRUNNABLE, and the list has a reason to show against it.
+set XE_SAID [a_echoed {a_use xe_editor [info nameofexecutable]}]
+check {XE5 registering the editor as a simulator records the entry unrunnable and says why, once, as an error} \
+  [list [llength $XE_SAID] \
+        [lindex [lindex $XE_SAID 0] 0] \
+        [dict get [lindex [a_ans ase::sim_list {}] 0] ok] \
+        [string equal [lindex [lindex $XE_SAID 0] 1] \
+           [a_ans ase::sim_why iseditor xe_editor [file normalize $XE_BIN]]]] \
+  {1 error 0 1}
+
+check {XE6 the per-entry reason a Simulators list shows against that row is the same sentence} \
+  [string equal [a_ans ase::sim_entry_why xe_editor] \
+     [a_ans ase::sim_why iseditor xe_editor [file normalize $XE_BIN]]] \
+  1
+
+## THE RESOLVER REFUSES, so nothing downstream -- a run, a probe, a casemode
+## question -- ever gets a program to start out of it.
+set XE_ST [a_ans ase::sim_status ngspice]
+check {XE7 the resolver refuses the editor, resolves nothing, and carries the sentence} \
+  [list [dict get $XE_ST ok] [dict get $XE_ST resolved] \
+        [string equal [dict get $XE_ST why] \
+           [a_ans ase::sim_why iseditor xe_editor [file normalize $XE_BIN]]]] \
+  {0 {} 1}
+
+## GUARD 2, ASKED DIRECTLY. ase::sim_capabilities_at is the funnel every probe
+## door goes through and it takes a RAW path, so it is reachable with a program
+## no validator has seen. It answers in the vocabulary's own shape -- `known 0`
+## plus the token naming the leg that never ran, beside `unmeasured noplace` and
+## `unmeasured timeout` -- and, decisively, NO FOLDER IS MADE AND NOTHING IS RUN.
+set XE_AT [a_xe_watch [list a_xe_at_do ngspice $XE_BIN]]
+check {XE8 the probe funnel refuses the editor by itself: known 0 with its own token, no probe folder made, no program started} \
+  [list [a_ans dict get $::a_xe_ans known] \
+        [a_ans dict get $::a_xe_ans unmeasured] \
+        $XE_AT] \
+  [list 0 iseditor {0 0}]
+
+## ⚠ AND THE POSITIVE CONTROL IN THE SAME BREATH, because a guard that refused
+## EVERYTHING would satisfy the row above and would have broken the feature. The
+## stub is measured through the identical watcher: a folder IS made and the
+## program IS started, twice, and the answer comes back known.
+a_resetall
+a_use xe_stub $S_GOOD
+set XE_OK [a_xe_watch {a_xe_cap_do ngspice}]
+check {XE9 CONTROL an ordinary registered program is still probed: the folder is made, the program is started twice, and the answer is known} \
+  [list [a_ans dict get $::a_xe_ans known] \
+        [lindex $XE_OK 0] [expr {[lindex $XE_OK 1] >= 2 ? 1 : 0}]] \
+  {1 1 1}
+
+## AND THE WHOLE ROUTE, with the editor in force: `known 0`, no `unmeasured`
+## token of the funnel's (the registry refused first, before the funnel was
+## reached), and again nothing made and nothing started. This is the row that
+## can only go red when BOTH guards are gone -- which is why it is not the only
+## row in this section.
+a_resetall
+a_use xe_editor2 $XE_BIN
+set XE_FULL [a_xe_watch {a_xe_cap_do ngspice}]
+check {XE10 with the editor registered and in force, asking what it can do makes no probe folder and starts no program} \
+  [list [a_ans dict get $::a_xe_ans known] $XE_FULL] \
+  [list 0 {0 0}]
+a_resetall
+
+# ---------------------------------------------------------------------------
+# XE11/XE12 -- THE MECHANISM, PINNED, AND THE CONTROL THAT KEEPS THE FIX HONEST
+# ---------------------------------------------------------------------------
+# ⚠ THESE TWO ARE NOT ABOUT ASE-L. They are what makes the paragraph at the top
+# of this section a measurement rather than a story, and XE11 is the control the
+# brief for issue 1453 demanded by name: a fix that stopped the user's OWN loads
+# recording would be a worse defect than the one being repaired, and a section
+# that only checked the negative could not tell the two apart.
+#
+# A THROW-AWAY HOME, ALWAYS. The child writes `<HOME>/.xschem/recent_files`;
+# pointing it anywhere near the developer's own is the defect this file is about.
+set XE_H [file join $scratch xehome]
+file delete -force -- $XE_H
+file mkdir [file join $XE_H .xschem]
+set XE_DECK [file join $scratch xe_deck.sp]
+a_wr $XE_DECK "* xe\nv1 a 0 1\nr1 a 0 1k\n.end\n"
+## ⚠ THE INVOCATION IS PART OF THE ANSWER. A child that never started, or that
+## died, writes no recent list either -- and `NORECENT` is what XE12 EXPECTS, so
+## a broken `exec` here would make the pair green while measuring nothing. The
+## exit status is therefore carried into the answer, and XE11's own `-q` launch
+## is measured to exit 0 in about 100 ms.
+proc a_xe_child {home args} {
+  global XE_BIN
+  file delete -force -- [file join $home .xschem recent_files]
+  set rc [catch {exec /usr/bin/env HOME=$home $XE_BIN {*}$args 2>@1} out]
+  if {$rc} { return "EXECFAIL($rc):$out" }
+  set rf [file join $home .xschem recent_files]
+  if {![file exists $rf]} { return {NORECENT} }
+  return [a_slurp $rf]
+}
+set XE_PLAIN [a_xe_child $XE_H -q --nolog $XE_DECK]
+check {XE11 CONTROL a plain launch that names a file still records it -- the writer is the CHILD process, and the recent list still belongs to the user} \
+  [list [expr {[string first "recentfile {$XE_DECK}" $XE_PLAIN] >= 0 ? 1 : 0}] \
+        [expr {$XE_PLAIN eq {NORECENT} ? 1 : 0}]] \
+  {1 0}
+
+check {XE12 and the same launch told not to record writes no recent list at all, so the gate the fix deliberately did NOT touch still works} \
+  [a_xe_child $XE_H -q --nolog --norecent $XE_DECK] \
+  {NORECENT}
+file delete -force -- $XE_H
+catch {file delete -force -- $XE_LINK}
+catch {file delete -force -- $XE_NAMED}
 
 } zzerr]} {
   puts "FATAL: uncaught error: $zzerr"

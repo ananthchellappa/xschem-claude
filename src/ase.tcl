@@ -1021,6 +1021,9 @@ proc ase::sim_why {kind name path {extra {}}} {
     badvar {
       return "The location given for the simulator named $name mentions a setting this session does not know about, so it cannot be turned into a real file name: $path"
     }
+    iseditor {
+      return "$path is xschem itself, not a simulator. It is registered as the simulator named $name. Starting it would open a second editor that overwrites your own recent files and window settings, so nothing was started. Point this entry at a simulator program such as ngspice."
+    }
     noentry {
       if {[llength $extra]} {
         return "You asked for the simulator named $name, but nothing by that name has been registered. The ones you can choose from are: [join $extra {, }]."
@@ -1361,7 +1364,41 @@ proc ase::sim_said_clear {} {
   return {}
 }
 
-# THE VALIDATOR. Four ordered guards, each its own line and its own thing to
+# IS THE PROGRAM AT `path` THIS EDITOR ITSELF? (issue 1453.)
+#
+# ⚠ IDENTITY, NOT NAME. The question is asked against `[info nameofexecutable]`
+# -- the program THIS session is running from -- by normalised path first and,
+# only when the two spellings differ, by device+inode. So a symbolic link, a
+# hard link, a relative `./src/xschem` and the absolute path are one answer,
+# and the ordinary case (a simulator, which matches neither) costs one string
+# compare. A basename test was considered and refused: it would turn away a
+# simulator somebody happened to name xschem, and it would still miss a second
+# xschem build living under another name, so it buys a false positive with no
+# coverage.
+#
+# ⚠ WHAT IT DELIBERATELY DOES NOT CATCH, said out loud so the next reader does
+# not believe it is covered: a DIFFERENT xschem binary -- /usr/local/bin/xschem,
+# an installed copy, a build in another tree. Telling that apart from a
+# simulator means starting it, which is the thing being refused. The residual
+# is recorded in doc/claude/issues/1453 rather than guessed at.
+proc ase::sim_is_editor {path} {
+  if {$path eq {}} { return 0 }
+  set me {}
+  if {[catch {info nameofexecutable} me]} { return 0 }
+  if {$me eq {}} { return 0 }
+  set a {} ; set b {}
+  catch {set a [file normalize $path]}
+  catch {set b [file normalize $me]}
+  if {$a ne {} && $a eq $b} { return 1 }
+  # TWO SPELLINGS OF ONE FILE. `file stat` is the only test here that sees
+  # through a link, and it is reached only once the cheap compare has already
+  # said no -- so no ordinary sim_check call pays for it.
+  if {[catch {file stat $path pa}]} { return 0 }
+  if {[catch {file stat $me mb}]}   { return 0 }
+  return [expr {$pa(dev) eq $mb(dev) && $pa(ino) eq $mb(ino)}]
+}
+
+# THE VALIDATOR. Five ordered guards, each its own line and its own thing to
 # say, returning the `kind` that names what is wrong or empty when the file
 # can be started.
 #
@@ -1373,11 +1410,43 @@ proc ase::sim_said_clear {} {
 # returns empty with no message in both of its bad arms; the sentence the
 # user then reads blames the variable as unset when it is set and merely
 # wrong. That silence is the shape this whole section exists not to copy.
+#
+# ⚠ THE FIFTH GUARD IS NOT A FILESYSTEM QUESTION, AND IT IS LAST ON PURPOSE
+# (issue 1453). The four above ask whether the file can be STARTED; this one
+# asks what starting it would DO. xschem itself passes all four -- it exists,
+# it is a file, it is executable -- and ASE-L started it: the capability probe
+# writes `<simulation folder>/.ase_probe/p<pid>_N/probe_a.sp` and runs
+# `<program> -b <deck>`, which for ngspice means "batch, run this deck" and for
+# xschem means `--detach` plus a bare filename to OPEN.
+#
+# MEASURED 2026-09-13, against a scratch HOME so nothing of the user's moved:
+# the probing session never calls the recorder at all -- update_recent_file,
+# write_recent_file and update_recent_dir were renamed aside and wrapped, and
+# the wrapper logged NOT ONE CALL -- while `<scratch>/.xschem/recent_files`
+# appeared holding exactly
+# `<scratch>/.xschem/simulations/.ase_probe/p3644712_1/probe_a.sp`. The writer
+# is the CHILD: it reaches xinit.c's `tcl_call("update_recent_file", fname, …)`
+# with no --nogui/--pipe/--norecent of its own, so `no_recent_files` is 0 in
+# THAT process and the user's recent list is rewritten with a scratch deck.
+# The gate (issue 0119) is behaving exactly as designed in both processes;
+# nothing about it is wrong. That is why the writer was hunted in the wrong
+# process twice, and why this guard is here and not there.
+#
+# WHAT IT COST: the user's `File > Open Recent` held TEN probe decks and
+# nothing of theirs. The list caps at ten and a probing session records three,
+# so four sessions flush it. Issue 0924 is the first time that file was
+# destroyed, by a stale binary; this is the second, and this one is ASE-L's own
+# doing. The list is the user's to repair and this fix does not touch it.
+#
+# IT IS LAST so that a path which is missing, a folder, or not executable still
+# gets the more specific answer: those are facts about the file the user typed,
+# and they are what that user needs to hear first.
 proc ase::sim_check {path} {
   if {$path eq {}}               { return empty_path }
   if {![file exists $path]}      { return missing }
   if {![file isfile $path]}      { return notfile }
   if {![file executable $path]}  { return notexec }
+  if {[ase::sim_is_editor $path]} { return iseditor }
   return {}
 }
 
@@ -3248,6 +3317,23 @@ proc ase::sim_capabilities_at {backend resolved eargs} {
   if {$resolved eq {}} { return [dict create known 0] }
   if {![dict exists $backends $backend capabilities]} {
     return [dict create known 0]
+  }
+  # ⚠ AND NEVER THE EDITOR, WHATEVER THE CALLER BELIEVED (issue 1453).
+  # ase::sim_check already refuses this at the registry door and at the
+  # typed-location door, so in a shipped session nothing reaches here -- this is
+  # the guard at the FUNNEL, the last line before a probe folder is made, a deck
+  # is written and a program is started. It answers in the vocabulary's own
+  # shape, `known 0` plus the token naming which leg never ran, beside
+  # `unmeasured noplace` and `unmeasured timeout` below.
+  #
+  # BEFORE THE CACHE READ, not after: an answer about the editor is never served
+  # from the cache either, because there is no answer about the editor to have.
+  # ase::cap_report stays SILENT on this token deliberately -- the sentence about
+  # this program belongs to the registry (ase::sim_why iseditor), which is where
+  # the user's gesture was; a probe that refused to start something has nothing
+  # of its own to say about it.
+  if {[ase::sim_is_editor $resolved]} {
+    return [dict create known 0 unmeasured iseditor]
   }
   # ⚠ THE `known` TEST BELOW IS THE **PRODUCER'S CACHE-WRITE GATE** AND IT IS THE
   # ONE HAND-WRITTEN CAPABILITY READ LEFT IN THE TREE ON PURPOSE (issue 1407).

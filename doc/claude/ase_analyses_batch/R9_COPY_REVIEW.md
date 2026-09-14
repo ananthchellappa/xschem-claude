@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**448 strings, from 25 issues, grouped by where the user sees them** — not by
+**449 strings, from 26 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -6540,3 +6540,24 @@ own capitalisation throughout both sections.** They are vector names a user will
 type into the calculator and read in a rawfile, not English words, so the house
 acronyms-uppercase rule does not reach them. This is stated once here rather than
 repeated on nine entries.
+
+## Issue 1453 — the registered "simulator" that is the editor
+
+*1 string.* Added when issue 1453 was collected. Pinned byte-for-byte by row **XE4** of
+`tests/headless/test_ase_simcaps_0948.tcl`, so a re-wording moves a suite.
+
+
+**R9-449** · refusal
+
+```text
+/opt/x/xschem is xschem itself, not a simulator. It is registered as the simulator named ng-cm3. Starting it would open a second editor that overwrites your own recent files and window settings, so nothing was started. Point this entry at a simulator program such as ngspice.
+```
+
+
+*Where:* `ase::sim_why iseditor` — the fifth guard of `ase::sim_check`. One sentence serving five surfaces: registration, the Simulators dialog's Problem column, `sim_status`, the Detect door and the casemode readers.
+
+
+*For:* The user's own registry entry points at the xschem binary. ASE-L's capability probe was `exec`ing it as `<prog> -b <deck>` — where **`-b` is xschem's `--detach`** — which started a **second editor** that rewrote their `recent_files` and `geometry` and never exited. This is the sentence that stops it and says why.
+
+
+*Note:* ⚠ **Four sentences, which is the longest refusal in the batch** (R9-419 was the previous holder at two). Every clause is doing work: *what it is*, *how it got here*, **what would have happened to the user's own files**, and *what to do instead*. ⚠ It is the only string in this document that tells the user a tool would have damaged something of theirs — and the damage had already happened when it was written. §A11's question about naming internals reaches it too: `xschem` is a program name the user knows, not a source file.
