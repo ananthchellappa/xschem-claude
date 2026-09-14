@@ -38,10 +38,10 @@ vanishes gets re-opened by the next reader.
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, twice in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
 | **In flight** | nothing — issue **1457** landed; `src/ase.tcl` is free |
-| **Next** | **Stage 10 task 1** — the deck half. Its two prerequisite debts (**M1**, **M7**) are paid and `evidence/ladder-streams.md` already holds its fixture text |
+| **Next** | **Stage 10 task 1** — the deck half. Its two prerequisite debts (**M1**, **M7**) are paid and `evidence/ladder-streams.md` already holds its fixture text, its `optran` warning and §10b's headline number re-measured. Issue **1458** (`store_geom` has no gate) is filed and queued behind the batch, not in front of it |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **170 rule / 63 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
+| **Debt queue** | **172 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
