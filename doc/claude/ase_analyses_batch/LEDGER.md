@@ -1209,6 +1209,27 @@ recorded deck each — which is why every entry the user has is `probe_a.sp`.**
 it needed. What it displaced was already probe decks. **The driver's own post-fix verification
 added nothing**, which is the measurement above.
 
+### ⚠ A HAZARD A FINISHED CREW FOUND IN ITSELF — 2026-09-13
+
+Stage 8 task 2's crew, woken by a stale background waiter **hours after it was collected**, checked
+the tree before doing anything and found that *"a `sab.py restore` fired now would have silently
+overwritten the other session's live edits to both files with pre-1451 content"*. **It moved its own
+snapshots to `ARCHIVED_DO_NOT_RESTORE/` and stood down.**
+
+The driver then measured the general case: **ten-plus pristine copies of `src/ase.tcl`** are sitting
+in `/tmp` from every crew this batch has run — `/tmp/nsk1450/pristine`, `/tmp/sp9/pristine`,
+`/tmp/sp1454/sab`, `/tmp/cy1457/pristine`, `/tmp/stage10/pristine`, and more. Each is a pre-change
+file, each is still restorable, and **no restore script in this batch checks a snapshot's age**.
+
+**Two dead crews woke that evening**, both after the driver had killed the four waiter shells it
+owned — so the wake-up path is not fully under the driver's control either.
+
+⚠ **The rule now lives in `CREW_BRIEF.md`**: disarm your snapshots at hand-over, keep your logs, and
+**if you are woken after collection, read `git status` and `git log` before you touch anything** —
+the single most damaging thing a finished crew can do is tidy up. The driver's own protection is
+unchanged and is why nothing was lost: **verify the tree before every commit**, and git is the real
+net — a snapshot can overwrite a working file, not a commit.
+
 ### ⚠ A STANDING RULE THIS BATCH HAS NOW EARNED FOUR TIMES: **ACCEPTED IS NOT HONOURED**
 
 Four settings, measured on both binaries at four different points in this batch, all with the

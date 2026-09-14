@@ -18,6 +18,29 @@ picking up Stage 1 reads `receipts/05-stage-0-silent-drop.md` first — it carri
 correction Stage 0 made to this plan (**C36**) and the two harness traps that cost two T1
 baselines before one was clean.
 
+## ⚠ DISARM YOUR SABOTAGE SNAPSHOTS WHEN YOU HAND OVER
+
+Every crew in this batch takes `cp` snapshots of `src/ase.tcl` and `src/ase_window.tcl` before its
+sabotage campaign and restores from them after each arm. **Those snapshots do not expire, and the
+restore script that reads them does not check their age.**
+
+Measured 2026-09-13: **ten-plus pristine copies of `src/ase.tcl`** were sitting in `/tmp` from
+every crew this batch has run, each one a pre-change file, each still restorable. A finished crew
+can be woken by a stale background waiter — **two were, that evening** — and a `restore` fired then
+would **silently overwrite the live tree with hours-old content**, taking both the current crew's
+work and everything committed since.
+
+One crew saw this coming and moved its own snapshots to an `ARCHIVED_DO_NOT_RESTORE/` directory
+before standing down. **Do that.** When your campaign is finished and your receipt is written:
+
+* **move or rename your snapshot files** so your own restore cannot find them, and
+* **keep your campaign logs** — they are the evidence the receipt points at, and nothing reads them
+  automatically.
+
+⚠ **And if you are ever woken after your task is collected: check `git status` and `git log` before
+you touch anything.** The tree will have moved on, another crew is probably live in it, and the
+single most damaging thing a finished crew can do is tidy up.
+
 **The standing rule that did NOT change:** no crew modifies anything outside
 `doc/claude/ase_analyses_batch/` *except* the files its own stage names, and every stage
 names them in `PLAN.md`'s *Files and procs* table.
