@@ -77,3 +77,46 @@ Nothing here argues against it: seeding is a **deck option** (`.options seed=`),
 of the 247 rows in the options catalogue, and it applies to the whole run rather than to one
 analysis. A per-analysis seed key would be a second way to say a thing the sheet already
 says, and the two would disagree the first time a user set both.
+
+---
+
+## ⚠ THE SEED IS A COMMAND, AND THE VARIABLE THAT LOOKS LIKE THE SEED IS A READBACK
+
+**Measured 2026-09-13 by the driver**, on **both** binaries, one deck —
+`v1 1 0 trrandom(2 1m 0 1)` into 1 kΩ, `tran 1m 5m`, reading `v(1)` at the second time point.
+
+| what was in the `.control` block | run 1 | run 2 | reproducible? |
+|---|---|---|---|
+| nothing | `-5.06766e-01` | `-8.24668e-01` | **no** — as expected |
+| `set rndseed=12345` | `7.059813e-01` | `1.035454e-02` | ⚠ **NO** |
+| **`setseed 12345`** | `3.950885e-01` | `3.950885e-01` | ✅ **yes** |
+
+**And `setseed 12345` gives `3.950885e-01` on `/usr/bin/ngspice` (45.2) as well** — the same value,
+to every digit, on both binaries and on every run.
+
+### Why `set rndseed=` looks right and is not
+
+`rndseed` is a variable ngspice **writes**, not one it reads: `src/frontend/inp.c:455` and `:465`
+call `cp_vset("rndseed", CP_NUM, &rseed)` to **report** the seed it chose. The mechanism that
+*sets* one is the `setseed` **command** (`src/frontend/commands.c:204`, `com_sseed`).
+
+So `set rndseed=12345` is a perfectly-formed line that assigns to a readback channel, is accepted
+without complaint, and changes nothing about the numbers. **That is the batch's
+*accepted-is-not-honoured* class again** — the fifth case, and the only one so far with a correct
+alternative sitting next to it.
+
+### What this buys Stage 11, which is more than it looks
+
+* **A Monte Carlo campaign can be made exactly reproducible** — `setseed <n>` per shard, emitted in
+  the `.control` block. A user can re-run a corner that failed and get *the same* failure.
+* **Reproducible ACROSS BUILDS.** The same seed gives the same numbers on 45.2 and on the fork,
+  which is unusual in this evidence base (see `evidence/binary-differences.md`, where a transient's
+  very point count differs) and means a campaign's results can be compared between binaries.
+* ⚠ **It does not weaken the batch's rule that no new analysis type gets a `seed_enabled` field.**
+  The opposite: the seed is a property of a **campaign**, emitted once as a command, not a
+  per-analysis checkbox. This measurement says where it belongs rather than that it should exist
+  per row.
+
+**Not measured:** whether `setseed` reaches `trnoise` and the `.model` statistical distributions as
+well as `trrandom`, and what `setseed` with no argument does. Both are one deck each when Stage 11
+is picked up.

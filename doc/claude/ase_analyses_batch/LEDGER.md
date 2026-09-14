@@ -917,6 +917,7 @@ same shape — **ngspice takes the request, does nothing, and says nothing**:
 | 2 | `set interp` on an **AC** or **nested DC** run | nothing — same points, same values — **and it prints `Warning: Interpolated raw file data!` anyway** | 0 / a warning that is false about the data |
 | 3 | `.options optran 0 0 0 0 0 0`, `.options optran=0`, `.options optran = 0 0 0 0 0 0` | nothing — rung 4 still runs and still supplies the operating point | 0 / silent |
 | 4 | a **third `.dc` sweep level** | nothing — 3 nested sweeps give the same **9** rows as 2, values byte-identical | 0 / silent |
+| 5 | `set rndseed=12345` | nothing — two runs answer `7.059813e-01` and `1.035454e-02`. `rndseed` is a variable ngspice **writes** to report the seed it chose (`inp.c:455,465`); the mechanism that sets one is the **`setseed` command**, which really does make `trrandom` reproducible — and identically so on **both** binaries | 0 / silent |
 
 **So "the simulator did not complain" is never evidence that a setting reached anything.** Every
 option this batch offers needs a measurement that it **does** something, not a measurement that it
