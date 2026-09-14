@@ -33,12 +33,12 @@ vanishes gets re-opened by the next reader.
 
 | | |
 |---|---|
-| **Stages landed** | 0, 1, 2, 3, 4, 5, 6, 7, 8, **9**. Since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
+| **Stages landed** | 0–**9**, and **Stage 10's deck half** (issue **1459**, `e1eaa5d0`). Since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
 | **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, three runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing — **Stage 10 task 1** landed (issue **1459**); `src/ase.tcl` is free |
-| **Next** | **Stage 10 task 2** — the ladder pane, the remedy assistant, the canvas highlight and the health strip. ⚠ Its rung-4 checkbox must be able to mean **OFF**, and three deck spellings of `.options optran` were measured **accepted and inert**, so task 1 owes it the spelling that works |
+| **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
+| **In flight** | a crew on **Stage 10 task 2** — the ladder pane, the remedy assistant with its diff preview, the **canvas highlight** and the health strip. It owns `src/ase_window.tcl` and the dialog suites |
+| **Next** | **Stage 11** — campaigns: sweeps, corners, Monte Carlo. ⚠ Two of its foundations are already measured: a **third `.dc` sweep is accepted and discarded in silence**, so it must be refused at the form; and **`setseed <n>` makes a campaign reproducible** — identically on both binaries — while `set rndseed=` is a readback that does nothing |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **479 strings from 27 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **173 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
