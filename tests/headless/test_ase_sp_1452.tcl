@@ -101,7 +101,22 @@
 #   SR  the registry entry            SL  the emitted lines and their place
 #   SN  the preconditions             SK  the `setup` contract as SCHEMA
 #   SM  the reconciliation question   SC  the corpus and the round trip
+#   SX  the matrix, the scan and the column declaration (issue 1454)
 #   SE  the END-TO-END run, on BOTH binaries (guarded legs)
+#
+# THE HISTORY:
+#   41   as issue 1452 shipped it -- the DECK half, identical rows on both arms
+#   50   section SX plus SK3's four new terms, issue 1454: §9a's ports table and
+#        §9b's matrix picker got a widget, so the contract grew `columns` and
+#        `scan`, the entry grew `matrix`, and the plots row grew the `vectors`
+#        proc SM5 had been holding the door open for. SM5 is REWRITTEN rather
+#        than deleted -- it now asserts that the reader folds, answers in the
+#        DECLARED spelling and unwraps ngspice's own `v()`/`i()`, which is what
+#        it was waiting for. The widgets themselves are
+#        `test_ase_dialogs.tcl` section SP, display arm.
+#
+# ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
+# row.
 #
 # ⚠ SECTION SE IS THE ONLY ONE THAT STARTS A SIMULATOR, AND IT EXISTS BECAUSE
 # OF ISSUE 1449: two halves of a feature tested in different suites never meet.
@@ -544,9 +559,11 @@ proc sk_errs {setup} {
   return $e
 }
 set SKGOOD {key pp noun port min 2 fields {ff} \
+            columns {{name aa label Aye} {name bb label Bee}} \
             lines ::ase::backend::ngspice::sp_alter_lines \
             post ::ase::backend::ngspice::sp_export_lines \
-            check ::ase::backend::ngspice::sp_row_check}
+            check ::ase::backend::ngspice::sp_row_check \
+            scan ::ase::backend::ngspice::sp_port_candidates}
 ## ⚠ NON-VACUITY FOR SK3 ITSELF: the fixture registry is really read, and the
 ## contract really reaches core through it. Without this, an `analysis_types`
 ## hook that failed would give an EMPTY registry, every `sk_errs` call would
@@ -571,7 +588,12 @@ check {SK3a the fixture backend really is read, and the contract reaches core\
           [s_dget [ase::analysis_setup zzsp zz] min] \
           [ase::analysis_setup_rows zzsp zz {type zz enabled 1 pp {a b c}}]}] \
   {zz pp 2 {a b c}}
-check {SK3 a well-formed contract is clean and each of the seven ways of getting\
+## ⚠ AND THE LIST GREW BY FOUR AT ISSUE 1454, BECAUSE THE CONTRACT GREW A
+## SURFACE. A table that EMITS must also be TYPABLE: `columns` is as required as
+## `lines`, and a `scan` hook that is not a command offers nothing on every bench
+## forever, which reads exactly like a circuit with no candidates in it. RAISED
+## 9 -> 13; no term was removed.
+check {SK3 a well-formed contract is clean and each of the eleven ways of getting\
  it wrong is named} \
   [list [sk_errs $SKGOOD] \
         [sk_errs [dict remove $SKGOOD key]] \
@@ -581,12 +603,20 @@ check {SK3 a well-formed contract is clean and each of the seven ways of getting
         [sk_errs [dict replace $SKGOOD key ff]] \
         [sk_errs [dict replace $SKGOOD key id]] \
         [sk_errs [dict replace $SKGOOD min twelve]] \
-        [sk_errs [dict replace $SKGOOD fields {nosuchfield}]]] \
+        [sk_errs [dict replace $SKGOOD fields {nosuchfield}]] \
+        [sk_errs [dict remove $SKGOOD columns]] \
+        [sk_errs [dict replace $SKGOOD columns {}]] \
+        [sk_errs [dict replace $SKGOOD columns {{name aa} {name bb label Bee}}]] \
+        [sk_errs [dict replace $SKGOOD columns {{name aa label Aye} {name aa label Bee}}]] \
+        [sk_errs [dict replace $SKGOOD scan ::no::such::proc]]] \
   [list {} {{zz nosetupkey {}}} {{zz nosetuplines {}}} \
         {{zz badsetuplines ::no::such::proc}} {{zz badsetuphook ::no::such::proc}} \
         {{zz setupkeyclash ff}} {{zz setupkeyclash id}} \
         {{zz badsetupmin twelve}} \
-        {{zz badsetupfield nosuchfield} {zz fieldunused ff}}]
+        {{zz badsetupfield nosuchfield} {zz fieldunused ff}} \
+        {{zz nosetupcolumns {}}} {{zz badsetupcolumns {}}} \
+        {{zz badsetupcolumn {name aa}}} {{zz setupcolumnclash aa}} \
+        {{zz badsetupscan ::no::such::proc}}]
 
 ## ⚠ AND A FIELD THE CONTRACT CONSUMES IS CONSUMED. `donoise` and `s2p` are spent
 ## by the setup legs, which build lines the slot grammar cannot produce, so no
@@ -691,19 +721,210 @@ check {SM4 the same is true of the sidecar's own record: case is tolerated and a
         [dict get [s_ans ase::reconcile_plots ngspice $SMST $SMFORK $SMMAP3] verdict]] \
   {ok mislabel}
 
-## ⚠ SM5 IS THE EXPOSURE THIS STAGE LEAVES BEHIND, PINNED SO IT CANNOT BE
-## FORGOTTEN. The mixed case is in the VECTOR names, and it is real: the same
-## deck written by the two binaries gives `S_1_1` and `s_1_1`. Nothing in the
-## deck half reads them -- `sp`'s plots row routes to the viewer and declares no
-## `vectors` proc -- so this row asserts the ABSENCE. The day PLAN.md §9b's
-## matrix picker adds one, this row is what makes the author choose between
-## declaring a case-insensitive reader and reddening a suite.
-check {SM5 the deck half declares no reader of the S-parameter vector names, so\
- nothing here can be case-sensitive about them} \
+## ⚠ SM5 WAS THE EXPOSURE THE DECK HALF LEFT BEHIND, AND ISSUE 1454 IS WHERE
+## ITS JOB CHANGES HANDS. As issue 1452 shipped it, this row asserted the
+## ABSENCE of any reader of the S-parameter vector names -- `sp`'s plots row
+## declared no `vectors` proc -- so that the author of §9b's matrix picker would
+## have to choose deliberately between a case-insensitive reader and a red
+## suite. §9b landed (issue 1454), the reader exists, and the row now asserts
+## what it was holding the door open FOR.
+##
+## MEASURED 2026-09-13, the same ASE-L-rendered `sp` deck written by both
+## binaries:
+##
+##     the fork    frequency S_1_1 ... Y_1_1 ... Z_1_1 ... NF NFmin Rn SOpt
+##     apt 45.2    frequency s_1_1 ... y_1_1 ... z_1_1 ... nf nfmin rn sopt
+##
+## `display` shows the CAPITALS on both; it is the written file that differs. So
+## the reader must fold, it must answer in the DECLARED spelling, and it must
+## strip ngspice's own `v(...)`/`i(...)` wrapper -- the `Cy` family is typed
+## `current` and is written `i(Cy_1_1)`.
+##
+## ⚠ EVERY TERM BELOW IS A DIFFERENT WAY OF BEING CASE-SENSITIVE, and the last
+## one is the control: a name that is in NEITHER file must come back absent
+## however hard the reader folds.
+check {SM5 the surface that reads the S-parameter vector names folds, answers in\
+ the DECLARED spelling, and unwraps ngspice's own v()/i()} \
   [list [dict exists [lindex [s_dget [s_ans ase::analysis_entry ngspice sp] plots] 0] vectors] \
         [s_ans ase::analysis_resultvecs ngspice sp] \
-        [lsort [dict keys [s_dget [s_ans ase::analysis_entry ngspice sp] results]]]] \
-  {0 own viewer}
+        [lsort [dict keys [s_dget [s_ans ase::analysis_entry ngspice sp] results]]] \
+        [s_ans ase::raw_vectors_present $SMFORK {S_1_1 S_1_2}] \
+        [s_ans ase::raw_vectors_present $SMAPT  {S_1_1 S_1_2}] \
+        [s_ans ase::raw_vectors_fold {i(Cy_1_1)}] \
+        [s_ans ase::raw_vectors_fold {v(pole(1))}] \
+        [s_ans ase::raw_vectors_present $SMAPT {S_9_9}]] \
+  [list 1 own viewer {S_1_1 S_1_2} {S_1_1 S_1_2} cy_1_1 {pole(1)} {}]
+
+
+# ===========================================================================
+# SX -- THE TABLE AS A WIDGET'S DATA, AND THE RESULT MATRIX (issue 1454)
+# ===========================================================================
+## Everything §9a and §9b need from the SCHEMA and from the ADAPTER. The widgets
+## themselves are `tests/headless/test_ase_dialogs.tcl` section SP, which runs
+## on the display arm; these rows run on both.
+
+## ⚠ THE MATRIX IS A TRANSCRIPT, NOT A GUESS. MEASURED 2026-09-13 on apt 45.2
+## AND on the fork, one deck per shape, `display` inside the `.control` block:
+##
+##   2 ports, no noise flag   S_1_1 S_1_2 S_2_1 S_2_2  Y_… (4)  Z_… (4)   = 12
+##   3 ports, no noise flag   S_… (9)  Y_… (9)  Z_… (9)                   = 27
+##   2 ports, noise flag on   + Cy_1_1 Cy_1_2 Cy_2_1 Cy_2_2 NF NFmin Rn SOpt = 20
+##
+## ⚠ THE `Cy` MATRIX IS A FINDING AND `evidence/sp-stage9.md` DOES NOT HAVE IT.
+## That file names FOUR noise vectors; the noise correlation matrix is a fifth
+## thing and an N x N grid of its own. A picker that silently omitted a family
+## the run produces would be this stage's own defect class.
+check {SX1 a two-port row's matrix is the twelve vectors the run really answers,\
+ in three families} \
+  [list [llength [s_ans ase::analysis_matrix ngspice sp [sp_row]]] \
+        [s_ans ase::analysis_matrix_families ngspice sp [sp_row]] \
+        [s_ans ase::backend::ngspice::sp_vectors [sp_row]]] \
+  [list 12 {S Y Z} \
+        {S_1_1 S_1_2 S_2_1 S_2_2 Y_1_1 Y_1_2 Y_2_1 Y_2_2 Z_1_1 Z_1_2 Z_2_1 Z_2_2}]
+
+## ⚠ THE GRID'S SIZE IS THE USER'S OWN TABLE, which is why `ase::analysis_matrix`
+## takes the ROW. A literal list could not be right for both shapes.
+set SX2ROW3 {type sp enabled 1 points 3 start 100meg stop 1g donoise 1 \
+             ports {{src v1 num 1} {src v2 num 2} {src v3 num 3}}}
+check {SX2 a three-port row's matrix is 27, and the noise families do NOT appear\
+ on it even with the flag on} \
+  [list [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW3]] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW3]] \
+  [list 27 {S Y Z}]
+
+## ⚠ SX3's SECOND HALF IS THE ONE THAT WOULD COST A USER A TRACE. `Cy_1_1` is
+## typed `current`, so ngspice writes it as `i(Cy_1_1)` -- and
+## `wviewer::validate_rpn` answers `unknown token 'Cy_1_1'` for the bare name
+## against EITHER binary's variable list while accepting the wrapped one against
+## both. `vector` and `expr` are two keys for exactly that reason, and for every
+## other family they are equal.
+set SX3ROW [sp_row donoise 1]
+proc sx_entry {row vec} {
+  foreach m [s_ans ase::analysis_matrix ngspice sp $row] {
+    if {[s_dget $m vector] eq $vec} { return $m }
+  }
+  return {}
+}
+check {SX3 the noise flag adds the Cy matrix and the four scalars, and Cy is the\
+ one family whose plot expression is not its name} \
+  [list [llength [s_ans ase::analysis_matrix ngspice sp $SX3ROW]] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX3ROW] \
+        [s_dget [sx_entry $SX3ROW Cy_1_2] expr] \
+        [s_dget [sx_entry $SX3ROW S_1_2] expr] \
+        [s_dget [sx_entry $SX3ROW NF] expr] \
+        [dict exists [sx_entry $SX3ROW NF] i]] \
+  [list 20 {S Y Z Cy Noise} {i(Cy_1_2)} S_1_2 NF 0]
+
+## ⚠ SX4 IS THE NON-VACUITY ROW FOR EVERY SX ABOVE. A row with no table has no
+## matrix at all -- so a `sp_matrix` that answered a fixed 2x2 whatever it was
+## given would be caught here -- and exactly ONE of the eleven shipped types
+## declares the hook, so nothing else in the registry moved.
+set SX4DECL {}
+foreach sxt [dict keys [s_ans ase::analysis_types ngspice]] {
+  if {[s_ans ase::analysis_matrix_declared ngspice $sxt] eq {1}} { lappend SX4DECL $sxt }
+}
+check {SX4 an empty table has no matrix, and exactly one shipped type declares\
+ one at all} \
+  [list [s_ans ase::analysis_matrix ngspice sp {type sp enabled 1}] \
+        $SX4DECL \
+        [s_ans ase::analysis_matrix ngspice tran {type tran enabled 1 step 1n stop 1u}] \
+        [s_ans ase::analysis_matrix_declared ngspice tran]] \
+  [list {} sp {} 0]
+
+## ⚠ SX5: ONE BODY, TWO READERS. `sp_vectors` is `sp_matrix` FLATTENED, so a
+## picker cannot offer a cell the `vectors` reader has never heard of and the
+## reader cannot name a vector no cell offers. That is the eight-copies drift
+## this batch exists to delete, asked of the pair that would drift first.
+set SX5FLAT {}
+foreach m [s_ans ase::analysis_matrix ngspice sp $SX3ROW] { lappend SX5FLAT [s_dget $m vector] }
+check {SX5 the declared vectors proc is the matrix flattened, and the registry\
+ really routes to it} \
+  [list [expr {$SX5FLAT eq [s_ans ase::backend::ngspice::sp_vectors $SX3ROW]}] \
+        [s_dget [lindex [s_dget [s_ans ase::analysis_entry ngspice sp] plots] 0] vectors]] \
+  [list 1 ::ase::backend::ngspice::sp_vectors]
+
+## ⚠ SX6: THE SCAN. MEASURED against `ase::netlist_facts`' own answer for a deck
+## carrying one plain V source, one declaring `portnum 2 z0 75`, one more plain
+## V source, a CURRENT source and a source INSIDE a subcircuit.
+##
+##   * a current source is not offered -- `vsrc.c:31-37` puts `portnum` on the
+##     VOLTAGE source and there is no `isrc` equivalent;
+##   * a subcircuit's source is not offered -- `alter <name>` addresses an
+##     instance by its own name and `v9` is not one at the top level;
+##   * a source that already declares `portnum`/`z0` comes back with them
+##     PREFILLED, and one that declares nothing gets the next free number and a
+##     blank Z0 (the 50 ohm default is the simulator's and ASE-L does not invent
+##     it -- row SL2);
+##   * and an entry already in the table is not offered twice.
+##
+## ⚠ THE THIRD TERM IS THE ONE THAT REFUTES PLAN.md §9a. That paragraph says the
+## scan *"only adds sources that already declare one"*; measured, that offers
+## NOTHING on the bench this whole stage exists for -- two ordinary V sources
+## promoted at run time.
+set SXNL "* b\nv1 in 0 dc 0 ac 1\nv2 out 0 dc 0 ac 1 portnum 2 z0 75\nv3 x 0 dc 1\ni1 a 0 dc 1\nr1 in mid 50\n.subckt sub a b\nv9 a b dc 1\n.ends\n.end\n"
+set SXFACTS [s_ans ase::netlist_facts $SXNL]
+check {SX6 the scan offers every top-level voltage source, prefills the one that\
+ already declares a port, and skips a current source and a subcircuit's} \
+  [list [s_ans ase::analysis_setup_scan ngspice sp $SXFACTS {type sp enabled 1}] \
+        [s_ans ase::analysis_setup_scan ngspice sp $SXFACTS \
+           {type sp enabled 1 ports {{src v1 num 1 z0 50}}}] \
+        [s_ans ase::analysis_setup_scan ngspice tran $SXFACTS {type tran enabled 1}] \
+        [s_ans ase::analysis_setup_scan ngspice sp {} {type sp enabled 1}]] \
+  [list {{src v1 num 1 z0 {}} {src v2 num 2 z0 75} {src v3 num 3 z0 {}}} \
+        {{src v2 num 2 z0 75} {src v3 num 3 z0 {}}} \
+        {} {}]
+
+## ⚠ SX7: THE COLUMN DECLARATION, WHICH IS THE WHOLE OF D34-D37 FOR THIS STAGE.
+## `Source`, `Port` and `Z0 (ohm)` are the ADAPTER's; core answers the noun, the
+## minimum and the labels and never learns what an entry holds.
+set SX7COLS {}
+foreach sxc [s_ans ase::analysis_setup_columns ngspice sp] {
+  lappend SX7COLS [list [s_dget $sxc name] [s_dget $sxc label]]
+}
+check {SX7 the table's columns, its noun and its minimum all come from the\
+ registry, and a type with no contract answers empty} \
+  [list $SX7COLS \
+        [s_ans ase::analysis_setup_noun ngspice sp 1] \
+        [s_ans ase::analysis_setup_noun ngspice sp 2] \
+        [s_ans ase::analysis_setup_min ngspice sp] \
+        [s_dget [s_ans ase::analysis_setup_column ngspice sp z0] label] \
+        [s_ans ase::analysis_setup_column ngspice sp nosuchcolumn] \
+        [s_ans ase::analysis_setup_columns ngspice tran] \
+        [s_ans ase::analysis_setup_min ngspice tran]] \
+  [list {{src Source} {num Port} {z0 {Z0 (ohm)}}} \
+        port ports 2 {Z0 (ohm)} {} {} 0]
+
+## ⚠ SX8: THE DIALOG'S NOTE IS `ase::needs_eval`'s OWN TWO ARMS AND NOT A SECOND
+## OPINION. A surface that judged the table its own way could pass a table
+## `render_deck` then refuses, which is the "nothing the window shows may fail to
+## reach the deck" rule this stage is easiest to break. The second term is the
+## ADAPTER's rule reaching the same banner, and the third is a type with no
+## contract having nothing to say.
+check {SX8 the setup banner carries core's count and the adapter's rules through\
+ one evaluator} \
+  [list [s_ans ase::analysis_setup_banner ngspice sp [sp_row]] \
+        [lindex [lindex [s_dget [s_ans ase::analysis_setup_banner ngspice sp \
+           {type sp enabled 1 ports {{src v1 num 1}}}] lines] 0] 0] \
+        [lindex [lindex [s_dget [s_ans ase::analysis_setup_banner ngspice sp \
+           {type sp enabled 1 ports {{src v1 num 1 z0 0} {src v2 num 2}}}] lines] 0] 0] \
+        [s_ans ase::analysis_setup_banner ngspice tran {type tran enabled 1}]] \
+  [list {state clear} two_ports setup_check {state clear}]
+
+## ⚠ SX9: THE READER THAT MUST FOLD, ASKED OF A REAL ngspice RAWFILE OF EACH
+## BINARY'S SHAPE. `sm_raw` writes the canned pair; this row adds the `v()`/`i()`
+## WRAP, which `sm_raw` does not produce and which the real files do -- `Cy_1_1`
+## is typed `current` and is written `i(Cy_1_1)`.
+set SX9RAW [file join $scratch sx9.raw]
+sm_raw $SX9RAW {i(cy_1_1) v(in) nf sopt}
+set SX9RAWF [file join $scratch sx9f.raw]
+sm_raw $SX9RAWF {i(Cy_1_1) v(in) NF SOpt}
+check {SX9 the same declared names come back from both binaries' spellings, and a\
+ name in neither file does not} \
+  [list [s_ans ase::raw_vectors_present $SX9RAW {Cy_1_1 NF SOpt S_1_1}] \
+        [s_ans ase::raw_vectors_present $SX9RAWF {Cy_1_1 NF SOpt S_1_1}] \
+        [s_ans ase::raw_vectors_present [file join $scratch nosuch.raw] {NF}] \
+        [s_ans ase::raw_vectors_present $SX9RAW {NF} {Some Other Plot}]] \
+  [list {Cy_1_1 NF SOpt} {Cy_1_1 NF SOpt} {} {}]
 
 # ===========================================================================
 # SC -- THE CORPUS, AND THE ROUND TRIP WITH A TABLE IN IT

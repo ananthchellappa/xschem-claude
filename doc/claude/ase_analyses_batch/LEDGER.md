@@ -862,6 +862,215 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ⚠ T1 HAS NOT BEEN AT ZERO SINCE STAGE 7, AND FOUR OF TODAY'S REPORTS OF IT WERE WRONG — 2026-09-13
+
+**The fault is the driver's, and the defect is the batch's own.** T1 was run solo after Stage 9
+task 2 with nothing else alive. It read **70 cases, rc 0** — and **six counted failure lines**,
+which is what every earlier run of it today would have read had anyone looked in the right place.
+
+**How the mistake was made, stated plainly so it is not repeated.** `run_regression.tcl` prints
+only `Start …` / `Finish …` to stdout, **exits 0 whatever happens**, and writes its verdicts —
+and its `Total num fail:` counters — to **`tests/results.log`** and nowhere else. The driver
+grepped the *stdout capture* for `FAIL` / `FATAL` / `TIMED OUT`, found nothing, and reported
+"zero counted failures". **The grep was of a file that never contains a verdict.**
+
+> **THE RULE: T1's answer lives in `tests/results.log`. Never in its stdout, and never in its
+> exit code.** `grep -cE 'FAIL$|GOLD\?|RESULT\?|^FATAL' tests/results.log`, then read the
+> `Total num fail:` lines.
+
+**What the file actually said, on the Stage 9 task 2 tree:**
+
+| case | counted | why |
+|---|---|---|
+| `test_ase_optsheet_1441` (headless) | 1 | HARNESS — no completion banner |
+| `test_ase_optsheet_1441` (display arm) | 1 | HARNESS — no completion banner |
+| `test_ase_effective_1442` | 1 | HARNESS — no completion banner |
+| `test_ase_meas_1443` | 1 | HARNESS — no completion banner |
+| `test_ase_optier_0963` | 2 | row **X7** failed, plus its harness line |
+
+**⚠ FOUR OF THE SIX ARE THIS BATCH'S OWN SUITES, AND THEY HAVE NEVER REPORTED.** All three files
+end with `RESULT: ALL PASS (n checks)` and **no `OVERALL:` line at all**. `banner_rule.tcl`'s
+`banner_complete` requires a whole-line `OVERALL: ok`, so `regression_case_failed` counts them —
+**every run, since the commit that added each to T1's case list**: `f91c36ae` (1441, stage 7),
+`1a5fefec` (1442, stage 7) and `3f31a33b` (1443, stage 8). `git log -S'OVERALL'` on all three
+prints nothing: they never had one. A sweep of **every** case in `run_regression.tcl`'s two lists
+finds **exactly these three and no others**, so the defect is bounded and it is ours.
+
+⚠ **This is issue 0689's family, and `CLAUDE.md` wrote the paragraph about it in advance** —
+*"a standing red is a defect, not furniture … it is the one place a real regression hides in plain
+sight"*, filed four times by four people who each waved it through. The shape is inverted this
+time: 0689 was the **reader** too strict for a banner that existed, this is three **suites** that
+emit no banner at all. The consequence is identical.
+
+**The sixth is the known flake, and this is its second appearance in T1.** `test_ase_optier_0963`
+row **X7** read `{0 0 0}` against `{1 1 1}` — the sky130 run died and wrote no raw. Re-run
+standalone on the same tree with nothing else alive: `MEASURE X7 rc=0 raw=284381bytes
+op-vectors=891`, **ALL PASS (108), OVERALL: ok**. The suite's own header (`:104`) already calls
+X7 a flake on the strength of the 1377 sweep, and this ledger's Stage 2 block records T1 losing
+two lines to the same row — **but that occasion had four of this batch's own ngspice processes
+live, and this one had nothing.** So the standing explanation no longer covers it. Filed as issue
+**1455** with both measurements.
+
+### The corrections to this ledger's own record
+
+Every earlier T1 claim in this document that says *"zero counted failures"* is **wrong from the
+moment `test_ase_optsheet_1441` joined the case list**, which is stage 7. What was actually true
+each time is: **rc 0, the expected number of cases, and no NEW red attributable to the commit** —
+which is a real thing to have measured, and is not what was written. The affected entries are the
+T1 rows of **Stage 8 task 1 / ⚖ R5 / 1446**, **Stage 8 task 2**, **Stage 9 task 1**, and the two
+standalone `T1 — RUN SOLO` blocks. They are corrected in place rather than deleted, each with a
+pointer here.
+
+⚠ **And one sentence in them was not merely wrong but unfalsifiable**: *"the literal strings
+`FAIL`, `FATAL` and `TIMED OUT` appear zero times in the log"*. They cannot appear in that log.
+A check that cannot fail is not a check — which is this batch's own first failure mode, committed
+by the driver, in the driver's own verification.
+
+
+### ✅ Stage 9 task 2 — the GUI half of SP, issue **1454**, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | §9a's **Ports table** and §9b's **matrix picker**, as two per-type doors on the Choose Analyses form at grid row 4 — the row that was free. `Ports…` opens a nested toplevel that edits the `sp` row's own `ports` key (no second home for it), with Add/edit/Delete, a live refusal, `Add from Schematic…` and the ratified caption. `Matrix…` writes ordinary Outputs rows in the viewer's RPN. `src/ase.tcl` +420, `src/ase_window.tcl` +735. |
+| **schema cost** | **None.** No new top-level state key, no schema bump, nothing added to `ase::omit_if_empty`, no new dialog state that serialises. Every word the two dialogs show is composed from the adapter's declared `columns` and `noun` — `Source`, `Port`, `Z0 (ohm)` appear in `ase_window.tcl` **only inside comments**, verified by the driver. |
+| **driver's own re-run** | `test_ase_sp_1452` **ALL PASS (50)** on **both** arms (41 → 50). `test_ase_dialogs` **ALL PASS (37)** headless, **1 FAILED (382 passed)** on the dev display — the one red is `G2sens`, issue **1436**, standing, `{1 1 0 1 0 Entry Entry normal}`, naming `sens` and nothing of this stage's. `test_ase_core` **636**, `test_ase_preflight` **235**, `test_ase_meas_1443` **113**. |
+| **byte identity** | Re-run by the driver: `TRACKED=104  NOT-BYTE-IDENTICAL={}  sp-rows=0  ports-keys=0`, `CONTROL-DISAGREES=1`, `TABLE-ROUNDTRIP=1`. `git status --short ihp-sg13g2/` empty. |
+| **sabotage** | **Twenty-seven mutations, twenty-six red by name, one behaviour-preserving survivor, zero kills.** **Four found defects in the SUITE** — see below. |
+| **T1** | ⚠ **Run solo: 70 cases — and it was NOT at zero, and the fault is the driver's.** Nothing in this task caused it; T1 read **6 counted lines**, and reading them properly for the first time is what found a standing red this driver has been mis-reporting all day. See the block below. `test_ase_sp_1452` inside T1 read **ALL PASS**; `test_ase_dialogs` is in neither arm's case list, so T1 exercises none of section SP. |
+| **ledger debts** | `rule 1454` (twenty new sentences) and `look ase_sp_ports_matrix_1454`. Queue **170 / 63 / 10**. |
+| **receipt** | `receipts/33-stage-9-sp-surface.md` |
+
+**⚠ THE HEADLINE IS A DEFECT THE DECK HALF SHIPPED AND NOBODY MEASURED: ISSUE 1450's, FOR THE
+THIRD TIME.** Issue 1452 taught `sp` to *emit* a ports table and built no widget for it. What
+nobody asked is what the **existing** widgets did with the key it added, and measured through the
+real dialog the answer was that `Options…` listed the whole two-entry table as **one free-text
+NAME/VALUE pair** and then **refused the commit** — *"a setting ASE-L cannot emit"*, subdialog
+standing, `bytes changed = 0`. **And the writer's half is sharper than the reader's**: `chana_x_ok`
+strips every key not in its `skip` list before writing the row back, so a commit that got past the
+refusal would have **destroyed the ports table** — word for word the sentence issue 1450 wrote
+about `id` and `x`, on a different key, six commits later. Both sites now also ask
+`ase::analysis_setup_key`. Sabotages **s9** (reader) and **s10** (writer) redden row `SP12`.
+
+⚠ **The general shape, and it is now a rule for this batch: a key licensed on ONE type is invisible
+to every blanket list.** `ports` is deliberately *not* in `ase::analysis_nonsetting_keys` — that is
+D4's list and it is right that it stayed at `{type enabled x id}`. But three sites ask "is this key
+a setting?" and each had to learn a **second** question. A fourth per-type row key will need
+`ase::analysis_setup_key`'s treatment, not `analysis_nonsetting_keys`'.
+
+**Four corrections the driver accepted, two of which contradict `PLAN.md`.**
+
+1. ⚠ **§9b's Smith chart cannot be drawn in this tree, so §9b is HALF shipped and says so.**
+   `grep -ri smith src/*.c src/*.tcl` prints nothing and `polar` matches only `bipolar` —
+   driver-verified. The viewer has one rectangular axis pair. The matrix picker ships; the chart
+   is a new plot engine in `wave_viewer.tcl`/`draw.c` and is recorded as **outstanding in issue
+   1454**, not as done. What the viewer *can* draw of a complex answer is offered instead —
+   `db20()`, `cph()`, `re()`, `im()`, each measured accepted against **both** binaries' variable
+   lists, with `S_9_9` and `nosuchfn()` as controls. `abs()` was not measured and is therefore not
+   on the menu. **If PLAN.md §9 is read without this receipt it will read as shipped.**
+2. ⚠ **`PLAN.md` §9a's scan rule is refuted by the stage's own headline case.** §9a says the
+   netlist scan *"only adds sources that already declare a `portnum`"*. On the bench Stage 9 exists
+   for — two **ordinary** V sources promoted at run time, no schematic edit — that rule offers
+   **nothing**. So the scan offers every top-level independent voltage source, and what the
+   declaration buys is the **prefill**: a declaring source comes back with its own number and Z0,
+   an ordinary one with the next free number and a **blank** Z0, because 50 Ω is the simulator's
+   default and ASE-L does not invent a number the user never typed (1452's `SL2`). Sabotage **s6**
+   *is the plan as written*, and it reds two rows.
+3. ⚠ **`evidence/sp-stage9.md` was one family short.** With the noise flag on and exactly two
+   ports, an `sp` run answers **20** vectors, not 16: the four scalars **and** a `Cy_i_j` **noise
+   correlation matrix**. Driver-verified on both binaries. `Cy` is also the one family whose plot
+   expression is **not** its name — it is typed `current`, so the rawfile writes `i(Cy_1_1)` and
+   `wviewer::validate_rpn` rejects the bare name against either binary. That is why a matrix entry
+   carries `vector` **and** `expr`. Appended to the evidence file.
+4. **Receipt 32's C8 is paid** — `test_ase_dialogs` `GN1b`'s stale title. It was rewritten to ask
+   **renderability** rather than the cell's state word, because the state word depends on whether
+   the capability cache is warm: `pss` reads `blocked` warm and `unrenderable` cold.
+
+**⚠ ROW `SM5` — THE TRAP RECEIPT 32 LAID WORKED, AND IT IS THE ARGUMENT FOR THE TWO-BINARY RULE.**
+Receipt 32 left `SM5` asserting the **absence** of any reader of the S-parameter vector names, so
+that whoever added one had to choose deliberately between folding and reddening a suite. It is
+**rewritten, not deleted**: eight terms, and it now asserts the fold, the declared spelling, and
+the unwrapping of ngspice's own `v()`/`i()`. Sabotage **s1** makes the reader case-sensitive:
+
+```
+s1  RED: SM5  SX9  SP14/apt          <- the fork's arm stays GREEN
+```
+
+**A case-sensitive reader is green on the development reference and reports *"this run produced
+nothing"* on the binary a downloading user has.** That is binary difference #6 — `display` says
+`S_1_1` on both, the written rawfile says `s_1_1` on apt 45.2 and `S_1_1` on the fork — turned into
+a row that fails.
+
+**⚠ THE FIFTH FAILURE MODE, MET FOUR TIMES INSIDE ONE SECTION.** *A read that raises kills the
+suite file at rc 0 instead of reddening a row* — `--nogui --pipe` exits 0 on an uncaught mid-script
+Tcl error, so the file's top-level catch turns fourteen to twenty checks into **silence that looks
+like a pass**. Every one was found by a sabotage and every one is fixed: `$sw.row.<col> insert` on
+a destroyed dialog (s11, −14 checks), `dict get [grid info …] -row` on an ungridded widget (s24,
+−20), `$tv set $it <col>` and `$tv heading <col>` on a column that no longer exists (s27, −19).
+The readers are now total — `ase_grid_row`, `sp_tbl`, `sp_head`, `sp_type`, and `SP5b` re-opening
+the dialog if `SP5`'s OK let it close. **The rule this earns: in a GUI suite, every read of a
+widget a sabotage could remove needs a total reader, not a comment.**
+
+**The one survivor is the behaviour-preserving class and cannot fail.** **s20** strips the `i(…)`
+wrapper from `SX9`'s apt-shaped fixture; the row stays green **correctly**, because the reader
+folds as well as unwraps and `cy_1_1` already matches the declared `Cy_1_1`. The mutation that
+makes the unwrap visible is **s2**, and it reds `SM5` and `SX9`.
+
+**⚠ AND THE FOURTH FAILURE MODE AGAIN — A SABOTAGE MISSING FROM THE GENERATOR.** The first pass was
+**five** short, in the way receipts 24, 25, 28 and 31 each found theirs to be: the whole-family
+deletion (s23), the ungridded door (s24), the normalising write-back (s25), the Save tick (s26)
+and the column reader (s27). **Three of those five found a suite defect on their first arm.** This
+is now the batch's most reliable finding: *the sabotage list is always short, and the missing ones
+are the expensive ones.*
+
+**⚠ FOUR ROWS HAVE NO WITNESS, AND THE RECEIPT SAYS SO RATHER THAN HIDING IT**: `SX4` (the
+non-vacuity row for SX1–SX3), `SP10`, `SP11b` and `SP13`'s second term. Each breaks only by
+deleting the thing it names. **s24** is the one of that family worth writing, because a door that
+exists and is never gridded is a rewrite somebody would actually make.
+
+**Debt M12 is PARTLY closed by task 1's measurement, and the residue is named.** `wrs2p` was
+measured on both binaries by four routes: the `let Rbase = <z0> / wrs2p / unlet Rbase` form this
+batch ships produces **the same 8 lines** as the documented `.csparam Rbase=50` card (`diff` empty
+past the generated-at line, header `# Hz S RI R 50`), and dropping the `unlet` leaks an `rbase`
+column into the results file. **What is still unmeasured is M12's second half** — nobody has opened
+the file in a third-party Touchstone reader. The debt stays open on that half alone.
+
+**⚖ R9 gains twenty strings, and two of them are one sentence in two voices.** The ports dialog's
+ratified caption — *"Ports are assigned at run time. Nothing is written to your schematic."* — and
+issue 1452's `two_ports` **fix clause** say the same thing, one as a promise and one inside a
+refusal. **A ruling on either must move both**, and they are in different files. Recorded in
+`R9_COPY_REVIEW.md` as one entry with two sites.
+
+**⚠ AND ISSUE 1453 IS ANSWERED, SHARPENED, AND MORE URGENT THAN WHEN IT WAS FILED.** Receipt 32
+found the user's `File > Open Recent` holding ten ASE-L capability-probe scratch decks and nothing
+else, and left *"which display-arm suite runs a live probe"* open. **It is one row, not a session**:
+`tests/headless/test_ase_dialogs.tcl:2715` (section **G13**, long pre-dating this work) calls
+`ase::ui::sod_case_mode`, which routes to a **live** capability probe; on the display arm the run
+reaches the Tk event loop, `no_recent_files` is back at 0 by `xinit.c:3546`'s own contract, and
+each `probe_a.sp` load records. Measured after this task's runs: **four pids × three decks, and the
+list is capped at ten** — so **four display-arm runs of that one suite flush it completely**, and
+this task ran it upwards of thirty times. **Nothing of the user's was lost here** — what it
+displaced was already probe decks — and nothing under `~/.xschem/` was touched. But the standing
+statement changes: this is not a user's own session filling their list, it is **the test suite
+doing it several times an hour**, and every crew that runs the display arm renews it. **1453's
+recommended option A fixes both, and it is now the next thing dispatched rather than a queued
+ruling.**
+
+**Three operating traps the crew hit and recorded, all of which left a sabotaged tree or a silent
+gap.** They belong here because the next crew will reach for the same shapes.
+
+* **`run_in_background` PLUS a trailing `&`** made the tool report *completed, exit 0* while the
+  child was still applying sabotages — the very next `md5sum` showed `src/ase.tcl` mutated.
+  **Background a runner with the tool's own mechanism and nothing else, and md5-check before
+  trusting any tree state.**
+* **Editing a running bash script** made bash resume at a stale byte offset (`syntax error near
+  unexpected token ';'`), and that arm's restore-and-verify tail never ran. The tree was clean by
+  luck. **Write the runner once, freeze a copy, run the copy.**
+* **Two sabotage runners raced** — `cp … && nohup runner &` backgrounds the *whole* `&&` list — and
+  the loser's restore silently reverted a hardening applied minutes earlier: `grep -c 'proc
+  sp_head'` answered **0** against a file verified green. **One runner at a time, launched on its
+  own line, confirmed with `ps`, and checked with a grep for a named proc rather than an md5.**
+
+
 ### ✅ Stage 9 task 1 — the DECK half of SP, issue **1452**, collected 2026-09-13
 
 | | |
@@ -871,7 +1080,7 @@ left. Recorded here, and a backup of the queue was taken before the crew's own `
 | **driver's own re-run** | New `test_ase_sp_1452` **ALL PASS (41)** on **both** arms. `test_ase_core` **636/636**, `test_ase_preflight` **235/235**, `test_ase_meas_1443` **113/113**, all both arms. `test_ase_dialogs` 37 headless / one standing red on display. |
 | **byte identity** | 104 tracked `.state` files, **zero not byte-identical, zero `sp` rows, zero `ports` keys**, and `git status --short ihp-sg13g2/` **empty** — the four existing SP benches did not move. |
 | **sabotage** | **Twelve, no survivors.** Two found defects **in the suite itself**. |
-| **T1** | ✅ **Run solo: 70 cases** — up from 69, the new suite joined — **rc 0, zero counted failures.** Fourth clean T1 of the day. |
+| **T1** | ⚠ **CORRECTED 2026-09-13 — this said "rc 0, zero counted failures" and it was not measured.** What was measured: **70 cases, rc 0** (up from 69, the new suite joined) **and no new red attributable to this commit**. `tests/results.log` was not read; it held **six** counted lines, four of them this batch's own banner-less suites. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* above. |
 | **receipt** | `receipts/32-stage-9-sp-deck.md` |
 
 **Three findings changed the design, and the first one amends a standing rule.**
@@ -948,7 +1157,7 @@ anywhere**, and a measurement row could only be created by hand-editing a `.stat
 | **byte identity** | 104/104 round-trip byte-identically with the non-vacuity control; no new state key, no schema bump. |
 | **sabotage** | **30 mutations plus a targeted re-run of 2**: `md5ok=1` on all five files every arm, three `RESULT:` lines every arm, **29 red, 1 survivor** (argued behaviour-preserving), **zero kills**. |
 | **receipt** | `receipts/31-stage-8-measurements-gui.md` |
-| **T1** | ✅ **Run solo after it landed: 69 cases, rc 0, ZERO counted failures**, and `FAIL` / `FATAL` / `TIMED OUT` appear zero times in the log. **Third clean T1 of the day.** |
+| **T1** | ⚠ **CORRECTED 2026-09-13.** Measured: **69 cases, rc 0, no new red attributable to this commit.** The "ZERO counted failures" claim was read from run_regression's stdout, which carries no verdicts — and the clause about `FAIL` / `FATAL` / `TIMED OUT` appearing zero times named strings that **cannot appear in that file**. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* above. |
 
 ⚠ ⚠ **THE HEADLINE: §8b's GAIN-MARGIN LINE ANSWERS NOTHING, ON EITHER BINARY.** The plan's
 `meas ac gm find vdb(out) when vp(out)=-180` fails with `out of interval` **because `vp()` is
@@ -987,10 +1196,14 @@ test_ase_dialogs` filed, not drained.
 ledger predicted when the stage's task split was written. A whole sub-dialog and a new column are
 pixels, and the crew decided it **by measurement** rather than by quoting the plan.
 
-### ✅ T1 — RUN SOLO A SECOND TIME, STILL ZERO, 2026-09-13
+### ⚠ T1 — RUN SOLO A SECOND TIME, 2026-09-13 — **THE HEADLINE OF THIS BLOCK IS CORRECTED**
 
-**`69 Start lines, rc 0, zero counted failures`**, and the literal strings `FAIL`, `FATAL` and
-`TIMED OUT` appear **zero** times in the log. Run after `fe0c2bdc` with nothing else writing.
+**`69 Start lines, rc 0`**, run after `fe0c2bdc` with nothing else writing. ⚠ **The rest of what
+this block claimed was not measured**: "zero counted failures" came from grepping
+run_regression's **stdout**, which prints only `Start` / `Finish` lines, and the clause about
+`FAIL`, `FATAL` and `TIMED OUT` appearing zero times named three strings that **cannot appear in
+that file**. `tests/results.log` — the only place the verdicts live — was never opened. It held
+**at least four** counted lines on that tree. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* above.
 
 This one covers the three landings since the first clean run: ⚖ **R6's GUI half** (1448), the
 **`id` allow-list fix** (1449) and the **one-list fix** (1450) — all three of which touched

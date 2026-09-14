@@ -5006,6 +5006,20 @@ proc ase::ui::choose_analyses {key {type {}} {idx {}}} {
   # button at all because the gap is in ASE-L rather than in the binary.
   button $w.detect -text Detect -command [list ase::ui::chana_detect $key]
   grid $w.detect -row 8 -column 1 -sticky e -padx 8 -pady 2
+  # ── STAGE 9a/9b (issue 1454): THE TWO PER-TYPE SUBDIALOG DOORS. ────────────
+  #
+  # ⚠ THEY LAND ON GRID ROW 4, WHICH WAS FREE, AND NOTHING MOVES. Issue 1405's
+  # lesson is about PATHS and issue 1448's row shift is about not moving the
+  # ones that exist: `$w.form` (3), `$w.note` (7), `$w.opts`/`$w.detect` (8) and
+  # the button bar (9) are all where they were, and rows 5-6 are still free.
+  #
+  # ⚠ THEY ARE CREATED ALWAYS AND GRIDDED PER TYPE, because `chana_show`
+  # destroys `$w.form` and nothing else -- a button built inside the form would
+  # be rebuilt eleven times and its path would come and go under a suite.
+  # `ase::ui::chana_show` grids or removes them from the REGISTRY's answer.
+  button $w.setupbtn -text {} -command [list ase::ui::setup_dialog $key]
+  button $w.matrixbtn -text [ase::ui::lbl_matrix] \
+    -command [list ase::ui::matrix_dialog $key]
   if {![ase::analysis_detectable $sim $caps]} {
     $w.detect configure -state disabled
   }
@@ -5556,6 +5570,30 @@ proc ase::ui::chana_show {key} {
   # overlays the widgets' live values on the stored row, so a banner refreshed
   # before the rebuild would describe the PREVIOUS type's widgets.
   ase::ui::chana_note $key
+  # ── STAGE 9a/9b (issue 1454): THE TWO SUBDIALOG DOORS, PER TYPE. ───────────
+  #
+  # ⚠ A STANDING SUBDIALOG DIES WITH THE REBUILD. Both of them edit ONE row of
+  # ONE type and both read `dlg($key,antype)` live, so a Ports table left open
+  # across a type click would write the previous type's table into the new
+  # type's row. `chana_show` is the one door every rebuild comes through, which
+  # is where `chana_cache_save` already sits for the same reason.
+  catch {ase::ui::setup_cancel $key}
+  catch {ase::ui::matrix_cancel $key}
+  if {[winfo exists $w.setupbtn]} {
+    if {[llength [ase::ui::setup_colnames $_sim2 $type]]} {
+      $w.setupbtn configure -text [ase::ui::lbl_setup_button $_sim2 $type]
+      grid $w.setupbtn -row 4 -column 0 -sticky w -padx 8 -pady 2
+    } else {
+      grid remove $w.setupbtn
+    }
+  }
+  if {[winfo exists $w.matrixbtn]} {
+    if {[ase::analysis_matrix_declared $_sim2 $type]} {
+      grid $w.matrixbtn -row 4 -column 1 -sticky e -padx 8 -pady 2
+    } else {
+      grid remove $w.matrixbtn
+    }
+  }
   # ⚠ AFTER THE FORM, so the grid's selection is repainted to match the row the
   # form is now showing -- a type cell click has to move the highlight too, or
   # the two halves of this dialog disagree about which analysis is being edited.
@@ -5784,6 +5822,13 @@ proc ase::ui::chana_cancel {key} {
   array unset dlg $key,antype
   array unset dlg $key,anen
   array unset dlg $key,anextra
+  # issue 1454: the two Stage 9 subdialogs are Tk children of `.chana`, so the
+  # destroy below takes their WINDOWS -- these are their RECORDS, which would
+  # otherwise outlive them exactly as `anextra` did before item 10.
+  array unset dlg $key,anports
+  array unset dlg $key,anscan
+  array unset dlg $key,mxv,*
+  array unset dlg $key,mxfmt
   # ⚖ R5 / ISSUE 1445: CANCEL DISCARDS EVERYTHING, INCLUDING WHAT WAS
   # REMEMBERED. The cache is the dialog's memory and not the bench's, so it goes
   # out with the dialog by the same rule `anextra` does -- and `chana_ok` ends
@@ -5839,8 +5884,22 @@ proc ase::ui::chana_options {key} {
   # named 'id' that ASE-L cannot emit`, subdialog left standing, nothing
   # written -- so the editor could not be opened-and-saved on such a row at all,
   # and the one gesture that got an OK out of it was DELETING the name.
+  #
+  # ⚠ AND IT HAPPENED A THIRD TIME, TO THE `setup` TABLE. Issue 1454. Issue
+  # 1452's `ports` key is licensed on ONE type rather than on every row, so it
+  # is deliberately NOT in `ase::analysis_nonsetting_keys` -- and this line only
+  # asked that proc. MEASURED 2026-09-13 through these very widgets, on an `sp`
+  # row carrying a two-port table:
+  #
+  #     Options editor lists: {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50}}}
+  #     OK pressed         -> subdialog still up = 1, bytes changed = 0
+  #
+  # The whole table listed as one free-text NAME/VALUE pair, and OK refusing it
+  # as a setting ASE-L cannot emit. The third site asks the schema the third
+  # question it has an answer for: `ase::analysis_setup_key`, for THIS type.
   set skip [concat [ase::analysis_nonsetting_keys] \
-                   [ase::ui::chana_fields $type $_sim]]
+                   [ase::ui::chana_fields $type $_sim] \
+                   [ase::analysis_setup_key $_sim $type]]
   set ex [dict create]
   dict for {k v} $row {
     if {[lsearch -exact $skip $k] < 0} { dict set ex $k $v }
@@ -5996,8 +6055,14 @@ proc ase::ui::chana_x_ok {key} {
   # destroyed ⚖ R6's handle and issue 1419's verbatim lines -- and the loop after
   # it then refused the commit outright, because the same keys had been seeded
   # into `anextra` by the reader. Both halves go away by asking the schema.
+  #
+  # ⚠ AND THE TYPE'S OWN `setup` TABLE IS THE THIRD KEY THE STRIP WOULD HAVE
+  # DESTROYED (issue 1454). It is licensed per TYPE, not per row, so it is not
+  # in `ase::analysis_nonsetting_keys` and `ase::analysis_setup_key` is the
+  # question that names it. Row SP12 is the byte-identity claim.
   set skip [concat [ase::analysis_nonsetting_keys] \
-                   [ase::ui::chana_fields $type $_sim]]
+                   [ase::ui::chana_fields $type $_sim] \
+                   [ase::analysis_setup_key $_sim $type]]
   foreach k [dict keys $row] {
     if {[lsearch -exact $skip $k] < 0} { set row [dict remove $row $k] }
   }
@@ -6021,6 +6086,672 @@ proc ase::ui::chana_x_ok {key} {
   ase::ui::populate $key
   array unset dlg $key,anextra
   catch {destroy [dict get $wins $key].chana.x}
+}
+
+
+# ===========================================================================
+# STAGE 9a -- THE SETUP TABLE, AS A WIDGET (issue 1454)
+# ===========================================================================
+#
+# Issue 1452 made a setup table EMIT and built no widget. `ports` was a row key
+# with no surface anywhere: the only way to put a table on a bench was to
+# hand-edit a `.state` file, and the one editor that DID see the key listed the
+# whole table as a free-text NAME/VALUE pair and refused the commit (measured;
+# `ase::ui::chana_options`' own header).
+#
+# ⚠ EVERY WORD IN THIS DIALOG COMES FROM THE CONTRACT, and that is D34-D37 at
+# its most literal. `Source`, `Port` and `Z0 (ohm)` are the ADAPTER's declared
+# column labels; the noun in the title, the caption and every refusal is the
+# adapter's declared `noun`; the minimum is its declared `min`. Nothing in this
+# file knows that an entry holds a voltage source, and a simulator whose
+# S-parameter analysis keeps four columns gets four without a line changing
+# here.
+#
+# ⚠ THE COMMIT MODEL IS THE `Options…` SUBDIALOG'S, NOT Choose Analyses'.
+# This is a nested toplevel of `.chana` that owns ONE row key, so it writes that
+# key straight into the addressed row and closes; the parent OK then merges only
+# `enabled` and the quick fields over the SAME row, and the two compose exactly
+# as `chana_x_ok` and `chana_ok` already do. A working copy lives in
+# `dlg($key,anports)` so Cancel really cancels.
+#
+# ⚠ AND OK IS A COMMIT DOOR, FOR `chana_ok`'s REASON. `span.c:376-386` calls
+# `controlled_exit(EXIT_BAD)` below two ports -- the process dies and takes
+# every other analysis of the run with it, `op` included -- so a table the run
+# will refuse must not leave this dialog. The evaluator is
+# `ase::analysis_setup_banner`, which is `ase::needs_eval`'s own two arms and
+# not a second opinion: a dialog that judged the table its own way could pass
+# something `render_deck` then refuses, which is the "nothing the window shows
+# may fail to reach the deck" rule this stage is easiest to break. An EMPTY
+# table is the untouched state and is allowed through; the run-time `two_ports`
+# fatal still refuses it, and still refuses a hand-edited `.state`.
+
+# The plural noun this contract uses, title-cased for a heading.
+proc ase::ui::setup_noun_title {sim type {n 1}} {
+  return [string totitle [ase::analysis_setup_noun $sim $type $n]]
+}
+proc ase::ui::lbl_setup_button {sim type} {
+  return "[ase::ui::setup_noun_title $sim $type 2]\u2026"
+}
+proc ase::ui::lbl_setup_title {sim type ty} {
+  return "Analysis [ase::ui::setup_noun_title $sim $type 2] ($ty)"
+}
+# ⚖ R9 / PLAN.md §9a, ratified there as the Ports table's caption. It is
+# COMPOSED from the declared noun for the same reason `two_ports`' fix clause is
+# -- the deck half already ships `<noun>s are assigned at run time, and nothing
+# is written to your schematic` inside a refusal, and two spellings of one
+# promise would be worse than either.
+proc ase::ui::lbl_setup_caption {sim type} {
+  return "[ase::ui::setup_noun_title $sim $type 2] are assigned at run time.\
+ Nothing is written to your schematic."
+}
+proc ase::ui::lbl_setup_scan   {} { return "Add from Schematic\u2026" }
+# The scan picker's own title. ⚠ NOT the button's text with the noun bolted
+# on the front: `Ports Add from Schematic…` reads as a sentence fragment, and a
+# window title ending in an ellipsis is a button wearing a title's clothes.
+proc ase::ui::lbl_setup_scan_title {sim type} {
+  return "Add [ase::ui::setup_noun_title $sim $type 2] from Schematic"
+}
+proc ase::ui::lbl_setup_none   {sim type} {
+  return "This schematic offers no more [ase::analysis_setup_noun $sim $type 2]."
+}
+proc ase::ui::lbl_setup_needs  {sim type col} {
+  return "Every [ase::analysis_setup_noun $sim $type 1] needs a $col."
+}
+proc ase::ui::lbl_matrix       {} { return "Matrix\u2026" }
+proc ase::ui::lbl_matrix_title {ty} { return "Result Matrix ($ty)" }
+proc ase::ui::lbl_matrix_format {} { return {Format} }
+proc ase::ui::lbl_matrix_none  {} { return {This analysis reports no matrix yet.} }
+proc ase::ui::lbl_matrix_ran   {n} {
+  return "The last run produced $n of these."
+}
+
+# The contract's column NAMES, in display order.
+proc ase::ui::setup_colnames {sim type} {
+  set out {}
+  foreach c [ase::analysis_setup_columns $sim $type] {
+    if {[catch {dict size $c}] || ![dict exists $c name]} { continue }
+    lappend out [dict get $c name]
+  }
+  return $out
+}
+proc ase::ui::setup_collabel {sim type name} {
+  set c [ase::analysis_setup_column $sim $type $name]
+  if {$c ne {} && [dict exists $c label]} { return [dict get $c label] }
+  return $name
+}
+# One entry's value under one column, trimmed -- `{}` for a malformed entry.
+# ⚠ TOTAL BY CONSTRUCTION: a hand-edited `.state` can put anything under the
+# table key, and a dialog that raised while filling its own list would take the
+# whole window with it.
+proc ase::ui::setup_cell {e name} {
+  if {[catch {dict size $e}]} { return {} }
+  if {![dict exists $e $name]} { return {} }
+  return [string trim [dict get $e $name]]
+}
+
+proc ase::ui::setup_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  # ⚠ THE SAME MEMBERSHIP GUARD AS chana_ok AND chana_x_ok, AND FOR THE SAME
+  # REASON: this door writes the bench through ase::session_update, and
+  # `[info exists dlg($key,antype)]` is TRUE for an `antype` of `{}`.
+  if {[ase::ui::chana_committable $key] eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $_sim $dlg($key,antype)] error}
+    return
+  }
+  set type $dlg($key,antype)
+  set cols [ase::ui::setup_colnames $_sim $type]
+  if {![llength $cols]} { return }
+  set w [dict get $wins $key].chana.setup
+  catch {destroy $w}
+  toplevel $w
+  wm title $w [ase::ui::lbl_setup_title $_sim $type $type]
+  set row [ase::ui::chana_row $key $type]
+  set dlg($key,anports) [ase::analysis_setup_rows $_sim $type $row]
+  ttk::treeview $w.tv -columns $cols -show headings -height 6 \
+    -selectmode browse -style Ase.Treeview
+  foreach c $cols {
+    set cd [ase::analysis_setup_column $_sim $type $c]
+    set hd [ase::ui::setup_collabel $_sim $type $c]
+    set gw 8
+    if {[dict exists $cd width]} { set gw [dict get $cd width] }
+    set str 0
+    if {[dict exists $cd stretch]} { set str [dict get $cd stretch] }
+    $w.tv heading $c -text $hd
+    $w.tv column $c -width [ase::ui::colw $gw $hd] \
+                    -minwidth [ase::ui::colw 0 $hd] -anchor w -stretch $str
+  }
+  bind $w.tv <<TreeviewSelect>> [list ase::ui::setup_pick $key]
+  # ⚠ THE CAPTION IS PART OF THE FEATURE AND NOT DECORATION. The whole of Stage
+  # 9 is "S-parameters with no schematic edit"; a user looking at a table of
+  # source names has every reason to think ASE-L is about to write them onto the
+  # schematic, and it is not -- `render_deck` emits `alter <src> portnum = N` at
+  # run time and the design file is never touched. PLAN.md §9a ratifies the
+  # sentence.
+  label $w.cap -anchor w -justify left -wraplength 520 \
+    -text [ase::ui::lbl_setup_caption $_sim $type]
+  label $w.note -text {} -anchor w -justify left -wraplength 520
+  frame $w.row
+  foreach c $cols {
+    label $w.row.l$c -text "[ase::ui::setup_collabel $_sim $type $c]:" \
+      -font AseLabelFont
+    entry $w.row.$c -width 10 -font AseEntryFont
+    pack $w.row.l$c $w.row.$c -side left -padx 2
+    bind $w.row.$c <Return> [list ase::ui::setup_add $key]
+  }
+  button $w.row.add -text Add -command [list ase::ui::setup_add $key]
+  button $w.row.del -text Delete -command [list ase::ui::setup_del $key]
+  pack $w.row.add $w.row.del -side left -padx 2
+  frame $w.btns
+  button $w.btns.proceed -text OK -command [list ase::ui::setup_ok $key]
+  button $w.btns.cancel -text Cancel -command [list ase::ui::setup_cancel $key]
+  button $w.btns.scan -text [ase::ui::lbl_setup_scan] \
+    -command [list ase::ui::setup_scan_dialog $key]
+  if {[ase::analysis_setup $_sim $type] eq {} \
+      || ![dict exists [ase::analysis_setup $_sim $type] scan]} {
+    $w.btns.scan configure -state disabled
+  }
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.scan -side left -padx 12
+  pack $w.btns.cancel -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  pack $w.row -side bottom -fill x -padx 8 -pady 2
+  pack $w.note -side bottom -fill x -padx 8 -pady 2
+  pack $w.cap -side bottom -fill x -padx 8 -pady {6 2}
+  pack $w.tv -side top -fill both -expand 1 -padx 8 -pady {8 2}
+  # item 10: ESC on the SUBDIALOG only -- a nested toplevel's bindtags never
+  # reach the parent dialog, so .chana's own ESC cannot fire from here.
+  ase::ui::bind_dialog_esc $w [list ase::ui::setup_cancel $key]
+  ase::ui::setup_fill $key
+  ase::ui::apply_theme $w
+  if {[llength $cols]} { focus $w.row.[lindex $cols 0] }
+  return $w
+}
+
+proc ase::ui::setup_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].chana.setup
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::setup_fill {key} {
+  variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![info exists dlg($key,anports)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  set type $dlg($key,antype)
+  set cols [ase::ui::setup_colnames $_sim $type]
+  $w.tv delete [$w.tv children {}]
+  set i 0
+  foreach e $dlg($key,anports) {
+    set vals {}
+    foreach c $cols { lappend vals [ase::ui::setup_cell $e $c] }
+    $w.tv insert {} end -id p$i -values $vals
+    incr i
+  }
+  ase::ui::setup_note $key
+}
+
+# Picking a line loads it into the entry row, so editing is select / change /
+# Add -- the `Options…` editor's own gesture, with no third one invented.
+proc ase::ui::setup_pick {key} {
+  variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![info exists dlg($key,anports)]} { return }
+  set sel [$w.tv selection]
+  if {[llength $sel] != 1} { return }
+  set idx [string range [lindex $sel 0] 1 end]
+  if {![string is integer -strict $idx] || $idx >= [llength $dlg($key,anports)]} { return }
+  set e [lindex $dlg($key,anports) $idx]
+  set _sim [ase::ui::chana_sim $key]
+  foreach c [ase::ui::setup_colnames $_sim $dlg($key,antype)] {
+    if {![winfo exists $w.row.$c]} { continue }
+    $w.row.$c delete 0 end
+    $w.row.$c insert 0 [ase::ui::setup_cell $e $c]
+  }
+}
+
+# THE FIRST COLUMN IS THE IDENTITY, exactly as the `Options…` editor's Name is.
+# Add on a first-column value already in the table REPLACES that entry in place
+# rather than appending a second one -- two entries naming the same thing is a
+# table no simulator can act on, and an editor that let you build one and then
+# refused at OK would be two surprises instead of none.
+proc ase::ui::setup_add {key} {
+  variable wins; variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![info exists dlg($key,anports)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  set type $dlg($key,antype)
+  set cols [ase::ui::setup_colnames $_sim $type]
+  set key1 [lindex $cols 0]
+  set e [dict create]
+  foreach c $cols {
+    if {![winfo exists $w.row.$c]} { continue }
+    dict set e $c [string trim [$w.row.$c get]]
+  }
+  if {[ase::ui::setup_cell $e $key1] eq {}} {
+    set m [ase::ui::lbl_setup_needs $_sim $type \
+             [ase::ui::setup_collabel $_sim $type $key1]]
+    catch {::ase::echo "ase: $m" error}
+    catch {$w.note configure -text $m}
+    return
+  }
+  set rows $dlg($key,anports)
+  set at -1
+  set i 0
+  foreach old $rows {
+    if {[string equal -nocase [ase::ui::setup_cell $old $key1] \
+                              [ase::ui::setup_cell $e $key1]]} { set at $i ; break }
+    incr i
+  }
+  if {$at >= 0} { lset rows $at $e } else { lappend rows $e }
+  set dlg($key,anports) $rows
+  foreach c $cols { if {[winfo exists $w.row.$c]} { $w.row.$c delete 0 end } }
+  ase::ui::setup_fill $key
+}
+
+proc ase::ui::setup_del {key} {
+  variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![info exists dlg($key,anports)]} { return }
+  set drop {}
+  foreach it [$w.tv selection] { lappend drop [string range $it 1 end] }
+  set rows {}
+  set i 0
+  foreach e $dlg($key,anports) {
+    if {[lsearch -exact $drop $i] < 0} { lappend rows $e }
+    incr i
+  }
+  set dlg($key,anports) $rows
+  ase::ui::setup_fill $key
+}
+
+# The row as it would be stored if OK were pressed now -- the addressed row with
+# the WORKING table over it. Nothing else of the row is touched, which is what
+# lets the parent OK compose.
+proc ase::ui::setup_merged_row {key} {
+  variable dlg
+  set _sim [ase::ui::chana_sim $key]
+  set type $dlg($key,antype)
+  set row [ase::ui::chana_row $key $type]
+  set k [ase::analysis_setup_key $_sim $type]
+  if {$k eq {}} { return $row }
+  if {[llength $dlg($key,anports)]} {
+    dict set row $k $dlg($key,anports)
+  } else {
+    set row [dict remove $row $k]
+  }
+  return $row
+}
+
+# ⚠ THE SAME EVALUATOR AS THE RUN, RENDERED THE SAME WAY AS THE PRECONDITION
+# BANNER -- `ase::precheck_banner_text` glyphs and `Fix:` clause included, so
+# this dialog and the form above it speak one vocabulary.
+proc ase::ui::setup_note {key} {
+  variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![winfo exists $w.note]} { return {} }
+  set txt {}
+  catch {
+    set txt [ase::precheck_banner_text \
+      [ase::analysis_setup_banner [ase::ui::chana_sim $key] $dlg($key,antype) \
+        [ase::ui::setup_merged_row $key] [ase::session_state $key]]]
+  }
+  catch {$w.note configure -text $txt}
+  return $txt
+}
+
+proc ase::ui::setup_ok {key} {
+  variable wins; variable dlg
+  set w [ase::ui::setup_win $key]
+  if {$w eq {} || ![info exists dlg($key,anports)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  if {[ase::ui::chana_committable $key] eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $_sim $dlg($key,antype)] error}
+    return
+  }
+  set type $dlg($key,antype)
+  set merged [ase::ui::setup_merged_row $key]
+  # ⚠ AN EMPTY TABLE IS THE UNTOUCHED STATE AND GOES THROUGH. A table with
+  # SOMETHING WRONG IN IT does not: the sentence stays on screen and the dialog
+  # stays up, which is the only shape that makes a one-port table hard to arrive
+  # at. The run-time refusal is unchanged and still catches the empty case and a
+  # hand-edited `.state`.
+  if {[llength $dlg($key,anports)]} {
+    set worst {}
+    foreach l [ase::analysis_setup_lines $_sim $type $merged [ase::session_state $key]] {
+      if {[lindex $l 1] eq {caution}} { continue }
+      set worst $l ; break
+    }
+    if {$worst ne {}} {
+      catch {::ase::echo "ase: [lindex $worst 2]" error}
+      ase::ui::setup_note $key
+      return
+    }
+  }
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st analyses]
+  # ⚠ THE ROW THIS DIALOG IS ADDRESSING, NOT THE FIRST OF ITS TYPE (issue 1448).
+  set idx [ase::ui::chana_row_idx $key $type]
+  if {$idx >= 0} { lset rows $idx $merged } else { lappend rows $merged }
+  dict set st analyses $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  array unset dlg $key,anports
+  catch {destroy $w.scan}
+  catch {destroy $w}
+  # the parent form's banner is now describing a different row
+  catch {ase::ui::chana_note $key}
+}
+
+proc ase::ui::setup_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,anports
+  array unset dlg $key,anscan
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].chana.setup.scan}
+    catch {destroy [dict get $wins $key].chana.setup}
+  }
+}
+
+# ─── Add from Schematic… ───────────────────────────────────────────────────
+#
+# ⚠ IT PEEKS AND NEVER NETLISTS. `ase::netlist_facts_cached` answers `{}` for a
+# bench nobody has netlisted, and a dialog may not produce a netlist because a
+# user opened it -- `ase::precheck_banner`'s constraint, issue 1435, and this
+# window is under that dialog. A cold bench gets the banner's OWN cold sentence
+# and an empty list, which is an honest nothing rather than a wrong list.
+proc ase::ui::setup_scan_dialog {key} {
+  variable wins; variable dlg
+  set pw [ase::ui::setup_win $key]
+  if {$pw eq {} || ![info exists dlg($key,anports)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  set type $dlg($key,antype)
+  set cols [ase::ui::setup_colnames $_sim $type]
+  set st [ase::session_state $key]
+  set facts [ase::netlist_facts_cached $st]
+  set cand [ase::analysis_setup_scan $_sim $type $facts \
+              [ase::ui::setup_merged_row $key]]
+  set dlg($key,anscan) $cand
+  set w $pw.scan
+  catch {destroy $w}
+  toplevel $w
+  wm title $w [ase::ui::lbl_setup_scan_title $_sim $type]
+  ttk::treeview $w.tv -columns $cols -show headings -height 6 \
+    -selectmode extended -style Ase.Treeview
+  foreach c $cols {
+    set hd [ase::ui::setup_collabel $_sim $type $c]
+    $w.tv heading $c -text $hd
+    $w.tv column $c -width [ase::ui::colw 10 $hd] \
+                    -minwidth [ase::ui::colw 0 $hd] -anchor w -stretch 0
+  }
+  set i 0
+  foreach e $cand {
+    set vals {}
+    foreach c $cols { lappend vals [ase::ui::setup_cell $e $c] }
+    $w.tv insert {} end -id s$i -values $vals
+    incr i
+  }
+  set msg {}
+  if {![llength $cand]} {
+    set msg [ase::ui::lbl_setup_none $_sim $type]
+    catch {
+      set fs [ase::facts_status $st]
+      if {[dict get $fs state] ne {warm}} {
+        set msg [ase::precheck_banner_text $fs]
+      }
+    }
+  }
+  label $w.note -text $msg -anchor w -justify left -wraplength 420
+  frame $w.btns
+  button $w.btns.proceed -text OK -command [list ase::ui::setup_scan_ok $key]
+  button $w.btns.cancel -text Cancel -command [list ase::ui::setup_scan_cancel $key]
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.cancel -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  pack $w.note -side bottom -fill x -padx 8 -pady 2
+  pack $w.tv -side top -fill both -expand 1 -padx 8 -pady {8 2}
+  ase::ui::bind_dialog_esc $w [list ase::ui::setup_scan_cancel $key]
+  # ⚠ EVERYTHING IS PRESELECTED, because the common gesture is "take them all"
+  # -- a two-source bench IS the two-port bench. Deselecting is one click.
+  $w.tv selection set [$w.tv children {}]
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::setup_scan_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,anscan)] \
+      || ![info exists dlg($key,anports)]} { return }
+  set w [dict get $wins $key].chana.setup.scan
+  if {![winfo exists $w]} { return }
+  set rows $dlg($key,anports)
+  foreach it [$w.tv selection] {
+    set i [string range $it 1 end]
+    if {![string is integer -strict $i] || $i >= [llength $dlg($key,anscan)]} { continue }
+    lappend rows [lindex $dlg($key,anscan) $i]
+  }
+  set dlg($key,anports) $rows
+  array unset dlg $key,anscan
+  catch {destroy $w}
+  ase::ui::setup_fill $key
+}
+
+proc ase::ui::setup_scan_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,anscan
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].chana.setup.scan}
+  }
+}
+
+# ===========================================================================
+# STAGE 9b -- THE RESULT MATRIX PICKER (issue 1454)
+# ===========================================================================
+#
+# An `sp` run answers in a GRID -- measured, 12 vectors for a two-port bench and
+# 27 for a three-port one, and 20 when the noise flag is on -- and until this
+# there was no way to get one of them onto a trace except by typing `S_1_1` into
+# the Add Output dialog and knowing it existed.
+#
+# ⚠ THE GRID'S SIZE IS THE PORTS TABLE'S, which is why this dialog lives beside
+# it and reads the same row. `ase::analysis_matrix` takes the row for exactly
+# that reason.
+#
+# ⚠ IT WRITES ORDINARY OUTPUT ROWS AND INVENTS NO STATE. One `{name expr plot
+# save}` row per ticked cell, `plot 1` / `save 0` -- `sp` declares
+# `resultvecs own`, so the deck already carries a `.save all` leader and a Save
+# tick would narrow nothing (issue 1434's `vecsaves` caution). Every row is
+# editable and deletable in the Outputs pane like any other.
+#
+# ⚠ AND THE FOUR FORMATS ARE THE WAVEFORM VIEWER'S OWN RPN, MEASURED ACCEPTED
+# ON BOTH BINARIES' VARIABLE LISTS. `wviewer::validate_rpn` answers `{}` for
+# `S_1_1 db20()`, `S_1_1 cph()`, `S_1_1 re()` and `S_1_1 im()` against the
+# fork's `S_1_1` AND against apt 45.2's `s_1_1`, and rejects `S_9_9` and
+# `nosuchfn()` -- so the acceptance is a measurement and not a permissive
+# validator. Nothing else is offered: `abs()` on a complex vector was not
+# measured, so it is not on the menu.
+#
+# ⚠ THERE IS NO SMITH CHART AND NO POLAR AXIS, AND THAT IS A MEASUREMENT
+# ABOUT THIS TREE RATHER THAN A CHOICE. `grep -ri smith src/*.c src/*.tcl`
+# prints NOTHING and `polar` matches only the word `bipolar`; the waveform
+# viewer has one rectangular axis pair and no mode that would draw either.
+# `Real` and `Imaginary` are what the viewer CAN draw of a complex answer, and
+# `PLAN.md` §9b's Smith chart is recorded as outstanding in issue 1454 rather
+# than reported as shipped.
+proc ase::ui::matrix_formats {} {
+  return [list [list label {Magnitude (dB)} suffix db rpn {db20()}] \
+               [list label {Phase (deg)}    suffix ph rpn {cph()}] \
+               [list label {Real}           suffix re rpn {re()}] \
+               [list label {Imaginary}      suffix im rpn {im()}]]
+}
+proc ase::ui::matrix_format_labels {} {
+  set out {}
+  foreach f [ase::ui::matrix_formats] { lappend out [dict get $f label] }
+  return $out
+}
+proc ase::ui::matrix_format_by_label {lbl} {
+  foreach f [ase::ui::matrix_formats] {
+    if {[dict get $f label] eq $lbl} { return $f }
+  }
+  return [lindex [ase::ui::matrix_formats] 0]
+}
+# One matrix entry rendered as an Outputs row under one format.
+proc ase::ui::matrix_output_row {m fmt} {
+  set ex [dict get $m expr]
+  set nm "[dict get $m vector]_[dict get $fmt suffix]"
+  set rpn [dict get $fmt rpn]
+  if {$rpn ne {}} { set ex "$ex $rpn" }
+  if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }
+  return [dict create name $nm expr $ex plot 1 save 0]
+}
+# The checkbutton variable of one cell -- a slot on the existing dlg array, so
+# `ase::ui::close`'s `array unset dlg $key,*` takes them all.
+proc ase::ui::matrix_var {key vec} { return "::ase::ui::dlg($key,mxv,$vec)" }
+
+proc ase::ui::matrix_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  if {[ase::ui::chana_committable $key] eq {}} {
+    catch {::ase::echo [ase::analysis_commit_refusal $_sim $dlg($key,antype)] error}
+    return
+  }
+  set type $dlg($key,antype)
+  # ⚠ THE ROW IT DESCRIBES IS THE ONE THE FORM IS SHOWING, MERGED. A user who
+  # has just ticked the noise flag and not yet pressed OK is looking at a form
+  # that says the run will produce `NF`; a picker built from the STORED row
+  # would not offer it.
+  set row [ase::ui::chana_merged_row $key $type]
+  set mx [ase::analysis_matrix $_sim $type $row]
+  set w [dict get $wins $key].chana.mx
+  catch {destroy $w}
+  toplevel $w
+  wm title $w [ase::ui::lbl_matrix_title $type]
+  array unset dlg $key,mxv,*
+  frame $w.body
+  # ⚠ WHAT THE LAST RUN ACTUALLY PRODUCED, THROUGH THE CASE-INSENSITIVE READER.
+  # `ase::raw_vectors_present` folds, because the two ngspice binaries write
+  # `S_1_1` and `s_1_1` into the same file for the same deck. Row SM5 of
+  # `test_ase_sp_1452.tcl` held this reader's absence open until there was a
+  # surface for it.
+  set present {}
+  catch {
+    set rf [ase::last_rawfile $key]
+    if {$rf ne {}} {
+      set nm {}
+      foreach m $mx { lappend nm [dict get $m vector] }
+      set present [ase::raw_vectors_present $rf $nm]
+    }
+  }
+  set r 0
+  foreach fam [ase::analysis_matrix_families $_sim $type $row] {
+    label $w.body.h$fam -text $fam -font AseLabelFont -anchor w
+    grid $w.body.h$fam -row $r -column 0 -sticky w -padx {8 6} -pady {6 0}
+    incr r
+    # ⚠ A MATRIX FAMILY IS LAID OUT AS A MATRIX -- entry `i,j` at grid row `i`
+    # and column `j` -- because that is the shape the answer HAS, and a
+    # nine-cell wrapped strip is not readable as one. A family with no `i`/`j`
+    # (the noise scalars) wraps instead, six to a line.
+    set ents [ase::analysis_matrix_of $_sim $type $row $fam]
+    set c 0 ; set maxr $r
+    foreach m $ents {
+      set vec [dict get $m vector]
+      set cap $vec
+      set gr $r ; set gc $c
+      if {[dict exists $m i] && [dict exists $m j]} {
+        set cap "[dict get $m i],[dict get $m j]"
+        set gr [expr {$r + [dict get $m i] - 1}]
+        set gc [expr {[dict get $m j] - 1}]
+      } else {
+        incr c
+        if {$c >= 6} { set c 0 ; incr r }
+      }
+      # ⚠ A CELL THE LAST RUN REALLY ANSWERED IS MARKED, and a bench that has
+      # never run marks nothing rather than marking everything.
+      if {[lsearch -exact $present $vec] >= 0} { append cap " \u2022" }
+      set vn [ase::ui::matrix_var $key $vec]
+      set $vn 0
+      checkbutton $w.body.c$vec -text $cap -variable $vn
+      grid $w.body.c$vec -row $gr -column $gc -sticky w -padx {12 4}
+      if {$gr > $maxr} { set maxr $gr }
+    }
+    set r [expr {($maxr > $r ? $maxr : $r) + 1}]
+  }
+  grid $w.body -row 0 -column 0 -columnspan 2 -sticky we
+  if {![llength $mx]} {
+    set msg [ase::ui::lbl_matrix_none]
+    catch {
+      set b [ase::precheck_banner_text \
+              [ase::analysis_setup_banner $_sim $type $row [ase::session_state $key]]]
+      if {$b ne {}} { set msg $b }
+    }
+    label $w.body.empty -text $msg -anchor w -justify left -wraplength 420
+    grid $w.body.empty -row 0 -column 0 -sticky w -padx 8 -pady 8
+  }
+  frame $w.fmt
+  label $w.fmt.l -text "[ase::ui::lbl_matrix_format]:" -font AseLabelFont
+  set dlg($key,mxfmt) [lindex [ase::ui::matrix_format_labels] 0]
+  ttk::combobox $w.fmt.v -state readonly -width 16 \
+    -values [ase::ui::matrix_format_labels] \
+    -textvariable ::ase::ui::dlg($key,mxfmt)
+  pack $w.fmt.l $w.fmt.v -side left -padx 2
+  grid $w.fmt -row 1 -column 0 -sticky w -padx 8 -pady 6
+  set nt {}
+  if {[llength $present]} { set nt [ase::ui::lbl_matrix_ran [llength $present]] }
+  label $w.note -text $nt -anchor w -justify left -wraplength 420
+  grid $w.note -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 3 [list ase::ui::matrix_ok $key] \
+    [list ase::ui::matrix_cancel $key]
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::matrix_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set w [dict get $wins $key].chana.mx
+  if {![winfo exists $w]} { return }
+  set _sim [ase::ui::chana_sim $key]
+  set type $dlg($key,antype)
+  set row [ase::ui::chana_merged_row $key $type]
+  set fmt [ase::ui::matrix_format_by_label $dlg($key,mxfmt)]
+  set st [ase::session_state $key]
+  set outs [ase::state_get $st outputs]
+  set have {}
+  foreach o $outs { lappend have [string trim [ase::state_get $o expr]] }
+  set added 0
+  foreach m [ase::analysis_matrix $_sim $type $row] {
+    set vec [dict get $m vector]
+    set vn [ase::ui::matrix_var $key $vec]
+    if {![info exists $vn] || [set $vn] ne {1}} { continue }
+    set nr [ase::ui::matrix_output_row $m $fmt]
+    # ⚠ AN EXPRESSION ALREADY IN THE LIST IS NOT ADDED TWICE. Opening this
+    # picker twice with the same cells ticked is an ordinary gesture, and a
+    # second identical Outputs row would plot the same trace over itself.
+    if {[lsearch -exact $have [dict get $nr expr]] >= 0} { continue }
+    lappend outs $nr
+    lappend have [dict get $nr expr]
+    incr added
+  }
+  if {$added} {
+    dict set st outputs $outs
+    ase::session_update $key $st
+    ase::ui::populate $key
+  }
+  ase::ui::matrix_cancel $key
+}
+
+proc ase::ui::matrix_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,mxv,*
+  array unset dlg $key,mxfmt
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].chana.mx}
+  }
 }
 
 # --- (a2) Analyses > List (issue 1444 surface 3, issue 1448) ----------------

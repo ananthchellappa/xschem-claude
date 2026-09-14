@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**410 strings, from 23 issues, grouped by where the user sees them** — not by
+**448 strings, from 25 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -39,6 +39,12 @@ The extraction was checked rather than trusted. Every string was searched for in
 the way the interpreter joins them:
 
 * **341 are present as a single literal**, byte for byte — the 262 of the first pass, plus all 79 of issue 1443's, each of which the driver found byte-for-byte in the committed source.
+* **38 arrived after the first version** — issue **1452**'s 18 and issue **1454**'s 20, appended
+  when stage 9 was collected. Each was verified individually by the driver against the working
+  tree at collection: **12 are present as a single literal** (the two `sp` field labels, the four
+  matrix formats, `Format`, `This analysis reports no matrix yet.`, and the adapter's four
+  headings `Source` / `Port` / `Noise` / `Z0 (ohm)`) and **26 are rendered** — composed from the
+  contract's declared `min` and `noun`, from the row's own numbers, or from a `\u2026` escape.
 * **31 are not, and all 31 are RENDERED rather than wrong** — the code composes
   them from pieces. `Time step (s):` is `label {Time step}` plus `unit s` plus
   the colon `form_label` appends. *"Stopping this run discards it — ngspice in
@@ -5992,3 +5998,545 @@ this template needs a value for $lbl
 ```
 
 *Where:* the other, unreachable from the GUI (the picker offers only what the catalogue declares) and reachable from a script
+
+## Issue 1452 — `sp`, the deck half (stage 9 task 1)
+
+*18 strings.* Two field labels, one composed precondition and its fix, and seven
+sentences the **ngspice adapter** writes about the ports table. Every one was
+verified by the driver against the working tree at collection; all but the two
+labels are **rendered** — the code composes them from the registry's declared
+`min` and `noun` and from the row's own numbers — so the text below is what the
+widget shows for the stated case, not a single source literal.
+
+⚠ **The sweep field labels this analysis shows are NOT new**: `Sweep type`,
+`Points per decade` / `Points per octave` / `Number of points (2 gives ONE point)`,
+`Start frequency`, `Stop frequency` and `lin_points`' caution and fix are all
+consumed unchanged from stage 6. They are already handled above.
+
+
+**R9-411** · label
+
+```text
+Noise figure (2 ports only)
+```
+
+
+*Where:* the `donoise` field's label on the `sp` form (adapter-declared).
+
+
+*For:* Ticking it adds `NF`, `NFmin`, `Rn`, `SOpt` **and** the `Cy` correlation matrix to the run — and only when the table holds exactly two ports, which is why the restriction is in the label rather than only in a caution.
+
+
+*Note:* §A5 — the parenthesised condition is doing a caution's job inside a label.
+
+
+**R9-412** · label
+
+```text
+Write Touchstone S2P
+```
+
+
+*Where:* the `s2p` field's label on the `sp` form (adapter-declared).
+
+
+*For:* Ticking it runs `let Rbase = <port 1's Z0>` / `wrs2p <path>` / `unlet Rbase` after the analysis.
+
+
+*Note:* §A12 — `S2P` is a file format, uppercase; `Touchstone` is a proper noun. The sibling field above it spells its condition out and this one does not.
+
+
+**R9-413** · refusal
+
+```text
+this analysis needs at least 2 ports and names 1
+```
+
+
+*Where:* `ase::needs_eval`'s `two_ports` arm — ASE-L **core**, composed from the contract's declared `min` and `noun` through `ase::sim_plural`. Shown in the precondition banner, in the Ports dialog, and as the reason the row will not render.
+
+
+*For:* A `fatal`: below the minimum `span.c:376-386` calls `controlled_exit(EXIT_BAD)`, so the process dies and takes every other analysis of the run with it, `op` included.
+
+
+*Note:* Rendered — the two numbers and the singular/plural both vary. Reads `…at least 2 ports and names 0` on an empty table. ⚠ The noun is the registry's, so a simulator that calls them something else gets its own word with no change here.
+
+
+**R9-414** · advice
+
+```text
+add 1 more port -- ports are assigned at run time, and nothing is written to your schematic
+```
+
+
+*Where:* the fix clause of R9-413, same site.
+
+
+*For:* Says what to do, and pre-empts the question every user of this feature asks — whether S-parameter analysis will modify their schematic.
+
+
+*Note:* ⚠ **THIS IS R9-431 IN A REFUSAL'S VOICE.** The Ports dialog's caption is the same promise as a statement: *"Ports are assigned at run time. Nothing is written to your schematic."* Two sites, two files, one sentence. **A ruling on either must move both.** Also §A5: `--` is the em-dash the tree writes as two hyphens.
+
+
+**R9-415** · refusal
+
+```text
+port 2 names no source, so nothing promotes it and the run dies before it starts
+```
+
+
+*Where:* `ase::backend::ngspice::sp_row_check` — the **adapter**'s rules over the same table.
+
+
+*For:* An entry with an empty first column promotes nothing, and the port count the simulator sees is then below the minimum.
+
+
+*Note:* Rendered (the index varies). §A5 — *"the run dies before it starts"* is plain and accurate; it is the one place this batch says "dies".
+
+
+**R9-416** · advice
+
+```text
+name the voltage source this port drives, or delete the row
+```
+
+
+*Where:* the fix clause of R9-415.
+
+
+*For:* Both ways out of the state, in the order a user would try them.
+
+
+**R9-417** · refusal
+
+```text
+port 'v1' has the number '0', and a port number must be a whole number of 1 or more
+```
+
+
+*Where:* `sp_row_check`.
+
+
+*For:* `vsrc.c:31-37` reads `portnum` as an integer index; 0 and fractions do not address a port.
+
+
+*Note:* Rendered — both quoted values vary. §A9 — the source name is quoted and so is the offending number.
+
+
+**R9-418** · advice
+
+```text
+number the ports 1 upwards, in the order the matrix reports them
+```
+
+
+*Where:* the fix clause of R9-417.
+
+
+*Note:* The trailing clause is the one that tells a user **why** the order matters — the matrix indices are the port numbers.
+
+
+**R9-419** · refusal
+
+```text
+port 'v1' has Z0 '0'. A Z0 of 0 or less turns that source back into an ordinary source, and the simulator then blames a DIFFERENT port for 'incorrect port ordering'
+```
+
+
+*Where:* `sp_row_check`.
+
+
+*For:* Measured behaviour: a non-positive `z0` silently demotes the source, and ngspice's own complaint then names an innocent port. Without this sentence the user debugs the wrong row.
+
+
+*Note:* ⚠ **The longest refusal in the batch, and the only one with a shouted word inside it** (`DIFFERENT`) — §A1. It also quotes the simulator's own message in single quotes — §A6. Two full sentences where every other refusal is one clause.
+
+
+**R9-420** · advice
+
+```text
+give every port a Z0 greater than 0, or leave Z0 empty for the 50 ohm default
+```
+
+
+*Where:* the fix clause of R9-419.
+
+
+*Note:* ⚠ **Spells the unit as the word `ohm`**, which is why the Ports table's column heading is `Z0 (ohm)` and not `Z0 (Ω)` — see R9-448.
+
+
+**R9-421** · refusal
+
+```text
+two ports share the number 1
+```
+
+
+*Where:* `sp_row_check`.
+
+
+*Note:* Rendered (the number varies). The shortest refusal this stage writes.
+
+
+**R9-422** · advice
+
+```text
+give every port a different number, 1 upwards with no gaps
+```
+
+
+*Where:* the fix clause of R9-421.
+
+
+**R9-423** · refusal
+
+```text
+the port numbers are 1, 3 -- they have to run 1 to 2 with no gaps
+```
+
+
+*Where:* `sp_row_check`.
+
+
+*For:* A gap in the numbering leaves an index the matrix has no row for.
+
+
+*Note:* Rendered — the list and both bounds vary. §A5 — `--` again.
+
+
+**R9-424** · advice
+
+```text
+renumber the ports 1 upwards, in the order the matrix reports them
+```
+
+
+*Where:* the fix clause of R9-423.
+
+
+*Note:* ⚠ **R9-418 and R9-424 are the same advice with one word different** (`number` / `renumber`) — §A8, siblings that drifted. They may be one sentence.
+
+
+**R9-425** · caution
+
+```text
+the noise figure is computed for exactly 2 ports and this analysis has 3, so NF, NFmin, Rn and SOpt will not be in the results
+```
+
+
+*Where:* `sp_row_check`, and a **caution** rather than a refusal because `span.c:74-178` simply does not compute them — the run still succeeds.
+
+
+*Note:* Rendered (the count varies). ⚠ Names the four vectors in the simulator's own capitalisation, deliberately: they are names a user types into the calculator. Incomplete as shipped — the `Cy` matrix is also absent at N ≠ 2 and the sentence does not say so.
+
+
+**R9-426** · advice
+
+```text
+switch the noise figure off, or reduce the analysis to 2 ports
+```
+
+
+*Where:* the fix clause of R9-425.
+
+
+**R9-427** · caution
+
+```text
+a Touchstone file holds exactly 2 ports and this analysis has 3, so only ports 1 and 2 will be written
+```
+
+
+*Where:* `sp_row_check`, a caution for the same reason — `rawfile.c:934-1022` prints its own note and writes the file anyway.
+
+
+*Note:* Rendered (the count varies).
+
+
+**R9-428** · advice
+
+```text
+reduce the analysis to 2 ports, or read the file as the 2-port it is
+```
+
+
+*Where:* the fix clause of R9-427.
+
+
+*Note:* The second half tells the user the file is still usable, which is the part that saves a re-run.
+
+
+## Issue 1454 — the Ports table and the matrix picker (stage 9 task 2)
+
+*20 strings.* **Six are composed from the adapter's declared `noun`** so that they
+read for any table a future contract declares, **four are the adapter's declared
+column and family headings**, and the rest are fixed. Driver-verified verbatim in
+`src/ase_window.tcl` and `src/ase.tcl` at collection.
+
+⚠ **Every precondition sentence these dialogs show is issue 1452's**, reaching the
+user through `ase::precheck_banner_text` — glyph and `Fix:` clause included. This
+task mints **no** refusal frame of its own.
+
+
+**R9-429** · button
+
+```text
+Ports…
+```
+
+
+*Where:* the per-type door on the Choose Analyses form, grid row 4 (composition: `"[Totitle <noun-plural>]…"`).
+
+
+*Note:* A type whose contract declares no table gets **no button**, not a disabled one.
+
+
+**R9-430** · label
+
+```text
+Analysis Ports (sp)
+```
+
+
+*Where:* the ports dialog's `wm title` (composition: `"Analysis [Totitle <noun-plural>] ($type)"`).
+
+
+*Note:* The shape `Analysis Options ($type)` already in the tree. §A2 — the type renders as the lowercase deck word.
+
+
+**R9-431** · label
+
+```text
+Ports are assigned at run time. Nothing is written to your schematic.
+```
+
+
+*Where:* the caption under the ports table. Ratified in `PLAN.md` §9a; composed from the declared noun.
+
+
+*For:* The one question this feature raises. S-parameter analysis in most tools means editing the schematic to place port devices; ASE-L does it with `alter` at run time and the caption says so before the user looks for the damage.
+
+
+*Note:* ⚠ **Same sentence as R9-414, in a promise's voice instead of a refusal's, in a different file. A ruling on either must move both.**
+
+
+**R9-432** · label
+
+```text
+Add Ports from Schematic
+```
+
+
+*Where:* the scan picker's `wm title` (composition: `"Add [Totitle <noun-plural>] from Schematic"`).
+
+
+*Note:* ⚠ Deliberately **not** the button's text with the noun bolted on the front — `Ports Add from Schematic…` reads as a fragment, and a window title ending in an ellipsis is a button wearing a title's clothes.
+
+
+**R9-433** · status
+
+```text
+This schematic offers no more ports.
+```
+
+
+*Where:* the scan picker when the circuit has nothing left to offer (composition: `"This schematic offers no more <nouns>."`).
+
+
+*For:* Distinguishes "nothing left" from "nothing found" — every eligible source is already in the table.
+
+
+**R9-434** · refusal
+
+```text
+Every port needs a Source.
+```
+
+
+*Where:* `Add` pressed with the first column empty (composition: `"Every <noun> needs a <first column's label>."`).
+
+
+*Note:* ⚠ The only refusal in this stage's GUI that is not issue 1452's, and the only sentence whose second half is a **column label** — so it changes if R9-445 does.
+
+
+**R9-435** · button
+
+```text
+Add from Schematic…
+```
+
+
+*Where:* the ports dialog.
+
+
+*Note:* ⚠ `PLAN.md` §9a writes it *"Add from schematic…"*. Title Case matches the two sibling buttons already in the tree (`From Design…`, `From Template…`); `Add` is kept because this one **adds** rows rather than replacing the dialog's source. §A8.
+
+
+**R9-436** · button
+
+```text
+Matrix…
+```
+
+
+*Where:* the second per-type door on the Choose Analyses form.
+
+
+**R9-437** · label
+
+```text
+Result Matrix (sp)
+```
+
+
+*Where:* the matrix picker's `wm title`.
+
+
+*Note:* §A2 again — lowercase deck word in a Title Case frame.
+
+
+**R9-438** · label
+
+```text
+Format
+```
+
+
+*Where:* the matrix picker's one control.
+
+
+**R9-439** · label
+
+```text
+Magnitude (dB)
+```
+
+
+*Where:* a format value → RPN `db20()`.
+
+
+**R9-440** · label
+
+```text
+Phase (deg)
+```
+
+
+*Where:* a format value → RPN `cph()`.
+
+
+*Note:* ⚠ `cph()` is **continuous** phase. The label says `Phase (deg)` and not `Unwrapped phase`, which is the 19th measurement kind's label (R9-408) for the same idea — §A10, one idea wearing two names, now across two surfaces.
+
+
+**R9-441** · label
+
+```text
+Real
+```
+
+
+*Where:* a format value → RPN `re()`.
+
+
+**R9-442** · label
+
+```text
+Imaginary
+```
+
+
+*Where:* a format value → RPN `im()`.
+
+
+*Note:* ⚠ `abs()` is **not** offered: its behaviour on a complex vector was never measured, and this batch does not offer what it has not measured.
+
+
+**R9-443** · status
+
+```text
+This analysis reports no matrix yet.
+```
+
+
+*Where:* the matrix picker with nothing to offer and no precondition sentence to borrow.
+
+
+*Note:* In practice the setup banner wins; this is the fallback.
+
+
+**R9-444** · status
+
+```text
+The last run produced 12 of these.
+```
+
+
+*Where:* the matrix picker's note when a results file is on disk (composition: `"The last run produced <n> of these."`).
+
+
+*For:* Tells the user the grid in front of them matches something that exists, rather than a prediction.
+
+
+*Note:* Rendered — the count varies with the port count and the noise flag (12 / 20 / 27).
+
+
+**R9-445** · label
+
+```text
+Source
+```
+
+
+*Where:* the ports table's first column — the **adapter**'s declared label.
+
+
+*Note:* ⚠ Nothing in `ase_window.tcl` spells this word outside a comment; it arrives from the registry. Feeds R9-434's second half.
+
+
+**R9-446** · label
+
+```text
+Port
+```
+
+
+*Where:* the ports table's second column — adapter-declared.
+
+
+*Note:* ⚠ The **column** is the port's number while the **noun** for a whole row is also `port`, so the heading and the row noun are the same word at two scales.
+
+
+**R9-447** · label
+
+```text
+Noise
+```
+
+
+*Where:* the matrix picker's heading over `NF`, `NFmin`, `Rn` and `SOpt`.
+
+
+*For:* ngspice groups those four under no name of its own, so this heading is the adapter's word rather than the simulator's.
+
+
+*Note:* ⚠ Capitalised to match its four siblings `S`, `Y`, `Z` and `Cy`, which are **ngspice's own spellings reproduced**, not minted. It is the only heading in that row that is an English word.
+
+
+**R9-448** · unit
+
+```text
+Z0 (ohm)
+```
+
+
+*Where:* the ports table's third column — adapter-declared.
+
+
+*Note:* ⚠ **Not `Z0 (Ω)`, which is what `PLAN.md` §9a's sketch draws.** The two sentences issue 1452 already ships write the unit as the word (*"leave Z0 empty for the 50 ohm default"*, *"a Z0 of 0 or less…"*), and one surface spelling it `Ω` while the refusal beside it spells it `ohm` would be two spellings of one unit. §A5, and exactly the kind of choice ⚖ R9 exists for.
+
+
+⚠ **`Z0`, `NF`, `NFmin`, `Rn`, `SOpt`, `S`, `Y`, `Z` and `Cy` keep the simulator's
+own capitalisation throughout both sections.** They are vector names a user will
+type into the calculator and read in a rawfile, not English words, so the house
+acronyms-uppercase rule does not reach them. This is stated once here rather than
+repeated on nine entries.

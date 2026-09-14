@@ -4943,6 +4943,17 @@ proc ase::analysis_schema_errors {{sim {}}} {
         lappend out [list $ty badresultvecs $rv]
       }
     }
+    # --- 1454 (Stage 9b): AND THE RESULT MATRIX'S HOOK ---------------------
+    # ⚠ `ase::analysis_matrix` CATCHES AND ANSWERS `{}`, which is right for the
+    # ten types that declare nothing and is a silent wrong answer for an entry
+    # that MEANT to declare one and mistyped the proc name: the matrix picker
+    # then offers an empty grid and no surface anywhere says the registry is
+    # wrong. Same rule as `salvage`, `resultvecs` and `setup` -- the reader
+    # stays permissive so no run is refused over a typo, and the validator is
+    # what tells the adapter's author.
+    if {[dict exists $e matrix] && [info commands [dict get $e matrix]] eq {}} {
+      lappend out [list $ty badmatrix [dict get $e matrix]]
+    }
     # --- 1452 (Stage 9): AND THE `setup` CONTRACT IS CHECKED ----------------
     # Same rule as `salvage` and `resultvecs`, for a key whose failure mode is
     # the same silence: a `lines` proc that is not a command answers `{}` from
@@ -4975,6 +4986,41 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
         if {[dict exists $sp min] && ![string is integer -strict [dict get $sp min]]} {
           lappend out [list $ty badsetupmin [dict get $sp min]]
+        }
+        # --- 1454 (Stage 9a): AND THE COLUMNS, BECAUSE A TABLE WITH NO
+        # --- DECLARED COLUMNS IS A TABLE NOBODY CAN TYPE INTO ---------------
+        # ⚠ THE FAILURE MODE IS THE SAME SILENCE AS `lines`, one surface later.
+        # `ase::analysis_setup_columns` answers `{}` for a contract that
+        # declares none, and the dialog then draws a treeview with no columns:
+        # the table is on screen, it is empty, it cannot be edited, and nothing
+        # says why. A contract that EMITS must also be typable, so the columns
+        # are as required as the `lines` hook is.
+        if {![dict exists $sp columns]} {
+          lappend out [list $ty nosetupcolumns {}]
+        } elseif {[catch {llength [dict get $sp columns]}] \
+                  || [llength [dict get $sp columns]] < 1} {
+          lappend out [list $ty badsetupcolumns {}]
+        } else {
+          set _scn {}
+          foreach _c [dict get $sp columns] {
+            if {[catch {dict size $_c}] || ![dict exists $_c name] \
+                || [string trim [dict get $_c name]] eq {} \
+                || ![dict exists $_c label]} {
+              lappend out [list $ty badsetupcolumn $_c]
+              continue
+            }
+            if {[lsearch -exact $_scn [dict get $_c name]] >= 0} {
+              lappend out [list $ty setupcolumnclash [dict get $_c name]]
+            }
+            lappend _scn [dict get $_c name]
+          }
+        }
+        # ⚠ AND THE OPTIONAL `scan` HOOK, FOR `badsetuplines`' REASON. A `scan`
+        # that is not a command answers `{}` and the Add-from-schematic button
+        # then offers nothing, on every bench, forever -- which reads exactly
+        # like a circuit with no candidates in it.
+        if {[dict exists $sp scan] && [info commands [dict get $sp scan]] eq {}} {
+          lappend out [list $ty badsetupscan [dict get $sp scan]]
         }
       }
     }
@@ -5122,6 +5168,242 @@ proc ase::analysis_setup_emit {sim row which {state {}} {idx -1}} {
   set p [dict get $s $which]
   if {[info commands $p] eq {}} { return {} }
   return [$p $state $row $idx]
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 9a/9b -- THE TABLE AS A WIDGET, AND THE RESULT MATRIX (issue 1454)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Issue 1452 made a setup table EMIT. It could not be TYPED: `ports` is a row
+# key with no widget anywhere, so the only way to put one on a bench was to
+# hand-edit a `.state` file, and the `Options…` subdialog -- the one editor
+# that did see the key -- listed the whole table as a free-text NAME/VALUE pair
+# and then REFUSED the commit. MEASURED 2026-09-13 through those very widgets:
+#
+#     Options editor lists: {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50}}}
+#     OK pressed -> subdialog still up = 1, bytes changed = 0
+#
+# That is issue 1450's defect for the THIRD time, and the third time is the
+# reason the fix below is a READER and not a third literal list.
+#
+# Everything here is SCHEMA (D34-D37). Core learns that a type declares a table,
+# how many of the thing it needs, what its columns are CALLED and what one entry
+# is called. It never learns that an entry holds a source name, a port number or
+# an impedance -- `ase::analysis_setup_rows`' own header says why, and the same
+# rule governs every reader below: THE COLUMN DESCRIPTORS ARE THE ADAPTER'S, in
+# exactly the shape a `fields` descriptor already has, so a simulator whose
+# S-parameter analysis keeps a different set of columns gets them without
+# touching this file.
+
+# The table's column descriptors, in display order -- `{}` for a type with no
+# contract or a contract that declares none. Each is a dict carrying at least
+# `name` (the entry key) and `label` (the heading).
+proc ase::analysis_setup_columns {sim type} {
+  set s [ase::analysis_setup $sim $type]
+  if {$s eq {} || ![dict exists $s columns]} { return {} }
+  set c [dict get $s columns]
+  if {[catch {llength $c}]} { return {} }
+  return $c
+}
+
+# One column descriptor by name, or `{}`.
+proc ase::analysis_setup_column {sim type name} {
+  foreach c [ase::analysis_setup_columns $sim $type] {
+    if {[catch {dict size $c}]} { continue }
+    if {[dict exists $c name] && [dict get $c name] eq $name} { return $c }
+  }
+  return {}
+}
+
+# What one entry is called, and what several are called. ONE speller, because
+# `ase::needs_eval`'s `two_ports` arm composes its sentence the same way and two
+# copies of "append an s" is two places for a noun to disagree with itself.
+proc ase::analysis_setup_noun {sim type {n 1}} {
+  set s [ase::analysis_setup $sim $type]
+  set one port
+  if {$s ne {} && [dict exists $s noun]} { set one [dict get $s noun] }
+  return [ase::sim_plural $n $one ${one}s]
+}
+
+# How many entries the simulator requires -- 0 when the contract does not say.
+proc ase::analysis_setup_min {sim type} {
+  set s [ase::analysis_setup $sim $type]
+  if {$s eq {} || ![dict exists $s min]} { return 0 }
+  set m [dict get $s min]
+  if {![string is integer -strict $m]} { return 0 }
+  return $m
+}
+
+# ─── THE SETUP VERDICT, FOR A SURFACE THAT IS EDITING THE TABLE ────────────
+#
+# ⚠ IT REUSES `ase::needs_eval` RATHER THAN RE-DERIVING THE TWO RULES, and that
+# is the whole reason this proc is four lines of dispatch. `two_ports` composes
+# core's own count sentence and `setup_check` delegates to the adapter's; a
+# dialog that asked the question a second way would be able to allow a table the
+# run then refuses, which is precisely the "nothing the window shows may fail to
+# reach the deck" rule this stage is easiest to break.
+#
+# ⚠ AND IT PASSES **EMPTY FACTS**, WHICH IS SAFE ONLY FOR THESE TWO IDS. Both
+# read the ROW and the registry and nothing else -- neither touches `facts` or
+# `opts`. Every other precondition id may, so this proc names the two ids it
+# evaluates instead of walking the type's whole `needs` list.
+proc ase::analysis_setup_needs {} { return [list two_ports setup_check] }
+
+proc ase::analysis_setup_lines {sim type row {state {}}} {
+  if {[ase::analysis_setup $sim $type] eq {}} { return {} }
+  set declared {}
+  catch {set declared [dict get [ase::analysis_entry $sim $type] needs]}
+  set out {}
+  foreach id [ase::analysis_setup_needs] {
+    if {[lsearch -exact $declared $id] < 0} { continue }
+    set v {}
+    catch {set v [ase::needs_eval $sim $type $id $row {} {} $state]}
+    if {[llength $v] < 2} { continue }
+    lappend out [list $id [lindex $v 0] [lindex $v 1] [lindex $v 2]]
+  }
+  return $out
+}
+
+# The same answer in `ase::precheck_banner`'s own shape, so the dialog renders it
+# through `ase::precheck_banner_text` and the two surfaces speak one vocabulary
+# (one glyph set, one `Fix:` clause) instead of two.
+proc ase::analysis_setup_banner {sim type row {state {}}} {
+  set lines [ase::analysis_setup_lines $sim $type $row $state]
+  if {![llength $lines]} { return {state clear} }
+  return [list state [ase::precheck_worst [dict create $type $lines]] lines $lines]
+}
+
+# ─── THE SCAN: WHAT THE CIRCUIT ALREADY OFFERS ────────────────────────────
+#
+# ⚠ IT TAKES FACTS THE CALLER ALREADY HAS AND NEVER NETLISTS. `ase::netlist_facts_cached`
+# PEEKS -- it answers `{}` for a bench nobody has netlisted -- and a dialog may
+# not produce a netlist because a user opened it (`ase::precheck_banner`'s own
+# constraint, issue 1435). A cold bench therefore offers nothing, which is an
+# honest empty rather than a wrong list.
+#
+# ⚠ AND THE HOOK ANSWERS ENTRIES IN THE TABLE'S OWN SHAPE, ALREADY NUMBERED AND
+# ALREADY DEDUPED AGAINST WHAT THE ROW HOLDS. Core cannot do any of the three:
+# "which cards can become one of these", "what does the next one get numbered"
+# and "is this the same entry" all need the entry keys, which are the adapter's.
+# It is CATCHING, unlike `ase::analysis_setup_emit`: a scan that raises costs a
+# convenience, while a `lines` leg that raises means the deck cannot be written.
+proc ase::analysis_setup_scan {sim type facts row} {
+  set s [ase::analysis_setup $sim $type]
+  if {$s eq {} || ![dict exists $s scan]} { return {} }
+  set p [dict get $s scan]
+  if {[info commands $p] eq {}} { return {} }
+  set r {}
+  if {[catch {$p $facts $row} r]} { return {} }
+  if {[catch {llength $r}]} { return {} }
+  return $r
+}
+
+# ─── THE RESULT MATRIX (§9b) ───────────────────────────────────────────────
+#
+# What an analysis will put in its plot, as a GRID rather than as a flat list.
+# `{}` for a type that declares none, which is ten of the eleven shipped types.
+#
+#     {vector S_1_1 expr S_1_1     family S i 1 j 1}
+#     {vector NF    expr NF        family noise}
+#     {vector Cy_1_1 expr i(Cy_1_1) family Cy i 1 j 1}
+#
+# ⚠ `vector` AND `expr` ARE TWO KEYS BECAUSE THE RAWFILE WRAPS BY TYPE, AND
+# THAT IS MEASURED. 2026-09-13, one `sp` deck with the noise flag, both
+# binaries: `Cy_1_1` is typed `current`, so ngspice's own writer emits it as
+# `i(Cy_1_1)` -- and `wviewer::validate_rpn` answers
+# `unknown token 'Cy_1_1'` for the bare name against either binary's variable
+# list while accepting `i(Cy_1_1)` against both. `S_1_1`, `Y_1_1`, `Z_1_1`,
+# `NF`, `NFmin`, `Rn` and `SOpt` are written bare and the two keys are equal.
+#
+# ⚠ IT TAKES THE ROW, BECAUSE THE GRID'S SIZE IS THE USER'S OWN TABLE. A
+# two-port bench has a 2x2 matrix and a three-port bench a 3x3 -- measured, both
+# binaries -- so a literal list could not be right for both.
+proc ase::analysis_matrix {sim type row} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e matrix]} { return {} }
+  set p [dict get $e matrix]
+  if {[info commands $p] eq {}} { return {} }
+  set r {}
+  if {[catch {$p $row} r]} { return {} }
+  if {[catch {llength $r}]} { return {} }
+  return $r
+}
+
+# Does this type declare a matrix at all? A row with an empty table yields NO
+# entries and still declares one -- the surface that offers the picker must ask
+# the TYPE, or the button would vanish at exactly the moment the user is about
+# to fill the table in.
+proc ase::analysis_matrix_declared {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e matrix]} { return 0 }
+  return 1
+}
+
+# The family tokens the matrix declares, in first-appearance order.
+proc ase::analysis_matrix_families {sim type row} {
+  set out {}
+  foreach m [ase::analysis_matrix $sim $type $row] {
+    if {[catch {dict size $m}] || ![dict exists $m family]} { continue }
+    set f [dict get $m family]
+    if {[lsearch -exact $out $f] < 0} { lappend out $f }
+  }
+  return $out
+}
+
+# The matrix's entries of one family, in declaration order.
+proc ase::analysis_matrix_of {sim type row family} {
+  set out {}
+  foreach m [ase::analysis_matrix $sim $type $row] {
+    if {[catch {dict size $m}] || ![dict exists $m family]} { continue }
+    if {[dict get $m family] eq $family} { lappend out $m }
+  }
+  return $out
+}
+
+# ─── THE READER THAT MUST FOLD, AND ROW SM5 IS WHY ────────────────────────
+#
+# Which of `names` a results file actually holds, answered in the DECLARED
+# spelling and never in the file's.
+#
+# ⚠ THE FOLD IS NOT A CONVENIENCE, IT IS THE ONLY CORRECT READING. MEASURED
+# 2026-09-13, the same ASE-L-rendered `sp` deck written by both binaries:
+#
+#     the fork     frequency S_1_1 S_1_2 ... Y_1_1 ... Z_1_1 ... NF NFmin Rn SOpt
+#     apt 45.2     frequency s_1_1 s_1_2 ... y_1_1 ... z_1_1 ... nf nfmin rn sopt
+#
+# and `display` shows the CAPITALS on both -- it is the written file that
+# differs. A case-sensitive reader is green on the development reference and
+# reports "this run produced nothing" on the binary a downloading user has.
+# `tests/headless/test_ase_sp_1452.tcl` row SM5 held the ABSENCE of this reader
+# open for exactly this moment.
+#
+# ⚠ AND IT STRIPS ngspice's OWN `v(...)`/`i(...)` WRAPPER, for the same reason
+# `ase::backend::ngspice::noise_contributor` does: a typed vector is written
+# wrapped, so a reader that only knew `pole(1)` -- or `Cy_1_1` -- would match
+# nothing in a raw file. The strip is one layer and no more; `v(pole(1))`
+# unwraps to `pole(1)` and stops there.
+proc ase::raw_vectors_fold {name} {
+  set n [string trim $name]
+  if {[string length $n] > 3 && [string index $n end] eq {)}} {
+    set p [string range $n 0 1]
+    if {[string equal -nocase $p {v(}] || [string equal -nocase $p {i(}]} {
+      set n [string trim [string range $n 2 end-1]]
+    }
+  }
+  return [string tolower $n]
+}
+
+proc ase::raw_vectors_present {rawpath names {plotsel {}}} {
+  set have [dict create]
+  foreach pl [ase::cap_raw_plots $rawpath] {
+    if {$plotsel ne {} && ![string equal -nocase [lindex $pl 0] $plotsel]} { continue }
+    foreach v [lindex $pl 2] { dict set have [ase::raw_vectors_fold $v] 1 }
+  }
+  set out {}
+  foreach n $names {
+    if {[dict exists $have [ase::raw_vectors_fold $n]]} { lappend out $n }
+  }
+  return $out
 }
 
 
@@ -22347,9 +22629,14 @@ $_leg
         resultvecs own \
         needs  {two_ports setup_check lin_points vecsaves saves_resolve cider_klu} \
         setup  {key ports noun port min 2 fields {donoise s2p} \
+                columns {{name src label Source stretch 1} \
+                         {name num label Port width 4} \
+                         {name z0  label {Z0 (ohm)} width 8}} \
                 lines ::ase::backend::ngspice::sp_alter_lines \
                 post  ::ase::backend::ngspice::sp_export_lines \
-                check ::ase::backend::ngspice::sp_row_check} \
+                check ::ase::backend::ngspice::sp_row_check \
+                scan  ::ase::backend::ngspice::sp_port_candidates} \
+        matrix ::ase::backend::ngspice::sp_matrix \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 min 1 label {Points per decade} \
@@ -22364,7 +22651,8 @@ $_leg
                              label {Write Touchstone S2P}}} \
         emit   {{role analysis tmpl {sp @sweep? @points @start @stop @donoise!}}} \
         results {viewer {kind sweep}} \
-        plots  {{select {SP Analysis} role sweep results viewer label sp} \
+        plots  {{select {SP Analysis} role sweep results viewer label sp \
+                 vectors ::ase::backend::ngspice::sp_vectors} \
                 {select {AC Operating Point} role opinfo results none \
                  when {opt keepopinfo} label {sp operating point}}}] \
       pss [dict create \
@@ -23702,6 +23990,134 @@ $_leg
         "reduce the analysis to 2 ports, or read the file as the 2-port it is"]
     }
     return {}
+  }
+
+  # ─── THE SCAN LEG: THE V SOURCES THIS CIRCUIT ALREADY HAS (issue 1454) ─────
+  #
+  # ⚠ THE WHOLE POINT OF STAGE 9 IS A BENCH WHOSE SOURCES DECLARE NO PORT, so
+  # this offers EVERY top-level independent voltage source and not only the ones
+  # already carrying `portnum`. `PLAN.md` §9a says *"the netlist scan only adds
+  # sources that already declare one"*; measured against the stage's own
+  # headline case that would offer NOTHING on the bench the stage exists for --
+  # two ordinary V sources, no port anywhere, promoted at run time. What the
+  # declaration buys is the PREFILL: a source that says `portnum 2 z0 75` comes
+  # back with 2 and 75 already in it, and one that says nothing gets the next
+  # free number and a blank Z0.
+  #
+  # ⚠ TOP LEVEL ONLY, AND THAT IS ngspice's RULE AND NOT A SIMPLIFICATION.
+  # `alter <name>` addresses an instance by its own name; a source inside a
+  # subcircuit is `x1.v9` at best and its promotion is not what `sp` reads. The
+  # scan already knows -- `ase::netlist_facts` records a `scope` per source and
+  # a subcircuit's is the subcircuit's name.
+  #
+  # ⚠ CURRENT SOURCES ARE NOT OFFERED. `vsrc.c:31-37` puts `portnum` on the
+  # VOLTAGE source and there is no `isrc` equivalent; `letter` is exactly the
+  # fact that tells them apart.
+  #
+  # ⚠ AND IT DEDUPES AGAINST THE TABLE THE USER IS EDITING, because the entry
+  # keys are this file's and core cannot compare two entries without them.
+  proc sp_port_candidates {facts row} {
+    if {[catch {dict size $facts}] || ![dict exists $facts sources]} { return {} }
+    set taken {}
+    set nums {}
+    foreach p [sp_ports $row] {
+      set s [sp_port_field $p src]
+      if {$s ne {}} { lappend taken [string tolower $s] }
+      set n [sp_port_field $p num]
+      if {[string is integer -strict $n]} { lappend nums $n }
+    }
+    set next 1
+    while {[lsearch -exact $nums $next] >= 0} { incr next }
+    set out {}
+    dict for {name rec} [dict get $facts sources] {
+      if {[catch {dict size $rec}]} { continue }
+      if {![dict exists $rec letter] || [dict get $rec letter] ne {v}} { continue }
+      if {[dict exists $rec scope] && [dict get $rec scope] ne {}} { continue }
+      if {[lsearch -exact $taken [string tolower $name]] >= 0} { continue }
+      set num {}
+      if {[dict exists $rec portnum]} {
+        set pn [string trim [dict get $rec portnum]]
+        if {[string is integer -strict $pn] && $pn >= 1 \
+            && [lsearch -exact $nums $pn] < 0} { set num $pn }
+      }
+      if {$num eq {}} { set num $next ; incr next }
+      lappend nums $num
+      while {[lsearch -exact $nums $next] >= 0} { incr next }
+      set z {}
+      if {[dict exists $rec z0]} { set z [string trim [dict get $rec z0]] }
+      lappend out [dict create src $name num $num z0 $z]
+    }
+    return $out
+  }
+
+  # ─── THE RESULT MATRIX OF AN `sp` ROW (§9b, issue 1454) ────────────────────
+  #
+  # MEASURED 2026-09-13 on apt 45.2 AND on the fork, one deck per port count,
+  # `display` inside the `.control` block and the written rawfile beside it:
+  #
+  #   2 ports, no noise flag   S_1_1 S_1_2 S_2_1 S_2_2  Y_… (4)  Z_… (4)
+  #   3 ports, no noise flag   S_… (9)                  Y_… (9)  Z_… (9)
+  #   2 ports, noise flag on   + NF NFmin Rn SOpt  AND  Cy_1_1 Cy_1_2 Cy_2_1 Cy_2_2
+  #
+  # ⚠ THE `Cy` MATRIX IS A FINDING, AND `evidence/sp-stage9.md` DOES NOT HAVE
+  # IT. That file names four noise vectors (`NF NFmin Rn SOpt`); the noise
+  # CORRELATION matrix is a fifth thing and it is an N x N grid of its own.
+  # Leaving it out would be a picker that silently omits a family the run
+  # produces, which is this stage's own defect class.
+  #
+  # ⚠ AND `Cy` IS THE ONE FAMILY WHOSE PLOT EXPRESSION IS NOT ITS NAME. It is
+  # typed `current`, so ngspice's writer emits `i(Cy_1_1)` -- measured, and
+  # measured again from the other end: `wviewer::validate_rpn` answers
+  # `unknown token 'Cy_1_1'` for the bare name against EITHER binary's variable
+  # list and accepts `i(Cy_1_1)` against both.
+  #
+  # ⚠ THE NOISE FAMILIES APPEAR ONLY WHEN THE ROW ASKS FOR THEM **AND** THE
+  # TABLE HOLDS EXACTLY TWO PORTS -- `span.c:74-178` computes them for N == 2
+  # and `sp_row_check` already cautions about it. Offering them on a three-port
+  # row would put four cells in the picker that no run can ever fill.
+  proc sp_matrix {row} {
+    set n [llength [sp_ports $row]]
+    if {$n < 1} { return {} }
+    set out {}
+    foreach fam {S Y Z} {
+      for {set i 1} {$i <= $n} {incr i} {
+        for {set j 1} {$j <= $n} {incr j} {
+          lappend out [dict create vector ${fam}_${i}_${j} \
+                                   expr   ${fam}_${i}_${j} \
+                                   family $fam i $i j $j]
+        }
+      }
+    }
+    if {[::ase::field_value ngspice sp $row donoise] eq {} || $n != 2} { return $out }
+    for {set i 1} {$i <= $n} {incr i} {
+      for {set j 1} {$j <= $n} {incr j} {
+        lappend out [dict create vector Cy_${i}_${j} \
+                                 expr   "i(Cy_${i}_${j})" \
+                                 family Cy i $i j $j]
+      }
+    }
+    # ⚠ THE FAMILY TOKEN IS A HEADING THE USER READS, so it is capitalised like
+    # the other four. `S`, `Y`, `Z` and `Cy` are ngspice's own spellings of the
+    # matrices; `Noise` is this adapter's name for the four circuit-level scalars,
+    # which ngspice groups under no name of its own.
+    foreach sc {NF NFmin Rn SOpt} {
+      lappend out [dict create vector $sc expr $sc family Noise]
+    }
+    return $out
+  }
+
+  # ─── THE VECTOR NAMES AN `sp` ROW WILL PRODUCE ────────────────────────────
+  # Reached through the `vectors` key of the `sp` entry's plots row, exactly as
+  # `tf_vectors` is.
+  #
+  # ⚠ IT IS `sp_matrix` FLATTENED AND NOT A SECOND LIST. One body, two readers,
+  # for the reason this batch keeps paying for: a picker offering a cell no
+  # `vectors` reader knows about, or a reader naming a vector no cell offers,
+  # would be the same drift the eight copies of "what is a `dc` analysis" were.
+  proc sp_vectors {row} {
+    set out {}
+    foreach m [sp_matrix $row] { lappend out [dict get $m vector] }
+    return $out
   }
 
   # ─── THE TWO CIRCUIT-LEVEL SCALARS OF AN `Integrated Noise` PLOT ───────────

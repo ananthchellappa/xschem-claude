@@ -205,6 +205,13 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 382   sections SP, Stage 9a/9b (issue 1454): the ports table and the
+#              matrix picker. Headless is unmoved for GR5's, GR6's, GH's, NX's
+#              and MS's reason -- every SP row drives real widgets, and the
+#              schema half is test_ase_sp_1452 section SX, which runs on both
+#              arms. ⚠ SP14 is the exception to "no simulator in this file": it
+#              runs BOTH binaries on the deck the table wrote, because two halves
+#              of a feature tested in different suites never meet (issue 1449).
 #   37 / 340   section GH, ⚖ R6's GUI half (issue 1448): the handle is visible
 #              and the second row of a type is reachable. Headless is unmoved
 #              for GR5's and GR6's reason -- every GH row drives widgets, and
@@ -255,6 +262,40 @@ set fail 0; set npass 0
 #              change -- or OK -- strips the binding off a row the user opened
 #              the dialog only to look at. MS17 is the item-10 ESC leg for both
 #              new toplevels.
+#   SP1-SP14   STAGE 9a/9b (issue 1454): THE PORTS TABLE AND THE MATRIX PICKER.
+#              Issue 1452 made a setup table EMIT and built no widget -- `ports`
+#              was a row key with no surface anywhere, so the only way to put a
+#              two-port table on a bench was to hand-edit a `.state` file. The
+#              Choose Analyses form gains two per-type doors (SP1), the ports
+#              dialog renders the row's own table with the ADAPTER's column
+#              labels, title and caption and spells none of them itself (SP2,
+#              SP3), Add/edit/Delete go through the real entries (SP4), the note
+#              is `ase::needs_eval`'s own verdict and OK is a commit door that
+#              refuses a one-port table (SP5) while letting a good one and an
+#              emptied one through (SP5b), `Add from Schematic…` peeks and never
+#              netlists (SP6, SP6b), the matrix picker offers one cell per vector
+#              the run will answer and writes ordinary Outputs rows in the
+#              viewer's own RPN (SP7, SP8, SP8b), it reads the LIVE form so a
+#              just-ticked noise flag already shows its vectors (SP9), an empty
+#              table gets the run's own sentence rather than a blank window
+#              (SP10), a type click closes a standing subdialog (SP11) and ESC
+#              dismisses all three toplevels through their cancel paths (SP11b).
+#              ⚠ SP12 IS THE DEFECT THIS SECTION FOUND, and it is issue 1450's
+#              for the THIRD time: `ports` is licensed per TYPE rather than per
+#              row, so it is not in `ase::analysis_nonsetting_keys` and the
+#              `Options…` subdialog's reader and writer asked only that proc.
+#              Measured on the unfixed tree through these very widgets -- the
+#              whole table listed as one free-text NAME/VALUE pair, OK refusing
+#              it, subdialog standing, nothing written -- and the writer's strip
+#              would have DESTROYED the table on any commit that got past it.
+#              ⚠ SP14 IS THE ROW ISSUE 1449 ASKED FOR: a port typed into the
+#              table, through the real widgets, reaching a rendered `alter` line
+#              and then a REAL RUN ON BOTH BINARIES that answers `S_1_1`. It is
+#              the only row in this file that starts a simulator, and its match
+#              is case-INSENSITIVE with the spelling reported, because the fork
+#              writes `S_1_1` and apt 45.2 writes `s_1_1` into the same file for
+#              the same deck.
+#              The schema half is `test_ase_sp_1452.tcl` section SX, both arms.
 #   NX1-NX6    ONE list of non-setting row keys (issue 1450). The `Options...`
 #              subdialog kept its own copy of it -- twice, a reader and a writer,
 #              both `{type enabled}` plus the declared fields -- so a row carrying
@@ -2885,16 +2926,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  existing status line carries a sentence on EVERY cell, so the banner cannot be\
  a second tenant of it" [list $GN1N $GN1] {11 {}}
   set ::ase::sim_caps $GN1CAPS
-  ## GN1b -- AND TWO CELLS CARRY ONE WHATEVER THE CACHE SAYS. `unrenderable` is
-  ## decided above the availability arms, so no measurement can empty these two.
+  ## GN1b -- AND A CELL RESTING ON NOTHING CARRIES ONE WHATEVER THE CACHE SAYS.
+  ##
+  ## ⚠ THIS ROW'S TITLE SAID *"the two unrenderable cells"* AND THAT STOPPED
+  ## BEING TRUE AT ISSUE 1452, WHICH MADE `sp` RENDERABLE. The row stayed GREEN
+  ## -- `sp` reads `absent unmeasured` with nothing measured and a cell in that
+  ## state also carries a sentence -- so nothing went red and the sentence rotted
+  ## in place. Receipt 32 recorded it as C8 and the GUI half owns the file, so it
+  ## is corrected here rather than carried. `pss` is the last `unrenderable` type
+  ## in the shipped registry; `sp` is now `absent`/`unmeasured`, which is a
+  ## DIFFERENT reason for the same sentence and is why both cells still answer.
   set GN1B {}
   foreach gnt {sp pss} {
     set ::ase::ui::dlg($key,antype) $gnt
     ase::ui::chana_show $key
     lappend GN1B [expr {[string trim [$gw.status cget -text]] ne {}}]
   }
-  check "GN1b and the two unrenderable cells carry one whatever has been\
- measured" $GN1B {1 1}
+  ## ⚠ AND THE SECOND TERM IS WHAT KEEPS THE TITLE HONEST NEXT TIME: it asks
+  ## RENDERABILITY rather than the cell's state word. The state word depends on
+  ## whether the capability cache is warm -- measured here, `pss` reads `blocked`
+  ## with a warm cache and `unrenderable` with a cold one, which is GG9's own
+  ## lesson -- while `ase::analysis_renderable` is decided by the registry alone
+  ## and cannot drift with the environment. The day `pss` becomes renderable this
+  ## row goes RED and names the paragraph above as the one to rewrite.
+  set GN1BREND {}
+  foreach gnt {sp pss} { lappend GN1BREND [ase::analysis_renderable ngspice $gnt] }
+  check "GN1b a cell that cannot be run here carries a sentence whatever has been\
+ measured, and `sp` is no longer one of the unrenderable ones" \
+    [list $GN1B $GN1BREND] {{1 1} {1 0}}
 
   ## GN2 -- AND IT DOES NOT WRAP, so a precondition sentence in it widens the
   ## dialog. The banner's own `-wraplength` is what keeps it from doing that.
@@ -5207,6 +5266,655 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::session_update $key $MSFIX
   ase::ui::populate $key
   update
+
+  # --- SP: THE PORTS TABLE AND THE MATRIX PICKER (issue 1454, PLAN.md §9a/§9b)
+  #
+  # Issue 1452 made a setup table EMIT and built no widget. `ports` was a row key
+  # with no surface anywhere: the only way to put a two-port table on a bench was
+  # to hand-edit a `.state` file. And the one editor that DID see the key was
+  # BROKEN by it -- SP12 is that defect as a row, measured on the unfixed tree
+  # through these very widgets:
+  #
+  #     Options editor lists: {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50}}}
+  #     OK pressed         -> subdialog still up = 1, bytes changed = 0
+  #
+  # which is issue 1450's defect for the THIRD time, on a key licensed per TYPE
+  # rather than per row.
+  #
+  # ⚠ EVERY COLUMN HEADING, THE NOUN AND THE MINIMUM COME FROM THE REGISTRY, and
+  # SP3 is the row that says the dialog ASKS rather than knowing. The schema half
+  # is `test_ase_sp_1452.tcl` section SX, which runs on both arms.
+  proc sp_open_chana {key idx} {
+    set top [ase::ui::window_for $key]
+    catch {destroy $top.chana}
+    ase::ui::choose_analyses $key {} $idx
+    update
+    return $top.chana
+  }
+  ## ⚠ EVERY CELL READ IS CAUGHT, AND A SABOTAGE IS WHY. Measured: a mutation
+  ## that made the column reader answer a FIXED list instead of the contract's
+  ## left the treeview without a `z0` column, and a bare `$tv set $it z0` raised
+  ## `Invalid column index z0` -- the file lost NINETEEN checks to the top-level
+  ## catch instead of reddening SP2. G2tf's documented failure shape, met a third
+  ## time in this section alone. A missing column now reads `NOCOL`, which is a
+  ## value a row can compare.
+  ## One heading, or `NOCOL` -- same reason as `sp_tbl`'s caught cells.
+  proc sp_head {sw c} {
+    set v NOCOL
+    catch {set v [$sw.tv heading $c -text]}
+    return $v
+  }
+  ## Type into one entry of the edit row, tolerating a column the contract no
+  ## longer declares -- the widget then does not exist, and a bare
+  ## `$sw.row.z0 insert` would kill the file instead of reddening a row.
+  proc sp_type {sw c v} {
+    if {![winfo exists $sw.row.$c]} { return 0 }
+    $sw.row.$c delete 0 end
+    if {$v ne {}} { $sw.row.$c insert 0 $v }
+    return 1
+  }
+  proc sp_tbl {sw cols} {
+    set out {}
+    if {![winfo exists $sw.tv]} { return NOTABLE }
+    foreach it [$sw.tv children {}] {
+      set r {}
+      foreach c $cols {
+        set v NOCOL
+        catch {set v [$sw.tv set $it $c]}
+        lappend r $v
+      }
+      lappend out $r
+    }
+    return $out
+  }
+  proc sp_bench {key rows} {
+    set st [ase::session_state $key]
+    dict set st analyses $rows
+    ase::session_update $key $st
+    ase::ui::populate $key
+    update
+  }
+  ## ⚠ ONE LINE, AND A CONTINUATION HERE COST A ROW. A backslash-newline inside
+  ## a braced fixture leaves a DOUBLE SPACE in the literal, the dialog writes the
+  ## dict back normalised, and SP13's byte-identity row then reds on the
+  ## fixture's own whitespace rather than on anything the product did.
+  ## ⚠ AND THE SECOND ENTRY'S KEYS ARE IN A DIFFERENT ORDER FROM THE COLUMNS,
+  ## deliberately. A dialog that rebuilt each entry in column order -- the obvious
+  ## tidy-up -- would rewrite a hand-written table's bytes on an OK that changed
+  ## nothing, and a fixture whose key order already matched the columns could not
+  ## see it. Measured: with both entries in column order the mutation SURVIVED.
+  set SPROW {type sp enabled 1 points 3 start 100meg stop 1g ports {{src v1 num 1 z0 50} {z0 50 src v2 num 2}}}
+  set SPBENCH [list {type op enabled 1} $SPROW \
+                    {type ac enabled 0 points 10 start 1 stop 1meg}]
+  sp_bench $key $SPBENCH
+
+  ## SP1 -- THE DOOR EXISTS, IT IS PER TYPE, AND IT IS NOT A THIRD COPY OF THE
+  ## WORD `Ports`. The button's text is composed from the contract's declared
+  ## `noun`; `ac`, which declares no contract, gets no button at all. ⚠ AND THE
+  ## EXISTING WIDGETS DO NOT MOVE -- issue 1405 cost 100 checks for that lesson
+  ## and issue 1448 paid it again, so the row asks for the four established grid
+  ## rows back as well as for the new one.
+  set cw [sp_open_chana $key 1]
+  ## ⚠ EVERY GRID READ GOES THROUGH `ase_grid_row`, WHICH ANSWERS -1 FOR A
+  ## WIDGET THAT IS NOT GRIDDED, AND A SABOTAGE IS WHY. Measured: a mutation that
+  ## never grids the Matrix door made a bare `dict get [grid info …] -row` raise
+  ## `key "-row" not known in dictionary` and the file lost TWENTY checks to the
+  ## top-level catch instead of reddening this row -- G2tf's documented failure
+  ## shape, met again.
+  set SP1B [list [$cw.setupbtn cget -text] [$cw.matrixbtn cget -text] \
+                 [ase_grid_row $cw.setupbtn] [ase_grid_row $cw.matrixbtn]]
+  $cw.types.ac invoke
+  update
+  set SP1AC [list [llength [grid info $cw.setupbtn]] [llength [grid info $cw.matrixbtn]]]
+  set SP1GRID [list [ase_grid_row $cw.rows] [ase_grid_row $cw.form] \
+                    [ase_grid_row $cw.note] [ase_grid_row $cw.opts] \
+                    [ase_grid_row $cw.btns]]
+  check "SP1 the type that declares a table gets a door named after its own noun,\
+ the type that declares none gets neither door, and nothing else moved" \
+    [list $SP1B $SP1AC $SP1GRID] \
+    [list [list "Ports…" "Matrix…" 4 4] {0 0} {1 3 7 8 9}]
+
+  ## SP2 -- THE TABLE IS THE ROW'S, RENDERED. ⚠ THE FIXTURE'S TWO ENTRIES DIFFER
+  ## IN EVERY COLUMN, so a dialog that showed one entry twice, or read the wrong
+  ## key, cannot pass by accident.
+  sp_bench $key [list {type op enabled 1} \
+    {type sp enabled 1 points 3 start 100meg stop 1g \
+     ports {{src v1 num 1 z0 50} {src vin2 num 2 z0 75}}}]
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set sw $cw.setup
+  check "SP2 the ports dialog shows the addressed row's own table" \
+    [list [winfo exists $sw] [$sw.tv cget -columns] [sp_tbl $sw {src num z0}]] \
+    [list 1 {src num z0} {{v1 1 50} {vin2 2 75}}]
+
+  ## SP3 -- AND EVERY WORD OF IT IS THE REGISTRY'S. The headings are the
+  ## ADAPTER's declared column labels, the title and the caption are composed
+  ## from its declared `noun`, and this file spells none of them. ⚠ THE FOURTH
+  ## TERM IS PLAN.md §9a's RATIFIED SENTENCE, byte for byte -- it is the promise
+  ## that makes S-parameters usable with no schematic edit, and a dialog that
+  ## showed a list of source names without it invites exactly the wrong
+  ## conclusion.
+  check "SP3 the headings, the title and the caption are the registry's answer\
+ and this dialog spells none of them" \
+    [list [list [sp_head $sw src] [sp_head $sw num] [sp_head $sw z0]] \
+          [wm title $sw] \
+          [$sw.cap cget -text] \
+          [expr {[string first {Source} [info body ase::ui::setup_dialog]] >= 0}] \
+          [expr {[string first {assigned at run time} \
+                    [info body ase::ui::setup_dialog]] >= 0}]] \
+    [list {Source Port {Z0 (ohm)}} {Analysis Ports (sp)} \
+          {Ports are assigned at run time. Nothing is written to your schematic.} \
+          0 0]
+
+  ## SP4 -- ADD, EDIT AND DELETE, THROUGH THE REAL ENTRIES. ⚠ ADD ON A FIRST
+  ## COLUMN ALREADY IN THE TABLE REPLACES THAT ENTRY rather than appending a
+  ## second one: two entries naming the same source is a table no simulator can
+  ## act on, and an editor that let you build one and refused at OK would be two
+  ## surprises instead of none. The last term is the control -- a DIFFERENT name
+  ## really does append.
+  $sw.tv selection set p1
+  update
+  set SP4LOADED {}
+  foreach spc {src num z0} {
+    set spv NOCOL
+    catch {set spv [$sw.row.$spc get]}
+    lappend SP4LOADED $spv
+  }
+  sp_type $sw z0 100
+  $sw.row.add invoke
+  update
+  set SP4EDIT [sp_tbl $sw {src num z0}]
+  foreach spc {src num z0} { sp_type $sw $spc {} }
+  sp_type $sw src v9
+  sp_type $sw num 3
+  $sw.row.add invoke
+  update
+  set SP4ADD [sp_tbl $sw {src num z0}]
+  $sw.tv selection set p2
+  $sw.row.del invoke
+  update
+  set SP4DEL [sp_tbl $sw {src num z0}]
+  check "SP4 Add on a name already in the table edits it in place, a new name\
+ appends, and Delete removes the selected line" \
+    [list $SP4LOADED $SP4EDIT $SP4ADD $SP4DEL] \
+    [list {vin2 2 75} {{v1 1 50} {vin2 2 100}} \
+          {{v1 1 50} {vin2 2 100} {v9 3 {}}} {{v1 1 50} {vin2 2 100}}]
+
+  ## SP5 -- THE LIVE NOTE IS `ase::needs_eval`'s OWN VERDICT, AND OK IS A COMMIT
+  ## DOOR. `span.c:376-386` calls `controlled_exit(EXIT_BAD)` below two ports --
+  ## the process dies and takes every other analysis of the run with it, `op`
+  ## included -- so a one-port table must not leave this dialog. ⚠ THE EMPTY
+  ## TABLE IS ALLOWED THROUGH: it is the untouched state, not a wrong answer, and
+  ## the run-time `two_ports` fatal still refuses it and still refuses a
+  ## hand-edited `.state`.
+  $sw.tv selection set p1
+  $sw.row.del invoke
+  update
+  set SP5NOTE [$sw.note cget -text]
+  set SP5BEFORE [ase::state_serialize [ase::session_state $key]]
+  $sw.btns.proceed invoke
+  update
+  set SP5UP [winfo exists $sw]
+  set SP5SAME [expr {[ase::state_serialize [ase::session_state $key]] eq $SP5BEFORE}]
+  check "SP5 a one-port table paints the run's own refusal and OK refuses it,\
+ leaving the dialog up and the bench untouched" \
+    [list [string match {*needs at least 2 ports and names 1*} $SP5NOTE] \
+          [string match {*nothing is written to your schematic*} $SP5NOTE] \
+          $SP5UP $SP5SAME] \
+    {1 1 1 1}
+
+  ## SP5b -- THE NON-VACUITY CONTROL FOR SP5. A table that is ALL RIGHT commits
+  ## and closes, and an EMPTY one commits too. Without this, an OK that refused
+  ## everything would pass SP5.
+  ##
+  ## ⚠ IT RE-OPENS THE DIALOG IF SP5's OK LET IT CLOSE, AND A SABOTAGE IS WHY.
+  ## Measured while running sabotage s11 (OK stops being a commit door): the
+  ## dialog closed under SP5, this row's first `$sw.row.src insert` raised
+  ## `invalid command name ".ase7.chana.setup.row.src"`, and the file lost
+  ## FOURTEEN checks to the top-level catch instead of reddening a row -- G2tf's
+  ## documented failure shape, met again. With the guard, SP5 still goes red and
+  ## SP6..SP14 still RUN -- measured, the arm went from `3 FAILED (366 passed)`
+  ## to `2 FAILED (381 passed)`, which is fourteen checks that stopped being
+  ## silently absent.
+  if {![winfo exists $sw]} {
+    $cw.setupbtn invoke
+    update
+    set sw $cw.setup
+  }
+  sp_type $sw src vin2
+  sp_type $sw num 2
+  sp_type $sw z0 75
+  $sw.row.add invoke
+  update
+  $sw.btns.proceed invoke
+  update
+  set SP5BROW {}
+  foreach spa [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $spa type] eq {sp}} { set SP5BROW $spa }
+  }
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set sw $cw.setup
+  $sw.tv selection set p0
+  $sw.row.del invoke
+  $sw.tv selection set p0
+  $sw.row.del invoke
+  update
+  $sw.btns.proceed invoke
+  update
+  set SP5BEMPTY {}
+  foreach spa [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $spa type] eq {sp}} { set SP5BEMPTY $spa }
+  }
+  check "SP5b a good table commits and closes, and an emptied one commits and\
+ removes the key rather than storing an empty list" \
+    [list [ase::state_get $SP5BROW ports] \
+          [dict exists $SP5BEMPTY ports] \
+          [ase::state_get $SP5BEMPTY points]] \
+    [list {{src v1 num 1 z0 50} {src vin2 num 2 z0 75}} 0 3]
+
+  ## SP6 -- ADD FROM SCHEMATIC. ⚠ IT PEEKS AND NEVER NETLISTS -- a dialog may not
+  ## produce a netlist because a user opened it (issue 1435's constraint, and
+  ## this window is under that dialog). COLD first, so the row cannot inherit a
+  ## warm slot from an earlier section and pass vacuously: the picker is empty
+  ## and says the banner's own cold sentence, naming the door.
+  ase::facts_clear
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set sw $cw.setup
+  $sw.btns.scan invoke
+  update
+  set scw $sw.scan
+  set SP6COLD [list [llength [$scw.tv children {}]] \
+                    [string match "*[ase::ui::menu_path_netlist_recreate]*" \
+                       [$scw.note cget -text]]]
+  $scw.btns.cancel invoke
+  update
+  ## AND WARM, through the product's own gesture -- the menu entry the cold
+  ## sentence names -- on the fixture schematic, whose two `vsource` symbols are
+  ## `V1` and `V2`.
+  ase::ui::do_netlist_recreate $key
+  update
+  $sw.btns.scan invoke
+  update
+  set scw $sw.scan
+  set SP6WARM [sp_tbl $scw {src num z0}]
+  set SP6SEL [llength [$scw.tv selection]]
+  set SP6TITLE [wm title $scw]
+  $scw.btns.proceed invoke
+  update
+  set SP6TBL [sp_tbl $sw {src num z0}]
+  check "SP6 Add from Schematic is empty and says why on a bench nobody has\
+ netlisted, and after Netlist > Recreate it offers the circuit's own voltage\
+ sources, preselected, numbered from 1" \
+    [list $SP6COLD [llength $SP6WARM] $SP6SEL $SP6TBL $SP6TITLE] \
+    [list {0 1} 2 2 {{V1 1 {}} {V2 2 {}}} {Add Ports from Schematic}]
+
+  ## SP6b -- AND IT DOES NOT OFFER WHAT IS ALREADY IN THE TABLE. Reopening the
+  ## picker on the table SP6 just filled offers nothing, with the "no more"
+  ## sentence rather than the cold one -- the two empties are different and the
+  ## dialog says which.
+  $sw.btns.scan invoke
+  update
+  set scw $sw.scan
+  set SP6BN [$scw.note cget -text]
+  set SP6BC [llength [$scw.tv children {}]]
+  $scw.btns.cancel invoke
+  update
+  $sw.btns.cancel invoke
+  update
+  check "SP6b a second Add from Schematic offers nothing and says so in its own\
+ words, not the cold ones" \
+    [list $SP6BC $SP6BN] [list 0 {This schematic offers no more ports.}]
+
+  ## SP7 -- THE MATRIX PICKER. ⚠ ITS SIZE IS THE PORTS TABLE'S, which is why it
+  ## reads the same row: measured on both binaries, a two-port `sp` run answers
+  ## twelve vectors in three families and a three-port one twenty-seven.
+  sp_bench $key [list {type op enabled 1} $SPROW]
+  set cw [sp_open_chana $key 1]
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  set SP7CELLS {}
+  foreach spw [winfo children $mw.body] {
+    if {[winfo class $spw] eq {Checkbutton}} { lappend SP7CELLS [$spw cget -text] }
+  }
+  check "SP7 the matrix picker offers one cell per vector the run will answer,\
+ laid out as the matrix it is" \
+    [list [wm title $mw] [llength $SP7CELLS] [lsort -unique $SP7CELLS] \
+          [$mw.fmt.v cget -values]] \
+    [list {Result Matrix (sp)} 12 {1,1 1,2 2,1 2,2} \
+          {{Magnitude (dB)} {Phase (deg)} Real Imaginary}]
+
+  ## SP8 -- OK WRITES ORDINARY OUTPUT ROWS AND INVENTS NO STATE. `plot 1` /
+  ## `save 0`, because `sp` declares `resultvecs own` and the deck already
+  ## carries a `.save all` leader -- a Save tick would narrow nothing (issue
+  ## 1434's `vecsaves` caution). ⚠ AND THE EXPRESSION IS THE VIEWER'S OWN RPN,
+  ## measured accepted against BOTH binaries' variable lists: `wviewer::validate_rpn`
+  ## answers {} for `S_1_1 db20()` against the fork's `S_1_1` AND against apt
+  ## 45.2's `s_1_1`, and rejects `S_9_9` and `nosuchfn()`.
+  set ::ase::ui::dlg($key,mxv,S_1_1) 1
+  set ::ase::ui::dlg($key,mxv,Y_2_1) 1
+  set ::ase::ui::dlg($key,mxfmt) {Phase (deg)}
+  $mw.btns.proceed invoke
+  update
+  set SP8OUT {}
+  foreach spo [ase::state_get [ase::session_state $key] outputs] {
+    set spx [ase::state_get $spo expr]
+    if {[string first {S_} $spx] < 0 && [string first {Y_} $spx] < 0} { continue }
+    lappend SP8OUT [list [ase::state_get $spo name] $spx \
+                         [ase::state_get $spo plot] [ase::state_get $spo save]]
+  }
+  set SP8RPN {}
+  foreach spvl [list {frequency S_1_1 Y_2_1} {frequency s_1_1 y_2_1}] {
+    set spr NOPROC
+    catch {set spr [wviewer::validate_rpn {S_1_1 cph()} $spvl]} spr
+    lappend SP8RPN $spr
+    set spr NOPROC
+    catch {set spr [wviewer::validate_rpn {S_9_9 cph()} $spvl]} spr
+    lappend SP8RPN [expr {$spr ne {}}]
+  }
+  check "SP8 OK writes one ordinary Outputs row per ticked cell, in the viewer's\
+ own RPN, and the viewer resolves it against EITHER binary's spelling" \
+    [list $SP8OUT $SP8RPN] \
+    [list {{S_1_1_ph {S_1_1 cph()} 1 0} {Y_2_1_ph {Y_2_1 cph()} 1 0}} {{} 1 {} 1}]
+
+  ## SP8b -- AND TICKING THE SAME CELL TWICE DOES NOT WRITE THE TRACE TWICE.
+  ## Opening the picker again with the same cells ticked is an ordinary gesture,
+  ## and a second identical Outputs row would plot the same trace over itself.
+  ## The control is a DIFFERENT format, which is a different expression and does
+  ## get written.
+  set cw [sp_open_chana $key 1]
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  set ::ase::ui::dlg($key,mxv,S_1_1) 1
+  set ::ase::ui::dlg($key,mxfmt) {Phase (deg)}
+  $mw.btns.proceed invoke
+  update
+  set SP8BN 0
+  foreach spo [ase::state_get [ase::session_state $key] outputs] {
+    if {[ase::state_get $spo expr] eq {S_1_1 cph()}} { incr SP8BN }
+  }
+  set cw [sp_open_chana $key 1]
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  set ::ase::ui::dlg($key,mxv,S_1_1) 1
+  set ::ase::ui::dlg($key,mxfmt) {Real}
+  $mw.btns.proceed invoke
+  update
+  set SP8BR 0
+  foreach spo [ase::state_get [ase::session_state $key] outputs] {
+    if {[ase::state_get $spo expr] eq {S_1_1 re()}} { incr SP8BR }
+  }
+  check "SP8b the same cell in the same format is not added twice, and the same\
+ cell in another format is" [list $SP8BN $SP8BR] {1 1}
+
+  ## SP9 -- THE PICKER DESCRIBES THE FORM THE USER IS LOOKING AT, NOT THE STORED
+  ## ROW. A user who has just ticked the noise flag and not pressed OK is reading
+  ## a form that says the run will answer `NF`; a picker built from the stored row
+  ## would not offer it. ⚠ MEASURED ON BOTH BINARIES: the flag adds the four
+  ## scalars AND a `Cy` correlation matrix, which `evidence/sp-stage9.md` does
+  ## not have.
+  set cw [sp_open_chana $key 1]
+  update
+  catch {$cw.form.advbtn invoke}
+  update
+  set SP9HAVE [winfo exists $cw.form.donoise]
+  if {$SP9HAVE} { $cw.form.donoise select }
+  update
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  set SP9N 0
+  foreach spw [winfo children $mw.body] {
+    if {[winfo class $spw] eq {Checkbutton}} { incr SP9N }
+  }
+  set SP9NF [winfo exists $mw.body.cNF]
+  set SP9CY [winfo exists $mw.body.cCy_1_1]
+  $mw.btns.cancel invoke
+  update
+  check "SP9 the picker is built from the live form, so a noise flag the user has\
+ ticked and not yet committed already shows its own vectors" \
+    [list $SP9HAVE $SP9N $SP9NF $SP9CY] {1 20 1 1}
+
+  ## SP10 -- AN EMPTY TABLE HAS NO MATRIX, AND THE PICKER SAYS THE RUN'S OWN
+  ## REASON RATHER THAN GOING BLANK. This is the "nothing the window shows may
+  ## fail to reach the deck" rule from the other end: there is nothing to show,
+  ## and the sentence is the one the run would give.
+  sp_bench $key [list {type op enabled 1} \
+    {type sp enabled 1 points 3 start 100meg stop 1g}]
+  set cw [sp_open_chana $key 1]
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  set SP10N 0
+  foreach spw [winfo children $mw.body] {
+    if {[winfo class $spw] eq {Checkbutton}} { incr SP10N }
+  }
+  set SP10T {}
+  catch {set SP10T [$mw.body.empty cget -text]}
+  $mw.btns.cancel invoke
+  update
+  check "SP10 a bench with no ports gets no cells and the run's own sentence" \
+    [list $SP10N [string match {*needs at least 2 ports and names 0*} $SP10T]] {0 1}
+
+  ## SP11 -- A STANDING SUBDIALOG DIES WITH A TYPE CLICK. Both of them edit ONE
+  ## row of ONE type and both read the live `antype`, so a Ports table left open
+  ## across a type click would write the previous type's table into the new
+  ## type's row. ⚠ AND THE RECORDS GO WITH THE WINDOWS, which is what tells a
+  ## cancel path from a bare destroy (item 10's rule).
+  sp_bench $key $SPBENCH
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set SP11UP [winfo exists $cw.setup]
+  $cw.types.ac invoke
+  update
+  check "SP11 a type click closes a standing ports table and takes its records\
+ with it" \
+    [list $SP11UP [winfo exists $cw.setup] \
+          [info exists ::ase::ui::dlg($key,anports)]] {1 0 0}
+
+  ## SP11b -- ESC DISMISSES BOTH NEW TOPLEVELS AND THE NESTED THIRD ONE, through
+  ## their own cancel paths (item 10, sections GE1-16's set).
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set sw $cw.setup
+  $sw.btns.scan invoke
+  update
+  set scw $sw.scan
+  send_key $scw <Key-Escape> {![winfo exists $scw]}
+  set SP11BSCAN [list [winfo exists $scw] [winfo exists $sw]]
+  send_key $sw <Key-Escape> {![winfo exists $sw]}
+  set SP11BSETUP [list [winfo exists $sw] [winfo exists $cw] \
+                       [info exists ::ase::ui::dlg($key,anports)]]
+  $cw.matrixbtn invoke
+  update
+  set mw $cw.mx
+  send_key $mw <Key-Escape> {![winfo exists $mw]}
+  check "SP11b ESC dismisses the scan picker without killing the ports table, the\
+ ports table without killing Choose Analyses, and the matrix picker, each\
+ through its own cancel path" \
+    [list $SP11BSCAN $SP11BSETUP [winfo exists $mw] \
+          [info exists ::ase::ui::dlg($key,mxfmt)]] \
+    [list {0 1} {0 1 0} 0 0]
+
+  ## SP12 -- THE DEFECT THIS SECTION FOUND, AND IT IS ISSUE 1450's FOR THE THIRD
+  ## TIME. `ports` is licensed on ONE type rather than on every row, so it is
+  ## deliberately not in `ase::analysis_nonsetting_keys` -- and the `Options…`
+  ## subdialog's reader and writer asked only that proc. MEASURED on the unfixed
+  ## tree through these very widgets: the whole table listed as one free-text
+  ## NAME/VALUE pair, and OK refusing it as a setting ASE-L cannot emit, with the
+  ## subdialog left standing and nothing written.
+  ##
+  ## ⚠ THE SECOND HALF IS THE SHARPER ONE. The writer's strip deletes every key
+  ## not in `skip` before writing back, so a `skip` that had never heard of the
+  ## table key would DESTROY it on any commit that got past the refusal. This row
+  ## asks for the bench back byte for byte, and its third term is the control --
+  ## a key that really IS a stray is still listed and still refused.
+  sp_bench $key [list {type op enabled 1} $SPROW]
+  set SP12BEFORE [ase::state_serialize [ase::session_state $key]]
+  set cw [sp_open_chana $key 1]
+  $cw.opts invoke
+  update
+  set xw $cw.x
+  set SP12PAIRS {}
+  foreach spit [$xw.tv children {}] {
+    lappend SP12PAIRS [list [$xw.tv set $spit name] [$xw.tv set $spit value]]
+  }
+  d_echo_arm
+  $xw.btns.proceed invoke
+  update
+  set SP12ERR [d_echoed_n {*cannot emit*}]
+  d_echo_disarm
+  set SP12UP [winfo exists $xw]
+  set SP12AFTER [ase::state_serialize [ase::session_state $key]]
+  sp_bench $key [list {type op enabled 1} [dict merge $SPROW {legacykey 7}]]
+  set cw [sp_open_chana $key 1]
+  $cw.opts invoke
+  update
+  set SP12STRAY {}
+  foreach spit [$cw.x.tv children {}] {
+    lappend SP12STRAY [list [$cw.x.tv set $spit name] [$cw.x.tv set $spit value]]
+  }
+  $cw.x.btns.cancel invoke
+  update
+  check "SP12 the Options editor no longer lists a row's setup TABLE as a\
+ free-text setting, commits silently, leaves the bench byte for byte, and still\
+ lists a key that really is a stray" \
+    [list $SP12PAIRS $SP12UP [expr {$SP12AFTER eq $SP12BEFORE}] \
+          $SP12ERR $SP12STRAY] \
+    [list {} 0 1 0 {{legacykey 7}}]
+
+  ## SP13 -- THE 104-FILE BYTE-IDENTITY QUESTION, FROM THIS SECTION'S SIDE.
+  ## Opening both new dialogs and pressing OK on a table nothing changed writes
+  ## the same bytes as never opening them. ⚠ THE CONTROL IS A CHANGED TABLE,
+  ## because a dialog whose OK did nothing at all would pass the first half.
+  sp_bench $key $SPBENCH
+  set SP13BEFORE [ase::state_serialize [ase::session_state $key]]
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  $cw.setup.btns.proceed invoke
+  update
+  $cw.matrixbtn invoke
+  update
+  $cw.mx.btns.proceed invoke
+  update
+  $cw.btns.proceed invoke
+  update
+  set SP13SAME [expr {[ase::state_serialize [ase::session_state $key]] eq $SP13BEFORE}]
+
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  sp_type $cw.setup src v7
+  sp_type $cw.setup num 3
+  $cw.setup.row.add invoke
+  update
+  $cw.setup.btns.proceed invoke
+  update
+  set SP13DIFF [expr {[ase::state_serialize [ase::session_state $key]] ne $SP13BEFORE}]
+  check "SP13 opening both Stage 9 dialogs and pressing OK on an untouched table\
+ writes the same bytes as never opening them, and a changed table does not" \
+    [list $SP13SAME $SP13DIFF] {1 1}
+
+  ## SP14 -- THE ROW ISSUE 1449 ASKED FOR: A PORT ADDED IN THE TABLE, THROUGH THE
+  ## REAL WIDGETS, REACHING A RENDERED `alter` LINE AND THEN A REAL RUN THAT
+  ## ANSWERS `S_1_1`.
+  ##
+  ## ⚠ TWO HALVES OF A FEATURE TESTED IN DIFFERENT SUITES NEVER MEET. The widget
+  ## half is everything above; the deck half is `test_ase_sp_1452.tcl`; this is
+  ## the one row that goes all the way through, and it is the only row in this
+  ## file that starts a simulator. Binaries come from `$env(ASE_SP_NGSPICE)`
+  ## (colon-separated) or from the two CREW_BRIEF names; a missing one SKIPS with
+  ## its path printed, so the log never confuses "not tested" with "tested and
+  ## fine".
+  ##
+  ## ⚠ AND THE `S_1_1` MATCH IS CASE-INSENSITIVE, AND THE SPELLING IT FOUND IS
+  ## REPORTED. Measured: the fork writes `S_1_1` and apt 45.2 writes `s_1_1` into
+  ## the same file for the same deck. A case-sensitive row would be green on the
+  ## development reference and red on the binary a downloading user has.
+  sp_bench $key [list {type op enabled 1} \
+    {type sp enabled 1 points 3 start 100meg stop 1g}]
+  set cw [sp_open_chana $key 1]
+  $cw.setupbtn invoke
+  update
+  set sw $cw.setup
+  foreach {spn spnum} {v1 1 v2 2} {
+    foreach spc {src num z0} { sp_type $sw $spc {} }
+    sp_type $sw src $spn
+    sp_type $sw num $spnum
+    sp_type $sw z0 50
+    $sw.row.add invoke
+    update
+  }
+  $sw.btns.proceed invoke
+  update
+  set SP14ST [ase::session_state $key]
+  set SP14NL "* spbench\nv1 in 0 dc 1 ac 1\nv2 out 0 dc 0 ac 0\nr1 in mid 50\nr2 mid 0 50\nr3 mid out 50\n.end\n"
+  set SP14RUN [file join $scratch sp14run]
+  file delete -force $SP14RUN
+  file mkdir $SP14RUN
+  dict set SP14ST rundir $SP14RUN
+  dict set SP14ST design [dict create cell spbench lib $scratch]
+  set SP14DECK {}
+  catch {set SP14DECK [ase::backend::ngspice::render_deck $SP14ST $SP14NL]} SP14DECK
+  set SP14ALT {}
+  foreach spl [split $SP14DECK "\n"] {
+    if {[string match {alter *} [string trim $spl]]} { lappend SP14ALT [string trim $spl] }
+  }
+  check "SP14 a port typed into the table reaches the deck as the promotion the\
+ simulator needs, above the card" \
+    [list $SP14ALT \
+          [expr {[string first {alter v1 portnum = 1} $SP14DECK] \
+                 < [string first {sp dec 3 100meg 1g} $SP14DECK]}]] \
+    [list [list {alter v1 portnum = 1} {alter v1 z0 = 50} \
+                {alter v2 portnum = 2} {alter v2 z0 = 50}] 1]
+
+  set SP14BINS {}
+  if {[info exists ::env(ASE_SP_NGSPICE)] && $::env(ASE_SP_NGSPICE) ne {}} {
+    foreach spb [split $::env(ASE_SP_NGSPICE) :] {
+      if {[string trim $spb] ne {}} { lappend SP14BINS [string trim $spb] }
+    }
+  } else {
+    set SP14BINS [list /usr/bin/ngspice \
+                       /home/analog/dev/ngspice/build-ver_50/src/ngspice]
+  }
+  foreach spb $SP14BINS {
+    set sptag [expr {[string match {/usr/bin/*} $spb] ? {apt} : {fork}}]
+    if {![file executable $spb]} {
+      puts "  SP14/$sptag SKIPPED -- no binary at $spb"
+      continue
+    }
+    set spdeckf [file join $SP14RUN spbench_ase.spice]
+    set spf [open $spdeckf w] ; puts -nonewline $spf $SP14DECK ; close $spf
+    set sprc 0
+    set spout {}
+    if {[catch {exec timeout 120 $spb -b $spdeckf 2>@1} spout]} { set sprc 1 }
+    set spraw [file join $SP14RUN spbench_ase.raw]
+    set sphave [ase::raw_vectors_present $spraw {S_1_1 S_2_1 Y_1_1 Z_2_2 S_9_9}]
+    set spspell {}
+    foreach sppl [ase::cap_raw_plots $spraw] {
+      if {![string equal -nocase [lindex $sppl 0] {SP Analysis}]} { continue }
+      foreach spv [lindex $sppl 2] {
+        if {[string equal -nocase $spv {S_1_1}]} { set spspell $spv }
+      }
+    }
+    check "SP14/$sptag the deck that table wrote really runs, and the results\
+ file answers the matrix the picker offers" \
+      [list [file exists $spraw] $sphave [expr {$spspell ne {}}]] \
+      [list 1 {S_1_1 S_2_1 Y_1_1 Z_2_2} 1]
+    puts "  SP14/$sptag rc=$sprc rawfile spelling of S_1_1 = |$spspell|"
+    if {$sprc} { puts "  SP14/$sptag output: $spout" }
+  }
+  sp_bench $key $SPBENCH
 
 } else {
   puts "gui legs skipped (no DISPLAY)"
