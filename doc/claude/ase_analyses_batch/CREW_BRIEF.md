@@ -119,6 +119,26 @@ second match is the hand doing the killing.
 So the rule has a mechanical reason rather than a moral one: **any `-f` pattern you type is, at the
 moment you type it, present in a live process's command line — your own.**
 
+⚠ **AND `pgrep -f` + `kill` IS THE SAME BUG WEARING A DISGUISE. The driver wrote the paragraph
+above and then did it, one hour later.** Retiring a chained mutation launcher, it ran
+
+```sh
+for p in $(pgrep -f 'stage11b'); do
+  c=$(tr '\0' ' ' < /proc/$p/cmdline)
+  case "$c" in *pass3_go*|*pass4_go*) kill $p ;; esac      # ← killed its own shell
+done
+```
+
+The loop's own command line contains `stage11b` **and** `pass3_go`, so the shell matched its own
+`case` and killed itself — **exit 144**. The launcher was retired first and the tree was verified
+byte-identical afterwards, so nothing was lost but the shell. **The lesson is that avoiding `pkill`
+is not enough**: `pgrep -f` hands you your own pid, and any substring test you then apply is a test
+your own argv can pass.
+
+**What actually works:** exclude `$$` and your own process group, or match the **exact** argv of
+something whose full command line you recorded when you started it — never a substring of a pattern
+you are, at that instant, holding in your hand.
+
 ## ⚠ DISARM YOUR SABOTAGE SNAPSHOTS WHEN YOU HAND OVER
 
 Every crew in this batch takes `cp` snapshots of `src/ase.tcl` and `src/ase_window.tcl` before its

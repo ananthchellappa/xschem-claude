@@ -28,6 +28,14 @@
 #  one mutates a loaded state and requires it to stop matching, the other
 #  requires an untouched one to keep matching.
 #
+#  ⚠ AND IT CALLS THE WRITER RATHER THAN RE-IMPLEMENTING IT. `ase::state_save`
+#  is `puts $f [ase::state_serialize $state]`, and `puts` is where the newline
+#  comes from -- so "serialize + \n" is byte-exact TODAY and is still a
+#  re-implementation of somebody else's proc. This helper writes with
+#  `ase::state_save` to a scratch path and compares bytes, so a change to the
+#  writer cannot escape the measurement. Issue 1464's crew put it exactly
+#  right: `state_serialize` is not the byte-identity mechanism, `state_save` is.
+#
 #  Usage, from a suite that has already sourced the ASE-L environment:
 #
 #        source [file join $repo tests headless state_roundtrip.tcl]
@@ -38,7 +46,8 @@
 #  `control_disagrees` and `control_agrees` must both be 1.
 #
 
-proc ase_state_roundtrip {repo} {
+proc ase_state_roundtrip {repo {tmp {}}} {
+  if {$tmp eq {}} { set tmp [file join [file dirname [info script]] .state_rt_[pid].tmp] }
   set files {}
   set out {}
   catch {exec git -C $repo ls-files -- *.state} out
@@ -52,10 +61,10 @@ proc ase_state_roundtrip {repo} {
     if {![file exists $f]} { continue }
     incr n
     set fh [::open $f rb] ; set orig [read $fh] ; ::close $fh
-    # ⚠ THE `\n` IS THE WHOLE POINT. See the header.
-    if {"[ase::state_serialize [ase::state_load $f]]\n" ne $orig} {
-      lappend bad [file tail $f]
-    }
+    # ⚠ THE WRITER, NOT A RECONSTRUCTION OF IT. See the header.
+    ase::state_save $tmp [ase::state_load $f]
+    set fh [::open $tmp rb] ; set again [read $fh] ; ::close $fh
+    if {$again ne $orig} { lappend bad [file tail $f] }
   }
 
   # --- CONTROL 1: a mutated state MUST stop matching -----------------------
@@ -68,7 +77,9 @@ proc ase_state_roundtrip {repo} {
     set rows [ase::state_get $st analyses]
     lappend rows {type op enabled 0 x zz_control_row}
     dict set st analyses $rows
-    set c_dis [expr {"[ase::state_serialize $st]\n" ne $orig}]
+    ase::state_save $tmp $st
+    set fh [::open $tmp rb] ; set mutated [read $fh] ; ::close $fh
+    set c_dis [expr {$mutated ne $orig}]
   }
 
   # --- CONTROL 2: an untouched one MUST keep matching ----------------------
@@ -77,9 +88,12 @@ proc ase_state_roundtrip {repo} {
   if {[llength $files]} {
     set f [lindex $files 0]
     set fh [::open $f rb] ; set orig [read $fh] ; ::close $fh
-    set c_agr [expr {"[ase::state_serialize [ase::state_load $f]]\n" eq $orig}]
+    ase::state_save $tmp [ase::state_load $f]
+    set fh [::open $tmp rb] ; set same [read $fh] ; ::close $fh
+    set c_agr [expr {$same eq $orig}]
   }
 
+  catch {file delete -force -- $tmp}
   return [dict create tracked $n bad $bad \
                       control_disagrees $c_dis control_agrees $c_agr]
 }
