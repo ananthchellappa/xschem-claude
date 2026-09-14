@@ -176,9 +176,25 @@ check "R1 state_default has viewer {}" [dict get $d viewer] {}
 ## identical `{}` default, so R2's byte-identical round trip below is unaffected
 ## and so are the 104 committed .state files (verified live, 104 of 104, at the
 ## moment the key was added).
-check "R1 exactly the 19 schema keys" [lsort [dict keys $d]] \
+## ⚠ AND RAISED 19 -> 22 (issue 1459, Stage 10). `opstrategy`, `opstate` and
+## `runhealth` are members six, seven and eight of ase::omit_if_empty and join
+## for the identical reason with the identical `{}` default, so R2's
+## byte-identical round trip below is unaffected and so are the 104 committed
+## .state files (re-verified live, 104 of 104, at the moment they were added).
+##
+## ⚠ THIS IS THE **SECOND** COPY OF THIS LIST -- `test_ase_core.tcl` R1 is the
+## other -- and 1459 found it the way a second copy is always found: by going
+## red when only the first one had been updated. Neither suite can see the
+## other's; the list itself lives in `ase::schema_keys` and both rows read
+## `ase::state_default`, so the two rows are the SAME claim asked twice. Left as
+## two rather than deleted: this suite's subject is the PERSISTED form and
+## core's is the schema, and a suite that trusted another suite's row would be
+## the drift this batch keeps finding. But a third copy would be a defect --
+## `test_ase_core.tcl`'s NS2 is the precedent for a scan that says so.
+check "R1 exactly the 22 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator sim_entry design rundir temperature models variables \
           analyses outputs save_all_v save_all_i save_op_params measurements \
+          opstrategy opstate runhealth \
           options includes pre_commands cosim viewer}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------

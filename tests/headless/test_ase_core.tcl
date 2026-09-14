@@ -138,6 +138,13 @@
 # eight templates -- `id <handle>`, never `row <index>` -- and MT8 is the row
 # that says `(off)` is spelled once, now that `ase::analysis_handle_text` is a
 # CALLER of `ase::analysis_handle_line` instead of a second copy of it.
+# 636 -> 638 with R1x (issue 1459 -- PLAN.md Stage 10). `opstrategy`, `opstate`
+# and `runhealth` join ase::omit_if_empty, so R1's key list moves 19 -> 22 and
+# R1x is the pair that makes the claim NON-VACUOUS: empty ones are absent from
+# the serialized form AND a non-empty one of each really is written. A key that
+# is never written cannot need omitting, so the second half is the half a
+# sabotage can redden.
+# AND RAISED 636 -> 638.
 # AND RAISED 626 -> 636.
 # AND RAISED 624 -> 626.
 # AND RAISED 622 -> 624.
@@ -470,8 +477,30 @@ set d [ase::state_default]
 ## is `{}`, and an empty one is not serialized -- which is what keeps the 104
 ## committed .state files round-tripping byte-identically (verified live, 104
 ## of 104, at the moment it was added).
-check "R1 default has exactly the 19 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements options includes pre_commands cosim viewer}]
+## ⚠ AND RAISED 19 -> 22 (issue 1459, Stage 10). `opstrategy`, `opstate` and
+## `runhealth` are members six, seven and eight of ase::omit_if_empty, so the
+## SHAPE of the claim is unchanged again: each key exists, each defaults to
+## `{}`, and an empty one is not serialized -- which is what keeps the 104
+## committed .state files round-tripping byte-identically (re-verified live,
+## 104 of 104, at the moment they were added). R1x below is the non-vacuous
+## half: a NON-empty one of each really is written.
+check "R1 default has exactly the 22 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements opstrategy opstate runhealth options includes pre_commands cosim viewer}]
+check "R1x 1459's three keys default to empty and are omitted from the serialized form" \
+  [list [dict get $d opstrategy] [dict get $d opstate] [dict get $d runhealth] \
+        [expr {[string first "opstrategy" [ase::state_serialize $d]] >= 0}] \
+        [expr {[string first "opstate"    [ase::state_serialize $d]] >= 0}] \
+        [expr {[string first "runhealth"  [ase::state_serialize $d]] >= 0}]] {{} {} {} 0 0 0}
+check "R1x a NON-empty opstrategy/opstate/runhealth IS serialized" \
+  [apply {{} {
+     set d [ase::state_default]
+     dict set d opstrategy {newton 1 gmin 0}
+     dict set d opstate {save 1 file op.ic}
+     dict set d runhealth 1
+     set t [ase::state_serialize $d]
+     return [list [expr {[string first "opstrategy {newton 1 gmin 0}" $t] >= 0}] \
+                  [expr {[string first "opstate {save 1 file op.ic}" $t] >= 0}] \
+                  [expr {[string first "runhealth 1" $t] >= 0}]] }}] {1 1 1}
 check "R1 cosim defaults to empty and is omitted from the serialized form" \
   [list [dict get $d cosim] [expr {[string first "cosim" [ase::state_serialize $d]] >= 0}]] {{} 0}
 check "R1m measurements defaults to empty and is omitted from the serialized form" \

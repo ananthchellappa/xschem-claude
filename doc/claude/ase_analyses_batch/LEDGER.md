@@ -37,11 +37,11 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, three runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on **Stage 10 task 1** — the deck half: `ase::ncdump_parse`, `ase::ladder_parse`, `ase::optran_line`, `ase::wrnodev_lines`. It owns `src/ase.tcl` and its own new suite. **`src/ase_window.tcl` is task 2's and is not open** |
+| **In flight** | nothing — **Stage 10 task 1** landed (issue **1459**); `src/ase.tcl` is free |
 | **Next** | **Stage 10 task 2** — the ladder pane, the remedy assistant, the canvas highlight and the health strip. ⚠ Its rung-4 checkbox must be able to mean **OFF**, and three deck spellings of `.options optran` were measured **accepted and inert**, so task 1 owes it the spelling that works |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **479 strings from 27 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **172 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
+| **Debt queue** | **173 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -920,6 +920,111 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 10 task 1 — the DECK half of convergence and diagnosis, issue **1459**, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+948** (441 comment/blank, **507 code**). Core holds the **schema**: three `omit_if_empty` state keys (`opstrategy`, `opstate`, `runhealth`), `ncdump_parse` / `ncdump_failing`, `ladder_rungs` / `ladder_parse` / `ladder_ran_notes`, `optran_line`, `wrnodev_lines`, `runhealth_lines` / `runhealth_parse`, two refusal evaluators and a memo dropped by `register_backend`. Every simulator word lives in **eleven new ngspice adapter hooks**. Four wiring sites in `render_deck`, each with a measured reason for its position. **`src/ase_window.tcl` md5 unchanged** after all 35 sabotage restores — the pane is task 2's. |
+| **driver's own re-run** | **new** `test_ase_converge_1459` **ALL PASS (76)** on **both** arms, identical rows. `test_ase_core` **636 → 638**. `test_ase_persist` 49 headless / 153 display. `test_ase_preflight` 235. The only red anywhere is `G2sens`, issue 1436, standing. |
+| **byte identity** | 104 tracked `.state` files, zero not round-tripping, control disagrees — driver-re-run. **Three new top-level keys and not one committed file moved**, which is what `ase::omit_if_empty` is for. |
+| **registration** | ⚠ Driver-checked, because issue **1456** landed this evening: the new suite **is** in `tests/run_regression.tcl` **and** emits a whole-line `OVERALL:` banner. |
+| **sabotage** | **Thirty-five mutations, 33 killed by name, `restore: OK` 35/35, zero md5 mismatches.** One declared **equivalent** with the measurement behind it. ⚠ **And one made the crew DELETE a row of its own** — a CRLF claim that three independent mutations could not falsify. **A row nothing can break is a row that is not measuring**, and deleting it is the right answer rather than leaving it green. |
+| **T1** | ✅ **Run solo: 70 cases, ZERO counted lines in `tests/results.log`.** |
+| **ledger debts** | **172 / 65 / 10 → 173 / 65 / 10.** One `rule 1459` — **nineteen** new user-facing sentences. ⚠ **No `look` and no `suite`, deliberately**: this half ships no pixels and the suite has no GUI leg. The receipt names what task 2 owes instead. |
+| **receipt** | `receipts/36-stage-10-deck.md` |
+
+## ⚠ AND THE FIXTURE DISCIPLINE IS THE BEST THIS BATCH HAS SEEN — WORTH COPYING
+
+`PLAN.md` §10 specifies a suite driven by **canned log text** for determinism, and the driver's
+brief warned that *"the canned text has to come from somewhere"* and that **a fixture invented from
+prose is the thing this batch refuses**. The answer, checked by the driver in the file:
+
+* **Every fixture was CAPTURED from a real run**, on a deck written for the purpose, and the file
+  says so at its head.
+* ⚠ **The one that could not be captured is DECLARED, not disguised.** No circuit on this machine
+  would make `dynamic_gmin` fail and `new_gmin` succeed — **nine were tried**, and every one either
+  completed at the first variant or failed at both. So that fixture is **assembled**, its two
+  literals are ngspice's own with their source lines cited (`cktop.c:264` and `:458`), the code path
+  is verified real (`cktop.c:58-70` runs the second variant only after the first fails), **exactly
+  one row uses it, and that row says so in its own name.**
+
+**That is the standard.** An unreachable case is not a licence to invent one quietly; it is a
+licence to say *"assembled, here is why, here is the source, and here is the single row that
+depends on it"*. Recorded here because the next crew that meets an unreachable fixture should copy
+this and not re-invent the judgement.
+
+## ⚠ THE DRIVER'S OWN BRIEF WAS WRONG ON ITS CENTRAL INSTRUCTION, AND THE CREW REFUTED IT
+
+The brief said: *"finding the spelling that turns `optran` off is YOUR job"*, after the driver had
+measured three `.options` spellings accepted and inert. **There is no option spelling. `optran` is
+a COMMAND.** Re-measured by the driver on both binaries, one deck:
+
+```
+optran 0 0 0 100n 10u 0   ->  rc 0,  v(out) = 9.999550e-01     (rung 4 supplies it)
+optran 0 0 0 0    10u 0   ->  rc 1,  the run dies
+```
+
+So the ladder really is controllable, from the `.control` block, and the fourth rung can be made to
+mean **off** — which is what task 2's checkbox needs. `.options optran …` remains **accepted and
+inert**, the fifth member of this batch's *accepted is not honoured* table.
+
+⚠ **And the brief's own proof recipe was self-defeating.** It asked for a deck combining
+`.options noopiter gminsteps=0 srcsteps=0` **with** an `optran` line to isolate rung 4 — but
+`optran`'s first three arguments **override those options**, so the combination proves nothing. The
+crew's first attempt measured exactly nothing for that reason and it says so.
+
+## ⚠ THE SECOND FINDING IS REAL, ITS MECHANISM WAS WRONG, AND THE DRIVER MEASURED THE DIFFERENCE
+
+`PLAN.md` §10c calls `wrnodev <file>` + `.include <file>` *"the fastest fix for a bench that takes
+four minutes to find its operating point"*. `wrnodev` writes **`.ic`** cards (`com_wr_ic.c:63`;
+there is no `.nodeset` writer), and the crew measured that including the file verbatim **changes a
+transient's answer silently**, at rc 0 with nothing on either stream. **That stands, and the fix
+that ships — `seed` (the default) re-spells the file as `.nodeset`, `force` is the verbatim
+include — is right.**
+
+⚠ **What does not stand is the reason.** The receipt, the issue and two suite comments said `.ic`
+is *"a clamp applied for every Newton phase with no `INITF` qualification … never released"*. The
+driver measured a node **with state**, both binaries:
+
+| | t ≈ 0 | 1 time constant | 20 time constants |
+|---|---|---|---|
+| transient, no restore | 1.500 | 1.500 | 1.500 |
+| transient + the `.ic` file | **2.4999** | 1.893 | **1.500** |
+| transient + the same values as `.nodeset` | 1.500 | 1.500 | 1.500 |
+| **`op`** + the `.ic` file | — | — | **1.500**, unaffected |
+
+**The clamp IS released.** What persists is the **initial condition**, and the trajectory converges
+once the circuit forgets it. The crew's own table was measured **at t = 0 only**, and a single point
+cannot tell those two mechanisms apart — the same shape as `SX2` being transcribed from `span.c`
+one issue earlier. **Corrected in the issue file and in both suite comments**; no *row* asserted it,
+so nothing was green and wrong.
+
+**The sentence that is true and is what the surface should say:** *`wrnodev`'s file is a **starting
+guess** for an operating point and an **initial condition** for a transient, and those are different
+things.* The `op` row of the table above is why the feature exists at all.
+
+## Three more corrections to the plan, two of them measured by the driver as well
+
+1. ⚠ **§10's four named procs are ALL CONTENT under D34/D36**, and the plan names them as if they
+   were core. `CKTncDump`'s layout, the ladder's line text, `optran` and `wrnodev` are every one of
+   them a fact about **one simulator**. Each therefore ships as a **pair** — an `ase::…` reader that
+   asks a hook and an `ase::backend::ngspice::…` speller. **Eleven hooks, not four procs**, and that
+   is where **+948** against the plan's **≈ +260** comes from. The plan's estimate was not wrong
+   about the work; it was wrong about where the boundary falls.
+2. ⚠ **§10c's `rusage devtimes` is COMPILED OUT and is therefore not offered.** Driver-verified:
+   `// #define PER_DEVICE_STATS` at `cktload.c:30`, commented out in the source both binaries are
+   built from. Silent on both. **Offering it would have been the accepted-and-inert defect this
+   batch now has a rule about.**
+3. **`wrnodev` and `CKTncDump` filter the same node list DIFFERENTLY** — `wrnodev` drops every
+   `#`-bearing name including `#branch` (`com_wr_ic.c:64`), `CKTncDump` keeps `#branch` and drops
+   only internal `#` nodes (`cktncdump.c:24`). **A caller that assumes one filter for both is wrong
+   about one of them**, and task 2 has two readers to wire.
+
+**And one the brief missed about this tree**: `tests/headless/test_ase_persist.tcl` holds a **second
+copy** of the schema key list, which the brief's *suites that move* list did not name. Three new
+state keys therefore moved a suite the driver had not warned about — found by the crew, not by the
+dispatch.
 
 ### ✅ Issue 1457 — the `Cy` matrix a three-port run really produces, collected 2026-09-13
 

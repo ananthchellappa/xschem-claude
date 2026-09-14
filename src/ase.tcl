@@ -69,6 +69,7 @@ namespace eval ase {
                         models
                         variables analyses outputs save_all_v save_all_i
                         save_op_params measurements
+                        opstrategy opstate runhealth
                         options includes pre_commands cosim viewer}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
@@ -114,7 +115,8 @@ namespace eval ase {
   # NO `seed_enabled` EQUIVALENT FOR IT -- nothing seeds a measurement into a
   # fresh bench, because a measurement is a question about a particular circuit
   # and ASE-L has none to ask.
-  variable omit_if_empty {cosim save_op_params sim_entry measurements}
+  variable omit_if_empty {cosim save_op_params sim_entry measurements
+                          opstrategy opstate runhealth}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -522,6 +524,9 @@ proc ase::state_default {} {
     save_all_i 0 \
     save_op_params {} \
     measurements {} \
+    opstrategy {} \
+    opstate   {} \
+    runhealth {} \
     options   {} \
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
@@ -690,6 +695,8 @@ proc ase::register_backend {name hooks} {
   ## NAME; registering `$name` is the one event that changes it. It sits BELOW
   ## the five-hook `foreach` for row A3's reason, not inside it.
   ase::meas_cache_clear $name
+  ## --- 1459 (Stage 10): AND THE RUNG-CATALOGUE MEMO, same place, same reason.
+  ase::ladder_cache_clear $name
   return $name
 }
 
@@ -19234,6 +19241,365 @@ proc ase::window_number_for_current {} {
   return $n
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 10 -- CONVERGENCE AND DIAGNOSIS, THE DECK HALF (issue 1459)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# THE FAILURE STORY ADE-L ANSWERS WITH AN OPAQUE `sim.log`. Three things the
+# simulator already tells you and no GUI has ever shown:
+#
+#  * `CKTncDump`'s `Last Node Voltages` table, whose trailing ` *` marks every
+#    node that STILL FAILS the convergence test (`cktncdump.c:23-39`). The
+#    convergence dossier calls it "the single most useful diagnostic in
+#    ngspice"; it is printed to stdout, in the middle of a run log, and read by
+#    nobody.
+#  * the four-rung operating-point ladder (`cktop.c`), whose progress is on
+#    STDERR and whose per-step trace only exists under `set ngdebug`.
+#  * `optran`, the fourth rung, which is ON BY DEFAULT in every ngspice built
+#    since the `cp_init` call at `optran.c:643-646` and which hands back THE
+#    TRANSIENT STATE AT ITS STOP TIME as your operating point.
+#
+# WHAT IS SCHEMA AND WHAT IS CONTENT (D34/D36). Everything in this block is the
+# SCHEMA: the three state keys and their shapes, the readers, the refusal
+# evaluators, the row/rung dict keys, the flattening of "which rows are
+# failing". NOT ONE SIMULATOR WORD APPEARS BELOW. The table's layout, the
+# ladder's line text, the rung labels, the `optran` spelling, the `wrnodev`
+# command and the `rusage` keywords are the adapter's `ncdump_parse` /
+# `ladder_rungs` / `ladder_parse` / `optran_line` / `opstrategy_options` /
+# `opstate_lines` / `runhealth_lines` / `runhealth_parse` hooks, and a backend
+# that declares none of them gets NO convergence content at all -- every reader
+# here answers `{}` and every feature then refuses rather than guessing.
+#
+# ⚠ THE THREE STATE KEYS ARE ABSENT BY DEFAULT AND ALL THREE ARE IN
+# `ase::omit_if_empty`. A bench that asks for none of this must serialize
+# byte-identically to what it does today, which is what keeps the 104 committed
+# `.state` files round-tripping and rows F3/G3/R4/V4/R2 green.
+
+namespace eval ase {
+  # ⚠ A MEMO KEYED ON BACKEND NAME, dropped by ase::register_backend beside the
+  # other two, for that call's reason: registering `$name` is the one event that
+  # changes what the hook would answer.
+  variable ladder_cache [dict create]
+}
+
+proc ase::ladder_cache_clear {{sim {}}} {
+  variable ladder_cache
+  if {$sim eq {}} { set ladder_cache [dict create] ; return {} }
+  if {[dict exists $ladder_cache $sim]} { dict unset ladder_cache $sim }
+  return $sim
+}
+
+# One hook call, or `{}` when the backend declares no such hook. Every reader
+# below goes through here, so "a backend with no hook gets no fallback content"
+# is stated once instead of eight times.
+proc ase::conv_hook {sim hook args} {
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim $hook]
+    if {$h ne {}} { set r [$h {*}$args] }
+  }
+  return $r
+}
+
+# ---------------------------------------------------------------------------
+# 10a -- THE NODES THAT DID NOT CONVERGE
+# ---------------------------------------------------------------------------
+
+# EVERY ROW OF EVERY `Last Node Voltages` TABLE in one run's log, in the order
+# the simulator printed them. Each row is a dict:
+#
+#     name     the node or branch name, exactly as the simulator spelled it
+#     last     the last value
+#     prev     the previous iteration's value
+#     failing  1 if the simulator marked this row as still failing its
+#              convergence test, 0 otherwise
+#     kind     `node` or `branch` -- see the ⚠ below
+#     table    0-based index of which table in this log the row came from
+#
+# ⚠ `kind` EXISTS BECAUSE THE TABLE IS NOT ALL NODES. A run whose operating
+# point fails prints `v1#branch` -- a BRANCH CURRENT -- in a table headed "Last
+# Node Voltages", and whatever maps these names onto canvas nets must not try to
+# light up a current. Measured 2026-09-13 on both binaries.
+proc ase::ncdump_parse {sim text} {
+  return [ase::conv_hook $sim ncdump_parse $text]
+}
+
+# THE NAMES THE SIMULATOR STARRED, deduped, in first-appearance order. This is
+# the list the canvas highlights.
+#
+# ⚠ AND IT IS ROUTINELY EMPTY EVEN WHEN THE TABLE IS THERE. Measured on both
+# binaries: a deck whose every ladder rung is switched off prints the full table
+# with NOT ONE starred row, because nothing ever iterated. A caller that treats
+# "table present" as "these nodes are the problem" lights the whole circuit; a
+# caller that assumes at least one star highlights nothing and looks broken.
+# `ase::ncdump_parse` answering rows while this answers `{}` is a real state
+# and both halves need a row.
+#
+# `kinds` selects which rows count: `node`, `branch`, or both (the default is
+# `node`, because the canvas has nets and not currents).
+proc ase::ncdump_failing {sim text {kinds node}} {
+  set seen [dict create]
+  set out {}
+  foreach row [ase::ncdump_parse $sim $text] {
+    if {![dict exists $row failing] || [dict get $row failing] ne {1}} { continue }
+    set k node
+    catch {set k [dict get $row kind]}
+    if {[lsearch -exact $kinds $k] < 0} { continue }
+    set n [dict get $row name]
+    if {[dict exists $seen $n]} { continue }
+    dict set seen $n 1
+    lappend out $n
+  }
+  return $out
+}
+
+# ---------------------------------------------------------------------------
+# 10b -- THE OPERATING-POINT LADDER
+# ---------------------------------------------------------------------------
+
+# THE RUNG CATALOGUE -- the adapter's, memoised. An ordered list of dicts:
+#
+#     id     the rung's stable identifier, used as the `opstrategy` key
+#     label  what the user reads (⚖ R9 -- the USER'S ruling, never a crew's)
+#     steps  the `opstrategy` key holding this rung's step count, or {}
+#     times  {stepkey stopkey} for a rung configured by two times, or {}
+#
+# `{}` for a backend with no hook, and `{}` is what makes the whole ladder
+# surface refuse rather than what makes core invent four rungs.
+proc ase::ladder_rungs {{sim {}}} {
+  variable ladder_cache
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {[dict exists $ladder_cache $sim]} { return [dict get $ladder_cache $sim] }
+  set r [ase::conv_hook $sim ladder_rungs]
+  dict set ladder_cache $sim $r
+  return $r
+}
+
+proc ase::ladder_rung {sim id} {
+  foreach r [ase::ladder_rungs $sim] {
+    if {[dict exists $r id] && [dict get $r id] eq $id} { return $r }
+  }
+  return {}
+}
+
+# WHAT THE LADDER DID IN THIS RUN. A dict `{rungs {<one dict per rung>} verdict
+# ok|failed|unknown}`; `{}` for a backend with no hook.
+#
+# ⚠ CONTENT-MATCHED, NEVER ORDER-MATCHED, AND THAT IS A MEASUREMENT RATHER THAN
+# A CAUTION. `run_cmd` folds the two streams with `2>@1`, and stdout to a file
+# is block-buffered while stderr is not: measured 2026-09-13, ALL THIRTEEN
+# stderr lines of a gmin-stepping run precede ALL THIRTEEN stdout lines, so the
+# whole ladder appears in the log BEFORE the analysis banner that really ran
+# first. A state machine that assumed sequence would work on a live terminal and
+# be wrong on every logged run. `evidence/ladder-streams.md`.
+#
+# ⚠ AND NOT STREAM-MATCHED EITHER. Four of the five detectable rung events are
+# on stderr and the fifth is on stdout, in the same run.
+proc ase::ladder_parse {sim text} {
+  return [ase::conv_hook $sim ladder_parse $text]
+}
+
+# THE SENTENCES THIS RUN EARNED -- one per rung that really ANSWERED and that
+# declares a sentence of its own.
+#
+# ⚠ CONDITIONAL, AND THAT IS A CORRECTION TO THE PLAN. PLAN.md §10b wants "this
+# operating point may come from a transient" on the OP form. MEASURED on both
+# binaries: the shipped defaults leave the transient rung ARMED AND NEVER
+# CALLED, because Newton converges above it -- a 1 k / 1 n RC answers
+# `1.000000e+00` with `optran` fully armed, and only `noopiter` PLUS
+# `gminsteps=0 srcsteps=0` gets down to the rung that answers `9.999550e-01`.
+# Said unconditionally the sentence would tell a user their exact operating
+# point is suspect when it is exact, which is worse than silence: the first
+# time they check it by hand the pane loses its credibility for every case
+# where it is right. The run says which rung answered, so the sentence can be
+# earned rather than assumed.
+proc ase::ladder_ran_notes {sim text} {
+  set out {}
+  set p [ase::ladder_parse $sim $text]
+  if {![llength $p] || ![dict exists $p rungs]} { return $out }
+  foreach r [dict get $p rungs] {
+    if {![dict exists $r state] || [dict get $r state] ne {ok}} { continue }
+    if {![dict exists $r ransentence]} { continue }
+    set t [dict get $r ransentence]
+    if {$t ne {}} { lappend out $t }
+  }
+  return $out
+}
+
+# THE OPERATING-POINT STRATEGY a state carries, or `{}` when it carries none.
+# One model of the ladder, which is the whole point of the key: see
+# `ase::opstrategy_refusals` for why two models cannot coexist.
+proc ase::opstrategy {state} {
+  set v {}
+  catch {set v [ase::state_get $state opstrategy {}]}
+  return $v
+}
+
+proc ase::opstrategy_armed {state} {
+  return [expr {[llength [ase::opstrategy $state]] ? 1 : 0}]
+}
+
+# One rung's on/off bit. Absent means ON: a strategy that names only the rung it
+# switched off must not silently disable the other three.
+proc ase::opstrategy_rung {state id {dflt 1}} {
+  set s [ase::opstrategy $state]
+  if {![dict exists $s $id]} { return $dflt }
+  return [expr {[dict get $s $id] ne {0}}]
+}
+
+proc ase::opstrategy_get {state key {dflt {}}} {
+  set s [ase::opstrategy $state]
+  if {![dict exists $s $key]} { return $dflt }
+  return [dict get $s $key]
+}
+
+# THE DECK LINES THAT CARRY THE STRATEGY, or `{}`. The adapter spells them.
+proc ase::optran_line {sim state} {
+  if {![ase::opstrategy_armed $state]} { return {} }
+  return [ase::conv_hook $sim optran_line $state]
+}
+
+# ⚠ THE XOR RULE, AS A REFUSAL RATHER THAN A CAUTION -- and it exists because
+# the simulator's answer to a request it will not honour is to TAKE IT AND SAY
+# NOTHING. Measured 2026-09-13 on both binaries: a deck carrying
+# `.options noopiter gminsteps=0 srcsteps=0` AND a strategy line that turns
+# those three back on runs with the strategy line winning, rc 0, nothing on
+# either stream, and three option rows the user set doing NOTHING. That is the
+# sixth accepted-and-inert case this batch has measured, and the house answer is
+# to refuse at the form instead of shipping a control that lies.
+#
+# Which option names collide is the adapter's (`opstrategy_options`); THAT they
+# may not coexist with a strategy is schema. A backend that declares no hook
+# names no options and therefore never refuses -- correct, because it also
+# emits no strategy line.
+#
+# Returns the house refusal tuple list: `{{<id> <verdict> <sentence> <fix>}...}`.
+proc ase::opstrategy_refusals {sim state} {
+  set out {}
+  if {![ase::opstrategy_armed $state]} { return $out }
+  set owned [ase::conv_hook $sim opstrategy_options]
+  set opts [ase::state_option_map $state]
+  set clash {}
+  foreach o $owned {
+    if {[dict exists $opts $o]} { lappend clash $o }
+  }
+  if {[llength $clash]} {
+    lappend out [list optionclash blocked \
+      "the Options sheet sets [join $clash {, }], and the operating-point\
+ strategy overrides [expr {[llength $clash] > 1 ? {those rows} : {that row}}]\
+ without saying so" \
+      "remove [expr {[llength $clash] > 1 ? {those rows} : {that row}}] from the\
+ Options sheet, or switch the strategy off"]
+  }
+  ## EVERY RUNG OFF IS NOT A STRATEGY, IT IS A DECK THAT CANNOT SOLVE. Measured
+  ## on both binaries: `optran 0 0 0 0 10u 0` on a 1 k / 1 n RC -- a circuit
+  ## whose operating point is one matrix solve -- ends `DC solution failed`,
+  ## `op simulation(s) aborted`, rc 1.
+  set anyon 0
+  foreach r [ase::ladder_rungs $sim] {
+    if {[ase::opstrategy_rung $state [dict get $r id]]} { set anyon 1 ; break }
+  }
+  if {[llength [ase::ladder_rungs $sim]] && !$anyon} {
+    lappend out [list allrungsoff blocked \
+      "every step of the operating-point strategy is switched off, so nothing\
+ would solve the operating point" \
+      "switch at least one step back on"]
+  }
+  foreach ar [ase::conv_hook $sim opstrategy_arg_refusals $state] {
+    lappend out $ar
+  }
+  return $out
+}
+
+# ---------------------------------------------------------------------------
+# 10c -- SAVE AND RESTORE THE OPERATING POINT, AND THE RUN-HEALTH STRIP
+# ---------------------------------------------------------------------------
+
+proc ase::opstate {state} {
+  set v {}
+  catch {set v [ase::state_get $state opstate {}]}
+  return $v
+}
+
+proc ase::opstate_get {state key {dflt {}}} {
+  set s [ase::opstate $state]
+  if {![dict exists $s $key]} { return $dflt }
+  return [dict get $s $key]
+}
+
+# THE FILE THE OPERATING POINT IS SAVED TO AND RESTORED FROM, absolute. A
+# relative `file` is taken against the run directory, which is where the
+# simulator's own working directory is.
+proc ase::opstate_path {state} {
+  set f [ase::opstate_get $state file {}]
+  if {$f eq {}} { return {} }
+  set f [ase::expand_path $f]
+  if {[file pathtype $f] eq {absolute}} { return $f }
+  set rd {}
+  catch {set rd [ase::rundir $state]}
+  if {$rd eq {}} { return $f }
+  return [file join $rd $f]
+}
+
+# The save lines, the restore lines, or `{}`. `which` is `save` or `restore`.
+proc ase::wrnodev_lines {sim state which} {
+  if {![llength [ase::opstate $state]]} { return {} }
+  if {[ase::opstate_get $state $which 0] ne {1}} { return {} }
+  return [ase::conv_hook $sim opstate_lines $state $which]
+}
+
+# ⚠ THE RESTORE IS NOT FREE, AND THE MEASUREMENT IS THE WHOLE REASON THIS
+# EVALUATOR EXISTS. See `ase::backend::ngspice::opstate_lines` for the numbers:
+# the simulator's own save file, included verbatim, SILENTLY CHANGES a
+# transient's answer when it is stale. The mode that is a pure speed-up needs
+# the file's contents at render time, so an unreadable file is a refusal and not
+# a shrug.
+proc ase::opstate_refusals {sim state} {
+  set out {}
+  if {![llength [ase::opstate $state]]} { return $out }
+  if {[ase::opstate_get $state save 0] eq {1}} {
+    set haveop 0
+    foreach row [ase::state_get $state analyses] {
+      if {[ase::state_get $row enabled 0] ne {1}} { continue }
+      if {[ase::state_get $row type {}] eq {op}} { set haveop 1 ; break }
+    }
+    if {!$haveop} {
+      lappend out [list saveneedsop blocked \
+        "there is no enabled OP row, so there is no operating point to save" \
+        "enable an OP analysis, or switch the save off"]
+    }
+  }
+  if {[ase::opstate_get $state save 0] eq {1} ||
+      [ase::opstate_get $state restore 0] eq {1}} {
+    if {[ase::opstate_path $state] eq {}} {
+      lappend out [list nofile blocked \
+        "no file is named for the saved operating point" \
+        "name a file"]
+    }
+  }
+  foreach r [ase::conv_hook $sim opstate_arg_refusals $state] { lappend out $r }
+  return $out
+}
+
+# THE RUN-HEALTH STRIP. One line in the deck, one line on screen -- not a pane.
+proc ase::runhealth_armed {state} {
+  set v {}
+  catch {set v [ase::state_get $state runhealth {}]}
+  return [expr {$v eq {1}}]
+}
+
+proc ase::runhealth_lines {sim state} {
+  if {![ase::runhealth_armed $state]} { return {} }
+  return [ase::conv_hook $sim runhealth_lines]
+}
+
+# The counters a finished run reported, as a dict, or `{}`. Keys are the
+# adapter's; core neither invents nor renames one.
+proc ase::runhealth_parse {sim text} {
+  return [ase::conv_hook $sim runhealth_parse $text]
+}
+
+
 # --- ngspice backend --------------------------------------------------------
 
 namespace eval ase::backend::ngspice {
@@ -19277,6 +19643,25 @@ namespace eval ase::backend::ngspice {
       return -code error "ase: measurement '[lindex [lindex $rmfat 0] 0]'\
  [lindex [lindex $rmfat 0] 1]; nothing was rendered"
     }
+    ## --- 1459 (§10b/§10c): AND THE CONVERGENCE SURFACE'S OWN REFUSALS ------
+    ## The same tier and the same doctrine a third time. Both evaluators are
+    ## empty for every bench that carries neither key, so this costs nothing and
+    ## says nothing until a state really does ask for two models of the ladder
+    ## at once, for every rung switched off, or for a seed restore from a file
+    ## that is not there.
+    ##
+    ## ⚠ AND THE SENTENCE IS THE EVALUATOR'S, NOT A SECOND SPELLING OF IT. The
+    ## form shows the same tuple; two wordings of one refusal is the drift that
+    ## ase::analysis_unrenderable_msg was written to stop.
+    set rcref {}
+    catch {
+      set rcsim [ase::state_get $state simulator [ase::default_simulator]]
+      set rcref [concat [ase::opstrategy_refusals $rcsim $state] \
+                        [ase::opstate_refusals $rcsim $state]]
+    }
+    if {[llength $rcref]} {
+      return -code error "ase: [lindex [lindex $rcref 0] 2]; nothing was rendered"
+    }
     set lines [split [string trimright $netlist_text "\n"] "\n"]
     while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
       set lines [lrange $lines 0 end-1]
@@ -19313,6 +19698,18 @@ namespace eval ase::backend::ngspice {
     }
     foreach v [ase::state_get $state variables] {
       lappend lines ".param [dict get $v name]=[dict get $v value]"
+    }
+    ## --- 1459 (§10c): THE SAVED OPERATING POINT, READ BACK ------------------
+    ## DOT CARDS, so deck level and not `.control` -- and position within the
+    ## deck does not matter, because `.nodeset` / `.ic` are handled in PASS 3 of
+    ## the parser (`inppas3.c:23-169`), after every circuit node exists. Empty
+    ## for every bench that carries no `opstate`, so no committed deck golden
+    ## moves. See ase::backend::ngspice::opstate_lines for the measurement that
+    ## decides which of the two spellings this emits.
+    foreach _osl [ase::wrnodev_lines \
+                    [ase::state_get $state simulator [ase::default_simulator]] \
+                    $state restore] {
+      lappend lines $_osl
     }
     ## ─── §7d/issue 1439: THE OPTION LOOP FINALLY ASKS WHAT KIND OF OPTION
     ## IT IS WRITING ───────────────────────────────────────────────────────
@@ -19666,6 +20063,26 @@ namespace eval ase::backend::ngspice {
     # happens to come first. See the deletion beside cosim_clear_artifacts.
     set pmapf {}
     if {[ase::n_enabled_analyses $state] > 0} {
+      ## --- 1459 (§10b): THE OPERATING-POINT STRATEGY ------------------------
+      ## ⚠ ABOVE EVERY ANALYSIS, AND INSIDE `.control`. `optran` is a COMMAND,
+      ## not an option (`commands.c:672-675`; it is absent from `OPTtbl[]`), so
+      ## `.options optran ...` is accepted and does NOTHING -- measured on both
+      ## binaries. With a live circuit the command writes `ci_defTask` directly
+      ## (`optran.c:117-118`), so it governs every analysis that follows it in
+      ## this block and none that precede it.
+      ##
+      ## ⚠ AND IT IS INSIDE THE "at least one enabled analysis" GUARD. A deck
+      ## with nothing to run has no operating point to strategise about, and an
+      ## unconditional line would put `optran` into a `.control` block that
+      ## holds nothing else.
+      ##
+      ## Empty for every bench that carries no `opstrategy`, so no committed
+      ## deck golden moves.
+      foreach _otl [ase::optran_line \
+                      [ase::state_get $state simulator [ase::default_simulator]] \
+                      $state] {
+        lappend lines $_otl
+      }
       lappend lines "set appendwrite"
       ## --- 1430: AND THE SIDECAR PATH, RESOLVED ONCE, UNDER EXACTLY THIS
       ## CONDITION. The `echo … >> <path>` lines below are 1:1 with the `write`
@@ -20067,6 +20484,17 @@ namespace eval ase::backend::ngspice {
       # the results file; placed after the write it would report the failure and
       # ship the bad raw anyway, which is the defect it was written against.
       foreach g [::ase::backend::ngspice::sim_status_guard] { lappend lines $g }
+      ## --- 1459 (§10c): SAVE THIS OPERATING POINT -------------------------
+      ## ⚠ BELOW THE GUARD, AND THAT IS THE WHOLE POINT. The guard `quit 1`s on
+      ## a failed analysis, so a run whose operating point did not converge can
+      ## never overwrite a good saved one with the zeros `CKTncDump` prints.
+      ## `wrnodev` is a COMMAND and belongs here rather than at deck level.
+      if {$type eq {op}} {
+        foreach _osl [ase::wrnodev_lines \
+                        [namespace tail [namespace current]] $state save] {
+          lappend lines $_osl
+        }
+      }
       ## --- 1452 (Stage 9): AND ITS OWN POST LINES ---------------------------
       ## ⚠ BELOW THE GUARD, ABOVE `remzerovec` AND THE WRITE, and each of those
       ## three sides is a decision. BELOW THE GUARD: an analysis that failed
@@ -20241,6 +20669,17 @@ namespace eval ase::backend::ngspice {
           lappend lines $_effl
         }
       }
+    }
+    ## --- 1459 (§10c): THE RUN-HEALTH STRIP ---------------------------------
+    ## ⚠ ABOVE THE COMPLETION MARKER, for issue 1433 row CK17's reason -- the
+    ## marker is "the last line inside .control" and another issue's pinned
+    ## anchor does not move. One line, four counters, and NOT `rusage devtimes`:
+    ## see ase::backend::ngspice::runhealth_lines for why that one prints
+    ## nothing in any stock build.
+    foreach _rhl [ase::runhealth_lines \
+                    [ase::state_get $state simulator [ase::default_simulator]] \
+                    $state] {
+      lappend lines $_rhl
     }
     if {[llength $ckrows]} {
       lappend lines "echo [ase::ckpt_marker complete]"
@@ -24909,6 +25348,504 @@ $_leg
   # Register at source time. Kept inside this namespace eval so the only
   # ngspice literals outside ase::backend::ngspice stay the state_default
   # schema defaults.
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # STAGE 10 -- CONVERGENCE AND DIAGNOSIS: THE ngspice CONTENT (issue 1459)
+  # ═════════════════════════════════════════════════════════════════════════
+  #
+  # Everything below spells ngspice: the table's layout, the ladder's literal
+  # line text, the `optran` command, `wrnodev`, the `rusage` keywords. The
+  # SCHEMA -- the three state keys, the readers, the refusal evaluators, the row
+  # and rung dict shapes -- is in core, above `ase::ncdump_parse`. D34/D36.
+
+  ## --- 10a: `CKTncDump`'s starred table ----------------------------------
+  ##
+  ## `cktncdump.c:18-40` prints, to STDOUT, after a failed operating point:
+  ##
+  ##     Last Node Voltages
+  ##     ------------------
+  ##
+  ##     Node                                   Last Voltage        Previous Iter
+  ##     ----                                   ------------        -------------
+  ##     in                                                5                    5
+  ##     1                                            4.9802                 4.98 *
+  ##     v1#branch                                   -0.0198                -0.02 *
+  ##
+  ## captured verbatim, 2026-09-13, BOTH BINARIES, from a deck whose Newton rung
+  ## runs and fails while every other rung is switched off.
+  ##
+  ## ⚠ PARSED BY WHITESPACE, NEVER BY COLUMN. The format string is
+  ## `"%-30s %20g %20g"`, and `%-30s` does not TRUNCATE: measured on both
+  ## binaries, a 37-character node name pushes both value columns right and a
+  ## column-position reader silently mis-reads the whole row. A SPICE node name
+  ## can never contain a space, so splitting on whitespace is both correct and
+  ## immune to that.
+  ##
+  ## ⚠ AND THE THIRD FIELD IS TESTED FOR BEING A NUMBER, which is not
+  ## defensiveness for its own sake: ASE-L folds the two streams with `2>@1`, so
+  ## an unbuffered stderr line can land INSIDE the table. A non-numeric row is
+  ## skipped rather than ending the table, and the blank line the simulator
+  ## prints after the last row is what ends it.
+  proc ncdump_parse {text} {
+    set out {}
+    set tbl -1
+    set mode idle
+    foreach line [split $text "\n"] {
+      set t [string trimright $line]
+      if {[string first {Last Node Voltages} $t] >= 0} {
+        incr tbl ; set mode header ; continue
+      }
+      if {$mode eq {header}} {
+        if {[regexp {^-{4}\s+-{6,}\s+-{6,}} $t]} { set mode rows }
+        continue
+      }
+      if {$mode ne {rows}} { continue }
+      if {[string trim $t] eq {}} { set mode idle ; continue }
+      set f [regexp -all -inline {\S+} $t]
+      set failing 0
+      if {[llength $f] && [lindex $f end] eq {*}} {
+        set failing 1
+        set f [lrange $f 0 end-1]
+      }
+      if {[llength $f] != 3} { continue }
+      lassign $f nm last prev
+      if {![_ncnum $last] || ![_ncnum $prev]} { continue }
+      ## `v1#branch` is a BRANCH CURRENT sitting in a table headed "Last Node
+      ## Voltages". Whatever lights nets on the canvas must not try to light a
+      ## current, so the row says which it is rather than leaving every caller
+      ## to re-derive it from a `#`.
+      set kind [expr {[string first {#branch} $nm] >= 0 ? {branch} : {node}}]
+      lappend out [dict create name $nm last $last prev $prev \
+                     failing $failing kind $kind table $tbl]
+    }
+    return $out
+  }
+
+  proc _ncnum {v} {
+    if {[string is double -strict $v]} { return 1 }
+    return [regexp -nocase {^[-+]?(nan|inf(inity)?)$} $v]
+  }
+
+  ## --- 10b: the four-rung ladder -----------------------------------------
+  ##
+  ## `cktop.c` tries, in order: plain Newton, gmin stepping, source stepping,
+  ## and `OPtran` -- a full private transient whose settled state is handed back
+  ## as the operating point. Each rung returns as soon as it converges.
+  ##
+  ## ⚠ RUNG 1 HAS NO MESSAGE OF ITS OWN, IN EITHER DIRECTION. There is no
+  ## "starting Newton" line and no "Newton failed" line anywhere in `cktop.c`;
+  ## measured on both binaries, `.options noopiter` (rung 1 SKIPPED) and a
+  ## genuinely failing Newton produce the SAME first line, `Note: Starting
+  ## dynamic gmin stepping`. So this parser reports rung 1 as `passedover` --
+  ## skipped or failed, and the log cannot say which -- rather than inventing a
+  ## verdict. A pane that showed "Newton failed" there would be guessing.
+  ##
+  ## ⚠ AND RUNG 4'S "OFF" LINE IS PRINTED BY ONLY ONE OF THE TWO BINARIES.
+  ## Measured 2026-09-13: `optran 1 1 1 0 10u 0` deselects the transient rung on
+  ## apt 45.2 and on the fork ALIKE -- same answer, `1.000000e+00` against the
+  ## `9.999550e-01` the rung would have given -- but only the fork prints
+  ## `Note: Optran is deselected.`. Absence of that line is NOT evidence the
+  ## rung is armed.
+  proc ladder_rungs {} {
+    return [list \
+      [dict create id newton label {Newton from the initial guess} \
+         steps {} times {} note {} ransentence {}] \
+      [dict create id gmin label {gmin stepping} \
+         steps gminsteps times {} note {} ransentence \
+         {This operating point came from gmin stepping, not from a plain solve.}] \
+      [dict create id src label {Source stepping} \
+         steps srcsteps times {} note {} ransentence \
+         {This operating point came from source stepping, not from a plain solve.}] \
+      [dict create id tranop label {Transient operating point} \
+         steps {} times {tranop_step tranop_stop} \
+         note {ON by default in this simulator. It hands back the TRANSIENT\
+ state at its stop time as the operating point: measured 0.9999550 instead of\
+ 1.0 on a 1 us RC.} \
+         ransentence {This operating point came from a transient, not from a DC\
+ solve.}]]
+  }
+
+  ## The literal markers, one table, so a reader can see that every one of them
+  ## is a SUBSTRING test and that nothing here depends on which line an event
+  ## arrived on.
+  ##
+  ## ⚠ `Source stepping completed` AND `source stepping failed` DIFFER IN CASE,
+  ## and that is ngspice's own inconsistency (`cktop.c:652-655`), not a typo
+  ## here. Matched case-sensitively on purpose: folding the case would make the
+  ## two markers overlap on the word that distinguishes them.
+  proc _ladder_markers {} {
+    return [dict create \
+      gmin [dict create \
+        start {{dynamic {Note: Starting dynamic gmin stepping}} \
+               {true    {Note: Starting true gmin stepping}} \
+               {spice3  {Note: Starting spice3 gmin stepping}}} \
+        ok    {{Note: Dynamic gmin stepping completed} \
+               {Note: True gmin stepping completed} \
+               {Note: spice3 gmin stepping completed}} \
+        bad   {{Warning: Dynamic gmin stepping failed} \
+               {Warning: True gmin stepping failed} \
+               {Warning: spice3 gmin stepping failed}}] \
+      src [dict create \
+        start {{gillespie {Note: Starting source stepping}}} \
+        ok    {{Note: Source stepping completed}} \
+        bad   {{Warning: source stepping failed}}] \
+      tranop [dict create \
+        start {{optran {Note: Transient op started}}} \
+        ok    {{Note: Transient op finished successfully}} \
+        bad   {{Error: Transient op failed, timestep too small} \
+               {Error: Transient op failed, cause unrecorded}} \
+        off   {{Note: Optran is deselected.}}]]
+  }
+
+  ## The per-step trace, which only exists under `set ngdebug`.
+  ##
+  ## ⚠ BOTH OF THESE END WITHOUT A NEWLINE (`cktop.c:195`, `:505`), so the
+  ## announcement of the rung being attempted and the verdict of the one before
+  ## it share ONE physical line:
+  ##
+  ##     Trying gmin =   1.0000E-03 Note: One successful gmin step
+  ##
+  ## That is why this parser scans each line for EVERY marker in it instead of
+  ## treating a line as one event. Measured from the other end, reading the pipe
+  ## with `os.read`: three of four chunks end mid-line and the dangling text is
+  ## always `Trying gmin = <value> ` -- the rung being attempted RIGHT NOW,
+  ## whose newline arrives only when it finishes. A trial with nothing after it
+  ## on its line is therefore reported as `pending`, which is correct for a
+  ## finished log (where it never happens) and is the one thing a live pane
+  ## needs (where it is the only interesting event).
+  proc _ladder_trials {} {
+    return [dict create \
+      gmin {Trying gmin =\s*(\S+)} \
+      src  {Supplies reduced to\s*(\S+?)%}]
+  }
+
+  proc ladder_parse {text} {
+    set markers [_ladder_markers]
+    set trialre [_ladder_trials]
+    set st [dict create]
+    foreach id {gmin src tranop} {
+      dict set st $id [dict create state notrun methods {} trials {} pending {}]
+    }
+    set lines [split $text "\n"]
+    set nl [llength $lines]
+    for {set i 0} {$i < $nl} {incr i} {
+      set line [lindex $lines $i]
+      dict for {id m} $markers {
+        foreach pair [dict get $m start] {
+          lassign $pair meth lit
+          if {[string first $lit $line] >= 0} {
+            ## ⚠ A START MARKER ONLY EVER PROMOTES `notrun` -> `running`, and
+            ## that is what makes this parser genuinely order-independent
+            ## rather than nearly so. The first cut set `running`
+            ## unconditionally; row LD2b -- the same lines in reverse -- then
+            ## read a COMPLETED rung as still running, because the start line
+            ## was the last one it saw. On a folded log the order is whatever
+            ## two buffers decided, so "nearly" is not a property worth having.
+            if {[dict get $st $id state] eq {notrun}} {
+              dict set st $id state running
+            }
+            set ms [dict get $st $id methods]
+            if {[lsearch -exact $ms $meth] < 0} {
+              lappend ms $meth ; dict set st $id methods $ms
+            }
+          }
+        }
+        foreach lit [dict get $m ok] {
+          if {[string first $lit $line] >= 0} { dict set st $id state ok }
+        }
+        foreach lit [dict get $m bad] {
+          ## ⚠ `ok` WINS OVER `bad` WITHIN A RUNG, and that is measured rather
+          ## than a preference. Rung 2 has three variants and the log of a
+          ## circuit that needed the second one carries BOTH `Warning: Dynamic
+          ## gmin stepping failed` AND `Note: True gmin stepping completed` --
+          ## the rung as a whole succeeded. A last-marker-wins reader would call
+          ## that rung failed whenever the failing variant printed last, which
+          ## on a folded log is a matter of buffering.
+          if {[string first $lit $line] >= 0 &&
+              [dict get $st $id state] ne {ok}} {
+            dict set st $id state failed
+          }
+        }
+        if {[dict exists $m off]} {
+          foreach lit [dict get $m off] {
+            if {[string first $lit $line] >= 0} { dict set st $id state off }
+          }
+        }
+      }
+      dict for {id re} $trialre {
+        foreach {whole val} [regexp -all -inline $re $line] {
+          set tr [dict get $st $id trials]
+          lappend tr $val
+          dict set st $id trials $tr
+          set at [string last $whole $line]
+          set after [string trim [string range $line \
+                       [expr {$at + [string length $whole]}] end]]
+          if {$after eq {}} {
+            dict set st $id pending $val
+          } else {
+            dict set st $id pending {}
+          }
+        }
+      }
+    }
+    ## RUNG 1, WHICH THE LOG NEVER SPEAKS ABOUT -- see the ⚠ above.
+    set n1 [dict create state unknown methods {} trials {} pending {}]
+    foreach id {gmin src tranop} {
+      if {[lsearch -exact {notrun off} [dict get $st $id state]] < 0} {
+        set n1 [dict create state passedover methods {} trials {} pending {} \
+                  detail {skipped or failed -- this simulator prints nothing\
+ for this step}]
+        break
+      }
+    }
+    set verdict unknown
+    if {[string first {Error: The operating point could not be simulated successfully.} \
+           $text] >= 0} {
+      set verdict failed
+    } else {
+      foreach id {gmin src tranop} {
+        if {[dict get $st $id state] eq {ok}} { set verdict ok ; break }
+      }
+    }
+    set rungs {}
+    foreach r [ladder_rungs] {
+      set id [dict get $r id]
+      if {$id eq {newton}} {
+        lappend rungs [dict merge $r $n1]
+      } else {
+        lappend rungs [dict merge $r [dict get $st $id]]
+      }
+    }
+    return [dict create rungs $rungs verdict $verdict]
+  }
+
+  ## --- 10b: the strategy line --------------------------------------------
+  ##
+  ## `optran <opiter> <gminsteps> <srcsteps> <opstepsize> <opfinaltime>
+  ## <opramptime>` -- exactly six arguments, enforced by the command table
+  ## (`commands.c:673`, min 6 max 6).
+  ##
+  ## ⚠ EITHER THIS LINE OR THE THREE `.options`, NEVER BOTH. Arguments 1-3
+  ## OVERRIDE `.options noopiter` / `gminsteps` / `srcsteps` on the same task,
+  ## silently. MEASURED 2026-09-13 on both binaries: a deck carrying
+  ## `.options noopiter gminsteps=0 srcsteps=0` AND `optran 1 1 1 0 10u 0`
+  ## answers `1.000000e+00` -- the plain-Newton answer -- with rc 0 and nothing
+  ## on either stream. Three option rows the user set did nothing and nobody was
+  ## told. `ase::opstrategy_refusals` refuses that deck at the form.
+  ##
+  ## ⚠ AND IT IS A COMMAND, NOT AN OPTION. `optran` is in `spcp_coms[]`, not in
+  ## `OPTtbl[]`, so `.options optran ...` is ACCEPTED AND INERT: measured on
+  ## both binaries, `.options optran 1 1 1 0 10u 0` left `Note: Transient op
+  ## started` in the log and the transient answer in the vector. Three deck
+  ## spellings of it were tried and all three did nothing at rc 0.
+  ##
+  ## ⚠ ARGUMENT 6 IS ALWAYS 0. `optran.c:670-671` has no `optime > opramptime`
+  ## clamp, so once the ramp time passes the supply factor keeps oscillating and
+  ## returns to ZERO at twice the ramp time; `README.optran` says supply ramping
+  ## is "not yet established". It is not offered and it is not emitted.
+  proc optran_line {state} {
+    set a [expr {[::ase::opstrategy_rung $state newton] ? 1 : 0}]
+    if {[::ase::opstrategy_rung $state gmin]} {
+      set b [::ase::opstrategy_get $state gminsteps 1]
+    } else { set b 0 }
+    if {[::ase::opstrategy_rung $state src]} {
+      set c [::ase::opstrategy_get $state srcsteps 1]
+    } else { set c 0 }
+    set e [::ase::opstrategy_get $state tranop_stop 10u]
+    if {[::ase::opstrategy_rung $state tranop]} {
+      set d [::ase::opstrategy_get $state tranop_step 100n]
+    } else {
+      ## `opstepsize == 0` is how the transient rung is switched off
+      ## (`optran.c:182-185`). MEASURED on both binaries, on a deck whose every
+      ## other rung was also off: `DC solution failed`, rc 1 -- i.e. the rung
+      ## really is gone, not merely quiet.
+      set d 0
+    }
+    return [list "optran $a $b $c $d $e 0"]
+  }
+
+  ## The `.options` names this line supersedes. Core does the collision test;
+  ## naming them is ngspice content.
+  proc opstrategy_options {} { return {noopiter gminsteps srcsteps} }
+
+  ## ⚠ TWO ARGUMENT REFUSALS, BOTH MEASURED, BOTH SILENT IN THE SIMULATOR.
+  ##
+  ##   optran 1 1 1 20u 10u 0  -> `Error: Optran step size larger than final
+  ##                              time.` + `Error in command 'optran'` -- and
+  ##                              **rc 0**: the run carries on with whatever
+  ##                              optran settings it had before.
+  ##   optran 1 1 1 1u  10u 0  -> `Note: Optran step size set to 2.000000e-07,
+  ##                              (stepsize = finaltime / 50).` -- the number
+  ##                              the user typed is NOT the number used, and the
+  ##                              note is on stdout in the middle of a run log.
+  ##
+  ## Both on both binaries. The house answer to a request the simulator will not
+  ## honour is to refuse at the form, not to pass it down with a caution.
+  proc opstrategy_arg_refusals {state} {
+    set out {}
+    if {![::ase::opstrategy_rung $state tranop]} { return $out }
+    set sufs [si_suffixes]
+    set stept [::ase::opstrategy_get $state tranop_step 100n]
+    set stopt [::ase::opstrategy_get $state tranop_stop 10u]
+    set sp [::ase::si_parse $stept $sufs]
+    set tp [::ase::si_parse $stopt $sufs]
+    if {[lindex $sp 0] eq {bad}} {
+      return [list [list tranopstep blocked \
+        "'$stept' is not a time this simulator can read" \
+        "give the transient step as a number, e.g. 100n"]]
+    }
+    if {[lindex $tp 0] eq {bad}} {
+      return [list [list tranopstop blocked \
+        "'$stopt' is not a time this simulator can read" \
+        "give the transient stop time as a number, e.g. 10u"]]
+    }
+    ## NO NUMBER ALPHABET DECLARED -> NO NUMERIC OPINION. `ase::si_parse`
+    ## answers a bare `ok` with no value when the adapter names no suffix table,
+    ## and refusing text there would be a claim about a simulator nobody has
+    ## measured (issue 1415's rule, kept rather than re-decided).
+    if {[llength $sp] < 2 || [llength $tp] < 2} { return $out }
+    set sv [lindex $sp 1]
+    set tv [lindex $tp 1]
+    if {$tv <= 0} {
+      lappend out [list tranopstopzero blocked \
+        "the transient operating point needs a stop time greater than zero" \
+        "give a stop time, e.g. 10u"]
+      return $out
+    }
+    if {$sv > $tv} {
+      lappend out [list tranopstepbig blocked \
+        "the transient step $stept is larger than the stop time $stopt, and the\
+ simulator rejects the whole setting when it is" \
+        "use a step of at most [format %g [expr {$tv / 50.0}]]"]
+    } elseif {$sv > $tv / 50.0} {
+      lappend out [list tranopstepcut blocked \
+        "the simulator silently replaces a transient step larger than the stop\
+ time over 50 with $stopt/50, so $stept would not be the step it used" \
+        "use a step of at most [format %g [expr {$tv / 50.0}]]"]
+    }
+    return $out
+  }
+
+  ## --- 10c: save and restore the operating point -------------------------
+  ##
+  ## `wrnodev <file>` (`com_wr_ic.c:24-70`) writes the CURRENT node voltages as
+  ## a ready-to-include file. Measured on both binaries after a plain `op` --
+  ## the dossier's "you need to execute stop ... tran ... resume" warning is
+  ## about having no solution at all, not about needing a transient:
+  ##
+  ##     * Intermediate Transient Solution
+  ##     * Circuit: * wrnodev after a plain op
+  ##     * Recorded at simulation time: 0
+  ##     .ic v(in) = 5
+  ##     .ic v(a) = 3.33333
+  ##
+  ## ⚠ AND `.ic` IS NOT A SEED IN A TRANSIENT -- IT IS A CLAMP, AND INCLUDING
+  ## THAT FILE VERBATIM SILENTLY CHANGES THE ANSWER. `cktload.c:146-173` applies
+  ## the ic clamp for every Newton phase of the TRANSIENT operating point with
+  ## no `INITF` qualification, so it is never released. MEASURED 2026-09-13 on
+  ## both binaries, one bench, one edit:
+  ##
+  ##     saved at 5 V           .ic v(a) = 2.5
+  ##     re-run at 3 V, no file  transient starts at 1.500000e+00   <- correct
+  ##     re-run at 3 V, .ic      transient starts at 2.500000e+00   <- wrong
+  ##     re-run at 3 V, nodeset  transient starts at 1.500000e+00   <- correct
+  ##
+  ## rc 0, nothing on either stream, in all three. "The fastest fix for a bench
+  ## that takes four minutes to find its operating point" is a WRONG ANSWER the
+  ## moment the file is one edit old.
+  ##
+  ## So the default restore mode is `seed`, which re-spells the simulator's own
+  ## file as `.nodeset` -- released before the final Newton phase, so it can
+  ## only ever STEER and never change the answer. `force` is the verbatim
+  ## `.include`, i.e. ngspice's `.ic` semantics, for a user who means them.
+  ## `wrnodev` has no `.nodeset` writer and takes exactly one argument (the file
+  ## name), so the re-spelling has to happen here.
+  proc opstate_lines {state which} {
+    set path [::ase::opstate_path $state]
+    if {$path eq {}} { return {} }
+    if {$which eq {save}} {
+      ## A COMMAND, so it belongs inside `.control` -- and after the
+      ## `$sim_status` guard, so a failed operating point never overwrites a
+      ## good saved one.
+      return [list "wrnodev $path"]
+    }
+    if {$which ne {restore}} { return {} }
+    set mode [::ase::opstate_get $state mode seed]
+    if {$mode eq {force}} { return [list ".include $path"] }
+    set txt {}
+    if {[catch {
+      set fh [open $path r] ; set txt [read $fh] ; close $fh
+    }]} { return {} }
+    set out {}
+    foreach l [split $txt "\n"] {
+      set t [string trim $l]
+      if {$t eq {} || [string index $t 0] eq {*}} { continue }
+      if {[regexp -nocase {^\.ic\s+(.*)$} $t -> rest]} {
+        lappend out ".nodeset $rest"
+      }
+    }
+    return $out
+  }
+
+  proc opstate_arg_refusals {state} {
+    set out {}
+    set mode [::ase::opstate_get $state mode seed]
+    if {[lsearch -exact {seed force} $mode] < 0} {
+      lappend out [list opstatemode blocked \
+        "'$mode' is not a way to restore an operating point" \
+        "choose seed or force"]
+      return $out
+    }
+    if {[::ase::opstate_get $state restore 0] ne {1}} { return $out }
+    if {$mode ne {seed}} { return $out }
+    set path [::ase::opstate_path $state]
+    if {$path eq {} || ![file readable $path]} {
+      lappend out [list opstatefile blocked \
+        "the saved operating point '$path' cannot be read, and seeding from it\
+ needs its contents" \
+        "run once with Save operating point ticked, or restore with force"]
+    }
+    return $out
+  }
+
+  ## --- 10c: the run-health strip -----------------------------------------
+  ##
+  ## One deck line, four counters, one line on screen. Measured on both
+  ## binaries, each keyword printing exactly one `Name = value` line:
+  ##
+  ##     Transient timepoints = 2013
+  ##     Accepted timepoints = 2012
+  ##     Rejected timepoints = 1
+  ##     Total iterations = 4045
+  ##
+  ## ⚠ `rusage devtimes` IS NOT AMONG THEM, AND THAT IS NOT AN OVERSIGHT.
+  ## `resource.c:322-335` reads `CKTstat->devCounts[]`, which is only ever
+  ## written inside `#ifdef PER_DEVICE_STATS` -- and `cktload.c:30` is the
+  ## literal line `// #define PER_DEVICE_STATS`. Every counter is therefore
+  ## zero, the loop `continue`s over all of them, and the command prints
+  ## NOTHING. Measured on both binaries: no output, no warning, rc 0 -- while
+  ## an unknown keyword (`rusage zzznosuch`) at least draws `Note: no resource
+  ## usage information for ...` from the fork. A GUI must not offer it.
+  ##
+  ## ⚠ AND EVEN THAT WARNING IS NOT PORTABLE: apt 45.2 answers an unknown
+  ## `rusage` keyword with complete silence. Never read back your own flag.
+  proc runhealth_lines {} {
+    return [list {rusage tranpoints accept rejected totiter}]
+  }
+
+  proc runhealth_parse {text} {
+    set out [dict create]
+    foreach {key lit} {tranpoints {Transient timepoints} \
+                       accept     {Accepted timepoints} \
+                       rejected   {Rejected timepoints} \
+                       totiter    {Total iterations}} {
+      if {[regexp "(?:^|\n)\\s*${lit}\\s*=\\s*(\\S+)" $text -> v]} {
+        dict set out $key $v
+      }
+    }
+    return $out
+  }
+
   ::ase::register_backend ngspice [dict create \
     render_deck  ::ase::backend::ngspice::render_deck \
     run_cmd      ::ase::backend::ngspice::run_cmd \
@@ -24938,5 +25875,15 @@ $_leg
     si_suffixes         ::ase::backend::ngspice::si_suffixes \
     dc_swkind           ::ase::backend::ngspice::dc_swkind \
     out_decompose       ::ase::backend::ngspice::out_decompose \
-    deck_keywords       ::ase::backend::ngspice::deck_keywords]
+    deck_keywords       ::ase::backend::ngspice::deck_keywords \
+    ncdump_parse        ::ase::backend::ngspice::ncdump_parse \
+    ladder_rungs        ::ase::backend::ngspice::ladder_rungs \
+    ladder_parse        ::ase::backend::ngspice::ladder_parse \
+    optran_line         ::ase::backend::ngspice::optran_line \
+    opstrategy_options  ::ase::backend::ngspice::opstrategy_options \
+    opstrategy_arg_refusals ::ase::backend::ngspice::opstrategy_arg_refusals \
+    opstate_lines       ::ase::backend::ngspice::opstate_lines \
+    opstate_arg_refusals ::ase::backend::ngspice::opstate_arg_refusals \
+    runhealth_lines     ::ase::backend::ngspice::runhealth_lines \
+    runhealth_parse     ::ase::backend::ngspice::runhealth_parse]
 }

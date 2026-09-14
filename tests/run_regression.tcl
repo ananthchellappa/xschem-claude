@@ -80,7 +80,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_effective_1442" \
                  "headless/test_ase_meas_1443" \
-                 "headless/test_ase_sp_1452"]
+                 "headless/test_ase_sp_1452" \
+                 "headless/test_ase_converge_1459"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -157,6 +158,21 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # that two halves of a feature tested in different suites never meet. A binary
 # that is not there SKIPS with its path printed, so the log can never confuse
 # "not tested" with "tested and fine"; `$ASE_SP_NGSPICE` (colon-separated)
+# overrides the search.
+# ⚠ `test_ase_converge_1459` IS NOT HERE EITHER, AND THE MEASUREMENT SAYS SO.
+# Measured 2026-09-13 on both arms from the `RESULT:` line: **76 checks headless
+# and 76 on the dev display, the same rows** (`diff` of the two ok-lists is
+# empty). Stage 10 task 1 is the DECK half -- the `CKTncDump` and ladder
+# parsers, the `optran` speller, the operating-point save/restore and the
+# run-health line -- and it creates no widget at all: the ladder pane, the
+# remedy assistant, the canvas highlight and the health strip are Stage 10
+# task 2. The day that lands it earns a line here and its counts will say so.
+# ⚠ AND IT IS THE SECOND SUITE IN `hcases` THAT REALLY STARTS A SIMULATOR,
+# ON BOTH BINARIES. Its section EE renders the deck ASE-L writes, runs it on apt
+# 45.2 AND on the fork, reads the ladder and the starred `Last Node Voltages`
+# table back through ASE-L's own parsers, and asks the SURPLUS question -- is
+# there a ladder line in that log this parser has never heard of. A binary that
+# is not there SKIPS with its path printed; `$ASE_CONV_NGSPICE` (colon-separated)
 # overrides the search.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \

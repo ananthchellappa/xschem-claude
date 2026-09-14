@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**449 strings, from 26 issues, grouped by where the user sees them** — not by
+**479 strings, from 27 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -6561,3 +6561,343 @@ repeated on nine entries.
 
 
 *Note:* ⚠ **Four sentences, which is the longest refusal in the batch** (R9-419 was the previous holder at two). Every clause is doing work: *what it is*, *how it got here*, **what would have happened to the user's own files**, and *what to do instead*. ⚠ It is the only string in this document that tells the user a tool would have damaged something of theirs — and the damage had already happened when it was written. §A11's question about naming internals reaches it too: `xschem` is a program name the user knows, not a source file.
+
+
+## Issue 1459 — the operating-point strategy, the ladder, and the saved operating point (stage 10, deck half)
+
+*30 entries, 19 sentences.* All minted by **core**; **none is in a widget yet** — `src/ase_window.tcl`
+is untouched and task 2 builds the surface that shows them. They are filed now because words settled
+before the surface is built are words the surface consumes rather than re-mints, which is the order
+issue 1443 established and this batch has followed since.
+
+⚠ **`seed` and `force` are the two restore modes and they reach the user inside a refusal**
+(R9-479, *"choose seed or force"*). They are the names the deck half needs; **whether the FORM calls
+them that is task 2's copy and the user's ruling.** They are flagged here rather than left to be
+noticed on a form that does not exist yet.
+
+**R9-450** · label
+
+```text
+Newton from the initial guess
+```
+
+
+*Where:* one of the four rung labels of the operating-point strategy — ASE-L **core**, minted from the adapter's declared ladder. Shown beside its own checkbox (task 2's widget).
+
+
+*Note:* §A6 — *Newton* is a numerical method's name, not a circuit designer's word. It is the honest name for rung 1 and it may still be the wrong one for this audience.
+
+**R9-451** · label
+
+```text
+gmin stepping
+```
+
+
+*Where:* one of the four rung labels of the operating-point strategy — ASE-L **core**, minted from the adapter's declared ladder. Shown beside its own checkbox (task 2's widget).
+
+
+*Note:* ⚠ **Lower-case `gmin`**, because it is ngspice's own spelling of a conductance, not an acronym. §A2 reaches it and the house rule about uppercase acronyms deliberately does not.
+
+**R9-452** · label
+
+```text
+Source stepping
+```
+
+
+*Where:* one of the four rung labels of the operating-point strategy — ASE-L **core**, minted from the adapter's declared ladder. Shown beside its own checkbox (task 2's widget).
+
+
+*Note:* ⚠ **Capitalised where `gmin stepping` is not** — because `Source` is an English word and `gmin` is a variable name. §A8: two siblings, two rules, one row of checkboxes.
+
+**R9-453** · label
+
+```text
+Transient operating point
+```
+
+
+*Where:* one of the four rung labels of the operating-point strategy — ASE-L **core**, minted from the adapter's declared ladder. Shown beside its own checkbox (task 2's widget).
+
+
+*Note:* The rung whose whole problem is that it does not produce an operating point. Its caution is R9-454.
+
+**R9-454** · caution
+
+```text
+ON by default in this simulator. It hands back the TRANSIENT state at its stop time as the operating point: measured 0.9999550 instead of 1.0 on a 1 us RC.
+```
+
+
+*Where:* shown beside the fourth rung's control.
+
+
+*For:* ngspice injects `optran 1 1 1 100n 10u 0` by default, so this rung runs on nearly every bench and nobody has ever been told. The error is whatever the slowest time constant has left unsettled at the stop time — a trivial RC is not an upper bound.
+
+
+*Note:* ⚠ **Shouted word** (`TRANSIENT`) — §A1, and the eleventh in this document. ⚠ And it **quotes a measurement at the user**: `0.9999550 instead of 1.0`. Driver-verified, identical to every digit on both binaries, so the number is true — the question is whether a number belongs in a caution or whether *"your operating point may be a transient snapshot"* carries it. **No other string in this batch cites a measured value.**
+
+**R9-455** · status
+
+```text
+This operating point came from gmin stepping, not from a plain solve.
+```
+
+
+*Where:* the OP form, **conditional** — rendered only when the log says that rung is the one that answered (`ase::ladder_ran_notes`).
+
+
+*Note:* ⚠ **These three are the only strings in the batch that appear because of what a RUN did**, rather than because of what a form holds. They are read out of the log after the fact.
+
+**R9-456** · status
+
+```text
+This operating point came from source stepping, not from a plain solve.
+```
+
+
+*Where:* the OP form, **conditional** — rendered only when the log says that rung is the one that answered (`ase::ladder_ran_notes`).
+
+
+*Note:* §A8 again — *source stepping* lower-case here, `Source stepping` in the label at R9-452. **One idea, two spellings, eight lines apart.**
+
+**R9-457** · status
+
+```text
+This operating point came from a transient, not from a DC solve.
+```
+
+
+*Where:* the OP form, **conditional** — rendered only when the log says that rung is the one that answered (`ase::ladder_ran_notes`).
+
+
+*Note:* ⚠ The sentence `PLAN.md` §10b asked for, and the one a user has never seen from any tool. Note it says *a DC solve* where its two siblings say *a plain solve* — §A8.
+
+**R9-458** · refusal
+
+```text
+the Options sheet sets <names>, and the operating-point strategy overrides those rows without saying so
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ **Its singular variant is real**: with one clashing row it reads *"sets noopiter, and the operating-point strategy overrides that row"*. §A7 — two frames for one event.
+
+**R9-459** · advice
+
+```text
+remove those rows from the Options sheet, or switch the strategy off
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-460** · refusal
+
+```text
+every step of the operating-point strategy is switched off, so nothing would solve the operating point
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* The refusal that makes the four checkboxes a strategy rather than four independent ticks.
+
+**R9-461** · advice
+
+```text
+switch at least one step back on
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-462** · refusal
+
+```text
+the transient step <s> is larger than the stop time <t>, and the simulator rejects the whole setting when it is
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* Driver-verified behaviour: `optran 0 0 0 0 10u 0` answers **rc 1** and the run dies. Rendered — both values and the computed bound vary.
+
+**R9-463** · advice
+
+```text
+use a step of at most <t/50>
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-464** · refusal
+
+```text
+the simulator silently replaces a transient step larger than the stop time over 50 with <t>/50, so <s> would not be the step it used
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ **A caution about a silent substitution — this batch's own subject.** Note it and the refusal above share one fix clause, which is right: one remedy, two conditions.
+
+**R9-465** · advice
+
+```text
+use a step of at most <t/50>
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-466** · refusal
+
+```text
+'<s>' is not a time this simulator can read
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* §A9 — the offending value is quoted. The fix carries an example, which most of this batch's fixes do not.
+
+**R9-467** · advice
+
+```text
+give the transient step as a number, e.g. 100n
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-468** · refusal
+
+```text
+'<t>' is not a time this simulator can read
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ **Byte-identical to R9-466 except for one word.** §A8, and arguably they should be one sentence naming the field.
+
+**R9-469** · advice
+
+```text
+give the transient stop time as a number, e.g. 10u
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-470** · refusal
+
+```text
+the transient operating point needs a stop time greater than zero
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+**R9-471** · advice
+
+```text
+give a stop time, e.g. 10u
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-472** · refusal
+
+```text
+there is no enabled OP row, so there is no operating point to save
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ `OP` **uppercase** here where the rung labels say *operating point* in words — §A12.
+
+**R9-473** · advice
+
+```text
+enable an OP analysis, or switch the save off
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-474** · refusal
+
+```text
+no file is named for the saved operating point
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* The shortest refusal in the stage.
+
+**R9-475** · advice
+
+```text
+name a file
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-476** · refusal
+
+```text
+the saved operating point '<path>' cannot be read, and seeding from it needs its contents
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ The fix names **`force`**, an internal mode word, in copy — §A3. The crew flagged exactly this; see R9-479.
+
+**R9-477** · advice
+
+```text
+run once with Save operating point ticked, or restore with force
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
+
+**R9-478** · refusal
+
+```text
+'<mode>' is not a way to restore an operating point
+```
+
+
+*Where:* a precondition refusal produced by ASE-L **core**, rendered through `ase::precheck_banner_text` — the same frame and the same `Fix:` clause every other refusal in this batch uses.
+
+
+*Note:* ⚠ **Both mode words in one refusal.** Reachable only from a hand-edited `.state`, since the form offers a picker.
+
+**R9-479** · advice
+
+```text
+choose seed or force
+```
+
+
+*Where:* the fix clause of the refusal above, same site.
