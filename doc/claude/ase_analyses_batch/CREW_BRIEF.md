@@ -80,6 +80,15 @@ done
 **`-f` matched its own shell's command line and killed it.** Walk `ps`, match the exact argv, and
 kill only what you started.
 
+**This is not an anecdote — it is reproducible, and the driver reproduced it read-only while
+writing this section.** `pgrep -c -f 'CAMPAIGN FINISHED'` answered **2** where exactly **one**
+such process existed: the waiter, plus **the shell running the `pgrep`**, because `-f` matches the
+whole command line and the pattern is *in* that command line. Swap `pgrep` for `pkill` and the
+second match is the hand doing the killing.
+
+So the rule has a mechanical reason rather than a moral one: **any `-f` pattern you type is, at the
+moment you type it, present in a live process's command line — your own.**
+
 ## ⚠ DISARM YOUR SABOTAGE SNAPSHOTS WHEN YOU HAND OVER
 
 Every crew in this batch takes `cp` snapshots of `src/ase.tcl` and `src/ase_window.tcl` before its
