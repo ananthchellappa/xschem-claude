@@ -65,8 +65,14 @@ rescued every deck built to fail and three spellings could not turn it off, whic
 checkbox has to solve; and §10b's own headline number, `9.999550e-01` against `1.000000e+00`,
 reproduces exactly on both binaries.
 
-**Still open and named:** M5, M9, M12's second half, M13, M14 *(never)*, M15, M16, M17, M18, M20,
-M21.
+**Also closed 2026-09-13:** **M15** — *by refuting its premise*: there is no help database, `help <verb>` is
+compiled into the binary on every build this batch supports, so Stage 2's gate cannot be defeated by a
+missing one. And **M20 is characterised rather than closed**: the fork's own flags build out of tree in 40
+seconds, but **subtracting the capability flags does not compile** — `--disable-xspice` dies on an
+`OPT_ENH_RSHUNT` guard mismatch and `--disable-osdi --disable-klu` on a missing `<stdlib.h>` in a generated
+code model. Both are ngspice's and neither was patched here.
+
+**Still open and named:** M5, M9, M12's second half, M13, M14 *(never)*, M16, M17, M18, M20, M21.
 
 ⚠ **M15 and M20 both need a second ngspice BUILD, and neither was taken while a crew was
 measuring** — a `make -j` alongside a sabotage campaign is exactly the load that made row X7 die
