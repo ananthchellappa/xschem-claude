@@ -27,6 +27,50 @@ vanishes gets re-opened by the next reader.
 
 ---
 
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-13 18:59
+
+**Read this first. It is the resume point, and it is rewritten rather than appended to.**
+
+| | |
+|---|---|
+| **Stages landed** | 0, 1, 2, 3, 4, 5, 6, 7, 8, **9** — Stage 9 as two commits, `f438af90` (the deck half, issue 1452) and `3e316f7a` (the GUI half, issue 1454) |
+| **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
+| **Out of scope** | Stage **15**, removed by ⚖ R10 |
+| **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`** — and this is the first honest zero the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
+| **In flight** | a crew on issue **1453** (ASE-L's capability probe took over the user's `File > Open Recent`); it owns `src/ase.tcl` and `tests/headless/test_ase_simcaps_0948.tcl` |
+| **Blocked behind it** | issue **1457**'s fix and **Stage 10 task 1** — both need `src/ase.tcl`, and two crews on one file is how a hardening gets silently reverted |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453** (four options, A recommended, and the crew above is measuring the writer first because the filed mechanism did not survive reading the code) |
+| **Debt queue** | **170 rule / 63 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
+
+### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
+
+**M1** (the ladder's two streams — the fold is systematically reordered, and the rung you are on
+has no newline) · **M7** (`.probe` spellings — and `vd()` inserts an E-source, and probing a source
+duplicates a vector name) · **M8** (`set interp` does nothing on AC or DC and prints a warning
+saying it did — and the two binaries disagree about a transient's point count, difference **#7**) ·
+**M10** (`onoise_total` is V **RMS**, and its value depends on the point count) · **M11**
+(everything survives `alterparam` + `reset` except `.spiceinit`, and `option`'s listing lies) ·
+**M12** half (what `wrs2p` emits is measured; *is it valid Touchstone* needs one install the user
+must approve) · **M21** sharpened from read to measured.
+
+**Still open and named:** M5, M9, M12's second half, M13, M14 *(never)*, M15, M16, M17, M18, M19,
+M20, M21.
+
+### The next three things, in order
+
+1. **Collect the 1453 crew**, verify its measurement of the writer independently, re-run both arms,
+   T1 solo, ledger, commit.
+2. **Issue 1457** — `sp_matrix` gates `Cy` on `donoise && $n == 2`; it must gate on the flag alone
+   and emit N×N, and row `SX2` must be rewritten to the measured table because it currently asserts
+   the defect.
+3. **Stage 10 task 1**, the deck half — `ase::ncdump_parse`, `ase::ladder_parse`,
+   `ase::optran_line`, `ase::wrnodev_lines`. **Its two prerequisite debts (M1, M7) are paid**, and
+   `evidence/ladder-streams.md` already carries its fixture text, its `optran` warning and §10b's
+   headline number re-measured on both binaries.
+
+---
+
 ## Baseline, recorded before any crew started — 2026-09-09
 
 **Re-verified 2026-09-10, by the pass that folded in the adapter pivot. Every figure below
