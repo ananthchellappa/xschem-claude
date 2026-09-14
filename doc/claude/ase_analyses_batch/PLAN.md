@@ -3353,6 +3353,15 @@ sentence beneath; and the one-line run-health strip. File `owed.sh add look` for
 
 **Two or three commits. Rulings ⚖ R8; ⚖ R2 is ANSWERED (yes, four conditions).**
 
+⚠ **MEASURED 2026-09-13, and the drop is SILENT — `evidence/sweep-nesting.md`.** A third `.dc`
+sweep level is **accepted and discarded**: three nested sweeps produce the same **9** rows as two,
+byte-identical values, **rc 0 and nothing on stderr**, on both binaries. A user who asks for 27
+operating points gets 9 and is told nothing. **So ASE-L must REFUSE a third level at the form**,
+not pass it through with a caution. It is the fourth *accepted-and-inert* case this batch has
+measured, and the rule they add up to is that **ngspice's usual answer to a request it cannot
+honour is to take it and say nothing** — so "the simulator did not complain" is never evidence
+that a setting reached anything.
+
 ngspice has **no `.step` and no corner construct**; `.dc` nests exactly twice and sweeps only
 R / V / I / `temp`; nested sweeps come back **flattened with no `Dimensions:` header**. So the GUI
 generates the campaign, and being a good code generator is the job.
