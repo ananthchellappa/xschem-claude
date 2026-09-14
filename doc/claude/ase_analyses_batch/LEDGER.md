@@ -37,7 +37,7 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, twice in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on issue **1457** (the `Cy` family hidden above two ports); it owns `src/ase.tcl`, `test_ase_sp_1452.tcl` and `test_ase_dialogs.tcl` |
+| **In flight** | nothing — issue **1457** landed; `src/ase.tcl` is free |
 | **Next** | **Stage 10 task 1** — the deck half. Its two prerequisite debts (**M1**, **M7**) are paid and `evidence/ladder-streams.md` already holds its fixture text |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
@@ -920,6 +920,85 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Issue 1457 — the `Cy` matrix a three-port run really produces, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | `sp_matrix`'s **single gate became two**: `Cy` on the noise flag alone, **N×N**; the four scalars keep the flag **and** `n == 2`. `sp_vectors` inherited the fix exactly as it had inherited the bug — which is the mechanism working, not a second edit. The comment block that **asserted the defect in prose** is replaced by a six-shape transcript. `src/ase_window.tcl` **not modified**, md5 identical to pristine. |
+| **driver's own re-run** | `test_ase_sp_1452` **50 → 58**, ALL PASS on **both** arms. `test_ase_dialogs` **ALL PASS (37)** headless, **1 FAILED (384 passed)** display — the red is `G2sens`, issue 1436, standing, value-identical. `test_ase_core` **636**. |
+| **the driver re-measured the generalisation itself** | The crew extended the brief's table from two port counts to **three**, on the ground that *two points do not establish "N×N"*. The driver then measured the new shape independently, both binaries: **4 ports, flag on → S/Y/Z 48, `Cy` 16, scalars 0.** It holds. |
+| **byte identity** | 104 tracked `.state` files, zero not round-tripping, control disagrees. |
+| **sabotage** | **Twenty mutations, ZERO survivors**, every restore md5-clean. |
+| **T1** | ✅ **Run solo: 70 cases, ZERO counted lines in `tests/results.log`.** |
+| **ledger debts** | **170 / 64 / 10 → 171 / 65 / 10**, backed up before every write. One new **ruling**, below. |
+| **receipt** | `receipts/35-1457-the-cy-matrix.md` |
+
+## ⚠ A SIXTH WAY A ROW FAILS TO FAIL, AND THE CREW FOUND IT IN ITS OWN WORK
+
+**`SE3` — the end-to-end row this task wrote — passed on both binaries first time, and would have
+passed with the defect still in.**
+
+Because 1457's defect is not a broken promise, it is a **missing** one. With `Cy` re-gated on
+`n == 2`, `sp_vectors` promises 27, the file holds 36, **all 27 promised are present**, the missing
+list is empty, green. **The direction that matters is the SURPLUS** — what the run wrote and the
+picker never offered — and an end-to-end row is blind to it unless it is asked for explicitly. SE3
+now folds the file's own matrix-shaped names and checks them **back** against the promise; under
+sabotage **m1** (the shipped defect restored) it reddens on **both** binaries.
+
+**So this stage produced two different ways to be green and wrong, one level apart:**
+
+| | the row | why it did not fail |
+|---|---|---|
+| **transcribed** | `SX2` was **green and wrong** | its expectation came from reading `span.c:74-178` — true of the noise *parameters*, false of the correlation matrix |
+| **one-directional** | `SE3` would have been **green and blind** | it asked *"is everything promised present?"* and never *"is anything present that was not promised?"* |
+
+⚠ **A row that runs the real thing is not automatically a row that would notice.** Add that to the
+batch's list beside *fixtures that never disagree*, *position where the mechanism is last-writer-
+wins*, *an extractor that returns nothing*, *a sabotage missing from the generator*, and *two
+halves of a feature tested in different suites*.
+
+## The campaign, and the three results worth reading twice
+
+* **m1** — the shipped defect restored — reds **eight** schema rows including `SE3` on both real
+  binaries, plus the two new picker rows.
+* **m7b** — proves the `SX5` rewrite **earns its place by measurement**: the *old* `SX5` returns
+  `ALL PASS` against a gate re-added to `sp_vectors`. The row that was there could not have caught
+  the bug in the proc it was written to guard.
+* **m18 / `SX2f`** — the gap the first list did not have, and it is the dangerous shape: **dropping
+  the emitted noise flag above two ports reads like a tidy-up** and would leave the picker showing
+  36 cells that no rawfile ever fills. The first sabotage list has now been short for **six** crews
+  running.
+
+⚠ **AND THE SIXTH SUITE DEFECT OF THIS CLASS.** Mutation **m17** made the picker raise out of
+`$cw.matrixbtn invoke`, and **thirteen checks — SP7 through SP13 — vanished at rc 0**. Every picker
+open, click and read in section SP now goes through a total reader; the same mutation reds **eight
+named rows and loses nothing**. *A read that raises kills a GUI suite at rc 0 instead of reddening
+a row* has now been met six times in this batch, three of them inside section SP alone.
+
+## ⚖ A NEW RULING, AND IT IS THE SAME DEFECT ONE LAYER UP
+
+**No new user-facing string was minted.** The caution sentence is untouched and is now **pinned
+verbatim by a new row, `SN5b`** — nothing pinned its *words* before, only its verdict, so a
+re-wording could have slipped through unnoticed.
+
+⚠ **But the field label is now wrong for a reason nobody had noticed.** `Noise figure
+(2 ports only)` (**R9-411**) is the tick that summons the **`Cy` grid at any N** — so on a
+three-port bench **the label tells the user not to tick the only control that would give them the
+nine `Cy` vectors.** Same hiding, one layer up, in copy instead of code. Filed as
+`owed.sh add rule 1457` with four options; the crew recommends **`Noise figure and correlation
+matrix`** and **implemented nothing**, which is the right call — it is the user's wording to
+choose, and ⚖ R9 is already open.
+
+## Corrections to the driver's brief
+
+1. **§4's premise was wrong.** The brief said a 3×3 `Cy` block with no scalars beside it is *"a
+   layout it has never been given"*. Measured through the real widgets: **the layout is correct**.
+   What was missing was any row that could **tell you** it was. Nothing in `ase_window.tcl` needed
+   changing, and nothing was changed.
+2. **The issue's *"re-check `sp_vectors`"* aimed at the wrong file.** `sp_vectors` is `sp_matrix`
+   flattened, so it inherited the fix by construction — the inheritance is the design working. The
+   re-check belonged in the **test**, and that is where it went (`m7b`).
 
 ### ✅ Issue 1453 — the probe was starting a SECOND XSCHEM, collected 2026-09-13
 

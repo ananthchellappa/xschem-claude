@@ -114,6 +114,31 @@
 #        DECLARED spelling and unwraps ngspice's own `v()`/`i()`, which is what
 #        it was waiting for. The widgets themselves are
 #        `test_ase_dialogs.tcl` section SP, display arm.
+#   58   AND RAISED 50 -> 58, issue 1457: SX2 was GREEN AND WRONG. It asserted
+#        that the noise families do not appear on a three-port row even with the
+#        flag on -- a sentence transcribed from `span.c:74-178` and never
+#        measured -- so `sp_matrix` hid the nine `Cy` vectors a three-port run
+#        really writes, and the sabotage that moved the code TOWARDS correctness
+#        was scored as caught. SX2 is now six rawfile counts (2/3/4 ports, flag
+#        off and on, both binaries), and it split into SX2/SX2b/SX2c/SX2d/SX2e
+#        because ONE row cannot separate the two opposite mistakes -- `Cy`
+#        dropped at N != 2, and the four scalars offered at N != 2. SX5 is
+#        rewritten to ask its flattening at all five shapes rather than only at
+#        N == 2, which is the shape that could not see 1457. SN5b is the fifth
+#        new row and a different gap: SN5 pinned the caution's VERDICT and
+#        nothing pinned its WORDS, so the sentence could have gained a clause in
+#        silence -- and during 1457 a review note nearly gave it one. SX2f is
+#        the sixth and the one this crew's first sabotage list did NOT have:
+#        1457 is the picker offering FEWER vectors than the run writes, and the
+#        MIRROR image -- dropping the emitted noise flag above two ports, which
+#        reads like a tidy-up next to the caution -- would leave 36 cells on
+#        screen that no rawfile ever fills. SX2f asks the card and the matrix
+#        together, at every port count. SE3 is the seventh and eighth (one per
+#        binary): a THREE-PORT flagged row rendered by ASE-L, RUN, and the
+#        results file asked whether every vector the picker offers is in it AND
+#        whether every matrix vector it holds is offered. The SURPLUS term is
+#        the load-bearing one -- with `Cy` re-gated on N == 2 the MISSING list
+#        is empty and a row without the surplus check would pass the defect.
 #
 # ⚠ RAISED, NEVER LOWERED. If a number falls, say which rows went and why, per
 # row.
@@ -483,6 +508,28 @@ check {SN5 three ports with the noise figure or the Touchstone box on is a\
   [list [sn_three donoise 1] [sn_three s2p 1] [sn_three]] \
   {{setup_check caution} {setup_check caution} ok}
 
+## ⚠ SN5b: THE CAUTION'S OWN WORDS, AND ISSUE **1457** IS WHY THIS ROW EXISTS.
+## SN5 asks for the VERDICT and nothing asked for the SENTENCE, so the sentence
+## could have gained a clause in silence -- and during 1457 it nearly did. A
+## review note claimed it was incomplete because the `Cy` family is "also absent
+## at N != 2"; measured, `Cy` is PRESENT at N != 2 and the note was withdrawn.
+## The sentence names the four scalars and ONLY the four scalars, which is
+## exactly right, and **a family that is present needs no warning** -- which is
+## itself the argument for why the picker must offer `Cy`. If anyone adds a `Cy`
+## clause here, this row is where it stops.
+proc sn_lines {args} {
+  set v [s_ans ase::analysis_needs ngspice \
+          [concat {type sp enabled 1 points 3 start 1g stop 2g} \
+            {ports {{src v1 num 1} {src v2 num 2} {src v3 num 3}}} $args] $::SPFACTS]
+  if {![llength $v]} { return NOCAUTION }
+  return [lrange [lindex $v 0] 2 3]
+}
+check {SN5b the noise caution names the four scalars and nothing else, and the\
+ Touchstone one names the file} \
+  [list [sn_lines donoise 1] [sn_lines s2p 1]] \
+  [list {{the noise figure is computed for exactly 2 ports and this analysis has 3, so NF, NFmin, Rn and SOpt will not be in the results} {switch the noise figure off, or reduce the analysis to 2 ports}} \
+        {{a Touchstone file holds exactly 2 ports and this analysis has 3, so only ports 1 and 2 will be written} {reduce the analysis to 2 ports, or read the file as the 2-port it is}}]
+
 ## ⚠ `lin 2` IS **`lin_points`**, WHICH ALREADY EXISTED. PLAN.md Stage 9 writes
 ## this as a NEW rule called `lin_two` with verdict `refuse`; the tree shipped
 ## `lin_points` as a CAUTION at issue 1442 under ⚖ D47 ("refusing removes a
@@ -763,17 +810,35 @@ check {SM5 the surface that reads the S-parameter vector names folds, answers in
 ## themselves are `tests/headless/test_ase_dialogs.tcl` section SP, which runs
 ## on the display arm; these rows run on both.
 
-## ⚠ THE MATRIX IS A TRANSCRIPT, NOT A GUESS. MEASURED 2026-09-13 on apt 45.2
-## AND on the fork, one deck per shape, `display` inside the `.control` block:
+## ⚠ THE MATRIX IS A TRANSCRIPT, NOT A GUESS -- AND ISSUE **1457** IS WHAT THAT
+## SENTENCE COST WHEN IT WAS NOT TRUE. RE-MEASURED 2026-09-13 for 1457 on apt
+## 45.2 AND on the fork, SIX decks -- two, three and four ports, flag off and on
+## -- counting the `Variables:` block of the WRITTEN RAWFILE. The two binaries
+## agree on every number:
 ##
-##   2 ports, no noise flag   S_1_1 S_1_2 S_2_1 S_2_2  Y_… (4)  Z_… (4)   = 12
-##   3 ports, no noise flag   S_… (9)  Y_… (9)  Z_… (9)                   = 27
-##   2 ports, noise flag on   + Cy_1_1 Cy_1_2 Cy_2_1 Cy_2_2 NF NFmin Rn SOpt = 20
+##   ports  flag   S/Y/Z   Cy    NF NFmin Rn SOpt   matrix total
+##     2    off     12      0           0                12
+##     2    on      12      4           4                20
+##     3    off     27      0           0                27
+##     3    on      27      9           0                36
+##     4    off     48      0           0                48
+##     4    on      48     16           0                64
 ##
-## ⚠ THE `Cy` MATRIX IS A FINDING AND `evidence/sp-stage9.md` DOES NOT HAVE IT.
-## That file names FOUR noise vectors; the noise correlation matrix is a fifth
-## thing and an N x N grid of its own. A picker that silently omitted a family
-## the run produces would be this stage's own defect class.
+## ⚠ `Cy` FOLLOWS THE FLAG AT ANY PORT COUNT, N x N; ONLY THE FOUR SCALARS ARE
+## RESTRICTED TO N == 2. THIS BLOCK SAID THE OPPOSITE UNTIL ISSUE 1457, and row
+## SX2 asserted it -- green, sabotage-verified, and WRONG, so the mutation that
+## moved the code towards correctness was scored as caught. The claim came from
+## reading `span.c:74-178`, which is true of the noise PARAMETERS and not of the
+## correlation matrix. **Transcribed source is not measured behaviour**, and a
+## row built on one defends the bug it was written to catch. Every number in the
+## table above is now a count of a rawfile this crew wrote and read; the N == 4
+## line is there so "N x N" is measured rather than extrapolated from two points.
+##
+## ⚠ THE `Cy` MATRIX IS A FINDING AND `evidence/sp-stage9.md` DID NOT HAVE IT
+## UNTIL 2026-09-13. That file names FOUR noise vectors; the noise correlation
+## matrix is a fifth thing and an N x N grid of its own. A picker that silently
+## omitted a family the run produces would be this stage's own defect class --
+## which is precisely what shipped for every port count but two.
 check {SX1 a two-port row's matrix is the twelve vectors the run really answers,\
  in three families} \
   [list [llength [s_ans ase::analysis_matrix ngspice sp [sp_row]]] \
@@ -782,15 +847,168 @@ check {SX1 a two-port row's matrix is the twelve vectors the run really answers,
   [list 12 {S Y Z} \
         {S_1_1 S_1_2 S_2_1 S_2_2 Y_1_1 Y_1_2 Y_2_1 Y_2_2 Z_1_1 Z_1_2 Z_2_1 Z_2_2}]
 
-## ⚠ THE GRID'S SIZE IS THE USER'S OWN TABLE, which is why `ase::analysis_matrix`
-## takes the ROW. A literal list could not be right for both shapes.
-set SX2ROW3 {type sp enabled 1 points 3 start 100meg stop 1g donoise 1 \
-             ports {{src v1 num 1} {src v2 num 2} {src v3 num 3}}}
-check {SX2 a three-port row's matrix is 27, and the noise families do NOT appear\
- on it even with the flag on} \
-  [list [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW3]] \
-        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW3]] \
-  [list 27 {S Y Z}]
+## ⚠ SX2 IS THE SIX-DECK TRANSCRIPT ABOVE, AND IT IS THE ROW ISSUE 1457 IS
+## ABOUT. Until 1457 it read *"a three-port row's matrix is 27, and the noise
+## families do NOT appear on it even with the flag on"* -- a sentence nobody had
+## measured, pinned by a fixture that disagreed and a sabotage that reddened, so
+## every control the batch knows about passed while the picker hid nine vectors
+## a three-port run really writes. It now asserts the RAWFILE COUNTS.
+##
+## ⚠ IT HAS TO CATCH **TWO** MISTAKES, WHICH ARE NOT THE SAME MISTAKE:
+##   (a) `Cy` DROPPED at N != 2  -- caught by SX2C's totals, its family list and
+##       its per-family counts, and by SX2D's nine names;
+##   (b) the four SCALARS OFFERED at N != 2 -- caught by the same totals from the
+##       other side, by the family list gaining `Noise`, and head-on by SX2E,
+##       which asks for the scalars by name at each port count.
+## A row that caught only one of them would be half a row, so the gates are
+## asserted separately as well as through the totals.
+##
+## ⚠ AND THE GRID'S SIZE IS THE USER'S OWN TABLE, which is why
+## `ase::analysis_matrix` takes the ROW: 2x2, 3x3 and 4x4 are all measured here,
+## so no literal list and no fixed N can pass.
+proc sx_row {n args} {
+  set ports {}
+  for {set i 1} {$i <= $n} {incr i} { lappend ports [list src v$i num $i z0 50] }
+  return [concat [list type sp enabled 1 points 3 start 100meg stop 1g \
+                       ports $ports] $args]
+}
+## per-family counts, through the real `_families` / `_of` readers rather than a
+## private tally, so a family that exists only inside `sp_matrix` cannot pass.
+proc sx_famcount {row} {
+  set out {}
+  foreach f [s_ans ase::analysis_matrix_families ngspice sp $row] {
+    lappend out $f [llength [s_ans ase::analysis_matrix_of ngspice sp $row $f]]
+  }
+  return $out
+}
+proc sx_vecs {row fam} {
+  set out {}
+  foreach m [s_ans ase::analysis_matrix_of ngspice sp $row $fam] {
+    lappend out [s_dget $m vector]
+  }
+  return $out
+}
+set SX2ROW2  [sx_row 2]
+set SX2ROW2N [sx_row 2 donoise 1]
+set SX2ROW3  [sx_row 3]
+set SX2ROW3N [sx_row 3 donoise 1]
+set SX2ROW4  [sx_row 4]
+set SX2ROW4N [sx_row 4 donoise 1]
+
+## SX2 -- THE TOTALS. Six numbers, six decks, both binaries agreeing on each.
+check {SX2 the matrix is the count the run really writes at two, three and four\
+ ports, flag off and on} \
+  [list [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW2]] \
+        [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW2N]] \
+        [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW3]] \
+        [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW3N]] \
+        [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW4]] \
+        [llength [s_ans ase::analysis_matrix ngspice sp $SX2ROW4N]]] \
+  [list 12 20 27 36 48 64]
+
+## SX2b -- THE FAMILIES, which is where the two mistakes look different. A
+## dropped `Cy` loses a token from the on-rows; an over-offered scalar set adds
+## `Noise` to the N != 2 on-rows. The off-rows are the control: the flag, not the
+## port count, is what summons either one.
+check {SX2b the flag alone decides the Cy family and the port count alone\
+ decides the Noise scalars} \
+  [list [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW2] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW2N] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW3] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW3N] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW4] \
+        [s_ans ase::analysis_matrix_families ngspice sp $SX2ROW4N]] \
+  [list {S Y Z} {S Y Z Cy Noise} {S Y Z} {S Y Z Cy} {S Y Z} {S Y Z Cy}]
+
+## SX2c -- THE GRID IS N x N AND THE SCALARS ARE FOUR. A `Cy` block emitted at a
+## fixed 2x2 whatever N is would keep the family token and still be wrong; only
+## the per-family counts see it.
+check {SX2c the Cy block is N x N at every port count and the scalars are always\
+ the same four} \
+  [list [sx_famcount $SX2ROW2N] \
+        [sx_famcount $SX2ROW3N] \
+        [sx_famcount $SX2ROW4N] \
+        [sx_famcount $SX2ROW3]] \
+  [list {S 4 Y 4 Z 4 Cy 4 Noise 4} \
+        {S 9 Y 9 Z 9 Cy 9} \
+        {S 16 Y 16 Z 16 Cy 16} \
+        {S 9 Y 9 Z 9}]
+
+## SX2d -- THE NINE NAMES AND THE NINE EXPRESSIONS, spelled out. `i(Cy_3_3)` is
+## MEASURED against the real three-port variable list of each binary:
+## `wviewer::validate_rpn` rejects the bare `Cy_3_3` on both, accepts
+## `i(Cy_3_3)` on both, and rejects `i(Cy_9_9)` on both as the control. The wrap
+## is NOT assumed to generalise from N == 2; it was re-measured at N == 3.
+set SX2CYV [sx_vecs $SX2ROW3N Cy]
+set SX2CYE {}
+foreach sx2m [s_ans ase::analysis_matrix_of ngspice sp $SX2ROW3N Cy] {
+  lappend SX2CYE [s_dget $sx2m expr]
+}
+check {SX2d a three-port Cy block names all nine cells and wraps every one of\
+ them the way the rawfile writes it} \
+  [list $SX2CYV $SX2CYE] \
+  [list {Cy_1_1 Cy_1_2 Cy_1_3 Cy_2_1 Cy_2_2 Cy_2_3 Cy_3_1 Cy_3_2 Cy_3_3} \
+        {i(Cy_1_1) i(Cy_1_2) i(Cy_1_3) i(Cy_2_1) i(Cy_2_2) i(Cy_2_3)\
+         i(Cy_3_1) i(Cy_3_2) i(Cy_3_3)}]
+
+## SX2e -- THE SCALARS, ASKED FOR BY NAME. This is the half SX2's totals could
+## in principle be tricked out of, so it is asked head-on: the four names are in
+## the two-port flagged matrix and in NO other shape. The first term is the
+## positive control -- if it ever answers `{}` the other three prove nothing.
+proc sx_scalars {row} {
+  set out {}
+  foreach sx2s [s_ans ase::backend::ngspice::sp_vectors $row] {
+    if {[lsearch -exact {NF NFmin Rn SOpt} $sx2s] >= 0} { lappend out $sx2s }
+  }
+  return $out
+}
+check {SX2e NF NFmin Rn and SOpt are in the two-port flagged matrix and in no\
+ other shape} \
+  [list [sx_scalars $SX2ROW2N] [sx_scalars $SX2ROW2] \
+        [sx_scalars $SX2ROW3N] [sx_scalars $SX2ROW4N]] \
+  [list {NF NFmin Rn SOpt} {} {} {}]
+
+## ⚠ SX2f: THE PICKER AND THE DECK, ASKED TOGETHER -- and it is the row this
+## crew's first sabotage list did not have. Issue 1457 is the picker offering
+## FEWER vectors than the run writes; the mirror image is the picker offering
+## MORE, and it is one plausible edit away: the caution says the noise figure is
+## not computed above two ports, so "stop emitting the flag there" reads like a
+## tidy-up. It would leave 36 cells on screen that no rawfile ever fills.
+##
+## MEASURED, the rendered card at each shape: `sp dec 3 100meg 1g` with the flag
+## off and `sp dec 3 100meg 1g 1` with it on, at TWO, THREE and FOUR ports
+## alike -- the trailing `1` does not depend on the port count, which is why the
+## `Cy` grid does not either.
+##
+## ⚠ THE INVARIANT IS THE PAIRING, NOT THE TEXT. Each shape asserts that the
+## card's flag and the matrix's `Cy` family agree; the two literal cards are the
+## positive control, so a `NOCARD` or an always-false reader cannot pass. This is
+## issue 1449's rule -- two halves of a feature tested in different suites never
+## meet -- applied to the two halves of one gate.
+proc sx_spcard {row} {
+  foreach sx2l [sp_lines [sp_state [list $row]]] {
+    set sx2l [string trim $sx2l]
+    if {[string match {sp *} $sx2l]} { return $sx2l }
+  }
+  return NOCARD
+}
+proc sx_flagged {row} {
+  set c [sx_spcard $row]
+  if {$c eq {NOCARD}} { return NOCARD }
+  return [expr {[llength $c] == 6 && [lindex $c 5] eq {1}}]
+}
+proc sx_hascy {row} {
+  return [expr {[lsearch -exact \
+    [s_ans ase::analysis_matrix_families ngspice sp $row] Cy] >= 0}]
+}
+set SX2FPAIR {}
+foreach sx2r [list $SX2ROW2 $SX2ROW2N $SX2ROW3 $SX2ROW3N $SX2ROW4 $SX2ROW4N] {
+  lappend SX2FPAIR [expr {[sx_flagged $sx2r] eq [sx_hascy $sx2r]}]
+}
+check {SX2f the emitted card's noise flag and the matrix's Cy family agree at\
+ every port count, so the picker offers nothing the run will not write} \
+  [list $SX2FPAIR [sx_spcard $SX2ROW3] [sx_spcard $SX2ROW3N]] \
+  [list {1 1 1 1 1 1} {sp dec 3 100meg 1g} {sp dec 3 100meg 1g 1}]
 
 ## ⚠ SX3's SECOND HALF IS THE ONE THAT WOULD COST A USER A TRACE. `Cy_1_1` is
 ## typed `current`, so ngspice writes it as `i(Cy_1_1)` -- and
@@ -835,13 +1053,28 @@ check {SX4 an empty table has no matrix, and exactly one shipped type declares\
 ## picker cannot offer a cell the `vectors` reader has never heard of and the
 ## reader cannot name a vector no cell offers. That is the eight-copies drift
 ## this batch exists to delete, asked of the pair that would drift first.
-set SX5FLAT {}
-foreach m [s_ans ase::analysis_matrix ngspice sp $SX3ROW] { lappend SX5FLAT [s_dget $m vector] }
-check {SX5 the declared vectors proc is the matrix flattened, and the registry\
- really routes to it} \
-  [list [expr {$SX5FLAT eq [s_ans ase::backend::ngspice::sp_vectors $SX3ROW]}] \
+##
+## ⚠ AND IT IS ASKED AT EVERY SHAPE SX2 MEASURES, NOT ONLY THE TWO-PORT ONE.
+## Issue 1457 lived in `sp_matrix` and `sp_vectors` inherited it by construction
+## -- which is the mechanism working, and is exactly why a flattening row that
+## only ever looks at N == 2 cannot notice. If anyone ever gives `sp_vectors` a
+## port-count gate of its own, one of these five terms is where it shows up.
+set SX5SHAPES [list $SX2ROW2 $SX2ROW2N $SX2ROW3 $SX2ROW3N $SX2ROW4N]
+set SX5OK {}
+foreach sx5r $SX5SHAPES {
+  set SX5FLAT {}
+  foreach m [s_ans ase::analysis_matrix ngspice sp $sx5r] {
+    lappend SX5FLAT [s_dget $m vector]
+  }
+  lappend SX5OK [expr {$SX5FLAT eq [s_ans ase::backend::ngspice::sp_vectors $sx5r]\
+                       && [llength $SX5FLAT] > 0}]
+}
+check {SX5 the declared vectors proc is the matrix flattened at every measured\
+ shape, and the registry really routes to it} \
+  [list $SX5OK \
+        [llength [s_ans ase::backend::ngspice::sp_vectors $SX2ROW3N]] \
         [s_dget [lindex [s_dget [s_ans ase::analysis_entry ngspice sp] plots] 0] vectors]] \
-  [list 1 ::ase::backend::ngspice::sp_vectors]
+  [list {1 1 1 1 1} 36 ::ase::backend::ngspice::sp_vectors]
 
 ## ⚠ SX6: THE SCAN. MEASURED against `ase::netlist_facts`' own answer for a deck
 ## carrying one plain V source, one declaring `portnum 2 z0 75`, one more plain
@@ -1071,6 +1304,78 @@ foreach sepair [se_binaries] {
  no port node in it, which is what emitting sp last buys" \
     [list [lsort $seop] [llength $seop]] \
     [list {i(v1) i(v2) v(in) v(mid) v(out)} 5]
+}
+
+## ⚠ SE3 -- THE THREE-PORT RUN, AND IT IS ISSUE **1457** END TO END. Everything
+## SX2 asserts is Tcl reasoning about a table the driver measured with hand-
+## written decks. This renders a THREE-PORT row with the noise flag through
+## ASE-L itself, runs it on both binaries, and asks the results file whether
+## every vector `sp_vectors` PROMISED is really in it.
+##
+## ⚠ THE TERM THAT MATTERS IS THE SET DIFFERENCE, NOT A COUNT. `sp_vectors` is
+## what the picker offers; `ase::raw_vectors_present` answers which of them the
+## file holds, folded, because apt 45.2 writes `i(cy_1_1)` where the fork writes
+## `i(Cy_1_1)`. A promise the run does not keep shows up as a MISSING name, and
+## 1457's defect -- nine vectors present and never offered -- shows up as a
+## SURPLUS. Both are printed by name rather than counted.
+set SE3RUN [file join $scratch serun3]
+file mkdir $SE3RUN
+set SE3PORTS {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50} {src v3 num 3 z0 50}}}
+set SE3ROW [concat {type sp enabled 1 sweep lin points 3 start 100meg stop 1g donoise 1} $SE3PORTS]
+proc se3_netlist {} {
+  return "* spbench\nv1 n1 0 dc 0 ac 1\nv2 n2 0 dc 0 ac 1\nv3 n3 0 dc 0 ac 1\nr1 n1 mid 100\nr2 n2 mid 100\nr3 n3 mid 100\nrg mid 0 200\n.end\n"
+}
+set SE3ST [sp_state [list $SE3ROW] $SE3RUN]
+set SE3DECK [file join $SE3RUN spbench_ase.spice]
+set se3f [open $SE3DECK w]
+puts -nonewline $se3f [ase::backend::ngspice::render_deck $SE3ST [se3_netlist]]
+close $se3f
+set SE3WANT [s_ans ase::backend::ngspice::sp_vectors $SE3ROW]
+set SE3SEEN {}
+foreach sepair [se_binaries] {
+  lassign $sepair setag sebin
+  if {$sebin eq {} || ![file executable $sebin]} {
+    puts "SKIPPED: SE3 $setag three-port leg (no executable at '$sebin')"
+    continue
+  }
+  if {[lsearch -exact $SE3SEEN [file normalize $sebin]] >= 0} { continue }
+  lappend SE3SEEN [file normalize $sebin]
+  file delete -force [file join $SE3RUN spbench_ase.raw]
+  set se3rc [catch {exec $sebin -b $SE3DECK 2>@1} se3out]
+  set SE3RAW [file join $SE3RUN spbench_ase.raw]
+  ## which of the 36 ASE-L promises are really there, and which are missing
+  set SE3HAVE [s_ans ase::raw_vectors_present $SE3RAW $SE3WANT]
+  set SE3MISS {}
+  foreach se3v $SE3WANT {
+    if {[lsearch -exact $SE3HAVE $se3v] < 0} { lappend SE3MISS $se3v }
+  }
+  ## ⚠ AND THE SURPLUS, WHICH IS THE DIRECTION ISSUE 1457 ACTUALLY WENT. The
+  ## MISSING list above catches a picker that promises more than the run writes;
+  ## it is BLIND to a picker that promises less, which is the whole defect --
+  ## measured, with `Cy` re-gated on N == 2 the missing list is empty and this
+  ## row would pass. So the file's own matrix-shaped names are folded and
+  ## checked back against the promise: anything the run wrote and the picker
+  ## never offered is named here.
+  set SE3ALL {}
+  foreach sep [s_ans ase::cap_raw_plots $SE3RAW] {
+    if {[string equal -nocase [lindex $sep 0] {SP Analysis}]} { set SE3ALL [lindex $sep 2] }
+  }
+  set SE3WANTF [s_ans ase::raw_vectors_fold $SE3WANT]
+  set SE3SURP {}
+  foreach se3v [s_ans ase::raw_vectors_fold $SE3ALL] {
+    if {![regexp {^(s|y|z|cy)_[0-9]+_[0-9]+$} $se3v]} { continue }
+    if {[lsearch -exact $SE3WANTF $se3v] < 0} { lappend SE3SURP $se3v }
+  }
+  ## and the four scalars, which this shape must NOT have -- asked of the file
+  ## rather than of the registry, so the caution is measured and not restated
+  set SE3SCAL [s_ans ase::raw_vectors_present $SE3RAW {NF NFmin Rn SOpt}]
+  check "SE3/$setag every vector the three-port picker offers is in the results\
+ file and every matrix vector the file holds is offered -- the nine-cell Cy grid\
+ included -- and the four scalars are in neither" \
+    [list $se3rc [llength $SE3WANT] $SE3MISS [lsort $SE3SURP] \
+          [llength $SE3ALL] $SE3SCAL] \
+    [list 0 36 {} {} 47 {}]
+  if {$se3rc} { puts "  SE3/$setag output: $se3out" }
 }
 
 puts "RESULT: [expr {$fail ? "$fail FAILED ($npass passed)" : "ALL PASS ($npass checks)"}]"

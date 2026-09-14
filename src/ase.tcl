@@ -24141,26 +24141,49 @@ $_leg
   # MEASURED 2026-09-13 on apt 45.2 AND on the fork, one deck per port count,
   # `display` inside the `.control` block and the written rawfile beside it:
   #
-  #   2 ports, no noise flag   S_1_1 S_1_2 S_2_1 S_2_2  Y_… (4)  Z_… (4)
-  #   3 ports, no noise flag   S_… (9)                  Y_… (9)  Z_… (9)
-  #   2 ports, noise flag on   + NF NFmin Rn SOpt  AND  Cy_1_1 Cy_1_2 Cy_2_1 Cy_2_2
+  # ⚠ RE-MEASURED 2026-09-13 FOR ISSUE 1457, ON BOTH BINARIES, SIX DECKS -- TWO,
+  # THREE **AND FOUR** PORTS, FLAG OFF AND ON -- counting the `Variables:` block
+  # of the written rawfile. The two binaries agree on every number:
   #
-  # ⚠ THE `Cy` MATRIX IS A FINDING, AND `evidence/sp-stage9.md` DOES NOT HAVE
-  # IT. That file names four noise vectors (`NF NFmin Rn SOpt`); the noise
-  # CORRELATION matrix is a fifth thing and it is an N x N grid of its own.
-  # Leaving it out would be a picker that silently omits a family the run
+  #   ports  flag   S/Y/Z   Cy    NF NFmin Rn SOpt   matrix total
+  #     2    off     12      0           0                12
+  #     2    on      12      4           4                20
+  #     3    off     27      0           0                27
+  #     3    on      27      9           0                36
+  #     4    off     48      0           0                48
+  #     4    on      48     16           0                64
+  #
+  # ⚠ `Cy` FOLLOWS THE NOISE FLAG AT **ANY** PORT COUNT, N x N. ONLY THE FOUR
+  # SCALARS ARE RESTRICTED TO N == 2. This comment said the opposite until issue
+  # **1457**, and the code did what the comment said: a three-port row with the
+  # flag on writes 36 vectors and the picker offered 27 -- nine the run produced
+  # and the user was never shown, which is exactly the defect class this proc's
+  # own `Cy` paragraph was written to avoid. The wrong claim came from reading
+  # `span.c:74-178`, which is true of the noise PARAMETERS and not of the
+  # correlation matrix. Transcribed source is not measured behaviour; the table
+  # above is a transcript of six rawfiles, and the N == 4 row is there so N x N
+  # is measured rather than extrapolated from two points.
+  #
+  # ⚠ THE `Cy` MATRIX IS A FINDING, AND `evidence/sp-stage9.md` DID NOT HAVE IT
+  # UNTIL 2026-09-13. That file names four noise vectors (`NF NFmin Rn SOpt`);
+  # the noise CORRELATION matrix is a fifth thing and it is an N x N grid of its
+  # own. Leaving it out would be a picker that silently omits a family the run
   # produces, which is this stage's own defect class.
   #
   # ⚠ AND `Cy` IS THE ONE FAMILY WHOSE PLOT EXPRESSION IS NOT ITS NAME. It is
   # typed `current`, so ngspice's writer emits `i(Cy_1_1)` -- measured, and
   # measured again from the other end: `wviewer::validate_rpn` answers
   # `unknown token 'Cy_1_1'` for the bare name against EITHER binary's variable
-  # list and accepts `i(Cy_1_1)` against both.
+  # list and accepts `i(Cy_1_1)` against both. RE-MEASURED AT N == 3 rather than
+  # assumed to generalise: against the real three-port variable list of each
+  # binary, bare `Cy_3_3` is rejected by both, `i(Cy_3_3)` is accepted by both,
+  # and `i(Cy_9_9)` is rejected by both as the control.
   #
-  # ⚠ THE NOISE FAMILIES APPEAR ONLY WHEN THE ROW ASKS FOR THEM **AND** THE
-  # TABLE HOLDS EXACTLY TWO PORTS -- `span.c:74-178` computes them for N == 2
-  # and `sp_row_check` already cautions about it. Offering them on a three-port
-  # row would put four cells in the picker that no run can ever fill.
+  # ⚠ THE FOUR SCALARS, AND ONLY THEY, NEED THE FLAG **AND** N == 2 --
+  # `span.c:74-178` computes the noise parameters for N == 2, and `sp_row_check`
+  # already cautions about exactly those four by name. That caution stays as it
+  # is: a family that is PRESENT needs no warning, which is itself the argument
+  # for why the picker must offer `Cy`.
   proc sp_matrix {row} {
     set n [llength [sp_ports $row]]
     if {$n < 1} { return {} }
@@ -24174,7 +24197,8 @@ $_leg
         }
       }
     }
-    if {[::ase::field_value ngspice sp $row donoise] eq {} || $n != 2} { return $out }
+    if {[::ase::field_value ngspice sp $row donoise] eq {}} { return $out }
+    # The correlation matrix follows the flag at ANY N -- measured at 2, 3 and 4.
     for {set i 1} {$i <= $n} {incr i} {
       for {set j 1} {$j <= $n} {incr j} {
         lappend out [dict create vector Cy_${i}_${j} \
@@ -24182,6 +24206,13 @@ $_leg
                                  family Cy i $i j $j]
       }
     }
+    # ⚠ AND THE FOUR SCALARS NEED THE SECOND GATE, which the `Cy` grid above does
+    # NOT. Measured: a three-port run with the flag on writes nine `Cy` vectors
+    # and NO `NF`/`NFmin`/`Rn`/`SOpt` at all, so offering the scalars here would
+    # put four cells in the picker that no such run can ever fill -- the mirror
+    # image of issue 1457's own defect, and the reason this is two gates rather
+    # than one.
+    if {$n != 2} { return $out }
     # ⚠ THE FAMILY TOKEN IS A HEADING THE USER READS, so it is capitalised like
     # the other four. `S`, `Y`, `Z` and `Cy` are ngspice's own spellings of the
     # matrices; `Noise` is this adapter's name for the four circuit-level scalars,

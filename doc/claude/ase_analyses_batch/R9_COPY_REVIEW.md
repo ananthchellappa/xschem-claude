@@ -6027,7 +6027,7 @@ Noise figure (2 ports only)
 *For:* Ticking it adds `NF`, `NFmin`, `Rn`, `SOpt` **and** the `Cy` correlation matrix to the run — and only when the table holds exactly two ports, which is why the restriction is in the label rather than only in a caution.
 
 
-*Note:* §A5 — the parenthesised condition is doing a caution's job inside a label.
+*Note:* §A5 — the parenthesised condition is doing a caution's job inside a label. ⚠ **AND IT IS NOW MEASURED WRONG, WHICH MAKES THIS THE ONE ENTRY IN THIS DOCUMENT WITH A DEFECT BEHIND IT (issue 1457, `owed.sh add rule 1457`).** This tick is what summons the **`Cy` correlation matrix, which the run produces at ANY port count, N×N** — only the four scalars `NF NFmin Rn SOpt` need exactly two ports. So on a three-port bench **the label tells the user not to tick the only control that would give them the nine `Cy` vectors.** It is issue 1457's own defect one layer up, in copy instead of code. The recommended wording is **`Noise figure and correlation matrix`**; four options are in the issue file and **nothing was implemented**, because the wording is the user's to choose.
 
 
 **R9-412** · label

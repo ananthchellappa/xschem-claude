@@ -205,6 +205,16 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 384   AND RAISED 382 -> 384 on the display arm, issue **1457**: SP9b
+#              and SP9c, the section's FIRST THREE-PORT ROWS. SP7 asked for 12
+#              cells and SP9 for 20, both on the two-port bench, so a picker that
+#              hid the nine `Cy` vectors every larger run really writes was green
+#              here as well as in the schema suite. SP9b asks for all 36 cells,
+#              the 3x3 `Cy` geometry, the ABSENCE of the four scalars, and that
+#              no two gridded children of the picker share a cell -- a four-
+#              matrix stack with no scalar strip is a layout `matrix_dialog` had
+#              never been handed. SP9c ticks a three-port `Cy` cell and follows
+#              it to an Outputs row, wrap and all. Headless unmoved, same reason.
 #   37 / 382   sections SP, Stage 9a/9b (issue 1454): the ports table and the
 #              matrix picker. Headless is unmoved for GR5's, GR6's, GH's, NX's
 #              and MS's reason -- every SP row drives real widgets, and the
@@ -276,7 +286,8 @@ set fail 0; set npass 0
 #              netlists (SP6, SP6b), the matrix picker offers one cell per vector
 #              the run will answer and writes ordinary Outputs rows in the
 #              viewer's own RPN (SP7, SP8, SP8b), it reads the LIVE form so a
-#              just-ticked noise flag already shows its vectors (SP9), an empty
+#              just-ticked noise flag already shows its vectors (SP9) at two
+#              ports and at THREE (SP9b/SP9c, issue 1457), an empty
 #              table gets the run's own sentence rather than a blank window
 #              (SP10), a type click closes a standing subdialog (SP11) and ESC
 #              dismisses all three toplevels through their cancel paths (SP11b).
@@ -5571,22 +5582,57 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $SP6BC $SP6BN] [list 0 {This schematic offers no more ports.}]
 
   ## SP7 -- THE MATRIX PICKER. ⚠ ITS SIZE IS THE PORTS TABLE'S, which is why it
-  ## reads the same row: measured on both binaries, a two-port `sp` run answers
-  ## twelve vectors in three families and a three-port one twenty-seven.
+  ## reads the same row: measured on both binaries, a two-port `sp` run with the
+  ## flag OFF answers twelve vectors in three families and a three-port one
+  ## twenty-seven. (With the flag ON those become 20 and **36** -- issue 1457,
+  ## rows SP9 and SP9b. This comment said "twenty-seven" with no flag clause
+  ## until then, which is the sentence the defect was hiding behind.)
+  ## ⚠ OPENING THE PICKER IS CAUGHT, AND A SABOTAGE IS WHY -- THE SIXTH TIME
+  ## THIS SHAPE HAS BEEN MET AND THE THIRD INSIDE SECTION SP. Measured under
+  ## issue 1457: a mutation that made `ase::analysis_matrix_of` stop filtering by
+  ## family had `matrix_dialog` build `cS_1_1` once per family, and
+  ## `window name "cS_1_1" already exists in parent` came straight out of
+  ## `$cw.matrixbtn invoke`. SP7 through SP12 -- THIRTEEN checks -- stopped
+  ## running, and the row that should have gone red never reported at all.
+  ## A dialog that raises on the way up IS a defect and must redden a row, so
+  ## `mx_open` answers a window path when one came up and the unusable
+  ## `.nosuchmxwin` when it did not, with the message in `::MXERR`. Every read
+  ## below goes through a total reader for the same reason.
+  proc mx_open {cw} {
+    set ::MXERR {}
+    if {[catch {$cw.matrixbtn invoke} m]} { set ::MXERR "RAISED:$m" ; return .nosuchmxwin }
+    update
+    if {![winfo exists $cw.mx]} { set ::MXERR NOWINDOW ; return .nosuchmxwin }
+    return $cw.mx
+  }
+  proc mx_title {mw} { set v NOTITLE ; catch {set v [wm title $mw]} ; return $v }
+  proc mx_fmts {mw} { set v NOFMT ; catch {set v [$mw.fmt.v cget -values]} ; return $v }
+  proc mx_click {mw b} { return [expr {[catch {$mw.btns.$b invoke}] ? 0 : 1}] }
+  ## the captions, in the order the picker built them -- `NOBODY` when the
+  ## window is not there at all, which is a value a row can compare.
+  proc mx_caps {mw} {
+    if {![winfo exists $mw.body]} { return NOBODY }
+    set out {}
+    foreach spw [winfo children $mw.body] {
+      set cls {}
+      catch {set cls [winfo class $spw]}
+      if {$cls ne {Checkbutton}} { continue }
+      set t {}
+      catch {set t [$spw cget -text]}
+      lappend out $t
+    }
+    return $out
+  }
   sp_bench $key [list {type op enabled 1} $SPROW]
   set cw [sp_open_chana $key 1]
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
-  set SP7CELLS {}
-  foreach spw [winfo children $mw.body] {
-    if {[winfo class $spw] eq {Checkbutton}} { lappend SP7CELLS [$spw cget -text] }
-  }
+  set mw [mx_open $cw]
+  set SP7CELLS [mx_caps $mw]
+  set SP7N [expr {$SP7CELLS eq {NOBODY} ? -1 : [llength $SP7CELLS]}]
   check "SP7 the matrix picker offers one cell per vector the run will answer,\
  laid out as the matrix it is" \
-    [list [wm title $mw] [llength $SP7CELLS] [lsort -unique $SP7CELLS] \
-          [$mw.fmt.v cget -values]] \
-    [list {Result Matrix (sp)} 12 {1,1 1,2 2,1 2,2} \
+    [list $::MXERR [mx_title $mw] $SP7N [lsort -unique $SP7CELLS] \
+          [mx_fmts $mw]] \
+    [list {} {Result Matrix (sp)} 12 {1,1 1,2 2,1 2,2} \
           {{Magnitude (dB)} {Phase (deg)} Real Imaginary}]
 
   ## SP8 -- OK WRITES ORDINARY OUTPUT ROWS AND INVENTS NO STATE. `plot 1` /
@@ -5599,7 +5645,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set ::ase::ui::dlg($key,mxv,S_1_1) 1
   set ::ase::ui::dlg($key,mxv,Y_2_1) 1
   set ::ase::ui::dlg($key,mxfmt) {Phase (deg)}
-  $mw.btns.proceed invoke
+  set SP8OK [mx_click $mw proceed]
   update
   set SP8OUT {}
   foreach spo [ase::state_get [ase::session_state $key] outputs] {
@@ -5619,8 +5665,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "SP8 OK writes one ordinary Outputs row per ticked cell, in the viewer's\
  own RPN, and the viewer resolves it against EITHER binary's spelling" \
-    [list $SP8OUT $SP8RPN] \
-    [list {{S_1_1_ph {S_1_1 cph()} 1 0} {Y_2_1_ph {Y_2_1 cph()} 1 0}} {{} 1 {} 1}]
+    [list $SP8OK $SP8OUT $SP8RPN] \
+    [list 1 {{S_1_1_ph {S_1_1 cph()} 1 0} {Y_2_1_ph {Y_2_1 cph()} 1 0}} {{} 1 {} 1}]
 
   ## SP8b -- AND TICKING THE SAME CELL TWICE DOES NOT WRITE THE TRACE TWICE.
   ## Opening the picker again with the same cells ticked is an ordinary gesture,
@@ -5628,31 +5674,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## The control is a DIFFERENT format, which is a different expression and does
   ## get written.
   set cw [sp_open_chana $key 1]
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
+  set mw [mx_open $cw]
   set ::ase::ui::dlg($key,mxv,S_1_1) 1
   set ::ase::ui::dlg($key,mxfmt) {Phase (deg)}
-  $mw.btns.proceed invoke
+  set SP8BOK [mx_click $mw proceed]
   update
   set SP8BN 0
   foreach spo [ase::state_get [ase::session_state $key] outputs] {
     if {[ase::state_get $spo expr] eq {S_1_1 cph()}} { incr SP8BN }
   }
   set cw [sp_open_chana $key 1]
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
+  set mw [mx_open $cw]
   set ::ase::ui::dlg($key,mxv,S_1_1) 1
   set ::ase::ui::dlg($key,mxfmt) {Real}
-  $mw.btns.proceed invoke
+  set SP8BOK2 [mx_click $mw proceed]
   update
   set SP8BR 0
   foreach spo [ase::state_get [ase::session_state $key] outputs] {
     if {[ase::state_get $spo expr] eq {S_1_1 re()}} { incr SP8BR }
   }
   check "SP8b the same cell in the same format is not added twice, and the same\
- cell in another format is" [list $SP8BN $SP8BR] {1 1}
+ cell in another format is" [list $SP8BOK $SP8BOK2 $SP8BN $SP8BR] {1 1 1 1}
 
   ## SP9 -- THE PICKER DESCRIBES THE FORM THE USER IS LOOKING AT, NOT THE STORED
   ## ROW. A user who has just ticked the noise flag and not pressed OK is reading
@@ -5667,20 +5709,160 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set SP9HAVE [winfo exists $cw.form.donoise]
   if {$SP9HAVE} { $cw.form.donoise select }
   update
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
-  set SP9N 0
-  foreach spw [winfo children $mw.body] {
-    if {[winfo class $spw] eq {Checkbutton}} { incr SP9N }
-  }
+  set mw [mx_open $cw]
+  set SP9CAPS [mx_caps $mw]
+  set SP9N [expr {$SP9CAPS eq {NOBODY} ? -1 : [llength $SP9CAPS]}]
   set SP9NF [winfo exists $mw.body.cNF]
   set SP9CY [winfo exists $mw.body.cCy_1_1]
-  $mw.btns.cancel invoke
+  mx_click $mw cancel
   update
   check "SP9 the picker is built from the live form, so a noise flag the user has\
  ticked and not yet committed already shows its own vectors" \
-    [list $SP9HAVE $SP9N $SP9NF $SP9CY] {1 20 1 1}
+    [list $::MXERR $SP9HAVE $SP9N $SP9NF $SP9CY] {{} 1 20 1 1}
+
+  ## SP9b -- THE THREE-PORT PICKER, WHICH IS ISSUE **1457**. Section SP had no
+  ## three-port row at all: SP7 asks for 12 cells and SP9 for 20, both on the
+  ## two-port bench, so the picker that hid nine real vectors on every larger run
+  ## was green here too.
+  ##
+  ## ⚠ RE-MEASURED ON BOTH BINARIES, SIX DECKS, FROM THE WRITTEN RAWFILE'S
+  ## `Variables:` BLOCK: a three-port run with the flag on writes **36** vectors
+  ## -- 27 in S/Y/Z and a **9-cell `Cy`** grid -- and **no** `NF`/`NFmin`/`Rn`/
+  ## `SOpt` at all. `Cy` follows the flag at ANY port count, N x N; only the four
+  ## scalars are restricted to N == 2. So this row asks for BOTH mistakes, which
+  ## are opposite ones: `Cy` missing (the shipped defect) and the scalars present
+  ## (its mirror image).
+  ##
+  ## ⚠ AND THE LAYOUT IS THE PART NO SCHEMA ROW CAN SEE. A 3x3 `Cy` block with no
+  ## scalar strip under it is a geometry `matrix_dialog` had never been handed:
+  ## four matrix families stacked, each one's header label in column 0 of the row
+  ## above its own first cell. The terms below are the two ways that goes wrong
+  ## -- a family's cells landing on top of another family's, or on their own
+  ## header -- asked as a COLLISION over every gridded child of `$mw.body`, so a
+  ## future family needs no new term.
+  ##
+  ## ⚠ EVERY READ IS TOTAL. A sabotage that drops a family removes the widget,
+  ## and a bare `grid info` on a missing window raises and takes the whole file
+  ## down at rc 0 -- this section has met that shape three times already (SP5b,
+  ## SP1, SP2). `mx_cells` answers `NOBODY` and never raises.
+  proc mx_cells {mw} {
+    if {![winfo exists $mw.body]} { return NOBODY }
+    set out {}
+    foreach spw [winfo children $mw.body] {
+      set cls {}
+      catch {set cls [winfo class $spw]}
+      if {$cls ne {Checkbutton}} { continue }
+      set gi {}
+      catch {set gi [grid info $spw]}
+      set gr -1 ; set gc -1
+      catch {set gr [dict get $gi -row]}
+      catch {set gc [dict get $gi -column]}
+      lappend out [list [string range [winfo name $spw] 1 end] $gr $gc]
+    }
+    return [lsort -index 0 $out]
+  }
+  ## every gridded child of the body, cells AND headers, as {row col} -- the
+  ## collision check's input.
+  proc mx_slots {mw} {
+    if {![winfo exists $mw.body]} { return NOBODY }
+    set out {}
+    foreach spw [winfo children $mw.body] {
+      set gi {}
+      catch {set gi [grid info $spw]}
+      set gr -1 ; set gc -1
+      catch {set gr [dict get $gi -row]}
+      catch {set gc [dict get $gi -column]}
+      lappend out [list $gr $gc]
+    }
+    return $out
+  }
+  ## ⚠ ONE LINE -- a backslash-newline inside a braced fixture leaves a DOUBLE
+  ## SPACE in the literal, which is what cost SP13 a row.
+  set SP3PROW {type sp enabled 1 points 3 start 100meg stop 1g donoise 1 ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50} {src v3 num 3 z0 50}}}
+  sp_bench $key [list {type op enabled 1} $SP3PROW]
+  set cw [sp_open_chana $key 1]
+  set mw [mx_open $cw]
+  set SP9BCELLS [mx_cells $mw]
+  set SP9BN [expr {$SP9BCELLS eq {NOBODY} ? -1 : [llength $SP9BCELLS]}]
+  ## the Cy block's own geometry: nine names, three distinct grid rows, three
+  ## distinct grid columns. A `Cy` emitted at a fixed 2x2 keeps the family and
+  ## still fails here.
+  set SP9BCYN {} ; set SP9BCYR {} ; set SP9BCYC {}
+  if {$SP9BCELLS ne {NOBODY}} {
+    foreach spc $SP9BCELLS {
+      if {![string match {Cy_*} [lindex $spc 0]]} { continue }
+      lappend SP9BCYN [lindex $spc 0]
+      if {[lsearch -exact $SP9BCYR [lindex $spc 1]] < 0} { lappend SP9BCYR [lindex $spc 1] }
+      if {[lsearch -exact $SP9BCYC [lindex $spc 2]] < 0} { lappend SP9BCYC [lindex $spc 2] }
+    }
+  }
+  ## no two gridded children share a cell -- headers included
+  set SP9BSLOTS [mx_slots $mw]
+  set SP9BDUP [expr {$SP9BSLOTS eq {NOBODY} ? -1 :
+                     [llength $SP9BSLOTS] - [llength [lsort -unique $SP9BSLOTS]]}]
+  ## the four scalars are not offered, and the `Noise` heading is not drawn
+  set SP9BSCAL {}
+  foreach spn {NF NFmin Rn SOpt} {
+    if {[winfo exists $mw.body.c$spn]} { lappend SP9BSCAL $spn }
+  }
+  set SP9BHEADS {}
+  foreach spf {S Y Z Cy Noise} {
+    if {[winfo exists $mw.body.h$spf]} { lappend SP9BHEADS $spf }
+  }
+  check "SP9b a three-port row with the noise flag offers all 36 cells the run\
+ writes -- the nine-cell Cy grid included -- and none of the four scalars" \
+    [list $::MXERR $SP9BN [llength $SP9BCYN] $SP9BCYN \
+          [llength $SP9BCYR] [llength $SP9BCYC] \
+          $SP9BSCAL $SP9BHEADS $SP9BDUP] \
+    [list {} 36 9 {Cy_1_1 Cy_1_2 Cy_1_3 Cy_2_1 Cy_2_2 Cy_2_3 Cy_3_1 Cy_3_2 Cy_3_3} \
+          3 3 {} {S Y Z Cy} 0]
+
+  ## SP9c -- AND THE NINE CELLS REACH A TRACE, which is the whole of what the
+  ## user was being denied. ⚠ THE EXPRESSION CARRIES THE `i(...)` WRAP AT N == 3,
+  ## RE-MEASURED RATHER THAN ASSUMED TO GENERALISE FROM N == 2: against the real
+  ## three-port variable list of each binary, `wviewer::validate_rpn` rejects the
+  ## bare `Cy_3_3`, accepts `i(Cy_3_3)`, and rejects `i(Cy_9_9)` as the control.
+  ## The second term is that measurement run here, both spellings; the third is
+  ## the control that keeps it honest.
+  ##
+  ## ⚠ THE ORDER IS THE MATRIX'S, NOT THE TICKING'S, and that is asserted rather
+  ## than sorted away: `matrix_ok` walks `ase::analysis_matrix`, so `S_3_1`
+  ## lands above `Cy_3_3` however they were ticked. Measured -- the row was
+  ## written the other way round first and reddened on exactly this.
+  set ::ase::ui::dlg($key,mxv,Cy_3_3) 1
+  set ::ase::ui::dlg($key,mxv,S_3_1) 1
+  set ::ase::ui::dlg($key,mxfmt) {Phase (deg)}
+  set SP9COK [mx_click $mw proceed]
+  update
+  set SP9COUT {}
+  foreach spo [ase::state_get [ase::session_state $key] outputs] {
+    set spx [ase::state_get $spo expr]
+    if {[string first {Cy_} $spx] < 0 && [string first {S_3_} $spx] < 0} { continue }
+    lappend SP9COUT [list [ase::state_get $spo name] $spx]
+  }
+  ## ⚠ THE TWO LISTS MUST DISAGREE, AND THAT IS A TERM. They are the SAME run in
+  ## the two binaries' spellings -- the fork writes `i(Cy_3_3)`, apt 45.2 writes
+  ## `i(cy_3_3)` -- so if a tidy-up ever makes them identical this row stops
+  ## measuring the fold while staying green. `SP9CDIFF` is what notices.
+  set SP9CLISTS [list {frequency i(Cy_3_3) S_3_1} {frequency i(cy_3_3) s_3_1}]
+  set SP9CDIFF [expr {[lindex $SP9CLISTS 0] ne [lindex $SP9CLISTS 1]}]
+  set SP9CRPN {}
+  foreach spvl $SP9CLISTS {
+    set spr NOPROC
+    catch {set spr [wviewer::validate_rpn {i(Cy_3_3) cph()} $spvl]} spr
+    lappend SP9CRPN $spr
+    set spr NOPROC
+    catch {set spr [wviewer::validate_rpn {Cy_3_3 cph()} $spvl]} spr
+    lappend SP9CRPN [expr {$spr ne {}}]
+    set spr NOPROC
+    catch {set spr [wviewer::validate_rpn {i(Cy_9_9) cph()} $spvl]} spr
+    lappend SP9CRPN [expr {$spr ne {}}]
+  }
+  check "SP9c a ticked three-port Cy cell becomes an ordinary Outputs row in the\
+ wrap the rawfile really uses, which the viewer accepts in either spelling" \
+    [list $SP9COK $SP9COUT $SP9CDIFF $SP9CRPN] \
+    [list 1 {{S_3_1_ph {S_3_1 cph()}} {Cy_3_3_ph {i(Cy_3_3) cph()}}} 1 \
+          {{} 1 1 {} 1 1}]
 
   ## SP10 -- AN EMPTY TABLE HAS NO MATRIX, AND THE PICKER SAYS THE RUN'S OWN
   ## REASON RATHER THAN GOING BLANK. This is the "nothing the window shows may
@@ -5689,19 +5871,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   sp_bench $key [list {type op enabled 1} \
     {type sp enabled 1 points 3 start 100meg stop 1g}]
   set cw [sp_open_chana $key 1]
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
-  set SP10N 0
-  foreach spw [winfo children $mw.body] {
-    if {[winfo class $spw] eq {Checkbutton}} { incr SP10N }
-  }
+  set mw [mx_open $cw]
+  set SP10CAPS [mx_caps $mw]
+  set SP10N [expr {$SP10CAPS eq {NOBODY} ? -1 : [llength $SP10CAPS]}]
   set SP10T {}
   catch {set SP10T [$mw.body.empty cget -text]}
-  $mw.btns.cancel invoke
+  mx_click $mw cancel
   update
   check "SP10 a bench with no ports gets no cells and the run's own sentence" \
-    [list $SP10N [string match {*needs at least 2 ports and names 0*} $SP10T]] {0 1}
+    [list $::MXERR $SP10N \
+          [string match {*needs at least 2 ports and names 0*} $SP10T]] {{} 0 1}
 
   ## SP11 -- A STANDING SUBDIALOG DIES WITH A TYPE CLICK. Both of them edit ONE
   ## row of ONE type and both read the live `antype`, so a Ports table left open
@@ -5734,16 +5913,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   send_key $sw <Key-Escape> {![winfo exists $sw]}
   set SP11BSETUP [list [winfo exists $sw] [winfo exists $cw] \
                        [info exists ::ase::ui::dlg($key,anports)]]
-  $cw.matrixbtn invoke
-  update
-  set mw $cw.mx
+  set mw [mx_open $cw]
   send_key $mw <Key-Escape> {![winfo exists $mw]}
   check "SP11b ESC dismisses the scan picker without killing the ports table, the\
  ports table without killing Choose Analyses, and the matrix picker, each\
  through its own cancel path" \
-    [list $SP11BSCAN $SP11BSETUP [winfo exists $mw] \
+    [list $SP11BSCAN $SP11BSETUP $::MXERR [winfo exists $mw] \
           [info exists ::ase::ui::dlg($key,mxfmt)]] \
-    [list {0 1} {0 1 0} 0 0]
+    [list {0 1} {0 1 0} {} 0 0]
 
   ## SP12 -- THE DEFECT THIS SECTION FOUND, AND IT IS ISSUE 1450's FOR THE THIRD
   ## TIME. `ports` is licensed on ONE type rather than on every row, so it is
@@ -5803,9 +5980,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   $cw.setup.btns.proceed invoke
   update
-  $cw.matrixbtn invoke
-  update
-  $cw.mx.btns.proceed invoke
+  set mw [mx_open $cw]
+  set SP13MXOK [mx_click $mw proceed]
   update
   $cw.btns.proceed invoke
   update
@@ -5823,7 +5999,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set SP13DIFF [expr {[ase::state_serialize [ase::session_state $key]] ne $SP13BEFORE}]
   check "SP13 opening both Stage 9 dialogs and pressing OK on an untouched table\
  writes the same bytes as never opening them, and a changed table does not" \
-    [list $SP13SAME $SP13DIFF] {1 1}
+    [list $SP13MXOK $SP13SAME $SP13DIFF] {1 1 1}
 
   ## SP14 -- THE ROW ISSUE 1449 ASKED FOR: A PORT ADDED IN THE TABLE, THROUGH THE
   ## REAL WIDGETS, REACHING A RENDERED `alter` LINE AND THEN A REAL RUN THAT

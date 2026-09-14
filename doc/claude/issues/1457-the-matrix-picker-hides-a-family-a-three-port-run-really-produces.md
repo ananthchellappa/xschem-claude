@@ -1,6 +1,6 @@
 # 1457 — the matrix picker hides the `Cy` family on any run with more than two ports
 
-**Status:** open · **Filed:** 2026-09-13 by the driver, from a spot-check of issue 1454's evidence
+**Status:** FIXED (2026-09-13, crew receipt 35) · **Filed:** 2026-09-13 by the driver, from a spot-check of issue 1454's evidence
 **Area:** ASE-L / `sp` · **Related:** 1452, 1454 (which introduced it), 0964
 
 ## The defect
@@ -76,3 +76,87 @@ The driver re-measured issue 1454's own evidence table before appending it to
 `evidence/sp-stage9.md`, because the table was a **correction** to that file and a correction is
 the last thing to take on trust. The three-port-with-flag shape was not in the crew's table at all;
 the crew measured three shapes and the fourth is where the defect lives.
+
+---
+
+## RESOLUTION — 2026-09-13, `receipts/35-1457-the-cy-matrix.md`
+
+### Re-measured independently before a line was edited
+
+Six decks, not four: **two, three AND four ports**, flag off and on, counted from the
+`Variables:` block of the written rawfile on `/usr/bin/ngspice` (apt 45.2) and on
+`/home/analog/dev/ngspice/build-ver_50/src/ngspice`. The two binaries agree on every number.
+
+| ports | flag | S/Y/Z | `Cy` | `NF NFmin Rn SOpt` | matrix total |
+|---|---|---|---|---|---|
+| 2 | off | 12 | 0 | 0 | **12** |
+| 2 | **on** | 12 | **4** | **4** | **20** |
+| 3 | off | 27 | 0 | 0 | **27** |
+| 3 | **on** | 27 | **9** | 0 | **36** |
+| 4 | off | 48 | 0 | 0 | **48** |
+| 4 | **on** | 48 | **16** | 0 | **64** |
+
+The **N == 4 row is new** and it is the reason the rule is now *measured* rather than
+extrapolated from two points: `Cy` follows the flag at any N, N×N; only the four scalars are
+restricted to N == 2.
+
+`i(Cy_3_3)` was re-measured rather than assumed to generalise from N == 2: against the real
+three-port variable list of **each** binary, `wviewer::validate_rpn` rejects the bare `Cy_3_3`,
+accepts `i(Cy_3_3)`, and rejects `i(Cy_9_9)` as the control.
+
+### What shipped
+
+1. `ase::backend::ngspice::sp_matrix` — `Cy` gated on the **noise flag alone**, emitted N×N; the
+   four scalars keep the flag **and** `n == 2`, as **two separate gates** with a comment saying
+   why. `sp_vectors` inherits it by construction.
+2. `test_ase_sp_1452.tcl` **50 → 58**: SX2 rewritten into SX2/SX2b/SX2c/SX2d/SX2e (one row cannot
+   separate the two opposite mistakes), plus **SX2f** and **SE3** (both binaries) — see below.
+   SX5 rewritten to ask its flattening at five shapes rather than only at N == 2.
+3. `test_ase_dialogs.tcl` **382 → 384** on the display arm: **SP9b/SP9c**, the section's first
+   three-port rows.
+
+### Point 4 of "The fix" is answered: NO second caution sentence
+
+The caution names the four scalars and is exactly right, and a family that is **present** needs
+no warning. It is now **pinned verbatim** by new row **SN5b** — `SN5` asked only for the
+*verdict*, so the clause this issue nearly added could have gone in silently.
+
+### ⚠ But the FIELD LABEL is a live question, and it is the user's
+
+`{Noise figure (2 ports only)}` (`ase.tcl`, the `sp` registry entry's `donoise` field). Measured:
+ticking that box is also what summons the N×N `Cy` grid at **any** port count. So on a three-port
+bench the label tells the user not to tick the only control that would give them the nine `Cy`
+vectors — the same *hiding* this issue is about, one layer up. The label was **not changed**;
+filed as `owed.sh add rule 1457`. Options:
+
+* **(a) leave it** — "noise figure" names the four scalars precisely, and the caution already
+  explains the N != 2 case when the box is ticked;
+* **(b)** `{Noise figure and correlation matrix}` — drops the parenthetical, tells the truth at
+  every N, and leans on the caution for the scalars;
+* **(c)** `{Noise data (figure needs 2 ports)}`;
+* **(d)** make the parenthetical follow the table, so it reads `(2 ports only)` at N == 2 and
+  nothing above it — most accurate, and the only option that costs a relabel hook.
+
+### The harder half: how the rows now fail properly
+
+* The **fifth way a row fails to fail** named at the head of this issue — *pinned to a fact
+  nobody measured* — is answered by construction: every number in SX2/SX2b/SX2c/SX2d/SX2e and in
+  SP9b is a count of a rawfile this crew wrote and read, and **SE3 runs the real thing on both
+  binaries** and compares the picker's promise against the file in **both directions**.
+* The **surplus** direction is the load-bearing one and it was nearly missed: with `Cy` re-gated
+  on N == 2 the *missing* list is empty, so an end-to-end row without a surplus check passes the
+  defect. Measured, then fixed.
+* **SX2f** is the mirror image nobody had asked about: dropping the emitted noise flag above two
+  ports reads like a tidy-up next to the caution, and would leave 36 cells on screen no rawfile
+  ever fills. The card and the matrix are now asserted together at every port count.
+
+### And a suite defect this issue's campaign found
+
+A mutation that made `ase::analysis_matrix_of` stop filtering by family had `matrix_dialog` build
+`cS_1_1` once per family; `window name "cS_1_1" already exists in parent` came out of
+`$cw.matrixbtn invoke` and **thirteen checks (SP7-SP13) stopped running** while the row that
+should have gone red never reported. This is the "a read that raises kills the file at rc 0"
+shape for the **sixth** time and the third-plus inside section SP. Every picker open, click and
+read in section SP now goes through a total reader (`mx_open` / `mx_caps` / `mx_cells` /
+`mx_slots` / `mx_title` / `mx_fmts` / `mx_click`). The same mutation now reddens **eight named
+rows and loses zero checks**.
