@@ -33,12 +33,12 @@ vanishes gets re-opened by the next reader.
 
 | | |
 |---|---|
-| **Stages landed** | 0–**10**. Stage 10 as two commits: the deck half (issue **1459**, `e1eaa5d0`) and the GUI half (issue **1460**). Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
+| **Stages landed** | 0–**10**. Stage 10 as two commits: the deck half (issue **1459**, `e1eaa5d0`) and the GUI half (issue **1460**, `375a769e`). Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix), **1461** (a leaked channel from a shadowed `close`), **1458** filed |
 | **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing. **Stage 10 is COMPLETE** (issues **1459** and **1460**), plus **1461** — a live channel leak the driver found by reading one line further than 1460's crew |
-| **Next** | **Stage 11 task 1** — campaigns, the runner half (§11a): the shard directory, the `<rundir>/.spiceinit` design-variable mechanism, the four axis kinds, `index.tsv`, and the `alter`-collapse mode. ⚠ Three foundations are already measured: a **third `.dc` sweep is accepted and discarded in silence** so it must be refused at the form; **`setseed <n>` makes `trrandom` reproducible** — identically on both binaries — while `set rndseed=` is a readback that does nothing; and **everything survives `alterparam` + `reset` except `.spiceinit`**, which is read at startup only |
+| **In flight** | a crew on **Stage 11 task 1** — the campaign runner (§11a) and the sampler (§11b). It owns `src/ase.tcl` and its own new suite; **`src/ase_window.tcl` is task 2's** |
+| **Next** | **Stage 11 task 2** — the campaign editor and §11c's *"the campaign ends with a NUMBER, not a directory"*. Then Stages 12, 13, 14, 16, and ⚖ R10's adapter-author specification |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **174 rule / 66 look / 10 suite.** ⚠ The newest `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`, the user's own screen. Four unstamped entries are another clone's and are not to be touched |
