@@ -80,7 +80,15 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `tests/headless/gold/`), or running one directly:
   `./src/xschem --nogui --pipe -q --script tests/headless/<t>.tcl`.
 - **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
-  leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
+  leading `FATAL` is counted.
+  ⚠ **AND `results.log` IS THE ONLY PLACE THE ANSWER IS.** `run_regression.tcl`
+  prints only `Start …` / `Finish …` to stdout and **exits 0 whatever happens**, so
+  grepping its stdout capture for `FAIL` finds nothing on a run with reds in it, and
+  its exit code says nothing at all. Measured 2026-09-13 (issue **1456**): four
+  consecutive T1 runs were reported as *"rc 0, zero counted failures"* from a grep
+  of the stdout capture while `results.log` held **six** counted lines — three suites
+  that emit no completion banner, plus a flaky row. Read the file, then name any case
+  whose `Total num fail:` is not 0. `couldn't execute "xschem"` or `exit 127` anywhere
   means the binary never launched and *nothing in that run is meaningful*
   (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
 - **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and

@@ -1,6 +1,6 @@
 # 1453 — ASE-L's probe decks took over the user's File > Open Recent
 
-**Branch:** fluid-editing · **Filed:** 2026-09-13 · **Status:** open, **rule debt filed**
+**Branch:** fluid-editing · **Filed:** 2026-09-13 · **Status:** open, **rule debt filed** · ⚠ **mechanism NOT established — see below**
 **Found by:** Stage 9's crew, in passing. **Verified by the driver, read-only.**
 
 ## What the user sees
@@ -36,11 +36,31 @@ and the comment above it says the suppression lasts **for the duration of the `-
 and is **restored before the event loop**, *"so loads the human performs afterward record
 normally"* (issue **0119**).
 
-So the gate is doing exactly what it was designed to do. The probe is on the wrong side of it:
-a **`--pipe` run with Tk** reaches the event loop with `no_recent_files` back at 0, and anything
-that loads a file **from the event loop** — an `after` handler, a Tk callback, a probe that runs
-once the GUI is up — records normally. A `--nogui --pipe` run provably cannot do it: the crew
-measured the file's md5 unchanged across one.
+So the gate is doing exactly what it was designed to do, and that half is measured: a
+`--nogui --pipe` run provably cannot record — the file's md5 is unchanged across one — while a
+**`--pipe` run with Tk** reaches the event loop with `no_recent_files` back at 0.
+
+## ⚠ BUT THE WRITER IS NOT IDENTIFIED, AND THE FIRST DRAFT OF THIS ISSUE IMPLIED IT WAS
+
+The sentence this paragraph replaced said the probe "loads a file from the event loop" and that
+each such load records. **Read rather than assumed, that does not hold up:**
+
+* `ase::cap_run` (`src/ase.tcl:2996`) only `exec`s the simulator — `exec {*}$cmd < $nul 2>@1`. It
+  never touches the editor.
+* There is **no `xschem load` anywhere on the capability-probe path**.
+* The only C callers of `update_recent_file` are `xschem load` / `load_new_window`
+  (`src/scheduler.c:7884, 7896, 8031, 8055`) and the **command-line filename**
+  (`src/xinit.c:3975`).
+
+What **is** measured is the observation and the trigger: the user's list holds ten probe decks from
+four pids and nothing else (read-only, twice), and the entries renew when the **display arm** of
+`tests/headless/test_ase_dialogs.tcl` runs — whose row **G13** (`:2715`) calls
+`ase::ui::sod_case_mode` and therefore a **live** probe.
+
+**So the first job is to find the writer, not to patch a path somebody guessed.** The measurement
+that settles it writes nothing: rename `update_recent_file`, install a wrapper that records
+`info level` and its argument and **does not call through**, then run G13's display arm. The
+caller then names itself, and the fix below can be aimed at it.
 
 ## What has to change, and what must not
 

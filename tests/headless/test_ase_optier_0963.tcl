@@ -3147,6 +3147,45 @@ check {X3 guard G4 STAYS, and here is the measurement it stands on: one device\
 ## not ride the transient. Measured before this work: they did, at every one of
 ## 20,505 timepoints, and the results file was 144 MB instead of 69 MB.
 set XG0 [x_run2 c $X_TRAN 0 {}]
+## ⚠ X7's DIAGNOSTIC LEG (issue 1455). X7 drives a real ngspice, and when that
+## run dies it used to print `rc=1 raw=-1bytes op-vectors=0` and stop -- which
+## costs a whole T1 run to reproduce and explains nothing when it does. Measured
+## 2026-09-13: X7 failed **2 of 3** runs inside `run_regression.tcl` and **0 of 3**
+## standalone -- one of those standalone runs being byte for byte the invocation
+## `run_regression.tcl:309` builds -- so the command is not the variable and the
+## thing that has to be captured is what the simulator itself said on a failing
+## run. `rc=1` there, not `rc=-1`: ngspice RAN and exited 1.
+##
+## TOTAL, and it RETURNS lines rather than printing them, for two reasons: a
+## diagnostic that raises would kill this file at rc 0 (the suite-death shape
+## this tree has met five times), and a printer cannot be checked. Row X7d is
+## its positive control.
+proc x7_diag_lines {rundir {n 12}} {
+  set out {}
+  if {[catch {
+    set files {}
+    if {$rundir ne {} && [file isdirectory $rundir]} {
+      foreach pat {*.log *.out *.err} {
+        foreach f [glob -nocomplain -directory $rundir $pat] {
+          if {[file isfile $f]} { lappend files [list [file mtime $f] $f] }
+        }
+      }
+    }
+    if {![llength $files]} {
+      lappend out "no log file under [expr {$rundir eq {} ? {(no rundir)} : $rundir}]"
+    } else {
+      set newest [lindex [lsort -integer -index 0 -decreasing $files] 0 1]
+      set fh [open $newest r] ; set body [read $fh] ; close $fh
+      set lines [split [string trimright $body "\n"] "\n"]
+      set tot [llength $lines]
+      set from [expr {$tot > $n ? $tot - $n : 0}]
+      lappend out "[file tail $newest]: last [expr {$tot - $from}] of $tot lines"
+      foreach l [lrange $lines $from end] { lappend out $l }
+    }
+  } derr]} { set out [list "RAISED:$derr"] }
+  return $out
+}
+
 proc x_trannodes {r} {
   if {![string is list $r] || [catch {dict get $r raw} raw]} { return NORUN }
   if {$raw eq {} || ![file isfile $raw]} { return NORAW }
@@ -3200,6 +3239,10 @@ if {[string is list $XF] && ![catch {dict get $XF raw} x7raw] &&
 }
 puts "MEASURE X7 rc=[x_num $XF rc] raw=[x_num $XF rawbytes]bytes\
  op-vectors=[expr {[string is list $X7V] ? [llength $X7V] : $X7V}]"
+## ONLY ON THE FAILING PATH, so a green run prints nothing extra (issue 1455).
+if {[x_num $XF rawbytes] <= 0 || ![string is list $X7V] || [llength $X7V] == 0} {
+  foreach _x7l [x7_diag_lines $X_RUN] { puts "MEASURE X7 diag| $_x7l" }
+}
 if {[string is list $X7V]} {
   foreach x7v $X7V {
     if {[string first {[vth]} $x7v] < 0} { continue }
@@ -3223,6 +3266,36 @@ check {X7 issue 0970 the bench now really does simulate what its schematic\
         [expr {($X7LV ne {ZZNONE} && $X7SV ne {ZZNONE} && $X7LV ne {} &&
                 $X7SV ne {} && $X7LV ne $X7SV) ? 1 : 0}]] \
   {1 1 1}
+
+## X7d -- THE POSITIVE CONTROL FOR X7's DIAGNOSTIC LEG (issue 1455). A reader
+## that returns nothing cannot disagree with anything, so the leg is exercised
+## here against a log it is GIVEN rather than only on a failure nobody can
+## summon. Four terms: it names the newest file and the line counts; it returns
+## the LAST n lines and not the first; a directory with no log says so instead
+## of raising; and a directory that does not exist says so too. The fixture is
+## 30 lines so that the tail is a proper subset -- a fixture shorter than the
+## window could not tell "tailed" from "printed everything".
+set X7DD [file join $scratch x7diag]
+file delete -force -- $X7DD
+file mkdir $X7DD
+set X7DF [open [file join $X7DD older.log] w]
+puts $X7DF "this file is older and must lose"
+close $X7DF
+after 1100
+set X7DF [open [file join $X7DD run.log] w]
+for {set i 1} {$i <= 30} {incr i} { puts $X7DF "line $i" }
+close $X7DF
+set X7DL [x7_diag_lines $X7DD 12]
+set X7DE [file join $scratch x7diag_empty]
+file delete -force -- $X7DE
+file mkdir $X7DE
+check {X7d issue 1455 the diagnostic leg names the newest log, returns its LAST\
+ lines and not its first, and answers a sentence rather than a raise when there\
+ is no log to read} \
+  [list [lindex $X7DL 0] [lindex $X7DL 1] [lindex $X7DL end] [llength $X7DL] \
+        [expr {[string match {no log file under *} [lindex [x7_diag_lines $X7DE] 0]] ? 1 : 0}] \
+        [expr {[string match {no log file under *} [lindex [x7_diag_lines [file join $scratch nosuchdir_x7]] 0]] ? 1 : 0}]] \
+  [list {run.log: last 12 of 30 lines} {line 19} {line 30} 13 1 1]
 
 }
 

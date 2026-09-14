@@ -127,7 +127,7 @@ before/after numbers **from its own run**, per arm, and the floor only ever goes
 | `test_ase_launch.tcl` | 431 | 44 | ux ledger: `ALL PASS (44)` |
 | `test_ase_locked_wire_pick_0160.tcl` | 232 | 17 | header: `ALL PASS (16)` under a HOME with no registry |
 | `test_ase_log_seam_0207.tcl` | 1040 | 50 | header: `ALL PASS (48)` under a clean HOME |
-| `test_ase_optier_0963.tcl` | 3166 | 104 | header: `ALL PASS (102)`, with X7 named as a known flake |
+| `test_ase_optier_0963.tcl` | 3166 | 104 | header: `ALL PASS (102)`, with X7 named as a known flake. ⚠ **2026-09-13: now `ALL PASS (109)`** — X7 cost T1 two counted lines on two of three solo runs and passed on three of three standalone, so it gained a **diagnostic leg** (`x7_diag_lines`, failing path only) and its positive control **X7d**. Issue **1455**. |
 | `test_ase_persist.tcl` | 1014 | 149 | header: **FLOOR, raised and never lowered: 44 headless / 147 with a display** |
 | `test_ase_plot.tcl` | 912 | 153 | header: `ALL PASS (150)`; ux ledger: 151 |
 | `test_ase_preflight.tcl` | 966 | 116 | none declared |
@@ -862,6 +862,26 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ T1 IS AT ZERO, MEASURED IN THE RIGHT FILE — 2026-09-13, issue 1456
+
+Three solo runs, one tree, read from `tests/results.log` rather than from stdout:
+
+| run | cases | counted lines | what they were |
+|---|---|---|---|
+| 1 — Stage 9 task 2's tree | 70 | **6** | 4 × no completion banner · X7 + its harness line |
+| 2 — after the banner fix | 70 | **2** | X7 + its harness line |
+| 3 — after X7's diagnostic leg | 70 | **0** | — |
+
+**Run 3 is the first time in this batch that "T1 is at zero" has been said on the strength of the
+file that holds the answer.** Every `Total num fail:` line reads 0, across all 70 cases and both
+arms.
+
+⚠ **Run 3's zero is not a claim that X7 is fixed.** X7 passed on that run; it failed on runs 1 and
+2 and on nothing outside T1. Issue **1455** stays open, and the leg that landed in run 3 exists so
+that the next failure arrives with the simulator's own words attached instead of costing another
+run to reproduce. **A green T1 is a floor, not a proof** — this batch has already shipped one
+defect (1449) past a clean one.
+
 ### ⚠ T1 HAS NOT BEEN AT ZERO SINCE STAGE 7, AND FOUR OF TODAY'S REPORTS OF IT WERE WRONG — 2026-09-13
 
 **The fault is the driver's, and the defect is the batch's own.** T1 was run solo after Stage 9
@@ -902,14 +922,27 @@ sight"*, filed four times by four people who each waved it through. The shape is
 time: 0689 was the **reader** too strict for a banner that existed, this is three **suites** that
 emit no banner at all. The consequence is identical.
 
-**The sixth is the known flake, and this is its second appearance in T1.** `test_ase_optier_0963`
-row **X7** read `{0 0 0}` against `{1 1 1}` — the sky130 run died and wrote no raw. Re-run
-standalone on the same tree with nothing else alive: `MEASURE X7 rc=0 raw=284381bytes
-op-vectors=891`, **ALL PASS (108), OVERALL: ok**. The suite's own header (`:104`) already calls
-X7 a flake on the strength of the 1377 sweep, and this ledger's Stage 2 block records T1 losing
-two lines to the same row — **but that occasion had four of this batch's own ngspice processes
-live, and this one had nothing.** So the standing explanation no longer covers it. Filed as issue
-**1455** with both measurements.
+**The sixth is `test_ase_optier_0963`'s row X7, and six runs later it is better understood and
+still not solved.** It read `{0 0 0}` against `{1 1 1}` — the sky130 bench ran and **exited 1**
+(`rc=1 raw=-1bytes op-vectors=0`), which is not the same as never starting (`rc=-1`). Measured
+across six runs on one unchanged tree: **2 of 3 failures inside T1, 0 of 3 outside it** — and one
+of the outside runs is byte for byte the invocation `run_regression.tcl:309` builds, same cwd, no
+`--nolog`. **So the command is not the variable.**
+
+⚠ **An intermediate draft of issue 1455 called it deterministic under T1. The third T1 run refuted
+that, and the claim was withdrawn rather than kept** — which is the same discipline this batch
+applies to a crew's claims, applied to the driver's own. The suite's own header (`:104`) calls X7 a
+flake on the strength of the 1377 sweep, and this ledger's Stage 2 block records T1 losing two
+lines to the same row **with four of the batch's own ngspice processes live**; these runs had
+nothing else alive, so contention alone no longer explains it.
+
+**What landed is the thing that will answer it.** `x7_diag_lines` prints the newest log under the
+run directory, last twelve lines, **only on the failing path** — so a green run is unchanged and
+the next failure explains itself instead of costing a whole T1 to reproduce. Row **X7d** is its
+positive control, because *an extractor that returns nothing cannot disagree*: a 30-line fixture
+with a newer file beside an older one, plus a directory with no log and a directory that does not
+exist, both of which must answer a **sentence** rather than raise — a diagnostic that raised would
+kill the file at rc 0, which is the fifth failure mode this batch keeps meeting. Issue **1455**.
 
 ### The corrections to this ledger's own record
 
@@ -1042,11 +1075,17 @@ refusal. **A ruling on either must move both**, and they are in different files.
 
 **⚠ AND ISSUE 1453 IS ANSWERED, SHARPENED, AND MORE URGENT THAN WHEN IT WAS FILED.** Receipt 32
 found the user's `File > Open Recent` holding ten ASE-L capability-probe scratch decks and nothing
-else, and left *"which display-arm suite runs a live probe"* open. **It is one row, not a session**:
+else, and left *"which display-arm suite runs a live probe"* open. **The ROW is identified and the WRITER is not**:
 `tests/headless/test_ase_dialogs.tcl:2715` (section **G13**, long pre-dating this work) calls
-`ase::ui::sod_case_mode`, which routes to a **live** capability probe; on the display arm the run
-reaches the Tk event loop, `no_recent_files` is back at 0 by `xinit.c:3546`'s own contract, and
-each `probe_a.sp` load records. Measured after this task's runs: **four pids × three decks, and the
+`ase::ui::sod_case_mode`, which routes to a **live** capability probe — driver-verified, both call
+sites read. ⚠ **But the crew's mechanism does not survive reading the code, and the driver checked
+rather than relaying it.** `ase::cap_run` (`src/ase.tcl:2996`) only `exec`s the simulator; there is
+no `xschem load` anywhere on the probe path, and the two C sites that call `update_recent_file`
+are `xschem load` / `load_new_window` (`scheduler.c`) and the command-line filename
+(`xinit.c:3975`). So **what actually writes those ten entries is not established**, and issue 1453
+now says so. The next task on it **measures the writer** — wrap `update_recent_file` so it logs its
+caller and does *not* call through, then run G13's display arm — rather than fixing the path
+somebody guessed. Measured after this task's runs: **four pids × three decks, and the
 list is capped at ten** — so **four display-arm runs of that one suite flush it completely**, and
 this task ran it upwards of thirty times. **Nothing of the user's was lost here** — what it
 displaced was already probe decks — and nothing under `~/.xschem/` was touched. But the standing
@@ -3337,16 +3376,36 @@ Decisions: **D6, D10**. Debt M12 belongs to this stage.
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ✅ **DONE, as two tasks** — the deck half (issue **1452**) and the GUI half (issue **1454**). ⚠ **§9b's Smith chart is NOT shipped and is named outstanding**, because this tree has no polar plot engine to draw it on. |
+| commit | `f438af90` (1452) · `3e316f7a` (1454) |
+| T1 | ⚠ Run solo after each. The second run is what exposed that **T1 had not been at zero since stage 7** — three of this batch's own suites emit no completion banner. Fixed separately; see *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7*. |
+| suites moved | **new** `test_ase_sp_1452` **50** both arms (41 at task 1, 50 at task 2) · `test_ase_dialogs` 37 headless unmoved / **362 → 382** display, section **SP** · `test_ase_core` 636 unmoved |
+| sabotage | **39 across the two tasks** (12 + 27), **38 red by name**, one behaviour-preserving survivor, **zero kills**. Six found defects in the SUITES rather than in the product. |
+| ledger debts | `rule 1452`, `rule 1454`, `look ase_sp_ports_matrix_1454`. **M12 is PARTLY closed** — `wrs2p`'s output is measured on both binaries and is byte-identical to the documented `.csparam` route; nobody has opened it in a third-party Touchstone reader, and the debt stays open on that half. |
+| spec paragraphs rewritten | `PLAN.md` §9b (the Smith chart, and `wrs2p` being `let`/`unlet` rather than `.csparam`) and §9a (the scan rule) — both corrected in place with the measurement that refuted them. |
+| receipt | `receipts/32-stage-9-sp-deck.md` · `receipts/33-stage-9-sp-surface.md` |
 
 ### What Stage 9 learned that binds later stages
+
+1. **`sp` emits AFTER `op`, which amends issue 0964 by measurement.** Promoting a source to a port
+   adds a `z0` series resistance, so `op` reads `v(in) = 1.0` before it and **0.625** after — and
+   the promotion cannot be undone (`alter v1 portnum = 0` → `Internal Error: incomplete
+   CKTunsetup()` and `exit(1)`, both binaries). 0964 was about which vectors land in which plot;
+   this is about whether a printed number is true. `emitorder 95` bends the rule by one number
+   instead of breaking it.
+2. **A key licensed on ONE type is invisible to every blanket list.** `ports` is legal on an `sp`
+   row and `unknownkey` everywhere else, **without** widening D4's `{type enabled x id}` — and
+   three separate sites that ask *"is this key a setting?"* each had to learn a **second**
+   question, `ase::analysis_setup_key`. The Options editor was broken by the first one for six
+   commits. **A fourth per-type row key needs that treatment, not `analysis_nonsetting_keys`'.**
+3. **The two binaries disagree about the rawfile's capitalisation and agree about `display`'s.**
+   Anything that reads a vector **out of a results file** must fold case. Row `SM5` pins it, and
+   sabotage s1 (a case-sensitive reader) is green on the fork and red on apt — which is the whole
+   argument for the two-binary rule, in one line.
+4. **Two halves of a feature tested in different suites never meet.** `SP14` goes from a port typed
+   into the real widgets to a rendered `alter` line to a real run on both binaries; it is the only
+   row in `test_ase_dialogs.tcl` that starts a simulator, and it exists because issue **1449** was
+   a defect that 622 checks and a clean T1 both missed.
 
 ---
 

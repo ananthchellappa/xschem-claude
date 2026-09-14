@@ -1661,3 +1661,8 @@ check {HK2 the measurement hooks are optional, and a five-hook backend still reg
 
 if {$fail} { puts "RESULT: $fail FAILED ($npass passed)" } \
 else { puts "RESULT: ALL PASS ($npass checks)" }
+# THE COMPLETION BANNER (issue 1456). `tests/banner_rule.tcl`'s `banner_complete`
+# requires a WHOLE-LINE `OVERALL: ok`, and `run_regression.tcl` counts a case with
+# no banner as a HARNESS failure however green its own checks are. This suite is in
+# T1's case list, so without this line it was a standing red from the day it joined.
+puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"

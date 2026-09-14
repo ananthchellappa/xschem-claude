@@ -3196,14 +3196,36 @@ user can fix in the dialog.
 ⚠ `portnum` is **not readable back** (`show v : portnum` returns 0 for a source declared `portnum 1`),
 so the table is **GUI-owned state** and the netlist scan only *adds* sources that already declare one.
 
+⚠ **THAT LAST CLAUSE IS REFUTED BY THIS STAGE'S OWN HEADLINE CASE, 2026-09-13 (issue 1454), AND
+THE SHIPPED SCAN DOES SOMETHING ELSE.** The bench Stage 9 exists for is two **ordinary** V sources
+promoted at run time with no schematic edit — on which *"only sources that already declare a
+`portnum`"* offers **nothing**. So the scan offers every **top-level independent voltage source**
+(no current sources, none inside a subcircuit, none already in the table), and what a declaration
+buys is the **prefill**: a declaring source comes back with its own number and Z0, an ordinary one
+with the next free number and a **blank** Z0 — because 50 Ω is the simulator's default and ASE-L
+does not invent a number the user never typed. It **peeks and never netlists**: a bench nobody has
+netlisted gets the precondition banner's own cold sentence and an empty list.
+
 ### 9b. The S-parameter surface
 
 Matrix picker, Smith/polar, and `wrs2p` export with the `.csparam Rbase=50` workaround.
 
+⚠ **SHIPPED HALF, 2026-09-13 (issue 1454): THE MATRIX PICKER IS IN AND THE SMITH CHART IS NOT,
+AND THAT IS A MEASUREMENT ABOUT THIS TREE RATHER THAN A CHOICE.** `grep -ri smith src/*.c
+src/*.tcl` prints **nothing** and `polar` matches only `bipolar`: the waveform viewer has one
+rectangular axis pair and no mode that would draw either. A Smith chart is a new plot engine in
+`wave_viewer.tcl`/`draw.c`, which is a different stage. What shipped instead are the four formats
+the viewer **can** render of a complex answer — `db20()`, `cph()`, `re()`, `im()` — each measured
+accepted against both binaries' variable lists. ⚠ **The `wrs2p` export is NOT `.csparam`**: it is
+`let Rbase = <port 1's Z0>` / `wrs2p` / `unlet Rbase`, measured byte-identical to the `.csparam`
+route and **per row** rather than deck-level, so two `sp` rows can carry different port-1
+impedances (issue 1452). ⚠ **And §9a's scan rule below is refuted by this stage's own headline
+case** — see the ⚠ there.
+
 ### What you see, the moment the window reopens
 
 1. **`sp` is `ok`** on a deck that declares no ports at all, because the table makes it satisfiable.
-2. **An S-matrix picker** and a Smith chart, from a schematic nobody edited.
+2. **An S-matrix picker** ~~and a Smith chart~~, from a schematic nobody edited. ⚠ **The chart is outstanding** — see the ⚠ under §9b.
 3. **A Touchstone file** you can open in someone else's tool.
 
 ### Files and procs
