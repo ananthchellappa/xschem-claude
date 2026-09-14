@@ -18,6 +18,30 @@ picking up Stage 1 reads `receipts/05-stage-0-silent-drop.md` first — it carri
 correction Stage 0 made to this plan (**C36**) and the two harness traps that cost two T1
 baselines before one was clean.
 
+## ⚠ DO NOT WRITE THE `.state` BYTE-IDENTITY MEASUREMENT YOURSELF — SOURCE IT
+
+Every stage has to show its change did not move the 104 committed `.state` files, and **three
+separate crews wrote that measurement from scratch and all three got the same false alarm first**:
+
+* receipt 30 §6 — found it and wrote it down;
+* issue **1460**'s crew — *"my first `.state` measurement said 104/104 mismatching and was wrong"*;
+* issue **1464**'s crew — *"a maximally alarming false alarm"*.
+
+The trap is that **`ase::state_serialize` omits the trailing newline the file on disk carries**, so
+a harness that compares the two directly reports **every** file as broken — the most alarming
+possible wrong answer, arriving at the exact moment you are deciding whether you have damaged the
+user's benches. Writing it down three times has not stopped it, so it is now **code**:
+
+```tcl
+source [file join $repo tests headless state_roundtrip.tcl]
+set r [ase_state_roundtrip $repo]
+# -> tracked / bad / control_disagrees / control_agrees
+```
+
+**`bad` must be empty and BOTH controls must be 1.** They are mandatory rather than decoration: a
+comparison that never ran reports a clean sweep, and a comparison that always disagrees satisfies
+the first control on its own. **Report all four numbers in your receipt.**
+
 ## ⚠ EVERY WAITING LOOP NEEDS A DEADLINE, AND HERE IS THE ONE TO COPY
 
 Telling crews *"give every waiting loop a deadline"* has not worked. Measured across this batch:
