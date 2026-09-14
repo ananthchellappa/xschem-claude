@@ -181,6 +181,11 @@ check "R1 state_default has viewer {}" [dict get $d viewer] {}
 ## for the identical reason with the identical `{}` default, so R2's
 ## byte-identical round trip below is unaffected and so are the 104 committed
 ## .state files (re-verified live, 104 of 104, at the moment they were added).
+## ⚠ AND RAISED 22 -> 23 (issue 1462, Stage 11a). `sweep` is the ninth member of
+## ase::omit_if_empty and the one named exception ⚖ R8 granted to D3, with the
+## identical `{}` default -- so R2's byte-identical round trip below is
+## unaffected and so are the 104 committed .state files (re-verified live at the
+## moment it was added, with a non-vacuity control).
 ##
 ## ⚠ THIS IS THE **SECOND** COPY OF THIS LIST -- `test_ase_core.tcl` R1 is the
 ## other -- and 1459 found it the way a second copy is always found: by going
@@ -191,11 +196,11 @@ check "R1 state_default has viewer {}" [dict get $d viewer] {}
 ## core's is the schema, and a suite that trusted another suite's row would be
 ## the drift this batch keeps finding. But a third copy would be a defect --
 ## `test_ase_core.tcl`'s NS2 is the precedent for a scan that says so.
-check "R1 exactly the 22 schema keys" [lsort [dict keys $d]] \
+check "R1 exactly the 23 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator sim_entry design rundir temperature models variables \
           analyses outputs save_all_v save_all_i save_op_params measurements \
           opstrategy opstate runhealth \
-          options includes pre_commands cosim viewer}]
+          options includes pre_commands cosim viewer sweep}]
 
 # --- R2: viewer round-trip byte-stability ------------------------------------
 set vgraphs [list \

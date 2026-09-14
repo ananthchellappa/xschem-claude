@@ -82,7 +82,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_meas_1443" \
                  "headless/test_ase_sp_1452" \
                  "headless/test_ase_converge_1459" \
-                 "headless/test_ase_conv_gui_1460"]
+                 "headless/test_ase_conv_gui_1460" \
+                 "headless/test_ase_campaign_1462"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -189,6 +190,23 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # and cleared and running both (rc 0 and `v(1) = 1.413677e-02` against rc 1 and
 # `The operating point could not be simulated successfully`, one argument apart,
 # identical on apt 45.2 and on the fork).
+#
+# ⚠ `test_ase_campaign_1462` IS HEADLESS-ONLY, AND THE MEASUREMENT SAYS SO.
+# Measured 2026-09-13 on both arms from the `RESULT:` line: **133 checks
+# headless and 133 on the dev display, the same rows** (`diff` of the two
+# ok-lists is empty). Stage 11 task 1 is the campaign RUNNER and the SAMPLER --
+# the shard directory, the one-deck-per-point renderer, `index.tsv` and the Tcl
+# random number generator -- and it creates no widget at all: the campaign
+# editor, the progress readout and the result table are Stage 11 task 2.
+# ⚠ AND IT IS THE THIRD SUITE IN `hcases` THAT REALLY STARTS A SIMULATOR, ON
+# BOTH BINARIES. Its section EE runs a four-point campaign on apt 45.2 AND on
+# the fork and checks the measurement column against PHYSICS rather than a
+# fixture -- the two points whose RC product is equal must agree and the other
+# two must not -- then measures the two facts the whole design rests on: that
+# `.param x='var(...)'` is **fatal** on 45.2 (`Undefined parameter [var]`,
+# `exit(1)`) and works on the fork, and that `setseed` in `<rundir>/.spiceinit`
+# is accepted and seeds nothing while the same line in `.control` does. A binary
+# that is not there SKIPS with its path printed.
 #
 # ⚠ AND THE DISPLAY ARM IS WHERE THE CANVAS IS. Section GC loads a real
 # schematic and asks `xschem hilight_netname` to light the nodes `CKTncDump`

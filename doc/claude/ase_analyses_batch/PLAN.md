@@ -3435,6 +3435,15 @@ campaign/
 big PDK deck. So **`alter`-only axes may be collapsed into one shard**, and the runner **says which
 mode it chose** in the run log.
 
+⚠ **MEASURED 2026-09-13 AND THE BYTE-IDENTICAL DECK IS REFUTED (issue 1462).** `var()` **does not
+exist on `/usr/bin/ngspice` (45.2)** — the same deck answers `Undefined parameter [var]`,
+`Formula() error.` and **`exit(1)`**, against `@r1[resistance] = 4.700000e+03` on the fork. It is
+ngspice `aa1242ac7`, 2025-10-16, **fifty commits after 45.2**, first shipped in ngspice-46, and
+**the current Ubuntu LTS ships 45.2**. So `campaign/deck.spice` **cannot be byte-identical for
+every shard** on the binary most users have: it is the **nominal** deck, and a shard is a one-line
+diff from it. A design verified on the development fork alone would have shipped a campaign that
+exits 1 on every shard.
+
 The design-variable mechanism is measured: `.param rv = 'var(myres)'` in the deck plus
 `set myres = 4700` in `<rundir>/.spiceinit` gives `@r1[resistance] = 4700` **with the process cwd
 somewhere else entirely**. The schematic is untouched, the deck is byte-identical between shards, and

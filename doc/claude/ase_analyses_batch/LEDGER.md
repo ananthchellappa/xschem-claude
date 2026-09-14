@@ -37,11 +37,11 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on **Stage 11 task 1** — the campaign runner (§11a) and the sampler (§11b). It owns `src/ase.tcl` and its own new suite; **`src/ase_window.tcl` is task 2's** |
+| **In flight** | nothing — **Stage 11 task 1** landed (issue **1462**); `src/ase.tcl` is free |
 | **Next** | **Stage 11 task 2** — the campaign editor and §11c's *"the campaign ends with a NUMBER, not a directory"*. Then Stages 12, 13, 14, 16, and ⚖ R10's adapter-author specification |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **174 rule / 66 look / 10 suite.** ⚠ The newest `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`, the user's own screen. Four unstamped entries are another clone's and are not to be touched |
+| **Debt queue** | **175 rule / 66 look / 10 suite.** ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -926,6 +926,168 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 11 task 1 — the campaign runner and the sampler, issue **1462**, collected 2026-09-13
+
+| | |
+|---|---|
+| **what landed** | A `sweep` state key (⚖ **R8 Option A**, the one named exception to D3, and the **ninth** member of `ase::omit_if_empty`), 44 core procs, **five** adapter hooks, and **one** new emit site in `render_deck`. `src/ase_window.tcl` never opened — md5 unchanged throughout. |
+| **the one idea** | ⚠ **A SHARD IS A STATE.** The point's coordinates are written into the keys they already belong in — `variables`, `temperature`, `models`, `options` — with `rundir` pointing at the shard directory, and the shard's deck is **`render_deck` of that state**. So every guard, refusal and sidecar path rides along and **there is no second deck writer**. That is why a stage this size needed **one** new emit site. |
+| **driver's own re-run** | **after the repair**: `test_ase_campaign_1462` **ALL PASS (133)** (124 before the repair added rows), `test_ase_simreg_0931` **ALL PASS (117)**, `test_ase_core` **638**, `test_ase_persist` **49**, `.state` **104 / zero mismatches** with the control disagreeing. |
+| **sabotage** | **Thirty-six mutations, 36 killed by name, zero survivors**; 39 restores, all `restore: OK`. **Three survived the first pass** and each earned a new row. ⚠ **And two of the three fixture backends written for those rows were themselves vacuous** — a `[list apply {…}]` hook is not callable and the readers' `catch` swallowed it. **Measured and recorded rather than quietly fixed**, which is the honest form of failure mode 3. |
+| **T1** | ⚠ **RED ON THE FIRST HAND-OVER — and that is T1 doing its job.** `test_ase_simreg_0931` row **S12**, `{2 0}` against `{1 1}`, in a suite the crew's neighbourhood list did not cover. Sent back, repaired by route 1, and **✅ re-run solo clean afterwards**. Nothing was committed until it was. |
+| **ledger debts** | **174 / 66 / 10 → 175 / 66 / 10.** `rule 1462`. **No `look`** — this half ships no pixels. **No `suite`** — no GUI leg and both arms identical. |
+| **receipt** | `receipts/38-stage-11-runner.md` |
+
+## ⚠ T1 CAUGHT A REGRESSION THE CREW'S OWN NEIGHBOURHOOD LIST DID NOT COVER
+
+The crew's twelfth correction was right about a real bug — *"`ase::campaign_run` had to call
+`ase::sim_apply_choice`, or a campaign runs whichever simulator was last **selected**"* — and the
+fix broke a structural invariant:
+
+```
+FAIL: S12 STRUCTURAL the running session's choice is put in force once, in the one
+body all three run doors share, below the gate that refuses without looking at a
+simulator and above everything that resolves one -> {2 0} (exp {1 1})
+```
+
+**Two call sites where the suite requires one**: the original at `src/ase.tcl:15541` and the new one
+at `:20550`. And the comment above the original says so in as many words — *"This is the one body
+all three doors share… it needs no second call and **must not have one** — two calls would say the
+stale-entry sentence twice for one gesture."*
+
+⚠ **`test_ase_simreg_0931` was not in the crew's neighbourhood list**, which is exactly why this
+reached T1 instead of the crew. **A neighbourhood list is a judgement, and a judgement can be
+wrong; T1 is the backstop that does not depend on one.** That is the whole argument for T1 having a
+baseline of zero — and for the six runs before this one, which established that a red here means
+*this change*.
+
+**Sent back rather than fixed by the driver**, with two routes named: route the shards through the
+shared body so the choice is applied once structurally, or argue that a campaign is genuinely a
+fourth run door and **rewrite S12 deliberately**, with the original defect still forbidden.
+⚠ *Widening a structural invariant to accommodate a new caller is how invariants die*, and this
+batch has already shipped one defect that way (issue **1449**).
+
+### ✅ The crew took route 1, and it made the code SMALLER
+
+**`ase::campaign_step` no longer composes a command, `exec`s, writes a log, deletes the five
+append-target sidecars, writes ⚖ R2's pre-deck file, takes the run lock, or applies the session's
+choice.** It builds the shard's state, writes the netlist into the shard, and hands both to the body
+`ase::run`, `ase::run_existing` and a script paste already share. **Nothing blocked it**, and
+`sim_apply_choice` is back to exactly one call site — driver-verified: `src/ase.tcl:15541`, the proc
+itself, and two comments, one of which marks the repair.
+
+⚠ **The crew named its own error better than the driver had**: *"I treated 'the campaign needs the
+bench's simulator applied' as a requirement to satisfy and reached for the nearest call, instead of
+asking whether a campaign is a new door or a caller of the existing one. It is a caller. **I had
+re-implemented four of that body's guards and silently skipped seven.**"* The structural row was
+therefore not protecting a style — it was protecting seven guards.
+
+**A shard directory is now literally a run directory**, holding `<cell>.spice`, `<cell>_ase.spice`,
+`<cell>_ase.log`, `<cell>_ase.raw` and `<cell>_ase.plotmap` under the names a single run gives them.
+
+**And the `catch` is gone, because there is no call to catch.** The demand moved to the one that
+remains — around `ase::run_deck` — and it is now **measured**: row `RN15` registers an entry
+pointing at nothing, runs three points, and asserts three `-1` rows in `index.tsv` **and three
+sentences, one per shard**, captured by replacing `::ase::echo` and counting. `RN15b` is its
+control: a runnable stand-in says it **zero** times.
+
+### ⚠ Three things the repair found that nobody was looking for
+
+1. **`ase::wait` is an unbounded `vwait`.** A campaign now races it against an `after`, kills the
+   overrunning process **by the id it started**, and returns **124**. `RN11` drives a 30-second
+   sleeper against a **one-second** budget.
+2. **A killed shard strands its in-flight lock.** `run_done` clears it on EOF, and a killed process
+   whose child holds the pipe never delivers one — so **the next campaign over the same directory
+   was refused by a run nobody was waiting for**. Cost two red rows before it was understood.
+3. ⚠ **A binary that never answers the capability probe pays `cap_budget_ms` (30 s) PER SHARD**,
+   because a timed-out probe is not cached: 31,296 ms for the probe against 64,420 ms for a
+   two-point campaign. **ASE-L's existing behaviour, not the campaign's** — recorded, not fixed.
+
+### ⚠ And the crew reported two defects in its own tests, and one in its own hygiene
+
+**Eleven mutations, eleven killed.** `n1` — the second `apply_choice` restored — reddens **only
+S12**, which is the whole argument for a structural row. Two survived the first pass and **both
+exposed the crew's own test defects**: one row was vacuous (`ps -C sh` for a process that had
+`exec`ed away) and another *did not exist*, because the stand-in fix had removed the grandchild
+shape the lock bug needs.
+
+⚠ **And it found a third by looking rather than by a sabotage**: the unique sleeper duration it had
+introduced ran up to **eighty minutes**, and one row deliberately does not kill its grandchild —
+**so every run leaked two processes, and ten were alive before it noticed.** Now a fractional
+second, with `ps` clean after three consecutive runs.
+
+⚠ **One process-hygiene note the crew made against itself**: sweeping leftovers it reached for
+`pkill -f 'sleep 37'`, and **`-f` matched its own shell's command line and killed it**. Nothing of
+the user's was touched. The replacement walks `ps` and kills only a process whose argv is exactly
+the sleeper. **`pkill -f` matching the sweeper is a shape worth remembering** — `CLAUDE.md` already
+forbids killing what you did not start, and this is the way that rule gets broken by accident.
+
+⚠ **And a second thing the driver asked to change either way**: the new call is
+`catch {ase::sim_apply_choice $state}`. **This batch has just spent two days on `catch` hiding
+failures** — 1460's seven rows green on an empty string, 1461's leaked channel — so a bare `catch`
+around **the one call that decides which simulator runs** needs a measured reason with a row behind
+it, or removal.
+
+## ⚠ THE HEADLINE REFUTES §11a's CENTRAL DESIGN, AND THE DRIVER RE-MEASURED IT
+
+`PLAN.md` §11a's first-ranked mechanism is `.param rv='var(myres)'` in the deck plus `set myres=…`
+in `<rundir>/.spiceinit` — **the thing that makes `campaign/deck.spice` byte-identical for every
+shard.** Driver-re-measured, same deck, both binaries:
+
+```
+/usr/bin/ngspice (45.2)   rc=1   Undefined parameter [var]   Formula() error.
+the fork (46+)            rc=0   @r1[resistance] = 4.700000e+03
+```
+
+**`var()` does not exist on apt 45.2 and the run dies.** It is ngspice `aa1242ac7`, 2025-10-16 —
+**fifty commits after 45.2** — and first shipped in ngspice-46. **The current Ubuntu LTS ships
+45.2.** So `campaign/deck.spice` **cannot** be byte-identical across shards on the binary a
+downloading user has; it is the **nominal** deck, and a shard is a one-line diff from it.
+
+⚠ **This is the most expensive thing the two-binary rule has caught in this batch.** A design
+verified on the development fork alone would have shipped a campaign feature that **exits 1 on
+every shard** for most users.
+
+## ⚠ THE SECOND FINDING CORRECTS THE DRIVER'S OWN EVIDENCE FILE
+
+`evidence/randomness-stage11.md` said **`setseed 12345` works** — measured, true, and **true only
+inside the `.control` block**. In `<rundir>/.spiceinit` it does **nothing**: rc 0, silent, a
+different answer every run, both binaries. Driver-re-measured against one deck — `.spiceinit` gives
+`1.164426e+00` then `3.497468e-01`; the identical command in `.control` gives `3.950885e-01` twice.
+
+The mechanism is an ordering one and is not guessable from outside: `main.c` reads the start-up
+file at `:1266-1330` and **then** calls `initw()` at `:1371`, which does `srand(getpid())`. **The
+start-up file's seed is set and then overwritten before the circuit runs.**
+
+⚠ **Sixth *accepted-is-not-honoured* case, and the sharpest for a reader**: the same command is
+honoured in one file and inert in another, with no diagnostic between them. **A campaign that
+seeds from `.spiceinit` is unseeded and cannot know it.** The evidence file now says so.
+
+## ⚠ AND IT OVERTURNS A PROHIBITION IN THE PLAN, WITH THE REASON
+
+§11d forbids `.options seed=`. The crew read the trap it names and found it **does not apply
+here**: trap B is about a `.control` loop that `reset`s, and **a shard runner never `reset`s**. So
+`.options seed=<base+N>` is used, and it is measured **reproducible per shard, distinct between
+shards, and identical on both binaries** — *and* it reaches the **netlist-level `agauss`** that
+`setseed` cannot, which is the shape **the user's own `tb_bandgap` bench is written in**.
+
+**A prohibition whose stated reason does not hold in this context is a prohibition to re-examine,
+not to obey** — and the crew re-examined it by measurement rather than by argument.
+
+## Seven more corrections, of which two are about readbacks lying again
+
+* The temperature mechanism **already existed** as `.temp` from the `temperature` key.
+* ⚠ **`@r1[resistance]` does not move with temperature** — the obvious readback is the wrong one,
+  which is the third time in two days that the natural readback channel has disagreed with the
+  behaviour (after `option`'s listing and `rndseed`).
+* The **third-`.dc`-level refusal belongs to the form, not the runner** — row `DK8` pins that the
+  runner **cannot create one**, which is the right place for a structural guarantee.
+* ⚠ **`ase::rundir` CREATES the directory it is asked about**, which made empty shard directories
+  for points that never ran — a predicate with a side effect, found because `index.tsv` is built
+  **from the odometer and never from the directory listing** (failure mode 6: the surplus question).
+* **`ase::campaign_run` had to call `ase::sim_apply_choice`**, or a campaign runs whichever
+  simulator happened to be *selected* rather than the one it was launched against.
 
 ### ✅ Issue 1461 — the driver read one line further than the crew, fixed 2026-09-13
 

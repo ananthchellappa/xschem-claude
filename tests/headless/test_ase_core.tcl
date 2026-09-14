@@ -484,8 +484,15 @@ set d [ase::state_default]
 ## committed .state files round-tripping byte-identically (re-verified live,
 ## 104 of 104, at the moment they were added). R1x below is the non-vacuous
 ## half: a NON-empty one of each really is written.
-check "R1 default has exactly the 22 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements opstrategy opstate runhealth options includes pre_commands cosim viewer}]
+## ⚠ AND RAISED 22 -> 23 (issue 1462, Stage 11a). `sweep` is the NINTH member of
+## ase::omit_if_empty and the ONE named exception ⚖ R8 granted to D3's "no new
+## top-level keys". Same shape, same `{}` default, and the 104 committed .state
+## files were re-verified live at the moment it was added -- 104 of 104, with a
+## non-vacuity control in the same loop (one file given a NON-empty sweep
+## re-serializes DIFFERENTLY, so the loop is comparing rather than agreeing with
+## itself).
+check "R1 default has exactly the 23 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements opstrategy opstate runhealth options includes pre_commands cosim viewer sweep}]
 check "R1x 1459's three keys default to empty and are omitted from the serialized form" \
   [list [dict get $d opstrategy] [dict get $d opstate] [dict get $d runhealth] \
         [expr {[string first "opstrategy" [ase::state_serialize $d]] >= 0}] \

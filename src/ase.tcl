@@ -70,7 +70,7 @@ namespace eval ase {
                         variables analyses outputs save_all_v save_all_i
                         save_op_params measurements
                         opstrategy opstate runhealth
-                        options includes pre_commands cosim viewer}
+                        options includes pre_commands cosim viewer sweep}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
   # LATER must not rewrite files that predate it — `state_load` merges over
@@ -115,8 +115,15 @@ namespace eval ase {
   # NO `seed_enabled` EQUIVALENT FOR IT -- nothing seeds a measurement into a
   # fresh bench, because a measurement is a question about a particular circuit
   # and ASE-L has none to ask.
+  # `sweep` (Stage 11a / issue 1462, ⚖ R8 Option A) is the NINTH member, and it
+  # joins for the identical reason with the identical consequence: it defaults
+  # to `{}`, so every state written before the key existed serializes exactly as
+  # it did before and the five load->save byte-identity rows stay green. ⚠ IT IS
+  # ALSO THE ONE NAMED EXCEPTION TO D3's "no new top-level keys", which ⚖ R8
+  # granted -- and by the time it was granted `measurements` had already proved
+  # the mechanism across all 104 committed files.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
-                          opstrategy opstate runhealth}
+                          opstrategy opstate runhealth sweep}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -527,6 +534,7 @@ proc ase::state_default {} {
     opstrategy {} \
     opstate   {} \
     runhealth {} \
+    sweep     {} \
     options   {} \
     includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
@@ -697,6 +705,10 @@ proc ase::register_backend {name hooks} {
   ase::meas_cache_clear $name
   ## --- 1459 (Stage 10): AND THE RUNG-CATALOGUE MEMO, same place, same reason.
   ase::ladder_cache_clear $name
+  ## --- 1462 (Stage 11a): AND THE CAMPAIGN-AXIS MEMO, same place, same reason.
+  ## `ase::campaign_axis_kinds` caches the hook's answer per BACKEND NAME, and
+  ## registering `$name` is the one event that changes what that answer is.
+  ase::campaign_kinds_cache_clear $name
   return $name
 }
 
@@ -19633,6 +19645,1027 @@ proc ase::runhealth_strip {sim text} {
 
 # --- ngspice backend --------------------------------------------------------
 
+# ═════════════════════════════════════════════════════════════════════════════
+# §11a/§11b -- CAMPAIGNS: THE SHARD RUNNER AND THE SAMPLER (issue 1462)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# WHAT THE USER COULD NOT DO BEFORE THIS BLOCK. Run the same bench more than
+# once. ngspice has **no `.step`, no corner statement, no `.MC` card and no
+# statistics** -- `.step param x 1 3 1` answers `unimplemented dot command
+# '.step'` and ABORTS the run -- so a sweep of a parameter, a corner set and a
+# Monte Carlo run are all the GUI's to generate. ASE-L generated none of them:
+# the user's own tb_bandgap bench carries `{name VCCGAUSS value {agauss(1.8,
+# 'ABSVAR', 1)}}` in its `variables`, a Monte Carlo distribution written by
+# hand, and ASE-L ran it exactly ONCE.
+#
+# ⚖ R8 IS ANSWERED AND IT CARRIED A REQUIREMENT NEITHER OPTION STATED. The
+# campaign lives in the SIMULATION STATE -- the user's words, *"I want it in the
+# simulation state -- so the user can interact with this Monte-carlo 'campaign'
+# in ASE-L"* -- and NOTHING is written to the schematic. `sweep` is the state
+# key; it joins `ase::omit_if_empty`, so all 104 committed `.state` files still
+# round-trip byte-identically and `version` stays 1.
+#
+# ─── THE SHAPE, AND WHY IT IS ONE PROCESS PER POINT ──────────────────────────
+#
+#   <rundir>/campaign/
+#       deck.spice            the NOMINAL deck -- what every shard is a diff from
+#       index.tsv             one row per POINT, always, run or not
+#       shard-0001/
+#           deck.spice        THIS point's deck
+#           .spiceinit        this point's pre-deck lines (⚖ R2's four conditions)
+#           <cell>_ase.raw    this point's results
+#           <cell>_ase.plotmap
+#           <cell>_ase.log
+#
+# A shard is not a special kind of run. **A shard is a STATE** -- the bench's own
+# state with this point's coordinates written into the keys they belong in and
+# `rundir` pointing at the shard directory -- and the shard's deck is
+# `render_deck` of that state. Every guard, every refusal, every measurement and
+# every sidecar path rides along for free, and there is no second deck writer.
+# That is the whole of why this block is small.
+#
+# One process per point, not one process with a `.control` loop, and the reasons
+# are measured (APPENDIX §4.6): an aborted campaign keeps every completed shard,
+# an interrupted shard has a NON-ZERO EXIT CODE where a `.control` loop leaves
+# `sim_status = 0` and is *indistinguishable from success*, progress is `k/N` for
+# free, and the deck is one artifact a person can read and run by hand.
+#
+# ⚠ AND THE COUNTER-ROW IS REAL AND IS REPORTED RATHER THAN HIDDEN. `alter` and
+# `altermod` skip the re-parse and are ~10x cheaper per run on a big PDK deck, so
+# a campaign whose every axis is `alter`-able COULD run in one process.
+# `ase::campaign_mode` computes that and the run log SAYS it. What it does not do
+# is take it -- see that proc's own header for what collapsing would cost today.
+#
+# ─── THE FOUR MEASUREMENTS THIS BLOCK RESTS ON, ALL TAKEN ON BOTH BINARIES ───
+#
+# 1. ☠ **`var()` DOES NOT EXIST IN ngspice 45.2, AND THE RUN DIES.** PLAN.md
+#    §11a's headline mechanism is `.param rv='var(myres)'` in a deck plus
+#    `set myres=4700` in `<rundir>/.spiceinit`, which makes the deck
+#    byte-identical between shards. Measured 2026-09-13: on the fork it answers
+#    `@r1[resistance] = 4.700000e+03`; on `/usr/bin/ngspice` (apt 45.2, **what a
+#    new Ubuntu user has**) it answers `Undefined parameter [var]` ->
+#    `Expression err: var(myres)` -> `Formula() error.` -> **`ERROR: fatal error
+#    in ngspice, exit(1)`**. `var()` and `vec()` were added upstream on
+#    2025-10-16 (ngspice `aa1242ac7`), 50 commits after `ngspice-45.2`, and first
+#    shipped in ngspice-46. **So the byte-identical deck is not available on the
+#    binary most users have, and asking for it kills the run.** This block
+#    therefore varies a design variable by RE-RENDERING the `variables` row, which
+#    works everywhere and needs no capability probe at all.
+# 2. ☠ **`setseed` IN `.spiceinit` DOES NOTHING** -- rc 0, nothing on either
+#    stream, two runs answering `-1.52995e+00` and `6.545672e-01` on apt and
+#    `-2.46074e+00` / `7.316806e-01` on the fork, indistinguishable from no seed
+#    at all. `main.c` reads the start-up file at `:1266-1330` and calls `initw()`
+#    -- `srand(getpid()); TausSeed();` -- at `:1371`, AFTER it. The same
+#    `setseed 12345` inside `.control` answers `3.950885e-01` on both binaries on
+#    every run. **The sixth accepted-and-inert case this batch has measured.**
+# 3. ✅ **`.options seed=<n>` IS THE RIGHT SEED FOR A SHARD RUNNER, AND THE
+#    PLAN FORBIDS IT FOR A REASON THAT DOES NOT APPLY HERE.** APPENDIX §4.4's
+#    Trap B is that `eval_opt()` re-seeds on EVERY re-parse, so a `.control` loop
+#    that `reset`s draws the SAME sample every time. A shard runner never
+#    `reset`s: each point is its own process with its own deck. Measured with
+#    seeds 7/8/9 on both binaries: `@r1[resistance]` = `9.068280e+02` /
+#    `1.056375e+03` / `1.005625e+03`, **identical across runs, identical across
+#    the two binaries**, and it covers the NETLIST-level draw as well as the
+#    interpreter's. `setseed` does not: with `setseed 12345` in `.control` the
+#    interpreter's `sgauss(0)` is `3.950885e-01` every time while the netlist's
+#    `agauss` gives 1053.4 / 853.9 / 995.4 on three consecutive runs.
+# 4. ✅ **`alter` NEEDS A LIVE CIRCUIT AND `.temp` RE-RENDERS CLEANLY.**
+#    `alter r1 resistance=2k` at the top of `.control` answers
+#    `@r1[resistance] = 2.000000e+03` on both binaries; the same line in
+#    `.spiceinit` answers `Error: no circuit loaded` and the run continues with
+#    the unaltered value. `altermod @dmod[is]=1e-12` moves `@d1[id]` from
+#    `1.690583e-28` to `5.670347e-01`, both binaries. `.temp 27` -> `.temp 125`
+#    on a `tc1=0.01` resistor moves `i(v1)` from `-1.00000e-03` to
+#    `-5.05051e-04`, both binaries -- while `@r1[resistance]` stays `1.000000e+03`
+#    at both temperatures, which is a READBACK THAT DOES NOT MOVE and is why the
+#    measurement is taken on the current.
+#
+# ⚠ **THE SAMPLES ARE DRAWN HERE, IN Tcl, NOT BY THE SIMULATOR** (§11b). The two
+# seeding traps above, issue 0210's model-level draw *proven* to change between
+# runs of the same migrated state, and the Wallace pool's `getpid()` seeding of
+# transient white and 1/f noise are the measured case. When ASE-L draws, the
+# sample set is reproducible, inspectable, exportable, re-runnable point by point
+# and **a column in `index.tsv`**. ADE-L cannot show you its samples.
+
+# ─── THE STATE KEY ──────────────────────────────────────────────────────────
+# Every reader goes through this, so a bench with no campaign is one `dict get`
+# away from a clean empty answer and nothing below needs a guard of its own.
+proc ase::campaign_get {state key {dflt {}}} {
+  return [ase::state_get [ase::state_get $state sweep] $key $dflt]
+}
+
+# Is there a campaign on this bench AND is it switched on? Absent, empty and
+# `enabled 0` are one answer, because all three mean "run this bench once".
+proc ase::campaign_enabled {state} {
+  set sw [ase::state_get $state sweep]
+  if {$sw eq {}} { return 0 }
+  if {![llength [ase::campaign_get $state axes]]} { return 0 }
+  set en [ase::campaign_get $state enabled 1]
+  return [expr {[ase::opt_truthy $en] ? 1 : 0}]
+}
+
+# The axes, in the order the bench stores them. THAT ORDER IS THE COLUMN ORDER
+# AND THE ODOMETER ORDER, and it is one list for both -- two lists is exactly
+# how `ac`'s `dec` key drifted (PLAN.md §0.3).
+proc ase::campaign_axes {state} { return [ase::campaign_get $state axes] }
+
+# The campaign's seed. `{}` is a real answer and means "this campaign is not
+# seeded": nothing is emitted, and `ase::campaign_notes` says so rather than
+# inventing one, because a seed the user did not choose is a number they cannot
+# write down and re-use.
+proc ase::campaign_seed {state} {
+  set s [string trim [ase::campaign_get $state seed]]
+  if {$s eq {}} { return {} }
+  if {![string is integer -strict $s]} { return {} }
+  return $s
+}
+
+# ─── §11b: THE SAMPLER -- ASE-L DRAWS, AND THE DRAW IS A NUMBER YOU CAN SEE ──
+#
+# ⚠ A SELF-CONTAINED GENERATOR, NOT Tcl'S `rand()`. `srand`/`rand` is one global
+# stream per interpreter: a draw taken through it would be disturbed by, and
+# would disturb, anything else in the session that used it, so the same campaign
+# would not redraw the same samples on reopening. Park-Miller
+# (`s <- 16807*s mod 2147483647`) is exact 64-bit integer arithmetic, so the
+# stream is identical on every platform and every Tcl build.
+#
+# ⚠ AND THE DISTRIBUTION NAMES ARE NEUTRAL. `agauss`, `gauss`, `aunif`, `unif`
+# and `limit` are NGSPICE's five netlist-level spellings (APPENDIX §4.4) and D34
+# forbids an ngspice word in core. `normal`, `uniform` and `bounded` express all
+# five: `agauss(n,a,k)` is `normal` with sigma `a/k`, `gauss(n,r,k)` is `normal`
+# with sigma `n*r/k`, `aunif(n,a)` and `unif(n,r)` are `uniform`, and `limit`
+# is `bounded`. A form that wants to offer the simulator's own five maps them
+# here; core never learns them.
+proc ase::mc_seed_norm {seed} {
+  # Park-Miller's modulus is prime and 0 is its fixed point, so a seed must land
+  # in 1..2147483646. Any integer the user types is folded into that range
+  # rather than refused: a campaign seeded `0` must still be reproducible.
+  set m 2147483647
+  set s [expr {abs(wide($seed)) % $m}]
+  if {$s == 0} { set s 1 }
+  ## ⚠ AND THE STREAM IS WARMED UP, WHICH IS NOT DECORATION. Park-Miller's state
+  ## IS its output, so a small seed produces small first outputs: measured, seed
+  ## 100 gave a first uniform of 0.00078, which Box-Muller turns into a 4-sigma
+  ## sample -- so a campaign seeded `1`, `2`, `3` would open with an outlier
+  ## every time and the user would read it as the circuit's tail. Ten discarded
+  ## steps put every seed deep in the cycle. It stays deterministic: the same
+  ## seed still gives the same samples everywhere.
+  for {set i 0} {$i < 10} {incr i} { set s [expr {(16807 * wide($s)) % $m}] }
+  return $s
+}
+proc ase::mc_next {svar} {
+  upvar 1 $svar s
+  set s [expr {(16807 * wide($s)) % 2147483647}]
+  return $s
+}
+# U(0,1), open at both ends so `log(u)` below can never be handed 0.
+proc ase::mc_unit {svar} {
+  upvar 1 $svar s
+  return [expr {(double([ase::mc_next s]) - 0.5) / 2147483647.0}]
+}
+# The distributions core knows, and the keys each one requires. State-free, so
+# ase::campaign_refusals can reject an unknown one without drawing anything.
+proc ase::mc_dists {} {
+  return [dict create \
+    normal  {mean sigma} \
+    uniform {min max} \
+    bounded {nom delta}]
+}
+# HOW MANY SIGNIFICANT DIGITS A SAMPLE CARRIES, and it is deliberately not many.
+# A gaussian needs `log` and `sqrt`, whose last bits are libm's rather than
+# arithmetic's, so a sample printed to 17 digits is a golden that can differ
+# between machines while the campaign is identical. Six digits is more precision
+# than any device parameter carries and is stable everywhere.
+proc ase::mc_digits {} { return 6 }
+# N samples from `spec`, as formatted decimal strings. The SAME seed and the
+# SAME spec give the SAME list, on any machine -- that is the whole point of
+# §11b and it is what makes the sample set a column rather than an event.
+proc ase::mc_draw {spec n seed} {
+  set kind [string trim [ase::state_get $spec dist]]
+  set dists [ase::mc_dists]
+  if {![dict exists $dists $kind]} {
+    return -code error "ase: unknown distribution '$kind'"
+  }
+  foreach k [dict get $dists $kind] {
+    if {![dict exists $spec $k]} {
+      return -code error "ase: distribution '$kind' needs '$k'"
+    }
+    if {![string is double -strict [dict get $spec $k]]} {
+      return -code error "ase: distribution '$kind' needs a number for '$k'"
+    }
+  }
+  if {![string is integer -strict $n] || $n < 1} {
+    return -code error "ase: a distribution needs a positive sample count"
+  }
+  set s [ase::mc_seed_norm $seed]
+  set out {}
+  set d [ase::mc_digits]
+  for {set i 0} {$i < $n} {incr i} {
+    switch -exact -- $kind {
+      normal {
+        ## Box-Muller. Both uniforms are drawn from the SAME stream and only the
+        ## first of the pair is kept -- keeping the second would make sample i
+        ## depend on whether i is even, which is a correlation nobody expects in
+        ## a column they are about to plot.
+        set u1 [ase::mc_unit s]
+        set u2 [ase::mc_unit s]
+        if {$u1 <= 0} { set u1 1e-12 }
+        set z [expr {sqrt(-2.0*log($u1)) * cos(6.283185307179586*$u2)}]
+        set v [expr {[dict get $spec mean] + [dict get $spec sigma]*$z}]
+      }
+      uniform {
+        set a [dict get $spec min] ; set b [dict get $spec max]
+        set v [expr {$a + ($b-$a)*[ase::mc_unit s]}]
+      }
+      bounded {
+        ## ngspice's `limit(nom, avar)`: nom PLUS or MINUS avar, never between.
+        set v [expr {[dict get $spec nom] + \
+                     ([ase::mc_unit s] > 0.5 ? 1 : -1) * [dict get $spec delta]}]
+      }
+    }
+    lappend out [format %.${d}g $v]
+  }
+  return $out
+}
+
+# ─── THE AXES ───────────────────────────────────────────────────────────────
+
+# What this axis is called in `index.tsv`'s header and in the run log. An
+# explicit `label` wins; otherwise the axis names itself from its own fields, so
+# a hand-written state never produces a nameless column.
+proc ase::campaign_axis_label {axis} {
+  set l [string trim [ase::state_get $axis label]]
+  if {$l ne {}} { return $l }
+  set kind [string trim [ase::state_get $axis kind]]
+  switch -exact -- $kind {
+    var     { return [string trim [ase::state_get $axis name]] }
+    temp    { return temp }
+    corner  { return corner }
+    inst    { return "[string trim [ase::state_get $axis target]].[string trim [ase::state_get $axis param]]" }
+    model   { return "[string trim [ase::state_get $axis model]].[string trim [ase::state_get $axis param]]" }
+  }
+  return $kind
+}
+
+# THE POINTS THIS AXIS VISITS. Two sources and they are mutually exclusive: a
+# literal `values` list, or a `draw` spec the sampler expands. `draw` takes the
+# CAMPAIGN's seed offset by the axis's position, so two axes drawing from the
+# same distribution do not draw the same numbers.
+#
+# ⚠ THE SAMPLE IS DRAWN ONCE AND IS THE SAME EVERY TIME IT IS ASKED FOR. There
+# is no memo here and none is needed: the draw is a pure function of the spec,
+# the count and the seed, so the Arguments column, the index file and the deck
+# cannot be handed three different samples.
+proc ase::campaign_axis_values {axis seed {idx 0}} {
+  set vals [ase::state_get $axis values]
+  if {[llength $vals]} { return $vals }
+  set spec [ase::state_get $axis draw]
+  if {$spec eq {}} { return {} }
+  set n [ase::state_get $spec n]
+  if {$seed eq {}} { set seed 1 }
+  return [ase::mc_draw $spec $n [expr {wide($seed) + 7919*$idx}]]
+}
+
+# EVERY POINT, AS AN ODOMETER OVER THE AXES. The LAST axis moves fastest, which
+# is the order a person reads a nested loop in and the order `index.tsv` sorts
+# in. Each point is a list of one value per axis, positionally aligned with
+# `ase::campaign_axes`.
+proc ase::campaign_points {state} {
+  set axes [ase::campaign_axes $state]
+  if {![llength $axes]} { return {} }
+  set seed [ase::campaign_seed $state]
+  set cols {}
+  set i 0
+  foreach a $axes {
+    set v [ase::campaign_axis_values $a $seed $i]
+    if {![llength $v]} { return {} }
+    lappend cols $v
+    incr i
+  }
+  set pts [list {}]
+  foreach col $cols {
+    set next {}
+    foreach p $pts { foreach v $col { lappend next [concat $p [list $v]] } }
+    set pts $next
+  }
+  return $pts
+}
+
+proc ase::campaign_count {state} { return [llength [ase::campaign_points $state]] }
+
+# HOW MANY SHARDS ARE TOO MANY. A ceiling, not a guess: a campaign is a
+# directory per point plus a process per point, so a four-axis odometer that
+# nobody counted is a filesystem the user has to clean up by hand. It is a
+# REFUSAL rather than a clamp, because silently running the first 2000 of 50000
+# points would be this batch's own *accepted-is-not-honoured* defect wearing a
+# progress bar.
+proc ase::campaign_max_points {} { return 2000 }
+
+# ─── WHAT THE ADAPTER SAYS, AND WHAT HAPPENS WHEN IT SAYS NOTHING ───────────
+#
+# ⚠ A BACKEND WITH NO HOOK GETS NO FALLBACK CONTENT (D34/D36). The axis kinds a
+# simulator can deliver, and HOW, are facts about that simulator: `alter` is
+# ngspice's word, `.lib <file> <section>` is ngspice's corner mechanism, and
+# whether a mechanism costs a re-parse is a property of its parser. Core owns the
+# odometer, the directory, the index and the sampler and knows none of it.
+namespace eval ase { variable campaign_kinds_cache [dict create] }
+proc ase::campaign_kinds_cache_clear {{sim {}}} {
+  variable campaign_kinds_cache
+  if {$sim eq {}} { set campaign_kinds_cache [dict create] ; return }
+  catch {dict unset campaign_kinds_cache $sim}
+}
+# kind -> descriptor. `{}` for a backend that declares none, which is a real
+# answer: that simulator offers no campaigns and `ase::campaign_refusals` says
+# so in those words rather than failing at the first shard.
+proc ase::campaign_axis_kinds {{sim {}}} {
+  variable campaign_kinds_cache
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {[dict exists $campaign_kinds_cache $sim]} {
+    return [dict get $campaign_kinds_cache $sim]
+  }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim campaign_axis_kinds]
+    if {$h ne {}} { set r [$h] }
+  }
+  dict set campaign_kinds_cache $sim $r
+  return $r
+}
+proc ase::campaign_kind_entry {sim kind} {
+  set k [ase::campaign_axis_kinds $sim]
+  if {![dict exists $k $kind]} { return {} }
+  return [dict get $k $kind]
+}
+# Does this kind cost the simulator a re-parse? Unknown answers 1 -- the
+# expensive answer -- because `collapsible` is a claim that a cheaper mode is
+# AVAILABLE, and an unmeasured mechanism has not earned it.
+proc ase::campaign_kind_reparse {sim kind} {
+  set e [ase::campaign_kind_entry $sim $kind]
+  if {$e eq {}} { return 1 }
+  return [expr {[ase::state_get $e reparse 1] ? 1 : 0}]
+}
+
+# ─── THE MODE, AND SAYING WHICH ONE WAS CHOSEN ──────────────────────────────
+#
+# ⚠ `collapsible` IS COMPUTED AND REPORTED; IT IS NOT TAKEN. Collapsing N points
+# into one process means emitting the `.control` body N times, and that body is
+# `render_deck`'s -- 670 lines of guards, `$sim_status` tiers, per-analysis
+# plotmap records, checkpoint rows and measurement blocks. A second emitter for
+# it would be the NINTH copy of "what a dc analysis is" (PLAN.md §0.3), which is
+# the defect this whole batch exists to remove. So the DECISION ships now, with
+# its inputs measured and its sentence minted, and the day `render_deck` can
+# repeat its own body the mode has a caller. Anything else buys a 10x saving by
+# paying for the defect the batch was written about.
+proc ase::campaign_mode {sim state} {
+  set axes [ase::campaign_axes $state]
+  set coll [expr {[llength $axes] ? 1 : 0}]
+  set why {}
+  foreach a $axes {
+    set kind [string trim [ase::state_get $a kind]]
+    if {[ase::campaign_kind_reparse $sim $kind]} {
+      set coll 0
+      if {$why eq {}} { set why $kind }
+    }
+  }
+  return [dict create mode shard collapsible $coll why $why]
+}
+
+# ─── WHERE A CAMPAIGN PUTS ITS FILES ────────────────────────────────────────
+proc ase::campaign_dir {state} {
+  return [file join [ase::rundir $state] campaign]
+}
+# `shard-0001`. FOUR DIGITS AND ZERO-PADDED so `ls` sorts the way the odometer
+# counts; a campaign over the ceiling is refused before it can need a fifth.
+proc ase::campaign_shard_id {idx} { return [format shard-%04d [expr {$idx + 1}]] }
+proc ase::campaign_shard_dir {state idx} {
+  return [file join [ase::campaign_dir $state] [ase::campaign_shard_id $idx]]
+}
+proc ase::campaign_index_path {state} {
+  return [file join [ase::campaign_dir $state] index.tsv]
+}
+proc ase::campaign_deck_path {state} {
+  return [file join [ase::campaign_dir $state] deck.spice]
+}
+
+# ─── A SHARD IS A STATE ─────────────────────────────────────────────────────
+#
+# THE ONE IDEA IN THIS BLOCK. This point's coordinates are written into the state
+# keys they belong in -- a design variable into `variables`, a temperature into
+# `temperature`, a corner into the `models` row it re-sections, the seed into
+# `options` -- and `rundir` is pointed at the shard directory. Everything else
+# follows: `render_deck` renders the point, `raw_file`/`log_file`/`plotmap_path`/
+# `meas_path`/`predeck_file` all resolve under the shard, and NOT ONE of them
+# needed a campaign-shaped argument.
+#
+# ⚠ THE KIND -> KEY MAPPING IS THE ADAPTER'S (`statekey` in its descriptor), not
+# a switch here. `corner` maps to `models` only because ngspice's corner
+# mechanism is a `.lib` section; a simulator with named corner decks would map it
+# somewhere else or not declare the kind at all.
+#
+# ⚠ AND THE POINT ITSELF RIDES IN `sweep point`, WHICH IS HOW THE `alter` AXES
+# REACH THE DECK. `render_deck` asks `ase::campaign_point_lines` for the
+# `.control` lines of the point the state names. A state with no `sweep point`
+# -- which is every state in this tree and all 104 committed files -- gets `{}`
+# and emits nothing, so no deck golden moves.
+proc ase::campaign_shard_state {sim state idx} {
+  set pts [ase::campaign_points $state]
+  if {$idx < 0 || $idx >= [llength $pts]} {
+    return -code error "ase: campaign has no point $idx"
+  }
+  set pt [lindex $pts $idx]
+  set st $state
+  dict set st rundir [ase::campaign_shard_dir $state $idx]
+  set axes [ase::campaign_axes $state]
+  set i 0
+  foreach a $axes {
+    set val [lindex $pt $i]
+    incr i
+    set kind [string trim [ase::state_get $a kind]]
+    set ent [ase::campaign_kind_entry $sim $kind]
+    if {$ent eq {}} { continue }
+    set key [string trim [ase::state_get $ent statekey]]
+    if {$key eq {}} { continue }
+    set st [ase::campaign_apply $st $a $key $val]
+  }
+  ## THE PER-SHARD SEED, THROUGH THE OPTIONS SHEET AND NOT A NEW EMIT SITE.
+  ## Measurement 3 in this block's header: `.options seed=<n>` in a per-shard
+  ## deck is reproducible per shard, distinct between shards, identical on both
+  ## binaries, and -- unlike `setseed` -- it reaches the NETLIST-level draw the
+  ## user's own bench is written with. The option is already row `seed` of the
+  ## catalogue, so this is an override of an existing key and nothing new is
+  ## spelled here.
+  set sopt [ase::campaign_seed_option $sim]
+  set seed [ase::campaign_seed $state]
+  if {$sopt ne {} && $seed ne {}} {
+    set st [ase::campaign_set_option $st $sopt [expr {wide($seed) + $idx}]]
+  }
+  dict set st sweep [dict replace [ase::state_get $state sweep] point $pt index $idx]
+  return $st
+}
+
+# Write one coordinate into the state key its kind names. Four shapes, because
+# the four keys that can carry a coordinate are four different shapes -- a
+# scalar, a named row list, an indexed row list, and the options list.
+proc ase::campaign_apply {state axis key val} {
+  switch -exact -- $key {
+    temperature { dict set state temperature $val }
+    variables {
+      set nm [string trim [ase::state_get $axis name]]
+      if {$nm eq {}} { return $state }
+      set rows {}
+      set hit 0
+      foreach r [ase::state_get $state variables] {
+        if {[ase::state_get $r name] eq $nm} {
+          lappend rows [dict replace $r value $val] ; set hit 1
+        } else { lappend rows $r }
+      }
+      ## A variable the bench does not declare is ADDED rather than refused: a
+      ## user sweeping a value their subcircuit reads is naming something the
+      ## bench never had a row for, and that is the commonest first campaign.
+      if {!$hit} { lappend rows [dict create name $nm value $val] }
+      dict set state variables $rows
+    }
+    models {
+      set n [ase::state_get $axis index 0]
+      set rows [ase::state_get $state models]
+      if {![string is integer -strict $n] || $n < 0 || $n >= [llength $rows]} {
+        return $state
+      }
+      lset rows $n [dict replace [lindex $rows $n] section $val]
+      dict set state models $rows
+    }
+    default { return [ase::campaign_set_option $state $key $val] }
+  }
+  return $state
+}
+
+# Set one option row, replacing an existing one of that name. Used by the seed
+# and by any adapter kind whose `statekey` is an option name.
+proc ase::campaign_set_option {state name val} {
+  set rows {}
+  set hit 0
+  foreach o [ase::state_get $state options] {
+    if {[string equal -nocase [ase::state_get $o name] $name]} {
+      lappend rows [dict replace $o value $val] ; set hit 1
+    } else { lappend rows $o }
+  }
+  if {!$hit} { lappend rows [dict create name $name value $val] }
+  dict set state options $rows
+  return $state
+}
+
+# WHICH OPTION CARRIES A PER-RUN SEED, or `{}`. The adapter's; there is no
+# fallback, because "the option called seed" is a fact about one simulator's
+# catalogue and a core that guessed it would emit a card nothing reads.
+proc ase::campaign_seed_option {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim campaign_seed_option]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# THE `.control` LINES FOR THE POINT THIS STATE NAMES. `{}` for every state that
+# is not a shard, which is every state in this tree.
+proc ase::campaign_point_lines {sim state} {
+  set pt [ase::campaign_get $state point]
+  if {![llength $pt]} { return {} }
+  set out {}
+  set i 0
+  foreach a [ase::campaign_axes $state] {
+    set val [lindex $pt $i]
+    incr i
+    set kind [string trim [ase::state_get $a kind]]
+    set ent [ase::campaign_kind_entry $sim $kind]
+    if {$ent eq {}} { continue }
+    if {[string trim [ase::state_get $ent statekey]] ne {}} { continue }
+    catch {
+      set h [ase::backend_hook $sim campaign_control_lines]
+      if {$h ne {}} { foreach l [$h $state $a $val] { lappend out $l } }
+    }
+  }
+  return $out
+}
+
+# ─── THE REFUSALS ───────────────────────────────────────────────────────────
+#
+# `{id verdict sentence fix}`, the shape the rest of this file already uses. A
+# campaign that cannot run must say so BEFORE it makes a directory -- the whole
+# cost of getting this wrong is a tree of half-written shards the user has to
+# identify and delete.
+proc ase::campaign_refusals {sim state} {
+  set out {}
+  if {![ase::campaign_enabled $state]} { return $out }
+  set kinds [ase::campaign_axis_kinds $sim]
+  if {![dict size $kinds]} {
+    lappend out [list nokinds refuse "this simulator declares no campaign axes,\
+ so a campaign cannot be generated for it" "choose a simulator that does"]
+    return $out
+  }
+  ## ⚖ R2 CONDITION 4, AND THE STANDING RULE BEHIND IT. With no run directory
+  ## `ase::rundir` answers `set_netlist_dir 0` -- ONE directory shared by every
+  ## cell of every library -- and a campaign would build a `campaign/` tree in
+  ## it and write a `.spiceinit` there. A crew's single run in that directory
+  ## once destroyed this user's 20502-point rawfile; N runs building a directory
+  ## tree in it is the same accident with a multiplier.
+  if {[ase::rundir_is_shared $state]} {
+    lappend out [list sharedrundir refuse "this bench names no run directory, so\
+ a campaign would build its shards in the directory every other cell shares" \
+      "set a run directory for this bench first"]
+  }
+  if {[ase::n_enabled_analyses $state] < 1} {
+    lappend out [list noanalysis refuse "no analysis is enabled, so every shard\
+ would run nothing" "enable at least one analysis"]
+  }
+  set seen [dict create]
+  set i 0
+  foreach a [ase::campaign_axes $state] {
+    set kind [string trim [ase::state_get $a kind]]
+    set lbl [ase::campaign_axis_label $a]
+    if {![dict exists $kinds $kind]} {
+      lappend out [list badkind refuse "'$kind' is not a campaign axis this\
+ simulator can deliver" "choose one of: [join [lsort [dict keys $kinds]] {, }]"]
+      incr i ; continue
+    }
+    if {$lbl eq {}} {
+      lappend out [list noname refuse "axis [expr {$i+1}] has no name, so its\
+ column could not be labelled" "give the axis a name"]
+    } elseif {[dict exists $seen $lbl]} {
+      lappend out [list dupname refuse "two axes are both called '$lbl', so one\
+ column would hide the other" "rename one of them"]
+    } else { dict set seen $lbl 1 }
+    set vals {}
+    if {[catch {ase::campaign_axis_values $a [ase::campaign_seed $state] $i} vals]} {
+      lappend out [list baddraw refuse "axis '$lbl' cannot be sampled: [string \
+        map {{ase: } {}} $vals]" "check the distribution's parameters"]
+      incr i ; continue
+    }
+    if {![llength $vals]} {
+      lappend out [list novalues refuse "axis '$lbl' has no values, so there is\
+ nothing to sweep" "give it a list of values or a distribution"]
+    }
+    ## The adapter's own per-axis refusals -- the ones that need a fact about
+    ## the simulator, such as a name that is not a parameter in its language.
+    catch {
+      set h [ase::backend_hook $sim campaign_axis_refusals]
+      if {$h ne {}} { foreach r [$h $state $a] { lappend out $r } }
+    }
+    incr i
+  }
+  ## ⚠ CAUGHT, BECAUSE THE COUNT NEEDS EVERY AXIS TO SAMPLE. An axis whose
+  ## distribution cannot be drawn already has its own refusal three lines up;
+  ## letting the ceiling check raise here would replace a sentence the user can
+  ## act on with a stack trace, and would take the OTHER axes' refusals with it.
+  set n 0
+  if {[catch {ase::campaign_count $state} n]} { return $out }
+  if {$n > [ase::campaign_max_points]} {
+    lappend out [list toomany refuse "this campaign has $n points, and ASE-L\
+ runs at most [ase::campaign_max_points]" "shorten an axis, or split the campaign"]
+  }
+  return $out
+}
+
+# ─── WHAT THE RUN SAYS, ONCE, BEFORE IT STARTS ──────────────────────────────
+#
+# Every sentence here is about a decision the user did not make and cannot see
+# from the directory afterwards: how many processes, which mode, whether a
+# cheaper one was available, what the seed does and -- the one that matters most
+# -- what the seed does NOT reproduce.
+proc ase::campaign_notes {sim state} {
+  set out {}
+  if {![ase::campaign_enabled $state]} { return $out }
+  set n [ase::campaign_count $state]
+  set m [ase::campaign_mode $sim $state]
+  set labels {}
+  foreach a [ase::campaign_axes $state] { lappend labels [ase::campaign_axis_label $a] }
+  lappend out "campaign: $n [ase::sim_plural $n point points] over\
+ [llength $labels] [ase::sim_plural [llength $labels] axis axes]\
+ ([join $labels {, }]), one simulator process per point"
+  if {[dict get $m collapsible]} {
+    lappend out "campaign: every axis in this campaign avoids a re-parse, so one\
+ process could run all $n points; ASE-L runs one process per point, which keeps\
+ every completed point when a campaign is stopped"
+  }
+  set seed [ase::campaign_seed $state]
+  if {$seed eq {}} {
+    lappend out "campaign: this campaign has no seed, so anything the simulator\
+ draws for itself will differ the next time it is run"
+  } else {
+    lappend out "campaign: seeded from $seed; shard N is seeded [expr {wide($seed)}]+N,\
+ so a single point can be re-run on its own and give the same answer"
+    foreach s [ase::campaign_seed_notes $sim] { lappend out "campaign: $s" }
+  }
+  return $out
+}
+
+# WHAT A SEED DOES NOT REPRODUCE. The adapter's, with NO fallback sentence:
+# which of a simulator's random sources escape its own seed is a fact about that
+# simulator, and a guessed reassurance is worse than silence.
+proc ase::campaign_seed_notes {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim campaign_seed_notes]
+    if {$h ne {}} { set r [$h] }
+  }
+  return $r
+}
+
+# ─── index.tsv ──────────────────────────────────────────────────────────────
+#
+# ⚠ ONE ROW PER POINT, ALWAYS, RUN OR NOT. A campaign that ran N shards and
+# wrote N rows proves nothing about the shard it silently skipped (issue 1457's
+# lesson: a one-directional check passes with the defect in). So the index is
+# built from the ODOMETER, not from the directory listing, and a point that never
+# ran carries `-` in `exit` and in `raw` -- which is a visible answer, where a
+# missing row is not an answer at all.
+proc ase::campaign_index_header {sim state} {
+  set cols [list shard]
+  foreach a [ase::campaign_axes $state] { lappend cols [ase::campaign_axis_label $a] }
+  lappend cols exit raw
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    lappend cols [ase::meas_name $r]
+  }
+  return $cols
+}
+# One row. `exitcode` is `{}` for a point that has not run.
+proc ase::campaign_index_row {sim state idx exitcode} {
+  set row [list [ase::campaign_shard_id $idx]]
+  set pts [ase::campaign_points $state]
+  foreach v [lindex $pts $idx] { lappend row $v }
+  lappend row [expr {$exitcode eq {} ? {-} : $exitcode}]
+  ## ⚠ THIS PROC MAY NOT CREATE A DIRECTORY, AND THE GUARD IS NOT DEFENSIVE
+  ## PROGRAMMING -- IT IS A MEASURED DEFECT. `ase::rundir` CREATES the directory
+  ## it is asked about, and every sidecar path resolves through it, so asking a
+  ## never-run shard for its rawfile path silently made the shard directory. A
+  ## campaign STOPPED after two points left four directories on disk, two of them
+  ## empty and indistinguishable from a run that produced nothing. Row RN8b is
+  ## the measurement.
+  set sst {}
+  set sdir [ase::campaign_shard_dir $state $idx]
+  if {[file isdirectory $sdir] &&
+      ![catch {ase::campaign_shard_state $sim $state $idx} sst]} {
+  } else { set sst {} }
+  set rawrel -
+  if {$sst ne {}} {
+    set rp {}
+    if {![catch {[ase::backend_hook $sim raw_file] $sst} rp] && [file isfile $rp]} {
+      set rawrel [file join [ase::campaign_shard_id $idx] [file tail $rp]]
+    }
+  }
+  lappend row $rawrel
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    set v -
+    if {$sst ne {}} {
+      catch {
+        set got [ase::meas_result $sim $sst [ase::meas_name $r]]
+        if {$got ne {}} { set v $got }
+      }
+    }
+    lappend row $v
+  }
+  return $row
+}
+# TAB-SEPARATED, with a `#` comment block above a plain header row: the header
+# is the first non-`#` line, so a spreadsheet opens it and a strict reader skips
+# the prose. A value is never allowed to carry a tab or a newline -- both are
+# mapped to a space -- because one embedded tab silently shifts every column to
+# its right and nothing downstream can tell.
+proc ase::campaign_index_cell {v} {
+  return [string map [list \t { } \n { } \r { }] $v]
+}
+proc ase::campaign_index_text {sim state rows} {
+  set out {}
+  lappend out "# ASE-L campaign index -- one row per point, run or not"
+  lappend out "# a '-' in exit or raw means that point produced nothing"
+  set hdr {}
+  foreach c [ase::campaign_index_header $sim $state] { lappend hdr [ase::campaign_index_cell $c] }
+  lappend out [join $hdr \t]
+  foreach r $rows {
+    set cells {}
+    foreach c $r { lappend cells [ase::campaign_index_cell $c] }
+    lappend out [join $cells \t]
+  }
+  return "[join $out \n]\n"
+}
+proc ase::campaign_index_write {sim state rows} {
+  set p [ase::campaign_index_path $state]
+  file mkdir [file dirname $p]
+  set f [open $p w]
+  puts -nonewline $f [ase::campaign_index_text $sim $state $rows]
+  close $f
+  return $p
+}
+# The index back as a list of rows, header included, `#` lines dropped. Total:
+# a missing or unreadable file answers `{}`, which is what "no campaign has run
+# here" looks like.
+proc ase::campaign_index_read {state} {
+  set p [ase::campaign_index_path $state]
+  if {![file isfile $p]} { return {} }
+  set f {}
+  if {[catch {open $p r} f]} { return {} }
+  set text [read $f]
+  catch {close $f}
+  set out {}
+  foreach l [split [string trimright $text "\n"] "\n"] {
+    if {[string index $l 0] eq {#}} { continue }
+    lappend out [split $l \t]
+  }
+  return $out
+}
+
+# ─── THE RUNNER ─────────────────────────────────────────────────────────────
+
+# MAKE THE TREE AND WRITE THE NOMINAL DECK. The nominal deck is the bench as it
+# stands, with no point applied -- so `diff campaign/deck.spice
+# shard-0007/deck.spice` is exactly what is different about point 7, in the one
+# or two lines that really differ. PLAN.md §11a asked for a deck that is
+# BYTE-IDENTICAL for every shard; measurement 1 in this block's header is why
+# that is not available on the binary most users have, and this is the honest
+# replacement: the variation is VISIBLE rather than hidden in a sidecar.
+proc ase::campaign_prepare {sim state netlist_text} {
+  ## ⚠ RENDER FIRST, THEN MAKE THE DIRECTORY. `render_deck` has a refusal tier of
+  ## its own -- a hand-edited `.state` reaches it directly -- and it RAISES. With
+  ## the `file mkdir` first, a bench whose nominal deck cannot be rendered left a
+  ## `campaign/` directory behind with nothing in it: no index, no shards, and
+  ## nothing to say which of those it was. The refusals above this call already
+  ## take care to leave nothing behind; this is the same rule one line further in.
+  set deck [[ase::backend_hook $sim render_deck] $state $netlist_text]
+  set d [ase::campaign_dir $state]
+  file mkdir $d
+  set f [open [ase::campaign_deck_path $state] w]
+  puts -nonewline $f $deck
+  close $f
+  return $d
+}
+
+# ONE SHARD, START TO FINISH, SYNCHRONOUSLY. Returns
+# `{idx <n> exit <rc> dir <path> deck <path> log <path>}`.
+#
+# ⚠ SYNCHRONOUS AND ONE AT A TIME, ON PURPOSE. `ase::run_deck` is event-driven
+# because a single run must not freeze the window; a campaign is a SEQUENCE, and
+# a caller that wants the window alive drives this one point at a time from an
+# `after` -- which is also what makes Stop mean "every completed shard survives"
+# with no extra machinery.
+#
+# ⚠ AND EVERY SHARD CARRIES A TIMEOUT. A campaign is the one place where a
+# single wedged run costs the user every point behind it, so the wall-clock
+# bound the capability probe already found on this box is put in front of each
+# shard. rc 124 is a RESULT -- it lands in the index as the shard's exit code --
+# never a gap in the log.
+proc ase::campaign_shard_timeout {} { return 1800 }
+
+# THE WAKE-UP, and it is the reason the wait below has a floor under it.
+# `ase::run_deck`'s callback fires from `execute_fileevent` on EOF, AFTER
+# `ase::run_done` has written the log, cleared the lock and probed the results --
+# so a campaign that waits on this variable is waiting for a FINISHED run, not
+# merely for a dead process.
+namespace eval ase { variable campaign_fin [dict create] }
+proc ase::campaign_woke {tok} {
+  variable campaign_fin
+  dict set campaign_fin $tok done
+  set ::ase::campaign_wake($tok) done
+}
+
+# WAIT FOR ONE SHARD, WITH A DEADLINE THAT ANNOUNCES ITSELF.
+#
+# ⚠ `ase::wait` IS AN UNBOUNDED `vwait`, AND FOR A CAMPAIGN THAT IS NOT GOOD
+# ENOUGH. A single run's unbounded wait is bounded by the user's own Stop button;
+# a campaign's is not -- one wedged shard costs the user every point behind it,
+# and "no output yet" is indistinguishable from "still working". So the wait is
+# raced against an `after`, and a stall is a NAMED OUTCOME (exit code **124**,
+# the same code `timeout` and `run_suites.sh` already use for it) rather than the
+# absence of one.
+#
+# ⚠ AND THE OVERRUNNING PROCESS IS KILLED, not abandoned. `kill_running_cmds
+# <id> -9` is the numeric branch the Stop button already uses; it kills only the
+# id this campaign started and nothing else. Its EOF then arrives during a later
+# shard's wait and `ase::run_done` writes that shard's own log -- harmless,
+# because every path in it is resolved from the state it was given.
+proc ase::campaign_wait {id tok ms} {
+  variable campaign_fin
+  if {![string is integer -strict $id] || $id < 0} { return -1 }
+  if {[dict exists $campaign_fin $tok]} { return [ase::campaign_exit $id] }
+  if {![info exists ::execute(pipe,$id)]} { return [ase::campaign_exit $id] }
+  set ::ase::campaign_wake($tok) {}
+  set tid {}
+  if {$ms > 0} { set tid [after $ms [list set ::ase::campaign_wake($tok) timeout]] }
+  xschem set semaphore [expr {[xschem get semaphore] + 1}]
+  vwait ::ase::campaign_wake($tok)
+  xschem set semaphore [expr {[xschem get semaphore] - 1}]
+  set how $::ase::campaign_wake($tok)
+  if {$tid ne {}} { catch {after cancel $tid} }
+  catch {unset ::ase::campaign_wake($tok)}
+  if {$how eq {timeout}} {
+    catch {kill_running_cmds $id -9}
+    return 124
+  }
+  return [ase::campaign_exit $id]
+}
+proc ase::campaign_exit {id} {
+  if {[info exists ::execute(exitcode,$id)]} { return $::execute(exitcode,$id) }
+  return -1
+}
+
+# ONE SHARD, START TO FINISH. Returns
+# `{idx <n> exit <rc> dir <path> netlist <path> timedout 0|1}`.
+#
+# ⚠ THIS PROC RUNS NOTHING ITSELF. It builds the shard's state, puts the netlist
+# where a run can read it, and hands both to **`ase::run_deck`** -- the one body
+# `ase::run`, `ase::run_existing` and a script paste already share. A campaign is
+# not a fourth run door, and the invariant that says so is row S12 of
+# test_ase_simreg_0931: the running session's choice is applied ONCE, in that
+# body, above everything that resolves a simulator. An earlier revision of this
+# proc composed and `exec`ed the command itself and added a second
+# `ase::sim_apply_choice` here; it was right about the defect (a campaign must
+# not run whichever simulator happened to be selected last) and wrong about the
+# fix, and S12 caught it.
+#
+# ⚠ AND EVERYTHING THIS PROC USED TO DO FOR ITSELF IS DONE BY THAT BODY, which
+# is the real argument for routing through it rather than a matter of taste:
+# the pre-run deletion of the rawfile, the plotmap, the measurement sidecar, the
+# effective-settings sidecar and the checkpoint (all five are APPEND targets, so
+# a stale one is added to rather than truncated); the ⚖ R2 pre-deck file, with
+# its four conditions, written into THIS shard's directory because the shard
+# state's `rundir` is the shard directory; the in-flight lock; the pre-flight
+# gate; the casemode pre-check; the operating-point tier; the run log with its
+# header and footer; and the result probe. A shard directory is therefore
+# exactly what a single run's directory is, produced by exactly the same code.
+proc ase::campaign_step {sim state netlist_text idx} {
+  variable campaign_fin
+  set sst [ase::campaign_shard_state $sim $state $idx]
+  set dir [ase::campaign_shard_dir $state $idx]
+  file mkdir $dir
+  ## The netlist this point runs, in the shard, because `ase::run_deck` reads a
+  ## FILE -- it is the same artifact `ase::netlist` would have written for a
+  ## single run, under the same name, in what is now this run's own directory.
+  set cell [ase::state_get [ase::state_get $state design] cell shard]
+  set nlpath [file join $dir ${cell}.spice]
+  set f [open $nlpath w]
+  puts -nonewline $f $netlist_text
+  close $f
+  set tok [ase::campaign_shard_id $idx]
+  catch {dict unset campaign_fin $tok}
+  set rc -1
+  set id -1
+  ## ⚠ RAISING IS A RESULT, NOT A CRASH. `ase::run_deck` raises for a refused
+  ## pre-flight, an unrunnable binary and a failed co-simulation build; a
+  ## campaign must record that point as failed and carry on to the next, because
+  ## the alternative is losing every point behind the first bad one. The message
+  ## is said by `run_deck` itself, per shard, in its own words.
+  if {[catch {ase::run_deck $sst $nlpath [list ase::campaign_woke $tok]} id]} {
+    ::ase::echo "ase: campaign $tok did not start: $id" error
+    return [dict create idx $idx exit -1 dir $dir netlist $nlpath timedout 0]
+  }
+  set rc [ase::campaign_wait $id $tok \
+            [expr {[ase::campaign_shard_timeout] * 1000}]]
+  catch {dict unset campaign_fin $tok}
+  if {$rc == 124} {
+    ## ⚠ AND THE LOCK GOES WITH IT. `ase::run_done` is what normally clears the
+    ## in-flight lock, and it fires on EOF -- which a killed process does not
+    ## always deliver promptly, because the pipe is held by whatever the
+    ## simulator left behind. The campaign has decided this run is over, so it
+    ## says so: without this line the NEXT campaign over the same run directory
+    ## is refused "something is already writing that file", by a run nobody is
+    ## waiting for. Measured -- it cost two rows in this suite before it was
+    ## found.
+    catch { ase::run_lock_clear [ase::run_lock_key $sst] }
+    ::ase::echo "ase: campaign $tok ran longer than\
+ [ase::campaign_shard_timeout] s and was stopped; the campaign continues with\
+ the next point" error
+    return [dict create idx $idx exit 124 dir $dir netlist $nlpath timedout 1]
+  }
+  return [dict create idx $idx exit $rc dir $dir netlist $nlpath timedout 0]
+}
+
+# THE WHOLE CAMPAIGN. Returns `{status <verdict> rows <index rows> notes <lines>
+# refusals <list> ran <n> of <n>}`.
+#
+# ⚠ THE REFUSALS ARE RE-EVALUATED HERE AND NOT ONLY WHERE THE CAMPAIGN WAS
+# CONFIGURED. A `.state` can be hand-edited and a bench's run directory can be
+# cleared between the dialog and the button; this is the tier that a caller
+# reaching the runner directly passes through at all. It refuses BEFORE it makes
+# a directory, so a refused campaign leaves nothing behind.
+#
+# ⚠ AND THE INDEX IS WRITTEN AFTER EVERY SHARD, not once at the end. A campaign
+# that is stopped, or that dies on its fifth point, must leave an index
+# describing what really happened -- an index written only on success is an
+# index that never describes the run anyone needs it for.
+proc ase::campaign_run {sim state netlist_text {onstep {}}} {
+  ## ⚠ THERE IS NO `ase::sim_apply_choice` CALL HERE, AND THAT IS THE REPAIR
+  ## T1 ASKED FOR. A campaign is not a fourth run door: every shard goes through
+  ## `ase::run_deck`, which is the one body `ase::run`, `ase::run_existing` and a
+  ## script paste already share, and which applies the running session's choice
+  ## ONCE, structurally, above everything that resolves a simulator. Row S12 of
+  ## test_ase_simreg_0931 asserts there is exactly ONE such call in this file and
+  ## that it sits between the in-flight refusal and the first resolver; a second
+  ## call here satisfied the requirement and broke the invariant that states it.
+  set ref [ase::campaign_refusals $sim $state]
+  if {[llength $ref]} {
+    return [dict create status refused rows {} notes {} refusals $ref ran 0 of 0]
+  }
+  set pts [ase::campaign_points $state]
+  set n [llength $pts]
+  set notes [ase::campaign_notes $sim $state]
+  foreach s $notes { ::ase::echo "ase: $s" }
+  ase::campaign_prepare $sim $state $netlist_text
+  set rows {}
+  for {set i 0} {$i < $n} {incr i} { lappend rows [ase::campaign_index_row $sim $state $i {}] }
+  ase::campaign_index_write $sim $state $rows
+  set ran 0
+  for {set i 0} {$i < $n} {incr i} {
+    set r [ase::campaign_step $sim $state $netlist_text $i]
+    lset rows $i [ase::campaign_index_row $sim $state $i [dict get $r exit]]
+    ase::campaign_index_write $sim $state $rows
+    incr ran
+    if {$onstep ne {}} {
+      ## THE STOP SEAM. A callback answering `stop` ends the campaign HERE, with
+      ## every completed shard on disk and an index that says which points never
+      ## ran. Anything else continues.
+      if {[catch {uplevel #0 [concat $onstep [list $i $n $r]]} verdict]} { set verdict {} }
+      if {$verdict eq {stop}} {
+        return [dict create status stopped rows $rows notes $notes refusals {} \
+                            ran $ran of $n]
+      }
+    }
+  }
+  return [dict create status done rows $rows notes $notes refusals {} ran $ran of $n]
+}
+
+# ─── LOAD-TIME VALIDATION OF THE ADAPTER'S DECLARATION ──────────────────────
+#
+# A campaign axis kind that names a `statekey` core cannot write, or that names
+# neither a `statekey` nor a control delivery, is a defect that would otherwise
+# show up as a shard whose deck silently does not carry the point. D30's
+# doctrine: a registry row that cannot be honoured is a LOAD-TIME error.
+proc ase::campaign_schema_errors {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set out {}
+  set known {temperature variables models}
+  dict for {kind ent} [ase::campaign_axis_kinds $sim] {
+    set key [string trim [ase::state_get $ent statekey]]
+    if {$key ne {} && [lsearch -exact $known $key] < 0 &&
+        [ase::sim_option_entry $sim $key] eq {}} {
+      lappend out "campaign axis '$kind' names statekey '$key', which is neither\
+ a state key core can write nor an option this simulator declares"
+    }
+    if {$key eq {}} {
+      if {[catch {ase::backend_hook $sim campaign_control_lines}]} {
+        lappend out "campaign axis '$kind' names no statekey, so it must be\
+ delivered by this simulator's campaign_control_lines hook, and there is none"
+      }
+    }
+    if {[ase::state_get $ent label] eq {}} {
+      lappend out "campaign axis '$kind' has no label"
+    }
+  }
+  return $out
+}
+
 namespace eval ase::backend::ngspice {
 
   # Render the simulation deck: the circuit netlist minus its trailing `.end`
@@ -20094,6 +21127,29 @@ namespace eval ase::backend::ngspice {
     # happens to come first. See the deletion beside cosim_clear_artifacts.
     set pmapf {}
     if {[ase::n_enabled_analyses $state] > 0} {
+      ## --- 1462 (§11a): THIS CAMPAIGN POINT'S `alter` LINES -----------------
+      ## ⚠ ABOVE EVERY ANALYSIS AND ABOVE `optran`, AND INSIDE `.control`.
+      ## `alter` and `altermod` need a LIVE CIRCUIT: measured 2026-09-13 on both
+      ## binaries, `alter r1 resistance=2k` at the top of this block answers
+      ## `@r1[resistance] = 2.000000e+03`, while the same line in
+      ## `<rundir>/.spiceinit` answers `Error: no circuit loaded` and the run
+      ## continues at the unaltered value. They go ABOVE `optran` because they
+      ## change the circuit the strategy is about to solve, and above every
+      ## analysis because a command in this block governs what FOLLOWS it and
+      ## nothing before.
+      ##
+      ## ⚠ AND EVERY OTHER AXIS KIND EMITS NOTHING HERE, deliberately: a design
+      ## variable, a temperature and a corner are written into the STATE this
+      ## deck is being rendered from, so they are already in the lines above.
+      ##
+      ## Empty for every state that is not a campaign shard -- which is every
+      ## state in this tree and all 104 committed files -- so no deck golden
+      ## moves.
+      foreach _cpl [ase::campaign_point_lines \
+                      [ase::state_get $state simulator [ase::default_simulator]] \
+                      $state] {
+        lappend lines $_cpl
+      }
       ## --- 1459 (§10b): THE OPERATING-POINT STRATEGY ------------------------
       ## ⚠ ABOVE EVERY ANALYSIS, AND INSIDE `.control`. `optran` is a COMMAND,
       ## not an option (`commands.c:672-675`; it is absent from `OPTtbl[]`), so
@@ -25889,6 +26945,179 @@ $_leg
     return $out
   }
 
+
+  # ═══ §11a: THE CAMPAIGN AXES ngspice CAN DELIVER (issue 1462) ══════════════
+  #
+  # ⚠ EVERY WORD IN THIS SECTION IS AN NGSPICE FACT, WHICH IS WHY IT IS HERE AND
+  # NOT IN CORE (D34/D36). `alter`, `altermod`, `.lib <file> <section>`, `.temp`
+  # and the option called `seed` are all this simulator's spellings; core owns
+  # the odometer, the shard directory, the index and the sampler, and knows none
+  # of them.
+  #
+  # TWO DELIVERY ROUTES, AND THE DIFFERENCE IS MEASURED:
+  #
+  #   `statekey <k>`  the point is written into an ASE-L state key and the
+  #                   shard's deck is RE-RENDERED. Costs a re-parse.
+  #   no statekey     the point is delivered by `campaign_control_lines` into the
+  #                   `.control` block, above every analysis. No re-parse.
+  #
+  # ⚠ THE SECOND ROUTE IS THE ONLY ONE FOR AN INSTANCE OR MODEL PARAMETER, and
+  # the first is the only one for a corner. MEASURED 2026-09-13, both binaries:
+  #
+  #   `alter r1 resistance=2k` at the top of `.control`
+  #        -> `@r1[resistance] = 2.000000e+03`
+  #   the same line in `<rundir>/.spiceinit`
+  #        -> `Error: no circuit loaded`, and the run continues at 1 k
+  #   `altermod @dmod[is]=1e-12`
+  #        -> `@d1[id]` 1.690583e-28 -> 5.670347e-01
+  #
+  # and `.lib <file> <section>` is resolved INSIDE `inp_readall()` by
+  # `expand_section_references()`, long before any control statement runs, and
+  # the deck copy `reset` reloads is taken AFTER library expansion -- so a corner
+  # **cannot be `alter`ed and always shards** (APPENDIX §4.4).
+  #
+  # ⚠ AND TEMPERATURE IS NOT A `.param`. PLAN.md §11a says the honest emission is
+  # `.options temp=<v>` re-rendered per shard and never `set temp`. ASE-L already
+  # renders `.temp <v>` from the `temperature` state key, and `.temp` goes
+  # through the SAME variable (`cp_vset("temp", ...)`, `inp.c:1194`) -- so the
+  # `temperature` key IS the plan's mechanism, under the spelling the tree
+  # already emits, and nothing new is spelled here. MEASURED on both binaries on
+  # a `tc1=0.01` resistor: `.temp 27` -> `i(v1) = -1.00000e-03`, `.temp 125` ->
+  # `-5.05051e-04`. ⚠ `@r1[resistance]` reads `1.000000e+03` at BOTH, so the
+  # readback a first implementation reaches for does not move with temperature.
+  #
+  # ⚠ AND `var()` IS NOT OFFERED AT ALL. PLAN.md §11a's ranked-first mechanism is
+  # `.param rv='var(myres)'` plus a per-shard `set myres=4700`, which would make
+  # the deck byte-identical between shards. MEASURED 2026-09-13: on apt 45.2 --
+  # what a new Ubuntu user has -- that deck answers `Undefined parameter [var]`,
+  # `Expression err: var(myres)`, `Formula() error.` and **`ERROR: fatal error in
+  # ngspice, exit(1)`**. `var()` arrived upstream in `aa1242ac7` on 2025-10-16,
+  # 50 commits after ngspice-45.2, first shipped in ngspice-46. A design variable
+  # is therefore delivered by re-rendering its `variables` row, which works on
+  # every ngspice and needs no capability probe.
+  proc campaign_axis_kinds {} {
+    return [dict create \
+      var [dict create label {Design variable} statekey variables reparse 1 \
+             fields {{name name kind text required 1 label {Variable}}}] \
+      temp [dict create label {Temperature} statekey temperature reparse 1 \
+             unit degC \
+             fields {}] \
+      corner [dict create label {Corner} statekey models reparse 1 \
+             fields {{name index kind int required 1 label {Model row}}}] \
+      inst [dict create label {Instance parameter} reparse 0 \
+             fields {{name target kind text required 1 label {Instance}} \
+                     {name param  kind text required 1 label {Parameter}}}] \
+      model [dict create label {Model parameter} reparse 0 \
+             fields {{name model kind text required 1 label {Model}} \
+                     {name param kind text required 1 label {Parameter}}}]]
+  }
+
+  # The `.control` lines that put ONE point of ONE `alter`-delivered axis into a
+  # live circuit. Emitted above every analysis, so they govern everything that
+  # follows and nothing before.
+  #
+  # ⚠ `alter <inst> <param>=<v>`, NOT `alter @<inst>[<param>]`. Both forms work;
+  # the bare one is what the manual's own examples use and is what a user would
+  # type by hand into the same block.
+  proc campaign_control_lines {state axis val} {
+    set kind [string trim [::ase::state_get $axis kind]]
+    switch -exact -- $kind {
+      inst {
+        set t [string trim [::ase::state_get $axis target]]
+        set p [string trim [::ase::state_get $axis param]]
+        if {$t eq {} || $p eq {}} { return {} }
+        return [list "alter $t $p=$val"]
+      }
+      model {
+        set m [string trim [::ase::state_get $axis model]]
+        set p [string trim [::ase::state_get $axis param]]
+        if {$m eq {} || $p eq {}} { return {} }
+        return [list "altermod @$m\[$p\]=$val"]
+      }
+    }
+    return {}
+  }
+
+  # THE OPTION THAT CARRIES A PER-RUN SEED. Row `seed` of this simulator's own
+  # catalogue (`.options seed=<n>`, `inp.c:442`).
+  #
+  # ⚠ AND IT IS THE RIGHT ONE **BECAUSE** THIS IS A SHARD RUNNER. APPENDIX §4.4's
+  # Trap B says never to emit `.option seed=<n>` for a statistical campaign,
+  # because `eval_opt()` re-seeds on every re-parse and a `.control` loop that
+  # `reset`s therefore draws the SAME sample every time. A shard runner never
+  # `reset`s: every point is its own process with its own deck and its own seed.
+  # MEASURED 2026-09-13 with seeds 7/8/9 on BOTH binaries, one deck carrying a
+  # netlist-level `agauss` and an interpreter-level `sgauss`:
+  #
+  #     seed=7  -> @r1[resistance] = 9.068280e+02   g = -9.31720e-01
+  #     seed=8  -> @r1[resistance] = 1.056375e+03   g =  5.637512e-01
+  #     seed=9  -> @r1[resistance] = 1.005625e+03   g =  5.625111e-02
+  #
+  # every value identical on a second run and identical on the other binary.
+  #
+  # ⚠ `setseed <n>` IS NOT THE ALTERNATIVE, AND THE MEASUREMENT SAYS WHY. With
+  # `setseed 12345` in `.control` the interpreter's draw is `3.950885e-01` every
+  # time while the NETLIST's `agauss` answers 1053.4, 853.9 and 995.4 on three
+  # consecutive runs -- because a netlist-level draw happens at PARSE time,
+  # before the control block runs at all. The user's own tb_bandgap bench carries
+  # `agauss(1.8, 'ABSVAR', 1)` in its `variables`, so it is exactly the case
+  # `setseed` would leave unseeded and silent.
+  #
+  # ⚠ AND `setseed` IN `<rundir>/.spiceinit` DOES NOTHING WHATEVER -- rc 0,
+  # nothing on either stream, a different number every run on both binaries.
+  # `main.c` reads the start-up file at `:1266-1330` and calls `initw()`
+  # (`srand(getpid()); TausSeed();`, `wallace.c:76-86`) at `:1371`, AFTER it.
+  proc campaign_seed_option {} { return seed }
+
+  # WHAT THE SEED DOES NOT REPRODUCE. Two clauses, both measured, and they are
+  # the difference between a reproducible campaign and one that only looks it.
+  proc campaign_seed_notes {} {
+    return [list \
+      "transient white and 1/f noise sources are not covered by it: their\
+ generator is seeded from the process id, so a `trnoise` source draws\
+ differently on every run whatever the seed says" \
+      "it is set as a deck option, so re-running a single point by hand from its\
+ own directory reproduces that point exactly"]
+  }
+
+  # PER-AXIS REFUSALS THAT NEED A FACT ABOUT NGSPICE.
+  #
+  # ⚠ THE FIRST ONE IS THE `temp` TRAP AND IT IS WORTH ITS OWN REFUSAL.
+  # `temp` is NOT a `.param` in ngspice -- it is a `US_SIMVAR` -- so a design
+  # variable called `temp` renders as `.param temp=125`, which sets a parameter
+  # named `temp` that the simulator's temperature machinery never reads. The
+  # deck runs, the run succeeds, every number is a 27 degC number, and nothing
+  # anywhere says so. That is this batch's *accepted-and-inert* class with a
+  # user's whole corner run inside it.
+  proc campaign_axis_refusals {state axis} {
+    set out {}
+    set kind [string trim [::ase::state_get $axis kind]]
+    if {$kind eq {var}} {
+      set nm [string trim [::ase::state_get $axis name]]
+      if {[string equal -nocase $nm temp]} {
+        lappend out [list temp_not_param refuse "'temp' is not a parameter in\
+ this simulator, so sweeping it as a design variable would run every point at\
+ the same temperature and say nothing" "use a Temperature axis instead"]
+      }
+    }
+    if {$kind eq {inst} || $kind eq {model}} {
+      foreach k {target param model} {
+        set v [string trim [::ase::state_get $axis $k]]
+        if {$v eq {}} { continue }
+        ## APPENDIX §4.5 edge 3: `$var` swallows a following `.` `-` `(` `[` `&`
+        ## `#` `?` `@`, so a name carrying one of them cannot be referred to from
+        ## inside a generated block. `alter` itself takes the name verbatim, but
+        ## a name with a space or a quote in it splits the command silently.
+        if {[regexp {[ \t"'=]} $v]} {
+          lappend out [list badname refuse "'$v' cannot be used in a generated\
+ command: a space, a quote or an '=' splits it" "use the name as the netlist\
+ spells it"]
+        }
+      }
+    }
+    return $out
+  }
+
   ::ase::register_backend ngspice [dict create \
     render_deck  ::ase::backend::ngspice::render_deck \
     run_cmd      ::ase::backend::ngspice::run_cmd \
@@ -25929,5 +27158,10 @@ $_leg
     opstate_arg_refusals ::ase::backend::ngspice::opstate_arg_refusals \
     runhealth_lines     ::ase::backend::ngspice::runhealth_lines \
     runhealth_labels    ::ase::backend::ngspice::runhealth_labels \
-    runhealth_parse     ::ase::backend::ngspice::runhealth_parse]
+    runhealth_parse     ::ase::backend::ngspice::runhealth_parse \
+    campaign_axis_kinds     ::ase::backend::ngspice::campaign_axis_kinds \
+    campaign_control_lines  ::ase::backend::ngspice::campaign_control_lines \
+    campaign_seed_option    ::ase::backend::ngspice::campaign_seed_option \
+    campaign_seed_notes     ::ase::backend::ngspice::campaign_seed_notes \
+    campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals]
 }

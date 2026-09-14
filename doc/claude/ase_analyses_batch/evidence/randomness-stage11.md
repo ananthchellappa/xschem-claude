@@ -90,9 +90,27 @@ says, and the two would disagree the first time a user set both.
 | nothing | `-5.06766e-01` | `-8.24668e-01` | **no** — as expected |
 | `set rndseed=12345` | `7.059813e-01` | `1.035454e-02` | ⚠ **NO** |
 | **`setseed 12345`** | `3.950885e-01` | `3.950885e-01` | ✅ **yes** |
+| `setseed 12345` **in `<rundir>/.spiceinit`** | `1.164426e+00` | `3.497468e-01` | ⚠ **NO** |
 
 **And `setseed 12345` gives `3.950885e-01` on `/usr/bin/ngspice` (45.2) as well** — the same value,
 to every digit, on both binaries and on every run.
+
+### ⚠ AND WHERE YOU PUT IT DECIDES WHETHER IT WORKS — added 2026-09-13, after Stage 11 task 1
+
+The row above was measured with `setseed` **inside the `.control` block**, and there it works. **In
+`<rundir>/.spiceinit` it does nothing** — rc 0, silent, a different answer every run, on both
+binaries. Driver-re-measured against the same deck: `.spiceinit` gives `1.164426e+00` then
+`3.497468e-01`; the identical command in `.control` gives `3.950885e-01` twice.
+
+The mechanism is an ordering one and it is not guessable from the outside: `main.c` reads the
+start-up file at `:1266-1330` and **then** calls `initw()` at `:1371`, which does
+`srand(getpid())`. **The start-up file's seed is set and then overwritten before the circuit
+runs.**
+
+⚠ **So this is the SIXTH *accepted-is-not-honoured* case**, and the sharpest of them for a reader
+of this file: the first table says *"`setseed` works"*, and that sentence is true in one place and
+false in another with no diagnostic to tell them apart. **A campaign that seeds from `.spiceinit`
+is unseeded and cannot know it.**
 
 ### Why `set rndseed=` looks right and is not
 
