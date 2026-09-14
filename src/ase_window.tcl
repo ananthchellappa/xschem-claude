@@ -11076,7 +11076,14 @@ proc ase::ui::show_log {key} {
     # ::open — inside ase::ui a bare `open` resolves to ase::ui::open
     set fh [::open $f r]
     set data [read $fh]
-    close $fh
+    ## ::close TOO, AND FOR THE SAME REASON (issue 1461). `ase::ui::close`
+    ## (:681) takes exactly one argument, so a bare `close $fh` in this
+    ## namespace reaches IT, leaves the channel OPEN and leaks one per call.
+    ## Measured: the shadow is entered with `key=file3` and `file channels`
+    ## still lists it. It does no damage -- ase::ui::close returns at its
+    ## first line for a key it does not know -- which is exactly why this
+    ## went unnoticed while the `::open` above was being fixed.
+    ::close $fh
     ase::ui::log_append $key $data
   } else {
     catch {::ase::echo "ase: no simulation log yet: $f"}

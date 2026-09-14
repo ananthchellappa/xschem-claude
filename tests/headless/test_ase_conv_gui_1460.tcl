@@ -1359,6 +1359,49 @@ foreach {eetag eebin} $EEBINS {
 
 } eeerr]} { check {EE0 section EE ran to the end} "RAISED:$eeerr" {} }
 
+## ============================================================================
+## ⚠ SHADOW LINT (issue 1461) -- STRUCTURAL, no widget, no simulator.
+## ============================================================================
+## `src/ase_window.tcl` shadows two of Tcl's most-used built-ins:
+## `ase::ui::open` (:619) and `ase::ui::close` (:681). Every proc in that file
+## is defined as `proc ase::ui::…`, so its body runs in that namespace and an
+## UNQUALIFIED call resolves to the shadow first. MEASURED with a five-line
+## reproduction: the shadow is entered (`key=file3`) and `file channels` still
+## lists the channel afterwards -- so a bare `close $fh` LEAKS it.
+##
+## ⚠ AND A `catch` AROUND THE READ DOES NOT SAVE YOU -- IT IS WHAT HIDES IT.
+## Issue 1460 measured SEVEN of this suite's own rows going green while reading
+## an empty string, because a bare `open` inside a total reader's `catch`
+## answers nothing and says nothing. That is why this row is a LINT over the
+## whole file and not a test of one call site: the class is the defect, one
+## site is just where it was found, and the next one will be written by
+## somebody who has never read issue 1461.
+##
+## The positive control is the file itself: it currently holds 17 correctly
+## qualified `::open`/`::close` calls, so a lint that found nothing to approve
+## would be measuring nothing.
+set SHADOWBAD {}
+set SHADOWOK 0
+if {[catch {
+  set _fh [::open [file join $repo src ase_window.tcl] r]
+  set _src [read $_fh]
+  ::close $_fh
+  set _n 0
+  foreach _l [split $_src "\n"] {
+    incr _n
+    if {[string index [string trimleft $_l] 0] eq {#}} { continue }
+    if {[regexp {::(open|close)[ \t]} $_l]} { incr SHADOWOK }
+    if {[regexp {\[[ \t]*open[ \t]} $_l] || [regexp {(^|[^:[:alnum:]_])close[ \t]+\$} $_l]} {
+      lappend SHADOWBAD "$_n:[string trim $_l]"
+    }
+  }
+} _serr]} { set SHADOWBAD [list "RAISED:$_serr"] }
+check {SL1 issue 1461 no unqualified open or close survives in ase_window.tcl,\
+ where both are shadowed by ase::ui procs of the same arity, and the file's own\
+ correctly-qualified calls prove the lint can see them} \
+  [list $SHADOWBAD [expr {$SHADOWOK >= 10 ? {many} : $SHADOWOK}]] \
+  [list {} {many}]
+
 if {$fail} { puts "RESULT: $fail FAILED ($npass passed)" } \
 else { puts "RESULT: ALL PASS ($npass checks)" }
 # THE COMPLETION BANNER (issue 1456). `tests/banner_rule.tcl`'s `banner_complete`

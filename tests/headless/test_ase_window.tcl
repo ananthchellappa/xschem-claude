@@ -3911,5 +3911,13 @@ if {$fail == 0} {
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"
 }
+# THE COMPLETION BANNER (issue 1456, added 1461). This suite is in NEITHER of
+# `run_regression.tcl`'s case lists today, so nothing counts it -- and that is
+# exactly why the banner belongs here now. `banner_rule.tcl`'s `banner_complete`
+# requires a WHOLE-LINE `OVERALL: ok`, and a case with none is scored a HARNESS
+# failure however green its own checks are. Three suites in this batch shipped
+# without one and were a standing T1 red from stage 7 until it was found. Adding
+# it before this suite ever joins T1 means that day costs nobody a red.
+puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -37,8 +37,8 @@ vanishes gets re-opened by the next reader.
 | **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing — **Stage 10 is COMPLETE** (issues **1459** and **1460**) |
-| **Next** | **Stage 11** — campaigns: sweeps, corners, Monte Carlo. ⚠ Two of its foundations are already measured: a **third `.dc` sweep is accepted and discarded in silence**, so it must be refused at the form; and **`setseed <n>` makes a campaign reproducible** — identically on both binaries — while `set rndseed=` is a readback that does nothing |
+| **In flight** | nothing. **Stage 10 is COMPLETE** (issues **1459** and **1460**), plus **1461** — a live channel leak the driver found by reading one line further than 1460's crew |
+| **Next** | **Stage 11 task 1** — campaigns, the runner half (§11a): the shard directory, the `<rundir>/.spiceinit` design-variable mechanism, the four axis kinds, `index.tsv`, and the `alter`-collapse mode. ⚠ Three foundations are already measured: a **third `.dc` sweep is accepted and discarded in silence** so it must be refused at the form; **`setseed <n>` makes `trrandom` reproducible** — identically on both binaries — while `set rndseed=` is a readback that does nothing; and **everything survives `alterparam` + `reset` except `.spiceinit`**, which is read at startup only |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **174 rule / 66 look / 10 suite.** ⚠ The newest `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`, the user's own screen. Four unstamped entries are another clone's and are not to be touched |
@@ -926,6 +926,56 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Issue 1461 — the driver read one line further than the crew, fixed 2026-09-13
+
+**Not a crew task. The driver found it while collecting 1460, by following that crew's own finding
+to the next line.**
+
+Issue 1460 established that `src/ase_window.tcl` shadows `open` (`:619`) **and** `close` (`:681`),
+and fixed the bare `open` in `ase::ui::show_log` with a comment explaining the trap. **The `close`
+on the very next line was missed.**
+
+**Measured, not reasoned** — a five-line reproduction in `tclsh`:
+
+```
+which close    : SHADOW reached with key=file3
+open channels  : file3            <- STILL OPEN
+```
+
+So `ase::ui::show_log` **leaked one file channel per invocation**, and `show_log` is something a
+user opens repeatedly while watching a run.
+
+| | |
+|---|---|
+| **blast radius** | **No state damage.** `ase::ui::close` returns at its first line for a key it does not know, and a channel name is never a session key — which is exactly why nothing ever went visibly wrong and why the `::open` above it got fixed alone. |
+| **extent** | **One site.** A sweep of every unqualified `close $…` inside an `ase::ui::` proc found this and no other. |
+| **the fix** | one character class: `close $fh` → `::close $fh`. |
+| **the row** | ⚠ **A LINT over the whole file, not a test of one call site** — `SL1` in `test_ase_conv_gui_1460`, which is in **both** of T1's case lists. It fails on any unqualified `[open ` or `close $` on a non-comment line, and its **positive control is the file's own 17 correctly-qualified calls**, so a lint with nothing to approve would be measuring nothing. |
+| **sabotage** | Put the bug back: `SL1` reds and **names the line** — `{11086:close $fh}`. Restored by `cp`, md5 equal, green again at 45. |
+| **T1** | ✅ **Run solo, zero counted lines.** |
+
+⚠ **The class is the defect and one site is just where it was found** — which is why the row is a
+lint. The next bare `open` in that file will be written by somebody who has never read issue 1461,
+and **a `catch` around the read will hide it**: issue 1460 measured **seven of its own suite rows
+going green while reading an empty string** for exactly this reason. **A total reader that catches
+the wrong `open` is worse than no reader**, and this is the one place in the batch where the
+defensive pattern it adopted actively conceals a defect.
+
+⚠ **And a related observation the sweep turned up, recorded rather than acted on:
+`tests/headless/test_ase_window.tcl` — 56 headless / 295 display, one of the largest ASE suites —
+is in NEITHER of T1's case lists and emits no `OVERALL:` banner.** That is consistent (issue 1456's
+sweep only covered cases that *are* in those lists, and `run_suites.sh`'s reader accepts a bare
+`RESULT: ALL PASS`), but it means **a suite this batch leans on is outside the one signal whose
+baseline is zero**. Whether it should join T1 — and pay T1's wall-clock for a 295-check display arm
+— is a decision, not a defect, and it is left as one.
+
+**But the banner was added anyway, and that is not the same decision.** A suite with no
+`OVERALL:` line is a **latent** red: the day somebody adds `test_ase_window` to a case list it
+becomes an instant HARNESS failure with every one of its 56/295 checks green, which is precisely
+the trap issue 1456 spent a day untangling. Adding the line now costs nothing — `run_suites.sh`'s
+reader already accepts a bare `RESULT: ALL PASS`, so nothing changes today — and it means that day
+costs nobody a red. **Fixing a trap is not the same as taking the decision the trap sits next to.**
 
 ### ✅ Stage 10 task 2 — the GUI half, issue **1460**, collected 2026-09-13 — **STAGE 10 IS COMPLETE**
 
