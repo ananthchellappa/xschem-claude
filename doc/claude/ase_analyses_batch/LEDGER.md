@@ -862,6 +862,38 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ⚠ A STANDING RULE THIS BATCH HAS NOW EARNED FOUR TIMES: **ACCEPTED IS NOT HONOURED**
+
+Four settings, measured on both binaries at four different points in this batch, all with the
+same shape — **ngspice takes the request, does nothing, and says nothing**:
+
+| # | the setting | what it does | rc / stderr |
+|---|---|---|---|
+| 1 | `set measureprec=10` / `NGSPICE_MEAS_PRECISION=10` on apt 45.2 | nothing — `meas` still prints 6 digits | 0 / silent |
+| 2 | `set interp` on an **AC** or **nested DC** run | nothing — same points, same values — **and it prints `Warning: Interpolated raw file data!` anyway** | 0 / a warning that is false about the data |
+| 3 | `.options optran 0 0 0 0 0 0`, `.options optran=0`, `.options optran = 0 0 0 0 0 0` | nothing — rung 4 still runs and still supplies the operating point | 0 / silent |
+| 4 | a **third `.dc` sweep level** | nothing — 3 nested sweeps give the same **9** rows as 2, values byte-identical | 0 / silent |
+
+**So "the simulator did not complain" is never evidence that a setting reached anything.** Every
+option this batch offers needs a measurement that it **does** something, not a measurement that it
+is **accepted** — and the two look identical from the outside, which is the whole problem.
+
+Two consequences that are already design decisions rather than advice:
+
+* **Where ASE-L cannot honour a request, it must REFUSE at the form**, not pass it down with a
+  caution. A caution says *"this may not do what you want"*; what is true in all four rows above is
+  *"this will produce a different experiment from the one you described, and nothing downstream
+  will tell you"*. That is the reasoning behind Stage 11 refusing a third sweep level.
+* **Capability probes must probe the EFFECT, not the acceptance.** A probe that runs a setting and
+  checks rc would have passed all four. `D49`'s probes already do this; it is written down here so
+  the next hook author does not invent the cheaper, wrong kind.
+
+⚠ **And a fifth member is nearby but different in kind**: `option`'s own listing disagreed with the
+simulator's behaviour (`evidence/alterparam-reset.md`) — an `abstol` set after the first analysis
+lists unchanged while a `temp` set at the same moment visibly reaches the next run. There the
+setting *was* honoured and the **readback** lied. Same lesson from the other end: **measure the
+behaviour, never the acknowledgement.**
+
 ### ✅ T1 IS AT ZERO, MEASURED IN THE RIGHT FILE — 2026-09-13, issue 1456
 
 Three solo runs, one tree, read from `tests/results.log` rather than from stdout:
