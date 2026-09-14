@@ -610,3 +610,62 @@ Recorded so nobody re-opens them.
    §6.3 says only that the probe must be `$curcasemode` and never `$casemode`. Whether the
    Case field should appear at all on a build that cannot deliver it is a UI ruling, not a
    measurement.
+
+---
+
+# 5. THE PROBEABILITY SURVEY — debt **M19**
+
+**Written 2026-09-13 by the driver.** M19 recorded that *"the other ~33 category-(b) fork fixes
+were never individually assessed for probeability"* — three had been found probeable in a deck that
+was already running (`one_vector_write`, `gnd_literal`, `keyword_case`), and *"three probes is not
+a survey"*.
+
+⚠ **This section is a CLASSIFICATION, not a measurement.** Each row is judged from the symptom
+§3 already measured; no probe below was written or run except the three that already exist. The
+distinction matters because this batch's own rule is that accepted is not honoured — a probe that
+looks obviously right still has to be run before it is believed.
+
+The test M19 set is *"does this defect land in a file?"* — because a probe that needs its **own
+process** to buy silence is not worth it, while one that is a line in a deck already running is
+free.
+
+## The answer, and the useful half of it is the NO column
+
+| row | probeable in a deck that is already running? | why |
+|---|---|---|
+| B1.1 `unset` frees a live node | **NO** | the symptom is `SIGABRT rc=134` — a probe would kill the run it is riding in |
+| B1.2 / B1.3 `define` bodies | **NO** | `SIGABRT` / `SIGSEGV`, same reason |
+| B1.4 computed variable in a raw header | **NO** | `SIGSEGV` on the *next* command |
+| B1.5 `.op` dot card with no netlist | **NO** | `SIGABRT`, and ASE-L is structurally immune anyway |
+| B1.6 auto-bridge `family=""` | **UNKNOWN** | the symptom is a *silently different bridge*, which is observable — but it needs an XSPICE event circuit stood up, so it is not a free line. Not classified without a measurement |
+| B1.7 subcircuit multiplier | **NO, and pointless** | needs a 10 000-parameter `.subckt` |
+| B1.8 `undefine` leak | **NO** | a leak is invisible to a batch run that exits |
+| **B2.1** phantom `v(all)` | ✅ **YES — already built** (`one_vector_write`) | a one-vector plot written and read back; the defect **lands in a file** |
+| B2.2 loaded plot reconfigures the reader | **YES, but NOT FREE** | needs a crafted raw header **and** a `source` afterwards, and it changes reader policy for the rest of the process — it must not ride in a deck that is doing real work |
+| **B2.3** bare `gnd` in control text | ✅ **YES — already built** (`gnd_literal`) | `echo M7MARK my gnd rail` and read the echo; one line, no file needed |
+| **B2.4** `let MyVec` written lower case | ⭐ **YES, AND NOT YET BUILT** | `let MyVec = 5` / `write <f> MyVec` and read the `Variables:` block: **APT `myvec`, FORK `MyVec`** (§4.10, already measured). It lands in a file, and ASE-L already writes and reads raws. **The cheapest unclaimed probe in the table.** |
+| **B2.5** `diff` pairs names byte-exactly | ⭐ **YES, AND NOT YET BUILT** | build two plots spelling one vector two ways and run `diff`: stock reports nothing, the fork reports the pair. Output only, no file. ⚠ **But it is worth almost nothing** — ASE-L emits no `diff`, so the probe would measure a capability nothing uses |
+| B2.6 XSPICE event-node lookups | **NO, today** | reachable through `libngspice` or an `eprint` on an event circuit; ASE-L drives `ngspice -b`. Becomes live only on the `--with-ngshared` route (⚖ R1 Option B, not taken) |
+| **B3** the 19-commit keyword census | ✅ **YES — already built** (`keyword_case`) | `write <file> ALL @M1[ID]` inside `.control`: stock writes **no file at rc 0**, the fork writes it (§4.11). One behaviour, one probe, nineteen commits |
+| **B4.1 / B4.2** the Verilator shim | ⭐ **YES, AND BY A CHEAPER KIND OF PROBE** | neither is reachable from a deck at all — but both are **file inspections of the installed tree**, needing no simulator process whatsoever: `grep -c verilated_vcd_c <sharedir>/scripts/vlnggen` (0 on apt, 1 on the fork) and a `grep` for `contextp.release()` in `scripts/src/verilator_shim.cpp`. **Zero cost, and they answer before any run** |
+
+## What the survey concludes
+
+1. **The three existing probes cover the whole of what a running deck can see cheaply, minus one.**
+   **B2.4** is the only unclaimed probe that is both free and useful. B2.5 is free and useless.
+2. **The entire B1 family is unprobeable by construction**, because its symptom is the death of the
+   process doing the probing. That is not a gap to be closed — it is the boundary between what
+   Stage 16 can **measure** and what it must **warn** about, and it is worth stating in those words
+   on the panel rather than leaving a reader to wonder why the crashes have no green tick.
+3. ⚠ **B4 is probeable by a kind of probe this batch had not considered**: reading the installed
+   tree. Two `grep`s, no process, an answer before the first simulation. If Stage 16 offers Verilog
+   co-simulation at all, these two belong in it — and B4.2's use-after-free is precisely the defect
+   a user cannot detect for themselves, because a run that *worked* is not evidence the memory was
+   valid.
+4. **So M19's blanket premise is confirmed and bounded**: *"the fork's fixes have no probe"* was
+   already overturned by three; the survey adds **one more free deck probe and two free file
+   probes**, and shows the remaining eight are unprobeable for a reason rather than by neglect.
+
+**What is NOT done:** none of the three new probes has been written or run. Each is one line plus a
+comparison, and each must be measured on **both** binaries before it is believed — this section is
+a map, not a result.
