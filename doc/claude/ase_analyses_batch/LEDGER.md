@@ -33,12 +33,12 @@ vanishes gets re-opened by the next reader.
 
 | | |
 |---|---|
-| **Stages landed** | 0, 1, 2, 3, 4, 5, 6, 7, 8, **9** — Stage 9 as two commits, `f438af90` (the deck half, issue 1452) and `3e316f7a` (the GUI half, issue 1454). Since: **1456** (T1's banners), **1453** (the probe was starting a second xschem) |
+| **Stages landed** | 0, 1, 2, 3, 4, 5, 6, 7, 8, **9**. Since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
 | **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, twice in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing — issue **1457** landed; `src/ase.tcl` is free |
-| **Next** | **Stage 10 task 1** — the deck half. Its two prerequisite debts (**M1**, **M7**) are paid and `evidence/ladder-streams.md` already holds its fixture text, its `optran` warning and §10b's headline number re-measured. Issue **1458** (`store_geom` has no gate) is filed and queued behind the batch, not in front of it |
+| **T1** | ✅ **70 cases, ZERO counted lines in `tests/results.log`, three runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
+| **In flight** | a crew on **Stage 10 task 1** — the deck half: `ase::ncdump_parse`, `ase::ladder_parse`, `ase::optran_line`, `ase::wrnodev_lines`. It owns `src/ase.tcl` and its own new suite. **`src/ase_window.tcl` is task 2's and is not open** |
+| **Next** | **Stage 10 task 2** — the ladder pane, the remedy assistant, the canvas highlight and the health strip. ⚠ Its rung-4 checkbox must be able to mean **OFF**, and three deck spellings of `.options optran` were measured **accepted and inert**, so task 1 owes it the spelling that works |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **448 strings from 25 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
 | **Debt queue** | **172 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
