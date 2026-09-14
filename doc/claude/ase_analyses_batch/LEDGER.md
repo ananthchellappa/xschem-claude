@@ -52,10 +52,25 @@ saying it did — and the two binaries disagree about a transient's point count,
 **M10** (`onoise_total` is V **RMS**, and its value depends on the point count) · **M11**
 (everything survives `alterparam` + `reset` except `.spiceinit`, and `option`'s listing lies) ·
 **M12** half (what `wrs2p` emits is measured; *is it valid Touchstone* needs one install the user
-must approve) · **M21** sharpened from read to measured.
+must approve) · **M19** (the probeability survey, **and its three new probes measured the same
+hour**: B2.4 from one `let`, B4.1 and B4.2 from two `grep`s and no simulator process) · **M21**
+sharpened from read to measured.
 
-**Still open and named:** M5, M9, M12's second half, M13, M14 *(never)*, M15, M16, M17, M18, M19,
-M20, M21.
+**Also measured the same day, and none of it was owed** — five findings that change design rather
+than close a debt: `sp`'s `Cy` family is offered at any port count and ASE-L hides it (issue
+**1457**); a **third `.dc` sweep is accepted and discarded in silence**, so Stage 11 must refuse it
+at the form; `setseed` is a command and `set rndseed=` is a readback that silently does nothing, so
+a Monte Carlo campaign **can** be made reproducible — identically on both binaries; `optran`
+rescued every deck built to fail and three spellings could not turn it off, which §10b's rung-4
+checkbox has to solve; and §10b's own headline number, `9.999550e-01` against `1.000000e+00`,
+reproduces exactly on both binaries.
+
+**Still open and named:** M5, M9, M12's second half, M13, M14 *(never)*, M15, M16, M17, M18, M20,
+M21.
+
+⚠ **M15 and M20 both need a second ngspice BUILD, and neither was taken while a crew was
+measuring** — a `make -j` alongside a sabotage campaign is exactly the load that made row X7 die
+under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
