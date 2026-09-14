@@ -3262,6 +3262,37 @@ written to your schematic."*
 
 **Two commits. Ruling ⚖ R9. ⚠ Open question M1 gates the live pane, not the stage.**
 
+✅ **DONE (status E), 2026-09-13.** Task 1 is the DECK half, issue **1459**, commit `e1eaa5d0`
+(`receipts/36-stage-10-deck.md`). Task 2 is the SURFACE, issue **1460**
+(`receipts/37-stage-10-gui.md`). The `E` is ⚖ R9: nineteen sentences from task 1 and this
+task's own control copy are on the user's queue, and **`seed`/`force` as the words on the form**
+is the one the crew flagged for a ruling specifically.
+
+### ⚠ Corrections this stage made to the text below — do not read §10 without them
+
+The task-1 corrections are **C1–C14** in `receipts/36-stage-10-deck.md`; the sharpest are that
+§10's four named procs are all **content** and ship as eleven adapter hooks, that
+**`rusage devtimes` is compiled out** and must not be offered, and that §10c's `.include`
+restore **silently changes a transient's answer**, so the restore needs a mode.
+
+The task-2 corrections are **C15–C20** in `receipts/37-stage-10-gui.md`:
+
+* **C15** — a form reader with no form standing must return the session **unchanged**; reading
+  absent widgets as cleared controls wiped three state keys.
+* **C16** — the run-health strip needed a **label hook** (`runhealth_labels`), because the
+  counters' keys are not user copy and a label table in the surface would leak ngspice into it.
+  **Every counter the parser found is in the strip, labelled or not.**
+* **C17** — ⚠ **§10a's highlight cannot light a hierarchy-qualified node.** `hilight_netname`
+  looks a name up in **this sheet's** node hash, and `x1.nn` is a node inside a subcircuit. It
+  is reported by name with the reason, never dropped.
+* **C18** — ⚠ **the highlight must not be automatic on a failed run.** Lighting a user's
+  schematic unasked is a mutation of what they are looking at; the run **says** what failed and
+  names the door.
+* **C19** — §10's `≈ +330` for `src/ase_window.tcl` is **≈ +1150**.
+* **C20** — ⚠ **`seed` and `force` are jargon that a core refusal already puts in front of the
+  user**, so the form uses those words rather than a second vocabulary — and whether they stay
+  is the **user's** ruling, because the refusal's fix clause moves with them.
+
 This is the failure story ADE-L answers with an opaque `sim.log`.
 
 ### 10a. `CKTncDump`'s starred nodes, highlighted on the canvas
@@ -3335,6 +3366,13 @@ deliberately interleaved out of order; the `optran`-xor-`noopiter` rule; the ram
 ⚠ **M1 blocks the live pane, not the stage.** Until it closes, the pane reads the log file after the
 fact. The experiment: run a deliberately non-converging OP through `ase::run_deck`'s existing capture
 with `set ngdebug`, and diff the interleaving against two separate `-o` / `2>` files. One deck.
+
+✅ **M1 CLOSED 2026-09-13** (`evidence/ladder-streams.md`) and **the pane shipped reading the log
+after the fact**, which this paragraph already allowed. The live pane is still not built: it costs
+a **second capture channel** (`run_cmd` appends `2>@1` at `src/ase.tcl:720` and every existing log
+reader expects one stream) **and a byte-oriented reader** (3 of 4 read chunks end mid-line and the
+dangling text is always the rung being attempted). `ase::ladder_parse` is already built for both —
+it reports an unterminated trailing trial as the rung in progress.
 
 ### Re-measure on the dev display
 

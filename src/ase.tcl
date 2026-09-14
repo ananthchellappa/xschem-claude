@@ -19599,6 +19599,37 @@ proc ase::runhealth_parse {sim text} {
   return [ase::conv_hook $sim runhealth_parse $text]
 }
 
+# THE STRIP AS THE USER READS IT: an ordered list of `{label value}` pairs, or
+# `{}`. Issue 1460 -- the GUI half needs the counters in a fixed order with
+# words on them, and neither the order nor the words may be this file's.
+#
+# ⚠ EVERY COUNTER THE PARSER FOUND IS IN THE ANSWER, LABELLED OR NOT, and that
+# is the one-directional-row defence rather than politeness. A strip that
+# rendered only the counters it had a label for would show a stale set for ever:
+# the day the adapter starts reporting a fifth counter, a label-driven loop says
+# nothing and looks correct. So the adapter's declared order comes first and
+# ANY key it did not name follows, under its own bare key -- ugly on purpose,
+# because ugly is visible and absent is not.
+proc ase::runhealth_strip {sim text} {
+  set got [ase::runhealth_parse $sim $text]
+  if {![llength $got]} { return {} }
+  set labels [ase::conv_hook $sim runhealth_labels]
+  set out {}
+  set seen [dict create]
+  if {[llength $labels] % 2 == 0} {
+    foreach {k l} $labels {
+      if {[dict exists $seen $k] || ![dict exists $got $k]} { continue }
+      dict set seen $k 1
+      lappend out [list $l [dict get $got $k]]
+    }
+  }
+  dict for {k v} $got {
+    if {[dict exists $seen $k]} { continue }
+    lappend out [list $k $v]
+  }
+  return $out
+}
+
 
 # --- ngspice backend --------------------------------------------------------
 
@@ -25833,6 +25864,18 @@ $_leg
     return [list {rusage tranpoints accept rejected totiter}]
   }
 
+  ## THE WORDS THE STRIP PUTS ON THEM, in the order it shows them. ⚖ R9 / issue
+  ## 1460: these four are ngspice's own counters, so naming them is CONTENT --
+  ## `ase::runhealth_strip` orders and renders, and knows none of these words.
+  ##
+  ## ⚠ `TRAN points` IS UPPERCASE BECAUSE IT IS AN ACRONYM (the house rule), and
+  ## `points` alone would be ambiguous in a strip that also counts iterations.
+  ## The simulator's own line is `Transient timepoints = 2013`.
+  proc runhealth_labels {} {
+    return {tranpoints {TRAN points} accept accepted rejected rejected \
+            totiter iterations}
+  }
+
   proc runhealth_parse {text} {
     set out [dict create]
     foreach {key lit} {tranpoints {Transient timepoints} \
@@ -25885,5 +25928,6 @@ $_leg
     opstate_lines       ::ase::backend::ngspice::opstate_lines \
     opstate_arg_refusals ::ase::backend::ngspice::opstate_arg_refusals \
     runhealth_lines     ::ase::backend::ngspice::runhealth_lines \
+    runhealth_labels    ::ase::backend::ngspice::runhealth_labels \
     runhealth_parse     ::ase::backend::ngspice::runhealth_parse]
 }

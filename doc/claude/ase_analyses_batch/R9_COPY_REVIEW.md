@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**479 strings, from 27 issues, grouped by where the user sees them** — not by
+**518 strings, from 28 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -6901,3 +6901,457 @@ choose seed or force
 
 
 *Where:* the fix clause of the refusal above, same site.
+
+
+## Issue 1460 — the convergence surface (stage 10, GUI half)
+
+*39 entries.* ⚠ **Everything core already mints is CONSUMED here, not re-spelled**: the four rung
+labels and the transient caution come off the rung dicts, the three *"this operating point came
+from …"* sentences from `ase::ladder_ran_notes`, and **all eleven refusals with their `Fix:` clauses**
+render through `ase::precheck_banner_text` — row `GX1` asserts the note is byte-identical to that
+frame's output. What follows is only what a widget needs and a deck does not.
+
+⚠ **Two of these are coupled to sentences elsewhere in this document and cannot be ruled on alone**:
+`Save operating point` (R9-482) appears inside a core refusal's fix clause, and `Seed` / `Force`
+(R9-484, R9-485) are the deck half's mode words, already reaching the user in R9-478/479.
+
+**R9-480** · button
+
+```text
+Convergence…
+```
+
+
+*Where:* the `Simulation` menu, directly below `Options…`
+
+
+*Note:* §A4 — the ellipsis convention this tree already uses for a door to a dialog.
+
+**R9-481** · label
+
+```text
+Convergence
+```
+
+
+*Where:* the ladder window's `wm title`
+
+
+*Note:* ⚠ **Bare, where every other window in this batch titles itself `Analysis Ports (sp)` or `Result Matrix (sp)`** — a type in parentheses. This dialog is not per-type, so it has nothing to put there; §A8 all the same.
+
+**R9-482** · label
+
+```text
+Highlight Non-Converged Nodes
+```
+
+
+*Where:* the `Results` menu
+
+
+*Note:* ⚠ **Title Case and hyphenated**, where the sentences about the same thing say *"did not converge"* in words. §A8.
+
+**R9-483** · label
+
+```text
+Convergence Remedies
+```
+
+
+*Where:* the remedy assistant's `wm title`
+
+**R9-484** · label
+
+```text
+Operating point strategy
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* The pane's own heading, and the name `PLAN.md` §10b gave it.
+
+**R9-485** · label
+
+```text
+Steps
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* the gmin/source rungs' step-count field.
+
+**R9-486** · label
+
+```text
+Step
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* the transient rung's timestep field. ⚠ **`Step` and `Steps` are different fields on the same pane**, one a time and one a count — §A8, and the closest pair of siblings in this document.
+
+**R9-487** · label
+
+```text
+Stop
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* the transient rung's stop-time field. ⚠ §A4 — `Stop` / `Stop time` / `Stop frequency` are already three spellings of one idea elsewhere in this batch.
+
+**R9-488** · label
+
+```text
+Emits:
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* the label above the rendered `optran` line, so the user sees the card the pane will write.
+
+**R9-489** · label
+
+```text
+Emits nothing. The simulator uses its own strategy.
+```
+
+
+*Where:* the four-rung ladder pane.
+
+
+*Note:* ⚠ **The honest empty state**, and the sentence that tells a user their untouched pane is not doing anything behind their back.
+
+**R9-490** · label
+
+```text
+Saved operating point
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+
+*Note:* the group heading.
+
+**R9-491** · label
+
+```text
+Save operating point
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+
+*Note:* ⚠ **NOT a free choice.** Core's own fix clause already reads *"run once with **Save operating point** ticked, or restore with force"*, so renaming this control makes that refusal point at something that does not exist. Row `CP3` asserts the label is a **substring of the live evaluator's fix clause** — which is the right shape for a coupling that would otherwise drift silently.
+
+**R9-492** · label
+
+```text
+Restore operating point
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+
+*Note:* Same coupling as above.
+
+**R9-493** · label
+
+```text
+File
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+**R9-494** · label
+
+```text
+Seed
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+
+*Note:* ⚠ **One of the two words flagged for the user by name.** See R9-495.
+
+**R9-495** · label
+
+```text
+Force
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane.
+
+
+*Note:* ⚠ **The other.** `seed` and `force` are the deck half's mode words and they **already reach the user inside a refusal** — *"'&lt;mode&gt;' is not a way to restore an operating point. Fix: choose seed or force"* (R9-478/479). The form therefore uses them rather than inventing a second vocabulary for one setting, and each carries the measurement that separates them (the two sentences below). **Whether they stay is the user's ruling, and if they change, that fix clause changes with them.**
+
+**R9-496** · advice
+
+```text
+a starting guess; the run can move away from it, so it cannot change the answer
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane. The explanation beside `Seed`.
+
+
+*Note:* Driver-measured: re-spelt `.nodeset`, the transient reads `1.500000e+00` from its first point, identical to no restore at all.
+
+**R9-497** · advice
+
+```text
+the simulator's own file unchanged; in a transient that is an initial condition, and it does change the answer
+```
+
+
+*Where:* the saved-operating-point group of the ladder pane. The explanation beside `Force`.
+
+
+*Note:* ⚠ Driver-measured on both binaries: `2.4999` → `1.893` at one time constant → `1.500` by twenty. **The sentence is exactly right and an earlier draft of the mechanism was not** — it called `.ic` a clamp that is never released.
+
+**R9-498** · label
+
+```text
+Report run health
+```
+
+
+*Where:* the run-health control.
+
+**R9-499** · label
+
+```text
+Health:
+```
+
+
+*Where:* the one-line strip in the status bar.
+
+
+*Note:* ⚠ **Empty on every bench that never asked**, which is why it is one label and not a pane.
+
+**R9-500** · label
+
+```text
+TRAN points
+```
+
+
+*Where:* the run-health strip's counters — **the ADAPTER's words** (`ase::backend::ngspice::runhealth_labels`), not core's.
+
+
+*Note:* ⚠ These are ngspice's counters, so the adapter names them. A simulator that counts something else gets its own words with no change in `ase_window.tcl`; D34–D37 at its most literal.
+
+**R9-501** · label
+
+```text
+accepted
+```
+
+
+*Where:* the run-health strip's counters — **the ADAPTER's words** (`ase::backend::ngspice::runhealth_labels`), not core's.
+
+**R9-502** · label
+
+```text
+rejected
+```
+
+
+*Where:* the run-health strip's counters — **the ADAPTER's words** (`ase::backend::ngspice::runhealth_labels`), not core's.
+
+**R9-503** · label
+
+```text
+iterations
+```
+
+
+*Where:* the run-health strip's counters — **the ADAPTER's words** (`ase::backend::ngspice::runhealth_labels`), not core's.
+
+**R9-504** · button
+
+```text
+Remedies…
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* the door, on the ladder pane.
+
+**R9-505** · label
+
+```text
+Change
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* the list's column heading.
+
+**R9-506** · label
+
+```text
+Apply
+```
+
+
+*Where:* the remedy assistant.
+
+**R9-507** · status
+
+```text
+Nothing to suggest. The last run found its operating point.
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* ⚠ **The empty state that says WHY it is empty** rather than showing a blank list.
+
+**R9-508** · status
+
+```text
+This changes nothing in the deck.
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* The diff preview when a remedy is state-only and the rendered deck is identical. ⚠ It is the honest answer and it is also a warning: a remedy that changes nothing is one the user should not expect anything from.
+
+**R9-509** · status
+
+```text
+The edits open in the Convergence window
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* ⚠ Tells the user **where the change will appear**, which is the thing a preview usually leaves them to discover.
+
+**R9-510** · status
+
+```text
+Switch on: <the rung's own label>
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* Composed — it reuses the rung label from R9-450…453 rather than re-spelling it.
+
+**R9-511** · status
+
+```text
+Save this run's operating point for next time
+```
+
+
+*Where:* the remedy assistant.
+
+**R9-512** · status
+
+```text
+Seed the next run from the saved operating point
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* ⚠ Uses **seed** as a verb where R9-484 uses it as a mode name. §A10.
+
+**R9-513** · status
+
+```text
+ASE-L has no netlist for this design yet, so it cannot show what the deck would become. Simulation > Netlist > Recreate.
+```
+
+
+*Where:* the remedy assistant.
+
+
+*Note:* ⚠ Composes its door from `lbl_simulation` / `lbl_netlist` / `lbl_netlist_recreate` — **the same three constants issue 1435's cold banner already uses**, so the two cold sentences name the menu identically.
+
+**R9-514** · status
+
+```text
+ase: <n> node(s) did not converge: <names>
+```
+
+
+*Where:* what a finished run says, and what the highlight answers.
+
+
+*Note:* ⚠ **The run SAYS and does not ACT** — see the next string. `(s)` is §A5's plural-in-parentheses, used here rather than `ase::sim_plural`.
+
+**R9-515** · status
+
+```text
+Results > Highlight Non-Converged Nodes lights them on the schematic.
+```
+
+
+*Where:* what a finished run says, and what the highlight answers.
+
+
+*Note:* ⚠ **This is why the highlight is not automatic.** The run names the door and leaves the canvas alone; reaching onto the user's schematic unasked would be this tree's *never steal focus* rule broken in a new place.
+
+**R9-516** · status
+
+```text
+ase: highlighted <n> node(s) that did not converge: <names>
+```
+
+
+*Where:* what a finished run says, and what the highlight answers.
+
+**R9-517** · status
+
+```text
+ase: not on this sheet: <name> (<reason>), …
+```
+
+
+*Where:* what a finished run says, and what the highlight answers.
+
+
+*Note:* ⚠ **The surface saying what it could NOT show, by name and with a reason** — *nothing the deck contains may be unshowable*, applied to a case that genuinely cannot be shown.
+
+**R9-518** · status
+
+```text
+inside a subcircuit
+```
+
+
+*Where:* what a finished run says, and what the highlight answers.
+
+
+*Note:* the one reason the string above currently gives.

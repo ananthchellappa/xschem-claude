@@ -1181,8 +1181,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   for {set i 0} {$i <= [$top.mb.sim index end]} {incr i} {
     lappend slabels [$top.mb.sim entrycget $i -label]
   }
+  ## ⚠ `Convergence…` JOINED AT ISSUE 1460 (PLAN.md Stage 10b/10c) and it sits
+  ## DIRECTLY BELOW `Options…` on purpose: the operating-point strategy it
+  ## writes overrides three rows of that sheet, silently, in the simulator --
+  ## measured on both binaries, issue 1459. The label comes from
+  ## `ase::ui::lbl_conv_menu`, not typed here, so a rename follows.
   check "W1m Simulation menu entries" $slabels \
-    [list Netlist {Netlist and Run} Run Stop Log "Options\u2026"]
+    [list Netlist {Netlist and Run} Run Stop Log "Options\u2026" \
+          [ase::ui::lbl_conv_menu]]
   set nlabels {}
   for {set i 0} {$i <= [$top.mb.sim.netlist index end]} {incr i} {
     lappend nlabels [$top.mb.sim.netlist entrycget $i -label]

@@ -949,6 +949,15 @@ proc ase::ui::build {key top} {
   $top.mb.sim add command -label Log -command [list ase::ui::show_log $key]
   $top.mb.sim add command -label "Options\u2026" \
     -command [list ase::ui::sim_options_dialog $key]
+  # ── STAGE 10 / issue 1460: `Simulation > Convergence…`. ───────────────────
+  # DIRECTLY BELOW `Options…`, and the adjacency is the feature rather than
+  # tidiness: the operating-point strategy this dialog writes OVERRIDES three
+  # rows of the sheet above it, silently, in the simulator (measured, both
+  # binaries, issue 1459). `ase::opstrategy_refusals` refuses that combination
+  # at the form; a user who meets the refusal should find the two doors beside
+  # each other rather than in different menus.
+  $top.mb.sim add command -label [ase::ui::lbl_conv_menu] \
+    -command [list ase::ui::conv_dialog $key]
 
   # Results: Direct Plot is LIVE (item 13) — the Select-On-Design click mode
   # in the `plot` flavor: clicks queue traces, ESC opens/raises the session's
@@ -1045,6 +1054,21 @@ proc ase::ui::build {key top} {
     -variable ::ase::ui::annot($key,tran) -state disabled \
     -command [list ase::ui::annot_apply $key tran]
   $top.mb.results add cascade -label Annotate -menu $top.mb.results.annotate
+  # ── STAGE 10a / issue 1460: THE NODES THAT DID NOT CONVERGE, ON THE CANVAS.
+  #
+  # RESULTS, because it reads the RUN's log -- it is a result of the last run in
+  # exactly the way Annotate's operating-point numbers are, and it is useless
+  # before one. Below Annotate rather than above: annotation shows a run that
+  # WORKED, this shows one that did not.
+  #
+  # ⚠ NOT AUTOMATIC ON A FAILED RUN, deliberately. Lighting a user's schematic
+  # without being asked is a mutation of what they are looking at; `run_finished`
+  # SAYS how many nodes failed and names this door, and the user decides. The
+  # highlights persist past ESC and are cleared the ordinary way (Del/unhilight),
+  # exactly as Direct Plot's colour cue does (issue 0153).
+  $top.mb.results add separator
+  $top.mb.results add command -label [ase::ui::lbl_hilite_menu] \
+    -command [list ase::ui::conv_highlight_door $key]
 
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
   # — wviewer::open is per-token idempotent (re-open arm raises the existing
@@ -1113,9 +1137,18 @@ proc ase::ui::build {key top} {
   label $top.status.sim   -text {}
   label $top.status.sep4  -text { | }
   label $top.status.state -text {}
+  # ── STAGE 10c / issue 1460: THE RUN-HEALTH STRIP -- "one line, not a pane".
+  #
+  # ⚠ EMPTY UNLESS THE RUN ASKED FOR IT, AND THAT IS WHY IT COSTS NOTHING. The
+  # counters only exist when `runhealth` is set on the bench, which is absent by
+  # default and in `ase::omit_if_empty`; on every one of the 104 committed
+  # benches this label and its separator render as two zero-width strings.
+  # `ase::ui::health_refresh` fills it from the finished run's own log.
+  label $top.status.sep5  -text {}
+  label $top.status.health -text {}
   pack $top.status.win $top.status.sep1 $top.status.stat $top.status.sep2 \
        $top.status.temp $top.status.sep3 $top.status.sim $top.status.sep4 \
-       $top.status.state -side left
+       $top.status.state $top.status.sep5 $top.status.health -side left
   pack $top.status -side bottom -fill x -pady 2
 
   # right vertical action strip (spec "Action strip"): text placeholders,
@@ -4994,6 +5027,20 @@ proc ase::ui::choose_analyses {key {type {}} {idx {}}} {
   # learn. The row is RESERVED whether or not the label has text, exactly as
   # `$w.status`'s is, so `Options…` and the button bar do not jump as the
   # sentence appears and goes.
+  # ── STAGE 10b / issue 1460: THE SENTENCE ABOUT THE LAST RUN'S OPERATING
+  # POINT. Row 6, which was free -- `$w.form` (3), the two subdialog doors (4),
+  # `$w.note` (7), `$w.opts`/`$w.detect` (8) and the button bar (9) do not move,
+  # which is the rule issue 1405 cost 100 checks to learn. RESERVED whether or
+  # not it has text, like `$w.status` and `$w.note`, so the form below does not
+  # jump as the sentence appears and goes.
+  #
+  # ⚠ IT IS NOT A SECOND TENANT OF `$w.note`. That label carries the
+  # PRECONDITION banner -- whether this analysis CAN run against this circuit --
+  # and this one carries what the last run's operating point actually WAS. Both
+  # can be true at once, and evicting either would be a fact the user does not
+  # get told.
+  label $w.opnote -text {} -anchor w -justify left -wraplength 600
+  grid $w.opnote -row 6 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   label $w.note -text {} -anchor w -justify left -wraplength 600
   grid $w.note -row 7 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   # quick-field rows land on grid rows 2.. (chana_show); Options/buttons sit
@@ -5570,6 +5617,10 @@ proc ase::ui::chana_show {key} {
   # overlays the widgets' live values on the stored row, so a banner refreshed
   # before the rebuild would describe the PREVIOUS type's widgets.
   ase::ui::chana_note $key
+  # ── STAGE 10b (issue 1460): AND WHAT THE LAST RUN'S OPERATING POINT WAS.
+  # Beside `chana_note` because both are repainted by the one rebuild door, and
+  # AFTER it for the same reason: it reads the session, not the form.
+  ase::ui::conv_op_note_paint $key $type
   # ── STAGE 9a/9b (issue 1454): THE TWO SUBDIALOG DOORS, PER TYPE. ───────────
   #
   # ⚠ A STANDING SUBDIALOG DIES WITH THE REBUILD. Both of them edit ONE row of
@@ -11232,6 +11283,11 @@ proc ase::ui::run_finished {key} {
       }
     }
     ase::ui::set_status $key ok
+    # ── STAGE 10c / issue 1460: THE RUN-HEALTH STRIP. ───────────────────────
+    # A finished run is the one moment the counters change, and the strip is
+    # EMPTY on a bench that never asked for them (`runhealth` absent), so no
+    # committed bench's window gains a pixel.
+    catch {ase::ui::health_refresh $key}
     # item 13 (D5): Plot-checked rows -> the viewer's auto graph. Deferred:
     # this callback can run inside ase::wait's semaphore bracket where
     # window switches silently no-op — see auto_plot_idle.
@@ -11247,6 +11303,32 @@ proc ase::ui::run_finished {key} {
   } else {
     ase::ui::set_status $key fail
   }
+  # ── STAGE 10a / issue 1460: THE FAILED OPERATING POINT HAS A NODE LIST, AND
+  # UNTIL NOW NOTHING READ IT. ─────────────────────────────────────────────────
+  #
+  # ⚠ ON BOTH ARMS OF THE EXIT CODE, and that is measured rather than cautious:
+  # `Convergence not reached` and `The operating point could not be simulated
+  # successfully` are BOTH reported at rc 0 in some shapes (the traps table's
+  # PSS row, and `optran`'s own `Error in command 'optran'` at rc 0), so keying
+  # the diagnostic on a non-zero exit would hide the table on exactly the runs
+  # that print it. `ase::ncdump_failing` answers `{}` for a healthy run, which
+  # is what makes it safe to ask on every one.
+  #
+  # ⚠ IT ANNOUNCES AND DOES NOT LIGHT. See the Results menu entry for why the
+  # canvas is not touched without being asked.
+  catch {
+    set _nc [ase::ui::conv_failing $key]
+    if {[llength $_nc]} {
+      ase::ui::log_append $key \
+        "\n[ase::ui::lbl_conv_failed_nodes $_nc]\n\
+ [ase::ui::lbl_conv_door_hint]\n"
+      ::ase::echo "[ase::ui::lbl_conv_failed_nodes $_nc].\
+ [ase::ui::lbl_conv_door_hint]" 
+    }
+  }
+  # ── STAGE 10c: and the strip is cleared or refilled on a FAILED run too, so
+  # it can never go on describing the run before last.
+  catch {ase::ui::health_refresh $key}
   ase::session_setattr $key run_id {}
 }
 
@@ -11495,4 +11577,1065 @@ proc ase::ui::view_netlist {key} {
   set f [file join [ase::rundir $st] $cell.spice]
   if {[file isfile $f]} { textwindow $f ro } \
   else { catch {::ase::echo "ase: no netlist yet: $f"} }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 10 -- CONVERGENCE AND DIAGNOSIS: THE SURFACE (issue 1460)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Issue 1459 landed the deck half -- the parsers, the emitters, the refusal
+# evaluators and eleven ngspice hooks -- and built NO WIDGET. Every one of those
+# readers had exactly zero callers outside its own suite: `ase::ncdump_failing`
+# knew which nodes would not converge and nothing lit them, `ase::ladder_parse`
+# knew which rung answered and nothing said so, `ase::optran_line` could only be
+# reached by hand-editing a `.state` file. This block is the other half.
+#
+# FOUR SURFACES, and each one shows something no SPICE front end has shown:
+#
+#  * THE CANVAS HIGHLIGHT (PLAN.md §10a). `CKTncDump` prints a `Last Node
+#    Voltages` table after a failed operating point and stars every node that
+#    still fails the convergence test. `evidence/convergence.md` calls it "the
+#    single most useful diagnostic in ngspice" and it has never had a UI. The
+#    names go through `ase::netlist_map`'s hierarchy-qualified resolution and
+#    the ones that live on this sheet are LIT.
+#  * THE FOUR-RUNG LADDER PANE (§10b), emitting EITHER the `.options` trio OR
+#    one `optran` line and never both.
+#  * THE REMEDY ASSISTANT (§10b), which shows the DECK before and after.
+#  * THE RUN-HEALTH STRIP (§10c) -- one line in the status bar, not a pane.
+#
+# ⚠ AND THE SENTENCE ON THE OP FORM (§10b): "this operating point may come from
+# a transient". Core mints it CONDITIONALLY (`ase::ladder_ran_notes`, issue
+# 1459's correction C4) because the shipped defaults leave the transient rung
+# armed and never called; this is the label that shows it.
+#
+# ⚠ WHAT THIS FILE MAY NOT DO. Everything below is SURFACE. It reads the
+# ladder through `ase::ladder_rungs` and never names a rung; it reads the strip
+# through `ase::runhealth_strip` and never names a counter; it renders refusals
+# through `ase::precheck_banner_text` and never spells one. The one simulator
+# word in this block is the analysis type in `ase::ui::conv_op_type`, and its
+# header says why it is here and what pins it.
+
+# --- ⚖ R9: THE COPY THIS SURFACE MINTS --------------------------------------
+#
+# ⚠ EVERY SENTENCE CORE ALREADY MINTS IS CONSUMED, NOT RE-SPELLED. The four
+# rung labels and the transient rung's caution come off the rung dicts; the
+# three "this operating point came from ..." sentences come from
+# `ase::ladder_ran_notes`; all eleven refusals and their `Fix:` clauses come
+# from the two evaluators through `ase::precheck_banner_text`. What is below is
+# what a widget needs and a deck does not: control labels, and the words for the
+# two things that only exist on screen -- the diff preview and the highlight
+# report.
+proc ase::ui::lbl_conv_menu       {} { return "Convergence…" }
+proc ase::ui::lbl_conv_title      {} { return {Convergence} }
+proc ase::ui::lbl_conv_strategy   {} { return {Operating point strategy} }
+proc ase::ui::lbl_conv_steps      {} { return {Steps} }
+proc ase::ui::lbl_conv_step       {} { return {Step} }
+proc ase::ui::lbl_conv_stop       {} { return {Stop} }
+proc ase::ui::lbl_conv_emits      {} { return {Emits:} }
+# ⚠ THE "OFF" TEXT IS A SENTENCE AND NOT A BLANK, because a blank beside a
+# cleared checkbox reads as "nothing happens" when what really happens is that
+# the simulator uses its own strategy -- which on this simulator includes a
+# transient operating point that is ON BY DEFAULT.
+proc ase::ui::lbl_conv_emits_none {} {
+  return {Emits nothing. The simulator uses its own strategy.}
+}
+proc ase::ui::lbl_conv_opstate    {} { return {Saved operating point} }
+# ⚠ THESE TWO STRINGS ARE NAMED BY A REFUSAL CORE ALREADY SHIPS -- "run once
+# with Save operating point ticked, or restore with force". A rename here makes
+# that fix clause point at a control that does not exist.
+proc ase::ui::lbl_conv_save       {} { return {Save operating point} }
+proc ase::ui::lbl_conv_restore    {} { return {Restore operating point} }
+proc ase::ui::lbl_conv_file       {} { return {File} }
+# ⚠ `Seed` AND `Force` ARE THE MODE WORDS THE DECK HALF ALREADY PUTS IN FRONT OF
+# THE USER ("'<mode>' is not a way to restore an operating point. Fix: choose
+# seed or force"), so the form uses them rather than inventing a second
+# vocabulary for one setting. They are jargon, and whether they stay is the
+# USER'S ruling -- issue 1460, `owed.sh add rule`. If they change, that fix
+# clause changes with them.
+proc ase::ui::lbl_conv_seed       {} { return {Seed} }
+proc ase::ui::lbl_conv_force      {} { return {Force} }
+proc ase::ui::lbl_conv_seed_why   {} {
+  return {a starting guess; the run can move away from it, so it cannot change the answer}
+}
+proc ase::ui::lbl_conv_force_why  {} {
+  return {the simulator's own file unchanged; in a transient that is an initial condition, and it does change the answer}
+}
+proc ase::ui::lbl_conv_health     {} { return {Report run health} }
+proc ase::ui::lbl_health_prefix   {} { return {Health:} }
+proc ase::ui::lbl_conv_remedies   {} { return "Remedies…" }
+proc ase::ui::lbl_remedy_title    {} { return {Convergence Remedies} }
+proc ase::ui::lbl_remedy_what     {} { return {Change} }
+proc ase::ui::lbl_remedy_none     {} {
+  return {Nothing to suggest. The last run found its operating point.}
+}
+proc ase::ui::lbl_remedy_nodeck   {} {
+  set door {Simulation > Netlist > Recreate}
+  catch {set door "[ase::ui::lbl_simulation] > [ase::ui::lbl_netlist] >\
+ [ase::ui::lbl_netlist_recreate]"}
+  return "ASE-L has no netlist for this design yet, so it cannot show what the\
+ deck would become. $door."
+}
+proc ase::ui::lbl_remedy_apply    {} { return {Apply} }
+proc ase::ui::lbl_remedy_same     {} { return {This changes nothing in the deck.} }
+proc ase::ui::lbl_remedy_pending  {} { return {The edits open in the Convergence window} }
+proc ase::ui::lbl_remedy_switchon {label} { return "Switch on: $label" }
+proc ase::ui::lbl_remedy_save     {} { return {Save this run's operating point for next time} }
+proc ase::ui::lbl_remedy_seed     {} { return {Seed the next run from the saved operating point} }
+proc ase::ui::lbl_hilite_menu     {} { return {Highlight Non-Converged Nodes} }
+proc ase::ui::lbl_hilite_nolog    {} { return {ase: this session has no run log to read} }
+proc ase::ui::lbl_hilite_none     {} {
+  return {ase: the last run reported no node that failed to converge}
+}
+# ⚠ THE REPORT NAMES WHAT IT COULD **NOT** LIGHT, AND THAT IS THE POINT OF IT.
+# A highlight that lights the nodes it found cannot notice one it dropped -- the
+# defect shape issue 1457 shipped past an end-to-end row. A node that lives
+# inside a subcircuit has no wire on this sheet and a node the netlist does not
+# know is a real disagreement; both are said out loud rather than skipped.
+proc ase::ui::lbl_hilite_lit {names} {
+  return "ase: highlighted [llength $names]\
+ node[expr {[llength $names] == 1 ? {} : {s}}] that did not converge:\
+ [join $names {, }]"
+}
+# What a finished run SAYS -- it lights nothing, so it may not claim to.
+proc ase::ui::lbl_conv_failed_nodes {names} {
+  return "ase: [llength $names] node[expr {[llength $names] == 1 ? {} : {s}}]\
+ did not converge: [join $names {, }]"
+}
+# ⚠ THE PATH IS COMPOSED FROM THE MENU'S OWN CONSTANTS, not typed. A rename of
+# either follows into this sentence, which is the rule issues 1391/1435 already
+# put on the five other composed menu paths in this file.
+proc ase::ui::menu_path_hilite {} {
+  return "Results > [ase::ui::lbl_hilite_menu]"
+}
+proc ase::ui::lbl_conv_door_hint {} {
+  return "[ase::ui::menu_path_hilite] lights them on the schematic."
+}
+proc ase::ui::lbl_hilite_missed {rows} {
+  set out {}
+  foreach r $rows {
+    set n [dict get $r name]
+    set w {}
+    catch {set w [dict get $r why]}
+    if {$w eq {}} { lappend out $n } else { lappend out "$n ($w)" }
+  }
+  return "ase: not on this sheet: [join $out {, }]"
+}
+proc ase::ui::lbl_hilite_deep  {} { return {inside a subcircuit} }
+proc ase::ui::lbl_hilite_absent {} { return {this netlist has no such node} }
+
+# --- THE READERS, ALL TOTAL -------------------------------------------------
+
+# THE ANALYSIS TYPE WHOSE FORM CARRIES THE LADDER SENTENCE.
+#
+# ⚠ THIS IS THE ONE SIMULATOR WORD IN THIS BLOCK, AND IT IS NOT A SECOND COPY
+# -- it is the SAME literal `ase::opstate_refusals` already tests for when it
+# refuses a bench with no operating point to save. There is no `analysis_role`
+# hook to ask, so rather than inventing one this proc names the same string in
+# one place and a suite row DRIVES core's refusal with a bench whose only row is
+# of this type: if the two ever disagree the row reds, which a second hardcoded
+# literal could not do.
+proc ase::ui::conv_op_type {} { return {op} }
+
+# THIS SESSION'S RUN LOG, as text, or `{}`. Never raises: the log is an
+# artifact on disk and every caller below is a repaint.
+#
+# ⚠ `::open` AND `::close`, FULLY QUALIFIED, AND IT IS NOT STYLE. This namespace
+# DEFINES `ase::ui::open` and `ase::ui::close` (the session window's own opener
+# and closer), so a bare `open $p r` inside any proc in this file resolves to
+# the WINDOW opener, raises on its argument count, and -- inside the `catch`
+# this reader needs -- returns an empty log with nothing said. Measured: every
+# reader below silently answered `{}` until this was qualified, and every row
+# that depended on one went green by reading an empty string. Any file I/O added
+# to this file must be qualified the same way.
+proc ase::ui::conv_logtext {key} {
+  set txt {}
+  catch {
+    set st [ase::session_state $key]
+    set h [ase::backend_hook [ase::state_get $st simulator ngspice] log_file]
+    set p [$h $st]
+    set f [::open $p r]
+    set txt [::read $f]
+    ::close $f
+  }
+  return $txt
+}
+
+# THE NETLIST ARTIFACT'S TEXT, or `{}` -- the same path `ase::ui::view_netlist`
+# shows and `ase::run_deck` reads. ⚠ IT NEVER NETLISTS: a preview is a read, and
+# `ase::netlist` deletes and rebuilds the artifact (the netlist-facts slot's own
+# rule, and row BN2 of test_ase_core).
+proc ase::ui::conv_netlist_text {key} {
+  set txt {}
+  catch {
+    set st [ase::session_state $key]
+    set p [file join [ase::rundir $st] [dict get $st design cell].spice]
+    set f [::open $p r]
+    set txt [::read $f]
+    ::close $f
+  }
+  return $txt
+}
+
+# The simulator this session will run, for the readers below.
+proc ase::ui::conv_sim {key} {
+  set s ngspice
+  catch {set s [ase::state_get [ase::session_state $key] simulator ngspice]}
+  if {$s eq {}} { set s ngspice }
+  return $s
+}
+
+# --- §10a: THE NODES THAT DID NOT CONVERGE, ON THE CANVAS -------------------
+
+# THE STARRED NODE NAMES OF THE LAST RUN, as the simulator spelled them.
+#
+# ⚠ NODES ONLY. `ase::ncdump_failing`'s `kinds` argument defaults to `node`
+# and this passes it explicitly, because the table is NOT all nodes: a failed
+# operating point prints `v1#branch` -- a BRANCH CURRENT -- in a table headed
+# "Last Node Voltages", and there is no wire on a schematic to light for a
+# current. Issue 1459 put the `kind` key on the row for exactly this caller.
+proc ase::ui::conv_failing {key} {
+  set out {}
+  catch {set out [ase::ncdump_failing [ase::ui::conv_sim $key] \
+                    [ase::ui::conv_logtext $key] node]}
+  return $out
+}
+
+# ONE STARRED NAME, RESOLVED AGAINST THE NETLIST -- a dict
+#
+#     name   as the simulator printed it
+#     real   the netlist's own spelling, or {} when there is none
+#     token  what to hand the canvas, or {} when nothing can be
+#     why    why not, for a row with no token
+#
+# ⚠ A HIERARCHY-QUALIFIED NAME GETS NO TOKEN, AND THAT IS A FACT ABOUT THE
+# CANVAS RATHER THAN A LIMIT OF THE MAP. `x1.nn` names a node INSIDE a
+# subcircuit; `hilight_netname` looks the name up in THIS sheet's node hash
+# (hilight.c, bus_node_hash_lookup) and there is no such wire to find. The row
+# is reported by name with `inside a subcircuit` on it rather than dropped --
+# see `lbl_hilite_missed`.
+#
+# ⚠ AND A COLD NETLIST IS NOT A REFUSAL. With no map to ask, the name the
+# simulator printed IS the best spelling anyone has, so it is offered as the
+# token and the canvas gets the last word. That is why `real` and `token` are
+# separate keys.
+proc ase::ui::conv_resolve_one {map name cs} {
+  set row [dict create name $name real {} token {} why {}]
+  if {[llength [split $name .]] > 1} {
+    dict set row why [ase::ui::lbl_hilite_deep]
+    if {$map ne {}} {
+      catch {
+        set r [ase::netlist_map_resolve $map node $name $cs]
+        if {[dict get $r real] ne {}} { dict set row real [dict get $r real] }
+      }
+    }
+    return $row
+  }
+  if {$map eq {}} {
+    dict set row token $name
+    return $row
+  }
+  set r {}
+  if {[catch {ase::netlist_map_resolve $map node $name $cs} r]} {
+    dict set row token $name
+    return $row
+  }
+  switch -exact -- [dict get $r status] {
+    present {
+      dict set row real [dict get $r real]
+      dict set row token [dict get $r real]
+    }
+    absent {
+      dict set row why [ase::ui::lbl_hilite_absent]
+    }
+    default {
+      ## `unknown` is a REFUSAL TO JUDGE, not a weaker `absent`, so the canvas
+      ## still gets the name: the map cannot prove it is missing.
+      dict set row token $name
+    }
+  }
+  return $row
+}
+
+# EVERY STARRED NODE OF THE LAST RUN, RESOLVED. Order is the simulator's.
+proc ase::ui::conv_resolve {key {names {}}} {
+  if {![llength $names]} { set names [ase::ui::conv_failing $key] }
+  set map {}
+  set cs 0
+  catch {
+    set st [ase::session_state $key]
+    set fx [ase::netlist_facts_cached $st]
+    if {[llength $fx] && [dict exists $fx nodes]} {
+      set map [dict create scopes [dict get $fx nodes] includes {}]
+    }
+    set mode [ase::sim_casemode_requested [ase::state_get $st simulator ngspice]]
+    set cs [expr {$mode eq {distinguish}}]
+  }
+  set out {}
+  foreach n $names { lappend out [ase::ui::conv_resolve_one $map $n $cs] }
+  return $out
+}
+
+# LIGHT THEM. -> {lit {<token> ...} missed {<row> ...}}
+#
+# ⚠ IT ROUTES TO THE DESIGN EXACTLY AS `ase::ui::do_run` DOES (issue 0643): the
+# question is whether the design is ON THIS WINDOW'S STACK, not whether it is
+# the level the user is standing on, and making it current for the duration is
+# `ase::with_design_current`'s job. Highlighting the wrong sheet would light
+# nothing and say it lit nothing, which is the worst of both.
+#
+# ⚠ AND `hilight_netname` RETURNS 1/0 FOR FOUND/NOT FOUND, which is what makes
+# this honest: a name the map called `present` that the canvas cannot find is
+# reported as missed rather than counted as lit.
+proc ase::ui::conv_highlight {key} {
+  set res [dict create lit {} missed {}]
+  set rows [ase::ui::conv_resolve $key]
+  if {![llength $rows]} { return $res }
+  set dpath [ase::ui::design_path $key]
+  if {$dpath ne {} && [ase::stack_level $dpath] < 0} {
+    catch {ase::ui::design_window $key ifhidden}
+    catch {update}
+  }
+  set body {}
+  set lit {}
+  set missed {}
+  foreach r $rows {
+    if {[dict get $r token] eq {}} { lappend missed $r ; continue }
+    lappend body $r
+  }
+  set act [list]
+  foreach r $body {
+    set tok [dict get $r token]
+    set ok 0
+    catch {set ok [xschem hilight_netname $tok]}
+    if {$ok eq {1}} {
+      lappend lit $tok
+    } else {
+      dict set r why [ase::ui::lbl_hilite_absent]
+      lappend missed $r
+    }
+  }
+  dict set res lit $lit
+  dict set res missed $missed
+  return $res
+}
+
+# `Results > Highlight Non-Converged Nodes`. Does the work on the DESIGN's own
+# level and says both halves of what happened.
+proc ase::ui::conv_highlight_door {key} {
+  if {[ase::ui::conv_logtext $key] eq {}} {
+    catch {::ase::echo [ase::ui::lbl_hilite_nolog]}
+    return {}
+  }
+  set names [ase::ui::conv_failing $key]
+  if {![llength $names]} {
+    catch {::ase::echo [ase::ui::lbl_hilite_none]}
+    return {}
+  }
+  set dpath [ase::ui::design_path $key]
+  set res {}
+  if {$dpath eq {}} {
+    set res [ase::ui::conv_highlight $key]
+  } elseif {[catch {ase::with_design_current $dpath \
+                     [list ase::ui::conv_highlight $key]} res]} {
+    catch {::ase::echo $res error}
+    return {}
+  }
+  if {[llength [dict get $res lit]]} {
+    catch {::ase::echo [ase::ui::lbl_hilite_lit [dict get $res lit]]}
+  }
+  if {[llength [dict get $res missed]]} {
+    catch {::ase::echo [ase::ui::lbl_hilite_missed [dict get $res missed]]}
+  }
+  return $res
+}
+
+# --- §10c: THE RUN-HEALTH STRIP ---------------------------------------------
+
+# ONE LINE, NOT A PANE (PLAN.md §10c). `{}` when the run reported no counters --
+# which is every run that did not ask for them, so the segment is empty on every
+# bench that never opened this dialog.
+proc ase::ui::health_text {sim text} {
+  set pairs {}
+  catch {set pairs [ase::runhealth_strip $sim $text]}
+  if {![llength $pairs]} { return {} }
+  set bits {}
+  foreach p $pairs { lappend bits "[lindex $p 1] [lindex $p 0]" }
+  return "[ase::ui::lbl_health_prefix] [join $bits {, }]"
+}
+
+proc ase::ui::health_refresh {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set top [dict get $wins $key]
+  if {![winfo exists $top.status.health]} { return {} }
+  set t [ase::ui::health_text [ase::ui::conv_sim $key] [ase::ui::conv_logtext $key]]
+  catch {$top.status.health configure -text $t}
+  return $t
+}
+
+# --- §10b: THE LADDER PANE --------------------------------------------------
+
+# THE STRATEGY THE LIVE WIDGETS DESCRIBE -- `{}` when the master box is clear,
+# which is what keeps the key out of the `.state` file altogether.
+#
+# ⚠ EVERY RUNG IS WRITTEN, INCLUDING THE ONES THAT ARE ON. `ase::opstrategy_rung`
+# treats an ABSENT rung as ON, so a strategy that named only what it switched
+# off would read identically to one that named nothing -- and the emitted line
+# would be right by accident. A dialog that has been through OK says what it
+# means about all four.
+proc ase::ui::conv_form_strategy {key} {
+  variable dlg
+  set w [ase::ui::conv_win $key]
+  if {$w eq {}} { return {} }
+  if {![info exists dlg($key,conv,armed)] || !$dlg($key,conv,armed)} { return {} }
+  set s [dict create]
+  foreach r [ase::ladder_rungs [ase::ui::conv_sim $key]] {
+    set id [dict get $r id]
+    set on 1
+    if {[info exists dlg($key,conv,rung,$id)]} {
+      set on [expr {$dlg($key,conv,rung,$id) ? 1 : 0}]
+    }
+    dict set s $id $on
+    set sk {}
+    catch {set sk [dict get $r steps]}
+    if {$sk ne {} && [winfo exists $w.rungs.s$id]} {
+      set v [string trim [$w.rungs.s$id get]]
+      if {$v ne {}} { dict set s $sk $v }
+    }
+    set tk {}
+    catch {set tk [dict get $r times]}
+    if {[llength $tk] == 2} {
+      foreach {wsfx kk} [list t [lindex $tk 0] p [lindex $tk 1]] {
+        if {![winfo exists $w.rungs.$wsfx$id]} { continue }
+        set v [string trim [$w.rungs.$wsfx$id get]]
+        if {$v ne {}} { dict set s $kk $v }
+      }
+    }
+  }
+  return $s
+}
+
+# THE SAVED-OPERATING-POINT BLOCK THE LIVE WIDGETS DESCRIBE, or `{}`.
+#
+# ⚠ `{}` ONLY WHEN NEITHER BOX IS TICKED **AND** NO FILE IS NAMED. A user who
+# typed a path and then cleared both boxes has said something, and losing it
+# silently on OK is the shape this batch keeps refusing.
+proc ase::ui::conv_form_opstate {key} {
+  variable dlg
+  set w [ase::ui::conv_win $key]
+  if {$w eq {}} { return {} }
+  set sv [expr {[info exists dlg($key,conv,save)] && $dlg($key,conv,save) ? 1 : 0}]
+  set rs [expr {[info exists dlg($key,conv,restore)] && $dlg($key,conv,restore) ? 1 : 0}]
+  set fl {}
+  if {[winfo exists $w.file]} { set fl [string trim [$w.file get]] }
+  set md seed
+  if {[info exists dlg($key,conv,mode)] && $dlg($key,conv,mode) ne {}} {
+    set md $dlg($key,conv,mode)
+  }
+  if {!$sv && !$rs && $fl eq {}} { return {} }
+  return [dict create save $sv restore $rs file $fl mode $md]
+}
+
+# THE SESSION STATE **AS OK WOULD WRITE IT**. One body, three callers: the
+# `Emits:` line, the refusal note, and OK itself -- and the remedy assistant's
+# `pending` row is a fourth. Two procs each deciding what the form means is how
+# a preview comes to disagree with the deck it previews.
+proc ase::ui::conv_form_state {key} {
+  variable dlg
+  set st [ase::session_state $key]
+  ## ⚠ WITH NO FORM STANDING THERE IS NO OK, SO THERE IS NOTHING TO OVERLAY.
+  ## Without this the proc read three absent widgets as three cleared controls
+  ## and handed back a state with the strategy, the saved operating point and
+  ## the health line all WIPED -- a reader that destroys what it was asked to
+  ## describe. Row GT6b is the one that says so: it renders the deck from this
+  ## proc after OK has closed the dialog.
+  if {[ase::ui::conv_win $key] eq {}} { return $st }
+  set s [ase::ui::conv_form_strategy $key]
+  if {[llength $s]} { dict set st opstrategy $s } else { dict set st opstrategy {} }
+  set o [ase::ui::conv_form_opstate $key]
+  if {[llength $o]} { dict set st opstate $o } else { dict set st opstate {} }
+  if {[info exists dlg($key,conv,health)] && $dlg($key,conv,health)} {
+    dict set st runhealth 1
+  } else {
+    dict set st runhealth {}
+  }
+  return $st
+}
+
+# Both evaluators, in one list, in the order the run meets them.
+proc ase::ui::conv_refusals {key st} {
+  set sim [ase::ui::conv_sim $key]
+  set out {}
+  catch { foreach r [ase::opstrategy_refusals $sim $st] { lappend out $r } }
+  catch { foreach r [ase::opstate_refusals   $sim $st] { lappend out $r } }
+  return $out
+}
+
+# ⚠ RENDERED THROUGH `ase::precheck_banner_text`, GLYPH AND `Fix:` CLAUSE
+# INCLUDED, so this dialog speaks the same vocabulary as the Choose Analyses
+# form, the Ports table and the gate. Eleven refusal sentences already exist in
+# core; not one of them is re-spelled here.
+proc ase::ui::conv_note {key {st {}}} {
+  set w [ase::ui::conv_win $key]
+  if {$w eq {} || ![winfo exists $w.note]} { return {} }
+  if {$st eq {}} { set st [ase::ui::conv_form_state $key] }
+  set lines [ase::ui::conv_refusals $key $st]
+  set txt {}
+  if {[llength $lines]} {
+    set worst [ase::precheck_worst [dict create conv $lines]]
+    catch {set txt [ase::precheck_banner_text \
+                      [list state $worst lines $lines]]}
+  }
+  catch {$w.note configure -text $txt}
+  return $txt
+}
+
+# The `optran` sentence beneath the pane (PLAN.md §10b's own `emits:` line).
+proc ase::ui::conv_emits_text {key {st {}}} {
+  if {$st eq {}} { set st [ase::ui::conv_form_state $key] }
+  set lines {}
+  catch {set lines [ase::optran_line [ase::ui::conv_sim $key] $st]}
+  if {![llength $lines]} { return [ase::ui::lbl_conv_emits_none] }
+  return "[ase::ui::lbl_conv_emits] [join $lines { }]"
+}
+
+proc ase::ui::conv_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].conv
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+# Repaint everything that follows from the controls: the enable/disable of the
+# rung fields, the `Emits:` line and the refusal note. ONE entry point, called
+# from every control's `-command` and from the build.
+proc ase::ui::conv_sync {key} {
+  variable dlg
+  set w [ase::ui::conv_win $key]
+  if {$w eq {}} { return {} }
+  set armed [expr {[info exists dlg($key,conv,armed)] && $dlg($key,conv,armed)}]
+  foreach r [ase::ladder_rungs [ase::ui::conv_sim $key]] {
+    set id [dict get $r id]
+    set on [expr {[info exists dlg($key,conv,rung,$id)] ? $dlg($key,conv,rung,$id) : 1}]
+    catch {$w.rungs.$id configure -state [expr {$armed ? {normal} : {disabled}}]}
+    foreach sfx {s t p} {
+      if {![winfo exists $w.rungs.$sfx$id]} { continue }
+      catch {$w.rungs.$sfx$id configure \
+               -state [expr {$armed && $on ? {normal} : {disabled}}]}
+    }
+  }
+  set anyop [expr {
+    ([info exists dlg($key,conv,save)] && $dlg($key,conv,save)) ||
+    ([info exists dlg($key,conv,restore)] && $dlg($key,conv,restore))}]
+  foreach wd {mseed mforce} {
+    catch {$w.$wd configure -state [expr {$anyop ? {normal} : {disabled}}]}
+  }
+  set st [ase::ui::conv_form_state $key]
+  catch {$w.emits configure -text [ase::ui::conv_emits_text $key $st]}
+  ase::ui::conv_note $key $st
+  return $st
+}
+
+# `Simulation > Convergence…`.
+proc ase::ui::conv_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set sim [ase::ui::conv_sim $key]
+  set rungs [ase::ladder_rungs $sim]
+  set st [ase::session_state $key]
+  ## ⚠ A STANDING REMEDY WINDOW DIES WITH THIS REBUILD, and it is Stage 9a's
+  ## rule reached from the other side: the assistant caches a LIST OF STATES
+  ## built from this form, so one left open across a rebuild would show -- and
+  ## Apply -- a deck the form no longer describes. `conv_dialog` is the one door
+  ## every rebuild comes through.
+  catch {ase::ui::remedy_cancel $key}
+  set w [ase::ui::dialog_frame [dict get $wins $key].conv [ase::ui::lbl_conv_title]]
+  ## --- the ladder ---------------------------------------------------------
+  set dlg($key,conv,armed) [ase::opstrategy_armed $st]
+  checkbutton $w.armed -text [ase::ui::lbl_conv_strategy] \
+    -variable ::ase::ui::dlg($key,conv,armed) \
+    -command [list ase::ui::conv_sync $key]
+  grid $w.armed -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {6 2}
+  labelframe $w.rungs -text {}
+  grid $w.rungs -row 1 -column 0 -columnspan 2 -sticky we -padx 16 -pady 2
+  grid columnconfigure $w.rungs 3 -weight 1
+  set r 0
+  foreach rg $rungs {
+    set id [dict get $rg id]
+    ## ⚠ THE LABEL IS THE RUNG'S OWN (⚖ R9, minted by the adapter in issue
+    ## 1459). A surface that typed "gmin stepping" here would be the second
+    ## copy, and the second copy is the one that drifts.
+    set dlg($key,conv,rung,$id) [ase::opstrategy_rung $st $id]
+    checkbutton $w.rungs.$id -text [dict get $rg label] \
+      -variable ::ase::ui::dlg($key,conv,rung,$id) \
+      -command [list ase::ui::conv_sync $key]
+    grid $w.rungs.$id -row $r -column 0 -sticky w -padx {6 8} -pady 1
+    set c 1
+    set sk {}
+    catch {set sk [dict get $rg steps]}
+    if {$sk ne {}} {
+      label $w.rungs.ls$id -text [ase::ui::lbl_conv_steps] -font AseLabelFont
+      entry $w.rungs.s$id -width 6 -font AseEntryFont
+      $w.rungs.s$id insert 0 [ase::opstrategy_get $st $sk]
+      ## ⚠ `<KeyRelease>`, NOT ONLY `<FocusOut>`. The `Emits:` line and the
+      ## refusal note below it are this dialog's promise about the deck; a
+      ## number typed and not tabbed away from left BOTH of them describing the
+      ## PREVIOUS value while OK wrote the new one -- the window disagreeing
+      ## with the deck, which is the one thing this batch forbids. Row GW9.
+      bind $w.rungs.s$id <KeyRelease> [list ase::ui::conv_sync $key]
+      grid $w.rungs.ls$id -row $r -column $c -sticky e -padx {6 2} -pady 1
+      grid $w.rungs.s$id  -row $r -column [expr {$c + 1}] -sticky w -pady 1
+    }
+    set tk {}
+    catch {set tk [dict get $rg times]}
+    if {[llength $tk] == 2} {
+      foreach {sfx lbl kk} [list t [ase::ui::lbl_conv_step]  [lindex $tk 0] \
+                                 p [ase::ui::lbl_conv_stop]  [lindex $tk 1]] {
+        label $w.rungs.l$sfx$id -text $lbl -font AseLabelFont
+        entry $w.rungs.$sfx$id -width 8 -font AseEntryFont
+        $w.rungs.$sfx$id insert 0 [ase::opstrategy_get $st $kk]
+        bind $w.rungs.$sfx$id <KeyRelease> [list ase::ui::conv_sync $key]
+        grid $w.rungs.l$sfx$id -row $r -column $c -sticky e -padx {6 2} -pady 1
+        grid $w.rungs.$sfx$id  -row $r -column [expr {$c + 1}] -sticky w -pady 1
+        incr c 2
+      }
+    }
+    incr r
+    ## The rung's own caution, where it has one -- the transient rung's
+    ## "ON by default in this simulator ..." is the adapter's string, not this
+    ## file's.
+    set nt {}
+    catch {set nt [dict get $rg note]}
+    if {$nt ne {}} {
+      label $w.rungs.n$id -text $nt -anchor w -justify left -wraplength 520
+      grid $w.rungs.n$id -row $r -column 0 -columnspan 6 -sticky w \
+        -padx {24 6} -pady {0 3}
+      incr r
+    }
+  }
+  ## --- the sentence beneath the pane --------------------------------------
+  label $w.emits -text {} -anchor w -justify left -wraplength 560 -font AseMonoFont
+  grid $w.emits -row 2 -column 0 -columnspan 2 -sticky w -padx 16 -pady {2 6}
+  ## --- §10c: the saved operating point ------------------------------------
+  labelframe $w.ops -text [ase::ui::lbl_conv_opstate]
+  grid $w.ops -row 3 -column 0 -columnspan 2 -sticky we -padx 8 -pady 2
+  grid columnconfigure $w.ops 1 -weight 1
+  set o [ase::opstate $st]
+  set dlg($key,conv,save)    [expr {[ase::opstate_get $st save 0] eq {1} ? 1 : 0}]
+  set dlg($key,conv,restore) [expr {[ase::opstate_get $st restore 0] eq {1} ? 1 : 0}]
+  set dlg($key,conv,mode)    [ase::opstate_get $st mode seed]
+  checkbutton $w.save -text [ase::ui::lbl_conv_save] \
+    -variable ::ase::ui::dlg($key,conv,save) \
+    -command [list ase::ui::conv_sync $key]
+  checkbutton $w.restore -text [ase::ui::lbl_conv_restore] \
+    -variable ::ase::ui::dlg($key,conv,restore) \
+    -command [list ase::ui::conv_sync $key]
+  grid $w.save    -in $w.ops -row 0 -column 0 -sticky w -padx 6 -pady 1
+  grid $w.restore -in $w.ops -row 0 -column 1 -sticky w -padx 6 -pady 1
+  label $w.lfile -text [ase::ui::lbl_conv_file] -font AseLabelFont -anchor w
+  entry $w.file -width 30 -font AseEntryFont
+  $w.file insert 0 [ase::opstate_get $st file {}]
+  bind $w.file <FocusOut> +[list ase::ui::conv_sync $key]
+  bind $w.file <KeyRelease> [list ase::ui::conv_sync $key]
+  grid $w.lfile -in $w.ops -row 1 -column 0 -sticky w -padx {6 2} -pady 1
+  grid $w.file  -in $w.ops -row 1 -column 1 -sticky we -padx {0 6} -pady 1
+  radiobutton $w.mseed -text [ase::ui::lbl_conv_seed] -value seed \
+    -variable ::ase::ui::dlg($key,conv,mode) -command [list ase::ui::conv_sync $key]
+  radiobutton $w.mforce -text [ase::ui::lbl_conv_force] -value force \
+    -variable ::ase::ui::dlg($key,conv,mode) -command [list ase::ui::conv_sync $key]
+  label $w.seedwhy  -text [ase::ui::lbl_conv_seed_why]  -anchor w -wraplength 420
+  label $w.forcewhy -text [ase::ui::lbl_conv_force_why] -anchor w -wraplength 420
+  grid $w.mseed    -in $w.ops -row 2 -column 0 -sticky w -padx 6
+  grid $w.seedwhy  -in $w.ops -row 2 -column 1 -sticky w -padx 6
+  grid $w.mforce   -in $w.ops -row 3 -column 0 -sticky w -padx 6
+  grid $w.forcewhy -in $w.ops -row 3 -column 1 -sticky w -padx 6
+  ## --- §10c: the health line ----------------------------------------------
+  set dlg($key,conv,health) [expr {[ase::runhealth_armed $st] ? 1 : 0}]
+  checkbutton $w.health -text [ase::ui::lbl_conv_health] \
+    -variable ::ase::ui::dlg($key,conv,health) \
+    -command [list ase::ui::conv_sync $key]
+  grid $w.health -row 4 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  ## THE NOTE ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the button bar does
+  ## not jump as a refusal appears and goes -- issue 1435's rule.
+  label $w.note -text {} -anchor w -justify left -wraplength 560
+  grid $w.note -row 5 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  button $w.remedybtn -text [ase::ui::lbl_conv_remedies] \
+    -command [list ase::ui::remedy_dialog $key]
+  grid $w.remedybtn -row 6 -column 1 -sticky e -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 7 [list ase::ui::conv_ok $key] \
+    [list ase::ui::conv_cancel $key]
+  ase::ui::conv_sync $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# ⚠ OK IS A COMMIT DOOR. `ase::backend::ngspice::render_deck` carries a THIRD
+# refusal tier for exactly these two evaluators (issue 1459), so a strategy this
+# dialog let through would come back as a raise at run time with the run already
+# started -- and the user would have to guess which of the two windows they were
+# last in. The sentence stays on screen and the dialog stays up instead. Only
+# `blocked` and `fatal` stop it; a `caution` is advice.
+proc ase::ui::conv_ok {key} {
+  set w [ase::ui::conv_win $key]
+  if {$w eq {}} { return }
+  set st [ase::ui::conv_form_state $key]
+  foreach l [ase::ui::conv_refusals $key $st] {
+    if {[lsearch -exact {blocked fatal} [lindex $l 1]] < 0} { continue }
+    catch {::ase::echo "ase: [lindex $l 2]" error}
+    ase::ui::conv_note $key $st
+    return
+  }
+  ase::session_update $key $st
+  ase::ui::populate $key
+  ase::ui::conv_cancel $key
+}
+
+proc ase::ui::conv_cancel {key} {
+  ## ⚠ AND CLOSING THE FORM CLOSES THE ASSISTANT. The assistant's first row IS
+  ## this form's live edits; with the form gone that row describes widgets that
+  ## no longer exist, and Apply would write a state nobody is looking at.
+  catch {ase::ui::remedy_cancel $key}
+  set w [ase::ui::conv_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+}
+
+# --- §10b: THE REMEDY ASSISTANT ---------------------------------------------
+
+# WHAT THIS RUN'S LADDER DID, per rung id -> state. `{}` when there is no log or
+# the backend declares no ladder.
+proc ase::ui::conv_rung_states {key} {
+  set out [dict create]
+  set p {}
+  catch {set p [ase::ladder_parse [ase::ui::conv_sim $key] [ase::ui::conv_logtext $key]]}
+  if {![llength $p] || ![dict exists $p rungs]} { return $out }
+  foreach r [dict get $p rungs] {
+    catch {dict set out [dict get $r id] [dict get $r state]}
+  }
+  return $out
+}
+
+proc ase::ui::conv_verdict {key} {
+  set v unknown
+  catch {
+    set p [ase::ladder_parse [ase::ui::conv_sim $key] [ase::ui::conv_logtext $key]]
+    if {[llength $p] && [dict exists $p verdict]} { set v [dict get $p verdict] }
+  }
+  return $v
+}
+
+# THE REMEDIES THIS BENCH AND THIS LOG JUSTIFY -- a list of dicts
+# `{id <id> label <sentence> state <the state it would write>}`, in the order
+# they are offered.
+#
+# ⚠ EVERY REMEDY IS A STATE EDIT AND NOTHING ELSE, so `Apply` is
+# `ase::session_update` and the preview is two `render_deck` calls. There is no
+# second path by which a remedy can change the deck, which is what makes the
+# diff a promise rather than an illustration.
+#
+# ⚠ A RUNG IS OFFERED ONLY WHEN THE RUN FAILED **AND** THE LOG SAYS THAT RUNG
+# NEVER RAN. Offering "switch on gmin stepping" after a run where gmin stepping
+# ran and failed would be a control that changes nothing -- this batch's
+# most-met defect, one layer up. Measured (evidence/ladder-streams.md §4): the
+# transient rung rescued every deck built to fail, which is why it is in the
+# list at all and why it is offered last, after the cheaper rungs.
+proc ase::ui::remedy_list {key} {
+  set out {}
+  set sim [ase::ui::conv_sim $key]
+  set st [ase::session_state $key]
+  ## 0 -- THE EDITS STANDING IN THE CONVERGENCE WINDOW. Not a suggestion: it is
+  ## the answer to "what would OK do to my deck", which is the question §10b
+  ## asks the diff preview to answer.
+  if {[ase::ui::conv_win $key] ne {}} {
+    lappend out [dict create id pending label [ase::ui::lbl_remedy_pending] \
+                   state [ase::ui::conv_form_state $key]]
+  }
+  set states [ase::ui::conv_rung_states $key]
+  set verdict [ase::ui::conv_verdict $key]
+  if {$verdict eq {failed}} {
+    foreach rg [ase::ladder_rungs $sim] {
+      set id [dict get $rg id]
+      if {![dict exists $states $id]} { continue }
+      if {[lsearch -exact {notrun off} [dict get $states $id]] < 0} { continue }
+      if {[ase::opstrategy_armed $st] && [ase::opstrategy_rung $st $id]} { continue }
+      set s [ase::opstrategy $st]
+      foreach o [ase::ladder_rungs $sim] {
+        set oid [dict get $o id]
+        if {![dict exists $s $oid]} { dict set s $oid [ase::opstrategy_rung $st $oid] }
+      }
+      dict set s $id 1
+      set n $st
+      dict set n opstrategy $s
+      lappend out [dict create id rung:$id \
+                     label [ase::ui::lbl_remedy_switchon [dict get $rg label]] \
+                     state $n]
+    }
+  }
+  ## The two operating-point remedies. `save` needs somewhere to put it, and the
+  ## file name is the user's, so it is offered only where one is already named
+  ## -- a remedy that opened a file dialog would not be a diff.
+  set path {}
+  catch {set path [ase::opstate_path $st]}
+  if {$path ne {} && [ase::opstate_get $st save 0] ne {1}} {
+    set n $st
+    dict set n opstate [dict merge [ase::opstate $st] [dict create save 1]]
+    lappend out [dict create id opsave label [ase::ui::lbl_remedy_save] state $n]
+  }
+  if {$path ne {} && [file readable $path] && [ase::opstate_get $st restore 0] ne {1}} {
+    set n $st
+    dict set n opstate [dict merge [ase::opstate $st] \
+                          [dict create restore 1 mode seed]]
+    lappend out [dict create id opseed label [ase::ui::lbl_remedy_seed] state $n]
+  }
+  return $out
+}
+
+# THE DECK A STATE WOULD RENDER, or the refusal it would raise instead.
+#
+# ⚠ A RAISE IS AN ANSWER AND IS SHOWN AS ONE. `render_deck`'s third tier
+# refuses BEFORE a single line is built (issue 1424/1459), so a remedy that
+# would be refused has no deck -- and showing the refusal in the pane where the
+# deck would be is the truthful preview of pressing Apply.
+proc ase::ui::conv_deck {key st netlist} {
+  ## ⚠ THE RENDERER COMES FROM THE REGISTRY, NEVER BY NAME (D34/D36). A preview
+  ## that spelled one backend's proc would show an ngspice deck for whatever
+  ## simulator the bench is actually bound to -- which is the one thing a diff
+  ## must not do, since its whole claim is that this is the deck that will run.
+  set h {}
+  if {[catch {ase::backend_hook [ase::ui::conv_sim $key] render_deck} h]} {
+    return $h
+  }
+  set d {}
+  catch {$h $st $netlist} d
+  return $d
+}
+
+# A LINE DIFF OF TWO DECKS -- `{  <line>}` unchanged, `{- <line>}` removed,
+# `{+ <line>}` added. Longest-common-subsequence, because a deck is mostly
+# identical with a handful of lines moved: a positional compare would report
+# every line after an insertion as changed, and the one thing this pane exists
+# to show is WHICH lines the remedy adds and where.
+proc ase::ui::deck_diff {a b} {
+  set A [split [string trimright $a "\n"] "\n"]
+  set B [split [string trimright $b "\n"] "\n"]
+  set na [llength $A] ; set nb [llength $B]
+  ## the LCS table, built bottom-up; decks are tens of lines, so this is cheap
+  ## and exact and needs no heuristic.
+  for {set i $na} {$i >= 0} {incr i -1} {
+    for {set j $nb} {$j >= 0} {incr j -1} {
+      if {$i == $na || $j == $nb} { set L($i,$j) 0 ; continue }
+      if {[lindex $A $i] eq [lindex $B $j]} {
+        set L($i,$j) [expr {$L([expr {$i+1}],[expr {$j+1}]) + 1}]
+      } elseif {$L([expr {$i+1}],$j) >= $L($i,[expr {$j+1}])} {
+        set L($i,$j) $L([expr {$i+1}],$j)
+      } else {
+        set L($i,$j) $L($i,[expr {$j+1}])
+      }
+    }
+  }
+  set out {}
+  set i 0 ; set j 0
+  while {$i < $na && $j < $nb} {
+    if {[lindex $A $i] eq [lindex $B $j]} {
+      lappend out "  [lindex $A $i]" ; incr i ; incr j
+    } elseif {$L([expr {$i+1}],$j) >= $L($i,[expr {$j+1}])} {
+      lappend out "- [lindex $A $i]" ; incr i
+    } else {
+      lappend out "+ [lindex $B $j]" ; incr j
+    }
+  }
+  while {$i < $na} { lappend out "- [lindex $A $i]" ; incr i }
+  while {$j < $nb} { lappend out "+ [lindex $B $j]" ; incr j }
+  return $out
+}
+
+# Only the lines that moved, with one line of context either side -- a 60-line
+# deck whose remedy adds one card is 60 lines of agreement and one line of
+# news, and a pane that shows all 60 hides the one.
+proc ase::ui::deck_diff_brief {lines {ctx 1}} {
+  set keep [dict create]
+  set n [llength $lines]
+  for {set i 0} {$i < $n} {incr i} {
+    if {[string index [lindex $lines $i] 0] eq { }} { continue }
+    for {set k [expr {$i - $ctx}]} {$k <= $i + $ctx} {incr k} {
+      if {$k >= 0 && $k < $n} { dict set keep $k 1 }
+    }
+  }
+  set out {}
+  set last -2
+  foreach i [lsort -integer [dict keys $keep]] {
+    if {$i > $last + 1} { lappend out {   ...} }
+    lappend out [lindex $lines $i]
+    set last $i
+  }
+  return $out
+}
+
+proc ase::ui::remedy_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].remedy
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::remedy_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].remedy [ase::ui::lbl_remedy_title]]
+  set dlg($key,remedy) [ase::ui::remedy_list $key]
+  set dlg($key,remedy,netlist) [ase::ui::conv_netlist_text $key]
+  set n [llength $dlg($key,remedy)]
+  if {$n < 1} { set n 1 }
+  if {$n > 6} { set n 6 }
+  ttk::treeview $w.tv -columns {what} -show headings -height $n \
+    -selectmode browse -style Ase.Treeview
+  $w.tv heading what -text [ase::ui::lbl_remedy_what]
+  $w.tv column what -width [ase::ui::colw 44 [ase::ui::lbl_remedy_what]] \
+    -minwidth [ase::ui::colw 0 [ase::ui::lbl_remedy_what]] -anchor w -stretch 1
+  bind $w.tv <<TreeviewSelect>> [list ase::ui::remedy_pick $key]
+  grid $w.tv -row 0 -column 0 -columnspan 2 -sticky we -padx 8 -pady {8 2}
+  text $w.diff -height 14 -width 78 -wrap none -font AseMonoFont
+  grid $w.diff -row 1 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady 2
+  grid rowconfigure $w 1 -weight 1
+  label $w.note -text {} -anchor w -justify left -wraplength 560
+  grid $w.note -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  frame $w.btns
+  button $w.btns.proceed -text [ase::ui::lbl_remedy_apply] \
+    -command [list ase::ui::remedy_apply $key]
+  button $w.btns.cancel -text Cancel -command [list ase::ui::remedy_cancel $key]
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.cancel -side right -padx 5
+  grid $w.btns -row 3 -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+  ase::ui::bind_dialog_esc $w [list ase::ui::remedy_cancel $key]
+  set i 0
+  foreach r $dlg($key,remedy) {
+    $w.tv insert {} end -id r$i -values [list [dict get $r label]]
+    incr i
+  }
+  if {[llength $dlg($key,remedy)]} {
+    $w.tv selection set r0
+  } else {
+    ase::ui::remedy_show $key {}
+  }
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::remedy_selected {key} {
+  variable dlg
+  set w [ase::ui::remedy_win $key]
+  if {$w eq {} || ![info exists dlg($key,remedy)]} { return {} }
+  set sel [$w.tv selection]
+  if {![llength $sel]} { return {} }
+  set i {}
+  if {![regexp {^r([0-9]+)$} [lindex $sel 0] -> i]} { return {} }
+  if {$i >= [llength $dlg($key,remedy)]} { return {} }
+  return [lindex $dlg($key,remedy) $i]
+}
+
+proc ase::ui::remedy_pick {key} {
+  ase::ui::remedy_show $key [ase::ui::remedy_selected $key]
+}
+
+# THE DECK, BEFORE AND AFTER. `{}` for the remedy shows the "nothing to
+# suggest" sentence; a cold netlist shows the sentence that names the door.
+proc ase::ui::remedy_show {key r} {
+  variable dlg
+  set w [ase::ui::remedy_win $key]
+  if {$w eq {}} { return {} }
+  set txt {}
+  set note {}
+  if {$r eq {}} {
+    set txt [ase::ui::lbl_remedy_none]
+    catch {$w.btns.proceed configure -state disabled}
+  } elseif {$dlg($key,remedy,netlist) eq {}} {
+    set txt [ase::ui::lbl_remedy_nodeck]
+    catch {$w.btns.proceed configure -state normal}
+  } else {
+    set before [ase::ui::conv_deck $key [ase::session_state $key] \
+                  $dlg($key,remedy,netlist)]
+    set after  [ase::ui::conv_deck $key [dict get $r state] \
+                  $dlg($key,remedy,netlist)]
+    set d [ase::ui::deck_diff_brief [ase::ui::deck_diff $before $after]]
+    if {![llength $d]} {
+      set txt [ase::ui::lbl_remedy_same]
+    } else {
+      set txt [join $d "\n"]
+    }
+    set bad 0
+    foreach l [ase::ui::conv_refusals $key [dict get $r state]] {
+      if {[lsearch -exact {blocked fatal} [lindex $l 1]] < 0} { continue }
+      set bad 1
+    }
+    set lines [ase::ui::conv_refusals $key [dict get $r state]]
+    if {[llength $lines]} {
+      set worst [ase::precheck_worst [dict create conv $lines]]
+      catch {set note [ase::precheck_banner_text [list state $worst lines $lines]]}
+    }
+    ## ⚠ A REMEDY THE RUN WOULD REFUSE CANNOT BE APPLIED FROM HERE. The refusal
+    ## is shown with its `Fix:` clause, so the user learns what to remove --
+    ## typically an Options row the strategy would silently override.
+    catch {$w.btns.proceed configure -state [expr {$bad ? {disabled} : {normal}}]}
+  }
+  catch {
+    $w.diff configure -state normal
+    $w.diff delete 1.0 end
+    $w.diff insert end $txt
+    $w.diff configure -state disabled
+  }
+  catch {$w.note configure -text $note}
+  return $txt
+}
+
+proc ase::ui::remedy_apply {key} {
+  set r [ase::ui::remedy_selected $key]
+  if {$r eq {}} { return }
+  foreach l [ase::ui::conv_refusals $key [dict get $r state]] {
+    if {[lsearch -exact {blocked fatal} [lindex $l 1]] < 0} { continue }
+    catch {::ase::echo "ase: [lindex $l 2]" error}
+    return
+  }
+  ase::session_update $key [dict get $r state]
+  ase::ui::populate $key
+  ## the Convergence window, if it is standing, is now describing a state that
+  ## has moved under it -- rebuild it from what was just written rather than
+  ## leave two windows disagreeing.
+  if {[ase::ui::conv_win $key] ne {}} { ase::ui::conv_dialog $key }
+  ase::ui::remedy_cancel $key
+}
+
+proc ase::ui::remedy_cancel {key} {
+  set w [ase::ui::remedy_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+}
+
+# --- §10b: THE SENTENCE ON THE OP FORM --------------------------------------
+
+# THE SENTENCES THIS SESSION'S LAST RUN EARNED, for the form of the operating
+# point -- and `{}` for every other form and for every run that solved at the
+# first rung.
+#
+# ⚠ CONDITIONAL, AND THAT IS ISSUE 1459's CORRECTION C4 REACHING THE SCREEN.
+# PLAN.md §10b wants "this operating point may come from a transient" on the OP
+# form; said unconditionally it tells a user their exact operating point is
+# suspect when it is exact, and the first time they check it by hand the pane
+# loses its credibility for every case where it is right. `ase::ladder_ran_notes`
+# answers only for a rung that really ANSWERED.
+proc ase::ui::conv_op_notes {key type} {
+  if {$type ne [ase::ui::conv_op_type]} { return {} }
+  set out {}
+  catch {set out [ase::ladder_ran_notes [ase::ui::conv_sim $key] \
+                    [ase::ui::conv_logtext $key]]}
+  return $out
+}
+
+proc ase::ui::conv_op_note_paint {key type} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].chana
+  if {![winfo exists $w] || ![winfo exists $w.opnote]} { return {} }
+  set txt [join [ase::ui::conv_op_notes $key $type] "\n"]
+  catch {$w.opnote configure -text $txt}
+  return $txt
 }

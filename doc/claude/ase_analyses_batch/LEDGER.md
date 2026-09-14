@@ -33,15 +33,15 @@ vanishes gets re-opened by the next reader.
 
 | | |
 |---|---|
-| **Stages landed** | 0–**9**, and **Stage 10's deck half** (issue **1459**, `e1eaa5d0`). Since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
-| **Stages remaining** | **10** (convergence and diagnosis), 11, 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
+| **Stages landed** | 0–**10**. Stage 10 as two commits: the deck half (issue **1459**, `e1eaa5d0`) and the GUI half (issue **1460**). Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix a three-port run really writes), **1458** filed (`store_geom` has no gate) |
+| **Stages remaining** | **11** (campaigns), 12, 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | a crew on **Stage 10 task 2** — the ladder pane, the remedy assistant with its diff preview, the **canvas highlight** and the health strip. It owns `src/ase_window.tcl` and the dialog suites |
+| **In flight** | nothing — **Stage 10 is COMPLETE** (issues **1459** and **1460**) |
 | **Next** | **Stage 11** — campaigns: sweeps, corners, Monte Carlo. ⚠ Two of its foundations are already measured: a **third `.dc` sweep is accepted and discarded in silence**, so it must be refused at the form; and **`setseed <n>` makes a campaign reproducible** — identically on both binaries — while `set rndseed=` is a readback that does nothing |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **479 strings from 27 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **518 strings from 28 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **173 rule / 65 look / 10 suite.** Four unstamped entries are another clone's and are not to be touched |
+| **Debt queue** | **174 rule / 66 look / 10 suite.** ⚠ The newest `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`, the user's own screen. Four unstamped entries are another clone's and are not to be touched |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -926,6 +926,69 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 10 task 2 — the GUI half, issue **1460**, collected 2026-09-13 — **STAGE 10 IS COMPLETE**
+
+| | |
+|---|---|
+| **what landed** | `src/ase_window.tcl` **+1144** and `src/ase.tcl` **+44** (one reader and one adapter label hook — C16). **§10a** the canvas highlight, `Results > Highlight Non-Converged Nodes`: starred names → `ase::netlist_map`'s hierarchy-qualified resolution → `xschem hilight_netname`, inside `ase::with_design_current` and routed exactly as `do_run` routes. **§10b** the four-rung pane at `Simulation > Convergence…`, one checkbox per rung **the registry declares**, wearing that rung's own label, with the emitted `optran` line beneath it; the remedy assistant, whose every remedy is a state edit only, so the preview is **two `render_deck` calls and a real LCS diff**; and the conditional OP-form sentence. **§10c** the health strip — one label in the status bar, empty on every bench that never asked. |
+| **driver's own re-run** | **new** `test_ase_conv_gui_1460` **44 headless / 103 display**. `test_ase_window` **56**. `test_ase_core` **638**. `.state` **104 / zero mismatches**, control disagrees. |
+| **registration** | ⚠ Driver-checked: in **both** of `run_regression.tcl`'s case lists **and** carrying a whole-line `OVERALL:` banner (issue **1456**). |
+| **sabotage** | **Fifty-five mutations, 54 killed by name**, one declared equivalent with its proof, `restore: OK` 55/55. The provenance is stated exactly — which mutations ran against which version of the suite, and which were re-run afterwards to confirm identical row sets. |
+| **T1** | ✅ **Run solo: 73 cases, ZERO counted lines in `tests/results.log`** — the new suite joined both arms. Fifth consecutive honest zero. |
+| **ledger debts** | **173 / 65 / 10 → 174 / 66 / 10.** `rule 1460` (the control copy, with **`seed`/`force` flagged for the user specifically**) and a **`look`**. |
+| **receipt** | `receipts/37-stage-10-gui.md` |
+
+## ⚠ THE FINDING EVERY FUTURE GUI SUITE NEEDS: `ase_window.tcl` SHADOWS `open` AND `close`
+
+`ase::ui::open` (`:619`) and `ase::ui::close` (`:681`) live inside `namespace eval ase::ui`.
+**So a bare `open` anywhere in that namespace resolves to ASE-L's window opener, not Tcl's.**
+Driver-verified — both procs are there, in that namespace.
+
+⚠ **And inside a total reader's `catch` it returns an empty string in silence.** **Seven rows of
+this crew's own suite went green reading an empty log**, and sabotage **m54** — once the reader was
+fixed — reddens **seventeen**.
+
+**This is failure mode 3 (*an extractor that returns nothing cannot disagree*) delivered by the
+production file rather than by the test**, and it is the nastiest instance this batch has met,
+because the defence the batch already adopted — wrap every read in `catch` and answer a sentinel —
+is exactly what hides it. **A total reader that catches the wrong `open` is worse than no reader.**
+Any future suite that reads a file from inside `ase::ui` must spell it `::open`.
+
+## The corrections, and one of them is the driver's brief again
+
+1. ⚠ **C21 — the brief's demanded proof shape is unreachable through the form.** The driver asked
+   for the rung-4 checkbox proved off *through the dialog*, and the obvious pair's "off" half is
+   **every rung off**, which `ase::opstrategy_refusals` correctly blocks. The pair that works keeps
+   Newton on in both arms. **The demand was right and the recipe was wrong**, for the second time in
+   this stage — task 1's brief had the same shape of error about `optran`'s argument override.
+   Measured on both binaries, one checkbox apart, from a deck ASE-L rendered off the dialog's own
+   state builder: `optran 1 0 0 100n 10u 0` → rc 0, `v(1) = 1.413677e-02`; `optran 1 0 0 0 10u 0` →
+   **rc 1, dead, and the starred table printed**.
+2. ⚠ **C17 — §10a cannot light a hierarchy-qualified node.** It is **reported by name with the
+   reason** rather than silently dropped, which is the rule *nothing the deck contains may be
+   unshowable* applied to a surface that genuinely cannot show it.
+3. ⚠ **C18 — the highlight must NOT be automatic.** The run *says* the nodes are there and names the
+   door; it does not reach onto the user's canvas unasked. That is this batch's *never steal focus*
+   rule in a new place.
+4. **C24 — the crew's first `.state` measurement said 104/104 mismatching and was wrong**, for the
+   missing trailing newline `ase::state_serialize` omits. **They found it themselves and said so.**
+   It is the same trap receipt 30 §6 recorded and the driver's own script carries the fix in a
+   comment — a trap does not stop being one because it is written down.
+5. ⚠ **C25 — Tk's `invoke` on a DISABLED button is a silent no-op**, which is how sabotage m39
+   survived its first arm. **A GUI row that drives a control must assert the control is enabled
+   first**, or it measures nothing and passes.
+6. **C19 — §10's `≈ +330` estimate is `+1144`.** With task 1's `+948` against `≈ +260`, the stage
+   came in at **2092 lines against an estimate of 590**. The plan was not wrong about the work; it
+   was wrong about how much of it is *content* that a per-simulator adapter has to own.
+
+## ⚠ AND THE LOOK DEBT IS ONE `:99` CANNOT PAY
+
+The lit nets are a change to the **canvas**. `CLAUDE.md`'s three-server table is explicit that
+`AUDIT_DISPLAY=:0` is **Xwayland**, not the user's screen, and that the user's screen is `$DISPLAY`
+— a Windows X server over TCP. So the crew filed the `look` naming **`AUDIT_DISPLAY=$DISPLAY`**,
+and filed **no `suite` debt**, because a `:0` pass could not discharge it. **Suites green, please
+look** — and no pixel is reported done.
 
 ### ✅ Stage 10 task 1 — the DECK half of convergence and diagnosis, issue **1459**, collected 2026-09-13
 

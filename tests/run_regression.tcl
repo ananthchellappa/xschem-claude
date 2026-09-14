@@ -81,7 +81,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_effective_1442" \
                  "headless/test_ase_meas_1443" \
                  "headless/test_ase_sp_1452" \
-                 "headless/test_ase_converge_1459"]
+                 "headless/test_ase_converge_1459" \
+                 "headless/test_ase_conv_gui_1460"]
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #
@@ -166,7 +167,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # parsers, the `optran` speller, the operating-point save/restore and the
 # run-health line -- and it creates no widget at all: the ladder pane, the
 # remedy assistant, the canvas highlight and the health strip are Stage 10
-# task 2. The day that lands it earns a line here and its counts will say so.
+# task 2. ⚠ THAT TASK HAS NOW LANDED as `test_ase_conv_gui_1460`, which IS in
+# `dcases` below; 1459 itself is still headless-only and still 76/76, because
+# nothing it ships draws a pixel.
 # ⚠ AND IT IS THE SECOND SUITE IN `hcases` THAT REALLY STARTS A SIMULATOR,
 # ON BOTH BINARIES. Its section EE renders the deck ASE-L writes, runs it on apt
 # 45.2 AND on the fork, reads the ladder and the starred `Last Node Voltages`
@@ -174,12 +177,30 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # there a ladder line in that log this parser has never heard of. A binary that
 # is not there SKIPS with its path printed; `$ASE_CONV_NGSPICE` (colon-separated)
 # overrides the search.
+# ⚠ `test_ase_conv_gui_1460` IS IN **BOTH** LISTS, AND THAT IS THE WHOLE POINT
+# OF IT. Stage 10 task 2 is the SURFACE -- the ladder pane, the remedy assistant
+# with its deck diff, the canvas highlight and the run-health strip -- so its
+# widget legs exist only under X and self-skip without one. Measured 2026-09-13
+# from the `RESULT:` line: **44 checks headless, 103 on the dev display**. The
+# headless arm is not redundant: sections CP NC HL DF RM OP are pure Tcl and are
+# where the readers are falsified, and section EE starts a real simulator on both
+# binaries on BOTH arms -- it is the row that proves the transient rung's
+# checkbox really means OFF, by rendering ASE-L's own deck with the box ticked
+# and cleared and running both (rc 0 and `v(1) = 1.413677e-02` against rc 1 and
+# `The operating point could not be simulated successfully`, one argument apart,
+# identical on apt 45.2 and on the fork).
+#
+# ⚠ AND THE DISPLAY ARM IS WHERE THE CANVAS IS. Section GC loads a real
+# schematic and asks `xschem hilight_netname` to light the nodes `CKTncDump`
+# starred; there is no canvas at all under `--nogui`, so a suite that ran only
+# headless would report the whole of §10a green while lighting nothing.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_ase_simdlg_0937" \
-                 "headless/test_ase_optsheet_1441"]
+                 "headless/test_ase_optsheet_1441" \
+                 "headless/test_ase_conv_gui_1460"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {
