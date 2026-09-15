@@ -1410,3 +1410,9 @@ else { puts "RESULT: ALL PASS ($npass checks)" }
 # this batch shipped without one and were a standing T1 red from stage 7 until it
 # was found.
 puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"
+# AND AN EXPLICIT EXIT CODE (issue 1464's T1 red). Without one a `--script` run
+# falls through to xschem's own exit status, and on the display arm that is rc 10
+# the moment anything has netlisted -- `regression_case_failed` counts a non-zero
+# child code as a failure however green the checks. This suite is green today only
+# because it never netlists; the four established `dcases` suites end this way.
+exit [expr {$fail ? 1 : 0}]
