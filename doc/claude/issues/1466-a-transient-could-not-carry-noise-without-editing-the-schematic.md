@@ -86,10 +86,16 @@ And `render_deck`'s precheck tier now merges the measured event inventory, as th
 
 ## Declared limits
 
-* **The salvage estimator (`tran_points`) does not know the noise timestep.** It decides
+* ~~**The salvage estimator (`tran_points`) does not know the noise timestep.** It decides
   checkpointing, and a checkpointed noisy transient is unmeasured, so it was left alone and
   `ase::stimuli_points` raises its answer for the readout only. A noisy transient whose card alone
-  is below the 100,000-point floor is therefore not checkpointed.
+  is below the 100,000-point floor is therefore not checkpointed.~~ ✅ **CLOSED by Stage 13 task 3
+  (debt M22, receipt 43).** Arming the loop on a noisy transient was measured safe on both binaries
+  (`evidence/m22-checkpointed-noise.md`), and `ase::ckpt_plan` now raises the hook's card count
+  through `ase::stimuli_raise_points` — the same body as the form's `≈ N points`. The hook itself
+  still counts the card, **by design**: a noise-aware hook would silence the noise caution and have
+  §7g tell the user to raise the time step for a count the noise timestep set. Proven by
+  `test_ase_trnoise_1466` EC1 on 45.2 (4 checkpoints) and the fork (5).
 * **The `notrnoise` catalogue row's text is unchanged.** Its `results_why` names only the white
   case; rewriting it moves text the Options sheet shows, which is task 2's pixel half.
 * **A source inside an `.include` or a subcircuit** is a caution, never a refusal.

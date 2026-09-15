@@ -58,10 +58,20 @@
 #   NS  the seed and kill-switch data
 #   NC  the corpus and the round trip
 #   EE  the END-TO-END run, on BOTH binaries (guarded legs)
+#   NP  the checkpoint plan counts the noise (debt M22)
+#   EC  a CHECKPOINTED noisy transient END TO END, on BOTH binaries (guarded)
 #
 # THE HISTORY:
 #   see the RESULT line of the first commit that carries this file -- issue
 #   1466 ships it; raise the number here when rows are added, never lower it.
+#   62 -> 76 AND RAISED, debt M22 (Stage 13 task 3, receipt 43): section NP --
+#   six pure-Tcl rows, the checkpoint planner raising the card's estimate by the
+#   noise -- and section EC, four rows per binary, a noisy transient whose card
+#   is under `ase::ckpt_floor` rendered, run through ASE-L's own checkpoint loop
+#   and read back. 62 + 6 + 2 x 4 = 76 with both binaries present; a missing one
+#   prints its SKIPPED line and the count falls by eight, never silently. One
+#   existing row's COMMENT moved and no term of it did: NX2's fourth term (the
+#   salvage hook stays the card's) is still true, for a new reason.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_trnoise_1466.tcl
@@ -606,8 +616,13 @@ check {NX1 white-noise density is NA*sqrt(2*TS), flat to 1/(2*TS), measured in t
 set NX2ROWA [nz_row {{src vdd func trnoise na 1m ts 100n}} stop 1m]
 set NX2ROWB [nz_row {{src vdd func trnoise na 1m ts 10u}} stop 1m]
 set NX2ROWC {type tran enabled 1 step 1u stop 1m}
-## ⚠ AND THE SALVAGE ESTIMATOR IS DELIBERATELY UNCHANGED: it decides whether a
-## run is checkpointed, and a checkpointed noisy transient is unmeasured.
+## ⚠ AND THE ADAPTER'S SALVAGE HOOK UNDERNEATH IT STAYS THE CARD'S (the fourth
+## term). Until debt M22 the reason was that the hook alone decided whether a run
+## was checkpointed, and a checkpointed noisy transient was unmeasured. Since M22
+## the PLANNER raises the hook's answer by the noise itself (section NP), and the
+## hook must stay the card's for three other readers: it is this estimate's
+## BASE, §7g's `points_max` input, and what lets NK20's noise-only caution fire.
+## Task 1's sabotage S44 (the hook made noise-aware) still reds this term.
 check {NX2 the point estimate is max(stop/step, 5*stop/TS), and the salvage\
  estimator underneath it is left alone} \
   [list [s_ans ase::stimuli_points ngspice {} $NX2ROWA] \
@@ -643,6 +658,129 @@ check {NX5 volts on a voltage source, amperes on a current source and on anythin
         [s_ans ase::stimuli_readout ngspice {} $NX5ROW 4] \
         [s_ans ase::stimuli_readout ngspice {} $NX5ROW 0]] \
   {V A A {} {}}
+
+# ===========================================================================
+# NP -- THE CHECKPOINT PLAN COUNTS THE NOISE (debt M22)
+# ===========================================================================
+## ⚠ A NOISY TRANSIENT IS FAR LONGER THAN ITS CARD, AND THE CARD USED TO DECIDE.
+## `tran 1u 2m` is 2000 points by its card -- a fiftieth of `ase::ckpt_floor` --
+## and `TS = 20n` makes it 443,808 points on 45.2 and 500,008 on the fork
+## (measured on section EC's bench). Planned from the card alone it was never
+## checkpointed, so a Stop threw the whole run away where ⚖ R1 ruled ALWAYS
+## SALVAGE. `evidence/m22-checkpointed-noise.md` measured the loop safe to arm on
+## a noisy transient on both binaries; section EC runs it through this renderer.
+set NPROW [nz_row {{src vdd func trnoise na 1m ts 20n}} stop 2m]
+set NPST [nz_state [list $NPROW]]
+set NPPLAN {n 4 step 100000 points 500000 vector time}
+set NPCARD [s_ans ase::analysis_point_estimate ngspice tran $NPROW $NPST]
+check {NP1 a noisy transient whose card is under the checkpoint floor and whose\
+ noise is far over it is checkpointed, on the noise's estimate and interval --\
+ the same count the Tran form shows} \
+  [list $NPCARD [expr {[string is double -strict $NPCARD] && $NPCARD < [ase::ckpt_floor]}] \
+        [s_ans ase::ckpt_plan ngspice $NPROW $NPST] \
+        [expr {[s_dget [s_ans ase::ckpt_plan ngspice $NPROW $NPST] points] eq \
+               [s_ans ase::stimuli_points ngspice $NPST $NPROW]}] \
+        [s_ans ase::ckpt_rows ngspice $NPST]] \
+  [list 2000 1 $NPPLAN 1 [list [list 30 0 tran $NPPLAN]]]
+
+## ⚠ AND NOTHING ELSE MOVES. The raise hands the card's answer back untouched for
+## a row with no table, an empty one, only switched-off entries, or noise whose
+## interval asks for FEWER points than the card -- under the floor and over it.
+## The switched-off entry is `TS = 1n`, which would ask 10 million points under
+## the floor and 40 million over it if it were counted.
+proc np_plan {row} { return [s_ans ase::ckpt_plan ngspice $row [nz_state [list $row]]] }
+set NP2UNDER {type tran enabled 1 step 1u stop 2m}
+set NP2OVER  {type tran enabled 1 step 10n stop 8m}
+set NP2OFF   {{src vdd func trnoise na 1m ts 1n enabled 0}}
+set NP2PLAN  {n 4 step 160000 points 800000 vector time}
+check {NP2 no table, an empty table and only switched-off entries plan exactly what\
+ the card alone plans, under the floor and over it -- and so does noise that asks\
+ for fewer points than the card} \
+  [list [np_plan $NP2UNDER] [np_plan [dict replace $NP2UNDER noise {}]] \
+        [np_plan [dict replace $NP2UNDER noise $NP2OFF]] \
+        [np_plan $NP2OVER] [np_plan [dict replace $NP2OVER noise {}]] \
+        [np_plan [dict replace $NP2OVER noise $NP2OFF]] \
+        [np_plan [dict replace $NP2OVER noise {{src vdd func trnoise na 1m ts 10u}}]]] \
+  [list {} {} {} $NP2PLAN $NP2PLAN $NP2PLAN $NP2PLAN]
+
+set NP3D0 [s_ans nz_deck [nz_state [list $NP2OVER]]]
+set NP3D1 [s_ans nz_deck [nz_state [list [dict replace $NP2OVER noise $NP2OFF]]]]
+check {NP3 a checkpointed transient carrying only a switched-off noise entry renders\
+ byte-identically to the same row with no table, loop and interval included} \
+  [list [expr {$NP3D0 eq $NP3D1 && ![s_broken $NP3D0]}] \
+        [expr {[string first {let ckstep = 160000} $NP3D0] >= 0}]] \
+  {1 1}
+
+## ⚠ THE NOISY DECK's SHAPE AROUND THE LOOP. The `alter` is above the arming (the
+## setup lines' place, issue 1466), the loop is issue 1433's between the card and
+## `delete all`, and the restore is the `post` leg's -- below the guard, ONCE,
+## outside the loop. A restore inside the loop would silence the noise at the
+## first checkpoint; section EC's third row is that measurement's twin.
+proc np_rising {ps} {
+  set prev -1
+  foreach p $ps { if {$p <= $prev} { return 0 } ; set prev $p }
+  return 1
+}
+set NP4L [nz_lines $NPST]
+set NP4CARD [nz_pos $NP4L {tran 1u 2m}]
+set NP4DEL [nz_pos $NP4L {delete all} $NP4CARD]
+set NP4REST {alter vdd trnoise = [ 0 0 0 0 0 0 0 ]}
+set NP4P [list [nz_pos $NP4L {alter vdd trnoise = [ 1m 20n 0 0 0 0 0 ]}] \
+               [nz_pos $NP4L {let ckstep = 100000}] \
+               [nz_pos $NP4L {echo ASE-CKPT-ARMED tran 0 100000 500000}] \
+               [nz_pos $NP4L {stop after $cktgt}] \
+               $NP4CARD \
+               [nz_pos $NP4L {while ckdone = 0} $NP4CARD] \
+               $NP4DEL \
+               [nz_pos $NP4L $NE5G $NP4CARD] \
+               [nz_pos $NP4L $NP4REST] \
+               [nz_pos $NP4L remzerovec $NP4DEL] \
+               [nz_pos $NP4L "write [ase::backend::ngspice::raw_file $NPST]" $NP4CARD]]
+set NP4LOOP {}
+if {$NP4CARD >= 0 && $NP4DEL > $NP4CARD} { set NP4LOOP [lrange $NP4L $NP4CARD $NP4DEL] }
+check {NP4 the noisy deck gives the noise above the arming, arms the loop on the\
+ noise's interval above the card, and puts the source back once -- below the loop\
+ and the guard, above remzerovec and the write} \
+  [list [np_rising $NP4P] [llength [lsearch -all -exact $NP4L $NP4REST]] \
+        [llength $NP4LOOP] [lsearch -all -glob $NP4LOOP {*alter *}]] \
+  [list 1 1 [expr {$NP4DEL - $NP4CARD + 1}] {}]
+
+## ⚠ NO FALLBACK CONTENT (D34-D37). The raise reads the TYPE's `stimuli`
+## contract, so an `ac` row carrying the key plans nothing, and a backend whose
+## `tran` keeps ngspice's `salvage` hook but declares no contract gets the card's
+## plan and never ngspice's factor of 5. The first probe is non-vacuity: the stub
+## really does carry the salvage hook, so its `{}` is the floor speaking.
+set NP5NOISY [dict replace $NP2OVER noise {{src vdd func trnoise na 1m ts 1n}}]
+check {NP5 a noise table on a type with no stimuli contract changes nothing -- an ac\
+ row, or a transient under a backend that declares no contract} \
+  [list [np_plan {type ac enabled 1 sweep dec points 10 start 1 stop 1meg \
+                  noise {{src vdd func trnoise na 1m ts 1n}}}] \
+        [nb_probe {list [expr {[s_ans ase::analysis_salvage zznz tran] ne {}}] \
+                        [s_ans ase::ckpt_plan zznz $NPROW $NPST] \
+                        [s_ans ase::ckpt_plan zznz $NP5NOISY [nz_state [list $NP5NOISY]]]}] \
+        [s_dget [np_plan $NP5NOISY] points]] \
+  [list {} [list 1 {} $NP2PLAN] 40000000]
+
+## ⚠ AND THE VERDICT AND THE SENTENCE FOLLOW THE SAME PLAN, because both re-derive
+## it from the state (`ase::ckpt_rows`). Before M22 a stopped noisy run was
+## `unknown` -- no marker was ever asked for -- so nothing was said about what a
+## Stop had kept. The checkpoint header is hand-written, as test_ase_core's CK23
+## writes one: `ase::cap_raw_plots` reads the ASCII half only.
+set NP6D [file join $scratch np6run]
+file mkdir $NP6D
+set NP6ST [nz_state [list $NPROW] $NP6D]
+set NP6V [list [s_ans ase::run_completed ngspice $NP6ST "ASE-CKPT-DONE 100000\n"] \
+               [s_ans ase::run_completed ngspice $NP6ST "ASE-CKPT-DONE 100000\nASE-RUN-COMPLETE\n"]]
+set np6f [open [ase::ckpt_path $NP6ST] w]
+puts -nonewline $np6f "Title: np\nDate: now\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: 200000\nVariables:\n\t0\ttime\ttime\n\t1\tv(vdd)\tvoltage\nBinary:\n"
+close $np6f
+set NP6R [s_ans ase::ckpt_report ngspice $NP6ST "ASE-CKPT-DONE 100000\n"]
+file delete -force $NP6D
+check {NP6 a stopped noisy run reads as aborted rather than unknown, and the salvage\
+ sentence quotes the noise's estimate} \
+  [list $NP6V [llength $NP6R] \
+        [string match {*kept at 200000 points of an estimated 500000,*} [lindex $NP6R 0]]] \
+  {{aborted complete} 1 1}
 
 # ===========================================================================
 # NS -- WHICH KINDS A SEED REPEATS, AND WHAT THE KILL SWITCH KILLS
@@ -864,6 +1002,123 @@ foreach eepair [ee_binaries] {
 }
 if {![llength $EESEEN]} {
   puts "SKIPPED: EE -- no ngspice binary found on this machine"
+}
+
+# ===========================================================================
+# EC -- A CHECKPOINTED NOISY TRANSIENT, END TO END, ON BOTH BINARIES (debt M22)
+# ===========================================================================
+## ⚠ THE LOOP IS ISSUE 1433's AND IT IS UNCHANGED; WHAT IS NEW IS THAT IT IS ARMED
+## HERE AT ALL. `tran 1u 2m` is 2000 points by its card and `TS = 20n` noise on
+## its only source makes it ~500,000, so the deck ASE-L renders now carries the
+## loop. The run is rendered, run on each binary, and read back by a SECOND
+## ngspice process that knows nothing about ASE-L. MEASURED while writing this
+## section, same bench: rc 0 on both, 4 checkpoints and 434,610 points on 45.2,
+## 5 and 501,008 on the fork (443,808 and 500,008 unchecked), under a second each.
+##
+## ⚠ NOISE IS JUDGED TIME-WEIGHTED, NEVER BY `stddev` OVER RAWFILE POINTS.
+## `evidence/m22-checkpointed-noise.md` reading 3: each `resume` clusters small
+## steps, and a per-point statistic moved 5 % under the loop while the generated
+## samples did not move at all. The statistic here is `integ(v*v)` over time; for
+## linearly interpolated independent samples of sigma NA its RMS is NA*sqrt(2/3),
+## 0.816 NA -- measured 0.825 / 0.823 checked and 0.840 / 0.833 unchecked
+## (45.2 / fork). The window 0.7-0.95 holds both and not a silenced source.
+## An absence is `maximum(abs(v))` under `ee_zero`'s tolerance -- not a statistic.
+proc ec_netlist {} { return "* ecbench\nvn nn 0 dc 0\nrn nn 0 1k\n.end\n" }
+## Per plot: points, last time, the smallest step between neighbours (time
+## rising at every point iff > 0), the time-weighted RMS and the peak of v(nn).
+proc ec_read {bin raw plots} {
+  global scratch
+  set rd [file join $scratch ec_reader.cir]
+  set f [open $rd w]
+  puts $f "* reader\nrdummy a 0 1\n.control\nload $raw"
+  foreach p $plots {
+    puts $f "setplot $p"
+    puts $f "let n0 = length(time)\nlet n1 = n0 - 1\nlet n2 = n0 - 2\nlet tl = maximum(time)"
+    puts $f "let ta = time\[1,\$&n1\]\nlet tb = time\[0,\$&n2\]\nlet dmin = minimum(ta - tb)"
+    puts $f "let e = integ(v(nn)*v(nn))\nlet rms = sqrt(e\[\$&n1\]/tl)\nlet mx = maximum(abs(v(nn)))"
+    puts $f "echo EC $p \$&n0 \$&tl \$&dmin \$&rms \$&mx"
+  }
+  puts $f ".endc\n.end"
+  close $f
+  catch {exec env HOME=$scratch $bin -b $rd 2>@1} out
+  set r {}
+  foreach l [split $out "\n"] {
+    if {[regexp {^EC (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)} $l -> p n0 tl dmin rms mx]} {
+      dict set r $p [dict create n0 $n0 tl $tl dmin $dmin rms $rms mx $mx]
+    }
+  }
+  return $r
+}
+proc ec_num {d k} {
+  set v [s_dget $d $k]
+  if {[string is double -strict $v]} { return $v }
+  return {}
+}
+set ECRUN [file join $scratch ecrun]
+file mkdir $ECRUN
+set ECROWA {type tran enabled 1 step 1u stop 2m noise {{src vn func trnoise na 1 ts 20n}}}
+set ECROWB {type tran enabled 1 step 10u stop 2m}
+set ECST [nz_state [list $ECROWA $ECROWB] $ECRUN]
+set ECDECK [file join $ECRUN nzbench_ec.spice]
+set ECRAW [ase::backend::ngspice::raw_file $ECST]
+set ECMAP [ase::plotmap_path $ECST]
+set ECCK [ase::ckpt_path $ECST]
+set ECCKT [ase::ckpt_tmp_path $ECST]
+set ECPLAN [s_ans ase::ckpt_plan ngspice $ECROWA $ECST]
+set ecf [open $ECDECK w] ; puts -nonewline $ecf [s_ans nz_deck $ECST [ec_netlist]] ; close $ecf
+set ECSEEN {}
+foreach ecpair [ee_binaries] {
+  lassign $ecpair ectag ecbin
+  if {$ecbin eq {} || ![file executable $ecbin]} {
+    puts "SKIPPED: EC $ectag end-to-end leg (no executable at '$ecbin')"
+    continue
+  }
+  if {[lsearch -exact $ECSEEN [file normalize $ecbin]] >= 0} { continue }
+  lappend ECSEEN [file normalize $ecbin]
+  file delete -force $ECRAW $ECMAP $ECCK $ECCKT
+  lassign [ee_run $ecbin $ECDECK] ecrc ecout
+  set ecn 0 ; set eccomplete 0
+  foreach l [split $ecout "\n"] {
+    if {[string match {ASE-CKPT-DONE *} [string trim $l]]} { incr ecn }
+    if {[string trim $l] eq [ase::ckpt_marker complete]} { set eccomplete 1 }
+  }
+  set ecres [ec_read $ecbin $ECRAW {tran1 tran2}]
+  set ecA [s_dget $ecres tran1] ; set ecB [s_dget $ecres tran2]
+  set ecC [s_dget [ec_read $ecbin $ECCK tran1] tran1]
+  set eccap [ase::cap_raw_plots $ECCK]
+  puts "  EC/$ectag rc $ecrc checkpoints $ecn plan {$ECPLAN} results {$ecA}\
+ next {$ecB} checkpoint {$ecC}"
+  check "EC1/$ectag the noisy transient's deck arms ASE-L's checkpoint loop on the\
+ noise's estimate, and the run checkpoints and finishes -- rc 0, three or more\
+ checkpoints, the completion marker, and ASE-L's own verdict says complete" \
+    [list [s_dget $ECPLAN points] $ecrc [expr {$ecn >= 3}] $eccomplete \
+          [s_ans ase::run_completed ngspice $ECST $ecout]] \
+    {500000 0 1 1 complete}
+  if {$ecrc} { puts "  EC1/$ectag output: [string range $ecout 0 3000]" }
+  set ecAn [ec_num $ecA n0] ; set ecCn [ec_num $ecC n0]
+  check "EC2/$ectag the checkpoint on disk is a readable transient that stops short of\
+ the end, and the results file's noisy transient reaches its stop time with time\
+ rising at every point and the noise's points, not the card's" \
+    [list [lindex [lindex $eccap end] 0] \
+          [expr {$ecCn ne {} && $ecAn ne {} && $ecCn > 0 && $ecCn < $ecAn}] \
+          [expr {[ec_num $ecC tl] ne {} && [ec_num $ecC tl] < 2e-3}] \
+          [expr {[ec_num $ecA tl] ne {} && abs([ec_num $ecA tl] - 2e-3) < 1e-9}] \
+          [expr {[ec_num $ecA dmin] ne {} && [ec_num $ecA dmin] > 0}] \
+          [expr {$ecAn ne {} && $ecAn > 50 * 2000 && $ecAn >= 250000 && $ecAn <= 1000000}]] \
+    {{Transient Analysis} 1 1 1 1 1}
+  check "EC3/$ectag the noise survived the loop, judged TIME-WEIGHTED: the RMS over\
+ time of the noisy source is 0.7-0.95 of its amplitude" \
+    [expr {[ec_num $ecA rms] ne {} && [ec_num $ecA rms] > 0.7 && [ec_num $ecA rms] < 0.95}] 1
+  check "EC4/$ectag the transient after it is clean and whole -- the source was put\
+ back below the loop -- reaching its own stop time with its own card's points" \
+    [list [ee_zero [s_dget $ecB mx]] \
+          [expr {[ec_num $ecB tl] ne {} && abs([ec_num $ecB tl] - 2e-3) < 1e-9}] \
+          [expr {[ec_num $ecB n0] ne {} && [ec_num $ecB n0] >= 200 && [ec_num $ecB n0] < 600}]] \
+    {1 1 1}
+}
+file delete -force $ECRAW $ECMAP $ECCK $ECCKT
+if {![llength $ECSEEN]} {
+  puts "SKIPPED: EC -- no ngspice binary found on this machine"
 }
 
 puts "RESULT: [expr {$fail ? "$fail FAILED ($npass passed)" : "ALL PASS ($npass checks)"}]"

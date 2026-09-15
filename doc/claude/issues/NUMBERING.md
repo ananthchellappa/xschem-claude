@@ -3377,7 +3377,16 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 
 - **1467** — **The transient noise table had a deck and no form.** Issue **1466** made a transient able to carry noise with no schematic edit and drew nothing: the only way to put a table on a bench was to hand-edit the `.state` file, and the density, the point estimate, the seed sentence and 32 refusals reached no screen. PLAN.md Stage 13 **task 2, the GUI half**: a **noise section on the Tran form**, folded shut, one line per entry showing the values the deck writes (positionally, padded), an **Add** row that offers only the targets the adapter's own target check accepts **for the function chosen** (a current source for noise, never for a random value), an editor **bound to the entry** so there is no half-typed row for OK to drop, **live estimates** under it (density, flat-to, points, and a results-file size once a run has given a vector count — read from the last run's header through the plotmap, never guessed), **per-entry verdicts** in the precondition banner's shape, and the seed and kill-switch sentences **verbatim** from core's reports. OK commits the table **only when it changed** and **refuses** a changed table the run would refuse; the Arguments column counts the entries that reach the deck; the `notrnoise` Options-sheet row now names the per-kind split. ⚠ **A measurement corrected issue 1466's hand-over**: `facts nodes` is **not a net list** — `ase::netlist_map` files every token after a device name, so `dc`, `1k`, `sin(0` and a MOS model name all read `present` — so the adapter reads nets from the netlist **text** by device letter, and the target rules were split out of `noise_entry_check` so the offer and the refusal are **one body**. Two new contract legs (`candidates`, `kill_sentences`), five core readers, no simulator word in `src/ase_window.tcl` (linted). New suite `tests/headless/test_ase_trnoise_gui_1467.tcl`, **19 checks headless / 63 on the dev display**, registered in **both** `hcases` and `dcases`; its section EE types noise into the form, runs the deck on **both** binaries and checks the form's file-size estimate against the file the run wrote. See `doc/claude/issues/1467-the-transient-noise-table-had-a-deck-and-no-form.md`.
 
-**The next free number is 1468.**
+~~**The next free number is 1468.**~~ superseded: **1468** is filed, below.
+
+- **1468** — **The "gigabytes and hours" caution goes silent at four billion points.**
+  `ase::analysis_point_estimate` reads the adapter's estimate through `string is integer -strict`,
+  which on Tcl 8.6.17 is false from 2³² (4 294 967 296) up, so §7g's size caution, the Tran form's
+  noise estimate and the noise check's base all lose their answer for the largest runs.
+  Checkpointing is unaffected. Found by Stage 13 task 3's crew, boundary measured by the driver.
+  OPEN.
+
+**The next free number is 1469.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

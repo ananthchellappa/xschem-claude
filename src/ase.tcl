@@ -9372,6 +9372,32 @@ proc ase::ckpt_plan {sim row state} {
   ## `badsalvagepoints` at load time, which is what tells the adapter's author.
   set est {}
   if {[catch {$hook $row $state} est]} { return {} }
+  if {![string is double -strict $est]} { return {} }
+  ## --- DEBT M22: THE NOISE COUNTS, AND IT DECIDES THE ARMING AND THE INTERVAL --
+  ## ⚠ THE HOOK ANSWERS FOR THE CARD, AND A NOISY TRANSIENT IS FAR LONGER THAN
+  ## ITS CARD. `TS = 100n` on `tran 1u 1m` made 44,116 points on 45.2 and 50,008
+  ## on the fork where the card says ~1000; `TS = 20n` on `tran 1u 2m` made
+  ## 443,808 and 500,008 where the card says 2000. Asked of the card alone, such
+  ## a run was never checkpointed, and ⚖ R1 ruled ALWAYS SALVAGE. So the answer
+  ## is raised by the row's noise through the SAME proc the Tran form's
+  ## `≈ N points` comes from (`ase::stimuli_raise_points`, which is also
+  ## `ase::stimuli_points`' body) -- the plan and the form cannot disagree.
+  ##
+  ## ⚠ ARMING THE LOOP ON A NOISY TRANSIENT IS MEASURED SAFE, and the loop below
+  ## is NOT changed for it. `evidence/m22-checkpointed-noise.md`: rc 0 on both
+  ## binaries, the run finishes at its end with time rising, a seeded RTS stream
+  ## bit-identical checked and unchecked, the generated white samples keep
+  ## sigma ~= 1. And through THIS renderer (`test_ase_trnoise_1466` section EC):
+  ## 4 checkpoints on 45.2 and 5 on the fork, the transient after it clean.
+  ##
+  ## ⚠ THE HOOK STAYS THE CARD'S, deliberately. It is `stimuli_points`' BASE and
+  ## §7g's `points_max` input, and the noise check's gigabytes caution fires only
+  ## where the base alone would not -- a noise-aware hook would silence that
+  ## caution and have `points_max` tell the user to raise the TIME STEP for a
+  ## count the NOISE timestep set. With no table, an empty one, only switched-off
+  ## entries, or a backend whose type declares no `stimuli` contract, the raise
+  ## hands `est` back untouched: the same decision, step and deck as before.
+  set est [ase::stimuli_raise_points $sim $state $row $est]
   if {![string is double -strict $est] || $est < [ase::ckpt_floor]} { return {} }
   set n [ase::ckpt_n]
   if {$n < 2} { set n 2 }
@@ -21795,13 +21821,26 @@ proc ase::stimuli_min_interval {sim row} {
 
 # A row's point estimate WITH its noise: the one estimator's answer
 # (`ase::analysis_point_estimate`, the adapter's `salvage` hook), raised to what
-# the smallest noise interval asks for. ⚠ THE SALVAGE ESTIMATOR ITSELF IS NOT
-# CHANGED, deliberately: it decides whether a run is CHECKPOINTED, and a
-# checkpointed noisy transient (`stop after` / `resume` across `trnoise`
-# breakpoints) is unmeasured. Named in the receipt as open.
+# the smallest noise interval asks for.
 proc ase::stimuli_points {sim state row} {
   set type [ase::state_get $row type]
-  set base [ase::analysis_point_estimate $sim $type $row $state]
+  return [ase::stimuli_raise_points $sim $state $row \
+            [ase::analysis_point_estimate $sim $type $row $state]]
+}
+
+# `base` -- a card's own point count -- raised to what the row's smallest
+# ENABLED noise interval asks for, or `base` untouched. ONE BODY, TWO READERS:
+# `ase::stimuli_points` above (the Tran form's `≈ N points`) and
+# `ase::ckpt_plan`, whose arming and interval it decides (debt M22, closed by
+# issue 1466's section NP/EC rows). A second copy of this arithmetic would be a
+# second answer to "how long is this run", and the form would then promise a
+# checkpointed run the deck did not arm.
+#
+# ⚠ NO FALLBACK CONTENT (D34-D37): the interval, the span and the points per
+# interval all come from the type's own `stimuli` contract, so a backend whose
+# type declares none gets `base` back -- never ngspice's factor of 5.
+proc ase::stimuli_raise_points {sim state row base} {
+  set type [ase::state_get $row type]
   set per {}
   catch {set per [dict get [ase::stimuli_get $sim $type estimate] points_per_interval]}
   set span {}
@@ -24093,6 +24132,12 @@ namespace eval ase::backend::ngspice {
   # 1.5 %. `pwl` gave 8,017 on both and `.options interp` 8,001 on both. A point
   # count can therefore never be exact across binaries, which is a second reason
   # the loop must not terminate on it.
+  #
+  # ⚠ IT COUNTS THE CARD, NOT THE ROW's NOISE TABLE, AND THAT IS DELIBERATE
+  # (debt M22). A noisy transient's extra points are added by core's
+  # `ase::ckpt_plan` through `ase::stimuli_raise_points`, from the `stimuli`
+  # contract's own `estimate`; this answer is that raise's BASE and §7g's
+  # `points_max` input, and both need the card's count.
   proc tran_points {row {state {}}} {
     set sufs [si_suffixes]
     set stop [ase::field_value ngspice tran $row stop]
