@@ -4064,6 +4064,70 @@ proc ase::variant_report {sim} {
   return [ase::variant_say $sim $path $caps]
 }
 
+# ─── STAGE 16 TASK 2: THE SIMULATORS WINDOW'S HALF (issue 1471) ────────────────
+# doc/claude/ase_analyses_batch/PLAN.md §16a; receipts/47-stage-16-gui.md.
+#
+# The sentence's SECOND and last appearance: the row editor of Setup >
+# Simulators…, on the line directly beneath its case-mode status line. The two
+# procs below decide what that line says; src/ase_window.tcl only paints it
+# (ruling D5-4, and D34-D37 -- no simulator word, no composer, in the window).
+#
+# ⚠ NEITHER STARTS A PROGRAM. ase::variant_status is ase::casemode_status's
+# shape exactly: ase::sim_capabilities_path is reached only when the peek
+# (ase::sim_caps_have_path) says a fresh answer is already in hand, where it is
+# a pure cache read. Otherwise the sentence is asked about `known 0`, which is
+# the first frame. Opening the Simulators window must not be a gesture that
+# starts the user's simulator (D8) -- for a licensed tool it would check out a
+# licence.
+#
+# ⚠ NEITHER RECORDS "SAID". ase::variant_say is the run log's door and keeps a
+# once-per-session record; these read ase::variant_sentence directly, so looking
+# at a program here never silences the line a run would print about it.
+#
+# THE WINDOW SHOWS THE COMPLETE FRAME TOO (decision C2 of receipt 46, taken in
+# issue 1471 and on the user's queue as a ruling). PLAN §16's summary said the
+# window shows nothing when the answer is "everything"; §16a's own rule said a
+# user with a complete build reads the short sentence and stops. The run log
+# keeps the delta-only discipline because it repeats every session. The window
+# is looked at on purpose, and an EMPTY line there already carries four other
+# meanings -- no location typed, no program at it, no way to try it, a probe
+# that did not answer -- so "everything" must not be a fifth reading of the
+# same silence.
+#
+# THE STATUS LINE ABOVE OWNS EVERY "NOTHING WAS MEASURED, FOR A REASON": the
+# three guards of ase::casemode_status, and -- after Detect -- the slow,
+# no-place and no-key sentences of ase::casemode_report. This line is empty for
+# each of them rather than saying the same thing again in other words.
+
+# At editor-open and whenever the Program field is left: MEASURING NOTHING.
+proc ase::variant_status {backend path {eargs {}}} {
+  if {$path eq {}} { return {} }
+  set p $path
+  if {![catch {ase::expand_path $p} out]} { set p $out }
+  set kind {}
+  catch {set kind [ase::sim_check $p]}
+  if {$kind ne {}} { return {} }
+  if {![ase::sim_has_probe $backend]} { return {} }
+  set caps [dict create known 0]
+  if {[ase::sim_caps_have_path $backend $path $eargs]} {
+    set caps [ase::sim_capabilities_path $backend $path $eargs]
+  }
+  return [ase::variant_sentence $backend $p $caps]
+}
+
+# After Detect, about the answer Detect just got. ⚠ NOT THE PEEK: an answer
+# that is not remembered (every `known 0`) would read back as "never measured"
+# and tell the user to press the button they have just pressed -- issue 1371's
+# refuted sentence. A `known` that is not 1 gives no sentence here; the status
+# line has already said why.
+proc ase::variant_detected {backend path caps} {
+  if {$path eq {}} { return {} }
+  if {[ase::caps_measured_as $caps known 1] != 1} { return {} }
+  set p $path
+  if {![catch {ase::expand_path $p} out]} { set p $out }
+  return [ase::variant_sentence $backend $p $caps]
+}
+
 # The file the user's own simulator list is saved in.
 proc ase::sim_conf_file {} {
   if {![info exists ::USER_CONF_DIR]} { return {} }

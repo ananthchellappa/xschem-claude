@@ -3403,7 +3403,17 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   dump printer is told the wrong reason for its long deck. Stage 16 task 1 of the ASE-L analyses
   batch. Checked free in every clone on this machine before minting. OPEN.
 
-**The next free number is 1471.**
+~~**The next free number is 1471.**~~ superseded: **1471** is filed, below.
+
+- **1471** — **The Simulators window never says what the program in front of it can do, and no page
+  says what works on which ngspice.** Issue 1470's sentence reached the run log only — once per
+  session, and only when something was missing — so the row editor where a user registers a build
+  and presses Detect said nothing about the fast operating-point dump it lacks or the command lines
+  it misreads, and a person deciding whether ASE-L works with the ngspice they already have had
+  nothing to read. Stage 16 task 2 of the ASE-L analyses batch. Checked free in every clone on this
+  machine before minting. OPEN.
+
+**The next free number is 1472.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

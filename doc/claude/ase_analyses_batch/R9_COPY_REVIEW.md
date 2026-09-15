@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**671 strings, from 32 issues, grouped by where the user sees them** — not by
+**721 strings, from 35 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -9177,7 +9177,7 @@ ASE-L has not measured /usr/bin/ngspice yet. Press Detect in the Simulators wind
 ```
 
 
-*Where:* the second frame — measured, nothing missing. **Never said in the run log**: the delta shrinks to nothing on the best build. Whether the window shows it is task 2's.
+*Where:* the second frame — measured, nothing missing. **Never said in the run log**: the delta shrinks to nothing on the best build. Whether the window shows it is task 2's. **Task 2 (issue 1471): the window shows it** — the row editor of *Setup > Simulators…*, decision C2, on the user's queue as rule `1471`.
 
 **R9-680** · frame
 
@@ -9559,3 +9559,31 @@ ase: checking the command lines for ngspice raised: <error>
 
 
 *Where:* the CIW, when an adapter's `lint_control_text` hook raises. The run goes on unlinted.
+
+## Issue 1471 — the Simulators window's line, and the release note (stage 16, task 2)
+
+*2 entries, and five re-used.* The window adds **no sentence of its own**: the new line beneath the row editor's case-mode status shows `ase::variant_sentence`'s answer verbatim, through `ase::variant_status` (at open and on leaving the Program field) and `ase::variant_detected` (after Detect). So **R9-678** and **R9-679**, which task 1 said nowhere, are said in the row editor of *Setup > Simulators…*, and **R9-680 … R9-682** (with the clauses and asides R9-683 … R9-696) are said there as well as in the run log. Four choices ride with the line under `owed.sh add rule 1471` — see the issue file: the window shows the complete frame, R9-679, rather than nothing (receipt 46's decision **C2**); it shows the first frame, R9-678, beside a status line that also names Detect; after a Detect whose probe did not answer it is empty; an emptied Program field empties it. The release note is new prose under the user's name; where it ships, and one departure from ⚖ R11's drafted wording, are `owed.sh add rule 1471_release_note_destination`.
+
+**R9-720** · sentence
+
+```text
+ASE-L is tested against the ngspice your distribution ships (45.2 on the current Ubuntu LTS), against stock upstream ngspice built from source, and against our own build. Older ngspice is not refused — it is measured, and ASE-L offers whatever it proves it can do.
+```
+
+
+*Where:* the release note's support sentence (`doc/claude/ase_analyses_batch/RELEASE_NOTE.md`), if and wherever it ships.
+
+
+*Note:* ⚖ R11's Option C wording, verbatim except *"against stock upstream at the 47 tip"* → *"against stock upstream ngspice built from source"*: 47 is not a release, and a number beside "stock upstream" reads as a version a person could install (receipt 46 C8's rule).
+
+**R9-721** · document
+
+```text
+ASE-L and the ngspice you have — the release note's description (24 tagged claims)
+```
+
+
+*Where:* `doc/claude/ase_analyses_batch/RELEASE_NOTE.md`, between `note:begin` and `note:end`. Read it there, as one document: every claim carries a tag naming its evidence row.
+
+
+*Note:* A measured finding, not a promise (PLAN §16e), so it needs no ruling on its substance — but it is still new copy. It never says "basic", never mentions PSS, never names a release that does not exist and states no version floor; rows WR1–WR4 of `tests/headless/test_ase_simwin_variant_1471.tcl` hold it there.

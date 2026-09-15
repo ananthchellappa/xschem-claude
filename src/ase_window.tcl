@@ -9659,8 +9659,27 @@ proc ase::ui::simdlg_case_status {key name} {
   set w [dict get $wins $key].simrow
   if {![winfo exists $w] || ![winfo exists $w.status]} { return }
   lassign [ase::ui::simdlg_case_ctx $key $name] backend path eargs stored have
+  ## THE LINE BENEATH FOLLOWS THE SAME GESTURES, and ahead of the early return
+  ## below on purpose: an emptied field names no program, so the line about
+  ## what "this program" can do must not go on describing the last one.
+  ase::ui::simdlg_variant_paint $key [ase::variant_status $backend $path $eargs]
   if {$path eq {}} { return }
   $w.status configure -text [ase::casemode_status $backend $path $eargs]
+}
+
+# THE ONE WRITER OF THE LINE BENEATH THE CASE-MODE STATUS (Stage 16a, issue
+# 1471): what the program in the Program field can and cannot do. It paints
+# what it is handed and decides nothing -- the answer is always
+# ase::variant_status's (measuring nothing) or ase::variant_detected's (about
+# what Detect just got), both in src/ase.tcl. ⚠ Never the run log's door,
+# ase::variant_say: that one records the sentence as said, and a user who
+# merely looked at a program here would then never be told about it in a run.
+proc ase::ui::simdlg_variant_paint {key text} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].simrow
+  if {![winfo exists $w.variant]} { return }
+  $w.variant configure -text $text
 }
 
 # Detect. THE ONLY PLACE IN THIS DIALOG THAT MAY START A PROCESS, and it says
@@ -9696,15 +9715,21 @@ proc ase::ui::simdlg_detect {key} {
   # nothing.
   if {$path eq {}} {
     $w.status configure -text [ase::casemode_status $backend $path $eargs]
+    ase::ui::simdlg_variant_paint $key [ase::variant_status $backend $path $eargs]
     return
   }
   $w.status configure -text [ase::sim_why casemode_measuring {} $path]
+  ## THE LINE BENEATH IS EMPTIED BEFORE THE FLUSH: while the launch blocks Tk,
+  ## what is on screen must not be the last program's answer, nor a line telling
+  ## the user to press the button they are pressing.
+  ase::ui::simdlg_variant_paint $key {}
   update idletasks
   set caps [dict create known 0]
   catch {set caps [ase::sim_capabilities_path $backend $path $eargs]}
   if {![winfo exists $w]} { return }
   ase::ui::simdlg_case_show $key $name $mode
   $w.status configure -text [ase::casemode_report $backend $path $caps]
+  ase::ui::simdlg_variant_paint $key [ase::variant_detected $backend $path $caps]
 }
 
 # The four-field row editor. An empty `name` is the Add flavor; anything else
@@ -9716,7 +9741,8 @@ proc ase::ui::simdlg_detect {key} {
 # ROW ORDER IS PART OF THE WIDGET CONTRACT the suite asserts, but the suite
 # addresses every widget by PATH, never by grid row, so adding rows here does
 # not move anything it can see: Name 0, Program 1 (+ Browse in column 2),
-# Case 2 (+ Detect in column 2), -n 3, status 4, buttons 5.
+# Case 2 (+ Detect in column 2), -n 3, status 4, what the program can do 5
+# (issue 1471), buttons 6.
 proc ase::ui::simdlg_editor {key name} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return }
@@ -9747,6 +9773,12 @@ proc ase::ui::simdlg_editor {key name} {
   # until there is something to say, so an untouched editor makes no claim.
   label $w.status -anchor w -justify left -wraplength 420 -text {}
   grid $w.status -row 4 -column 0 -columnspan 3 -sticky we -padx 8 -pady {4 0}
+  # WHAT THIS PROGRAM CAN AND CANNOT DO, directly beneath the case-mode line
+  # (Stage 16a, issue 1471). Painted only by ase::ui::simdlg_variant_paint, and
+  # only with what ase::variant_status / ase::variant_detected answer. Empty
+  # until there is something to say, like the line above it.
+  label $w.variant -anchor w -justify left -wraplength 420 -text {}
+  grid $w.variant -row 5 -column 0 -columnspan 3 -sticky we -padx 8 -pady {2 0}
   set mode {}
   if {$name ne {}} {
     $en insert 0 $name
@@ -9771,7 +9803,7 @@ proc ase::ui::simdlg_editor {key name} {
   ase::ui::simdlg_case_status $key $name
   bind $en <Return> [list ase::ui::simdlg_ok $key]
   bind $ep <Return> [list ase::ui::simdlg_ok $key]
-  ase::ui::dialog_buttons $w 5 [list ase::ui::simdlg_ok $key] \
+  ase::ui::dialog_buttons $w 6 [list ase::ui::simdlg_ok $key] \
     [list ase::ui::simdlg_cancel $key]
   ase::ui::apply_theme $w
   if {$name eq {}} { focus $en } else { focus $ep }

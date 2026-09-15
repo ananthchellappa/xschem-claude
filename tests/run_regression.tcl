@@ -88,7 +88,15 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_events_1465" \
                  "headless/test_ase_trnoise_1466" \
                  "headless/test_ase_trnoise_gui_1467" \
-                 "headless/test_ase_variant_1470"]
+                 "headless/test_ase_variant_1470" \
+                 "headless/test_ase_simwin_variant_1471"]
+# ⚠ ISSUE 1471 (Stage 16 task 2 -- the Simulators-window line and the release
+# note) IS IN BOTH LISTS. Headless it is pure Tcl and starts nothing: the two
+# schema procs the window paints from, the release note held to its rules, and
+# the .state round trip. On the display arm (`dcases`) its WG rows open Setup >
+# Simulators… through the real menu, and WG7 presses Detect on apt 45.2 and on
+# the fork -- the ordinary capability probe, which crashes neither. Every other
+# row requires the counted probe door and the stand-ins' MARK file to stay at 0.
 # ⚠ ISSUE 1470 (Stage 16 task 1, "the ngspice you actually have") IS HEADLESS
 # ONLY, AND ITS SECTIONS M21 AND EX START REAL SIMULATORS: the fork once for the
 # `casemodewrite` header, and the ordinary capability probe once per binary
@@ -282,7 +290,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_campaign_gui_1464" \
-                 "headless/test_ase_trnoise_gui_1467"]
+                 "headless/test_ase_trnoise_gui_1467" \
+                 "headless/test_ase_simwin_variant_1471"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

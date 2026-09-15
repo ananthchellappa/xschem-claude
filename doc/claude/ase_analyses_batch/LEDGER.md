@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 15:03
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 15:59
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**13**, and **Stage 16 task 1** (issue **1470**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`. Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, **M22** `02288c30`. Since: **1468** `36153d03`, **1469** `3addf5ca`. Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages landed** | 0–**13**, and **Stage 16 tasks 1–2** (issues **1470** `4e1e1cac`, **1471**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`. Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, **M22** `02288c30`. Since: **1468** `36153d03`, **1469** `3addf5ca`. Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
 | **Stages remaining** | **16** tasks 2 and 3, then **14** (PSS), which waits on ⚖ R7 going back to the user — plus ⚖ **R10's adapter-author specification**, written after the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **81 cases, ZERO counted lines in `tests/results.log`, 356 s**, solo, in the foreground — the new suite in `hcases`; no job list or `untitled~.sch` left behind — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
-| **In flight** | nothing at this commit. **Stage 16 task 2 is dispatched immediately after it** |
-| **Next** | **Stage 16 task 2** (brief drafted, with C2/C8 folded in) → **Stage 16 task 3** (wire 16c) → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **719 strings from 34 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
+| **T1** | ✅ **83 cases, ZERO counted lines in `tests/results.log`, 368 s**, solo, in the foreground — the new suite in both `hcases` and `dcases`; no job list or `untitled~.sch` left behind — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 and long suite batches in the foreground**: the harness stopped three background runs as "low on memory" with ~13 GB free |
+| **In flight** | nothing at this commit. **Stage 16 task 3 (wire 16c) is dispatched immediately after it** |
+| **Next** | **Stage 16 task 3** (brief drafted) → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **721 strings from 35 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9, and **R11's support sentence carries one wording departure** under `rule 1471_release_note_destination` |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **182 rule / 69 look / 11 suite**, after Stage 16 task 1. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (one refusal shown three times, widening the dialog to 839 px). Four unstamped entries are another clone's |
+| **Debt queue** | **184 rule / 70 look / 11 suite**, after Stage 16 task 2. ⚠ Four `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, `ase-trnoise-section-1467` (one refusal shown three times), and the Simulators editor's new line (cold, two lines both mention Detect). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,15 +87,14 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect Stage 16 task 2** — receipt `47-stage-16-gui.md`. Verify independently: opening the Simulators window
-   starts no simulator; the window shows exactly `ase::variant_sentence`'s answer and never calls `variant_say`; the
-   C2 decision is recorded under the rule; the look debt's screenshot shows both registry entries; the release note
-   states nothing unmeasured, names binaries not versions, and copies neither of C8's two *"ngspice 47"* sentences.
-   T1 in the foreground.
-2. **Stage 16 task 3** — wire 16c: a probe leg that records `$sourcepath`'s `scripts_dir`, and a say-site that runs the
-   two co-simulation checks once, when the user first asks for Verilog waveforms. **Stage 16 is complete after it.**
-3. **Then the user**: ⚖ R9 first, and after it ⚖ R7 on `evidence/pss-two-binaries.md` — one at a time. Stage 14
-   opens only after R7.
+1. **Collect Stage 16 task 3** — receipt `48-stage-16-cosim.md`. Verify independently: the probe's crash profile
+   and cost did not change on either binary; the two co-simulation defects are said once, when the user first asks
+   for Verilog waveforms, and not on the fork; an unanswered leg says nothing. T1 in the foreground. **Stage 16 is
+   complete after it.**
+2. **Then the user**: ⚖ R9 first (721 strings), and after it ⚖ R7 on `evidence/pss-two-binaries.md` — one at a
+   time. The release note's destination and R11's one wording change are `rule 1471_release_note_destination`.
+3. **Stage 14** opens only after R7. Then ⚖ R10's adapter-author specification, written after the last
+   hook-adding stage.
 
 ⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
 nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
@@ -937,6 +936,22 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 16 task 2 — the Simulators window says what the program can do, and the release note, issue **1471**, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | `src/ase_window.tcl` **+34/−2** — one line, `$top.simrow.variant`, beneath the case-mode status line **in the row editor** (*Setup > Simulators… > Edit…*, where Detect lives — PLAN placed it in the list, which has no status line: C1). Its one writer paints what two **schema** procs decide: `ase::variant_status` (the peek, D8 — opening the editor starts nothing) and `ase::variant_detected` (the answer Detect just got, deliberately **not** the peek, so an unanswered Detect never says *"press Detect"*). `src/ase.tcl` **+64**. No sentence composed in the window (WS7 greps for one) |
+| **⚖ C2, decided and on the queue** | **the window shows the complete frame** — the fork reads *"… can do everything ASE-L offers."* rather than a blank line, because in that editor a blank line already means four other things (no location, no program, no probe hook, an unanswered Detect). The run log keeps the delta rule. `rule 1471` |
+| **the look** | ⚠ **driver looked at both screenshots**: 45.2 cold reads frame 1 beneath the status line; after Detect 45.2 reads the full delta sentence and the fork *"can do everything ASE-L offers."* — the sentences EX1/EX2 measured. One wrinkle, named by the crew and visible: **cold, two lines in one editor both mention Detect**. `look` filed, *"suites green, please look"* — taken on `:99`, not the user's screen (`evidence/stage16-simulators-{cold,detected}.png`) |
+| **the release note** | `RELEASE_NOTE.md` — **24 tagged claims, each with an evidence row naming a receipt or evidence file and the binaries**; never "basic", never PSS, no version floor, no future release fixing anything, and neither of receipt 46 C8's *"ngspice 47"* sentences — held to that by suite rows **WR1–WR4**. ⚠ **Where it ships is the user's**: the repo's `Changelog` is upstream xschem's per-release file, so the note ships nowhere until `rule 1471_release_note_destination` is answered. ⚠ **One departure from ⚖ R11's drafted support sentence** — *"stock upstream at the 47 tip"* became *"stock upstream ngspice built from source"*, because 47 is not a release; recorded in the note, R9-720 and that rule. **The crew did not edit the ruling record** (`LEDGER.md`, `DECISIONS.md`, `PLAN.md` untouched). Driver spot-checked claims against today's own measurements (E20, E22) |
+| **driver's own re-run** | headless: `test_ase_simwin_variant_1471` **12**, `test_ase_variant_1470` **57**, `test_ase_simdlg_0937` **5**, `test_ase_simcaps_0948` **211**, `test_ase_simreg_0931` **117**, `test_ase_window` **56**, `test_ase_dialogs` **37**, `test_ase_persist` **49**, `test_ase_core` **638**. Display: **21**, **57**, **55**, **295**, **153**. All rc 0, in the foreground, matching the receipt. Byte identity `tracked 104 bad {} control_disagrees 1 control_agrees 1` |
+| **sabotage** | **34 arms, every one of the 21 rows reddened**, restores guaranteed by `try/finally` and signal handlers. Driver's own, display arm: after-Detect paint blanked → **WS7 WG5 WG7/apt WG7/fork**, the crew's S16 set; restored to md5 `55b021fd`, `ALL PASS (21)` |
+| **T1** | ✅ **83 cases, ZERO counted lines in `tests/results.log`, 368 s**, solo, in the foreground — the new suite in both `hcases` and `dcases`; no job list or `untitled~.sch` left behind |
+| **ledger debts** | `rule 1471` (the window's four choices), `rule 1471_release_note_destination` (where the note ships, the R11 wording, R9-720/721), `look` for the line. Queue **182/69/11 → 184/70/11**. R9 **721 strings from 35 issues** — and the review's own header, stale at 671/32 since two tasks ago, corrected by the driver |
+| **corrections** | **C1** the line lives in the row editor · **C2** `+64` in `src/ase.tcl`, not only the window · **C3** PLAN §16e's *"runs byte-identically on 45.2"* is scoped to op and tran; the note cites per analysis · **C4** ⚠ `binary-differences.md` said *"the differences are six"* over nine rows, and its row 3 event counts looked like a contradiction of M9 — two different decks; **both corrected by the driver in place** · **C5** the R11 wording (above) |
+| **binds later** | ⚠ when Stage 14 makes `pss` renderable, **WR2 still reds on a PSS mention in the release note, deliberately** — ⚖ R7 decides; T1's `dcases` now runs the ordinary probe on 45.2 and the fork through Detect (WG7, ~2 s); **16c still reaches no user** — task 3 |
+| **receipt** | `receipts/47-stage-16-gui.md` |
 
 ### ✅ Stage 16 task 1 — the ngspice you actually have, everything that is not a pixel, issue **1470**, collected 2026-09-15
 
@@ -4745,12 +4760,12 @@ Decisions: **D42–D52**.
 
 | | |
 |---|---|
-| status | ⏳ **task 1 of 3 landed** — everything that is not a pixel (issue **1470**); task 2 the window row, look debt and release note; task 3 wires 16c |
-| commit | task 1: the `feat(1470)` commit that carries this row |
+| status | ⏳ **tasks 1 and 2 of 3 landed** — everything that is not a pixel (issue **1470**) and the window line, look debt and release note (issue **1471**); task 3 wires 16c |
+| commit | task 1: `4e1e1cac` · task 2: the `feat(1471)` commit that carries this row |
 | T1 | task 1: solo in the foreground, see the *Stage 16 task 1* block |
-| suites moved | **new** `test_ase_variant_1470` **57** both arms; ⚠ eight expectations in four existing suites (§16 said none) |
-| sabotage | task 1: **54 arms, all 57 rows reddened** |
-| ledger debts | `rule 1470`; **M21 closed**; M20 open |
+| suites moved | **new** `test_ase_variant_1470` **57** both arms; ⚠ eight expectations in four existing suites (§16 said none) · **new** `test_ase_simwin_variant_1471` **12 headless / 21 display**, in `hcases` and `dcases`; no existing row moved |
+| sabotage | task 1: **54 arms, all 57 rows reddened** · task 2: **34 arms, all 21 rows reddened** |
+| ledger debts | `rule 1470`; **M21 closed**; M20 open · `rule 1471`, `rule 1471_release_note_destination`, one `look` |
 | spec paragraphs rewritten | none yet — C1–C8 are in receipt 46 for the stage's close |
 | tested on apt 45.2 as well as the fork | *required field for this stage: the sentence and the linter are ABOUT the stock binary, so a receipt naming only the fork has tested the one configuration this stage does not care about* |
 | receipt | |
