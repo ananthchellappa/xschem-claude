@@ -3386,7 +3386,15 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   Checkpointing is unaffected. Found by Stage 13 task 3's crew, boundary measured by the driver.
   OPEN.
 
-**The next free number is 1469.**
+~~**The next free number is 1469.**~~ superseded: **1469** is filed, below.
+
+- **1469** — **A campaign seed outside ngspice's range runs unseeded and says it was seeded.**
+  ngspice honours `.options seed=` only for 1 … 2147483647 — it refuses 0, negatives and
+  2³¹ … 2³² with one warning and runs unseeded, and wraps larger values — identically on 45.2 and
+  the fork. ASE-L accepts 0 … 4294967295 and writes `seed + shard index` per shard, so a campaign
+  can report seeded shards that ngspice ran unseeded. Driver-measured. OPEN.
+
+**The next free number is 1470.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

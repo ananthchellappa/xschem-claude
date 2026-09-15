@@ -9342,7 +9342,25 @@ proc ase::analysis_point_estimate {sim type row {state {}}} {
   if {$hook eq {}} { return {} }
   set n {}
   if {[catch {$hook $row $state} n]} { return {} }
-  if {![string is integer -strict $n]} { return {} }
+  ## ⚠ `entier`, NOT `integer` -- ISSUE 1468. On Tcl 8.6 `string is integer
+  ## -strict` is not "is a whole number": measured on 8.6.17 it answers 1 for
+  ## 4294967295 and 0 for 4294967296, so every estimate of 2^32 points or more
+  ## read as NO estimate. `tran 1n 5` is 5e9 points, and the three readers of
+  ## this answer went silent for exactly the runs they exist for -- §7g's
+  ## `points_max` caution, the Tran form's `≈ N points` (`ase::stimuli_points`)
+  ## and the noise check's base.
+  ##
+  ## `entier` WIDENS THE RANGE AND NOT THE TYPE. Measured over 36 spellings:
+  ## every string `integer` accepts, `entier` accepts, and the only strings it
+  ## adds are whole numbers of magnitude 2^32 or more. So `5e9`, `3.5`, a word
+  ## and `{}` still read as no estimate, and a negative is a number as it was.
+  ## Not `wideinteger`, which on this Tcl stops at 2^64 and would move the
+  ## silence rather than remove it. The readers compare and multiply the answer
+  ## in `expr`, which is exact on an integer of any size; the checkpoint
+  ## planner calls the hook itself through `string is double` and never had the
+  ## bound. Rows: test_ase_effective_1442 RU12/RU13, test_ase_trnoise_1466
+  ## NX6/NK22.
+  if {![string is entier -strict $n]} { return {} }
   return $n
 }
 

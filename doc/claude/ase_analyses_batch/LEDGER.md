@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 12:36
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 13:06
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,12 +40,12 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**13**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, debt **M22**'s fix. Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463**, **1468** filed |
+| **Stages landed** | 0–**13**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, debt **M22** `02288c30`. Since: **1468** (the point estimate's range). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed; **1469** filed and open |
 | **Stages remaining** | **16** (the ngspice you actually have) — **before** **14** (PSS), which waits on ⚖ R7 going back to the user — plus ⚖ **R10's adapter-author specification**, written after the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`, 353 s**, solo, in the foreground at full parallelism; no job list or `untitled~.sch` left behind — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design: `xschemtest.tcl` writes there **only when it fails** (`run_regression.tcl:478-490`). ⚠ **Run T1 in the foreground**: on 2026-09-15 the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
-| **In flight** | nothing at this commit. **Issue 1468's small fix is dispatched immediately after it**, then Stage 16 task 1 |
-| **Next** | **Issue 1468** (a one-proc fix with rows above 2³²) → **Stage 16 task 1** (brief drafted) → **Stage 16 task 2** → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
+| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`**, solo in the foreground on issue 1468 (368 s) — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
+| **In flight** | nothing at this commit. **Issue 1469's small fix is dispatched immediately after it**, then Stage 16 task 1 |
+| **Next** | **Issue 1469** (the honoured seed range, as adapter content, refused at the form and kept inside for every shard) → **Stage 16 task 1** (brief drafted) → **Stage 16 task 2** → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **671 strings from 32 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
 | **Debt queue** | **180 rule / 69 look / 11 suite**, after Stage 13 task 2. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (**one refusal shown three times, widening the dialog to 839 px**). Four unstamped entries are another clone's |
@@ -87,10 +87,11 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Issue 1468** — a small crew task: read the point estimate as a whole number of any size
-   (`string is entier`/`wideinteger`, or `double` as the planner does), with a row above 2³² for each
-   of its three readers that goes red without the fix, and a survey of the other `string is integer
-   -strict` sites on counts. Both arms, T1 in the foreground, ledger, commit.
+1. **Collect issue 1469** — receipt `receipts/45-1469-campaign-seed-range.md`. Verify independently on
+   both binaries: a seed at the top of the honoured range reproduces; one just past it is refused
+   before a deck exists; a campaign whose last shard would cross the boundary never writes an
+   unhonoured seed; and **no `Cannot convert … seed value` warning appears in any shard log**. T1 in
+   the foreground, ledger, commit.
 2. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
    `stage16_task1_brief.md`): the four-frame sentence, the five-pattern linter (**its RED row is never
    re-run on `/usr/bin/ngspice`**), the installation greps, the `dumpunsound` token, and debt **M21**.
@@ -937,6 +938,31 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Issue 1468 — the point estimate reads a whole number of any size, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | **one word** in `ase::analysis_point_estimate`: `string is integer -strict` → **`string is entier -strict`**. Measured over 36 spellings on Tcl 8.6.17: `entier` accepts everything `integer` does and adds only whole numbers of magnitude 2³² or more — `wideinteger` would fall silent again at 2⁶⁴ and `double` would admit `5e9` and `3.5`. §7g's size caution, the Tran form's noise estimate and the noise check's base now reach the largest runs |
+| **proof** | **RU12, RU13** (`test_ase_effective_1442`, 92 → 94) and **NX6, NK22** (`test_ase_trnoise_1466`, 76 → 78), all red on the pre-change file; and **each reader's row reds when only that reader is broken** (S05–S07). Receipt 43's M10 now reds NK20 too |
+| **driver's own re-run** | headless: `test_ase_effective_1442` **94**, `test_ase_trnoise_1466` **78**, `test_ase_trnoise_gui_1467` **19**, `test_ase_preflight` **235**, `test_ase_persist` **49**, `test_ase_core` **638**. Display: **94**, **78**, **63**, **153**. All rc 0, matching the receipt. Byte identity `tracked 104 bad {} control_disagrees 1 control_agrees 1` |
+| **sabotage** | **9 arms, 9 killed by name.** Driver's own: `string is integer -strict` put back → **RU12 RU13 · NK22 NX6**; restored md5 `cfae0e2f`, `ALL PASS (94)` and `(78)`. ⚠ **`test_ase_effective_1442` exited rc 0 while reporting `2 FAILED`** — it sets no exit code. T1 still counts it (banner and `FAIL` lines), but an rc-only reader would not |
+| **T1** | ✅ **80 cases, ZERO counted lines, 368 s**, solo, in the foreground |
+| **⚠ the survey corrected the driver's issue text** | a rawfile's point count **is** bounded here, at 2³¹−1 — ngspice's `write` prints `%d` from an `int`, and xschem's reader scans `%d` into an `int` — and `~:15293` is the `no_draw` flag, not a count. No other site changed |
+| **found, named, not filed** | `ase::backend::ngspice::tran_points` wraps from 2⁶³ (`int()`): `tran 1a 10` estimates **−8446744073709551616**. Fixing it means `ase::ckpt_plan`'s own `int()`/`wide()` too. An absurd input; named here |
+| **⚠ found, and it became issue 1469** | the crew saw *"a seed of 2³² or more reads as not seeded"*. **The driver measured what ngspice does with the seed** and the defect is wider and the other way round — see issue 1469 below |
+| **receipt** | `receipts/44-1468-point-estimate-range.md` |
+
+### ⚠ Issue 1469 — filed by the driver 2026-09-15: a campaign seed ngspice throws away is reported as seeded
+
+`.options seed=<n>`, measured on **both** binaries, identically, fork first, nothing crashed: ngspice keeps
+the low 32 bits as a signed `int` and **refuses** anything then ≤ 0 — 0, negatives, and **2³¹ … 2³²** —
+with `Warning: Cannot convert 'option seed=…' to seed value, skipped!` and an **unseeded** run at rc 0,
+and **wraps** larger values (5000000000 → 705032704). **Only 1 … 2147483647 is honoured as typed.**
+ASE-L accepts 0 … 4294967295 and writes `seed + shard index` into each shard, so a campaign seeded at
+2147483600 over 100 shards runs shards 48–99 unseeded while every surface reports it seeded. **The
+accepted-is-not-honoured class a seventh time**, and the first where the dishonoured value is typed into
+ASE-L's own field. OPEN; the fix is a small crew task, dispatched next.
 
 ### ✅ Stage 13 task 3 — debt M22's fix, collected 2026-09-15 — **STAGE 13 IS COMPLETE**
 

@@ -71,6 +71,12 @@
 #    sections RS SP DK EF DF GT RU HK, all pure Tcl, on both arms
 #    section UI drives the real widgets and self-skips without an X connection
 #
+# THE HISTORY:
+#   92 on both arms at HEAD 02288c30 (measured; the file was last changed by 1456).
+#   92 -> 94 AND RAISED, issue 1468 (receipt 44): RU12 -- rule 4 warns from 2^32
+#   points up and quotes the whole count -- and RU13 -- the one estimator takes
+#   a whole number of any size and still nothing else. Pure Tcl, both arms.
+#
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice number quoted above was
 # measured beforehand on both binaries; the rows below assert what ASE-L does
 # with those facts, which is pure Tcl.
@@ -943,6 +949,73 @@ check {RU11 the size rule uses the ONE point estimator the checkpointer uses} \
   [list [s_ans ase::analysis_point_estimate ngspice tran {type tran step 1u stop 100u}] \
         [s_ans ase::analysis_point_estimate ngspice ac {type ac sweep lin points 2}]] \
   {100 {}}
+
+## ⚠ ISSUE 1468: THE RULE WAS SILENT FROM 2^32 POINTS UP -- the runs it exists
+## for. The estimator took the hook's answer through `string is integer -strict`,
+## which on Tcl 8.6.17 is 1 for 4294967295 and 0 for 4294967296, so `tran 1n 5`
+## (5e9 points) and `tran 1f 10` (1e16) read as no estimate and said nothing
+## while `tran 1n 3` warned. The first term is the control one point under the
+## boundary, and every sentence must carry the WHOLE count.
+proc ru12_pm {step stop} {
+  set st [s_state {} [list [list type tran enabled 1 step $step stop $stop]]]
+  set pc [ase::analysis_precheck ngspice $st [ase::netlist_facts [s_netlist]]]
+  foreach {type finds} $pc {
+    foreach f $finds {
+      if {[lindex $f 0] ne {points_max}} { continue }
+      return [list [lindex $f 1] [lindex [regexp -inline {about [0-9]+ points} [lindex $f 2]] 0]]
+    }
+  }
+  return none
+}
+check {RU12 a transient asking 2^32 points or more still warns, and quotes the whole\
+ count} \
+  [s_ans apply {{} {
+     list [ru12_pm 1n 4.294967295] [ru12_pm 1n 4.294967296] [ru12_pm 1n 5] [ru12_pm 1f 10] }}] \
+  {{caution {about 4294967295 points}} {caution {about 4294967296 points}}\
+ {caution {about 5000000000 points}} {caution {about 10000000000000000 points}}}
+
+## ⚠ AND THE FIX WIDENS THE RANGE, NOT THE TYPE. A fixture backend whose `tran`
+## is ngspice's own entry with the `salvage` points hook swapped for one that
+## hands back the row's `ans`, so each spelling reaches the ONE estimator as it
+## is. A whole number of any size is an estimate -- 2^32, 5e9 and 2^64, the last
+## of which is why the test is `entier` and not `wideinteger` (0 from 2^64 on
+## this Tcl, which would move the silence rather than remove it). A float
+## spelling, a fraction, a word and the empty string are not, and a negative is
+## a number -- all as before. The last term uses the OLD test as its oracle over
+## spellings under 2^32, accepted and refused alike: it must find no difference.
+proc ru13_types {} {
+  set e [dict get [ase::analysis_types ngspice] tran]
+  dict set e salvage points ::ru13_hook
+  return [dict create tran $e]
+}
+proc ru13_hook {row {state {}}} { return [dict get $row ans] }
+proc ru13_est {ans} {
+  set save $::ase::backends
+  ase::register_backend zz1468 [dict create render_deck x run_cmd x log_file x \
+    result_probe x raw_file x analysis_types ru13_types]
+  ase::analysis_cache_clear zz1468
+  set r [s_ans ase::analysis_point_estimate zz1468 tran \
+           [list type tran enabled 1 ans $ans] {}]
+  set ::ase::backends $save
+  ase::analysis_cache_clear zz1468
+  return $r
+}
+## ⚠ `if`, NOT `expr {… ? $v : {}}`, FOR THE ORACLE: `expr` hands back the
+## NUMBER, so ` 7` came back `7` and `0x10` came back `16`, and the first cut of
+## this row reported both as differences on the unfixed tree. The estimator
+## returns the hook's own string, and so must the oracle.
+set RU13PAR {}
+foreach v [list 100 4294967295 -1 -4294967295 { 7} 0x10 5e9 3.5 abc {} 08] {
+  if {[string is integer -strict $v]} { set old $v } else { set old {} }
+  if {[ru13_est $v] ne $old} { lappend RU13PAR $v }
+}
+check {RU13 the estimator takes a whole number of any size and still nothing else --\
+ under 2^32 every spelling answers what the old test answered} \
+  [list [ru13_est 100] [ru13_est 4294967296] [ru13_est 5000000000] \
+        [ru13_est 18446744073709551616] [ru13_est -5000000000] \
+        [ru13_est 5e9] [ru13_est 5000000000.0] [ru13_est 3.5] [ru13_est abc] \
+        [ru13_est {}] $RU13PAR] \
+  {100 4294967296 5000000000 18446744073709551616 -5000000000 {} {} {} {} {} {}}
 
 } ruerr]} { check {RU0 section RU ran to the end} "RAISED:$ruerr" {} }
 

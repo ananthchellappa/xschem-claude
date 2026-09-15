@@ -72,6 +72,10 @@
 #   prints its SKIPPED line and the count falls by eight, never silently. One
 #   existing row's COMMENT moved and no term of it did: NX2's fourth term (the
 #   salvage hook stays the card's) is still true, for a new reason.
+#   76 -> 78 AND RAISED, issue 1468 (receipt 44): NX6 -- the Tran form's estimate
+#   keeps a card of 2^32 points or more -- and NK22 -- the noise caution leaves
+#   such a card to §7g's size rule, as it does under the boundary. Two pure-Tcl
+#   rows that start no simulator, so neither moves with a missing binary.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_trnoise_1466.tcl
@@ -600,6 +604,32 @@ check {NK21 render_deck refuses noise on a node the event inventory measured, an
         $NK21SEEDED [string match {RAISED:*nothing was rendered*} $NK21B]] \
   {1 1 1}
 
+## ⚠ ISSUE 1468: A CARD THAT ASKS 2^32 POINTS OR MORE ON ITS OWN IS §7g's TO WARN
+## ABOUT, NOT THIS CHECK's. The noise caution fires only where the card's own
+## count would not; `points_max` says it otherwise, once. With the estimate
+## dropped as `{}` from 2^32 up, `tran 1n 5` under noise asking 2e8 points had NO
+## base -- so this caution fired, quoted the noise's 2e+08 for a run the card makes
+## 5e9, told the user to change the NOISE timestep, and `points_max` said nothing.
+## The first pair is the control under the boundary (3e9 by its card, noise asking
+## 2e8); the second is the same shape above it. The size rule's tier is read from
+## the precheck, BROKEN if that raised, so "no finding" cannot pass on a reader
+## that is gone.
+proc nk22_pm {row} {
+  set pc [s_ans ase::analysis_precheck ngspice [nz_state [list $row]] [nz_facts]]
+  if {[s_broken $pc]} { return BROKEN }
+  foreach {type finds} $pc {
+    foreach f $finds { if {[lindex $f 0] eq {points_max}} { return [lindex $f 1] } }
+  }
+  return none
+}
+set NK22UNDER [nz_row {{src vdd func trnoise na 1m ts 75n}} step 1n stop 3]
+set NK22OVER  [nz_row {{src vdd func trnoise na 1m ts 125n}} step 1n stop 5]
+check {NK22 a card asking 2^32 points or more is left to the size rule -- the noise\
+ caution stays silent for it and points_max speaks, exactly as under the boundary} \
+  [list [nz_find $NK22UNDER {*gigabytes*}] [nk22_pm $NK22UNDER] \
+        [nz_find $NK22OVER {*gigabytes*}] [nk22_pm $NK22OVER]] \
+  {{} caution {} caution}
+
 # ===========================================================================
 # NX -- THE DERIVED READOUTS
 # ===========================================================================
@@ -658,6 +688,28 @@ check {NX5 volts on a voltage source, amperes on a current source and on anythin
         [s_ans ase::stimuli_readout ngspice {} $NX5ROW 4] \
         [s_ans ase::stimuli_readout ngspice {} $NX5ROW 0]] \
   {V A A {} {}}
+
+## ⚠ ISSUE 1468: A CARD OF 2^32 POINTS OR MORE IS STILL A NUMBER. The one
+## estimator took the hook's answer through `string is integer -strict`, which on
+## Tcl 8.6.17 is 1 for 4294967295 and 0 for 4294967296 -- so `tran 1n 5`'s own
+## 5e9 points read as NO base, and this estimate fell back to whatever the noise
+## alone asked for: nothing with no table, 25 million (and 800 MB) under noise
+## asking fewer points than the card. The first term is the control one point
+## under the boundary; the last is noise asking MORE than the card, which the
+## old test answered right by accident and which must not move.
+set NX6ROW {type tran enabled 1 step 1n stop 5}
+set NX6NZ  [dict replace $NX6ROW noise {{src vdd func trnoise na 1m ts 1u}}]
+set NX6RD  [s_ans ase::stimuli_readout ngspice {} $NX6NZ 1 4]
+check {NX6 the estimate keeps a card of 2^32 points or more -- with no table, under\
+ noise asking fewer points than the card, and in the readout's points and bytes} \
+  [list [s_ans ase::stimuli_points ngspice {} {type tran enabled 1 step 1n stop 4.294967295}] \
+        [s_ans ase::stimuli_points ngspice {} {type tran enabled 1 step 1n stop 4.294967296}] \
+        [s_ans ase::stimuli_points ngspice {} $NX6ROW] \
+        [s_ans ase::stimuli_points ngspice {} $NX6NZ] \
+        [s_dget $NX6RD points] [s_dget $NX6RD bytes] \
+        [s_ans ase::stimuli_points ngspice {} \
+           [dict replace $NX6ROW noise {{src vdd func trnoise na 1m ts 1f}}]]] \
+  {4294967295 4294967296 5000000000 5000000000 5000000000 160000000000 25000000000000000}
 
 # ===========================================================================
 # NP -- THE CHECKPOINT PLAN COUNTS THE NOISE (debt M22)
