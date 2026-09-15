@@ -1254,6 +1254,31 @@ proc ase::sim_why {kind name path {extra {}}} {
       append s " Press Detect in the Simulators window to try again."
       return $s
     }
+    cosim_install {
+      ## STAGE 16c (issue 1472) -- THE FRAME AROUND ONE CO-SIMULATION
+      ## INSTALLATION DEFECT. ASE-L owns these words; the clause, the remedy and
+      ## the patch are the adapter's (ase::cosim_shim_notes). ⚖ R9: a recommended
+      ## shape, not a ratification.
+      ##
+      ## ⚠ `$path` IS A FILE HERE, NOT THE PROGRAM, and that is the one place in
+      ## this switch where it is. The defect is in a file BESIDE the binary --
+      ## the executable itself is blameless -- so naming the program would send
+      ## the user to change the wrong thing.
+      ##
+      ## ⚠ THE FRAME SUPPLIES NO SUBJECT. Both clauses are whole subject +
+      ## predicate ("this ngspice's vlnggen does not link..."), so a frame that
+      ## opened with the file name would read as two subjects in one sentence.
+      ## The path gets its own short sentence instead.
+      ##
+      ## ⚠ THE PATCH IS PRINTED VERBATIM ON ITS OWN LINES. It is the change the
+      ## user has to make; re-wrapping or re-indenting it would break it.
+      set s "This run asks for Verilog waveforms, and [dict get $extra clause]."
+      append s " The file is $path. Fix: [dict get $extra remedy]."
+      set p {}
+      catch {set p [dict get $extra patch]}
+      if {[string trim $p] ne {}} { append s "\n$p" }
+      return $s
+    }
     op_tier_blanket {
       return "Your simulator can hand back all of one device's operating-point numbers in a single request, so this run asked once per device instead of once per number. The requests are made just before the operating point and nowhere else, so nothing is recorded at every step of a transient that happens to be in the same run."
     }
@@ -2422,6 +2447,13 @@ proc ase::sim_caps_clear {} {
   # AND SO IS WHAT A BUILD CANNOT DO (issue 1470): the sentence is about a
   # measurement, so it is said again for the measurement taken next.
   set variant_said [dict create]
+  # AND SO IS WHAT IS WRONG WITH ITS CO-SIMULATION FILES (issue 1472), for a
+  # sharper version of the same reason: the directory those files are in is
+  # itself part of the measurement being forgotten (Band 1 `scripts_dir`), so a
+  # user who has just pointed the entry at a different build, or just applied
+  # the patch, must be able to be told again.
+  variable cosim_said
+  set cosim_said [dict create]
   return {}
 }
 
@@ -3213,23 +3245,36 @@ proc ase::cap_run {exe exeargs workdir secs} {
 #               vocabulary itself and was filled by leg D (issue 1412), because a
 #               band key with no reader is a key no row can pin.
 #
-# ⚠ `scripts_path` AND `curcasemode_default` ARE NOT HERE, AND THEIR ABSENCE IS A
-# DECISION. Measured on all three preflight binaries: `$sourcepath` came back
-# EMPTY from inside the probe deck, so `scripts_path` would be an absent key on
-# every binary in this environment; and `curcasemode_default` reports the CURRENT
-# mode rather than the supported SET (it is the empty string on apt 45.2 and on
-# upstream 47, whose logs say `Error: curcasemode: no such variable.`), D52
-# forbids its one tempting use -- populating `casemode_detected` from it would
-# narrow the fork's real {fold preserve distinguish} to {fold} and SWITCH OFF the
-# one feature the fork has -- and nothing in this stage reads it. A key with no
-# consumer, no value on any binary here, and one forbidden use is not a key.
-# ⚠ RE-MEASURED 2026-09-15 (issue 1470), AND THE `$sourcepath` HALF DID NOT
-# REPRODUCE: `echo "@@sourcepath=$sourcepath" >> probe_d.txt` inside a `-b`
-# deck -- leg D's own redirect form -- wrote `. /usr/share/ngspice/scripts
-# /usr/share/ngspice/scripts .` on apt 45.2 and `. <build>/stage/share/ngspice/
-# scripts` on the fork, quotes included. `scripts_dir` is still not a key, for
-# the other reason above: nothing in the tree consumes it yet. Stage 16c's parse
-# rule is ase::backend::ngspice::scripts_dir_of, ready for the leg that does.
+# ⚠ `scripts_dir` IS A BAND-1 KEY AS OF ISSUE 1472; `curcasemode_default` IS
+# STILL NOT ONE. The two were refused together, for two different reasons, and
+# only one of the reasons survived re-measurement.
+#
+#   `scripts_dir` -- the claim was that `$sourcepath` came back EMPTY from inside
+#   the probe deck. RE-MEASURED 2026-09-15 (issue 1470) IT DID NOT REPRODUCE, in
+#   leg D's own redirect form: `echo "@@sourcepath=$sourcepath" >> probe_d.txt`
+#   inside a `-b` deck wrote `. /usr/share/ngspice/scripts
+#   /usr/share/ngspice/scripts .` on apt 45.2 and `. <build>/stage/share/ngspice/
+#   scripts` on the fork -- as ONE DOUBLE-QUOTED LINE, which is why it still read
+#   as absent until issue 1472 measured the quoting and taught the marker reader
+#   about it (ase::backend::ngspice::cap_d_unquote). The second reason -- no
+#   consumer --
+#   held until issue 1472 gave it one: ase::cosim_shim_report, which reads the
+#   two co-simulation file checks out of that directory. Leg D publishes the key
+#   and the ADAPTER parses it (ase::backend::ngspice::scripts_dir_of); it is
+#   DISPLAY AND LOG ONLY like the two identity keys beside it, and NOTHING GATES
+#   ON IT -- the two greps it leads to are their own verdict.
+#   ⚠ ABSENT MEANS UNKNOWN, NEVER A GUESS. A binary whose `$sourcepath` names no
+#   absolute `scripts` directory publishes NO key, and the say-site then says
+#   nothing at all. A hardcoded /usr/share instead would answer "stock" for every
+#   fork a user registers, which is M19's finding.
+#
+#   `curcasemode_default` -- reports the CURRENT mode rather than the supported
+#   SET (it is the empty string on apt 45.2 and on upstream 47, whose logs say
+#   `Error: curcasemode: no such variable.`), D52 forbids its one tempting use --
+#   populating `casemode_detected` from it would narrow the fork's real
+#   {fold preserve distinguish} to {fold} and SWITCH OFF the one feature the fork
+#   has -- and nothing reads it. A key with no consumer, no value on any binary
+#   here, and one forbidden use is not a key.
 #   provenance  the absence of an answer, which is itself not a claim.
 #
 # ⚠ THE PREDICATE FOLLOWS THE **DIRECTION OF THE GATE**, NOT THE BAND. This is
@@ -3241,7 +3286,7 @@ proc ase::cap_run {exe exeargs workdir secs} {
 # a simulator" -- issue 0953, re-filed.
 proc ase::caps_keys {{band {}}} {
   set k [dict create \
-    identity   {version_line build_date} \
+    identity   {version_line build_date scripts_dir} \
     capability {usable appendwrite hier_op_names blanket_op_save altshow_op_dump
                 casemode_detected analyses_available analyses_probed
                 devices_available} \
@@ -4126,6 +4171,159 @@ proc ase::variant_detected {backend path caps} {
   set p $path
   if {![catch {ase::expand_path $p} out]} { set p $out }
   return [ase::variant_sentence $backend $p $caps]
+}
+
+# ─── STAGE 16c: THE TWO CO-SIMULATION INSTALLATION DEFECTS ───── issue 1472 ───
+# doc/claude/ase_analyses_batch/PLAN.md §16c; evidence/fork-dependencies.md §5
+# B4.1/B4.2; receipts/46-stage-16-deck.md shipped the two checks and
+# receipts/48-stage-16-cosim.md wired them.
+#
+# WHAT THE USER GOT BEFORE: NOTHING. Issue 1470 shipped the parse rule and both
+# greps and nothing called them (its own correction C6), so two characterised
+# defects stayed exactly as invisible as they had been before anyone found them:
+#
+#   * a `vlnggen` that does not link the VCD runtime. A `--trace` Verilator build
+#     then fails its FINAL LINK with unresolved symbols -- outside ASE-L, in the
+#     user's own build step -- and arrives as "my wrapper won't link".
+#   * a `verilator_shim.cpp` whose `Vlng` model holds a NON-OWNING pointer to a
+#     `VerilatedContext` the `unique_ptr` destroys when `Cosim_setup()` returns:
+#     USE-AFTER-FREE FOR THE WHOLE SIMULATION. It may never crash, which is
+#     exactly why it must be said out loud -- a run that "worked" is not evidence
+#     the memory was valid.
+#
+# ⚠ THESE ARE DEFECTS OF THE INSTALLATION, NOT OF THE EXECUTABLE, so no probe
+# deck can reach either one. They are two greps of files beside the registered
+# binary, in the directory that binary's own `$sourcepath` names (Band 1
+# `scripts_dir`, published by leg D). THE VERDICT STARTS NO PROCESS -- rows CS5
+# and CD7 of tests/headless/test_ase_variant_1470.tcl pin that structurally.
+#
+# THE SPLIT (D34-D37, D51). ASE-L owns WHEN this is said, to whom, how often and
+# the frame around the words (ase::sim_why cosim_install). The ADAPTER owns which
+# files, which greps, the clauses, the remedies and the patch text, through the
+# optional `cosim_shim_verdict {scripts_dir}` hook. ⚠ A BACKEND WITH NO HOOK GETS
+# NOTHING -- no fallback content and no guessed file name.
+#
+# THE NOTE SHAPE the hook answers, one per FAILED check, in reading order:
+#   check  <token>   which of the two; it is also the say-once key
+#   file   <path>    the file the user has to change
+#   clause <text>    what is wrong with it, in the adapter's own nouns
+#   remedy <text>    what to do about it
+#   patch  <text>    the change itself, verbatim (optional)
+# A note missing `check`, `file`, `clause` or `remedy` is DROPPED rather than
+# guessed at, and a hook that raises gives no sentence at all.
+#
+# ⚠ SAID ONCE PER INSTALLATION PER SESSION, A NOTE AND NEVER A MODAL, AND ONLY
+# WHEN THE RUN ASKS FOR VERILOG WAVEFORMS (PLAN §16c). Three consequences worth
+# naming, because each is a place silence is correct:
+#   * an `unknown` verdict -- no such file to read -- says NOTHING. "I could not
+#     look" is not a finding about somebody's installation.
+#   * a purely analog run says nothing, and neither does a co-simulation under
+#     `cosim trace 0` or on the Icarus arm: none of them asks for the VCD the
+#     first defect is about.
+#   * a second run in the same session says nothing, like every other
+#     once-per-session sentence here.
+
+namespace eval ase {
+  # {sim scripts_dir check} -> 1, for every installation defect said this session.
+  variable cosim_said [dict create]
+}
+
+# Does this backend check its own co-simulation installation at all?
+proc ase::cosim_has_shim_hook {sim} {
+  variable backends
+  return [expr {[dict exists $backends $sim cosim_shim_verdict] ? 1 : 0}]
+}
+
+# WHERE THIS PROGRAM'S INSTALLED SCRIPTS ARE, OUT OF THE FREE PEEK.
+#
+# ⚠ THE PEEK, for ase::variant_report's reason. The say-site fires on the user's
+# own Run gesture, one proc after ase::cap_report has already warmed the cache; a
+# cold ase::sim_capabilities here would start the simulator a SECOND time for a
+# sentence. An answer nobody worked out therefore yields no directory, and no
+# directory yields no sentence -- which is the right answer, not a gap.
+proc ase::cosim_scripts_dir {sim} {
+  set caps [ase::sim_caps_cached $sim]
+  if {$caps eq {}} { return {} }
+  set g [ase::caps_get $caps scripts_dir]
+  if {![dict get $g measured]} { return {} }
+  return [dict get $g value]
+}
+
+# THE ADAPTER'S FAILED CHECKS FOR ONE INSTALLATION, VALIDATED.
+#
+# ⚠ A RAISE IS REPORTED AND SWALLOWED. A defect in a hook must never stop a run
+# it was only reporting on (ase::cap_report's rule), and a claim built on an
+# answer that never arrived is a claim nobody made -- so the CIW gets a developer
+# diagnostic and the user gets no sentence.
+proc ase::cosim_shim_notes {sim dir} {
+  if {$dir eq {}} { return {} }
+  if {![ase::cosim_has_shim_hook $sim]} { return {} }
+  if {[catch {[ase::backend_hook $sim cosim_shim_verdict] $dir} v]} {
+    ::ase::echo "ase: checking the co-simulation files for $sim raised: $v" error
+    return {}
+  }
+  set raw {}
+  if {[catch {dict get $v notes} raw]} { return {} }
+  if {[catch {llength $raw}]} { return {} }
+  set out {}
+  foreach n $raw {
+    if {[catch {dict size $n}]} { continue }
+    set ok 1
+    foreach k {check file clause remedy} {
+      if {![dict exists $n $k] || [string trim [dict get $n $k]] eq {}} { set ok 0 }
+    }
+    if {!$ok} { continue }
+    lappend out $n
+  }
+  return $out
+}
+
+# SAY EACH ONE ONCE PER INSTALLATION PER SESSION -- ase::variant_say's discipline,
+# keyed on the backend, the DIRECTORY and the check.
+#
+# ⚠ THE DIRECTORY IS IN THE KEY, NOT THE PROGRAM -- AND WHAT THAT BUYS IS
+# NARROWER THAN IT LOOKS. MEASURED, by a row that assumed the wider claim and
+# went red: within one measurement epoch a second ask about the same installed
+# tree is silent, and a different tree is told about. That is the whole of the
+# key's job, and it is what a user with one ngspice and many runs feels.
+#
+# It does NOT follow that two registered entries sharing one tree are told once
+# between them. REGISTERING THE SECOND ENTRY IS A REGISTRY EDIT, and every
+# registry edit calls ase::sim_caps_clear (issue 0950, from ase::sim_register and
+# ase::sim_unregister) -- which forgets this ledger along with the measurements
+# that named the directory. That user IS told again, and rightly: the answer
+# being described is a new measurement of a program they have just changed.
+# Row CD11 pins the key; row CD10 pins the clear.
+proc ase::cosim_shim_say {sim dir} {
+  variable cosim_said
+  set out {}
+  foreach n [ase::cosim_shim_notes $sim $dir] {
+    set k [list $sim $dir [dict get $n check]]
+    if {[dict exists $cosim_said $k]} { continue }
+    dict set cosim_said $k 1
+    lappend out [ase::sim_say cosim_install $sim [dict get $n file] $n note]
+  }
+  return $out
+}
+
+# THE RUN'S DOOR.
+#
+# ⚠ GATED ON THE RUN REALLY ASKING FOR VERILOG WAVEFORMS, which in this tree is a
+# map entry carrying a `vcd`. ase::cosim_map sets that key ONLY when this run will
+# actually write one -- never for the Icarus arm, never for a `.so` outside the
+# run directory, never for a `+`-continued card render_deck cannot edit, and
+# never under `cosim trace 0`. So the gate is not a proxy for the user's
+# intention; it IS the promise this run made, and the first defect is precisely a
+# failure of the `--trace` build that promise implies.
+proc ase::cosim_shim_report {sim map} {
+  set wants 0
+  foreach e $map {
+    set v {}
+    if {[catch {ase::state_get $e vcd} v]} { continue }
+    if {$v ne {}} { set wants 1 ; break }
+  }
+  if {!$wants} { return {} }
+  return [ase::cosim_shim_say $sim [ase::cosim_scripts_dir $sim]]
 }
 
 # The file the user's own simulator list is saved in.
@@ -16359,6 +16557,27 @@ proc ase::run_deck {state netlistfile {callback {}}} {
     append casenote "ase: $_vn"
   }
   if {[llength $cosim]} {
+    ## --- Stage 16c (issue 1472): AND WHAT IS WRONG WITH THE CO-SIMULATION FILES
+    ## THIS RUN IS ABOUT TO BUILD AGAINST. Said once per installation per session,
+    ## to the CIW and into this run's log `notes`, and only when the run promises
+    ## a VCD (ase::cosim_shim_report's own gate).
+    ##
+    ## ⚠ ABOVE ase::cosim_build ON PURPOSE. The first defect is exactly what makes
+    ## that build fail its final link, and a failed build RAISES out of this proc
+    ## -- so a warning placed after it would never reach the one user who needs
+    ## it. The order is pinned by row CD9.
+    ##
+    ## ⚠ IT READS THE PEEK AND STARTS NOTHING: ase::cap_report, a few lines up,
+    ## has already warmed the cache for the program about to start.
+    ##
+    ## CAUGHT, for ase::cap_report's reason: everything it says is advisory and
+    ## nothing downstream reads it, so a defect in it must never stop a run.
+    set _cs {}
+    catch {set _cs [ase::cosim_shim_report $sim $cosim]}
+    foreach _c $_cs {
+      if {$casenote ne {}} { append casenote "\n" }
+      append casenote "ase: $_c"
+    }
     foreach r [ase::cosim_build $state $cosim] {
       lassign $r cm cstatus cdetail
       if {$cstatus eq {unavailable}} {
@@ -24842,6 +25061,21 @@ namespace eval ase::backend::ngspice {
   # `string first gnd <line>` is TRUE on every binary INCLUDING the two that
   # rewrite -- the key satisfies its own search. Measured payloads after the
   # rename: `my 0 rail` on apt 45.2 and on stock 47, `my gnd rail` on the fork.
+  #
+  # ⚠ THE `@@sourcepath=` LINE COSTS NO PROCESS (issue 1472), AND THAT IS WHY IT
+  # IS HERE RATHER THAN IN A LEG OF ITS OWN. It rides the deck leg D already
+  # runs, in leg D's own redirect form, and it is the only way to learn where
+  # THIS binary's installed scripts are: a hardcoded /usr/share would answer
+  # "stock" for every fork a user registers (M19's finding), and the two
+  # co-simulation file checks are about files in that tree.
+  #
+  # MEASURED 2026-09-15 on apt 45.2 and on the fork, both echo forms: rc 0, or
+  # rc 1 with a parse complaint, and NEVER a crash. The payload keeps its repeats
+  # and its leading `.` (`. /usr/share/ngspice/scripts /usr/share/ngspice/scripts
+  # .`), and ⚠ THE WHOLE LINE COMES BACK IN ONE PAIR OF DOUBLE QUOTES where the
+  # `@@gref=` line does not -- see cap_d_unquote, which is what makes it
+  # findable. `scripts_dir_of` is the parse rule, and it is the ADAPTER's because
+  # the word `scripts` is ngspice's.
   proc cap_deck_d {} {
     return {* ase variant probe D
 v1 in 0 dc 1
@@ -24854,6 +25088,7 @@ op
 write probe_d.raw
 write probe_k.raw ALL
 echo "@@gref=M7 my gnd rail" >> probe_d.txt
+echo "@@sourcepath=$sourcepath" >> probe_d.txt
 version -v >> probe_d.txt
 version -d >> probe_d.txt
 .endc
@@ -24878,9 +25113,40 @@ version -d >> probe_d.txt
   # aborted xschem at startup, which is issue 0663's arm.
   proc cap_d_words {line} { return [regexp -all -inline {\S+} $line] }
 
+  # ⚠ A WHOLE MARKER LINE CAN COME BACK INSIDE ONE PAIR OF DOUBLE QUOTES, AND
+  # THAT IS NOT COSMETIC: it moves the `@@` off position 0 and makes the field
+  # unfindable. MEASURED 2026-09-15 (issue 1472), the shipped deck D, ONE run,
+  # both binaries:
+  #
+  #   @@gref=M7 my 0 rail                                        <- bare
+  #   "@@sourcepath=. /usr/share/ngspice/scripts /usr/share/..."  <- quoted
+  #
+  # The difference is the PAYLOAD, not the marker: ngspice's `echo` re-quotes an
+  # argument that came from expanding a LIST variable (`sourcepath` is
+  # `cptype list`), while `gref`'s payload is literal text. So the quote lands on
+  # the FRONT OF THE LINE, BEFORE the `@@` -- which is why stripping quotes per
+  # ELEMENT in `scripts_dir_of` did not rescue it, and why the key read as absent
+  # on every binary while the payload was arriving intact all along.
+  #
+  # ⚠ THIS IS ISSUE 1470's CORRECTION C5 CARRIED ONE STEP FURTHER. C5 established
+  # that `$sourcepath` is NOT empty from inside the probe deck. What it did not
+  # establish is that the line arrives in a shape the reader cannot find, which
+  # is indistinguishable from empty at every call site.
+  #
+  # Removing a quote that is not there is a no-op, so every bare marker reads
+  # exactly as before -- row V2 of tests/headless/test_ase_simcaps_0948.tcl pins
+  # `gref` on both measured payload shapes.
+  proc cap_d_unquote {t} {
+    if {[string length $t] >= 2 && [string index $t 0] eq "\"" \
+        && [string index $t end] eq "\""} {
+      return [string range $t 1 end-1]
+    }
+    return $t
+  }
+
   proc cap_d_field {text key} {
     foreach line [split $text "\n"] {
-      set t [string trim $line]
+      set t [cap_d_unquote [string trim $line]]
       if {[string first "@@$key=" $t] == 0} {
         return [string range $t [expr {[string length $key] + 3}] end]
       }
@@ -24935,7 +25201,15 @@ version -d >> probe_d.txt
     set out [dict create]
     set lines {}
     foreach l [split $text "\n"] {
-      set t [string trim $l]
+      ## ⚠ UNQUOTED BEFORE THE MARKER TEST, OR A MARKER LINE IS READ AS IDENTITY.
+      ## The quoted `@@sourcepath=` line (cap_d_unquote's header) does not start
+      ## with `@@`, so without this it survives the skip and is offered to the two
+      ## tests below -- and a user whose ngspice lives under, say,
+      ## /opt/ngspice-46.2/share would then have `version_line` FABRICATED FROM A
+      ## PATH. The three preflight binaries happen not to reproduce that (no
+      ## `ngspice-` and no four digits in either installed path), which is exactly
+      ## the kind of luck a reader must not be left depending on.
+      set t [cap_d_unquote [string trim $l]]
       if {$t eq {} || [string first {@@} $t] == 0} { continue }
       lappend lines $t
     }
@@ -24946,6 +25220,21 @@ version -d >> probe_d.txt
         dict set out build_date $l
       }
     }
+    # ⚠ AND WHERE THIS BINARY'S INSTALLED SCRIPTS ARE (issue 1472). Band 1 like
+    # the two above -- display and log only, never compared, never a gate: the
+    # two file checks it leads to are their own verdict, and the sentence they
+    # produce is about a FILE, not about the program.
+    #
+    # ⚠ PUBLISHED ONLY WHEN THE PARSE FINDS ONE. A `$sourcepath` that names no
+    # absolute `scripts` directory -- and a deck whose echo line never arrived --
+    # leaves the key ABSENT, which every reader in this vocabulary takes as "not
+    # measured" rather than as a claim about the user's installation. There is no
+    # fallback directory to guess.
+    #
+    # ⚠ THE `@@` LINES ARE SKIPPED BY THE LOOP ABOVE, so this marker cannot be
+    # mistaken for a version line however the payload is ordered.
+    set sd [scripts_dir_of [cap_d_field $text sourcepath]]
+    if {$sd ne {}} { dict set out scripts_dir $sd }
     return $out
   }
 
@@ -30581,9 +30870,19 @@ $_leg
   #   build-ver_50/stage/share/ngspice/scripts (fork)  verilated_vcd_c 1   contextp.release 1
   #
   # Each check answers 1 (sound), 0 (the defect is in the file) or `unknown` (no
-  # such file to read) -- Band 3's polarity -- and a 0 carries the clause, the
-  # remedy and the fork's own change as `patch` (commits e47a2abc8 and
-  # c2722d89b, read from /home/analog/dev/ngspice).
+  # such file to read) -- Band 3's polarity -- and a 0 carries the FILE, the
+  # clause, the remedy and the fork's own change as `patch` (commits e47a2abc8
+  # and c2722d89b, read from /home/analog/dev/ngspice).
+  #
+  # ⚠ WHO SAYS IT: ase::cosim_shim_report, on the run that first asks for Verilog
+  # waveforms, once per installation per session (issue 1472). Until that wiring
+  # landed these two greps had no caller at all and neither defect reached a
+  # user -- which is issue 1470's own correction C6. Nothing here decides when to
+  # speak; the adapter's whole job is which files, which greps and which words.
+  #
+  # ⚠ `file` IS PART OF THE NOTE, not composed by the frame. The remedies name
+  # the files by basename ("your copy of vlnggen"), and a user with two ngspice
+  # installations needs to be told WHICH tree to edit.
 
   # §16c's PARSE RULE: the first ABSOLUTE element whose basename is `scripts`.
   # The list has repeats and a leading `.` (apt: `. /usr/share/ngspice/scripts
@@ -30624,11 +30923,12 @@ $_leg
     set out [dict create vcd_link unknown ctx_lifetime unknown notes {}]
     if {$scripts_dir eq {}} { return $out }
     set notes {}
-    set n [cosim_count [file join $scripts_dir vlnggen] verilated_vcd_c]
+    set vlf [file join $scripts_dir vlnggen]
+    set n [cosim_count $vlf verilated_vcd_c]
     if {$n ne {}} {
       dict set out vcd_link [expr {$n > 0 ? 1 : 0}]
       if {$n == 0} {
-        lappend notes [dict create check vcd_link \
+        lappend notes [dict create check vcd_link file $vlf \
           clause {this ngspice's vlnggen does not link the VCD runtime, so a Verilog block built with waveforms fails at the final link with unresolved symbols} \
           remedy {add the lines below to your copy of vlnggen, after its verilated_timing.o lines} \
           patch {   // Trace builds leave the VCD runtime outside of Vlng__ALL.a.
@@ -30640,11 +30940,12 @@ $_leg
    end}]
       }
     }
-    set n [cosim_count [file join $scripts_dir src verilator_shim.cpp] contextp.release]
+    set shf [file join $scripts_dir src verilator_shim.cpp]
+    set n [cosim_count $shf contextp.release]
     if {$n ne {}} {
       dict set out ctx_lifetime [expr {$n > 0 ? 1 : 0}]
       if {$n == 0} {
-        lappend notes [dict create check ctx_lifetime \
+        lappend notes [dict create check ctx_lifetime file $shf \
           clause {this ngspice's Verilator shim frees its simulation context while the model still uses it, so every Verilog co-simulation reads freed memory, and a run that worked is not evidence the memory was valid} \
           remedy {make the change below in verilator_shim.cpp and rebuild your wrapper; ngspice itself needs no rebuild} \
           patch {-    const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};

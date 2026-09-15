@@ -3965,7 +3965,16 @@ its example is frame and table disagreeing about the same binary. **One rule, bo
 
 **Three properties to hold onto:** it is a **delta**, so it shrinks to nothing on the best build;
 it **says the door** in the same breath as the gap (*"press Detect"*, *"ASE-L will say so if you
-use one"*); and it appears **twice and only twice** — the Simulators window row beside the existing
+use one"*); and it appears **twice and only twice** — ⚠ **CORRECTED 2026-09-15: the row EDITOR, not the
+list** (receipt 47, C1). The casemode status line lives in *Setup > Simulators… > **Edit…***, which is
+where Detect is, so the sentence went beneath it there; the list has no status line and shows no program's
+detail. ⚠ **And the complete frame IS shown there** (receipt 47, C2, rule `1471`): this section's *What you
+see* said *"nothing at all when the answer is everything"*, but in that editor an empty line already means
+four other things — no location, no program, no probe hook, an unanswered Detect — so silence would have
+been a fifth meaning. The **run log** keeps the delta rule. ⚠ **And ASE-L has no "Commands box"** (receipt
+46, C3): the lines linted are pre-commands, an analysis's verbatim lines and a netlist's own `.control`
+block, and the two gated kinds are *misread*, not crashed on — the shipped sentence is *"Two kinds of
+command line are misread by it; ASE-L warns before a run that uses one."* — the Simulators window row beside the existing
 casemode status line, updated by the free peek (`ase::sim_caps_have_path`) so opening the dialog
 still starts nothing (**D8**), and the run log **once per binary per session**, through
 `ase::cap_report`'s existing say-once discipline. Never on every run; never a modal.
@@ -3981,7 +3990,7 @@ text is the failure this whole amendment is trying not to commit.
 | 1 | line begins `unset` | `set temp=27` / `unset temp` → **SIGABRT rc 134, stdout destroyed**; `unset curplot` and `unset plots` by other arms | M-refusal | **warn always, never refuse** — the key that would license a refusal is the one D50 refuses to measure |
 | 2 | line begins `define` / `undefine` | `define c(x) 5` + two `print c(2)` → SIGABRT; `define d(x,y) x` + `print d(2,3)` → SIGSEGV | M-refusal | warn always. ngspice's own built-ins (`vm`, `vp`, `vdb`, `vr`, `vi`) are operator-rooted and unaffected — the pattern is a **user** `define` |
 | 3 | line begins `load` | a raw whose header carries `Option: curplot=` / `plots=` / `curplotname=` → SIGSEGV on the *next* command; one carrying `Option: no_auto_gnd` / `ngbehavior` / `sourcepath` **reconfigures the parser** for a later `source` | M-refusal | warn always. **And the good news in the same breath:** the fork's own `casemodewrite` header (`Option: casemode=…`) does **not** collide and loads cleanly on apt (measured) — a fork-written raw is safe to hand to a stock binary |
-| 4 | a whitespace- or paren-delimited bare `gnd` token | rewritten to ` 0 ` in control-command **arguments**: `echo M7 my gnd rail` → `M7 my 0 rail`, `echo v(gnd)` → `v( 0 )`. Paths survive (`/ _ - .` are not delimiters) | M-free | gated on `ase::caps_measured_as $caps gnd_literal 0`, **warn when unmeasured** — the key is free (§2g, **D49**) |
+| 4 | a whitespace-, paren- **or comma**-delimited bare `gnd` token, **never the first token of a line**, and only in commands whose arguments are text (⚠ corrected 2026-09-15 from ngspice's own `inp_fix_gnd_name()`, receipt 46 C4: the comma is ngspice's too, the first token is skipped, and on `print v(gnd)` the rewrite is the documented alias of node 0 and changes nothing — pattern 5 is likewise scoped to `write`/`wrdata`) | rewritten to ` 0 ` in control-command **arguments**: `echo M7 my gnd rail` → `M7 my 0 rail`, `echo v(gnd)` → `v( 0 )`. Paths survive (`/ _ - .` are not delimiters) | M-free | gated on `ase::caps_measured_as $caps gnd_literal 0`, **warn when unmeasured** — the key is free (§2g, **D49**) |
 | 5 | an ngspice keyword ARGUMENT spelled with capitals | rejected, **usually silently**: `write <file> ALL @M1[ID]` gives rc 0 **with no raw**, so the `$sim_status` guard does not fire and `attach_dbs` reports `NOT ATTACHED` | M-free | gated on `ase::caps_measured_as $caps keyword_case 0`, warn when unmeasured |
 
 **Two things it must get right, or it becomes the nuisance it exists to prevent.** It runs at
@@ -4004,7 +4013,7 @@ the directory `$sourcepath` names (Band 1's `scripts_dir`; measured
 
 | check | what a 0 means | what the user gets |
 |---|---|---|
-| `grep -c verilated_vcd_c <scripts_dir>/vlnggen` | a `--trace` Verilator build fails the final link with unresolved symbols | run **once**, when the user first asks for Verilog waveforms. Name the cause — it is a *build-time* failure of `vlnggen` arriving as *"my wrapper won't link"* — and hand over the seven-line `fopen` probe from the fork's `vlnggen` |
+| `grep -c verilated_vcd_c <scripts_dir>/vlnggen` | a `--trace` Verilator build fails the final link with unresolved symbols | ⚠ **both checks ship at ONE door** (receipt 48, C3, rule `1472`): the run that first asks for Verilog waveforms, above `ase::cosim_build` — a failed `--trace` link raises out of the run, so a warning below it would never reach the user who needs it. Once per installed scripts directory per session. Confining the **shim** warning to that gate is a deliberate narrowing, since that defect bites every co-simulation. Originally: run **once**, when the user first asks for Verilog waveforms. Name the cause — it is a *build-time* failure of `vlnggen` arriving as *"my wrapper won't link"* — and hand over the seven-line `fopen` probe from the fork's `vlnggen` |
 | `grep -c 'contextp.release' <scripts_dir>/src/verilator_shim.cpp` | the `Vlng` model holds a **non-owning** pointer to a `VerilatedContext` destroyed when `Cosim_setup()` returns: **use-after-free for the whole simulation** | warn, and hand over the one-line patch. Say plainly that a run which *"worked"* is **not** evidence the memory was valid, and that the fix needs no ngspice rebuild — only the user's wrapper `.so` |
 
 ### 16d. The `dumpunsound` reason token
@@ -4024,6 +4033,15 @@ the sentence never mentions. ⚠ **Whether that sentence is WANTED is a ruling, 
   headline that the ordinary deck already runs byte-identically on apt 45.2. It is a **measured
   finding**. It turns *"will this work with my ngspice?"* from an unanswered question into a yes,
   it is zero code, and it is **the highest-adoption-value item in this whole amendment**.
+⚠ **AND WHERE THE NOTE SHIPS IS ITSELF A RULING, 2026-09-15** (receipt 47, rule
+`1471_release_note_destination`). The repository's `Changelog` is upstream xschem's per-release file, kept
+by its author, so ASE-L writing into it is a maintainer's decision. The note is written as
+`doc/claude/ase_analyses_batch/RELEASE_NOTE.md` — 24 claims, each tagged to an evidence row naming a
+receipt or evidence file and the binaries it was measured on, held to §16a's rules by suite rows WR1–WR4 —
+and **ships nowhere until the user rules**. ⚖ R11's drafted support sentence carries **one departure**:
+*"stock upstream at the 47 tip"* became *"stock upstream ngspice built from source"*, because 47 is not a
+release; R11's condition 3 still binds when one exists.
+
 * **The SUPPORT SENTENCE waits on ⚖ R11.** *"What we test and will fix bugs against"* is a promise,
   not a measurement. R11 is filed **last** in the ask order, behind R2 and R10 — and an earlier
   draft of this amendment had R11 blocking the release note while also calling the note the
@@ -4045,9 +4063,22 @@ the sentence never mentions. ⚠ **Whether that sentence is WANTED is a ruling, 
 | `src/ase.tcl` — the SCHEMA half | **new** `ase::variant_sentence`, `ase::variant_say`, `ase::preflight_notes` (applies **D47**'s warn/refuse policy) | **≈ +170** |
 | the ngspice adapter | **new** `variant_notes {caps}` (the clause list), `lint_control_text {lines caps}` (the five patterns), `cosim_shim_verdict {scripts_dir}`; the `dumpunsound` token on `ase::op_save_tier` | **≈ +230** |
 | `src/ase_window.tcl` | the Simulators-window row | **≈ +40** |
+
+⚠ **What it actually cost, 2026-09-15** (receipts 46 C7, 47 C2, 48 C5): `src/ase.tcl` **+710** (task 1)
+**+64** (task 2) **+328/−27** (task 3), most of it the measurement-bearing comments the house style
+requires; `src/ase_window.tcl` **+34/−2**, task 2 only — tasks 1 and 3 left it md5-unchanged. The schema
+half grew beyond the table because *"no second composer in `ase_window.tcl`"* puts the guard ladder and the
+peek on the schema side, where `ase::casemode_status` already lives.
 | release note | 16e's description half | zero code |
 
 ### Suites that move
+
+⚠ **CORRECTED 2026-09-15 — EIGHT EXPECTATIONS IN FOUR SUITES MOVED** (receipt 46, C1). This line did not
+count M21 and 16d as moves, and both change a value an existing row pins: `test_sim_run_profile` CS176,
+CS176c, CS176d and CS176e and `test_ase_simdlg_0937` S29 gained `-D casemodewrite`; `test_op_dump_altshow`
+T2 and `test_ase_optier_0963` X5 read `{c dumpunsound}` for `{c unsafe}`; optier's S11 filter gained the two
+`variant_*` sentence kinds; and `test_ase_simcaps_0948` V8 gained `scripts_dir` (receipt 48). Each still
+pins an exact value, each carries a paragraph naming its issue, and each reds under that issue's S00.
 
 * **None move.** Everything here is additive: a sentence, a linter over text ASE-L does not
   generate, and two file greps.

@@ -3862,11 +3862,18 @@ check {V7 STRUCTURAL no variant reader writes the case-mode key -- the one infer
 ## ⚠ AND THE TREE ITSELF PROVES WHY: this file's header records two DIFFERENT
 ## builds printing the same version string byte for byte. Any ordering operator on
 ## it is wrong TODAY, not in principle.
+## ⚠ THE BAND GAINED `scripts_dir` IN ISSUE 1472, and it belongs here rather than
+## in a band of its own for the reason this row is about: where a binary's
+## installed scripts live is DISPLAY AND LOG ONLY -- nothing gates on it, and the
+## two co-simulation file checks it leads to are their own verdict. The payload
+## shapes that produce it, and the whole-line quoting that hid it, are sections SD
+## and CD of tests/headless/test_ase_variant_1470.tcl; `$V_FORK` below carries no
+## `@@sourcepath=` line, so the first term is unmoved.
 check {V8 the version line is collected for display and the band that holds it is the one nothing gates on} \
   [list [a_ans ${V_NS}::cap_d_identity $V_FORK] \
         [a_ans ase::caps_keys identity]] \
   [list {version_line ngspice-46+ build_date {Fri Sep 11 03:44:45 UTC 2026}} \
-        {version_line build_date}]
+        {version_line build_date scripts_dir}]
 
 ## --- V9: LEG D RUNS **LAST**, AND ITS ABSENCE IS RECORDED BY NAME ----------
 ## ⚠ THE ORDERING HAS A COST WORTH NAMING: on a slow box leg D is the FIRST thing

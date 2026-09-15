@@ -19,6 +19,12 @@
 #   SOURCE 2 could never fire on a file ASE-L caused.
 # * A build on the per-device operating-point shape because its dump printer is
 #   unsound was told the reason was an all-or-nothing risk (16d).
+# * ⚠ AND (issue 1472) THE TWO CO-SIMULATION CHECKS BELOW WERE SAID TO NOBODY.
+#   Section CS shipped with no caller: a `vlnggen` that cannot link a `--trace`
+#   Verilator build, and a `verilator_shim.cpp` whose model holds a non-owning
+#   pointer to a destroyed `VerilatedContext` -- use-after-free for the whole
+#   simulation -- reached no user, and no probe leg collected `$sourcepath`, so
+#   nothing knew which installed tree to read. Sections SD and CD are that wiring.
 #
 # ============================================================================
 # SECTIONS
@@ -26,6 +32,8 @@
 #   VS  the four sentence frames, from HAND-BUILT dicts -- no binary
 #   LN  the five linter patterns, over strings -- no binary
 #   CS  the two co-simulation file checks -- files only, no binary
+#   SD  `scripts_dir`: the Band 1 key leg D publishes (issue 1472)
+#   CD  the say-site: who is told about the two checks, and when (issue 1472)
 #   OT  the `dumpunsound` reason token -- a primed answer, no binary
 #   CF  the three conformance rows (D44, D48 twice) over the source text
 #   M21 `-D casemodewrite` -- the fork is started ONCE (self-skips without it)
@@ -33,9 +41,12 @@
 #   ST  the 104 committed .state files round-trip byte for byte
 #
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. NEW AT 57 with all three
-# binaries present, both arms. EX1-EX3, M21b and CS4/apt, CS4/fork self-skip,
-# uncounted, when their binary or installed tree is absent. The sabotage campaign is in
-# doc/claude/ase_analyses_batch/receipts/46-stage-16-deck.md.
+# binaries present, both arms, AND RAISED 57 -> 76 by issue 1472, which wired
+# section CS's two checks to a user: sections SD (8) and CD (11). EX1-EX3, M21b,
+# CS4/apt, CS4/fork and SD7/apt, SD7/fork self-skip, uncounted, when their binary
+# or installed tree is absent. The sabotage campaigns are in
+# doc/claude/ase_analyses_batch/receipts/46-stage-16-deck.md and
+# doc/claude/ase_analyses_batch/receipts/48-stage-16-cosim.md.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_variant_1470.tcl
@@ -613,6 +624,249 @@ foreach p {cosim_shim_verdict cosim_count scripts_dir_of} {
   lappend CS5 [regexp {\yexec\y|open\s+"?\|} $b]
 }
 check {CS5 STRUCTURAL: the three procs start no process -- no exec, no pipe} $CS5 {0 0 0}
+
+# ============================================================================
+# SECTION SD -- `scripts_dir`: THE BAND 1 KEY LEG D PUBLISHES (issue 1472)
+# ============================================================================
+## Section CS's two checks have to know WHICH installed tree to read, and until
+## this key existed nothing did. It rides leg D -- ONE more `echo` line in a deck
+## that was already running -- so the probe costs no new process. MEASURED
+## 2026-09-15, three cold probes per binary, before and after the key:
+##
+##   apt 45.2   536 427 424 ms -> 544 429 429 ms   absent -> /usr/share/ngspice/scripts
+##   the fork   456 452 451 ms -> 459 452 450 ms   absent -> <build>/stage/share/ngspice/scripts
+set SDDECK [v_ans ::ase::backend::ngspice::cap_deck_d]
+check {SD1 leg D asks for $sourcepath in its own redirect form, exactly once, and nothing else about that deck moved} \
+  [list [v_count $SDDECK {echo "@@sourcepath=$sourcepath" >> probe_d.txt}] \
+        [v_count $SDDECK {@@gref=}] [v_count $SDDECK {remzerovec}] \
+        [v_count $SDDECK {set appendwrite}] [v_count $SDDECK {write probe_}]] \
+  {1 1 0 0 2}
+
+## ⚠ THE TWO MARKER LINES COME BACK IN DIFFERENT SHAPES, IN ONE RUN, ON BOTH
+## BINARIES -- MEASURED 2026-09-15 by running this very deck by hand:
+##
+##   @@gref=M7 my 0 rail                                          <- bare
+##   "@@sourcepath=. /usr/share/ngspice/scripts /usr/share/..."   <- wholly quoted
+##
+## ngspice's `echo` re-quotes an argument expanded from a LIST variable, so the
+## quote lands in FRONT of the `@@` and a reader that tests position 0 never finds
+## the field. That is why the key read as absent on every binary while the payload
+## was arriving intact the whole time -- issue 1470's correction C5, one step on.
+set SD_APT "@@gref=M7 my 0 rail\n\"@@sourcepath=. /usr/share/ngspice/scripts /usr/share/ngspice/scripts .\"\nngspice-45.2\nFri Sep 12 11:58:13 UTC 2025\n"
+set SD_FORK "@@gref=M7 my gnd rail\n\"@@sourcepath=. /home/analog/dev/ngspice/build-ver_50/stage/share/ngspice/scripts\"\nngspice-46+\nFri Sep 11 03:44:45 UTC 2026\n"
+proc v_df {t k} { return [v_ans ::ase::backend::ngspice::cap_d_field $t $k] }
+proc v_di {t}   { return [v_ans ::ase::backend::ngspice::cap_d_identity $t] }
+check {SD2 a field is found whether its line came back bare or wholly quoted, and the bare markers read exactly as they did before} \
+  [list [v_df $SD_APT sourcepath] [v_df $SD_APT gref] [v_df $SD_FORK gref] [v_df $SD_APT nosuch]] \
+  [list {. /usr/share/ngspice/scripts /usr/share/ngspice/scripts .} \
+        {M7 my 0 rail} {M7 my gnd rail} {}]
+
+check {SD3 leg D publishes where this binary's installed scripts are, beside the two identity lines it already published} \
+  [list [v_di $SD_APT] [v_di $SD_FORK]] \
+  [list {version_line ngspice-45.2 build_date {Fri Sep 12 11:58:13 UTC 2025} scripts_dir /usr/share/ngspice/scripts} \
+        {version_line ngspice-46+ build_date {Fri Sep 11 03:44:45 UTC 2026} scripts_dir /home/analog/dev/ngspice/build-ver_50/stage/share/ngspice/scripts}]
+
+## ⚠ THE ROW THAT WOULD HAVE CAUGHT THE SECOND HALF OF THE DEFECT. A quoted marker
+## line does not start with `@@`, so before the fix it survived the identity
+## loop's skip and was offered to the version and date tests -- and a program
+## installed under /opt/ngspice-46.2/... would have had its `version_line`
+## FABRICATED FROM A PATH, which is a Band 1 key invented out of a folder name.
+## The three preflight binaries happen not to reproduce it; a row must not be left
+## depending on that luck.
+set SD_TRAP "\"@@sourcepath=. /opt/ngspice-46.2/share/ngspice/scripts\"\nngspice-45.2\nFri Sep 12 11:58:13 UTC 2025\n"
+check {SD4 a marker line is never read as identity, so a program installed under a path that looks like a version does not have one fabricated from it} \
+  [v_di $SD_TRAP] \
+  {version_line ngspice-45.2 build_date {Fri Sep 12 11:58:13 UTC 2025} scripts_dir /opt/ngspice-46.2/share/ngspice/scripts}
+
+check {SD5 a payload with no absolute scripts directory in it leaves the key ABSENT -- never a guessed /usr/share -- and the vocabulary reads that absence as "not measured"} \
+  [v_total {
+    list [dict exists [::ase::backend::ngspice::cap_d_identity "ngspice-46+\n"] scripts_dir] \
+         [dict exists [::ase::backend::ngspice::cap_d_identity "\"@@sourcepath=. relative/scripts\"\nngspice-46+\n"] scripts_dir] \
+         [dict exists [::ase::backend::ngspice::cap_d_identity "\"@@sourcepath=\"\nngspice-46+\n"] scripts_dir] \
+         [dict get [ase::caps_get [dict create known 1 usable 1] scripts_dir] measured]
+  }] {0 0 0 0}
+
+check {SD6 the key is Band 1 -- display and log only -- and is in neither the band that gates a capability up nor the band that gates a mitigation down} \
+  [list [v_ans ase::caps_keys identity] \
+        [expr {[lsearch -exact [v_ans ase::caps_keys capability] scripts_dir] < 0}] \
+        [expr {[lsearch -exact [v_ans ase::caps_keys defect] scripts_dir] < 0}]] \
+  {{version_line build_date scripts_dir} 1 1}
+
+## ⚠ THE ORDINARY PROBE -- the same short `-b` decks Detect already runs, with one
+## more echo line in a deck that was already running. This is the row the key
+## exists for: what the binary in front of the user answered, and what its OWN
+## installed tree then says.
+foreach {sdtag sdbin sddir sdexp} [list \
+    apt  /usr/bin/ngspice /usr/share/ngspice/scripts {0 0 2} \
+    fork /home/analog/dev/ngspice/build-ver_50/src/ngspice \
+         /home/analog/dev/ngspice/build-ver_50/stage/share/ngspice/scripts {1 1 0}] {
+  if {![file executable $sdbin] || ![file isdirectory $sddir]} {
+    puts "ok:   SD7/$sdtag SKIPPED -- no binary at $sdbin, or no installed tree at $sddir"
+    continue
+  }
+  catch {test_sim_registry_isolate}
+  set ::sdc [v_ans ase::sim_capabilities_path ngspice $sdbin]
+  check "SD7/$sdtag the ordinary probe of $sdbin records where its installed scripts are, and the two file checks of that very tree answer as measured" \
+    [v_total {
+      set g [ase::caps_get $::sdc scripts_dir]
+      list [dict get $g measured] [dict get $g value] [v_cv [dict get $g value]]
+    }] [list 1 $sddir $sdexp]
+}
+catch {test_sim_registry_isolate}
+
+# ============================================================================
+# SECTION CD -- THE SAY-SITE: WHO IS TOLD, AND WHEN (issue 1472)
+# ============================================================================
+## Section CS's two checks shipped with NO CALLER -- issue 1470's own correction
+## C6 -- so two characterised defects reached nobody. These rows are that wiring:
+## the run that FIRST asks for Verilog waveforms is told, once per installed
+## scripts directory per session, as a note and never a modal. ⚠ NO BINARY IS
+## STARTED ANYWHERE IN THIS SECTION: the say-site reads the free peek and the
+## checks read files, and row CD8 measures both claims.
+proc v_nocomment {b} {
+  set out {}
+  foreach l [split $b "\n"] {
+    if {[regexp {^[ \t]*#} $l]} { continue }
+    lappend out $l
+  }
+  return [join $out "\n"]
+}
+proc v_cdprime {dir} {
+  global STUB
+  catch {test_sim_registry_isolate}
+  v_ans ase::sim_register cd1472 $STUB
+  v_ans ase::sim_select cd1472
+  catch {ase::sim_caps_clear}
+  set c [dict create known 1 usable 1]
+  if {$dir ne {}} { dict set c scripts_dir $dir }
+  v_prime $c
+  return {}
+}
+proc v_cdsay {map} { return [v_ans ase::cosim_shim_report ngspice $map] }
+set CDMAP   [list [dict create model m1 vcd /zz/run/m1.vcd]]
+set CDMAP0  [list [dict create model m1 vcd {}]]
+set T_BAD2  [v_tree bad2 "set v_objs=\"\$v_objs\"\n" "    const std::unique_ptr<VerilatedContext> contextp;\n"]
+set CDMARK0 [expr {[file exists $MARK] ? [file size $MARK] : 0}]
+
+v_cdprime $T_BAD
+set CD1A [v_cdsay $CDMAP]
+set CD1B [v_cdsay $CDMAP]
+check {CD1 the first run that asks for Verilog waveforms is told both defects -- each with its clause, the file to change, the remedy and the change itself -- and the second run of the same session is told nothing} \
+  [v_total {
+    list [llength $::CD1A] [llength $::CD1B] \
+      [string match {This run asks for Verilog waveforms, and this ngspice's vlnggen does not link the VCD runtime,*} [lindex $::CD1A 0]] \
+      [string match "*The file is $::T_BAD/vlnggen. Fix: add the lines below to your copy of vlnggen*" [lindex $::CD1A 0]] \
+      [string match {*verilated_vcd_c.o*} [lindex $::CD1A 0]] \
+      [string match {*shim frees its simulation context while the model still uses it,*a run that worked is not evidence the memory was valid.*} [lindex $::CD1A 1]] \
+      [string match "*The file is $::T_BAD/src/verilator_shim.cpp. Fix: make the change below*ngspice itself needs no rebuild.*" [lindex $::CD1A 1]] \
+      [string match {*contextp.release();*} [lindex $::CD1A 1]]
+  }] {2 0 1 1 1 1 1 1}
+
+v_cdprime $T_GOOD ; set CD2A [v_cdsay $CDMAP]
+v_cdprime $T_NONE ; set CD2B [v_cdsay $CDMAP]
+v_cdprime $T_HALF ; set CD2C [v_cdsay $CDMAP]
+v_cdprime $T_BAD  ; set CD2D [v_cdsay $CDMAP]
+check {CD2 a sound installation says nothing, and so does a verdict of unknown -- "I could not look" is not a finding about somebody's installation -- while the same session on a broken one still speaks} \
+  [list [llength $CD2A] [llength $CD2B] [llength $CD2C] [llength $CD2D]] {0 0 0 2}
+
+v_cdprime {}
+check {CD3 a program whose probe recorded no scripts directory is silent, because it has no directory rather than because it guessed one} \
+  [list [v_ans ase::cosim_scripts_dir ngspice] [llength [v_cdsay $CDMAP]]] {{} 0}
+
+v_cdprime $T_BAD
+check {CD4 the gate is this run's own promise of a VCD, not whether co-simulation is present: a map promising none is silent on the very installation that speaks for one that does} \
+  [list [llength [v_cdsay $CDMAP0]] [llength [v_cdsay {}]] [llength [v_cdsay $CDMAP]]] {0 0 2}
+
+v_backend cdnohook {}
+check {CD5 a backend that does not check its own co-simulation installation is given no clause, no file name and no fallback} \
+  [list [v_ans ase::cosim_has_shim_hook cdnohook] \
+        [llength [v_ans ase::cosim_shim_notes cdnohook $T_BAD]] \
+        [v_ans ase::cosim_has_shim_hook ngspice]] {0 0 1}
+
+proc ::v_cdraise {args} { return -code error "zz cosim broken" }
+v_backend cdraise [list cosim_shim_verdict ::v_cdraise]
+set CD6 [v_capture {ase::cosim_shim_notes cdraise $::T_BAD}]
+check {CD6 a hook that raises is reported to the developer and gives no sentence at all, rather than stopping the run it was only reporting on} \
+  [v_total {
+    list [lindex $::CD6 0] [llength [lindex $::CD6 1]] \
+         [lindex [lindex [lindex $::CD6 1] 0] 0] \
+         [string match {*checking the co-simulation files for cdraise raised: zz cosim broken*} \
+                       [lindex [lindex [lindex $::CD6 1] 0] 1]]
+  }] {{} 1 error 1}
+
+proc ::v_cdbad {dir} {
+  return [dict create vcd_link 0 ctx_lifetime 0 notes [list \
+    [dict create check vcd_link file /zz/vlnggen clause {a clause} remedy {a remedy}] \
+    [dict create check ctx_lifetime file /zz/shim.cpp clause {a clause}] \
+    [dict create file /zz/shim.cpp clause {a clause} remedy {a remedy}] \
+    [dict create check ctx_lifetime file {} clause {a clause} remedy {a remedy}] \
+    {this is not a dict at all} ]]
+}
+v_backend cdbad [list cosim_shim_verdict ::v_cdbad]
+check {CD7 a note missing its check, its file, its clause or its remedy is dropped rather than guessed at, and so is one that is not a dict at all: only the complete note survives} \
+  [v_total {
+    set ns [ase::cosim_shim_notes cdbad /zz]
+    list [llength $ns] [dict get [lindex $ns 0] check]
+  }] {1 vcd_link}
+
+set CD8 {}
+foreach p {cosim_shim_report cosim_shim_say cosim_shim_notes cosim_scripts_dir cosim_has_shim_hook} {
+  ## a MISSING proc reads as a red, never as "starts nothing"
+  if {[catch {info body ::ase::$p} b]} { set b "NOPROC exec" }
+  lappend CD8 [regexp {\yexec\y|open\s+"?\|} [v_nocomment $b]]
+}
+set CD8SD NOPROC
+if {![catch {info body ::ase::cosim_scripts_dir} b8]} {
+  set b8 [v_nocomment $b8]
+  ## ⚠ THE COMMENTS ARE STRIPPED FIRST: this proc's own header explains why a cold
+  ## ase::sim_capabilities here would be wrong, so a scanner reading the raw body
+  ## would find the very word it is fencing out and red a correct tree.
+  set CD8SD [list [regexp {sim_caps_cached} $b8] [regexp {ase::sim_capabilities\y} $b8]]
+}
+check {CD8 STRUCTURAL the say-site starts no process and never measures -- it reads the free peek, so the Run gesture that triggers it does not start the simulator a second time for a sentence} \
+  [list $CD8 $CD8SD \
+        [expr {[expr {[file exists $MARK] ? [file size $MARK] : 0}] == $CDMARK0}]] \
+  {{0 0 0 0 0} {1 0} 1}
+
+set CD9 NOPROC
+if {![catch {info body ::ase::run_deck} b9]} {
+  set b9 [v_nocomment $b9]
+  set i1 [string first {ase::cosim_shim_report} $b9]
+  set i2 [string first {ase::cosim_build} $b9]
+  set seg {}
+  if {$i1 >= 0 && $i2 > $i1} { set seg [string range $b9 $i1 $i2] }
+  set CD9 [list [expr {$i1 >= 0 ? 1 : 0}] [expr {$i2 >= 0 ? 1 : 0}] \
+                [expr {($i1 >= 0 && $i2 > $i1) ? 1 : 0}] \
+                [expr {[string first {casenote} $seg] >= 0 ? 1 : 0}]]
+}
+check {CD9 STRUCTURAL the run asks BEFORE it builds -- a failed --trace link raises out of run_deck, so a warning placed after the build would never reach the one user who needs it -- and what is said rides into the run log's notes} \
+  $CD9 {1 1 1 1}
+
+v_cdprime $T_BAD
+set CDAa [llength [v_cdsay $CDMAP]]
+set CDAb [llength [v_cdsay $CDMAP]]
+catch {ase::sim_caps_clear}
+v_prime [dict create known 1 usable 1 scripts_dir $T_BAD]
+set CDAc [llength [v_cdsay $CDMAP]]
+check {CD10 clearing the measurements forgets what was said about the installation they named, so a user who has just applied the patch -- or pointed the entry at another build -- is told again} \
+  [list $CDAa $CDAb $CDAc] {2 0 2}
+
+## ⚠ THE TWO-ENTRY CASE IS NOT A QUESTION ABOUT THE KEY, AND MEASURING IT TAUGHT
+## THIS ROW SO -- it was written as "two registered entries sharing one tree are
+## told once between them" and came back {2 2 2}. Registering the second entry is
+## a REGISTRY EDIT, and every registry edit calls ase::sim_caps_clear (issue 0950,
+## from ase::sim_register and ase::sim_unregister), which now forgets the
+## said-ledger too, by CD10's rule. So that user is told again, and rightly: the
+## answer being described is a new measurement. The key's own claim is therefore
+## tested where it lives -- two asks about one directory, nothing edited between.
+catch {ase::sim_caps_clear}
+set CDBa [llength [v_ans ase::cosim_shim_say ngspice $T_BAD]]
+set CDBb [llength [v_ans ase::cosim_shim_say ngspice $T_BAD]]
+set CDBc [llength [v_ans ase::cosim_shim_say ngspice $T_BAD2]]
+set CDBd [llength [v_ans ase::cosim_shim_say ngspice $T_BAD]]
+check {CD11 the say-once key is the installed DIRECTORY: a second ask about the same tree is silent, a different tree is told about, and the first tree stays silent afterwards} \
+  [list $CDBa $CDBb $CDBc $CDBd] {2 0 2 0}
+catch {test_sim_registry_isolate}
 
 # ============================================================================
 # SECTION OT -- THE `dumpunsound` REASON TOKEN (16d). A PRIMED ANSWER.

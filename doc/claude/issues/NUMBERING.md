@@ -3413,7 +3413,20 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   nothing to read. Stage 16 task 2 of the ASE-L analyses batch. Checked free in every clone on this
   machine before minting. OPEN.
 
-**The next free number is 1472.**
+~~**The next free number is 1472.**~~ superseded: **1472** is filed, below.
+
+- **1472** — **Two co-simulation installation defects were measured, characterised, and said to
+  nobody.** Issue 1470 shipped `ase::backend::ngspice::scripts_dir_of` and `cosim_shim_verdict` —
+  the parse rule and the two installation greps of PLAN §16c — and **nothing called them** (1470's
+  own correction C6). So a `vlnggen` that does not link the VCD runtime, which makes a `--trace`
+  Verilator build fail its final link and arrive as "my wrapper won't link", and a
+  `verilator_shim.cpp` whose model holds a non-owning pointer to a `VerilatedContext` destroyed
+  when `Cosim_setup()` returns — use-after-free for the whole simulation — both still reached no
+  user. No probe leg collected `$sourcepath` either, so nothing knew which installed tree to read.
+  Stage 16 task 3 of the ASE-L analyses batch. Checked free in every clone on this machine before
+  minting. OPEN.
+
+**The next free number is 1473.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

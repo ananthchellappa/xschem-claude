@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**721 strings, from 35 issues, grouped by where the user sees them** — not by
+**723 strings, from 36 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -9501,7 +9501,7 @@ this ngspice's vlnggen does not link the VCD runtime, so a Verilog block built w
 ```
 
 
-*Where:* 16c, `vcd_link 0`. ⚠ **Not yet said anywhere** — the check exists and no say-site calls it (receipt 46, what binds later work).
+*Where:* 16c, `vcd_link 0`. **Said as of issue 1472**, inside R9-722's frame, on the first run of a session that asks for Verilog waveforms. (It read *"not yet said anywhere — the check exists and no say-site calls it"* until that wiring landed.)
 
 **R9-714** · fix
 
@@ -9519,7 +9519,7 @@ this ngspice's Verilator shim frees its simulation context while the model still
 ```
 
 
-*Where:* 16c, `ctx_lifetime 0`. Not yet said anywhere.
+*Where:* 16c, `ctx_lifetime 0`. **Said as of issue 1472**, inside R9-722's frame, on the same run. (It read *"not yet said anywhere"* until that wiring landed.)
 
 **R9-716** · fix
 
@@ -9587,3 +9587,29 @@ ASE-L and the ngspice you have — the release note's description (24 tagged cla
 
 
 *Note:* A measured finding, not a promise (PLAN §16e), so it needs no ruling on its substance — but it is still new copy. It never says "basic", never mentions PSS, never names a release that does not exist and states no version floor; rows WR1–WR4 of `tests/headless/test_ase_simwin_variant_1471.tcl` hold it there.
+
+## Issue 1472 — the two co-simulation defects reach a user (stage 16, task 3)
+
+*2 entries, and four re-used.* Issue 1470 minted the two co-simulation clauses and their two remedies (**R9-713 … R9-716**) and shipped **no say-site**, so all four were said nowhere at all. Task 3 wires them. The **frame** below is ASE-L's (`ase::sim_why cosim_install`); the clauses, the remedies, the file names and the patch text stay the adapter's (`ase::backend::ngspice::cosim_shim_verdict`), so a second simulator keeps the frame and brings its own installation defects. One choice rides with these words under `owed.sh add rule 1472` — see the issue file: it is said on the run that **first asks for Verilog waveforms**, once per installed scripts directory per session, as a note and never a modal, and a verdict of `unknown` says nothing at all.
+
+**R9-722** · sentence
+
+```text
+This run asks for Verilog waveforms, and <clause>. The file is <path>. Fix: <remedy>.
+<patch>
+```
+
+
+*Where:* the CIW and the run log's `notes`, on the first run of a session that promises a VCD. Rendered with R9-713 + R9-714 for `vcd_link 0`, and with R9-715 + R9-716 for `ctx_lifetime 0`, each followed by the change itself on its own lines.
+
+
+*Note:* The frame supplies **no subject**, because both clauses are already whole subject + predicate (*"this ngspice's vlnggen does not link…"*); the path gets its own short sentence rather than being pushed in front of them. ⚠ `<path>` is the **file**, not the program — the executable is blameless here, and naming it would send the user to change the wrong thing. The patch is printed verbatim, because re-wrapping it would break it.
+
+**R9-723** · diagnostic
+
+```text
+ase: checking the co-simulation files for ngspice raised: <error>
+```
+
+
+*Where:* the CIW, when an adapter's `cosim_shim_verdict` hook raises — a defect report to a developer, in R9-719's shape for the same event one stage earlier. No sentence is given in that case, and the run goes on.
