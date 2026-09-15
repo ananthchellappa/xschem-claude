@@ -3662,6 +3662,19 @@ the text below.** Both binaries unless marked.
 * **"No new look debt is filed"** is task 2's to decide by measurement (Stage 12's C5); task 1 drew
   nothing.
 
+⚠ **And by task 2 (issue 1467, `receipts/42-stage-13-gui.md`).**
+* **A look debt IS filed** (`ase-trnoise-section-1467`): the section is a table, an editor, a live
+  estimate line and a sentence footer, and the dev-display screenshots show three things only eyes
+  can judge — the refusal sentence repeated (section note, form banner, and the status line on a
+  refused OK, which also widens the dialog 667 → 839 px), the dialog at 814 px tall unfolded, and a
+  random source's distribution shown by number in the Values column.
+* **`facts nodes` is not a net list**, so nets are not offered from it: `ase::netlist_map` files
+  every token after a device name, and `dc`, `1k`, `sin(0` and a MOS model name all read `present`.
+  The adapter reads nets from the netlist text by device letter, and its target rules are one body
+  for the offer and the refusal.
+* **"An Add a noise source button that offers only the sources a stimulus is not already using"**
+  is per FUNCTION: a current source is offered for noise and never for a random value.
+
 Both are `IF_REALVEC` instance parameters on **both** `vsrc` and `isrc` — the manual's *"isrc not yet
 available"* is wrong here, measured — and documented nowhere in-tree. They belong on the **Tran form**
 as a collapsible section: they are a simulation setting, not a source property, and nothing goes on the

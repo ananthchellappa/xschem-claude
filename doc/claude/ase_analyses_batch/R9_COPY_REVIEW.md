@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**653 strings, from 31 issues, grouped by where the user sees them** — not by
+**671 strings, from 32 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -8875,3 +8875,205 @@ Offset
 
 
 *Note:* `trrandom` argument 5's label, and its label under Uniform, Exponential and Poisson.
+
+## Issue 1467 — the noise section on the Tran form (stage 13, the GUI half)
+
+*18 entries.* ⚠ **R9-625 … R9-653 above are now ON SCREEN**, in this section: the seed sentences in its footer, the kind names inside them, and the labels on the editor's fields and the Add row. Their *Where:* lines were written before this task and say otherwise. **Every frame below is ASE-L's** (`src/ase_window.tcl`, `ase::ui::lbl_nz_*`) **except R9-667 … R9-671, which are the ngspice adapter's** (`ase::backend::ngspice::noise_kill_sentences` and the `notrnoise` catalogue row). Every noun is composed from the contract's `noun`, so a second simulator's adapter would change the word and not the frame.
+
+**R9-654** · label
+
+```text
+▸ Noise sources (<n>)
+```
+
+
+*Where:* the Tran form in Choose Analyses, the section's header button; `▾` while it is open.
+
+
+*Note:* Rendered: the contract's `noun` pluralised and title-cased, and the number of entries in the table (switched off or not). Folded shut until first opened, then remembered for the window, like `▸ Advanced`.
+
+**R9-655** · sentence
+
+```text
+Noise sources are added at run time. Nothing is written to your schematic.
+```
+
+
+*Where:* the section's caption, first line under the header when open.
+
+
+*Note:* Rendered from the noun. Modelled on the Ports table's ratified caption (`<Nouns> are assigned at run time. Nothing is written to your schematic.`), with **added** for **assigned**, because a noise source is added to the deck rather than assigned a role.
+
+**R9-656** · label
+
+```text
+On · Target · Kind · Values
+```
+
+
+*Where:* the section's table headings (a fifth, unheaded column carries the verdict glyph).
+
+
+*Note:* **Values** is the entry's arguments exactly as the deck writes them — positionally, padded with 0 — so a Random source reads `2 100u 1n 1m 0`, distribution by number.
+
+**R9-657** · label
+
+```text
+Target:
+```
+
+
+*Where:* the editor under the table, before the target-kind picker (`Source` / `Net`, R9-642/643-style contract labels) and the name.
+
+**R9-658** · label
+
+```text
+Kind:
+```
+
+
+*Where:* the editor, before the function picker (`Transient noise` / `Random source`).
+
+**R9-659** · label
+
+```text
+Estimates:
+```
+
+
+*Where:* the first word of the readout line under the editor.
+
+
+*Note:* ⚠ The point count differs between the two binaries this batch supports (4415 against 5008 for one noisy transient), so every number on the line is marked as an estimate.
+
+**R9-660** · readout
+
+```text
+density ≈ <d> <V|A>/√Hz, flat to ≈ <f> <k|M|G>Hz
+```
+
+
+*Where:* the readout line, for an entry with an amplitude and a noise timestep.
+
+
+*Note:* Rendered: `<d>` is `%.3g` of amplitude × √(2 × timestep); `<f>` is 1/(2 × timestep) with an SI prefix (not the SPICE `Meg`/`u`); V or A is the adapter's `quantity` for the entry.
+
+**R9-661** · readout
+
+```text
+≈ <n> points
+```
+
+
+*Where:* the readout line.
+
+
+*Note:* the row's estimate with its noise, digits grouped with commas.
+
+**R9-662** · readout
+
+```text
+results file ≈ <size>
+```
+
+
+*Where:* the readout line — only after a run of that row, whose results-file header gives the vector count. Without one the clause is left out rather than guessed.
+
+**R9-663** · readout
+
+```text
+memory before the first point ≈ <size>
+```
+
+
+*Where:* the readout line, for an entry with 1/f noise.
+
+
+*Note:* the 1/f record ngspice allocates before the first time point (issue 1466's measured 40 bytes a sample).
+
+**R9-664** · label
+
+```text
+bytes · kB · MB · GB
+```
+
+
+*Where:* `<size>` in the two readouts above; powers of 1000.
+
+**R9-665** · label
+
+```text
+<Target label> <name>
+```
+
+
+*Where:* the Add row's target list, and the table's Target column — e.g. `Source vdd`, `Net bias`.
+
+**R9-666** · label
+
+```text
+  + <n> noise source(s)
+```
+
+
+*Where:* the main window's Analyses pane, Arguments column, after the analysis line — `tran 1u 2m  + 2 noise sources`.
+
+
+*Note:* Rendered: counts only entries switched on (the ones that reach the deck); singular for 1. Modelled on the hatch's `  + verbatim: <n> line(s)`.
+
+**R9-667** · sentence
+
+```text
+With <option> set, noise source <k> loses its <kinds>[ and noise source <k> loses its <kinds>].
+```
+
+
+*Where:* the section's footer, after the seed sentences, when the kill switch is armed. **The adapter's** (`noise_kill_sentences`).
+
+
+*Note:* Rendered: `<option>` is `notrnoise`; one clause per entry, joined with `and` (a comma list for three or more); `<kinds>` from R9-669 joined the same way. Per ENTRY because the split is per entry: RTS noise is switched off on a source with a noise timestep above 0 and not on one without (issue 1466, EE6, both binaries).
+
+**R9-668** · sentence
+
+```text
+Noise source <k> keeps its <kinds>[ and noise source <k> keeps its <kinds>]: <option> does not switch it|them off.
+```
+
+
+*Where:* the footer, after R9-667. **The adapter's.**
+
+
+*Note:* `them` for more than one surviving kind-entry pair.
+
+**R9-669** · label
+
+```text
+white noise · 1/f noise · RTS noise · random value
+```
+
+
+*Where:* `<kinds>` in R9-667/668. **The adapter's** (`noise_kind_noun`).
+
+
+*Note:* the first three are R9-628's names; **random value** is new, singular because it is one entry's, where R9-628's **random sources** speaks of a kind.
+
+**R9-670** · help
+
+```text
+switch off transient noise: white and 1/f noise always, RTS noise only where its noise timestep is above 0; random sources keep running
+```
+
+
+*Where:* the Options sheet, the `notrnoise` row's detail line. **The adapter's catalogue.**
+
+
+*Note:* the row carried no help before; the sheet's search now finds it by `random`, `RTS` or `white`.
+
+**R9-671** · evidence
+
+```text
+MEASURED 2026-09-15 on both binaries, per kind (issue 1466 row EE6): white and 1/f noise go to 0, RTS noise only on a source whose noise timestep is above 0, and a trrandom source runs on
+```
+
+
+*Where:* the Options sheet, the `notrnoise` row's detail line, appended to the existing 2026-09-13 measurement (`results_why`). **The adapter's catalogue.**

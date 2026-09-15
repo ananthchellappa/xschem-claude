@@ -86,7 +86,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_campaign_1462" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_events_1465" \
-                 "headless/test_ase_trnoise_1466"]
+                 "headless/test_ase_trnoise_1466" \
+                 "headless/test_ase_trnoise_gui_1467"]
 # ⚠ ISSUE 1465 (Stage 12, event-driven results) IS HEADLESS ONLY, AND ITS SECTION
 # EE STARTS BOTH REAL SIMULATORS. Nothing in it maps a window: the digital pane
 # it fills is the existing viewer's, reached through `ase::attach_dbs`, and the
@@ -253,6 +254,18 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # no canvas at all. Row GT5 is the one that measures them being THEMED, which is
 # a defect a headless arm cannot see and which a `_theme_widget` with no `Canvas`
 # arm shipped until this suite existed.
+#
+# ⚠ `test_ase_trnoise_gui_1467` IS IN **BOTH** LISTS, FOR 1460's AND 1464's
+# REASON. Stage 13 task 2 is the SURFACE -- the noise section on the Tran form,
+# its Add control, its live readouts, verdicts and seed sentence -- so its widget
+# legs exist only under X and self-skip without one: **19 checks headless, 63 on
+# the dev display**, measured 2026-09-15. The headless arm is not redundant:
+# sections NQ NK NN NO NS NR NZ NC are where the offer is falsified against the
+# check the run applies, where the file-size input is read from a header, and
+# where the window is linted for simulator words. ⚠ AND ITS SECTION EE STARTS
+# BOTH REAL SIMULATORS ON THE DISPLAY ARM ONLY: it types noise into the form,
+# presses OK, renders the deck, runs it on apt 45.2 AND the fork, and returns to
+# the form to check its file-size estimate against the file that run wrote.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
@@ -260,7 +273,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
-                 "headless/test_ase_campaign_gui_1464"]
+                 "headless/test_ase_campaign_gui_1464" \
+                 "headless/test_ase_trnoise_gui_1467"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

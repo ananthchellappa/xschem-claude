@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 10:49
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 12:04
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**12**, and **Stage 13 task 1** (issue **1466**, the deck half of transient noise). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages landed** | 0–**12**, and **Stage 13 tasks 1–2** (issues **1466** `3ae661fa`, **1467**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
 | **Stages remaining** | **13** (transient noise and `trrandom`, split into two tasks by the driver), 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **78 cases, ZERO counted lines in `tests/results.log`, 358 s**, solo on Stage 13 task 1's finished tree — the new suite joined `hcases`; no `untitled~.sch` in the repo root afterwards — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design: `xschemtest.tcl` writes there **only when it fails** (`run_regression.tcl:478-490`) |
-| **In flight** | nothing at this commit. **Stage 13 task 2's crew (the GUI half) is dispatched immediately after it**, and while it holds the code the driver takes debt **M22**'s measurement (ngspice only, never a suite) |
+| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`, 365 s**, solo, in the foreground at full parallelism — the new suite in both lists. ⚠ **Two earlier attempts were stopped by the harness as "running low on memory" while a sampler read ~13 900 MB available and no `xschem` process**: the first after the driver's sabotage had completed and been restored, the second during the third case (`netlisting.tcl`), pinned to 8 CPUs. Neither produced a verdict. The run that did read 13 970 MB available before and 13 907 MB after, so T1's own footprint was not the trigger. ⚠ And one guard written to refuse a concurrent suite **matched its own shell's command line** and refused to start T1 — the `pgrep -f` self-match again, as a false refusal; guards now match by process name (`comm`) — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design: `xschemtest.tcl` writes there **only when it fails** (`run_regression.tcl:478-490`) |
+| **In flight** | nothing at this commit. **Stage 13 task 3 — debt M22's fix — is dispatched immediately after it**, and Stage 13 completes with it |
 | **Next** | **Stage 13** — task 1 the deck half (in flight), then task 2 the GUI half. Then ⚠ **Stage 16 before Stage 14**: `evidence/pss-two-binaries.md` shows PSS converging on nothing on apt 45.2 and ⚖ **R7** was answered on a scratch build's evidence, so R7 goes back to the user (after R9, one at a time) before Stage 14 opens. Then ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **653 strings from 31 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **671 strings from 32 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **179 rule / 68 look / 11 suite**, after Stage 13 task 1. ⚠ Two `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`) and `ase-digital-pane-run-end-1465`. Four unstamped entries are another clone's |
+| **Debt queue** | **180 rule / 69 look / 11 suite**, after Stage 13 task 2. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (**one refusal shown three times, widening the dialog to 839 px**). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,19 +87,15 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect Stage 13 task 2** — receipt `receipts/42-stage-13-gui.md`. Verify independently: a row
-   that goes from values typed into the real widgets to the rendered deck on **both** binaries (the
-   SP14 precedent); every readout worded as an estimate and checked against the arithmetic; opening
-   the form starts nothing and adds no `noise` key to an untouched bench; the `look` decision taken by
-   measurement with screenshots. Both arms, T1 solo, ledger, commit.
-2. **Stage 13 task 3 — debt M22's fix**, dispatched when task 2 hands over (it holds `src/ase.tcl`).
-   ✅ **The measurement is done** (`evidence/m22-checkpointed-noise.md`): arming the loop on a noisy
-   transient is safe on both binaries, so `tran_points` becomes noise-aware through task 1's
-   `ase::stimuli_points`, NX2's fourth term and sabotage S44 move with it, and a row runs a noisy
-   transient over the floor through the real loop on both binaries. **Stage 13 is complete after task 3.**
-3. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
+1. **Collect Stage 13 task 3** — receipt `receipts/43-stage-13-m22.md`. Verify independently: a transient
+   with no noise table checkpoints exactly as before (same deck bytes); a noisy transient whose card is
+   under the floor is now checkpointed, through the real loop, on **both** binaries; NX2's term and
+   sabotage S44 moved deliberately and say so. Both arms, T1 solo, ledger, commit — **Stage 13 complete**.
+2. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
    `stage16_task1_brief.md`): the four-frame sentence, the five-pattern linter (**its RED row is never
    re-run on `/usr/bin/ngspice`**), the installation greps, the `dumpunsound` token, and debt **M21**.
+3. **Stage 16 task 2** — the Simulators-window row, its look debt with two registry entries, and 16e's
+   release note.
 
 ⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
 nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
@@ -941,6 +937,23 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 13 task 2 — the GUI half of transient noise, issue **1467**, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | `src/ase_window.tcl` **+904/−1** — a **Noise sources** section on the Tran form (folded, built or destroyed by `chana_show` on every rebuild), a table of entries, an Add row offering per-function targets, an editor bound to the selected entry, live estimates, per-entry verdicts, the seed and kill sentences verbatim, and `tran 1u 2m  + 2 noise sources` in the Arguments column. `src/ase.tcl` **+308/−5** — `stimuli_candidates` (no core fallback), `stimuli_nvec`, `facts_netlist_text`, kill sentences, and the adapter's target check split out so **the offer and the refusal are one body** |
+| **⚠ the correction that mattered** | **`facts nodes` is not a net list.** Receipt 41 said to offer nets from it; measured, the map holds `dc`, `1k`, `sin(0`, `nch` and calls them all `present`. Harmless for a refusal (it can only under-refuse), wrong for an offer. Nets now come from the netlist **text** by device-letter node positions |
+| **widgets to a run, both binaries** | EE types a white-noise entry and a Gaussian random current into the real widgets, presses OK, renders, runs on **45.2 and the fork**, reads the results back with a second ngspice, and returns to the form, whose file-size estimate is then within 2× of the file the run wrote (45.2 106 899 B, fork 119 130 B) |
+| **driver's own re-run** | headless: `test_ase_trnoise_gui_1467` **19**, `test_ase_trnoise_1466` **62**, `test_ase_dialogs` **37**, `test_ase_window` **56**, `test_ase_optsheet_1441` **62**, `test_ase_persist` **49**, `test_ase_core` **638**, `test_ase_sp_1452` **58**, `test_ase_events_1465` **87**. Display: `test_ase_trnoise_gui_1467` **63**, `test_ase_window` **295**, `test_ase_simdlg_0937` **55**, `test_ase_optsheet_1441` **87**, `test_ase_persist` **153**, `test_ase_conv_gui_1460` **104**, `test_ase_campaign_gui_1464` **156**. **All rc 0, all matching the receipt** |
+| **byte identity** | `tracked 104 bad {} control_disagrees 1 control_agrees 1`, driver-re-run through the shared helper — and through the dialog: an untouched bench opened, unfolded and OKed writes the same bytes and no `noise` key (GB1) |
+| **the pixels, looked at by the driver** | the readout in `02-open-entry1.png` is the arithmetic (`1m·√(2·10u)` = 4.47e-06 V/√Hz, 50 kHz, 2,000 points). ⚠ **In `04`/`05` one refusal appears THREE times** — the editor's verdict line, the section's banner, and the status line on OK, which **widens the dialog 667 → 839 px** (`dialog_status` has `-wraplength 0`). Not a defect in behaviour and it follows the existing banner/status pattern, so it is **the user's to judge**: filed as `look ase-trnoise-section-1467`, and named here so the look is aimed |
+| **sabotage** | **64 mutations, 64 killed by name**, restored tree `ALL PASS` both arms; one first-pass survivor (a noun never pluralised) earned a literal row, and a second row that passed by coincidence was narrowed. Driver's own: **D1** — `chana_ok` never refuses a fatal noise table — reds **GV2** by name on the display arm; restored md5-identical (`cd552daa`), `ALL PASS (63)` |
+| **T1** | **80 cases, ZERO counted lines in `tests/results.log`, 365 s**, solo, in the foreground at full parallelism — the new suite in both lists. ⚠ **Two earlier attempts were stopped by the harness as "running low on memory" while a sampler read ~13 900 MB available and no `xschem` process**: the first after the driver's sabotage had completed and been restored, the second during the third case (`netlisting.tcl`), pinned to 8 CPUs. Neither produced a verdict. The run that did read 13 970 MB available before and 13 907 MB after, so T1's own footprint was not the trigger. ⚠ And one guard written to refuse a concurrent suite **matched its own shell's command line** and refused to start T1 — the `pgrep -f` self-match again, as a false refusal; guards now match by process name (`comm`) |
+| **ledger debts** | `rule 1467` (R9-654 … R9-671; **671 strings from 32 issues**) · `look ase-trnoise-section-1467`. Queue **179/68/11 → 180/69/11** |
+| **⚠ pre-existing, named for the driver** | under a **hermetic `HOME`**, `test_ase_dialogs`' display arm fails **four** rows (G2sens, GG3, GG9, GN1b) before and after — receipt 41 recorded one, probably with a different `HOME`. GG3/GG9/GN1b are capability-cache/Detect rows, the class that reads the developer's registry. Issue **1436** and the suite's own comment at `test_ase_dialogs.tcl:332-342` already name the class. Not in T1 (it runs that suite headless) |
+| **corrections** | **C1** the node map · **C2** a renderable row's Arguments cell showed nothing of its table · **C3** PLAN's *no look debt* — filed · **C4** the offer is per function and includes nets · **C5** the four display reds · **C7** `ase_window.tcl` +904 against PLAN's +200 |
+| **receipt** | `receipts/42-stage-13-gui.md` |
 
 ### ✅ Stage 13 task 1 — the DECK half of transient noise, issue **1466**, collected 2026-09-15
 
@@ -4520,14 +4533,14 @@ New goldens. **Ruling: ⚖ R9.** Decisions: **D10** (the `trnoise` k=v tokens ar
 
 | | |
 |---|---|
-| status | ⏳ **task 1 of 2 landed** — the deck half (issue **1466**); task 2, the GUI half, dispatched after it |
-| commit | task 1: the `feat(1466)` commit that carries this row |
+| status | ⏳ **tasks 1 and 2 landed** — the deck half (issue **1466**) and the GUI half (issue **1467**); **task 3, debt M22's fix, dispatched after them — the stage completes with it** |
+| commit | task 1: `3ae661fa` · task 2: the `feat(1467)` commit that carries this row |
 | T1 | task 1: solo, see the *Stage 13 task 1* block |
-| suites moved | **new** `test_ase_trnoise_1466` **62** both arms; `test_ase_sp_1452` SK1's fourth term `{}` → `noise`, count unchanged at **58**; every other neighbour unmoved |
-| sabotage | task 1: **58, all killed by name**; driver's D1 → NE5 NE8 EE3/apt EE3/fork |
-| ledger debts | `rule 1466` (R9-565 … R9-653); **M22** filed by the driver |
+| suites moved | **new** `test_ase_trnoise_gui_1467` **19 headless / 63 display** (in `hcases` and `dcases`); **new** `test_ase_trnoise_1466` **62** both arms; `test_ase_sp_1452` SK1's fourth term `{}` → `noise`, count unchanged at **58**; every other neighbour unmoved |
+| sabotage | task 1: **58, all killed by name**; driver's D1 → NE5 NE8 EE3/apt EE3/fork · task 2: **64, all killed by name**; driver's own in the task 2 block |
+| ledger debts | `rule 1466` (R9-565 … R9-653); **M22** filed by the driver and measured · `rule 1467` (R9-654 … R9-671), `look ase-trnoise-section-1467` |
 | spec paragraphs rewritten | §13's head (the crew's correction block); APPENDIX §5.5 and `evidence/trnoise.md` §10.2, §10.4 and T11 (the driver, from C1–C3); `binary-differences.md` #7 (C8) |
-| receipt | `receipts/41-stage-13-deck.md` |
+| receipt | `receipts/41-stage-13-deck.md` · `receipts/42-stage-13-gui.md` |
 
 ### What Stage 13 learned that binds later stages
 

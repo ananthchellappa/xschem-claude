@@ -1653,7 +1653,11 @@ proc ase::ui::arg_summary {row {sim {}}} {
   }
   if {[ase::analysis_entry $sim $type] ne {}} {
     if {![catch {ase::analysis_line $sim $row} line] && $line ne {}} {
-      return "$line$vb"
+      ## ⚠ 1467: AND A NOISE TABLE IS COUNTED, FOR THE HATCH's REASON. Its lines
+      ## are not the analysis line, and a transient that runs with noise must not
+      ## read exactly like one that runs without. Only entries that reach the
+      ## deck are counted.
+      return "$line$vb[ase::ui::nz_summary $sim $row]"
     }
     ## ⚠ NO DECK LINE: SAY WHY, DO NOT DUMP THE KEYS. Issue 1420, and it is the
     ## OTHER half of this batch's acceptance criterion. The fallback below lists
@@ -5358,6 +5362,16 @@ proc ase::ui::chana_cache_clear {key} {
   # of whatever type it is preselected on, unless the door that opened it named
   # a row.
   array unset dlg $key,anrow,*
+  # ⚠ 1467: AND THE NOISE SECTION's WORKING TABLES AND EDITOR GO WITH IT -- they
+  # are this dialog's memory by the same rule. `nzopen` stays, like `advopen`:
+  # whether the section is folded is remembered for the window.
+  catch {ase::ui::nz_untrace $key}
+  array unset dlg $key,annoise,*
+  array unset dlg $key,nzf,*
+  array unset dlg $key,nzcand,*
+  foreach _nz {nzsel nzck nzfacts nztext nznvec nzbarmap nzeditfn nzloading} {
+    array unset dlg $key,$_nz
+  }
 }
 
 # SAVE THE FORM THAT IS ON SCREEN INTO THE TYPE IT BELONGS TO. Called from
@@ -5643,6 +5657,15 @@ proc ase::ui::chana_show {key} {
   # Beside `chana_note` because both are repainted by the one rebuild door, and
   # AFTER it for the same reason: it reads the session, not the form.
   ase::ui::conv_op_note_paint $key $type
+  # ── STAGE 13 TASK 2 (issue 1467): THE NOISE SECTION, BUILT OR REMOVED. ──────
+  # After the banner and the OP sentence, because it reads the merged row too,
+  # and on EVERY rebuild, because `nz_build` is also what destroys it -- the
+  # destroy-list trap of `evidence/trnoise.md` §10.1.
+  # ⚠ A RAISE IN IT IS SAID IN THE CIW AND DOES NOT TAKE THE DIALOG DOWN: the
+  # subdialog doors and the handle grid below still have to be built.
+  if {[catch {ase::ui::nz_build $key} _nzerr]} {
+    catch {::ase::echo "ase: $_nzerr" error}
+  }
   # ── STAGE 9a/9b (issue 1454): THE TWO SUBDIALOG DOORS, PER TYPE. ───────────
   #
   # ⚠ A STANDING SUBDIALOG DIES WITH THE REBUILD. Both of them edit ONE row of
@@ -5750,6 +5773,7 @@ proc ase::ui::chana_commit_vals {key type sim} {
 # on its `probe` says exactly that about the commit door, and the banner sits
 # next to the widgets the user is typing into.
 proc ase::ui::chana_merged_row {key type} {
+  variable dlg
   set sim [ase::ui::chana_sim $key]
   set row [ase::ui::chana_row $key $type]
   dict for {f v} [ase::ui::chana_form_vals $key $type $sim] {
@@ -5757,6 +5781,21 @@ proc ase::ui::chana_merged_row {key type} {
       set row [dict remove $row $f]
     } else {
       dict set row $f $v
+    }
+  }
+  # ── 1467: AND THE NOISE SECTION's WORKING TABLE, once it has been read for
+  # this row. The banner, the readouts and the verdicts all judge what is ON
+  # SCREEN; an empty working table is the key's absence, exactly as OK writes it.
+  if {[ase::analysis_stimuli $sim $type] ne {}} {
+    set _ck [ase::ui::nz_ck $key $type]
+    set _k [ase::analysis_setup_key $sim $type]
+    if {$_ck ne {} && $_k ne {} && [info exists dlg($key,annoise,$_ck)]} {
+      set _t $dlg($key,annoise,$_ck)
+      if {[catch {llength $_t} _n] || $_n} {
+        dict set row $_k $_t
+      } else {
+        set row [dict remove $row $_k]
+      }
     }
   }
   return $row
@@ -5866,6 +5905,37 @@ proc ase::ui::chana_ok {key} {
       return
     }
   }
+  # ── 1467: THE NOISE SECTION's TABLE GOES WITH THIS OK -- WHEN IT CHANGED. ──
+  # ⚠ ONLY WHEN IT CHANGED. The working table was taken from the stored row
+  # VERBATIM, so an untouched section compares equal and the key is neither
+  # written nor removed: the byte-identity rule `form_is_absent` keeps for a
+  # field, kept for a table.
+  # ⚠ AND A CHANGED TABLE THE RUN WOULD REFUSE DOES NOT LEAVE THE DIALOG --
+  # `setup_ok`'s rule. The evaluator is the adapter's own `check` leg, which
+  # `render_deck` re-runs, so this door cannot pass what the deck refuses.
+  set nzkey {} ; set nztbl {} ; set nzchg 0
+  if {[ase::analysis_stimuli $sim $type] ne {}} {
+    set nzkey [ase::analysis_setup_key $sim $type]
+    set _nzck [ase::ui::nz_ck $key $type]
+    if {$nzkey ne {} && $_nzck ne {} && [info exists dlg($key,annoise,$_nzck)]} {
+      set nztbl $dlg($key,annoise,$_nzck)
+      set _nzrow [ase::ui::chana_row $key $type]
+      set _nzold {}
+      if {[dict exists $_nzrow $nzkey]} { set _nzold [dict get $_nzrow $nzkey] }
+      set nzchg [expr {$nztbl ne $_nzold}]
+    }
+  }
+  if {$nzchg} {
+    set _nzst [ase::session_state $key]
+    set _nzw [ase::stimuli_worst [ase::stimuli_verdicts $sim \
+      [ase::ui::chana_merged_row $key $type] [ase::netlist_facts_cached $_nzst] $_nzst]]
+    if {$_nzw ne {} && [lindex $_nzw 0] ne {caution}} {
+      catch {::ase::echo "ase: [lindex $_nzw 1]" error}
+      ase::ui::dialog_status $w $key [ase::precheck_banner_text [list state \
+        [lindex $_nzw 0] lines [list [linsert $_nzw 0 stimuli_check]]]]
+      return
+    }
+  }
   set st [ase::session_state $key]
   set rows [ase::state_get $st analyses]
   # ⚠ THE ROW THIS DIALOG IS ADDRESSING, NOT THE FIRST OF ITS TYPE. Issue 1448.
@@ -5881,6 +5951,13 @@ proc ase::ui::chana_ok {key} {
       set row [dict remove $row $f]
     } else {
       dict set row $f $v
+    }
+  }
+  if {$nzchg} {
+    if {[catch {llength $nztbl} _nzn] || $_nzn} {
+      dict set row $nzkey $nztbl
+    } else {
+      set row [dict remove $row $nzkey]
     }
   }
   if {$idx >= 0} { lset rows $idx $row } else { lappend rows $row }
@@ -5909,6 +5986,832 @@ proc ase::ui::chana_cancel {key} {
   ase::ui::chana_cache_clear $key
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].chana}
+  }
+}
+
+# ===========================================================================
+# STAGE 13 TASK 2 -- THE NOISE SECTION ON THE TRANSIENT FORM (issue 1467)
+# ===========================================================================
+#
+# doc/claude/ase_analyses_batch/PLAN.md §13, the PIXEL half. Issue 1466 shipped
+# the table, its emission, its refusals, its readouts and its seed and kill
+# reports as data drawn by nothing; this section draws them.
+#
+# ⚠ EVERY WORD ABOUT THE SIMULATOR IS DATA (D34-D37). The functions, their
+# POSITIONAL arguments, labels, units, the target kinds, the candidates, the
+# verdicts, the seed sentence and the kill-switch sentence all come from the
+# type's `stimuli` contract through core readers. This file names no function,
+# no argument, no target field and no option -- row GS1 of
+# tests/headless/test_ase_trnoise_gui_1467.tcl lints it for exactly that.
+#
+# ⚠ THE EDITOR IS BOUND TO AN ENTRY, NEVER A DRAFT. Every field writes the
+# selected entry of the working table as it is typed, and `Add` creates the
+# entry before anything is typed into it. There is no half-filled row for OK to
+# drop, which is the whole of "nothing the window shows may fail to reach the
+# deck" for a form with a table in it.
+#
+# ⚠ THE WORKING TABLE IS DIALOG MEMORY, KEYED BY THE EDIT CACHE's KEY
+# (`ase::ui::chana_cache_key`), so a type switch or a `▸ Advanced` rebuild keeps
+# it (⚖ R5) and two transient rows never share one (issue 1448). It is taken
+# from the stored row VERBATIM the first time it is read, so an untouched table
+# compares equal at OK and the key is not written: that is what keeps the 104
+# committed `.state` files, and a bench that never had a table, byte-identical.
+#
+# ⚠ AND THE SECTION IS DESTROYED BY EVERY REBUILD, BEFORE THE TYPE IS LOOKED AT.
+# `evidence/trnoise.md` §10.1 names `chana_show`'s old destroy list as the trap
+# this feature walks into -- a frame the list does not name survives a type
+# switch and shows the transient's noise on the AC form. `nz_build` destroys
+# `$w.noise` unconditionally and only then asks whether the type has a contract.
+#
+# ⚠ OPENING IT STARTS NOTHING. The facts, the netlist text and the last run's
+# vector count are peeks taken once per build (issue 1435's constraint).
+
+# ⚖ R9 -- the section's own words. Every noun is the contract's.
+proc ase::ui::lbl_nz_header {sim type n open} {
+  set g [expr {$open ? "▾" : "▸"}]
+  return "$g [string totitle [ase::stimuli_noun $sim $type 2]] ($n)"
+}
+proc ase::ui::lbl_nz_caption {sim type} {
+  return "[string totitle [ase::stimuli_noun $sim $type 2]] are added at run time.\
+ Nothing is written to your schematic."
+}
+proc ase::ui::lbl_nz_columns {} { return {On Target Kind Values} }
+proc ase::ui::lbl_nz_target {} { return {Target:} }
+proc ase::ui::lbl_nz_kind {} { return {Kind:} }
+# ⚠ EVERY NUMBER IS AN ESTIMATE AND IS WORDED AS ONE: the two ngspice binaries
+# this batch supports give 4415 and 5008 points for the same noisy transient
+# (issue 1466's C8), and a count that looked measured would be wrong on one.
+proc ase::ui::lbl_nz_estimates {} { return {Estimates:} }
+proc ase::ui::lbl_nz_density {q dens flat} {
+  return "density ≈ $dens $q/√Hz, flat to ≈ ${flat}Hz"
+}
+proc ase::ui::lbl_nz_points {n} { return "≈ $n points" }
+proc ase::ui::lbl_nz_bytes {b} { return "results file ≈ $b" }
+proc ase::ui::lbl_nz_memory {b} { return "memory before the first point ≈ $b" }
+proc ase::ui::lbl_nz_count {sim type n} {
+  return "  + $n [ase::stimuli_noun $sim $type $n]"
+}
+
+# THE ARGUMENTS COLUMN's COUNT: the entries of a row's table that are switched
+# on, or `{}` for none -- so a row with no table reads exactly as it did.
+proc ase::ui::nz_summary {sim row} {
+  set n 0
+  if {[catch {
+    foreach e [ase::stimuli_rows $sim $row] {
+      if {[ase::stimuli_entry_on $e]} { incr n }
+    }
+  }]} { return {} }
+  if {!$n} { return {} }
+  return [ase::ui::lbl_nz_count $sim [ase::state_get $row type] $n]
+}
+
+# Three significant figures, or the text unchanged.
+proc ase::ui::nz_g {v} {
+  if {![string is double -strict $v]} { return $v }
+  return [format %.3g $v]
+}
+# An SI prefix (k, M, G) and a trailing space before the unit. Not the SPICE
+# alphabet: `Meg` and `u` are a simulator's spelling, and this is a readout.
+proc ase::ui::nz_si {v} {
+  if {![string is double -strict $v]} { return "$v " }
+  set a [expr {abs(double($v))}]
+  foreach {m p} {1e9 G 1e6 M 1e3 k} {
+    if {$a >= $m} { return "[format %.3g [expr {double($v) / $m}]] $p" }
+  }
+  return "[format %.3g $v] "
+}
+proc ase::ui::nz_int {v} {
+  if {![string is double -strict $v]} { return $v }
+  set s [format %.0f $v]
+  while {[regsub {^(-?[0-9]+)([0-9]{3})} $s {\1,\2} s]} {}
+  return $s
+}
+proc ase::ui::nz_bytes {v} {
+  if {![string is double -strict $v]} { return $v }
+  foreach {m p} {1e9 GB 1e6 MB 1e3 kB} {
+    if {$v >= $m} { return "[format %.3g [expr {double($v) / $m}]] $p" }
+  }
+  return "[format %.0f $v] bytes"
+}
+
+proc ase::ui::nz_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].chana.noise
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+# The type whose section may stand: the dialog's type, when its contract exists.
+proc ase::ui::nz_type {key} {
+  variable dlg
+  if {![info exists dlg($key,antype)]} { return {} }
+  set type $dlg($key,antype)
+  if {$type eq {}} { return {} }
+  if {[ase::analysis_stimuli [ase::ui::chana_sim $key] $type] eq {}} { return {} }
+  return $type
+}
+
+# WHICH WORKING TABLE: the edit cache's key for the row this dialog addresses.
+# ⚠ ONE READER, AND EVERY SITE ASKS IT -- the table's reader and writer, the
+# merged row and OK. Four sites spelling the key their own way would be four
+# chances for two transient rows to share one table (issue 1448's leak).
+proc ase::ui::nz_ck {key type} {
+  return [ase::ui::chana_cache_key $key $type]
+}
+
+# THE WORKING TABLE for the row this dialog addresses, taken VERBATIM from the
+# stored row on first read.
+proc ase::ui::nz_table {key type} {
+  variable dlg
+  set ck [ase::ui::nz_ck $key $type]
+  if {$ck eq {}} { return {} }
+  if {![info exists dlg($key,annoise,$ck)]} {
+    set sim [ase::ui::chana_sim $key]
+    set k [ase::analysis_setup_key $sim $type]
+    set row [ase::ui::chana_row $key $type]
+    set v {}
+    if {$k ne {} && [dict exists $row $k]} { set v [dict get $row $k] }
+    set dlg($key,annoise,$ck) $v
+  }
+  return $dlg($key,annoise,$ck)
+}
+proc ase::ui::nz_put {key type tbl} {
+  variable dlg
+  set ck [ase::ui::nz_ck $key $type]
+  if {$ck eq {}} { return }
+  set dlg($key,annoise,$ck) $tbl
+}
+# The entries, or `{}` for a stored value that is not a list (a hand-edited
+# `.state`). The table-level verdict names that case; this keeps the section up.
+proc ase::ui::nz_entries {key type} {
+  set t [ase::ui::nz_table $key $type]
+  if {[catch {llength $t}]} { return {} }
+  return $t
+}
+
+proc ase::ui::nz_targets {sim type} {
+  set out {}
+  foreach t [ase::stimuli_get $sim $type targets] {
+    if {[catch {dict get $t name} nm]} { continue }
+    set l $nm
+    catch {set l [dict get $t label]}
+    lappend out [list $nm $l]
+  }
+  return $out
+}
+proc ase::ui::nz_target_label {sim type field} {
+  foreach t [ase::ui::nz_targets $sim $type] {
+    if {[lindex $t 0] eq $field} { return [lindex $t 1] }
+  }
+  return $field
+}
+proc ase::ui::nz_target_by_label {sim type lbl} {
+  foreach t [ase::ui::nz_targets $sim $type] {
+    if {[lindex $t 1] eq $lbl} { return [lindex $t 0] }
+  }
+  return {}
+}
+# The first target field an entry fills, as `{field name}`, or `{}`.
+proc ase::ui::nz_target_of {sim type e} {
+  foreach t [ase::ui::nz_targets $sim $type] {
+    set v [ase::stimuli_field $e [lindex $t 0]]
+    if {$v ne {}} { return [list [lindex $t 0] $v] }
+  }
+  return {}
+}
+proc ase::ui::nz_fn_label {sim type fn} {
+  set fns [ase::stimuli_get $sim $type functions]
+  if {[catch {dict get $fns $fn label} l]} { return $fn }
+  return $l
+}
+proc ase::ui::nz_fn_by_label {sim type lbl} {
+  set fns [ase::stimuli_get $sim $type functions]
+  if {[catch {dict keys $fns} names]} { return {} }
+  foreach fn $names {
+    if {[ase::ui::nz_fn_label $sim $type $fn] eq $lbl} { return $fn }
+  }
+  return {}
+}
+proc ase::ui::nz_fn_labels {sim type} {
+  set out {}
+  set fns [ase::stimuli_get $sim $type functions]
+  if {[catch {dict keys $fns} names]} { return {} }
+  foreach fn $names { lappend out [ase::ui::nz_fn_label $sim $type $fn] }
+  return $out
+}
+# An argument with declared `values`: the label shown for a stored value, and
+# the value a shown label stands for. An undeclared value shows as itself.
+proc ase::ui::nz_value_label {d v} {
+  if {[dict exists $d valuelabels] && [dict exists [dict get $d valuelabels] $v]} {
+    return [dict get [dict get $d valuelabels] $v]
+  }
+  return $v
+}
+proc ase::ui::nz_value_of {d lbl} {
+  if {[dict exists $d valuelabels]} {
+    dict for {v l} [dict get $d valuelabels] {
+      if {$l eq $lbl} { return $v }
+    }
+  }
+  return $lbl
+}
+proc ase::ui::nz_value_labels {d} {
+  set out {}
+  if {![dict exists $d values]} { return {} }
+  foreach v [dict get $d values] { lappend out [ase::ui::nz_value_label $d $v] }
+  return $out
+}
+
+# ONE ARGUMENT's LABEL: the declared label -- or the per-value one, keyed by the
+# value of the function's argument that declares `values` -- and its unit in
+# parentheses, where `source` is the entry's own quantity.
+proc ase::ui::nz_arg_label {sim type fn e d} {
+  set l [dict get $d name]
+  catch {set l [dict get $d label]}
+  if {[dict exists $d labels]} {
+    foreach g [ase::stimuli_args $sim $type $fn] {
+      if {[catch {dict exists $g values} ok] || !$ok} { continue }
+      set gv [ase::stimuli_field $e [dict get $g name]]
+      if {[dict exists [dict get $d labels] $gv]} { set l [dict get [dict get $d labels] $gv] }
+      break
+    }
+  }
+  set u {}
+  catch {set u [dict get $d unit]}
+  if {$u eq {source}} { set u [ase::stimuli_quantity $sim $type $e] }
+  if {$u ne {}} { append l " ($u)" }
+  return "$l:"
+}
+
+# The candidates for one target field and function, from the build's peeks,
+# memoised for the build -- a large netlist is read once, not per keystroke.
+proc ase::ui::nz_names {key type field fn} {
+  variable dlg
+  if {![info exists dlg($key,nzcand,$fn)]} {
+    set facts {} ; set text {}
+    catch {set facts $dlg($key,nzfacts)}
+    catch {set text $dlg($key,nztext)}
+    set dlg($key,nzcand,$fn) [ase::stimuli_candidates [ase::ui::chana_sim $key] $type \
+                                $fn $facts $text [ase::session_state $key]]
+  }
+  if {[catch {dict get $dlg($key,nzcand,$fn) $field} v]} { return {} }
+  return $v
+}
+
+# BUILD (OR REMOVE) THE SECTION. Called by `chana_show` on every rebuild.
+proc ase::ui::nz_build {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return {} }
+  set cw [dict get $wins $key].chana
+  if {![winfo exists $cw]} { return {} }
+  catch {destroy $cw.noise}
+  set type [ase::ui::nz_type $key]
+  if {$type eq {}} { return {} }
+  set sim [ase::ui::chana_sim $key]
+  set ck [ase::ui::chana_cache_key $key $type]
+  if {![info exists dlg($key,nzck)] || $dlg($key,nzck) ne $ck} {
+    set dlg($key,nzsel) {}
+    set dlg($key,nzck) $ck
+  }
+  ase::ui::nz_table $key $type
+  set n [llength [ase::ui::nz_entries $key $type]]
+  set open [expr {[info exists dlg($key,nzopen)] && $dlg($key,nzopen) eq {1}}]
+  set w $cw.noise
+  frame $w
+  # ⚠ GRID ROW 5, WHICH WAS FREE. `$w.form` (3), the Stage 9 doors (4), the OP
+  # sentence (6), the banner (7), `Options…` (8) and the buttons (9) do not
+  # move -- issue 1405's lesson about paths, and 1448's about rows.
+  grid $w -row 5 -column 0 -columnspan 2 -sticky we -padx 8 -pady 2
+  grid columnconfigure $w 0 -weight 1
+  button $w.hdr -text [ase::ui::lbl_nz_header $sim $type $n $open] \
+    -font AseLabelFont -relief flat -anchor w \
+    -command [list ase::ui::nz_toggle $key]
+  grid $w.hdr -row 0 -column 0 -sticky w
+  if {!$open} {
+    ase::ui::apply_theme $w
+    return $w
+  }
+  array unset dlg $key,nzcand,*
+  set st [ase::session_state $key]
+  set dlg($key,nzfacts) [ase::netlist_facts_cached $st]
+  set dlg($key,nztext) [ase::facts_netlist_text $st]
+  set dlg($key,nznvec) [ase::stimuli_nvec $sim $st [ase::ui::chana_row_idx $key $type]]
+  label $w.cap -text [ase::ui::lbl_nz_caption $sim $type] -anchor w -justify left \
+    -wraplength 600
+  grid $w.cap -row 1 -column 0 -sticky w
+  set cols {on target kind values mark}
+  ttk::treeview $w.tv -columns $cols -show headings -height 4 -selectmode browse \
+    -style Ase.Treeview
+  # ⚠ THE KIND COLUMN IS AS WIDE AS THE LONGEST FUNCTION LABEL. Measured on the
+  # dev display with a fixed 12: `Transient nois` and `Random sourc`, because the
+  # stretching Values column took the rest. The labels are data, so is the width.
+  set gk 12
+  foreach fl [ase::ui::nz_fn_labels $sim $type] {
+    if {[string length $fl] + 2 > $gk} { set gk [expr {[string length $fl] + 2}] }
+  }
+  foreach c $cols h [concat [ase::ui::lbl_nz_columns] [list {}]] g [list 3 14 $gk 24 2] {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width [ase::ui::colw $g $h] -minwidth [ase::ui::colw 0 $h] \
+      -anchor w -stretch [expr {$c eq {values}}]
+  }
+  bind $w.tv <<TreeviewSelect>> [list ase::ui::nz_pick $key]
+  grid $w.tv -row 2 -column 0 -sticky we
+  # ── THE ADD CONTROL: A FUNCTION, AND ONLY THE TARGETS ITS CHECK ACCEPTS ──
+  # A scrolling list rather than a menu, because a real bench has hundreds of
+  # nets and a Tk menu does not scroll. With no target chosen Add still makes an
+  # entry, whose verdict then says it names nothing -- so a bench whose facts
+  # are cold is not a dead end: the name can be typed in the editor.
+  frame $w.bar
+  ttk::combobox $w.bar.func -state readonly -width 16 \
+    -values [ase::ui::nz_fn_labels $sim $type]
+  catch {$w.bar.func set [lindex [ase::ui::nz_fn_labels $sim $type] 0]}
+  ttk::combobox $w.bar.target -state readonly -width 22
+  button $w.bar.add -text Add -command [list ase::ui::nz_add_pick $key]
+  button $w.bar.del -text Delete -command [list ase::ui::nz_del $key]
+  bind $w.bar.func <<ComboboxSelected>> [list ase::ui::nz_bar_targets $key]
+  pack $w.bar.func $w.bar.target $w.bar.add $w.bar.del -side left -padx 2
+  grid $w.bar -row 3 -column 0 -sticky w -pady 2
+  frame $w.ed
+  grid $w.ed -row 4 -column 0 -sticky we
+  foreach {lw r} {readout 5 note 6 seed 7} {
+    label $w.$lw -text {} -anchor w -justify left -wraplength 600
+    grid $w.$lw -row $r -column 0 -sticky w
+  }
+  # ⚠ THE READOUTS FOLLOW THE FORM's OWN FIELDS TOO: the point estimate is the
+  # row's, so typing a new stop time moves it. Added once per widget -- the
+  # section rebuilds on a fold without rebuilding the form.
+  set fw [ase::ui::chana_form $key]
+  if {$fw ne {}} {
+    foreach f [ase::ui::chana_fields $type $sim] {
+      if {![winfo exists $fw.$f] || [winfo class $fw.$f] ne {Entry}} { continue }
+      if {[string first nz_live [bind $fw.$f <KeyRelease>]] < 0} {
+        bind $fw.$f <KeyRelease> +[list ase::ui::nz_live $key]
+      }
+    }
+  }
+  ase::ui::nz_bar_targets $key
+  ase::ui::nz_fill $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::nz_toggle {key} {
+  variable dlg
+  set open [expr {[info exists dlg($key,nzopen)] && $dlg($key,nzopen) eq {1}}]
+  set dlg($key,nzopen) [expr {$open ? 0 : 1}]
+  ase::ui::nz_build $key
+}
+
+# The Add row's target list, for the function it shows.
+proc ase::ui::nz_bar_targets {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {} || ![winfo exists $w.bar.target]} { return }
+  set sim [ase::ui::chana_sim $key]
+  set fn [ase::ui::nz_fn_by_label $sim $type [$w.bar.func get]]
+  set map {} ; set shown {}
+  foreach t [ase::ui::nz_targets $sim $type] {
+    foreach nm [ase::ui::nz_names $key $type [lindex $t 0] $fn] {
+      lappend map [list "[lindex $t 1] $nm" [lindex $t 0] $nm]
+      lappend shown "[lindex $t 1] $nm"
+    }
+  }
+  set dlg($key,nzbarmap) $map
+  $w.bar.target configure -values $shown
+  $w.bar.target set [lindex $shown 0]
+}
+
+proc ase::ui::nz_add_pick {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {}} { return }
+  set sim [ase::ui::chana_sim $key]
+  set fn [ase::ui::nz_fn_by_label $sim $type [$w.bar.func get]]
+  set pick [$w.bar.target get]
+  set field {} ; set name {}
+  if {[info exists dlg($key,nzbarmap)]} {
+    foreach m $dlg($key,nzbarmap) {
+      if {[lindex $m 0] eq $pick} { set field [lindex $m 1] ; set name [lindex $m 2] ; break }
+    }
+  }
+  ase::ui::nz_add $key $fn $field $name
+}
+
+# APPEND AN ENTRY AND SELECT IT. The target first and the function after it,
+# which is the key order issue 1466's own tables are written in.
+proc ase::ui::nz_add {key fn field name} {
+  variable dlg
+  set type [ase::ui::nz_type $key]
+  if {$type eq {} || $fn eq {}} { return }
+  set sim [ase::ui::chana_sim $key]
+  set sel [ase::stimuli_get $sim $type selector]
+  if {$sel eq {}} { return }
+  set e [dict create]
+  if {$field ne {} && $name ne {}} { dict set e $field $name }
+  dict set e $sel $fn
+  set entries [ase::ui::nz_entries $key $type]
+  lappend entries $e
+  ase::ui::nz_put $key $type $entries
+  set dlg($key,nzsel) [llength $entries]
+  ase::ui::nz_fill $key
+  catch {ase::ui::chana_note $key}
+}
+
+proc ase::ui::nz_del {key} {
+  variable dlg
+  set type [ase::ui::nz_type $key]
+  if {$type eq {}} { return }
+  set entries [ase::ui::nz_entries $key $type]
+  set k {}
+  catch {set k $dlg($key,nzsel)}
+  if {![string is integer -strict $k] || $k < 1 || $k > [llength $entries]} { return }
+  set entries [lreplace $entries [expr {$k - 1}] [expr {$k - 1}]]
+  ase::ui::nz_put $key $type $entries
+  set n [llength $entries]
+  set dlg($key,nzsel) [expr {$n == 0 ? {} : ($k > $n ? $n : $k)}]
+  ase::ui::nz_fill $key
+  catch {ase::ui::chana_note $key}
+}
+
+proc ase::ui::nz_fill {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {} || ![winfo exists $w.tv]} { return }
+  set n [llength [ase::ui::nz_entries $key $type]]
+  set k {}
+  catch {set k $dlg($key,nzsel)}
+  if {![string is integer -strict $k] || $k < 1 || $k > $n} {
+    set dlg($key,nzsel) [expr {$n ? 1 : {}}]
+  }
+  ase::ui::nz_rows $key
+  ase::ui::nz_editor $key
+  ase::ui::nz_texts $key
+}
+
+# THE TABLE's LINES: the On glyph, the target, the kind, the POSITIONAL values
+# exactly as the deck writes them (`ase::stimuli_values`, padded) and the worst
+# verdict's glyph.
+proc ase::ui::nz_rows {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {} || ![winfo exists $w.tv]} { return }
+  set sim [ase::ui::chana_sim $key]
+  set row [ase::ui::chana_merged_row $key $type]
+  set facts {}
+  catch {set facts $dlg($key,nzfacts)}
+  set rank {caution 1 blocked 2 fatal 3}
+  set worst [dict create]
+  foreach f [ase::stimuli_verdicts $sim $row $facts [ase::session_state $key]] {
+    set fk [lindex $f 0] ; set fv [lindex $f 1]
+    if {![dict exists $rank $fv]} { continue }
+    if {![dict exists $worst $fk] \
+        || [dict get $rank $fv] > [dict get $rank [dict get $worst $fk]]} {
+      dict set worst $fk $fv
+    }
+  }
+  set sel [ase::stimuli_get $sim $type selector]
+  $w.tv delete [$w.tv children {}]
+  set k 0
+  set entries [ase::ui::nz_entries $key $type]
+  foreach e $entries {
+    incr k
+    set tg [ase::ui::nz_target_of $sim $type $e]
+    set tt {}
+    if {$tg ne {}} {
+      set tt "[ase::ui::nz_target_label $sim $type [lindex $tg 0]] [lindex $tg 1]"
+    }
+    set fn [ase::stimuli_function $sim $type $e]
+    if {$fn ne {}} {
+      set kind [ase::ui::nz_fn_label $sim $type $fn]
+    } else {
+      set kind [ase::stimuli_field $e $sel]
+    }
+    set mk {}
+    if {[dict exists $worst $k]} { set mk [string trim [ase::ui::chana_glyph [dict get $worst $k]]] }
+    $w.tv insert {} end -id n$k -values [list \
+      [ase::ui::chk_glyph [ase::stimuli_entry_on $e]] $tt $kind \
+      [join [ase::stimuli_values $sim $type $e] { }] $mk]
+  }
+  set cur {}
+  catch {set cur $dlg($key,nzsel)}
+  if {$cur ne {} && [$w.tv exists n$cur]} { $w.tv selection set [list n$cur] }
+  catch {$w.hdr configure -text [ase::ui::lbl_nz_header $sim $type [llength $entries] 1]}
+}
+
+proc ase::ui::nz_pick {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  if {$w eq {} || ![winfo exists $w.tv]} { return }
+  set s [lindex [$w.tv selection] 0]
+  if {![regexp {^n([0-9]+)$} $s -> k]} { return }
+  if {[info exists dlg($key,nzsel)] && $dlg($key,nzsel) eq $k} { return }
+  set dlg($key,nzsel) $k
+  ase::ui::nz_editor $key
+  ase::ui::nz_texts $key
+}
+
+proc ase::ui::nz_vars {key} {
+  variable dlg
+  return [array names dlg $key,nzf,*]
+}
+proc ase::ui::nz_untrace {key} {
+  foreach n [ase::ui::nz_vars $key] {
+    catch {trace remove variable ::ase::ui::dlg($n) write [list ase::ui::nz_traced $key]}
+  }
+}
+proc ase::ui::nz_trace {key} {
+  foreach n [ase::ui::nz_vars $key] {
+    catch {trace remove variable ::ase::ui::dlg($n) write [list ase::ui::nz_traced $key]}
+    trace add variable ::ase::ui::dlg($n) write [list ase::ui::nz_traced $key]
+  }
+}
+
+# THE EDITOR FOR THE SELECTED ENTRY. The top row (target kind, name, function,
+# Enable) is built once per section and re-pointed; the argument grid is rebuilt,
+# because a function switch changes which arguments exist.
+proc ase::ui::nz_editor {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {} || ![winfo exists $w.ed]} { return }
+  set sim [ase::ui::chana_sim $key]
+  ase::ui::nz_untrace $key
+  array unset dlg $key,nzf,a:*
+  catch {destroy $w.ed.args}
+  set entries [ase::ui::nz_entries $key $type]
+  set k {}
+  catch {set k $dlg($key,nzsel)}
+  if {![string is integer -strict $k] || $k < 1 || $k > [llength $entries]} {
+    foreach c [winfo children $w.ed] { destroy $c }
+    return
+  }
+  set e [lindex $entries [expr {$k - 1}]]
+  if {[catch {dict size $e}]} { set e [dict create] }
+  set fn [ase::stimuli_function $sim $type $e]
+  set sel [ase::stimuli_get $sim $type selector]
+  set dlg($key,nzloading) 1
+  set tg [ase::ui::nz_target_of $sim $type $e]
+  set field [lindex [lindex [ase::ui::nz_targets $sim $type] 0] 0]
+  set name {}
+  if {$tg ne {}} { set field [lindex $tg 0] ; set name [lindex $tg 1] }
+  set dlg($key,nzf,t:route) [ase::ui::nz_target_label $sim $type $field]
+  set dlg($key,nzf,t:name) $name
+  if {$fn ne {}} {
+    set dlg($key,nzf,t:func) [ase::ui::nz_fn_label $sim $type $fn]
+  } else {
+    set dlg($key,nzf,t:func) [ase::stimuli_field $e $sel]
+  }
+  set dlg($key,nzf,t:on) [ase::stimuli_entry_on $e]
+  if {![winfo exists $w.ed.route]} {
+    set tl {}
+    foreach t [ase::ui::nz_targets $sim $type] { lappend tl [lindex $t 1] }
+    label $w.ed.ltarget -text [ase::ui::lbl_nz_target] -font AseLabelFont
+    ttk::combobox $w.ed.route -state readonly -width 8 -values $tl \
+      -textvariable ::ase::ui::dlg($key,nzf,t:route)
+    ttk::combobox $w.ed.name -width 16 -textvariable ::ase::ui::dlg($key,nzf,t:name)
+    label $w.ed.lkind -text [ase::ui::lbl_nz_kind] -font AseLabelFont
+    ttk::combobox $w.ed.func -state readonly -width 16 \
+      -values [ase::ui::nz_fn_labels $sim $type] \
+      -textvariable ::ase::ui::dlg($key,nzf,t:func)
+    checkbutton $w.ed.on -text Enable -onvalue 1 -offvalue 0 \
+      -variable ::ase::ui::dlg($key,nzf,t:on)
+    grid $w.ed.ltarget $w.ed.route $w.ed.name $w.ed.lkind $w.ed.func $w.ed.on \
+      -row 0 -sticky w -padx 2 -pady 2
+  }
+  frame $w.ed.args
+  grid $w.ed.args -row 1 -column 0 -columnspan 6 -sticky w
+  set i 0
+  foreach d [ase::stimuli_args $sim $type $fn] {
+    if {[catch {dict get $d name} an]} { continue }
+    set val {}
+    if {[dict exists $e $an]} { set val [dict get $e $an] }
+    set r [expr {$i / 2}]
+    set c [expr {($i % 2) * 2}]
+    label $w.ed.args.l$an -text [ase::ui::nz_arg_label $sim $type $fn $e $d] \
+      -font AseLabelFont -anchor w
+    if {[dict exists $d values]} {
+      set dlg($key,nzf,a:$an) [ase::ui::nz_value_label $d $val]
+      ttk::combobox $w.ed.args.$an -state readonly -width 12 \
+        -values [ase::ui::nz_value_labels $d] \
+        -textvariable ::ase::ui::dlg($key,nzf,a:$an)
+    } else {
+      set dlg($key,nzf,a:$an) $val
+      entry $w.ed.args.$an -width 10 -font AseEntryFont \
+        -textvariable ::ase::ui::dlg($key,nzf,a:$an)
+    }
+    grid $w.ed.args.l$an -row $r -column $c -sticky w -padx {8 4} -pady 1
+    grid $w.ed.args.$an -row $r -column [expr {$c + 1}] -sticky w -padx {0 8} -pady 1
+    incr i
+  }
+  set dlg($key,nzeditfn) $fn
+  set dlg($key,nzorder) [dict keys $e]
+  catch {$w.ed.name configure -values [ase::ui::nz_names $key $type $field $fn]}
+  unset -nocomplain dlg($key,nzloading)
+  ase::ui::nz_trace $key
+  ase::ui::apply_theme $w.ed
+}
+
+# THE ENTRY's KEYS BACK IN THE ORDER THEY HAD WHEN THE EDITOR LOADED IT, new keys
+# after them. ⚠ RETYPING PASSES THROUGH AN EMPTY FIELD, and an emptied argument
+# loses its key -- so without this, deleting and re-entering the same `10u` moved
+# `ts` to the end of a hand-written entry and changed the bench's bytes for a
+# value that had not changed (measured, row GB6).
+proc ase::ui::nz_reorder {key e} {
+  variable dlg
+  set ord {}
+  catch {set ord $dlg($key,nzorder)}
+  set out [dict create]
+  foreach kk $ord {
+    if {[dict exists $e $kk]} { dict set out $kk [dict get $e $kk] }
+  }
+  dict for {kk vv} $e {
+    if {![dict exists $out $kk]} { dict set out $kk $vv }
+  }
+  return $out
+}
+
+proc ase::ui::nz_traced {key args} {
+  variable dlg
+  if {[info exists dlg($key,nzloading)]} { return }
+  if {[catch {ase::ui::nz_write $key} err]} {
+    catch {::ase::echo "ase: $err" error}
+  }
+}
+
+# ONE FIELD CHANGED: REWRITE THE SELECTED ENTRY FROM THE EDITOR.
+#
+# ⚠ ONLY WHAT CHANGED IS WRITTEN, IN PLACE. A key that already exists keeps its
+# position (`dict set`), an emptied argument loses its key (core pads it), and an
+# entry that ends up equal to what it was is not written back at all -- so
+# selecting, and even retyping the same value, moves no byte.
+#
+# ⚠ A FUNCTION SWITCH DROPS THE ARGUMENTS THE NEW FUNCTION DOES NOT HAVE. They
+# would never reach the deck, and a key the window cannot show is the other
+# half of this batch's rule.
+proc ase::ui::nz_write {key} {
+  variable dlg
+  set type [ase::ui::nz_type $key]
+  if {$type eq {}} { return }
+  set sim [ase::ui::chana_sim $key]
+  set entries [ase::ui::nz_entries $key $type]
+  set k {}
+  catch {set k $dlg($key,nzsel)}
+  if {![string is integer -strict $k] || $k < 1 || $k > [llength $entries]} { return }
+  set old [lindex $entries [expr {$k - 1}]]
+  set e $old
+  if {[catch {dict size $e}]} { set e [dict create] }
+  set sel [ase::stimuli_get $sim $type selector]
+  set oldfn {}
+  catch {set oldfn $dlg($key,nzeditfn)}
+  set fn [ase::ui::nz_fn_by_label $sim $type $dlg($key,nzf,t:func)]
+  if {$fn ne {} && $sel ne {}} { dict set e $sel $fn }
+  set curfn [ase::stimuli_function $sim $type $e]
+  set rfield [ase::ui::nz_target_by_label $sim $type $dlg($key,nzf,t:route)]
+  set nm [string trim $dlg($key,nzf,t:name)]
+  foreach t [ase::ui::nz_targets $sim $type] {
+    set f [lindex $t 0]
+    if {$f eq $rfield && $nm ne {}} {
+      if {![dict exists $e $f] || [dict get $e $f] ne $nm} { dict set e $f $nm }
+    } elseif {[dict exists $e $f]} {
+      dict unset e $f
+    }
+  }
+  if {$curfn ne {}} {
+    set keep [list $sel enabled]
+    foreach t [ase::ui::nz_targets $sim $type] { lappend keep [lindex $t 0] }
+    foreach d [ase::stimuli_args $sim $type $curfn] {
+      set an [dict get $d name]
+      lappend keep $an
+      if {$curfn ne $oldfn || ![info exists dlg($key,nzf,a:$an)]} { continue }
+      set v [string trim $dlg($key,nzf,a:$an)]
+      if {[dict exists $d values]} { set v [ase::ui::nz_value_of $d $v] }
+      if {$v eq {}} {
+        if {[dict exists $e $an]} { dict unset e $an }
+      } elseif {![dict exists $e $an] || [dict get $e $an] ne $v} {
+        dict set e $an $v
+      }
+    }
+    if {$curfn ne $oldfn} {
+      foreach kk [dict keys $e] {
+        if {[lsearch -exact $keep $kk] < 0} { dict unset e $kk }
+      }
+    }
+  }
+  if {$dlg($key,nzf,t:on) eq {1}} {
+    if {[dict exists $e enabled] && [string trim [dict get $e enabled]] eq {0}} {
+      dict unset e enabled
+    }
+  } else {
+    dict set e enabled 0
+  }
+  set e [ase::ui::nz_reorder $key $e]
+  if {$e ne $old} {
+    lset entries [expr {$k - 1}] $e
+    ase::ui::nz_put $key $type $entries
+  }
+  if {$curfn ne $oldfn} { ase::ui::nz_editor $key }
+  ase::ui::nz_refresh $key
+}
+
+proc ase::ui::nz_refresh {key} {
+  ase::ui::nz_rows $key
+  ase::ui::nz_texts $key
+  catch {ase::ui::chana_note $key}
+}
+
+# A form field of the row changed (step, stop): the estimates follow it.
+proc ase::ui::nz_live {key} {
+  if {[ase::ui::nz_win $key] eq {}} { return }
+  ase::ui::nz_rows $key
+  ase::ui::nz_texts $key
+}
+
+# THE READOUT UNDER THE SELECTED ENTRY, from `ase::stimuli_readout` and nothing
+# else. `bytes` needs the last run's vector count and is left out without one:
+# the proc answers `{}` rather than guess, and so does this line.
+proc ase::ui::nz_readout_text {key type row k} {
+  variable dlg
+  set sim [ase::ui::chana_sim $key]
+  set nvec {}
+  catch {set nvec $dlg($key,nznvec)}
+  set rd [ase::stimuli_readout $sim [ase::session_state $key] $row $k $nvec]
+  if {$rd eq {}} { return {} }
+  set parts {}
+  if {[dict get $rd density] ne {}} {
+    lappend parts [ase::ui::lbl_nz_density [dict get $rd quantity] \
+      [ase::ui::nz_g [dict get $rd density]] [ase::ui::nz_si [dict get $rd flat_to]]]
+  }
+  if {[dict get $rd points] ne {}} {
+    lappend parts [ase::ui::lbl_nz_points [ase::ui::nz_int [dict get $rd points]]]
+  }
+  if {[dict get $rd bytes] ne {}} {
+    lappend parts [ase::ui::lbl_nz_bytes [ase::ui::nz_bytes [dict get $rd bytes]]]
+  }
+  if {[dict get $rd flicker_bytes] ne {}} {
+    lappend parts [ase::ui::lbl_nz_memory [ase::ui::nz_bytes [dict get $rd flicker_bytes]]]
+  }
+  if {![llength $parts]} { return {} }
+  return "[ase::ui::lbl_nz_estimates] [join $parts { · }]"
+}
+
+# THE SELECTED ENTRY's VERDICTS, AND THE TABLE's OWN, in the precondition
+# banner's shape -- `ase::precheck_banner_text` renders them, glyphs and `Fix:`
+# clause included, so this line and the banner under the form speak one
+# vocabulary.
+proc ase::ui::nz_note_text {key type row k} {
+  variable dlg
+  set sim [ase::ui::chana_sim $key]
+  set facts {}
+  catch {set facts $dlg($key,nzfacts)}
+  set lines {}
+  foreach f [ase::stimuli_verdicts $sim $row $facts [ase::session_state $key]] {
+    set fk [lindex $f 0]
+    if {$fk ne {0} && $fk ne $k} { continue }
+    lappend lines [list stimuli_check [lindex $f 1] [lindex $f 2] [lindex $f 3]]
+  }
+  if {![llength $lines]} { return {} }
+  return [ase::precheck_banner_text \
+    [list state [ase::precheck_worst [dict create $type $lines]] lines $lines]]
+}
+
+# THE READOUT, THE VERDICTS, AND THE SEED AND KILL-SWITCH SENTENCES -- the last
+# two VERBATIM from core's reports, which is where the adapter's words arrive.
+proc ase::ui::nz_texts {key} {
+  variable dlg
+  set w [ase::ui::nz_win $key]
+  set type [ase::ui::nz_type $key]
+  if {$w eq {} || $type eq {} || ![winfo exists $w.readout]} { return }
+  set sim [ase::ui::chana_sim $key]
+  set st [ase::session_state $key]
+  set row [ase::ui::chana_merged_row $key $type]
+  set k {}
+  catch {set k $dlg($key,nzsel)}
+  set ro {}
+  if {[string is integer -strict $k]} {
+    set ro [ase::ui::nz_readout_text $key $type $row $k]
+  }
+  set foot {}
+  catch {lappend foot {*}[dict get [ase::stimuli_seed_report $sim $st $row] sentences]}
+  catch {lappend foot {*}[dict get [ase::stimuli_kill_report $sim $st $row] sentences]}
+  catch {$w.readout configure -text $ro}
+  catch {$w.note configure -text [ase::ui::nz_note_text $key $type $row $k]}
+  catch {$w.seed configure -text [join $foot "\n"]}
+  if {[string is integer -strict $k] && [winfo exists $w.ed.args]} {
+    set entries [ase::ui::nz_entries $key $type]
+    set e [lindex $entries [expr {$k - 1}]]
+    set fn [ase::stimuli_function $sim $type $e]
+    foreach d [ase::stimuli_args $sim $type $fn] {
+      set an [dict get $d name]
+      catch {$w.ed.args.l$an configure -text [ase::ui::nz_arg_label $sim $type $fn $e $d]}
+    }
+    set rfield {}
+    catch {set rfield [ase::ui::nz_target_by_label $sim $type $dlg($key,nzf,t:route)]}
+    catch {$w.ed.name configure -values [ase::ui::nz_names $key $type $rfield $fn]}
   }
 }
 

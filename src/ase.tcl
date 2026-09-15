@@ -5160,7 +5160,10 @@ proc ase::analysis_schema_errors {{sim {}}} {
         } elseif {[info commands [dict get $st lines]] eq {}} {
           lappend out [list $ty badstimulilines [dict get $st lines]]
         }
-        foreach _leg {netlist post check kinds quantity sentences} {
+        ## 1467 (Stage 13 task 2): `candidates` and `kill_sentences` are the two
+        ## legs the Tran form reads -- a mistyped one offers no target and says
+        ## nothing about the kill switch, silently, on every bench.
+        foreach _leg {netlist post check kinds quantity sentences candidates kill_sentences} {
           if {[dict exists $st $_leg] && [info commands [dict get $st $_leg]] eq {}} {
             lappend out [list $ty badstimulihook [dict get $st $_leg]]
           }
@@ -21966,7 +21969,16 @@ proc ase::stimuli_kill_report {sim state row} {
       }
     }
   }
-  return [dict create option $opt armed $armed killed $killed survive $survive]
+  ## 1467: AND THE ADAPTER's WORDS FOR IT, the seed report's shape -- a form
+  ## prints `sentences` verbatim and composes nothing about kinds itself. `{}`
+  ## with no leg; the leg answers `{}` for a switch that is not armed.
+  set sentences {}
+  set sp [ase::stimuli_get $sim $type kill_sentences]
+  if {$sp ne {} && [info commands $sp] ne {}} {
+    catch {set sentences [$sp $opt $armed $killed $survive]}
+  }
+  return [dict create option $opt armed $armed killed $killed survive $survive \
+            sentences $sentences]
 }
 
 # ─── TWO QUESTIONS ABOUT A NET, ASKED OF FACTS ──────────────────────────────
@@ -22000,6 +22012,124 @@ proc ase::facts_event_node {facts net} {
     if {[string equal -nocase $n $net]} { return 1 }
   }
   return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 13 TASK 2 (issue 1467) -- WHAT THE TRAN FORM's NOISE SECTION READS
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The noun, the quantity, the legal targets, the netlist TEXT those come from
+# and the last run's vector count. Every one of them is a READ: none netlists,
+# probes or starts a program, because a dialog may not (issue 1435). All are
+# total and answer `{}` for a type with no contract, so a backend that declares
+# none gets no section and no guess.
+
+# The contract's noun, singular for 1 and plural otherwise, or `{}`.
+proc ase::stimuli_noun {sim type {n 1}} {
+  set one [ase::stimuli_get $sim $type noun]
+  if {$one eq {}} { return {} }
+  return [ase::sim_plural $n $one ${one}s]
+}
+
+# What one entry's amplitude is measured in (the adapter's `quantity` leg), or
+# `{}`. `ase::stimuli_readout` answers the same for an entry already in a row;
+# a form labelling a field needs it for the entry it is editing.
+proc ase::stimuli_quantity {sim type entry} {
+  set qp [ase::stimuli_get $sim $type quantity]
+  if {$qp eq {} || [info commands $qp] eq {}} { return {} }
+  set q {}
+  catch {set q [$qp $entry]}
+  return $q
+}
+
+# THE NETLIST TEXT THE CACHED FACTS WERE TAKEN FROM, or `{}` -- only while the
+# facts are warm, and never by netlisting.
+#
+# ⚠ WHY A FORM NEEDS THE TEXT AND NOT ONLY THE FACTS. `facts nodes` is not a
+# list of nets: `ase::netlist_map` files EVERY token after a device's name.
+# MEASURED 2026-09-15 on `vdd vdd 0 dc 1.8` / `vsig in 0 dc 0 sin(0 1 1k)` /
+# `r1 vdd out 1k` / `m1 out in 0 0 nch W=1u`: the top scope's nodes were
+# `0 1 1.8 1k 1k) bias dc in nch out rts sin(0 vdd y`, and
+# `ase::facts_net_status` answered `present` for `dc`, `1k`, `sin(0` and `nch`.
+# That is harmless for a refusal, which must not false-refuse, and wrong for an
+# OFFER. Which positions of a card are nodes is the adapter's to say.
+proc ase::facts_netlist_text {state} {
+  variable netlist_facts_slot
+  if {[dict get [ase::facts_status $state] state] ne {warm}} { return {} }
+  if {![dict exists $netlist_facts_slot path]} { return {} }
+  if {[catch {open [dict get $netlist_facts_slot path] r} f]} { return {} }
+  set txt [read $f]
+  close $f
+  return $txt
+}
+
+# THE TARGETS A FORM MAY OFFER FOR ONE FUNCTION, as `{<target field> {names}}`
+# in the contract's `targets` order -- every declared field present, `{}` when
+# it has no candidates. `{}` outright for no contract, no `candidates` leg, or a
+# leg that raises.
+#
+# ⚠ AN OFFER, NEVER A REFUSAL. A name this list does not carry can still be
+# typed, and the `check` leg judges it; a name it DOES carry must be one the
+# `check` leg accepts as a target, which is row NQ2 of
+# tests/headless/test_ase_trnoise_gui_1467.tcl.
+proc ase::stimuli_candidates {sim type fn facts {text {}} {state {}}} {
+  set p [ase::stimuli_get $sim $type candidates]
+  if {$p eq {} || [info commands $p] eq {}} { return {} }
+  if {[catch {$p $facts $text $fn $state} r] || [catch {dict size $r}]} { return {} }
+  set out [dict create]
+  foreach t [ase::stimuli_get $sim $type targets] {
+    if {[catch {dict get $t name} nm]} { continue }
+    set v {}
+    if {[dict exists $r $nm]} { set v [dict get $r $nm] }
+    dict set out $nm $v
+  }
+  return $out
+}
+
+# THE VECTOR COUNT OF THE LAST RUN's PLOT FOR ROW `idx`, or `{}` -- the number
+# `ase::stimuli_readout` needs before it will estimate a file size.
+#
+# ⚠ READ FROM A HEADER, NEVER GUESSED. The plotmap sidecar names the plot each
+# row wrote (`PLOT <type> <idx> |<name>|`); `ase::cap_raw_plots` reads the
+# results file's headers and seeks over the data. The record is matched by row
+# index AND type, and among plots of the same name by position, so a bench
+# edited since the run (a row moved, a type changed) answers `{}` rather than
+# another analysis's count.
+proc ase::stimuli_nvec {sim state idx} {
+  set rows [ase::state_get $state analyses]
+  if {![string is integer -strict $idx] || $idx < 0 || $idx >= [llength $rows]} {
+    return {}
+  }
+  set type [ase::state_get [lindex $rows $idx] type]
+  set raw {}
+  catch {set raw [[ase::backend_hook $sim raw_file] $state]}
+  if {$raw eq {} || ![file isfile $raw]} { return {} }
+  set pm {}
+  catch {set pm [ase::plotmap_read [ase::plotmap_path $state]]}
+  set name {} ; set ord 0
+  set seen [dict create]
+  foreach r $pm {
+    lassign $r t i n
+    set lk [string tolower $n]
+    if {$t eq $type && $i == $idx} {
+      set name $n
+      if {[dict exists $seen $lk]} { set ord [dict get $seen $lk] }
+      break
+    }
+    dict incr seen $lk
+  }
+  if {$name eq {}} { return {} }
+  set k 0
+  foreach pl [ase::cap_raw_plots $raw] {
+    if {![string equal -nocase [lindex $pl 0] $name]} { continue }
+    if {$k == $ord} {
+      set nv [llength [lindex $pl 2]]
+      if {$nv > 0} { return $nv }
+      return {}
+    }
+    incr k
+  }
+  return {}
 }
 
 namespace eval ase::backend::ngspice {
@@ -27985,7 +28115,7 @@ $_leg
     nosort                 {cptype bool phase any group postproc scope global site src/frontend/com_display.c:70}
     nostepsizelimit        {cptype bool phase any group integration scope {analysis tran} results 1 site src/spicelib/analysis/traninit.c:30 results_why {NOT MEASURED: no probe deck made the timestep ceiling the binding constraint -- breakpoints dominated every one tried}}
     nosubckt               {cptype bool phase pre group netlist scope global site src/frontend/nutinp.c:161}
-    notrnoise              {cptype bool phase any group netlist scope {analysis tran} results 1 site src/frontend/trannoise/1-f-code.c:122 results_ev measured results_why {MEASURED 2026-09-13 on both binaries, a trnoise source: .options notrnoise takes v(n) to 0.000000e+00 at every timepoint}}
+    notrnoise              {cptype bool phase any group netlist scope {analysis tran} results 1 site src/frontend/trannoise/1-f-code.c:122 results_ev measured help {switch off transient noise: white and 1/f noise always, RTS noise only where its noise timestep is above 0; random sources keep running} results_why {MEASURED 2026-09-13 on both binaries, a trnoise source: .options notrnoise takes v(n) to 0.000000e+00 at every timepoint. MEASURED 2026-09-15 on both binaries, per kind (issue 1466 row EE6): white and 1/f noise go to 0, RTS noise only on a source whose noise timestep is above 0, and a trrandom source runs on}}
     nounits                {cptype bool phase any group display scope global site src/frontend/plotting/graf.c:140}
     nperiods               {cptype num phase any group postproc scope global site src/frontend/fourier.c:71}
     num_threads            {cptype num phase any group solver scope global results 0 site src/spicelib/analysis/cktsetup.c:316 results_ev measured results_why {⚠ REFUTED. MEASURED 2026-09-13 on both binaries: num_threads=1 against the default gives byte-identical OP, AC, TRAN and NOISE values. It is an OpenMP thread count}}
@@ -28855,7 +28985,9 @@ $_leg
       check     ::ase::backend::ngspice::noise_check \
       kinds     ::ase::backend::ngspice::noise_kinds \
       quantity  ::ase::backend::ngspice::noise_quantity \
-      sentences ::ase::backend::ngspice::noise_seed_sentences]
+      sentences ::ase::backend::ngspice::noise_seed_sentences \
+      candidates     ::ase::backend::ngspice::noise_candidates \
+      kill_sentences ::ase::backend::ngspice::noise_kill_sentences]
   }
 
   # ─── THE CARRIER NAMES ─────────────────────────────────────────────────────
@@ -29132,6 +29264,168 @@ $_leg
                     "choose Transient noise or Random source"]
       return $out
     }
+    foreach f [noise_target_check $facts $state $k $e $fn] { lappend out $f }
+    return [noise_value_check $row $state $k $e $stopv $fn $out]
+  }
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # 1467 (Stage 13 task 2): THE TARGET HALF, SPLIT OUT SO THE FORM's OFFER AND
+  # THE RUN's REFUSAL ARE ONE BODY
+  # ═════════════════════════════════════════════════════════════════════════
+  #
+  # `noise_entry_check` held these rules inline. The Tran form's Add control
+  # offers only targets they accept, and a second copy written for the offer
+  # would drift from the refusal the first time either learned something -- the
+  # defect this batch keeps meeting. Both call this; row NQ2 of
+  # tests/headless/test_ase_trnoise_gui_1467.tcl asks that nothing the offer
+  # carries is refused here. The order of the findings is unchanged.
+
+  # THE NETS A TOP-LEVEL CARD CONNECTS, by the letter SPICE reads the card as.
+  #
+  # ⚠ ONLY POSITIONS THIS TABLE IS SURE OF. A letter it does not list adds
+  # nothing, so the list can be short but never carries a value, a keyword or a
+  # model name. `facts nodes` DOES carry them -- MEASURED 2026-09-15, `dc`, `1k`,
+  # `sin(0` and a MOS model name all read `present` through
+  # `ase::facts_net_status` -- which is harmless for a refusal and wrong for an
+  # offer. A subcircuit's own nodes and a `.control` block are skipped: a
+  # top-level carrier card cannot name the first, and the second holds commands.
+  proc noise_net_tokens {text} {
+    set npos {r 2 c 2 l 2 v 2 i 2 d 2 b 2 e 2 f 2 g 2 h 2 j 3 m 4}
+    set cards {}
+    foreach raw [split $text "\n"] {
+      set t [string trimleft $raw]
+      if {[string index $t 0] eq {+}} {
+        if {[llength $cards]} {
+          lset cards end "[lindex $cards end] [string range $t 1 end]"
+        }
+        continue
+      }
+      lappend cards $raw
+    }
+    set depth 0
+    set ctl 0
+    set out {}
+    foreach card $cards {
+      regsub {\s[;$].*$} $card {} card
+      set toks [regexp -all -inline {\S+} $card]
+      if {![llength $toks]} { continue }
+      set first [lindex $toks 0]
+      set c [string tolower [string index $first 0]]
+      if {$c eq {*}} { continue }
+      if {$c eq {.}} {
+        set kw [string tolower $first]
+        if {$kw eq {.subckt}} {
+          incr depth
+        } elseif {($kw eq {.ends} || $kw eq {.eom}) && $depth > 0} {
+          incr depth -1
+        } elseif {$kw eq {.control}} {
+          set ctl 1
+        } elseif {$kw eq {.endc}} {
+          set ctl 0
+        }
+        continue
+      }
+      if {$depth > 0 || $ctl} { continue }
+      set nodes {}
+      if {$c eq {x}} {
+        set keep {}
+        foreach tk [lrange $toks 1 end] {
+          if {[string equal -nocase $tk params:]} { break }
+          if {[string first = $tk] < 0} { lappend keep $tk }
+        }
+        set nodes [lrange $keep 0 end-1]
+      } elseif {[dict exists $npos $c]} {
+        set nodes [lrange $toks 1 [dict get $npos $c]]
+      }
+      foreach n $nodes {
+        if {[regexp {[()\[\]{}=\"',]} $n]} { continue }
+        if {[lsearch -exact $out $n] < 0} { lappend out $n }
+      }
+    }
+    return $out
+  }
+
+  proc noise_target_fatal {facts state e fn} {
+    foreach f [noise_target_check $facts $state 1 $e $fn] {
+      if {[lindex $f 0] eq {fatal}} { return 1 }
+    }
+    return 0
+  }
+
+  # THE `candidates` LEG: `{src {...} net {...}}` for one function. A source is
+  # offered when it is a TOP-LEVEL independent source the target rules accept
+  # for that function -- so a current source is offered for noise and not for a
+  # random value -- and a net when it is a node of a top-level card they accept
+  # (not ground, not an absent or digital node, not beside a carrier-name
+  # clash). Cold facts offer nothing: they cannot say what carries a waveform.
+  proc noise_candidates {facts text fn state} {
+    set none [dict create src {} net {}]
+    if {[catch {dict get $facts sources} srcs] || [catch {dict keys $srcs} names]} {
+      return $none
+    }
+    if {[::ase::stimuli_args ngspice tran $fn] eq {}} { return $none }
+    set src {} ; set net {}
+    foreach nm [lsort -dictionary $names] {
+      set sc {}
+      catch {set sc [dict get $srcs $nm scope]}
+      if {$sc ne {}} { continue }
+      if {![noise_target_fatal $facts $state [dict create src $nm func $fn] $fn]} {
+        lappend src $nm
+      }
+    }
+    foreach n [lsort -dictionary [noise_net_tokens $text]] {
+      if {![noise_target_fatal $facts $state [dict create net $n func $fn] $fn]} {
+        lappend net $n
+      }
+    }
+    return [dict create src $src net $net]
+  }
+
+  # ⚖ R9 -- WHAT `notrnoise` DOES TO THIS TABLE, IN WORDS, from the kill
+  # report's own data. PER ENTRY, because the split is per entry: the same RTS
+  # noise is switched off on a source that has a noise timestep and keeps running
+  # on one that has none (issue 1466, row EE6, on both binaries).
+  proc noise_kind_noun {kind} {
+    set names {white {white noise} flicker {1/f noise} rts {RTS noise} random {random value}}
+    if {[dict exists $names $kind]} { return [dict get $names $kind] }
+    return $kind
+  }
+  proc noise_and {items} {
+    if {[llength $items] < 2} { return [lindex $items 0] }
+    return "[join [lrange $items 0 end-1] {, }] and [lindex $items end]"
+  }
+  proc noise_kill_clauses {pairs verb} {
+    set order {}
+    set kinds [dict create]
+    foreach p $pairs {
+      lassign $p k kind
+      if {![dict exists $kinds $k]} { lappend order $k ; dict set kinds $k {} }
+      dict lappend kinds $k [noise_kind_noun $kind]
+    }
+    set out {}
+    foreach k $order {
+      lappend out "noise source $k $verb its [noise_and [dict get $kinds $k]]"
+    }
+    return $out
+  }
+  proc noise_kill_sentences {option armed killed survive} {
+    if {$armed ne {1}} { return {} }
+    set out {}
+    if {[llength $killed]} {
+      lappend out "With $option set, [noise_and [noise_kill_clauses $killed loses]]."
+    }
+    if {[llength $survive]} {
+      set s "[noise_and [noise_kill_clauses $survive keeps]]: $option does not\
+ switch [expr {[llength $survive] > 1 ? {them} : {it}}] off."
+      lappend out "[string toupper [string index $s 0]][string range $s 1 end]"
+    }
+    return $out
+  }
+
+  proc noise_target_check {facts state k e fn} {
+    set out {}
+    set src [::ase::stimuli_field $e src]
+    set net [::ase::stimuli_field $e net]
     foreach tg [list $src $net] {
       if {$tg ne {} && [regexp {[\s"'=\[\]]} $tg]} {
         lappend out [list fatal "'$tg' cannot be used in a generated command: a\
@@ -29207,7 +29501,16 @@ $_leg
         }
       }
     }
-    ## ── THE VALUES ──────────────────────────────────────────────────────────
+    return $out
+  }
+
+  # The value half of `noise_entry_check`, split from the target half above by
+  # issue 1467 and in the same order; `out` arrives carrying the target findings.
+  proc noise_value_check {row state k e stopv fn out} {
+    set type [::ase::state_get $row type]
+    set src [::ase::stimuli_field $e src]
+    set net [::ase::stimuli_field $e net]
+    ## -- THE VALUES --------------------------------------------------------
     set bad 0
     foreach d [::ase::stimuli_args ngspice $type $fn] {
       set n [dict get $d name]
