@@ -65,12 +65,18 @@
 #    sections ST EX RD DC RR -- pure Tcl and a /bin/sh stand-in, identical on
 #                   both arms, and EVERY ONE of them guarded: a raise becomes a
 #                   named red (ST0/EX0/RD0/DC0/RR0), never a missing RESULT line
-#    sections GM GC GA GR GT GX -- widgets; DISPLAY only, self-skipping
+#    sections GM GC GA GR GS GT GX -- widgets; DISPLAY only, self-skipping
 #    section  EE -- starts BOTH real binaries, self-skips with the path printed
 #                   when one is absent
 #
 # NEW AT 78 headless / 156 on the dev display. The sabotage campaign is in
 # doc/claude/ase_analyses_batch/receipts/39-stage-11-gui.md.
+#
+# AND RAISED 156 -> 162 on the dev display, headless unchanged at 78 (issue
+# 1469): section GS, six rows -- a seed ngspice does not honour is refused AT
+# THIS FORM, in the note line, at OK and at Run, before anything is written. The
+# sabotage campaign is in
+# doc/claude/ase_analyses_batch/receipts/45-1469-campaign-seed-range.md.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_campaign_gui_1464.tcl
@@ -1029,6 +1035,112 @@ check {GR13b and the one that cannot even find its window answers the same\
     if {[catch {dict get $r status} v]} { return "NOSTATUS:$r" }
     return $v
   }} [q_ans ase::ui::camp_run nosuchkey]] nowindow
+
+# ---------------------------------------------------------------------------
+# GS -- ISSUE 1469: A SEED THE SIMULATOR WILL NOT HONOUR IS REFUSED AT THIS
+# FORM, BEFORE ANYTHING IS WRITTEN
+# ---------------------------------------------------------------------------
+# ngspice honours `.options seed=` only for 1 ... 2147483647 (issue 1469's table,
+# measured on both binaries), and that range is its adapter's declaration. This
+# form used to take 2147483648, write it into the state and every shard deck, and
+# say "seeded" while ngspice printed `Cannot convert ... to seed value` and ran
+# unseeded. The sentence is core's; the rows below read it literally because it
+# is also the user's to ratify (⚖ R9).
+set GS_SENT {the seed must be a whole number from 1 to 2147483647, the only seeds this simulator honours}
+set GS_SEED0 [ase::campaign_get [ase::session_state $gkey] seed]
+proc gs_reopen {} {
+  global gtop gkey gw
+  if {![winfo exists $gtop.camp]} { ase::ui::campaign_dialog $gkey ; update }
+  set gw $gtop.camp
+}
+proc gs_seed {v} {
+  global gw gkey
+  $gw.sd.e delete 0 end
+  $gw.sd.e insert 0 $v
+  ase::ui::camp_sync $gkey
+  update
+}
+set ::ase::ui::dlg($gkey,camp,axes) {{kind var name myres values {1k 2k}}}
+set ::ase::ui::dlg($gkey,camp,enabled) 1
+gs_seed 2147483648
+check {GS1 a seed one past the top is refused in the note line as it is typed --\
+ the refusal, with no point count under it -- and Run is dead} \
+  [list [q_cfg $gw.note -text] [q_cfg $gw.btns2.run -state]] [list $GS_SENT disabled]
+
+ase::ui::camp_ok $gkey
+update
+check {GS2 OK refuses it too: the dialog stays up and the session keeps the seed it\
+ had, so nothing the simulator would throw away reaches the state} \
+  [list [winfo exists $gtop.camp] [ase::campaign_get [ase::session_state $gkey] seed]] \
+  [list 1 $GS_SEED0]
+gs_reopen
+
+## ⚠ RUN COMMITS THE FORM BEFORE IT ASKS CORE, ON PURPOSE (GR13's paragraph) --
+## so the seed refusal is asked FIRST, or a refused Run would write the seed.
+gs_seed 2147483648
+set GS_DIRS0 [lsort [glob -nocomplain -tails -directory $GR_DIR *]]
+set GS_IDXT0 [q_slurp [file join $GR_DIR index.tsv]]
+set GS_RUN [q_ans ase::ui::camp_run $gkey]
+update
+check {GS3 Run refuses before it commits the form: the answer is `refused` with\
+ core's refusal, the session keeps its seed, and the campaign directory and its\
+ index are untouched} \
+  [list [apply {{r} {
+          if {[catch {list [dict get $r status] [lindex [dict get $r refusals] 0 0]} v]} {
+            return "BAD:$r"
+          }
+          return $v
+        }} $GS_RUN] \
+        [ase::campaign_get [ase::session_state $gkey] seed] \
+        [expr {[lsort [glob -nocomplain -tails -directory $GR_DIR *]] eq $GS_DIRS0}] \
+        [expr {[q_slurp [file join $GR_DIR index.tsv]] eq $GS_IDXT0}]] \
+  [list {refused badseed} $GS_SEED0 1 1]
+gs_reopen
+
+set ::ase::ui::dlg($gkey,camp,axes) {}
+gs_seed 0
+check {GS4 with no axis yet the refusal still stands in the note line, where "No\
+ axes yet" would tell the user the bench simply runs once} \
+  [q_cfg $gw.note -text] $GS_SENT
+
+## THE CONTROL: the top of the range is refused nothing -- and the note line says
+## the wrap, because this two-point campaign's second shard is seeded 1.
+set ::ase::ui::dlg($gkey,camp,axes) {{kind var name myres values {1k 2k}}}
+gs_seed 2147483647
+check {GS5 and the control: the top of the range is refused nothing, the note line\
+ says what will run -- including that the second shard wraps to 1 -- and Run is\
+ live} \
+  [list [lindex [split [q_cfg $gw.note -text] "\n"] 1] [q_cfg $gw.btns2.run -state]] \
+  [list {campaign: seeded from 2147483647; shard N is seeded 2147483647+N, wrapping to 1 after 2147483647, so a single point can be re-run on its own and give the same answer} normal]
+
+## ⚠ THE AXIS EDITOR IS NOT WHERE A SEED IS WRONG. It evaluates a one-axis campaign
+## built from the bench's seed; handed the raw typed seed it would refuse to add an
+## axis over a field on the OTHER form, where the user is not looking.
+gs_seed 0
+$gw.ax.b.add invoke
+update
+set gs_ga $gtop.campax
+set ::ase::ui::dlg($gkey,campax,kind) [dict get [ase::campaign_kind_entry ngspice var] label]
+ase::ui::camp_axis_kind_changed $gkey
+set ::ase::ui::dlg($gkey,campax,src) list
+ase::ui::camp_axis_sync $gkey
+$gs_ga.f.ename delete 0 end
+$gs_ga.f.ename insert 0 rload
+$gs_ga.src.values delete 0 end
+$gs_ga.src.values insert 0 {1k 2k 3k}
+check {GS6 the axis editor does not refuse an axis for the bench's seed -- that\
+ refusal belongs to the Seed field on the other form} \
+  [q_ans ase::ui::camp_axis_sync $gkey] "[ase::ui::lbl_camp_c_points]: 3"
+ase::ui::camp_axis_cancel $gkey
+update
+
+## Put the form and the session back where GR13 left them, for GT.
+gs_reopen
+set ::ase::ui::dlg($gkey,camp,axes) {{kind var name myres values {1k 2k}}}
+set ::ase::ui::dlg($gkey,camp,enabled) 1
+gs_seed 11
+ase::session_update $gkey [ase::ui::camp_form_state $gkey]
+update
 
 # ---------------------------------------------------------------------------
 # GT -- §11c's RESULT TABLE

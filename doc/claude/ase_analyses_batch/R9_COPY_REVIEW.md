@@ -9077,3 +9077,79 @@ MEASURED 2026-09-15 on both binaries, per kind (issue 1466 row EE6): white and 1
 
 
 *Where:* the Options sheet, the `notrnoise` row's detail line, appended to the existing 2026-09-13 measurement (`results_why`). **The adapter's catalogue.**
+
+## Issue 1469 — a campaign seed ngspice does not honour (the seed range)
+
+*6 entries.* ngspice honours `.options seed=<n>` only for **1 … 2147483647** (measured on both binaries, issue 1469). Every frame below is **ASE-L's** (`src/ase.tcl`: `ase::campaign_seed_refusals`, `ase::campaign_refusals`, `ase::campaign_notes`, `ase::campaign_schema_errors`); the two numbers in them are **the adapter's** (`ase::backend::ngspice::campaign_seed_range`), so a second simulator changes the numbers and not the words.
+
+**R9-672** · refusal
+
+```text
+the seed must be a whole number from 1 to 2147483647, the only seeds this simulator honours
+```
+
+
+*Where:* the Campaign dialog's note line, as the seed is typed — **also before the first axis exists**, where it replaces *No axes yet…*; the CIW (`ase: …`) when OK or Run Campaign is refused for it; and the refusal `ase::campaign_run` and Re-run Point return for a hand-edited `.state`.
+
+
+*Note:* Rendered: `from <lo> to <hi>`. Covers zero, negatives, one past the top, a wrapped value (5000000000), a word and a fraction alike. Before this, the form took any of them, wrote it, and said the campaign was seeded.
+
+**R9-673** · fix
+
+```text
+type a seed in that range, or leave it empty
+```
+
+
+*Where:* R9-672's fix field (the refusal tuple's fourth element).
+
+
+*Note:* "leave it empty" is the unseeded campaign, which the dialog's own caption already describes.
+
+**R9-674** · refusal
+
+```text
+this campaign has 4 points and the simulator honours only 3 seeds, so two points would share one
+```
+
+
+*Where:* the Campaign dialog's note line and the runner's refusal, **for a seeded campaign only**.
+
+
+*Note:* Rendered: `<n> points … only <k> seeds`. ⚠ **Unreachable with ngspice** — 2147483647 seeds against the 2000-point campaign ceiling — and shown here for the adapter that declares a small range. The example is the suite's fixture (a range of 10..12).
+
+**R9-675** · fix
+
+```text
+shorten an axis, or split the campaign
+```
+
+
+*Where:* R9-674's fix field.
+
+
+*Note:* the same words as the existing *too many points* refusal's fix, deliberately.
+
+**R9-676** · sentence
+
+```text
+campaign: seeded from 2147483647; shard N is seeded 2147483647+N, wrapping to 1 after 2147483647, so a single point can be re-run on its own and give the same answer
+```
+
+
+*Where:* the Campaign dialog's note line and the run log, **only for a campaign whose last shard would pass the top of the range**.
+
+
+*Note:* the existing per-shard sentence (issue 1462) with `, wrapping to <lo> after <hi>` inserted; every other seeded campaign gets that sentence byte for byte. A shard past the top counts on from the bottom rather than being refused — the reason is in the receipt (`receipts/45-1469-campaign-seed-range.md`).
+
+**R9-677** · diagnostic
+
+```text
+campaign_seed_range answered '5 1', which is not two whole numbers with the lowest first
+```
+
+
+*Where:* `ase::campaign_schema_errors` — the load-time validator an **adapter author** reads, not an end user.
+
+
+*Note:* Rendered with the hook's raw answer. A malformed range is treated as no range (no refusal, no fold); this line is what keeps that from being silent.

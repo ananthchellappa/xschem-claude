@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 13:06
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 13:56
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**13**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, debt **M22** `02288c30`. Since: **1468** (the point estimate's range). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed; **1469** filed and open |
+| **Stages landed** | 0–**13**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, debt **M22** `02288c30`. Since: **1468** `36153d03` (the point estimate's range), **1469** (the campaign seed range). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
 | **Stages remaining** | **16** (the ngspice you actually have) — **before** **14** (PSS), which waits on ⚖ R7 going back to the user — plus ⚖ **R10's adapter-author specification**, written after the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`**, solo in the foreground on issue 1468 (368 s) — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
-| **In flight** | nothing at this commit. **Issue 1469's small fix is dispatched immediately after it**, then Stage 16 task 1 |
-| **Next** | **Issue 1469** (the honoured seed range, as adapter content, refused at the form and kept inside for every shard) → **Stage 16 task 1** (brief drafted) → **Stage 16 task 2** → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **671 strings from 32 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
+| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`, 354 s**, solo, in the foreground — covering issue 1469, the `test_ase_campaign_1462` exit, and the earlier `d39e7e07` and `396070ad` — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
+| **In flight** | nothing at this commit. **Stage 16 task 1 is dispatched immediately after it** |
+| **Next** | **Stage 16 task 1** (brief drafted) → **Stage 16 task 2** → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **677 strings from 33 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **180 rule / 69 look / 11 suite**, after Stage 13 task 2. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (**one refusal shown three times, widening the dialog to 839 px**). Four unstamped entries are another clone's |
+| **Debt queue** | **181 rule / 69 look / 11 suite**, after issue 1469. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (one refusal shown three times, widening the dialog to 839 px). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,16 +87,14 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect issue 1469** — receipt `receipts/45-1469-campaign-seed-range.md`. Verify independently on
-   both binaries: a seed at the top of the honoured range reproduces; one just past it is refused
-   before a deck exists; a campaign whose last shard would cross the boundary never writes an
-   unhonoured seed; and **no `Cannot convert … seed value` warning appears in any shard log**. T1 in
-   the foreground, ledger, commit.
-2. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
-   `stage16_task1_brief.md`): the four-frame sentence, the five-pattern linter (**its RED row is never
-   re-run on `/usr/bin/ngspice`**), the installation greps, the `dumpunsound` token, and debt **M21**.
-3. **Stage 16 task 2** — the Simulators-window row, its look debt with two registry entries, and 16e's
-   release note.
+1. **Collect Stage 16 task 1** — receipt `<n>-stage-16-deck.md`. Verify independently: the linter's rows drive
+   text only and **its RED row was never run on `/usr/bin/ngspice`**; all four sentence frames, including the
+   fourth, driven from hand-built dicts and matching the real probe's dicts on both binaries; debt **M21**'s
+   row red without `-D casemodewrite` on the fork; no version comparison anywhere (D44). T1 in the foreground.
+2. **Stage 16 task 2** — the Simulators-window row, its look debt with two registry entries, and 16e's release
+   note.
+3. **Then the user**: ⚖ R9 first, and after it ⚖ R7 on `evidence/pss-two-binaries.md` — one at a time. Stage 14
+   opens only after R7.
 
 ⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
 nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
@@ -939,6 +937,31 @@ ruling the user meant.
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
 
+### ✅ Issue 1469 — a campaign never writes a seed ngspice will not honour, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+202/−9**, `src/ase_window.tcl` **+41/−1**. The honoured range is **the adapter's** (`ase::backend::ngspice::campaign_seed_range` → `{1 2147483647}`, read from `eval_opt()`'s `atoi` / `sr <= 0`; no hook → no range, no fallback). `ase::campaign_seed` reads with `entier` and answers only an honoured seed; `ase::campaign_seed_refusals` refuses at every door — the dialog's note line, OK, Run Campaign **before** it commits the form, `ase::campaign_run` and Re-run Point; a `.state` carrying such a seed still loads and saves byte for byte |
+| **⚖ the design choice, filed as a ruling** | **every shard's seed is FOLDED into the range, not refused** (`ase::campaign_shard_seed`). A refusal of `seed + (shards − 1)` would turn a valid seed invalid when the user **added an axis**. The fold is deterministic (Re-run Point rewrites a wrapped shard's deck byte for byte, SR10), collision-free against the 2000-point ceiling (SR4b walks all 2000 across the top), and **said** — the shard sentence gains *"wrapping to 1 after 2147483647"* exactly when a campaign crosses. `rule 1469` records it so the user sees it was a choice |
+| **reproduced before the fix, through ASE-L's own runner, both binaries** | seeded 2147483647 over two points: shard 2's deck carried `seed=2147483648`, its `rc_ase.log` the `Cannot convert` warning, and its measurement changed between two runs (fork 5.139e-01 → 4.755e-01, 45.2 5.257e-01 → 4.713e-01) while shard 1 repeated exactly |
+| **⚠ a second path the issue did not name** | `ase::stimuli_seeded` counted **any** options row named `seed`, so `seed 0`, `seed 2147483648` and `seed random` made the Tran form's noise section say RTS noise *"repeats exactly under the seed"*. Under a declared range it now counts only an honoured value (SR7); a no-range backend keeps the old answer (SR7c) |
+| **driver's own re-run** | headless: `test_ase_campaign_1462` **161**, `test_ase_campaign_gui_1464` **78**, `test_ase_trnoise_1466` **78**, `test_ase_persist` **49**, `test_ase_core` **638**, `test_ase_window` **56**. Display: `test_ase_campaign_1462` **161**, `test_ase_campaign_gui_1464` **162**, `test_ase_trnoise_gui_1467` **63**, `test_ase_persist` **153**, `test_ase_window` **295**. **All rc 0, all matching the receipt** |
+| **byte identity** | `tracked 104 bad {} control_disagrees 1 control_agrees 1`, driver-re-run through the shared helper |
+| **sabotage** | **23 arms; every one of the 34 new rows reddened at least once**, restores md5-clean. Driver's own: **D1** — the fold never fires — reds **SR4 SR4b SR4c SR5 SR10 EE7/apt EE8/apt EE7/fork EE8/fork**, the crew's S06 set exactly; restored to md5 `c34184f6`, `ALL PASS (161)`. ⚠ **That mutated run exited rc 0 with `9 FAILED`** — which is how `test_ase_campaign_1462`'s missing exit was found (below) |
+| **T1** | **80 cases, ZERO counted lines in `tests/results.log`, 354 s**, solo, in the foreground — covering issue 1469, the `test_ase_campaign_1462` exit, and the earlier `d39e7e07` and `396070ad` |
+| **not a look** | decided by measuring the real dialog on `:99`: the new refusal is exactly the size of a refusal the dialog already shows, and the wrap variant adds one wrapped line to a label that already grows |
+| **ledger debts** | `rule 1469` — R9-672 … R9-677 (**677 strings from 33 issues**). Queue **180/69/11 → 181/69/11** |
+| **corrections** | **C1** the per-shard seed is written by `ase::campaign_shard_state`, not `campaign_prepare` (the driver's issue text) · **C2** the dialog's three seed readers needed no edit · **C3** the options-row branch (above). **Named, not filed:** the Options sheet still accepts `seed 0`/`random` (the report now says unseeded, which is true); Tcl reads `08` as not a number and `010` as 8 |
+| **receipt** | `receipts/45-1469-campaign-seed-range.md` |
+
+### ✅ And four batch suites that exited rc 0 on failure — the driver's, three of them while 1469's crew held the tree
+
+`test_ase_effective_1442` (`d39e7e07`), `test_ase_meas_1443` and `test_ase_converge_1459` (`396070ad`), and `test_ase_campaign_1462` (in the 1469 commit — its only `exit` lines are inside the `/bin/sh` stand-ins it writes as text, so sabotaging 1469 printed `9 FAILED` at rc 0) ended on their
+`OVERALL` banner with no exit, so `2 FAILED` exited rc 0 (measured while sabotaging 1468). T1 counted them anyway
+through banners and `FAIL` lines; an rc-only reader did not. Each now ends `exit [expr {$fail ? 1 : 0}]` — green at
+rc 0 on both arms, **rc 1 on an injected failure**, restored md5-identical. T1 for those two commits is the one in
+the 1469 block above. ⚠ **A first scan said 27 suites had no exit; it was wrong both ways** — its regex missed inline `exit 0` branches and counted `exit` lines that are text inside embedded shell scripts. **The precise test — is the suite's LAST statement an exit — finds 60 of T1's 67 suites do and 7 do not**: `test_ase_campaign_1462` (now fixed) and six outside this batch, left unchanged: `test_add_pin_lib_symbol_view`, `test_sky130a_libmgr`, `test_gf180mcud_libmgr`, `test_ihp_sg13g2_libmgr`, `test_pdk_launcher`, `test_ciw_actionlog_output`. T1 still counts their failures through banners; only an exit-code-only reader is misled.
+
 ### ✅ Issue 1468 — the point estimate reads a whole number of any size, collected 2026-09-15
 
 | | |
@@ -953,7 +976,7 @@ left. Recorded here, and a backup of the queue was taken before the crew's own `
 | **⚠ found, and it became issue 1469** | the crew saw *"a seed of 2³² or more reads as not seeded"*. **The driver measured what ngspice does with the seed** and the defect is wider and the other way round — see issue 1469 below |
 | **receipt** | `receipts/44-1468-point-estimate-range.md` |
 
-### ⚠ Issue 1469 — filed by the driver 2026-09-15: a campaign seed ngspice throws away is reported as seeded
+### ✅ Issue 1469 — filed by the driver 2026-09-15, **fixed the same day** (block above): a campaign seed ngspice throws away was reported as seeded
 
 `.options seed=<n>`, measured on **both** binaries, identically, fork first, nothing crashed: ngspice keeps
 the low 32 bits as a signed `int` and **refuses** anything then ≤ 0 — 0, negatives, and **2³¹ … 2³²** —

@@ -20254,10 +20254,115 @@ proc ase::campaign_axes {state} { return [ase::campaign_get $state axes] }
 # seeded": nothing is emitted, and `ase::campaign_notes` says so rather than
 # inventing one, because a seed the user did not choose is a number they cannot
 # write down and re-use.
-proc ase::campaign_seed {state} {
+#
+# ⚠ 1469: AND A SEED THE SIMULATOR WILL NOT HONOUR IS NO SEED. ngspice honours
+# `.options seed=<n>` only for 1 ... 2147483647 -- 0, negatives and 2^31 ... 2^32
+# are REFUSED (one `Cannot convert ... to seed value` warning, an unseeded run,
+# rc 0) and larger values WRAP onto another seed; measured on both binaries,
+# issue 1469. This proc used to accept every `string is integer` value, which on
+# Tcl 8.6 is 0 ... 4294967295 and every negative, so a campaign reported as
+# seeded could be one ngspice ran unseeded -- and every reader of this proc (the
+# run log's seed sentence, the noise seed sentence, the dialog) agreed with ASE-L
+# rather than with the simulator. The range is the ADAPTER's declaration
+# (`ase::campaign_seed_range`); a backend with none gets its typed whole number,
+# exactly as before, and no guess at a range.
+#
+# ⚠ `entier`, NOT `integer` (issue 1468's lesson): `integer` answers 0 from 2^32,
+# so a large seed read as "not seeded" rather than being judged at all.
+#
+# `sim` names the simulator whose range applies; `{}` reads the state's own
+# `simulator` key -- the one `ase::ui::camp_sim` reads -- and then the default.
+proc ase::campaign_seed {state {sim {}}} {
   set s [string trim [ase::campaign_get $state seed]]
   if {$s eq {}} { return {} }
-  if {![string is integer -strict $s]} { return {} }
+  if {![string is entier -strict $s]} { return {} }
+  if {$sim eq {}} { set sim [ase::state_get $state simulator] }
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  if {![ase::campaign_seed_honoured $sim $s]} { return {} }
+  return $s
+}
+
+# THE SEEDS A SIMULATOR HONOURS, as `{lo hi}`, or `{}`. The adapter's
+# `campaign_seed_range` hook, with NO fallback: which seeds a simulator keeps is
+# a fact about that simulator, and core guessing ngspice's range for a backend
+# that declared none would refuse seeds that backend honours. A malformed answer
+# -- not two whole numbers, or the lowest not first -- is no range here, and
+# `ase::campaign_schema_errors` names it so the declaration is not silently dead.
+proc ase::campaign_seed_range {{sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set r {}
+  catch {
+    set h [ase::backend_hook $sim campaign_seed_range]
+    if {$h ne {}} { set r [$h] }
+  }
+  if {[catch {llength $r} n] || $n != 2} { return {} }
+  lassign $r lo hi
+  if {![string is entier -strict $lo] || ![string is entier -strict $hi]} { return {} }
+  if {$lo > $hi} { return {} }
+  return [list $lo $hi]
+}
+
+# Is `value` a seed `sim` honours as typed? A whole number inside the declared
+# range; with no range declared, any whole number (nothing more is known).
+proc ase::campaign_seed_honoured {sim value} {
+  set v [string trim $value]
+  if {![string is entier -strict $v]} { return 0 }
+  set r [ase::campaign_seed_range $sim]
+  if {![llength $r]} { return 1 }
+  lassign $r lo hi
+  return [expr {$v >= $lo && $v <= $hi}]
+}
+
+# THE REFUSAL FOR A TYPED SEED THE SIMULATOR WILL NOT HONOUR: one row
+# `{badseed refuse <sentence> <fix>}`, or `{}`. Its own reader, NOT gated on the
+# campaign being enabled: `ase::campaign_refusals` is silent for a bench with no
+# axes, but a seed typed into the dialog before its first axis is still a seed,
+# and the dialog asks this before OK and before Run commit anything. A backend
+# with no range refuses no seed -- there is no range to say.
+proc ase::campaign_seed_refusals {sim state} {
+  if {[string trim [ase::campaign_get $state seed]] eq {}} { return {} }
+  set r [ase::campaign_seed_range $sim]
+  if {![llength $r]} { return {} }
+  if {[ase::campaign_seed $state $sim] ne {}} { return {} }
+  lassign $r lo hi
+  return [list [list badseed refuse "the seed must be a whole number from $lo\
+ to $hi, the only seeds this simulator honours" \
+    "type a seed in that range, or leave it empty"]]
+}
+
+# SHARD `idx`'s SEED, or `{}` for an unseeded campaign. base+idx -- and past the
+# top of the declared range it counts on from the bottom.
+#
+# ⚠ FOLDED, NOT REFUSED, AND THIS IS WHY. The alternative was refusing any seed
+# whose base+(points-1) leaves the range. That refusal depends on the POINT COUNT,
+# so a seed that was fine turns refused because an axis was added -- a sentence
+# about the Seed field appearing when the user edits a different one. Folding
+# keeps every honoured seed usable for every campaign size, which is what
+# `ase::mc_seed_norm` already does for the sampler's seed.
+#   * DETERMINISTIC: a pure function of the seed, the index and the range, so
+#     Re-run Point (`ase::campaign_rerun` -> `campaign_step` ->
+#     `campaign_shard_state`) writes the same seed, and the shard's own deck
+#     carries it, so a re-run by hand from its directory reproduces it too.
+#   * COLLISION-FREE: n consecutive integers are n different residues modulo the
+#     range's size whenever n <= that size. ngspice's size is 2147483647 and
+#     `ase::campaign_max_points` is 2000; a range smaller than a campaign is
+#     refused (`seedspan`, in `ase::campaign_refusals`) rather than folded onto
+#     itself.
+#   * SAID: `ase::campaign_notes` adds the wrap to its per-shard sentence exactly
+#     when a campaign crosses the top, so "shard N is seeded S+N" is never a
+#     promise the deck breaks.
+# A backend with no range is not folded: base+idx, as before.
+proc ase::campaign_shard_seed {sim state idx} {
+  set seed [ase::campaign_seed $state $sim]
+  if {$seed eq {}} { return {} }
+  set s [expr {entier($seed) + $idx}]
+  set r [ase::campaign_seed_range $sim]
+  if {[llength $r]} {
+    lassign $r lo hi
+    if {$s > $hi || $s < $lo} {
+      set s [expr {$lo + ($s - $lo) % ($hi - $lo + 1)}]
+    }
+  }
   return $s
 }
 
@@ -20575,10 +20680,14 @@ proc ase::campaign_shard_state {sim state idx} {
   ## user's own bench is written with. The option is already row `seed` of the
   ## catalogue, so this is an override of an existing key and nothing new is
   ## spelled here.
+  ## ⚠ 1469: THROUGH `ase::campaign_shard_seed`, which keeps every shard's seed
+  ## inside the range the simulator honours. `wide($seed) + $idx` wrote
+  ## `seed=2147483648` into the second shard of a campaign seeded 2147483647, and
+  ## ngspice ran that shard unseeded at rc 0 -- measured, both binaries.
   set sopt [ase::campaign_seed_option $sim]
-  set seed [ase::campaign_seed $state]
+  set seed [ase::campaign_shard_seed $sim $state $idx]
   if {$sopt ne {} && $seed ne {}} {
-    set st [ase::campaign_set_option $st $sopt [expr {wide($seed) + $idx}]]
+    set st [ase::campaign_set_option $st $sopt $seed]
   }
   dict set st sweep [dict replace [ase::state_get $state sweep] point $pt index $idx]
   return $st
@@ -20700,6 +20809,10 @@ proc ase::campaign_refusals {sim state} {
     lappend out [list noanalysis refuse "no analysis is enabled, so every shard\
  would run nothing" "enable at least one analysis"]
   }
+  ## ⚠ 1469: A SEED THE SIMULATOR WILL NOT HONOUR. Re-evaluated here, not only at
+  ## the dialog, for this proc's own reason: the runner and Re-run Point are
+  ## reached by a hand-edited `.state` that never saw the form.
+  foreach r [ase::campaign_seed_refusals $sim $state] { lappend out $r }
   set seen [dict create]
   set i 0
   foreach a [ase::campaign_axes $state] {
@@ -20718,7 +20831,7 @@ proc ase::campaign_refusals {sim state} {
  column would hide the other" "rename one of them"]
     } else { dict set seen $lbl 1 }
     set vals {}
-    if {[catch {ase::campaign_axis_values $a [ase::campaign_seed $state] $i} vals]} {
+    if {[catch {ase::campaign_axis_values $a [ase::campaign_seed $state $sim] $i} vals]} {
       lappend out [list baddraw refuse "axis '$lbl' cannot be sampled: [string \
         map {{ase: } {}} $vals]" "check the distribution's parameters"]
       incr i ; continue
@@ -20745,6 +20858,23 @@ proc ase::campaign_refusals {sim state} {
     lappend out [list toomany refuse "this campaign has $n points, and ASE-L\
  runs at most [ase::campaign_max_points]" "shorten an axis, or split the campaign"]
   }
+  ## ⚠ 1469: MORE POINTS THAN THE RANGE HAS SEEDS. `ase::campaign_shard_seed`
+  ## folds past the top, which is collision-free only while the campaign fits in
+  ## the range; beyond that two points would be handed one stream and report two
+  ## different answers they cannot have. Unreachable for ngspice (2147483647 seeds
+  ## against a 2000-point ceiling) and asked anyway, because the range is an
+  ## adapter's declaration and the next adapter's may be small. Only a SEEDED
+  ## campaign is asked: an unseeded one emits no seed to collide.
+  set rng [ase::campaign_seed_range $sim]
+  if {[llength $rng] && [ase::campaign_seed $state $sim] ne {}} {
+    lassign $rng lo hi
+    set k [expr {$hi - $lo + 1}]
+    if {$n > $k} {
+      lappend out [list seedspan refuse "this campaign has $n points and the\
+ simulator honours only $k seeds, so two points would share one" \
+        "shorten an axis, or split the campaign"]
+    }
+  }
   return $out
 }
 
@@ -20769,12 +20899,26 @@ proc ase::campaign_notes {sim state} {
  process could run all $n points; ASE-L runs one process per point, which keeps\
  every completed point when a campaign is stopped"
   }
-  set seed [ase::campaign_seed $state]
+  ## ⚠ 1469: THE SEED THE SIMULATOR HONOURS, NOT THE ONE TYPED. A seed outside the
+  ## adapter's range is refused before any of this is said, and a caller asking
+  ## directly is told the campaign has no seed -- which is what the simulator
+  ## would have done with it.
+  set seed [ase::campaign_seed $state $sim]
   if {$seed eq {}} {
     lappend out "campaign: this campaign has no seed, so anything the simulator\
  draws for itself will differ the next time it is run"
   } else {
-    lappend out "campaign: seeded from $seed; shard N is seeded [expr {wide($seed)}]+N,\
+    ## "shard N is seeded S+N" IS A PROMISE THE DECK MUST KEEP, so a campaign
+    ## whose last shard passes the top of the range -- where
+    ## `ase::campaign_shard_seed` counts on from the bottom -- is told so in the
+    ## same sentence. Every other campaign gets the sentence it always had.
+    set wrap {}
+    set rng [ase::campaign_seed_range $sim]
+    if {[llength $rng]} {
+      lassign $rng lo hi
+      if {entier($seed) + $n - 1 > $hi} { set wrap ", wrapping to $lo after $hi" }
+    }
+    lappend out "campaign: seeded from $seed; shard N is seeded [expr {entier($seed)}]+N$wrap,\
  so a single point can be re-run on its own and give the same answer"
     foreach s [ase::campaign_seed_notes $sim] { lappend out "campaign: $s" }
   }
@@ -21148,6 +21292,17 @@ proc ase::campaign_schema_errors {{sim {}}} {
     }
     if {[ase::state_get $ent label] eq {}} {
       lappend out "campaign axis '$kind' has no label"
+    }
+  }
+  ## --- 1469: A SEED RANGE THAT CANNOT BE READ. `ase::campaign_seed_range`
+  ## treats it as no range -- no refusal, no fold -- which is the safe reading and
+  ## a silent one, so the declaration is named here. No hook is not an error.
+  if {![catch {ase::backend_hook $sim campaign_seed_range} h] && $h ne {}} {
+    set raw {}
+    catch {set raw [$h]}
+    if {![llength [ase::campaign_seed_range $sim]]} {
+      lappend out "campaign_seed_range answered '$raw', which is not two whole\
+ numbers with the lowest first"
     }
   }
   return $out
@@ -21942,13 +22097,26 @@ proc ase::stimuli_kinds {sim type entry} {
 # Whether this run is seeded: a campaign carrying a seed, or an options row of
 # the name the adapter's campaign seed uses (`ase::campaign_seed_option`). No
 # hook, no name, no answer but 0.
+#
+# ⚠ 1469: SEEDED MEANS THE SIMULATOR WILL HONOUR IT. Under a declared range
+# (`ase::campaign_seed_range`) a campaign seed or an options row outside it is no
+# seed: ngspice refuses 0, negatives and 2^31 ... 2^32 with one warning and runs
+# unseeded, wraps anything larger, and `seed=random` draws from the clock. Before
+# this, all of those made the noise section say RTS noise "repeats exactly under
+# the seed" on a run that would not repeat. With NO range declared the options
+# row counts whatever it holds, exactly as it did -- core has nothing to judge by.
 proc ase::stimuli_seeded {sim state} {
-  if {[ase::campaign_enabled $state] && [ase::campaign_seed $state] ne {}} { return 1 }
+  if {[ase::campaign_enabled $state] && [ase::campaign_seed $state $sim] ne {}} { return 1 }
   set so [ase::campaign_seed_option $sim]
   if {$so eq {}} { return 0 }
+  set ranged [llength [ase::campaign_seed_range $sim]]
   foreach o [ase::state_get $state options] {
     if {[catch {dict exists $o name} ok] || !$ok} { continue }
-    if {[string equal -nocase [dict get $o name] $so]} { return 1 }
+    if {![string equal -nocase [dict get $o name] $so]} { continue }
+    if {!$ranged} { return 1 }
+    set v {}
+    catch {set v [dict get $o value]}
+    if {[ase::campaign_seed_honoured $sim $v]} { return 1 }
   }
   return 0
 }
@@ -28928,6 +29096,30 @@ $_leg
   # (`srand(getpid()); TausSeed();`, `wallace.c:76-86`) at `:1371`, AFTER it.
   proc campaign_seed_option {} { return seed }
 
+  # THE SEEDS THAT OPTION HONOURS, AS TYPED: 1 ... 2147483647 (issue 1469).
+  #
+  # `eval_opt()` (`src/frontend/inp.c`, the `seed=` branch) does
+  # `int sr = atoi(token); if (sr <= 0) fprintf(cp_err, "Warning: Cannot convert
+  # 'option seed=%s' to seed value, skipped!\n", token); else setseed`. MEASURED
+  # by the driver on BOTH binaries, one `trrandom` deck read twice per seed:
+  #
+  #     1, 2147483647                 repeats; $rndseed is the seed
+  #     0, -5, 2147483648, 3000000000,
+  #     4294967295, 4294967296,
+  #     6442450944                    ONE warning, $rndseed 1, a different draw
+  #                                   every run, rc 0 -- UNSEEDED
+  #     5000000000, 8589934593        repeats -- but WRAPPED: $rndseed 705032704
+  #                                   and 1, so two typed seeds share a stream
+  #
+  # i.e. the low 32 bits as a signed int, refused when <= 0. The two boundary rows
+  # were re-measured by the 1469 crew, fork first, and again through ASE-L's own
+  # campaign runner (rows EE7/EE8 of test_ase_campaign_1462): before this hook a
+  # campaign seeded 2147483647 wrote `seed=2147483648` into its second shard and
+  # that shard's log carried the warning. Core refuses a typed seed outside this
+  # range and folds a shard's base+N into it; the numbers live HERE because they
+  # are a fact about this simulator's `atoi`, not about campaigns.
+  proc campaign_seed_range {} { return {1 2147483647} }
+
   # WHAT THE SEED DOES NOT REPRODUCE. Two clauses, both measured, and they are
   # the difference between a reproducible campaign and one that only looks it.
   proc campaign_seed_notes {} {
@@ -29741,6 +29933,7 @@ $_leg
     campaign_axis_kinds     ::ase::backend::ngspice::campaign_axis_kinds \
     campaign_control_lines  ::ase::backend::ngspice::campaign_control_lines \
     campaign_seed_option    ::ase::backend::ngspice::campaign_seed_option \
+    campaign_seed_range     ::ase::backend::ngspice::campaign_seed_range \
     campaign_seed_notes     ::ase::backend::ngspice::campaign_seed_notes \
     campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals \
     event_probe         ::ase::backend::ngspice::event_probe \

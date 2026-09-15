@@ -59,13 +59,20 @@
 #
 # ============================================================================
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP
-#    sections SA AX KN MD SH DK RF IX RN PD NT -- pure Tcl and a /bin/sh
+#    sections SA AX KN SR MD SH DK RF IX RN PD NT -- pure Tcl and a /bin/sh
 #                   stand-in, identical on both arms
 #    section  EE -- starts BOTH real binaries, self-skips with the path printed
 #                   when one is absent
 #
 # NEW AT 133, both arms, `diff` of the two ok-lists empty. The sabotage campaign
 # is in doc/claude/ase_analyses_batch/receipts/38-stage-11-runner.md.
+#
+# AND RAISED 133 -> 161, both arms (issue 1469 -- a seed ngspice does not honour
+# was written into the shard decks and reported as a seed): section SR (20 rows,
+# pure Tcl), SR9 and SR10 in section RN (the stand-in), and EE7 EE8 EE9 once per
+# binary in section EE. With a binary absent its three EE rows go with the rest
+# of its EE block. The sabotage campaign is in
+# doc/claude/ase_analyses_batch/receipts/45-1469-campaign-seed-range.md.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_campaign_1462.tcl
@@ -402,6 +409,286 @@ check {KN7 the seed rides an option this simulator really declares} \
 
 check {KN8 the seed's caveats are the adapter's, and there are two of them} \
   [llength [c_ans ase::campaign_seed_notes ngspice]] 2
+
+# ============================================================================
+# SECTION SR -- ISSUE 1469: A SEED THE SIMULATOR DOES NOT HONOUR IS NEVER
+# WRITTEN, AND NEVER REPORTED AS A SEED
+# ============================================================================
+# MEASURED on both binaries (the driver's table in the issue file; its two
+# boundary rows re-measured by the crew, fork first): `.options seed=2147483647`
+# repeats with `$rndseed` 2147483647, and `.options seed=2147483648` prints
+# `Warning: Cannot convert 'option seed=2147483648' to seed value, skipped!`,
+# answers `$rndseed` 1 and draws differently on every run, rc 0. ngspice's
+# `eval_opt()` does `int sr = atoi(token); if (sr <= 0) <warn>`, so only
+# 1 ... 2147483647 is honoured as typed. ASE-L took 0 ... 4294967295 and wrote
+# seed+N per shard -- MEASURED THROUGH THIS RUNNER before the fix, both binaries:
+# a campaign seeded 2147483647 wrote `seed=2147483648` into its second shard,
+# that shard's log carried the warning, and its measurement differed between two
+# runs of the same campaign.
+#
+# ⚠ THE RANGE IS THE ADAPTER'S (`campaign_seed_range`), and a backend with no
+# hook gets NO range: no refusal, no fold, its typed whole number as before.
+#
+# ⚠ AND A SHARD PAST THE TOP IS FOLDED, NOT REFUSED. seed+N past the top counts
+# on from the bottom: deterministic, so Re-run Point reproduces it; collision
+# free while the campaign has no more points than the range has seeds, and
+# refused (`seedspan`) when it has. Refusing instead would turn a seed that was
+# valid into a refused one because an axis was ADDED.
+
+## Fixture backends. `norange` has ngspice's axes and seed option and NO range
+## hook. `tinyrange` declares 10..12 -- ngspice's range is two billion seeds and
+## a campaign is at most 2000 points, so without a tiny range neither the fold's
+## arithmetic nor `seedspan` could be made to disagree. The two `badrange`s
+## declare what no range may be.
+proc ::sr_tiny_range {} { return {10 12} }
+proc ::sr_bad_range_order {} { return {5 1} }
+proc ::sr_bad_range_word {} { return {one 9} }
+proc sr_backend {name args} {
+  set hooks [dict create render_deck x run_cmd x log_file x result_probe x raw_file x \
+    campaign_axis_kinds    ::ase::backend::ngspice::campaign_axis_kinds \
+    campaign_control_lines ::ase::backend::ngspice::campaign_control_lines \
+    campaign_seed_option   ::ase::backend::ngspice::campaign_seed_option]
+  foreach {k v} $args { dict set hooks $k $v }
+  ase::register_backend $name $hooks
+}
+sr_backend norange
+sr_backend tinyrange campaign_seed_range ::sr_tiny_range
+sr_backend badrange1 campaign_seed_range ::sr_bad_range_order
+sr_backend badrange2 campaign_seed_range ::sr_bad_range_word
+## A one-axis temperature campaign under `sim`; `-` means "no seed key at all".
+proc sr_st {seed {sim ngspice} {vals {27}}} {
+  set sw [c_sweep enabled 1 axes [list [list kind temp values $vals]]]
+  if {$seed ne {-}} { dict set sw seed $seed }
+  return [c_state simulator $sim sweep $sw]
+}
+
+check {SR1 the range a seed is honoured in is the adapter's declaration, and a\
+ backend with no hook gets none} \
+  [list [c_ans ase::campaign_seed_range ngspice] [c_ans ase::campaign_seed_range norange] \
+        [c_ans ase::campaign_seed_range tinyrange]] \
+  {{1 2147483647} {} {10 12}}
+
+check {SR2 under ngspice the campaign's seed is a seed only where ngspice honours\
+ it -- both ends in; zero, a negative, every refused and every wrapped value out} \
+  [apply {{} {
+    set o {}
+    foreach s {1 2147483647 0 -5 2147483648 3000000000 4294967295 4294967296 5000000000 abc 1.5} {
+      lappend o [c_ans ase::campaign_seed [sr_st $s]]
+    }
+    return $o
+  }}] {1 2147483647 {} {} {} {} {} {} {} {} {}}
+
+## ⚠ THE `entier` LESSON (issue 1468) IS THE SECOND ELEMENT'S NEIGHBOUR: under the
+## old `integer` test 5000000000 read as NO seed while 4294967295 read as one.
+check {SR2b a backend with no range hook gets NO range, not ngspice's: its seed is\
+ the typed whole number, of any size and any sign} \
+  [list [c_ans ase::campaign_seed [sr_st 0 norange]] \
+        [c_ans ase::campaign_seed [sr_st -5 norange]] \
+        [c_ans ase::campaign_seed [sr_st 5000000000 norange]] \
+        [c_ans ase::campaign_seed [sr_st abc norange]]] \
+  {0 -5 5000000000 {}}
+
+check {SR2c the simulator argument decides the range when it is given, the state's\
+ own simulator when it is not, and the default simulator when the state names none} \
+  [list [c_ans ase::campaign_seed [sr_st 0 norange] ngspice] \
+        [c_ans ase::campaign_seed [sr_st 0 ngspice] norange] \
+        [c_ans ase::campaign_seed [dict remove [sr_st 0] simulator]]] \
+  {{} 0 {}}
+
+check {SR3 a campaign seed outside the range is refused -- zero, a negative, one\
+ past the top, a wrapped value, a word and a fraction alike} \
+  [apply {{} {
+    set o {}
+    foreach s {0 -5 2147483648 5000000000 abc 1.5} {
+      lappend o [c_ids [c_ans ase::campaign_refusals ngspice [sr_st $s]]]
+    }
+    return $o
+  }}] {badseed badseed badseed badseed badseed badseed}
+
+check {SR3b in one sentence that names the range, with its fix} \
+  [lrange [lindex [c_ans ase::campaign_seed_refusals ngspice [sr_st 2147483648]] 0] 0 3] \
+  {badseed refuse {the seed must be a whole number from 1 to 2147483647, the only seeds this simulator honours} {type a seed in that range, or leave it empty}}
+
+## THE CONTROL FOR SR3: a refusal that always fired would pass SR3 by itself.
+check {SR3c and the control: both ends of the range and no seed at all are\
+ refused nothing} \
+  [list [c_ids [c_ans ase::campaign_refusals ngspice [sr_st 1]]] \
+        [c_ids [c_ans ase::campaign_refusals ngspice [sr_st 2147483647]]] \
+        [c_ids [c_ans ase::campaign_refusals ngspice [sr_st -]]] \
+        [c_ans ase::campaign_seed_refusals ngspice [sr_st 2147483647]]] \
+  {{} {} {} {}}
+
+## ⚠ THE FORM ASKS BEFORE THERE IS A CAMPAIGN. `campaign_refusals` is silent for a
+## bench with no axes -- there is nothing to run -- but a seed typed into the
+## dialog before its first axis is still a seed, so the seed refusal is its own
+## reader and does not wait for one.
+check {SR3d a backend with no range refuses no seed; and a seed with no campaign\
+ around it is still judged by its own reader while the campaign refuser stays\
+ silent} \
+  [list [c_ids [c_ans ase::campaign_refusals norange [sr_st 0 norange]]] \
+        [c_ids [c_ans ase::campaign_seed_refusals ngspice [c_state sweep [c_sweep seed 0]]]] \
+        [c_ids [c_ans ase::campaign_refusals ngspice [c_state sweep [c_sweep seed 0]]]]] \
+  {{} badseed {}}
+
+check {SR4 every shard's seed stays inside the range: base+N up to the top, then on\
+ from the bottom} \
+  [apply {{} {
+    set st [sr_st 2147483645 ngspice {1 2 3 4 5}]
+    set o {}
+    for {set i 0} {$i < 5} {incr i} {
+      set s [c_ans ase::campaign_shard_state ngspice $st $i]
+      if {[catch {ase::state_get [lindex [dict get $s options] 0] value} v]} { set v RAISED }
+      lappend o $v
+    }
+    return $o
+  }}] {2147483645 2147483646 2147483647 1 2}
+
+## ⚠ THE COLLISION ROW, AT THE CEILING. A fold that collided would give two
+## shards one stream and a campaign two identical points it believed different.
+check {SR4b a folded seed never collides with another shard's: the ceiling's 2000\
+ shards, crossing the top at shard 1000, get 2000 different seeds, every one in\
+ the range} \
+  [apply {{} {
+    set st [sr_st 2147482648]
+    set seen {}
+    set out 0
+    for {set i 0} {$i < [c_ans ase::campaign_max_points]} {incr i} {
+      set s [c_ans ase::campaign_shard_seed ngspice $st $i]
+      if {![string is entier -strict $s] || $s < 1 || $s > 2147483647} { incr out }
+      lappend seen $s
+    }
+    return [list [llength $seen] [llength [lsort -unique $seen]] $out \
+                 [lindex $seen 999] [lindex $seen 1000]]
+  }}] {2000 2000 0 2147483647 1}
+
+check {SR4c the same shard asked twice gets the same seed -- which is what lets\
+ Re-run Point reproduce it -- a backend with no range is not folded, and an\
+ unseeded campaign has no shard seed} \
+  [list [expr {[c_ans ase::campaign_shard_seed ngspice [sr_st 2147483647] 1] eq \
+               [c_ans ase::campaign_shard_seed ngspice [sr_st 2147483647] 1]}] \
+        [c_ans ase::campaign_shard_seed ngspice [sr_st 2147483647] 1] \
+        [c_ans ase::campaign_shard_seed norange [sr_st 2147483647 norange] 1] \
+        [c_ans ase::campaign_shard_seed ngspice [sr_st -] 1]] \
+  {1 1 2147483648 {}}
+
+check {SR5 the fold and the refusal read the RANGE, not ngspice: a range of 10..12\
+ seeded 11 gives 11 12 10, and 9 and 13 are refused while 10 is not} \
+  [list [apply {{} {
+          set st [sr_st 11 tinyrange {1 2 3}]
+          set o {}
+          foreach i {0 1 2} { lappend o [c_ans ase::campaign_shard_seed tinyrange $st $i] }
+          return $o
+        }}] \
+        [c_ids [c_ans ase::campaign_refusals tinyrange [sr_st 9 tinyrange]]] \
+        [c_ids [c_ans ase::campaign_refusals tinyrange [sr_st 13 tinyrange]]] \
+        [c_ids [c_ans ase::campaign_refusals tinyrange [sr_st 10 tinyrange {1 2 3}]]]] \
+  {{11 12 10} badseed badseed {}}
+
+check {SR5b a seeded campaign with more points than the range has seeds is\
+ refused, because two of its points would have to share one -- and an unseeded\
+ one is not} \
+  [list [c_ids [c_ans ase::campaign_refusals tinyrange [sr_st 10 tinyrange {1 2 3 4}]]] \
+        [lindex [lindex [c_ans ase::campaign_refusals tinyrange [sr_st 10 tinyrange {1 2 3 4}]] 0] 2] \
+        [c_ids [c_ans ase::campaign_refusals tinyrange [sr_st - tinyrange {1 2 3 4}]]]] \
+  {seedspan {this campaign has 4 points and the simulator honours only 3 seeds, so two points would share one} {}}
+
+## ⚠ THE PER-SHARD RULE IS A PROMISE ("shard N is seeded S+N"), SO A CAMPAIGN THAT
+## WRAPS IS TOLD SO IN THAT SENTENCE -- and one that ends exactly at the top gets
+## the sentence it always had, byte for byte.
+check {SR6 a campaign that crosses the top is told it wraps, in the per-shard\
+ rule's own sentence; one that ends exactly at the top is told nothing new} \
+  [list [lindex [c_ans ase::campaign_notes ngspice [sr_st 2147483647 ngspice {27 85}]] 1] \
+        [lindex [c_ans ase::campaign_notes ngspice [sr_st 2147483646 ngspice {27 85}]] 1]] \
+  [list {campaign: seeded from 2147483647; shard N is seeded 2147483647+N, wrapping to 1 after 2147483647, so a single point can be re-run on its own and give the same answer} \
+        {campaign: seeded from 2147483646; shard N is seeded 2147483646+N, so a single point can be re-run on its own and give the same answer}]
+
+check {SR6b and a seed the simulator would throw away is not reported as a seed:\
+ the campaign is told it has none} \
+  [lindex [c_ans ase::campaign_notes ngspice [sr_st 0]] 1] \
+  {campaign: this campaign has no seed, so anything the simulator draws for itself will differ the next time it is run}
+
+## ⚠ THE NOISE SEED SENTENCE READS THE SAME ANSWER. `ase::stimuli_seed_report` is
+## what the Tran form's noise section prints under its table; before the fix a
+## campaign seeded 0 and an options row `seed 0` both made it say RTS noise
+## "repeats exactly under the seed", on a run ngspice would leave unseeded.
+set SR7ROW {type tran enabled 1 step 1u stop 2m noise {{src vrts func trnoise rtsam 5m rtscapt 18u rtsemt 30u}}}
+proc sr_report {args} {
+  global SR7ROW
+  return [c_ans ase::stimuli_seed_report ngspice [c_state {*}$args] $SR7ROW]
+}
+proc sr_seeded {args} {
+  set r [sr_report {*}$args]
+  if {[catch {dict get $r seeded} v]} { return "NOREPORT:$r" }
+  return $v
+}
+check {SR7 the noise seed report says seeded only where the simulator will be: a\
+ campaign seed or an options seed row outside the range is no seed, and one\
+ inside it still is} \
+  [list [sr_seeded sweep [c_sweep enabled 1 seed 7 axes {{kind temp values {27}}}]] \
+        [sr_seeded sweep [c_sweep enabled 1 seed 0 axes {{kind temp values {27}}}]] \
+        [sr_seeded sweep [c_sweep enabled 1 seed 2147483648 axes {{kind temp values {27}}}]] \
+        [sr_seeded options {{name seed value 5}}] \
+        [sr_seeded options {{name seed value 0}}] \
+        [sr_seeded options {{name seed value 2147483648}}] \
+        [sr_seeded options {{name seed value random}}]] \
+  {1 0 0 1 0 0 0}
+
+check {SR7b and the sentence the Tran form shows follows it} \
+  [apply {{r} {
+    if {[catch {dict get $r sentences} v]} { return "NOREPORT:$r" }
+    return $v
+  }} [sr_report sweep [c_sweep enabled 1 seed 2147483648 axes {{kind temp values {27}}}]]] \
+  {{RTS noise repeats only when a seed is set.}}
+
+check {SR7c a backend with no range keeps the answer it had: an options row of its\
+ seed option's name counts, whatever it holds} \
+  [c_ans ase::stimuli_seeded norange [c_state simulator norange options {{name seed value 0}}]] 1
+
+check {SR8 a malformed range is no range, and the load-time validator names it\
+ rather than letting the declaration go silent} \
+  [list [c_ans ase::campaign_seed_range badrange1] [c_ans ase::campaign_seed_range badrange2] \
+        [llength [c_ans ase::campaign_schema_errors badrange1]] \
+        [llength [c_ans ase::campaign_schema_errors badrange2]] \
+        [llength [c_ans ase::campaign_schema_errors tinyrange]] \
+        [llength [c_ans ase::campaign_schema_errors norange]]] \
+  {{} {} 1 1 0 0}
+
+## ⚠ REFUSED AT THE FORM AND AT RUN -- NEVER REPAIRED IN THE FILE. A `.state`
+## written before this fix can carry a seed ngspice does not honour. It must still
+## load, and save byte for byte with the seed it was written with, so the user
+## meets the refusal and repairs it themselves; a loader that "fixed" the number
+## would change their file behind their back. Written and re-written through
+## `ase::state_save` and read through `ase::state_load`, the pair
+## `state_roundtrip.tcl` measures the 104 committed files with -- and a mutated
+## save must DISAGREE, or "identical" measured nothing.
+check {SR11 a .state carrying a seed outside the range loads and saves byte for\
+ byte, keeps the seed it was written with, and is refused rather than repaired} \
+  [apply {{} {
+    global scratch
+    if {[catch {
+      set o {}
+      foreach s {0 2147483648 5000000000 abc} {
+        set p [file join $scratch sr11_$s.state]
+        ase::state_save $p [c_state sweep [c_sweep enabled 1 seed $s axes {{kind temp values {27 85}}}]]
+        set fh [::open $p rb] ; set orig [read $fh] ; ::close $fh
+        set ld [ase::state_load $p]
+        set p2 [file join $scratch sr11_${s}_again.state]
+        ase::state_save $p2 $ld
+        set fh [::open $p2 rb] ; set again [read $fh] ; ::close $fh
+        lappend o [list [expr {$orig eq $again}] [ase::campaign_get $ld seed] \
+                        [c_ans ase::campaign_seed $ld] \
+                        [c_ids [c_ans ase::campaign_refusals ngspice $ld]]]
+      }
+      ## THE CONTROL: the same load with its seed repaired saves DIFFERENTLY.
+      set sw [ase::state_get $ld sweep]
+      dict set sw seed 7
+      dict set ld sweep $sw
+      ase::state_save $p2 $ld
+      set fh [::open $p2 rb] ; set fixed [read $fh] ; ::close $fh
+      lappend o [expr {$fixed ne $orig ? {differs} : {SAME}}]
+    } err]} { return "RAISED:$err" }
+    return $o
+  }}] {{1 0 {} badseed} {1 2147483648 {} badseed} {1 5000000000 {} badseed} {1 abc {} badseed} differs}
 
 # ============================================================================
 # SECTION MD -- THE MODE, AND SAYING WHICH ONE WAS CHOSEN
@@ -1087,6 +1374,51 @@ check {RN9b a campaign whose nominal deck cannot be rendered makes no directory 
     return [list $raised [file exists [c_ans ase::campaign_dir $st]]]
   }}] {1 0}
 
+## ⚠ 1469: A SEED ONE PAST THE TOP IS REFUSED BEFORE ANYTHING EXISTS -- through
+## the runner AND through Re-run Point, because a `.state` can be hand-edited and
+## neither door goes through the dialog.
+check {SR9 a campaign seeded one past the top is refused by the runner and by\
+ Re-run Point, and makes no directory} \
+  [apply {{} {
+    rn_fresh
+    set st [rn_state [c_sweep enabled 1 seed 2147483648 axes {{kind temp values {27 85}}}]]
+    set r  [c_ans ase::campaign_run ngspice $st [c_netlist]]
+    set rr [c_ans ase::campaign_rerun ngspice $st [c_netlist] 1]
+    set o {}
+    foreach x [list $r $rr] {
+      if {[catch {list [dict get $x status] [c_ids [dict get $x refusals]]} v]} { set v "BAD:$x" }
+      lappend o $v
+    }
+    lappend o [file exists [c_ans ase::campaign_dir $st]]
+    return $o
+  }}] {{refused badseed} {refused badseed} 0}
+
+## ⚠ AND A CAMPAIGN THAT CROSSES THE TOP RUNS, WITH THE FOLDED SEED IN THE SHARD'S
+## OWN DECK -- so the adapter's promise that a point re-run by hand from its own
+## directory reproduces it still holds -- and Re-run Point writes that deck again,
+## byte for byte. The deck is DELETED before the re-run, so "identical" cannot be
+## a file nobody touched.
+check {SR10 a campaign seeded at the top writes seed 2147483647 and then 1 into its\
+ shard decks, never 2147483648, and Re-run Point rewrites the folded deck byte for\
+ byte} \
+  [apply {{} {
+    rn_fresh
+    set st [rn_state [c_sweep enabled 1 seed 2147483647 axes {{kind temp values {27 85}}}]]
+    set r [c_ans ase::campaign_run ngspice $st [c_netlist]]
+    set seeds {}
+    foreach i {0 1} {
+      lappend seeds {*}[regexp -all -inline {seed=-?[0-9]+} [c_ans rn_shard_deck $st $i]]
+    }
+    set before [c_ans rn_shard_deck $st 1]
+    file delete [file join [ase::campaign_shard_dir $st 1] rc_ase.spice]
+    set rr [c_ans ase::campaign_rerun ngspice $st [c_netlist] 1]
+    set after [c_ans rn_shard_deck $st 1]
+    set s0 {} ; catch {set s0 [dict get $r status]}
+    set s1 {} ; catch {set s1 [dict get $rr status]}
+    return [list $s0 $seeds $s1 \
+                 [expr {$before eq $after && ![string match NOFILE:* $after]}]]
+  }}] {done {seed=2147483647 seed=1} done 1}
+
 ## ⚠ THE INDEX IS WRITTEN AFTER EVERY SHARD, NOT ONCE AT THE END. An index
 ## written only on success never describes the run anyone needs it for -- and it
 ## is COMPLETE from the first step, so a campaign killed at its second point
@@ -1648,6 +1980,109 @@ foreach {eetag eebin} $EEBINS {
       return [list [expr {$i1 ne $i2}] [expr {$c1 eq $c2}] \
                    [expr {[string is double -strict $c1]}]]
     }} $eebin $eedir] {1 1 1}
+
+  ## ⚠ 1469 ON THE REAL BINARY. A campaign seeded at the TOP of the range whose two
+  ## points differ ONLY by their seed (the resistor is the simulator's own
+  ## `agauss`), so its second shard folds to seed 1. MEASURED BEFORE THE FIX on both
+  ## binaries through this very runner, fork first: the second shard was written
+  ## `seed=2147483648`, its log carried `Cannot convert ... to seed value`, and its
+  ## measurement differed between two runs of the same campaign (fork 5.13913e-01
+  ## then 4.75481e-01; apt 5.257042e-01 then 4.713302e-01), while the first shard
+  ## repeated exactly.
+  set sr_nl "* seed\n.param rv=agauss(1000,100,1)\nv1 in 0 dc 1\nr1 in out {rv}\nr2 out 0 1k\n.end\n"
+  proc ee_seedcamp {tag dir sweep opts nl} {
+    file delete -force $dir
+    file mkdir $dir
+    set st [ase::state_default]
+    dict set st design [dict create cell rc lib $dir]
+    dict set st rundir $dir
+    dict set st simulator ngspice
+    dict set st sim_entry [list name ee$tag]
+    dict set st save_all_v 1
+    dict set st analyses {{type tran enabled 1 step 1u stop 10u}}
+    dict set st outputs {{expr v(out) plot 1 save 1}}
+    dict set st measurements {{name vmax analysis tran kind max target v(out)}}
+    dict set st options $opts
+    dict set st sweep $sweep
+    set r [c_ans ase::campaign_run ngspice $st $nl]
+    set status {} ; catch {set status [dict get $r status]}
+    set vals {}
+    foreach row [lrange [ase::campaign_index_read $st] 1 end] {
+      lappend vals [lindex $row 2] [lindex $row 4]
+    }
+    set warn 0 ; set logs 0 ; set seeds {}
+    foreach sd [lsort [glob -nocomplain -type d [file join [ase::campaign_dir $st] shard-*]]] {
+      set lg [file join $sd rc_ase.log]
+      if {[file isfile $lg]} {
+        incr logs
+        incr warn [regexp -all {Cannot convert[^\n]*seed value} [rn_slurp $lg]]
+      }
+      lappend seeds {*}[regexp -all -inline {seed=-?[0-9]+} [rn_slurp [file join $sd rc_ase.spice]]]
+    }
+    return [dict create status $status vals $vals warn $warn logs $logs seeds $seeds]
+  }
+  set sr_top {enabled 1 seed 2147483647 axes {{kind temp values {27 27}}}}
+  set sr_a [ee_seedcamp $eetag [file join $eedir srtop1] $sr_top {} $sr_nl]
+  set sr_b [ee_seedcamp $eetag [file join $eedir srtop2] $sr_top {} $sr_nl]
+  check "EE7/$eetag a campaign seeded at the top of the range reproduces EVERY shard\
+ across two runs -- the one past the top included -- and its two shards draw\
+ differently" \
+    [apply {{a b} {
+      set va [dict get $a vals] ; set vb [dict get $b vals]
+      if {[llength $va] != 4} { return "BADROWS:$va" }
+      foreach {e v} $va {
+        if {$e ne {0} || ![string is double -strict $v]} { return "NOTRUN:$va" }
+      }
+      return [list [dict get $a status] [dict get $b status] [dict get $a seeds] \
+                   [expr {$va eq $vb}] [expr {[lindex $va 1] ne [lindex $va 3]}]]
+    }} $sr_a $sr_b] {done done {seed=2147483647 seed=1} 1 1}
+
+  ## ⚠ AND NO SHARD LOG SAYS THE SEED WAS THROWN AWAY -- with the control that lets
+  ## the grep disagree: an OPTIONS row `seed 0` (the options sheet is not this
+  ## issue's form) reaches a shard log through the same runner, and there the
+  ## warning IS found. Measured before the fix: `rc_ase.log` carries the simulator's
+  ## stderr on both binaries. EE1's own campaign (seeded 100, four shards) is read
+  ## too, so the claim covers every seeded campaign this section renders.
+  set sr_z [ee_seedcamp $eetag [file join $eedir srzero] \
+              {enabled 1 axes {{kind temp values {27}}}} {{name seed value 0}} $sr_nl]
+  set sr_e1 {0 0}
+  catch {
+    set l 0 ; set w 0
+    foreach sd [glob -nocomplain -type d [file join [ase::campaign_dir $eest] shard-*]] {
+      set lg [file join $sd rc_ase.log]
+      if {![file isfile $lg]} { continue }
+      incr l
+      incr w [regexp -all {Cannot convert[^\n]*seed value} [rn_slurp $lg]]
+    }
+    set sr_e1 [list $l $w]
+  }
+  check "EE8/$eetag no shard log of a seeded campaign says `Cannot convert ... seed\
+ value`, and the same grep finds it in the one log whose deck really carries seed 0" \
+    [list [expr {[dict get $sr_a logs] + [dict get $sr_b logs]}] \
+          [expr {[dict get $sr_a warn] + [dict get $sr_b warn]}] \
+          $sr_e1 \
+          [dict get $sr_z logs] [dict get $sr_z warn] [dict get $sr_z seeds]] \
+    {4 0 {4 0} 1 1 seed=0}
+
+  check "EE9/$eetag on this binary's own entry a seed one past the top is refused\
+ before any campaign directory or deck exists" \
+    [apply {{tag dir} {
+      file delete -force $dir
+      file mkdir $dir
+      set st [ase::state_default]
+      dict set st design [dict create cell rc lib $dir]
+      dict set st rundir $dir
+      dict set st simulator ngspice
+      dict set st sim_entry [list name ee$tag]
+      dict set st analyses {{type op enabled 1}}
+      dict set st sweep {enabled 1 seed 2147483648 axes {{kind temp values {27 85}}}}
+      set r [c_ans ase::campaign_run ngspice $st "* r\nr1 a 0 1k\n.end\n"]
+      set s {} ; set ids {}
+      catch {set s [dict get $r status]}
+      catch {set ids [c_ids [dict get $r refusals]]}
+      return [list $s $ids [file exists [ase::campaign_dir $st]] \
+                   [llength [glob -nocomplain -directory $dir *.spice]]]
+    }} $eetag [file join $eedir srpast]] {refused badseed 0 0}
 }
 } eeerr]} { check {EE0 section EE ran to the end} "RAISED:$eeerr" {} }
 
@@ -1657,3 +2092,8 @@ else { puts "RESULT: ALL PASS ($npass checks)" }
 # requires a WHOLE-LINE `OVERALL: ok`, and `run_regression.tcl` counts a case with
 # no banner as a HARNESS failure however green its own checks are.
 puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"
+# AND AN EXPLICIT EXIT CODE. Measured 2026-09-15 by the driver, sabotaging issue
+# 1469: `RESULT: 9 FAILED (152 passed)` exited rc 0, because the only `exit` lines
+# in this file are inside the `/bin/sh` stand-in scripts it writes as TEXT. T1 reads
+# the banner too; a reader of the exit code alone scored this suite green.
+exit [expr {$fail ? 1 : 0}]

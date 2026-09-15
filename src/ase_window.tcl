@@ -13844,6 +13844,18 @@ proc ase::ui::camp_refusals {key {st {}}} {
   if {$st eq {}} { set st [ase::ui::camp_form_state $key] }
   set out {}
   catch {set out [ase::campaign_refusals [ase::ui::camp_sim $key] $st]}
+  ## ⚠ 1469: AND THE SEED'S OWN REFUSAL WHEN THERE IS NO CAMPAIGN YET. Core's
+  ## campaign refuser is silent for a bench with no axes -- there is nothing to
+  ## run -- so a seed the simulator would throw away, typed before the first axis,
+  ## would otherwise sit under "No axes yet" and be committed by OK. It is added
+  ## once: with a campaign configured core has already listed it.
+  set ids {}
+  foreach r $out { lappend ids [lindex $r 0] }
+  catch {
+    foreach r [ase::campaign_seed_refusals [ase::ui::camp_sim $key] $st] {
+      if {[lsearch -exact $ids [lindex $r 0]] < 0} { lappend out $r }
+    }
+  }
   return $out
 }
 proc ase::ui::camp_notes {key {st {}}} {
@@ -14039,7 +14051,22 @@ proc ase::ui::camp_seed_entry {key} {
 proc ase::ui::camp_ok {key} {
   set w [ase::ui::camp_win $key]
   if {$w eq {}} { return }
-  ase::session_update $key [ase::ui::camp_form_state $key]
+  set st [ase::ui::camp_form_state $key]
+  ## ⚠ 1469: OK IS A COMMIT DOOR, AND A SEED THE SIMULATOR WILL NOT HONOUR DOES NOT
+  ## GO THROUGH IT. Committed, it reaches the session and then the `.state` file,
+  ## and every later run is refused over a number nobody is looking at any more.
+  ## Only the seed is asked here: the campaign's other refusals (no run directory,
+  ## no analysis) are about the bench, which this form cannot repair, and OK has
+  ## never been refused for them. A state that already carries such a seed still
+  ## LOADS and SAVES untouched -- this refuses a commit, it rewrites nothing.
+  set bad {}
+  catch {set bad [ase::campaign_seed_refusals [ase::ui::camp_sim $key] $st]}
+  if {[llength $bad]} {
+    catch {::ase::echo "ase: [lindex [lindex $bad 0] 2]" error}
+    ase::ui::camp_sync $key
+    return
+  }
+  ase::session_update $key $st
   ase::ui::populate $key
   ase::ui::camp_cancel $key
 }
@@ -14530,6 +14557,19 @@ proc ase::ui::camp_run {key} {
   ## campaign runs: the campaign that runs is the one on screen, and the one
   ## that is saved is the one that ran.
   set st [ase::ui::camp_form_state $key]
+  ## ⚠ 1469: EXCEPT A SEED THE SIMULATOR WILL NOT HONOUR, WHICH IS ASKED FIRST.
+  ## The commit below is deliberate for every other refusal -- the bench's own
+  ## (GR13's paragraph) -- but this one is a value the FORM holds, and committing
+  ## it would write the very number the refusal is about into the session and
+  ## then the file. The design routing above writes nothing; from here on,
+  ## nothing is committed or run for it.
+  set sref {}
+  catch {set sref [ase::campaign_seed_refusals [ase::ui::camp_sim $key] $st]}
+  if {[llength $sref]} {
+    catch {::ase::echo "ase: [lindex [lindex $sref 0] 2]" error}
+    ase::ui::camp_sync $key
+    return [dict create status refused ran 0 of 0 refusals $sref]
+  }
   ase::session_update $key $st
   ase::ui::populate $key
   set ref [ase::ui::camp_refusals $key $st]
