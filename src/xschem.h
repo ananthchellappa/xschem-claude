@@ -2725,6 +2725,10 @@ extern int table_read(const char *f);
  * on entry, the caller sets raw->sim_type. See src/vcd_read.c and
  * doc/claude/specs/mixed_signal_signal_browser.md section C. */
 extern int vcd_read(const char *f);
+/* The run end, in seconds, that the NEXT vcd_read() extends its traces to when it is
+ * later than the file's own last `#t`; <= 0 means none. Set and reset around one read by
+ * `xschem raw read <file> vcd -end <seconds>` (issue 1465). */
+extern void vcd_read_set_end(double end_seconds);
 /* THE reader dispatch (issue 0290): `type` is the key that picks the parser --
  * "table" -> table_read(), "vcd" -> vcd_read(), anything else -> raw_read() -- and
  * raw->sim_type is stamped for the non-spice readers, which do not all do it

@@ -46,6 +46,10 @@ Every one of these was measured on both, in the same sitting:
   a failed measurement is silent to rc/`$sim_status`/stdout, and a deck-card `.measure`
   never becomes a vector. (`evidence/meas-readback.md`)
 * **`pss` segfaults on four arguments on both** (rc 139). (`evidence/pss-stage14.md`)
+* **`eprvcd` directly after a `tf` segfaults on both** (rc 139, VCD 0 bytes), while after a `dc`
+  it writes the same VCD on each (225 / 224 bytes). Found by Stage 12's sabotage T13 (issue
+  **1465**), re-confirmed by the driver on the fork only — see `CREW_BRIEF.md` on never crashing
+  the user's simulator. It is why the export line follows a transient and nothing else.
 * **`CKTncDump`'s table, and the ladder's `Note:` lines, are the same on both** — including
   the stream each one is written to.
 * **XSPICE is compiled into both**, though neither banner says so.

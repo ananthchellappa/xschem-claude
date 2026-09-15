@@ -142,6 +142,13 @@ is the crew's design; neither route was measured here.
 | **`eprvcd -a din dout v(in)`** | ⚠ **rc 134, the same** | rc 0, 46 timestamps, last still `#26267500` |
 | `eprvcd -t 1p din dout` | rc 0, `$timescale 1 ps` | rc 0, `$timescale 1 ps` |
 
+⚠ **AMENDED by Stage 12 (issue 1465, receipt 40, C6/C7).** A fourth rule: **only after a
+TRANSIENT** — `eprvcd` after `tf` segfaults both binaries. And finding 1's *"neither route was
+measured"* is now measured: the emission route cannot be built (`$&` prints `3E+07`), so the run end
+shipped reader-side as `xschem raw read <f> vcd -end <seconds>`. ⚠ **The two 45.2 aborts in the table
+below were the driver's, the second deliberate** — a breach of `CREW_BRIEF.md`'s rule against crashing
+the user's simulator, recorded there.
+
 **The trigger is the analog argument, not `-a`.** Three rules for the emission follow:
 
 1. **Name only the nodes `edisplay` reported** — never an analog vector, even though the fork

@@ -3563,7 +3563,9 @@ Measured on an `adc_bridge → d_inverter → dac_bridge` chain:
   emitted line and one list append.**
 
 **Two cautions the analyses pane owes a mixed deck:** `trtol` is **silently forced to 1** whenever
-event nodes exist, which changes numbers and belongs in the `caution` vocabulary; and the DC-sweep +
+event nodes exist, which changes numbers and belongs in the `caution` vocabulary (⚠ **CORRECTED by Stage 12,
+C1, measured on both binaries: for ANY XSPICE `a` card** — an analog-only `gain` block prints the same
+`Reducing trtol to 1` line — not only when event nodes exist); and the DC-sweep +
 auto-bridge failure has a reproducer and no root cause, so `dc` on a deck with event nodes is
 `caution`, not `ok`. ⚠ **That second caution is permanent until open question M13 closes** — a
 user-facing caution with no debt behind it is how a temporary hedge becomes furniture. M13 is in the
@@ -3583,6 +3585,14 @@ analog traces from the same run.
 
 `src/ase.tcl` — **new** `ase::event_nodes` (parses `edisplay`), the `eprvcd` emission, the `vcdfiles`
 append, the two cautions (**≈ +120**). `src/ase_window.tcl` — none beyond the caution sentence.
+
+⚠ **CORRECTED by Stage 12 (issue 1465, C2–C4): the wrong size by five times, and it missed a language.**
+Shipped: `src/ase.tcl` **+626**, plus **`src/vcd_read.c`, `src/scheduler.c`, `src/xschem.h`** —
+because the run end cannot be written by the deck (`$&` prints a 30 ns end in fs as `3E+07` on both
+binaries) and so is the reader's, as `xschem raw read <f> vcd -end <seconds>`. The inventory is a
+cached probe run with the run's own words; names go out in groups of 93; the parse is the adapter's
+`event_parse`, not core's (D34). `src/ase_window.tcl` was indeed untouched. ⚠ **And the export line
+follows a TRANSIENT only** — measured, `eprvcd` after `tf` **segfaults both binaries** (rc 139).
 
 ### Suites that move
 
@@ -3607,6 +3617,9 @@ The launch line is Stage 2's. Take: **the digital pane filled in beside the anal
 same run**, with the event nodes under their ngspice names. **The labelling is the half nobody has
 seen** — it is the second clause of open question **M9**, and this screenshot is that question's
 proof. No new pane is built (the VCD pipeline already owns it), so **no new look debt is filed**.
+⚠ **CORRECTED by Stage 12 (C5): that clause is stale.** No pane is built, but an existing pane's
+**drawing** changes — the digital strip's last 3.7 ns — so a `look` debt **was** filed
+(`ase-digital-pane-run-end-1465`). **A change to what an existing pane draws is a pixel deliverable.**
 
 ### Rulings in this stage
 
@@ -4480,7 +4493,7 @@ These remain:
 | **M11** | Does `alterparam` + `reset` preserve `.options` and `set` variables across the re-parse, and does it re-read `<rundir>/.spiceinit`? | Stage 11's collapse-into-one-shard mode | One deck: `option reltol=0.05`, `alterparam`, `reset`, then `option` — Stage 7f's reader gives the diff for free |
 | **M12** | What does `wrs2p` emit for an `sp` run with the `.csparam Rbase=50` workaround, and is it valid Touchstone? | Stage 9's export | One two-port deck, `wrs2p out.s2p`, open it in any Touchstone reader |
 | **M5** | A **multi-raw family** (one raw per shard) is new to the waveform viewer and to the Calculator, whose spec says v1 handles only the single-raw multi-dataset case | Stage 11's family-of-curves display | Not an experiment — a conversation with `doc/claude/specs/calculator.md`'s owner, **at Stage 11** |
-| **M13** | The **DC-sweep + auto-bridge failure** has a reproducer and no root cause | blocks offering `dc` on a mixed-signal deck as `ok` rather than `caution` — Stage 12 ships a **permanent** caution until this closes | `evidence/xspice.md` §12.1/§12.2 has the reproducer; someone must debug it |
+| **M13** | The **DC-sweep + auto-bridge failure** has a reproducer and no root cause | blocks offering `dc` on a mixed-signal deck as `ok` rather than `caution` — Stage 12 ships a **permanent** caution until this closes | `evidence/xspice.md` §12.1/§12.2 has the reproducer; someone must debug it. ⚠ **Re-measured 2026-09-15 by Stage 12's crew (issue 1465), on BOTH binaries**: §12.1's `dcsw5.cir` gives `v(out) = 3.3 V` at every sweep point on apt 45.2 exactly as on the fork, and §12.2's `dcsw6.cir` (the bridge written ahead of the gate) turns at 1.8 V on both — so the failure is not a fork regression and the remedy the caution names is real on the binary users have. **Root cause still not chased**; the caution ships as `R9-559`/`R9-560` |
 | **M14** | Why does `help devhelp` print **nothing at all** — neither a help line nor `Sorry, no help for …`? | nothing. It matters only as *"never probe with `devhelp`"*, which is already Stage 2's rule | not worth an experiment; recorded so nobody re-hunts it |
 | **M15** | Does `help <verb>` answer correctly on a build with a **relocated or stripped** help database? `[A-M7]` covers a second build but **both had their database** | nothing blocks — but Stage 2's whole gate rests on the `help <verb>` probe, so this is the gate's one unmeasured failure mode | the same probe against a third build, cross-checked against `devhelp`'s families. Publish only on a clean parse. ⚠ **Stage 2b's Detect leg is the cheaper half**: the command table is a second oracle that needs no help database, and *a disagreement between the two legs is itself the M15 signal* — it needs `-p` (§0.11), and ⚖ R1 has decided — **deferred with the transport** — so M15 stays open through this batch and Stage 2 ships the `help <verb>` leg alone, saying so |
 | **M16** | **The adapter-author specification is not written, and will not be** — the schema is defined by the ngspice adapter that exercises it and by Stage 15's harness | nothing, while adapters are first-party. It becomes the whole cost of onboarding the first outside author, and nothing in the tree announces it | not an experiment. Write it **when a second adapter is actually wanted**, never speculatively. ⚖ R10's **option B**, left standing on purpose (`LEDGER.md` owns the row) |

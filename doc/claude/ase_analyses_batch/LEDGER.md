@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 08:30
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 09:39
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**11**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix), **1461** (a leaked channel from a shadowed `close`); **1455**, **1458**, **1463** filed |
-| **Stages remaining** | **12** (event-driven results), 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
+| **Stages landed** | 0–**12**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465**, one task, gated by the driver's M9 (`a6d75d00`). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages remaining** | **13** (transient noise and `trrandom`, split into two tasks by the driver), 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **76 cases, ZERO counted lines in `tests/results.log`**, re-run solo 2026-09-15 on the 1460 `exit` fix (370 s) — and zero on every run since issue 1456, including all three Stage 11 re-runs. ⚠ **Why the file holds 75 case logs for 76 cases, measured rather than guessed:** 63 `hcases` + 9 `dcases` + 3 legacy write a log each, and the 76th, **`xschemtest.tcl`, writes to `results.log` ONLY WHEN IT FAILS** (`run_regression.tcl:478-490`, a `catch` around its `exec`). The driver nearly "corrected" 76 to 75 in this very block before reading that — counting `.log` lines is not counting cases, any more than grepping stdout was reading verdicts |
-| **In flight** | nothing at this commit. **Stage 12's crew is dispatched immediately after it** |
-| **Next** | **Stage 12** — event-driven results. ✅ **Its gate M9 was PAID by the driver on 2026-09-15** (`evidence/m9-event-vcd-attach.md`): the attach works and the names are ngspice's, and **two findings bind the emission** — the digital traces end at the last event, and `eprvcd` given an analog argument aborts 45.2 (`binary-differences.md` **#9**). **M13** stays a permanent caution. Then 13, 14, 16, and ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **556 strings from 29 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **T1** | ✅ **77 cases, ZERO counted lines in `tests/results.log`**, re-run solo 2026-09-15 on Stage 12 (346 s) — zero on every run since issue 1456. ⚠ **The file holds one fewer case log than there are cases, by design:** `xschemtest.tcl` writes to `results.log` **only when it fails** (`run_regression.tcl:478-490`). The driver nearly "corrected" 76 to 75 on that basis before reading it — counting `.log` lines is not counting cases |
+| **In flight** | nothing at this commit. **Stage 13 task 1's crew (the deck half) is dispatched immediately after it** |
+| **Next** | **Stage 13** — task 1 the deck half (state, all seven/five arguments padded, both injection routes, readouts, refusals, the seed sentence's logic), then task 2 the GUI half. Then **14** (PSS — ⚠ Stage 12 says the `eprvcd` line must not follow `pss` until measured on the fork), **16**, and ⚖ R10's specification |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **564 strings from 30 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **177 rule / 67 look / 11 suite**, measured 2026-09-15. ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
+| **Debt queue** | **178 rule / 68 look / 11 suite**, after Stage 12. ⚠ Two `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`) and `ase-digital-pane-run-end-1465` (the before/after pair is in `evidence/`). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,22 +87,17 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect Stage 12's crew** — receipt `receipts/40-stage-12-event-results.md`. Verify
-   independently against `evidence/m9-event-vcd-attach.md`: that the emitted `eprvcd` names only
-   inventory nodes and sits after `write` (**run it on 45.2 with an analog node in the deck** —
-   row #9 is what a fork-only check misses), that the event database now reaches the run's end in
-   the viewer (**a screenshot, not a `RESULT:` line** — the headless half of M9 said *yes* and only
-   the pixels found the defect), and that `test_ase_cosim` RD1–RD11 are unmoved. Both arms, both
-   binaries, T1 solo, ledger, commit.
-2. **Stage 13** — transient noise and `trrandom`. `evidence/randomness-stage11.md` already carries
-   the seed measurements (`setseed` is a command; `set rndseed=` is an inert readback) and
-   `binary-differences.md` says `trnoise` is unreproducible on both binaries under one seed, so the
-   *honest seed sentence* has its facts before a crew is briefed.
-3. **Stage 14** — PSS, explicitly experimental (⚖ R7 answered, Option A). The two binaries disagree
-   about whether `pss` exists at all; read `evidence/pss-stage14.md` first.
-
-**Also owed, and not stage work:** the one-line explicit `exit` on `test_ase_conv_gui_1460` —
-✅ **done 2026-09-15**, verified 45 headless / 104 display, rc 0 each.
+1. **Collect Stage 13 task 1** — receipt `receipts/41-stage-13-deck.md`. Verify independently: all
+   seven `trnoise` and all five `trrandom` arguments emitted **padded**, on both binaries; the seed
+   sentence's logic **split by noise kind** (white and 1/f never reproducible; RTS and `trrandom`
+   under `setseed` in `.control`); `src/ase_window.tcl` md5-unchanged; Stage 12's `eprvcd` line and
+   the positional anchors unmoved; and the negative-`TS` refusal measured **on the fork only, under
+   `timeout`** — it hangs ngspice. Both arms, T1 solo, ledger, commit.
+2. **Stage 13 task 2** — the GUI half. Decide its `look` debt by measurement (PLAN says none; Stage
+   12's C5 says a change to what a pane draws is a pixel deliverable).
+3. **Stage 14** — PSS, explicitly experimental (⚖ R7, Option A). The two binaries disagree about
+   whether `pss` exists; read `evidence/pss-stage14.md` first, and measure `eprvcd` after `pss` **on
+   the fork** before any mixed-signal PSS deck carries it.
 
 ---
 
@@ -940,6 +935,23 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 12 — event-driven results, issue **1465**, collected 2026-09-15 — **STAGE 12 IS COMPLETE**
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+626/−6** — an event-node inventory taken by a **cached probe run** with the run's own words in the run's own directory (`ase::event_nodes` the door, `ase::event_nodes_peek` never starts a program); `eprvcd` in groups of 93 at the end of each **transient's** block; `ase::last_vcdfiles` serving it; two cautions; the `.probe alli` refusal on two tiers. **Three adapter hooks** (`event_probe`, `event_inventory`, `xspice_caveat`), no fallback. **And C** — `src/vcd_read.c` +32/−2, `src/scheduler.c` +24/−3, `src/xschem.h` +4: `xschem raw read <f> vcd -end <seconds>`. `src/ase_window.tcl` untouched |
+| **why C** | ⚠ **The deck cannot write the run end.** `$&` prints a 30 ns end in fs as **`3E+07`** on both binaries, `numdgt` inert — so the end is the reader's, supplied by `ase::attach_dbs` from the analog database beside a **transient** only |
+| **driver's own re-run** | headless: `test_ase_events_1465` **87**, `test_ase_cosim` **341**, `test_vcd_read` **156**, `test_raw_read_dispatch` **137**, `test_vcd_time_base` **112**, `test_ase_simreg_0931` **117**, `test_ase_predeck_1439` **78**, `test_ase_core` **638**, `test_ase_campaign_1462` **133**. Display: `test_ase_events_1465` **87**, `test_wave_crossdb_trace` **130**, `test_wave_sigbrowser_digital` **82**, `test_ase_window` **295**. **All rc 0, all matching the receipt.** `make -q` rc 0 — the binary is the sources' |
+| **byte identity** | `tracked 104 bad {} control_disagrees 1 control_agrees 1`, driver-re-run through the shared helper |
+| **the pixels, independently** | the driver re-ran **its own** M9 script on **its own** M9 artefacts through the unchanged `wviewer::attach_raw`: `din`/`dout` now reach **30 ns**, where this morning they stopped at 26.3. The crew's before/after pair (`evidence/stage12-{after,noend}-apt.png`) differs exactly there |
+| **sabotage** | **45 mutations, 45 killed by name.** ⚠ The crew **discarded its own first C arm**: a `cp -p` restore left `make` keeping a mutated object, with every source md5-identical, and only its **positive restored-tree row** noticed (C8, now in the CREW_BRIEF). Driver's own **D1** — `attach_dbs` never passes an end — reds **EE6/apt, EE6/fork** by name; restored md5-identical, `ALL PASS (87)` |
+| **⚠ the export line after `tf`** | **segfaults both binaries** (rc 139), found by sabotage T13. **Driver re-confirmed on the fork only** (rc 139; after `dc`, rc 0 and 224 bytes, the crew's figure). Recorded as an agreement in `binary-differences.md` |
+| **⚠ two breaches of one rule** | *Never crash the user's simulator.* **The driver** aborted `/usr/bin/ngspice` twice this morning characterising M9 — the second deliberately — and **the crew** re-ran the `tf` crash directly on 45.2 to confirm it. Both felt like measurement. The CREW_BRIEF now says **the rule covers a confirmation too**: characterise on the fork |
+| **T1** | ✅ **Solo on the finished tree: 77 cases, ZERO counted lines in `tests/results.log`, 346 s** — the new suite joined `hcases` (76 case logs plus `xschemtest.tcl`, which logs only when it fails). No `untitled~.sch` in the repo root afterwards |
+| **ledger debts** | `rule 1465` (R9-557 … R9-564; **564 strings from 30 issues** — R9-564 is continuation-joined in source, which is the review's own method) · **`look ase-digital-pane-run-end-1465`**, filed against §12's *no new look debt*, which the crew showed stale. Queue **177/67/11 → 178/68/11** |
+| **corrections** | **C1** `trtol` is lowered for **any** `a` card · **C2/C3** the plan's size was wrong by 5× and missed a language · **C4** the `edisplay` parse is the adapter's · **C5** a change to what a pane draws is a pixel deliverable · **C7** the export follows a transient only · **C8** C restores without `-p` · **C9** three rows read `run_cmd`'s body · **C10** `test_node_token_split` leaves `untitled~.sch` in the repo root — **issue 0609's class, open, 80 suites wide**; no new issue · **C11** M13 reproduces on 45.2 too. **Nothing in the driver's M9 evidence was wrong** (C6) |
+| **receipt** | `receipts/40-stage-12-event-results.md` |
 
 ### ✅ Debt M9 — PAID BY THE DRIVER before Stage 12 was briefed, 2026-09-15 — plus the 1460 `exit`, and a ledger that had drifted
 
@@ -4429,20 +4441,40 @@ own proof.
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ✅ **COMPLETE, as one task** — issue **1465**. ⚠ Not the plan's size: `src/ase.tcl` **+626** plus **C** (`vcd_read.c`, `scheduler.c`, `xschem.h`), against §12's *≈ +120, no C* |
+| commit | the `feat(1465)` commit that carries this row |
+| T1 | solo on the finished tree — the figure is in the *Stage 12* block above |
+| suites moved | **new** `test_ase_events_1465` **87 headless / 87 display** (T1 runs it headless). Every neighbour unmoved on both arms — 30 headless and 13 display suites by the crew, 13 of them re-run by the driver — including `test_ase_cosim` RD1–RD11 (**341**) and `test_ase_window` W1m (**295** display) |
+| sabotage | **45 mutations, 45 killed by name**, zero restore mismatches — after the crew **discarded its own first C arm**, which a `cp -p` restore had run against a stale binary. Driver's own: D1 (no run end passed) → **EE6/apt, EE6/fork** red, restored `ALL PASS (87)` |
+| ledger debts | `rule 1465` (R9-557 … R9-564, **564 strings from 30 issues**) · `look ase-digital-pane-run-end-1465`. Queue **177/67/11 → 178/68/11** |
+| spec paragraphs rewritten | §12's Transport bullet and M9 paragraph (by the driver's M9 measurement); the `trtol` scope (any `a` card), *Files and procs* (size and C), and the *no new look debt* clause (by the crew's receipt); the M13 row |
+| receipt | `receipts/40-stage-12-event-results.md` |
 
 ### What Stage 12 learned that binds later stages
 
 ---
 
 ## Stage 13 — Transient noise and `trrandom`
+
+### 📋 Stage 13's task split, decided by the driver before the stage opens — 2026-09-15
+
+`PLAN.md` §13 says *"one commit"*. It is **two crew tasks**, on the principle Stages 8–11 were
+split on: the deck half and the pixel half are separated so that any **`look` debt is
+attributable to exactly one commit**.
+
+| task | what | why it is one task |
+|---|---|---|
+| **1** | the noisy-source state; `trnoise`/`trrandom` emission, **all seven / all five arguments, padded**; **both injection routes**; the derived readouts as core procs; the refusals; the `notrnoise` row; the seed sentence's logic, split by noise kind | everything the deck sees, and everything a second GUI would read. **Headless by construction — `src/ase_window.tcl` md5-unchanged** |
+| **2** | the Tran form's collapsible section, its rows, the greying of stimulus-bearing sources, the live readouts, the sentence on screen | the whole pixel half, and the whole of this stage's `look` question |
+
+⚠ **Two things decided before any crew reads the plan, because the plan says otherwise.**
+**(a) `PLAN.md` §13's *"no new look debt is filed"* is suspect on sight**: Stage 12's C5 established
+that *a change to what a pane draws is a pixel deliverable*, and a new collapsible section with rows
+and live numbers is more than that. Task 2 decides it by measurement. **(b) The seed sentence is
+split by noise kind**: white and 1/f `trnoise` are irreproducible under every control on both
+binaries, while RTS and `trrandom` are reproducible under `setseed` in `.control` — identically
+across the binaries for `trrandom` (`evidence/trnoise.md` §4, `events-and-trnoise.md` Part 2,
+`randomness-stage11.md`). A sentence about "noise" in general would be false for half the rows.
 
 *The Tran form's collapsible section; both injection routes; all seven / all five arguments
 padded; the derived readouts; the rms `meas`; the `notrnoise` row; the honest seed sentence.*

@@ -709,6 +709,11 @@ proc ase::register_backend {name hooks} {
   ## `ase::campaign_axis_kinds` caches the hook's answer per BACKEND NAME, and
   ## registering `$name` is the one event that changes what that answer is.
   ase::campaign_kinds_cache_clear $name
+  ## --- 1465 (Stage 12): AND THE EVENT INVENTORY, same place, same reason. Its
+  ## answers were read by the backend being replaced; a new `event_probe` may ask
+  ## a different question. Caught: the cache is defined further down this file,
+  ## after the first registrations some suites make.
+  catch {ase::event_inv_clear}
   return $name
 }
 
@@ -12330,6 +12335,25 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
  outright on one" \
         "select the `sparse` solver for this run"]
     }
+    xspice {
+      # ⚠ ISSUE 1465 (Stage 12): WHAT A SIMULATOR DOES TO A MIXED CIRCUIT. The
+      # evaluator is ASE-L's and every word of the verdict is the adapter's
+      # (`xspice_caveat`), which is the split D34 asks for and the one the
+      # `cider_klu` arm above predates. ASE-L hands over the two things it
+      # holds: the netlist facts and the MEASURED inventory (`evtinv`, `{}` when
+      # nothing was measured -- which the adapter must read as "unknown", never
+      # as "none"). ⚠ A BACKEND WITH NO HOOK GETS NO CAUTION: absent means not
+      # described, and a caution nobody wrote would be ASE-L speaking for a
+      # simulator it knows nothing about.
+      set h {}
+      catch {set h [ase::backend_hook $sim xspice_caveat]}
+      if {$h eq {}} { return {} }
+      set inv {}
+      if {[dict exists $facts evtinv]} { set inv [dict get $facts evtinv] }
+      set v {}
+      catch {set v [$h $type $facts $inv]}
+      return $v
+    }
   }
   return {}
 }
@@ -13082,6 +13106,41 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   # process pointless.
   set pfacts {}
   catch { set pfacts [ase::netlist_facts $netlist_text] }
+  ## --- 1465 (Stage 12): THE MEASURED INVENTORY RIDES WITH THE FACTS -------
+  ## So the `xspice` precondition can tell a DC sweep over MEASURED digital nodes
+  ## from one over an `a` card nobody has asked about, and so the dialog's banner,
+  ## which is handed these facts by the donate below, says the same thing the gate
+  ## says. From the PEEK: the gate starts no program of its own.
+  if {$pfacts ne {}} {
+    catch { set pfacts [ase::event_facts $simname $state $netlist_text $pfacts] }
+  }
+  ## --- 1465: A CIRCUIT THE SIMULATOR REFUSES OUTRIGHT IS A REFUSAL ---------
+  ## ⚠ ABOVE THE `ase_preflight` ESCAPE, for 1424's reason and a sharper one:
+  ## `.probe alli` beside a digital node makes ngspice exit before it simulates
+  ## anything, so there is no run for a user to force. ⚠ ONLY WHAT WAS MEASURED:
+  ## an earlier run's inventory of this very circuit. A circuit measured for the
+  ## first time is refused one tier later, by render_deck, after ase::run_deck has
+  ## taken the inventory -- and that later refusal writes no deck.
+  set evref {}
+  catch { set evref [ase::event_refusals $simname $state $netlist_text] }
+  if {[llength $evref]} {
+    set plines {}
+    foreach er $evref {
+      set l "ase: this circuit cannot run: [lindex $er 2]"
+      ::ase::echo $l error
+      lappend plines $l
+      if {[lindex $er 3] ne {}} {
+        set l "ase:   fix: [lindex $er 3]"
+        ::ase::echo $l error
+        lappend plines $l
+      }
+    }
+    set l "ase: Nothing was generated: no deck, no raw, no log.\
+ `set ase_preflight 0` does NOT disable this check."
+    ::ase::echo $l error
+    lappend plines $l
+    return -code error [join $plines "\n"]
+  }
   ## 1435: HAND THEM TO THE SLOT SO THE DIALOG NEVER RECOMPUTES THEM. A donate
   ## fills only a slot ase::netlist_in_place already opened for THIS deck path,
   ## so ase::run_existing -- which never re-netlists -- donates nothing.
@@ -15633,6 +15692,13 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## the wrong placement. Caught for ase::meas_path's raise on a state with no
   ## design cell, the shape the five lines above already tolerate.
   catch {file delete -- [ase::meas_path $state]}
+  ## --- 1465 (Stage 12): AND THE EVENT VCDs, for the co-simulation VCDs' reason
+  ## four lines up the proc. They are written by a command that runs AFTER the
+  ## analog `write`, so the analog half can succeed while the digital half
+  ## writes nothing -- and ase::last_vcdfiles decides with `file isfile`, so a
+  ## survivor would be served beside THIS run's raw as though it were this run's.
+  ## ⚠ WITH ITS SIBLINGS, below the gate, for 1430's reason.
+  catch {ase::event_vcd_clear $state}
   ## --- §7d (issue 1439): AND THE PRE-DECK FILE, WHICH IS ⚖ R2 CONDITION 1 ---
   ## It joins the list one line up for the rawfile's reason and for a sharper
   ## one. A stale rawfile serves last run's numbers; a stale pre-deck file
@@ -15729,6 +15795,33 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## re-checks render_deck's own two gates and the captured block, so a run that
   ## asks for nothing still asks the shape question zero times.
   catch {ase::op_tier_report $sim $state $netlist_text}
+
+  ## --- 1465 (Stage 12): TAKE THE EVENT INVENTORY, THEN RENDER --------------
+  ## render_deck reads only the PEEK, so this is the line that decides whether
+  ## this run exports its digital half, which names it exports, and whether the
+  ## simulator refuses the circuit outright (render_deck then raises, below, and
+  ## no deck is written).
+  ##
+  ## ⚠ HERE AND NOT AT THE GATE, BECAUSE THE QUESTION MUST BE ASKED IN THE RUN'S
+  ## OWN ROOM. The pre-deck start-up file was delivered, and the co-simulation
+  ## models were built, a few lines up; a probe taken before them would read the
+  ## PREVIOUS run's start-up file -- and a case mode that spelt a name one way
+  ## for the probe and another for the run would put a non-event word on the
+  ## export line, which aborts apt 45.2. The gate still refuses what an EARLIER
+  ## run measured, before anything is deleted.
+  ##
+  ## ⚠ CAUGHT, for cap_report's reason: a probe that cannot run must never stop
+  ## the run it was only asked about. It is also the rule the pin below states --
+  ## nothing between the arm and the disarm may raise uncaught. Silent for every
+  ## circuit with no `a` card, which starts no program at all.
+  catch {
+    set _evinv [ase::event_nodes $sim $state $netlist_text]
+    set _evbad [ase::state_get $_evinv unexportable {}]
+    if {[llength $_evbad]} {
+      ::ase::echo "ase: left out of the VCD, because the export command cannot\
+ take these digital node names: [join $_evbad {, }]" error
+    }
+  }
 
   ## ⚠ CAUGHT ONLY TO RELEASE THE PIN, AND RE-RAISED UNCHANGED -- message,
   ## stack and error code. This is the one statement between the arm and the
@@ -17473,10 +17566,38 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
     if {$i == $cur} { continue }
     catch {xschem raw clear $i}
   }
+  ## --- 1465 (Stage 12): THE RUN END, HANDED TO EVERY DIGITAL DATABASE ------
+  ## A VCD's traces stop at its last `#t` (vcd_read() DECISION 2), and ngspice's
+  ## `eprvcd` ends its file on the LAST VALUE CHANGE -- so `dout`, which goes to 1
+  ## at 26.3 ns and stays there, was drawn ENDING at 26.3 ns in a 30 ns run. The
+  ## headless half of debt M9 answered *yes* with every number right; only the
+  ## pixels showed it. The one thing that knows where the run ended is the analog
+  ## database just read, which is the current one here, so its last scale value
+  ## is the end every VCD of this attach is extended to.
+  ##
+  ## ⚠ ONLY A TIME AXIS HAS AN END A VCD SHARES. A VCD beside an `ac` or a `dc`
+  ## database has no common axis with it, so no end is passed and the read is
+  ## exactly what it was. ⚠ AND IT ONLY EVER EXTENDS: an end at or before a file's
+  ## own last timestamp changes nothing, so a co-simulation VCD whose writer
+  ## already stamps the end reads as before.
+  set vend {}
+  catch {
+    if {[xschem raw sim_type] eq {tran}} {
+      set np [xschem raw points]
+      set sc [lindex [split [xschem raw list] "\n"] 0]
+      if {[string is integer -strict $np] && $np > 0 && $sc ne {}} {
+        set e [xschem raw value $sc [expr {$np - 1}]]
+        if {[string is double -strict $e] && $e > 0} { set vend $e }
+      }
+    }
+  }
+  set vopt [expr {$vend ne {} ? [list -end $vend] : {}}]
   set got {}; set skipped {}
   foreach v $vcdfiles {
     if {$v eq {} || ![file isfile $v]} { lappend skipped $v; continue }
-    if {[catch {xschem raw read $v vcd} r] || $r ne {1}} { lappend skipped $v; continue }
+    if {[catch {xschem raw read $v vcd {*}$vopt} r] || $r ne {1}} {
+      lappend skipped $v; continue
+    }
     lappend got $v
   }
   # the analog DB is slot 0: it is the only survivor of the loop above, and
@@ -17518,7 +17639,215 @@ proc ase::last_vcdfiles {key} {
     set v [ase::state_get $e vcd]
     if {$v ne {} && [file isfile $v]} { lappend out $v }
   }
+  ## --- 1465 (Stage 12): AND THE RUN'S OWN EVENT-DRIVEN RESULTS ------------
+  ## PLAN.md §12's "one list append". Same "file existence == has results"
+  ## contract as every line above, so a fresh session that never ran serves them
+  ## too. ⚠ AFTER the co-simulation VCDs, so a deck that has both keeps every
+  ## database index it had before this stage.
+  foreach v [ase::event_vcd_files $state] { lappend out $v }
   return $out
+}
+
+# ─── STAGE 12: THE DIGITAL HALF OF AN ORDINARY RUN ─────────────── issue 1465 ──
+#
+# XSPICE is compiled into every ngspice this batch supports, so a deck with a
+# digital gate in it is an ordinary deck -- and until this block its digital half
+# never reached the window. The rawfile cannot carry it (`write <f> all` omits
+# every event node without a word, and naming one writes a zero-padded vector)
+# and `-b -r` discards it, so it travels as a VCD beside the rawfile, through the
+# attach the co-simulation VCDs already use. PLAN.md §12;
+# doc/claude/ase_analyses_batch/evidence/m9-event-vcd-attach.md.
+#
+# ⚠ SCHEMA HERE, CONTENT IN THE ADAPTER (D34-D37). ASE-L owns where the VCDs live,
+# which files a run promises, the inventory's cache and its shape, the refusal
+# frame and the run end of the attach. The adapter owns how the simulator is asked
+# which nodes are event-driven, what its answer looks like, the export command, its
+# argument cap, which names that command can take, and every sentence about what
+# the simulator does to such a circuit. ⚠ A BACKEND WITH NO `event_probe` HOOK GETS
+# NO INVENTORY, NO EMISSION, NO CAUTION AND NO REFUSAL -- never a fallback.
+#
+# THE INVENTORY, as one dict:
+#   {known 1 nodes {<name> <type> ...} fatal {} unexportable {<name> ...}}
+#   {known 1 nodes {} fatal {{<id> <sentence> <fix>} ...} unexportable {}}
+#                                     the simulator refused the circuit outright
+#   {known 0 why <token> ...}         nobody could tell; nothing downstream acts
+#
+# ⚠ IT IS MEASURED, NOT PARSED OUT OF THE NETLIST. Which ports of an `a` card are
+# digital is a fact about each code model's interface, and the one refusal this
+# stage carries depends on exactly that: `.probe alli` beside an analog-only `a`
+# card runs at rc 0, beside a digital one it exits 1 (measured 2026-09-15, both
+# binaries). So the adapter asks the simulator, once per distinct circuit, and the
+# answer is cached here.
+
+# Where the run's event VCD number `i` lives: `<rundir>/<cell>_ase_evt.vcd`, then
+# `<cell>_ase_evt_2.vcd` ... for a circuit with more event nodes than the
+# adapter's export command takes at once.
+proc ase::event_vcd_path {state {i 1}} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (event_vcd_path)"
+  }
+  set cell [dict get $state design cell]
+  set sfx [expr {$i > 1 ? "_$i" : {}}]
+  return [file join [ase::rundir $state] ${cell}_ase_evt${sfx}.vcd]
+}
+
+# The bound on how many event VCDs one run may promise. The adapter's chunking
+# stops here too, so nothing is ever written that this walk would not serve.
+proc ase::event_vcd_max {} { return 1000 }
+
+# The event VCDs that exist on disk, in order, CONTIGUOUS from the first -- the
+# deck writes them in that order and never skips one, so a gap means the files
+# after it belong to some other run.
+proc ase::event_vcd_files {state} {
+  set out {}
+  for {set i 1} {$i <= [ase::event_vcd_max]} {incr i} {
+    if {[catch {ase::event_vcd_path $state $i} p] || ![file isfile $p]} { break }
+    lappend out $p
+  }
+  return $out
+}
+
+# Delete them before a run, for the reason ase::cosim_clear_artifacts gives: the
+# VCD is written by a command that runs AFTER the analog `write`, so the analog
+# half can succeed while the digital half writes nothing -- and ase::last_vcdfiles
+# decides with `file isfile`, so a survivor would be served beside THIS run's raw.
+proc ase::event_vcd_clear {state} {
+  set gone {}
+  foreach p [ase::event_vcd_files $state] {
+    if {![catch {file delete -- $p}]} { lappend gone $p }
+  }
+  return $gone
+}
+
+# The throwaway deck the inventory is taken with. It lives in the run directory
+# because the simulator must run THERE -- the run's own start-up file and any
+# relative model paths resolve against it -- and it is deleted the moment the
+# answer is in.
+proc ase::event_probe_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (event_probe_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase_evtprobe.spice]
+}
+
+namespace eval ase { variable event_inv [dict create] }
+proc ase::event_inv_clear {} {
+  variable event_inv
+  set event_inv [dict create]
+  return {}
+}
+
+# What the adapter would ask, or `{}` when there is nothing to ask: no hook, or a
+# circuit the adapter says cannot hold an event node. `{deck <text> argv <list>}`.
+proc ase::event_probe {sim state netlist_text} {
+  variable backends
+  if {![dict exists $backends $sim event_probe]} { return {} }
+  if {[catch {[ase::backend_hook $sim event_probe] $state $netlist_text} p]} {
+    return {}
+  }
+  if {[catch {dict exists $p deck}] || ![dict exists $p deck] ||
+      ![dict exists $p argv]} { return {} }
+  return $p
+}
+
+# ⚠ THE KEY IS THE WHOLE QUESTION: the program, its arguments, its stamp and the
+# deck. Two runs that would parse the same circuit with the same program share an
+# answer; a changed netlist, a changed include path, a different registered
+# binary or a rebuilt one each ask again. DECLARED LIMIT: an included file edited
+# IN PLACE keeps its path and so keeps the answer -- the next netlist change, or a
+# rebuilt binary, is what refreshes it.
+proc ase::event_inv_key {probe} {
+  set argv [dict get $probe argv]
+  set stamp {}
+  catch {set stamp [ase::cap_stamp [lindex $argv 0]]}
+  return [list $argv $stamp [dict get $probe deck]]
+}
+
+# THE FREE PEEK -- never starts a program; `{}` when nothing has been measured.
+# render_deck, the gate and the refusal evaluator read this and only this, so the
+# deck, the refusal and the cautions are answers about ONE measurement.
+proc ase::event_nodes_peek {sim state netlist_text} {
+  variable event_inv
+  set p [ase::event_probe $sim $state $netlist_text]
+  if {$p eq {}} { return {} }
+  set k [ase::event_inv_key $p]
+  if {[dict exists $event_inv $k]} { return [dict get $event_inv $k] }
+  return {}
+}
+
+# THE COLD DOOR: take the inventory if it is not already known. Called by the two
+# places that are about to render a deck that will RUN -- ase::run_deck and
+# ase::campaign_prepare -- and by nothing that merely shows one.
+#
+# ⚠ NEVER RAISES, AND AN ANSWER NOBODY WORKED OUT IS NEVER REMEMBERED -- issue
+# 0950's rule for the capability cache, for its reason: a probe that timed out, or
+# a circuit that did not parse, says nothing about the circuit, and remembering it
+# would switch the digital half off until the netlist changed.
+proc ase::event_nodes {sim state netlist_text} {
+  variable event_inv
+  variable backends
+  set p [ase::event_probe $sim $state $netlist_text]
+  if {$p eq {}} { return [dict create known 0 why noprobe] }
+  set k [ase::event_inv_key $p]
+  if {[dict exists $event_inv $k]} { return [dict get $event_inv $k] }
+  if {![dict exists $backends $sim event_inventory]} {
+    return [dict create known 0 why noprobe]
+  }
+  if {[catch {ase::event_probe_path $state} dp]} {
+    return [dict create known 0 why noplace]
+  }
+  if {[catch {
+    set f [::open $dp w]
+    puts -nonewline $f [dict get $p deck]
+    ::close $f
+  } werr]} {
+    return [dict create known 0 why noplace detail $werr]
+  }
+  set rc [catch {[ase::backend_hook $sim event_inventory] $state $p $dp} ans]
+  catch {file delete -- $dp}
+  if {$rc} { return [dict create known 0 why raised detail $ans] }
+  if {[catch {ase::state_get $ans known 0} kn] || $kn ne {1}} { return $ans }
+  if {[dict size $event_inv] >= 16} {
+    set event_inv [dict remove $event_inv [lindex [dict keys $event_inv] 0]]
+  }
+  dict set event_inv $k $ans
+  return $ans
+}
+
+# The nodes the deck will export, or `{}`: only a MEASURED answer counts.
+proc ase::event_nodes_known {inv} {
+  if {$inv eq {} || [catch {ase::state_get $inv known 0} kn] || $kn ne {1}} {
+    return {}
+  }
+  return [ase::state_get $inv nodes {}]
+}
+
+# THE CIRCUIT-LEVEL REFUSALS, as `{<id> fatal <sentence> <fix>}` rows -- the
+# precheck's own row shape, so the gate and render_deck print them the way they
+# print every other fatal precondition. Read from the PEEK only: a refusal is
+# never a guess, so an unmeasured circuit is refused by nothing here.
+proc ase::event_refusals {sim state netlist_text} {
+  set inv {}
+  catch {set inv [ase::event_nodes_peek $sim $state $netlist_text]}
+  if {$inv eq {} || [catch {ase::state_get $inv known 0} kn] || $kn ne {1}} {
+    return {}
+  }
+  set out {}
+  foreach fr [ase::state_get $inv fatal {}] {
+    lassign $fr id sentence fix
+    lappend out [list $id fatal $sentence $fix]
+  }
+  return $out
+}
+
+# Facts plus the inventory, for the precondition evaluator. `evtinv` is the peek,
+# `{}` when unmeasured, which the adapter reads as "unknown" and not as "none".
+proc ase::event_facts {sim state netlist_text facts} {
+  set inv {}
+  catch {set inv [ase::event_nodes_peek $sim $state $netlist_text]}
+  dict set facts evtinv $inv
+  return $facts
 }
 
 # --- F2: which VCD scope holds THIS instance's digital signals ---------------
@@ -20434,6 +20763,12 @@ proc ase::campaign_prepare {sim state netlist_text} {
   ## `campaign/` directory behind with nothing in it: no index, no shards, and
   ## nothing to say which of those it was. The refusals above this call already
   ## take care to leave nothing behind; this is the same rule one line further in.
+  ## --- 1465 (Stage 12): THE NOMINAL DECK EXPORTS WHAT EVERY SHARD EXPORTS.
+  ## Each shard goes through ase::run_deck, which takes the event inventory
+  ## before it renders; without the same step here `diff campaign/deck.spice
+  ## shard-0007/deck.spice` would show the export line as a difference that no
+  ## point of the campaign actually made. Caught: it is a question, never a gate.
+  catch {ase::event_nodes $sim $state $netlist_text}
   set deck [[ase::backend_hook $sim render_deck] $state $netlist_text]
   set d [ase::campaign_dir $state]
   file mkdir $d
@@ -21092,6 +21427,27 @@ namespace eval ase::backend::ngspice {
     }
     if {[llength $rcref]} {
       return -code error "ase: [lindex [lindex $rcref 0] 2]; nothing was rendered"
+    }
+    ## --- 1465 (Stage 12): AND A CIRCUIT THE SIMULATOR REFUSES OUTRIGHT -----
+    ## The same tier a fourth time, and for its own sharper reason: this is the
+    ## tier ase::run_deck reaches AFTER it has taken the inventory, so it is the
+    ## first place a circuit measured for the first time can be refused -- the
+    ## gate only knows what an earlier run measured. ⚠ FROM THE PEEK, so a
+    ## caller that never measured (a golden, a preview) is refused by nothing
+    ## here: a refusal is never a guess.
+    set evref {}
+    catch {
+      set evref [::ase::event_refusals [namespace tail [namespace current]] \
+                   $state $netlist_text]
+    }
+    if {[llength $evref]} {
+      return -code error "ase: [lindex [lindex $evref 0] 2]; nothing was rendered"
+    }
+    ## The same peek, once, for the export lines the analysis loop emits.
+    set evnodes {}
+    catch {
+      set evnodes [::ase::event_nodes_known [::ase::event_nodes_peek \
+                     [namespace tail [namespace current]] $state $netlist_text]]
     }
     set lines [split [string trimright $netlist_text "\n"] "\n"]
     while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
@@ -22058,6 +22414,33 @@ namespace eval ase::backend::ngspice {
       ## force before this row's per-analysis settings are taken off.
       foreach _ol $supprepost { lappend lines $_ol }
       foreach _ol $scopepost  { lappend lines $_ol }
+      ## --- 1465 (Stage 12): THIS TRANSIENT'S DIGITAL HALF ---------------------
+      ## `eprvcd` writes the event history the simulator is holding, which is the
+      ## MOST RECENT analysis's -- so the line belongs to this row's block and must
+      ## run before the next analysis starts. A digital pane is a picture over TIME,
+      ## so only a transient carries it.
+      ##
+      ## ⚠ WHERE IT SITS, AND EACH SIDE IS A REASON:
+      ##   * BELOW THE `$sim_status` GUARD -- a transient that failed `quit 1`s
+      ##     before it can export a VCD beside a raw it never wrote;
+      ##   * BELOW `remzerovec` AND THE `write` -- measured in debt M9: when 45.2
+      ##     aborted on an `eprvcd` line, the rawfile ALREADY WRITTEN survived intact
+      ##     at 656 points. So even the failure this line is built to avoid would cost
+      ##     the VCD and not the analog result;
+      ##   * AT THE END OF THE ROW'S BLOCK, BELOW EVERY ANCHOR ANOTHER ISSUE PINNED
+      ##     BY POSITION (1430, 1433, 1434, 0963, 0967, §7e) -- appending here moves
+      ##     none of them, which is the argument §7e's restore lines above made.
+      ##
+      ## ⚠ THE NAMES ARE THE INVENTORY'S AND NOTHING ELSE'S (the adapter's
+      ## event_lines filters them once more). An analog word on this line aborts
+      ## apt 45.2 while the fork accepts it -- a line checked on the fork alone
+      ## would kill every mixed-signal run on the binary most users have.
+      ##
+      ## Empty for every circuit with no measured event node, so no committed deck
+      ## golden moves.
+      if {$type eq {tran} && [dict size $evnodes]} {
+        foreach _el [event_lines $state $evnodes] { lappend lines $_el }
+      }
     }
     # A deck with no enabled analysis at all still carries its print lines, in
     # the one place there is for them -- exactly where they were before.
@@ -22193,12 +22576,23 @@ namespace eval ase::backend::ngspice {
   # from the one that runs is measuring the wrong thing -- which is the class of
   # defect the whole case-mode batch exists to close. The goldens are
   # re-baselined, deliberately, and this paragraph is the reason.
-  proc run_cmd {state deckpath} {
+  proc run_cmd {state deckpath {quiet 0}} {
     set s [ase::sim_status ngspice]
     if {![dict get $s ok]} {
       return -code error "ase: [dict get $s why]"
     }
-    if {[dict get $s why] ne {}} {
+    ## --- 1465 (Stage 12): `quiet` IS THE EVENT INVENTORY'S, AND ONLY ITS ------
+    ## The inventory's probe must start the SAME program with the SAME words --
+    ## `-D casemode`, `-n`, the pre-deck options -- as the run it is taken for: a
+    ## name spelt one way by the probe and another by the run would be a
+    ## non-event word on the run's `eprvcd` line, and on apt 45.2 that aborts the
+    ## simulator (binary-differences.md #9). So the probe asks THIS proc, and
+    ## `quiet` stops it saying the stale-entry sentence a second time for one run.
+    ## ⚠ NOT A SECOND BUILDER: rows P6 (test_ase_simreg_0931) and CM5/CM6
+    ## (test_ase_predeck_1439) read this body for the router call and the word
+    ## order, and this stage's first cut -- which split the words out into a
+    ## `run_argv` -- reddened all three by name.
+    if {!$quiet && [dict get $s why] ne {}} {
       ase::echo "ase: [dict get $s why]" error
     }
     set cmd [list [dict get $s exe] -b]
@@ -24438,7 +24832,7 @@ $_leg
         plots  {{select {Operating Point} role scalars results value label op}}] \
       dc [dict create \
         label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
-        needs  {sweep_target saves_resolve cider_klu} \
+        needs  {sweep_target saves_resolve cider_klu xspice} \
         fields {{name source kind source required 1 label {Sweep variable}} \
                 {name start  kind real   required 1 label {Start}} \
                 {name stop   kind real   required 1 label {Stop}} \
@@ -24473,7 +24867,7 @@ $_leg
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        needs  {saves_resolve points_max cider_klu} \
+        needs  {saves_resolve points_max cider_klu xspice} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \
@@ -25436,6 +25830,229 @@ $_leg
       }
     }
     return $out
+  }
+
+  # ─── STAGE 12: WHAT ngspice DOES WITH AN EVENT NODE ─────────── issue 1465 ──
+  # CONTENT for the schema block beside ase::last_vcdfiles. Every ngspice word
+  # about event-driven results is in this block and nowhere else: `edisplay`,
+  # `eprvcd`, its output, its cap, the names it can take, `trtol`, `xtrtol` and
+  # `.probe alli`. Every fact below was MEASURED 2026-09-15 on apt 45.2 AND the
+  # ngspice-46+ fork, and the two agree on all of them.
+
+  # THE EXPORT COMMAND'S ARGUMENT CAP. `eprvcd` handed 94 names prints `ERROR -
+  # eprvcd currently limited to 93 arguments`, leaves an EMPTY file behind its
+  # redirect and exits 0. So a larger circuit is exported 93 names per VCD.
+  proc event_argmax {} { return 93 }
+
+  # ⚠ WHICH NAMES `eprvcd` MAY BE HANDED -- AND WHY ONE WRONG CHARACTER KILLS 45.2.
+  # Any argument that is not an event node is evaluated as an ANALOG expression,
+  # and apt 45.2 then ABORTS: `*** buffer overflow detected ***`, rc 134, no VCD
+  # (binary-differences.md #9). A name the control-language lexer would split or
+  # substitute is exactly such an argument. MEASURED through `eprint`, which
+  # REPORTS a bad name where `eprvcd` aborts -- so the measurement never crashed
+  # the user's simulator: `_ - + : # @ / .` survive on both binaries; `$` is
+  # variable substitution (`n$1` gives `Error: 1: no such variable`). `% < > '` and
+  # `[ ]` are refused when the netlist is read and `~ = ,` split the name there, so
+  # none of those can name an event node at all. Anything else is dropped from the
+  # line and named to the user -- never guessed at.
+  proc event_exportable {name} {
+    return [regexp {^[A-Za-z0-9_][A-Za-z0-9_.:#@/+-]*$} $name]
+  }
+
+  # THE QUESTION: which nodes of this circuit are event-driven, and what are they
+  # called? `{argv <list> deck <text>}`, or `{}` when there is nothing to ask.
+  #
+  # ⚠ `edisplay` ANSWERS BEFORE A RUN (xspice.md §7.4, re-measured today): the deck
+  # reads the circuit, lists every event node with a count of 0 and simulates
+  # nothing. It then ends `Error: incomplete or empty netlist ... no simulations
+  # run!` at rc 1 -- the expected shape of a deck with no analysis, not a failure.
+  #
+  # ⚠ ONLY A CIRCUIT WITH AN `a` CARD IS ASKED. An event node is a port of an
+  # XSPICE `a` device, so a deck without one has none and costs no launch.
+  # DECLARED LIMIT, the one ase::netlist_facts states for itself: an `a` card that
+  # lives only inside an `.include` is not seen, and that circuit's digital half
+  # stays unexported, exactly as it was before this stage.
+  #
+  # ⚠ THE PROGRAM AND ITS WORDS ARE THE RUN'S OWN (run_cmd, asked quietly), and the deck carries
+  # everything that changes how the circuit is READ -- the netlist, its includes,
+  # its model libraries, its parameters and the bench's `pre_` commands -- and
+  # nothing that WRITES: no analysis, no `write`, no redirection.
+  proc event_probe {state netlist_text} {
+    if {[catch {::ase::netlist_facts $netlist_text} facts]} { return {} }
+    if {![dict exists $facts families xspice]} { return {} }
+    if {[catch {run_cmd $state __ASE_EVENT_PROBE__ 1} full]} { return {} }
+    set argv [lrange $full 0 end-2]
+    if {![llength $argv]} { return {} }
+    set lines [split [string trimright $netlist_text "\n"] "\n"]
+    while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
+      set lines [lrange $lines 0 end-1]
+    }
+    if {[llength $lines] > 0 && [string trim [lindex $lines end]] eq ".end"} {
+      set lines [lrange $lines 0 end-1]
+    }
+    foreach inc [::ase::state_get $state includes] {
+      if {[llength $inc] >= 2 && [dict exists $inc file]} {
+        set incfile [dict get $inc file]
+      } else {
+        set incfile $inc
+      }
+      lappend lines ".include [::ase::expand_path $incfile]"
+    }
+    foreach m [::ase::state_get $state models] {
+      lappend lines ".lib [::ase::expand_path [dict get $m file]] [dict get $m section]"
+    }
+    foreach v [::ase::state_get $state variables] {
+      lappend lines ".param [dict get $v name]=[dict get $v value]"
+    }
+    lappend lines .control
+    foreach pc [::ase::state_get $state pre_commands] {
+      if {[llength $pc] >= 2 && [dict exists $pc cmd]} {
+        set cmdtext [dict get $pc cmd]
+      } else {
+        set cmdtext $pc
+      }
+      lappend lines [::ase::expand_path $cmdtext]
+    }
+    lappend lines edisplay .endc .end
+    return [dict create argv $argv deck "[join $lines "\n"]\n"]
+  }
+
+  # ASK IT, in the run directory, under the tree's standing probe budget.
+  proc event_inventory {state probe deckpath} {
+    set argv [dict get $probe argv]
+    set secs 30
+    catch {set secs [expr {max(1, $::ase::cap_budget_ms / 1000)}]}
+    set wd {}
+    catch {set wd [::ase::rundir $state]}
+    lassign [::ase::cap_run [lindex $argv 0] \
+               [concat [lrange $argv 1 end] [list $deckpath]] $wd $secs] \
+      rc out cut ms
+    if {$cut} { return [dict create known 0 why timeout ms $ms] }
+    set ans [event_parse $out]
+    dict set ans ms $ms
+    return $ans
+  }
+
+  # READ THE ANSWER. Captured verbatim from both binaries, which print it
+  # byte-identically:
+  #
+  #     List of event nodes                        (after a run: "... in plot tran1")
+  #         node name           : type , number of events
+  #
+  #         din                 : d    ,     0
+  #         a_really_long_digital_node_name_x: d    ,     0
+  #
+  # ⚠ THE NAME COLUMN IS `%-20s` AND DOES NOT TRUNCATE, so a long name pushes its
+  # own `:` right up against it, and a name may itself contain `:` (`n:1` is a
+  # legal event node). The row is therefore read from the RIGHT: the LAST ` : `
+  # before a type and a count ends the name.
+  #
+  # `No event node available!` is a MEASURED NO -- an analog-only XSPICE circuit
+  # (a `gain` block) prints it. Anything else is `known 0`: a circuit that did not
+  # parse says nothing about which nodes it would have had.
+  proc event_parse {text} {
+    set nodes [dict create]
+    set bad {}
+    set head 0
+    set none 0
+    set fatal {}
+    foreach l [split $text "\n"] {
+      set l [string trimright $l "\r"]
+      ## ⚠ THE ONE CIRCUIT THIS SIMULATOR REFUSES OUTRIGHT. `.probe alli` beside a
+      ## DIGITAL node: `Error: Dot command '.probe alli' and digital nodes are not
+      ## compatible.` then `ERROR: fatal error in ngspice, exit(1)`, before a single
+      ## analysis -- identical text and rc on both binaries. Beside an analog-only
+      ## `a` card the same card runs at rc 0, which is why this is read from the
+      ## simulator and never from the netlist text.
+      if {[string first {Dot command '.probe alli' and digital nodes are not compatible} $l] >= 0} {
+        set fatal [list [list probe_alli \
+          "this circuit has digital nodes, and with `.probe alli` the simulator exits before it simulates anything" \
+          "remove `.probe alli` from the netlist"]]
+        continue
+      }
+      if {[regexp {^\s*No event node available!\s*$} $l]} { set none 1 ; continue }
+      if {[regexp {^\s*node name\s*:\s*type\s*,\s*number of events\s*$} $l]} {
+        set head 1
+        continue
+      }
+      if {$head && [regexp {^\s+(\S+)\s*:\s*(\S+)\s*,\s*\d+\s*$} $l -> nm ty]} {
+        dict set nodes $nm $ty
+        if {![event_exportable $nm]} { lappend bad $nm }
+      }
+    }
+    if {[llength $fatal]} {
+      return [dict create known 1 nodes {} fatal $fatal unexportable {}]
+    }
+    if {$head} {
+      return [dict create known 1 nodes $nodes fatal {} unexportable $bad]
+    }
+    if {$none} {
+      return [dict create known 1 nodes {} fatal {} unexportable {}]
+    }
+    return [dict create known 0 why unparsed]
+  }
+
+  # THE LINES: one `eprvcd` per group of at most 93 exportable names, each to the
+  # next of ase::event_vcd_path's files. `{}` for a circuit with none.
+  proc event_lines {state nodes} {
+    set ok {}
+    dict for {nm ty} $nodes {
+      if {[event_exportable $nm]} { lappend ok $nm }
+    }
+    set n [event_argmax]
+    set out {}
+    set i 0
+    for {set s 0} {$s < [llength $ok] && $i < [::ase::event_vcd_max]} {incr s $n} {
+      incr i
+      lappend out "eprvcd [join [lrange $ok $s [expr {$s + $n - 1}]] { }] >\
+ [::ase::event_vcd_path $state $i]"
+    }
+    return $out
+  }
+
+  # THE TWO CAUTIONS A MIXED CIRCUIT IS OWED -- both describe a run that completes
+  # and gives a number, so both are `caution`, never a refusal. `{}` when neither
+  # applies. `inv` is ASE-L's peek: `{}` means UNMEASURED, not "no event nodes".
+  proc xspice_caveat {type facts inv} {
+    set adev [expr {[dict exists $facts families xspice] ? 1 : 0}]
+    set known 0
+    set nnodes 0
+    if {$inv ne {} && ![catch {dict get $inv known} kn] && $kn eq {1}} {
+      set known 1
+      catch {set nnodes [dict size [dict get $inv nodes]]}
+    }
+    switch -exact -- $type {
+      tran {
+        ## ⚠ ANY `a` CARD, NOT ONLY A DIGITAL ONE. `cktdojob.c` tests
+        ## `CKTadevFlag`, which the parser sets for every `a` card: an analog-only
+        ## `gain` block printed `Reducing trtol to 1 for xspice 'A' devices` exactly
+        ## as a digital chain did, on both binaries. PLAN.md §12 says "whenever
+        ## event nodes exist", which is narrower than what the simulator does.
+        ## `set xtrtol=7` printed `Override trtol to 7 for xspice 'A' devices` on
+        ## both -- so the remedy is real, and it is a command, which is what an
+        ## analysis's verbatim lines carry.
+        if {$adev || $nnodes} {
+          return [list caution \
+            "this circuit has XSPICE devices, so the simulator lowers trtol to 1 and takes smaller time steps than the options ask for" \
+            "add `set xtrtol=<n>` to this analysis's verbatim lines to choose the value yourself"]
+        }
+      }
+      dc {
+        ## ⚠ EVENT NODES, NOT `a` CARDS -- no digital node, no bridge to fail. A
+        ## MEASURED "none" is silent; an unmeasured circuit with an `a` card is
+        ## cautioned, because that is the circuit this could be. The failure
+        ## (xspice.md §12.1) reproduces on BOTH binaries -- `v(out)` stays at 3.3 V
+        ## for the whole sweep -- and the remedy (§12.2, the bridge written ahead
+        ## of the gate) turns it at 1.8 V on both. It has no root cause yet: debt
+        ## M13, and this sentence is permanent until that closes.
+        if {($known && $nnodes) || (!$known && $adev)} {
+          return [list caution \
+            "a DC sweep does not always reach digital nodes through the bridges the simulator inserts on its own" \
+            "write the bridge devices into the netlist yourself, ahead of the digital devices"]
+        }
+      }
+    }
+    return {}
   }
 
   proc analysis_caveat {type caps} {
@@ -27530,5 +28147,8 @@ $_leg
     campaign_control_lines  ::ase::backend::ngspice::campaign_control_lines \
     campaign_seed_option    ::ase::backend::ngspice::campaign_seed_option \
     campaign_seed_notes     ::ase::backend::ngspice::campaign_seed_notes \
-    campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals]
+    campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals \
+    event_probe         ::ase::backend::ngspice::event_probe \
+    event_inventory     ::ase::backend::ngspice::event_inventory \
+    xspice_caveat       ::ase::backend::ngspice::xspice_caveat]
 }

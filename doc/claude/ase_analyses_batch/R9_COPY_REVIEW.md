@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**556 strings, from 29 issues, grouped by where the user sees them** — not by
+**564 strings, from 30 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -7761,3 +7761,107 @@ ase: this campaign has no points to run
 
 
 *Where:* the campaign result table.
+
+## Issue 1465 — a mixed-signal run's digital half (stage 12, event-driven results)
+
+*8 entries.* ⚠ **Every clause is the ADAPTER's** (`ase::backend::ngspice::xspice_caveat` and
+`event_parse`) **and every frame is ASE-L's** (`ase::preflight_gate`, `render_deck`'s tier,
+`ase::run_deck`) — the split `cider_klu`, the precondition beside them, predates. The two cautions
+reach the user through the existing precheck surfaces (the gate's pre-run advice and the dialog's
+banner) with the frame those already print: `ase: the <type> analysis: <sentence>. Fix: <fix>`.
+
+⚠ **One entry carries a claim the user should weigh**: R9-559's DC caution is **permanent until
+debt M13 closes** — it has a reproducer on both binaries and no root cause.
+
+**R9-557** · caution
+
+```text
+this circuit has XSPICE devices, so the simulator lowers trtol to 1 and takes smaller time steps than the options ask for
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run, and the analysis form's banner.
+
+
+*Note:* fires on ANY `a` card. Measured on both binaries: an analog-only `gain` block prints `Reducing trtol to 1 for xspice 'A' devices` exactly as a digital chain does. ⚠ PLAN.md §12 says "whenever event nodes exist", which is narrower than what the simulator does.
+
+**R9-558** · fix
+
+```text
+add `set xtrtol=<n>` to this analysis's verbatim lines to choose the value yourself
+```
+
+
+*Where:* R9-557's fix.
+
+
+*Note:* measured: `set xtrtol=7` prints `Override trtol to 7 for xspice 'A' devices` on both binaries. "verbatim lines" is the tree's existing name for an analysis's hatch (issue 1419; the Arguments column shows `+ verbatim: N lines`).
+
+**R9-559** · caution
+
+```text
+a DC sweep does not always reach digital nodes through the bridges the simulator inserts on its own
+```
+
+
+*Where:* a `dc` row's precheck, as R9-557.
+
+
+*Note:* fires on MEASURED event nodes, or on an `a` card nobody has measured; a circuit measured to have none is silent. ⚠ **Permanent until debt M13 closes.** `evidence/xspice.md` §12.1 reproduced on BOTH binaries on 2026-09-15 (`v(out)` stays at 3.3 V for the whole sweep).
+
+**R9-560** · fix
+
+```text
+write the bridge devices into the netlist yourself, ahead of the digital devices
+```
+
+
+*Where:* R9-559's fix.
+
+
+*Note:* measured on both binaries (§12.2's `dcsw6.cir`): the same bridge written ahead of the gate turns `v(out)` at 1.8 V.
+
+**R9-561** · refusal
+
+```text
+this circuit has digital nodes, and with `.probe alli` the simulator exits before it simulates anything
+```
+
+
+*Where:* the pre-run gate and `render_deck`'s refusal tier.
+
+
+*Note:* the simulator's own words, measured identical on both binaries, are `Error: Dot command '.probe alli' and digital nodes are not compatible.` then `ERROR: fatal error in ngspice, exit(1)`. Read from the simulator's answer, never from the netlist text: beside an analog-only `a` card the same card runs at rc 0.
+
+**R9-562** · fix
+
+```text
+remove `.probe alli` from the netlist
+```
+
+
+*Where:* R9-561's fix.
+
+**R9-563** · refusal frame
+
+```text
+ase: this circuit cannot run: <sentence>
+```
+
+
+*Where:* the pre-run gate, followed by `ase:   fix: <fix>` and the gate's existing `ase: Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check.`
+
+
+*Note:* ⚠ a NEW frame, because the gate's existing fatal frame is per analysis (`the <type> analysis cannot run`) and this refusal is about the whole circuit. `render_deck`'s tier uses its existing frame, `ase: <sentence>; nothing was rendered`.
+
+**R9-564** · warning
+
+```text
+ase: left out of the VCD, because the export command cannot take these digital node names: <names>
+```
+
+
+*Where:* the CIW, when a run starts.
+
+
+*Note:* a name carrying a character the control-language lexer splits or substitutes (measured: `$`) is never put on the export line, because on apt 45.2 a word that is not an event node ABORTS the simulator. The node is simulated; it is only not shown.

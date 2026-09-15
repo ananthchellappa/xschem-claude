@@ -18,6 +18,24 @@ picking up Stage 1 reads `receipts/05-stage-0-silent-drop.md` first — it carri
 correction Stage 0 made to this plan (**C36**) and the two harness traps that cost two T1
 baselines before one was clean.
 
+## ⚠ A C SABOTAGE IS RESTORED WITHOUT `-p`, AND THE CAMPAIGN ENDS ON A POSITIVE ROW
+
+Stage 12's crew (issue 1465, receipt 40, C8) restored mutated C files with **`cp -p`**. A preserved
+mtime is **older** than the object `make` built from the mutated file, so `make` kept that object:
+two C arms ran with the **previous** mutation still compiled in, and the restored tree's binary carried
+two more — **with every source md5-identical the whole time**. It is CLAUDE.md's *no harness builds*
+trap arriving from the sabotage side instead of the `git stash` side.
+
+**What caught it was the campaign's last row: the suite on the restored tree must be a positive
+`ALL PASS`** — and it came back `3 FAILED`. So, for any campaign that touches C: restore with plain
+`cp`, `make` after every restore, and **end on a positive restored-tree row**. The discarded arm's
+results are discarded, not averaged in.
+
+⚠ **And three rows outside every stage's *Suites that move* list read `run_cmd`'s BODY** —
+`test_ase_simreg_0931` **P6** and `test_ase_predeck_1439` **CM5/CM6** grep it for the router call
+`ase::predeck_argv ngspice $state` and the word order. A refactor that moves those lines reds all
+three (C9).
+
 ## ⚠ A GUARD AGAINST ABSENCE MUST ITSELF BE TESTED AGAINST ABSENCE
 
 This batch's most-met defect is **a defect hiding in the absence of a signal** — a suite that dies
@@ -458,6 +476,14 @@ enabled on this very release (`dpkg -l apport` → `ii 2.34.1-0ubuntu0.1`, `/etc
 because WSL leaves `core_pattern` at `core` and `systemd-coredump` is not installed. On a stock
 Ubuntu desktop the same probe files a crash report blaming the user's simulator. See `PLAN.md`
 §0.13 and the refuse-list.
+
+⚠ **BROKEN TWICE ON 2026-09-15, BY THE DRIVER AND BY A CREW — and both times it felt like a
+measurement rather than a probe.** The driver, characterising M9's `eprvcd` abort, crashed
+`/usr/bin/ngspice` **twice** (rc 134): the first unintended, the second a deliberate variant run to
+find the trigger. Stage 12's crew met `eprvcd` after `tf` segfaulting through a sabotage run —
+unintended — and then **ran the deck directly on 45.2 to confirm it**, which was deliberate. **The
+rule covers a confirmation too.** Once a crash is seen on 45.2, characterise it **on the fork**,
+where a crash is harmless, and carry 45.2's half as the one observation already made.
 
 **Partial results ARE recoverable in `-b`, and the mechanism is checkpointing.** Measured
 2026-09-10 against that binary (`evidence/salvage.md`, APPENDIX §6.8): a `.control` block that

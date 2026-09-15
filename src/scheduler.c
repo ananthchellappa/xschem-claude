@@ -10744,6 +10744,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 3 && !strcmp(argv[2], "read")) {
         /* xschem raw read <file> [<type>] [<sweep1> <sweep2>] [-case <mode>]
+         *                 [-end <seconds>]
          *
          * `-case` is an OPTION, extracted before the positionals are counted,
          * so it may appear anywhere after the subcommand and the three shipped
@@ -10752,11 +10753,29 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * "-case" to atof_spice() as sweep1. <mode> is fold | preserve |
          * distinguish (or 0 | 1); only `distinguish` sets Raw.case_sensitive.
          * NOTHING here folds a name any more -- see read_dataset() in save.c
-         * and doc/claude/specs/raw_case_mode.md */
+         * and doc/claude/specs/raw_case_mode.md
+         *
+         * `-end <seconds>` (issue 1465) is an option for the same reason: the
+         * RUN END a VCD database is extended to. vcd_read() ends a trace at the
+         * file's last `#t` (its DECISION 2), and ngspice's `eprvcd` writes the
+         * last VALUE CHANGE as that timestamp, never the end of the run -- so a
+         * value held from 26.3 ns to the end of a 30 ns transient was drawn as a
+         * trace that stops at 26.3 ns. Only the caller holding the analog
+         * database of the same run knows where the run ended (ase::attach_dbs),
+         * so it says so here. It only ever EXTENDS, and every reader but
+         * vcd_read() ignores it. Reset on every path out, so it cannot reach a
+         * later read that did not ask for it. */
         const char *pos[8];
         int npos = 0, k, cs = -1, n_before;
+        double vend = -1.0;
         for(k = 3; k < argc; ++k) {
-          if(!strcmp(argv[k], "-case")) {
+          if(!strcmp(argv[k], "-end")) {
+            if(k + 1 >= argc) {
+              Tcl_SetResult(interp, "xschem raw read: -end needs a time in seconds", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            vend = atof_spice(argv[++k]);
+          } else if(!strcmp(argv[k], "-case")) {
             if(k + 1 >= argc) {
               Tcl_SetResult(interp, "xschem raw read: -case needs a mode", TCL_STATIC);
               return TCL_ERROR;
@@ -10779,6 +10798,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           sweep2 = atof_spice(pos[3]);
         }
         n_before = xctx->extra_raw_n;
+        vcd_read_set_end(vend);
         ret = extra_rawfile(1 | RAW_READ_REBIND, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
         /* extra_rawfile(what == 1) makes the database it just read the CURRENT
          * one, so xctx->raw is the Raw this option is about. On a failed read it
@@ -10794,10 +10814,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
            * doc/claude/specs/raw_case_mode.md section 3. */
           if(xctx->extra_raw_n == n_before) {
             ret = raw_case_reread(interp, npos > 1 ? pos[1] : NULL);
-            if(!ret) return TCL_ERROR;
+            if(!ret) { vcd_read_set_end(-1.0); return TCL_ERROR; }
           }
           if(xctx->raw) xctx->raw->case_sensitive = cs;
         }
+        vcd_read_set_end(-1.0);
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "switch")) {
         if(argc > 4) {

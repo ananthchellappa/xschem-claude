@@ -91,9 +91,11 @@
  *
  *   Column set = { first `#t` in the file }
  *              U { t-1, t : for every t carrying a value change }
- *              U { last `#t` in the file }
+ *              U { last `#t` in the file, or the caller's `-end` if that is later }
  *   The first and last are what make the trace span the whole run rather than stopping
- *   at the first and last edge. Changes landing ON the first timestamp (the $dumpvars
+ *   at the first and last edge. ⚠ "The last `#t` is the end of the run" is a property of
+ *   the WRITER, not of VCD: ngspice's `eprvcd` ends on its last value change, which is
+ *   why the caller's run end exists (issue 1465, at vcd_run_end below). Changes landing ON the first timestamp (the $dumpvars
  *   block, always) overwrite that seeded column instead of appending, so #0 stays a
  *   single point.
  *
@@ -488,6 +490,27 @@ static void vcd_flush(Raw *raw, int *ncol, int *cap, double tick_seconds, double
 
 /* --------------------------------------------------------------------- the read ---- */
 
+/* THE RUN END A CALLER NAMED (issue 1465). DECISION 2 extends every trace to the file's
+ * own last `#t`, which is right for a writer that stamps the end of the run and wrong
+ * for one that does not: ngspice's `eprvcd` ends its file on the LAST VALUE CHANGE, so
+ * on a 30 ns transient whose digital nodes last move at 26.3 ns the pane drew both
+ * traces stopping at 26.3 ns -- a held value drawn as an absence. Measured 2026-09-15 on
+ * ngspice 45.2 and the ngspice-46+ fork alike, in every `eprvcd` variant (plain, -a,
+ * -t 1p). The file cannot be fixed at the source: the deck would have to print an
+ * integer tick, and `$&` prints 30000000 fs as `3E+07` whatever `numdgt` says.
+ *
+ * So the end comes from the one place that knows it -- the analog database of the same
+ * run -- through `xschem raw read <f> vcd -end <seconds>`, which sets this around ONE
+ * read and resets it to -1 afterwards. It only ever EXTENDS: an end at or before the
+ * file's last timestamp changes nothing, so a writer that already stamps the end (the
+ * d_cosim shim) reads exactly as before. */
+static double vcd_run_end = -1.0;
+
+void vcd_read_set_end(double end_seconds)
+{
+  vcd_run_end = end_seconds;
+}
+
 /* Read VCD file `f` into a freshly allocated xctx->raw. See the file header for the
  * contract and every decision. Returns 1 on success, 0 on failure. */
 int vcd_read(const char *f)
@@ -814,6 +837,13 @@ int vcd_read(const char *f)
   if(pending) {
     vcd_flush(raw, &ncol, &cap, tick_seconds, pending_tick, cur, emitted,
               c.ncols, &last_emitted);
+  }
+  /* ...or to the run end the caller named, when that is LATER (issue 1465; the reason is
+   * at vcd_run_end). Half a tick of slack, so an end that is the file's own last
+   * timestamp to within floating-point division does not append a second column there. */
+  if(ncol > 0 && vcd_run_end > 0.0 && tick_seconds > 0.0) {
+    double end_tick = vcd_run_end / tick_seconds;
+    if(end_tick > last_tick + 0.5) last_tick = end_tick;
   }
   /* extend the traces to the end of the run: the last `#t` normally carries no change,
    * and without this the waveform would stop at the last edge (DECISION 2) */
