@@ -157,6 +157,31 @@ your own argv can pass.
 something whose full command line you recorded when you started it — never a substring of a pattern
 you are, at that instant, holding in your hand.
 
+⚠ **AND A GUARD IS THE SAME BUG A THIRD TIME — IT FAILS SAFE, WHICH IS WHY IT IS EASY TO MISS.**
+2026-09-15, the driver, before a solo T1: a guard meant to refuse the run if another suite was
+alive, `ps -eo cmd | grep -qE '[r]un_regression'`, sat in the **same shell command** as
+`tclsh run_regression.tcl`. The bracket trick hides `grep` from itself; it does not hide the shell
+whose argv contains the literal — so the guard found "another suite", printed its refusal and
+exited 3, **and T1 never ran**. The memory sampler written beside it had the same hole through its
+own `echo … run_regression gone …` text, and would have reported T1 alive for twenty minutes.
+**Match by process NAME, which no shell's argv can counterfeit:**
+
+```sh
+ps -eo comm=,args= | awk '($1=="tclsh" && /run_regression/) || $1=="xschem"'
+```
+
+`awk`'s own `comm` is `awk` and the shell's is `bash`, so neither can match itself.
+
+⚠ **A BACKGROUND COMMAND STOPPED FOR "LOW MEMORY" IS A NAMED OUTCOME, NOT A MEASUREMENT.** The same
+day the harness stopped two of the driver's long background commands — a sabotage-then-T1 chain and
+a pinned T1 — as *"running low on memory"* while a sampler read **~13 900 MB available** and no
+`xschem` process at all, and the T1 that followed, **in the foreground** under `timeout 590`,
+finished clean at full parallelism with 13 970 MB available before and 13 907 MB after. Whatever the
+trigger is, it was not the suite. So: when a background run is stopped that way, **check what it
+left** (a sabotage mid-application, a truncated `results.log`, a `tests/.parallel_jobs.<pid>` job
+list, a `results/.work`), restore or remove only what is yours, and **re-run in the foreground
+under a `timeout`** — and say in the receipt that the first attempt has no verdict.
+
 ## ⚠ DISARM YOUR SABOTAGE SNAPSHOTS WHEN YOU HAND OVER
 
 Every crew in this batch takes `cp` snapshots of `src/ase.tcl` and `src/ase_window.tcl` before its
