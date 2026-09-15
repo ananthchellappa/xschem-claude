@@ -206,12 +206,20 @@ eqcheck CS175-nothing-registered-is-the-literal-and-an-entry-composes \
   "def=<[list ngspice -b $DECK 2>@1]> row=<[list $exeA -b $DECK 2>@1]>"
 
 # args, `-n` and `-D` word order, all against one composed command
+#
+# ⚠ MOVED BY ISSUE 1470 (debt M21): EVERY NON-`fold` REQUEST NOW CARRIES
+# `-D casemodewrite` DIRECTLY AFTER `-D casemode=<m>` -- in CS176, CS176c, CS176d
+# and CS176e (whose word count goes 9 -> 10). The classic path's `sim_run_flags`
+# always sent both words and ASE-L's sent the first alone, so a rawfile an ASE-L
+# run caused never carried the `Option: casemode=` header the reader's SOURCE 2
+# looks for. The word ORDER these rows pin is otherwise unchanged; `fold` still
+# emits nothing (CS176c's first half, CS176d's `back`).
 reset_sim
 set iB [add_row spice {row B} $exeA {-r out.raw --soa-log soa.log} preserve 1]
 set stB [mkstate $rd cell spice $iB]
 eqcheck CS176-full-composition-word-order \
   [runcmd $stB $DECK] \
-  [list $exeA -b -r out.raw --soa-log soa.log -n -D casemode=preserve $DECK 2>@1]
+  [list $exeA -b -r out.raw --soa-log soa.log -n -D casemode=preserve -D casemodewrite $DECK 2>@1]
 
 # A2: `-n` is OFF BY DEFAULT and only the profile field turns it on. Both
 # directions, one assertion.
@@ -232,7 +240,7 @@ eqcheck CS176c-D-flag-only-for-a-non-fold-request \
   "fold=<[runcmd [mkstate $rd cell spice $iE] $DECK]>\
  dist=<[runcmd [mkstate $rd cell spice $iF] $DECK]>" \
   "fold=<[list $exeA -b $DECK 2>@1]>\
- dist=<[list $exeA -b -D casemode=distinguish $DECK 2>@1]>"
+ dist=<[list $exeA -b -D casemode=distinguish -D casemodewrite $DECK 2>@1]>"
 
 # B1's global floor: no row mode at all, `sim_case_mode` set in an rc.
 reset_sim
@@ -242,7 +250,7 @@ set floorcmd [runcmd [mkstate $rd cell spice $iG] $DECK]
 set ::sim_case_mode fold
 eqcheck CS176d-global-floor-is-a-request \
   "floor=<$floorcmd> back=<[runcmd [mkstate $rd cell spice $iG] $DECK]>" \
-  "floor=<[list $exeA -b -D casemode=preserve $DECK 2>@1]>\
+  "floor=<[list $exeA -b -D casemode=preserve -D casemodewrite $DECK 2>@1]>\
  back=<[list $exeA -b $DECK 2>@1]>"
 
 # the deck path is the LAST word before the stderr fold, whatever else is on
@@ -250,7 +258,7 @@ reset_sim
 set iH [add_row spice {row H} $exeA {-r x.raw} distinguish 1]
 set ch [runcmd [mkstate $rd cell spice $iH] $DECK]
 eqcheck CS176e-deck-is-last-before-2>@1 \
-  "tail=<[lrange $ch end-1 end]> len=<[llength $ch]>" "tail=<$DECK 2>@1> len=<9>"
+  "tail=<[lrange $ch end-1 end]> len=<[llength $ch]>" "tail=<$DECK 2>@1> len=<11>"
 
 # ===========================================================================
 # B — THE RUN FILTER. It is NOT the probe's filter and must never become it.

@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 13:56
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 15:03
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**13**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, debt **M22** `02288c30`. Since: **1468** `36153d03` (the point estimate's range), **1469** (the campaign seed range). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
-| **Stages remaining** | **16** (the ngspice you actually have) — **before** **14** (PSS), which waits on ⚖ R7 going back to the user — plus ⚖ **R10's adapter-author specification**, written after the last hook-adding stage |
+| **Stages landed** | 0–**13**, and **Stage 16 task 1** (issue **1470**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`. Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, **M22** `02288c30`. Since: **1468** `36153d03`, **1469** `3addf5ca`. Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages remaining** | **16** tasks 2 and 3, then **14** (PSS), which waits on ⚖ R7 going back to the user — plus ⚖ **R10's adapter-author specification**, written after the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **80 cases, ZERO counted lines in `tests/results.log`, 354 s**, solo, in the foreground — covering issue 1469, the `test_ase_campaign_1462` exit, and the earlier `d39e7e07` and `396070ad` — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
-| **In flight** | nothing at this commit. **Stage 16 task 1 is dispatched immediately after it** |
-| **Next** | **Stage 16 task 1** (brief drafted) → **Stage 16 task 2** → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **677 strings from 33 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
+| **T1** | ✅ **81 cases, ZERO counted lines in `tests/results.log`, 356 s**, solo, in the foreground — the new suite in `hcases`; no job list or `untitled~.sch` left behind — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 in the foreground**: the harness stopped two background T1s as "low on memory" with ~13.9 GB free |
+| **In flight** | nothing at this commit. **Stage 16 task 2 is dispatched immediately after it** |
+| **Next** | **Stage 16 task 2** (brief drafted, with C2/C8 folded in) → **Stage 16 task 3** (wire 16c) → ⚖ R9 and then ⚖ R7 with the user → **Stage 14** → ⚖ R10's specification |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **719 strings from 34 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **181 rule / 69 look / 11 suite**, after issue 1469. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (one refusal shown three times, widening the dialog to 839 px). Four unstamped entries are another clone's |
+| **Debt queue** | **182 rule / 69 look / 11 suite**, after Stage 16 task 1. ⚠ Three `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, and `ase-trnoise-section-1467` (one refusal shown three times, widening the dialog to 839 px). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,12 +87,13 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect Stage 16 task 1** — receipt `<n>-stage-16-deck.md`. Verify independently: the linter's rows drive
-   text only and **its RED row was never run on `/usr/bin/ngspice`**; all four sentence frames, including the
-   fourth, driven from hand-built dicts and matching the real probe's dicts on both binaries; debt **M21**'s
-   row red without `-D casemodewrite` on the fork; no version comparison anywhere (D44). T1 in the foreground.
-2. **Stage 16 task 2** — the Simulators-window row, its look debt with two registry entries, and 16e's release
-   note.
+1. **Collect Stage 16 task 2** — receipt `47-stage-16-gui.md`. Verify independently: opening the Simulators window
+   starts no simulator; the window shows exactly `ase::variant_sentence`'s answer and never calls `variant_say`; the
+   C2 decision is recorded under the rule; the look debt's screenshot shows both registry entries; the release note
+   states nothing unmeasured, names binaries not versions, and copies neither of C8's two *"ngspice 47"* sentences.
+   T1 in the foreground.
+2. **Stage 16 task 3** — wire 16c: a probe leg that records `$sourcepath`'s `scripts_dir`, and a say-site that runs the
+   two co-simulation checks once, when the user first asks for Verilog waveforms. **Stage 16 is complete after it.**
 3. **Then the user**: ⚖ R9 first, and after it ⚖ R7 on `evidence/pss-two-binaries.md` — one at a time. Stage 14
    opens only after R7.
 
@@ -936,6 +937,25 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 16 task 1 — the ngspice you actually have, everything that is not a pixel, issue **1470**, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+710/−2**; `src/ase_window.tcl` md5-unchanged. **16a** `ase::variant_sentence` with all four frames from the adapter's `variant_notes`, and the run-log line once per binary per session from **the peek** (never a second probe). **16b** `lint_control_text`, five patterns, at pre-flight before the gate and before the first delete, quoting the line from the source and never rewriting it. **16c** `scripts_dir_of` and `cosim_shim_verdict`. **16d** the `dumpunsound` reason token. **Debt M21** — `ase::run_casemode_flag` now sends `-D casemode=<m> -D casemodewrite`. Three conformance rows (D44, D48) |
+| **the sentences, from the real probe on three binaries** | apt 45.2: *"… except case-sensitive net names and the fast operating-point dump. Its fast dump prints wrong numbers, so operating points are saved one device at a time; no ngspice release has the fix yet. Two kinds of command line are misread by it; ASE-L warns before a run that uses one."* · stock 47: *"… except case-sensitive net names. Two kinds of command line …"* · the fork: *"… can do everything ASE-L offers."* **No version, no "basic", no PSS** (`pss` is `renderable 0`, so it is named nowhere) |
+| **the crash rule, kept** | **no linter pattern ran on any binary** — section LN drives the proc over strings; `/usr/bin/ngspice` was started only by the ordinary capability probe and two `$sourcepath` echoes, and never aborted |
+| **M21, measured then fixed** | the fork: `-D casemode=preserve` alone → **0** `Option:` lines; with `-D casemodewrite` → `Option: casemode=preserve`. Row **M21b** runs ASE-L's own render and run on the fork and reads **`preserve header`** — SOURCE 2 fires on a file ASE-L caused |
+| **⚠ §16's "none move" was wrong** | **eight expectations in four existing suites moved**, each for M21 or 16d and each still an exact value: `test_sim_run_profile` CS176/c/d/e and `test_ase_simdlg_0937` S29 gain `-D casemodewrite`; `test_op_dump_altshow` T2 and `test_ase_optier_0963` X5 read `{c dumpunsound}` for `{c unsafe}`. Plus optier S11's filter gains `variant_missing variant_partial`, on issue 1370's precedent — **driver-read: an unnamed kind still reds the row**. The existing suites also found a gap: a program measured **not** to be a simulator got a sentence (VS9b) |
+| **driver's own re-run** | headless: `test_ase_variant_1470` **57**, `test_ase_simdlg_0937` **5**, `test_ase_optier_0963` **109**, `test_op_dump_altshow` **70**, `test_sim_run_profile` **37**, `test_ase_core` **638**, `test_ase_preflight` **235**, `test_ase_persist` **49**, `test_ase_simcaps_0948` **211**, `test_ase_simreg_0931` **117**, `test_ase_predeck_1439` **78**, `test_raw_case_mode` **277**, `test_ase_cosim` **341**, `test_ase_events_1465` **87**, `test_ase_trnoise_1466` **78**, `test_ase_campaign_1462` **161**, `test_ase_dialogs` **37**, `test_ase_window` **56**. Display: `test_ase_variant_1470` **57**, `test_ase_simdlg_0937` **55**, `test_ase_window` **295**, `test_ase_persist` **153**. **All rc 0, all matching the receipt.** ⚠ The background batch was **stopped by the harness as "low on memory"** (13.3 GB available afterwards, no process left) during its 22nd run; the one unfinished arm and the byte-identity check were re-run in the foreground |
+| **byte identity** | `tracked 104 bad {} control_disagrees 1 control_agrees 1`, driver-re-run in the foreground after the harness stop |
+| **sabotage** | **54 arms; every one of the 57 rows reddened by at least one**; three first-run outcomes (two `NORESULT`, one anchor not unique) fixed rather than averaged in. Driver's own: **D1** — `run_casemode_flag` drops `-D casemodewrite` — reds **M21a M21b** and **CS176, CS176c, CS176d, CS176e**, the crew's S01 set on those two suites; restored to md5 `a052b663`, `ALL PASS (57)` and `(37)`. Run in the foreground with a restore guaranteed on timeout |
+| **T1** | **81 cases, ZERO counted lines in `tests/results.log`, 356 s**, solo, in the foreground — the new suite in `hcases`; no job list or `untitled~.sch` left behind |
+| **ledger debts** | `rule 1470` — R9-678 … R9-719 and four choices (the log says only a delta; patterns 1–3 warn on every binary; 4–5 confined to where they bite; `dumpunsound` only on a measured-unsound printer). **R9 now 719 strings from 34 issues.** Queue **181/69/11 → 182/69/11**. **M21 CLOSED** by M21b. **M20 stays open** — upstream-blocked; the fourth frame covers its slow-box half (VS4b, VS4c) |
+| **corrections that bind** | **C2** PLAN §16 contradicts itself on frame 2 in the window — task 2's decision. **C6** ⚠ **16c is not wired**: no say-site calls the verdict and no probe leg records `$sourcepath`, so the two co-simulation clauses reach no user — **Stage 16 task 3**. **C8** ⚠ `evidence/fork-features.md` §13.3 and §14 row 4 say *"ngspice 47"* fixes the dump — a release that does not exist; the release note must not copy them. **C5** `src/ase.tcl`'s comment that `$sourcepath` came back empty did not reproduce |
+| **⚠ for ⚖ R7's framing** | when Stage 14 makes `pss` renderable, stock 47 and every build without it will read *"except the PSS analysis"*, and **apt 45.2 — whose PSS converges on nothing measured — will not** |
+| **pre-existing, named** | `test_ase_dialogs`' display arm fails G2sens, GG3, GG9 and **GN1b** on the untouched tree; issue 1436 names G2sens and GG9 and quotes GG3 — **GN1b is in no issue**. Not a T1 count |
+| **receipt** | `receipts/46-stage-16-deck.md` |
 
 ### ✅ Issue 1469 — a campaign never writes a seed ngspice will not honour, collected 2026-09-15
 
@@ -4725,13 +4745,13 @@ Decisions: **D42–D52**.
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
+| status | ⏳ **task 1 of 3 landed** — everything that is not a pixel (issue **1470**); task 2 the window row, look debt and release note; task 3 wires 16c |
+| commit | task 1: the `feat(1470)` commit that carries this row |
+| T1 | task 1: solo in the foreground, see the *Stage 16 task 1* block |
+| suites moved | **new** `test_ase_variant_1470` **57** both arms; ⚠ eight expectations in four existing suites (§16 said none) |
+| sabotage | task 1: **54 arms, all 57 rows reddened** |
+| ledger debts | `rule 1470`; **M21 closed**; M20 open |
+| spec paragraphs rewritten | none yet — C1–C8 are in receipt 46 for the stage's close |
 | tested on apt 45.2 as well as the fork | *required field for this stage: the sentence and the linter are ABOUT the stock binary, so a receipt naming only the fork has tested the one configuration this stage does not care about* |
 | receipt | |
 

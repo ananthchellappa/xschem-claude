@@ -1205,6 +1205,55 @@ proc ase::sim_why {kind name path {extra {}}} {
     casemode_nopath {
       return "Type the location of a program in the Program field, then press Detect."
     }
+    variant_unmeasured {
+      ## STAGE 16a (issue 1470) -- THE FIRST OF FOUR FRAMES. ASE-L owns these
+      ## words; the clauses in `extra` are the adapter's (`variant_notes`). The
+      ## composer, the frame choice and the note shape are documented at
+      ## ase::variant_frame. ⚖ R9: recommended shapes, not ratifications.
+      return "ASE-L has not measured $path yet. Press Detect in the Simulators window to find out what it can do."
+    }
+    variant_complete {
+      return "$path can do everything ASE-L offers."
+    }
+    variant_missing {
+      set miss {} ; set aside {}
+      foreach n $extra {
+        switch -- [dict get $n kind] {
+          missing { lappend miss [dict get $n text] }
+          aside   { lappend aside [dict get $n text] }
+        }
+      }
+      if {[llength $miss]} {
+        set s "$path can do everything ASE-L offers except [ase::variant_join $miss]."
+      } else {
+        set s "$path can do everything ASE-L offers."
+      }
+      foreach a $aside { append s " $a" }
+      return $s
+    }
+    variant_partial {
+      ## ⚠ THE FOURTH FRAME. Measured, but a measurement did not come back --
+      ## on a slow box leg D is the first thing the budget kills, and "can do
+      ## everything" would then be a claim nobody measured.
+      set miss {} ; set aside {} ; set unm {}
+      foreach n $extra {
+        switch -- [dict get $n kind] {
+          missing    { lappend miss [dict get $n text] }
+          aside      { lappend aside [dict get $n text] }
+          unmeasured { lappend unm [dict get $n text] }
+        }
+      }
+      set nu [llength $unm]
+      set did "[ase::sim_plural $nu {one measurement} "$nu measurements"] did not finish: [ase::variant_join $unm]"
+      if {[llength $miss]} {
+        set s "$path can do everything ASE-L offers except [ase::variant_join $miss], and $did."
+      } else {
+        set s "$path can do everything ASE-L offers, except that $did."
+      }
+      foreach a $aside { append s " $a" }
+      append s " Press Detect in the Simulators window to try again."
+      return $s
+    }
     op_tier_blanket {
       return "Your simulator can hand back all of one device's operating-point numbers in a single request, so this run asked once per device instead of once per number. The requests are made just before the operating point and nowhere else, so nothing is recorded at every step of a transient that happens to be in the same run."
     }
@@ -1304,6 +1353,14 @@ proc ase::sim_why {kind name path {extra {}}} {
         }
         unsafe {
           return "$head There is a much shorter way your simulator would accept, but it is all or nothing: if a single device in your design has a name the simulator cannot match, it throws the whole operating point away and says nothing. Until that risk is gone, xschem asks the safe way."
+        }
+        dumpunsound {
+          ## ISSUE 1470 (Stage 16d) -- THE ACTUAL REASON, where `unsafe` gave a
+          ## true one that was not it. Reached only when the dump printer was
+          ## MEASURED unsound. It names no release and no version: which build
+          ## carries the printer fix is the adapter's to say, in the variant
+          ## sentence, and never as a number (D44).
+          return "$head There is a much faster way that collects every device at once, but your simulator was measured printing wrong numbers that way, so xschem asks one device at a time."
         }
         toomany {
           return "$head The shorter way puts every device on one request line, and your design has too many devices to fit on one line, so the safe way is the only one left."
@@ -2356,11 +2413,15 @@ proc ase::cap_key {resolved eargs} { return [list $resolved $eargs] }
 proc ase::sim_caps_clear {} {
   variable sim_caps
   variable cap_noplace_said
+  variable variant_said
   set sim_caps [dict create]
   # THE NOTICE ABOUT A PLACE IS FORGOTTEN WITH THE MEASUREMENTS (issue 0960).
   # This is the lever for a user who knows something changed, and a folder
   # they have just fixed -- or just broken -- is exactly such a change.
   set cap_noplace_said [dict create]
+  # AND SO IS WHAT A BUILD CANNOT DO (issue 1470): the sentence is about a
+  # measurement, so it is said again for the measurement taken next.
+  set variant_said [dict create]
   return {}
 }
 
@@ -3162,6 +3223,13 @@ proc ase::cap_run {exe exeargs workdir secs} {
 # narrow the fork's real {fold preserve distinguish} to {fold} and SWITCH OFF the
 # one feature the fork has -- and nothing in this stage reads it. A key with no
 # consumer, no value on any binary here, and one forbidden use is not a key.
+# ⚠ RE-MEASURED 2026-09-15 (issue 1470), AND THE `$sourcepath` HALF DID NOT
+# REPRODUCE: `echo "@@sourcepath=$sourcepath" >> probe_d.txt` inside a `-b`
+# deck -- leg D's own redirect form -- wrote `. /usr/share/ngspice/scripts
+# /usr/share/ngspice/scripts .` on apt 45.2 and `. <build>/stage/share/ngspice/
+# scripts` on the fork, quotes included. `scripts_dir` is still not a key, for
+# the other reason above: nothing in the tree consumes it yet. Stage 16c's parse
+# rule is ase::backend::ngspice::scripts_dir_of, ready for the leg that does.
 #   provenance  the absence of an answer, which is itself not a claim.
 #
 # ⚠ THE PREDICATE FOLLOWS THE **DIRECTION OF THE GATE**, NOT THE BAND. This is
@@ -3847,6 +3915,153 @@ proc ase::cap_report {backend nwrites} {
     return cap_no_append
   }
   return {}
+}
+
+# ─── STAGE 16a: WHAT THIS BUILD CAN AND CANNOT DO -- ONE SENTENCE, FOUR FRAMES ─
+# doc/claude/ase_analyses_batch/PLAN.md §16a; DECISIONS.md D42-D52; issue 1470.
+#
+# WHAT THE USER GOT BEFORE: NOTHING. apt 45.2 -- what the current Ubuntu LTS
+# ships -- keeps no net name's case, has an unsound `show` printer (so every
+# operating point is saved the long way), and misreads two kinds of command
+# line, and not one of those facts reached the user anywhere although ASE-L had
+# measured all three.
+#
+# THE SPLIT (D34-D37, D51). ASE-L owns the FRAMES -- which of four things is
+# true, and the words around the clauses -- minted in ase::sim_why like every
+# other sentence about a simulator (ruling D5-4). The ADAPTER owns the CLAUSES,
+# in its own nouns, through the optional `variant_notes {caps}` hook.
+# ⚠ A BACKEND WITH NO HOOK GETS NO SENTENCE AT ALL -- no fallback content. A
+# guessed clause about a simulator nobody described is what D34 forbids.
+#
+# THE FOUR FRAMES (ase::variant_frame):
+#   unmeasured  nothing is known about the program: `known` is not 1
+#   complete    measured, and the adapter names nothing
+#   missing     measured, and the adapter names at least one gap
+#   partial     measured, but at least one measurement did not come back
+#
+# ⚠ THE FOURTH FRAME IS NOT DECORATION. On a slow box the probe budget kills
+# leg D first (§2g), Band 3 stays unmeasured for the whole session, and without
+# this frame that user would read "can do everything" about keys nobody
+# measured. The adapter reports such a key as a `kind unmeasured` note, read
+# from the key's absence through ase::caps_get -- where `unmeasured_keys` (§2f)
+# says which leg did not deliver.
+#
+# THE NOTE SHAPE the hook answers -- a list of dicts, in reading order:
+#   kind missing     text <noun phrase>      "...except A, B and C."
+#   kind unmeasured  text <noun phrase>      "...did not finish: A and B."
+#   kind aside       text <whole sentence>   appended after the frame
+#   key  <capability key>                    which measurement it came from
+# A note of any other shape is DROPPED, never guessed at.
+#
+# ⚠ NEVER A VERSION, NEVER "BASIC" (D44, D45). Nothing below reads
+# `version_line`; the sentence names capabilities, so it stays true when the
+# subsets change. Row CF1 of tests/headless/test_ase_variant_1470.tcl greps the
+# tree for an ordering operator on it, and row VS11 swaps it and watches
+# nothing move.
+#
+# ⚠ SAID TWICE AND ONLY TWICE, NEVER A MODAL: the Simulators window's row (Stage
+# 16 task 2, through the free peek) and the run log once per binary per session
+# (ase::variant_say below).
+
+# "A", "A and B", "A, B and C". The only word it owns is the conjunction.
+proc ase::variant_join {items} {
+  set n [llength $items]
+  if {$n == 0} { return {} }
+  if {$n == 1} { return [lindex $items 0] }
+  return "[join [lrange $items 0 end-1] {, }] and [lindex $items end]"
+}
+
+# Does this backend describe its variants at all? Asked of the registry.
+proc ase::variant_has_hook {sim} {
+  variable backends
+  return [expr {[dict exists $backends $sim variant_notes] ? 1 : 0}]
+}
+
+# THE ADAPTER'S CLAUSES FOR ONE ANSWER, validated. ⚠ A RAISE PROPAGATES: the
+# callers below catch it and answer "no sentence" rather than "can do
+# everything", because a claim built on a clause list that never arrived is a
+# claim nobody measured.
+proc ase::variant_notes {sim caps} {
+  if {![ase::variant_has_hook $sim]} { return {} }
+  set raw [[ase::backend_hook $sim variant_notes] $caps]
+  set out {}
+  if {[catch {llength $raw}]} { return {} }
+  foreach n $raw {
+    if {[catch {dict size $n}]} { continue }
+    if {![dict exists $n kind] || ![dict exists $n text]} { continue }
+    if {[lsearch -exact {missing unmeasured aside} [dict get $n kind]] < 0} { continue }
+    if {[string trim [dict get $n text]] eq {}} { continue }
+    lappend out $n
+  }
+  return $out
+}
+
+# WHICH OF THE FOUR IS TRUE, or {} when this backend describes nothing -- or
+# when its description raised, which goes to the CIW as a defect report.
+proc ase::variant_frame {sim caps} {
+  if {![ase::variant_has_hook $sim]} { return {} }
+  if {[ase::caps_measured_as $caps known 1] != 1} { return unmeasured }
+  ## ⚠ A PROGRAM MEASURED NOT TO BE A SIMULATOR HAS NO VARIANT. ase::cap_report
+  ## already tells the user so (`cap_not_a_simulator`); a list of everything such
+  ## a program "cannot do" would bury that one true sentence under noise.
+  ## MEASURED: test_sim_run_profile CS182b's stand-in answered `usable 0` and,
+  ## before this line, its run log gained a partial-frame sentence.
+  if {[ase::caps_measured_as $caps usable 0]} { return {} }
+  if {[catch {ase::variant_notes $sim $caps} notes]} {
+    ::ase::echo "ase: describing what $sim can do raised: $notes" error
+    return {}
+  }
+  set kinds {}
+  foreach n $notes { lappend kinds [dict get $n kind] }
+  if {[lsearch -exact $kinds unmeasured] >= 0} { return partial }
+  if {[llength $kinds]} { return missing }
+  return complete
+}
+
+# THE SENTENCE for one program, or {} when the backend describes nothing.
+proc ase::variant_sentence {sim path caps} {
+  set fr [ase::variant_frame $sim $caps]
+  if {$fr eq {}} { return {} }
+  set notes {}
+  catch {set notes [ase::variant_notes $sim $caps]}
+  return [ase::sim_why variant_$fr $sim $path $notes]
+}
+
+namespace eval ase {
+  # {sim path sentence} -> 1, for every variant sentence said this session.
+  variable variant_said [dict create]
+}
+
+# SAY IT ONCE PER BINARY PER SESSION -- ase::cap_report's say-once discipline
+# (ase::cap_noplace_once's shape), keyed on the program AND the sentence, so a
+# binary whose answer changes is described again, and forgotten by
+# ase::sim_caps_clear together with the measurements it describes.
+#
+# ⚠ ONLY A DELTA IS SAID. `complete` shrinks to nothing -- a user with a
+# complete build is not told so -- and `unmeasured` is not said on this path at
+# all: ase::cap_report already owns the sentences for a program that did not
+# answer, and "press Detect" printed just after a probe ran would be issue
+# 1371's refuted sentence again.
+proc ase::variant_say {sim path caps} {
+  variable variant_said
+  set fr [ase::variant_frame $sim $caps]
+  if {$fr ne {missing} && $fr ne {partial}} { return {} }
+  set notes {}
+  catch {set notes [ase::variant_notes $sim $caps]}
+  set k [list $sim $path [ase::sim_why variant_$fr $sim $path $notes]]
+  if {[dict exists $variant_said $k]} { return {} }
+  dict set variant_said $k 1
+  return [ase::sim_say variant_$fr $sim $path $notes note]
+}
+
+# THE RUN'S DOOR. ⚠ IT READS THE PEEK, never ase::sim_capabilities: an answer
+# that was not remembered (every `known 0`) would otherwise start the program a
+# second time, one line after ase::cap_report started it.
+proc ase::variant_report {sim} {
+  set caps [ase::sim_caps_cached $sim]
+  if {$caps eq {}} { return {} }
+  set path [dict get [ase::sim_status $sim] resolved]
+  return [ase::variant_say $sim $path $caps]
 }
 
 # The file the user's own simulator list is saved in.
@@ -10706,10 +10921,24 @@ proc ase::run_profile {state} {
 # ask a simulator for when no simulator profile names one" (xschem.tcl), so a
 # user who sets it to `preserve` in an rc gets `-D casemode=preserve` with no
 # profile row at all -- B1's "per profile, with a global floor".
+#
+# ⚠ AND `-D casemodewrite` RIDES WITH THE MODE -- debt M21, issue 1470. The
+# classic path's `sim_run_flags` (src/xschem.tcl) has always sent both words;
+# this one sent the first alone, so a rawfile ASE-L caused carried no
+# `Option: casemode=` line and the header parser -- mode SOURCE 2, the
+# second-strongest of four -- could never fire on it. MEASURED 2026-09-15 on the
+# fork, ASE-L's own deck shape (`write` inside `.control`), same deck, same
+# binary: `-D casemode=preserve` alone -> no `Option:` line; with
+# `-D casemodewrite` -> `Option: casemode=preserve`. Safe on a stock build: a
+# released ngspice ignores both words in silence (the classic path's own
+# measurement), and the header the fork writes loads cleanly on apt 45.2
+# (evidence/fork-dependencies.md §4.8b). Never alone and never for `fold` --
+# the same rule as `sim_run_flags`. Row M21b of
+# tests/headless/test_ase_variant_1470.tcl runs it on the fork.
 proc ase::run_casemode_flag {state} {
   set m [dict get [ase::run_profile $state] requested]
   if {$m eq {} || $m eq {fold}} { return {} }
-  return [list -D casemode=$m]
+  return [list -D casemode=$m -D casemodewrite]
 }
 
 # B4's POLICY, as a PURE FUNCTION of a request and item 7's measurement, so the
@@ -10938,6 +11167,134 @@ proc ase::run_precheck {state} {
   ::ase::echo $msg note
   lappend notes $msg
   return [join $notes "\n"]
+}
+
+# ─── STAGE 16b: THE USER'S OWN COMMAND LINES -- WARN, NEVER REWRITE ──────────
+# PLAN.md §16b; DECISIONS.md D46, D47, D50; issue 1470.
+#
+# WHAT THE USER GOT BEFORE. A pre-command reading `unset temp` on apt 45.2 ends
+# the run with SIGABRT, rc 134, and the abort does not flush stdio, so the log
+# is destroyed and nothing anywhere says why (evidence/fork-dependencies.md
+# §4.3 -- TRANSCRIBED: this batch does not crash the user's simulator to
+# re-confirm it).
+#
+# THE SPLIT. The patterns are the adapter's (`lint_control_text {lines caps}`):
+# which command words abort which builds is a fact about one simulator. ASE-L
+# owns WHICH LINES are the user's, the frame of the warning, and D47's policy. A
+# backend with no hook gets no linting at all.
+#
+# THE THREE SOURCES OF USER TEXT inside `.control`, and nothing ASE-L generates:
+#   the bench's pre-commands          (`pre_commands`)
+#   an enabled row's verbatim lines   (issue 1419's hatch, `x`)
+#   the netlist's own `.control`      a schematic code block, or a hand-edited
+#                                     deck ase::run_existing runs as it is
+#
+# ⚠ IT WARNS AND NEVER REWRITES. Every line reaches the deck exactly as typed;
+# rewriting user text is the failure this stage exists not to commit.
+#
+# ⚠ IT REPORTS THE LINE, NOT THE FILE. The line quoted is taken from the
+# SOURCE, never from the adapter's answer, so what the user reads is byte for
+# byte what they wrote, with the remedy beside it.
+#
+# ⚠ IT READS THE PEEK AND STARTS NOTHING. It runs on the pre-flight pass, before
+# ase::cap_report warms the cache, so on a cold session the gated patterns see
+# an unmeasured build and warn -- D47's rule for an unmeasured build, not a gap.
+
+# D47, AS A PURE FUNCTION: warn | refuse. Refuse ONLY when the note names the
+# measurement that licenses a refusal (`refuse_key`) AND that key is MEASURED 0.
+# Unmeasured warns; measured 1 warns -- silence is the adapter's, by answering
+# no note at all. ⚠ The ngspice adapter names no `refuse_key` anywhere: the key
+# that would license one is the probe D50 refuses to run, so today the refuse
+# arm is reachable only by a fixture backend.
+proc ase::preflight_policy {caps note} {
+  set rk {}
+  catch {set rk [dict get $note refuse_key]}
+  if {$rk ne {} && [ase::caps_measured_as $caps $rk 0]} { return refuse }
+  return warn
+}
+
+# The user's lines, as {where line} pairs in reading order. `where` is
+# `pre_commands`, `{verbatim <type>}` or `netlist`. Never raises.
+proc ase::preflight_lint_sources {state netlist_text} {
+  set out {}
+  set pcs {}
+  catch {set pcs [ase::state_get $state pre_commands]}
+  foreach pc $pcs {
+    ## render_deck's own reading of an entry: a {cmd <text>} dict, else the
+    ## string verbatim.
+    set t $pc
+    catch { if {[llength $pc] >= 2 && [dict exists $pc cmd]} { set t [dict get $pc cmd] } }
+    foreach l [split $t "\n"] {
+      if {[string trim $l] ne {}} { lappend out [list pre_commands $l] }
+    }
+  }
+  set rows {}
+  catch {set rows [ase::state_get $state analyses]}
+  foreach arow $rows {
+    set en 0 ; set ty {} ; set vl {}
+    catch {set en [ase::state_get $arow enabled 0]}
+    if {$en ne {1}} { continue }
+    catch {set ty [ase::state_get $arow type]}
+    catch {set vl [ase::analysis_verbatim $arow]}
+    foreach l $vl { lappend out [list [list verbatim $ty] $l] }
+  }
+  set inctl 0
+  foreach l [split $netlist_text "\n"] {
+    set tl [string trim $l]
+    if {[string equal -nocase $tl .control]} { set inctl 1 ; continue }
+    if {[string equal -nocase $tl .endc]} { set inctl 0 ; continue }
+    if {$inctl && $tl ne {}} { lappend out [list netlist $l] }
+  }
+  return $out
+}
+
+# Where a line came from, in the warning's words.
+proc ase::preflight_where {where} {
+  switch -- [lindex $where 0] {
+    pre_commands { return pre-command }
+    verbatim     { return "[string toupper [lindex $where 1]] verbatim line" }
+    netlist      { return "netlist .control line" }
+  }
+  return line
+}
+
+# THE PASS. -> the warnings said (each already on the CIW), {} for a clean
+# box; raises with the refusal for a D47 refusal, before anything is written.
+proc ase::preflight_notes {state netlist_text} {
+  variable backends
+  set sim [ase::state_get $state simulator [ase::default_simulator]]
+  if {![dict exists $backends $sim lint_control_text]} { return {} }
+  set src [ase::preflight_lint_sources $state $netlist_text]
+  if {![llength $src]} { return {} }
+  set lines {}
+  foreach s $src { lappend lines [lindex $s 1] }
+  set caps [ase::sim_caps_cached $sim]
+  if {[catch {[ase::backend_hook $sim lint_control_text] $lines $caps} notes]} {
+    ::ase::echo "ase: checking the command lines for $sim raised: $notes" error
+    return {}
+  }
+  set warn {}
+  foreach n $notes {
+    set i {} ; set clause {} ; set remedy {}
+    if {[catch {
+      set i [dict get $n index]
+      set clause [dict get $n clause]
+      set remedy [dict get $n remedy]
+    }]} { continue }
+    if {![string is entier -strict $i] || $i < 0 || $i >= [llength $src]} { continue }
+    if {$clause eq {} || $remedy eq {}} { continue }
+    lassign [lindex $src $i] where line
+    set what "the [ase::preflight_where $where] '$line' $clause. Fix: $remedy."
+    if {[ase::preflight_policy $caps $n] eq {refuse}} {
+      set msg "ase: REFUSED — $what Nothing was generated: no deck, no raw, no log."
+      ::ase::echo $msg error
+      return -code error $msg
+    }
+    set msg "ase: warning — $what"
+    ::ase::echo $msg note
+    lappend warn $msg
+  }
+  return $warn
 }
 
 # --- casemode batch item 10: the three defences ------------------------------
@@ -14228,6 +14585,8 @@ proc ase::op_ctl_saves {names} {
 #   G2 unknown  nothing was measured about the program    -> c
 #   G3a dump     its `show` printer is sound (measured)     -> d
 #   G3 blanket  it can save every device in one request   -> a
+#   G4a dumpunsound  it could take the short form, and its dump
+#               printer was MEASURED unsound                -> c   (issue 1470)
 #   G4 unsafe   it could take the short form              -> c   (the demotion)
 #   G5 nocap    it can take neither shorter form          -> c
 #   G6 toomany  the short form will not fit on one line   -> c
@@ -14298,6 +14657,20 @@ proc ase::op_save_tier {state} {
     } elseif {[ase::caps_is $caps blanket_op_save 1]} {
       set tier a
       set reason blanket
+    } elseif {[ase::caps_is $caps appendwrite 1] &&
+              [ase::caps_is $caps hier_op_names 1] &&
+              [ase::caps_measured_as $caps altshow_op_dump 0]} {
+      # G4a -- `dumpunsound` (Stage 16d, issue 1470). THE SAME SHAPE AS G4 AND
+      # A DIFFERENT REASON, which is the whole of it. G4 tells the user "there is
+      # a much shorter way your simulator would accept, but it is all or
+      # nothing" -- TRUE, and the WRONG explanation for a build whose `show`
+      # printer was just measured unsound: that build is on the per-device shape
+      # because shape d's dump prints wrong numbers (evidence/fork-features.md
+      # §13.3), and the sentence never said so. MEASURED 0, not unmeasured: an
+      # absent key still reads `unsafe`, because "we did not look" is not "we
+      # looked and it is broken".
+      set tier c
+      set reason dumpunsound
     } elseif {[ase::caps_is $caps appendwrite 1] &&
               [ase::caps_is $caps hier_op_names 1]} {
       set tier c
@@ -15765,6 +16138,18 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set netlist_text [read $f]
   close $f
 
+  ## --- Stage 16b (issue 1470): THE USER'S OWN COMMAND LINES, ON THE PRE-FLIGHT
+  ## PASS. Beside ase::run_precheck's gate and above ase::preflight_gate:
+  ## everything above the first delete below only READS, so a warning is said
+  ## before anything is touched and a refusal (D47 -- fixture-only today) leaves
+  ## nothing behind. UNCAUGHT ON PURPOSE: the proc contains the adapter itself
+  ## and raises only for a refusal. Each warning also rides into the run log's
+  ## `notes`, so the quoted line is in the file the user reads afterwards.
+  foreach _lw [ase::preflight_notes $state $netlist_text] {
+    if {$casenote ne {}} { append casenote "\n" }
+    append casenote $_lw
+  }
+
   # casemode batch item 10 (C3/C4, defence (a)): the PRE-FLIGHT, and it sits
   # here for the same reason item 8's gate sits above — everything before this
   # line only READS, so a refusal leaves no deck, no raw, no log, no deleted
@@ -15896,6 +16281,19 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## reads its answer. The suite calls ase::cap_report directly, uncaught, so
   ## a defect in it is still loud where it should be.
   catch {ase::cap_report $sim [ase::n_enabled_analyses $state]}
+  ## --- Stage 16a (issue 1470): WHAT THIS BUILD CANNOT DO, ONCE PER BINARY PER
+  ## SESSION. Directly below ase::cap_report, which has just warmed the cache for
+  ## the program about to start; ase::variant_report reads only the PEEK, so an
+  ## answer that was not remembered gives no sentence rather than a second probe.
+  ## Said to the CIW and put in this run's log `notes`; the next run on the same
+  ## binary says nothing. CAUGHT for cap_report's reason: advisory, and it must
+  ## never stop the run it only reports on.
+  set _vn {}
+  catch {set _vn [ase::variant_report $sim]}
+  if {$_vn ne {}} {
+    if {$casenote ne {}} { append casenote "\n" }
+    append casenote "ase: $_vn"
+  }
   if {[llength $cosim]} {
     foreach r [ase::cosim_build $state $cosim] {
       lassign $r cm cstatus cdetail
@@ -29889,6 +30287,312 @@ $_leg
     return $out
   }
 
+  # ─── STAGE 16a: THE CLAUSES FOR "THE NGSPICE YOU ACTUALLY HAVE" (issue 1470) ─
+  #
+  # ASE-L's frame (ase::sim_why variant_*) says which of four things is true;
+  # this says, in ngspice's nouns, WHICH capability each measured key takes away.
+  # THE RULE IT OBEYS: MENTION ONLY WHAT ASE-L ACTUALLY OFFERS.
+  #
+  #   * an analysis is named only when ASE-L lists it AND can emit it -- so `pss`,
+  #     which apt 45.2 has and ASE-L does not offer until Stage 14, is on NO row:
+  #     not as a gap on the builds without it, not as a feature on the one with
+  #     it. One rule, every binary (PLAN.md §16a (b)).
+  #   * `one_vector_write` has no clause: ASE-L mitigates that defect itself
+  #     (§6g), so the user loses nothing to it.
+  #   * `blanket_op_save` has no clause: no released ngspice answers 1 and shape a
+  #     is cold code, so it is not something ASE-L offers.
+  #   * the crash family (`unset`, `define`, `load`) has no clause and no key: it
+  #     is unprobeable by construction (evidence/fork-dependencies.md §5 -- the
+  #     symptom kills the run a probe rides in, and D50 refuses the probe), so it
+  #     is warned about line by line, on every binary, by lint_control_text.
+  #
+  # MEASURED 2026-09-15 through ase::sim_capabilities_path, the real probe:
+  #   apt 45.2   casemode {fold}                        altshow 0  keyword 0  gnd 0
+  #   stock 47   casemode {fold}                        altshow 1  keyword 0  gnd 0  (no pss)
+  #   the fork   casemode {fold preserve distinguish}   altshow 1  keyword 1  gnd 1
+  # so the fork reads "can do everything ASE-L offers" and the other two name
+  # their gaps -- rows EX1-EX3 of tests/headless/test_ase_variant_1470.tcl.
+  #
+  # ⚠ NO VERSION ANYWHERE (D44). "no ngspice release has the fix yet" is a fact
+  # about commit 10276f993 (`git tag --contains` empty, re-measured 2026-09-15),
+  # stated without a number -- and never "ngspice 47 fixes that", which names a
+  # release that does not exist.
+  proc variant_key_note {caps key missing unmeasured} {
+    set g [::ase::caps_get $caps $key]
+    if {![dict get $g measured]} {
+      return [list [dict create kind unmeasured key $key text $unmeasured]]
+    }
+    if {[::ase::caps_measured_as $caps $key 0]} {
+      return [list [dict create kind missing key $key text $missing]]
+    }
+    return {}
+  }
+
+  proc variant_notes {caps} {
+    set out {}
+    foreach ty [::ase::analysis_offered ngspice] {
+      if {![::ase::analysis_renderable ngspice $ty]} { continue }
+      if {[::ase::caps_analysis_present $ty $caps] eq {absent}} {
+        lappend out [dict create kind missing key analyses_available \
+                       text "the [string toupper $ty] analysis"]
+      }
+    }
+    if {![dict get [::ase::caps_get $caps analyses_available] measured]} {
+      lappend out [dict create kind unmeasured key analyses_available \
+                     text {which analyses it can run}]
+    }
+    lappend out {*}[variant_key_note $caps appendwrite \
+                     {more than one analysis in a run} \
+                     {whether it keeps every analysis of a run}]
+    lappend out {*}[variant_key_note $caps hier_op_names \
+                     {operating-point numbers for devices inside subcircuits} \
+                     {how it names devices inside subcircuits}]
+    ## ⚠ A LIST-VALUED KEY, SO ase::caps_get AND NEVER A PREDICATE (D48).
+    if {![dict get [::ase::caps_get $caps casemode_detected] measured]} {
+      lappend out [dict create kind unmeasured key casemode_detected \
+                     text {which spellings of a net name it keeps}]
+    } else {
+      set d [::ase::casemode_detected_in $caps]
+      if {[lsearch -exact $d preserve] < 0} {
+        lappend out [dict create kind missing key casemode_detected \
+                       text {case-sensitive net names}]
+      } elseif {[lsearch -exact $d distinguish] < 0} {
+        lappend out [dict create kind missing key casemode_detected \
+                       text {nets told apart by case alone}]
+      }
+    }
+    lappend out {*}[variant_key_note $caps altshow_op_dump \
+                     {the fast operating-point dump} \
+                     {the fast operating-point dump}]
+    set asides {}
+    if {[::ase::caps_measured_as $caps altshow_op_dump 0]} {
+      lappend asides [dict create kind aside key altshow_op_dump text \
+        {Its fast dump prints wrong numbers, so operating points are saved one device at a time; no ngspice release has the fix yet.}]
+    }
+    ## THE TWO GATED LINTER PATTERNS, counted, and said with their door.
+    set bad 0 ; set unm 0
+    foreach k {keyword_case gnd_literal} {
+      if {![dict get [::ase::caps_get $caps $k] measured]} { incr unm }
+      if {[::ase::caps_measured_as $caps $k 0]} { incr bad }
+    }
+    if {$unm} {
+      lappend out [dict create kind unmeasured key keyword_case \
+                     text {how it reads two kinds of command line}]
+    }
+    if {$bad == 1} {
+      lappend asides [dict create kind aside key keyword_case text \
+        {One kind of command line is misread by it; ASE-L warns before a run that uses one.}]
+    } elseif {$bad == 2} {
+      lappend asides [dict create kind aside key keyword_case text \
+        {Two kinds of command line are misread by it; ASE-L warns before a run that uses one.}]
+    }
+    return [concat $out $asides]
+  }
+
+  # ─── STAGE 16b: THE PASS-THROUGH LINTER (issue 1470) ─────────────────────────
+  #
+  # FIVE PATTERNS OVER THE USER'S OWN LINES -- never over what render_deck emits,
+  # which ase::deck_case_lint already fences. Every symptom below was measured on
+  # apt 45.2 by the variant amendment (evidence/fork-dependencies.md §3-§4) and
+  # is TRANSCRIBED here: patterns 1-3 end the process, and this batch does not
+  # crash the user's simulator to re-confirm one (D50, CREW_BRIEF.md).
+  #
+  #   # pattern                            without the fix                        gate
+  #   1 command word `unset`               SIGABRT rc 134, stdout destroyed       warn always
+  #   2 command word `define`/`undefine`   SIGABRT / SIGSEGV                      warn always
+  #   3 command word `load`                SIGSEGV on the next command, or a      warn always
+  #                                        later `source` parsed another way
+  #   4 a bare `gnd` in a TEXT argument    rewritten to ` 0 `                     gnd_literal
+  #   5 `ALL` etc. in capitals on `write`  NO FILE, rc 0, $sim_status silent      keyword_case
+  #
+  # ⚠ 1-3 WARN ON EVERY BINARY, THE FORK INCLUDED, and that is accepted rather
+  # than solved: the key that could license silence or a refusal is the probe
+  # D50 refuses to run. So they carry no `refuse_key`.
+  #
+  # ⚠ 4 AND 5 ARE GATED: silent on MEASURED 1, a warning on measured 0 AND ON
+  # UNMEASURED (D47). Both keys are free (§2g, D49).
+  #
+  # ⚠ PATTERN 4's DELIMITERS ARE ngspice's OWN, READ from the pre-fix
+  # `inp_fix_gnd_name()` (`git show 131779106^:src/frontend/inpcom.c`): the first
+  # token is skipped, then `gnd` is rewritten when the character before it is
+  # whitespace, `(` or `,` and the one after is whitespace, `)` or `,` -- so a
+  # `gnd` ending the line survives and `/ _ - .` protect it (measured, §4.7).
+  # Lower case only on a stock build. ⚠ AND IT IS CONFINED TO THE COMMANDS WHOSE
+  # ARGUMENTS ARE TEXT -- the reader's case-preserving list. On `print v(gnd)`
+  # the rewrite is ngspice's documented alias for node 0 and changes nothing, and
+  # a warning there would be the nuisance this proc exists not to be.
+  #
+  # ⚠ PATTERN 5 IS CONFINED TO `write` AND `wrdata`, the case-preserving lines
+  # that take a keyword argument. Every other `.control` line is folded before a
+  # command sees it, so `print ALL` works everywhere; the measured failure is
+  # `write <file> ALL`, where apt 45.2 writes no file at rc 0 (§4.11).
+  #
+  # ⚠ WORDS COME OUT BY REGEXP, NEVER BY A Tcl LIST COMMAND: this is the user's
+  # text, and a quote or an unbalanced brace in it must not raise (cap_d_words'
+  # header records the measured crash).
+  #
+  # THE ANSWER: a list of {index <i> pattern <p> clause <c> remedy <r>}, `index`
+  # into `lines`. No note carries a line of its own, because nothing is rewritten.
+  proc lint_note {i pattern clause remedy} {
+    return [dict create index $i pattern $pattern clause $clause remedy $remedy]
+  }
+  proc lint_text_words {} {
+    return {echo shell write wrdata source cd load setcs strcmp strstr}
+  }
+  proc lint_wildcards {} { return {all allv alli ally alle} }
+
+  proc lint_control_text {lines caps} {
+    set out {}
+    set gsound [::ase::caps_measured_as $caps gnd_literal 1]
+    set gbad   [::ase::caps_measured_as $caps gnd_literal 0]
+    set ksound [::ase::caps_measured_as $caps keyword_case 1]
+    set kbad   [::ase::caps_measured_as $caps keyword_case 0]
+    set i -1
+    foreach raw $lines {
+      incr i
+      set l [string trim $raw]
+      if {$l eq {}} { continue }
+      set c0 [string index $l 0]
+      if {$c0 eq "*" || $c0 eq ";"} { continue }
+      if {![regexp {^(\S+)(.*)$} $l -> w tail]} { continue }
+      set lw [string tolower $w]
+      switch -exact -- $lw {
+        unset {
+          lappend out [lint_note $i unset \
+            {can crash some ngspice builds and lose the run's whole log} \
+            {delete it, or give the variable another value instead}]
+        }
+        define {
+          lappend out [lint_note $i define \
+            {defines a function, which can crash some ngspice builds and lose the run's whole log} \
+            {compute the value with let instead}]
+        }
+        undefine {
+          lappend out [lint_note $i define \
+            {goes with a user-defined function, which can crash some ngspice builds and lose the run's whole log} \
+            {compute the value with let instead}]
+        }
+        load {
+          lappend out [lint_note $i load \
+            {loads a results file, which can crash some ngspice builds or change how the rest of the run is read} \
+            {open the results in the waveform viewer instead}]
+        }
+      }
+      if {$gsound == 0 && [lsearch -exact [lint_text_words] $lw] >= 0 &&
+          [regexp {[[:space:](,]gnd(?=[[:space:]),])} $tail]} {
+        if {$gbad} {
+          set c {has a bare gnd, which this simulator turns into 0}
+        } else {
+          set c {has a bare gnd, which some ngspice builds turn into 0}
+        }
+        lappend out [lint_note $i gnd $c {write it as Gnd}]
+      }
+      if {$ksound == 0 && ($lw eq {write} || $lw eq {wrdata})} {
+        set toks [regexp -all -inline {\S+} $tail]
+        foreach t [lrange $toks 1 end] {
+          set lt [string tolower $t]
+          if {$t eq $lt} { continue }
+          if {[lsearch -exact [lint_wildcards] $lt] < 0} { continue }
+          if {$kbad} {
+            set c "has $t in capitals, which this simulator does not recognise, so the line writes nothing"
+          } else {
+            set c "has $t in capitals, which some ngspice builds do not recognise, so the line may write nothing"
+          }
+          lappend out [lint_note $i keyword $c "write it as $lt"]
+        }
+      }
+    }
+    return $out
+  }
+
+  # ─── STAGE 16c: TWO FILE CHECKS OF THE INSTALLATION, NOT OF THE BINARY ───────
+  #
+  # Defects of the files `vlnggen` and `verilator_shim.cpp` a Verilog
+  # co-simulation builds from, so they are read out of the directory the
+  # registered binary's `$sourcepath` names -- never a hardcoded /usr/share, which
+  # would answer "stock" for every fork a user registers (M19's finding). Two
+  # greps, no process. MEASURED 2026-09-15 on this machine:
+  #
+  #   /usr/share/ngspice/scripts (apt 45.2)            verilated_vcd_c 0   contextp.release 0
+  #   build-ver_50/stage/share/ngspice/scripts (fork)  verilated_vcd_c 1   contextp.release 1
+  #
+  # Each check answers 1 (sound), 0 (the defect is in the file) or `unknown` (no
+  # such file to read) -- Band 3's polarity -- and a 0 carries the clause, the
+  # remedy and the fork's own change as `patch` (commits e47a2abc8 and
+  # c2722d89b, read from /home/analog/dev/ngspice).
+
+  # §16c's PARSE RULE: the first ABSOLUTE element whose basename is `scripts`.
+  # The list has repeats and a leading `.` (apt: `. /usr/share/ngspice/scripts
+  # /usr/share/ngspice/scripts .`), and read back from an `echo` it keeps the
+  # quotes, so each element is stripped of them first.
+  proc scripts_dir_of {sourcepath} {
+    foreach el [regexp -all -inline {\S+} $sourcepath] {
+      set el [string trim $el "\"'"]
+      if {$el eq {} || [file pathtype $el] ne {absolute}} { continue }
+      set t $el
+      while {[string length $t] > 1 && [string index $t end] eq "/"} {
+        set t [string range $t 0 end-1]
+      }
+      if {[file tail $t] eq {scripts}} { return $t }
+    }
+    return {}
+  }
+
+  # How many lines of `path` contain `needle` -- `grep -c` -- or {} when there is
+  # no readable file. ::open, because src/ase_window.tcl shadows `open`.
+  proc cosim_count {path needle} {
+    if {![file isfile $path]} { return {} }
+    if {[catch {::open $path r} fh]} { return {} }
+    set n 0
+    if {[catch {
+      while {[gets $fh line] >= 0} {
+        if {[string first $needle $line] >= 0} { incr n }
+      }
+    }]} {
+      catch {::close $fh}
+      return {}
+    }
+    ::close $fh
+    return $n
+  }
+
+  proc cosim_shim_verdict {scripts_dir} {
+    set out [dict create vcd_link unknown ctx_lifetime unknown notes {}]
+    if {$scripts_dir eq {}} { return $out }
+    set notes {}
+    set n [cosim_count [file join $scripts_dir vlnggen] verilated_vcd_c]
+    if {$n ne {}} {
+      dict set out vcd_link [expr {$n > 0 ? 1 : 0}]
+      if {$n == 0} {
+        lappend notes [dict create check vcd_link \
+          clause {this ngspice's vlnggen does not link the VCD runtime, so a Verilog block built with waveforms fails at the final link with unresolved symbols} \
+          remedy {add the lines below to your copy of vlnggen, after its verilated_timing.o lines} \
+          patch {   // Trace builds leave the VCD runtime outside of Vlng__ALL.a.
+   set vcd_obj="$objdir/verilated_vcd_c.o"
+   fopen fh "$vcd_obj"
+   if $fh >= 0
+      fclose $fh
+      set v_objs="$v_objs $vcd_obj"
+   end}]
+      }
+    }
+    set n [cosim_count [file join $scripts_dir src verilator_shim.cpp] contextp.release]
+    if {$n ne {}} {
+      dict set out ctx_lifetime [expr {$n > 0 ? 1 : 0}]
+      if {$n == 0} {
+        lappend notes [dict create check ctx_lifetime \
+          clause {this ngspice's Verilator shim frees its simulation context while the model still uses it, so every Verilog co-simulation reads freed memory, and a run that worked is not evidence the memory was valid} \
+          remedy {make the change below in verilator_shim.cpp and rebuild your wrapper; ngspice itself needs no rebuild} \
+          patch {-    const std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
++    std::unique_ptr<VerilatedContext> contextp{new VerilatedContext};
+     Vlng *topp{new Vlng{contextp.get()}};
++    contextp.release();}]
+      }
+    }
+    dict set out notes $notes
+    return $out
+  }
+
   ::ase::register_backend ngspice [dict create \
     render_deck  ::ase::backend::ngspice::render_deck \
     run_cmd      ::ase::backend::ngspice::run_cmd \
@@ -29938,5 +30642,9 @@ $_leg
     campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals \
     event_probe         ::ase::backend::ngspice::event_probe \
     event_inventory     ::ase::backend::ngspice::event_inventory \
-    xspice_caveat       ::ase::backend::ngspice::xspice_caveat]
+    xspice_caveat       ::ase::backend::ngspice::xspice_caveat \
+    variant_notes       ::ase::backend::ngspice::variant_notes \
+    lint_control_text   ::ase::backend::ngspice::lint_control_text \
+    scripts_dir_of      ::ase::backend::ngspice::scripts_dir_of \
+    cosim_shim_verdict  ::ase::backend::ngspice::cosim_shim_verdict]
 }

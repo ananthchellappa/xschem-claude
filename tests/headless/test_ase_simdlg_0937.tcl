@@ -1478,7 +1478,10 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
     [list $S29OPEN $S29PICK $S29NPICK $S29FIELD $S29NS $S29REQ $S29FLAG \
           [expr {[string first {-casemode preserve} $S29TXT] >= 0}] \
           $S29CHILD] \
-    [list 1 OK OK preserve 1 preserve [list -D casemode=preserve] 1 preserve]
+    [list 1 OK OK preserve 1 preserve [list -D casemode=preserve -D casemodewrite] 1 preserve]
+  ## ⚠ MOVED BY ISSUE 1470 (debt M21): the run's flag now carries
+  ## `-D casemodewrite` beside the mode, as the classic path's `sim_run_flags`
+  ## always has, so the rawfile the run writes says which mode wrote it.
 
   # --- S30: A MODE THE USER WROTE BY HAND IS SHOWN, NOT SILENTLY DROPPED -
   ## Until this item landed, hand-editing the saved list was the ONLY way to

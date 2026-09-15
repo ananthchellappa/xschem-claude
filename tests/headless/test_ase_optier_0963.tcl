@@ -2420,7 +2420,13 @@ ase::op_cards_put $NL $BLK5
 ## one listed still lands in Q_NEWKINDS and still reds the arity, which is the
 ## whole point of counting them. Adding a sentence to a run without saying so
 ## here is still caught.
-set Q_OTHERITEMS {run_using}
+## ⚠ AND ISSUE 1470 (Stage 16a) ADDED TWO MORE, for the identical reason:
+## `variant_missing` / `variant_partial` -- "<path> can do everything ASE-L offers
+## except ..." -- are said from ase::run_deck once per binary per session, and the
+## primed answers this section runs on omit most capability keys, so a run here
+## says the fourth frame. Measured {3 {1 1 1}} with them unlisted; each is still
+## minted exactly once (row VS12 and friends in test_ase_variant_1470 own them).
+set Q_OTHERITEMS {run_using variant_missing variant_partial}
 set Q_NEWKINDS {}
 foreach q6r [list $Q1R $Q3R] {
   if {$q6r eq {NOPROC} || [string match RAISED:* $q6r]} { continue }
@@ -3211,9 +3217,14 @@ o_force {}
 set X5ST [ase::session_state $X_KEY]
 catch {dict set X5ST rundir $X_RUN}
 catch {dict set X5ST save_op_params 1}
+## ⚠ MOVED BY ISSUE 1470 (Stage 16d): `c unsafe` -> `c dumpunsound`. This box's
+## real simulator is /usr/bin/ngspice 45.2, whose `show` printer the probe
+## measures unsound (altshow_op_dump 0, receipt 46), so the per-device shape now
+## carries its actual reason. The SHAPE -- `c`, the short form still refused --
+## is exactly what this row has always pinned.
 check {X5 guard G4 on the real bench with the real simulator: the short form is\
  still not chosen for anybody automatically} \
-  [o_tr $X5ST] {c unsafe}
+  [o_tr $X5ST] {c dumpunsound}
 
 ## X7 -- ISSUE 0970, AND IT IS THE ONLY ROW IN THE TREE THAT MEASURES A DEVICE
 ## RATHER THAN A NAME. Two passgates on this bench have a low-threshold

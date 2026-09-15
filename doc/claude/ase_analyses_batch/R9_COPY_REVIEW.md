@@ -9153,3 +9153,409 @@ campaign_seed_range answered '5 1', which is not two whole numbers with the lowe
 
 
 *Note:* Rendered with the hook's raw answer. A malformed range is treated as no range (no refusal, no fold); this line is what keeps that from being silent.
+
+## Issue 1470 — the ngspice you actually have (stage 16, task 1)
+
+*42 entries.* The **frames** are ASE-L's (`src/ase.tcl`: `ase::sim_why` kinds `variant_*` and the `dumpunsound` tail, `ase::preflight_notes`, `ase::preflight_where`); the **clauses** are the adapter's (`ase::backend::ngspice::variant_notes`, `lint_control_text`, `cosim_shim_verdict`), so a second simulator keeps the frames and brings its own clauses. Four choices ride with these words under `owed.sh add rule 1470` — see the issue file: the run log says only a delta; patterns 1–3 warn on every binary; patterns 4–5 are confined to the commands where they bite; `dumpunsound` only on a measured-unsound printer. Worked sentences, from the real probe (receipt 46): the fork reads R9-679; stock 47 reads R9-680 with R9-686 and R9-691; apt 45.2 reads R9-680 with R9-686, R9-688, R9-689 and R9-691.
+
+**R9-678** · sentence
+
+```text
+ASE-L has not measured /usr/bin/ngspice yet. Press Detect in the Simulators window to find out what it can do.
+```
+
+
+*Where:* the first frame — nothing measured. **Not said in the run log** (on the Run path `ase::cap_report` already owns the sentences for a program that did not answer); it is the Simulators window's, task 2.
+
+
+*Note:* Rendered with the program's path. PLAN §16a's draft had *"-- it takes about a second --"*; dropped for terseness and because the measured cost is the whole probe, not one launch.
+
+**R9-679** · sentence
+
+```text
+/usr/bin/ngspice can do everything ASE-L offers.
+```
+
+
+*Where:* the second frame — measured, nothing missing. **Never said in the run log**: the delta shrinks to nothing on the best build. Whether the window shows it is task 2's.
+
+**R9-680** · frame
+
+```text
+/usr/bin/ngspice can do everything ASE-L offers except case-sensitive net names and the fast operating-point dump.
+```
+
+
+*Where:* the third frame — the run log, once per binary per session, and (task 2) the Simulators window.
+
+
+*Note:* Rendered: `<path> can do everything ASE-L offers except <A>`, `<A and B>`, `<A, B and C>`, followed by any asides (R9-689 … R9-691). With no gap but an aside, it is R9-679 followed by the aside.
+
+**R9-681** · frame
+
+```text
+/usr/bin/ngspice can do everything ASE-L offers, except that one measurement did not finish: the fast operating-point dump. Press Detect in the Simulators window to try again.
+```
+
+
+*Where:* **the fourth frame** — measured, but a measurement did not come back (the slow box whose budget killed leg D). The run log, once per binary per session.
+
+
+*Note:* Rendered: `one measurement` / `<n> measurements`, the unfinished nouns joined as in R9-680, asides before the door.
+
+**R9-682** · frame
+
+```text
+/usr/bin/ngspice can do everything ASE-L offers except case-sensitive net names, and one measurement did not finish: how it reads two kinds of command line. Press Detect in the Simulators window to try again.
+```
+
+
+*Where:* the fourth frame when there are measured gaps as well.
+
+**R9-683** · clause
+
+```text
+the SP analysis
+```
+
+
+*Where:* R9-680's list. Rendered `the <TYPE> analysis`, type upper-cased.
+
+
+*Note:* Only for an analysis ASE-L lists **and** can emit, measured absent — so PSS, which ASE-L does not offer until Stage 14, is on no row.
+
+**R9-684** · clause
+
+```text
+more than one analysis in a run
+```
+
+
+*Where:* R9-680's list, for a build that keeps only the last analysis.
+
+**R9-685** · clause
+
+```text
+operating-point numbers for devices inside subcircuits
+```
+
+
+*Where:* R9-680's list, for a build that cannot name a device inside a subcircuit.
+
+**R9-686** · clause
+
+```text
+case-sensitive net names
+```
+
+
+*Where:* R9-680's list — apt 45.2 and stock 47.
+
+**R9-687** · clause
+
+```text
+nets told apart by case alone
+```
+
+
+*Where:* R9-680's list, for a build that keeps case but not `distinguish`. No build measured here has that shape.
+
+**R9-688** · clause
+
+```text
+the fast operating-point dump
+```
+
+
+*Where:* R9-680's list (apt 45.2), and R9-681's list when its measurement did not come back.
+
+**R9-689** · aside
+
+```text
+Its fast dump prints wrong numbers, so operating points are saved one device at a time; no ngspice release has the fix yet.
+```
+
+
+*Where:* after R9-680 on apt 45.2.
+
+
+*Note:* ⚠ **A claim with a clock on it**: `git tag --contains 10276f993` was empty on 2026-09-15. It names no version, on purpose — never *"ngspice 47 fixes that"*, which names a release that does not exist.
+
+**R9-690** · aside
+
+```text
+One kind of command line is misread by it; ASE-L warns before a run that uses one.
+```
+
+
+*Where:* after R9-680, when one of `keyword_case` / `gnd_literal` is measured 0.
+
+**R9-691** · aside
+
+```text
+Two kinds of command line are misread by it; ASE-L warns before a run that uses one.
+```
+
+
+*Where:* after R9-680 on apt 45.2 and stock 47.
+
+
+*Note:* PLAN's draft said *"Two kinds of line in a Commands box are unsafe on it; ASE-L will say so if you use one."* ASE-L has no Commands box (the lines are pre-commands, verbatim lines and a netlist's `.control`), and these two kinds are misread rather than crashed on.
+
+**R9-692** · clause (unfinished)
+
+```text
+which analyses it can run
+```
+
+
+*Where:* R9-681's list.
+
+**R9-693** · clause (unfinished)
+
+```text
+whether it keeps every analysis of a run
+```
+
+
+*Where:* R9-681's list.
+
+**R9-694** · clause (unfinished)
+
+```text
+how it names devices inside subcircuits
+```
+
+
+*Where:* R9-681's list.
+
+**R9-695** · clause (unfinished)
+
+```text
+which spellings of a net name it keeps
+```
+
+
+*Where:* R9-681's list.
+
+**R9-696** · clause (unfinished)
+
+```text
+how it reads two kinds of command line
+```
+
+
+*Where:* R9-681 / R9-682's list — leg D cut on a slow box.
+
+**R9-697** · warning
+
+```text
+ase: warning — the pre-command 'unset temp' can crash some ngspice builds and lose the run's whole log. Fix: delete it, or give the variable another value instead.
+```
+
+
+*Where:* the CIW before the run starts, and the run log's `notes`. Every run that carries the line.
+
+
+*Note:* Rendered: `ase: warning — the <where> '<line>' <clause>. Fix: <remedy>.` The line is quoted byte for byte as the user wrote it.
+
+**R9-698** · refusal
+
+```text
+ase: REFUSED — the pre-command 'anything' can do a thing. Fix: do another. Nothing was generated: no deck, no raw, no log.
+```
+
+
+*Where:* D47's refusal arm. ⚠ **Unreachable with ngspice** — its adapter licenses no refusal (D50); shown with the suite's fixture clause.
+
+**R9-699** · where
+
+```text
+pre-command
+```
+
+
+*Where:* R9-697's `<where>`. The two others: `TRAN verbatim line` (rendered `<TYPE> verbatim line`) and `netlist .control line`.
+
+**R9-700** · clause
+
+```text
+can crash some ngspice builds and lose the run's whole log
+```
+
+
+*Where:* pattern 1, `unset` — every binary.
+
+**R9-701** · fix
+
+```text
+delete it, or give the variable another value instead
+```
+
+
+*Where:* pattern 1's fix.
+
+**R9-702** · clause
+
+```text
+defines a function, which can crash some ngspice builds and lose the run's whole log
+```
+
+
+*Where:* pattern 2, `define` — every binary.
+
+**R9-703** · clause
+
+```text
+goes with a user-defined function, which can crash some ngspice builds and lose the run's whole log
+```
+
+
+*Where:* pattern 2, `undefine`.
+
+**R9-704** · fix
+
+```text
+compute the value with let instead
+```
+
+
+*Where:* pattern 2's fix, both words.
+
+**R9-705** · clause
+
+```text
+loads a results file, which can crash some ngspice builds or change how the rest of the run is read
+```
+
+
+*Where:* pattern 3, `load` — every binary.
+
+**R9-706** · fix
+
+```text
+open the results in the waveform viewer instead
+```
+
+
+*Where:* pattern 3's fix.
+
+**R9-707** · clause
+
+```text
+has a bare gnd, which this simulator turns into 0
+```
+
+
+*Where:* pattern 4 on a build **measured** to rewrite it.
+
+**R9-708** · clause
+
+```text
+has a bare gnd, which some ngspice builds turn into 0
+```
+
+
+*Where:* pattern 4 on a build nobody measured.
+
+**R9-709** · fix
+
+```text
+write it as Gnd
+```
+
+
+*Where:* pattern 4's fix.
+
+**R9-710** · clause
+
+```text
+has ALL in capitals, which this simulator does not recognise, so the line writes nothing
+```
+
+
+*Where:* pattern 5 on a build **measured** to reject it. Rendered with the word as typed.
+
+**R9-711** · clause
+
+```text
+has ALL in capitals, which some ngspice builds do not recognise, so the line may write nothing
+```
+
+
+*Where:* pattern 5 on a build nobody measured.
+
+**R9-712** · fix
+
+```text
+write it as all
+```
+
+
+*Where:* pattern 5's fix, rendered with the word in lower case.
+
+**R9-713** · clause
+
+```text
+this ngspice's vlnggen does not link the VCD runtime, so a Verilog block built with waveforms fails at the final link with unresolved symbols
+```
+
+
+*Where:* 16c, `vcd_link 0`. ⚠ **Not yet said anywhere** — the check exists and no say-site calls it (receipt 46, what binds later work).
+
+**R9-714** · fix
+
+```text
+add the lines below to your copy of vlnggen, after its verilated_timing.o lines
+```
+
+
+*Where:* R9-713's fix, followed by the seven lines from the fork's own `vlnggen`.
+
+**R9-715** · clause
+
+```text
+this ngspice's Verilator shim frees its simulation context while the model still uses it, so every Verilog co-simulation reads freed memory, and a run that worked is not evidence the memory was valid
+```
+
+
+*Where:* 16c, `ctx_lifetime 0`. Not yet said anywhere.
+
+**R9-716** · fix
+
+```text
+make the change below in verilator_shim.cpp and rebuild your wrapper; ngspice itself needs no rebuild
+```
+
+
+*Where:* R9-715's fix, followed by the three-line change.
+
+**R9-717** · sentence tail
+
+```text
+There is a much faster way that collects every device at once, but your simulator was measured printing wrong numbers that way, so xschem asks one device at a time.
+```
+
+
+*Where:* 16d — the per-device operating-point sentence's tail for reason `dumpunsound`, after its shared head. Every run on a build whose dump printer is measured unsound (apt 45.2).
+
+
+*Note:* Replaces, on that build only, the `unsafe` tail (*"There is a much shorter way your simulator would accept, but it is all or nothing…"*), which stays for a build nobody measured. **Whether this sentence is wanted is itself the ruling** (PLAN §16d): it changes what a 45.2 user is told about why the deck is long.
+
+**R9-718** · diagnostic
+
+```text
+ase: describing what ngspice can do raised: <error>
+```
+
+
+*Where:* the CIW, when an adapter's `variant_notes` hook raises — a defect report to a developer. No sentence is given in that case.
+
+**R9-719** · diagnostic
+
+```text
+ase: checking the command lines for ngspice raised: <error>
+```
+
+
+*Where:* the CIW, when an adapter's `lint_control_text` hook raises. The run goes on unlinted.

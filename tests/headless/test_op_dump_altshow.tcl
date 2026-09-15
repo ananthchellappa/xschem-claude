@@ -267,8 +267,14 @@ check {T1 a measured-SOUND printer selects shape d} \
 ## one that always works -- and the reason token is what says which guard got
 ## there. A row expecting `nocap` here would be asserting that the new guard
 ## had swallowed G4.
+## ⚠ MOVED BY ISSUE 1470 (Stage 16d): `c unsafe` -> `c dumpunsound`, THE SHAPE
+## UNCHANGED. A printer MEASURED broken now lands on G4a, which is G4's shape
+## with the actual reason -- "your simulator was measured printing wrong numbers
+## that way" -- where `unsafe` said something true that was not the reason. T3
+## below is the control: an ABSENT key still reads `unsafe`, because not looking
+## is not the same as looking and finding it broken.
 check {T2 a measured-BROKEN printer falls past shape d to the per-device shape, through the EXISTING G4 demotion} \
-  [t_tier [dict merge $C_BASE {altshow_op_dump 0}]] {c unsafe}
+  [t_tier [dict merge $C_BASE {altshow_op_dump 0}]] {c dumpunsound}
 check {T3 an ABSENT key means "not measured", never "yes" -- a leg that ran out of budget must not promote the deck} \
   [t_tier $C_BASE] {c unsafe}
 check {T4 nothing measured at all still refuses shape d} \

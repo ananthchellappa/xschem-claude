@@ -3394,7 +3394,16 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   the fork. ASE-L accepts 0 … 4294967295 and writes `seed + shard index` per shard, so a campaign
   can report seeded shards that ngspice ran unseeded. Driver-measured. OPEN.
 
-**The next free number is 1470.**
+~~**The next free number is 1470.**~~ superseded: **1470** is filed, below.
+
+- **1470** — **A build that cannot do what ASE-L offers is never named, and a command line that
+  crashes it gets no warning.** `unset temp` in a pre-command aborts apt 45.2 at rc 134 with the
+  log destroyed and no sentence anywhere; the probe measures what each build lacks and ASE-L says
+  none of it; an ASE-L run never sent `-D casemodewrite` (debt M21); and a build with an unsound
+  dump printer is told the wrong reason for its long deck. Stage 16 task 1 of the ASE-L analyses
+  batch. Checked free in every clone on this machine before minting. OPEN.
+
+**The next free number is 1471.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

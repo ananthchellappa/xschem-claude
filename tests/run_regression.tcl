@@ -87,7 +87,15 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_events_1465" \
                  "headless/test_ase_trnoise_1466" \
-                 "headless/test_ase_trnoise_gui_1467"]
+                 "headless/test_ase_trnoise_gui_1467" \
+                 "headless/test_ase_variant_1470"]
+# ⚠ ISSUE 1470 (Stage 16 task 1, "the ngspice you actually have") IS HEADLESS
+# ONLY, AND ITS SECTIONS M21 AND EX START REAL SIMULATORS: the fork once for the
+# `casemodewrite` header, and the ordinary capability probe once per binary
+# present (apt 45.2, the fork, stock 47). ⚠ NONE OF THE LINTER'S ROWS STARTS ONE:
+# patterns 1-3 abort apt 45.2, and this batch never crashes the user's simulator,
+# so section LN drives the linter over strings. It maps no window -- the
+# Simulators-window row is task 2's -- and ends with an explicit `exit`.
 # ⚠ ISSUE 1465 (Stage 12, event-driven results) IS HEADLESS ONLY, AND ITS SECTION
 # EE STARTS BOTH REAL SIMULATORS. Nothing in it maps a window: the digital pane
 # it fills is the existing viewer's, reached through `ase::attach_dbs`, and the
