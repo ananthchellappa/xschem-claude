@@ -1,5 +1,12 @@
 # `pss` before Stage 14 opens — it SEGFAULTS on a short argument list, on both binaries
 
+⚠ **SUPERSEDED IN SCOPE, 2026-09-15 — read `evidence/pss-two-binaries.md` first.** This file
+measured one thing (argument count) on the two binaries in the matrix. Everything else `PLAN.md`
+§14 and APPENDIX §2.12 say about PSS — the convergence, the refusal thresholds, the verdict
+stream — was measured on a **scratch** `--enable-pss` build, and re-taken on the two binaries it
+does not hold: **on apt 45.2 PSS converges on nothing measured**, writes its verdict to
+**stderr**, and runs past the timeout where the fork aborts in 0.1 s.
+
 Taken by the driver on **2026-09-13** while the crews held the code. Both binaries:
 `/usr/bin/ngspice` (**45.2**) and `/home/analog/dev/ngspice/build-ver_50/src/ngspice`
 (**46+**). ⚖ **R7** has ruled that the PSS panel ships, *explicitly experimental*. This is

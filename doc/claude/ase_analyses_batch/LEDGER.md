@@ -45,7 +45,7 @@ ones its date. **Rewrite every row, or none.**
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
 | **T1** | ✅ **77 cases, ZERO counted lines in `tests/results.log`**, re-run solo 2026-09-15 on Stage 12 (346 s) — zero on every run since issue 1456. ⚠ **The file holds one fewer case log than there are cases, by design:** `xschemtest.tcl` writes to `results.log` **only when it fails** (`run_regression.tcl:478-490`). The driver nearly "corrected" 76 to 75 on that basis before reading it — counting `.log` lines is not counting cases |
 | **In flight** | nothing at this commit. **Stage 13 task 1's crew (the deck half) is dispatched immediately after it** |
-| **Next** | **Stage 13** — task 1 the deck half (state, all seven/five arguments padded, both injection routes, readouts, refusals, the seed sentence's logic), then task 2 the GUI half. Then **14** (PSS — ⚠ Stage 12 says the `eprvcd` line must not follow `pss` until measured on the fork), **16**, and ⚖ R10's specification |
+| **Next** | **Stage 13** — task 1 the deck half (in flight), then task 2 the GUI half. Then ⚠ **Stage 16 before Stage 14**: `evidence/pss-two-binaries.md` shows PSS converging on nothing on apt 45.2 and ⚖ **R7** was answered on a scratch build's evidence, so R7 goes back to the user (after R9, one at a time) before Stage 14 opens. Then ⚖ R10's specification |
 | **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **564 strings from 30 issues**. Everything else (R1–R8, R10, R11) is answered |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
 | **Debt queue** | **178 rule / 68 look / 11 suite**, after Stage 12. ⚠ Two `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`) and `ase-digital-pane-run-end-1465` (the before/after pair is in `evidence/`). Four unstamped entries are another clone's |
@@ -935,6 +935,20 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ⚠ Stage 14's evidence re-taken on the two binaries in the matrix — 2026-09-15 — and ⚖ R7 rests on a build users do not have
+
+Taken by the driver while Stage 13's crew held the code, the way M9 was taken before Stage 12:
+**one ngspice process at a time, fork first, 45.2 never crashed.** `evidence/pss-two-binaries.md`.
+
+| | |
+|---|---|
+| **what was wrong with the premise** | every PSS number in `PLAN.md` §14 and APPENDIX §2.12 came from a **scratch** `--enable-pss` build of `ccebdf2a2`. The two binaries in the matrix had only ever been measured for argument count |
+| **⚠ on apt 45.2** | **PSS converges on NOTHING measured** — not ngspice's own shipped ring example with its own arguments (rc 0, both plots full, `Convergence not reached … 3857280067 Hz`), not nineteen perturbations; the Van der Pol example **aborts**; three inputs the fork answers in under a second ran past the timeout |
+| **⚠ the stream** | 45.2 writes the verdict and all progress to **stderr**; the fork to stdout. The plan says *scrape stdout* |
+| **why** | upstream: the convergence fix `668329ca3` (2026-04-20), the endless-loop fix `8351188e6` and two stream fixes are **in no release tag** — not ngspice-46. Every released ngspice with PSS, Ubuntu's included, has the broken one |
+| **on the fork** | the plan's table mostly reproduces (the example converges, `fguess` 2.1× high aborts, `harmonics` 1 hangs and 0 segfaults, `steady_coeff 1e-9` falsely converges 4.5 % high) — ⚠ **but** `harmonics` 1/0 print `Convergence reached` **before** dying, `steady_coeff = 1e-6` (the plan's allowed minimum) **did not finish in 60 s**, a 19×-low `fguess` did **not** converge, and **a nonexistent `oscnode` moves f0 by 0.46 %** while real nodes do not. `eprvcd` after `pss`: safe on the fork |
+| **⚖ R7** | ⚠ **answered on the scratch build's evidence.** On the binary Ubuntu ships, the panel would offer an analysis that fails on ngspice's own example every time, with rc 0. `help pss` answers identically on both, and this batch does not prune a declared capability by probing behaviour. **Whether R7 stands is the user's question, to be put after ⚖ R9 — one ruling at a time — and Stage 14 does not open until it is answered.** Stage 16 (*the ngspice you actually have*) is unaffected and may go first |
 
 ### ✅ Stage 12 — event-driven results, issue **1465**, collected 2026-09-15 — **STAGE 12 IS COMPLETE**
 
