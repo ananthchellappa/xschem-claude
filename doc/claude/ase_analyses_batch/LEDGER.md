@@ -95,9 +95,16 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
    `timeout`** — it hangs ngspice. Both arms, T1 solo, ledger, commit.
 2. **Stage 13 task 2** — the GUI half. Decide its `look` debt by measurement (PLAN says none; Stage
    12's C5 says a change to what a pane draws is a pixel deliverable).
-3. **Stage 14** — PSS, explicitly experimental (⚖ R7, Option A). The two binaries disagree about
-   whether `pss` exists; read `evidence/pss-stage14.md` first, and measure `eprvcd` after `pss` **on
-   the fork** before any mixed-signal PSS deck carries it.
+3. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
+   `stage16_task1_brief.md`): the sentence composer with all four frames, the five-pattern linter
+   (text in, notes out — **its RED row is never re-run on `/usr/bin/ngspice`**), the two installation
+   greps, the `dumpunsound` token, and debt **M21**'s one word. Task 2 is the Simulators-window row,
+   the look debt with two registry entries, and 16e's release note (⚖ R11 is answered, so the support
+   sentence is no longer blocked).
+
+⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
+nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
+⚖ R9**, one ruling at a time; `eprvcd` after `pss` is already measured safe on the fork.
 
 ---
 
