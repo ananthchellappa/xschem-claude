@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**564 strings, from 30 issues, grouped by where the user sees them** — not by
+**653 strings, from 31 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -7865,3 +7865,1013 @@ ase: left out of the VCD, because the export command cannot take these digital n
 
 
 *Note:* a name carrying a character the control-language lexer splits or substitutes (measured: `$`) is never put on the export line, because on apt 45.2 a word that is not an event node ABORTS the simulator. The node is simulated; it is only not shown.
+
+## Issue 1466 — transient noise and random sources (stage 13, the deck half)
+
+*89 entries.* ⚠ **Every clause is the ADAPTER's** (`ase::backend::ngspice::noise_entry_check`, `noise_check`, `noise_seed_sentences`, `noise_contract`) **and every frame is ASE-L's**. The refusals and cautions reach the user today through the existing precheck surfaces, with the frames those already print; the seed sentences and the labels are DATA for Stage 13 task 2's Tran-form section and are on no screen until it ships.
+
+⚠ **One claim the user should weigh**: the seed sentence is split BY KIND on purpose — white and 1/f noise do not repeat under any seed on either binary, RTS noise and random sources repeat exactly. A single sentence about "noise" would be false for half of the rows.
+
+**R9-565** · refusal
+
+```text
+the noise table on this analysis cannot be read
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* a `noise` value that is not a Tcl list, reported as entry 0 — it would otherwise be dropped in silence.
+
+**R9-566** · fix
+
+```text
+delete it and add the noise sources again
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-567** · refusal
+
+```text
+noise source <k> cannot be read
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* an entry that is not a key/value list; `ase::stimuli_entry_on` treats it as off, so this is the only place it is named.
+
+**R9-568** · fix
+
+```text
+delete it and add it again
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-569** · caution
+
+```text
+the noise timestep makes this transient about <n> points -- gigabytes of results file and a run measured in hours
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* said once per row, and only when the card alone is under `points_max`'s threshold (1e8), which says the same thing for a card that asks for it. `<n>` is `%.3g`.
+
+**R9-570** · fix
+
+```text
+use a larger noise timestep, or a shorter stop time
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* also the fix of the 1/f record entry below.
+
+**R9-571** · refusal
+
+```text
+noise source <k> names no source and no net
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-572** · fix
+
+```text
+name the source it rides on, or the net it goes into
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-573** · refusal
+
+```text
+noise source <k> names both a source and a net
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-574** · fix
+
+```text
+keep one of the two
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-575** · refusal
+
+```text
+noise source <k> has no noise kind this simulator knows ('<kind>')
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* the parenthesis is added only when a kind was named.
+
+**R9-576** · fix
+
+```text
+choose Transient noise or Random source
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* names the two function labels below.
+
+**R9-577** · refusal
+
+```text
+'<name>' cannot be used in a generated command: a space, a quote, a bracket or an '=' splits it
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* the shape of Stage 11's campaign axis refusal, with the bracket added because the argument list is bracketed. Its fix reuses that refusal's existing `use the name as the netlist spells it`, so no new fix string.
+
+**R9-578** · refusal
+
+```text
+'<source>' is not a voltage or current source, so it cannot carry noise
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-579** · fix
+
+```text
+name a V or I source, or put the noise on a net instead
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-580** · refusal
+
+```text
+a random source on the current source '<source>' can stop changing after its first value
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* measured on both binaries: `trrandom(2 1u 1m 1m 0)` on an I source draws ONE value after its delay and holds it to the end; on a V source, 501. `isrcacct.c` redraws (and posts its next breakpoint) only within 3 ulps of `n*TS`, computed as `CKTtime - TD`.
+
+**R9-581** · fix
+
+```text
+put it on a voltage source, or on a net instead
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* on a net the deck carries a random VOLTAGE into a 1 S VCCS, never a current source.
+
+**R9-582** · refusal
+
+```text
+'<source>' already carries a <kind> waveform, and a source carries only one, so the noise would replace it
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `<kind>` is the card's own keyword, lowercased: `pulse`, `sin`, `exp`, `sffm`, `am`, `pwl`, `sound`, `external`, `trnoise`, `trrandom`. `evidence/trnoise.md` T5: the second function replaces the first with nothing said.
+
+**R9-583** · fix
+
+```text
+put the noise on a net instead
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* also the fix of the subcircuit caution below.
+
+**R9-584** · caution
+
+```text
+'<source>' is inside a subcircuit, and only a top-level source can be changed during the run
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-585** · caution
+
+```text
+'<source>' is not in the netlist text, so it may be in an included file or not exist
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* a caution, never a refusal: the netlist text cannot see inside an `.include`.
+
+**R9-586** · fix
+
+```text
+check the source name
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-587** · refusal
+
+```text
+noise source <k> goes into ground, where it does nothing
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `0` or `gnd`, any case.
+
+**R9-588** · fix
+
+```text
+name the net it goes into
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-589** · caution
+
+```text
+there is no net '<net>' in the netlist text, so it may come from an included file or not exist
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* the bench carries `includes` or `models`, or the scope has an `.include` card, so absence is not proof.
+
+**R9-590** · fix
+
+```text
+check the net name
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-591** · refusal
+
+```text
+there is no net '<net>' in this circuit, so the noise would drive a node nothing else is connected to
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* measured on both binaries: such a carrier runs at rc 0 and says nothing.
+
+**R9-592** · fix
+
+```text
+name a net the circuit has
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-593** · refusal
+
+```text
+'<net>' is a digital node, and the noise would drive a separate analog node of the same name
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* only from a MEASURED event inventory (Stage 12's peek). Measured on the fork only: `singular matrix: check node dig`, the transient fallback rescues it, rc 0.
+
+**R9-594** · fix
+
+```text
+put the noise on an analog net
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-595** · refusal
+
+```text
+the netlist already has '<name>', a name ASE-L keeps for its noise sources
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `ase_noise_*` nodes and `?ase_noise_*` devices.
+
+**R9-596** · fix
+
+```text
+rename that device or node
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-597** · fix
+
+```text
+type a number, with an SI suffix if you like
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* the fix for the EXISTING refusal `cannot read '<value>' as a number for '<field>'` (`ase::analysis_emit_msg fill`, not a new string), here naming the argument's label.
+
+**R9-598** · refusal
+
+```text
+a negative noise timestep makes the simulator hang
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `evidence/trnoise.md` T1; re-measured through `alter` on the fork ONLY (rc 124 under `timeout 10`). Never run on `/usr/bin/ngspice`.
+
+**R9-599** · fix
+
+```text
+give the noise timestep a value above 0
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* also the fix of the next entry.
+
+**R9-600** · refusal
+
+```text
+a noise timestep of 0 switches white and 1/f noise off, so their amplitudes add nothing
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* a timestep of 0 is legal and meaningful for an RTS-only entry, so it is refused only under a non-zero white or 1/f amplitude.
+
+**R9-601** · refusal
+
+```text
+a 1/f exponent of <exponent> gives no 1/f noise: it must be above 0 and below 2
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* only while the 1/f amplitude is non-zero. T3: exactly 2 gives an output of 1e-18; T4: 0 discards the amplitude.
+
+**R9-602** · fix
+
+```text
+use an exponent between 0 and 2, such as 1
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-603** · refusal
+
+```text
+<label> cannot be negative
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `<label>` is the argument's label: 1/f amplitude, RTS amplitude, RTS mean low time or RTS mean high time.
+
+**R9-604** · fix
+
+```text
+enter 0 or more
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-605** · refusal
+
+```text
+an RTS mean low time of 0 holds the source at the RTS amplitude, a fixed offset and not noise
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-606** · fix
+
+```text
+give both RTS times a value above 0
+```
+
+
+*Where:* the refusal or caution above.
+
+
+*Note:* also the fix of the next entry.
+
+**R9-607** · refusal
+
+```text
+an RTS mean high time of 0 gives spikes one time step wide, not a telegraph signal
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-608** · caution
+
+```text
+noise source <k> adds no noise: its white, 1/f and RTS amplitudes are all 0
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-609** · fix
+
+```text
+set an amplitude, or switch it off
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-610** · caution
+
+```text
+a noise timestep above 1/100 of the stop time draws too few samples to be noise
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `evidence/trnoise.md` §5.5: 51.7 uV rms where 1 mV was asked.
+
+**R9-611** · fix
+
+```text
+use a smaller noise timestep
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-612** · refusal
+
+```text
+1/f noise at this timestep allocates about <MB> MB before the first time point
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* a refusal above 1e8 samples and the SAME words as a caution above 1e7 — about 40 bytes a sample per 1/f source, 416 MB measured at 1e7 (§2.2). Fix: `use a larger noise timestep, or a shorter stop time`.
+
+**R9-613** · refusal
+
+```text
+a random source needs a distribution from 1 to 4; any other value gives 0 for the whole run
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-614** · fix
+
+```text
+choose Uniform, Gaussian, Exponential or Poisson
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-615** · refusal
+
+```text
+a random source needs a hold time above 0
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-616** · fix
+
+```text
+give the hold time a value above 0
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-617** · refusal
+
+```text
+a random source needs a value for <label>
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* `<label>` is the first parameter's label (`Amplitude`). A blank would be padded to 0.
+
+**R9-618** · fix
+
+```text
+enter a value
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-619** · caution
+
+```text
+noise source <k> adds nothing random: its <label> is 0
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-620** · fix
+
+```text
+set a value, or switch it off
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-621** · refusal
+
+```text
+a negative delay is ignored by the simulator
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+**R9-622** · fix
+
+```text
+enter a delay of 0 or more
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-623** · caution
+
+```text
+if the OP needs the transient fallback, this transient starts from a random value of '<target>'
+```
+
+
+*Where:* a `tran` row's precheck — the gate's advice before a run and the analysis form's banner (`stimuli_check`, worst finding first), `render_deck`'s tier for a refusal, and every finding per entry in `ase::stimuli_verdicts` for task 2's form.
+
+
+*Note:* measured on both binaries: with `optran 0 0 0 100n 10u 0` the transient's first point is a random draw (fork 5.93e-02, 45.2 8.29e-02 V); with TD = 1n it is 0. Fires only with TD = 0 and the transient rung on, which is the default.
+
+**R9-624** · fix
+
+```text
+give the random source a delay above 0
+```
+
+
+*Where:* the refusal or caution above.
+
+
+**R9-625** · sentence
+
+```text
+<Kinds> does not repeat from run to run: the simulator seeds it from its process ID, and no seed reaches it.
+```
+
+
+*Where:* `ase::stimuli_seed_report`'s `sentences` — data for task 2's form; not on any screen yet.
+
+
+*Note:* the plural reads `do not repeat` / `seeds them` / `reaches them`. Said for white and 1/f noise ONLY. Measured on both binaries under `.options seed=` and `setseed` in `.control`. ⚠ Never widened to RTS or random sources (false: they repeat) and never narrowed to "this build" (it is both binaries).
+
+**R9-626** · sentence
+
+```text
+<Kinds> repeats exactly under the seed.
+```
+
+
+*Where:* `ase::stimuli_seed_report`'s `sentences` — data for task 2's form; not on any screen yet.
+
+
+*Note:* the plural reads `repeat`. For RTS noise and random sources, when the bench carries a seed (a seeded campaign, or an options row `seed`).
+
+**R9-627** · sentence
+
+```text
+<Kinds> repeats only when a seed is set.
+```
+
+
+*Where:* `ase::stimuli_seed_report`'s `sentences` — data for task 2's form; not on any screen yet.
+
+
+*Note:* the same kinds, when the bench carries no seed.
+
+**R9-628** · label
+
+```text
+white noise · 1/f noise · RTS noise · random sources
+```
+
+
+*Where:* `ase::stimuli_seed_report`'s `sentences` — data for task 2's form; not on any screen yet.
+
+
+*Note:* the kind names inside the three sentences above, joined with `and` (a comma list for three), first letter capitalised at the start of a sentence.
+
+**R9-629** · label
+
+```text
+noise source
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* the noun in the entry sentences (`noise source <k>`).
+
+**R9-630** · label
+
+```text
+Transient noise
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* function `trnoise`.
+
+**R9-631** · label
+
+```text
+Random source
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* function `trrandom`.
+
+**R9-632** · label
+
+```text
+Source
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* the `alter` route's target.
+
+**R9-633** · label
+
+```text
+Net
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* the inject route's target.
+
+**R9-634** · label
+
+```text
+White noise
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 1, NA — rms per sample; its density is a readout.
+
+**R9-635** · label
+
+```text
+Noise timestep
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 2, TS — sets the timestep, a COST control.
+
+**R9-636** · label
+
+```text
+1/f exponent
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 3, NALPHA.
+
+**R9-637** · label
+
+```text
+1/f amplitude
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 4, NAMP — the DRIVING amplitude, never the output rms.
+
+**R9-638** · label
+
+```text
+RTS amplitude
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 5.
+
+**R9-639** · label
+
+```text
+RTS mean low time
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 6, RTSCAPT.
+
+**R9-640** · label
+
+```text
+RTS mean high time
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trnoise` argument 7, RTSEMT.
+
+**R9-641** · label
+
+```text
+Distribution
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trrandom` argument 1, TYPE.
+
+**R9-642** · label
+
+```text
+Uniform
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* TYPE 1.
+
+**R9-643** · label
+
+```text
+Gaussian
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* TYPE 2.
+
+**R9-644** · label
+
+```text
+Exponential
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* TYPE 3.
+
+**R9-645** · label
+
+```text
+Poisson
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* TYPE 4.
+
+**R9-646** · label
+
+```text
+Hold time
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trrandom` argument 2, TS.
+
+**R9-647** · label
+
+```text
+Delay
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trrandom` argument 3, TD.
+
+**R9-648** · label
+
+```text
+Amplitude
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trrandom` argument 4's default label.
+
+**R9-649** · label
+
+```text
+Half-range
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* argument 4 under Uniform — ⚠ the HALF range; a field called Range would be off by 2x.
+
+**R9-650** · label
+
+```text
+Standard deviation
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* argument 4 under Gaussian.
+
+**R9-651** · label
+
+```text
+Mean
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* argument 4 under Exponential, and argument 5 under Gaussian.
+
+**R9-652** · label
+
+```text
+Lambda
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* argument 4 under Poisson.
+
+**R9-653** · label
+
+```text
+Offset
+```
+
+
+*Where:* the noise table's descriptors (`ase::backend::ngspice::noise_contract`) — data for task 2's form; not on any screen yet.
+
+
+*Note:* `trrandom` argument 5's label, and its label under Uniform, Exponential and Poisson.

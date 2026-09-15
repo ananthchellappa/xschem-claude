@@ -3637,6 +3637,31 @@ the defensible sentence is about the form, not the simulator (see *The ADE-L com
 arguments, §5.3 all five `trrandom` arguments, §5.4 seeding and the sentence a form owes the user,
 §5.5 the two injection routes.
 
+⚠ **Corrections measured by task 1 (issue 1466, `receipts/41-stage-13-deck.md`) — read these before
+the text below.** Both binaries unless marked.
+* **The carrier example `ase_inoise_1 …` is an XSPICE `a` card** (SPICE reads the device from the first
+  letter; fork: `MIF-ERROR - unable to find definition of model 0`, rc 1). Shipped carriers are
+  `iase_noise_<row>_<k>`.
+* **"a parallel current source … `trrandom(…)` on a current source freezes" — true, and now with a
+  trigger**: `trrandom(2 1u 1m 1m 0)` on an I source draws ONE value after its delay; on a V source,
+  501. So an injected random current is a **V source + 1 S VCCS**, and the `alter` route refuses
+  `trrandom` on an existing I source.
+* **The carrier's noise is not written on the netlist card.** A netlist-level source serves every
+  analysis in the deck; measured, a second transient after a noisy one carries its noise unless
+  the source is put back. The carrier is quiet (`dc 0`), altered above its own row's card, and
+  restored by a zero `trnoise` below the guard.
+* **"White and 1/f noise are not reproducible in this build"** — true on BOTH binaries, so *"in this
+  build"* is narrower than the fact; the shipped sentence names the kinds and says RTS noise and
+  random sources DO repeat under a seed (`.options seed=` or `setseed` in `.control`).
+* **"non-positive `TS`" is refused only where it silences something**: `TS = 0` is the legal
+  RTS-only idiom for `trnoise` and fatal for `trrandom`; a negative `TS` hangs (fork only, rc 124).
+* **The `optran` warning has a fix**: a random source with any delay above 0 keeps the draw out of
+  the transient's first point.
+* **Points ≈ `5*tstop/TS`** is the fork's factor; 45.2 gives ≈ 4.4 (4415 vs 5008 at `tran 1u 1m`,
+  TS = 1u), so the readout is an estimate. **`alter` does not survive `reset`.**
+* **"No new look debt is filed"** is task 2's to decide by measurement (Stage 12's C5); task 1 drew
+  nothing.
+
 Both are `IF_REALVEC` instance parameters on **both** `vsrc` and `isrc` — the manual's *"isrc not yet
 available"* is wrong here, measured — and documented nowhere in-tree. They belong on the **Tran form**
 as a collapsible section: they are a simulation setting, not a source property, and nothing goes on the

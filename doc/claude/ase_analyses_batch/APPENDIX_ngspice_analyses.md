@@ -2243,6 +2243,9 @@ the two must seed per run.
 
 ### 5.5 Two injection routes, neither touching the schematic
 
+⚠ **CORRECTED 2026-09-15 by Stage 13 task 1 (issue 1466, C1/C2), measured on both binaries.** **(1) `ase_inoise_1` is an XSPICE `a` card** — SPICE reads a device from its first letter; on the fork it gives `MIF-ERROR - unable to find definition of model 0`, rc 1, and `ase::netlist_facts` would file it under `xspice`. A generated card's name begins with its device letter (`iase_noise_<row>_<k>`). **(2) A `trnoise(…)` written on a card serves EVERY transient in the deck**: a second `tran` with no restore is noisy (45.2: 0.88 V RMS, 4439 points where its card asks for ~108). Shipped: a quiet carrier in the netlist slot, `alter … trnoise = [ … ]` above the row's own card, and `alter … trnoise = [ 0 0 0 0 0 0 0 ]` below its guard. **(3) `trrandom` on a current source freezes** when its delay outruns its hold time (one value where a V source gives 501), so an injected random current is a V source into a 1 S VCCS.
+
+
 1. **`alter <src> trnoise = [ 10m 1u 0 0 ]`** on an existing DC-only source. ⚠ **grey out any
    source that carries a stimulus** — §7 T5: one source carries exactly **one** transient
    function, and `alter` on a source that had `sin(...)` **destroys the sine** (measured: max

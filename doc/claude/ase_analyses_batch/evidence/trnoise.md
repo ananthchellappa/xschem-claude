@@ -677,7 +677,7 @@ arguments are unusable by hand** — which is the case for the GUI.
 | **T8** | ⚠️ incomplete | **`notrnoise` does not disable RTS-only sources or `trrandom` at all** (§5.4) |
 | **T9** | ⚠️ unreproducible | **No user-facing seed reaches `trnoise` white or 1/f noise** (§4.1). This is arguably the single biggest quality gap in the feature: you cannot re-run a failing noise transient |
 | **T10** | ℹ️ cost cliff | **1/f pre-allocates ≈ 40 bytes × `tstop/TS` per source before the first timepoint** (§2.2). 1e7 samples = 416 MB MEASURED |
-| **T11** | ℹ️ divergent code | VSRC and ISRC use **different** breakpoint algorithms for the same feature — VSRC tracks `VSRCbreak_time` (`vsrcacct.c:250-258`), ISRC compares `AlmostEqualUlps(n·TS, CKTtime, 3)` (`isrcacct.c:282-297`), and the ISRC path divides by `TS` with no `TS > 0` guard. MEASURED, the observable behaviour is nonetheless identical for RTS-only, white and `trrandom` (V and I gave the same 22 613 rows and the same duty cycle). Recorded as a maintenance hazard, **not** as a behavioural difference — do not let a plan claim ISRC is broken |
+| **T11** | ℹ️ divergent code | VSRC and ISRC use **different** breakpoint algorithms for the same feature — VSRC tracks `VSRCbreak_time` (`vsrcacct.c:250-258`), ISRC compares `AlmostEqualUlps(n·TS, CKTtime, 3)` (`isrcacct.c:282-297`), and the ISRC path divides by `TS` with no `TS > 0` guard. MEASURED, the observable behaviour is nonetheless identical for RTS-only, white and `trrandom` (V and I gave the same 22 613 rows and the same duty cycle). Recorded as a maintenance hazard, **not** as a behavioural difference — do not let a plan claim ISRC is broken. ⚠ **TOO WIDE — Stage 13 task 1 (issue 1466, C3), measured on both binaries and re-measured by the driver:** `trrandom(2 1u 1m 1m 0)` on an I source holds **one** value through [1 m, 2 m] where a V source takes **501**. The 3-ulps test above misses the first redraw when TD ≫ TS and never posts another breakpoint. White noise, RTS and TD = 0 `trrandom` on ISRC do redraw |
 | **T12** | ℹ️ doc | `examples/transient-noise/noilib-demo.h` subckt `inv13` uses a `noise` keyword that does not exist ⇒ hard parse error if instantiated |
 
 None of T1-T12 is reported by any dossier, and none is in `src/ngspice.txt`.
@@ -713,6 +713,9 @@ rows in a small table inside it. Concretely, against `ase-ui.md`'s map:
   that does not emit is worse than none.
 
 ### 10.2 How the deck gets the source, without touching the schematic
+
+⚠ **CORRECTED 2026-09-15 by Stage 13 task 1 (issue 1466, C1/C2), measured on both binaries.** **(1) `ase_inoise_1` is an XSPICE `a` card** — SPICE reads a device from its first letter; on the fork it gives `MIF-ERROR - unable to find definition of model 0`, rc 1, and `ase::netlist_facts` would file it under `xspice`. A generated card's name begins with its device letter (`iase_noise_<row>_<k>`). **(2) A `trnoise(…)` written on a card serves EVERY transient in the deck**: a second `tran` with no restore is noisy (45.2: 0.88 V RMS, 4439 points where its card asks for ~108). Shipped: a quiet carrier in the netlist slot, `alter … trnoise = [ … ]` above the row's own card, and `alter … trnoise = [ 0 0 0 0 0 0 0 ]` below its guard. **(3) `trrandom` on a current source freezes** when its delay outruns its hold time (one value where a V source gives 501), so an injected random current is a V source into a 1 S VCCS.
+
 
 Three routes, in the order the GUI should prefer them. MEASURED, all three.
 
@@ -796,6 +799,9 @@ point of the panel is that the raw arguments are uncalibrated.
 | Runs `[ 1 ]` | `repeat N … end` around the tran + measures | the Monte Carlo of §4.5 — free, no `alter` |
 
 ### 10.4 What the deck must emit, and in what order
+
+⚠ **See the correction at §10.2: the carrier below is an `a` card, and a card-level `trnoise` leaks into every later transient.**
+
 
 Per `ase-deck.md` §1.1's slot table:
 

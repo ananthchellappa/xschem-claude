@@ -5134,6 +5134,61 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
       }
     }
+    # --- 1466 (Stage 13): AND THE `stimuli` CONTRACT, FOR THE SAME SILENCE --
+    # Every leg below is read by a reader that answers `{}` for a leg it cannot
+    # call, so a mistyped proc name means noise that never reaches the deck, a
+    # refusal that never fires, or a seed sentence that is never said -- at rc 0,
+    # with nothing anywhere naming the typo. `twotables` exists because
+    # `ase::analysis_setup_key` answers ONE key per type.
+    if {[dict exists $e stimuli]} {
+      set st [dict get $e stimuli]
+      if {[catch {dict size $st}]} {
+        lappend out [list $ty badstimuli {}]
+      } else {
+        if {[dict exists $e setup]} { lappend out [list $ty twotables {}] }
+        if {![dict exists $st key] || [string trim [dict get $st key]] eq {}} {
+          lappend out [list $ty nostimulikey {}]
+        } elseif {[lsearch -exact [ase::analysis_nonsetting_keys] [dict get $st key]] >= 0 \
+                  || [lsearch -exact $declared [dict get $st key]] >= 0} {
+          lappend out [list $ty stimulikeyclash [dict get $st key]]
+        }
+        if {![dict exists $st selector] || [string trim [dict get $st selector]] eq {}} {
+          lappend out [list $ty nostimuliselector {}]
+        }
+        if {![dict exists $st lines]} {
+          lappend out [list $ty nostimulilines {}]
+        } elseif {[info commands [dict get $st lines]] eq {}} {
+          lappend out [list $ty badstimulilines [dict get $st lines]]
+        }
+        foreach _leg {netlist post check kinds quantity sentences} {
+          if {[dict exists $st $_leg] && [info commands [dict get $st $_leg]] eq {}} {
+            lappend out [list $ty badstimulihook [dict get $st $_leg]]
+          }
+        }
+        if {![dict exists $st targets] || [catch {llength [dict get $st targets]} _nt] \
+            || $_nt < 1} {
+          lappend out [list $ty nostimulitargets {}]
+        }
+        if {![dict exists $st functions] || [catch {dict size [dict get $st functions]} _nf] \
+            || $_nf < 1} {
+          lappend out [list $ty nostimulifunctions {}]
+        } else {
+          dict for {_fn _fd} [dict get $st functions] {
+            if {[catch {dict get $_fd args} _fa] || [catch {llength $_fa} _nfa] || $_nfa < 1} {
+              lappend out [list $ty badstimulifunction $_fn]
+              continue
+            }
+            foreach _ad $_fa {
+              if {[catch {dict size $_ad}] || ![dict exists $_ad name] \
+                  || [string trim [dict get $_ad name]] eq {} || ![dict exists $_ad label]} {
+                lappend out [list $ty badstimuliarg $_fn]
+                break
+              }
+            }
+          }
+        }
+      }
+    }
   }
   return $out
 }
@@ -5245,10 +5300,23 @@ proc ase::analysis_setup {sim type} {
 }
 
 # The row key this type's setup table lives under -- `{}` when there is none.
+#
+# ⚠ 1466 (Stage 13): OR THE KEY OF ITS `stimuli` TABLE, AND THE NAME STAYS. This
+# proc's real question is the one Stage 9's lesson 2 named -- *which row key is
+# licensed on THIS type and is not a setting?* -- and three sites ask it: the
+# refusal reader here (`ase::analysis_emit_check`) and the `Options…` editor's
+# reader and writer in `src/ase_window.tcl`. A transient's noise table is exactly
+# such a key, and a second proc answering it would leave the two window sites
+# listing the whole table as a free-text NAME/VALUE pair and refusing it at OK --
+# issue 1450's defect for the fourth time, in a commit that may not touch the
+# window. An entry declares ONE table or the other, never both
+# (`ase::analysis_schema_errors` answers `twotables`), so this is still one key.
 proc ase::analysis_setup_key {sim type} {
   set s [ase::analysis_setup $sim $type]
-  if {$s eq {} || ![dict exists $s key]} { return {} }
-  return [dict get $s key]
+  if {$s ne {} && [dict exists $s key]} { return [dict get $s key] }
+  set t [ase::analysis_stimuli $sim $type]
+  if {$t ne {} && [dict exists $t key]} { return [dict get $t key] }
+  return {}
 }
 
 # THE TABLE ITSELF, as a list of entries -- `{}` for a type with no contract, a
@@ -11069,11 +11137,14 @@ proc ase::preflight_pick {tbl name cs} {
 # REFUSAL is refusing decks that work. Static warns; only an exact leg blocks.
 #
 #  -> {sources  {<inst> {scope <s> letter v|i ac <mag> dc <v> portnum <n> z0 <r>
-#                        distof1 <a> distof2 <a> trnoise <args> trrandom <args>}}
+#                        distof1 <a> distof2 <a> trnoise <args> trrandom <args>
+#                        wave pulse|sin|exp|sffm|am|pwl|sound|external}}
 #      families {resistor 1 vsource 1 mos 1 ...}
 #      events   {<node> 1 ...}
 #      models   {<name> {type <t> level <n>}}
 #      nodes    <ase::netlist_map's scopes>
+#      globals  <ase::netlist_map's globals>      (1466)
+#      includes <ase::netlist_map's includes>     (1466)
 #      exact    0}
 proc ase::netlist_facts {netlist_text} {
   # THE DEVICE LETTER TABLE. SPICE's first-character convention, which is the
@@ -11193,6 +11264,18 @@ proc ase::netlist_facts {netlist_text} {
         }
         continue
       }
+      ## --- 1466 (Stage 13): AND WHICH WAVEFORM THE CARD ALREADY CARRIES --------
+      ## ⚠ A SOURCE CARRIES EXACTLY ONE TRANSIENT FUNCTION, and the next one it is
+      ## given REPLACES the first with nothing said: measured
+      ## (`evidence/trnoise.md` T5), `alter vsig trnoise = [...]` on a source that
+      ## carried `sin(...)` destroyed the sine. So a noise table that alters a
+      ## source must know whether the card already has a waveform, and this is
+      ## the pass that reads the card. Recorded under `wave`, lowercased, the
+      ## first one seen; `trnoise` and `trrandom` keep their own keys below.
+      if {[regexp -nocase {^(pulse|sin|exp|sffm|am|pwl|sound|external)(\(|$)} $t -> _wk]} {
+        if {![dict exists $rec wave]} { dict set rec wave [string tolower $_wk] }
+        continue
+      }
       if {[string match {trnoise*} $lt]} { dict set rec trnoise $t ; continue }
       if {[string match {trrandom*} $lt]} { dict set rec trrandom $t ; continue }
     }
@@ -11205,9 +11288,16 @@ proc ase::netlist_facts {netlist_text} {
     }
     dict set sources $first $rec
   }
+  ## --- 1466 (Stage 13): `globals` AND `includes` RIDE ALONG WITH `nodes` ------
+  ## so a precondition holding only FACTS can ask `ase::netlist_map_resolve`
+  ## whether a net exists -- that reader needs all three, and without `includes`
+  ## it would call a net absent in exactly the include-bearing scope where it has
+  ## to stand down (`ase::facts_net_status`).
+  set _nm [ase::netlist_map $netlist_text]
   return [dict create \
     sources $sources families $families events $events models $models \
-    nodes [dict get [ase::netlist_map $netlist_text] scopes] exact 0]
+    nodes [dict get $_nm scopes] globals [dict get $_nm globals] \
+    includes [dict get $_nm includes] exact 0]
 }
 
 # ---------------------------------------------------------------------------
@@ -12232,6 +12322,21 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       catch { set _v [$_p $row] }
       if {[llength $_v] < 2} { return {} }
       return $_v
+    }
+    stimuli_check {
+      # ─── STAGE 13 (issue 1466): THE NOISE TABLE's FINDINGS, WORST FIRST ────
+      #
+      # The adapter answers EVERY finding over EVERY entry -- a surface editing
+      # the table wants all of them (`ase::stimuli_verdicts`) -- and a
+      # precondition reports one, so this arm picks the worst, first of equal
+      # rank. ⚠ It reads FACTS and STATE, which is the reason this is not
+      # `setup_check`: whether a source already carries a waveform is a fact
+      # about the netlist, and whether the operating point's transient fallback
+      # is armed is a fact about the state.
+      #
+      # ⚠ AN ADAPTER WITH NO `check` LEG GETS NO OPINION -- absent means NOT
+      # MEASURED, never NO, exactly as `setup_check` says.
+      return [ase::stimuli_worst [ase::stimuli_verdicts $sim $row $facts $state]]
     }
     saves_resolve {
       # ⚠ EVERY ANALYSIS IS STARVED BY A SAVE LIST THAT RESOLVES TO NOTHING, AND
@@ -21368,6 +21473,535 @@ proc ase::campaign_rerun {sim state netlist_text idx} {
   return [dict create status done idx $idx exit [dict get $r exit] refusals {}]
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 13 -- TRANSIENT NOISE AND RANDOM SOURCES, WITH NO SCHEMATIC EDIT
+# (issue 1466; doc/claude/ase_analyses_batch/PLAN.md §13, the DECK half)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# WHAT THE USER COULD NOT DO. ngspice can make any independent source emit
+# transient noise (`trnoise`: white, 1/f and RTS) or a random value held for a
+# time (`trrandom`). It is the one kind of noise a designer cannot get from
+# `.NOISE` -- jitter on an edge, a comparator flipping -- and ASE-L had no way to
+# ask for it. The only door was typing positional arguments onto a source on the
+# schematic: the founding doctrine forbids it, and two SHIPPED ngspice examples
+# get the positions wrong.
+#
+# THE SHAPE. A TABLE ON THE TRANSIENT ROW, under a key the registry names: the
+# `stimuli` contract. One entry is one noisy source and it reaches the deck by
+# one of two routes, neither of which touches the schematic --
+#
+#   alter    the entry names an existing source: `alter <src> <fn> = [ ... ]`
+#            above this row's card
+#   inject   the entry names a net: a QUIET carrier source goes in the slot
+#            right after the netlist, and the `alter` addresses the carrier
+#
+# -- and a `post` leg puts every altered source back after the row's own
+# transient. ⚠ THE RESTORE IS MEASURED, NOT TIDINESS: on both binaries a second
+# transient after an altered one carried the first one's noise when nothing put
+# it back. Two transients on one bench are two rows (⚖ R6), and a noise table
+# belongs to one of them.
+#
+# ⚠ WHY A CONTRACT OF ITS OWN AND NOT STAGE 9's `setup`. Three reasons, each a
+# fact about this tree:
+#   1. `setup` has no leg for the NETLIST SLOT, and a carrier card cannot be
+#      written inside `.control`;
+#   2. its `check` leg is handed the ROW alone, and these rules need the
+#      netlist's facts (does the source already carry a waveform? is that a
+#      net?) and the state (is the operating point's transient fallback armed?);
+#   3. ⚠ `src/ase_window.tcl` DRAWS EVERY `setup` CONTRACT. `ase::ui::chana_show`
+#      grids its table button for any type whose contract declares `columns`, and
+#      the schema requires them -- so a `setup` contract on `tran` would have put
+#      a button on the Tran form in the task that must draw nothing.
+#
+# ⚠ SCHEMA vs CONTENT (D34-D37). Core learns the key, the entry's `selector`,
+# each function's POSITIONAL argument descriptors, the `targets`, which argument
+# plays which ROLE, and the constants of the estimate; it pads, counts, orders,
+# does arithmetic and aggregates. `trnoise`, `trrandom`, `alter`, the carrier
+# cards, every refusal, every threshold and every sentence are the adapter's. A
+# backend whose registry declares no `stimuli` gets NOTHING: every reader below
+# answers `{}`, and there is no fallback of any kind.
+#
+# ⚠ AND NO `seed_enabled`, ON ANYTHING. A seed is a campaign's (Stage 11), or an
+# options row; the seed report below READS whether one is set and never offers
+# a second place to set it.
+
+proc ase::analysis_stimuli {sim type} {
+  set e [ase::analysis_entry $sim $type]
+  if {$e eq {} || ![dict exists $e stimuli]} { return {} }
+  set s [dict get $e stimuli]
+  if {[catch {dict size $s}]} { return {} }
+  return $s
+}
+
+# One key of a type's contract, or `dflt`.
+proc ase::stimuli_get {sim type key {dflt {}}} {
+  set s [ase::analysis_stimuli $sim $type]
+  if {$s eq {} || ![dict exists $s $key]} { return $dflt }
+  return [dict get $s $key]
+}
+
+# The entries of a row's table -- `{}` for a type with no contract, a row that
+# carries none, or a value that is not a list. Through Stage 9's reader, so a
+# malformed table answers empty rather than raising on the Run path.
+proc ase::stimuli_rows {sim row} {
+  if {[ase::analysis_stimuli $sim [ase::state_get $row type]] eq {}} { return {} }
+  return [ase::analysis_setup_rows $sim [ase::state_get $row type] $row]
+}
+
+# An entry is ON unless it says `enabled 0` -- the row's own word and default.
+# ⚠ A MALFORMED ENTRY IS OFF, so a hand-edited `.state` cannot put a line in a
+# deck from an entry nothing can read; the adapter's check names it instead.
+proc ase::stimuli_entry_on {entry} {
+  if {[catch {dict size $entry}]} { return 0 }
+  if {[dict exists $entry enabled] && [string trim [dict get $entry enabled]] eq {0}} {
+    return 0
+  }
+  return 1
+}
+
+# One field of one entry, trimmed, or `{}`. Total by construction.
+proc ase::stimuli_field {entry name} {
+  if {[catch {dict size $entry}] || ![dict exists $entry $name]} { return {} }
+  return [string trim [dict get $entry $name]]
+}
+
+# The function an entry names, through the contract's `selector` -- `{}` for none
+# or one the contract does not declare.
+proc ase::stimuli_function {sim type entry} {
+  set sel [ase::stimuli_get $sim $type selector]
+  if {$sel eq {}} { return {} }
+  set fn [ase::stimuli_field $entry $sel]
+  set fns [ase::stimuli_get $sim $type functions]
+  if {$fn eq {} || [catch {dict exists $fns $fn} ok] || !$ok} { return {} }
+  return $fn
+}
+
+# One function's argument descriptors IN POSITIONAL ORDER. ⚠ ONE LIST: the order
+# the emitter writes (`ase::stimuli_values`) and the order a form shows, so a
+# value typed into a field cannot reach the deck in a different position.
+proc ase::stimuli_args {sim type fn} {
+  set fns [ase::stimuli_get $sim $type functions]
+  if {[catch {dict exists $fns $fn} ok] || !$ok} { return {} }
+  set f [dict get $fns $fn]
+  if {[catch {dict exists $f args} ok] || !$ok} { return {} }
+  set a [dict get $f args]
+  if {[catch {llength $a}]} { return {} }
+  return $a
+}
+
+proc ase::stimuli_arg_names {sim type fn} {
+  set out {}
+  foreach d [ase::stimuli_args $sim $type $fn] {
+    if {[catch {dict exists $d name} ok] || !$ok} { lappend out {} ; continue }
+    lappend out [dict get $d name]
+  }
+  return $out
+}
+
+# The argument that plays `role` (`amplitude`, `interval`, `flicker`), or `{}`.
+proc ase::stimuli_arg_role {sim type fn role} {
+  foreach d [ase::stimuli_args $sim $type $fn] {
+    if {[catch {dict exists $d role} ok] || !$ok} { continue }
+    if {[dict get $d role] eq $role && [dict exists $d name]} { return [dict get $d name] }
+  }
+  return {}
+}
+
+# ⚠ EVERY POSITIONAL VALUE, ALWAYS, PADDED WITH THE CONTRACT's `pad`. The short
+# forms are the trap: `trnoise(1m)` is a heap read past a one-element array and a
+# silent zero, and `simple-noise.cir`'s five-argument "1/f noise" is white noise
+# plus a permanent offset. `evidence/trnoise.md` §10.3 said to omit arguments 5-7
+# when RTS is off; `PLAN.md` §13 measured padding benign and overruled it.
+proc ase::stimuli_values {sim type entry} {
+  set fn [ase::stimuli_function $sim $type $entry]
+  if {$fn eq {}} { return {} }
+  set pad [ase::stimuli_get $sim $type pad 0]
+  set out {}
+  foreach n [ase::stimuli_arg_names $sim $type $fn] {
+    set v [ase::stimuli_field $entry $n]
+    if {$v eq {}} { set v $pad }
+    lappend out $v
+  }
+  return $out
+}
+
+# Which route an entry takes: `{route <r> field <f> value <v>}` when exactly one
+# declared target field is filled, `{}` for none or several.
+proc ase::stimuli_target {sim type entry} {
+  set hit {}
+  foreach t [ase::stimuli_get $sim $type targets] {
+    if {[catch {dict exists $t name} ok] || !$ok} { continue }
+    set v [ase::stimuli_field $entry [dict get $t name]]
+    if {$v eq {}} { continue }
+    set r {}
+    if {[dict exists $t route]} { set r [dict get $t route] }
+    lappend hit [dict create route $r field [dict get $t name] value $v]
+  }
+  if {[llength $hit] != 1} { return {} }
+  return [lindex $hit 0]
+}
+
+# The lines one per-row leg answers -- `lines` (above the card) or `post` (below
+# the guard). ⚠ IT DOES NOT CATCH, for `ase::analysis_setup_emit`'s reason: a leg
+# that raises means the deck cannot be written, and swallowing it would ship a
+# transient with its noise silently missing.
+proc ase::stimuli_emit {sim row which {state {}} {idx -1}} {
+  set s [ase::analysis_stimuli $sim [ase::state_get $row type]]
+  if {$s eq {} || ![dict exists $s $which]} { return {} }
+  set p [dict get $s $which]
+  if {[info commands $p] eq {}} { return {} }
+  return [$p $state $row $idx]
+}
+
+# THE NETLIST SLOT: every ENABLED row's `netlist` leg, in row order. A disabled
+# transient carries no carrier -- it runs no analysis the carrier could serve.
+proc ase::stimuli_netlist_lines {sim state} {
+  set out {}
+  set i -1
+  foreach row [ase::state_get $state analyses] {
+    incr i
+    if {[ase::state_get $row enabled 0] ne {1}} { continue }
+    foreach l [ase::stimuli_emit $sim $row netlist $state $i] { lappend out $l }
+  }
+  return $out
+}
+
+# EVERY FINDING OVER A ROW's TABLE, as `{<entry> <verdict> <sentence> <fix>}`
+# (entry counted from 1; 0 for the table as a whole). ALL of them, not the
+# first -- a form marks each entry. `{}` for a contract with no `check` leg.
+proc ase::stimuli_verdicts {sim row facts {state {}}} {
+  set p [ase::stimuli_get $sim [ase::state_get $row type] check]
+  if {$p eq {} || [info commands $p] eq {}} { return {} }
+  set v {}
+  if {[catch {$p $row $facts $state} v]} { return {} }
+  if {[catch {llength $v}]} { return {} }
+  return $v
+}
+
+# The worst of those as `{verdict sentence fix}`, first of equal rank, or `{}`.
+proc ase::stimuli_worst {verdicts} {
+  set rank {fatal 3 blocked 2 caution 1}
+  set best {}
+  set br 0
+  foreach f $verdicts {
+    if {[catch {llength $f} n] || $n < 4} { continue }
+    set vd [lindex $f 1]
+    if {![dict exists $rank $vd]} { continue }
+    if {[dict get $rank $vd] > $br} {
+      set br [dict get $rank $vd]
+      set best [lrange $f 1 3]
+    }
+  }
+  return $best
+}
+
+# The same answer in `ase::precheck_banner`'s own shape, for a surface editing
+# the table -- `ase::analysis_setup_banner`'s twin, so the two tables speak one
+# vocabulary.
+proc ase::stimuli_banner {sim row facts {state {}}} {
+  set type [ase::state_get $row type]
+  set lines {}
+  foreach f [ase::stimuli_verdicts $sim $row $facts $state] {
+    if {[catch {llength $f} n] || $n < 4} { continue }
+    lappend lines [list stimuli_check [lindex $f 1] [lindex $f 2] [lindex $f 3]]
+  }
+  if {![llength $lines]} { return {state clear} }
+  return [list state [ase::precheck_worst [dict create $type $lines]] lines $lines]
+}
+
+# A number, through the simulator's own SI alphabet (its `si_suffixes` hook), or
+# `{}`. With no hook only a plain number reads -- never a guessed suffix table.
+proc ase::stimuli_num {sim text} {
+  set t [string trim $text]
+  set sufs {}
+  catch {
+    set h [ase::backend_hook $sim si_suffixes]
+    if {$h ne {}} { set sufs [$h] }
+  }
+  if {$sufs eq {}} {
+    if {[string is double -strict $t]} { return [expr {double($t)}] }
+    return {}
+  }
+  set r [ase::si_parse $t $sufs]
+  if {[lindex $r 0] eq {bad} || [llength $r] < 2} { return {} }
+  return [lindex $r 1]
+}
+
+# ─── THE DERIVED READOUTS: ARITHMETIC ON NUMBERS, NO NAME SPELLED ───────────
+
+# White-noise DENSITY from a per-sample amplitude and its interval:
+# `A * sqrt(2 * TS)` per root hertz, flat to about `1 / (2 * TS)`.
+# `evidence/trnoise.md` §2.1 calibrated it through a 1 kOhm / 159 nF filter:
+# predicted 17.7 / 56.1 / 177 uV against 19.1 / 55.3 / 180 uV measured.
+proc ase::noise_density {amplitude interval} {
+  if {![string is double -strict $amplitude] || ![string is double -strict $interval]} {
+    return {}
+  }
+  if {$interval <= 0} { return {} }
+  return [expr {abs(double($amplitude)) * sqrt(2.0 * $interval)}]
+}
+proc ase::noise_flat_to {interval} {
+  if {![string is double -strict $interval] || $interval <= 0} { return {} }
+  return [expr {1.0 / (2.0 * $interval)}]
+}
+
+# THE POINT ESTIMATE: `max(base, per * span / interval)`, where `base` is the
+# card's own count. ⚠ AN ESTIMATE, AND IT HAS TO BE WORDED AS ONE: the two
+# binaries disagree about a transient's point count (`binary-differences.md`
+# #7), and this stage measured it at TS well below the step -- 5008 / 50008
+# points on the fork against 4415 / 44116 on 45.2 for `tran 1u 1m` at TS = 1u /
+# 100n, while at TS = 10u and 100u both give 1309 and 1039. No golden pins it.
+proc ase::noise_points {base span interval per} {
+  set n {}
+  if {[string is double -strict $base]} { set n $base }
+  if {[string is double -strict $span] && [string is double -strict $interval] \
+      && [string is double -strict $per] && $interval > 0 && $span > 0} {
+    set k [expr {entier(double($per) * $span / $interval + 0.5)}]
+    if {$n eq {} || $k > $n} { set n $k }
+  }
+  return $n
+}
+
+# THE FILE SIZE ESTIMATE: points x vectors x bytes per value. Measured 8 bytes a
+# value in the binary rawfile `write` makes, on both binaries (141,569 bytes for
+# 4415 points and 4 vectors, 160,544 for 5008).
+proc ase::noise_bytes {points nvec bpv} {
+  foreach x [list $points $nvec $bpv] {
+    if {![string is double -strict $x]} { return {} }
+  }
+  return [expr {entier($points) * entier($nvec) * entier($bpv)}]
+}
+
+# The smallest positive interval among a row's ENABLED entries -- the one that
+# sets the timestep -- or `{}`.
+proc ase::stimuli_min_interval {sim row} {
+  set type [ase::state_get $row type]
+  set best {}
+  foreach e [ase::stimuli_rows $sim $row] {
+    if {![ase::stimuli_entry_on $e]} { continue }
+    set fn [ase::stimuli_function $sim $type $e]
+    if {$fn eq {}} { continue }
+    set ia [ase::stimuli_arg_role $sim $type $fn interval]
+    if {$ia eq {}} { continue }
+    set v [ase::stimuli_num $sim [ase::stimuli_field $e $ia]]
+    if {$v eq {} || $v <= 0} { continue }
+    if {$best eq {} || $v < $best} { set best $v }
+  }
+  return $best
+}
+
+# A row's point estimate WITH its noise: the one estimator's answer
+# (`ase::analysis_point_estimate`, the adapter's `salvage` hook), raised to what
+# the smallest noise interval asks for. ⚠ THE SALVAGE ESTIMATOR ITSELF IS NOT
+# CHANGED, deliberately: it decides whether a run is CHECKPOINTED, and a
+# checkpointed noisy transient (`stop after` / `resume` across `trnoise`
+# breakpoints) is unmeasured. Named in the receipt as open.
+proc ase::stimuli_points {sim state row} {
+  set type [ase::state_get $row type]
+  set base [ase::analysis_point_estimate $sim $type $row $state]
+  set per {}
+  catch {set per [dict get [ase::stimuli_get $sim $type estimate] points_per_interval]}
+  set span {}
+  set sf [ase::stimuli_get $sim $type span]
+  if {$sf ne {}} { set span [ase::stimuli_num $sim [ase::field_value $sim $type $row $sf]] }
+  set ts [ase::stimuli_min_interval $sim $row]
+  if {$ts eq {} || $per eq {} || $span eq {}} { return $base }
+  return [ase::noise_points $base $span $ts $per]
+}
+
+# EVERYTHING A FORM SHOWS UNDER ONE ENTRY, as a dict. `k` counts from 1; `nvec`
+# is the number of vectors the run writes, which only the caller knows -- give
+# it and `bytes` is filled, omit it and `bytes` is `{}` rather than a guess.
+#
+#   function   the entry's function
+#   quantity   V or A (the adapter's `quantity` leg), or {}
+#   density    amplitude * sqrt(2 * interval), per root hertz, or {}
+#   flat_to    1 / (2 * interval) in hertz, or {}
+#   points     the ROW's estimate with its noise (`ase::stimuli_points`)
+#   bytes      points * nvec * bytes_per_value, or {}
+#   flicker_bytes  bytes allocated for this entry's 1/f record before the first
+#              time point, or {}
+#   estimate   1 -- every number here is an estimate and a surface must say so
+proc ase::stimuli_readout {sim state row k {nvec {}}} {
+  set type [ase::state_get $row type]
+  set entries [ase::stimuli_rows $sim $row]
+  if {![string is integer -strict $k] || $k < 1 || $k > [llength $entries]} { return {} }
+  set entry [lindex $entries [expr {$k - 1}]]
+  set fn [ase::stimuli_function $sim $type $entry]
+  if {$fn eq {}} { return {} }
+  set est [ase::stimuli_get $sim $type estimate]
+  set out [dict create function $fn quantity {} density {} flat_to {} \
+             points {} bytes {} flicker_bytes {} estimate 1]
+  set qp [ase::stimuli_get $sim $type quantity]
+  if {$qp ne {} && [info commands $qp] ne {}} {
+    catch {dict set out quantity [$qp $entry]}
+  }
+  set interval {} ; set amp {} ; set flick {}
+  foreach {role var} {interval interval amplitude amp flicker flick} {
+    set an [ase::stimuli_arg_role $sim $type $fn $role]
+    if {$an ne {}} { set $var [ase::stimuli_num $sim [ase::stimuli_field $entry $an]] }
+  }
+  if {$amp ne {} && $amp != 0} {
+    set d [ase::noise_density $amp $interval]
+    if {$d ne {}} {
+      dict set out density $d
+      dict set out flat_to [ase::noise_flat_to $interval]
+    }
+  }
+  set pts [ase::stimuli_points $sim $state $row]
+  dict set out points $pts
+  set bpv {}
+  catch {set bpv [dict get $est bytes_per_value]}
+  if {$pts ne {} && [string is integer -strict $nvec] && $bpv ne {}} {
+    dict set out bytes [ase::noise_bytes $pts $nvec $bpv]
+  }
+  set span {}
+  set sf [ase::stimuli_get $sim $type span]
+  if {$sf ne {}} { set span [ase::stimuli_num $sim [ase::field_value $sim $type $row $sf]] }
+  set fbs {} ; set fpad 0
+  catch {set fbs [dict get $est flicker_bytes_per_sample]}
+  catch {set fpad [dict get $est flicker_pad]}
+  if {$flick ne {} && $flick != 0 && $interval ne {} && $interval > 0 \
+      && $span ne {} && $fbs ne {}} {
+    dict set out flicker_bytes [expr {entier(($span / $interval + $fpad) * $fbs)}]
+  }
+  return $out
+}
+
+# ─── WHICH KINDS A SEED REPEATS, AND WHICH KINDS THE KILL SWITCH KILLS ──────
+
+# The adapter's answer for one entry: `{live {...} repeat {...} killed {...}}`.
+proc ase::stimuli_kinds {sim type entry} {
+  set p [ase::stimuli_get $sim $type kinds]
+  if {$p eq {} || [info commands $p] eq {}} { return {} }
+  set r {}
+  if {[catch {$p $entry} r] || [catch {dict size $r}]} { return {} }
+  return $r
+}
+
+# Whether this run is seeded: a campaign carrying a seed, or an options row of
+# the name the adapter's campaign seed uses (`ase::campaign_seed_option`). No
+# hook, no name, no answer but 0.
+proc ase::stimuli_seeded {sim state} {
+  if {[ase::campaign_enabled $state] && [ase::campaign_seed $state] ne {}} { return 1 }
+  set so [ase::campaign_seed_option $sim]
+  if {$so eq {}} { return 0 }
+  foreach o [ase::state_get $state options] {
+    if {[catch {dict exists $o name} ok] || !$ok} { continue }
+    if {[string equal -nocase [dict get $o name] $so]} { return 1 }
+  }
+  return 0
+}
+
+# ⚖ R9 -- THE SEED SENTENCE's LOGIC, AS DATA A FORM READS.
+#
+#   present    the kinds the row's enabled entries have live
+#   repeat     those a seed repeats          norepeat  those it cannot
+#   seeded     1 when this run carries a seed
+#   sentences  the adapter's words for exactly that split, or {}
+#
+# ⚠ SPLIT BY KIND, AND NEVER WIDENED OR NARROWED. White and 1/f are
+# irreproducible under every control on BOTH binaries -- so neither "in this
+# build" nor "noise is not reproducible" is true: the first is too narrow and the
+# second is false for RTS and random sources, which repeat exactly.
+proc ase::stimuli_seed_report {sim state row} {
+  set type [ase::state_get $row type]
+  if {[ase::analysis_stimuli $sim $type] eq {}} { return {} }
+  set present {} ; set repeat {} ; set norepeat {}
+  foreach e [ase::stimuli_rows $sim $row] {
+    if {![ase::stimuli_entry_on $e]} { continue }
+    set kd [ase::stimuli_kinds $sim $type $e]
+    set live {} ; set rep {}
+    catch {set live [dict get $kd live]}
+    catch {set rep [dict get $kd repeat]}
+    foreach x $live {
+      if {[lsearch -exact $present $x] < 0} { lappend present $x }
+      if {[lsearch -exact $rep $x] >= 0} {
+        if {[lsearch -exact $repeat $x] < 0} { lappend repeat $x }
+      } elseif {[lsearch -exact $norepeat $x] < 0} {
+        lappend norepeat $x
+      }
+    }
+  }
+  set seeded [ase::stimuli_seeded $sim $state]
+  set sentences {}
+  set sp [ase::stimuli_get $sim $type sentences]
+  if {$sp ne {} && [info commands $sp] ne {} && [llength $present]} {
+    catch {set sentences [$sp $norepeat $repeat $seeded]}
+  }
+  return [dict create present $present repeat $repeat norepeat $norepeat \
+            seeded $seeded sentences $sentences]
+}
+
+# WHAT THE CONTRACT's KILL SWITCH DOES TO THIS ROW, as data:
+# `{option <name> armed 0|1 killed {{<k> <kind>}...} survive {{<k> <kind>}...}}`.
+# `{}` for a contract that names no kill switch. `armed` reads the options sheet
+# the way every other precondition does.
+proc ase::stimuli_kill_report {sim state row} {
+  set type [ase::state_get $row type]
+  set opt [ase::stimuli_get $sim $type kill]
+  if {$opt eq {}} { return {} }
+  set armed 0
+  foreach o [ase::state_get $state options] {
+    if {[catch {dict exists $o name} ok] || !$ok} { continue }
+    if {![string equal -nocase [dict get $o name] $opt]} { continue }
+    set v 1
+    if {[dict exists $o value]} { set v [dict get $o value] }
+    set armed [expr {[ase::opt_truthy $v] ? 1 : 0}]
+  }
+  set killed {} ; set survive {}
+  set k 0
+  foreach e [ase::stimuli_rows $sim $row] {
+    incr k
+    if {![ase::stimuli_entry_on $e]} { continue }
+    set kd [ase::stimuli_kinds $sim $type $e]
+    set live {} ; set kl {}
+    catch {set live [dict get $kd live]}
+    catch {set kl [dict get $kd killed]}
+    foreach x $live {
+      if {[lsearch -exact $kl $x] >= 0} {
+        lappend killed [list $k $x]
+      } else {
+        lappend survive [list $k $x]
+      }
+    }
+  }
+  return [dict create option $opt armed $armed killed $killed survive $survive]
+}
+
+# ─── TWO QUESTIONS ABOUT A NET, ASKED OF FACTS ──────────────────────────────
+
+# `present`, `absent` or `unknown`, through `ase::netlist_map_resolve` -- the
+# pre-flight's own reader, so an include-bearing scope stands down exactly as it
+# does for an output name. ⚠ FACTS TAKEN BEFORE ISSUE 1466 carry no `globals` or
+# `includes` (a cached answer can be that old), and for them the answer is
+# `unknown`, never `absent`: a false refusal is worse than a missed one.
+proc ase::facts_net_status {facts net} {
+  if {[catch {dict size $facts}] || ![dict exists $facts nodes] \
+      || ![dict exists $facts globals] || ![dict exists $facts includes]} {
+    return unknown
+  }
+  set map [dict create scopes [dict get $facts nodes] \
+             globals [dict get $facts globals] includes [dict get $facts includes]]
+  if {[catch {ase::netlist_map_resolve $map voltage $net 0} r]} { return unknown }
+  if {[catch {dict get $r status} st]} { return unknown }
+  return $st
+}
+
+# 1 when a MEASURED event inventory (`evtinv`, donated by `ase::event_facts`)
+# names the net -- case-folded -- and 0 otherwise. ⚠ NEVER FROM THE `a` CARD's
+# TOKENS: they name analog ports too (an ADC's input), and a refusal is never a
+# guess.
+proc ase::facts_event_node {facts net} {
+  if {[catch {dict get $facts evtinv} inv]} { return 0 }
+  set nodes [ase::event_nodes_known $inv]
+  if {[catch {dict keys $nodes} ks]} { return 0 }
+  foreach n $ks {
+    if {[string equal -nocase $n $net]} { return 1 }
+  }
+  return 0
+}
+
 namespace eval ase::backend::ngspice {
 
   # Render the simulation deck: the circuit netlist minus its trailing `.end`
@@ -21388,6 +22022,17 @@ namespace eval ase::backend::ngspice {
     # something that looks like output.
     if {![catch {ase::netlist_facts $netlist_text} rfacts]} {
       set rsim [ase::state_get $state simulator [ase::default_simulator]]
+      ## --- 1466 (Stage 13): WITH THE MEASURED EVENT NODES, WHEN THERE ARE ANY -
+      ## The gate already donates them (`ase::event_facts`); this tier did not,
+      ## so a circuit measured for the FIRST time by `ase::run_deck` -- which
+      ## takes the inventory immediately before calling this proc -- could not
+      ## be refused here for putting noise on a digital node. MEASURED on the
+      ## fork: a current source on an event node drives a separate analog node
+      ## of the same name, `singular matrix: check node dig` five times, the
+      ## transient fallback rescues it, and the run ends rc 0. ⚠ A PEEK, which
+      ## never starts a program, and it is the same peek this proc takes again
+      ## below for the export lines. Every other arm ignores the key.
+      catch {set rfacts [ase::event_facts $rsim $state $netlist_text $rfacts]}
       if {[ase::precheck_worst \
              [ase::analysis_precheck $rsim $state $rfacts]] eq {fatal}} {
         return -code error "ase: this deck has a precondition the simulator\
@@ -21466,6 +22111,20 @@ namespace eval ase::backend::ngspice {
     # Empty for any analog deck, so this is inert unless a code block exists.
     set cosim [ase::cosim_map $state $netlist_text]
     if {[llength $cosim]} { set lines [ase::cosim_rewrite $lines $cosim] }
+    ## --- 1466 (Stage 13): THE CARRIERS OF THIS DECK'S INJECTED NOISE ----------
+    ## ⚠ RIGHT AFTER THE NETLIST AND OUTSIDE `.control`, because a device card
+    ## cannot be written inside the control block -- and above the `.include`,
+    ## `.lib` and `.param` cards, which is where `evidence/trnoise.md` §10.4 put
+    ## the slot. A carrier is a QUIET source (`dc 0`, no function): its noise is
+    ## given by an `alter` above its own transient and taken away below it, so a
+    ## netlist-level card cannot leak one row's noise into another analysis.
+    ##
+    ## Empty for every state whose enabled rows carry no noise table -- every
+    ## state in this tree and all 104 committed files -- so no deck golden moves.
+    foreach _nzl [ase::stimuli_netlist_lines \
+                    [namespace tail [namespace current]] $state] {
+      lappend lines $_nzl
+    }
     # .include cards (top-level, before .lib models so any global .params they
     # define — gf180's design.ngspice switches sw_stat_global/mc_skew/fnoicor/…
     # that sm141064's typical section references — are in scope when the models
@@ -22154,6 +22813,17 @@ namespace eval ase::backend::ngspice {
                      [namespace tail [namespace current]] $a lines $state $ai] {
         lappend lines $_pl
       }
+      ## --- 1466 (Stage 13): THIS TRANSIENT'S NOISE, GIVEN ABOVE ITS CARD -------
+      ## ⚠ WITH THE SETUP LINES, FOR THE SAME TWO REASONS: rows VB1/VB2 hold the
+      ## verbatim hatch IMMEDIATELY above the card, and a hatch that alters the
+      ## same source must win over the table. MEASURED on both binaries: an
+      ## `alter <src> trnoise = [ ... ]` placed after an earlier analysis still
+      ## reaches the transient that follows it (5008 points on the fork, 4415 on
+      ## 45.2, where the unaltered card gives 1008 on both).
+      foreach _nzl [ase::stimuli_emit \
+                      [namespace tail [namespace current]] $a lines $state $ai] {
+        lappend lines $_nzl
+      }
       set ckplan {}
       if {[llength $ckrows]} {
         set ckplan [ase::ckpt_plan [namespace tail [namespace current]] $a $state]
@@ -22319,6 +22989,17 @@ namespace eval ase::backend::ngspice {
       foreach _pl [ase::analysis_setup_emit \
                      [namespace tail [namespace current]] $a post $state $ai] {
         lappend lines $_pl
+      }
+      ## --- 1466 (Stage 13): AND EVERY NOISY SOURCE PUT BACK --------------------
+      ## ⚠ BELOW THE GUARD AND ABOVE `remzerovec`, the `post` leg's own place, and
+      ## the reason it exists at all is measured: with no restore, a SECOND
+      ## transient after a noisy one carried the first one's noise on both
+      ## binaries (rms 0.82 V on a `dc 0` source, 5004 points where its own card
+      ## asks for 108). A failed transient `quit 1`s at the guard and has nothing
+      ## to put back. `alter` touches no plot, so the write below is unmoved.
+      foreach _nzl [ase::stimuli_emit \
+                      [namespace tail [namespace current]] $a post $state $ai] {
+        lappend lines $_nzl
       }
       # `remzerovec` before every write, not once at the end: `.options
       # savecurrents` leaves zero-length @m...[ib]-class vectors in the plot
@@ -24867,7 +25548,7 @@ $_leg
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        needs  {saves_resolve points_max cider_klu xspice} \
+        needs  {saves_resolve points_max cider_klu xspice stimuli_check} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \
@@ -24878,6 +25559,7 @@ $_leg
         emit   {{role analysis tmpl {tran @step @stop @tstart? @tmax? @uic!}}} \
         results {viewer {kind sweep}} \
         salvage {points ::ase::backend::ngspice::tran_points vector time} \
+        stimuli [noise_contract] \
         plots  {{select {Transient Analysis} role sweep results viewer label tran}}] \
       noise [dict create \
         label noise  baseline 1  registered 1  emitorder 40 \
@@ -28096,6 +28778,553 @@ $_leg
           lappend out [list badname refuse "'$v' cannot be used in a generated\
  command: a space, a quote or an '=' splits it" "use the name as the netlist\
  spells it"]
+        }
+      }
+    }
+    return $out
+  }
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # STAGE 13 (issue 1466): TRANSIENT NOISE AND RANDOM SOURCES -- THE CONTENT
+  # ═════════════════════════════════════════════════════════════════════════
+  #
+  # Everything below spells ngspice: the two instance parameters, `alter`, the
+  # carrier cards, the argument positions, every refusal and every threshold.
+  # Core (`ase::analysis_stimuli` and its readers) learns only the shape.
+  #
+  # ⚠ THE MEASUREMENTS THIS CODE STANDS ON, all 2026-09-15 unless marked, on
+  # `/usr/bin/ngspice` (45.2) AND the fork, scratch decks with `HOME` pointed at
+  # an empty directory:
+  #
+  #   alter v1 trnoise = [ 1m 1u 0 0 0 0 0 ]    -> `@v1[function]` = 7, the vector
+  #                                                reads back 1e-3 1e-6 ..., rms
+  #                                                ~0.83 mV: SI suffixes parse
+  #                                                inside the brackets, on V AND I
+  #   op; alter ...; tran                       -> the noise still reaches the tran
+  #   tran; (no restore); tran                  -> the SECOND tran is noisy too
+  #   tran; alter v1 trnoise = [ 0 0 0 0 0 0 0 ]; tran
+  #                                             -> the second is clean (rms 0, 108
+  #                                                points), and the same zero vector
+  #                                                clears a `trrandom` source
+  #   alter ...; reset; tran                    -> CLEAN: `alter` does NOT survive
+  #                                                `reset` (unlike `alterparam`)
+  #   trrandom(2 1u 1m 1m 0) on an I source     -> ONE value after TD, held to the
+  #                                                end; on a V source 501 values
+  #   ase_inoise_1 0 out dc 0 trnoise(...)      -> fork only: an XSPICE `a` card,
+  #                                                `MIF-ERROR - unable to find
+  #                                                definition of model 0`, rc 1
+  #   alter v1 trnoise = [ 1m -1u 0 0 0 0 0 ]   -> fork only: HANGS, rc 124 under
+  #                                                `timeout 10`
+  #   optran 0 0 0 100n 10u 0 + trrandom TD=0   -> the transient's first point is a
+  #                                                random draw; TD=1n -> 0
+  #   notrnoise                                 -> white and 1/f gone, RTS with a
+  #                                                timestep of 0 and every trrandom
+  #                                                source untouched
+  #   .options seed=5 (or setseed 5)            -> RTS and trrandom repeat run to
+  #                                                run; white noise does not
+
+  proc noise_contract {} {
+    return [dict create \
+      key noise  noun {noise source}  selector func  pad 0  span stop \
+      kill notrnoise \
+      targets {{name src route alter label Source} \
+               {name net route inject label Net}} \
+      functions [dict create \
+        trnoise {label {Transient noise} \
+                 args {{name na      label {White noise}        unit source role amplitude} \
+                       {name ts      label {Noise timestep}     unit s      role interval} \
+                       {name nalpha  label {1/f exponent}} \
+                       {name namp    label {1/f amplitude}      unit source role flicker} \
+                       {name rtsam   label {RTS amplitude}      unit source} \
+                       {name rtscapt label {RTS mean low time}  unit s} \
+                       {name rtsemt  label {RTS mean high time} unit s}}} \
+        trrandom {label {Random source} \
+                  args {{name dist   label Distribution values {1 2 3 4} \
+                                     valuelabels {1 Uniform 2 Gaussian 3 Exponential 4 Poisson}} \
+                        {name ts     label {Hold time} unit s role interval} \
+                        {name td     label Delay unit s} \
+                        {name param1 label Amplitude unit source \
+                                     labels {1 Half-range 2 {Standard deviation} 3 Mean 4 Lambda}} \
+                        {name param2 label Offset unit source \
+                                     labels {1 Offset 2 Mean 3 Offset 4 Offset}}}}] \
+      estimate {points_per_interval 5 bytes_per_value 8 \
+                flicker_bytes_per_sample 40 flicker_pad 10} \
+      netlist   ::ase::backend::ngspice::noise_carrier_lines \
+      lines     ::ase::backend::ngspice::noise_alter_lines \
+      post      ::ase::backend::ngspice::noise_restore_lines \
+      check     ::ase::backend::ngspice::noise_check \
+      kinds     ::ase::backend::ngspice::noise_kinds \
+      quantity  ::ase::backend::ngspice::noise_quantity \
+      sentences ::ase::backend::ngspice::noise_seed_sentences]
+  }
+
+  # ─── THE CARRIER NAMES ─────────────────────────────────────────────────────
+  #
+  # ⚠ `PLAN.md` §13's `ase_inoise_1` IS AN XSPICE `a` CARD, because SPICE reads a
+  # device's kind from its FIRST LETTER. Measured on the fork: `MIF-ERROR -
+  # unable to find definition of model 0`, `Simulation interrupted due to error!`,
+  # rc 1 -- and `ase::netlist_facts` would have filed it under `xspice` and
+  # started Stage 12's event probe for a circuit with no digital half. So the
+  # letter comes first: `i` for a current carrier, `v` + `g` for the pair below.
+  # One base per row and entry, both counted from 1, so two rows never collide.
+  proc noise_carrier_base {idx k} { return "ase_noise_[expr {$idx + 1}]_$k" }
+
+  # The device an entry's `alter` addresses, or `{}`.
+  #
+  # ⚠ A RANDOM VALUE GOES INTO A NET THROUGH A VOLTAGE SOURCE AND A VCCS, NEVER A
+  # CURRENT SOURCE. Measured on both binaries: `trrandom(2 1u 1m 1m 0)` on an I
+  # source draws ONE value after its delay and holds it to the end of the run,
+  # where the same card on a V source draws 501. `isrcacct.c` redraws -- and
+  # posts its next breakpoint -- only when the accepted time is within 3 ulps of
+  # `n*TS`, computed as `CKTtime - TD`; a delay much larger than the hold time
+  # puts that subtraction further off than 3 ulps, the first redraw is missed,
+  # and no breakpoint is ever posted again. `vsrcacct.c` tracks `VSRCbreak_time`
+  # with `>=` and cannot miss. `trnoise` has no delay, and the I carrier is
+  # measured to redraw (T11 in `evidence/trnoise.md`, and 5004 points here).
+  proc noise_alter_target {row idx k entry} {
+    set type [::ase::state_get $row type]
+    set t [::ase::stimuli_target ngspice $type $entry]
+    if {$t eq {}} { return {} }
+    if {[dict get $t route] eq {alter}} { return [dict get $t value] }
+    set b [noise_carrier_base $idx $k]
+    if {[::ase::stimuli_function ngspice $type $entry] eq {trrandom}} { return v$b }
+    return i$b
+  }
+
+  # ─── THE `netlist` LEG: A QUIET CARRIER PER INJECTED ENTRY ─────────────────
+  # `dc 0` and no function. The carrier drives current INTO the net: SPICE's
+  # `I n+ n-` and `G n+ n- ...` both push their current from `n+` through the
+  # device to `n-`, and `n+` is ground. The VCCS gain is 1 S, so the random
+  # VOLTAGE on the internal node is the injected CURRENT in amperes.
+  proc noise_carrier_lines {state row idx} {
+    set out {}
+    set type [::ase::state_get $row type]
+    set k 0
+    foreach e [::ase::stimuli_rows ngspice $row] {
+      incr k
+      if {![::ase::stimuli_entry_on $e]} { continue }
+      set t [::ase::stimuli_target ngspice $type $e]
+      if {$t eq {} || [dict get $t route] ne {inject}} { continue }
+      set fn [::ase::stimuli_function ngspice $type $e]
+      if {$fn eq {}} { continue }
+      set net [dict get $t value]
+      set b [noise_carrier_base $idx $k]
+      if {$fn eq {trrandom}} {
+        lappend out "v$b $b 0 dc 0"
+        lappend out "g$b 0 $net $b 0 1"
+      } else {
+        lappend out "i$b 0 $net dc 0"
+      }
+    }
+    return $out
+  }
+
+  # ─── THE `lines` LEG: EVERY ARGUMENT, ALWAYS, POSITIONALLY, PADDED ─────────
+  #
+  # ⚠ ALL SEVEN / ALL FIVE, and core pads them (`ase::stimuli_values`). A short
+  # form is a heap read past a one-element array (`vsrcpar.c` reads index 1 with
+  # no count guard) and two shipped ngspice examples get the positions wrong;
+  # padding was measured benign (`PLAN.md` §13). The values go out as the user
+  # typed them: SI suffixes parse inside the brackets on both binaries.
+  proc noise_alter_lines {state row idx} {
+    set out {}
+    set type [::ase::state_get $row type]
+    set k 0
+    foreach e [::ase::stimuli_rows ngspice $row] {
+      incr k
+      if {![::ase::stimuli_entry_on $e]} { continue }
+      set fn [::ase::stimuli_function ngspice $type $e]
+      set tg [noise_alter_target $row $idx $k $e]
+      if {$fn eq {} || $tg eq {}} { continue }
+      lappend out "alter $tg $fn = \[ [join [::ase::stimuli_values ngspice $type $e] { }] \]"
+    }
+    return $out
+  }
+
+  # ─── THE `post` LEG: A ZERO `trnoise` ON EVERY SOURCE THE ROW ALTERED ──────
+  # A zero vector, whatever the entry's function was: measured on both binaries,
+  # it switches a `trrandom` source to `trnoise` (`@v1[function]` = 7) and the
+  # transient after it is clean -- no panic, rms 0, 108 points. It is not a
+  # `trrandom` zero, which would be a hold time of 0 and a fatal error in the
+  # NEXT transient.
+  proc noise_restore_lines {state row idx} {
+    set out {}
+    set type [::ase::state_get $row type]
+    set zeros [lrepeat [llength [::ase::stimuli_arg_names ngspice $type trnoise]] 0]
+    set k 0
+    foreach e [::ase::stimuli_rows ngspice $row] {
+      incr k
+      if {![::ase::stimuli_entry_on $e]} { continue }
+      set fn [::ase::stimuli_function ngspice $type $e]
+      set tg [noise_alter_target $row $idx $k $e]
+      if {$fn eq {} || $tg eq {}} { continue }
+      lappend out "alter $tg trnoise = \[ [join $zeros { }] \]"
+    }
+    return $out
+  }
+
+  # A number, through this simulator's own SI alphabet, or `{}`.
+  proc noise_num {text} { return [::ase::stimuli_num ngspice $text] }
+  proc noise_numz {entry name} {
+    set v [noise_num [::ase::stimuli_field $entry $name]]
+    if {$v eq {}} { return 0 }
+    return $v
+  }
+
+  # Which kinds of randomness an entry has live, which of them a seed repeats,
+  # and which of them `notrnoise` switches off.
+  #
+  # ⚠ `repeat` IS SPLIT BY KIND AND THE SPLIT IS THE FEATURE. White and 1/f come
+  # from the Wallace pool, seeded from `getpid()` (`wallace.c:83`) before the
+  # deck is read; nothing a user can type reaches it. RTS and `trrandom` draw
+  # from the stream `setseed` and `.options seed=` DO reach. Measured again here
+  # on both binaries through the `alter` route: under `.options seed=5` and under
+  # `setseed 5` the RTS mean and the `trrandom` mean were identical run to run
+  # and the white mean was not.
+  #
+  # ⚠ `killed` IS SPLIT TOO, and not the way the option's name reads. Measured
+  # on both binaries, inline and through `alter`: `notrnoise` zeroes white and
+  # 1/f, zeroes RTS only on a source whose noise timestep is above 0 (an RTS-only
+  # source never runs the generator that reads the option), and never touches
+  # `trrandom`.
+  proc noise_kinds {entry} {
+    switch -exact -- [::ase::stimuli_function ngspice tran $entry] {
+      trnoise {
+        set ts [noise_numz $entry ts]
+        set live {} ; set killed {}
+        if {$ts > 0 && [noise_numz $entry na] != 0} {
+          lappend live white ; lappend killed white
+        }
+        if {$ts > 0 && [noise_numz $entry namp] != 0} {
+          lappend live flicker ; lappend killed flicker
+        }
+        if {[noise_numz $entry rtsam] != 0} {
+          lappend live rts
+          if {$ts > 0} { lappend killed rts }
+        }
+        return [dict create live $live repeat {rts} killed $killed]
+      }
+      trrandom {
+        return [dict create live {random} repeat {random} killed {}]
+      }
+    }
+    return {}
+  }
+
+  # What the amplitude is measured in: volts on a voltage source, amperes on a
+  # current source and on every injected carrier (the VCCS turns the random
+  # voltage into a current at 1 S).
+  proc noise_quantity {entry} {
+    set src [::ase::stimuli_field $entry src]
+    if {$src ne {} && [string match -nocase {v*} $src]} { return V }
+    return A
+  }
+
+  # ⚖ R9 -- THE SEED SENTENCE, SPLIT BY KIND. Never one sentence about "noise":
+  # it would be false for half of the rows.
+  proc noise_kind_phrase {kinds} {
+    set names {white {white noise} flicker {1/f noise} rts {RTS noise} random {random sources}}
+    set ph {}
+    foreach k $kinds { if {[dict exists $names $k]} { lappend ph [dict get $names $k] } }
+    if {![llength $ph]} { return {} }
+    set s [join $ph { and }]
+    if {[llength $ph] > 2} {
+      set s "[join [lrange $ph 0 end-1] {, }] and [lindex $ph end]"
+    }
+    return "[string toupper [string index $s 0]][string range $s 1 end]"
+  }
+  proc noise_seed_sentences {norepeat repeat seeded} {
+    set out {}
+    set many [expr {[llength $norepeat] > 1}]
+    if {[llength $norepeat]} {
+      lappend out "[noise_kind_phrase $norepeat] [expr {$many ? {do} : {does}}] not\
+ repeat from run to run: the simulator seeds [expr {$many ? {them} : {it}}] from\
+ its process ID, and no seed reaches [expr {$many ? {them} : {it}}]."
+    }
+    if {[llength $repeat]} {
+      set one [expr {[llength $repeat] == 1 && [lindex $repeat 0] ne {random}}]
+      if {$seeded} {
+        lappend out "[noise_kind_phrase $repeat] [expr {$one ? {repeats} : {repeat}}]\
+ exactly under the seed."
+      } else {
+        lappend out "[noise_kind_phrase $repeat] [expr {$one ? {repeats} : {repeat}}]\
+ only when a seed is set."
+      }
+    }
+    return $out
+  }
+
+  # ASE-L's reserved names for its carriers, if the netlist already uses one.
+  proc noise_reserved_hit {facts} {
+    if {[catch {dict get $facts nodes {}} top]} { return {} }
+    foreach space {devs nodes} {
+      if {[catch {dict keys [dict get $top $space]} ks]} { continue }
+      foreach n $ks {
+        if {[string match -nocase {ase_noise_*} $n] \
+            || [string match -nocase {?ase_noise_*} $n]} { return $n }
+      }
+    }
+    return {}
+  }
+
+  # ─── THE `check` LEG: ngspice's OWN RULES OVER THE NOISE TABLE ─────────────
+  #
+  # Answers EVERY finding as `{<entry> <verdict> <sentence> <fix>}`, entries
+  # counted from 1. Core picks the worst for the precondition; a form wants them
+  # all. `fatal` for anything the simulator hangs on, dies on or silently
+  # ignores -- the house answer is to refuse at the form, never to pass a request
+  # down that will not be honoured -- and `caution` for what runs and says less
+  # than it looks. ⚠ `fatal` IS ALSO EXEMPT FROM THE STATIC DEMOTION, which is
+  # right here: a card found carrying `sin(...)` is a proof about that card, and
+  # a table the user typed is not "read from the netlist text".
+  proc noise_check {row facts state} {
+    set out {}
+    if {[dict exists $row noise] && [catch {llength [dict get $row noise]}]} {
+      return [list [list 0 fatal "the noise table on this analysis cannot be read" \
+                    "delete it and add the noise sources again"]]
+    }
+    set type [::ase::state_get $row type]
+    set stopv [noise_num [::ase::field_value ngspice $type $row stop]]
+    set k 0
+    foreach e [::ase::stimuli_rows ngspice $row] {
+      incr k
+      if {[catch {dict size $e}]} {
+        lappend out [list $k fatal "noise source $k cannot be read" \
+                      "delete it and add it again"]
+        continue
+      }
+      if {![::ase::stimuli_entry_on $e]} { continue }
+      foreach f [noise_entry_check $row $facts $state $k $e $stopv] {
+        lappend out [linsert $f 0 $k]
+      }
+    }
+    ## THE WHOLE ROW's COST, ONCE. `points_max` already says this for a card that
+    ## asks for it on its own; this is the case it cannot see, where the noise
+    ## timestep and not the card's step sets the count.
+    set base [::ase::analysis_point_estimate ngspice $type $row $state]
+    set pts [::ase::stimuli_points ngspice $state $row]
+    if {$pts ne {} && $pts > 99999999 && ($base eq {} || $base <= 99999999)} {
+      lappend out [list 0 caution "the noise timestep makes this transient about\
+ [format %.3g $pts] points -- gigabytes of results file and a run measured in hours" \
+                    "use a larger noise timestep, or a shorter stop time"]
+    }
+    return $out
+  }
+
+  proc noise_entry_check {row facts state k e stopv} {
+    set out {}
+    set type [::ase::state_get $row type]
+    set src [::ase::stimuli_field $e src]
+    set net [::ase::stimuli_field $e net]
+    set fnraw [::ase::stimuli_field $e func]
+    set fn [::ase::stimuli_function ngspice $type $e]
+    ## ── THE TARGET ──────────────────────────────────────────────────────────
+    if {$src eq {} && $net eq {}} {
+      lappend out [list fatal "noise source $k names no source and no net" \
+                    "name the source it rides on, or the net it goes into"]
+    } elseif {$src ne {} && $net ne {}} {
+      lappend out [list fatal "noise source $k names both a source and a net" \
+                    "keep one of the two"]
+    }
+    if {$fn eq {}} {
+      lappend out [list fatal "noise source $k has no noise kind this simulator\
+ knows[expr {$fnraw ne {} ? " ('$fnraw')" : {}}]" \
+                    "choose Transient noise or Random source"]
+      return $out
+    }
+    foreach tg [list $src $net] {
+      if {$tg ne {} && [regexp {[\s"'=\[\]]} $tg]} {
+        lappend out [list fatal "'$tg' cannot be used in a generated command: a\
+ space, a quote, a bracket or an '=' splits it" "use the name as the netlist spells it"]
+      }
+    }
+    if {$src ne {} && $net eq {}} {
+      set letter [string tolower [string index $src 0]]
+      if {$letter ne {v} && $letter ne {i}} {
+        lappend out [list fatal "'$src' is not a voltage or current source, so it\
+ cannot carry noise" "name a V or I source, or put the noise on a net instead"]
+      } else {
+        if {$fn eq {trrandom} && $letter eq {i}} {
+          lappend out [list fatal "a random source on the current source '$src' can\
+ stop changing after its first value" \
+                        "put it on a voltage source, or on a net instead"]
+        }
+        if {![catch {dict get $facts sources} srcs]} {
+          set top {} ; set sub {}
+          dict for {nm rec} $srcs {
+            if {![string equal -nocase $nm $src]} { continue }
+            set sc {}
+            catch {set sc [dict get $rec scope]}
+            if {$sc eq {}} { set top $rec } else { set sub $rec }
+          }
+          if {$top ne {}} {
+            set wave {}
+            catch {set wave [dict get $top wave]}
+            if {$wave eq {} && [dict exists $top trnoise]} { set wave trnoise }
+            if {$wave eq {} && [dict exists $top trrandom]} { set wave trrandom }
+            if {$wave ne {}} {
+              lappend out [list fatal "'$src' already carries a $wave waveform, and\
+ a source carries only one, so the noise would replace it" \
+                            "put the noise on a net instead"]
+            }
+          } elseif {$sub ne {}} {
+            lappend out [list caution "'$src' is inside a subcircuit, and only a\
+ top-level source can be changed during the run" "put the noise on a net instead"]
+          } else {
+            lappend out [list caution "'$src' is not in the netlist text, so it may\
+ be in an included file or not exist" "check the source name"]
+          }
+        }
+      }
+    }
+    if {$net ne {} && $src eq {}} {
+      if {[lsearch -exact {0 gnd} [string tolower $net]] >= 0} {
+        lappend out [list fatal "noise source $k goes into ground, where it does\
+ nothing" "name the net it goes into"]
+      } else {
+        set st [::ase::facts_net_status $facts $net]
+        if {$st eq {absent}} {
+          if {[llength [::ase::state_get $state includes]] \
+              || [llength [::ase::state_get $state models]]} {
+            lappend out [list caution "there is no net '$net' in the netlist text,\
+ so it may come from an included file or not exist" "check the net name"]
+          } else {
+            ## MEASURED on both binaries: a carrier on a net nothing else touches
+            ## runs at rc 0 and says nothing.
+            lappend out [list fatal "there is no net '$net' in this circuit, so the\
+ noise would drive a node nothing else is connected to" \
+                          "name a net the circuit has"]
+          }
+        }
+        if {[::ase::facts_event_node $facts $net]} {
+          lappend out [list fatal "'$net' is a digital node, and the noise would\
+ drive a separate analog node of the same name" "put the noise on an analog net"]
+        }
+        set rh [noise_reserved_hit $facts]
+        if {$rh ne {}} {
+          lappend out [list fatal "the netlist already has '$rh', a name ASE-L keeps\
+ for its noise sources" "rename that device or node"]
+        }
+      }
+    }
+    ## ── THE VALUES ──────────────────────────────────────────────────────────
+    set bad 0
+    foreach d [::ase::stimuli_args ngspice $type $fn] {
+      set n [dict get $d name]
+      set v [::ase::stimuli_field $e $n]
+      if {$v ne {} && [noise_num $v] eq {}} {
+        lappend out [list fatal [::ase::analysis_emit_msg fill [dict get $d label] $v] \
+                      "type a number, with an SI suffix if you like"]
+        set bad 1
+      }
+    }
+    if {$bad} { return $out }
+    set lbl [dict create]
+    foreach d [::ase::stimuli_args ngspice $type $fn] {
+      dict set lbl [dict get $d name] [dict get $d label]
+    }
+    switch -exact -- $fn {
+      trnoise {
+        set ts [noise_numz $e ts] ; set na [noise_numz $e na]
+        set nalpha [noise_numz $e nalpha] ; set namp [noise_numz $e namp]
+        set rtsam [noise_numz $e rtsam]
+        set rtscapt [noise_numz $e rtscapt] ; set rtsemt [noise_numz $e rtsemt]
+        if {$ts < 0} {
+          ## ☠ `evidence/trnoise.md` T1, and measured again through `alter` on
+          ## the fork only: rc 124 under `timeout 10`, no output after the
+          ## initial solution. `floor(time/TS)` goes hugely positive and the
+          ## generator's `while` never ends. NEVER run on `/usr/bin/ngspice`.
+          lappend out [list fatal "a negative noise timestep makes the simulator\
+ hang" "give the noise timestep a value above 0"]
+        } elseif {$ts == 0 && ($na != 0 || $namp != 0)} {
+          lappend out [list fatal "a noise timestep of 0 switches white and 1/f\
+ noise off, so their amplitudes add nothing" \
+                        "give the noise timestep a value above 0"]
+        }
+        if {$namp != 0 && !($nalpha > 0 && $nalpha < 2)} {
+          ## T3/T4: an exponent of 0 discards the amplitude, exactly 2 gives an
+          ## output of 1e-18, above 2 a random walk at a fixed slope.
+          lappend out [list fatal "a 1/f exponent of [::ase::stimuli_field $e nalpha]\
+ gives no 1/f noise: it must be above 0 and below 2" \
+                        "use an exponent between 0 and 2, such as 1"]
+        }
+        foreach n {namp rtsam rtscapt rtsemt} {
+          if {[noise_numz $e $n] < 0} {
+            lappend out [list fatal "[dict get $lbl $n] cannot be negative" \
+                          "enter 0 or more"]
+          }
+        }
+        if {$rtsam != 0 && $rtscapt == 0} {
+          lappend out [list fatal "an RTS mean low time of 0 holds the source at the\
+ RTS amplitude, a fixed offset and not noise" \
+                        "give both RTS times a value above 0"]
+        }
+        if {$rtsam != 0 && $rtsemt == 0} {
+          lappend out [list fatal "an RTS mean high time of 0 gives spikes one time\
+ step wide, not a telegraph signal" "give both RTS times a value above 0"]
+        }
+        if {$na == 0 && $namp == 0 && $rtsam == 0} {
+          lappend out [list caution "noise source $k adds no noise: its white, 1/f\
+ and RTS amplitudes are all 0" "set an amplitude, or switch it off"]
+        }
+        if {$ts > 0 && ($na != 0 || $namp != 0) && $stopv ne {} && $stopv > 0 \
+            && $ts > $stopv / 100.0} {
+          ## §5.5: `trnoise(1m 1000u 0 0)` under `tran 1u 100u` gave the first
+          ## tenth of one interpolation ramp -- 51.7 uV rms where 1 mV was asked.
+          lappend out [list caution "a noise timestep above 1/100 of the stop time\
+ draws too few samples to be noise" "use a smaller noise timestep"]
+        }
+        if {$namp != 0 && $ts > 0 && $stopv ne {} && $stopv > 0} {
+          ## §2.2: ~40 bytes per sample per 1/f source, allocated before the first
+          ## time point -- 416 MB measured at 1e7 samples.
+          set est [::ase::stimuli_get ngspice tran estimate]
+          set per 40 ; set padn 10
+          catch {set per [dict get $est flicker_bytes_per_sample]}
+          catch {set padn [dict get $est flicker_pad]}
+          set samples [expr {$stopv / $ts + $padn}]
+          set mb [expr {entier($samples * $per / 1e6 + 0.5)}]
+          if {$samples > 1e8} {
+            lappend out [list fatal "1/f noise at this timestep allocates about $mb MB\
+ before the first time point" "use a larger noise timestep, or a shorter stop time"]
+          } elseif {$samples > 1e7} {
+            lappend out [list caution "1/f noise at this timestep allocates about $mb MB\
+ before the first time point" "use a larger noise timestep, or a shorter stop time"]
+          }
+        }
+      }
+      trrandom {
+        set dist [::ase::stimuli_field $e dist]
+        if {![string is integer -strict $dist] || $dist < 1 || $dist > 4} {
+          ## `1-f-code.h:94-97`: any other TYPE emits 0 for ever. Measured, 0 and 5.
+          lappend out [list fatal "a random source needs a distribution from 1 to 4;\
+ any other value gives 0 for the whole run" \
+                        "choose Uniform, Gaussian, Exponential or Poisson"]
+        }
+        set ts [noise_numz $e ts]
+        if {$ts <= 0} {
+          lappend out [list fatal "a random source needs a hold time above 0" \
+                        "give the hold time a value above 0"]
+        }
+        if {[::ase::stimuli_field $e param1] eq {}} {
+          lappend out [list fatal "a random source needs a value for\
+ [dict get $lbl param1]" "enter a value"]
+        } elseif {[noise_numz $e param1] == 0} {
+          lappend out [list caution "noise source $k adds nothing random: its\
+ [dict get $lbl param1] is 0" "set a value, or switch it off"]
+        }
+        set td [noise_numz $e td]
+        if {$td < 0} {
+          lappend out [list fatal "a negative delay is ignored by the simulator" \
+                        "enter a delay of 0 or more"]
+        }
+        if {$td == 0 && [::ase::opstrategy_rung $state tranop]} {
+          ## MEASURED on both binaries: with the operating point forced through
+          ## the transient step (`optran 0 0 0 100n 10u 0`) the transient's FIRST
+          ## POINT is a random draw (fork 5.93e-02, 45.2 8.29e-02 V where 0 is
+          ## right); the same source with TD=1n starts at 0 and stays random.
+          lappend out [list caution "if the OP needs the transient fallback, this\
+ transient starts from a random value of '[expr {$src ne {} ? $src : $net}]'" \
+                        "give the random source a delay above 0"]
         }
       }
     }

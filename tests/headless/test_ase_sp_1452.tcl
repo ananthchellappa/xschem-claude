@@ -553,6 +553,16 @@ check {SN6 sp lin 2 is the one warning ac already had, from the same predicate,\
 ## row NS1 of test_ase_core.tcl asserts that list literally. One registry entry
 ## declares that ONE type carries a table; a simulator that wants a different
 ## word gets one without touching core.
+## ⚠ THE FOURTH TERM MOVED AT ISSUE 1466, AND IT MOVED ON PURPOSE. It read `{}`:
+## tran had no table. Stage 13 gave the transient a noise table under its own
+## `stimuli` contract, and `ase::analysis_setup_key` now answers for EITHER
+## contract -- because the Options editor's reader and writer in
+## `src/ase_window.tcl` ask exactly this proc which row keys are not settings,
+## and a second proc would have listed the noise table there as a free-text pair
+## and refused it at OK (issue 1450's defect a fourth time). So the term is
+## `noise` now, and the row's point survives intact: `ports` is still refused on
+## a tran row (term two) because tran's key is a DIFFERENT word, and `ports`
+## still reaches no blanket list (term five). The count is unchanged.
 check {SK1 the ports table is a legal key on an sp row and a refused one on a\
  tran row, and core learns the name from the registry} \
   [list [s_ans ase::analysis_emit_check ngspice [sp_row]] \
@@ -561,7 +571,7 @@ check {SK1 the ports table is a legal key on an sp row and a refused one on a\
         [s_ans ase::analysis_setup_key ngspice sp] \
         [s_ans ase::analysis_setup_key ngspice tran] \
         [s_ans ase::analysis_nonsetting_keys]] \
-  {{} {unknownkey ports} ports {} {type enabled x id}}
+  {{} {unknownkey ports} ports noise {type enabled x id}}
 
 ## ⚠ AND THE READERS NEVER LOOK INSIDE AN ENTRY. `z0` is an ngspice keyword
 ## (D34-D37); core may count the entries and no more. A malformed table answers

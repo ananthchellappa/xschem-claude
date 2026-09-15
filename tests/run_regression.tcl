@@ -85,13 +85,22 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_campaign_1462" \
                  "headless/test_ase_campaign_gui_1464" \
-                 "headless/test_ase_events_1465"]
+                 "headless/test_ase_events_1465" \
+                 "headless/test_ase_trnoise_1466"]
 # ⚠ ISSUE 1465 (Stage 12, event-driven results) IS HEADLESS ONLY, AND ITS SECTION
 # EE STARTS BOTH REAL SIMULATORS. Nothing in it maps a window: the digital pane
 # it fills is the existing viewer's, reached through `ase::attach_dbs`, and the
 # pixels are a `look` debt rather than a row. It ends with an explicit `exit` for
 # receipt 39's C13 reason -- a run door is driven, so rc 10 would otherwise be one
 # netlist away.
+# ⚠ ISSUE 1466 (Stage 13 task 1, transient noise -- the DECK half) IS HEADLESS
+# ONLY, AND ITS SECTION EE STARTS BOTH REAL SIMULATORS, twice each plus a
+# `notrnoise` run, and reads every results file back with a SECOND ngspice
+# process. It maps no window: task 1 draws nothing by construction, and the Tran
+# form's section is task 2's. No row pins a drawn number or a point count -- white
+# noise differs every run and the two binaries disagree about point counts --
+# so it asserts presence, absence, equality between two seeded runs and an
+# order-of-magnitude window.
 # ISSUE 0891 -- THE SAME SUITE, RUN AGAIN ON A REAL DISPLAY, BECAUSE THE ARM THE
 # USER HAS IS NOT THE ARM THIS RUNNER WAS RUNNING.
 #

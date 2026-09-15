@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 09:39
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 10:49
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**12**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465**, one task, gated by the driver's M9 (`a6d75d00`). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages landed** | 0–**12**, and **Stage 13 task 1** (issue **1466**, the deck half of transient noise). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`, gated by the driver's M9 (`a6d75d00`). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
 | **Stages remaining** | **13** (transient noise and `trrandom`, split into two tasks by the driver), 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **77 cases, ZERO counted lines in `tests/results.log`**, re-run solo 2026-09-15 on Stage 12 (346 s) — zero on every run since issue 1456. ⚠ **The file holds one fewer case log than there are cases, by design:** `xschemtest.tcl` writes to `results.log` **only when it fails** (`run_regression.tcl:478-490`). The driver nearly "corrected" 76 to 75 on that basis before reading it — counting `.log` lines is not counting cases |
-| **In flight** | nothing at this commit. **Stage 13 task 1's crew (the deck half) is dispatched immediately after it** |
+| **T1** | ✅ **78 cases, ZERO counted lines in `tests/results.log`, 358 s**, solo on Stage 13 task 1's finished tree — the new suite joined `hcases`; no `untitled~.sch` in the repo root afterwards — zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design: `xschemtest.tcl` writes there **only when it fails** (`run_regression.tcl:478-490`) |
+| **In flight** | nothing at this commit. **Stage 13 task 2's crew (the GUI half) is dispatched immediately after it**, and while it holds the code the driver takes debt **M22**'s measurement (ngspice only, never a suite) |
 | **Next** | **Stage 13** — task 1 the deck half (in flight), then task 2 the GUI half. Then ⚠ **Stage 16 before Stage 14**: `evidence/pss-two-binaries.md` shows PSS converging on nothing on apt 45.2 and ⚖ **R7** was answered on a scratch build's evidence, so R7 goes back to the user (after R9, one at a time) before Stage 14 opens. Then ⚖ R10's specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **564 strings from 30 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **653 strings from 31 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9 |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **178 rule / 68 look / 11 suite**, after Stage 12. ⚠ Two `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`) and `ase-digital-pane-run-end-1465` (the before/after pair is in `evidence/`). Four unstamped entries are another clone's |
+| **Debt queue** | **179 rule / 68 look / 11 suite**, after Stage 13 task 1. ⚠ Two `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — `AUDIT_DISPLAY=$DISPLAY`) and `ase-digital-pane-run-end-1465`. Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -87,20 +87,17 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect Stage 13 task 1** — receipt `receipts/41-stage-13-deck.md`. Verify independently: all
-   seven `trnoise` and all five `trrandom` arguments emitted **padded**, on both binaries; the seed
-   sentence's logic **split by noise kind** (white and 1/f never reproducible; RTS and `trrandom`
-   under `setseed` in `.control`); `src/ase_window.tcl` md5-unchanged; Stage 12's `eprvcd` line and
-   the positional anchors unmoved; and the negative-`TS` refusal measured **on the fork only, under
-   `timeout`** — it hangs ngspice. Both arms, T1 solo, ledger, commit.
-2. **Stage 13 task 2** — the GUI half. Decide its `look` debt by measurement (PLAN says none; Stage
-   12's C5 says a change to what a pane draws is a pixel deliverable).
+1. **Collect Stage 13 task 2** — receipt `receipts/42-stage-13-gui.md`. Verify independently: a row
+   that goes from values typed into the real widgets to the rendered deck on **both** binaries (the
+   SP14 precedent); every readout worded as an estimate and checked against the arithmetic; opening
+   the form starts nothing and adds no `noise` key to an untouched bench; the `look` decision taken by
+   measurement with screenshots. Both arms, T1 solo, ledger, commit.
+2. **Debt M22** — the driver measures a checkpointed noisy transient on both binaries while task 2's
+   crew works, then a small deck task makes `tran_points` noise-aware (or the measurement says why not).
+   **Stage 13 is not complete until M22 is decided.**
 3. **Stage 16 task 1 — before Stage 14.** Its brief is drafted (driver's scratchpad,
-   `stage16_task1_brief.md`): the sentence composer with all four frames, the five-pattern linter
-   (text in, notes out — **its RED row is never re-run on `/usr/bin/ngspice`**), the two installation
-   greps, the `dumpunsound` token, and debt **M21**'s one word. Task 2 is the Simulators-window row,
-   the look debt with two registry entries, and 16e's release note (⚖ R11 is answered, so the support
-   sentence is no longer blocked).
+   `stage16_task1_brief.md`): the four-frame sentence, the five-pattern linter (**its RED row is never
+   re-run on `/usr/bin/ngspice`**), the installation greps, the `dumpunsound` token, and debt **M21**.
 
 ⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
 nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
@@ -942,6 +939,23 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Stage 13 task 1 — the DECK half of transient noise, issue **1466**, collected 2026-09-15
+
+| | |
+|---|---|
+| **what landed** | `src/ase.tcl` **+1234/−5** (about a third measurement-bearing comments). A per-row `noise` table on `tran` under a **new `stimuli` contract** — not Stage 9's `setup`, because the window draws a button for every `setup` contract and this task draws nothing; `ase::analysis_setup_key` now answers either contract's key (Stage 9's lesson 2, honoured). Every `trnoise`/`trrandom` argument emitted **positionally and padded**; a quiet carrier in the netlist slot, `alter … = [ … ]` above the row's card, a **zero restore below the guard**; the readouts, refusals, seed and kill reports as data. No new hook, no top-level state key, **`src/ase_window.tcl` md5-unchanged** |
+| **⚠ three plan claims wrong, all measured on both binaries** | **(1)** the plan's carrier `ase_inoise_1` is an **XSPICE `a` card** (first letter decides the device) — shipped names begin with their letter. **(2)** a card-level `trnoise(…)` **serves every transient in the deck** — a noisy row leaks into the next unless restored. **(3)** `trrandom` on a current source **does freeze** — with TD ≫ TS, one value where a V source gives 501 — so injected random current is a V source into a 1 S VCCS |
+| **driver's own re-measurement** | both binaries, hand-written decks: without the restore the second transient is noisy (45.2 `0.880181` V RMS, **4439** points against the card's ~108); with it, **0** and **108**. `trrandom(2 1u 1m 1m 0)`: I source **1** distinct value in [1 m, 1.5 m) and [1.5 m, 2 m], V source **501** — identical on 45.2 and the fork |
+| **driver's own re-run** | headless: `test_ase_trnoise_1466` **62**, `test_ase_sp_1452` **58**, `test_ase_core` **638**, `test_ase_events_1465` **87**, `test_ase_campaign_1462` **133**, `test_ase_converge_1459` **76**, `test_ase_optsheet_1441` **62**, `test_ase_dialogs` **37**, `test_ase_persist` **49**, `test_ase_preflight` **235**. Display: `test_ase_trnoise_1466` **62**, `test_ase_sp_1452` **58**, `test_ase_window` **295**, `test_ase_optsheet_1441` **87**. **All rc 0, all matching the receipt.** Pre-existing and unmoved, per the crew: `test_ase_dialogs` display `G2sens` (1436) and `test_ase_optier_0963`'s display stall after N3 — neither in T1 |
+| **byte identity** | `tracked 104 bad {} control_disagrees 1 control_agrees 1`, driver-re-run through the shared helper |
+| **sabotage** | **58 mutations, 58 killed by name**, restored tree `ALL PASS`; S02 (the `a`-named carrier) and S54 on the fork only. Driver's own: **D1** — the zero restore emits nothing — reds **NE5, NE8, EE3/apt, EE3/fork** by name (the crew's S04 set exactly); restored md5-identical, `ALL PASS (62)` |
+| **T1** | **78 cases, ZERO counted lines in `tests/results.log`, 358 s**, solo on Stage 13 task 1's finished tree — the new suite joined `hcases`; no `untitled~.sch` in the repo root afterwards |
+| **ledger debts** | `rule 1466` — **89 strings, R9-565 … R9-653; `R9_COPY_REVIEW.md` now 653 strings from 31 issues**. No `look` (task 1 draws nothing). Queue **178/68/11 → 179/68/11** |
+| **corrections** | **C1** the `a`-card carrier · **C2** the leak · **C3** the ISRC freeze is real, with a deterministic trigger (`isrcacct.c`'s 3-ulps test) · **C4** `TS = 0` is the legal RTS-only idiom, refused only under a white or 1/f amplitude · **C5** *"in this build"* is both binaries · **C6** ⚠ **the driver's own brief was wrong**: Stage 11 emits `.options seed=` per shard, not `setseed` — both reproduce RTS and `trrandom` · **C7** the `optran` warning has a measured fix (any delay > 0) · **C8** the point factor is ≈ 4.4 on 45.2 and 5 on the fork (**4415 vs 5008**, **44116 vs 50008**) — #7's family, larger · **C10** `alter` does not survive `reset` · **C12** `test_ase_sp_1452` SK1's fourth term moves `{}` → `noise`, deliberately, count unchanged |
+| **⚠ open, and the driver's** | **`tran_points` ignores the noise timestep**, and it decides checkpointing: a noisy transient whose card alone is under 100 000 points is **not checkpointed**, and a checkpointed noisy transient (`stop after` / `resume` across `trnoise` breakpoints) is **unmeasured**. Filed as debt **M22** below |
+| **⚠ numbering, beyond this clone** | `xschem-op-wcard`'s `NUMBERING.md` carries this clone's history and its pointer **also** read 1466 — a pointer, not a reservation. This clone is advanced to 1467; the other clone's is not ours to write. Whichever commits a 1466 second collides |
+| **receipt** | `receipts/41-stage-13-deck.md` |
 
 ### ⚠ Stage 14's evidence re-taken on the two binaries in the matrix — 2026-09-15 — and ⚖ R7 rests on a build users do not have
 
@@ -4504,14 +4518,14 @@ New goldens. **Ruling: ⚖ R9.** Decisions: **D10** (the `trnoise` k=v tokens ar
 
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ⏳ **task 1 of 2 landed** — the deck half (issue **1466**); task 2, the GUI half, dispatched after it |
+| commit | task 1: the `feat(1466)` commit that carries this row |
+| T1 | task 1: solo, see the *Stage 13 task 1* block |
+| suites moved | **new** `test_ase_trnoise_1466` **62** both arms; `test_ase_sp_1452` SK1's fourth term `{}` → `noise`, count unchanged at **58**; every other neighbour unmoved |
+| sabotage | task 1: **58, all killed by name**; driver's D1 → NE5 NE8 EE3/apt EE3/fork |
+| ledger debts | `rule 1466` (R9-565 … R9-653); **M22** filed by the driver |
+| spec paragraphs rewritten | §13's head (the crew's correction block); APPENDIX §5.5 and `evidence/trnoise.md` §10.2, §10.4 and T11 (the driver, from C1–C3); `binary-differences.md` #7 (C8) |
+| receipt | `receipts/41-stage-13-deck.md` |
 
 ### What Stage 13 learned that binds later stages
 
@@ -4717,6 +4731,7 @@ exactly as long as ASE-L tells someone their work will be lost and then loses it
 | **M19** *(new 2026-09-10, the variant amendment)* | ✅ **SURVEY DONE AND THE THREE NEW PROBES MEASURED, 2026-09-13 — `evidence/fork-dependencies.md` §5.** **B2.4** answers `myvec` on apt 45.2 and `MyVec` on the fork from one `let` in a deck already running; **B4.1** and **B4.2** answer `0` / `1` from two `grep`s with **no simulator process at all**, before the first run. ⚠ **The share directory must be resolved from the REGISTERED binary, not hardcoded** — a probe assuming `/usr/share` answers *"stock"* for every fork the user registers, which is branching on a version string wearing a path. Every row of §3 classified against M19's own test — *does this defect land in a file?* **The whole B1 family is unprobeable BY CONSTRUCTION**, because its symptom is `SIGABRT`/`SIGSEGV` and a probe would kill the run it rides in; that is the boundary between what Stage 16 can measure and what it must warn about, and it belongs on the panel in those words. **B2.4** (`let MyVec` written lower case — APT `myvec`, FORK `MyVec`) is **the only unclaimed probe that is both free and useful**. **B2.5** is free and useless — ASE-L emits no `diff`. ⚠ **And B4 is probeable by a kind this batch had not considered: reading the INSTALLED TREE** — two `grep`s, no simulator process, an answer before the first run. ⚠ **The section is a CLASSIFICATION, not a measurement**, and says so: nothing there was run except the three probes that already exist. | It bounds how much of the fork/stock gap ASE-L can *measure* rather than merely warn about. | **Write and measure the three named probes on both binaries.** One line plus a comparison each. | opportunistic; nothing blocks |
 | **M20** *(new 2026-09-10, the variant amendment)* | ⚠ **ATTEMPTED 2026-09-13 AND BLOCKED, WITH TWO EXACT CAUSES — AND BOTH ARE NGSPICE'S, NOT THIS TREE'S.** The known-0 leg still cannot be taken, but it is no longer unexplained. **The baseline builds fine**: the fork's own recorded flags (`--enable-pss --enable-cider`, read out of `build-ver_50/config.log`) compile out of tree in about **40 seconds** with `-j4`. Subtracting the capability flags is what breaks. **(a) `--disable-xspice` does not compile**: `OPT_ENH_RSHUNT` is enumerated **inside** `#ifdef XSPICE` in `src/include/ngspice/optdefs.h:152` and used **unguarded** at `src/spicelib/analysis/cktsopt.c:254`, so the build dies with *'OPT_ENH_RSHUNT' undeclared*. Its table entry at `:275` **is** correctly guarded, which is how the mismatch survived. **(b) `--disable-osdi --disable-klu` does not compile either**, and reproducibly on top of the working configuration: the generated `xspice/icm/xtradev/seegenerator/cfunc.c` fails with *implicit declaration of `malloc`/`free`* — a missing `<stdlib.h>` that the OSDI/KLU configuration had been pulling in transitively, fatal under this compiler. ⚠ **So a stripped ngspice is not one `configure` away**, which is what this debt assumed, and the two-minute estimate was wrong for a reason worth knowing. | Unchanged: it becomes real the first time a user registers a stripped build and ASE-L must say *"this one lacks X"* rather than *"this one has X"*. | **Fix (a) or (b) upstream first — each is one line — then re-run leg D.** Neither belongs in this tree, and neither was patched here: `/home/analog/dev/ngspice` is the user's checkout and nothing in this batch edits it. | before Stage 16 ships |
 | **M21** *(new 2026-09-10, the variant amendment)* | ⚠ **STILL OPEN, AND NOW MEASURED RATHER THAN READ — 2026-09-13.** The divergence is real and it is **one word**. `ase::run_casemode_flag` (`src/ase.tcl`) returns `[list -D casemode=$m]`; `sim_run_flags` (`src/xschem.tcl:2935`), the classic `Simulation > Simulate` path, returns `[list -D casemode=$m -D casemodewrite]`. Measured on the fork, same deck, same binary: with `-D casemode=preserve` alone the rawfile carries **no `Option:` line**; with `-D casemodewrite` added it carries `Option: casemode=preserve`. **So the same tool writes a self-describing raw from one route and not from the other**, and the header parser — mode SOURCE 2, the second-strongest of four — can never fire on a file ASE-L caused to be written. | The crew that builds Stage 16 will read a spec describing behaviour that exists on one path and not the one the spec is about. A spec wrong in one place is not trusted in the others. | **The fix is one word** in `ase::run_casemode_flag`, plus a row that reddens without it. Not taken here because `src/ase.tcl` was another crew's file at the moment this was measured, and because a behaviour change belongs to a task rather than to a driver's verification pass. | when Stage 16 is picked up |
+| **M22** *(new 2026-09-15, Stage 13 task 1)* | ⚠ **The checkpoint decision does not know the noise timestep.** `tran_points` estimates a transient from its card alone, and that estimate decides whether Stage 6f's checkpoint loop is armed — so a noisy transient whose card is under the 100 000-point floor but whose noise interval makes it far longer (`TS = 100n` on `tran 1u 1m`: **44 116 / 50 008** points where the card says 1000) is **not checkpointed**. And a checkpointed noisy transient — `stop after` / `resume` across `trnoise` breakpoints — has **never been run**. | ⚖ R1 ruled *always salvage*; this is the class of run most likely to be long, and salvage silently does not apply to it. | **Measure first, on both binaries** (nothing here crashes): a `trnoise` transient under the checkpoint loop — does `stop after N` land between noise breakpoints, does `resume` continue or redraw, and do the finished statistics match an unchecked run's (samples cannot — white noise is irreproducible)? Only then make the estimate noise-aware: task 1's `ase::stimuli_points` already computes it, and its sabotage S44 reds NX2 by design until the decision is taken. | before Stage 13 closes |
 
 **And one debt that is this document's own.** The suite table above records **call sites**,
 not run rows, because no suite was run for this baseline. The first crew to touch a suite
