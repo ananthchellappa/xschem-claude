@@ -27,21 +27,28 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-13 18:59
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 08:30
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
+⚠ **This block was STALE from 2026-09-13 18:59 until 2026-09-15**, found by the driver re-reading
+the ledger against the tree when the user asked for the batch's status: its heading, its *Stages
+landed* row, its T1 row and all three of *The next three things* described a moment two stages
+back, while its *In flight* row alone had been patched to say Stage 11 was complete. A resume point
+that half-updates is worse than one that is plainly old, because the patched row lends the stale
+ones its date. **Rewrite every row, or none.**
+
 | | |
 |---|---|
-| **Stages landed** | 0–**10**. Stage 10 as two commits: the deck half (issue **1459**, `e1eaa5d0`) and the GUI half (issue **1460**, `375a769e`). Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix), **1461** (a leaked channel from a shadowed `close`), **1458** filed |
+| **Stages landed** | 0–**11**. Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Also since Stage 9: **1456** (T1's banners), **1453** (the probe was starting a second xschem), **1457** (the `Cy` matrix), **1461** (a leaked channel from a shadowed `close`); **1455**, **1458**, **1463** filed |
 | **Stages remaining** | **12** (event-driven results), 13, 14, 16 — plus ⚖ **R10's adapter-author specification**, deliberately written *after* the last hook-adding stage |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **71 cases** (the new convergence suite joined), **ZERO counted lines in `tests/results.log`, four runs in a row** — the first honest zeroes the batch has had. See *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7* |
-| **In flight** | nothing — **Stage 11 is COMPLETE** (issues **1462** and **1464**) |
-| **Next** | **Stage 12** — event-driven results (XSPICE, the VCD attach). ⚠ Debt **M9** is its gate and **M13** is a permanent caution with a reproducer and no root cause. Then 13, 14, 16, and ⚖ R10's adapter-author specification |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, now **556 strings from 29 issues**. Everything else (R1–R8, R10, R11) is answered |
-| **Open issue awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) and **1453**, now on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or something else's**. Options A and C are **refuted by measurement**; **B shipped** |
-| **Debt queue** | **177 rule / 67 look / 11 suite.** ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
+| **T1** | ✅ **76 cases, ZERO counted lines in `tests/results.log`**, re-run solo 2026-09-15 on the 1460 `exit` fix (370 s) — and zero on every run since issue 1456, including all three Stage 11 re-runs. ⚠ **Why the file holds 75 case logs for 76 cases, measured rather than guessed:** 63 `hcases` + 9 `dcases` + 3 legacy write a log each, and the 76th, **`xschemtest.tcl`, writes to `results.log` ONLY WHEN IT FAILS** (`run_regression.tcl:478-490`, a `catch` around its `exec`). The driver nearly "corrected" 76 to 75 in this very block before reading that — counting `.log` lines is not counting cases, any more than grepping stdout was reading verdicts |
+| **In flight** | nothing at this commit. **Stage 12's crew is dispatched immediately after it** |
+| **Next** | **Stage 12** — event-driven results. ✅ **Its gate M9 was PAID by the driver on 2026-09-15** (`evidence/m9-event-vcd-attach.md`): the attach works and the names are ngspice's, and **two findings bind the emission** — the digital traces end at the last event, and `eprvcd` given an analog argument aborts 45.2 (`binary-differences.md` **#9**). **M13** stays a permanent caution. Then 13, 14, 16, and ⚖ R10's specification |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **556 strings from 29 issues**. Everything else (R1–R8, R10, R11) is answered |
+| **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
+| **Debt queue** | **177 rule / 67 look / 11 suite**, measured 2026-09-15. ⚠ One `look` is one **`:99` cannot pay** — the lit non-converged nets must be seen on `AUDIT_DISPLAY=$DISPLAY`. Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -80,15 +87,22 @@ under T1 (issue 1455). They are the first thing to do in a quiet window.
 
 ### The next three things, in order
 
-1. **Collect the 1453 crew**, verify its measurement of the writer independently, re-run both arms,
-   T1 solo, ledger, commit.
-2. **Issue 1457** — `sp_matrix` gates `Cy` on `donoise && $n == 2`; it must gate on the flag alone
-   and emit N×N, and row `SX2` must be rewritten to the measured table because it currently asserts
-   the defect.
-3. **Stage 10 task 1**, the deck half — `ase::ncdump_parse`, `ase::ladder_parse`,
-   `ase::optran_line`, `ase::wrnodev_lines`. **Its two prerequisite debts (M1, M7) are paid**, and
-   `evidence/ladder-streams.md` already carries its fixture text, its `optran` warning and §10b's
-   headline number re-measured on both binaries.
+1. **Collect Stage 12's crew** — receipt `receipts/40-stage-12-event-results.md`. Verify
+   independently against `evidence/m9-event-vcd-attach.md`: that the emitted `eprvcd` names only
+   inventory nodes and sits after `write` (**run it on 45.2 with an analog node in the deck** —
+   row #9 is what a fork-only check misses), that the event database now reaches the run's end in
+   the viewer (**a screenshot, not a `RESULT:` line** — the headless half of M9 said *yes* and only
+   the pixels found the defect), and that `test_ase_cosim` RD1–RD11 are unmoved. Both arms, both
+   binaries, T1 solo, ledger, commit.
+2. **Stage 13** — transient noise and `trrandom`. `evidence/randomness-stage11.md` already carries
+   the seed measurements (`setseed` is a command; `set rndseed=` is an inert readback) and
+   `binary-differences.md` says `trnoise` is unreproducible on both binaries under one seed, so the
+   *honest seed sentence* has its facts before a crew is briefed.
+3. **Stage 14** — PSS, explicitly experimental (⚖ R7 answered, Option A). The two binaries disagree
+   about whether `pss` exists at all; read `evidence/pss-stage14.md` first.
+
+**Also owed, and not stage work:** the one-line explicit `exit` on `test_ase_conv_gui_1460` —
+✅ **done 2026-09-15**, verified 45 headless / 104 display, rc 0 each.
 
 ---
 
@@ -926,6 +940,23 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Debt M9 — PAID BY THE DRIVER before Stage 12 was briefed, 2026-09-15 — plus the 1460 `exit`, and a ledger that had drifted
+
+No crew and no receipt: M9 is a measurement `PLAN.md` §12 requires **before the emission is
+written**, so the driver took it, as it did M1, M7, M8, M10 and M11 before their stages.
+
+| | |
+|---|---|
+| **the answer** | ✅ **YES on both clauses, on apt 45.2 and on the fork.** `ase::attach_dbs` → `n 2 current 0`, VCD in slot 1 as `time din dout`; a missing VCD is `skipped` (the negative control). In a real viewer window on `:99`, attached through `wviewer::attach_raw`, the legend reads **`din`**/**`dout`** beside `v(in)`/`v(aout)` on one time axis. `evidence/m9-event-vcd-attach.md`, screenshot `evidence/m9-viewer-apt.png` |
+| **⚠ finding 1** | **The digital traces END AT THE LAST EVENT** — 26.3 ns in a 30 ns run. `eprvcd` writes no final timestamp in any variant measured, and `vcd_read()` extends only to the file's own last `#t`. **Only the pixels showed it: the headless half of the measurement said *yes* with every number right.** Stage 12 owes the event database a run end |
+| **⚠ finding 2** | **`eprvcd` given an analog argument ABORTS 45.2** — `*** buffer overflow detected ***`, rc 134, VCD 0 bytes — with or without `-a`; the fork writes a valid VCD. `binary-differences.md` **#9**. The rawfile, written first, survived. So the emission names only inventory nodes, after `write` |
+| **also measured** | `$timescale` follows `TSTEP` (`1 fs` here; §12 said `1 ps`, one deck's figure — corrected in place); event times differ by up to 7.5 ps between the binaries with counts equal (#3 re-confirmed, not a new row) |
+| **⚠ the driver's own defect** | the measurement script's dump of the analog strip's traces printed **nothing** — a `dict get` on a key a current-database trace does not carry, swallowed by `catch`. Failure mode 3, in a measurement. The screenshot is the evidence for that strip, and the evidence file says so |
+| **the 1460 `exit`** | ✅ `e9deb1e7`. Verified **45 headless / 104 display, rc 0 each**. ⚠ The first display attempt never ran: the dev display had died (`state: stale`, its Xvfb gone), so `devdisplay.sh exec` returned **rc 6** with no `RESULT:` line — a named outcome, not a pass. Restarted, re-run, green |
+| **T1** | ✅ **Solo, 76 cases, zero counted lines in `tests/results.log`, 370 s** |
+| **the ledger itself** | ⚠ **Three kinds of drift, found by re-reading against the tree when the user asked for status.** (1) The resume point was **two stages stale** with one row patched — rewritten whole. (2) **Stages 8, 10 and 11 had EMPTY per-stage tables** although every task in them was collected as a block up here; filled from those blocks, each saying so. (3) The driver drafted a correction of T1's case count from 76 to 75 by counting `.log` lines, and **retracted it before commit** on reading that `xschemtest.tcl` logs only on failure |
+| **debts** | none added — M9's findings carry no new user-facing sentence, and §12 files no `look` for a pane it does not build. Queue **177 / 67 / 11**, unmoved |
 
 ### ✅ Stage 11 task 2 — the campaign dialog and the result table, issue **1464**, collected 2026-09-14 — **STAGE 11 IS COMPLETE**
 
@@ -4271,16 +4302,22 @@ derived templates including phase margin with `set units=degrees`; `.four`/`fft`
 `psd`/`linearize` producers; THD and the harmonic table.* New suite; the Value column gains
 rows. **Ruling: ⚖ R9.** Decisions: **D27** (non-negotiable here), **D30**.
 
+⚠ **This table sat EMPTY after Stage 8 landed**, found 2026-09-15 by the driver re-reading the
+ledger against the tree: both tasks were collected as blocks near the top of this file and the
+stage's own row was never filled, so a reader walking the stages found a landed stage with no
+receipt — which by this file's own rule means *not landed*. Filled from those blocks; nothing new is
+claimed here.
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ✅ **COMPLETE, as two tasks** — the deck half (issue **1443**) and the GUI half (issue **1451**) |
+| commit | `3f31a33b` (1443) · `b7a4f5b6` (1451) |
+| T1 | ⚠ Deferred at task 1 while 1446 held `src/ase_window.tcl`; at task 2 **69 cases, no new red attributable** — a figure later **corrected** because it was read from stdout (see *T1 HAS NOT BEEN AT ZERO SINCE STAGE 7*) |
+| suites moved | **new** `test_ase_meas_1443` **100 → 113** both arms · `test_ase_core` 598 → **636** · `test_ase_dialogs` 37 headless / 345 → 362 display (`G2sens`, 1436, standing) |
+| sabotage | task 1: **72 applications, zero kills**, three argued survivors · task 2: **30 + 2 re-run, 29 red, 1 survivor, zero kills** |
+| ledger debts | `rule 1443` (79 strings, R9-294 … R9-372) and `rule 1451`; no `look` at task 1 |
+| spec paragraphs rewritten | §8b's gain-margin line — it answers nothing on either binary, because `vp()` is wrapped |
+| receipt | `receipts/23-stage-8-measurements.md` · `receipts/31-stage-8-measurements-gui.md` — collected blocks: *Stage 8 task 1* and *Stage 8 task 2*, above |
 
 ### What Stage 8 learned that binds later stages
 
@@ -4338,16 +4375,19 @@ the sentence on the OP form; `wrnodev` save/restore; the run-health strip.* New 
 is where the scheduled second implementation of the run interface becomes **due**, the stage
 after which `-p` was ratified to start.
 
+⚠ **Filled 2026-09-15 from the collected blocks near the top of this file**, where both tasks were
+recorded when they landed; this row was left empty at the time (see Stage 8's note).
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ✅ **COMPLETE, as two tasks** — the deck half (issue **1459**) and the GUI half (issue **1460**), plus **1461** found while collecting it |
+| commit | `e1eaa5d0` (1459) · `375a769e` (1460) · `1519ca6c` (1461, a leaked channel from the shadowed `close`) |
+| T1 | ✅ solo after each, zero counted lines in `tests/results.log` — case counts as recorded in the blocks (see the resume point on how those counts were taken) |
+| suites moved | **new** `test_ase_converge_1459` **76** both arms · **new** `test_ase_conv_gui_1460` **44 → 45 headless / 103 → 104 display** · `test_ase_core` 636 → **638** · `test_ase_window` **56** |
+| sabotage | task 1: **35, 33 red by name, one declared equivalent, one row DELETED** because nothing could break it · task 2: **55, 54 red by name, one declared equivalent** |
+| ledger debts | `rule 1459` (nineteen sentences) · `rule 1460` and a **`look`** — ⚠ one **`:99` cannot pay**: the lit non-converged nets need `AUDIT_DISPLAY=$DISPLAY` |
+| spec paragraphs rewritten | the driver's own brief on the ladder (refuted by the crew), and `wrnodev`'s mechanism — see the task 1 block |
+| receipt | `receipts/36-stage-10-deck.md` · `receipts/37-stage-10-gui.md` |
 
 ### What Stage 10 learned that binds later stages
 
@@ -4363,16 +4403,18 @@ same number `evidence/design-of-record.md` §16, `PLAN.md`'s "Still open" table 
 all use; an earlier draft of PLAN numbered it M13, which collides with the DC-sweep question).
 **Rulings: ⚖ R8, ⚖ R2.** Decisions: **D18, D19, D25**.
 
+⚠ **Filled 2026-09-15 from the collected blocks near the top of this file** (see Stage 8's note).
+
 | | |
 |---|---|
-| status | |
-| commit | |
-| T1 | |
-| suites moved | |
-| sabotage | |
-| ledger debts | |
-| spec paragraphs rewritten | |
-| receipt | |
+| status | ✅ **COMPLETE, as two tasks** — the runner and the sampler (issue **1462**) and the dialog and result table (issue **1464**); **1463** filed alongside |
+| commit | `d5295c24` (1462) · `dfca2364` (1463, docs) · `5d0d07ed` (1464) |
+| T1 | ⚠ **RED on BOTH first hand-overs and that was T1 working** — 1462: `test_ase_simreg_0931` S12, a suite outside the crew's neighbourhood; 1464: `exit=10` under `ALL PASS`, then the leak row `HY1` itself. Each sent back, repaired, and re-run solo clean before anything was committed |
+| suites moved | **new** `test_ase_campaign_1462` **124 → 133** · **new** `test_ase_campaign_gui_1464` **78 headless / 156 display** · `test_ase_simreg_0931` **117** · `test_ase_core` **638** · `test_ase_persist` **49** · `test_ase_window` **56** |
+| sabotage | 1462: **36, all killed by name**, three first-pass survivors each earning a row · 1464: **63, all killed by name**, then the `HY` rows sabotaged again **under `--logdir`** |
+| ledger debts | `rule 1462` · `rule 1464`, a **`look`** (`ase-campaign-histogram-and-progress-1464`, ASE-L's first drawn canvases) and a `suite` |
+| spec paragraphs rewritten | ⚠ §11a's central design — `var()` in a `.param` **kills the run on 45.2** (`binary-differences.md` #8), so a campaign became *nominal deck plus a one-line diff per shard* |
+| receipt | `receipts/38-stage-11-runner.md` · `receipts/39-stage-11-gui.md` |
 
 ### What Stage 11 learned that binds later stages
 
@@ -4608,7 +4650,7 @@ exactly as long as ASE-L tells someone their work will be lost and then loses it
 | **M5** | A **multi-raw family** (one raw per shard) is new to the waveform viewer and to the Calculator, whose spec says v1 handles only the single-raw multi-dataset case. | Stage 11's family-of-curves display has no owner. | Not an experiment — a conversation with `doc/claude/specs/calculator.md`'s owner, **at Stage 11, not at Stage 0**. | Stage 11 |
 | ~~**M7**~~ | ✅ **CLOSED 2026-09-13 — `evidence/probe-vectors.md`.** The manual's spellings are **correct and now measured on both binaries**, from `display` and the rawfile: `p(<instance>)` answers `<instance>:power` **bare** (subcircuit `x1` included), and `vd(r2)` becomes a **node** `vd_r2`, so the rawfile writes `v(vd_r2)`. No case difference between the binaries here — this family's case follows the **deck**, unlike the S-parameter matrix. ⚠ **Two facts the manual does not mention.** `.probe vd(...)` **inserts an E-source** — `ediff2_r2` — so a differential probe *changes the netlist* and puts `i(ediff2_r2)` in the results file naming a device that is not on the user's schematic; that is squarely inside this batch's *nothing the deck contains may be unshowable* rule. And `.probe i(v1)` on a source yields a **duplicate vector name**: two variables both called `i(v1)`, which any name-keyed reader silently collapses. | — | **paid before Stage 10 was dispatched** |
 | ~~**M8**~~ | ✅ **CLOSED 2026-09-13 — `evidence/interp.md`.** **It does nothing on either, and says it did.** AC `dec 10 1 1meg` stays at **61** points and nested DC at **33**, rawfile counts unmoved and `v(out)[5]` identical to every printed digit, on both binaries — while every run still prints `Warning: Interpolated raw file data!`. **On AC and DC that sentence is false about the data**, so ASE-L must not offer `interp` on those rows: it buys nothing and puts a untrue line in the user's log. ⚠ **And the transient half turned up a new binary difference**: the same `tran 1u 20u` gives **118** points on 45.2 and **121** on the fork, while `interp` makes both exactly **21**. So any golden pinning a transient point count is build-dependent (difference **#7**), and `interp` is the one setting that buys reproducibility across builds — a better caption for the Tran form's `grid` field than the plan's. | — | **paid 2026-09-13** |
-| **M9** | Does the `eprvcd` VCD attach cleanly through `ase::attach_dbs` **alongside** a rawfile, and does the digital pane label the nodes with their ngspice names? | Stage 12's whole claim. | Drive an `adc_bridge → d_inverter → dac_bridge` chain through a real ASE-L session with the VCD in `vcdfiles`. ⚠ The design of record cited this deck as `../dor/mx.cir`; **that directory no longer exists** (README). The deck is the one `evidence/xspice.md` §5 builds: an analog source into `adc_bridge`, a `d_inverter` code model, a `dac_bridge` back out, `.control` running `tran`, then `edisplay` and `eprvcd din dout > mx_evt.vcd`. | Stage 12 |
+| ~~**M9**~~ | ✅ **CLOSED 2026-09-15 — `evidence/m9-event-vcd-attach.md`. YES on both clauses, on both binaries.** `ase::attach_dbs` returns `n 2 current 0` with the VCD in slot 1 as `time din dout`; a missing VCD is reported `skipped` (the negative control). In a real viewer window on `:99`, attached through `wviewer::attach_raw` — the route a run takes — the legend reads **`din`** and **`dout`** beside `v(in)` and `v(aout)`, on one time axis, and bare-name traces resolve in the VCD database unaided (`evidence/m9-viewer-apt.png`). ⚠ **Two findings nobody asked for, both binding on Stage 12:** **(1) the digital traces END AT THE LAST EVENT** — 26.3 ns in a 30 ns run, because `eprvcd` writes no final timestamp in any variant and `vcd_read()` extends only to the file's own last one, so a held value is drawn as an absence; **(2) `eprvcd` given an ANALOG argument ABORTS 45.2** — `buffer overflow detected`, rc 134, no VCD — while the fork accepts it (`binary-differences.md` **#9**), so the emission names only what `edisplay` reported, after `write`. Also: the `$timescale` follows `TSTEP` (`1 fs` here, not §12's `1 ps`), and event times differ by up to 7.5 ps between the binaries with counts equal (#3 re-confirmed, not a new row). ⚠ **The original question, kept:** does the `eprvcd` VCD attach cleanly through `ase::attach_dbs` **alongside** a rawfile, and does the digital pane label the nodes with their ngspice names? | Stage 12's whole claim. | Drive an `adc_bridge → d_inverter → dac_bridge` chain through a real ASE-L session with the VCD in `vcdfiles`. ⚠ The design of record cited this deck as `../dor/mx.cir`; **that directory no longer exists** (README). The deck is the one `evidence/xspice.md` §5 builds: an analog source into `adc_bridge`, a `d_inverter` code model, a `dac_bridge` back out, `.control` running `tran`, then `edisplay` and `eprvcd din dout > mx_evt.vcd`. | Stage 12 |
 | ~~**M10**~~ | ✅ **CLOSED 2026-09-13 — `evidence/noise-integration.md`.** `Nintegrate()` (`src/spicelib/analysis/ninteg.c`) integrates **between two adjacent frequency points** on the assumption that the density is a power law across the interval, with three branches — flat, **1/f** (the case the general formula cannot express, and the one that matters in analog design), and everything else. ⚠ **And the units were measured, not assumed: `onoise_total` is V RMS, not V².** A 1 kΩ resistor driven by a current source answers `4.071369e-06` on both binaries against a closed-form √(4kTR·Δf) of **4.071370e-06** — seven significant figures — and `cktnoise.c:113,126` square-roots the whole output vector before writing it. So the spectrum is **V/√Hz** and the total is **V RMS**. The tooltip sentence is in the evidence file, and its load-bearing clause is that **the number depends on the sweep range and, slightly, on the point count** — it is not a property of the circuit alone. | — | **paid 2026-09-13** |
 | ~~**M11**~~ | ✅ **CLOSED 2026-09-13 — `evidence/alterparam-reset.md`.** **Everything survives except `.spiceinit`.** The altered parameter takes (1k → 2k), a deck `.options reltol=0.005` card is still 0.005 after the re-parse, an interactive `option abstol=1e-15` set before the first analysis survives, and `set` shell variables are untouched — identical on both binaries. ⚠ **`<rundir>/.spiceinit` is read at startup ONLY and is NOT re-read by `reset`**, which is right for a loop and must not be assumed otherwise. ⚠ **Also measured, because Stage 11 rests on it: an `option` issued BETWEEN two analyses does reach the later one** (`TEMP = 27` then `TEMP = 100`), so per-analysis option scoping is real. ⚠ **And a finding for D26's reader: `option`'s LISTING is not a safe readback** — an `abstol` set after the first analysis lists unchanged while a `temp` set at the same moment visibly reaches the next analysis. The listing and the behaviour disagree, and the listing is the one that is wrong. | — | **paid 2026-09-13, before Stage 11** |
 | **M12** | ⚠ **HALF CLOSED 2026-09-13.** *What `wrs2p` emits* is measured — issue 1452 ran four routes on both binaries: the shipped `let Rbase = <port 1's z0>` / `wrs2p` / `unlet Rbase` form produces **the same 8 lines** as the documented `.csparam Rbase=50` card (`diff` empty past the generated-at line, header `# Hz S RI R 50`), and dropping the `unlet` leaks an `rbase` column into the results file. *Is it a valid Touchstone file* is **still open**. | Stage 9's export. | ⚠ **Nothing on this machine can read a Touchstone file** — measured 2026-09-13: no `skrf`, no `numpy`, no `octave`, no `qucs`/`qucsator`. The remaining half needs **one install the user has to approve**: `python3 -m pip install scikit-rf` (it pulls numpy), after which `rf.Network('out.s2p')` either parses it or does not. **Offered rather than done, and no hand-rolled parser was written** — reading it with something written here would test this tree's idea of Touchstone against this tree's idea of Touchstone. | Stage 9 — **awaiting the user's yes/no on one install** |

@@ -3548,8 +3548,13 @@ Measured on an `adc_bridge → d_inverter → dac_bridge` chain:
 * **Inventory:** `edisplay` prints a machine-readable list of the event nodes in the current plot —
   `din : d , 7` / `dout : d , 7` — with no netlist parsing. It is also the check that decides whether
   any of this is emitted at all.
-* **Transport:** `eprvcd din dout > <cell>_ase_evt.vcd` writes a **valid VCD** (`$timescale 1 ps`,
-  `$var wire 1 ! din`, value changes).
+* **Transport:** `eprvcd din dout > <cell>_ase_evt.vcd` writes a **valid VCD** (`$var wire 1 ! din`,
+  value changes). ⚠ **CORRECTED 2026-09-15 (M9):** the `$timescale` is **not** a constant `1 ps` —
+  it is one decade finer than `TSTEP`, so `tran 0.05n 30n` writes `1 fs` on both binaries; `-t 1p`
+  pins it. And ⚠ **the argument list must be event nodes ONLY**: `eprvcd din dout v(in)` **aborts
+  ngspice 45.2** (`buffer overflow detected`, rc 134, no VCD) while the fork accepts it —
+  `binary-differences.md` **#9**. Emit it **after** `write`, so an abort costs the VCD and not the
+  rawfile (measured: the rawfile survived).
 * **The rawfile is NOT a viable transport:** `write mx.raw all` contains `time i(adac) v(aout) v(in)
   i(vin)` and **not** `din`/`dout`, silently; naming them explicitly produces vectors declared
   `dims=10` while `No. Points: 119`, zero-padded and not truncated on read.
@@ -3586,10 +3591,15 @@ New goldens: the `eprvcd` line present only when `edisplay` found nodes; the `.p
 default-bridge rows and the rest of **RD1–RD11** must stay green. (`E5` in that file is a plan-item
 label in a comment, not a check name.)
 
-⚠ **Open question M9 is this stage's whole claim** and is not closed: does the `eprvcd` VCD attach
-cleanly through `ase::attach_dbs` **alongside** a rawfile, and does the digital pane label the nodes
-with their ngspice names? The experiment is to drive the measured `adc_bridge` deck through a real
-ASE-L session with the VCD in `vcdfiles`. Do it before writing the emission.
+✅ **Open question M9 was this stage's whole claim, and it is ANSWERED — 2026-09-15, YES on both
+clauses and both binaries** (`evidence/m9-event-vcd-attach.md`). `ase::attach_dbs` returns `n 2`
+with the VCD in slot 1 as `time din dout`; in a real viewer window attached through
+`wviewer::attach_raw`, the legend reads `din` and `dout` beside `v(in)` and `v(aout)` on one time
+axis, and a bare-name `add_trace` resolves them in the VCD database with no user action. ⚠ **But
+the measurement found a requirement this section did not have: the digital traces END AT THE LAST
+EVENT** (26.3 ns in a 30 ns run), because `eprvcd` writes no final timestamp and `vcd_read()`
+extends only to the file's own last one. A held value is drawn as an absence. **This stage owes the
+event database a run end**; how is the crew's design, and neither route was measured.
 
 ### Re-measure on the dev display
 
