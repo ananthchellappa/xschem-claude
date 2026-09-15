@@ -1350,3 +1350,7 @@ else { puts "RESULT: ALL PASS ($npass checks)" }
 # this batch shipped without one and were scored a HARNESS failure on every T1 run
 # since stage 7.
 puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"
+# AND AN EXPLICIT EXIT CODE, for the reason `test_ase_effective_1442` got one on
+# 2026-09-15: without it a failing run exits rc 0, and any reader of the exit code
+# alone scores a red suite green. T1 reads the banner too; nothing else has to.
+exit [expr {$fail ? 1 : 0}]
