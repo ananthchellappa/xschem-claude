@@ -1178,3 +1178,9 @@ else { puts "RESULT: ALL PASS ($npass checks)" }
 # no banner as a HARNESS failure however green its own checks are. This suite is in
 # T1's case list, so without this line it was a standing red from the day it joined.
 puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"
+# AND AN EXPLICIT EXIT CODE. Without one a failing run still exited rc 0: measured
+# 2026-09-15 by the driver, `RESULT: 2 FAILED (92 passed)` at rc 0 while sabotaging
+# issue 1468. T1 counts it anyway through the banner and the FAIL lines, but any
+# reader of the exit code alone -- a bespoke loop, `timeout`'s caller -- scored a
+# red suite green. The established suites end this way.
+exit [expr {$fail ? 1 : 0}]
