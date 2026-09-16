@@ -3426,7 +3426,15 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   Stage 16 task 3 of the ASE-L analyses batch. Checked free in every clone on this machine before
   minting. OPEN.
 
-**The next free number is 1473.**
+~~**The next free number is 1473.**~~ superseded: **1473** is filed, below.
+
+- **1473** — **The stop warning still says a run is discarded, after Stage 6f made that untrue.**
+  `ase::run_stop_warning` is emitted by both its callers with no test of the run's checkpoint plan,
+  so a transient that Stage 6f checkpoints is still told stopping discards it, while
+  `ase::ckpt_report` afterwards says what was kept. Debt **M18**'s unfinished half; the ledger says
+  M18 is closed in one place and open in two. Driver-measured at `d761b630`. OPEN.
+
+**The next free number is 1474.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
