@@ -91,6 +91,18 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   whose `Total num fail:` is not 0. `couldn't execute "xschem"` or `exit 127` anywhere
   means the binary never launched and *nothing in that run is meaningful*
   (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
+  ⚠ **AND A STALE `results.log` READS EXACTLY LIKE A CLEAN SWEEP.** Invoke it as
+  `cd tests && tclsh run_regression.tcl`, the spelling under "Build & run" above —
+  **never `tclsh tests/run_regression.tcl` from the repo root.** Measured
+  2026-09-15: run that way it **exits 1 without running the cases** and leaves the
+  *previous* run's `results.log` byte-for-byte in place, so the next reader counts
+  a sweep nobody took. Note how cleanly this defeats the rule above it: you are
+  told to ignore the exit code and read the file, and here the nonzero exit is the
+  **only** signal that the file is a fossil. Two receipts in the ASE-L batch and
+  one commit message carry a case count obtained this way (84, where the tree has
+  82). **So before counting, confirm the log's mtime and md5 moved off their
+  pre-run values** — and treat an empty log *after* a run as a death, never as a
+  zero.
 - **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and
   the loser reports a `FATAL` that never happened. `open_close.tcl:38` puts its
   per-job exit-status files in a **fixed** `results/.work` (no pid), and `:108`

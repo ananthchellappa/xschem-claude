@@ -3434,6 +3434,18 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   `ase::ckpt_report` afterwards says what was kept. Debt **M18**'s unfinished half; the ledger says
   M18 is closed in one place and open in two. Driver-measured at `d761b630`. OPEN.
 
+~~**The next free number is 1474.**~~ superseded: **1474** is filed, below.
+
+- **1474** — **The post-stop message still says nothing was written, seconds before the checkpoint
+  report says what was kept.** Issue 1473 made the LAUNCH warning true for a checkpointed run;
+  `ase::run_stopped_msg` (`src/ase.tcl:16960`) takes one argument and was left composing *"nothing of
+  this run was written"* unconditionally, its sole caller (`src/ase_window.tcl:12548`) passing only the
+  simulator. So after 1473 the two messages of one run **disagree**, where before they agreed and were
+  both wrong. Carries the `pss` and `sp` rows issue 1473's CK28c does not hold. Found by 1473's crew,
+  confirmed by its independent verifier, filed by the driver at `df5df4fe`. ⚠ **This row was written
+  late** — the pointer was advanced to 1475 in the 1473 commit without filing the block beneath it,
+  which is the same stale-summary defect as the ledger's *Still open and named* line. OPEN.
+
 **The next free number is 1475.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch

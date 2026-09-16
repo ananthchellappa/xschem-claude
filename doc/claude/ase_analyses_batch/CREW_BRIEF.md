@@ -313,8 +313,18 @@ Each one has a scar behind it. Sources: `/home/analog/dev/xschem-claude/CLAUDE.m
 - **Sabotage-verify every new row.** Acceptance is a name+status diff, never a count: break
   the fix, watch the named row go RED, restore by `cp`, verify the md5 matches, report the
   red set by name. A row that cannot be made to fail proves nothing.
-- **Run `tests/headless/run_regression.tcl` SOLO** (issue **0990** — two at once corrupt
+- **Run `tests/run_regression.tcl` SOLO** (issue **0990** — two at once corrupt
   each other and the loser prints a `FATAL` that never happened; `exit -1` is the tell).
+  ⚠ **The path above said `tests/headless/run_regression.tcl` until 2026-09-15 and that file
+  does not exist.** The suite lives at `tests/run_regression.tcl`.
+- ⚠ **INVOKE IT AS `cd tests && tclsh run_regression.tcl`, NEVER `tclsh tests/run_regression.tcl`.**
+  Measured 2026-09-15 by the issue 1474 verifier: run from the repo root it **exits 1** and leaves
+  the **previous run's `results.log` in place**, so the next reader counts a clean sweep that was
+  never taken. Two receipts in this batch quote a T1 row obtained that way, and the case count
+  they carry (**84**) is the stale file's; the tree measures **82**. This is the same defect as
+  reading `run_regression.tcl`'s stdout instead of `results.log` (issue **1456**) — the failure
+  is silent, plausible and always green. **Before counting, confirm the log's mtime and md5 moved
+  off the pre-run value**, and treat an empty log after the run as a death, never as zero.
 - **T1's baseline is ZERO counted failures.** "A standing red is a defect, not furniture."
   A receipt may not say "3 FAIL — pre-existing"; if T1 is not zero, name the case and say
   why, per case. Eight issue files were filed four times each because crews carried

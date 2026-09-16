@@ -85,5 +85,11 @@ Headless 644 / 118 / 79 / 49 / 235 / 87 / 76; display (`:99`, Xvfb + openbox)
 
 `tclsh tests/run_regression.tcl`, solo and in the foreground under `timeout 3600`:
 rc 0, **zero** counted lines in `tests/results.log` (no `FAIL$`, `GOLD?`,
-`RESULT?`, leading `FATAL`), 84 × `Total num fail: 0`, no case non-zero, no
+`RESULT?`, leading `FATAL`), ⚠ **CORRECTED BY THE DRIVER 2026-09-15 — THE FIGURES BELOW ARE A STALE LOG, NOT THIS RUN'S.**
+The driver's brief specified `tclsh tests/run_regression.tcl`; run that way from the repo root the
+suite **exits 1 and leaves the PREVIOUS run's `results.log` untouched**, so this row counted a sweep
+that this pass never took. The tree measures **82** cases, not 84. The **zero is corroborated** by a
+real run made from `tests/` after issue 1474, so the verdict stands and only its provenance was
+wrong — but nothing here earned it. **The fault is the brief's, not this verifier's**, and the
+invocation is now fixed in `CREW_BRIEF.md`. Original text, kept verbatim: 84 × `Total num fail: 0`, no case non-zero, no
 `couldn't execute` and no `exit 127`.
