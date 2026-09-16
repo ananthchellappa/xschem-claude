@@ -318,15 +318,36 @@ about the entry. Reconstruct from **`cleared.log`** in the state dir root: appen
 never rotated, the full pre-image of every clear and every overwrite *this* script makes.
 A silent `cleared.log` beside a missing debt means the other clone did it, and there is
 no pre-image anywhere.
+⚠ **BUT FOUR UNSTAMPED ENTRIES ARE INNOCENT, AND THEY WILL OUTLIVE THIS PARAGRAPH.**
+Measured **2026-09-16 07:43**: that same `grep -L` now prints **four** —
+`rule/1357`, `look/hier_pdf_nav_1357_H6.…`, `suite/test_hier_pdf_links_1333` (all three
+at **2026-09-10 13:25:32**, twelve *milliseconds* apart) and `rule/1357@xschem-claude`
+(13:35:02). Nothing was destroyed. The first three are **one `owed.sh` run filing three
+debts**, from op-wcard, in the window after this file recorded a clean sweep at 12:40 and
+before the repaired script reached that clone — an atomic trio is a *filing*, never an
+overwrite, and that is the shape to check first. The fourth is the guard **working**: ten
+minutes later this clone hit the collision on 1357 and wrote the suffixed name rather than
+clobbering. Their `ref:` resolves too, to an op-wcard branch nobody here has checked out
+(`5866270d`), so **"the ref names a file no clone has" is not evidence either.** The rule
+above still holds for an unstamped entry that is *alone*, *undated* or *unexplained*; it
+does not hold for these four, and re-running the twenty-minute investigation on them is
+waste. **Read the mtimes before reaching for `cleared.log`.**
 
-**The refusal is one-sided until the repaired script reaches the other clones.** One
-ledger, but each clone runs its **own** `owed.sh`, and the guard lives in the script, not
-in the ledger. op-wcard's copy is dated 2026-09-04 and has never heard of `repo:`;
-measured against the stamped ledger it still overwrites at exit 0 printing `recorded`,
-taking `ref:` and both stamp lines with it. This clone now refuses to write theirs; theirs
-can still destroy all 182 of ours — **and a ruling was destroyed in place at 10:46:14 on
-2026-09-10, surviving only because a backup existed.** Take one before any pass that
-touches the ledger.
+**The refusal WAS one-sided, and as of 2026-09-15 it is not.** One ledger, but each clone
+runs its **own** `owed.sh`, and the guard lives in the script, not in the ledger — so
+until the repaired script reached the other clones, this one refused to write theirs while
+theirs could still destroy ours wholesale. That window is **closed**: measured
+**2026-09-16 07:44**, op-wcard's copy is dated **2026-09-15 10:05** and contains `repo:`
+**thirteen times, identical to this clone's**. This paragraph said "dated 2026-09-04 and
+has never heard of `repo:`" until that measurement, which is why the four unstamped
+entries above read as a live attack rather than as fossils of the gap.
+⚠ **Do not read the closed window as a closed risk.** The guard is still per-script and
+still absolute-path-based, a third clone would arrive unrepaired, and **a ruling really was
+destroyed in place at 10:46:14 on 2026-09-10, surviving only because a backup existed.**
+**Take one before any pass that touches the ledger** — `cp -r ~/.claude/xschem_owed …`
+costs nothing and is the only thing that has ever saved one. And **re-measure both clones'
+scripts rather than trusting this paragraph**: it has been wrong once, in the direction of
+alarm, and the next edit to either script can make it wrong in the direction of comfort.
 
 **The stamp is an absolute path**, so moving or renaming a clone turns every one of its
 own rulings foreign — run `owed.sh` from this tree at a different path and all 196 read
