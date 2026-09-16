@@ -91,6 +91,18 @@
 # be an expression: `cph(v(out))` answers `no such vector`), which is the 19th
 # kind `cphase`, and that vector must NOT be printed into the sidecar -- one line
 # per frequency point. TP2/TP2b/TP2c are those three claims and their controls.
+# 113 -> 115 with VD17 and TP7 (⚖ R9 A3's remainder, 2026-09-16): the refusals
+# in `ase::meas_verdict` and `ase::meas_template_expand` each resolved a field
+# caption THEIR OWN WAY over the kind and template registries and both DROPPED
+# THE UNIT -- `needs a value for Fundamental` against a box captioned
+# `Fundamental (Hz):`, 14 fields divergent. Both now ask `ase::caption_of`.
+# ⚠ THESE TWO ROWS ARE REAL COVER AND THE SUITE'S LAST CAPTION CLAIM WAS NOT.
+# Receipt 54 called this suite regression cover for `ase::ui::meas_flabel`; its
+# verifier made that proc RAISE on every call and this suite still finished ALL
+# PASS, because a headless suite never reaches the widget loop that calls it.
+# `meas_verdict` and `meas_template_expand` are pure Tcl and this suite already
+# drives both, which is why the cover lands here and `meas_flabel`'s could not.
+# AND RAISED 113 -> 115.
 # AND RAISED 100 -> 113.
 #
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice number quoted above was
@@ -531,6 +543,32 @@ check {VD16 a backend with no rule hook refuses nothing of its own} \
      ase::meas_cache_clear zzmr
      rename ::ase_t_mr {}
      return $r }}] ok
+
+## VD17 -- ⚖ R9 A3's REMAINDER, IN THE SUITE THAT OWNS THIS PROC.
+## ⚠ THIS ROW EXISTS BECAUSE THIS SUITE WAS FOUND UNABLE TO WITNESS THE LAST
+## CAPTION CHANGE. Receipt 54 claimed `test_ase_meas_1443` was regression cover
+## for `ase::ui::meas_flabel`; its verifier replaced that proc with a body that
+## RAISES on every call and this suite still finished ALL PASS, because it never
+## calls it -- `meas_flabel` is reached only from a widget loop and this suite is
+## headless-only. So "113 green" was no evidence at all, and `LB5` in
+## test_ase_core was the only cover.
+##
+## `ase::meas_verdict` is a DIFFERENT case and this suite drives it fifteen
+## times already, which is exactly why the fix belongs here too. Before A3's
+## remainder this refusal resolved the caption ITSELF -- declared label, else the
+## bare slot, AND NO UNIT -- so it said `needs a value for Fundamental` while the
+## form captioned that box `Fundamental (Hz):`. Eight of this registry's fields
+## diverged that way. The last term is the control: a field whose descriptor
+## declares no unit is still named bare, so the row cannot pass by a rule that
+## simply appends something to everything.
+check {VD17 a missing required field is refused by the caption the form shows,\
+ unit included, and a field with no unit is still named bare} \
+  [list [lindex [m_ans vd {name m1 analysis tran kind fourier target v(out)} \
+                   {{type tran enabled 1}}] 1] \
+        [lindex [m_ans vd {name m1 analysis tran kind when target v(out)} \
+                   {{type tran enabled 1}}] 1]] \
+  [list {'m1' needs a value for Fundamental (Hz)} \
+        {'m1' needs a value for Value}]
 
 } vderr]} { check {VD0 section VD ran to the end} "RAISED:$vderr" {} }
 
@@ -1587,6 +1625,24 @@ check {TP6 the run report speaks the measured values and the silent failure} \
 check {TP6b the report is silent on a bench with no measurements, which is why\
  no committed bench's log moves} \
   [m_ans ase::meas_report ngspice [tp_state {}]] {}
+
+## TP7 -- ⚖ R9 A3's REMAINDER ON THE TEMPLATE REGISTRY, which is the THIRD table
+## holding the same shape of descriptor and had the same defect as the kind
+## registry: `ase::meas_template_expand` resolved the caption itself and dropped
+## the unit, so six of the eight templates' required fields were named without
+## one. ⚠ THE SECOND TERM IS THE CONTROL and it is the half that makes this more
+## than a golden: with the field actually supplied the same template answers
+## `ok`, so the row cannot pass on a proc that refuses everything.
+check {TP7 a template refuses a missing required field by the caption the form\
+ shows, unit included, and still expands when the field is given} \
+  [list [m_ans ase::meas_template_expand ngspice [tp_state {}] bw3db \
+           [dict create an ac1 out out]] \
+        [lindex [m_ans ase::meas_template_expand ngspice [tp_state {}] bw3db \
+           [dict create an ac1 out out gain 60]] 0] \
+        [lindex [m_ans ase::meas_template_expand ngspice [tp_state {}] sr \
+           [dict create an tran1 out out]] 1]] \
+  [list {refuse {this template needs a value for Passband gain (dB)}} ok \
+        {this template needs a value for Start level (V)}]
 
 # ============================================================================
 if {[catch {

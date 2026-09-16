@@ -213,6 +213,20 @@
 # it matches `*nothing of this run was written*` with a trailing wildcard, so the
 # new full stop passes through it. That is luck rather than design, and SN6 is
 # what actually pins the punctuation.
+# ⚠ FOUR ROWS GAINED (LB10-LB13) for ⚖ **R9 A3's remainder and rulings A9 and
+# A10** (2026-09-16). A3's "one accessor, never a second table" was true of the
+# ANALYSIS registry only: `ase::meas_verdict`, `ase::meas_template_expand` and
+# `ase::ui::meas_tpl_show` each resolved a caption their own way over the
+# measurement and template registries, and the two refusals among them DROPPED
+# THE UNIT -- `needs a value for Fundamental` against a box captioned
+# `Fundamental (Hz):`, 14 fields divergent. LB10 is the rendered sentences,
+# LB11 the single-source property with COMMENTS STRIPPED (every comment this
+# ruling added contains the literal `ase::caption_of`, so an unstripped scan
+# would pass on the comment alone), LB12 A9's angle-bracket invariant and LB13
+# A10's one-word-per-idea plus §A5's single named exception.
+# ⚠ ONE ROW MOVED RATHER THAN BEING ADDED and is NOT in the +4: MT5, whose
+# golden gained the unit (`Passband gain` -> `Passband gain (dB)`).
+# AND RAISED 669 -> 673.
 # AND RAISED 662 -> 669.
 # AND RAISED 653 -> 662.
 # AND RAISED 652 -> 653.
@@ -6846,6 +6860,176 @@ check "LB9 a measurement refusal names the word the Kind picker shows, the\
            {kind trigtarg name m1 analysis sp}] 0]] \
   [list {1 0 1 0 1 0 1 0 1 0} {1 0 1 1 0 1 1 0 1} refuse fatal]
 
+## ---------------------------------------------------------------------------
+## LB10..LB13 -- ⚖ R9 A3's REMAINDER, AND RULINGS A9 AND A10
+## ---------------------------------------------------------------------------
+##
+## ⚠ LB5 CLAIMED "ONE ACCESSOR, NEVER A SECOND TABLE" AND THAT WAS TRUE OF ONE
+## REGISTRY ONLY. A3's verifier found THREE further bodies resolving a caption
+## their own way -- `ase::meas_verdict`, `ase::meas_template_expand` and
+## `ase::ui::meas_tpl_show` -- over the measurement kind and template registries.
+## Two of the three put their answer in a REFUSAL and both dropped the unit, so
+## a user was told `needs a value for Fundamental` at a box captioned
+## `Fundamental (Hz):`. That is A3's own defect, one registry over: 8 kind fields
+## and 6 template fields measured divergent, fourteen in all.
+
+## LB10 -- A3's REMAINDER, RENDERED. ⚠ THESE ARE MEASURED SENTENCES, NOT A BODY
+## SCAN: LB11 below asserts the shape, and this row asserts that the shape
+## produces the right words. The unit is the whole point -- every golden here
+## carries one, and the last two terms are the control that a field with NO unit
+## still renders bare rather than gaining an empty `()`.
+set LB10ST [ase::state_default]
+dict set LB10ST analyses [list {type tran enabled 1 step 1n stop 1u}]
+proc lb10v {row} {
+  return [lindex [ase::meas_verdict ngspice $::LB10ST $row] 1]
+}
+proc lb10t {tpl} {
+  return [lindex [ase::meas_template_expand ngspice $::LB10ST $tpl \
+                    [dict create an ac1 out out]] 1]
+}
+check "LB10 a measurement refusal names the caption the user can see WITH ITS\
+ UNIT, on both the kind registry and the template registry, and a field with no\
+ unit is still named bare" \
+  [list [lb10v {name m1 kind fourier analysis tran target v(out)}] \
+        [lb10v {name m1 kind spec analysis tran target v(out)}] \
+        [lb10t bw3db] [lb10t sr] [lb10t ts] [lb10t thd] \
+        [lb10v {name m1 kind when analysis tran target v(out)}] \
+        [ase::caption_of [ase::meas_kind_field ngspice when value] value]] \
+  [list {'m1' needs a value for Fundamental (Hz)} \
+        {'m1' needs a value for Start (Hz)} \
+        {this template needs a value for Passband gain (dB)} \
+        {this template needs a value for Start level (V)} \
+        {this template needs a value for Final value (V)} \
+        {this template needs a value for Fundamental (Hz)} \
+        {'m1' needs a value for Value} Value]
+
+## LB11 -- A3's LOAD-BEARING REQUIREMENT, EXTENDED TO THE REGISTRIES LB5 DID NOT
+## REACH. LB5 asserts the analysis registry's surfaces delegate; this asserts the
+## other three do, and that none of them has kept a copy of the RULE.
+##
+## ⚠ THE COMMENTS ARE STRIPPED BEFORE THE SCAN AND THAT IS NOT A DETAIL. LB5's
+## own comment records the trap by measurement: `info body` SEES COMMENTS, and a
+## first cut of that row got a YES out of a comment quoting the code it had just
+## replaced. Every source comment this ruling added contains the literal
+## `ase::caption_of`, so an unstripped scan here would pass on the comment alone
+## and prove exactly nothing. `lb_nocomment` is local rather than borrowed so the
+## row cannot be quietly weakened by an edit somewhere else in this file.
+##
+## ⚠ THE SECOND HALF IS THE ABSENCE HALF. `dict get $f label`, `string totitle`
+## and `dict get $f unit` are the three moves that RE-DERIVE the rule; the whole
+## defect was three bodies doing exactly that. Requiring the call to be present
+## is satisfied by a body that calls the accessor AND keeps its own copy beside
+## it, which is how these three drifted in the first place.
+proc lb_nocomment {t} {
+  set out {}
+  foreach l [split $t "\n"] { if {[regexp {^\s*#} $l]} { continue } ; lappend out $l }
+  return [join $out "\n"]
+}
+set LB11P {}
+set LB11A {}
+foreach lb11p {ase::meas_verdict ase::meas_template_expand \
+                ase::ui::meas_tpl_show ase::ui::meas_flabel} {
+  set lb11b [lb_nocomment [info body ::$lb11p]]
+  lappend LB11P [expr {[string first {ase::caption_of} $lb11b] >= 0 ? 1 : 0}]
+  set lb11bad 0
+  foreach lb11t {{dict get $f label} {string totitle} {dict get $f unit}} {
+    if {[string first $lb11t $lb11b] >= 0} { set lb11bad 1 }
+  }
+  lappend LB11A $lb11bad
+}
+check "LB11 the caption rule still has exactly ONE body after the measurement\
+ and template registries were folded onto it, and none of the four surfaces\
+ keeps a copy of the rule beside the call" \
+  [list $LB11P $LB11A \
+        [expr {[string first {ase::caption_of} \
+                 [lb_nocomment [info body ::ase::caption_of]]] >= 0 ? 1 : 0}] \
+        [ase::ui::meas_flabel ngspice fourier fund]] \
+  [list {1 1 1 1} {0 0 0 0} 0 {Fundamental (Hz):}]
+
+## LB12 -- ⚖ R9 A9: EVERY `<...>` LEFT ON SCREEN IS A REAL VALUE.
+## ⚠ THE RULING IS AN INVARIANT, NOT A SENTENCE, which is why the last term is
+## the row and the first two are only its evidence. `<mag>` and `<phase>` were
+## LITERAL text the user was meant to read, sitting on the same screen as
+## `<outv>`, `<node>` and `<name>`, which the renderer substitutes before the
+## user ever sees them -- so nothing distinguished a placeholder the user should
+## type over from a substitution that had failed. With the literal ones spelled
+## as words, a `<...>` on screen is a BUG REPORT.
+## ⚠ R9-140 (`distof2`) IS NOT IN §A9's RULING TABLE and moved anyway: half an
+## invariant is not one, and leaving it would have made two adjacent remedies in
+## one dialog disagree, which is the §A8 defect by hand.
+set LB12F [dict create sources [dict create V1 [dict create letter v ac 1]]]
+set LB12A [ase::needs_eval ngspice disto disto_f1src {type disto enabled 1} \
+             $LB12F {} [ase::state_default]]
+set LB12B [ase::needs_eval ngspice disto disto_f2src \
+             {type disto enabled 1 f2overf1 0.9} $LB12F {} [ase::state_default]]
+set LB12N 0
+foreach lb12s [list [lindex $LB12A 1] [lindex $LB12A 2] \
+                    [lindex $LB12B 1] [lindex $LB12B 2]] {
+  incr LB12N [regexp -all {<} $lb12s]
+}
+check "LB12 the two distortion remedies spell their placeholders as words, so\
+ no literal angle bracket is left in either sentence and any `<...>` a user sees\
+ from here on is a value that failed to substitute" \
+  [list [lindex $LB12A 2] [lindex $LB12B 2] $LB12N] \
+  [list {add `distof1` to the input source with a magnitude and a phase in degrees} \
+        {add `distof2` to a source with a magnitude and a phase in degrees, or clear the F2/F1 ratio to measure harmonics instead} \
+        0]
+
+## LB13 -- ⚖ R9 A10: ONE IDEA, ONE WORD -- AND §A5's SINGLE NAMED EXCEPTION.
+## Two concepts wore five names across three forms of one dialog: "ignore the
+## signal until" was `Ignore before` on find/when and `Trigger delay` /
+## `Target delay` on the delay form, and "the level a signal must reach" was
+## `Value` on when, `reaches` on find and `Trigger value` / `Target value` on
+## the delay form. Now: `Ignore before` and `Value`, qualified ONLY on the delay
+## form, where two of each really do appear at once.
+##
+## ⚠ THE QUALIFIER IS A MEASURED CHOICE, NOT A PREFERENCE. §A10 says plain
+## `Ignore before` twice is better IF the form groups its rows under Trigger and
+## Target headings. `ase::ui::meas_show` renders ONE FLAT LABEL COLUMN with no
+## such headings, so two boxes reading `Ignore before` would be indistinguishable
+## and the qualified default stands. If headings are ever added, unqualify these.
+##
+## ⚠ TERM 7 IS §A5's EXCEPTION AND THIS ROW IS THE ONLY PLACE IT IS WRITTEN DOWN.
+## §A5 ruled that a caption is a NOUN PHRASE -- that is why `Start recording at`
+## became `Start time` (row LB7, forty lines up). `Ignore before` is an
+## IMPERATIVE and stays one, because every noun phrase is worse: it is not a
+## start time (the simulation has already started and is still running) and it is
+## not a delay (nothing is delayed -- the signal is watched from the beginning
+## and early crossings are discarded). `delay` was the word that lied and it is
+## the word that left. A later consistency pass "finishing A5's job" here has
+## REVERSED THE USER, exactly as lowercasing A1's `SEGFAULTS` (LB9) or tidying
+## A4's `Stop time`/`Time step` word order (LB6) would.
+##
+## ⚠ TERM 8 IS A10's DISSOLUTION, AND IT BOUGHT BACK A LAYOUT CONSTRAINT.
+## `reaches` was the only lowercase label in the tree and read correctly only if
+## the form laid `When signal` and `reaches` on ONE line -- so ratifying that one
+## word would have ratified how the form is BUILT. As `Value` it needs no such
+## thing. The term sweeps every field of every kind and requires that no shipped
+## label begins lowercase at all; `MS9` in test_ase_dialogs is its widget half.
+set LB13LOW {}
+foreach lb13k [dict keys [ase::meas_kinds ngspice]] {
+  foreach lb13f [ase::meas_kind_fields ngspice $lb13k] {
+    if {![dict exists $lb13f label]} { continue }
+    set lb13l [dict get $lb13f label]
+    if {$lb13l ne {} && [string is lower [string index $lb13l 0]]} {
+      lappend LB13LOW $lb13k/[dict get $lb13f name]=$lb13l
+    }
+  }
+}
+proc lb13c {kind field} { return [ase::caption_of \
+  [ase::meas_kind_field ngspice $kind $field] $field] }
+check "LB13 one idea wears one word across the measurement forms, qualified only\
+ where two appear together, `Ignore before` stands as A5's named exception, and\
+ the lowercase label that cost a layout constraint is gone" \
+  [list [lb13c find value] [lb13c when value] \
+        [lb13c trigtarg trigval] [lb13c trigtarg targval] \
+        [lb13c trigtarg trigtd] [lb13c trigtarg targtd] \
+        [lb13c find td] [lb13c when td] \
+        $LB13LOW] \
+  [list Value Value {Trigger value} {Target value} \
+        {Trigger ignore before (s)} {Target ignore before (s)} \
+        {Ignore before (s)} {Ignore before (s)} {}]
+
 # ===========================================================================
 # SN -- ⚖ R9 RULINGS A6, A7 AND A8: DEVELOPER VOCABULARY OFF THE SCREEN, ONE
 #       FRAME IN BOTH PLACES, AND SIBLING SENTENCES THAT HAD DRIFTED APART
@@ -11485,7 +11669,7 @@ check "MT5 a template with a required field left empty refuses by label" \
   [list [mt_exp bw3db $MT5ST [dict create gain {}]] \
         [lindex [mt_exp bw3db $MT5ST] 0] \
         [lindex [ase::meas_template_expand ngspice $MT5ST nosuch {}] 0]] \
-  [list {refuse {this template needs a value for Passband gain}} ok refuse]
+  [list {refuse {this template needs a value for Passband gain (dB)}} ok refuse]
 
 ## MT6 -- THE ARITHMETIC IS THE ADAPTER'S, AND IT IS IN A UNIT ONLY THE ADAPTER
 ## KNOWS. `-3 dB` is `gain - 3.0103` because `vdb()` answers in decibels; the

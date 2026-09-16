@@ -2683,14 +2683,14 @@ no source in this circuit carries a `distof1` excitation, and a distortion analy
 **R9-138** · advice
 
 ```text
-add `distof1 <mag> <phase>` to the input source (phase is in degrees)
+add `distof1` to the input source with a magnitude and a phase in degrees
 ```
 
 *Where:* Banner ". Fix: …" clause / run-log advice line
 
 *For:* The remedy paired with the missing-distof1 caution.
 
-*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: `DEGREES` was shouted and is now lowercase. <mag> and <phase> here are LITERAL placeholder text shown to the user, not substituted values — the user is meant to read them as "type a magnitude and a phase".
+*Note:* ⚠ **CHANGED BY ⚖ R9 A9**, 2026-09-16 — the ruling's named site. It previously read ``add `distof1 <mag> <phase>` to the input source (phase is in degrees)``, where `<mag>` and `<phase>` were LITERAL text the user was meant to read while every other angle bracket on the same screen (`<outv>`, `<node>`, `<name>`) was a `$var` the renderer had already substituted. **The point of the change is the invariant, not the sentence:** any `<…>` a user now sees is a value that failed to substitute, which makes it a reportable bug rather than house style. Measured after the change: the rendered remedy contains no `<` at all. ⚠ Previously **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: `DEGREES` was shouted and is now lowercase — that remains true, and `degrees` is still the word.
 
 
 **R9-139** · caution
@@ -2709,14 +2709,14 @@ this row asks for intermodulation, which needs a second excitation, and no sourc
 **R9-140** · advice
 
 ```text
-add `distof2 <mag> <phase>` to a source, or clear the F2/F1 ratio to measure harmonics instead
+add `distof2` to a source with a magnitude and a phase in degrees, or clear the F2/F1 ratio to measure harmonics instead
 ```
 
 *Where:* Banner ". Fix: …" clause / run-log advice line
 
 *For:* The remedy paired with the missing-distof2 caution; names the field by its form label.
 
-*Note:* <mag>/<phase> literal again. "F2/F1 ratio" must stay in step with the field label "F2/F1 ratio (switches to intermodulation)" below — two strings, one name.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A9**, 2026-09-16, **although §A9's ruling table names R9-138 alone.** It moved because A9's stated point is the invariant — *"any `<…>` a user sees is a value that failed to substitute"* — and half an invariant is not one. Leaving it would also have manufactured §A8's exact defect by hand: two adjacent remedies in the same dialog, the same sentence, spelled two ways. The crew reports this rather than claiming the ruling covered it. "F2/F1 ratio" must still stay in step with the field label "F2/F1 ratio (switches to intermodulation)" below — two strings, one name.
 
 
 ### from issue 1434 (stage 6)
@@ -5122,7 +5122,7 @@ Trigger edge number
 **R9-316** · label
 
 ```text
-Trigger delay
+Trigger ignore before
 ```
 
 
@@ -5132,7 +5132,7 @@ Trigger delay
 *For:* Captions how long to ignore the trigger signal before looking for a crossing.
 
 
-*Note:* Carries `unit s`, so a form using the tree's existing `ase::ui::form_label` convention would render `Trigger delay (s):`. `delay` here means 'ignore before', which is what the SAME concept is called `Ignore before` on the find and when forms — see that entry.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A10**, 2026-09-16, from `Trigger delay`. `delay` was the word that lied: nothing is delayed — the signal is watched from the beginning and early crossings are discarded — and the find and when forms already called the same idea `Ignore before`. **It is qualified rather than bare because this form has no group headings**, which was measured rather than assumed: `ase::ui::meas_show` renders one flat label column with no Trigger/Target captions above the two halves, so two boxes both reading `Ignore before` would be indistinguishable. §A10 says plain `Ignore before` twice is better *if* the form groups its rows; it does not. Measured after the change, it renders `Trigger ignore before (s):`.
 
 
 **R9-317** · label
@@ -5190,7 +5190,7 @@ Target edge number
 **R9-321** · label
 
 ```text
-Target delay
+Target ignore before
 ```
 
 
@@ -5254,7 +5254,7 @@ When signal
 **R9-325** · label
 
 ```text
-reaches
+Value
 ```
 
 
@@ -5264,7 +5264,7 @@ reaches
 *For:* Captions the value the `When signal` must reach; it is meant to be read as the middle of the phrase *When signal <x> reaches <v>*.
 
 
-*Note:* ⚠ THE ONLY LOWERCASE LABEL IN THE COMMIT, and deliberately so. It only reads correctly if the form lays `When signal` / `reaches` out on one line; in a right-aligned label column it appears as a stray lowercase word under `When signal`. Since no form exists yet, ratifying this word also ratifies a layout constraint on Stage 8 task 2.
+*Note:* ⚠ **DISSOLVED BY ⚖ R9 A10**, 2026-09-16, from `reaches` — and this is the ruling's best outcome rather than merely its most uniform one. It *was* the only lowercase label in the tree, readable only if the form laid `When signal` / `reaches` on one line, so ratifying the word would have ratified **a layout constraint**. Under A10 it becomes `Value`, the word the `when` form already used for the same idea, and the constraint has nothing left to constrain. ⚠ **One correction to the entry above:** *"no form renders it at HEAD"* was true when this document was built and is **not true now** — `ase::ui::meas_show` renders the measurement form, and the constraint was implemented, as an inline-continuation branch keyed on a lowercase initial letter plus `ase::ui::meas_inline` and row `MS9`. The branch is **left standing and is now unreached**; MS9 was rewritten to assert that no shipped label is lowercase, so the next reader learns it is unreached rather than broken. **Deleting it is a code question this ruling did not ask.**
 
 
 **R9-326** · label
@@ -5309,7 +5309,7 @@ Ignore before
 *For:* Captions the time before which crossings are not counted.
 
 
-*Note:* ⚠ A verb phrase where every neighbour is a noun phrase — §A5's complaint about `Start recording at (s):` exactly. It is also the SAME concept the trigtarg form calls `Trigger delay` / `Target delay`, so the commit ships two names for one idea, one imperative and one nominal. ⚠ And it is deliberately NOT offered on the eight statistics: ngspice honours `TD=` only for WHEN/TRIG/TARG and silently ignores it for AVG, RMS, MIN, MAX, MIN_AT, MAX_AT, PP and INTEG, so a user will meet this box on some kinds and not others.
+*Note:* ⚠ **KEPT, AND IT IS §A5's SINGLE NAMED EXCEPTION** (⚖ R9 A10, 2026-09-16). It is a verb phrase where every neighbour is a noun phrase — §A5's complaint about `Start recording at (s):` exactly — and it stands anyway because every noun-phrase alternative is worse: it is **not** a start time (the simulation has already started and is still running) and it is **not** a delay (nothing is delayed). The trigtarg form's `Trigger delay` / `Target delay` moved to `Trigger ignore before` / `Target ignore before` to match it, so one idea now wears one word. ⚠ **A later consistency pass must not tidy this into a noun phrase** — that would reverse a user ruling in good faith, exactly as lowercasing A1's `SEGFAULTS` or A2's `dec`/`oct`/`lin` would. Row `LB13` in `test_ase_core` is the only place that is written down. ⚠ And it is deliberately NOT offered on the eight statistics: ngspice honours `TD=` only for WHEN/TRIG/TARG and silently ignores it for AVG, RMS, MIN, MAX, MIN_AT, MAX_AT, PP and INTEG, so a user will meet this box on some kinds and not others.
 
 
 **R9-329** · label

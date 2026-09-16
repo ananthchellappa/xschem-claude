@@ -205,6 +205,21 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 387   UNMOVED on both arms for ⚖ **R9 ruling A10** (2026-09-16): MS9
+#              MOVED rather than being added, so the count does not rise. It
+#              used to assert that `When signal` and `reaches` shared ONE LINE,
+#              because `reaches` was the only lowercase label in the tree and
+#              `ase::ui::meas_show` renders such a label as an inline
+#              continuation in columns 2 and 3. A10 dissolved the word into
+#              `Value` -- so ratifying the copy no longer ratifies a LAYOUT
+#              CONSTRAINT, which is the best thing in that ruling. The row now
+#              asserts the OPPOSITE and a strictly stronger claim: `Value:`
+#              starts its own row in the ordinary caption column, and NO shipped
+#              label of ANY kind begins with a lowercase letter, so nothing
+#              depends on the inline branch. ⚠ That branch is still in
+#              `meas_show` and is now UNREACHED; MS9 is what tells the next
+#              reader it is unreached rather than broken. Deleting it is a code
+#              question the ruling did not ask.
 #   37 / 387   AND RAISED 386 -> 387 on the display arm, ⚖ **R9 rulings A3, A4
 #              and A5** (2026-09-16): G2dc, the dc form's captions, which A4
 #              qualified (`Stop` -> `Stop value`, `Step` -> `Step size`) so that
@@ -5107,24 +5122,51 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [list {ac1  AC  dec 100 1 1g} {ac2  AC  lin 5 1 10  (off)}] \
           {ugf pmph pm} ac1 {180 + pmph} 0]
 
-  ## MS9 -- ⚠ `R9-325`'s LAYOUT CONSTRAINT. `When signal` and `reaches` on ONE
-  ## line, because `reaches` is the only lowercase label in the tree and a
-  ## right-aligned label column turns it into a stray lowercase word under its
-  ## neighbour. The rule is keyed on the COPY's own shape; the last two terms
-  ## are the control that an ordinary label is NOT inlined.
+  ## MS9 -- ⚠ `R9-325`'s LAYOUT CONSTRAINT, AND ⚖ R9 A10 DISSOLVED IT. This row
+  ## used to assert the OPPOSITE: that `When signal` and `reaches` shared one
+  ## line, because `reaches` was the only lowercase label in the tree and a
+  ## right-aligned label column turned it into a stray lowercase word under its
+  ## neighbour. A10 made the field `Value` -- the word the `when` form already
+  ## used for the same idea -- so the word no longer needs the layout, and
+  ## ratifying it no longer ratifies a constraint on how the form is built.
+  ##
+  ## ⚠ SO THE ROW NOW PINS THE DISSOLUTION, WHICH IS A STRONGER CLAIM THAN THE
+  ## ONE IT REPLACES. Terms 1-4: `Value` starts ITS OWN row, directly below
+  ## `When signal`, in column 0 like every other caption. Term 5-6: an ordinary
+  ## label is unchanged. Term 7: `meas_inline` says NO for the one field that
+  ## used to be its only customer. ⚠ TERM 8 IS THE LOAD-BEARING ONE -- it sweeps
+  ## EVERY field of EVERY kind and requires that no shipped label begins with a
+  ## lowercase letter at all. The inline branch in `ase::ui::meas_show` is still
+  ## there and is now unreached; this term is what tells the next reader it is
+  ## unreached rather than broken, and what reddens if a future adapter reaches
+  ## for the mechanism without the ruling being revisited.
   $mw.rows selection set 1
   update
   set MS9WHEN  [ms_grid $mw.form.lfwhen]
   set MS9VAL   [ms_grid $mw.form.lfvalue]
   set MS9TARG  [ms_grid $mw.form.lftarget]
-  check "MS9 the form puts `When signal` and `reaches` on one line, and an\
- ordinary label still starts its own" \
-    [list [lindex $MS9WHEN 0] [lindex $MS9WHEN 1] \
-          [lindex $MS9VAL 0] [lindex $MS9VAL 1] \
+  set MS9SIM   [ase::ui::meas_sim $key]
+  set MS9LOW {}
+  foreach ms9k [dict keys [ase::meas_kinds $MS9SIM]] {
+    foreach ms9f [ase::meas_kind_fields $MS9SIM $ms9k] {
+      if {![dict exists $ms9f label]} { continue }
+      set ms9l [dict get $ms9f label]
+      if {$ms9l ne {} && [string is lower [string index $ms9l 0]]} {
+        lappend MS9LOW $ms9k/[dict get $ms9f name]
+      }
+    }
+  }
+  check "MS9 A10 dissolved the one-line layout constraint: `Value` starts its\
+ own row in the ordinary caption column, and no shipped label is lowercase any\
+ more, so nothing depends on the inline continuation rule" \
+    [list [lindex $MS9WHEN 1] \
+          [expr {[lindex $MS9VAL 0] == [lindex $MS9WHEN 0] + 1}] \
+          [lindex $MS9VAL 1] \
+          [$mw.form.lfvalue cget -text] \
           [expr {[lindex $MS9TARG 0] != [lindex $MS9WHEN 0]}] [lindex $MS9TARG 1] \
-          [ase::ui::meas_inline [ase::ui::meas_sim $key] find value] \
-          [ase::ui::meas_inline [ase::ui::meas_sim $key] find when]] \
-    [list [lindex $MS9WHEN 0] 0 [lindex $MS9WHEN 0] 2 1 0 1 0]
+          [ase::ui::meas_inline $MS9SIM find value] \
+          $MS9LOW] \
+    [list 0 1 0 {Value:} 1 0 0 {}]
 
   ## MS10 -- THE VALUE COLUMN. ⚠ THE NUMBER IS THE SIMULATOR'S PRINTED TEXT AND
   ## IS NOT NORMALISED: measured on both binaries, apt 45.2 prints `9.149274e+05`

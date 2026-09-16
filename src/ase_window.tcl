@@ -8111,17 +8111,23 @@ proc ase::ui::meas_pick {key} {
 
 # ── THE FORM ────────────────────────────────────────────────────────────────
 #
-# ⚠ R9-325's LAYOUT CONSTRAINT LIVES HERE, AND IT IS KEYED ON THE COPY'S OWN
-# SHAPE. `reaches` is the only LOWERCASE field label in the tree: it is the
-# second half of the sentence `When signal <v(out)> reaches <0.9>`, and a
-# right-aligned label column would leave a stray lowercase word sitting under
-# its neighbour. So a field whose label begins with a lowercase letter is
-# rendered as an INLINE CONTINUATION of the row above it, in columns 2 and 3.
+# ⚠ R9-325's LAYOUT CONSTRAINT LIVED HERE AND ⚖ R9 A10 DISSOLVED IT. `reaches`
+# was the only LOWERCASE field label in the tree -- the second half of the
+# sentence `When signal <v(out)> reaches <0.9>` -- and it read correctly ONLY if
+# the form laid both halves on one line. So ratifying that one word would have
+# ratified a LAYOUT CONSTRAINT, which is a strange thing for a copy ruling to
+# buy. A10 made the field `Value`, the word the `when` form already used for the
+# same idea, and the constraint had nothing left to constrain.
 #
-# The rule is about COPY, not about ngspice -- an adapter writes a lowercase
-# label precisely when the label continues the previous one -- so it needs no
-# per-simulator knowledge and no new descriptor key. `MR9` is the row that
-# holds it.
+# ⚠ THE MECHANISM IS STILL HERE AND NOTHING NOW TRIGGERS IT. A field whose
+# label begins lowercase is still rendered as an inline continuation of the row
+# above, in columns 2 and 3; no label in any shipped registry begins lowercase
+# any more, and row MS9 asserts exactly that. It is left standing rather than
+# deleted because the rule is about COPY, not about ngspice -- an adapter writes
+# a lowercase label precisely when the label continues the previous one -- so it
+# costs no per-simulator knowledge and no descriptor key. **Deleting it is a
+# code question the ruling did not ask**, and MS9 is what tells the next reader
+# the branch is unreached rather than broken.
 proc ase::ui::meas_form {key} {
   variable wins
   if {![dict exists $wins $key]} { return {} }
@@ -8570,12 +8576,14 @@ proc ase::ui::meas_tpl_show {key} {
   set dlg($key,mtplan) [dict create]
   foreach f [ase::meas_template_fields $sim $tpl] {
     set fn [dict get $f name]
-    set lbl $fn
-    if {[dict exists $f label]} { set lbl [dict get $f label] }
-    if {[dict exists $f unit] && [dict get $f unit] ne {}} {
-      append lbl " ([dict get $f unit])"
-    }
-    label $w.form.l$fn -text "$lbl:" -font AseLabelFont -anchor w
+    ## ⚖ R9 A3: THIS WAS A THIRD COPY OF THE CAPTION RULE -- label, else the
+    ## RAW slot, plus the unit, plus the colon. It happened to agree with
+    ## `ase::caption_of` for every template field shipping today, which is the
+    ## LATENT half of the defect A3 names: two bodies that agree now disagree
+    ## the first time one of them is reworded, and nothing reds when they do.
+    ## `ase::ui::meas_flabel` does the same job for the kind registry.
+    label $w.form.l$fn \
+      -text "[ase::caption_of $f $fn]:" -font AseLabelFont -anchor w
     if {[dict exists $f kind] && [dict get $f kind] eq {analysis}} {
       ## ⚠ FILTERED TO THE TEMPLATE'S OWN ANALYSIS TYPE. A phase margin reads an
       ## AC sweep; offering a `tran` handle would write a row `ase::meas_binding`

@@ -2504,11 +2504,20 @@ set MPD_F1 [pcheckx $MPNLNOD $MPDROW {} \
   {save_all_v 1 outputs {{name a expr v(mid) save 1 plot 1}}}]
 set MPD_F1ROW [lindex [dgn $MPD_F1 disto] \
   [lsearch -index 0 -exact [dgn $MPD_F1 disto] disto_f1src]]
-eqcheck PF234c-the-distof1-advice-says-degrees-in-lower-case-and-shouts-nothing \
+# ⚠ MOVED BY ⚖ R9 A9 (2026-09-16) AND STRENGTHENED WHILE IT MOVED. Term 2 used
+# to match the literal `(phase is in degrees)`; A9 respelled the remedy because
+# `<mag>` and `<phase>` were LITERAL placeholder text sitting on the same screen
+# as `<outv>`/`<node>`/`<name>`, which are substituted values. Term 2 now matches
+# the surviving words, and TERM 4 IS THE NEW ONE AND THE REASON THE ROW IS
+# STRONGER: it demands no `<` anywhere in the remedy, which is A9's actual
+# ruling -- the invariant that any `<...>` still on screen is a substitution
+# that failed. A1's lowercase `degrees` (term 3) is unaffected and still pinned.
+eqcheck PF234c-the-distof1-advice-says-degrees-in-lower-case-shouts-nothing-and-carries-no-literal-placeholder \
   [list [lindex $MPD_F1ROW 0] \
-        [string match {*(phase is in degrees)*} [lindex $MPD_F1ROW 3]] \
-        [regexp {[A-Z]{2,}} [lindex $MPD_F1ROW 3]]] \
-  {disto_f1src 1 0}
+        [string match {*a magnitude and a phase in degrees*} [lindex $MPD_F1ROW 3]] \
+        [regexp {[A-Z]{2,}} [lindex $MPD_F1ROW 3]] \
+        [string first {<} [lindex $MPD_F1ROW 3]]] \
+  {disto_f1src 1 0 -1}
 
 # ---------------------------------------------------------------------------
 # PF235 -- ⚖ R9 RULING A8: SIBLING SENTENCES THAT HAD DRIFTED APART

@@ -8365,9 +8365,15 @@ proc ase::meas_verdict {sim state row} {
     if {![dict exists $f required] || [dict get $f required] ne {1}} { continue }
     set fn [dict get $f name]
     if {[ase::meas_field_value $sim $kind $row $fn] eq {}} {
-      set lbl $fn
-      if {[dict exists $f label]} { set lbl [dict get $f label] }
-      return [list refuse "'$name' needs a value for $lbl"]
+      ## ⚖ R9 A3, THE MEASUREMENT REGISTRY. This resolved the caption ITSELF --
+      ## declared label, else the bare slot, AND NO UNIT -- so it said `needs a
+      ## value for Fundamental` at a box captioned `Fundamental (Hz):`. That is
+      ## A3's own defect one registry over: the ruling is the visible caption,
+      ## colon stripped, UNIT KEPT. Eight of this registry's fields diverged.
+      ## ⚠ ASK `ase::caption_of`, NEVER RE-DERIVE. A second body here is exactly
+      ## what "one accessor, never a second table" forbids, and row LB10 fails
+      ## if this line ever grows its own copy of the rule again.
+      return [list refuse "'$name' needs a value for [ase::caption_of $f $fn]"]
     }
   }
   # THE SIMULATOR'S OWN RULES, LAST. A hook that is absent leaves the row `ok`,
@@ -8745,9 +8751,11 @@ proc ase::meas_template_expand {sim state tpl vals} {
     if {![dict exists $f required] || [dict get $f required] ne {1}} { continue }
     set fn [dict get $f name]
     if {![dict exists $vals $fn] || [string trim [dict get $vals $fn]] eq {}} {
-      set lbl $fn
-      if {[dict exists $f label]} { set lbl [dict get $f label] }
-      return [list refuse "this template needs a value for $lbl"]
+      ## ⚖ R9 A3, THE TEMPLATE REGISTRY -- the same defect as `meas_verdict`'s,
+      ## on a third table. Six of the eight templates' required fields carry a
+      ## unit this sentence dropped: `needs a value for Passband gain` against a
+      ## form captioned `Passband gain (dB):`. One accessor; row LB10 pins it.
+      return [list refuse "this template needs a value for [ase::caption_of $f $fn]"]
     }
   }
   ## THE SIMULATOR'S OWN COMPUTED FIELDS, BEFORE ANY SUBSTITUTION.
@@ -13265,10 +13273,27 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       dict for {inst rec} [dict get $facts sources] {
         if {[dict exists $rec distof1]} { return {} }
       }
+      # ⚖ R9 A9: THE ANGLE BRACKETS HERE WERE LITERAL TEXT, AND EVERY OTHER
+      # ANGLE BRACKET ON THIS SCREEN IS A SUBSTITUTED VALUE. `<outv>`,
+      # `<node>` and `<name>` in the neighbouring preconditions are all `$var`
+      # the renderer fills in before the user sees them; `<mag>` and `<phase>`
+      # were words the user was meant to READ as "type a magnitude and a
+      # phase". Two kinds of bracket on one screen with no way to tell them
+      # apart. Spelled as words, so the INVARIANT holds: any `<...>` a user now
+      # sees is a value that failed to substitute -- a reportable bug rather
+      # than house style. Row LB12. The `distof2` sibling below moved with it,
+      # because fixing one of two identical sentences is the drift §A8 is about.
+      #
+      # ⚠ AND THE COMMENT LIVES HERE, ABOVE THE `return`, FOR A MEASURED
+      # REASON. Put inside the `[list blocked ...]` below, a `#` is NOT a
+      # comment: inside a command substitution a newline separates commands, so
+      # the remedy string became a command name and the whole precondition
+      # raised `invalid command name "add ..."`. It reddened MP7, WD5b and WD5d
+      # and truncated test_ase_preflight by ten rows.
       return [list blocked \
         "no source in this circuit carries a `distof1` excitation, and a\
  distortion analysis without one runs to completion and answers zeros" \
-        "add `distof1 <mag> <phase>` to the input source (phase is in degrees)"]
+        "add `distof1` to the input source with a magnitude and a phase in degrees"]
     }
     disto_f2src {
       # ⚠ THE INTERMODULATION MODE NEEDS A SECOND EXCITATION AND SAYS SO LATE.
@@ -13283,11 +13308,16 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       dict for {inst rec} [dict get $facts sources] {
         if {[dict exists $rec distof2]} { return {} }
       }
+      # ⚖ R9 A9's SIBLING -- see the `distof1` remedy above. R9-140 is NOT in
+      # §A9's ruling table, which names R9-138 alone; it moves anyway because
+      # the ruling's point is the invariant, and half an invariant is not one.
+      # Leaving it would also have created §A8's exact defect by hand: two
+      # adjacent remedies in one dialog, the same sentence, spelled two ways.
       return [list blocked \
         "this row asks for intermodulation, which needs a second excitation,\
  and no source in this circuit carries a `distof2`" \
-        "add `distof2 <mag> <phase>` to a source, or clear the F2/F1 ratio to\
- measure harmonics instead"]
+        "add `distof2` to a source with a magnitude and a phase in degrees, or\
+ clear the F2/F1 ratio to measure harmonics instead"]
     }
     cider_klu {
       # ⚠ FATAL, AND IT IS NOT A STYLE OPINION. A CIDER device under the KLU
@@ -27390,6 +27420,34 @@ $_leg
   # rejects it at run time -- so a user who types it gets a failed measurement
   # and no explanation. The `unsupported` sentence is the explanation, and it
   # carries the workaround the dossier verified.
+  # ⚖ R9 A10 -- ONE IDEA, ONE WORD, qualified ONLY where two of them appear in
+  # one form. Three labels moved and the ruling is the reason for each:
+  #
+  #   find/value    `reaches`       -> `Value`                 (R9-325)
+  #   trigtarg/trigtd `Trigger delay` -> `Trigger ignore before` (R9-316)
+  #   trigtarg/targtd `Target delay`  -> `Target ignore before`  (R9-321)
+  #
+  # `Trigger value` / `Target value` KEEP their qualifier: the delay form really
+  # does show two of them at once. The `td` fields keep theirs for the same
+  # reason -- and they are qualified rather than bare because THIS FORM HAS NO
+  # GROUP HEADINGS. Measured, not assumed: `ase::ui::meas_show` renders one flat
+  # label column (`$w.form.lf<field>` at column 0) with no Trigger/Target
+  # captions above the two halves, so two boxes both reading `Ignore before`
+  # would be indistinguishable. §A10 says plain `Ignore before` twice is better
+  # IF the form groups its rows; it does not, so the qualified default stands.
+  # If headings are ever added, this is the comment that says to unqualify them.
+  #
+  # ⚠ `Ignore before` IS §A5's SINGLE NAMED EXCEPTION AND MUST NOT BE TIDIED.
+  # §A5 rules that a caption is a noun phrase -- that is why `Start recording
+  # at` became `Start time`. This one stays an imperative because every noun
+  # phrase is worse: it is NOT a start time (the simulation has already started
+  # and is still running) and it is NOT a delay (nothing is delayed -- the
+  # signal is watched from the beginning and early crossings are discarded).
+  # `delay` was the word that lied, and it is the word that left. This is the
+  # same kind of deliberate-looking untidiness as A1's `SEGFAULTS`, A2's
+  # `dec`/`oct`/`lin` and A4's `Stop time`/`Time step` word order, and it is
+  # pinned by its own row (LB13) for the same reason: a later consistency pass
+  # reverses a user ruling in good faith unless something says it was one.
   proc meas_kinds {} {
     return [dict create \
       trigtarg [dict create \
@@ -27399,19 +27457,19 @@ $_leg
                 {name trigdir  kind mode    required 0 default rise
                                values {rise fall cross} label {Trigger edge}}
                 {name trign    kind int     required 0 default 1 label {Trigger edge number}}
-                {name trigtd   kind time    required 0 label {Trigger delay} unit s}
+                {name trigtd   kind time    required 0 label {Trigger ignore before} unit s}
                 {name targ     kind vecexpr required 1 label {Target signal}}
                 {name targval  kind real    required 0 label {Target value}}
                 {name targdir  kind mode    required 0 default rise
                                values {rise fall cross} label {Target edge}}
                 {name targn    kind int     required 0 default 1 label {Target edge number}}
-                {name targtd   kind time    required 0 label {Target delay} unit s}}] \
+                {name targtd   kind time    required 0 label {Target ignore before} unit s}}] \
       find [dict create \
         form meas  label {Value at a point} \
         fields {{name target kind vecexpr required 1 label {Signal}}
                 {name at     kind real    required 0 label {At}}
                 {name when   kind vecexpr required 0 label {When signal}}
-                {name value  kind real    required 0 label {reaches}}
+                {name value  kind real    required 0 label {Value}}
                 {name dir    kind mode    required 0
                              values {rise fall cross} label {Edge}}
                 {name n      kind int     required 0 default 1 label {Edge number}}
