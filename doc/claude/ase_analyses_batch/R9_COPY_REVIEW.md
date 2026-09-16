@@ -227,6 +227,32 @@ keep.
 
 ## A2 — Acronyms shipped lowercase in pickers
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — **A2 IS COMPLETE**
+>
+> **Display the readable word, emit the deck word.**
+>
+> | handle | shows | emits |
+> |---|---|---|
+> | `R9-053` | **`DC`**, **`AC`** | `dc`, `ac` |
+> | `R9-046`, `R9-047` | **`Voltage`**, **`Current`** | `vol`, `cur` |
+> | `R9-048` | **`PZ`** | `pz` |
+> | `R9-049`, `R9-050` | **`Poles`**, **`Zeroes`** | `pol`, `zer` |
+> | `R9-054` | **`dec`**, **`oct`**, **`lin`** — *unchanged* | `dec`, `oct`, `lin` |
+>
+> **`DC`/`AC`/`PZ` were not asked** — the user's standing rule (UI copy spells acronyms in
+> UPPERCASE) already settles them, and re-asking a settled rule wastes a question.
+>
+> **`dec`/`oct`/`lin` stay as they are, and that is a deliberate exception rather than an
+> oversight.** They are the field's own vocabulary: an analog engineer reads `dec` fluently on a
+> log axis, and it is what the documentation and every other tool calls it. Expanding them would
+> buy friendliness the reader does not need.
+>
+> ⚠ **The cost the user accepted.** The picker is currently a *teaching surface* — someone who
+> selects `cur` learns the word they will need when they read the netlist ASE-L generated, or type
+> a deck by hand, and this tool's users **do** read netlists. Mapping the display away from the
+> deck word makes the screen friendlier and that connection quieter. The truncations were judged
+> not worth teaching; the sweep spacings were.
+
 The combobox values are the deck words: `dc ac` (R9-053), `dec` `oct` `lin`
 (R9-054), `vol` / `cur` (R9-046, R9-047), `pz` / `pol` / `zer` (R9-048–R9-050).
 The combobox renders `-values` with no display mapping, so what SPICE calls it is
@@ -239,6 +265,31 @@ uppercase — so `dc ac` should be `DC AC` regardless. The open part is the
 
 *My recommendation:* display the readable word, emit the deck word. The mapping
 costs one dictionary per picker.
+
+> ### ✅ IMPLEMENTED 2026-09-16 — and the paragraph above is now the HISTORY
+>
+> The two paragraphs above describe the tree **before** the ruling and are kept as the
+> question that was asked; the handles themselves (R9-046–R9-050, R9-053, R9-054) carry the
+> shipped strings and are byte-accurate to the source as always.
+>
+> **The mapping did not cost "one dictionary per picker".** It cost one dictionary per
+> *labelled* picker on the field descriptor — `valuelabels`, an **existing** key that
+> `trrandom`'s `dist` argument has carried since issue 1467 — plus three readers in
+> `ase::` that the trnoise editor's own three now wrap, so there is exactly **one**
+> implementation of the rule rather than two drifting copies.
+>
+> **The deck is byte-identical to `252fee2d`** (89 emitted-deck lines over every value of
+> every `kind mode` field, diffed against the commit), the 104 committed `.state` files
+> round-trip unchanged, and `ase::ui::form_get` maps the display word back at the single
+> funnel every commit path already goes through — so the state file and the deck keep
+> ngspice's spelling and only the screen changed.
+>
+> ⚠ **No handle was added and the count stays 728.** Every new word REPLACES a handled
+> string one-for-one — R9-046's slot still names "the first item of the Input type
+> drop-down", and its text moved from `vol` to `Voltage` exactly as A1 moved R9-011's from
+> `Number of points (2 gives ONE point)` to `Number of points`. Nothing new is orphaned
+> without a handle, which is the case that obliged A1's driver to mint R9-727/R9-728
+> afterwards.
 
 ## A3 — Internal slot names shown where the form shows a label
 
@@ -1051,66 +1102,66 @@ Find
 **R9-046** · label
 
 ```text
-vol
+Voltage
 ```
 
 *Where:* `Input type` readonly combobox, first item in the drop-down list
 
 *For:* The selectable value meaning a voltage-driven input; it is also the default shown when the row stores nothing.
 
-*Note:* Raw ngspice keyword, shipped unexpanded — the combobox shows the emitted deck word rather than "Voltage". Reviewer may want `Voltage`/`Current`.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16. It read `vol` — the raw ngspice keyword, straight onto the screen. **The deck word is unchanged**: the row stores `vol`, `render_deck` emits `vol`, and the mapping lives only at the widget (`valuelabels {vol Voltage cur Current}` on the field descriptor, read by `ase::field_value_label`). Measured: the emitted deck is byte-identical to `252fee2d`.
 
 
 **R9-047** · label
 
 ```text
-cur
+Current
 ```
 
 *Where:* `Input type` readonly combobox, second item in the drop-down list
 
 *For:* The selectable value meaning a current-driven input (input admittance of a node).
 
-*Note:* Raw ngspice keyword, shipped unexpanded.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16. It read `cur`. The row still stores `cur` and the deck still carries it; see R9-046.
 
 
 **R9-048** · label
 
 ```text
-pz
+PZ
 ```
 
 *Where:* `Find` readonly combobox, first item in the drop-down list
 
 *For:* The selectable value meaning "find both poles and zeros"; it is also the default.
 
-*Note:* Raw ngspice keyword. Note the picker value `pz` is spelled identically to the analysis type name shown in the grid, so the form reads `Find: pz` inside the pz row.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16, under the standing rule that UI copy spells acronyms UPPERCASE — it read `pz`. The row still stores `pz` and the deck still carries it. The collision the old note recorded survives the change: the picker value is still spelled like the analysis type in the grid, so the form reads `Find: PZ` inside the PZ row.
 
 
 **R9-049** · label
 
 ```text
-pol
+Poles
 ```
 
 *Where:* `Find` readonly combobox, second item in the drop-down list
 
 *For:* The selectable value meaning "find poles only".
 
-*Note:* Raw ngspice keyword, shipped unexpanded.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16. It read `pol`. The row still stores `pol` and the deck still carries it; see R9-046.
 
 
 **R9-050** · label
 
 ```text
-zer
+Zeroes
 ```
 
 *Where:* `Find` readonly combobox, third item in the drop-down list
 
 *For:* The selectable value meaning "find zeros only".
 
-*Note:* Raw ngspice keyword. Measured in the issue: this choice can legitimately produce no vectors at all at rc 0.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16. It read `zer`. The row still stores `zer` and the deck still carries it. Measured in the issue: this choice can legitimately produce no vectors at all at rc 0. ⚠ **SPELLING — the ruling says `Zeroes` and the rest of the tree says `zeros`.** Shipped as ruled. Every other occurrence in the tree spells the plural noun `zeros` (twelve in `src/`, and `PLAN.md`'s own proposed plot label for this very analysis is `Poles and zeros`); `zeroes` appears only as the verb. No *shipped* user-facing string used either spelling before this one, so nothing is contradicted on screen today — but the first sibling label to land will read `zeros` beside this picker's `Zeroes` unless one of them moves. Flagged for the user, not silently changed.
 
 
 ### from issue 1432 (stage 6)
@@ -1144,14 +1195,14 @@ Mode
 **R9-053** · button
 
 ```text
-dc ac
+DC AC
 ```
 
 *Where:* Choose Analyses form, `sens` — the items inside the "Mode:" readonly combobox
 
-*For:* The two selectable values of the sens Mode picker, shown to the user exactly as the registry spells them.
+*For:* The two selectable values of the sens Mode picker.
 
-*Note:* ⚠ Both acronyms ship LOWERCASE in a user-facing picker. The combobox renders `-values` verbatim with no display mapping. Pre-existing pickers in the same dialog do the same (`dec oct lin`, `vol cur`, `pz pol zer`), so this is a house-wide question rather than a one-line fix — but this commit is the first to put `dc`/`ac` themselves in front of the user as choices.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A2**, 2026-09-16, under the standing rule that UI copy spells acronyms UPPERCASE — it read `dc ac`. The row still stores `dc`/`ac` and the deck still carries them. The old note's "house-wide question" is what the ruling answered: the combobox no longer renders `-values` verbatim, it renders `ase::field_value_labels`, and `vol cur` / `pz pol zer` moved with it. `dec oct lin` did **not** — see R9-054.
 
 
 **R9-054** · button
@@ -1164,7 +1215,7 @@ dec
 
 *For:* The only selectable sweep for AC sensitivity. `lin` and `oct` are deliberately not offered because both are broken in ngspice (measured: `oct` yields ~48% of the points asked for).
 
-*Note:* A one-item readonly picker: the user sees a combobox they cannot change. Nothing on screen says why the other two sweeps are missing — the reasoning lives only in a source comment. Lowercase, as above.
+*Note:* ⚠ **UNCHANGED BY ⚖ R9 A2, AND THAT IS A RULING RATHER THAN AN OVERSIGHT.** The user ruled on 2026-09-16 that `vol`/`cur`, `pz`/`pol`/`zer` and `dc`/`ac` expand to readable words and that `dec`/`oct`/`lin` stay exactly as they are: they are the field's own vocabulary, an analog engineer reads `dec` fluently on a log axis, and expanding them would buy friendliness the reader does not need. Mechanically the field simply declares no `valuelabels`, and both readers are identity for such a field. **A later consistency pass that "finishes the job" here has reversed the user, not tidied up** — `test_ase_core` row **PZ2f** is the pin, and it carries a non-vacuity half so it cannot pass on a tree where the mapping was never built. A one-item readonly picker otherwise, as before; nothing on screen still says why the other two sweeps are missing.
 
 
 ---

@@ -166,6 +166,15 @@
 # ase::ckpt_plan instead. ⚠ SECTION SW STILL DOES NOT MOVE: SW2 passes no plan,
 # which IS the un-checkpointed run, and RG13's silent Stop is silent for SW7's
 # reason and not this one.
+# 652 -> 653 with row PZ2f (⚖ R9 ruling A2, 2026-09-16 -- the analysis pickers
+# display the readable word and emit the deck word). ⚠ PZ2f IS THE ONLY PLACE
+# THE `dec`/`oct`/`lin` EXCEPTION IS WRITTEN DOWN as the user's ruling rather
+# than as an omission, which is why it carries a non-vacuity half: a tree where
+# the mapping was never built satisfies "the sweeps are unlabelled" trivially.
+# ⚠ PZ2e DOES NOT MOVE, and that is the contract: the registry's `values` are
+# still ngspice's own words, because the map is a DISPLAY map and the deck is
+# byte-identical to 252fee2d.
+# AND RAISED 652 -> 653.
 # AND RAISED 644 -> 652.
 # AND RAISED 638 -> 644.
 # AND RAISED 636 -> 638.
@@ -6474,6 +6483,65 @@ check "PZ2e the search and the input type declare their legal values and a\
         [ase::field_default [pzfd $PZFLD transfer]] \
         [ase::analysis_emit_check ngspice {type pz enabled 1 inp in outp out mode zer}]] \
   [list {pz pol zer} pz {vol cur} vol {}]
+
+## PZ2f -- ⚖ R9 A2: THE DISPLAY MAP, AND THE ONE PICKER THE USER RULED UNCHANGED.
+##
+## ⚠ `dec`/`oct`/`lin` ARE A DELIBERATE EXCEPTION, NOT AN OVERSIGHT, AND THIS ROW
+## IS THE ONLY PLACE THAT SAYS SO. The user ruled on 2026-09-16 that `vol`/`cur`,
+## `pz`/`pol`/`zer` and `dc`/`ac` expand to words a person reads, and IN THE SAME
+## BREATH that the sweep pickers stay the field's own vocabulary -- an analog
+## engineer reads `dec` fluently on a log axis, and it is what the documentation
+## and every other tool calls it. A later consistency pass that "finishes the
+## job" by labelling the sweeps has REVERSED THE USER, not tidied up.
+##
+## ⚠ THE LAST TERMS ARE THE NON-VACUITY HALF, and without them the row is
+## satisfied by a tree in which the feature was never built: "the sweeps carry no
+## labels" is trivially true where NOTHING carries labels. So the row also
+## demands the five ruled values map, that the map is exactly the ruling's, and
+## that the round trip closes for every declared value of every `kind mode` field.
+##
+## ⚠ AND THE DECK IS PINNED SEPARATELY FROM THE SCREEN BECAUSE NOTHING ELSE PINS
+## IT. `ase::analysis_emit_check` does NOT check a `kind mode` value against its
+## declared `values` -- only `real int time freq` are validated (the allow-list
+## above) -- so a display word that leaked into a row would be written into the
+## deck VERBATIM, at rc 0, with nothing anywhere complaining. MEASURED on this
+## change. The mapping therefore lives at the widget and `ase::ui::form_get` maps
+## back; PZ2e keeps the registry spelling ngspice's words and G2a2 walks the
+## round trip through the real dialog.
+## ⚠ THE TWO ARMS BELOW ARE `if`, NOT `expr {... ? WORD : WORD}`, AND THAT IS
+## RECEIPT 52's CORRECTION C2 MET A SECOND TIME. Tcl's `expr` takes `yes`/`no`/
+## `true`/`false` as boolean literals and rejects every other bareword, so the
+## ternary form does not answer `LABELLED` -- it RAISES, and a raise here kills
+## the file at PZ2e instead of reddening a row. MEASURED on this change: the
+## suite died at 466 of 653 with `invalid bareword "LABELLED"` and printed no
+## RESULT line at all, which is the silent-suite shape this batch keeps meeting.
+set PZ2FSW {} ; set PZ2FRT {}
+foreach {pzt pzn} {ac sweep noise sweep disto sweep sp sweep} {
+  set fd [ase::field_descriptor ngspice $pzt $pzn]
+  if {[dict exists $fd valuelabels]} { lappend PZ2FSW LABELLED } \
+  else                               { lappend PZ2FSW bare }
+  if {[ase::field_value_labels $fd] eq [dict get $fd values]} { lappend PZ2FSW same } \
+  else                                                        { lappend PZ2FSW MOVED }
+}
+foreach {pzt pzn} {pz transfer pz mode sens mode sens sweep ac sweep noise sweep disto sweep sp sweep} {
+  set fd [ase::field_descriptor ngspice $pzt $pzn]
+  foreach pzv [dict get $fd values] {
+    if {[ase::field_label_value $fd [ase::field_value_label $fd $pzv]] ne $pzv} {
+      lappend PZ2FRT "$pzt.$pzn=$pzv"
+    }
+  }
+}
+check "PZ2f the ruled pickers show a readable word, the sweep pickers keep the\
+ field's own vocabulary by the user's own ruling, and every value round-trips" \
+  [list [ase::field_value_labels [ase::field_descriptor ngspice pz transfer]] \
+        [ase::field_value_labels [ase::field_descriptor ngspice pz mode]] \
+        [ase::field_value_labels [ase::field_descriptor ngspice sens mode]] \
+        [ase::field_value_label [ase::field_descriptor ngspice pz mode] zer] \
+        [ase::field_label_value [ase::field_descriptor ngspice pz mode] Zeroes] \
+        [ase::field_label_value [ase::field_descriptor ngspice pz mode] nosuchlabel] \
+        $PZ2FSW $PZ2FRT] \
+  [list {Voltage Current} {PZ Poles Zeroes} {DC AC} Zeroes zer nosuchlabel \
+        {bare same bare same bare same bare same} {}]
 
 ## ⚠ ONLY THE TWO SIGNAL NODES ARE REQUIRED, AND THE DOOR NAMES THE ONE THAT IS
 ## MISSING. Requiring the references too would make the commonest pole-zero row

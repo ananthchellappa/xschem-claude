@@ -4862,6 +4862,56 @@ proc ase::field_default {fd} {
   if {[dict exists $fd default]} { return [dict get $fd default] }
   return {}
 }
+
+# ── ⚖ R9 RULING A2: DISPLAY THE READABLE WORD, EMIT THE DECK WORD ───────────
+#
+# A `values` field offers the simulator's own vocabulary, and until this the
+# combobox rendered `-values` VERBATIM -- so `vol`, `cur`, `pol`, `zer`, `dc`
+# and `ac` were what the user read. The ruling (2026-09-16) maps the DISPLAY and
+# leaves the deck alone: the widget shows `Voltage`, the row stores `vol`, and
+# `render_deck` is untouched byte for byte.
+#
+# ⚠ THE MAPPING IS ADAPTER CONTENT AND LIVES ON THE DESCRIPTOR, never in a table
+# here. `valuelabels` is an EXISTING key -- `trrandom`'s `dist` argument has
+# carried one since issue 1467 -- so this is one contract read by a second
+# surface rather than a second contract. A reader that spelled `vol -> Voltage`
+# in ASE-L's own source would be per-simulator knowledge on the schema side,
+# which D34/D36 forbid.
+#
+# ⚠ BOTH DIRECTIONS FALL BACK TO IDENTITY, AND THAT IS THE SAFETY PROPERTY THAT
+# MATTERS MOST. A field with no `valuelabels` is unchanged in both directions; a
+# stored word with no label shows as itself rather than as a blank; and a label
+# that maps to nothing comes back as itself rather than as the empty string. So
+# the worst case of a missing entry is that the user reads the deck word -- never
+# that the deck gains a word ngspice cannot parse.
+#
+# ⚠ `dec`/`oct`/`lin` DECLARE NO `valuelabels` ON PURPOSE, AND THAT IS A RULING
+# RATHER THAN AN OVERSIGHT. They are the field's own vocabulary -- an analog
+# engineer reads `dec` fluently on a log axis, and it is what the documentation
+# and every other tool calls it -- so the user ruled them UNCHANGED in the same
+# breath as ruling the other five expanded. A later consistency pass that
+# "finishes the job" by giving them labels has REVERSED THE USER, not tidied.
+# Row PZ2f asserts the absence, by name and non-vacuously.
+proc ase::field_value_label {fd v} {
+  if {[dict exists $fd valuelabels] && [dict exists [dict get $fd valuelabels] $v]} {
+    return [dict get [dict get $fd valuelabels] $v]
+  }
+  return $v
+}
+proc ase::field_label_value {fd lbl} {
+  if {[dict exists $fd valuelabels]} {
+    dict for {v l} [dict get $fd valuelabels] {
+      if {$l eq $lbl} { return $v }
+    }
+  }
+  return $lbl
+}
+proc ase::field_value_labels {fd} {
+  set out {}
+  if {![dict exists $fd values]} { return {} }
+  foreach v [dict get $fd values] { lappend out [ase::field_value_label $fd $v] }
+  return $out
+}
 # THE VALUE THAT WILL BE EMITTED, or `{}` for "this slot contributes nothing".
 #
 # ⚠ A BOOL IS NOT A STRING, AND ngspice HAS NO WAY TO SAY "OFF". MEASURED on both
@@ -26951,8 +27001,10 @@ $_leg
                 {name outn kind node required 0 default 0 whenskipped 0 \
                            label {Output -}} \
                 {name transfer kind mode required 0 default vol values {vol cur} \
+                           valuelabels {vol Voltage cur Current} \
                            label {Input type}} \
                 {name mode kind mode required 0 default pz values {pz pol zer} \
+                           valuelabels {pz PZ pol Poles zer Zeroes} \
                            label {Find}}} \
         emit   {{role analysis \
                  tmpl {pz @inp @inn? @outp @outn? @transfer? @mode?}}} \
@@ -26968,6 +27020,7 @@ $_leg
         fields {{name out     kind outvar required 1 label {Output}} \
                 {name filters kind filter required 0 label {Parameters}} \
                 {name mode    kind mode required 0 default dc values {dc ac} \
+                              valuelabels {dc DC ac AC} \
                               label {Mode}} \
                 {name sweep   kind mode required 1 default dec values {dec} \
                               depends {mode ac} label {Sweep type}} \

@@ -205,6 +205,18 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 386   AND RAISED 385 -> 386 on the display arm, ⚖ **R9 ruling A2**
+#              (2026-09-16): G2a2, the READ direction of "display the readable
+#              word, emit the deck word". G2pz MOVED rather than being added --
+#              its golden read `vol pz {vol cur} {pz pol zer}` and now reads
+#              `Voltage PZ {Voltage Current} {PZ Poles Zeroes}` -- and G2pz's
+#              pick gesture moved with it, from `set pol` to `set Poles`.
+#              ⚠ THAT GESTURE MOVE IS NOT COSMETIC: `ase::field_label_value`
+#              falls back to identity, so the old gesture stored `pol` with the
+#              mapping never consulted and the row stayed green either way.
+#              MEASURED on this change before the gesture was moved. Headless is
+#              unmoved because every row here is a widget row inside the display
+#              guard; the schema half is test_ase_core.tcl row PZ2f.
 #   37 / 385   AND RAISED 384 -> 385 on the display arm, ⚖ **R9 ruling A1**
 #              (2026-09-15): G2e2, the row that stops a field label regaining an
 #              arithmetic claim. G2e and G2g MOVED rather than being added --
@@ -1253,15 +1265,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     if {[catch {$w cget $opt} v]} { return NOOPT }
     return $v
   }
-  check "G2pz the pickers open on the declared default and offer ngspice's own\
- words, and the labels are the declared ones" \
+  ## ⚠ THE WORDS IN THE PICKER ARE THE READABLE ONES SINCE ⚖ R9 RULING A2
+  ## (2026-09-16), AND THE DECK'S ARE UNCHANGED. This golden read
+  ## `vol pz {vol cur} {pz pol zer}` -- ngspice's own spelling, straight onto the
+  ## user's screen. The ruling maps the DISPLAY only: the row still stores `vol`
+  ## and the deck line below is still `pz in 0 out 0 vol pz`. `test_ase_core`
+  ## section PZ2e pins the registry's `values` (still the deck words) and PZ2f
+  ## pins the map itself.
+  check "G2pz the pickers open on the declared default, spell it the way a\
+ person reads it, and the labels are the declared ones" \
     [list [$top.chana.form.transfer get] [$top.chana.form.mode get] \
           [g2pz_cget $top.chana.form.transfer -values] \
           [g2pz_cget $top.chana.form.mode -values] \
           [g2pz_cget $top.chana.form.linp -text] \
           [g2pz_cget $top.chana.form.linn -text] \
           [g2pz_cget $top.chana.form.lmode -text]] \
-    [list vol pz {vol cur} {pz pol zer} {Input +:} {Input -:} {Find:}]
+    [list Voltage PZ {Voltage Current} {PZ Poles Zeroes} {Input +:} {Input -:} {Find:}]
   ## ⚠ THE WHOLE ROUND TRIP, AND THE PART THAT MATTERS IS WHAT IS **NOT** STORED.
   ## Typing only the two signal nodes must store only those two keys: the pickers
   ## answer their own defaults, and `form_is_absent` drops a value that equals the
@@ -1300,8 +1319,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## RETURN CODE is recorded as an ordinary value, so the row reds naming the
   ## gesture that could not be made.
   set ::ase::ui::dlg($key,anen) 1
-  set g2pz_pick [list [catch {$top.chana.form.mode set pol}] \
-                      [catch {$top.chana.form.transfer set cur}]]
+  ## ⚠ AND THE GESTURE USES THE WORD THE USER CAN SEE, NOT THE DECK WORD. This
+  ## read `set pol` / `set cur` until ⚖ R9 A2, and leaving it that way would have
+  ## been a row proving nothing: `ase::field_label_value` falls back to IDENTITY
+  ## for a label it cannot map, so typing the DECK word straight into the picker
+  ## went on storing `pol` with the whole display mapping BYPASSED -- MEASURED on
+  ## this change, the row stayed green with the map never once consulted. Picking
+  ## `Poles` and getting `pol` on the line below is the write direction proven.
+  set g2pz_pick [list [catch {$top.chana.form.mode set Poles}] \
+                      [catch {$top.chana.form.transfer set Current}]]
   $top.chana.btns.proceed invoke
   update
   set g2pzrow2 {}
@@ -1313,6 +1339,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $g2pz_pick [lsort [dict keys $g2pzrow2]] \
           [expr {[set i [tv_find $atv type pz]] ne {} ? [$atv set $i args] : {}}]] \
     [list {0 0} {enabled inp mode outp transfer type} {pz in 0 out 0 cur pol}]
+
+  ## G2a2: ⚖ R9 A2 -- THE READ DIRECTION, WHICH IS THE HALF A WRITE CANNOT SHOW.
+  ## ⚠ THE ROW ABOVE PROVES `Poles` -> `pol` ON THE WAY OUT. This one reopens the
+  ## dialog on the bench that write just produced -- a row storing the DECK words
+  ## `cur` and `pol` -- and asks what the user sees. A mapping applied only on
+  ## commit would show `cur` here, which is the window disagreeing with itself:
+  ## the same picker that offers `Current` would be sitting on `cur`.
+  ## ⚠ AND IT ASKS THE STORED ROW AND THE EMITTED LINE IN THE SAME BREATH, so the
+  ## row cannot be satisfied by a tree that made the screen readable by moving
+  ## the display word into the state file. That is the failure this ruling's
+  ## whole risk is about: the 104 committed `.state` files carry deck words.
+  $top.strip.ana invoke
+  update
+  $top.chana.types.pz invoke
+  update
+  check "G2a2 a bench storing ngspice's own words opens showing the readable\
+ ones, while the row on disk and the emitted line keep the deck's spelling" \
+    [list [$top.chana.form.transfer get] [$top.chana.form.mode get] \
+          [ase::state_get $g2pzrow2 transfer] [ase::state_get $g2pzrow2 mode] \
+          [ase::analysis_line ngspice $g2pzrow2]] \
+    [list Current Poles cur pol {pz in 0 out 0 cur pol}]
+  $top.chana.btns.cancel invoke
+  update
   ## ⚠ AND THE DOOR STILL SHUTS ON A HALF-FILLED ONE. ⚠ THE STATUS LINE IS READ
   ## INSIDE THIS ROW'S OWN `catch`, for the reason G2tf's last row records: the
   ## one change this row exists to catch -- `outp` losing its `required 1`, after

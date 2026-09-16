@@ -5146,16 +5146,23 @@ proc ase::ui::chana_field_row {key parent type field r row} {
     }
     mode {
       label $parent.l$field -text $lbl -font AseLabelFont -anchor w
-      set vals {}
-      if {[dict exists $fd values]} { set vals [dict get $fd values] }
-      ttk::combobox $parent.$field -values $vals -state readonly -width 12
+      # ⚖ R9 A2: THE PICKER OFFERS THE READABLE WORD AND THE ROW KEEPS THE DECK
+      # WORD. `ase::field_value_labels` is IDENTITY for a field that declares no
+      # `valuelabels`, so the sweep pickers still read `dec oct lin` -- the
+      # user's own deliberate exception, and that reader's header says why.
+      ttk::combobox $parent.$field -values [ase::field_value_labels $fd] \
+        -state readonly -width 12
       # ⚠ THE DEFAULT IS RESOLVED HERE TOO, and it has to be: a bench storing no
       # sweep key must still SHOW `dec`, because the deck it renders carries
       # `dec`. A blank picker beside a deck line that says `dec` is the window
       # disagreeing with the file, which is the one thing this batch forbids.
       set cur [ase::state_get $row $field]
       if {$cur eq {}} { set cur [ase::field_default $fd] }
-      catch {$parent.$field set $cur}
+      # ⚠ MAPPED ON THE WAY IN AS WELL AS OUT. The stored row and the declared
+      # default are both DECK words; setting one unmapped would put `vol` into a
+      # picker whose list says `Voltage`, which ttk accepts in silence -- a
+      # combobox `set` is not restricted to `-values`.
+      catch {$parent.$field set [ase::field_value_label $fd $cur]}
       bind $parent.$field <<ComboboxSelected>> \
         [list ase::ui::chana_mode_changed $key $type $field]
       grid $parent.l$field -row $r -column 0 -sticky w -padx {8 6} -pady 2
@@ -5207,6 +5214,33 @@ proc ase::ui::form_get {key field} {
         return 1
       }
       return 0
+    }
+    Combobox - TCombobox {
+      # ⚖ R9 A2: THE WIDGET SHOWS THE READABLE WORD AND EVERY READER ABOVE THIS
+      # POINT MUST STILL SEE THE DECK WORD. Mapping back HERE -- at the one
+      # funnel `chana_form_vals`, `chana_commit_vals`, `chana_merged_row`,
+      # `chana_ok` and `form_is_absent` all come through -- is what keeps the
+      # display mapping at the widget and out of the `.state` file and the deck.
+      # `form_is_absent` compares against the descriptor's `default`, which is a
+      # deck word, so a mapped-back value is also what makes the write-back rule
+      # keep answering (a picker left alone still writes no key).
+      #
+      # ⚠ THE TYPE IS `anshown`, NOT `antype`, FOR `chana_cache_save`'s OWN
+      # REASON: `anshown` names the type whose widgets are actually STANDING,
+      # which is what this proc is reading, while Tk has already moved `antype`
+      # to the type being switched TO by the time a rebuild reads the old form.
+      #
+      # ⚠ AND IT FALLS BACK TO THE RAW STRING rather than to the empty one. A
+      # descriptor this reader cannot resolve must not silently blank a value
+      # the user can see -- `ase::field_label_value` is identity for an unmapped
+      # label, so an unlabelled picker is returned exactly as before.
+      set _t {}
+      if {[info exists dlg($key,anshown)]} { set _t $dlg($key,anshown) }
+      if {$_t eq {} && [info exists dlg($key,antype)]} { set _t $dlg($key,antype) }
+      set _v [string trim [$w.$field get]]
+      if {$_t eq {}} { return $_v }
+      return [ase::field_label_value \
+        [ase::field_descriptor [ase::ui::chana_sim $key] $_t $field] $_v]
     }
     default { return [string trim [$w.$field get]] }
   }
@@ -6202,26 +6236,17 @@ proc ase::ui::nz_fn_labels {sim type} {
 }
 # An argument with declared `values`: the label shown for a stored value, and
 # the value a shown label stands for. An undeclared value shows as itself.
-proc ase::ui::nz_value_label {d v} {
-  if {[dict exists $d valuelabels] && [dict exists [dict get $d valuelabels] $v]} {
-    return [dict get [dict get $d valuelabels] $v]
-  }
-  return $v
-}
-proc ase::ui::nz_value_of {d lbl} {
-  if {[dict exists $d valuelabels]} {
-    dict for {v l} [dict get $d valuelabels] {
-      if {$l eq $lbl} { return $v }
-    }
-  }
-  return $lbl
-}
-proc ase::ui::nz_value_labels {d} {
-  set out {}
-  if {![dict exists $d values]} { return {} }
-  foreach v [dict get $d values] { lappend out [ase::ui::nz_value_label $d $v] }
-  return $out
-}
+# ⚠ THESE THREE ARE NOW WRAPPERS, AND THAT IS THE POINT. ⚖ R9 ruling A2 gave the
+# ANALYSIS form the same "display the readable word, emit the deck word"
+# behaviour these have had since issue 1467, off the same `valuelabels` key. Two
+# implementations of one rule is precisely the drift this batch exists to delete
+# -- the next correction would have been made to one of them and not the other --
+# so the bodies moved to `ase::field_value_label` / `ase::field_label_value` /
+# `ase::field_value_labels` and these keep their names for their own call sites
+# (`nz_editor`, `nz_row_commit`) and for test_ase_trnoise_gui_1467's rows GE4/GE5.
+proc ase::ui::nz_value_label {d v} { return [ase::field_value_label $d $v] }
+proc ase::ui::nz_value_of {d lbl} { return [ase::field_label_value $d $lbl] }
+proc ase::ui::nz_value_labels {d} { return [ase::field_value_labels $d] }
 
 # ONE ARGUMENT's LABEL: the declared label -- or the per-value one, keyed by the
 # value of the function's argument that declares `values` -- and its unit in
