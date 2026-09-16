@@ -100,7 +100,17 @@ a completeness sweep of the commits themselves — the section at the end says h
 
 ---
 
-# Section A — the nine choices that recur
+# Section A — the twelve choices that recur
+
+> ⚠ **This heading said "the nine choices" until 2026-09-16, with twelve sections beneath it.**
+> A1 and A2 were answered as conversations; **A3–A12 were ruled in one delegation** the same day:
+> *"You have solid arguments for the recommendations accompanying each needed ruling. Just go with
+> your recommendation for the remaining A items in R9."*
+>
+> ⚠ **That delegation is SCOPED to Section A.** ⚖ R7, `rule 1471_release_note_destination` and
+> ⚖ R10's specification still go back to the user as conversations, one question at a time — and
+> so does any **new copy** the implementations mint (`R9-727`, `R9-728`, and onward from `R9-729`),
+> because a ruling on wording does not ratify sentences that did not exist when it was given.
 
 Each of these appears in many strings at once. Answering here is worth more than
 marking up individual handles, and the rest of the document is mostly the
@@ -293,6 +303,34 @@ costs one dictionary per picker.
 
 ## A3 — Internal slot names shown where the form shows a label
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **A refusal names the label the user can see — trailing colon stripped, unit kept.**
+>
+> ```
+> needs a value for 'stop'          ->  needs a value for 'Stop time (s)'
+> needs 'ptssum' to be at least 1   ->  needs 'Report every N points' to be at least 1
+> ```
+>
+> The reasoning is the acceptance criterion: **`ptssum` appears nowhere on screen.** It cannot be
+> searched for, cannot be pointed at, and is in no documentation a user has. A refusal exists to
+> say which box to go and fix, and this one asks the user to translate first.
+>
+> **The colon is code, not copy** (`ase_window.tcl` builds the caption as `"$txt:"`), so stripping
+> it is a code change. **The unit is kept** because a message about a missing value is exactly
+> where knowing it wants seconds is useful.
+>
+> ⚠ **One accessor, never a second table.** The refusal path must resolve the caption through the
+> same accessor the form uses. A parallel slot→label map rots the first time a caption is
+> reworded — **and A4 and A5 reword four of them immediately.**
+>
+> ⚠ **A slot with no caption must never render `needs a value for ''`.** Fall back to the slot
+> name, and pin the no-label case with a row.
+>
+> **§A12's measurement refusals fold in here**: `R9-356` names the internal token `'fft'` and
+> `R9-361` tells a row captioned `Delay (TRIG … TARG)` that **`TRIGTARG`** segfaults — a word on
+> no screen. Same ruling, same accessor. Under §A2 it becomes `FFT`, never `Fft`.
+
 R9-062 and R9-159 say **`needs a value for '$f'`**, which renders as
 *"needs a value for 'stop'"* — while the box it is pointing at is captioned
 **`Stop time (s):`**. R9-075 and R9-076 are worse: **`needs '<field>' to be at
@@ -303,6 +341,32 @@ points:"* that the row *"needs 'ptssum' to be at least 1"*.
 is ours, not theirs.
 
 ## A4 — `Stop` / `Stop time` / `Stop frequency`, and `Step` / `Time step`
+
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **No caption is bare.**
+>
+> | form | was | becomes |
+> |---|---|---|
+> | dc | `Stop` (`R9-003`) | **`Stop value`** |
+> | dc | `Step` (`R9-004`) | **`Step size`** |
+> | tran | `Stop time (s)` (`R9-016`) | unchanged |
+> | tran | `Time step (s)` (`R9-015`) | **unchanged — term of art** |
+> | ac | `Stop frequency (Hz)` (`R9-013`) | unchanged |
+>
+> **The rule is "no bare caption", NOT "one fixed word order".** `Stop time` puts the role first
+> and `Time step` the quantity; `.tran tstep tstop` is how an analog designer reads it, and
+> renaming it `Step time` for symmetry would be tidier on paper and worse in the hand. **The
+> asymmetry is deliberate and is pinned**, so a later consistency pass cannot "fix" it.
+>
+> ⚠ **§A3 is what made this stop being cosmetic.** Once the caption is the refusal text, and
+> preflight refusals list several rows at once, the flat ADE-L shape (`Start`/`Stop`/`Step`
+> everywhere, unit in parentheses) would print *"needs a value for 'Stop'"* three times in one
+> message with no way to tell which row. **ADE-L is the floor, and this is a convenience above
+> it** — the qualified caption points at exactly one box.
+>
+> **It costs nothing in the 104 `.state` files**, which store the slot name (`stop`, `tstep`).
+> It costs the goldens that assert caption text.
 
 The same concept is captioned three ways across three forms in the same dialog:
 `Stop` (R9-003, dc), `Stop time` (R9-016, tran), `Stop frequency` (R9-013, ac);
@@ -315,6 +379,23 @@ not a time — so this is not simply an inconsistency to flatten.
 reads `<quantity> <role>`, and nothing is bare.
 
 ## A5 — Units in parentheses, and one label that is a sentence
+
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **Keep the units in parentheses.** `Start recording at (s):` (`R9-017`, `R9-025`) becomes
+> **`Start time (s):`** — a noun phrase like every other caption.
+>
+> ⚠ **THE MEANING MOVES; IT DOES NOT DISAPPEAR.** That caption is carrying the fact the whole
+> issue is named for — **ngspice still simulates from 0**, it merely does not *record* before this
+> point. That sentence moves to the detail line under the form. **A receipt that renames the
+> caption without showing the detail line carrying the fact has lost the defect**, and the
+> verifier is told to check precisely that.
+>
+> The dc form's captions still carry no unit, because the unit depends on what is being swept.
+> That stays.
+>
+> ⚠ **This rule has exactly one named exception, and it is §A10's `Ignore before`** — an
+> imperative, kept because every noun-phrase alternative is worse. See §A10.
 
 Every tran and ac label carries its unit: `Time step (s):`, `Stop time (s):`,
 `Start frequency (Hz):`. That is consistent and good. Two exceptions:
@@ -331,6 +412,20 @@ and name the field `Start time (s):`.
 
 ## A6 — Developer vocabulary on the user's screen
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> | what | handles | ruling |
+> |---|---|---|
+> | `this simulator backend` | `R9-077`, `R9-065`, `R9-160` | → **`this simulator`**. The user chose a *simulator*; "backend" is our word for our own architecture |
+> | `readable list of non-blank lines` | `R9-080` | → plain English. Tcl vocabulary in front of a circuit designer |
+> | `verbatim` | `R9-157`, `R9-158` | ⚠ **LEFT EXACTLY AS IT IS** |
+>
+> ⚠ **`verbatim` is a deliberate non-change, not an oversight.** It names a feature with **no
+> editor**, reachable only by hand-editing the state file. It gets named properly when it gets a
+> UI, and not before — naming it now would advertise a door with no handle. **Pin the
+> non-change**, the way §A1 pinned `SEGFAULTS` and §A2 pinned `dec`/`oct`/`lin`, or the next
+> consistency pass renames it in good faith and nobody learns a user ruling was reversed.
+
 Four phrases say what the code calls something rather than what the user calls
 it: **`this simulator backend`** (R9-077, R9-065, R9-160 — the user chose a
 *simulator*; "backend" is ours), **`readable list of non-blank lines`** (R9-080 —
@@ -343,6 +438,19 @@ second; leave `verbatim` until it has a UI, then name it there.
 
 ## A7 — Two frames for the same event
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **One frame, used both places.** What that means concretely, so nobody has to guess:
+>
+> **The two verbs stay** — a log line records an *event* (`enabled`), a status line describes
+> *state* (`This`) — **but the clause and its punctuation come from a single generated string
+> used by both.** Two call sites, one body. They can then never drift again.
+>
+> **Pin it with a row that renders both and compares the clause**, so a future edit to one reddens
+> instead of quietly reopening the gap. This is §A2's lesson arriving from the other side: that
+> implementation found `valuelabels` already had two readers and **deleted one**, because the next
+> correction would have been made to one and not the other.
+
 The OK-button validator logs **`ase: enabled $type analysis $_clause`**
 (R9-059) while the status line under the same form says
 **`This $type analysis $_clause.`** (R9-061, and R9-068/R9-069 from a different
@@ -352,6 +460,20 @@ period.
 *My recommendation:* one frame, used both places.
 
 ## A8 — Sibling sentences that drifted apart
+
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **Each pair becomes identical except for the part that genuinely differs.** For the
+> node-naming family, **converge on the singular `name a node that is in the circuit`**
+> (`R9-089`, `R9-115`), bringing `R9-098`, `R9-119` and `R9-123` onto it.
+>
+> ⚠ **Keep a genuinely plural site plural.** If a field really accepts a list, say which and why
+> rather than flattening it — **flattening a true plural to match a template is a worse defect
+> than the drift**, because it makes the sentence false.
+>
+> ⚠ **`R9-119`'s example syntax (`v(out)` / `v(out,ref)`) is information, not drift.** If
+> converging the sentence would drop it, **move it — do not delete it.** Same shape as §A5: the
+> meaning moves, it does not disappear.
 
 Several pairs open with the same words and diverge mid-sentence, which reads as a
 typo even when both are deliberate:
@@ -372,6 +494,22 @@ differs.
 
 ## A9 — Placeholders the user is meant to read as placeholders
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **Spell the literal ones as words**, so `R9-138` reads:
+>
+> ```
+> add `distof1` to the input source with a magnitude and a phase in degrees
+> ```
+>
+> **The point is the invariant, not the sentence.** After this, **any `<…>` a user sees is a value
+> that failed to substitute** — which makes it a reportable bug instead of house style. Today the
+> screen carries two kinds of angle bracket (`<mag>`/`<phase>` literal, `<outv>`/`$type`/`[join …]`
+> substituted) and no reader can tell them apart.
+>
+> ⚠ **Sweep for other literal angle brackets** in user-facing copy and report any found. `R9-138`
+> is where the review noticed it, not necessarily the only site.
+
 R9-138's `<mag>` and `<phase>` are **literal text on screen** — the user is meant
 to read *"type a magnitude and a phase"* — while `<outv>`, `$type` and
 `[join …]` elsewhere are substituted before display. Two kinds of angle bracket,
@@ -382,6 +520,41 @@ input source with a magnitude and a phase in degrees"*), so every remaining
 `<…>` on screen is a real value.
 
 ## A10 — one idea wearing three names, inside one dialog
+
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **One word per concept**, qualified **only** where two appear in one form:
+>
+> | concept | ruled word | shipped today as |
+> |---|---|---|
+> | ignore the signal until | **`Ignore before`** | `Ignore before` (`R9-328`); `Trigger delay` / `Target delay` (`R9-316`, `R9-321`) |
+> | the level a signal must reach | **`Value`** | `Value` (`R9-331`); `reaches` (`R9-325`); `Trigger value` / `Target value` (`R9-313`, `R9-318`) |
+>
+> So the delay form keeps `Trigger value` / `Target value`, where two really do appear together.
+>
+> ✅ **`R9-325 reaches` DISSOLVES, and that is the best thing in this ruling.** It is the only
+> lowercase caption in the tree, and it reads correctly only if the form lays `When signal` and
+> `reaches` on one line — so ratifying it would have ratified **a layout constraint on a dialog
+> that does not exist yet.** Under this ruling it becomes `Value` and the constraint goes with it.
+> **This ruling makes the tree simpler, not merely more uniform.**
+>
+> ⚠ **One detail to settle against the real layout, not to invent.** The delay form has two
+> instances of the *first* concept as well. **Default to `Trigger ignore before` / `Target ignore
+> before`** — **but if the form already groups its rows under Trigger and Target headings, plain
+> `Ignore before` twice is correct and better.** Look, choose, and **say which you saw.**
+>
+> ### ⚠ §A5 and §A10 conflict, and the conflict is NAMED rather than smoothed
+>
+> §A5 rules that a caption is a noun phrase — that is why `Start recording at` became
+> `Start time`. §A10 keeps **`Ignore before`**, an imperative, and §A10's own text above admits
+> this is *"§A5's complaint again"*.
+>
+> **`Ignore before` stands, as the single named exception to §A5.** Every noun-phrase alternative
+> is worse: it is not a start time (the simulation has already started) and it is not a delay
+> (nothing is delayed). **Pin the exception with its own row**, exactly as `SEGFAULTS` was pinned
+> under §A1 and `dec`/`oct`/`lin` under §A2 — because a ruling that deliberately leaves the
+> interface looking inconsistent is precisely the one a later consistency pass reverses in good
+> faith, with nobody learning a user ruling was undone.
 
 The measurements copy (R9-294 onward) ships the same concept under different words
 in forms the user will switch between:
@@ -405,6 +578,20 @@ dialog that does not exist yet.
 
 ## A11 — a C source file and a line number, in a refusal
 
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **Keep it — in parentheses, at the end of the sentence.** A designer who believes a refusal is
+> wrong can check it in ten seconds; everyone else reads the sentence and stops at the bracket.
+>
+> **This is a consistency RULE, not a ratification of two strings.** Where ASE-L knows exactly
+> where a limit lives in the simulator's source, it cites it — **always parenthesised, always
+> sentence-final.** **Pin the placement with a row**, or the next author puts a citation
+> mid-sentence and the rule is gone without anyone deciding to drop it.
+>
+> ⚠ **Survey before pinning.** A site already sitting mid-sentence is the rule's first violation
+> and is in scope — move it and say so. A site that knows the limit but does **not** cite it is
+> **not** in scope: adding a citation is new copy, which is the user's to rule on. Report it.
+
 R9-355 tells the user that ngspice *"names DERIV and refuses it at run time
 (com_measure2.c:2156, `function 'deriv' currently not supported`)"*. The options
 sheet already does this — it cites `cktntask.c:68` — so this is a **consistency**
@@ -416,6 +603,28 @@ now. A designer who hits a refusal they think is wrong can check it in ten
 seconds, and nobody else has to read it.
 
 ## A12 — acronyms: expanded, or not?
+
+> ### ✅ RULED BY THE USER, 2026-09-16 — by delegation
+>
+> **The acronym, uppercase, where an analog designer would say the acronym: `RMS`, `FFT`, `PSD`,
+> `THD`** — because that is how they are spoken at a bench. So `Power spectral density`
+> (`R9-310`) becomes **`PSD`**.
+>
+> This is the **expansion** question; §A2 already settled **case**. The two compose: `'fft'`
+> becomes **`FFT`**, never `Fft`.
+>
+> ⚠ **`FFT spectrum` (`R9-309`) is decided per site, not by blanket substitution.** An FFT *is* a
+> spectrum, so the noun is redundant where the string names the **measurement kind** — but it may
+> be load-bearing where it names the **plot**. Check each site, drop the noun where it is
+> redundant, keep it where it is not, **and say why for each.** A global substitution here would
+> be the exact shape of §A1's failed verification arm: right in aggregate, wrong in a particular
+> place.
+>
+> ⚠ **Do not expand an acronym this ruling does not name.** It lists four. Anything outside that
+> list is unruled — leave it and report it.
+>
+> **§A3 covers the other half of this section** (`R9-356`'s `'fft'`, `R9-361`'s `TRIGTARG`):
+> internal tokens shown where a picker shows a label, same accessor, same fix.
 
 §A2 asks about **case**. This asks about **expansion**, and the same set of
 strings answers it three ways: **`RMS`** (R9-298), **`FFT spectrum`** (R9-309)
