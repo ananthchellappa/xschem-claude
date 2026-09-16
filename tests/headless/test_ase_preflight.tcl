@@ -167,6 +167,23 @@
 # `ase::preflight_refusal`, so it now scans that proc for ONE and requires the
 # gate to keep NONE -- term 4 is the load-bearing one, and it reds if a fifth
 # refusal ever spells its own tail again.
+# 242 UNMOVED for ⚖ R9 rulings A9 and A10 and §A3's remainder (2026-09-16), and
+# this paragraph exists because its ABSENCE was itself the finding. A9 reworded
+# the two distortion preconditions (`distof1 <mag> <phase>` -> a sentence with no
+# angle brackets in it), and PF234c -- the row over that precondition -- MOVED
+# rather than being added, so the count does not rise. The floor is right and
+# nothing was lowered; what was missing was anybody being able to SEE that from
+# the floor block. The only note this file carried about A9 was an inline comment
+# at the PF234c row itself, ~2,350 lines below here, which is not where a reader
+# auditing a floor looks -- every other "moved rather than added" note in this
+# batch (PF222b, PF222e, PF228b, PF234b above) lives in this block.
+# ⚠ AND A ROW COUNT DOES NOT PROVE A SUITE RAN TO THE END. A9's first edit put an
+# explanatory `#` INSIDE a `[list blocked ...]` command substitution, where `#` is
+# NOT a comment: the remedy string was parsed as a command name, the precondition
+# raised, and THIS SUITE stopped at 232 rows -- while still printing a plausible
+# `RESULT:` line. 242 is therefore checked by NAME as well as by number: the last
+# row of this file is `PF233f`, and `OVERALL: ok` is the banner that says the tail
+# was reached. A file that stops early prints neither.
 # AND RAISED 238 -> 242.
 # AND RAISED 235 -> 238.
 # AND RAISED 229 -> 235.

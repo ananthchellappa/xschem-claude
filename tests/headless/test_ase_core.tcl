@@ -226,6 +226,24 @@
 # A10's one-word-per-idea plus §A5's single named exception.
 # ⚠ ONE ROW MOVED RATHER THAN BEING ADDED and is NOT in the +4: MT5, whose
 # golden gained the unit (`Passband gain` -> `Passband gain (dB)`).
+# ⚠ TWO ROWS GAINED (LB14, LB15) for ⚖ **R9 rulings A11 and A12** (2026-09-16),
+# and ONE MOVED rather than being added: LB9's golden, whose two producer labels
+# went `FFT spectrum` -> `FFT` and `Power spectral density` -> `PSD`.
+# LB14 is §A11's PLACEMENT rule -- a citation of the simulator's source is
+# parenthesised and sentence-final -- and the ruling asked for it in as many
+# words, because without a row the next author puts one mid-sentence and the
+# rule is gone with nobody deciding to drop it. ⚠ IT SCANS WHAT IS RENDERED:
+# all 247 catalogue rows carry a `site` file:line that NOTHING READS, so a
+# source grep answers 247 where a user sees 17. ⚠ AND ITS SECOND TERM PINS THE
+# TEN THAT WERE NOT FIXED, by name: in those the citation is the sentence's
+# SUBJECT rather than a bracket, so moving it would REWRITE the sentence, which
+# is new copy and the user's. An eleventh reds the row.
+# LB15 is §A12's EXPANSION rule. Two of its four acronyms already shipped right
+# (`RMS`, `THD`), so the row watches all four and not only the two that moved --
+# otherwise a later pass could expand `RMS` with nothing going red. Its fifth
+# term pins a NON-CHANGE (`Spectrum over a frequency band` carries no acronym,
+# and the ruling lists four), the same job LB6, LB13 and section PF234 do.
+# AND RAISED 673 -> 675.
 # AND RAISED 669 -> 673.
 # AND RAISED 662 -> 669.
 # AND RAISED 653 -> 662.
@@ -6808,7 +6826,7 @@ check "LB8 the detail line is silent when the field is not set, and belongs to\
 
 ## LB9 -- A3's MEASUREMENT HALF, which §A12 folds into it (R9-356, R9-361).
 ## The two measurement refusals rendered the INTERNAL token: a row the user
-## built from a picker reading `FFT spectrum` was refused for `'fft'`, and a row
+## built from a picker reading `FFT` was refused for `'fft'`, and a row
 ## captioned `Delay (TRIG ... TARG)` was told it segfaults for `TRIGTARG` -- a
 ## word that appears on NO screen anywhere in ASE-L. Same ruling, same rule:
 ## `ase::meas_kind_label` is the accessor the Kind picker itself reads, so there
@@ -6829,8 +6847,8 @@ set LB9ST [ase::state_default]
 set LB9SP $LB9ST
 dict set LB9SP analyses [list {type sp enabled 1 points 10 start 1k stop 1g}]
 set LB9R {}
-foreach {lb9k lb9lbl} {fft {FFT spectrum} \
-                       psd {Power spectral density} \
+foreach {lb9k lb9lbl} {fft {FFT} \
+                       psd {PSD} \
                        fourier {Fourier / THD} \
                        linearize {Resample onto a uniform time grid} \
                        spec {Spectrum over a frequency band}} {
@@ -7029,6 +7047,172 @@ check "LB13 one idea wears one word across the measurement forms, qualified only
   [list Value Value {Trigger value} {Target value} \
         {Trigger ignore before (s)} {Target ignore before (s)} \
         {Ignore before (s)} {Ignore before (s)} {}]
+
+## ---------------------------------------------------------------------------
+## LB14 -- ⚖ R9 A11: A CITATION IS PARENTHESISED AND SENTENCE-FINAL
+## ---------------------------------------------------------------------------
+##
+## §A11 ruled that where ASE-L knows exactly where a limit lives in the
+## SIMULATOR'S source it cites it, "always parenthesised, always sentence-final"
+## -- and said in as many words to PIN THE PLACEMENT WITH A ROW, or the next
+## author drops a citation mid-sentence and the rule is gone with nobody
+## deciding to drop it. This is that row.
+##
+## ⚠ IT SCANS WHAT IS RENDERED, NOT WHAT IS GREPPABLE, and that distinction is
+## the whole survey. Every one of the 247 catalogue rows carries a `site` key
+## holding a file:line, and NOTHING READS IT -- it is documentation and reaches
+## no screen. A source grep for `.c:` therefore answers 247 where the true
+## answer is 17. What a user can see is what `ase::ui::optsheet_detail`
+## composes, so this row composes the same bits the same way.
+##
+## ⚠ TERM 2 IS THE RATCHET AND IS WHY THIS IS NOT A NAME DIFF. Ten rendered bits
+## still carry a mid-sentence citation and were NOT tidied: in each the citation
+## is the sentence's SUBJECT or an em-dash aside rather than a bracket, so
+## moving it means REWRITING the sentence -- new copy, which is the user's, not
+## a crew's. Pinning that set by name means an ELEVENTH reds this row, and so
+## does quietly rewording one of the ten. A row asserting only "the seven are
+## compliant" would be satisfied by a tree in which everything else drifted.
+##
+## ⚠ TERM 4 IS THE CLASSIFIER'S OWN POSITIVE CONTROL. A placement test whose
+## classifier always answered END would pass terms 1-3 while proving nothing --
+## the batch's most-met defect shape, a guard that cannot disagree. So the
+## classifier is fed one hand-made compliant string and one hand-made
+## mid-sentence string, and must tell them apart; and fed a string with no
+## citation at all it must answer NOTHING rather than "compliant".
+proc lb14cite {s} {
+  ## every `<file>.c:<line>` in $s, each classified END (inside a bracket group
+  ## whose `)` ends the sentence) or MID (anywhere else)
+  set out {}
+  foreach m [regexp -all -inline {[A-Za-z0-9_/]+\.c:[0-9][0-9-]*} $s] {
+    set i [string first $m $s]
+    ## the innermost bracket group open at position $i, if any
+    set open -1 ; set d 0
+    for {set j 0} {$j < $i} {incr j} {
+      set c [string index $s $j]
+      if {$c eq "("} { if {$d == 0} { set open $j } ; incr d }
+      if {$c eq ")"} { incr d -1 ; if {$d <= 0} { set d 0 ; set open -1 } }
+    }
+    if {$open < 0} { lappend out MID ; continue }
+    set d 0 ; set close -1
+    for {set j $open} {$j < [string length $s]} {incr j} {
+      set c [string index $s $j]
+      if {$c eq "("} { incr d }
+      if {$c eq ")"} { incr d -1 ; if {$d == 0} { set close $j ; break } }
+    }
+    if {$close < 0} { lappend out MID ; continue }
+    set tail [string trim [string range $s $close+1 end]]
+    if {$tail eq {} || [string index $tail 0] eq {.}} {
+      lappend out END
+    } else {
+      lappend out MID
+    }
+  }
+  return $out
+}
+## the bits `ase::ui::optsheet_detail` puts in front of a user, per option
+proc lb14bits {name} {
+  set out {}
+  set h {} ; catch {set h [ase::opt_help ngspice $name]}
+  if {$h ne {}} { lappend out $h }
+  switch -- [ase::opt_offer ngspice $name] {
+    no        { lappend out [ase::opt_inert ngspice $name] }
+    elsewhere { lappend out [ase::opt_owner ngspice $name] }
+    clamp     { lappend out [ase::ui::optsheet_key ngspice $name clamp] }
+    caveat    { lappend out "[ase::ui::optsheet_key ngspice $name defect][ase::ui::optsheet_key ngspice $name caveat]" }
+  }
+  set w {} ; catch {set w [ase::opt_results_why ngspice $name]}
+  if {$w ne {}} { lappend out $w }
+  set g {} ; catch {set g [ase::opt_gate_why ngspice $name [ase::sim_caps_cached ngspice]]}
+  if {$g ne {}} { lappend out $g }
+  set l {} ; catch {set l [ase::opt_leak_why ngspice $name]}
+  if {$l ne {}} { lappend out $l }
+  return $out
+}
+set LB14END {} ; set LB14MID {}
+foreach lb14n [ase::sim_option_names ngspice] {
+  set lb14v {}
+  foreach lb14s [lb14bits $lb14n] {
+    foreach lb14c [lb14cite $lb14s] { lappend lb14v $lb14c }
+  }
+  if {![llength $lb14v]} { continue }
+  if {[lsearch -exact $lb14v MID] >= 0} {
+    lappend LB14MID $lb14n
+  } else {
+    lappend LB14END $lb14n
+  }
+}
+check "LB14 a rendered citation of the simulator's source is parenthesised and\
+ sentence-final, the ten that are not are pinned by name so an eleventh reds,\
+ and the classifier can tell the two apart" \
+  [list [lsort $LB14END] \
+        [lsort $LB14MID] \
+        [lb14cite [ase::meas_kind_unsupported ngspice deriv]] \
+        [lb14cite {a limit lives at foo.c:12 and the sentence goes on}] \
+        [lb14cite {a limit lives here (foo.c:12). And the sentence ended}] \
+        [lb14cite {this sentence cites nothing at all}]] \
+  [list {acct list node nomod nopage oldlimit opts} \
+        {debug defas itl1 itl2 itl4 klu_memgrow_factor newtrunc scale wnflag x11lineararcs} \
+        END MID END {}]
+
+## ---------------------------------------------------------------------------
+## LB15 -- ⚖ R9 A12: THE ACRONYM, UPPERCASE, WHERE A DESIGNER SAYS THE ACRONYM
+## ---------------------------------------------------------------------------
+##
+## A12 is the EXPANSION question and §A2 already settled CASE; the two compose,
+## so `fft` resolves to `FFT` and never to `Fft`. Four acronyms are named --
+## `RMS`, `FFT`, `PSD`, `THD` -- and TWO OF THE FOUR ALREADY SHIPPED RIGHT,
+## which is why terms 3 and 4 exist: a row that only watched the two that moved
+## would let `RMS` be expanded to `Root mean square` by a later pass with
+## nothing going red.
+##
+## ⚠ TERM 5 IS THE OUT-OF-SCOPE CONTROL AND IT PINS A NON-CHANGE. `Spectrum over
+## a frequency band` keeps its noun because it carries no acronym at all, and
+## A12's ruling lists four. A consistency pass that "finished the job" by
+## shortening it would be acting outside a ruling, exactly as §A4's bare `Start`
+## and §A5's `Ignore before` are pinned against tidying.
+##
+## ⚠ TERM 6 IS THE ONE THAT COST A HAND-OFF. §A3 fixed `$klbl` in this sentence
+## (it used to render `TRIGTARG`); the REMEDY still named ngspice's deck words
+## `FIND, MIN, MAX or AVG`, four words on no screen in ASE-L, and task 1 handed
+## that clause forward rather than widening §A3. It now names the four Kind
+## labels, through the accessor the picker reads.
+##
+## ⚠ TERM 8 IS WEAKER THAN IT LOOKS AND I AM SAYING SO: it requires the proc
+## body (COMMENTS STRIPPED -- `info body` sees comments and the comment this
+## ruling added names the accessor) to ask `meas_kind_label` and to contain no
+## frozen copy of a label. A body that froze the labels under some OTHER
+## spelling would pass it. Terms 6 and 7 are what actually pin the sentence.
+set LB15SP [ase::state_default]
+dict set LB15SP analyses [list {type sp enabled 1 points 10 start 1k stop 1g}]
+set LB15F [lindex [ase::backend::ngspice::meas_rule $LB15SP \
+             {kind trigtarg name m1 analysis sp}] 1]
+set LB15EXP {}
+foreach lb15w {{spectral density} {root mean square} {total harmonic} \
+               {FFT spectrum} {Fast Fourier}} {
+  foreach lb15k [ase::meas_kind_order ngspice] {
+    if {[string match -nocase "*$lb15w*" [ase::meas_kind_label ngspice $lb15k]]} {
+      lappend LB15EXP $lb15k=$lb15w
+    }
+  }
+}
+set LB15BODY [lb_nocomment [info body ::ase::backend::ngspice::meas_rule]]
+check "LB15 the four ruled acronyms ship as acronyms, nothing expands one back,\
+ the unruled sibling label is left alone, and the S-parameter remedy names the\
+ four Kind labels instead of ngspice's deck words" \
+  [list [ase::meas_kind_label ngspice fft] \
+        [ase::meas_kind_label ngspice psd] \
+        [ase::meas_kind_label ngspice rms] \
+        [ase::meas_kind_label ngspice fourier] \
+        [ase::meas_kind_label ngspice spec] \
+        $LB15EXP \
+        [string match {*Measure Value at a point, Minimum, Maximum or Average there*} $LB15F] \
+        [list [string match {*FIND*} $LB15F] [string match {*MIN,*} $LB15F] \
+              [string match {*MAX *} $LB15F] [string match {*AVG*} $LB15F] \
+              [string match {*SEGFAULTS*} $LB15F]] \
+        [list [string match {*meas_kind_label*} $LB15BODY] \
+              [string match {*Value at a point*} $LB15BODY]]] \
+  [list FFT PSD RMS {Fourier / THD} {Spectrum over a frequency band} {} 1 \
+        {0 0 0 0 1} {1 0}]
 
 # ===========================================================================
 # SN -- ⚖ R9 RULINGS A6, A7 AND A8: DEVELOPER VOCABULARY OFF THE SCREEN, ONE

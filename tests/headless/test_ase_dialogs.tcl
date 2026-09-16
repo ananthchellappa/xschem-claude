@@ -205,6 +205,20 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 388   AND RAISED 387 -> 388 on the display arm, ⚖ **R9 ruling A10's
+#              PREMISE** (2026-09-16): MS9b, which asserts that the delay form
+#              has NO Trigger/Target headings -- no labelframe, no separator,
+#              every caption in column 0. A10 chose the QUALIFIED captions
+#              `Trigger ignore before` / `Target ignore before` over plain
+#              `Ignore before` twice ON THAT CONDITION, and until this row
+#              nothing in the tree held the condition still.
+#              ⚠ THE PASS THAT SHIPPED A10 CALLED THIS UNWITNESSABLE -- "no test
+#              can witness it, it is an absence". It is witnessable in five
+#              lines, and the cost of believing otherwise is that adding a
+#              heading later makes `Trigger ignore before` wrong copy SILENTLY,
+#              with the whole tree green. Headless is unmoved because the row
+#              drives the real form inside the display guard; the schema half is
+#              test_ase_core row LB13, which pins the captions themselves.
 #   37 / 387   UNMOVED on both arms for ⚖ **R9 ruling A10** (2026-09-16): MS9
 #              MOVED rather than being added, so the count does not rise. It
 #              used to assert that `When signal` and `reaches` shared ONE LINE,
@@ -5167,6 +5181,50 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [ase::ui::meas_inline $MS9SIM find value] \
           $MS9LOW] \
     [list 0 1 0 {Value:} 1 0 0 {}]
+
+  ## MS9b -- ⚖ R9 A10's PREMISE, AS A ROW. A10 let the delay form's two captions
+  ## be QUALIFIED (`Trigger ignore before` / `Target ignore before`) instead of
+  ## plain `Ignore before` twice, and it attached a CONDITION: plain twice would
+  ## be better if the form grouped its rows under Trigger and Target headings.
+  ## It does not -- `ase::ui::meas_show` builds four fixed captions and then one
+  ## `lf<field>` per field, all in column 0, with no labelframe and no separator
+  ## anywhere -- so two boxes both reading `Ignore before` would be
+  ## indistinguishable and the qualified default stands.
+  ##
+  ## ⚠ THE PREVIOUS PASS CALLED THIS UNWITNESSABLE -- "no test can witness it,
+  ## it is an absence" -- AND THAT WAS WRONG. An absence is ordinary state:
+  ## count the grouping widgets, read the columns. Without this row, somebody
+  ## adding a real `labelframe -text Trigger` later makes `Trigger ignore
+  ## before` WRONG COPY silently, with every suite in the tree green -- which is
+  ## precisely the failure the qualification was chosen to avoid.
+  ##
+  ## ⚠ TERM 4 IS THE NON-VACUITY HALF. "No headings" is trivially true of a form
+  ## that rendered nothing, so the row also requires the delay kind's TEN field
+  ## captions to be present. A form that failed to build would fail here rather
+  ## than passing for the wrong reason.
+  ms_bench $key $MSROWS [list \
+    {name tr kind trigtarg trig v(out) targ v(out) analysis tran id tran1}]
+  set mw [ms_open $key]
+  $mw.rows selection set 0
+  update
+  set MS9BGRP 0 ; set MS9BSEP 0 ; set MS9BCOL {} ; set MS9BN 0
+  foreach ms9bw [winfo children $mw.form] {
+    switch -- [winfo class $ms9bw] {
+      Labelframe - TLabelframe { incr MS9BGRP }
+      Separator  - TSeparator  { incr MS9BSEP }
+    }
+    if {![string match {*.lf*} $ms9bw]} { continue }
+    incr MS9BN
+    set ms9bg [grid info $ms9bw]
+    if {[dict exists $ms9bg -column]} { lappend MS9BCOL [dict get $ms9bg -column] }
+  }
+  check "MS9b the delay form has NO Trigger/Target headings -- one flat caption\
+ column, no labelframe, no separator -- which is the measured condition A10\
+ attached its qualified captions to" \
+    [list $MS9BGRP $MS9BSEP [lsort -unique $MS9BCOL] $MS9BN] \
+    [list 0 0 0 10]
+  $mw.btns.cancel invoke
+  update
 
   ## MS10 -- THE VALUE COLUMN. ⚠ THE NUMBER IS THE SIMULATOR'S PRINTED TEXT AND
   ## IS NOT NORMALISED: measured on both binaries, apt 45.2 prints `9.149274e+05`

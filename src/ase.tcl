@@ -27448,6 +27448,30 @@ $_leg
   # `dec`/`oct`/`lin` and A4's `Stop time`/`Time step` word order, and it is
   # pinned by its own row (LB13) for the same reason: a later consistency pass
   # reverses a user ruling in good faith unless something says it was one.
+  #
+  # ⚠ ⚖ R9 A12 -- THE ACRONYM, UPPERCASE, WHERE A DESIGNER WOULD SAY THE
+  # ACRONYM: `RMS`, `FFT`, `PSD`, `THD`. A12 is the EXPANSION question; §A2
+  # already settled CASE, and the two compose (`fft` resolves to `FFT`, never
+  # `Fft`). Two labels moved and two did not:
+  #
+  #   fft      `FFT spectrum` -> `FFT`   -- the noun is redundant, per site
+  #   psd      `Power spectral density` -> `PSD`
+  #   rms      `RMS`            unchanged -- already the acronym
+  #   fourier  `Fourier / THD`  unchanged -- `THD` is already uppercase and
+  #                             `Fourier` is a NAME, not an acronym
+  #
+  # ⚠ `FFT spectrum` WAS DECIDED PER SITE AND NOT BY SUBSTITUTION, because an
+  # FFT *is* a spectrum only where the string names the MEASUREMENT KIND; where
+  # a string names the PLOT the noun may be load-bearing. All three readers of
+  # this label name the kind -- the Kind column of the Measurements list, the
+  # Kind picker, and `$klbl` in the two `meas_rule` refusals below. The one
+  # surface that names a PLOT is the `Measured on` picker, and it renders
+  # `ase::meas_name` (the row's own name), never this label. So the noun is
+  # redundant at every site there is.
+  #
+  # ⚠ `Spectrum over a frequency band` (spec) KEEPS ITS NOUN and is NOT an
+  # oversight: it carries no acronym at all, and A12's ruling lists four.
+  # Expanding or contracting anything outside those four is unruled.
   proc meas_kinds {} {
     return [dict create \
       trigtarg [dict create \
@@ -27517,10 +27541,10 @@ $_leg
         fields {{name np      kind string required 0 label {Points}}
                 {name vectors kind string required 0 label {Only these signals}}}] \
       fft [dict create \
-        form producer  label {FFT spectrum} yields plot \
+        form producer  label {FFT} yields plot \
         fields {{name target kind vecexpr required 1 label {Signal}}}] \
       psd [dict create \
-        form producer  label {Power spectral density} yields plot \
+        form producer  label {PSD} yields plot \
         fields {{name avgpts kind int     required 1 default 1
                              label {Averaging points}}
                 {name target kind vecexpr required 1 label {Signal}}}] \
@@ -27783,9 +27807,27 @@ $_leg
     set klbl [::ase::meas_kind_label [namespace tail [namespace current]] $kind]
     if {[meas_word $state $row] eq {sp} && $on eq {} &&
         $kind in {when trigtarg rms integ}} {
+      ## ⚠ ⚖ R9 A12 -- THE REMEDY NAMED NGSPICE'S DECK WORDS, NOT THE PICKER'S.
+      ## §A3 fixed the first half of this sentence ($klbl, which used to render
+      ## `TRIGTARG`); the REMEDY still said `Measure FIND, MIN, MAX or AVG
+      ## there`, and those four words appear on NO screen in ASE-L, so a user
+      ## sent to them could not look up one of them in the Kind picker. Task 1
+      ## handed the clause forward rather than widening §A3, and A12 is where it
+      ## lands: same defect, same fix, same accessor the picker itself reads --
+      ## so there is no second table on this side either, and the day one of
+      ## these four labels is reworded this sentence moves with it.
+      ## ⚠ THE FOUR KINDS ARE NOT A CHOICE MADE HERE. They are the complement of
+      ## the four this guard refuses (`when trigtarg rms integ`), which is the
+      ## set ngspice exits 139 on; the remedy has always meant exactly these.
+      set _safe {}
+      foreach _sk {find min max avg} {
+        lappend _safe [::ase::meas_kind_label \
+                         [namespace tail [namespace current]] $_sk]
+      }
+      set _safe "[join [lrange $_safe 0 end-1] {, }] or [lindex $_safe end]"
       return [list fatal "on a real S-parameter run ngspice's own measure\
  engine reads a complex frequency scale as if it were real and SEGFAULTS for\
- $klbl. Measure FIND, MIN, MAX or AVG there, or measure a\
+ $klbl. Measure $_safe there, or measure a\
  spectrum produced from a transient instead"]
     }
     if {$kind in {fourier linearize fft psd spec} && $type ne {tran}} {
@@ -29550,6 +29592,38 @@ $_leg
   # ⚠ `temp` AND `tnom` ARE STORED IN KELVIN AND READ BACK IN CELSIUS
   # (`TSKtemp = rValue + CONSTCtoK`, 300.15 K). The default here is 27, the
   # number the user types and the number `option` prints back.
+  #
+  # ⚠ ⚖ R9 A11 -- WHERE ASE-L CITES THE SIMULATOR'S SOURCE, THE CITATION IS
+  # PARENTHESISED AND SENTENCE-FINAL. A designer who thinks a refusal is wrong
+  # can check it in ten seconds; everybody else reads the sentence and stops at
+  # the bracket. That is a CONSISTENCY RULE, not a ratification of two strings,
+  # and row LB14 in test_ase_core is what keeps it -- without a row the next
+  # author drops a citation mid-sentence and the rule is gone with nobody
+  # deciding to drop it.
+  #
+  # ⚠ SURVEYED BY RENDERING, NOT BY GREPPING THE SOURCE, because the `site` key
+  # every row below carries has NO READER: it is documentation, it reaches no
+  # screen, and a grep for `.c:` counts 247 rows that a user can never see. What
+  # a user CAN see is what `ase::ui::optsheet_detail` composes -- `help`, then
+  # one of `inert`/`owner`/`clamp`/`defect`+`caveat` by `ase::opt_offer`, then
+  # `results_why` -- plus the measurement catalogue's `unsupported`. Rendered,
+  # that is 17 bits carrying a citation, over 16 options and one kind.
+  #
+  # ⚠ SEVEN WERE MOVED AND TEN WERE NOT, AND THE DIFFERENCE IS WHETHER A MOVE
+  # COSTS A WORD. `oldlimit` (cktntask.c:68 -- the very precedent §A11 cites)
+  # and the six front-end print flags (spiceif.c:472-499) already had their
+  # citation in brackets, just in the middle; relocating the bracket to the end
+  # of its own sentence adds and removes NO word, so it is the "move it" §A11
+  # asks for. The other ten do not have a bracket at all -- the citation is the
+  # sentence's SUBJECT (`niiter.c:38-39 raises every iteration limit...`) or an
+  # em-dash aside -- so moving it means REWRITING the sentence, which is new
+  # copy and is the user's to rule on. They are reported, not tidied, exactly as
+  # §A4's bare `Start` and §A6's `analysis_gap_msg` were.
+  #
+  # ⚠ THE SIX ARE ONE STRING SHARED BY SIX ROWS, and the bracket goes to the end
+  # of the FIRST sentence rather than the end of the string: the citation
+  # evidences "the print happens on the dot-card path only", not the separate
+  # MEASURED sentence after it. Sentence-final means the sentence it belongs to.
   variable sim_options {
 
     maxopalter             {cptype optint phase any group iteration scope global ngphase task help {Maximum analog/event alternations in DCOP} site cktsopt.c:267}
@@ -29581,7 +29655,7 @@ $_leg
     srcsteps               {cptype optint phase any group iteration scope {analysis op} default 1 ngphase task help {number of source steps} site cktsopt.c:297}
     gminsteps              {cptype optint phase any group iteration scope {analysis op} default 1 ngphase task help {number of Gmin steps} site cktsopt.c:298}
     gminfactor             {cptype optreal phase any group convergence scope {analysis op} default 10 ngphase task help {factor per Gmin step} site cktsopt.c:299}
-    oldlimit               {cptype optflag phase any group convergence scope global default 0 ngphase task inert {CKTnewTask leaves TSKfixLimit uncopied (cktntask.c:68 is the bare comment /* fixLimit */), so the option is dropped the moment an analysis is issued as a .control command, which is the route ASE-L uses} help {use SPICE2 MOSfet limiting} site cktsopt.c:306}
+    oldlimit               {cptype optflag phase any group convergence scope global default 0 ngphase task inert {CKTnewTask leaves TSKfixLimit uncopied, so the option is dropped the moment an analysis is issued as a .control command, which is the route ASE-L uses (cktntask.c:68 is the bare comment /* fixLimit */)} help {use SPICE2 MOSfet limiting} site cktsopt.c:306}
     method                 {cptype optstring phase any group integration scope {analysis tran} default trap values {trap gear} ngphase task help {Integration method} site cktsopt.c:313}
     maxord                 {cptype optint phase any group integration scope {analysis tran} default 2 ngphase task help {Maximum integration order} site cktsopt.c:314}
     indverbosity           {cptype optint phase any group device scope global default 2 ngphase task help {Control Inductive Systems Check (coupling)} site cktsopt.c:315}
@@ -29800,12 +29874,12 @@ $_leg
     soa_log                {cptype string phase cmdline group diagnostics scope global ngphase argv cmdline --soa-log=@value help {file for SOA warnings; pairs with the warn option, which has a different door} site main.c:970}
 
 
-    acct                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
-    list                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
-    nomod                  {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
-    nopage                 {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
-    node                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
-    opts                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    acct                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    list                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    nomod                  {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    nopage                 {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    node                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
+    opts                   {cptype optflag phase any group diagnostics scope global ngphase frontend inert {the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does} site cktsopt.c}
 
 
     nosavecurrents         {cptype optflag phase any group output scope global inert {documented by the ngspice manual as the workaround for savecurrents + AC, and the string appears NOWHERE in the source tree. Tombstone -- do not re-add it} site none}

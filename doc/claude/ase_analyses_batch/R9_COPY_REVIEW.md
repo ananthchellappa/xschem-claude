@@ -698,6 +698,75 @@ dialog that does not exist yet.
 > and is in scope — move it and say so. A site that knows the limit but does **not** cite it is
 > **not** in scope: adding a citation is new copy, which is the user's to rule on. Report it.
 
+> ### ✅ IMPLEMENTED 2026-09-16 — and the survey found **eighteen** citations, not two
+>
+> **Surveyed by RENDERING, not by grepping.** Every one of the 247 option rows carries a
+> `site` key holding a `file:line`, and **no user-visible surface reads it** — it is
+> documentation and reaches no screen, so a source grep answers **393** where a user sees
+> **18**. What a user sees is what `ase::ui::optsheet_detail` composes (`help`, then one of
+> `inert`/`owner`/`clamp`/`defect`+`caveat` by `ase::opt_offer`, then `results_why`), plus
+> the measurement catalogue's `unsupported`. That is **18 bits over 17 options and one kind**.
+>
+> ⚠ **CORRECTED 2026-09-16, and the error was in this block rather than in the work.** It read
+> *"seventeen … 17 bits over 16 options"* and *"a grep answers 247"* — **both wrong, and the
+> first contradicted this block's own "8 of the 18" eight paragraphs below** (8 compliant + 10
+> mid-sentence = 18). **247 is the option ROW count, not the grep's match count**, which is
+> **393**. So the ratio the sentence exists to make — how far a source grep overstates what a
+> user can actually read — is nearer **twenty-two to one** than fourteen, and the point is
+> **strengthened** by the correction. *"Nothing reads it"* is likewise narrowed to *"no
+> user-visible reader"*: four readers exist in `test_ase_options_1437`.
+>
+> **One was already compliant: `R9-355` itself** (`com_measure2.c:2156`) — parenthesised,
+> and closing its own sentence. It is the exemplar the rule is written from.
+>
+> **Seven were moved**, and every one is a *pure relocation* — not one word added or removed:
+>
+> | handle | option(s) | citation | was | now |
+> |---|---|---|---|---|
+> | `R9-245` | `oldlimit` | `cktntask.c:68` | after *“uncopied”*, mid-sentence | end of the sentence |
+> | `R9-252` | `acct` `list` `nomod` `nopage` `node` `opts` | `spiceif.c:472-499` | after *“front-end side”*, mid-sentence | end of **its own** sentence |
+>
+> ⚠ **`R9-245` is the precedent §A11 itself cites**, and it was the rule's first violation.
+> ⚠ **`R9-252`'s bracket goes to the end of the FIRST sentence, not the end of the string** —
+> it evidences *“the print happens on the dot-card path only”*, not the separate `MEASURED`
+> sentence after it. *Sentence*-final means the sentence it belongs to.
+>
+> ⚠ **TEN WERE NOT MOVED, AND THEY ARE REPORTED RATHER THAN TIDIED.** In each of these the
+> citation is **not in a bracket at all** — it is the sentence's grammatical **subject**, or
+> an em-dash aside — so “moving” it means **rewriting the sentence**, which is new copy and
+> is the user's, exactly as §A11 says of *adding* one:
+>
+> | option(s) | citation | shape | handle |
+> |---|---|---|---|
+> | `klu_memgrow_factor` | `cktsopt.c:187` | subject | `R9-246` |
+> | `newtrunc` | `cktsopt.c:199-207` | subject | `R9-247` |
+> | `x11lineararcs` | `x11.c:707` | subject | `R9-250` |
+> | `debug` | `options.c:346-348` | subject | `R9-251` |
+> | `itl1` `itl2` `itl4` | `niiter.c:38-39` | subject | ⚠ **no handle** |
+> | `defas` | `cktsopt.c:111-113` | after a colon | ⚠ **no handle** |
+> | `scale` | `subckt.c:592`, `inp.c:2689` | em-dash aside | ⚠ **no handle** |
+> | `wnflag` | `inpgmod.c:268` (bracketed, mid) · `inpcom.c:990`, `inp.c:2828` (subjects) | mixed | ⚠ **no handle** |
+>
+> ⚠ **Four of those ten carry no `R9-` handle at all** — `niiter.c`, `cktsopt.c:111`,
+> `subckt.c`, `inpgmod.c` return **zero** hits in this document. That is the same bookkeeping
+> gap §A6 found in `ase::analysis_gap_msg`: user-visible copy with nothing to rule on it.
+> **For the driver to raise with the user.**
+>
+> ⚠ **One adjacent site is reported and deliberately NOT moved:** the `d_cosim` multi-instance
+> notice cites **`spice_netlist.c:143-169`**, bracketed and mid-sentence — but that is
+> **xschem's own netlister**, not the simulator's source, and §A11's subject is *“where a limit
+> lives in the simulator's source”*. Extending the rule to ASE-L's host is a one-word change to
+> the ruling and is the user's to make. It has no handle either.
+>
+> **So the invariant is true of 8 of the 18 citations a user can reach**, and this document says
+> so rather than implying a sweep. **Pinned by `test_ase_core` row `LB14`**, which scans the
+> *rendered* bits, asserts the seven-plus-one by name, **and pins the ten by name so an eleventh
+> reds the row** — plus a classifier control, because a placement test whose classifier always
+> answered “compliant” would pass while proving nothing.
+>
+> **No handle minted; the count stays 730.** Both moved strings are reworded existing handles,
+> on §A1's and §A4's precedent.
+
 R9-355 tells the user that ngspice *"names DERIV and refuses it at run time
 (com_measure2.c:2156, `function 'deriv' currently not supported`)"*. The options
 sheet already does this — it cites `cktntask.c:68` — so this is a **consistency**
@@ -731,6 +800,54 @@ seconds, and nobody else has to read it.
 >
 > **§A3 covers the other half of this section** (`R9-356`'s `'fft'`, `R9-361`'s `TRIGTARG`):
 > internal tokens shown where a picker shows a label, same accessor, same fix.
+
+> ### ✅ IMPLEMENTED 2026-09-16 — two labels moved, two were already right
+>
+> | kind slot | handle | was | now | why |
+> |---|---|---|---|---|
+> | `fft` | `R9-309` | `FFT spectrum` | **`FFT`** | the noun is redundant at every site there is — see below |
+> | `psd` | `R9-310` | `Power spectral density` | **`PSD`** | the ruling names it explicitly |
+> | `rms` | `R9-298` | `RMS` | **unchanged** | already the acronym |
+> | `fourier` | `R9-307` | `Fourier / THD` | **unchanged** | `THD` is already uppercase; `Fourier` is a **name**, not an acronym |
+>
+> ⚠ **`FFT spectrum` was decided PER SITE, and the sites were enumerated rather than assumed.**
+> The label has exactly **three** readers, and all three name the **measurement kind**: the Kind
+> **column** of the Measurements list, the Kind **picker**, and `$klbl` inside `meas_rule`'s two
+> refusals. The one surface that names a **plot** is the `Measured on` picker — and it renders
+> `ase::meas_name`, *the row's own name*, never this label. So the case the ruling reserved the
+> noun for (*“load-bearing where it names the plot”*) **does not occur**, and the noun is
+> redundant at every site. Had one reader named a plot, that one would have kept `FFT spectrum`.
+>
+> ⚠ **Nothing outside the ruling's four was touched.** `Spectrum over a frequency band`
+> (`R9-311`) keeps its noun — it carries no acronym, and expanding or contracting it is unruled.
+> It is **pinned** by `LB15`'s fifth term so a later consistency pass cannot “finish the job”.
+>
+> ⚠ **`R9-361`'s remedy — the clause task 1 handed forward — is now a relabel, not new copy.**
+> It said *“Measure `FIND, MIN, MAX or AVG` there”*: **four ngspice deck words that appear on no
+> screen in ASE-L**, so a user sent to them could not look one up in the Kind picker. Decided per
+> word — `FIND` → **`Value at a point`**, `MIN` → **`Minimum`**, `MAX` → **`Maximum`**, `AVG` →
+> **`Average`** — each fetched from `ase::meas_kind_label`, the accessor the picker itself reads,
+> so there is no second table and the sentence moves the day one of those labels is reworded.
+> That is **§A3's fix applied to the half §A3's ruling did not cover**, which is why it needed no
+> new wording: every word in the new sentence is an existing, handled label.
+>
+> ⚠ **The four kinds are not a choice made here** — they are the complement of the four this
+> refusal guards (`when trigtarg rms integ`), the set ngspice exits 139 on. The remedy has always
+> meant exactly these.
+>
+> ⚠ **One phrasing consequence, reported rather than decided:** the sentence now reads *“Measure
+> **Value at a point**, Minimum, Maximum or Average there”*, which is a slightly awkward verb
+> pairing that the deck word `FIND` did not have. No word was invented to smooth it, because
+> that would be new copy. **For the driver to raise with the user.**
+>
+> ⚠ **Two acronyms found and left alone, both outside the ruling's four:** the `noise` analysis's
+> plot label **`noise spectral density`** (lowercase, an ngspice plot name, **no handle in this
+> document**), and `src/calculator.tcl`'s *“Power spectral density: needs a new C opcode”* — a
+> different feature, outside this batch's file scope, and not an ASE-L string.
+>
+> **Pinned by `test_ase_core` row `LB15`**, which watches **all four** acronyms and not only the
+> two that moved — otherwise a later pass could expand `RMS` back with nothing going red.
+> **No handle minted; the count stays 730.**
 
 §A2 asks about **case**. This asks about **expansion**, and the same set of
 strings answers it three ways: **`RMS`** (R9-298), **`FFT spectrum`** (R9-309)
@@ -4032,14 +4149,14 @@ ase: simulator '$sim' has no way to write a '$cptype' option through the '$door'
 **R9-245** · caution
 
 ```text
-CKTnewTask leaves TSKfixLimit uncopied (cktntask.c:68 is the bare comment /* fixLimit */), so the option is dropped the moment an analysis is issued as a .control command, which is the route ASE-L uses
+CKTnewTask leaves TSKfixLimit uncopied, so the option is dropped the moment an analysis is issued as a .control command, which is the route ASE-L uses (cktntask.c:68 is the bare comment /* fixLimit */)
 ```
 
 *Where:* catalogue `inert` reason for the option `oldlimit` — appears in the speller's refusal and in the delivery report's `inert` note
 
 *For:* Explains that this option is silently dropped on the route ASE-L runs analyses through.
 
-*Note:* Quotes C identifiers, a file:line and a C comment to a user; longest of the reason strings.
+*Note:* ✅ **MOVED under §A11, 2026-09-16.** The citation used to sit in the middle of the sentence, immediately after *"uncopied"*; it is now the parenthesis that closes the sentence. **Not one word was added or removed** — §A11's *"move it"*, done as a pure relocation. ⚠ **This is the site §A11's own ruling cites as the precedent** (*"the options sheet already does this — it cites `cktntask.c:68`"*), so the rule's exemplar was also its first violation. Placement pinned by `test_ase_core` row `LB14`. Quotes C identifiers, a file:line and a C comment to a user; longest of the reason strings.
 
 
 **R9-246** · caution
@@ -4123,14 +4240,14 @@ options.c:346-348 warns `compiled without debug messages` because FTEDEBUG is de
 **R9-252** · caution
 
 ```text
-the .options card is intercepted front-end side (spiceif.c:472-499) and the print it arms happens on the dot-card path only. MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does
+the .options card is intercepted front-end side and the print it arms happens on the dot-card path only (spiceif.c:472-499). MEASURED on both binaries: on a deck whose analyses run inside .control it changes nothing at all, while the same option on a dot-card deck does
 ```
 
 *Where:* catalogue `inert` reason shared by the six front-end print flags `acct`, `list`, `nomod`, `nopage`, `node`, `opts` — speller refusal and delivery-report `inert` note
 
 *For:* Explains that these accounting/print flags do nothing on the route ASE-L uses, because the printing only happens on the dot-card path.
 
-*Note:* Six rows carry this identical wording. "MEASURED on both binaries" is lab shorthand shouted inside a user-visible reason; the closing "while the same option on a dot-card deck does" ends on a dangling verb.
+*Note:* ✅ **MOVED under §A11, 2026-09-16** — a pure relocation, no word added or removed, in all six rows at once (one literal, six carriers). ⚠ **The bracket went to the end of the FIRST sentence, not the end of the string**: it evidences *"the print happens on the dot-card path only"*, not the separate `MEASURED` sentence after it, and §A11 says **sentence**-final. Placement pinned by `test_ase_core` row `LB14`. Six rows carry this identical wording. "MEASURED on both binaries" is lab shorthand shouted inside a user-visible reason; the closing "while the same option on a dot-card deck does" ends on a dangling verb.
 
 
 **R9-253** · caution
@@ -5016,7 +5133,7 @@ Resample onto a uniform time grid
 **R9-309** · label
 
 ```text
-FFT spectrum
+FFT
 ```
 
 
@@ -5026,10 +5143,13 @@ FFT spectrum
 *For:* Names the producer that takes an FFT of a transient signal and makes a spectrum plot to measure on.
 
 
+*Note:* ✅ **CHANGED under §A12, 2026-09-16** — was `FFT spectrum`. §A12 ruled the noun **per site**, not by substitution: an FFT *is* a spectrum, so the word is redundant where the string names the **measurement kind** and load-bearing only where it names the **plot**. The label has exactly **three** readers and all three name the kind — the Kind column of the Measurements list, the Kind picker, and `$klbl` in `meas_rule`'s two refusals. The one surface that names a **plot**, the `Measured on` picker, renders `ase::meas_name` (the row's own name) and never this label, **so the reserved case does not occur.** Pinned by `test_ase_core` row `LB15`.
+
+
 **R9-310** · label
 
 ```text
-Power spectral density
+PSD
 ```
 
 
@@ -5039,7 +5159,7 @@ Power spectral density
 *For:* Names the producer that computes a power spectral density from a transient signal.
 
 
-*Note:* The one acronym spelled out rather than shipped as `PSD`, where `RMS` and `FFT spectrum` ship the acronym. Pick one convention across the three.
+*Note:* ✅ **CHANGED under §A12, 2026-09-16** — was `Power spectral density`, the one acronym spelled out where `RMS` and `FFT` shipped the acronym. The ruling names this handle explicitly. Pinned by `test_ase_core` row `LB15`, which watches **all four** ruled acronyms and not only the two that moved, so a later pass cannot expand `RMS` back with nothing going red.
 
 
 **R9-311** · label
@@ -5762,7 +5882,7 @@ ngspice names DERIV and refuses it at run time (com_measure2.c:2156, `function '
 *For:* Refuses every `Derivative` row, explaining that ngspice recognises the word but rejects it when the measurement runs — so a user who picked it would otherwise get a silently failed measurement with no explanation — and giving the workaround.
 
 
-*Note:* ⚠ Rendered: joined across three continuations. The sharpest §A6 case in the commit: it puts a C source filename and line number (`com_measure2.c:2156`) and a quoted ngspice source string in front of a circuit designer. There IS precedent for that in already-drafted options-sheet copy (`cktntask.c:68`), so this is a consistency ruling rather than a one-off. The backticked clause is ngspice's own text; the rest is ours.
+*Note:* ⚠ Rendered: joined across three continuations. The sharpest §A6 case in the commit: it puts a C source filename and line number (`com_measure2.c:2156`) and a quoted ngspice source string in front of a circuit designer. There IS precedent for that in already-drafted options-sheet copy (`cktntask.c:68`), so this is a consistency ruling rather than a one-off. The backticked clause is ngspice's own text; the rest is ours. ✅ **KEPT UNCHANGED under §A11, 2026-09-16, and it is the rule's EXEMPLAR**: its citation is parenthesised and closes its own sentence, which is the placement §A11 ruled for. Of the **17** rendered citations the survey found, this was the only one already compliant — the precedent it cites, `cktntask.c:68`, was sitting mid-sentence and had to be moved. Pinned by `test_ase_core` row `LB14`.
 
 
 **R9-356** · refusal
@@ -5858,12 +5978,12 @@ a spectrum's step must fit inside its band; ngspice answers `Error: bad step fre
 **R9-361** · refusal
 
 ```text
-on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for $klbl. Measure FIND, MIN, MAX or AVG there, or measure a spectrum produced from a transient instead
+on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for $klbl. Measure $_safe there, or measure a spectrum produced from a transient instead
 ```
 
-*Rendered:* `... and SEGFAULTS for Delay (TRIG ... TARG). Measure FIND, MIN, MAX or AVG there, ...`
+*Rendered:* `... and SEGFAULTS for Delay (TRIG ... TARG). Measure Value at a point, Minimum, Maximum or Average there, ...`
 
-*Note:* ✅ **FIXED under §A3, 2026-09-16** — was `[string toupper $kind]`, which told a row captioned `Delay (TRIG ... TARG)` that it segfaults for **`TRIGTARG`**, a word on no screen anywhere in ASE-L. ⚠ **`SEGFAULTS` KEEPS ITS CAPITALS** — §A1's named exception, so this change moves which word the sentence *names* without quietening the shout, and row LB9 asserts both at once. ⚠ **`rms` is the one kind where the old and new spellings are the same string (`RMS`)**, which is why LB9's non-vacuity terms use `trigtarg`, `when` and `integ` instead. **NOT changed and reported instead:** the remedy still names ngspice's deck function words `FIND, MIN, MAX or AVG` rather than the four kind labels, so a user still cannot look those six words up in the picker — R9-361's original note raises it, §A3's ruling does not cover it, and it is left for §A12's crew.
+*Note:* ✅ **FIXED under §A3, 2026-09-16** — was `[string toupper $kind]`, which told a row captioned `Delay (TRIG ... TARG)` that it segfaults for **`TRIGTARG`**, a word on no screen anywhere in ASE-L. ⚠ **`SEGFAULTS` KEEPS ITS CAPITALS** — §A1's named exception, so this change moves which word the sentence *names* without quietening the shout, and row LB9 asserts both at once. ⚠ **`rms` is the one kind where the old and new spellings are the same string (`RMS`)**, which is why LB9's non-vacuity terms use `trigtarg`, `when` and `integ` instead. **NOT changed and reported instead:** the remedy still names ngspice's deck function words `FIND, MIN, MAX or AVG` rather than the four kind labels, so a user still cannot look those six words up in the picker — R9-361's original note raises it, §A3's ruling does not cover it, and it is left for §A12's crew. ✅ **AND §A12's CREW FIXED IT, 2026-09-16.** `$_safe` is built from `ase::meas_kind_label` for the four kinds `find`/`min`/`max`/`avg`, so the remedy now reads **`Measure Value at a point, Minimum, Maximum or Average there`** — the words the Kind picker shows, through the accessor the picker reads, with no second table on this side either. It is a **relabel, not new copy**: every word in the new sentence is an existing handled label (`R9-295`, `R9-299`, `R9-300`, `R9-297`). ⚠ **The four kinds are not chosen here** — they are the complement of the four this guard refuses (`when trigtarg rms integ`), the set ngspice exits 139 on. ⚠ **One phrasing consequence, reported not decided:** *"Measure Value at a point there"* is a slightly awkward verb pairing that the deck word `FIND` did not have, and no word was invented to smooth it because that would be new copy. Pinned by `test_ase_core` row `LB15`.
 
 
 *Where:* A measurement row's FATAL reason — the reason half of the deck refusal. Produced by the **ngspice adapter's** `ase::backend::ngspice::meas_rule`, collected by ASE-L core's `ase::meas_fatals`, and composed into the render-refusal frame below. Unlike a `refuse`, this one IS reachable today: it stops the whole deck being written, so the user meets it wherever a `render_deck` error surfaces (the Deck preview pane and the run path).
