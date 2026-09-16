@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**726 strings, from 38 issues, grouped by where the user sees them** — not by
+**728 strings, from 38 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -107,6 +107,104 @@ marking up individual handles, and the rest of the document is mostly the
 consequence.
 
 ## A1 — Shouted words in the middle of a sentence
+
+> ### ✅ RULED BY THE USER, 2026-09-15 — part 1 of 3 (the field labels)
+>
+> **The arithmetic comes out of the label.** `R9-011`, `R9-030` and `R9-051` become plain
+> `Number of points` (keeping `R9-030`'s trailing colon, which is `form_label`'s, not copy), and
+> the arithmetic moves into the caution line beneath the form, where a sentence has room to name
+> **which analysis it is talking about**.
+>
+> **The reason this was asked, and it is the part to preserve when implementing:** the AC and
+> transient forms said *"2 gives ONE point"* while the noise form said *"1 gives ONE point"*.
+> **Both are correct** — ngspice counts noise points differently from AC points — but a user who
+> opens both in one session sees the same wording with different numbers and concludes the tool
+> is inconsistent. **So each form's caution must state its own rule explicitly**, rather than the
+> two cautions being generic and leaving the difference to be inferred. A shared sentence that
+> silently means different things on different forms would reproduce the defect one layer down.
+>
+> The user was told the cost and accepted it: **a label cannot be missed and a caution line can
+> be skipped**, so this trades certainty for consistency.
+>
+> ### ✅ RULED BY THE USER, 2026-09-15 — part 2 of 3 (shouted words inside sentences)
+>
+> **Lowercase `VOLTAGE` (`R9-118`), `DEGREES` (`R9-138`) and both `NOT`s (`R9-078`, `R9-171`)**,
+> rewriting the negations positively where that reads naturally — `R9-171` already carries its own
+> positive form in the same sentence (*"so it stays in force for every analysis after it"*), so the
+> negated clause can go rather than merely losing its capitals.
+>
+> ✅ **`SEGFAULTS` (`R9-135`) KEEPS its capitals**, and the reason must survive into any future
+> copy pass: it is **not emphasis**. It names a *category of outcome* — ngspice dies, and there is
+> no exit status, no log and no results file to explain it. Every other shouted word in this
+> section stresses a word choice; this one warns that the tool will vanish taking its diagnostics
+> with it. **The rule that follows: capitals survive only where the word names a catastrophic
+> outcome, never where they stress a word the reader would hit anyway.**
+>
+> ⚠ **The argument the user was given for keeping all of them, recorded because it is real:** these
+> strings land in the CIW and the run log, which are **plain text with no bold available**, so
+> capitals are the only emphasis mechanism they have. The ruling accepts that cost.
+>
+> ### ✅ RULED BY THE USER, 2026-09-15 — part 3 of 3 (the prefixes) — **A1 IS COMPLETE**
+>
+> ✅ **`NOT OFFERED:` and `NOT MEASURED:` KEEP their capitals** (`R9-190`, `R9-212`–`R9-221`,
+> eleven rows). They **label a class of row** — the job a column heading would do if the options
+> sheet had one — rather than stressing a word inside a sentence, and the repeated word in a fixed
+> position is what makes the sheet's left edge scannable.
+>
+> ⚠ **This ruling deliberately leaves the interface LOOKING inconsistent**, and the user was told
+> so: four sentences lose their capitals while eleven rows keep theirs. The distinction is
+> structural — *prefix versus emphasis* — and structural distinctions are the ones readers do not
+> notice. **So both exceptions must be PINNED BY A ROW**, or a later consistency pass will tidy
+> them away in good faith and no one will know a ruling was reversed.
+>
+> **The complete A1 rule, in one sentence:** capitals survive only where a word names a
+> catastrophic outcome (`SEGFAULTS`) or marks a class of row (`NOT OFFERED:`, `NOT MEASURED:`);
+> everywhere else, emphasis inside a sentence loses them, and a field label carries no arithmetic.
+>
+> ### ⚖ NEW COPY THIS RULING PRODUCED — `R9-727`, `R9-728`, **NOT YET RULED ON**
+>
+> Implementing A1 uncovered that the caution the arithmetic moves *into* **was already the shared
+> sentence the ruling forbids**: one predicate told four analysis types *"2 points yields ONE
+> point"*. Re-measured on both binaries and **CONFIRMED by an independent verifier**, that is
+> **false for `noise`** (1 point really is measured, but `$plots` is `const noise1` and the
+> Integrated Noise plot is **not created at all**) and **false for `disto`** (3/4/5/6 points, never
+> collapsing). So `noise` gained its own arm and `disto`'s never-correct precondition was removed.
+>
+> **`R9-727`** · caution
+>
+> ```text
+> a linear noise sweep of 1 point measures one frequency and produces no Integrated Noise plot at all, and $sim says nothing about it
+> ```
+>
+> **`R9-728`** · fix
+>
+> ```text
+> use 2 points or more, or switch the sweep to `dec`
+> ```
+>
+> ⚠ **These two are new sentences the user has never seen, and they are NOT covered by the A1
+> answer** — A1 ruled on shouting and on arithmetic-in-labels, not on this wording. They are raised
+> with the rest of R9.
+>
+> ⚠ **The driver's brief to the crew was wrong here and the crew was right to say so.** It read
+> *"no handle is added; the count stays 726"* — correct for strings A1 *changes*, wrong the moment
+> the work produced genuinely new copy. The crew obeyed it and recorded the new text inside
+> `R9-153`'s note, then reported the consequence plainly rather than widening its own scope. The
+> handles are minted here by the driver, and the count moves **726 → 728**. **Issue count stays 38:
+> these arise from a ruling, not from an issue.**
+>
+> ### ✅ CONSEQUENCE — `R9-153`'s `ONE` lowercases too
+>
+> `R9-153` (*"a linear sweep of 2 points yields ONE point"*) was flagged under part 1 as pending.
+> **Part 2's rule settles it**: the shouted `ONE` is emphasis on a word the reader hits anyway, not
+> a catastrophic outcome, so it lowercases with the rest. ⚠ **This was NOT put to the user as its
+> own question** — it follows from the stated rule rather than from a separate answer, and is
+> recorded that way so a later reader can tell a ruling from an inference.
+
+⚠ **The rest of this section is the question AS IT WAS PUT**, and it quotes the
+strings as they stood at HEAD `89677ac5`. The ruling above has since shipped, so
+every handle below now carries its **new** text; read the prose here as the case
+for the change, not as a description of the tree.
 
 Nine strings shout a word in capitals mid-sentence for emphasis:
 `ONE` (R9-011, R9-030, R9-051, R9-153), `VOLTAGE` (R9-118), `DEGREES` (R9-138),
@@ -458,14 +556,14 @@ Points per octave
 **R9-011** · label
 
 ```text
-Number of points (2 gives ONE point)
+Number of points
 ```
 
 *Where:* Choose Analyses dialog -> ac form, points row, text shown when Sweep type is `lin`
 
-*For:* Names the same ac points entry when the sweep is linear, and warns in the label itself that ngspice's linear count is a total, not a per-decade rate, and is off by one.
+*For:* Names the same ac points entry when the sweep is linear.
 
-*Note:* THE ONE THE REVIEWER WILL STOP ON. Three problems: (a) shouting `ONE` mid-label, which is the only uppercase word in any label in the tree; (b) an arithmetic claim embedded in a field label rather than in help text; (c) it does not match its siblings -- the IDENTICAL field on the `noise` form reads `Number of points (1 gives ONE point)` and on the `disto` form reads plain `Number of points`. Those two other types were added by later commits, but the three ship side by side today and only this one is in 1416's scope.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 1**, 2026-09-15. It read `Number of points (2 gives ONE point)` — the only uppercase word in any label in the tree, and an arithmetic claim inside a field label. The arithmetic now lives in the caution beneath the form (R9-153), where a sentence has room to say *which* analysis it is talking about; the label is a name again. All four sweep-bearing types (`ac`, `noise`, `disto`, `sp`) now spell this label identically, which is what the old note's problem (c) asked for.
 
 
 **R9-012** · label
@@ -719,16 +817,16 @@ Points per octave:
 **R9-030** · label
 
 ```text
-Number of points (2 gives ONE point):
+Number of points:
 ```
 
 *Where:* Choose Analyses dialog → per-analysis form, AC, the points field label after picking `lin`
 
-*For:* Same field, relabelled for the linear sweep — where the number is a TOTAL, and ngspice's off-by-one means 2 yields a single point. This relabel is the defect issue 1417 is named for.
+*For:* Same field, relabelled for the linear sweep — where the number is a total rather than a per-decade rate.
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* ⚠ THE ONE THE REVIEWER MOST LIKELY WANTS TO CHANGE. Shouty caps mid-label, a parenthetical that is a warning rather than a unit, and it is INCONSISTENT ACROSS TYPES at HEAD: noise ships "Number of points (1 gives ONE point):" and disto ships a bare "Number of points:" for the same `lin` pick. The parenthetical constants are 1416/1432 text; 1417 is the commit that renders them.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 1**, 2026-09-15. It read `Number of points (2 gives ONE point):`. **The trailing colon is `ase::ui::form_label`'s, not copy, and is deliberately kept** — it is the rendered form of R9-011's source literal. The arithmetic moved to the caution beneath the form; the four sweep-bearing types now render this label identically.
 
 
 **R9-031** · label
@@ -868,7 +966,7 @@ Number of points
 
 *For:* Captions the distortion sweep's point-count entry when the sweep is linear.
 
-*Note:* The third spelling of one caption across three analyses: `ac` says "(2 gives ONE point)", `noise` says "(1 gives ONE point)", `disto` says nothing at all. Rendered as "Number of points:".
+*Note:* ⚠ **UNCHANGED BY ⚖ R9 A1, AND IT IS NOW THE SPELLING THE OTHERS ADOPTED.** It used to be the third of three: `ac` said "(2 gives ONE point)", `noise` said "(1 gives ONE point)", `disto` said nothing at all. A1 part 1 took the arithmetic out of the other two, so all four sweep-bearing types now ship this exact string. Rendered as "Number of points:".
 
 
 **R9-041** · label
@@ -1020,14 +1118,14 @@ zer
 **R9-051** · label
 
 ```text
-Number of points (1 gives ONE point)
+Number of points
 ```
 
 *Where:* Choose Analyses form, `noise` — left-column field label, shown only while Sweep type is `lin` (the Sweep type combobox relabels this field live)
 
-*For:* Captions the noise sweep's point-count entry when the sweep is linear, and warns that a linear noise sweep of 1 collapses to a single frequency (which also suppresses the Integrated Noise plot).
+*For:* Captions the noise sweep's point-count entry when the sweep is linear.
 
-*Note:* ⚠ The identical field on the `ac` analysis reads "Number of points (2 gives ONE point)" — same caption, different number, in the same dialog. Both are measured-correct (the two analyses step differently), but seen side by side they read like a typo in one of them. Rendered with a trailing colon: "Number of points (1 gives ONE point):". "ONE" shouted.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 1**, 2026-09-15. It read `Number of points (1 gives ONE point)` while the identical field on `ac` read `(2 gives ONE point)` — same caption, different number, in the same dialog, and both measured-correct. That is the pair the ruling is named for. **The noise warning was not deleted, it moved**: the `lin_points` caution now has a `noise` arm of its own that fires at 1 point and names what is actually lost there — the Integrated Noise plot, which ngspice does not create at all for a one-point linear noise sweep (re-measured 2026-09-15, both binaries). Rendered with a trailing colon: "Number of points:".
 
 
 **R9-052** · label
@@ -1407,7 +1505,7 @@ ase: analysis type '$type' is not one this simulator backend can render
 **R9-078** · caution
 
 ```text
-ase: it is enabled on this bench, so the run would have completed, produced no result for it, and said nothing. Nothing was generated: no deck, no raw, no log. Any files already in [file normalize $rd] are from an earlier run. `set ase_preflight 0` does NOT disable this check.
+ase: it is enabled on this bench, so the run would have completed, produced no result for it, and said nothing. Nothing was generated: no deck, no raw, no log. Any files already in [file normalize $rd] are from an earlier run. `set ase_preflight 0` leaves this check in force.
 ```
 
 *Where:* CIW / ASE-L message area, red (error) — the second line of the same preflight refusal, printed once after the per-type lines above, and joined into the raised error text.
@@ -1416,7 +1514,7 @@ ase: it is enabled on this bench, so the run would have completed, produced no r
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* Assembled in ase::preflight_gate (src/ase.tcl ~:11230) from a continued string plus $rdnote. THE RUNDIR SENTENCE IS CONDITIONAL: when the rundir does not yet exist the middle sentence is absent entirely and the text reads "...no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check." The path shown is [file normalize $rd], i.e. an absolute directory path. The backticks around set ase_preflight 0 are literal characters in the shipped message, and the shouted NOT is literal too. ⚠ Reviewer should see this beside its near-twin ~20 lines above in the same proc (a DIFFERENT issue, not 1401): "ase: it is enabled on this bench, so the run would have started and produced nothing for it. Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check." — two refusals that open with the same nine words and diverge at "completed, produced no result for it, and said nothing" vs "started and produced nothing for it". Also: "it" has no antecedent in this line on its own; the antecedent is the analysis type named in the line before it.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: the closing sentence read "`set ase_preflight 0` does NOT disable this check." and is now the positive "`set ase_preflight 0` leaves this check in force." — the rewrite the ruling preferred to a bare lowercasing. **The fragment is shared by FOUR refusals in `ase::preflight_gate` and all four were changed together**, because leaving three of them shouting would have re-created the very drift §A1 is about. Assembled in ase::preflight_gate (src/ase.tcl) from a continued string plus $rdnote. THE RUNDIR SENTENCE IS CONDITIONAL: when the rundir does not yet exist the middle sentence is absent entirely and the text reads "...no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." The path shown is [file normalize $rd], i.e. an absolute directory path. The backticks around set ase_preflight 0 are literal characters in the shipped message. ⚠ Reviewer should see this beside its near-twin ~20 lines above in the same proc (a DIFFERENT issue, not 1401): "ase: it is enabled on this bench, so the run would have started and produced nothing for it. Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." — two refusals that open with the same nine words and diverge at "completed, produced no result for it, and said nothing" vs "started and produced nothing for it". Also: "it" has no antecedent in this line on its own; the antecedent is the analysis type named in the line before it.
 
 
 ### from issue 1417 (stage 3b)
@@ -1935,7 +2033,7 @@ name a device this netlist has at the top level -- a device inside a subcircuit 
 **R9-118** · refusal
 
 ```text
-a noise analysis measures a VOLTAGE, and '<outv>' is a current
+a noise analysis measures a voltage, and '<outv>' is a current
 ```
 
 *Where:* Choose Analyses precondition banner under the form (fatal, glyph "⊘ "), and the pre-run refusal in the run log framed "ase: the <type> analysis cannot run: …"
@@ -1944,7 +2042,7 @@ a noise analysis measures a VOLTAGE, and '<outv>' is a current
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* <outv> is the user's own typed Output string, inserted verbatim. "VOLTAGE" is shouted in caps mid-sentence — the only all-caps word in the noise clauses. Clause carries no frame and no trailing period; the caller supplies both.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: `VOLTAGE` was shouted mid-sentence and is now lowercase. <outv> is the user's own typed Output string, inserted verbatim. Clause carries no frame and no trailing period; the caller supplies both.
 
 
 **R9-119** · advice
@@ -1955,7 +2053,7 @@ name a node, as `v(out)` or `v(out,ref)`
 
 *Where:* Same banner line, appended as ". Fix: <this>"; in the fatal run-log refusal it is its own line, "ase:   fix: <this>"
 
-*For:* The remedy paired with the "measures a VOLTAGE" refusal above.
+*For:* The remedy paired with the "measures a voltage" refusal above.
 
 *Note:* Backticks are literal in the shipped string — they are not markdown, they render as backticks in a Tk label.
 
@@ -2211,14 +2309,14 @@ no source in this circuit carries a `distof1` excitation, and a distortion analy
 **R9-138** · advice
 
 ```text
-add `distof1 <mag> <phase>` to the input source (phase is in DEGREES)
+add `distof1 <mag> <phase>` to the input source (phase is in degrees)
 ```
 
 *Where:* Banner ". Fix: …" clause / run-log advice line
 
 *For:* The remedy paired with the missing-distof1 caution.
 
-*Note:* <mag> and <phase> here are LITERAL placeholder text shown to the user, not substituted values — the user is meant to read them as "type a magnitude and a phase". "DEGREES" is shouted.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: `DEGREES` was shouted and is now lowercase. <mag> and <phase> here are LITERAL placeholder text shown to the user, not substituted values — the user is meant to read them as "type a magnitude and a phase".
 
 
 **R9-139** · caution
@@ -2420,12 +2518,14 @@ switch this analysis to the DC mode, which is safe under KLU, or clear the `klu`
 **R9-153** · caution
 
 ```text
-a linear sweep of 2 points yields ONE point, and $sim says nothing about it
+a linear sweep of 2 points yields one point, and $sim says nothing about it
 ```
 
 *Where:* Choose Analyses form — precondition banner, caution row for an ac/sp sweep of lin 2
 
-*For:* Rule 3: warns (never refuses) that lin 2 silently halves to a single point.
+*For:* Rule 3: warns (never refuses) that lin 2 silently halves to a single point. **This is where A1 part 1 put the arithmetic that used to be in the field label** (R9-011 / R9-030 / R9-051).
+
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1**, 2026-09-15: `ONE` lowercased — by the rule rather than by its own answer, which the ruling block records as an inference. ⚠ **AND THE SAME PREDICATE NOW SPEAKS A SECOND SENTENCE, which is not a new handle but a per-type arm of this one** — A1 requires each form's caution to state its *own* rule, and re-measurement on both binaries showed the sentence above was false for two of the four types that used to receive it. `noise` fires at **1** point with *"a linear noise sweep of 1 point measures one frequency and produces no Integrated Noise plot at all, and $sim says nothing about it"* / fix *"use 2 points or more, or switch the sweep to `dec`"*; `disto` no longer declares the precondition at all (measured `lin 1/2/3/4` → 3/4/5/6 points — it never collapses). `ac` and `sp` keep the sentence above.
 
 
 **R9-154** · advice
@@ -2656,12 +2756,14 @@ turned off for the $atype analysis, which crashes $sim under it, and put back im
 **R9-171** · caution
 
 ```text
-set for the $atype analysis and NOT put back afterwards -- [ase::opt_leak_why $sim $name], so it stays in force for every analysis after it
+set for the $atype analysis and left in force for every analysis after it -- [ase::opt_leak_why $sim $name]
 ```
 
 *Where:* Deck preview pane — 'not delivered' note for a scoped row that cannot be restored
 
 *For:* Warns in the preview that a per-analysis setting will outlive its analysis, and why.
+
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15. It read "set for the $atype analysis and NOT put back afterwards -- [why], so it stays in force for every analysis after it". The ruling asked for a positive rewrite rather than a bare lowercasing, on the grounds that the sentence **already carried its own positive form in its trailing clause** — so that clause became the whole sentence and the reason now follows it. Same facts, one clause shorter, no negation.
 
 
 **R9-172** · caution
@@ -4926,7 +5028,7 @@ Points
 *For:* Captions how many points the resampled uniform grid should have.
 
 
-*Note:* ⚠ Near-twin of the analysis forms' `Number of points (2 gives ONE point)` / `(1 gives ONE point)` captions that §A1 is about, but with no arithmetic caveat and a different, shorter wording. Whatever §A1 decides for those should decide this.
+*Note:* ⚠ Near-twin of the analysis forms' points captions that §A1 was about — which carried `(2 gives ONE point)` / `(1 gives ONE point)` and, since A1 part 1 shipped, carry no arithmetic at all. This one never did, so **A1 leaves it unchanged**; the wording is still shorter than the analysis forms' `Number of points` and that difference is A5's, not A1's.
 
 
 **R9-335** · label
@@ -6009,9 +6111,11 @@ labels are **rendered** — the code composes them from the registry's declared
 widget shows for the stated case, not a single source literal.
 
 ⚠ **The sweep field labels this analysis shows are NOT new**: `Sweep type`,
-`Points per decade` / `Points per octave` / `Number of points (2 gives ONE point)`,
+`Points per decade` / `Points per octave` / `Number of points`,
 `Start frequency`, `Stop frequency` and `lin_points`' caution and fix are all
-consumed unchanged from stage 6. They are already handled above.
+consumed unchanged from stage 6. They are already handled above. (`sp` shares
+`ac`'s linear count — measured `sp lin 2` → 1 point — so ⚖ R9 A1 left it on
+`ac`'s caution sentence and took the arithmetic out of its label with the rest.)
 
 
 **R9-411** · label
@@ -7849,7 +7953,7 @@ ase: this circuit cannot run: <sentence>
 ```
 
 
-*Where:* the pre-run gate, followed by `ase:   fix: <fix>` and the gate's existing `ase: Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` does NOT disable this check.`
+*Where:* the pre-run gate, followed by `ase:   fix: <fix>` and the gate's existing `ase: Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` leaves this check in force.` (that closing sentence was changed by ⚖ R9 A1 part 2 — see R9-078)
 
 
 *Note:* ⚠ a NEW frame, because the gate's existing fatal frame is per analysis (`the <type> analysis cannot run`) and this refusal is about the whole circuit. `render_deck`'s tier uses its existing frame, `ase: <sentence>; nothing was rendered`.

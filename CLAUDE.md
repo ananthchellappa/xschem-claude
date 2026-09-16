@@ -99,8 +99,17 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   a sweep nobody took. Note how cleanly this defeats the rule above it: you are
   told to ignore the exit code and read the file, and here the nonzero exit is the
   **only** signal that the file is a fossil. Two receipts in the ASE-L batch and
-  one commit message carry a case count obtained this way (84, where the tree has
-  82). **So before counting, confirm the log's MTIME moved off its pre-run value**
+  one commit message carry a case count obtained this way (84, where the tree runs
+  **83**).
+  ⚠ **AND THE CASE COUNT IS NOT THE LOG-LINE COUNT** — a correction to this very
+  paragraph, measured 2026-09-15. It said the tree has "82", which was itself wrong
+  for the *same* reason the 84 was: 82 is the number of `Total num fail:` lines, and
+  `results.log` carries **one fewer than there are cases** by design (the bullet
+  below: `xschemtest.tcl` logs only when it fails). The run is **83 cases** — 68
+  headless, 11 display, 4 top-level, every `Start` matched by a `Finish`, none run
+  twice. **Count `Start`/`Finish` pairs for cases; count log lines only for
+  failures.** Two independent passes reached "82" by conflating them, so this is a
+  trap with a track record, not a one-off slip. **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
   hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for

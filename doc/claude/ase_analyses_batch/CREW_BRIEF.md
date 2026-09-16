@@ -313,6 +313,26 @@ Each one has a scar behind it. Sources: `/home/analog/dev/xschem-claude/CLAUDE.m
 - **Sabotage-verify every new row.** Acceptance is a name+status diff, never a count: break
   the fix, watch the named row go RED, restore by `cp`, verify the md5 matches, report the
   red set by name. A row that cannot be made to fail proves nothing.
+  ⚠ **AND "THE FILE CHANGED" IS NOT "THE FILE CHANGED WHERE I MEANT".** Measured 2026-09-15 by
+  the ⚖ R9 A1 verifier, on itself: its first label sabotage **lost its line address and became a
+  global substitution**, hitting all four labels instead of the one it named — and **the
+  md5-moved guard passed**, because the edit *did* change the file, just far more of it than
+  intended. A second arm lowercased `SCOPED:`, a term belonging to row **HK4**, and duly
+  reddened **HK4** — while the row it was meant to prove was **HK5**. Either one, reported
+  as-is, would have claimed a row proven on the strength of a red that was not it.
+  **So the guard is not "the md5 moved" but "exactly the intended lines moved"**: diff the file
+  after planting the arm and **count the changed lines against the number you intended**, and
+  require the red set to be **exactly** the named row rather than merely non-empty. The verifier
+  caught both itself and reported them; that is the standard.
+- ⚠ **NEVER END YOUR TURN WAITING TO BE WOKEN.** A watch, monitor, timer or notification does
+  **not** resume you: when your turn ends you stop executing, and a pass that says *"standing by
+  for the watch event"* sits there until the driver notices. This happened **twice on
+  2026-09-15**, both times to a verifier holding a live regression run it had correctly started.
+  **Poll it yourself, in the foreground, by recorded PID** — `while ps -p <pid> -o comm=
+  >/dev/null; do sleep 30; done` inside `timeout <n>`, printing elapsed each pass so "still
+  working" and "wedged" stay distinguishable. Never match a process by a pattern your own
+  command line contains. **A stall is a named outcome — `TIMEOUT` with the last line of the log
+  — never the absence of one**, because a hung job and a slow job produce identical silence.
 - **Run `tests/run_regression.tcl` SOLO** (issue **0990** — two at once corrupt
   each other and the loser prints a `FATAL` that never happened; `exit -1` is the tell).
   ⚠ **The path above said `tests/headless/run_regression.tcl` until 2026-09-15 and that file

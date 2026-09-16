@@ -76,6 +76,14 @@
 #   92 -> 94 AND RAISED, issue 1468 (receipt 44): RU12 -- rule 4 warns from 2^32
 #   points up and quotes the whole count -- and RU13 -- the one estimator takes
 #   a whole number of any size and still nothing else. Pure Tcl, both arms.
+#   94 -> 97 AND RAISED, ⚖ R9 ruling A1 (2026-09-15): RU6c, RU6d and RU6e. A1
+#   moved the points arithmetic out of the field labels and INTO rule 3's
+#   caution, on the stated condition that each form state its OWN rule -- so the
+#   caution's words became part of the contract and needed rows. RU6d and RU6e
+#   are also a defect fix: re-measured on both binaries, `noise lin 2` gives TWO
+#   points and `disto lin 2` gives FOUR, and both were being told they would get
+#   one. RU8 MOVED rather than being added (disto no longer declares the need).
+#   Pure Tcl, both arms.
 #
 # ⚠ NO SIMULATOR IS STARTED HERE. Every ngspice number quoted above was
 # measured beforehand on both binaries; the rows below assert what ASE-L does
@@ -906,6 +914,81 @@ check {RU6b and it never refuses} \
      return [ase::precheck_worst [ase::analysis_precheck ngspice $st \
                [ase::netlist_facts [s_netlist]]]] }}] caution
 
+## ⚠ ⚖ R9 A1 PUT THE ARITHMETIC HERE, SO THE WORDS ARE NOW PART OF THE CONTRACT.
+## The field labels used to carry it -- `ac`/`sp` said "(2 gives ONE point)" and
+## `noise` said "(1 gives ONE point)", the same caption with different numbers in
+## one dialog, both measured-correct -- and the ruling moved it into this caution
+## ON THE STATED CONDITION THAT EACH FORM STATE ITS OWN RULE, because one shared
+## sentence that silently meant different things per form would be the same
+## defect one layer down. RU6c pins ac's sentence word for word, the lowercase
+## `one` included; the last term is the non-vacuity half, since a sentence with
+## no shouted word in it is what the ruling actually asked for.
+check {RU6c the ac sentence is the one ruling A1 shipped, word for word, and\
+ nothing in it or its fix is shouted} \
+  [s_ans apply {{} {
+     set st [s_state {} {{type ac enabled 1 sweep lin points 2 start 1k stop 11k}}]
+     set pc [ase::analysis_precheck ngspice $st [ase::netlist_facts [s_netlist]]]
+     foreach r [dict get $pc ac] {
+       if {[lindex $r 0] ne {lin_points}} { continue }
+       return [list [lindex $r 2] [lindex $r 3] \
+                 [regexp {[A-Z]{2,}} "[lindex $r 2] [lindex $r 3]"]]
+     }
+     return none }}] \
+  [list {a linear sweep of 2 points yields one point, and ngspice says nothing about it} \
+        {use 3 points, or switch the sweep to `dec`} 0]
+
+## ⚠ AND `noise` HAS A DIFFERENT RULE, WHICH IS THE WHOLE REASON A1 REFUSED ONE
+## SHARED SENTENCE. RE-MEASURED 2026-09-15 on BOTH binaries, with the plot list
+## read back so the null result could not be the measurement failing:
+##
+##   noise lin 1 1k 11k  ->  1 point, and `$plots` is `const noise1` -- the
+##                           Integrated Noise plot IS NOT CREATED AT ALL
+##   noise lin 2 1k 11k  ->  2 points, noise1 AND noise2
+##   noise lin 3 1k 11k  ->  3 points, noise1 AND noise2
+##
+## So until this ruling a `noise lin 2` row was told "a linear sweep of 2 points
+## yields ONE point", which is measured FALSE for it, and the real noise hazard
+## -- at ONE point, where a whole plot goes missing -- was said only by the field
+## label A1 removed. This row is what stops either half coming back.
+check {RU6d noise states its own rule -- it fires at one point, names the plot\
+ that is lost, and is silent at the count ac warns about} \
+  [s_ans apply {{} {
+     set out {}
+     foreach n {1 2 3} {
+       set st [s_state {} [list [list type noise enabled 1 out v(mid) insrc v1 \
+                 sweep lin points $n start 1k stop 11k]]]
+       set hit none
+       foreach r [s_pre $st] { if {[lindex $r 0] eq {lin_points}} { set hit fired } }
+       lappend out $hit
+     }
+     set st [s_state {} {{type noise enabled 1 out v(mid) insrc v1 sweep lin \
+               points 1 start 1k stop 11k}}]
+     set pc [ase::analysis_precheck ngspice $st [ase::netlist_facts [s_netlist]]]
+     foreach r [dict get $pc noise] {
+       if {[lindex $r 0] eq {lin_points}} { lappend out [lindex $r 1] [lindex $r 2] }
+     }
+     return $out }}] \
+  [list fired none none caution \
+        {a linear noise sweep of 1 point measures one frequency and produces no Integrated Noise plot at all, and ngspice says nothing about it}]
+
+## ⚠ AND `disto` NO LONGER DECLARES THE NEED AT ALL. RE-MEASURED 2026-09-15 on
+## BOTH binaries: disto lin 1/2/3/4 1k 11k -> 3/4/5/6 frequency points. It never
+## collapses, so nothing this precondition says was ever true of it -- and until
+## the ruling a `disto lin 2` row was warned it would get ONE point and got four.
+## A precondition that can never fire correctly is the drift this batch deletes,
+## so it was removed from the entry rather than left returning nothing.
+check {RU6e disto is silent at every linear count, because it has no such hazard} \
+  [s_ans apply {{} {
+     set out {}
+     foreach n {1 2 3} {
+       set st [s_state {} [list [list type disto enabled 1 sweep lin points $n \
+                 start 1k stop 11k]]]
+       set hit none
+       foreach r [s_pre $st] { if {[lindex $r 0] eq {lin_points}} { set hit fired } }
+       lappend out $hit
+     }
+     return $out }}] {none none none}
+
 check {RU7 three points, one point and a dec sweep of two are all silent} \
   [s_ans apply {{} {
      set out {}
@@ -918,14 +1001,22 @@ check {RU7 three points, one point and a dec sweep of two are all silent} \
      }
      return $out }}] {none none none none}
 
-check {RU8 and the rule reaches every analysis that has a linear sweep} \
+## ⚠ MOVED BY ⚖ R9 A1, AND THE `no` IS THE POINT. This row read `{yes yes yes}`
+## over `{ac noise disto}` and asserted that the rule "reaches every analysis
+## that has a linear sweep" -- true of the NEEDS LIST and false of the hazard.
+## `sp` is added because it shipped a sweep at issue 1452 and really does share
+## ac's count (measured `sp lin 2` -> 1 point); `disto` answers `no` because it
+## was measured not to have the hazard at all (RU6e). A later pass that re-adds
+## `lin_points` to disto without measuring it reds here.
+check {RU8 the rule reaches every analysis whose linear sweep really has the\
+ hazard, and disto -- measured not to -- no longer declares it} \
   [s_ans apply {{} {
      set out {}
-     foreach t {ac noise disto} {
+     foreach t {ac noise sp disto} {
        set e [ase::analysis_entry ngspice $t]
        lappend out [expr {[lsearch -exact [dict get $e needs] lin_points] >= 0 ? yes : no}]
      }
-     return $out }}] {yes yes yes}
+     return $out }}] {yes yes yes no}
 
 ## --- rule 4 ---------------------------------------------------------------
 ## ⚠ THE REASON `PLAN.md` GIVES DOES NOT APPLY TO THE DECK ASE-L WRITES. D4 is

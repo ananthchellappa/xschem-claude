@@ -72,8 +72,16 @@
 # ============================================================================
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP
 # ============================================================================
-#    62  headless -- sections GR SC RB FN CH DP PV HK, all pure Tcl
-#    87  on the dev display (:99) -- the same 62 plus section UI's 25
+#    64  headless -- sections GR SC RB FN CH DP PV HK, all pure Tcl
+#    89  on the dev display (:99) -- the same 64 plus section UI's 25
+#
+#    AND RAISED 62 -> 64 / 87 -> 89, ⚖ R9 ruling A1 (2026-09-15): HK4 and HK5,
+#    the two rows that pin the capitals the user KEPT. A1 lowercased every word
+#    shouted for emphasis inside a sentence -- VOLTAGE, DEGREES, both NOTs, ONE
+#    -- and kept this sheet's row PREFIXES, which leaves the interface looking
+#    inconsistent on purpose. An exception held only in memory is one a later
+#    consistency pass deletes in good faith, so it is held by a row. Pure Tcl,
+#    both arms.
 #
 #    The two arms DIFFER on purpose: section UI drives the real widgets and
 #    self-skips without an X connection, so the display arm is a measurement of
@@ -814,6 +822,55 @@ check {HK3 the preview's slot names are ASE-L's own and do not vary by backend} 
      set r [lsort [dict keys [ase::opt_preview zzhk [ase::state_default]]]]
      set ::ase::backends $save
      return $r }}] {cmdline control deck notes prefile}
+
+## ⚠ THE PREFIXES ⚖ R9 RULING A1 part 3 DELIBERATELY KEPT IN CAPITALS, PINNED SO
+## A LATER CONSISTENCY PASS CANNOT TIDY THEM AWAY IN GOOD FAITH. On 2026-09-15
+## the user lowercased every word shouted for emphasis INSIDE a sentence in this
+## batch -- VOLTAGE, DEGREES, both NOTs, ONE -- and KEPT these, because they are
+## not emphasis: they label a CLASS OF ROW, the job a column heading would do if
+## this sheet had one, and the repeated word in a fixed position is what makes
+## the left edge of the detail line scannable.
+##
+## ⚠ THE USER WAS TOLD THE INTERFACE WOULD LOOK INCONSISTENT AS A RESULT and
+## ruled anyway, which is exactly why the exception needs a row rather than a
+## memory: the distinction is structural, and structural distinctions are the
+## ones a later reader does not notice. The second foreach is the absence half --
+## a guard against lowercasing must itself be tested against the lowercase form,
+## or it is satisfied by a body that no longer contains the prefix at all.
+check {HK4 the options sheet's row prefixes keep the capitals ruling A1 gave them} \
+  [s_ans apply {{} {
+     set b [info body ::ase::ui::optsheet_detail]
+     set out {}
+     ## ⚠ `if` RATHER THAN `expr ?:` ON PURPOSE. Tcl's expr takes `yes`/`no` as
+     ## BOOLEAN LITERALS -- which is why RU8's idiom in test_ase_effective_1442
+     ## works -- and rejects every other bareword, so a `? kept : GONE` here
+     ## RAISES rather than answering. Measured while writing this row.
+     foreach lit {{NOT OFFERED: } {SET ELSEWHERE: } {CLAMPED: } {SCOPED: }} {
+       if {[string first $lit $b] >= 0} { lappend out kept } else { lappend out GONE }
+     }
+     foreach lit {{not offered: } {Not offered: } {set elsewhere: }} {
+       if {[string first $lit $b] >= 0} { lappend out LOWERCASED } else { lappend out ok }
+     }
+     return $out }}] {kept kept kept kept ok ok ok}
+
+## ⚠ AND THE OTHER PREFIX LIVES IN THE CATALOGUE, NOT IN THE WIDGET, so it needs
+## a row of its own: `NOT MEASURED: ` opens the `results_why` of every option
+## whose ⚠ badge no probe deck could settle. THE COUNT IS THE NON-VACUITY HALF --
+## a row asserting only "each one that starts with the prefix is in capitals" is
+## satisfied by a catalogue in which none of them starts with it any more. The
+## `bad` list is the lowercase half: a reason that opens `not measured` in any
+## casing names itself here rather than vanishing from the count.
+check {HK5 every unsettled badge reason still opens with the NOT MEASURED prefix\
+ ruling A1 kept, and there are ten of them} \
+  [s_ans apply {{} {
+     set n 0 ; set bad {}
+     foreach name [ase::sim_option_names ngspice] {
+       set w [ase::opt_results_why ngspice $name]
+       if {$w eq {}} { continue }
+       if {[string match {NOT MEASURED: *} $w]} { incr n ; continue }
+       if {[string match -nocase {not measured*} $w]} { lappend bad $name }
+     }
+     return [list $n $bad] }}] {10 {}}
 
 } hkerr]} { check {HK0 section HK ran to the end} "RAISED:$hkerr" {} }
 

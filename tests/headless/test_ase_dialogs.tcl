@@ -205,6 +205,12 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 385   AND RAISED 384 -> 385 on the display arm, ⚖ **R9 ruling A1**
+#              (2026-09-15): G2e2, the row that stops a field label regaining an
+#              arithmetic claim. G2e and G2g MOVED rather than being added --
+#              their goldens read `Number of points (2 gives ONE point):` and
+#              now read `Number of points:`. Headless is unmoved because both
+#              are widget rows inside the display guard.
 #   37 / 384   AND RAISED 382 -> 384 on the display arm, issue **1457**: SP9b
 #              and SP9c, the section's FIRST THREE-PORT ROWS. SP7 asked for 12
 #              cells and SP9 for 20, both on the two-port bench, so a picker that
@@ -1565,7 +1571,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # G2e: THE AC SWEEP MODE IS A CONTROL, AND PICKING ONE RELABELS ITS NEIGHBOUR.
   ## ⚠ THIS IS ngspice's SHARPEST AC TRAP AND THE FORM USED TO SAY `Points:` FOR
   ## BOTH SIDES OF IT: `dec 10` is ten points PER DECADE, `lin 10` is ten points
-  ## IN TOTAL, and `lin 2` yields ONE point.
+  ## IN TOTAL, and `lin 2` yields one point.
+  ## ⚠ THE LABEL NO LONGER CARRIES THAT ARITHMETIC. ⚖ R9 ruling A1 part 1
+  ## (2026-09-15) took it out: `ac`/`sp` read `Number of points (2 gives ONE
+  ## point)` while `noise` read `(1 gives ONE point)` -- the same caption with
+  ## different numbers in one dialog, both measured-correct, which reads as a
+  ## typo rather than as two counts. The relabel still HAPPENS, and it is still
+  ## what this row is about; what it says is now a name, and the count is said
+  ## by the caution beneath the form. Row G2e2 is the pin.
   $top.strip.ana invoke
   update
   $top.chana.types.ac invoke
@@ -1584,14 +1597,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.chana.form.sweep set lin
   event generate $top.chana.form.sweep <<ComboboxSelected>>
   update
-  check "G2e picking a linear sweep relabels the neighbour to say the number is\
- a TOTAL, which is the defect this control exists to delete" \
-    [$top.chana.form.lpoints cget -text] {Number of points (2 gives ONE point):}
+  check "G2e picking a linear sweep relabels the neighbour away from the\
+ per-decade rate, which is the defect this control exists to delete" \
+    [$top.chana.form.lpoints cget -text] {Number of points:}
   $top.chana.form.sweep set oct
   event generate $top.chana.form.sweep <<ComboboxSelected>>
   update
   check "G2e and per octave for oct" \
     [$top.chana.form.lpoints cget -text] {Points per octave:}
+
+  ## G2e2: ⚖ R9 A1 part 1 -- A FIELD LABEL CARRIES NO ARITHMETIC, ON ANY FORM.
+  ## ⚠ THIS ROW EXISTS BECAUSE THE RULING IS EASY TO UNDO BY ACCIDENT. Putting a
+  ## count back into a label reads like helpfulness, and the four types drifted
+  ## apart exactly that way once already -- three spellings of one caption, of
+  ## which two were arithmetic and one was not. The last two terms are the
+  ## non-vacuity half: no digit and no shouted word in any of the four, so a
+  ## label that regained `(2 gives ONE point)` reds here even if someone also
+  ## edited the golden above to match it.
+  check "G2e2 every sweep-bearing type spells the linear points label the same,\
+ and none of the four carries a number or a shouted word" \
+    [list [ase::ui::form_label ngspice ac    points lin] \
+          [ase::ui::form_label ngspice noise points lin] \
+          [ase::ui::form_label ngspice disto points lin] \
+          [ase::ui::form_label ngspice sp    points lin] \
+          [regexp {[0-9]} [ase::ui::form_label ngspice ac points lin]] \
+          [regexp {[A-Z]{2,}} [ase::ui::form_label ngspice noise points lin]]] \
+    {{Number of points:} {Number of points:} {Number of points:} {Number of points:} 0 0}
   $top.chana.btns.cancel invoke
   update
 
@@ -1658,7 +1689,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G2g reopening a bench that stores a non-default mode shows that mode AND\
  the label that goes with it, without anyone touching the picker" \
     [list [$top.chana.form.sweep get] [$top.chana.form.lpoints cget -text]] \
-    {lin {Number of points (2 gives ONE point):}}
+    {lin {Number of points:}}
   $top.chana.btns.cancel invoke
   update
 
@@ -4386,7 +4417,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## declared field names -- ⚖ R6 added `id` to the ROW and not to that list. So
   ## `ase::preflight_gate`, which runs that check over every ENABLED stored row,
   ## refused the whole bench: no deck, no raw, no log, and `set ase_preflight 0`
-  ## does not disable it. Naming an analysis and switching it on stopped the
+  ## leaves that check in force. Naming an analysis and switching it on stopped the
   ## bench running. The row was written to go RED when that was fixed, and it
   ## did: issue 1449 landed the one word and this file's display arm went to
   ## 2 FAILED (338 passed).

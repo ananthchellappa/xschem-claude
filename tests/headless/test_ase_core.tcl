@@ -5545,8 +5545,9 @@ check "EK6 every analysis switched on in every bench committed to this repositor
 ## that list. `ase::preflight_gate` runs that check over every ENABLED stored row
 ## and answers `emit_incomplete`, so a user who NAMED an analysis and switched it
 ## on could not run the bench: no deck, no raw, no log, and the sentence ends
-## `set ase_preflight 0` does NOT disable this check. Measured against the
-## unfixed tree:
+## `set ase_preflight 0` leaves this check in force (⚖ R9 A1 part 2 rewrote that
+## closing sentence positively on 2026-09-15; it read `does NOT disable this
+## check` when this comment was written). Measured against the unfixed tree:
 ##     emit_check : {unknownkey id {has a setting named 'id' that ASE-L cannot emit}}
 ##     gate       : emit_incomplete
 ##     gate, the identical bench with the `id` removed : {}   (it runs)

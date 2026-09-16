@@ -143,6 +143,15 @@
 # passes a hand-written netlist string that nobody netlisted, and the gate's new
 # optional third argument exists precisely so those donate nothing to the slot a
 # dialog reads.
+# 235 -> 238 with section PF234 (⚖ R9 ruling A1, 2026-09-15 -- the shouted words
+# in user-facing sentences, and the TWO EXCEPTIONS the user kept). ⚠ PF230b MOVED
+# rather than being added: its clause read `measures a VOLTAGE` and now reads
+# `measures a voltage`, with a new term asserting nothing in it is shouted at all.
+# ⚠ THE SECTION'S SUBJECT IS AN EXCEPTION, WHICH IS UNUSUAL AND DELIBERATE: A1
+# leaves the interface looking inconsistent on purpose, so `SEGFAULTS` and the
+# options sheet's two row prefixes are pinned BY NAME lest a later consistency
+# pass tidy them away in good faith and reverse a user ruling in silence.
+# AND RAISED 235 -> 238.
 # AND RAISED 229 -> 235.
 # AND RAISED 218 -> 229.
 # ⚠ AND THIS SUITE IS FINALLY IN T1 (issue 1421). It printed `RESULT:` and no
@@ -2299,10 +2308,13 @@ eqcheck PF230a-a-noise-row-this-circuit-can-run-says-nothing \
 ## ⚠ THE OUTPUT IS A VOLTAGE AND ONLY A VOLTAGE, which is where `noise` differs
 ## from `tf` and `sens`: both of those take `i(<vsrc>)`.
 set MPPI [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {out {i(V1)}}]] {} $MPBLANKET]
+## ⚠ THE LAST TERM IS ⚖ R9 A1 part 2's: `VOLTAGE` was shouted mid-sentence here
+## and is now lowercase, and nothing else in the clause is shouted either.
 eqcheck PF230b-a-current-output-is-refused-as-fatal-because-noise-measures-a-voltage \
   [list [mpn $MPPI noise 0] [mpv $MPPI noise 0] \
-        [string match {*measures a VOLTAGE*} [mps $MPPI noise 0]]] \
-  {noise_out fatal 1}
+        [string match {*measures a voltage*} [mps $MPPI noise 0]] \
+        [regexp {[A-Z]{2,}} [mps $MPPI noise 0]]] \
+  {noise_out fatal 1 0}
 
 ## ⚠ AND A MISSING NODE IS THE SILENT ONE: rc 0 and a whole spectrum of numbers.
 ## It is `blocked`, so the static demotion turns it into a `caution` carrying the
@@ -2414,6 +2426,62 @@ set MPD_CUR [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(Vnope) save 1 plo
 set MPD_CUROK [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(V1) save 1 plot 1}}}]
 eqcheck PF230i-a-branch-current-of-a-source-that-is-not-there-starves-it-as-well \
   [list [mpv $MPD_CUR disto 0] [dict size $MPD_CUROK]] {fatal 0}
+
+# ===========================================================================
+# PF234 -- ⚖ R9 RULING A1: THE WORDS, AND THE TWO EXCEPTIONS IT KEPT
+# ===========================================================================
+## The user ruled on 2026-09-15 that capitals survive in a user-facing sentence
+## ONLY where a word names a catastrophic OUTCOME or marks a CLASS OF ROW;
+## everywhere else emphasis inside a sentence loses them, and a field label
+## carries no arithmetic.
+##
+## ⚠ THIS SECTION EXISTS BECAUSE THE RULING DELIBERATELY LEAVES THE INTERFACE
+## LOOKING INCONSISTENT, and the user was told so before ruling: four sentences
+## lost their capitals while one word and eleven row prefixes kept theirs. The
+## distinction is STRUCTURAL -- prefix and outcome versus emphasis -- and
+## structural distinctions are the ones a reader does not notice. Without these
+## rows a later consistency pass tidies the exceptions away in good faith and
+## nobody ever learns that a user ruling was reversed.
+
+## ⚠ `SEGFAULTS` IS THE ONE SHOUTED WORD A1 KEPT, AND IT IS NOT EMPHASIS. It
+## names a category of outcome: ngspice dies and leaves NO exit status, NO log
+## and NO results file, so there is nothing afterwards to explain it. Every
+## other shouted word in this batch stressed a word the reader would hit anyway.
+## The third term is the non-vacuity half -- it is the ONLY all-caps run in the
+## sentence, so a pass that lowercased it reds, and so does one that shouts
+## something new beside it.
+eqcheck PF234a-SEGFAULTS-is-the-one-shouted-word-ruling-A1-deliberately-kept \
+  [list [string match {*ngspice SEGFAULTS,*} [mps $MPD_BAD disto 0]] \
+        [string match {*segfaults*} [mps $MPD_BAD disto 0]] \
+        [lsort -unique [regexp -all -inline {[A-Z]{2,}} [mps $MPD_BAD disto 0]]]] \
+  {1 0 SEGFAULTS}
+
+## ⚠ AND THE GATE'S CLOSING SENTENCE IS NOW POSITIVE, IN ALL FOUR PLACES IT IS
+## SAID. It read "`set ase_preflight 0` does NOT disable this check."; A1 part 2
+## asked for the rewrite rather than a bare lowercasing. THE COUNT IS THE
+## LOAD-BEARING TERM: the fragment is shared by four refusals inside this one
+## proc, and changing three of them would have re-created, inside a single
+## procedure, exactly the drift §A1 exists to delete. The second term is the
+## absence half -- a guard against a shout coming back must itself be tested
+## against the shout, or it passes on a tree that never had one.
+eqcheck PF234b-the-gate-closes-every-refusal-positively-in-all-four-places \
+  [list [regexp -all {leaves this check in force} [info body ase::preflight_gate]] \
+        [regexp -all {does NOT disable} [info body ase::preflight_gate]]] \
+  {4 0}
+
+## ⚠ AND `DEGREES` LOST ITS CAPITALS IN THE distof1 ADVICE. `<mag>` and `<phase>`
+## stay as they are: they are literal placeholder text the user is meant to type
+## over, which is §A9's business and not A1's -- so the shout test is deliberately
+## for a RUN of capitals, which those two placeholders do not contain.
+set MPD_F1 [pcheckx $MPNLNOD $MPDROW {} \
+  {save_all_v 1 outputs {{name a expr v(mid) save 1 plot 1}}}]
+set MPD_F1ROW [lindex [dgn $MPD_F1 disto] \
+  [lsearch -index 0 -exact [dgn $MPD_F1 disto] disto_f1src]]
+eqcheck PF234c-the-distof1-advice-says-degrees-in-lower-case-and-shouts-nothing \
+  [list [lindex $MPD_F1ROW 0] \
+        [string match {*(phase is in degrees)*} [lindex $MPD_F1ROW 3]] \
+        [regexp {[A-Z]{2,}} [lindex $MPD_F1ROW 3]]] \
+  {disto_f1src 1 0}
 
 ## ⚠ THE SILENT ZEROS. `CKTdisto`'s `D_RHSF1` walk looks for a source carrying
 ## `distof1`; with none it stamps nothing and the analysis runs to completion.

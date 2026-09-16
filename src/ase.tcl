@@ -7784,10 +7784,13 @@ proc ase::opt_preview {sim state {plan {}}} {
       if {$rl ne {}}   { lappend ctl [list $name $rl] }
       switch -exact -- $status {
         leaks {
+          ## ⚖ R9 A1: the negated clause is gone rather than merely lowercased.
+          ## The sentence already carried its own positive form in its trailing
+          ## clause, so that clause is now the whole of it and the reason
+          ## follows. Copy review: doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md
           dict set notes $name [list leaks \
-            "set for the $atype analysis and NOT put back afterwards --\
- [ase::opt_leak_why $sim $name], so it stays in force for every analysis after\
- it"]
+            "set for the $atype analysis and left in force for every analysis\
+ after it -- [ase::opt_leak_why $sim $name]"]
         }
         refused {
           dict set notes $name [list refused \
@@ -12604,7 +12607,7 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       }
       if {[lindex $d 0] eq {current}} {
         return [list fatal \
-          "a noise analysis measures a VOLTAGE, and '$outv' is a current" \
+          "a noise analysis measures a voltage, and '$outv' is a current" \
           "name a node, as `v(out)` or `v(out,ref)`"]
       }
       if {$d eq {malformed}} {
@@ -12781,18 +12784,51 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       # one and got one. `lin 2` is the only value that silently halves, so the
       # rule fires on it alone and names the fix rather than the symptom.
       #
-      # ⚠ AND IT IS WRITTEN OVER THE FIELDS, NOT OVER A TYPE LIST, so it covers
-      # `sp` the day `sp` gets a sweep -- which is the second half of §7g's own
-      # "`ac lin 2` / `sp lin 2`" and is unreachable today because `sp` is still
-      # a bare probe stub with no fields at all.
+      # ⚠ AND THE SENTENCE IS PER ANALYSIS, BECAUSE THE ARITHMETIC IS. ⚖ R9's
+      # ruling A1 took the arithmetic OUT of the field labels: `ac` and `sp`
+      # read `Number of points (2 gives ONE point)` while `noise` read
+      # `(1 gives ONE point)`, so a user who opened both forms in one session
+      # read a typo rather than two correct counts. Every form's label is now
+      # plain `Number of points` and THIS is where the count is explained --
+      # which is why each type states ITS OWN rule below. A single shared
+      # sentence that silently meant different things on different forms would
+      # be the very defect the ruling deleted, one layer down.
+      # Copy review: doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md §A1.
+      #
+      # ⚠ RE-MEASURED 2026-09-15 on BOTH binaries for the two other types that
+      # declared this need, and NEITHER shares ac's count:
+      #
+      #   noise lin 1 1k 11k  ->  1 point, and `$plots` is `const noise1` --
+      #                           the Integrated Noise plot IS NOT CREATED
+      #   noise lin 2 1k 11k  ->  2 points, noise1 AND noise2
+      #   noise lin 3 1k 11k  ->  3 points, noise1 AND noise2
+      #   disto lin 1/2/3/4   ->  3 / 4 / 5 / 6 points; it NEVER collapses
+      #
+      # So `noise` gets an arm of its own -- its hazard is at 1, and what is
+      # lost there is a whole PLOT rather than a point -- and `disto` no longer
+      # declares this need at all, because nothing here was ever true of it.
+      # Until today both were told "a linear sweep of 2 points yields ONE
+      # point", which is measured false for each of them.
+      #
+      # ⚠ AND IT IS STILL WRITTEN OVER THE FIELDS, NOT OVER A TYPE LIST, so it
+      # covers `sp`, which got its sweep at issue 1452 and does share ac's count
+      # (measured `sp lin 2` -> 1 point). A NEW type whose linear count differs
+      # from ac's therefore needs an arm of its own here; it must not be handed
+      # this need and left to inherit a sentence nobody measured for it.
       if {[string tolower [ase::field_value $sim $type $row sweep]] ne {lin}} {
         return {}
       }
-      if {[string trim [ase::field_value $sim $type $row points]] ne {2}} {
-        return {}
+      set npts [string trim [ase::field_value $sim $type $row points]]
+      if {$type eq {noise}} {
+        if {$npts ne {1}} { return {} }
+        return [list caution \
+          "a linear noise sweep of 1 point measures one frequency and produces\
+ no Integrated Noise plot at all, and $sim says nothing about it" \
+          "use 2 points or more, or switch the sweep to `dec`"]
       }
+      if {$npts ne {2}} { return {} }
       return [list caution \
-        "a linear sweep of 2 points yields ONE point, and $sim says nothing\
+        "a linear sweep of 2 points yields one point, and $sim says nothing\
  about it" \
         "use 3 points, or switch the sweep to `dec`"]
     }
@@ -13056,7 +13092,7 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       return [list blocked \
         "no source in this circuit carries a `distof1` excitation, and a\
  distortion analysis without one runs to completion and answers zeros" \
-        "add `distof1 <mag> <phase>` to the input source (phase is in DEGREES)"]
+        "add `distof1 <mag> <phase>` to the input source (phase is in degrees)"]
     }
     disto_f2src {
       # ⚠ THE INTERMODULATION MODE NEEDS A SECOND EXCITATION AND SAYS SO LATE.
@@ -13813,7 +13849,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     }
     set l "ase: it is enabled on this bench, so the run would have started and\
  produced nothing for it. Nothing was generated: no deck, no raw, no log.\
- `set ase_preflight 0` does NOT disable this check."
+ `set ase_preflight 0` leaves this check in force."
     ::ase::echo $l error
     return [list emit_incomplete $emitbad]
   }
@@ -13854,7 +13890,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     }
     set l "ase: it is enabled on this bench, so the run would have completed,\
  produced no result for it, and said nothing. Nothing was generated: no deck, no\
- raw, no log.$rdnote `set ase_preflight 0` does NOT disable this check."
+ raw, no log.$rdnote `set ase_preflight 0` leaves this check in force."
     ::ase::echo $l error
     lappend lines $l
     return -code error [join $lines "\n"]
@@ -13907,7 +13943,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       }
     }
     set l "ase: Nothing was generated: no deck, no raw, no log.\
- `set ase_preflight 0` does NOT disable this check."
+ `set ase_preflight 0` leaves this check in force."
     ::ase::echo $l error
     lappend plines $l
     return -code error [join $plines "\n"]
@@ -13942,7 +13978,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       }
       set l "ase: the simulator would exit part-way through this deck, leaving a\
  raw file that reads back as a valid result. Nothing was generated: no deck, no\
- raw, no log. `set ase_preflight 0` does NOT disable this check."
+ raw, no log. `set ase_preflight 0` leaves this check in force."
       ::ase::echo $l error
       lappend plines $l
       return -code error [join $plines "\n"]
@@ -26839,7 +26875,7 @@ $_leg
                 {name points kind int  required 1 label {Points per decade} \
                              labels {dec {Points per decade} \
                                      oct {Points per octave} \
-                                     lin {Number of points (2 gives ONE point)}}} \
+                                     lin {Number of points}}} \
                 {name start  kind freq required 1 label {Start frequency} unit Hz} \
                 {name stop   kind freq required 1 label {Stop frequency} unit Hz}} \
         emit   {{role analysis tmpl {ac @sweep? @points @start @stop}}} \
@@ -26873,7 +26909,7 @@ $_leg
                 {name points kind int  required 1 min 1 label {Points per decade} \
                              labels {dec {Points per decade} \
                                      oct {Points per octave} \
-                                     lin {Number of points (1 gives ONE point)}}} \
+                                     lin {Number of points}}} \
                 {name start  kind freq required 1 label {Start frequency} unit Hz} \
                 {name stop   kind freq required 1 label {Stop frequency} unit Hz} \
                 {name contributors kind bool advanced 1 \
@@ -26954,7 +26990,7 @@ $_leg
                  paramname ::ase::backend::ngspice::sens_param_kind}}] \
       disto [dict create \
         label disto  baseline 1  registered 1  emitorder 80 \
-        needs  {disto_saves disto_f1src disto_f2src lin_points cider_klu} \
+        needs  {disto_saves disto_f1src disto_f2src cider_klu} \
         fields {{name sweep  kind mode required 0 default dec values {dec oct lin} \
                              label {Sweep type} relabels points} \
                 {name points kind int  required 1 min 1 label {Points per decade} \
@@ -26998,7 +27034,7 @@ $_leg
                 {name points kind int  required 1 min 1 label {Points per decade} \
                              labels {dec {Points per decade} \
                                      oct {Points per octave} \
-                                     lin {Number of points (2 gives ONE point)}}} \
+                                     lin {Number of points}}} \
                 {name start  kind freq required 1 label {Start frequency} unit Hz} \
                 {name stop   kind freq required 1 label {Stop frequency} unit Hz} \
                 {name donoise kind bool advanced 1 when_true 1 \
