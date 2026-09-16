@@ -27,7 +27,7 @@ vanishes gets re-opened by the next reader.
 
 ---
 
-## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 17:57
+## ⏱ WHERE THE BATCH STANDS — updated 2026-09-15 19:36
 
 **Read this first. It is the resume point, and it is rewritten rather than appended to.**
 
@@ -40,15 +40,15 @@ ones its date. **Rewrite every row, or none.**
 
 | | |
 |---|---|
-| **Stages landed** | 0–**13**, and **Stage 16 COMPLETE** (issues **1470** `4e1e1cac`, **1471** `a64bd6a3`, **1472**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`. Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, **M22** `02288c30`. Since: **1468** `36153d03`, **1469** `3addf5ca`. Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed |
+| **Stages landed** | 0–**13**, and **Stage 16 COMPLETE** (issues **1470** `4e1e1cac`, **1471** `a64bd6a3`, **1472**). Stage 10: **1459** `e1eaa5d0`, **1460** `375a769e`. Stage 11: **1462** `d5295c24`, **1464** `5d0d07ed`. Stage 12: **1465** `5302bd77`. Stage 13: **1466** `3ae661fa`, **1467** `f4cc6796`, **M22** `02288c30`. Since: **1468** `36153d03`, **1469** `3addf5ca`, **1473** `df5df4fe` (debt **M18** closed), **1474** (this commit). Also since Stage 9: **1456**, **1453**, **1457**, **1461**; **1455**, **1458**, **1463** filed. ⚠ **1473 and 1474 are the first two items implemented by one crew and verified by a SECOND** — the split that caught a decorative seam, a stale-log T1 reading and an overstated coverage claim, none of which the implementing crew's own campaign reddened |
 | **Stages remaining** | **14** (PSS) — and it **waits on ⚖ R7**, which goes back to the user on `evidence/pss-two-binaries.md` after ⚖ R9 — then ⚖ **R10's adapter-author specification**, written after the last hook-adding stage. **Nothing else in the plan is open.** |
 | **Out of scope** | Stage **15**, removed by ⚖ R10 |
-| **T1** | ✅ **82 cases, ZERO counted lines in `results.log`** (2026-09-15 19:09, solo, foreground, driver-confirmed on the tree after issue 1474). ⚠ **CORRECTED — this row said "84 cases", and that number was a STALE-LOG READING**: `tclsh tests/run_regression.tcl` from the repo root exits 1 and leaves the previous run's log in place, so receipt 49b's T1 row and the `df5df4fe` commit message both quote a sweep that run never took. The zero is corroborated by a real run; the count was not. Invoke as `cd tests && tclsh run_regression.tcl`. Zero on every run since issue 1456. ⚠ `results.log` holds one fewer case log than there are cases, by design (`xschemtest.tcl` logs only when it fails). ⚠ **Run T1 and long suite batches in the foreground**: the harness stopped three background runs as "low on memory" with ~13 GB free |
-| **In flight** | **nothing, and nothing can start without the user.** Issue **1473** shipped and closed debt **M18**; issue **1474** is filed but not dispatched — it is small and unblocked, and it is the only such item left |
-| **Next** | ⚖ **R9** with the user, then ⚖ **R7** — one at a time — then **Stage 14**, then ⚖ R10's specification. Issue **1474** (the stop-moment message, plus the two missing residue rows) needs no ruling. **Four `look` debts are queued**, one of which `:99` cannot pay |
-| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **725 strings from 37 issues**. Everything else (R1–R8, R10, R11) is answered — ⚠ but **R7 goes back to the user** on `evidence/pss-two-binaries.md`, after R9, and **R11's support sentence carries one wording departure** under `rule 1471_release_note_destination` |
+| **T1** | ✅ **82 cases, ZERO counted, rc 0, 362 s** — 2026-09-15 19:33, solo, foreground, **run from `tests/`** on the tree after issue 1474. ⚠ **The earlier "84 cases" in this batch was a STALE LOG**: `tclsh tests/run_regression.tcl` from the repo root exits 1 without running the cases and leaves the previous log in place, so receipt 49b's row and the `df5df4fe` commit message quote a sweep nobody took (corrected in `0b0b61c0`). ⚠ **Check MTIME, not md5** — a green run is byte-deterministic, so the fossil is itself a previous green run. ⚠ **Foreground only**: the harness stopped three background runs as "low on memory" with ~13 GB free |
+| **In flight** | **nothing, and nothing can start without the user.** Issues **1473** and **1474** both shipped, verified by a second crew each; debt **M18** is closed. Every remaining item in the plan is gated on a ruling |
+| **Next** | ⚖ **R9**, now in progress — **A1 has been put to the user** (the shouted words mid-sentence, and the arithmetic inside `Number of points (2 gives ONE point)`); A2–A12 follow **one at a time**. Then ⚖ **R7**, then **Stage 14**, then ⚖ R10's specification. `rule 1471_release_note_destination` and **four `look` debts** are on the same queue, one of which `:99` cannot pay |
+| **The one open ruling** | ⚖ **R9** — `R9_COPY_REVIEW.md`, **726 strings from 38 issues**, but the ruling is really **Section A's twelve recurring choices**; answering those settles most of the document and anything unmarked is ratified as it stands. **A1 is asked and open.** ⚠ **R7 goes back to the user** on `evidence/pss-two-binaries.md` after R9, and **R11's support sentence carries one wording departure** under `rule 1471_release_note_destination` |
 | **Open issues awaiting a ruling** | **1446** (implemented ahead of the answer; Option A means one small revert) · **1453**, on two narrower points: the **wording** of the new refusal sentence, and **whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs** (A and C refuted by measurement; B shipped) · **1458** (a suite run overwrites the user's window geometry) · **1463** (a dead registered binary costs the probe budget once per shard). Each has a `rule` entry, measured 2026-09-15 |
-| **Debt queue** | **186 rule / 70 look / 11 suite**. ⚠ Four `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — needs `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, `ase-trnoise-section-1467` (one refusal shown three times), and the Simulators row editor's new line (cold, two lines both mention Detect). Four unstamped entries are another clone's |
+| **Debt queue** | **187 rule / 70 look / 11 suite**. ⚠ Four `look`s want particular eyes: the lit non-converged nets (**`:99` cannot pay** — needs `AUDIT_DISPLAY=$DISPLAY`), `ase-digital-pane-run-end-1465`, `ase-trnoise-section-1467` (one refusal shown three times), and the Simulators row editor's new line (cold, two lines both mention Detect). Four unstamped entries are another clone's |
 
 ### Measurement debts paid on 2026-09-13, all by the driver, all by measurement
 
@@ -90,17 +90,20 @@ while the debts table said open — **strike the row and the summary in one edit
 measuring** — a `make -j` alongside a sabotage campaign is exactly the load that made row X7 die
 under T1 (issue 1455). They are the first thing to do in a quiet window.
 
-### The next three things, in order — **the first two are the user's**
+### The next three things, in order — **all three are the user's**
 
-1. ⚖ **R9** — `R9_COPY_REVIEW.md`, **725 strings from 37 issues**, every one byte-present in the source
-   it ships from. It is the last single ruling standing between the batch and its close.
-2. ⚖ **R7** — after R9, on `evidence/pss-two-binaries.md`: PSS was ruled shippable on a scratch build's
-   evidence, and on apt 45.2 it converges on nothing measured, not even ngspice's own example. **Stage 14
-   does not open until this is answered.** Then ⚖ R10's specification. `rule 1471_release_note_destination`
-   (where the release note ships, and R11's one wording departure) is on the same queue.
-3. **Issue 1474** — needs no ruling, and is the only unblocked work in the tree: pass issue 1473's
-   already-resolved plan to `ase::run_stopped_msg` so the stop-moment message stops contradicting the
-   launch warning it now disagrees with, and add the `pss` and `sp` rows CK28c does not hold.
+1. ⚖ **R9**, already started. The document is 726 strings, but the ruling is **Section A's twelve
+   recurring choices**; answering those settles most of it, and anything unmarked is ratified as it
+   stands. **A1 is on the table**: nine strings shout a word mid-sentence (`ONE`, `VOLTAGE`,
+   `DEGREES`, `SEGFAULTS`, `NOT`), and the field label `Number of points (2 gives ONE point)` carries
+   an arithmetic claim that reads `(1 gives ONE point)` on the noise form in the same dialog — both
+   measured, both correct. Recommended: drop the shouting, move the arithmetic to the detail line,
+   keep `NOT OFFERED:` / `NOT MEASURED:` as the class prefixes they are. A2–A12 follow one at a time.
+2. ⚖ **R7** — after R9, on `evidence/pss-two-binaries.md`: PSS was ruled shippable on a scratch
+   build's evidence, and on apt 45.2 it converges on nothing measured, not even ngspice's own example.
+   **Stage 14 does not open until this is answered.** Then ⚖ R10's adapter-author specification.
+3. **`rule 1471_release_note_destination`** — where `RELEASE_NOTE.md` ships (the repo's `Changelog`
+   is upstream xschem's), and R11's one wording departure. **Four `look` debts** sit behind these.
 
 ⚠ **Stage 14 waits on the user.** `evidence/pss-two-binaries.md`: on apt 45.2 PSS converges on
 nothing, and ⚖ R7 was answered on a scratch build's evidence. R7 is put back to the user **after
@@ -942,6 +945,30 @@ ruling the user meant.
 **Nothing was touched**, by the crew or by the driver: the rule against claiming an unstamped
 entry for this clone exists precisely because doing so erases the only signal the overwrite
 left. Recorded here, and a backup of the queue was taken before the crew's own `add`.
+
+### ✅ Issue **1474** — the two messages of one run stop contradicting each other — collected 2026-09-15
+
+Issue 1473's second half. 1473 made the **launch** warning true for a checkpointed run and left the
+message at the **moment of the stop** saying *"nothing of this run was written"* — so the two
+disagreed **within one run**, where before they had agreed and were both wrong. Implemented by one
+crew, verified by a second told to disbelieve it, then **corrected and re-verified** after that pass
+found a seam worth deleting.
+
+| | |
+|---|---|
+| **what landed** | **+431 / −11 across five files** (`src/ase.tcl` **+120 / −8**). `ase::run_stopped_msg` takes issue 1473's **already-resolved** `ckpt` — never re-resolved, never recomputed from the bench — read at the Stop door through a new `ase::run_record` seam that validates the callback is ASE-L's own and reads it **before** the kill. The adapter gains a fourth key **`after_ckpt`**, so a checkpointed run hears *"ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial"* |
+| **the split holds** | an un-checkpointed run keeps its sentence **byte for byte** (probed against `df5df4fe` itself: md5 `0687549d…`, 59 bytes both sides), the residue kinds keep theirs, and a backend missing `after_ckpt` says **nothing at all** — all four backend shapes measured, `after`-only and `before_ckpt`-only both silent |
+| **CK31 is the row the issue is about** | it reduces each message to its claim and asserts the launch warning and the stop message **against each other**. ⚠ **A suite of per-message goldens would have passed on the broken tree** — and the verifier rated the row **better than its own receipt claimed**: the verifier's arm reds **CK31 alone**, which no arm in the crew's own campaign does |
+| **CK28f** | pins all eight residue kinds **one at a time**, because `pss` declares no `emitorder` and would otherwise make the bench walk raise and pass the row **for the wrong reason** — the exact defect this batch keeps finding. Each of the eight broken singly moved exactly its own term |
+| ⚠ **a seam added, then deleted** | the crew introduced `ase::run_record` with a `dict size` guard the task never asked for. **Verification found it decorative**: the `V_DICTSIZE` arm removed it and **both suites stayed ALL PASS**, and the `xschem.tcl simulate` threat its comment named is **unreachable**. The crew then measured three ways and **deleted it** — `dict exists` returns 0 without raising for an odd list, a bare word, an empty string or unbalanced braces; the one shape that *does* raise does so at `lindex` **two lines above**, inside `do_stop`'s long-standing `catch`. **N10 is a new arm for the deletion** (`ase::run_record` → `{}` unconditionally) and reds **CK32 + CK33**, so the surviving body is pinned |
+| **and the one nuance the verifier would not round off** | *"identically either way"* is true of the **outcome**, not the return: with the guard re-added, `run_record` on an odd element 4 gives `{a b c}` where the deletion gives `{}`. Unobservable — `state_get` answers `{}` both ways and `do_stop` is the only caller — but it is not the same value, and the receipt now says so |
+| **suites, both arms** | rc 0, ALL PASS **652**/118/**80**/49/235/87/76 headless and **652**/118/**80**/**153**/235/87/76 display, from 644/118/79 at `df5df4fe`. Reported as a **name diff**: **lost = 0 in all 14 comparisons**, gained exactly the eight new names plus `NP7b` |
+| **sabotage** | the crew's **10**, then **11** after the deletion, then the verifier's **own 6** and a further **5** — every arm KILLED by name, **0 survivors**, restores from `finally:` plus SIGINT/SIGTERM/SIGHUP, `RESTORED_CLEAN` after every arm and five files back at their hand-over md5s |
+| **T1** | ✅ **82 cases, ZERO counted, rc 0, 362 s** — run **solo, in the foreground, from `tests/`**, log non-empty, no `exit -1` collision |
+| ⚠ **the fossil, and the sharper rule it produced** | the earlier T1 row in this batch was a **stale log**: `tclsh tests/run_regression.tcl` from the repo root **exits 1 without running the cases** and leaves the previous log in place (`0b0b61c0`). The verifier then found the check that catches it is **mtime, NOT md5** — `results.log` is **byte-deterministic for a green run** (base, re-run and final all `8456b56c…`), so an unchanged md5 proves nothing and would condemn every honest green run. **The fossil is itself a previous green run**, indistinguishable by content. CLAUDE.md and `CREW_BRIEF.md` said "mtime and md5" for about an hour and are corrected |
+| **found, not fixed** | a run completing **microseconds before the kill** is told it is partial — confirmed as the pre-existing race **reversed**, neither introduced nor widened by this change. ⚠ And **`EE5` is a binary-independent intermittent**, not the apt-only one the receipt first claimed: the verifier saw **`EE5/fork`**, identical symptom, **1 fail in 38**. It is **not** upgraded to a pass on a run of greens, and the crew kept its original wording as the confession rather than deleting it |
+| **ledger debts** | `rule 1474` — **R9-726**, stamped to this clone. R9 now **726 strings from 38 issues**. Queue **186/70/11 → 187/70/11**. No `look` — this task draws no pixels |
+| **receipts** | `receipts/50-1474-stop-moment-message.md` · `receipts/50b-1474-verification.md` |
 
 ### ✅ Issue **1473** — the stop warning is about THIS run — collected 2026-09-15 — **debt M18 CLOSED**
 

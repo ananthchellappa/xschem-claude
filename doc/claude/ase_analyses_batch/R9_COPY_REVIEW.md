@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**725 strings, from 37 issues, grouped by where the user sees them** — not by
+**726 strings, from 38 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -9654,3 +9654,25 @@ stop      : Stopping this run loses at most its last 20 %, and what is kept is m
 
 
 *Note:* A record with no `ckpt` — every caller written before this issue, and every un-checkpointed run — writes R9-263 unchanged, and a backend with no `run_stop_cost` hook still writes no `stop` line at all. Reviewer question carried over from R9-263: whether the log field wants the same prose as the CIW line or a shorter value.
+
+## Issue 1474 — the two messages of one run stop contradicting each other
+
+*1 entry, and one re-used.* Issue 1473 made the LAUNCH warning conditional (R9-724) and left the sentence said at the MOMENT of the Stop unconditional, so for one commit a checkpointed run read **R9-264** — *"nothing of this run was written"* — and then, seconds later, `ase::ckpt_report`'s *"kept at 200000 points of an estimated 500000"*. Two sentences of one run, in one channel, contradicting each other. **R9-264 is unchanged byte for byte and is now the sentence for an un-checkpointed run only**; the one below is what a **checkpointed** run is told in its place. One choice rides with it under `owed.sh add rule 1474` — see the issue file: this sentence quotes **no percentage**, where its launch-time sibling R9-724 quotes `100/(N+1)` %. The launch number is a bound on the plan, computed before anything ran; at the moment of the Stop the amount really kept is a measurable fact, and `ase::ckpt_report` reports it afterwards in POINTS for exactly that reason — a percentage of an estimate reads like a measurement. So this sentence says what KIND of result the user now has, and the salvage note that follows says how much of it there is.
+
+**R9-726** · status
+
+```text
+ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial
+```
+
+
+*Where:* the CIW / ASE-L message area, plain (not error) — printed once by `ase::ui::do_stop`, at the instant a live run is killed, in place of R9-264, for a run whose checkpoint plan is not empty. The two early-return paths keep their own sentences ("ase: no simulation running for this session", "ase: Stop is not available on Windows"), which are pre-existing and untouched.
+
+
+*For:* Tells the user, at the moment they press Stop, that this particular run is not all-or-nothing after all: what had been checkpointed is on disk, and it is a partial result rather than a finished one. Without it the next thing they read is a salvage note describing points that the Stop had just told them did not exist.
+
+
+*Rendered:* the source does not hold this as one literal. The FRAME is `ase::run_stopped_msg` — "ase: simulation stopped — `<clause>`, and what is kept is marked partial" — chosen for a checkpointed run by the same plan R9-724 reads, `ase::ckpt_rows`' answer, resolved once by `ase::run_deck` and read back out of the run record by `ase::run_record`. The CLAUSE is ngspice adapter content, the new `after_ckpt` key of `ase::backend::ngspice::run_stop_cost`, literally "every point up to this run's last checkpoint was written".
+
+
+*Note:* Em dash (U+2014), and **no trailing full stop** — it follows R9-264, its sibling in the same place, rather than R9-724; the period inconsistency between the launch and stop sentences is pre-existing and is recorded at R9-262/R9-264 rather than silently fixed here. "what is kept is marked partial" is R9-724's clause repeated verbatim, deliberately: the two sentences of one run should agree in words as well as in claim, and a reviewer who re-words one must re-word both. A backend that declares `after` and not `after_ckpt` says nothing at all here rather than falling back to R9-264. Reviewer question: whether "every point up to this run's last checkpoint was written" is the right thing to say when the Stop landed before the FIRST checkpoint — the salvage note that follows says "kept nothing" in that case, which does not contradict it but is a blunter answer than this sentence leads a reader to expect.

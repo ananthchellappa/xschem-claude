@@ -152,6 +152,21 @@
 # ⚠ SECTION SW DOES NOT MOVE, and that is the contract: SW1 passes no plan, which
 # IS the un-checkpointed run, so its literal is unchanged byte for byte -- as are
 # SW4's header substring and rows L10/L11 of test_ase_simreg_0931.
+# 644 -> 652 with rows CK28f and CK30-CK33b (issue 1474 -- the SECOND message of
+# the same run). 1473 fixed the launch warning and left the moment-of-the-Stop
+# sentence saying "nothing of this run was written" to a checkpointed run,
+# seconds before ase::ckpt_report said what it had kept. ⚠ CK31 IS THE ROW THE
+# ISSUE IS ABOUT: the defect was never that either sentence was wrong on its own
+# -- each matched its own literal -- but that the two CONTRADICTED each other
+# inside one run, so CK31 asserts them against EACH OTHER and would have reddened
+# on the tree 1473 left. CK28f is the coverage 1473's receipt claimed and did not
+# have: its bench held six of the eight residue kinds, and `pss` cannot be put in
+# a walked bench at all (no `emitorder` -> the walk raises -> the row would pass
+# for the wrong reason), so the eight are asked one at a time through
+# ase::ckpt_plan instead. ⚠ SECTION SW STILL DOES NOT MOVE: SW2 passes no plan,
+# which IS the un-checkpointed run, and RG13's silent Stop is silent for SW7's
+# reason and not this one.
+# AND RAISED 644 -> 652.
 # AND RAISED 638 -> 644.
 # AND RAISED 636 -> 638.
 # AND RAISED 626 -> 636.
@@ -10019,10 +10034,22 @@ check "CK28b the percentage is 100/(N+1) from THIS plan's own N, and the worst\
 ## ⚠ THE LAST TERM IS THE NON-VACUITY CONTROL, and it is not decoration:
 ## ase::ckpt_rows answers `{}` when ase::analysis_emit_order RAISES, so without
 ## it this row would pass just as happily over a state nothing could walk.
+## ⚠ AND THE BENCH IS SEVEN ROWS HOLDING **SEVEN** KINDS SINCE ISSUE 1474 -- it
+## held six, and receipt 49 called them seven. `ac` is in it and is NOT one of
+## the eight residue kinds this row is about; `sp` (added here) is. So `pss`
+## remains the one kind no walked bench can carry, and that is a fact about the
+## REGISTRY rather than an omission: `pss` declares no `emitorder`, so
+## ase::analysis_emit_rank answers `{}` for it and ase::analysis_emit_order
+## RAISES -- whereupon ase::ckpt_rows answers `{}` for the raise rather than for
+## the salvage declaration, this row passes for the wrong reason, and the
+## non-vacuity control below collapses to 0 without saying why. MEASURED, both
+## halves. Row CK28f pins all eight kinds where the question can actually be
+## asked of each: ase::ckpt_plan, one row at a time, with no walk in the way.
 set CK28RES [list {type op enabled 1} \
                   {type ac enabled 1 sweep dec points 100 start 1 stop 1e6} \
                   {type noise enabled 1} {type disto enabled 1} \
-                  {type tf enabled 1} {type pz enabled 1} {type sens enabled 1}]
+                  {type tf enabled 1} {type pz enabled 1} {type sens enabled 1} \
+                  {type sp enabled 1 sweep dec points 100 start 1 stop 1e6}]
 set CK28RESST  [ck_state $CK28RES]
 set CK28RESST2 [ck_state [concat $CK28RES [list $CKBIG]]]
 check "CK28c a bench whose analyses are ALL residue kinds is promised no salvage\
@@ -10031,6 +10058,31 @@ check "CK28c a bench whose analyses are ALL residue kinds is promised no salvage
         [ase::run_stop_warning ngspice [ase::ckpt_rows ngspice $CK28RESST]] \
         [llength [ase::ckpt_rows ngspice $CK28RESST2]]] \
   [list {} $CK28UN 1]
+
+## ⚠ CK28f: ALL EIGHT RESIDUE KINDS, ASKED ONE AT A TIME (issue 1474).
+## CK28c walks a BENCH, and a walk cannot answer for a kind it refuses to walk:
+## the verifier of issue 1473 found `pss` and `sp` pinned by no row at all, and
+## `pss` cannot be put in CK28c's bench for the reason stated there. The planner
+## itself has no such limit -- ase::ckpt_plan asks ase::analysis_salvage first
+## and answers `{}` before it looks at anything else -- so every kind can be
+## asked here, including the one the emit order will not carry.
+## ⚠ THE LAST TWO TERMS ARE THE NON-VACUITY CONTROL. An assertion that eight
+## things answer `{}` is satisfied by a planner that answers `{}` to everything,
+## by a renamed proc and by a typo in the type list, so the same call on the
+## long transient must produce a real plan and the list must be eight kinds long.
+set CK28F {}
+foreach ck28ty {op noise disto pss sp pz sens tf} {
+  lappend CK28F [list $ck28ty [ase::analysis_salvage ngspice $ck28ty] \
+    [ase::ckpt_plan ngspice [list type $ck28ty enabled 1] \
+                            [ck_state [list [list type $ck28ty enabled 1]]]]]
+}
+check "CK28f every one of the EIGHT residue kinds declares no salvage and reaches\
+ no checkpoint plan, asked one row at a time" \
+  [list $CK28F [llength $CK28F] \
+        [ase::ckpt_plan ngspice $CKBIG [ck_state [list $CKBIG]]]] \
+  [list [list {op {} {}} {noise {} {}} {disto {} {}} {pss {} {}} {sp {} {}} \
+              {pz {} {}} {sens {} {}} {tf {} {}}] 8 \
+        {n 4 step 160000 points 800000 vector time}]
 
 ## ⚠ CK28d: THE ROW THAT REDS IF A CHECKPOINTED RUN IS TOLD IT IS DISCARDED.
 ## Asserted as its own row rather than left as a by-product of CK28's equality:
@@ -10097,6 +10149,186 @@ check "CK29 the log field and the CIW sentence are one sentence about one plan,\
         [rg_has $CK29B {ase::run_stop_warning $sim $ckplan}] \
         [rg_has $CK29B {ckpt $ckplan}]] \
   [list $CK28CK $CK28UN 1 1 1]
+
+## --- CK30-CK33: THE MOMENT-OF-THE-STOP SENTENCE (issue 1474) -----------------
+## ⚠ ISSUE 1473 MADE THE TWO MESSAGES OF ONE RUN DISAGREE, WHICH IS WORSE THAN
+## WHAT IT REPAIRED. Before it, the launch warning and the stop message agreed
+## with each other and were both wrong for a checkpointed run. After it the
+## launch warning was right and the stop message still said *"nothing of this
+## run was written"* -- seconds before ase::ckpt_report said *"kept at 200000
+## points of an estimated 500000"* (test_ase_trnoise_1466 NP6), in one channel,
+## about one run. MEASURED on the finished 1473 tree, which is why that receipt
+## names it found-and-not-fixed rather than merely predicted.
+set CK30CK {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial}
+## ⚠ BYTE FOR BYTE SW2's LITERAL, SPELLED AGAIN RATHER THAN SHARED. SW2 owns the
+## un-checkpointed sentence and passes no plan; this row owns the SPLIT, and a
+## row that read its own expectation out of the other row's variable could not
+## tell "unchanged" from "both moved together".
+set CK30UN {ase: simulation stopped — nothing of this run was written}
+check "CK30 a checkpointed run is told at the STOP what was kept and that it is\
+ partial, where an un-checkpointed one keeps the old sentence byte for byte" \
+  [list [ase::run_stopped_msg ngspice $CK28BIGROWS] \
+        [ase::run_stopped_msg ngspice $CK28SMLROWS] \
+        [ase::run_stopped_msg ngspice] \
+        [ase::run_stopped_msg] \
+        [ase::run_stopped_msg ngspice {{30 0 tran {}}}]] \
+  [list $CK30CK $CK30UN $CK30UN $CK30UN $CK30UN]
+
+## ⚠ CK30b: THE `after` COLUMN HAS NO FALLBACK EITHER -- CK28e one message later.
+## `ckstopsim` declares the two keys the adapter had before issue 1473: a
+## backend that has not said what a stopped CHECKPOINTED run keeps on it gets
+## silence, never `after`, because `after` would then be a WRONG sentence rather
+## than a missing one. The last two terms are the no-hook-at-all control.
+check "CK30b a backend that declares `after` and not `after_ckpt` says NOTHING at\
+ the stop of a checkpointed run, and one with no hook says nothing either way" \
+  [list [ase::run_stopped_msg ckstopsim] \
+        [ase::run_stopped_msg ckstopsim $CK28BIGROWS] \
+        [ase::run_stopped_msg someoneelsesim] \
+        [ase::run_stopped_msg someoneelsesim $CK28BIGROWS]] \
+  [list {ase: simulation stopped — zz nothing} {} {} {}]
+
+## ⚠ CK30c: `partial` COMES FROM NEITHER `rc` NOR ase::sim_status, AND THE
+## SIGNATURE IS WHY. Both are 0 after a Stop (evidence/salvage.md §5.3), so a
+## sentence derived from either would say the run succeeded. This proc takes
+## (sim, ckpt) and can therefore SEE neither -- a structural claim, not a
+## promise: to consult an exit code someone would have to add a parameter, and
+## this row is what would notice. The body scans are the same claim from the
+## other side, and rg_body drops comments so the word in this proc's own header
+## cannot satisfy them.
+check "CK30c the stop sentence is composed from the simulator and THIS run's\
+ plan, and from no exit code or simulator status" \
+  [list [info args ase::run_stopped_msg] \
+        [rg_has [rg_body ase::run_stopped_msg] {sim_status}] \
+        [rg_has [rg_body ase::run_stopped_msg] {exitcode}] \
+        [rg_has [rg_body ase::run_stopped_msg] {ase::ckpt_worst_n $ckpt}]] \
+  {{sim ckpt} 0 0 1}
+
+## ⚠ CK31: THE TWO MESSAGES OF ONE RUN, ASSERTED AGAINST **EACH OTHER**.
+## THIS IS THE ROW THE ISSUE IS ABOUT. CK28 and CK30 each check one message
+## against a literal, and a suite built only of those would have passed happily
+## on the broken tree: both were individually "correct", and the defect was that
+## they contradicted one another inside a single run. So this row reduces each
+## sentence to WHAT IT CLAIMS -- salvage, nothing, or silence -- and requires the
+## launch warning and the stop message to make the SAME claim about the SAME
+## plan. `CONTRADICTORY` is a verdict of its own rather than a failure to match,
+## so a sentence that promised salvage and denied it in one breath reds here with
+## a name instead of reading as some other claim.
+proc ck_claim {s} {
+  if {$s eq {}} { return SILENT }
+  set keeps   [string match {*marked partial*} $s]
+  set nothing [expr {[string match {*discards*} $s] \
+                     || [string match {*nothing of this run was written*} $s]}]
+  if {$keeps && !$nothing} { return KEEPS }
+  if {$nothing && !$keeps} { return NOTHING }
+  return CONTRADICTORY
+}
+proc ck_pair {rows} {
+  return [list [ck_claim [ase::run_stop_warning ngspice $rows]] \
+               [ck_claim [ase::run_stopped_msg   ngspice $rows]]]
+}
+## ⚠ AND THE EXPECTATION PINS THE ANSWER AS WELL AS THE AGREEMENT. Two messages
+## that both said NOTHING would agree perfectly and be the defect issue 1473
+## repaired, so the checkpointed plans must read KEEPS on both sides.
+check "CK31 the launch warning and the stop message make the SAME claim about the\
+ same run -- never one promising salvage and the other denying it" \
+  [list [ck_pair $CK28BIGROWS] [ck_pair $CK28P9] [ck_pair $CK28P2] \
+        [ck_pair $CK28SMLROWS] [ck_pair {}] \
+        [ck_pair [ase::ckpt_rows ngspice $CK28RESST]] \
+        [list [ck_claim [ase::run_stop_warning ckstopsim $CK28BIGROWS]] \
+              [ck_claim [ase::run_stopped_msg  ckstopsim $CK28BIGROWS]]]] \
+  [list {KEEPS KEEPS} {KEEPS KEEPS} {KEEPS KEEPS} {NOTHING NOTHING} \
+        {NOTHING NOTHING} {NOTHING NOTHING} {SILENT SILENT}]
+
+## --- CK32: THE RUN RECORD IS READABLE BY THE ID THAT IS ABOUT TO BE KILLED ---
+## ase::run_deck already resolved this run's plan once and put it in the record
+## it hands `execute`; until issue 1474 nothing could read it back, so
+## ase::ui::do_stop -- which holds the id and nothing else -- had no way to ask
+## about the run it was stopping.
+## ⚠ THE FOREIGN-CALLBACK TERM IS NOT PADDING. `execute(callback,<id>)` is
+## xschem's table and src/xschem.tcl's own `simulate` writes one too, so element
+## 4 of a stranger's list is not a run record; reading it as one would put
+## arbitrary text through ase::state_get. The remaining terms are the shapes a
+## session attr can actually hold after a window was closed and reopened.
+set ::execute(callback,9071) [list ase::run_done /x.log {a b} {} \
+                                   [dict create cell z ckpt $CK28BIGROWS]]
+set ::execute(callback,9072) [list some_other_proc a b c [dict create ckpt $CK28BIGROWS]]
+set ::execute(callback,9073) [list ase::run_done /x.log {a b}]
+check "CK32 the run record is readable by execute id, and only ASE-L's own\
+ callback is read as one" \
+  [list [ase::state_get [ase::run_record 9071] ckpt {}] \
+        [ase::run_record 9072] [ase::run_record 9073] \
+        [ase::run_record 4242] [ase::run_record notanid] [ase::run_record {}] \
+        [ase::state_get [ase::run_record 4242] ckpt {}]] \
+  [list $CK28BIGROWS {} {} {} {} {} {}]
+catch {unset ::execute(callback,9071)}
+catch {unset ::execute(callback,9072)}
+catch {unset ::execute(callback,9073)}
+
+## --- CK33: THE PLAN REALLY TRAVELS FROM THE RECORD TO THE USER'S SCREEN ------
+## The whole chain through the REAL ase::ui::do_stop: a live id, the record it
+## carries, the sentence that reaches the CIW. `kill_running_cmds` is stubbed
+## because there is no process to kill, and the stub RECORDS its argument -- a
+## do_stop that composed a beautiful sentence and stopped killing runs would
+## otherwise pass this row.
+## ⚠ ITS OWN SESSION ON ITS OWN CELL, deliberately: RG12's session is open on
+## `aselib/nfet_clean/schematic` with the `holdsim` fixture simulator, and
+## re-opening that key here would take a live fixture out from under section RG.
+## ⚠ THE RESTORE IS OUTSIDE THE catch, so a raise inside the measurement leaves
+## the real kill_running_cmds in place for every section after this one.
+set CK33ST [ck_state [list $CKBIG]]
+dict set CK33ST simulator ngspice
+dict set CK33ST design {lib aselib cell ck33cell view schematic}
+dict set CK33ST rundir [file join $scratch ck33run]
+file mkdir [file join $scratch ck33run]
+set CK33P [file join $scratch ck33.state]
+ase::state_save $CK33P $CK33ST
+set CK33KEY [ase::session_key aselib ck33cell schematic]
+ase::session_open $CK33KEY $CK33P
+set CK33R {}
+set ::ck33killed {}
+rename ::kill_running_cmds ::ck33_saved_kill
+proc ::kill_running_cmds {{lb {}} sig} { lappend ::ck33killed [list $lb $sig] ; return 1 }
+set ck33rc [catch {
+  foreach {ck33id ck33meta} [list \
+      9077 [dict create cell ck33cell simulator ngspice ckpt $CK28BIGROWS] \
+      9078 [dict create cell ck33cell simulator ngspice ckpt {}] \
+      9079 [dict create cell ck33cell simulator ngspice]] {
+    set ::execute(pipe,$ck33id) dummy
+    set ::execute(callback,$ck33id) [list ase::run_done /x.log $CK33ST {} $ck33meta]
+    ase::session_setattr $CK33KEY run_id $ck33id
+    lappend CK33R [lindex [rg_ciw {ase::ui::do_stop $CK33KEY}] 0 1]
+    catch {unset ::execute(pipe,$ck33id)}
+    catch {unset ::execute(callback,$ck33id)}
+  }
+} ck33err]
+rename ::kill_running_cmds {}
+rename ::ck33_saved_kill ::kill_running_cmds
+catch {ase::session_close $CK33KEY}
+## The three records are: this run's plan, an EMPTY plan, and NO `ckpt` KEY AT
+## ALL -- the last being every record written before issue 1473, which must keep
+## the old sentence rather than raise or fall silent.
+check "CK33 the plan in the run record reaches the sentence the user reads at the\
+ Stop, and the run is still really killed" \
+  [list $ck33rc $CK33R $::ck33killed] \
+  [list 0 [list $CK30CK $CK30UN $CK30UN] {{9077 -9} {9078 -9} {9079 -9}}]
+
+## ⚠ CK33b: READ, NOT RE-DERIVED, AND READ BEFORE THE KILL.
+## Re-resolving ase::ckpt_rows here would answer about the bench AS IT IS NOW,
+## which the user may have edited while the run was live -- the defect issue 1370
+## fixed for `using` and 1473 fixed for the launch warning, one message later.
+## And the record must be read BEFORE kill_running_cmds: `execute` drops
+## `execute(callback,<id>)` when it fires the callback, and what fires it is the
+## EOF the kill causes. The ORDER term follows row CK25's precedent -- a source
+## claim about two lines is a claim about which comes first.
+set CK33B [rg_body ase::ui::do_stop]
+check "CK33b the Stop door READS this run's plan out of the record before it\
+ kills, and never re-derives it from the session's current bench" \
+  [list [rg_has $CK33B {ase::run_record $id}] \
+        [rg_has $CK33B {ase::run_stopped_msg}] \
+        [rg_has $CK33B {ckpt_rows}] [rg_has $CK33B {sim_status}] \
+        [expr {[string first {ase::run_record} $CK33B] < \
+               [string first {kill_running_cmds} $CK33B]}]] \
+  {1 1 0 0 1}
 
 } ck_err]} {
   check "CK0 section CK ran to the end" "RAISED:$ck_err" {}

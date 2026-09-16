@@ -100,9 +100,16 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   told to ignore the exit code and read the file, and here the nonzero exit is the
   **only** signal that the file is a fossil. Two receipts in the ASE-L batch and
   one commit message carry a case count obtained this way (84, where the tree has
-  82). **So before counting, confirm the log's mtime and md5 moved off their
-  pre-run values** — and treat an empty log *after* a run as a death, never as a
-  zero.
+  82). **So before counting, confirm the log's MTIME moved off its pre-run value**
+  — and treat an empty log *after* a run as a death, never as a zero.
+  ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
+  hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for
+  a green run**, so a clean 82-case sweep writes the identical file every time
+  (three consecutive runs, all `8456b56c…`). An unchanged md5 therefore proves
+  nothing, and reading it as proof of a fossil would condemn every honest green
+  run. Only the mtime separates "rewritten identically" from "never rewritten" —
+  which is also why the fossil is so dangerous: the stale file it leaves behind is
+  a **previous green run**, indistinguishable from a pass by content alone.
 - **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and
   the loser reports a `FATAL` that never happened. `open_close.tcl:38` puts its
   per-job exit-status files in a **fixed** `results/.work` (no pid), and `:108`

@@ -80,6 +80,11 @@
 #   follows the same plan the checkpoint loop does, so this bench is told what a
 #   Stop KEEPS while the identical card without its noise table is told a Stop
 #   discards it. One pure-Tcl row that starts no simulator.
+#   79 -> 80 AND RAISED, issue 1474 (receipt 50): NP7b -- the sentence at the
+#   MOMENT of the Stop follows the same plan, so this bench is no longer told
+#   "nothing of this run was written" seconds before NP6's own salvage note says
+#   it kept 200,000 points. NP6 and NP7b are the two halves of that contradiction
+#   and they are in this file together deliberately. One pure-Tcl row.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_trnoise_1466.tcl
@@ -854,6 +859,39 @@ check {NP7 the noisy transient is told what a Stop KEEPS, and the same card\
   [list {Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.} \
         {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.} \
         {}]
+
+## ⚠ AND THE SENTENCE AT THE MOMENT OF THE STOP FOLLOWS THE SAME PLAN (issue
+## 1474). NP6, eleven lines above, is the OTHER half of this row: it measures
+## that this exact bench's salvage note says *"kept at 200000 points of an
+## estimated 500000"*. Until 1474 the sentence the user read seconds EARLIER --
+## at the instant they pressed Stop -- was *"nothing of this run was written"*.
+## The two are in one file on purpose: whichever of them a later change moves,
+## the other is right here to contradict it.
+## ⚠ THE LAST TWO TERMS COMPARE THE MESSAGES WITH EACH OTHER, not with a
+## literal. A suite that checked each sentence against its own golden would have
+## passed on the tree issue 1473 left, where both goldens were individually
+## correct and the pair was the defect.
+proc np_claim {s} {
+  if {[s_broken $s]} { return $s }
+  if {$s eq {}} { return SILENT }
+  set keeps   [string match {*marked partial*} $s]
+  set nothing [expr {[string match {*discards*} $s] \
+                     || [string match {*nothing of this run was written*} $s]}]
+  if {$keeps && !$nothing} { return KEEPS }
+  if {$nothing && !$keeps} { return NOTHING }
+  return CONTRADICTORY
+}
+set NP7BNOISY [s_ans ase::run_stopped_msg ngspice [s_ans ase::ckpt_rows ngspice $NPST]]
+set NP7BPLAIN [s_ans ase::run_stopped_msg ngspice [s_ans ase::ckpt_rows ngspice $NP7ST]]
+check {NP7b the noisy transient is told at the STOP what was kept, its two\
+ sentences make the same claim, and the same card without its noise table is told\
+ nothing was written} \
+  [list $NP7BNOISY $NP7BPLAIN \
+        [list [np_claim $NP7NOISY] [np_claim $NP7BNOISY]] \
+        [list [np_claim $NP7PLAIN] [np_claim $NP7BPLAIN]]] \
+  [list {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial} \
+        {ase: simulation stopped — nothing of this run was written} \
+        {KEEPS KEEPS} {NOTHING NOTHING}]
 
 # ===========================================================================
 # NS -- WHICH KINDS A SEED REPEATS, AND WHAT THE KILL SWITCH KILLS

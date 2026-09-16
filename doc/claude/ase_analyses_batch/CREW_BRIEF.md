@@ -323,8 +323,12 @@ Each one has a scar behind it. Sources: `/home/analog/dev/xschem-claude/CLAUDE.m
   never taken. Two receipts in this batch quote a T1 row obtained that way, and the case count
   they carry (**84**) is the stale file's; the tree measures **82**. This is the same defect as
   reading `run_regression.tcl`'s stdout instead of `results.log` (issue **1456**) — the failure
-  is silent, plausible and always green. **Before counting, confirm the log's mtime and md5 moved
-  off the pre-run value**, and treat an empty log after the run as a death, never as zero.
+  is silent, plausible and always green. **Before counting, confirm the log's MTIME moved off the
+  pre-run value**, and treat an empty log after the run as a death, never as zero.
+  ⚠ **MTIME, NOT MD5** — this line said "mtime and md5" for an hour on 2026-09-15. `results.log`
+  is **byte-deterministic for a green run** (three consecutive 82-case sweeps, all `8456b56c…`),
+  so an unchanged md5 proves nothing and treating it as proof of a fossil condemns every honest
+  green run. The stale file is itself a *previous green run*: only the mtime tells them apart.
 - **T1's baseline is ZERO counted failures.** "A standing red is a defect, not furniture."
   A receipt may not say "3 FAIL — pre-existing"; if T1 is not zero, name the case and say
   why, per case. Eight issue files were filed four times each because crews carried

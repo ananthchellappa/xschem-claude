@@ -16853,6 +16853,55 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   return $id
 }
 
+# THE RUN RECORD OF A LIVE RUN, BY ITS EXECUTE ID -- or `{}` when there is none.
+# Issue 1474.
+#
+# ⚠ THIS EXISTS SO A STOP CAN ASK ABOUT THE RUN IT IS STOPPING. ase::run_deck
+# builds the record and hands it to `execute` as argument four of the callback;
+# until now nothing could read it back, so ase::ui::do_stop -- which holds the
+# id and nothing else -- had to compose its sentence out of the simulator name
+# alone. Re-deriving the plan there instead would be a SECOND answer about a
+# state the session may have edited while the run was live, which is the defect
+# issue 1370 fixed for `using` and 1473 fixed for the launch warning.
+#
+# ⚠ THE CALLBACK'S FIRST WORD IS CHECKED, AND IT IS NOT DECORATION.
+# `execute(callback,<id>)` is xschem's table, not ASE-L's: src/xschem.tcl's own
+# `simulate` writes one too (:5889 -- a script string whose first word is
+# `set_simulate_button`), and so may any other caller. Only `ase::run_done`'s
+# own shape is read as a run record. Row CK32, and the arm that drops this line
+# reds it alone.
+#
+# ⚠ AND THERE IS NO `dict size` CHECK ON THE META, DELIBERATELY -- A SABOTAGE IS
+# WHY. The first cut had one. The driver's verifier removed it and BOTH SUITES
+# STAYED ALL PASS, which is this batch's definition of a line no row can defend.
+# Re-measured three ways before deleting it, because "no row fails" is a reason
+# to look rather than a verdict:
+#   * REACHABILITY -- the only writer of an `ase::run_done`-headed entry is
+#     ase::run_deck above, which builds element 4 with `dict create`. No product
+#     path can put a non-dict there at all;
+#   * EFFECT IF REACHED -- `ase::state_get` answers its default for every
+#     malformed shape, because `dict exists` returns 0 (never raises) for an
+#     odd-length list, a bare word, the empty string and an unbalanced one. The
+#     caller sees `{}` with the check and `{}` without it, measured both ways;
+#   * THE SHAPE THAT REALLY BREAKS -- a callback that is not a well-formed list
+#     raises `unmatched open brace in list` at `lindex`, TWO LINES ABOVE, where
+#     no `dict size` could ever have caught it. ase::ui::do_stop's own `catch`
+#     is what covers that, and always did.
+# So the guard defended nothing reachable, changed no answer where it was
+# reachable, and did not defend the one case that fails. A line whose whole
+# effect another line has already had is deleted rather than given a fixture --
+# issue 1432's S32, and ase::ckpt_plan's own header two thousand lines up.
+#
+# The id is never trusted: `execute` hands out integers, but this proc is
+# reachable from a session attr that survived a closed window (ase.tcl:8588).
+proc ase::run_record {id} {
+  if {![string is integer -strict $id]} { return {} }
+  if {![info exists ::execute(callback,$id)]} { return {} }
+  set cb $::execute(callback,$id)
+  if {[lindex $cb 0] ne {ase::run_done} || [llength $cb] < 5} { return {} }
+  return [lindex $cb 4]
+}
+
 # --- 0618: the simulation log's framing --------------------------------------
 # A header before the simulator's output and a footer after it, both clearly
 # delimited, so the log is a record of the RUN and not merely of the run's
@@ -16957,10 +17006,57 @@ proc ase::run_stop_warning {{sim {}} {ckpt {}}} {
 }
 
 # The moment-of-the-Stop sentence -- said ONLY on the path that killed something.
-proc ase::run_stopped_msg {{sim {}}} {
+#
+# ⚠ IT IS ABOUT **THIS** RUN TOO, AND THAT IS ISSUE 1474. Issue 1473 made the
+# LAUNCH warning conditional and left this one saying the adapter's `after`
+# clause to every run, so a checkpointed transient read *"nothing of this run
+# was written"* at the instant it stopped and, seconds later,
+# ase::ckpt_report's *"kept at 200000 points of an estimated 500000"* -- two
+# sentences of ONE run, in ONE channel, contradicting each other. That is worse
+# than the state 1473 repaired: before it the two agreed and were both wrong;
+# after it they disagreed within a run.
+#
+# <ckpt> IS THE SAME ONE ase::run_stop_warning TAKES -- ase::ckpt_rows' answer,
+# resolved ONCE by ase::run_deck and carried in the run record, which
+# ase::ui::do_stop reads back through ase::run_record for the id it is about to
+# kill. NOT re-resolved here and NOT recomputed from the bench: the session may
+# have edited the bench while the run was live, and the plan the deck in the
+# rundir actually carries is the one taken at the launch.
+#
+# ⚠ NO PERCENTAGE HERE, DELIBERATELY, and it is not an oversight of symmetry.
+# The launch sentence may quote 100/(N+1) % because that is a BOUND ON THE PLAN,
+# computed before anything has run. At this instant the amount really kept is a
+# measurable fact, and ase::ckpt_report reports it AFTER the run in POINTS for
+# exactly that reason -- a percentage of an estimate reads like a measurement
+# (receipt 49's binding note 3: do not "unify" the two). So this sentence says
+# WHAT KIND of result the user now has, and the salvage note that follows says
+# how much of it there is.
+#
+# ⚠ AND `partial` COMES FROM NEITHER `rc` NOR ase::sim_status. Both are 0 after
+# a Stop (evidence/salvage.md §5.3), so either would say the run succeeded. Two
+# things establish partial-ness instead: this proc is reached ONLY from the arm
+# of ase::ui::do_stop that has just killed a live process, and the authority for
+# complete-vs-aborted afterwards is the DECK'S COMPLETION ECHO, read by
+# ase::run_completed for ase::ckpt_report. This proc's signature is the
+# structural half of that claim -- it takes (sim, ckpt) and can therefore SEE
+# neither an exit code nor a simulator status (row CK30c).
+#
+# ⚠ THE CHECKPOINTED CLAUSE IS THE ADAPTER'S, WITH NO FALLBACK -- ase::run_stop_
+# warning's rule one message later. A backend that declares `after` and not
+# `after_ckpt` has not said what a stopped checkpointed run keeps on IT, and
+# `after` would then be a WRONG sentence rather than a missing one. Silence, as
+# for a backend with no hook at all (D34-D37).
+proc ase::run_stopped_msg {{sim {}} {ckpt {}}} {
   set c [ase::run_stop_cost $sim]
-  if {$c eq {} || ![dict exists $c after]} { return {} }
-  return "ase: simulation stopped — [dict get $c after]"
+  if {$c eq {}} { return {} }
+  set n [ase::ckpt_worst_n $ckpt]
+  if {$n eq {}} {
+    if {![dict exists $c after]} { return {} }
+    return "ase: simulation stopped — [dict get $c after]"
+  }
+  if {![dict exists $c after_ckpt]} { return {} }
+  return "ase: simulation stopped — [dict get $c after_ckpt], and what is kept\
+ is marked partial"
 }
 
 proc ase::run_log_header {meta} {
@@ -27977,21 +28073,37 @@ $_leg
   # Same proc, same two keys."* What happened instead: `before` is a CONSTANT
   # and a THIRD key answers the checkpointed case, because the two are different
   # facts about ngspice and a caller that holds a plan must be able to ask for
-  # the one it needs. And `after` has NOT gained its case -- ase::run_stopped_msg
-  # takes no plan, so a stopped checkpointed run still hears "nothing of this run
-  # was written" from ase::ui::do_stop and then "kept at N points" from
-  # ase::ckpt_report seconds later. Named in receipt 49, not fixed there.
+  # the one it needs. `after` did not gain its case either -- a FOURTH key did,
+  # one issue later (1474). So the proc has four keys and not two, and every one
+  # of them is a constant: WHICH of them is said is the caller's question, and a
+  # caller that holds this run's plan is the only one that can answer it.
+  #
+  # ⚠ THE PAIRS ARE (before, before_ckpt) AND (after, after_ckpt), AND THE AXES
+  # ARE DIFFERENT. before/after is WHEN the sentence is said -- the launch
+  # warning against the moment of the kill; the `_ckpt` half is WHICH RUN it is
+  # said about. A backend may declare either column without the other and ASE-L
+  # then says nothing in the case it was not told about, never the other
+  # column's sentence (rows CK28e, CK30b).
   #
   # ⚠ `before_ckpt` IS A FACT ABOUT ngspice UNDER THE EMITTED LOOP, not about the
   # plan: how much is at risk is ASE-L's arithmetic over its own N (D34-D37), and
   # what survives the kill is this simulator's business. Measured: the `.tmp` +
   # `shell mv -f` pair makes the last checkpoint whole through a `kill -9`, where
   # a plain `write` in the same loop leaves a file ngspice refuses ENTIRELY.
+  # ⚠ `after_ckpt` IS THE PAST TENSE OF `before_ckpt` AND NOT A COPY OF IT. The
+  # launch clause promises what ngspice WILL keep; this one states what is on
+  # disk now, in the voice `after` already uses -- neither names ngspice,
+  # because at this instant the user is being told about their RESULT and not
+  # about the simulator's run model. The `.tmp` + `shell mv -f` pair is what
+  # makes the claim true through a `kill -9`: the last checkpoint is whole, and
+  # a plain `write` in the same loop would leave a file ngspice refuses
+  # entirely.
   proc run_stop_cost {} {
     return [dict create \
       before      {ngspice in batch mode writes nothing on a stop} \
       before_ckpt {ngspice keeps every point up to this run's last checkpoint} \
-      after       {nothing of this run was written}]
+      after       {nothing of this run was written} \
+      after_ckpt  {every point up to this run's last checkpoint was written}]
   }
 
   # WHICH KIND OF THING A DC SWEEP VARIABLE IS, BY ITS SPICE DEVICE LETTER.

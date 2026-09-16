@@ -12527,6 +12527,21 @@ proc ase::ui::do_stop {key} {
     catch {::ase::echo "ase: Stop is not available on Windows"}
     return
   }
+  ## ⚠ 1474: THE RUN RECORD IS READ **BEFORE** THE KILL. `execute` drops
+  ## `execute(callback,<id>)` the moment it fires the callback
+  ## (src/xschem.tcl:315), and what fires it is the EOF this kill is about to
+  ## cause. Nothing between here and the sentence below enters the event loop
+  ## today, so the order is insurance rather than a live race -- but it costs
+  ## one line, and the failure it prevents is silent: an empty record reads as
+  ## "this run had no checkpoints", which is the un-checkpointed sentence said
+  ## to a checkpointed run, i.e. exactly the defect this issue is about.
+  ##
+  ## ⚠ AND IT IS READ, NOT RE-DERIVED. `ase::ckpt_rows` over the session's
+  ## CURRENT state would answer about the bench as it is now, which the user may
+  ## have edited while the run was live; `ckpt` is the plan the deck in the
+  ## rundir was actually rendered from, resolved once by ase::run_deck.
+  set stopckpt {}
+  catch {set stopckpt [::ase::state_get [::ase::run_record $id] ckpt {}]}
   catch {kill_running_cmds $id -9}
   ## STAGE 2e: SAY WHAT THE STOP COST, AND ONLY ON THE PATH THAT KILLED
   ## SOMETHING. The two early returns above keep the sentences they have -- the
@@ -12546,7 +12561,8 @@ proc ase::ui::do_stop {key} {
   ## mode the catch exists to prevent, hiding the defect it was protecting.
   set stopmsg {}
   catch {set stopmsg [::ase::run_stopped_msg \
-                        [::ase::state_get [::ase::session_state $key] simulator]]}
+                        [::ase::state_get [::ase::session_state $key] simulator] \
+                        $stopckpt]}
   if {$stopmsg ne {}} { catch {::ase::echo $stopmsg} }
 }
 
