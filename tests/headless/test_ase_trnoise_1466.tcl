@@ -76,6 +76,10 @@
 #   keeps a card of 2^32 points or more -- and NK22 -- the noise caution leaves
 #   such a card to §7g's size rule, as it does under the boundary. Two pure-Tcl
 #   rows that start no simulator, so neither moves with a missing binary.
+#   78 -> 79 AND RAISED, issue 1473 (receipt 49): NP7 -- the launch warning
+#   follows the same plan the checkpoint loop does, so this bench is told what a
+#   Stop KEEPS while the identical card without its noise table is told a Stop
+#   discards it. One pure-Tcl row that starts no simulator.
 #
 # Runs on BOTH arms:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_trnoise_1466.tcl
@@ -833,6 +837,23 @@ check {NP6 a stopped noisy run reads as aborted rather than unknown, and the sal
   [list $NP6V [llength $NP6R] \
         [string match {*kept at 200000 points of an estimated 500000,*} [lindex $NP6R 0]]] \
   {{aborted complete} 1 1}
+
+## ⚠ AND THE LAUNCH WARNING FOLLOWS THE SAME PLAN (issue 1473). Until it, every
+## run was told *"Stopping this run discards it"* -- including this one, where
+## the noise is the entire reason there is anything to keep. The sentence's two
+## callers, its numbers and the residue kinds that keep the old wording are
+## rows CK28-CK29 of test_ase_core; what THIS row owns is that the NOISE is what
+## changes it, because the identical card with no table is under the floor.
+set NP7NOISY [s_ans ase::run_stop_warning ngspice [s_ans ase::ckpt_rows ngspice $NPST]]
+set NP7ROW   [dict remove $NPROW noise]
+set NP7ST    [nz_state [list $NP7ROW]]
+set NP7PLAIN [s_ans ase::run_stop_warning ngspice [s_ans ase::ckpt_rows ngspice $NP7ST]]
+check {NP7 the noisy transient is told what a Stop KEEPS, and the same card\
+ without its noise table is told a Stop discards it} \
+  [list $NP7NOISY $NP7PLAIN [s_ans ase::ckpt_rows ngspice $NP7ST]] \
+  [list {Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.} \
+        {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.} \
+        {}]
 
 # ===========================================================================
 # NS -- WHICH KINDS A SEED REPEATS, AND WHAT THE KILL SWITCH KILLS

@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**723 strings, from 36 issues, grouped by where the user sees them** — not by
+**725 strings, from 37 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -9613,3 +9613,44 @@ ase: checking the co-simulation files for ngspice raised: <error>
 
 
 *Where:* the CIW, when an adapter's `cosim_shim_verdict` hook raises — a defect report to a developer, in R9-719's shape for the same event one stage earlier. No sentence is given in that case, and the run goes on.
+
+## Issue 1473 — the Stop warning tells the truth about this run (debt M18)
+
+*2 entries, and two re-used.* Stage 6f (issue 1433) shipped the checkpoint loop and left stage 2e's sentence where it stood, so a transient over `ase::ckpt_floor` was warned at launch that stopping it discarded everything — and told by `ase::ckpt_report`, afterwards, that it had kept 200,000 points. **R9-262** (the CIW line) and **R9-263** (the log field) are unchanged and are now the sentence for an **un-checkpointed run only**: a run with no checkpointed row is byte-identical to what it was, in both channels. The two below are what a **checkpointed** run is told instead, in those same two places. Four choices ride with them under `owed.sh add rule 1473` — see the issue file: the number is the worst case `100/(N+1)` % computed from **this run's own plan**, never a constant, so a bench whose `ase::ckpt_n` differs says a different percentage; what is kept is called **partial**, and that marking comes from the deck's completion echo rather than from `rc` or `$sim_status`, which are 0 either way; the **residue kinds** (`op`, `noise`, `disto`, `pss`, `sp`, `pz`, `sens`, `tf`) keep R9-262 / R9-263 permanently, because none of them declares a measured salvage; and a backend that declares `before` and not `before_ckpt` says **nothing at all** rather than either sentence.
+
+**R9-724** · caution
+
+```text
+ase: Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.
+```
+
+
+*Where:* the CIW / ASE-L message area, plain (not error) — printed once per launch, at the last instant before the simulator is executed, in place of R9-262, for a run whose checkpoint plan is not empty.
+
+
+*For:* Tells the user, before they have any reason to press Stop, that Stop on this particular run is not all-or-nothing: it costs at most one checkpoint interval, and what survives is a partial result rather than a finished one.
+
+
+*Rendered:* the source does not hold this as one literal. The FRAME is `ase::run_stop_warning` — "Stopping this run loses at most its last `<pct>` %, and what is kept is marked partial — `<clause>`." — where `<pct>` is `format %.3g` of `100/(N+1)` over the smallest N in this run's own `ase::ckpt_rows` plan (20 at the shipped N = 4, 33.3 at N = 2, 10 at N = 9). The CLAUSE is ngspice adapter content, the new `before_ckpt` key of `ase::backend::ngspice::run_stop_cost`, literally "ngspice keeps every point up to this run's last checkpoint".
+
+
+*Note:* The `ase: ` prefix is added at the echo site, not by the proc; the dash is an em dash (U+2014). Sentence-initial "Stopping" after the lowercase prefix is inherited from R9-262 deliberately — the two sentences are alternatives in one place and should be re-worded together if they are re-worded at all. A reviewer may want "loses at most its last 20 %" shortened, or "marked partial" replaced by whatever word the results pane will eventually print beside a salvaged run.
+
+
+**R9-725** · status
+
+```text
+stop      : Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.
+```
+
+
+*Where:* run log file, header block — the same field as R9-263, in the same place, for a run whose checkpoint plan is not empty. The user reads it after the fact, not live.
+
+
+*For:* Records in the run's own log what pressing Stop would have cost, so a user reading it later knows that a short plot beside a `.ckpt` file means a Stop rather than a simulator that failed.
+
+
+*Rendered:* the same frame and clause as R9-724, with the header's fixed-width field label `stop      : ` instead of the `ase: ` prefix. The plan is resolved once, in `ase::run_deck`, and carried in the run record as `ckpt`, so the log field and the CIW line cannot be answers about two different states.
+
+
+*Note:* A record with no `ckpt` — every caller written before this issue, and every un-checkpointed run — writes R9-263 unchanged, and a backend with no `run_stop_cost` hook still writes no `stop` line at all. Reviewer question carried over from R9-263: whether the log field wants the same prose as the CIW line or a shorter value.

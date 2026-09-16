@@ -3434,7 +3434,7 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   `ase::ckpt_report` afterwards says what was kept. Debt **M18**'s unfinished half; the ledger says
   M18 is closed in one place and open in two. Driver-measured at `d761b630`. OPEN.
 
-**The next free number is 1474.**
+**The next free number is 1475.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

@@ -144,6 +144,15 @@
 # the serialized form AND a non-empty one of each really is written. A key that
 # is never written cannot need omitting, so the second half is the half a
 # sabotage can redden.
+# 638 -> 644 with rows CK28-CK29 (issue 1473 -- the Stop warning tells the truth
+# about THIS run). Stage 6f shipped the checkpoint loop and left Stage 2e's
+# sentence alone, so both callers of ase::run_stop_warning consulted no plan and
+# a checkpointed transient was warned at launch that stopping it discarded
+# everything -- then told by ase::ckpt_report, afterwards, that it had not.
+# ⚠ SECTION SW DOES NOT MOVE, and that is the contract: SW1 passes no plan, which
+# IS the un-checkpointed run, so its literal is unchanged byte for byte -- as are
+# SW4's header substring and rows L10/L11 of test_ase_simreg_0931.
+# AND RAISED 638 -> 644.
 # AND RAISED 636 -> 638.
 # AND RAISED 626 -> 636.
 # AND RAISED 624 -> 626.
@@ -2730,6 +2739,14 @@ check "RG13 with nothing running Stop still says there is nothing to stop" \
 #
 # ⚠ BOTH SENTENCES ARE THE USER'S TO RATIFY (⚖ R9) -- filed as a rule debt the
 # moment they landed, not ratified by their appearing here.
+#
+# ⚠ SW1's LITERAL IS THE **UN-CHECKPOINTED** SENTENCE, AND SINCE ISSUE 1473 THAT
+# IS A CHOICE THIS ROW MAKES BY PASSING NO PLAN -- not the only sentence there
+# is. A run whose transient clears ase::ckpt_floor is told what a Stop costs at
+# worst and that what is kept is marked partial. That form, the numbers it
+# quotes, the residue kinds that keep SW1's sentence for good and the backend
+# that declares no `before_ckpt` are rows CK28-CK29 of section CK, which owns
+# issue 1433's checkpoint plan and therefore owns every question asked of one.
 check "SW1 the launch warning is ASE-L's frame around the backend's clause" \
   [ase::run_stop_warning] \
   {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.}
@@ -9943,6 +9960,143 @@ check "CK27 a salvage with no points hook, a hook that is not a command and a\
   $CK27 \
   [list {cka 0 {}} {ckb 0 {}} {ckc 0 {}} \
         {ckd 0 {n 4 step 160000 points 800000 vector time}}]
+
+## --- CK28: THE STOP WARNING IS ABOUT **THIS** RUN (issue 1473) ---------------
+## ⚠ THIS SECTION SHIPPED THE LOOP AND LEFT THE SENTENCE. Measured at d761b630:
+## both callers of ase::run_stop_warning -- the run door and ase::run_log_header
+## -- consulted no checkpoint plan, so the very transient section CK exists for
+## was told at launch *"Stopping this run discards it"* and told by
+## ase::ckpt_report afterwards that it had kept 200,000 points. The warning is
+## the sentence a person ACTS on: someone who read it and did not stop a
+## ten-minute run lost the ten minutes this section was built to give back.
+## Debt M18's other half; section SW owns the un-checkpointed sentence and does
+## not move, because SW1 passes no plan.
+set CK28CK {Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.}
+set CK28UN {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.}
+set CK28BIGROWS [ase::ckpt_rows ngspice [ck_state [list $CKBIG]]]
+set CK28SMLROWS [ase::ckpt_rows ngspice [ck_state [list $CKSMALL]]]
+check "CK28 a checkpointed run is told what a Stop costs at worst and that what\
+ is kept is marked partial, where an un-checkpointed one keeps the old sentence\
+ byte for byte" \
+  [list [ase::run_stop_warning ngspice $CK28BIGROWS] \
+        [ase::run_stop_warning ngspice $CK28SMLROWS] \
+        [ase::run_stop_warning ngspice] \
+        [llength $CK28BIGROWS] [llength $CK28SMLROWS]] \
+  [list $CK28CK $CK28UN $CK28UN 1 0]
+
+## ⚠ CK28b: THE NUMBER IS THE PLAN'S OWN, AND `20` IS NOWHERE IN THE CODE.
+## The plans below are spelled BY HAND, and that is the whole point: ase::ckpt_n
+## answers one number for every row on the shipped registry, so asked through
+## the planner *"reads this run's plan"* and *"asks ase::ckpt_n"* are the same
+## answer and neither a hard-coded 20 nor a second call to the planner could be
+## told from the fix. The two-row plan is the WORST case over the rows -- N=4
+## loses more than N=9 -- so the SMALLEST N wins, not the first and not the
+## largest. A plan row carrying no usable `n` is not a checkpointed run at all.
+set CK28P9  {{30 0 tran {n 9 step 1 points 10 vector time}}}
+set CK28P2  {{30 0 tran {n 2 step 1 points 10 vector time}}}
+set CK28P49 [list {30 0 tran {n 4 step 1 points 10 vector time}} \
+                  {31 1 tran {n 9 step 1 points 10 vector time}}]
+proc ck_pctof {rows} {
+  set s [ase::run_stop_warning ngspice $rows]
+  if {![regexp {its last ([0-9.]+) %} $s -> p]} { return NOPCT }
+  return $p
+}
+check "CK28b the percentage is 100/(N+1) from THIS plan's own N, and the worst\
+ case over two rows is the SMALLEST N" \
+  [list [ck_pctof $CK28BIGROWS] [ck_pctof $CK28P9] [ck_pctof $CK28P2] \
+        [ck_pctof $CK28P49] [ck_pctof {{30 0 tran {}}}] \
+        [ase::ckpt_worst_n $CK28P49] [ase::ckpt_worst_n {{30 0 tran {n 0}}}] \
+        [ase::ckpt_n]] \
+  {20 10 33.3 20 NOPCT 4 {} 4}
+
+## ⚠ CK28c: NOTHING IS PROMISED FOR THE RESIDUE KINDS, AND THAT IS PERMANENT.
+## Debt M18 named the residue and it is not transitional: `op` is one point;
+## `noise` and `disto` leave an incomplete plot SET rather than a short plot;
+## `pz`, `sens`, `tf`, `sp` and `pss` are unmeasured under a stop, and `sens` is
+## already known not to honour `bg_halt` (row CK6). A bench whose analyses are
+## ALL residue kinds must therefore keep the old sentence rather than be
+## promised a salvage that is not coming.
+## ⚠ THE LAST TERM IS THE NON-VACUITY CONTROL, and it is not decoration:
+## ase::ckpt_rows answers `{}` when ase::analysis_emit_order RAISES, so without
+## it this row would pass just as happily over a state nothing could walk.
+set CK28RES [list {type op enabled 1} \
+                  {type ac enabled 1 sweep dec points 100 start 1 stop 1e6} \
+                  {type noise enabled 1} {type disto enabled 1} \
+                  {type tf enabled 1} {type pz enabled 1} {type sens enabled 1}]
+set CK28RESST  [ck_state $CK28RES]
+set CK28RESST2 [ck_state [concat $CK28RES [list $CKBIG]]]
+check "CK28c a bench whose analyses are ALL residue kinds is promised no salvage\
+ -- and the same bench with one long transient added is" \
+  [list [ase::ckpt_rows ngspice $CK28RESST] \
+        [ase::run_stop_warning ngspice [ase::ckpt_rows ngspice $CK28RESST]] \
+        [llength [ase::ckpt_rows ngspice $CK28RESST2]]] \
+  [list {} $CK28UN 1]
+
+## ⚠ CK28d: THE ROW THAT REDS IF A CHECKPOINTED RUN IS TOLD IT IS DISCARDED.
+## Asserted as its own row rather than left as a by-product of CK28's equality:
+## a reworded checkpointed sentence that still carried "discards it" would
+## satisfy nothing here, and a fix that stopped gating reds this before it reds
+## anything else. The second and fourth terms are its controls -- an assertion
+## about an absent word is satisfied by an empty string, by a renamed proc and
+## by a typo in the fixture.
+check "CK28d the word `discards` never reaches a checkpointed run and always\
+ reaches an un-checkpointed one" \
+  [list [string match {*discards*} [ase::run_stop_warning ngspice $CK28BIGROWS]] \
+        [string match {*marked partial*} [ase::run_stop_warning ngspice $CK28BIGROWS]] \
+        [string match {*discards*} [ase::run_stop_warning ngspice $CK28SMLROWS]] \
+        [string match {*marked partial*} [ase::run_stop_warning ngspice $CK28SMLROWS]]] \
+  {0 1 1 0}
+
+## ⚠ CK28e: THE CHECKPOINTED CLAUSE IS THE ADAPTER'S TOO, WITH NO FALLBACK.
+## D34-D37 and rows SW3/SW3b's own reason, one step further in: a backend that
+## declares `before` and not `before_ckpt` has not said what a stopped
+## checkpointed run keeps on IT, and the un-checkpointed sentence would then be a
+## WRONG warning rather than a missing one. Silence is the honest answer; a
+## guessed sentence is the defect Stage 1's Xyce paper-validation found in this
+## item's own plan text.
+proc ck_stop_cost_old {} {
+  return [dict create before {zz batch writes nothing} after {zz nothing}]
+}
+ase::register_backend ckstopsim [dict create \
+  render_deck  [ase::backend_hook ngspice render_deck] \
+  run_cmd      [ase::backend_hook ngspice run_cmd] \
+  log_file     [ase::backend_hook ngspice log_file] \
+  result_probe [ase::backend_hook ngspice result_probe] \
+  raw_file     [ase::backend_hook ngspice raw_file] \
+  run_stop_cost ck_stop_cost_old]
+check "CK28e a backend that declares `before` and not `before_ckpt` says NOTHING\
+ for a checkpointed run -- never the discarded sentence -- and one with no hook\
+ at all says nothing either way" \
+  [list [ase::run_stop_warning ckstopsim] \
+        [ase::run_stop_warning ckstopsim $CK28BIGROWS] \
+        [ase::run_stop_warning someoneelsesim] \
+        [ase::run_stop_warning someoneelsesim $CK28BIGROWS]] \
+  [list {Stopping this run discards it — zz batch writes nothing.} {} {} {}]
+
+## --- CK29: BOTH CALLERS, ONE RESOLVE ----------------------------------------
+## The CIW note at launch and the log's `stop      :` field are the same sentence
+## about the same plan, and the plan is resolved ONCE -- in ase::run_deck, beside
+## the walk render_deck itself made -- then carried in the run record as `ckpt`.
+## A header that re-asked the planner would be a second answer over a state the
+## session may have edited since, which is exactly the defect issue 1370 fixed
+## for `using`, in this same proc.
+set CK29M [dict create cell nfet_clean simulator ngspice started 0 \
+                       cmd {ngspice -b x.spice} dir /tmp deck x.spice]
+proc ck_hdrstop {m} {
+  foreach l [split [ase::run_log_header $m] "\n"] {
+    if {[regexp {^stop      : (.*)$} $l -> v]} { return $v }
+  }
+  return NOFIELD
+}
+set CK29B [rg_body ase::run_deck]
+check "CK29 the log field and the CIW sentence are one sentence about one plan,\
+ resolved once in the run door and carried in the run record" \
+  [list [ck_hdrstop [dict replace $CK29M ckpt $CK28BIGROWS]] \
+        [ck_hdrstop $CK29M] \
+        [rg_has $CK29B {set ckplan [ase::ckpt_rows $sim $state]}] \
+        [rg_has $CK29B {ase::run_stop_warning $sim $ckplan}] \
+        [rg_has $CK29B {ckpt $ckplan}]] \
+  [list $CK28CK $CK28UN 1 1 1]
 
 } ck_err]} {
   check "CK0 section CK ran to the end" "RAISED:$ck_err" {}

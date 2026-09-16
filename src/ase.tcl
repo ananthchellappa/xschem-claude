@@ -16765,8 +16765,22 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ##
   ## CAUGHT and advisory, like the line above it: a defect in a warning must
   ## never stop a run.
+  ##
+  ## ⚠ 1473: THE SENTENCE IS ABOUT THIS RUN, AND ONE RESOLVE ANSWERS FOR BOTH
+  ## CHANNELS. ase::ckpt_rows is the same walk render_deck made a few lines
+  ## above, so the plan the deck carries and the plan the warning quotes are one
+  ## computation; it then travels in the run record below as `ckpt`, for
+  ## ase::run_log_header's own `stop      :` field. Resolving it twice would let
+  ## the CIW line and the log be answers about two different instants -- the
+  ## defect 1370 fixed for `using`, in the same proc.
+  ##
+  ## CAUGHT SEPARATELY, AND EMPTY IS THE CONSERVATIVE ANSWER: a planner that
+  ## raises leaves the un-checkpointed sentence standing, which is the one that
+  ## promises the user nothing.
+  set ckplan {}
+  catch {set ckplan [ase::ckpt_rows $sim $state]}
   catch {
-    set _sw [ase::run_stop_warning $sim]
+    set _sw [ase::run_stop_warning $sim $ckplan]
     if {$_sw ne {}} { ::ase::echo "ase: $_sw" }
   }
 
@@ -16806,10 +16820,18 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## two resolves would be taken at different instants over a state the session
   ## may have edited in between (a changed rundir is one click), and the run
   ## that leaked its lock would be the one whose settings moved.
+  ## `ckpt` (1473) rides for `using`'s reason and not `rawlock`'s: the log
+  ## header renders a SENTENCE from it, and the field must say what THIS run's
+  ## plan was at the instant the run started -- not what the planner would answer
+  ## when the log is written, over a state the session may have edited since.
+  ## ⚠ A meta WITHOUT the key is not a defect, it is the un-checkpointed run and
+  ## every pre-1473 caller: ase::run_log_header defaults it to `{}` and writes
+  ## exactly the line it always wrote.
   set meta [dict create cell $cell simulator $sim cmd $cmd dir $rd \
                         deck $deckpath started [clock seconds] \
                         opblock $opblock casenote $casenote optier $optier \
-                        using $using rawlock $rawlock t0 [clock milliseconds]]
+                        using $using ckpt $ckplan rawlock $rawlock \
+                        t0 [clock milliseconds]]
   catch {ase::run_log_write $logpath $meta {} {}}
 
   set ::execute(callback) [list ase::run_done $logpath $state $callback $meta]
@@ -16863,11 +16885,75 @@ proc ase::run_stop_cost {{sim {}}} {
   return $r
 }
 
+# ─── WHAT A STOP COSTS **THIS** RUN (issue 1473) ─────────────────────────────
+# THE WORST CASE THIS RUN'S OWN CHECKPOINT PLAN ALLOWS: N checkpoints cut the
+# run into N+1 intervals and a Stop lands somewhere inside one of them, so at
+# worst 100/(N+1) % of it is lost. `{}` for a run with no checkpointed row.
+#
+# ⚠ THE SMALLEST N WINS -- NOT THE FIRST ROW'S, AND NOT THE LARGEST. The answer
+# is a WORST case over the rows that were planned, and FEWER checkpoints mean a
+# BIGGER loss. ase::ckpt_n is one number for every row on the shipped registry,
+# so all three readings coincide there -- which is exactly why row CK28b of
+# tests/headless/test_ase_core.tcl hands this proc a two-row plan spelled by
+# hand, where they do not.
+#
+# ⚠ AND IT READS THE PLAN, NEVER ase::ckpt_n. The plan is what the deck was
+# rendered from; re-asking the planner here would be a second answer to "how
+# many checkpoints does this run have", taken at a different instant from the
+# one the deck in the rundir actually carries.
+proc ase::ckpt_worst_n {rows} {
+  set worst {}
+  foreach ent $rows {
+    if {[catch {dict get [lindex $ent 3] n} n]} continue
+    if {![string is integer -strict $n] || $n < 1} continue
+    if {$worst eq {} || $n < $worst} { set worst $n }
+  }
+  return $worst
+}
+
 # The launch sentence -- said once per run, in the log header and in the CIW.
-proc ase::run_stop_warning {{sim {}}} {
+#
+# ⚠ IT IS ABOUT **THIS** RUN, AND THAT IS ISSUE 1473. Stage 6f (issue 1433)
+# shipped the checkpoint loop and left this sentence where it stood, so a
+# transient whose estimate clears ase::ckpt_floor was told at launch that
+# stopping it discarded everything -- and then told by ase::ckpt_report,
+# afterwards, that it had not. The warning is the one a person ACTS on: someone
+# who reads it and does not stop a ten-minute run has lost the ten minutes the
+# salvage was built to give back.
+#
+# <ckpt> IS THIS RUN'S OWN PLAN -- ase::ckpt_rows' answer, resolved ONCE by
+# ase::run_deck and carried in the run record, so the CIW line and the log's
+# `stop      :` field cannot be answers about two different states. Empty (the
+# default, and every caller that holds no state) keeps the un-checkpointed
+# sentence BYTE FOR BYTE.
+#
+# ⚠ THE RESIDUE KEEPS THAT OLD SENTENCE, AND PERMANENTLY -- debt M18 named it
+# and it is not transitional. `op` is one point; `noise` and `disto` leave an
+# incomplete plot SET rather than a short plot; `pss`, `sp`, `pz`, `sens` and
+# `tf` are unmeasured under a stop, and `sens` is already known not to honour
+# `bg_halt`. None of them declares `salvage`, so none of them reaches a plan --
+# which is how a bench whose analyses are all residue kinds is never promised a
+# salvage that is not coming.
+#
+# ⚠ AND THE CHECKPOINTED CLAUSE IS THE ADAPTER'S TOO, WITH NO FALLBACK. A
+# backend that declares `before` and not `before_ckpt` has not said what a
+# stopped checkpointed run keeps on IT, and the un-checkpointed sentence would
+# then be a WRONG warning rather than a missing one -- so ASE-L says nothing,
+# which is the same answer it already gives a backend with no hook at all
+# (D34-D37, and rows SW3/SW3b's own reason).
+proc ase::run_stop_warning {{sim {}} {ckpt {}}} {
   set c [ase::run_stop_cost $sim]
-  if {$c eq {} || ![dict exists $c before]} { return {} }
-  return "Stopping this run discards it — [dict get $c before]."
+  if {$c eq {}} { return {} }
+  set n [ase::ckpt_worst_n $ckpt]
+  if {$n eq {}} {
+    if {![dict exists $c before]} { return {} }
+    return "Stopping this run discards it — [dict get $c before]."
+  }
+  if {![dict exists $c before_ckpt]} { return {} }
+  ## `%.3g`, so N = 4 reads `20` rather than `20.0` and N = 2 reads `33.3`.
+  set pct [format %.3g [expr {100.0 / ($n + 1)}]]
+  return "Stopping this run loses at most its last $pct %, and what is kept is\
+ marked partial — [dict get $c before_ckpt]."
 }
 
 # The moment-of-the-Stop sentence -- said ONLY on the path that killed something.
@@ -16911,7 +16997,14 @@ proc ase::run_log_header {meta} {
   ## EMPTY WRITES NOTHING -- the `casenote`/`using` discipline of this proc --
   ## so a backend that declares no `run_stop_cost` hook produces a log
   ## byte-identical to 0618's committed framing.
-  set stopwarn [ase::run_stop_warning [ase::state_get $meta simulator]]
+  ##
+  ## ⚠ 1473: AND IT IS **THIS RUN'S** SENTENCE, NOT EVERY RUN'S. `ckpt` is the
+  ## plan ase::run_deck resolved once and carried here. A meta without it --
+  ## every caller that holds no state, and every record written before that
+  ## issue -- keeps the un-checkpointed sentence byte for byte, which is what
+  ## leaves rows SW4 and L10 where they were.
+  set stopwarn [ase::run_stop_warning [ase::state_get $meta simulator] \
+                                      [ase::state_get $meta ckpt {}]]
   if {$stopwarn ne {}} { append out "stop      : $stopwarn\n" }
   ## THE CASEMODE NOTE, from `fluid-editing`'s casemode batch item 8 section 3b.
   ## It goes in the HEADER and not above it: item 8 asked for "the head of the
@@ -27872,15 +27965,33 @@ $_leg
   # mode -- so `kill_running_cmds $id -9` kills it at the default disposition in
   # a few milliseconds and nothing of the analysis in flight is on disk.
   #
-  # ⚠ AND THIS IS WHAT IS HONEST *UNTIL SALVAGE LANDS*, not a substitute for it.
-  # Stage 6f adds `stop after <points>` checkpointing under ⚖ R1's always-salvage
-  # requirement; when it does, `before` becomes conditional on whether this run
-  # has checkpoints and `after` gains the salvaged-file case. Same proc, same two
-  # keys, which is why the sentence ships now rather than waiting.
+  # ⚠ AND `before` IS WHAT IS HONEST FOR A RUN WITH NO CHECKPOINTS. Stage 6f
+  # added `stop after <points>` checkpointing under ⚖ R1's always-salvage
+  # requirement and LEFT THIS PROC ALONE, which is issue 1473: for a transient
+  # over ase::ckpt_floor the `before` clause became false while it was still the
+  # only one being said.
+  #
+  # ⚠ THE PREDICTION IN THIS COMMENT WAS WRONG IN BOTH HALVES, AND IT IS
+  # CORRECTED RATHER THAN DELETED. It read *"`before` becomes conditional on
+  # whether this run has checkpoints and `after` gains the salvaged-file case.
+  # Same proc, same two keys."* What happened instead: `before` is a CONSTANT
+  # and a THIRD key answers the checkpointed case, because the two are different
+  # facts about ngspice and a caller that holds a plan must be able to ask for
+  # the one it needs. And `after` has NOT gained its case -- ase::run_stopped_msg
+  # takes no plan, so a stopped checkpointed run still hears "nothing of this run
+  # was written" from ase::ui::do_stop and then "kept at N points" from
+  # ase::ckpt_report seconds later. Named in receipt 49, not fixed there.
+  #
+  # ⚠ `before_ckpt` IS A FACT ABOUT ngspice UNDER THE EMITTED LOOP, not about the
+  # plan: how much is at risk is ASE-L's arithmetic over its own N (D34-D37), and
+  # what survives the kill is this simulator's business. Measured: the `.tmp` +
+  # `shell mv -f` pair makes the last checkpoint whole through a `kill -9`, where
+  # a plain `write` in the same loop leaves a file ngspice refuses ENTIRELY.
   proc run_stop_cost {} {
     return [dict create \
-      before {ngspice in batch mode writes nothing on a stop} \
-      after  {nothing of this run was written}]
+      before      {ngspice in batch mode writes nothing on a stop} \
+      before_ckpt {ngspice keeps every point up to this run's last checkpoint} \
+      after       {nothing of this run was written}]
   }
 
   # WHICH KIND OF THING A DC SWEEP VARIABLE IS, BY ITS SPICE DEVICE LETTER.

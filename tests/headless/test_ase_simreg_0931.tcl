@@ -81,7 +81,10 @@
 #
 # ⚠ THE CHECK COUNT IS A FLOOR AND IT ONLY EVER GOES UP: 111 as of 2026-09-08,
 # AND RAISED 111 -> 117 on 2026-09-13 by issue 1439 (section P, the pre-deck
-# `-D` arm). It was 95 before section S (the registry-is-environment /
+# `-D` arm), AND RAISED 117 -> 118 on 2026-09-15 by issue 1473 (row L12 -- the
+# `stop      :` field says what stopping THIS run would cost, so a checkpointed
+# transient is no longer told in its own log that it would be discarded).
+# It was 95 before section S (the registry-is-environment /
 # choice-is-state ruling) and R8b landed. If a run reports fewer, a row went
 # missing -- do not edit this number down to match it.
 #
@@ -2505,6 +2508,30 @@ check {L11 the run log's three lines finally agree: the kind of simulator, the n
         [lindex [a_hdrfield $L11HDR using] 1] \
         [expr {[string first $L11EXE [lindex [a_hdrfield $L11HDR command] 1]] >= 0}]] \
   [list $L11EXE ng-l11 ngspice ng-l11 1]
+
+## L12 AND THE `stop` FIELD SAYS WHAT STOPPING **THIS** RUN WOULD COST (1473).
+## Stage 2e put one sentence in every header; Stage 6f then made it false for
+## exactly the runs it matters most for -- a transient over ase::ckpt_floor is
+## rendered with the checkpoint loop, and a Stop keeps everything up to its last
+## checkpoint. The field now renders the run record's own `ckpt` plan, resolved
+## ONCE in ase::run_deck for L10's reason, so the log and the CIW note cannot be
+## answers about two different states.
+## ⚠ THE LINE DOES NOT MOVE, AND TWO TERMS SAY SO. A record with no `ckpt` is
+## every pre-1473 caller and every un-checkpointed run: same sentence, same
+## index, same line count -- which is what leaves L10's own `command` index at 3
+## and its 6-line header where they are.
+set L12PLAN {{30 0 tran {n 4 step 160000 points 800000 vector time}}}
+set L12A [a_ans ase::run_log_header [dict replace $L10META ckpt $L12PLAN]]
+set L12B [a_ans ase::run_log_header $L10META]
+set L12WIRED [regexp -all {\yckpt\s+\$\w+} $L0SRCA]
+check {L12 the run log says what stopping THIS run would cost -- a run that checkpoints is told what it keeps, an ordinary one that it keeps nothing, and the line moves for neither} \
+  [list [a_hdrfield $L12A stop] [a_hdrfield $L12B stop] \
+        [lindex [a_hdrfield $L12A command] 0] \
+        [llength [split [string trimright $L12A "\n"] "\n"]] \
+        [llength [split [string trimright $L12B "\n"] "\n"]] $L12WIRED] \
+  [list [list 6 {Stopping this run loses at most its last 20 %, and what is kept is marked partial — ngspice keeps every point up to this run's last checkpoint.}] \
+        [list 6 {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.}] \
+        3 7 7 1]
 
 ## ============================================================================
 ## L12-L15 -- 1370'S REPAIR, AFTER ITS ADVERSARIES. Four defects the first
