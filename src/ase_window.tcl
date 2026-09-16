@@ -5910,12 +5910,18 @@ proc ase::ui::chana_ok {key} {
       # would need a per-field marker language, which is its own ruling.
       set _fld    [lindex [lindex $bad 0] 1]
       set _clause [lindex [lindex $bad 0] 2]
-      catch {::ase::echo "ase: enabled $type analysis $_clause" error}
+      ## ⚖ R9 A7: ONE FRAME, BOTH PLACES. The log's verb and the status line's
+      ## verb genuinely differ -- a log records an EVENT, a status line describes
+      ## STATE -- but the clause and its punctuation now come from ONE generated
+      ## pair (ase::analysis_refusal_frames), so the two cannot drift again. This
+      ## site spelled both frames itself, and so did the two `Options...` doors.
+      set _fr [ase::analysis_refusal_frames $type $_clause enabled]
+      catch {::ase::echo [dict get $_fr log] error}
       # ⚠ AND IN THE DIALOG, WHERE THE USER IS ACTUALLY LOOKING. Issue 1417.
       # Before this the sentence went ONLY to the action log, which lands in
       # ANOTHER WINDOW -- so from the user's seat OK "did nothing". The echo
       # stays because it is what a headless assertion can witness.
-      set _msg "This $type analysis $_clause."
+      set _msg [dict get $_fr status]
       if {$_fld ne {} && ![ase::ui::form_has $key $_fld]} {
         set _fd [ase::field_descriptor $sim $type $_fld]
         if {[dict exists $_fd advanced] && [dict get $_fd advanced] eq {1}} {
@@ -6981,10 +6987,13 @@ proc ase::ui::chana_x_add {key} {
   set _sim [ase::ui::chana_sim $key]
   set _ty  $dlg($key,antype)
   if {[lsearch -exact [ase::ui::chana_fields $_ty $_sim] $n] < 0} {
-    set _c [ase::analysis_emit_msg unknownkey $n]
-    catch {::ase::echo "ase: this $_ty analysis $_c" error}
+    set _c  [ase::analysis_emit_msg unknownkey $n]
+    ## ⚖ R9 A7: one frame, both places -- and `this` rather than `enabled`,
+    ## because what is refused here is a key on a row that already exists.
+    set _fr [ase::analysis_refusal_frames $_ty $_c this]
+    catch {::ase::echo [dict get $_fr log] error}
     catch {ase::ui::dialog_status [dict get $wins $key].chana $key \
-             "This $_ty analysis $_c."}
+             [dict get $_fr status]}
     return
   }
   dict set dlg($key,anextra) $n $v
@@ -7069,10 +7078,12 @@ proc ase::ui::chana_x_ok {key} {
   # door that now refuses them at the front.
   foreach k [dict keys $dlg($key,anextra)] {
     if {[lsearch -exact [ase::ui::chana_fields $type $_sim] $k] < 0} {
-      set _c [ase::analysis_emit_msg unknownkey $k]
-      catch {::ase::echo "ase: this $type analysis $_c" error}
+      set _c  [ase::analysis_emit_msg unknownkey $k]
+      ## ⚖ R9 A7: one frame, both places -- the OK arm of the same door.
+      set _fr [ase::analysis_refusal_frames $type $_c this]
+      catch {::ase::echo [dict get $_fr log] error}
       catch {ase::ui::dialog_status [dict get $wins $key].chana $key \
-               "This $type analysis $_c."}
+               [dict get $_fr status]}
       return
     }
   }

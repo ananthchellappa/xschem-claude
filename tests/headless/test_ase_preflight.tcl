@@ -151,6 +151,23 @@
 # leaves the interface looking inconsistent on purpose, so `SEGFAULTS` and the
 # options sheet's two row prefixes are pinned BY NAME lest a later consistency
 # pass tidy them away in good faith and reverse a user ruling in silence.
+# 238 -> 242 with section PF235 (⚖ R9 ruling A8, 2026-09-16 -- sibling sentences
+# that had drifted apart). Five places tell a user to name a node and they said it
+# FOUR ways; PF235a/c converge them and PF235c's third term is the sharp one --
+# the four remedies de-duplicate to a list of length ONE, so a later edit to any
+# single site reds with the count going to 2. PF235b is §A8's named exception in
+# the other direction: R9-119's `v(out)` / `v(out,ref)` example is INFORMATION,
+# not drift, so the template took it along instead of replacing it. PF235d is the
+# gate pair end to end, where §A8's other ruling lands.
+# ⚠ THREE ROWS MOVED RATHER THAN BEING ADDED and are NOT in the +4: PF222b and
+# PF222e (`this simulator backend` -> `this simulator`, ⚖ R9 A6) and PF228b (the
+# pz remedy losing its plural). ⚠ AND PF234b MOVED THE FURTHEST: it used to scan
+# `ase::preflight_gate` for the closing sentence FOUR times, because four
+# refusals inside that one proc each spelled it out. A8 collapsed the tail into
+# `ase::preflight_refusal`, so it now scans that proc for ONE and requires the
+# gate to keep NONE -- term 4 is the load-bearing one, and it reds if a fifth
+# refusal ever spells its own tail again.
+# AND RAISED 238 -> 242.
 # AND RAISED 235 -> 238.
 # AND RAISED 229 -> 235.
 # AND RAISED 218 -> 229.
@@ -514,7 +531,7 @@ dict set stU analyses $UNREND
 set cu1 [catch {ase::preflight_gate $stU $NL} eu1]
 eqcheck PF222a-an-unrenderable-analysis-is-refused $cu1 1
 eqcheck PF222b-the-refusal-names-the-type \
-  [string match "*analysis type 'pss' is not one this simulator backend can render*" $eu1] 1
+  [string match "*analysis type 'pss' is not one this simulator can render*" $eu1] 1
 eqcheck PF222c-and-says-the-run-would-have-said-nothing \
   [string match "*said nothing*" $eu1] 1
 eqcheck PF222d-it-reaches-the-action-log-too \
@@ -529,7 +546,7 @@ set ::ase_preflight 0
 said_clear
 set cu2 [catch {ase::preflight_gate $stU $NL} eu2]
 eqcheck PF222e-ase_preflight-0-does-NOT-defeat-it \
-  [list $cu2 [string match "*is not one this simulator backend can render*" $eu2]] {1 1}
+  [list $cu2 [string match "*is not one this simulator can render*" $eu2]] {1 1}
 set ::ase_preflight 1
 ## Non-vacuity: the SAME state with every analysis renderable passes the gate, so
 ## PF222a is measuring the analysis rows and not something else about this state.
@@ -1784,7 +1801,7 @@ eqcheck PF228b-a-node-that-is-not-in-the-circuit-is-reported-whichever-of-the-fo
         [expr {[string first {'nosuch'} [pzs $PZB3 0]] >= 0}] \
         [expr {[string first {'nosuchref'} [pzs $PZB4 0]] >= 0}] \
         [pzf $PZB1 0]] \
-  {pz_nodes pz_nodes pz_nodes pz_nodes 1 1 1 1 {name nodes that are in the circuit}}
+  {pz_nodes pz_nodes pz_nodes pz_nodes 1 1 1 1 {name a node that is in the circuit}}
 
 ## ⚠ AND IT IS DEMOTED TO `caution` WITH THE `.include` CAVEAT, because an
 ## included stimulus or PDK file really could define that node. This is the half
@@ -2458,16 +2475,26 @@ eqcheck PF234a-SEGFAULTS-is-the-one-shouted-word-ruling-A1-deliberately-kept \
 
 ## ⚠ AND THE GATE'S CLOSING SENTENCE IS NOW POSITIVE, IN ALL FOUR PLACES IT IS
 ## SAID. It read "`set ase_preflight 0` does NOT disable this check."; A1 part 2
-## asked for the rewrite rather than a bare lowercasing. THE COUNT IS THE
-## LOAD-BEARING TERM: the fragment is shared by four refusals inside this one
-## proc, and changing three of them would have re-created, inside a single
-## procedure, exactly the drift §A1 exists to delete. The second term is the
+## asked for the rewrite rather than a bare lowercasing. The second term is the
 ## absence half -- a guard against a shout coming back must itself be tested
 ## against the shout, or it passes on a tree that never had one.
-eqcheck PF234b-the-gate-closes-every-refusal-positively-in-all-four-places \
-  [list [regexp -all {leaves this check in force} [info body ase::preflight_gate]] \
-        [regexp -all {does NOT disable} [info body ase::preflight_gate]]] \
-  {4 0}
+##
+## ⚠ THIS ROW MOVED UNDER ⚖ R9 A8, 2026-09-16, AND THE COUNT MOVED WITH IT.
+## It used to scan `ase::preflight_gate` and require the fragment FOUR times,
+## because four refusals inside that one procedure each spelled the closing
+## sentence out -- which is precisely why A1 had to rewrite it in four places at
+## once, and how the two "it is enabled on this bench" refusals came to diverge
+## mid-sentence while their tails stayed identical. §A8 collapsed the tail into
+## `ase::preflight_refusal`, so the fragment now lives ONCE and the gate names
+## that proc four times. ⚠ TERM 4 IS THE LOAD-BEARING ONE NOW: it requires the
+## gate to keep NO copy of the sentence at all, so a fifth refusal that spelled
+## its own tail again reds here instead of quietly restoring the old shape.
+eqcheck PF234b-the-gate-closes-every-refusal-positively-from-ONE-body \
+  [list [regexp -all {leaves this check in force} [info body ase::preflight_refusal]] \
+        [regexp -all {does NOT disable} [info body ase::preflight_refusal]] \
+        [regexp -all {ase::preflight_refusal} [info body ase::preflight_gate]] \
+        [regexp -all {leaves this check in force} [info body ase::preflight_gate]]] \
+  {1 0 4 0}
 
 ## ⚠ AND `DEGREES` LOST ITS CAPITALS IN THE distof1 ADVICE. `<mag>` and `<phase>`
 ## stay as they are: they are literal placeholder text the user is meant to type
@@ -2482,6 +2509,90 @@ eqcheck PF234c-the-distof1-advice-says-degrees-in-lower-case-and-shouts-nothing 
         [string match {*(phase is in degrees)*} [lindex $MPD_F1ROW 3]] \
         [regexp {[A-Z]{2,}} [lindex $MPD_F1ROW 3]]] \
   {disto_f1src 1 0}
+
+# ---------------------------------------------------------------------------
+# PF235 -- ⚖ R9 RULING A8: SIBLING SENTENCES THAT HAD DRIFTED APART
+# ---------------------------------------------------------------------------
+#
+# Five places tell a user to name a node, and before this ruling they said it
+# FOUR different ways: `name a node that is in the circuit` (tf, sens),
+# `name nodes that are in the circuit` (pz), `name a node, as \`v(out)\` or
+# \`v(out,ref)\`` (noise, current output) and `name a node this netlist has`
+# (noise, missing node). Nothing distinguished them -- the same remedy, for the
+# same mistake, in one dialog -- so they read as typos.
+#
+# ⚠ THE PLURAL WAS NOT A REAL PLURAL, AND THAT IS WHY IT COULD GO. §A8 says a
+# genuinely plural site STAYS plural, because flattening a true plural makes the
+# sentence false. `pz_nodes` looked plural because it walks FOUR node slots
+# (`inp inn outp outn`) and may find more than one missing -- but no FIELD of it
+# accepts a list: each box holds exactly one node, and the remedy is what to type
+# in one box. `tf_out` has the same shape (it decomposes `v(out,ref)` into two
+# nodes) and was always singular. So the plural was drift, not meaning.
+#
+# ⚠ AND R9-119's EXAMPLE SYNTAX IS INFORMATION, NOT DRIFT -- PF235b. Converging
+# that sentence onto the template would have DELETED the one place the noise form
+# tells a user how a node voltage is spelled. §A8 says move it, do not delete it,
+# so the template took the example with it rather than replacing it.
+proc mpf {pc ty n} { return [lindex [lindex [dgn $pc $ty] $n] 3] }
+set PF235TF [pcheck $TFNL [tfrow out {v(nosuchnode)} insrc V1]]
+set PF235PZ [pcheck $PZNL [pzrow inp nosuch outp out]]
+set PF235SE [pcheck $SENL [serow out {v(nosuchnode)}]]
+set PF235NI [pcheckx $MPNL [mprow {*}[dict merge $MPGOOD {out {i(V1)}}]] {} $MPBLANKET]
+set PF235NN [pcheckx $MPNLNOD [mprow {*}[dict merge $MPGOOD {out {v(nosuchnode)}}]] {} $MPBLANKET]
+
+eqcheck PF235a-the-four-missing-node-remedies-are-now-one-singular-sentence \
+  [list [tff $PF235TF 0] [pzf $PF235PZ 0] [sef $PF235SE 0] [mpf $PF235NN noise 0]] \
+  [list {name a node that is in the circuit} {name a node that is in the circuit} \
+        {name a node that is in the circuit} {name a node that is in the circuit}]
+
+## ⚠ THE `v(out,ref)` TERM IS THE ACCEPTANCE CRITERION OF THIS HALF. A row that
+## only asserted the template would pass on a tree where the example had been
+## quietly dropped, which is the one outcome §A8 explicitly forbids.
+eqcheck PF235b-the-noise-current-remedy-joined-the-template-and-KEPT-its-example \
+  [list [mpf $PF235NI noise 0] \
+        [string match {*v(out)*} [mpf $PF235NI noise 0]] \
+        [string match {*v(out,ref)*} [mpf $PF235NI noise 0]]] \
+  [list {name a node that is in the circuit, as `v(out)` or `v(out,ref)`} 1 1]
+
+## ⚠ THE NON-VACUITY HALF, AND TERM 3 IS THE SHARPEST THING IN THIS SECTION:
+## the four remedies are not merely "similar", they are ONE string, so a list of
+## them de-duplicates to length 1. A future edit to any single site reds here
+## with the count going to 2 -- which is the drift itself, caught as it happens.
+eqcheck PF235c-the-plural-and-the-two-other-spellings-are-gone-and-the-four-are-ONE-string \
+  [list [string match {*name nodes*} [pzf $PF235PZ 0]] \
+        [string match {*this netlist has*} [mpf $PF235NN noise 0]] \
+        [llength [lsort -unique [list [tff $PF235TF 0] [pzf $PF235PZ 0] \
+                                      [sef $PF235SE 0] [mpf $PF235NN noise 0]]]]] \
+  {0 0 1}
+
+## ⚠ AND THE GATE PAIR, END TO END THROUGH THE REAL GATE -- not through the
+## composer, which is test_ase_core row SN7. §A8's other pair: two refusals that
+## open with the same nine words and diverge mid-sentence. The tail is now ONE
+## string (ase::preflight_refusal) and the LEAD is the only thing that differs,
+## because the lead genuinely differs -- MEASURED 2026-09-16: an incomplete row
+## and an unrenderable type fail the deck writer at two different points, and
+## issue 1401's measured pre-guard behaviour was a run that COMPLETED in silence,
+## which the other's never was. Flattening that would make one sentence FALSE,
+## which §A8 ranks as worse than the drift.
+said_clear
+set PF235S1 [mkstate $RD c $GOOD]
+dict set PF235S1 analyses {{type op enabled 1} {type tran enabled 1 step 1n}}
+ase::preflight_gate $PF235S1 $NL
+set PF235L1 [lindex [lindex $::said end] 1]
+said_clear
+set PF235S2 [mkstate $RD c $GOOD]
+dict set PF235S2 analyses {{type op enabled 1} {type pss enabled 1 source v1}}
+catch {ase::preflight_gate $PF235S2 $NL}
+set PF235L2 [lindex [lindex $::said end] 1]
+set PF235T {Nothing was generated: no deck, no raw, no log.}
+eqcheck PF235d-the-two-gate-refusals-share-one-tail-and-differ-only-in-the-lead \
+  [list [string match "*$PF235T*" $PF235L1] \
+        [string match "*$PF235T*" $PF235L2] \
+        [string match {*leaves this check in force.} $PF235L1] \
+        [string match {*leaves this check in force.} $PF235L2] \
+        [string match {*would have started and produced nothing for it.*} $PF235L1] \
+        [string match {*would have completed, produced no result for it, and said nothing.*} $PF235L2]] \
+  {1 1 1 1 1 1}
 
 ## ⚠ THE SILENT ZEROS. `CKTdisto`'s `D_RHSF1` walk looks for a source carrying
 ## `distof1`; with none it stamps nothing and the analysis runs to completion.

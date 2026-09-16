@@ -195,6 +195,25 @@
 # staying bare because the ruling's table did not name it. Both are REPORTED
 # boundaries, not oversights, and a consistency pass that "fixes" either has
 # reversed the user in good faith.
+# 662 -> 669 with section SN (⚖ R9 rulings A6, A7 and A8, 2026-09-16 -- developer
+# vocabulary off the user's screen, one frame in both places, and sibling
+# sentences that had drifted apart). ⚠ TWO OF THE SEVEN PIN A NON-CHANGE, which
+# is the reason they are worth their lines: SN3 pins that A6 left `verbatim`
+# exactly as it is, because it names a feature with NO EDITOR and gets a user's
+# name when it gets a UI; SN7 pins that A8 left the two gate refusals' LEADS
+# different, because they describe two genuinely different failures and
+# flattening one to match the other would make it FALSE. Both read as untidiness
+# to a later reader and both are the user's rulings -- the same job section PF234
+# does for A1's `SEGFAULTS` and row PZ2f for A2's `dec`/`oct`/`lin`.
+# ⚠ NINE ROWS MOVED RATHER THAN BEING ADDED and are NOT in the +7: D7b, D7c and
+# D7e4 (`this simulator backend` -> `this simulator`), AC5 (the same clause in
+# the Arguments column), VB4 (its NAME quoted the old Tcl-vocabulary sentence),
+# SW2 and CK30/CK30b's three goldens (the stop sentence gained the full stop its
+# launch-time sibling always had). ⚠ CK31's `ck_claim` did NOT need touching --
+# it matches `*nothing of this run was written*` with a trailing wildcard, so the
+# new full stop passes through it. That is luck rather than design, and SN6 is
+# what actually pins the punctuation.
+# AND RAISED 662 -> 669.
 # AND RAISED 653 -> 662.
 # AND RAISED 652 -> 653.
 # AND RAISED 644 -> 652.
@@ -867,7 +886,7 @@ set d7rc [catch {$render $st7 $netlist_text} d7err]
 check "D7a a state whose only enabled row is unrenderable REFUSES instead of\
  rendering" $d7rc 1
 check "D7b ... with the type named, in the one minted sentence" $d7err \
-  {ase: analysis type 'pss' is not one this simulator backend can render}
+  {ase: analysis type 'pss' is not one this simulator can render}
 check "D7c ... which is the sentence ase::analysis_unrenderable_msg mints" \
   [ase::analysis_unrenderable_msg pss] $d7err
 check "D7d ... and n_enabled_analyses still COUNTS the row -- the counter was\
@@ -902,7 +921,7 @@ check "D7e3 TWO distinct unrenderable types are BOTH named, in state order" \
   [ase::analysis_unrenderable $st7t] {pss hb}
 check "D7e4 ... and render refuses on the FIRST of them, by name" \
   [list [catch {$render $st7t $netlist_text} e7t] $e7t] \
-  [list 1 {ase: analysis type 'pss' is not one this simulator backend can render}]
+  [list 1 {ase: analysis type 'pss' is not one this simulator can render}]
 
 # ⚠ CORE CARRIES ONE BACKEND'S RANK TABLE, so it must not refuse for a backend
 # whose analyses it does not describe: ase::register_backend is a real extension
@@ -2754,7 +2773,7 @@ catch {ase::wait $::rg11id}
 ## because "what a stop costs" is a run-model fact core does not know for a
 ## simulator it was never told about, and a guessed warning is worse than
 ## silence. MEASURED: the same call with the real backend in force returns
-## `ase: simulation stopped — nothing of this run was written` (row SW2), and
+## `ase: simulation stopped — nothing of this run was written.` (row SW2), and
 ## row SW7 pins that `holdsim` specifically yields nothing. Change the fixture's
 ## simulator and this element MUST become that sentence.
 check "RG13 Stop from a session that did not launch really kills the run and frees the results file" \
@@ -2798,7 +2817,7 @@ check "SW1 the launch warning is ASE-L's frame around the backend's clause" \
   {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.}
 check "SW2 the moment-of-the-Stop sentence likewise" \
   [ase::run_stopped_msg] \
-  {ase: simulation stopped — nothing of this run was written}
+  {ase: simulation stopped — nothing of this run was written.}
 check "SW3 a backend with no run_stop_cost hook gets NO launch warning" \
   [ase::run_stop_warning someoneelsesim] {}
 check "SW3b ... and no stopped sentence either" \
@@ -5860,7 +5879,7 @@ check "AC4 a renderable row still shows the line the deck will carry, hatch\
 check "AC5 an enabled row of a type the backend cannot set up says that, not\
  that some value is missing" \
   [ase::ui::arg_summary {type pss enabled 1} ngspice] \
-  {is not one this simulator backend can set up}
+  {is not one this simulator can set up}
 
 # --- VB: THE ONE HONEST ESCAPE FROM A TYPED FORM ----------------------------
 ## ⚠ EVERY OTHER ESCAPE THIS STAGE FOUND WAS A LIE. `Options…` collected
@@ -5957,7 +5976,7 @@ check "VB3 the hatch adds exactly its own lines and changes nothing else, so a\
 ## issue 1405's shape exactly -- one bad row in one bench, and the window that
 ## would let the user fix it will not open.
 set VBRC [catch {ase::analysis_verbatim {type tran x "unbalanced \{brace"}} VBR]
-check "VB4 a hatch that is not a readable list of non-blank lines is refused,\
+check "VB4 a hatch ASE-L cannot read, or with a blank line among them, is refused,\
  and the reader answers empty rather than raising" \
   [list [lindex [lindex [ase::analysis_emit_check ngspice \
            {type tran step 1n stop 1u x "unbalanced \{brace"}] 0] 0] \
@@ -6826,6 +6845,172 @@ check "LB9 a measurement refusal names the word the Kind picker shows, the\
         [lindex [ase::backend::ngspice::meas_rule $LB9SP \
            {kind trigtarg name m1 analysis sp}] 0]] \
   [list {1 0 1 0 1 0 1 0 1 0} {1 0 1 1 0 1 1 0 1} refuse fatal]
+
+# ===========================================================================
+# SN -- ⚖ R9 RULINGS A6, A7 AND A8: DEVELOPER VOCABULARY OFF THE SCREEN, ONE
+#       FRAME IN BOTH PLACES, AND SIBLING SENTENCES THAT HAD DRIFTED APART
+# ===========================================================================
+#
+# ⚠ TWO OF THESE ROWS PIN A NON-CHANGE, WHICH IS THE WHOLE REASON THEY EXIST.
+# A6 left `verbatim` exactly as it is (SN3) and A8 left the two gate refusals'
+# LEADS different on purpose (SN7). Both look like untidiness to a later reader,
+# both are the user's rulings, and without a row saying so the next consistency
+# pass reverses them in good faith -- which is what section PF234 was written
+# about for A1's `SEGFAULTS` and row PZ2f for A2's `dec`/`oct`/`lin`.
+
+## --- SN1: A6 -- `backend` IS OUR WORD FOR OUR OWN ARCHITECTURE --------------
+## The user chose a SIMULATOR under Setup > Simulators. They have never been
+## shown the word "backend" anywhere else, and it names the adapter layer, not
+## anything they can act on. The absence terms are the non-vacuity half: a
+## sentence still carrying `backend` passes the first two terms trivially if the
+## goldens are ever relaxed to substrings.
+check "SN1 the two refusals about a type this simulator cannot do name the\
+ SIMULATOR, and the word `backend` has left both" \
+  [list [ase::analysis_unrenderable_msg pss] \
+        [ase::analysis_emit_msg unrenderable] \
+        [string match {*backend*} [ase::analysis_unrenderable_msg pss]] \
+        [string match {*backend*} [ase::analysis_emit_msg unrenderable]]] \
+  [list {ase: analysis type 'pss' is not one this simulator can render} \
+        {is not one this simulator can set up} 0 0]
+
+## --- SN2: A6 -- TCL VOCABULARY IN FRONT OF A CIRCUIT DESIGNER --------------
+## "a readable list of non-blank lines" is `llength` and Tcl list syntax said out
+## loud. ⚠ THE LAST TWO TERMS ARE WHY THIS IS NOT A NAME DIFF: one clause covers
+## TWO distinct faults -- a value that will not parse at all, and a blank line
+## among ones that do -- and a rewrite that fixed the English while dropping
+## either fault would pass a golden-only row.
+check "SN2 the verbatim-hatch refusal drops the Tcl vocabulary, still names the\
+ hatch, and still refuses BOTH of the two faults it covers" \
+  [list [ase::analysis_emit_msg verbatim] \
+        [string match {*readable list*} [ase::analysis_emit_msg verbatim]] \
+        [string match {*non-blank*} [ase::analysis_emit_msg verbatim]] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran step 1n stop 1u x "unbalanced \{brace"}] 0] 0] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran step 1n stop 1u x {{echo ok} {}}}] 0] 0]] \
+  [list {has verbatim lines ASE-L cannot read, or a blank one among them} \
+        0 0 verbatim verbatim]
+
+## --- SN3: A6's NAMED EXCEPTION, AND THIS ROW IS THE ONLY RECORD OF IT -------
+## ⚠ `verbatim` STAYS, AND THAT IS A RULING RATHER THAN AN OVERSIGHT. It names a
+## feature with NO EDITOR: the only way to create one today is to hand-edit the
+## `.state` file. The user ruled that it gets a user's name when it gets a UI and
+## not before -- naming it now would advertise a door with no handle. A tidy-up
+## that renamed it here would reverse that in silence, exactly as a pass that
+## lowercased A1's `SEGFAULTS` would (row LB9, twenty lines above).
+check "SN3 ⚖ R9 A6 LEFT `verbatim` EXACTLY AS IT IS in the Arguments column,\
+ singular and plural, because the hatch has no editor to name it in" \
+  [list [ase::ui::arg_summary \
+           {type tran enabled 1 step 1n stop 10u x {{echo a}}} ngspice] \
+        [ase::ui::arg_summary \
+           {type tran enabled 1 step 1n stop 10u x {{echo a} {echo b}}} ngspice]] \
+  [list {tran 1n 10u  + verbatim: 1 line} {tran 1n 10u  + verbatim: 2 lines}]
+
+## --- SN4: A7 -- ONE FRAME, BOTH PLACES -------------------------------------
+## The same refusal is said in two channels: the ACTION LOG, which records an
+## EVENT, and the dialog's STATUS LINE, which describes the STATE the user is
+## looking at. ⚠ THE TWO VERBS STAY -- that is the ruling, not an omission --
+## but the CLAUSE and ITS PUNCTUATION come from one generated pair.
+## ⚠ TERMS 5 AND 6 ARE THE PUNCTUATION HALF AND THEY ARE THE DRIFT THAT WAS
+## THERE: the status line ended in a full stop and the log line did not, and
+## there was nowhere to correct that once.
+set SN4C [ase::analysis_emit_msg missing [ase::field_caption ngspice tran stop]]
+set SN4F [ase::analysis_refusal_frames tran $SN4C]
+check "SN4 the log line and the status line are built from ONE body: the same\
+ clause in both, the log's event verb and the status line's state verb kept, and\
+ only the log goes without a full stop" \
+  [list [dict get $SN4F log] [dict get $SN4F status] \
+        [expr {[string first $SN4C [dict get $SN4F log]] >= 0}] \
+        [expr {[string first $SN4C [dict get $SN4F status]] >= 0}] \
+        [expr {[string index [dict get $SN4F log] end] eq {.}}] \
+        [expr {[string index [dict get $SN4F status] end] eq {.}}] \
+        [dict get [ase::analysis_refusal_frames dc zz this] log]] \
+  [list {ase: enabled tran analysis needs a value for 'Stop time (s)'} \
+        {This tran analysis needs a value for 'Stop time (s)'.} \
+        1 1 0 1 {ase: this dc analysis zz}]
+
+## --- SN5: AND THE THREE DOORS KEEP NO FRAME OF THEIR OWN --------------------
+## ⚠ THIS IS THE ROW THAT MAKES SN4 MEAN ANYTHING. A proc that renders both
+## frames correctly is worth nothing if the call sites go on spelling their own,
+## which is exactly the state this ruling found: three doors, six literals, and a
+## correction to one of them would have been a correction to one of them. That is
+## §A2's `valuelabels` finding from the other side -- it found a second reader
+## and DELETED it.
+## ⚠ `chana_x_ok`, NOT `chana_options`. The `Options...` sub-dialog has TWO
+## doors -- Add (`chana_x_add`) refuses at the gesture, OK (`chana_x_ok`) refuses
+## a key seeded from a hand-edited bench that Add never saw -- and they are
+## separate procs. Naming the wrong one would scan a body with no frame in it and
+## pass for the wrong reason.
+check "SN5 the three commit doors carry no refusal frame of their own any more,\
+ so the sentence cannot be corrected in one place and not the others" \
+  [list [rg_has [rg_body ase::ui::chana_ok]     {analysis $_clause}] \
+        [rg_has [rg_body ase::ui::chana_x_add]  {analysis $_c}] \
+        [rg_has [rg_body ase::ui::chana_x_ok]   {analysis $_c}] \
+        [regexp -all {ase::analysis_refusal_frames} [rg_body ase::ui::chana_ok]] \
+        [regexp -all {ase::analysis_refusal_frames} [rg_body ase::ui::chana_x_add]] \
+        [regexp -all {ase::analysis_refusal_frames} [rg_body ase::ui::chana_x_ok]]] \
+  {0 0 0 1 1 1}
+
+## --- SN6: A8 -- THE STOP PAIR ENDS THE SAME WAY ----------------------------
+## R9-262 ended `... on a stop.` and its sibling R9-264 ended `... was written`
+## with nothing. Both are whole sentences in the same channel about the same run,
+## seconds apart, and the period was in one frame and not the other.
+## ⚠ THE CHECKPOINTED VOICE MOVES WITH IT (R9-726), and that is not scope creep:
+## R9-726's own note says it took its missing full stop FROM R9-264 and that a
+## reviewer who re-words one must re-word both. Leaving it would have split the
+## pair a second time, one layer down.
+set SN6PLAN {{30 0 tran {n 4 step 160000 points 800000 vector time}}}
+check "SN6 the launch warning and the sentence at the moment of the Stop end the\
+ same way, in the un-checkpointed voice and in the checkpointed one" \
+  [list [ase::run_stop_warning ngspice] \
+        [ase::run_stopped_msg ngspice] \
+        [string index [ase::run_stop_warning ngspice] end] \
+        [string index [ase::run_stopped_msg ngspice] end] \
+        [string index [ase::run_stop_warning ngspice $SN6PLAN] end] \
+        [string index [ase::run_stopped_msg ngspice $SN6PLAN] end]] \
+  [list {Stopping this run discards it — ngspice in batch mode writes nothing on a stop.} \
+        {ase: simulation stopped — nothing of this run was written.} \
+        . . . .]
+
+## --- SN7: A8 -- THE GATE PAIR, AND THE PART THAT GENUINELY DIFFERS ---------
+## ⚠ THE LEADS STAY DIFFERENT AND THIS ROW IS WHY THAT IS DEFENSIBLE. §A8 rules
+## that a genuinely different part stays different and that flattening one to
+## match a template is WORSE than the drift, because it makes the sentence false.
+## MEASURED 2026-09-16 through this tree's own binary: an incomplete row and an
+## unrenderable type fail the deck writer at two different points --
+## `ase::analysis_emit_order` returns normally for the incomplete row and
+## `ase::analysis_line` then raises `key "stop" not known in dictionary`, while
+## an unrenderable type raises out of `emit_order` ITSELF -- and issue 1401's
+## measured pre-guard behaviour was a run that COMPLETED in silence, which the
+## other's never was.
+## So what A8 buys here is that EVERYTHING AFTER THE LEAD is one string, and the
+## goldens below are BYTE-EXACT whole sentences rather than substrings.
+##
+## ⚠ THE RUNDIR NOTE IS SPLICED **INSIDE** THE TAIL, NOT APPENDED AFTER IT --
+## between `no log.` and the `set ase_preflight 0` sentence. That is where the
+## pristine code put it and it is preserved byte for byte. The first cut of this
+## row asserted that BOTH sentences END with the whole shared tail; that is true
+## of the one without a rundir and FALSE of the one with it, and the row reddened
+## on a tree that was correct. Terms 2 and 3 now say the true thing: the tail's
+## two halves straddle the note.
+set SN7T {Nothing was generated: no deck, no raw, no log.}
+set SN7E {`set ase_preflight 0` leaves this check in force.}
+set SN7N { Any files already in /tmp/zz are from an earlier run.}
+set SN7A [ase::preflight_refusal "it is enabled on this bench, so the run would have started and produced nothing for it."]
+set SN7B [ase::preflight_refusal "it is enabled on this bench, so the run would have completed, produced no result for it, and said nothing." $SN7N]
+check "SN7 the two `it is enabled on this bench` refusals differ ONLY in the lead\
+ and the rundir note, the gate keeps no copy of the tail, and all four of its\
+ refusals close through the one body" \
+  [list $SN7A $SN7B \
+        [expr {[string first $SN7N $SN7A] >= 0}] \
+        [expr {[string first $SN7N $SN7B] >= 0}] \
+        [regexp -all {ase::preflight_refusal} [rg_body ase::preflight_gate]] \
+        [rg_has [rg_body ase::preflight_gate] {leaves this check in force}] \
+        [ase::preflight_refusal]] \
+  [list "ase: it is enabled on this bench, so the run would have started and produced nothing for it. $SN7T $SN7E" \
+        "ase: it is enabled on this bench, so the run would have completed, produced no result for it, and said nothing. $SN7T$SN7N $SN7E" \
+        0 1 4 0 \
+        "ase: $SN7T $SN7E"]
 
 ## ⚠ ONLY THE TWO SIGNAL NODES ARE REQUIRED, AND THE DOOR NAMES THE ONE THAT IS
 ## MISSING. Requiring the references too would make the commonest pole-zero row
@@ -10512,12 +10697,12 @@ check "CK29 the log field and the CIW sentence are one sentence about one plan,\
 ## points of an estimated 500000"* (test_ase_trnoise_1466 NP6), in one channel,
 ## about one run. MEASURED on the finished 1473 tree, which is why that receipt
 ## names it found-and-not-fixed rather than merely predicted.
-set CK30CK {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial}
+set CK30CK {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial.}
 ## ⚠ BYTE FOR BYTE SW2's LITERAL, SPELLED AGAIN RATHER THAN SHARED. SW2 owns the
 ## un-checkpointed sentence and passes no plan; this row owns the SPLIT, and a
 ## row that read its own expectation out of the other row's variable could not
 ## tell "unchanged" from "both moved together".
-set CK30UN {ase: simulation stopped — nothing of this run was written}
+set CK30UN {ase: simulation stopped — nothing of this run was written.}
 check "CK30 a checkpointed run is told at the STOP what was kept and that it is\
  partial, where an un-checkpointed one keeps the old sentence byte for byte" \
   [list [ase::run_stopped_msg ngspice $CK28BIGROWS] \
@@ -10538,7 +10723,7 @@ check "CK30b a backend that declares `after` and not `after_ckpt` says NOTHING a
         [ase::run_stopped_msg ckstopsim $CK28BIGROWS] \
         [ase::run_stopped_msg someoneelsesim] \
         [ase::run_stopped_msg someoneelsesim $CK28BIGROWS]] \
-  [list {ase: simulation stopped — zz nothing} {} {} {}]
+  [list {ase: simulation stopped — zz nothing.} {} {} {}]
 
 ## ⚠ CK30c: `partial` COMES FROM NEITHER `rc` NOR ase::sim_status, AND THE
 ## SIGNATURE IS WHY. Both are 0 after a Stop (evidence/salvage.md §5.3), so a

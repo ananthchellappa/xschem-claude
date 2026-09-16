@@ -465,6 +465,23 @@ and name the field `Start time (s):`.
 > UI, and not before — naming it now would advertise a door with no handle. **Pin the
 > non-change**, the way §A1 pinned `SEGFAULTS` and §A2 pinned `dec`/`oct`/`lin`, or the next
 > consistency pass renames it in good faith and nobody learns a user ruling was reversed.
+>
+> ### ✅ IMPLEMENTED, 2026-09-16 — and it minted NO new handle
+>
+> `R9-077` and `R9-065`/`R9-160` say **`this simulator`**; `R9-080` reads
+> **`has verbatim lines ASE-L cannot read, or a blank one among them`**; `R9-157`/`R9-158` are
+> **byte-identical**. ⚠ `R9-065` and `R9-160` are the **same literal**, not two, so one edit moved
+> both and no drift between the dialog and the Arguments column is possible.
+>
+> **All three are reworded EXISTING handles, so the count stays 730** — the §A1 precedent, where
+> `R9-078`'s closing sentence was fully rewritten and kept its handle. Pinned by `test_ase_core`
+> rows **SN1** (with an absence term for the word `backend`), **SN2** (which requires *both* faults
+> the verbatim clause covers to go on being refused) and **SN3** (the non-change).
+>
+> ⚠ **REPORTED, NOT TIDIED:** `ase::analysis_gap_msg` says `ASE-L does not know a simulator
+> backend called '$nm'.` — the same developer word, but a different string, carrying **no R9 handle
+> at all** and outside this ruling's three-handle table. Left exactly as it is, the way §A4's bare
+> `Start` was. **This is the driver's to raise with the user.**
 
 Four phrases say what the code calls something rather than what the user calls
 it: **`this simulator backend`** (R9-077, R9-065, R9-160 — the user chose a
@@ -490,6 +507,25 @@ second; leave `verbatim` until it has a UI, then name it there.
 > instead of quietly reopening the gap. This is §A2's lesson arriving from the other side: that
 > implementation found `valuelabels` already had two readers and **deleted one**, because the next
 > correction would have been made to one and not the other.
+>
+> ### ✅ IMPLEMENTED, 2026-09-16 — one body, three call sites, no copy changed
+>
+> **`ase::analysis_refusal_frames {type clause {verb enabled}}`** returns the log line and the
+> status line together. The two verbs stay (`enabled` for an event, `This` for state); the clause
+> and its punctuation are now one string. **Every rendered sentence is byte-identical** — this is a
+> structural change, so no handle moved and the count stays **730**.
+>
+> ⚠ **THERE WERE THREE SITES, NOT TWO**, and the third is in a proc the section does not name:
+> `ase::ui::chana_ok` (`R9-059`/`R9-061`), `ase::ui::chana_x_add` (`R9-068`) and
+> **`ase::ui::chana_x_ok`** (`R9-069`) — the `Options…` sub-dialog has two separate doors, Add and
+> OK, and they are separate procs rather than two arms of `chana_options`. `R9-069`'s own note had
+> already diagnosed this: *"Two separate literals in the source … a reviewer changing one must
+> change both."*
+>
+> Pinned by `test_ase_core` **SN4** (renders both, compares the clause, and checks that only the
+> status line takes a full stop) and **SN5**. ⚠ **SN5 is the load-bearing one**: it forbids a call
+> site keeping a frame of its own. Sabotage arm S6 re-spelled one site's frame by hand, leaving the
+> **rendered text unchanged**, and SN5 was the only row in any suite that reddened.
 
 The OK-button validator logs **`ase: enabled $type analysis $_clause`**
 (R9-059) while the status line under the same form says
@@ -514,6 +550,36 @@ period.
 > ⚠ **`R9-119`'s example syntax (`v(out)` / `v(out,ref)`) is information, not drift.** If
 > converging the sentence would drop it, **move it — do not delete it.** Same shape as §A5: the
 > meaning moves, it does not disappear.
+>
+> ### ✅ IMPLEMENTED, 2026-09-16 — three pairs, and one of them deliberately NOT flattened
+>
+> **The node-naming family.** `R9-098`, `R9-119` and `R9-123` converged onto `R9-089`/`R9-115`'s
+> **`name a node that is in the circuit`**. ⚠ **The plural was not a real plural**: `pz_nodes` walks
+> four node slots and may report several missing, but **no field of it accepts a list** — each box
+> holds one node — so flattening it made nothing false. `R9-119` **kept its example**, now
+> `name a node that is in the circuit, as \`v(out)\` or \`v(out,ref)\``.
+> ⚠ **REPORTED, NOT TIDIED:** the `sens_filters` remedy still says `name a device this netlist
+> has at the top level …` — a *device*, not a node, so outside this family.
+>
+> **The stop pair.** `R9-264` gained the full stop `R9-262` always had, and **`R9-726` moved with
+> it** — its own note recorded that it had inherited the missing period *from* `R9-264` and that
+> re-wording one obliges re-wording both. The period is in the frame; no adapter clause changed.
+>
+> **The gate pair — and here the ruling's own exception applies.** The shared tail was spelled out
+> **four times** inside `ase::preflight_gate` and now comes from one body,
+> **`ase::preflight_refusal`**. ⚠ **THE TWO LEADS WERE NOT FLATTENED.** §A8 says a genuinely
+> different part stays different, because flattening makes a sentence *false* — and **measured
+> 2026-09-16**, the two arms fail the deck writer at different points (`ase::analysis_emit_order`
+> returns normally for an incomplete row and `ase::analysis_line` then raises `key "stop" not known
+> in dictionary`; an unrenderable type raises out of `emit_order` itself), while issue 1401's
+> measured pre-guard behaviour was a run that **completed** in silence, which the other's never was.
+> So *"completed, produced no result for it, and said nothing"* is true of one and would be **false**
+> of the other. **No new handle; the count stays 730.**
+>
+> Pinned by `test_ase_core` **SN6**/**SN7** and `test_ase_preflight` **PF235a–d**, with **PF234b**
+> moved from requiring the closing sentence four times in the gate to **once** in the new body and
+> **none** in the gate. ⚠ **PF235c's third term is the sharp one**: the four remedies de-duplicate
+> to a list of length **one**, so a later edit to any single site reds with the count going to 2.
 
 Several pairs open with the same words and diverge mid-sentence, which reads as a
 typo even when both are deliberate:
@@ -1547,7 +1613,7 @@ ase: enabled $type analysis $_clause
 
 *For:* Frames whatever ase::analysis_emit_check found wrong with the row the user is about to commit. `$type` is the analysis name (`tran`, `dc`, `ac`, `op`, ...); `$_clause` is the unframed clause from ase::analysis_emit_msg.
 
-*Note:* The FRAME is not new, but what it now carries is: this commit deleted the door's own loop and made it ask analysis_emit_check, so the sentence a user sees for a blank required field changed from `ase: enabled tran analysis needs a non-empty 'step'` to `ase: enabled tran analysis needs a value for 'step'`, and four further clauses became reachable here for the first time (`'$f' must be on or off`, `cannot read '<v>' as a number for '$f'`, `is not one this simulator backend can set up`, and the group one). At C3 this went ONLY to the action log -- from the user's seat OK appeared to do nothing; the in-dialog status line is issue 1417, not this commit.
+*Note:* The FRAME is not new, but what it now carries is: this commit deleted the door's own loop and made it ask analysis_emit_check, so the sentence a user sees for a blank required field changed from `ase: enabled tran analysis needs a non-empty 'step'` to `ase: enabled tran analysis needs a value for 'step'`, and four further clauses became reachable here for the first time (`'$f' must be on or off`, `cannot read '<v>' as a number for '$f'`, `is not one this simulator can set up`, and the group one). At C3 this went ONLY to the action log -- from the user's seat OK appeared to do nothing; the in-dialog status line is issue 1417, not this commit. ✅ **NOW GENERATED BY ONE BODY UNDER §A7, 2026-09-16** — this log frame and `R9-061`'s status frame were two literals in `ase::ui::chana_ok` and are now one call to `ase::analysis_refusal_frames`, which returns both. **The rendered text is byte-identical**; `enabled` stays, because a log records an event. ⚠ The clause quoted above also lost the word `backend` under §A6 in the same commit, which is why this note now reads `this simulator`. Pinned by `test_ase_core` rows SN4 and SN5.
 
 
 **R9-060** · refusal
@@ -1577,7 +1643,7 @@ This $type analysis $_clause.
 
 *For:* Tells the user why OK did nothing, in the dialog itself rather than only in the action log. `$type` is the analysis type name (tran, ac, dc, noise…); `$_clause` is one clause from `ase::analysis_emit_msg`, listed separately below.
 
-*Note:* NEW SENTENCE FRAME, minted by 1417. Renders as e.g. "This tran analysis needs a value for 'stop'." Note the frame repeats the type the user just clicked, and that it writes over `$w.status` — which on a fresh bench already carries a capability sentence for the selected cell, so the capability line is evicted by the refusal.
+*Note:* NEW SENTENCE FRAME, minted by 1417. ✅ **NOW GENERATED BY ONE BODY UNDER §A7, 2026-09-16.** This frame and the action-log frame `R9-059` were two literals in `ase::ui::chana_ok`, and they had already drifted: **this one ends in a full stop and the log line does not**, with nowhere to correct that once. Both now come from `ase::analysis_refusal_frames`, which returns the pair. ⚠ **THE TWO VERBS STAY — that is the ruling, not an omission**: a log line records an *event* (`enabled`), a status line describes *state* (`This`). The rendered text is byte-identical. Renders as e.g. "This tran analysis needs a value for 'Stop time (s)'." (the caption, since §A3). The frame still repeats the type the user just clicked, and still writes over `$w.status` — so on a fresh bench the capability sentence for the selected cell is evicted by the refusal; §A7 did not touch that. Pinned by `test_ase_core` rows SN4 and SN5.
 
 
 **R9-062** · refusal
@@ -1631,7 +1697,7 @@ is not one this simulator backend can set up
 
 *For:* The enabled analysis type has no renderable emit template for this backend.
 
-*Note:* Pre-1417 clause, newly surfaced in the dialog by 1417. Reads as a fragment by design (the caller owns the frame): "This pss analysis is not one this simulator backend can set up."
+*Note:* ✅ **CHANGED UNDER §A6, 2026-09-16** — `this simulator backend` → **`this simulator`**. *Rendered:* `is not one this simulator can set up`, so the framed sentence is now "This pss analysis is not one this simulator can set up." Pre-1417 clause, newly surfaced in the dialog by 1417. Reads as a fragment by design (the caller owns the frame). ⚠ **One literal, two handles**: this clause and `R9-160` (the Arguments column) are the *same* `ase::analysis_emit_msg` return, so the single edit moved both. Pinned by `test_ase_core` rows SN1 and AC5.
 
 
 **R9-066** · refusal
@@ -1672,7 +1738,7 @@ This $_ty analysis $_c.
 
 *For:* Refuses a name/value pair at the Add gesture, before it can appear in the Options list and be believed. `$_ty` is the analysis type; `$_c` is the unknownkey clause above.
 
-*Note:* ⚠ SURFACE ODDITY WORTH A RULING: the gesture happens in the `Options…` sub-dialog but the sentence lands on the PARENT Choose Analyses dialog's status line, which the sub-dialog may be covering. Renders as "This tran analysis has a setting named 'foo' that ASE-L cannot emit."
+*Note:* ✅ **NOW COMPOSED BY ONE BODY UNDER §A7, 2026-09-16** — `ase::analysis_refusal_frames`, which returns this status line and its action-log twin (`R9-070`) together. The rendered text is byte-identical; only the duplication is gone. ⚠ SURFACE ODDITY WORTH A RULING, **STILL OPEN**: the gesture happens in the `Options…` sub-dialog but the sentence lands on the PARENT Choose Analyses dialog's status line, which the sub-dialog may be covering. §A7 ruled on the *frame*, not on the *surface*, so that is untouched and still the user's to decide. Renders as "This tran analysis has a setting named 'foo' that ASE-L cannot emit." Pinned by `test_ase_core` rows SN4/SN5.
 
 
 **R9-069** · refusal
@@ -1685,7 +1751,7 @@ This $type analysis $_c.
 
 *For:* Second refusal at commit time, for keys seeded from an older or hand-edited bench rather than typed. Same rendered sentence as the Add arm.
 
-*Note:* Two separate literals in the source (different variable names, identical output), so a reviewer changing one must change both. Same parent-status-line placement caveat as the row above. This arm is a dead end for the user: the offending key is in the stored bench, and the sentence does not say that, nor how to remove it.
+*Note:* ✅ **FIXED UNDER §A7, 2026-09-16 — THIS NOTE WAS THE DIAGNOSIS.** It read *"Two separate literals in the source (different variable names, identical output), so a reviewer changing one must change both"*, which is precisely the drift §A7 ruled against. Both sites (and `R9-061`'s) now call **`ase::analysis_refusal_frames`**, one body returning the log line and the status line together, so a correction to one cannot fail to be a correction to the other. **The rendered text is byte-identical** — this is a structural change, not a copy change, which is why no handle moved. The two call sites are `ase::ui::chana_x_add` (the Add gesture, `R9-068`) and `ase::ui::chana_x_ok` (this one) — **separate procs**, not two arms of `chana_options`. Pinned by `test_ase_core` rows SN4 and **SN5**, and SN5 is the one that matters: it forbids a call site keeping a frame of its own, which is the regression no rendered-text row could ever see. Same parent-status-line placement caveat as the row above. This arm is still a dead end for the user: the offending key is in the stored bench, and the sentence does not say that, nor how to remove it.
 
 
 **R9-070** · status
@@ -1805,7 +1871,7 @@ ase: analysis type '$type' is not one this simulator backend can render
 
 *For:* Tells the user that an enabled analysis row carries a type this simulator's backend has no way to emit, so the run is refused instead of completing and silently doing nothing. Appears at Run/Netlist time, before anything is written.
 
-*Note:* Minted once in ase::analysis_unrenderable_msg (src/ase.tcl:4105) and said by both refusal sites, so changing it here changes both. The code interpolates $type; the issue file spells the placeholder <t>, and the measured real instance reads: ase: analysis type 'noise' is not one this simulator backend can render. Note it says "this simulator backend" — the user picked a simulator, not a backend, so the word may be developer vocabulary leaking out.
+*Note:* ✅ **CHANGED UNDER §A6, 2026-09-16** — `this simulator backend` → **`this simulator`**. The user chose a *simulator* under Setup > Simulators; "backend" names the adapter layer and is our word for our own architecture. Minted once in ase::analysis_unrenderable_msg and said by both refusal sites, so the one edit changed both. *Rendered:* `ase: analysis type 'pss' is not one this simulator can render`. Pinned by `test_ase_core` row SN1 (which carries an absence term for the word `backend`, so a revert cannot pass on a relaxed golden) and by rows D7b/D7c/D7e4 and `test_ase_preflight` PF222b, which moved with it. ⚠ **`ase::analysis_gap_msg`'s `ASE-L does not know a simulator backend called '$nm'.` was NOT changed**: it is a different string, it carries no R9 handle at all, and §A6's table names three handles — so it is **reported** rather than tidied by a crew, exactly as §A4's `Start` was.
 
 
 **R9-078** · caution
@@ -1820,7 +1886,7 @@ ase: it is enabled on this bench, so the run would have completed, produced no r
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: the closing sentence read "`set ase_preflight 0` does NOT disable this check." and is now the positive "`set ase_preflight 0` leaves this check in force." — the rewrite the ruling preferred to a bare lowercasing. **The fragment is shared by FOUR refusals in `ase::preflight_gate` and all four were changed together**, because leaving three of them shouting would have re-created the very drift §A1 is about. Assembled in ase::preflight_gate (src/ase.tcl) from a continued string plus $rdnote. THE RUNDIR SENTENCE IS CONDITIONAL: when the rundir does not yet exist the middle sentence is absent entirely and the text reads "...no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." The path shown is [file normalize $rd], i.e. an absolute directory path. The backticks around set ase_preflight 0 are literal characters in the shipped message. ⚠ Reviewer should see this beside its near-twin ~20 lines above in the same proc (a DIFFERENT issue, not 1401): "ase: it is enabled on this bench, so the run would have started and produced nothing for it. Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." — two refusals that open with the same nine words and diverge at "completed, produced no result for it, and said nothing" vs "started and produced nothing for it". Also: "it" has no antecedent in this line on its own; the antecedent is the analysis type named in the line before it.
+*Note:* ⚠ **CHANGED BY ⚖ R9 A1 part 2**, 2026-09-15: the closing sentence read "`set ase_preflight 0` does NOT disable this check." and is now the positive "`set ase_preflight 0` leaves this check in force." — the rewrite the ruling preferred to a bare lowercasing. **The fragment is shared by FOUR refusals in `ase::preflight_gate` and all four were changed together**, because leaving three of them shouting would have re-created the very drift §A1 is about. Assembled in ase::preflight_gate (src/ase.tcl) from a continued string plus $rdnote. THE RUNDIR SENTENCE IS CONDITIONAL: when the rundir does not yet exist the middle sentence is absent entirely and the text reads "...no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." The path shown is [file normalize $rd], i.e. an absolute directory path. The backticks around set ase_preflight 0 are literal characters in the shipped message. ⚠ Reviewer should see this beside its near-twin ~20 lines above in the same proc (a DIFFERENT issue, not 1401): "ase: it is enabled on this bench, so the run would have started and produced nothing for it. Nothing was generated: no deck, no raw, no log. `set ase_preflight 0` leaves this check in force." — two refusals that open with the same nine words and diverge at "completed, produced no result for it, and said nothing" vs "started and produced nothing for it". Also: "it" has no antecedent in this line on its own; the antecedent is the analysis type named in the line before it. ✅ **§A8 APPLIED, 2026-09-16 — AND THE ANSWER IS THAT THE LEADS GENUINELY DIFFER.** The shared tail (*"Nothing was generated … leaves this check in force."*) was spelled out FOUR times inside `ase::preflight_gate` and now comes from one body, **`ase::preflight_refusal`** — so the identical halves can never drift again, and the rundir note is still spliced *inside* that tail exactly where it was. ⚠ **THE TWO LEADS WERE NOT FLATTENED, DELIBERATELY.** §A8 rules that a genuinely different part stays different and that flattening one to match a template is *worse* than the drift because it makes the sentence false. **MEASURED 2026-09-16** through this tree's own binary: the two arms fail the deck writer at different points — `ase::analysis_emit_order` returns normally for an incomplete row and `ase::analysis_line` then raises `key "stop" not known in dictionary`, while an unrenderable type raises out of `emit_order` itself — and issue 1401's measured pre-guard behaviour was a run that **completed** in silence, which the other's never was. So "completed, produced no result for it, and said nothing" is true of this one and would be **false** of its near-twin. Pinned by `test_ase_core` row SN7 and `test_ase_preflight` rows PF234b and PF235d; PF234b moved from requiring the sentence four times in the gate to requiring it **once** in the new body and **none** in the gate.
 
 
 ### from issue 1417 (stage 3b)
@@ -1843,14 +1909,14 @@ ase: it is enabled on this bench, so the run would have completed, produced no r
 **R9-080** · refusal
 
 ```text
-has verbatim lines that are not a readable list of non-blank lines
+has verbatim lines ASE-L cannot read, or a blank one among them
 ```
 
 *Where:* Choose Analyses dialog status line (the sentence under the form, after pressing OK) — and the same clause verbatim in the action log and in the preflight refusal before a run
 
 *For:* Refuses to commit or run an analysis row whose verbatim hatch is malformed — either not parseable as a Tcl list, or containing a blank line (a blank would emit an empty line into .control, which ngspice accepts and which makes the deck unreadable).
 
-*Note:* THE CLAUSE CARRIES NO FRAME; the caller supplies one, so the user actually reads three different composed sentences: in the dialog `This tran analysis has verbatim lines that are not a readable list of non-blank lines.` (trailing period added by the caller), in the action log `ase: enabled tran analysis has verbatim lines that are not a readable list of non-blank lines`, and at the preflight gate `ase: the tran analysis has verbatim lines that are not a readable list of non-blank lines`. Reviewer-visible awkwardness: one clause covers two distinct faults (unreadable list vs. a blank line among readable ones), so the user is not told which; and `readable list` is Tcl vocabulary surfaced to a circuit designer. src/ase.tcl, ase::analysis_emit_msg, token `verbatim`.
+*Note:* ✅ **CHANGED UNDER §A6, 2026-09-16.** It read `has verbatim lines that are not a readable list of non-blank lines` — `readable list` is `llength` and Tcl list syntax said out loud to a circuit designer. THE CLAUSE CARRIES NO FRAME; the caller supplies one, so the user reads three composed sentences: in the dialog `This tran analysis has verbatim lines ASE-L cannot read, or a blank one among them.` (trailing period added by the caller), in the action log `ase: enabled tran analysis has verbatim lines ASE-L cannot read, or a blank one among them`, and at the preflight gate `ase: the tran analysis has verbatim lines ASE-L cannot read, or a blank one among them`. ⚠ **`verbatim` ITSELF IS KEPT, DELIBERATELY** — §A6 ruled that word untouched (see `R9-157`/`R9-158`), and only the Tcl vocabulary around it was replaced. ⚠ **The two-faults-in-one-clause awkwardness the old note raised is UNCHANGED and still open**: one clause still covers both an unparseable value and a blank line among parseable ones, so the user is still not told which. Splitting it would be new copy §A6 did not rule on. Pinned by `test_ase_core` row SN2, whose last two terms require **both** faults to go on being refused — a rewrite that fixed the English and dropped a fault would pass a golden-only row. src/ase.tcl, ase::analysis_emit_msg, token `verbatim`.
 
 
 ### from issue 1426 (stage 5)
@@ -1969,7 +2035,7 @@ name a node that is in the circuit
 
 *For:* The remedy offered when the output names an absent node.
 
-*Note:* Singular "a node" even when the sentence above it listed two missing nodes.
+*Note:* Singular "a node" even when the sentence above it listed two missing nodes. ✅ **UNCHANGED BY §A8, 2026-09-16, AND NOW THE TEMPLATE**: the ruling converged `R9-098`, `R9-119` and `R9-123` onto *this* wording (with `R9-115`), so this string is byte-identical to what it always was and is now said in all five places. Pinned by `test_ase_preflight` rows PF235a and PF235c — PF235c's third term requires the four remedies to de-duplicate to a list of length **one**, so a later edit to any single site reds with the count going to 2.
 
 
 ### from issue 1427 (stage 5)
@@ -2077,14 +2143,14 @@ this circuit has no node '[join $missing {' and no node '}]', and ngspice report
 **R9-098** · advice
 
 ```text
-name nodes that are in the circuit
+name a node that is in the circuit
 ```
 
 *Where:* the `Fix:` clause of the missing-node finding
 
 *For:* The remedy when a node box names an absent node.
 
-*Note:* Plural here, where 1426's equivalent tf sentence is singular ("name a node that is in the circuit") — the two are inconsistent.
+*Note:* ✅ **CHANGED UNDER §A8, 2026-09-16** — it read `name nodes that are in the circuit` and is now the singular template `R9-089` and `R9-115` already used. ⚠ **THE PLURAL WAS NOT A REAL PLURAL, WHICH IS THE ONLY REASON IT COULD GO.** §A8 rules that a genuinely plural site STAYS plural, because flattening a true plural makes the sentence FALSE. `pz_nodes` looks plural because it walks FOUR node slots (`inp inn outp outn`) and may report more than one missing — but **no field of it accepts a list**: each box holds exactly one node, and the remedy says what to type in one box. `tf_out` has the same shape (it decomposes `v(out,ref)` into two nodes) and was always singular. So this was drift, not meaning. Pinned by `test_ase_preflight` rows PF235a and PF235c, and by PF228b, whose golden moved with it.
 
 
 **R9-099** · refusal
@@ -2305,7 +2371,7 @@ name a node that is in the circuit
 
 *For:* The remedy paired with the missing-node warning; appears as `. Fix: <this text>`.
 
-*Note:* Terser than the other three remedies; no example spelling.
+*Note:* Terser than the other three remedies; no example spelling. ✅ **UNCHANGED BY §A8, 2026-09-16, AND NOW THE TEMPLATE** — with `R9-089`, this is the wording `R9-098`, `R9-119` and `R9-123` converged onto, so it is byte-identical to what it always was and is now said in all five places. The "no example spelling" observation is why `R9-119`'s `v(out)` / `v(out,ref)` had to be **moved rather than deleted**: this sentence never carried one, so converging onto it would have lost the only place that syntax is shown. Pinned by `test_ase_preflight` rows PF235a and PF235c.
 
 
 **R9-116** · caution
@@ -2354,14 +2420,14 @@ a noise analysis measures a voltage, and '<outv>' is a current
 **R9-119** · advice
 
 ```text
-name a node, as `v(out)` or `v(out,ref)`
+name a node that is in the circuit, as `v(out)` or `v(out,ref)`
 ```
 
 *Where:* Same banner line, appended as ". Fix: <this>"; in the fatal run-log refusal it is its own line, "ase:   fix: <this>"
 
 *For:* The remedy paired with the "measures a voltage" refusal above.
 
-*Note:* Backticks are literal in the shipped string — they are not markdown, they render as backticks in a Tk label.
+*Note:* ✅ **CHANGED UNDER §A8, 2026-09-16** — it read `name a node, as \`v(out)\` or \`v(out,ref)\`` and now opens with the singular template the other three use. ⚠ **THE EXAMPLE SYNTAX MOVED; IT WAS NOT DELETED.** §A8 says explicitly that `v(out)` / `v(out,ref)` is *information, not drift* — it is the one place the noise form tells a user how a node voltage is spelled — so the template took it along rather than replacing it. Converging the opening while dropping the example would have been the one outcome the ruling forbids. Pinned by `test_ase_preflight` row **PF235b**, whose second and third terms require the example to survive, so a row asserting only the template could not pass on a tree that had lost it. Backticks are literal in the shipped string — they are not markdown, they render as backticks in a Tk label.
 
 
 **R9-120** · refusal
@@ -2410,12 +2476,14 @@ this circuit has no '<node>' for the noise analysis to measure, and ngspice answ
 **R9-123** · advice
 
 ```text
-name a node this netlist has
+name a node that is in the circuit
 ```
 
 *Where:* Banner ". Fix: …" clause / run-log advice line
 
 *For:* The remedy paired with the missing-node caution.
+
+*Note:* ✅ **CHANGED UNDER §A8, 2026-09-16** — it read `name a node this netlist has`, a fourth way of saying what `R9-089`, `R9-098` and `R9-115` also say, and is now the singular template. ⚠ **`name a device this netlist has at the top level …` (the `sens_filters` remedy) KEEPS that phrasing and was NOT touched**: it is about a *device*, not a node, so it is outside the node-naming family §A8 named — reported rather than tidied. Pinned by `test_ase_preflight` rows PF235a and PF235c.
 
 
 **R9-124** · caution
@@ -2885,7 +2953,7 @@ raise the time step, or lower the stop time, if that is not what you meant
 
 *For:* Tells the user this analysis row will push one extra line of their own into the .control block, immediately above its analysis command; it appears whenever such a row is displayed, alongside the line the deck will carry.
 
-*Note:* Two leading spaces are part of the string (the cell reads `tran 1n 1u  + verbatim: 1 line`). Singular and plural are two separate code paths, so both spellings need reviewing. The contents are deliberately NOT shown, only the count — the issue file explains that three pasted control lines would push the analysis line off the right edge of a one-line treeview cell. `verbatim` is the registry's own word for the hatch; there is currently no editor for it, so the only way to create one is hand-editing the .state file. src/ase_window.tcl, ase::ui::arg_summary.
+*Note:* ⚠ **§A6 RULED THIS LEFT EXACTLY AS IT IS, 2026-09-16 — A DELIBERATE NON-CHANGE, NOT AN OVERSIGHT.** `verbatim` names a feature with **no editor**: the only way to create one is to hand-edit the `.state` file, so naming it in the user's vocabulary now would advertise a door with no handle. It gets a user's name when it gets a UI, and not before. **Pinned by `test_ase_core` row SN3**, which exists solely so that a later consistency pass cannot rename it in good faith and reverse a user ruling in silence — the same job section PF234 does for §A1's `SEGFAULTS` and row PZ2f for §A2's `dec`/`oct`/`lin`. Two leading spaces are part of the string (the cell reads `tran 1n 1u  + verbatim: 1 line`). Singular and plural are two separate code paths, and SN3 pins both spellings. The contents are deliberately NOT shown, only the count — three pasted control lines would push the analysis line off the right edge of a one-line treeview cell. src/ase_window.tcl, ase::ui::arg_summary.
 
 
 **R9-158** · status
@@ -2898,7 +2966,7 @@ raise the time step, or lower the stop time, if that is not what you meant
 
 *For:* Same as the singular: names the hatch by count so a deck carrying lines the window never mentions cannot exist; shown on every display of a row with two or more verbatim lines.
 
-*Note:* `$nvb` is the Tcl variable the code interpolates — it renders as a bare integer, e.g. the pinned cell `tran 1n 1u  + verbatim: 2 lines`. Again two leading spaces. src/ase_window.tcl, ase::ui::arg_summary.
+*Note:* ⚠ **LEFT EXACTLY AS IT IS by §A6, 2026-09-16 — see `R9-157` for the reasoning.** The plural is a separate code path from the singular and row SN3 pins both, so neither can be renamed without a red. `$nvb` is the Tcl variable the code interpolates — it renders as a bare integer, e.g. the pinned cell `tran 1n 1u  + verbatim: 2 lines`. Again two leading spaces. src/ase_window.tcl, ase::ui::arg_summary.
 
 
 ### from issue 1420 (stage 3b)
@@ -2926,7 +2994,7 @@ is not one this simulator backend can set up
 
 *For:* Tells the user an enabled row of this type will contribute nothing to the deck because ASE-L has no template for it — as distinct from a value being missing, which would send them hunting for a field that does not exist.
 
-*Note:* Pre-existing clause (ase::analysis_emit_msg token `unrenderable`); 1420 routes it to the column. Bare fragment again: the cell reads exactly `is not one this simulator backend can set up`, with no subject, so the sentence's subject is only implied by the row it sits on (pinned by row AC5). Note this clause is deliberately skipped by the preflight gate, which prints its own differently-worded block for the same condition — so the column and the gate do not say the same thing for this one token, unlike every other.
+*Note:* ✅ **CHANGED UNDER §A6, 2026-09-16** — the cell now reads exactly `is not one this simulator can set up`. ⚠ **This is the SAME LITERAL as `R9-065`**, not a copy of it: both are `ase::analysis_emit_msg`'s `unrenderable` return, so one edit moved both and no drift between the dialog and the column is possible. Pre-existing clause; 1420 routes it to the column. Bare fragment again, with no subject, so the sentence's subject is only implied by the row it sits on (pinned by row AC5, and by SN1 for the vocabulary). Note this clause is deliberately skipped by the preflight gate, which prints its own differently-worded block for the same condition — so the column and the gate do not say the same thing for this one token, unlike every other.
 
 
 ---
@@ -4218,7 +4286,7 @@ ase: Stopping this run discards it — ngspice in batch mode writes nothing on a
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* Composed from two halves that a reviewer may want to edit separately: the FRAME is ase::run_stop_warning — "Stopping this run discards it — <clause>." — and the CLAUSE is ngspice adapter content, the `before` key of ase::backend::ngspice::run_stop_cost, literally "ngspice in batch mode writes nothing on a stop". The "ase: " prefix is added at the echo site, not by the proc. The dash is an em dash (U+2014). A backend that declares no run_stop_cost hook prints nothing at all — there is no fallback wording. Sentence-initial capital "Stopping" after the lowercase "ase: " prefix is inconsistent with the other ASE-L CIW lines, which continue lowercase after the prefix.
+*Note:* Composed from two halves that a reviewer may want to edit separately: the FRAME is ase::run_stop_warning — "Stopping this run discards it — <clause>." — and the CLAUSE is ngspice adapter content, the `before` key of ase::backend::ngspice::run_stop_cost, literally "ngspice in batch mode writes nothing on a stop". The "ase: " prefix is added at the echo site, not by the proc. The dash is an em dash (U+2014). A backend that declares no run_stop_cost hook prints nothing at all — there is no fallback wording. Sentence-initial capital "Stopping" after the lowercase "ase: " prefix is inconsistent with the other ASE-L CIW lines, which continue lowercase after the prefix. ✅ **UNCHANGED BY §A8, 2026-09-16 — THIS IS THE SIDE THE PAIR CONVERGED ONTO.** §A8 named this handle and `R9-264` as a pair whose punctuation had drifted; the full stop was already here, so `R9-264` (and `R9-726` behind it) gained one and this string is byte-identical to what it shipped. ⚠ **The capital-`S` observation above is NOT part of that ruling and was deliberately left alone** — §A8 ruled on the full stop, and lowercasing "Stopping" would be new copy nobody has ratified. Pinned as the un-moved half by `test_ase_core` row SN6.
 
 
 **R9-263** · status
@@ -4239,7 +4307,7 @@ stop      : Stopping this run discards it — ngspice in batch mode writes nothi
 **R9-264** · status
 
 ```text
-ase: simulation stopped — nothing of this run was written
+ase: simulation stopped — nothing of this run was written.
 ```
 
 *Where:* CIW / ASE-L message area, plain (not error) — printed by ase::ui::do_stop the moment a Stop actually kills a running simulator, from either Stop door (menu or strip button).
@@ -4248,7 +4316,7 @@ ase: simulation stopped — nothing of this run was written
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
-*Note:* Frame is ase::run_stopped_msg — "ase: simulation stopped — <clause>" — and the clause is ngspice adapter content, the `after` key of ase::backend::ngspice::run_stop_cost, literally "nothing of this run was written". Em dash (U+2014). NO TRAILING FULL STOP, unlike its launch-time sibling above which ends in a period — the inconsistency is in the shipped strings. The two early-return paths keep their existing sentences ("ase: no simulation running for this session", "ase: Stop is not available on Windows"), which are pre-existing and not part of this issue. A backend with no run_stop_cost hook stays silent here, so a successful Stop on an unregistered simulator says nothing at all.
+*Note:* Frame is ase::run_stopped_msg — "ase: simulation stopped — <clause>" — and the clause is ngspice adapter content, the `after` key of ase::backend::ngspice::run_stop_cost, literally "nothing of this run was written". Em dash (U+2014). ✅ **CHANGED UNDER §A8, 2026-09-16 — IT NOW ENDS IN A FULL STOP.** It did not, while its launch-time sibling `R9-262` did: two whole sentences, in the same channel, about the same run, seconds apart, punctuated differently. ⚠ **THE PERIOD IS IN THE FRAME, NOT THE CLAUSE** — `ase::run_stopped_msg` supplies it, and the adapter's `after` key is still byte-identical (`nothing of this run was written`), so no per-simulator content moved. ⚠ **`R9-726` MOVED WITH IT AND THAT IS NOT SCOPE CREEP**: its own note says it took its missing full stop *from* this handle and that a reviewer who re-words one must re-word both — leaving it would have split the pair a second time, one layer down. Pinned by `test_ase_core` row SN6, with goldens moving in SW2, CK30, CK30b and `test_ase_trnoise_1466` NP7b. ⚠ CK31's and NP7b's `ck_claim`/`np_claim` reducers did **not** need touching — they match `*nothing of this run was written*` with a trailing wildcard, so the new period passes through; that is luck, and SN6 is what actually pins the punctuation. The two early-return paths keep their existing sentences ("ase: no simulation running for this session", "ase: Stop is not available on Windows"), which are pre-existing and not part of this issue. A backend with no run_stop_cost hook stays silent here, so a successful Stop on an unregistered simulator says nothing at all.
 
 
 ### from issue 1429 (stage 5)
@@ -10080,7 +10148,7 @@ stop      : Stopping this run loses at most its last 20 %, and what is kept is m
 **R9-726** · status
 
 ```text
-ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial
+ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial.
 ```
 
 
@@ -10093,4 +10161,4 @@ ase: simulation stopped — every point up to this run's last checkpoint was wri
 *Rendered:* the source does not hold this as one literal. The FRAME is `ase::run_stopped_msg` — "ase: simulation stopped — `<clause>`, and what is kept is marked partial" — chosen for a checkpointed run by the same plan R9-724 reads, `ase::ckpt_rows`' answer, resolved once by `ase::run_deck` and read back out of the run record by `ase::run_record`. The CLAUSE is ngspice adapter content, the new `after_ckpt` key of `ase::backend::ngspice::run_stop_cost`, literally "every point up to this run's last checkpoint was written".
 
 
-*Note:* Em dash (U+2014), and **no trailing full stop** — it follows R9-264, its sibling in the same place, rather than R9-724; the period inconsistency between the launch and stop sentences is pre-existing and is recorded at R9-262/R9-264 rather than silently fixed here. "what is kept is marked partial" is R9-724's clause repeated verbatim, deliberately: the two sentences of one run should agree in words as well as in claim, and a reviewer who re-words one must re-word both. A backend that declares `after` and not `after_ckpt` says nothing at all here rather than falling back to R9-264. Reviewer question: whether "every point up to this run's last checkpoint was written" is the right thing to say when the Stop landed before the FIRST checkpoint — the salvage note that follows says "kept nothing" in that case, which does not contradict it but is a blunter answer than this sentence leads a reader to expect.
+*Note:* Em dash (U+2014). ✅ **GAINED ITS FULL STOP UNDER §A8, 2026-09-16, TOGETHER WITH `R9-264`.** This note used to read *"**no trailing full stop** — it follows R9-264, its sibling in the same place, rather than R9-724; the period inconsistency … is pre-existing and is recorded at R9-262/R9-264 rather than silently fixed here"* — and that is exactly why it moved when R9-264 did: it had inherited the missing period deliberately, and the note itself said a reviewer who re-words one must re-word both. The period comes from the frame `ase::run_stopped_msg`; the adapter's `after_ckpt` clause is unchanged. Pinned by `test_ase_core` rows SN6 and CK30. "what is kept is marked partial" is R9-724's clause repeated verbatim, deliberately: the two sentences of one run should agree in words as well as in claim, and a reviewer who re-words one must re-word both. A backend that declares `after` and not `after_ckpt` says nothing at all here rather than falling back to R9-264. Reviewer question: whether "every point up to this run's last checkpoint was written" is the right thing to say when the Stop landed before the FIRST checkpoint — the salvage note that follows says "kept nothing" in that case, which does not contradict it but is a blunter answer than this sentence leads a reader to expect.

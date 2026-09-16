@@ -4703,7 +4703,7 @@ proc ase::n_enabled_analyses {state} {
 # `rule` debt against issue 1401 the moment it landed, per the batch's standing
 # rule that a new user-facing sentence is never a crew's to keep.
 proc ase::analysis_unrenderable_msg {type} {
-  return "ase: analysis type '$type' is not one this simulator backend can render"
+  return "ase: analysis type '$type' is not one this simulator can render"
 }
 
 # ─── THE ANALYSIS REGISTRY: ASE-L'S SCHEMA ───────────────────────────────────
@@ -5477,13 +5477,39 @@ proc ase::analysis_emit_msg {token args} {
     missing      { return "needs a value for '$f'" }
     boolval      { return "'$f' must be on or off" }
     fill         { return "cannot read '[lindex $args 1]' as a number for '$f'" }
-    unrenderable { return "is not one this simulator backend can set up" }
+    unrenderable { return "is not one this simulator can set up" }
     group        { return "needs every value of the $f, or none of them" }
     unknownkey   { return "has a setting named '$f' that ASE-L cannot emit" }
-    verbatim     { return "has verbatim lines that are not a readable list of non-blank lines" }
+    verbatim     { return "has verbatim lines ASE-L cannot read, or a blank one among them" }
     belowmin     { return "needs '$f' to be at least [lindex $args 1]" }
   }
   return {}
+}
+
+# ⚖ R9 A7 -- ONE FRAME, BOTH PLACES. THE CLAUSE ABOVE IS SAID TWICE EVERY TIME.
+#
+# A commit door refuses in two channels at once: the ACTION LOG, which records an
+# EVENT, and the dialog's own STATUS LINE, which describes the STATE the user is
+# looking at. ⚖ R9 A7 ruled that the two verbs STAY -- a log says `enabled`, a
+# status line says `This` -- but that the clause and its punctuation come from a
+# single generated string used by both, so the two can never drift apart again.
+#
+# ⚠ THEY HAD ALREADY DRIFTED, WHICH IS WHY THE RULING EXISTS: the status line
+# ended in a full stop and the log line did not, and there was nowhere to fix
+# that once. Three call sites spelled the frame themselves --
+# `ase::ui::chana_ok` and the two `Options...` doors -- and a correction made to
+# one of them would have been made to one of them. That is §A2's `valuelabels`
+# finding arriving from the other side: it found a second reader and DELETED it.
+#
+# ⚠ `verb` IS THE LOG'S VERB AND IT IS THE ONE GENUINE DIFFERENCE between the
+# three sites. `chana_ok` refuses a row the user has just switched ON (`enabled`;
+# R9-059), while the two `Options...` doors refuse a key carried by a row that
+# already exists (`this`; R9-070). Both are shipped copy under ratification;
+# neither is invented here, and the status line is `This ...` in all three.
+proc ase::analysis_refusal_frames {type clause {verb enabled}} {
+  return [dict create \
+    log    "ase: $verb $type analysis $clause" \
+    status "This $type analysis $clause."]
 }
 
 # EVERY WAY THIS SIMULATOR'S REGISTRY IS SELF-INCONSISTENT, as a list of
@@ -10707,7 +10733,7 @@ proc ase::analysis_emit_rank {type {op_last 0} {sim {}}} {
 # so every type had a rank whatever the state said; now the ranks live in the
 # RENDERING BACKEND's registry, and ngspice's render_deck must ask for its own.
 # MEASURED when this defaulted to the state's simulator: `ase: analysis type
-# 'op' is not one this simulator backend can render` aborted test_ase_core at
+# 'op' is not one this simulator can render` aborted test_ase_core at
 # 163 of 248 checks. The default stays the state's simulator for core callers;
 # an adapter passes its own name.
 proc ase::analysis_emit_order {state {op_last 0} {sim {}}} {
@@ -12454,7 +12480,7 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       return [list blocked \
         "this circuit has no node '[join $missing {' and no node '}]', and\
  ngspice reports that as the input being shorted to the output" \
-        "name nodes that are in the circuit"]
+        "name a node that is in the circuit"]
     }
     pz_devices {
       # ⚠ TWO CLASSES, AND THE SECOND IS THE ONE NOBODY WOULD GUESS. A device
@@ -12758,7 +12784,7 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       if {[lindex $d 0] eq {current}} {
         return [list fatal \
           "a noise analysis measures a voltage, and '$outv' is a current" \
-          "name a node, as `v(out)` or `v(out,ref)`"]
+          "name a node that is in the circuit, as `v(out)` or `v(out,ref)`"]
       }
       if {$d eq {malformed}} {
         return [list fatal \
@@ -12783,7 +12809,7 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
         "this circuit has no '[join $miss {' and no '}]' for the noise analysis\
  to measure, and ngspice answers a missing node with a full spectrum of\
  numbers rather than failing" \
-        "name a node this netlist has"]
+        "name a node that is in the circuit"]
     }
     noise_insrc {
       # ⚠ THREE DISTINCT REFUSALS, AND THE THIRD IS THE ONE `ac_source` CANNOT
@@ -14003,6 +14029,47 @@ proc ase::preflight_fix_session {key} {
 ## netlist string -- omits it and donates nothing, which is the right answer: a
 ## string nobody netlisted must not become what the dialog reports about a
 ## circuit.
+
+# ⚖ R9 A8 -- THE FOUR REFUSALS OF THIS GATE END THE SAME WAY, FROM ONE BODY.
+#
+# Each of them says three things: what the run would have done, that nothing was
+# written this time, and that `set ase_preflight 0` does not reach this check.
+# Only the FIRST of the three differs, and the other two were spelled out FOUR
+# TIMES inside one procedure. That is how ⚖ R9 A1 came to rewrite the closing
+# sentence in four places at once (row PF234b counts them for exactly that
+# reason), and how the two "it is enabled on this bench" refusals came to diverge
+# mid-sentence while their tails stayed identical -- §A8's subject.
+#
+# ⚠ THE LEAD IS THE PART THAT GENUINELY DIFFERS, AND IT STAYS DIFFERENT.
+# MEASURED 2026-09-16, both arms through this tree's own binary: an incomplete
+# row and an unrenderable type fail the deck writer at two DIFFERENT points --
+# `ase::analysis_emit_order` returns normally for the incomplete row
+# (`{0 0 op} {30 1 tran}`) and `ase::analysis_line` then raises `key "stop" not
+# known in dictionary`, while an unrenderable type raises out of `emit_order`
+# ITSELF -- and issue 1401's measured pre-guard behaviour was a run that
+# COMPLETED in silence, which the other's never was. §A8 rules that a genuinely
+# different part stays different and that flattening one to match a template is
+# worse than the drift, because it makes the sentence FALSE. So the two leads
+# stay; everything after them is now one string.
+#
+# ⚠ `rdnote` IS THE OTHER GENUINE DIFFERENCE. Only issue 1401's refusal names an
+# earlier run's files, and only when the rundir ALREADY EXISTS -- `ase::rundir`
+# does `file mkdir`, so naming it unconditionally would CREATE the directory from
+# inside a refusal whose whole claim is that nothing was written. Rows PF222e,
+# PF222h and PF222i assert all three halves of that.
+#
+# ⚠ THE SAVE-NAME REFUSAL AT THE FOOT OF THIS GATE IS NOT ONE OF THESE and must
+# never call this proc: `set ase_preflight 0` really does defeat that one (the
+# early return sits above it), so the closing sentence would be a lie there. It
+# says "Any files already in ... are from an earlier run" instead.
+proc ase::preflight_refusal {{lead {}} {rdnote {}}} {
+  set s "ase: "
+  if {$lead ne {}} { append s "$lead " }
+  append s "Nothing was generated: no deck, no raw, no log.$rdnote\
+ `set ase_preflight 0` leaves this check in force."
+  return $s
+}
+
 proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   # --- 1415: AN ENABLED ANALYSIS THAT CANNOT BE EMITTED IS A REFUSAL ---------
   #
@@ -14042,9 +14109,8 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     foreach eb $emitbad {
       ::ase::echo "ase: the [lindex $eb 0] analysis [lindex $eb 1]" error
     }
-    set l "ase: it is enabled on this bench, so the run would have started and\
- produced nothing for it. Nothing was generated: no deck, no raw, no log.\
- `set ase_preflight 0` leaves this check in force."
+    set l [ase::preflight_refusal "it is enabled on this bench, so the run would\
+ have started and produced nothing for it."]
     ::ase::echo $l error
     return [list emit_incomplete $emitbad]
   }
@@ -14083,9 +14149,8 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       set rdnote " Any files already in [file normalize $rd] are from an earlier\
  run."
     }
-    set l "ase: it is enabled on this bench, so the run would have completed,\
- produced no result for it, and said nothing. Nothing was generated: no deck, no\
- raw, no log.$rdnote `set ase_preflight 0` leaves this check in force."
+    set l [ase::preflight_refusal "it is enabled on this bench, so the run would\
+ have completed, produced no result for it, and said nothing." $rdnote]
     ::ase::echo $l error
     lappend lines $l
     return -code error [join $lines "\n"]
@@ -14137,8 +14202,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
         lappend plines $l
       }
     }
-    set l "ase: Nothing was generated: no deck, no raw, no log.\
- `set ase_preflight 0` leaves this check in force."
+    set l [ase::preflight_refusal]
     ::ase::echo $l error
     lappend plines $l
     return -code error [join $plines "\n"]
@@ -14171,9 +14235,8 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
           lappend plines $l
         }
       }
-      set l "ase: the simulator would exit part-way through this deck, leaving a\
- raw file that reads back as a valid result. Nothing was generated: no deck, no\
- raw, no log. `set ase_preflight 0` leaves this check in force."
+      set l [ase::preflight_refusal "the simulator would exit part-way through\
+ this deck, leaving a raw file that reads back as a valid result."]
       ::ase::echo $l error
       lappend plines $l
       return -code error [join $plines "\n"]
@@ -17283,11 +17346,11 @@ proc ase::run_stopped_msg {{sim {}} {ckpt {}}} {
   set n [ase::ckpt_worst_n $ckpt]
   if {$n eq {}} {
     if {![dict exists $c after]} { return {} }
-    return "ase: simulation stopped — [dict get $c after]"
+    return "ase: simulation stopped — [dict get $c after]."
   }
   if {![dict exists $c after_ckpt]} { return {} }
   return "ase: simulation stopped — [dict get $c after_ckpt], and what is kept\
- is marked partial"
+ is marked partial."
 }
 
 proc ase::run_log_header {meta} {

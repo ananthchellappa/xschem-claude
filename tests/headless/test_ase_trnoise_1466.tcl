@@ -889,8 +889,8 @@ check {NP7b the noisy transient is told at the STOP what was kept, its two\
   [list $NP7BNOISY $NP7BPLAIN \
         [list [np_claim $NP7NOISY] [np_claim $NP7BNOISY]] \
         [list [np_claim $NP7PLAIN] [np_claim $NP7BPLAIN]]] \
-  [list {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial} \
-        {ase: simulation stopped — nothing of this run was written} \
+  [list {ase: simulation stopped — every point up to this run's last checkpoint was written, and what is kept is marked partial.} \
+        {ase: simulation stopped — nothing of this run was written.} \
         {KEEPS KEEPS} {NOTHING NOTHING}]
 
 # ===========================================================================
