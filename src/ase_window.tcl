@@ -5283,21 +5283,17 @@ proc ase::ui::form_is_absent {sim type field v} {
 # value. That is the fix for ngspice's sharpest AC trap: `dec 10` is ten points
 # PER DECADE while `lin 10` is ten points IN TOTAL, and the form said `Points:`
 # for both.
+#
+# ⚠ THE RULE MOVED TO `ase::caption_of` AND ONLY THE COLON IS LEFT HERE.
+# ⚖ R9 A3 made the caption the text of a refusal, and a refusal is produced in
+# `ase.tcl` with no window anywhere near it -- so the rule had to live on the
+# schema side, where both surfaces can ask it. What is genuinely THIS proc's is
+# the colon: a form asks a question, a sentence does not, which is why
+# `ase::caption_of` returns `Stop time (s)` and this returns `Stop time (s):`.
+# Do not re-implement the body here; two copies of a display rule is the drift
+# receipt 53 deleted and A3 forbade in the same breath.
 proc ase::ui::form_label {sim type field {modeval {}}} {
-  set fd [ase::field_descriptor $sim $type $field]
-  set txt {}
-  if {$modeval ne {} && [dict exists $fd labels] \
-      && [dict exists [dict get $fd labels] $modeval]} {
-    set txt [dict get [dict get $fd labels] $modeval]
-  } elseif {[dict exists $fd label] && [dict get $fd label] ne {}} {
-    set txt [dict get $fd label]
-  } else {
-    set txt [string totitle $field]
-  }
-  if {[dict exists $fd unit] && [dict get $fd unit] ne {}} {
-    append txt " ([dict get $fd unit])"
-  }
-  return "$txt:"
+  return "[ase::field_caption $sim $type $field $modeval]:"
 }
 
 # A MODE PICK RELABELS ITS DECLARED NEIGHBOUR. `relabels <field>` on the mode
@@ -8123,18 +8119,14 @@ proc ase::ui::meas_form {key} {
   return $w
 }
 
+# ⚠ THIS WAS A BYTE-FOR-BYTE SECOND COPY OF `ase::ui::form_label`'s BODY, over
+# the OTHER field registry, and ⚖ R9 A3's "one accessor, never a second table"
+# is exactly about that. The measurement registry is a different table
+# (`ase::meas_kind_field`, not `ase::field_descriptor`) holding the same SHAPE
+# of descriptor, so the lookup stays here and the RULE is asked for -- which is
+# why `ase::caption_of` takes a descriptor rather than a sim/type pair.
 proc ase::ui::meas_flabel {sim kind field} {
-  set fd [ase::meas_kind_field $sim $kind $field]
-  set txt {}
-  if {[dict exists $fd label] && [dict get $fd label] ne {}} {
-    set txt [dict get $fd label]
-  } else {
-    set txt [string totitle $field]
-  }
-  if {[dict exists $fd unit] && [dict get $fd unit] ne {}} {
-    append txt " ([dict get $fd unit])"
-  }
-  return "$txt:"
+  return "[ase::caption_of [ase::meas_kind_field $sim $kind $field] $field]:"
 }
 
 # Is this field's label a CONTINUATION of the one above it?

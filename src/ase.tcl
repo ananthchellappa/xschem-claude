@@ -4863,6 +4863,95 @@ proc ase::field_default {fd} {
   return {}
 }
 
+# ── ⚖ R9 RULING A3: A REFUSAL NAMES THE CAPTION THE USER CAN SEE ────────────
+#
+# `needs a value for 'stop'` named a SLOT. The box it is pointing at is
+# captioned `Stop time (s):`. `ptssum` is the worse case: it appears NOWHERE on
+# screen, cannot be searched for, cannot be pointed at, and is in no
+# documentation a user has -- so a refusal whose whole job is to say which box
+# to go and fix was asking the user to translate first. The ruling
+# (2026-09-16): the sentence names the visible caption, TRAILING COLON
+# STRIPPED, UNIT KEPT. The colon is punctuation the form adds, which is why
+# stripping it is a code change and not a copy change; the unit stays because a
+# message about a missing value is exactly where knowing it wants seconds is
+# useful.
+#
+# ⚠ ONE BODY FOR THE CAPTION RULE. THIS IS THE WHOLE POINT AND IT IS THE EASY
+# THING TO GET WRONG. The obvious implementation is a slot->caption table in
+# the refusal path, and it would have rotted the same day it landed: ⚖ R9
+# rulings A4 and A5 reword FOUR of these captions in the very commit that adds
+# this. So `ase::caption_of` is the ONLY place the rule -- the mode's relabel,
+# else the declared label, else the title-cased slot, plus the unit in
+# parentheses -- is written down, and every surface asks it.
+# `ase::ui::form_label` adds the colon for a form, `ase::ui::meas_flabel` asks
+# it for a measurement field, and the refusals ask it with no colon at all.
+# This is receipt 53's `valuelabels` lesson arriving from the other side: that
+# pass DELETED a second implementation of a display rule for exactly this
+# reason, and `meas_flabel` was a byte-for-byte second copy of this one.
+#
+# ⚠ IT TAKES A DESCRIPTOR, NOT A `sim`/`type`, BECAUSE THERE ARE TWO
+# REGISTRIES. Analysis fields come from `ase::field_descriptor`, measurement
+# fields from `ase::meas_kind_field`; two different tables holding the same
+# SHAPE of descriptor. Writing the rule over the descriptor lets both surfaces
+# share one body without pretending the two tables are one.
+#
+# ⚠ AND IT NEVER RETURNS THE EMPTY STRING. `needs a value for ''` is strictly
+# worse than the slot name the old sentence quoted, and it is reachable rather
+# than theoretical: a `labels` entry declared as `{}` walks straight past the
+# `dict exists` test above and leaves `$txt` empty. The `$txt eq {}` line is
+# that guard and row LB4 is what fails if it goes.
+proc ase::caption_of {fd field {modeval {}}} {
+  set txt {}
+  if {$modeval ne {} && [dict exists $fd labels] \
+      && [dict exists [dict get $fd labels] $modeval]} {
+    set txt [dict get [dict get $fd labels] $modeval]
+  } elseif {[dict exists $fd label] && [dict get $fd label] ne {}} {
+    set txt [dict get $fd label]
+  } else {
+    set txt [string totitle $field]
+  }
+  if {$txt eq {}} { set txt $field }
+  if {[dict exists $fd unit] && [dict get $fd unit] ne {}} {
+    append txt " ([dict get $fd unit])"
+  }
+  return $txt
+}
+
+# ONE ANALYSIS FIELD'S CAPTION, no colon.
+proc ase::field_caption {sim type field {modeval {}}} {
+  return [ase::caption_of [ase::field_descriptor $sim $type $field] $field $modeval]
+}
+
+# THE CAPTION A FIELD WEARS ON A PARTICULAR ROW -- which is a different
+# question, and answering the easy one instead is how a refusal comes to name a
+# box nobody is looking at. A `mode` field that declares `relabels` renames its
+# neighbour: `ac`'s and `noise`'s sweep makes `points` read `Points per
+# decade`, `Points per octave` or `Number of points` depending on what is
+# picked. So a refusal about `points` has to resolve THIS row's mode -- its
+# stored value, or the mode field's own `default` when the row stores none,
+# which is exactly what the form shows in that case. Without this a user who
+# picked `oct` and typed 0 would be told to fix `Points per decade`, a caption
+# not on their screen -- which is the very defect A3 is about, re-created one
+# layer in. Row LB3 is the pin.
+proc ase::field_caption_for_row {sim type row field} {
+  set e [ase::analysis_entry $sim $type]
+  set mv {}
+  if {$e ne {} && [dict exists $e fields]} {
+    foreach f [dict get $e fields] {
+      if {![dict exists $f relabels] || [dict get $f relabels] ne $field} { continue }
+      if {![dict exists $f name]} { continue }
+      set mn [dict get $f name]
+      if {[dict exists $row $mn] && [dict get $row $mn] ne {}} {
+        set mv [dict get $row $mn]
+      } else {
+        set mv [ase::field_default $f]
+      }
+      break
+    }
+  }
+  return [ase::field_caption $sim $type $field $mv]
+}
+
 # ── ⚖ R9 RULING A2: DISPLAY THE READABLE WORD, EMIT THE DECK WORD ───────────
 #
 # A `values` field offers the simulator's own vocabulary, and until this the
@@ -5198,17 +5287,28 @@ proc ase::analysis_emit_check {sim row} {
       # would refuse a row the deck renders perfectly -- the exact shape issue
       # 1416 deleted when `required 1` stopped meaning "every field".
       if {$fd ne {} && ![ase::field_active $row $fd $flds]} { continue }
+      # ⚖ R9 A3: THE SENTENCE NAMES THE CAPTION, THE TUPLE KEEPS THE SLOT.
+      #
+      # ⚠ BOTH HALVES ARE LOAD-BEARING AND SWAPPING THEM WOULD BREAK THE DIALOG
+      # WHILE THE SENTENCE READ PERFECTLY. `ase::ui::chana_ok` takes element 1
+      # of this tuple and asks `ase::ui::form_has` whether that field has a
+      # widget and `ase::field_descriptor` whether it is `advanced 1` -- which
+      # is how the user gets " It is under Advanced." and how the focus lands in
+      # the offending box. Both lookups are keyed by the SLOT. So element 1
+      # stays the slot for ever; only element 2, the clause the user reads,
+      # changes.
+      set cap [ase::field_caption_for_row $sim $type $row $slot]
       if {$kind eq {bool}} {
         # ⚠ A BOOL'S ONLY WRONG VALUE IS ONE THAT IS NEITHER 1 NOR 0 NOR ABSENT.
         # It cannot be "missing": absent means off, which is a legal answer.
         if {$have && [lsearch -exact {0 1} [dict get $row $slot]] < 0} {
-          lappend out [list boolval $slot [ase::analysis_emit_msg boolval $slot]]
+          lappend out [list boolval $slot [ase::analysis_emit_msg boolval $cap]]
         }
         continue
       }
       if {!$have} {
         if {$required eq {1}} {
-          lappend out [list missing $slot [ase::analysis_emit_msg missing $slot]]
+          lappend out [list missing $slot [ase::analysis_emit_msg missing $cap]]
         }
         continue
       }
@@ -5228,7 +5328,7 @@ proc ase::analysis_emit_check {sim row} {
         set r [ase::si_parse [dict get $row $slot] $sufs]
         if {[lindex $r 0] eq {bad}} {
           lappend out [list fill $slot \
-            [ase::analysis_emit_msg fill $slot [dict get $row $slot]]]
+            [ase::analysis_emit_msg fill $cap [dict get $row $slot]]]
         } elseif {[dict exists $fd min] && [llength $r] >= 2 \
                   && [string is double -strict [lindex $r 1]]} {
           # --- 1432: A DECLARED LOWER BOUND, AND ngspice ENFORCES IT LATE ----
@@ -5239,7 +5339,7 @@ proc ase::analysis_emit_check {sim row} {
           # typed. `min` is declared only where the simulator itself refuses.
           if {[lindex $r 1] < [dict get $fd min]} {
             lappend out [list belowmin $slot \
-              [ase::analysis_emit_msg belowmin $slot [dict get $fd min]]]
+              [ase::analysis_emit_msg belowmin $cap [dict get $fd min]]]
           }
         }
       }
@@ -13210,6 +13310,51 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       set v {}
       catch {set v [$h $type $facts $inv]}
       return $v
+    }
+    tstart_note {
+      # ── ⚖ R9 RULING A5: THE CAPTION STOPPED BEING A SENTENCE, SO THE FACT
+      # IT WAS CARRYING MOVED HERE. ─────────────────────────────────────────
+      #
+      # The field was captioned `Start recording at (s):` -- a verb phrase
+      # where every neighbour is a noun phrase, and the only caption on the
+      # form that reads as an instruction. A5 renamed it `Start time (s):`.
+      #
+      # ⚠ BUT THAT CAPTION WAS CARRYING THE FACT THE FIELD EXISTS FOR, AND A
+      # RENAME ALONE WOULD HAVE DELETED A TRUE THING THE USER NEEDS. ngspice
+      # does NOT start at `tstart`. It simulates from 0 exactly as it would
+      # without the field and merely DISCARDS the output before that point, so
+      # the run costs what it always cost and only the saved data is shorter.
+      # A user who reads a bare `Start time` as "skip the first 5 us of work"
+      # has been misled BY the rename -- which is why the ruling says the
+      # meaning moves rather than goes, and why this arm is half of A5 rather
+      # than a decoration on it.
+      #
+      # ⚠ IT SPEAKS ONLY WHEN THE FIELD IS SET, which is what keeps it advice
+      # instead of noise: an empty `tstart` changes nothing and has nothing to
+      # explain, so every bench that does not use the field sees exactly what
+      # it saw before. `caution` is the mildest verdict `ase::precheck_worst`
+      # ranks -- there is no `note` level and inventing one is its own ruling --
+      # and nothing here refuses anything.
+      #
+      # ⚠ THE CAPTION IN THE FIX IS ASKED FOR, NEVER SPELLED. Writing
+      # `Start time` here would be the parallel table A3 exists to forbid, and
+      # it would go stale the next time this caption is ruled on -- which A4 and
+      # A5 have now done four times in one commit.
+      #
+      # ⚠ BE PRECISE ABOUT WHAT PINS THIS, because the obvious claim is false: a
+      # hardcoded `Start time (s)` here is byte-identical to what the accessor
+      # returns TODAY, so no row can redden at the moment somebody types it.
+      # What row LB7 catches is the hardcode's CONSEQUENCE -- the day this
+      # caption is reworded again, the accessor moves and the frozen copy does
+      # not, and LB7's "the fix names the caption" term goes red then. The
+      # moment-of-typing guard is LB5 and a reader, not a test.
+      set _ts [string trim [ase::field_value $sim $type $row tstart]]
+      if {$_ts eq {}} { return {} }
+      return [list caution \
+        "$sim still simulates from 0 and only discards the output before\
+ $_ts, so this shortens the results file and not the run" \
+        "clear [ase::field_caption $sim $type tstart] to keep the whole\
+ waveform"]
     }
   }
   return {}
@@ -26903,8 +27048,8 @@ $_leg
         needs  {sweep_target saves_resolve cider_klu xspice} \
         fields {{name source kind source required 1 label {Sweep variable}} \
                 {name start  kind real   required 1 label {Start}} \
-                {name stop   kind real   required 1 label {Stop}} \
-                {name step   kind real   required 1 label {Step}} \
+                {name stop   kind real   required 1 label {Stop value}} \
+                {name step   kind real   required 1 label {Step size}} \
                 {name source2 kind source advanced 1 group {second sweep} \
                               label {Second sweep variable}} \
                 {name start2  kind real  advanced 1 group {second sweep} \
@@ -26935,11 +27080,12 @@ $_leg
                  when {opt keepopinfo} label {ac operating point}}}] \
       tran [dict create \
         label tran  baseline 1  registered 1  seed_enabled 0  emitorder 30 viewrank 40 \
-        needs  {saves_resolve points_max cider_klu xspice stimuli_check} \
+        needs  {saves_resolve points_max cider_klu xspice stimuli_check \
+                tstart_note} \
         fields {{name step   kind time required 1 label {Time step} unit s} \
                 {name stop   kind time required 1 label {Stop time} unit s} \
                 {name tstart kind time advanced 1 whenskipped 0 \
-                             label {Start recording at} unit s} \
+                             label {Start time} unit s} \
                 {name tmax   kind time advanced 1 label {Maximum time step} unit s} \
                 {name uic    kind bool advanced 1 when_true uic \
                              label {Use initial conditions}}} \
@@ -27492,15 +27638,37 @@ $_leg
     set bind [::ase::meas_binding [namespace tail [namespace current]] $state $row]
     set type [lindex $bind 0]
     set on [::ase::meas_on $row]
+    # ⚖ R9 A3, THE MEASUREMENT HALF (§A12 folds into it): NAME THE KIND THE
+    # PICKER SHOWS, NOT THE TOKEN THE STATE FILE STORES. These two sentences
+    # rendered `$kind` and `[string toupper $kind]` -- so a row the user built
+    # from a picker reading `FFT spectrum` was refused for `'fft'`, and a row
+    # captioned `Delay (TRIG ... TARG)` was told it segfaults for `TRIGTARG`, a
+    # word that appears on NO screen anywhere in ASE-L. `ase::meas_kind_label`
+    # is the one accessor the Kind picker itself reads, so there is no second
+    # table here either, and under A2 `fft` resolves to `FFT spectrum` rather
+    # than to `Fft`.
+    #
+    # ⚠ `SEGFAULTS` KEEPS ITS CAPITALS. That is ⚖ R9 A1's named exception --
+    # capitals survive where a word names a catastrophic outcome. A3 changes
+    # WHICH WORD the sentence names, never how the rest of it shouts.
+    #
+    # ⚠ AND THE ROW THAT GUARDS THIS SHOUT IS `LB9` IN test_ase_core, NOT
+    # PF234. This comment said PF234 and that was WRONG, caught by measurement
+    # rather than by reading: sabotage arm S10 lowercased the word below and
+    # test_ase_preflight came back ALL PASS (238). PF234a pins a DIFFERENT
+    # occurrence -- the `disto` precondition's `ngspice SEGFAULTS,` further up
+    # this file -- and nothing in that suite has ever looked at this sentence.
+    # So LB9 is the only thing standing between this exception and a tidy-up.
+    set klbl [::ase::meas_kind_label [namespace tail [namespace current]] $kind]
     if {[meas_word $state $row] eq {sp} && $on eq {} &&
         $kind in {when trigtarg rms integ}} {
       return [list fatal "on a real S-parameter run ngspice's own measure\
  engine reads a complex frequency scale as if it were real and SEGFAULTS for\
- [string toupper $kind]. Measure FIND, MIN, MAX or AVG there, or measure a\
+ $klbl. Measure FIND, MIN, MAX or AVG there, or measure a\
  spectrum produced from a transient instead"]
     }
     if {$kind in {fourier linearize fft psd spec} && $type ne {tran}} {
-      return [list refuse "'$kind' reads a transient, and this row is bound to\
+      return [list refuse "'$klbl' reads a transient, and this row is bound to\
  a $type analysis"]
     }
     if {$kind in {fft psd}} {

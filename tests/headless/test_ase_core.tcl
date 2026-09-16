@@ -174,6 +174,28 @@
 # ⚠ PZ2e DOES NOT MOVE, and that is the contract: the registry's `values` are
 # still ngspice's own words, because the map is a DISPLAY map and the deck is
 # byte-identical to 252fee2d.
+# 653 -> 662 with section LB (⚖ R9 rulings A3, A4 and A5, 2026-09-16 -- a
+# refusal names the caption the user can see, no caption is bare, and one
+# caption stops being a sentence). ⚠ THE THREE ARE ONE SECTION BECAUSE THEY ARE
+# ONE CHANGE: A3 makes a caption into the text of a refusal and A4/A5 then
+# reword four captions, so pinning them apart would let the second silently
+# rewrite the first one's goldens.
+# ⚠ EIGHT ROWS MOVED RATHER THAN BEING ADDED and are NOT in the +9: EK1, EK4,
+# AC1, AC2, TF3, PZ3, SE3 and MP11 each quoted a slot name (`'stop'`, `'out'`,
+# `'inp'`, `'points'`) and now quote the caption beside the box. EK4 got
+# STRONGER rather than merely moving -- it builds its clause from the caption
+# the way the gate does, so its substring term now proves the frame wraps the
+# clause AND that the clause is the one made from the caption.
+# ⚠ LB5 IS THE ROW THAT MATTERS and the one a later pass will be tempted to
+# delete: it forbids a second slot->caption table, which is the obvious
+# implementation and would have passed every other row here while rotting the
+# same day, because A4 and A5 reword four of these captions in this very commit.
+# ⚠ LB6 AND LB7 PIN USER RULINGS THAT LOOK LIKE UNTIDINESS -- the deliberate
+# `Stop time` / `Time step` word-order asymmetry, and the dc form's `Start`
+# staying bare because the ruling's table did not name it. Both are REPORTED
+# boundaries, not oversights, and a consistency pass that "fixes" either has
+# reversed the user in good faith.
+# AND RAISED 653 -> 662.
 # AND RAISED 652 -> 653.
 # AND RAISED 644 -> 652.
 # AND RAISED 638 -> 644.
@@ -5436,12 +5458,15 @@ proc ek_gate {rows} {
 }
 
 ## --- EK1: A ROW THAT CANNOT BE EMITTED IS REFUSED, BY NAME ------------------
+## ⚖ R9 A3 MOVED THIS GOLDEN: it read `'stop'`, the slot, and now reads
+## `'Stop time (s)'`, the caption on the box the user is being sent to. Section
+## LB is where the property is pinned; this row pins the shipped sentence.
 check "EK1 an analysis switched on with a value missing is refused before\
  anything is written, and the refusal names the value" \
   [list [lindex [ek_gate {{type tran enabled 1 step 1n}}] 0] \
         [lindex [ek_gate {{type tran enabled 1 step 1n}}] 1] \
         [ek_gate {{type tran enabled 1 step 1n stop 10u}}]] \
-  [list emit_incomplete {{tran {needs a value for 'stop'}}} {}]
+  [list emit_incomplete {{tran {needs a value for 'Stop time (s)'}}} {}]
 
 ## --- EK2: **ALL** THE OFFENCES, NOT THE FIRST ------------------------------
 ## A validator that stops at the first makes the user press OK once per mistake,
@@ -5477,7 +5502,13 @@ check "EK3 the switch that turns off the netlist scanner does not turn off this\
 ## split frame from clause so an adapter cannot write in ASE-L's voice; a row that
 ## only checked the finished sentence would stay green when an adapter composed
 ## the whole thing itself.
-set EK4C [ase::analysis_emit_msg missing stop]
+## ⚠ AND ⚖ R9 A3 MADE THE SUBSTRING TEST MEAN MORE, NOT LESS. The clause is
+## built here the way `ase::analysis_emit_check` builds it -- renderer plus
+## CAPTION -- so term 4 now proves two things at once: the frame wraps the
+## clause, AND the clause the gate composed is the one made from the caption.
+## Feeding the renderer the bare slot instead would rebuild a sentence the gate
+## no longer says, and term 4 would red while nothing was wrong.
+set EK4C [ase::analysis_emit_msg missing [ase::field_caption ngspice tran stop]]
 set EK4S {}
 ek_gate {{type tran enabled 1 step 1n}}
 foreach ek4 $::ek_said { if {[string first {needs a value} [lindex $ek4 1]] >= 0} { set EK4S [lindex $ek4 1] } }
@@ -5489,7 +5520,7 @@ check "EK4 the part the adapter supplies is a bare clause with no prefix and no\
         [expr {[string first {Nothing was generated} $EK4C] < 0}] \
         [expr {[string first $EK4C $EK4S] > 0}] \
         [expr {[string range $EK4S 0 4] eq {ase: }}]] \
-  [list {needs a value for 'stop'} 1 1 1 1]
+  [list {needs a value for 'Stop time (s)'} 1 1 1 1]
 
 ## --- EK5: A BOOL'S ONLY WRONG VALUE ---------------------------------------
 ## ⚠ A BOOL CANNOT BE "MISSING": absent means off, which is a legal answer. Its
@@ -5782,10 +5813,11 @@ check "SI5 a simulator that has not said what its numbers look like has nothing\
 ## setting that is in force, in the one column whose entire job is to say what
 ## the deck carries. The honest answer to "what will this run?" for a row that
 ## cannot run is the reason it cannot.
+## ⚖ R9 A3 MOVED THIS GOLDEN from `'step'` to `'Time step (s)'`.
 check "AC1 an enabled row that cannot render says WHY, in the column that would\
  otherwise list values the deck will never carry" \
   [ase::ui::arg_summary {type tran enabled 1 stop 10u} ngspice] \
-  {needs a value for 'step'}
+  {needs a value for 'Time step (s)'}
 
 ## ⚠ AND THE WORDS ARE THE SAME ONES THE COMMIT DOOR AND THE GATE USE. Three
 ## surfaces, one vocabulary: if the pane and the dialog disagreed about why a row
@@ -5795,7 +5827,7 @@ check "AC2 the column's reason is the identical clause the refusal reader\
   [list [ase::ui::arg_summary {type tran enabled 1 stop 10u} ngspice] \
         [lindex [lindex [ase::analysis_emit_check ngspice \
                   {type tran enabled 1 stop 10u}] 0] 2]] \
-  {{needs a value for 'step'} {needs a value for 'step'}}
+  {{needs a value for 'Time step (s)'} {needs a value for 'Time step (s)'}}
 
 ## ⚠ ONLY FOR AN ENABLED ROW. A switched-off row makes no claim about a run, so
 ## it has nothing to be wrong about -- and EVERY NEW BENCH OPENS WITH THREE EMPTY
@@ -6239,8 +6271,8 @@ check "TF3 the commit door refuses a tf row missing either field, by name, and\
   [list [ase::analysis_emit_check ngspice {type tf enabled 1 insrc V1}] \
         [ase::analysis_emit_check ngspice {type tf enabled 1 out v(D)}] \
         [ase::analysis_emit_check ngspice {type tf enabled 1 out v(D) insrc V1}]] \
-  [list {{missing out {needs a value for 'out'}}} \
-        {{missing insrc {needs a value for 'insrc'}}} \
+  [list {{missing out {needs a value for 'Output'}}} \
+        {{missing insrc {needs a value for 'Input source'}}} \
         {}]
 
 ## ⚠ AND THE ROW IS REFUSED AT THE GATE BEFORE IT REACHES render_deck. Until
@@ -6543,6 +6575,258 @@ check "PZ2f the ruled pickers show a readable word, the sweep pickers keep the\
   [list {Voltage Current} {PZ Poles Zeroes} {DC AC} Zeroes zer nosuchlabel \
         {bare same bare same bare same bare same} {}]
 
+# ---------------------------------------------------------------------------
+# LB -- ⚖ R9 RULINGS A3, A4 AND A5: THE REFUSAL NAMES THE CAPTION THE USER SEES
+# ---------------------------------------------------------------------------
+#
+# A3: `needs a value for 'stop'` named a SLOT and the box beside it was
+# captioned `Stop time (s):`. `ptssum` was the case that settled it -- that word
+# appears NOWHERE on screen, cannot be searched for and is in no documentation a
+# user has, so a sentence whose whole job is to say which box to fix was asking
+# the user to translate first. A4 then qualified the dc captions so a refusal
+# listing several rows can point at one of them, and A5 renamed the one caption
+# that was a sentence -- moving, not deleting, the fact it carried.
+#
+# ⚠ THESE THREE ARE ONE SECTION BECAUSE THEY ARE ONE CHANGE. A3 makes a
+# caption into the text of a refusal; A4 and A5 then reword four captions. Pin
+# them apart and the second would silently rewrite the first one's goldens.
+
+## LB1 -- A3: THE SENTENCE NAMES THE CAPTION AND THE SLOT IS GONE FROM IT.
+## ⚠ THE SECOND AND THIRD TERMS OF EACH TRIPLE ARE THE NON-VACUITY HALF, and
+## without them the row is satisfied by the tree this change replaced. "The
+## sentence contains the caption" is TRIVIALLY TRUE for any field whose caption
+## happens to equal its slot -- so the row also demands that the quoted slot has
+## LEFT the sentence, and that caption and slot are genuinely different words.
+## All four of these were `'stop'`, `'out'`, `'inp'` and `'out'` at HEAD~.
+set LB1 {}
+foreach {lbt lbf lbrow} {
+  tran stop  {type tran enabled 1 step 1n}
+  tf   out   {type tf enabled 1 insrc V1}
+  pz   inp   {type pz enabled 1 outp out}
+  sens out   {type sens enabled 1}
+} {
+  set _c [lindex [lindex [ase::analysis_emit_check ngspice $lbrow] 0] 2]
+  set _cap [ase::field_caption ngspice $lbt $lbf]
+  lappend LB1 [expr {[string first "'$_cap'" $_c] >= 0 ? 1 : 0}]
+  lappend LB1 [expr {[string first "'$lbf'" $_c] >= 0 ? 1 : 0}]
+  lappend LB1 [expr {$_cap eq $lbf ? 1 : 0}]
+}
+check "LB1 every refusal names the caption the user can see, the raw slot has\
+ left the sentence, and the two really are different words" \
+  $LB1 {1 0 0 1 0 0 1 0 0 1 0 0}
+
+## LB2 -- A3: THE SENTENCE MOVED AND THE TUPLE DID NOT, WHICH IS THE HALF THAT
+## KEEPS THE DIALOG WORKING. `ase::ui::chana_ok` takes element 1 of this tuple
+## and asks `ase::ui::form_has` whether that field has a widget and
+## `ase::field_descriptor` whether it is `advanced 1` -- which is how the focus
+## lands in the offending box and how the user is told " It is under Advanced."
+## BOTH ARE KEYED BY THE SLOT. A tuple that carried the caption would break the
+## focus and the Advanced clause while the sentence read perfectly, which is
+## exactly the kind of damage a copy ruling should not be able to do.
+check "LB2 the refusal tuple still names the SLOT in its field element, so the\
+ focus and the Advanced clause keep working" \
+  [list [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran enabled 1 step 1n}] 0] 1] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tran enabled 1 step 1n stop 1u tstart zz}] 0] 1] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type tf enabled 1 insrc V1}] 0] 1]] \
+  {stop tstart out}
+
+## LB3 -- A3: A MODE PICK RENAMES ITS NEIGHBOUR IN THE REFUSAL TOO.
+## ⚠ THIS IS THE HALF A SLOT->CAPTION TABLE COULD NOT HAVE DONE AT ALL. `ac`'s
+## and `noise`'s sweep declares `relabels points`, so the SAME slot wears three
+## different captions depending on what is picked. A refusal that resolved the
+## caption without the row would tell a user who picked `oct` to go and fix
+## `Points per decade` -- a caption not on their screen, which is A3's own
+## defect re-created one layer in. The last term is the sentence itself.
+check "LB3 a mode pick renames its neighbour in the REFUSAL as well as on the\
+ form, so a user who picked oct is not sent to a box captioned for dec" \
+  [list [ase::field_caption_for_row ngspice noise {type noise} points] \
+        [ase::field_caption_for_row ngspice noise {type noise sweep dec} points] \
+        [ase::field_caption_for_row ngspice noise {type noise sweep oct} points] \
+        [ase::field_caption_for_row ngspice noise {type noise sweep lin} points] \
+        [lindex [lindex [ase::analysis_emit_check ngspice \
+           {type noise enabled 1 out v(D) insrc V1 sweep oct points 0 \
+            start 1k stop 10k}] 0] 2]] \
+  [list {Points per decade} {Points per decade} {Points per octave} \
+        {Number of points} {needs 'Points per octave' to be at least 1}]
+
+## LB4 -- A3: A SLOT WITH NO CAPTION FALLS BACK TO ITS OWN NAME, NEVER TO `''`.
+## ⚠ `needs a value for ''` IS STRICTLY WORSE THAN THE SLOT THE OLD SENTENCE
+## QUOTED, and it is reachable rather than theoretical: a `labels` entry
+## declared as the empty string walks straight past the `dict exists` test and
+## leaves the caption empty. The last term is the guard stated as itself, so the
+## row says WHICH property failed instead of only that a word changed.
+set LB4E filled
+if {[ase::caption_of {name foo labels {dec {}}} foo dec] eq {}} { set LB4E EMPTY }
+check "LB4 a field with no usable caption falls back to its own name and never\
+ to the empty string, however the descriptor is malformed" \
+  [list [ase::caption_of {name foo kind real} foo] \
+        [ase::caption_of {name foo label {}} foo] \
+        [ase::caption_of {name foo labels {dec {}}} foo dec] \
+        [ase::caption_of {} stop] \
+        [ase::field_caption ngspice tran nosuchfield] \
+        $LB4E] \
+  [list Foo Foo foo Stop Nosuchfield filled]
+
+## LB5 -- A3's LOAD-BEARING REQUIREMENT: ONE ACCESSOR, NEVER A SECOND TABLE.
+## ⚠ THIS ROW EXISTS BECAUSE THE WRONG IMPLEMENTATION IS THE OBVIOUS ONE, AND
+## IT WOULD HAVE PASSED EVERY OTHER ROW IN THIS SECTION. A slot->caption map in
+## the refusal path produces identical sentences today and rots immediately:
+## A4 and A5 reword FOUR of these captions in this very commit, and the map
+## would have kept answering with the old ones. So the row asserts the SHAPE --
+## every surface delegates to `ase::caption_of` and none re-implements it.
+## `ase::ui::meas_flabel` is in the list because it WAS a byte-for-byte second
+## copy of `form_label`'s body over the other field registry; it delegates now.
+## ⚠ THE LAST TWO TERMS ARE THE NON-VACUITY HALF: a "delegation" that returned
+## nonsense would satisfy every `info body` term above and fail these.
+## ⚠ AND THESE ARE `info body` TESTS, WHICH SEE COMMENTS INSIDE THE PROC. That
+## is measured, not guessed: a first cut of this row asked whether `meas_rule`
+## still contained `string toupper $kind` and got YES -- from the COMMENT this
+## change had just added, quoting the old code it replaced. Every term below is
+## therefore aimed at a call that must EXIST, never at text that must be absent.
+check "LB5 the caption rule has exactly one body and every surface asks it, so\
+ a reworded caption cannot come to mean two things at once" \
+  [list [expr {[string first {ase::caption_of} \
+                 [info body ase::field_caption]] >= 0 ? 1 : 0}] \
+        [expr {[string first {ase::field_caption} \
+                 [info body ase::ui::form_label]] >= 0 ? 1 : 0}] \
+        [expr {[string first {ase::caption_of} \
+                 [info body ase::ui::meas_flabel]] >= 0 ? 1 : 0}] \
+        [expr {[string first {ase::field_caption_for_row} \
+                 [info body ase::analysis_emit_check]] >= 0 ? 1 : 0}] \
+        [ase::ui::form_label ngspice tran stop] \
+        [ase::ui::meas_flabel ngspice psd avgpts]] \
+  [list 1 1 1 1 {Stop time (s):} {Averaging points:}]
+
+## LB6 -- A4: NO CAPTION IS BARE, AND THE WORD ORDER IS DELIBERATELY NOT
+## UNIFORM. `Stop time` puts the role first and `Time step` the quantity.
+## ⚠ THE ASYMMETRY IS THE USER'S RULING, NOT AN OVERSIGHT: `.tran tstep tstop`
+## is how an analog designer reads it, and renaming it `Step time` for symmetry
+## would be tidier on paper and worse in the hand. A later consistency pass that
+## "finishes the job" here has REVERSED THE USER, exactly as A1's `SEGFAULTS`
+## and A2's `dec`/`oct`/`lin` would be reversed by tidying. This row is the only
+## place that is written down.
+## ⚠ THE LAST TERM RECORDS A BOUNDARY RATHER THAN A RULING. The dc form's
+## `Start` is STILL BARE, because the ruling's table names `Stop` and `Step`
+## only. It is reported, not tidied; pinning it here means the next reader sees
+## where the ruling actually stopped instead of inferring that it was missed.
+check "LB6 the dc captions are qualified so a refusal can point at one row, the\
+ tran and ac captions are untouched, and the tran word order stays the term of\
+ art the user ruled" \
+  [list [ase::field_caption ngspice dc stop] \
+        [ase::field_caption ngspice dc step] \
+        [ase::field_caption ngspice tran step] \
+        [ase::field_caption ngspice tran stop] \
+        [ase::field_caption ngspice ac stop] \
+        [ase::field_caption ngspice dc start]] \
+  [list {Stop value} {Step size} {Time step (s)} {Stop time (s)} \
+        {Stop frequency (Hz)} {Start}]
+
+## LB7 -- A5: THE CAPTION STOPPED BEING A SENTENCE AND THE FACT DID NOT VANISH.
+## ⚠ THE SECOND HALF IS THE WHOLE ROW, AND A RENAME ON ITS OWN WOULD HAVE BEEN
+## A REGRESSION. `Start recording at` was carrying the fact the field exists
+## for: ngspice does NOT start at `tstart`. It simulates from 0 exactly as it
+## would without the field and merely DISCARDS the output before that point, so
+## the run costs what it always cost and only the saved data is shorter. Rename
+## the caption to `Start time` and drop that, and the new caption is positively
+## MISLEADING -- a user reads it as "skip the first 5 us of work". So the row
+## demands the noun phrase AND the detail line that now carries the meaning.
+## The last term is the one that fails if someone re-imperatives the caption.
+##
+## ⚠ TERM 5 IS WEAKER THAN IT LOOKS AND THE COMMENT SAYS SO ON PURPOSE. It asks
+## that the FIX name the caption, which a HARDCODED copy of today's caption also
+## satisfies -- the two strings are identical right now, so nothing here reddens
+## at the moment somebody freezes it. What this term really catches is the day
+## the caption is reworded again: the accessor moves, a frozen copy does not,
+## and the term goes red then. Claiming it catches the hardcode itself would be
+## claiming a guard this row does not have.
+set LB7V [ase::needs_eval ngspice tran tstart_note {type tran tstart 5u} {} {}]
+check "LB7 the tran caption is a noun phrase, and the fact it used to carry --\
+ that the simulator still runs from 0 -- now lives in the detail line under the\
+ form instead of being lost with the rename" \
+  [list [ase::field_caption ngspice tran tstart] \
+        [lindex $LB7V 0] \
+        [expr {[string first {simulates from 0} [lindex $LB7V 1]] >= 0 ? 1 : 0}] \
+        [expr {[string first {not the run} [lindex $LB7V 1]] >= 0 ? 1 : 0}] \
+        [expr {[string first [ase::field_caption ngspice tran tstart] \
+                 [lindex $LB7V 2]] >= 0 ? 1 : 0}] \
+        [expr {[string first {recording} \
+                 [ase::field_caption ngspice tran tstart]] >= 0 ? 1 : 0}]] \
+  [list {Start time (s)} caution 1 1 1 0]
+
+## LB8 -- A5: AND IT SAYS NOTHING WHEN THE FIELD IS NOT SET.
+## ⚠ THIS IS WHAT KEEPS IT ADVICE RATHER THAN NOISE, and it is the difference
+## between a detail line and a banner nobody reads. An empty `tstart` changes
+## nothing about the run and has nothing to explain, so every one of the 104
+## committed benches -- none of which sets it -- shows exactly what it showed
+## before. The last term is the containment: the note belongs to `tran` alone,
+## because no other type has a `tstart` to be misread.
+check "LB8 the detail line is silent when the field is not set, and belongs to\
+ the one analysis type that has the field at all" \
+  [list [ase::needs_eval ngspice tran tstart_note {type tran} {} {}] \
+        [ase::needs_eval ngspice tran tstart_note {type tran tstart {}} {} {}] \
+        [expr {[lsearch -exact \
+           [dict get [ase::analysis_entry ngspice tran] needs] tstart_note] >= 0 ? 1 : 0}] \
+        [expr {[lsearch -exact \
+           [dict get [ase::analysis_entry ngspice ac] needs] tstart_note] >= 0 ? 1 : 0}]] \
+  [list {} {} 1 0]
+
+## LB9 -- A3's MEASUREMENT HALF, which §A12 folds into it (R9-356, R9-361).
+## The two measurement refusals rendered the INTERNAL token: a row the user
+## built from a picker reading `FFT spectrum` was refused for `'fft'`, and a row
+## captioned `Delay (TRIG ... TARG)` was told it segfaults for `TRIGTARG` -- a
+## word that appears on NO screen anywhere in ASE-L. Same ruling, same rule:
+## `ase::meas_kind_label` is the accessor the Kind picker itself reads, so there
+## is no second table on this side either.
+##
+## ⚠ `SEGFAULTS` MUST SURVIVE, AND THE ROW ASSERTS THAT IT DOES. It is ⚖ R9
+## A1's named exception -- capitals stay where a word names a catastrophic
+## outcome -- so this section changes WHICH WORD the sentence names and must not
+## quieten the shout on its way past. A pass that lowercased it here would
+## reverse A1 while greening A3.
+##
+## ⚠ THE `absent` TERMS ARE THE NON-VACUITY HALF AND THEY ARE WHY THIS IS NOT A
+## NAME DIFF. `rms` is the one kind whose label and whose uppercased token are
+## the SAME STRING (`RMS`), so a row built only from `rms` would pass on the
+## unfixed tree; the three kinds asserted below are the three where the two
+## genuinely differ.
+set LB9ST [ase::state_default]
+set LB9SP $LB9ST
+dict set LB9SP analyses [list {type sp enabled 1 points 10 start 1k stop 1g}]
+set LB9R {}
+foreach {lb9k lb9lbl} {fft {FFT spectrum} \
+                       psd {Power spectral density} \
+                       fourier {Fourier / THD} \
+                       linearize {Resample onto a uniform time grid} \
+                       spec {Spectrum over a frequency band}} {
+  set _v [ase::backend::ngspice::meas_rule $LB9ST \
+            [dict create kind $lb9k name m1 analysis ac]]
+  set _s [lindex $_v 1]
+  lappend LB9R [expr {[string first "'$lb9lbl'" $_s] >= 0 ? 1 : 0}]
+  lappend LB9R [expr {[string first "'$lb9k'" $_s] >= 0 ? 1 : 0}]
+}
+set LB9F {}
+foreach {lb9k lb9lbl} {trigtarg {Delay (TRIG ... TARG)} \
+                       when {Where a signal crosses a value} \
+                       integ Integral} {
+  set _v [ase::backend::ngspice::meas_rule $LB9SP \
+            [dict create kind $lb9k name m1 analysis sp]]
+  set _s [lindex $_v 1]
+  lappend LB9F [expr {[string first $lb9lbl $_s] >= 0 ? 1 : 0}]
+  lappend LB9F [expr {[string first [string toupper $lb9k] $_s] >= 0 ? 1 : 0}]
+  lappend LB9F [expr {[string first {SEGFAULTS} $_s] >= 0 ? 1 : 0}]
+}
+check "LB9 a measurement refusal names the word the Kind picker shows, the\
+ internal token has left both sentences, and A1's shouted SEGFAULTS survives" \
+  [list $LB9R $LB9F \
+        [lindex [ase::backend::ngspice::meas_rule $LB9ST \
+           {kind fft name m1 analysis ac}] 0] \
+        [lindex [ase::backend::ngspice::meas_rule $LB9SP \
+           {kind trigtarg name m1 analysis sp}] 0]] \
+  [list {1 0 1 0 1 0 1 0 1 0} {1 0 1 1 0 1 1 0 1} refuse fatal]
+
 ## ⚠ ONLY THE TWO SIGNAL NODES ARE REQUIRED, AND THE DOOR NAMES THE ONE THAT IS
 ## MISSING. Requiring the references too would make the commonest pole-zero row
 ## in existence -- both references ground -- a four-box form.
@@ -6551,8 +6835,8 @@ check "PZ3 the commit door refuses a pz row missing either signal node, by name,
   [list [ase::analysis_emit_check ngspice {type pz enabled 1 outp out}] \
         [ase::analysis_emit_check ngspice {type pz enabled 1 inp in}] \
         [ase::analysis_emit_check ngspice {type pz enabled 1 inp in outp out}]] \
-  [list {{missing inp {needs a value for 'inp'}}} \
-        {{missing outp {needs a value for 'outp'}}} \
+  [list {{missing inp {needs a value for 'Input +'}}} \
+        {{missing outp {needs a value for 'Output +'}}} \
         {}]
 
 ## ⚠ THE CONTROL TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss` (issue 1432 made
@@ -6804,7 +7088,7 @@ check "SE3 the commit door refuses a sens row with no output, by name, passes\
         [ase::analysis_emit_check ngspice {type sens enabled 1 out v(mid)}] \
         [ase::analysis_emit_check ngspice \
            {type sens enabled 1 out v(mid) filters {r*:r m*:vth0}}]] \
-  [list {{missing out {needs a value for 'out'}}} {} {}]
+  [list {{missing out {needs a value for 'Output'}}} {} {}]
 
 ## ⚠ THE CONTROL TYPE WAS `noise`, THEN `sp`, AND IS NOW `pss` (issues 1432 and
 ## 1452).
@@ -9001,12 +9285,12 @@ check "MP11 a declared lower bound is refused at the commit door by name, a\
            [dict merge $MPNBASE {sweep dec points 1 start 1k stop 10k}]] \
         [ase::analysis_emit_check ngspice {type sens out v(D)}] \
         [ase::analysis_emit_check ngspice {type sens out v(D) mode ac}]] \
-  [list [list {belowmin points {needs 'points' to be at least 1}}] \
+  [list [list {belowmin points {needs 'Points per decade' to be at least 1}}] \
         {} {} \
-        [list {missing sweep {needs a value for 'sweep'}} \
-              {missing points {needs a value for 'points'}} \
-              {missing start {needs a value for 'start'}} \
-              {missing stop {needs a value for 'stop'}}]]
+        [list {missing sweep {needs a value for 'Sweep type'}} \
+              {missing points {needs a value for 'Points per decade'}} \
+              {missing start {needs a value for 'Start frequency (Hz)'}} \
+              {missing stop {needs a value for 'Stop frequency (Hz)'}}]]
 
 ## --- MP12: SENS GAINS ITS AC MODE AND THE DC LINE DOES NOT MOVE ------------
 ## ⚠ BYTE IDENTITY IS THE ACCEPTANCE HERE. Issue 1428 shipped `sens` with the

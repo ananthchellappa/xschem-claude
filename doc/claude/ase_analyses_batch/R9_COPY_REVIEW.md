@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**728 strings, from 38 issues, grouped by where the user sees them** — not by
+**730 strings, from 38 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -396,6 +396,46 @@ reads `<quantity> <role>`, and nothing is bare.
 >
 > ⚠ **This rule has exactly one named exception, and it is §A10's `Ignore before`** — an
 > imperative, kept because every noun-phrase alternative is worse. See §A10.
+>
+> ### ⚖ NEW COPY THIS RULING PRODUCED — `R9-729`, `R9-730`, **NOT YET RULED ON**
+>
+> The ruling says the meaning **moves** to the detail line. A detail line is a sentence, and
+> nobody has written it: §A5 ruled that the fact must survive the rename, not what words carry
+> it. So implementing A5 mints a caution and its fix, exactly as implementing §A1 minted
+> `R9-727`/`R9-728`.
+>
+> It is delivered as a `tstart_note` precondition on the tran entry, rendered by
+> `ase::precheck_banner` into `$w.note` under the form, and it **speaks only when the field is
+> set** — an empty `tstart` changes nothing and has nothing to explain, so none of the 104
+> committed benches shows it.
+>
+> **`R9-729`** · caution
+>
+> ```text
+> $sim still simulates from 0 and only discards the output before $_ts, so this shortens the results file and not the run
+> ```
+>
+> **`R9-730`** · fix
+>
+> ```text
+> clear $caption to keep the whole waveform
+> ```
+>
+> *Rendered together:* `⚠ ngspice still simulates from 0 and only discards the output before 5u,
+> so this shortens the results file and not the run. Fix: clear Start time (s) to keep the whole
+> waveform`
+>
+> ⚠ **The caption in the fix is ASKED FOR, never spelled** (`ase::field_caption`), so it cannot
+> go stale the next time this caption is ruled on — which §A4 and §A5 have now done four times in
+> one commit. ⚠ **Row LB7 does not catch a hardcode at the moment it is typed**, and the receipt
+> says so rather than overclaiming: a frozen copy of today's caption is byte-identical to what
+> the accessor returns, so nothing reddens until the caption is reworded again — at which point
+> LB7 goes red.
+>
+> ⚠ **These two are sentences the user has never seen, and the A5 answer does not cover them** —
+> A5 ruled that the meaning must move, not how it should read. They are raised with the rest of
+> R9, and the count moves **728 → 730**. **Issue count stays 38: these arise from a ruling, not
+> from an issue.**
 
 Every tran and ac label carries its unit: `Time step (s):`, `Stop time (s):`,
 `Start frequency (Hz):`. That is consistent and good. Two exceptions:
@@ -714,27 +754,27 @@ Start
 **R9-003** · label
 
 ```text
-Stop
+Stop value
 ```
 
 *Where:* Choose Analyses dialog -> dc form, label on the third entry row
 
 *For:* Names the dc entry holding the first sweep's stop value.
 
-*Note:* Same as the previous auto-title. Note `Stop` here vs `Stop time` on the tran form and `Stop frequency` on the ac form -- the reviewer may want the three consistent.
+*Note:* ✅ **SHIPPED under §A4, 2026-09-16** — was `Stop`. The ruling is "no caption is bare", and §A3 is what stopped this being cosmetic: once the caption IS the refusal text, a form of flat `Start`/`Stop`/`Step` prints *"needs a value for 'Stop'"* with no way to tell which row it means. ⚠ The neighbouring `Start` (R9-002) is **still bare** — the ruling's table names `Stop` and `Step` only, so it is reported rather than tidied. Pinned by `test_ase_core` row LB6 and `test_ase_dialogs` row G2dc.
 
 
 **R9-004** · label
 
 ```text
-Step
+Step size
 ```
 
 *Where:* Choose Analyses dialog -> dc form, label on the fourth entry row
 
 *For:* Names the dc entry holding the first sweep's increment.
 
-*Note:* Same as the previous auto-title. Note `Step` here vs `Time step` on the tran form.
+*Note:* ✅ **SHIPPED under §A4, 2026-09-16** — was `Step`. ⚠ The tran form's `Time step` is deliberately NOT renamed to match the word order: `.tran tstep tstop` is how an analog designer reads it, and symmetry here would be tidier on paper and worse in the hand. **The asymmetry is the user's ruling**, pinned by `test_ase_core` row LB6 so a later consistency pass cannot reverse it in good faith.
 
 
 **R9-005** · label
@@ -894,14 +934,14 @@ Stop time
 **R9-017** · label
 
 ```text
-Start recording at
+Start time
 ```
 
 *Where:* Choose Analyses dialog -> tran form, label on the tstart row (under Advanced once C4 lands)
 
 *For:* Names the tran entry holding tstart -- the time before which results are computed but not saved. Appears only on the tran form.
 
-*Note:* A verb phrase where every other label in the batch is a noun phrase, and the only label that reads as an instruction. It is trying to convey that ngspice still SIMULATES from 0 -- the defect this whole issue is named for. `Start recording at (s):` when the unit is appended.
+*Note:* ✅ **SHIPPED under §A5, 2026-09-16** — was `Start recording at`, a verb phrase where every neighbour is a noun phrase. Renders `Start time (s):`. ⚠ **THE MEANING MOVED RATHER THAN BEING DELETED, AND THAT HALF IS THE RULING.** The old caption was carrying the fact the field exists for — ngspice still **simulates** from 0 and merely *discards* the output before this point — so a bare `Start time` on its own would be positively misleading (a user reads it as "skip the first 5 µs of work"). That fact now lives in the detail line under the form, as a `caution` that speaks **only when the field is set**; it is new copy and is handled as **R9-729 / R9-730** below. Pinned by `test_ase_core` rows LB7 and LB8 and `test_ase_dialogs` row G2c.
 
 
 **R9-018** · label
@@ -1002,12 +1042,14 @@ Stop time (s):
 **R9-025** · label
 
 ```text
-Start recording at (s):
+Start time (s):
 ```
 
 *Where:* Choose Analyses dialog → per-analysis form, tran, behind ▸ Advanced
 
 *For:* Optional tran tstart — the time before which output is discarded.
+
+*Note:* ✅ **SHIPPED under §A5, 2026-09-16** — was `Start recording at (s):`. This is R9-017 with its unit appended; see that entry for why the meaning moved to the detail line rather than being dropped.
 
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
@@ -1546,9 +1588,11 @@ needs a value for '$f'
 
 *Where:* Choose Analyses dialog → status line (and the action log), composed into the frame above
 
-*For:* A required slot of the enabled analysis is empty. `$f` is the field's internal NAME (stop, tmax, insrc), not its label.
+*For:* A required slot of the enabled analysis is empty. `$f` now carries the field's **caption**, not its internal name.
 
-*Note:* Clause text predates 1417 (issue 1404/1416 era) but 1417 is what puts it in front of the user in the dialog. ⚠ The clause names the raw field name while the form beside it shows the human label — the user reads "needs a value for 'stop'" next to a box labelled "Stop time (s):". Flagged already in the source as ⚖ R9 "recommended shapes, not ratifications".
+*Rendered:* `needs a value for 'Stop time (s)'`
+
+*Note:* ✅ **FIXED under §A3, 2026-09-16.** ⚠ **The literal in `ase::analysis_emit_msg` did NOT change and that is not an oversight** — what changed is what is fed to it. `ase::analysis_emit_check` now resolves the caption through `ase::field_caption_for_row` and passes *that* as `$f`, so the renderer stays a pure sentence-builder with no lookup in it and the fix lands in one place for all four sibling clauses (this, R9-063, R9-064, R9-075). A reader grepping text blocks therefore sees no diff here; the *Rendered* line above is where the change is visible. The tuple's field element is still the **slot**, deliberately: `ase::ui::chana_ok` keys the focus and the " It is under Advanced." clause off it. Pinned by `test_ase_core` rows LB1, LB2 and EK1/EK4.
 
 
 **R9-063** · refusal
@@ -1721,7 +1765,9 @@ needs '$f' to be at least [lindex $args 1]
 
 *For:* Refuses a value the simulator itself would reject late, mid-run (measured: a noise sweep with 0 steps), at the moment it is typed instead.
 
-*Note:* POSTDATES BOTH ISSUES — minted by issue 1432, after 1420 — but it lands in the same cell and the same dialog line, so it belongs in any one-pass read of this surface. Flagged so the reviewer does not attribute it to 1419/1420.
+*Rendered:* `needs 'Points per octave' to be at least 1`
+
+*Note:* POSTDATES BOTH ISSUES — minted by issue 1432, after 1420 — but it lands in the same cell and the same dialog line, so it belongs in any one-pass read of this surface. Flagged so the reviewer does not attribute it to 1419/1420. ✅ **FIXED under §A3, 2026-09-16**: `$f` now carries the caption (see R9-062 for why the literal is unchanged). ⚠ Note the *Rendered* line says **octave**: this field's caption depends on the row's own sweep mode (`relabels`), so the refusal resolves the caption **per row** — a user who picked `oct` is not sent to a box captioned `Points per decade`. Pinned by `test_ase_core` row LB3.
 
 
 ### from issue 1432 (stage 6)
@@ -1729,7 +1775,7 @@ needs '$f' to be at least [lindex $args 1]
 **R9-076** · refusal
 
 ```text
-needs '<field>' to be at least <min>
+needs '<caption>' to be at least <min>
 ```
 
 *Where:* Choose Analyses dialog status line on OK (framed "This <type> analysis <clause>."), the action log ("ase: enabled <type> analysis <clause>"), the pre-run gate ("ase: the <type> analysis <clause>"), and the Analyses grid's settings/deck-line column, where the bare clause is printed as the whole cell
@@ -2867,7 +2913,7 @@ needs a value for '$f'
 
 *For:* Answers "what will this run?" for an enabled row that produces no deck line at all, by naming the missing field instead of listing values the deck will never carry; appears in place of the analysis line whenever such a row is shown.
 
-*Note:* 1420 wrote none of these words — the clause is the pre-existing one from ase::analysis_emit_msg (token `missing`); what 1420 changed is WHERE it appears. In the dialog it arrives framed and punctuated (`This tran analysis needs a value for 'step'.`); in this cell it appears bare, lower-case, with no subject and no full stop, so the column reads `needs a value for 'step'` — the pinned value of row AC1. `$f` is the field name, single-quoted by the code. Related oddity for the same surface: a DISABLED incomplete row is deliberately left alone and still shows the old key dump (`stop=10u`, row AC3), so one column now speaks two vocabularies depending on the row's checkbox.
+*Note:* 1420 wrote none of these words — the clause is the pre-existing one from ase::analysis_emit_msg (token `missing`); what 1420 changed is WHERE it appears. In the dialog it arrives framed and punctuated (`This tran analysis needs a value for 'Time step (s)'.`); in this cell it appears bare, lower-case, with no subject and no full stop, so the column reads `needs a value for 'Time step (s)'` — the pinned value of row AC1. ✅ **FIXED under §A3, 2026-09-16**: `$f` carries the caption (see R9-062); rows AC1 and AC2 moved with it, and AC2 is what keeps this cell and the dialog speaking one vocabulary rather than two. Related oddity for the same surface: a DISABLED incomplete row is deliberately left alone and still shows the old key dump (`stop=10u`, row AC3), so one column now speaks two vocabularies depending on the row's checkbox.
 
 
 **R9-160** · refusal
@@ -5654,8 +5700,12 @@ ngspice names DERIV and refuses it at run time (com_measure2.c:2156, `function '
 **R9-356** · refusal
 
 ```text
-'$kind' reads a transient, and this row is bound to a $type analysis
+'$klbl' reads a transient, and this row is bound to a $type analysis
 ```
+
+*Rendered:* `'FFT spectrum' reads a transient, and this row is bound to a ac analysis`
+
+*Note:* ✅ **FIXED under §A3, 2026-09-16** (§A12 folds its half in here) — was `'$kind'`, the internal token, so a row the user built from a picker reading `FFT spectrum` was refused for `'fft'`. `$klbl` is `ase::meas_kind_label`, the same accessor the Kind picker itself reads, so there is no second table on this side either. Under §A2 this composes to `FFT spectrum`, never `Fft`. Pinned by `test_ase_core` row LB9.
 
 
 *Where:* A measurement row's refusal reason, produced by the **ngspice adapter** — `ase::backend::ngspice::meas_rule` (or, for `Derivative`, the `unsupported` key of its kind catalogue entry, which ASE-L core passes straight through as the refusal text). Same delivery as the core refusals: at HEAD the row is dropped from the deck silently and the sentence is only consumed by the uncalled `ase::meas_report` frame `$nm was not measured: $why`.
@@ -5740,8 +5790,12 @@ a spectrum's step must fit inside its band; ngspice answers `Error: bad step fre
 **R9-361** · refusal
 
 ```text
-on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for [string toupper $kind]. Measure FIND, MIN, MAX or AVG there, or measure a spectrum produced from a transient instead
+on a real S-parameter run ngspice's own measure engine reads a complex frequency scale as if it were real and SEGFAULTS for $klbl. Measure FIND, MIN, MAX or AVG there, or measure a spectrum produced from a transient instead
 ```
+
+*Rendered:* `... and SEGFAULTS for Delay (TRIG ... TARG). Measure FIND, MIN, MAX or AVG there, ...`
+
+*Note:* ✅ **FIXED under §A3, 2026-09-16** — was `[string toupper $kind]`, which told a row captioned `Delay (TRIG ... TARG)` that it segfaults for **`TRIGTARG`**, a word on no screen anywhere in ASE-L. ⚠ **`SEGFAULTS` KEEPS ITS CAPITALS** — §A1's named exception, so this change moves which word the sentence *names* without quietening the shout, and row LB9 asserts both at once. ⚠ **`rms` is the one kind where the old and new spellings are the same string (`RMS`)**, which is why LB9's non-vacuity terms use `trigtarg`, `when` and `integ` instead. **NOT changed and reported instead:** the remedy still names ngspice's deck function words `FIND, MIN, MAX or AVG` rather than the four kind labels, so a user still cannot look those six words up in the picker — R9-361's original note raises it, §A3's ruling does not cover it, and it is left for §A12's crew.
 
 
 *Where:* A measurement row's FATAL reason — the reason half of the deck refusal. Produced by the **ngspice adapter's** `ase::backend::ngspice::meas_rule`, collected by ASE-L core's `ase::meas_fatals`, and composed into the render-refusal frame below. Unlike a `refuse`, this one IS reachable today: it stops the whole deck being written, so the user meets it wherever a `render_deck` error surfaces (the Deck preview pane and the run path).

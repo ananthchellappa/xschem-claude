@@ -205,6 +205,26 @@ set fail 0; set npass 0
 #              same measurement, and the row asserts both survive untouched. A
 #              golden that keyed on digit count passes on one binary and fails on
 #              the other.
+#   37 / 387   AND RAISED 386 -> 387 on the display arm, ⚖ **R9 rulings A3, A4
+#              and A5** (2026-09-16): G2dc, the dc form's captions, which A4
+#              qualified (`Stop` -> `Stop value`, `Step` -> `Step size`) so that
+#              A3's refusal can point at ONE row instead of printing "needs a
+#              value for 'Stop'" three times in one message.
+#              ⚠ FIVE ROWS MOVED RATHER THAN BEING ADDED, so the count rises by
+#              one and not by six. G2c's third golden went from
+#              `Start recording at (s):` to `Start time (s):` (A5); G2tf, G2pz,
+#              G2sens and G2f each searched the dialog's status line for a SLOT
+#              NAME -- `insrc`, `outp`, `out`, `step` -- and now search for the
+#              CAPTION, with a new term demanding the quoted slot be ABSENT.
+#              ⚠ THAT ABSENCE TERM IS THE POINT, and two of the four were weak
+#              without it: `out` is three letters any sentence about an output
+#              may contain by accident, and `step` is a substring of the tran
+#              form's `Time step` -- so a caption change could have gone
+#              unnoticed by the very rows meant to witness it.
+#              ⚠ AND A5's MEANING MOVED RATHER THAN VANISHING: the fact the old
+#              caption carried -- ngspice still SIMULATES from 0 and merely
+#              discards output before that point -- now lives in the detail line
+#              under the form, pinned by test_ase_core rows LB7 and LB8.
 #   37 / 386   AND RAISED 385 -> 386 on the display arm, ⚖ **R9 ruling A2**
 #              (2026-09-16): G2a2, the READ direction of "display the readable
 #              word, emit the deck word". G2pz MOVED rather than being added --
@@ -1016,10 +1036,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [winfo class $top.chana.form.uic]] {1 1 1 Checkbutton}
   ## ⚠ AND THE LABELS CARRY THEIR UNITS. `Stop time:` and `Stop time (s):` are
   ## different questions, and the second is the one the simulator is asking.
+  ## ⚖ R9 A5 MOVED THE THIRD GOLDEN: `Start recording at (s):` -> `Start time
+  ## (s):`, a noun phrase like its neighbours. ⚠ THE MEANING IT WAS CARRYING --
+  ## that ngspice still SIMULATES from 0 and merely discards the output before
+  ## this point -- did not disappear with it; it moved to the detail line under
+  ## the form, and test_ase_core rows LB7/LB8 are what fail if it is ever
+  ## dropped. A rename with nothing behind it would leave `Start time` actively
+  ## misleading, which is the defect A5 exists to avoid rather than create.
   check "G2c the labels are the declared ones and carry their units" \
     [list [$top.chana.form.lstep cget -text] [$top.chana.form.lstop cget -text] \
           [$top.chana.form.ltstart cget -text]] \
-    {{Time step (s):} {Stop time (s):} {Start recording at (s):}}
+    {{Time step (s):} {Stop time (s):} {Start time (s):}}
   set ::ase::ui::dlg($key,anen) 1
   foreach {fld val} {step 1n stop 10u} {
     $top.chana.form.$fld delete 0 end
@@ -1193,19 +1220,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ## `invalid command name ".ase5.chana.status"` and killed the whole file at 65
   ## of 271 instead of reddening a row. A suite that dies names the defect with a
   ## line number; a row that reds names it with a sentence.
+  ## ⚖ R9 A3: THE SENTENCE IN THE DIALOG NAMES THE BOX'S CAPTION. This looked
+  ## for `insrc`, the slot, which is a word on no screen -- the user reads
+  ## `Input source:` beside the empty box. The second term is the non-vacuity
+  ## half and it is the one that matters: a sentence can only be said to name
+  ## the caption if the raw slot is GONE from it, and at HEAD~ it was the only
+  ## thing in it.
   set g2tf_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
   set g2tf_said 0
+  set g2tf_slot 0
   if {$g2tf_alive} {
     catch {
-      set g2tf_said [expr {[string first {insrc} \
+      set g2tf_said [expr {[string first [ase::field_caption ngspice tf insrc] \
+        [$top.chana.status cget -text]] >= 0}]
+      set g2tf_slot [expr {[string first {'insrc'} \
         [$top.chana.status cget -text]] >= 0}]
     }
   }
   check "G2tf an enabled tf row with no input source is refused, the dialog\
  survives and the state is untouched" \
-    [list $g2tf_alive $g2tf_said \
+    [list $g2tf_alive $g2tf_said $g2tf_slot \
           [ase::state_get [ase::session_state $key] analyses]] \
-    [list 1 1 $g2tf_before]
+    [list 1 1 0 $g2tf_before]
   ## Leave the bench as the rest of this file found it: no tf row. ⚠ The cancel
   ## is caught for the same reason as the read above -- under the sabotage the
   ## dialog is already gone, and the cleanup must not become a second casualty.
@@ -1376,19 +1412,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set g2pz_before [ase::state_get [ase::session_state $key] analyses]
   $top.chana.btns.proceed invoke
   update
+  ## ⚖ R9 A3, as G2tf above: the caption, and the slot gone.
   set g2pz_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
   set g2pz_said 0
+  set g2pz_slot 0
   if {$g2pz_alive} {
     catch {
-      set g2pz_said [expr {[string first {outp} \
+      set g2pz_said [expr {[string first [ase::field_caption ngspice pz outp] \
+        [$top.chana.status cget -text]] >= 0}]
+      set g2pz_slot [expr {[string first {'outp'} \
         [$top.chana.status cget -text]] >= 0}]
     }
   }
   check "G2pz an enabled pz row with no output node is refused, the dialog\
  survives and the state is untouched" \
-    [list $g2pz_alive $g2pz_said \
+    [list $g2pz_alive $g2pz_said $g2pz_slot \
           [ase::state_get [ase::session_state $key] analyses]] \
-    [list 1 1 $g2pz_before]
+    [list 1 1 0 $g2pz_before]
   ## Leave the bench as the rest of this file found it: no pz row. ⚠ The cancel
   ## is caught for the same reason as the read above.
   catch {$top.chana.btns.cancel invoke}
@@ -1499,19 +1539,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set g2se_before [ase::state_get [ase::session_state $key] analyses]
   $top.chana.btns.proceed invoke
   update
+  ## ⚖ R9 A3, as G2tf above. ⚠ AND THIS ONE WAS THE WEAKEST OF THE THREE BEFORE
+  ## THE CHANGE: it searched for the three letters `out`, which any sentence
+  ## about an output is likely to contain by accident. It now asks for the
+  ## caption and for the quoted slot's absence.
   set g2se_alive [expr {[winfo exists $top.chana] ? 1 : 0}]
   set g2se_said 0
+  set g2se_slot 0
   if {$g2se_alive} {
     catch {
-      set g2se_said [expr {[string first {out} \
+      set g2se_said [expr {[string first [ase::field_caption ngspice sens out] \
+        [$top.chana.status cget -text]] >= 0}]
+      set g2se_slot [expr {[string first {'out'} \
         [$top.chana.status cget -text]] >= 0}]
     }
   }
   check "G2sens an enabled sens row with no output is refused, the dialog\
  survives and the state is untouched" \
-    [list $g2se_alive $g2se_said \
+    [list $g2se_alive $g2se_said $g2se_slot \
           [ase::state_get [ase::session_state $key] analyses]] \
-    [list 1 1 $g2se_before]
+    [list 1 1 0 $g2se_before]
   ## Leave the bench as the rest of this file found it: no sens row. ⚠ The cancel
   ## is caught for the same reason as the read above.
   catch {$top.chana.btns.cancel invoke}
@@ -1808,14 +1855,35 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   $top.chana.types.dc invoke
   update
+  ## G2dc -- ⚖ R9 A4: NO CAPTION ON THIS FORM IS BARE. The dc form said `Stop:`
+  ## and `Step:` where the tran form says `Stop time (s):` and the ac form says
+  ## `Stop frequency (Hz):` -- three spellings of one idea, and the dc pair were
+  ## the two with nothing to tell them apart. A3 is what stopped this being
+  ## cosmetic: once the caption IS the refusal text, a form of bare
+  ## `Start`/`Stop`/`Step` prints "needs a value for 'Stop'" with no way to tell
+  ## which row it means.
+  ## ⚠ `Start` IS STILL BARE AND THAT IS NOT AN OVERSIGHT: the ruling's table
+  ## names `Stop` and `Step` only, so `Start` is REPORTED and left alone rather
+  ## than tidied by a crew. The last term pins it so the next reader can see the
+  ## boundary of what was actually ruled instead of inferring it.
+  check "G2dc the dc captions are qualified so a refusal can point at one row,\
+ and the one the ruling did not name is left exactly as it was" \
+    [list [$top.chana.form.lstart cget -text] [$top.chana.form.lstop cget -text] \
+          [$top.chana.form.lstep cget -text]] \
+    [list {Start:} {Stop value:} {Step size:}]
   set ::ase::ui::dlg($key,anen) 1
   $top.chana.form.step delete 0 end
   $top.chana.btns.proceed invoke
   update
+  ## ⚖ R9 A3/A4: the dialog names the caption, which on this form is now
+  ## `Step size` -- and note the old assertion could not tell the difference,
+  ## because the slot `step` is a substring of the tran form's `Time step`.
+  ## This one asks the accessor for the caption of the field it actually cleared.
   check "G2f a missing required value is refused, said in the dialog, and the\
  cursor lands on the field that is missing" \
     [list [winfo exists $top.chana] \
-          [expr {[string first {step} [$top.chana.status cget -text]] >= 0}] \
+          [expr {[string first [ase::field_caption ngspice dc step] \
+             [$top.chana.status cget -text]] >= 0}] \
           [focus]] \
     [list 1 1 $top.chana.form.step]
   $top.chana.btns.cancel invoke
