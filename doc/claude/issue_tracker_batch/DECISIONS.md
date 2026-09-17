@@ -110,6 +110,53 @@ measured** — the box is 15.35 GiB and `dmesg` carries zero OOM kills.
 
 ---
 
+## D8 — B and C merge into one crew, because A decided the design
+
+**Decision.** `PLAN.md` separates **B1** (design the convention) from **C1** (build the
+checker). They dispatch as **one** crew, `BC1`. Recorded here at the moment of departing,
+not discovered later in an audit.
+
+**Why.** B1's question was *what should the convention be*, and three independent
+measurements answered it before B1 could be dispatched:
+
+| evidence | source | result |
+|---|---|---|
+| bare `file:line` citations | A3, 5 files | **5 of 5 rotted** |
+| `file:line` **plus a revision** | A3, 0818 | **4 of 4 reproduced** via `git show fadb226d:` |
+| **symbolic** citations (name, not position) | A3, 0945/1344/0896 | **3 of 3 held** |
+| coordinates vs symbols in one sample | A2, 10 files | **8 of 10 coordinates wrong; the symbol survived in every one** |
+| backticked `foo()` across the whole corpus | driver, `symbolscan.py` | **2016 checked, 98.4% still present** |
+| cited lines past end of file | driver, `citescan.py` | **0 of 3751** |
+
+**Coordinates rot; identity holds.** That is the same finding as the harness batch's
+`W12b` — where a shared `/tmp` namespace could not be scored by counting or even by set
+difference, and needed the child to **announce its own identity** — arriving in the prose
+layer. With the design settled by measurement, a separate design stage would only add a
+handoff at which it could be mis-transcribed.
+
+**What stays separate.** `D1` (apply) remains its own stage, and the driver still holds
+the commit.
+
+---
+
+## D9 — The checker must be GREEN on today's tree, and still able to go red
+
+**Decision.** `BC1`'s checker must pass at its default setting on the tree as it stands,
+while remaining capable of a real red.
+
+**Why.** T1's baseline is **ZERO counted failures** and CLAUDE.md is emphatic that *a
+standing red is a defect, not furniture* — it is the one place a real regression hides in
+plain sight, and this branch has already shipped two defects past twenty-eight passing
+checks. A checker that fails 1047 files on the day it lands would either redden T1
+permanently or, far likelier, be quietly disabled — and a disabled checker is how the
+cleanup rots, which is the outcome `D3` exists to prevent.
+
+So it enforces **forward**: files that carry the new header are checked against it, and a
+**non-regression count** keeps the unconverted set from growing. Red-first still applies —
+the crew must observe it red on a genuine defect and green after, per `CREW_BRIEF.md`.
+
+---
+
 ## D7 — `UNKNOWN` is a first-class verdict
 
 **Decision.** Stage A's schema carries `UNKNOWN`, and a crew that cannot determine a

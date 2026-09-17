@@ -9,8 +9,8 @@ after the driver has read the receipt and checked at least one of its claims.
 |---|---|---|---|---|
 | A1 | sample files 1–10, classify against the tree | dispatched | — | — |
 | A2 | sample files 11–20, classify against the tree | **DONE** | **accepted** — and it corrects the plan twice (see below) | — |
-| A3 | sample files 21–30, classify against the tree | dispatched | — | — |
-| A4 | sample files 31–40, classify against the tree | dispatched | — | — |
+| A3 | sample files 21–30, classify against the tree | **DONE** | **accepted** — it decided the design (see below); triggered D8 | — |
+| A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | dispatched | — | — |
 
 ## Running findings
@@ -73,6 +73,72 @@ cannot be refuted by a single green run.
 A2 explicitly records that it did **not** re-verify the plan's 1047/510/742/0 census, so
 its receipt is **not** corroboration of those figures.
 
+### A3 (files 21–30) — the citation split, and 0905's account of its own fix
+
+`TRUE-OPEN 4 · TRUE-FIXED 4 · STALE-FIXED 2 · ROTTED-CITE 6 · UNKNOWN 0` — and A3 says it
+**distrusts its own zero**, because this draw happened to name readable symbols. Counts,
+not a rate.
+
+**The measurement that decided the design (see D8):** 5 files citing bare `file:line` →
+**5 of 5 rotted**. 1 file citing line **plus a revision** (0818) → **4 of 4 reproduced**
+via `git show fadb226d:`. 3 files citing **symbolically** (0945, 1344, 0896) → **3 of 3
+held**. *"The least ceremonious files survived intact."*
+
+**0905 — the subject is genuinely fixed; the file's account of its own fix is
+substantially stale.** `32dff39a`, the commit that *replaced* the design 0905 describes,
+appears **zero times** in it. §1 still says the second run *"refuses loudly and exits 2
+writing nothing"* — `exit 2` is gone. **§3 is the dangerous one**: it records the
+per-pid-log shape as *"considered and deliberately NOT taken"* when that is exactly what
+shipped, as a **copy**, which was 0905's own stated objection to it. **A reader in good
+faith is told not to build the thing the tree already runs.** Its other half —
+*"`banner_rule.tcl` is unchanged"* — is **still true** (136 lines, zero `T1-RUN`), so a
+blanket `STALE-FIXED` would over-claim. One file, three sections, three different truth
+values.
+
+**The OOM loop has a measured origin and a live residue.** 0905 is where the phrase enters,
+and it was never a measurement — it was *"a documented event"*, an appeal to a document
+that does not exist. Both ends now carry in-place corrections that cross-reference
+correctly. **The uncorrected residue is `0432:82`**, which asserts the **event**, not
+merely the figure — *"(this box OOMs on concurrent builds, ~7.8 GB)"* — with no correction
+attached. That one still reads as live.
+
+**A free red for C1:** the sabotage protocol's own `grep -rn SABOTAGE src/ # must be
+empty` returns **8** on a clean tree. That is issue **1219**'s subject, and it is live.
+A3 also refuted 1219's own numbers — *"60 lines / 28 files"* is **118 / 44** — in the
+direction that **strengthens** the issue.
+
+### A4 (files 31–40) — corrections land outside the issue file
+
+`TRUE-FIXED 5 · TRUE-OPEN 3 · STALE-FIXED 3 · ROTTED-CITE 4 · DUPLICATE 1 · UNKNOWN 1 ·
+**BAD-FIX 0 · STALE-OPEN 0**`. Six of ten carry a defect verdict; **three have a status
+line that alone sends the reader the wrong way.**
+
+**The finding that most changes C1: corrections land *outside* the issue file, two times
+in three.** 1436's refutation lives in the **suite**; 1395's in `ase_window.tcl:9435`;
+1439's *"Fixes issue 1438"* never propagated back to 1438. **A checker confined to
+`doc/claude/issues/` misses two of three** — and on this sample the source comments cite
+*more* accurately than the tracker does.
+
+**Both `STALE-FIXED` files share one mechanical pattern, and it is detectable:** filed as
+A, fixed later under number B, B's header names A, **A is never updated**. Grep for *"Fixes
+issue N"* / *"Supersedes N"* and check N's header. 1439→1438 is a worked example sitting
+in the tree right now. **This is the concrete detector for sub-problem 2** (nothing closes
+an issue when the thing is fixed).
+
+**1458 is a `DUPLICATE` of 1397 — and names 1397 in its own `Related:` line while
+duplicating it.** So **cross-reference presence is not duplicate detection**, and a
+checker must not assume it is. The defect is **live and was reproduced today**:
+`~/.xschem/geometry` mtime **2026-09-17 09:08** against `recent_files` frozen at
+**2026-09-13 18:53**. A4 recommends merging 1458 and 1397 to one number — a D1 item.
+
+**1436 answered without running T1, and it is a trap for C1.** The rows sit in `hcases`
+(`run_regression.tcl:76`), **not** `dcases` — the driver's own comment at `:172` says *"⚠
+THEY GO IN `hcases`, NOT HERE."* So a **green T1 and a red display-arm row are
+consistent**. ⚠ **C1 must not assert "no open issue may claim a red row while T1 is
+green"**: it would false-red the one file in this sample that is careful about exactly
+that distinction. The *"two rows"* count is nonetheless stale — the suite itself at
+`:407-411` records that only G2sens reds.
+
 ## Wrong recorded beliefs caught in this batch
 
 The last batch's tally was twenty, *"every one caught by re-measuring rather than
@@ -86,6 +152,16 @@ re-reading."* Same table here, same discipline.
 
 | 4 | *"only 1 issue file in 1047 states the tree it was measured against"* | **the driver** | **Wrong, and by the same mechanism as 1–3.** 1477, 1478 and 1479 visibly open with *"measured in the tree at `aa0e2213`"* — the driver had **read them in this session** and still published a census that excluded them. **Two** causes, both in one command: the phrase **hard-wraps across a newline** (`measured in` ⏎ `the tree at`) so a **line**-oriented grep cannot match it, and inside **single** quotes the `` \` `` escapes became a literal backslash-backtick, so the SHA alternation matched nothing either. |
 | 5 | *"193 of 508 git SHAs cited in issue files do not resolve"* | **the driver** | **Not SHAs.** The regex `[0-9a-f]{8,40}` matches any 8-digit **decimal** number, so the non-resolving list is led by `16091816` (the box's `MemTotal` **in kB**, from the RAM correction), `141592654` (**π**), `12405346`, `1286397804`, `0000001e`. A SHA-ish token must contain at least one `a`–`f`. |
+
+| 6 | *"issue **0663** is the guard suite that was **writing** `~/.xschem/geometry`, and its ruling was isolate-not-prune"* | **the driver**, in **A4's own dispatch brief** | **0663 is not about geometry at all.** It is *"a Tcl error in any file sourced late by `xschem.tcl` SEGFAULTS startup"*, fixed in C on 2026-08-24. `/usr/bin/grep -c geometry` on it returns **0**. There is no geometry-writing guard suite in it and no isolate-not-prune ruling. **The real sibling of 1458 is 1397**, filed four days earlier, citing the same proc at the same line. |
+
+⚠ **Error 6 is the batch's subject happening to the batch.** The driver took a belief from
+**its own compacted summary of a previous session**, did not re-measure it, and wrote it
+into a crew's instructions as fact — which is precisely how a defect gets filed five times
+in seven weeks. It is the same shape as the last batch's *"0609's containment pins T1's
+cwd to `$REPO`"*, where the driver also reasoned from its own summary rather than the
+document. **A4 checked it and refused it**, which is the behaviour `CREW_BRIEF.md` rule 10
+asks for, and it was contained to one brief only because A4 looked.
 
 ## The rule those five errors bought
 
