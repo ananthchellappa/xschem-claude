@@ -58,6 +58,15 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
 - Each case is a `<name>.tcl` script; `run_regression.tcl` execs them and greps
   `results.log` for `FAIL` / `GOLD?` / `FATAL`. To run one case, source its script
   directly (e.g. `tclsh netlisting.tcl`).
+  ⚠ **YOUR run's answer is `tests/results.<pid>.log`, not `results.log`** (changed
+  2026-09-17, harness-concurrency batch). Every run fills its own per-run verdict and
+  **copies** it to the canonical `results.log` at the end, so `results.log` holds
+  whichever run finished **last** — which need not be yours if anyone else was running
+  T1 in this tree. The per-case logs work the same way: `<name>.<pid><suffix>`,
+  published back to the canonical `<name>.log` after that case is scored. Running one
+  case by hand is unchanged (`cd tests && tclsh open_close.tcl` still writes
+  `open_close.log`); the pid tag rides in `T1_LOG_TAG` and an unset tag means the old
+  name.
 - Tests invoke the built binary headless via `xschem ... --pipe -q --script <file>`.
   `tests/test_utility.tcl` resolves it as **`$XSCHEM` → in-tree `src/xschem` →
   `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
@@ -90,15 +99,29 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `./src/xschem --nogui --pipe -q --script tests/headless/<t>.tcl`.
 - **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
   leading `FATAL` is counted.
+  ⚠ **READ THE TRAILER FIRST — new 2026-09-17, and it supersedes most of what
+  follows.** Every verdict now opens with `T1-RUN-BEGIN pid= script= start=
+  planned_cases= verdict= canonical=` and closes with `T1-RUN-END pid= cases= blocks=
+  counted_failures= elapsed= end=` (`run_regression.tcl:694` and `:916`), written on a
+  channel that is `fconfigure`d `-buffering line` so the header survives a kill. **A
+  verdict with no `T1-RUN-END` line did not finish, whatever its contents**, and one
+  whose `T1-RUN-BEGIN` names a pid or a start time you do not recognise is somebody
+  else's answer or a fossil. Neither sentinel can match a counted shape, deliberately
+  — row `V4a` of `test_regression_concurrency_1476.tcl` holds that by measurement — so
+  they never manufacture a red. The trailer also **states** the arithmetic the rest of
+  this bullet makes you do by hand: `cases=`, `blocks=`, `counted_failures=`.
   ⚠ **AND `results.log` IS THE ONLY PLACE THE ANSWER IS.** `run_regression.tcl`
   prints only `Start …` / `Finish …` to stdout, so grepping its stdout capture for
   `FAIL` finds nothing on a run with reds in it, and **its exit code does not carry
   the verdict**: a run that completes exits 0 whether every case passed or every one
-  failed. This bullet said "**exits 0 whatever happens**" until 2026-09-17, and that
-  is now false in exactly one place — a run **refused** because another run holds the
-  verdict lock exits **2** and writes nothing (issue **1476** face 4, see the SOLO
-  bullet below). So **rc 2 means nothing ran**, and rc 0 still tells you nothing about
-  what the run found. Measured 2026-09-13 (issue **1456**): four
+  failed. ⚠ **This bullet said "rc 2 means nothing ran" for part of 2026-09-17, and
+  that is now FALSE — the refusal it described was deleted the same day.** The text
+  *it* replaced said "exits 0 whatever happens"; the refuse-and-`exit 2` path existed
+  only between the two harness-concurrency commits and is gone (`/usr/bin/grep -n
+  'exit 2' tests/run_regression.tcl` finds no such exit). **No run is refused and no
+  run exits 2 on account of another run.** So rc 0 still tells you nothing about what
+  the run found, and rc 2 now tells you nothing either — it is the **trailer**, not the
+  exit code, that says whether a run completed. Measured 2026-09-13 (issue **1456**): four
   consecutive T1 runs were reported as *"rc 0, zero counted failures"* from a grep
   of the stdout capture while `results.log` held **six** counted lines — three suites
   that emit no completion banner, plus a flaky row. Read the file, then name any case
@@ -117,6 +140,12 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   tree ran 83.** ⚠ Note what that means now the tree really does run 84 — the fossil
   number was *indistinguishable from today's correct one*, and only its mtime ever
   said otherwise. A plausible value is not a measurement.
+  ⚠ **"Only its mtime" stopped being true on 2026-09-17.** `T1-RUN-BEGIN` names the
+  pid and the wall-clock start time, so a fossil is now self-identifying **from
+  content** — which is the only thing the reader of a pasted log actually has. The
+  nonzero exit is still the signal that *this* invocation never ran; the header is
+  what tells you how old the file in front of you is. The trap is unchanged; the
+  detection is no longer forensic.
   ⚠ **AND THE CASE COUNT IS NOT THE LOG-LINE COUNT** — a correction to this very
   paragraph, measured 2026-09-15. It said the tree has "82", which was itself wrong
   for the *same* reason the 84 was: 82 is the number of `Total num fail:` lines, and
@@ -142,6 +171,27 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   answers **75**, because it counts lines, spans `dcases` too, and one line carries
   two entries. Three separate crude-grep miscounts landed in one batch. Take the
   number from the run's own `Start`/`Finish` output.
+  ⚠ **Re-measured 2026-09-17 after the harness-concurrency batch: still 84.** The
+  suite `test_regression_concurrency_1476` went **20 → 36 checks**, but those are
+  checks *inside* one case, not cases — it was already the 69th `hcases` entry, and
+  the three list lengths are unchanged at **3 / 69 / 11**, taken from `sed -n '23p' /
+  '27,93p' / '309,318p' | /usr/bin/grep -o '"[^"]*"' | wc -l` rather than from a
+  sentence. ⚠ **But the verdict FILE is no longer 83 lines:** it now carries the 83
+  `Total num fail:` lines **plus the two sentinel lines**, so `wc -l` answers **85**,
+  which is neither of the two numbers this paragraph has already been wrong with.
+  Count nothing you can read off `T1-RUN-END`.
+  ⚠ **AND `Start`/`Finish` PAIRS DO NOT PAIR ON A BOX WITH NO DEV DISPLAY.** Found
+  2026-09-17 by the harness-concurrency batch; filed as issue **1481**, and in no
+  issue file before that. The display arm's NODISPLAY path writes its block and
+  `continue`s at `run_regression.tcl:841` — **before** the `puts "Finish …"` at
+  `:872` — so a run on a box where `devdisplay.sh status` is not alive prints **84
+  `Start` lines and 73 `Finish` lines**. The rule just above ("count `Start`/`Finish`
+  pairs for cases") therefore **under-counts by 11 exactly there**, and a reader
+  counting `Finish` concludes eleven cases vanished — the same shape as 1476 face 2,
+  which is the defect that rule exists to catch. The `tcases` and `hcases` loops print
+  their `Finish` unconditionally; this one arm is the only asymmetry. **Count `Start`
+  lines, or read `cases=` from `T1-RUN-END`** — that counter is incremented once per
+  case entered and is blind to the asymmetry.
   **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **BUT A MOVED MTIME PROVES A RUN *WROTE*, NOT THAT A RUN *FINISHED* (issue
@@ -153,17 +203,30 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   moves the mtime **and** leaves a truncated `results.log` that scores **zero
   counted failures at every prefix length** — verified at 1, 10, 40, 80, 120 and
   170 lines of V2's own 169-line verdict — because all four counted shapes
-  (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`, at `run_regression.tcl:327`) need a
+  (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`, at `run_regression.tcl:376` — this
+  said `:327` until 2026-09-17, before the driver grew 305 lines) need a
   line to **exist**, and
   a short file has fewer lines to match. **Every prefix of a green run is itself a
-  green run** to every automated reader. Worse, the verdict channel is never
-  `fconfigure`d, so it is **full-buffered at 4096 B** against a **4785 B** verdict:
-  a killed run leaves **0 or 4096 bytes**, not a proportional prefix, which makes
-  the 0-byte file the *typical* outcome rather than an extreme one. Nothing marks
-  that a run began or ended — there is no `REGRESSION START/END` sentinel anywhere
-  in `tests/`. **So pair the mtime with the case count:** the log must carry one
-  `Total num fail:` line per case minus one (**83** for today's 84), and a short
-  count is a death even when every line that is present is green.
+  green run** to every automated reader. Worse, the verdict channel was never
+  `fconfigure`d, so it was **full-buffered at 4096 B** against a **4785 B** verdict:
+  a killed run left **0 or 4096 bytes**, not a proportional prefix, which made
+  the 0-byte file the *typical* outcome rather than an extreme one. **So pair the
+  mtime with the case count:** the log must carry one `Total num fail:` line per case
+  minus one (**83** for today's 84), and a short count is a death even when every line
+  that is present is green.
+  ⚠ **TWO HALVES OF THAT WERE FIXED ON 2026-09-17 AND THE DANGEROUS HALF WAS NOT.**
+  This bullet said *"Nothing marks that a run began or ended — there is no `REGRESSION
+  START/END` sentinel anywhere in `tests/`"*: there is one now
+  (`T1-RUN-BEGIN`/`T1-RUN-END`), and the channel is line-buffered, so a killed run
+  leaves a **genuine proportional prefix** instead of 0 or 4096 bytes and the header
+  survives the kill. What did **not** change is the thing this bullet is about:
+  **every prefix of a green run still scores zero counted failures**, because the four
+  counted shapes still need a line to exist. Row `V3c` of
+  `test_regression_concurrency_1476.tcl` now states it as a measurement rather than a
+  paragraph — a verdict carrying **800** counted failures, cut to its first line,
+  scores **ZERO**. The difference is that the death is now **decidable**: no
+  `T1-RUN-END` ⇒ the run did not finish. Pair the mtime with the case count if you
+  like; read the trailer regardless.
   ⚠ **THE OOM USED TO HEAD THAT LIST, AND THE BOX IT NAMED DOES NOT EXIST.**
   This bullet said *"OOM on this ~7.8 GB box"* until 2026-09-17. Measured twice
   that day: `MemTotal: 16091816 kB` — **15.35 GiB** (16.48 GB decimal) — plus
@@ -193,23 +256,66 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   run. Only the mtime separates "rewritten identically" from "never rewritten" —
   which is also why the fossil is so dangerous: the stale file it leaves behind is
   a **previous green run**, indistinguishable from a pass by content alone.
-- **⚠ RUN `run_regression.tcl` SOLO — and as of 2026-09-17 it makes you.** A second
-  run in the same tree is **refused loudly**: it names the pid, script and age of the
-  run holding `tests/results.log.lock`, says in as many words that the `results.log`
-  on disk is not yours, **exits 2 and writes nothing**, so the first run's verdict
-  survives intact. Queueing is opt-in (`T1_LOG_LOCK_WAIT=<secs>`), and the waiting
-  path **preserves** the verdict it queued behind as `results.<pid>.log` before taking
-  the canonical name — because "wait politely, then truncate" was measured to destroy
-  exactly what the lock protects (**0** of the first run's four case blocks survived).
-  A stale lock is broken on **evidence** — the owner pid is gone, or
+  ⚠ **AND AS OF 2026-09-17 A GREEN VERDICT IS NO LONGER BYTE-DETERMINISTIC, so this
+  bullet is wrong for the THIRD time — this time because the world moved under it, not
+  because it overclaimed.** `T1-RUN-BEGIN` carries a **pid** and a start timestamp;
+  `T1-RUN-END` carries a pid, an end timestamp and an **elapsed** time. Two identical
+  green sweeps therefore differ in at least five fields and their md5s **always**
+  differ. So a *changed* md5 now proves nothing either — it no longer separates "a real
+  second run" from "the same file again", which is the one job anyone gave it.
+  **Stop hashing this file.** Read the header: it states the pid and the start time
+  outright, which is what the hash was ever a poor proxy for. The mtime rule still
+  works and is still the cheapest check — but the closing sentence above, *the fossil
+  is indistinguishable from a pass by content alone*, is the one claim here that the
+  sentinels retire.
+- **⚠ TWO REGRESSION RUNS IN ONE TREE NOW BOTH PROCEED. THE "RUN IT SOLO" RULE IS
+  GONE** (2026-09-17). ⚠ For part of that same day this bullet read *"RUN
+  `run_regression.tcl` SOLO — and as of 2026-09-17 it makes you … a second run is
+  **refused loudly** … **exits 2 and writes nothing**"*, with queueing opt-in through
+  `T1_LOG_LOCK_WAIT`. **All of that is deleted.** The refusal era is exactly datable
+  and lasted hours: `43b40f04` introduced it, `32dff39a` removed it, both on
+  2026-09-17 — so a transcript from that window is the only place the refused-run
+  behaviour was ever real. Nobody waits, nobody is refused, nothing is truncated, and — read the
+  corrected paragraph above — **`rc 2` no longer means "nothing ran"**. A live run is
+  **announced, not refused**: the second run prints a banner naming the other pid and
+  telling you which file is yours.
+  **How it works now.** Each run fills `tests/results.<pid>.log` and at the end
+  **copies** it onto the canonical `results.log`, which therefore holds whichever run
+  finished **last**. Copy, never rename: a rename would hand the canonical name over
+  and **delete that run's own answer**, the "lost cleanly" outcome
+  `DECISIONS.md:64-70` names — a quiet data loss traded for a loud one. Each case
+  likewise writes `<name>.<pid><suffix>` and publishes back to the canonical name once
+  it is scored, so 83 of the 88 fixed-name files are now structurally per-run and the
+  84th is published rather than shared. Both answers survive under their own names,
+  and every verdict carries its own `T1-RUN-BEGIN`/`T1-RUN-END` pair naming its pid —
+  **so read the trailer, not the filename.**
+  ⚠ **CONCURRENCY IS 20% SLOWER, AND IT IS NOT A THROUGHPUT OPTIMISATION.** Measured
+  (`doc/claude/harness_concurrency_batch/receipts/R1-recon.md:291-292,469-470`): both
+  answers are available **64.4 s** after the first run starts, against **53.7 s**
+  running the two **back-to-back**. What the change buys is that **no crew is ever
+  turned away** — nothing else, and certainly not wall-clock. Anyone who schedules two
+  T1s to save time has made the run slower and gained only the thing they already had.
+  **The lock survives, demoted to a publish mutex.** It brackets exactly one file copy
+  — a sub-second critical section instead of a ~410 s one — so the canonical file can
+  never be a mixture of two runs' bytes. The knobs were retuned to match:
+  `T1_LOG_LOCK_WAIT` **0 → 60 s** (it used to mean "seconds to queue behind a whole
+  live run before being refused", and 0 was right for that; the only thing it can wait
+  for now is a copy, so 0 would make the lock decorative), `T1_LOG_LOCK_TTL`
+  **14400 → 300 s** (it had to outlast a whole run; now it only has to outlast a
+  copy), and a new `T1_VERDICT_KEEP` (**86400 s**) sweeps dead runs'
+  `results.<pid>.log` — a pid with `/proc` present is never swept, so the failure
+  direction is always "a leftover survives", never "a live run's answer is deleted".
+  A stale lock is still broken on **evidence** — the owner pid is gone, or
   `/proc/<pid>/cmdline` is no longer the script that took it, since a bare `kill -0`
-  answers yes for a *recycled* pid — with `T1_LOG_LOCK_TTL` as a backstop, and the
-  lock **fails open**: one that can be neither taken nor broken lets the run proceed
-  UNLOCKED with a warning. Each case now also works in its own `<case>/results.<pid>`
-  with scratch in `<case>/.work.<pid>`, published back to the canonical
-  `<case>/results` at the end, so two runs no longer wipe each other's *files* either.
-  Fixed by `5f7164d4` and `43b40f04`; issues **0384**, **0867**, **0955**, **0905**,
-  **0990**, **1476**, batch record in `doc/claude/harness_concurrency_batch/`.
+  answers yes for a *recycled* pid — and it still **fails open**: one that can be
+  neither taken nor broken lets the run proceed UNLOCKED with a warning. Each case
+  also works in its own `<case>/results.<pid>` with scratch in `<case>/.work.<pid>`,
+  published back to the canonical `<case>/results` at the end, so two runs do not wipe
+  each other's *files* either.
+  Fixed by `5f7164d4`, `43b40f04` and `32dff39a` (the last is the one that made both
+  runs proceed); issues **0384**, **0867**, **0955**, **0905**, **0990**, **1476**,
+  **1477**, **1478**; batch record in `doc/claude/harness_concurrency_batch/`, build
+  receipt `receipts/R1-build.md`.
   ⚠ **The history still matters, because it is what a number from the broken era is
   worth.** Before the fix two runs at once corrupted each other and the loser reported
   a `FATAL` that never happened: the per-job exit-status files lived under a **shared**
@@ -221,8 +327,11 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   second run could instead **die at startup with no banner and no `Total num fail:`
   line at all** (1476 face 2), and nothing counts a line that is not there. **So a T1
   number taken before 2026-09-17 while another agent's suite was live is still not
-  evidence** — nothing recorded whether that run had been contended. A number taken
-  today either held the lock or was refused.
+  evidence** — nothing recorded whether that run had been contended. ⚠ This sentence
+  used to end *"A number taken today either held the lock or was refused"*, which the
+  same-day rewrite above makes false: nothing is refused now. **A number taken today
+  is its own run's**, written under its own pid to its own file, and its trailer says
+  whether it finished — which is a better answer than the lock ever gave.
 - **⚠ NO TEST HARNESS BUILDS. `full_audit.sh` runs `$REPO/src/xschem` as it
   finds it** (`full_audit.sh:49`), and so does every standalone suite. So a
   source tree that is correct and a binary that is stale produce a *plausible*

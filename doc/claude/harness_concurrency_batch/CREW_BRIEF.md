@@ -27,11 +27,35 @@ brief, your stage's row in `PLAN.md`, and **the previous stage's receipt** in
 5. **T1 is `cd tests && tclsh run_regression.tcl`** — never `tclsh
    tests/run_regression.tcl` from the repo root, which exits 1 without running and
    leaves the **previous** run's `results.log` byte-for-byte in place. Read
-   `results.log` itself, not stdout; confirm its **mtime moved** first (a green run
-   is byte-deterministic, so an unchanged md5 proves nothing); count cases by
-   `Start`/`Finish` pairs, not by log lines (the log carries one fewer than there are
-   cases, by design). **T1's baseline is ZERO counted failures**, measured on this
-   tree tonight at 410 s. A standing red is a defect, not furniture.
+   `results.log` itself, never stdout. **T1's baseline is ZERO counted failures.**
+   A standing red is a defect, not furniture.
+
+   ⚠ **THIS BULLET TAUGHT THREE RETIRED RULES UNTIL 2026-09-17**, and was still
+   teaching them to crews dispatched *after* the change that retired them. Corrected
+   by the `claude-md` crew's finding; recorded rather than silently swapped, because
+   a receipt written under the old rules is not wrong — it was right when written.
+
+   * **It said "confirm its mtime moved first (a green run is byte-deterministic, so
+     an unchanged md5 proves nothing)".** Both clauses are now false. **Read the
+     `T1-RUN-END` trailer instead** — mtime only ever proved a run *wrote*; the
+     trailer proves it *finished*, which is what you actually need. And a green
+     verdict is **no longer byte-deterministic**: the sentinels carry a pid and a
+     timestamp, so two identical green runs now differ.
+   * **It said "count cases by `Start`/`Finish` pairs, not by log lines".** That rule
+     has a hole, filed as **issue 1481**: the NODISPLAY path `continue`s before its
+     `Finish` line, so a box with no dev display prints **84 `Start` / 73 `Finish`**
+     — under-counting by 11. Note what this means: the rule was written *because* two
+     independent passes miscounted by using log lines, and the trusted alternative
+     was wrong too.
+   * **There are now THREE plausible numbers, not two.** 84 cases; 83 `Total num
+     fail:` lines; and `wc -l` answers **85**, because the verdict carries the two
+     sentinel lines as well. This paragraph's ancestor has already been wrong twice
+     by conflating the first two — do not let the third in.
+
+   ⚠ **AND `results.log` MAY NOT BE YOUR ANSWER.** Both runs now proceed, so during a
+   concurrent run `results.log` can hold a verdict that is complete, well-formed and
+   **someone else's**. **Your answer is `tests/results.<pid>.log`** — and the
+   `T1-RUN-BEGIN` header names the pid that wrote whatever you are reading. Check it.
 6. **Rebuild before any measurement meant as evidence.** No test harness builds;
    `full_audit.sh` runs `$REPO/src/xschem` as it finds it. A correct source tree with
    a stale binary produces a plausible, wrong audit.

@@ -3564,7 +3564,30 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   root; 0609's fix direction pins T1's cwd to `$REPO`, which fires it on the first unguarded
   case in the one suite whose baseline is ZERO. OPEN.
 
-**The next free number is 1481.**
+~~**The next free number is 1481.**~~ superseded: **1481** is filed, below.
+
+- **1481** — **the NODISPLAY arm skips its `Finish` line, so the `Start`/`Finish` case
+  count under-counts by eleven on any box with no dev display.** The display-arm loop
+  writes its block and `continue`s at `run_regression.tcl:841`, **before** the
+  `puts "Finish …"` at `:872`, while `tcases` (`:736`), `hcases` (`:792`) and the
+  `xschemtest` arm (`:895`) all print theirs unconditionally. So a run where
+  `devdisplay.sh status` is not alive — a fresh boot, a container, a CI box — prints
+  **84 `Start` and 73 `Finish`** lines, and a reader applying CLAUDE.md's *"count
+  `Start`/`Finish` pairs for cases"* rule concludes **eleven cases vanished**: exactly
+  the reading **1476** face 2 is about, reached from a perfectly healthy run. ⚠ **The
+  rule this defeats is itself scar tissue** — it exists because two independent passes
+  miscounted the tree (the 82/83/84 corrections), and both **1476**:75 and **1477**:101
+  *cite* it as a protection without noticing the hole. `results.log` is **unaffected**
+  (the branch writes its own block and increments `t1_blocks`, so a display-less green
+  run still carries the normal 83 lines) and `T1-RUN-END cases=` is **correct**
+  (`incr t1_cases` precedes the branch) — the damage is entirely in the stdout-derived
+  count that readers are told to trust. Fix is one `puts` before the `continue`, ⚠ but
+  it must not let a reader score those eleven arms as verified: **0891** chose the
+  uncounted-loud-`NODISPLAY:`-line design on 0147's precedent so a headless box stays
+  green while saying it verified nothing. Ships with **no row**; documented meanwhile in
+  `CLAUDE.md` inline with the rule it undermines. OPEN.
+
+**The next free number is 1482.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
