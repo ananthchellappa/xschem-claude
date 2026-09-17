@@ -57,7 +57,7 @@ set saved_infix $::infix_interface
 set ::pin_new_name PG ; set ::pin_new_dir in
 
 # `reset` leaves an UNTITLED buffer, whose path load_schematic() composes from $PWD
-# (src/save.c:4407) -- and this file is run from the repo ROOT. So anything that persists such a
+# (src/save.c:6500) -- and this file is run from the repo ROOT. So anything that persists such a
 # buffer litters the working tree with untitled-<n>.sch, one more per run because
 # get_unused_untitled_name() skips names already on disk (src/xinit.c:180). Two writers:
 #   * the E8 `xschem save` below -- redirected into the scratch dir;

@@ -33,7 +33,7 @@ Xschem.log.*
 !doc/claude/evidence/**
 
 # Untitled buffers saved in the cwd (issue 0322). load_schematic() names an empty buffer
-# $PWD/untitled[-n].sch (src/save.c:4407) and get_unused_untitled_name() skips numbers already
+# $PWD/untitled[-n].sch (src/save.c:6500) and get_unused_untitled_name() skips numbers already
 # taken (src/xinit.c:180), so a stray save from the repo root piles up one MORE file per run --
 # 67 of them before anyone noticed.
 #

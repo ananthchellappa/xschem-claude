@@ -89,6 +89,49 @@ source [file join $here scratch.tcl]
 source [file join $here sharefarm.tcl]
 set scratch [test_scratch startup_guard_0663]
 
+## --- ISOLATION FROM WHOEVER'S ~/.xschem/ase_simulators IS LIVE ---------------
+## THE CHILD-PROCESS FACE OF ISSUE 1377, WHICH 1377 DOES NOT COVER.
+##
+## Every farm child below is a FULL xschem start, so it reaches
+## src/xschem.tcl:19929 `ase::sim_load_conf` and registers the DEVELOPER'S OWN
+## simulator list. Every entry whose program is missing, is not a file, is not
+## executable, or IS xschem itself is REPORTED -- src/ase.tcl:1806-1807
+## (`if {$kind ne {}} { ase::sim_say $kind ... error }`) -> ase::sim_say
+## (:1445) -> ase::echo -> ::xschem::notify sink 2 -> src/xschem.tcl:17327
+## notify_log -> `xschem log_action -error` -> src/scheduler.c:8107 ->
+## log_output(1) -- i.e. as a `#! ` line in the CHILD'S OWN durable log.
+##
+## SG13 and SG14 count those lines and expect 0 and 1, so on a machine with N
+## bad entries they read N and N+1 and this suite reports a defect the
+## repository does not have. MEASURED on this box 2026-09-17, before this
+## block existed: SG13 -> {3} (exp {0}) and SG14 -> {0 1 1 0 4} (exp
+## {0 1 1 0 1}), on BOTH arms, from three dead entries (`stub` and `slowstub`
+## naming vanished /tmp paths, and src/xschem itself registered as `ng-cm3`,
+## which trips ase::sim_check's fifth guard `iseditor`, src/ase.tcl:1550-1557).
+## PRUNING THAT FILE IS NOT THE FIX: it repairs this box today and leaves the
+## next developer -- and this box after the next ASE-L session registers a
+## build -- the identical false red. THE SUITE MUST NOT CARE WHAT IS IN IT.
+##
+## ⚠ `test_sim_registry_isolate` (scratch.tcl:166-190) CANNOT REACH THIS, which
+## is why this is a new face of 1377 and not an instance of it. That proc
+## clears THIS process's `ase::simulators`; the subject here is a SECOND
+## xschem process, which reads the file from disk for itself before any script
+## of ours exists. HOME is the only handle: src/xinit.c:3179 getenv("HOME") ->
+## :3286-3289 regsub of USER_CONF_DIR ("~/.xschem", config.h:46) ->
+## tclsetvar USER_CONF_DIR. Idiom lifted from test_ase_simdlg_0937.tcl:397-417
+## and test_ase_simreg_0931.tcl:355-375, both of which give a child its own
+## HOME for exactly this reason.
+##
+## ⚠ NOTHING OF THE USER'S IS READ, WRITTEN, RENAMED OR BACKED UP -- scratch.tcl's
+## own rule (:148-153). The .xschem directory is PRE-CREATED because
+## src/xinit.c:3436-3446 mkdir's a missing one and copies a template xschemrc,
+## printing `Created <dir> dir with template xschemrc` on the child's stderr.
+## MEASURED: pre-created -> that line is absent; not pre-created -> it is
+## present. No row counts it today, but a child's stderr is this suite's
+## evidence and it must not carry noise of our own making.
+set sg_home [file join $scratch home]
+file mkdir [file join $sg_home .xschem]
+
 set no_recent_files 1                       ;# issue 0119: keep Open Recent clean
 
 # --- helpers -----------------------------------------------------------------
@@ -125,15 +168,36 @@ set SG_BOOM "error {SG0663 deliberate helper failure}\n"
 ## a line of script, so an "exit 0" would be a lie.
 set SG_INNER {
   puts "SG-ALIVE cadlayers=[expr {[info exists ::cadlayers] ? $::cadlayers : {NONE}}]"
+  ## SG22's two witnesses: which config directory THIS CHILD resolved, and how
+  ## many simulators it inherited from it. Printed by the child, asserted by
+  ## the parent -- the parent cannot ask either question, because both are
+  ## answered in the child's own C startup before any script of ours runs.
+  puts "SG-CONF=[expr {[info exists ::USER_CONF_DIR] ? $::USER_CONF_DIR : {NONE}}]"
+  puts "SG-SIMS=[expr {[catch {llength [ase::sim_list]} n] ? {ERR} : $n}]"
   flush stdout
   exit 0
 }
 
 proc sg_run {tag replace {flags {--nogui --pipe -q}} {drop {}}} {
-  global repo scratch SG_INNER
+  global repo scratch SG_INNER sg_home
   set farm [share_farm $repo [file join $scratch farm_$tag] $replace]
   foreach d $drop { file delete -force [file join $farm $d] }
-  set r [share_farm_child $farm [file join $scratch c_$tag] $SG_INNER $flags]
+  ## THE ONLY LAUNCH SITE, so this is the only place the children's HOME can be
+  ## moved -- see the block beside `set sg_home` above for why it must be.
+  ## share_farm_child passes ::env through to `exec` (sharefarm.tcl:87-88), so
+  ## setting it here is what reaches the child's getenv("HOME").
+  ##
+  ## RESTORED ON EVERY PATH, including the error one: share_farm_child already
+  ## restores ::env(XSCHEM_SHAREDIR) the same way (sharefarm.tcl:90-91), and a
+  ## suite that left this process's own HOME moved would poison every later row
+  ## AND anything scratch.tcl's exit-time cleanup touches.
+  set had [info exists ::env(HOME)] ; set old {}
+  if {$had} { set old $::env(HOME) }
+  set ::env(HOME) $sg_home
+  set rc [catch {share_farm_child $farm [file join $scratch c_$tag] \
+                   $SG_INNER $flags} r]
+  if {$had} { set ::env(HOME) $old } else { catch {unset ::env(HOME)} }
+  if {$rc} { return -code error $r }
   note "SG child $tag status" [dict get $r -status]
   return $r
 }
@@ -332,6 +396,25 @@ check "SG12 0663 R6 a CLEAN farm starts exactly as before: exit 0, the script\
 check "SG13 0663 R6 hard form: a healthy startup writes ZERO `#! ` lines to the\
  durable log -- not one error line of any kind" \
   [sg_log_count $sg_clean {#! }] 0
+
+# --- SG22: the isolation is REAL, and it is OBSERVABLE -----------------------
+# WITHOUT THIS ROW THE FIX IS A LINE NOTHING CAN RED. Delete the two
+# `set ::env(HOME)` lines from sg_run and SG13/SG14 go on passing on any
+# machine whose registry happens to be clean, then red on a working one naming
+# nothing -- which is precisely how this suite spent today claiming a defect
+# the repository does not have. `scratch.tcl:191-197` is issue 1377's own
+# recorded lesson in the same words: "a line nothing can red is a line that
+# quietly stops working".
+#
+# RED, MEASURED with sg_run's HOME swap absent: {0 0} against {1 1} -- the
+# child resolved /home/analog/.xschem and answered SG-SIMS=5.
+check "SG22 1377 the farm children resolve a PRIVATE config dir inside this\
+ suite's own scratch and inherit ZERO registered simulators -- so SG13/SG20's\
+ and SG14's `#! ` counts are about xschem's startup, never about whatever is\
+ in the developer's ~/.xschem/ase_simulators" \
+  [list [expr {[sg_out_glob $sg_clean "SG-CONF=$sg_home*"] ? 1 : 0}] \
+        [sg_out_count $sg_clean {SG-SIMS=0}]] \
+  [list 1 1]
 
 # --- SG14: the 0658 control -- no interaction, no double announcement -------
 # GREEN AT HEAD and it must stay green. With ciw.tcl broken, xschem.tcl SUCCEEDS

@@ -151,7 +151,7 @@ check "setprop on churned buffer returns" [expr {[string first {SETPROP rc=} $bo
 #   X3   the deck emitted with the flags leaked is byte-identical to the clean one
 #   X3b  ... same, on the non-crashing fixture
 #   X4   no_undo is still in force after the netlist (probe by EFFECT: there is
-#        no `xschem get no_undo`, only a setter at scheduler.c:12030)
+#        no `xschem get no_undo`, only a setter at scheduler.c:12868)
 #   X4b  keep_symbols is NOT clobbered -- it is a user preference
 #   X5   the clean path's undo behaviour is unchanged
 #   X6   a NON-global netlist still pushes no undo slot under no_undo=1
@@ -558,7 +558,7 @@ foreach nf {spice_netlist.c spectre_netlist.c vhdl_netlist.c verilog_netlist.c t
 
 # S3: the five global_*_netlist drivers and hier_psprint restore the user's
 # document by exactly one mechanism -- their own push_undo/pop_undo pair -- which
-# xctx->no_undo silently no-ops (save.c:4713/4795, in_memory_undo.c:439/600).
+# xctx->no_undo silently no-ops (save.c:6709/6793, in_memory_undo.c:439/600).
 # That pair is the WALK'S save/restore, not editing undo, so it must not be
 # disableable by an editing flag. Each driver must take the shield and drop it on
 # every exit path (the tail AND the early `return 1` on fopen failure) -- I6.

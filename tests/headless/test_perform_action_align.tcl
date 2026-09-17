@@ -47,10 +47,10 @@ proc check {name ok {info {}}} {
 # keeps a bare invocation from erroring. (deferred, NOT "skipped: no X" -- the
 # token full_audit's is_skip matches -- because the effect is X-independent.)
 # Issue 0601: this suite edits the startup UNTITLED buffer, and set_modify(1) ->
-# write_backup() (src/actions.c:208 -> src/save.c:4149) then writes `untitled~.sch` into
-# the cwd captured at STARTUP (pwd_dir, src/xinit.c:2952) -- the repo root for a hand run,
+# write_backup() (src/actions.c:208 -> src/save.c:6139) then writes `untitled~.sch` into
+# the cwd captured at STARTUP (pwd_dir, src/xinit.c:3175) -- the repo root for a hand run,
 # tests/ under run_regression.tcl. Nothing here descends or recovers, so suppress it:
-# write_backup() returns early when autosave_backup is off (src/save.c:4156). See
+# write_backup() returns early when autosave_backup is off (src/save.c:6146). See
 # tests/headless/test_undo_selection.tcl for the full note; guarded by
 # tests/headless/test_no_untitled_litter.tcl.
 set ::saved_autosave_0601 $::autosave_backup

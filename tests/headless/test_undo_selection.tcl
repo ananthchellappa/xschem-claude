@@ -12,13 +12,13 @@ update idletasks
 
 # --- issue 0601: keep the editor's autosave "~" file out of the launch directory ---
 # The FIRST edit to the startup UNTITLED buffer runs set_modify(1) -> write_backup()
-# (src/actions.c:208 -> src/save.c:4149), which backs up untitled buffers on purpose
-# (src/save.c:4159-4162, issue 0060). The backup path is composed from the cwd captured
-# at STARTUP (pwd_dir, src/xinit.c:2952); a Tcl `cd` does NOT move it (src/xinit.c:174,
+# (src/actions.c:208 -> src/save.c:6139), which backs up untitled buffers on purpose
+# (src/save.c:6149-6152, issue 0060). The backup path is composed from the cwd captured
+# at STARTUP (pwd_dir, src/xinit.c:3175); a Tcl `cd` does NOT move it (src/xinit.c:174,
 # issue 0323), so the fixture below dropped `untitled~.sch` into whatever directory the
 # suite was launched from -- the repo root for a hand run, tests/ under
 # tests/run_regression.tcl. Nothing here descends or recovers, so that backup is pure
-# litter. write_backup() returns early when autosave_backup is off (src/save.c:4156).
+# litter. write_backup() returns early when autosave_backup is off (src/save.c:6146).
 # Same guard as tests/headless/test_placement_wire_gate.tcl:69-70 and
 # tests/headless/test_shape_draw_gate.tcl:44. Guarded by test_no_untitled_litter.tcl.
 set ::saved_autosave_0601 $::autosave_backup

@@ -11,15 +11,15 @@
 # window up, call it again -> the second call sets the three flags, raises at
 # `toplevel .trav`, and never reaches the restore.
 #
-# no_undo has NO getter (scheduler.c:12030 is a setter only; `xschem get no_undo`
-# does not exist), so it is witnessed BEHAVIOURALLY: push_undo (save.c:4713) and
-# pop_undo (save.c:4795) both return immediately when xctx->no_undo is set, so a
+# no_undo has NO getter (scheduler.c:12868 is a setter only; `xschem get no_undo`
+# does not exist), so it is witnessed BEHAVIOURALLY: push_undo (save.c:6709) and
+# pop_undo (save.c:6793) both return immediately when xctx->no_undo is set, so a
 # leaked no_undo makes `xschem undo` a silent no-op.
 #
 # NEEDS A DISPLAY. `toplevel` is Tk; do NOT run this under --nogui. Run it as:
 #   tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --script \
 #       tests/headless/test_traversal_flag_leak.tcl
-# full_audit.sh's default arm (--pipe -q --nolog --script, full_audit.sh:448) is
+# full_audit.sh's default arm (--pipe -q --nolog --script, full_audit.sh:485) is
 # already the right one - do not add this suite to its nogui_tests list.
 
 if {[catch {winfo exists .}]} {
@@ -31,11 +31,11 @@ if {[catch {winfo exists .}]} {
 # --- issue 0601: keep the editor's autosave "~" file out of the launch directory ---
 # This suite edits the startup UNTITLED buffer (undo_works below instances a
 # resistor), and the FIRST edit runs set_modify(1) -> write_backup()
-# (src/actions.c:208 -> src/save.c:4149), dropping `untitled~.sch` into the
+# (src/actions.c:208 -> src/save.c:6139), dropping `untitled~.sch` into the
 # directory the suite was LAUNCHED from -- the repo root under
 # tests/headless/full_audit.sh:64, which does `cd "$REPO"`. A Tcl `cd` does not
-# move it (pwd_dir, src/xinit.c:2952/174, issue 0323). write_backup() returns
-# early when autosave_backup is off (src/save.c:4156). Same guard as
+# move it (pwd_dir, src/xinit.c:3175/174, issue 0323). write_backup() returns
+# early when autosave_backup is off (src/save.c:6146). Same guard as
 # tests/headless/test_undo_selection.tcl:24-25. Guarded by
 # tests/headless/test_no_untitled_litter.tcl.
 set ::saved_autosave_0601 $::autosave_backup

@@ -51,7 +51,7 @@ if {[catch {winfo exists .}] || ![winfo exists .]} {
 
 # --- issue 0601: keep the editor's autosave "~" file out of the launch directory.
 # This suite instances a resistor, and the first edit of the startup untitled
-# buffer runs set_modify(1) -> write_backup() (src/actions.c:208 -> save.c:4149),
+# buffer runs set_modify(1) -> write_backup() (src/actions.c:208 -> save.c:6139),
 # which lands in the LAUNCH dir (a Tcl `cd` does not move it, issue 0323).
 # Guarded by tests/headless/test_no_untitled_litter.tcl.
 set ::saved_autosave_0601 $::autosave_backup

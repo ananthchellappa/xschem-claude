@@ -5339,7 +5339,7 @@ proc traversal_setlabels {w parent_sch instname inst_sch sym_sch default_sch
 # normal path.
 #
 # no_draw/no_undo go back to a hardcoded 0, which is what the body's normal-path restore
-# already did. `xschem get no_undo` does not exist (scheduler.c:12030 is a setter only),
+# already did. `xschem get no_undo` does not exist (scheduler.c:12868 is a setter only),
 # so a true save/restore of that one is impossible from Tcl and remains issue 0432's
 # residual. Guardian: tests/headless/test_traversal_flag_leak.tcl.
 proc traversal {{only_subckts 1} {all_hierarchy 1}} {
