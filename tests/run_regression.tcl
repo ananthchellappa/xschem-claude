@@ -90,7 +90,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_variant_1470" \
                  "headless/test_ase_simwin_variant_1471" \
-                 "headless/test_regression_concurrency_1476"]
+                 "headless/test_regression_concurrency_1476" \
+                 "headless/test_issue_stamp"]
 # ⚠ `test_regression_concurrency_1476` IS THE SUITE FOR THIS DRIVER'S OWN
 # CONCURRENCY DEFECT, and the paragraph below about wall-clock cost is answered
 # up front: measured 2026-09-17 on this tree, **8.5-8.6 s** for 20 checks (8.53,
