@@ -165,6 +165,55 @@ three times — reproduced by a crew that had just read the warning.*
 **Read-only confirmed by evidence, not assertion:** `diff -rq` against the driver's backup
 is **silent**; the ledger is byte-identical. Nothing cleared, edited or added.
 
+### The OTHER half of the user's queue, which E1 did not triage
+
+E1 took the **190 `rule`** debts. Nobody has looked at the **71 `look`** or the **11
+`suite`**. Measured by the driver, 2026-09-17:
+
+**The `look` queue has the SAME shape defect as the rule queue.** By mtime: **54 of the 71
+were filed on a single day** — 2026-09-10 — then 1, 1, 10, 1, 3, 1 across the following
+week. That is one batch discharging its pixel debts one entry at a time into a queue a
+person reads serially, which is exactly the pattern D11 is collapsing for the 48 wording
+ratifications. **The fix is the same fix**, and it should follow E2's document rather than
+invent a second shape.
+
+**These are genuinely the user's, and unlike the rule debts they are not arguable.** A
+`look` debt asks for their eyes, and the sample entry reads exactly as it should —
+*"Suites green (124 --nogui / 136 :99 window, 53 keys :99, 130 store, 485 op_annot control,
+T1 zero); please look: does the row visibly move where you expect, does the shading land on
+it and not on the line it left…"*. That is the rule working: **never report a pixel
+deliverable done on a green suite.** The defect is the serialisation, not the filing.
+
+**The 11 `suite` debts are NOT the user's** and need no ruling — a suite debt clears itself
+on a pass and `owed.sh drain` runs them as one batch with the gate live:
+`test_annot_declutter_1244`, `test_ase_campaign_gui_1464`, `test_ase_core`,
+`test_ase_dialogs`, `test_ase_optsheet_1441`, `test_ase_simdlg_0937`, `test_ase_window`,
+`test_hier_pdf_links_1333`, `test_ps_valid_1350`, `test_rdw_keys_1245`,
+`test_rdw_window_1245`. **Deferred, not forgotten:** draining them runs GUI suites, and the
+driver's T1 baseline is live — a concurrent suite run would muddy the one number F1 needs.
+
+### A4's geometry finding, independently confirmed by the driver
+
+A4 reported that issues 1397/1458 are live. Confirmed on the user's real configuration:
+
+```
+2026-09-17 09:08:56   7076 bytes   ~/.xschem/geometry      <- written TODAY
+2026-09-13 18:53:01   2632 bytes   ~/.xschem/recent_files  <- frozen four days ago
+101 entries in geometry
+```
+
+**`geometry` moved today and `recent_files` did not**, which is the signature: the
+`no_recent_files` gate protects one file and not the other, so test runs still write the
+user's saved window positions. **50 of those 101 entries were permanently displaced.** This
+is `MINE` to fix (E1's verdict) but the *fact* is theirs to know — it is their windows
+opening in the wrong place.
+
+⚠ **A separate, unrelated thing that looks similar and is not:** the untracked
+`.xschem/op_param_lists.conf` in the **repo root** is dated **2026-09-09**, long before
+this batch. It is not tonight's litter and not the geometry defect. Noted so the next
+reader does not spend an hour on it — but note also that a repo-root `.xschem/` shadows the
+user's own for anything launched from there.
+
 ### The driver's corpus-wide run of A4's closure detector
 
 `tools/closescan.py` (self-testing, per the rule the eight errors bought). **165** issue
