@@ -3535,7 +3535,36 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   would mean a run where every job failed to start reports zero, which is exactly issue **0147**.
   OPEN.
 
-**The next free number is 1480.**
+~~**The next free number is 1480.**~~ superseded: **1480** is filed, below.
+
+- **1480** — **nothing sweeps for the `untitled*` residue class, and neither audit driver
+  leaves a log that could attribute it.** The **litter** is not this number — it is filed five
+  times already (**0353** detector-half, **0356** the open widening decision, **0609** the
+  80-of-116 leak, **0673** whose fix item 2 *is* "widen the sweep", **0687** the `tests/`
+  producer), and re-filing it would be the sixth copy of a proposal nobody has implemented.
+  What is new is **why it survived an hour of checking by four readers**: ⚠ **neither audit
+  driver writes a per-suite `.log` under `tests/` at all** — `full_audit.sh:473,475,477` and
+  `run_suites.sh:121,122` capture into `out=$(…)` with a `mktemp -d` logdir outside the repo,
+  so a verification pass that answered *"did a suite run in this window?"* from `tests/*.log`
+  was **structurally incapable** of seeing the run responsible, and concluded the opposite of
+  the truth (same fail-open class as **0147** and **1476** face 2). The second blindness —
+  the audit's own detector is `git status --porcelain` and `.gitignore:75` hides `*~.sch` — is
+  **already** 0353's closing section and 0356, locked as a LIMIT by C39b/C39c; ⚠ but its
+  citations are stale in **five** places, still reading `.gitignore:55,:56` (today `:75,:76`),
+  one of them a **check-name string** at `test_audit_classifier.tcl:490`. Measured: **T1
+  writes `tests/untitled~.sch` on every green run**, twice with *different* pids
+  (`_badig_2066619`, `_badig_2108581`) so a fresh write and not a survivor, from a **passing**
+  case; **63 of T1's 69 headless cases** carry no `set ::autosave_backup 0` (static proxy, not
+  a leak count — 0609's 80/116 is the real number); and `write_backup()`'s **header comment
+  contradicts its own body** (`save.c:6137-6138` says untitled is skipped, `:6149-6152` and the
+  code say it is deliberately **not**, issue 0060) — wrong in exactly the direction that hides
+  this leak. ⚠ **AND IT MUST LAND WITH 0609's CONTAINMENT, OR EVERY T1 RUN GOES RED**: the only
+  reason `C11` has never fired under T1 is that T1's cwd is `tests/` while `C11`
+  (`test_ase_core.tcl:1531`, `$repo` at `:460` derived from `[info script]`) reads the repo
+  root; 0609's fix direction pins T1's cwd to `$REPO`, which fires it on the first unguarded
+  case in the one suite whose baseline is ZERO. OPEN.
+
+**The next free number is 1481.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

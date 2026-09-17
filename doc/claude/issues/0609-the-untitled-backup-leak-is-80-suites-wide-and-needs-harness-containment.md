@@ -35,14 +35,18 @@ guard would silently gut those.
 
 * `src/actions.c:208` — `set_modify(1)` calls `write_backup()` on the **first**
   edit of any buffer, untitled included.
-* `src/save.c:4149-4171` — `write_backup()`; the create is `fopen(bak, "w")` at
-  `:4164`. It deliberately does not skip untitled buffers (`:4159-4162`, issue
-  0060).
-* `src/save.c:4156` — it returns early when `autosave_backup` is off. That is the
+* `src/save.c:6139-6161` — `write_backup()`; the create is `fopen(bak, "w")` at
+  `:6154`. It deliberately does not skip untitled buffers (`:6149-6152`, issue
+  0060). ⚠ **But the function's own header comment at `:6137-6138` says it DOES**
+  ("Skipped when … the buffer has no real on-disk file yet (untitled)") — the
+  header is stale, the body and the code are right, and the header is wrong in
+  exactly the direction that makes a reader conclude this issue cannot exist.
+  Measured 2026-09-17; see 1480 §1.
+* `src/save.c:6146` — it returns early when `autosave_backup` is off. That is the
   hook the per-suite guard uses.
 * The path is composed from `pwd_dir`, which is `$env(PWD)` when set
-  (`src/xinit.c:3690-3693`) and otherwise the **startup** `getcwd`
-  (`src/xinit.c:2952`). A Tcl `cd` moves neither (`src/xinit.c:174`, issue 0323).
+  (`src/xinit.c:3917-3919`) and otherwise the **startup** `getcwd`
+  (`src/xinit.c:3175`). A Tcl `cd` moves neither (`src/xinit.c:174`, issue 0323).
 
 ## The fix direction
 
@@ -73,8 +77,8 @@ Found while attributing the non-PASS rows of a `full_audit.sh` run during the
 
 | suite | row | what it asserts |
 |---|---|---|
-| `test_ase_core` | **C11** (`:772`) | `[file exists $repo/untitled~.sch]` is 0 |
-| `test_op_dump_altshow` | **H1** (`:924`) | the suite left the cwd alone **and made no `untitled*` in the repo root** |
+| `test_ase_core` | **C11** (`:1531`) | `[file exists $repo/untitled~.sch]` is 0 |
+| `test_op_dump_altshow` | **H1** (`:939-941`) | the suite left the cwd alone **and made no `untitled*` in the repo root** |
 
 Both are correct and useful when the suite is run ALONE — they catch that suite's
 own leak. Neither can survive `full_audit.sh`, which `cd "$REPO"`s at `:64` and
@@ -128,3 +132,98 @@ That keeps each row's real purpose, makes it true under the audit, and leaves th
 80-suite leak itself filed here where it belongs. **Not done in the batch that
 found this** — two unrelated suites, and the rows are correct as written when run
 the way their own headers say to run them.
+
+---
+
+## 2026-09-17 — under T1, `C11` cannot catch its own leak at all
+
+Measured by the harness concurrency batch (receipts `G1.md`, `H1.md`). This section
+adds **one new structural argument**, one **⚠ warning about the fix direction above**,
+and a correction table. It changes nothing about this issue's status and settles
+nothing about `C11`'s shape.
+
+### 1. The new argument: a third context, and it is the one T1 uses
+
+Section 2.1 above measured two contexts — the suite run alone (correct) and the suite
+run inside `full_audit.sh` (false red, 13 of 13). **There is a third, and `C11` is
+wrong in it too, for the opposite reason.**
+
+`test_ase_core.tcl:460` sets `$repo` to `[file normalize [file join $here .. ..]]`,
+derived from `[info script]` — so `C11` (`:1531`) reads the **repo root irrespective
+of the process cwd**. Under T1 the suite's own cwd is `tests/`:
+`tests/run_regression.tcl:619-620` runs
+`exec $xschem_cmd --nogui --pipe -q --script ${hc}.tcl` with a relative script path,
+**no `cd` and no `$env(PWD)` assignment anywhere in the harness** (measured across
+`run_regression.tcl`, `test_utility.tcl`, `full_audit.sh`, `run_suites.sh`). So any
+`untitled~.sch` the suite itself writes lands in `tests/`, which `C11` does not read.
+
+| how run | cwd | what `C11` actually tests |
+|---|---|---|
+| by hand from the repo root (its header's recipe) | repo root | **its own leak** — the meaning it was written for ✓ |
+| inside `full_audit.sh` (`cd "$REPO"`, `:64`) | repo root | **other suites' leaks** — false red, 13 of 13 ✗ |
+| inside **T1** (`cd tests`) | `tests/` | **only foreign litter in the root**, never its own ✗ |
+
+**Under T1, `C11` has zero ability to catch its own suite's leak** — it is a pure
+probe of foreign machine state. Two of the three contexts are wrong, and the third
+is the rarest.
+
+*(`test_op_dump_altshow`'s H1 has the same `-directory $repo` property, but that
+suite is **not in T1's case list at all** — measured, no hit for `op_dump_altshow` in
+`run_regression.tcl` — so under T1 the only exposed row is `C11`.)*
+
+**This is the twin of ruling ⚖ R2** (a suite red-ing on machine state it does not
+own), and as with R2, pruning the litter greens the box today while the next
+contributor inherits the identical false red.
+
+### 2. ⚖ R3 is filed with the user, against this issue
+
+*Should `C11` become a delta — snapshot the repo root at suite start, assert only
+that this suite added nothing — instead of the raw existence test?* The fix code is
+already in "The shape of a fix" above. **The ruling is the user's and is not decided
+here**, and this section takes no position. Recorded in the owed ledger as
+`rule/0609`. One answer plausibly settles R2 as well.
+
+### 3. ⚠ THE FIX DIRECTION ABOVE WOULD MAKE EVERY T1 RUN RED, ON ITS OWN
+
+"The fix direction" proposes giving each test its own cwd in `full_audit.sh` **and
+`tests/run_regression.tcl`**. Applied to T1, that moves T1's leak out of `tests/` —
+and if the new cwd is `$REPO`, `C11` fires on the first unguarded case and **the one
+suite whose baseline is ZERO reports a failure on every run.**
+
+The only thing standing between T1 and that red is the accident that its cwd and
+`C11`'s search root are different directories. **So the containment and `C11`'s shape
+must land together**, and the containment must set `$env(PWD)`, not merely `cd` — the
+load-bearing detail already recorded above (`src/xinit.c:3917-3919` prefers
+`env(PWD)` over the startup `getcwd` at `:3175`; a Tcl `cd` moves neither,
+`src/xinit.c:174`).
+
+Filed as **1480**, together with the measurement that T1 writes `tests/untitled~.sch`
+on every green run (twice, with different pids, from a **passing** case) and the
+reason nobody saw it: **neither audit driver writes a per-suite `.log` under `tests/`
+at all**, so the sweep that concluded "no suite ran in that window" could not have
+seen one.
+
+### 4. Corrections — every citation in this file, re-measured 2026-09-17
+
+Corrected in place above; the pre-image is here so nothing is lost.
+
+| what | this file said | **measured today** |
+|---|---|---|
+| `set_modify(1)` → `write_backup()` | `actions.c:208` | `actions.c:208` ✓ **unchanged** |
+| `write_backup()` definition | `save.c:4149-4171` | **`save.c:6139-6161`** |
+| the `fopen(bak, "w")` create | `save.c:4164` | **`save.c:6154`** |
+| untitled backed up on purpose (0060) | `save.c:4159-4162` | **`save.c:6149-6152`** |
+| `autosave_backup` early return | `save.c:4156` | **`save.c:6146`** |
+| `$env(PWD)` preferred for `pwd_dir` | `xinit.c:3690-3693` | **`xinit.c:3917-3919`** |
+| startup `getcwd` into `pwd_dir` | `xinit.c:2952` | **`xinit.c:3175`** |
+| `cd` moves neither | `xinit.c:174` | `xinit.c:174` ✓ **unchanged** |
+| `test_ase_core` C11 row | `:772` | **`test_ase_core.tcl:1531`** |
+| `test_op_dump_altshow` H1 row | `:924` | **`test_op_dump_altshow.tcl:939-941`** |
+| `full_audit.sh` pins the cwd | `:64` | `full_audit.sh:64` ✓ **unchanged** |
+
+⚠ **And one that is NOT in this file but belongs to its mechanism**:
+`write_backup()`'s header comment (`save.c:6137-6138`) states that untitled buffers
+are **skipped**, contradicting its own body at `:6149-6152` and the code, which has
+no such skip. A reader who trusts the header concludes an untitled buffer can never
+produce a `~` file — i.e. concludes this issue does not exist. Source change, not
+made here (this was a documentation-only task). Recorded in **1480 §1**.
