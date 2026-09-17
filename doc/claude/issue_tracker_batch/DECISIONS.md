@@ -110,6 +110,34 @@ measured** — the box is 15.35 GiB and `dmesg` carries zero OOM kills.
 
 ---
 
+## D12 — D0 is pipelined ahead of D1, and E3 is deliberately held behind E2
+
+**Decision.** Two scheduling calls, opposite in direction, recorded because a driver that
+serialises or parallelises its crews is making a choice of its own and ought to say so at
+the moment of making it.
+
+**D0 runs NOW, ahead of the stage it feeds.** The 7 stale-closure issues (`0071`, `0216`,
+`0249`, `0264`, `0516`, `0650`, `0947`) are the one D1 work-item that is **exactly known**
+— produced by a self-testing detector with no judgement calls — so verifying them does not
+need BC1's convention, only the truth about the tree. Doing it in parallel means D1 can
+act the moment BC1 lands instead of starting its longest lookup from cold. D0 is read-only
+and **proposes** replacement text rather than applying it, precisely so it cannot pre-empt
+the convention it will be written in.
+
+**E3 is HELD, though nothing technical blocks it.** The 71 `look` debts have the same shape
+defect as the 48 wording ratifications — **54 of the 71 were filed on a single day** — and
+the same remedy. Dispatching it now would produce a **second user-facing consolidation
+document in a different format**, invented in parallel by a crew that could not see E2's.
+Two rival formats for one user is worse than one format arriving later. **E3 inherits E2's
+shape.**
+
+⚠ **Note these two are not the same judgement applied twice.** D0 is parallelised because
+its input is already certain; E3 is serialised because its *output* must match something
+that does not exist yet. The test is not "can this run now" but **"does running it now
+commit us to something we would have to undo"**.
+
+---
+
 ## D10 — The plan is re-scoped by its own measurement, and the wrong version is kept
 
 **Decision.** `PLAN.md`'s sub-problem 1 (*"a stored fix is an unverified hypothesis"*) is

@@ -110,14 +110,25 @@ the header, which is the documented habit of this project.
 
 Each stage is one dispatch. Read-only stages run in parallel (`CREW_BRIEF.md` rule 6).
 
-| id | stage | crews | runs a suite? | depends on |
-|---|---|---|---|---|
-| **A1–A4** | **Measure the rate** on a pre-registered random sample | 4 ∥ | no | — |
-| **E1** | **Triage the user's queue** — 190 `rule` debts against *does this reach a person?* | 1 ∥ | no | — |
-| **B1** | **Design the header convention**, sized by A | 1 | no | A |
-| **C1** | **Build the checker** — mechanical, goes red, wired into the suites | 1 | yes | B |
-| **D1** | **Apply** to the known-bad set and to A's findings | 1 | no | B, C |
-| **F1** | **Closing gate** — checker green, T1 at zero, ledger reconciled | driver | yes | all |
+⚠ **This table is kept CURRENT, unlike everything else this batch is studying.** It drifted
+once already — `B1`/`C1` merged into `BC1` (D8), and `D0`/`E2` were dispatched after it was
+first written and were missing from it for several commits. **A stage table that does not
+say what actually happened is the corpus's own disease**, so it is corrected in place as
+the batch runs rather than at the end.
+
+| id | stage | crews | runs a suite? | depends on | state |
+|---|---|---|---|---|---|
+| **A1–A4** | **Measure the rate** on a pre-registered random sample | 4 ∥ | no | — | **DONE** |
+| **E1** | **Triage the user's queue** — 190 `rule` debts against *does this reach a person?* | 1 ∥ | no | — | **DONE** |
+| **T1-base** | pre-change regression baseline; pre-D1 tree reference | driver | **yes** | — | **DONE — green, 84/83/0** |
+| ~~**B1**~~ | ~~design the header convention~~ | — | — | — | **merged into BC1 (D8)** |
+| ~~**C1**~~ | ~~build the checker~~ | — | — | — | **merged into BC1 (D8)** |
+| **BC1** | **Design the convention AND build the checker** | 1 | yes | A | **in flight** |
+| **D0** | **Verify the 7 stale-closure issues**, propose replacement text | 1 ∥ | no | — | **in flight** |
+| **E2** | **Collapse the 48 repeated wording ratifications** into one document | 1 ∥ | no | E1 | **in flight** |
+| **D1** | **Apply** — the convention, D0's 7, and A's findings | 1 | no | BC1, D0 | blocked |
+| **E3** | **Collapse the 71 `look` debts** the same way | 1 | no | **E2's format** | held, deliberately |
+| **F1** | **Closing gate** — checker green, T1 at zero, ledger reconciled | driver | yes | all | blocked |
 
 ### A1–A4 — measure the rate
 

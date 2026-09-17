@@ -13,7 +13,7 @@ after the driver has read the receipt and checked at least one of its claims.
 | A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
 | **BC1** | design the convention **and** build the checker (B+C merged, D8) | in flight | — | — |
-| **D0** | verify the 7 stale-closure issues; propose replacement text | in flight | — | — |
+| **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
 | **E2** | collapse the 48 repeated wording ratifications into one document | in flight | — | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
 
@@ -387,6 +387,32 @@ have a header that agrees. **7 do not**, and they are the mechanical face of sub
 C1 sweeping beyond `doc/claude/issues/`. At **4.3%** this is a smaller class than citation
 rot, and unlike citation rot it is **exactly detectable**, today, with no judgement calls.
 
+### D0 (the 7 stale closures) — 3 header rewrites and 1 child table, not 7
+
+Read-only against `63a1b41f`. The headline is error 10 above; these are the verdicts.
+
+| issue | verdict | finding |
+|---|---|---|
+| **0249** | **CONFIRMED-CLOSED** | the only true member. **Its own `# RESOLUTION — FIXED` sits 306 lines below a header that still says OPEN** |
+| **0216** | **PARTIALLY-CLOSED** | `wviewer::attach_raw`'s whole body has no `rawhist_push`; the push is in `results::select`, reached by the Location bar and `wviewer::restore` — **not** the ASE re-run path, which is what the issue is about. `src/results.tcl` says so itself: *"Converting that path is NOT this item."* |
+| **0650** | **PARTIALLY-CLOSED** | the general channel landed (`5dd68128`, `xschem::notify` + 4 sinks); **the titular session-window sink did not** — 0655 reads `OPEN (deferred out of issue 0650 deliberately)` |
+| **0071** | **NOT-CLOSED**, header correct | deliverable is the **child table**: 5 stale rows, §4b's six mutators are **five done**, and its *"11 checks"* is now **79** |
+| **0264** | **NOT-CLOSED**, header correct | `hierarchy_modified()` still loops `[0, currsch)`, ancestors only; the `had_unsaved` guard never landed |
+| **0516** | **NOT-CLOSED**, header correct | `calc::session_result` still walks viewer tokens only. **The ruling happened, the implementation did not** |
+| **0947** | **NOT-CLOSED**, header correct | `ase::sim_entry_kind` still returns `badvar` on a frozen `varok 0`; `0947` appears nowhere in `src/` or `tests/headless/` |
+
+**A binary open/closed schema cannot express 0216 or 0650**, and D0 rates their **scope**
+lines — *"for this path"*, *"this issue's actual title"* — as the precise fact a reader
+needs. That is two concrete cases for BC1's three-value requirement, and without a scope
+field both get closed wrongly by whoever tidies next.
+
+**Below-the-fold, third independent sighting.** 0249's resolution is 306 lines down; 0071's
+truth is in its child tables; A1 found the same in 0071's §3/§4/§4b. **The truth is in the
+file — just never where anyone looks.**
+
+**D1 resized: 3 header rewrites + 1 child table.** The four correct headers are marked
+**do not touch**, with an optional tree stamp only.
+
 ### A3 (files 21–30) — the citation split, and 0905's account of its own fix
 
 `TRUE-OPEN 4 · TRUE-FIXED 4 · STALE-FIXED 2 · ROTTED-CITE 6 · UNKNOWN 0` — and A3 says it
@@ -473,6 +499,37 @@ re-reading."* Same table here, same discipline.
 | 8 | *"`SUPERSEDED` appears in ~15 hits across ~13 files"* | the driver, `PLAN.md` baseline table | **26 hits across 19 files** (A1 re-measured). A1 confirmed 1047 and 742. |
 
 | 9 | *"`status.md` names **77** issue numbers (7.4% coverage), **61%** of them already fixed, and **4** name no file"* | **the driver** | **26 issues (2.5%), 42% fixed, 0 orphans.** `\b[0-9]{4}\b` matched **years, pixel widths and byte counts**: `1855` is *"731–1855 px"*, `2026` is a date, `4096` is *"a 4096-byte action-log line"*, `0521` is *"the next one is 0521"*. **51 of the 77 were not issue references.** The finding got **sharper** — the index covers 2.5%, not 7.4% — but three published figures were wrong. |
+
+| 10 | *"165 issue numbers are claimed closed; **7** still have an OPEN header; **4.3%**"* — sent to BC1 as a design input and queued as D1's work list | **the driver**, `tools/closescan.py` | **4 of the 7 are FALSE POSITIVES. The real class is 1 in 165 — 0.6%.** D0 verified all seven against the tree. **Acting on the driver's table would have marked two genuinely open defects closed, one of them carrying a live user ruling.** |
+
+⚠ **Error 10 is the most dangerous of the ten, and it is the batch's own subject in the
+first person.** A *"stored fix that would damage working code"* is the exact class this
+batch was convened to study. The driver produced one, handed it to BC1 as evidence, and
+queued it as D1's work list. **It would have been the seventh.** It was caught only because
+D0 was dispatched to verify the seven rather than repair them (D12) — the same
+measure-before-acting discipline as D1 and D4, paying out a second time.
+
+**How the regex was blind, all three found by printing the MATCHED TEXT rather than the
+location** — the location says *where* a claim lives and is silent on *what it says*:
+
+| shape | what the text actually reads | why v1 matched |
+|---|---|---|
+| **negation** (0264, 0516) | *"FILED, **not** closed: issue 0516"*, *"filed, **not fixed** … issue 0264"* | the pattern allows a 40-character gap between verb and number — **the negation sits inside the gap** |
+| **attribution** (0071 ×6) | `**Status:** CLOSED 2026-07-14 (issue 0071 atom 6)` | this closes **0003**; 0071 is being **credited as the fixer** |
+| **prescription** (0947, 0650) | *"…and fixes 0947 at the same time"* | 0946's **unimplemented option 3**. A proposal is not an event |
+
+⚠ **And the method lesson, which outlives the number: `closescan.py`'s self-test asserted
+only a TRUE POSITIVE.** It proved the check *fires*; it could never prove the check does
+not **over-fire**. **A self-test needs a known negative as well as a known positive** — and
+an over-firing checker on a 1047-file corpus is worse than none, because it gets disabled,
+which is D9's whole argument. `tools/closescan2.py` adds the three filters and asserts
+**both directions** using D0's verified verdicts as fixtures (`0249` must flag; `0071`,
+`0264`, `0516`, `0947` must not). **On first run it FAILED and refused to print a rate** —
+0516 and 0947 are now correctly suppressed, 0071 and 0264 still leak. That refusal is the
+tool working. v1 would have published.
+
+⚠ **The corpus-wide 165 / 154 / 7 is therefore WITHDRAWN**, not merely qualified. It is
+inflated by the same three shapes and must not be quoted until closescan2 passes.
 
 ⚠ **Error 9 is the ninth instance of one single mistake**, and it is worth naming plainly:
 **every driver error tonight was a pattern matched against the wrong namespace.** `-e`
