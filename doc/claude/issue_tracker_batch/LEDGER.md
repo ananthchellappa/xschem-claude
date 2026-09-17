@@ -702,6 +702,23 @@ cwd to `$REPO`"*, where the driver also reasoned from its own summary rather tha
 document. **A4 checked it and refused it**, which is the behaviour `CREW_BRIEF.md` rule 10
 asks for, and it was contained to one brief only because A4 looked.
 
+### Near-misses — driver errors caught BEFORE publication
+
+Recorded separately from the numbered errors, because the difference is the whole
+improvement. Errors 1–14 were **published and then withdrawn**. These were stopped at the
+door by checking a suspicious number instead of repeating it.
+
+| | claim | what checking found |
+|---|---|---|
+| N1 | *"`R9_COPY_REVIEW.md` was first committed 2026-09-16"*, contradicting E2's 09-13 | **E2 was right.** `git log -1 -- <path>` returns the **newest** commit touching a file, not the first. `--diff-filter=A` gives `07922d71`, **2026-09-13**. Re-checking also produced the sharper finding: **35 commits**, 291 → 821 strings, maintained to the day before this batch and still never handed over. |
+| N2 | *"BC1's suite has 41 checks"*, contradicting BC1's 39 | **BC1 was right.** `/usr/bin/grep -c 'check '` counts any line **containing** the substring — it swept in a prose comment and **`proc check {name got want}`, the definition itself**. Line-anchored: **39**, and 39 again excluding comments. |
+
+**Both are the same defect as errors 1–14 — a pattern matched against the wrong namespace —
+and in both the driver's number contradicted a crew's.** The rule that changed the outcome:
+**when a measurement disagrees with a crew's, the crew has usually read the artefact and
+the driver has usually run a grep.** Check before publishing, and check by tightening the
+pattern rather than by re-running the loose one.
+
 ## The rule those five errors bought
 
 **Every mechanical check is run first against a case whose answer is already known, and
