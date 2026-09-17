@@ -204,8 +204,37 @@ state*, not just headers — and that single check would cover 0071, `status.md`
 `status_annotate.md` (712 lines, unexamined) and every future umbrella at once.
 
 ⚠ **Nothing here says delete it.** A stale index is a defect; an absent index is worse,
-and this one's 26 genuinely-open entries are real. The finding is that it has no
+and this one's 15 genuinely-open entries are real. The finding is that it has no
 maintainer and no checker — which is D3's thesis with a very sharp example.
+
+**And it is not one file. It is BOTH indexes**, measured with the same self-tested
+extraction:
+
+| index | lines | last touched | issues named | coverage | already FIXED | still open |
+|---|---|---|---|---|---|---|
+| `status.md` | 223 | 2026-08-20 | **26** | **2.5%** | 11 — **42%** | 15 |
+| `status_annotate.md` | 713 | 2026-08-26 | **21** | **2.0%** | 18 — **86%** | 3 |
+| **both** | 936 | — | **47** | **4.5%** | **29 — 62%** | 18 |
+
+**`status_annotate.md` is the worse of the two: 86% of what it lists is done.** It is 713
+lines long and names 21 issues — the ratio of prose to index is itself the tell. Between
+them, the tracker's two top-level indexes cover **4.5%** of the corpus and **62% of what
+they do cover is finished work**.
+
+⚠ **Note the inflation these two files would have caused an unwary reader**: naive
+4-digit matching finds 77 and 111 "issue numbers" in them; the sound count is 26 and 21.
+`status_annotate.md` is **90 false positives** out of 111 — the worst ratio measured
+anywhere tonight, and the reason error 9 happened.
+
+### Nine issue-numbered artefacts that no scanner and no convention covers
+
+Not `.md`, so every scan in this batch — and any checker scoped to `NNNN-*.md` — skips
+them silently: `0054-activate-probe.tcl`, `0054-raise-drift-probe.tcl`,
+`0054-xactivate.c`, and six preserved patches (`0264`, `0436`, `0442`, `0443`, `0466`,
+`0494` — five named `attempt-N-reverted`, one `attempt-3-interrupted`). **Six of the nine
+are reverted or interrupted attempts**, which is exactly the content a reader must not
+paste, and none is reachable from either index. Small, but C1 should say whether its glob
+sees them.
 
 ### The OTHER half of the user's queue, which E1 did not triage
 
