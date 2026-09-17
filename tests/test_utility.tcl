@@ -99,29 +99,155 @@ proc run_parallel_cmds {cmds njobs} {
 # handles many files in one process (its beginfile/endfile logic writes each FILENAME
 # back independently), so we batch files per awk and run batches through the pool.
 # Files are disjoint across batches, so parallel awks never touch the same file.
+#
+# ⚠ AND ONE MISSING FILE USED TO COST ITS WHOLE BATCH, SILENTLY (issue 1476,
+# face 3). gawk's "cannot open file" is a FATAL, not a warning: it aborts the awk
+# process, so the up-to-63 files batched WITH the missing one are left
+# un-normalized too -- cleanup_debug_file.awk writes a file back from endfile(),
+# and END{endfile()} is the only thing that flushes the last file of a batch.
+# Then `catch {exec ...}` with no result variable discarded the message as well,
+# so the caller was told nothing at all. Reproducible in two awk spawns with no
+# concurrency whatever (test_regression_concurrency_1476.tcl section C).
+# Absent files are now dropped BEFORE batching -- a file that vanished costs only
+# itself -- and whatever went wrong is both printed and RETURNED to the caller.
 proc cleanup_debug_files {files njobs} {
-  if {[llength $files] == 0} { return }
-  set tmp [file join [pwd] .cleanup_files.[pid]]
-  set fd [open $tmp w]
-  fconfigure $fd -translation binary
+  if {[llength $files] == 0} { return {} }
+  set present {}
+  set missing {}
   foreach f $files {
-    puts -nonewline $fd $f
-    puts -nonewline $fd "\x00"
+    if {[file exists $f]} { lappend present $f } else { lappend missing $f }
   }
-  close $fd
-  catch {exec xargs -0 -P $njobs -n 64 awk -f cleanup_debug_file.awk < $tmp 2>@ stderr}
-  file delete -force $tmp
+  # ⚠ AND DEDUPED, because the batches must stay disjoint: two parallel awks
+  # rewriting one file at once is a corrupted file, and that invariant is the
+  # only reason this may be run in parallel at all. netlisting's last-writer-wins
+  # rename can put one published netlist path in the list twice (the library has
+  # duplicate .sch basenames).
+  set present [lsort -unique $present]
+  set problems {}
+  if {[llength $missing]} {
+    set m "cleanup_debug_files: [llength $missing] result file(s) gone before\
+ normalization (first: [lindex $missing 0]) -- another run in this tree is the\
+ usual cause (issue 1476)"
+    lappend problems $m
+    puts "FATAL: $m"
+  }
+  if {[llength $present]} {
+    set tmp [file join [pwd] .cleanup_files.[pid]]
+    set fd [open $tmp w]
+    fconfigure $fd -translation binary
+    foreach f $present {
+      puts -nonewline $fd $f
+      puts -nonewline $fd "\x00"
+    }
+    close $fd
+    if {[catch {exec xargs -0 -P $njobs -n 64 awk -f cleanup_debug_file.awk \
+                     < $tmp 2>@ stderr} err]} {
+      set e [string trim $err]
+      if {$e eq {}} { set e "awk exited nonzero" }
+      lappend problems "cleanup_debug_files: $e"
+      puts "FATAL: cleanup_debug_files: $e -- result files may be un-normalized"
+    }
+    file delete -force $tmp
+  }
+  return $problems
 }
 
+# ---------------------------------------------------------------------------
+# Job status: the two ways a status can fail to BE a status (issue 1476).
+#
+# `echo $?` writes 0..255, so neither sentinel can collide with a code a job
+# really wrote -- which is the entire point of them. Both used to be -1 and the
+# three callers printed `FATAL: <cmd> : exit -1`: a phantom failure of a job that
+# had run perfectly, wearing the exact shape of a real crash. 656 of them in one
+# measured collision, and `exit -1` is not a code any xschem process writes --
+# that tell is what identified the defect in the first place.
+#
+# A MISSING status file means somebody deleted it (the other run in this tree);
+# a GARBLED one means the job wrote nonsense. Different defects, different words.
+set JOB_STATUS_MISSING -1001
+set JOB_STATUS_GARBLED -1002
+
 # Read an integer exit status written by a job's `echo $? > status` tail.
-# Missing/garbled file => treat as a hard failure (-1).
 proc read_job_status {statusfile} {
-  if {![file exists $statusfile]} { return -1 }
-  set fd [open $statusfile r]
+  if {![file exists $statusfile]} { return $::JOB_STATUS_MISSING }
+  # The file can vanish between the test and the open -- that race IS the defect.
+  if {[catch {open $statusfile r} fd]} { return $::JOB_STATUS_MISSING }
   set s [string trim [read $fd]]
   close $fd
-  if {![string is integer -strict $s]} { return -1 }
+  if {![string is integer -strict $s]} { return $::JOB_STATUS_GARBLED }
   return $s
+}
+
+# The FATAL detail line for a status that is not a clean exit.
+# ⚠ A REAL exit code is still reported exactly as it always was -- `exit 139` --
+# so a genuine crash keeps the shape every reader, grep and habit in this tree
+# already knows. Only the two not-a-status cases get their own words.
+proc job_status_reason {rc statusfile} {
+  if {$rc == $::JOB_STATUS_MISSING} {
+    return "NO STATUS FILE ($statusfile) -- this job's exit code was never\
+ written or was deleted by another run in this tree (issue 1476); the job itself\
+ may well have succeeded"
+  }
+  if {$rc == $::JOB_STATUS_GARBLED} {
+    return "UNREADABLE STATUS FILE ($statusfile) -- its contents are not an exit\
+ code, so this job's real outcome is unknown"
+  }
+  return "exit $rc"
+}
+
+# ---------------------------------------------------------------------------
+# Per-run results roots (issue 1476, faces 1 and 2)
+# ---------------------------------------------------------------------------
+# Each case works in <case>/results.<pid> and publishes it under the canonical
+# <case>/results name when the verdict is already computed. Two helpers support
+# that; the wipe and the workroot themselves stay in the case files, where a
+# reader looking for "what does this case destroy at startup" will find them.
+
+# Restore the canonical <case>/results name from this run's private root.
+# `<case>/results/` is the name CLAUDE.md documents, the name a gold baseline is
+# promoted FROM, and the name a human looks in. Last run wins -- exactly what a
+# second SEQUENTIAL run has always done to this directory.
+#
+# It runs AFTER print_results has computed the verdict from the private root, so
+# nothing here can change a result. A failure is therefore a warning and never a
+# death: the files simply stay under their per-run name, which the message says.
+proc publish_results {testname resdir} {
+  set canon $testname/results
+  if {$resdir eq $canon || ![file isdirectory $resdir]} { return 0 }
+  if {[catch {
+        file delete -force $canon
+        file rename -force $resdir $canon
+      } e]} {
+    puts "WARNING: could not publish $resdir as $canon ($e) -- this run's result\
+ files are in $resdir"
+    return 0
+  }
+  return 1
+}
+
+# Remove per-run roots left behind by runs that are no longer alive.
+# Before per-run roots a killed run's mess was cleaned by the NEXT run's wipe of
+# the shared `results`; per-run roots would otherwise accumulate one directory
+# per killed run for ever, and open_close's is 1898 files. T1 kills cases for
+# real (issue 1403's 900 s per-case timeout), so this is not hypothetical.
+#
+# The canonical `results` can never match -- it has no `.<pid>` suffix -- and a
+# pid that is still alive is left alone even if it is not a regression run: the
+# failure direction here must always be "a leftover survives", never "a live
+# run's tree is deleted". Where pid liveness cannot be established (no /proc,
+# i.e. not Linux) nothing is swept at all.
+proc sweep_dead_run_dirs {testname} {
+  if {![file isdirectory /proc/[pid]]} { return {} }
+  set swept {}
+  foreach d [glob -nocomplain -directory $testname -types d -- results.* .work.*] {
+    if {![regexp {\.([0-9]+)$} [file tail $d] -> p]} { continue }
+    if {$p == [pid] || [file exists /proc/$p]} { continue }
+    if {![catch {file delete -force $d}]} { lappend swept [file tail $d] }
+  }
+  if {[llength $swept]} {
+    puts "swept [llength $swept] dead per-run dir(s) under $testname: $swept"
+  }
+  return $swept
 }
 
 # From Glenn Jackman (Stack Overflow answer)
@@ -145,7 +271,12 @@ proc comp_file {file1 file2} {
 # reported as a non-counting NOGOLD line (absent baseline is a setup state, not a
 # regression) while FATALs are always emitted, and summarize_all counts those via
 # its ^FATAL pattern.
-proc print_results {testname pathlist num_fatals} {
+# $resdir is this run's results root; it defaults to the canonical
+# <case>/results for any caller that has not got one (issue 1476 made the three
+# regression cases work in <case>/results.<pid> and publish afterwards, so the
+# comparison has to be told where the files it is judging actually are).
+proc print_results {testname pathlist num_fatals {resdir {}}} {
+    if {$resdir eq {}} { set resdir $testname/results }
 
     set a [catch "open \"$testname.log\" w" fd]
     if {$a} {
@@ -162,11 +293,11 @@ proc print_results {testname pathlist num_fatals} {
           incr num_gold
           continue
         }
-        if {![file exists $testname/results/$f]} {
+        if {![file exists $resdir/$f]} {
           puts $fd "$i. $f: RESULT?"
           continue
         }
-        if ([comp_file $testname/gold/$f $testname/results/$f]) {
+        if ([comp_file $testname/gold/$f $resdir/$f]) {
           puts $fd "$i. $f: PASS"
         } else {
           puts $fd "$i. $f: FAIL"

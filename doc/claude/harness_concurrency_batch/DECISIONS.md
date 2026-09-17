@@ -56,6 +56,24 @@ serialising runs completely, and that option only became visible through this
 measurement. If the user overturns R1 toward "no agent ever waits", that is the branch
 where it matters.
 
+## ⚖ R1 — a third shape appeared, and it is the "no agent waits" branch
+
+B1's `publish_results` pattern — work in `<case>/results.<pid>`, then restore the
+canonical `<case>/results` name — raises an option nobody had when the user was asked:
+the **verdict file could do the same thing**. Write `results.<pid>.log`, then rename to
+`results.log` at the end.
+
+That would give the "no agent ever waits" branch of R1 something it previously lacked:
+`results.log` keeps its canonical name *and* no run is made to queue. It is not free —
+the second finisher's rename still overwrites the first's verdict, so one run's answer
+is lost, merely lost *cleanly* (a complete, internally consistent file) instead of
+truncated mid-write. A lock, by contrast, serialises and keeps **both** answers.
+
+**This does not change what was implemented.** R1 as ruled stands: C1 builds the lock.
+But the option is recorded here so that if the user overturns R1 toward "no agent
+waits", the work is already scoped rather than rediscovered — and C1 is asked to
+evaluate it in its receipt for exactly that reason.
+
 ## Note — the measured premise that failed
 
 0990 stated a row here "would have to run two regressions at once, which is

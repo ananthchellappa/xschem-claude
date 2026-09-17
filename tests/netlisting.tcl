@@ -29,13 +29,23 @@ if {![file exists $testname]} {
   file mkdir $testname
 }
 
-file delete -force $testname/results
-file mkdir $testname/results
+# ⚠ PER-RUN RESULTS ROOT (issue 1476, faces 1 and 2) -- see the long note in
+# open_close.tcl for what the shared `$testname/results` did to two concurrent
+# runs: the startup wipe raises when another run is writing inside the tree, and
+# an unguarded raise here kills the case with no banner and no `Total num fail:`
+# line at all. The canonical `netlisting/results` name is restored by
+# publish_results at the end, so gold promotion is unchanged.
+file delete -force $testname/results.[pid]
+set resdir "$testname/results.[pid]"
+file mkdir $resdir
+sweep_dead_run_dirs $testname
 
 set xschem_library_path "../xschem_library"
 
 set cwd [pwd]
-set workroot "$testname/results/.work"
+# Scratch is per-run AND outside the results tree: pid-scoping it inside was
+# measured to change nothing, because results itself was the shared object.
+set workroot "$testname/.work.[pid]"
 file mkdir $workroot
 
 # Job records, in walk order.
@@ -76,12 +86,12 @@ proc netlisting_dir {dir} {
 # and xschem also drops intermediate dotfiles into -o). The finished netlist is
 # moved into the shared results dir later, sequentially, in walk order.
 proc plan_xschem_netlist {type output_dir dir fn} {
-  global testname xschem_cmd cwd workroot jobs
+  global testname xschem_cmd cwd workroot resdir jobs
   set fn_debug [join [list $output_dir , [regsub {\.} $fn {_}] "_${type}_debug.txt"] ""]
   regsub {./} $fn_debug {_} fn_debug
   set sch_name [regsub {\.sch} $fn {}]
   set fn_netlist [join [list $sch_name "." $type] ""]
-  set output [join [list $cwd / $testname / results / $fn_debug] ""]
+  set output [join [list $cwd / $resdir / $fn_debug] ""]
   set opt s
   if {$type eq "vhdl"} {set opt V}
   if {$type eq "v"} {set opt w}
@@ -110,17 +120,26 @@ run_parallel_cmds $cmds $njobs
 # COLLATE: sequential, in walk order. Reproduce the original exit-code logic
 # (exit 10 = expected netlist error, ignored; other nonzero = FATAL) and move each
 # finished netlist into the shared results dir last-writer-wins by walk order.
-set results "$cwd/$testname/results"
+set results "$cwd/$resdir"
 set cleanlist {}
 foreach j $jobs {
   lassign $j fn_debug fn_netlist output workdir status cmd
   set rc [read_job_status $status]
   if {$rc != 0 && $rc != 10} {
-    puts "FATAL: $cmd : exit $rc"
+    puts "FATAL: $cmd : [job_status_reason $rc $status]"
     incr num_fatals
   } else {
     if {[file exists "$workdir/$fn_netlist"]} {
       file rename -force "$workdir/$fn_netlist" "$results/$fn_netlist"
+      # ⚠ AND THE NETLIST ITSELF IS NORMALIZED NOW (issue 1476). Only the debug
+      # files were ever passed to the awk, so nothing normalized the netlists --
+      # and two of them carry an `.include <workroot>/<idx>.d/model_*.txt` line
+      # pointing into this job's private scratch. That path is per-run since the
+      # workroot moved, so those two files would otherwise differ from their own
+      # gold on every run. Measured before adding them: with the current pattern
+      # set the awk changes 0 of the 724 netlist files, so this costs nothing
+      # anywhere else.
+      lappend cleanlist "$results/$fn_netlist"
     }
     lappend pathlist $fn_debug
     lappend pathlist $fn_netlist
@@ -130,4 +149,5 @@ foreach j $jobs {
 cleanup_debug_files $cleanlist $njobs
 file delete -force $workroot
 
-print_results $testname $pathlist $num_fatals
+print_results $testname $pathlist $num_fatals $resdir
+publish_results $testname $resdir

@@ -33,6 +33,26 @@ function replace_pattern(old, new)
   replace_pattern("drawing window ID.*$", "drawing window ID ***Removed***")
   replace_pattern("top window ID.*$", "top window ID ***Removed***")
   replace_pattern("created dir.*$", "created dir ***Removed***")
+  ## ⚠ THE PER-RUN TOKENS (issue 1476), mapped back to their canonical spelling.
+  ## Each run now owns its results root and its scratch root -- <case>/results.<pid>
+  ## and <case>/.work.<pid> -- so two runs in one tree cannot wipe each other. But
+  ## those paths are PRINTED into the results themselves, in at least four shapes
+  ## measured on this tree:
+  ##      process_options(): ... set XSCHEM_TMP_DIR {<workroot>/44.tmp}   (1898 files)
+  ##      process_option(): file name given: <resdir>/simple_inv.sch      (5 files)
+  ##      is_from_web(<resdir>/simple_inv.sch) = 0
+  ##      .include <workroot>/31.d/model_test_ne555.txt                   (2 netlists)
+  ## Left alone, every one of those files would differ from its own gold on the
+  ## very next run -- same machine, same tree, nothing changed -- which is a
+  ## harder failure than the machine-absolute paths already in here (those at
+  ## least compare equal to themselves).
+  ##
+  ## Mapped rather than ***Removed***: the substitution restores exactly the text
+  ## these lines had before the roots became per-run, so the file keeps its
+  ## filename and its context, an existing baseline still matches, and the
+  ## recorded path agrees with where publish_results finally puts the file.
+  replace_pattern("results\\.[0-9]+", "results")
+  replace_pattern("\\.work\\.[0-9]+", ".work")
   replace_pattern("undo_dirname.*$", "undo_dirname ***Removed***")
   replace_pattern("framewinID.*$", "framewinID ***Removed***")
   replace_pattern("framewin parentID.*$", "framewin parentID ***Removed***")

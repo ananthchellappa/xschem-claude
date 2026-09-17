@@ -103,6 +103,18 @@ src/*.log
 tests/create_save/results/
 tests/netlisting/results/
 tests/open_close/results/
+# ...and their per-run siblings (issue 1476). Each run works in
+# <case>/results.<pid> with its scratch in <case>/.work.<pid>, so two runs in one
+# tree can no longer wipe each other's files, and publishes to the canonical
+# `results` name above when its verdict is computed. A run that is KILLED (T1
+# gives each case 900 s) leaves its pair behind until a later run sweeps it, and
+# NEITHER name is matched by the three rules above -- they are exact paths.
+tests/create_save/results.*/
+tests/netlisting/results.*/
+tests/open_close/results.*/
+tests/create_save/.work.*/
+tests/netlisting/.work.*/
+tests/open_close/.work.*/
 tests/create_save_output.txt
 tests/netlisting_output.txt
 tests/open_close_output.txt

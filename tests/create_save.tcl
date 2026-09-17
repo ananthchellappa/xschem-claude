@@ -25,11 +25,21 @@ set testname "create_save"
 set pathlist {}
 set num_fatals 0
 
-file delete -force $testname/results
-file mkdir $testname/results
+# ⚠ PER-RUN RESULTS ROOT (issue 1476, faces 1 and 2) -- see the long note in
+# open_close.tcl for what the shared `$testname/results` did to two concurrent
+# runs: the startup wipe raises when another run is writing inside the tree, and
+# an unguarded raise here kills the case with no banner and no `Total num fail:`
+# line at all. The canonical `create_save/results` name is restored by
+# publish_results at the end, so gold promotion is unchanged.
+file delete -force $testname/results.[pid]
+set resdir "$testname/results.[pid]"
+file mkdir $resdir
+sweep_dead_run_dirs $testname
 
 set cwd [pwd]
-set workroot "$testname/results/.work"
+# Scratch is per-run AND outside the results tree: pid-scoping it inside was
+# measured to change nothing, because results itself was the shared object.
+set workroot "$testname/.work.[pid]"
 file mkdir $workroot
 
 # Job records, in walk order. Each: {output fn_sch status cmd}
@@ -39,8 +49,8 @@ set jobs {}
 # PLAN: write each seed .sch (cheap, sequential) and build the xschem command.
 # These jobs use distinct file names and no `cd`, so they're trivially parallel-safe.
 proc create_save_plan {} {
-  global testname xschem_cmd cwd workroot jobs
-  set results_dir ${testname}/results
+  global testname xschem_cmd cwd workroot resdir jobs
+  set results_dir $resdir
   if {[file exists ${testname}/tests]} {
     set ff [lsort [glob -directory ${testname}/tests -tails \{.*,*\}]]
     foreach f $ff {
@@ -81,13 +91,13 @@ foreach j $jobs { lappend cmds [lindex $j 3] }
 run_parallel_cmds $cmds $njobs
 
 # COLLATE: sequential, in walk order, reproducing the original pass/FATAL logic.
-set results_dir ${testname}/results
+set results_dir $resdir
 set cleanlist {}
 foreach j $jobs {
   lassign $j output fn_sch status cmd
   set rc [read_job_status $status]
   if {$rc != 0} {
-    puts "FATAL: $cmd : exit $rc"
+    puts "FATAL: $cmd : [job_status_reason $rc $status]"
     incr num_fatals
   } else {
     lappend pathlist $output
@@ -98,4 +108,5 @@ foreach j $jobs {
 }
 cleanup_debug_files $cleanlist $njobs
 file delete -force $workroot
-print_results $testname $pathlist $num_fatals
+print_results $testname $pathlist $num_fatals $resdir
+publish_results $testname $resdir
