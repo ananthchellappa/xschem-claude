@@ -71,8 +71,13 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **1480-update** | `write_backup()`'s header marked fixed, not re-filed | DONE (folded into R3-build) | `9ed27a7f` |
 | **R2-build** | private `HOME` for the guard suite's children | IN FLIGHT (holds the suite slot) | — |
 | **save-citations** | `save.c:4149` cited stale by ~7 suites | IN FLIGHT (no suite) | — |
-| **V4** | solo T1 + a measured concurrent pair (relaxes R4) | QUEUED — after R2-build | — |
-| **serialisation docs** | rewrite the 6 that cite the refuted RAM figure | QUEUED — needs V4's evidence | — |
+| **R2-build** | private `HOME` — every prediction held to the digit | DONE | `6751c5c4` |
+| **save-citations** | 7 reported → **30 coordinates, 11 files** | DONE | `6751c5c4` |
+| **V4** | solo GREEN + **the first measured concurrent pair** | DONE | *(this commit)* |
+| **W12b** | counts→sets in `/tmp`; the R4 gate | IN FLIGHT (holds the suite slot) | — |
+| **claude-md-2** | the two numbers V4 refuted | IN FLIGHT (no suite) | — |
+| **serialisation docs** | rewrite the 6 that cite the refuted RAM figure | QUEUED — after `W12b` | — |
+| **PLAN.md** | closing pass; it still describes the superseded shape | QUEUED | — |
 
 ⚠ **Only one crew may run suites at a time** — that is this batch's own subject, and a number
 produced during a collision is void. The queue above is that constraint, not a priority order.
@@ -248,6 +253,44 @@ work as outstanding.** Marked done, so a solved defect is not filed a sixth time
 
 **Reported, not fixed:** `src/save.c:4149` cited stale by ~7 further suites — dispatched as
 `save-citations`.
+
+## ✅ V4 — TWO FULL T1 RUNS NOW COEXIST. The batch's core claim is a fact.
+
+Seven full T1 runs. **Solo GREEN**: rc 0, 375 s, trailer `cases=84 blocks=83
+counted_failures=0`. **Pair**: both proceeded, each verdict headed by **its own** pid and
+trailered, 84 cases and 83 blocks each, **no refusal, no `rc 2`, no `exit -1`, no phantom
+`FATAL`** — and the original silent defect is gone: **neither verdict was missing blocks the
+other had.** Pre-fix, the same staggered shape gave **407/432/757 phantoms with the second run
+dead at rc 1**.
+
+**One thing gates R4.** One run in four reds `W12b` (`37 -> 38 in /tmp`) **in the zero-baseline
+suite**: it globs a **global `/tmp` namespace with no pid in the name** and **compares counts,
+not sets**. **Third appearance of that exact defect class in one batch** — after `C11` and
+0609's own fix code. Dispatched.
+
+### ⚠ THE SHARPEST LESSON IN THE BATCH: `wc -l` is 171, not 85
+
+`85` = 83 + 2, and **omits the 83 block-header lines**. Real: **`2 + 83 + 83 + 3 = 171`**,
+verified on four green verdicts. That paragraph has now been wrong **three times** — and **the
+number added to prevent the conflation was itself the conflation**, produced by arithmetic on a
+sentence rather than by running `wc -l` once. The driver propagated it into `CLAUDE.md`,
+`CREW_BRIEF.md` and two commit messages within hours of writing the warning it violated.
+
+### ⚠ Concurrency is ~44% FASTER at full-T1 scale, not 20% slower
+
+**771 s** back-to-back for both answers against **435 s / 436 s** concurrent. Per-run cost ~12%,
+matching R1-recon's *direction* — the box has **20 cores**, so wall-clock flips sign at full-T1
+scale while the single-case figure stays right for a single case. ⚠ **`run_regression.tcl:665-666`
+prints the refuted sentence to every crew that starts a second run.** **The reason for the change
+remains that no crew is ever turned away; speed is a side effect.**
+
+### Two findings that change how a red is read
+
+* ⚠ **A T1 red is not by itself evidence of a collision.** An **uncontended** run returned 3
+  counted failures in `test_ase_optier_0963`; standalone re-run `ALL PASS (109 checks)`. A flake.
+* **No memory pressure.** Peak **10328 MiB concurrent vs 10350 MiB solo** — concurrency added
+  **nothing**. Swap 0, `dmesg` OOM kills **0**. Still **no receipt anywhere** for the OOM six
+  documents once cited.
 
 ## ⚖ R4 — the serialisation rule keeps its rule and loses its reason (driver's call)
 

@@ -48,9 +48,16 @@ brief, your stage's row in `PLAN.md`, and **the previous stage's receipt** in
      independent passes miscounted by using log lines, and the trusted alternative
      was wrong too.
    * **There are now THREE plausible numbers, not two.** 84 cases; 83 `Total num
-     fail:` lines; and `wc -l` answers **85**, because the verdict carries the two
-     sentinel lines as well. This paragraph's ancestor has already been wrong twice
-     by conflating the first two — do not let the third in.
+     fail:` lines; and `wc -l` answers **171**.
+
+     ⚠ **THIS BULLET SAID 85 UNTIL V4 MEASURED IT, AND THAT IS THE SHARPEST LESSON
+     IN THE BATCH.** 85 is 83 + 2 — the log lines plus the two sentinels — and it
+     omits the **83 block-header lines**. The real decomposition, verified on four
+     green verdicts, is **2 + 83 + 83 + 3 = 171**. So this paragraph has now been
+     wrong **three times**, and the number added *to prevent the conflation* **was
+     itself the conflation**, arrived at by arithmetic on a sentence instead of by
+     running `wc -l` once. **Take the number from the artefact. Every time. Including
+     when you are writing the warning about not doing that.**
 
    ⚠ **AND `results.log` MAY NOT BE YOUR ANSWER.** Both runs now proceed, so during a
    concurrent run `results.log` can hold a verdict that is complete, well-formed and

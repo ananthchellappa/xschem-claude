@@ -375,6 +375,61 @@ cite the collision evidence rather than a box that was never weighed.
 **unmeasured by anyone**, and so are the `ngspice` and display arms; the recon measured
 `open_close` only. Those remain open questions, and the relaxation must not silently cover them.
 
+## ⚖ R4 — MEASURED. The fix held; one counts-not-sets row still gates the relaxation.
+
+**V4 ran seven full T1 runs and produced the first-ever measured concurrent pair.** The core
+claim of this batch is now a fact rather than a design intention.
+
+**Solo: GREEN.** rc 0, **375 s**, trailer `cases=84 blocks=83 counted_failures=0`. Read the new
+way — trailer, not mtime; no md5 comparison. With `:99` alive it printed **84 `Start` / 84
+`Finish`**, so **1481's hole is display-state dependent** and did not fire; its mechanism was
+confirmed in source at `:826`/`:841`/`:872`.
+
+**Pair: the fix held.** Both runs proceeded. Each verdict carries a header naming **its own**
+pid and a trailer; 84 cases and 83 blocks each; **no refusal, no `rc 2`, no `exit -1`, no
+phantom `FATAL`**; and — the original silent defect — **neither verdict was missing blocks the
+other had**, the whole diff being one hunk. `results.log` byte-identical to the last finisher.
+
+**What still gates R4.** One run in four reds `test_suite_watchdog_1403` row **`W12b`**
+(`37 -> 38 in /tmp`) **in the suite whose baseline is ZERO**. It globs
+`/tmp/xschem_emergencysave_*` — a **global namespace with no pid in the name** (`main.c:42`) —
+and **compares counts, not sets**, so the other run's killed children red it. **Third appearance
+of this exact defect class in one batch**, after `C11` and 0609's own supplied fix code. A count
+is not an identity. Dispatched as `W12b`, with four sibling files V4 listed but did not read.
+
+**Decision: R4 relaxes when `W12b` and its siblings compare sets — not before.** The conditional
+form is the point. The rule's stated basis was a refuted RAM figure; its real basis was
+corruption; that corruption is now measured gone, and what remains is a *different*, narrower
+defect that would still manufacture a false red in the one suite whose baseline is zero.
+
+### Two numbers refuted, and one of them is the batch's sharpest lesson
+
+1. ⚠ **`wc -l` is 171, not 85.** `85` is 83 + 2 and **omits the 83 block-header lines**; the
+   real decomposition, verified on four green verdicts, is **`2 + 83 + 83 + 3`**. That paragraph
+   has now been wrong **three times** — and **the number added to prevent the conflation was
+   itself the conflation**, reached by arithmetic on a sentence instead of by running `wc -l`
+   once. The driver propagated it into `CLAUDE.md`, `CREW_BRIEF.md` and two commit messages
+   within hours. **Take the number from the artefact — including when writing the warning about
+   not doing that.**
+2. ⚠ **Concurrency is ~44% FASTER at full-T1 scale, not 20% slower.** Measured back-to-back
+   rather than derived: **771 s** for both answers versus **435 s / 436 s** concurrent. Per-run
+   cost is ~12%, which *does* match R1-recon's direction — the box has **20 cores**, so
+   wall-clock flips sign at full-T1 scale while the single-case figure (64.4 s vs 53.7 s) stays
+   correct **for a single case**. ⚠ `run_regression.tcl:665-666` **prints the refuted sentence
+   to every crew that starts a second run**; dispatched with `W12b`. **The reason for the change
+   is still that no crew is ever turned away — speed is a side effect, not the goal.**
+
+### Two findings that change how a red is read
+
+* ⚠ **A T1 red is not by itself evidence of a collision.** V4's back-to-back baseline returned
+  **3 counted failures in `test_ase_optier_0963`** (ngspice `rc=1`, `raw=-1bytes`, `NORAW`) in an
+  **uncontended** run; standalone re-run was `ALL PASS (109 checks)`. A flake. After a night
+  spent teaching everyone to suspect collisions, this deserves saying out loud.
+* **Memory pressure is not a live concern here.** Peak used **10328 MiB concurrent against 10350
+  MiB solo** — concurrency added **nothing**. Min available ~5.4 GiB, **swap 0 throughout**,
+  `dmesg` OOM kills **0** before and after. No OOM was observed, so there is still **no receipt
+  anywhere** for the event six documents once cited.
+
 ## ⚠ AND THE RULE ABOUT NUMBERS NOW HAS A THIRD VICTIM: PROVENANCE
 
 "7.8 GB" first appears on **2026-08-07, in a session prompt** (`git log -S`), spread by copying
