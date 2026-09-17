@@ -182,12 +182,27 @@ issue file are **1476**. Batch record: `doc/claude/harness_concurrency_batch/`.
    a death, never as a zero. This file's own argument that (3) is worth doing
    alongside (1) still stands, unaddressed.
 
-⚠ **The second sighting's `.disp.log` mechanism is only partly closed, and is worth
-knowing before anyone cites this issue as done.** Two `run_regression.tcl` runs can no
-longer overlap by default, which removes the case measured here. But the per-suite
-`headless/*.disp.log` names are **still not pid-qualified**, and the lock covers
-`run_regression.tcl` only — a standalone suite run on `:99` (a bare `./src/xschem
---script`, a `devdisplay.sh exec`, another clone's mutation loop) is not enrolled in
-it and can still race those files against a live T1. That is exactly the
-configuration this sighting recorded. Not measured by the batch; flagged here rather
-than left implicit, and worth its own number if anyone hits it again.
+⚠ **The second sighting's `.disp.log` residual is real — but the description that
+stood here until 2026-09-17 was WRONG, and it sent readers hunting a writer that does
+not exist.** This paragraph used to say that a standalone suite run on `:99` (a bare
+`./src/xschem --script`, a `devdisplay.sh exec`, another clone's mutation loop) is not
+enrolled in the lock and "can still race those files against a live T1". **It cannot.**
+Measured repo-wide by task D3 and **re-measured independently by task F1**: the **only**
+writer of `headless/*.disp.log` anywhere in this repository is `tests/run_regression.tcl`
+itself, at `:669, 671, 691, 696, 700, 704`. The three ways a standalone suite is actually
+launched all write somewhere else — `devdisplay.sh`'s `cmd_exec` (`:399-403`) performs
+**no redirection at all**, being exactly `DISPLAY="$DPY" GUI_GATE=0 "$@"`;
+`run_suites.sh` (`:121, 123, 125`) and `full_audit.sh` (`:475-485`) capture the child
+into a shell **variable**, never into a file beside the suite; and
+`tests/headless/scratch.tcl` already hands each process a **pid-qualified** directory.
+A single writer cannot race itself. The 2026-08-29 sighting is not in doubt — what that
+pair raced was the **display**, plus whichever of them was a `run_regression.tcl` run.
+
+**The residual's real subject is different: four FIXED names whose only protection is a
+lock that is documented to fail open.** `<case>.log`, `headless/<case>.log`,
+`headless/<case>.disp.log` and the display arm's shared `--logdir`
+(`tests/results/.actionlogs`, `run_regression.tcl:661-662`) are all unqualified names
+shared by every run in the tree; and `t1_lock_take` **proceeds UNLOCKED after four
+failed attempts** (`:502-505`), announcing it only on stdout — the stream this file's
+own closure tells readers not to trust. **Filed as issue 1478**, which opens with this
+correction. Do not repeat the standalone-race sentence.

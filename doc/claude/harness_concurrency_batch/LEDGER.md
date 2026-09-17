@@ -23,83 +23,67 @@ when the receipt is in `receipts/` and the driver has read it.
 |---|---|---|---|---|---|
 | **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0 rc 0; **0805's own fix was a regression** | 0805, 0802 |
 | **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 rc 0 | 0408(a) |
-| **E3** | 1332-residual | **DONE** | — | **40 → 43 checks**; 12/12 clean, **8/8 under load**; reddened under **two** sabotages | 1332 |
+| **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43 checks**; 12/12 clean, **8/8 under load**; reddened under **two** sabotages | 1332 |
+| **F1** | final documentation pass | **DONE** | — | all three OWED items closed; comment-only, **proven not asserted** | 0905, 1477, 1478 |
 
-## ⚠ E3: IT REFUTED ITS OWN ROW'S PREMISE, MID-TASK
+## ⚠ F1: A CITATION WRITTEN DOWN *AS A CORRECTION* WENT STALE INSIDE THE SAME BATCH
 
-`BB37`'s first draft asserted that the fixed `after 100` produces a *vacuous pass*. It
-does not — it fires **before the toplevel exists** and degenerates into `BB36`'s shape.
-The comment and check name now state both measured results separately.
+D3's refutation cited `full_audit.sh:438-440` as the capture site. **Today those lines
+are `:475-485`** — because **E1's `b3cc484c` added lines to that file after D3 measured
+at `aa0e2213`.** Under a day, inside one batch, in a sentence whose entire purpose was
+to correct an earlier error.
 
-E3's own formulation is the one to keep: **"an unmeasured mechanism in a comment is
-D2's defect one layer up: nothing can ever redden it."**
+F1 wrote the re-measured numbers into 0905 but **left `1478`'s copies at `:41` and
+`:192` stale**, judging the 1477/1478/1479 fence to be about their *defects* rather than
+their citations. **Driver: that is two one-line fixes and they are dispatched as F2** —
+a just-filed issue carrying a known-stale citation is exactly the rot this batch exists
+to be about.
 
-## E3's red phase — two sabotages, and the second is the important one
+## F1's work, re-measured rather than inherited
 
-* **Reverted to today's `after 100`** → `3 FAILED (40 passed)`, 2/2 byte-identical.
-  `BB36 -> {0 {} {} 0 {} 1 0 1 0 1}` — 1332's own recorded shape: nothing seen, no
-  grab, no bits, deadman burned.
-* **A `winfo exists`-only poll** → `2 FAILED (41 passed)`.
-  `BB37 -> {1 {} 1 {{A[1]} {A[0]}} …}` — window seen, **grab empty, `tkwait` never
-  entered, and the right bits returned anyway.** ⚠ **That vacuous pass is the shape a
-  naive "just poll instead" fix would have shipped GREEN**, and **only the grab leg
-  sees it.** The obvious fix was measured and rejected.
+* **0905's closure corrected.** D3's refutation re-verified from scratch and it holds:
+  the only writer of `headless/*.disp.log` is `run_regression.tcl`
+  (`:669, 671, 691, 696, 700, 704`). The paragraph now leads with the refutation, names
+  the real residual (four fixed names, the `:502-505` fail-open lock, `:661-662`'s
+  shared `--logdir`), and points at 1478.
+* **CLAUDE.md's MTIME bullet (`:138-156`).** The rule is **re-affirmed first**, with
+  V2's disagreeing mtime/md5 result quoted as its justification, *then* the 1477 hole:
+  **mtime proves a run WROTE, not that it FINISHED.** F1 reproduced 1477's measurement
+  independently — zero counted failures at 1/10/40/80/120/170 lines, `-buffering full`,
+  `-buffersize 4096`, no `fconfigure` anywhere. **The actionable addition is a second
+  gate: pair the mtime with the case count** (83 `Total num fail:` lines for today's 84
+  cases).
+* **The three `:294` citations → `:540`**, verified against the real emitter (line 540
+  of 545).
 
-Related: **the focus leg is a guard, not the discriminator** — it reads 1 under *both*
-sabotages, because the WM focuses the toplevel before the wrapper's own `focus`. Kept,
-but the file now says plainly that only the grab proves modality.
+**Comment-only, proven rather than claimed:** non-comment lines diffed against `HEAD`
+are **identical** in all three files, line counts unchanged (136 / 572 / 811). Sharper
+still for `full_audit.sh`: the classifier's only extractions from its source key on
+`line_has '…'` **shell syntax**, which cannot occur in a comment.
 
-## E3's other findings
+**Verification with a pre-edit baseline**, so "nothing moved" is a comparison rather
+than an assertion: `ALL PASS (75 checks)` and `ALL PASS (20 checks)` **both before and
+after**; CI gate exactly as `ci.yaml:68-74` → `SUMMARY: 15 pass 0 fail 0 crash/timeout
+0 skip`, rc 0; `results.log` byte-for-byte V2's throughout.
 
-* **The gate question, answered before any edit** (as the brief demanded):
-  `test_ase_bus_bits_0159` is **NOT CI-gated** — checked in four places. It is in
-  neither `hcases` nor `dcases`, nor `nogui_tests`/`nolog_tests`/`logdir_tests`, and is
-  reached only by `full_audit.sh:430`'s `ls test_*.tcl` glob. **The "both companions
-  were gated" pattern does not extend to E3** — which is why the brief asked rather
-  than asserted.
-* **Citation drift in BOTH directions.** 1332 cites `:258` three times and **nothing
-  was ever at `:258`**. The PLAN's `:277`/`:285` were exact today. The block is now
-  `:387-407`.
-* **The same latent defect P3 found, one row over:** `BB34`'s `after 5000` deadman
-  stayed armed through `BB35` — and `BB35` expects `{}`, so it could have passed on the
-  *deadman's* answer instead of Cancel's. Both timers are now cancelled per row, and
-  `BB38` asserts the handle no longer resolves.
-* **On E2's self-catch question**, asked explicitly: E3's rows write no files and use no
-  shared path — they assert on in-process Tk state, so they cannot re-create what they
-  test. No source-text rows were used, which matters because the file now contains
-  several comments quoting the old `after 100`.
-* Green after: `ALL PASS (43 checks)`, **12/12 clean**, **8/8 under 1332's own
-  acceptance clause** (6-way CPU spinner plus a concurrent `test_op_annot` on `:99`,
-  load 0.67 → 1.72), 3/3 through `run_suites.sh`, headless and `DISPLAY`-unset
-  unchanged at 23. **WM live: openbox 3.6.1 on `:99`, 1920x1080x24** — stated, as the
-  house rule requires.
+## ⚠ A convention decision F1 declined to take unilaterally — and measured why
 
-## ⚠ OWED — the final documentation pass (F1)
+E3 adopted "cite the emitter, not the line". F1 **deliberately did not** propagate it,
+with arithmetic rather than taste: it costs a line each, and a line added above
+`test_audit_classifier.tcl:280` drifts `:295-296`, which `test_startup_guard_0663.tcl:232`
+**pins by number**; a line above `banner_rule.tcl:50` drifts `:107` (cited twice by
+1479) and `:82-124` (cited by 1477). **Fixing drift by creating drift, in files four
+issue files cite by line, is the wrong trade at crew level.** All three edits are
+therefore line-count-neutral. Adopting the convention deliberately and everywhere at
+once is worth doing and is recorded here as a candidate, not smuggled in.
 
-1. **`0905`'s closure text (in `1a46c800`) carries a claim D3 refuted** — that a
-   standalone suite on `:99` can race `headless/*.disp.log`. It cannot; the only writer
-   of those names is `run_regression.tcl` itself.
-2. **CLAUDE.md's "confirm the log's MTIME moved" bullet has a known hole** (1477): a run
-   killed mid-write moves the mtime *and* leaves a truncated file that reads green. The
-   bullet should point at 1477.
-3. **NEW — three stale `:294` citations.** E3's added rows moved
-   `test_ase_bus_bits_0159.tcl`'s banner from `:294` to `:540`, and it is cited by
-   `tests/banner_rule.tcl:50`, `tests/headless/test_audit_classifier.tcl:280` and
-   `tests/headless/full_audit.sh:211` — **all three on E3's do-not-touch list**. All are
-   comments, so nothing reddens; E3 updated the two it was permitted to (0805's, and
-   `test_rdw_keys_1245.tcl`'s, re-running that suite green at `ALL PASS (92 checks)` to
-   prove the comment edit inert). The `:129` citations in three other suites were
-   **already stale before E3 arrived** — left alone deliberately.
+## Candidates, recorded and deliberately not scheduled
 
-## Candidate, not scheduled
-
-1478: make the lock's **fail-open warning write into the verdict** rather than only to
-stdout — a run that proceeded UNLOCKED leaves no trace in "the only place the answer
-is".
+1. **1478's fail-open warning should write into the verdict**, not only to stdout — a
+   run that proceeded UNLOCKED leaves no trace in "the only place the answer is".
+2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass.**
 
 ## Resume point
 
-Next: **F1** (final documentation pass, all three OWED items), then the **final solo
-T1** covering everything the companions touched — E1 moved `banner_rule.tcl`, which
-`run_regression.tcl` sources live, and two CI-gated classifiers; E2 moved a CI-gated
-suite.
+Next: **F2** (1478's two stale citations), then the **final solo T1** covering
+everything the companions touched.

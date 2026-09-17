@@ -208,7 +208,7 @@ line_has() { printf '%s\n' "$2" | grep -qE "$1"; }
 # banner_complete, because K20 asserts the three agree. `RESULT: ALL PASS` takes
 # `\(.*\)`, which the other two readers cannot constrain because neither
 # implements that spelling at all -- and it MUST, because
-# test_ase_bus_bits_0159.tcl:294 emits `RESULT: ALL PASS (12 checks, 2 group(s)
+# test_ase_bus_bits_0159.tcl:540 emits `RESULT: ALL PASS (12 checks, 2 group(s)
 # skipped)`, whose trailer contains an INNER parenthesis. Copying `[^)]*` onto
 # this alternative stops at that inner ")" and scores a green shipped suite FAIL.
 # Measured: with `[^)]*` on both, C47 reds. Locked by C45/C46/C47.

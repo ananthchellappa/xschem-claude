@@ -277,7 +277,7 @@ set B_ALLPASS_JUNK "$PRE\nok:   something  (ok)\nRESULT: ALL PASS and then some"
 set B_ALLPASS_NOTE "$PRE\nok:   something  (ok)\nRESULT: ALL PASS (51 checks, structural partition asserts)"
 
 # ⚠ THE ONE SHIPPED SHAPE A `[^)]*` TRAILER REJECTS, and the reason this arm's
-# trailer is NOT byte-identical to banner_complete's. test_ase_bus_bits_0159.tcl:294
+# trailer is NOT byte-identical to banner_complete's. test_ase_bus_bits_0159.tcl:540
 # prints "RESULT: ALL PASS ($npass checks[expr {$skipped ? ", $skipped group(s)
 # skipped" : {}}])", so with any group skipped the trailer contains an INNER
 # parenthesis: "(12 checks, 2 group(s) skipped)". A `\([^)]*\)` trailer stops at

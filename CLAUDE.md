@@ -135,6 +135,25 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   number from the run's own `Start`/`Finish` output.
   **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
+  ⚠ **BUT A MOVED MTIME PROVES A RUN *WROTE*, NOT THAT A RUN *FINISHED* (issue
+  1477).** The rule above is still correct and still necessary — V2 demonstrated
+  its value in the sharpest possible way, its mtime and md5 tests *disagreeing*:
+  the mtime had moved while the md5 came back byte-identical to the previous
+  run's. It has a hole all the same, measured 2026-09-17. A run killed mid-write
+  (OOM on this ~7.8 GB box, or 1403's 900 s per-case timeout) moves the mtime
+  **and** leaves a truncated `results.log` that scores **zero counted failures at
+  every prefix length** — verified at 1, 10, 40, 80, 120 and 170 lines of V2's own
+  169-line verdict — because all four counted shapes (`FAIL$`, `GOLD?$`,
+  `RESULT?$`, `^FATAL`, at `run_regression.tcl:327`) need a line to **exist**, and
+  a short file has fewer lines to match. **Every prefix of a green run is itself a
+  green run** to every automated reader. Worse, the verdict channel is never
+  `fconfigure`d, so it is **full-buffered at 4096 B** against a **4785 B** verdict:
+  a killed run leaves **0 or 4096 bytes**, not a proportional prefix, which makes
+  the 0-byte file the *typical* outcome rather than an extreme one. Nothing marks
+  that a run began or ended — there is no `REGRESSION START/END` sentinel anywhere
+  in `tests/`. **So pair the mtime with the case count:** the log must carry one
+  `Total num fail:` line per case minus one (**83** for today's 84), and a short
+  count is a death even when every line that is present is green.
   ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
   hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for
   a green run**, so a clean sweep writes the identical file every time

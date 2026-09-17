@@ -47,7 +47,7 @@
 # ⚠ ONE DIVERGENCE IS DELIBERATE AND MUST SURVIVE. full_audit's `RESULT: ALL PASS`
 # alternative tolerates an inner parenthesis in its trailer (`\(.*\)`) where this
 # file's `OVERALL: ok` rule does not (`\([^)]*\)`). That is not drift: no suite
-# emits an inner paren after the ok-sentinel, while test_ase_bus_bits_0159.tcl:294
+# emits an inner paren after the ok-sentinel, while test_ase_bus_bits_0159.tcl:540
 # really does emit `RESULT: ALL PASS (12 checks, 2 group(s) skipped)` -- and this
 # file implements no `RESULT: ALL PASS` spelling at all, so there is nothing here
 # for it to agree with. Locked by C45/C46/C47; K20 compares only the shared
