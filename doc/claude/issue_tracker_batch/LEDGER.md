@@ -8,14 +8,70 @@ after the driver has read the receipt and checked at least one of its claims.
 | stage | task | crew status | driver verdict | commit |
 |---|---|---|---|---|
 | A1 | sample files 1–10, classify against the tree | dispatched | — | — |
-| A2 | sample files 11–20, classify against the tree | dispatched | — | — |
+| A2 | sample files 11–20, classify against the tree | **DONE** | **accepted** — and it corrects the plan twice (see below) | — |
 | A3 | sample files 21–30, classify against the tree | dispatched | — | — |
 | A4 | sample files 31–40, classify against the tree | dispatched | — | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | dispatched | — | — |
 
 ## Running findings
 
-*(filled as receipts land — the corrections to `PLAN.md` live here and in the receipts)*
+### A2 (files 11–20) — the dangerous direction was empty; the **citation layer** is what rots
+
+`TRUE-OPEN 7 · TRUE-FIXED 2 · STALE-FIXED 1 · BAD-FIX 1 · ROTTED-CITE 8 · STALE-OPEN 0 ·
+DUPLICATE 0 · UNKNOWN 0.` n=10 — **not a rate** (D1).
+
+**The headline is the shape, not the count. In all eight rotted citations the symbol
+still existed and still behaved as the issue described — only the coordinates died.**
+0654 has 5 cites and 5 misses; 0674's two load-bearing cites drifted **~15 000 lines**;
+0618's ~20 bad cites sit in a section titled *"so a later reader need not re-derive it"*.
+
+**This converges with the driver's symbol scan from the opposite direction**, and the two
+were measured independently: symbols are **98.4% stable** (2016 backticked `foo()`
+citations, 33 absent — and see the correction below, of which only a handful are rot at
+all), while A2 found line coordinates wrong **8 times in 10**. The tracker's problem is
+not that it describes the wrong code. **It is that it points at the wrong place.**
+`src/op_annot.tcl:2366-2368` already models the answer in shipped source: *"Cited by
+function name, not by line number, on purpose."*
+
+**The rot has escaped the tracker into shipped source.** `src/ciw.tcl:122-126` repeats
+0654's three dead coordinates as fact; `src/ase.tcl:15795` cites `ase.tcl:802` from inside
+`ase.tcl`. **A checker scoped to `doc/claude/issues/` would miss half the corpus** — C1
+must be able to sweep `src/` comments even if D1 only repairs the tracker.
+
+**0442 is a `BAD-FIX` the schema did not anticipate: a placement defect, not a truth
+defect.** Its numbered item 1 was accurate when written; the tree then fixed the defect by
+the *unnumbered alternative buried at the end of the same section*, and the file's own
+header records why the prescribed shape was abandoned — *"a hand-maintained mirror of
+another module's rules is wrong by construction and had already drifted twice."* Pasting
+item 1 today re-introduces what was deliberately deleted. **No status field would have
+caught this**, so B1 must make a prescribed fix say **which option was taken**, not merely
+whether it was verified.
+
+**3 of 10 carry their own refutation 100+ lines below the wrong text.** 0665 line 3 says
+OPEN and line 59 says FIXED. Append-without-touching-the-top is not an occasional lapse —
+it is the corpus's default editing motion, and it is what the **510 both-words** census
+measures. The header block has to be able to express supersession.
+
+**Sizing D7: 9 of 10 needed no suite run at all.** The `UNKNOWN`/`NEEDS-RUN` fraction may
+be small. The exception is 0448's count-instability claim, which needs repeated T1s and
+cannot be refuted by a single green run.
+
+**Two corrections owed upward, both accepted:**
+* `PLAN.md:3` said the batch opened at `2cbce753`; **HEAD was `8608c7ef`** by the time A2
+  read it. ⚠ **The driver's own plan carried a rotted tree-state citation, inside the
+  batch about rotted tree-state citations, within an hour of writing it** — and it rotted
+  because *the driver itself committed twice*. This is the sharpest possible argument for
+  B1: a tree state in prose decays the moment anyone commits, so the convention must be
+  cheap to re-stamp or it will not be kept.
+* **CLAUDE.md's `run_regression.tcl:376`** for the four counted shapes is now **`:387`** —
+  the same citation CLAUDE.md already records as having moved once from `:327`. Third
+  position for one sentence.
+* A2 also **refused a hint in its own dispatch**: the driver suggested 0676 might concern
+  `share_farm_child` launching children under the developer's real `HOME`; 0676 is about
+  action-log **slot 0** and has nothing to do with `HOME`. Do not merge them in D1.
+
+A2 explicitly records that it did **not** re-verify the plan's 1047/510/742/0 census, so
+its receipt is **not** corroboration of those figures.
 
 ## Wrong recorded beliefs caught in this batch
 
@@ -27,6 +83,23 @@ re-reading."* Same table here, same discipline.
 | 1 | *"1050 issue files explicitly call themselves a duplicate"* | **the driver** | **7.** There are only 1047 numbered files, so 1050 was impossible on its face and the driver published it anyway. Cause: `/usr/bin/grep -lieE 'duplicate of…'` — in a bundled short-option string **`-e` consumes the rest as its pattern**, so the command searched for the literal letter `E` and matched every file. Proved by experiment: `grep -lieE 'zzz-no-such-pattern-zzz'` also returns **1050**. **A plausible number from a silently broken command** — the same shape as the fossil `results.log` that reads exactly like a clean sweep. |
 | 2 | *"69 citations in the tracker are demonstrably wrong"* | **the driver** | **Near zero.** `citescan.py` resolved 3751 `file:line` citations across 620 files and labelled 69 "missing", but the samples are `outitf.c`, `rawfile.c`, `tfanal.c`, `inp2dot.c` (**ngspice**), `libio/iovsprintf.c`, `debug/fortify_fail.c` (**glibc**) and `tcltk/tk8.6/entry.tcl` (**system Tk**) — legitimate citations into **external source trees**, counted as rot because the scanner only knew this repo. Same false-positive class as `pgrep -af` self-matching: **a pattern matched against the wrong namespace.** |
 | 3 | *"the tracker's citations rot at 85%"* | **the driver** | **Unmeasured, and not measurable this way.** `quotescan.py` checked 20 quoted numbered source lines and called 17 mismatches, but 16 are the heuristic (*"nearest filename mentioned above"*) grabbing **SPICE decks, netlist listings and `results.log` excerpts** that happen to carry line numbers inside fenced blocks. **Exactly one was genuine** — see the finding below. The lesson is not a rate; it is that **retrospective rot detection cannot be done by heuristic**, which is a Stage C input. |
+
+| 4 | *"only 1 issue file in 1047 states the tree it was measured against"* | **the driver** | **Wrong, and by the same mechanism as 1–3.** 1477, 1478 and 1479 visibly open with *"measured in the tree at `aa0e2213`"* — the driver had **read them in this session** and still published a census that excluded them. **Two** causes, both in one command: the phrase **hard-wraps across a newline** (`measured in` ⏎ `the tree at`) so a **line**-oriented grep cannot match it, and inside **single** quotes the `` \` `` escapes became a literal backslash-backtick, so the SHA alternation matched nothing either. |
+| 5 | *"193 of 508 git SHAs cited in issue files do not resolve"* | **the driver** | **Not SHAs.** The regex `[0-9a-f]{8,40}` matches any 8-digit **decimal** number, so the non-resolving list is led by `16091816` (the box's `MemTotal` **in kB**, from the RAM correction), `141592654` (**π**), `12405346`, `1286397804`, `0000001e`. A SHA-ish token must contain at least one `a`–`f`. |
+
+## The rule those five errors bought
+
+**Every mechanical check is run first against a case whose answer is already known, and
+reports nothing if it fails that.** All five driver errors are one family — *a command
+that returns a plausible number without doing what was meant* — and every one was caught
+only by a number looking impossible (1050 > 1047) or by reading the samples instead of
+the count. This is **red-first applied to measurement**: the last batch's brief demanded
+that a test row be observed red before it is trusted, and a grep is a test row.
+`tools/stampscan.py` implements it — it asserts 1473/1477/1478/1479 are detected and
+`sys.exit(1)`s rather than print a census if they are not.
+
+**This is also the tracker's own disease, reproduced five times in one evening by the
+agent auditing it.** The corpus is 1047 confident sentences produced the same way.
 
 ## Findings the driver measured directly (2026-09-17, at `8608c7ef`)
 

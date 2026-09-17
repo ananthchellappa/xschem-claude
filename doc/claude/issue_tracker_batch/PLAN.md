@@ -3,6 +3,13 @@
 **Opened** 2026-09-17, at `2cbce753`, branch `fluid-editing`.
 **Subject** `doc/claude/issues/` — the tracker, not any bug in it.
 
+⚠ **That opening line rotted within the hour, and A2 caught it.** By the time the first
+crew read this file HEAD was `8608c7ef` — because **the driver had committed twice**. The
+line is left standing rather than quietly corrected: it is the batch's own best evidence
+that **a tree state written in prose decays the moment anyone commits**, so B1's
+convention must be cheap to re-stamp or nobody will keep it. Re-read the stamp as *"the
+state this sentence was true of"*, never as *"the state you are reading it in"*.
+
 ## Why
 
 The user asked for the most open/broken thing more important than new features, and
