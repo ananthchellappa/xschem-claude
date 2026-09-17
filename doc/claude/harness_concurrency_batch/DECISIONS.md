@@ -345,3 +345,45 @@ regression driver and runs two copies of it**, so a containment edit changes wha
 1480's sweep stays out: the containment adds **no `.gitignore` rule** and **no sweep**, reusing
 the existing `_*_[0-9]*/` shape (verified with `git check-ignore -v`) **specifically so 0356
 remains the user's to settle.**
+
+## ⚖ R4 — "ONE CREW AT A TIME" KEEPS ITS RULE AND LOSES ITS REASON. Driver's call.
+
+The `ram-figure` crew surfaced this and could not file it: **six documents justify the
+serialisation rule by citing the "~7.8 GB box", and that box does not exist.** It is 15.35 GiB
+with 4 GiB of untouched swap, `dmesg` shows **zero** OOM kills, and the whole OOM chain is
+assertions citing each other — 1477 cites 0905, 0905 calls it *"a documented event"*, the
+ledgers say *"the recorded OOM path"*, and **nothing at the end of that chain is a
+measurement.** A rule whose stated basis evaporates deserves re-examination, not inertia.
+
+**This is the driver's decision, not the user's** — it is internal scheduling policy and reaches
+no person. Per the filter now recorded at the head of this file: *does this reach a person?*
+
+**Decision: the rule stands, on its real basis, and relaxes on evidence — not before.**
+
+The memory figure was always a **secondary** justification. The **primary** one is measured,
+reproduced in this very batch, and untouched by the correction: **concurrent runs corrupted each
+other 407/432/757 times** in the pre-fix pairs, and the loser died outright. That has nothing to
+do with RAM. Serialising crews is correct *because concurrent runs produce void numbers*, which
+is the batch's entire subject.
+
+**What changes is when it may be lifted.** `R1-build` exists precisely to make concurrent runs
+safe. Once it lands **and a verification crew has measured a clean concurrent pair**, the rule
+relaxes on that measurement. Until then it holds — and the six documents must be rewritten to
+cite the collision evidence rather than a box that was never weighed.
+
+⚠ **Do not read this as an all-clear on concurrency generally.** Concurrent `make` is
+**unmeasured by anyone**, and so are the `ngspice` and display arms; the recon measured
+`open_close` only. Those remain open questions, and the relaxation must not silently cover them.
+
+## ⚠ AND THE RULE ABOUT NUMBERS NOW HAS A THIRD VICTIM: PROVENANCE
+
+"7.8 GB" first appears on **2026-08-07, in a session prompt** (`git log -S`), spread by copying
+for **five weeks**, and reached CLAUDE.md only on **2026-09-17** — *the same commit that added
+the 1477 bullet, and the same day the driver reasoned from it*. Nobody ever ran `free`.
+
+This batch's standing rule was *"take the count from the artefact's own output, never from a
+grep."* It needs widening: **take every measurable fact from the machine, never from a
+sentence** — including facts that feel like background rather than measurements. Two further
+machine claims failed the same day and nobody had been looking for either: `/usr/bin/xfwm4` does
+not exist (introduced, unmeasured, by the commit titled *"correct the AUDIT_WM claim"*), and
+`/usr/local/bin/xschem` does not exist either.

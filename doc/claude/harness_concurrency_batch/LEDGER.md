@@ -63,7 +63,7 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **R1-recon** | can both runs proceed? what else is shared? | DONE | *(this commit)* |
 | **R2-R3-design** | isolation + C11 delta, read-only design | DONE | *(this commit)* |
 | **0060-comment** | the comment that misdirects leak-hunters | DONE | `a6038098` |
-| **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | IN FLIGHT | — |
+| **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | DONE | *(this commit)* |
 | **R1-build** | per-pid logs + header/trailer sentinels | IN FLIGHT (holds the suite slot) | — |
 | **R3-build** | the C11 delta — **land alone, not hostage** | QUEUED behind the suite slot | — |
 | **R2-build** | private `HOME` for the guard suite's children | QUEUED behind the suite slot | — |
@@ -107,6 +107,62 @@ separate process, which makes this **a child-process face of issue 1377 that 137
 supplied falsifiable predictions (`SG13` → `{3}`, `SG14` → `{0 1 1 0 4}`) precisely so the build
 crews can prove the chain wrong. **Report the actual numbers; do not round them into "2 failed."**
 The driver's own "clean HOME → ALL PASS (22)" is still taken **entirely on trust**.
+
+## ⚠ RAM-FIGURE — THE NUMBER WAS HALF, AND THE REASONING BUILT ON IT HAS NO RECEIPT
+
+Committed `2a60d81d`. `MemTotal: 16091816 kB` = **15.35 GiB**, plus **4 GiB of swap, zero in
+use**, which CLAUDE.md never mentioned at all. "~7.8 GB" was not a rounding — it was almost
+exactly **half**.
+
+**The OOM attribution has no receipt anywhere.** `dmesg` shows **zero** OOM kills. A repo sweep
+for an *observed* kill finds only SIGKILLs the harness sends deliberately, plus assertions citing
+each other: **1477 cites 0905, 0905 calls it "a documented event", the ledgers say "the recorded
+OOM path", and nothing at the end of that chain is a measurement.**
+
+**Provenance is the sharpest part.** `git log -S` dates "7.8 GB" to **2026-08-07, in a session
+prompt**. It spread by copying for **five weeks** and reached CLAUDE.md only on **2026-09-17** —
+*the same commit that added the 1477 bullet, and the same day the driver reasoned from it.*
+Nobody ever ran `free`.
+
+**The truncation paragraph was correctly NOT deleted.** 1477's hole is about *a kill*, not a
+cause; the cause list is reordered (1403's 900 s timeout first, OOM last) and the limits written
+in — **concurrent `make` and the ngspice/display arms remain unmeasured by anyone**, so the
+correction does not read as an all-clear.
+
+**A trap the driver's own brief would have walked into:** **455 doc citations** point at
+`src/ase.tcl` lines *below* 2857, so inserting a comment line there rots every one. The crew made
+that fix **line-count-preserving** (`numstat 1 1`) — driver-verified, along with "every changed
+line is a comment" in both `.tcl` files.
+
+**Two further machine facts failed, and nobody was looking for either:**
+
+* **`/usr/bin/xfwm4` does not exist.** Introduced — unmeasured — by the commit titled *"correct
+  the AUDIT_WM claim"*. One WM fact corrected and a second invented in the same breath, into a
+  paragraph warning that a missing WM falls back silently.
+* **`/usr/local/bin/xschem` does not exist**; the directory is empty. The crew **strengthened**
+  the never-a-bare-`xschem` rule rather than weakening it — one `make install` restores the
+  hazard — noting only that the failure is now loud instead of silent. Correct judgement.
+
+**17 stale sites deliberately left**, listed in the receipt: dated ledgers, another branch's park
+doc, session prompts, and four issue files recording *why a past decision was made*. Rewriting
+those would falsify the record. **The driver confirms that judgement.**
+
+## ⚖ R4 — the serialisation rule keeps its rule and loses its reason (driver's call)
+
+**Six documents justify "one crew at a time" by citing a box that does not exist.** Decision in
+`DECISIONS.md`: **the rule stands on its real basis and relaxes only on evidence.** The RAM figure
+was always *secondary*; the *primary* justification is measured, reproduced in this batch, and
+untouched — **concurrent runs corrupted each other 407/432/757 times** and the loser died. That
+has nothing to do with memory.
+
+`R1-build` exists to make concurrent runs safe. **When it lands and a verification crew measures a
+clean concurrent pair, the rule relaxes on that measurement** — and the six documents get rewritten
+to cite the collision evidence rather than a weight nobody took.
+
+**The standing rule needs widening.** It was *"take the count from the artefact's own output, never
+from a grep."* Three miscounts and now a fabricated hardware fact say it should read: **take every
+measurable fact from the machine, never from a sentence** — *including facts that feel like
+background rather than measurements.*
 
 ## ⚠ H1 RE-SCOPED ITS OWN BRIEF, AND THE IRONY IS EXACT
 
@@ -220,6 +276,7 @@ display. Cure: `.<pid>`, B1's own pattern, ~6 lines.
 1. **This box is not ~7.8 GB. `MemTotal` ≈ 15.35 GiB — wrong by 2×** in CLAUDE.md, and
    inherited into `DECISIONS.md`. CLAUDE.md *reasons* from it (1477's OOM attribution).
    Crew `ram-figure` is repairing it; the truncation defect itself is real and stays.
+   ⚠ **It repaired more than the number — see the next section.**
 2. **Concurrency does not buy throughput** — 64.4 s concurrent vs **53.7 s back-to-back**,
    20% *worse*. The case for "both proceed" is that **no crew is ever refused**, never speed.
 
