@@ -110,6 +110,55 @@ measured** — the box is 15.35 GiB and `dmesg` carries zero OOM kills.
 
 ---
 
+## D10 — The plan is re-scoped by its own measurement, and the wrong version is kept
+
+**Decision.** `PLAN.md`'s sub-problem 1 (*"a stored fix is an unverified hypothesis"*) is
+demoted from headline to secondary. **Citation rot becomes the batch's primary target.**
+The mis-scoped text stays in the file with the correction above it; nothing is deleted.
+
+**Why demoted.** The plan was built on the last batch's **six prescribed fixes that would
+have damaged working code**. Across 40 pre-registered random files: `BAD-FIX` **1**,
+`STALE-OPEN` **0**, `ROTTED-CITE` **27**. The six were a **selected** sample — we went
+looking at issues we already suspected — and generalising them into a rate is the precise
+error `D1` exists to prevent. **The mechanism caught its own author.**
+
+**Why not deleted.** Three reasons, and the third is the real one.
+
+1. The last batch's rule: *"the plan as written, corrected in place and not one line
+   deleted"* (`f669af14`).
+2. A plan that is silently rewritten to match its results cannot be audited, and stops
+   being evidence that the measurement mattered.
+3. **This is the batch's proof that pre-registration works.** A reader who finds only the
+   corrected plan learns nothing; a reader who finds both learns that a confident,
+   evidence-backed, six-example scoping was **wrong by an order of magnitude**, and that
+   40 random files were enough to show it. That is the argument for doing this again.
+
+**Why `BAD-FIX 1` is nonetheless an undercount.** A1 declined to score 0296 and 0435
+`BAD-FIX` although both quote C that no longer exists **and still looks like valid C** —
+*"correct by reference, damaging by paste."* The class is real and rarer than assumed, not
+absent. Requirement: a stored fix must still record **which option was taken**.
+
+---
+
+## D11 — The user's queue is triaged but not touched, and the 48 collapse first
+
+**Decision.** E1's triage stands as a **recommendation**; the driver clears nothing (`D5`).
+The first thing put to the user is not the 24 misfiled entries but the **48 that are one
+repeated question**.
+
+**Why.** E1 measured **153 of 190 (81%) THEIRS** — the filter does not dissolve the queue,
+and the driver's claim that it would was wrong (ledger error 7). But **48 of those 153 are
+a single request**: *ratify this batch's new on-screen wording*, already explicitly batched
+under **⚖ R9** and then filed **one entry at a time over weeks**. The user is looking at 48
+queue items where there is **one** decision.
+
+That is a **shape** defect, and it is the one the user actually experiences. Collapsing it
+is worth more than any of the other 141 entries individually, and it is the standing
+label-ratification exception working as intended: **collect the sentences into one
+reviewable document, then work through it one question at a time** — never ask in bulk.
+
+---
+
 ## D8 — B and C merge into one crew, because A decided the design
 
 **Decision.** `PLAN.md` separates **B1** (design the convention) from **C1** (build the

@@ -7,11 +7,11 @@ after the driver has read the receipt and checked at least one of its claims.
 
 | stage | task | crew status | driver verdict | commit |
 |---|---|---|---|---|
-| A1 | sample files 1–10, classify against the tree | dispatched | — | — |
+| A1 | sample files 1–10, classify against the tree | **DONE** | **accepted** — and it re-aims the batch | — |
 | A2 | sample files 11–20, classify against the tree | **DONE** | **accepted** — and it corrects the plan twice (see below) | — |
 | A3 | sample files 21–30, classify against the tree | **DONE** | **accepted** — it decided the design (see below); triggered D8 | — |
 | A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
-| E1 | triage 190 `rule` debts — *does this reach a person?* | dispatched | — | — |
+| E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
 
 ## Running findings
 
@@ -72,6 +72,111 @@ cannot be refuted by a single green run.
 
 A2 explicitly records that it did **not** re-verify the plan's 1047/510/742/0 census, so
 its receipt is **not** corroboration of those figures.
+
+### ⭐ THE AGGREGATE — all 40 pre-registered files, and it re-aims the batch
+
+| verdict | count / 40 | what it means |
+|---|---|---|
+| **ROTTED-CITE** | **27** | **the disease** |
+| TRUE-OPEN | 21 | says open, is open |
+| TRUE-FIXED | 14 | says fixed, is fixed |
+| **STALE-FIXED** | **7** | says open, tree already fixed it |
+| **BAD-FIX** | **1** | a stored fix that would damage the tree |
+| **STALE-OPEN** | **0** | *the dangerous direction never appeared* |
+| DUPLICATE | 2 | |
+| UNKNOWN | 1 | |
+
+*(Crews used slightly different secondary labels, so the four primary rows are the robust
+ones. A file can carry several verdicts. **n=40 of 1047 — roughly ±15 points at 95%.
+Do not quote this to two significant figures**, per D1.)*
+
+**`PLAN.md` was aimed at the wrong target, and D1 is why we know.** The plan was scoped
+around `BAD-FIX` and `STALE-OPEN` — the six prescribed bad fixes the last batch found. In a
+**random** sample `STALE-OPEN` is **0 of 40** and `BAD-FIX` is **1 of 40**. Those six were a
+**selected** sample, exactly as D1 warned, and a batch that had skipped the pre-registered
+measurement would have spent itself hunting a defect class that is genuinely rare while
+walking past one that affects **two files in three**.
+
+**The tracker does not describe the wrong code. It points at the wrong place.**
+
+⚠ **And the undercount is real: `BAD-FIX 1` is too low.** A1 declined to score 0296 and
+0435 as `BAD-FIX` although both quote C that no longer exists **and still looks like valid
+C**. Its verdict on 0435: *"correct by reference, damaging by paste."*
+
+### A1 (files 1–10) — the rot is BELOW THE FOLD, where no header checker can see it
+
+`TRUE-OPEN 7 · TRUE-FIXED 3 · ROTTED-CITE 9 · STALE-FIXED 1 · BAD-FIX 0 · STALE-OPEN 0 ·
+UNKNOWN 0 · NEEDS-RUN 0.` Ten files, **ten status-line directions correct**.
+
+⚠ **The finding that most constrains C1: a first-ten-lines checker scores the worst file
+in the sample GREEN.** 0071's header is *correct* — it says OPEN and it is open. The rot is
+**below the fold**, in the tables an **umbrella** issue uses to track its children: §3 lists
+0063 as an unresolved HIGH while 0063 reads `✅ REPLAYABLE`; §4 calls 0003 *"pre-existing"*
+while 0003 reads CLOSED; §4b's six *"next mutators"* are **five done**. **Umbrella issues
+are what people read to pick work**, so this is the highest-consequence rot in the corpus
+and a header-scoped validator is blind to all of it.
+
+**The tracker already contains its own prescription, unimplemented.** Issue **0229** *is*
+the write-up of line-number rot: it prescribes *"cite symbols, not offsets"*, **ships a
+ready-made pre-commit grep**, is **still OPEN**, and has since rotted itself — its class-d
+*"only survivor"* `select.c:790` now lives at `:1021`, and it is the driver's one confirmed
+rotted quote (`src/callback.c:2990`). **The fix for this batch's central finding has been
+sitting in the tracker, written down, for weeks, unbuilt.** That is the five-filings-zero-
+fixes pattern in its purest form.
+
+### E1 — the queue is real; its problem is shape, not validity
+
+| verdict | count | share |
+|---|---|---|
+| **THEIRS** — reaches a person | **153** | **81%** |
+| **MINE** — internal, never should have been filed | 24 | 13% |
+| STALE — already decided or moot | 11 | 6% |
+| UNKNOWN | 2 | 1% |
+
+**The headline is the 153, not the 24** (driver error 7 above). **48 of the 153 are one
+repeated request** — *ratify this batch's new on-screen wording* — already explicitly
+batched under ⚖ R9 and then filed **one entry at a time over weeks**. Collapsing those 48
+into the single review they were always meant to be is the most valuable thing available to
+put to the user.
+
+**Ordered for the user** (E1's ranking): `1453` ASE-L's test decks filled their *File >
+Open Recent* with ten dead entries · `1352` typing in an xschem dialog runs what you type
+as code · `1358_digits…vs_D2` **a ruling they already made was reversed without being put
+back to them** · `1395-default` the gesture they asked for in 0932 has no door left ·
+`1446` a value typed into a collapsed section is echoed back and silently not saved ·
+`1398` every glyph in ASE-L changed typeface, unseen on their screen.
+
+**The clearest never-theirs:** `1377_isolate_opt_in` — *should a test fixture clear the
+simulator registry by default or on request?* No surface, no wording, no consequence any
+XSCHEM user could observe. Eleven of the 24 are harness or tracker mechanics; five more
+state their own answer — **an entry whose text says "Forced by…" is not a question.**
+
+**Two notes carried up.** **Issue 0356 has no ledger entry at all** (0 hits across
+rule/look/suite) — the standing constraint protecting it was **inert**. And `1397`/`1458`
+are MINE to fix but carry a fact that is theirs to know: **50 of the user's 101 saved
+window geometries were permanently displaced by test runs.**
+
+**E1 corrected itself, in the batch's own idiom.** Its first draft took tier sizes from its
+table's **row** counts and silently dropped **10 THEIRS entries**; the verdict totals were
+right and the presentation lost ten. Caught by grepping the artefact against the ledger,
+not by re-reading. *That is the cases-vs-lines conflation CLAUDE.md records getting wrong
+three times — reproduced by a crew that had just read the warning.*
+
+**Read-only confirmed by evidence, not assertion:** `diff -rq` against the driver's backup
+is **silent**; the ledger is byte-identical. Nothing cleared, edited or added.
+
+### The driver's corpus-wide run of A4's closure detector
+
+`tools/closescan.py` (self-testing, per the rule the eight errors bought). **165** issue
+numbers are claimed closed somewhere — in issue files, `src/`, `tests/` or git log. **154**
+have a header that agrees. **7 do not**, and they are the mechanical face of sub-problem 2:
+
+`0071` · `0216` · `0249` · `0264` · `0516` · `0650` · `0947`
+
+**Two are closed by shipped source and git log rather than by another issue** — 0216 via
+`src/wave_viewer.tcl`, 0516 via `src/calculator.tcl` — which is the concrete argument for
+C1 sweeping beyond `doc/claude/issues/`. At **4.3%** this is a smaller class than citation
+rot, and unlike citation rot it is **exactly detectable**, today, with no judgement calls.
 
 ### A3 (files 21–30) — the citation split, and 0905's account of its own fix
 
@@ -154,6 +259,15 @@ re-reading."* Same table here, same discipline.
 | 5 | *"193 of 508 git SHAs cited in issue files do not resolve"* | **the driver** | **Not SHAs.** The regex `[0-9a-f]{8,40}` matches any 8-digit **decimal** number, so the non-resolving list is led by `16091816` (the box's `MemTotal` **in kB**, from the RAM correction), `141592654` (**π**), `12405346`, `1286397804`, `0000001e`. A SHA-ish token must contain at least one `a`–`f`. |
 
 | 6 | *"issue **0663** is the guard suite that was **writing** `~/.xschem/geometry`, and its ruling was isolate-not-prune"* | **the driver**, in **A4's own dispatch brief** | **0663 is not about geometry at all.** It is *"a Tcl error in any file sourced late by `xschem.tcl` SEGFAULTS startup"*, fixed in C on 2026-08-24. `/usr/bin/grep -c geometry` on it returns **0**. There is no geometry-writing guard suite in it and no isolate-not-prune ruling. **The real sibling of 1458 is 1397**, filed four days earlier, citing the same proc at the same line. |
+
+| 7 | *"the user's 190 `rule` debts are largely internal engineering misfiled as theirs — the three cleared on 2026-09-17 were the tip of an iceberg"* | **the driver**, and it was said **to the user**, in the answer that opened this batch | **153 of 190 (81%) are genuinely THEIRS.** E1's triage: THEIRS **153** · MINE **24** · STALE **11** · UNKNOWN **2**. The filter does **not** dissolve the queue. Its problem is **shape, not validity** — 48 of the 153 are *one repeated request* (ratify a batch's new on-screen wording), already batched under ⚖ R9 and then filed one entry at a time over weeks. |
+| 8 | *"`SUPERSEDED` appears in ~15 hits across ~13 files"* | the driver, `PLAN.md` baseline table | **26 hits across 19 files** (A1 re-measured). A1 confirmed 1047 and 742. |
+
+⚠ **Error 7 is the most consequential of the eight, because it is the only one the USER
+heard.** It was asserted in the answer that persuaded them to take this batch on. The three
+debts cleared that day were real, and generalising from three to 190 is the same move as
+generalising six *selected* bad fixes into a rate — **the error this batch was designed to
+avoid, committed by the driver in the act of proposing it.**
 
 ⚠ **Error 6 is the batch's subject happening to the batch.** The driver took a belief from
 **its own compacted summary of a previous session**, did not re-measure it, and wrote it

@@ -33,6 +33,35 @@ The tracker needs the same property: **an issue file should state what it was me
 against, and whether its prescribed fix has been verified or is a guess** — so that a
 reader can tell a measurement from a hypothesis without re-deriving the whole thing.
 
+## ⭐ RE-SCOPED 2026-09-17 BY THE MEASUREMENT — THIS PLAN WAS AIMED AT THE WRONG TARGET
+
+The stage-A sample came back and **the plan below is mis-scoped**. It is left standing and
+annotated rather than rewritten, because the gap between what it predicted and what was
+measured is the batch's single most valuable artefact. See `D10`.
+
+| verdict | / 40 | the plan expected |
+|---|---|---|
+| **ROTTED-CITE** | **27** | not a listed sub-problem at all |
+| **STALE-FIXED** | 7 | sub-problem 2 ✓ |
+| **BAD-FIX** | **1** | **sub-problem 1 — the batch's headline** |
+| **STALE-OPEN** | **0** | the dangerous direction |
+
+**Sub-problem 1 below is built on the last batch's six prescribed bad fixes. In a random
+sample that class is 1 in 40, and the dangerous direction is 0 in 40.** Those six were a
+**selected** sample — we went looking at issues we already suspected — which is the exact
+failure `D1` was written to catch, caught by the mechanism `D1` installed.
+
+**The real disease: the tracker does not describe the wrong code, it points at the wrong
+place.** Two files in three carry a citation that no longer resolves to what it claims,
+while the *symbol* it names survives 98.4% of the time. Bare `file:line` rotted **5 of 5**;
+line-plus-revision reproduced **4 of 4**; symbolic citations held **3 of 3**.
+
+**And the fix has been sitting in the tracker, written down, unbuilt.** Issue **0229** is
+the tracker's own write-up of line-number rot. It prescribes *"cite symbols, not offsets"*,
+**ships a ready-made pre-commit grep**, is **still OPEN**, and has since rotted itself.
+That is the five-filings-zero-fixes pattern in its purest form, and it is now this batch's
+primary target.
+
 ## The three sub-problems, in the order they cost us
 
 1. **A stored fix is an unverified hypothesis and nothing marks it as one.** Six would
