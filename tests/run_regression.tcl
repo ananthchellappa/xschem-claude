@@ -89,7 +89,31 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_trnoise_1466" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_variant_1470" \
-                 "headless/test_ase_simwin_variant_1471"]
+                 "headless/test_ase_simwin_variant_1471" \
+                 "headless/test_regression_concurrency_1476"]
+# ⚠ `test_regression_concurrency_1476` IS THE SUITE FOR THIS DRIVER'S OWN
+# CONCURRENCY DEFECT, and the paragraph below about wall-clock cost is answered
+# up front: measured 2026-09-17 on this tree, **8.5-8.6 s** for 20 checks (8.53,
+# 8.63, 8.63 over three runs) -- 2.1% of T1's ~410 s. The batch plan circulated
+# 7.4 s for it; that did not reproduce here, and the cost belongs to whoever runs
+# T1 next, so take it from a measurement rather than from a paragraph -- this
+# file's own comments above have been wrong that way twice.
+# It is not free because four of its rows are BEHAVIOURAL: it runs
+# a staggered pair of 1500-job miniature cases and a staggered pair of copies of
+# THIS FILE, and a race that is not provoked is a row that proves nothing.
+#
+# ⚠ IT RUNS TWO REGRESSION DRIVERS WHILE T1 IS RUNNING, AND THAT IS SAFE BY
+# CONSTRUCTION, NOT BY LUCK. Both copies are driven with their cwd inside the
+# suite's own per-pid scratch, with the case lists neutered to /bin/sh stand-ins,
+# so their verdict file and their verdict LOCK are `<scratch>/results.log` and
+# never this run's. A row that provoked the collision in `tests/` would corrupt
+# the very T1 executing it -- which is face 4 doing exactly what it does.
+#
+# ⚠ AND IT WAS DELIBERATELY UNREGISTERED UNTIL THE FIX LANDED. While the defect
+# was open the suite was RED BY DESIGN, and `full_audit.sh:393` picked it up
+# anyway through its `ls "$HERE"/test_*.tcl` glob -- so every audit taken in that
+# window showed two reds that were the point. A standing red is a defect, not
+# furniture: it is registered here now that both of its rows are green.
 # ⚠ ISSUE 1471 (Stage 16 task 2 -- the Simulators-window line and the release
 # note) IS IN BOTH LISTS. Headless it is pure Tcl and starts nothing: the two
 # schema procs the window paints from, the release note held to its rules, and
@@ -378,6 +402,164 @@ proc t1_why {childcode secs} {
   return "crashed, aborted mid-script, or a check failed"
 }
 
+## ---------------------------------------------------------------------------
+## THE VERDICT IS SERIALISED (issue 1476 face 4; filed as 0955 and 0905)
+## ---------------------------------------------------------------------------
+## The verdict file is opened mode `w` -- fixed name, truncate, no lock -- so two
+## runs in one tree destroy each other's ANSWER. Measured 2026-09-16 with two
+## copies of this driver: the file ends up 13268 bytes, zero NUL bytes, the first
+## run's verdict complete and perfectly well-formed, and the second run's ENTIRE
+## verdict simply never exists while that run exits 0 printing its Finish lines.
+## Nothing is corrupted; a whole run's evidence is gone.
+##
+## ⚠ THAT IS THE DANGEROUS DIRECTION. The other three faces of 1476 are loud --
+## they manufacture phantom FATALs and a case that dies with no banner. This one
+## manufactures a phantom PASS: a run that reports ZERO having verified nothing,
+## in the one file CLAUDE.md calls "THE ONLY PLACE THE ANSWER IS".
+##
+## ⚠ AND "I STARTED FIRST" IS NOT A DEFENCE. The race is symmetric: measured over
+## ten pairs, nine erased the second run and one erased the FIRST. Whichever run
+## you are, your verdict may be the one that never existed.
+##
+## Ruling R1 (doc/claude/harness_concurrency_batch/DECISIONS.md): the per-case
+## scratch and results roots become per-run (the three case files), while the
+## VERDICT keeps its canonical name -- doc/claude/ledger/crew.js, CLAUDE.md's own
+## reading instructions and the user all name this exact file -- and is instead
+## serialised. The second run is told plainly. It never silently truncates.
+##
+##     T1_LOG_LOCK_WAIT  seconds to queue behind a live run before refusing;
+##                       0 (the default) refuses at once, so nobody waits by
+##                       accident. The refusal says how to opt into waiting.
+##     T1_LOG_LOCK_TTL   seconds after which a lock is broken even though some
+##                       process still holds the owner's pid; 0 disables it.
+##                       The pid AND its /proc cmdline are the real evidence;
+##                       this is only the backstop for a recycled pid, so it is
+##                       deliberately far longer than any real run (T1 is ~410 s).
+##
+## ⚠ A LOCK MUST NEVER BECOME THE REASON T1 DOES NOT RUN. Every failure of the
+## locking machinery itself FAILS OPEN: a lock whose owner is gone is broken on
+## evidence, and one that can be neither taken nor broken lets the run proceed
+## UNLOCKED with a warning. A tree that cannot be tested is worse than a tree
+## tested without a lock.
+##
+## ⚠ AND `file mkdir` IS NOT A LOCK IN TCL. tests/headless/gui_gate.sh:169 uses
+## the mkdir idiom, which is atomic in /bin/sh because mkdir(2) fails on an
+## existing directory. Tcl's `file mkdir` SUCCEEDS silently on one (measured on
+## tcl 8.6.17: rc 0, no error), so that shape ported here would hand the lock to
+## both runs and read as correct. `open ... {WRONLY CREAT EXCL}` is the Tcl
+## primitive that carries O_EXCL's guarantee, and it is what this uses.
+proc t1_lock_env {name dflt} {
+  if {[info exists ::env($name)]} {
+    set v [string trim $::env($name)]
+    if {[string is integer -strict $v] && $v >= 0} { return $v }
+  }
+  return $dflt
+}
+
+## Is $p a live process OTHER than us, still running what the lock owner recorded?
+## A bare `kill -0` answers yes for a RECYCLED pid, which is how an age-only rule
+## comes to break a healthy run's lock. On Linux the cmdline settles it; the tag
+## is the owner's own script name, so this works for a copy of this driver under
+## another name (which is exactly what the 1476 suite runs).
+proc t1_lock_owner_alive {p tag} {
+  if {![string is integer -strict $p] || $p <= 0} { return 0 }
+  if {$p == [pid]} { return 0 }
+  if {[file isdirectory /proc]} {
+    if {![file isdirectory /proc/$p]} { return 0 }
+    if {$tag eq {}} { return 1 }
+    set cl {}
+    if {[catch {set f [open /proc/$p/cmdline r]; set cl [read $f]; close $f}]} { return 1 }
+    return [expr {[string first $tag [string map [list \x00 { }] $cl]] >= 0}]
+  }
+  return [expr {[catch {exec kill -0 $p}] ? 0 : 1}]
+}
+
+## Take the lock. Returns {} when we own it, or a sentence naming the holder.
+## ::t1_lock_waited is the pid we queued behind, 0 if we never waited -- the
+## caller needs it to know whether the verdict on disk is a live run's.
+set t1_lock_waited 0
+proc t1_lock_take {lf waitsecs ttl} {
+  set deadline [expr {[clock seconds] + $waitsecs}]
+  set tag [file tail [info script]]
+  if {$tag eq {}} { set tag tclsh }
+  set breaks 0
+  set said 0
+  while {1} {
+    if {![catch {open $lf {WRONLY CREAT EXCL} 0600} fh]} {
+      catch {puts $fh [list [pid] [clock seconds] $tag]}
+      catch {close $fh}
+      return {}
+    }
+    set own {}
+    catch {set f [open $lf r] ; set own [string trim [read $f]] ; close $f}
+    set opid {} ; set oep 0 ; set otag {}
+    catch {set opid [lindex $own 0] ; set oep [lindex $own 1] ; set otag [lindex $own 2]}
+    if {![string is integer -strict $oep]} { set oep 0 }
+    set age   [expr {[clock seconds] - $oep}]
+    set alive [t1_lock_owner_alive $opid $otag]
+    if {!$alive || ($ttl > 0 && $age >= $ttl)} {
+      incr breaks
+      if {$breaks > 3} {
+        puts "WARNING: $lf can be neither taken nor broken after $breaks attempts."
+        puts "WARNING: running UNLOCKED -- a second run in this tree can still erase this run's verdict."
+        return {}
+      }
+      if {$alive} {
+        puts "NOTE: breaking verdict lock $lf -- owner pid $opid is alive but the lock is ${age}s old, past the ${ttl}s TTL (a recycled pid)."
+      } else {
+        puts "NOTE: breaking stale verdict lock $lf -- owner pid [expr {$opid eq {} ? {?} : $opid}] is no longer running. A killed run leaves this behind."
+      }
+      catch {file delete -force $lf}
+      continue
+    }
+    if {[clock seconds] >= $deadline} { return "held by pid $opid ($otag), taken [clock format $oep -format {%Y-%m-%d %H:%M:%S}], ${age}s ago" }
+    if {!$said} {
+      set said 1
+      set ::t1_lock_waited $opid
+      puts "WAITING for the verdict lock: pid $opid is running $otag here. Queueing for up to ${waitsecs}s (T1_LOG_LOCK_WAIT)."
+    }
+    after 500
+  }
+}
+
+set lock_file "$log_fn.lock"
+set lock_busy [t1_lock_take $lock_file [t1_lock_env T1_LOG_LOCK_WAIT 0] \
+                                       [t1_lock_env T1_LOG_LOCK_TTL 14400]]
+if {$lock_busy ne {}} {
+  ## ⚠ REFUSING MUST BE LOUD AND LEGIBLE. A silent refusal is just another way to
+  ## lose a verdict: the run stops, the operator sees a prompt come back, and the
+  ## file sitting on disk reads exactly like their own clean sweep.
+  puts "############################################################"
+  puts "REFUSING TO RUN: another regression run is using $log_fn in this tree,"
+  puts "  $lock_busy."
+  puts "  Truncating it would erase that run's verdict -- issue 1476 face 4, a"
+  puts "  whole run reporting ZERO having verified nothing. Nothing was run."
+  puts ""
+  puts "  THE $log_fn ON DISK IS NOT YOURS. It belongs to that run, or to an"
+  puts "  older one. Counting its lines as this run's result is the fossil trap."
+  puts ""
+  puts "  Let that run finish and start again, or pick one of:"
+  puts "    T1_LOG_LOCK_WAIT=1800 tclsh run_regression.tcl   -- queue behind it"
+  puts "    a second clone of the repo                       -- a tree of your own"
+  puts "  If that pid is NOT a regression run, delete $lock_file."
+  puts "############################################################"
+  exit 2
+}
+## ⚠ THE RUN WE QUEUED BEHIND LEFT ITS ANSWER HERE, AND WE ARE ABOUT TO TRUNCATE
+## IT. Serialising alone does not close face 4: "wait politely, then destroy it
+## anyway" loses precisely the evidence the lock was taken to protect. Move it
+## aside under the finishing run's pid and say where it went. This only fires on
+## the opt-in waiting path -- a lone run truncating the previous run's stale log
+## is the behaviour every reader already expects.
+if {$t1_lock_waited && [file exists $log_fn]} {
+  set keep_fn "results.$t1_lock_waited.log"
+  if {[catch {file rename -force $log_fn $keep_fn} e]} {
+    puts "WARNING: could not preserve pid $t1_lock_waited's verdict: $e"
+  } else {
+    puts "NOTE: the run we queued behind (pid $t1_lock_waited) left its verdict in $log_fn; preserved as $keep_fn before this run took the name."
+  }
+}
+
 set a [catch "open \"$log_fn\" w" fd]
 if {!$a} {
 foreach tc $tcases {
@@ -539,3 +721,12 @@ foreach tc $tcases {
 } else {
   puts "Couldn't open $log_fn to write.  Investigate please."
 }
+## Release, on BOTH arms above -- the failed-open arm holds the lock too, and a
+## run that refused to start must not leave the tree locked against the next one.
+##
+## ⚠ A RUN THAT DIES BEFORE THIS POINT LEAVES THE LOCK BEHIND, ON PURPOSE. There
+## is no trap handler here and there should not be one: the next run breaks a
+## lock on EVIDENCE -- the owner pid is gone, or its cmdline is no longer the
+## script that took it -- never on hope and never on a timer alone. A crashed run
+## therefore costs the next one a printed NOTE, not a wedged tree.
+catch {file delete -force $lock_file}

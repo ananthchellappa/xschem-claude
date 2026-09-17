@@ -74,6 +74,25 @@ But the option is recorded here so that if the user overturns R1 toward "no agen
 waits", the work is already scoped rather than rediscovered — and C1 is asked to
 evaluate it in its receipt for exactly that reason.
 
+## ⚖ R1 — AMENDED A SECOND TIME, 2026-09-17: "waits" was the unsafe half
+
+The ruling put to the user was "the second run **waits**". C1 measured that shape and
+it **destroys the thing the lock protects**: a run that queues politely and then
+truncates leaves `results.log` holding **0** of the first run's four blocks. The
+polite option was the data-losing one.
+
+**Built instead:** refusal by default; waiting opt-in via `T1_LOG_LOCK_WAIT`; and the
+waiting path **preserves** the prior verdict as `results.<pid>.log` before taking the
+canonical name. `results.log` still keeps its name, so R1's load-bearing half — the
+canonical filename every reader names — is intact.
+
+**What this does to the user's open question.** The choice was framed as "second agent
+waits" versus "no agent ever waits". The first option, as literally worded, does not
+exist in a safe form: waiting is only safe if it *preserves*, which it now does. The
+question that remains is genuinely narrower — whether a second run should be refused
+(today's default) or should preserve-and-proceed. That is a smaller decision than the
+one filed, and it stays the user's.
+
 ## Note — the measured premise that failed
 
 0990 stated a row here "would have to run two regressions at once, which is

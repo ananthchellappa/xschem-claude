@@ -115,6 +115,12 @@ tests/open_close/results.*/
 tests/create_save/.work.*/
 tests/netlisting/.work.*/
 tests/open_close/.work.*/
+# ...and the verdict lock that serialises two runs' results.log (issue 1476
+# face 4). `tests/*.log` above does not cover it -- the name ends in .lock -- and
+# a run that is KILLED leaves it behind deliberately, for the next run to break
+# on evidence. The preserved verdict of a run queued behind another is
+# `tests/results.<pid>.log`, which `tests/*.log` DOES already cover.
+tests/results.log.lock
 tests/create_save_output.txt
 tests/netlisting_output.txt
 tests/open_close_output.txt
