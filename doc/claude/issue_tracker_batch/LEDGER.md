@@ -16,7 +16,10 @@ after the driver has read the receipt and checked at least one of its claims.
 | **D1** | apply: stamp the 9 measured files, fix 0071's child table | **DONE** | **accepted** — caught a vacuous green on the critical path | — |
 | **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
 | **E2** | collapse the 48 repeated wording ratifications into one document | **DONE** | **accepted** — corrected D11's premise; caught driver errors 11 and 12 | — |
+| **E3** | collapse the 71 `look` debts the same way | **DONE** | **accepted** — deepens error 11 into the batch's real thesis | — |
+| **BC2** | fix `scope=` round-trip, spec `open=` counts, spec §4 | in flight | — | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
+| **F1** | closing gate: register in T1, CLAUDE.md 84→85, post-change run | blocked on BC2 | — | — |
 
 ## Running findings
 
@@ -481,6 +484,27 @@ is not a work list and never was. **Sending them as candidates rather than as wo
 only reason no live defect was closed** — and 0885 was matched partly by **this ledger's own
 commit about 0885**, a citation loop closing in under an hour.
 
+**Driver verification of D1's claims** (the ledger's own rule: a row lands only after the
+driver has checked at least one claim). All confirmed on the committed tree:
+
+* **10 stamps, every one at line 3**, all `v1` — as D1 reported.
+* All carry `tree=61af3692`, and it **resolves** (`git cat-file -e`).
+* The six-valued `claim=` is **genuinely exercised**: `fixed` ×5, `partial` ×3, `latent`
+  ×1, `duplicate` ×1 — so `partial`/`latent`, added for 0891 and A3's missing cell, are
+  carrying real weight rather than sitting unused.
+* `fix=`: `taken` ×5, `superseded` ×2, `partial` ×1, `untried` ×1, `none` ×1.
+* **Every `fix=superseded` and the `duplicate` carries a `super=`** (`self`, `32dff39a`,
+  `1439`, `0655`, `1397`). **The 0442 rule holds in practice, not just in the grammar.**
+* ⚠ **`scope=` appears exactly ONCE in the entire corpus** — 0216. So the formatter bug's
+  blast radius is **one file**, which is worth knowing before anyone panics about it.
+* ⚠ **A spec ambiguity found by the driver, not yet resolved:** D0 named **both** 0216 and
+  0650 as cases a binary field cannot state, but D1 stamped 0216 with `scope=` and 0650
+  with `super=0655`. Both readings are defensible — 0650's titular sink was deferred *out
+  of* it into 0655, which is arguably supersession of a part rather than a scope
+  restriction. **The spec does not say which applies when**, and that is how a field gets
+  used inconsistently and then discarded as noise. Sent to BC2 as a spec question; **no
+  stamp is to be rewritten over it.**
+
 **Two defects in the new machinery, deliberately left for a follow-up:**
 
 1. ⚠ **`istamp::format_stamp` omits `scope=`.** A round-trip **silently drops the one field
@@ -836,6 +860,7 @@ door by checking a suspicious number instead of repeating it.
 |---|---|---|
 | N1 | *"`R9_COPY_REVIEW.md` was first committed 2026-09-16"*, contradicting E2's 09-13 | **E2 was right.** `git log -1 -- <path>` returns the **newest** commit touching a file, not the first. `--diff-filter=A` gives `07922d71`, **2026-09-13**. Re-checking also produced the sharper finding: **35 commits**, 291 → 821 strings, maintained to the day before this batch and still never handed over. |
 | N2 | *"BC1's suite has 41 checks"*, contradicting BC1's 39 | **BC1 was right.** `/usr/bin/grep -c 'check '` counts any line **containing** the substring — it swept in a prose comment and **`proc check {name got want}`, the definition itself**. Line-anchored: **39**, and 39 again excluding comments. |
+| N3 | *"2 entries in `~/.xschem/recent_files` look like ASE-L probe decks"* — about to be told to the user | **It is 10 of 10, and none is theirs.** The grep counted **lines**; the file is 5 lines and packs all ten entries into two `set` statements (`recentfile` and `tctx::recentfile` mirroring each other). **A proxy for the thing, one paragraph after recording error 20 for exactly that.** Caught before it reached the user. |
 
 **Both are the same defect as errors 1–14 — a pattern matched against the wrong namespace —
 and in both the driver's number contradicted a crew's.** The rule that changed the outcome:
