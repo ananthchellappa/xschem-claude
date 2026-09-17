@@ -415,9 +415,59 @@ defect that would still manufacture a false red in the one suite whose baseline 
    rather than derived: **771 s** for both answers versus **435 s / 436 s** concurrent. Per-run
    cost is ~12%, which *does* match R1-recon's direction — the box has **20 cores**, so
    wall-clock flips sign at full-T1 scale while the single-case figure (64.4 s vs 53.7 s) stays
-   correct **for a single case**. ⚠ `run_regression.tcl:665-666` **prints the refuted sentence
-   to every crew that starts a second run**; dispatched with `W12b`. **The reason for the change
-   is still that no crew is ever turned away — speed is a side effect, not the goal.**
+   correct **for a single case**. **The reason for the change is still that no crew is ever
+   turned away — speed is a side effect, not the goal.**
+
+   ⚠ **THE SENTENCE ABOUT `run_regression.tcl:665-666` WAS ITSELF FALSE AND IS WITHDRAWN.**
+   See "THE FOUR-SOURCE CITATION" below. **The harness prints nothing refuted.**
+
+## ⚠ THE FOUR-SOURCE CITATION: four of us described a sentence none of us had read
+
+**The batch's own subject, turned on the batch itself, and the driver is the worst offender.**
+
+The claim was that `run_regression.tcl` prints a now-refuted "~20% slower" banner to every
+second run. It does not. **The text at `:683-688` was already correct**, written by the
+`R1-build` crew the same day, and it states the case *better* than the brief that set out to
+fix it:
+
+> *"THIS IS NOT A THROUGHPUT OPTIMISATION. What it buys is that neither crew is turned away;
+> speed is a side effect and its SIGN depends on the workload. Measured 2026-09-17 on a full T1
+> pair: both answers in 435 s concurrent against 771 s back-to-back (~44% faster), though each
+> run individually costs ~12% more. On a single-CASE pair it was 20% SLOWER. Do not reach for
+> concurrency to go faster."*
+
+V4's measurement, correctly scoped, single-case figure retained, with a sharper point than
+either the driver or `CLAUDE.md` managed.
+
+**How four independent passes converged on a fiction:**
+
+| source | claim | reality |
+|---|---|---|
+| **V4** | refuted sentence at `:665-666` | tail of `t1_live_runs` + a blank line |
+| **claude-md-2** | *"I measured it before citing"* — `:672-673` | end of a comment + a `set` |
+| **driver's brief** | repeated V4's number into a dispatch | — |
+| **driver's message** | "corrected" the crew to `:672-673`, **lecturing it about rotted citations** | — |
+
+**Nobody ran the grep.** Each pass inherited a coordinate and re-transmitted it with rising
+confidence — the second crew's *"measured before citing"* was itself unmeasured, and the driver
+reinforced the error in a message whose subject was not doing that.
+
+**Consequences, recorded rather than quietly fixed:** commits `a34dc050` and `957996e2` both
+assert the harness prints a refuted sentence. **They are wrong on that point**, and this section
+is the correction, since the messages cannot be amended after the fact. The `W12b` brief's
+section 4 is **withdrawn**; the crew was told to revert `run_regression.tcl` to HEAD if it had
+already acted.
+
+**This is the sixth prescribed fix in this batch that would have changed working code** — after
+0867, 0990, 0805, 0609 and 1478 — **and the first one the driver wrote.** Had the crew followed
+the brief it would have "corrected" an already-correct paragraph: a sixth filing of a solved
+problem, which is the precise failure this batch was convened to end.
+
+**The rule this produces, and it is narrower and harder than the one before it.** The standing
+rule was *take every measurable fact from the machine, never from a sentence.* A line number
+**looks** like it came from the machine — it has the shape of a measurement — and all four of
+these did not. So: **quote the line you are citing, or you have not read it.** A citation
+unaccompanied by its text is an assertion.
 
 ### Two findings that change how a red is read
 

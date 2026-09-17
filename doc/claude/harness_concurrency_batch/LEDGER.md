@@ -280,9 +280,37 @@ sentence rather than by running `wc -l` once. The driver propagated it into `CLA
 
 **771 s** back-to-back for both answers against **435 s / 436 s** concurrent. Per-run cost ~12%,
 matching R1-recon's *direction* — the box has **20 cores**, so wall-clock flips sign at full-T1
-scale while the single-case figure stays right for a single case. ⚠ **`run_regression.tcl:665-666`
-prints the refuted sentence to every crew that starts a second run.** **The reason for the change
+scale while the single-case figure stays right for a single case. **The reason for the change
 remains that no crew is ever turned away; speed is a side effect.**
+
+## ⚠ THE FOUR-SOURCE CITATION — four of us described a sentence none of us had read
+
+**The worst single failure of the batch, and the driver is the author.** The claim that
+`run_regression.tcl` prints a refuted "~20% slower" banner is **false**. The text at `:683-688`
+was **already correct**, written by `R1-build` the same day, and states the case better than the
+brief sent to fix it — V4's numbers, correctly scoped, single-case figure retained, closing on
+*"Do not reach for concurrency to go faster."*
+
+| source | claim | what is actually there |
+|---|---|---|
+| **V4** | `:665-666` | tail of `t1_live_runs` + a blank line |
+| **claude-md-2** | *"measured before citing"* → `:672-673` | end of a comment + a `set` |
+| **driver's brief** | repeated V4's number into a dispatch | — |
+| **driver's message** | "corrected" the crew, **while lecturing it about rotted citations** | — |
+
+**Nobody ran the grep.** Confidence rose at every hop; the crew that said it measured had not.
+
+**Sixth prescribed fix in this batch that would have changed working code** — after 0867, 0990,
+0805, 0609, 1478 — **and the first written by the driver.** Following it would have "corrected"
+a correct paragraph: a sixth filing of a solved problem, the exact failure this batch exists to
+end. Brief section 4 **withdrawn**; crew told to revert if it had acted. ⚠ Commits `a34dc050`
+and `957996e2` carry the false claim in their messages and **cannot be amended** — `DECISIONS.md`
+holds the correction.
+
+**The rule this produces is narrower and harder than the one before it.** *Take every measurable
+fact from the machine* was not enough: a line number **has the shape of a measurement** and these
+four were not. So — **quote the line you are citing, or you have not read it.** A citation
+without its text is an assertion.
 
 ### Two findings that change how a red is read
 
