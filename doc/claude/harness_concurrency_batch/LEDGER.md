@@ -74,8 +74,8 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **R2-build** | private `HOME` — every prediction held to the digit | DONE | `6751c5c4` |
 | **save-citations** | 7 reported → **30 coordinates, 11 files** | DONE | `6751c5c4` |
 | **V4** | solo GREEN + **the first measured concurrent pair** | DONE | *(this commit)* |
-| **W12b** | counts→sets in `/tmp`; the R4 gate | IN FLIGHT (holds the suite slot) | — |
-| **claude-md-2** | the two numbers V4 refuted | IN FLIGHT (no suite) | — |
+| **W12b** | **identity**, not counts, in `/tmp`; the R4 gate | DONE — **R4 RELAXED** | `2cf01084` |
+| **claude-md-2** | the two numbers V4 refuted | DONE | `957996e2` |
 | **serialisation docs** | rewrite the 6 that cite the refuted RAM figure | QUEUED — after `W12b` | — |
 | **PLAN.md** | closing pass; it still describes the superseded shape | QUEUED | — |
 
@@ -282,6 +282,28 @@ sentence rather than by running `wc -l` once. The driver propagated it into `CLA
 matching R1-recon's *direction* — the box has **20 cores**, so wall-clock flips sign at full-T1
 scale while the single-case figure stays right for a single case. **The reason for the change
 remains that no crew is ever turned away; speed is a side effect.**
+
+## ⛔ THE "FOUR-SOURCE CITATION" BELOW IS WITHDRAWN — IT WAS THE ERROR IT ACCUSED OTHERS OF
+
+Kept in full, because deleting it would hide the batch's most instructive failure. `d5396ddd`
+accused four passes of citing without reading. **All four readings were correct against the tree
+each had read.** The `W12b` crew had already found the sentence *by text* and fixed it; its
+`+22/−7` edit (net **+15**) sat **above** the banner and shifted everything below. Verified four
+ways: `git log -S` **silent**, HEAD `:672-673` still carrying the refuted sentence, the corrected
+text present only in the working tree, and the numstat. **Nobody's grep was broken — the tree was
+moving underneath the conversation about it.**
+
+⚠ **And the driver then ordered a revert that would have DESTROYED the fix.** `git checkout HEAD
+-- tests/run_regression.tcl` restores the defect. **The crew refused, and was right.** Had it
+complied, the batch would have shipped the refuted sentence believing it withdrawn. **That
+refusal is the single behaviour most worth keeping from tonight.**
+
+**Rule 10 is superseded** — quoting the line is necessary and not sufficient, and the driver is
+the proof: it read the lines, quoted them, and was still wrong. **A citation needs a tree state,
+not just a line.** Which is the same finding as the task that produced it: **position is not
+identity.** `W12b` could not be fixed by counting `/tmp` entries *or even set-differencing them*,
+because `/tmp` is a shared namespace with no bounded producer. A line number is a position in a
+shared namespace.
 
 ## ⚠ THE FOUR-SOURCE CITATION — four of us described a sentence none of us had read
 

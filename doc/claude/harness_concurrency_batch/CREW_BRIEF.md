@@ -72,10 +72,32 @@ brief, your stage's row in `PLAN.md`, and **the previous stage's receipt** in
 9. **`_ALLOC_ID_`, C89, `dbg()`** — house conventions, if you touch C. This batch is
    Tcl and shell.
 
-10. ⚠ **QUOTE THE LINE YOU ARE CITING, OR YOU HAVE NOT READ IT.** A citation without its
-    text is an assertion. This rule is narrower and harder than *"take every measurable
-    fact from the machine, never from a sentence"* — because **a line number has the SHAPE
-    of a measurement** and will pass for one.
+10. ⚠ **A CITATION NEEDS A TREE STATE, NOT JUST A LINE.** Cite against a named revision —
+    or quote the text and say **which tree you read it in**. `HEAD` and the working tree are
+    different documents, and in this repo crews edit concurrently.
+
+    Quoting the line is **necessary and not sufficient**, and the driver is the proof: it
+    read the lines, quoted them, and was still wrong. **Position is not identity** — which
+    is this batch's entire subject, made in prose about the very file that proves it. `W12b`
+    could not be fixed by counting `/tmp` entries *or even by set-differencing them*,
+    because `/tmp` is a shared namespace with no bounded producer; it needed the child to
+    **announce its own identity**. A line number is a position in a shared namespace.
+
+    ⚠ **The worked example is the driver's, and it is the batch's most instructive failure.**
+    Four passes gave three different coordinates for one sentence. The driver read two of
+    them, found unrelated code, and committed `d5396ddd` accusing everyone — itself included
+    — of citing without reading, **in a message lecturing a crew about exactly that**. All
+    four readings were **correct against the tree each had read**: a live crew's `+15`-line
+    edit sat above the banner and shifted everything below it. Nobody's grep was broken; the
+    tree was moving underneath the conversation about it.
+
+    ⚠ **Then the driver ordered a revert that would have DESTROYED the fix** — `git checkout
+    HEAD --` restores the defect. **The crew refused, and was right.** If an instruction from
+    the driver would discard work you have measured as correct, **say so and do not comply.**
+    That refusal is the behaviour this batch most wants to keep.
+
+    The superseded form of this rule — *"quote the line you are citing, or you have not read
+    it"* — is kept here because it is still good practice, just not enough on its own.
 
     Measured 2026-09-17: **four independent passes described a sentence none of them had
     read.** A verification crew placed a supposedly-refuted banner at

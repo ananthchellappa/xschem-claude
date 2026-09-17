@@ -397,6 +397,18 @@ and **compares counts, not sets**, so the other run's killed children red it. **
 of this exact defect class in one batch**, after `C11` and 0609's own supplied fix code. A count
 is not an identity. Dispatched as `W12b`, with four sibling files V4 listed but did not read.
 
+✅ **R4 IS RELAXED, 2026-09-17.** The condition below was met and measured: `W12b` survived a
+deliberate **48-corpse flood green** while still redding **with a named path** on a real leak,
+and the producer feeding that namespace was reaped at source (two consecutive runs, **delta 0**).
+⚠ **The fix was NOT a set difference** — `/tmp` has no bounded producer set, so a foreign corpse
+is "new" too. It took **identity**: the child announces `EMERGENCY SAVE DIR: <path>` on its way
+out (`src/main.c:45-52`). **Siblings: 0 of 4 shared the defect**, so 0 were touched.
+
+**Two caveats stand.** A T1 red must still be diagnosed **by case** — the `optier` flake is not
+concurrency — and **nobody has swept `/tmp` for shared globals other than
+`xschem_emergencysave_*`.** ⚠ **49 pre-existing corpses remain in `/tmp` right now**; they are
+not the batch's to delete, since they may belong to live processes.
+
 **Decision: R4 relaxes when `W12b` and its siblings compare sets — not before.** The conditional
 form is the point. The rule's stated basis was a refuted RAM figure; its real basis was
 corruption; that corruption is now measured gone, and what remains is a *different*, narrower
@@ -420,6 +432,57 @@ defect that would still manufacture a false red in the one suite whose baseline 
 
    ⚠ **THE SENTENCE ABOUT `run_regression.tcl:665-666` WAS ITSELF FALSE AND IS WITHDRAWN.**
    See "THE FOUR-SOURCE CITATION" below. **The harness prints nothing refuted.**
+
+## ⛔ THE SECTION BELOW IS WITHDRAWN. IT WAS ITSELF THE ERROR IT ACCUSED OTHERS OF.
+
+**Measured 2026-09-17, after `d5396ddd` was already committed.** The "four-source citation"
+story is **false**, and the driver wrote it while lecturing two crews about carelessness that
+never happened. Kept in full below, because deleting it would hide the most instructive failure
+in the batch.
+
+**What actually happened.** The `W12b` crew had **already found the sentence by text** — not by
+line number — and fixed it, *before either of the driver's messages arrived*. The text the
+driver quoted back at it as *"already correct at `:683-688`, written by the R1-build crew"* was
+**the crew's own uncommitted edit, from this session**.
+
+**Verified by the driver, four ways:**
+
+| check | result |
+|---|---|
+| `git log -S 'THROUGHPUT OPTIMISATION' -- tests/run_regression.tcl` | **silent** — never committed |
+| `git show HEAD:… \| sed -n '672,673p'` | `"This is not faster: measured 20% SLOWER…"` |
+| working tree | corrected text at `:683` |
+| `git diff --numstat` | **+22/−7**, net **+15**, sitting **above** the banner |
+
+**So every coordinate reconciles and nobody was careless.** `claude-md-2`'s `:672-673` was
+**right against HEAD**. V4's `:665-666` was right against the tree it read. The driver's Read saw
+*"tail of a proc"* and *"a comment and a `set`"* at those lines because the crew's `+15` had
+already shifted everything below it. **Nobody's grep was broken — the tree was moving underneath
+the conversation about it.**
+
+⚠ **AND THE DRIVER'S INSTRUCTION WOULD HAVE DESTROYED WORKING CODE.** `git checkout HEAD --
+tests/run_regression.tcl` **restores the defect.** The crew refused the revert and said so. Had
+it complied, the batch would have shipped the refuted sentence while believing it had been
+withdrawn — the driver's second prescription in a row that would have damaged a correct tree.
+
+### The rule that actually follows, and it is not the one in `d5396ddd`
+
+`d5396ddd` concluded *"quote the line you are citing, or you have not read it."* **That rule is
+insufficient and the driver is the proof: it DID read the lines, and quoted them, and was still
+wrong.** A line number is not a fact about a file; it is a fact about **a file at a revision**.
+Four people held four correct readings of three different tree states and read the disagreement
+as error.
+
+> **A citation needs a tree state, not just a line. Cite against a named revision — or quote the
+> text and say which tree you read it in.** In a repository where crews edit concurrently,
+> `HEAD` and the working tree are different documents, and *this batch's whole subject is that
+> concurrent actors need identity, not position.*
+
+**Which is the same finding as the task that produced it:** `W12b` could not be fixed by
+counting `/tmp` entries, or even by set-differencing them, because `/tmp` is a shared namespace
+with no bounded producer — it needed the child to **announce its own identity**. A line number is
+a position in a shared namespace. The batch spent a night proving position is not identity, and
+the driver then made the same mistake in prose, twice, about the very file that proves it.
 
 ## ⚠ THE FOUR-SOURCE CITATION: four of us described a sentence none of us had read
 
