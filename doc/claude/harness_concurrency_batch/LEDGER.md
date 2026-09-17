@@ -25,88 +25,86 @@ when the receipt is in `receipts/` and the driver has read it.
 | **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161**; **8 of 20 bad → 0 of 40** | 0408(a) |
 | **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43**; 8/8 under load; **two** sabotages | 1332 |
 | **F1** | documentation pass | **DONE** | `bb069d89` | three OWED items; comment-only, proven | 0905, 1477, 1478 |
-| **F2** | stale citations | **DONE** | `c9c50562` | **briefed as 2, found 9** | 1477–1479, NUMBERING |
-| **F3** | last stale citations | **DONE** | — | **briefed as 4, found 43** across 30 comment lines | — |
+| **F2** | stale citations | **DONE** | `c9c50562` | **briefed as 2, found 9** | 1477–1479 |
+| **F3** | citations outside issues/ | **DONE** | `c7f3cdba` | **briefed as 4, found 43**; two were *never* correct | — |
+| **F4** | the false count | **DONE** | — | **briefed as 4 sites, found 7**; two were *arithmetic*, not the word | — |
 
-## ⚠ A DRIVER ERROR: I COMPRESSED A RECEIPT AND THEN BRIEFED FROM MY COMPRESSION
+## ⚠ F4: A CLASS OF STALENESS NO GREP CAN FIND
 
-F2's receipt said, in full, that `doc/claude/issues/0663-*.md` lines `:149/:201/:241`
-were worth fixing. **I compressed that into the LEDGER as `0663:149/:201/:241`**, which
-F3's brief then read as the *suite* `test_startup_guard_0663.tcl`. Those `.tcl` lines
-carry **no citations at all** — they are `set sg_xtcl [...]`, a check-name
-continuation, and a blank line.
+F3 located the false "FIFTEEN" at four sites. There were **seven**. F4 found a missed
+`:9`, a `:275` that was really `:277`, and — the two that matter — **`:295` "Sixteen
+`catch` wrappers"** (15 bare + 1) and **`:300` "the seventeenth helper nobody has added
+yet"** (16 + 1).
 
-**The lossy step was mine, not the crew's**, and it is the same failure mode as
-everything else in this batch: a second-hand summary treated as a source. The ledger is
-a *pointer* to receipts, and a brief must be written from the receipt.
+**Those are arithmetic DERIVED from the count, not the word itself. A crew grepping for
+`fifteen` cannot find either.** Corrected to Nineteen and twentieth.
 
-## ⚠ F3: A CLASS OF ERROR F2's METHOD STRUCTURALLY COULD NOT SEE
+And the sentence at `:300` had already been overtaken by events: it promised the
+backstop would cover "the seventeenth helper nobody has added yet". **Three have since
+arrived** — `op_param_lists`, `results`, `rdw` — it covered all three silently, and
+nobody updated the prediction. Those are exactly the three the block had never named.
 
-**Two citations were never correct — authoring errors, not drift.** F2 diagnosed by
-comparing against the authoring commit, so it would have scored both "sound":
+## F4 solved the drift-by-fixing-drift problem instead of accepting it
 
-* `banner_rule.tcl:68` → `test_ihp_sg13g2_libmgr:195`: that banner was at **`:218`** *at
-  `banner_rule.tcl`'s own creation commit* `237fc966`.
-* `test_startup_guard_0663.tcl:360` → `xinit.c:1535`: the `has_x` condition was at
-  **`:1537`** at both `8d2bc871` and its parent. It is `:1543` today.
+F3 judged the block had no room for three more names, and **on lines 3–9 alone F3 was
+right**: +53 characters of payload against 47 of slack at 80 columns, six short. F4
+reflowed the **whole paragraph** (`3-19`, which carries ~114 spare columns at its short
+lines 13 and 19) and landed on exactly 17 lines; the `295-301` paragraph is net zero and
+re-wraps to 7. **Line-count-neutral, 435 → 435, so nothing shifted.**
 
-**A method that checks "has it moved since it was written?" cannot see a citation that
-was wrong when written.** The only check that catches both is reading what is actually
-at the line today.
+It enumerated the inbound citations **before** editing — four repo-wide (`:149`, `:230`,
+`:232`, `:360`), all in `doc/claude/` receipts and this ledger, none in code — and
+re-printed all four after. **"There is no list of shifted citations to hand you"**,
+which is the right ending for this particular tail.
 
-Scale: **43 stale numbers across 30 comment lines**, including citations with **no file
-extension** (`test_pdk_launcher:119`) that an extension-anchored regex misses. Largest
-block: `src/xschem.tcl`'s bare sources moved **+2576** (`:14568` → `:17144`) across 41
-commits and +3643 lines.
+Item 1's proof is not an eyeball: F4 extracted the `:NNNNN name` pairs back out of the
+finished comment (joining lines first, since three pairs straddle a line break) and
+diffed them against the 18 measured from `src/xschem.tcl` — **identical, 18 each**.
 
-## ⚠ A LIVE FALSE RED ON THE USER'S BOX — `test_startup_guard_0663`
+Item 2 (four citations inside `check "…"` name strings) was digit-count-neutral, so it
+could not shift a line, and **nothing pins those names** — established by five separate
+checks. The entire observable effect is four `ok:` lines reading differently.
 
-`2 FAILED (20 passed)` at HEAD **because of the user's `~/.xschem`, not the tree.**
-Measured both ways: with a clean HOME it is **`RESULT: ALL PASS (22 checks)`**, rc 0.
+**Both arms, both sides:** inherited `$HOME` `2 FAILED (20 passed)` rc 1 before *and*
+after; clean `HOME` `ALL PASS (22 checks)` rc 0 before *and* after; `test_audit_classifier`
+byte-identical. The two reds are **the same two by name and by measured value** (SG13
+`{3}`, SG14 `{0 1 1 0 4}`) — the known R2 config artefact. F4 ran the two arms **serially
+inside one shell command**, noting that both guard arms share one scratch dir, so
+overlapping them would have reproduced this batch's own subject.
 
-The three `#! ` lines a "healthy" startup writes are **ASE-L registry warnings**: `stub`
-→ `/tmp/stage11/e2e/bin/sim` and `slowstub` → `/tmp/stage11/kp/bin/slowsim`, both now
-gone, plus `src/xschem` registered as simulator `ng-cm3`. `sharefarm.tcl:87` launches
-children with the parent's environment and `scratch.tcl` deliberately does not redirect
-`USER_CONF_DIR`.
+## ⛔ THE CITATION TAIL STOPS HERE — a driver decision
 
-**T1's zero baseline is unaffected** — this suite is not in `run_regression.tcl`'s case
-list — **but it is a live false red for `full_audit.sh`**, which globs the file.
+F4 handed over yet another stale set, this time in **product code**: `src/xinit.c:2990-2993`
+and `:3025` still say "fifteen helpers" and carry **five** of the exact numbers just
+corrected, inside the C comment that explains the fix. Also `test_ase_core.tcl:3314/:3317`.
+Replacements are measured and listed in F4's receipt.
 
-**Filed as a ruling debt for the user** (⚖ R2): prune the three dead
-`~/.xschem/ase_simulators` entries, or isolate the suite from the registry. **F3
-recommends isolating**, because pruning fixes this box and leaves the next developer to
-inherit the same false red. **Not implemented**: redirecting `USER_CONF_DIR` in
-`scratch.tcl` reaches 169 suites and is a design change deserving its own scoped work,
-not a tail-end patch on a closing batch.
-
-## F3's proofs
-
-Line counts **136 → 136** and **435 → 435**; non-comment lines diff **0** against `HEAD`
-in both; **0** non-comment additions; `+30 / −30`. Suites before vs after on `:99`:
-`test_audit_classifier` `ALL PASS (75 checks)`, `test_startup_guard_0663`
-**byte-identical output**, `1476` `ALL PASS (20 checks)`. F3 also caught two errors in
-its **own draft receipt** and re-derived F2's `:328-330` rather than inheriting it.
-
-## Owed — F4, genuinely the last content task
-
-1. **`FIFTEEN` is now eighteen.** `src/xschem.tcl` has **18** bare sources;
-   `op_param_lists`, `results` and `rdw` are named nowhere. F3 renumbered the fifteen
-   cited lines but deliberately did not touch the count, because fixing it means adding
-   helper names — content, not a citation. ⚠ **The block therefore now carries
-   freshly-verified numbers under a false count — the exact shape F2 warned about.**
-2. **Four citations sit inside `check "…"` name strings** (`:217`, `:279`, `:287`,
-   `:310`), so editing them would have broken F3's comment-only proof. Replacements are
-   measured and listed in its receipt; they currently **disagree with the comments above
-   them.**
+**They are deliberately not being patched.** Every pass in this tail found more than its
+brief — F2 two→nine, F3 four→forty-three, F4 four→seven — and each fix is one more
+hand-maintained number in a repo that has just demonstrated, at length, that
+hand-maintained numbers rot. **Patching file-by-file is exactly the trade F1 argued
+against.** The structural answer is candidate 2 below, now supported by three
+independent measurements.
 
 ## Candidates, recorded and deliberately not scheduled
 
 1. **1478's fail-open warning should write into the verdict**, not only to stdout.
-2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass** — now
-   supported by F2's evidence *and* by F3's, which showed 43 stale numbers in two files
-   alone.
+2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass** —
+   justified by F2 (9 stale), F3 (43 stale, two never correct) and F4 (7 sites, two of
+   them arithmetic no grep can reach). Carries the remaining `src/xinit.c` and
+   `test_ase_core.tcl` sites with it.
+
+## Rulings standing with the user
+
+* **⚖ R1** (against 0990) — narrowed by measurement from "wait or don't" to **refuse**
+  versus **preserve-and-proceed**. The originally-offered "second run waits" was
+  measured to destroy the verdict the lock protects, so it no longer exists in a safe
+  form.
+* **⚖ R2** (against 0663) — `test_startup_guard_0663` false-reds 2 of 22 on this box
+  because `~/.xschem/ase_simulators` holds three dead ASE-L entries. Clean `HOME` is
+  `ALL PASS (22)`. **Prune, or isolate the suite from the registry?** Recommendation:
+  isolate — pruning fixes this box and the next developer inherits the same false red.
 
 ## Resume point
 
-Next: **F4** (the two items above), then the **final solo T1**.
+**Final solo T1** — the closing gate. After it, the batch is finished.

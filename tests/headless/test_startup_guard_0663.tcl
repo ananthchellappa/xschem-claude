@@ -1,20 +1,20 @@
 # A FAILED `source` OF xschem.tcl MUST NOT WALK ON INTO UNSET VARIABLES (issue 0663).
 #
-# THE CLASS. src/xschem.tcl sources FIFTEEN helpers with a BARE `source`
+# THE CLASS. src/xschem.tcl sources EIGHTEEN helpers with a BARE `source`
 # (:17144 action_registry, :17160 library_defs, :17162 library_git, :17164
 # library_manager, :17166 copy_form, :17168 create_instance, :17170
-# save_as_form, :17521 op_annot, :17557 cmdmode, :17559 ase, :17561 ase_window,
-# :17563 wave_viewer, :17574 calculator, :17589 property_form, :17593
-# alt2_toggle_view) plus ONE guarded by issue 0658 (:17632 ciw.tcl). A Tcl error
-# inside any of the fifteen propagates OUT of xschem.tcl, so the REST of
-# xschem.tcl -- the statusbar widgets, build_widgets, ciw_create, the colour and
-# layer setup -- never runs. Then source_tcl_file() (src/xinit.c:1519) merely
-# PRINTS the error and returns TCL_ERROR, Tcl_AppInit (src/xinit.c:3628)
-# DISCARDS that return, and control walks on into
-# `tclgetdoublevar("cairo_font_line_spacing")` (:3639) and nine siblings against
-# variables that were never set, then into alloc_xschem_data(), whose
-# `strcmp(tclgetvar("undo_type"), "disk")` (src/xinit.c:659) is handed a NULL.
-# SIGSEGV. main.c:32's handler then derefs `xctx->sch[xctx->currsch]` on a
+# save_as_form, :17521 op_annot, :17528 op_param_lists, :17557 cmdmode, :17559
+# ase, :17561 ase_window, :17563 wave_viewer, :17571 results, :17574 calculator,
+# :17587 rdw, :17589 property_form, :17593 alt2_toggle_view) plus ONE guarded by
+# issue 0658 (:17632 ciw.tcl). A Tcl error inside any of the eighteen propagates
+# OUT of xschem.tcl, so the REST of xschem.tcl -- the statusbar widgets,
+# build_widgets, ciw_create, the colour and layer setup -- never runs. Then
+# source_tcl_file() (src/xinit.c:1519) merely PRINTS the error and returns
+# TCL_ERROR, Tcl_AppInit (src/xinit.c:3628) DISCARDS that return, and control
+# walks on into `tclgetdoublevar("cairo_font_line_spacing")` (:3639) and nine
+# siblings against variables that were never set, then into alloc_xschem_data(),
+# whose `strcmp(tclgetvar("undo_type"), "disk")` (src/xinit.c:659) is handed a
+# NULL. SIGSEGV. main.c:32's handler then derefs `xctx->sch[xctx->currsch]` on a
 # half-initialised xctx and DOUBLE-faults, which is why the code is 139 and not
 # the handler's own exit(1).
 #
@@ -22,7 +22,7 @@
 # op_annot.tcl from the install list; 275 in-tree checks stayed GREEN and the
 # INSTALLED binary was dead on arrival, exit 139. The fix then was to put the
 # file back on the install list -- the crash mechanism was never touched, and
-# op_annot.tcl is STILL one of the fifteen bare sources (src/xschem.tcl:17521).
+# op_annot.tcl is STILL one of the eighteen bare sources (src/xschem.tcl:17521).
 # So the subject file of R1/R3 below is op_annot.tcl DELIBERATELY: it is 0424's
 # own file, and ciw.tcl is already guarded so breaking it would prove nothing
 # about the class.
@@ -214,7 +214,7 @@ check "SG5 0663 the aborted child never runs a line of the script (SG-ALIVE\
 # (xinit.c:3639) through `can't read "cairo_font_scale": no such variable` are
 # the ten reads that prove control walked past the failed source into the
 # unset-variable field. Zero of them means the walk no longer happens.
-check "SG6 0663 control never reaches xinit.c:3417's unset-variable reads (no\
+check "SG6 0663 control never reaches xinit.c:3639's unset-variable reads (no\
  `no such variable` line at all)" \
   [sg_out_count $sg_err {no such variable}] 0
 
@@ -274,9 +274,9 @@ check "SG8 0663 R3 op_annot.tcl ABSENT (0424's exact shape: a helper missing\
 # and the pair proves one more thing a pair of adjacent picks could not: at
 # :17144 `::xschem::notify_log` (defined ~:17327) DOES NOT EXIST YET, so an
 # announcement routed through any Tcl-side notify proc would be silent for the
-# first seven of the fifteen helpers. The announcement must come from C.
+# first seven of the eighteen helpers. The announcement must come from C.
 set sg_early [sg_run early [list action_registry.tcl $SG_BOOM]]
-check "SG9 0663 R2-early action_registry.tcl (:14568, the FIRST bare source,\
+check "SG9 0663 R2-early action_registry.tcl (:17144, the FIRST bare source,\
  BEFORE ::xschem::notify_log is defined) aborts cleanly and names\
  action_registry.tcl -- so the announcement cannot depend on a Tcl notify proc" \
   [list [dict get $sg_early -status] \
@@ -284,7 +284,7 @@ check "SG9 0663 R2-early action_registry.tcl (:14568, the FIRST bare source,\
   [list {CHILDSTATUS 1} 1]
 
 set sg_late [sg_run late [list alt2_toggle_view.tcl $SG_BOOM]]
-check "SG10 0663 R2-late alt2_toggle_view.tcl (:14815, the LAST bare source)\
+check "SG10 0663 R2-late alt2_toggle_view.tcl (:17593, the LAST bare source)\
  aborts cleanly and names alt2_toggle_view.tcl -- position in the list is\
  irrelevant" \
   [list [dict get $sg_late -status] \
@@ -292,13 +292,13 @@ check "SG10 0663 R2-late alt2_toggle_view.tcl (:14815, the LAST bare source)\
   [list {CHILDSTATUS 1} 1]
 
 # --- SG11: xschem.tcl ITSELF -- the case a per-file catch cannot cover -------
-# THE CLASS ROW. Sixteen `catch` wrappers do not fix this class: the hazard is
+# THE CLASS ROW. Nineteen `catch` wrappers do not fix this class: the hazard is
 # not "a helper source raises", it is "ANYTHING in xschem.tcl raises". Measured:
-# with all fifteen sources wrapped, src/xschem.tcl:17145 `load_action_table` and
-# :19936 `wviewer::rawhist_load` are bare top-level CALLS into helper namespaces
-# and STILL exit 139, because they escape a source-only catch. A backstop at the
-# ONE call in Tcl_AppInit covers those, the seventeenth helper nobody has added
-# yet, and this row.
+# with all eighteen sources wrapped, src/xschem.tcl:17145 `load_action_table`
+# and :19936 `wviewer::rawhist_load` are bare top-level CALLS into helper
+# namespaces and STILL exit 139, because they escape a source-only catch. A
+# backstop at the ONE call in Tcl_AppInit covers those, the twentieth helper
+# nobody has added yet, and this row.
 # NOTE its HEAD colour is different from every other broken row: a TRAILING
 # error in xschem.tcl runs the whole file first, so `cadlayers`/`undo_type`
 # (:19628, :19716) ARE set and HEAD exits 0 rather than 139. Red at HEAD all the
@@ -307,7 +307,7 @@ check "SG10 0663 R2-late alt2_toggle_view.tcl (:14815, the LAST bare source)\
 set sg_self [sg_run selftcl \
   [list xschem.tcl "[sg_slurp [file join $repo src xschem.tcl]]\n$SG_BOOM"]]
 check "SG11 0663 xschem.tcl ITSELF failing (no helper involved -- the shape a\
- per-file catch measurably cannot cover: :14569 load_action_table and :16873\
+ per-file catch measurably cannot cover: :17145 load_action_table and :19936\
  wviewer::rawhist_load escape a source-only catch) aborts cleanly and names\
  xschem.tcl" \
   [list [dict get $sg_self -status] \
