@@ -65,7 +65,7 @@
 # THE THREE BANNER SHAPES THE TREE ACTUALLY EMITS (swept, 2026-08-25):
 #   OVERALL: ok                       131 sites
 #   OVERALL: ok (N checks)              5 sites (test_pdk_launcher:119,
-#                                       test_ihp_sg13g2_libmgr:195,
+#                                       test_ihp_sg13g2_libmgr:218,
 #                                       test_descend_inert_class:183,
 #                                       test_context_menu_descend_refusal_0249:110,
 #                                       test_descend_refusal_channel_0251:437)
@@ -95,7 +95,7 @@ proc banner_complete {body} {
 
 # Did the suite DIE, whatever it printed before dying?
 #
-# The two literals are full_audit.sh's own crash arm (full_audit.sh:315-316),
+# The two literals are full_audit.sh's own crash arm (full_audit.sh:352-353),
 # column-0 anchored so a log that merely QUOTES them mid-line is not a death.
 #
 # This predicate is why relaxing the completion anchor is safe. Measured during

@@ -1,19 +1,19 @@
 # A FAILED `source` OF xschem.tcl MUST NOT WALK ON INTO UNSET VARIABLES (issue 0663).
 #
 # THE CLASS. src/xschem.tcl sources FIFTEEN helpers with a BARE `source`
-# (:14568 action_registry, :14584 library_defs, :14586 library_git, :14588
-# library_manager, :14590 copy_form, :14592 create_instance, :14594
-# save_as_form, :14796 op_annot, :14800 cmdmode, :14802 ase, :14804 ase_window,
-# :14806 wave_viewer, :14809 calculator, :14811 property_form, :14815
-# alt2_toggle_view) plus ONE guarded by issue 0658 (:14854 ciw.tcl). A Tcl error
+# (:17144 action_registry, :17160 library_defs, :17162 library_git, :17164
+# library_manager, :17166 copy_form, :17168 create_instance, :17170
+# save_as_form, :17521 op_annot, :17557 cmdmode, :17559 ase, :17561 ase_window,
+# :17563 wave_viewer, :17574 calculator, :17589 property_form, :17593
+# alt2_toggle_view) plus ONE guarded by issue 0658 (:17632 ciw.tcl). A Tcl error
 # inside any of the fifteen propagates OUT of xschem.tcl, so the REST of
 # xschem.tcl -- the statusbar widgets, build_widgets, ciw_create, the colour and
-# layer setup -- never runs. Then source_tcl_file() (src/xinit.c:1513) merely
-# PRINTS the error and returns TCL_ERROR, Tcl_AppInit (src/xinit.c:3406)
+# layer setup -- never runs. Then source_tcl_file() (src/xinit.c:1519) merely
+# PRINTS the error and returns TCL_ERROR, Tcl_AppInit (src/xinit.c:3628)
 # DISCARDS that return, and control walks on into
-# `tclgetdoublevar("cairo_font_line_spacing")` (:3417) and nine siblings against
+# `tclgetdoublevar("cairo_font_line_spacing")` (:3639) and nine siblings against
 # variables that were never set, then into alloc_xschem_data(), whose
-# `strcmp(tclgetvar("undo_type"), "disk")` (src/xinit.c:658) is handed a NULL.
+# `strcmp(tclgetvar("undo_type"), "disk")` (src/xinit.c:659) is handed a NULL.
 # SIGSEGV. main.c:32's handler then derefs `xctx->sch[xctx->currsch]` on a
 # half-initialised xctx and DOUBLE-faults, which is why the code is 139 and not
 # the handler's own exit(1).
@@ -22,7 +22,7 @@
 # op_annot.tcl from the install list; 275 in-tree checks stayed GREEN and the
 # INSTALLED binary was dead on arrival, exit 139. The fix then was to put the
 # file back on the install list -- the crash mechanism was never touched, and
-# op_annot.tcl is STILL one of the fifteen bare sources (src/xschem.tcl:14796).
+# op_annot.tcl is STILL one of the fifteen bare sources (src/xschem.tcl:17521).
 # So the subject file of R1/R3 below is op_annot.tcl DELIBERATELY: it is 0424's
 # own file, and ciw.tcl is already guarded so breaking it would prove nothing
 # about the class.
@@ -45,22 +45,22 @@
 #   * the NORMAL path is byte-unchanged: a clean tree starts exactly as before,
 #     with no announcement and no new stderr line. A fix that announced on a
 #     healthy startup would be worse than the bug;
-#   * issue 0658's per-file ciw.tcl catch (src/xschem.tcl:14854) keeps its
+#   * issue 0658's per-file ciw.tcl catch (src/xschem.tcl:17632) keeps its
 #     shipped behaviour: still alive, still ONE `NOTICE CHANNEL DEGRADED` line,
 #     and NO second announcement from the C backstop.
 #
 # ROWS. SG0 harness sanity | SG1-SG6 R1 the broken op_annot.tcl child | SG7 R1b
 # the error at the END of the file | SG8 R3 the file ABSENT (the pure 0424
-# shape) | SG9 R2-early (action_registry.tcl, :14568, the FIRST bare source and
-# BEFORE ::xschem::notify_log exists at ~14671) | SG10 R2-late
-# (alt2_toggle_view.tcl, :14815, the LAST) | SG11 xschem.tcl ITSELF, the case a
+# shape) | SG9 R2-early (action_registry.tcl, :17144, the FIRST bare source and
+# BEFORE ::xschem::notify_log exists at ~17327) | SG10 R2-late
+# (alt2_toggle_view.tcl, :17593, the LAST) | SG11 xschem.tcl ITSELF, the case a
 # per-file catch measurably cannot cover | SG12-SG13 R6 the normal path |
 # SG14 the 0658 control | SG15-SG19 R7 the same on a DISPLAY | SG20 R5 one
 # durable line | SG21 the audit classifier's literal is preserved.
 #
 # WHY THE CHECKS ONLY EVER COMPARE COUNTS AND STATUS STRINGS, never a raw -out
 # blob: a broken child's stderr carries `Tcl_AppInit() error: ...` at column 0,
-# and full_audit.sh:316 classify() scores a whole suite CRASH on that line if
+# and full_audit.sh:353 classify() scores a whole suite CRASH on that line if
 # the suite is not passing. Printing a child's output into this parent's stdout
 # would reclassify a plain FAIL as a CRASH.
 #
@@ -101,7 +101,7 @@ proc sg_out_count {r s} { return [share_farm_count [sg_out_lines $r] $s] }
 proc sg_log_count {r s} { return [share_farm_count [dict get $r -log] $s] }
 
 ## count LOG lines matching a glob -- this is where the announcement's SHAPE is
-## pinned (the `#! ` durable prefix from log_output, src/util.c:536, and the
+## pinned (the `#! ` durable prefix from log_output, src/util.c:571, and the
 ## order sourced-file -> failing-file -> cause), not just its keyword.
 proc sg_log_glob {r pat} {
   set n 0
@@ -178,7 +178,7 @@ check "SG1 0663 R1 a child whose op_annot.tcl RAISES exits CLEANLY (CHILDSTATUS\
 
 # --- SG2: R4 the failure is ANNOUNCED, in the DURABLE log -------------------
 # RED AT HEAD: zero. In every crashing row the child's Xschem.log holds only its
-# 3 header lines. The glob pins the `#! ` carrier (log_output, util.c:536), so a
+# 3 header lines. The glob pins the `#! ` carrier (log_output, util.c:571), so a
 # fix that announced on stdout only would still be red here.
 check "SG2 0663 R4 the failure reaches the DURABLE LOG as exactly ONE `#! `\
  line carrying STARTUP ABORTED" \
@@ -211,7 +211,7 @@ check "SG5 0663 the aborted child never runs a line of the script (SG-ALIVE\
 
 # --- SG6: the mechanism itself is gone --------------------------------------
 # RED AT HEAD: ten. `can't read "cairo_font_line_spacing": no such variable`
-# (xinit.c:3417) through `can't read "cairo_font_scale": no such variable` are
+# (xinit.c:3639) through `can't read "cairo_font_scale": no such variable` are
 # the ten reads that prove control walked past the failed source into the
 # unset-variable field. Zero of them means the walk no longer happens.
 check "SG6 0663 control never reaches xinit.c:3417's unset-variable reads (no\
@@ -227,9 +227,9 @@ check "SG20 0663 R5 the aborted child's durable log holds EXACTLY ONE `#! `\
   [sg_log_count $sg_err {#! }] 1
 
 # --- SG21: the audit classifier's literal is preserved ----------------------
-# GREEN AT HEAD, and a regression guard: full_audit.sh:316 classify() scores a
+# GREEN AT HEAD, and a regression guard: full_audit.sh:353 classify() scores a
 # suite CRASH on a line matching `^Tcl_AppInit\(\) error`, and
-# test_audit_classifier.tcl:295-296 pins that literal. source_tcl_file() must
+# test_audit_classifier.tcl:321-322 pins that literal. source_tcl_file() must
 # keep printing its block byte-for-byte, and the new announcement must NOT
 # borrow that prefix.
 check "SG21 0663 source_tcl_file()'s own stderr block is unchanged: exactly ONE\
@@ -269,10 +269,10 @@ check "SG8 0663 R3 op_annot.tcl ABSENT (0424's exact shape: a helper missing\
 # =============================================================================
 # R2 -- the fix must not be position-dependent
 # =============================================================================
-# EARLY = action_registry.tcl (src/xschem.tcl:14568, the FIRST bare source) and
-# LATE = alt2_toggle_view.tcl (:14815, the LAST). They bracket the whole run,
+# EARLY = action_registry.tcl (src/xschem.tcl:17144, the FIRST bare source) and
+# LATE = alt2_toggle_view.tcl (:17593, the LAST). They bracket the whole run,
 # and the pair proves one more thing a pair of adjacent picks could not: at
-# :14568 `::xschem::notify_log` (defined ~:14671) DOES NOT EXIST YET, so an
+# :17144 `::xschem::notify_log` (defined ~:17327) DOES NOT EXIST YET, so an
 # announcement routed through any Tcl-side notify proc would be silent for the
 # first seven of the fifteen helpers. The announcement must come from C.
 set sg_early [sg_run early [list action_registry.tcl $SG_BOOM]]
@@ -294,14 +294,14 @@ check "SG10 0663 R2-late alt2_toggle_view.tcl (:14815, the LAST bare source)\
 # --- SG11: xschem.tcl ITSELF -- the case a per-file catch cannot cover -------
 # THE CLASS ROW. Sixteen `catch` wrappers do not fix this class: the hazard is
 # not "a helper source raises", it is "ANYTHING in xschem.tcl raises". Measured:
-# with all fifteen sources wrapped, src/xschem.tcl:14569 `load_action_table` and
-# :16873 `wviewer::rawhist_load` are bare top-level CALLS into helper namespaces
+# with all fifteen sources wrapped, src/xschem.tcl:17145 `load_action_table` and
+# :19936 `wviewer::rawhist_load` are bare top-level CALLS into helper namespaces
 # and STILL exit 139, because they escape a source-only catch. A backstop at the
 # ONE call in Tcl_AppInit covers those, the seventeenth helper nobody has added
 # yet, and this row.
 # NOTE its HEAD colour is different from every other broken row: a TRAILING
 # error in xschem.tcl runs the whole file first, so `cadlayers`/`undo_type`
-# (:16575, :16663) ARE set and HEAD exits 0 rather than 139. Red at HEAD all the
+# (:19628, :19716) ARE set and HEAD exits 0 rather than 139. Red at HEAD all the
 # same -- exit 0 with no announcement at all is precisely the silent-continue
 # the contract forbids.
 set sg_self [sg_run selftcl \
@@ -335,7 +335,7 @@ check "SG13 0663 R6 hard form: a healthy startup writes ZERO `#! ` lines to the\
 
 # --- SG14: the 0658 control -- no interaction, no double announcement -------
 # GREEN AT HEAD and it must stay green. With ciw.tcl broken, xschem.tcl SUCCEEDS
-# (0658's catch at :14854 swallows it), so source_tcl_file returns TCL_OK and
+# (0658's catch at :17632 swallows it), so source_tcl_file returns TCL_OK and
 # the C backstop never fires: one announcement, ONE durable line, 0658's shipped
 # output byte-unchanged. The `#! ` total is the anti-0665 half -- one notice
 # must not become two durable lines.
@@ -357,7 +357,7 @@ check "SG14 0663 the 0658 CONTROL: a broken ciw.tcl still starts (exit 0),\
 # The crash is in the cairo/colour setup path, so a --nogui-only proof would not
 # be a proof. Measured at HEAD: every row below is 139 on :99 exactly as it is
 # headless. The GUI children run `--pipe -q`, which is what keeps them off
-# source_tcl_file's modal-messageBox branch (xinit.c:1535: `has_x &&
+# source_tcl_file's modal-messageBox branch (xinit.c:1543: `has_x &&
 # !cli_opt_pipe && !cli_opt_quit`) -- a bare GUI launch hangs forever on a
 # dialog nobody clicks, which is issue 0669, not this suite's subject.
 if {!$sg_have_display} {

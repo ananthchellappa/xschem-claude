@@ -17,74 +17,96 @@ when the receipt is in `receipts/` and the driver has read it.
 | **V2** | closing solo T1 | **GREEN** | `aa0e2213` | **84 cases**, 375.0 s, **ZERO failures**, rc 0, committed tree | — |
 | **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480 | 1477–1479 |
 
-## Companions — ALL THREE DONE
+## Companions and the documentation tail
 
 | id | task | status | commit | result | issues |
 |---|---|---|---|---|---|
-| **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0; **0805's own fix was a regression** | 0805, 0802 |
-| **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 | 0408(a) |
-| **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43 checks**; 12/12 clean, **8/8 under load**; **two** sabotages | 1332 |
-| **F1** | documentation pass | **DONE** | `bb069d89` | three OWED items; comment-only, **proven** (0 non-comment lines) | 0905, 1477, 1478 |
-| **F2** | stale citations | **DONE** | — | **briefed as 2, found 9** | 1477, 1478, 1479, NUMBERING |
+| **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75**; **0805's own fix was a regression** | 0805, 0802 |
+| **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161**; **8 of 20 bad → 0 of 40** | 0408(a) |
+| **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43**; 8/8 under load; **two** sabotages | 1332 |
+| **F1** | documentation pass | **DONE** | `bb069d89` | three OWED items; comment-only, proven | 0905, 1477, 1478 |
+| **F2** | stale citations | **DONE** | `c9c50562` | **briefed as 2, found 9** | 1477–1479, NUMBERING |
+| **F3** | last stale citations | **DONE** | — | **briefed as 4, found 43** across 30 comment lines | — |
 
-## ⚠ F2: "THE BRIEF SAID TWO STALE CITATIONS. THERE WERE NINE."
+## ⚠ A DRIVER ERROR: I COMPRESSED A RECEIPT AND THEN BRIEFED FROM MY COMPRESSION
 
-The two it was sent for (`1478:41`, `:192`) were right, and **re-derived rather than
-trusted**: `out=$(` sits at `475,477,481,483,485` today against `438,440,444,446,448`
-at `aa0e2213` — a **+37** shift. Today's `:438-440` is `fi` / blank /
-`PASS=0 FAIL=0 CRASH=0 SKIP=0`.
+F2's receipt said, in full, that `doc/claude/issues/0663-*.md` lines `:149/:201/:241`
+were worth fixing. **I compressed that into the LEDGER as `0663:149/:201/:241`**, which
+F3's brief then read as the *suite* `test_startup_guard_0663.tcl`. Those `.tcl` lines
+carry **no citations at all** — they are `set sg_xtcl [...]`, a check-name
+continuation, and a blank line.
 
-**Six more had the same cause and the brief did not anticipate them.** `b3cc484c` also
-grew `tests/banner_rule.tcl` from 124 to 136 lines: `1479:75,:180`
-(`banner_rule.tcl:107` → **`:119`**), `1479:82,:181` (`:115-118` → **`:127-130`**), and
-`1477:168,:201` (`:82-124` → **`:92-136`**). A **ninth** sat in
-`NUMBERING.md:3517`, repeating 1478's sentence verbatim, stale pair included.
+**The lossy step was mine, not the crew's**, and it is the same failure mode as
+everything else in this batch: a second-hand summary treated as a source. The ledger is
+a *pointer* to receipts, and a brief must be written from the receipt.
 
-### ⚠ The 1477 citation is the one to remember
+## ⚠ F3: A CLASS OF ERROR F2's METHOD STRUCTURALLY COULD NOT SEE
 
-`banner_rule.tcl` grew **+10 above `banner_complete` and +2 more below it**, so
-`banner_complete` moved +10 (82→92) while `banner_died` moved +12 (106→118).
-**The natural repair — assume a single offset and write `:82-136` — is wrong at the
-start**, and today's `:82` lands on a bare `#` inside a comment block, **so it reads as
-plausible**. A one-offset assumption would have produced a still-broken citation that
-now looked *freshly verified*. Same shape as D1's fossil-84: **a plausible value is not
-a measurement.**
+**Two citations were never correct — authoring errors, not drift.** F2 diagnosed by
+comparing against the authoring commit, so it would have scored both "sound":
 
-Roughly 30 other citations were checked by printing the cited range and found sound.
-One judgement call, trivially revertible: `run_suites.sh:123` widened to `:121, 123,
-125` to match what F1 wrote into 0905.
+* `banner_rule.tcl:68` → `test_ihp_sg13g2_libmgr:195`: that banner was at **`:218`** *at
+  `banner_rule.tcl`'s own creation commit* `237fc966`.
+* `test_startup_guard_0663.tcl:360` → `xinit.c:1535`: the `has_x` condition was at
+  **`:1537`** at both `8d2bc871` and its parent. It is `:1543` today.
 
-## ⚠ F2 REFUTED THE REASONING BEHIND F1's CONVENTION DECISION
+**A method that checks "has it moved since it was written?" cannot see a citation that
+was wrong when written.** The only check that catches both is reading what is actually
+at the line today.
 
-F1 declined E3's "cite the emitter, not the line" partly to protect
-`test_audit_classifier.tcl:295-296` and `banner_rule.tcl:107` from drift. **Both were
-already stale when F1 named them.** The *conclusion* (adopt it deliberately, repo-wide,
-in one pass) is **strengthened** — but its supporting fact must not be inherited. That
-is the eighth wrong recorded belief this batch, and the second in which the correction
-itself was the thing that rotted.
+Scale: **43 stale numbers across 30 comment lines**, including citations with **no file
+extension** (`test_pdk_launcher:119`) that an extension-anchored regex misses. Largest
+block: `src/xschem.tcl`'s bare sources moved **+2576** (`:14568` → `:17144`) across 41
+commits and +3643 lines.
 
-## Owed — F3, the last content task
+## ⚠ A LIVE FALSE RED ON THE USER'S BOX — `test_startup_guard_0663`
 
-Three stale citations **outside** `doc/claude/issues/`, numbers measured and ready:
+`2 FAILED (20 passed)` at HEAD **because of the user's `~/.xschem`, not the tree.**
+Measured both ways: with a clean HOME it is **`RESULT: ALL PASS (22 checks)`**, rc 0.
 
-* `tests/banner_rule.tcl:98` cites `full_audit.sh:315-316` for the crash arm → **`:352-353`**.
-  ⚠ **F1 edited that very file and missed this.**
-* `tests/headless/test_startup_guard_0663.tcl:230` cites `full_audit.sh:316` → **`:353`**
-* `tests/headless/test_startup_guard_0663.tcl:232` cites `test_audit_classifier.tcl:295-296` → **`:321-322`**
+The three `#! ` lines a "healthy" startup writes are **ASE-L registry warnings**: `stub`
+→ `/tmp/stage11/e2e/bin/sim` and `slowstub` → `/tmp/stage11/kp/bin/slowsim`, both now
+gone, plus `src/xschem` registered as simulator `ng-cm3`. `sharefarm.tcl:87` launches
+children with the parent's environment and `scratch.tcl` deliberately does not redirect
+`USER_CONF_DIR`.
 
-Plus `0663:149/:201/:241`, which F2 reports live and worth fixing.
+**T1's zero baseline is unaffected** — this suite is not in `run_regression.tcl`'s case
+list — **but it is a live false red for `full_audit.sh`**, which globs the file.
 
-**Deliberately NOT to be renumbered: `0802:16`** (`full_audit.sh:311-325`). It precedes
-a code block quoting the *pre-fix* source, so it is a historical transcript like
-`receipts/E1.md:115`; renumbering without requoting would make it worse.
+**Filed as a ruling debt for the user** (⚖ R2): prune the three dead
+`~/.xschem/ase_simulators` entries, or isolate the suite from the registry. **F3
+recommends isolating**, because pruning fixes this box and leaves the next developer to
+inherit the same false red. **Not implemented**: redirecting `USER_CONF_DIR` in
+`scratch.tcl` reaches 169 suites and is a design change deserving its own scoped work,
+not a tail-end patch on a closing batch.
+
+## F3's proofs
+
+Line counts **136 → 136** and **435 → 435**; non-comment lines diff **0** against `HEAD`
+in both; **0** non-comment additions; `+30 / −30`. Suites before vs after on `:99`:
+`test_audit_classifier` `ALL PASS (75 checks)`, `test_startup_guard_0663`
+**byte-identical output**, `1476` `ALL PASS (20 checks)`. F3 also caught two errors in
+its **own draft receipt** and re-derived F2's `:328-330` rather than inheriting it.
+
+## Owed — F4, genuinely the last content task
+
+1. **`FIFTEEN` is now eighteen.** `src/xschem.tcl` has **18** bare sources;
+   `op_param_lists`, `results` and `rdw` are named nowhere. F3 renumbered the fifteen
+   cited lines but deliberately did not touch the count, because fixing it means adding
+   helper names — content, not a citation. ⚠ **The block therefore now carries
+   freshly-verified numbers under a false count — the exact shape F2 warned about.**
+2. **Four citations sit inside `check "…"` name strings** (`:217`, `:279`, `:287`,
+   `:310`), so editing them would have broken F3's comment-only proof. Replacements are
+   measured and listed in its receipt; they currently **disagree with the comments above
+   them.**
 
 ## Candidates, recorded and deliberately not scheduled
 
 1. **1478's fail-open warning should write into the verdict**, not only to stdout.
 2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass** — now
-   with F2's evidence that the counter-argument rested on already-stale citations.
+   supported by F2's evidence *and* by F3's, which showed 43 stale numbers in two files
+   alone.
 
 ## Resume point
 
-Next: **F3** (the three measured citations above — the last content task), then the
-**final solo T1**.
+Next: **F4** (the two items above), then the **final solo T1**.
