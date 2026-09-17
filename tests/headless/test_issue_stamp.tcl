@@ -62,9 +62,117 @@ proc with_corpus {issuesdir baselinefile body} {
     return $res
 }
 
+## ---------------------------------------------------------------------------
+## Scratch discipline: THIS RUN'S DIRECTORIES, AND NOTHING ELSE
+## ---------------------------------------------------------------------------
+##
+## ⚠ THIS FILE USED TO END WITH A SINGLE UNQUALIFIED DELETE:
+##
+##     file delete -force <tests/headless>/.scratch
+##
+## -- the WHOLE shared scratch tree, not this run's own directories.  Creation
+## was pid-qualified and correct all along (`istamp_[pid]_<tag>` below, and
+## `drv_[pid]` in row S20); only the sweep was qualified by POSITION -- the
+## directory it happened to sit in -- instead of by IDENTITY, the directories
+## this process actually made.  That is `W12b`, *position is not identity*: the
+## defect class the harness-concurrency batch existed to fix, reproduced inside
+## the file this batch built to enforce its own convention.
+##
+## ⚠ IT IS NOT THEORETICAL AND IT REDDENED THE GATE.  `.scratch` is the shared
+## namespace `tests/headless/scratch.tcl` hands directories out of --
+## `test_scratch <tag>` returns `.scratch/_<tag>_<pid>` -- and 192 files under
+## tests/ source that library (187 `test_*.tcl` suites plus 5 helpers), measured
+## by an anchored `^\s*source .*scratch\.tcl` rather than by a bare substring:
+## 194 files merely CONTAIN the string, this one included, and counting those
+## would be the `pgrep -af` self-match again.  Measured 2026-09-17: run by hand while T1 was
+## live, this line removed `_simcaps0948_<pid>` and `_conc1476_<pid>` mid-run,
+## and T1 returned `counted_failures=55` with 42 of them from
+## `test_ase_simcaps_0948` alone.  The suite reported `RESULT: ALL PASS` and
+## exited 0 while doing it, which is exactly why nothing caught it for a day.
+##
+## The replacement is scratch.tcl's own division of labour, COPIED rather than
+## invented, because a correct implementation already exists in this tree:
+##
+##   * directories this process creates are REGISTERED at creation and deleted
+##     from that record -- identity, never a pattern (scratch.tcl's
+##     `__scratch_dirs` / `__scratch_cleanup_all`);
+##   * corpses left behind by runs that were killed are swept only on EVIDENCE
+##     that their owner is gone, behind the same guards as scratch.tcl's
+##     `__scratch_sweep` and `run_regression.tcl`'s `t1_sweep_verdicts`.
+##
+## ⚠ `.scratch` ITSELF IS NEVER DELETED, and the failure direction is always
+## "a leftover survives", never "a live run's state is deleted".
+
+## Resolve the scratch root ONCE, at the top level, while [info script] still
+## names this file -- the discipline scratch.tcl states for `__scratch_home`.
+## The creators and the sweep must agree on the root, or the sweep looks in the
+## wrong place and silently does nothing.
+set ::ISTAMP_SCRATCH_ROOT \
+    [file join [file dirname [file normalize [info script]]] .scratch]
+
+## The record of what this process made.
+if {![info exists ::ISTAMP_OWN_DIRS]} { set ::ISTAMP_OWN_DIRS {} }
+
+proc istamp_own {d} {
+    if {[lsearch -exact $::ISTAMP_OWN_DIRS $d] < 0} {
+        lappend ::ISTAMP_OWN_DIRS $d
+    }
+    return $d
+}
+
+## Delete exactly the directories handed over.  No glob and no pattern: the
+## caller supplies the record of what it created, which is the whole point.
+proc istamp_delete_own {dirs} {
+    set gone {}
+    foreach d $dirs {
+        if {![file exists $d]} { continue }
+        if {![catch {file delete -force $d}]} { lappend gone [file tail $d] }
+    }
+    return $gone
+}
+
+## Is $p a live process?  Conservative, exactly as scratch.tcl's
+## `__scratch_pid_alive`: when we cannot tell, answer "alive", so a sweep never
+## removes a directory another running test still owns.
+proc istamp_pid_alive {p} {
+    if {![string is integer -strict $p]} { return 1 }
+    if {[file isdirectory /proc]} { return [file exists /proc/$p] }
+    return 1
+}
+
+## Sweep same-shaped corpses of runs that never reached their own cleanup.
+## FOUR guards before any delete, every one of them load-bearing:
+##   1. the name must be THIS SUITE's shape -- `istamp_<pid>_<tag>` or
+##      `drv_<pid>` -- so `_simcaps0948_<pid>`, and every other suite's
+##      directory, is invisible to this loop;
+##   2. the pid must not be mine (my own go through the record above);
+##   3. the pid must be DEAD on evidence: /proc absent, never a bare `kill -0`,
+##      which answers yes for a RECYCLED pid;
+##   4. the directory must be older than $min_age -- belt and braces against
+##      pid reuse on a box that just wrapped its pid space (pid_max here is
+##      4194304), the same floor `__scratch_sweep` carries.
+## `$root` itself is never touched.
+proc istamp_sweep_corpses {root {min_age 300}} {
+    set gone {}
+    if {![file isdirectory $root]} { return $gone }
+    set now [clock seconds]
+    foreach d [concat \
+            [glob -nocomplain -directory $root -type d {istamp_[0-9]*_*}] \
+            [glob -nocomplain -directory $root -type d {drv_[0-9]*}]] {
+        set base [file tail $d]
+        if {![regexp {^istamp_([0-9]+)_.+$|^drv_([0-9]+)$} $base -> p1 p2]} { continue }
+        set p [expr {$p1 ne {} ? $p1 : $p2}]
+        if {$p eq [pid]} { continue }
+        if {[istamp_pid_alive $p]} { continue }
+        if {[catch {file mtime $d} mt]} { continue }
+        if {$now - $mt < $min_age} { continue }
+        if {![catch {file delete -force $d}]} { lappend gone $base }
+    }
+    return $gone
+}
+
 proc mkcorpus {tag files {baseline ""}} {
-    set d [file join [file dirname [file normalize [info script]]] .scratch \
-                     istamp_[pid]_$tag]
+    set d [istamp_own [file join $::ISTAMP_SCRATCH_ROOT istamp_[pid]_$tag]]
     file delete -force $d
     file mkdir [file join $d issues]
     foreach {name body} $files {
@@ -89,9 +197,51 @@ proc problems_matching {issuesdir baselinefile needle} {
     return $n
 }
 
-set REV [string trim [exec timeout 30 git -C $istamp::repo rev-parse --short=8 HEAD]]
+## ⚠ HEAD'S ABBREVIATION IS NOT GUARANTEED TO BE A LEGAL `tree=` TOKEN, AND ON
+## 2026-09-17 IT WAS NOT.  The grammar requires 7-40 hex with AT LEAST ONE a-f
+## (issue_stamp.tcl's `tree=... is not a revision (7-40 hex, at least one a-f)`
+## arm) -- a rule stolen from tools/stampscan.py because a bare [0-9a-f]{8,40}
+## matched `16091816`, the box's MemTotal in kB, and led a whole census astray.
+## THAT RULE IS RIGHT AND MUST NOT BE LOOSENED TO MAKE THIS SUITE PASS.
+##
+## But an 8-char abbreviation is all decimal digits with probability
+## (10/16)^8 = 2.3%, and measured over this branch's last 300 commits it is
+## 6 of 300 -- 2%.  At HEAD `83656487` the fixtures built from $REV stopped
+## parsing and TWELVE rows went red at once -- S15, S15c, B3, G2, Q1, Q2, A2,
+## A3, A4, N1, N2, N3 -- with nothing about the tree changed and nothing wrong
+## with the checker.  Only the SPELLING OF HEAD had changed.  An earlier run of
+## this same suite cost an evening of hypotheses about concurrency, corpora and
+## shared scratch before anyone suspected the revision itself.
+##
+## So: lengthen the abbreviation until it carries a hex letter.  Every form
+## names the SAME commit, `git show` and `cat-file` accept all of them, and the
+## full 40-char object name is the backstop.
+proc istamp_test_rev {} {
+    foreach n {8 9 10 12 40} {
+        if {[catch {exec timeout 30 git -C $istamp::repo rev-parse --short=$n HEAD} r]} {
+            continue
+        }
+        set r [string trim $r]
+        if {[regexp {^[0-9a-f]{7,40}$} $r] && [regexp {[a-f]} $r]} { return $r }
+    }
+    return {}
+}
+set REV [istamp_test_rev]
 
 puts "## issue-stamp checker, corpus [file tail $istamp::issues_dir], tree $REV"
+
+## ⚠ ONE NAMED ROW INSTEAD OF TWELVE MYSTERIOUS ONES.  If the revision this
+## suite builds its fixtures from is ever not a legal tree= token again, THIS
+## row says so by name -- instead of twelve unrelated-looking rows failing at
+## once and a reader spending an evening refuting hypotheses about concurrency,
+## which is precisely what happened on 2026-09-17.  A stall must be a named
+## outcome; so must this.
+check "S0 the revision the fixtures are built from is itself a legal tree= token" \
+    [list [expr {$REV ne {}}] \
+          [dict get [istamp::parse_stamp \
+              "**STAMP:** `v1 claim=open tree=$REV stamped=2026-09-17 fix=none open=0`"] ok] \
+          [istamp::rev_exists $REV]] \
+    {1 1 1}
 
 ## ---------------------------------------------------------------------------
 ## S -- the grammar.  Half of these are the ONLY reason a green from the gate
@@ -284,7 +434,7 @@ check "S19 super= takes an issue number, a revision, or self (0442 has no number
 ## family -- and caught only because the revision under test was known-good.
 ## This row runs the checker from a directory that is not tests/headless.
 check "S20 the repo is derived from the CHECKER's own location, not the caller's script" \
-    [set d [file join [file dirname [file normalize [info script]]] .scratch drv_[pid]] ;
+    [set d [istamp_own [file join $::ISTAMP_SCRATCH_ROOT drv_[pid]]] ;
      file mkdir $d ;
      set fh [open [file join $d drv.tcl] w] ;
      puts $fh "set ::ISSUE_STAMP_LIB 1" ;
@@ -583,10 +733,117 @@ check "D9b the self-test is a precondition of any verdict, not a separate comman
     [llength [istamp::selftest]] \
     0
 
-## Sweep this run's fixture corpora.  A leak here would land in
-## tests/headless/.scratch/, which is gitignored, but the pile is the subject of
-## issue 0148 and there is no reason to add to it.
-catch {file delete -force [file join [file dirname [file normalize [info script]]] .scratch]}
+## ---------------------------------------------------------------------------
+## W -- THE SWEEP.  This section locks a defect that was LIVE IN THIS FILE.
+## ---------------------------------------------------------------------------
+##
+## ⚠ RED WHEN WRITTEN, ON THE REAL TREE, AND IT COST A T1 RUN.  The mechanism is
+## in the block above `mkcorpus`; this is what was observed at bb3eeb81.  Three
+## sentinel directories were placed in `.scratch` -- `_bc3_sentinel_<pid>` plus
+## replicas of the two real victims, `_simcaps0948_*` and `_conc1476_2642112` --
+## and ALL THREE, together with `.scratch` itself, were destroyed by a run of
+## this suite that reported `RESULT: ALL PASS (43 checks)` / `OVERALL: ok` /
+## rc 0, identically on the tclsh arm and the xschem arm.  A green suite
+## deleting three other suites' live state is the shape nothing in this project
+## catches, and it is the reason these rows exist.
+##
+## ⚠ THESE ROWS RUN AGAINST A FIXTURE ROOT, NEVER THE REAL ONE, so the suite
+## cannot damage a concurrent run even while proving that it does not.
+
+## A throw-away scratch root with $entries as its children.  Registered, so the
+## real cleanup below removes it however this suite ends.
+proc mksweepfix {tag entries} {
+    set root [istamp_own [file join $::ISTAMP_SCRATCH_ROOT istamp_[pid]_$tag]]
+    file delete -force $root
+    file mkdir $root
+    foreach e $entries { file mkdir [file join $root $e] }
+    return $root
+}
+
+proc sweepfix_left {root} {
+    set out {}
+    foreach d [glob -nocomplain -directory $root -type d *] {
+        lappend out [file tail $d]
+    }
+    return [lsort $out]
+}
+
+## A pid that owns nothing: below pid_max, so it is a well-formed pid, and with
+## no /proc entry, so it is dead ON EVIDENCE rather than by assumption.
+set W_DEAD 0
+for {set n 4000000} {$n < 4000200} {incr n} {
+    if {![file exists /proc/$n]} { set W_DEAD $n ; break }
+}
+
+check "W1 cleanup deletes the directories this run RECORDED -- and only those" \
+    [set r [istamp_own [file join $::ISTAMP_SCRATCH_ROOT istamp_[pid]_ownfix]] ;
+     file delete -force $r ; file mkdir $r ;
+     foreach e {recorded_a recorded_b never_recorded} { file mkdir [file join $r $e] } ;
+     set gone [lsort [istamp_delete_own \
+         [list [file join $r recorded_a] [file join $r recorded_b]]]] ;
+     list $gone [sweepfix_left $r]] \
+    {{recorded_a recorded_b} never_recorded}
+
+## One fixture, one sweep, and the rows below read different guards off it.
+set W_FIX [mksweepfix sweepfix [list \
+    istamp_[pid]_mine  drv_1  istamp_1_live \
+    istamp_${W_DEAD}_corpse  drv_${W_DEAD} \
+    _simcaps0948_${W_DEAD}  _conc1476_2642112]]
+set W_SWEPT [lsort [istamp_sweep_corpses $W_FIX 0]]
+set W_LEFT  [sweepfix_left $W_FIX]
+
+check "W2 the sweep removes exactly the DEAD pids' own-namespace dirs, nothing else" \
+    [list $W_SWEPT $W_LEFT] \
+    [list [lsort [list drv_${W_DEAD} istamp_${W_DEAD}_corpse]] \
+          [lsort [list _conc1476_2642112 _simcaps0948_${W_DEAD} \
+                       drv_1 istamp_1_live istamp_[pid]_mine]]]
+
+## ⚠ THE SENTINEL, MECHANISED.  pid 1 is alive on every Linux box there is, so a
+## sweep that removed `istamp_1_live` would be deleting a LIVE run's state --
+## which is what the old line did to every suite at once.
+check "W3 a LIVE pid's directory is never swept, even in this suite's own namespace" \
+    [list [expr {[lsearch -exact $W_LEFT istamp_1_live] >= 0}] \
+          [expr {[lsearch -exact $W_LEFT drv_1] >= 0}] \
+          [istamp_pid_alive 1]] \
+    {1 1 1}
+
+## ⚠ THE MEASURED VICTIM.  `_simcaps0948_<pid>` is the literal directory
+## test_ase_simcaps_0948 asks `test_scratch` for, and `_conc1476_2642112` is what
+## `.scratch` actually held -- test_regression_concurrency_1476 running INSIDE a
+## live T1 -- at the moment the old line fired.  Neither is in this suite's
+## namespace, so neither may EVER be reachable from here, dead pid or not.
+check "W4 a directory outside this suite's namespace is invisible to the sweep" \
+    [list [expr {[lsearch -exact $W_LEFT _simcaps0948_${W_DEAD}] >= 0}] \
+          [expr {[lsearch -exact $W_LEFT _conc1476_2642112] >= 0}]] \
+    {1 1}
+
+## ⚠ NON-VACUITY.  W3 and W4 are "it survived" rows, and a sweep that did
+## nothing whatsoever would pass both.  This is the row that says it works.
+check "W5 a dead pid's corpse IS swept, so W3 and W4 are not passing on a no-op" \
+    [list [expr {[lsearch -exact $W_SWEPT istamp_${W_DEAD}_corpse] >= 0}] \
+          [expr {$W_DEAD > 0}] [istamp_pid_alive $W_DEAD]] \
+    {1 1 0}
+
+## The age floor -- scratch.tcl's "belt-and-braces against pid reuse on a box
+## that just wrapped its pid space".  A FRESH directory owned by a dead pid is
+## the shape a recycled pid produces, so it must survive the default budget.
+check "W6 the age floor spares a dead pid's FRESH directory (pid reuse)" \
+    [set f [mksweepfix agefix [list istamp_${W_DEAD}_fresh]] ;
+     list [istamp_sweep_corpses $f] [sweepfix_left $f] [file isdirectory $f]] \
+    [list {} [list istamp_${W_DEAD}_fresh] 1]
+
+## ⚠ THE HEADLINE.  The root is 192 files' shared namespace and is NOT this
+## suite's to delete.  Deleting it was the old line's entire content.
+check "W7 the scratch ROOT itself survives a sweep -- it is 192 files' namespace" \
+    [list [file isdirectory $W_FIX] [file isdirectory $::ISTAMP_SCRATCH_ROOT]] \
+    {1 1}
+
+## Sweep: this run's own directories, from the record of what it made, and then
+## -- only on evidence the owner is gone -- same-shaped corpses of runs that
+## were killed before they got here.  `.scratch` ITSELF IS NOT DELETED.
+catch {istamp_delete_own $::ISTAMP_OWN_DIRS}
+set ::ISTAMP_OWN_DIRS {}
+catch {istamp_sweep_corpses $::ISTAMP_SCRATCH_ROOT}
 
 if {$fail == 0} {
     puts "RESULT: ALL PASS ($npass checks)"
