@@ -21,6 +21,51 @@ after the driver has read the receipt and checked at least one of its claims.
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
 | **F1** | closing gate: register in T1, CLAUDE.md 84→85, post-change run | blocked on BC2 | — | — |
 
+## ✅ BATCH CLOSED — 2026-09-17, at `df464d1d`
+
+**12 crews, 12 receipts, 37 commits, gate green.**
+
+```
+T1-RUN-END pid=2654581 cases=85 blocks=84 counted_failures=0 elapsed=380s
+```
+
+| closing invariant | state |
+|---|---|
+| T1 baseline | **ZERO**, at 85 cases |
+| owed ledger | **byte-identical** to the pre-batch backup — 190 / 71 / 11, `cleared.log` 106 |
+| user's `ase_simulators` | md5 `13c5cec624b130f598db5779f7b2b8bf`, **unchanged** |
+| `/tmp/xschem_emergencysave_*` | 49, untouched |
+| tree | clean but for four directories predating the batch |
+
+### What was built
+
+* **A convention** (`doc/claude/specs/issue_stamp.md`) that makes an issue file state what
+  it was measured against — and **dissolved** the hardest requirement rather than meeting
+  it: `tree=` is a statement about the *past*, which cannot rot, only age.
+* **A checker**, registered in T1, self-testing in **both** directions before it reports.
+* **10 files stamped**, 0071's child table repaired, **zero prose rewritten**.
+* **Two documents for the user**: 48 wording debts → **16 decisions (~1 h)**; 71 look debts
+  → **27 looks in 5 sittings (~2 h 40)**.
+* **A measured answer**: citation rot, **27 of 40** pre-registered random files.
+
+### What was NOT fixed, and is the honest limit
+
+**The tracker fails to *keep* delivering, and nothing here addresses that.** Issue 0229
+wrote down the fix for citation rot and nobody built it. The wording collection was
+maintained across 35 commits and never handed over. The look collection *was* handed over
+and decayed anyway. **A convention and a checker govern contents; none of them governs
+delivery.**
+
+### The cost, stated plainly
+
+**Three of twelve crew tasks — BC2, BC3, and half of D1 — existed to repair things this
+batch built.** The gate went **red twice** before green. **Twenty-five driver errors** are
+recorded below, plus four near-misses caught before publication. Every one was the same
+mistake: **a pattern matched against the wrong namespace.**
+
+⚠ **Error 7 is the one that matters**, because it is the only one the user heard: they were
+told their 190 queued decisions were mostly misfiled. **153 of them are genuinely theirs.**
+
 ## Running findings
 
 ### A2 (files 11–20) — the dangerous direction was empty; the **citation layer** is what rots

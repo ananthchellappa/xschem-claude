@@ -141,10 +141,9 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   the tree ran 84 the fossil's number was *indistinguishable from today's correct
   one*; the tree now runs **85**, so a stale log reading 84 finally looks stale. **Do
   not read that as the trap closing** — it reopens the instant the count next moves,
-  and the next fossil will carry 85. The durable half is the sentence below, not the
-  digit: only the mtime, and now `T1-RUN-BEGIN`, ever said otherwise. — the fossil
-  number was *indistinguishable from today's correct one*, and only its mtime ever
-  said otherwise. A plausible value is not a measurement.
+  and the next fossil will carry 85. The durable half is the punchline, not the digit:
+  the fossil's number was *indistinguishable from today's correct one*, and only its
+  mtime ever said otherwise. **A plausible value is not a measurement.**
   ⚠ **"Only its mtime" stopped being true on 2026-09-17.** `T1-RUN-BEGIN` names the
   pid and the wall-clock start time, so a fossil is now self-identifying **from
   content** — which is the only thing the reader of a pasted log actually has. The
