@@ -73,7 +73,9 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **save-citations** | `save.c:4149` cited stale by ~7 suites | IN FLIGHT (no suite) | — |
 | **R2-build** | private `HOME` — every prediction held to the digit | DONE | `6751c5c4` |
 | **save-citations** | 7 reported → **30 coordinates, 11 files** | DONE | `6751c5c4` |
-| **V4** | solo GREEN + **the first measured concurrent pair** | DONE | *(this commit)* |
+| **V4** | solo GREEN + **the first measured concurrent pair** | DONE | `a34dc050` |
+| **plan-closeout** | `PLAN.md` corrected **+263/−0**, nothing deleted | DONE | `f669af14` |
+| **V5** | **closing solo T1 — GREEN, zero counted failures** | DONE | *(this commit)* |
 | **W12b** | **identity**, not counts, in `/tmp`; the R4 gate | DONE — **R4 RELAXED** | `2cf01084` |
 | **claude-md-2** | the two numbers V4 refuted | DONE | `957996e2` |
 | **serialisation docs** | rewrite the 6 that cite the refuted RAM figure | QUEUED — after `W12b` | — |
@@ -282,6 +284,47 @@ sentence rather than by running `wc -l` once. The driver propagated it into `CLA
 matching R1-recon's *direction* — the box has **20 cores**, so wall-clock flips sign at full-T1
 scale while the single-case figure stays right for a single case. **The reason for the change
 remains that no crew is ever turned away; speed is a side effect.**
+
+## ✅ V5 — CLOSING GATE GREEN. T1 AT ZERO ON TODAY'S TREE.
+
+V4's green predated **four commits** that touched the harness and its suites, so it was a green
+from a tree that no longer existed. V5 is the close-out.
+
+| | |
+|---|---|
+| verdict | `tests/results.2484691.log`, rc **0**, **378 s** |
+| trailer | **`T1-RUN-END … cases=84 blocks=83 counted_failures=0`** — the run *finished* |
+| cases (`Start`/`Finish`) | **84 / 84** |
+| `Total num fail:` lines | **83** |
+| `wc -l` | **171** — *this run's measurement, not a constant* |
+| `exit -1` | **0** |
+
+`wc -l` decomposed with **every term counted and none subtracted**: 2 sentinels + 83 totals +
+3 NOGOLD + 0 NODISPLAY + 83 block headers. Solo-ness established **positively** — no lock, no
+foreign process, **zero** "another regression run is live" notices.
+
+**Both repairs hold.** `test_suite_watchdog_1403` `ALL PASS (32)` with `W12b` green in
+**identity** form and **corpse delta 0** (49 → 49, nothing deleted). `test_ase_core`
+`ALL PASS (675)`, all four `C11` rows green in delta form.
+
+**Outstanding rather than rounded away:** V4's `test_ase_optier_0963` flake is **unexplained**
+and merely passed today; and **nobody has swept shared globals beyond `xschem_emergencysave_*`**
+for count-based assertions.
+
+### ⚠ Three findings the brief did not contain — and the first is the fourth sighting
+
+1. **`pgrep -af 'run_regression'` SELF-MATCHES.** It returned **four hits for one run** — the real
+   processes plus two Bash wrapper shells whose *command text* contains the pattern. **In a batch
+   about detecting concurrent runs, the detector has a false-positive mode that could excuse a
+   red.** Same class as `W12b`: matching a shared namespace **by pattern instead of by identity**.
+   ⚠ **The driver put that exact command in V5's own brief.**
+2. **The trailer BEATS `Start`/`Finish` on a NODISPLAY box** — the reverse of what the brief
+   implied. `incr t1_cases` fires *before* the `continue`, so `cases` stays **84** where `Finish`
+   drops to 73. **1481's hole does not reach the trailer**, which makes the trailer the better
+   instrument, not merely the newer one. 1481 should record this.
+3. **Running `test_ase_core` standalone does NOT test `C11`'s ambient-litter tolerance** — its
+   watch list collapses to the repo root. **T1 supplied the stronger test**: cwd `tests/`, ambient
+   `tests/untitled~.sch` present *and rewritten mid-run*, `C11` still green.
 
 ## ⛔ THE "FOUR-SOURCE CITATION" BELOW IS WITHDRAWN — IT WAS THE ERROR IT ACCUSED OTHERS OF
 
