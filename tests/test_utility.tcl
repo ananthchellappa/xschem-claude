@@ -196,6 +196,45 @@ proc job_status_reason {rc statusfile} {
 }
 
 # ---------------------------------------------------------------------------
+# Per-run LOG names (issue 1478; ruling R1 as re-decided 2026-09-17)
+# ---------------------------------------------------------------------------
+# A full T1 run writes 88 fixed-name files under tests/, of which 83 are verdict
+# INPUTS -- the driver reads each case's log back and scores it. Two runs in one
+# tree therefore scored each other's bodies, and the verdict lock protected
+# exactly ONE of the 88. Measured 2026-09-17 on a forced collision, using this
+# tree's own banner_rule.tcl as the scorer, wrong in BOTH directions: run A's two
+# real failures silently counted as ZERO, and a phantom failure charged to the
+# run that passed.
+#
+# ⚠ THE TAG IS THE DRIVER'S PID AND IT TRAVELS IN THE ENVIRONMENT, which looks
+# indirect until you notice who writes this file: print_results runs in the
+# CASE's process (`tclsh open_close.tcl`), not the driver's, so the two cannot
+# both reach for `[pid]` and get the same answer. run_regression.tcl sets
+# T1_LOG_TAG to its own pid; both sides then spell the name with this one proc,
+# so they cannot drift.
+#
+# ⚠ AND AN UNSET TAG MEANS THE OLD NAME, DELIBERATELY. `cd tests && tclsh
+# open_close.tcl` is the documented way to run one case by hand (CLAUDE.md says
+# so), and it must go on producing `open_close.log` -- a private name for a solo
+# run would be a new thing to learn for no benefit.
+proc t1_log_tag {} {
+  if {[info exists ::env(T1_LOG_TAG)]} {
+    set v [string trim $::env(T1_LOG_TAG)]
+    if {[string is integer -strict $v] && $v > 0} { return $v }
+  }
+  return {}
+}
+
+# "$stem$suffix" solo, "$stem.<tag>$suffix" under a driver. The suffix is passed
+# rather than assumed because the four shapes differ: `.log`, `.disp.log` and
+# `_output.txt` are not one extension with one spelling.
+proc t1_run_file {stem suffix} {
+  set t [t1_log_tag]
+  if {$t eq {}} { return "$stem$suffix" }
+  return "$stem.$t$suffix"
+}
+
+# ---------------------------------------------------------------------------
 # Per-run results roots (issue 1476, faces 1 and 2)
 # ---------------------------------------------------------------------------
 # Each case works in <case>/results.<pid> and publishes it under the canonical
@@ -278,9 +317,16 @@ proc comp_file {file1 file2} {
 proc print_results {testname pathlist num_fatals {resdir {}}} {
     if {$resdir eq {}} { set resdir $testname/results }
 
-    set a [catch "open \"$testname.log\" w" fd]
+    ## ⚠ PER-RUN NAME (issue 1478). This log is a VERDICT INPUT -- the driver
+    ## reads it back and counts the lines in it -- and it used to be one fixed
+    ## slot per case NAME rather than per RUN, so a second run in the tree
+    ## overwrote it between this case exiting and the driver summarizing it.
+    ## The driver publishes it back to `$testname.log` afterwards, so every
+    ## reader's spelling survives.
+    set logname [t1_run_file $testname .log]
+    set a [catch "open \"$logname\" w" fd]
     if {$a} {
-      puts "Couldn't open $testname.log"
+      puts "Couldn't open $logname"
     } else {
      if {[file exists ${testname}/gold]} {
       set i 0

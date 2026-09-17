@@ -316,10 +316,59 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_simwin_variant_1471"]
-set log_fn "results.log"
+## ---------------------------------------------------------------------------
+## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
+## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)
+## ---------------------------------------------------------------------------
+## `results.log` is the name CLAUDE.md's reading instructions, doc/claude/ledger/
+## crew.js and the user all spell, so it stays exactly where it is. What changed
+## is that NO RUN WRITES THROUGH IT: each run fills its own `results.<pid>.log`
+## and copies that onto the canonical name when it is complete. The canonical
+## file therefore always holds ONE run's whole answer -- the most recent
+## completed one -- instead of a mixture or a truncation, and two runs never
+## contend for the file they are still filling.
+##
+## ⚠ THE PREVIOUS DESIGN REFUSED THE SECOND RUN AND THE USER REJECTED THAT
+## SHAPE: "Why not make it fault-tolerant and find a way for both runs to
+## proceed? Innovation and progress are about having one's cake and eating it."
+## They were right. The constraint the whole choice rested on turned out to be a
+## FILENAME CONVENTION, not a property of the system.
+##
+## ⚠ AND CONCURRENCY BUYS NO THROUGHPUT HERE. Measured on a staggered pair of
+## golden cases: both answers at 64.4 s concurrent against 53.7 s back-to-back --
+## 20% WORSE, because 32 workers are being asked of 20 cores. What it buys is
+## that no crew is ever told its verification cannot run right now. Anyone who
+## reads this as a speed optimisation will reach for it in the wrong place.
+set log_fn     "results.log"          ;# canonical: the most recent COMPLETED run
+set run_log_fn "results.[pid].log"    ;# this run's own answer, never shared
 
-proc summarize_all {fn fd} {
-  puts $fd "$fn"
+## The three running totals the trailer reports.
+## ⚠ NONE OF THEM EXISTED. summarize_all returned nothing and its num_fail was
+## local, so this driver has never known its own answer -- which is why a
+## trailer had to be BUILT rather than merely printed, and why every reader has
+## had to re-derive the count by grepping the file afterwards.
+set t1_cases    0   ;# cases ENTERED -- one per "Start ..." line
+set t1_blocks   0   ;# "Total num fail:" blocks written into the verdict
+set t1_failures 0   ;# counted failures: the number whose baseline is ZERO
+
+## $fn is the file to READ; $label is the name to PRINT as the block header.
+##
+## ⚠ THEY ARE SEPARATE ARGUMENTS ON PURPOSE, AND THIS IS ISSUE 1478 §3's TRAP.
+## The per-case file NAME GOES INTO THE VERDICT -- this proc's first act is to
+## write it as the block header. Pid-qualify the read name naively and every
+## block header in results.log grows a pid: the verdict's CONTENTS change, the
+## byte-determinism a green run has today is gone, and any reader keying on the
+## literal `headless/<name>.disp.log` stops matching.
+##
+## 1478 proposed publishing each log back to its canonical name BEFORE
+## summarizing. That fixes the header and PUTS THE RACE BACK: between the rename
+## and the read, the other run can publish its own file onto that same name and
+## be scored instead. Reading the private name while printing the public one is
+## what closes both at once, and it is one extra argument.
+proc summarize_all {fn fd {label {}}} {
+  if {$label eq {}} { set label $fn }
+  incr ::t1_blocks
+  puts $fd "$label"
   set b [catch "open \"$fn\" r" fdread]
   set num_fail 0
   if (!$b) {
@@ -345,13 +394,41 @@ proc summarize_all {fn fd} {
     # Fail CLOSED (issue 0147): print_results now always writes its log, so a
     # missing one means the case died before reporting. This used to be a
     # non-counting note, which is how 2654 dead jobs summarized as zero failures.
-    puts $fd "HARNESS: $fn missing -- case produced no log (never ran?): FAIL"
+    puts $fd "HARNESS: $label missing ($fn) -- case produced no log (never ran?): FAIL"
     puts $fd "Total num fail: 1"
+    set num_fail 1
   }
+  incr ::t1_failures $num_fail
+  return $num_fail
 }
 
 source test_utility.tcl  ;# defines $xschem_cmd (used by the headless cases below) + helpers
 source banner_rule.tcl   ;# banner_complete / banner_died / regression_case_failed (issue 0689)
+
+## ⚠ THE CASES WRITE THEIR OWN LOGS, IN THEIR OWN PROCESSES. `tclsh
+## open_close.tcl` is a separate pid, so this driver and that case cannot both
+## reach for `[pid]` and get the same answer -- the name has to be AGREED.
+## print_results reads T1_LOG_TAG out of the environment and t1_run_file (both
+## in test_utility.tcl) spells the rule once for both sides. Set before the
+## first case starts, and inherited by every child of this interpreter.
+set ::env(T1_LOG_TAG) [pid]
+
+## Restore a canonical name from this run's private one, after the verdict for
+## that case is already computed. Same contract as publish_results
+## (test_utility.tcl): nothing here can change a result, so a failure is a
+## warning and never a death -- the file simply stays under its per-run name.
+## ⚠ RENAME, NOT COPY, for the per-case logs: the private name is scratch once
+## it has been scored, and leaving 83 of them per run behind would be litter in
+## a tree that has already paid for litter (issue 1480). The VERDICT is the
+## opposite case and is copied, for the reason given where it is published.
+proc t1_publish {priv canon} {
+  if {$priv eq $canon || ![file exists $priv]} { return 0 }
+  if {[catch {file rename -force $priv $canon} e]} {
+    puts "WARNING: could not publish $priv as $canon ($e) -- this run's copy stays there"
+    return 0
+  }
+  return 1
+}
 
 ## ---------------------------------------------------------------------------
 ## EVERY CHILD GETS A DEADLINE (issue 1403)
@@ -403,38 +480,50 @@ proc t1_why {childcode secs} {
 }
 
 ## ---------------------------------------------------------------------------
-## THE VERDICT IS SERIALISED (issue 1476 face 4; filed as 0955 and 0905)
+## THE PUBLISH LOCK -- A SAFETY NET, NOT A GATE (issue 1476 face 4; 0955, 0905)
 ## ---------------------------------------------------------------------------
-## The verdict file is opened mode `w` -- fixed name, truncate, no lock -- so two
-## runs in one tree destroy each other's ANSWER. Measured 2026-09-16 with two
-## copies of this driver: the file ends up 13268 bytes, zero NUL bytes, the first
-## run's verdict complete and perfectly well-formed, and the second run's ENTIRE
-## verdict simply never exists while that run exits 0 printing its Finish lines.
-## Nothing is corrupted; a whole run's evidence is gone.
+## HISTORY, because it is what the code below is shaped by. The verdict file was
+## opened mode `w` -- fixed name, truncate, no lock -- so two runs in one tree
+## destroyed each other's ANSWER. Measured 2026-09-16 with two copies of this
+## driver: the file ends up 13268 bytes, zero NUL bytes, the first run's verdict
+## complete and perfectly well-formed, and the second run's ENTIRE verdict simply
+## never exists while that run exits 0 printing its Finish lines. Nothing is
+## corrupted; a whole run's evidence is gone. That is the DANGEROUS direction --
+## the other three faces of 1476 are loud, this one manufactures a phantom PASS
+## in the one file CLAUDE.md calls "THE ONLY PLACE THE ANSWER IS". And "I started
+## first" was never a defence: measured over ten pairs, nine erased the second
+## run and one erased the FIRST.
 ##
-## ⚠ THAT IS THE DANGEROUS DIRECTION. The other three faces of 1476 are loud --
-## they manufacture phantom FATALs and a case that dies with no banner. This one
-## manufactures a phantom PASS: a run that reports ZERO having verified nothing,
-## in the one file CLAUDE.md calls "THE ONLY PLACE THE ANSWER IS".
+## ⚠ THE FIRST FIX WAS A LOCK THAT REFUSED THE SECOND RUN, AND IT IS GONE. Under
+## ruling R1 as re-decided, both runs proceed: each fills its own
+## `results.<pid>.log`, so while a run is happening there is NOTHING SHARED left
+## to serialise. A lock across a whole regression run was protecting a filename
+## convention as if it were physics.
 ##
-## ⚠ AND "I STARTED FIRST" IS NOT A DEFENCE. The race is symmetric: measured over
-## ten pairs, nine erased the second run and one erased the FIRST. Whichever run
-## you are, your verdict may be the one that never existed.
+## ⚠ WHAT IS KEPT, AND WHY IT IS KEPT RATHER THAN DELETED. One act is still
+## shared: copying a FINISHED verdict onto the canonical name. The lock now
+## brackets exactly that -- a sub-second critical section instead of a ~410 s
+## one -- so the canonical file can never be a mixture of two runs' bytes. And
+## the evidence-based stale-lock logic below is the only correct code in this
+## tree for "is that pid still the thing that took this": a bare `kill -0`
+## answers yes for a RECYCLED pid. Deleting the block would throw that away to
+## save nothing.
 ##
-## Ruling R1 (doc/claude/harness_concurrency_batch/DECISIONS.md): the per-case
-## scratch and results roots become per-run (the three case files), while the
-## VERDICT keeps its canonical name -- doc/claude/ledger/crew.js, CLAUDE.md's own
-## reading instructions and the user all name this exact file -- and is instead
-## serialised. The second run is told plainly. It never silently truncates.
-##
-##     T1_LOG_LOCK_WAIT  seconds to queue behind a live run before refusing;
-##                       0 (the default) refuses at once, so nobody waits by
-##                       accident. The refusal says how to opt into waiting.
+##     T1_LOG_LOCK_WAIT  seconds to wait for the PUBLISH lock (default 60).
+##                       ⚠ ITS MEANING CHANGED. It used to be "seconds to queue
+##                       behind a whole live regression run before being
+##                       refused", default 0 because nobody should wait 400 s by
+##                       accident. Nothing queues behind a run any more, so the
+##                       only thing it can now wait for is a file copy, and a
+##                       default of 0 would make the lock decorative.
 ##     T1_LOG_LOCK_TTL   seconds after which a lock is broken even though some
 ##                       process still holds the owner's pid; 0 disables it.
 ##                       The pid AND its /proc cmdline are the real evidence;
-##                       this is only the backstop for a recycled pid, so it is
-##                       deliberately far longer than any real run (T1 is ~410 s).
+##                       this is only the backstop for a recycled pid. ⚠ ALSO
+##                       RETUNED, 14400 -> 300: it had to outlast a whole run,
+##                       and now it only has to outlast a copy.
+##     T1_VERDICT_KEEP   seconds to keep a DEAD run's results.<pid>.log before
+##                       sweeping it (default 86400; 0 disables sweeping).
 ##
 ## ⚠ A LOCK MUST NEVER BECOME THE REASON T1 DOES NOT RUN. Every failure of the
 ## locking machinery itself FAILS OPEN: a lock whose owner is gone is broken on
@@ -523,68 +612,127 @@ proc t1_lock_take {lf waitsecs ttl} {
 }
 
 set lock_file "$log_fn.lock"
-set lock_busy [t1_lock_take $lock_file [t1_lock_env T1_LOG_LOCK_WAIT 0] \
-                                       [t1_lock_env T1_LOG_LOCK_TTL 14400]]
-if {$lock_busy ne {}} {
-  ## ⚠ REFUSING MUST BE LOUD AND LEGIBLE. A silent refusal is just another way to
-  ## lose a verdict: the run stops, the operator sees a prompt come back, and the
-  ## file sitting on disk reads exactly like their own clean sweep.
-  puts "############################################################"
-  puts "REFUSING TO RUN: another regression run is using $log_fn in this tree,"
-  puts "  $lock_busy."
-  puts "  Truncating it would erase that run's verdict -- issue 1476 face 4, a"
-  puts "  whole run reporting ZERO having verified nothing. Nothing was run."
-  puts ""
-  puts "  THE $log_fn ON DISK IS NOT YOURS. It belongs to that run, or to an"
-  puts "  older one. Counting its lines as this run's result is the fossil trap."
-  puts ""
-  puts "  Let that run finish and start again, or pick one of:"
-  puts "    T1_LOG_LOCK_WAIT=1800 tclsh run_regression.tcl   -- queue behind it"
-  puts "    a second clone of the repo                       -- a tree of your own"
-  puts "  If that pid is NOT a regression run, delete $lock_file."
-  puts "############################################################"
-  exit 2
-}
-## ⚠ THE RUN WE QUEUED BEHIND LEFT ITS ANSWER HERE, AND WE ARE ABOUT TO TRUNCATE
-## IT. Serialising alone does not close face 4: "wait politely, then destroy it
-## anyway" loses precisely the evidence the lock was taken to protect. Move it
-## aside under the finishing run's pid and say where it went. This only fires on
-## the opt-in waiting path -- a lone run truncating the previous run's stale log
-## is the behaviour every reader already expects.
-if {$t1_lock_waited && [file exists $log_fn]} {
-  set keep_fn "results.$t1_lock_waited.log"
-  if {[catch {file rename -force $log_fn $keep_fn} e]} {
-    puts "WARNING: could not preserve pid $t1_lock_waited's verdict: $e"
-  } else {
-    puts "NOTE: the run we queued behind (pid $t1_lock_waited) left its verdict in $log_fn; preserved as $keep_fn before this run took the name."
+
+## Verdicts of runs that are no longer alive get swept, or one file per T1 run
+## accumulates in tests/ for ever (this tree has already paid for litter --
+## issue 1480).
+## ⚠ THE FAILURE DIRECTION MUST BE "A LEFTOVER SURVIVES", never "a live run's
+## answer is deleted", which is why a pid with /proc present is skipped even if
+## it is not a regression run at all. Same contract as sweep_dead_run_dirs, and
+## the age floor is there so a crew that finished ten minutes ago can still be
+## asked what it found.
+proc t1_sweep_verdicts {keep} {
+  if {$keep <= 0 || ![file isdirectory /proc/[pid]]} { return {} }
+  set now [clock seconds]
+  set swept {}
+  foreach f [glob -nocomplain -- results.*.log] {
+    if {![regexp {^results\.([0-9]+)\.log$} [file tail $f] -> p]} { continue }
+    if {$p == [pid] || [file exists /proc/$p]} { continue }
+    if {[catch {file mtime $f} m]} { continue }
+    if {$now - $m < $keep} { continue }
+    if {![catch {file delete -force $f}]} { lappend swept [file tail $f] }
   }
+  if {[llength $swept]} {
+    puts "swept [llength $swept] dead run verdict(s): $swept"
+  }
+  return $swept
 }
 
-set a [catch "open \"$log_fn\" w" fd]
+## Which OTHER regression runs are filling a verdict in this tree right now?
+## ⚠ THE PER-RUN VERDICT IS ITSELF THE LIVENESS RECORD -- a `results.<pid>.log`
+## whose pid is still alive. No registry, no second file to leak, and it is the
+## same evidence a reader uses afterwards to decide whose answer a file is.
+proc t1_live_runs {} {
+  set live {}
+  if {![file isdirectory /proc]} { return $live }
+  foreach f [glob -nocomplain -- results.*.log] {
+    if {![regexp {^results\.([0-9]+)\.log$} [file tail $f] -> p]} { continue }
+    if {$p == [pid]} { continue }
+    if {[file isdirectory /proc/$p]} { lappend live $p }
+  }
+  return $live
+}
+
+t1_sweep_verdicts [t1_lock_env T1_VERDICT_KEEP 86400]
+
+## ⚠ A LIVE RUN IS ANNOUNCED, NEVER REFUSED. The operator needs to know which
+## file is theirs, because the canonical one is about to be written twice; that
+## is the whole of what the old refusal was really for, and it can be said
+## without stopping anybody.
+set t1_others [t1_live_runs]
+if {[llength $t1_others]} {
+  puts "############################################################"
+  puts "NOTE: another regression run is live in this tree (pid: [join $t1_others {, }])."
+  puts "  BOTH RUNS PROCEED. Nobody waits and nobody is refused (ruling R1)."
+  puts ""
+  puts "  YOUR answer is $run_log_fn. $log_fn will hold whichever run"
+  puts "  finishes LAST, and every verdict carries a T1-RUN-BEGIN/T1-RUN-END"
+  puts "  pair naming its pid -- so read the trailer, not the filename."
+  puts ""
+  puts "  This is not faster: measured 20% SLOWER to both answers than running"
+  puts "  back-to-back. What it buys is that neither crew is turned away."
+  puts "############################################################"
+}
+
+set t1_started [clock seconds]
+set a [catch "open \"$run_log_fn\" w" fd]
 if {!$a} {
+## ⚠ THIS ONE LINE IS LOAD-BEARING AND IT LOOKS LIKE HOUSEKEEPING. There was no
+## `fconfigure` and no `flush` anywhere in this driver, so the verdict channel
+## was FULL-BUFFERED AT 4096 B against a ~4785-byte verdict. That is why issue
+## 1477's killed runs leave a 0-BYTE file rather than a proportional prefix: the
+## typical outcome, not an extreme one. The trailer below survives buffering
+## either way (it is written last, then closed); the HEADER does not, and the
+## header is the half that says WHOSE answer a file is. Without this line the
+## sentinels inherit the exact hole they were added to close.
+fconfigure $fd -buffering line
+## ⚠ NEITHER SENTINEL MAY END IN `FAIL`/`GOLD?`/`RESULT?` OR BEGIN WITH `FATAL`.
+## Those are summarize_all's four counted shapes, and every reader of this file
+## -- crew.js, CLAUDE.md's greps, a human -- applies them to the whole verdict. A
+## sentinel that scored itself would be a phantom red manufactured by the fix.
+## Row V4a of test_regression_concurrency_1476.tcl holds that by measurement.
+puts $fd "T1-RUN-BEGIN pid=[pid] script=[file tail [info script]]\
+ start=[clock format $t1_started -format {%Y-%m-%d %H:%M:%S}]\
+ planned_cases=[expr {[llength $tcases] + [llength $hcases] + [llength $dcases] + 1}]\
+ verdict=$run_log_fn canonical=$log_fn"
 foreach tc $tcases {
     puts "Start source ${tc}.tcl"
+    incr t1_cases
+    ## ⚠ PER-RUN NAMES (issue 1478). ${tc}.log is written by the CASE's own
+    ## process via print_results, which agrees on the spelling through
+    ## T1_LOG_TAG; ${tc}_output.txt is written by the redirection below. Both
+    ## were one fixed slot per case NAME rather than per RUN.
+    ## The sharpest face lived right here: `file delete -force ${tc}.log` at the
+    ## START of the next case could land between the other run's case exiting and
+    ## that run's summarize_all, which then took the missing-log branch --
+    ## `case produced no log (never ran?): FAIL`, A COUNTED FAILURE THAT NEVER
+    ## HAPPENED, in the one suite whose baseline is ZERO.
+    set tclog [t1_run_file $tc .log]
+    set tcout [t1_run_file $tc _output.txt]
     # Drop any previous run's log FIRST (issue 0147): nothing else deletes it, so
     # a stale <case>.log left on disk was re-grepped and its old FAILs replayed as
     # if they were this run's -- and it survives a "reproduce on a clean baseline"
     # recheck, which makes phantom failures look confirmed.
-    file delete -force ${tc}.log
+    file delete -force $tclog
     set childcode 0
     set tccmd [concat $t1_pre [list tclsh ${tc}.tcl]]
-    if {[catch {eval exec $tccmd > ${tc}_output.txt} msg opt]} {
+    if {[catch {eval exec $tccmd > $tcout} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
       puts "Something seems to have gone wrong with $tc, but we will ignore it: $msg"
     }
-    ## A kill leaves ${tc}.log as whatever the case had written by then, which
+    ## A kill leaves the case log as whatever the case had written by then, which
     ## summarize_all would read as an ordinary partial result. Say so instead.
     if {$childcode == 124 || $childcode == 137} {
-      set af [open ${tc}.log a]
+      set af [open $tclog a]
       puts $af "HARNESS: ${tc} [t1_why $childcode $t1_tmo]: FAIL"
       close $af
       puts "TIMEOUT: ${tc} killed after ${t1_tmo}s"
     }
-    summarize_all ${tc}.log $fd
+    ## READ the private name, PRINT the canonical one -- see summarize_all.
+    summarize_all $tclog $fd ${tc}.log
+    t1_publish $tclog ${tc}.log
+    t1_publish $tcout ${tc}_output.txt
     puts "Finish source ${tc}.tcl"
   }
   # Headless self-checks driven directly through the built binary (needs xschem to resolve its
@@ -615,22 +763,32 @@ foreach tc $tcases {
   # of log contents, and the line names which of the three conditions gave way.
   foreach hc $hcases {
     puts "Start ${hc}.tcl (headless)"
+    incr t1_cases
+    ## ⚠ THIS IS THE FILE THE COLLISION WAS REPRODUCED IN, and it is 69 of the
+    ## 83 verdict inputs. Measured 2026-09-17 with the tree's own banner_rule.tcl
+    ## as the scorer, wrong in BOTH directions: with both children exiting 0 --
+    ## the ORDINARY shape, since a suite reporting N failed checks still prints
+    ## its banner and exits 0 -- run A's TWO REAL FAILURES were counted as ZERO,
+    ## and separately the PASSING run counted a failure it did not earn. The
+    ## silent direction is face 4 again, one file upstream of the verdict.
+    set hclog [t1_run_file $hc .log]
     set childcode 0
     set hccmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script ${hc}.tcl]]
-    if {[catch {eval exec $hccmd > ${hc}.log 2>@1} msg opt]} {
+    if {[catch {eval exec $hccmd > $hclog 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
     set body ""
-    if {![catch {open ${hc}.log r} rf]} { set body [read $rf]; close $rf }
+    if {![catch {open $hclog r} rf]} { set body [read $rf]; close $rf }
     set sentinel [banner_complete $body]
     set died     [banner_died $body]
     if {[regression_case_failed $childcode $body]} {
-      set af [open ${hc}.log a]
+      set af [open $hclog a]
       puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- [t1_why $childcode $t1_tmo]: FAIL"
       close $af
     }
-    summarize_all ${hc}.log $fd
+    summarize_all $hclog $fd ${hc}.log
+    t1_publish $hclog ${hc}.log
     puts "Finish ${hc}.tcl (headless)"
   }
   # ISSUE 0891 -- THE DISPLAY ARM. Same three-condition verdict as the headless
@@ -666,8 +824,16 @@ foreach tc $tcases {
   set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
   foreach dc $dcases {
     puts "Start ${dc}.tcl (display arm)"
-    file delete -force ${dc}.disp.log
+    incr t1_cases
+    ## Per-run name, as for the headless arm (issue 1478): 11 more of the 83.
+    set dclog [t1_run_file $dc .disp.log]
+    file delete -force $dclog
     if {!$dd_alive} {
+      ## ⚠ THIS ARM WRITES ITS OWN BLOCK RATHER THAN CALLING summarize_all, so
+      ## the block counter has to be incremented by hand here. Miss it and the
+      ## trailer under-reports on every box with no dev display -- which would
+      ## make the trailer itself the thing that lies.
+      incr t1_blocks
       puts $fd "${dc}.disp.log"
       puts $fd "NODISPLAY: ${dc} display arm NOT RUN -- the persistent dev display is not up, so THIS ARM VERIFIED NOTHING. Start it with tests/headless/devdisplay.sh start and run again."
       puts $fd "Total num fail: 0"
@@ -688,20 +854,21 @@ foreach tc $tcases {
     ## the words "devdisplay.sh start"). Splitting this across a continuation
     ## reddened V57 on both arms in T1; do not re-wrap it.
     set dccmd [concat [list $dd exec] $t1_pre [list $xschem_cmd --pipe -q --logdir $dlogdir --script ${dc}.tcl]]
-    if {[catch {eval exec $dccmd > ${dc}.disp.log 2>@1} msg opt]} {
+    if {[catch {eval exec $dccmd > $dclog 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
     set body ""
-    if {![catch {open ${dc}.disp.log r} rf]} { set body [read $rf]; close $rf }
+    if {![catch {open $dclog r} rf]} { set body [read $rf]; close $rf }
     set sentinel [banner_complete $body]
     set died     [banner_died $body]
     if {[regression_case_failed $childcode $body]} {
-      set af [open ${dc}.disp.log a]
+      set af [open $dclog a]
       puts $af "HARNESS: ${dc} (display arm) did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel, died=$died) -- [t1_why $childcode $t1_tmo]: FAIL"
       close $af
     }
-    summarize_all ${dc}.disp.log $fd
+    summarize_all $dclog $fd ${dc}.disp.log
+    t1_publish $dclog ${dc}.disp.log
     puts "Finish ${dc}.tcl (display arm)"
   }
   # xschemtest.tcl: the broad functional/perf harness. GUARDED (issue 0147) --
@@ -709,24 +876,81 @@ foreach tc $tcases {
   # (e.g. an unresolvable binary) aborted the interpreter with a raw Tcl stack
   # trace and never appeared in the summary at all. Now its outcome is recorded.
   puts "Start xschemtest.tcl"
+  incr t1_cases
+  set xtlog [t1_run_file stefan_xschemtest .log]
   set xtcmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script xschemtest.tcl]]
-  if {[catch {eval exec $xtcmd > stefan_xschemtest.log 2>@1} msg]} {
+  if {[catch {eval exec $xtcmd > $xtlog 2>@1} msg]} {
+    ## ⚠ THIS ARM ALSO WRITES ITS OWN BLOCK, so it counts its own block and its
+    ## own failure. And note it writes one ONLY WHEN IT FAILS -- which is why the
+    ## verdict carries one fewer block than there are cases on a green run. That
+    ## arithmetic used to have to be remembered; the trailer now states it.
+    incr t1_blocks
+    incr t1_failures
     puts $fd "xschemtest.tcl"
     puts $fd "HARNESS: xschemtest.tcl did not run cleanly ($msg): FAIL"
     puts $fd "Total num fail: 1"
     puts "xschemtest.tcl FAILED: $msg"
   }
+  t1_publish $xtlog stefan_xschemtest.log
   puts "Finish xschemtest.tcl"
+  ## ⚠ THE TRAILER IS THE HALF WORTH MORE THAN THE CONCURRENCY FIX, and it closes
+  ## two recorded traps that no amount of locking touches:
+  ##
+  ##   * THE FOSSIL. A stale results.log reads as a perfect clean sweep. Only its
+  ##     mtime ever said otherwise, and receipts plus a commit message in this
+  ##     tree already carry a case count taken that way -- one of them a number
+  ##     that was INDISTINGUISHABLE from the correct one on the day it was taken.
+  ##     A trailer naming pid and end time makes a fossil self-identifying FROM
+  ##     CONTENT, which is the only thing a reader actually has.
+  ##
+  ##   * ISSUE 1477's TRUNCATION HOLE. EVERY PREFIX OF A GREEN RUN IS ITSELF A
+  ##     GREEN RUN, because all four counted shapes (FAIL$, GOLD?$, RESULT?$,
+  ##     ^FATAL) need a line to EXIST -- verified at 1, 10, 40, 80, 120 and 170
+  ##     lines of a real 169-line verdict, zero counted failures at every length.
+  ##     "No trailer => did not finish" is decidable where "short file" is not.
+  ##
+  ## ⚠ AND IT STATES THE ARITHMETIC CLAUDE.md SPELLS OUT BY HAND. `cases` is
+  ## Start lines; `blocks` is "Total num fail:" lines, normally one fewer; a
+  ## short count is a death even when every line present is green.
+  set t1_ended [clock seconds]
+  puts $fd "T1-RUN-END pid=[pid] cases=$t1_cases blocks=$t1_blocks\
+ counted_failures=$t1_failures elapsed=[expr {$t1_ended - $t1_started}]s\
+ end=[clock format $t1_ended -format {%Y-%m-%d %H:%M:%S}]"
   close $fd
+
+  ## ⚠ COPY, DO NOT RENAME. A rename would hand the canonical name over and
+  ## DELETE this run's own answer -- which is precisely the "lost cleanly"
+  ## outcome this ruling exists to avoid: the second finisher would erase the
+  ## first's verdict, tidily instead of mid-write, and the batch would have
+  ## traded a loud data loss for a quiet one.
+  ##
+  ## The lock is taken HERE and nowhere else: one file copy, not a whole run.
+  ## It fails open by construction (t1_lock_take returns a sentence rather than
+  ## raising), because a lock must never become the reason T1 has no answer.
+  set lock_busy [t1_lock_take $lock_file [t1_lock_env T1_LOG_LOCK_WAIT 60] \
+                                         [t1_lock_env T1_LOG_LOCK_TTL 300]]
+  if {$lock_busy ne {}} {
+    puts "NOTE: publishing $run_log_fn as $log_fn WITHOUT the publish lock ($lock_busy)."
+    puts "NOTE: both verdicts are complete under their own names; $log_fn is whichever copied last."
+  }
+  if {[catch {file copy -force $run_log_fn $log_fn} e]} {
+    puts "WARNING: could not publish $run_log_fn as $log_fn ($e)."
+    puts "WARNING: this run's verdict is COMPLETE and is in $run_log_fn -- read that."
+  }
+  catch {file delete -force $lock_file}
+  puts "VERDICT: this run's answer is $run_log_fn ($t1_failures counted failure(s) over $t1_cases case(s)); published as $log_fn"
 } else {
-  puts "Couldn't open $log_fn to write.  Investigate please."
+  puts "Couldn't open $run_log_fn to write.  Investigate please."
 }
-## Release, on BOTH arms above -- the failed-open arm holds the lock too, and a
-## run that refused to start must not leave the tree locked against the next one.
+## ⚠ NOTHING TO RELEASE HERE ANY MORE, AND THAT IS THE POINT. The lock used to be
+## held for the WHOLE RUN and released at this line on both arms. It is now taken
+## and dropped around the single file copy above, so by the time control reaches
+## here this run holds nothing -- and deleting `$lock_file` unconditionally at
+## this point would destroy ANOTHER run's publish lock, which is a new defect
+## wearing the old line's clothes.
 ##
-## ⚠ A RUN THAT DIES BEFORE THIS POINT LEAVES THE LOCK BEHIND, ON PURPOSE. There
+## ⚠ A RUN THAT DIES MID-PUBLISH STILL LEAVES THE LOCK BEHIND, ON PURPOSE. There
 ## is no trap handler here and there should not be one: the next run breaks a
 ## lock on EVIDENCE -- the owner pid is gone, or its cmdline is no longer the
 ## script that took it -- never on hope and never on a timer alone. A crashed run
 ## therefore costs the next one a printed NOTE, not a wedged tree.
-catch {file delete -force $lock_file}

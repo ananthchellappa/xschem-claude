@@ -184,9 +184,19 @@ Dev display (\`tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog 
 Full: \`cd ${REPO}/tests && tclsh run_regression.tcl\` — baseline **ZERO** counted
 failures, 0 launch failures. Block count grows as suites are added (46 at commit
 0e6cb3cb, 53 at 827220bb); the ZERO is the invariant, the block count is not.
-**Run it SOLO** — two concurrent runs in one tree share a results directory and
-truncate each other's \`results.log\`, which manufactures a FATAL and can also
-report ZERO having verified nothing (issues 0955, 0990).
+**Two runs in one tree is now SAFE** (issues 0955, 0990, 1476, 1478 — fixed).
+Each run writes its own \`results.<pid>.log\` and copies it onto \`results.log\`
+when it finishes, so nobody is refused and nobody's answer is erased. It is not
+FASTER — measured 20% slower to both answers than running back-to-back — it just
+means a second crew is never turned away.
+
+**READ THE TRAILER, NOT THE MTIME.** Every verdict now opens with
+\`T1-RUN-BEGIN pid=… start=…\` and ends with
+\`T1-RUN-END pid=… cases=… blocks=… counted_failures=…\`. A file with NO
+\`T1-RUN-END\` line DID NOT FINISH — that is the only way to tell a killed run
+from a clean sweep, because every prefix of a green run counts as zero failures.
+A file whose \`T1-RUN-BEGIN\` pid is not your run's is somebody else's answer, or
+a fossil. If two runs were live, read \`results.<your pid>.log\`.
 
 NOTHING IS KNOWN-RED. If a tier is not at its number above, that is YOURS: say
 which case and why, per case. A standing red is a defect, not furniture.

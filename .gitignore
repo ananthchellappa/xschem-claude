@@ -115,12 +115,24 @@ tests/open_close/results.*/
 tests/create_save/.work.*/
 tests/netlisting/.work.*/
 tests/open_close/.work.*/
-# ...and the verdict lock that serialises two runs' results.log (issue 1476
-# face 4). `tests/*.log` above does not cover it -- the name ends in .lock -- and
-# a run that is KILLED leaves it behind deliberately, for the next run to break
-# on evidence. The preserved verdict of a run queued behind another is
-# `tests/results.<pid>.log`, which `tests/*.log` DOES already cover.
+# ...and the PUBLISH lock (issue 1476 face 4). `tests/*.log` above does not cover
+# it -- the name ends in .lock -- and a run that is KILLED leaves it behind
+# deliberately, for the next run to break on evidence.
+# ⚠ ITS SCOPE SHRANK when ruling R1 was re-decided: it is no longer held for a
+# whole run, only around the one act of copying a finished verdict onto the
+# canonical name. Every run's OWN answer is `tests/results.<pid>.log`, which
+# `tests/*.log` DOES already cover.
 tests/results.log.lock
 tests/create_save_output.txt
 tests/netlisting_output.txt
 tests/open_close_output.txt
+# ...and the per-run siblings of those three (ruling R1: both runs proceed).
+# Each run writes `tests/<case>.<pid>_output.txt` and publishes it to the
+# canonical name above when the case is done; a run that is KILLED leaves one
+# behind. ⚠ THE THREE RULES ABOVE ARE EXACT PATHS AND MATCH NEITHER -- and
+# unlike the per-run LOGS, which `tests/*.log` sweeps up, nothing else here
+# covers these, so a killed run would otherwise show as untracked noise in
+# `git status` (issue 1480's own subject).
+tests/create_save.*_output.txt
+tests/netlisting.*_output.txt
+tests/open_close.*_output.txt

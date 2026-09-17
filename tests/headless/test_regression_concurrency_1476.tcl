@@ -398,16 +398,185 @@ check D2b-the-second-run-exits-zero [expr {$Brc eq {0}}] \
   "-- B rc=$Brc, and 0 is the requirement; face 2 is worse than face 1 precisely because it is quiet -- face 1 screams in the log, face 2 leaves nothing behind to count"
 
 # =============================================================================
+# SECTION P -- the 83 files UPSTREAM of the verdict (issue 1478)
+# =============================================================================
+# ⚠ THE LOCK PROTECTED 1 OF 88. This section exists because the batch's own
+# decision record asserted, on the day the decision was taken, that "the only
+# single-slot object left was the name tests/results.log". MEASURED FALSE: a full
+# T1 writes **88 fixed-name files** under tests/ --
+#
+#     3 tcases x (<tc>.log + <tc>_output.txt)  =  6
+#    69 hcases x  <hc>.log                     = 69
+#    11 dcases x  <dc>.disp.log                = 11
+#       stefan_xschemtest.log + results.log    =  2
+#                                         total  88
+#
+# -- of which **83 are verdict INPUTS**: summarize_all and regression_case_failed
+# are applied to their contents. Fixing results.log while those stand means each
+# run writes a correct-LOOKING verdict computed from the other run's bodies.
+#
+# ⚠ AND THE COLLISION WAS REPRODUCED, WRONG IN BOTH DIRECTIONS, using the tree's
+# own shipped banner_rule.tcl as the scorer:
+#   * SILENTLY (both children exit 0, the ordinary shape) run A's TWO REAL
+#     FAILURES were counted as **0**. That is face 4 -- the dangerous direction --
+#     one file upstream of the file the lock guards.
+#   * and the PASSING run counted a failure it did not earn.
+#
+# The cure is the one B1 already proved one directory away: a `.<pid>` infix,
+# then PUBLISH back to the canonical name. These rows pin the naming; V3a pins
+# the property behaviourally.
+
+set UTIL_NOW [slurp $UTIL_PATH]
+
+## P1 -- the three redirection sites, per site, in the idiom of W15c in
+## test_suite_watchdog_1403.tcl: isolate the ONE line that writes the file and
+## require it not to name the shared spelling. A row that grepped the whole loop
+## would match the PROSE about the file as readily as the file (issue 0894).
+foreach {_psite _pvar _pbare} [list \
+    tcases-output tccmd {${tc}_output.txt} \
+    hcases-log    hccmd {${hc}.log} \
+    dcases-displog dccmd {${dc}.disp.log}] {
+  set _pl [src_line $RR "eval exec \\\$$_pvar"]
+  check P1-$_psite-is-written-under-a-per-run-name \
+    [expr {$_pl ne {} && ![has_text $_pl $_pbare] ? 1 : 0}] \
+    "-- observed `[string trim $_pl]`; the requirement is that this redirection NOT name the shared `$_pbare`. One slot per suite NAME rather than per RUN is what let two runs score each other's bodies"
+}
+
+## P1d -- and the same for the file the CASE writes rather than the driver.
+## <case>.log is produced by print_results in tests/test_utility.tcl, in a CHILD
+## process, so the driver cannot simply pick the name: the tag is handed down in
+## the environment. A bare `open "$testname.log" w` there puts the shared name
+## back however careful the driver is.
+check P1d-print_results-writes-a-per-run-log \
+  [expr {[has_text $UTIL_NOW {t1_run_file}] && ![regexp {open[^\n]*"\$testname\.log"[^\n]*w} $UTIL_NOW] ? 1 : 0}] \
+  "-- test_utility.tcl helper=[has_text $UTIL_NOW {t1_run_file}] bare-open=[expr {[regexp {open[^\n]*"\$testname\.log"[^\n]*w} $UTIL_NOW] ? 1 : 0}]; print_results runs in the case's own process, so the driver and the case must agree on the name by construction rather than by luck"
+
+## ⚠ P1e/P1f ARE THE ONLY BEHAVIOURAL ROWS IN THIS SECTION, AND THEY EXIST
+## BECAUSE THE SOURCE ROWS ABOVE CANNOT REACH THE RISK. <case>.log is written by
+## print_results in the CASE's process and read back by the DRIVER's, so the two
+## must agree on a name across a process boundary. Get that handshake wrong and
+## the driver looks for a file the case never wrote -- summarize_all takes its
+## missing-log branch and synthesizes `case produced no log (never ran?): FAIL`,
+## A COUNTED FAILURE THAT NEVER HAPPENED, in the suite whose baseline is ZERO.
+## ⚠ AND SECTION V CANNOT CATCH IT EITHER: its two driver copies run with
+## `set tcases {}`, so the golden-case path is never walked there.
+set pdir [file join $scratch pr] ; file mkdir $pdir
+set pprobe [spit [file join $scratch pr_probe.tcl] "source \[lindex \$argv 0\]
+cd \[lindex \$argv 1\]
+set ::env(T1_LOG_TAG) 4242
+print_results tagcase {} 0
+if {\[catch {t1_run_file tagcase .log} r\]} { set r NO-SUCH-PROC }
+puts \"TAGGED \[file exists tagcase.4242.log\]\"
+puts \"CANON \[file exists tagcase.log\]\"
+puts \"AGREE \[expr {\$r eq {tagcase.4242.log}}\]\"
+unset ::env(T1_LOG_TAG)
+print_results plaincase {} 0
+puts \"PLAIN \[file exists plaincase.log\]\"
+"]
+set pout {}
+catch {exec timeout 60 tclsh $pprobe $UTIL_PATH $pdir 2>@1} pout
+set _ptag   [probe_val $pout TAGGED]
+set _pcanon [probe_val $pout CANON]
+set _pagree [probe_val $pout AGREE]
+set _pplain [probe_val $pout PLAIN]
+
+check P1e-the-case-and-the-driver-agree-on-the-log-name-across-processes \
+  [expr {$_ptag eq {1} && $_pcanon eq {0} && $_pagree eq {1}}] \
+  "-- with T1_LOG_TAG=4242 set: print_results wrote tagcase.4242.log=$_ptag, wrote the shared tagcase.log=$_pcanon (must be 0), and t1_run_file names the same file=$_pagree. If these disagree the driver summarizes a file that was never written and counts a failure that never happened"
+check P1f-an-untagged-run-still-writes-the-name-people-type \
+  [expr {$_pplain eq {1}}] \
+  "-- with T1_LOG_TAG unset: plaincase.log=$_pplain. `cd tests && tclsh open_close.tcl` is the documented way to run one case by hand and CLAUDE.md says so; a private per-run name there would be a new thing to learn for no benefit, and the non-vacuity half of P1e"
+
+## ⚠ P2a IS ISSUE 1478 §3, AND IT IS THE TRAP IN THIS WHOLE PART. The per-case
+## FILE NAME GOES INTO THE VERDICT: summarize_all writes its argument as the
+## block header (`puts $fd "$fn"`). Pid-qualify the name naively and every block
+## header in results.log grows a pid -- which changes what the verdict CONTAINS,
+## destroys the byte-determinism a green run has today, and breaks any reader
+## keying on the literal `headless/<name>.disp.log`.
+##
+## 1478 proposed publishing back to the canonical name BEFORE summarizing. That
+## works for the header and REOPENS THE RACE: between the rename and the read,
+## the other run can publish its own file onto the same name and be summarized
+## instead. The shape that closes both is to separate the two jobs -- READ the
+## per-run file, PRINT the canonical name -- which is what a label argument does.
+check P2a-the-block-header-is-the-canonical-name-not-the-per-run-one \
+  [expr {[regexp {summarize_all[ \t]+\S+[ \t]+\$fd[ \t]+\S+} $RR] ? 1 : 0}] \
+  "-- summarize_all must be handed the file to READ and, separately, the name to PRINT: `[string trim [src_line $RR {summarize_all[ \t]+\S+[ \t]+\$fd}]]`. Publishing first and summarizing after would fix the header and put the race back"
+
+# =============================================================================
 # SECTION V -- the verdict file (face 4)
 # =============================================================================
 
-## V1b is a GUARD, green today and required by ruling R1 to stay green: the
-## canonical name is read by doc/claude/ledger/crew.js, by CLAUDE.md's own
-## reading instructions and by the user. If C1 is ever overturned in favour of
-## `results.<pid>.log`, this row is what says so out loud.
-check V1b-the-verdict-keeps-its-canonical-name \
-  [expr {[regexp -line {^[ \t]*set[ \t]+log_fn[ \t]+\"results\.log\"[ \t]*$} $RR] ? 1 : 0}] \
-  "-- run_regression.tcl says `[string trim [src_line $RR {^[ \t]*set[ \t]+log_fn[ \t]}]]`; ruling R1: the scratch dir is per-run, the VERDICT is serialised under its own name, and renaming it would break every reader that names it"
+## ⚠ V1b WAS REKEYED WHEN R1 WAS RE-DECIDED, AND THE OLD TEXT IS LEFT HERE
+## BECAUSE IT IS THE POINT. It used to read:
+##
+##     check V1b-the-verdict-keeps-its-canonical-name
+##       [regexp -line {^[ \t]*set[ \t]+log_fn[ \t]+"results\.log"[ \t]*$} $RR]
+##
+## -- a row written to enforce R1 AS FIRST RULED ("the second run waits; the
+## verdict keeps ONE name"). The user rejected that shape -- *"Why not make it
+## fault-tolerant and find a way for both runs to proceed?"* -- and they were
+## right: the constraint the whole choice rested on was a FILENAME CONVENTION,
+## not a property of the system. A row that pins a decision rather than a
+## PROPERTY goes red the day the decision is improved, and it did.
+##
+## The property that actually matters survives both rulings and is what this row
+## now asserts, in two halves:
+##   1. `results.log` STILL EXISTS as a canonical name. crew.js, CLAUDE.md's
+##      reading instructions and the user all name that exact file; the new
+##      design keeps it, tracking the most recent COMPLETED run.
+##   2. the run does NOT WRITE THROUGH IT. Each run's own verdict is
+##      `results.<pid>.log`, so two runs never share the file they are writing
+##      and neither is ever refused.
+## Half 1 alone is the old row. Half 2 alone would bless deleting the canonical
+## name. Both together are the ruling as re-decided.
+check V1b-canonical-name-survives-AND-is-not-what-the-run-writes \
+  [expr {[has_text $RR {results.log}] &&
+         [regexp {results\.\[pid\]\.log} $RR] ? 1 : 0}] \
+  "-- canonical `results.log` still named in the driver, AND a per-run verdict spelled `results.\[pid\].log`: [expr {[regexp {results\.\[pid\]\.log} $RR] ? {found} : {ABSENT}}]. With only the canonical name, two runs write one file and one answer is erased (face 4); with only the per-run name, every reader that spells `results.log` breaks"
+
+## ⚠ V1f IS THE ROW THAT RETIRES THE REFUSAL. R1 as re-decided says NOBODY IS
+## REFUSED: a second crew must never be told to go away, because this user runs
+## crews that verify in parallel by design. The lock is DEMOTED to a safety net
+## around the publish, not deleted -- V1a still requires it to exist -- but the
+## `exit 2` and the REFUSING-TO-RUN banner must be gone, or "both runs proceed"
+## is a sentence in a design document and not a property of the program.
+check V1f-no-run-is-ever-refused \
+  [expr {![has_text $RR {REFUSING TO RUN}] && ![regexp -line {^[ \t]*exit 2[ \t]*$} $RR] ? 1 : 0}] \
+  "-- REFUSING-banner=[has_text $RR {REFUSING TO RUN}] bare-exit-2=[expr {[regexp -line {^[ \t]*exit 2[ \t]*$} $RR] ? 1 : 0}], and both must be 0. A refused run is a crew told its work cannot be verified right now, which is the cost R1 was re-decided to remove"
+
+## ⚠ V1c IS THE LOAD-BEARING ONE AND IT LOOKS LIKE A DETAIL. The verdict channel
+## has never been `fconfigure`d, so it is FULL-BUFFERED AT 4096 B against a
+## ~4785-byte verdict. That makes a **0-byte** file the TYPICAL outcome of a
+## killed run rather than an extreme one -- which is why issue 1477's truncated
+## verdict is usually EMPTY rather than a proportional prefix. The trailer below
+## survives buffering either way (it is written last, then closed); the HEADER
+## does not, and the header is the half that says WHOSE answer a file is. Without
+## this line the sentinels inherit the exact hole they were added to close.
+check V1c-the-verdict-channel-is-line-buffered \
+  [expr {[regexp {fconfigure[^\n]*-buffering[ \t]+line} $RR] ? 1 : 0}] \
+  "-- `[string trim [src_line $RR {fconfigure[^\n]*-buffering}]]`; unbuffered-or-line is the difference between a killed run leaving a header that identifies it and a killed run leaving 0 bytes. (⚠ The needle here is deliberately the FULL expression: a bare `fconfigure` needle matched the COMMENT above the code and quoted that instead -- this batch's own D2 defect, a detail string that says something other than what the row measured)"
+
+## V1d/V1e -- THE SENTINELS, which are worth more than the concurrency fix.
+## They close two recorded traps that no amount of locking touches:
+##   * THE FOSSIL. A stale `results.log` reads as a perfect clean sweep; only its
+##     mtime ever said otherwise, and receipts plus a commit message in this tree
+##     already carry a case count taken that way. A header naming pid and start
+##     time makes a fossil self-identifying FROM CONTENT.
+##   * 1477's TRUNCATION HOLE. Every prefix of a green run is itself a green run,
+##     because all four counted shapes (FAIL$, GOLD?$, RESULT?$, ^FATAL) need a
+##     line to EXIST. "No trailer => did not finish" is decidable where "short
+##     file" is not.
+## ⚠ NEITHER SENTINEL MAY END IN `FAIL` OR BEGIN WITH `FATAL` -- summarize_all's
+## four counted shapes are applied to CASE logs, but a human, crew.js and every
+## grep in CLAUDE.md read the verdict, and a sentinel that scored itself would be
+## a self-inflicted phantom red. V4a checks that.
+check V1d-the-verdict-carries-a-run-header \
+  [expr {[has_text $RR {T1-RUN-BEGIN}] ? 1 : 0}] \
+  "-- a header naming pid, script and start time; without it a verdict file cannot say whose answer it is, and the fossil trap has only mtime to defend it"
+check V1e-the-verdict-carries-a-completion-trailer \
+  [expr {[has_text $RR {T1-RUN-END}] ? 1 : 0}] \
+  "-- a trailer naming pid, case count and counted failures; without it a run killed mid-write is indistinguishable from a clean sweep, because every prefix of a green run IS a green run"
 
 check V1a-the-driver-serialises-the-verdict \
   [expr {[regexp -nocase {flock|lockfile|\.lock\M|lock_file|[a-z_]*lockf} $RR] ? 1 : 0}] \
@@ -466,18 +635,110 @@ if {[catch {exec timeout 200 sh $f4_sh $fdir $xbin 2>@1} _fo opt]} {
 }
 set verdict [slurp [file join $fdir results.log]]
 set f4Bout  [slurp [file join $fdir B.out]]
+set f4Aout  [slurp [file join $fdir A.out]]
+set f4Arc   [string trim [slurp [file join $fdir A.rc]]]
+set f4Brc   [string trim [slurp [file join $fdir B.rc]]]
 set _ablocks [count_re $verdict {^a[1-4]\.log$}]
 set _bblocks [count_re $verdict {^b1\.log$}]
-## Any wording C1 might choose for "I did not take the verdict file".
-set _announced [regexp -nocase {lock|wait|refus|already running|in use|another run} $f4Bout]
+
+## The two per-run verdicts, found by CONTENT rather than by a pid this suite
+## would otherwise have to scrape out of a shell script. Whichever file carries
+## the `b1.log` block is run B's, and whichever carries the `a1.log` block is
+## run A's -- an identification that keeps working if the naming is re-spelled.
+set VA {} ; set VB {} ; set VA_F {} ; set VB_F {}
+foreach _vf [lsort [glob -nocomplain -directory $fdir -- results.*.log]] {
+  set _vt [slurp $_vf]
+  if {[count_re $_vt {^b1\.log$}] > 0} { set VB $_vt ; set VB_F $_vf }
+  if {[count_re $_vt {^a[1-4]\.log$}] > 0} { set VA $_vt ; set VB_F $VB_F ; set VA_F $_vf }
+}
+## "Did this run FINISH?" -- decidable from content, which is the whole of the
+## 1477 fix. "Whose answer is this?" -- likewise, which is the whole of the
+## fossil fix.
+proc verdict_finished {txt} { expr {[regexp -line {^T1-RUN-END } $txt] ? 1 : 0} }
+proc verdict_started  {txt} { expr {[regexp -line {^T1-RUN-BEGIN } $txt] ? 1 : 0} }
+proc verdict_pid {txt re} {
+  foreach l [split $txt \n] { if {[regexp -- "$re\[^\n\]*pid=(\[0-9\]+)" $l -> p]} { return $p } }
+  return {}
+}
+## summarize_all's four counted shapes, verbatim (run_regression.tcl's own line).
+proc counted_shapes {txt} {
+  set n 0
+  foreach l [split $txt \n] {
+    if {[regexp {FAIL$} $l] || [regexp {GOLD\?$} $l] || [regexp {RESULT\?$} $l] || [regexp {^FATAL} $l]} { incr n }
+  }
+  return $n
+}
 
 check V0a-both-driver-copies-were-built [expr {$_iA && $_iB && $frc != 124}] \
   "-- injection A=$_iA B=$_iB, pair rc=$frc; without both, V2a and V2b measure nothing"
 check V2b-the-first-run-verdict-is-complete [expr {$_ablocks == [llength $F4_A_CASES]}] \
-  "-- $_ablocks of [llength $F4_A_CASES] case blocks, [string length $verdict] bytes; the non-vacuity half, and the reason face 4 is SILENT rather than loud -- when it strikes nothing is corrupted, the surviving verdict is perfectly well-formed, and only the OTHER run's answer is missing"
-check V2a-the-second-run-verdict-is-not-silently-discarded \
-  [expr {$_bblocks > 0 || $_announced}] \
-  "-- b1 blocks in the verdict=$_bblocks, announced=$_announced, B rc=[string trim [slurp [file join $fdir B.rc]]]; B said: `[string trim [src_line $f4Bout {(?i)lock|wait|refus|already running|in use|another run}]]`. With NEITHER a block nor an announcement, a whole run reports success and its verdict never existed"
+  "-- $_ablocks of [llength $F4_A_CASES] case blocks in the CANONICAL results.log, [string length $verdict] bytes; the non-vacuity half, and now also issue 1478 §3's guard -- if the per-run naming ever leaked into the block HEADER these would be `a1.<pid>.log` and this count would drop to 0"
+
+## ⚠ V2a REKEYED. It used to accept an ANNOUNCEMENT ("I refused, so I did not
+## destroy anything") as an alternative to run B's answer existing. Under R1 as
+## re-decided there is nothing to announce: nobody is refused, so the only
+## acceptable outcome is that B's verdict EXISTS, complete, under its own name.
+## The `|| $_announced` escape hatch is deliberately gone -- it is what made this
+## row green on a tree where run B produced no answer at all.
+check V2a-the-second-run-verdict-exists-in-its-own-right \
+  [expr {$VB ne {} && [count_re $VB {^b1\.log$}] > 0 && [verdict_finished $VB]}] \
+  "-- B's own verdict file=[expr {$VB_F eq {} ? {NONE FOUND} : [file tail $VB_F]}], b1 blocks=[expr {$VB eq {} ? 0 : [count_re $VB {^b1\.log$}]}], finished-trailer=[expr {$VB eq {} ? 0 : [verdict_finished $VB]}], B rc=$f4Brc. A second run that is refused, or whose verdict lands in a file the first run then overwrites, fails this row -- and a whole run reporting success while its answer never existed is face 4"
+
+check V3a-both-runs-proceed-and-both-answers-survive \
+  [expr {$VA ne {} && $VB ne {} && $VA_F ne $VB_F &&
+         [count_re $VA {^a[1-4]\.log$}] == [llength $F4_A_CASES] &&
+         [count_re $VB {^b1\.log$}] == 1}] \
+  "-- A=[expr {$VA_F eq {} ? {NONE} : [file tail $VA_F]}] ([expr {$VA eq {} ? 0 : [count_re $VA {^a[1-4]\.log$}]}]/[llength $F4_A_CASES] blocks), B=[expr {$VB_F eq {} ? {NONE} : [file tail $VB_F]}] ([expr {$VB eq {} ? 0 : [count_re $VB {^b1\.log$}]}]/1). ⚠ This is the ruling itself, as a property: two runs collide and BOTH keep a complete answer. Concurrency buys no throughput here (measured 64.4 s concurrent against 53.7 s back-to-back, 20% WORSE) -- what it buys is that no crew is ever told its verification cannot run"
+
+check V3b-neither-run-was-refused \
+  [expr {$f4Arc eq {0} && $f4Brc eq {0} &&
+         ![has_text $f4Aout {REFUSING TO RUN}] && ![has_text $f4Bout {REFUSING TO RUN}]}] \
+  "-- A rc=$f4Arc B rc=$f4Brc, REFUSING banner A=[has_text $f4Aout {REFUSING TO RUN}] B=[has_text $f4Bout {REFUSING TO RUN}]. rc 2 is the old refusal; the user's instruction was to make it fault-tolerant so BOTH runs proceed rather than to pick which one is turned away"
+
+## ⚠ V3c IS ISSUE 1477, AND IT IS THE HALF WORTH MORE THAN THE CONCURRENCY FIX.
+## EVERY PREFIX OF A GREEN RUN IS ITSELF A GREEN RUN: all four counted shapes
+## need a LINE TO EXIST, so a file cut short has FEWER lines to match and scores
+## zero failures at every prefix length (verified at 1, 10, 40, 80, 120 and 170
+## lines of a real 169-line verdict). The row proves the counted-shape scan is
+## blind to truncation AND that the trailer is not -- both directions, or it
+## would pass on a scan that is merely broken in a different way.
+## ⚠ THE FIRST DRAFT OF THIS ROW ASSERTED THE WRONG THING AND IS WORTH RECORDING.
+## It required `counted($full) == counted($cut)` -- "truncation does not change
+## the count" -- which is FALSE and was measured false the moment the fix landed:
+## run A's stand-in emits 200 FAIL lines per case, so the full verdict counts 800
+## and a three-line prefix counts 1. The property is not that the count is
+## PRESERVED; it is that the count can only go DOWN, i.e. toward "clean", so
+## counting can never raise the alarm. Stating it as equality would have been a
+## row that passed only on green fixtures and lied about the mechanism.
+##
+## The prefix used here is ONE LINE -- the header alone. That is the exact shape
+## 1477 records: a run with 800 real failures, killed early, leaves a file that
+## scores ZERO and reads as a perfect clean sweep. The trailer is the only thing
+## that disagrees.
+set _vfull $VA
+set _vcut  [lindex [split $_vfull \n] 0]
+check V3c-a-truncated-verdict-is-detectable-where-counting-is-blind \
+  [expr {$_vfull ne {} && [verdict_finished $_vfull] && [counted_shapes $_vfull] > 0 &&
+         ![verdict_finished $_vcut] && [counted_shapes $_vcut] == 0}] \
+  "-- full verdict: finished=[expr {$_vfull eq {} ? {n/a} : [verdict_finished $_vfull]}] counted=[expr {$_vfull eq {} ? {n/a} : [counted_shapes $_vfull]}]; cut to its first line: finished=[verdict_finished $_vcut] counted=[counted_shapes $_vcut]. ⚠ READ THOSE TWO COUNTS TOGETHER: a run carrying [expr {$_vfull eq {} ? {n/a} : [counted_shapes $_vfull]}] counted failures truncates to a file scoring ZERO -- indistinguishable from a clean sweep to every automated reader, because all four counted shapes need a LINE TO EXIST. The trailer is what says it never finished. ⚠ And the channel must be line-buffered (V1c), or a killed run leaves 0 bytes rather than a prefix at all"
+
+check V3d-each-verdict-says-whose-answer-it-is \
+  [expr {$VA ne {} && $VB ne {} && [verdict_started $VA] && [verdict_started $VB] &&
+         [verdict_pid $VA {^T1-RUN-BEGIN}] ne {} &&
+         [verdict_pid $VA {^T1-RUN-BEGIN}] ne [verdict_pid $VB {^T1-RUN-BEGIN}]}] \
+  "-- A header pid=[expr {$VA eq {} ? {none} : [verdict_pid $VA {^T1-RUN-BEGIN}]}], B header pid=[expr {$VB eq {} ? {none} : [verdict_pid $VB {^T1-RUN-BEGIN}]}], and they must DIFFER. This is the fossil trap's cure: today a stale results.log reads as a perfect clean sweep and only its mtime ever said otherwise -- receipts and a commit message in this tree already carry a case count taken that way"
+
+## ⚠ V4a -- THE SENTINELS MUST NOT SCORE THEMSELVES. A trailer reading
+## `...counted_failures=0 ... FAIL` or a header at column 0 beginning `FATAL`
+## would be a phantom red manufactured by the fix, in the one file CLAUDE.md
+## calls "THE ONLY PLACE THE ANSWER IS". Cheap to check, expensive to discover.
+set _sent {}
+foreach _sl [split "$VA\n$VB" \n] {
+  if {[regexp -- {^T1-RUN-(BEGIN|END) } $_sl]} { lappend _sent $_sl }
+}
+check V4a-the-sentinels-do-not-count-as-failures \
+  [expr {[llength $_sent] >= 4 && [counted_shapes [join $_sent \n]] == 0}] \
+  "-- [llength $_sent] sentinel line(s) across both verdicts, of which [expr {[llength $_sent] ? [counted_shapes [join $_sent \n]] : 0}] match one of the four counted shapes (FAIL\$, GOLD?\$, RESULT?\$, ^FATAL); the requirement is ZERO, and >=4 is the non-vacuity half"
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
