@@ -269,6 +269,61 @@ and the gap is exactly where the file lives.**
   non-regression baseline **and a suite for the checker itself**, which is red-first done
   properly.
 
+### ⚠⚠ F1 — the new suite has the OLD defect: pid-qualified create, unqualified delete
+
+**Found by the driver at the gate, and it is the batch's own machinery carrying the exact
+defect class the previous batch existed to fix.**
+
+`tests/headless/test_issue_stamp.tcl` returned **`RESULT: 12 FAILED (31 passed)` ·
+`OVERALL: notok`** when run by hand — **twenty minutes after** BC2 reported and the driver
+independently verified **`ALL PASS (43 checks)` · `OVERALL: ok`**. Same 43 rows
+(31 + 12 = 43); twelve flipped.
+
+**Three hypotheses were tested and refuted before the real one was found** — recorded
+because two of them were the driver's confident first guesses:
+
+| hypothesis | verdict |
+|---|---|
+| a row asserts its own non-registration, as row `B1` did | **refuted** — the only `run_regression` mention is a *comment* about `pgrep -af` self-matching |
+| the suite reads state a live T1 writes | **refuted** — it reads no verdict, no `results.log`, no per-case log; the checker reads only `doc/claude/issues/` and the baseline |
+| its inputs changed between the runs | **refuted** — corpus untouched (0 files modified in 40 min), `git status` on `doc/claude/issues/` and `tests/headless/` empty, 1047 files / 10 stamped / baseline 1057 throughout |
+
+**The cause, with live evidence.** `tests/headless/.scratch` is a **shared namespace**. At
+the moment of measuring it held **`_conc1476_2642112`** — `test_regression_concurrency_1476`
+running **inside the live T1** — and the tree records `_campgui1464_*` and `_badig_*` from
+other suites.
+
+```tcl
+:66   set d [... .scratch istamp_[pid]_$tag]     ;# CREATE: pid-qualified, correct
+:68   file delete -force $d                      ;# its own dir, correct
+:589  catch {file delete -force [... ] .scratch} ;# SWEEP: THE WHOLE TREE
+```
+
+**Creation is qualified by identity; the sweep is qualified by position.** So the suite
+destroys every other suite's live scratch state on its way out, and a concurrent
+`.scratch` user destroys its fixtures mid-run. That is **`W12b` exactly** — *position is
+not identity* — reproduced in the file this batch built to enforce its own convention, and
+it is the fifth sighting of a self-inflicted defect in this batch's machinery after BC1's
+`rev_exists`, BC1's row `B1`, BC2's scope round-trip, and this.
+
+⚠ **The driver caused the collision it then diagnosed.** The hand-run at 13:41 was a
+*diagnostic run undertaken to be careful*, launched while T1 was live — breaking the rule
+it was checking. **The failures are real evidence of a real defect, produced by an
+illegitimate method.**
+
+⚠ **It came within one green run of shipping into T1.** `issue_stamp` is registered last in
+`hcases`, so in this run its sweep fires after the others finish and the blast radius is
+small. **Registered anywhere else in the list, it would delete the scratch of every suite
+after it.**
+
+**Not minted as an issue.** It is a defect in an uncommitted-behaviour file of this batch's
+own making, and CLAUDE.md is explicit that a document about a defect already understood is
+this project's signature failure rather than a fix. **It gets fixed, not filed.**
+
+**Sequenced deliberately:** the fix is **not** applied while T1 is live, because T1 is about
+to execute that very file. Trailer first, then a solo re-run to capture all twelve row
+names, then the fix. **The `hcases` registration stays uncommitted until the gate is green.**
+
 ### F1 pre-work — the CLAUDE.md edit is a DOZEN sites, and half of them must NOT change
 
 `issue_stamp` registered in `hcases` (D13). Verified sound before running anything:
