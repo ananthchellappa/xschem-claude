@@ -334,11 +334,22 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## They were right. The constraint the whole choice rested on turned out to be a
 ## FILENAME CONVENTION, not a property of the system.
 ##
-## ⚠ AND CONCURRENCY BUYS NO THROUGHPUT HERE. Measured on a staggered pair of
-## golden cases: both answers at 64.4 s concurrent against 53.7 s back-to-back --
-## 20% WORSE, because 32 workers are being asked of 20 cores. What it buys is
-## that no crew is ever told its verification cannot run right now. Anyone who
-## reads this as a speed optimisation will reach for it in the wrong place.
+## ⚠ THROUGHPUT IS NOT THE REASON, AND THE SIGN DEPENDS ON THE WORKLOAD. What
+## this buys is that no crew is ever told its verification cannot run right now.
+## Anyone who reads it as a speed optimisation will reach for it in the wrong
+## place -- which is why the two measurements below are given together: they
+## disagree in SIGN, so either one quoted alone is a claim about the other.
+##   * a staggered pair of golden CASES: both answers at 64.4 s concurrent
+##     against 53.7 s back-to-back -- 20% WORSE, because `open_close` already
+##     fans out 16 xargs workers, so a second copy is pure contention.
+##   * a staggered pair of FULL T1 runs: both answers at 435 s concurrent
+##     against 771 s back-to-back -- ~44% BETTER, because a full run has long
+##     serial stretches that interleave into this 20-core box's idle cores. Each
+##     individual run still costs ~12% more wall (426-431 s vs 382-389 s).
+## Measured 2026-09-17, doc/claude/harness_concurrency_batch/receipts/V4.md.
+## The banner below reports the FULL-T1 figures, because a second run of this
+## driver is a full T1 -- it said "20% SLOWER" until V4 measured it back-to-back
+## rather than deriving it, and that sentence was printed to every crew.
 set log_fn     "results.log"          ;# canonical: the most recent COMPLETED run
 set run_log_fn "results.[pid].log"    ;# this run's own answer, never shared
 
@@ -669,8 +680,12 @@ if {[llength $t1_others]} {
   puts "  finishes LAST, and every verdict carries a T1-RUN-BEGIN/T1-RUN-END"
   puts "  pair naming its pid -- so read the trailer, not the filename."
   puts ""
-  puts "  This is not faster: measured 20% SLOWER to both answers than running"
-  puts "  back-to-back. What it buys is that neither crew is turned away."
+  puts "  THIS IS NOT A THROUGHPUT OPTIMISATION. What it buys is that neither"
+  puts "  crew is turned away; speed is a side effect and its SIGN depends on"
+  puts "  the workload. Measured 2026-09-17 on a full T1 pair: both answers in"
+  puts "  435 s concurrent against 771 s back-to-back (~44% faster), though each"
+  puts "  run individually costs ~12% more. On a single-CASE pair it was 20%"
+  puts "  SLOWER. Do not reach for concurrency to go faster."
   puts "############################################################"
 }
 

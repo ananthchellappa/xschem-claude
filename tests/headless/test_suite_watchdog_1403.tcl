@@ -262,19 +262,79 @@ append b12 "set d \[test_scratch wd1403child\]\n"
 append b12 "puts \"CHILDSCRATCH \$d\"\nflush stdout\n"
 append b12 "vwait ::__never_set__\nexit 0"
 set f_w12 [write_fixture [file join $scratch w12.tcl] $b12]
-set em_before [llength [glob -nocomplain -directory /tmp -type d xschem_emergencysave_*]]
+## ⚠ SETS AND IDENTITY, NEVER A COUNT. `/tmp/xschem_emergencysave_*` is a GLOBAL
+## namespace and `src/main.c:42` puts NO PID IN THE NAME -- the prefix is the cell
+## name plus a random suffix -- so a count taken across this window answers for
+## every xschem on the box, not for this child. Measured 2026-09-17 (receipt V4):
+## under a concurrent T1 pair the OTHER run's deliberately-killed watchdog children
+## reddened this row at ~1 run in 4 (`37 -> 38 in /tmp`), in the one suite whose
+## baseline is ZERO. Same defect class as C11 (`test_ase_core.tcl:1591`) and as
+## 0609's own supplied fix code: a count is not an identity, third appearance.
+##
+## ⚠ AND A SET DIFFERENCE ALONE CANNOT BE THE ASSERTION EITHER. Names that appear
+## during the window are still names from a SHARED namespace, so a foreign corpse
+## is `new` too and asserting on the delta would red exactly as often as the count
+## did. The ground truth is what the CHILD ITSELF announced: `sig_handler` creates
+## the dir and then prints `EMERGENCY SAVE DIR: <path>` (`src/main.c:45-52`), so a
+## child names its own corpse on the way out, and `run_child` merges stderr (`2>@1`)
+## so the row can see it. That is the identity idiom the three sibling reapers
+## already use (`test_zero_point_pos_at_0852.tcl:156`,
+## `test_raw_read_failure_0306.tcl:254`, `test_zero_point_raw_0836.tcl:147`).
+## The delta is kept and REPORTED, never asserted on, so the foreign traffic that
+## used to red this row is visible as evidence instead of as a failure.
+proc em_snap {} {
+  return [lsort [glob -nocomplain -directory /tmp -type d xschem_emergencysave_*]]
+}
+## The corpses a child NAMED on its way out. `run_child` merges stderr (`2>@1`),
+## which is what puts `sig_handler`'s marker into $out; identity, never a glob.
+proc em_announced {txt} {
+  set ds {}
+  foreach {em_all em_d} [regexp -all -inline {EMERGENCY SAVE DIR: (\S+)} $txt] {
+    if {[string match {*xschem_emergencysave*} $em_d] && [lsearch -exact $ds $em_d] < 0} {
+      lappend ds $em_d
+    }
+  }
+  return $ds
+}
+## Delete ONLY what this run's own child announced. NEVER a foreign corpse.
+proc em_reap {txt} {
+  set n 0
+  foreach d [em_announced $txt] { catch {file delete -force $d} ; incr n }
+  return $n
+}
+set em_before [em_snap]
 lassign [run_child $f_w12 3000 40] rc el out
 set childdir {}
 foreach l [split $out \n] {
   if {[regexp {^CHILDSCRATCH (.+)$} [string trim $l] -> d]} { set childdir [string trim $d] }
 }
-set em_after [llength [glob -nocomplain -directory /tmp -type d xschem_emergencysave_*]]
+set em_after [em_snap]
+## Appeared during the window, whoever made it -- CONTEXT, not the assertion.
+set em_new {}
+foreach d $em_after { if {[lsearch -exact $em_before $d] < 0} { lappend em_new $d } }
+## Announced by THIS child -- the only corpses this row is entitled to judge.
+set em_mine [em_announced $out]
+set em_foreign {}
+foreach d $em_new { if {[lsearch -exact $em_mine $d] < 0} { lappend em_foreign $d } }
 check W12a-child-scratch-dir-was-removed \
   [expr {$childdir ne {} && ![file isdirectory $childdir]}] \
   "-- [expr {$childdir eq {} ? {the fixture never reported a dir} : $childdir}]"
-check W12b-no-emergency-save-corpse \
-  [expr {$em_after == $em_before}] \
-  "-- $em_before -> $em_after in /tmp; an external SIGTERM on this same hang adds one"
+## A failure prints the OFFENDING PATHS, not a bare pair of numbers: `37 -> 38`
+## told a reader that something happened somewhere in /tmp, which is precisely
+## what made the false red so expensive to diagnose.
+if {[llength $em_mine]} {
+  set em_detail "THIS child left [llength $em_mine] emergency-save corpse(s): [join $em_mine {, }]"
+} else {
+  set em_detail "the child announced no EMERGENCY SAVE DIR, so it left through the wrapped exit"
+}
+append em_detail " -- [llength $em_foreign] foreign corpse(s) appeared in the same window and are\
+ deliberately IGNORED (shared /tmp, no pid in the name); an external SIGTERM on this same hang\
+ would add one that IS ours"
+check W12b-no-emergency-save-corpse [expr {[llength $em_mine] == 0}] "-- $em_detail"
+## Reap ONLY what this child announced. NEVER a foreign corpse: another run may
+## still be holding it, and deleting one would make this suite commit the very
+## cross-run interference it exists to detect.
+foreach d $em_mine { catch {file delete -force $d} }
 
 ## --- W13: THE LIMITATION, pinned by measurement ------------------------------
 ## A Tcl `after` timer fires only when the interpreter reaches the event loop.
@@ -287,6 +347,19 @@ lassign [run_child $f_exec 2000 8] rc el out
 check W13a-blocking-exec-is-NOT-covered \
   [expr {![has_text $out {WATCHDOG TIMEOUT}] && $el > 6000}] \
   "-- ${el}ms with a 2000ms budget; the watchdog cannot reach a hang that never gets to the event loop, and scratch.tcl says so in prose"
+## ⚠ AND THIS ROW IS A CORPSE PRODUCER -- MEASURED, NOT SUSPECTED. W13 is the one
+## row whose child CANNOT leave through the wrapped exit: that is the whole point
+## of it, so `timeout` SIGTERMs the child at the 8 s cap, `sig_handler` runs, and
+## the run leaks exactly one `/tmp/xschem_emergencysave_*` EVERY TIME. Measured
+## 2026-09-17: /tmp grew by +1 per suite run (44 -> 49 over five runs) with no
+## other producer running. That litter is not cosmetic -- `/tmp` is a tmpfs here
+## and, until W12b above stopped counting, corpses in this SHARED namespace were
+## exactly what reddened a concurrent run's W12b at ~1 run in 4. So this suite was
+## itself one of the producers of the foreign traffic that the row above had to be
+## taught to ignore, and leaving the leak in place while fixing only the detector
+## would have kept feeding every other count-based check on the box.
+## Reaps by NAME, from this child's own announcement -- never a foreign corpse.
+em_reap $out
 
 # =============================================================================
 # LAYER 1 -- run_regression.tcl's four exec sites
