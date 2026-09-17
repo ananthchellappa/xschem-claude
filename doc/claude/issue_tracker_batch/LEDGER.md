@@ -305,6 +305,82 @@ mtime 2026-09-14 00:22:03 — unchanged. The simulator-registry rows failed beca
 did move at 13:44 — that is the already-recorded 1397/1458 defect firing during T1, not new
 damage.)
 
+⚠ **A static correspondence test was run to confirm the diagnosis, and it came back
+INCONCLUSIVE. Recorded rather than rounded up.**
+
+If the 12 rows that failed inside T1 were *exactly* the fixture-building rows, the
+`.scratch` diagnosis would be confirmed without re-running anything. They are not:
+
+| | rows |
+|---|---|
+| failed inside T1 | S15 · S15c · B3 · G2 · Q1 · Q2 · A2 · A3 · A4 · N1 · N2 · N3 |
+| classified fixture-dependent | B3 · G1 · G2 · G3 · G4 · G5 · Q2 · A3 · A4 · A5 · N2 · N3 |
+| **overlap** | **7 of 12** |
+| failed but classified *plain* | **S15 · S15c · Q1 · A2 · N1** |
+| classified fixture but **passed** | G1 · G3 · G4 · G5 · A5 |
+
+**The classifier is crude** — a 14-line proximity window around `mkcorpus`/`with_corpus` —
+so this is weak evidence in *both* directions and settles nothing. **It does not confirm the
+diagnosis and it does not refute it.**
+
+⚠ **The sharpest loose end: `S15` and `S15c` are the formatter/parser round-trip rows** —
+precisely what BC2 fixed — **and they have no obvious need for `.scratch` at all.** Their
+failure inside T1 is **not** explained by the scratch hypothesis. Writing a story that
+covers them would be this batch's own disease; the honest position is that **the mechanism
+for 5 of the 12 is unexplained**, and only a controlled re-run after BC3's fix can settle
+it.
+
+⚠ **A FOURTH hypothesis was raised and refuted: git contention.** `REV` is captured by
+`exec git -C $istamp::repo rev-parse --short=8 HEAD`, and the driver **was** running
+`git add`/`git commit` while T1 was live — so a disturbed `git` call looked like it could
+fail every `$REV`-bearing row at once. **Refuted statically:** the `$REV`-dependent rows are
+**S15, S15b, S15c, S17, S20, G5, N3**, and **S15b, S17, S20 and G5 all PASSED**, so `REV`
+resolved correctly. Overlap with the twelve failures is **three**. And only **one** commit
+(`11326086`, 13:40:13) fell inside the 13:38:33–13:44:43 window, while the suite ran near
+the **end**, ~13:43–13:44.
+
+⚠⚠ **FOUR HYPOTHESES RAISED, FOUR REFUTED — AND THE DRIVER NEVER OPENED THE SUITE'S OWN
+LOG.** Row-asserts-its-non-registration; reads-live-T1-state; inputs-changed;
+git-contention. Every one was reasoned from source code and timing, and every one was
+wrong. **`tests/headless/test_issue_stamp.log` — the artefact T1 itself wrote, carrying the
+actual got/want values rather than row names — was not consulted until after the fourth
+refutation.**
+
+**That is this batch's subject, in the first person, at the gate.** The corpus's disease is
+confident prose reasoned from other prose instead of from the artefact; the driver spent
+four rounds doing exactly that about a file it could have read at any point. It is the same
+lesson as *"take the number from the artefact — every time, including when you are writing
+the warning about not doing that."*
+
+**What the log actually said, once opened** (`tests/headless/test_issue_stamp.log`, mtime
+13:43:44, written by the T1 run itself):
+
+```
+## issue-stamp checker, corpus issues, tree 11326086
+```
+
+* **`tree 11326086`** is the driver's own 13:40:13 commit — so **`REV` resolved to a real
+  commit**, independently confirming the git-contention refutation from the artefact rather
+  than from reasoning.
+* ⚠ **The `FAIL` lines carry NO got/want values** — only row names, identical to what the
+  verdict already showed. **The artefact was less informative than assumed**, which does not
+  excuse four rounds of theorising before opening it, but does mean it cannot settle the
+  mechanism either.
+
+⚠ **THE MECHANISM FOR THOSE TWELVE REMAINS UNKNOWN, AND IS RECORDED AS UNKNOWN.** Five
+explanations have been raised and four refuted outright; the fifth (the `.scratch` sweep)
+explains `simcaps`' 42 but **cannot** explain `S15`/`S15c`, which need no scratch. **Writing
+a story that covers all twelve would be this batch's disease with the driver's name on it.**
+
+**The decisive test is a controlled re-run after BC3 lands, not more source-reading.** If
+the gate comes back green, the episode was self-inflicted and transient; if it reproduces,
+it gets diagnosed by experiment. Either way the `:589` defect is real and worth fixing on
+its own merits — `test_ase_simcaps_0948` did lose its scratch mid-run.
+
+**What IS established** and does not depend on the correspondence: both arms pass solo
+(43/43 each), the sole variable was concurrency, `test_issue_stamp.tcl:589` deletes a
+directory shared by 191 suites, and `test_ase_simcaps_0948` lost its scratch mid-run.
+
 **Sequenced deliberately: the gate is NOT re-run yet.** Re-running now would certify a file
 already known to be defective. **BC3 fixes the sweep with a real-collision red-first proof;
 the gate runs after.** The `hcases` registration stays uncommitted until it is green.
