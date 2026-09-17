@@ -141,6 +141,26 @@ fixes pattern in its purest form.
 | STALE — already decided or moot | 11 | 6% |
 | UNKNOWN | 2 | 1% |
 
+**Driver verification of E1 — belatedly, and the gap is worth recording.** The ledger's
+own preamble says a row lands only after the driver has checked at least one claim. That
+was done for BC1, D0, D1, E2 and E3 — and **not** for E1, **the one receipt that corrected
+what the driver had told the user** (error 7). Checked now, read-only, and every claim
+holds:
+
+* the rule queue really holds **190**, and E1's four verdicts sum to exactly **190**;
+* `1377_isolate_opt_in` — its clearest *never-theirs* example — **exists**;
+* **issue 0356 has 0 hits across `rule`, `look` and `suite`**, exactly as E1 reported, so
+  the standing constraint protecting it was genuinely **inert**;
+* all six top-ranked `THEIRS` ids exist as rule debts (1358 and 1395 carry two entries each).
+
+⚠ **And a spot-check the driver ran and then DISCARDED, correctly.** Three of E2's 48
+(`1453`, `1446`, `1398`) were checked against the R9 collection: one present, two absent.
+That looks like it contradicts E2's *"36 of the 48 are already in it"* — **and it does not**.
+Twelve of the 48 are by E2's own account absent, and these three were drawn from **E1's
+top-ranked list**, which is a **selected** sample: the newest and hardest questions are
+precisely the ones most likely to be among the missing twelve. **Reporting that as a
+refutation would have been D1's selected-sample error for the third time in one evening.**
+
 **The headline is the 153, not the 24** (driver error 7 above). **48 of the 153 are one
 repeated request** — *ratify this batch's new on-screen wording* — already explicitly
 batched under ⚖ R9 and then filed **one entry at a time over weeks**. Collapsing those 48
@@ -708,6 +728,28 @@ behaviour in this operating model, and it has now paid out three times.
 
 | 13 | `LEDGER.md` **cited `tools/stampscan.py` three minutes before that file existed** | **the driver** | Found by BC1. **A rotted citation, written into the batch about rotted citations, pointing at a tool built to detect them** — and it rotted *forward*, naming something not yet real rather than something since moved. |
 | 14 | *"`tests/` holds 1189 `file:line` citations"* | the driver | **1190** (BC1). The companion `937` across `27` `src/` files is **confirmed exact**. |
+
+**Driver verification of E2 — what was checked, and what was NOT.** Recorded with the gap
+visible, because an unlabelled unverified number is how this corpus got into trouble.
+
+**Verified:**
+* the collection **exists** and was added by `07922d71`, **2026-09-13** (see N1);
+* **35 commits** touch it, carrying it **291 → 821 strings** to 2026-09-16;
+* its **structure is exactly as E2 described** — 130 headings, front matter *"What this
+  is / How it was built, and why the strings can be trusted / How to answer / What is
+  deliberately NOT here"*, then themed sections grouped by surface (`A1 — Shouted words in
+  the middle of a sentence`, `A2 — Acronyms shipped lowercase in pickers`, `A3 — Internal
+  slot names shown where the form shows a label`…).
+
+⚠ **NOT verified: E2's "36 of the 48 are already in it."** The driver's extraction pulled
+**17** candidate ids where ~48 were expected, so **the scanner's guard refused to report a
+rate** rather than publish one off a bad parse — the both-directions discipline working on
+the driver's own tooling for the second time. **The fault is in the driver's regex** (it
+was band-restricted to 1200–1500), **not in E2's claim**, and the figure is neither
+confirmed nor refuted here.
+
+**Error 11 does not rest on it.** Its core — the collection existed, was actively
+maintained, and was never handed over — stands on the three verified facts above.
 
 ⚠ **E2's date was verified and is CORRECT — the driver's check was the sloppy one.** E2 said
 the collection *"has existed since 2026-09-13"*. The driver first ran `git log -1 -- <path>`,
