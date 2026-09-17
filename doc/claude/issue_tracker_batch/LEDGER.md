@@ -12,6 +12,10 @@ after the driver has read the receipt and checked at least one of its claims.
 | A3 | sample files 21–30, classify against the tree | **DONE** | **accepted** — it decided the design (see below); triggered D8 | — |
 | A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
+| **BC1** | design the convention **and** build the checker (B+C merged, D8) | in flight | — | — |
+| **D0** | verify the 7 stale-closure issues; propose replacement text | in flight | — | — |
+| **E2** | collapse the 48 repeated wording ratifications into one document | in flight | — | — |
+| **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
 
 ## Running findings
 
@@ -164,6 +168,39 @@ three times — reproduced by a crew that had just read the warning.*
 
 **Read-only confirmed by evidence, not assertion:** `diff -rq` against the driver's backup
 is **silent**; the ledger is byte-identical. Nothing cleared, edited or added.
+
+### T1 pre-change baseline — GREEN, at `63a1b41f`
+
+The driver's own run, never delegated (CLAUDE.md: the solo regression run stays with the
+driver). `cd tests && tclsh run_regression.tcl`, 12:45:51 → 12:52:22, **rc 0**.
+
+```
+T1-RUN-BEGIN pid=2554005 script=run_regression.tcl start=2026-09-17 12:45:51
+             planned_cases=84 verdict=results.2554005.log canonical=results.log
+T1-RUN-END   pid=2554005 cases=84 blocks=83 counted_failures=0 elapsed=391s
+             end=2026-09-17 12:52:22
+```
+
+**The baseline is ZERO counted failures and it is met.** Every one of the 83 blocks reports
+`Total num fail: 0`; the four counted shapes appear **0** times.
+
+Checked the way CLAUDE.md demands, rather than by reading a number off stdout:
+
+| check | value | why it is here |
+|---|---|---|
+| trailer present | **yes** | a verdict with no `T1-RUN-END` **did not finish**, whatever it contains |
+| `wc -l` | **171** | and it decomposes exactly — **2** sentinels + **83** block headers + **83** `Total num fail:` + **3** NOGOLD |
+| ran **solo** | **positively established** | **0** occurrences of *"another regression run is live"* in its own output — better evidence than `pgrep`, which answers yes to itself |
+| `exit -1` | **0** | the pre-2026-09-17 corruption tell; no xschem process writes that code |
+| `Start` / `Finish` | **84 / 84** | issue **1481**'s NODISPLAY asymmetry did **not** fire — the dev display was alive, exactly as CLAUDE.md predicts for this box |
+
+⚠ **This is the PRE-CHANGE reference, and it was already overtaken while being recorded.**
+It was taken at `63a1b41f`; BC1 has since created `tests/headless/issue_stamp.tcl` and
+`tests/headless/issue_stamp_baseline.txt` in the working tree. **If BC1 registers that
+suite in `hcases`, the case count moves off 84** and CLAUDE.md's arithmetic block
+(69 + 11 + 3 + 1 = 84) needs updating in the same commit — the block itself records that
+this paragraph has already been wrong three times. F1 re-runs T1 after D1 and compares
+against this row.
 
 ### ⭐ `status.md` — the tracker's own "what is still open" index, and it is the worst of it
 
