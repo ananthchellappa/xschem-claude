@@ -269,7 +269,50 @@ and the gap is exactly where the file lives.**
   non-regression baseline **and a suite for the checker itself**, which is red-first done
   properly.
 
-### ⚠⚠⚠ F1 GATE RUN — RED. 55 counted failures, and the driver caused them
+### ✅ F1 GATE — GREEN, at `5bcf003b`. Registered, and the baseline is still ZERO
+
+```
+T1-RUN-END pid=2654581 cases=85 blocks=84 counted_failures=0 elapsed=380s
+           end=2026-09-17 14:11:14        rc 0
+```
+
+**All 84 blocks report `Total num fail: 0`, including the newly registered
+`headless/test_issue_stamp`.** Solo-ness established **positively** — 0 occurrences of
+*"another regression run is live"* in the run's own output — and `exit -1` count **0**.
+Registration committed at `1acae0b0`, after being held uncommitted across two red runs on
+the rule that **a red gets reverted, not shipped**.
+
+**The three numbers, read off the artefact and never computed:**
+
+| | |
+|---|---|
+| cases | **85** (trailer) |
+| blocks | **84** (trailer) |
+| `Start` / `Finish` | **85 / 85** — 1481's NODISPLAY asymmetry did not fire |
+| `wc -l` on the green verdict | **173** = 2 sentinels + 84 block headers + 84 `Total num fail:` + 3 NOGOLD |
+
+⚠ **Driver error 25, committed in the act of measuring the correction to it.** The
+driver's `grep -cE '\.log$'` answered **85** block-header lines against the trailer's
+`blocks=84` — because **`T1-RUN-BEGIN` ends in `canonical=results.log`**. The sum
+`2+84+84+3 = 173` matches `wc -l` exactly and settles it. **The `pgrep -af` self-match, a
+fourth time, inside the one paragraph whose entire subject is not counting things by hand.**
+
+**Closing checks, all clean:**
+
+* `.scratch` **survives** as an empty directory rather than being nuked — BC3's fix working
+  in the gate run itself.
+* All per-pid verdicts belong to **dead** pids; left in place, `T1_VERDICT_KEEP` sweeps them
+  and the failure direction is always *"a leftover survives"*.
+* **49** `/tmp/xschem_emergencysave_*`, unchanged and untouched.
+* **Owed ledger byte-identical** to the pre-batch backup: 190 rule / 71 look / 11 suite,
+  `cleared.log` still 106 lines. **Nothing cleared — that stays the user's.**
+* **User config unchanged**: `ase_simulators` md5 `13c5cec624b130f598db5779f7b2b8bf`.
+* Tree clean but for four untracked directories that predate the batch.
+* `tests/untitled~.sch` regenerated at **14:06:28**, inside the gate window — **T1 writes it
+  every run**, as recorded in the pre-D1 reference. Gitignored; `.gitignore` deliberately
+  untouched because what the user's `git status` shows them is **issue 0356, theirs**.
+
+### ⚠⚠⚠ F1 GATE RUN — RED. 55 counted failures, and the driver caused them *(superseded)*
 
 ```
 T1-RUN-END pid=2613154 cases=85 blocks=84 counted_failures=55 elapsed=370s

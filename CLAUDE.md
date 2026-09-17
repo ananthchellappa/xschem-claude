@@ -153,17 +153,28 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   below: `xschemtest.tcl` logs only when it fails). **Count `Start`/`Finish` pairs
   for cases; count log lines only for failures.** Two independent passes reached
   "82" by conflating them, so this is a trap with a track record, not a one-off slip.
-  **The run is 84 cases and 83 log lines** as of 2026-09-17, and the arithmetic is
+  **The run is 85 cases and 84 log lines** as of 2026-09-17 (it was 84 and 83
+  earlier the same day — see the registration note below), and the arithmetic is
   written out here because this paragraph has already been wrong twice in exactly
   this way — swap the digit and the next reader inherits the conflation again:
 
   ```
-    69  hcases      (run_regression.tcl:27-93, entries not lines)
-  + 11  dcases      (:309-318, the display arm)
+    70  hcases      (run_regression.tcl:27-94, entries not lines)
+  + 11  dcases      (:310-319, the display arm)
   +  3  tcases      (:23 — create_save, open_close, netlisting)
   +  1  xschemtest.tcl
-  = 84  Start/Finish pairs          83 `Total num fail:` lines
+  = 85  Start/Finish pairs          84 `Total num fail:` lines
   ```
+
+  ⚠ **84 → 85 on 2026-09-17, second registration of the day**, when the
+  issue-tracker batch added `headless/test_issue_stamp` to `hcases` (70th entry).
+  **Every number here was read off the artefact, not computed**: the trailer
+  `T1-RUN-END … cases=85 blocks=84 counted_failures=0 elapsed=380s` at
+  `1acae0b0`, `Start`/`Finish` counted at **85/85**, and `wc -l` run once. The
+  driver's own `grep -cE '\.log$'` answered **85** block headers in the act of
+  checking this — because `T1-RUN-BEGIN` **ends in** `canonical=results.log`.
+  **`blocks=` from the trailer is authoritative; a pattern that can match the
+  header is not.** That is the `pgrep -af` self-match wearing yet another hat.
 
   It was **68 + 11 + 3 + 1 = 83** until the harness-concurrency batch registered
   `headless/test_regression_concurrency_1476` in `hcases`. ⚠ **`hcases` entries are
@@ -188,16 +199,21 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
 
   ```
      2  sentinel lines (T1-RUN-BEGIN, T1-RUN-END)
-  +  83  block header lines (one per block, naming the log)
-  +  83  "Total num fail:" lines
+  +  84  block header lines (one per block, naming the log)
+  +  84  "Total num fail:" lines
   +   3  NOGOLD notes
-  = 171  wc -l on a GREEN verdict
+  = 173  wc -l on a GREEN verdict        (85-case tree, measured at 1acae0b0)
   ```
 
   ⚠ **And it MOVES WITH THE FAILURE COUNT**, so it is not a constant to check against:
-  measured the same day, **171** green, **172** with one counted failure, **174** with
-  three. **The three numbers, none of them interchangeable: 84 cases · 83 `Total num
-  fail:` lines · `wc -l` = 171 on a green run.** Count nothing you can read off
+  on the **84-case** tree, measured 2026-09-17, **171** green, **172** with one counted
+  failure, **174** with three. ⚠ **Only the GREEN figure has been re-measured on the
+  85-case tree — it is 173.** The one-failure and three-failure numbers above are the
+  **old tree's** measurements and are deliberately **not** renumbered here: nobody has run
+  an 85-case verdict with failures in it, and inventing 174/176 by adding two would be
+  exactly the arithmetic-on-a-sentence this paragraph exists to forbid.
+  **The three numbers, none of them interchangeable: 85 cases · 84 `Total num
+  fail:` lines · `wc -l` = 173 on a green run.** Count nothing you can read off
   `T1-RUN-END`, which states `cases=`, `blocks=` and `counted_failures=` outright.
   ⚠ **Take the number from the artefact. Every time — including when you are writing
   the warning about not doing that.** Three passes have now missed that, and the third
