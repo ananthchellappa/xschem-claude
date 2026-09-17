@@ -121,6 +121,9 @@ Per-suite guards cannot close the leak (see above) — but they can stop these t
 rows reporting *other* suites' leaks. Snapshot the repo root at suite START and
 assert only that THIS suite added nothing:
 
+⚠ **SUPERSEDED — DO NOT PASTE THIS BLOCK. It is a partial fix in two ways, both
+measured. See §"2026-09-17 — the delta landed" below for what actually shipped.**
+
 ```tcl
 set h_pre [glob -nocomplain -directory $repo untitled*]
 ...
@@ -132,6 +135,18 @@ That keeps each row's real purpose, makes it true under the audit, and leaves th
 80-suite leak itself filed here where it belongs. **Not done in the batch that
 found this** — two unrelated suites, and the rows are correct as written when run
 the way their own headers say to run them.
+
+**Why the block above is not enough:**
+
+1. **It compares COUNTS, not SETS.** A run that removes `untitled~.sym` and adds
+   `untitled~.sch` scores `1 <= 1` — clean. **§3 of this very file is the recorded
+   correction that both extensions occur**, so the block is defeated by the exact
+   swap the file already knows about.
+2. **It watches `$repo` only**, so it fixes the false-red direction and leaves the
+   **blind** direction exactly as blind. `$repo` comes from `[info script]` and is
+   cwd-independent; under T1 the suite's own leak lands in `tests/`, which `$repo`
+   never reads. §1 of the 2026-09-17 block above is that finding, and this code does
+   not act on it.
 
 ---
 
@@ -222,8 +237,62 @@ Corrected in place above; the pre-image is here so nothing is lost.
 | `full_audit.sh` pins the cwd | `:64` | `full_audit.sh:64` ✓ **unchanged** |
 
 ⚠ **And one that is NOT in this file but belongs to its mechanism**:
-`write_backup()`'s header comment (`save.c:6137-6138`) states that untitled buffers
-are **skipped**, contradicting its own body at `:6149-6152` and the code, which has
-no such skip. A reader who trusts the header concludes an untitled buffer can never
-produce a `~` file — i.e. concludes this issue does not exist. Source change, not
-made here (this was a documentation-only task). Recorded in **1480 §1**.
+`write_backup()`'s header comment (`save.c:6137-6138`) stated that untitled buffers
+were **skipped**, contradicting its own body at `:6149-6152` and the code, which has
+no such skip. A reader who trusted the header concluded an untitled buffer can never
+produce a `~` file — i.e. concluded this issue does not exist. Recorded in **1480 §1**.
+✅ **FIXED — verified 2026-09-17.** `save.c:6137-6138` now reads *"NOT skipped for an
+untitled buffer -- it is a PRODUCER of `<dir>/untitled~.sch` (issue 0060, gate note
+below). Skipped only when autosave_backup is off, during load, or on an empty name."*
+Landed under issue **0060**. **1480 §6 item 3 is therefore done and should not be
+re-filed** — it was still being reported as outstanding on the morning of the same day.
+
+---
+
+## 2026-09-17 — the delta landed, and the two rows now mean what they say
+
+**`C11` and its twin `H1` are deltas as of today.** ⚖ R3, built and measured by the
+harness-concurrency batch (receipt `R3-build.md`). This section records what shipped,
+because the "shape of a fix" block above is **not** what shipped.
+
+### What shipped
+
+* `tests/headless/test_ase_core.tcl` — a fixed watch-directory list and an
+  `untitled*` snapshot taken at suite start (`:462-520`); `C11` (`:1591-1605`) is now
+  a **set difference** over that snapshot.
+* `tests/headless/test_op_dump_altshow.tcl` — the same, `:57-87` and `:975-984`.
+  `H1` keeps its cwd-restored leg, so the suite's check count is unchanged at **70**.
+
+Two deliberate departures from the block above:
+
+* **A set difference, not a `llength` comparison** — defect 1 above.
+* **The watch list is `{$repo, $env(PWD), [pwd]}`, deduplicated and FIXED at suite
+  start**, not `$repo` alone — defect 2 above. xschem composes the untitled buffer
+  path from `$env(PWD)` when set (`save.c:6492-6497`, `xinit.c:3917-3919`) and
+  otherwise from the startup `getcwd` (`xinit.c:3175`); a Tcl `cd` moves neither
+  (`xinit.c:174`, issue 0323). The list is fixed at suite start for that same reason —
+  re-deriving it at the row would score pre-existing files in a newly-entered
+  directory as new.
+
+### The measurements — every cell executed on this tree today, nothing inferred
+
+| scenario | old row | new row |
+|---|---|---|
+| clean, from the repo root | `ALL PASS (675)` / `(70)` | **unchanged, 675 / 70** |
+| **foreign** `untitled~.sch`+`.sym` planted in the root | `FAIL: C11 … -> {1} (exp {0})`, `FAIL: H1 … -> {0} (exp {1})` | **green, both** |
+| real leak (the `autosave_backup` park removed), from the repo root | `FAIL … -> {1}` | **`FAIL … -> {/…/untitled~.sch}`** |
+| real leak, run from `tests/` — **T1's cwd** | **`ok:` — green while writing `tests/untitled~.sch`** | **`FAIL … -> {/…/tests/untitled~.sch}`** |
+
+**The fourth row is the point of the whole change**, and it is now measured rather
+than argued: the old existence test passed, `RESULT: ALL PASS`, exit 0, while the
+suite it was guarding was writing `tests/untitled~.sch` at that moment.
+
+### Scope
+
+The **80-suite leak itself is untouched** and stays filed here. So does the
+harness-side containment (1480 §6) and the sweep. ⚠ **The dependency is
+one-directional**, contrary to what the batch's own decision record said: the delta is
+strictly *less* sensitive than what it replaces, so it ships alone safely; it is the
+**containment** that cannot ship before it. With the delta in place, the containment's
+choice of directory no longer matters to `C11` — which is the constraint §3 above was
+written about.

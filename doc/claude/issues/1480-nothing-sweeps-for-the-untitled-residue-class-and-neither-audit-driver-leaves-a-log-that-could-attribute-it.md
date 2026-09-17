@@ -209,6 +209,16 @@ change away from making it cost a great deal.
 
 ## 5. ⚠ THIS FIX AND 0609's MUST LAND TOGETHER, OR EVERY T1 RUN GOES RED
 
+⚠ **HALF RESOLVED, 2026-09-17 — the heading above overstates a one-directional
+dependency.** `C11`'s delta **shipped alone**, and safely: a delta is strictly *less*
+sensitive than the existence test it replaced, so no state that was green became red.
+What cannot ship alone is the **containment** in §6, and even that constraint is now
+weaker — with `C11` watching its own cwd as well as `$repo`, the containment's choice
+of directory no longer decides whether T1 goes red. The table below is still the
+correct diagnosis of the *old* row; see 0609 §"2026-09-17 — the delta landed" for the
+measured before/after, including the `tests/` case where the old row reported `ok:`
+while the suite was writing `tests/untitled~.sch`.
+
 The only reason T1 has never reddened `C11` is that **T1's cwd is `tests/` while
 `C11` reads the repo root**. Two independent facts; **either one changing turns
 every T1 run red.**
@@ -264,9 +274,14 @@ Nothing below has been run. Three separable pieces:
    leave a single machine-readable manifest (run id, start/end epoch, suite names in
    order) rather than 15 log files. **PROPOSED AND UNMEASURED**, and note
    `.gitignore` would have to not hide it.
-3. **`write_backup()`'s header comment** (§1) should be corrected to match its body.
-   Source change, one comment, no behaviour. **PROPOSED AND UNMEASURED — not done
-   here**, this task was documentation-only.
+3. ~~**`write_backup()`'s header comment** (§1) should be corrected to match its body.
+   Source change, one comment, no behaviour.~~ ✅ **DONE — verified 2026-09-17.**
+   `src/save.c:6137-6138` now reads *"NOT skipped for an untitled buffer -- it is a
+   PRODUCER of `<dir>/untitled~.sch` (issue 0060, gate note below). Skipped only when
+   autosave_backup is off, during load, or on an empty name."* Landed under issue
+   **0060**. ⚠ **Do not re-file it**: it was still being reported as outstanding, on a
+   re-read, on the morning of the day it was already fixed — the header had been
+   corrected by a commit that landed in the same window.
 
 ## 7. What this issue does NOT claim
 

@@ -1,17 +1,23 @@
 # Guardian for issue 0601 -- a headless suite must not leave `untitled*.sch` in the
 # directory it was launched from.
 #
-# THE MECHANISM (all file:line verified, 2026-08-22):
-#   The startup buffer is named `<pwd_dir>/untitled[-N].sch` (src/save.c:4508-4511,
-#   src/actions.c:4639-4652), where pwd_dir is the cwd captured at STARTUP
-#   (src/xinit.c:2952) -- a Tcl `cd` does NOT move it (src/xinit.c:174, issue 0323).
+# THE MECHANISM (all file:line RE-VERIFIED 2026-09-17; the 2026-08-22 set had drifted
+# by ~1200-2400 lines and every save.c/actions.c/xinit.c number below is corrected):
+#   The startup buffer is named `<dir>/untitled[-N].sch` by get_unused_untitled_name()
+#   (src/xinit.c:181-196); the path is composed at src/save.c:6500-6503 and
+#   src/actions.c:6588-6595. `dir` is $env(PWD) when that is set (src/save.c:6492-6497,
+#   src/xinit.c:3917-3919) and otherwise the cwd captured at STARTUP (src/xinit.c:3175)
+#   -- a Tcl `cd` moves NEITHER (src/xinit.c:174, issue 0323).
 #   The FIRST edit to that buffer runs set_modify(1) -> write_backup()
-#   (src/actions.c:208 -> src/save.c:4149), which backs up untitled buffers ON PURPOSE
-#   (src/save.c:4159-4162, issue 0060) and so drops `untitled~.sch` next to the caller.
+#   (src/actions.c:208 -> src/save.c:6139), which backs up untitled buffers ON PURPOSE
+#   (src/save.c:6149-6152, issue 0060) and so drops `untitled~.sch` next to the caller.
 #   For a hand run and for tests/headless/full_audit.sh (which pins cwd=$REPO at
 #   full_audit.sh:64) that directory is the REPO ROOT; under tests/run_regression.tcl
 #   it is tests/. write_backup() returns early when autosave_backup is off
-#   (src/save.c:4156), which is the whole of the fix the guarded suites carry.
+#   (src/save.c:6146), which is the whole of the fix the guarded suites carry.
+#   ⚠ write_backup()'s OWN header comment at src/save.c:6137-6138 now says so too; it
+#   used to claim untitled buffers were SKIPPED, i.e. that this whole class of leak
+#   could not exist (issue 1480 §1, corrected under 0060).
 #
 # SCOPE, deliberately a LIST and not "the repo root is clean": a measured sweep of the
 # 116 headless suites that touch an untitled buffer and carried no guard (each run in a
@@ -84,13 +90,14 @@ set ::untitled_before [untitled_in $::launch_cwd]
 # was fixed at startup (src/xinit.c:174), so moving the cwd cannot re-point it.
 #
 # TRAP, measured here: `cd` ALONE DOES NOT ISOLATE THE CHILD. xschem prefers
-# $env(PWD) over getcwd() when composing pwd_dir (src/xinit.c:3690-3693, "does not
+# $env(PWD) over getcwd() when composing pwd_dir (src/xinit.c:3917-3919, "does not
 # dereference symlinks"), and Tcl's `cd` does not touch ::env(PWD) -- which `exec`
 # then hands to the child. Without the two lines below the children of this suite
 # named their untitled buffers in the PARENT's launch directory (the repo root), row
 # N1 read 0 files because the litter had gone somewhere else entirely, and the later
-# children's `xschem clear force` -> remove_backup() (src/actions.c:4618 ->
-# src/save.c:4175-4182) then silently deleted it again -- issue 0356 in miniature.
+# children's `xschem clear force` -> remove_backup() (src/actions.c:6561, inside
+# clear_schematic() at :6552 -> src/save.c:6165-6172) then silently deleted it
+# again -- issue 0356 in miniature.
 proc run_child {d script} {
   global xschem
   set out [file join $d out.txt]

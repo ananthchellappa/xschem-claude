@@ -459,6 +459,66 @@ proc note {name got} { puts "note: $name = {$got}"; flush stdout }
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
+
+## --- C11's untitled* BASELINE, taken before anything else runs (issues 0609, 1480 §5)
+## C11 used to be a RAW EXISTENCE TEST on the repo root -- `[file exists
+## $repo/untitled~.sch]` expecting 0 -- which made it simultaneously TOO SENSITIVE
+## and COMPLETELY BLIND, and both directions are measured on this tree, not inferred:
+##
+##   too sensitive: plant a FOREIGN untitled~.sch in the repo root and the clean
+##     suite reports `FAIL: C11 ... -> {1} (exp {0})`. That is why test_ase_core is
+##     red in 13 of 13 recorded full_audit runs -- full_audit.sh:64 does `cd "$REPO"`
+##     and some OTHER one of the ~80 leaking suites (issue 0609) sorts first.
+##   blind: comment out the `set ::autosave_backup 0` park below and run the suite
+##     from tests/ -- T1's cwd -- and C11 reports `ok:` WHILE tests/untitled~.sch is
+##     being written by this very suite. Measured 2026-09-17, both arms.
+##
+## A DELTA fixes both directions at once: it asserts only that THIS suite added
+## something, so foreign litter cannot red it and its own leak cannot hide.
+##
+## ⚠ WATCH THE CWD AS WELL AS $repo -- THE HALF 0609'S OWN FIX CODE MISSES.
+## xschem composes the untitled buffer path from $env(PWD) when that is set
+## (src/save.c:6492-6497, src/xinit.c:3917-3919) and otherwise from the STARTUP
+## getcwd (src/xinit.c:3175); a Tcl `cd` moves neither (src/xinit.c:174, issue 0323).
+## $repo here comes from [info script] (:460) and so is cwd-INDEPENDENT. So this
+## suite's own leak lands in the repo root by hand and under full_audit.sh, but in
+## tests/ under T1 -- and a row watching $repo alone is blind in exactly the context
+## it runs in most.
+##
+## ⚠ AND THE DIRECTORY LIST IS FIXED HERE, NOT RE-DERIVED AT THE ROW. Re-globbing a
+## directory that was not in the "before" set would score every file already in it
+## as new. Fixing the list is also what the mechanism says: since `cd` moves neither
+## producer, the litter can only land where the process STARTED.
+proc c11_litter_dirs {} {
+  global repo
+  set ds {}
+  foreach d [list $repo \
+                  [expr {[info exists ::env(PWD)] ? $::env(PWD) : {}}] \
+                  [pwd]] {
+    if {$d eq {}} continue
+    set n [file normalize $d]
+    if {[lsearch -exact $ds $n] < 0} { lappend ds $n }
+  }
+  return $ds
+}
+set c11_dirs [c11_litter_dirs]
+## `untitled*`, not `untitled~.sch`: 0609 §3 is the recorded correction that a
+## `untitled~.sym` occurs too (clear_schematic(symbol=1) names the buffer
+## untitled.sym, src/actions.c:6585-6588, and the same write_backup() path drops
+## untitled~.sym). The old row's glob could not see it; this one can.
+proc c11_litter_snap {} {
+  global c11_dirs
+  set out {}
+  foreach d $c11_dirs {
+    foreach f [glob -nocomplain -directory $d -tails untitled*] {
+      lappend out [file join $d $f]
+    }
+  }
+  return [lsort $out]
+}
+set c11_pre [c11_litter_snap]
+note "C11 untitled* watch dirs" $c11_dirs
+
 source [file join $here scratch.tcl]
 source [file join $here ase_design_window.tcl]  ;# ase_bind_design_window (issue 0698)
 ## issue 0658: a throw-away XSCHEM_SHAREDIR + a CHILD xschem launched against it,
@@ -1513,7 +1573,7 @@ rename ::op_annot::c_real_save_cards ::op_annot::save_cards
 # C11: ase::design_is_dirty is the real predicate, not a stub. Driven in BOTH
 # directions so C12 cannot pass on a constant.
 # ⚠ `autosave_backup` is PARKED across the set_modify pair. set_modify(1)
-# calls write_backup() (actions.c:207), and on the startup untitled buffer that
+# calls write_backup() (actions.c:208), and on the startup untitled buffer that
 # drops an `untitled~.sch` into the repo ROOT -- issue 0609, the leak that turns
 # three unrelated suites red. Parked, not deleted afterwards: the write happens
 # inside the C call, so there is no window in which a cleanup could be racing it.
@@ -1528,8 +1588,21 @@ check "C11 design_is_dirty agrees with xschem get modified (dirty)" \
 xschem set_modify 0
 check "C11 design_is_dirty back to 0" [cx {ase::design_is_dirty}] 0
 if {$c11_ab_had} { set ::autosave_backup $c11_ab_val } else { unset ::autosave_backup }
-check "C11 no untitled~.sch was dropped in the repo root (issue 0609)" \
-  [file exists [file join $repo untitled~.sch]] 0
+## ⚠ A SET DIFFERENCE, NOT A COUNT. 0609's "The shape of a fix" block compares
+## LENGTHS (`<= [llength $h_pre]`), which scores a run that removed `untitled~.sym`
+## and added `untitled~.sch` as perfectly clean -- and 0609 §3 is itself the
+## recorded correction that BOTH extensions occur. What is asserted is that this
+## suite added NOTHING, so the new NAMES are the answer, and a failure prints the
+## offending paths instead of a bare {1}. Baseline + watch dirs at :462.
+set c11_new {}
+foreach f [c11_litter_snap] {
+  if {[lsearch -exact $c11_pre $f] < 0} { lappend c11_new $f }
+}
+check "C11 this suite added no untitled* to the repo root or to the directory it\
+ was launched from (issue 0609 -- a DELTA, not an existence test: it must not red\
+ on litter another suite left before this one started, and unlike the existence\
+ test it can still catch its OWN leak under T1, whose cwd is tests/)" \
+  $c11_new {}
 
 # C12: THE PROVISIONAL 0632 REFUSAL. With unsaved edits on the sheet the ASE
 # path emits no cards AT ALL and says so -- it does not walk. On a dirty entry

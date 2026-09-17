@@ -54,6 +54,38 @@ set scratch [test_scratch op_dump_altshow]
 catch {set ::ase::sim_autosave 0}
 set T_OLDPWD [pwd]
 
+## H1's untitled* BASELINE (issues 0609, 1480 §5) -- the twin of test_ase_core's
+## C11, and 0609 §2.1 names the two rows as a pair. H1 used to glob $repo alone and
+## assert the count was 0, which made it a probe of FOREIGN machine state: inside
+## full_audit.sh (`cd "$REPO"`, :64) whichever of the ~80 leaking suites sorts first
+## hands this one a red it had no part in. Measured 2026-09-17: with a foreign
+## untitled~.sch + untitled~.sym planted in the repo root, the otherwise-clean suite
+## reported `FAIL: H1 ... -> {0} (exp {1})` while leaking nothing itself.
+##
+## ⚠ THE CWD IS WATCHED TOO, NOT JUST $repo, and the list is FIXED HERE. xschem
+## names the untitled buffer under $env(PWD) when set (src/save.c:6492-6497,
+## src/xinit.c:3917-3919) and otherwise under the STARTUP getcwd (src/xinit.c:3175);
+## a Tcl `cd` moves neither (src/xinit.c:174, issue 0323), so the :938 `cd $T_OLDPWD`
+## cannot change where litter lands and re-deriving the list at the row would only
+## score pre-existing files in a new directory as new.
+set h1_dirs {}
+foreach d [list $repo [expr {[info exists ::env(PWD)] ? $::env(PWD) : {}}] $T_OLDPWD] {
+  if {$d eq {}} continue
+  set n [file normalize $d]
+  if {[lsearch -exact $h1_dirs $n] < 0} { lappend h1_dirs $n }
+}
+proc h1_litter_snap {} {
+  global h1_dirs
+  set out {}
+  foreach d $h1_dirs {
+    foreach f [glob -nocomplain -directory $d -tails untitled*] {
+      lappend out [file join $d $f]
+    }
+  }
+  return [lsort $out]
+}
+set h1_pre [h1_litter_snap]
+
 # ============================================================================
 # P — THE PATH, DERIVED ONCE
 # ============================================================================
@@ -936,9 +968,20 @@ check {N6 and it carries BOTH numbers, each in its own clause -- the cards it\
 catch {ase::sim_caps_clear} ; catch {ase::sim_clear}
 
 cd $T_OLDPWD
-check_true {H1 HYGIENE the suite left the cwd where it found it and made no untitled* in the repo root} \
-  [expr {[pwd] eq $T_OLDPWD &&
-         [llength [glob -nocomplain -directory $repo -tails untitled*]] == 0}]
+## ⚠ A SET DIFFERENCE, NOT A COUNT -- baseline and watch dirs at :57. 0609's own
+## suggested fix compares `llength`s, so a run that removed `untitled~.sym` and
+## added `untitled~.sch` scores clean; 0609 §3 records that both extensions occur.
+## Kept as ONE row with two legs (cwd restored, nothing added) so the suite's check
+## count stays 70; a failure now prints the offending paths.
+set h1_new {}
+foreach f [h1_litter_snap] {
+  if {[lsearch -exact $h1_pre $f] < 0} { lappend h1_new $f }
+}
+check {H1 HYGIENE the suite left the cwd where it found it and added no untitled*\
+ to the repo root or to the directory it was launched from (issue 0609 -- a DELTA,\
+ not an existence test: it must not red on litter another suite left before this\
+ one started, which is what made it structurally unpassable inside full_audit.sh)} \
+  [list [expr {[pwd] eq $T_OLDPWD}] $h1_new] {1 {}}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }
