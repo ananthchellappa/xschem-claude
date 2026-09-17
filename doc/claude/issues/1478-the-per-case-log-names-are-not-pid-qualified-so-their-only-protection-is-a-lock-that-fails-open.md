@@ -38,8 +38,8 @@ write somewhere else:
 * **`devdisplay.sh exec`** performs **no redirection at all** — `cmd_exec` (`:399-403`) is
   `DISPLAY="$DPY" GUI_GATE=0 "$@"`. The child's output goes wherever the caller's stdout
   goes.
-* **`run_suites.sh:123`** and **`full_audit.sh:438-440`** capture the child into a shell
-  variable (`out=$(timeout "$TIMEOUT" "$XSCHEM" … )`), never into a file beside the suite.
+* **`run_suites.sh:121, 123, 125`** and **`full_audit.sh:475-485`** capture the child into a
+  shell variable (`out=$(timeout "$TIMEOUT" "$XSCHEM" … )`), never into a file beside the suite.
 * **`tests/headless/scratch.tcl`** hands each process a **pid-qualified** directory —
   `tests/headless/.scratch/_<tag>_<pid>` (`:46-50`, `:104`) — with a dead-pid sweep and a
   300 s age floor (`:68`). It is already safe by construction.
@@ -189,7 +189,8 @@ starts:**
 fixed `.disp.log` name, six sites), `:481-523` (`t1_lock_take`), `:502-505` (the fail-open
 WARNING), `:464-475` (`t1_lock_owner_alive`), `:322` (the block header). 
 `tests/headless/devdisplay.sh:399-403` (`cmd_exec`, no redirection).
-`tests/headless/run_suites.sh:123`, `tests/headless/full_audit.sh:438-440` (variable capture).
+`tests/headless/run_suites.sh:121, 123, 125`, `tests/headless/full_audit.sh:475-485`
+(variable capture).
 `tests/headless/scratch.tcl:46-50, 68, 104` (pid-qualified scratch). `.gitignore:30-31, 94-96`.
 Grep, ownership and ignore measurements taken 2026-09-17; no suite was run and no collision
 was forced.

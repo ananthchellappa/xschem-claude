@@ -15,75 +15,76 @@ when the receipt is in `receipts/` and the driver has read it.
 | **D1** | the written record | **DONE** | `1a46c800` | 1476 minted; 5 closed; **five** CLAUDE.md corrections | 1476 + five |
 | **D2** | the lying detail strings | **DONE** | `d35db718` | **12 of 20 rows lied on the green path**; 16 rewritten | — |
 | **V2** | closing solo T1 | **GREEN** | `aa0e2213` | **84 cases**, 375.0 s, **ZERO failures**, rc 0, committed tree | — |
-| **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480; one residual refuted | 1477–1479 |
+| **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480 | 1477–1479 |
 
 ## Companions — ALL THREE DONE
 
 | id | task | status | commit | result | issues |
 |---|---|---|---|---|---|
-| **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0 rc 0; **0805's own fix was a regression** | 0805, 0802 |
-| **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 rc 0 | 0408(a) |
-| **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43 checks**; 12/12 clean, **8/8 under load**; reddened under **two** sabotages | 1332 |
-| **F1** | final documentation pass | **DONE** | — | all three OWED items closed; comment-only, **proven not asserted** | 0905, 1477, 1478 |
+| **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0; **0805's own fix was a regression** | 0805, 0802 |
+| **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 | 0408(a) |
+| **E3** | 1332-residual | **DONE** | `36226c0c` | **40 → 43 checks**; 12/12 clean, **8/8 under load**; **two** sabotages | 1332 |
+| **F1** | documentation pass | **DONE** | `bb069d89` | three OWED items; comment-only, **proven** (0 non-comment lines) | 0905, 1477, 1478 |
+| **F2** | stale citations | **DONE** | — | **briefed as 2, found 9** | 1477, 1478, 1479, NUMBERING |
 
-## ⚠ F1: A CITATION WRITTEN DOWN *AS A CORRECTION* WENT STALE INSIDE THE SAME BATCH
+## ⚠ F2: "THE BRIEF SAID TWO STALE CITATIONS. THERE WERE NINE."
 
-D3's refutation cited `full_audit.sh:438-440` as the capture site. **Today those lines
-are `:475-485`** — because **E1's `b3cc484c` added lines to that file after D3 measured
-at `aa0e2213`.** Under a day, inside one batch, in a sentence whose entire purpose was
-to correct an earlier error.
+The two it was sent for (`1478:41`, `:192`) were right, and **re-derived rather than
+trusted**: `out=$(` sits at `475,477,481,483,485` today against `438,440,444,446,448`
+at `aa0e2213` — a **+37** shift. Today's `:438-440` is `fi` / blank /
+`PASS=0 FAIL=0 CRASH=0 SKIP=0`.
 
-F1 wrote the re-measured numbers into 0905 but **left `1478`'s copies at `:41` and
-`:192` stale**, judging the 1477/1478/1479 fence to be about their *defects* rather than
-their citations. **Driver: that is two one-line fixes and they are dispatched as F2** —
-a just-filed issue carrying a known-stale citation is exactly the rot this batch exists
-to be about.
+**Six more had the same cause and the brief did not anticipate them.** `b3cc484c` also
+grew `tests/banner_rule.tcl` from 124 to 136 lines: `1479:75,:180`
+(`banner_rule.tcl:107` → **`:119`**), `1479:82,:181` (`:115-118` → **`:127-130`**), and
+`1477:168,:201` (`:82-124` → **`:92-136`**). A **ninth** sat in
+`NUMBERING.md:3517`, repeating 1478's sentence verbatim, stale pair included.
 
-## F1's work, re-measured rather than inherited
+### ⚠ The 1477 citation is the one to remember
 
-* **0905's closure corrected.** D3's refutation re-verified from scratch and it holds:
-  the only writer of `headless/*.disp.log` is `run_regression.tcl`
-  (`:669, 671, 691, 696, 700, 704`). The paragraph now leads with the refutation, names
-  the real residual (four fixed names, the `:502-505` fail-open lock, `:661-662`'s
-  shared `--logdir`), and points at 1478.
-* **CLAUDE.md's MTIME bullet (`:138-156`).** The rule is **re-affirmed first**, with
-  V2's disagreeing mtime/md5 result quoted as its justification, *then* the 1477 hole:
-  **mtime proves a run WROTE, not that it FINISHED.** F1 reproduced 1477's measurement
-  independently — zero counted failures at 1/10/40/80/120/170 lines, `-buffering full`,
-  `-buffersize 4096`, no `fconfigure` anywhere. **The actionable addition is a second
-  gate: pair the mtime with the case count** (83 `Total num fail:` lines for today's 84
-  cases).
-* **The three `:294` citations → `:540`**, verified against the real emitter (line 540
-  of 545).
+`banner_rule.tcl` grew **+10 above `banner_complete` and +2 more below it**, so
+`banner_complete` moved +10 (82→92) while `banner_died` moved +12 (106→118).
+**The natural repair — assume a single offset and write `:82-136` — is wrong at the
+start**, and today's `:82` lands on a bare `#` inside a comment block, **so it reads as
+plausible**. A one-offset assumption would have produced a still-broken citation that
+now looked *freshly verified*. Same shape as D1's fossil-84: **a plausible value is not
+a measurement.**
 
-**Comment-only, proven rather than claimed:** non-comment lines diffed against `HEAD`
-are **identical** in all three files, line counts unchanged (136 / 572 / 811). Sharper
-still for `full_audit.sh`: the classifier's only extractions from its source key on
-`line_has '…'` **shell syntax**, which cannot occur in a comment.
+Roughly 30 other citations were checked by printing the cited range and found sound.
+One judgement call, trivially revertible: `run_suites.sh:123` widened to `:121, 123,
+125` to match what F1 wrote into 0905.
 
-**Verification with a pre-edit baseline**, so "nothing moved" is a comparison rather
-than an assertion: `ALL PASS (75 checks)` and `ALL PASS (20 checks)` **both before and
-after**; CI gate exactly as `ci.yaml:68-74` → `SUMMARY: 15 pass 0 fail 0 crash/timeout
-0 skip`, rc 0; `results.log` byte-for-byte V2's throughout.
+## ⚠ F2 REFUTED THE REASONING BEHIND F1's CONVENTION DECISION
 
-## ⚠ A convention decision F1 declined to take unilaterally — and measured why
+F1 declined E3's "cite the emitter, not the line" partly to protect
+`test_audit_classifier.tcl:295-296` and `banner_rule.tcl:107` from drift. **Both were
+already stale when F1 named them.** The *conclusion* (adopt it deliberately, repo-wide,
+in one pass) is **strengthened** — but its supporting fact must not be inherited. That
+is the eighth wrong recorded belief this batch, and the second in which the correction
+itself was the thing that rotted.
 
-E3 adopted "cite the emitter, not the line". F1 **deliberately did not** propagate it,
-with arithmetic rather than taste: it costs a line each, and a line added above
-`test_audit_classifier.tcl:280` drifts `:295-296`, which `test_startup_guard_0663.tcl:232`
-**pins by number**; a line above `banner_rule.tcl:50` drifts `:107` (cited twice by
-1479) and `:82-124` (cited by 1477). **Fixing drift by creating drift, in files four
-issue files cite by line, is the wrong trade at crew level.** All three edits are
-therefore line-count-neutral. Adopting the convention deliberately and everywhere at
-once is worth doing and is recorded here as a candidate, not smuggled in.
+## Owed — F3, the last content task
+
+Three stale citations **outside** `doc/claude/issues/`, numbers measured and ready:
+
+* `tests/banner_rule.tcl:98` cites `full_audit.sh:315-316` for the crash arm → **`:352-353`**.
+  ⚠ **F1 edited that very file and missed this.**
+* `tests/headless/test_startup_guard_0663.tcl:230` cites `full_audit.sh:316` → **`:353`**
+* `tests/headless/test_startup_guard_0663.tcl:232` cites `test_audit_classifier.tcl:295-296` → **`:321-322`**
+
+Plus `0663:149/:201/:241`, which F2 reports live and worth fixing.
+
+**Deliberately NOT to be renumbered: `0802:16`** (`full_audit.sh:311-325`). It precedes
+a code block quoting the *pre-fix* source, so it is a historical transcript like
+`receipts/E1.md:115`; renumbering without requoting would make it worse.
 
 ## Candidates, recorded and deliberately not scheduled
 
-1. **1478's fail-open warning should write into the verdict**, not only to stdout — a
-   run that proceeded UNLOCKED leaves no trace in "the only place the answer is".
-2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass.**
+1. **1478's fail-open warning should write into the verdict**, not only to stdout.
+2. **"Cite the emitter, not the line", adopted repo-wide in one deliberate pass** — now
+   with F2's evidence that the counter-argument rested on already-stale citations.
 
 ## Resume point
 
-Next: **F2** (1478's two stale citations), then the **final solo T1** covering
-everything the companions touched.
+Next: **F3** (the three measured citations above — the last content task), then the
+**final solo T1**.

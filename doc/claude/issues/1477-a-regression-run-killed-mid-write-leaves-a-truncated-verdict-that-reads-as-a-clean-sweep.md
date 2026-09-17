@@ -165,7 +165,7 @@ START mean something, and the END line needs no flush because `close` follows it
 
 **What 0905 did not know — two.** It says *"have `banner_rule.tcl` treat a summary with no
 END line as `HARNESS`"*. `banner_rule.tcl` today has no run-level predicate at all: its three
-procs (`banner_complete`, `banner_died`, `regression_case_failed`, `:82-124`) each take **one
+procs (`banner_complete`, `banner_died`, `regression_case_failed`, `:92-136`) each take **one
 case's body**. A run-level check is a new consumer, not an adjustment of an existing one.
 That file is also load-bearing in a way the change must respect — `test_audit_classifier.tcl`
 **section K** locks the Tcl rule against `run_suites.sh`'s ERE and `full_audit.sh`'s crash
@@ -198,6 +198,6 @@ documented miscounts. Unmeasured, and it costs the byte-determinism of a green v
 
 `tests/run_regression.tcl:321-345` (`summarize_all`), `:327` (the counted rule), `:563` (the
 `open … w`), `:720` (the only `close`), `:724-732` (the deliberate lock-left-behind comment),
-`:380-392` (`t1_timeout` / the `timeout --kill-after=20` prefix). `tests/banner_rule.tcl:82-124`
+`:380-392` (`t1_timeout` / the `timeout --kill-after=20` prefix). `tests/banner_rule.tcl:92-136`
 (three per-case predicates, no run-level one). Truncation and buffering measurements taken
 2026-09-17 on a copy of `tests/results.log` and a scratch channel; no suite was run.

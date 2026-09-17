@@ -72,14 +72,14 @@ Whoever implements it by looking for that string will find nothing in the job pa
   `job_status_reason` as an ordinary integer.
 * **The case-log path.** `FATAL: signal N` is printed by **xschem itself** —
   `src/main.c:58`, `fprintf(errfp, "\nFATAL: signal %d\n", s)` — into the case log *body*,
-  where `banner_rule.tcl:107` (`banner_died`) reads it to decide whether a suite died. That
+  where `banner_rule.tcl:119` (`banner_died`) reads it to decide whether a suite died. That
   is a per-case predicate about the child's own crash, not about a job's status file.
 
 0384's transcript shows `FATAL: signal 15` because it was reading the second channel. The
 classification it asks for belongs to the first. Both are worth having; they are not the
 same change, and conflating them is how this candidate ends up half-implemented again.
 
-⚠ **And do not "fix" this in `banner_rule.tcl`.** Its comment at `:115-118` records that the
+⚠ **And do not "fix" this in `banner_rule.tcl`.** Its comment at `:127-130` records that the
 `couldn't execute "xschem"` / exit-127 markers are **deliberately excluded** from the death
 set, with a stated reason: they belong to the golden cases' `/bin/sh` jobs and to
 run_regression's xschemtest guard, neither of which that predicate is reached from, and
@@ -177,6 +177,6 @@ landed cleanly.
 `:270-277` (the 0147 comment on always counting FATALs).
 `tests/netlisting.tcl:107` (the `echo $?` job tail), `:127-131`; `tests/open_close.tcl:128-132`;
 `tests/create_save.tcl:98-102` (the three identical collate branches).
-`tests/run_regression.tcl:327` (the counted rule). `tests/banner_rule.tcl:107` (`banner_died`),
-`:115-118` (the deliberate exclusion). `src/main.c:58` (the real `FATAL: signal` emitter).
+`tests/run_regression.tcl:327` (the counted rule). `tests/banner_rule.tcl:119` (`banner_died`),
+`:127-130` (the deliberate exclusion). `src/main.c:58` (the real `FATAL: signal` emitter).
 Probes taken 2026-09-17 against verbatim-extracted shipped source; no suite was run.

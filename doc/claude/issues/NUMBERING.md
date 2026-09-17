@@ -3514,7 +3514,7 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   inherited claim that *"a standalone suite on `:99` can still race those files"* is **wrong** —
   measured repo-wide, the ONLY writer of `headless/*.disp.log` anywhere is `run_regression.tcl`
   itself (`:669,671,691,696,700,704`); `devdisplay.sh cmd_exec:399-403` does **no** redirection,
-  `run_suites.sh:123` and `full_audit.sh:438-440` capture into a shell variable, and
+  `run_suites.sh:121,123,125` and `full_audit.sh:475-485` capture into a shell variable, and
   `scratch.tcl` is already pid-qualified. What *is* exposed: `<case>.log`, `headless/<case>.log`,
   `headless/<case>.disp.log` and the display arm's `--logdir` `tests/results/.actionlogs`
   (`:661-662`) are fixed names whose guarantee is the verdict lock — **best-effort**, since
