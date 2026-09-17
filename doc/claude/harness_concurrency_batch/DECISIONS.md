@@ -361,6 +361,26 @@ leave-list said 17 and should say 18: it counted four session prompts where ther
 number was requoted instead of measured.** The driver propagated it into three files and a crew
 brief. Nineteenth wrong recorded belief, and the driver's.
 
+### ⚠ AND THEN THE DRIVER'S OWN RECOUNT SAID 30. Nobody had miscounted.
+
+The driver re-measured to check the crew's 18 and got **30** — and, for once, stopped instead of
+publishing it. Reconciled: **excluding this batch's own paperwork the tree carries 17 hits across
+14 files.** The gap is **11 hits in six files written TODAY, about this very error** —
+`DECISIONS.md`, `LEDGER.md`, `PLAN.md`, `receipts/ram-figure.md`, `receipts/R1-recon.md`,
+`receipts/plan-closeout.md`. The crew measured the tree it was sent to repair; the driver
+measured that tree **plus the commentary on the repair**, including sentences it had written
+minutes earlier.
+
+**Both counts are correct against their own scope, and neither is correct without one.** This is
+the four-source citation one layer up: **a count is only meaningful against a stated scope, in
+exactly the way a line number is only meaningful against a stated tree.** The corrections about
+the defect become part of the corpus the next sweep measures — so a document that discusses a
+string will always inflate a naive count of that string.
+
+> **The rule, final form for this batch: state the scope with the count, and the tree with the
+> line.** Bare numbers and bare coordinates are the same failure — *position without identity*,
+> which is the defect this entire batch was convened about.
+
 The `ram-figure` crew surfaced this and could not file it: **documents justify the
 serialisation rule by citing the "~7.8 GB box", and that box does not exist.** It is 15.35 GiB
 with 4 GiB of untouched swap, `dmesg` shows **zero** OOM kills, and the whole OOM chain is

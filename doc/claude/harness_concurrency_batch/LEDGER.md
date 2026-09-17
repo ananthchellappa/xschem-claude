@@ -1,5 +1,33 @@
 # Ledger — harness concurrency batch
 
+## ✅ BATCH CLOSED — 2026-09-17. T1 AT ZERO, VERIFIED ON THE FINAL TREE.
+
+**Closing gate `69c65249` (V5):** rc 0, 378 s, trailer `cases=84 blocks=83 counted_failures=0`,
+`exit -1` count **0**, solo-ness established **positively**. Both companion repairs re-confirmed.
+
+**What was fixed.** A defect filed **five times across seven weeks with zero attempts** — two of
+its four faces recorded nowhere. Both runs now proceed: nobody is refused, every verdict names
+the run that wrote it, and every verdict says whether that run *finished*. ⚠ **"Nobody waits" is
+the run-level truth, not the literal one** — the lock still exists, demoted to bracketing one
+file copy; what was deleted is **refusal**.
+
+**The batch's real subject, found four times in four costumes:** **position is not identity.**
+Two runs sharing one filename; a check counting files in a shared `/tmp`; a line number, which is
+a position in a file others are editing; and a process search matching *text* where it needed to
+match *a process*. Every working fix did the same thing — **made the thing announce who it is**.
+
+**Twenty wrong recorded beliefs**, every one caught by re-measuring rather than re-reading.
+**Six prescribed fixes in issue files would have changed working code** — 0867, 0990, 0805, 0609,
+1478, **and one the driver wrote**. The driver also falsely accused two crews of carelessness that
+never happened, and **ordered a revert that would have destroyed a correct fix — which the crew
+refused.** That refusal is the single behaviour most worth keeping from this batch.
+
+**Outstanding, named rather than rounded away:** the `test_ase_optier_0963` flake is unexplained
+and merely passed today; shared globals beyond `xschem_emergencysave_*` are unswept; 49
+pre-existing `/tmp` corpses are **not ours to delete**; `share_farm_child`'s other two callers
+still launch children under the developer's real `HOME`; the `load_backup_as` citation family is
+half-fixed; and **issue 0356 remains the user's** — it governs what their own `git status` shows.
+
 ## ⚠ REOPENED 2026-09-17 — THE PREMISE WAS WRONG. SEE "R1-RECON" BELOW.
 
 The batch closed at `77820c03` with T1 at zero. It reopened the same day for two reasons:
@@ -391,6 +419,14 @@ without its text is an assertion.
 fenced leave-alone class, so only `CLAUDE.md` was ever live.** Measured by `final-docs`. The
 error sits in the opening sentence of **the ruling that exists because a number was requoted
 instead of measured**, and the driver carried it into three files and a crew brief.
+
+⚠ **THEN THE DRIVER'S RECOUNT SAID 30, AND NOBODY HAD MISCOUNTED.** Reconciled: outside this
+batch's own paperwork the tree carries **17 hits in 14 files**; the gap is **11 hits in six files
+written TODAY about this very error**. The crew measured the tree it was repairing; the driver
+measured that tree *plus the commentary on the repair*. **Both are correct against their own
+scope and neither is correct without one** — the four-source citation one layer up. **State the
+scope with the count, and the tree with the line.** A bare number and a bare coordinate are the
+same failure: *position without identity*.
 
 **Documents justify "one crew at a time" by citing a box that does not exist.** Decision in
 `DECISIONS.md`: **the rule stands on its real basis and relaxes only on evidence.** The RAM figure
