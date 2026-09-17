@@ -14,7 +14,7 @@ after the driver has read the receipt and checked at least one of its claims.
 | E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
 | **BC1** | design the convention **and** build the checker (B+C merged, D8) | in flight | — | — |
 | **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
-| **E2** | collapse the 48 repeated wording ratifications into one document | in flight | — | — |
+| **E2** | collapse the 48 repeated wording ratifications into one document | **DONE** | **accepted** — corrected D11's premise; caught driver errors 11 and 12 | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
 
 ## Running findings
@@ -502,6 +502,22 @@ re-reading."* Same table here, same discipline.
 
 | 10 | *"165 issue numbers are claimed closed; **7** still have an OPEN header; **4.3%**"* — sent to BC1 as a design input and queued as D1's work list | **the driver**, `tools/closescan.py` | **4 of the 7 are FALSE POSITIVES. The real class is 1 in 165 — 0.6%.** D0 verified all seven against the tree. **Acting on the driver's table would have marked two genuinely open defects closed, one of them carrying a live user ruling.** |
 
+| 11 | *"the collection step was skipped — 48 debts were filed one at a time where there should have been one document"* (D11) | **the driver** | **The collection was made on 2026-09-13 and never handed over.** `ase_analyses_batch/R9_COPY_REVIEW.md`: 11,364 lines, 821 blocks from 38 issues, already grouped by surface, **36 of the 48 already in it**. The defect is a missing **handover**, not a missing collection — **worse**, because the work was done twice and delivered zero times. |
+| 12 | *"resolve each entry to `doc/claude/issues/NNNN-*.md` for the real text"* — the **method** in E2's dispatch brief | **the driver** | **Following it literally produces a document of superseded drafts.** The review itself records: *"The issue files could not be the source… several quote a draft that was superseded before the commit landed."* E2 **inverted** the instruction — review for the 36, issue file for the 9, `src/ase.tcl` where the issue only *describes* (1439's sentences exist nowhere else). |
+
+⚠ **Error 12 is the SEVENTH prescribed fix in this project's record that would have damaged
+working code, and the THIRD written by the driver** — after the harness batch's dispatch
+brief and error 10's closure table. **All three were written into a crew's instructions**,
+which is the most dangerous place for one, because a crew that obeys has no reason to
+doubt. **Both crews refused and said why.** That refusal is the single most valuable
+behaviour in this operating model, and it has now paid out three times.
+
+⚠ **Error 11 names the tracker's real disease, and it is not ignorance.** 0229 is the fix
+for citation rot — **written down, never built.** `R9_COPY_REVIEW.md` is the wording
+collection — **built, never delivered.** A defect was filed five times in seven weeks and
+attempted zero times. **The corpus does not fail to know things. It fails to deliver what
+it knows**, and no status field, convention or checker addresses that.
+
 ⚠ **Error 10 is the most dangerous of the ten, and it is the batch's own subject in the
 first person.** A *"stored fix that would damage working code"* is the exact class this
 batch was convened to study. The driver produced one, handed it to BC1 as evidence, and
@@ -528,8 +544,52 @@ which is D9's whole argument. `tools/closescan2.py` adds the three filters and a
 0516 and 0947 are now correctly suppressed, 0071 and 0264 still leak. That refusal is the
 tool working. v1 would have published.
 
-⚠ **The corpus-wide 165 / 154 / 7 is therefore WITHDRAWN**, not merely qualified. It is
-inflated by the same three shapes and must not be quoted until closescan2 passes.
+⚠ **The corpus-wide 165 / 154 / 7 is therefore WITHDRAWN**, not merely qualified.
+
+**`closescan2.py` now PASSES both directions, and here is the honest number.** It needed a
+**fifth** and **sixth** filter that neither the driver nor D0 anticipated — found the same
+way, by printing the matched text:
+
+> **BLEED — the verb belongs to a DIFFERENT issue number.**
+> `issue 0055 (locate arg, FIXED); umbrella 0071` — the verb is **0055's**, and the
+> 40-character gap merely scooped up the next number along.
+> `docs(issues): 0244 FIXED write-up, and file 0264-0267` — the verb is **0244's**; 0264 is
+> a *filing* announcement. Neither carries a negation, a parenthesis or a proposal word, so
+> all three of D0's filters passed them through.
+
+Rules added: a claim cannot survive a `;` or `)` between its verb and its number, and **a
+4-digit number immediately before the verb owns that verb**.
+
+| | v1 (`closescan.py`) | v2 (`closescan2.py`, both-direction self-test) |
+|---|---|---|
+| claims accepted | 165 | **173** |
+| header agrees | 154 | 157 |
+| **header still OPEN** | **7** | **6** |
+| no issue file | 4 | 10 |
+| **rate** | **4.3%** ⚠ withdrawn | **3.7%** (6/163) |
+| claims **rejected** by filter | 0 | **542** — negation 176, attribution 166, bleed-sep 96, prescription 65, bleed-owner 39 |
+
+**542 rejected claims.** The unfiltered scan was roughly three-quarters noise, and it read
+as a clean, plausible result.
+
+**The six that survive**, three of them already D0-verified:
+
+| issue | claimed closed by | D0 verdict |
+|---|---|---|
+| `0249` | git log, issue 0366 | **CONFIRMED-CLOSED** — genuinely stale header |
+| `0216` | git log, `src/wave_viewer.tcl` | **PARTIALLY-CLOSED** — needs a scope, not a close |
+| `0650` | issue 0653 | **PARTIALLY-CLOSED** — same |
+| `0056` | `tests/headless/test_ase_preflight.tcl` | **not yet verified** |
+| `0885` | git log | **not yet verified** |
+| `0897` | issue 0894 | **not yet verified** |
+
+⚠ **Do not repair the last three on the scanner's word.** That is precisely error 10, and
+the detector has now been wrong about four of seven once already. They go to D1 as
+*candidates to verify*, never as a work list.
+
+⚠ **And note the one number that got WORSE: "claimed closed but no issue file" rose 4 → 10.**
+Unexamined. Likely renumbering casualties or another clone's numbers, but that is a guess
+and is labelled as one.
 
 ⚠ **Error 9 is the ninth instance of one single mistake**, and it is worth naming plainly:
 **every driver error tonight was a pattern matched against the wrong namespace.** `-e`

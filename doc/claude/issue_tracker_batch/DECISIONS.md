@@ -170,6 +170,21 @@ absent. Requirement: a stored fix must still record **which option was taken**.
 
 ## D11 — The user's queue is triaged but not touched, and the 48 collapse first
 
+⚠ **CORRECTED BY E2, 2026-09-17. The premise below is wrong in one word, and the
+correction is worse news than the original.** This decision says the collection step *was
+skipped*. **It was not.** `doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md` has existed
+since **2026-09-13**: 11,364 lines, **821 handle blocks / 825 handle ids, drawn from 38
+issues, already grouped by surface**, opening with *"all of them in one place, so they can
+be read once instead of nineteen times."* **36 of the 48 were already in it.**
+
+**So the defect is not a missing collection. It is a missing HANDOVER** — the document was
+built, was correct, and was never put in front of the user, so debts went on being filed
+one per stage beside a finished artefact that already contained them. That is strictly
+worse than never collecting: the work was done twice and delivered zero times, and it is
+the same disease as issue **0229** (the fix for citation rot, written down and unbuilt) and
+as the five-filings-zero-fixes pattern. **The tracker's characteristic failure is not
+ignorance. It is non-delivery.**
+
 **Decision.** E1's triage stands as a **recommendation**; the driver clears nothing (`D5`).
 The first thing put to the user is not the 24 misfiled entries but the **48 that are one
 repeated question**.
