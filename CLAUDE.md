@@ -182,12 +182,28 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   answers **75**, because it counts lines, spans `dcases` too, and one line carries
   two entries. Three separate crude-grep miscounts landed in one batch. Take the
   number from the run's own `Start`/`Finish` output.
-  ⚠ **Re-measured 2026-09-17 after the harness-concurrency batch: still 84.** The
+  ⚠ **Re-measured 2026-09-17 after the harness-concurrency batch: still 84 THEN.** The
   suite `test_regression_concurrency_1476` went **20 → 36 checks**, but those are
   checks *inside* one case, not cases — it was already the 69th `hcases` entry, and
-  the three list lengths are unchanged at **3 / 69 / 11**, taken from `sed -n '23p' /
-  '27,93p' / '309,318p' | /usr/bin/grep -o '"[^"]*"' | wc -l` rather than from a
-  sentence. ⚠ **But the verdict FILE is no longer 83 lines: `wc -l` answers 171.**
+  the three list lengths were unchanged at **3 / 69 / 11**, taken from the lists
+  themselves rather than from a sentence. ⚠ **And the verdict FILE was no longer 83
+  lines: `wc -l` answered 171.**
+  ⚠ **Both numbers moved again LATER THE SAME DAY** — the issue-tracker batch added
+  `headless/test_issue_stamp` as the **70th** `hcases` entry. Current lengths
+  **3 / 70 / 11**, and `wc -l` on a green verdict is **173**. Take the list lengths
+  by piping each `[list …]` block through `/usr/bin/grep -o '"[^"]*"' | wc -l`, and
+  **find the block by matching `set hcases [list` rather than by line number** — the
+  ranges quoted here have already rotted twice, and this batch measured bare
+  `file:line` citations rotting **5 of 5** while symbolic ones held **3 of 3**.
+  ⚠⚠ **READ THE NEXT WARNING WITH THIS ONE, OR YOU WILL DELETE IT.** The paragraph
+  below says *"85 was wrong"*. **85 is also, now, right — and the two are different
+  quantities.** The wrong 85 was an answer to *"how many LINES is the verdict?"*
+  (the answer is **173**). The right 85 is the answer to *"how many CASES does T1
+  run?"*. **Same numeral, different question**, and they became equal by coincidence
+  on the same day: the issue-tracker batch registered a 70th `hcases` entry hours
+  after the `wc -l` error was corrected. **The warning below is NOT refuted. Do not
+  tidy it away on the grounds that "85 is the right number now."**
+
   ⚠ **This passage said 85 for a few hours on 2026-09-17, and that is the sharpest
   lesson in this batch.** 85 is `83 + 2` — the `Total num fail:` lines plus the two
   new sentinels — and it **forgets the 83 block-header lines entirely**. It was
