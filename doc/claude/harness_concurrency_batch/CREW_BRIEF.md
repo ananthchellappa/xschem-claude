@@ -72,6 +72,25 @@ brief, your stage's row in `PLAN.md`, and **the previous stage's receipt** in
 9. **`_ALLOC_ID_`, C89, `dbg()`** — house conventions, if you touch C. This batch is
    Tcl and shell.
 
+10. ⚠ **QUOTE THE LINE YOU ARE CITING, OR YOU HAVE NOT READ IT.** A citation without its
+    text is an assertion. This rule is narrower and harder than *"take every measurable
+    fact from the machine, never from a sentence"* — because **a line number has the SHAPE
+    of a measurement** and will pass for one.
+
+    Measured 2026-09-17: **four independent passes described a sentence none of them had
+    read.** A verification crew placed a supposedly-refuted banner at
+    `run_regression.tcl:665-666`; a second crew said it had *"measured before citing"* and
+    placed it at `:672-673`; the driver repeated the first number into a dispatch brief and
+    then sent the crew a message "correcting" it to the second — **in a message lecturing
+    that crew about rotted citations.** Every coordinate was wrong (`:665-666` is the tail
+    of a proc and a blank line; `:672-673` is the end of a comment and a `set`), and **the
+    text at `:683-688` had been correct all along.** Nobody ran the grep. Confidence rose at
+    every hop.
+
+    Had the crew followed the brief it would have "corrected" a correct paragraph — **the
+    sixth prescribed fix in this batch that would have changed working code, and the first
+    written by the driver.** So: paste the line. If you cannot paste it, you are guessing.
+
 ## Red-first, and what "red" has to mean
 
 A row that has never been observed RED proves nothing. For each row you add, record
