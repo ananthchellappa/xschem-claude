@@ -61,10 +61,52 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 |---|---|---|---|
 | **R1/R2/R3** | all three rulings taken by the driver | DONE | `890cb5e5` |
 | **R1-recon** | can both runs proceed? what else is shared? | DONE | *(this commit)* |
-| **R2-R3-design** | isolation + C11 delta, read-only design | IN FLIGHT | — |
-| **0060-comment** | the comment that misdirects leak-hunters | IN FLIGHT | — |
+| **R2-R3-design** | isolation + C11 delta, read-only design | DONE | *(this commit)* |
+| **0060-comment** | the comment that misdirects leak-hunters | DONE | `a6038098` |
 | **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | IN FLIGHT | — |
-| **R1-build** | per-pid logs + header/trailer sentinels | BLOCKED on R2-R3-design (shares `run_regression.tcl`) | — |
+| **R1-build** | per-pid logs + header/trailer sentinels | IN FLIGHT (holds the suite slot) | — |
+| **R3-build** | the C11 delta — **land alone, not hostage** | QUEUED behind the suite slot | — |
+| **R2-build** | private `HOME` for the guard suite's children | QUEUED behind the suite slot | — |
+| **citations** | 9 stale in `test_no_untitled_litter.tcl`, +`test_ase_core.tcl:1516` | QUEUED (collides with R3-build) | — |
+| **1480-update** | record that `write_backup()`'s header is fixed | QUEUED | — |
+
+⚠ **Only one crew may run suites at a time** — that is this batch's own subject, and a number
+produced during a collision is void. The queue above is that constraint, not a priority order.
+
+## ⚠ R2/R3 DESIGN — THREE MORE DRIVER ERRORS, AND A FOURTH BAD ISSUE FILE
+
+Full detail in `DECISIONS.md`. The headline for anyone reading only this file:
+
+1. **"Neither ships alone" was HALF WRONG, and it changed the build order.** The dependency is
+   **one-directional** — the C11 delta is strictly safe on its own (it only makes the row *less*
+   sensitive); only the *containment* cannot ship alone. The delta was being held hostage for no
+   reason. `R3-build` is now queued to land it by itself.
+2. **"0609's containment pins T1's cwd to `$REPO`" — 0609 names no directory at all.** The
+   driver's summary dropped a conditional that 1480 §5 still carries.
+3. **"`scratch.tcl` reaches 169 suites" — it is 187 suites / 193 sourcers / 195 mentions.**
+   Another count taken from a plausible sentence instead of from the artefact. The out-of-scope
+   ruling stands and is *stronger*; the number must not be requoted.
+
+⚠ **0609's supplied fix code is partial — do not paste it.** It compares **counts, not sets**
+(a `.sym`→`.sch` swap scores clean, and **0609 §3 is itself the correction recording that both
+occur**) and watches **only `$repo`**, fixing the false-red direction while leaving the blind
+direction exactly as blind. **Fourth issue file this batch whose prescribed fix would have
+shipped a no-op or a regression** — after 0867, 0990 and 0805.
+
+**G1's decisive measurement VERIFIED on seven independent legs**, so R3's premise holds: under
+T1 the suite's cwd is `tests/` while `C11` reads the repo root, and it cannot catch its own leak.
+
+**R2's decisive hop:** `init_action_log()` runs from `main.c:103` **before** `Tcl_AppInit`
+(`xinit.c:3112`), so the child's log is open when `xschem.tcl` sources the registry. Had it been
+the other way round the whole hypothesis collapses. The two affected rows are **`SG13`**
+(`:332-334`) and **`SG14`** (`:343-352`); fix is a private `HOME` for the farm children, 22 → 23
+checks. Options (b) and (c) are **impossible**, not merely worse — the registry reader is a
+separate process, which makes this **a child-process face of issue 1377 that 1377 does not cover**.
+
+⚠ **Everything in the R2/R3 design is INFERRED FROM SOURCE — nothing was executed.** The crew
+supplied falsifiable predictions (`SG13` → `{3}`, `SG14` → `{0 1 1 0 4}`) precisely so the build
+crews can prove the chain wrong. **Report the actual numbers; do not round them into "2 failed."**
+The driver's own "clean HOME → ALL PASS (22)" is still taken **entirely on trust**.
 
 ## ⚠ H1 RE-SCOPED ITS OWN BRIEF, AND THE IRONY IS EXACT
 

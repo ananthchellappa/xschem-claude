@@ -190,6 +190,12 @@ directions at once.
 ⚠ **MUST LAND TOGETHER WITH 1480's CONTAINMENT.** 0609's proposed containment pins T1's cwd to
 `$REPO`, which would **red every T1 run**. Neither ships alone.
 
+⚠ **BOTH SENTENCES ABOVE ARE WRONG — corrected 2026-09-17 by the R2/R3 design crew.** See the
+"R2/R3 DESIGN — THREE DRIVER ERRORS" section at the end of this file. In short: the dependency
+is **one-directional** (the C11 delta is strictly safe alone and must NOT be held hostage; only
+the *containment* cannot ship alone), and **0609 names no directory at all** — the driver's
+summary dropped a conditional that 1480 §5 still carries.
+
 ⚠ **1480's sweep still requires deciding 0356 first** (`--ignored=matching` versus a `find`-based
 arm). That one is a *repository hygiene policy* affecting what the user's own `git status` shows
 them, so unlike these three it does not obviously belong to the driver. Left open, not filed.
@@ -267,3 +273,75 @@ branch), `~/.xschem/` (**19 T1-registered suites do not source `scratch.tcl`**),
   rekeyed or it will red on the correct new behaviour.
 * **Measured good news:** **no shell script reads `results.log` at all.** `run_suites.sh` and
   `full_audit.sh` are untouched by this change.
+
+## R2/R3 DESIGN — THREE DRIVER ERRORS, AND A FOURTH ISSUE FILE WHOSE FIX CODE IS WRONG
+
+### The designs (both INFERRED FROM SOURCE — nothing was executed, another crew held the slot)
+
+**R2.** The 2-of-22 are **`SG13`** (`test_startup_guard_0663.tcl:332-334`) and **`SG14`**
+(`:343-352`) — the only two rows counting the child's **total** `#! ` durable-log lines; every
+other row counts a *named* string, and the registry's sentences carry none of those names. The
+decisive hop in a twelve-hop chain: **`init_action_log()` runs from `main.c:103` *before*
+`Tcl_AppInit`** (`xinit.c:3112` says so), so the child's log is open when `xschem.tcl` sources
+the registry. Had that been the other way round the hypothesis would have collapsed.
+
+**Fix: give the farm children a private `HOME`, inside this suite only** — a `$sg_home` with a
+pre-created `.xschem` after `:90`; save/set/restore `::env(HOME)` around the launch in `sg_run`
+(`:132-139`); new row **SG22** plus two witness lines in `SG_INNER` so the isolation can redden.
+Check count **22 → 23** (17 → 18 headless); nothing asserts on it, but it is recorded here.
+
+⚠ Options (b) and (c) from the brief are **impossible**, not merely worse: the registry reader
+is a **separate process**, so `test_sim_registry_isolate` cannot reach it. **This is a
+child-process face of issue 1377 that 1377 does not cover.**
+
+**R3.** **G1's decisive measurement is VERIFIED** on seven independent legs — no `cd` and no
+`env(PWD)` anywhere in `run_regression.tcl`, relative script path at `:619`, `$repo` from
+`[info script]` at `:460`, `test_ase_core` never `cd`s. Under T1, `C11` genuinely cannot catch
+its own leak. **Fix: a set-difference delta over *both* the repo root and the process's own
+working directory**, snapshotted at suite start, replacing `:1531-1532`; the same edit for the
+twin at `test_op_dump_altshow.tcl:939-941`.
+
+### Three driver errors
+
+1. ⚠ **"Neither ships alone" is HALF WRONG, and it changes the build order.** The dependency is
+   **one-directional**: the C11 delta alone is strictly safe — it only ever makes the row *less*
+   sensitive — while the **containment** is what cannot ship alone. **Land the delta now; do not
+   hold it hostage.**
+2. ⚠ **"0609's containment pins T1's cwd to `$REPO`" — 0609 names no directory** (`:52-54`).
+   1480 §5 keeps the conditional; the driver's summary dropped it. **Any per-case directory that
+   is not the repo root is already safe today.**
+3. ⚠ **"`scratch.tcl` reaches 169 suites" is wrong — it is 187 suites / 193 sourcers / 195
+   mentions.** The out-of-scope ruling stands, and is in fact *stronger*; the number must not be
+   requoted. Another count taken from a plausible sentence rather than from the artefact.
+
+### The fourth issue file in this batch whose prescribed fix is wrong
+
+⚠ **0609's supplied fix code is partial — DO NOT PASTE IT.** It compares **counts, not sets**
+(a `.sym`→`.sch` swap scores clean, and **0609 §3 is itself the correction recording that both
+occur**), and it watches **only `$repo`** — so it fixes the false-red direction and leaves the
+blind direction exactly as blind. Joining 0867, 0990 and 0805 on this batch's list of issue
+files that would have shipped a no-op or a regression to anyone who followed them.
+
+### Falsifiable predictions — the implementation crew MUST report actual numbers
+
+`SG13` should read **`{3}`** against an expected 0; `SG14` **`{0 1 1 0 4}`** against an expected
+`{0 1 1 0 1}` — three bad entries (`stub`, `slowstub` missing; `ng-cm3` → `iseditor`, the child's
+own binary), `realsim` and `eebin` clean, all five stat'd. ⚠ **Any other number means the chain
+is wrong somewhere. Report what you actually see; do not round it into "2 failed."** The
+driver's "clean HOME → ALL PASS (22)" is taken **entirely on trust** and has not been re-measured.
+
+For R3: the delta must still **redden** when the `:1520-1530` autosave park is removed
+(non-vacuity); the containment must not disturb **W15a/b/c, W16a, V57**; the five T1 suites using
+`[pwd]` are inference, not measurement; and ⚠ **`test_regression_concurrency_1476` copies the
+regression driver and runs two copies of it**, so a containment edit changes what those copies do.
+
+### Also reported, not fixed
+
+**Nine stale citations in `test_no_untitled_litter.tcl`**, plus `test_ase_core.tcl:1516`
+(`actions.c:207` → `:208`). The F2/F3/F4 class, still live.
+
+### Boundary held
+
+1480's sweep stays out: the containment adds **no `.gitignore` rule** and **no sweep**, reusing
+the existing `_*_[0-9]*/` shape (verified with `git check-ignore -v`) **specifically so 0356
+remains the user's to settle.**
