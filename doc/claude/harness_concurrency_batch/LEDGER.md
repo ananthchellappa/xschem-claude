@@ -64,11 +64,13 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **R2-R3-design** | isolation + C11 delta, read-only design | DONE | *(this commit)* |
 | **0060-comment** | the comment that misdirects leak-hunters | DONE | `a6038098` |
 | **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | DONE | *(this commit)* |
-| **R1-build** | per-pid logs + header/trailer sentinels | IN FLIGHT (holds the suite slot) | — |
-| **R3-build** | the C11 delta — **land alone, not hostage** | QUEUED behind the suite slot | — |
+| **R1-build** | per-pid logs + copied verdict + sentinels | DONE — 20 → **36 checks**, 16 red first | `32dff39a` |
+| **claude-md** | 7 items + mint the `Start`/`Finish` hole | IN FLIGHT (no suite) | — |
+| **R3-build** | the C11 delta — **land alone, not hostage** | IN FLIGHT (holds the suite slot) | — |
 | **R2-build** | private `HOME` for the guard suite's children | QUEUED behind the suite slot | — |
-| **citations** | 9 stale in `test_no_untitled_litter.tcl`, +`test_ase_core.tcl:1516` | QUEUED (collides with R3-build) | — |
-| **1480-update** | record that `write_backup()`'s header is fixed | QUEUED | — |
+| **citations** | 9 stale in `test_no_untitled_litter.tcl`, +`test_ase_core.tcl:1516` | folded into R3-build | — |
+| **1480-update** | record that `write_backup()`'s header is fixed | QUEUED (R3-build holds the file) | — |
+| **V4** | solo T1 + a measured concurrent pair (relaxes R4) | QUEUED — after every build | — |
 
 ⚠ **Only one crew may run suites at a time** — that is this batch's own subject, and a number
 produced during a collision is void. The queue above is that constraint, not a priority order.
@@ -146,6 +148,49 @@ line is a comment" in both `.tcl` files.
 **17 stale sites deliberately left**, listed in the receipt: dated ledgers, another branch's park
 doc, session prompts, and four issue files recording *why a past decision was made*. Rewriting
 those would falsify the record. **The driver confirms that judgement.**
+
+## ✅ R1-BUILD — BOTH RUNS PROCEED. `32dff39a`.
+
+**20 → 36 checks, `RESULT: ALL PASS`, rc 0, and SIXTEEN of the 36 observed RED on the
+unmodified tree first**, each quoted red-before/green-after. Collateral green: watchdog 1403
+**32/32**, audit classifier **75/75**, op_annot **485/485**.
+
+The verdict is **copied, never renamed** — a rename deletes the finisher's own answer, the
+"lost cleanly" trap `DECISIONS.md` recorded. Refusal and `exit 2` are **deleted**; the lock now
+brackets **one file copy** instead of a whole run. Per-case logs are pid-scoped and published
+back, with `T1_LOG_TAG` carrying the agreed name across the process boundary — the cases run in
+their own pids, so the name had to be *agreed*, not computed. Sentinels `T1-RUN-BEGIN`/
+`T1-RUN-END` plus the load-bearing `fconfigure $fd -buffering line`.
+
+**Driver-verified before commit:** the `file rename` at `:426` is the *per-case* path only and
+never the verdict — its comment states the distinction unprompted, citing 1480 on litter, and
+all five call sites are per-case.
+
+### Five corrections from the crew
+
+1. **"~6 lines" for Part 1 is 26.** The estimate missed the cross-process handshake, the
+   publish-back, and `summarize_all`'s label argument.
+2. ⚠ **Issue 1478 §3's prescribed fix would have REOPENED the race** — publishing before
+   `summarize_all` lets the other run publish onto that name between the rename and the read.
+   **Fifth issue file this batch whose prescribed fix would have shipped a regression**, after
+   0867, 0990, 0805 and 0609.
+3. **The brief's rows could not reach the riskiest mechanism** — section V neuters `tcases`, so
+   the only cross-process name agreement was untestable. Added `P1e`/`P1f`.
+4. ⚠ **The binary was STALE at task start** and `make -C src` relinked it — though an earlier
+   crew had recorded *"Nothing to be done"* hours before. CLAUDE.md's rebuild-before-evidence
+   rule earned its place again, in this batch, today.
+5. **REFUTED: "five call sites would have to accumulate"** — only two did.
+
+**Two self-inflicted defects caught and recorded rather than quietly fixed:** a first `V3c`
+asserting count *equality* (false — 800 vs 1), and a `V1c` whose detail string quoted a comment
+instead of the code — **this batch's own D2 class, committed by a crew that had read about it.**
+
+### ⚠ NEW DEFECT, IN NO ISSUE FILE: the `Start`/`Finish` rule under-counts by 11
+
+The NODISPLAY path **`continue`s before its `Finish` line**, so a box with no dev display prints
+**84 `Start` / 73 `Finish`**. CLAUDE.md's *"count `Start`/`Finish` pairs"* rule — which exists
+**precisely because two independent passes got the case count wrong** — is itself wrong on that
+arm. Handed to the `claude-md` crew to document and mint.
 
 ## ⚖ R4 — the serialisation rule keeps its rule and loses its reason (driver's call)
 
