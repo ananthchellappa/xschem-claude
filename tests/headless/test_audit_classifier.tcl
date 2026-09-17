@@ -261,6 +261,32 @@ set B_PASSNAME "$PRE\nok:   replay log agrees with the child run  (OVERALL: ok)\
 set B_ALLPASS "$PRE\nok:   something  (ok)\nRESULT: ALL PASS (25 checks)"
 set B_OKVAR   "$PRE\nok:   something  (ok)\nOVERALL: ok  (all checks passed)"
 
+# ISSUE 0805, the OTHER alternative of the same `*)` arm. `^(RESULT: ALL PASS|
+# OVERALL: ok)` anchors the START of the line and nothing anchors the end, so
+# trailing junk is accepted on BOTH alternatives. K20 below locks the
+# ok-sentinel against the other two readers; these two rows lock the all-pass
+# spelling, which the other two readers do not implement at all and so cannot
+# lock for it.
+#
+# Swept across tests/ before tightening (2026-09-17): every emitted spelling is
+# bare (224 sites) or carries exactly ONE parenthesised trailer -- 163
+# "($npass checks)", plus the multi-clause variants of which B_ALLPASS_NOTE is a
+# verbatim one. No shipped suite emits trailing words, so no suite changes
+# classification.
+set B_ALLPASS_JUNK "$PRE\nok:   something  (ok)\nRESULT: ALL PASS and then some"
+set B_ALLPASS_NOTE "$PRE\nok:   something  (ok)\nRESULT: ALL PASS (51 checks, structural partition asserts)"
+
+# ⚠ THE ONE SHIPPED SHAPE A `[^)]*` TRAILER REJECTS, and the reason this arm's
+# trailer is NOT byte-identical to banner_complete's. test_ase_bus_bits_0159.tcl:294
+# prints "RESULT: ALL PASS ($npass checks[expr {$skipped ? ", $skipped group(s)
+# skipped" : {}}])", so with any group skipped the trailer contains an INNER
+# parenthesis: "(12 checks, 2 group(s) skipped)". A `\([^)]*\)` trailer stops at
+# the inner ")" and fails the end anchor, which would turn that shipped suite
+# from PASS into FAIL -- a live regression, not the latent one 0805 is about.
+# The ok-sentinel alternative keeps `[^)]*` because it must stay verdict-identical
+# to the other two readers (K20) and no suite emits an inner paren there.
+set B_ALLPASS_INNER "$PRE\nok:   something  (ok)\nRESULT: ALL PASS (12 checks, 2 group(s) skipped)"
+
 # The third banner shape (test_cadence_descend_newwin_ro.tcl:71, test_hi_descend.tcl:163). It is
 # prefixed BY CONSTRUCTION, so it is the one arm that needs anchoring at BOTH ends.
 set B_THIRD     "$PRE\nok:   descended into the new window  (ok)\ncadence_descend_newwin_ro headless: all checks passed"
@@ -407,6 +433,16 @@ check "C35 classify: the nogui sentinel quoted in a name -> FAIL" \
       [classify $B_SENTNAME test_nogui 1] FAIL
 check "C36 classify: the real column-0 nogui sentinel -> PASS" \
       [classify $B_SENTREAL test_nogui 0] PASS
+# C45/C46: the whole-line half of the same arm (issue 0805). C18 already locks
+# that a real banner passes; C45 is the direction that was never asserted --
+# that a line which merely BEGINS with the banner is not one. C46 is its
+# anti-overshoot and is green in both directions by construction.
+check "C45 is_pass: trailing words after the all-pass banner are not a pass (0805)" \
+      [is_pass $B_ALLPASS_JUNK probe 0] NO
+check "C46 is_pass: a real multi-clause parenthesised trailer still passes" \
+      [is_pass $B_ALLPASS_NOTE probe 0] YES
+check "C47 is_pass: the shipped trailer with an INNER parenthesis still passes (0159)" \
+      [is_pass $B_ALLPASS_INNER probe 0] YES
 
 # ---------------------------------------------------------------------------
 # G. has_failure() -- widened to the banner shapes the tree actually emits (issue 0354 H2).
@@ -554,11 +590,13 @@ check "C44 run_suites.sh's skip regexp is line-anchored and identical to is_skip
 #      catches a binary that never launched is the child code, and it is not
 #      touched here).
 #
-# DELIBERATE DIVERGENCE, FILED AS 0802: full_audit.sh:315-316 guards its
-# Tcl_AppInit arm with `&& ! is_pass`, so a pass banner followed by a death is
-# scored PASS there. banner_died carries no such clause. K9-K12 lock the
-# stricter behaviour; the laxer one is filed, not fixed, because changing
-# full_audit's classification moves section H, which is in the CI gate list.
+# THAT DIVERGENCE IS CLOSED (issues 0802 and 0805, both FIXED, see K20-K22).
+# full_audit.sh's Tcl_AppInit arm used to be guarded by `&& ! is_pass`, so a pass
+# banner followed by a death was scored PASS there while banner_died -- which
+# carries no such clause -- called it a death. K9-K12 locked the stricter side
+# only; the laxer side was left filed rather than fixed because full_audit is the
+# CI gate. K21 now locks the two together, and K22 is the anti-overshoot proving
+# the dropped clause's intent survives in the column-0 anchor.
 #
 # RED BEFORE THE IMPLEMENTATION: tests/banner_rule.tcl does not exist, so the
 # probe reports NO_RULE_FILE for every behavioural row, and run_regression.tcl
@@ -720,6 +758,54 @@ if {$fa_fatal   ne ""} { set k19_f [banner_died "ok:   x  (ok)\n[ere_to_line $fa
 if {$fa_appinit ne ""} { set k19_a [banner_died "ok:   x  (ok)\n[ere_to_line $fa_appinit]: can not execute /tmp/probe.tcl, please fix:"] }
 check "K19 the death predicate fires on full_audit's own two crash literals" \
       [list [expr {$fa_fatal ne {}}] [expr {$fa_appinit ne {}}] $k19_f $k19_a] {1 1 YES YES}
+
+# --- K20-K22: THE THIRD READER, AT LAST (issues 0805 + 0802) ----------------
+# K18 locks two of the three readers together by verdict. full_audit.sh -- the
+# one CI actually runs -- was locked by neither, and it diverged in both of the
+# ways the other two were hardened against:
+#
+#   0805  is_pass's `*)` arm is only PREFIX-anchored, so a banner with trailing
+#         junk is a pass there and a not-a-completion in the other two.
+#   0802  classify's death arm is guarded by `&& ! is_pass`, so a suite that
+#         reported, exited 0 and THEN died is scored PASS -- precisely the
+#         hollow pass banner_died exists to catch (K9, K12).
+#
+# MEASURED ON THIS TREE BEFORE THE REPAIR, through the same AUDIT_LIB_ONLY path
+# these rows use: R_OKAY and R_TAB were YES for full_audit and NO for both other
+# readers, all seven other fixtures agreed, and classify(R_DIE_BARE, ec 0) was
+# PASS while banner_died and regression_case_failed both said YES.
+#
+# K20 reports the DIVERGING FIXTURES, not a bare 0/1 -- a row that says only
+# "they disagree" makes the next reader re-derive which ones, which is how the
+# two counted suites stayed red for four filings.
+set k20_names {R_BARE R_C30 R_C67 R_DBL R_FAILED R_NOTOK R_OKAY R_TAB R_FORGED}
+set k20_blobs [list $R_BARE $R_C30 $R_C67 $R_DBL $R_FAILED $R_NOTOK $R_OKAY $R_TAB $R_FORGED]
+set k20_diff {}
+foreach nm $k20_names fx $k20_blobs {
+  set t [banner_complete $fx]
+  set s [grep_ere $rs_re $fx]
+  set f [is_pass $fx probe 0]
+  # built with format, never interpolation: "$nm(" would parse as an array
+  # subscript, the same trap the C15a loop documents at its own build site.
+  if {!($t eq $s && $s eq $f)} {
+    lappend k20_diff [format {%s tcl=%s sh=%s full_audit=%s} $nm $t $s $f]
+  }
+}
+check "K20 all three readers agree on the completion banner, fixture for fixture (0805)" \
+      [list [expr {$rs_re ne {}}] $k20_diff] {1 {}}
+
+check "K21 full_audit scores a completion banner followed by a column-0 death marker as a death (0802)" \
+      [list [classify $R_DIE_BARE probe 0] [banner_died $R_DIE_BARE] [case_failed 0 $R_DIE_BARE]] \
+      {CRASH YES YES}
+
+# ANTI-OVERSHOOT, and green in BOTH directions by construction -- it has never
+# been observed red and is kept deliberately. Its job is to redden if anyone
+# closes 0802 by widening the death anchor instead of dropping the `! is_pass`
+# guard: that would score a green suite which merely QUOTES the literal in a
+# check name as a crash, which is the 0354 H4 direction C33 locks for a FAILING
+# suite and nothing locked for a passing one.
+check "K22 anti-overshoot: both death literals quoted mid-line leave a green suite green" \
+      [list [classify $R_DIE_MID probe 0] [banner_died $R_DIE_MID]] {PASS NO}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

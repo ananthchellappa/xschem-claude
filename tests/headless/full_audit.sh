@@ -192,6 +192,26 @@ line_has() { printf '%s\n' "$2" | grep -qE "$1"; }
 # The "<name> headless: ..." arm is the one banner that is PREFIXED by
 # construction (test_hi_descend.tcl:163), so it is anchored at BOTH ends -- that
 # is the only way to assert its shape rather than accept it inside a check name.
+#
+# THE `*)` ARM IS ANCHORED AT BOTH ENDS TOO, as of issue 0805. It used to anchor
+# only the START, so a line that merely BEGAN with a banner was a pass here while
+# the other two readers called it a failure to report: `OVERALL: okay then` and
+# `OVERALL: ok<TAB>junk` were PASS here and not-a-completion in both
+# tests/banner_rule.tcl and tests/headless/run_suites.sh. Latent when filed (no
+# suite emitted either shape) and re-measured still latent when fixed; the risk
+# was 0689's -- the day a suite prints `OVERALL: ok -- see log for details`, two
+# readers report a failure and the reader CI actually runs reports a pass.
+# test_audit_classifier.tcl K20 now holds all THREE readers together by verdict.
+#
+# ⚠ THE TWO ALTERNATIVES CARRY DIFFERENT TRAILERS, DELIBERATELY. `OVERALL: ok`
+# takes `\([^)]*\)`, byte-identical to run_suites.sh:161 and verdict-identical to
+# banner_complete, because K20 asserts the three agree. `RESULT: ALL PASS` takes
+# `\(.*\)`, which the other two readers cannot constrain because neither
+# implements that spelling at all -- and it MUST, because
+# test_ase_bus_bits_0159.tcl:294 emits `RESULT: ALL PASS (12 checks, 2 group(s)
+# skipped)`, whose trailer contains an INNER parenthesis. Copying `[^)]*` onto
+# this alternative stops at that inner ")" and scores a green shipped suite FAIL.
+# Measured: with `[^)]*` on both, C47 reds. Locked by C45/C46/C47.
 is_pass() {
   local name="$1" out="$2" ec="$3"
   case "$name" in
@@ -208,7 +228,7 @@ is_pass() {
     test_cadence_descend_newwin_ro|test_hi_descend) \
                                line_has '^[A-Za-z0-9_]+ headless: all checks passed$' "$out" \
                                  && ! is_skip "$out" ;;
-    *)                         line_has '^(RESULT: ALL PASS|OVERALL: ok)' "$out" \
+    *)                         line_has '^(RESULT: ALL PASS([[:space:]]+\(.*\))?|OVERALL: ok([[:space:]]+\([^)]*\))?)[[:space:]]*$' "$out" \
                                  && ! is_skip "$out" ;;
   esac
 }
@@ -308,12 +328,29 @@ has_failure() {
 # NOTE the anchor keeps the arm's own literal. xinit.c also emits
 # "Tcl_AppInit() err 1:" .. "err 4:" (xinit.c:1507/3253/3325/3373), which this arm
 # has never matched; widening it is a separate, unmeasured change (0354 H4 note).
+#
+# THE `&& ! is_pass` GUARD ON THE Tcl_AppInit ARM IS GONE (issue 0802). It made a
+# suite that printed its completion banner, exited 0 and THEN died score PASS:
+# is_pass was true, the guard suppressed the CRASH arm, and the death line was
+# never surfaced. `xschem --nogui --pipe` exits 0 on an uncaught mid-script Tcl
+# error, so that is the ORDINARY shape of a real death, not an exotic one -- and
+# the `^FATAL: signal` arm beside it was never guarded and always fired.
+# tests/banner_rule.tcl::banner_died had no such clause either, so the Tcl reader
+# and this one disagreed about the same log; K21 now holds them together.
+#
+# The guard's INTENT is preserved by the anchor rather than by the clause, which
+# is what 0802 recommended: the clause was added (0354 H4) so that a check NAME
+# quoting the literal could not score a genuinely failing suite CRASH instead of
+# FAIL. `line_has '^...'` already requires column 0, so a quoted literal cannot
+# reach this arm at all. C33 locks that for a failing suite and K22 for a passing
+# one -- both stay green with the clause removed, which is the measurement that
+# says the clause had become dead weight rather than a gate.
 classify() {
   local name="$1" out="$2" ec="$3"
   if [ "$ec" -eq 124 ]; then
     echo TIMEOUT
   elif line_has '^FATAL: signal' "$out" \
-       || { line_has '^Tcl_AppInit\(\) error' "$out" && ! is_pass "$name" "$out" "$ec"; }; then
+       || line_has '^Tcl_AppInit\(\) error' "$out"; then
     echo CRASH
   elif is_skip "$out" && ! has_failure "$out"; then
     echo SKIP

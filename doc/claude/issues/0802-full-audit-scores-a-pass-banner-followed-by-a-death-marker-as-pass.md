@@ -1,6 +1,10 @@
 # 0802 — `full_audit.sh` scores a pass banner followed by a death marker as PASS
 
-Status: **OPEN** (measured, NOT fixed — deliberately out of the 0689+0690 blast radius)
+Status: **RESOLVED** 2026-09-17, landed with 0805 as one bundle. Re-measured still-live
+before the repair (`classify` returned **PASS** on banner+exit-0+column-0 death while
+`banner_died` and `regression_case_failed` both said YES), fixed, and locked by
+`test_audit_classifier.tcl` **K21** with **K22** as its anti-overshoot. All three
+acceptance items below are met.
 Filed by: the 0689+0690+0698 crew, 2026-08-25, from its Implement leg.
 Class: a **harness** defect — the same hollow-pass hole 0689 just closed in the
 Tcl reader is still open in the shell reader that CI actually runs.
@@ -71,3 +75,41 @@ widening to those is a separate unmeasured change (0354 H4 note).
    classifies FAIL, not CRASH (the 0354 H4 row stays green).
 3. `test_audit_classifier.tcl` passes in full, including section H, and the CI
    gate list is unchanged.
+
+## How it was fixed, and all three acceptance items (2026-09-17)
+
+The guard is simply **gone**; the recommended fix's "tighten the anchor rather than
+the guard" needed no new anchoring, because `line_has '^...'` was **already** column-0
+anchored by 0354 H1. The clause had become dead weight rather than a gate:
+
+```sh
+elif line_has '^FATAL: signal' "$out" \
+     || line_has '^Tcl_AppInit\(\) error' "$out"; then
+```
+
+1. **Met.** `classify(R_DIE_BARE, ec 0)`: **PASS → CRASH**. Locked by **K21**, which
+   asserts full_audit's verdict beside `banner_died` and `regression_case_failed` in
+   one row, so the two readers can never again disagree about the same log. Observed
+   red first: `-> {PASS YES YES} (exp {CRASH YES YES})`.
+2. **Met, and this is the part worth reading.** ⚠ **The row this filing warns about —
+   "a row (0354 H4) that exists *because* the clause was added on purpose" — is
+   labelled `C33`, not `H4`.** `H1`–`H4` are *issue* sub-item labels from 0354; the
+   suite's section H rows are labelled `C30`–`C34`. A grep for `"H<digit>` finds
+   nothing and sizes the repair wrong. `C33`'s fixture `B_APPINITNAME` carries the
+   literal **mid-line inside a check name**, so the column-0 anchor rejects it with or
+   without the guard — `C33` and `C34` were green before the change and are green
+   after, never touched. **K22** adds what nothing locked: the same shape for a
+   *passing* suite (`R_DIE_MID`, both death literals quoted mid-line) must stay
+   `PASS`. K22 is green in both directions by construction and has never been observed
+   red; it is kept deliberately, because it reddens if anyone ever closes this by
+   widening the death anchor instead of dropping the guard.
+3. **Met.** `test_audit_classifier.tcl`: **RESULT: ALL PASS (75 checks)**, twice
+   identically, section H included. The CI gate list is untouched — `.github/workflows/
+   ci.yaml` was not edited, and the gate was run exactly as CI runs it
+   (`AUDIT_DISPLAY=none AUDIT_MIN_PASS=15`, the same 15 suites): **15 pass, 0 fail,
+   0 crash, rc 0**. `test_grid_toggle_sel_gc` appended to that run scored **SKIP**, so
+   the no-display skip path is confirmed intact rather than turned into a hollow pass.
+
+Note the widening to `Tcl_AppInit() err 1:`..`err 4:` (`xinit.c:1507/3253/3325/3373`)
+remains **not done** and still unmeasured, exactly as this filing and the 0354 H4 note
+left it. It is a separate change and neither reader matches those strings today.

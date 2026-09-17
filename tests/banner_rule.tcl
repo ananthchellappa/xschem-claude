@@ -28,20 +28,30 @@
 #   tests/headless/run_suites.sh  -- its own ERE, necessarily: it is /bin/sh
 #   tests/headless/full_audit.sh  -- likewise
 # The shell pair cannot source a Tcl file, so the rule exists in three spellings.
-# tests/headless/test_audit_classifier.tcl section K locks TWO of them together BY
+# tests/headless/test_audit_classifier.tcl section K locks ALL THREE together BY
 # VERDICT, not byte for byte: K18 extracts run_suites.sh's ERE from source and
-# compares it to banner_complete fixture for fixture, and K19 does the same for
-# full_audit.sh's two crash literals. Either of those may be re-spelled; neither
-# may drift.
+# compares it to banner_complete fixture for fixture, K20 does the same for
+# full_audit.sh's is_pass across all three readers at once, K19 covers
+# full_audit.sh's two crash literals and K21 its death arm. Any of them may be
+# re-spelled; none may drift.
 #
-# ⚠ THE THIRD SPELLING IS NOT LOCKED, AND IT DOES DIVERGE. full_audit.sh's is_pass
-# `*)` arm is only PREFIX-anchored (`^(RESULT: ALL PASS|OVERALL: ok)`), so it
-# ACCEPTS `OVERALL: okay then` and `OVERALL: ok<TAB>junk`, which banner_complete
-# and run_suites.sh both reject (measured 2026-08-25 through AUDIT_LIB_ONLY=1).
-# No suite in the tree emits either shape, so the divergence is latent, not live;
-# it is filed as issue 0805 rather than fixed here, because full_audit is the CI
-# gate and test_audit_classifier section H locks its classification. Do not
-# describe the three readers as agreeing until 0805 lands.
+# THE THIRD SPELLING USED TO DIVERGE, AND NO LONGER DOES (issue 0805, FIXED).
+# full_audit.sh's is_pass `*)` arm was only PREFIX-anchored, so it ACCEPTED
+# `OVERALL: okay then` and `OVERALL: ok<TAB>junk`, which banner_complete and
+# run_suites.sh both reject (measured 2026-08-25, re-measured unchanged and then
+# repaired 2026-09-17, both times through AUDIT_LIB_ONLY=1). No suite in the tree
+# ever emitted either shape, so the divergence was latent throughout; what closed
+# it was K20, which reports the DIVERGING FIXTURES by name rather than a bare
+# verdict.
+#
+# ⚠ ONE DIVERGENCE IS DELIBERATE AND MUST SURVIVE. full_audit's `RESULT: ALL PASS`
+# alternative tolerates an inner parenthesis in its trailer (`\(.*\)`) where this
+# file's `OVERALL: ok` rule does not (`\([^)]*\)`). That is not drift: no suite
+# emits an inner paren after the ok-sentinel, while test_ase_bus_bits_0159.tcl:294
+# really does emit `RESULT: ALL PASS (12 checks, 2 group(s) skipped)` -- and this
+# file implements no `RESULT: ALL PASS` spelling at all, so there is nothing here
+# for it to agree with. Locked by C45/C46/C47; K20 compares only the shared
+# ok-sentinel, which is the only shape all three readers actually implement.
 #
 # WHY THIS FILE EXISTS AT ALL. run_regression.tcl used to carry a PRIVATE copy
 # anchored at both ends -- {^OVERALL: ok$}. Suites that append a check count to
@@ -49,8 +59,8 @@
 # with every one of their own checks passing. That standing red was filed FOUR
 # times (0420, 0492, 0629, 0689) and waved through as furniture each time,
 # because a copied shape drifts silently and a shared one cannot. One builder for
-# the Tcl side; the two shell readers are separate spellings held by K18/K19 (and,
-# for full_audit's is_pass, not yet held at all -- see 0805 above).
+# the Tcl side; the two shell readers are separate spellings held by K18/K19 and,
+# for full_audit's is_pass and death arm, by K20/K21 (issues 0805/0802).
 #
 # THE THREE BANNER SHAPES THE TREE ACTUALLY EMITS (swept, 2026-08-25):
 #   OVERALL: ok                       131 sites
@@ -98,11 +108,13 @@ proc banner_complete {body} {
 # not a better one. Relax it WITH this predicate and all three shapes are
 # handled for the first time.
 #
-# DELIBERATELY STRICTER THAN full_audit.sh, which guards the same Tcl_AppInit
-# literal with `&& ! is_pass` and therefore still scores pass-banner-then-death
-# as PASS. Filed as issue 0802 rather than fixed here: changing full_audit's
-# classification moves test_audit_classifier section H, which is in the CI gate
-# list, and that is a bigger blast radius than a harness-trust fix warrants.
+# full_audit.sh AGREES WITH THIS PREDICATE AS OF ISSUE 0802 (FIXED). It used to
+# guard the same Tcl_AppInit literal with `&& ! is_pass`, so it alone scored
+# pass-banner-then-death as PASS; the clause is gone and the column-0 anchor
+# carries its whole intent, because a literal quoted inside a check name cannot
+# reach column 0 in the first place. K21 holds the two readers together by
+# verdict, and K22 is its anti-overshoot: a green suite that merely QUOTES either
+# death literal mid-line must stay green in both readers.
 proc banner_died {body} {
   return [regexp -line {^(FATAL: signal|Tcl_AppInit\(\) error)} $body]
 }
