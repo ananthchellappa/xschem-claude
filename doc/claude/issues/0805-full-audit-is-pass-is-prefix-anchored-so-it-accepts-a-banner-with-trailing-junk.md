@@ -89,7 +89,9 @@ shapes and only those, precisely as filed. After: all three agree on all nine.
 the one thing the original filing got wrong, and it would have shipped a live
 regression. "Use the same optional-trailer tolerance the other two readers use"
 (above) is right for `OVERALL: ok` and **wrong for `RESULT: ALL PASS`**:
-`test_ase_bus_bits_0159.tcl:294` prints
+`test_ase_bus_bits_0159.tcl`'s banner — **cite the emitter, not the line: it was
+`:294` here and is `:540` since issue 1332's residual was closed on 2026-09-17**
+— prints
 
 ```tcl
 puts "RESULT: ALL PASS ($npass checks[expr {$skipped ? ", $skipped group(s) skipped" : {}}])"

@@ -268,24 +268,270 @@ C {devices/lab_pin} 0 100 0 0 {name=lS lab=OUT}}
   check "BB33 (control) a scalar net click still queues exactly one row" \
     $::queued {v(out)}
 
+  # --- the modal driver: issue 1332's residual, and the poll that closes it ---
+  ## BB34-BB38 drive a REAL grabbing modal: `ase::ui::bus_dialog` does build +
+  ## update + raise + `grab set` + `focus` + `tkwait window`. They used to do it
+  ## on a FIXED `after 100`, and THIS FILE is where that idiom came from - issue
+  ## 1332 was filed against the copies of it in test_rdw_keys_1245.tcl, which
+  ## measured it false-redding, converted itself to a poll, and named this file
+  ## in its "still open" section. This is that residual.
+  ##
+  ## THE MARGIN IS NOT THE POINT. 1332 instrumented the dialog appearing 3-6 ms
+  ## after the invoke, max 19 ms over 88 runs, against a 100 ms timer - a 5-30x
+  ## margin that lost anyway, because a contended X display does not stretch the
+  ## margin a little, it stops the interpreter reaching the event loop at all.
+  ## So widening the delay is the one fix that is ruled out: it turns a race into
+  ## a slower race. The driver POLLS instead, and 1332's recorded loss is the
+  ## all-zeros tuple at 5004 ms - a plausible "nothing happened", not a crash and
+  ## not a hang, which is why it survived 134 runs.
+  ##
+  ## AND THE CONDITION IS THE DIALOG'S OWN GRAB, NOT MERELY ITS WINDOW.
+  ## `ase::ui::bus_dialog` runs `grab set $w`, `focus $w.lf.list` and
+  ## `tkwait window $w` with NO event loop between them, so a driver that finds
+  ## `.asebusbits` holding the grab is running from inside `tkwait` on a dialog
+  ## that is fully modal. A poll waiting on `winfo exists` alone would fire
+  ## during the wrapper's own `update`, before the grab; the buttons would still
+  ## answer and the row would report the RIGHT bits having never entered tkwait -
+  ## the one thing BB34's comment says it is there to cover. That is row BB37,
+  ## and it is why this condition is the grab. `grab current` is compared to the
+  ## WINDOW rather than to `{}` (1332's SD8): a bare `ne {}` answers for any grab
+  ## the application holds anywhere, and one unrelated grab satisfies it.
+  ##
+  ## AND BOTH TIMERS ARE CANCELLED WHEN THE ROW ENDS. They were not: BB34's 5 s
+  ## deadman stayed armed all through BB35, one `catch {destroy .asebusbits}`
+  ## away from ending a dialog the next row was still driving - and BB35 expects
+  ## `{}`, so it would have PASSED on the deadman's answer instead of Cancel's.
+  ## The stray one-shot was survivable because it fired within 100 ms, i.e.
+  ## almost always inside its own row; a self-re-arming poll lives seconds, so
+  ## disarming is load-bearing here in a way it was not before. BB38 asserts it.
+  set ::BB_POLL_ID {} ; set ::BB_DEADMAN {} ; set ::BB_POLLS 0
+  set ::BB_GAVEUP 0 ; set ::BB_RAN 0 ; set ::BB_DEADLINE 0
+  set ::BB_SEEN 0 ; set ::BB_GRAB {} ; set ::BB_FOCUS UNSET
+  proc bb_arm {script {budget 900} {deadman 5000}} {
+    ## ⚠ ARMING DISARMS FIRST, and that is not tidiness: overwriting the handles
+    ## while the previous chain is still running puts it beyond reach of
+    ## `bb_disarm`, and a live chain presses buttons on whatever dialog the NEXT
+    ## row has up.
+    bb_disarm
+    set ::BB_POLLS 0 ; set ::BB_GAVEUP 0 ; set ::BB_RAN 0
+    ## The give-up is a wall-clock deadline AS WELL AS a poll count. `after 5` is
+    ## a floor, not a period: 1332's adversary measured a full 900-poll give-up
+    ## taking 6.5 s at load avg 54 - past the 5 s deadman it was claimed to sit
+    ## inside. Whichever limit comes first stops the chain, so a poll that never
+    ## finds its dialog gives up rather than outliving the row.
+    set ::BB_DEADLINE [expr {[clock milliseconds] + $deadman - 500}]
+    set ::BB_POLL_ID {}
+    set ::BB_DEADMAN [after $deadman {catch {destroy .asebusbits}}]
+    bb_poll_modal $script $budget
+    return {}
+  }
+  proc bb_poll_modal {script budget} {
+    set ::BB_POLL_ID {}
+    incr ::BB_POLLS
+    if {[winfo exists .asebusbits] && [grab current] eq {.asebusbits}} {
+      set ::BB_RAN 1
+      uplevel #0 $script
+      return
+    }
+    if {$::BB_POLLS >= $budget || [clock milliseconds] >= $::BB_DEADLINE} {
+      set ::BB_GAVEUP 1 ; return
+    }
+    set ::BB_POLL_ID [after 5 [list bb_poll_modal $script $budget]]
+  }
+  proc bb_disarm {} {
+    if {$::BB_POLL_ID ne {}} { catch {after cancel $::BB_POLL_ID} }
+    if {$::BB_DEADMAN ne {}} { catch {after cancel $::BB_DEADMAN} }
+    set ::BB_POLL_ID {} ; set ::BB_DEADMAN {} ; set ::BB_DEADLINE 0
+    return {}
+  }
+  ## The sabotage rows below delay the real build by spinning the EVENT LOOP,
+  ## which is what display contention does to this path. A busy-wait would prove
+  ## nothing: no timer can fire while Tcl is not in the event loop.
+  ## `rename`, never `proc` - this file's own idiom at :129-132.
+  proc bb_spin {ms} {
+    set ::BB_SPIN_GATE 0
+    after $ms {set ::BB_SPIN_GATE 1}
+    vwait ::BB_SPIN_GATE
+    return {}
+  }
+  proc bb_slow_install {when ms} {
+    set ::BB_SLOW_WHEN $when ; set ::BB_SLOW_MS $ms
+    if {![llength [info commands ::ase::ui::bb_real_build]]} {
+      rename ::ase::ui::bus_dialog_build ::ase::ui::bb_real_build
+    }
+    proc ::ase::ui::bus_dialog_build {args} {
+      if {$::BB_SLOW_WHEN eq {before}} { bb_spin $::BB_SLOW_MS }
+      set w [uplevel 1 [linsert $args 0 ::ase::ui::bb_real_build]]
+      if {$::BB_SLOW_WHEN eq {after}} { bb_spin $::BB_SLOW_MS }
+      return $w
+    }
+    return {}
+  }
+  proc bb_slow_none {} {
+    set ::BB_SLOW_WHEN none
+    if {![llength [info commands ::ase::ui::bb_real_build]]} {
+      rename ::ase::ui::bus_dialog_build ::ase::ui::bb_real_build
+    }
+    proc ::ase::ui::bus_dialog_build {args} { return NO-DIALOG-EVER-BUILT }
+    return {}
+  }
+  proc bb_slow_remove {} {
+    if {[llength [info commands ::ase::ui::bb_real_build]]} {
+      catch {rename ::ase::ui::bus_dialog_build {}}
+      rename ::ase::ui::bb_real_build ::ase::ui::bus_dialog_build
+    }
+    set ::BB_SLOW_WHEN none
+    return [llength [info commands ::ase::ui::bus_dialog_build]]
+  }
+
   # --- BB34-BB35  the REAL modal wrapper -------------------------------------
-  # ase::ui::bus_dialog does update + raise + grab + tkwait. Drive it with a
-  # timer that presses the buttons while it is blocked in tkwait, so the
-  # grab/tkwait path itself is covered and not just the widget builder. The
-  # second `after` is a deadman: if the first never fires the window is
-  # destroyed anyway and tkwait returns, so this can never hang the suite.
-  after 100  {catch {.asebusbits.btns.all invoke} ; catch {.asebusbits.btns.ok invoke}}
-  after 5000 {catch {destroy .asebusbits}}
+  # ase::ui::bus_dialog does update + raise + grab + tkwait. Drive it with
+  # `bb_arm`, which POLLS until the dialog owns the grab and only then presses
+  # the buttons, so the grab/tkwait path itself is covered and not just the
+  # widget builder. `bb_arm` carries the deadman (issue 0803): if the poll never
+  # finds its dialog the window is destroyed anyway and tkwait returns, so this
+  # can never hang the suite. `bb_disarm` cancels BOTH timers at the end of each
+  # row -- BB34's deadman used to stay armed all through BB35, and BB35 expects
+  # `{}`, so it could have passed on the deadman's answer instead of Cancel's.
+  bb_arm {catch {.asebusbits.btns.all invoke} ; catch {.asebusbits.btns.ok invoke}}
   set got [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  bb_disarm
   check "BB34 the modal wrapper returns the chosen bits and releases" \
     $got [list {A[1]} {A[0]}]
   check_true "BB34b it left no grab and no window behind" \
     [expr {![winfo exists .asebusbits] && [grab current] eq {}}]
 
-  after 100  {catch {.asebusbits.btns.cancel invoke}}
-  after 5000 {catch {destroy .asebusbits}}
+  bb_arm {catch {.asebusbits.btns.cancel invoke}}
   set got [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  bb_disarm
   check "BB35 Cancel through the modal wrapper returns nothing" $got {}
+
+  # --- BB36  SHAPE A: the dialog is not there yet (issue 1332) ---------------
+  ## 1332's own recorded failure, made deterministic. The real build is delayed
+  ## 300 ms past the old 100 ms timer by spinning the event loop, which is the
+  ## only kind of delay a timer can fire during.
+  ##
+  ## MEASURED on this tree with the driver reverted to `after 100`, twice and
+  ## byte-identical:
+  ##   BB36 -> {0 {} {} 0 {} 1 0 1 0 1}
+  ##        exp {1 .asebusbits {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+  ## - nothing seen, no grab, no bits, and the `< 3000 ms` leg 0 because the
+  ## deadman burned the full ~4.9 s (suite wall clock 5.92 s against 1.50 s
+  ## green). Note the SHAPE: a plausible "the user chose nothing", not a crash
+  ## and not a hang - which is why 1332 survived 134 runs before anyone saw it.
+  ##
+  ## A poll keyed on `winfo exists` ALONE reds this row differently, and the
+  ## difference is the point: {1 {} {{A[1]} {A[0]}} ...} - the right bits, with
+  ## an EMPTY grab. That is BB37's subject.
+  ##
+  ## The elapsed-time legs are what stop a poll quietly reverted to a fixed
+  ## delay from passing by accident, and every leg below prints what was
+  ## OBSERVED rather than a description of the failure case.
+  bb_slow_install before 300
+  set ::BB_SEEN 0 ; set ::BB_GRAB {}
+  bb_arm {
+    catch {set ::BB_SEEN [expr {[winfo exists .asebusbits] ? 1 : 0}]}
+    catch {set ::BB_GRAB [grab current]}
+    catch {.asebusbits.btns.all invoke}
+    catch {.asebusbits.btns.ok invoke}
+  }
+  set BB36_T0 [clock milliseconds]
+  set BB36_GOT [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  set BB36_DT [expr {[clock milliseconds] - $BB36_T0}]
+  bb_disarm
+  set BB36_RESTORED [bb_slow_remove]
+  check "BB36 the modal driver is a POLL and not a bet: with the dialog's construction delayed 300 ms - past the old fixed 100 ms timer, and delayed by spinning the event loop the way a contended display does - the driver still lands on a real modal holding its OWN grab, All+OK still returns both bits, nothing is left behind, and it finishes well inside the 5 s deadman. Under `after 100` this row is issue 1332's own shape: nothing seen, no grab, no bits, ~5004 ms" \
+    [list $::BB_SEEN $::BB_GRAB $BB36_GOT \
+          [expr {[winfo exists .asebusbits] ? 1 : 0}] [grab current] \
+          [expr {$BB36_DT >= 250 ? 1 : 0}] [expr {$BB36_DT < 3000 ? 1 : 0}] \
+          $::BB_RAN $::BB_GAVEUP $BB36_RESTORED] \
+    [list 1 .asebusbits [list {A[1]} {A[0]}] 0 {} 1 1 1 0 1]
+
+  # --- BB37  SHAPE B: the window is there, the MODAL is not (issue 1332) -----
+  ## The losing shape that does NOT red - it passes, having covered nothing, and
+  ## that is worse. The delay moves to AFTER the real build returns and BEFORE
+  ## the wrapper's own `update` / `grab set` / `tkwait`. A driver waiting on
+  ## `winfo exists` alone fires here: `.asebusbits` already exists, the buttons
+  ## answer, OK destroys the dialog, and the wrapper then SKIPS `tkwait`
+  ## altogether because its window is already gone. The returned bits are right
+  ## and the grab/tkwait path BB34 exists to cover was never entered.
+  ## So the load-bearing leg is the GRAB AT DRIVE TIME. MEASURED on this tree,
+  ## each sabotage run twice and byte-identical:
+  ##   a poll keyed on `winfo exists` ALONE:
+  ##     BB37 -> {1 {} 1 {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+  ##     -- window seen, grab EMPTY, tkwait never entered, and the RIGHT bits
+  ##        returned. The vacuous pass, and ONLY the grab leg sees it.
+  ##   the old fixed `after 100`:
+  ##     BB37 -> {0 {} 0 {} 0 {} 1 1 1 0 1}
+  ##     -- it never gets that far: the 100 ms timer fires before the toplevel
+  ##        exists at all, so under the fixed bet this fixture degenerates into
+  ##        BB36's shape A. Both are red, in DIFFERENT places.
+  ##
+  ## ⚠ AND THE FOCUS LEG IS A GUARD, NOT THE DISCRIMINATOR. It reads 1 under
+  ## BOTH sabotages above (measured), because the window manager hands the new
+  ## toplevel the focus before the wrapper's own `focus $w.lf.list` ever runs.
+  ## It is kept because a driver firing while the keyboard is elsewhere is worth
+  ## catching, but it must not be read as evidence of modality - the grab is the
+  ## only leg that separates "inside tkwait" from "during the build's update".
+  bb_slow_install after 200
+  set ::BB_SEEN 0 ; set ::BB_GRAB {} ; set ::BB_FOCUS UNSET
+  bb_arm {
+    catch {set ::BB_SEEN [expr {[winfo exists .asebusbits] ? 1 : 0}]}
+    catch {set ::BB_GRAB [grab current]}
+    catch {set ::BB_FOCUS [focus]}
+    catch {.asebusbits.btns.all invoke}
+    catch {.asebusbits.btns.ok invoke}
+  }
+  set BB37_T0 [clock milliseconds]
+  set BB37_GOT [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  set BB37_DT [expr {[clock milliseconds] - $BB37_T0}]
+  bb_disarm
+  set BB37_RESTORED [bb_slow_remove]
+  check "BB37 and the poll waits for the MODAL, not merely for the window: with the delay moved between the build and the wrapper's own grab, the driver still finds `.asebusbits` owning the grab before it presses anything, so the bits it returns were given by a dialog that really was inside tkwait. A poll keyed on `winfo exists` alone fires during the build's `update` instead and reports the RIGHT bits with an EMPTY grab, having never entered tkwait - the vacuous pass only this row's grab leg can see; the old fixed `after 100` fires even earlier and loses the window too" \
+    [list $::BB_SEEN $::BB_GRAB \
+          [expr {$::BB_FOCUS eq {.asebusbits} || [string match {.asebusbits.*} $::BB_FOCUS] ? 1 : 0}] \
+          $BB37_GOT \
+          [expr {[winfo exists .asebusbits] ? 1 : 0}] [grab current] \
+          [expr {$BB37_DT >= 150 ? 1 : 0}] [expr {$BB37_DT < 3000 ? 1 : 0}] \
+          $::BB_RAN $::BB_GAVEUP $BB37_RESTORED] \
+    [list 1 .asebusbits 1 [list {A[1]} {A[0]}] 0 {} 1 1 1 0 1]
+
+  # --- BB38  the poll can fail, but it cannot lie and it cannot linger -------
+  ## (a) NO dialog is ever CONSTRUCTED. The wrapper's own `winfo exists` guard
+  ##     returns at once, so the poll must give up on its budget and its script
+  ##     must never have run. `bus_dialog_result` is reset BY HAND here because
+  ##     the stubbed build is the thing that normally resets it - left alone it
+  ##     would still carry BB37's answer and this leg would read a stale pass.
+  ## (b) a REAL dialog is built and NOBODY drives it. `tkwait` is entered for
+  ##     real and only the deadman can end it - issue 0803's property, asserted
+  ##     under the poll instead of assumed. A short deadman keeps the row cheap.
+  ## (c) THE TIMERS ARE GONE AFTERWARDS. The deadman handle no longer resolves,
+  ##     so neither timer can reach into a later row's dialog. This is the leg
+  ##     that BB34's old uncancelled `after 5000` would have failed.
+  bb_slow_none
+  set ::ase::ui::bus_dialog_result {}
+  bb_arm {catch {.asebusbits.btns.ok invoke}} 10
+  set BB38A_GOT [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  ## ⚠ `after 120` ALONE WOULD PROVE NOTHING - a bare `after ms` BLOCKS and
+  ## enters no event loop, so the poll's own timers cannot fire during it and the
+  ## budget is never spent. The spin is a `vwait`, which IS the event loop.
+  bb_spin 120
+  set BB38A_RAN $::BB_RAN ; set BB38A_GAVE $::BB_GAVEUP
+  bb_disarm
+  set BB38_RESTORED [bb_slow_remove]
+  bb_arm {} 900 300
+  set BB38_H $::BB_DEADMAN
+  set BB38_T0 [clock milliseconds]
+  set BB38B_GOT [ase::ui::real_bus_dialog nosuchkey {A[1:0]} [list {A[1]} {A[0]}]]
+  set BB38_DT [expr {[clock milliseconds] - $BB38_T0}]
+  bb_disarm
+  check "BB38 the poll can fail but it cannot lie or linger: with no dialog ever CONSTRUCTED the driver script never runs and the poll gives up on its own budget instead of re-arming into the next row; with a real dialog built and NOBODY driving it the deadman still ends it, tkwait returns, the answer is empty and no grab or window is left; and afterwards both timers are cancelled and the real bus_dialog_build is back in place" \
+    [list $BB38A_GOT $BB38A_RAN $BB38A_GAVE $BB38_RESTORED \
+          $BB38B_GOT \
+          [expr {$BB38_DT >= 250 ? 1 : 0}] [expr {$BB38_DT < 2000 ? 1 : 0}] \
+          [expr {[winfo exists .asebusbits] ? 1 : 0}] [grab current] \
+          [catch {after info $BB38_H}] $::BB_POLL_ID $::BB_DEADMAN] \
+    [list {} 0 1 1 {} 1 1 0 {} 1 {} {}]
 }
 
 } err]} { puts "FATAL: $err" ; incr fail }

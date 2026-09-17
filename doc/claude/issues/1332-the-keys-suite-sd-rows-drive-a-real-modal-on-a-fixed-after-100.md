@@ -94,6 +94,12 @@ The same fixed-delay idiom is used by `test_ase_bus_bits_0159.tcl:258`
 (BB34/BB35), which is where the SD rows copied it from. Not measured flaking,
 not touched here.
 
+> **CLOSED 2026-09-17** by the harness-concurrency batch, item **E3** — see
+> **THE RESIDUAL, CLOSED** at the bottom of this file.
+> ⚠ The `:258` above had **already drifted when it was written**: the two
+> drivers were at `:277` and `:285`. Cite the **`BB34-BB35`** anchor, never a
+> line number — that block has now moved twice.
+
 ---
 
 # THE FIX, AND WHAT IT WAS MEASURED AGAINST (item P3, 2026-09-05)
@@ -204,8 +210,137 @@ Steady and byte-identical across seven post-fix runs on the user's VcXsrv:
 unrelated. **`$DISPLAY` is now a usable measurement for this suite**, which was
 the point.
 
-## Still open, unchanged
+---
 
-`test_ase_bus_bits_0159.tcl:258` (BB34/BB35) still uses the fixed-delay idiom
-the SD rows copied from. Not measured flaking, not touched — it is another
-item's file.
+# THE RESIDUAL, CLOSED (item **E3**, harness-concurrency batch, 2026-09-17)
+
+`test_ase_bus_bits_0159.tcl` — the file the SD rows copied the idiom **from** —
+now polls too. Both drivers converted, three rows added (**BB36**, **BB37**,
+**BB38**), display arm **40 → 43 checks**, headless arm unchanged at 23.
+
+## The citation in this file was wrong in both directions
+
+It said `:258` three times. The drivers were at **`:277` and `:285`** on the day
+this was read, and the `BB34-BB35` block is at **`:387-407`** now. Nothing was
+ever at `:258`. Cite the anchor, not a line.
+
+## It is NOT CI-gated, and only one runner reaches it
+
+Checked before touching anything, because the two previous companions both
+turned out to be gated and both crews discovered it themselves:
+
+* **`ci.yaml` does not name it.** The headless hard gate lists 15 suites
+  (`AUDIT_MIN_PASS=15`) and this is not one; nor is it in the fluid-suites gate
+  (`test_fluid_* / test_rotate_* / test_cadence_stretch_move /
+  test_drag_keeps_selection`). `test_audit_classifier.tcl`'s `$GATED` agrees —
+  15 names, not this one.
+* **Not in `run_regression.tcl`'s `hcases` or `dcases`** (T1 never runs it,
+  consistent with issue 1421, which lists `bus_bits_0159` among the 21 ASE
+  suites outside T1), and **not in `full_audit.sh`'s `nogui_tests`**. It is
+  reached **only** by `full_audit.sh`'s `ls "$HERE"/test_*.tcl` glob, in the
+  default `--pipe -q --nolog` arm, on whatever display the audit arms — i.e. the
+  **informational** audit step, which CI runs with `|| true`.
+
+So the blast radius is the informational audit and the suite's own two arms.
+
+## Two losing shapes, both driven deterministically, both red before the fix
+
+Same method as item P3 above: wrap the real `ase::ui::bus_dialog_build` and
+delay it by **spinning the event loop** (`vwait`), which is the only kind of
+delay a timer can fire during. Rows added first, red observed, then fixed.
+
+**Shape A — the driver fires before the toplevel exists.** Build delayed 300 ms,
+driver reverted to `after 100`. Twice, byte-identical:
+
+```
+FAIL: BB36 -> {0 {} {} 0 {} 1 0 1 0 1}   exp {1 .asebusbits {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+FAIL: BB37 -> {0 {} 0 {} 0 {} 1 1 1 0 1} exp {1 .asebusbits 1 {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+FAIL: BB38 -> {{} 1 0 1 {} 1 1 0 {} 1 {} {}} exp {{} 0 1 1 {} 1 1 0 {} 1 {} {}}
+RESULT: 3 FAILED (40 passed)      suite wall clock 5.92 s (green: 1.50 s)
+```
+
+Nothing seen, no grab, no bits, the `< 3000 ms` leg 0 — the deadman burned the
+full ~4.9 s. This is P3's tuple in a different suite.
+
+**Shape B — the window exists but the modal does not, and it PASSES.** The half
+that matters, and it is **not** produced by the fixed delay. With the delay
+moved between the build and the wrapper's own `grab set`, a poll keyed on
+**`winfo exists` alone** gives:
+
+```
+FAIL: BB36 -> {1 {} {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+FAIL: BB37 -> {1 {} 1 {{A[1]} {A[0]}} 0 {} 1 1 1 0 1}
+RESULT: 2 FAILED (41 passed)
+```
+
+Window **seen**, grab **empty**, `tkwait` **never entered**, and the **right
+bits returned**. Before BB37 existed that shape was a silent pass: BB34's own
+comment says it is there so "the grab/tkwait path itself is covered", and on
+this path it covers nothing — `ase::ui::bus_dialog` destroys `$w` on OK and then
+skips `tkwait` because its window is already gone. **Only the grab leg sees it.**
+
+## ⚠ Two claims that had to be corrected by measurement
+
+1. **The fixed `after 100` does not produce shape B here.** BB37's first draft
+   said it did. Measured, the timer fires *before the toplevel exists* and the
+   fixture degenerates into shape A (`{0 {} 0 {} …}` above). The comment and the
+   check name now state the two results separately. An unmeasured mechanism
+   asserted in a comment is the same defect as a detail string that describes
+   the failure case unconditionally, one layer up.
+2. **The focus leg is a guard, not the discriminator.** It reads **1 under both
+   sabotages**, because the window manager hands the new toplevel the focus
+   before the wrapper's own `focus $w.lf.list` runs. Kept, but it is not
+   evidence of modality; the grab is the only leg that separates "inside
+   `tkwait`" from "during the build's `update`". Said so in the file, so nobody
+   reads it the way P3's SD6 comment reads on `.rdw.scope`.
+
+## A second, latent defect removed on the way past — the same one P3 found
+
+**BB34's `after 5000` deadman stayed armed all through BB35.** One
+`catch {destroy .asebusbits}` from ending a dialog the next row was still
+driving — and **BB35 expects `{}`**, so it would have passed on the deadman's
+answer instead of Cancel's. Worse in the other direction: BB34's `after 100`
+driver, firing late, presses `All`+`OK` on **BB35's** dialog and reds it. Both
+timers are now cancelled by `bb_disarm` at the end of every row, and **BB38**
+asserts the deadman handle no longer resolves.
+
+## The poll, and why its condition is the grab
+
+`bb_arm` / `bb_poll_modal` / `bb_disarm`, beside the fixture. Re-arms on
+`after 5` until **`[winfo exists .asebusbits]` AND `[grab current] eq
+{.asebusbits}`**. Measured, not assumed: a probe inside the live modal returned
+`grab current` = `.asebusbits` and `focus` = `.asebusbits.lf.list`.
+`ase::ui::bus_dialog` runs `grab set`, `focus` and `tkwait window` with **no
+event loop between them**, so a driver that sees that grab is running from
+inside `tkwait`.
+
+* The grab is compared to the **window**, not to `{}` — P3's **SD8** lesson,
+  adopted rather than re-learned.
+* Give-up is a poll count **and** a wall-clock deadline (`deadman - 500`), P3's
+  own correction: `after 5` is a floor, not a period.
+* The **deadman is unchanged** (issue 0803) and the delay was **not widened**.
+
+## Acceptance, measured
+
+| arm | result |
+|---|---|
+| `:99` + openbox, clean | **`ALL PASS (43 checks)` × 12/12**, 1.50 s |
+| `:99`, **6-way CPU spinner + a concurrent `test_op_annot` on the same display** (this file's own acceptance clause) | **8/8 `ALL PASS (43)`**, load avg 0.67 → 1.72 |
+| `run_suites.sh -n 3` (bounded, gated) | **3/3 PASS** |
+| headless `--nogui` | `ALL PASS (23 checks, 1 group(s) skipped)` — unchanged |
+| `DISPLAY` unset | same, unchanged |
+| before the change, for comparison | `ALL PASS (40 checks)` × 5, 0.50 s |
+
+Cost: 0.50 s → 1.50 s, all of it the three sabotage spins (300 + 200 + 120 +
+300 ms). Unlike P3 this suite does not get faster: its two original drivers were
+already winning their bet on a quiet display.
+
+## ⚠ Adding rows moved this suite's banner, and three citing files are untouchable
+
+The banner went `:294` → **`:540`**. It is cited by **`tests/banner_rule.tcl:50`**,
+**`tests/headless/test_audit_classifier.tcl:280`** and
+**`tests/headless/full_audit.sh:211`** — all three on item E3's do-not-touch
+list, all three **comments** (nothing reddens). `doc/claude/issues/0805`'s copy
+was updated; `test_rdw_keys_1245.tcl`'s two `:263-280` citations were updated to
+`:387-407` and that suite re-run green (`ALL PASS (92 checks)`).
+**Cite the emitter, not the line.**

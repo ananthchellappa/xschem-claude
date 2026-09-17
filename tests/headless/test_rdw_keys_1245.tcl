@@ -1817,7 +1817,7 @@ if {[rdw::have_tk]} {
 # WAS FIXED IN B5's FIRST COMMIT RATHER THAN RETROFITTED. A suite that reaches
 # a `tkwait window` with nobody to click it does not FAIL - it HANGS, and takes
 # the whole audit with it. The tree has exactly one place that exercises a real
-# modal safely, tests/headless/test_ase_bus_bits_0159.tcl:263-280, and this
+# modal safely, tests/headless/test_ase_bus_bits_0159.tcl:387-407, and this
 # section was copied from it verbatim in shape:
 #   after 100  {invoke the widgets}      drives it while it is blocked
 #   after 5000 {destroy the toplevel}    the DEADMAN: if the first timer never
@@ -1920,7 +1920,7 @@ C \{$SD_SYMP\} 300 -120 0 0 \{name=M2\}"
 
   # --- THE MODAL DRIVER: A POLL, NEVER A FIXED DELAY (issue 1332) -----------
   ## ⚠ THIS SECTION USED TO ARM ITS DRIVER ON A BARE `after 100`, COPIED IN
-  ## SHAPE FROM tests/headless/test_ase_bus_bits_0159.tcl:263-280, AND IT
+  ## SHAPE FROM tests/headless/test_ase_bus_bits_0159.tcl:387-407, AND IT
   ## FLAKED FOR IT. The delay is a bet that the dialog is up by then. Losing
   ## the bet is not a hang and not a loud failure - every `catch` inside the
   ## driver hits nothing, the deadman cancels the dialog 4.9 s later, and the

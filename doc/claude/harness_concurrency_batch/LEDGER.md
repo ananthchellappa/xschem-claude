@@ -17,74 +17,79 @@ when the receipt is in `receipts/` and the driver has read it.
 | **V2** | closing solo T1 | **GREEN** | `aa0e2213` | **84 cases**, 375.0 s, **ZERO failures**, rc 0, committed tree | — |
 | **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480; one residual refuted | 1477–1479 |
 
-## Companions
+## Companions — ALL THREE DONE
 
 | id | task | status | commit | result | issues |
 |---|---|---|---|---|---|
 | **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0 rc 0; **0805's own fix was a regression** | 0805, 0802 |
-| **E2** | 0408(a) | **DONE** | — | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 rc 0 | 0408(a) |
-| **E3** | 1332-residual | queued | — | — | — |
+| **E2** | 0408(a) | **DONE** | `b46892d6` | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 rc 0 | 0408(a) |
+| **E3** | 1332-residual | **DONE** | — | **40 → 43 checks**; 12/12 clean, **8/8 under load**; reddened under **two** sabotages | 1332 |
 
-## ⚠ E2: THE CREW CAUGHT ITSELF RE-CREATING THE DEFECT IT WAS TESTING
+## ⚠ E3: IT REFUTED ITS OWN ROW'S PREMISE, MID-TASK
 
-E2's **first** `W3` row planted a sentinel at the shared legacy path to prove a
-collision. Green sequentially — **4 of 20 bad under concurrency**, every one
-`W3 -> {DELETED}`. **The row written to detect a fixed-path collision was itself a
-fixed path in a shared directory**, and would have shipped a 20% flake into a
-**CI-gated** suite. Rewritten to *observe* (glob) rather than plant.
+`BB37`'s first draft asserted that the fixed `after 100` produces a *vacuous pass*. It
+does not — it fires **before the toplevel exists** and degenerates into `BB36`'s shape.
+The comment and check name now state both measured results separately.
 
-⚠ **It was diagnosable in one grep only because the detail string reported `DELETED`
-rather than a canned sentence.** That is D2's work paying for itself two tasks later:
-an honest detail string turned a mystery flake into a one-line diagnosis.
+E3's own formulation is the one to keep: **"an unmeasured mechanism in a comment is
+D2's defect one layer up: nothing can ever redden it."**
 
-## ⚠ E2 refuted 0408's own reasoning about part (b)
+## E3's red phase — two sabotages, and the second is the important one
 
-0408 states that a collision "aborts the script, it does not return a wrong agreement
-count". **It does.** Two collided runs returned `V22 -> {1}` — part (b)'s exact shape
-and one of its two recorded values. `rotflip` returns `"?"` when it parses the peer's
-file, `V22` scores a disagreement, and the tier drops 157 → 156 **silently**.
+* **Reverted to today's `after 100`** → `3 FAILED (40 passed)`, 2/2 byte-identical.
+  `BB36 -> {0 {} {} 0 {} 1 0 1 0 1}` — 1332's own recorded shape: nothing seen, no
+  grab, no bits, deadman burned.
+* **A `winfo exists`-only poll** → `2 FAILED (41 passed)`.
+  `BB37 -> {1 {} 1 {{A[1]} {A[0]}} …}` — window seen, **grab empty, `tkwait` never
+  entered, and the right bits returned anyway.** ⚠ **That vacuous pass is the shape a
+  naive "just poll instead" fix would have shipped GREEN**, and **only the grab leg
+  sees it.** The obvious fix was measured and rejected.
 
-Part (b) stays OPEN per scope, but its recorded next step is now **"re-run the V22 loop
-with (a) fixed"** rather than hunting a second, independent cause. The "unexplained
-non-determinism" may simply *be* part (a).
+Related: **the focus leg is a guard, not the discriminator** — it reads 1 under *both*
+sabotages, because the WM focuses the toplevel before the wrapper's own `focus`. Kept,
+but the file now says plainly that only the grab proves modality.
 
-## E2's other measurements
+## E3's other findings
 
-* **The defect was worse than filed:** 10 concurrent pairs → **8 of 20 runs bad**. Six
-  aborted on `couldn't open … _label_ride_rf.sch` **and exited 0 with no `RESULT:`
-  line** — a silent pass to any exit-code reader. Two returned *wrong answers*.
-* **The "next sequential run stays red" half did NOT reproduce.** Five planted
-  stale-fixture flavours (content, zero-byte, read-only, directory, non-empty read-only
-  directory) all gave `ALL PASS (157)`: `rotflip`'s leading `file delete -force`
-  defeats every one. Fixed anyway — **nobody should spend time reproducing it.**
-* **All six cited line numbers were exact** — no drift, contrary to the driver's
-  warning. The driver's caution was unnecessary this time and is recorded as such.
-* **The fix is `test_scratch` from `scratch.tcl`, not a bare pid path**, for measured
-  reasons: nothing outside `rotflip` reads the fixture, so **no publish-back** (unlike
-  B1); `.gitignore:84` is directory-only, so all three candidate paths are NOT IGNORED;
-  and `_label_ride_rf_[pid].sch` **matches `full_audit.sh:381`'s glob**, which `ls -1d`
-  applies to files — a leak would have been a *fatal* audit failure. B1's
-  wiped-parent trap was **checked, not assumed**: nothing wipes `tests/headless/` or
-  `.scratch/` wholesale.
-* Green sequentially, after the concurrent rounds, with `DISPLAY` unset, and after a
-  `kill -9` that left no corpse in the tracked tree.
+* **The gate question, answered before any edit** (as the brief demanded):
+  `test_ase_bus_bits_0159` is **NOT CI-gated** — checked in four places. It is in
+  neither `hcases` nor `dcases`, nor `nogui_tests`/`nolog_tests`/`logdir_tests`, and is
+  reached only by `full_audit.sh:430`'s `ls test_*.tcl` glob. **The "both companions
+  were gated" pattern does not extend to E3** — which is why the brief asked rather
+  than asserted.
+* **Citation drift in BOTH directions.** 1332 cites `:258` three times and **nothing
+  was ever at `:258`**. The PLAN's `:277`/`:285` were exact today. The block is now
+  `:387-407`.
+* **The same latent defect P3 found, one row over:** `BB34`'s `after 5000` deadman
+  stayed armed through `BB35` — and `BB35` expects `{}`, so it could have passed on the
+  *deadman's* answer instead of Cancel's. Both timers are now cancelled per row, and
+  `BB38` asserts the handle no longer resolves.
+* **On E2's self-catch question**, asked explicitly: E3's rows write no files and use no
+  shared path — they assert on in-process Tk state, so they cannot re-create what they
+  test. No source-text rows were used, which matters because the file now contains
+  several comments quoting the old `after 100`.
+* Green after: `ALL PASS (43 checks)`, **12/12 clean**, **8/8 under 1332's own
+  acceptance clause** (6-way CPU spinner plus a concurrent `test_op_annot` on `:99`,
+  load 0.67 → 1.72), 3/3 through `run_suites.sh`, headless and `DISPLAY`-unset
+  unchanged at 23. **WM live: openbox 3.6.1 on `:99`, 1920x1080x24** — stated, as the
+  house rule requires.
 
-## ⚠ A PLAN omission the driver should not repeat
-
-`test_label_ride` is one of the **15 CI-gated suites** (`ci.yaml:68`,
-`AUDIT_MIN_PASS=15`) and the PLAN's E2 row never said so. E2 ran that gate exactly as
-CI does anyway: **15 pass, 0 fail, floor met, rc 0**, `SCRATCH: 0 leaked`, `TREE: 0
-appeared 0 vanished`. **Both companions so far have turned out to touch CI-gated
-files** — E3's brief must state the gate status up front rather than leaving the crew
-to discover it.
-
-## ⚠ OWED — carry into the final documentation pass
+## ⚠ OWED — the final documentation pass (F1)
 
 1. **`0905`'s closure text (in `1a46c800`) carries a claim D3 refuted** — that a
    standalone suite on `:99` can race `headless/*.disp.log`. It cannot; the only writer
-   is `run_regression.tcl` itself.
+   of those names is `run_regression.tcl` itself.
 2. **CLAUDE.md's "confirm the log's MTIME moved" bullet has a known hole** (1477): a run
-   killed mid-write moves the mtime *and* leaves a truncated file that reads green.
+   killed mid-write moves the mtime *and* leaves a truncated file that reads green. The
+   bullet should point at 1477.
+3. **NEW — three stale `:294` citations.** E3's added rows moved
+   `test_ase_bus_bits_0159.tcl`'s banner from `:294` to `:540`, and it is cited by
+   `tests/banner_rule.tcl:50`, `tests/headless/test_audit_classifier.tcl:280` and
+   `tests/headless/full_audit.sh:211` — **all three on E3's do-not-touch list**. All are
+   comments, so nothing reddens; E3 updated the two it was permitted to (0805's, and
+   `test_rdw_keys_1245.tcl`'s, re-running that suite green at `ALL PASS (92 checks)` to
+   prove the comment edit inert). The `:129` citations in three other suites were
+   **already stale before E3 arrived** — left alone deliberately.
 
 ## Candidate, not scheduled
 
@@ -94,6 +99,7 @@ is".
 
 ## Resume point
 
-Next: **E3** (1332-residual — `test_ase_bus_bits_0159.tcl:277,285`, and **state its CI
-gate status in the brief**), then the final documentation pass carrying both OWED
-items, then a final solo T1.
+Next: **F1** (final documentation pass, all three OWED items), then the **final solo
+T1** covering everything the companions touched — E1 moved `banner_rule.tcl`, which
+`run_regression.tcl` sources live, and two CI-gated classifiers; E2 moved a CI-gated
+suite.
