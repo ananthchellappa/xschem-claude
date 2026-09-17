@@ -31,6 +31,12 @@
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_label_ride.tcl
 # Prints "RESULT: ALL PASS" / "OVERALL: ok" on success.
 
+## issue 0408(a): section V's `rotflip` oracle needs a scratch directory PRIVATE to this process.
+## scratch.tcl puts it under the gitignored tests/headless/.scratch/, wraps `exit` so it is removed
+## on the failing `exit 1` as well as the normal end, and sweeps dead-pid corpses on first use
+## (issue 0148).  Section W at the end of this file measures all three properties.
+source [file join [file dirname [info script]] scratch.tcl]
+
 set fail 0; set npass 0
 proc check {name got exp} {
   global fail npass
@@ -545,7 +551,12 @@ set fluid_editing 1
 # rot/flip as it reaches DISK -- the honest oracle for "the text rotates with the wire" (R3).
 # draw.c orients the symbol's `T {@lab}` record from this same pair, so asserting the pair asserts
 # the text.  There is no `getprop instance <n> rot`.
-set ::rfsch [file join [file dirname [info script]] _label_ride_rf.sch]
+## ⚠ PER-PROCESS, never a fixed name in the shared tests/headless directory -- issue 0408(a).
+## `rotflip` below deletes this file, re-creates it with `saveas` and reads it straight back; with
+## one shared name, two concurrent runs of this suite delete each other's copy in the window
+## between the write and the read.  Measured: 8 of 20 runs bad -- six aborting on "couldn't open"
+## while still EXITING 0, two returning wrong answers (V22, V45).  Section W holds the rows.
+set ::rfsch [file join [test_scratch label_ride_rf] rf.sch]
 proc rotflip {nm} {
   file delete -force $::rfsch
   xschem saveas $::rfsch
@@ -836,6 +847,9 @@ xschem move_objects 0 100 stretch kissing
 check "V48 fluid off: the label still rides"         [lp] {100 100}
 check "V49 fluid off: no copper invented"            [xschem get wires] 1
 set fluid_editing 1
+## Vestigial since 0408(a): the real cleanup is scratch.tcl's wrapped `exit`, which removes the
+## whole per-run directory on every exit path.  Kept because dropping the fixture as soon as the
+## last rotflip caller is done is still the right habit; W3 below re-creates it deliberately.
 file delete -force $::rfsch
 
 # ===========================================================================
@@ -887,6 +901,80 @@ xschem select wire 0
 xschem move_objects 0 100 stretch kissing
 check "U10 device pin at the endpoint still kisses"  [xschem get wires] 2
 check "U11 ... the tether stub is the perpendicular" [spans] {{0 -100 0 0} {0 0 200 0}}
+
+# ===========================================================================
+# W. ISSUE 0408(a): THE ROT/FLIP FIXTURE MUST BE PRIVATE TO THIS PROCESS.
+#    `rotflip` writes a real .sch to disk and reads it back, because there is no `getprop
+#    instance <n> rot`.  While that file had a FIXED name in the shared tests/headless
+#    directory, two concurrent runs of this suite deleted each other's copy between the
+#    `saveas` and the `open`.  Measured 2026-09-17, ten concurrent pairs, 8 of 20 runs bad:
+#      * SIX aborted on `couldn't open "..._label_ride_rf.sch": no such file or directory`
+#        and EXITED 0 with no RESULT line at all -- a silent pass to any reader that trusts
+#        the exit code (only the completion-banner rule catches it);
+#      * TWO returned WRONG ANSWERS rather than aborting -- `V22 -> {1}` and
+#        `V45 -> {{0 100} {0 0}}` -- because rotflip parsed the OTHER run's file and its
+#        `C {...}` scan fell through to "?".  That shape is indistinguishable from a real
+#        regression in the tier, which is what makes it expensive.
+#
+#    These rows assert the RUNTIME path, not the source text, deliberately: a source-text row
+#    takes the FIRST match in the file, so the comment you are reading would become the thing
+#    it measures.
+# ===========================================================================
+# ⚠ THE GLOB BELOW DELIBERATELY NAMES THE OLD SHARED FIXTURE.  Anyone tempted to add a
+#    `has_text`/`src_line` row for "the fixed path is gone" will match HERE and conclude the fix
+#    was reverted.  Assert the runtime value of ::rfsch instead, as W1/W2 do.
+set ::w_dir [file dirname [info script]]
+proc w_shared_fixtures {} {
+  set r {}
+  foreach f [glob -nocomplain -directory $::w_dir _label_ride_rf*] { lappend r [file tail $f] }
+  return [lsort $r]
+}
+
+# W1 the path carries this process's pid, so no two runs can ever name the same file.
+check "W1 the rot/flip fixture path is per-process" \
+  [string map [list [pid] <pid>] \
+    [file join [file tail [file dirname $::rfsch]] [file tail $::rfsch]]] \
+  {_label_ride_rf_<pid>/rf.sch}
+
+# W2 ... and it sits under the gitignored scratch root rather than the tracked test directory,
+#    so a corpse from a killed run never litters `git status` (issue 0148).
+if {[file dirname $::rfsch] eq [file dirname [info script]]} {
+  set w2 SHARED-TEST-DIR
+} else {
+  set w2 [file tail [file dirname [file dirname $::rfsch]]]
+}
+check "W2 ... under the gitignored scratch root"     $w2 {.scratch}
+
+# W3 THE BEHAVIOURAL ROW: drive the real `rotflip` and require that it leave NOTHING in the
+#    shared test directory.  That is the collision itself -- what made two runs fight was that
+#    both wrote and deleted one name there -- and it needs no second process to observe.
+#
+#    ⚠ AN EARLIER DRAFT OF THIS ROW PLANTED A SENTINEL AT THE SHARED NAME AND CHECKED IT SURVIVED.
+#    Measured 2026-09-17: that draft failed **4 of 20** runs under ten concurrent pairs, detail
+#    `DELETED`, because the sentinel was itself a fixed path in a shared directory -- the row
+#    written to detect the defect had faithfully re-created it one layer up.  A row that proves a
+#    shared path is untouched MUST NOT ITSELF USE A SHARED PATH.  This form only observes, so
+#    concurrent runs cannot disturb one another.
+#
+#    Deliberately ABSOLUTE ("nothing is there") rather than a before/after delta: a corpse left by
+#    an older build is precisely what 0408 complains poisons the next run, so it should be
+#    reported rather than subtracted out.
+ridescene
+rotflip l1
+set w3 [w_shared_fixtures]
+if {[llength $w3] == 0} { set w3 none }
+check "W3 rotflip leaves nothing in the shared test directory" $w3 {none}
+
+# W4 and the per-run directory is deleted on EVERY exit path, the failing `exit 1` below
+#    included, so a crashed or killed run cannot poison the next one.
+if {![info exists ::__scratch_dirs]} {
+  set w4 NO-SCRATCH-DISCIPLINE
+} elseif {[lsearch -exact $::__scratch_dirs [file dirname $::rfsch]] >= 0} {
+  set w4 registered
+} else {
+  set w4 NOT-REGISTERED
+}
+check "W4 the per-run fixture dir is cleaned up on exit" $w4 {registered}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

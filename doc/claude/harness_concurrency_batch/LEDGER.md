@@ -15,83 +15,85 @@ when the receipt is in `receipts/` and the driver has read it.
 | **D1** | the written record | **DONE** | `1a46c800` | 1476 minted; 5 closed; **five** CLAUDE.md corrections | 1476 + five |
 | **D2** | the lying detail strings | **DONE** | `d35db718` | **12 of 20 rows lied on the green path**; 16 rewritten | — |
 | **V2** | closing solo T1 | **GREEN** | `aa0e2213` | **84 cases**, 375.0 s, **ZERO failures**, rc 0, committed tree | — |
-| **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480; **one residual refuted** | 1477–1479 |
+| **D3** | file the residuals | **DONE** | `9dffeed4` | **1477, 1478, 1479** minted, pointer → 1480; one residual refuted | 1477–1479 |
 
 ## Companions
 
 | id | task | status | commit | result | issues |
 |---|---|---|---|---|---|
-| **E1** | 0805 + 0802 bundle | **DONE** | — | classifier **69 → 75 checks**, `ALL PASS (75)` ×2; CI gate 15/0 rc 0; **0805's own prescribed fix was WRONG** | 0805, 0802 |
-| **E2** | 0408(a) | queued | — | — | 0408 |
+| **E1** | 0805 + 0802 bundle | **DONE** | `b3cc484c` | classifier **69 → 75 checks**; CI gate 15/0 rc 0; **0805's own fix was a regression** | 0805, 0802 |
+| **E2** | 0408(a) | **DONE** | — | **157 → 161 checks**; **8 of 20 bad → 0 of 40**; CI gate 15/0 rc 0 | 0408(a) |
 | **E3** | 1332-residual | queued | — | — | — |
 
-## ⚠ E1: THE THIRD ISSUE FILE THIS BATCH WHOSE PRESCRIBED FIX WAS WRONG
+## ⚠ E2: THE CREW CAUGHT ITSELF RE-CREATING THE DEFECT IT WAS TESTING
 
-0805 prescribes anchoring the arm "with the same optional-trailer tolerance the other
-two readers use". That is right for `OVERALL: ok` and **wrong for `RESULT: ALL PASS`**:
-`test_ase_bus_bits_0159.tcl:294` emits
+E2's **first** `W3` row planted a sentinel at the shared legacy path to prove a
+collision. Green sequentially — **4 of 20 bad under concurrency**, every one
+`W3 -> {DELETED}`. **The row written to detect a fixed-path collision was itself a
+fixed path in a shared directory**, and would have shipped a 20% flake into a
+**CI-gated** suite. Rewritten to *observe* (glob) rather than plant.
 
-    RESULT: ALL PASS (12 checks, 2 group(s) skipped)
+⚠ **It was diagnosable in one grep only because the detail string reported `DELETED`
+rather than a canned sentence.** That is D2's work paying for itself two tasks later:
+an honest detail string turned a mystery flake into a one-line diagnosis.
 
-— an **inner parenthesis inside the trailer**. `\([^)]*\)` stops at that inner `)` and
-scores a **green shipped suite FAIL**. That is a *live regression*, not the latent
-divergence 0805 is actually about.
+## ⚠ E2 refuted 0408's own reasoning about part (b)
 
-So the two arms deliberately differ: `OVERALL: ok` keeps `\([^)]*\)`, byte-identical to
-`run_suites.sh` and asserted by K20; `RESULT: ALL PASS` takes `\(.*\)`, which the other
-two readers cannot constrain because **neither implements that spelling**.
+0408 states that a collision "aborts the script, it does not return a wrong agreement
+count". **It does.** Two collided runs returned `V22 -> {1}` — part (b)'s exact shape
+and one of its two recorded values. `rotflip` returns `"?"` when it parses the peer's
+file, `V22` scores a disagreement, and the tier drops 157 → 156 **silently**.
 
-**Tally: 0867, 0990 and now 0805 — three of this batch's issue files confidently
-prescribed a fix that was a no-op or a regression.** The lesson is no longer an
-anecdote: **a fix shape in an issue file is a hypothesis, not an instruction.**
+Part (b) stays OPEN per scope, but its recorded next step is now **"re-run the V22 loop
+with (a) fixed"** rather than hunting a second, independent cause. The "unexplained
+non-determinism" may simply *be* part (a).
 
-**E1 proved it the right way round** — it reddened row `C47` by *first applying 0805's
-prescribed fix* (`-> {NO} (exp {YES})`) and only then correcting it. The wrong fix was
-used as the sabotage.
+## E2's other measurements
 
-## The unresolved "0354 H4" warning — resolved, and the repair was SMALLER than sized
+* **The defect was worse than filed:** 10 concurrent pairs → **8 of 20 runs bad**. Six
+  aborted on `couldn't open … _label_ride_rf.sch` **and exited 0 with no `RESULT:`
+  line** — a silent pass to any exit-code reader. Two returned *wrong answers*.
+* **The "next sequential run stays red" half did NOT reproduce.** Five planted
+  stale-fixture flavours (content, zero-byte, read-only, directory, non-empty read-only
+  directory) all gave `ALL PASS (157)`: `rotflip`'s leading `file delete -force`
+  defeats every one. Fixed anyway — **nobody should spend time reproducing it.**
+* **All six cited line numbers were exact** — no drift, contrary to the driver's
+  warning. The driver's caution was unnecessary this time and is recorded as such.
+* **The fix is `test_scratch` from `scratch.tcl`, not a bare pid path**, for measured
+  reasons: nothing outside `rotflip` reads the fixture, so **no publish-back** (unlike
+  B1); `.gitignore:84` is directory-only, so all three candidate paths are NOT IGNORED;
+  and `_label_ride_rf_[pid].sch` **matches `full_audit.sh:381`'s glob**, which `ls -1d`
+  applies to files — a leak would have been a *fatal* audit failure. B1's
+  wiped-parent trap was **checked, not assumed**: nothing wipes `tests/headless/` or
+  `.scratch/` wholesale.
+* Green sequentially, after the concurrent rounds, with `DISPLAY` unset, and after a
+  `kill -9` that left no corpse in the tracked tree.
 
-Section H's rows are labelled **C30–C34**; `H1`–`H4` are *issue sub-item* labels, not
-check names. The row meant is **C33**, and it needed **no repair at all**: its literal
-is mid-line, so the column-0 anchor already rejects it. The `&& ! is_pass` clause was
-**dead weight, not a gate**, so no red phase over section H was needed.
+## ⚠ A PLAN omission the driver should not repeat
 
-## E1 verification
-
-Classifier suite `RESULT: ALL PASS (75 checks)` **twice identically** (baseline 69,
-also ×2). Six new rows, each observed red first with a detail string reporting what was
-*observed* — e.g. K20 names the diverging fixtures (`{R_OKAY tcl=NO sh=NO
-full_audit=YES} {R_TAB …}`) rather than printing a bare 0/1. C46 and K22 are
-anti-overshoot rows, never red, **declared as such with the reason they are kept**.
-
-End-to-end `full_audit` over every banner shape the changed arm sees: **6 pass, 0 fail,
-rc 0**. **CI headless gate exactly as `ci.yaml` runs it: 15 pass, 0 fail, floor met,
-rc 0** — that is 0802's acceptance item 3. `test_grid_toggle_sel_gc` scored **SKIP**
-under no display, so the skip path is intact rather than a hollow pass.
-`test_regression_concurrency_1476` — which `file copy`s `banner_rule.tcl` — still
-**PASS, 20 checks**.
-
-Two facts the driver checked independently: **`banner_rule.tcl`'s procs are
-byte-identical** (comments only), which matters because `run_regression.tcl` sources it
-live and T1's baseline is zero; and **`full_audit.sh`'s entire code delta is 2 lines.**
+`test_label_ride` is one of the **15 CI-gated suites** (`ci.yaml:68`,
+`AUDIT_MIN_PASS=15`) and the PLAN's E2 row never said so. E2 ran that gate exactly as
+CI does anyway: **15 pass, 0 fail, floor met, rc 0**, `SCRATCH: 0 leaked`, `TREE: 0
+appeared 0 vanished`. **Both companions so far have turned out to touch CI-gated
+files** — E3's brief must state the gate status up front rather than leaving the crew
+to discover it.
 
 ## ⚠ OWED — carry into the final documentation pass
 
-1. **`0905`'s closure text (committed in `1a46c800`) carries a claim D3 refuted** — that
-   a standalone suite on `:99` can race `headless/*.disp.log`. It cannot; the only
-   writer of those names is `run_regression.tcl` itself. A closed issue with a wrong
-   sentence is how the next reader inherits the error.
-2. **CLAUDE.md's "confirm the log's MTIME moved" bullet now has a known hole** (1477): a
-   run killed mid-write moves the mtime *and* leaves a truncated file that reads green.
-   The bullet should point at 1477.
+1. **`0905`'s closure text (in `1a46c800`) carries a claim D3 refuted** — that a
+   standalone suite on `:99` can race `headless/*.disp.log`. It cannot; the only writer
+   is `run_regression.tcl` itself.
+2. **CLAUDE.md's "confirm the log's MTIME moved" bullet has a known hole** (1477): a run
+   killed mid-write moves the mtime *and* leaves a truncated file that reads green.
 
 ## Candidate, not scheduled
 
-1478 argues the cheapest useful next change is making the lock's **fail-open warning
-write into the verdict** rather than only to stdout — a run that proceeded UNLOCKED
-currently leaves no trace in "the only place the answer is".
+1478: make the lock's **fail-open warning write into the verdict** rather than only to
+stdout — a run that proceeded UNLOCKED leaves no trace in "the only place the answer
+is".
 
 ## Resume point
 
-Next: **E2** (0408a — part (a) only), then **E3** (1332-residual), then the final
-documentation pass carrying both OWED items, then a final solo T1.
+Next: **E3** (1332-residual — `test_ase_bus_bits_0159.tcl:277,285`, and **state its CI
+gate status in the brief**), then the final documentation pass carrying both OWED
+items, then a final solo T1.
