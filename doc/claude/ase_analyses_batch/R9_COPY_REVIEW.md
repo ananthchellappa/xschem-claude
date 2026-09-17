@@ -85,9 +85,21 @@ a completeness sweep of the commits themselves — the section at the end says h
 * ~~**Issue 1443's strings.**~~ ✅ **They are here now** — the crew finished, the work
   landed as commit `3f31a33b`, and its 79 strings are the last section of this document,
   **R9-294 … R9-372**. Every handle above them kept its meaning.
-* **ngspice's own text.** Where ASE-L quotes a simulator error back to the user
-  verbatim, the wording is ngspice's and is not ours to ratify. Those are noted
-  in place where they matter.
+* ~~**ngspice's own text.**~~ ⚠ **STILL NOT OURS TO RATIFY, BUT NO LONGER ABSENT — changed
+  2026-09-16.** Where ASE-L quotes the simulator back at the user, the wording is ngspice's and
+  a ruling on it could not be acted on. **But "not ratified" is not the same as "not written
+  down"**, and this bullet used to mean both. The user ruled that such text is **listed and
+  marked**, so the next reader knows it exists and where it came from: **70 of them now carry
+  handles, `R9-756`–`R9-825`**, in *"Listed, not ratified"*. This bullet's old promise —
+  *"noted in place where they matter"* — was the weaker thing it sounds like.
+* **Strings that were on screen BEFORE this batch.** ⚠ **Ruled out of scope 2026-09-16, and
+  recorded rather than dropped.** About **155** user-visible strings pre-date this work and
+  carry no handle, so no ruling here has ever covered them. Widening ⚖ R9 to take them in would
+  roughly triple it and mix two different questions — *is this new text right?* and *is the old
+  text right?* — so they get **their own pass**, tracked as **`rule R9_preexisting_unhandled_copy`**.
+  ⚠ **That count is a FLOOR, not a ceiling**: two default-closed folds, three `sp`-gated dialogs
+  and every run-time-only surface went unsurveyed, and nobody doc-checked what sits behind them.
+  ⚠ **Any future pass must survey by RENDERING, not grepping** — four instances of one trap say so.
 * **Deck cards and netlist lines.** `.tran 1n 100n`, `pz in 0 out 0 vol pz` and
   the like are SPICE syntax, not copy. Four strings that *do* land on disk are
   here, because a user reading the deck or the run directory meets them as
