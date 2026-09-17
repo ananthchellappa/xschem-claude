@@ -367,6 +367,63 @@ the warning about not doing that."*
   excuse four rounds of theorising before opening it, but does mean it cannot settle the
   mechanism either.
 
+## ⭐⭐⭐ SOLVED BY BC3 — it was THE SPELLING OF HEAD
+
+**Driver error 23: the twelve had nothing to do with `.scratch`.**
+
+After BC3's sweep fix, both arms *still* returned **`12 FAILED (38 passed)`** — which is
+`12 FAILED (31 passed)` of the original 43, **the driver's exact F1 signature** — with
+**zero concurrency**. HEAD had moved to **`83656487`: eight decimal digits, no `a`–`f`.**
+
+The suite feeds `git rev-parse --short=8 HEAD` into every fixture stamp, and row **`S8`
+correctly rejects a `tree=` carrying no hex letter** — *that rule is the driver's own ledger
+**error 5** mechanised*, learned when decimal numbers were scored as git SHAs. So **all
+twelve `$REV`-parsing rows die at once. The suite was right; the input was unlucky.**
+
+```
+rate  (10/16)^8 = 2.3%        measured  6 of the last 300 commits = 2%
+```
+
+⚠ **BC2's green and the driver's red differed only in the spelling of HEAD.** The 13:41
+hand-run fell between `11326086` (13:40:13) and `bb3eeb81` (13:45:07) — and **`11326086` is
+also all-decimal**.
+
+**BC3 predicted the failing set from source *before* reading the log** — S15, S15c, B3, G2,
+Q1, Q2, A2, A3, A4, N1, N2, N3 — **and it matched exactly.** The driver's own `$REV`
+analysis had missed it by classifying only rows carrying a literal `$REV` **in the check
+body**, overlooking rows where `$REV` arrives through a fixture stamp built earlier.
+**Hypothesis 4 was nearly right: it *was* about `$REV` — the value being unparseable, not
+contention.**
+
+**Fixed in-suite:** `istamp_test_rev` lengthens the abbreviation until it carries a hex
+letter (banner now `tree 83656487e`), plus new row **`S0`** so a recurrence is **one named
+row instead of twelve anonymous ones**. **`S8` was NOT loosened** — correctly.
+
+⚠ **It was live on the critical path.** `test_issue_stamp` is registered in `hcases`, so
+**T1 at this HEAD would have carried 12 counted failures against a baseline of zero, from
+the spelling of a commit hash alone** — a 2%-per-commit landmine under the one number this
+project treats as sacred.
+
+**The `.scratch` fix landed too**, real on its own merits: registration at creation
+(`istamp_own`/`istamp_delete_own`, mirroring `__scratch_dirs`/`__scratch_cleanup_all`) plus
+a four-guard corpse sweep (own namespace, not my pid, pid dead via `/proc`, 300 s age
+floor); `.scratch` itself is never deleted; rows `W1`–`W7` lock each guard. **Sentinel red →
+green, both arms:** pre-fix `ALL PASS (43)` *while `ls` showed all three planted sentinels
+gone*; post-fix **`ALL PASS (51 checks)`**, sentinels survive, own-pid leftovers **0**.
+
+⚠ **But F1's adopted hypothesis had NO MECHANISM**, and BC3 says so plainly: **no suite in
+this tree ever deletes another's `.scratch` entry** — `__scratch_sweep` cannot match
+`istamp_*`. **Two real defects, conflated by the driver into one wrong story.**
+
+⚠ **Driver error 24, same receipt:** *"191 suites source `scratch.tcl`"* is **192** by
+anchored count (187 `test_*.tcl` + 5 helpers). A bare substring grep says **194** — because
+it now counts the file doing the grepping. **The `pgrep -af` self-match, a third time.**
+
+---
+
+⚠ *(SUPERSEDED by the section above. Kept verbatim, because recording "unknown" instead of
+inventing a story is precisely what left room for the real answer to be found.)*
+
 ⚠ **THE MECHANISM FOR THOSE TWELVE REMAINS UNKNOWN, AND IS RECORDED AS UNKNOWN.** Five
 explanations have been raised and four refuted outright; the fifth (the `.scratch` sweep)
 explains `simcaps`' 42 but **cannot** explain `S15`/`S15c`, which need no scratch. **Writing
