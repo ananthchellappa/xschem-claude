@@ -34,10 +34,12 @@
 #     aborts the whole `xargs -n 64` batch and up to 63 files that WERE there
 #     are silently left un-normalised. Section C pins that deterministically.
 #
-#   FACE 4, phantom PASS -- sections V. `run_regression.tcl:295` is
-#     `set log_fn "results.log"` and `:381` opens it mode `w`: fixed name,
-#     truncate, no lock. A run can report ZERO having verified nothing, into the
-#     one file CLAUDE.md calls "THE ONLY PLACE THE ANSWER IS".
+#   FACE 4, phantom PASS -- sections V. `run_regression.tcl`'s
+#     `set log_fn "results.log"` and the `open ... w` that follows it: fixed
+#     name, truncate, no lock. (Cite the MEANING, not a line number -- C1's lock
+#     moved both, and the numbers this header first carried are already stale.)
+#     A run can report ZERO having verified nothing, into the one file CLAUDE.md
+#     calls "THE ONLY PLACE THE ANSWER IS".
 #
 # ⚠ FACE 4 IS NOT A CORRUPTION, IT IS AN ERASURE, AND THE FIRST DRAFT OF THIS
 # SUITE GOT IT WRONG. The obvious rows -- "the verdict file has no NUL bytes",
@@ -83,15 +85,19 @@
 # a fixture that stopped provoking would leave it green. If D2a is green while
 # D1a is red, the fixture is what needs looking at, not the fix.
 #
-# ⚠ NOT REGISTERED IN ANY RUNNER YET. `tests/run_regression.tcl:27` (`hcases`)
-# is task C1's file and registering here would collide with it; registration is
-# OWED. `full_audit.sh:393` picks this file up anyway through its
-# `ls "$HERE"/test_*.tcl` glob, so it is not unrun in the meantime.
+# REGISTERED IN T1. Task C1 added this suite to `hcases` in
+# `tests/run_regression.tcl`, so it now runs inside the very regression sweep
+# whose concurrency it measures. That is safe because both of its driver copies
+# run with cwd inside this suite's own per-pid scratch, so their verdict file
+# AND their verdict lock are `<scratch>/results.log`, never the live run's.
+# `full_audit.sh:393` also picks this file up through its
+# `ls "$HERE"/test_*.tcl` glob.
 #
-# ⚠ FLOOR: 20 checks, and it only ever goes up. 13 are RED on today's tree; the
-# other 7 are non-vacuity and guard rows that must be green NOW and stay green
-# (V1b is the one that reds if C1 renames `results.log`, which ruling R1
-# forbids).
+# ⚠ FLOOR: 20 checks, and it only ever goes up. 13 were RED when this suite was
+# written, and 7 were the non-vacuity and guard rows that had to be green from
+# the start; ALL 20 are green as of the B1 and C1 fixes, so a red one now is a
+# REGRESSION rather than an unfixed face (V1b is the one that reds if
+# `results.log` is ever renamed, which ruling R1 forbids).
 #
 #   headless -> 20 checks
 #     ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_regression_concurrency_1476.tcl
@@ -176,7 +182,7 @@ check S3a-both-expressions-were-found-in-all-three-case-files [expr {$_got}] \
 ## scratch -- is what section D measures. This row is the cheap structural half.
 foreach c $CASES {
   check S1-$c-workroot-is-per-run [has_text $WR($c) {[pid]}] \
-    "-- `set workroot $WR($c)`: a FIXED path means two runs of this case share one scratch dir, and whichever finishes first deletes it out from under the other"
+    "-- observed `set workroot $WR($c)`; the requirement is a per-run, \[pid\]-scoped path, because when two runs of this case SHARE one scratch dir whichever finishes first deletes it out from under the other"
 }
 
 ## ⚠ S2 ACCEPTS EITHER RESOLUTION, DELIBERATELY. Face 2 is the case dying with
@@ -188,7 +194,7 @@ foreach c $CASES {
   set _guarded [has_text $WIPELINE($c) {catch}]
   set _perrun  [has_text $RES($c) {[pid]}]
   check S2-$c-startup-wipe-cannot-die-silently [expr {$_guarded || $_perrun}] \
-    "-- `[string trim $WIPELINE($c)]` is unguarded and its target is shared: when it raises, the case exits 1 with NO banner and NO `Total num fail:` line, and summarize_all counts the lines that are there"
+    "-- observed `[string trim $WIPELINE($c)]`; guarded-by-catch=$_guarded per-run-target=$_perrun, and EITHER one suffices. With NEITHER, the wipe raises while the other run is creating files inside that tree mid-walk, the case exits 1 with NO banner and NO `Total num fail:` line, and summarize_all counts the lines that are there"
 }
 
 # =============================================================================
@@ -228,7 +234,7 @@ set _v10  [probe_val $rout VALID10]
 
 check R1a-missing-is-distinguishable-from-garbled \
   [expr {$_miss ne {} && $_garb ne {} && $_miss ne $_garb}] \
-  "-- missing=$_miss garbled=$_garb; both answer -1 today, so the caller cannot tell \"the other run deleted my status file\" from \"the job wrote nonsense\", and prints `exit -1` for both"
+  "-- missing=$_miss garbled=$_garb, and these two must DIFFER; while ONE code answers both, the caller cannot tell \"the other run deleted my status file\" from \"the job wrote nonsense\" and prints the same `exit` line for either"
 check R1b-a-real-status-is-returned-verbatim \
   [expr {$_v0 eq {RET:0} && $_v10 eq {RET:10}}] \
   "-- 0=$_v0 10=$_v10; the non-vacuity half: whatever R1a is fixed with must not disturb the codes a job really wrote (netlisting treats 10 as an EXPECTED netlist error)"
@@ -266,10 +272,10 @@ set _batched [probe_val $cout BATCHED]
 set _told    [probe_val $cout TOLD]
 
 check C1a-a-file-on-its-own-is-normalised [expr {$_alone eq {1}}] \
-  "-- alone=$_alone; the non-vacuity half -- the awk really does rewrite a file, so C1b is measuring a LOSS and not a no-op"
+  "-- alone=$_alone (1 = the awk rewrote the lone file it was handed); the non-vacuity half -- unless the awk really does rewrite a file on its own, C1b would be measuring a no-op rather than a LOSS"
 check C1b-a-missing-file-does-not-silently-cost-its-batch-mates \
   [expr {$_batched eq {1} || $_told eq {1}}] \
-  "-- batched=$_batched told-the-caller=$_told; one absent file makes gawk exit FATAL, so up to 63 files that WERE there go unprocessed in that `xargs -n 64` batch, and `catch {exec ...}` with no result variable reports none of it"
+  "-- batched=$_batched told-the-caller=$_told, and EITHER one suffices; one absent file makes gawk exit FATAL, so with NEITHER, up to 63 files that WERE there go unprocessed in that `xargs -n 64` batch and `catch {exec ...}` with no result variable reports none of it"
 
 # =============================================================================
 # SECTION D -- the miniature concurrent pair (faces 1 and 2, behavioural)
@@ -384,12 +390,12 @@ check D0a-the-miniature-pair-ran [expr {$mrc != 124 && $Aout ne {} && $Bout ne {
 
 set _ph [count_lines $Aout {: exit -1}]
 check D1a-no-phantom-exit-minus-1-in-the-collating-run [expr {$_ph == 0}] \
-  "-- $_ph counted `FATAL ... : exit -1` lines out of $MINI_JOBS jobs; every one of them is a job that RAN FINE whose status file the other run deleted. This row is the ANCHOR: while it is red the fixture is provoking a real collision"
+  "-- $_ph counted `FATAL ... : exit -1` lines out of $MINI_JOBS jobs, and the requirement is ZERO; each such line WOULD BE a job that RAN FINE whose status file the other run deleted. This row is the ANCHOR: while it is red the fixture is provoking a real collision"
 
 check D2a-the-second-run-reaches-a-verdict [has_text $Bout {MINI-RESULT}] \
-  "-- [expr {[has_text $Bout {MINI-STARTUP-DIED}] ? [string trim [src_line $Bout {MINI-STARTUP-DIED}]] : {no MINI-RESULT line}}]; a run that dies here contributes NO `Total num fail:` line at all, so the driver counts only the runs that survived"
+  "-- B said: [expr {[has_text $Bout {MINI-RESULT}] ? [string trim [src_line $Bout {MINI-RESULT}]] : ([has_text $Bout {MINI-STARTUP-DIED}] ? [string trim [src_line $Bout {MINI-STARTUP-DIED}]] : {NOTHING -- neither a MINI-RESULT line nor a MINI-STARTUP-DIED line})}]; a run that dies here contributes NO `Total num fail:` line at all, so the driver counts only the runs that survived"
 check D2b-the-second-run-exits-zero [expr {$Brc eq {0}}] \
-  "-- B rc=$Brc; face 2 is worse than face 1 precisely because it is quiet -- face 1 screams in the log, face 2 leaves nothing behind to count"
+  "-- B rc=$Brc, and 0 is the requirement; face 2 is worse than face 1 precisely because it is quiet -- face 1 screams in the log, face 2 leaves nothing behind to count"
 
 # =============================================================================
 # SECTION V -- the verdict file (face 4)
@@ -401,11 +407,11 @@ check D2b-the-second-run-exits-zero [expr {$Brc eq {0}}] \
 ## `results.<pid>.log`, this row is what says so out loud.
 check V1b-the-verdict-keeps-its-canonical-name \
   [expr {[regexp -line {^[ \t]*set[ \t]+log_fn[ \t]+\"results\.log\"[ \t]*$} $RR] ? 1 : 0}] \
-  "-- ruling R1: the scratch dir is per-run, the VERDICT is serialised under its own name; renaming it would break every reader that names it"
+  "-- run_regression.tcl says `[string trim [src_line $RR {^[ \t]*set[ \t]+log_fn[ \t]}]]`; ruling R1: the scratch dir is per-run, the VERDICT is serialised under its own name, and renaming it would break every reader that names it"
 
 check V1a-the-driver-serialises-the-verdict \
   [expr {[regexp -nocase {flock|lockfile|\.lock\M|lock_file|[a-z_]*lockf} $RR] ? 1 : 0}] \
-  "-- `set log_fn \"results.log\"` opened mode `w` with no lock: the second run truncates the first's verdict and neither is told. R1 asks for a lock, with the second run told plainly to wait"
+  "-- lock evidence in run_regression.tcl: `[string trim [src_line $RR {(?i)flock|lockfile|\.lock\M|lock_file|[a-z_]*lockf}]]`. WITHOUT one the verdict file is opened mode `w` and the second run truncates the first's, with neither told. NOTE this is a WHOLE-FILE regexp that a mere comment satisfies -- V2a/V2b are the behavioural proof, never this row"
 
 ## The behavioural half. Two copies of the REAL driver, case lists neutered to
 ## /bin/sh stand-ins, sharing ONE private cwd -- never the repo's tests/.
@@ -468,10 +474,10 @@ set _announced [regexp -nocase {lock|wait|refus|already running|in use|another r
 check V0a-both-driver-copies-were-built [expr {$_iA && $_iB && $frc != 124}] \
   "-- injection A=$_iA B=$_iB, pair rc=$frc; without both, V2a and V2b measure nothing"
 check V2b-the-first-run-verdict-is-complete [expr {$_ablocks == [llength $F4_A_CASES]}] \
-  "-- $_ablocks of [llength $F4_A_CASES] case blocks, [string length $verdict] bytes; the non-vacuity half, and the reason face 4 is SILENT: nothing is corrupted and the surviving verdict is perfectly well-formed"
+  "-- $_ablocks of [llength $F4_A_CASES] case blocks, [string length $verdict] bytes; the non-vacuity half, and the reason face 4 is SILENT rather than loud -- when it strikes nothing is corrupted, the surviving verdict is perfectly well-formed, and only the OTHER run's answer is missing"
 check V2a-the-second-run-verdict-is-not-silently-discarded \
   [expr {$_bblocks > 0 || $_announced}] \
-  "-- b1 blocks in the verdict=$_bblocks, and the second run announced nothing (rc [string trim [slurp [file join $fdir B.rc]]], last line: [string trim [lindex [split [string trim $f4Bout] \n] end]]). A whole run reported success and its verdict never existed"
+  "-- b1 blocks in the verdict=$_bblocks, announced=$_announced, B rc=[string trim [slurp [file join $fdir B.rc]]]; B said: `[string trim [src_line $f4Bout {(?i)lock|wait|refus|already running|in use|another run}]]`. With NEITHER a block nor an announcement, a whole run reports success and its verdict never existed"
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
