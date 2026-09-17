@@ -176,10 +176,32 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   checks *inside* one case, not cases — it was already the 69th `hcases` entry, and
   the three list lengths are unchanged at **3 / 69 / 11**, taken from `sed -n '23p' /
   '27,93p' / '309,318p' | /usr/bin/grep -o '"[^"]*"' | wc -l` rather than from a
-  sentence. ⚠ **But the verdict FILE is no longer 83 lines:** it now carries the 83
-  `Total num fail:` lines **plus the two sentinel lines**, so `wc -l` answers **85**,
-  which is neither of the two numbers this paragraph has already been wrong with.
-  Count nothing you can read off `T1-RUN-END`.
+  sentence. ⚠ **But the verdict FILE is no longer 83 lines: `wc -l` answers 171.**
+  ⚠ **This passage said 85 for a few hours on 2026-09-17, and that is the sharpest
+  lesson in this batch.** 85 is `83 + 2` — the `Total num fail:` lines plus the two
+  new sentinels — and it **forgets the 83 block-header lines entirely**. It was
+  reached by doing arithmetic on a sentence instead of by running `wc -l` once, and it
+  was added *to prevent* exactly the cases-vs-lines conflation this paragraph exists
+  to warn about. **So this paragraph has now been wrong three times, and the third
+  time was the correction itself.** Measured by V4 on four independent green verdicts,
+  all 171, and re-derived from those artefacts when this correction was written:
+
+  ```
+     2  sentinel lines (T1-RUN-BEGIN, T1-RUN-END)
+  +  83  block header lines (one per block, naming the log)
+  +  83  "Total num fail:" lines
+  +   3  NOGOLD notes
+  = 171  wc -l on a GREEN verdict
+  ```
+
+  ⚠ **And it MOVES WITH THE FAILURE COUNT**, so it is not a constant to check against:
+  measured the same day, **171** green, **172** with one counted failure, **174** with
+  three. **The three numbers, none of them interchangeable: 84 cases · 83 `Total num
+  fail:` lines · `wc -l` = 171 on a green run.** Count nothing you can read off
+  `T1-RUN-END`, which states `cases=`, `blocks=` and `counted_failures=` outright.
+  ⚠ **Take the number from the artefact. Every time — including when you are writing
+  the warning about not doing that.** Three passes have now missed that, and the third
+  missed it while typing the warning.
   ⚠ **AND `Start`/`Finish` PAIRS DO NOT PAIR ON A BOX WITH NO DEV DISPLAY.** Found
   2026-09-17 by the harness-concurrency batch; filed as issue **1481**, and in no
   issue file before that. The display arm's NODISPLAY path writes its block and
@@ -192,6 +214,16 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   their `Finish` unconditionally; this one arm is the only asymmetry. **Count `Start`
   lines, or read `cases=` from `T1-RUN-END`** — that counter is incremented once per
   case entered and is blind to the asymmetry.
+  ⚠ **IT IS DISPLAY-STATE DEPENDENT, AND ON THIS BOX IT DOES NOT FIRE.** Do not read
+  the paragraph above as "the count is broken". V4's seven T1 runs on 2026-09-17 all
+  ran with the persistent dev display `:99` alive, and every one printed **84 `Start`
+  / 84 `Finish`**. The hole was confirmed **in the source** (`:826` prints `Start`,
+  `:841` `continue`s, `:872` prints `Finish`) and has **never been observed** — the
+  84/73 split remains **derived, not measured**, because nobody has yet run T1 with
+  the display down. Read that the right way round: the `Start`/`Finish` rule is safe
+  *here* and unsafe *generally*, so it turns wrong the first time anyone runs on a
+  fresh boot, a container or CI — which is exactly where nobody is watching for it.
+  `cases=` from the trailer is correct on every box, which is why it is the rule.
   **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **BUT A MOVED MTIME PROVES A RUN *WROTE*, NOT THAT A RUN *FINISHED* (issue
@@ -242,9 +274,19 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   and 1403's 900 s per-case timeout is a measured cause with nothing to do with
   memory — so read a short `results.log` as a death, but stop reaching for
   memory to explain it, and do not serialise crews on a RAM figure nobody took.
-  ⚠ **Still unmeasured:** concurrent `make`, and the arms that start real
-  `ngspice`, are where a memory ceiling would actually show; neither has been
-  measured, so neither is being declared safe here.
+  ⚠ **HALF OF THAT IS NOW MEASURED, AND CONCURRENCY COST NOTHING.** This read *"Still
+  unmeasured: concurrent `make`, and the arms that start real `ngspice`, are where a
+  memory ceiling would actually show; neither has been measured"* until 2026-09-17.
+  V4 then ran two full T1s concurrently — which **do** start real `ngspice` — sampling
+  `/proc/meminfo` every 2 s: peak used **10328 MiB concurrent against 10350 MiB
+  solo**, minimum available **~5.4 GiB**, **swap 0 throughout**, and `dmesg` OOM kills
+  **0** before and after. **Concurrency added no measurable peak memory at all** — the
+  *solo* run's peak was marginally the highest of the three. So stop serialising crews
+  on a memory argument: the thing everyone was prepared to serialise over cost nothing.
+  **Concurrent `make` is still unmeasured** and is not declared safe here.
+  ⚠ **None of this touches 1477.** That defect is about a *kill* — a kill is a kill
+  whatever causes it, and a truncated verdict still scores green at every prefix
+  length. What died is only the habit of reaching for **memory** as the explanation.
   ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
   hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for
   a green run**, so a clean sweep writes the identical file every time
@@ -289,12 +331,39 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   84th is published rather than shared. Both answers survive under their own names,
   and every verdict carries its own `T1-RUN-BEGIN`/`T1-RUN-END` pair naming its pid —
   **so read the trailer, not the filename.**
-  ⚠ **CONCURRENCY IS 20% SLOWER, AND IT IS NOT A THROUGHPUT OPTIMISATION.** Measured
-  (`doc/claude/harness_concurrency_batch/receipts/R1-recon.md:291-292,469-470`): both
-  answers are available **64.4 s** after the first run starts, against **53.7 s**
-  running the two **back-to-back**. What the change buys is that **no crew is ever
-  turned away** — nothing else, and certainly not wall-clock. Anyone who schedules two
-  T1s to save time has made the run slower and gained only the thing they already had.
+  ⚠ **IT IS NOT A THROUGHPUT OPTIMISATION — AND IT IS NOT SLOWER EITHER. THE REASON
+  STANDS; THE NUMBER WAS BACKWARDS.** ⚠ This passage read *"CONCURRENCY IS 20%
+  SLOWER"* until 2026-09-17, generalising a single-**case** pair to a full T1. V4 then
+  measured the full-T1 case back-to-back rather than deriving it, and the sign flips:
+
+  | mode | to BOTH answers |
+  |---|---|
+  | back-to-back (389 s + 382 s) | **771 s** |
+  | concurrent, pair 1 / pair 2 | **435 s** / **436 s** |
+
+  **A concurrent pair delivers both answers ~44% FASTER**, at a per-run cost of
+  **~12%** (426–431 s against 382–389 s; solo reference 375 s). That per-run figure is
+  the part directionally consistent with the old measurement — the sign flips only on
+  the quantity the claim was actually about. **Why:** this box has **20 cores**
+  (`nproc`), a full T1 has long serial stretches, and two runs interleave into idle
+  cores. The original **64.4 s vs 53.7 s** stands as what it always was — a single
+  `open_close` *case* pair, where 16 parallel `xargs` workers already saturate the box
+  so a second copy is pure contention (`receipts/R1-recon.md:291-292,469-470`).
+  Correctly scoped it is not refuted; generalised to a full T1 it was.
+  ⚠ **KEEP THE REAL POINT, WHICH THE NUMBER NEVER WAS.** The change was made so that
+  **no crew is ever turned away.** That is the entire case for it, it is confirmed,
+  and it is independent of the clock. The speed is a side effect measured once, on one
+  20-core box, and it would invert again on a busier or narrower one. Do not let a
+  future reader — or a future scheduler — come away thinking concurrency was adopted
+  for throughput.
+  ⚠ **AND THE HARNESS ITSELF STILL PRINTS THE REFUTED SENTENCE TO EVERY CREW.**
+  `run_regression.tcl:672-673` tells the second run *"This is not faster: measured 20%
+  SLOWER to both answers than running back-to-back."* That first sentence is false for
+  a full T1 — which is the only thing that banner is ever printed by. Believe this
+  paragraph, not the banner, until the banner is fixed; its second sentence (*"what it
+  buys is that neither crew is turned away"*) is the true half. This is the batch's own
+  **D2 "lying detail string"** class: a true measurement of one thing, printed as a
+  claim about another.
   **The lock survives, demoted to a publish mutex.** It brackets exactly one file copy
   — a sub-second critical section instead of a ~410 s one — so the canonical file can
   never be a mixture of two runs' bytes. The knobs were retuned to match:
@@ -356,6 +425,19 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   regression hides in plain sight, and this branch has already shipped two
   defects past twenty-eight passing checks. If T1 is not at zero, say which case
   and why, per case; never carry a count forward as a known quantity.
+  ⚠ **Measured green 2026-09-17:** a solo T1 returned `rc 0`, **375 s**, trailer
+  `cases=84 blocks=83 counted_failures=0`. The baseline is met and it remains ZERO.
+  ⚠ **BUT A T1 RED IS NOT BY ITSELF EVIDENCE OF A COLLISION**, and the
+  harness-concurrency batch has just spent a night teaching everyone to suspect one.
+  In that same session an **uncontended, solo** run produced **3 counted failures** in
+  `headless/test_ase_optier_0963` (`X1`/`X2` — ngspice `rc=1`, `raw=-1bytes`,
+  `NORAW`); the standalone re-run was `ALL PASS (109 checks)` with
+  `raw=284381bytes`. A flake, cause undiagnosed — **not** concurrency, and not a
+  standing red. Of seven runs that day five were green and two red: **one concurrent**
+  (a real collision through a global `/tmp` corpse *count*) and **one solo** (this
+  flake). So diagnose **by case, never by count** — which is what this bullet already
+  demanded, and here is the session that shows it is not mere bookkeeping: the same
+  number, 3, meant a genuine defect in one run and noise in another.
 - **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
   `banner_died`, `regression_case_failed`) and `run_regression.tcl` is a
   *consumer* of it. The two shell readers (`run_suites.sh`, `full_audit.sh`) keep
