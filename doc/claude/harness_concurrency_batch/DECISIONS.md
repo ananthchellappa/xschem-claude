@@ -278,8 +278,8 @@ branch), `~/.xschem/` (**19 T1-registered suites do not source `scratch.tcl`**),
 
 ### The designs (both INFERRED FROM SOURCE — nothing was executed, another crew held the slot)
 
-**R2.** The 2-of-22 are **`SG13`** (`test_startup_guard_0663.tcl:332-334`) and **`SG14`**
-(`:343-352`) — the only two rows counting the child's **total** `#! ` durable-log lines; every
+**R2.** The 2-of-22 are **`SG13`** (`test_startup_guard_0663.tcl:396`) and **`SG14`**
+(`:419-426`) — the only two rows counting the child's **total** `#! ` durable-log lines; every
 other row counts a *named* string, and the registry's sentences carry none of those names. The
 decisive hop in a twelve-hop chain: **`init_action_log()` runs from `main.c:103` *before*
 `Tcl_AppInit`** (`xinit.c:3112` says so), so the child's log is open when `xschem.tcl` sources
