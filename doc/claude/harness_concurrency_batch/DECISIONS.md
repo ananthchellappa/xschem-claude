@@ -99,3 +99,94 @@ one filed, and it stays the user's.
 expensive". Measured 2026-09-16: one **case**, not a regression, and ~70 s. The
 estimate that stood on that sentence was wrong for seventeen days and nobody
 re-measured it. Recorded because it is the batch's own cautionary tale.
+
+## ⚖ R1, R2, R3 — TAKEN BY THE DRIVER, 2026-09-17. THEY WERE NEVER THE USER'S.
+
+**The user returned all three and told us why.** Asked to rule on the verdict filename,
+they answered: *"I barely know what you are talking about. I don't get into the weeds of
+the test-suites. As my coding agent, I am expecting you to make the best decision. We want
+good test coverage. But you can't let me gate progress."*
+
+**This was a filing error, not an unanswered question.** All three are internal test-harness
+engineering with a knowable right answer. The user's stated goal — good test coverage — is
+the whole of their input. Contrast the ~22 rule debts left standing on the ledger, which are
+almost entirely UI wording and product behaviour: what sentence a refusal shows, what a
+blank column displays, whether a registered argument reaches a command line. **Those reach a
+person; these three do not.** The test for a ruling is that question, and it was not applied.
+
+Earlier in the same exchange the user also rejected R1's *shape*: offered "refuse" versus
+"wait", they asked *"Why not make it fault-tolerant and find a way for both runs to
+proceed? Innovation and progress are about having one's cake and eating it."* They were
+right, and the constraint the whole choice rested on turned out to be a **filename
+convention**, not a property of the system. R1's decision below is theirs in spirit and the
+driver's in detail.
+
+`owed.sh clear rule 0990 / 0663 / 0609` — cleared on that instruction.
+
+### ⚖ R1 → BOTH RUNS PROCEED. Nobody waits, nobody is refused.
+
+B1 already made the *work* parallel-safe: every case computes its verdict in a private
+`<case>/results.<pid>`. The only single-slot object left was the **name** `tests/results.log`
+— a convention CLAUDE.md, `doc/claude/ledger/crew.js` and the crews adopted, not a limit the
+system imposes. C1's lock protected that convention as if it were physics.
+
+**Decided shape.** Each run writes `results.<pid>.log`. The canonical `results.log` remains,
+tracking the most recent completed run, so no reader's spelling changes. Every verdict gains
+a **header** (pid, script, start time) and a **trailer** (pid, case count, counted failures),
+so a reader can always tell *whose* answer it is and *whether the run finished*.
+
+**The sentinels are worth more than the concurrency fix**, and are the reason this shape wins
+outright rather than trading one cost for another. They close two recorded traps that no
+amount of locking touches:
+
+* **The fossil.** A stale `results.log` reads as a perfect clean sweep today; only its mtime
+  ever said otherwise, and two receipts plus a commit message already carry a case count
+  taken that way. A trailer naming the run makes a fossil self-identifying.
+* **1477's truncation hole.** Every prefix of a green run is itself a green run, because all
+  four counted shapes need a line to *exist*. The 4096-byte full buffering against a 4785-byte
+  verdict makes a **0-byte** file the typical kill outcome. A file with no trailer did not
+  finish, and that is detectable where a short one is not.
+
+C1's lock is **demoted to a safety net**, not deleted: it stops nothing that now needs
+stopping, but the evidence-based stale-lock logic is sound and cheap to keep armed.
+
+⚠ **A filename was the obvious shared object; it is not proven to be the only one.** Two runs
+also share `~/.xschem/`, the dev display, and this ~8 GB box — and an OOM kill is precisely
+what produced 1477's truncated log. Those are physics, not convention. Recon task **R1-recon**
+is measuring them; the build must not begin until it reports.
+
+### ⚖ R2 → ISOLATE the suite from the simulator registry. Do not prune.
+
+`test_startup_guard_0663` false-reds **2 of 22** on this box because `~/.xschem/ase_simulators`
+holds three dead ASE-L entries (`stub` → a vanished `/tmp/stage11/...`, `slowstub` likewise,
+and `src/xschem` registered as `ng-cm3`). With a clean `HOME` it is `ALL PASS (22 checks)`.
+
+Pruning fixes **this box on this day**. The next developer, and this box after the next ASE-L
+session registers a simulator, inherits the identical false red — and a suite that reds for
+reasons outside the repository is a suite people learn to ignore. **That is how a standing red
+becomes furniture**, which this project has already paid for twice (0689 and 0690, four filings
+each, everybody re-deriving and nobody fixing).
+
+Not in T1's case list, so **T1's zero is unaffected either way**; `full_audit.sh` globs it, so
+the audit is what is being repaired. Deliberately *not* done: redirecting `USER_CONF_DIR` in
+`scratch.tcl`, which reaches **169 suites** and is a far larger blast radius than this warrants.
+
+### ⚖ R3 → YES, `C11` BECOMES A DELTA. Clean before, compare after.
+
+`C11` is a raw existence test — `[file exists [file join $repo untitled~.sch]]` expecting 0 —
+so it reds on any repo-root litter regardless of who produced it, and it says nothing about the
+run that just happened. R2's twin: a check that fails for reasons outside its own subject.
+
+The decisive measurement is G1's: **under T1 the suite's cwd is `tests/` while `C11` reads the
+repo root, so under T1 `C11` cannot catch its own leak at all.** It is simultaneously too
+sensitive (ambient litter) and completely blind (its own producer). A delta fixes both
+directions at once.
+
+0609 already names `C11`, records 13/13 red audits and supplies fix code — **no new number.**
+
+⚠ **MUST LAND TOGETHER WITH 1480's CONTAINMENT.** 0609's proposed containment pins T1's cwd to
+`$REPO`, which would **red every T1 run**. Neither ships alone.
+
+⚠ **1480's sweep still requires deciding 0356 first** (`--ignored=matching` versus a `find`-based
+arm). That one is a *repository hygiene policy* affecting what the user's own `git status` shows
+them, so unlike these three it does not obviously belong to the driver. Left open, not filed.
