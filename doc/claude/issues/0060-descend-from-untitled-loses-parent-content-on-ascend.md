@@ -10,13 +10,20 @@ parent via `load_backup_as()` instead of failing to open `untitled.sch`. Gated a
 descend → go_back → content + modified flag preserved, no prompt), sabotage-verified RED (3 fails) on
 the old skip. `test_backup_file.tcl`'s "untitled skipped" check flipped to "untitled IS backed up".
 Full descend/backup suite + property_form 264 + wireedit 20 + main regression green.
+⚠ **Comment residue cleaned 2026-09-17 (see section 5).** The fix corrected the comment at the deleted
+gate but left `write_backup()`'s own function header — and `set_modify()`'s call-site comment in
+`actions.c` — still asserting the skip it had just removed, for 77 days.
 **Severity:** HIGH — silent data loss: the unsaved top-level content is discarded, plus an
 "Unable to open file: …/untitled.sch" alert under X.
 **Branch:** `fluid-editing`.
 **Source:** user report (2026-07-02).
-**Affects:** `src/save.c` `write_backup()` (~:3471, the `stat(name)` early-return that skips untitled
-buffers); the descend/ascend restore in `src/actions.c` `go_back()` (~:3616-3625) which relies on the
-`cellName~.sch` autosave backup. Related: [[descend-autosave]], `doc/claude/specs/descend_hierarchy_in_memory.md`.
+**Affects:** `src/save.c` `write_backup()` — **today at `:6139`** (header comment `:6133-6138`; gates
+`:6145-6153`; the corrective note `:6149-6152`), with the `~` name built by `backup_file_name()` `:6116`.
+The descend/ascend restore is `src/actions.c` `go_back()` — **today at `:6435`**. The autosave hook that
+calls it is `set_modify()`, `src/actions.c:201-208`.
+⚠ **The citations above used to read `~:3471`, `~:3482` and `~:3616-3625`** — rotted by roughly 2700
+lines. Re-measured 2026-09-17; see section 5. Related: [[descend-autosave]],
+`doc/claude/specs/descend_hierarchy_in_memory.md`.
 
 ---
 
@@ -45,6 +52,9 @@ The descend/ascend design keeps the parent's unsaved edits in a `cellName~.sch` 
 if(stat(name, &buf)) return; /* no real on-disk file (untitled): nothing to back up */   // save.c:3482
 ```
 
+(**Historical.** That `save.c:3482` citation describes the **pre-fix** tree. The line was deleted by
+the fix below and does not exist today — there is no `stat()` anywhere in `write_backup()`.)
+
 Since `untitled.sch` has no on-disk file, `stat` fails and **no `untitled~.sch` is written**. On
 descend the single object arrays are overwritten by the child; on `go_back()` there is no backup, so it
 falls to `load_schematic(1, "untitled.sch", …)`, which cannot open the nonexistent file →
@@ -68,3 +78,53 @@ drop it on a real save or discard.
 Descending from an untitled schematic that has unsaved content and then ascending restores that content
 (no "Unable to open file" alert, no data loss). A regression: place an instance on an untitled buffer,
 descend, `go_back`, assert the instance is still present.
+
+## 5. Comment residue — found and fixed 2026-09-17 (harness-concurrency batch)
+
+**The behaviour fix of 2026-07-02 left two comments behind asserting the behaviour it had just
+removed.** Found by crew H1 while tracing where a stray `untitled~.sch` in the repo root comes from;
+verified and fixed by crew 0060-comment. Receipt:
+`doc/claude/harness_concurrency_batch/receipts/0060-comment.md`.
+
+### What was wrong
+
+| Site | Vintage | Said |
+|---|---|---|
+| `src/save.c:6137-6138` — `write_backup()`'s **function header** | `c408fe3ec`, 2026-06-21 | *"Skipped when autosave_backup is off or the buffer has no real on-disk file yet (untitled): there is nothing to back a `~` file against."* |
+| `src/actions.c:204` — `set_modify()`'s **call-site** comment | `a9ca3cfdb`, 2026-06-21 | *"write_backup() is itself a no-op … or for an untitled buffer."* |
+
+Both predate this issue's fix (`6cc6c6950`, 2026-07-02), which edited only the comment at the point of
+the deleted `stat()` gate (`:6149-6152`). The header sat **six lines above** the code contradicting it,
+inside the same function.
+
+### Why it mattered enough to fix
+
+The claim was **wrong in the direction that hides a live defect**. A reader chasing repo-root
+`untitled~.sch` litter reads the header, concludes an untitled buffer can never produce a `~` file, and
+stops — so the producer is never identified. That litter has now been filed **five separate times**
+(0353, 0356, 0609, 0673, 0687) and remains unfixed; issue 1480 records the same finding independently
+(`1480:78-93`). Compounding it, `.gitignore:74-75` ignores `*~.sch`, so the residue is invisible to
+`git status` too: the comment was one blindness, the ignore rule a second, and they stack.
+
+### What the code actually does (re-measured 2026-09-17)
+
+`write_backup()` has **four** gates and **none** of them tests for untitled:
+`no_autosave` (`:6145`), `autosave_backup` off (`:6146`), an **empty** buffer name (`:6148`), and no
+`.sch`/`.sym` extension (`:6153`). Note the third is real but is **not** the untitled case — an
+untitled buffer is not nameless, it carries a full path `<dir>/untitled.sch`, so it passes the gate and
+**is** backed up. The resulting file is literally `<dir>/untitled~.sch`
+(`get_unused_untitled_name`, `xinit.c:189` → `backup_file_name`, `save.c:6127-6129`), landing in
+whatever directory the untitled name was composed against — `pwd_dir` at `actions.c:6594`, or
+`$PWD`/`pwd_dir` at `save.c:6491-6503`. This is the behaviour asserted by
+`tests/headless/test_backup_file.tcl:70`.
+
+**This is correct and deliberate: a crash-recovery backup is exactly what an unsaved buffer needs.**
+The fix was comment-only — both comments now say that the function is a *producer* for untitled
+buffers, and why — with zero behaviour change.
+
+### Not changed, deliberately
+
+`doc/claude/specs/descend_hierarchy_in_memory.md:32-33` still reads *"skip buffers with no real on-disk
+name (untitled / headless tests)"*, but it sits inside a `>` blockquote of the **original design plan**.
+That is a historical record of what was proposed before this issue changed it, and rewriting history to
+match the present would be a different error. Left as-is by design.

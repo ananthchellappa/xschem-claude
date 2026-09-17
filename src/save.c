@@ -6134,8 +6134,8 @@ int backup_file_name(char *dest, int destsize, const char *src)
  * touching the live buffer's identity, selection, timestamp or title (unlike
  * save_schematic). Used as the on-disk persistence of unsaved edits, so a descend
  * never has to save and edits survive a crash (doc/claude/specs/descend_hierarchy_in_memory.md).
- * Skipped when autosave_backup is off or the buffer has no real on-disk file yet
- * (untitled): there is nothing to back a "~" file against. */
+ * NOT skipped for an untitled buffer -- it is a PRODUCER of <dir>/untitled~.sch (issue 0060,
+ * gate note below). Skipped only when autosave_backup is off, during load, or on an empty name. */
 void write_backup(void)
 {
   char bak[PATH_MAX];
