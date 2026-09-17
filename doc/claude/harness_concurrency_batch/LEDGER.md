@@ -65,12 +65,14 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **0060-comment** | the comment that misdirects leak-hunters | DONE | `a6038098` |
 | **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | DONE | *(this commit)* |
 | **R1-build** | per-pid logs + copied verdict + sentinels | DONE — 20 → **36 checks**, 16 red first | `32dff39a` |
-| **claude-md** | 7 items + mint the `Start`/`Finish` hole | IN FLIGHT (no suite) | — |
-| **R3-build** | the C11 delta — **land alone, not hostage** | IN FLIGHT (holds the suite slot) | — |
-| **R2-build** | private `HOME` for the guard suite's children | QUEUED behind the suite slot | — |
-| **citations** | 9 stale in `test_no_untitled_litter.tcl`, +`test_ase_core.tcl:1516` | folded into R3-build | — |
-| **1480-update** | record that `write_backup()`'s header is fixed | QUEUED (R3-build holds the file) | — |
-| **V4** | solo T1 + a measured concurrent pair (relaxes R4) | QUEUED — after every build | — |
+| **claude-md** | 9 passages + **minted 1481** | DONE | `2e65e885` |
+| **R3-build** | the C11 delta — landed **alone**, not hostage | DONE | `9ed27a7f` |
+| **citations** | 9 stale in `test_no_untitled_litter.tcl`, +`test_ase_core.tcl:1516` | DONE (folded into R3-build) | `9ed27a7f` |
+| **1480-update** | `write_backup()`'s header marked fixed, not re-filed | DONE (folded into R3-build) | `9ed27a7f` |
+| **R2-build** | private `HOME` for the guard suite's children | IN FLIGHT (holds the suite slot) | — |
+| **save-citations** | `save.c:4149` cited stale by ~7 suites | IN FLIGHT (no suite) | — |
+| **V4** | solo T1 + a measured concurrent pair (relaxes R4) | QUEUED — after R2-build | — |
+| **serialisation docs** | rewrite the 6 that cite the refuted RAM figure | QUEUED — needs V4's evidence | — |
 
 ⚠ **Only one crew may run suites at a time** — that is this batch's own subject, and a number
 produced during a collision is void. The queue above is that constraint, not a priority order.
@@ -191,6 +193,61 @@ The NODISPLAY path **`continue`s before its `Finish` line**, so a box with no de
 **84 `Start` / 73 `Finish`**. CLAUDE.md's *"count `Start`/`Finish` pairs"* rule — which exists
 **precisely because two independent passes got the case count wrong** — is itself wrong on that
 arm. Handed to the `claude-md` crew to document and mint.
+
+## ✅ CLAUDE-MD — AND THE DRIVER'S OWN BRIEF WAS STILL TEACHING THE RETIRED RULES. `2e65e885`.
+
+Nine passages corrected, `+141/−32`, every one in the house confessional style with the old
+claim quoted rather than erased. **`rc 2` marked FALSE, not softened.** The refusal era turns
+out to be **exactly datable and lasted hours** — `43b40f04` introduced it, `32dff39a` removed
+it, both 2026-09-17 — so a transcript from that window is the only place it was ever real.
+
+⚠ **`CREW_BRIEF.md` was still teaching three retired rules to every crew dispatched after the
+change that retired them** — mtime-and-md5, and the `Start`/`Finish` count with 1481's hole in
+it. **R2-build was to be the next crew to read it.** Repaired in the same commit, recorded
+rather than silently swapped: *a receipt written under the old rules was right when written.*
+
+⚠ **The driver's brief dropped item 7 of R1-build's seven, and the crew did it anyway** — the
+sentence telling a crew its own answer is `tests/results.<pid>.log`. Arguably the most
+operationally useful line of the whole change, since `results.log` during a concurrent run now
+yields an answer that is complete, well-formed and **someone else's**.
+
+⚠ **A THIRD PLAUSIBLE NUMBER.** Cases are still **84**, log lines still **83** — but `wc -l`
+now answers **85**, because the verdict carries the two sentinel lines. That paragraph has
+already been wrong **twice** by conflating the first two; the third neighbour is now written
+out explicitly instead of waiting to be discovered.
+
+**Issue 1481 minted** for the `Start`/`Finish` hole after three searches (this clone, repo-wide,
+`xschem-op-wcard`) found it filed nowhere. ⚠ **1476 and 1477 both *cite* that rule as a
+protection without noticing the hole in it.**
+
+## ✅ R3-BUILD — THE OLD CHECK PASSED, rc 0, WHILE ITS SUITE WAS LEAKING. `9ed27a7f`.
+
+| scenario | old row | new row |
+|---|---|---|
+| clean | `ALL PASS (675)` / `(70)` | **unchanged** |
+| **foreign** litter in repo root | `C11 FAIL`, `H1 FAIL` | **green, both** |
+| real leak, from repo root | `FAIL → {1}` | `FAIL → {/…/untitled~.sch}` |
+| **real leak, from `tests/` — T1's cwd** | **`ALL PASS`, rc 0, *while writing the leak*** | `FAIL → {/…/tests/untitled~.sch}` |
+
+**That fourth row is the whole justification.** G1 inferred it from source; this crew executed
+it. The row was *simultaneously* too sensitive and completely blind.
+
+**Only the IDEA was kept from 0609's fix code** — snapshot at suite start. Both halves of the
+code discarded: `llength` became a real set difference (`:1597-1600`), and `-directory $repo`
+became `{$repo, $env(PWD), [pwd]}`. 0609's block is banner-marked **SUPERSEDED — DO NOT PASTE**.
+
+**Two design corrections, one of which the twin file would have exposed:** the watch list needs
+**three** entries (two cwd producers; preferring one hides the other), and the list must be
+**fixed at suite start** — the design re-derived it per call, and `test_op_dump_altshow`, the
+twin it said to apply "the same edit" to, **is a suite that `cd`s**.
+
+⚠ **A REFUTATION REACHING BEYOND THE TASK: the design crew reported `write_backup()`'s lying
+comment as "re-confirmed by reading today" — it was already FIXED**, by `a6038098`, *inside the
+window they were reading*. **1480 §6 item 3 and 0609's closing warning were both reporting done
+work as outstanding.** Marked done, so a solved defect is not filed a sixth time.
+
+**Reported, not fixed:** `src/save.c:4149` cited stale by ~7 further suites — dispatched as
+`save-citations`.
 
 ## ⚖ R4 — the serialisation rule keeps its rule and loses its reason (driver's call)
 
