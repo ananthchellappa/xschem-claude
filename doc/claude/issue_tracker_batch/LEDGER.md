@@ -13,7 +13,7 @@ after the driver has read the receipt and checked at least one of its claims.
 | A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
 | **BC1** | design the convention **and** build the checker (B+C merged, D8) | **DONE** | **accepted** — dissolved requirement 4 rather than meeting it | — |
-| **D1** | apply: stamp the 9 measured files, fix 0071's child table | in flight | — | — |
+| **D1** | apply: stamp the 9 measured files, fix 0071's child table | **DONE** | **accepted** — caught a vacuous green on the critical path | — |
 | **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
 | **E2** | collapse the 48 repeated wording ratifications into one document | **DONE** | **accepted** — corrected D11's premise; caught driver errors 11 and 12 | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
@@ -388,6 +388,109 @@ have a header that agrees. **7 do not**, and they are the mechanical face of sub
 C1 sweeping beyond `doc/claude/issues/`. At **4.3%** this is a smaller class than citation
 rot, and unlike citation rot it is **exactly detectable**, today, with no judgement calls.
 
+### ⭐⭐ E3 — a look collection existed, WAS published, and still changed nothing
+
+**This is the batch's real thesis, and it supersedes D11's correction.**
+
+`doc/claude/lookdebt_batch/` — **tracked**, committed **2026-09-07** (`a7cfa479`,
+`4ac6f182`): **46** debts in `debts.json`, each with question / right / wrong / recipe, a
+page builder, and photograph poses. **Unlike the wording collection, its own brief says it
+WAS published.**
+
+It still changed nothing:
+
+* **8 of its 10 retire recommendations are still in the queue ten days later.** The two
+  that went, went in the user's own 2026-09-09 topic close-out — **not** on its
+  recommendation.
+* **Never maintained:** 46 → **71**, and **36 of today's 71 are absent from it**.
+* **Cannot even be rebuilt:** `build_page.py` reads `shots/`, which does not exist. **No PNG
+  was ever committed.**
+
+⚠ **So "collect, then hand over" is NOT the lesson, and D11's correction did not go far
+enough.** Both collections were built correctly. One was delivered. **Both decayed, because
+nothing re-points a collection at a queue that keeps growing.** A handover is an **event**;
+the queue is a **process**.
+
+**That unifies every finding in this batch:**
+
+| artefact | state | outcome |
+|---|---|---|
+| issue **0229** — the fix for citation rot | written down, correct | **never built** |
+| `R9_COPY_REVIEW.md` — the wording collection | built, maintained 35 commits | **never handed over** |
+| `lookdebt_batch/` — the look collection | built **and handed over** | **never re-pointed; decayed** |
+| `status.md` / `status_annotate.md` — the indexes | built | **2.5% / 2.0% coverage, unmaintained** |
+| the harness-concurrency defect | filed **five times** | **attempted zero times** |
+
+**The tracker does not fail to know things, and it does not even reliably fail to deliver
+them. It fails to KEEP delivering.** No status field, convention, or checker addresses
+that — which is the honest limit of what this batch built.
+
+**The collapse: 71 → 27 looks in 5 sittings, ~2h40, plus 10 needing nothing.** Results
+window 7 · Schematic 3 · ASE-L 12 · *File > Open Recent* 1 · Hierarchical PDF 4 · retire 10.
+Arithmetic re-derived from the deliverable's own reference table; **all 71 ledger ids proved
+present, 0 unaccounted.**
+
+**Two live findings worth acting on:**
+
+* ⚠ **`File > Open Recent` is damaged right now** — ten dead ASE-L probe decks and nothing
+  of the user's. **Two minutes of their time, and the only item in the entire queue where
+  something of theirs is actually broken.** (This is E1's top-ranked `THEIRS` item, 1453,
+  reaching the same conclusion independently.)
+* `rdw_keys_B4` claims *"nothing to look at yet — it is not in the tree"*. **False** —
+  `src/cadence_style_rc` binds keys 1–4 to that window today.
+
+**UNKNOWN recorded, not invented:** the 10 PDF entries live only on branch `op-wcard` of
+`~/dev/xschem-op-wcard`, which is **currently checked out on `fluid-editing`**. E3 can say
+what to open and **cannot** say whether they are current. A checkout away, and it did not
+guess.
+
+**Ledger proved untouched by `diff -rq` four times bracketing the work.**
+
+### ⭐ D1 — the convention applied, and a VACUOUS GREEN caught on the critical path
+
+`checker BEFORE ok (0 problems) rc 0` → `AFTER ok (0 problems) rc 0`. Suite **ALL PASS (40
+checks)** on both the `tclsh` and `--nogui` arms. **Census exact: 1047 = 10 stamped + 1037
+grandfathered.** Baseline 1067 → 1057. **Ten files stamped at line 3 with zero prose
+rewritten**, and 0071's child table repaired with its header untouched (*"11 checks"* →
+**79**, all fourteen child statuses re-read from their own headers, §4b's five-of-six
+re-derived in C rather than inherited).
+
+⚠ **BC1's own suite forbade the adoption BC1's receipt instructs — and it was on the
+critical path.** Row `B1` asserted the baseline covers **every** file. But **adoption *is*
+deleting a number from the baseline**, so the row reddened on the first ten stamps. It had
+been green before **only because zero files were stamped**: a **vacuous green, inside the
+file written to prevent vacuous greens.** And `e14a0796` (D13) registers this checker in
+T1 next — where it would have become **a counted failure against a ZERO baseline**, the one
+thing CLAUDE.md is most emphatic about. D1 corrected the invariant to the one actually
+meant (covered by baseline **or** carrying a stamp), added known-negative row `B3`, and
+**flagged that it had edited a tracked file rather than burying it.**
+
+**1219's `assert=` block proved non-vacuous by negative control**: flipping `broken` →
+`holds` reddens with *"8 hits for SABOTAGE under src"*.
+
+**All three closure candidates were false positives, in three NEW shapes:**
+
+| | verdict | how the detector was fooled |
+|---|---|---|
+| **0056** | CONFIRMED-CLOSED — **right by accident** | matched *"a folded `.save` **resolves** (upstream 0056)"* — the same `resolves` over-fire BC1 hit on 0818. The tree is closed for reasons the scanner never saw |
+| **0885** | **NOT-CLOSED**, untouched | three mechanisms at once: the float literal **`3.950885e-01`**; **the driver's own LEDGER commit about 0885, read back as evidence**; and two commits that genuinely name it saying *"STILL OPEN"* |
+| **0897** | **NOT-CLOSED**, untouched | a **negation** — 0894's *"is **not** fixed here and is filed as 0897"* |
+
+⚠ **Across D0 and D1, SEVEN OF TEN verified closure candidates were false.** The detector
+is not a work list and never was. **Sending them as candidates rather than as work is the
+only reason no live defect was closed** — and 0885 was matched partly by **this ledger's own
+commit about 0885**, a citation loop closing in under an hour.
+
+**Two defects in the new machinery, deliberately left for a follow-up:**
+
+1. ⚠ **`istamp::format_stamp` omits `scope=`.** A round-trip **silently drops the one field
+   that stops 0216 and 0650 being closed wrongly** — and the round-trip fixture carries no
+   scope, so nothing catches it. The field D0 identified as essential is the field the
+   formatter forgets.
+2. **Spec §8's `open=` counts are wrong twice**, measured: **0442 → 1** (two of three
+   still-open items are fixed) and **0650 → 5** (0655 plus 0654/0659/0660/0661; only 0658
+   moved).
+
 ### ⭐ BC1 — the convention, and requirement 4 DISSOLVED rather than met
 
 Spec: `doc/claude/specs/issue_stamp.md`. One physical line, column 0, first 12 lines:
@@ -701,6 +804,27 @@ in seven weeks. It is the same shape as the last batch's *"0609's containment pi
 cwd to `$REPO`"*, where the driver also reasoned from its own summary rather than the
 document. **A4 checked it and refused it**, which is the behaviour `CREW_BRIEF.md` rule 10
 asks for, and it was contained to one brief only because A4 looked.
+
+| 20 | *"**54** of the 71 `look` debts were filed on a single day, 2026-09-10"* — used to justify E3's whole framing, and written into its brief | **the driver** | **That is a file MTIME, not a filing date.** 53 of the 71 share the identical mtime `2026-09-10 12:18:38` — **the `repo:` stamping pass**, which CLAUDE.md independently measures complete at 12:40. Real filing dates spread over **14 days**, peaking at **25 on 2026-09-05**; 09-10 holds **6**. Eight days summed and attributed to the last. Two further claims fall with it: it was **three** batches on **two clones**, not one, and the ratio is not E2's (71→27 groups *screens*; 48→16 de-duplicates *one question*). |
+
+⚠ **Error 20 is the twentieth instance of the same mistake and the most on-the-nose: the
+driver read a PROXY for the thing.** An mtime is not a filing date, exactly as a line number
+is not an identity, a decimal is not a SHA, and a year is not an issue number. **This is
+the defect the batch measured in the corpus, committed by its auditor twenty times in one
+evening** — and E2 independently recorded the same shape in its own work, calling it the
+fifth instance in this project.
+
+| 15 | **row `B1` of `test_issue_stamp.tcl` asserted the baseline covers every file** — which forbids the adoption its own receipt prescribes | **BC1** | Green **only because zero files were stamped**. **A vacuous green inside the file written to prevent vacuous greens**, sitting on the path D13 was about to register in T1. Found and fixed by D1, with a known-negative row added. |
+| 16 | **`issue_stamp_baseline.txt` left untracked** while checker, suite and spec were committed | **the driver** | A fresh clone's gate refuses with `BASELINE MISSING`. The driver excluded it on purpose (D1 was mid-edit) and then **did not put it back**. A correct precaution with no follow-through — the same *non-delivery* shape as error 11. |
+| 17 | *"0442 contains the phrase «a hand-maintained mirror of another module's rules is wrong by construction»"* — quoted to D1 in its brief | **the driver** | It is in **`src/op_annot.tcl`**, not 0442. Requoted from A2's receipt without opening the file. |
+| 18 | spec §4: *"the tree deleted `op_annot::_netlisted`"* | **BC1** | It is **live**; its *shape* was deleted. |
+| 19 | spec §8's `open=` worked examples | **BC1** | **0442 is 1**, not as written; **0650 is 5**. Both re-measured by D1. |
+
+⚠ **Error 15 is the most valuable catch of the batch**, because it was **not** in the
+corpus being studied — it was in **the machinery built to study it**, and it was on the
+critical path. A checker that cannot be adopted without reddening is worse than no checker,
+and it would have reddened T1 at the gate, against the one baseline this project treats as
+sacred.
 
 ### Near-misses — driver errors caught BEFORE publication
 

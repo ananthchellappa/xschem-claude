@@ -213,6 +213,19 @@ since **2026-09-13**: 11,364 lines, **821 handle blocks / 825 handle ids, drawn 
 issues, already grouped by surface**, opening with *"all of them in one place, so they can
 be read once instead of nineteen times."* **36 of the 48 were already in it.**
 
+⚠⚠ **AND E3 SHOWS THIS CORRECTION IS ITSELF TOO SHALLOW.** A look-debt collection also
+existed — `doc/claude/lookdebt_batch/`, committed 2026-09-07, 46 debts with question /
+right / wrong / recipe each — **and its own brief says it WAS published.** It changed
+nothing anyway: 8 of its 10 retire recommendations sat in the queue ten days later, it was
+never maintained (46 → 71, 36 of today's absent), and it cannot be rebuilt because its page
+builder reads a `shots/` directory nobody committed.
+
+**So the lesson is not "collect, then hand over" either. Nothing re-points a collection at
+a queue that keeps growing.** A handover is an **event**; the queue is a **process**. One
+collection was never delivered and one was delivered and decayed, and the outcome was the
+same. **This batch built a convention and a checker for the tracker's contents; it has
+built nothing for this, and that is the honest limit of what it achieved.**
+
 **So the defect is not a missing collection. It is a missing HANDOVER** — the document was
 built, was correct, and was never put in front of the user, so debts went on being filed
 one per stage beside a finished artefact that already contained them. That is strictly
