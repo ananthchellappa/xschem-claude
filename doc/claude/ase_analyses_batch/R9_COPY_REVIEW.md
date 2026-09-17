@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**755 strings, from 38 issues, grouped by where the user sees them** — not by
+**825 strings, from 38 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -5281,6 +5281,658 @@ the .options card reaches the ONLY live read (INPgetModBin, inpgmod.c:268, at mo
 *For:* Records which of three cited read sites actually runs, and that only the `.options` spelling reaches it.
 
 *Note:* ⚠ **Its first citation IS bracketed and mid-sentence, so the narrowed §A11 rule DOES reach this one** — unlike its three siblings above. ⚠ **A survey filter silently swallowed this string as fixture data** and it was recovered only when that filter was repaired — the reason it is worth saying that a guard which cannot disagree has measured nothing. Three shouted words, four C identifiers, two raw measurement pairs.
+
+---
+
+## Listed, not ratified — ngspice's own words, reaching the user through ASE-L
+
+*70 strings.*
+
+> ### ✅ RULED BY THE USER, 2026-09-16
+>
+> *"List them, but don't ask you to approve them. They appear in the review, marked as the
+> simulator's words, so anyone reading knows where they came from and that they're not ours to
+> change."*
+>
+> **Nothing in this section is ASE-L's wording and nothing here is asking for a decision.** These
+> are ngspice's own strings, quoted back at the user by surfaces ASE-L built. Changing one would
+> mean ASE-L saying something different from the simulator it is reporting, so ratifying them would
+> be asking for a ruling nobody could act on. They are written down so that the next person to read
+> this document knows the words exist, knows where they came from, and does not rediscover them.
+>
+> **The precedent is `R9-276`**, which lists an ngspice plot name *"because it is new text on a
+> user's screen"* while noting it is *"not ASE-L's wording to change."* This section applies that
+> to every member of the class.
+
+**How this list was built, and what it is worth.** A rendering survey found the class; an
+adversarial pass refuted its first count; an adjudication settled it; a fourth pass enumerated the
+strings, because **the first three established the classes and never wrote the strings down**; and a
+fifth verified every one of them character by character against the tree — **zero transcription
+defects, in both directions, carriers included.** That last check is the one that matters here: a
+mangled character becomes a permanent wrong entry under a permanent handle.
+
+⚠ **`*For:*` is deliberately omitted throughout this section.** Everywhere else in this document it
+says what a string is for; here the string **is** ngspice's own description of the thing, and
+restating it in ASE-L's voice would invent exactly the authorship this section exists to disclaim.
+
+### The options-sheet help text — 53 strings, every one from `src/spicelib/analysis/cktsopt.c`
+
+⚠ **The shared `*Where:*` for all 53, stated once because a wrong version of it would otherwise be
+repeated 53 times.** Each is the **leading segment of the detail line under the options grid**,
+rendered by `ase::ui::optsheet_detail` for the **selected** row and joined with `  |  ` into
+`$w.detail`. ⚠ **It is NOT rendered for every catalogue row** — an earlier receipt said so and it is
+false: **180 of the 247 rows carry no help text at all**, 67 do, and those collapse to these 60
+distinct strings, of which **53 are ngspice's and 7 are ASE-L's**. ⚠ **All 7 ASE-L-authored ones
+already carry handles** (`R9-199`, `R9-235`, `R9-255`, `R9-256`, `R9-257`, `R9-258`, `R9-670`) and
+are **not** repeated here — the ASE-L half of this surface was already complete. `ase::opt_help` has
+exactly two callers; the other reads help as a search haystack and renders nothing.
+
+**R9-756** · help
+
+```text
+Maximum absolute iter-iter node voltage change
+```
+
+*Where:* option `absdv`
+
+**R9-757** · help
+
+```text
+Absolute error tolerence
+```
+
+*Where:* options `abstol`, `lteabstol` — two carriers, one string
+
+*Note:* ⚠ **`tolerence` is ngspice's own misspelling** and is reproduced exactly. It is the clearest single piece of evidence that this class is transcribed rather than written here.
+
+**R9-758** · help
+
+```text
+Use auto-partial computation for all models
+```
+
+*Where:* option `autopartial`
+
+**R9-759** · help
+
+```text
+use old mos3 model (discontinuous with respect to kappa)
+```
+
+*Where:* option `badmos3`
+
+**R9-760** · help
+
+```text
+Allow bypass of unchanging elements
+```
+
+*Where:* option `bypass`
+
+**R9-761** · help
+
+```text
+Charge error tolerence
+```
+
+*Where:* option `chgtol`
+
+*Note:* ngspice's misspelling again; see `R9-757`.
+
+**R9-762** · help
+
+```text
+Absolute step allowed by code model inputs between iterations
+```
+
+*Where:* option `convabsstep`
+
+**R9-763** · help
+
+```text
+Enable convergence assistance on code models
+```
+
+*Where:* option `convlimit`
+
+**R9-764** · help
+
+```text
+Fractional step allowed by code model inputs between iterations
+```
+
+*Where:* option `convstep`
+
+**R9-765** · help
+
+```text
+Copy nodesets from device terminals to internal nodes
+```
+
+*Where:* option `copynodesets`
+
+**R9-766** · help
+
+```text
+Shunt capacitor from analog nodes to ground
+```
+
+*Where:* option `cshunt`
+
+**R9-767** · help
+
+```text
+Default MOSfet area of drain
+```
+
+*Where:* option `defad`
+
+**R9-768** · help
+
+```text
+Default MOSfet area of source
+```
+
+*Where:* option `defas`
+
+*Note:* ⚠ **This option's own catalogue `defect` reason — `R9-753` — records that ngspice in fact writes the DRAIN field here.** The help text above is ngspice's and says "source"; the defect note is ASE-L's and says otherwise. **Both are on the same detail line.**
+
+**R9-769** · help
+
+```text
+Default MOSfet length
+```
+
+*Where:* option `defl`
+
+**R9-770** · help
+
+```text
+Default MOSfet Multiplier
+```
+
+*Where:* option `defm`
+
+**R9-771** · help
+
+```text
+Default MOSfet width
+```
+
+*Where:* option `defw`
+
+**R9-772** · help
+
+```text
+Minimum value for log
+```
+
+*Where:* option `epsmin`
+
+**R9-773** · help
+
+```text
+Minimum conductance
+```
+
+*Where:* option `gmin`
+
+**R9-774** · help
+
+```text
+factor per Gmin step
+```
+
+*Where:* option `gminfactor`
+
+**R9-775** · help
+
+```text
+number of Gmin steps
+```
+
+*Where:* option `gminsteps`
+
+**R9-776** · help
+
+```text
+Shunt conductance
+```
+
+*Where:* option `gshunt`
+
+**R9-777** · help
+
+```text
+Control Inductive Systems Check (coupling)
+```
+
+*Where:* option `indverbosity`
+
+**R9-778** · help
+
+```text
+DC iteration limit
+```
+
+*Where:* option `itl1`
+
+*Note:* Its catalogue `clamp` reason — `R9-752` — sits on the same detail line and says the limit cannot be lowered.
+
+**R9-779** · help
+
+```text
+DC transfer curve iteration limit
+```
+
+*Where:* option `itl2`
+
+**R9-780** · help
+
+```text
+Upper transient iteration limit
+```
+
+*Where:* option `itl4`
+
+**R9-781** · help
+
+```text
+number of source steps
+```
+
+*Where:* options `itl6`, `srcsteps` — two carriers, one string
+
+**R9-782** · help
+
+```text
+Record operating point for each small-signal analysis
+```
+
+*Where:* option `keepopinfo`
+
+**R9-783** · help
+
+```text
+Set KLU as Direct Linear Solver
+```
+
+*Where:* option `klu`
+
+**R9-784** · help
+
+```text
+KLU Memory Grow Factor (default is 1.2)
+```
+
+*Where:* option `klu_memgrow_factor`
+
+*Note:* ⚠ Its `inert` reason — `R9-246` — records that every value **but** 1.2 sets the factor to zero, so the parenthesised default is the only usable value.
+
+**R9-785** · help
+
+```text
+Relative error tolerence
+```
+
+*Where:* options `ltereltol`, `reltol` — two carriers, one string
+
+*Note:* ngspice's misspelling again; see `R9-757`.
+
+**R9-786** · help
+
+```text
+Truncation error overestimation factor
+```
+
+*Where:* options `ltetrtol`, `trtol` — two carriers, one string
+
+**R9-787** · help
+
+```text
+Maximum event iterations at analysis point
+```
+
+*Where:* option `maxevtiter`
+
+**R9-788** · help
+
+```text
+Maximum analog/event alternations in DCOP
+```
+
+*Where:* option `maxopalter`
+
+**R9-789** · help
+
+```text
+Maximum integration order
+```
+
+*Where:* option `maxord`
+
+**R9-790** · help
+
+```text
+Integration method
+```
+
+*Where:* option `method`
+
+**R9-791** · help
+
+```text
+Minimum time between breakpoints
+```
+
+*Where:* option `minbreak`
+
+**R9-792** · help
+
+```text
+voltage controlled truncation
+```
+
+*Where:* option `newtrunc`
+
+*Note:* Its `inert` reason — `R9-247` — records that this option is compiled out of the build.
+
+**R9-793** · help
+
+```text
+Limit iteration to iteration node voltage change
+```
+
+*Where:* option `nodedamping`
+
+**R9-794** · help
+
+```text
+No op calculation in ac if circuit is linear
+```
+
+*Where:* option `noopac`
+
+**R9-795** · help
+
+```text
+Do not do analog/event alternation in DCOP
+```
+
+*Where:* option `noopalter`
+
+**R9-796** · help
+
+```text
+Go directly to gmin stepping
+```
+
+*Where:* option `noopiter`
+
+**R9-797** · help
+
+```text
+use SPICE2 MOSfet limiting
+```
+
+*Where:* option `oldlimit`
+
+*Note:* Its `inert` reason — `R9-245` — is the site §A11's placement rule was drawn from, and was that rule's first violation.
+
+**R9-798** · help
+
+```text
+Minimum acceptable ratio of pivot
+```
+
+*Where:* option `pivrel`
+
+**R9-799** · help
+
+```text
+Minimum acceptable pivot
+```
+
+*Where:* option `pivtol`
+
+**R9-800** · help
+
+```text
+Transient analysis supply ramping time
+```
+
+*Where:* option `ramptime`
+
+*Note:* ⚠ An earlier receipt named `R9-254` as this option's handle. `R9-254` is `ramptime`'s **`inert` reason**, a different string on the same detail line; **its help text is this one, and it is ngspice's.**
+
+**R9-801** · help
+
+```text
+Maximum relative iter-iter node voltage change
+```
+
+*Where:* option `reldv`
+
+**R9-802** · help
+
+```text
+Shunt resistance from analog nodes to ground
+```
+
+*Where:* option `rshunt`
+
+**R9-803** · help
+
+```text
+Set SPARSE 1.3 as Direct Linear Solver
+```
+
+*Where:* option `sparse`
+
+**R9-804** · help
+
+```text
+Operating temperature
+```
+
+*Where:* option `temp`
+
+**R9-805** · help
+
+```text
+Nominal temperature
+```
+
+*Where:* option `tnom`
+
+*Note:* ⚠ **The one string in this group that is not distinctive to `cktsopt.c`** — it also occurs in two device files. It does resolve there, so the class is unchanged, but a handle citing a single line for it would be citing one of three.
+
+**R9-806** · help
+
+```text
+Try compaction for LTRA lines
+```
+
+*Where:* option `trytocompact`
+
+**R9-807** · help
+
+```text
+Voltage error tolerence
+```
+
+*Where:* option `vntol`
+
+*Note:* ngspice's misspelling, fourth and last occurrence; see `R9-757`.
+
+**R9-808** · help
+
+```text
+Coefficient for trapezoidal method
+```
+
+*Where:* option `xmu`
+
+### The plot names ASE-L quotes back — 15 capturable `select` literals
+
+⚠ **These reach the user through the *mislabel* arm of `ase::reconcile_plots`, printed into the run
+log** — **proved by rendering**, twice and independently, by driving the unmodified proc headless
+until it emitted the literal into its sentence. That matters because **an earlier pass excluded all
+of them as unreadable**, on the argument that the key is opaque to the core; this document had
+already refuted that in writing at `R9-274`, in text that pass had in its own corpus. They are
+ngspice's plot names, every one resolving in the ngspice tree.
+
+**R9-809** · status
+
+```text
+Operating Point
+```
+
+*Where:* the `op` analysis's plot row — `src/spicelib/parser/inp2dot.c:141`
+
+**R9-810** · status
+
+```text
+DC transfer characteristic
+```
+
+*Where:* the `dc` analysis's plot row — `src/spicelib/parser/inp2dot.c:303`
+
+**R9-811** · status
+
+```text
+AC Analysis
+```
+
+*Where:* the `ac` analysis's plot row — `src/spicelib/parser/inp2dot.c:203`
+
+**R9-812** · status
+
+```text
+Transient Analysis
+```
+
+*Where:* the `tran` analysis's plot row — `src/spicelib/parser/inp2dot.c:429`
+
+**R9-813** · status
+
+```text
+Integrated Noise*
+```
+
+*Where:* the `noise` analysis's first plot row — `src/spicelib/analysis/noisesp.c:356`, `src/spicelib/analysis/noisean.c:535`
+
+*Note:* ⚠ **The trailing `*` is ASE-L's, not ngspice's** — a glob, and **the only character in this whole section that the simulator never wrote.** ngspice emits one of *two* names here, chosen by a ternary on whether units are reported (`Integrated Noise` or `Integrated Noise - V^2 or A^2`), and the glob exists to match both. ⚠ **The asterisk reaches the screen**: rendering the mislabel sentence prints the literal with it. So for this entry and `R9-814`, the accurate description is *ngspice's plot name, with ASE-L's trailing glob* — **not "verbatim"**.
+
+**R9-814** · status
+
+```text
+Noise Spectral Density Curves*
+```
+
+*Where:* the `noise` analysis's second plot row — `src/spicelib/analysis/noisesp.c:188`, `src/spicelib/analysis/noisean.c:278`
+
+*Note:* See `R9-813` — same mechanism, the two ngspice spellings being `Noise Spectral Density Curves` and `Noise Spectral Density Curves - (V^2 or A^2)/Hz`.
+
+**R9-815** · status
+
+```text
+Transfer Function
+```
+
+*Where:* the `tf` analysis's plot row — `src/spicelib/parser/inp2dot.c:368`
+
+**R9-816** · status
+
+```text
+Pole-Zero Analysis
+```
+
+*Where:* the `pz` analysis's plot row — `src/spicelib/parser/inp2dot.c:265`
+
+**R9-817** · status
+
+```text
+Sensitivity Analysis
+```
+
+*Where:* the `sens` analysis — **both** its plot rows carry this literal — `src/spicelib/parser/inp2dot.c:485`
+
+**R9-818** · status
+
+```text
+DISTORTION - 3rd harmonic
+```
+
+*Where:* the `disto` analysis's first plot row — `src/spicelib/analysis/distoan.c:541`
+
+*Note:* The five `DISTORTION -` names share a shouted first word and a spaced hyphen; all five are ngspice's spelling.
+
+**R9-819** · status
+
+```text
+DISTORTION - 2nd harmonic
+```
+
+*Where:* the `disto` analysis's second plot row — `src/spicelib/analysis/distoan.c:517`
+
+**R9-820** · status
+
+```text
+DISTORTION - IM: 2f1-f2
+```
+
+*Where:* the `disto` analysis's third plot row — `src/spicelib/analysis/distoan.c:607`
+
+**R9-821** · status
+
+```text
+DISTORTION - IM: f1-f2
+```
+
+*Where:* the `disto` analysis's fourth plot row — `src/spicelib/analysis/distoan.c:585`
+
+**R9-822** · status
+
+```text
+DISTORTION - IM: f1+f2
+```
+
+*Where:* the `disto` analysis's fifth plot row — `src/spicelib/analysis/distoan.c:564`
+
+**R9-823** · status
+
+```text
+SP Analysis
+```
+
+*Where:* the `sp` analysis's plot row — `src/spicelib/parser/inp2dot.c:736`
+
+### The two operating-point plot names the document mentioned and never listed (2)
+
+⚠ **These reach the user through the run log's *"also computes"* sentence**, not the mislabel arm —
+`ase::plot_capturable` returns 0 for `role opinfo`, so they are named rather than captured. `R9-276`
+is the third member of this trio and the only one that was ever given an entry.
+
+**R9-824** · status
+
+```text
+AC Operating Point
+```
+
+*Where:* the `ac` analysis's second plot row and the `sp` analysis's second — `src/spicelib/analysis/acan.c:158`, `src/spicelib/analysis/span.c:479`
+
+*Note:* ⚠ **Listed on the strength of the user's 2026-09-16 ruling alone.** A receipt claimed `R9-276`'s Note concedes this name reaches that sentence; **it does not — `AC Operating Point` appears nowhere in `R9-276`**, and that claim was refuted before this entry was written. It belongs here because it is ngspice's word on a user's screen with no handle, which is the whole of the rule.
+
+**R9-825** · status
+
+```text
+Distortion Operating Point
+```
+
+*Where:* the `pz` analysis's second plot row and the `disto` analysis's sixth — `src/spicelib/analysis/pzan.c:58`, `src/spicelib/analysis/distoan.c:107`
+
+*Note:* ⚠ **`R9-276`'s own Note names this string** — *"`disto` adds 'Distortion Operating Point' to the same sentence, which `pz` already contributed."* **So the document has stated since that entry was written that this plot name reaches the user, and never gave it an entry.** The precedent for listing the class and the omission of one of its members were the same paragraph.
 
 ---
 
