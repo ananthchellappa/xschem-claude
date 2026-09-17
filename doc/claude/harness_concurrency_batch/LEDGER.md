@@ -1,6 +1,20 @@
 # Ledger — harness concurrency batch
 
-## ✅ BATCH COMPLETE — T1 AT ZERO, 2026-09-17
+## ⚠ REOPENED 2026-09-17 — THE PREMISE WAS WRONG. SEE "R1-RECON" BELOW.
+
+The batch closed at `77820c03` with T1 at zero. It reopened the same day for two reasons:
+
+1. **The user returned all three rulings**, which were never theirs to make — internal
+   test-harness engineering filed as if it needed their sign-off. *"I don't get into the
+   weeds of the test-suites. As my coding agent, I am expecting you to make the best
+   decision … you can't let me gate progress."* All three taken by the driver, `890cb5e5`.
+2. **The user rejected R1's shape before returning it** — *"Why not make it fault-tolerant
+   and find a way for both runs to proceed?"* — and was right. The constraint the whole
+   choice rested on was a filename convention, not a property of the system.
+3. **Recon then refuted the driver's own stated premise.** `results.log` was not the last
+   shared object. It is **1 of 88**.
+
+## Closing state of the first pass — T1 AT ZERO, 2026-09-17
 
 | | |
 |---|---|
@@ -40,6 +54,17 @@ phantom PASS). All four faces closed; two of the four had never been recorded an
 | **V3** | closing solo T1 — **RED (2)** | DONE | `973ddb9f` |
 | **G1** | origin + clear + re-run — **GREEN** | DONE | `0e559104` |
 | **H1** | mint 1480, argue 0609 | DONE | — |
+
+## Second pass — rulings taken, premise re-measured
+
+| id | task | status | commit |
+|---|---|---|---|
+| **R1/R2/R3** | all three rulings taken by the driver | DONE | `890cb5e5` |
+| **R1-recon** | can both runs proceed? what else is shared? | DONE | *(this commit)* |
+| **R2-R3-design** | isolation + C11 delta, read-only design | IN FLIGHT | — |
+| **0060-comment** | the comment that misdirects leak-hunters | IN FLIGHT | — |
+| **ram-figure** | CLAUDE.md's RAM constraint is wrong by 2× | IN FLIGHT | — |
+| **R1-build** | per-pid logs + header/trailer sentinels | BLOCKED on R2-R3-design (shares `run_regression.tcl`) | — |
 
 ## ⚠ H1 RE-SCOPED ITS OWN BRIEF, AND THE IRONY IS EXACT
 
@@ -114,14 +139,54 @@ caught by a crew reading it.**
 
 **Every one was found by re-measuring rather than re-reading.**
 
-## Rulings standing with the user
+## Rulings — ALL THREE TAKEN BY THE DRIVER, none standing with the user
 
-* **⚖ R1** (0990) — **refuse** vs **preserve-and-proceed**. The originally offered
-  "second run waits" was measured to destroy the verdict the lock protects.
-* **⚖ R2** (0663) — prune the three dead `~/.xschem/ase_simulators` entries, or isolate
-  the suite? Recommendation: **isolate**.
-* **⚖ R3** (0609) — should `C11` become a delta? R2's twin. Under T1 it cannot currently
-  catch its own leak.
+Cleared from `owed.sh` on the user's instruction. Reasoning in `DECISIONS.md`.
+
+* **⚖ R1** (0990) → **both runs proceed.** Per-pid verdict files; `results.log` keeps its
+  canonical name tracking the most recent completed run; every verdict gains a header and
+  a trailer so a reader can tell whose answer it is and whether the run finished.
+* **⚖ R2** (0663) → **isolate** the suite from the simulator registry; do not prune.
+* **⚖ R3** (0609) → **`C11` becomes a delta.** Must land with 1480's containment.
+
+**The filter that should have been applied at filing time:** *does this reach a person?*
+UI wording and product behaviour are the user's; harness internals are the driver's. The
+~190 rule debts still on the ledger have never been through that filter — a triage pass is
+proposed, not scheduled.
+
+## ⚠ R1-RECON — THE FOURTEENTH WRONG RECORDED BELIEF, AND IT WAS THE DRIVER'S
+
+`DECISIONS.md` asserted, on the day the decision was taken, that *"the only single-slot
+object left was the name `tests/results.log`"*. **Measured false.** A full T1 writes **88
+fixed-name files** under `tests/`; **83 are verdict inputs**. The lock C1 built protects
+**1 of 88**. The driver inherited that sentence from B1's receipt instead of measuring it —
+the exact failure this batch spent its tail documenting, committed into the decision record.
+
+**B1's fix is real, and re-measured rather than inherited:** two `open_close.tcl` runs
+staggered 5 s produced **0 phantoms, rc 0, 1898 result files each, neither dying** — against
+a pre-fix record of **407/432/757 phantoms with run B dead**. The *cases* are parallel. The
+**driver** is not.
+
+**The collision reproduced one file upstream**, in `<hc>.log`, wrong in **both** directions:
+silently scoring run A's **two real failures as 0** (face 4 again), and inventing a failure
+the passing run did not earn. Also shared: `<tc>.log` ×3, `<dc>.disp.log` ×11,
+`tests/results/.actionlogs`, `~/.xschem/` (**19 T1 suites do not source `scratch.tcl`**), the
+display. Cure: `.<pid>`, B1's own pattern, ~6 lines.
+
+**Two corrections that outlive the batch:**
+
+1. **This box is not ~7.8 GB. `MemTotal` ≈ 15.35 GiB — wrong by 2×** in CLAUDE.md, and
+   inherited into `DECISIONS.md`. CLAUDE.md *reasons* from it (1477's OOM attribution).
+   Crew `ram-figure` is repairing it; the truncation defect itself is real and stays.
+2. **Concurrency does not buy throughput** — 64.4 s concurrent vs **53.7 s back-to-back**,
+   20% *worse*. The case for "both proceed" is that **no crew is ever refused**, never speed.
+
+⚠ **The header sentinel does not survive a kill without a `fconfigure`**, and there is still
+**zero** `fconfigure`/`flush` in `run_regression.tcl`. The trailer survives; the header is the
+half buffering eats — and the header is what says whose answer a file is. It is load-bearing.
+
+⚠ **Row `V1b` of `test_regression_concurrency_1476.tcl:100` encodes the OLD R1** and will red
+on the correct new behaviour. Rekey it in the build, do not delete it.
 
 ## Candidates, recorded and deliberately not scheduled
 

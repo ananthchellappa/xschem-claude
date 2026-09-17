@@ -151,9 +151,12 @@ C1's lock is **demoted to a safety net**, not deleted: it stops nothing that now
 stopping, but the evidence-based stale-lock logic is sound and cheap to keep armed.
 
 ⚠ **A filename was the obvious shared object; it is not proven to be the only one.** Two runs
-also share `~/.xschem/`, the dev display, and this ~8 GB box — and an OOM kill is precisely
+also share `~/.xschem/`, the dev display, and this box's memory — and an OOM kill is precisely
 what produced 1477's truncated log. Those are physics, not convention. Recon task **R1-recon**
 is measuring them; the build must not begin until it reports.
+
+⚠ **IT REPORTED. THE SENTENCE ABOVE THAT SAYS "the only single-slot object left was the name
+`tests/results.log`" IS FALSE — see the next section.**
 
 ### ⚖ R2 → ISOLATE the suite from the simulator registry. Do not prune.
 
@@ -190,3 +193,77 @@ directions at once.
 ⚠ **1480's sweep still requires deciding 0356 first** (`--ignored=matching` versus a `find`-based
 arm). That one is a *repository hygiene policy* affecting what the user's own `git status` shows
 them, so unlike these three it does not obviously belong to the driver. Left open, not filed.
+
+## ⚖ R1 — AMENDED BY RECON, 2026-09-17. THE LOCK PROTECTS 1 OF 88.
+
+**R1's decision stands; its stated PREMISE was wrong, and the error is the driver's own.**
+The section above asserts *"the only single-slot object left was the name `tests/results.log`"*.
+Measured by R1-recon: a full T1 writes **88 fixed-name files** under `tests/`, of which **83 are
+verdict inputs**. `results.log` is one of them. **The lock C1 built protects 1 of 88.**
+
+This is the batch's **fourteenth** wrong recorded belief, and it was written *by the driver,
+into the decision record, on the day the decision was taken* — inherited from B1's receipt
+rather than measured. The batch's own standing rule was available and not applied: take the
+number from the artefact, never from a plausible sentence.
+
+### What was measured, and what it refutes
+
+**B1's fix is real — re-measured, not inherited.** Two `open_close.tcl` runs staggered 5 s, on a
+freshly-verified build:
+
+| | solo | run A | run B |
+|---|---|---|---|
+| rc | 0 | **0** | **0** |
+| wall | 26.85 s | 55.13 s | 59.44 s |
+| phantom `FATAL … exit -1` | 0 | **0** | **0** |
+| result files | 1898 | **1898** | **1898** |
+| died at startup | no | **no** | **no** |
+
+Against PLAN.md's pre-fix record for the identical shape — **407/432/757 phantoms with run B
+dead, rc 1**. The *cases* are genuinely parallel now. It is the **driver** that is not.
+
+**The collision was reproduced one file upstream.** `<hc>.log` (`run_regression.tcl:620`),
+scored with the tree's own `banner_rule.tcl`, gives wrong answers **in both directions**:
+
+* **Silently** — both children exit 0, the ordinary shape — run A's **two real failures counted
+  as 0**. This is face 4 again, in a file nobody had looked at.
+* **Phantom red** — the passing run counts a failure it did not earn.
+
+Also still shared: `<tc>.log` ×3 (where `:571`'s delete can synthesise
+`case produced no log … FAIL` **in the suite whose baseline is ZERO**), `<dc>.disp.log` ×11,
+`tests/results/.actionlogs` (`util.c:385`/`:399` is stat-then-fopen, and with all 10
+`ACTIONLOG_KEEP` slots full every session now takes the **deterministic** `slot = oldest`
+branch), `~/.xschem/` (**19 T1-registered suites do not source `scratch.tcl`**), and the display.
+
+**The cure is the one B1 already proved:** `.<pid>` on the per-case logs. **~6 lines.**
+
+### Two corrections that outlive this batch
+
+1. ⚠ **THIS BOX IS NOT ~8 GB. `MemTotal` is 16091816 kB ≈ 15.35 GiB — roughly double.**
+   CLAUDE.md says "~7.8 GB" and `DECISIONS.md` inherited it as "~8 GB" *in the section above*,
+   which then asked the recon to judge OOM risk against a figure that was wrong by 2×. Measured
+   headroom during the pair: **5282 MB minimum available, 487 MB peak xschem RSS, 31 concurrent
+   processes.** No OOM risk from this shape — measured on `open_close` only, **not** the ngspice
+   or display arms, so the figure is not yet a licence for those.
+2. ⚠ **CONCURRENCY DOES NOT BUY THROUGHPUT.** Both answers arrive at **64.4 s** concurrent
+   against **53.7 s** back-to-back — **20% worse**. The case for "both proceed" is that **no crew
+   is ever refused**, never that it is faster, and every write-up must say so. A reader who
+   believes this is a speed optimisation will draw the wrong conclusion about when to use it.
+
+### Consequences for the build
+
+* **Scope grows from 1 file to the per-case logs**: the `.<pid>` treatment extends to `<hc>.log`,
+  `<tc>.log` ×3 and `<dc>.disp.log` ×11. Small, and exactly B1's pattern.
+* **Cost of the sentinel half:** ~30–40 lines, ~100–150 at this file's comment density. The
+  trailer needs **two counters that do not exist** — `summarize_all` (`:321-351`) returns nothing
+  and five call sites would have to accumulate.
+* ⚠ **The header does NOT survive a kill without a `fconfigure`.** There is still **zero**
+  `fconfigure`/`flush` in `run_regression.tcl`. The trailer survives regardless; the header is
+  the half that buffering eats, and the header is what identifies *whose* answer a file is.
+  **The `fconfigure` is not optional — it is the load-bearing line.**
+* **Readers to update:** `CLAUDE.md` ×11 lines, `crew.js:184-189,504`, `crew_annotate.js`,
+  `crew_opfix.js`, `item_pipeline.js`, `.gitignore:96,118-123`, and
+  `test_regression_concurrency_1476.tcl:100` — row **`V1b` encodes the OLD R1** and must be
+  rekeyed or it will red on the correct new behaviour.
+* **Measured good news:** **no shell script reads `results.log` at all.** `run_suites.sh` and
+  `full_audit.sh` are untouched by this change.
