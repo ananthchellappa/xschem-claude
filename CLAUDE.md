@@ -247,8 +247,17 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   moves the mtime **and** leaves a truncated `results.log` that scores **zero
   counted failures at every prefix length** — verified at 1, 10, 40, 80, 120 and
   170 lines of V2's own 169-line verdict — because all four counted shapes
-  (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`, at `run_regression.tcl:376` — this
-  said `:327` until 2026-09-17, before the driver grew 305 lines) need a
+  (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`, at `run_regression.tcl:387` — this
+  said `:327`, then `:376`, both on 2026-09-17 — **three positions for one
+  sentence in one day.** ⚠ **And the citation is still a line number, which is
+  the defect.** The issue-tracker batch measured this corpus-wide on 40
+  pre-registered random issue files: bare `file:line` rotted **5 of 5**,
+  `file:line` **plus a revision** reproduced **4 of 4**, and **symbolic**
+  citations held **3 of 3**, while backticked `foo()` names across all 1047 issue
+  files are **98.4%** still present. **Coordinates rot; identity holds.** Cite
+  `summarize_all`, which has not moved, rather than the line it currently
+  occupies — as `src/op_annot.tcl` already does on purpose. Verified at
+  `07c8dee3`) need a
   line to **exist**, and
   a short file has fewer lines to match. **Every prefix of a green run is itself a
   green run** to every automated reader. Worse, the verdict channel was never

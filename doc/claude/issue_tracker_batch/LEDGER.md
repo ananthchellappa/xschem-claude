@@ -165,6 +165,48 @@ three times — reproduced by a crew that had just read the warning.*
 **Read-only confirmed by evidence, not assertion:** `diff -rq` against the driver's backup
 is **silent**; the ledger is byte-identical. Nothing cleared, edited or added.
 
+### ⭐ `status.md` — the tracker's own "what is still open" index, and it is the worst of it
+
+Nobody had looked at this. It is the file a person opens **to pick what to work on**.
+
+| measurement | value |
+|---|---|
+| last touched | **2026-08-20** (`ab33cee6`) — **28 days ago** |
+| issue files committed **since** it was last touched | **616** |
+| **issues it actually names** | **26** of 1047 — **2.5% coverage** |
+| of those 26: header now reads **FIXED** | **11** — **42%** |
+| still reads OPEN | 15 |
+| naming a number with no issue file | **0** |
+
+⚠ **These are the SOUND numbers; the driver's first pass published four wrong ones** — see
+error 9. A naive `\b[0-9]{4}\b` found **77** "issue numbers", of which **51 were not issue
+numbers at all**: `1855` is a **pixel width**, `2026` a **year**, `4096` a **byte count**,
+`0521` a sentence saying *"the next one is 0521"*. Extraction now requires the number to be
+**presented as an issue** (`| **NNNN** |` or `issue NNNN`), and self-tests against 0517,
+0519 and 0520 before reporting.
+
+**A developer who opens `status.md` to choose work is handed a list covering 2.5% of the
+tracker, of which 42% is already done.** It is titled *"What is still open — branch `fluid-editing`"*,
+and it has been wrong in both directions for a month.
+
+**This is sub-problem 2 in its most consequential form, and it outranks the seven
+stale-closure headers D0 is verifying.** A stale header on issue 0264 misleads whoever
+opens 0264. A stale *index* misleads **everyone choosing what to open at all** — and it is
+the mechanism by which a defect gets filed five times in seven weeks, because the index
+that would have shown the previous filing does not list it. 616 of the numbers a re-filer
+would need to see are simply absent.
+
+**It also generalises the A1 finding.** A1 measured that 0071's rot is **below the fold**,
+in the child tables an umbrella uses to track its children, where a header checker cannot
+see it. `status.md` is that same defect at corpus scale: **the index is an umbrella over
+everything.** So C1's checker must handle *tables that name issue numbers and assert a
+state*, not just headers — and that single check would cover 0071, `status.md`,
+`status_annotate.md` (712 lines, unexamined) and every future umbrella at once.
+
+⚠ **Nothing here says delete it.** A stale index is a defect; an absent index is worse,
+and this one's 26 genuinely-open entries are real. The finding is that it has no
+maintainer and no checker — which is D3's thesis with a very sharp example.
+
 ### The OTHER half of the user's queue, which E1 did not triage
 
 E1 took the **190 `rule`** debts. Nobody has looked at the **71 `look`** or the **11
@@ -312,7 +354,19 @@ re-reading."* Same table here, same discipline.
 | 7 | *"the user's 190 `rule` debts are largely internal engineering misfiled as theirs — the three cleared on 2026-09-17 were the tip of an iceberg"* | **the driver**, and it was said **to the user**, in the answer that opened this batch | **153 of 190 (81%) are genuinely THEIRS.** E1's triage: THEIRS **153** · MINE **24** · STALE **11** · UNKNOWN **2**. The filter does **not** dissolve the queue. Its problem is **shape, not validity** — 48 of the 153 are *one repeated request* (ratify a batch's new on-screen wording), already batched under ⚖ R9 and then filed one entry at a time over weeks. |
 | 8 | *"`SUPERSEDED` appears in ~15 hits across ~13 files"* | the driver, `PLAN.md` baseline table | **26 hits across 19 files** (A1 re-measured). A1 confirmed 1047 and 742. |
 
-⚠ **Error 7 is the most consequential of the eight, because it is the only one the USER
+| 9 | *"`status.md` names **77** issue numbers (7.4% coverage), **61%** of them already fixed, and **4** name no file"* | **the driver** | **26 issues (2.5%), 42% fixed, 0 orphans.** `\b[0-9]{4}\b` matched **years, pixel widths and byte counts**: `1855` is *"731–1855 px"*, `2026` is a date, `4096` is *"a 4096-byte action-log line"*, `0521` is *"the next one is 0521"*. **51 of the 77 were not issue references.** The finding got **sharper** — the index covers 2.5%, not 7.4% — but three published figures were wrong. |
+
+⚠ **Error 9 is the ninth instance of one single mistake**, and it is worth naming plainly:
+**every driver error tonight was a pattern matched against the wrong namespace.** `-e`
+swallowing its pattern; ngspice and glibc paths scored as rot; SPICE decks scored as rotted
+quotes; a line-oriented grep against a hard-wrapped phrase; decimal numbers scored as SHAs;
+md5 digests scored as git SHAs; a premise requoted from a session summary; and now years
+and pixel widths scored as issue numbers. **This is the same defect as `W12b` and
+`pgrep -af` from the last batch** — *position, or shape, mistaken for identity* — which is
+also the finding this batch just measured about the tracker itself. The corpus and its
+auditor have the same disease.
+
+⚠ **Error 7 is the most consequential of the nine, because it is the only one the USER
 heard.** It was asserted in the answer that persuaded them to take this batch on. The three
 debts cleared that day were real, and generalising from three to 190 is the same move as
 generalising six *selected* bad fixes into a rate — **the error this batch was designed to
