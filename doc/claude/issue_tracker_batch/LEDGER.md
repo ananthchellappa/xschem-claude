@@ -512,6 +512,23 @@ which is the most dangerous place for one, because a crew that obeys has no reas
 doubt. **Both crews refused and said why.** That refusal is the single most valuable
 behaviour in this operating model, and it has now paid out three times.
 
+⚠ **E2's date was verified and is CORRECT — the driver's check was the sloppy one.** E2 said
+the collection *"has existed since 2026-09-13"*. The driver first ran `git log -1 -- <path>`,
+which returns the **newest** commit touching a file rather than the first, and labelled the
+answer *"first committed: 2026-09-16"*. Re-run with `--diff-filter=A`: the ADD commit is
+**`07922d71`, 2026-09-13**, *"the R9 copy review — 291 strings, grouped by where they are
+seen."* **E2 was right; the driver's label was wrong** — caught before it reached a commit
+message, which is the first time tonight a driver error was stopped at the door rather than
+published and withdrawn.
+
+⚠ **And the correction makes error 11 WORSE, not better. `git log -- <path>` counts 35
+commits touching that file**, carrying it from **291 strings to 821** between 2026-09-13
+and 2026-09-16. It was not forgotten in a corner. **It was actively maintained for three
+days, right up to the day before this batch opened, and still never put in front of the
+user** — while `owed.sh` went on accruing one debt per stage for the very strings it
+already held. Non-delivery here was not neglect; it was sustained, diligent work with no
+handover step at the end of it.
+
 ⚠ **Error 11 names the tracker's real disease, and it is not ignorance.** 0229 is the fix
 for citation rot — **written down, never built.** `R9_COPY_REVIEW.md` is the wording
 collection — **built, never delivered.** A defect was filed five times in seven weeks and
