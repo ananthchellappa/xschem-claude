@@ -81,6 +81,30 @@ cannot be refuted by a single green run.
 A2 explicitly records that it did **not** re-verify the plan's 1047/510/742/0 census, so
 its receipt is **not** corroboration of those figures.
 
+### Driver verification of A3 and A4 — the thesis confirmed in one command
+
+The last two receipts the driver had only ever **relayed**. Both exact:
+
+* **A4 on 0663** — the claim that retired driver **error 6**. `/usr/bin/grep -ci geometry`
+  on it returns **0**, and its title is *"a Tcl error in any file sourced late by
+  `xschem.tcl` SEGFAULTS startup."* **There is no geometry guard suite in 0663 and never
+  was.** A4 was right and the driver's brief was wrong.
+* **A4 on 1458 ≡ 1397** — both cite `store_geom` (1 hit and 5), and **1458 names 1397
+  twice** while duplicating it. Cross-reference presence really is not duplicate detection.
+* **A3 on 0818** — it cites **`fadb226d`**, and that revision **resolves**. The one file in
+  the sample that anchored its citations to a tree state is the one whose citations still
+  work.
+* **A3's contrast** — 0945, 1344 and 0896 carry **zero** `file:line` citations each.
+
+⚠ **Those last two lines are the batch's entire finding, reproducible in one command:**
+
+> **The file that names a revision reproduces. The files that name no positions have
+> nothing to lose. The 27-in-40 that name bare positions are the ones that rotted.**
+
+Every receipt in this batch has now been checked against at least one claim, as the ledger
+preamble requires — including E1, which was checked last and had corrected what the driver
+told the user.
+
 ### ⭐ THE AGGREGATE — all 40 pre-registered files, and it re-aims the batch
 
 | verdict | count / 40 | what it means |
