@@ -128,8 +128,19 @@ the batch runs rather than at the end.
 | **E2** | **Collapse the 48 repeated wording ratifications** into one document | 1 ∥ | no | E1 | **in flight** |
 | **D1** | **Apply** — the convention, D0's 7, and A's findings | 1 | no | BC1, D0 | blocked |
 | **E3** | **Collapse the 71 `look` debts** the same way | 1 | no | E2's format | **DONE — 71 → 27 looks, 5 sittings** |
-| **BC2** | **Fix `scope=` round-trip** + spec `open=` counts + §4 | 1 | yes | D1 | **in flight** |
-| **F1** | **Closing gate** — register in T1, CLAUDE.md 84→85, post-change run | driver | yes | all | blocked on BC2 |
+| **BC2** | **Fix `scope=` round-trip** + spec `open=` counts + §4 | 1 | yes | D1 | **DONE** — root-caused it; caught driver error 21 |
+| **BC3** | **Fix the unqualified `.scratch` sweep** (added mid-batch) | 1 | yes | BC2 | **DONE** — and found the *real* cause of the gate red |
+| **F1** | **Closing gate** — register in T1, CLAUDE.md 84→85, post-change run | driver | yes | all | **DONE — GREEN**, `cases=85 blocks=84 counted_failures=0` |
+
+⚠ **BC3 was not in the plan.** It was added after D1's receipt exposed a defect in the
+batch's *own* machinery. Recorded here rather than quietly absorbed: **three of the eleven
+crew tasks (BC2, BC3, and half of D1) existed to repair things this batch built**, which is
+the honest cost of building a checker while measuring a corpus.
+
+⚠ **F1 went RED twice before it went green**, and both are in `LEDGER.md`: once because the
+driver hand-ran a suite while T1 was live, and once because `HEAD` abbreviated to
+`83656487` — eight decimal digits, no hex letter, which the checker's grammar correctly
+refused. **A 2%-per-commit coin flip under a baseline that treats any red as a defect.**
 
 ### A1–A4 — measure the rate
 
