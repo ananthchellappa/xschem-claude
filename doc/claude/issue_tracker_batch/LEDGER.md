@@ -269,6 +269,46 @@ and the gap is exactly where the file lives.**
   non-regression baseline **and a suite for the checker itself**, which is red-first done
   properly.
 
+### ⚠⚠⚠ F1 GATE RUN — RED. 55 counted failures, and the driver caused them
+
+```
+T1-RUN-END pid=2613154 cases=85 blocks=84 counted_failures=55 elapsed=370s
+```
+
+**Against a baseline of ZERO.** Two cases nonzero: **`test_ase_simcaps_0948` — 42** and
+**`test_issue_stamp` — 13**. The registration itself worked: `planned_cases=85`,
+`Start` 85 / `Finish` 85, solo-ness positively established (0 occurrences of *"another
+regression run is live"*), `exit -1` count 0.
+
+**The red is the driver's doing, and the defect is real. Both are true.**
+
+| test | result |
+|---|---|
+| suite solo, `tclsh` arm | **ALL PASS (43 checks)** |
+| suite solo, `./src/xschem --nogui --pipe` arm — **the arm T1 uses** | **ALL PASS (43 checks)** |
+| suite inside T1, while the driver hand-ran a second copy | **12 rows + harness line FAIL** |
+
+**Both arms pass solo, so the arm is not the difference. Concurrency is the only variable
+left**, which settles the diagnosis.
+
+⚠ **The blast radius is 191 suites, not six.** `tests/headless/scratch.tcl` returns
+`<repo>/tests/headless/.scratch` as the **shared** scratch root and **does not pid-qualify**;
+**191 suites `source scratch.tcl`**. `test_ase_simcaps_0948:201-202` does exactly that
+(`set scratch [test_scratch simcaps0948]`). So the unqualified sweep at
+`test_issue_stamp.tcl:589` can delete the live working directory of any of 191 suites —
+and today it deleted `simcaps0948`'s **mid-run**, which is the 42.
+
+⚠ **The user's own configuration is INTACT**, verified at the moment of the red:
+`~/.xschem/ase_simulators` md5 **`13c5cec624b130f598db5779f7b2b8bf`**, 724 bytes,
+mtime 2026-09-14 00:22:03 — unchanged. The simulator-registry rows failed because their
+**scratch** was deleted, not because anything of the user's was touched. (`~/.xschem/geometry`
+did move at 13:44 — that is the already-recorded 1397/1458 defect firing during T1, not new
+damage.)
+
+**Sequenced deliberately: the gate is NOT re-run yet.** Re-running now would certify a file
+already known to be defective. **BC3 fixes the sweep with a real-collision red-first proof;
+the gate runs after.** The `hcases` registration stays uncommitted until it is green.
+
 ### ⚠⚠ F1 — the new suite has the OLD defect: pid-qualified create, unqualified delete
 
 **Found by the driver at the gate, and it is the batch's own machinery carrying the exact
