@@ -17,7 +17,7 @@ after the driver has read the receipt and checked at least one of its claims.
 | **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
 | **E2** | collapse the 48 repeated wording ratifications into one document | **DONE** | **accepted** — corrected D11's premise; caught driver errors 11 and 12 | — |
 | **E3** | collapse the 71 `look` debts the same way | **DONE** | **accepted** — deepens error 11 into the batch's real thesis | — |
-| **BC2** | fix `scope=` round-trip, spec `open=` counts, spec §4 | in flight | — | — |
+| **BC2** | fix `scope=` round-trip, spec `open=` counts, spec §4 | **DONE** | **accepted** — root-caused it, and caught driver error 21 | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
 | **F1** | closing gate: register in T1, CLAUDE.md 84→85, post-change run | blocked on BC2 | — | — |
 
@@ -493,6 +493,54 @@ guess.
 
 **Ledger proved untouched by `diff -rq` four times bracketing the work.**
 
+### BC2 — the writer's vocabulary had drifted from the reader's
+
+**Root cause, and it is a clean one.** `format_stamp` wrote fields by iterating a
+hard-coded list `{claim tree stamped fix open super by}` — **`scope` absent** — while
+`parse_stamp` accepts `scope` and `ok_key` contains it. **The writer's vocabulary had
+drifted from the reader's**, so every round-trip silently deleted the one field keeping
+0216 from being closed wrongly. Fixed to `{claim tree stamped fix open super scope by}`,
+ordered to the spec's own field table.
+
+⚠ **Why nothing caught it — the vacuous-green family, FOURTH sighting in this batch.** The
+round-trip fixture carried only the **required** keys and asked only whether the result
+*parsed*. **A fixture whose input lacks a field cannot see a formatter that drops it.**
+After BC1's `rev_exists`, BC1's row `B1`, and this, the pattern is established enough to
+state as a rule: *a green that never exercised the thing is not evidence about the thing.*
+
+**Red then green, both arms, against 0216's REAL on-disk stamp** rather than a synthetic
+one (at the driver's request):
+
+```
+before   round-trip LOST OR CHANGED a field: scope ase-rerun-path
+         S15b 0/1 · S15c "1 0"/"1 1" · B4 got 0216:scope · D9b 1/0
+         RESULT: 4 FAILED (39 passed)        rc 1
+after    RESULT: ALL PASS (43 checks) · OVERALL: ok   rc 0
+         gate self-test PASSED (17 parser cases) · ISSUE-STAMP: ok (0 problems)
+```
+
+Re-run **a second time after the final comment edits**, on the grounds that *a green which
+does not cover the final bytes is not evidence*. **All ten committed stamps round-trip
+byte-identical** through the fixed formatter — placing `scope` between `super` and `by` is
+what makes that true — so **no stamp needed rewriting**.
+
+**The two counts re-derived, not inherited.** **0442 → `open=1`**: item 1 fixed
+(`_netlisted` asks the deck index, not symbol attributes), item 3 fixed (`_element` uses
+`xschem translate`), item 2 genuinely open (`_force_netlist_env` forces `netlist_type
+spice` — a declared constraint, not a fix). **0650 → `open=5`**: 0654/0655/0659/0660/0661
+all read OPEN in their own headers, only 0658 moved — **and BC2 checked 0658 against the
+tree because it is the one child whose wrongness would make the count too SMALL.** That is
+the right direction to be paranoid in.
+
+**A rule worth keeping, endorsing D1's choice over the driver's query:** `super=` names a
+**successor carrying the remainder**; `scope=` names a **route nothing else carries**.
+0216 has no successor — verified.
+
+**Driver verification** (checker and suite re-run by the driver before anything was
+registered): `self-test PASSED (17 parser cases)`, `ISSUE-STAMP: ok (0 problems)`, rc 0;
+suite `ALL PASS (43 checks)`, `OVERALL: ok`, including row `N3` covering `scope=`.
+`issue_stamp` confirmed **still unregistered** in `run_regression.tcl` (0 hits).
+
 ### ⭐ D1 — the convention applied, and a VACUOUS GREEN caught on the critical path
 
 `checker BEFORE ok (0 problems) rc 0` → `AFTER ok (0 problems) rc 0`. Suite **ALL PASS (40
@@ -894,6 +942,9 @@ in seven weeks. It is the same shape as the last batch's *"0609's containment pi
 cwd to `$REPO`"*, where the driver also reasoned from its own summary rather than the
 document. **A4 checked it and refused it**, which is the behaviour `CREW_BRIEF.md` rule 10
 asks for, and it was contained to one brief only because A4 looked.
+
+| 21 | *"`scope=` appears exactly ONCE in the entire corpus"* — sent to BC2 to size its work | **the driver** | **Three hits across two files.** 0216's stamp, plus **two ngspice PROBE log lines inside 0307** (`PROBE-5 entry: model='dcell' … scope=…`). **The conclusion was right — exactly one is a STAMP, blast radius one file — but the stated measurement grepped prose.** Same family as `pgrep -af` answering four for one run. Verified by the driver: 3 raw hits, 1 stamp. |
+| 22 | spec §8: *"the table below has been corrected to match"* — **with the table not corrected** | **BC2** (self-reported) | Caught only by grepping the rows back out of the artefact. **A document asserting a correction it never made** — this batch's disease with a crew's name on it. Both rows fixed and read back. |
 
 | 20 | *"**54** of the 71 `look` debts were filed on a single day, 2026-09-10"* — used to justify E3's whole framing, and written into its brief | **the driver** | **That is a file MTIME, not a filing date.** 53 of the 71 share the identical mtime `2026-09-10 12:18:38` — **the `repo:` stamping pass**, which CLAUDE.md independently measures complete at 12:40. Real filing dates spread over **14 days**, peaking at **25 on 2026-09-05**; 09-10 holds **6**. Eight days summed and attributed to the last. Two further claims fall with it: it was **three** batches on **two clones**, not one, and the ratio is not E2's (71→27 groups *screens*; 48→16 de-duplicates *one question*). |
 
