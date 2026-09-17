@@ -169,6 +169,58 @@ three times — reproduced by a crew that had just read the warning.*
 **Read-only confirmed by evidence, not assertion:** `diff -rq` against the driver's backup
 is **silent**; the ledger is byte-identical. Nothing cleared, edited or added.
 
+### Pre-D1 tree reference, and `tests/untitled~.sch` is NOT ambient — T1 writes it
+
+Taken at `01cef414`, 2026-09-17 12:54, **before** D1 edits anything. Issue **1480**'s
+complaint is that *nothing sweeps the `untitled*` residue class and neither audit driver
+leaves a log that could attribute it* — so the before-picture has to exist before the
+change, not after.
+
+**And it immediately overturned a recorded belief.** The previous session's closing state
+recorded `tests/untitled~.sch` as *"ambient, pre-existing, not ours."* Measured:
+
+| | |
+|---|---|
+| mtime | **2026-09-17 12:47:30** — **inside** the driver's T1 window (12:45:51 → 12:52:22) |
+| tracked by git | **no** — `git ls-files --error-unmatch` errors |
+| ignored | **yes** — `.gitignore:75` `*~.sch` matches it |
+| in `git status --porcelain` | **never** — which is why it read as ambient |
+
+**T1 wrote it, during this batch's own baseline run.** It is not ambient and it is not
+pre-existing. This is the `untitled` backup leak of issues **0060**, **0609** and **1480**,
+confirmed live — and note *why* it stayed invisible: **it is ignored by git and outside the
+guard suite's watch list at the same time.** `test_no_untitled_litter.tcl:22-28` says its
+scope is deliberately *"a LIST and not 'the repo root is clean'"*, watching `$repo` and
+`$launch_cwd`; a file under `tests/` falls between the two checks. **Two guards, one gap,
+and the gap is exactly where the file lives.**
+
+⚠ **Two things NOT to do, both deliberate.**
+
+1. **Do not touch `.gitignore`.** That `*~.sch` rule is what hides the litter from
+   `git status` — and *what the user's own `git status` shows them* is **issue 0356**,
+   which is **explicitly theirs** and deliberately not taken by this batch or the last one.
+   Changing the rule to make the litter visible would be answering their question for them.
+2. **Do not mint an issue for this.** It is already 0060, 0609 and 1480. CLAUDE.md's own
+   words: *"A sixth document about a defect already documented five times is this project's
+   signature failure, not a fix."* The finding is the **attribution** — recorded here.
+
+**Rest of the reference, for F1 to compare against:**
+
+* **9** per-pid verdict logs in `tests/`, **every pid dead** — left alone. `T1_VERDICT_KEEP`
+  (86400 s) sweeps them, a pid with `/proc` present is never swept, and the failure
+  direction is therefore always *"a leftover survives"*, never *"a live run's answer is
+  deleted"*.
+* **49** `/tmp/xschem_emergencysave_*` dirs — unchanged, and **never to be deleted**; they
+  may belong to live processes.
+* **`~/.xschem/ase_simulators` untouched**, verified by content and not by assertion:
+  md5 `13c5cec624b130f598db5779f7b2b8bf`, 724 B, mtime 2026-09-14 00:22:03 — byte-identical
+  to the value the previous batch recorded. It is the **user's own configuration**, and
+  pruning its dead entries was an explicitly rejected fix.
+* Untracked set otherwise unchanged from the batch's start, plus BC1's three new files
+  (`issue_stamp.tcl`, `issue_stamp_baseline.txt`, `test_issue_stamp.tcl`) — a tool, a
+  non-regression baseline **and a suite for the checker itself**, which is red-first done
+  properly.
+
 ### T1 pre-change baseline — GREEN, at `63a1b41f`
 
 The driver's own run, never delegated (CLAUDE.md: the solo regression run stays with the
