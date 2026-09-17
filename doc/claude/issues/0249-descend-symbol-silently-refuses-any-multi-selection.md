@@ -1,5 +1,7 @@
 # 0249 — descend_symbol refuses any multi-object selection with zero feedback
 
+**STAMP:** `v1 claim=fixed tree=61af3692 stamped=2026-09-17 fix=taken open=0 by=D1`
+
 Status: **OPEN** — the refusal and its four trigger shapes are measured headless (transcript
 below). What is *not* measured: the GUI-only consequences (dead `I` key / dead toolbar button /
 dead context-menu item) and the phantom action-log line, both read from the source only.

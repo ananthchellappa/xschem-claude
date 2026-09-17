@@ -1,5 +1,7 @@
 # 1219 - the sabotage protocol's closing check cannot see a sabotage left in a test file
 
+**STAMP:** `v1 claim=latent tree=61af3692 stamped=2026-09-17 fix=untried open=1 by=D1`
+
 **Branch:** annotate
 **Status:** OPEN - measured, not fixed. Process/harness, not product code.
 **Filed by:** item S6a, write-up pass, 2026-08-31, from three agents' measurements
@@ -56,3 +58,27 @@ should resolve it (`readlink -f`) before opening it for writing.
 The crew's house rules, not `CLAUDE.md` - so this file is the record, and
 whoever maintains the crew brief is the audience. `CLAUDE.md` is untouched: no
 build or test invariant of the repository changed.
+
+---
+
+## Declared assertion (issue-stamp convention, appended 2026-09-17 by D1)
+
+The protocol's closing check, restated in the machine-checkable form of
+`doc/claude/specs/issue_stamp.md` §4 so that nobody has to remember this issue
+exists. `state=broken` records that the predicate is FALSE today; on the day it
+becomes true, `tests/headless/issue_stamp.tcl` flags this file with *"the defect
+appears FIXED and the issue was never closed"*.
+
+```sh assert=absent pat=SABOTAGE path=src state=broken
+grep -rn SABOTAGE src/      # the sabotage protocol says this must be empty
+```
+
+Measured at `61af3692`: **8 hits across 2 files** under `src/`, so the assertion is
+broken exactly as this issue describes, and the protocol's closing grep cannot pass
+on a clean tree.
+
+⚠ This file's *"60 lines across 28 files"* for `tests/` was a count taken on
+2026-08-31; at `61af3692` it is **126 lines across 46 files**. A count is prose and
+not a citation (§3 rule 3), so it is recorded here rather than corrected above —
+the stamp is the file's newest word, and the argument *"a check that is never empty
+is not a check"* holds harder than when it was written.

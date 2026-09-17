@@ -37,26 +37,33 @@ per-edge wrappers. Decision for the spec owner.
 
 ## 3. New issues filed by this audit
 
-| # | Gap | Sev |
-|---|---|---|
-| 0061 | Non-File menubar items (Edit/View/Tools/Symbol/Highlight/Sim/Properties) not logged | HIGH |
-| 0062 | Toolbar + recent-component bar buttons not logged | HIGH |
-| 0063 | Property-edit dialogs (editprop.c) commit silently | HIGH |
-| 0064 | Library Manager mutations (git/create/rename/delete/copy) not logged (FIXED, atom 7) | MED |
-| 0065 | Net-hilight-style editor commit not logged (FIXED, atom 8) | LOW |
-| 0066 | `xschem set` config/display + change-layer/header not logged | MED |
-| 0067 | Raw Tk key/mouse binds bypass registry logger | MED |
-| 0068 | Un-migrated legacy-`switch` keyboard edits not logged | MED |
-| 0069 | Gesture drops recorded as non-replayable `#` markers | MED |
-| 0070 | Command output/results not logged to CIW + file (user requirement) | HIGH |
+Status re-read from each child's own header, 2026-09-17 (`61af3692`). **Re-read them
+rather than trusting this column** — it is a snapshot, and the umbrella is what people
+read to pick work.
+
+| # | Gap | Sev | Status at `61af3692` |
+|---|---|---|---|
+| 0061 | Non-File menubar items (Edit/View/Tools/Symbol/Highlight/Sim/Properties) not logged | HIGH | **OPEN** — largely fixed by successive C-core self-log passes |
+| 0062 | Toolbar + recent-component bar buttons not logged | HIGH | **OPEN** — partially fixed (toolbar EditUndo/EditRedo/Cut/Delete) |
+| 0063 | Property-edit dialogs (editprop.c) commit silently | HIGH | **✅ REPLAYABLE 2026-07-15 (atom 10)** — no longer marker-only |
+| 0064 | Library Manager mutations (git/create/rename/delete/copy) not logged | MED | **FIXED 2026-07-14 (atom 7)** |
+| 0065 | Net-hilight-style editor commit not logged | LOW | **FIXED 2026-07-14 (atom 8); residual CLOSED atom 15 — FULLY CLOSED** |
+| 0066 | `xschem set` config/display + change-layer/header not logged | MED | **RESOLVED 2026-07-02** |
+| 0067 | Raw Tk key/mouse binds bypass registry logger | MED | **RESOLVED 2026-07-02** |
+| 0068 | Un-migrated legacy-`switch` keyboard edits not logged | MED | **FIXED** — sweep deliverable, commit `682e63ac` |
+| 0069 | Gesture drops recorded as non-replayable `#` markers | MED | **OPEN** — paste/merge drop FIXED 2026-07-14 (atom 9) |
+| 0070 | Command output/results not logged to CIW + file (user requirement) | HIGH | **PARTIALLY IMPLEMENTED** |
+
+**Still open: 0061, 0062, 0069, 0070.** Six of the ten are done.
 
 ## 4. Pre-existing related issues (not re-filed)
 
-- **0003** — stdin REPL + TCP server command channels not logged.
-- **0004** — TCP command server has no authentication (security, same channel).
+- **0003** — stdin REPL + TCP server command channels not logged. **CLOSED 2026-07-14
+  (atom 6)** — both channels record with the `ciw_exec` pattern.
+- **0004** — TCP command server has no authentication (security, same channel). **OPEN.**
 - **0005** — replayable click-select / shape control-point need stable object
-  referents (deferred by design).
-- **0055** — Library Manager *locate* logged the bare command (FIXED).
+  referents. **OPEN — DEFERRED by design.**
+- **0055** — Library Manager *locate* logged the bare command. **FIXED.**
 
 ## 4b. Implementation status (2026-07-02)
 
@@ -76,13 +83,20 @@ tested** as a first slice:
   toolbar, key, context menu — closing that slice of 0061/0062/0068.
 - **Output (0070/D1):** CIW-typed and menu-pick results/errors now land in the file
   as `#=`/`#!` comments and in the CIW pane.
-- **Test:** `tests/headless/test_selflog_output.tcl` (11 checks, in `full_audit.sh`).
+- **Test:** `tests/headless/test_selflog_output.tcl` (in `full_audit.sh`; **79 checks at
+  `61af3692`** — it was 11 when this line was written).
 
-**Next mutators to convert** (same one-line `log_action` + record-after-mutation
-pattern): flip/rotate family, `trim_wires`/`break_wires`/`align`, `setprop`/
-property-dialog commits (0063), `change_layer`/`change_elem_order` (0066), symbol
-generators, then the toolbar/menu migration (0061/0062) becomes largely redundant
-because the cores self-log.
+**Next mutators to convert — FIVE OF SIX ARE DONE (re-measured 2026-09-17, `61af3692`).**
+The conversion ran through the `perform_action` boundary: `run_core()` applies the
+effect, `core_log_action()` is the single log site (per-verb arms for the pivot verbs,
+a default `xschem %s` form for the rest). Landed: the **flip/rotate/flipv** family
+(arg-carrying pivot arms, atoms 7-8); **`trim_wires` / `break_wires` / `align`**;
+**`setprop` / property-dialog commits** (0063, atom 10); **`change_layer` /
+`change_elem_order`** (0066); and the **symbol generators** (`make_symbol()` self-logs
+at its core, covering menu, toolbar, script and the inline `a` key).
+**Outstanding: only the toolbar/menu migration (0061/0062)** — and the prediction in the
+original paragraph held, in that the cores self-logging is what made most of it
+redundant.
 
 ## 5. Coverage that already works (for contrast)
 

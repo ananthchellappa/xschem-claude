@@ -264,13 +264,27 @@ check "S20 the repo is derived from the CHECKER's own location, not the caller's
      set got] \
     {1 xschem-claude}
 
-check "B1 the shipped baseline loads and covers every numbered issue file today" \
+## ⚠ THIS ROW USED TO ASSERT THE BASELINE COVERED EVERY NUMBERED FILE, AND IT
+## COULD ONLY STAY GREEN WHILE THE CONVENTION WAS NEVER USED.  Adopting a file is
+## exactly "stamp it, then delete its number from the baseline" -- the baseline's
+## own header says SHRINK THIS FILE, NEVER GROW IT, and BC1's receipt instructs
+## D1 to delete the nine it measured.  So the first adoption reddened the suite
+## that was written to protect the adoption: measured by D1 the moment it stamped
+## the first ten, `got: 1 {0056 0216 0249 0442 0650 0891 0905 1219 1438 1458}`.
+## The row was green only because there were zero stamped files when it was
+## written, which is the vacuous-green family this very suite exists to prevent.
+## The invariant actually meant is COVERAGE, and it is the one that makes "may
+## shrink, never grow" true: every numbered issue file is accounted for by the
+## baseline OR by a stamp of its own, and none falls between the two.
+check "B1 every numbered issue file is covered -- grandfathered in the baseline OR carrying a stamp" \
     [lassign [istamp::load_baseline] okb base ;
-     set missing {} ;
+     set uncovered {} ;
      foreach {num fname} [istamp::issue_files] {
-        if {![dict exists $base $num]} { lappend missing $num }
+        if {[dict exists $base $num]} { continue } ;
+        set text [istamp::read_file [file join $istamp::issues_dir $fname]] ;
+        if {[dict get [istamp::find_stamp $text] n] == 0} { lappend uncovered $num }
      } ;
-     list $okb $missing] \
+     list $okb $uncovered] \
     {1 {}}
 
 check "B2 a corpus with no baseline file REFUSES rather than emitting 1047 false reds" \
@@ -279,6 +293,21 @@ check "B2 a corpus with no baseline file REFUSES rather than emitting 1047 false
      set p [with_corpus $id $bf {istamp::gate}] ;
      list [llength $p] [string match "BASELINE MISSING*" [lindex $p 0]]] \
     {1 1}
+
+## ⚠ THE BASELINE MUST NEVER BE ABLE TO SUPPRESS VALIDATION, and the state this
+## row describes is not hypothetical: it is what a half-finished adoption leaves
+## behind -- the file stamped, its number not yet deleted from the baseline.  If
+## being grandfathered short-circuited the stamped path, a malformed stamp would
+## ride in behind a number nobody had got round to removing, and the grammar
+## could be bypassed simply by not finishing the job.  KNOWN NEGATIVE: the stamp
+## below is bad on the 0442 rule (fix=superseded naming nothing) while 0001 IS
+## listed in the baseline, so a green here would be the bypass, not a pass.
+check "B3 a number still in the baseline does NOT suppress validation of a stamp it carries" \
+    [lassign [mkcorpus baseline_no_suppress [list 0001-half-adopted.md "# 0001 - half adopted
+
+**STAMP:** `v1 claim=fixed tree=$REV stamped=2026-09-17 fix=superseded open=0`"] "0001"] id bf ;
+     problems_matching $id $bf "must name what replaced it"] \
+    1
 
 ## ---------------------------------------------------------------------------
 ## G -- the gate.  RED observed, then GREEN, on each rule.

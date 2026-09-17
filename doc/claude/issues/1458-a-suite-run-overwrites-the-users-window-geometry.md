@@ -1,5 +1,7 @@
 # 1458 — every GUI suite run overwrites the user's `~/.xschem/geometry`, and nothing gates it
 
+**STAMP:** `v1 claim=duplicate tree=61af3692 stamped=2026-09-17 fix=none open=0 super=1397 by=D1`
+
 **Status:** open · **Filed:** 2026-09-13 by the driver of the ASE-L analyses batch
 **Area:** xschem core / test isolation
 **Related:** **1453** (the same family, one file over), 0119 (the gate that exists), 0924, 1397

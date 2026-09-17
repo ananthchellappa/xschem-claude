@@ -1,5 +1,7 @@
 # 0905 — two regression runs at once truncate each other's verdict, and the wreckage reads as a pass
 
+**STAMP:** `v1 claim=fixed tree=61af3692 stamped=2026-09-17 fix=superseded open=2 super=32dff39a by=D1`
+
 **Status:** ✅ **FIXED 2026-09-17** by the harness concurrency batch — `43b40f04`
 (the verdict lock) with `5f7164d4`. See "Closed" at the bottom, issue **1476**, and
 `doc/claude/harness_concurrency_batch/`.

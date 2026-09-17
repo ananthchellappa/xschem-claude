@@ -1,5 +1,7 @@
 # 1438 — `render_deck` spells options without a `cptype`, and three classes of value are silently wrong
 
+**STAMP:** `v1 claim=fixed tree=61af3692 stamped=2026-09-17 fix=taken open=0 super=1439 by=D1`
+
 **Filed by the driver, not fixed.** Found by the Stage 7 task-1 crew (issue **1437**)
 while building the option catalogue, named in its receipt, and deliberately left
 unfixed because the fix belongs to `PLAN.md` **§7d**/**§7e**. Filed under its own number

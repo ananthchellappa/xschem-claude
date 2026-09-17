@@ -1,5 +1,7 @@
 # 0216 — `attach_raw` bypasses the raw history, so the ASE re-run path never appears in the Location dropdown
 
+**STAMP:** `v1 claim=partial tree=61af3692 stamped=2026-09-17 fix=taken open=1 scope=ase-rerun-path by=D1`
+
 Status: **OPEN**, low priority. A **declared limit** of Signal Browser item 13, not a
 regression.
 Found by: Signal Browser batch item 13 (`receipts/13_receipt.md`, declared limit 1), filed

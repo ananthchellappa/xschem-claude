@@ -1,5 +1,7 @@
 # 0442 — op_annot's walk filters three of the netlister's seven drop classes
 
+**STAMP:** `v1 claim=fixed tree=61af3692 stamped=2026-09-17 fix=superseded open=1 super=self by=D1`
+
 STATUS: **OPEN.** Measured on branch `annotate`, step S3b, 2026-08-16.
 **This is the defect that refuted S3b and caused its revert.**
 Successor to 0437 (which fixed three classes); blocks the S3 deliverable.

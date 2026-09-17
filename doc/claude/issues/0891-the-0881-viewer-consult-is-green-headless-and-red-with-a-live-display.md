@@ -1,5 +1,7 @@
 # 0891 — 0881's viewer consult is green headless and red with a live display
 
+**STAMP:** `v1 claim=partial tree=61af3692 stamped=2026-09-17 fix=partial open=1 by=D1`
+
 **Status:** **FIXED** 2026-08-28 (backlog item A12); **ruling debt SETTLED 2026-08-29** on the user's "decide the 23" instruction — see the RULING section at the foot of this file (arm ratified; three follow-up code changes named, not yet done). Verdict: **the fixture was
 at fault, the product was not** — established by measurement, not by assumption,
 see "Which side was wrong" below. Originally measured 2026-08-28 during the

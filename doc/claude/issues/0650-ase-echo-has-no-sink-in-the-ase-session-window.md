@@ -1,5 +1,7 @@
 # 0650 — `ase::echo` has no sink in the ASE session window, so every notice the feature emits is invisible where the user is working
 
+**STAMP:** `v1 claim=partial tree=61af3692 stamped=2026-09-17 fix=taken open=5 super=0655 by=D1`
+
 STATUS: **OPEN — measured 2026-08-23** by the adversary leg of the 0648 crew,
 which flagged it as the reason 0648's fix may be invisible to the very user who
 reported it. Related: 0617, 0633, 0635, 0636, 0648, 0649, **0653**.

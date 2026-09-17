@@ -1,5 +1,7 @@
 # 0056 — Ctrl-N blank window collides with an unsaved `untitled.sch`
 
+**STAMP:** `v1 claim=fixed tree=61af3692 stamped=2026-09-17 fix=taken open=0 by=D1`
+
 ## Summary
 
 In Cadence mode, **Ctrl-N** opens a fresh blank schematic in its own top-level window
