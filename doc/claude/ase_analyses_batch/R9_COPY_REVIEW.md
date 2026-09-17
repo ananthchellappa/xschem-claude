@@ -11,7 +11,7 @@ the crew filed a `rule` debt rather than deciding the wording itself. Those debt
 have been accumulating since stage 2. This document is all of them in one place,
 so they can be read once instead of nineteen times.
 
-**730 strings, from 38 issues, grouped by where the user sees them** — not by
+**755 strings, from 38 issues, grouped by where the user sees them** — not by
 issue number, because the question "is this the right word?" is answered by
 reading the four sentences that appear on the same line of the same dialog, not
 by reading one issue's worth of unrelated surfaces.
@@ -2012,6 +2012,54 @@ needs '<caption>' to be at least <min>
 *Rendered:* the source does not hold this as one literal — it composes it (label plus unit, frame plus adapter clause, a branch variable expanded, or a placeholder shown where the code writes a variable). This is what the user reads; an edit lands on the pieces.
 
 *Note:* ⚠ <field> is the INTERNAL SLOT NAME, not the form label: a user who typed 0 into the field captioned "Report every N points:" is told "needs 'ptssum' to be at least 1". The sibling clauses `missing` and `fill` have the same defect and predate this commit, so fixing this one alone would make the set inconsistent. Clause carries no frame and no trailing period by design.
+
+
+### from ⚖ R9 itself — copy that reached the screen with no handle (minted 2026-09-16)
+
+⚠ **These three are not new copy.** They have been on the user's screen for the whole batch and
+were never written down, so **no ruling has ever covered them** — the gap §A6 hit from one
+direction, §A4 from another and §A11 from a third. The user ruled on **2026-09-16** that the
+already-found cases be given handles so they can be ruled on at all. **Minting a handle changes
+nothing on screen**; it only makes the string addressable.
+
+⚠ **All three are returns of ONE proc, `ase::analysis_gap_msg`, and §A6 named only the FIRST.**
+The other two were never mentioned anywhere in this document.
+
+**R9-731** · caution
+
+```text
+ASE-L does not know a simulator backend called '<nm>'. Registered: <names>
+```
+
+*Where:* Choose Analyses dialog — the status line, when the analysis list is empty because the chosen simulator is not a registered backend. `ase::analysis_gap_msg` via `ase_window.tcl:5109` (`$w.status configure -text`)
+
+*For:* Tells the user why there is nothing to choose, and names the simulators that ARE registered so they can pick one that works.
+
+*Note:* ⚠ **It says `simulator backend` — the exact developer vocabulary §A6 ruled OUT of `R9-077`, `R9-065` and `R9-160`**, all of which now read `this simulator`. §A6's table named three handles and this string was not one of them, so it was **reported rather than tidied** and still carries the word today. ⚠ **Deliberately NOT changed while minting**: giving a string a handle is bookkeeping, and the wording is the user's to rule on. The `<nm>` placeholder is a Tcl variable, not literal text on screen.
+
+**R9-732** · caution
+
+```text
+ASE-L has no adapter for '<nm>' yet, so it cannot list its analyses.
+```
+
+*Where:* Choose Analyses dialog status line — the second gap case: the simulator IS registered, but no adapter has been written for it
+
+*For:* Separates "I have never heard of this simulator" from "I know it, but I cannot drive it yet", which are different problems with different fixes.
+
+*Note:* ⚠ **Never mentioned anywhere in this document before today.** `adapter` is our word for our own architecture, the same objection §A6 raised against `backend` — and unlike `backend` it has never been ruled on.
+
+**R9-733** · caution
+
+```text
+The adapter for '<nm>' lists no analyses, so there is nothing to choose.
+```
+
+*Where:* Choose Analyses dialog status line — the third and last gap case: an adapter exists but declares no analysis types
+
+*For:* Closes the set, so an empty list always says which of the three reasons produced it rather than leaving the user with a blank dialog.
+
+*Note:* ⚠ **Also never mentioned before today.** Same `adapter` vocabulary question as `R9-732`. ⚠ **The three together are the whole of `ase::analysis_gap_msg`** — verified by reading the proc, not by grepping for one of its strings.
 
 
 ---
@@ -4909,6 +4957,330 @@ no `cell`.
 does not name a design cell.
 
 *Note:* See R9-292 — same sentence, same family of six, same question.
+
+---
+
+## Added after Section A — found by a rendering survey, refuted, then adjudicated
+
+*22 strings.*
+
+⚠ **None of these is new copy, and nothing here changed on screen.** Every one was already in
+front of the user and none carried a handle, so **no ruling has ever covered any of them** — there
+was no way to point at them. Three separate rulings hit this gap from three directions (§A6 in
+`ase::analysis_gap_msg`, §A4 in the dc form, §A11 in the options sheet), which is a pattern rather
+than three coincidences. The user ruled on **2026-09-16** that the found cases be written down and
+the rest counted.
+
+**How the count was reached, and why it is worth trusting.** A survey rendered the surfaces rather
+than grepping them — a live widget walk, the composers driven over their full domains, and the
+spellers over theirs — and answered **19**. A second crew told to disbelieve it **refuted that**,
+and an adjudication settled the disagreement at **18**, re-deriving every one from the tree: source
+hit present, **zero** hits in the pre-batch blob, **zero** hits in this document. The three passes
+between them caught four things worth naming:
+
+* **Twelve strings were nearly reported that no user can read**, and **fifteen were nearly omitted
+  that the user does read** — the same detector pointed in opposite directions. The `select` key
+  *greps* as invisible and **prints to the run log**; this document said so in writing at `R9-274`,
+  in text the survey had in its own corpus while it decided otherwise.
+* **The largest apparent finding collapsed to zero**: 53 of 60 option-help strings are ngspice's
+  own words, verbatim, misspelling included.
+* **The provenance gate could not disagree** for a composed string — it answers "batch-added"
+  whatever the truth — which is how three pre-existing strings were nearly minted here.
+* **One arm was grepped instead of rendered, and it is the one whose numbers were wrong.**
+
+⚠ **18 is a floor, not a ceiling.** Two default-closed disclosure folds, three `sp`-gated dialogs
+and every run-time-only surface were not reached. **What is here is sound; what is not here is not
+yet known.** Issue count stays **38** — these arise from a survey, not an issue.
+
+### from the survey — Simulation > Options…, the detail line (2)
+
+**R9-734** · caution
+
+```text
+the simulator entry's Case field
+```
+
+*Where:* Simulation > Options… — detail line under the row list, rendered after the `SET ELSEWHERE:` prefix (`R9-191`) for the option `casemode`
+
+*For:* Tells the user this option is not set here, and names the place it *is* set.
+
+*Note:* ⚠ **Minted 2026-09-16 — on screen the whole batch with no handle.** The `owner` catalogue key has exactly **one** other entry in this document; `clamp`, `caveat` and `defect` had **none at all** until the four citations below, so three of `ase::opt_offer`'s five verdicts were never reviewed.
+
+**R9-735** · caution
+
+```text
+the simulator entry's -n flag
+```
+
+*Where:* Simulation > Options… detail line, `SET ELSEWHERE:` arm for the option `no_spinit`
+
+*For:* Points the user at the simulator entry's command-line flag rather than the sheet.
+
+*Note:* Sibling of `R9-734`; same composer, same prefix. ⚠ **`-n` is a flag spelling with no expansion** — a designer who has not met it has nothing to look up.
+
+### from the survey — Choose Analyses (2)
+
+**R9-736** · caution
+
+```text
+Offered because every build of this simulator has it. Nothing was measured.
+```
+
+*Where:* Choose Analyses — the dialog's status label (`.ase4.chana.status`). **Confirmed rendered on a real widget.**
+
+*For:* Distinguishes an analysis offered on a declared capability from one proved present by measurement, so the user knows which claim they are relying on.
+
+*Note:* ⚠ **Two sentences, the second a bare four words.** *"Nothing was measured"* reads as a warning without saying what the user should do about it, and the §A1 objection applies — this is the kind of clause that carries a caution's job without a caution's frame.
+
+**R9-737** · refusal
+
+```text
+ase: '<sim>' cannot run <type>, so it was not added to the bench.
+```
+
+*Where:* `ase::analysis_commit_refusal` — the commit path, when a chosen analysis is not one the simulator can run
+
+*For:* Says the analysis was dropped rather than silently omitted, and why.
+
+*Note:* ⚠ **NOT the same string as the preflight refusal this document already carries** — the doc's nine `cannot run` mentions are all `ase: the <type> analysis cannot run: <sentence>`, a different frame raised at a different door. **Two refusals for one idea, which is precisely §A7's subject**, and §A7 never saw this one because it had no handle.
+
+### from the survey — the campaign dialog (5)
+
+**R9-738** · label
+
+```text
+Model row
+```
+
+*Where:* Campaign axis editor — label on the axis-source row (`.ase4.campax.f.lindex`). **Confirmed rendered.**
+
+*For:* Names the row that selects which model line a model-parameter sweep walks.
+
+*Note:* ⚠ **Bare two-word caption with no unit and no qualifier**, beside captions that carry both. The §A4 ruling — *"no caption is bare"* — was never applied here because this caption was not in the document.
+
+**R9-739** · label
+
+```text
+Instance parameter
+```
+
+*Where:* Campaign axis editor — value in the axis-kind picker. **Confirmed rendered.**
+
+*For:* Names the axis kind that sweeps a parameter on one instance.
+
+*Note:* Pair with `R9-740`. ⚠ **Picker values, so §A2's case rule governs them** — it was applied to six picker values in this batch and could not reach these two.
+
+**R9-740** · label
+
+```text
+Model parameter
+```
+
+*Where:* Campaign axis editor — value in the axis-kind picker. **Confirmed rendered.**
+
+*For:* Names the axis kind that sweeps a parameter on a model card.
+
+*Note:* See `R9-739`. The two differ by one word and sit adjacent in the same picker.
+
+**R9-741** · caution
+
+```text
+axis '<name>' has no values, so there is nothing to sweep
+```
+
+*Where:* Campaign axis editor — the note line under the editor (`.ase4.campax.note`). **Confirmed rendered.**
+
+*For:* Explains why an axis will produce no points, at the moment it is defined rather than when the campaign runs.
+
+*Note:* ⚠ **A caution with no fix clause.** §A1 and §A5 both produced caution/fix pairs in this batch; this one states the problem and stops.
+
+**R9-742** · caution
+
+```text
+# ASE-L campaign index -- one row per point, run or not
+# a '-' in exit or raw means that point produced nothing
+```
+
+*Where:* `ase::campaign_index_text` — written into the campaign index file on disk, read by the user as English
+
+*For:* Tells a reader of the index file what the rows are and how to read an empty cell.
+
+*Note:* ⚠ **Copy on disk is still copy**, and this document's scope has otherwise been the screen. Two comment lines; the literal `--` and the quoted `'-'` are both the sort of thing §A9 is about. **Whether file headers belong in ⚖ R9 at all is the user's call**, and this entry exists so the question can be asked.
+
+### from the survey — convergence and node highlighting (3)
+
+**R9-743** · caution
+
+```text
+this netlist has no such node
+```
+
+*Where:* `ase::ui::lbl_hilite_absent` — the node-highlighting surface, when a named node is not in the netlist
+
+*For:* Says the node cannot be highlighted because it does not exist, rather than failing silently.
+
+*Note:* ⚠ **A fragment with no frame and no capital** — the caller owns the sentence. Sibling of `R9-744` and `R9-745`, which do carry the `ase:` prefix, **so the family is inconsistent with itself**: exactly §A8's subject, which never saw these three.
+
+**R9-744** · caution
+
+```text
+ase: this session has no run log to read
+```
+
+*Where:* `ase::ui::lbl_hilite_nolog` — the same surface, when no run log exists yet
+
+*For:* Distinguishes "nothing to show" from "nothing failed", which are different answers to the same click.
+
+*Note:* See `R9-743` on the family's inconsistency.
+
+**R9-745** · caution
+
+```text
+ase: the last run reported no node that failed to converge
+```
+
+*Where:* `ase::ui::lbl_hilite_none` — the same surface, when the log exists and is clean
+
+*For:* Confirms the run converged, rather than leaving an empty list the user must interpret.
+
+*Note:* The third of the family. ⚠ **This one is a good sentence** — it says which run, and what was true of it. If the family is made consistent, it is the one to move toward.
+
+### from the survey — the noise-sources table headings (4)
+
+⚠ **This group was the survey's LOWEST-confidence finding and the adjudication made it the
+best-evidenced one** — and one larger. The survey reported three and hedged that `Kind` was
+already handled; `Kind`'s two handles (`R9-384`, `R9-537`) are **verbatim different surfaces**, and
+`ase::ui::lbl_nz_columns` is mentioned **nowhere** in this document. They are not behind an
+unopenable dialog either: `nz_build` grids the frame **inside Choose Analyses, one fold-click
+away** — which is why a widget walk that opens dialogs but does not open folds missed all four.
+
+**R9-746** · label
+
+```text
+On
+```
+
+*Where:* Choose Analyses > the noise section — column heading in the noise-sources table (`ase::ui::lbl_nz_columns`)
+
+*For:* Heads the column whose tick includes a source in the noise analysis.
+
+*Note:* ⚠ **A one-word heading over a tick column.** The noise editor's *form* labels are handled (`R9-657`/`R9-658`/`R9-659`); its *table* headings were not.
+
+**R9-747** · label
+
+```text
+Target
+```
+
+*Where:* Choose Analyses > the noise section — column heading, noise-sources table
+
+*For:* Heads the column naming what each source's noise is measured against.
+
+*Note:* ⚠ **Collides with `Target` elsewhere in the dialog** — the measurement delay form's `Trigger`/`Target` pair, which §A10 qualified precisely because a bare repeated caption is ambiguous. That ruling could not reach this heading.
+
+**R9-748** · label
+
+```text
+Kind
+```
+
+*Where:* Choose Analyses > the noise section — column heading, noise-sources table
+
+*For:* Heads the column naming the type of each noise source.
+
+*Note:* ⚠ **`Kind` IS handled — twice — and neither is this surface.** `R9-384` is the Measurements list and `R9-537` the axis editor. **The survey nearly dropped this string on exactly that resemblance**, which is the argument for handles being per-surface rather than per-word.
+
+**R9-749** · label
+
+```text
+Values
+```
+
+*Where:* Choose Analyses > the noise section — column heading, noise-sources table
+
+*For:* Heads the column holding each source's parameters.
+
+*Note:* Fourth of the four. ⚠ **Plural where its three siblings are singular**, with nothing marking why.
+
+### from the survey — the run log (2)
+
+**R9-750** · caution
+
+```text
+…s and was stopped; the campaign continues with the next point
+```
+
+*Where:* `ase::echo` — the run log, when a campaign point exceeds its shard timeout
+
+*For:* Tells the user a point was killed on time and that the campaign is still going, so a timeout does not read as a crash.
+
+*Note:* ⚠ **Of 185 `ase::echo` sites, this and `R9-751` are the only batch-added unhandled ones** — the rest are handled or pre-existing. The leading `…s` is the tail of a composed duration.
+
+**R9-751** · caution
+
+```text
+ase: campaign <tok> did not start: <err>
+```
+
+*Where:* `ase::echo` at `ase.tcl:22386` — the run log, when `ase::run_deck` throws for a campaign shard
+
+*For:* Reports that a point never launched, and passes the underlying error through.
+
+*Note:* ⚠ **Found by NEITHER the survey nor its verifier** — the survey's `ase::echo` arm was the one it **grepped** rather than rendered, and the short domain hid this frame. Surfaced by the adjudication and re-verified in-tree. ⚠ **`<tok>` is an internal campaign token shown to a user**, which is §A3's subject exactly.
+
+### from ⚖ A11's survey — the option-sheet citations that had no handle (4)
+
+⚠ **These four were found by §A11 and held back deliberately** until it was known whether they were
+four strays or the corner of a class. They are the `clamp`, `caveat` and `defect` verdicts of
+`ase::opt_offer` — **three of its five verdicts, none of which this document covered at all.**
+
+**R9-752** · caution
+
+```text
+niiter.c:38-39 raises every iteration limit below 100 to 100, so the shipped defaults 50 and 10 are already 100
+```
+
+*Where:* Simulation > Options… detail line — the catalogue `clamp` reason shared by `itl1`, `itl2` and `itl4`
+
+*For:* Explains that asking for a lower iteration limit cannot work, because the simulator raises it regardless.
+
+*Note:* ⚠ **The citation is the sentence's grammatical SUBJECT**, not a bracket — so it is one of the ten §A11's narrowing put **outside** the rule's scope on 2026-09-16, and it stays as written. Pinned in place by `test_ase_core` row `LB14`, which reds if an eleventh appears.
+
+**R9-753** · caution
+
+```text
+.options defas sets the DRAIN area: cktsopt.c:111-113 writes TSKdefaultMosAD, the same field the OPT_DEFAD arm three lines above writes
+```
+
+*Where:* Simulation > Options… detail line — the catalogue `defect` reason for `defas`
+
+*For:* Warns that an option named for the *source* area in fact sets the *drain* area, an upstream defect the user would otherwise discover from wrong results.
+
+*Note:* ⚠ **Citation after a colon, mid-sentence** — also outside the narrowed rule. ⚠ **`DRAIN` is shouted and `TSKdefaultMosAD` / `OPT_DEFAD` are C identifiers on a designer's screen**, which is §A6's subject; §A6 could not reach this string because it had no handle.
+
+**R9-754** · caution
+
+```text
+MEASURED on both binaries: .options scale=0.5 does halve a MOS W (@m1[w] 2u -> 1u) while set scale=0.5 inside .control does nothing at all. But two of its read sites are earlier than any .options card -- subckt.c:592 and inp.c:2689 -- so a deck with subcircuits is scaled only in part. To scale uniformly, deliver it before the netlist is read as well
+```
+
+*Where:* Simulation > Options… detail line — the catalogue `caveat` for `scale`
+
+*For:* Warns that `scale` applies only partly to a hierarchical deck, and says what to do instead.
+
+*Note:* ⚠ **Citations as an em-dash aside** — outside the narrowed rule. ⚠ **`MEASURED on both binaries` is lab shorthand shouted at a user**, the same objection `R9-252` carries, and `@m1[w]` is ngspice vector syntax with no explanation. Longest string in this section.
+
+**R9-755** · caution
+
+```text
+the .options card reaches the ONLY live read (INPgetModBin, inpgmod.c:268, at model-binning time) -- MEASURED on both binaries, on a flat m line AND on the sky130 x-line shape: .options wnflag=1 moves the selected bin (@m1[vth] 0.9889 -> 0.5889, i(vd) -1.017mA -> -1.737mA) while a bare .options wnflag, set wnflag=1 in .control and -D wnflag=1 all do nothing. The other two cited read sites are DEAD: inpcom.c:990 reads it into a local inp_get_w_l_x never uses, and inp.c:2828 is inside #ifdef REM_UNUSED, which is defined nowhere in the tree
+```
+
+*Where:* Simulation > Options… detail line — the catalogue `caveat` for `wnflag`
+
+*For:* Records which of three cited read sites actually runs, and that only the `.options` spelling reaches it.
+
+*Note:* ⚠ **Its first citation IS bracketed and mid-sentence, so the narrowed §A11 rule DOES reach this one** — unlike its three siblings above. ⚠ **A survey filter silently swallowed this string as fixture data** and it was recovered only when that filter was repaired — the reason it is worth saying that a guard which cannot disagree has measured nothing. Three shouted words, four C identifiers, two raw measurement pairs.
 
 ---
 
