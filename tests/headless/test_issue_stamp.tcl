@@ -201,6 +201,40 @@ check "S15 the formatter and the parser agree (one writer, one reader)" \
         [dict create claim fixed tree $REV stamped 2026-09-17 fix taken open 0]]] ok] \
     1
 
+## ⚠ RED WHEN WRITTEN, AND S15 ABOVE IS THE REASON IT COULD HIDE.
+## `format_stamp` iterated {claim tree stamped fix open super by}.  `scope` was
+## not in that list, though `parse_stamp` accepts it and `ok_key` contains it --
+## so ANY round-trip through the formatter silently deleted the one field that
+## records a defect closed on one route and live on another.  0216 is fixed for
+## the Location bar and `wviewer::restore` and NOT for the ASE re-run path;
+## 0650's general channel landed while its titular session-window sink did not.
+## Both are stamped with a scope in this tree today.  Dropping it closes a live
+## defect, which is the STALE-OPEN direction -- the one the spec calls dangerous.
+##
+## S15 could not see it, and the reason generalises: ITS FIXTURE CARRIES NO
+## SCOPE, and a round-trip whose input lacks a field cannot detect a formatter
+## that drops it.  Vacuous green, for the third time in this batch (BC1's
+## rev_exists, BC1's row B1, and this), twice inside the machinery built to
+## treat it.  Found by D1 (receipt F2) by reading, not by any row going red.
+check "S15b the formatter EMITS scope= -- it used to drop the field silently" \
+    [string match "*scope=ase-rerun-path*" [istamp::format_stamp \
+        [dict create claim partial tree $REV stamped 2026-09-17 fix taken open 1 \
+                     scope ase-rerun-path by D1]]] \
+    1
+
+## The other direction, and the one that generalises past `scope`: asserted as a
+## whole dict rather than as `ok`, so a key added to the grammar and forgotten in
+## the formatter reddens here instead of evaporating on the next rewrite.
+## Canonicalised, so this asks "did a field go missing?" and not "did anyone
+## reorder the key list?".
+check "S15c a round-trip carrying EVERY optional field loses nothing" \
+    [set full [dict create claim partial tree $REV stamped 2026-09-17 fix taken \
+                           open 1 super 0655 scope ase-rerun-path by D1] ;
+     set got [istamp::parse_stamp [istamp::format_stamp $full]] ;
+     list [dict get $got ok] \
+          [expr {[istamp::dict_canon [dict get $got f]] eq [istamp::dict_canon $full]}]] \
+    {1 1}
+
 ## ⚠ THIS ROW WAS RED WHEN IT WAS WRITTEN, and it is the reason find_stamp is a
 ## regexp and not a `string match`.  In a glob pattern the stamp's own leading
 ## `**` are two WILDCARDS, so `string match {**STAMP:** *}` matches any line that
@@ -286,6 +320,41 @@ check "B1 every numbered issue file is covered -- grandfathered in the baseline 
      } ;
      list $okb $uncovered] \
     {1 {}}
+
+## ⚠ RED WHEN WRITTEN, ON REAL DATA RATHER THAN ON A FIXTURE, AND IT NAMED THE
+## FILE.  `format_stamp` is the WRITER; if it cannot reproduce what is already on
+## disk, then any `restamp` helper, any tidy-up pass, any future tool that reads a
+## stamp and writes it back CORRUPTS the corpus silently.  Measured by the driver
+## at d09ebece: `scope=` occurs exactly ONCE in all 1047 files -- on 0216 -- so
+## the blast radius was one file, and one file is enough, because that one file is
+## the case the field was invented for.  Against the broken formatter this row
+## answered `0216:scope`.
+##
+## Field-wise and canonicalised, NOT byte-identical: this must ask "did a field go
+## missing?", never "did anyone reorder the key list?".  An over-firing row on a
+## 1047-file corpus is worse than no row, because it gets the checker disabled --
+## which is D9, and how a cleanup rots.
+check "B4 every stamp in the real corpus round-trips through the formatter with no field lost" \
+    [set lost {} ;
+     foreach {num fname} [istamp::issue_files] {
+        set fs [istamp::find_stamp [istamp::read_file \
+                    [file join $istamp::issues_dir $fname]]] ;
+        if {[dict get $fs n] != 1} { continue } ;
+        set p [istamp::parse_stamp [dict get $fs line]] ;
+        if {![dict get $p ok]} { continue } ;
+        set f [dict get $p f] ;
+        set back [istamp::parse_stamp [istamp::format_stamp $f]] ;
+        if {![dict get $back ok]} { lappend lost $num:unparseable ; continue } ;
+        if {[istamp::dict_canon [dict get $back f]] ne [istamp::dict_canon $f]} {
+            set miss {} ;
+            foreach k [dict keys $f] {
+                if {![dict exists [dict get $back f] $k]} { lappend miss $k }
+            } ;
+            lappend lost $num:[expr {[llength $miss] ? [join $miss ,] : {value-changed}}]
+        }
+     } ;
+     set lost] \
+    {}
 
 check "B2 a corpus with no baseline file REFUSES rather than emitting 1047 false reds" \
     [lassign [mkcorpus norebase {0001-x.md {# 0001 - x}}] id bf ;

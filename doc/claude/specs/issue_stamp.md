@@ -106,6 +106,27 @@ both would be closed **wrongly** by whoever tidies next — which is the
   sink did not, and 0655 carries the remainder as *"OPEN (deferred out of issue
   0650 deliberately)"*.
 
+#### ⚠ `scope=` and `super=` answer different questions: *is there somewhere else to look?*
+
+The two files above are deliberately **not** stamped the same way, and this is the
+rule that says which is which. It is written down because a field used
+inconsistently for a month gets read as noise and then dropped.
+
+* **`super=` names a successor that CARRIES the remainder.** 0650 deferred its
+  titular session-window sink into **0655** — a file that exists and says so in
+  its own header. A reader who follows a `super=` **arrives somewhere**.
+* **`scope=` names a route this claim does not cover, and which nothing else
+  carries.** 0216's ASE re-run path has no issue of its own: 0216 names no
+  successor, and `src/results.tcl` simply says *"Converting that path is NOT this
+  item."* A reader who meets a `scope=` is being told where **not to trust the
+  claim**.
+
+They are independent rather than alternatives, and a file may carry both when it
+is scoped *and* its remainder is filed. Stamping a deferral as a scope tells a
+reader to distrust a route while hiding the number that would have told them what
+to do about it; stamping a scope restriction as a supersession sends them to a
+file that does not exist.
+
 ### Why three numbers and not one verdict
 
 This is copied deliberately from `T1-RUN-END`, which states `cases=`, `blocks=`
@@ -176,8 +197,15 @@ two would be the both-words defect in miniature, and the checker refuses it.
 4. **Do not mirror another file's status — link to it.** An umbrella issue that
    restates its children's statuses is a hand-maintained mirror, and *"a
    hand-maintained mirror of another module's rules is wrong by construction and
-   had already drifted twice"* — which is issue **0442**'s own header, written
-   about code, and true verbatim of prose. Issue **0071** is the proof: its
+   had already drifted twice"* — which is a comment in **`src/op_annot.tcl`**,
+   above the seven-class truth table, written about code and true verbatim of
+   prose. ⚠ **This rule cited that sentence as "issue 0442's own header" until
+   `BC2` checked it. It is not in 0442 at all** — measured at `d09ebece`,
+   `/usr/bin/grep -c 'hand-maintained mirror'` over 0442 answers **0**, and the
+   only copies in the tree are `src/op_annot.tcl` and this checker's own comment.
+   The point being made was sound; it was quoted from the wrong document, by a
+   spec whose subject is quoting from the wrong document. Found by `D1`
+   (receipt F4). Issue **0071** is the proof: its
    header is correct while its §3 lists 0063 as an unresolved HIGH (0063 reads
    `✅ REPLAYABLE`), its §4 calls 0003 "pre-existing" (0003 reads CLOSED), and
    its "next mutators" list of six is five done.
@@ -210,18 +238,42 @@ in this tracker is an undercount.
 
 ````
 ```tcl fix=superseded
-op_annot::_netlisted {i}   ;# the shape 0442 prescribed, and the tree deleted
+op_annot::_netlisted {i}   ;# the ONE-ARGUMENT symbol-attribute probe 0442
+                           ;# prescribed. The SHAPE is gone; the proc is not.
 ```
 ````
 
 **`fix=` exists because of 0442, the sharpest defect in the sample.** Its
 numbered item 1 was *accurate when written*. The tree then fixed the defect by
-the unnumbered alternative buried at the end of the same section, and the file's
-own header records why the prescribed shape was abandoned. **Pasting item 1 today
-re-introduces what was deliberately deleted.** No status field catches that — the
-status was never wrong. Only *which option was taken* catches it. Note 0442 is
-also why `super=` accepts `self`: what superseded item 1 was not another issue,
-it was a paragraph in the same file.
+the unnumbered alternative buried at the end of the same section — *derive the
+device set FROM `xschem netlist` output* — which that paragraph justifies by
+noting that the hand-written Tcl filter had already drifted twice. **Pasting item
+1 today re-introduces what was deliberately deleted.** No status field catches
+that — the status was never wrong. Only *which option was taken* catches it. Note
+0442 is also why `super=` accepts `self`: what superseded item 1 was not another
+issue, it was a paragraph in the same file.
+
+⚠ **"The tree deleted it" was the wrong word, and the right one is the whole
+point of this field.** This example read *"the shape 0442 prescribed, and the
+tree deleted"*, and the sentence *"the file's own header records why the
+prescribed shape was abandoned"* stood beneath it. Both are wrong, measured at
+`d09ebece`:
+
+* `proc op_annot::_netlisted` is **live** in `src/op_annot.tcl`, with the
+  signature `{i idx {block {}}}`. What the tree deleted is its **shape** — the
+  one-argument probe that mirrored symbol attributes (`cell::format`,
+  `cell::spice_sym_def`, `cell::spice_stop`, `cell::default_schematic`) is gone,
+  and the live body asks the deck index instead.
+* 0442's header records no such thing; it reads `STATUS: **OPEN.**`. What records
+  why is the **unnumbered alternative at the end of its own fix section**, which
+  is exactly why `super=self` is the right stamp for it.
+
+The distinction is not pedantry, it is the reason `fix=superseded` exists: the
+**name survived and the option did not**, which is precisely the case no status
+field can express — and a reader who checks *"the tree deleted `foo`"* against a
+live symbol stops believing the document. A spec about citation rot asserting a
+deletion that did not happen is the defect demonstrating itself. Found by `D1`
+(receipt F4), corrected by `BC2`.
 
 ### `assert=` — a claim about the tree that a machine can settle
 
@@ -355,18 +407,44 @@ exercised.
 | check every `file:line` in `src/` and `tests/` | 937 across 27 `src/` files and 1190 in `tests/`; green-field rot, and reddening it on day one gets the checker disabled. **Report it; do not gate it.** |
 | rewrite the 1047 files into a house style | not achievable by anyone, and it would become the seventh prescribed fix that damaged something |
 
-## 8. Worked examples — proposed, not applied
+## 8. Worked examples — proposed here, and APPLIED by D1
 
-These are what the stamp would say for real files. **No issue file was edited**;
-adopting them is stage `D1`'s call.
+These are what the stamp says for real files. They were written as proposals and
+`D1` adopted every one on 2026-09-17, so the ten files now carry `tree=61af3692
+by=D1` rather than the `tree=8608c7ef` and `by=` values proposed below. The rows
+are kept in their proposed form as the record of what was designed — except for
+two numbers, which were simply **wrong**.
+
+⚠ **Two `open=` counts in this table were wrong, and a count is the one field a
+reader cannot sanity-check by eye.** Re-measured by `D1`, and again independently
+by `BC2`; the applied stamps carry the corrected numbers and the table below has
+been corrected to match.
+
+* **0442 is `open=1`, not `open=0`.** Its "Still open" list has three items and
+  **two of them are fixed**. Item 1 (the four unfiltered classes):
+  `op_annot::_netlisted` no longer mirrors symbol attributes at all — it asks the
+  deck index — and the seven-class truth table is in the file. Item 3 (the
+  `spiceprefix` card prefix): `op_annot::_element` builds the deck identity from
+  `xschem translate {@spiceprefix@name}`, under a comment forbidding `getprop`.
+  Item 2 (the `netlist_type` divergence) stands, now as a **declared
+  constraint** — `op_annot::_force_netlist_env` forces `netlist_type spice`.
+* **0650 is `open=5`, not `open=1`.** Its own closing section names six
+  follow-ups and only **0658** has moved to FIXED; **0654**, **0655**, **0659**,
+  **0660** and **0661** all still read OPEN in their own headers. `open=1` counted
+  the titular half alone and rounded four live follow-ups away.
+
+**That error shape is the argument for `open=` being a count rather than a flag,
+and also its warning label:** a wrong count still parses, still reads plausibly,
+and is believed. Re-derive it from the file's own list when you re-stamp; never
+carry it forward.
 
 | file | proposed stamp | what it fixes about today's header |
 |---|---|---|
-| **0442** | `` `v1 claim=fixed tree=8608c7ef stamped=2026-09-17 fix=superseded open=0 super=self by=A2` `` | says `STATUS: **OPEN.**` while the tree fixed it by 0442's own unnumbered alternative; `fix=superseded super=self` is what stops a reader pasting item 1 |
+| **0442** | `` `v1 claim=fixed tree=8608c7ef stamped=2026-09-17 fix=superseded open=1 super=self by=A2` `` | says `STATUS: **OPEN.**` while the tree fixed it by 0442's own unnumbered alternative; `fix=superseded super=self` is what stops a reader pasting item 1. **`open=1`, corrected from `open=0`** — two of its three "Still open" items are fixed, the `netlist_type` divergence is not |
 | **0891** | `` `v1 claim=partial tree=8608c7ef stamped=2026-09-17 fix=partial open=1 by=A3` `` | says three follow-ups are outstanding; **two landed**, one (drop `test_annot_stale_0684` from `dcases`) genuinely has not |
 | **0905** | `` `v1 claim=fixed tree=8608c7ef stamped=2026-09-17 fix=superseded open=2 super=32dff39a by=A3` `` | closed against a design that lived hours; its §2 records as *deliberately rejected* the shape `32dff39a` shipped |
 | **1219** | `` `v1 claim=latent tree=8608c7ef stamped=2026-09-17 fix=untried open=1 by=A3` `` + an `assert=absent pat=SABOTAGE path=src state=broken` block | its own numbers understate it (60 lines/28 files → **118/44**), and the `assert` block makes the tree close it automatically |
 | **1438** | `` `v1 claim=fixed tree=8608c7ef stamped=2026-09-17 fix=taken open=0 super=1439 by=A4` `` | says *"Filed by the driver, not fixed"*; 1439 fixed it and 1439's header says so |
 | **1458** | `` `v1 claim=duplicate tree=8608c7ef stamped=2026-09-17 fix=none open=0 super=1397 by=A4` `` | duplicates 1397 while citing it in `Related:` |
 | **0216** | `` `v1 claim=partial tree=8608c7ef stamped=2026-09-17 fix=taken open=1 scope=ase-rerun-path by=D0` `` | fixed for the Location bar and `wviewer::restore`, **not** for the ASE re-run path; a binary schema closes it wrongly |
-| **0650** | `` `v1 claim=partial tree=8608c7ef stamped=2026-09-17 fix=taken open=1 super=0655 by=D0` `` | the general channel landed at `5dd68128`; the **titular** session-window sink did not, and 0655 carries the remainder |
+| **0650** | `` `v1 claim=partial tree=8608c7ef stamped=2026-09-17 fix=taken open=5 super=0655 by=D0` `` | the general channel landed at `5dd68128`; the **titular** session-window sink did not, and 0655 carries the remainder. **`open=5`, corrected from `open=1`** — 0655 plus 0654, 0659, 0660, 0661 all still read OPEN; only 0658 moved |

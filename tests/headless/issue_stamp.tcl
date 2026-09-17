@@ -158,6 +158,10 @@ namespace eval istamp {
     ## Timeouts, seconds, for the three things we shell out to.
     variable t_git   30
     variable t_grep  60
+
+    ## How many fixtures the last selftest run exercised.  DERIVED, never
+    ## hand-written -- see selftest_case_names.
+    variable selftest_n 0
 }
 
 ## ⚠ THE PARAMETER IS NOT CALLED `repo`.  `variable repo` inside a proc that
@@ -296,12 +300,42 @@ proc istamp::parse_stamp {line} {
 
 ## Format a field dict back into a stamp line.  Used by `restamp` and by the
 ## fixtures, so the writer and the reader can never drift apart.
+##
+## ⚠ THIS LIST IS THE WRITER'S WHOLE VOCABULARY AND IT MUST NOT DRIFT FROM
+## `ok_key`, WHICH IS THE READER'S.  It shipped without `scope` -- a key
+## `parse_stamp` accepts and `ok_key` contains -- so every round-trip through the
+## formatter SILENTLY DELETED the one field that records a defect closed on ONE
+## route and live on another.  In this corpus that is exactly one file, 0216, and
+## one file is enough: it is the case the field was invented for, and dropping it
+## closes a live defect (the STALE-OPEN direction, the dangerous one).
+##
+## Nothing caught it, because the round-trip fixture carried no scope and asked
+## only whether the result PARSED -- and a fixture whose INPUT lacks a field
+## cannot detect a formatter that drops it.  That is the vacuous-green family,
+## inside the machinery built to treat it, for the second time (after row B1).
+## The selftest now round-trips EVERY field and asserts the whole dict, and suite
+## row B4 round-trips the REAL corpus, so a key added to `ok_key` and forgotten
+## here reddens instead of quietly eating data.
+##
+## Order follows the spec's field table (issue_stamp.md §2).
 proc istamp::format_stamp {f} {
     set out "v1"
-    foreach k {claim tree stamped fix open super by} {
+    foreach k {claim tree stamped fix open super scope by} {
         if {[dict exists $f $k]} { append out " $k=[dict get $f $k]" }
     }
     return "**STAMP:** `$out`"
+}
+
+## Compare two field dicts without caring what order the keys were written in.
+## The round-trip fixture asserts the WHOLE dict, and a plain string compare of
+## two dicts is really a compare of their key ORDER -- which would redden if
+## anyone reordered format_stamp's key list without losing anything at all.
+## Canonicalise, so the fixture answers the question it is actually asking:
+## did any field go missing or change value?
+proc istamp::dict_canon {d} {
+    set out {}
+    foreach k [lsort [dict keys $d]] { lappend out $k [dict get $d $k] }
+    return $out
 }
 
 ## ---------------------------------------------------------------------------
@@ -580,10 +614,18 @@ proc istamp::gate {args} {
     ## --- cross-file coherence, between stamped files only ---
     ##
     ## A hand-maintained mirror of another file's status is wrong by
-    ## construction.  That sentence is not mine: it is issue 0442's own header,
-    ## written about mirroring another MODULE's rules, and it applies verbatim to
-    ## prose.  0071 is the proof -- its child tables restate six children's
-    ## statuses and four of them had drifted.
+    ## construction.  That sentence is not mine: it is a comment in
+    ## src/op_annot.tcl, above the seven-class truth table, written about
+    ## mirroring another MODULE's rules, and it applies verbatim to prose.
+    ## 0071 is the proof -- its child tables restate six children's statuses and
+    ## four of them had drifted.
+    ##
+    ## ⚠ THIS COMMENT SAID "issue 0442's own header" UNTIL BC2 CHECKED IT, and
+    ## the sentence is not in 0442 anywhere: /usr/bin/grep -c over that file
+    ## answers 0 at d09ebece.  A misattributed quote, inside the checker written
+    ## to stop misattributed quotes.  The claim was true and the citation was
+    ## invented -- which is this corpus's dominant defect (ROTTED-CITE, 27 of 40)
+    ## reproducing itself in its own cure.  Found by D1 (receipt F4).
     foreach {num f} $stamped {
         if {![dict exists $f super]} { continue }
         set s [dict get $f super]
@@ -608,7 +650,9 @@ proc istamp::gate {args} {
 ## "found nothing to check".
 
 proc istamp::selftest {} {
+    variable selftest_n
     set bad {}
+    set n 0
     ## Known-GOOD stamps: must parse.
     set good {
         {**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=3`}
@@ -621,6 +665,7 @@ proc istamp::selftest {} {
         set p [parse_stamp $g]
         if {![dict get $p ok]} { lappend bad "GOOD stamp rejected: [dict get $p err] -- $g" }
     }
+    incr n [llength $good]
     ## Known-BAD stamps: each must be REJECTED, and each is a real failure mode.
     set badcases {
         {**STAMP:** `claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=3`}
@@ -648,10 +693,40 @@ proc istamp::selftest {} {
         set p [parse_stamp $line]
         if {[dict get $p ok]} { lappend bad "BAD stamp accepted ($why): $line" }
     }
+    incr n [expr {[llength $badcases] / 2}]
     ## The formatter and the parser must agree.
     set rt [format_stamp [dict create claim open tree d64686a1 stamped 2026-09-17 fix none open 3]]
     set p [parse_stamp $rt]
     if {![dict get $p ok]} { lappend bad "round-trip failed: $rt -- [dict get $p err]" }
+    incr n
+    ## ⚠ AND ONE ROUND-TRIP CARRYING EVERY OPTIONAL FIELD, ASSERTED AS A WHOLE
+    ## DICT RATHER THAN AS `ok`.  The fixture above carries only the five
+    ## REQUIRED keys and asks only whether the result PARSES -- so format_stamp,
+    ## whose key list omitted `scope` entirely, round-tripped GREEN while
+    ## silently deleting the one field that records a defect closed on ONE route
+    ## and live on another.  0216 (fixed for the Location bar and
+    ## wviewer::restore, NOT for the ASE re-run path) and 0650 (general channel
+    ## landed, titular session-window sink did not) both carry a scope today,
+    ## and dropping it closes a live defect: the STALE-OPEN direction, the one
+    ## this design calls the dangerous one.
+    ##
+    ## A round-trip fixture whose INPUT lacks a field cannot detect a formatter
+    ## that drops it.  That is the vacuous-green family arriving for the THIRD
+    ## time in this batch -- BC1's rev_exists, BC1's row B1, and this -- and
+    ## twice now inside the very machinery built to treat it.  Asserting the
+    ## whole dict means a key added to the grammar and forgotten in the
+    ## formatter reddens HERE, not in a corpus six months from now.
+    set full [dict create claim partial tree 61af3692 stamped 2026-09-17 \
+                          fix taken open 1 super 0655 scope ase-rerun-path by D1]
+    set rt2 [format_stamp $full]
+    set p2  [parse_stamp $rt2]
+    if {![dict get $p2 ok]} {
+        lappend bad "round-trip (every field) did not parse: $rt2 -- [dict get $p2 err]"
+    } elseif {[dict_canon [dict get $p2 f]] ne [dict_canon $full]} {
+        lappend bad "round-trip LOST OR CHANGED a field: wrote {[dict_canon $full]}, read back {[dict_canon [dict get $p2 f]]} via $rt2"
+    }
+    incr n
+    set selftest_n $n
     return $bad
 }
 
@@ -753,9 +828,18 @@ proc istamp::main {argv} {
     }
 }
 
+## ⚠ DERIVED FROM THE FIXTURES, NEVER HAND-COUNTED.  This used to return a
+## literal `lrepeat 16 x` with the arithmetic "5 good + 10 bad + 1 round-trip"
+## in a comment beside it -- a hand-maintained mirror of a number that lives
+## somewhere else, which is the defect class this entire batch is about, sitting
+## inside the checker built to treat it.  It would have gone stale the moment
+## anybody added a fixture, and the gate would have gone on printing a confident
+## wrong count.  `selftest` is pure string work with no exec, so re-running it
+## here to take the number from the artefact costs nothing.
 proc istamp::selftest_case_names {} {
-    ## 5 good + 10 bad + 1 round-trip
-    return [lrepeat 16 x]
+    variable selftest_n
+    selftest
+    return [lrepeat $selftest_n x]
 }
 
 if {![info exists ::ISSUE_STAMP_LIB]} {
