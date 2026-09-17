@@ -9,74 +9,66 @@ when the receipt is in `receipts/` and the driver has read it.
 | **A1** | the RED suite | **DONE** | `5114dd8b` | 20 checks, **13 RED / 7 green**, identical across 4 runs | 1476 |
 | **B1** | faces 1–3 | **DONE** | `5f7164d4` | **13 RED → 2 RED**, `2 FAILED (18 passed)` in **10 of 10** runs | 0867, 0990, 0384(part) |
 | **C1** | face 4, the verdict | **DONE** | `43b40f04` | **2 RED → 0**, `ALL PASS (20 checks)` rc 0, **18 of 18** runs | 0955, 0905, 0384(rest) |
-| **V1** | solo T1 verification | **DONE — GREEN** | — | **84 cases** (`Start=84 / Finish=84`), **374.6 s**, **ZERO counted failures**, **rc 0** | — |
+| **V1** | solo T1 verification | **DONE — GREEN** | `d4946b61` | **84 cases**, **374.6 s**, **ZERO counted failures**, **rc 0** | — |
+| **D1** | the written record | **DONE** | — | 1476 minted (249 lines); 5 issues closed; NUMBERING + CLAUDE.md corrected. 7 modified (+354/−31), 2 new | 1476, 0384, 0867, 0955, 0905, 0990 |
 
-## V1's verdict, in full
+## D1's corrections — the brief was short by two, and it matters
 
-**Not a fossil, and the diff is exactly two lines.** `results.log` mtime moved
-`1789624370` → `1789629728`; the md5 changed (`8456b56c…` → `cb8b3911…`) *because
-content changed* — the diff against the pre-batch baseline is the new suite's log name
-and its `Total num fail: 0`, nothing else. Zero by all four counted shapes, and all 83
-`Total num fail:` lines are 0. **83 log lines against 84 cases confirms the "one fewer
-by design" rule.**
+1. **"Three CLAUDE.md corrections" was wrong; there were five.** Fixing 83→84 would
+   have left two *other* sentences in the same bullet false: the fossil parenthetical
+   *"(84, where the tree runs 83)"* would have contradicted the paragraph eleven lines
+   below it, and the CHECK MTIME bullet said *"a clean **82-case** sweep"* — the exact
+   case-count/log-line conflation the bullet above it exists to warn about, and wrong
+   in its own era too. **A number appearing in more than one place is a number that
+   must be changed in more than one place.**
+   D1 also added the observation the driver had not seen: now that the tree really
+   runs 84, **the fossil "84" is indistinguishable from today's correct value**, and
+   only its mtime ever said otherwise. *A plausible value is not a measurement.*
+2. **0867's proposed fix is the same no-op as 0990's.** It proposes
+   `results/.work.[pid]` verbatim — the shape A1 measured at **658** phantoms against
+   660. **Two of the five issues carried a confidently-worded fix that does nothing**,
+   which is a large part of why seven weeks produced no attempt.
+3. **`NUMBERING.md:3334` also contains "exits 0 whatever happens"** — left deliberately
+   in place, because it sits inside issue 1456's record of what *it* measured then.
+   Correcting a historical measurement would be falsifying it. 1476's Related section
+   says so instead.
+4. Re-measured rather than inherited: the case arithmetic independently
+   (bracket-balanced extraction: 3/69/11 at HEAD, 3/68/11 at `5f7164d4`), confirming
+   V1 and refuting the driver's 75; the 1476 mint re-checked today; 1477 checked before
+   advancing the pointer.
+5. **No performance claim appears anywhere.** 374.6 s is labelled UNATTRIBUTED, and
+   netlisting is reported log-against-log as 1488 → 1488 unchanged, with the
+   planned-vs-landed reason given so nobody re-compares 1468.
 
-**The new suite passed INSIDE T1**, not merely standalone — its own case log carries
-`RESULT: ALL PASS (20 checks)` and `OVERALL: ok`. The lock was caught working live
-during the run (owner record `1722617 1789629353 run_regression.tcl`) and released
-after. rc 0 on the ordinary path is **structural**: `exit 2` at `:546` is the only
-`exit` statement in the driver.
+## ⚠ DRIVER DECISION — the residuals get filed (D3)
 
-**Preconditions measured, not assumed.** The `pgrep` hits were another user's idle
-xschem in `/opt/xschem-repo` (**uid 1001, not `analog`**, 25 h idle, 0.0% CPU) plus V1's
-own shell matching its own pattern. Binary current (`make -C src` → `Nothing to be
-done`). Bounded by `timeout 1800` plus a Monitor arming DONE/STALL/DEADLINE.
+D1 found three things this batch does **not** close and explicitly declined to mint a
+number, leaving it to the driver. **Decision: file them.** An unfiled measured defect
+is precisely what this batch exists to be about — and the opposite error, a *fix
+proposal nobody re-measured*, is what cost the last seven weeks. Filing costs minutes;
+rediscovery cost this project three duplicate issue numbers.
 
-**Residue: none — and the check is evidence, not a blind command.** All five residue
-classes are gitignored, so `git status` is *structurally blind* to them. V1 swept with
-`find`/`ls`, then **planted a decoy, confirmed the sweep detected it, and removed it**.
+To be filed by **D3**, as defects, not as fixes:
 
-## ⚠ The hcases disagreement — settled, and BOTH numbers were right
+1. **0905 shape (3) was not implemented** — the `REGRESSION START/END` sentinel. A run
+   **killed mid-write** can still leave a short `results.log` that reads green. The
+   *collision* route is closed; the *interrupted-state* route is not.
+2. **`headless/*.disp.log` names are still not pid-qualified** (0905's second
+   sighting), so a standalone suite on `:99` is enrolled in no lock and **can still
+   race a live T1**.
+3. **0384's fix candidate 2 landed only in part** — the `exit 126` / `127` /
+   `signal 15` → `INFRA:` distinction was not implemented, so "the binary never ran"
+   still reports as an ordinary counted failure.
 
-**C1's 69 is the `hcases` entry count.** The driver's **75** counted *lines* containing
-`"headless/` across **both** `hcases` and `dcases` — 76 entries on 75 lines, because
-line 309 carries two. Settled from the run itself: 69 + 11 + 3 + 1 = **84**, and
-pre-batch 68 + 11 + 3 + 1 = **83**, reproducing CLAUDE.md exactly. **The driver's crude
-greps have now been wrong twice** (16 vs 20 checks; 75 vs 69 entries). Both times a
-crew settled it from the run's own output. Drivers should stop grepping for counts.
+## Owed to the suite (D2)
 
-## ⚠ V1's two corrections to its own brief
-
-1. **The briefed ~418 s did not reproduce: 374.6 s — 35 s FASTER than the 410 s
-   baseline.** V1 did not measure that baseline, it is one run, and load is
-   uncontrolled, so this is recorded as **UNATTRIBUTED**. **Do not write that this
-   batch made T1 faster.**
-2. **The brief's netlisting "~1464–1472" was wrong, and it is a category error rather
-   than a regression.** The log reports `[llength $pathlist]` — *planned* files — and
-   says **1488 before and 1488 after, unchanged**. The tree's **1468** is *landed*
-   files; the 20-file gap is jobs exiting 10, the expected-netlist-error path, which
-   append to `pathlist` without producing a file. `create_save` 10 and `open_close`
-   1898 are likewise identical to baseline.
-
-## ⚠ Scope discovered for the written record
-
-**At least SEVEN rows in the suite carry detail strings that lie on the green path** —
-C1 found one, V1 found the count is higher and calls its own number a lower bound, not
-an audit. The worst is **`D2a`**: an `ok:` row whose detail reads `no MINI-RESULT
-line`, asserting the very absence that would make it red. This is bigger than C1
-scoped it and is dispatched as its own task (**D2**), not folded into the prose work.
-
-## Owed to the written record (task D1)
-
-* **CLAUDE.md, two corrections.** The run is now **84 cases / 83 log lines**, not 83/82
-  — keeping the lesson (count `Start`/`Finish` pairs, never log lines) while fixing the
-  number. And `run_regression.tcl` **no longer "exits 0 whatever happens"**: a refused
-  run exits **2** and writes nothing. Also the "⚠ RUN `run_regression.tcl` SOLO"
-  paragraph, which still says 0990 is unfixed.
-* **Describe the built shape correctly.** Not "it now takes a lock" — that sentence is
-  wrong in the direction that loses data. Refusal by default; waiting opt-in; the
-  waiting path *preserves* the prior verdict as `results.<pid>.log`.
+**At least SEVEN rows carry detail strings that lie on the green path** — V1 calls its
+own count a lower bound, not an audit. Worst is **`D2a`**: an `ok:` row whose detail
+reads `no MINI-RESULT line`, asserting the very absence that would make it red. `V2a`
+(found by C1) hard-codes "the second run announced nothing" on the green path. D2
+audits all 20.
 
 ## Resume point
 
-Next: **D1** (the written record), then **D2** (the lying detail strings), then a final
-solo T1, then companions E1/E2/E3.
+Next: **D2** (the lying detail strings), then **D3** (file the three residuals), then a
+final solo T1, then companions E1/E2/E3.

@@ -82,9 +82,14 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
 - **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
   leading `FATAL` is counted.
   ⚠ **AND `results.log` IS THE ONLY PLACE THE ANSWER IS.** `run_regression.tcl`
-  prints only `Start …` / `Finish …` to stdout and **exits 0 whatever happens**, so
-  grepping its stdout capture for `FAIL` finds nothing on a run with reds in it, and
-  its exit code says nothing at all. Measured 2026-09-13 (issue **1456**): four
+  prints only `Start …` / `Finish …` to stdout, so grepping its stdout capture for
+  `FAIL` finds nothing on a run with reds in it, and **its exit code does not carry
+  the verdict**: a run that completes exits 0 whether every case passed or every one
+  failed. This bullet said "**exits 0 whatever happens**" until 2026-09-17, and that
+  is now false in exactly one place — a run **refused** because another run holds the
+  verdict lock exits **2** and writes nothing (issue **1476** face 4, see the SOLO
+  bullet below). So **rc 2 means nothing ran**, and rc 0 still tells you nothing about
+  what the run found. Measured 2026-09-13 (issue **1456**): four
   consecutive T1 runs were reported as *"rc 0, zero counted failures"* from a grep
   of the stdout capture while `results.log` held **six** counted lines — three suites
   that emit no completion banner, plus a flaky row. Read the file, then name any case
@@ -99,36 +104,78 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   a sweep nobody took. Note how cleanly this defeats the rule above it: you are
   told to ignore the exit code and read the file, and here the nonzero exit is the
   **only** signal that the file is a fossil. Two receipts in the ASE-L batch and
-  one commit message carry a case count obtained this way (84, where the tree runs
-  **83**).
+  one commit message carry a case count obtained this way: **84, at a time when the
+  tree ran 83.** ⚠ Note what that means now the tree really does run 84 — the fossil
+  number was *indistinguishable from today's correct one*, and only its mtime ever
+  said otherwise. A plausible value is not a measurement.
   ⚠ **AND THE CASE COUNT IS NOT THE LOG-LINE COUNT** — a correction to this very
   paragraph, measured 2026-09-15. It said the tree has "82", which was itself wrong
   for the *same* reason the 84 was: 82 is the number of `Total num fail:` lines, and
   `results.log` carries **one fewer than there are cases** by design (the bullet
-  below: `xschemtest.tcl` logs only when it fails). The run is **83 cases** — 68
-  headless, 11 display, 4 top-level, every `Start` matched by a `Finish`, none run
-  twice. **Count `Start`/`Finish` pairs for cases; count log lines only for
-  failures.** Two independent passes reached "82" by conflating them, so this is a
-  trap with a track record, not a one-off slip. **So before counting, confirm the log's MTIME moved off its pre-run value**
+  below: `xschemtest.tcl` logs only when it fails). **Count `Start`/`Finish` pairs
+  for cases; count log lines only for failures.** Two independent passes reached
+  "82" by conflating them, so this is a trap with a track record, not a one-off slip.
+  **The run is 84 cases and 83 log lines** as of 2026-09-17, and the arithmetic is
+  written out here because this paragraph has already been wrong twice in exactly
+  this way — swap the digit and the next reader inherits the conflation again:
+
+  ```
+    69  hcases      (run_regression.tcl:27-93, entries not lines)
+  + 11  dcases      (:309-318, the display arm)
+  +  3  tcases      (:23 — create_save, open_close, netlisting)
+  +  1  xschemtest.tcl
+  = 84  Start/Finish pairs          83 `Total num fail:` lines
+  ```
+
+  It was **68 + 11 + 3 + 1 = 83** until the harness-concurrency batch registered
+  `headless/test_regression_concurrency_1476` in `hcases`. ⚠ **`hcases` entries are
+  not `hcases` lines** and no crude grep can see the difference: `grep -c '"headless/'`
+  answers **75**, because it counts lines, spans `dcases` too, and one line carries
+  two entries. Three separate crude-grep miscounts landed in one batch. Take the
+  number from the run's own `Start`/`Finish` output.
+  **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
   hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for
-  a green run**, so a clean 82-case sweep writes the identical file every time
-  (three consecutive runs, all `8456b56c…`). An unchanged md5 therefore proves
+  a green run**, so a clean sweep writes the identical file every time
+  (three consecutive runs, all `8456b56c…`; that was the 83-case tree, whose log
+  carried 82 lines — ⚠ this bullet said "82-**case** sweep" until 2026-09-17, which
+  is the very conflation the bullet above it exists to warn about, two bullets
+  away). An unchanged md5 therefore proves
   nothing, and reading it as proof of a fossil would condemn every honest green
   run. Only the mtime separates "rewritten identically" from "never rewritten" —
   which is also why the fossil is so dangerous: the stale file it leaves behind is
   a **previous green run**, indistinguishable from a pass by content alone.
-- **⚠ RUN `run_regression.tcl` SOLO.** Two of them at once corrupt each other and
-  the loser reports a `FATAL` that never happened. `open_close.tcl:38` puts its
-  per-job exit-status files in a **fixed** `results/.work` (no pid), and `:108`
-  deletes that directory when the run ends — including out from under a run still
-  reading it. `read_job_status` scores a missing status file as `-1`
-  (`test_utility.tcl:119`), so the victim prints `FATAL: 10` and a nonzero count
-  in the one suite whose baseline is ZERO. **`exit -1` is the tell**: no xschem
-  process writes that; a real crash writes a real code. Both verify passes on
-  item S4c hit this in one session. Filed as **0990**; until it is fixed, a T1
-  number taken while another agent's suite was live is not evidence.
+- **⚠ RUN `run_regression.tcl` SOLO — and as of 2026-09-17 it makes you.** A second
+  run in the same tree is **refused loudly**: it names the pid, script and age of the
+  run holding `tests/results.log.lock`, says in as many words that the `results.log`
+  on disk is not yours, **exits 2 and writes nothing**, so the first run's verdict
+  survives intact. Queueing is opt-in (`T1_LOG_LOCK_WAIT=<secs>`), and the waiting
+  path **preserves** the verdict it queued behind as `results.<pid>.log` before taking
+  the canonical name — because "wait politely, then truncate" was measured to destroy
+  exactly what the lock protects (**0** of the first run's four case blocks survived).
+  A stale lock is broken on **evidence** — the owner pid is gone, or
+  `/proc/<pid>/cmdline` is no longer the script that took it, since a bare `kill -0`
+  answers yes for a *recycled* pid — with `T1_LOG_LOCK_TTL` as a backstop, and the
+  lock **fails open**: one that can be neither taken nor broken lets the run proceed
+  UNLOCKED with a warning. Each case now also works in its own `<case>/results.<pid>`
+  with scratch in `<case>/.work.<pid>`, published back to the canonical
+  `<case>/results` at the end, so two runs no longer wipe each other's *files* either.
+  Fixed by `5f7164d4` and `43b40f04`; issues **0384**, **0867**, **0955**, **0905**,
+  **0990**, **1476**, batch record in `doc/claude/harness_concurrency_batch/`.
+  ⚠ **The history still matters, because it is what a number from the broken era is
+  worth.** Before the fix two runs at once corrupted each other and the loser reported
+  a `FATAL` that never happened: the per-job exit-status files lived under a **shared**
+  `results/` tree that every run wiped on the way in, and `read_job_status` scored a
+  missing status file as `-1`, so the victim printed `FATAL: 10` and a nonzero count in
+  the one suite whose baseline is ZERO. **`exit -1` was the tell**: no xschem process
+  writes that; a real crash writes a real code. Both verify passes on item S4c hit it
+  in one session. The *quiet* variant is the one to fear in an old transcript: the
+  second run could instead **die at startup with no banner and no `Total num fail:`
+  line at all** (1476 face 2), and nothing counts a line that is not there. **So a T1
+  number taken before 2026-09-17 while another agent's suite was live is still not
+  evidence** — nothing recorded whether that run had been contended. A number taken
+  today either held the lock or was refused.
 - **⚠ NO TEST HARNESS BUILDS. `full_audit.sh` runs `$REPO/src/xschem` as it
   finds it** (`full_audit.sh:49`), and so does every standalone suite. So a
   source tree that is correct and a binary that is stale produce a *plausible*

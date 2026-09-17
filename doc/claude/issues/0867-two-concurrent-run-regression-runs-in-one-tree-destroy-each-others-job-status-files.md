@@ -1,6 +1,10 @@
 # 0867 — two concurrent `run_regression.tcl` runs in one tree report 25 phantom FATALs
 
-STATUS: **OPEN — measured 2026-08-27, NOT fixed.** Harness defect, unrelated to
+STATUS: **FIXED 2026-09-17** by the harness concurrency batch — `5f7164d4` and
+`43b40f04`. See "Closed" at the bottom, issue **1476**, and
+`doc/claude/harness_concurrency_batch/`.
+
+~~OPEN — measured 2026-08-27, NOT fixed.~~ Harness defect, unrelated to
 the feature work that found it (item 0864's verification). Filed rather than
 fixed because it touches the shared test runner and belongs in its own change.
 
@@ -68,3 +72,34 @@ pattern `run_parallel_cmds` already uses.
   report ZERO counted failures, and neither `results.log` contains
   `FATAL: ... : exit -1`.
 * The status/tmp paths of a run contain that run's pid.
+
+## Closed — 2026-09-17
+
+Fixed by **`5f7164d4`** (per-run results roots, and a job status you can tell apart)
+with **`43b40f04`** (the verdict lock). Red suite at **`5114dd8b`**, registered and
+verified at **`d4946b61`** — solo T1, **84 cases, ZERO counted failures, rc 0**. The
+two faces that were in no issue file are recorded as **1476**.
+
+**Against this file's acceptance, honestly:**
+
+* *"Two runs started ~30 s apart both report ZERO, and neither `results.log` contains
+  `FATAL: … : exit -1`"* — met, by making the second run **not run at all**. By
+  default it is refused loudly (exit 2, nothing written) so the first run's verdict is
+  intact; with `T1_LOG_LOCK_WAIT` set it queues and both produce complete verdicts,
+  the earlier one preserved as `results.<pid>.log`. The phantom `exit -1` is gone
+  regardless of which arm is taken: **656 phantoms of 1500 jobs → 0, in 10 of 10
+  runs.** A missing status file is now `-1001` and reported as *"NO STATUS FILE …
+  this job's exit code was never written or was deleted by another run in this tree"*,
+  never as `exit -1`.
+* *"The status/tmp paths of a run contain that run's pid"* — met: `<case>/.work.<pid>`.
+
+⚠ **But this file's proposed one-line fix was measured to be a NO-OP, and that is the
+part worth carrying forward.** It proposed
+`set workroot "$testname/results/.work.[pid]"` — pid-scoping the scratch *inside*
+`results/`. Measured on one staggered pair: today's shared path gave **660** phantoms,
+this file's shape gave **658**, and only moving the workroot **out** of `results/`
+(`"$testname/.work.[pid]"`) gave **0**. The shared object was never `.work`; it was
+`$testname/results` itself, which every run wiped on the way in. A fix taken from this
+file as written, verified by inspection, would have shipped and changed nothing. It is
+the same lesson as **0990**'s refuted "a row would be expensive": an unmeasured
+sentence in an issue file is not a finding.

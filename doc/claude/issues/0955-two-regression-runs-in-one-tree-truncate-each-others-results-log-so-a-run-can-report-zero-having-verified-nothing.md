@@ -1,8 +1,13 @@
 # 0955 — two regression runs in one tree truncate each other's `results.log`, so a run can report ZERO having verified nothing
 
-**STATUS: OPEN — measured 2026-08-30 by 0948's verification pass. A harness
+**STATUS: FIXED 2026-09-17** by the harness concurrency batch — `43b40f04` (the
+verdict lock) with `5f7164d4`. See "Closed" at the bottom, issue **1476**, and
+`doc/claude/harness_concurrency_batch/`.
+
+~~**OPEN — measured 2026-08-30 by 0948's verification pass.**~~ **A harness
 defect, unrelated to the feature work that found it. Sibling of issue 0867,
 which is the same collision in a different file and in the opposite direction.**
+Both were fixed by the same batch, which is what this file recommended.
 
 ## Why this one is the dangerous direction
 
@@ -62,3 +67,38 @@ pid scope on `open_close`'s work root. Either
 * No run can end with a 0-byte log and a zero verdict.
 * Fixing this together with 0867 is the sensible shape: same cause, same file
   family, one change.
+
+## Closed — 2026-09-17
+
+Fixed by **`43b40f04`** (the verdict lock) with **`5f7164d4`** (per-run results
+roots and a job status you can tell apart). Red suite at **`5114dd8b`**, registered
+and verified at **`d4946b61`** — solo T1, **84 cases, ZERO counted failures, rc 0**.
+The two faces that were in no issue file are **1476**. Batch record:
+`doc/claude/harness_concurrency_batch/`.
+
+**This file's closing recommendation was followed exactly**: it and 0867 were fixed
+together, as one change, because they are one cause. So were 0384, 0990 and 0905.
+
+**Against this file's acceptance, honestly:**
+
+* *"Either both report their own complete results, or the second one refuses and says
+  why"* — **met, both ways, and the choice is the operator's.** By default the second
+  run refuses: it exits **2**, writes nothing, and names the holding pid, script and
+  age. With `T1_LOG_LOCK_WAIT=<secs>` it queues instead, and the verdict it queued
+  behind is **preserved** as `results.<pid>.log` before the canonical name is taken —
+  so on that arm both runs' complete results survive. ⚠ Note that this file's second
+  option, *"scope the log per run with a final copy to `results.log`"*, was considered
+  and rejected (ruling R1): the second finisher's rename still overwrites the first's
+  verdict, so one answer is still lost. Its own preferred reading — *"take a lock …
+  which is arguably better, because two concurrent runs in one tree are never really
+  independent measurements anyway"* — is what shipped, and the measurement supports
+  it: the lock keeps **both** answers.
+* *"No run can end with a 0-byte log and a zero verdict"* — ⚠ **met only for this
+  cause.** A second run can no longer truncate a live run's log. But nothing yet stops
+  a run *killed mid-write* (OOM, or issue 1403's 900 s per-case timeout) from leaving
+  a short or empty file, because 0905's suggestion (3) — a `REGRESSION START/END`
+  sentinel that `banner_rule.tcl` checks — was **not implemented**. The tell this file
+  gives remains the reader's guard and is still correct: *a 0-byte `results.log` whose
+  mtime is the run's start, not its end.* CLAUDE.md's rule — confirm the mtime moved,
+  count `Start`/`Finish` pairs, treat an empty log after a run as a death — is
+  unchanged and still load-bearing.

@@ -1620,7 +1620,13 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   same `:99` display (issue **0990**'s situation). Instrumented margin: the
   dialog appears 3–6 ms after the invoke, max 19 ms over 88 runs, against a
   100 ms timer. The deadman worked — it false-redded, it did not hang. A TEST
-  defect; the fix is to poll, not to widen the delay. **FILED, NOT FIXED.**
+  defect; the fix is to poll, not to widen the delay. **FIXED** 2026-09-05 by item
+  **P3** of the RDW repair batch: the three rows now POLL for the dialog instead of
+  betting on a fixed delay, and rows **SD5**, **SD6** and **SD7** were added, each of
+  which reds under the old driver. ⚠ *This bullet read "FILED, NOT FIXED" until
+  2026-09-17, twelve days after `1332-*.md` line 3 was changed to `Status: FIXED`.
+  A summary line does not update itself when the file it summarises does — when you
+  fix an issue, edit **both**, in the same commit.*
 
 * **1333** — **the blanket operating-point dump shipped with no caller.**
   `op_annot::opdump_read` was defined, tested at 33 green checks and invoked by
@@ -3460,7 +3466,34 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   BUILT**; `PLAN.md` §14 is retained as the design that was not implemented. Revisit when a
   **released** ngspice contains `668329ca3`. OPEN.
 
-**The next free number is 1476.**
+~~**The next free number is 1476.**~~ superseded: **1476** is filed, below.
+
+- **1476** — **the second regression run vanishes at startup, and the cleanup loses result
+  files silently.** The two faces of the concurrent-`run_regression.tcl` collision that seven
+  weeks and five issue numbers (0384, 0867, 0990, 0955, 0905) never recorded. **Face 2:** the
+  startup wipe `file delete -force $testname/results` is unguarded and its target is shared, so
+  when the other run is creating files inside that tree mid-walk it **raises** — `error deleting
+  "open_close/results": file already exists` — and the case dies on the spot with **rc 1, no
+  banner and no `Total num fail:` line at all** (measured: the second run died this way in **9 of
+  9** staggered pairs). That is *worse* than the phantom FATAL it travels with, because all four
+  of `run_regression.tcl`'s counted shapes need a line to **exist**: a run that screams gets
+  counted, a run that vanishes does not, and the verdict file is merely one block shorter than it
+  should be — which is what a clean run looks like. **Face 3:** `cleanup_debug_files` wrapped its
+  `xargs … awk` in a bare `catch` with no branch and no return value, and gawk's *cannot open
+  file* is **fatal**, so one missing path aborts the entire `-n 64` batch and leaves up to 63
+  **present** files un-normalised beside it. ⚠ **Needs no concurrency at all** — reproduced
+  race-free in two awk spawns. **FIXED** 2026-09-17 by the harness concurrency batch: `5f7164d4`
+  (per-run results roots `<case>/results.<pid>`, scratch out of `results/`, `publish_results`
+  restoring the canonical name, `read_job_status` distinguishing missing `-1001` from garbled
+  `-1002` from a real exit, `cleanup_debug_file.awk` mapping the per-run token back to canonical)
+  and `43b40f04` (the verdict lock: **refusal by default**, waiting opt-in via
+  `T1_LOG_LOCK_WAIT`, and the waiting path **preserving** the prior verdict as
+  `results.<pid>.log` — "wait politely then truncate" was measured to lose **0 of 4** case
+  blocks). Red suite first at `5114dd8b` (20 checks, 13 red); registered in `hcases` and verified
+  at `d4946b61` — solo T1, **84 cases, ZERO counted failures, rc 0**. Closes 0384, 0867, 0990,
+  0955 and 0905 with it. Batch record `doc/claude/harness_concurrency_batch/`. FIXED.
+
+**The next free number is 1477.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

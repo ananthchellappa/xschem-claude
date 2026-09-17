@@ -1,6 +1,9 @@
 # 0384 — `run_regression.tcl` has no lock, so two concurrent runs forge phantom FATALs
 
-Status: OPEN (measured, not fixed)
+Status: **FIXED** 2026-09-17 by the harness concurrency batch — `5f7164d4` and
+`43b40f04`. See "Closed" at the bottom of this file, issue **1476** for the two
+faces that were in no issue file, and `doc/claude/harness_concurrency_batch/`.
+~~OPEN (measured, not fixed)~~
 Found by: D6 Verify-A (tier diff), 2026-08-10
 Class: harness / test infrastructure
 Severity: high for automated crews — it manufactures failure lines that read exactly
@@ -120,3 +123,44 @@ diagnosable in seconds.
   one exit code over, and additionally self-inflicted by the harness.
 - Not related to 0380 (`test_lib_sweep` derives the repo root from the cwd),
   though both bite when more than one runner shares a checkout.
+
+## Closed — 2026-09-17
+
+Fixed by the harness concurrency batch: **`5f7164d4`** (per-run results roots and a
+job status you can tell apart) and **`43b40f04`** (the verdict lock). The red suite
+landed first at **`5114dd8b`** (`tests/headless/test_regression_concurrency_1476.tcl`,
+20 checks, 13 red on the then-current tree) and was registered in T1 and verified at
+**`d4946b61`** — solo T1, **84 cases, ZERO counted failures, rc 0**. Two further faces
+of the same collision, in no issue file at all, are recorded as **1476**. Batch
+record: `doc/claude/harness_concurrency_batch/`.
+
+**This file listed three fix candidates. Two landed; the third landed only in part,
+and the part it did not cover is still open as written.**
+
+1. **Advisory lock — landed, in a stronger form than proposed.** This file suggested
+   the second run "either blocks or exits". Blocking alone was *measured to be the
+   data-losing option*: a run that queues politely and then opens the verdict mode `w`
+   leaves `results.log` holding **0** of the first run's case blocks. What shipped is
+   refusal by default (exit **2**, nothing written), waiting opt-in via
+   `T1_LOG_LOCK_WAIT`, and the waiting path preserving the prior verdict as
+   `results.<pid>.log` first. The lock file is `tests/results.log.lock`, taken with
+   `open … {WRONLY CREAT EXCL}`, broken only on evidence that the owner is gone.
+2. **"Distinguish *never ran* from *ran and differed*" — landed only for the
+   status-file half.** `read_job_status` now answers `-1001` for a missing status file
+   and `-1002` for a garbled one, and `job_status_reason` gives each its own sentence
+   naming the likely cause, while a real exit code is still reported exactly as before
+   (`exit 139`). ⚠ **The `exit 126` / `exit 127` / `signal 15` distinction this file
+   actually asked for — an `INFRA:` line separate from `FATAL:` — was NOT
+   implemented.** Those still fold into the same counted `FATAL` shape. The diagnosis
+   recipe above therefore stands unchanged and is still the way to recognise them.
+3. **Per-run result roots — landed, without the cost this file feared.** Each case
+   works in `<case>/results.<pid>` with scratch in `<case>/.work.<pid>`, and
+   `publish_results` restores the canonical `<case>/results` name once the verdict is
+   computed. So gold promotion reads the same path it always did, and the "largest
+   blast radius" objection did not materialise. `results.log` itself keeps its
+   canonical name (ruling R1); per-run naming for the verdict was considered and
+   rejected, because `crew.js`, CLAUDE.md and the user all name that exact file.
+
+**The concurrent-relink source of the same `exit 126` signature is untouched** and
+remains exactly as described above — that one is not a harness collision and the
+batch did not address it.

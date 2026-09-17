@@ -1,6 +1,10 @@
 # 0905 — two regression runs at once truncate each other's verdict, and the wreckage reads as a pass
 
-**Status:** 🔴 **OPEN — filed, not fixed.** A **fail-open** harness defect: the
+**Status:** ✅ **FIXED 2026-09-17** by the harness concurrency batch — `43b40f04`
+(the verdict lock) with `5f7164d4`. See "Closed" at the bottom, issue **1476**, and
+`doc/claude/harness_concurrency_batch/`.
+
+~~🔴 **OPEN — filed, not fixed.**~~ A **fail-open** harness defect: the
 destroyed evidence is indistinguishable, to every reader in the tree and to a
 human, from a clean run.
 
@@ -136,3 +140,54 @@ truncating. A run that overlaps another agent's suite produces numbers that are
 silently not its own — the same class of lie as a `cp -p` restore whose preserved
 mtime makes `make` a no-op. Check the box is quiet first; `ps -ef | grep -E
 "xschem|run_regression"` returning nothing is the cheap version.
+
+## Closed — 2026-09-17
+
+Fixed by **`43b40f04`** (the verdict lock) with **`5f7164d4`** (per-run results
+roots). Red suite at **`5114dd8b`**; registered and verified at **`d4946b61`** —
+solo T1, **84 cases, ZERO counted failures, rc 0**. The two faces that were in no
+issue file are **1476**. Batch record: `doc/claude/harness_concurrency_batch/`.
+
+**Against this file's three proposed shapes:**
+
+1. **An exclusive lock — landed, and it is what shipped.** `tests/results.log.lock`,
+   taken with `open … {WRONLY CREAT EXCL}` (⚠ **not** `file mkdir`, which in Tcl
+   *succeeds silently* on an existing directory and would hand the lock to both runs
+   while reading as correct in review). The second run refuses loudly and **exits 2
+   writing nothing**, naming the holder's pid, script and age, and saying in as many
+   words that *"the `results.log` on disk is NOT YOURS"* — because a silent refusal
+   is just another way to lose a verdict. Stale locks are broken on evidence (owner
+   pid gone, or `/proc/<pid>/cmdline` no longer the script that took it, since a bare
+   `kill -0` answers yes for a recycled pid), with `T1_LOG_LOCK_TTL` as a backstop.
+   ⚠ This file said the second run should "refuse **rather than starting**"; note
+   that the *other* obvious reading — let it wait — was measured to be the
+   **data-losing** option. A run that queues politely and then opens mode `w` leaves
+   `results.log` holding **0** of the first run's four case blocks. Waiting is
+   therefore opt-in (`T1_LOG_LOCK_WAIT`) and **preserves** the prior verdict as
+   `results.<pid>.log` before taking the canonical name.
+2. **A run-unique log with `results.log` written at the end — considered and
+   deliberately NOT taken** (ruling R1, `doc/claude/harness_concurrency_batch/DECISIONS.md`).
+   It costs the canonical filename that `doc/claude/ledger/crew.js`, CLAUDE.md's own
+   reading instructions and the user all name explicitly, and the second finisher's
+   rename still overwrites the first's verdict — one run's answer is still lost, just
+   lost *cleanly*. The lock keeps **both** answers, which is the one thing the rename
+   shape cannot do. The option is costed in DECISIONS.md if it is ever reopened.
+3. ⚠ **"Never let an empty file read as a pass" — NOT IMPLEMENTED.** There is still
+   no `REGRESSION START/END` sentinel and `banner_rule.tcl` is unchanged, so a run
+   killed mid-write (OOM on this ~7.8 GB box, or issue 1403's 900 s per-case timeout)
+   can still leave a short file that reads as green. What closed is the *collision*
+   route into that state, not the state itself. **CLAUDE.md's rules remain the
+   reader's only guard**: confirm the log's mtime moved off its pre-run value, count
+   `Start`/`Finish` pairs rather than log lines, and treat an empty log after a run as
+   a death, never as a zero. This file's own argument that (3) is worth doing
+   alongside (1) still stands, unaddressed.
+
+⚠ **The second sighting's `.disp.log` mechanism is only partly closed, and is worth
+knowing before anyone cites this issue as done.** Two `run_regression.tcl` runs can no
+longer overlap by default, which removes the case measured here. But the per-suite
+`headless/*.disp.log` names are **still not pid-qualified**, and the lock covers
+`run_regression.tcl` only — a standalone suite run on `:99` (a bare `./src/xschem
+--script`, a `devdisplay.sh exec`, another clone's mutation loop) is not enrolled in
+it and can still race those files against a live T1. That is exactly the
+configuration this sighting recorded. Not measured by the batch; flagged here rather
+than left implicit, and worth its own number if anyone hits it again.
