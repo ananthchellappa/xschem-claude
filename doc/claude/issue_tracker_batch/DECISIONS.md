@@ -110,6 +110,42 @@ measured** — the box is 15.35 GiB and `dmesg` carries zero OOM kills.
 
 ---
 
+## D13 — The checker DOES join T1, but only after D1 lands
+
+**Decision.** BC1 deliberately left `issue_stamp.tcl` unregistered in T1's `hcases` and
+flagged it as *"one line for you if you want it."* **The driver wants it.** It is registered
+by the driver, after D1 finishes, never before.
+
+**Why register, against BC1's leaning.** BC1's reasoning for abstaining was sound on its own
+terms — `full_audit.sh:430` discovers `test_*.tcl` by `ls`, so the checker joins the audit
+merely by existing, and registering moves the case count **84 → 85** and forces an edit to
+CLAUDE.md's arithmetic block. But `full_audit.sh` **is not the routine gate**; T1 is. A
+checker that only a deliberate audit runs is a checker that can be skipped indefinitely —
+and **D3's entire thesis is that a one-time cleanup against a corpus with no enforcement
+regresses to the mean.** This project has the receipts: 0689 filed four times, 0690 filed
+four times, eight files, nobody fixing. An unenforced convention becomes the eleventh.
+
+**Why the driver and not a crew.** BC1 was right that *a crew is the wrong author for that
+edit*. CLAUDE.md's `69 + 11 + 3 + 1 = 84` block is **the most error-prone paragraph in the
+file** — it records having been wrong **three times**, and the third time was **the
+correction itself**, which reached `85` by doing arithmetic on a sentence instead of
+running `wc -l` once. Editing it to 85 for real, while that paragraph warns against exactly
+this, needs whoever holds the commit.
+
+**Why after D1, not now.** Registering mid-repair would put a checker into T1 while D1 is
+part-way through stamping nine files. A malformed intermediate stamp would redden T1 — and
+**T1's baseline is ZERO, where a standing red is a defect, not furniture.** The first T1 run
+that includes this checker must be one where it is green on a finished corpus. F1 runs that.
+
+⚠ **Note the shape of the case-count change, because it is a trap this file has already
+sprung.** 84 → 85 alters `hcases` **entries** (69 → 70), the `Start`/`Finish` pair count,
+and `T1-RUN-END`'s `cases=`. It does **not** alter the `Total num fail:` line count the same
+way, and `wc -l` on a green verdict moves by its own arithmetic. **Take every number from
+the artefact after the change — including `wc -l` — and never by adding one to a
+remembered figure.**
+
+---
+
 ## D12 — D0 is pipelined ahead of D1, and E3 is deliberately held behind E2
 
 **Decision.** Two scheduling calls, opposite in direction, recorded because a driver that
