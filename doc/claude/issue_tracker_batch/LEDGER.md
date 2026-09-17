@@ -269,6 +269,31 @@ and the gap is exactly where the file lives.**
   non-regression baseline **and a suite for the checker itself**, which is red-first done
   properly.
 
+### ⭐ The thesis confirmed a second time — by this batch's own commit, in the same six citations
+
+CLAUDE.md records six citations that **rotted by +15** on 2026-09-17, when a crew's
+`+22/−7` edit landed above them: the display arm's `Start`/`continue`/`Finish` plus the
+`tcases`/`hcases`/`xschemtest` `Finish` lines. **They have now rotted again — by +1, caused
+by this batch's own one-line `hcases` registration:**
+
+| site | CLAUDE.md said | measured now |
+|---|---|---|
+| display-arm `Start` | `:841` | **842** |
+| display-arm `continue` | `:856` | **857** |
+| display-arm `Finish` | `:887` | **888** |
+| `tcases` `Finish` | `:751` | **752** |
+| `hcases` `Finish` | `:807` | **808** |
+| `xschemtest` `Finish` | `:910` | **911** |
+
+**Six for six, from a two-line diff.** The batch measured bare `file:line` citations rotting
+**5 of 5** while symbolic ones held **3 of 3**; here is the sixth through eleventh instance,
+produced by the batch itself while writing the correction. **Fixed by citing the loop rather
+than the line** — `foreach dc $dcases`, not `:842`.
+
+⚠ **And note which citation did NOT rot**: `T1-RUN-END`'s `cases=`. Nothing about it moves
+when a line is inserted, because it names a *thing* rather than a *place*. That is the whole
+convention in one comparison.
+
 ### ✅ F1 GATE — GREEN, at `5bcf003b`. Registered, and the baseline is still ZERO
 
 ```

@@ -238,8 +238,10 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   2026-09-17 by the harness-concurrency batch; filed as issue **1481**, and in no
   issue file before that. The display arm's NODISPLAY path writes its block and
   `continue`s at `run_regression.tcl:856` — **before** the `puts "Finish …"` at
-  `:887` — so a run on a box where `devdisplay.sh status` is not alive prints **84
-  `Start` lines and 73 `Finish` lines**. The rule just above ("count `Start`/`Finish`
+  the `Finish` line — so a run on a box where `devdisplay.sh status` is not alive
+  prints **85 `Start` lines and 74 `Finish` lines** (it was 84/73 before the
+  issue-tracker batch registered a 70th `hcases` entry; the gap is always the 11
+  `dcases`). The rule just above ("count `Start`/`Finish`
   pairs for cases") therefore **under-counts by 11 exactly there**, and a reader
   counting `Finish` concludes eleven cases vanished — the same shape as 1476 face 2,
   which is the defect that rule exists to catch. The `tcases` and `hcases` loops print
@@ -249,9 +251,12 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   ⚠ **IT IS DISPLAY-STATE DEPENDENT, AND ON THIS BOX IT DOES NOT FIRE.** Do not read
   the paragraph above as "the count is broken". V4's seven T1 runs on 2026-09-17 all
   ran with the persistent dev display `:99` alive, and every one printed **84 `Start`
-  / 84 `Finish`**. The hole was confirmed **in the source** (`:841` prints `Start`,
-  `:856` `continue`s, `:887` prints `Finish`) and has **never been observed** — the
-  84/73 split remains **derived, not measured**, because nobody has yet run T1 with
+  / 84 `Finish`** — as did the issue-tracker batch's gate run at **85 / 85**. The hole
+  was confirmed **in the source** (the `foreach dc $dcases` loop prints `Start`,
+  `continue`s on `!$dd_alive`, and prints `Finish` only past that point — **cited by
+  the loop, not by line number, because these three coordinates have now rotted
+  twice**) and has **never been observed** — the
+  85/74 split remains **derived, not measured**, because nobody has yet run T1 with
   the display down. Read that the right way round: the `Start`/`Finish` rule is safe
   *here* and unsafe *generally*, so it turns wrong the first time anyone runs on a
   fresh boot, a container or CI — which is exactly where nobody is watching for it.
