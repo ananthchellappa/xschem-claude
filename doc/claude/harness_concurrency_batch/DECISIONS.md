@@ -35,6 +35,27 @@ everyone reads.
 all. Then C1 becomes `results.<pid>.log` plus a stable symlink, and every reader of
 the canonical name has to be updated — `crew.js` and CLAUDE.md included.
 
+## ⚖ R1 — AMENDED 2026-09-16 by A1's measurement, still unratified
+
+R1's *verdict* half stands unchanged: `results.log` keeps its canonical name and is
+serialised. Its *scratch* half was *wrong as written* and is amended.
+
+R1 said "pid-scope the scratch and it costs nothing". A1 measured that exact shape:
+`"$testname/results/.work.[pid]"` leaves **658** phantom FATALs against today's 660 —
+a no-op. The shared object is `$testname/results` itself, wiped at startup by every
+run. So the amended scratch half is: **the workroot moves out of `results/`**
+(`"$testname/.work.[pid]"`, measured 0 phantoms), **and the startup wipe is made
+run-safe** — which is what face 2 actually turns on.
+
+**This strengthens the case for the verdict lock rather than weakening it.** With the
+wipe and the workroot both per-run, two runs stop corrupting each other's *files*; the
+lock remains what stops them corrupting each other's *answer*. Nothing here changes
+the question the user was asked, so it is not re-asked — but note that a lock taken for
+the whole of `run_regression.tcl` would close all four faces at once, at the price of
+serialising runs completely, and that option only became visible through this
+measurement. If the user overturns R1 toward "no agent ever waits", that is the branch
+where it matters.
+
 ## Note — the measured premise that failed
 
 0990 stated a row here "would have to run two regressions at once, which is

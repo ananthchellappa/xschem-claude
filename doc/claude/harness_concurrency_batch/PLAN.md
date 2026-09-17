@@ -69,7 +69,7 @@ numbers are void. Nobody runs a suite while another crew is running one.
 | id | task | files | acceptance |
 |---|---|---|---|
 | **A1** | the RED suite | new `tests/headless/test_regression_concurrency_1476.tcl` | rows RED on today's tree, for all four faces; source-text rows in the idiom of `test_suite_watchdog_1403.tcl` W14–W19 (`has_text`), behavioural rows bounded by `timeout` |
-| **B1** | faces 1–3: scratch | `open_close.tcl:38`, `create_save.tcl:32`, `netlisting.tcl:38`, `test_utility.tcl:118-125` + its 3 callers | A1's face-1/2/3 rows go GREEN; a missing status file is reported as missing, not as `exit -1` |
+| **B1** | faces 1–3: scratch | `open_close.tcl:32,38`, `create_save.tcl:28,32`, `netlisting.tcl:32,38`, `test_utility.tcl:118-125` + its 3 callers, **and `test_utility.tcl:102-114`** | A1's face-1/2/3 rows go GREEN; a missing status file is reported as missing, not as `exit -1`; see ⚠ A1 below — the workroot must move **out of** `results/`, and face 2 needs the startup wipe, not the workroot |
 | **C1** | face 4: verdict lock | `run_regression.tcl` (~`:295`, `:381`) | A1's face-4 rows go GREEN; second run waits or refuses **loudly**; `results.log` keeps its name |
 | **D1** | docs | new `doc/claude/issues/1476-*.md`; close 0384, 0867, 0990, 0955, 0905; `NUMBERING.md` | 1476 records faces 2+3; the five are closed with pointers; NUMBERING records 1476 and corrects the stale 1332 bullet |
 | **V1** | verification | — | solo T1, reported per CLAUDE.md's reading rules (mtime moved, Start/Finish pairs, per-case zero) |
@@ -83,6 +83,37 @@ schedule after, never beside), 1455/1290, 1346, 0396/0368.
 **Verified already fixed, do not touch:** 1332 (`Status: FIXED` 2026-09-05), 0994
 (`FIXED 2026-08-30`). The scan also reported 0642 and 0645 as stale; **unverified by
 the driver** — check before believing.
+
+## ⚠ A1's corrections — measured, and they invalidate part of this plan
+
+**The shape this PLAN called the minimum is a no-op.** A1 measured three
+configurations of one staggered pair:
+
+| workroot | run A | run B |
+|---|---|---|
+| `"$testname/results/.work"` (today) | **660** phantoms | died at startup |
+| `"$testname/results/.work.[pid]"` — *this PLAN's stated minimum* | **658** phantoms | died at startup |
+| `"$testname/.work.[pid]"` (outside `results/`) | **0** phantoms | died at startup, 2 of 3 |
+
+The shared object is **`$testname/results` itself**, which every run wipes at startup
+(`open_close.tcl:32`, `create_save.tcl:28`, `netlisting.tcl:32`). Pid-scoping a
+directory *inside* the thing that gets wiped changes nothing. Moving the workroot out
+closes face 1 and leaves face 2 flaky — **face 2 is a property of the startup wipe and
+must be fixed there.**
+
+**Face 1 is mis-attributed above.** The end-of-run delete at `:108` is not the culprit
+in practice: run B died at startup and never reached it, yet run A still lost 639–670
+status files to B's partially-completed *startup* wipe.
+
+**Face 4 is an erasure, not a corruption.** 13268 bytes, zero NUL bytes, run A's
+verdict complete — run B's verdict simply never appears while B exits 0. Rows keyed on
+corruption or interleaving ship GREEN and prove nothing; A1 had two such rows in its
+first draft and rekeyed them.
+
+**Face 3 needs no concurrency and is wider than stated.** gawk's "cannot open file" is
+**fatal**, so one missing file aborts the entire `xargs -n 64` batch — the *present*
+files in that batch are left un-normalised too. Reproducible in two awk spawns, no
+collision required. `test_utility.tcl:102-114` joins B1's file list.
 
 ## Issue number
 
