@@ -3493,7 +3493,49 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   at `d4946b61` — solo T1, **84 cases, ZERO counted failures, rc 0**. Closes 0384, 0867, 0990,
   0955 and 0905 with it. Batch record `doc/claude/harness_concurrency_batch/`. FIXED.
 
-**The next free number is 1477.**
+~~**The next free number is 1477.**~~ superseded: **1477**, **1478** and **1479** are filed, below.
+
+- **1477** — **a regression run killed mid-write leaves a truncated verdict that reads as a
+  clean sweep.** Issue **0905**'s fix shape **(3)**, which the harness concurrency batch did
+  **not** implement: there is still no `REGRESSION START/END` sentinel, and `banner_rule.tcl`'s
+  three predicates are all **per-case**, so nothing judges the run as a whole. The batch closed
+  the *collision* route into a short `results.log`; the *interrupted-state* route is untouched,
+  and needs **no second run at all** — a `T1_CASE_TIMEOUT` kill, an outer `timeout`, an OOM.
+  Measured on a copy of the real 169-line verdict: every prefix scores **0 counted failures**
+  (1/10/40/80/120/170 lines), because all four shapes at `run_regression.tcl:327` require a line
+  to **exist**. ⚠ **And it defeats the one rule CLAUDE.md tells you to trust** — the mtime
+  *moves*, because the run really did write. Worse than a prefix, too: the channel is never
+  `fconfigure`d, so it is full-buffered at **4096 B** while the whole verdict is **4785 B**
+  (measured: 200 lines written and not closed → 4096 B on disk), so a killed run leaves **0 or
+  4096 bytes**, not a proportional tail. OPEN.
+
+- **1478** — **the per-case log names are not pid-qualified, so their only protection is a lock
+  that fails open.** The residual of 0905's *second sighting*. ⚠ **First, a correction:** the
+  inherited claim that *"a standalone suite on `:99` can still race those files"* is **wrong** —
+  measured repo-wide, the ONLY writer of `headless/*.disp.log` anywhere is `run_regression.tcl`
+  itself (`:669,671,691,696,700,704`); `devdisplay.sh cmd_exec:399-403` does **no** redirection,
+  `run_suites.sh:123` and `full_audit.sh:438-440` capture into a shell variable, and
+  `scratch.tcl` is already pid-qualified. What *is* exposed: `<case>.log`, `headless/<case>.log`,
+  `headless/<case>.disp.log` and the display arm's `--logdir` `tests/results/.actionlogs`
+  (`:661-662`) are fixed names whose guarantee is the verdict lock — **best-effort**, since
+  `:502-505` proceeds **UNLOCKED** after four failed attempts — where the results trees' is
+  *structural*. Cost when it bites is a **false RED** (0905's 47-blocks-in-a-45-case-tree, a torn
+  block header, a FAIL against a file that ends `OVERALL: ok`). Not reproduced; the naming and
+  ownership were. LOW/LATENT. OPEN.
+
+- **1479** — **a job that never executed is counted as an ordinary failure, because nothing
+  classifies infrastructure exit codes.** Issue **0384**'s fix candidate **2**, landed only for
+  the status-file half. Measured on verbatim-extracted shipped source: `job_status_reason`
+  (`test_utility.tcl:185-196`) returns a bare `exit $rc` for **126 / 127 / 139 / 143 alike**, and
+  all of them score `counted=1` at `run_regression.tcl:327` — so *"the binary was never
+  executed"* is indistinguishable from *"the product SIGSEGVed"*. ⚠ **`signal 15` is the wrong
+  string to grep for**: jobs end `; echo $? > '$status'` so SIGTERM records **143**, while
+  `FATAL: signal N` comes from a different channel entirely (`src/main.c:58` → `banner_died`).
+  ⚠ **And an `INFRA:` line must stay COUNTED and merely be labelled** — making it non-counting
+  would mean a run where every job failed to start reports zero, which is exactly issue **0147**.
+  OPEN.
+
+**The next free number is 1480.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
