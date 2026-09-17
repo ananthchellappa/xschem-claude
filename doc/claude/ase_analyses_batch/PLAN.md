@@ -3746,9 +3746,50 @@ filed** — but the derived readout is a number on screen and must be checked ag
 
 ---
 
-## Stage 14 — PSS, explicitly experimental
+## Stage 14 — ~~PSS, explicitly experimental~~ ⚠ **NOT BUILT — ⚖ R7 REVERSED BY THE USER, 2026-09-16**
 
-**One commit. Ruling ⚖ R7. Last, deliberately.**
+⚠ **THIS STAGE IS NOT BUILT, AND NOTHING BELOW THIS BLOCK WAS IMPLEMENTED.** The user ruled on
+**2026-09-16**, on `evidence/pss-two-binaries.md`: ***"don't build it, write up the issue."*** The
+write-up is issue **1475** —
+`doc/claude/issues/1475-pss-declared-everywhere-working-nowhere.md` — and it is the index to the two
+measurements that stay: `evidence/pss-two-binaries.md` (2026-09-15, both binaries) and
+`evidence/pss-stage14.md` (2026-09-13, the argument-count SIGSEGV).
+
+⚠ **⚖ R7's 2026-09-13 answer — Option A, *ship it, explicitly experimental* — is SUPERSEDED, not
+forgotten.** It was correct on the evidence it was given and that evidence came from a **scratch**
+`--enable-pss` build of `ccebdf2a2` **that no user has**. On the binary Ubuntu ships, **PSS
+converged on nothing measured** — twenty runs, zero `Convergence reached`, including ngspice's own
+shipped ring example with its own arguments, at **rc 0** with **both plots full** and a frequency
+**2.6 % high**. The fix that would change this (`668329ca3`, *"this will re-enable convergence"*) is
+**in no release tag**, so every released ngspice that has `pss` has the broken one. `DECISIONS.md`'s
+⚖ R7 block carries the reversal at its head and keeps the 2026-09-13 answer in full beneath it.
+
+**EVERYTHING FROM HERE TO THE STAGE 15 HEADING IS THE DESIGN THAT WAS NOT IMPLEMENTED**, retained
+for whoever revisits it — the same treatment the withdrawn `-b` refusal gets in *"What this plan
+refuses"*, and for the same reason: the superseded text is quoted elsewhere in this batch.
+⚠ **FOUR of its claims are now known FALSE on the binaries in the matrix**, and issue 1475's last
+section tables all four against the evidence: *scrape stdout* (45.2 writes the verdict to
+**stderr**), the refusal thresholds (`steady_coeff = 1e-6` is allowed and does not finish; a 19×-low
+`fguess` is called *fine* and does not converge), *`oscnode` steers nothing* (true among **real**
+nodes only — a name that is not a node moves f0 by **0.46 %**, because the parser inserts a floating
+node), and — the one this sentence omitted while claiming to count them — **the case for shipping
+itself**: *"a 3-stage ring in 0.91 s … both `Convergence reached`"* is the **scratch build**; the
+fork does it in 0.81 s and **45.2 does not do it at all**.
+**Do not implement from this section without reading issue 1475 first.**
+
+**Reopen when a RELEASED ngspice contains `668329ca3`** — and **re-take
+`evidence/pss-two-binaries.md`'s table on that release before writing any code**, because the
+thresholds below were never validated on a binary a user can install.
+
+✅ **The two rows elsewhere in this document that recorded ⚖ R7 as *ship it* have since been
+corrected** — the ruling ledger's **R7** row and the sequencing table's row **15**, both now marked
+NOT BUILT and pointing here. ⚠ **This paragraph named them as outstanding, and that is why they were
+found**: the crew that wrote this block was scoped to the Stage 14 section, could not reach them,
+and **said so in writing instead of leaving them silent**. A reader who meets either row first still
+lands here; neither now says *ship it*.
+
+**~~One commit. Ruling ⚖ R7. Last, deliberately.~~ No commit. The ruling is reversed; the stage is
+closed unbuilt.**
 
 **The parameter-level source for this stage** is APPENDIX **§2.12** (`PSS`, absent from this build,
 measured on the `--enable-pss` one) and **§1.7** (what a different build changes).
@@ -4190,7 +4231,7 @@ merge nobody wants.
 | **R4** | 2 | Does `ase::state_default` gain any of the new analysis types? | **No.** All 104 committed files carry four rows and `test_ase_core` R1 asserts it. The four-state grid gives discoverability without touching a single bench. **But today this would change by accident, so it must be a decision.** ⚠ R4 costs the user **no reach**: `ase::ui::chana_ok` already appends a row when no row of the selected type exists (hint `:4650-4657`), so picking a type in the grid and pressing OK **is** the add gesture. R4 decides only what a brand-new bench looks like. |
 | **R5** | 3 | Reverse recorded decision D4 — should switching the analysis type keep what you typed? | **Reverse.** Cache per-type edits for the dialog's lifetime and commit only the visible type at OK; D4's stated reason ("deterministic, no hidden multi-type writes") is satisfied because nothing is written until OK. Defensible with four types; a trap with twelve. |
 | **R6** | after 3 | Do analysis rows gain identity (`id`) — two DC sweeps or two AC sweeps at once? | **Yes**, sequenced after Stage 3 so the addressing lands with the form work. One optional per-row key, absent on all 104 committed files, no schema version. It is the difference between a bench that can say "sweep VIN **and also** sweep temperature" and one that cannot. ⚠ `ase::ui::chana_row` returns the **first** row of a type and `pane_dblclick` discards the index, so the addressing work comes first either way. |
-| **R7** | 14 | Do we ship a PSS panel at all, given that it was built and run? | **Yes, last, explicitly experimental**, with the hard validator, the stdout verdict scrape (rc 0 is not success), the last-pair-by-Plotname rule, the transient+FFT cross-check, and the `oscnode` hint. |
+| **R7** | ~~14~~ **none** | Do we ship a PSS panel at all, given that it was built and run? | 🚫 **NO — REVERSED BY THE USER, 2026-09-16. Stage 14 is NOT BUILT** (issue **1475**). ⚠ **This cell read *"Yes, last, explicitly experimental"* until then**, and a reader arriving at this table cold would have read *ship it* long after the answer changed. The 2026-09-13 answer was sound on its evidence and its evidence was a scratch `--enable-pss` build no user has; on the binary Ubuntu ships PSS converges on **nothing measured**, at rc 0 with full plots. The hard validator, stdout verdict scrape, last-pair-by-Plotname rule, transient+FFT cross-check and `oscnode` hint are **recorded in 1475, not implemented**. |
 | **R8** | 11 | Where does a campaign's configuration live? | **A new top-level `sweep` state key**, in `ase::omit_if_empty` so byte-identity for the 104 committed files is preserved by construction and `version` stays 1. The single named exception to "no new top-level keys". |
 | **R9** | 2–14 | The standing label ratification — every new user-facing sentence in this plan. | **Batch per stage.** Twelve analyses otherwise means twelve rounds of asking, which is exactly what the standing preference forbids. |
 
@@ -4480,7 +4521,7 @@ dishonest in eight new ways instead of four old ones.
 | 12 | **11** | campaigns: shards, corners, GUI-drawn MC, `index.tsv`, statistics in Tcl | +1150 | **R8**, R2 | new suite (stand-in simulator) |
 | 13 | **12** | `edisplay` + `eprvcd`; the VCD joins `attach_dbs` | +120 | R9 | new goldens (**M9 first**) |
 | 14 | **13** | transient noise and `trrandom`, padded, with the seed sentence | +400 | R9 | new goldens |
-| 15 | **14** | PSS, experimental, hard validator, stdout verdict | +300 | **R7** | new suite |
+| ~~15~~ | **14** | 🚫 **NOT BUILT** — ~~PSS, experimental, hard validator, stdout verdict~~ (⚖ **R7 reversed 2026-09-16**, issue **1475**) | ~~+300~~ **0** | **R7** | ~~new suite~~ **none** |
 | later | **15** | the adapter conformance harness — what the SECOND adapter needs, not the first | +500 | **R10** | none; new suite only |
 | any time after 2 | **16** | *"the ngspice you actually have"*: the per-simulator sentence, the pass-through linter, the two co-simulation file checks, `dumpunsound`, the release note | +440 | **R11** (one sentence of it), R9 | **none move**; new suite + three conformance rows |
 | later | — | the `-p` transport and the transient debugger | — | **R1 ANSWERED: deferred** | — |

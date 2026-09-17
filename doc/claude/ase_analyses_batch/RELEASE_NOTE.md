@@ -120,8 +120,11 @@ itself exactly as the fork does, so no version string can tell the two apart (`D
 
 * **PSS, on every row.** ASE-L does not offer it (`ase::analysis_renderable ngspice pss` answers 0), and
   on apt 45.2 it converges on nothing measured, not even ngspice's own example
-  (`evidence/pss-two-binaries.md`). ⚖ R7 is back with the user; one rule for the window, the run log and
-  this note (PLAN §16a (b)).
+  (`evidence/pss-two-binaries.md`). ✅ **This is now PERMANENT, not pending.** ⚖ R7 was reversed by the
+  user on 2026-09-16 — the PSS panel is **not built** (issue **1475**) — so the omission is a decision
+  rather than a gap waiting on a stage. ⚠ **This bullet read *"⚖ R7 is back with the user"* until then**,
+  which would have shipped a user-facing note describing an open question as open after it was closed.
+  One rule for the window, the run log and this note (PLAN §16a (b)).
 * **The phantom `v(all)` column** (difference 1) and **XSPICE event counts** (difference 3). ASE-L already
   works around the first where it reads, and the evidence disagrees about the second — `binary-differences.md`
   counts 10 events against 11 where `m9-event-vcd-attach.md` found the counts equal on its own deck — so

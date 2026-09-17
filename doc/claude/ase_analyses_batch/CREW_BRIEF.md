@@ -589,9 +589,11 @@ oscillators to `Convergence reached`, and **still reports `ngspice-46+`**. Every
 `evidence/` was taken against the earlier binary (md5 `eaa99c22…`, the `LEDGER.md` baseline).
 The live fixture for the four-state grid's `absent` state is now the **bare-configure upstream
 build**, `/home/analog/.claude/projects/-home-analog-dev-ngspice/workpad/builds/upstream47/src/ngspice`,
-which answers `Sorry, no help for pss.` (measured 2026-09-10). A crew testing Stage 14, or Stage 2's
-Detect leg and the `absent` state, registers that binary as a second simulator entry — no rebuild
-needed. `/usr/bin/ngspice` (45.2) still differs from both 46+ builds in the other direction
+which answers `Sorry, no help for pss.` (measured 2026-09-10). A crew testing Stage 2's
+Detect leg and the `absent` state registers that binary as a second simulator entry — no rebuild
+needed. ⚠ **This sentence also named *"a crew testing Stage 14"* until 2026-09-16; there will be no
+such crew.** ⚖ R7 was reversed and **Stage 14 is not built** (issue **1475**) — the `--enable-pss`
+fork build stays a useful fixture for the four-state grid, and is no longer a fixture for a panel. `/usr/bin/ngspice` (45.2) still differs from both 46+ builds in the other direction
 (`pyplot`, `astate`, `ota`; APPENDIX §1.8).
 `hb` and `sens2` will never be present: `HBinfo` and `SEN2info` are `extern` declared and
 defined nowhere. **That two-binary disagreement is the whole case for the adapter/probe split**

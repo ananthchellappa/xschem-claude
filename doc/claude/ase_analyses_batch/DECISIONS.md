@@ -1357,7 +1357,35 @@ as **`{type idx}`**, and the user-visible spelling must follow that shape and be
 `Analyses > List`; Stage 8 task 2's Measurements dropdown **consumes** it. If that order ever
 inverts, task 2 consumes `{type idx}` verbatim rather than minting a display form.
 
-### ⚖ R7 — ANSWERED. Do we ship a PSS panel at all, given that the build probes ran it successfully?
+### ⚖ R7 — **REVERSED 2026-09-16. The PSS panel is NOT built.** Do we ship a PSS panel at all?
+
+✅ **THE ANSWER IS NOW *NO*, AND THE 2026-09-13 RULING BELOW IS SUPERSEDED IN FULL.** Re-put to the
+user on `evidence/pss-two-binaries.md`, their words: ***"don't build it, write up the issue."***
+Issue **1475** carries the measurement; `PLAN.md` §14 is retained as the design that was not
+implemented.
+
+⚠ **WHAT CHANGED WAS THE EVIDENCE, NOT THE ARGUMENT.** Every performance number the 2026-09-13
+ruling rested on came from a **scratch `--enable-pss` build of `ccebdf2a2`** that no user has. On
+the binary Ubuntu ships, PSS converges on **nothing measured** — twenty cases, zero convergences,
+including ngspice's own shipped example with its own arguments — and reports **rc 0** with both
+plots full and a frequency about **2.6 % high**. The upstream fix `668329ca3` ("this will re-enable
+convergence") is in **no release tag**, so this is every released ngspice, not this machine.
+
+⚠ **AND THE DECIDING INPUT WAS NOT A MEASUREMENT.** The block below records that the driver asked
+whether the user actually *runs* PSS and that *"the user answered by delegating instead"* — it was
+put again on 2026-09-16 and answered: ***"I have never run PSS."*** That is the thing no
+measurement here could settle, and it is what made the ruling easy. **The paragraph below that
+names Stage 14 as the cheapest stage to cut was written before anyone knew it would be cut; it was
+right.**
+
+⚠ **NOTHING USER-VISIBLE CHANGES.** `pss` keeps `baseline 0  registered 1` with a probe-only
+template (`src/ase.tcl:27342`), so it stays **listed** and an enabled row keeps answering *"This
+pss analysis is not one this simulator can set up."* That string is ratified copy under ⚖ R9 and
+is **not** reopened by this ruling.
+
+#### ⬇ THE SUPERSEDED 2026-09-13 RULING, KEPT IN FULL — everything below this line until ⚖ R8 is the answer that no longer stands
+
+#### ⚖ R7 as it was ANSWERED on 2026-09-13. Do we ship a PSS panel at all, given that the build probes ran it successfully?
 
 ⚠ **MEASURED AFTER THE RULING, 2026-09-13, AND IT SHARPENS WHAT "EXPERIMENTAL" HAS TO
 MEAN: `pss` SEGFAULTS ON A SHORT ARGUMENT LIST, ON BOTH BINARIES.** `pss 1meg 1m out 1024`

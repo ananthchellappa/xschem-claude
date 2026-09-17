@@ -3446,7 +3446,21 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   late** — the pointer was advanced to 1475 in the 1473 commit without filing the block beneath it,
   which is the same stale-summary defect as the ledger's *Still open and named* line. OPEN.
 
-**The next free number is 1475.**
+~~**The next free number is 1475.**~~ superseded: **1475** is filed, below.
+
+- **1475** — **`pss` is declared by every released ngspice built with it, and converges in none of
+  them.** On `/usr/bin/ngspice` (45.2) PSS converged on **nothing measured** — twenty cases, zero
+  convergences, including ngspice's own shipped `examples/pss/ring_osc_pss_ctrl.cir` with its own
+  arguments — returning **rc 0** with both plots full and a frequency **~2.6 % high**. The
+  convergence fix `668329ca3` is in **no release tag**, so every released ngspice with PSS has the
+  broken one, and `help pss` answers identically on both binaries, so the capability probe cannot
+  tell them apart. Also records the **four-argument SIGSEGV** (rc 139, both binaries, no salvage,
+  takes `op` with it) and that a **non-existent `oscnode` moves f0 by 0.46 %** while real nodes
+  steer nothing. ⚖ **R7 REVERSED on this evidence, 2026-09-16** — Stage 14's PSS panel is **NOT
+  BUILT**; `PLAN.md` §14 is retained as the design that was not implemented. Revisit when a
+  **released** ngspice contains `668329ca3`. OPEN.
+
+**The next free number is 1476.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
