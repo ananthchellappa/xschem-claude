@@ -2854,7 +2854,7 @@ proc ase::cap_timeout_cmd {} {
 # is that reading a few header lines is cheap. It is not, once the run report
 # added by issue 0965 calls this on the USER'S OWN results file: measured on the
 # shipped tb_bandgap bench that file is 69,595,016 bytes, and was 144,455,860
-# before issue 0964, on a box with about 7.8 GB. And issue 0964 put the
+# before issue 0964, on a box with 15.35 GiB ("7.8 GB" here until 2026-09-17, wrong by 2x -- issue 0971). And issue 0964 put the
 # operating point LAST, so no read of the first few kilobytes can find the plot
 # the report needs -- the file pointer has to walk past the payload, which the
 # `Binary:` arithmetic below already knew how to do. Nothing a suite can observe

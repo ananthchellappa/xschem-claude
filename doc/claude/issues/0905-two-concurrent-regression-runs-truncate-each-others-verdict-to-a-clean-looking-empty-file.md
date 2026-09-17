@@ -84,7 +84,18 @@ failure mode has to be closed in the harness rather than in the instructions.
    collision but removes the fail-open, and is the part that matters most.
 
 (3) is worth doing even alongside (1) or (2): the same missing-END check also
-catches a run killed by an OOM, which on this ~7.8 GB box is a documented event.
+catches a run killed by an OOM.
+
+⚠ **CORRECTED 2026-09-17 — that sentence ended *"on this ~7.8 GB box is a
+documented event"*, and both halves were wrong.** Measured twice that day:
+`MemTotal: 16091816 kB` = **15.35 GiB** (16.48 GB decimal), plus **4 GiB of swap,
+unused**. The figure was off by **2×** and had been copied from doc to doc since
+**2026-08-07** without anyone taking a measurement. And the event is **not
+documented**: a sweep of this repo finds only assertions citing each other, never
+an observed kill, and `dmesg` carries **zero** OOM kills. The argument for (3) is
+untouched, because it never depended on the cause — the missing-END check catches
+**any** kill, and issue 1403's 900 s per-case timeout is a measured one with
+nothing to do with memory.
 
 ## Not this issue
 
@@ -174,7 +185,8 @@ issue file are **1476**. Batch record: `doc/claude/harness_concurrency_batch/`.
    shape cannot do. The option is costed in DECISIONS.md if it is ever reopened.
 3. ⚠ **"Never let an empty file read as a pass" — NOT IMPLEMENTED.** There is still
    no `REGRESSION START/END` sentinel and `banner_rule.tcl` is unchanged, so a run
-   killed mid-write (OOM on this ~7.8 GB box, or issue 1403's 900 s per-case timeout)
+   killed mid-write (issue 1403's 900 s per-case timeout, an outer `timeout`, or an
+   OOM — ⚠ see the 2026-09-17 correction above: this box is **15.35 GiB**, not ~7.8 GB)
    can still leave a short file that reads as green. What closed is the *collision*
    route into that state, not the state itself. **CLAUDE.md's rules remain the
    reader's only guard**: confirm the log's mtime moved off its pre-run value, count

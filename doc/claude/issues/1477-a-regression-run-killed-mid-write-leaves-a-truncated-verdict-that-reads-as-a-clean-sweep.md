@@ -110,8 +110,20 @@ foundation for a safety check.
 case a `T1_CASE_TIMEOUT` (default 900 s) and prefixes it with `timeout --kill-after=20`;
 issue 1403 exists because stalls happen. The batch's own doctrine is a `timeout` on every
 long command, and V2 ran T1 as `timeout 1800 tclsh run_regression.tcl` — an outer bound that
-fires kills the driver itself, mid-write, with nothing to say so. An OOM on this ~7.8 GB box
-does the same, as 0905 noted.
+fires kills the driver itself, mid-write, with nothing to say so. An OOM would do the same,
+as 0905 noted.
+
+⚠ **CORRECTION, 2026-09-17 — the OOM was the weakest cause on that list, not the strongest.**
+This paragraph said *"An OOM on this ~7.8 GB box"*, inheriting a figure from CLAUDE.md that
+nobody had measured. Measured that day, twice: `MemTotal: 16091816 kB` = **15.35 GiB**
+(16.48 GB decimal), plus **4 GiB of swap, none of it in use** — wrong by **2×**. During a
+deliberate two-run collision the box held **5282 MB minimum available against 487 MB peak
+combined `xschem` RSS over 31 processes**, and `dmesg` carries **zero** OOM kills. No file in
+this repo records an *observed* OOM: the phrase 0905 used — *"a documented event"* —
+documents nothing but another assertion. **The defect is unaffected**, because the timeout
+kills above are measured, memory-free and sufficient on their own. Only the attribution
+changes. (⚠ Still unmeasured, and not claimed safe: concurrent `make`, and the arms that
+start real `ngspice`.)
 
 **The lock makes it rarer, not safer.** Fewer writers means fewer collisions, but a single
 writer dying is untouched by mutual exclusion. There is one genuine interaction, and it is
@@ -152,7 +164,9 @@ fix that was later measured to change nothing — `results/.work.[pid]`, 658 pha
 last line (`REGRESSION END <pid> rc=<n>`), and have a summary with no END line be treated as
 `HARNESS`, not as zero failures. That file's own argument for why (3) is worth doing
 *alongside* the lock still stands verbatim: the same missing-END check catches a run killed
-by an OOM, which on this box is a documented event. It does not stop the interruption; it
+by an OOM — ⚠ which 0905 called *"a documented event"* and which the 2026-09-17 correction
+above found to be documented nowhere. Read it as *any* kill, which is what the check actually
+catches, and the reason (3) survives the correction. It does not stop the interruption; it
 removes the fail-open, and 0905 called that *"the part that matters most"*.
 
 **What 0905 did not know — one.** With full buffering, a START line is not evidence of

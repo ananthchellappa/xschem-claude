@@ -73,6 +73,15 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   modern and the legacy spelling so the round trip is lossless, but the rule
   stands: **always give the binary a path** — `./src/xschem`, `$XSCHEM`, or
   `devdisplay.sh exec ./src/xschem`. Never a bare `xschem`.
+  ⚠ **Measured 2026-09-17: nothing is installed at that path any more.**
+  `/usr/local/bin/` is **empty**, `/usr/local/share/xschem` is gone, and
+  `command -v xschem` exits **1** — so the 3.4.6 above can no longer be verified,
+  and a bare `xschem` today fails loudly (`command not found`) instead of
+  silently running a Jan-2025 build. **That re-arms this rule rather than
+  retiring it:** one `make install` puts a binary back on PATH the same minute,
+  and `test_utility.tcl`'s third fallback *is* PATH. Give the binary a path
+  anyway — and read a `xschem: command not found` in an old transcript as this
+  state, not as a broken harness.
 - **`create_save`, `open_close` and `netlisting` have no committed `gold/`
   baseline**, so they can only report `NOGOLD` — they run the cases and produce
   `<case>/results/`, but verify nothing until someone promotes a baseline. The
@@ -140,11 +149,12 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   its value in the sharpest possible way, its mtime and md5 tests *disagreeing*:
   the mtime had moved while the md5 came back byte-identical to the previous
   run's. It has a hole all the same, measured 2026-09-17. A run killed mid-write
-  (OOM on this ~7.8 GB box, or 1403's 900 s per-case timeout) moves the mtime
-  **and** leaves a truncated `results.log` that scores **zero counted failures at
-  every prefix length** — verified at 1, 10, 40, 80, 120 and 170 lines of V2's own
-  169-line verdict — because all four counted shapes (`FAIL$`, `GOLD?$`,
-  `RESULT?$`, `^FATAL`, at `run_regression.tcl:327`) need a line to **exist**, and
+  (1403's 900 s per-case timeout, an outer `timeout` around the driver, or an OOM)
+  moves the mtime **and** leaves a truncated `results.log` that scores **zero
+  counted failures at every prefix length** — verified at 1, 10, 40, 80, 120 and
+  170 lines of V2's own 169-line verdict — because all four counted shapes
+  (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`, at `run_regression.tcl:327`) need a
+  line to **exist**, and
   a short file has fewer lines to match. **Every prefix of a green run is itself a
   green run** to every automated reader. Worse, the verdict channel is never
   `fconfigure`d, so it is **full-buffered at 4096 B** against a **4785 B** verdict:
@@ -154,6 +164,24 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   in `tests/`. **So pair the mtime with the case count:** the log must carry one
   `Total num fail:` line per case minus one (**83** for today's 84), and a short
   count is a death even when every line that is present is green.
+  ⚠ **THE OOM USED TO HEAD THAT LIST, AND THE BOX IT NAMED DOES NOT EXIST.**
+  This bullet said *"OOM on this ~7.8 GB box"* until 2026-09-17. Measured twice
+  that day: `MemTotal: 16091816 kB` — **15.35 GiB** (16.48 GB decimal) — plus
+  **4 GiB of swap, none of it in use**. The figure was wrong by **2×**, and it
+  reached CLAUDE.md *that same day* by being copied out of a session prompt
+  dated **2026-08-07** that nobody had re-measured. Headroom during a deliberate
+  two-run collision: **5282 MB minimum available against 487 MB peak combined
+  `xschem` RSS over 31 processes** — two orders off. `dmesg` carries **zero** OOM
+  kills this boot (up 1 d 22 h at the time of measuring), and no file in this
+  repo records an observed one either: every *"recorded OOM
+  path"* and *"documented event"* traces back to another assertion, never to a
+  measurement. **The defect is untouched** — a kill is a kill whatever kills it,
+  and 1403's 900 s per-case timeout is a measured cause with nothing to do with
+  memory — so read a short `results.log` as a death, but stop reaching for
+  memory to explain it, and do not serialise crews on a RAM figure nobody took.
+  ⚠ **Still unmeasured:** concurrent `make`, and the arms that start real
+  `ngspice`, are where a memory ceiling would actually show; neither has been
+  measured, so neither is being declared safe here.
   ⚠ **CHECK MTIME, NOT THE MD5.** This bullet said "mtime and md5" for about an
   hour on 2026-09-15 and that was wrong: `results.log` is **byte-deterministic for
   a green run**, so a clean sweep writes the identical file every time
@@ -466,8 +494,17 @@ Re-measure rather than trusting an older number.
 The fallback path is still real (another box, a stripped container), so the rule
 stands: a suite whose subject is reparenting, iconify, stacking or raise **must
 say in its report which WM was actually live**, and if it needs to be certain it
-should name one explicitly — `AUDIT_WM=openbox`, or `AUDIT_WM=xfwm4` as issue
-0616's did (`xfwm4 --compositor=off`; `/usr/bin/xfwm4` is also present). A report
+should name one explicitly — `AUDIT_WM=openbox` (verified 2026-09-17:
+`/usr/bin/openbox`, Openbox 3.6.1, dpkg `openbox 3.6.1-12ubuntu3`).
+⚠ **`AUDIT_WM=xfwm4` IS NOT A LIVE OPTION HERE.** This paragraph said
+`AUDIT_WM=xfwm4` *"as issue 0616's did (`xfwm4 --compositor=off`;
+`/usr/bin/xfwm4` is also present)"* from 2026-08-23 until 2026-09-17 — added, as
+it happens, by the very commit that corrected the openbox claim above it, and
+never measured. Measured 2026-09-17: `command -v xfwm4` exits **1** and **no
+xfwm package is installed**, only the openbox family. So either 0616 ran on an
+install since removed, or its report is itself the thing this paragraph warns
+about. Naming an absent WM does **not** fail loudly — `:156` falls back to no WM
+with a stderr warning — so check that a WM exists before naming it. A report
 that omits the WM is a bare-Xvfb measurement wearing a window manager's name, and
 it will pass while the bug is live. The warning line is not cosmetic; it is the
 difference between evidence and nothing.

@@ -22,7 +22,10 @@ Issue **0965**'s run report needs the Operating Point plot's variable list out o
 came back. Measured on the shipped `sky130_tests_ase/tb_bandgap` bench, that
 file is **69,595,016 bytes** with the device requests scoped to the operating
 point, and was **144,455,860 bytes** before issue 0964 scoped them. This box has
-about 7.8 GB.
+**15.35 GiB** (`MemTotal: 16091816 kB`, measured 2026-09-17). ⚠ This line said
+*"about 7.8 GB"* until then — wrong by **2×**, from a figure that spread by
+copying rather than measurement. The argument is unaffected: it rests on loading
+144 MB to read 40 lines, not on the ceiling.
 
 And issue **0964** put the operating point **LAST** in the deck, so no read of
 the first few kilobytes can find the plot the report needs. The reader has to

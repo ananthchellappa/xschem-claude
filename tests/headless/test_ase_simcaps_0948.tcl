@@ -4014,7 +4014,10 @@ check {H2 the five hooks a backend must have still resolve, and the simulator th
 #
 # MEASURED, on the shipped sky130_tests_ase/tb_bandgap bench: the results file
 # is 69,595,016 bytes with the device requests scoped to the operating point,
-# and was 144,455,860 bytes before they were. This box has about 7.8 GB. And
+# and was 144,455,860 bytes before they were. This box has 15.35 GiB (MemTotal
+# 16091816 kB, measured 2026-09-17; this comment said "about 7.8 GB" until then,
+# wrong by 2x -- see issue 0971. The row's argument is the 144 MB slurp to read
+# 40 lines, not the ceiling). And
 # the plot the report needs is the LAST one in the file, so no read of the
 # first few kilobytes can find it -- the reader must step over the numbers,
 # which is exactly what its own `Binary:` arithmetic already knows how to do.
