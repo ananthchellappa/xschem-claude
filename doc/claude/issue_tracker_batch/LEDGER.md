@@ -12,7 +12,8 @@ after the driver has read the receipt and checked at least one of its claims.
 | A3 | sample files 21–30, classify against the tree | **DONE** | **accepted** — it decided the design (see below); triggered D8 | — |
 | A4 | sample files 31–40, classify against the tree | **DONE** | **accepted** — and it caught driver error 6, in its own dispatch brief | — |
 | E1 | triage 190 `rule` debts — *does this reach a person?* | **DONE** | **accepted** — and it refutes the driver's claim to the user | — |
-| **BC1** | design the convention **and** build the checker (B+C merged, D8) | in flight | — | — |
+| **BC1** | design the convention **and** build the checker (B+C merged, D8) | **DONE** | **accepted** — dissolved requirement 4 rather than meeting it | — |
+| **D1** | apply: stamp the 9 measured files, fix 0071's child table | in flight | — | — |
 | **D0** | verify the 7 stale-closure issues; propose replacement text | **DONE** | **accepted — and it refuted the driver's own detector** | — |
 | **E2** | collapse the 48 repeated wording ratifications into one document | **DONE** | **accepted** — corrected D11's premise; caught driver errors 11 and 12 | — |
 | **T1-base** | pre-change regression baseline (driver's own, never delegated) | **DONE** | **GREEN** — see below | — |
@@ -387,6 +388,72 @@ have a header that agrees. **7 do not**, and they are the mechanical face of sub
 C1 sweeping beyond `doc/claude/issues/`. At **4.3%** this is a smaller class than citation
 rot, and unlike citation rot it is **exactly detectable**, today, with no judgement calls.
 
+### ⭐ BC1 — the convention, and requirement 4 DISSOLVED rather than met
+
+Spec: `doc/claude/specs/issue_stamp.md`. One physical line, column 0, first 12 lines:
+
+```
+**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=3`
+```
+
+* `claim=` is **six-valued** — `partial` and `latent` carry 0891 and **the missing
+  "claims latent, is live" cell** A3 identified.
+* **`fix=superseded` requires `super=`** — that is the 0442 rule, mechanised.
+* `open=` is the outstanding count; optional **`scope=`** expresses 0216 and 0650.
+* **The stamp is the file's newest word; prose that disagrees, above or below, is
+  history.** That single rule answers the below-the-fold problem — A1's 0071 §3/§4/§4b,
+  D0's 0249 with its resolution 306 lines down, and the **510** both-words files — without
+  rewriting a line of anyone's prose.
+
+⚠ **Requirement 4 was DISSOLVED, not satisfied, and this is the batch's best piece of
+design.** The driver demanded the convention be *cheap to re-stamp*, because `PLAN.md:3`'s
+tree citation rotted within the hour. BC1's answer: **`tree=` means "last checked against
+this revision" — a statement about the PAST, which cannot rot, only age.** There is no
+re-stamping treadmill because nothing ever becomes false. `tree=HEAD` is recorded as an
+explicitly **rejected** design, because it *is* the `PLAN.md:3` failure mechanised.
+**Demonstrated accidentally: HEAD moved seven times during BC1's task and nothing stamped
+broke.**
+
+**The checker.** `tests/headless/issue_stamp.tcl`, with `test_issue_stamp.tcl` (**39
+checks**) and `issue_stamp_baseline.txt`. Green on all three arms. **Deliberately NOT
+registered in T1** — `full_audit.sh:430` discovers `test_*.tcl` by `ls`, so it joins the
+audit merely by existing; registering moves the case count **84 → 85** and forces an edit
+to CLAUDE.md's arithmetic block, and BC1 judged *a crew is the wrong author for that*.
+Correct call, and left to the driver.
+
+**Four red classes, `rc=1`, then `rc=0` on the same corpus repaired:**
+
+```
+9996:5: states this assertion is BROKEN, but it now HOLDS -- the defect appears FIXED
+        and the issue was never closed
+9997:5: states this assertion HOLDS and it does not (8 hits for SABOTAGE under src)
+9998:   tree=deadbee does not resolve to a commit in this repo
+9999:   a NEW issue file with no **STAMP:** line
+```
+
+**9997 is the free red and it is live** — issue 1219, at `cf5f8dd7`. And the
+`state=broken` → now-holds arm is **a mechanical STALE-FIXED detector**, the class measured
+at **7 of 40**. Non-vacuous because `gate` self-tests **16 fixtures in both directions**
+first — **BC1 adopted the lesson D0 taught the driver**, unprompted.
+
+**BC1 re-measured five things and found them wrong**, the first being its own:
+
+1. ⚠ **Its own checker produced a plausible red for the wrong reason.** `init` called
+   `[info script]` at call time, so **every** `rev_exists` returned false. Caught **only
+   because it tested a SHA it knew was good.** Row S20 locks it. *Exactly* the
+   known-answer discipline, catching a defect in the tool built to enforce it.
+2. ⚠ **`closescan.py` flagged 0818 as closed by `tests/headless/issue_stamp.tcl` — a file
+   twenty minutes old** — from the phrase *"3 of 3 still **resolved**; and exactly one —
+   **issue 0818**"*. **An independent second instance of the over-firing recorded as error
+   10**, found without knowledge of D0's. Two crews, two corpora, same defect.
+3. The worked example **refuted BC1's own grammar**: 0442 has no other number to name,
+   hence `super=self`.
+4. `tests/` carries **1190** `file:line` citations, not the driver's 1189.
+5. The baseline's first cut was **1048 for 1047 files** — number **0443** has an artefact
+   and no issue file.
+
+**The driver's `937` citations across `27` `src/` files is confirmed EXACT.**
+
 ### D0 (the 7 stale closures) — 3 header rewrites and 1 child table, not 7
 
 Read-only against `63a1b41f`. The headline is error 10 above; these are the verdicts.
@@ -511,6 +578,9 @@ brief and error 10's closure table. **All three were written into a crew's instr
 which is the most dangerous place for one, because a crew that obeys has no reason to
 doubt. **Both crews refused and said why.** That refusal is the single most valuable
 behaviour in this operating model, and it has now paid out three times.
+
+| 13 | `LEDGER.md` **cited `tools/stampscan.py` three minutes before that file existed** | **the driver** | Found by BC1. **A rotted citation, written into the batch about rotted citations, pointing at a tool built to detect them** — and it rotted *forward*, naming something not yet real rather than something since moved. |
+| 14 | *"`tests/` holds 1189 `file:line` citations"* | the driver | **1190** (BC1). The companion `937` across `27` `src/` files is **confirmed exact**. |
 
 ⚠ **E2's date was verified and is CORRECT — the driver's check was the sloppy one.** E2 said
 the collection *"has existed since 2026-09-13"*. The driver first ran `git log -1 -- <path>`,
