@@ -269,6 +269,46 @@ and the gap is exactly where the file lives.**
   non-regression baseline **and a suite for the checker itself**, which is red-first done
   properly.
 
+### F1 pre-work — the CLAUDE.md edit is a DOZEN sites, and half of them must NOT change
+
+`issue_stamp` registered in `hcases` (D13). Verified sound before running anything:
+`info complete: 1` (the whole driver's brackets balance — a malformed list breaks *every*
+case, not just the new one), **`hcases` 69 → 70**, `tcases` 3, `dcases` 11 unchanged, and
+the suite file exists. **The registration is deliberately UNCOMMITTED until T1 is green**;
+if it reddens it gets reverted rather than shipped.
+
+⚠ **The count is asserted in about a dozen places in CLAUDE.md, and a one-site fix would be
+this batch's own disease under the driver's name.** Census taken **before** the edit:
+
+**Must change** (they describe today's tree): the arithmetic block's `69 hcases` and its
+`= 84 Start/Finish pairs`; *"The run is 84 cases and 83 log lines"*; the three-numbers
+sentence *"84 cases · 83 … · `wc -l` = 171"*; *"one `Total num fail:` line per case minus
+one (83 for today's 84)"*; the NODISPLAY derivation *"84 `Start` lines and 73 `Finish`"*
+and its companion *"84 `Start` / 84 `Finish`"*; and the baseline line *"`cases=84
+blocks=83 counted_failures=0`"*.
+
+**Must NOT change** — these are **dated records of what was true then**, and rewriting them
+falsifies the history the file exists to preserve:
+
+* *"84, at a time when the tree ran 83"* — the fossil-`results.log` story;
+* *"82 is the number of `Total num fail:` lines"* — the earlier conflation;
+* *"It was **68 + 11 + 3 + 1 = 83** until the harness-concurrency batch registered …"*;
+* *"that was the 83-case tree, whose log carried 82 lines"*.
+
+⚠⚠ **AND A COLLISION THE NEXT READER WILL WALK INTO.** CLAUDE.md currently warns:
+*"This passage said **85** for a few hours on 2026-09-17, and that is the sharpest lesson in
+this batch. 85 is `83 + 2` … it **forgets the 83 block-header lines entirely**."* **The
+correct case count is now 85** — for a completely unrelated reason (a 70th `hcases` entry).
+So the file is about to contain *"85 was wrong"* and *"85 is right"* within a few
+paragraphs of each other. **That must be called out explicitly in the edit, or the warning
+reads as refuted and gets deleted by someone tidying** — which would retire the single
+best-earned lesson in the previous batch.
+
+⚠ **No number here is computed.** `cases=`, the `Total num fail:` count and `wc -l` all come
+from the post-change run's own trailer and verdict. The paragraph being edited has been
+wrong **three times**, and the third time was **the correction itself**, reached by doing
+arithmetic on a sentence instead of running `wc -l` once.
+
 ### T1 pre-change baseline — GREEN, at `63a1b41f`
 
 The driver's own run, never delegated (CLAUDE.md: the solo regression run stays with the
