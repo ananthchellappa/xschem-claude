@@ -697,6 +697,42 @@ dialog that does not exist yet.
 > ⚠ **Survey before pinning.** A site already sitting mid-sentence is the rule's first violation
 > and is in scope — move it and say so. A site that knows the limit but does **not** cite it is
 > **not** in scope: adding a citation is new copy, which is the user's to rule on. Report it.
+>
+> ⚠ **SUPERSEDED IN PART, 2026-09-16 — read the NARROWED block below before acting on the two
+> sentences above.** *"A site already sitting mid-sentence is the rule's first violation"* was the
+> rule as first written. The survey it asked for found ten such sites in which the citation is not
+> bracketed at all, and the user ruled those **out of the rule's scope** rather than in breach of
+> it. The clause still holds for a **bracketed** citation sitting mid-sentence; it no longer holds
+> for a citation written as the sentence's subject.
+
+> ### ✅ NARROWED BY THE USER, 2026-09-16 — the rule governs **bracketed** citations
+>
+> The survey below found **ten** rendered citations the rule as first written does not fit: in each
+> the citation is not in a bracket at all — it is the sentence's grammatical **subject** or an
+> em-dash aside — so obeying *"sentence-final"* would mean **rewriting the sentence**, which is new
+> copy and the user's. Asked whether to rewrite them, leave them, or split the set, the user ruled:
+>
+> **Leave them, and narrow the rule to what it actually governs:**
+>
+> > **Where ASE-L cites the simulator's source *in a bracket*, the bracket closes the sentence.**
+>
+> ⚠ **This is a narrowing, and it is worth being honest about what a narrowing costs.** The rule no
+> longer claims anything about a citation written as a subject, so two shapes stay on screen. What
+> it keeps is the part that was load-bearing: **every new citation is new copy**, and its author
+> reaches for the bracket form because this rule says so. The purpose — a designer who thinks a
+> refusal is wrong can check it in ten seconds — is served by a subject-form citation as well as by
+> a bracketed one, arguably better, since it is then the first thing read.
+>
+> ⚠ **The narrowing does NOT weaken `LB14`, and that was checked before it was accepted rather than
+> assumed.** The row classifies by **mechanism**, not by the rule's wording: `lb14cite` answers END
+> for a citation inside a bracket group whose `)` ends the sentence and MID for anything else, and
+> term 2 pins the ten MID options **by name**. So the asserted partition is unchanged, and the
+> ratchet stands — **an eleventh mid-sentence citation still reds the row**, as does quietly
+> rewording one of the ten. What changes is only the English the row and the document use to
+> describe themselves.
+>
+> **So the invariant is now true of every citation it claims to govern**, instead of being a rule
+> that ten live strings violated.
 
 > ### ✅ IMPLEMENTED 2026-09-16 — and the survey found **eighteen** citations, not two
 >
@@ -729,9 +765,14 @@ dialog that does not exist yet.
 > ⚠ **`R9-245` is the precedent §A11 itself cites**, and it was the rule's first violation.
 > ⚠ **`R9-252`'s bracket goes to the end of the FIRST sentence, not the end of the string** —
 > it evidences *“the print happens on the dot-card path only”*, not the separate `MEASURED`
-> sentence after it. *Sentence*-final means the sentence it belongs to.
+> sentence after it. *Sentence*-final means the sentence it belongs to. ⚠ **After the 2026-09-16 narrowing this
+> governs a BRACKETED citation**; one written as the sentence's grammatical subject is outside the
+> rule's scope, not in breach of it.
 >
-> ⚠ **TEN WERE NOT MOVED, AND THEY ARE REPORTED RATHER THAN TIDIED.** In each of these the
+> ⚠ **TEN WERE NOT MOVED, AND THEY WERE REPORTED RATHER THAN TIDIED.** ✅ **The user has since
+> ruled that they STAY and that the rule narrows around them** — see the NARROWED block above — so
+> they are now **outside the rule's scope** rather than in breach of it. The survey below is left
+> as it was taken, because what it found is what the ruling was made on. In each of these the
 > citation is **not in a bracket at all** — it is the sentence's grammatical **subject**, or
 > an em-dash aside — so “moving” it means **rewriting the sentence**, which is new copy and
 > is the user's, exactly as §A11 says of *adding* one:
@@ -758,8 +799,11 @@ dialog that does not exist yet.
 > lives in the simulator's source”*. Extending the rule to ASE-L's host is a one-word change to
 > the ruling and is the user's to make. It has no handle either.
 >
-> **So the invariant is true of 8 of the 18 citations a user can reach**, and this document says
-> so rather than implying a sweep. **Pinned by `test_ase_core` row `LB14`**, which scans the
+> **So the rule AS FIRST WRITTEN was true of 8 of the 18 citations a user can reach**, and this
+> document says so rather than implying a sweep. ✅ **After the narrowing it is true of all eight
+> it claims to govern** — the other ten are out of its scope, not in breach of it. ⚠ **The two
+> sentences describe the same tree before and after the ruling, and neither is a sweep**: no
+> citation moved when the rule narrowed. **Pinned by `test_ase_core` row `LB14`**, which scans the
 > *rendered* bits, asserts the seven-plus-one by name, **and pins the ten by name so an eleventh
 > reds the row** — plus a classifier control, because a placement test whose classifier always
 > answered “compliant” would pass while proving nothing.
@@ -4247,7 +4291,7 @@ the .options card is intercepted front-end side and the print it arms happens on
 
 *For:* Explains that these accounting/print flags do nothing on the route ASE-L uses, because the printing only happens on the dot-card path.
 
-*Note:* ✅ **MOVED under §A11, 2026-09-16** — a pure relocation, no word added or removed, in all six rows at once (one literal, six carriers). ⚠ **The bracket went to the end of the FIRST sentence, not the end of the string**: it evidences *"the print happens on the dot-card path only"*, not the separate `MEASURED` sentence after it, and §A11 says **sentence**-final. Placement pinned by `test_ase_core` row `LB14`. Six rows carry this identical wording. "MEASURED on both binaries" is lab shorthand shouted inside a user-visible reason; the closing "while the same option on a dot-card deck does" ends on a dangling verb.
+*Note:* ✅ **MOVED under §A11, 2026-09-16** — a pure relocation, no word added or removed, in all six rows at once (one literal, six carriers). ⚠ **The bracket went to the end of the FIRST sentence, not the end of the string**: it evidences *"the print happens on the dot-card path only"*, not the separate `MEASURED` sentence after it, and §A11 says **sentence**-final — which after the 2026-09-16 narrowing governs **bracketed** citations, and this one is bracketed, so the rule does reach it. Placement pinned by `test_ase_core` row `LB14`. Six rows carry this identical wording. "MEASURED on both binaries" is lab shorthand shouted inside a user-visible reason; the closing "while the same option on a dot-card deck does" ends on a dangling verb.
 
 
 **R9-253** · caution
@@ -5882,7 +5926,7 @@ ngspice names DERIV and refuses it at run time (com_measure2.c:2156, `function '
 *For:* Refuses every `Derivative` row, explaining that ngspice recognises the word but rejects it when the measurement runs — so a user who picked it would otherwise get a silently failed measurement with no explanation — and giving the workaround.
 
 
-*Note:* ⚠ Rendered: joined across three continuations. The sharpest §A6 case in the commit: it puts a C source filename and line number (`com_measure2.c:2156`) and a quoted ngspice source string in front of a circuit designer. There IS precedent for that in already-drafted options-sheet copy (`cktntask.c:68`), so this is a consistency ruling rather than a one-off. The backticked clause is ngspice's own text; the rest is ours. ✅ **KEPT UNCHANGED under §A11, 2026-09-16, and it is the rule's EXEMPLAR**: its citation is parenthesised and closes its own sentence, which is the placement §A11 ruled for. Of the **17** rendered citations the survey found, this was the only one already compliant — the precedent it cites, `cktntask.c:68`, was sitting mid-sentence and had to be moved. Pinned by `test_ase_core` row `LB14`.
+*Note:* ⚠ Rendered: joined across three continuations. The sharpest §A6 case in the commit: it puts a C source filename and line number (`com_measure2.c:2156`) and a quoted ngspice source string in front of a circuit designer. There IS precedent for that in already-drafted options-sheet copy (`cktntask.c:68`), so this is a consistency ruling rather than a one-off. The backticked clause is ngspice's own text; the rest is ours. ✅ **KEPT UNCHANGED under §A11, 2026-09-16, and it is the rule's EXEMPLAR**: its citation is parenthesised and closes its own sentence, which is the placement §A11 ruled for. Of the **18** rendered citations the survey found, this was the only one already compliant — the precedent it cites, `cktntask.c:68`, was sitting mid-sentence and had to be moved. Pinned by `test_ase_core` row `LB14`.
 
 
 **R9-356** · refusal

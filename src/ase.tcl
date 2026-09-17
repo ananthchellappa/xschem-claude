@@ -29593,21 +29593,29 @@ $_leg
   # (`TSKtemp = rValue + CONSTCtoK`, 300.15 K). The default here is 27, the
   # number the user types and the number `option` prints back.
   #
-  # ⚠ ⚖ R9 A11 -- WHERE ASE-L CITES THE SIMULATOR'S SOURCE, THE CITATION IS
-  # PARENTHESISED AND SENTENCE-FINAL. A designer who thinks a refusal is wrong
-  # can check it in ten seconds; everybody else reads the sentence and stops at
-  # the bracket. That is a CONSISTENCY RULE, not a ratification of two strings,
-  # and row LB14 in test_ase_core is what keeps it -- without a row the next
-  # author drops a citation mid-sentence and the rule is gone with nobody
-  # deciding to drop it.
+  # ⚠ ⚖ R9 A11 -- WHERE ASE-L CITES THE SIMULATOR'S SOURCE IN A BRACKET, THE
+  # BRACKET CLOSES THE SENTENCE. A designer who thinks a refusal is wrong can
+  # check it in ten seconds; everybody else reads the sentence and stops at the
+  # bracket. That is a CONSISTENCY RULE, not a ratification of two strings, and
+  # row LB14 in test_ase_core is what keeps it -- without a row the next author
+  # drops a citation mid-sentence and the rule is gone with nobody deciding to
+  # drop it.
+  #
+  # ⚠ NARROWED BY THE USER, 2026-09-16. It was first written "always
+  # parenthesised, always sentence-final"; the ten citations written as the
+  # sentence's SUBJECT or as an em-dash aside were never in a bracket at all, so
+  # that form could only be obeyed by REWRITING them, which is new copy. They
+  # are OUT OF THE RULE'S SCOPE, not violations of it. LB14 is unchanged by the
+  # narrowing -- it classifies by mechanism, never by the rule's English.
   #
   # ⚠ SURVEYED BY RENDERING, NOT BY GREPPING THE SOURCE, because the `site` key
-  # every row below carries has NO READER: it is documentation, it reaches no
-  # screen, and a grep for `.c:` counts 247 rows that a user can never see. What
-  # a user CAN see is what `ase::ui::optsheet_detail` composes -- `help`, then
-  # one of `inert`/`owner`/`clamp`/`defect`+`caveat` by `ase::opt_offer`, then
+  # every row below carries has NO USER-VISIBLE READER: it is documentation, it
+  # reaches no screen, and a grep of this file for `.c:<digit>` counts 393
+  # occurrences a user can never see. What a user CAN see is what
+  # `ase::ui::optsheet_detail` composes -- `help`, then one of
+  # `inert`/`owner`/`clamp`/`defect`+`caveat` by `ase::opt_offer`, then
   # `results_why` -- plus the measurement catalogue's `unsupported`. Rendered,
-  # that is 17 bits carrying a citation, over 16 options and one kind.
+  # that is 18 bits carrying a citation, over 17 options and one kind.
   #
   # ⚠ SEVEN WERE MOVED AND TEN WERE NOT, AND THE DIFFERENCE IS WHETHER A MOVE
   # COSTS A WORD. `oldlimit` (cktntask.c:68 -- the very precedent §A11 cites)
@@ -29617,8 +29625,9 @@ $_leg
   # asks for. The other ten do not have a bracket at all -- the citation is the
   # sentence's SUBJECT (`niiter.c:38-39 raises every iteration limit...`) or an
   # em-dash aside -- so moving it means REWRITING the sentence, which is new
-  # copy and is the user's to rule on. They are reported, not tidied, exactly as
-  # §A4's bare `Start` and §A6's `analysis_gap_msg` were.
+  # copy and is the user's to rule on. The user's narrowing put those ten OUT OF
+  # THE RULE'S SCOPE rather than leaving them as violations; LB14 pins them by
+  # name so an eleventh cannot appear unnoticed.
   #
   # ⚠ THE SIX ARE ONE STRING SHARED BY SIX ROWS, and the bracket goes to the end
   # of the FIRST sentence rather than the end of the string: the citation

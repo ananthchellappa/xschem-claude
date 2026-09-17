@@ -229,20 +229,35 @@
 # ⚠ TWO ROWS GAINED (LB14, LB15) for ⚖ **R9 rulings A11 and A12** (2026-09-16),
 # and ONE MOVED rather than being added: LB9's golden, whose two producer labels
 # went `FFT spectrum` -> `FFT` and `Power spectral density` -> `PSD`.
-# LB14 is §A11's PLACEMENT rule -- a citation of the simulator's source is
-# parenthesised and sentence-final -- and the ruling asked for it in as many
-# words, because without a row the next author puts one mid-sentence and the
-# rule is gone with nobody deciding to drop it. ⚠ IT SCANS WHAT IS RENDERED:
-# all 247 catalogue rows carry a `site` file:line that NOTHING READS, so a
-# source grep answers 247 where a user sees 17. ⚠ AND ITS SECOND TERM PINS THE
-# TEN THAT WERE NOT FIXED, by name: in those the citation is the sentence's
-# SUBJECT rather than a bracket, so moving it would REWRITE the sentence, which
-# is new copy and the user's. An eleventh reds the row.
+# LB14 is §A11's PLACEMENT rule -- where ASE-L cites the simulator's source IN
+# A BRACKET, the bracket closes the sentence -- and the ruling asked for it in
+# as many words, because without a row the next author puts one mid-sentence
+# and the rule is gone with nobody deciding to drop it. ⚠ NARROWED BY THE USER
+# ON 2026-09-16 from "always parenthesised, always sentence-final": ten
+# rendered citations are written as the sentence's SUBJECT or an em-dash aside
+# and were never in a bracket, so the absolute form could only be obeyed by
+# rewriting them, which is new copy. THE NARROWING IS WORDING ONLY -- lb14cite
+# classifies by mechanism and every expected value below is unchanged.
+# ⚠ IT SCANS WHAT IS RENDERED: all 247 catalogue rows carry a `site` file:line
+# that NO USER-VISIBLE SURFACE READS, so a grep of src/ase.tcl for `.c:<digit>`
+# answers 393 where a user sees 18. ⚠ AND ITS SECOND TERM PINS THE TEN SITES
+# THE NARROWED RULE DOES NOT GOVERN, by name -- they are out of scope, not
+# violations -- which is what makes an eleventh one red the row.
 # LB15 is §A12's EXPANSION rule. Two of its four acronyms already shipped right
 # (`RMS`, `THD`), so the row watches all four and not only the two that moved --
 # otherwise a later pass could expand `RMS` with nothing going red. Its fifth
 # term pins a NON-CHANGE (`Spectrum over a frequency band` carries no acronym,
 # and the ruling lists four), the same job LB6, LB13 and section PF234 do.
+# ⚠ 675 UNMOVED BY §A11's NARROWING (2026-09-16), AND THAT IS THE CORRECT
+# OUTCOME RATHER THAN A ROW THAT FAILED TO ARRIVE. The user narrowed A11 to
+# "where ASE-L cites the simulator's source IN A BRACKET, the bracket closes
+# the sentence". That is a WORDING change: LB14 classifies by MECHANISM, so no
+# expected value moved, no row was added and none was removed -- only the prose
+# describing the rule. A pass that leaves the count still is the one where a
+# truncation hides best, so this one was checked by NAME (last emitting row
+# MT10, terminal OVERALL banner, both arms) as well as by number -- task 3's C1,
+# where a `#` inside a `[list ...]` truncated a sibling suite 242 -> 232 while
+# still printing a plausible RESULT: line.
 # AND RAISED 673 -> 675.
 # AND RAISED 669 -> 673.
 # AND RAISED 662 -> 669.
@@ -7049,29 +7064,51 @@ check "LB13 one idea wears one word across the measurement forms, qualified only
         {Ignore before (s)} {Ignore before (s)} {}]
 
 ## ---------------------------------------------------------------------------
-## LB14 -- ⚖ R9 A11: A CITATION IS PARENTHESISED AND SENTENCE-FINAL
+## LB14 -- ⚖ R9 A11: A BRACKETED CITATION CLOSES THE SENTENCE
 ## ---------------------------------------------------------------------------
 ##
 ## §A11 ruled that where ASE-L knows exactly where a limit lives in the
-## SIMULATOR'S source it cites it, "always parenthesised, always sentence-final"
-## -- and said in as many words to PIN THE PLACEMENT WITH A ROW, or the next
-## author drops a citation mid-sentence and the rule is gone with nobody
-## deciding to drop it. This is that row.
+## SIMULATOR'S source it cites it -- and said in as many words to PIN THE
+## PLACEMENT WITH A ROW, or the next author drops a citation mid-sentence and
+## the rule is gone with nobody deciding to drop it. This is that row.
+##
+## ⚠ THE RULE WAS NARROWED BY THE USER ON 2026-09-16, AND THIS IS ITS WORDING:
+##
+##     Where ASE-L cites the simulator's source IN A BRACKET, the bracket
+##     closes the sentence.
+##
+## It was first written "always parenthesised, always sentence-final". The
+## survey then found TEN rendered citations that were never in a bracket at all
+## -- the citation is the sentence's grammatical SUBJECT, or an em-dash aside --
+## so the absolute form could only be obeyed by REWRITING those sentences, which
+## is new copy and the user's. Asked whether to rewrite them, leave them, or
+## split the set, the user left them and narrowed the rule to what it actually
+## governs. THE TEN ARE THEREFORE OUT OF THE RULE'S SCOPE: they are not
+## violations, and they are not untidied leftovers awaiting a later pass.
+##
+## ⚠ THE NARROWING IS WORDING ONLY, AND THAT WAS CHECKED RATHER THAN ASSUMED.
+## `lb14cite` classifies by MECHANISM -- END for a citation inside a bracket
+## group whose `)` ends the sentence, MID for anything else -- so it never
+## encoded the rule's English and needs no change. Every expected value below is
+## byte-identical across the narrowing; what moved is only the prose this row
+## and §A11 use to describe themselves.
 ##
 ## ⚠ IT SCANS WHAT IS RENDERED, NOT WHAT IS GREPPABLE, and that distinction is
 ## the whole survey. Every one of the 247 catalogue rows carries a `site` key
-## holding a file:line, and NOTHING READS IT -- it is documentation and reaches
-## no screen. A source grep for `.c:` therefore answers 247 where the true
-## answer is 17. What a user can see is what `ase::ui::optsheet_detail`
-## composes, so this row composes the same bits the same way.
+## holding a file:line, and NO USER-VISIBLE SURFACE READS IT -- it is
+## documentation and reaches no screen. (Four readers exist, all of them
+## assertions in test_ase_options_1437; none renders it.) A grep of src/ase.tcl
+## for `.c:<digit>` therefore answers 393 where a user sees 18. What a user can
+## see is what `ase::ui::optsheet_detail` composes, so this row composes the
+## same bits the same way.
 ##
-## ⚠ TERM 2 IS THE RATCHET AND IS WHY THIS IS NOT A NAME DIFF. Ten rendered bits
-## still carry a mid-sentence citation and were NOT tidied: in each the citation
-## is the sentence's SUBJECT or an em-dash aside rather than a bracket, so
-## moving it means REWRITING the sentence -- new copy, which is the user's, not
-## a crew's. Pinning that set by name means an ELEVENTH reds this row, and so
-## does quietly rewording one of the ten. A row asserting only "the seven are
-## compliant" would be satisfied by a tree in which everything else drifted.
+## ⚠ TERM 2 IS THE RATCHET AND IS WHY THIS IS NOT A NAME DIFF. It pins the ten
+## OUT-OF-SCOPE sites by name -- the subject-form and em-dash citations the
+## narrowed rule does not govern. Pinning a set the rule says nothing about is
+## precisely what makes the ratchet work: an ELEVENTH mid-sentence citation reds
+## this row, and so does quietly rewording one of the ten into compliance. A row
+## asserting only "the seven are compliant" would be satisfied by a tree in
+## which everything else drifted.
 ##
 ## ⚠ TERM 4 IS THE CLASSIFIER'S OWN POSITIVE CONTROL. A placement test whose
 ## classifier always answered END would pass terms 1-3 while proving nothing --
@@ -7141,9 +7178,9 @@ foreach lb14n [ase::sim_option_names ngspice] {
     lappend LB14END $lb14n
   }
 }
-check "LB14 a rendered citation of the simulator's source is parenthesised and\
- sentence-final, the ten that are not are pinned by name so an eleventh reds,\
- and the classifier can tell the two apart" \
+check "LB14 a bracketed citation of the simulator's source closes the sentence,\
+ the ten the rule does not govern are pinned by name so an eleventh reds, and\
+ the classifier can tell the two apart" \
   [list [lsort $LB14END] \
         [lsort $LB14MID] \
         [lb14cite [ase::meas_kind_unsupported ngspice deriv]] \
