@@ -3,7 +3,8 @@
 **Status: OPEN — found 2026-09-17** by the harness concurrency batch: recorded as a new
 finding in `doc/claude/harness_concurrency_batch/receipts/R1-build.md:277-282`, confirmed
 against the source and filed by `receipts/claude-md.md`.
-**Subject** `tests/run_regression.tcl:825-872` (the display arm), and the counting rule in
+**Subject** `tests/run_regression.tcl:840-887` (the display arm) — ⚠ this read
+`:825-872` until 2026-09-17, see the citation note below — and the counting rule in
 `CLAUDE.md`'s Tests section that every reader of a T1 run is told to apply.
 **Class** harness / verification method — a *counting rule* that under-counts silently, on
 one whole class of machine, in the one suite whose baseline is ZERO.
@@ -44,7 +45,7 @@ is that sentence this defect defeats.
 
 ```tcl
 foreach dc $dcases {
-    puts "Start ${dc}.tcl (display arm)"        ;# :826
+    puts "Start ${dc}.tcl (display arm)"        ;# :841
     incr t1_cases
     set dclog [t1_run_file $dc .disp.log]
     file delete -force $dclog
@@ -54,10 +55,10 @@ foreach dc $dcases {
       puts $fd "NODISPLAY: ${dc} display arm NOT RUN -- ..."
       puts $fd "Total num fail: 0"
       puts "NODISPLAY: ${dc} display arm NOT RUN -- this arm verified NOTHING"
-      continue                                   ;# :841  <-- leaves before the Finish
+      continue                                   ;# :856  <-- leaves before the Finish
     }
     ...
-    puts "Finish ${dc}.tcl (display arm)"        ;# :872  <-- never reached when !$dd_alive
+    puts "Finish ${dc}.tcl (display arm)"        ;# :887  <-- never reached when !$dd_alive
   }
 ```
 
@@ -65,9 +66,31 @@ foreach dc $dcases {
 display — a fresh boot (the dev display does not survive one), a container, a CI box, any
 machine where nobody ran `devdisplay.sh start`. It is an ordinary state, not an exotic one.
 
-**The `tcases` and `hcases` loops print their `Finish` unconditionally** (`:736`, `:792`),
-and so does the `xschemtest` arm (`:895`). This one branch is the only asymmetry in the
+**The `tcases` and `hcases` loops print their `Finish` unconditionally** (`:751`, `:807`),
+and so does the `xschemtest` arm (`:910`). This one branch is the only asymmetry in the
 driver.
+
+⚠ **EVERY LINE NUMBER IN THIS FILE WAS WRONG BY +15, CORRECTED 2026-09-17.** As filed,
+this issue cited `:825-872` as its subject, `:826`/`:841`/`:872` in the code block above,
+and `:736`/`:792`/`:895` in the paragraph above. Measured against **`69c65249`**, every one
+is **+15**: `:841`/`:856`/`:887` and `:751`/`:807`/`:910`. Nobody mis-read the file — a
+single `+22/−7` edit (net **+15**) landed above all six sites on the same day this issue
+was minted, from the crew fixing `W12b`. **The mechanism is this batch's own subject**: a
+line number is a position in a namespace another actor is writing to, and *position is not
+identity*. That same `+15` produced the batch's four-source-citation failure, in which four
+passes gave three different coordinates for one sentence and **every one was correct
+against the tree that pass had read**. Quoted with their text, so the next reader
+re-derives rather than inherits:
+
+```
+841:    puts "Start ${dc}.tcl (display arm)"
+842:    incr t1_cases
+856:      continue
+887:    puts "Finish ${dc}.tcl (display arm)"
+```
+
+**Re-grep before requoting these.** `/usr/bin/grep -n 'puts "Start\|puts "Finish'
+tests/run_regression.tcl` is the whole check and costs nothing.
 
 ## The arithmetic, which needs no run to derive
 
@@ -98,6 +121,18 @@ the `NODISPLAY:` lines are there to say.
   sentinel added by the harness-concurrency batch is therefore already the *right* answer
   to this question — which is why this issue is a live hole in a **documented rule** rather
   than a live hole in the harness's own counting.
+
+  ⚠ **RE-MEASURED AND CONFIRMED 2026-09-17 by `receipts/V5.md:119-129`**, recorded here so
+  that nobody files this refinement a second time believing it new. V5 read the increment
+  sites rather than the comment that asserts them — `t1_cases` at `:715`, `:781`, **`:842`**,
+  `:894` — and confirmed `incr t1_cases` fires **before** the `continue` at `:856`: on a
+  NODISPLAY box the trailer still reports `cases=84` while stdout drops to 73 `Finish`.
+  **So `T1-RUN-END cases=` is not merely the newer instrument, it is the structurally
+  better one** — 1481's hole cannot reach it. That is the reverse of the intuition that the
+  stdout pairs are primary and the trailer a convenience, and it is why fix direction 2
+  below is written as it is. **The paragraph above already said this when the issue was
+  filed**; V5 supplied the measurement, and **no part of this issue needed rewriting as a
+  result.**
 
 ## Fix directions
 

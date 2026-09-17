@@ -205,8 +205,8 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   ⚠ **AND `Start`/`Finish` PAIRS DO NOT PAIR ON A BOX WITH NO DEV DISPLAY.** Found
   2026-09-17 by the harness-concurrency batch; filed as issue **1481**, and in no
   issue file before that. The display arm's NODISPLAY path writes its block and
-  `continue`s at `run_regression.tcl:841` — **before** the `puts "Finish …"` at
-  `:872` — so a run on a box where `devdisplay.sh status` is not alive prints **84
+  `continue`s at `run_regression.tcl:856` — **before** the `puts "Finish …"` at
+  `:887` — so a run on a box where `devdisplay.sh status` is not alive prints **84
   `Start` lines and 73 `Finish` lines**. The rule just above ("count `Start`/`Finish`
   pairs for cases") therefore **under-counts by 11 exactly there**, and a reader
   counting `Finish` concludes eleven cases vanished — the same shape as 1476 face 2,
@@ -217,13 +217,25 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   ⚠ **IT IS DISPLAY-STATE DEPENDENT, AND ON THIS BOX IT DOES NOT FIRE.** Do not read
   the paragraph above as "the count is broken". V4's seven T1 runs on 2026-09-17 all
   ran with the persistent dev display `:99` alive, and every one printed **84 `Start`
-  / 84 `Finish`**. The hole was confirmed **in the source** (`:826` prints `Start`,
-  `:841` `continue`s, `:872` prints `Finish`) and has **never been observed** — the
+  / 84 `Finish`**. The hole was confirmed **in the source** (`:841` prints `Start`,
+  `:856` `continue`s, `:887` prints `Finish`) and has **never been observed** — the
   84/73 split remains **derived, not measured**, because nobody has yet run T1 with
   the display down. Read that the right way round: the `Start`/`Finish` rule is safe
   *here* and unsafe *generally*, so it turns wrong the first time anyone runs on a
   fresh boot, a container or CI — which is exactly where nobody is watching for it.
   `cases=` from the trailer is correct on every box, which is why it is the rule.
+  ⚠ **EVERY LINE NUMBER IN THE TWO PARAGRAPHS ABOVE WAS WRONG BY +15 UNTIL
+  2026-09-17 — AND SO IS ISSUE 1481's OWN CODE BLOCK.** They read `:826` `Start`,
+  `:841` `continue`, `:872` `Finish`; measured against **`69c65249`** the text is at
+  **`:841`, `:856`, `:887`**, and 1481's companion citations rot by the same amount
+  (`tcases` `Finish` `:736`→**`:751`**, `hcases` `:792`→**`:807`**, `xschemtest`
+  `:895`→**`:910`**). Nobody mis-read anything: a **uniform +15**, from one crew's
+  `+22/−7` edit landing above all six sites the same day. This is the batch's
+  four-source-citation lesson arriving inside the paragraph that describes the defect
+  it was learned on — **a citation needs a tree state, not just a line** — so these
+  are quoted with their text at `69c65249`: `841:    puts "Start ${dc}.tcl (display
+  arm)"` · `856:      continue` · `887:    puts "Finish ${dc}.tcl (display arm)"`.
+  Re-grep before requoting. That includes these.
   **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **BUT A MOVED MTIME PROVES A RUN *WROTE*, NOT THAT A RUN *FINISHED* (issue
@@ -401,6 +413,71 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   same-day rewrite above makes false: nothing is refused now. **A number taken today
   is its own run's**, written under its own pid to its own file, and its trailer says
   whether it finished — which is a better answer than the lock ever gave.
+  ⚠ **THE RULE THAT SERIALISED CREWS LOST ITS STATED REASON AND KEPT A REAL ONE
+  (⚖ R4, 2026-09-17).** For five weeks "one crew at a time" was justified in writing
+  by *"a ~7.8 GB box"* on which *"a concurrent `make` is the recorded OOM path"*.
+  **Neither half was ever measured.** The box is **15.35 GiB** with 4 GiB of untouched
+  swap, `dmesg` carries **zero** OOM kills, and V4's 2 s sampling found concurrency
+  added **nothing** to peak memory — **10328 MiB** concurrent against **10350 MiB**
+  solo, the *solo* run peaking highest. **The rule was right anyway, for a reason
+  nobody was citing.** The one measured block that survived the entire batch is the
+  pre-fix pair table: two staggered runs produced **407 / 432 / 757 phantom `FATAL`s**
+  with the second run **dead at rc 1**, in the one suite whose baseline is ZERO. That
+  is the whole basis, it has nothing to do with memory, and it is why a T1 number
+  taken during a collision was void.
+  **R4 is now RELAXED, on measurement — and the relaxation is about THE HARNESS.**
+  V4 ran the first clean concurrent pair (both verdicts complete, self-identifying,
+  neither missing a block the other had), and `W12b` — the last row that manufactured
+  a false red out of a shared namespace — was fixed by **identity**, the child
+  announcing `EMERGENCY SAVE DIR:` on its way out (`src/main.c:52`), not by counting.
+  Two T1 runs in one tree are a supported thing to do.
+  ⚠ **A batch's own dispatch queue does not inherit that licence.** A driver that
+  serialises its crews is applying a *scheduling* choice of its own. Meeting a relaxed
+  R4 here and a serialised ledger there does **not** mean one of them is stale — ask
+  which is speaking, the harness (relaxed) or that batch (its own call).
+  ⚠ **Two caveats stand, and neither is bookkeeping.** **Diagnose a T1 red by case,
+  never by count**: the `test_ase_optier_0963` flake was observed in an
+  **uncontended** run and is still unexplained, so "T1 went red" is not evidence of a
+  collision. And **nobody has swept the shared globals** beyond
+  `/tmp/xschem_emergencysave_*` — `W12b` was one count-based assertion on one global
+  namespace, found by accident, and no one has looked for its siblings.
+  **Concurrent `make` remains unmeasured** and nothing here declares it safe.
+  ⚠ **The refuted figure is still on disk in 18 places, deliberately.** Measured
+  2026-09-17: five `doc/claude/ledger/*.md`, four crew-launcher `.js` (`crew.js:29`,
+  `crew_annotate.js:58`, `crew_opfix.js:67`, `op_param_batch/item_pipeline.js:91`),
+  five `doc/claude/suggestions/next_session_prompt_*.md`, and four issue files
+  (`0432:82`, `0671:83`, `0868:215`, `0876:45`). Those are dated records of what
+  people believed, and rewriting them would falsify the record — **so when you meet
+  "~7.8 GB" out there it is a fossil, and this bullet is the correction.** Note the
+  four `.js` are *launchers*, not archives: each still emits that sentence into a new
+  crew's brief, and `crew.js:25` tells that crew CLAUDE.md **overrides** it — this
+  paragraph is what does the overriding. (`receipts/ram-figure.md` records the same
+  set as **17**; it counted four session prompts where the tree carries five.)
+  ⚠ **AND DO NOT ASK `pgrep -af run_regression` WHETHER A RUN IS LIVE — IT ANSWERS
+  YES TO ITSELF.** Measured 2026-09-17: **four hits for one run** — the real `timeout`
+  and `tclsh` processes, plus **two Bash wrapper shells whose command *text* contains
+  the pattern**, one of them the `pgrep` being typed. `-f` matches the whole command
+  line, so **any pattern you type is, at that instant, present in a live process's
+  command line: your own.** In a batch whose subject was detecting concurrent runs,
+  the detector had a false-positive mode that makes a solo run look contended — and a
+  false collision is a ready-made excuse for a red. Same defect as `W12b` and `C11` in
+  different clothes: **matching a shared namespace by pattern instead of by identity.**
+  **Ask the harness instead.** `t1_live_runs` (`tests/run_regression.tcl:656-665`)
+  already does it by identity: it globs `results.<pid>.log` and keeps a pid only if
+  `/proc/<pid>` exists, so the verdict file *is* the liveness record and there is no
+  second thing to leak. A run that sees a peer says so on stdout (`another regression
+  run is live in this tree (pid: …)`), so **zero occurrences of that line in your own
+  run's output is a positive statement that it ran solo** — better evidence than any
+  `pgrep`, because it comes from the thing being measured. If you must match processes
+  by hand, bracket a character (`'run_[r]egression'`) or match `ps -eo comm=` by name;
+  never a bare `-f` substring.
+  Deliberately **not** filed as an issue: the trap is already written up correctly in
+  `doc/claude/code_analysis/gui_test_gate_tutorial.md:207-210` (Lesson 5),
+  `doc/claude/suggestions/retrospective_new_user_lessons.md:46-98`, and
+  `doc/claude/ase_analyses_batch/CREW_BRIEF.md:125-160`, which records three sightings
+  including one that **killed its own shell**. A sixth document about a defect already
+  documented five times is this project's signature failure, not a fix. What was
+  missing was never a number — it was this sentence, here, where everyone reads.
 - **⚠ NO TEST HARNESS BUILDS. `full_audit.sh` runs `$REPO/src/xschem` as it
   finds it** (`full_audit.sh:49`), and so does every standalone suite. So a
   source tree that is correct and a binary that is stale produce a *plausible*

@@ -348,7 +348,20 @@ remains the user's to settle.**
 
 ## ⚖ R4 — "ONE CREW AT A TIME" KEEPS ITS RULE AND LOSES ITS REASON. Driver's call.
 
-The `ram-figure` crew surfaced this and could not file it: **six documents justify the
+⚠ **"SIX DOCUMENTS" WAS ITSELF AN UNMEASURED REQUOTED NUMBER — measured 2026-09-17 by the
+`final-docs` crew: there are 18 sites, and only ONE was ever live.** The figure appears here,
+at `LEDGER.md`, and in `receipts/ram-figure.md` with **no measurement behind any of them**; the
+tree carries **19 grep hits minus one false positive** (a section number, "### 7.8 GUI gate").
+**Seventeen of the eighteen are the fenced leave-alone class** — dated ledgers, another branch's
+park doc, session prompts, and issue files recording *why a past decision was made* — so the
+"rewrite the six" task found **one** document to change, `CLAUDE.md`. `ram-figure`'s own
+leave-list said 17 and should say 18: it counted four session prompts where there are five.
+
+⚠ **Note where that error sits: in the opening sentence of the ruling that exists BECAUSE a
+number was requoted instead of measured.** The driver propagated it into three files and a crew
+brief. Nineteenth wrong recorded belief, and the driver's.
+
+The `ram-figure` crew surfaced this and could not file it: **documents justify the
 serialisation rule by citing the "~7.8 GB box", and that box does not exist.** It is 15.35 GiB
 with 4 GiB of untouched swap, `dmesg` shows **zero** OOM kills, and the whole OOM chain is
 assertions citing each other — 1477 cites 0905, 0905 calls it *"a documented event"*, the

@@ -387,7 +387,12 @@ without its text is an assertion.
 
 ## ⚖ R4 — the serialisation rule keeps its rule and loses its reason (driver's call)
 
-**Six documents justify "one crew at a time" by citing a box that does not exist.** Decision in
+⚠ **"Six documents" was itself an unmeasured requoted number — it is 18 sites, and 17 are the
+fenced leave-alone class, so only `CLAUDE.md` was ever live.** Measured by `final-docs`. The
+error sits in the opening sentence of **the ruling that exists because a number was requoted
+instead of measured**, and the driver carried it into three files and a crew brief.
+
+**Documents justify "one crew at a time" by citing a box that does not exist.** Decision in
 `DECISIONS.md`: **the rule stands on its real basis and relaxes only on evidence.** The RAM figure
 was always *secondary*; the *primary* justification is measured, reproduced in this batch, and
 untouched — **concurrent runs corrupted each other 407/432/757 times** and the loser died. That
