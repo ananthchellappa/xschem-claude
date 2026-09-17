@@ -302,7 +302,7 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   a killed run left **0 or 4096 bytes**, not a proportional prefix, which made
   the 0-byte file the *typical* outcome rather than an extreme one. **So pair the
   mtime with the case count:** the log must carry one `Total num fail:` line per case
-  minus one (**83** for today's 84), and a short count is a death even when every line
+  minus one (**84** for today's 85), and a short count is a death even when every line
   that is present is green.
   ⚠ **TWO HALVES OF THAT WERE FIXED ON 2026-09-17 AND THE DANGEROUS HALF WAS NOT.**
   This bullet said *"Nothing marks that a run began or ended — there is no `REGRESSION
@@ -550,6 +550,18 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   and why, per case; never carry a count forward as a known quantity.
   ⚠ **Measured green 2026-09-17:** a solo T1 returned `rc 0`, **375 s**, trailer
   `cases=84 blocks=83 counted_failures=0`. The baseline is met and it remains ZERO.
+  ⚠ **Re-measured green the same day at 85 cases**, after the issue-tracker batch
+  registered `headless/test_issue_stamp`: `rc 0`, **380 s**, trailer
+  `cases=85 blocks=84 counted_failures=0` (commit `1acae0b0`). **Still ZERO**, and
+  solo-ness was established *positively* — zero occurrences of `another regression
+  run is live` in the run's own output, which is better evidence than any `pgrep`.
+  ⚠ **That gate went RED twice first, and both reds are worth knowing.** One was a
+  driver hand-running a suite **while T1 was live** — in a diagnostic run undertaken
+  to be careful. The other was **the spelling of `HEAD`**: `83656487` has no `a`–`f`,
+  the issue-stamp suite feeds `git rev-parse --short=8 HEAD` into its fixtures, and
+  its grammar correctly refuses a `tree=` with no hex letter — so **12 rows died at
+  once, on a 2%-per-commit coin flip**, under a baseline that treats any red as a
+  defect. Measured: 6 of the last 300 commits abbreviate to all-decimal.
   ⚠ **BUT A T1 RED IS NOT BY ITSELF EVIDENCE OF A COLLISION**, and the
   harness-concurrency batch has just spent a night teaching everyone to suspect one.
   In that same session an **uncontended, solo** run produced **3 counted failures** in

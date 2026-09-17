@@ -294,6 +294,33 @@ than the line** — `foreach dc $dcases`, not `:842`.
 when a line is inserted, because it names a *thing* rather than a *place*. That is the whole
 convention in one comparison.
 
+### ⭐⭐ The control experiment was already in CLAUDE.md, and it held
+
+**The strongest evidence this batch produced was not designed — it was sitting in the file.**
+CLAUDE.md contains one paragraph that cites the *same six sites* but **anchors them to a
+revision**:
+
+> *"measured against **`69c65249`** the text is at **`:841`, `:856`, `:887`** … so these are
+> quoted with their text at `69c65218`"* — and issue 1481's own block likewise: *"Measured
+> against **`69c65249`**, every one is **+15**."*
+
+**Those numbers are still correct**, because they are statements about `69c65249` and
+`69c65249` has not changed. Meanwhile **every bare coordinate in the surrounding prose has
+now rotted twice** — `+15` from a crew's edit this morning, `+1` from this batch's
+registration this afternoon.
+
+| citation form | after two unrelated edits |
+|---|---|
+| bare `file:line` | **wrong, twice** (6 sites × 2) |
+| `file:line` **at a named revision** | **still exactly right** |
+| the emitter's name (`cases=`, `foreach dc $dcases`) | **cannot rot** |
+
+⚠ **So those paragraphs must NOT be "corrected".** Rewriting `:841` → `842` there would
+make the sentence *false* — it is a claim about `69c65249` — and would destroy the only
+worked demonstration in the tree of a citation that survived. **They get an annotation, not
+an edit.** This is `BC1`'s `tree=` design vindicated by a control the batch never set up:
+**a statement about the past cannot rot, only age.**
+
 ### ✅ F1 GATE — GREEN, at `5bcf003b`. Registered, and the baseline is still ZERO
 
 ```
