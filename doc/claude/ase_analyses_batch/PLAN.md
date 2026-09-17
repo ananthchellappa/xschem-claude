@@ -968,6 +968,15 @@ proc ase::analysis_emit_order {state {op_last 0}} {
     if {$r eq {}} {
       return -code error \
         "ase: analysis type '$t' is not one this simulator backend can render"
+      ## ⚠ THE SHIPPED STRING NO LONGER SAYS `backend`. ⚖ R9 §A6 struck the
+      ## developer word on 2026-09-16; `src/ase.tcl:4706` now returns
+      ## "ase: analysis type '$type' is not one this simulator can render".
+      ## THIS LISTING IS LEFT AS WRITTEN because it is the plan's record of what
+      ## Stage 0 specified, and rewriting it would claim the plan specified
+      ## something it did not -- the same reason a receipt is never edited.
+      ## ⚠ QUOTE THE SOURCE, NEVER THIS BLOCK: a pre-edit literal from a batch
+      ## document propagated into R10's adapter specification on 2026-09-16 and
+      ## was caught only by a character-by-character check against src/ase.tcl.
     }
     lappend out [list $r $i $t]
   }
@@ -1033,7 +1042,10 @@ conventions dossier knew about. This stage owns both.
    something is wrong.
 2. A bench whose `.state` carries an analysis type this build cannot render **refuses at Netlist &
    Run**, before the netlist is written, with the type named:
-   *"ase: analysis type 'noise' is not one this simulator backend can render"*.
+   *"ase: analysis type 'noise' is not one this simulator can render"*. ⚠ **This line said
+   `this simulator backend` until 2026-09-16**, when ⚖ R9 §A6 struck the developer word from the
+   shipped string; it is corrected here because it asserts, in the present tense, what a user is
+   shown. The **code listing** earlier in this stage is annotated rather than corrected — see there.
 3. The refusal lands in the action log through `ase::echo`, which is where every other ASE-L refusal
    lands, so the headless suites can assert it.
 

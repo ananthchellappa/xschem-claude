@@ -1538,7 +1538,7 @@ analyses asked one sentence at a time would be dozens of rounds; one round per s
 respects the standing preference instead of defeating it.
 
 Stage 1 mints **no** user-facing sentence. Stage 0 mints exactly **one** — the refusal naming
-the unrenderable type, *"ase: analysis type '<t>' is not one this simulator backend can
+the unrenderable type, *"ase: analysis type '<t>' is not one this simulator can
 render"* — which is filed as a rule debt (`owed.sh add rule <issue>`) **the moment it lands**
 and paid with Stage 3's batch. It **blocks nothing**, and both stages still carry no ruling
 that has to be answered before they ship. ⚠ **CORRECTION 2026-09-09**: this paragraph used to
