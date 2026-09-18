@@ -232,3 +232,100 @@ I worked on byte-identical copies (issue_stamp.tcl 4f990c5e…, test_issue_stamp
   * GIT_ATTR_NOSYSTEM is set but unmeasured, because planting /etc/gitattributes needs root.
   * Carried over: summarize_all still drops `skip:` lines (D12, driver); the offline blob:none quote= limit is latent; HAVE_GIT still depends on the `timeout` binary.
   * Not verified by a full T1 run. Only the T1 spelling (`cd tests && ../src/xschem --nogui --pipe -q --script headless/test_issue_stamp.tcl`) was run, in every shape.
+
+## S1-fix3 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix3 is refuted on fail-open, although almost every measurement it claims reproduces. The new hole is not in `full` or `unreadable`: those really never skip (MEASURED). It is in how the probe gets into `shallow`.
+
+**The hole (MEASURED; READ at issue_stamp.tcl `history_probe` / `rev_verdict`).** The checker calls a tree `shallow` whenever `git rev-parse --is-shallow-repository` answers true. That flag belongs to the whole repository, not to HEAD. Any shallow boundary anywhere in the store, even one that is not in HEAD's ancestry, exempts every revision that does not resolve.
+
+Two ordinary shapes do this:
+- **The developer's own full clone after one routine command.** Take a full clone of 616110a6 and run `git fetch --depth 1 origin main`; a failed `git pull --depth 1 --ff-only origin fluid-editing` does the same. The repository becomes `shallow=true` permanently, with `.git/shallow` naming only main's new tip. HEAD's history is still 5818 commits back to 7fe79fb2, the same as the main tree.
+- **A stranger's CI flow.** `git clone --depth 1 -b main`, then a plain `git fetch origin fluid-editing` and a checkout. HEAD's history is again complete: 5818 commits, root 7fe79fb2, and 61af3692 resolves.
+
+In both shapes I planted 0056 `tree=deadbee0` and 0216 `tree=<blob sha>`. Results on the final bytes:
+- tclsh, xschem and T1-spelling arms: rc 0, `RESULT: ALL PASS (68 checks, 3 skipped -- shallow: history absent)`, and `regression_case_failed` scores 0.
+- CLI: `ok (0 problems; 2 revision(s) NOT VERIFIED -- shallow: history absent)`.
+
+The same plants in a plain full clone give CLI rc 1 with 2 problems. The skip is named, but the name is false: it says "commits older than its depth are not in it" and "history absent" while every one of HEAD's commits is present. H6 does not catch it, because it reads the shallow file and agrees. H7 does not catch it, because shallow's skip set is the declared one. No H1 fixture has a shallow boundary off HEAD's path.
+
+The probe already holds the proof. The walk's roots are {7fe79fb2}, none of them is a shallow boundary, and none of their stored objects has a parent. In a real `--depth 1` clone the root is the boundary.
+
+This is not a regression: S1-fix2's bytes give the same CLI result on both shapes. But it is exactly what D14 forbids: "no exemption for a history that has commits … whatever the ancestry looks like". It is also what the header forbids: only positive evidence of absence may skip.
+
+**What reproduces (MEASURED, final bytes 2c6436ef/bf814c4f, checked on every run):**
+- Main tree: ALL PASS 71 with 0 skips on the tclsh, xschem and T1 arms; CLI ok.
+- 71 checks, all green: full clone, worktree, pct%41dir, blob:none, graft, orphan, deep, shallow-since and deepened clones, and graft with `GIT_NO_REPLACE_OBJECTS=1` set by the caller.
+- shallow: 68 + 3 named skips (G4 D9h H9).
+- export, export inside another repo, `git init`, `git init` + `add`: 64 + 7 named skips.
+- RED D9 D9h H9, with the NOTE where 7fe79fb2 is absent: re-init today, re-init backdated to 2020, root-author rewrite, root-date rewrite, squash onto origin/main (no NOTE there).
+- Corrupt shallow: unreadable, red D9 D9h H6 H9, RESULT reached.
+- An uncommitted orphan branch in a repo with history: unreadable, red S0 H6, whether or not refs remain.
+- Planted defects in a full clone are each RED: bd2016, 0000-00-00, blob `tree=`, rotted `quote=`, unstamped file.
+- S1-fix2's bytes, for contrast: bd2016 and 0000 are green, and the warning config reads unreadable with a blank cause.
+- Warning config and `GIT_TRACE=2`: ALL PASS 71.
+- Dubious ownership: 14 FAILED, RESULT reached. No git on PATH: 14 FAILED + 13 skipped.
+- `chmod 000` on an issue file: red B1 B4 D9. Read-only checkout: 71 on two arms. `TMPDIR=/proc`: red X0.
+- Hermetic writes: a victim repository and the tree under test are byte-identical before and after.
+- Sabotages: full_skips turns G4 H2 H5 H8 H11 H13 H14 red; removing `lacks_upstream` turns only H14 red.
+- Every run: corpses 0→0.
+## problems:
+  * FAIL-OPEN on a complete HEAD history, pre-existing but inside D14's class (MEASURED). A full clone of 616110a6 plus one `git fetch --depth 1 origin main` (shape /var/tmp/xschem_fixes/s1fix3_verify/shapes/fetchd) has git's shallow flag set by main's tip (75bd6944), which is not an ancestor of HEAD. HEAD's history is complete: 5818 commits, root 7fe79fb2.
+- A failed `git pull --depth 1 --ff-only origin fluid-editing` leaves the same state (shapes/selfdepth).
+- Planted `tree=deadbee0` in 0056 and a blob `tree=8ccb7c22` in 0216. tclsh, xschem and T1 arms: rc 0, `RESULT: ALL PASS (68 checks, 3 skipped -- shallow: history absent)`, case_failed 0. CLI: `ok (0 problems; 2 revision(s) NOT VERIFIED -- shallow: history absent)`.
+- The same plants in a plain full clone: CLI rc 1, 2 problems.
+- S1-fix2's bytes are identical here (fetchd_pre), so this is not a regression.
+- The stated reason ('commits older than its depth are not in it') is false.
+- H6 agrees, because it reads the shallow file. H7 agrees, because this is shallow's declared skip set. No H1 fixture has a boundary off HEAD's path.
+  * The same FAIL-OPEN in a stranger's CI flow (MEASURED, shapes/ciflow): `git clone --depth 1 -b main`, then a plain `git fetch origin fluid-editing` and `git checkout -b fluid-editing FETCH_HEAD`.
+- The shallow file is {052b29f1}, off HEAD's path. HEAD's walk is 5818 commits, root 7fe79fb2, and 61af3692 is present.
+- A bogus `tree=` plus a blob `tree=` give ALL PASS 68 + 3 skipped on tclsh, xschem and T1, and CLI rc 0.
+- An empty `.git/shallow` in a full clone (contrived) does the same (shapes/eshallow).
+  * Remedy (INFERRED from MEASURED discriminators). Stay `shallow` only when a root from HEAD's `--no-replace-objects` walk is itself a shallow boundary: roots ∩ the shallow file ≠ ∅, or the root's stored object carries a `parent` line. Otherwise the probe is `full`.
+- Measured: fetchd, ciflow and eshallow have 0 roots that are boundaries and 0 with a parent; a real `--depth 1` clone has 1 and 1.
+- Alternative, one exec: `git --shallow-file '' --no-replace-objects rev-list --max-parents=0 HEAD` succeeds in fetchd and selfdepth and fails in a real shallow clone. It uses an internal git option.
+- Add an H1/H13 fixture that holds a shallow boundary off HEAD's path, with a planted bogus stamp that must be RED.
+  * Minor misclassification (MEASURED): `.git` as a dangling symlink (shapes/dangling) reads `none -- no .git in this tree`, which is false. Result: 64 + 7 named skips, and a bogus `tree=` passes.
+- The header says anything not positively established lands in `unreadable`. `file exists` follows the symlink, so a broken one reads as absent.
+  * Genuine defect green in the author's own full clone, pre-existing and in the design (MEASURED, shapes/amend). A stamp naming a commit that no ref reaches passes: `commit --allow-empty`, then `reset --soft HEAD~1`, then `tree=` set to that commit.
+- Author's clone: CLI rc 0 `ok`.
+- After committing the stamp, a fresh clone of that repo is RED (1 problem). T1 would then count 3 for every stranger.
+- `rev_exists`, H9 and D9h all use `cat-file -e`, which checks only the local store. The author's pre-commit gate is exactly where this should be caught, and it is not.
+  * Argument injection writes a file during validation, pre-existing (MEASURED). `quote=` has no format check, and `quote_holds` runs `git show ${rev}:${path}`.
+- An issue block of the form ```` ```c quote=--output=<scratch>/pwned path=x ```` made the gate write `<scratch>/pwned:x`: 21181 bytes, the `git show HEAD` output.
+- The gate then reported it red. The write is already done by that point, and D9 runs this over the real corpus in T1.
+- This contradicts 'no way to express anything but a grep'. Remedy (INFERRED): validate `quote=` like `tree=` (7-40 hex with at least one a-f), or pass `--end-of-options`.
+  * Rotted quotes that pass silently, pre-existing parser scope (MEASURED). In a full clone, a `quote=61af3692 path=src/xschem.h` block with text that is not in that file gives CLI rc 0 `ok (0 problems)`, with no NOT VERIFIED line, in three forms:
+- an indented fence (2 spaces, which CommonMark renders as a code block);
+- a `~~~` fence;
+- an unclosed fence at the end of the file.
+The same block in a column-0 fence is red.
+  * Accuracy of the receipt: it says 'Green with named skips only: shallow (G4 D9h H9)' and that `full` and `unreadable` never skip. Both statements are true, but the shallow classification is repository-wide while the question is about HEAD. So the named skip can sit on a complete history, and its RESULT trailer then asserts 'history absent' falsely.
+## real_home_check: `md5sum -c --quiet /tmp/claude-1000/-home-analog-dev-xschem-claude/f12b1fd5-2898-41a7-9dd9-9fd4b899f2af/scratchpad/xschem_manifest_fixes.md5` gave rc 0 before any work and rc 0 after all of it.
+
+**Real home.** `find ~/.xschem ~/.claude/xschem_dev_display ~/.claude/gui_test_gate -newer /var/tmp/xschem_fixes/s1fix3_verify/.marker_start` printed nothing. The same check on ~/dev/xschem-op-wcard, excluding .git, printed nothing.
+
+**How runs were made.** Every tclsh, xschem, CLI and T1-spelling run used HOME=/var/tmp/xschem_fixes/s1fix3_verify/homes/<tag>, with DISPLAY and GIT_EDITOR unset, and ran under `timeout`.
+
+**Main tree.**
+- It was only read, plus suite and CLI runs with a scratch HOME.
+- The two files are unchanged (2c6436ef… / bf814c4f…) and HEAD is still 616110a6.
+- `git status` shows only the pre-existing entries.
+- tests/headless/.scratch holds 0 istamp_/drv_ entries, and /tmp holds 0 istamp_*.
+- Nothing was committed, stashed, reset or checked out there.
+
+**Where git writes went.** Every git write went to scratch repositories under /var/tmp/xschem_fixes/s1fix3_verify/shapes/. That includes the bare mirrors (mirror.git, and mirror2.git with one extra commit each on main and fluid-editing), the plants, the amend commit, and the injection test's file `/var/tmp/xschem_fixes/s1fix3_verify/pwned:x`.
+
+**Display and other crews.** `:99` and devdisplay were not touched. Other crews' r2i runs were seen in `ps` and left alone.
+
+**Processes.** None of mine is running; the only `ps` match was the checking shell itself.
+
+**Left for the driver.** Shapes, logs and scripts (run.sh, mk.sh, mkshapes.sh, plant.sh, clibatch.sh) are under /var/tmp/xschem_fixes/s1fix3_verify/. Every plant was restored, except the deliberately sabotaged copies sab1/sab2 and the committed stamp in amend.
+
+## IMPL open_problems (S1-fix3 crew):
+  * Redundant layer: D9h's skip-set column is not independently held. With the checker skipping and that column blanked, D9h stays red on its count column (9 of 10 verified). H13's skip column is the only assertion of (i) that nothing else duplicates.
+  * A re-initialised download is RED by design, including in T1 (3 counted lines). The explanation is in the suite's `## history:` line and in D9's problem lines, but not in results.log, because summarize_all copies no suite body (D12).
+  * A squash onto origin/main is red with no note, because that history does contain 7fe79fb2. A legacy .git/info/grafts file makes the NOTE appear on a green run, because git honours a grafts file even under --no-replace-objects. Both are wording only.
+  * The suite costs about +6 s (≈19 s against ≈13 s).
+  * Carried over: GIT_ATTR_NOSYSTEM is unmeasured (needs root); HAVE_GIT depends on `timeout`; the offline blob:none quote= limit is latent; summarize_all drops `skip:` lines.

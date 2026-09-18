@@ -311,3 +311,35 @@ The shape was never in Item 1's done-criteria. **Fail-closed beats convenient**,
   calls are judged by their exit code alone.
 * **A row asserts that no revision question skips in a full history** (an empty skip set), and a
   row plants a backdated bogus stamp in a full fixture and requires it RED.
+
+---
+
+# D15 — Round 4 of Item 1: shallow is a property of HEAD's history, and user text is never an argument (driver)
+
+S1-fix3's refuter confirmed D14 in `full` and `unreadable`: they never skip. It found the
+shallow skip itself fails open. `--is-shallow-repository` is a flag on the whole repository.
+One `git fetch --depth 1` of another branch, or a stranger's CI flow of
+`clone --depth 1 -b main` followed by a fetch of this branch, sets it. HEAD's history then stays
+complete (5818 commits, root `7fe79fb2`), yet a planted bogus `tree=` passed as "history absent".
+That skip was introduced by S1 and is not in the committed checker, so it is fixed before any
+commit. Rulings:
+
+1. **`shallow` only when HEAD's own walk ends at a shallow boundary.** That means a root of
+   `git --no-replace-objects rev-list --max-parents=0 HEAD` is listed in the shallow file, or its
+   stored object carries a `parent` line. Otherwise the tree is `full`. Add a fixture with a
+   boundary off HEAD's path and a planted bogus stamp, which must be RED.
+2. **A `.git` that exists as a link but does not resolve is `unreadable`**, never `none`: test it
+   with lstat, not `file exists`.
+3. **No text from an issue file ever reaches git as an option.** Validate `quote=` with the same
+   grammar as `tree=`, and pass `--end-of-options` (or an equivalent) on every git call that carries
+   a value derived from the corpus. The refuter made the gate write a 21 KB file through
+   `quote=--output=…`. This is a write hazard in T1 over the real corpus, and it is fixed here even
+   though it predates the batch.
+4. **A stamp's revision must be an ancestor of HEAD.** It is checked with
+   `merge-base --is-ancestor`, and in a shallow history only up to the boundary, where it skips by
+   name. That catches, in the author's own clone, a stamp whose commit was amended away, which
+   today passes locally and turns T1 red for every stranger. **The current corpus is measured
+   first.** If any of today's stamps names a non-ancestor, the crew reports it and falls back to
+   "reachable from some ref", rather than turning the gate red.
+5. **A `quote=` or `**STAMP:**` that the parser does not consume is a problem.** Examples are a
+   quote in an indented, `~~~` or unclosed fence. It is never a silent pass.
