@@ -232,3 +232,64 @@ driver rather than a crew, because every crew brief forbids touching `~/.xschem`
 sentence, and whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or a
 suite's. That entry is why the probe launched the editor as a simulator in the first place;
 the refusal guard is what now stops it. `~/.xschem/ase_simulators` is untouched.
+
+## ⚠ CORRECTION 2026-09-17 — the registry WAS written by AI crews, and it caused this issue
+
+**This file's statement that the registry is one "which no suite in this tree writes" is
+false**, and so is the belief it rested on. A 22-agent investigation, every key claim checked
+by two independent refuters, found:
+
+* **`ng-cm3` was never the user's.** On 2026-09-13 at ~02:28 an **unfinished draft** of
+  `tests/headless/test_ase_predeck_1439.tcl` (rows RF3, RF4 and CM3; `ng-cm3` is named after
+  row CM3) ran against the user's **real** `HOME`. Each row did `ase::sim_clear` (memory
+  only) then `ase::sim_register … [info nameofexecutable]`, and registration saves at once,
+  so the saved list was **replaced**: the user's own entry **`ngspice-v50`** (their
+  `build-ver_50` ngspice) was **deleted**, and `ng-cm3` — the xschem binary itself — became
+  the saved default. The draft was rewritten 70 s later, before commit `98beb2b5`, so no
+  search of the committed tree finds it. **That default is what launched a second xschem and
+  damaged `File > Open Recent`.** The registry was broken *first*; this issue is its symptom.
+* **`stub`, `realsim`, `eebin`, `slowstub`** were added 2026-09-13 23:02 → 2026-09-14
+  00:22:03 by a Stage 11 crew's throwaway scripts under `/tmp/stage11`, also under the real
+  `HOME`. The last write matches the file's mtime to the second.
+* **This issue's fix wrote nothing to the registry.** It changed what the `ng-cm3` default
+  *does* — from silently opening a second editor to being refused — so from then on **every
+  bench with no simulator choice of its own was refused**, all 35 of jkustin's included.
+* The same false belief sits in three other dated records, left as written and corrected
+  here: `doc/claude/ase_analyses_batch/receipts/20-stage-7-predeck.md` (blames *"the
+  developer's own saved entry"*), the 1453 entry in `doc/claude/ase_analyses_batch/LEDGER.md`
+  (*"No suite in this tree registers the xschem binary"*), and that batch's Stage 11 receipt
+  (*"Nothing of the user's was destroyed"*).
+
+**Cleaned up 2026-09-17 on the user's instruction** (*"just do a cleanup so that the default
+is just the ngspice found in PATH"*; the user will re-add `ngspice-v50` themselves). All five
+entries removed; the file is now exactly what xschem's own writer emits for "no entries, use
+the program on PATH":
+
+```
+# xschem ASE-L simulator list -- written by xschem, issue 0931.
+# Read once at startup. Edit by hand if you like: it is a plain
+# Tcl script of ase::sim_register lines.
+ase::sim_select {}
+```
+
+md5 `2d5d78e38b6a0e401ee7855fd79df269`. The `ase::sim_select {}` line is load-bearing: per
+`ase::sim_write_body`, its absence would put the first registered entry back in charge at the
+next start. Backup of the damaged file: `~/.claude/xschem_ase_simulators_backup_20260917`
+(md5 `13c5cec6…`). Verified beforehand by three independent agents on copies under scratch
+`HOME`s — this clone's binary, the op-wcard clone's binary, and an adversarial code read —
+all PASS: 0 entries registered, default decodes as the PATH choice, `ase::sim_status ngspice`
+resolves `/usr/bin/ngspice` with ok 1, a new bench and all 35 jkustin benches resolve to it
+and are not refused, startup does not rewrite the file, and **xschem's own writer produces
+the file byte-identically**. Installed with no xschem running, by atomic rename, mode 644 kept.
+
+**Still open, and NOT fixed by this cleanup:**
+* **Nothing in the product stops a recurrence.** `ase::sim_register` and
+  `ase::sim_unregister` save `$USER_CONF_DIR/ase_simulators` from any session — `--nogui`,
+  `--pipe`, `--script`, `no_recent_files=1` — unless `::ase::sim_autosave` is 0 (only suites
+  that call `test_sim_registry_isolate`) or `HOME`/`USER_CONF_DIR` is redirected. A hand-run
+  script or an unfinished test draft has neither.
+* **The iseditor guard recognises only the running binary** (by path or dev+inode), so an
+  xschem built elsewhere — the op-wcard clone's, or an installed copy — would still accept an
+  entry pointing at this tree's xschem. Moot while no such entry exists.
+* Rule debt `1453`'s half (b) question — *was `ng-cm3` the user's or a suite's?* — is
+  answered above (a suite draft's). Its wording half remains the user's.
