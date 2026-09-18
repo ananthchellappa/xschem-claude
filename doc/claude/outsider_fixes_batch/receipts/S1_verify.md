@@ -329,3 +329,145 @@ The same block in a column-0 fence is red.
   * A squash onto origin/main is red with no note, because that history does contain 7fe79fb2. A legacy .git/info/grafts file makes the NOTE appear on a green run, because git honours a grafts file even under --no-replace-objects. Both are wording only.
   * The suite costs about +6 s (≈19 s against ≈13 s).
   * Carried over: GIT_ATTR_NOSYSTEM is unmeasured (needs root); HAVE_GIT depends on `timeout`; the offline blob:none quote= limit is latent; summarize_all drops `skip:` lines.
+
+## S1-fix4 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix4 is refuted. Everything it claims about git reproduces, but the checker still hands corpus text to a pipeline that can write files and run programs, and it still fails open in a full clone.
+
+**The hole: the `assert=` grep exec** (READ at issue_stamp.tcl:1131, `exec timeout $t_grep /usr/bin/grep -rn -- $pat $target`).
+- Tcl's `exec` treats any word beginning with `>`, `2>`, `<` or `|` as a redirection or a pipe, whether or not it follows `--`.
+- `pat=` is one whitespace-free token taken from the issue file, so it can be exactly such a word.
+- The receipt's argument table says the grep exec is safe because "assert_eval passes pat= after --". The spec (issue_stamp.md:286-288) promises "no shell and no interpolation". Measured, neither holds.
+- The path is live in T1 today. 1219 is stamped (`tree=61af3692`) and carries an `assert=absent pat=SABOTAGE path=src state=broken` block, so every T1 run's D9 goes through this exec over the real corpus.
+- It predates the batch: HEAD caa110ba has the same line at :462. That is exactly the status of the `quote=` hazard, which D15.3 fixed "even though it predates the batch".
+
+MEASURED, each plant in one issue file of a scratch full clone (`shapes/xschem`), with HOME=scratch and DISPLAY unset:
+- **Truncation.** `pat=>` with `path=README` turns the checkout's tracked README from 1243 bytes to **0 bytes**. The same happens on the CLI, the tclsh arm and the T1 spelling. The row goes red (D9) only after the write has happened.
+- **Overwrite.** `pat=2>` with `path=README` replaces README with grep's 83-byte usage text.
+- **Silent write.** `pat=>/var/tmp/.../pwned` writes a file outside the repository. The run stays **green**: CLI `ok (0 problems)`, and the suite gives `RESULT: ALL PASS (76 checks)`, rc 0, case_failed 0, on tclsh and T1.
+- **A program runs.** `pat=|` with `path=mark_exec.sh` runs that script, which wrote its marker file. `path=../../../../../../usr/bin/id` also executes.
+- **Fail-open, plausibly by accident.** `assert=absent pat=2>/dev/null path=src/xschem.tcl state=holds` is false, since the file has 4 occurrences. It still passes: CLI ok, ALL PASS 76. The control spelling `pat=/dev/null` is red (7 hits). With `pat=2>&1`, the T1 spelling gives ALL PASS 76 and leaves an untracked `tests/&1` in the checkout.
+
+**Second fail-open: D15's own class, with the boundary ON HEAD's path.**
+- In the developer's own full clone, one `git fetch --depth 1 origin fluid-editing` with nothing new writes HEAD (caa110ba) into `.git/shallow`.
+- The same happens when the fetched ref is an ancestor. The fdanc shape uses 634b0cec, which is the main tree's `origin/fluid-editing` today, behind the local branch.
+- The store still holds all 5819 commits: with the shallow file ignored (`GIT_SHALLOW_FILE=/dev/null/none`), git walks back to 7fe79fb2. A real `--depth 1` clone fails that walk with `Could not read`.
+- The checker still says `shallow -- … commits older than that are not in it`, and all 10 stamps come back NOT VERIFIED.
+- A planted `tree=deadbee0` plus a blob `tree=` gives CLI rc 0, and the suite gives `ALL PASS (73 checks, 3 skipped -- shallow: history absent)` on tclsh and T1.
+- This follows D15.1's wording ("its stored object carries a parent line"). But the skip's reason is false, which is exactly what D15 was written to stop, and one exec can tell the two states apart.
+
+**Two parser silent passes (D15.5).**
+- A 4-backtick quote fence with an inner ``` line. Only the text before the inner line is checked, so a rotted line after it passes (CLI ok). markdown-it in CommonMark mode renders that line inside the quote block. The 3-backtick control is red.
+- `__STAMP:__`, `<strong>STAMP:</strong>` and `<b>STAMP:</b>` naming `tree=deadbee0` in a grandfathered file each give CLI ok. markdown-it renders them to the same HTML as `**STAMP:**`.
+
+**What reproduces (MEASURED, final bytes 6f649911/41adf733):**
+- Main tree: ALL PASS (76 checks) with 0 skips on tclsh, xschem and T1, at 29.0-29.1 s. CLI ok (0 problems).
+- Full clone `xschem` and worktree `wt`: 76.
+- `--depth 1`: 73 + 3 skipped (G4 D9h H9).
+- Export, and an export inside another repository: 69 + 7 skipped.
+- Unborn: 69 + 7 skipped.
+- `--shallow-since`, `--shallow-exclude` and `--deepen`: shallow with named skips; 61af3692 verified; plants NOT VERIFIED by name.
+- `--unshallow`: full, and the plants are RED.
+- fetchd (a boundary off HEAD's path): full, RED with 2 problems.
+- Dangling `.git`: unreadable, 10 problems.
+- Amend: RED, "NOT in HEAD's history".
+- The `quote=` injection is closed. `--output=`, `>` and `|` values are each refused by name, and no file is written.
+- Corpses 0→0 on every run.
+## problems:
+  * WRITE HAZARD and PROGRAM EXECUTION through assert= pat= (MEASURED). This is the same class as D15.3, which covered only git.
+- issue_stamp.tcl:1131 runs `exec timeout $t_grep /usr/bin/grep -rn -- $pat $target`. Tcl exec parses a word beginning with `>`, `2>`, `<` or `|` as a redirection or pipe, and grep's `--` does not stop it.
+- `pat=>` with `path=README`: README 1243 → 0 bytes, on the CLI, the tclsh arm and the T1 spelling.
+- `pat=2>` with `path=README`: README overwritten with 83 bytes of grep usage.
+- `pat=|` with `path=mark_exec.sh`: the script ran and wrote its marker. `path=../../../../../../usr/bin/id` also executes.
+- Live in T1: 1219 is stamped and carries an assert= block, so D9 runs this exec over the real corpus every run.
+- It predates the batch (HEAD caa110ba:462, and the same line in S1-fix3's bytes).
+- The receipt's exec table claims `assert_eval passes pat= after --` as protection. The spec (issue_stamp.md:286-288) promises no shell.
+- Logs: /var/tmp/xschem_fixes/s1fix4_verify/logs/runs/pattrunc.{tclsh,t1}.log, patpipe.cli.log, patpipe2.cli.log.
+- Remedy (INFERRED): pass the pattern as one `--regexp=$pat` word, which Tcl never parses as a redirection. Confine path= to repo-relative with no `..`. Add a row that plants `pat=>`, `pat=|` and `pat=2>` and asserts nothing is written or run.
+  * FAIL-OPEN in a FULL clone through the same exec (MEASURED).
+- Plant: `assert=absent pat=2>/dev/null path=src/xschem.tcl state=holds`. It is false: xschem.tcl has 4 occurrences.
+- Result: CLI `ok (0 problems)`; suite `RESULT: ALL PASS (76 checks)`, rc 0.
+- Control `pat=/dev/null`: RED, `the file states this assertion HOLDS and it does not (7 hits …)`.
+- `pat=>/var/tmp/…/pwned` wrote a file outside the repository with ALL PASS 76, rc 0, case_failed 0, on the tclsh and T1 arms.
+- `pat=2>&1` under the T1 spelling: ALL PASS 76, and an untracked `tests/&1` was left in the checkout (a write outside the suite's scratch).
+- Logs: devnull.{cli,tclsh}.log, devnullctl.cli.log, patsilent.{tclsh,t1}.log, amp1.t1.log.
+  * FAIL-OPEN, D15's class, with the boundary ON HEAD's path while the store is complete (MEASURED).
+- Shape fdself: a full clone plus `git fetch --depth 1 origin fluid-editing` with nothing new. `.git/shallow` names caa110ba (HEAD itself), and HEAD's walk becomes 1 commit.
+- Shape fdanc: a fetch of an ancestor ref, 634b0cec. That is the main tree's own origin/fluid-editing today, behind the local branch. HEAD's walk becomes 7 commits.
+- In both, the store holds all 5819 commits: `GIT_SHALLOW_FILE=/dev/null/none git rev-list --max-parents=0 HEAD` gives 7fe79fb2. The same command in a real --depth 1 clone gives `Could not read`.
+- Checker: `shallow -- … commits older than that are not in it`; all 10 stamps NOT VERIFIED.
+- With a planted bogus `tree=deadbee0` and blob `tree=8ccb7c22`: CLI rc 0 `ok (0 problems; 10 revision(s) NOT VERIFIED -- shallow: history absent)`; suite `RESULT: ALL PASS (73 checks, 3 skipped -- shallow: history absent)`, rc 0, case_failed 0, on tclsh and T1.
+- This follows D15.1's letter (a root with a stored parent line), but the skip's stated reason is false, which is the refutation D15 answered.
+- Remedy (INFERRED): one walk with the shallow file disabled. If it reaches a root with no parent, the state is full.
+- Logs: fdself_bb.{tclsh,t1}.log, fdanc_bb.cli.log, fdself_clean.cli.log.
+  * D15.5 silent pass: a 4-backtick quote fence (MEASURED).
+- Plant: ````c quote=61af3692 path=src/xschem.h / #define CADMAXHIER 40 / ``` / <rotted line> / ````.
+- CLI `ok (0 problems)`. fence_scan closes at the inner ```, so only the prefix is verified, and the fence that reopens carries no quote, so stray_quotes stays silent.
+- markdown-it (CommonMark) renders all three lines as the one quote block.
+- The same rotted line in a 3-backtick fence is RED.
+- Remedy (INFERRED): close only on a fence of the same character, at least as long as the opener.
+- Logs: fence4.cli.log, fence3.cli.log.
+  * D15.5 silent pass: markdown's other bold spellings of a stamp (MEASURED).
+- Plant: `__STAMP:__`, `<strong>STAMP:</strong>` or `<b>STAMP:</b>`, each followed by `v1 claim=fixed tree=deadbee0 …`, on line 3 of grandfathered 0057.
+- Each gives CLI `ok (0 problems)`.
+- markdown-it renders `__STAMP:__` to the same `<strong>STAMP:</strong> <code>…</code>` HTML as `**STAMP:**`.
+- stray_stamps matches only `**`. Log: bold.cli.log.
+  * Minor (MEASURED): in every shallow state, a tree= that names an object present in the store but not a commit is skipped as 'shallow: beyond the depth?'.
+- The example is 8ccb7c22 = HEAD:README; `git cat-file -t` says blob.
+- `cat-file -e rev^{commit}` cannot tell 'absent' from 'present and the wrong type', so positive evidence of a defect is skipped.
+- Measured in the real --depth 1 clone (d1) and in the fdself and fdanc shapes.
+  * Reproduced as claimed (MEASURED):
+- main tree 76/76 with 0 skips on tclsh, xschem and T1, and CLI ok;
+- xschem and wt: 76;
+- --depth 1: 73 + 3;
+- export and outer/nested: 69 + 7; unborn: 69 + 7;
+- fetchd: full and RED; dangling: unreadable with 10 problems; amend: RED;
+- since, exclude and deepen: named skips; unshallow: full and RED on plants;
+- quote= injection closed (3 named problems, 0 files written);
+- corpses 0→0 on every run.
+## real_home_check: `md5sum -c --quiet /tmp/claude-1000/-home-analog-dev-xschem-claude/f12b1fd5-2898-41a7-9dd9-9fd4b899f2af/scratchpad/xschem_manifest_fixes.md5` gave rc 0 before any work and rc 0 after all of it.
+
+**Real home and other trees**
+- `find /home/analog/.xschem /home/analog/.claude/xschem_dev_display /home/analog/.claude/gui_test_gate -newer /var/tmp/xschem_fixes/s1fix4_verify/.marker_start` printed nothing.
+- The same check on ~/dev/xschem-op-wcard, excluding .git, printed nothing.
+
+**How runs were made**
+- Every tclsh, xschem, CLI and T1-spelling run used HOME=/var/tmp/xschem_fixes/s1fix4_verify/homes/<tag>, with DISPLAY and GIT_EDITOR unset, under `timeout`.
+- Git writes used HOME=/var/tmp/xschem_fixes/s1fix4_verify/homes/git.
+
+**Main tree**
+- It was only read, plus suite and CLI runs with a scratch HOME.
+- Both files are unchanged: 6f64991118c6407b43fdef2c852419e4 and 41adf73392b80a7517ce42c0440f0062.
+- HEAD is still caa110ba, and `git status` shows only the pre-existing entries.
+- tests/headless/.scratch is empty, /tmp holds 0 istamp_* entries, and there is no `tests/&1`.
+- Nothing was committed, stashed, reset or checked out there.
+
+**Where writes went**
+- Every git write and every plant went to scratch repositories under /var/tmp/xschem_fixes/s1fix4_verify/shapes/ (mirror.git, xschem, wt, d1, fdanc, fdself, since, exclude, deepen, unshallow, export, outer, unborn, fetchd, dangling, amend).
+- The truncated README and the `tests/&1` file were in the scratch clone and were restored or removed. The pwned_* markers were deleted.
+- Plants deliberately left in place, all in scratch: fetchd (bogus + blob), dangling (bogus), and amend (the edited stamp).
+
+**Display and processes**
+- :99, devdisplay and ~/.claude/gui_test_gate were not touched.
+- No process with a s1fix4_verify HOME is alive. I checked through /proc/<pid>/environ, not pgrep.
+
+**Logs**
+- /var/tmp/xschem_fixes/s1fix4_verify/logs/runs/<tag>.<arm>.log.
+- Scripts: run.sh, inst.sh, plant.sh.
+
+## IMPL deviations + open_problems (S1-fix4 crew):
+  * Item 1: the boundary test is 'a root whose stored object has a parent line'. D15's 'listed in the shallow file' disjunct is dropped because it is measured fail-open: a depth that reaches the root lists the true root. Sabotage B2 (the disjunct added back) reddens H1 and H16.
+  * The legacy .git/info/grafts file is switched off for every checker git call (GIT_GRAFT_FILE pointing at /dev/null/istamp-no-grafts). D15 does not ask for this, but item 4 needs 'history as stored'. It also removes S1-fix3's NOTE-on-a-green-run in the grafts shape.
+  * The ancestor rule covers quote= as well as tree=. They share rev_verdict.
+  * stray_quotes also runs on files with no stamp (grandfathered or new). It measures 0 lines today.
+  * Verdicts changed in shapes already measured: the orphan squash goes from green to RED (D9 D9h H9, D15.4's case); corrupt shallow goes from 4 to 12 reds (unreadable, noanswer); a dangling .git goes from none to unreadable.
+  * The first red-first pass ran on intermediate bytes 19b97094 / ae6da854, which differ in wording and a caught census only. Every final-bytes half was re-run on the frozen bytes.
+  * The first clean shallow run was mistakenly run in parallel with a planted run on the same shape. Those rows were discarded and re-run alone.
+  * The xschem and T1 arms in the shapes use the main tree's src/xschem, as S1-fix3's refuter did, not a per-shape build.
+  * Redundant layer I4: --end-of-options on rev_exists and rev_is_ancestor is not held alone by any row. The grammar blocks first, and neither command has an option that writes. Only quote_holds' lock is held alone (H17).
+  * Two fail-closed branches are exercised by no row: noanswer (the revision resolves and merge-base errors, seen only in corrupt shallow) and a shallow_boundaries failure (goes to unreadable).
+  * assert= path= is not confined to the repository: grep reads outside it on an absolute path. It is read-only and outside D15's scope.
+  * /usr/bin/timeout is uutils coreutils 0.8.0, a flat 100 ms per exec. It causes this suite's +10 s and taxes every suite in the tree. For the driver.
+  * A real shallow clone still reports revision-level defects as NOT VERIFIED (the stated limit). Fixture rows prove the refusal in every shape.
+  * Carried over: summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; the offline blob:none quote= limit is latent.

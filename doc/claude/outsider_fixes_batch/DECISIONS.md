@@ -343,3 +343,40 @@ commit. Rulings:
    "reachable from some ref", rather than turning the gate red.
 5. **A `quote=` or `**STAMP:**` that the parser does not consume is a problem.** Examples are a
    quote in an indented, `~~~` or unclosed fence. It is never a silent pass.
+
+---
+
+# D16 — Round 5 of Item 1: the checker executes nothing with corpus text in it (driver)
+
+S1-fix4's refuter confirmed every git-side claim, and then found the class D15.3 was meant to
+close, **one exec over**. `assert_eval` runs `exec timeout … /usr/bin/grep -rn -- $pat $target`.
+Tcl's `exec` parses any word that begins with `>`, `2>`, `<` or `|` as a redirection or a pipe,
+**after `--` too**. Planted in one issue file:
+
+* `pat=>` truncated a tracked file to 0 bytes;
+* `pat=>/path` wrote a file outside the repository **and the run stayed green**;
+* `pat=|` with `path=<script>` **ran a program**;
+* `pat=2>/dev/null` turned a false assertion green.
+
+It predates the batch, and it is live: 1219 is stamped and carries an `assert=` block, so T1's
+D9 goes through that exec over the real corpus on every run. So:
+
+1. **No `exec` ever carries a word derived from the corpus except git revisions** that have
+   passed `rev_token` and sit behind `--end-of-options`. `assert=` search is done **in Tcl**: read
+   the files and match with `string first` or `regexp` as the spec defines `pat=`. That removes
+   the grep exec entirely, which dissolves the class instead of escaping it.
+2. **`path=` is confined.** It must be relative, contain no `..` component, and not start with `-`
+   or `/`. After normalisation it must resolve inside the checkout and never leave it through a
+   symlink. Anything else is a named problem, and nothing is read.
+3. **`shallow` means git cannot read a commit HEAD's walk needs.** Walk HEAD with the shallow file
+   disregarded (the refuter measured `GIT_SHALLOW_FILE=/dev/null/none`; the crew confirms it on
+   git 2.53 and uses the most robust spelling). If the walk completes, the store holds the whole
+   history and the tree is `full`, whatever `.git/shallow` says. The trigger is a no-op
+   `fetch --depth 1` of the branch itself or of an ancestor, which writes HEAD, or an ancestor, into
+   the shallow file.
+4. **In a shallow history, an object that is present but not a commit is RED**, not skipped: that
+   is positive evidence of a defect.
+5. **Fences close the CommonMark way**: on the same character, at least as long as the opener.
+   **Stray-stamp detection matches the stamp by content**, meaning `STAMP:` followed by
+   `` `v1 `` in any emphasis spelling, including `__STAMP:__` and `<strong>`/`<b>`. It does not
+   match only `**`.
