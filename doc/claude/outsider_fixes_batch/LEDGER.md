@@ -17,7 +17,8 @@ Safety net for the user's configuration, taken before any stage ran:
 | S2a | Item 2 — HOME dependence map + `scratch.tcl` redirect feasibility | DONE (`receipts/S2a.md`) | collected; design adopted with the critic's corrections | — (docs ride with S2c) |
 | S2b | Item 2 — design | driver | DONE: `DECISIONS.md` D4–D12 | — |
 | S2c | Item 2 — implement (T Tcl / S shell / U suites, parallel) → integrate + canary proof → refute | DONE (receipts S2c-T/S/U/I) | armed commands **proven** (canary byte-identical, red-first; T1 87/86/**0** with DISPLAY set; all 402 shared suites same verdict and check count). Refuted (`receipts/S2c_refute_r1.md`): unarmed documented entry points, cwd autosave overwrite, sweep/handoff/KEEP holes, H1b by number → D13 | — |
-| S2c-R2 | D13 items: T (Tcl) ∥ S (shell) → integrate + proof → refute | dispatched | — | — |
+| S2c-R2 | D13 items: T (Tcl) ∥ S (shell) → integrate + proof → refute | DONE (receipts S2c-R2-*, `S2c_refute_r2.md`) | core **proven by both refuters**: T1 87/86/0 in main-tree shape, canary byte-identical (seeded AND empty), auto-start env clean, attach identical, pairs green, 84/84 shared results identical. Refuted on edges: 3 more unarmed documented scripts, reaper start window, `devdisplay.sh stop` kills by recorded pid, relative TMPDIR, nesting forgery, V3 row gap → D17 | — |
+| S2c-R3 | D17 | dispatched | — | — |
 | F | T1 gate, CLAUDE.md, commit | driver | — | — |
 
 ## Open item for the user

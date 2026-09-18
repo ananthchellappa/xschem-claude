@@ -380,3 +380,56 @@ D9 goes through that exec over the real corpus on every run. So:
    **Stray-stamp detection matches the stamp by content**, meaning `STAMP:` followed by
    `` `v1 `` in any emphasis spelling, including `__STAMP:__` and `<strong>`/`<b>`. It does not
    match only `**`.
+
+---
+
+# D17 — Round 3 of Item 2: stop finding entry points one at a time (driver)
+
+Round 2 holds wherever it is aimed. Both refuters reproduced every armed measurement:
+* T1 is 87/86/0 in the main-tree shape;
+* the canary is byte-identical, and an **empty** canary stays empty;
+* auto-start leaves no harness variable in the persistent display's environment;
+* attach is byte-identical;
+* concurrent pairs are green;
+* all 84 shared case results are identical;
+* the D10 suites keep their counts (converge 76, sp 61).
+
+The refutations are edges:
+
+1. **An xschem launcher guard.** Each round has found more documented scripts that start xschem
+   under the tester's HOME: round 1 found the standalone `.sh` suites, `owed.sh drain` and
+   `run_nogui.sh`; round 2 found `lookshot.sh`/`winshot.sh`, `tests/netlist_diff/netlist_diff.sh`
+   and `wireedit/run_wireedit.sh`. **Whack-a-mole is the wrong shape.** A row in
+   `test_home_isolation` enumerates every script under `tests/` that starts xschem (by `src/xschem`,
+   `$XSCHEM`, `xschem_cmd`, `gated_xschem` or `xvfb_arm --arm`). It fails unless each one is
+   armed or is on an **explicit allowlist with a one-line reason**. The known exception is the bare
+   `./src/xschem --script` and `xschemtest.tcl`, for D9's reasons. The three found by round 2 are
+   armed, and a `winshot` build cache goes into the throwaway.
+2. **The proof includes a FRESH (empty) canary** for every newly armed entry point. A seeded canary
+   cannot see first-run creation of `~/.xschem/xschemrc`.
+3. **A relative `TMPDIR` is made absolute before `mktemp`**, in the shell. Tcl already
+   normalises it.
+4. **Nesting requires HOME to sit under the temp root**, as the fresh arm and the takeover do, in
+   both languages. A forged `…/xschem-test-home.1.forged` inside the real home is refused.
+5. **`XSCHEM_TEST_HOME=<dir>` whose `.xschem` resolves into the real HOME is refused**, in both
+   languages.
+6. **Nothing is killed on a recorded pid alone.**
+   * `devdisplay.sh stop`/`_ours` kill a recorded pid only if `/proc/<pid>/cmdline` is the
+     expected program for that display number (`Xvfb :N`, openbox, x11vnc), and they remove
+     `/tmp/.X<N>-lock` only if it names that Xvfb.
+   * `test_devdisplay.sh`'s cleanup removes a lock only by content.
+   * **This matters for the user today:** their real state dir names pids 1116/1135, which are dead
+     and low enough for a reboot to hand to unrelated processes, and `stop` would have killed them.
+7. **No reaper window.** On the shell private path the reaper starts before `xvfb-run` or
+   together with it, and the server's pid is recorded in the throwaway, so the sweep can kill it by
+   identity. In Tcl the reaper starts immediately after the exec, not after the up-check. Recipe:
+   a kill -9 within 100–140 ms of the Xvfb starting must leave nothing after about 10 s.
+8. **The private arms never use `:99`.** `xvfb-run -a` in `xvfb_arm.sh`'s private path and in
+   `test_devdisplay.sh` get `-n <base>` with a base of at least 100, so no run can hold the user's
+   dev display number while it is down.
+9. **Rows.**
+   * A row makes an installed Xvfb that will not start a counted HARNESS FAIL, never NODISPLAY.
+     The refuter's sabotage V3 went unnoticed.
+   * Fixture displays in the suites use `-displayfd` (or a range that cannot run out under 4-way
+     concurrency), so H3 stops skipping under load.
+   * `owed.sh drain` prints the throwaway banner once.
