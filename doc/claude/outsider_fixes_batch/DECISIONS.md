@@ -193,3 +193,84 @@ row that finds nothing prints `skip:` with a reason rather than passing silently
   uses `-p`.
 
 These go to issue files in stage F.
+
+---
+
+# D13 — Round 2, after S2c's refuters (driver, 2026-09-18 06:30)
+
+The integrated build (`/var/tmp/xschem_fixes/s2c_I/final.patch`) holds everywhere it was
+aimed: T1, `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh` and the tcases alone all leave a
+seeded canary byte-identical, and every one of them was measured red first. The safety refuter
+and the completeness critic still refuted the claim, and they were right, for these reasons. Each
+item below amends D4–D11, and the contract is still shared by both languages.
+
+1. **Arm the remaining documented entry points.**
+   * `xvfb_arm.sh --arm` arms through `test_home.sh`, and the xvfb-run handoff applies. That
+     covers the 7 standalone suites that re-exec through it.
+   * `test_devdisplay.sh` arms directly.
+   * `owed.sh drain` arms a throwaway **only around each shell debt it runs**, in a subshell.
+     Its own ledger path is fixed from the real HOME **before** that switch.
+   * `tests/headless/run.sh` and `run_nogui.sh` (T2) arm too.
+   * `xschem --script xschemtest.tcl` is a bare binary invocation and stays with D9's
+     exception. It is recorded, not armed.
+2. **The developer shape is kept, and the claim is scoped to say so.** A tester who already has
+   `~/.claude/xschem_dev_display` gets the persistent display auto-started with the real HOME,
+   so the state dir and `~/.cache/openbox` are written. A tester who already has
+   `~/.claude/gui_test_gate` gets the shared panel. Both are the developer's own standing setup,
+   and the persistent display must outlive any one run. The done-claim reads: **nothing under
+   the real HOME is touched except the dev-display state and the gate dir that the tester already
+   set up.**
+3. **cwd.** `run_suites.sh` changes to the repository root before it runs anything, as
+   `full_audit.sh` already does, after first making its path arguments absolute. `gated_xschem.sh`
+   does the same, and it first rewrites to absolute paths any argument that names a path existing
+   relative to the caller's cwd. That fixes the overwrite and delete of `~/untitled~.sch`
+   (xschem's autosave) when a tester runs from their home. Litter in the checkout stays a D12
+   item.
+4. **TMPDIR inside the real HOME** is still honoured, but the banner must not claim *"your HOME is
+   untouched"*. It says your `~/.xschem` is untouched and the throwaway lives under your HOME
+   because TMPDIR does.
+5. **`XSCHEM_TEST_HOME=<dir>` is fully resolved, including a symlink in the last component**,
+   before it is compared. If it resolves to the real HOME it is refused, in both languages.
+   (Tcl's `file normalize` leaves the last component unresolved.)
+6. **`.owner` becomes `<pid> <boot_id> <pidns>`.** `boot_id` is
+   `/proc/sys/kernel/random/boot_id`, and `pidns` is the link text of `/proc/<pid>/ns/pid`; each
+   is `-` where unavailable. The owner counts as **dead** when either:
+   * the boot_id differs from the current one;
+   * or the boot_id **and** the pidns both match the sweeper's own, and the pid is not alive.
+
+   A matching boot_id with a different pidns (a container, bwrap or flatpak) is never swept
+   unless the entry is older than 7 days. Where a field is `-`, the old rule applies.
+7. **The sweep kills only what it can identify.** A recorded Xvfb or openbox is killed only if
+   its name matches **and** the `HOME` in its `/proc/<pid>/environ` is exactly the dead
+   throwaway's path. A panel is identified by a cmdline naming that exact gate dir, as now.
+8. **Handoff.** The re-exec'd script takes ownership only if the handoff pid is its parent or
+   grandparent, it matches `.owner`, **and** `/proc/<handoff pid>/cmdline` shows that process is
+   now running `xvfb-run`, meaning the exec really happened.
+9. **`XSCHEM_TEST_KEEP_HOME=1` writes `.keep` at arm time**, not at exit, so a killed run's home
+   is kept. This holds in both languages.
+10. **`binary=`** carries the full path resolved through `auto_execok`, not the bare word.
+11. **`run_suites.sh` prints every `skip:` line a suite emitted**, indented under its verdict
+    line. Without that, D10's "skip loudly" is silent through the documented command.
+12. **F14 is re-attributed.** The four suites segfault on exit **when DISPLAY is unset**, not
+    because the clone is fresh; the critic measured them green with DISPLAY set. That is a product
+    defect a headless CI box hits, and it is filed in stage F with the right cause. The stage-F
+    gate runs in the shell's normal environment (DISPLAY inherited), the same as the 09-17
+    baseline, so the comparison is like for like.
+13. **The stage-F gate will restart the user's persistent `:99`.** The orphan is gone (the user
+    killed it at 06:1x), and the real state dir names a dead pid, so T1's D8 step 2 starts it with
+    the real HOME. That is exactly what T1 did before this batch (0891), and it restores the
+    user's intended state. The driver accepts it knowingly. Crews still never do it.
+14. **Identity, not number** (regression refuter, 1 red in 14 concurrent pairs). `test_home_isolation`
+    row H1b checked `![file exists /tmp/.X$pnum-lock]`, so a concurrent run that re-took the freed
+    number turned it red. Every "did it clean up" check compares the lock's **content** with the
+    pid it started, as `stop_pid` does. This is the W12b class again.
+15. **A private Xvfb must not outlive a killed owner by more than a few seconds.** When a private
+    Xvfb and its openbox are started (T1's private arm, and `xvfb_arm.sh`'s private path), a
+    detached reaper starts with them. It polls the owner pid every 5 s, kills them when the owner is
+    gone, and then exits. The run-time sweep stays as the backstop.
+16. **The "pre-switch environment" is a snapshot of the environment as it was before arming**,
+    not the current environment with HOME swapped back. The persistent display and the shared
+    panel therefore inherit none of the harness variables (`XSCHEM_TEST_*`, `GIT_CONFIG_*`, and a
+    carried `XSCHEM_DEVDISPLAY_DIR` the tester had not set themselves).
+17. **Header values are also stripped of `T1-RUN-`** (it becomes `T1_RUN_`), so no field can
+    carry sentinel text even for an unanchored reader.
