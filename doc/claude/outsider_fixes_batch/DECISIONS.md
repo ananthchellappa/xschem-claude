@@ -433,3 +433,50 @@ The refutations are edges:
    * Fixture displays in the suites use `-displayfd` (or a range that cannot run out under 4-way
      concurrency), so H3 stops skipping under load.
    * `owed.sh drain` prints the throwaway banner once.
+
+---
+
+# D18 — Item 1's threat model, written down so that rounds converge (driver)
+
+Five refutation rounds on the issue-stamp checker have each found something. The early ones were
+genuine fail-opens in shapes a stranger or an honest author hits (repository-wide shallow, a
+typo'd date, amended-away commits) and genuine **safety** holes (corpus text reaching `exec`
+wrote files and ran a program). Round 5 found, mostly, that **an author who deliberately
+disguises a stamp** can hide it from the parser: a leading NBSP or ZWSP before `**STAMP:**`,
+HTML with attributes, a table cell, a link or a task list. Chasing every markdown spelling does
+not converge, and it guards against nothing real: **the person who can write the issue file can
+simply leave the stamp out**. So the checker's contract is:
+
+**A. Safety, absolute.** Running the checker or its suite on *any* corpus **never** writes
+outside its scratch, runs a program, reads outside the checkout, hangs, or burns unbounded CPU.
+Each such finding is a defect whatever the corpus looks like, adversarial or not.
+
+**B. Honest mistakes, fail-closed.** In the canonical formats the spec defines, every genuine
+defect an honest author could make is RED in a full clone. The canonical formats are a
+column-0 `**STAMP:**` line, a column-0 backtick fence carrying `quote=` or `assert=`, and one
+stamp per file. The defects are a bogus, typo'd, blob or amended-away `tree=`, a rotted
+`quote=`, a false `assert=`, an unstamped new file and a malformed stamp. Near-miss spellings
+that an honest author produces by accident, such as an indented or `~~~` fence, or
+`__STAMP:__`, are named problems, never silent passes.
+
+**C. Strangers, never falsely red.** Every shape in which HEAD's history is truly absent, as
+opposed to merely flagged as absent, is green with each skipped item named. The shapes are a
+renamed clone, a worktree, a shallow clone, an export, an export inside another repo, and an
+unborn repository.
+
+**Out of scope, recorded as a known limit:** deliberate disguise of a stamp or assertion through
+invisible characters, HTML, or container markup (tables, links, task lists), and a second stamp
+hidden that way. The checker is a hygiene tool against honest error, not a gate against its own
+authors.
+
+S1-fix6 therefore fixes:
+
+* the non-UTF-8 filename skip, which is a regression, fail-closed: a path the scan cannot stat is
+  a named problem;
+* `assert=` in a fence the parser does not read, named as `quote=` already is, plus `assert=` in
+  an unstamped file;
+* an issue file that is not a regular file: a symlink or FIFO is a named problem and is not read
+  (A);
+* `md_strip`'s quadratic cost, made linear or with an over-long line refused by name (A);
+* the spec now saying that `pat=` is a **literal** string, which is the safer semantics, since
+  the checker has no regex engine exposed to corpus text.

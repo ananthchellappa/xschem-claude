@@ -471,3 +471,127 @@ MEASURED, each plant in one issue file of a scratch full clone (`shapes/xschem`)
   * /usr/bin/timeout is uutils coreutils 0.8.0, a flat 100 ms per exec. It causes this suite's +10 s and taxes every suite in the tree. For the driver.
   * A real shallow clone still reports revision-level defects as NOT VERIFIED (the stated limit). Fixture rows prove the refusal in every shape.
   * Carried over: summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; the offline blob:none quote= limit is latent.
+
+## S1-fix5 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix5 is refuted on fail-open. Its exec and git claims reproduce. But three planted genuine defects pass the CLI, the tclsh arm and the T1 spelling together (MEASURED), and one of the three is a regression that S1-fix5's own Tcl scan introduced.
+
+**What reproduces (MEASURED, final bytes 05e284e3/5a36d2df, HOME=scratch, DISPLAY unset)**
+- Main tree: ALL PASS (83 checks) on the tclsh, xschem and T1 arms, 0 skips; CLI `ok (0 problems)`; `self-test PASSED (50 parser cases)`.
+- Every earlier recipe is closed. `pat=` values `>`, `2>`, `|`, `>file`, `2>&1`, `<` and `&`, `quote=--output=`, and path= given as absolute, `..`, a link out, or starting with `-` were each tried. README stayed byte-identical, no marker was written and no `&1` appeared. The false `2>/dev/null` assertion is RED.
+- Shallow family:
+  - fdself, fdanc, fetchd, ciflow, eshallow, fdself+`--deepen 5`, a merge of a depth-1 fetch, unshallow and blob:none each read `full`, and bogus+blob plants are RED (fdself/fdanc: D9 D9h H9 on tclsh and T1).
+  - d1, d20 and depth1+blob:none read `shallow` with named skips (80 + 3 skipped: G4 D9h H9), and the blob is RED.
+- export and unborn: 76 + 7 named skips. dangling and corrupt shallow: `unreadable`, RED, RESULT reached. orphan: RED with the NOTE. amend: RED (not an ancestor). graft: RED. The stamped=2016 typo: RED.
+- Parser: old and new over all 1047 numbered files give identical blocks and stray results.
+- assert=: 99 of 99 literal pattern/path pairs match S1-fix4's grep exec in a scratch clone that carries the main tree's build products. 1219's block is 8 = 8.
+- Corpses 0→0 on every run.
+
+**How it fails**
+1. **REGRESSION, new in S1-fix5.** The Tcl scan silently skips any file or directory whose name is not valid UTF-8. In `scan_dir`, `if {[catch {file lstat $p st}]} { continue }` fails because glob's decoded name does not round-trip under the default `C.UTF-8`.
+   - Plant: a false `assert=absent pat=ZQXTOKEN path=src state=holds`, whose token exists only in `src/caf\xe9/note.txt`.
+   - `grep -rn` finds 1 hit, and S1-fix4's bytes are RED. S1-fix5's bytes give `ok (0 problems)`.
+   - Under `LANG=C` the scan counts 3 = 3, so the verdict depends on the locale.
+2. **D16.5 is not met: stamps are not matched "by content".** Each of these, carrying `tree=deadbee0` in grandfathered 0057, gives `ok (0 problems)`:
+   - `**STAMP:**` with a leading NBSP (markdown-it renders HTML byte-identical to a real stamp);
+   - the same with a leading zero-width space;
+   - `<strong class="s">STAMP:</strong>` (the `<strong>` spelling D16.5 names, with an attribute);
+   - a stamp in a table cell, a task list, a link, or `<u>`.
+
+   A second, contradicting NBSP stamp in stamped 0056 also passes, although the spec says the checker refuses two stamps. This is the class S1-fix4 was refuted on. It is pre-existing: S1-fix4's bytes are also ok.
+3. **Unread assert= blocks are neither evaluated nor named.** A false `assert=` gives `ok (0 problems)` in each of these places: a `~~~` fence, a 2-space indented fence, a blockquote, a list item, an unclosed fence, or an unstamped file. A `quote=` in the same list-item position is named, so only quote= gets the D15.5 treatment. Pre-existing.
+4. **End to end.** Planting items 1, 2 (NBSP) and 3 (list item) together gives CLI ok, tclsh ALL PASS 83 and T1 ALL PASS 83, all rc 0 with case_failed 0 (`logs/e2e.out`).
+
+**Lesser findings on (a)**
+- An issue file that is a symbolic link is followed out of the checkout: its target is read and its stamp checked. A link to a FIFO hangs the gate, stopped only by my external timeout (rc 124).
+- `md_strip` (added in S1-fix4) is quadratic in line length. It is a busy Tcl loop that neither `timeout` nor the watchdog can interrupt. Three lines of 50k `>` took the gate from 0.6 s to 19.2 s.
+- pat= is now literal rather than a regular expression: 45 of 144 regex-special pattern/path pairs differ. The real corpus is unaffected; the spec does not say so yet.
+## problems:
+  * FAIL-OPEN REGRESSION introduced by S1-fix5 (MEASURED). assert_scan/scan_dir silently skips any file or directory whose name is not valid UTF-8 (READ: scan_dir `if {[catch {file lstat $p st}]} { continue }`). Under Tcl's utf-8 system encoding (LANG=C.UTF-8, this box's default) glob returns a decoded name that does not round-trip, and lstat says ENOENT (MEASURED: `could not read .../dirÿ: no such file or directory`). Scratch clone shapes/plant: a token only in `src/caf\xe9/note.txt`, plus `assert=absent pat=ZQXTOKEN path=src state=holds` in 1219. `grep -rn` finds 1 hit and S1-fix4's bytes are RED ('HOLDS and it does not (1 hits…)'). S1-fix5's bytes give `ISSUE-STAMP: ok (0 problems)`, and the skip is not named. Library test (encdir): C.UTF-8 counts 1 against grep's 3; LANG=C counts 3, so the verdict depends on the locale. This contradicts 'recursive the way grep -r was' and '84/84 identical'.
+  * FAIL-OPEN: D16.5 'stray stamps recognised by content' is not met (MEASURED; pre-existing, also ok on S1-fix4's bytes). Each spelling below was planted as line 3 of grandfathered 0057 carrying `v1 claim=fixed tree=deadbee0 …`, and each gives CLI `ok (0 problems)`:
+- NBSP+`**STAMP:**` (markdown-it CommonMark renders HTML byte-identical to a real stamp);
+- ZWSP+`**STAMP:**`;
+- `<strong class="s">STAMP:</strong>`, which is D16.5's own `<strong>` spelling with an attribute;
+- `| **STAMP:** … |` (a table cell);
+- `- [ ] **STAMP:**` (a task list);
+- `[**STAMP:**](x)` (a link);
+- `<u>STAMP:</u>`.
+A library probe also finds `<span>`, `<mark>`, a code span, escaped `\*\*`, `~~` and a BOM prefix unflagged. A SECOND, contradicting NBSP stamp (claim=open open=3 tree=deadbee0) in stamped 0056 also gives ok (0 problems), although the spec says 'exactly one stamp per file … the checker refuses it'. Scripts: plant_stamp.sh, stray.tcl.
+  * FAIL-OPEN: assert= blocks the parser does not read are neither evaluated nor named (MEASURED; pre-existing, same on S1-fix4's bytes). A FALSE `assert=absent pat=SABOTAGE path=src state=holds` (8 real hits) appended to stamped 1219 is RED in a column-0 fence (control). It gives `ok (0 problems)` in each of these places:
+- a `~~~` fence;
+- a 2-space indented fence;
+- a blockquote fence;
+- a fence in a list item;
+- an unclosed fence;
+- a column-0 fence in grandfathered 0057.
+The same list-item position carrying `quote=` IS named ('a fence that is indented'), so D15.5's treatment covers quote= only. That is 'verifying less than every assertion without naming the skipped item'. The real corpus has only one assert= line (1219:72), so naming these would redden nothing today (INFERRED from grep). Script: plant_assert.sh.
+  * END-TO-END FAIL-OPEN (MEASURED, logs/e2e.out). In one scratch clone, three genuine defects were planted at once:
+- the NBSP stamp with a bogus tree= in 0057;
+- the false SABOTAGE assert= in a list-item fence of 1219;
+- the false ZQXTOKEN assert= whose only hit is in the non-UTF-8 directory.
+Results: CLI rc 0 `ok (0 problems)`; tclsh rc 0 `RESULT: ALL PASS (83 checks)` with case_failed 0; T1 spelling rc 0 ALL PASS 83 with case_failed 0; corpses 0→0.
+  * (a) File reads outside the checkout by corpus shape (MEASURED; pre-existing; outside D16.2's path= rule). read_file follows an issue file that is a symbolic link. `doc/claude/issues/1601-sym.md -> <scratch>/outside/outside.md` was read, and its stamp checked ('1601: tree=deadbee0 does not resolve'). A link to a FIFO blocked the gate in `open` (rc 124 only from my external `timeout 20`; the checker has no bound). git cannot store a FIFO, but it can store a link to one or to /dev/zero. /dev/zero was NOT run, for the host's safety; unbounded memory is INFERRED. Nothing is ever lstat-checked for issue files or the baseline.
+  * (a) A CPU bomb driven by corpus text, uninterruptible (MEASURED). md_strip (added in S1-fix4 and kept) strips one container token per regexp call and copies the rest of the line each time, so its cost is quadratic:
+- one line of N `>` followed by a stamp costs 69 ms at 5k, 270 ms at 10k, 971 ms at 20k and 3996 ms at 40k;
+- with `- ` repeated, 40k costs 8475 ms;
+- a 155 KB 0057 (three lines of 50k `>` plus 'stamp') took the CLI gate from 0.6 s to 19.2 s.
+A 1 MB line would take about 40 min (INFERRED). It is a busy Tcl loop, which neither `timeout` nor the in-suite watchdog can interrupt (W13); only T1's 900 s per-case cap stops it. Today's longest corpus line is 1491 characters, so the effect is negligible now.
+  * (c) Semantic drift in pat=, beyond the real corpus (MEASURED, diff_assert.tcl on a scratch clone with the main tree's src build products). Literal patterns (including ü, é, ELF and matches inside binaries): 99/99 identical, and 1219's block is `0 8` both old and new, so the brief's (c) criterion holds for today's corpus. With regex-special patterns (a.c, x*, ^#, $, [a], foo\|bar, \.), 45 of 144 pairs differ. Example: `assert=absent pat=foo\|bar state=holds` is RED on S1-fix4's bytes (593 hits in src/xschem.tcl) and GREEN on S1-fix5's (0). doc/claude/specs/issue_stamp.md §4 still does not say 'literal', and its example body is `grep -rn SABOTAGE src/`. The crew documented this deviation.
+  * Reproduced as claimed (MEASURED):
+- Main tree: tclsh, xschem and T1 each ALL PASS (83 checks) at about 41 s with 0 skips; CLI ok; 50 parser cases.
+- Previous refuters' text recipes: nothing written or run, and RED where they should be (textplants.sh).
+- Shallow family: fdself, fdanc, fetchd, ciflow, eshallow, fddeep, mshallow, unshallow and blobless are full, with bb RED (2 problems; D9 D9h H9 on the suite). d1, d20 and pshallow are shallow with 10 named NOT VERIFIED; bb there leaves the bogus stamp skipped by name and the blob RED; the suite gives 80 + 3 skipped (G4 D9h H9), and d1+bb gives D9 red.
+- export and unborn: 76 + 7 skipped (S0 S20c G4 Q1 Q2 D9h H9) on tclsh and T1.
+- dangling: 13 FAILED; corrupt shallow: 12 FAILED; RESULT reached in both.
+- wt, weird path and graft: ALL PASS 83.
+- amend: RED notancestor; bd2016 and 2025-12-31: RED; 0000-00-00: malformed.
+- Parser diff (old against new) over 1047 files: 0 block, 0 stray-stamp and 0 stray-quote differences.
+## real_home_check: `md5sum -c --quiet /tmp/claude-1000/-home-analog-dev-xschem-claude/f12b1fd5-2898-41a7-9dd9-9fd4b899f2af/scratchpad/xschem_manifest_fixes.md5` gave rc 0 before any work and rc 0 after all of it.
+
+**Real home and other trees**
+- `find /home/analog/.xschem /home/analog/.claude/xschem_dev_display /home/analog/.claude/gui_test_gate -newer /var/tmp/xschem_fixes/s1fix5_verify/marker_start` printed nothing.
+- The same check on ~/dev/xschem-op-wcard, excluding .git, printed nothing.
+- :99, devdisplay and the gui_test_gate were not touched.
+
+**How runs were made**
+- Every tclsh, xschem, CLI and T1-spelling run used HOME=/var/tmp/xschem_fixes/s1fix5_verify/homes/<tag>, with DISPLAY and GIT_EDITOR unset, and ran under `timeout`.
+- Git writes used HOME=…/homes/git.
+
+**Main tree**
+- It was only read, plus clean suite and CLI runs (tclsh, xschem, T1 and CLI).
+- No plant of any kind ran there.
+- Its two files are unchanged: 05e284e38df36519b7f255a1a0394d21 and 5a36d2dfad4cc6a55852072ac7cfdc06.
+- tests/headless/.scratch is empty, /tmp holds 0 istamp_* entries, and there is no `&1` or `tests/&1`.
+- Nothing was committed, stashed, reset or checked out there. HEAD moved from 52453f1e to 4da72c24 during this session through another agent's commit, not mine.
+
+**Where writes went**
+- Every plant and every git write went to repositories under /var/tmp/xschem_fixes/s1fix5_verify/shapes/ (a mirror of the main tree plus clones: xschem, plant, built, fdself, fdanc, fetchd, eshallow, d1, d20, ciflow, unshallow, pshallow, blobless, fddeep, mshallow, dangling, export, unborn, amend, graft, orphan, cshallow, wt, and `we ird[x] %41`).
+- The outside, encdir and markers directories are also under that scratch root.
+- Every plant was restored; the plant clone was checked clean afterwards, and the café directory was removed.
+
+**Processes**
+- A /proc/*/environ scan found no live process with an s1fix5_verify HOME.
+- Every background batch completed.
+
+**Logs and scripts**
+- Logs: /var/tmp/xschem_fixes/s1fix5_verify/logs/ (runs/<tag>.<arm>.log, batch1.out, batch2.out, e2e.out, diff_assert_literal.out).
+- Scripts: run.sh, inst.sh, plant.sh, plant_stamp.sh, plant_assert.sh, textplants.sh, e2e.sh, mkshapes.sh, mkshapes2.sh, diff_assert.tcl, diff_parse.tcl, stray.tcl, quad.tcl, enc.tcl.
+
+## IMPL deviations + open_problems (S1-fix5 crew):
+  * pat= is a LITERAL string, not grep's basic regular expression. The spec calls it a token and the recipes had to be judged literally; literal matching also cannot hang the Tcl interpreter (backreference patterns can). The one real block (SABOTAGE) counts 8 either way. doc/claude/specs/issue_stamp.md section 4 should say 'literal' (not my file).
+  * Binary files: a matching file that contains a NUL byte is unevaluable, by name. That preserves grep 3.12's measured verdict (it reports binary matches on stderr, which the old exec read as a failure). grep's locale-dependent encoding-error test is not reproduced.
+  * Newly refused as named problems (fail-closed, none occur in the corpus): an empty pat=; a path= that is neither a file nor a directory (a FIFO would block); an absolute symlink target that reaches the checkout only through another link.
+  * The path rule and the no-corpus-word-on-the-command-line rule were extended to quote=: its path= is shape-checked, and <rev>:<path> goes to cat-file --batch on stdin. A quote naming a directory is now 'not a file at that revision' (git show used to print a listing).
+  * shallow requires two agreeing pieces of evidence: the walk with the shallow file disregarded exits 128, AND a boundary sits on HEAD's honoured walk. Any other outcome is unreadable.
+  * H6's disk check now accepts full or shallow for any repository with a shallow file. The old 'HEAD is listed, so it is shallow' is exactly the fdself shape. H1 and H19 hold the probe on fixtures instead.
+  * The 'names a blob/tree' wording applies in every state, not only shallow. Only the words change in full, where these were already RED; this is part of the +11 s.
+  * Cost trims: H20 and Q7 use one gate run per corpus (hcorpus), and H19's fdanc half checks 3 stamps rather than the 7-stamp row, to bound cost.
+  * The xschem and T1 arms in the shapes used the main tree's src/xschem (built 09-17), as S1-fix4 and its refuter did.
+  * Redundant layer I2: removing rev_token from rev_exists stays green, because the gate grammar and --end-of-options still hold. The doubled lock is deliberate; no row holds it alone.
+  * Branches no row exercises, all fail-closed (READ): the disregarding walk exiting other than 128 (-> unreadable); that walk failing with no boundary on HEAD's walk (-> unreadable); an empty pat= (refused).
+  * No row can test the choice of the empty GIT_SHALLOW_FILE over /dev/null/none: they behave identically today (MEASURED). The choice rests on which way each fails.
+  * Q6 makes its outside directory mode 000 for the row's length. A run killed mid-row leaves a corpse the sweep cannot delete (a leftover survives).
+  * Suite cost is +11 s on T1 (~380 s). Restricting rev_type to the shallow state would save about 2-3 s at the price of the type-naming wording in full (INFERRED from the profile). This is the driver's call.
+  * doc/claude/specs/issue_stamp.md does not state pat= semantics. It should say literal, with no special characters (outside my files).
+  * Carried over: summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; quote_holds in an online blob:none clone may still lazily fetch the quoted blob (latent, 0 quote blocks in the corpus); uutils timeout costs 100 ms per exec.
