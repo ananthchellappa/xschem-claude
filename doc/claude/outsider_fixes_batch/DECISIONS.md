@@ -274,3 +274,40 @@ item below amends D4–D11, and the contract is still shared by both languages.
     carried `XSCHEM_DEVDISPLAY_DIR` the tester had not set themselves).
 17. **Header values are also stripped of `T1-RUN-`** (it becomes `T1_RUN_`), so no field can
     carry sentinel text even for an unanchored reader.
+
+---
+
+# D14 — Item 1 stops excusing a re-initialised history (driver, 2026-09-18)
+
+Two consecutive rounds tried to keep a download that was then run through `git init && git
+commit` green, and **each round opened a fail-open in the state that must be strict**:
+
+* **S1-fix** used an anchor-absent test (`foreign`). A rewritten history and a corrupt clone
+  then went green while verifying nothing.
+* **S1-fix2** used a per-stamp date rule. The stamp's own unvalidated `stamped=` date became the
+  evidence that exempted it, so a one-digit typo (`2016` for `2026`) turned a bogus `tree=` green
+  in an ordinary full clone. Grafted, orphan-branch and root-date-rewritten histories failed open
+  the same way.
+
+The shape was never in Item 1's done-criteria. **Fail-closed beats convenient**, so:
+
+* **There is no exemption for a history that has commits.** In a full history every
+  unresolved revision is red, whatever its date and whatever the ancestry looks like. The date
+  rule and the `foreign` state are removed.
+* **The red explains itself.** When a revision does not resolve and HEAD's ancestry lacks the
+  project's root commit `7fe79fb2`, the problem line says so. It names the likely cause (a
+  re-initialised download, an orphan squash or a rewrite) and the cure (a real clone). That check
+  only changes the **wording**; it never changes the verdict.
+* **What stays from S1-fix2:**
+  * `unborn`, which needs three pieces of evidence (HEAD does not verify, no refs, no commit
+    object); with no commits, nothing can be verified, as with `none`;
+  * H7's HAVE_GIT fix;
+  * the fixture seal;
+  * `%41` in paths;
+  * no death before RESULT;
+  * the S20c split.
+* **A git warning on stderr is not a failure.** A deprecated setting in the tester's config turned a
+  pristine clone `unreadable`, because Tcl's `exec` treats any stderr output as an error. Git
+  calls are judged by their exit code alone.
+* **A row asserts that no revision question skips in a full history** (an empty skip set), and a
+  row plants a backdated bogus stamp in a full fixture and requires it RED.
