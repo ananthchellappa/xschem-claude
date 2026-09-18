@@ -279,12 +279,17 @@ deletion that did not happen is the defect demonstrating itself. Found by `D1`
 
 ````
 ```sh assert=absent pat=SABOTAGE path=src state=broken
-grep -rn SABOTAGE src/      # the sabotage protocol says this must be empty
+the literal text SABOTAGE on no line of any file under src/ (the sabotage protocol's closing check)
 ```
 ````
 
 Vocabulary: `assert=absent|present`, `pat=` one whitespace-free token, `path=` a
-repo-relative path, `state=holds|broken`. There is no shell and no
+repo-relative path, `state=holds|broken`. **`pat=` is a literal string**, never a
+regular expression or a glob: it is matched byte for byte (its UTF-8 bytes
+against each file's bytes), every character in it — `.` `*` `[` `^` `$` `\`
+`|` `>` — stands for itself, and a hit is counted once per line that contains
+it, as `grep -rnF` counts. The block's body is prose for the reader; only the
+info string is read. There is no shell and no
 interpolation — a document that can run arbitrary commands when you validate it
 is a document you cannot validate.
 
@@ -389,6 +394,12 @@ exercised.
   `test_ase_dialogs.tcl` and 1395's in `src/ase_window.tcl`; and 0249's own
   `# RESOLUTION — FIXED` sitting **306 lines below** a header that still says
   OPEN.
+* **Deliberate disguise is out of scope.** A stamp or an assertion hidden from
+  the parser on purpose — behind an invisible character such as NBSP or ZWSP, in
+  HTML with attributes, or inside a table, a link or a task list — is not
+  detected, because the checker is a hygiene tool against honest error and not
+  a gate against its own authors: whoever can write the file can simply leave
+  the stamp out (outsider-fixes DECISIONS D18).
 * **A green T1 does not mean every suite arm is green.** Do not add a rule of the
   form *"no open issue may claim a red row while T1 is green"*: issue **1436**
   legitimately claims a red display-arm row, because `test_ase_dialogs` sits in

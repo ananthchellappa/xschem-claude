@@ -480,3 +480,41 @@ S1-fix6 therefore fixes:
 * `md_strip`'s quadratic cost, made linear or with an over-long line refused by name (A);
 * the spec now saying that `pat=` is a **literal** string, which is the safer semantics, since
   the checker has no regex engine exposed to corpus text.
+
+---
+
+# D19 — Commit the verified improvement now; round 7 closes the remaining in-scope findings (driver)
+
+**Commit first.** Every round from S1-fix onward is strictly better than the committed checker.
+That checker is red for strangers (F23/F24/F21) and still runs `grep` through Tcl `exec` with
+corpus text, so it can write files and run a program. S1-fix6's refuter measured no **regression**
+against it: every finding is also present in, or absent from, HEAD's checker. So S1-fix6's bytes
+commit after a solo T1 gate in the main tree. That gate runs with `HOME` set to scratch, and with
+`XSCHEM_DEVDISPLAY_DIR` and `DEVDISPLAY_NUM` pinned to scratch and `:141`, so neither the real
+home nor `:99` is touched. The remaining findings go to S1-fix7 as a follow-up commit.
+Holding verified work hostage to the next round converts a small uncertainty into zero delivered
+value.
+
+**S1-fix7 (in scope under D18):**
+* **A. The corpus confinement applies to every reader.** `issues_dir_problem` is honoured by the
+  suite's own corpus reads (B1, B4, the D9 census) and by `report`. `report`'s `grep -r` over the
+  issues directory becomes a Tcl scan, which removes one more exec.
+* **A. `GIT_NO_LAZY_FETCH=1` on every checker git call.** Otherwise a partial clone fetches over
+  its remote and writes into `.git` because of corpus text.
+* **A. A total budget for `assert=` scans per run.** Exhausting it is a named problem. Per-scan
+  bounds do not bound 100 blocks.
+* **B. A read fence's info string is fully parsed.** Any word that is not a recognised
+  `key=value` (a multi-word `pat=`, for instance) is a named problem, never silently dropped.
+* **B. A line carrying a stamp body (`` `v1 claim=``) that is not a valid stamp line is named.**
+  That catches a stamp with its colon missing, and similar typos.
+* **B. Grandfathering is by exact filename, not by number.** A new unstamped file under a colliding
+  grandfathered number is RED; this project has real cross-clone collisions (1349–1353). Files in
+  the issues directory that look like issue files but miss the canonical name pattern are named.
+
+**Recorded as a limit, not fixed:** a checkout whose own path is not valid UTF-8. It is falsely red
+in both locales, partly because this box's `timeout` (uutils) refuses non-UTF-8 argv. UTF-8 paths
+(café, 日本, emoji) are green. It goes into the spec's limits section.
+
+**After S1-fix7, only a finding in class A or a regression blocks a commit.** A new class-B
+near-miss becomes a follow-up issue, because the committed state will already be far ahead of what
+it replaces.
