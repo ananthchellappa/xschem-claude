@@ -3,6 +3,7 @@
 **Branch:** fluid-editing · **Filed:** 2026-09-13 · **Status:** **FIXED 2026-09-13**, option B · rule debt filed
 **Found by:** Stage 9's crew, in passing. **Verified by the driver, read-only.**
 **Mechanism MEASURED 2026-09-13** by the 1453 crew — see "The writer, found by measurement".
+**List REPAIRED 2026-09-17, on the user's instruction** (*"repair File > Open Recent"*): the ten dead probe entries removed and the list left empty, because no honest record of the prior entries survives. Backup `~/.claude/xschem_recent_files_backup_20260917`. See **REPAIRED** at the end.
 
 ## What the user sees
 
@@ -201,3 +202,33 @@ probe, so the crew's own verification runs added process numbers to it. Counted 
 
 **With the fix in, a display-arm run of that suite can no longer add to it**, because the
 probe refuses to start the program the user registered.
+
+## ✅ REPAIRED 2026-09-17 — on the user's instruction
+
+The user ruled on this issue's look debt with *"repair File > Open Recent"*. Done by the
+driver rather than a crew, because every crew brief forbids touching `~/.xschem`.
+
+* **Cause confirmed closed BEFORE repairing, by measurement rather than citation.**
+  `recent_files` was unwritten from 2026-09-13 18:53 through four full T1 runs on
+  2026-09-17 that exercise the ASE-L probe suites, while `geometry` — written by those same
+  runs — moved. A repaired list stays repaired.
+* **Nothing restored, deliberately.** No honest record of the user's prior entries survives:
+  0924 recorded the file *format*, this issue recorded the *damaged* state, and `geometry`
+  holds 41 test-scratch paths of 50, the other 9 being PDK example benches that suites also
+  open, none resolvable to an existing file. Putting guesses in the user's menu would be the
+  tracker's own disease. **The list is left empty and refills as the user opens files.**
+* **The edit:** `set recentfile {…}` and `set tctx::recentfile {…}` blanked to `{}`; every
+  other line — `tctx::recentdirs` and the two `c_toolbar` arrays, the load dialog's toolbar
+  state (110 cells) — byte-identical to the backup. Guarded to abort if any `xschem` was
+  running, since a live one rewrites this file from memory on exit; none was.
+* **Backup:** `~/.claude/xschem_recent_files_backup_20260917`, verified with `cmp`.
+* **Verified in both directions, on copies under a scratch `HOME`** so the check could not
+  touch the real file. xschem's own reader reads the backup as **10** entries — the positive
+  control, without which a `--nogui` reader that never loads the list would pass vacuously —
+  and the repair as **0**. An independent Tcl parse agrees, toolbar cells 110 in both. The
+  real file's md5 and the `~/.xschem` listing were unchanged by the verification.
+
+**Still open, and still the user's:** half (b) of rule debt `1453` — the `iseditor` refusal
+sentence, and whether the `ng-cm3` registry entry pointing at `src/xschem` was theirs or a
+suite's. That entry is why the probe launched the editor as a simulator in the first place;
+the refusal guard is what now stops it. `~/.xschem/ase_simulators` is untouched.
