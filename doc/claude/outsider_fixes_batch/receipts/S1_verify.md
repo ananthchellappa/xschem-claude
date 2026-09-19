@@ -1039,3 +1039,64 @@ The only main-tree write is an append to /home/analog/dev/xschem-claude/doc/clau
 Everything ran in /var/tmp/xschem_fixes/s1fix9_verify/:
 - The clones: fin (final bytes), s8 (S1-fix8 final), d42 (a checkout of d42fc517), aa5 (a checkout of aa5cece0), rem (the remedy prototype), cur (a fresh clone at 021e9405), mix8 and mixd, plus the shapes under shapes/ and rv/shapes/.
 - The main tree was only read: a mirror clone, one direct clone, git log/diff, and a cp of the issues directory out of it.
+
+## S1-fix10 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix10 is refuted on one regression family, and there is no class-A finding.
+
+**Cause (MEASURED).** Item 3's opener rule changes how fences pair up: a line with a backtick in its info string no longer opens a fence. So a marked fence with a misspelled marking key (asert=, assertion=, asserts=, qoute=, quotes=) is either swallowed by a phantom fence or is itself no fence. stray_attrs only matches `(quote|assert)[ \t]*=`, so nothing names it.
+
+- In stamped 1219, d42fc517 says rc 1: "has a key the grammar does not know".
+- The final bytes say rc 0, ok (0 problems).
+
+**What makes this a regression.** It falls under "anything d42fc517 names now passing silently". The crew did not disclose it: the receipt says every item-3 consequence is fail-closed ("named, never passed"). Spec §5 still promises that a misspelled marking key on a block is named, and D21 item 2 says typo'd marking keys are named.
+
+**Proof of cause (MEASURED).** I took the final checker and removed only the item-3 opener condition. Called directly, with the self-test skipped, it names all three probes again, byte-identical to d42fc517.
+
+**Scope (MEASURED).** A fuzz of 20 000 random info strings per context:
+- with the fence alone, 0 marked fences go silent, so items 1 and 2 are clean in isolation;
+- after a flip opener, 2106 do.
+
+**Honest caveats.**
+- markdown-it agrees with final's pairing. Final is CommonMark-correct about structure; what is lost is d42's name for an honest near-miss (D18-B).
+- d42 has a mirror-image hole: after a Slack-style ```make install``` fails line, z_r3_asert and z_r3_qoute pass on d42 and are named on final.
+- The z_bt_* half (the typo on the backtick-info line itself) was already visible in S1-fix9's refuter's fuzz ("new silent passes … apart from backtick-info lines"). The flip-swallow half (z_flip*, zr_real_*) is new.
+- The driver has to decide whether a fail-open consequence of item 3 counts as an "intended difference". I judged it does not: the batch rejected S1-fix9 for a fail-open of the same shape (h_mdbq, a near-miss after a nested example).
+
+**Every key measurement in the claim reproduced (MEASURED):**
+- The battery: the crew's 33 differences exactly, and every added 0057 placement identical. The only ok→RED changes are k_btpat_true and k_flip_true, plus z_bt_false from the same family.
+- Red-first: 6 FAILED (Q14 Q18 Q20 Q21 Q23 Q24) on d42fc517's checker, and 3 FAILED (Q19 Q22 Q23) on S1-fix9's.
+- The real-corpus parser diff is 0 (1056 files, 5032 fence lines), and the report is byte-identical.
+- ALL PASS (100 checks) with 0 skips on tclsh, xschem and T1, and the CLI says ok with 122 parser cases.
+- The stranger shapes match: d1 97+3, export and export-inside-another-repo and unborn 93+7, reinit RED on D9 D9h H9. The renamed, worktree, weird-path and blobless clones, plus GIT_NO_LAZY_FETCH=1 and LANG=C, each give 100.
+- The class-A scripts are inert.
+- The sabotages I re-ran (S9e, A10, G8 and K1) each reddened their rows.
+
+The refutation section is appended to receipts/S1.md; it is insertions only, and the only main-tree write.
+## class_A:
+## regressions:
+  * MEASURED, flip swallow. In stamped 1219, a fence opened by ```sh `make` output (item 3 makes it no fence), then its bare ```, then a misspelled-key fence making a false claim (z_flip_asert, z_flip_assertion, z_flip_asserts, z_flip_qoute, z_flip_quotes). d42fc517 gives rc 1, 1 problem: 'has a key the grammar does not know'. Final gives rc 0, ok (0 problems). Recipes are in /var/tmp/xschem_fixes/s1fix10_verify/rc/ and logs in logs/bat/{base,fin}__z_flip_*_1219.log.
+  * MEASURED, same with other honest openers. z_flip2_asert (```bash # run `make check` first) and z_flip3_qoute (```console $ `pwd`): d42 rc 1, final rc 0 ok. The realistic file zr_real_asert / zr_real_qoute (```text `make check` output, a FAIL line, a bare ```, prose, then ```sh asert=absent pat=SABOTAGE path=src state=holds with 8 real hits) was re-run on lanes base2 and fin2: d42 rc 1, final rc 0 ok. The control zr_real_ctl, with the canonical key, is red on both.
+  * MEASURED, typo on the backtick-info line itself: z_bt_asert (```sh asert=absent pat=`SABOTAGE` path=src state=holds), z_bt_assertion and z_bt_qoute each give d42 rc 1, final rc 0 ok. This was disclosed only indirectly, by S1-fix9's refuter's fuzz ('apart from backtick-info lines').
+  * MEASURED, cause. scripts/gate3.tcl calls gate() directly on d42, final, and final with ONLY the item-3 opener condition removed (scripts/fin_S9e.tcl). The last names zr_real_asert, z_flip_qoute and z_bt_asert byte-identically to d42, so item 3's pairing change is the sole cause. scripts/fuzz3.tcl finds 0 such silent passes for a fence standing alone, and 2106 of 20000 after a flip opener.
+  * MEASURED, contradicts the crew's own claims. The receipt says item 3's consequences are 'fail closed (named, never passed)'. Spec §5 says 'A misspelled marking key on a block (asert=, qoute=) is named as a key the grammar does not know'. D21 item 2 says typo'd marking keys are named. None of these hold in the rows above.
+## class_B_followups:
+  * Item-3 fail-open fix candidate, not built: stray_attrs could also match misspelled marking keys (asert, assertion, asserts, qoute, quotes, assert:, 'assert absent'), or name any marked word on a line that the item-3 opener rule leaves unread. Either would restore d42's naming without undoing the CommonMark opener rule.
+  * Item-1 consequence, not blocking under D21's wording: a fence whose only key-shaped word is a misspelled marking key goes from named on d42 to ok on final. z_k_asert_alone (```sh asert=absent) and z_k_qoute_fix (```c qoute=... fix=...) were MEASURED. S1-fix9's refuter's fuzz disclosed this as 'fences that carry none of the five marking keys'.
+  * Carried: the d42 mirror-image hole. z_r3_asert and z_r3_qoute, a misspelled key after a Slack-style ```make install``` fails line, pass on d42 and are named on final. Whatever is kept, one side has a swallowed-typo hole; a checker that names misspelled marking keys wherever it finds them would close both.
+  * Carried from the crew: the path=/pat=/state= marking cost (m_* red on both), cx_k_nomark ok on both, K2 held by D9b alone, Q20 real sleeps, the 600 s budget depending on the box, the stale '34 checks' in spec §5, and the S1-fix7 list.
+## out_of_scope:
+  * k_btpat_true, k_flip_true and z_bt_false go from ok to RED. These are item-3 consequences the crew disclosed; markdown-it agrees and they fail closed. I did not count them as regressions, but the driver should still confirm, per the receipt's deviation 3.
+  * z_k_asert_alone and z_k_qoute_fix are named on d42 and silent on final. That is item 1's 'marked only by a marking key' rule as D21 words it.
+  * The D21 limit itself: a stamp body inside a fence in doc/claude/issues is RED.
+## real_home_check: The manifest check `md5sum -c --quiet …/xschem_manifest_fixes.md5` gave rc 0 before any work, before the append and after it (MEASURED).
+
+- `find -newer /var/tmp/xschem_fixes/s1fix10_verify/.marker_start` printed nothing over ~/.xschem, ~/.claude/xschem_dev_display, ~/.claude/gui_test_gate, or ~/dev/xschem-op-wcard with .git pruned.
+- A /proc/*/environ scan (not pgrep -f) found 0 live processes with an s1fix10_verify HOME, and ps shows 0 of my jobs left.
+- There are 0 /tmp/istamp_*, 0 FIFOs under the scratch, 0 istamp_/drv_ entries in the main tree's tests/headless/.scratch, and 0 `&1`.
+- The main tree is at HEAD 32b6a9cd with the four files unchanged: 6d0592ad 930eb435 d19e7a82 1d4f8efb.
+- Its only write is my append to doc/claude/outsider_fixes_batch/receipts/S1.md. git diff --stat reports insertions only (+380 in total, of which the crew's is 277 lines).
+- Every xschem, tclsh and git run used HOME under /var/tmp/xschem_fixes/s1fix10_verify/homes, with DISPLAY and GIT_EDITOR unset and a timeout.
+- :99, the devdisplay, the GUI gate and op-wcard were never touched.
+- uploadpack.allowFilter was set only on my scratch mirror.

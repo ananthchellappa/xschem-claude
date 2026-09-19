@@ -3623,7 +3623,14 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   dev display.** `TIMEOUT` at 200, 300 and 600 s on attached displays, in the old and new
   code alike, and `ALL PASS (983)` on the private `xvfb-run` one. Pre-existing. OPEN.
 
-**The next free number is 1489.**
+~~**The next free number is 1489.**~~
+
+- **1489** — **the issue-stamp checker names honest fences (`title=`, `cc=`) and fenced
+  stamp examples; four fixes are ready without the opener rule.** Filed when the outsider-fixes
+  batch closed Item 1 under D21. S1-fix10's files minus the CommonMark opener rule measured
+  regression-free. OPEN.
+
+**The next free number is 1490.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
