@@ -705,28 +705,33 @@ positions, and left a persistent Xvfb plus `~/.cache/openbox` behind (outsider a
 F6–F10, F36, F39). The fix was proved with **seeded and empty** canary homes left
 byte-identical, each shown red first on the old code — not asserted.
 
-* **Armed** (one `test home: throwaway …` line per run): T1 **and every case run
-  alone** (`t1_arm_home`, called when `tests/test_utility.tcl` is sourced);
+* **Armed** (one `test home: throwaway …` line per run): T1 **and each tcase run alone
+  with `tclsh`** (`t1_arm_home`, called when `tests/test_utility.tcl` is sourced);
   `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh`; the standalone `test_*.sh`
   suites (through `xvfb_arm.sh --arm`) and `test_devdisplay.sh`; `owed.sh drain`,
   around each shell debt it runs; `run.sh` / `run_nogui.sh`; `lookshot.sh`,
-  `tests/netlist_diff/netlist_diff.sh`, `wireedit/run_wireedit.sh`. A driver nested
+  `tests/netlist_diff/netlist_diff.sh`, `wireedit/run_wireedit.sh`; since round 4 also
+  `doc/claude/signal_browser_2pane_batch/xarm.sh` and `tools/migrate/test_ase_migrate.py`
+  (`winshot.sh` builds into the gitignored `tests/headless/.winshot-cache/`, never
+  `~/.cache`). A driver nested
   inside an armed run reuses its throwaway; only the owner deletes.
 * **Not armed:** the bare `./src/xschem … --script tests/headless/<t>.tcl` (D9 — the
   `scratch.tcl` suites print a `note:` naming the armed spelling) and a hand-run
   `xschemtest.tcl`. **The armed spelling is `tests/headless/run_suites.sh [--nogui] <t>`.**
 * **The list is enforced, not remembered.** Three refutation rounds each found more
   unarmed launchers by hand, so row **G2** of `test_home_isolation.tcl` (a T1 case)
-  enumerates every script under `tests/` that starts xschem and fails unless it is
-  armed, runs inside xschem, or is on an allowlist with a one-line reason. **A new
-  launcher script reddens T1 until you arm it** (`. test_home.sh; test_home_arm`, or
-  source `test_utility.tcl`). Widening G2 to the whole repository is round 4 (D20.6),
-  not landed.
+  enumerates **every script in the repository** (715 at round 4) that starts xschem,
+  including through a variable-held binary path, a PATH lookup (`command -v`, `which`,
+  `auto_execok`) or a Python/Tcl launcher, and fails unless it is armed, runs inside
+  xschem, or is on a path-keyed allowlist with a one-line reason; an allowlist entry that
+  matches nothing fails too. **A new launcher script reddens T1 until you arm it**
+  (`. test_home.sh; test_home_arm`, or source `test_utility.tcl`). G2 is textual: what
+  it cannot see is written into the row and measured by fixture row **G2b**.
 
 | variable | meaning |
 |---|---|
 | `XSCHEM_TEST_HOME=real` | opt out: your real HOME, a loud `!! test home: REAL` banner on **every** run, header `home=real` |
-| `XSCHEM_TEST_HOME=<abs dir>` | use that directory, never delete it (`home=custom`); refused if it resolves — symlinks included — to your real HOME, or its `.xschem` leads into it |
+| `XSCHEM_TEST_HOME=<abs dir>` | use that directory, never delete it (`home=custom`); refused if it resolves — symlinks included — to your real HOME, or its `.xschem` (two levels deep), `.cache` or `.claude` leads into it |
 | `XSCHEM_TEST_KEEP_HOME=1` | keep the throwaway and print its path; `.keep` is written at arm time, so a killed run's is kept too |
 | `XSCHEM_TEST_REAL_HOME` | **set by the arm**, not by you: your real HOME, for **read-only** fixture lookups (`test_real_home` in `scratch.tcl`) — the fork ngspice, VCD fixtures, `test_launch_context`'s geometry. A row that finds nothing prints `skip:`, never a silent pass |
 

@@ -136,3 +136,8 @@ tests/open_close_output.txt
 tests/create_save.*_output.txt
 tests/netlisting.*_output.txt
 tests/open_close.*_output.txt
+
+# winshot.sh's compile-on-demand build of winshot.c (DECISIONS D20.3 of
+# doc/claude/outsider_fixes_batch: it used to build into ~/.cache/xschem-winshot,
+# i.e. into the tester's real home).
+/tests/headless/.winshot-cache/

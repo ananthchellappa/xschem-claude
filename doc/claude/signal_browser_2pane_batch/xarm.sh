@@ -23,13 +23,30 @@
 #
 # The deadline is an epoch second in DEADLINE beside this script. Edit that file
 # to extend or end the unattended window; nothing else reads a clock.
+#
+# ⚠ SINCE 2026-09-18 (doc/claude/outsider_fixes_batch, DECISIONS D20.6) EVERY RUN
+# GOES THROUGH AN ARMED DRIVER, UNDER A THROWAWAY HOME. The round-3 safety
+# refuter ran `xarm.sh one test_crossview_paste.tcl` on an empty home and it
+# created ~/.claude/gui_test_gate/ and left a `wish` gate panel running there;
+# its unattended arm also ran a bare `xschem` under `xvfb-run -a` -- which starts
+# at :99, the persistent dev display's number -- against the tester's own HOME.
+# So:
+#   * it arms first (tests/headless/test_home.sh), like every documented test
+#     command, and runs its driver as a CHILD so the throwaway is deleted after;
+#   * `one` runs through gated_xschem.sh and `suites` through run_suites.sh, in
+#     BOTH modes: those drivers already choose the display (the dev display when
+#     it is up, else a private Xvfb from :200 -- never :99, D17.8), and the gate
+#     raises its own panel, tracked, when it applies;
+#   * unattended only adds GUI_GATE=0, which is what that window has always meant.
+# XARM_SCREEN is gone with xvfb-run: set AUDIT_SCREEN (e.g. 1920x1080x24).
 
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
-CTLDIR="${GUI_GATE_DIR:-$HOME/.claude/gui_test_gate}"
+# shellcheck source=/dev/null
+. "$REPO/tests/headless/test_home.sh"
+test_home_arm || exit $?
 DEADLINE_FILE="$HERE/DEADLINE"
-SCREEN="${XARM_SCREEN:--screen 0 1920x1080x24}"
 
 deadline=0
 [ -r "$DEADLINE_FILE" ] && deadline=$(tr -dc '0-9' < "$DEADLINE_FILE")
@@ -40,21 +57,6 @@ unattended=0
 if [ "$now" -lt "$deadline" ] && command -v xvfb-run >/dev/null 2>&1; then
   unattended=1
 fi
-
-# After the deadline the user is back in charge, so the panel must be up. Raising
-# it is idempotent: if one is already running we leave it alone. It goes on the
-# REAL display, never on the Xvfb one — a panel nobody can see is worse than none.
-raise_panel() {
-  if pgrep -f 'gui_gate_widget.tcl' >/dev/null 2>&1; then return 0; fi
-  if [ -z "${DISPLAY:-}" ]; then
-    echo "xarm: no DISPLAY — cannot raise the gate panel" >&2
-    return 1
-  fi
-  mkdir -p "$CTLDIR"
-  ( wish "$REPO/tests/headless/gui_gate_widget.tcl" "$CTLDIR" >>"$CTLDIR/widget.log" 2>&1 & )
-  sleep 2
-  pgrep -f 'gui_gate_widget.tcl' >/dev/null 2>&1
-}
 
 print_mode() {
   if [ "$unattended" = 1 ]; then
@@ -68,7 +70,7 @@ print_mode() {
     else
       echo "xarm mode: GATED :0 — the unattended window closed at $(date -d "@$deadline" 2>/dev/null || echo "$deadline")."
     fi
-    echo "xarm: the GUI gate panel governs these runs. Pause/Stop are live."
+    echo "xarm: the GUI gate governs these runs where it applies (its panel is raised by the driver). Pause/Stop are live."
   fi
 }
 
@@ -84,11 +86,11 @@ case "$cmd" in
     [ $# -ge 1 ] || { echo "xarm: 'suites' needs at least one suite name" >&2; exit 2; }
     print_mode
     if [ "$unattended" = 1 ]; then
-      exec env GUI_GATE=0 xvfb-run -a -s "$SCREEN" \
-        "$REPO/tests/headless/run_suites.sh" "$@"
+      GUI_GATE=0 "$REPO/tests/headless/run_suites.sh" "$@"
+    else
+      "$REPO/tests/headless/run_suites.sh" "$@"
     fi
-    raise_panel || echo "xarm: WARNING — proceeding without a panel" >&2
-    exec "$REPO/tests/headless/run_suites.sh" "$@"
+    exit $?
     ;;
   one)
     [ $# -ge 1 ] || { echo "xarm: 'one' needs a test file" >&2; exit 2; }
@@ -99,11 +101,11 @@ case "$cmd" in
     esac
     print_mode
     if [ "$unattended" = 1 ]; then
-      exec env GUI_GATE=0 xvfb-run -a -s "$SCREEN" \
-        "$REPO/src/xschem" --pipe -q --nolog --script "$f" "$@"
+      GUI_GATE=0 "$REPO/tests/headless/gated_xschem.sh" --pipe -q --nolog --script "$f" "$@"
+    else
+      "$REPO/tests/headless/gated_xschem.sh" --pipe -q --nolog --script "$f" "$@"
     fi
-    raise_panel || echo "xarm: WARNING — proceeding without a panel" >&2
-    exec "$REPO/tests/headless/gated_xschem.sh" --pipe -q --nolog --script "$f" "$@"
+    exit $?
     ;;
   *)
     echo "usage: xarm.sh {suites <names...>|one <testfile.tcl>|mode}" >&2

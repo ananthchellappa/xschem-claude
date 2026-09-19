@@ -27,7 +27,9 @@ on today's corpus: the parser diff over all 1056 issue files is 0.
 
 ## What is ready
 
-S1-fix10's final files (`/var/tmp/xschem_fixes/s1fix10/final/`; the receipt is
+S1-fix10's final files (saved in-repo as
+`doc/claude/outsider_fixes_batch/patches/1489-s1fix10-candidate.patch`, a diff against
+`d42fc517`'s bytes; the scratch copy under `/var/tmp` is gone; the receipt is
 `doc/claude/outsider_fixes_batch/receipts/S1.md`, section `## S1-fix10`) fix items 1, 3, 4
 and 5, plus one more item: **3′, a backtick line whose info string holds a backtick does not open a
 fence** (the CommonMark opener rule). Its refuter (`receipts/S1_verify.md`, last section)

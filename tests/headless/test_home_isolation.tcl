@@ -38,9 +38,10 @@
 #   K  inside an xschem interpreter arming is a no-op; sourcing twice is too
 #   G  issue 1397's trap: every $HOME/.claude default in tests/ is carried or
 #      allowlisted with a reason
-#   G2 D17.1: every script under tests/ that STARTS xschem is armed, runs
-#      inside xschem (D9), or is allowlisted with a reason -- the launcher
-#      guard that replaces finding unarmed entry points one round at a time
+#   G2 D17.1 + D20.6: every script in the REPOSITORY that STARTS xschem is
+#      armed, runs inside xschem (D9), or is allowlisted with a reason -- the
+#      launcher guard that replaces finding unarmed entry points one round at
+#      a time; G2b measures its reach on planted launchers
 #   H  T1's display arm (D8), through a copy of the real driver: the private
 #      Xvfb, the auto-start with the PRE-switch HOME, the fallback when that
 #      start fails, and the header fields (D6)
@@ -77,6 +78,16 @@
 # absolute by both), L18 (a nested arm is silent in both); and section H's
 # fixture numbers became 150-169, each released when its row is done, so four
 # concurrent runs no longer skip H3.
+#
+# ROUND 4 (DECISIONS D20, after the round-3 refuters) added, each red on the
+# round-3 build or under a named sabotage (receipt S2c-R4-build.md): G2 widened
+# to the WHOLE REPOSITORY and to launchers that hold the binary in a variable,
+# look it up on PATH, or are written in Python; G2b (a fixture measuring what
+# the guard catches and what it provably cannot); L15 rows g-k (a custom home's
+# .cache, .claude and a second level of .xschem); L19 (nesting applies the same
+# escape check); H6d (the reaper is forked before the server, and a T1 killed as
+# the reaper starts leaves nothing running); H6e (the reaper stops a tagged
+# server nothing recorded); H7b (the round-3 sabotage S14, deterministic).
 #
 #   headless (the only arm; nothing here maps a window of its own)
 #     ./src/xschem --nogui --pipe -q --script tests/headless/test_home_isolation.tcl
@@ -988,74 +999,157 @@ check G1-every-HOME/.claude-default-in-tests-is-carried-or-allowlisted \
 
 
 ## =========================================================================
-## SECTION G2 -- D17.1: EVERY SCRIPT UNDER tests/ THAT STARTS XSCHEM IS ARMED
+## SECTION G2 -- D17.1 + D20.6: EVERY SCRIPT IN THE REPOSITORY THAT STARTS XSCHEM
+## IS ARMED, RUNS INSIDE XSCHEM, OR IS ALLOWLISTED WITH A REASON
 ## =========================================================================
 ## Three rounds each found more documented scripts that ran xschem under the
 ## tester's real HOME: round 1 the standalone .sh suites, `owed.sh drain` and
-## run_nogui.sh; round 2 lookshot.sh, netlist_diff.sh and run_wireedit.sh.
-## Whack-a-mole is the wrong shape, so this row enumerates them instead. A
-## script STARTS xschem when a non-comment line names the binary -- `src/xschem`,
-## `src xschem` (a Tcl file join), `$XSCHEM`/`${XSCHEM`, `env(XSCHEM)` or
-## `xschem_cmd` -- and it must then be ONE of:
+## run_nogui.sh; round 2 lookshot.sh, netlist_diff.sh and run_wireedit.sh; round
+## 3 doc/claude/signal_browser_2pane_batch/xarm.sh (OUTSIDE tests/, where this
+## row did not look) and tools/migrate/test_ase_migrate.py (a Python launcher,
+## which it could not see). Whack-a-mole is the wrong shape, so this row
+## enumerates them instead -- over the WHOLE REPOSITORY (D20.6): every .sh,
+## .bash, .py and .tcl file, and every extensionless file with a `#!`, skipping
+## only dot-directories, `results*` and `gold`. A script STARTS xschem when a
+## non-comment line
+##   * names the binary: `src/xschem`, `src xschem` (a Tcl file join),
+##     `$XSCHEM`/`${XSCHEM`, `env(XSCHEM)` or `xschem_cmd`;
+##   * or holds its path in a variable or spells it: any path whose LAST
+##     component is `xschem` -- `"$BIN/xschem"`, `/opt/x/bin/xschem` --, a Tcl
+##     `[file join ... xschem]`, a Python `os.path.join(..., "xschem")`;
+##   * or looks it up on PATH: `command -v xschem`, `type -P xschem`,
+##     `$(which xschem)`, Tcl `auto_execok xschem`, Python `shutil.which("xschem")`;
+##   * or runs it bare: `xschem -...` in command position (a shell file), Tcl
+##     `exec ... xschem -...` / `open "|xschem`, a Python argv list or
+##     subprocess call starting with "xschem";
+## and it must then be ONE of:
 ##   armed      an arm precedes that line: `test_home_arm` (test_home.sh
 ##              sourced), the `test_home.sh --run` or `xvfb_arm.sh --arm`
-##              re-exec guard, or, in Tcl, `source ... test_utility.tcl`
-##              (t1_arm_home runs at source time) or t1_arm_home itself;
+##              re-exec guard (Python's `"test_home.sh"), "--run"`), or, in Tcl,
+##              `source ... test_utility.tcl` (t1_arm_home runs at source time)
+##              or t1_arm_home itself;
 ##   inside     a .tcl suite that runs INSIDE xschem (it sources scratch.tcl or
 ##              calls the `xschem` command, and has no tclsh shebang): any
 ##              child it starts inherits the HOME of whatever launched IT -- an
 ##              armed driver, or the bare `./src/xschem --script` that D9 keeps
 ##              as the known exception, with scratch.tcl's note;
-##   allowed    each such line on ALLOW below, with its one-line reason.
+##   allowed    that line (or, with `*`, every such line of the file) is on
+##              G2ALLOW with a one-line reason, printed on every run; an entry
+##              that matches nothing is a FAILURE, so the list cannot rot into
+##              silent permission.
 ## A line that only names an ARMED driver (gated_xschem.sh, run_suites.sh,
-## full_audit.sh) or an arming re-exec delegates to something this same row
-## checks, and needs nothing. Every launcher found, and its class, is printed.
+## full_audit.sh) delegates to something this same row checks; such a script is
+## listed as armed if it arms too, and needs nothing if not.
+## ⚠ WHAT A TEXTUAL GUARD CANNOT SEE, and why none of it is allowlisted: this
+## reads source text, not what runs. It cannot see a binary name assembled from
+## pieces (`"$d/xs""chem"`, `${a}${b}`), a path read at run time (from a file,
+## an argument, a config), a command built elsewhere and run through `eval` or
+## Tcl's `exec {*}$cmd`, a copy or symlink of the binary under another name, a
+## launcher in a language it does not scan (Perl, Ruby, a compiled program), a
+## launch in a file it never opens (under a dot-directory), or one written as
+## text a program later runs -- a here-document fed to a shell, a Python
+## triple-quoted string (read as prose, like a docstring). Nothing on
+## G2ALLOW stands in for those: each entry is a line this row DID see. Row G2b
+## plants the three shapes the round-3 safety refuter used (a variable-held
+## path, a Python subprocess, `command -v`) and requires each one caught, and
+## plants the unseeable shapes and requires them NOT caught -- so the limit is a
+## measured property of this row, not a hope.
 set G2ALLOW {
-  test_owed.sh {-x "$REPO/src/xschem"}
+  tests/headless/test_owed.sh {-x "$REPO/src/xschem"}
     "a precondition test, not a start: O13's only xschem run is `owed.sh drain`, which runs the suite through run_suites.sh (armed)"
-  test_pdk_launcher.tcl {set xs [file join $repo src xschem]}
+  tests/headless/test_pdk_launcher.tcl {set xs [file join $repo src xschem]}
     "builds the PDK launcher's command line as a Tcl list and compares it; it never runs it"
-  fuzz_sweep.tcl {puts $fh "#   src/xschem}
+  tests/headless/fuzz/fuzz_sweep.tcl {puts $fh "#   src/xschem}
     "writes a usage COMMENT into a generated replay file; the sweep itself runs inside xschem (--script), D9's case"
+  pdk_launcher.sh {Use src/xschem --script}
+    "an error MESSAGE naming the binary; this script starts wish (the PDK launcher GUI), never xschem"
+  tools/launcher/pdk_launcher.tcl *
+    "the PRODUCT's PDK launcher GUI: it starts xschem for a person to USE, in their own HOME on purpose -- not a test command"
+  sky130A/run.sh {exec "$repo/src/xschem"}
+    "a PRODUCT launcher for the sky130A workarea: it opens xschem for a person to use, in their own HOME on purpose"
+  gf180mcuD/run.sh {exec "$repo/src/xschem"}
+    "a PRODUCT launcher for the gf180mcuD workarea: it opens xschem for a person to use, in their own HOME on purpose"
+  ihp-sg13g2/run.sh {exec "$repo/src/xschem"}
+    "a PRODUCT launcher for the ihp-sg13g2 workarea: it opens xschem for a person to use, in their own HOME on purpose"
+  tools/migrate/ase_migrate.py *
+    "a migration TOOL a person runs on their own library: --verify starts their own xschem on purpose; its test, tools/migrate/test_ase_migrate.py, is armed"
+  tools/migrate/build_ihp_sg13g2.sh {XSCHEM_SRC=$SRC/xschem}
+    "names the PDK's libs.tech/xschem DIRECTORY (a source of symbols), not the binary; the script copies files and starts nothing"
+  doc/claude/batch_F/eyeball_fixtures.sh {DISPLAY=:0 ./src/xschem}
+    "the text of a here-document: launch lines WRITTEN into RUN.txt for a person to type at their own screen; the script starts nothing"
+  doc/claude/casemode_batch/repro3/run_r3b.sh {X=/home/qflow/dev/xschem/claude_1/xschem/src/xschem}
+    "a recorded repro from ANOTHER machine: the binary is a hard-coded /home/qflow path no checkout here has, so it starts nothing here; kept as evidence, not edited"
+  doc/claude/casemode_batch/item15_cite_check.py {ROOT="/home/qflow/dev/xschem/claude_1/xschem"}
+    "names a CHECKOUT directory on another machine (.../claude_1/xschem), not the binary; the script reads files and starts nothing"
+  doc/claude/casemode_batch/item15_doc_cite_check.py {ROOT="/home/qflow/dev/xschem/claude_1/xschem"}
+    "names a CHECKOUT directory on another machine (.../claude_1/xschem), not the binary; the script reads files and starts nothing"
 }
-proc g2_scan {tdir allow} {
+proc g2_scan {root allow} {
   set DIRECT {src/xschem([^.A-Za-z0-9_]|$)|src xschem([^.A-Za-z0-9_]|$)|\$\{?XSCHEM([^A-Za-z0-9_]|$)|env\(XSCHEM\)|(^|[^A-Za-z0-9_])xschem_cmd([^A-Za-z0-9_]|$)}
+  ## any path whose LAST component is `xschem`: spelled, or held in a variable
+  set PATHX {(/|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)xschem(["'\s;)|&`\]\}]|$)}
+  set LOOK {(command\s+-v|type\s+-[Pp]|auto_execok|shutil\.which\(|\$\(\s*which|`\s*which)\s*["']?xschem(["'\s;)|&`\]\}]|$)}
   ## a BARE `xschem` in command position (0924: never a bare name), after an
   ## optional exec/env/timeout/nohup/setsid prefix with its words
   set BARE {(^\s*|[;&|(`]\s*)((exec|env|timeout|nohup|setsid)\s+([^ ]+=[^ ]*\s+|-[^ ]+\s+|[0-9]+[a-z]?\s+)*)*xschem\s+-}
-  set ARM {(^|[;&|\{])\s*test_home_arm(\s|;|$)|xvfb_arm\.sh"?\s+--arm\s|test_home\.sh"?\s+--run\s|^\s*source\s.*test_utility\.tcl|^\s*t1_arm_home\s*$}
-  set out [dict create armed {} inside {} allowed {} offenders {} used {}]
-  set todo [list $tdir]
+  set TCLJ {file\s+join\s[^]]*\s["']?xschem["']?\]}
+  set TCLX {(^|[\[;\{]\s*)exec\s+([^\s\]]+\s+)*?xschem\s+-|open\s+["\{]?\|\s*xschem\s}
+  set PYJ {os\.path\.join\([^)]*["']xschem["']\s*\)|/\s*["']xschem["']}
+  set PYL {\[\s*["']xschem["']\s*[,\]]|subprocess\.[A-Za-z_]+\(\s*["']xschem}
+  set ARM {(^|[;&|\{])\s*test_home_arm(\s|;|$)|xvfb_arm\.sh"?\s+--arm\s|test_home\.sh"?\s+--run\s|test_home\.sh["']\)?\s*,\s*["']--run["']|^\s*source\s.*test_utility\.tcl|^\s*t1_arm_home\s*$}
+  set DELEG {(^|[\s"'/;&|(])(gated_xschem|run_suites|full_audit)\.sh(["'\s;)|&]|$)}
+  set out [dict create armed {} inside {} allowed {} offenders {} used {} delegates {} scanned 0]
+  set todo [list $root]
   while {[llength $todo]} {
     set d [lindex $todo 0] ; set todo [lrange $todo 1 end]
     foreach f [lsort [glob -nocomplain -directory $d -- *]] {
       set t [file tail $f]
-      if {[file isdirectory $f]} {
+      if {[catch {file type $f} ty] || $ty eq "link"} { continue }
+      if {$ty eq "directory"} {
         if {![string match results* $t] && ![string match .* $t] && $t ne {gold}} { lappend todo $f }
         continue
       }
       set ext [file extension $t]
+      if {$ext ni {.sh .bash .py .tcl} && $ext ne {}} { continue }
       set body [slurp $f]
-      if {$ext ni {.sh .bash .py .tcl} && !($ext eq {} && [string range $body 0 1] eq "#!")} { continue }
-      set rel [string range $f [expr {[string length $tdir] + 1}] end]
-      set n 0 ; set armed 0 ; set inside 0 ; set bad {} ; set first 0 ; set allowed {}
+      if {$ext eq {} && [string range $body 0 1] ne "#!"} { continue }
+      dict incr out scanned
+      set rel [string range $f [expr {[string length $root] + 1}] end]
+      set n 0 ; set armed 0 ; set inside 0 ; set bad {} ; set first 0 ; set allowed {} ; set deleg 0 ; set tq 0
       foreach l [split $body \n] {
         incr n
         if {[regexp {^\s*#} $l]} { continue }
+        ## a Python docstring or other triple-quoted text is prose, as a comment is
+        if {$ext eq {.py}} {
+          set q [expr {[regexp -all {"""|'''} $l] % 2}]
+          if {$tq || $q} { set tq [expr {$tq ^ $q}] ; continue }
+        }
         if {$ext eq {.tcl} && ([regexp {(^|[\[;\{]\s*)xschem\s+[a-z_]+} $l] || [regexp {scratch\.tcl} $l])} { set inside 1 }
         if {!$armed && [regexp $ARM $l]} { set armed $n }
-        set hit [regexp $DIRECT $l]
-        if {!$hit && $ext ne {.tcl} && [regexp $BARE $l]} { set hit 1 }
-        if {!$hit} { continue }
+        set hit [expr {[regexp $DIRECT $l] || [regexp $PATHX $l] || [regexp $LOOK $l]}]
+        if {!$hit && $ext ni {.tcl .py} && [regexp $BARE $l]} { set hit 1 }
+        if {!$hit && $ext eq {.tcl} && ([regexp $TCLJ $l] || [regexp $TCLX $l])} { set hit 1 }
+        if {!$hit && $ext eq {.py} && ([regexp $PYJ $l] || [regexp $PYL $l])} { set hit 1 }
+        if {!$hit} {
+          if {[regexp $DELEG $l]} { set deleg 1 }
+          continue
+        }
         if {!$first} { set first $n }
         if {$armed && $armed <= $n} { continue }
         set ok 0
         foreach {af an areason} $allow {
-          if {$af eq $t && [string first $an $l] >= 0} { set ok 1 ; lappend allowed "$rel ($areason)" ; dict lappend out used $af }
+          if {$af eq $rel && ($an eq "*" || [string first $an $l] >= 0)} {
+            set ok 1 ; lappend allowed "$rel ($areason)" ; dict lappend out used "$af $an"
+          }
         }
         if {!$ok} { lappend bad "$rel:$n `[string trim [string range $l 0 80]]`" }
       }
-      if {!$first} { continue }
+      if {!$first} {
+        if {$deleg} {
+          if {$armed} { dict lappend out armed $rel } else { dict lappend out delegates $rel }
+        }
+        continue
+      }
       if {[llength $bad] && $inside && ![regexp {^#![^\n]*tclsh} $body]} { dict lappend out inside $rel ; continue }
       if {[llength $bad]} {
         foreach b $bad { dict lappend out offenders $b }
@@ -1068,17 +1162,57 @@ proc g2_scan {tdir allow} {
   }
   return $out
 }
-set g2 [g2_scan $tdir $G2ALLOW]
+set g2 [g2_scan $repo $G2ALLOW]
 set g2unused {}
-foreach {af an areason} $G2ALLOW { if {[lsearch -exact [dict get $g2 used] $af] < 0} { lappend g2unused $af } }
-set g2need {headless/lookshot.sh netlist_diff/netlist_diff.sh headless/wireedit/run_wireedit.sh
-            headless/run_suites.sh headless/full_audit.sh headless/gated_xschem.sh run_regression.tcl netlisting.tcl}
+foreach {af an areason} $G2ALLOW { if {[lsearch -exact [dict get $g2 used] "$af $an"] < 0} { lappend g2unused "$af ($an)" } }
+set g2need {tests/headless/lookshot.sh tests/netlist_diff/netlist_diff.sh tests/headless/wireedit/run_wireedit.sh
+            tests/headless/run_suites.sh tests/headless/full_audit.sh tests/headless/gated_xschem.sh tests/run_regression.tcl
+            tests/netlisting.tcl doc/claude/signal_browser_2pane_batch/xarm.sh tools/migrate/test_ase_migrate.py}
 set g2miss {}
 foreach w $g2need { if {[lsearch -exact [dict get $g2 armed] $w] < 0} { lappend g2miss $w } }
-check G2-every-script-under-tests-that-starts-xschem-is-armed-or-allowlisted-with-a-reason \
-  [expr {[llength [dict get $g2 offenders]] == 0 && [llength $g2miss] == 0 && [llength [dict get $g2 armed]] >= 20
-         && [llength [dict get $g2 inside]] > 0}] \
-  "-- UNARMED: [expr {[llength [dict get $g2 offenders]] ? [join [dict get $g2 offenders] {; }] : {none}}]. armed ([llength [dict get $g2 armed]]): [join [dict get $g2 armed] {, }]. allowlisted: [expr {[llength [dict get $g2 allowed]] ? [join [dict get $g2 allowed] {; }] : {none}}]. inside xschem (their children inherit their launcher's HOME; bare, D9): [llength [dict get $g2 inside]] suites. Known launchers not seen armed: [expr {[llength $g2miss] ? [join $g2miss {, }] : {none}}]. Allowlist entries matching nothing: [expr {[llength $g2unused] ? [join $g2unused {, }] : {none}}]"
+check G2-every-script-in-the-repository-that-starts-xschem-is-armed-or-allowlisted-with-a-reason \
+  [expr {[llength [dict get $g2 offenders]] == 0 && [llength $g2miss] == 0 && [llength $g2unused] == 0
+         && [llength [dict get $g2 armed]] >= 20 && [llength [dict get $g2 inside]] > 0 && [dict get $g2 scanned] > 500}] \
+  "-- [dict get $g2 scanned] scripts scanned, the whole repository. UNARMED: [expr {[llength [dict get $g2 offenders]] ? [join [dict get $g2 offenders] {; }] : {none}}]. armed ([llength [dict get $g2 armed]]): [join [dict get $g2 armed] {, }]. allowlisted: [expr {[llength [dict get $g2 allowed]] ? [join [dict get $g2 allowed] {; }] : {none}}]. inside xschem (their children inherit their launcher's HOME; bare, D9): [llength [dict get $g2 inside]] suites. delegating to an armed driver only: [llength [dict get $g2 delegates]]. Known launchers not seen armed: [expr {[llength $g2miss] ? [join $g2miss {, }] : {none}}]. Allowlist entries matching nothing (each one a failure): [expr {[llength $g2unused] ? [join $g2unused {, }] : {none}}]"
+
+## G2b -- D20.6: the guard's reach, MEASURED rather than described. A fixture tree
+## holds the three launchers the round-3 safety refuter planted in a copy of
+## tests/ -- a variable-held binary path (`BIN=$REPO/src; "$BIN/xschem"`), a
+## Python subprocess of os.path.join(repo, 'src', 'xschem'), `X=$(command -v
+## xschem)` -- which the round-3 row passed with 0 offenders while the first of
+## them overwrote a canary clipboard; plus the Tcl and Python bare forms. Each
+## must be an offender. The shapes the header says no textual guard can see are
+## planted too and must NOT be caught: if one ever is, this row goes red and
+## names the header paragraph to rewrite. And the controls: the same launcher
+## armed first is armed, a comment is nothing, and an allowlisted line is allowed.
+set g2fx [file join $S g2fixture] ; file mkdir [file join $g2fx t] [file join $g2fx .hidden]
+spit [file join $g2fx t probe_var_launch.sh] "#!/bin/sh\nREPO=\$(cd \"\$(dirname \"\$0\")/..\" && pwd)\nBIN=\"\$REPO/src\"\n\"\$BIN/xschem\" --nogui --pipe -q --script t.tcl\n"
+spit [file join $g2fx t probe_py_launch.py] "#!/usr/bin/env python3\nimport os, subprocess\nrepo = os.path.dirname(__file__)\nsubprocess.run(\[os.path.join(repo, 'src', 'xschem'), '--nogui', '--script', 'x.tcl'\])\n"
+spit [file join $g2fx t probe_cmdv.sh] "#!/bin/bash\nX=\$(command -v xschem)\n\"\$X\" --nogui --pipe -q --script t.tcl\n"
+spit [file join $g2fx t probe_bare.py] "import subprocess\nsubprocess.call(\['xschem', '--nogui'\])\n"
+spit [file join $g2fx t probe_bare.tcl] "#!/usr/bin/env tclsh\nexec timeout 60 xschem --nogui --script t.tcl\n"
+spit [file join $g2fx t probe_which.tcl] "#!/usr/bin/env tclsh\nset b \[auto_execok xschem\]\nexec {*}\$b --nogui\n"
+spit [file join $g2fx t unseen_pieces.sh] "#!/bin/sh\nd=src; b=xsch\n\"./\$d/\${b}em\" --nogui --script t.tcl\n"
+spit [file join $g2fx t unseen_eval.tcl] "#!/usr/bin/env tclsh\nset f \[open binpath\]; set cmd \[list \[gets \$f\] --nogui\]\nexec {*}\$cmd\n"
+spit [file join $g2fx t unseen_perl.pl] "system('./src/xschem', '--nogui');\n"
+spit [file join $g2fx .hidden probe_hidden.sh] "#!/bin/sh\n./src/xschem --nogui\n"
+spit [file join $g2fx t armed_ok.sh] "#!/bin/bash\n. ./tests/headless/test_home.sh\ntest_home_arm || exit \$?\n\"\$BIN/xschem\" --nogui\n"
+spit [file join $g2fx t comment_only.sh] "#!/bin/sh\n# run it as ./src/xschem --script t.tcl\necho hi\n"
+spit [file join $g2fx t allowed_one.sh] "#!/bin/sh\nexec \"\$repo/src/xschem\" --script rc\n"
+set g2b [g2_scan $g2fx [list t/allowed_one.sh {exec "$repo/src/xschem"} "fixture: a product launcher"]]
+set g2bo [dict get $g2b offenders]
+set g2bmiss {}
+foreach w {probe_var_launch.sh probe_py_launch.py probe_cmdv.sh probe_bare.py probe_bare.tcl probe_which.tcl} {
+  if {[lsearch -glob $g2bo "t/$w:*"] < 0} { lappend g2bmiss $w }
+}
+set g2bseen {}
+foreach w {unseen_pieces.sh unseen_eval.tcl unseen_perl.pl probe_hidden.sh} {
+  if {[lsearch -glob $g2bo "*$w:*"] >= 0} { lappend g2bseen $w }
+}
+check G2b-the-guard-catches-a-variable-held-path-a-Python-subprocess-and-command-v-and-its-stated-blind-spots-hold \
+  [expr {[llength $g2bmiss] == 0 && [llength $g2bseen] == 0 && [dict get $g2b armed] eq {t/armed_ok.sh}
+         && [llength [dict get $g2b allowed]] == 1 && [lsearch -glob $g2bo t/comment_only.sh:*] < 0 && [llength $g2bo] == 6}] \
+  "-- offenders found in the fixture: [llength $g2bo] ([join $g2bo {; }]); launchers MISSED (must be none): [expr {[llength $g2bmiss] ? [join $g2bmiss {, }] : {none}}]; shapes the header calls unseeable that WERE caught (none, or the header is out of date): [expr {[llength $g2bseen] ? [join $g2bseen {, }] : {none}}]; armed: [dict get $g2b armed]; allowlisted: [dict get $g2b allowed]"
 
 ## =========================================================================
 ## SECTION H -- T1's display arm (D8) and header (D6), through a driver copy
@@ -1471,6 +1605,126 @@ exec '%2$s' "$@"
     catch {file delete -force $th6c}
   }
 
+  ## H6d -- D20.5: THE REAPER IS FORKED BEFORE THE SERVER. Round 3 started it the
+  ## instant `exec` returned the server's pid, and the round-3 regression refuter
+  ## read the window that left off the source: a T1 killed between that exec and
+  ## the reaper's fork leaves a server that nothing watches and nothing records
+  ## (the sweep kills only a RECORDED pid) -- sub-millisecond, hit 0 times in 111
+  ## trials, "true as measured, not by construction". A window that small cannot
+  ## be hit on purpose from outside, so this row measures the CONSTRUCTION, and
+  ## then the outcome: a `setsid` first on PATH (the reaper's launch goes through
+  ## it) records its own pid -- the reaper's -- kills T1 -9, and then really does
+  ## start the reaper; an `Xvfb` first on PATH records its pid -- the server's --
+  ## and becomes the real server. Pids are handed out in order, so the reaper's
+  ## must be the SMALLER one (round 3's was the larger, every time), and ~12 s on
+  ## nothing of the killed run may be running: the reaper found the server by
+  ## its tag, whether or not T1 lived long enough to record it.
+  set fk6d [file join $S fakex6d] ; file mkdir $fk6d
+  set m6s [file join $S h6d.setsid] ; set m6x [file join $S h6d.xvfb]
+  set realX6d [lindex [auto_execok Xvfb] 0] ; set realS6d [lindex [auto_execok setsid] 0]
+  if {$realS6d eq {}} {
+    skip H6d-the-reaper-is-forked-before-the-server-and-a-T1-killed-there-leaves-nothing "no setsid on PATH: the reaper's launch cannot be intercepted"
+  } else {
+    spit [file join $fk6d setsid] [format {#!/bin/sh
+# H6d's stand-in for the reaper's launch: record, kill T1, then BE setsid.
+echo "$$ $(date +%%s%%N | cut -c1-13)" > '%1$s'
+kill -9 "$PPID"
+exec '%2$s' "$@"
+} $m6s $realS6d]
+    spit [file join $fk6d Xvfb] [format {#!/bin/sh
+echo "$$ $(date +%%s%%N | cut -c1-13)" > '%1$s'
+exec '%2$s' "$@"
+} $m6x $realX6d]
+    file attributes [file join $fk6d setsid] -permissions 0755
+    file attributes [file join $fk6d Xvfb] -permissions 0755
+    lassign [mkfdir drvH6d st1 {sleep 60}] fH6d injH6d
+    set o6d [file join $S h6d.out]
+    set d6d [exec env -i PATH=$fk6d:$::PATHV HOME=$cH TMPDIR=$tH DEVDISPLAY_WM=openbox DEVDISPLAY_NUM=$n1 \
+               sh -c {cd "$1" && exec tclsh drv.tcl} sh $fH6d >& $o6d &]
+    lappend ::started $d6d
+    for {set i 0} {$i < 600 && [running $d6d]} {incr i} { after 100 }
+    set th6d {} ; regexp {test home: throwaway (\S+) } [slurp $o6d] -> th6d
+    for {set i 0} {$i < 20 && [string trim [slurp $m6x]] eq {}} {incr i} { after 100 }
+    set rs6d [lindex [string trim [slurp $m6s]] 0] ; set sx6d [lindex [string trim [slurp $m6x]] 0]
+    set left6d {}
+    for {set i 0} {$i < 120} {incr i} {
+      set left6d {}
+      if {$th6d ne {}} { foreach p [procs_with_env HOME $th6d] { if {[running $p]} { lappend left6d $p } } }
+      if {$sx6d ne {} && [running $sx6d] && [lsearch -exact $left6d $sx6d] < 0} { lappend left6d $sx6d }
+      if {![llength $left6d]} { break }
+      after 100
+    }
+    ## the reaper's fork precedes the server's: a smaller pid (a wrap of the pid
+    ## counter between the two -- a difference of more than half the pid space --
+    ## would say nothing, and is reported as such)
+    set pmax 4194304 ; catch {set pmax [string trim [slurp /proc/sys/kernel/pid_max]]}
+    set order6d unknown
+    if {[string is integer -strict $rs6d] && [string is integer -strict $sx6d]} {
+      if {abs($sx6d - $rs6d) > $pmax / 2} { set order6d wrapped } elseif {$rs6d < $sx6d} { set order6d reaper-first } else { set order6d server-first }
+    } elseif {[string is integer -strict $rs6d]} { set order6d no-server }
+    check H6d-the-reaper-is-forked-before-the-server-and-a-T1-killed-there-leaves-nothing \
+      [expr {$injH6d && ![running $d6d] && $th6d ne {} && $order6d in {reaper-first no-server} && [llength $left6d] == 0}] \
+      "-- the reaper's launch (pid [expr {$rs6d eq {} ? {NONE} : $rs6d}]) killed T1; the server was pid [expr {$sx6d eq {} ? {never started} : $sx6d}]: order=$order6d (round 3: server-first); running ~12 s after T1 died: [expr {[llength $left6d] ? $left6d : {nothing}}]"
+    foreach p $left6d { if {[running $p]} { stop_pid $p } }
+    if {$th6d ne {}} {
+      foreach p [procs_with_env HOME $th6d] { catch {exec kill -KILL $p} }
+      foreach p [reapers_in $th6d] { catch {exec kill -TERM $p} }
+      after 200
+      catch {file delete -force $th6d}
+    }
+  }
+
+  ## H6e -- D20.5, the other half: the reaper FINDS the server by its tag, with no
+  ## record. The reaper now exists before the server, so it cannot be handed the
+  ## server's pid; it waits for the record, and if the owner dies first it stops
+  ## everything carrying this attempt's XSCHEM_TEST_T1_XVFB_TAG. Measured on the
+  ## reaper itself (t1_reaper_sh, read out of the real run_regression.tcl): an
+  ## owner that dies before any `.xvfb.pid` exists, a tagged `Xvfb` and a tagged
+  ## WM that nothing recorded -- both must go within seconds -- and an `Xvfb`
+  ## carrying ANOTHER attempt's tag, which must survive (identity, not name).
+  ## The stand-ins are perl, run under the program names the reaper looks for.
+  if {[auto_execok perl] eq {}} {
+    skip H6e-the-reaper-stops-a-tagged-server-nothing-recorded "no perl on PATH for the stand-ins"
+  } else {
+    set rr6e [slurp $RRSRC]
+    set a6e [string first "set t1_reaper_sh \{" $rr6e] ; set b6e [string first "\nproc t1_private_reaper " $rr6e]
+    set ci6e [interp create]
+    catch {$ci6e eval [string range $rr6e $a6e $b6e]}
+    set rsh6e {} ; catch {set rsh6e [$ci6e eval {set t1_reaper_sh}]}
+    interp delete $ci6e
+    set fb6e [file join $S fakebin6e] ; file mkdir $fb6e
+    foreach nm {Xvfb openbox} { catch {file delete -- [file join $fb6e $nm]} ; file link -symbolic [file join $fb6e $nm] [lindex [auto_execok perl] 0] }
+    set rd6e [file join $S rd6e] ; file mkdir [file join $rd6e .xvfb]
+    set own6e [exec sleep 60 &] ; lappend ::started $own6e
+    after 100
+    set st6e [slurp /proc/$own6e/stat]
+    set ost6e [lindex [string range $st6e [expr {[string last ")" $st6e] + 2}] end] 19]
+    set tag6e "t1.h6e.[pid].[clock microseconds]"
+    set fx6e [exec env HOME=$rd6e XSCHEM_TEST_T1_XVFB_TAG=$tag6e bash -c "exec -a Xvfb [file join $fb6e Xvfb] -e 'sleep 300' -- :9166" &]
+    set fw6e [exec env HOME=$rd6e XSCHEM_TEST_T1_XVFB_TAG=$tag6e DISPLAY=:9166 bash -c "exec -a openbox [file join $fb6e openbox] -e 'sleep 300'" &]
+    set fo6e [exec env HOME=$rd6e XSCHEM_TEST_T1_XVFB_TAG=other.$tag6e bash -c "exec -a Xvfb [file join $fb6e Xvfb] -e 'sleep 300' -- :9166" &]
+    lappend ::started $fx6e $fw6e $fo6e
+    set rp6e {}
+    if {$rsh6e ne {}} {
+      set rp6e [exec env -i PATH=$::PATHV sh -c $rsh6e xschem-t1-reaper $own6e $ost6e $rd6e $tag6e 9166 openbox 5 </dev/null >/dev/null 2>/dev/null &]
+      lappend ::started $rp6e
+    }
+    after 500
+    set t0 [clock milliseconds]
+    catch {exec kill -KILL $own6e}
+    set gone6e -1
+    for {set i 0} {$i < 120} {incr i} {
+      if {![running $fx6e] && ![running $fw6e]} { set gone6e [expr {[clock milliseconds] - $t0}] ; break }
+      after 100
+    }
+    for {set i 0} {$i < 30 && $rp6e ne {} && [running $rp6e]} {incr i} { after 100 }
+    check H6e-the-reaper-stops-a-tagged-server-and-WM-that-nothing-recorded-and-spares-another-tag \
+      [expr {$rsh6e ne {} && ![file exists [file join $rd6e .xvfb.pid]] && $gone6e >= 0 && [running $fo6e]
+             && $rp6e ne {} && ![running $rp6e] && [glob -nocomplain -directory [file join $rd6e .xvfb] -- reaper*.pid] eq {}}] \
+      "-- after the owner died (no .xvfb.pid ever written): the tagged Xvfb and WM were gone after [expr {$gone6e < 0 ? {MORE THAN 12000} : $gone6e}] ms; the Xvfb with another attempt's tag alive=[running $fo6e] (must be 1); the reaper exited=[expr {$rp6e ne {} && ![running $rp6e]}] and removed its record=[expr {[glob -nocomplain -directory [file join $rd6e .xvfb] -- reaper*.pid] eq {}}]"
+    foreach p [list $fx6e $fw6e $fo6e $rp6e] { if {$p ne {} && [running $p]} { catch {exec kill -KILL $p} } }
+  }
+
   ## H8 -- D17.9 (the round-2 regression refuter's sabotage V3, which NOTHING
   ## caught): an Xvfb that is INSTALLED but will not start is a counted HARNESS
   ## FAIL, never a NODISPLAY line. NODISPLAY is uncounted by design -- it means
@@ -1511,19 +1765,34 @@ exec '%2$s' "$@"
   spit [file join $fk Xvfb] [format {#!/bin/bash
 # H7's stand-in: the FIRST call loses its display on purpose -- a real server,
 # another pid, takes the number -- and stays alive as a loser that has not
-# exited yet. Every later call is the real Xvfb.
+# exited yet. Every later call is the real Xvfb. The winner is ANOTHER run's
+# server, so it does not carry this run's reaper tag (D20.5).
 if [ ! -e '%1$s' ]; then
   : > '%1$s'
   echo "$1" > '%3$s'
-  HOME='%4$s' '%5$s' "$@" </dev/null >/dev/null 2>&1 &
+  env -u XSCHEM_TEST_T1_XVFB_TAG HOME='%4$s' '%5$s' "$@" </dev/null >/dev/null 2>&1 &
   echo $! > '%2$s'
   exec -a Xvfb bash -c 'sleep 30 & sp=$!; trap "kill $sp 2>/dev/null; exit 0" TERM; wait $sp; exit 1' "$1"
 fi
 exec '%5$s' "$@"
 } $m7 $w7f $n7f $S $realX]
   file attributes [file join $fk Xvfb] -permissions 0755
-  lassign [mkfdir drvH7] fH7 injH7
-  lassign [rundrv $fH7 [list HOME=$cH TMPDIR=$tH DEVDISPLAY_WM=none DEVDISPLAY_NUM=$n1 PATH=$fk:$::PATHV]] rch7 outh7
+  ## The display case lists, as it runs, every live private-display reaper of
+  ## its run (its HOME is the run's directory): see H7b below.
+  set h7r [file join $S h7.reapers] ; file delete -force $h7r
+  ## (Only as the DISPLAY case: T1 runs the same stand-in for xschemtest.tcl
+  ## afterwards, with no display, once the arm is gone.)
+  set h7extra [format {if [ -n "${DISPLAY:-}" ]; then
+for d in /proc/[0-9]*; do
+  c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null) || continue
+  case "$c" in *" xschem-t1-reaper "*" $HOME "*) echo "${d#/proc/}" ;; esac
+done > '%s'
+fi} $h7r]
+  lassign [mkfdir drvH7 st1 $h7extra] fH7 injH7
+  ## T1_XVFB_REAPER_POLL=60: see H7b below.
+  lassign [rundrv $fH7 [list HOME=$cH TMPDIR=$tH DEVDISPLAY_WM=none DEVDISPLAY_NUM=$n1 PATH=$fk:$::PATHV T1_XVFB_REAPER_POLL=60]] rch7 outh7
+  set rp7 {} ; set th7 {} ; regexp {test home: throwaway (\S+) } $outh7 -> th7
+  if {$th7 ne {}} { set rp7 [reapers_in $th7] }
   set lost7 [string trim [slurp $n7f]] ; set win7 [string trim [slurp $w7f]]
   set p7 {} ; set x7 {} ; regexp {display arm: PRIVATE Xvfb :([0-9]+) for this run only \(pid ([0-9]+)} $outh7 -> p7 x7
   set s7 {} ; regexp {STANDIN DISPLAY=(\S+)} [slurp [file join $fH7 st1.disp.log]] -> s7
@@ -1532,6 +1801,22 @@ exec '%5$s' "$@"
     [expr {$injH7 && $rch7 == 0 && [regexp {^:[0-9]+$} $lost7] && $p7 ne {} && ":$p7" ne $lost7 && $s7 eq ":$p7"
            && [has_text $outh7 "display arm: $lost7 went to a concurrent run"] && $winalive}] \
     "-- the number the stand-in lost=$lost7 (its winner, pid $win7, still alive after the run=$winalive: never ours to stop); the arm said :$p7 (pid $x7) and the case saw DISPLAY=$s7 -- it must be ANOTHER number; rc=$rch7"
+  ## H7b -- the round-3 regression refuter's sabotage S14, made DETERMINISTIC. A
+  ## lost race abandons an attempt, and t1_private_reaper_stop stops that
+  ## attempt's reaper at once; S14 made it a no-op, and the reaper lingered to its
+  ## next poll -- which H1b caught in only 1 of 8 four-way runs, because a lost
+  ## race is otherwise rare and the poll is 5 s. Here H7 FORCES the lost race,
+  ## sets the poll to 60 s (T1_XVFB_REAPER_POLL), and has the display case --
+  ## which runs only after the arm has settled on its display -- list the run's
+  ## live reapers: exactly ONE, the winning attempt's, may be there. (Each reaper
+  ## records itself, so the arm's own teardown now stops a straggler too; that is
+  ## why "after the run" alone no longer sees S14, and this row looks during it.)
+  set h7live [string trim [slurp $h7r]]
+  check H7b-the-reaper-of-an-abandoned-attempt-is-stopped-at-once-not-at-its-next-poll \
+    [expr {$injH7 && $th7 ne {} && [has_text $outh7 "went to a concurrent run"] && [file exists $h7r]
+           && [llength $h7live] == 1 && [llength $rp7] == 0}] \
+    "-- the lost race happened=[has_text $outh7 {went to a concurrent run}]; reapers of this run alive while its display case ran: [expr {[file exists $h7r] ? "[llength $h7live] ([join $h7live {, }])" : {NOT RECORDED}}] (must be 1: the abandoned attempt's is stopped at once, and with a 60 s poll it would otherwise still be there); still running when the run ended: [expr {[llength $rp7] ? $rp7 : {none}}]"
+  foreach p $rp7 { if {[running $p]} { catch {exec kill -TERM $p} } }
   foreach p [list $win7 $x7] { if {[string is integer -strict $p] && [running $p]} { stop_pid $p } }
   reap_scratch_displays
 }
@@ -2077,18 +2362,22 @@ $body
   return [list $rc $out]
 }
 
-## L15 -- D17.5: a custom home whose .xschem -- or an entry directly in it --
-## resolves into the real HOME is REFUSED by both helpers: that is where xschem
-## writes, and the round-2 safety refuter measured the real clipboard
-## overwritten (103 -> 198 B) under a banner that said "your HOME is untouched".
+## L15 -- D17.5 + D20.4: a custom home whose .xschem -- or an entry in it, two
+## levels down -- or whose .cache or .claude (or an entry directly in them)
+## resolves into the real HOME is REFUSED by both helpers: that is where xschem,
+## openbox and the gate write. The round-2 safety refuter measured the real
+## clipboard overwritten (103 -> 198 B) under a banner that said "your HOME is
+## untouched"; the round-3 one, the real .cache/openbox written through a
+## symlinked .cache, and the real simulations/{clean,short}.spice (35 -> 146 B)
+## through symlinks one level below what round 3 checked (rows g-j).
 ## The non-vacuity halves stay custom in both: a .xschem linked OUTSIDE the
 ## real home, and a custom dir INSIDE the real home with its own .xschem (the
 ## L11b case, whose banner says it writes there).
-set cL15 [mkcanary canaryL15]
+set cL15 [mkcanary canaryL15 dir:.cache/openbox dir:.claude/gui_test_gate]
 set tL15 [mktroot trootL15]
-set elsewhere [file join $S elsewhereL15] ; file mkdir [file join $elsewhere .xschem]
+set elsewhere [file join $S elsewhereL15] ; file mkdir [file join $elsewhere .xschem] [file join $elsewhere .cache]
 set cu {}
-foreach {tag how} {a link b sub c dangle d out e inreal f inreal_link} {
+foreach {tag how} {a link b sub c dangle d out e inreal f inreal_link g cache h deep i cachesub j claude k cacheout} {
   if {$tag in {e f}} { set d [file join $cL15 mycopy$tag] } else { set d [file join $S custL15$tag] }
   file mkdir $d
   switch $how {
@@ -2098,6 +2387,12 @@ foreach {tag how} {a link b sub c dangle d out e inreal f inreal_link} {
     out         { file link -symbolic [file join $d .xschem] [file join $elsewhere .xschem] }
     inreal      { file mkdir [file join $d .xschem] }
     inreal_link { file link -symbolic [file join $d .xschem] [file join $cL15 .xschem] }
+    cache       { file mkdir [file join $d .xschem] ; file link -symbolic [file join $d .cache] [file join $cL15 .cache] }
+    deep        { file mkdir [file join $d .xschem simulations]
+                  foreach n {clean short} { file link -symbolic [file join $d .xschem simulations $n.spice] [file join $cL15 .xschem simulations $n.spice] } }
+    cachesub    { file mkdir [file join $d .cache] ; file link -symbolic [file join $d .cache openbox] [file join $cL15 .cache openbox] }
+    claude      { file link -symbolic [file join $d .claude] [file join $cL15 .claude] }
+    cacheout    { file link -symbolic [file join $d .cache] [file join $elsewhere .cache] }
   }
   lappend cu $tag $d
 }
@@ -2108,7 +2403,12 @@ foreach {tag exp why} {a refused "a .xschem that is a symlink to the real ~/.xsc
                        c refused "a DANGLING .xschem symlink into the real home"
                        d custom  "a .xschem linked OUTSIDE the real home (non-vacuity)"
                        e custom  "a custom dir inside the real home with its own .xschem (non-vacuity; L11b)"
-                       f refused "a custom dir inside the real home whose .xschem links to the real ~/.xschem"} {
+                       f refused "a custom dir inside the real home whose .xschem links to the real ~/.xschem"
+                       g refused "a .cache that is a symlink to the real ~/.cache (D20.4: openbox wrote real .cache/openbox)"
+                       h refused "simulations/{clean,short}.spice that are symlinks to the real files, TWO levels down in .xschem (D20.4)"
+                       i refused "a .cache/openbox that is a symlink into the real ~/.cache (D20.4)"
+                       j refused "a .claude that is a symlink to the real ~/.claude (the gate writes there, D20.4)"
+                       k custom  "a .cache linked OUTSIDE the real home (non-vacuity)"} {
   set d [dict get $cu $tag]
   set e [list HOME=$cL15 TMPDIR=$tL15 XSCHEM_TEST_HOME=$d]
   lassign [kid $e [probe]] trc tout
@@ -2117,7 +2417,7 @@ foreach {tag exp why} {a refused "a .xschem that is a symlink to the real ~/.xsc
   set sv [verdict_of $src $sout $cL15 $tL15 $d]
   if {$tv ne $exp || $sv ne $exp} { lappend l15 "$why: expected $exp, Tcl $tv (rc=$trc), shell $sv (rc=$src)" }
 }
-check L15-a-custom-home-whose-.xschem-resolves-into-the-real-HOME-is-refused-by-both \
+check L15-a-custom-home-that-leads-into-the-real-HOME-through-.xschem-.cache-or-.claude-is-refused-by-both \
   [expr {[llength $l15] == 0 && [snap $cL15] eq $sL15 && [entries $tL15] eq {}}] \
   "-- disagreements: [expr {[llength $l15] ? [join $l15 {; }] : {none}}]; the real home byte-identical=[expr {[snap $cL15] eq $sL15}]; TMPDIR left [list [entries $tL15]]"
 
@@ -2181,6 +2481,44 @@ check L18-a-nested-arm-prints-no-banner-in-either-language \
          && [count_lines $o18t {test home:}] == 0 && [count_lines $o18s {test home:}] == 0}] \
   "-- nested in $h18: Tcl printed [count_lines $o18t {test home:}] `test home:` line(s), the shell [count_lines $o18s {test home:}] (both must print none)"
 stop_pid $sl18
+
+## L19 -- D20.4: NESTING applies D17.5's escape check too, in both. The round-3
+## safety refuter's forgery: a throwaway-shaped HOME planted DIRECTLY under the
+## temp root (so D17.4 passes), `.owner` naming a live pid, XSCHEM_TEST_REAL_HOME
+## set, and `.xschem` a symlink into the real home -- both helpers reused it as
+## nested (Tcl kind=throwaway), and run_suites.sh overwrote the real
+## simulations/{clean,short}.spice. An arm never makes such a home, so neither
+## helper reuses one: both arm a fresh throwaway, the forged home is left alone,
+## and a write the run makes lands in the fresh one -- never in the real home.
+## The same for a `.cache` leading into it. The non-vacuity half: an honest
+## live throwaway beside them is still reused (nested).
+set cL19 [mkcanary canaryL19 dir:.cache/openbox]
+set tL19 [mktroot trootL19]
+set sl19 [exec sleep 120 &] ; lappend ::started $sl19
+set f19a [file join $tL19 xschem-test-home.$sl19.EscXs1]
+set f19b [file join $tL19 xschem-test-home.$sl19.EscCa1]
+set h19  [file join $tL19 xschem-test-home.$sl19.Honest]
+file mkdir $f19a [file join $f19b .xschem] [file join $h19 .xschem]
+file link -symbolic [file join $f19a .xschem] [file join $cL19 .xschem]
+file link -symbolic [file join $f19b .cache] [file join $cL19 .cache]
+foreach h [list $f19a $f19b $h19] { spit [file join $h .owner] "$sl19 $MYBOOT $MYNS\n" }
+set sL19 [snap $cL19]
+set l19 {}
+foreach {h exp why} [list $f19a fresh "a live-owned throwaway-shaped HOME under TMPDIR whose .xschem is a symlink into the real home" \
+                          $f19b fresh "the same whose .cache is a symlink into the real home" \
+                          $h19  same  "an honest live throwaway under TMPDIR (nested, non-vacuity)"] {
+  set e [list HOME=$h XSCHEM_TEST_REAL_HOME=$cL19 TMPDIR=$tL19]
+  lassign [kid $e [probe {close [open [file join $::env(HOME) .xschem probe_wrote_tcl] w]}]] trc tout
+  lassign [shkid $e {: > "$HOME/.xschem/probe_wrote_sh"}] src sout
+  set tv [verdict_of $trc $tout $h $tL19 {}]
+  set sv [verdict_of $src $sout $h $tL19 {}]
+  if {$tv ne $exp || $sv ne $exp} { lappend l19 "$why: expected $exp, Tcl $tv (rc=$trc), shell $sv (rc=$src)" }
+}
+check L19-both-helpers-refuse-to-nest-in-a-throwaway-shaped-HOME-that-leads-into-the-real-HOME \
+  [expr {[llength $l19] == 0 && [snap $cL19] eq $sL19 && [file type [file join $f19a .xschem]] eq "link"
+         && [lsort [entries $tL19]] eq [lsort [list [file tail $f19a] [file tail $f19b] [file tail $h19]]]}] \
+  "-- disagreements: [expr {[llength $l19] ? [join $l19 {; }] : {none}}]; the real home byte-identical (the probes' writes landed elsewhere)=[expr {[snap $cL19] eq $sL19}]; TMPDIR left [list [entries $tL19]] (only the three planted homes)"
+stop_pid $sl19
 
 cleanup_started
 if {$fail == 0} {

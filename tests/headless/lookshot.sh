@@ -24,9 +24,10 @@
 # HOME: a THROWAWAY one, deleted at exit (tests/headless/test_home.sh; DECISIONS
 # D17.1). Measured unarmed by the round-2 safety refuter: the posed xschem
 # evicted a saved window position from ~/.xschem/geometry, and winshot.sh built
-# its binary into ~/.cache/xschem-winshot. Both now land in the throwaway -- the
-# winshot build with them (a cc run per lookshot, well under a second).
-# XSCHEM_TEST_HOME=real opts out, loudly.
+# its binary into ~/.cache/xschem-winshot. The first now lands in the throwaway;
+# winshot.sh builds into the checkout's gitignored tests/headless/.winshot-cache/
+# (D20.3), so its build no longer follows HOME at all. XSCHEM_TEST_HOME=real
+# opts out, loudly.
 set -u
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=/dev/null

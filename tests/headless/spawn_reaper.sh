@@ -722,6 +722,40 @@ reaper_swept_xvfb() { printf '%s' "$_REAPER_SWEPT_X"; }
 # the three devdisplay.sh writes are known without it -- xvfb.pid is Xvfb,
 # vnc.pid is x11vnc, and wm.pid is whatever the dir's own `wm` record says. A
 # pidfile whose program cannot be named is not killed from.
+#
+# ⚠ AND ONLY IF IT IS ON THE DISPLAY THE DIR RECORDED (DECISIONS D20.2). A name is
+# not an identity either: the round-3 safety refuter planted a stale dir that
+# recorded display :188 and named, as its xvfb.pid and wm.pid, a live `Xvfb :192`
+# and that server's openbox -- and one run of test_devdisplay.sh killed both. So
+# the dir's display (`display`, or `.reaper_display` for a run that died before
+# devdisplay.sh wrote `display`) must be the killed process's own: the server
+# and the viewer carry it as an argv word (`Xvfb :N ...`, `x11vnc -display :N`),
+# the window manager as DISPLAY=:N in /proc/<pid>/environ -- which is how
+# devdisplay.sh starts each of them. A dir with no display record, or a process
+# whose display cannot be read, is not killed from: "a leftover survives" is the
+# failure direction.
+_reaper_dir_display() {   # <dir>: echo ":N", or fail
+  local d="$1" v f
+  for f in display .reaper_display; do
+    v=$(head -n 1 "$d/$f" 2>/dev/null | tr -d ' \t\r')
+    case "$v" in :[0-9]*) v="${v%%.*}"; case "${v#:}" in *[!0-9]*) continue ;; esac
+                 printf '%s' "$v"; return 0 ;; esac
+  done
+  return 1
+}
+# Per pidfile, the way devdisplay.sh starts each program: the server and the
+# viewer by the argv word (their environ DISPLAY is only their parent's -- the
+# tester's -- and says nothing), the window manager by DISPLAY=:N in its environ
+# (its argv names no display). A `<file>=<prog>` record may show it either way.
+_reaper_on_display() {   # <pid> <:N> <pidfile, as given>
+  local p="$1" dpy="$2" f="$3"
+  case "$f" in
+    xvfb.pid|vnc.pid) _reaper_argv "$p" | grep -qxF -- "$dpy"; return ;;
+    wm.pid) tr '\0' '\n' 2>/dev/null < "/proc/$p/environ" | grep -qxF "DISPLAY=$dpy"; return ;;
+  esac
+  _reaper_argv "$p" | grep -qxF -- "$dpy" && return 0
+  tr '\0' '\n' 2>/dev/null < "/proc/$p/environ" | grep -qxF "DISPLAY=$dpy"
+}
 _reaper_pidfile_prog() {   # <dir> <file[=prog]>: echo the program, or fail
   local d="$1" f="$2" w
   case "$f" in *=*) printf '%s' "${f#*=}"; return 0 ;; esac
@@ -735,7 +769,7 @@ _reaper_pidfile_prog() {   # <dir> <file[=prog]>: echo the program, or fail
 }
 reaper_sweep_orphan_runs() {
   local glob="${1:-}" ; shift || true
-  local d f p n=0 prog a0
+  local d f f0 p n=0 prog a0 dpy
   [ -n "$glob" ] || return 0
   for d in $glob; do
     [ -d "$d" ] || continue
@@ -745,15 +779,18 @@ reaper_sweep_orphan_runs() {
       *) continue ;;
     esac
     _reaper_owner_state "$d"; [ $? -eq 1 ] || continue    # only "provably dead"
-    for f in "$@"; do
-      prog=$(_reaper_pidfile_prog "$d" "$f") || continue
-      f="${f%%=*}"
+    dpy=$(_reaper_dir_display "$d") || dpy=""
+    for f0 in "$@"; do
+      [ -n "$dpy" ] || break                               # no display record: kill nothing
+      prog=$(_reaper_pidfile_prog "$d" "$f0") || continue
+      f="${f0%%=*}"
       [ -r "$d/$f" ] || continue
       p=$(tr -d ' \t\n' < "$d/$f" 2>/dev/null)
       case "$p" in ''|*[!0-9]*) continue ;; esac
       _reaper_alive "$p" || continue
       a0=$(_reaper_argv_n "$p" 0) || continue
       [ "${a0##*/}" = "$prog" ] || continue
+      _reaper_on_display "$p" "$dpy" "$f0" || continue
       _reaper_kill "$p" && n=$((n + 1))
     done
     rm -rf "$d" 2>/dev/null

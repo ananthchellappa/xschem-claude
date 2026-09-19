@@ -46,8 +46,9 @@
 #                                       Fully resolved first, symlinks included:
 #                                       one that resolves to your real HOME is
 #                                       REFUSED (D13.5), and so is one whose
-#                                       .xschem -- or anything directly in it --
-#                                       resolves into your real HOME (D17.5)
+#                                       .xschem, .cache or .claude -- or an entry
+#                                       in them, two levels deep in .xschem --
+#                                       resolves into your real HOME (D17.5, D20.4)
 #   XSCHEM_TEST_KEEP_HOME  1            keep the throwaway and print its path; the
 #                                       `.keep` marker is written AT ARM TIME, so a
 #                                       killed run's home is kept too (D13.9)
@@ -74,10 +75,11 @@
 #     directory inside the real home must not pass for one), its .owner names
 #     an owner that is ALIVE by the D13.6 rule below (not from another boot,
 #     not from another pid namespace, and its pid alive), and
-#     XSCHEM_TEST_REAL_HOME is set. A nested run reuses HOME, never creates or
+#     XSCHEM_TEST_REAL_HOME is set -- and nothing in it leads into the real home
+#     (D20.4, the custom-home check of D17.5). A nested run reuses HOME, never creates or
 #     deletes, and SAYS NOTHING: the arm that made the home already said where
 #     it is (D17.9; Tcl's nested arm was always silent). Anything short of all
-#     four is a fresh arm.
+#     of them is a fresh arm.
 #   * Only the owner deletes, from its EXIT trap, and only the exact path it
 #     created, after re-checking it is under the temp root, matches the pattern
 #     and is not the real HOME.
@@ -207,25 +209,41 @@ _th_abs_tmpdir() {
   export TMPDIR="$a"
 }
 
-# D17.5: does anything under custom home <dir>'s .xschem -- the directory
-# itself or an entry directly in it -- resolve into the real home <real>? That
-# is where xschem writes (the clipboard, simulations/, geometry), so such a
-# "copy of someone's configuration" writes the tester's OWN files while the
-# banner says the HOME is untouched (measured by the round-2 safety refuter
-# with a symlinked .xschem). Allowed only where the custom dir is itself
-# inside the real home and the entry stays inside the custom dir -- the case
+# D17.5 + D20.4: does anything the harness WRITES under home <dir> resolve into
+# the real home <real>? xschem writes under .xschem (the clipboard, simulations/,
+# geometry), openbox under .cache (openbox/), the gate under .claude
+# (gui_test_gate/), so each of those is checked -- the directory itself, every
+# entry in it, and for .xschem the entries one level further down, where
+# simulations/clean.spice lives. So such a "copy of someone's configuration"
+# writes the tester's OWN files while the banner says the HOME is untouched:
+# measured by the round-2 safety refuter with a symlinked .xschem, and by the
+# round-3 one with a symlinked .cache (openbox wrote the real .cache/openbox)
+# and with symlinked simulations/{clean,short}.spice (both overwritten).
+#   Only a SYMLINK can lead out -- every entry examined sits in a real
+# directory of <dir>, or in one a symlink already checked leads to -- so only
+# symlinks are resolved: cheap on a large simulations/. Allowed only where <dir>
+# is itself inside the real home and the entry stays inside <dir> -- the case
 # the banner already announces as writing there. Prints the offender.
+#   Used for a custom home (XSCHEM_TEST_HOME=<dir>) AND, since D20.4, for a
+# nested one: a throwaway-shaped HOME planted under the temp root whose .xschem
+# leads into the real home was reused as nested, and wrote there.
 _th_custom_escapes() {
-  local dir="$1" real="$2" cp rp x xr
+  local dir="$1" real="$2" cp rp x xr top
+  local -a c
   cp=$(_th_phys "$dir") || return 1
   rp=$(_th_phys "$real" 2>/dev/null || printf '%s' "$real")
-  for x in "$dir/.xschem" "$dir/.xschem"/* "$dir/.xschem"/.[!.]* "$dir/.xschem"/..?*; do
-    [ -e "$x" ] || [ -L "$x" ] || continue
-    xr=$(_th_resolve_any "$x") || continue
-    case "$xr/" in "$rp"/*) ;; *) continue ;; esac
-    case "$cp/" in "$rp"/*) case "$xr/" in "$cp"/*) continue ;; esac ;; esac
-    printf '%s -> %s' "${x#"$dir"/}" "$xr"
-    return 0
+  for top in .xschem .cache .claude; do
+    # an unmatched glob stays literal and fails the -L test below
+    c=("$dir/$top" "$dir/$top"/* "$dir/$top"/.[!.]* "$dir/$top"/..?*)
+    [ "$top" = .xschem ] && c+=("$dir/$top"/*/* "$dir/$top"/*/.[!.]* "$dir/$top"/.[!.]*/*)
+    for x in "${c[@]}"; do
+      [ -L "$x" ] || continue
+      xr=$(_th_resolve_any "$x") || continue
+      case "$xr/" in "$rp"/*) ;; *) continue ;; esac
+      case "$cp/" in "$rp"/*) case "$xr/" in "$cp"/*) continue ;; esac ;; esac
+      printf '%s -> %s' "${x#"$dir"/}" "$xr"
+      return 0
+    done
   done
   return 1
 }
@@ -728,12 +746,21 @@ test_home_arm() {
   #    temp root (D17.4), compared physically, as the handoff compares it. And
   #    SILENT (D17.9): the arm that made this home has already printed where it
   #    is, and `owed.sh drain` running a suite that arms again printed it twice.
+  #    AND NOTHING IN IT LEADS INTO THE REAL HOME (D20.4): the round-3 safety
+  #    refuter planted a throwaway-shaped HOME directly under /tmp, `.owner`
+  #    naming a live pid, `.xschem` a symlink into the real home -- both
+  #    languages reused it as nested, and run_suites.sh overwrote the real
+  #    simulations/{clean,short}.spice. An arm never makes such a home (it
+  #    mkdirs .xschem), so one that has it is not a home an arm made: it is not
+  #    reused, and a fresh throwaway is armed instead -- D17.4's answer too.
   if [ -d "$HOME" ] && _th_is_name "${HOME##*/}" && [ -n "${XSCHEM_TEST_REAL_HOME:-}" ]; then
-    local _hp _rp
+    local _hp _rp _esc
     _hp=$(_th_parent_phys "$HOME" 2>/dev/null) || _hp=""
     _rp=$(_th_phys "$(_th_root)" 2>/dev/null) || _rp=""
     if [ -z "$_hp" ] || [ "$_hp" != "$_rp" ]; then
       _th_warn "note: HOME ($HOME) is named like a throwaway but is not directly under the temp root ($(_th_root)), so it is not reused; arming a fresh one"
+    elif _esc=$(_th_custom_escapes "$HOME" "$XSCHEM_TEST_REAL_HOME"); then
+      _th_warn "note: HOME ($HOME) is named like a throwaway but its $_esc, inside your real HOME, so it is not reused; arming a fresh one"
     elif _th_owner_alive "$HOME"; then
       _th_carry "$XSCHEM_TEST_REAL_HOME" "$HOME"
       return 0

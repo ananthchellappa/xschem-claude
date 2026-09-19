@@ -25,6 +25,24 @@ import subprocess
 import sys
 import tempfile
 
+# THE TEST HOME (doc/claude/outsider_fixes_batch, DECISIONS D20.6). The
+# integration leg below starts xschem, and xschem writes the tester's own
+# ~/.xschem -- measured on an unarmed run: it created ~/.xschem/op_annot/ in a
+# canary home. Every documented test command runs under a throwaway HOME, so this
+# one re-execs ONCE through tests/headless/test_home.sh --run (the shell
+# helper's POSIX shape: a Python script cannot source it), guarded by our
+# parent's pid, and exits with the suite's own status. XSCHEM_TEST_HOME=real
+# opts out, loudly, as everywhere else.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if os.environ.get("XSCHEM_TEST_HOME_WRAPPED") != str(os.getppid()):
+    try:
+        os.execvp("bash", ["bash", os.path.join(_HERE, "..", "..", "tests", "headless", "test_home.sh"), "--run", sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
+    except OSError as _e:
+        sys.stderr.write("!! test home REFUSED: cannot re-exec through tests/headless/test_home.sh (%s);"
+                         " this suite does not fall back to your real HOME\n" % _e)
+        sys.exit(2)
+os.environ.pop("XSCHEM_TEST_HOME_WRAPPED", None)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 fail = 0

@@ -161,27 +161,42 @@ proc t1_home_under_root {h} {
   return [expr {[file dirname [t1_home_resolve $h]] eq [t1_home_root]}]
 }
 
-## D17.5: why custom home $dir may not be used because something under its
-## .xschem -- the directory itself or an entry directly in it -- resolves into
-## the real home $realr (resolved), or {} when nothing does. That is where
-## xschem writes (the clipboard, simulations/, geometry), so a "copy of
-## someone's configuration" whose .xschem is a SYMLINK into the real home
-## wrote the tester's own files while the banner said "your HOME is untouched"
-## (measured by the round-2 safety refuter). Allowed only where the custom dir
-## is itself inside the real home and the entry stays inside the custom dir --
-## the case the banner already announces as writing there. test_home.sh's
-## _th_custom_escapes is the same rule; row L15 holds the two to one answer.
+## D17.5 + D20.4: why home $dir may not be used because something the harness
+## WRITES under it resolves into the real home $realr (resolved), or {} when
+## nothing does. xschem writes under .xschem (the clipboard, simulations/,
+## geometry), openbox under .cache, the gate under .claude -- so each of those
+## is checked: the directory itself, every entry in it, and for .xschem one
+## level further down, where simulations/clean.spice lives. A "copy of someone's
+## configuration" whose .xschem is a SYMLINK into the real home wrote the
+## tester's own files while the banner said "your HOME is untouched" (the
+## round-2 safety refuter); so did one whose .cache, or whose
+## simulations/{clean,short}.spice, were symlinks (the round-3 one). Only a
+## symlink can lead out of a real directory of $dir, so only symlinks are
+## resolved. Allowed only where $dir is itself inside the real home and the entry
+## stays inside $dir -- the case the banner already announces as writing there.
+## Used for a custom home and, since D20.4, for a NESTED one: a throwaway-shaped
+## HOME planted under the temp root with such a link was reused as nested.
+## test_home.sh's _th_custom_escapes is the same rule; rows L15 and L19 of
+## test_home_isolation.tcl hold the two to one answer.
 proc t1_home_custom_escapes {dir realr} {
   set cr [t1_home_resolve $dir]
-  set x [file join $dir .xschem]
   set cands {}
-  if {![catch {file lstat $x st}]} { lappend cands $x }
-  if {[file isdirectory $x]} {
+  foreach top {.xschem .cache .claude} {
+    set x [file join $dir $top]
+    lappend cands $x
+    if {![file isdirectory $x]} { continue }
     foreach f [glob -nocomplain -directory $x -- * .*] {
-      if {[file tail $f] ni {. ..}} { lappend cands $f }
+      if {[file tail $f] in {. ..}} { continue }
+      lappend cands $f
+      if {$top eq ".xschem" && [file isdirectory $f]} {
+        foreach g [glob -nocomplain -directory $f -- * .*] {
+          if {[file tail $g] ni {. ..}} { lappend cands $g }
+        }
+      }
     }
   }
   foreach c $cands {
+    if {[catch {file lstat $c st}] || $st(type) ne "link"} { continue }
     set r [t1_home_resolve_any $c]
     if {[string first "$realr/" "$r/"] != 0} { continue }
     if {[string first "$realr/" "$cr/"] == 0 && [string first "$cr/" "$r/"] == 0} { continue }
@@ -330,28 +345,33 @@ proc t1_home_pid_is {p prog d} {
   if {$h eq $d} { return 1 }
   return [expr {[file isdirectory $h] && [file isdirectory $d] && [t1_home_resolve $h] eq [t1_home_resolve $d]}]
 }
-## The private display's reaper (D13.15): identified by its own record in
-## $d/.xvfb/reaper.pid AND a command line naming both its marker and $d.
-proc t1_home_reaper_of {d} {
-  set r [t1_home_read_int [file join $d .xvfb reaper.pid]]
-  if {$r eq {} || ![t1_home_pid_running $r]} { return {} }
-  if {[catch {set f [open /proc/$r/cmdline r]; fconfigure $f -translation binary
-              set c [split [read $f] \x00]; close $f}]} { return {} }
-  if {[lsearch -exact $c xschem-t1-reaper] < 0 || [lsearch -exact $c $d] < 0} { return {} }
-  return $r
+## The private display's reapers (D13.15): each identified by its own record,
+## $d/.xvfb/reaper.<pid>.pid (or the round-3 single `reaper.pid`), AND a command
+## line naming both its marker and $d. More than one can be live: every attempt
+## at a server has its own (D20.5), and a lost race makes two attempts.
+proc t1_home_reapers_of {d} {
+  set out {}
+  foreach f [glob -nocomplain -directory [file join $d .xvfb] -- reaper*.pid] {
+    set r [t1_home_read_int $f]
+    if {$r eq {} || ![t1_home_pid_running $r]} { continue }
+    if {[catch {set h [open /proc/$r/cmdline r]; fconfigure $h -translation binary
+                set c [split [read $h] \x00]; close $h}]} { continue }
+    if {[lsearch -exact $c xschem-t1-reaper] < 0 || [lsearch -exact $c $d] < 0} { continue }
+    lappend out $r
+  }
+  return $out
 }
 
 ## Kill a private display recorded in $d (DECISIONS D5/D8/D13.7):
-## `.xvfb/reaper.pid` for its reaper, `.xvfb/wm.pid` for its window manager and
+## `.xvfb/reaper*.pid` for its reapers, `.xvfb/wm.pid` for its window manager and
 ## `.xvfb.pid` for the server -- each only if that pid is still running the
 ## program it was recorded as, WITH HOME = $d (the reaper: its marker and $d on
 ## its command line).
 proc t1_home_kill_xvfb {d} {
   set sd [file join $d .xvfb]
-  ## The reaper first, so that it is not itself racing to kill what follows.
-  set r [t1_home_reaper_of $d]
-  if {$r ne {}} { t1_home_kill $r }
-  catch {file delete -- [file join $sd reaper.pid]}
+  ## The reapers first, so that none is itself racing to kill what follows.
+  foreach r [t1_home_reapers_of $d] { t1_home_kill $r }
+  foreach f [glob -nocomplain -directory $sd -- reaper*.pid] { catch {file delete -- $f} }
   set w [t1_home_read_int [file join $sd wm.pid]]
   set wname {}
   catch {set h [open [file join $sd wm] r]; set wname [string trim [read $h]]; close $h}
@@ -698,7 +718,19 @@ proc t1_arm_home {} {
       && [regexp $::t1_home_pattern [file tail [file normalize $home]]]} {
     puts "!! test home: note: HOME ($home) is named like a throwaway but is not directly under the temp root ([t1_home_root]), so it is not reused; arming a fresh one"
   }
+  ## ⚠ AND NOTHING IN IT MAY LEAD INTO THE REAL HOME (D20.4): the round-3 safety
+  ## refuter planted a throwaway-shaped HOME directly under /tmp, `.owner`
+  ## naming a live pid, `.xschem` a symlink into the real home, and this branch
+  ## reused it. An arm never makes such a home, so it is not one; a fresh
+  ## throwaway is armed instead, as for D17.4.
+  set nest_esc {}
   if {$opt eq {} && $rh ne {} && [t1_home_live_throwaway $home] && [t1_home_under_root $home]} {
+    set nest_esc [t1_home_custom_escapes $home [t1_home_resolve $rh]]
+    if {$nest_esc ne {}} {
+      puts "!! test home: note: HOME ($home) is named like a throwaway but $nest_esc; it is not reused -- arming a fresh one"
+    }
+  }
+  if {$opt eq {} && $rh ne {} && $nest_esc eq {} && [t1_home_live_throwaway $home] && [t1_home_under_root $home]} {
     set t1_home(kind) throwaway
     set t1_home(real) $rh
     set t1_home(th) [file normalize $home]

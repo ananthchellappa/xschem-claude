@@ -14,6 +14,14 @@
 # DEVDISPLAY_TEST_NUMS / DEVDISPLAY_TEST_FOREIGN_NUMS (space lists) move the
 # display numbers it may take (default 96..89 and 88..85; :99 is never taken).
 #
+# ROUND 4 (DECISIONS D20.1/D20.2) added, each red on the round-3 build or under
+# the round-3 regression refuter's sabotage it names: D17c/D17d (the orphan sweep
+# kills only on the display its dir recorded), D19 (argv[0] identity; S1), D20
+# (the lock says whose a live server is; S3), D21 (a dead xvfb.pid means `stop`
+# kills nothing) and D22 (a WM is identified by DISPLAY and HOME, not its name).
+# The decoys are `perl -e 'sleep 300'` under the name being impersonated; the
+# rows skip, loudly, where there is no perl.
+#
 # This suite deliberately does NOT arm its DISPLAY: it manages X displays, so it
 # must be the thing deciding which ones exist.
 #
@@ -87,6 +95,31 @@ export DEVDISPLAY_NUM="$NUM"
 # teardown can be identified as dead by the next one (and, equally, so that a
 # concurrent run is identified as ALIVE and left alone).
 reaper_mark_owner "$STATE"
+# ...and the display it is about to take, BEFORE devdisplay.sh has written its
+# own `display` record: the orphan sweep kills a recorded pid only on the display
+# its dir recorded (DECISIONS D20.2), and a run killed inside `start` would
+# otherwise leave a dir that names none.
+echo ":$NUM" > "$STATE/.reaper_display"
+
+# A DECOY: a process that merely LOOKS like something -- argv[0] <argv0>, the
+# given words after it, and the given environment -- and is really `perl -e
+# 'sleep 300' -- <words>`, one process that dies cleanly on any signal (a bash wrapper would
+# leave its `sleep` child behind when killed -9). The identity rows below plant
+# them wherever a state dir names a pid; every one is killed in _cleanup.
+#   _decoy <argv0> [NAME=value ...] -- [word ...]   -> its pid in $DECOY
+DECOYS=""
+HAVE_PERL=0; command -v perl >/dev/null 2>&1 && HAVE_PERL=1
+_decoy() {
+  local a0="$1"; shift
+  local envs=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do envs+=("$1"); shift; done
+  [ "${1:-}" = -- ] && shift
+  env ${envs[@]+"${envs[@]}"} bash -c 'a0=$1; shift; exec -a "$a0" perl -e "sleep 300" -- "$@"' _ "$a0" "$@" \
+    </dev/null >/dev/null 2>&1 &
+  DECOY=$!
+  DECOYS="$DECOYS $DECOY"
+}
+_alive() { [ -d "/proc/$1" ] && ! grep -q '^State:.*Z' "/proc/$1/status" 2>/dev/null && echo 1 || echo 0; }
 
 # THIS SUITE STARTS AN X SERVER AND A WINDOW MANAGER, so it tears them down --
 # and not only through `$DD stop`. The strays that produced item 14 were an
@@ -132,7 +165,7 @@ _cleanup() {
   local p
   XSCHEM_DEVDISPLAY_DIR="$STATE" DEVDISPLAY_NUM="$NUM" "$DD" stop >/dev/null 2>&1
   reaper_reap_procs
-  for p in $SWEEPPIDS; do kill -9 "$p" 2>/dev/null; done
+  for p in $SWEEPPIDS ${DECOYS:-}; do kill -9 "$p" 2>/dev/null; done
   rm -rf "$STATE" "$EMPTY" ${SWEEPDIRS:-} 2>/dev/null
   _rm_our_lock "$NUM"
   [ -n "${FOREIGN:-}" ] && _rm_our_lock "$FOREIGN"
@@ -301,6 +334,60 @@ fi
 si_up=$(DISPLAY=:0 bash -c "eval \"\$('$DD' shellinit)\"; echo \$DISPLAY" 2>/dev/null)
 ck "D15 shellinit points a shell at a LIVE dev display" ":$NUM" "$si_up"
 
+# --- D20: the LOCK says whose a live server is (DECISIONS D17.6; round 3's S3) --
+#
+# `_ours` requires /tmp/.X<N>-lock to name the recorded pid, and nothing locked
+# that: the round-3 regression refuter removed the check (its sabotage S3) and
+# every suite stayed green. The shape it guards is a recorded pid that IS an
+# `Xvfb :N` by argv -- a server that lost the race for :N, or a recycled pid --
+# while a DIFFERENT server answers on :N. Here that server is this suite's own,
+# and the state dir records a decoy named `Xvfb` with `:N` as its own word:
+# `status` must call the display foreign, `exec` must refuse to route there, and
+# `stop` must leave the answering server and its lock alone.
+if [ "$HAVE_PERL" = 1 ]; then
+  D20S=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_empty.XXXXXX")
+  _decoy Xvfb -- ":$NUM" -screen 0 640x480x24; D20X=$DECOY
+  sleep 0.2
+  echo "$D20X" > "$D20S/xvfb.pid"; echo ":$NUM" > "$D20S/display"; echo none > "$D20S/wm"
+  realx=$(cat "$STATE/xvfb.pid" 2>/dev/null)
+  st20=$(XSCHEM_DEVDISPLAY_DIR="$D20S" "$DD" status 2>/dev/null | grep '^state:' | awk '{print $2}')
+  ck "D20 a recorded 'Xvfb :$NUM' that the lock does NOT name is not ours: status says foreign" "foreign" "$st20"
+  XSCHEM_DEVDISPLAY_DIR="$D20S" "$DD" exec true >/dev/null 2>&1
+  ck "D20 ...and exec refuses to route to it (rc 6)" 6 "$?"
+  XSCHEM_DEVDISPLAY_DIR="$D20S" "$DD" stop >/dev/null 2>&1
+  ck "D20 ...and stop leaves the server the lock names running, lock intact" "1 $realx" \
+     "$(_alive "$realx") $(tr -cd 0-9 < "/tmp/.X$NUM-lock" 2>/dev/null)"
+  kill -9 "$D20X" 2>/dev/null; wait "$D20X" 2>/dev/null; rm -rf "$D20S"
+else
+  skipck "D20 (no perl on PATH to make an argv[0]-named decoy)"
+fi
+
+# --- D22: a window manager is identified by its DISPLAY and HOME, not its name --
+#
+# DECISIONS D20.1. `stop` killed a recorded WM on argv[0] alone, so a wm.pid
+# naming ANY live openbox -- the round-3 safety refuter's was serving another
+# display -- was killed. _wm_is now also requires DISPLAY=:N in the WM's own
+# environment and the HOME of the server it serves (one `start` launched both).
+# Tested at the predicate, like D14, so that the positive controls are exact:
+# the real WM passes, and so does a decoy with the right name, display and home.
+if [ "$HAVE_PERL" = 1 ] && [ -n "$(cat "$STATE/wm.pid" 2>/dev/null)" ] && [ "$(cat "$STATE/wm" 2>/dev/null)" != none ]; then
+  realx=$(cat "$STATE/xvfb.pid" 2>/dev/null); realw=$(cat "$STATE/wm.pid" 2>/dev/null)
+  xhome=$(tr '\0' '\n' < "/proc/$realx/environ" 2>/dev/null | sed -n 's/^HOME=//p' | head -n 1)
+  _decoy openbox "DISPLAY=:$((NUM + 1000))" "HOME=$xhome"; W1=$DECOY
+  _decoy openbox "DISPLAY=:$NUM" "HOME=$xhome/elsewhere"; W2=$DECOY
+  _decoy openbox "DISPLAY=:$NUM" "HOME=$xhome"; W3=$DECOY
+  sleep 0.3
+  d22=$( (
+    . "$DD"
+    NUM="$NUM"; DPY=":$NUM"; STATE_DIR="$STATE"
+    for w in "$realw" "$W1" "$W2" "$W3"; do _wm_is "$w" "$realx" && printf 1 || printf 0; done
+  ) 2>/dev/null )
+  ck "D22 _wm_is: the real WM yes; another DISPLAY no; another HOME no; right name+DISPLAY+HOME yes" "1001" "$d22"
+  kill -9 "$W1" "$W2" "$W3" 2>/dev/null; wait "$W1" "$W2" "$W3" 2>/dev/null
+else
+  skipck "D22 (no perl, or the dev display is running WM-less)"
+fi
+
 # --- D13: stop ---------------------------------------------------------------
 "$DD" stop >/dev/null 2>&1
 ck "D13 stop exits 0" 0 "$?"
@@ -327,31 +414,57 @@ ck "D15 shellinit leaves DISPLAY ALONE when it is not running" ":0" "$si_down"
 SWEEPDIRS=""
 ORPH=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
 LIVED=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
-SWEEPDIRS="$ORPH $LIVED"
+OTHER=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
+NODPY=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
+SWEEPDIRS="$ORPH $LIVED $OTHER $NODPY"
 DEADP=999999; while [ -e "/proc/$DEADP" ]; do DEADP=$((DEADP + 1)); done
-printf '%s %s\n' "$DEADP" 1 > "$ORPH/.reaper_owner"          # a run that is gone
-# Named Xvfb by argv[0], as the dead run's server was: the sweep kills a
-# recorded pid only if it is still the program recorded (D17.6).
-bash -c 'exec -a Xvfb sleep 300' & OPH=$!
-echo "$OPH" > "$ORPH/xvfb.pid"
-# ...and a pid the same dead run recorded as its WM that is now something else
-# entirely -- a recycled pid -- which must survive.
-sleep 300 & RCY=$!
-echo "$RCY" > "$ORPH/wm.pid"; echo openbox > "$ORPH/wm"
+# Display numbers no server uses: the decoys below only CARRY them.
+DA=":$((NUM + 2000))"; DB=":$((NUM + 3000))"
+for d in "$ORPH" "$OTHER" "$NODPY"; do printf '%s %s\n' "$DEADP" 1 > "$d/.reaper_owner"; done   # runs that are gone
 cp "$STATE/.reaper_owner" "$LIVED/.reaper_owner"             # THIS run: alive
-bash -c 'exec -a Xvfb sleep 300' & LVP=$!
-echo "$LVP" > "$LIVED/xvfb.pid"
-SWEEPPIDS="$OPH $LVP $RCY"
-sleep 0.2
-reaper_sweep_orphan_runs "${TMPDIR:-/tmp}/devdisplay_test.*" xvfb.pid wm.pid vnc.pid
-ck "D17 the sweep reclaims the server of a run that is provably dead" 0 \
-   "$(kill -0 "$OPH" 2>/dev/null && echo 1 || echo 0)"
-ck "D17 ...and leaves a CONCURRENT run's alone (negative control)" 1 \
-   "$(kill -0 "$LVP" 2>/dev/null && echo 1 || echo 0)"
-ck "D17b ...and never kills a recorded pid that is no longer the program recorded (a recycled pid)" 1 \
-   "$(kill -0 "$RCY" 2>/dev/null && echo 1 || echo 0)"
-kill -9 "$OPH" "$LVP" "$RCY" 2>/dev/null; wait "$OPH" "$LVP" "$RCY" 2>/dev/null
-rm -rf "$ORPH" "$LIVED" 2>/dev/null; SWEEPDIRS=""; SWEEPPIDS=""
+if [ "$HAVE_PERL" = 1 ]; then
+  # ORPH: a dead run's dir recording $DA, naming what that run started ON $DA --
+  # a server by argv[0] and display word, a WM by argv[0] and DISPLAY=$DA -- and a
+  # pid it recorded as its WM that is now something else entirely (recycled).
+  echo "$DA" > "$ORPH/display"; echo openbox > "$ORPH/wm"
+  _decoy Xvfb -- "$DA" -screen 0 640x480x24; OPH=$DECOY
+  _decoy openbox "DISPLAY=$DA"; OWM=$DECOY
+  sleep 300 & RCY=$!
+  echo "$OPH" > "$ORPH/xvfb.pid"; echo "$OWM" > "$ORPH/wm.pid"
+  # OTHER: a dead run's dir recording $DA whose pid files name a server and a WM
+  # on ANOTHER display, $DB -- the round-3 safety refuter's recipe (DECISIONS
+  # D20.2): a stale dir recording :188 named a live `Xvfb :192` and its openbox,
+  # and one run of this suite killed both.
+  echo "$DA" > "$OTHER/display"; echo openbox > "$OTHER/wm"
+  _decoy Xvfb -- "$DB" -screen 0 640x480x24; XO=$DECOY
+  _decoy openbox "DISPLAY=$DB"; WO=$DECOY
+  echo "$XO" > "$OTHER/xvfb.pid"; echo "$WO" > "$OTHER/wm.pid"
+  # NODPY: a dead run's dir with NO display record at all: nothing can be
+  # identified, so nothing is killed.
+  echo openbox > "$NODPY/wm"
+  _decoy Xvfb -- "$DA"; XN=$DECOY
+  echo "$XN" > "$NODPY/xvfb.pid"
+  # LIVED: THIS run's (alive) dir: never touched, whatever it names.
+  echo "$DA" > "$LIVED/display"
+  _decoy Xvfb -- "$DA"; LVP=$DECOY
+  echo "$LVP" > "$LIVED/xvfb.pid"
+  echo "$RCY" > "$ORPH/vnc.pid"
+  SWEEPPIDS="$RCY"
+  sleep 0.3
+  reaper_sweep_orphan_runs "${TMPDIR:-/tmp}/devdisplay_test.*" xvfb.pid wm.pid vnc.pid
+  ck "D17 the sweep reclaims the server and WM of a run that is provably dead, on the display it recorded" "0 0" \
+     "$(_alive "$OPH") $(_alive "$OWM")"
+  ck "D17 ...and leaves a CONCURRENT run's alone (negative control)" 1 "$(_alive "$LVP")"
+  ck "D17b ...and never kills a recorded pid that is no longer the program recorded (a recycled pid)" 1 "$(_alive "$RCY")"
+  ck "D17c ...nor a server or WM on ANOTHER display than the dead dir recorded (D20.2)" "1 1" \
+     "$(_alive "$XO") $(_alive "$WO")"
+  ck "D17d ...nor anything named by a dead dir that records no display" 1 "$(_alive "$XN")"
+  kill -9 "$OPH" "$OWM" "$LVP" "$RCY" "$XO" "$WO" "$XN" 2>/dev/null
+  wait "$OPH" "$OWM" "$LVP" "$RCY" "$XO" "$WO" "$XN" 2>/dev/null
+else
+  skipck "D17 (no perl on PATH to make an argv[0]-named decoy)"
+fi
+rm -rf "$ORPH" "$LIVED" "$OTHER" "$NODPY" 2>/dev/null; SWEEPDIRS=""; SWEEPPIDS=""
 
 # --- D18: `stop` kills only what it can identify, and unlocks only its own ---
 #
@@ -383,6 +496,59 @@ else
 fi
 kill -9 $DX $DW $DV 2>/dev/null; wait $DX $DW $DV 2>/dev/null
 rm -rf "$D18S"; SWEEPPIDS=""
+
+# --- D19: identity is argv[0], not a word in the command line (round 3's S1) --
+#
+# DECISIONS D17.6: `sleep 300 Xvfb :99` is not an Xvfb. D18's decoys never carry
+# the words, so when the round-3 regression refuter put `_pid_is` back to "the
+# program's name anywhere in the command line" (its sabotage S1) every suite
+# stayed green. This decoy carries exactly those words -- `Xvfb` and `:N`, each
+# its own argv word -- behind an argv[0] that is something else, as a stale
+# state dir's recycled pid might; `stop` must leave it, and a lock naming it,
+# alone. (The display is this run's own number, down since D13.)
+if [ "$HAVE_PERL" = 1 ]; then
+  D19S=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_empty.XXXXXX")
+  _decoy perl -- Xvfb ":$NUM" -screen 0 640x480x24; D19X=$DECOY
+  sleep 0.2
+  echo "$D19X" > "$D19S/xvfb.pid"; echo ":$NUM" > "$D19S/display"; echo none > "$D19S/wm"
+  d19lock=0
+  if [ ! -e "/tmp/.X$NUM-lock" ]; then printf '%10d\n' "$D19X" > "/tmp/.X$NUM-lock" && d19lock=1; fi
+  XSCHEM_DEVDISPLAY_DIR="$D19S" "$DD" stop >/dev/null 2>&1
+  ck "D19 stop never kills a pid whose command line merely CONTAINS 'Xvfb :$NUM' (argv[0] is perl)" 1 "$(_alive "$D19X")"
+  if [ "$d19lock" = 1 ]; then
+    ck "D19 ...and leaves the lock that names it" "$D19X" "$(tr -cd 0-9 < "/tmp/.X$NUM-lock" 2>/dev/null)"
+    [ "$(tr -cd 0-9 < "/tmp/.X$NUM-lock" 2>/dev/null)" = "$D19X" ] && rm -f "/tmp/.X$NUM-lock"
+  else
+    skipck "D19 lock half (a lock appeared on :$NUM meanwhile -- another run's; not planting over it)"
+  fi
+  kill -9 "$D19X" 2>/dev/null; wait "$D19X" 2>/dev/null; rm -rf "$D19S"
+else
+  skipck "D19 (no perl on PATH to make a decoy)"
+fi
+
+# --- D21: a dead server means NOTHING the state dir names is killed ------------
+#
+# The round-3 safety refuter's recipe (DECISIONS D20.1), and the user's own state
+# dir today: xvfb.pid names a DEAD pid, wm.pid a LIVE window manager -- theirs was
+# serving another display. `stop` fell through the dead server to the WM kill and
+# killed it on argv[0] alone ('devdisplay: stopped :194', that openbox gone).
+# Nothing a state dir records can still be its own once its server is gone.
+if [ "$HAVE_PERL" = 1 ]; then
+  D21S=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_empty.XXXXXX")
+  _decoy openbox "DISPLAY=:$((NUM + 1000))"; D21W=$DECOY
+  _decoy x11vnc -- -display ":$NUM" -localhost; D21V=$DECOY
+  sleep 0.2
+  echo "$DEADP" > "$D21S/xvfb.pid"; echo "$D21W" > "$D21S/wm.pid"; echo "$D21V" > "$D21S/vnc.pid"
+  echo ":$NUM" > "$D21S/display"; echo openbox > "$D21S/wm"
+  d21out=$(XSCHEM_DEVDISPLAY_DIR="$D21S" "$DD" stop 2>&1)
+  ck "D21 stop with a DEAD xvfb.pid kills neither the live WM nor the viewer its state dir names" "1 1" \
+     "$(_alive "$D21W") $(_alive "$D21V")"
+  ck "D21 ...says it was not running, and cleans the state" "1 0" \
+     "$(printf '%s' "$d21out" | grep -c 'not running') $([ -e "$D21S/wm.pid" ] && echo 1 || echo 0)"
+  kill -9 "$D21W" "$D21V" 2>/dev/null; wait "$D21W" "$D21V" 2>/dev/null; rm -rf "$D21S"
+else
+  skipck "D21 (no perl on PATH to make a decoy)"
+fi
 
 # --- D16: nothing this run started outlives it -------------------------------
 #

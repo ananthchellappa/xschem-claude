@@ -29,6 +29,11 @@
 ## reason when a tool is missing. Every process a row starts is killed before
 ## the suite exits.
 ##
+## ROUND 4 (DECISIONS D20) added, each red on the round-3 build: W3b (xarm.sh
+## and tools/migrate/test_ase_migrate.py arm, read from the files), W11 (the
+## same two, RUN from an empty home) and W10 (winshot.sh builds into the
+## checkout's gitignored .winshot-cache, never ~/.cache).
+##
 ## ROUND 3 (DECISIONS D17) added, each red on the round-2 build: X9 (no reaper
 ## window: the reaper starts before the exec into xvfb-run), X10 (xvfb-run gets
 ## `-n <base> -a`, base >= 100, so :99 is never chosen), X11 (the server is
@@ -328,6 +333,84 @@ check "W3 D13.1 + D17.1: --arm, test_devdisplay.sh, run.sh, run_nogui.sh, owed.s
             {test_action_log 1} {test_action_replay 1} {test_file_menu_log 1} {test_flylines 1} \
             {test_readonly_action_dispatch 1} {test_readonly_guard 1} {test_recent_launchlog 1} \
             {lookshot 1} {netlist_diff 1} {run_wireedit 1}]
+
+## W3b (D20.6): the two launchers round 3's refuters found OUTSIDE what W3 and
+## G2 looked at. doc/claude/signal_browser_2pane_batch/xarm.sh arms before it
+## runs anything, and runs only ARMED drivers (gated_xschem.sh, run_suites.sh),
+## as children -- no `exec` (it would skip the EXIT trap that deletes the home),
+## no `xvfb-run -a` (which starts at :99), no bare binary, no hand-launched gate
+## panel. tools/migrate/test_ase_migrate.py (Python cannot source test_home.sh)
+## re-execs through `test_home.sh --run` before anything else can start xschem.
+set w3b {}
+set xl [split [slurp [file join $repo doc claude signal_browser_2pane_batch xarm.sh]] \n]
+set a -1; set d -1; set bad {}; set i 0
+foreach l $xl {
+  incr i
+  if {[regexp {^\s*#} $l]} { continue }
+  if {$a < 0 && [regexp {^\s*test_home_arm \|\| exit \$\?\s*$} $l]} { set a $i }
+  if {$d < 0 && [regexp {(gated_xschem|run_suites)\.sh} $l]} { set d $i }
+  if {[regexp {(^|\s)exec\s|xvfb-run\s+-a|src/xschem|gui_gate_widget\.tcl} $l]} { lappend bad $i }
+}
+lappend w3b [list xarm [expr {$a > 0 && $d > $a}] $bad]
+set ml [split [slurp [file join $repo tools migrate test_ase_migrate.py]] \n]
+set g -1; set x -1; set i 0
+foreach l $ml {
+  incr i
+  if {$g < 0 && [regexp {os\.execvp\("bash", \["bash", os\.path\.join\(_HERE, "\.\.", "\.\.", "tests", "headless", "test_home\.sh"\), "--run", sys\.executable} $l]} { set g $i }
+  if {$x < 0 && [regexp {src.*xschem|subprocess} $l] && ![regexp {^\s*#|^import|^\s*"|^\s*on \./src} $l]} { set x $i }
+}
+lappend w3b [list test_ase_migrate [expr {$g > 0 && $x > $g}]]
+check "W3b D20.6: xarm.sh arms and runs only armed drivers as children (no exec, no xvfb-run -a, no bare binary, no panel of its own); test_ase_migrate.py re-execs through test_home.sh --run first" \
+  $w3b [list {xarm 1 {}} {test_ase_migrate 1}]
+
+## W11 (D20.6), BEHAVIOUR, not text: W3b and G2 read the arm off the page, and a
+## disabled one (`if False:` round the re-exec, `true` for test_home_arm) still
+## reads as armed -- that sabotage stayed green through both. So the two
+## launchers are RUN, from an EMPTY home: each must announce its throwaway, and
+## the home must stay empty. test_ase_migrate.py's integration leg starts xschem
+## when ngspice is on PATH (unarmed it created ~/.xschem/op_annot/ in a canary);
+## `xarm.sh mode` starts nothing, so for it the banner is the evidence.
+if ![have python3] {
+  skip W11-test_ase_migrate-and-xarm-run-under-a-throwaway "no python3 on PATH"
+} else {
+  set w11h [file join $S w11home] ; file mkdir $w11h
+  set w11s [snap $w11h]
+  lassign [run 300 [list HOME=$w11h] python3 [file join $repo tools migrate test_ase_migrate.py]] m11rc m11out
+  lassign [run 60 [list HOME=$w11h] bash [file join $repo doc claude signal_browser_2pane_batch xarm.sh] mode] x11rc x11out
+  check "W11 test_ase_migrate.py and xarm.sh, RUN from an empty home, announce a throwaway, keep their exit status, and leave the home empty" \
+    [list $m11rc [count_lines $m11out {^test home: throwaway }] [count_lines $m11out {^RESULT: ALL PASS}] \
+          $x11rc [count_lines $x11out {^test home: throwaway }] [expr {[snap $w11h] eq $w11s}] [throwaways]] \
+    [list 0 1 1 0 1 1 {}]
+}
+
+## W10 (D20.3): winshot.sh builds its binary into the CHECKOUT's gitignored
+## tests/headless/.winshot-cache/, never into ~/.cache. Run standalone -- it is
+## documented to be, and G2 cannot see it (it starts no xschem) -- it wrote
+## .cache/xschem-winshot/{build.log,winshot} into an EMPTY home (the round-3
+## safety refuter). No display is needed: the build happens before winshot runs,
+## and without a DISPLAY winshot then fails to connect (rc 3), which is fine.
+## And where the cache cannot be written it builds for this one call in a
+## temporary directory and removes it -- still never in the home.
+if {![have cc]} {
+  skip W10-winshot-builds-in-the-checkout-never-in-HOME "no cc on PATH: winshot.sh cannot build here"
+} else {
+  set wsh [file join $S wshome] ; file mkdir $wsh
+  set wsh0 [snap $wsh]
+  set wsout [file join $S ws.png]
+  lassign [run 120 [list HOME=$wsh] bash [file join $here winshot.sh] $wsout -root] wsrc wsouttxt
+  set wsc [file join $here .winshot-cache]
+  set ign {n/a}
+  if {[file exists [file join $repo .git]] && [have git]} {
+    set ign [expr {![catch {exec git -C $repo check-ignore -q -- tests/headless/.winshot-cache/winshot}]}]
+  }
+  set ro [file join $S ws_ro] ; file mkdir $ro ; file attributes $ro -permissions 0555
+  lassign [run 120 [list HOME=$wsh XSCHEM_WINSHOT_CACHE=$ro] bash [file join $here winshot.sh] $wsout -root] wsrc2 wsout2
+  file attributes $ro -permissions 0755
+  check "W10 winshot.sh builds into the checkout's gitignored .winshot-cache, never under HOME; an unwritable cache builds once in TMPDIR and cleans up" \
+    [list [expr {$wsrc != 5}] [file executable [file join $wsc winshot]] $ign [expr {[snap $wsh] eq $wsh0}] \
+          [expr {$wsrc2 != 5}] [glob -nocomplain -directory $TMP -tails xschem-winshot.*] [glob -nocomplain -directory $ro -tails *]] \
+    [list 1 1 [expr {$ign eq {n/a} ? {n/a} : 1}] 1 1 {} {}]
+}
 
 ## ===========================================================================
 ## F. A FRESH ARM

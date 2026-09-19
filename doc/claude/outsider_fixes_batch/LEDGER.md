@@ -24,7 +24,7 @@ Safety net for the user's configuration, taken before any stage ran:
 | S2c | Item 2 — implement (T Tcl / S shell / U suites, parallel) → integrate + canary proof → refute | DONE (receipts S2c-T/S/U/I) | armed commands **proven** (canary byte-identical, red-first; T1 87/86/**0** with DISPLAY set; all 402 shared suites same verdict and check count). Refuted (`receipts/S2c_refute_r1.md`): unarmed documented entry points, cwd autosave overwrite, sweep/handoff/KEEP holes, H1b by number → D13 | — |
 | S2c-R2 | D13 items: T (Tcl) ∥ S (shell) → integrate + proof → refute | DONE (receipts S2c-R2-*, `S2c_refute_r2.md`) | core **proven by both refuters**: T1 87/86/0 in main-tree shape, canary byte-identical (seeded AND empty), auto-start env clean, attach identical, pairs green, 84/84 shared results identical. Refuted on edges: 3 more unarmed documented scripts, reaper start window, `devdisplay.sh stop` kills by recorded pid, relative TMPDIR, nesting forgery, V3 row gap → D17 | — |
 | S2c-R3 | D17 | DONE (receipts S2c-R3-build/prove, `S2c_refute_r3.md`) | prover: every armed launcher (G2: 22) byte-identical on seeded AND empty canaries, T1 87/86/0 per-case = base; **regression refuter could not refute**; safety refuter's remaining kill-identity/opt-in findings are identical in base → D20: commit, round 4 follows. **Driver gate in the main tree**: canary = copy of the real `~/.xschem`+`.gitconfig`+`.ngspice_history` (134 MB), dev display pinned to scratch: `T1-RUN-END cases=87 blocks=86 counted_failures=0 elapsed=517s`, wc -l 177, header `home=throwaway binary=<full path>`, canary **byte-identical** (find+md5), throwaway removed, private Xvfb :100 gone; real home snapshot diff 0 lines, real `~/.xschem` md5-identical. Real-home run refused by the permission check → owed to the user | (this commit) |
-| S2c-R4 | D20 | dispatched (on copies) | — | — |
+| S2c-R4 | D20 | DONE (receipts S2c-R4-build, S2c-R4-refute-*, `S2c_refute_r4.md`) | **both refuters refuted=false** — the first clean round. Regression: T1 87/86/0 in 5 shapes incl. attach, auto-start from the user's dead-pid state shape, and a checkout inside HOME; 403/405 suites identical (2 gained checks); 0 of 63 killed runs leaked. **Driver gate in the main tree** (canary copy of the real home, dev display pinned to scratch): `cases=87 blocks=86 counted_failures=0 elapsed=529s`, wc -l 177, canary byte-identical, real home unchanged, no throwaway left | (this commit) |
 | F | T1 gate, CLAUDE.md, commit | docs crew + verifier (`receipts/F-docs.md`) | gates done per item (see S1-fix6/7, S2c-R3 rows). Docs: CLAUDE.md passages made false rewritten (87 · 86 · 177, header fields, 1481 paragraph, single-case and bare commands, dev-display auto-start, new 'The throwaway test home' subsection, STAMP rule for new issue files); issues **1483–1488** filed and stamped (1482 skipped: live pointer in both clones); 0891 addendum, 1481 update. Verifier refuted on one wrong number (`+387`) and three overstated sentences: **corrected by the driver**; checker `ok (0 problems)` after. Real-home run owed to the user | (this commit) |
 
 ## Open item for the user
@@ -35,3 +35,25 @@ directory since deleted. The user's own dev display is not running: its state di
 `xvfb.pid 1116`, which is dead. Checked: no other process has `DISPLAY=:99`. The driver's
 `kill` was refused by the session's permission check, so the user decides. **Resolved 06:1x:
 the user ran the kill; both are gone and `:99` is free.**
+
+## Closed — 2026-09-18
+
+**Item 1** landed as `aa5cece0` + `d42fc517` after ten refutation rounds. A stranger's clone
+(renamed, worktree, shallow, export, unborn) is green with named skips, and no corpus text
+reaches an exec. It stopped at `d42fc517` under D21. The remaining false alarms on honest
+fences, and four ready fixes, are issue **1489**, with the candidate saved as
+`patches/1489-s1fix10-candidate.patch`.
+
+**Item 2** landed as `7a46275f` + this commit after four build rounds. Every documented test
+command, and every launcher G2 can see in the repository, runs with a throwaway HOME. Seeded
+and empty canaries stayed byte-identical in every shape, each shown red first. Kills are by
+identity only.
+
+**Owed to the user:** one T1 with the real HOME. Only that run shows the attach to, or
+auto-start of, their own `:99` through the real state dir. The session's permission check
+refused it for the driver. Command: `cd tests && tclsh run_regression.tcl`. Expect
+`test home: throwaway …`, a `display arm:` line on `:99`, `counted_failures=0`, and an
+unchanged `~/.xschem`.
+
+**Follow-ups filed:** 1483–1489. Stage F's docs are `021e9405`, plus the round-4 CLAUDE.md
+edits in this commit.

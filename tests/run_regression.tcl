@@ -548,15 +548,15 @@ set t1_xvfb_why {}
 ## a SIGHUP, it only resets) never reaches its own kill, and the round-1
 ## regression refuter measured the private Xvfb and openbox then living on,
 ## reparented to init, holding their lock, until some LATER armed run's sweep
-## found them 305 s on -- "no leak" only if somebody runs again. So the moment
-## the server answers, a small detached reaper starts beside it. Every 5 s it
-## asks whether its owner is still THIS process -- the pid AND its start time,
-## because a pid alone recycles -- and when the owner is gone it stops the WM
-## and the server and exits. It exits on its own too, as soon as the server is
-## gone (the normal path: the owner killed it). It kills only what it can
-## identify, by the same rule as the sweep (D13.7): the program's name AND a
-## HOME in its /proc/<pid>/environ that is exactly the run directory. The next
-## run's sweep stays the backstop.
+## found them 305 s on -- "no leak" only if somebody runs again. So a small
+## detached reaper watches every attempt at a private server. It asks whether
+## its owner is still THIS process -- the pid AND its start time, because a pid
+## alone recycles -- and when the owner is gone it stops the WM and the server
+## and exits. It exits on its own too, as soon as the server is gone (the normal
+## path: the owner killed it). It kills only what it can identify: a process
+## carrying this attempt's tag (below). The next run's sweep stays the backstop,
+## by the sweep's own rule (D13.7): the program's name AND a HOME in its
+## /proc/<pid>/environ that is exactly the run directory.
 ## ⚠ `env -i PATH=...`: it inherits no HOME and none of the harness variables,
 ## so nothing that looks for a process by this run's HOME mistakes it for part
 ## of the run -- and `setsid`, where there is one, so that a signal to T1's
@@ -565,82 +565,123 @@ set t1_xvfb_why {}
 ## start time intact, until its parent reaps it -- which a parent that is not a
 ## shell may not do for a long time (measured: the reaper waited on one for
 ## over 20 s in row H6 of test_home_isolation.tcl before this line).
-## ⚠ IT STARTS THE MOMENT THE SERVER IS EXEC'D, NOT WHEN IT ANSWERS (D17.7). Round
-## 2 started it after the up-check, and the round-2 regression refuter measured
-## that window at 130-138 ms: a T1 killed -9 inside it left Xvfb :100 serving
-## for five minutes, until an unrelated later run's sweep found it. So the
-## server's own pid, the instant `exec` returns it, is what the reaper is given;
-## the up-check, the lost-race retry and the WM all happen under its watch. It
-## first waits (bounded) for that pid to BECOME Xvfb -- `env HOME=... Xvfb` is
-## still `env` for a moment after the fork -- and exits if it never does; and an
-## owner that dies inside that moment still gets its server stopped once it is
-## one (a second bounded wait, before the stop).
-## ⚠ AND IT KILLS ANYTHING ELSE OF THE DISPLAY'S BY IDENTITY: after the owner
-## dies it also stops any process whose argv[0] is Xvfb or the configured WM
-## and whose HOME is exactly this run directory (unique: mktemp made it). That
-## covers a WM started a moment before its pid could be recorded.
-## Positional: $1 owner pid, $2 its start time, $3 run dir, $4 Xvfb pid,
-## $5 display number, $6 the configured WM's name (or none). The WM's pid is read
-## from the record at reap time.
+## ⚠ IT STARTS BEFORE THE SERVER IS EXEC'D, AND KNOWS IT BY A TAG (D17.7, D20.5).
+## Round 2 started it after the up-check, and the round-2 regression refuter
+## measured that window at 130-138 ms: a T1 killed -9 inside it left Xvfb :100
+## serving for five minutes. Round 3 started it the instant `exec` returned the
+## server's pid -- which still left a window, sub-millisecond but real, between
+## the exec and the reaper's fork in which a killed T1 left a server that
+## nothing watched and nothing recorded (the round-3 regression refuter read it
+## off the source; the sweep kills only a RECORDED pid). So now, as the shell
+## arm does (xvfb_arm.sh, XSCHEM_TEST_XVFB_TAG), the reaper is started FIRST,
+## with a tag unique to this attempt, and the server and its WM are exec'd with
+## XSCHEM_TEST_T1_XVFB_TAG=<tag> in their environment. There is then no instant
+## at which a server of this run exists with nobody watching: until the record
+## names it, the reaper finds it by the tag.
+## Its three phases:
+##   1. wait (bounded, 10 s) for THIS attempt's server -- the pid the record
+##      names, argv[0] Xvfb AND carrying the tag -- watching the owner meanwhile;
+##      an owner alive at the end of the wait with no server means the exec
+##      failed, and the reaper simply exits;
+##   2. while the owner lives, check every $poll s (T1_XVFB_REAPER_POLL, default
+##      5) that the server is still there; the normal exit is the owner having
+##      stopped it;
+##   3. once the owner is gone, stop EVERYTHING carrying the tag -- Xvfb, the
+##      WM, and a server still in its `env` stage (the tag is then an argv word)
+##      -- rescanning until the scan comes back empty twice, then remove the
+##      display's lock if it names a server it stopped.
+## Identity is the tag (DECISIONS D13.7): nothing else on the machine carries it.
+## ⚠ The poll only bounds how long an ABANDONED attempt's reaper would linger if
+## nobody stopped it (t1_private_reaper_stop does, synchronously), and how long a
+## killed owner goes unnoticed. Row H7b of test_home_isolation.tcl sets it to 60
+## so that a reaper left behind is still there to be seen (the round-3 S14 row).
+## ⚠ EACH REAPER RECORDS ITSELF IN ITS OWN FILE, `.xvfb/reaper.<its pid>.pid`, and
+## removes it when it exits: a lost race makes two attempts, so two reapers, and
+## one shared `reaper.pid` named whichever wrote LAST -- not necessarily the one
+## still running (t1_home_kill_xvfb stops every one it finds recorded).
+## Positional: $1 owner pid, $2 its start time, $3 run dir, $4 the attempt's
+## tag, $5 display number, $6 the configured WM's name (or none), $7 the poll.
 set t1_reaper_sh {
-o=$1 ost=$2 rd=$3 xp=$4 n=$5 wn0=${6:-none}
-echo $$ > "$rd/.xvfb/reaper.pid" 2>/dev/null
+o=$1 ost=$2 rd=$3 tg=$4 n=$5 wn0=${6:-none} poll=${7:-5}
+case "$poll" in ''|*[!0-9]*|0) poll=5 ;; esac
+echo $$ > "$rd/.xvfb/reaper.$$.pid" 2>/dev/null
 st() { s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1; s=${s##*) }; case "$s" in Z*) return 1 ;; esac; set -- $s; printf '%s' "${20}"; }
+tagged() {
+  tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qxF "XSCHEM_TEST_T1_XVFB_TAG=$tg" && return 0
+  tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | grep -qxF "XSCHEM_TEST_T1_XVFB_TAG=$tg"
+}
 ours() {
   s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
   s=${s##*) }; case "$s" in Z*) return 1 ;; esac
   a=$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | head -n 1)
   [ -n "$2" ] && [ "${a##*/}" = "$2" ] || return 1
-  tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qxF "HOME=$rd"
+  tagged "$1"
 }
-stop() {
-  ours "$1" "$2" || return 0
-  kill "$1" 2>/dev/null
-  i=0; while [ $i -lt 30 ] && ours "$1" "$2"; do sleep 0.1; i=$((i+1)); done
-  ours "$1" "$2" && kill -9 "$1" 2>/dev/null
-  return 0
-}
+bye() { rm -f "$rd/.xvfb/reaper.$$.pid"; exit 0; }
 sp=
 trap '[ -n "$sp" ] && kill $sp 2>/dev/null; exit 0' TERM
+xp=
 i=0
-while [ $i -lt 50 ] && [ -d "/proc/$xp" ] && ! ours "$xp" Xvfb; do
+while [ $i -lt 100 ]; do
   [ "$(st "$o")" = "$ost" ] || break
+  x=$(tr -cd 0-9 < "$rd/.xvfb.pid" 2>/dev/null)
+  if [ -n "$x" ] && ours "$x" Xvfb; then xp=$x; break; fi
   sleep 0.1; i=$((i+1))
 done
-while :; do
-  [ "$(st "$o")" = "$ost" ] || break
-  ours "$xp" Xvfb || exit 0
-  sleep 5 & sp=$!; wait $sp; sp=
-done
-i=0
-while [ $i -lt 20 ] && [ -n "$(st "$xp")" ] && ! ours "$xp" Xvfb; do sleep 0.1; i=$((i+1)); done
-wp=$(tr -cd 0-9 < "$rd/.xvfb/wm.pid" 2>/dev/null)
-wn=$(head -n 1 "$rd/.xvfb/wm" 2>/dev/null)
-[ -n "$wp" ] && stop "$wp" "$wn"
-stop "$xp" Xvfb
+if [ "$(st "$o")" = "$ost" ]; then
+  [ -n "$xp" ] || bye
+  while :; do
+    [ "$(st "$o")" = "$ost" ] || break
+    ours "$xp" Xvfb || bye
+    sleep "$poll" & sp=$!; wait $sp; sp=
+  done
+fi
 w15=$(printf '%s' "${wn0##*/}" | cut -c1-15)
-for d in /proc/[0-9]*; do
-  c=; read -r c < "$d/comm" 2>/dev/null
-  case "$c" in Xvfb) a=Xvfb ;; *) [ "$wn0" != none ] && [ -n "$c" ] && [ "$c" = "$w15" ] || continue ; a=${wn0##*/} ;; esac
-  stop "${d#/proc/}" "$a"
+k=TERM r=0 e=0 xs=
+while [ $r -lt 14 ]; do
+  f=
+  for d in /proc/[0-9]*; do
+    c=; read -r c < "$d/comm" 2>/dev/null
+    case "$c" in Xvfb|env) ;; *) [ "$wn0" != none ] && [ -n "$c" ] && [ "$c" = "$w15" ] || continue ;; esac
+    p=${d#/proc/}
+    [ "$p" != "$$" ] || continue
+    tagged "$p" || continue
+    f="$f $p"
+    [ "$c" = Xvfb ] && xs="$xs $p"
+    kill -$k "$p" 2>/dev/null
+  done
+  if [ -z "$f" ]; then e=$((e+1)); [ $e -ge 2 ] && break; else e=0; fi
+  [ $r -ge 6 ] && k=KILL
+  sleep 0.5; r=$((r+1))
 done
-if [ "$(tr -cd 0-9 < "/tmp/.X$n-lock" 2>/dev/null)" = "$xp" ] && ! ours "$xp" Xvfb; then rm -f "/tmp/.X$n-lock"; fi
-rm -f "$rd/.xvfb/reaper.pid"
-exit 0
+lk=$(tr -cd 0-9 < "/tmp/.X$n-lock" 2>/dev/null)
+for x in $xs; do
+  if [ "$lk" = "$x" ] && [ -z "$(st "$x")" ]; then rm -f "/tmp/.X$n-lock"; fi
+done
+bye
 }
-proc t1_private_reaper {rd xp n {wm none}} {
+proc t1_private_reaper {rd tag n {wm none}} {
   if {![file isdirectory /proc/self]} { return }
-  if {[catch {set f [open /proc/[pid]/stat r]; set st [read $f]; close $f}]} { return }
-  set ost [lindex [string range $st [expr {[string last ")" $st] + 2}] end] 19]
+  set ost [t1_self_starttime]
   if {![string is integer -strict $ost]} { return }
   set path /usr/bin:/bin
   if {[info exists ::env(PATH)] && $::env(PATH) ne {}} { set path $::env(PATH) }
   set sid {}
   if {[auto_execok setsid] ne {}} { set sid setsid }
+  set poll 5
+  if {[info exists ::env(T1_XVFB_REAPER_POLL)] && [string is integer -strict $::env(T1_XVFB_REAPER_POLL)]
+      && $::env(T1_XVFB_REAPER_POLL) >= 1 && $::env(T1_XVFB_REAPER_POLL) <= 3600} {
+    set poll $::env(T1_XVFB_REAPER_POLL)
+  }
   set rp {}
-  catch {set rp [exec env -i PATH=$path {*}$sid sh -c $::t1_reaper_sh xschem-t1-reaper [pid] $ost $rd $xp $n [file tail $wm] \
+  catch {set rp [exec env -i PATH=$path {*}$sid sh -c $::t1_reaper_sh xschem-t1-reaper [pid] $ost $rd $tag $n [file tail $wm] $poll \
            </dev/null >/dev/null 2>/dev/null &]}
   return $rp
+}
+## This process's start time (field 22 of /proc/self/stat), or {}.
+proc t1_self_starttime {} {
+  if {[catch {set f [open /proc/[pid]/stat r]; set st [read $f]; close $f}]} { return {} }
+  return [lindex [string range $st [expr {[string last ")" $st] + 2}] end] 19]
 }
 ## Stop the reaper of an ATTEMPT this arm abandons (a lost race, a server that
 ## never answered): it watches a server that is gone and would otherwise linger
@@ -690,12 +731,17 @@ proc t1_private_xvfb {dd} {
     ## client sequence, 0 of 360 with -noreset; H6 saw it as `wm 0`, and the arm
     ## then ran WM-LESS). The persistent dev display never resets either: its
     ## openbox stays connected.
-    if {[catch {exec env HOME=$rd Xvfb :$n -screen 0 $scr -nolisten tcp -noreset </dev/null >/dev/null 2>/dev/null &} xp]} {
+    ## ⚠ THE REAPER FIRST, THEN THE SERVER (D17.7, D20.5; see t1_reaper_sh). The
+    ## tag names THIS attempt -- this run, this number, this instant -- and rides
+    ## into the server's and the WM's environment, so a T1 killed at any moment
+    ## after this line leaves nothing the reaper cannot find, record or no record.
+    set tag "t1.[pid].[t1_self_starttime].$n.[clock microseconds]"
+    set rp [t1_private_reaper $rd $tag $n $wm]
+    if {[catch {exec env HOME=$rd XSCHEM_TEST_T1_XVFB_TAG=$tag Xvfb :$n -screen 0 $scr -nolisten tcp -noreset </dev/null >/dev/null 2>/dev/null &} xp]} {
+      t1_private_reaper_stop $rp $rd
       set ::t1_xvfb_why "Xvfb would not start: $xp"
       return {}
     }
-    ## THE REAPER NOW, before anything can wait (D17.7; see t1_reaper_sh).
-    set rp [t1_private_reaper $rd $xp $n $wm]
     foreach f [list [file join $rd .xvfb.pid] [file join $sd xvfb.pid]] {
       set h [open $f w] ; puts $h $xp ; close $h
     }
@@ -757,7 +803,7 @@ proc t1_private_xvfb {dd} {
       ## openbox would otherwise leave ~/.cache/openbox there (measured). Its
       ## cache goes with the run directory.
       if {![catch {exec env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME \
-                        HOME=$rd DISPLAY=:$n $wm </dev/null >/dev/null 2>/dev/null &} wp]} {
+                        HOME=$rd DISPLAY=:$n XSCHEM_TEST_T1_XVFB_TAG=$tag $wm </dev/null >/dev/null 2>/dev/null &} wp]} {
         set h [open [file join $sd wm.pid] w] ; puts $h $wp ; close $h
         set h [open [file join $sd wm] w] ; puts $h [file tail $wm] ; close $h
         set wmname [file tail $wm]

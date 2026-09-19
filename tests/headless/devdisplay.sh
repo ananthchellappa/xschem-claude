@@ -96,12 +96,37 @@ _f() { echo "$STATE_DIR/$1"; }
 # persists -- so a stale xvfb.pid can name some unrelated live process and make
 # a dead display report healthy. Every liveness test below therefore also
 # confirms WHAT the pid is.
-_pid_of() {
+#
+# The number a pid file RECORDS, whether or not anything is running under it.
+_pid_rec() {
   local f; f=$(_f "$1")
   [ -r "$f" ] || return 1
   local p; p=$(cat "$f" 2>/dev/null)
   case "$p" in ''|*[!0-9]*) return 1 ;; esac
   echo "$p"
+}
+# The pid a pid file records, ONLY IF a process is running under it (DECISIONS
+# D20.1): a dead record is no record. It used to answer for any number in the
+# file, so `stop` on a state dir whose server was long dead still went on to
+# kill whatever its wm.pid named -- the round-3 safety refuter's recipe killed a
+# live openbox on another display that way, and the user's own state dir names
+# 1116 and 1135, both dead. What IS running there is still not identified by
+# this; _pid_is does that.
+_pid_of() {
+  local p st
+  p=$(_pid_rec "$1") || return 1
+  kill -0 "$p" 2>/dev/null || return 1
+  st=$(cat "/proc/$p/stat" 2>/dev/null) || return 1
+  st="${st##*) }"; [ "${st%% *}" != Z ] || return 1
+  echo "$p"
+}
+
+# One variable from a live process's /proc/<pid>/environ, or fail when it is
+# absent or unreadable (another uid's process: never "matches").
+_env_of() {   # <pid> <NAME>
+  local e
+  e=$( (tr '\0' '\n' < "/proc/$1/environ") 2>/dev/null | grep -m 1 "^$2=") || return 1
+  printf '%s' "${e#"$2"=}"
 }
 
 _cmdline() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null; }
@@ -194,10 +219,29 @@ _ours() {
   _server_answers
 }
 
+# Is <pid> THIS display's window manager? argv[0] is not enough (DECISIONS
+# D20.1): the round-3 safety refuter pointed a state dir's wm.pid at a live
+# openbox serving ANOTHER display, and `stop` killed it on its name alone. A WM
+# is identified the way it was started (cmd_start): its environment names this
+# display exactly (DISPLAY=:N), and it carries the same HOME as the server
+# <xpid> -- the one this state dir recorded and that passed _pid_is -- because
+# one `start` launched both. An unreadable environ (another uid's process)
+# never matches: the failure direction is "a leftover survives".
+_wm_is() {   # <pid> <verified server pid>
+  local p="$1" xp="$2" d h xh
+  _pid_is "$p" "$(_wm_name)" || return 1
+  d=$(_env_of "$p" DISPLAY) || return 1
+  [ "$d" = "$DPY" ] || return 1
+  xh=$(_env_of "$xp" HOME) || return 1
+  h=$(_env_of "$p" HOME) || return 1
+  [ "$h" = "$xh" ]
+}
+
 _wm_alive() {
-  local p; p=$(_pid_of wm.pid) || return 1
+  local p x; p=$(_pid_of wm.pid) || return 1
   [ "$WM" = none ] && return 1
-  _pid_is "$p" "$(_wm_name)"
+  x=$(_pid_of xvfb.pid) && _pid_is "$x" Xvfb "$DPY" || return 1
+  _wm_is "$p" "$x"
 }
 
 _vnc_alive() {
@@ -232,6 +276,20 @@ _kill_pidfile() {   # <file> <prog> [<display>]
     local i=0
     while [ "$i" -lt 30 ] && _pid_is "$p" "$2" "${3:-}"; do sleep 0.1; i=$((i+1)); done
     _pid_is "$p" "$2" "${3:-}" && kill -KILL "$p" 2>/dev/null
+  fi
+  rm -f "$f"
+}
+
+# The window manager's pid file, by _wm_is (D20.1) -- argv[0], DISPLAY=:N and
+# the HOME of the verified server <xpid> -- never by name alone.
+_kill_wm() {   # <verified server pid>
+  local f; f=$(_f wm.pid); local p xp="$1"
+  p=$(_pid_of wm.pid) || { rm -f "$f"; return 0; }
+  if _wm_is "$p" "$xp"; then
+    kill -TERM "$p" 2>/dev/null
+    local i=0
+    while [ "$i" -lt 30 ] && _wm_is "$p" "$xp"; do sleep 0.1; i=$((i+1)); done
+    _wm_is "$p" "$xp" && kill -KILL "$p" 2>/dev/null
   fi
   rm -f "$f"
 }
@@ -334,17 +392,28 @@ cmd_start() {
 
 cmd_stop() {
   if [ ! -d "$STATE_DIR" ]; then _say "not running (no state)"; return 0; fi
-  if ! _ours && ! _pid_of xvfb.pid >/dev/null 2>&1; then
-    _clean_state; _say "not running (state cleaned)"; return 0
-  fi
-  # Each by IDENTITY (D17.6), and the lock only if it names the server this
-  # state dir recorded AND that pid really was that server when we stopped it.
+  # ⚠ NO SERVER, NO KILLS (DECISIONS D20.1). Everything this state dir records
+  # was started by ONE `start` around ONE server, and a WM or a viewer dies
+  # with the display it is connected to. So unless xvfb.pid names a LIVE
+  # process that IS `Xvfb :N` by argv[0], nothing it recorded can still be
+  # ours, and nothing is killed: a dead xvfb.pid used to fall through to the
+  # wm.pid and vnc.pid kills, and the round-3 safety refuter had `stop` on a
+  # dead :194 kill a live openbox serving :192. That is exactly the user's own
+  # state dir today -- xvfb.pid 1116 and wm.pid 1135, both dead, both low
+  # enough for a reboot to hand to anything.
   local xp=""
   xp=$(_pid_of xvfb.pid 2>/dev/null) && _pid_is "$xp" Xvfb "$DPY" || xp=""
+  if [ -z "$xp" ]; then
+    _clean_state; _say "not running (state cleaned)"; return 0
+  fi
+  # Each by IDENTITY (D17.6, D20.1): the viewer by argv[0] and the display
+  # word, the WM by argv[0] AND an environment naming this display and this
+  # server's HOME, the server by argv[0] and the display word. The lock goes
+  # only if it names the server this state dir recorded, which is now gone.
   _kill_pidfile vnc.pid x11vnc "$DPY"
-  _kill_pidfile wm.pid "$(_wm_name)"
+  _kill_wm "$xp"
   _kill_pidfile xvfb.pid Xvfb "$DPY"
-  [ -n "$xp" ] && _rm_lock_if_names "$xp"
+  _rm_lock_if_names "$xp"
   _clean_state
   _say "stopped $DPY"
   return 0
@@ -354,7 +423,7 @@ cmd_status() {
   local state
   if _ours; then state=alive
   elif _server_answers; then state=foreign
-  elif _pid_of xvfb.pid >/dev/null 2>&1; then state=stale
+  elif _pid_rec xvfb.pid >/dev/null 2>&1; then state=stale
   else state=dead
   fi
 
@@ -377,7 +446,7 @@ cmd_status() {
   echo "state:   $state"
   echo "screen:  $(cat "$(_f screen)" 2>/dev/null || echo "$SCREEN (not started)")"
   echo "wm:      $(cat "$(_f wm)" 2>/dev/null || echo "$WM (not started)") ($wmid)"
-  echo "xvfb:    $(_pid_of xvfb.pid 2>/dev/null || echo '-')"
+  echo "xvfb:    $(_pid_rec xvfb.pid 2>/dev/null || echo '-')"
   echo "vnc:     $(_vnc_alive && _pid_of vnc.pid || echo '-')"
   echo "clients: $clients"
   echo "state dir: $STATE_DIR"

@@ -1,0 +1,1312 @@
+diff -ruN a/doc/claude/specs/issue_stamp.md b/doc/claude/specs/issue_stamp.md
+--- a/doc/claude/specs/issue_stamp.md	2026-09-18 21:54:11.598290591 -0700
++++ b/doc/claude/specs/issue_stamp.md	2026-09-18 21:54:11.600393906 -0700
+@@ -216,16 +216,49 @@
+ 
+ The info string after the language word takes the same `key=value` grammar.
+ 
+-**It is read in full.** A fence is *marked* when any word of its info string is
+-shaped `key=value`, and a marked fence's info string must then be exactly: at most
+-one leading language word (no `=` in it), then `key=value` words only, each key one
+-of `quote path fix assert pat state` and each given once. Any other word is a named
+-problem and the block is **not evaluated**. The checker used to keep the key=value
+-words and drop the rest, so `assert=absent pat="static int" path=src state=holds`
+-was checked as a search for the literal `"static` and passed, while the phrase is on
+-463 lines of `src` (measured by S1-fix6's refuter; outsider-fixes DECISIONS D19). A
+-fence with no key=value word at all is an ordinary code sample, and its info string
+-is not read.
++**A fence is *marked* only by a key of a block: `quote=`, `assert=`, `path=`,
++`pat=` or `state=`.** Any other fence is an ordinary code sample and its info string
++is not read, whatever it holds. That includes an mkdocs title
++(```` ```python title="example.py" ````), a build line (```` ```sh cc=gcc make ````,
++```` ```sh make prefix=/usr install ````), `hl_lines=` and a lone `fix=` label. Until
++S1-fix8 a fence was marked by *any* `key=value` word, and those three fences were each
++named as malformed in a stamped file: false reds on honest content (measured by
++S1-fix7's refuter, red-first by S1-fix8). S1-fix8 then marked by `quote=` and
++`assert=` alone, and that lost every block whose marking key was **misspelled**:
++`asert=`, `assertion=` or `asserts=` on a false assertion, and `qoute=` or `quotes=`
++on a rotted quote, each passed `ok (0 problems)` where the checker before it named the
++unknown key (measured by S1-fix8's refuter, red-first by S1-fix9). The other three
++keys only ever appear on a block, so they mark a fence too, and the misspelled key is
++a named problem. A fence marked only by `path=`, `pat=` or `state=` and otherwise
++well-formed has nothing to evaluate and is no problem (```` ```sh path=src/foo.c ````).
++A near-miss of `quote=` or `assert=` in another case or spacing (`ASSERT=`,
++`QUOTE=`, `assert = absent`, `Assert= absent`) is named **once** (§5).
++
++**Which lines are fences.** A fence is a run of three or more backticks, or of three
++or more tildes, indented at most three spaces, and it closes on a run of the same
++character at least as long, as CommonMark has it. So a fence in a list item indented
++three spaces or fewer is a fence. A backtick fence's info string holds no backtick:
++```` ```make install``` fails here ```` is inline code in a paragraph, the way
++Slack-style writing uses it, and opens nothing. Until S1-fix9 it opened a fence that
++ran to the next bare ```` ``` ```` line, and a real `assert=` fence after it was
++swallowed as text: named, never evaluated, so a true assertion went red and a false
++one was never called false (read by S1-fix8's refuter, red-first by S1-fix9 and
++S1-fix10). The same rule has two consequences, stated in §6.
++Only a **column-0 backtick** fence is *read* as a block. Any other fence (`~~~`, or
++indented one to three spaces) is a fence whose contents are text. A fence indented
++four or more spaces, as under a nested list item, or inside a `>` blockquote, is not a
++fence to the block reader at all. A `quote=` or `assert=` on any fence that is not
++read is a named problem (§5), never a silent pass.
++
++**A marked fence's info string is read in full.** It must be exactly: at most one
++leading language word (no `=` in it), then `key=value` words only, each key one of
++`quote path fix assert pat state` and each given once. Any other word, a title
++included, is a named problem and the block is **not evaluated**. The checker used to
++keep the key=value words and drop the rest, so `assert=absent pat="static int"
++path=src state=holds` was checked as a search for the literal `"static` and passed,
++while the phrase is on 463 lines of `src` (measured by S1-fix6's refuter;
++outsider-fixes DECISIONS D19). The problem names the first five such words and
++counts the rest.
+ 
+ ### `quote=` — a block that claims to reproduce tree text
+ 
+@@ -304,12 +337,23 @@
+ interpolation — a document that can run arbitrary commands when you validate it
+ is a document you cannot validate.
+ 
+-**All the `assert=` scans of one gate run share one budget** (60 s), on top of
+-each scan's own. A block reached after it is spent is a named problem, never
+-evaluated and never passed. Per-scan bounds alone did not bound how many scans a
+-corpus asks for: 100 two-line blocks over `path=.` held the gate for 211–253 s
+-(measured by S1-fix6's refuter and by S1-fix7). The real corpus's one block costs
+-about 70 ms.
++**All the `assert=` scans of one gate run share one budget: 60 s of scanning
++time**, on top of each scan's own 60 s. Only time spent scanning is charged to it. A
++block reached after it is spent is a named problem, never evaluated and never
++passed. Per-scan bounds alone did not bound how many scans a corpus asks for: 100
++two-line blocks over `path=.` held the gate for 211–253 s (measured by S1-fix6's
++refuter and by S1-fix7). The real corpus's one block costs about 70 ms. Until
++S1-fix8 this budget was a wall clock that started with the gate, so git work done
++*before* an assertion spent it. 240 valid `quote=` blocks in 0056 made the gate
++report 1219's 70 ms assertion as having run past the scanning budget: a false red
++with a false reason (measured by S1-fix7's refuter, red-first by S1-fix8).
++
++**A whole gate run also has a wall-clock budget, 600 s**, for everything it does:
++every git question a `tree=` or a `quote=` asks, and every scan. Once it is spent,
++each `tree=`, `quote=` and `assert=` the gate reaches is a named problem saying that
++the gate's time ran out. It is never passed, and never blamed on the assertion that
++came next. 600 s is under T1's 900 s per-case cap, so a corpus that asks for more is
++named rather than killed. The real corpus's whole gate takes well under a second.
+ 
+ `state=` is the interesting half, and it is what makes the tracker close its own
+ issues:
+@@ -362,7 +406,26 @@
+   stamp that lost its colon (`**STAMP** `, `**Stamp** `, `**STAMP;**`) was prose
+   to the stray-stamp detector, which needs the word and a colon, so its bogus
+   `tree=` was never checked (measured by S1-fix6's refuter). The only lines in the
+-  real corpus that carry a body are the ten real stamps.
++  real corpus that carry a body are its real stamps (ten when this was written, 17
++  at `32b6a9cd`, measured by S1-fix10). **There is no exception
++  for a body inside a fence**, although markdown renders it as code: an example of
++  the format written in an issue file is named like any other body. That is a
++  documented limit, with its workaround, in §6.
++* Near-misses of a marked fence are named too: a `quote=` or `assert=` written in a
++  `~~~` fence, an indented fence, a blockquote, a list item, a fence never closed, a
++  file with no stamp, a ```` ``` ```` line whose info string holds a backtick, or as
++  `ASSERT=`, `QUOTE=`, `assert =` or `Assert= absent`. Each is **one** problem: a
++  case or spacing near-miss of `quote=`/`assert=` is named by the stray-attribute
++  check alone, and the marked-fence reader leaves that word to it, unless the key is
++  also written correctly in the same info string, where the near-miss is a bad word
++  of the fence instead. A misspelled marking key on a block (`asert=`, `qoute=`) is named
++  as a key the grammar does not know (§4).
++* **No problem line is unbounded.** A problem quotes corpus words, and one marked
++  fence of 200k stray words once printed a single 5.8–6.9 MB line (measured by
++  S1-fix7's refuter and red-first by S1-fix8). A quoted word is clipped with its real
++  length, as in `ZZZZ…...(1000000 characters)`. A fence names its first five stray
++  words and counts the rest. Any line still longer than 2000 characters is cut, and
++  says so.
+ 
+ So the unconverted set can shrink and never grow, and **the gate is green on the
+ corpus as it stands** — which is the hard constraint (`D9`): T1's baseline is
+@@ -469,6 +532,56 @@
+   in UTF-8 (`café`, `日本`, an emoji) are green in both locales. This is recorded
+   rather than fixed (outsider-fixes DECISIONS D19). Rename the directory or clone
+   elsewhere.
++* **A stamp body inside a fence is named, as anywhere else** (outsider-fixes
++  DECISIONS D21). ``see `v1 claim=open …` `` in a ```` ```text ```` fence is an
++  example to a reader and to markdown, and the checker names it: every line holding
++  a body — a backtick, `v1`, blanks, then `claim=` — that is not the stamp line is a
++  problem, in a fence or not, at any indentation or blockquote depth. S1-fix8
++  exempted closed fences and S1-fix9 found them through blockquotes and lists, and
++  each round's refuter then measured new regressions **in that exemption** from
++  nested markdown: a fence shown inside a fence, a blockquoted or four-indented fence
++  inside an example, a docstring example. One of them failed **open**: a colon-less
++  stamp in prose after such an example passed. A line-based scanner cannot settle
++  which fence a nested container's ```` ``` ```` line belongs to, and a real
++  CommonMark parser is out of scope, so the exemption was withdrawn. The limit is
++  fail-closed and loud, and the real corpus has no such line. **The workaround:**
++  show a stamp example outside `doc/claude/issues/` (a spec such as this one is not
++  scanned), or break the body so it is no longer one — write `` `v1 …` `` without
++  `claim=`, or leave out the backtick before `v1`. Rows Q19 and Q22 hold the limit.
++* **A stamp written in a fence is still read as one.** A canonical `**STAMP:**` line
++  at column 0 inside a fence is read as a stamp, because the stamp reader does not
++  look at fences. So is `STAMP:` followed by a body, in any emphasis, which is named
++  as a stamp the parser does not read. Both are fail-closed (red), as they were at
++  `aa5cece0`. The real corpus has neither.
++* **Which fences the block reader sees, exactly.** This section said until S1-fix9
++  that *"a fence inside a blockquote or a list item is not seen as a fence"*, which
++  was wrong for a list item: a list-item fence indented three spaces or fewer **is**
++  seen (measured by S1-fix8's refuter). The block reader (`quote=`, `assert=`) sees
++  a fence indented three spaces or fewer, a list item's included, and reads only a
++  column-0 backtick one. It does not see a fence indented four or more spaces (a
++  nested list item's), one inside a `>` blockquote, or one with a list-item marker
++  on its own line (`- ```text`). A `quote=` or `assert=` on any fence it does not
++  read is named, never passed. A block inside a container is therefore never
++  *verified*; write it at column 0.
++* **A backtick in a backtick fence's info string makes it no fence** (§4), as
++  CommonMark has it, and markdown-it agrees on both consequences. **A `pat=` cannot
++  hold a backtick:** ```` ```sh assert=absent pat=`x` … ```` is inline code, not a
++  block, and is named as such, where the checker before S1-fix9 read it. And **a
++  ```` ```sh `make` output ```` line opens nothing**, so the bare ```` ``` ```` meant
++  to close it opens a fence instead, and a real `quote=` or `assert=` fence after it
++  is text inside that one: named as not read, never passed. Search for the text
++  without its backticks, and write example output under a plain ```` ```text ````.
++* **A block that lost its marking key entirely is not named.** A fence carrying
++  `pat=`, `path=` and `state=` but no `assert=` at all, or `path=` alone, is read and
++  has nothing to evaluate. Naming it would false-red ordinary code samples that
++  carry a `path=` word. The converse cost of marking by those three keys is stated
++  too: an ordinary code sample whose info string holds one of them **and** a word
++  that is not `key=value` (```` ```sh path=/tmp ls ````) is named as a malformed
++  fence. The real corpus has neither.
++* **The gate's 600 s wall-clock budget depends on the box.** On a machine slow
++  enough that the gate takes longer than that, whatever it reaches afterwards is
++  red, and the problem says why: the gate's time ran out. The real corpus takes well
++  under a second here.
+ * **In a partial clone, a `quote=` whose content was never fetched is NOT VERIFIED.**
+   The checker never fetches (every git call runs with `GIT_NO_LAZY_FETCH=1`), so
+   the content of an old revision's file is not there to compare against. It is
+diff -ruN a/tests/headless/issue_stamp.tcl b/tests/headless/issue_stamp.tcl
+--- a/tests/headless/issue_stamp.tcl	2026-09-18 21:54:11.585207905 -0700
++++ b/tests/headless/issue_stamp.tcl	2026-09-18 21:54:11.590021953 -0700
+@@ -202,12 +202,48 @@
+     ## cap out.  Now the run's scans share one clock, and a block reached after
+     ## it has run out is a NAMED problem, never evaluated and never passed.  The
+     ## real corpus's one block costs ~70 ms of the 60 s.
++    ## ⚠ AND THE TOTAL IS CHARGED WITH SCANNING TIME ONLY (outsider-fixes S1-fix8).
++    ## It was a wall clock started when the gate started, so everything the gate
++    ## did BEFORE an assert= -- every git question a tree= or a quote= asks --
++    ## spent the assert= budget.  MEASURED by S1-fix7's refuter and red-first by
++    ## S1-fix8: 240 VALID quote= blocks in stamped 0056, every one of which holds,
++    ## took the gate past 60 s before it reached 1219's real assertion, and the
++    ## gate said `1219:72: assertion could not be evaluated -- the search ran past
++    ## the gate's total budget of 60 s for all the assert= scans of one run`,
++    ## rc 1, in 74.5 s -- while 1219's own scan takes ~70 ms.  A false sentence and
++    ## a false red, over a corpus with nothing wrong in it.  Now each scan's own
++    ## time is added up (scan_spent_us) and only that is charged: 60 s of
++    ## SCANNING, which is what bounds the busy loop above.
++    ## ⚠ THE WALL CLOCK IS KEPT, UNDER ITS OWN NAME.  Git work was never bounded
++    ## by anything but each call's `timeout` (S1-fix7's refuter: 50 quote= blocks
++    ## of bogus revisions 16 s, and a partial clone runs an `ls-tree -r` per
++    ## absent quote), so a whole gate() run also has a wall-clock budget,
++    ## t_gate_total: once it is spent, every tree=, quote= and assert= the gate
++    ## reaches is a NAMED problem saying that the GATE's time ran out -- never
++    ## charged to whichever assertion happened to come next.  600 s sits under
++    ## T1's 900 s per-case cap, so a corpus that asks for more is named rather
++    ## than killed; the real corpus's whole gate takes well under a second.
+     variable t_git        30
+     variable t_scan       60
+     variable t_scan_total 60
+-    ## The deadline (clock milliseconds) shared by every scan of the gate() run
+-    ## in progress, or "" outside one.  Set and cleared by gate() alone.
+-    variable scan_deadline ""
++    variable t_gate_total 600
++    ## Microseconds of assert= SCANNING charged to the gate() run in progress,
++    ## and that run's wall-clock deadline (clock milliseconds) -- both "" outside
++    ## one.  Set and cleared by gate() alone.
++    variable scan_spent_us ""
++    variable gate_deadline ""
++    ## ⚠ NO PROBLEM LINE IS UNBOUNDED (outsider-fixes S1-fix8).  A problem quotes
++    ## corpus words -- a fence's stray words, a pat=, a path=, a stamp's token --
++    ## and nothing capped them: S1-fix7's refuter MEASURED one marked fence with
++    ## 200k stray words (a 404 KB issue file) print a single 5.8 MB problem line,
++    ## and S1-fix8 red-first a 6.9 MB one, plus 1 MB for a 1 MB pat=, 3 MB for a
++    ## 1 MB path=, and 1 MB for a stamp's 1 MB tree=.  Each quoted word is now
++    ## clipped (clip), a fence names its first fence_bad_shown stray words and
++    ## counts the rest, and gate() cuts any problem or NOT VERIFIED line longer
++    ## than problem_cap characters, saying so -- the backstop for a site nobody
++    ## clipped.
++    variable fence_bad_shown 5
++    variable problem_cap     2000
+ 
+     ## ⚠ THE CALLER'S REPOSITORY-LOCATING VARIABLES, REMOVED FROM EVERY git CALL
+     ## THIS CHECKER MAKES (istamp::git_in).  The checker describes the tree it
+@@ -866,6 +902,15 @@
+ ## states its tree" having READ those four files in the same session.  A
+ ## convention a grep cannot see is a convention that does not exist.
+ 
++## A corpus word as a problem quotes it: whole when it is at most $n characters,
++## else its first $n and how long it really was (see problem_cap).  String
++## work only.
++proc istamp::clip {s {n 80}} {
++    set len [string length $s]
++    if {$len <= $n} { return $s }
++    return "[string range $s 0 [expr {$n - 1}]]...($len characters)"
++}
++
+ proc istamp::parse_stamp {line} {
+     variable ok_claim
+     variable ok_fix
+@@ -884,15 +929,15 @@
+     }
+     set ver [lindex $toks 0]
+     if {$ver ne "v1"} {
+-        return [dict create ok 0 err "first token must be the schema version `v1`, got `$ver`" f {}]
++        return [dict create ok 0 err "first token must be the schema version `v1`, got `[clip $ver]`" f {}]
+     }
+     set f [dict create]
+     foreach t [lrange $toks 1 end] {
+         if {![regexp {^([a-z]+)=(.*)$} $t -> k v]} {
+-            return [dict create ok 0 err "token `$t` is not key=value" f {}]
++            return [dict create ok 0 err "token `[clip $t]` is not key=value" f {}]
+         }
+         if {[lsearch -exact $ok_key $k] < 0} {
+-            return [dict create ok 0 err "unknown key `$k` (known: $ok_key)" f {}]
++            return [dict create ok 0 err "unknown key `[clip $k]` (known: $ok_key)" f {}]
+         }
+         if {[dict exists $f $k]} {
+             return [dict create ok 0 err "duplicate key `$k`" f {}]
+@@ -906,11 +951,11 @@
+     }
+     set claim [dict get $f claim]
+     if {[lsearch -exact $ok_claim $claim] < 0} {
+-        return [dict create ok 0 err "claim=$claim is not one of: $ok_claim" f $f]
++        return [dict create ok 0 err "claim=[clip $claim] is not one of: $ok_claim" f $f]
+     }
+     set fix [dict get $f fix]
+     if {[lsearch -exact $ok_fix $fix] < 0} {
+-        return [dict create ok 0 err "fix=$fix is not one of: $ok_fix" f $f]
++        return [dict create ok 0 err "fix=[clip $fix] is not one of: $ok_fix" f $f]
+     }
+     set tree [dict get $f tree]
+     ## The a-f requirement is stolen from tools/stampscan.py, and it is there
+@@ -918,10 +963,10 @@
+     ## 141592654 (pi) and produced a driver finding that "193 of 508 cited SHAs
+     ## do not resolve".  They were not SHAs.
+     if {![rev_token $tree]} {
+-        return [dict create ok 0 err "tree=$tree is not a revision (7-40 hex, at least one a-f)" f $f]
++        return [dict create ok 0 err "tree=[clip $tree] is not a revision (7-40 hex, at least one a-f)" f $f]
+     }
+     if {![regexp {^[0-9]{4}-[0-9]{2}-[0-9]{2}$} [dict get $f stamped]]} {
+-        return [dict create ok 0 err "stamped=[dict get $f stamped] is not YYYY-MM-DD" f $f]
++        return [dict create ok 0 err "stamped=[clip [dict get $f stamped]] is not YYYY-MM-DD" f $f]
+     }
+     ## ⚠ AND IT MUST BE A DAY ON THE CALENDAR.  `0000-00-00` has the right shape
+     ## and names no day at all, and while a date rule trusted this field it was
+@@ -931,7 +976,7 @@
+         return [dict create ok 0 err "stamped=[dict get $f stamped] is not a day on the calendar" f $f]
+     }
+     if {![regexp {^(0|[1-9][0-9]*)$} [dict get $f open]]} {
+-        return [dict create ok 0 err "open=[dict get $f open] is not a non-negative integer" f $f]
++        return [dict create ok 0 err "open=[clip [dict get $f open]] is not a non-negative integer" f $f]
+     }
+     ## ⚠ A SUPERSEDED FIX MUST NAME WHAT REPLACED IT.  This rule exists because
+     ## of issue 0442, and 0442 is the sharpest defect in the whole sample: its
+@@ -955,14 +1000,14 @@
+     ## `self`.
+     if {[dict exists $f scope] && ![regexp {^[A-Za-z0-9._/-]+$} [dict get $f scope]]} {
+         return [dict create ok 0 err \
+-            "scope=[dict get $f scope] must be a single token naming an arm, path or door" f $f]
++            "scope=[clip [dict get $f scope]] must be a single token naming an arm, path or door" f $f]
+     }
+     if {[dict exists $f super]} {
+         set s [dict get $f super]
+         set ok_super [expr {[regexp {^[0-9]{4}$} $s] || $s eq "self" || [rev_token $s]}]
+         if {!$ok_super} {
+             return [dict create ok 0 err \
+-                "super=$s must be a 4-digit issue number, a revision, or `self`" f $f]
++                "super=[clip $s] must be a 4-digit issue number, a revision, or `self`" f $f]
+         }
+     }
+     return [dict create ok 1 err "" f $f]
+@@ -1072,8 +1117,10 @@
+ ## key=value grammar as the stamp:
+ ##
+ ##   ```c quote=fadb226d path=src/scheduler.c      <- a verifiable quote
+-##   ```tcl fix=superseded                          <- a prescription's state
+ ##   ```sh assert=absent pat=SABOTAGE path=src/ state=broken
++##   ```tcl fix=superseded                          <- a prescription's state:
++##                                                     a label for the reader,
++##                                                     not marked, never read
+ ##
+ ## Returns a list of dicts: kind, attrs, body, lineno.
+ proc istamp::find_blocks {text} {
+@@ -1098,11 +1145,25 @@
+ ##     indented at most 3 spaces, with nothing after it but blanks;
+ ##   * a ~~~ fence and an indented fence are fences -- what is inside them is
+ ##     text, not a block -- but only a column-0 backtick fence is READ as one
+-##     (a quote on any other kind is named by stray_quotes, as before).
+-## Not modelled, and stated: containers (a fence inside `>` or a list item is
+-## not seen as one) and a backtick in a backtick fence's info string.  Each can
+-## only make this parser see a block markdown does not, or miss one it does --
+-## and a missed quote fence is named by stray_quotes, never passed.
++##     (a quote on any other kind is named by stray_quotes, as before);
++##   * a backtick fence's info string holds no backtick (outsider-fixes S1-fix9,
++##     kept by S1-fix10; CommonMark's own rule).  A line such as ```` ```make
++##     install``` fails here ```` is an inline code span in a paragraph, the
++##     way Slack-style writing uses it, and it OPENED a fence here: everything
++##     down to the next bare ``` line was text inside that phantom, so a real
++##     ```sh assert=... fence after it was swallowed, named `inside another
++##     fenced block` and never evaluated -- a TRUE assertion went red, a FALSE
++##     one was never called false (READ by S1-fix8's refuter, MEASURED
++##     red-first by S1-fix9 and again by S1-fix10; row Q24).  The same rule
++##     has two consequences markdown-it agrees with, stated in spec section 6:
++##     a pat= cannot hold a backtick (that line is no fence either, and is
++##     named for it), and a ```sh `make` output line is no opener, so the bare
++##     ``` meant to close it opens a fence instead and swallows the next one.
++## Not modelled, and stated: containers.  A fence indented 4 or more spaces
++## (under a nested list item) or inside a `>` blockquote is not seen as a fence
++## by THIS scan; one indented 3 spaces or fewer -- a list item's included -- is.
++## That can only make this parser miss a block markdown reads -- and a missed
++## quote= or assert= fence is named by stray_attrs, never passed.
+ ##
+ ## ⚠ A MARKED FENCE'S INFO STRING IS READ IN FULL (outsider-fixes DECISIONS
+ ## D19).  This kept the words shaped `key=value` and silently DROPPED every
+@@ -1114,29 +1175,109 @@
+ ## threw `int"` away; `assert=present pat=static nonexistent_zz_symbol ...`
+ ## -- a phrase on NO line -- said ok too, because it searched for `static`.
+ ## The stamp's grammar has always refused a token that is not key=value.  So a
+-## fence is MARKED when any word of its info string is shaped `key=value`, and
+-## then its info string must be exactly: at most one leading language word (no
+-## `=` in it), then `key=value` words only, each key known (`fence_keys`) and
+-## given once.  Anything else lands in the block's `bad` list, and the gate
+-## names the block and does not evaluate it (fail-closed: nothing it claims is
+-## passed).  A fence with no key=value word is an ordinary code sample, and
+-## its info string is nobody's business (row N2).
+-namespace eval istamp { variable fence_keys {quote path fix assert pat state} }
++## MARKED fence's info string must be exactly: at most one leading language
++## word (no `=` in it), then `key=value` words only, each key known
++## (`fence_keys`) and given once.  Anything else lands in the block's `bad`
++## list, and the gate names the block and does not evaluate it (fail-closed:
++## nothing it claims is passed).
++##
++## ⚠ AND A FENCE IS MARKED ONLY BY A KEY OF A BLOCK (fence_marks;
++## outsider-fixes S1-fix8, widened by S1-fix9 below).  S1-fix7 marked a fence
++## when ANY word was shaped `key=value`, and so read every ordinary code fence
++## that carried one as a malformed block: MEASURED by its refuter and red-first
++## by S1-fix8, in stamped 1219, an mkdocs-style ```` ```python title="example.py"
++## ````, ```` ```sh cc=gcc make ```` and ```` ```sh make prefix=/usr install
++## ```` were each `a marked fence the parser cannot read in full`, rc 1 --
++## honest content, false reds, where aa5cece0 said ok.  Those words are the
++## fence's own business.  A fence carrying no key of a block -- `fix=superseded`
++## alone included, a label for the reader that the gate has never evaluated --
++## is an ordinary code sample (rows N2, Q18).
++##
++## ⚠ ...AND BY THE KEYS THAT ONLY A BLOCK CARRIES: path=, pat= AND state=
++## (fence_marks; outsider-fixes S1-fix9).  Marking by quote= and assert= alone
++## lost every block whose marking key was MISSPELLED: `asert=`, `assertion=` or
++## `asserts=` on a FALSE assertion (`pat=SABOTAGE path=src state=holds`, eight
++## real hits), and `qoute=` or `quotes=` on a ROTTED quote (`path=README`, a body
++## not in the file), each said `ok (0 problems)` in stamped 1219 -- the fence was
++## not marked, so its info string was never read -- where d42fc517 named the
++## unknown key (MEASURED by S1-fix8's refuter, red-first by S1-fix9; row Q23).
++## A near-miss an honest author makes by accident is named, never passed
++## (DECISIONS D18-B).  The ordinary fences S1-fix8 freed stay free: a title,
++## cc=, prefix=, hl_lines=, a fix= label carry none of the five (Q18).  A fence
++## marked only by path=, pat= or state= and otherwise well-formed is read and
++## has nothing to evaluate, so it is no problem (`sh path=src/foo.c`); one that
++## also carries a word that is not key=value (`sh path=/tmp ls`) is named, as
++## any marked fence is -- the cost of this rule, stated in spec section 6, and
++## the price of also catching `assert:absent` and `assert absent` (MEASURED:
++## each named here, `ok (0 problems)` at S1-fix8).
++##
++## ⚠ A NEAR-MISS OF quote= OR assert= IS NAMED ONCE, BY stray_attrs.  Another
++## case (`ASSERT=absent`, `Quote=`) or a spacing (`assert = absent`, `assert
++## =absent`, and since S1-fix10 `Assert= absent`, which S1-fix9's refuter
++## MEASURED still named twice, as d42fc517 names it) is matched there in any
++## case and spacing.  A fence now marked by
++## its pat= would also put that word in `bad`, and the file got two problems
++## for one mistake -- d42fc517's double-naming, which S1-fix8 had ended (row
++## Q18's 9188; MEASURED by S1-fix8's refuter on its remedy).  So those words are
++## LEFT to stray_attrs here, and the rest of the info string is read without
++## them -- but only while the key is not ALSO written canonically in the same
++## info string: then stray_attrs is silent for that line and the near-miss is a
++## bad word here, so it is still named exactly once.
++## ⚠ The `bad` list names at most fence_bad_shown words and COUNTS the rest: a
++## fence of 200k stray words printed a 6.9 MB problem line (see problem_cap).
++namespace eval istamp { variable fence_keys {quote path fix assert pat state} ; variable fence_marks {quote assert path pat state} }
+ proc istamp::fence_info {info} {
+     variable fence_keys
++    variable fence_marks
++    variable fence_bad_shown
+     set words {}
+     foreach t [split [string trim $info]] { if {$t ne ""} { lappend words $t } }
+-    set toks {}; set bad {}; set seen {}; set marked 0
+-    foreach t $words { if {[regexp {^[a-z]+=} $t]} { set marked 1 ; break } }
++    set toks {}; set bad {}; set nbad 0; set seen {}; set marked 0; set canon {}
++    foreach t $words {
++        if {[regexp {^([a-z]+)=} $t -> k]} {
++            if {$k in $fence_marks} { set marked 1 }
++            if {$k in {quote assert}} { dict set canon $k 1 }
++        }
++    }
+     if {!$marked} { return [list {} {}] }
++    ## The near-miss words stray_attrs names (its own test, on the same info
++    ## string), by word index.
++    set left {}
++    set n [llength $words]
++    foreach k {quote assert} {
++        if {[dict exists $canon $k] || ![regexp -nocase "(^|\[ \t\])$k\[ \t\]*=" $info]} { continue }
++        for {set j 0} {$j < $n} {incr j} {
++            set t [lindex $words $j]
++            if {[regexp -nocase "^$k=" $t]} {
++                dict set left $j 1
++                ## `Assert= absent`: the value came apart from its `=`.
++                if {[regexp -nocase "^$k=\$" $t] && $j + 1 < $n && [string first = [lindex $words $j+1]] < 0} {
++                    incr j
++                    dict set left $j 1
++                }
++            } elseif {[string equal -nocase $t $k] && [string index [lindex $words $j+1] 0] eq "="} {
++                dict set left $j 1
++                incr j
++                dict set left $j 1
++                if {[lindex $words $j] eq "=" && $j + 1 < $n && [string first = [lindex $words $j+1]] < 0} {
++                    incr j
++                    dict set left $j 1
++                }
++            }
++        }
++    }
+     set i 0
++    set j -1
+     foreach t $words {
++        incr j
++        if {[dict exists $left $j]} { continue }
+         incr i
++        set why ""
+         if {[regexp {^([a-z]+)=(.*)$} $t -> k v]} {
+             if {$k ni $fence_keys} {
+-                lappend bad "`[string range $t 0 39]` has a key the grammar does not know (known: $fence_keys)"
++                set why "`[string range $t 0 39]` has a key the grammar does not know (known: $fence_keys)"
+             } elseif {[dict exists $seen $k]} {
+-                lappend bad "`[string range $t 0 39]` gives `$k=` a second time"
++                set why "`[string range $t 0 39]` gives `$k=` a second time"
+             } else {
+                 dict set seen $k 1
+                 lappend toks $k $v
+@@ -1144,8 +1285,12 @@
+         } elseif {$i == 1 && [string first = $t] < 0} {
+             ## the language word
+         } else {
+-            lappend bad "`[string range $t 0 39]` is not a key=value word"
++            set why "`[string range $t 0 39]` is not a key=value word"
+         }
++        if {$why ne "" && [incr nbad] <= $fence_bad_shown} { lappend bad $why }
++    }
++    if {$nbad > $fence_bad_shown} {
++        lappend bad "and [expr {$nbad - $fence_bad_shown}] more word(s) like these, not listed"
+     }
+     return [list $toks $bad]
+ }
+@@ -1164,7 +1309,8 @@
+     foreach ln [split $text \n] {
+         incr i
+         if {!$in} {
+-            if {[regexp {^( {0,3})(`{3,}|~{3,})(.*)$} $ln -> ind fence info]} {
++            if {[regexp {^( {0,3})(`{3,}|~{3,})(.*)$} $ln -> ind fence info]
++                && !([string index $fence 0] eq "`" && [string first "`" $info] >= 0)} {
+                 set fch  [string index $fence 0]
+                 set flen [string length $fence]
+                 set readable [expr {$ind eq "" && $fch eq "`"}]
+@@ -1283,6 +1429,24 @@
+ ## does not read is a problem, wherever it sits.  MEASURED 2026-09-18 at
+ ## aa5cece0, all 1047 numbered issue files: the only lines holding it are the
+ ## ten real stamps, so the real corpus gains nothing.
++##
++## ⚠ INSIDE A FENCE TOO -- A DOCUMENTED LIMIT, NOT AN OVERSIGHT (outsider-fixes
++## DECISIONS D21).  A body quoted in a fenced example (``see `v1 claim=...` ``
++## in a ```text fence) is named here like any other, although markdown renders
++## it as code.  S1-fix8 exempted closed fences and S1-fix9 found them through
++## blockquotes and lists, and each round's refuter then MEASURED new
++## regressions IN THAT EXEMPTION from nested markdown -- a fence shown inside a
++## fence, a blockquoted or 4-indented fence inside an example, a docstring
++## example -- one of them fail-OPEN: a colon-less stamp in prose after such an
++## example passed.  A line-based scan cannot settle which fence a nested
++## container's ``` line belongs to, and a real CommonMark parser is out of
++## scope.  So every stamp body outside the stamp line is named, inside fences
++## included: fail-closed and loud, and the real corpus has none (MEASURED: the
++## only lines holding a body are the ten real stamps).  Row Q19 holds the
++## limit, with Q22.  The workaround, in spec section 6: show a stamp example
++## outside doc/claude/issues/, or break the body -- what is matched is a
++## backtick, `v1`, blanks and `claim=`, so write the example as `v1 ...`, or
++## leave out the backtick before `v1`.
+ proc istamp::stray_stamps {num text} {
+     set out {}
+     set words [regexp -nocase {stamp} $text]
+@@ -1362,6 +1526,9 @@
+                 set cause "a fence that is $cause"
+             } elseif {[string index $fence 0] eq "~"} {
+                 set cause "a ~~~ fence; only ``` fences are read"
++            } elseif {[string first "`" $info] >= 0} {
++                ## fence_scan's CommonMark rule (S1-fix9): not a fence at all.
++                set cause "a ``` line whose info string holds a backtick, which markdown reads as inline code, not a fence"
+             } elseif {[dict exists $opened $i] && ![dict get $opened $i]} {
+                 set cause "a fence that is never closed"
+             } elseif {![dict exists $opened $i]} {
+@@ -1478,7 +1645,7 @@
+ proc istamp::quote_holds {rev path body {gapok 0}} {
+     variable repo
+     if {[catch {git_q $repo --no-replace-objects cat-file --batch << "${rev}:${path}\n"} src]} {
+-        return [list 0 "git cat-file --batch could not read ${rev}:${path}"]
++        return [list 0 "git cat-file --batch could not read ${rev}:[clip $path 200]"]
+     }
+     set nl   [string first \n $src]
+     set head [expr {$nl < 0 ? $src : [string range $src 0 [expr {$nl - 1}]]}]
+@@ -1487,14 +1654,14 @@
+         if {$gap ne ""} { return [list -1 $gap] }
+     }
+     if {![regexp {^[0-9a-f]{40}(?:[0-9a-f]{24})? blob [0-9]+$} $head]} {
+-        return [list 0 "${rev}:${path} is not a file at that revision (git: [string range $head 0 99])"]
++        return [list 0 "${rev}:[clip $path 200] is not a file at that revision (git: [string range $head 0 99])"]
+     }
+     set src [expr {$nl < 0 ? "" : [string range $src [expr {$nl + 1}] end]}]
+     set n_src  [regsub -all {[ \t\r\n]+} $src  { }]
+     set n_body [string trim [regsub -all {[ \t\r\n]+} $body { }]]
+     if {$n_body eq ""} { return [list 0 "empty quote block"] }
+     if {[string first $n_body $n_src] >= 0} { return [list 1 ""] }
+-    return [list 0 "quoted text is not in ${rev}:${path}"]
++    return [list 0 "quoted text is not in ${rev}:[clip $path 200]"]
+ }
+ 
+ ## Why `<rev>:<path>` is MISSING here although nothing is wrong with it, or ""
+@@ -1521,14 +1688,14 @@
+     if {!$partial} { return "" }
+     set want [join [lsearch -all -inline -not -exact [path_parts $path] .] /]
+     if {[catch {git_q $repo --no-replace-objects ls-tree -r -z --full-tree --end-of-options $rev} ls]} {
+-        return "partial clone: the tree of $rev is not in this checkout either, so whether it holds $path cannot be told without fetching, and this checker never fetches"
++        return "partial clone: the tree of $rev is not in this checkout either, so whether it holds [clip $path 200] cannot be told without fetching, and this checker never fetches"
+     }
+     foreach ent [split $ls \0] {
+         if {![regexp {^[0-7]+ ([a-z]+) ([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(.*)$} $ent -> type oid name]} { continue }
+         if {$name ne $want} { continue }
+         if {$type ne "blob"} { return "" }
+         if {![catch {git_q $repo cat-file -e --end-of-options $oid}]} { return "" }
+-        return "partial clone: $rev has $want, and its content is not in this checkout -- this checker never fetches"
++        return "partial clone: $rev has [clip $want 200], and its content is not in this checkout -- this checker never fetches"
+     }
+     return ""
+ }
+@@ -1605,24 +1772,29 @@
+ proc istamp::assert_eval {kind pat path} {
+     variable repo
+     if {$kind ni {absent present}} {
+-        return [list -1 -1 "unknown assert kind `$kind`"]
++        return [list -1 -1 "unknown assert kind `[clip $kind]`"]
+     }
+     if {$pat eq ""} {
+         return [list -1 -1 "pat= is empty, and an empty pattern names nothing to look for"]
+     }
+-    ## The run's shared clock (t_scan_total): once it has run out, a block is
+-    ## named without a single file being read.
++    ## The run's shared budgets (t_scan_total, t_gate_total): once one has run
++    ## out, a block is named without a single file being read.
+     lassign [scan_budget] - bmsg bspent
+     if {$bspent} { return [list -1 -1 $bmsg] }
+     ## Text to bytes BEFORE the switch, each through the encoding that made it.
+     set rootb [as_bytes $repo [encoding system]]
+     set relb  [as_bytes $path utf-8]
+     set patb  [encoding convertto utf-8 $pat]
+-    if {[catch {in_bytes {
+-            lassign [confine_path $relb $path $rootb] cst target cwhy
++    ## ⚠ ONLY THIS -- the walk and the scan -- IS CHARGED TO THE RUN'S SCANNING
++    ## BUDGET, on every way out (scan_charge; see t_scan_total).
++    set t0 [clock microseconds]
++    set rc [catch {in_bytes {
++            lassign [confine_path $relb [clip $path 200] $rootb] cst target cwhy
+             if {$cst ne "ok"} { error $cwhy }
+             assert_scan $target $patb
+-        }} hits]} {
++        }} hits]
++    scan_charge $t0
++    if {$rc} {
+         return [list -1 -1 $hits]
+     }
+     if {$kind eq "absent"} {
+@@ -1711,7 +1883,7 @@
+         ok      { return [list ok $where ""] }
+         out     { return [list refused "" "path=$shown is refused: it leaves the checkout through a symbolic link (to `[bytes_shown $where]`); $rule"] }
+         missing { return [list missing "" "path=$shown does not exist in this checkout"] }
+-        default { return [list error "" "path=$shown cannot be resolved: [bytes_shown $where]"] }
++        default { return [list error "" "path=$shown cannot be resolved: [clip [bytes_shown $where] 400]"] }
+     }
+ }
+ 
+@@ -1829,19 +2001,49 @@
+     }
+ }
+ 
+-## The deadline one scan must meet, as {deadline words spent}: its own t_scan,
+-## or the gate() run's shared deadline when that comes first -- with the
+-## sentence a scan that misses it throws, and whether it is ALREADY missed.
++## The deadline one scan must meet, as {deadline words spent}: the EARLIEST of
++## its own t_scan, what is left of the gate() run's scanning time
++## (t_scan_total less scan_spent_us), and the gate() run's wall-clock deadline
++## (t_gate_total) -- with the sentence that names THAT budget, which a scan
++## that misses it throws, and whether it is ALREADY spent.  Outside a gate()
++## run only the scan's own budget applies.
+ proc istamp::scan_budget {} {
+     variable t_scan
+     variable t_scan_total
+-    variable scan_deadline
++    variable scan_spent_us
++    variable gate_deadline
+     set now [clock milliseconds]
+-    set own [expr {$now + 1000 * $t_scan}]
+-    if {$scan_deadline ne "" && $scan_deadline <= $own} {
+-        return [list $scan_deadline "the search ran past the gate's total budget of $t_scan_total s for all the assert= scans of one run -- a corpus that asks for more scanning than that is not evaluated past it, and each assertion reached after it is named instead" [expr {$now > $scan_deadline}]]
++    set best [list [expr {$now + 1000 * $t_scan}] "the search ran past its $t_scan s budget" 0]
++    if {$scan_spent_us ne ""} {
++        set left [expr {$now + (1000000.0 * $t_scan_total - $scan_spent_us) / 1000.0}]
++        if {$left <= [lindex $best 0]} {
++            set best [list $left "the assert= scans of this run used up the $t_scan_total s of scanning time they share -- only time spent scanning is charged to it, not the rest of the gate's work -- so a corpus that asks for more scanning than that is not evaluated past it, and each assertion reached after it is named instead" [expr {$left <= $now}]]
++        }
++    }
++    if {$gate_deadline ne "" && $gate_deadline <= [lindex $best 0]} {
++        set best [list $gate_deadline [gate_msg] [expr {$gate_deadline <= $now}]]
+     }
+-    return [list $own "the search ran past its $t_scan s budget" 0]
++    return $best
++}
++
++## Charge the scan that began at clock microseconds $t0 to the gate() run's
++## scanning time, if one is running.
++proc istamp::scan_charge {t0} {
++    variable scan_spent_us
++    if {$scan_spent_us ne ""} {
++        set scan_spent_us [expr {$scan_spent_us + [clock microseconds] - $t0}]
++    }
++}
++
++## Has the gate() run in progress spent its wall-clock budget (t_gate_total)?
++## Never, outside one.  And the words for what is not checked because it has.
++proc istamp::gate_spent {} {
++    variable gate_deadline
++    return [expr {$gate_deadline ne "" && [clock milliseconds] >= $gate_deadline}]
++}
++proc istamp::gate_msg {} {
++    variable t_gate_total
++    return "this gate run used up its total budget of $t_gate_total s of wall-clock time -- every git question a tree= or a quote= asks, and every assert= scan, counts toward it -- so it is not checked, and everything the gate reaches after that is named instead of checked"
+ }
+ 
+ proc istamp::scan_dir {d patb deadline {bmsg ""}} {
+@@ -2049,17 +2251,39 @@
+ ## Returns a list of problem strings.  Empty list = green.
+ ## `opts` may carry -headerlines N (default 12).
+ 
+-## The run's assert= scans share ONE clock (t_scan_total, see there): set here,
+-## cleared on every way out, so a scan outside a gate() run -- a suite row
+-## calling assert_eval directly -- has only its own per-scan budget.
++## The run's two shared budgets (see t_scan_total): the assert= scans' own
++## scanning time, and the whole run's wall clock.  Set here and cleared on every
++## way out, so a scan outside a gate() run -- a suite row calling assert_eval
++## directly -- has only its own per-scan budget.  And every line the run
++## answers with is capped (cap_lines, problem_cap).
+ proc istamp::gate {args} {
+-    variable scan_deadline
+-    variable t_scan_total
+-    set scan_deadline [expr {[clock milliseconds] + 1000 * $t_scan_total}]
++    variable scan_spent_us
++    variable gate_deadline
++    variable t_gate_total
++    variable last_skips
++    set scan_spent_us 0
++    set gate_deadline [expr {[clock milliseconds] + 1000 * $t_gate_total}]
+     set rc [catch {gate_body {*}$args} res opt]
+-    set scan_deadline ""
++    set scan_spent_us ""
++    set gate_deadline ""
+     if {$rc} { return -options $opt $res }
+-    return $res
++    set last_skips [cap_lines $last_skips]
++    return [cap_lines $res]
++}
++
++## Each line cut to problem_cap characters, saying so -- the backstop for a
++## corpus word some sentence quotes without clip.
++proc istamp::cap_lines {lines} {
++    variable problem_cap
++    set out {}
++    foreach p $lines {
++        set len [string length $p]
++        if {$len > $problem_cap} {
++            set p "[string range $p 0 [expr {$problem_cap - 1}]] ... (cut: this line has $len characters, and only the first $problem_cap are shown)"
++        }
++        lappend out $p
++    }
++    return $out
+ }
+ 
+ proc istamp::gate_body {args} {
+@@ -2151,6 +2375,12 @@
+         ## does not need it still runs: the header window, the grammar and the
+         ## baseline are already behind us, and assert= and the mirror check are
+         ## grep and dict work.  The date is not consulted.
++        ## ⚠ Once the run's wall clock (t_gate_total) is spent, no more git is
++        ## asked: the file is NAMED, never passed (fail-closed).
++        if {[gate_spent]} {
++            lappend problems "$num: tree=[dict get $f tree], and every marked block in this file, not checked -- [gate_msg]"
++            continue
++        }
+         lassign [rev_verdict [dict get $f tree]] rv rwhy
+         switch -- $rv {
+             ok   { incr last_verified }
+@@ -2200,9 +2430,13 @@
+                 ## `bad` falls through to quote_holds, which fails on it by name;
+                 ## a revision off HEAD's history is refused HERE, because
+                 ## `git show` would find it in this store and pass it.
++                if {[gate_spent]} {
++                    lappend problems "$num:$ln: quote=$q path=[clip [dict get $a path] 200] not checked -- [gate_msg]"
++                    continue
++                }
+                 lassign [rev_verdict $q] qv qwhy
+                 if {$qv eq "skip"} {
+-                    lappend last_skips "$num:$ln: quote=$q path=[dict get $a path] ($qwhy)"
++                    lappend last_skips "$num:$ln: quote=$q path=[clip [dict get $a path] 200] ($qwhy)"
+                 } elseif {$qv eq "bad" && $qwhy ne "unresolved"} {
+                     lappend problems "$num:$ln: [rev_problem quote=$q $q $qwhy]"
+                 } else {
+@@ -2210,7 +2444,7 @@
+                     ## content excused as a partial clone's (quote_holds).
+                     lassign [quote_holds [dict get $a quote] [dict get $a path] [dict get $blk body] [expr {$qv eq "ok"}]] ok why
+                     if {$ok == -1} {
+-                        lappend last_skips "$num:$ln: quote=$q path=[dict get $a path] ($why)"
++                        lappend last_skips "$num:$ln: quote=$q path=[clip [dict get $a path] 200] ($why)"
+                     } elseif {!$ok} {
+                         set qn [expr {$qv eq "bad" ? [upstream_note] : ""}]
+                         lappend problems "$num:$ln: $why -- a quoted block that no longer matches its source still LOOKS like valid code, and is the direct on-ramp to a fix that damages working code[expr {$qn ne "" ? ".$qn" : ""}]"
+@@ -2230,7 +2464,7 @@
+                 }
+                 set state [dict get $a state]
+                 if {$state eq "holds" && !$holds} {
+-                    lappend problems "$num:$ln: the file states this assertion HOLDS and it does not ($hits hits for [dict get $a pat] under [dict get $a path])"
++                    lappend problems "$num:$ln: the file states this assertion HOLDS and it does not ($hits hits for [clip [dict get $a pat] 200] under [clip [dict get $a path] 200])"
+                 } elseif {$state eq "broken" && $holds} {
+                     ## ⚠ THIS IS THE STALE-FIXED DETECTOR, AND IT IS THE WHOLE
+                     ## POINT.  7 of 40 sampled files reported finished work as
+@@ -2241,7 +2475,7 @@
+                     ## this project; this closes the greppable ones.
+                     lappend problems "$num:$ln: the file states this assertion is BROKEN, but it now HOLDS -- the defect appears FIXED and the issue was never closed. Re-read it and update the stamp."
+                 } elseif {$state ni {holds broken}} {
+-                    lappend problems "$num:$ln: state=$state must be holds or broken"
++                    lappend problems "$num:$ln: state=[clip $state] must be holds or broken"
+                 }
+             }
+         }
+@@ -2412,13 +2646,17 @@
+         incr n
+     }
+     ## D16: fences close the CommonMark way -- same character, at least as long,
+-    ## indented at most 3 -- as {blocks read, body of the first}.
++    ## indented at most 3 -- as {blocks read, body of the first}.  S1-fix9: and
++    ## open the CommonMark way -- a ``` line whose info string holds a backtick
++    ## is inline code, so it swallows no fence below it.
+     set fc [list "````c quote=d64686a1 path=x\na\n```\nb\n````" [list 1 "a\n```\nb"] \
+                  "```c quote=d64686a1 path=x\na\n`````\nb" [list 1 a] \
+                  "```c quote=d64686a1 path=x\na\n  ```\nb" [list 1 a] \
+                  "```c quote=d64686a1 path=x\na\n~~~\n```" [list 1 "a\n~~~"] \
+                  "~~~\n```c quote=d64686a1 path=x\na\n```\n~~~" [list 0 {}] \
+-                 "  ```text\n```c quote=d64686a1 path=x\na\n  ```" [list 0 {}]]
++                 "  ```text\n```c quote=d64686a1 path=x\na\n  ```" [list 0 {}] \
++                 "```make install``` fails\n\n```sh assert=absent pat=x path=y state=holds\nz\n```" [list 1 z] \
++                 "``` `x` ``` inline\n```c quote=d64686a1 path=x\na\n```" [list 1 a]]
+     foreach {txt want} $fc {
+         set blks [dict get [fence_scan $txt] blocks]
+         set got [list [llength $blks] [expr {[llength $blks] ? [dict get [lindex $blks 0] body] : {}}]]
+@@ -2433,11 +2671,13 @@
+     ## D18: an assert= the parser does not read is named as a quote= is -- in a
+     ## ~~~ fence, an indented one, a blockquote, one never closed, and in a file
+     ## with no stamp -- while a READ assert= fence and assert= in prose are not.
+-    ## As {text stamped? want}.
++    ## S1-fix9: and on a ``` line whose info string holds a backtick, which is
++    ## no fence at all.  As {text stamped? want}.
+     set a "assert=absent pat=x path=y state=holds"
+     set ac [list "~~~sh $a\nz\n~~~" 1 1   "  ```sh $a\n  z\n  ```" 1 1   "> ```sh $a\n> z\n> ```" 1 1 \
+                  "```sh $a\nz" 1 1        "```sh $a\nz\n```" 0 1        "```sh $a\nz\n```" 1 0 \
+-                 "the gate reads $a in a fence, never in prose" 1 0]
++                 "the gate reads $a in a fence, never in prose" 1 0 \
++                 "```sh assert=absent pat=`x` path=y state=holds\nz\n```" 1 1]
+     foreach {txt st want} $ac {
+         set got [llength [stray_attrs 9999 $txt [expr {$st ? [fence_scan $txt] : ""}]]]
+         if {$got != $want} { lappend bad "stray_attrs found $got, want $want, in ([expr {$st ? "stamped" : "unstamped"}]): [string map [list \n { | }] $txt]" }
+@@ -2455,6 +2695,14 @@
+     ## grammar does not know, a key given twice; and the known negatives: a
+     ## well-formed marked fence (with and without a language word), and an
+     ## ordinary code fence whose info string has words but no key=value at all.
++    ## S1-fix8: a title in a MARKED fence is still a bad word, and seven stray
++    ## words are five named plus one "and 2 more"; while a fence marked by no
++    ## key of a block -- an mkdocs title, `cc=gcc make`, `prefix=/usr`, a lone
++    ## fix= -- is not read at all.  S1-fix9: path=, pat= and state= mark a fence
++    ## too, so a misspelled marking key (asert=, assertion=, qoute=, quotes=) is
++    ## a bad word; a near-miss of quote=/assert= in another case or spacing is
++    ## LEFT to stray_attrs (not a bad word here), unless the key is also written
++    ## canonically, when it is one; and a lone path= is read with nothing wrong.
+     set ic [list {sh assert=absent pat="static int" path=src state=holds} {4 1} \
+                  {sh assert=present pat=static nonexistent_zz_symbol path=src state=holds} {4 1} \
+                  {sh assert=absent pat=x path=src state=holds pth=src} {4 1} \
+@@ -2462,7 +2710,24 @@
+                  {sh assert=absent pat=x path=src state=holds} {4 0} \
+                  {assert=absent pat=x path=src state=holds} {4 0} \
+                  {c quote=d64686a1 path=x} {2 0} \
+-                 {text an ordinary title, no attributes} {0 0}]
++                 {text an ordinary title, no attributes} {0 0} \
++                 {python title="x.py" assert=absent pat=x path=src state=holds} {4 1} \
++                 {sh assert=absent pat=x path=src state=holds a b c d e f g} {4 6} \
++                 {python title="example.py"} {0 0} \
++                 {sh cc=gcc make} {0 0} \
++                 {sh make prefix=/usr install} {0 0} \
++                 {tcl fix=superseded} {0 0} \
++                 {sh ASSERT=absent pat=x path=src state=holds} {3 0} \
++                 {c QUOTE=d64686a1 path=x} {1 0} \
++                 {sh assert = absent pat=x path=src state=holds} {3 0} \
++                 {sh Assert =absent pat=x path=src state=holds} {3 0} \
++                 {sh Assert= absent pat=x path=src state=holds} {3 0} \
++                 {sh assert=absent ASSERT=present pat=x path=src state=holds} {4 1} \
++                 {sh asert=absent pat=x path=src state=holds} {3 1} \
++                 {sh assertion=absent pat=x path=src state=holds} {3 1} \
++                 {c qoute=d64686a1 path=x} {1 1} \
++                 {c quotes=d64686a1 path=x} {1 1} \
++                 {sh path=src/foo.c} {1 0}]
+     foreach {info want} $ic {
+         lassign [fence_info $info] toks fb
+         set got [list [expr {[llength $toks] / 2}] [llength $fb]]
+@@ -2472,13 +2737,30 @@
+     ## D19: a line holding a stamp's BODY that find_stamp does not read is named
+     ## whatever precedes it -- the refuter's colon-less spellings and a stamp
+     ## quoted mid-sentence -- while the read stamp and prose that happens to
+-    ## hold `v1` are not.
++    ## hold `v1` are not.  D21 (S1-fix10): and so is a body INSIDE a fence of
++    ## any kind -- ```, ~~~, four backticks, blockquoted, under a list item, a
++    ## fence shown inside a fence -- the documented limit: no exemption, so
++    ## each of these is ONE problem, as at d42fc517.
+     set bc [list "**STAMP** $s" 1 "STAMP $s" 1 "**Stamp** $s" 1 "**STAMP;** $s" 1 \
+                  "the stamp we meant was $s, never written" 1 "# see **STAMP:** $s in the spec" 1 "**STAMP:** $s" 0 \
+-                 "the batch reads `v1 v2 v3` newest-first" 0 "`v1 = 8.333333e-01` is volts" 0]
++                 "the batch reads `v1 v2 v3` newest-first" 0 "`v1 = 8.333333e-01` is volts" 0 \
++                 "```text\nsee $s\n```" 1 "~~~\n**STAMP** $s\n~~~" 1 "````md\n```\n**STAMP** $s\n```\n````" 1 \
++                 "```text\nsee $s" 1 "```text\nx\n```\n**STAMP** $s" 1 "```text $s\nx\n```" 1 \
++                 "> ```text\n> see $s\n> ```" 1 "1. a\n   - b\n\n     ```text\n     see $s\n     ```" 1 \
++                 "    see $s" 1 "<pre>\nsee $s\n</pre>" 1 \
++                 "```md\n> ```text\n> x\n> ```\n\nsee $s\n```" 1 \
++                 "```make install``` fails\n\n**STAMP** $s\n\n```sh\nx\n```" 1]
+     foreach {txt want} $bc {
+         set got [llength [stray_stamps 9999 $txt]]
+-        if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: $txt" }
++        if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: [string map [list \n { | }] $txt]" }
++        incr n
++    }
++    ## S1-fix8: a quoted corpus word is clipped, and a line is capped, each
++    ## saying how long it really was.
++    set lc [list [clip abcdef 4] "abcd...(6 characters)" [clip abcd 4] abcd \
++                 [cap_lines [list [string repeat x 5000] ok]] [list "[string repeat x 2000] ... (cut: this line has 5000 characters, and only the first 2000 are shown)" ok]]
++    foreach {got want} $lc {
++        if {$got ne $want} { lappend bad "clip/cap_lines gave <[string range $got 0 60]>, want <[string range $want 0 60]>" }
+         incr n
+     }
+     ## D19: the one rule for an issue file's name.
+diff -ruN a/tests/headless/test_issue_stamp.tcl b/tests/headless/test_issue_stamp.tcl
+--- a/tests/headless/test_issue_stamp.tcl	2026-09-18 21:54:11.590021953 -0700
++++ b/tests/headless/test_issue_stamp.tcl	2026-09-18 21:54:11.593375693 -0700
+@@ -137,6 +137,25 @@
+ ##       number is RED, and a name that misses NNNN-<slug>.md is named;
+ ##   H22 no git call fetches: in a partial clone a quote of content that is not
+ ##       in the checkout is NOT VERIFIED by name, and nothing is fetched.
++## And from S1-fix8 (S1-fix7's refuter: false reds on honest content, and a
++## budget named for the wrong thing):
++##   Q18 a fence is MARKED only by quote= or assert=; an ordinary code fence
++##       whose info string holds other key=value words is not read;
++##   Q19 (D21, S1-fix10: the documented limit) a stamp's body is named inside a
++##       fence as anywhere else -- S1-fix8's in-fence exemption is withdrawn;
++##   Q20 each run budget is charged with what it names -- the assert= scans'
++##       own scanning time, and the gate's own wall clock;
++##   Q21 no problem line is unbounded.
++## And from S1-fix9 (S1-fix8's refuter: three regressions, R1-R3):
++##   Q22 (D21, S1-fix10: the documented limit) a body in a fence inside a
++##       blockquote, under a nested list item, or in a fence shown inside a
++##       fence is named too, and so is a colon-less stamp in prose after such
++##       an example -- S1-fix9's container-stripped exemption is withdrawn;
++##   Q23 a fence whose marking key is misspelled (asert=, qoute=) is still read
++##       -- path=, pat= and state= mark it -- and named; ASSERT=, QUOTE=,
++##       `assert =` and (S1-fix10) `Assert= absent` are each named once;
++##   Q24 a ```inline``` line opens no fence: a real assert= fence after it is
++##       still read, and a stamp body in the prose after it is named.
+ ##
+ ## ⚠ AND IN THE ONE STATE THAT IS MEANT TO BE RED -- `unreadable`: a .git that
+ ## git cannot read, e.g. git's dubious-ownership refusal in a container whose
+@@ -1716,8 +1735,10 @@
+ ## set already spent (t_scan_total -1) for ONE gate over five blocks that would
+ ## all hold: each is a problem naming the total budget, and nothing is scanned.
+ ## Then the same five with the budget back: no problem at all -- so the budget,
+-## not the blocks, made the first answer -- and the run's deadline is cleared
++## not the blocks, made the first answer -- and the run's budgets are cleared
+ ## once the gate returns, so a scan outside a gate is never charged to it.
++## (Since S1-fix8 the budget is SCANNING time, not the gate's wall clock: row
++## Q20 holds that.)
+ check_needs "Q14 a gate run's assert= scans share one budget: once it is spent every further block is a NAMED problem and nothing more is scanned; with the budget back the same blocks pass" {
+     if {$RB_ERR ne ""} {
+         set r "FIXTURE NOT BUILT: $RB_ERR"
+@@ -1732,11 +1753,12 @@
+             set istamp::t_scan_total -1
+             set q14_rc [catch {with_corpus $id $bf {istamp::gate}} q14_p]
+             set istamp::t_scan_total $q14_saved
+-            set q14_cleared [expr {$istamp::scan_deadline eq ""}]
++            set q14_cleared [expr {[info exists istamp::scan_spent_us] && [info exists istamp::gate_deadline]
++                                   && $istamp::scan_spent_us eq "" && $istamp::gate_deadline eq ""}]
+             set q14_back [with_corpus $id $bf {istamp::gate}]
+         }
+         if {$q14_rc} { error $q14_p }
+-        set n 0 ; foreach x $q14_p { if {[string match "91*: assertion could not be evaluated -- the search ran past the gate's total budget*" $x]} { incr n } }
++        set n 0 ; foreach x $q14_p { if {[string match "91*: assertion could not be evaluated -- the assert= scans of this run used up the -1 s of scanning time they share*" $x]} { incr n } }
+         set r [list $n [llength $q14_p] [llength $q14_back] $q14_cleared]
+     }
+     set r
+@@ -1847,6 +1869,350 @@
+     set r
+ } {0 1 5 0 0 6 1 1}
+ 
++## ⚠ S1-fix8 -- A FENCE IS MARKED ONLY BY quote= OR assert=, THE TWO KEYS THE
++## GATE EVALUATES.  S1-fix7 marked a fence when ANY word of its info string was
++## shaped key=value, and then read the whole info string as the grammar: an
++## mkdocs ```python title="example.py"```, a ```sh cc=gcc make``` and a
++## ```sh make prefix=/usr install``` in a stamped file were each `a marked
++## fence the parser cannot read in full`, rc 1 (MEASURED by S1-fix7's refuter,
++## red-first by S1-fix8; aa5cece0 said ok) -- honest content, false reds.  Each
++## of those, a fix= label with a comment after it (the gate never evaluated
++## fix=, so no fix= fence is read -- sabotage F2 marks by fix= too), and an mkdocs
++## hl_lines/linenums pair must now be NO problem at all.  The near-misses that
++## made the strict reading worth having stay named: a MARKED fence with a stray
++## title, a multi-word pat=, and an uppercase ASSERT= (named by stray_attrs,
++## once -- S1-fix7 named it twice).  S1-fix9 marks a fence by path=, pat= and
++## state= as well (row Q23), which put 9188's ASSERT= -- a fence with a pat= --
++## back in the malformed-fence list beside stray_attrs' problem: two for one,
++## MEASURED by S1-fix8's refuter on its remedy.  fence_info now leaves that word
++## to stray_attrs, and this row's want is unchanged: ONE.
++check_needs "Q18 GREEN: a fence whose info string holds key=value words but no quote= or assert= -- an mkdocs title, cc=gcc make, prefix=/usr, a fix= label, hl_lines/linenums -- is ordinary and not read; a MARKED fence with a stray title or a multi-word pat=, and an uppercase ASSERT=, are still named" {
++    if {$RB_ERR ne ""} {
++        set r "FIXTURE NOT BUILT: $RB_ERR"
++    } else {
++        lassign [mkcorpus q18 [list \
++            9181-x.md "# 9181 - x\n\n$RB_ST\n\n```python title=\"example.py\"\nprint(1)\n```" \
++            9182-x.md "# 9182 - x\n\n$RB_ST\n\n```sh cc=gcc make\nmake\n```" \
++            9183-x.md "# 9183 - x\n\n$RB_ST\n\n```sh make prefix=/usr install\nmake\n```" \
++            9184-x.md "# 9184 - x\n\n$RB_ST\n\n```tcl fix=superseded -- the shape 0442 prescribed\nproc x {} {}\n```" \
++            9185-x.md "# 9185 - x\n\n$RB_ST\n\n```python hl_lines=\"2 3\" linenums=\"1\"\nprint(1)\n```" \
++            9186-x.md "# 9186 - x\n\n$RB_ST\n\n```python title=\"x.py\" assert=absent pat=ZQXNOPE path=t.txt state=holds\nx\n```" \
++            9187-x.md "# 9187 - x\n\n$RB_ST\n\n```sh assert=absent pat=\"static int\" path=t.txt state=holds\nx\n```" \
++            9188-x.md "# 9188 - x\n\n$RB_ST\n\n```sh ASSERT=absent pat=static path=t.txt state=holds\nx\n```"] ""] id bf
++        set r [with_plain_root $RB_ROOT {
++            set p [with_corpus $id $bf {istamp::gate}]
++            set out {}
++            foreach n {9181 9182 9183 9184 9185 9186 9187 9188} {
++                set c 0 ; foreach x $p { if {[string match "${n}:*" $x]} { incr c } }
++                lappend out $c
++            }
++            lappend out [llength $p]
++        }]
++    }
++    set r
++} {0 0 0 0 0 1 1 1 3}
++
++## ⚠ D21 (S1-fix10) -- A STAMP'S BODY IS NAMED INSIDE A FENCE, AS ANYWHERE ELSE.
++## THIS ROW HOLDS A DOCUMENTED LIMIT, NOT A FEATURE.  S1-fix8 made a body in a
++## closed fence an example (this row said GREEN for 9191, 9192, 9193 and 9198),
++## and S1-fix9 found such fences through blockquotes and lists (Q22).  Each
++## round's refuter then MEASURED regressions in that exemption from nested
++## markdown -- a fence shown inside a fence, a docstring example -- one of them
++## fail-OPEN, a colon-less stamp in prose after such an example passing
++## (DECISIONS D21).  A line-based scan cannot settle nested containers, so the
++## exemption is withdrawn and d42fc517's rule stands: every body outside the
++## stamp line is ONE problem -- a body in a ``` fence, a colon-less typo in a
++## ~~~ fence, one in a four-backtick fence holding ``` lines, the first again
++## in a STAMPED file, and, as before, mid-sentence, after a fence has closed, in
++## a fence never closed, on a fence's opening line, and a colon-less second
++## stamp under a stamped file's real one.  Spec section 6 states the limit and
++## its workaround.  A sabotage that restores S1-fix8's skip reddens this row.
++check_needs "Q19 RED (a documented limit, D21): a stamp's body is named inside a closed fence (```, ~~~, four backticks), stamped or grandfathered, exactly as in prose, after a fence closes, in a fence never closed, on a fence's opening line, and under a real stamp" {
++    set q19b "`v1 claim=fixed tree=deadbee0 stamped=2026-09-17 fix=taken open=0`"
++    set files {} ; set base {}
++    foreach {n v} [list 9191 "The format:\n\n```text\nsee $q19b\n```" \
++                        9192 "~~~\n**STAMP** $q19b\n~~~" \
++                        9193 "````md\n```\nstamp body: $q19b\n```\n````" \
++                        9194 "the stamp we meant was $q19b, never landed" \
++                        9195 "```text\nx\n```\n**STAMP** $q19b" \
++                        9196 "```text\nsee $q19b" \
++                        9197 "```text $q19b\nx\n```"] {
++        lappend files $n-x.md "# $n - x\n\n$v\n\nprose."
++        append base "$n-x.md\n"
++    }
++    lappend files 9198-x.md "# 9198 - x\n\n$RB_ST\n\nThe format:\n\n```text\nsee $q19b\n```"
++    lappend files 9199-x.md "# 9199 - x\n\n$RB_ST\n**STAMP** $q19b\n\nprose."
++    lassign [mkcorpus q19 $files $base] id bf
++    set r [with_plain_root $RB_ROOT {
++        problems_per_file $id $bf "a line carrying a stamp's body" \
++            {9191 {} 9192 {} 9193 {} 9194 {} 9195 {} 9196 {} 9197 {} 9198 {} 9199 {}}
++    }]
++    set r
++} {1 1 1 1 1 1 1 1 1}
++
++## ⚠ S1-fix8 -- EACH BUDGET IS CHARGED WITH WHAT IT NAMES.  The run's assert=
++## budget was a wall clock started with the gate, so the git work of 240 VALID
++## quote= blocks in stamped 0056 spent it, and 1219's real assertion -- a 70 ms
++## scan -- was reported `could not be evaluated -- the search ran past the
++## gate's total budget of 60 s for all the assert= scans`, rc 1 (MEASURED by
++## S1-fix7's refuter, 69.9 s; red-first by S1-fix8, 74.5 s).  Time is made
++## deterministic here with an execution trace that sleeps, and nothing in the
++## checker is changed:
++##   A  300 ms of NON-scan work per file (in parse_stamp), four files, 0.4 s of
++##      scanning allowed: every assertion is evaluated, no problem (the old
++##      clock named three);
++##   B  300 ms of SCANNING per block (in assert_scan), the same allowance: the
++##      scanning budget runs out after two or three blocks, and every problem
++##      names THAT budget -- none names the gate's;
++##   C  the gate's own wall-clock budget (t_gate_total 0.5 s), spent inside the
++##      first tree= question (900 ms): the quote= and the assert= after it, and
++##      the next file's tree=, are each named as NOT CHECKED because the GATE's
++##      time ran out -- three problems, none evaluated, none passed -- and both
++##      budgets are cleared once the gate returns.
++proc q20_sleep {ms args} { after $ms }
++check_needs "Q20 each budget is charged with what it names: non-scan work is not charged to the assert= scanning budget, scanning time is, and the run's wall clock is its own named budget that stops tree=, quote= and assert= alike" {
++    if {$RB_ERR ne ""} {
++        set r "FIXTURE NOT BUILT: $RB_ERR"
++    } else {
++        set files {}
++        foreach i {1 2 3 4} {
++            lappend files 920$i-x.md "# 920$i - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE$i path=t.txt state=holds\nx\n```"
++        }
++        lassign [mkcorpus q20 $files ""] id bf
++        lassign [mkcorpus q20c [list \
++            9211-x.md "# 9211 - x\n\n$RB_ST\n\n```c quote=d64686a1 path=t.txt\nstatic int x;\n```\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds\nx\n```" \
++            9212-x.md "# 9212 - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds\nx\n```"] ""] idc bfc
++        set scanw "the assert= scans of this run used up"
++        set gatew "this gate run used up its total budget"
++        set q20_saved [list $istamp::t_scan_total [expr {[info exists istamp::t_gate_total] ? $istamp::t_gate_total : 600}]]
++        set q20_tr [list {istamp::parse_stamp q20_sleep 300} {istamp::assert_scan q20_sleep 300} {istamp::rev_verdict q20_sleep 900}]
++        set r {}
++        set q20_rc [catch {with_plain_root $RB_ROOT {
++            set istamp::t_scan_total 0.4
++            trace add execution istamp::parse_stamp enter {q20_sleep 300}
++            set pa [with_corpus $id $bf {istamp::gate}]
++            trace remove execution istamp::parse_stamp enter {q20_sleep 300}
++            lappend r [llength $pa]
++            trace add execution istamp::assert_scan enter {q20_sleep 300}
++            set pb [with_corpus $id $bf {istamp::gate}]
++            trace remove execution istamp::assert_scan enter {q20_sleep 300}
++            set ns 0 ; set ng 0
++            foreach x $pb {
++                if {[string first $scanw $x] >= 0} { incr ns }
++                if {[string first $gatew $x] >= 0} { incr ng }
++            }
++            lappend r [expr {$ns >= 2 && $ns <= 3 && $ns == [llength $pb]}] $ng
++            set istamp::t_scan_total [lindex $q20_saved 0]
++            set istamp::t_gate_total 0.5
++            trace add execution istamp::rev_verdict enter {q20_sleep 900}
++            set pc [with_corpus $idc $bfc {istamp::gate}]
++            trace remove execution istamp::rev_verdict enter {q20_sleep 900}
++            set out {}
++            foreach needle [list "9211:*: quote=d64686a1 path=t.txt not checked -- $gatew*" \
++                                 "9211:*: assertion could not be evaluated -- $gatew*" \
++                                 "9212: tree=d64686a1, and every marked block in this file, not checked -- $gatew*"] {
++                set c 0 ; foreach x $pc { if {[string match $needle $x]} { incr c } } ; lappend out $c
++            }
++            lappend r $out [llength $pc] [expr {[info exists istamp::scan_spent_us] && [info exists istamp::gate_deadline]
++                                                 && $istamp::scan_spent_us eq "" && $istamp::gate_deadline eq ""}]
++        }} q20_e]
++        foreach t $q20_tr { catch {trace remove execution [lindex $t 0] enter [lrange $t 1 end]} }
++        lassign $q20_saved istamp::t_scan_total istamp::t_gate_total
++        if {$q20_rc} { error $q20_e }
++    }
++    set r
++} {0 1 0 {1 1 1} 3 1}
++
++## ⚠ S1-fix8 -- NO PROBLEM LINE IS UNBOUNDED.  A problem quotes corpus words,
++## and nothing capped them: one marked fence holding 200k stray words printed a
++## single 5.8 MB problem line (MEASURED by S1-fix7's refuter; 6.9 MB red-first
++## by S1-fix8), and a 1 MB pat=, path= or stamp token printed 1-3 MB.  Here, in
++## one gate: a marked fence of 20000 stray words names five and COUNTS the rest,
++## a 100000-character pat= and path= each appear clipped with their real
++## length, and so does a quote= path= in a NOT VERIFIED line -- every one of
++## them well under 1000 characters.
++check_needs "Q21 no problem line is unbounded: a fence of 20000 stray words names five and counts the rest; a 100000-character pat= or path= is clipped with its real length, in a problem and in a NOT VERIFIED line" {
++    if {$RB_ERR ne ""} {
++        set r "FIXTURE NOT BUILT: $RB_ERR"
++    } else {
++        set q21w {} ; for {set i 0} {$i < 20000} {incr i} { lappend q21w w$i }
++        set q21z [string repeat Z 100000]
++        lassign [mkcorpus q21 [list \
++            9221-x.md "# 9221 - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds [join $q21w { }]\nx\n```" \
++            9222-x.md "# 9222 - x\n\n$RB_ST\n\n```sh assert=present pat=$q21z path=t.txt state=holds\nx\n```" \
++            9223-x.md "# 9223 - x\n\n$RB_ST\n\n```sh assert=present pat=static path=$q21z state=holds\nx\n```" \
++            9224-x.md "# 9224 - x\n\n$RB_ST\n\n```c quote=d64686a1 path=$q21z\nstatic int x;\n```"] ""] id bf
++        set r [with_plain_root $RB_ROOT {
++            set p [with_corpus $id $bf {istamp::gate}]
++            set out {}
++            foreach {n src needle} [list 9221 $p "and 19995 more word(s) like these, not listed" \
++                                         9222 $p "...(100000 characters)" \
++                                         9223 $p "...(100000 characters)" \
++                                         9224 $istamp::last_skips "...(100000 characters)"] {
++                set c 0 ; set big 0
++                foreach x $src {
++                    if {![string match "${n}:*" $x]} { continue }
++                    if {[string first $needle $x] >= 0} { incr c }
++                    if {[string length $x] > 1000} { incr big }
++                }
++                lappend out $c $big
++            }
++            lappend out [llength $p]
++        }]
++    }
++    set r
++} {1 0 1 0 1 0 1 0 3}
++
++## ⚠ D21 (S1-fix10) -- AND THROUGH MARKDOWN'S CONTAINERS, NO EXEMPTION EITHER.
++## THIS ROW HOLDS THE SAME DOCUMENTED LIMIT AS Q19.  S1-fix9 found the fences
++## whose bodies were skipped in the text with every line's blanks and `>`
++## markers taken off, so a body in a `> ```text` fence, or in a fence indented
++## 5 under a nested list item, was an example (this row said GREEN for 9231 to
++## 9234).  Its refuter MEASURED that strip, applied to the bodies of real
++## fences too, turning a `> ```` or `    ```` line inside a ```md or ```python
++## example into a closer: a colon-less stamp in PROSE after such an example
++## (9261, the refuter's h_mdbq) and after an indented code block showing one
++## ```text line (9262, h_indcode1) said `ok (0 problems)` where d42fc517 named
++## it -- fail-open -- and a body inside a ```md fence after an inner quoted
++## fence (9263, h2_mdex) went red where S1-fix8 said ok.  So every one of these
++## is ONE problem, as at d42fc517: the container forms, grandfathered and
++## stamped; an indented code block; <pre>; a blockquoted fence never closed;
++## blockquoted prose; and the refuter's three.  A sabotage that restores
++## S1-fix9's container-stripped skip reddens this row.
++check_needs "Q22 RED (a documented limit, D21): a stamp's body in a fence inside a blockquote or under a nested list item, grandfathered or stamped, in a fence shown inside a fence, in an indented code block, in <pre>, in a blockquoted fence never closed, in blockquoted prose, and a colon-less stamp in prose after a nested example, is each ONE named problem" {
++    set q22b "`v1 claim=fixed tree=deadbee0 stamped=2026-09-17 fix=taken open=0`"
++    set q22bq "The reviewer wrote:\n\n> Use this format:\n>\n> ```text\n> see $q22b\n> ```"
++    set q22nl "Steps:\n\n1. First\n   - Write the stamp:\n\n     ```text\n     see $q22b\n     ```"
++    set files {} ; set base {}
++    foreach {n v} [list 9231 $q22bq 9232 $q22nl \
++                        9235 "The format:\n\n    see $q22b\n\nabove." \
++                        9236 "The format:\n\n<pre>\nsee $q22b\n</pre>" \
++                        9237 "> ```text\n> see $q22b" \
++                        9238 "> the old stamp was **STAMP** $q22b" \
++                        9261 "To quote a fence in a reply:\n\n```md\n> ```text\n> make install\n> ```\n```\n\n**STAMP** $q22b\n\n```sh\nmake install\n```" \
++                        9262 "A fence opens with a line like\n\n    ```text\n\nand closes with a bare one.\n\n**STAMP** $q22b\n\n```sh\nmake install\n```" \
++                        9263 "How a reply quotes a fence:\n\n```md\n> ```text\n> make install\n> ```\n\nsee $q22b\n```"] {
++        lappend files $n-x.md "# $n - x\n\n$v\n\nprose."
++        append base "$n-x.md\n"
++    }
++    lappend files 9233-x.md "# 9233 - x\n\n$RB_ST\n\n$q22bq"
++    lappend files 9234-x.md "# 9234 - x\n\n$RB_ST\n\n$q22nl"
++    lassign [mkcorpus q22 $files $base] id bf
++    set r [with_plain_root $RB_ROOT {
++        problems_per_file $id $bf "a line carrying a stamp's body" \
++            {9231 {} 9232 {} 9233 {} 9234 {} 9235 {} 9236 {} 9237 {} 9238 {} 9261 {} 9262 {} 9263 {}}
++    }]
++    set r
++} {1 1 1 1 1 1 1 1 1 1 1}
++
++## ⚠ S1-fix9 -- A FENCE WHOSE MARKING KEY IS MISSPELLED IS STILL READ, AND NAMED
++## (R2).  S1-fix8 marked a fence only by quote= or assert=, so a block whose
++## marking key was misspelled was an ordinary code sample and its info string
++## was never read: `asert=`, `assertion=` or `asserts=` on a FALSE assertion
++## (`pat=SABOTAGE path=src state=holds`, eight real hits), and `qoute=` or
++## `quotes=` on a ROTTED quote, each said `ok (0 problems)` in stamped 1219,
++## where d42fc517 named the unknown key (MEASURED by S1-fix8's refuter,
++## red-first by S1-fix9).  path=, pat= and state= now mark a fence too.  Here,
++## in one gate over a plain root whose t.txt holds `static` (so every
++## `pat=static ... state=holds` below is FALSE): each misspelling must be ONE
++## problem naming the fence, and never evaluated.  The controls: the correct
++## key is RED as false (evaluated, not named as malformed), a fence carrying
++## only path= is no problem (read, and nothing to evaluate), and an ASSERT=
++## beside a canonical assert= is one problem naming the fence -- stray_attrs
++## is silent on that line, so fence_info must not leave the variant to it.
++## And the near-misses stray_attrs names -- `QUOTE=` on a fence its path=
++## marks, `assert = absent` on one its pat= marks -- are ONE problem each, from
++## stray_attrs alone (the refuter's remedy, applied bare, made each two).
++## S1-fix10: so is `Assert= absent` (9239), whose value came apart from its
++## `=` -- S1-fix9's refuter MEASURED it named twice there and at d42fc517.
++check_needs "Q23 RED: a fence whose marking key is misspelled -- asert=, assertion=, asserts= on a false assertion; qoute=, quotes= on a rotted quote -- is one named problem; the correct key is evaluated, a path=-only fence is no problem, and ASSERT= beside assert=, QUOTE=, assert = and Assert= absent are each named once" {
++    if {$RB_ERR ne ""} {
++        set r "FIXTURE NOT BUILT: $RB_ERR"
++    } else {
++        set q23f {}
++        foreach {n k} {9241 asert 9242 assertion 9243 asserts 9246 assert} {
++            lappend q23f $n-x.md "# $n - x\n\n$RB_ST\n\n```sh $k=absent pat=static path=t.txt state=holds\nx\n```"
++        }
++        foreach {n k} {9244 qoute 9245 quotes} {
++            lappend q23f $n-x.md "# $n - x\n\n$RB_ST\n\n```c $k=d64686a1 path=t.txt\nthis text is not in t.txt at all ZQXNOPE\n```"
++        }
++        lappend q23f 9247-x.md "# 9247 - x\n\n$RB_ST\n\n```sh path=t.txt\ncat t.txt\n```"
++        lappend q23f 9248-x.md "# 9248 - x\n\n$RB_ST\n\n```sh assert=absent ASSERT=present pat=ZQXNOPE path=t.txt state=holds\nx\n```"
++        lappend q23f 9249-x.md "# 9249 - x\n\n$RB_ST\n\n```c QUOTE=d64686a1 path=t.txt\nthis text is not in t.txt at all ZQXNOPE\n```"
++        lappend q23f 9240-x.md "# 9240 - x\n\n$RB_ST\n\n```sh assert = absent pat=static path=t.txt state=holds\nx\n```"
++        lappend q23f 9239-x.md "# 9239 - x\n\n$RB_ST\n\n```sh Assert= absent pat=static path=t.txt state=holds\nx\n```"
++        lassign [mkcorpus q23 $q23f ""] id bf
++        set r [with_plain_root $RB_ROOT {
++            set p [with_corpus $id $bf {istamp::gate}]
++            set out {}
++            foreach n {9241 9242 9243 9244 9245 9246 9247 9248 9249 9240 9239} {
++                set c 0 ; set all 0
++                foreach x $p {
++                    if {![string match "${n}:*" $x]} { continue }
++                    incr all
++                    if {[string first "a marked fence the parser cannot read in full" $x] >= 0} { incr c }
++                }
++                lappend out [list $all $c]
++            }
++            set out
++        }]
++    }
++    set r
++} {{1 1} {1 1} {1 1} {1 1} {1 1} {1 0} {0 0} {1 1} {1 0} {1 0} {1 0}}
++
++## ⚠ S1-fix9 -- A ```inline``` LINE OPENS NO FENCE (R3; kept by S1-fix10).
++## fence_scan took any line beginning with ``` as an opener, although
++## CommonMark forbids a backtick in a backtick fence's info string: ````
++## ```make install``` fails here ```` is an inline code span, common in
++## Slack-style writing, and everything down to the next bare ``` line counted
++## as inside a fence.  So a real ```sh assert=... fence after such a line was
++## swallowed, named `inside another fenced block` and never evaluated -- a TRUE
++## assertion went red, a FALSE one was never called false (READ by S1-fix8's
++## refuter; MEASURED red-first by S1-fix9, and by S1-fix10 on d42fc517's
++## checker).  Under S1-fix8's fenced-body skip the same phantom also hid
++## `The old stamp was **STAMP** `v1 claim=fixed tree=deadbee0 ...`` below it;
++## with that skip withdrawn (D21) the body is named whatever the fences do, so
++## the first three parts now hold d42fc517's behaviour, kept as a guard.
++## Here: the body after a ```inline``` line, grandfathered and stamped, and
++## after a ``` `x` ``` line, is ONE problem each; a FALSE assertion after one
++## is evaluated and RED as false, never named as not read; a TRUE one after one
++## is no problem; and a ``` line whose info string holds a backtick and an
++## assert= is named for exactly that (spec section 6: a pat= cannot hold a
++## backtick).
++check_needs "Q24 RED: a real assert= fence after a Slack-style ```inline``` line is still read (false: RED as false; true: no problem), a stamp's body after one is named, and a ``` line with a backtick in its info string is not a fence" {
++    if {$RB_ERR ne ""} {
++        set r "FIXTURE NOT BUILT: $RB_ERR"
++    } else {
++        set q24b "`v1 claim=fixed tree=deadbee0 stamped=2026-09-17 fix=taken open=0`"
++        set q24s "```make install``` fails here, see below.\n\nThe old stamp was **STAMP** $q24b\n\n```sh\nmake install\n```"
++        set q24i "``` `x` ``` is how inline code with three backticks looks\n**STAMP** $q24b\n\nprose\n\n```text\ny\n```"
++        lassign [mkcorpus q24 [list \
++            9251-x.md "# 9251 - x\n\n$q24s\n\nprose." \
++            9252-x.md "# 9252 - x\n\n$RB_ST\n\n$q24s" \
++            9253-x.md "# 9253 - x\n\n$q24i\n\nprose." \
++            9254-x.md "# 9254 - x\n\n$RB_ST\n\n```make install``` fails here.\n\n```sh assert=absent pat=static path=t.txt state=holds\nx\n```" \
++            9255-x.md "# 9255 - x\n\n$RB_ST\n\n```make install``` fails here.\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds\nx\n```" \
++            9256-x.md "# 9256 - x\n\n$RB_ST\n\n```sh assert=absent pat=`static` path=t.txt state=holds\nx\n```"] \
++            "9251-x.md\n9253-x.md"] id bf
++        set r [with_plain_root $RB_ROOT {
++            set p [with_corpus $id $bf {istamp::gate}]
++            set out {}
++            foreach {n needle} [list 9251 "a line carrying a stamp's body" 9252 "a line carrying a stamp's body" \
++                                     9253 "a line carrying a stamp's body" 9254 "states this assertion HOLDS and it does not" \
++                                     9254 "the parser does not read" 9255 "" \
++                                     9256 "whose info string holds a backtick" 9256 ""] {
++                set c 0
++                foreach x $p {
++                    if {[string match "${n}:*" $x] && ($needle eq "" || [string first $needle $x] >= 0)} { incr c }
++                }
++                lappend out $c
++            }
++            set out
++        }]
++    }
++    set r
++} {1 1 1 1 0 0 1 1}
++
+ ## ---------------------------------------------------------------------------
+ ## N -- ANTI-OVERSHOOT.  Green in both directions by construction.
+ ## ---------------------------------------------------------------------------
