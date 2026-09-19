@@ -815,3 +815,124 @@ This contradicts the suite's own contract (H21: "the caller's ... GIT_NO_LAZY_FE
   * A git older than 2.44 ignores GIT_NO_LAZY_FETCH (INFERRED; this box runs 2.53).
   * With an emoji in HOME, the xschem binary fails 'Tcl_AppInit(): failure creating $HOME/.xschem'. That is outside these files; cause UNKNOWN, recorded only.
   * Carried over: lstat-then-open is not atomic; the non-UTF-8 checkout path (now in spec §6); summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; uutils costs ~100 ms per exec; redundant layer I2; the stale '34 checks' count in spec §5, left as prose.
+
+## S1-fix8 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix8 is refuted on three measured regressions. I found no class-A failure. I re-ran every key measurement the claim makes, and each one reproduces.
+
+Setup: my own `--mirror` of the main tree, and clones `final` (d42fc517 plus the four final files), `base` (d42fc517, whose four md5s match the base bytes: 6d0592ad 930eb435 d19e7a82 1d4f8efb) and `aa5` (aa5cece0). Everything is under /var/tmp/xschem_fixes/s1fix8_verify/. Every run used HOME=scratch, DISPLAY unset and a timeout.
+
+**What reproduced (MEASURED):**
+- **Suite on final.**
+  - tclsh, xschem and T1 spelling each give ALL PASS (97 checks), rc 0, case_failed 0, 0 skip lines, corpses 0->0.
+  - GIT_NO_LAZY_FETCH=1 (tclsh, and T1 in the worktree) and LANG=C LC_ALL=C each give ALL PASS 97.
+  - CLI: `self-test PASSED (103 parser cases)`, `ok (0 problems)`. base has 87 cases, aa5 has 62.
+  - report: 1047/10/1037, citations 4689/930/1180.
+- **Row red-first.** The final suite on the base checker gives `RESULT: 5 FAILED (92 passed)`, exactly Q14 Q18 Q19 Q20 Q21, with the claimed got-values.
+- **Stranger shapes.** Seven suites ran concurrently, which also put Q20 under load:
+  - worktree, `we ird[x] %41`, blob:none: ALL PASS 97.
+  - d1: 94 + 3 skipped (G4 D9h H9).
+  - export and unborn: 90 + 7 skipped.
+  - CLI ok in every shape.
+- **Real corpus parse diff.** My own dp.tcl, base vs final: 1050 files and 5032 fence lines, 0 differences in find_blocks, stray_stamps, find_stamp, stray_attrs and fence_info.
+- **Item 1.** All 21 honest fence info strings are ok on final and on aa5; 12 of them are rc 1 on base (logs/battery_fences.out). The honest strings: mkdocs title, three pandoc attribute forms, cc=gcc, CC=gcc, prefix=, hl_lines/linenums, fix= alone and with a comment, `text quote`, `python assert`, `assert x == 1`, titles holding quote/assert, env assignments, path= alone, pat= alone. All 10 S1-fix7 near-misses stay RED. ASSERT=, `assert =` and QUOTE= each give 1 problem (base gives 2).
+- **Item 2.** A body in a ```, ~~~, 2-space, 3-space list-item or bare fence gives ok on final (rc 1 on base, ok on aa5). The colon-less typos (`**STAMP**`, `STAMP`, `**Stamp**`, `**STAMP -**`, `**STAMP;**`, `**STAMP.**`, `__STAMP:__`) at line 3 of 0057 stay RED. The 1349 collision and a misnamed file stay RED.
+- **Item 3.**
+  - 240 valid quotes in 0056: base rc 1 in 75.9 s with the false `1219:72 ... 60 s for all the assert= scans`; final ok in 76.0 s.
+  - A3: rc 1 in 61.7 s, 100 problems, 84 named by the scanning budget and 0 by the gate's. The claim says 74; the count depends on box speed, and the bound holds.
+- **Item 4.** Longest line: 444 for 1M stray words (base 34 889 136), 321 for a 1 MB pat=, 730 for path=, 535 for a quote path, 193 for tree=. Six other stamp fields at 1 MB each stay under 210.
+- **Genuine defects (full clones).** All four at once gives B1 D9 D9h H9. Singly: bogus gives D9 D9h H9, unstamped B1 D9, blob D9 D9h H9, quote D9. CLI problems match.
+- **Sabotages spot-checked.** F1 reddens Q18 D9b, G2 Q19 D9b, H1 Q20, K1 Q21 D9b.
+
+**Class A, none found (MEASURED).**
+- The 22 textplants: README unchanged, 0 markers, no `&1`.
+- An issue file that is a FIFO or a link out, and the issues dir linked out: each is named in 0.6 s; report says `not counted`.
+- blob:none with an absent-blob quote under GIT_TRACE: 0 fetch lines, objects and packs 8->8, the blob still absent, NOT VERIFIED by name.
+- GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE pointed at a victim repo: victim md5 993ad047 before and after, ALL PASS 97.
+- New code paths stay linear:
+  - 100k and 400k fences in a grandfathered file with a body: 2.7 s and 6.5 s;
+  - 50k marked fences: 3.6 s;
+  - 200k prose bodies: 1.8 s;
+  - 1 MB of `>` plus 300k `- ` markers: 0.6 s.
+
+**The regressions.** R1 is a false red against aa5cece0 on honest content, and it is identical on base. R2 and R3 are silent passes where base named the defect. Each has a remedy, measured in the scratch copy `remedy` (details under regressions).
+## class_A:
+## regressions:
+  * R1, regression against aa5cece0 on honest content (base is red identically). MEASURED; logs/battery_bodies.out and logs/*_b_{bq,nested}_*.log.
+- Recipe: a stamp-body example with no STAMP word (``see `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=0` ``) inside a well-formed, closed fenced code block.
+- Blockquote form (`> ```text` / `> see ...` / `> ````): final rc 1, `a line carrying a stamp's body`, in stamped 1219 and in grandfathered 0057. aa5cece0 `ok (0 problems)` in both. base rc 1.
+- Nested-list form (fence indented 5 spaces under `1. First` / `   - Write the stamp:`): the same result.
+- markdown-it 3.0.0 (commonmark preset) renders both bodies as <pre><code>. So they are documentation examples, exactly like the ```, ~~~, 2-space and 3-space list-item fences that final now exempts; those all measured ok.
+- The task said stamp examples in fences of every kind must not go red. The crew records this as open item 2 ('carried').
+- Spec section 6 overstates the limit ('a list item'): a list-item fence at 3 spaces or fewer IS exempt (b_list1: ok on final).
+- Remedy measured in scratch copy `remedy`: compute stray_stamps' `inside` over container-stripped text, `fence_scan [regsub -all -line {^(?:[ \t]*>)*[ \t]*} $text ""]`.
+  - Both forms are then ok.
+  - Indented-code, <pre>, unclosed-fence and inline-prose bodies stay RED.
+  - Real corpus: 0 differences (1050 files).
+  - Q19 stays green.
+  * R2, regression against base (fail-open), MEASURED; logs/battery_typo.out. A fence whose marking key is misspelled is no longer named.
+- Recipes, appended to stamped 1219: `asert=`, `assertion=` or `asserts=` on a FALSE assertion (`pat=SABOTAGE path=src state=holds`, 8 real hits); `qoute=` or `quotes=` on a ROTTED quote (`61af3692 path=README`, body not in the file).
+- base: rc 1, named (`1219:86: a marked fence the parser cannot read in full -- `asert=absent` has a key the grammar does not know`).
+- final: rc 0, `ok (0 problems)`, a silent pass. aa5cece0 also passes it.
+- Controls with the correct keys are RED on all three.
+- D18-B: near-miss spellings an honest author produces by accident are named, never silent passes. The loss follows from marking only by quote=/assert=, which the receipt says the task specified.
+- Remedy measured in `remedy`: `variable fence_marks {quote assert path pat state}`.
+  - All 5 typos RED.
+  - All 20 honest fence recipes still ok; `sh quote="$1"` is red on all three versions.
+  - Real-corpus CLI ok, real-corpus parse diff 0.
+  - Cost: the self-test case `{sh ASSERT=absent pat=x ...}` must expect `{3 1}`, and Q18 then counts ASSERT= twice (got `0 0 0 0 0 1 1 2 4`), which is base's double-naming. Keeping it named once needs fence_info to leave case-variant quote/assert words to stray_attrs.
+  * R3, regression against base (fail-open), MEASURED; logs/*_adv_slack_*.log and *_adv_inline_*.log.
+- The trigger: fence_scan takes a line beginning with ``` as a fence opener even when its info string contains a backtick. CommonMark forbids that, so the line is an inline code span, which is common Slack-style writing. Everything up to the next bare ``` line then counts as 'inside' a closed fence, and the new body skip hides a stamp body in prose there.
+- Recipe: '```make install``` fails here, see below.' then 'The old stamp was **STAMP** `v1 claim=fixed tree=deadbee0 ...`' then a normal ```sh fence.
+- markdown-it renders the body as a prose <p>.
+- base: rc 1 (`1219:88` / `0057:94: a line carrying a stamp's body ... preceded by `The old stamp was **STAMP**``), the mid-sentence body D19 requires to be named.
+- final: `ok (0 problems)` in both stamped 1219 and grandfathered 0057, so the bogus tree=deadbee0 goes unchecked. aa5cece0 is ok.
+- A variant (``` `x` ``` at line start, then a colon-less `**STAMP** `v1 ...``) gives the same split.
+- Severity is lowest of the three: the header-window typo cannot be reached, because line 1 is the title.
+- Remedy measured in `remedy`: add `&& !([string index $fence 0] eq "`" && [string first "`" $info] >= 0)` to fence_scan's opener test.
+  - Both recipes are then RED; honest fence examples stay ok.
+  - The real corpus has 0 such lines, and the parse diff against final is 0 over 1050 files and 5032 fence lines.
+  - Suite with all three remedies: 96/97, only Q18 red, from R2's double-naming.
+## class_B_followups:
+  * A stamp-body example is still named, although CommonMark (markdown-it) renders it as code, in three cases MEASURED red on final and on base and ok on aa5: a 4-space-indented code block, an HTML <pre> block, and a fence left unclosed at end of file. Each is defensible fail-closed (an indented or unclosed near-miss is ambiguous, and the crew's deviation 3 is deliberate), so I list them as follow-ups, not blockers.
+  * Spec section 6 says 'A fence inside a blockquote or a list item is not seen as a fence'. A list-item fence indented 3 spaces or fewer IS seen and exempt (MEASURED b_list1 ok). Only fences indented 4 or more spaces (nested lists) and blockquoted fences are not seen.
+  * A pre-existing false red, the same at aa5, base and final (READ from the code, INFERRED, not planted): a Slack-style ```inline``` line before a real ```sh assert=... fence would swallow that fence, and stray_attrs then names it 'inside another fenced block'. R3's CommonMark opener rule would fix this too.
+  * A3's count of blocks named by the scanning budget is box-dependent: 84 here against the claimed 74 (MEASURED). The bound holds at 61.7 s. The receipt's '74' should be read as one run's value.
+  * Q20 depends on real sleeps: part B needs about 100 ms of margin, part C needs setup under 0.5 s. It was green in about 20 of my runs, including 7 concurrent suites. I deliberately did not saturate the CPU, because the driver's T1 gate was reading the main tree.
+  * t_gate_total (600 s) is a new fail-closed failure mode that depends on the box. The real corpus takes 0.6 s. The crew disclosed it (spec section 6).
+## out_of_scope:
+  * A stamp body in inline code in prose (`The format is `v1 claim=...` as written.`) is RED on final and base and ok on aa5 (MEASURED). D19 explicitly requires a mid-sentence body to be named, so this is by design.
+  * A valid quote=/assert= block with an extra word or an unknown key=value (for example a title=) in its info string is RED on final and base; aa5 ignored such words. D19-B explicitly makes it named.
+  * A full `**STAMP:** `v1 ...`` example inside any fence is RED at aa5cece0, base and final alike (crew's measurement; not re-planted). It is pre-existing and recorded in spec section 6.
+  * Not re-run by me: the reinit red-by-design shape, rf6b's non-UTF-8 recipes, reportplants, and the pre-commit-hook hermetic test. The code paths they exercise are unchanged by S1-fix8 (READ from the diff).
+## real_home_check: `md5sum -c --quiet /tmp/claude-1000/-home-analog-dev-xschem-claude/f12b1fd5-2898-41a7-9dd9-9fd4b899f2af/scratchpad/xschem_manifest_fixes.md5` gave rc 0 before any work and rc 0 at the end.
+
+- **Real home.** `find ~/.xschem ~/.claude/xschem_dev_display ~/.claude/gui_test_gate -newer /var/tmp/xschem_fixes/s1fix8_verify/.marker_start` printed nothing. The same find over ~/dev/xschem-op-wcard (with .git pruned) printed nothing. :99, devdisplay and gui_test_gate were never touched.
+- **Main tree** /home/analog/dev/xschem-claude:
+  - not edited;
+  - HEAD is still d42fc517;
+  - the four files are still 6d0592ad 930eb435 d19e7a82 1d4f8efb;
+  - `git status` is unchanged from the start (7 entries);
+  - tests/headless/.scratch has 0 istamp_/drv_ entries, and there is no `&1`.
+  - Only read-only git ran against it: my `clone --mirror`. Its src/xschem binary was executed only from scratch clones.
+- **Crew's final bytes** in /var/tmp/xschem_fixes/s1fix8/final are unchanged: b373429b accdf887 d19e7a82 97482872.
+- **Where writes went.** Every plant, link, FIFO, clone, worktree, remedy edit and sabotage stayed under /var/tmp/xschem_fixes/s1fix8_verify/. Every plant was restored (git status of the issues dir: 0).
+- **Leftovers.** 0 FIFOs, 0 /tmp/istamp_* entries. A /proc/*/environ scan found 0 live processes with an s1fix8_verify HOME; I did not use `pgrep -f`.
+
+## IMPL deviations + open_problems (S1-fix8 crew):
+  * Item 3 has two budgets. The assert= total is scanning time only (60 s). The old wall clock is kept as a separately named whole-gate budget, t_gate_total 600 s, so git work (quotes, tree=) is bounded too. When it is spent, each tree=, quote= and assert= is named by a sentence saying the gate's time ran out. The cost is that a box slow enough to take 600 s on the real corpus goes red, saying why (spec section 6).
+  * A fix=-only fence is no longer a block: marking is by quote= or assert= only, as the task specified. fix= was never evaluated (READ gate_body), so no verdict changes.
+  * The fenced-body skip applies only to fences that close. Bodies in never-closed fences and on a fence's opening line stay RED (fail-closed); Q19 and sabotages G2 and G3 hold this.
+  * Item 4 goes beyond 'first N stray words'. Every corpus word a problem quotes is clipped, and there is a 2000-char backstop on problems and NOT VERIFIED lines. The recipes found 1-3 MB lines from pat=, path=, a quote path and a stamp token.
+  * Q14's cleared-check is false (not an error) when the new variables are absent, so that on the base checker Q14 and Q20 report every part instead of ROW DIED.
+  * The suite was re-frozen once. In the first sabotage pass, F2 reddened only D9b, so Q18's fix= fixture gained a trailing comment. Everything that runs the suite was re-run on 97482872; the checker and spec did not change.
+  * Harness slip, not in the owned files: my path rewrite of the refuter's rf6.sh pointed its restore at a nonexistent directory, deleting plant's baseline. The first class-A pass was void and was fully re-run after the fix.
+  * The xschem and T1 arms use the main tree's src/xschem, as in every earlier round; the shapes were not built.
+  * The main tree's HEAD moved aa5cece0 -> d42fc517 (the driver's commit of exactly the base bytes) during the run. My clones are aa5cece0 plus the installed files. They differ from d42fc517 only in receipts and the ledger, which nothing under test reads.
+  * A stamp written inside a fence is still read as one. find_stamp reads a column-0 **STAMP:** line inside a fence, and the stamp-shaped check names `STAMP:`+body there. Both are fail-closed reds, measured identical at aa5cece0, and the real corpus has neither. Item 2 was scoped to body detection. Recorded in spec section 6.
+  * A fence inside a blockquote or list item is not seen as a fence (carried), so a stamp body quoted there is still named.
+  * The 600 s gate wall clock depends on the box. Quote git work is now bounded by it but not made faster: ls-tree is still uncached per revision (the refuter's efficiency note).
+  * Q20 uses real sleeps. Part C needs the gate's setup to take under 0.5 s; it takes milliseconds, and the row was green in 56 logs under load, but it is a margin.
+  * Sabotage K2 (the 2000-char backstop disabled) is held only by D9b's self-test, because every known site now clips before the backstop.
+  * Carried from S1-fix7: lstat-then-open is not atomic; the non-UTF-8 checkout path; summarize_all drops skip lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; uutils costs ~100 ms per exec; redundant layers I2 and N3; the tree:0 branch is held by no row; git before 2.44 ignores GIT_NO_LAZY_FETCH (INFERRED); the stale '34 checks' in spec section 5.
