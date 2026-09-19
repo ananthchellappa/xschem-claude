@@ -1,5 +1,7 @@
 # 1481 — the NODISPLAY arm skips its `Finish` line, so the `Start`/`Finish` case count under-counts by eleven on any box with no dev display
 
+**STAMP:** `v1 claim=open tree=7a46275f stamped=2026-09-18 fix=untried open=1 by=F-docs`
+
 **Status: OPEN — found 2026-09-17** by the harness concurrency batch: recorded as a new
 finding in `doc/claude/harness_concurrency_batch/receipts/R1-build.md:277-282`, confirmed
 against the source and filed by `receipts/claude-md.md`.
@@ -167,3 +169,56 @@ this in the first place.
 
 **Documented meanwhile** in `CLAUDE.md`'s Tests section, inline with the counting rule it
 undermines, so no reader meets the rule without meeting its hole.
+
+---
+
+## UPDATE, 2026-09-18 — observed twice, and the trigger narrowed (outsider-fixes batch)
+
+**Filed by** the outsider-fixes batch, stage F (docs crew). The defect is **still live at
+`7a46275f`**, READ: the display-arm loop prints `Start` at `:1190`, both can't-run paths
+leave through one `continue` at `:1212`, and `Finish` is at `:1245`
+(`/usr/bin/grep -n 'puts "Start ${dc}\|puts "Finish ${dc}'`). The same three lines were
+at `:841`, `:856` and `:887` at `69c65249`. **No row locks it yet.** A grep for `Finish`
+over `test_home_isolation.tcl`, `test_regression_concurrency_1476.tcl` and
+`test_suite_watchdog_1403.tcl` finds only a comment.
+
+### It is no longer "derived, not measured"
+
+* **85 `Start` / 74 `Finish` / 11 `NODISPLAY`, three runs.** MEASURED by the S1 crew in a
+  `git archive` export, with `devdisplay.sh` stubbed so that `status` said dead and `start`
+  refused (pre-D8 code, 85-case tree; `receipts/S1.md` §7). Each run was solo, with 0
+  lines of `another regression run is live`.
+* **87 `Start` / 76 `Finish`**, with `T1-RUN-END cases=87` correct. MEASURED by the R3
+  prover on the new code, with a PATH `Xvfb` that exits 1 (`t1_h8_brokenx`,
+  `receipts/S2c-R3-prove.md`). The trailer's counter was right in both, as this file
+  predicted: `incr t1_cases` precedes the branch.
+
+### The trigger is narrower now (DECISIONS D8, `7a46275f`)
+
+This file's premise, *"`$dd_alive` is 0 whenever `devdisplay.sh status` does not report
+an alive display — a fresh boot, a container, a CI box"*, **no longer reaches the
+`continue`** on a box with a working Xvfb. Such a box now runs the 11 `dcases` on a
+**private Xvfb numbered from `:100`, for that run only**. The stage-F gate printed
+`display arm: PRIVATE Xvfb :100 for this run only` and 87 `Start` / 87 `Finish`. The
+`continue` is reached only:
+
+1. with **no Xvfb installed**: an uncounted `NODISPLAY:` line per case, as 0891 designed;
+   or
+2. with an **installed Xvfb that will not start**: a **counted** `HARNESS: <dc> display
+   arm NOT RUN -- Xvfb is installed but no display could be started (…): FAIL` per case
+   (D17.9), 11 counted failures.
+
+So the shape to fear is a stripped container or CI image without `xvfb`. That is still
+the box nobody watches.
+
+### What this changes about the fix
+
+* **Fix direction 1 got easier on one path.** On the `HARNESS` path the case is already
+  a counted red, so a `Finish` line there cannot make it read as a pass. The caution in
+  "Whichever lands" now applies to the `NODISPLAY` path alone.
+* **The arithmetic above is the 84-case tree's.** Today it is 87 `Start` against 76
+  `Finish` (MEASURED, the R3 prover). The verdict carries 86 `Total num fail:` lines
+  whichever path the arm takes. That is MEASURED on the green gate
+  (`T1-RUN-END … blocks=86`), and on the can't-run paths it is READ from the branch's own
+  `incr t1_blocks`. CLAUDE.md's Tests section carries the corrected numbers inline with
+  the rule.

@@ -187,6 +187,9 @@ row that finds nothing prints `skip:` with a reason rather than passing silently
   the unquoted `wrs2p` path.
 * Suites write into the cwd: `untitled~.sch`, and the op_param project tier
   `.xschem/op_param_lists.conf`. This checkout's root has carried one since 2026-09-09.
+  ⚠ **Corrected in stage F:** the op_param file is **the user's own Save** (issue 1381
+  records one quarantined for exactly that reason), not suite litter. Nobody deletes it.
+  Issue 1486 carries the correction; `untitled~.sch` remains the litter.
 * `summarize_all` does not carry `skip:` lines, so T1's verdict cannot show that a case
   skipped rows.
 * `ngspice -p` writes `~/.ngspice_history`. Its origin is unknown, and nothing in the tree

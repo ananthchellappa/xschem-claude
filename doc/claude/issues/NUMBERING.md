@@ -3587,7 +3587,43 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   green while saying it verified nothing. Ships with **no row**; documented meanwhile in
   `CLAUDE.md` inline with the rule it undermines. OPEN.
 
-**The next free number is 1482.**
+~~**The next free number is 1482.**~~ superseded: **1482 is SKIPPED, not filed**, and
+**1483**–**1488** are filed, below (2026-09-18, outsider-fixes batch, stage F).
+
+- **1482** — **skipped on purpose.** At minting time the cross-clone check found `1482` in
+  **both** clones' `NUMBERING.md`, as each one's live pointer line
+  (`~/dev/xschem-op-wcard`'s copy of this file was byte-identical to this one). CLAUDE.md's
+  procedure reads any `NUMBERING.md` hit as taken, and the reason is concrete here: the
+  other clone's next filing would take 1482 by its own pointer, which is issue **1400**'s
+  collision shape. Left for that clone. ⚠ Its pointer will then walk into 1483–1488, so
+  that clone must run the cross-clone check too. The pointer cannot see these files.
+- **1483** — **four T1 suites segfault mid-run under `--nogui` when `DISPLAY` is unset,
+  so a headless box never sees T1 at ZERO.** `test_op_annot`, `test_ase_optier_0963`,
+  `test_unused_attr_0970` and `test_auto_specialize_1201` die with `FATAL: signal 11`
+  after rows `W30a`, `S13`, `UF28` and `AS65`, each while inside a child sheet, and pass
+  with DISPLAY set. Re-measured at `7a46275f`. The outsider audit's "fresh-clone
+  segfault" (F14) label was wrong. With DISPLAY unset, T1 is `87/86/8`. OPEN.
+- **1484** — **an uppercase letter in the checkout path turns five ASE suites red**
+  (`sp_1452`, `converge_1459`, `campaign_1462`, `campaign_gui_1464`, `variant_1470`: 18
+  counted lines). Isolated for `sp_1452` only (`clonB` red, `clone2` green). ngspice
+  lowercasing the unquoted `wrs2p` path is INFERRED. OPEN.
+- **1485** — **nine T1 suites go red in a `git archive` export because they read their
+  corpus through git** and use git's error text as data: 20 counted lines. The
+  issue-stamp checker's classify-and-skip-by-name is the remedy's shape. OPEN.
+- **1486** — **suites write xschem's untitled autosave into their cwd, and the checkout's
+  op_param project file is the user's, not litter.** Running from `~` overwrote or
+  deleted the tester's own `~/untitled~.sch`; that is fixed for `run_suites.sh` and
+  `gated_xschem.sh` (D13.3). ⚠ It **corrects** DECISIONS D12, which listed
+  `<repo>/.xschem/op_param_lists.conf` as suite litter: per issue 1381 it is the user's
+  Save. OPEN, partly fixed.
+- **1487** — **the T1 verdict cannot show that a case skipped rows, because
+  `summarize_all` drops `skip:` lines.** The stage-F gate's own case logs carried 8
+  `skip:` lines (converge at 70 checks, not 76) and its verdict none. OPEN.
+- **1488** — **`test_wave_markers` hangs when `run_suites.sh` attaches to a persistent
+  dev display.** `TIMEOUT` at 200, 300 and 600 s on attached displays, in the old and new
+  code alike, and `ALL PASS (983)` on the private `xvfb-run` one. Pre-existing. OPEN.
+
+**The next free number is 1489.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

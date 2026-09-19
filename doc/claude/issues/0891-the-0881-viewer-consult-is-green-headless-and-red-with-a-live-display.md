@@ -1,6 +1,6 @@
 # 0891 — 0881's viewer consult is green headless and red with a live display
 
-**STAMP:** `v1 claim=partial tree=61af3692 stamped=2026-09-17 fix=partial open=1 by=D1`
+**STAMP:** `v1 claim=partial tree=7a46275f stamped=2026-09-18 fix=partial open=1 by=F-docs`
 
 **Status:** **FIXED** 2026-08-28 (backlog item A12); **ruling debt SETTLED 2026-08-29** on the user's "decide the 23" instruction — see the RULING section at the foot of this file (arm ratified; three follow-up code changes named, not yet done). Verdict: **the fixture was
 at fault, the product was not** — established by measurement, not by assumption,
@@ -584,3 +584,70 @@ recorded here.
 
 **The user may reverse this at any time; it was decided to spare their
 attention, not to bind them.**
+
+---
+
+# ADDENDUM, 2026-09-18 — DECISIONS D8 partly supersedes the ruling above
+
+**Filed by** the outsider-fixes batch, stage F (docs crew), for the driver's decision
+**D8** in `doc/claude/outsider_fixes_batch/DECISIONS.md`, landed in `7a46275f`. D8 names
+this ruling and records the supersession as *"internal harness behaviour and the driver's
+call"*. This section makes the ruling say so where it is read. **The ruling above is not
+edited.** Where the two differ, this section is the newer word.
+
+## What the ruling said, and what the harness does now
+
+The ruling said the everyday run *"goes on starting the persistent dev display … goes on
+leaving that display up afterwards, and goes on printing an uncounted `NODISPLAY:` line …
+on a machine that has no such display"*, and that *"a surviving Xvfb is the documented
+intended state"*. That held for the developer who had asked for a persistent display. It
+was wrong for a stranger. The outsider audit measured (F36) that T1 started a persistent
+`Xvfb :99` plus openbox for anyone with Xvfb installed and `:99` free, never stopped it,
+and created `~/.claude/xschem_dev_display` and `~/.cache/openbox` in their HOME. Under a
+throwaway HOME the same start is how an orphan came to hold this box's `:99`: it was
+started with a HOME that was then deleted beneath it.
+
+Since `7a46275f`, T1's display arm, in order (the comment above `set dd_state` in
+`tests/run_regression.tcl`):
+
+1. **Attach** to the dev display, through the state dir carried from the real HOME.
+   Unchanged.
+2. **Auto-start it only if `~/.claude/xschem_dev_display` already exists**, meaning the
+   tester has used it before, and only with the environment from before the HOME switch.
+   It is then left up, as the ruling says. **For the developer this ruling was written
+   for, nothing changes.**
+3. **Otherwise, or if that start fails, a private Xvfb for this run only**, numbered
+   from `:100` (never `:99`), killed when the arm is done, with a reaper if the run dies.
+   **This supersedes "goes on starting the persistent dev display" and "a surviving Xvfb
+   is the intended state" for every tester who never set one up.** MEASURED at the
+   stage-F gate: `display arm: PRIVATE Xvfb :100 for this run only (pid 1248630, wm
+   openbox)`, all 11 display cases green, `T1-RUN-END cases=87 blocks=86
+   counted_failures=0`.
+4. **`NODISPLAY` only when no Xvfb is installed at all.** An Xvfb that is installed and
+   will not start is a **counted** failure, one `HARNESS: <dc> display arm NOT RUN -- Xvfb
+   is installed but no display could be started (…): FAIL` per case (D17.9). **This
+   narrows "an uncounted `NODISPLAY:` line on a machine that has no such display".** Since
+   step 3, a machine with no dev display but a working Xvfb runs the arm. Printing
+   silence for a broken one would be this issue's own defect again. The R3 prover measured
+   it with a PATH `Xvfb` that exits 1: 11 counted `HARNESS` lines, 0 `NODISPLAY`
+   (`receipts/S2c-R3-prove.md`).
+
+**The cost the ruling weighed moved with it.** D8 turned 11 uncounted lines into 11
+counted runs on every box without a dev display, so it was measured green on the private
+arm before it landed (D8, `receipts/S2c-T.md`).
+
+## The three follow-ups, re-checked at `7a46275f`
+
+1. **A clock on each display-arm launch: LANDED**, as issue 1403's `t1_timeout`
+   (`T1_CASE_TIMEOUT`, default 900 s rather than the 300 s named here), inside
+   `devdisplay.sh exec` as this ruling required.
+2. **Line-buffered report: LANDED** (`fconfigure $fd -buffering line` in
+   `run_regression.tcl`, from the harness-concurrency batch).
+3. **Drop `test_annot_stale_0684` from `dcases`: NOT DONE.** MEASURED: `dcases` still
+   lists it (11 entries at `7a46275f`), and the stage-F gate printed `Start
+   headless/test_annot_stale_0684.tcl (display arm)`. The arm has also grown since this
+   ruling, from 4 suites to 11, so its membership rule is due a fresh look. That was
+   the ruling's own point about this suite.
+
+The stamp at the head is re-dated to `7a46275f` for these three checks. It still records
+one open follow-up.

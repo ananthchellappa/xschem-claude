@@ -64,9 +64,14 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   whichever run finished **last** — which need not be yours if anyone else was running
   T1 in this tree. The per-case logs work the same way: `<name>.<pid><suffix>`,
   published back to the canonical `<name>.log` after that case is scored. Running one
-  case by hand is unchanged (`cd tests && tclsh open_close.tcl` still writes
+  case by hand keeps its log name (`cd tests && tclsh open_close.tcl` still writes
   `open_close.log`); the pid tag rides in `T1_LOG_TAG` and an unset tag means the old
-  name.
+  name. ⚠ **What did change (2026-09-18, `7a46275f`): it arms a throwaway HOME.** This
+  sentence said "Running one case by hand is unchanged" until then. `test_utility.tcl` calls `t1_arm_home` at source time, so T1 *and*
+  each tcase run alone with `tclsh` (`create_save`, `open_close`, `netlisting`, the
+  scripts that source `test_utility.tcl`) print `test home: throwaway /tmp/xschem-test-home.<pid>.<x> (your
+  HOME is untouched; …)` first and never touch your `~/.xschem` — see "The throwaway
+  test home" below.
 - Tests invoke the built binary headless via `xschem ... --pipe -q --script <file>`.
   `tests/test_utility.tcl` resolves it as **`$XSCHEM` → in-tree `src/xschem` →
   `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
@@ -91,19 +96,44 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   and `test_utility.tcl`'s third fallback *is* PATH. Give the binary a path
   anyway — and read a `xschem: command not found` in an old transcript as this
   state, not as a broken harness.
+  ⚠ **Since `7a46275f` the damage is contained, not the rule retired.** T1 and every
+  single case run under a throwaway HOME, so the PATH fallback would now rewrite a
+  throwaway's `recent_files`, not yours — measured by the S2c critic with a fake PATH
+  `xschem` in an unbuilt tree: 729 `recent_files` lines on the base, a byte-identical
+  canary on the fix. And `T1-RUN-BEGIN`'s `binary=` names the path that actually ran, so
+  a verdict now **says** when it was not this tree's binary. A bare `xschem` typed at
+  your own prompt is still armed by nothing.
 - **`create_save`, `open_close` and `netlisting` have no committed `gold/`
   baseline**, so they can only report `NOGOLD` — they run the cases and produce
   `<case>/results/`, but verify nothing until someone promotes a baseline. The
   trustworthy signal is the headless cases (which do have
-  `tests/headless/gold/`), or running one directly:
-  `./src/xschem --nogui --pipe -q --script tests/headless/<t>.tcl`.
+  `tests/headless/gold/`), or running one through the armed driver:
+  `tests/headless/run_suites.sh --nogui <t>` (drop `--nogui` for the display arm).
+  ⚠ **This line said `./src/xschem --nogui --pipe -q --script
+  tests/headless/<t>.tcl` until 2026-09-18, and that bare spelling still works — but it
+  runs with your REAL HOME** (DECISIONS D9: it is deliberately not re-exec'd). The 190
+  of 405 `test_*.tcl` that source `scratch.tcl` (a non-comment `source … scratch.tcl`
+  line, measured at `7a46275f`; a bare name grep says 191 because
+  `test_issue_stamp.tcl` only mentions it in comments) say so on
+  stderr, once — `note: this suite is using your real HOME;
+  tests/headless/run_suites.sh <t> gives it a throwaway one` — and the rest say
+  nothing. `run_suites.sh` also echoes each `skip:` line under its verdict, which the
+  bare command buries in the scroll.
 - **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
   leading `FATAL` is counted.
   ⚠ **READ THE TRAILER FIRST — new 2026-09-17, and it supersedes most of what
   follows.** Every verdict now opens with `T1-RUN-BEGIN pid= script= start=
-  planned_cases= verdict= canonical=` and closes with `T1-RUN-END pid= cases= blocks=
-  counted_failures= elapsed= end=` (`run_regression.tcl:694` and `:916`), written on a
-  channel that is `fconfigure`d `-buffering line` so the header survives a kill. **A
+  planned_cases= verdict= home= binary= canonical=` and closes with `T1-RUN-END pid=
+  cases= blocks= counted_failures= elapsed= end=` (the two `puts $fd "T1-RUN-…` lines in
+  `run_regression.tcl` — `:1003` and `:1293` at `7a46275f`; this said `:694`/`:916`,
+  which were correct only at `32dff39a` and had already drifted to `:709`/`:931` by
+  `69c65249`, before `7a46275f` moved them again), written on a
+  channel that is `fconfigure`d `-buffering line` so the header survives a kill.
+  `home=` (added 2026-09-18, `7a46275f`) is `throwaway`, `real` or `custom` — which HOME
+  the run wrote into; `binary=` is the full path `auto_execok` resolved, so a PATH
+  fallback is visible. Both sit **before** `canonical=`, which stays last, and both are
+  sanitised (whitespace replaced, `T1-RUN-` rewritten `T1_RUN_`) so no value can end the
+  header in a counted shape or plant a fake sentinel (D6, D13.10, D13.17). **A
   verdict with no `T1-RUN-END` line did not finish, whatever its contents**, and one
   whose `T1-RUN-BEGIN` names a pid or a start time you do not recognise is somebody
   else's answer or a fossil. Neither sentinel can match a counted shape, deliberately
@@ -139,9 +169,11 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   one commit message carry a case count obtained this way: **84, at a time when the
   tree ran 83.** ⚠ **That coincidence has since LAPSED, and the lesson has not.** When
   the tree ran 84 the fossil's number was *indistinguishable from today's correct
-  one*; the tree now runs **85**, so a stale log reading 84 finally looks stale. **Do
+  one*; the tree then ran **85**, so a stale log reading 84 finally looked stale. **Do
   not read that as the trap closing** — it reopens the instant the count next moves,
-  and the next fossil will carry 85. The durable half is the punchline, not the digit:
+  and the next fossil will carry 85. ⚠ **The count has moved (2026-09-18):** the tree
+  runs **87** since `7a46275f`, so a verdict written on 09-17 is now an 85-case
+  fossil — plausible, green, and two cases behind. The durable half is the punchline, not the digit:
   the fossil's number was *indistinguishable from today's correct one*, and only its
   mtime ever said otherwise. **A plausible value is not a measurement.**
   ⚠ **"Only its mtime" stopped being true on 2026-09-17.** `T1-RUN-BEGIN` names the
@@ -157,18 +189,29 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   below: `xschemtest.tcl` logs only when it fails). **Count `Start`/`Finish` pairs
   for cases; count log lines only for failures.** Two independent passes reached
   "82" by conflating them, so this is a trap with a track record, not a one-off slip.
-  **The run is 85 cases and 84 log lines** as of 2026-09-17 (it was 84 and 83
-  earlier the same day — see the registration note below), and the arithmetic is
+  **The run is 87 cases and 86 log lines** as of 2026-09-18, `7a46275f` (it was 85 and
+  84 on 2026-09-17, and 84 and 83 earlier that day — see the registration notes below),
+  and the arithmetic is
   written out here because this paragraph has already been wrong twice in exactly
   this way — swap the digit and the next reader inherits the conflation again:
 
   ```
-    70  hcases      (run_regression.tcl:27-94, entries not lines)
-  + 11  dcases      (:310-319, the display arm)
-  +  3  tcases      (:23 — create_save, open_close, netlisting)
+    72  hcases      (the `set hcases [list` block, entries not lines)
+  + 11  dcases      (the `set dcases [list` block, the display arm)
+  +  3  tcases      (`set tcases` — create_save, open_close, netlisting)
   +  1  xschemtest.tcl
-  = 85  Start/Finish pairs          84 `Total num fail:` lines
+  = 87  Start/Finish pairs          86 `Total num fail:` lines
   ```
+
+  ⚠ **85 → 87 on 2026-09-18**, when the outsider-fixes batch registered
+  `headless/test_home_isolation` and `headless/test_home_isolation_sh` (the 71st and
+  72nd `hcases` entries). **Read off the artefact, not computed:** the gate verdict
+  `tests/results.1176485.log` at `7a46275f` closes `T1-RUN-END pid=1176485 cases=87
+  blocks=86 counted_failures=0 elapsed=517s`, its stdout carries **87 `Start` / 87
+  `Finish`** and **zero** `another regression run is live`, `wc -l` answers **177**,
+  and the three lists piped through `/usr/bin/grep -o '"[^"]*"' | wc -l` answer
+  **3 / 72 / 11**. The block ranges this box used to quote (`:27-94`, `:310-319`) are
+  gone on purpose — `dcases` now starts at `:312` and will move again.
 
   ⚠ **84 → 85 on 2026-09-17, second registration of the day**, when the
   issue-tracker batch added `headless/test_issue_stamp` to `hcases` (70th entry).
@@ -193,20 +236,23 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   themselves rather than from a sentence. ⚠ **And the verdict FILE was no longer 83
   lines: `wc -l` answered 171.**
   ⚠ **Both numbers moved again LATER THE SAME DAY** — the issue-tracker batch added
-  `headless/test_issue_stamp` as the **70th** `hcases` entry. Current lengths
-  **3 / 70 / 11**, and `wc -l` on a green verdict is **173**. Take the list lengths
+  `headless/test_issue_stamp` as the **70th** `hcases` entry. Lengths then
+  **3 / 70 / 11**, and `wc -l` on a green verdict **173** — ⚠ **both superseded on
+  2026-09-18: 3 / 72 / 11 and 177** (the registration note above). Take the list lengths
   by piping each `[list …]` block through `/usr/bin/grep -o '"[^"]*"' | wc -l`, and
   **find the block by matching `set hcases [list` rather than by line number** — the
   ranges quoted here have already rotted twice, and this batch measured bare
   `file:line` citations rotting **5 of 5** while symbolic ones held **3 of 3**.
   ⚠⚠ **READ THE NEXT WARNING WITH THIS ONE, OR YOU WILL DELETE IT.** The paragraph
-  below says *"85 was wrong"*. **85 is also, now, right — and the two are different
-  quantities.** The wrong 85 was an answer to *"how many LINES is the verdict?"*
-  (the answer is **173**). The right 85 is the answer to *"how many CASES does T1
-  run?"*. **Same numeral, different question**, and they became equal by coincidence
-  on the same day: the issue-tracker batch registered a 70th `hcases` entry hours
-  after the `wc -l` error was corrected. **The warning below is NOT refuted. Do not
-  tidy it away on the grounds that "85 is the right number now."**
+  below says *"85 was wrong"*. **85 was also, for one day, right — and the two are
+  different quantities.** The wrong 85 was an answer to *"how many LINES is the
+  verdict?"* (the answer was **173**). The right 85 was the answer to *"how many CASES
+  does T1 run?"*. **Same numeral, different question**, and they became equal by
+  coincidence on the same day: the issue-tracker batch registered a 70th `hcases` entry
+  hours after the `wc -l` error was corrected. ⚠ **Since `7a46275f` (2026-09-18) 85 is
+  neither: T1 runs 87 cases and a green verdict is 177 lines.** **The warning below is
+  NOT refuted. Do not tidy it away on the grounds that "85 was the right number" — or
+  that it no longer is.**
 
   ⚠ **This passage said 85 for a few hours on 2026-09-17, and that is the sharpest
   lesson in this batch.** 85 is `83 + 2` — the `Total num fail:` lines plus the two
@@ -225,33 +271,58 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   = 173  wc -l on a GREEN verdict        (85-case tree, measured at 1acae0b0)
   ```
 
+  and on today's tree, read off `tests/results.1176485.log` rather than re-derived:
+
+  ```
+     2  sentinel lines (T1-RUN-BEGIN, T1-RUN-END)
+  +  86  block header lines
+  +  86  "Total num fail:" lines
+  +   3  NOGOLD notes
+  = 177  wc -l on a GREEN verdict        (87-case tree, measured at 7a46275f)
+  ```
+
   ⚠ **And it MOVES WITH THE FAILURE COUNT**, so it is not a constant to check against:
   on the **84-case** tree, measured 2026-09-17, **171** green, **172** with one counted
-  failure, **174** with three. ⚠ **Only the GREEN figure has been re-measured on the
-  85-case tree — it is 173.** The one-failure and three-failure numbers above are the
-  **old tree's** measurements and are deliberately **not** renumbered here: nobody has run
-  an 85-case verdict with failures in it, and inventing 174/176 by adding two would be
-  exactly the arithmetic-on-a-sentence this paragraph exists to forbid.
-  **The three numbers, none of them interchangeable: 85 cases · 84 `Total num
-  fail:` lines · `wc -l` = 173 on a green run.** Count nothing you can read off
+  failure, **174** with three. On the **87-case** tree two figures are measured: **177**
+  green (the stage-F gate, and the R3 prover on four more), and **185 with eight
+  counted failures** — the four DISPLAY-unset segfault suites of issue **1483**, two
+  lines each, `2 + 86 + 86 + 8 + 3`, measured on five runs by the S2c regression refuter
+  and on two by the R3 prover. The **85-case** tree, which this said nobody had run with
+  failures, has one measured too: **181 with eight**, the R3 prover's DISPLAY-unset base
+  run (`2 + 84 + 84 + 8 + 3`). ⚠ **No other `wc -l` figure is measured.** Receipts hold
+  87-case verdicts with 1, 2, 13 and 28 counted failures, and two of them quote 178 and
+  179, but those may be arithmetic, so do not cite them. The 84-case one- and
+  three-failure numbers are deliberately **not** renumbered: inventing 178/180 by adding
+  one would be exactly the arithmetic-on-a-sentence this paragraph exists to forbid.
+  **The three numbers, none of them interchangeable: 87 cases · 86 `Total num
+  fail:` lines · `wc -l` = 177 on a green run** (they were 85 · 84 · 173 on
+  2026-09-17). Count nothing you can read off
   `T1-RUN-END`, which states `cases=`, `blocks=` and `counted_failures=` outright.
   ⚠ **Take the number from the artefact. Every time — including when you are writing
   the warning about not doing that.** Three passes have now missed that, and the third
   missed it while typing the warning.
-  ⚠ **AND `Start`/`Finish` PAIRS DO NOT PAIR ON A BOX WITH NO DEV DISPLAY.** Found
+  ⚠ **AND `Start`/`Finish` PAIRS DO NOT PAIR WHEN THE DISPLAY ARM CANNOT RUN.** Found
   2026-09-17 by the harness-concurrency batch; filed as issue **1481**, and in no
-  issue file before that. The display arm's NODISPLAY path writes its block and
-  `continue`s at `run_regression.tcl:856` — **before** the `puts "Finish …"` at
-  the `Finish` line — so a run on a box where `devdisplay.sh status` is not alive
-  prints **85 `Start` lines and 74 `Finish` lines** (it was 84/73 before the
-  issue-tracker batch registered a 70th `hcases` entry; the gap is always the 11
-  `dcases`). The rule just above ("count `Start`/`Finish`
-  pairs for cases") therefore **under-counts by 11 exactly there**, and a reader
-  counting `Finish` concludes eleven cases vanished — the same shape as 1476 face 2,
-  which is the defect that rule exists to catch. The `tcases` and `hcases` loops print
-  their `Finish` unconditionally; this one arm is the only asymmetry. **Count `Start`
-  lines, or read `cases=` from `T1-RUN-END`** — that counter is incremented once per
-  case entered and is blind to the asymmetry.
+  issue file before that. The display arm's can't-run paths write their block and
+  `continue` — `run_regression.tcl:856` at `69c65249`, `:1212` at `7a46275f` —
+  **before** the `puts "Finish …"` line. ⚠ **This heading said "ON A BOX WITH NO DEV
+  DISPLAY" until 2026-09-18, and that is no longer the trigger.** Since `7a46275f`
+  (DECISIONS D8) a box with no live dev display runs the 11 `dcases` on a **private
+  Xvfb numbered from `:100`, for that run only** — the stage-F gate printed `display
+  arm: PRIVATE Xvfb :100 for this run only` and **87 / 87**. The `continue` is now
+  reached only on a box with **no Xvfb installed** (an uncounted `NODISPLAY:` line per
+  case) or one whose **installed Xvfb will not start** (a **counted** `HARNESS: <dc>
+  display arm NOT RUN -- Xvfb is installed but no display could be started (…): FAIL`
+  per case, D17.9 — silence was 0891's defect). There a run prints **87 `Start` lines
+  and 76 `Finish` lines**; on 2026-09-17 the same hole fired on *any* box without a
+  live dev display, at **85/74** (84/73 before the issue-tracker batch registered a 70th
+  `hcases` entry; the gap is always the 11 `dcases`). The rule just above ("count
+  `Start`/`Finish` pairs for cases") therefore **under-counts by 11 exactly there**,
+  and a reader counting `Finish` concludes eleven cases vanished — the same shape as
+  1476 face 2, which is the defect that rule exists to catch. The `tcases` and
+  `hcases` loops print their `Finish` unconditionally; this one arm is the only
+  asymmetry. **Count `Start` lines, or read `cases=` from `T1-RUN-END`** — that
+  counter is incremented once per case entered and is blind to the asymmetry.
   ⚠ **IT IS DISPLAY-STATE DEPENDENT, AND ON THIS BOX IT DOES NOT FIRE.** Do not read
   the paragraph above as "the count is broken". V4's seven T1 runs on 2026-09-17 all
   ran with the persistent dev display `:99` alive, and every one printed **84 `Start`
@@ -261,10 +332,17 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   the loop, not by line number, because these three coordinates have now rotted
   twice**) and has **never been observed** — the
   85/74 split remains **derived, not measured**, because nobody has yet run T1 with
-  the display down. Read that the right way round: the `Start`/`Finish` rule is safe
-  *here* and unsafe *generally*, so it turns wrong the first time anyone runs on a
-  fresh boot, a container or CI — which is exactly where nobody is watching for it.
-  `cases=` from the trailer is correct on every box, which is why it is the rule.
+  the display down. ⚠ **OBSERVED TWICE SINCE — "derived, not measured" is RETIRED
+  (2026-09-18).** The outsider-fixes S1 crew measured **85 `Start` / 74 `Finish` / 11
+  `NODISPLAY`** in three T1 runs in a `git archive` export with `devdisplay.sh`
+  stubbed dead (pre-D8 code, `receipts/S1.md` §7); the R3 prover measured **87 / 76**
+  with a PATH `Xvfb` that exits 1, all 11 `dcases` counted `HARNESS` fails and
+  `cases=87` still right (`receipts/S2c-R3-prove.md`, "an installed Xvfb that will not
+  start"). Read that the right way round: the `Start`/`Finish` rule is safe *here* and
+  unsafe *generally* — and D8 has narrowed "generally" to boxes with **no working
+  Xvfb**, which is still a stripped container or a CI image, exactly where nobody is
+  watching for it. `cases=` from the trailer is correct on every box, which is why it
+  is the rule.
   ⚠ **EVERY LINE NUMBER IN THE TWO PARAGRAPHS ABOVE WAS WRONG BY +15 UNTIL
   2026-09-17 — AND SO IS ISSUE 1481's OWN CODE BLOCK.** They read `:826` `Start`,
   `:841` `continue`, `:872` `Finish`; measured against **`69c65249`** the text is at
@@ -276,7 +354,12 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   it was learned on — **a citation needs a tree state, not just a line** — so these
   are quoted with their text at `69c65249`: `841:    puts "Start ${dc}.tcl (display
   arm)"` · `856:      continue` · `887:    puts "Finish ${dc}.tcl (display arm)"`.
-  Re-grep before requoting. That includes these.
+  Re-grep before requoting. That includes these. ⚠ **They moved again at `7a46275f`,
+  and not uniformly** (+349 / +356 / +358 counted from `69c65249`, one line of each from an earlier commit;
+  `7a46275f`'s own shift was +348 / +355 / +357, uneven because D8's private arm landed
+  *between* them): `1190:    puts "Start ${dc}.tcl (display arm)"` · `1212:      continue` ·
+  `1245:    puts "Finish ${dc}.tcl (display arm)"`. The one `continue` now serves both
+  the `NODISPLAY` and the `HARNESS` path.
   **So before counting, confirm the log's MTIME moved off its pre-run value**
   — and treat an empty log *after* a run as a death, never as a zero.
   ⚠ **BUT A MOVED MTIME PROVES A RUN *WROTE*, NOT THAT A RUN *FINISHED* (issue
@@ -306,7 +389,7 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   a killed run left **0 or 4096 bytes**, not a proportional prefix, which made
   the 0-byte file the *typical* outcome rather than an extreme one. **So pair the
   mtime with the case count:** the log must carry one `Total num fail:` line per case
-  minus one (**84** for today's 85), and a short count is a death even when every line
+  minus one (**86** for today's 87 — it read "84 for today's 85" until 2026-09-18), and a short count is a death even when every line
   that is present is green.
   ⚠ **TWO HALVES OF THAT WERE FIXED ON 2026-09-17 AND THE DANGEROUS HALF WAS NOT.**
   This bullet said *"Nothing marks that a run began or ended — there is no `REGRESSION
@@ -418,14 +501,18 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   20-core box, and it would invert again on a busier or narrower one. Do not let a
   future reader — or a future scheduler — come away thinking concurrency was adopted
   for throughput.
-  ⚠ **AND THE HARNESS ITSELF STILL PRINTS THE REFUTED SENTENCE TO EVERY CREW.**
-  `run_regression.tcl:672-673` tells the second run *"This is not faster: measured 20%
+  ⚠ **AND THE HARNESS ITSELF PRINTED THE REFUTED SENTENCE TO EVERY CREW.**
+  `run_regression.tcl:672-673` told the second run *"This is not faster: measured 20%
   SLOWER to both answers than running back-to-back."* That first sentence is false for
-  a full T1 — which is the only thing that banner is ever printed by. Believe this
-  paragraph, not the banner, until the banner is fixed; its second sentence (*"what it
-  buys is that neither crew is turned away"*) is the true half. This is the batch's own
+  a full T1 — which is the only thing that banner is ever printed by. Its second
+  sentence (*"what it buys is that neither crew is turned away"*) is the true half.
+  This is the batch's own
   **D2 "lying detail string"** class: a true measurement of one thing, printed as a
-  claim about another.
+  claim about another. ⚠ **The banner was fixed by `2cf01084` (2026-09-17 09:00), and
+  this paragraph kept saying "still" until 2026-09-18.** Read at `7a46275f`, the
+  `t1_others` banner says *"THIS IS NOT A THROUGHPUT OPTIMISATION … its SIGN depends on
+  the workload"* and quotes V4's full-T1 pair; the comment above `set log_fn` records
+  that it *"said '20% SLOWER' until V4 measured it back-to-back"*.
   **The lock survives, demoted to a publish mutex.** It brackets exactly one file copy
   — a sub-second critical section instead of a ~410 s one — so the canonical file can
   never be a mixture of two runs' bytes. The knobs were retuned to match:
@@ -512,8 +599,8 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   the detector had a false-positive mode that makes a solo run look contended — and a
   false collision is a ready-made excuse for a red. Same defect as `W12b` and `C11` in
   different clothes: **matching a shared namespace by pattern instead of by identity.**
-  **Ask the harness instead.** `t1_live_runs` (`tests/run_regression.tcl:656-665`)
-  already does it by identity: it globs `results.<pid>.log` and keeps a pid only if
+  **Ask the harness instead.** `t1_live_runs` (`tests/run_regression.tcl:656-665` when
+  written; `proc t1_live_runs` is at `:946` at `7a46275f`) already does it by identity: it globs `results.<pid>.log` and keeps a pid only if
   `/proc/<pid>` exists, so the verdict file *is* the liveness record and there is no
   second thing to leak. A run that sees a peer says so on stdout (`another regression
   run is live in this tree (pid: …)`), so **zero occurrences of that line in your own
@@ -559,7 +646,19 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `cases=85 blocks=84 counted_failures=0` (commit `1acae0b0`). **Still ZERO**, and
   solo-ness was established *positively* — zero occurrences of `another regression
   run is live` in the run's own output, which is better evidence than any `pgrep`.
-  ⚠ **That gate went RED twice first, and both reds are worth knowing.** One was a
+  ⚠ **Re-measured green 2026-09-18 at 87 cases** (`7a46275f`, the outsider-fixes
+  stage-F gate): `rc 0`, **517 s**, trailer `cases=87 blocks=86 counted_failures=0`,
+  header `home=throwaway binary=/home/analog/dev/xschem-claude/src/xschem`, display
+  arm `PRIVATE Xvfb :100 for this run only`, zero peers. **Still ZERO.** Its HOME was a
+  copy of the real `~/.xschem`, `.gitconfig` and `.ngspice_history`, byte-identical
+  afterwards. ⚠ **Two things that green does not cover, both filed:** (1) it ran with
+  **DISPLAY set**, like every ZERO before it — with DISPLAY **unset** the same tree is
+  `87/86/8`, four suites segfaulting mid-run (issue **1483**), so a headless CI box
+  does **not** see ZERO; (2) its case logs carry **8 `skip:` lines** and the verdict
+  carries **none** — `test_ase_converge_1459` ran **70** checks, not 76, because the
+  copied home held no fork ngspice (issue **1487**). Green is per case; coverage is not
+  in the verdict.
+  ⚠ **The 85-case gate (`1acae0b0`) went RED twice first, and both reds are worth knowing.** One was a
   driver hand-running a suite **while T1 was live** — in a diagnostic run undertaken
   to be careful. The other was **the spelling of `HEAD`**: `83656487` has no `a`–`f`,
   the issue-stamp suite feeds `git rev-parse --short=8 HEAD` into its fixtures, and
@@ -592,13 +691,62 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   that reported and *then* died used to score a silent pass).
 - `xschemtest.tcl` is a broader functional/perf harness, run as
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
-  log allocations for leak checking.
+  log allocations for leak checking. ⚠ **Run by hand it is armed by nothing** — it
+  uses your real HOME, and (being a bare binary start that sources no `scratch.tcl`)
+  prints no note saying so (D13.1 records it as the exception). T1's own `xschemtest`
+  case runs under T1's throwaway. Give it a path, too: `./src/xschem --script …`.
+
+### The throwaway test home (`t1_arm_home`, `tests/headless/test_home.sh`)
+**Since `7a46275f` (2026-09-18) every documented test command runs with `HOME` set to a
+fresh `${TMPDIR:-/tmp}/xschem-test-home.<pid>.XXXXXX`**, deleted at exit by the
+process that made it. Before that T1, `run_suites.sh` and `full_audit.sh` overwrote a
+tester's clipboard, same-named netlists in `~/.xschem/simulations` and saved window
+positions, and left a persistent Xvfb plus `~/.cache/openbox` behind (outsider audit
+F6–F10, F36, F39). The fix was proved with **seeded and empty** canary homes left
+byte-identical, each shown red first on the old code — not asserted.
+
+* **Armed** (one `test home: throwaway …` line per run): T1 **and every case run
+  alone** (`t1_arm_home`, called when `tests/test_utility.tcl` is sourced);
+  `run_suites.sh`, `full_audit.sh`, `gated_xschem.sh`; the standalone `test_*.sh`
+  suites (through `xvfb_arm.sh --arm`) and `test_devdisplay.sh`; `owed.sh drain`,
+  around each shell debt it runs; `run.sh` / `run_nogui.sh`; `lookshot.sh`,
+  `tests/netlist_diff/netlist_diff.sh`, `wireedit/run_wireedit.sh`. A driver nested
+  inside an armed run reuses its throwaway; only the owner deletes.
+* **Not armed:** the bare `./src/xschem … --script tests/headless/<t>.tcl` (D9 — the
+  `scratch.tcl` suites print a `note:` naming the armed spelling) and a hand-run
+  `xschemtest.tcl`. **The armed spelling is `tests/headless/run_suites.sh [--nogui] <t>`.**
+* **The list is enforced, not remembered.** Three refutation rounds each found more
+  unarmed launchers by hand, so row **G2** of `test_home_isolation.tcl` (a T1 case)
+  enumerates every script under `tests/` that starts xschem and fails unless it is
+  armed, runs inside xschem, or is on an allowlist with a one-line reason. **A new
+  launcher script reddens T1 until you arm it** (`. test_home.sh; test_home_arm`, or
+  source `test_utility.tcl`). Widening G2 to the whole repository is round 4 (D20.6),
+  not landed.
+
+| variable | meaning |
+|---|---|
+| `XSCHEM_TEST_HOME=real` | opt out: your real HOME, a loud `!! test home: REAL` banner on **every** run, header `home=real` |
+| `XSCHEM_TEST_HOME=<abs dir>` | use that directory, never delete it (`home=custom`); refused if it resolves — symlinks included — to your real HOME, or its `.xschem` leads into it |
+| `XSCHEM_TEST_KEEP_HOME=1` | keep the throwaway and print its path; `.keep` is written at arm time, so a killed run's is kept too |
+| `XSCHEM_TEST_REAL_HOME` | **set by the arm**, not by you: your real HOME, for **read-only** fixture lookups (`test_real_home` in `scratch.tcl`) — the fork ngspice, VCD fixtures, `test_launch_context`'s geometry. A row that finds nothing prints `skip:`, never a silent pass |
+
+⚠ **What your real HOME still sees, on purpose (D13.2).** If you already have
+`~/.claude/xschem_dev_display`, T1 attaches to the dev display or **auto-starts it with
+your real HOME** — writing that state dir and `~/.cache/openbox` — because a persistent
+display must outlive the run that started it (the orphan that once held `:99` was one
+started under a HOME deleted beneath it). An existing `~/.claude/gui_test_gate` is
+shared the same way. Neither is ever **created** for someone who has not set it up;
+without them T1 uses a private Xvfb from `:100` and removes it. A `TMPDIR` inside your
+HOME puts the throwaway there too, and the banner says so instead of "untouched".
+Every rule, and why: `doc/claude/outsider_fixes_batch/DECISIONS.md` **D4–D20**.
 
 ### The persistent dev display (`tests/headless/devdisplay.sh`)
 **Start this once and GUI testing stops touching your screen at all**, including
 the case no wrapper script can reach — a bare
 `./src/xschem --pipe -q --script tests/headless/<t>.tcl`, which is the most-typed
-command in a session and which no arming script wraps.
+command in a session and which no arming script wraps. ⚠ **Your screen, not your
+HOME:** that bare command still runs with your **real** HOME (D9); only the drivers
+arm a throwaway one — see "The throwaway test home" above.
 
 ```sh
 tests/headless/devdisplay.sh start     # Xvfb :99 + openbox, ~0.3 s, idempotent
@@ -611,11 +759,16 @@ earlier revision of this section wrongly told them to put it in `~/.bashrc`. A
 person launching xschem is launching it *to use it* — sending that to an
 invisible display is the bug, not the fix. The armed entry points
 (`full_audit.sh`, `run_suites.sh`, `gated_xschem.sh`, the 8 standalone
-`test_*.sh`) already need nothing.
+`test_*.sh`) already need nothing — for the display, and since `7a46275f` for HOME
+too. ⚠ **Until then the 8 standalone suites were armed for the display only**: the S2c
+refuters, running them with a canary as HOME, measured four rewriting its
+`.xschem/geometry` and all seven `--arm` ones creating `.cache/openbox` in it (D13.1
+fixed it through `xvfb_arm.sh --arm`).
 
 **The one consumer of the export is the assistant**, whose bare
 `./src/xschem --pipe -q --script tests/headless/<t>.tcl` is typed dozens of
-times a session and is armed by nothing. Two ways to cover it, in order:
+times a session and is armed by nothing — neither display nor HOME. Two ways to
+cover the display, in order, and one that covers both:
 
 1. **Launch the session as `DISPLAY=:99 claude`.** Tool shells inherit the
    Claude Code process's environment, so every bare invocation lands on the dev
@@ -625,6 +778,12 @@ times a session and is armed by nothing. Two ways to cover it, in order:
    exec ./src/xschem --pipe -q --script <t>.tcl`, or run suites through
    `run_suites.sh`. Never a bare `./src/xschem --script` on a live `:0` unless
    the point *is* the real screen.
+3. ⚠ **Only `run_suites.sh <t>` also arms HOME.** Option 1 and `devdisplay.sh exec`
+   route the display and leave HOME real — `devdisplay.sh exec` pins `DISPLAY` and
+   `GUI_GATE=0`, nothing else — so a suite run that way writes your clipboard, geometry
+   and `simulations/` exactly as before. Prefer `tests/headless/run_suites.sh [--nogui]
+   <t>`, which attaches to the dev display when it is up **and** gives the run a
+   throwaway HOME.
 
 Note `~/.bashrc` cannot serve purpose 1 here anyway: it returns at its line 6–9
 for non-interactive shells, and the Bash tool's shell is non-interactive
@@ -643,6 +802,25 @@ one stable display. `:0` becomes the opt-in (`AUDIT_DISPLAY=:0`), which is the
 right way round — the only thing that still needs it is reproducing
 Xwayland-specific defects. Side wins: immune to the WSLg Xwayland aborts that
 kill `:0` clients ~3×/session, and no per-run Xvfb spawn.
+
+⚠ **It is started with your REAL HOME, by design (D13.2).** `devdisplay.sh start` run
+by hand is an ordinary command in your environment, and T1's auto-start of it (D8
+step 2, only when `~/.claude/xschem_dev_display` **already exists**) runs under the
+environment from before T1 switched HOME. Either way it writes that state dir and
+`~/.cache/openbox` into your home: a display that outlives every run must not live in
+a HOME a run deletes. The R3 prover measured the auto-started display's environment
+carrying **no** harness variable (`XSCHEM_TEST_*`, `GIT_CONFIG_*`). T1 never creates
+the state dir for a tester who has none; it uses a private Xvfb from `:100` and
+removes it.
+
+⚠ **`test_wave_markers` TIMES OUT when `run_suites.sh` attaches to a persistent dev
+display** — pre-existing, identical in the old code, issue **1488**. The S2c round-3
+refuter measured it hang on a fixture display (200 s and 600 s) and on a
+`devdisplay.sh`-started one (300 s), in both trees, while it passes `ALL PASS (983
+checks)` on `run_suites.sh`'s private `xvfb-run` display. With `:99` up, a `TIMEOUT` for
+this suite is that defect, not your change; the private display (dev display down) is
+the arm it has been measured green on. `xvfb_arm.sh` has no "private even though `:99`
+is up" knob.
 
 ### ⚠ THERE ARE THREE X SERVERS HERE, AND `:0` IS NOT THE USER'S SCREEN
 
@@ -800,7 +978,10 @@ the recorded `:0` fail list exactly, and `test_wave_modes` at 2.3 s against
 6.2–45.6 s. Knobs: `AUDIT_DISPLAY=:0` (Xwayland — **not** the user's screen,
 see the three-server table above; use `=$DISPLAY` for that), `=none` (no DISPLAY, GUI
 legs self-skip), `AUDIT_SCREEN=WxHxD` (default `1920x1080x24` — **pin it**, and
-never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at).
+never `1600x1200`, the one size `test_fluid_bodyshove_guards_0132` fails at),
+`AUDIT_XVFB_BASE` (first number the private `xvfb-run` may take, default **200**,
+never below **100** — bare `xvfb-run -a` numbers from `:99`, the dev display's own
+number, and did so here until `7a46275f`, D17.8).
 
 **`GUI_GATE=0` is forced on the Xvfb arm, not defaulted.** `_gate_enabled` only
 checks that `$DISPLAY` is non-empty, so a virtual display arms the gate; then
@@ -921,9 +1102,13 @@ such first run a timeout and watch it.
   says `TIMED OUT`. Note the display-arm prefix goes **inside** `devdisplay.sh
   exec`, not around it: `cmd_exec` stays the parent of what it runs, so a timeout
   around the script would signal the shell and orphan xschem on `:99`.
-* **Every suite that sources `tests/headless/scratch.tcl` (169 of 384) carries its
+* **Every suite that sources `tests/headless/scratch.tcl` (169 of 384 when written;
+  190 of 405 `test_*.tcl` at `7a46275f`) carries its
   own watchdog**, armed by being a suite — so it reaches the one command no driver
-  wraps, a bare `./src/xschem --nogui --pipe -q --nolog --script <t>.tcl`. Budget
+  wraps, a bare `./src/xschem --nogui --pipe -q --nolog --script <t>.tcl`. ⚠ That bare
+  command is also the one that keeps your **real HOME** (D9; the same `scratch.tcl`
+  prints a `note:` saying so); `tests/headless/run_suites.sh --nogui <t>` gets the
+  watchdog, the 200 s driver bound **and** a throwaway HOME. Budget
   `XSCHEM_SUITE_WATCHDOG_MS`, default **900 000 ms** (deliberately above both
   drivers' caps so it never preempts their verdict), `0` disables. It exits **124**,
   which `run_suites.sh` already reads as `TIMEOUT`, and prints
@@ -1085,6 +1270,18 @@ fluid-editing branch**, i.e. this one, with 21 issue files already inside it. (T
 sentence said "another branch" until 2026-09-10; it is not one. Read the table.) A
 duplicated number rots silently and a collision costs a renumbering (0420–0432, +80,
 2026-08-19). Record the new number in NUMBERING.md as part of the same commit.
+
+⚠ **A NEW issue file must open with a valid stamp line, or T1 goes red.** Since
+2026-09-17 `test_issue_stamp` (a T1 case) runs the checker's gate, and its row **D9**
+fails on any issue file that carries no `**STAMP:**` line and whose **exact file name**
+is not in `tests/headless/issue_stamp_baseline.txt` — grandfathering is by name, not
+by number, so a new file under a colliding number is not exempt. The line goes in the
+first 12 lines, on one physical line, `tree=` an abbreviation of a commit with at
+least one `a`–`f` letter (lengthen an all-decimal one), and in a full clone it must
+resolve **to an ancestor of HEAD** (D15.4). A commit that exists only on another
+branch or clone, or one amended away, is red. Grammar and vocabulary: `doc/claude/specs/issue_stamp.md` §2; check before
+committing with `tclsh tests/headless/issue_stamp.tcl` → `ok (0 problems)`. Writing a
+stamp-shaped example anywhere else in an issue file is itself a red.
 
 **Wiring work**: before touching anything that creates, moves, deletes, or reroutes wires
 (move.c, the fluid passes, trim/break/merge, connected drag/rotate/flip), read
