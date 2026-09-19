@@ -567,3 +567,32 @@ their real state dir. It is recorded as owed to the user, with the exact command
    either armed or allowlisted, with its reason.
 7. Recorded, not fixed: `test_wave_markers` hangs when `run_suites.sh` attaches to a persistent
    dev display (identically in base). It goes into CLAUDE.md.
+
+---
+
+# D21 — Item 1 stops trying to exempt stamp examples inside fences; one last narrow round (driver)
+
+S1-fix8 added a "stamp body inside a closed fence is an example" exemption, and S1-fix9 made
+it CommonMark-aware. Each round's refuter then measured new regressions **in that exemption**,
+from nested markdown: a fence shown inside a fence, a blockquoted or 4-indented fence inside an
+example, a docstring example. One of S1-fix9's regressions fails **open**, because a
+colon-less stamp in prose after such an example passes. A line-based scanner cannot settle
+nested-container ambiguity, and a real CommonMark parser is out of scope.
+
+So the committed behaviour (`d42fc517`) stands for bodies inside fences: **every stamp body
+outside the stamp line is named**, inside fences included. That is fail-closed and loud, and
+the real corpus has none. It goes into the spec as a documented limit, with the workaround: show
+a stamp example outside `doc/claude/issues/`, or break the body (for example write `v1…`).
+
+**S1-fix10**, the last round for Item 1 in this batch. It keeps only the S1-fix8/9 parts that
+no refuter broke:
+* a fence is marked only by a marking key (`quote`, `assert`, `path`, `pat`, `state`), so
+  `title="…"` and `cc=gcc` fences are ordinary;
+* typo'd marking keys are named, and case or spacing variants are named once;
+* a backtick line whose info string holds a backtick does not open a fence;
+* the assert= budget charges scan time only, and there is a separately named gate budget;
+* problem text is capped.
+
+It drops the in-fence body exemption and the container-stripped scan. **If its refuter
+measures a class-A finding or a regression against `d42fc517`, the batch keeps `d42fc517` and
+files the rest as an issue.** There is no round 11.

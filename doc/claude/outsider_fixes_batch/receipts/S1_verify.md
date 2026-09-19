@@ -936,3 +936,106 @@ Setup: my own `--mirror` of the main tree, and clones `final` (d42fc517 plus the
   * Q20 uses real sleeps. Part C needs the gate's setup to take under 0.5 s; it takes milliseconds, and the row was green in 56 logs under load, but it is a margin.
   * Sabotage K2 (the 2000-char backstop disabled) is held only by D9b's self-test, because every known site now clips before the backstop.
   * Carried from S1-fix7: lstat-then-open is not atomic; the non-UTF-8 checkout path; summarize_all drops skip lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; uutils costs ~100 ms per exec; redundant layers I2 and N3; the tree:0 branch is held by no row; git before 2.44 ignores GIT_NO_LAZY_FETCH (INFERRED); the stale '34 checks' in spec section 5.
+
+## S1-fix9 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix9 is refuted. Its R1 remedy introduces two regression families; both are MEASURED on the final bytes (75c8aa17 04bc9ef6 d19e7a82 261c1ac7). There is no class-A finding.
+
+**The cause (READ).** The R1 remedy changed one line in `stray_stamps`: `inside` now comes from `fence_scan [regsub -all -line {^(?:[ \t]*>)*[ \t]*} $text ""]`. The strip is applied to the whole text, including the bodies of real column-0 fences. Two things go wrong:
+- A `> ```` line, or a `    ```` line, inside a real ```md or ```python fence becomes a closer. The real closer then opens a phantom fence. That phantom runs to the next bare ``` of a later fence and flips the body check's view of everything in between.
+- A lone ``` line in an indented code block, or in a blockquote that leaves a fence unclosed, pairs with a later fence in the same way.
+
+**Checking that the content is honest.** None of the shapes is a disguise; all are valid CommonMark. markdown-it 3.0.0 (commonmark mode) renders every typo line as paragraph text and every example body as fence content (MEASURED).
+
+**Reproducing the crew's claims (all MEASURED; setup in `real_home_check`).**
+- The final suite gives ALL PASS (100 checks) with 0 skip lines and corpses 0→0 in every full shape:
+  - `fin` on tclsh, xschem and T1;
+  - the renamed clone, the worktree, the weird-path clone, the blob:none clone and `cur`, on tclsh and T1.
+- The CLI says ok (0 problems) with self-test PASSED (120 parser cases).
+- Stranger shapes match the claim: d1 97 + 3 skipped (G4 D9h H9), export and unborn 93 + 7, reinit 3 FAILED (D9 D9h H9).
+- Red-first matches: the final suite gives 3 FAILED (Q22 Q23 Q24) on S1-fix8's checker, and 8 FAILED on d42fc517's.
+- The parser diff against S1-fix8 and against d42fc517 is 0 (1050 files, 5032 fence lines).
+- The R1, R2 and R3 recipes, the once-naming recipes and the 20 honest f_* fences give exactly the crew's table.
+- The class-A scripts (textplants, rf6, rf6b, rf7 A1/A2, reportplants, hermetic, defects) reproduce: README unchanged, 0 markers, 0 `&1`, 0 files mentioning 9994–9998, 0 fetch trace lines, packs 8→8, the victim and self repos byte-identical, and the same defect red sets.
+- A3 gives rc 1 in 60.6 s with 100 problems, 86 of them naming the scanning budget. q240 is ok in 75.6 s.
+- `stray_stamps` stays linear on adversarial input: 15.7 MB of indented openers in 375 ms.
+
+**The regressions are new in S1-fix9** (S1-fix8's raw scan handles every one correctly), and none is disclosed. Spec §6 names only two different "disguise" shapes, and it calls a ``` line in an indented code block "harmless". The h_indcode1 recipe measures that sentence false.
+
+**A measured remedy.** A scratch prototype, `body_ranges` (rem clone, checker md5 6ac99c4c), fixes both families:
+- it blanks every line of each raw fence before the stripped scan;
+- it keeps a stripped fence only while every line of it stays inside the opener's container (`>` on every line, or at least the opener's indentation).
+
+With it:
+- all h_* are RED and all h2_* are ok;
+- every b_* and adv_* recipe gives the same verdict as final;
+- the suite gives ALL PASS 100;
+- `stray_stamps` has 0 diffs over the 1050 committed files and the 1056 working-directory files;
+- it also names both of the crew's stated §6 shapes, so that limit can be deleted rather than stated.
+
+**A process note.** My T1 run on `cur` concurrent with a tclsh run in the same clone showed corpses 0→118. That was the sibling run's live scratch: 0 were left afterwards, and a solo T1 re-run gave corpses 0→0.
+## class_A:
+## regressions:
+  * REGRESSION A: an honest near-miss that d42fc517 names now passes silently (the D19-B 'stamp with its colon missing' class; same family as the S1-fix8 refuter's R3). MEASURED with the CLI gate in stamped 1219 and in grandfathered 0057; each recipe is an ordinary markdown example, then a colon-less stamp in prose, then an ordinary ```sh fence. Verdicts are listed as aa5cece0 / d42fc517 / S1-fix8 / final.
+- h_mdbq: a ```md fence showing a blockquoted fence (`> ```text`, `> make install`, `> ````), then `**STAMP** `v1 claim=fixed tree=deadbee0 ...``. Verdicts: ok / 1 problem / 1 problem / **ok (0 problems)**.
+- h_mdlist: a ```md fence showing a list item with a 4-indented fence. ok / 1 / 1 / **ok**.
+- h_pydoc: a ```python fence whose docstring holds an indented ```sh / ``` example. ok / 1 / 1 / **ok**.
+- h_indcode1: an indented code block showing one ```text line. ok / 1 / 1 / **ok**.
+- h_bqopen: a blockquote holding only `> ```sh` and `> make install`. ok / 1 / 1 / **ok**.
+- j_mdbq_prose and j_mdlist_dash: the same with `The old stamp was **STAMP** `v1 ...`` and `**STAMP -** `v1 ...``. ok / 1 / 1 / **ok**.
+- Controls h_ctl and h_ctl2 stay 1 problem on final.
+markdown-it (commonmark) renders every typo line as paragraph text. h_mdbq and h_indcode1 were re-measured on a fresh clone at main HEAD 021e9405. Recipes are in /var/tmp/xschem_fixes/s1fix9_verify/rc/, logs in logs/bat_h1_*.out and logs/bat_j_*.out.
+  * REGRESSION B: honest content that aa5cece0 accepts now goes red (the same family as the S1-fix8 refuter's R1, which was counted with the same aa5 ok / d42 red pattern; S1-fix8 had this case ok). MEASURED in 1219 and 0057: a stamp-body example inside a real, closed, column-0 fence, placed after an inner container fence. markdown-it renders each body line as fence content. Verdicts are listed as aa5cece0 / d42fc517 / S1-fix8 / final.
+- h2_mdex: ```md, `> ```text`, `> make install`, `> ````, a blank line, `see `v1 claim=open ...``, ```. Verdicts: ok / 1 problem / ok / **1 problem**.
+- h2_mdlistex: a 4-indented list fence, then `2. Stamp it with `v1 claim=...``. ok / 1 / ok / **1**.
+- h2_pyex: a docstring fence example, then `The body is `v1 claim=...``. ok / 1 / ok / **1**.
+- Control h2_ctl is ok on final.
+This contradicts the claim that 'the fenced stamp examples are still ok'. h2_mdex and h2_pyex were re-measured on the 021e9405 clone. Logs are in logs/bat_h2_*.out.
+## class_B_followups:
+  * Remedy for both regressions (MEASURED prototype `body_ranges` in /var/tmp/xschem_fixes/s1fix9_verify/rem/tests/headless/issue_stamp.tcl, md5 6ac99c4c). It blanks every raw fence's lines (opener through closer, or opener to EOF when unclosed) before the container-stripped scan. It accepts a stripped fence's range only while every line stays in the opener's container: `>` on every line, or indentation at least the opener's on every non-blank line. Results:
+- rtest.tcl: 15 of 15 right (final 6 wrong, S1-fix8 4 wrong).
+- The CLI battery: all h_* RED, all h2_* ok, every b_*/adv_* identical to final.
+- The suite: ALL PASS (100 checks).
+- stray_stamps: 0 diffs over the 1050 committed and 1056 working-directory files.
+- It also names spec §6's two stated mis-pairing shapes, so that limit can be removed.
+The suite should gain a row for h_mdbq, h_indcode1 and h2_mdex; Q22 covers none of them.
+  * Spec §6 says a ``` line inside an indented code block is 'harmless, because the lines between are code either way'. That is false: h_indcode1 hides a colon-less stamp in prose (MEASURED). Fix the sentence together with the remedy.
+  * The path=/pat=/state= marking cost goes beyond the crew's example. MEASURED as aa5cece0 / d42fc517 / S1-fix8 / final:
+- ```c path=src/move.c (excerpt): ok / red / ok / red.
+- ```c path=src/scheduler.c lines 120-140: ok / red / ok / red.
+- ```python title="build.py" path=tools/build.py: ok / red / ok / red.
+- ```text state=before the fix: ok / red / ok / red.
+It meets the letter of the aa5cece0 clause, but it is the stated cost in spec §6 and the S1-fix8 refuter's own remedy verbatim, and the committed d42fc517 is red too. So it is recorded here, not as a blocking regression. Consider narrowing the marking to fences that carry pat= and state= together, or path= plus a quote/assert near-miss.
+  * Two backtick-info cases, MEASURED as aa5cece0 / d42fc517 / S1-fix8 / final:
+- A TRUE assertion with pat=`ZQXNOPE` (k_btpat_true): ok / ok / ok / RED. Disclosed as deviation 2.
+- A backtick-info opener (```sh `make` output) followed by a real TRUE assert= fence (k_flip_true): ok / ok / ok / RED, named 'inside another fenced block'. The pairing flip is not disclosed.
+markdown-it agrees with final (neither line is a fence), so this is CommonMark-consistent. The spec should state the flip, and that pat= cannot contain a backtick.
+  * `Assert= absent` (a space after the `=`) is still named twice on final: 2 problems (d42fc517 also 2, S1-fix8 1). The 'named once' claim covers `assert =`, `assert =absent` and `assert = absent`, but not the `Key= value` spacing.
+  * Fuzz of 40 000 random info strings (fuzz2.tcl), final against d42fc517 (MEASURED): 0 new silent passes, apart from 1249 backtick-info lines (R3, by design) and 3050 fences carrying none of the five marking keys (S1-fix8's intended unmarking). 0 cases where final evaluates a block d42fc517 named.
+## out_of_scope:
+  * Carried from S1-fix8, not re-litigated:
+- K2 is held by D9b alone.
+- Q20 depends on real sleeps.
+- The 600 s gate wall clock depends on the box.
+- A stamp written in a fence is still read as one.
+- The '34 checks' in spec §5 is stale.
+- The S1-fix7 list: lstat-then-open, the non-UTF-8 checkout path, D12, GIT_ATTR_NOSYSTEM, HAVE_GIT/timeout, uutils cost, I2/N3, tree:0, git < 2.44.
+  * Main HEAD moved to 021e9405 (another crew's docs commit adding 1483-1488) after the crew's re-run at 7a46275f. MEASURED on a fresh clone at 021e9405 with the final bytes: CLI ok (0 problems), self-test 120, and ALL PASS (100 checks) with 0 skips on tclsh and on T1 (T1 re-run solo, corpses 0->0).
+## real_home_check: MEASURED:
+- The manifest check (`md5sum -c --quiet` on xschem_manifest_fixes.md5) gave rc 0 before any work, after all of it, and after the receipt append.
+- `find -newer /var/tmp/xschem_fixes/s1fix9_verify/.marker_start` printed nothing over ~/.xschem, ~/.claude/xschem_dev_display and ~/.claude/gui_test_gate, nor over ~/dev/xschem-op-wcard with .git pruned.
+- A /proc/*/environ scan (not pgrep -f) found 0 live processes with an s1fix9_verify HOME, and a ps check found 0 processes of mine left.
+- 0 FIFOs under /var/tmp/xschem_fixes/s1fix9_verify, 0 /tmp/istamp_* entries, 0 istamp_/drv_ corpses in the main tree's tests/headless/.scratch, and no `&1` file.
+- The main tree's four files still read 6d0592ad 930eb435 d19e7a82 1d4f8efb.
+
+How the runs were made:
+- Every tclsh, xschem, T1, CLI and git run used HOME set to a directory under /var/tmp/xschem_fixes/s1fix9_verify/homes, with DISPLAY and GIT_EDITOR unset, and each command ran under a timeout.
+- The xschem and T1 arms used the main tree's src/xschem.
+- :99, the devdisplay, the GUI gate and op-wcard were never touched.
+
+The only main-tree write is an append to /home/analog/dev/xschem-claude/doc/claude/outsider_fixes_batch/receipts/S1.md, a section titled '## S1-fix9 — refutation'. `git diff` on that file shows insertions only.
+
+Everything ran in /var/tmp/xschem_fixes/s1fix9_verify/:
+- The clones: fin (final bytes), s8 (S1-fix8 final), d42 (a checkout of d42fc517), aa5 (a checkout of aa5cece0), rem (the remedy prototype), cur (a fresh clone at 021e9405), mix8 and mixd, plus the shapes under shapes/ and rv/shapes/.
+- The main tree was only read: a mirror clone, one direct clone, git log/diff, and a cp of the issues directory out of it.
