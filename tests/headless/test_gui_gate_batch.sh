@@ -70,8 +70,12 @@ reaper_sweep_orphan_xvfb
 # so a session that correctly reaped its own server made xvfb-run exit 1 with
 # 57 green checks behind it. Note this is NOT an `exec`: the parent stays alive
 # to reap the display if the run under it cannot.
+#
+# The state file is looked up in the tester's REAL home when no state dir is
+# carried: a driver runs this with HOME switched to a throwaway (outsider fixes
+# batch, DECISIONS.md D4/D10), where `$HOME/.claude` never exists. Read-only.
 if [ -n "${DISPLAY:-}" ] && [ "${XSCHEM_GATE_SELFTEST_ARM:-0}" != 1 ] && \
-   [ "$DISPLAY" = "$(cat "${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display" 2>/dev/null)" ] && \
+   [ "$DISPLAY" = "$(cat "${XSCHEM_DEVDISPLAY_DIR:-${XSCHEM_TEST_REAL_HOME:-$HOME}/.claude/xschem_dev_display}/display" 2>/dev/null)" ] && \
    command -v Xvfb >/dev/null 2>&1; then
   echo "-- on the dev display, where the gate is disabled BY DESIGN; re-running on a private Xvfb" >&2
   export XSCHEM_GATE_SELFTEST_ARM=1
@@ -482,7 +486,7 @@ ck "R6 reaper_own_xvfb REFUSES :0 AS the user's screen" \
 # AWAY, which is not hypothetical: test_devdisplay.sh exports exactly that
 # redirection for its whole run and sources the reaper. The refusal that holds
 # here is "this run did not start it", which no environment variable can move.
-DEVDPY="$(cat "$HOME/.claude/xschem_dev_display/display" 2>/dev/null)"
+DEVDPY="$(cat "${XSCHEM_TEST_REAL_HOME:-$HOME}/.claude/xschem_dev_display/display" 2>/dev/null)"
 [ -n "$DEVDPY" ] || DEVDPY=":99"
 rmsg="$( ( XSCHEM_DEVDISPLAY_DIR="$TMP/no_such_state_dir"; reaper_own_xvfb "$DEVDPY" ) 2>&1 )"; rc=$?
 ck "R7 ...and REFUSES the dev display ($DEVDPY) AS SUCH with its state dir redirected away" \
@@ -490,9 +494,23 @@ ck "R7 ...and REFUSES the dev display ($DEVDPY) AS SUCH with its state dir redir
 
 # The provenance arm has its own refusal: pointed at a non-temp root it would
 # match half the processes on a developer box by their command lines.
-( reaper_init "$HOME" ) >/dev/null 2>&1; rc=$?
-ck "R8 reaper_init REFUSES a non-temp prefix (\$HOME)" \
-   "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+#
+# ⚠ THE ROOT IS THE TESTER'S REAL HOME, NOT $HOME (outsider fixes batch,
+# DECISIONS.md D10). Under a driver HOME is a throwaway made by mktemp under the
+# temp root, which reaper_init rightly ACCEPTS -- so `reaper_init "$HOME"` turned
+# this row red on every driven run for a reason that had nothing to do with the
+# refusal. The real home is the directory the refusal exists to protect. If the
+# real home itself sits under a temp root (a CI box with HOME=/tmp/...), no
+# non-temp home is on hand and the row says so instead of failing for nothing.
+R8ROOT="${XSCHEM_TEST_REAL_HOME:-$HOME}"
+case "$R8ROOT" in
+  /tmp/?*|/var/tmp/?*|"${TMPDIR:-/nonexistent-tmpdir}"/?*)
+    echo "skip: R8 -- the real home $R8ROOT is itself under a temp root, so there is no non-temp prefix to refuse" ;;
+  *)
+    ( reaper_init "$R8ROOT" ) >/dev/null 2>&1; rc=$?
+    ck "R8 reaper_init REFUSES a non-temp prefix (the real home, $R8ROOT)" \
+       "$([ "$rc" -ne 0 ] && echo 1 || echo 0)" ;;
+esac
 
 # An innocent process that merely MENTIONS Xvfb and a display number. The first
 # version of the identification asked whether those two strings appeared

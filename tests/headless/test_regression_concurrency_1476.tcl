@@ -740,6 +740,27 @@ check V4a-the-sentinels-do-not-count-as-failures \
   [expr {[llength $_sent] >= 4 && [counted_shapes [join $_sent \n]] == 0}] \
   "-- [llength $_sent] sentinel line(s) across both verdicts, of which [expr {[llength $_sent] ? [counted_shapes [join $_sent \n]] : 0}] match one of the four counted shapes (FAIL\$, GOLD?\$, RESULT?\$, ^FATAL); the requirement is ZERO, and >=4 is the non-vacuity half"
 
+## ⚠ V4b -- THE HEADER GREW TWO FIELDS A USER CONTROLS (outsider fixes batch,
+## DECISIONS D6): `home=` (from XSCHEM_TEST_HOME) and `binary=` (from $XSCHEM,
+## which is also how a run on an installed xschem now names itself -- audit
+## F10). V4a used to hold because every field was ours; it now holds because
+## `canonical=` -- ours -- stays LAST, so no user value can end the line. This
+## row pins the ORDER on both real verdicts. The hostile value itself (a space,
+## a newline, `FATAL`, a trailing `FAIL`) is driven through a driver copy by
+## row H1e of test_home_isolation.tcl.
+set _hdrs {}
+foreach _vt [list $VA $VB] {
+  foreach _l [split $_vt \n] { if {[string match {T1-RUN-BEGIN *} $_l]} { lappend _hdrs $_l } }
+}
+set _hbad {}
+foreach _h $_hdrs {
+  set _ih [string first { home=} $_h] ; set _ib [string first { binary=} $_h] ; set _ic [string first { canonical=} $_h]
+  if {!($_ih > 0 && $_ib > $_ih && $_ic > $_ib && [regexp { canonical=\S+$} $_h])} { lappend _hbad $_h }
+}
+check V4b-home-and-binary-sit-before-canonical-which-stays-last \
+  [expr {[llength $_hdrs] == 2 && [llength $_hbad] == 0}] \
+  "-- [llength $_hdrs] header(s) read; out of order or missing: [expr {[llength $_hbad] ? [join $_hbad { | }] : {none}}]. A user-controlled field last on the line could end it in `FAIL` and make the header score itself"
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

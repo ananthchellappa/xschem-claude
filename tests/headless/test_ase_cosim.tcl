@@ -2256,13 +2256,15 @@ if {[file isfile $oadefs] && [file isfile $refsch]} {
   eqcheck REF10-map-scope [dict get [lindex $rm 0] scope] TOP.counter
   eqcheck REF11-map-not-multi [dict get [lindex $rm 0] multi] 0
   # the scope hint must agree with the VCD the real shim actually wrote
-  set realvcd $::env(HOME)/.xschem/simulations/counter.vcd
+  ## read-only, from the tester's REAL home (D10 of
+  ## doc/claude/outsider_fixes_batch/DECISIONS.md), never the driver's throwaway
+  set realvcd [file join [test_real_home] .xschem simulations counter.vcd]
   if {[file isfile $realvcd]} {
     set f [open $realvcd r]; set vtxt [read $f 4096]; close $f
     check REF12-scope-hint-matches-the-real-vcd \
       [expr {[string first "\$scope module counter \$end" $vtxt] >= 0}] ""
   } else {
-    puts "SKIPPED: REF12 (no $realvcd — run the mixed-signal sim first)"
+    puts "skip: REF12 -- no $realvcd (run the mixed-signal sim first), so the row did not run"
   }
 } else {
   puts "SKIPPED: group REF (xschem_libraries_oa/ngspice_verilog_cosim_ase absent)"

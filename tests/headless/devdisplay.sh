@@ -106,18 +106,44 @@ _pid_of() {
 
 _cmdline() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null; }
 
-# Is <pid> alive AND running <program>? For the X server we also require the
-# display number to appear as its own argv word, so :99 never matches :990.
+# Is <pid> alive AND running <program>? IDENTITY IS argv[0] (its basename), never
+# a word anywhere in the command line: `sleep 300 Xvfb :99` is not an Xvfb
+# (DECISIONS D17.6). For the X server we also require the display number to
+# appear as its own argv word, so :99 never matches :990. A zombie is not alive.
 _pid_is() {
-  local p="$1" prog="$2" want_dpy="${3:-}"
+  local p="$1" prog="$2" want_dpy="${3:-}" a0 st
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$prog" ] || return 1
   kill -0 "$p" 2>/dev/null || return 1
-  local c; c=$(_cmdline "$p") || return 1
-  case " $c " in *" $prog "*|*"/$prog "*) ;; *) return 1 ;; esac
+  st=$(cat "/proc/$p/stat" 2>/dev/null) || return 1
+  st="${st##*) }"; [ "${st%% *}" != Z ] || return 1
+  a0=$( (tr '\0' '\n' < "/proc/$p/cmdline") 2>/dev/null | head -n 1)
+  [ -n "$a0" ] && [ "${a0##*/}" = "${prog##*/}" ] || return 1
   if [ -n "$want_dpy" ]; then
+    local c; c=$(_cmdline "$p") || return 1
     case " $c " in *" $want_dpy "*) ;; *) return 1 ;; esac
   fi
   return 0
 }
+
+# The pid named by /tmp/.X<NUM>-lock, or nothing.
+_lock_pid() { head -c 32 "/tmp/.X$NUM-lock" 2>/dev/null | tr -cd 0-9; }
+
+# Remove /tmp/.X<NUM>-lock -- and the socket file -- ONLY if the lock names
+# <pid>, the server this state dir started and its caller has just stopped, and
+# that server is gone: by CONTENT, never by number (D13.14, D17.6). A lock
+# naming anything else belongs to whoever took the number since, and removing
+# it would let a second server start on top of theirs.
+_rm_lock_if_names() {
+  local p="$1"
+  case "$p" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$(_lock_pid)" = "$p" ] || return 0
+  _pid_is "$p" Xvfb "$DPY" && return 0
+  rm -f "/tmp/.X$NUM-lock" "/tmp/.X11-unix/X$NUM" 2>/dev/null
+}
+
+# The WM this state dir recorded starting, else the configured one.
+_wm_name() { local w; w=$(head -n 1 "$(_f wm)" 2>/dev/null); [ -n "$w" ] && [ "$w" != none ] || w="$WM"; printf '%s' "$w"; }
 
 # Is anything LISTENING for this display? Two forms, and on this platform only
 # the second one ever exists:
@@ -155,22 +181,28 @@ _server_answers() {
 
 # Is the live server on $DPY the one WE started? Distinguishing this from
 # "something answers" is what stops us adopting, killing or overwriting another
-# user's or another tool's :99.
+# user's or another tool's :99. THE LOCK SAYS WHOSE IT IS (D17.6; T1's private
+# arm learned it as defect A): a recorded pid named `Xvfb :N` that LOST the race
+# for :N does not exit at once, while the winner answers -- so "alive, named
+# Xvfb :N, and something answers" is not "ours" unless the lock names that pid.
+# A missing lock (a tmp cleaner) is not evidence against it.
 _ours() {
-  local p; p=$(_pid_of xvfb.pid) || return 1
+  local p lk; p=$(_pid_of xvfb.pid) || return 1
   _pid_is "$p" Xvfb "$DPY" || return 1
+  lk=$(_lock_pid)
+  [ -z "$lk" ] || [ "$lk" = "$p" ] || return 1
   _server_answers
 }
 
 _wm_alive() {
   local p; p=$(_pid_of wm.pid) || return 1
   [ "$WM" = none ] && return 1
-  _pid_is "$p" "$WM"
+  _pid_is "$p" "$(_wm_name)"
 }
 
 _vnc_alive() {
   local p; p=$(_pid_of vnc.pid) || return 1
-  _pid_is "$p" x11vnc
+  _pid_is "$p" x11vnc "$DPY"
 }
 
 # A compliant WM sets _NET_SUPPORTING_WM_CHECK on the root window once it is
@@ -186,13 +218,21 @@ _wm_claimed() {
     grep -q 'window id #'
 }
 
-_kill_pidfile() {
+# Kill the pid a state file records ONLY IF it is still the program recorded
+# there (D17.6): <prog> as argv[0], and for the server and the viewer the
+# display word too. A state dir outlives its processes and a WSL boot recycles
+# pids -- the real one on this box names 1116 and 1135, both dead and low enough
+# for the next boot to hand to anything -- and the round-2 safety refuter had
+# `stop` kill two unrelated `sleep`s it named. Either way the record goes.
+_kill_pidfile() {   # <file> <prog> [<display>]
   local f; f=$(_f "$1"); local p
   p=$(_pid_of "$1") || { rm -f "$f"; return 0; }
-  kill -TERM "$p" 2>/dev/null
-  local i=0
-  while [ "$i" -lt 30 ] && kill -0 "$p" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
-  kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
+  if _pid_is "$p" "$2" "${3:-}"; then
+    kill -TERM "$p" 2>/dev/null
+    local i=0
+    while [ "$i" -lt 30 ] && _pid_is "$p" "$2" "${3:-}"; do sleep 0.1; i=$((i+1)); done
+    _pid_is "$p" "$2" "${3:-}" && kill -KILL "$p" 2>/dev/null
+  fi
   rm -f "$f"
 }
 
@@ -215,9 +255,21 @@ cmd_start() {
 
   # A lock with no server behind it. Xvfb refuses to start over one, and this is
   # the documented cause of the black-frame captures earlier in this batch.
+  # Stale only BY ITS CONTENT (D17.6): the pid it names is gone, or is no X
+  # server at all (a recycled pid). A lock naming a live X server is a server
+  # still coming up, or someone else's -- never ours to remove.
   if [ -e "/tmp/.X$NUM-lock" ]; then
+    local lp la
+    lp=$(_lock_pid)
+    la=""
+    [ -n "$lp" ] && la=$( (tr '\0' '\n' < "/proc/$lp/cmdline") 2>/dev/null | head -n 1)
+    case "${la##*/}" in
+      X|Xvfb|Xorg|Xwayland|Xephyr|Xvnc|Xtigervnc|Xnest)
+        _die "/tmp/.X$NUM-lock names a live X server (pid $lp) that does not answer on $DPY yet.
+       Pick another display with DEVDISPLAY_NUM=<n>, or stop that server yourself." 4 ;;
+    esac
     if rm -f "/tmp/.X$NUM-lock" 2>/dev/null; then
-      _say "cleaned stale /tmp/.X$NUM-lock"
+      _say "cleaned stale /tmp/.X$NUM-lock (it named ${lp:-nothing}, which is no running X server)"
     else
       _die "/tmp/.X$NUM-lock exists and is not removable (owned by another user?).
        Pick another display with DEVDISPLAY_NUM=<n>." 4
@@ -241,7 +293,7 @@ cmd_start() {
     i=$((i+1)); sleep 0.1
   done
   if ! _server_answers; then
-    _kill_pidfile xvfb.pid; _clean_state
+    _kill_pidfile xvfb.pid Xvfb "$DPY"; _rm_lock_if_names "$xpid"; _clean_state
     _die "Xvfb did not accept connections on $DPY within 10s" 5
   fi
 
@@ -285,10 +337,14 @@ cmd_stop() {
   if ! _ours && ! _pid_of xvfb.pid >/dev/null 2>&1; then
     _clean_state; _say "not running (state cleaned)"; return 0
   fi
-  _kill_pidfile vnc.pid
-  _kill_pidfile wm.pid
-  _kill_pidfile xvfb.pid
-  rm -f "/tmp/.X$NUM-lock" "/tmp/.X11-unix/X$NUM" 2>/dev/null
+  # Each by IDENTITY (D17.6), and the lock only if it names the server this
+  # state dir recorded AND that pid really was that server when we stopped it.
+  local xp=""
+  xp=$(_pid_of xvfb.pid 2>/dev/null) && _pid_is "$xp" Xvfb "$DPY" || xp=""
+  _kill_pidfile vnc.pid x11vnc "$DPY"
+  _kill_pidfile wm.pid "$(_wm_name)"
+  _kill_pidfile xvfb.pid Xvfb "$DPY"
+  [ -n "$xp" ] && _rm_lock_if_names "$xp"
   _clean_state
   _say "stopped $DPY"
   return 0
@@ -330,7 +386,7 @@ cmd_status() {
 
 cmd_view() {
   if [ "${1:-}" = "--stop" ]; then
-    _kill_pidfile vnc.pid; _say "viewer stopped ($DPY still running)"; return 0
+    _kill_pidfile vnc.pid x11vnc "$DPY"; _say "viewer stopped ($DPY still running)"; return 0
   fi
   _ours || _die "$DPY is not running. Start it first: $0 start" 6
   if _vnc_alive; then

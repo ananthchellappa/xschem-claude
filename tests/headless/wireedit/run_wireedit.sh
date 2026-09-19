@@ -23,6 +23,16 @@
 #   Never write `valgrind env -u DISPLAY ./src/xschem` -- valgrind would trace `env`, which
 #   execve()s xschem and ESCAPES the trace (no --trace-children), reporting a bogus "0 errors".
 root=$(cd "$(dirname "$0")/../../.." && pwd)
+# HOME: a THROWAWAY one (tests/headless/test_home.sh; DECISIONS D17.1). Measured
+# unarmed by the round-2 safety refuter: run standalone on a fresh home, its 58
+# xschem runs CREATED ~/.xschem and ~/.xschem/xschemrc in the tester's real home.
+# This is a POSIX script and cannot source that bash file, so it re-execs
+# THROUGH it once: `--run` arms, runs this script as its CHILD and deletes the
+# home when it ends. The guard is identity, not a flag: the wrapper's pid,
+# compared with $PPID. Under full_audit.sh it nests in the audit's throwaway.
+# XSCHEM_TEST_HOME=real opts out, loudly.
+[ "${XSCHEM_TEST_HOME_WRAPPED:-}" = "$PPID" ] || exec bash "$root/tests/headless/test_home.sh" --run sh "$0" "$@"
+unset XSCHEM_TEST_HOME_WRAPPED
 cd "$root" || exit 2
 
 # Binary: honor the $XSCHEM override full_audit.sh documents (review wf_bfc3c5e4: this suite

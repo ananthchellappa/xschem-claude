@@ -345,3 +345,84 @@ if {![info exists ::__wd_armed]} {
   set ::__wd_suite  [__wd_suite_name]
   if {$::__wd_budget > 0} { catch {after $::__wd_budget ::__wd_fire} ::__wd_token }
 }
+
+## ---------------------------------------------------------------------------
+## Whose HOME is this? (outsider fixes batch, DECISIONS.md D9 and D10)
+## ---------------------------------------------------------------------------
+## Every xschem start reads and writes $HOME/.xschem -- the clipboard, same-named
+## netlists under simulations/, window geometry -- BEFORE a suite's first line
+## runs, so nothing in this file can redirect those writes (measured in the S2a
+## redirect study: a Tcl-side redirect still clobbered the real clipboard). The
+## drivers therefore switch HOME for the whole run (`t1_arm_home` in
+## tests/test_utility.tcl, tests/headless/test_home.sh for the shell drivers).
+## What is left is the bare command no driver wraps,
+##
+##     ./src/xschem --nogui --pipe -q --nolog --script tests/headless/<t>.tcl
+##
+## and D9 settles it by POINTING, not by re-exec'ing: an un-armed suite says, once,
+## on stderr, that it is using the tester's real HOME and which command would not.
+##
+## ⚠ THE LINE MUST NEVER BE COUNTED. Every reader that sees it -- T1's
+## summarize_all (`FAIL$`, `GOLD?$`, `RESULT?$`, `^FATAL`), tests/banner_rule.tcl,
+## run_suites.sh and full_audit.sh's classifier EREs -- keys on a column-0 or an
+## end-of-line shape, so it starts with `note:` and ends with the fixed word `one`
+## whatever the suite is called. test_scratch_home_note.tcl holds both ends of it
+## against those readers' own patterns.
+
+## Is this run under a test home the harness armed? Exactly D9's rule:
+##   * HOME's basename is `xschem-test-home.<pid>.<suffix>` (the one contract
+##     regex: t1_home_pattern in tests/test_utility.tcl, _TH_NAME_RE in
+##     tests/headless/test_home.sh) AND
+##     XSCHEM_TEST_REAL_HOME is set (a driver's throwaway, or a nested run inside
+##     one), OR
+##   * XSCHEM_TEST_HOME is set -- `real` or a custom directory, the D6 opt-out,
+##     whose driver prints its own banner on every run.
+## An empty value counts as unset, the way the shell drivers read `${VAR:-}`.
+proc __scratch_env {name} {
+  if {[info exists ::env($name)]} { return $::env($name) }
+  return {}
+}
+proc __scratch_home_armed {} {
+  if {[__scratch_env XSCHEM_TEST_HOME] ne {}} { return 1 }
+  set h [__scratch_env HOME]
+  if {$h ne {} && [__scratch_env XSCHEM_TEST_REAL_HOME] ne {} &&
+      [regexp {^xschem-test-home\.[0-9]+\.[A-Za-z0-9]+$} [file tail $h]]} { return 1 }
+  return 0
+}
+
+## The tester's REAL home, for READ-ONLY fixture lookups (D10): the fork ngspice
+## under ~/dev, the mixed-signal reference artifacts under ~/.xschem/simulations.
+## Under a driver HOME is a throwaway that holds none of them, so a suite that
+## looked there would lose those rows without a word -- measured, 76 checks
+## becoming 70 in test_ase_converge_1459, still ALL PASS.
+##
+## ⚠ READ-ONLY. Nothing may be written under the path this returns. A suite that
+## wants somewhere to write uses `test_scratch`; a suite that wants a config
+## copies the file OUT of here into its own scratch.
+##
+## XSCHEM_TEST_REAL_HOME is honoured only as what D5 says it is -- an absolute,
+## existing directory. Anything else (a stray `=1` in someone's shell) falls back
+## to HOME, and the rows that then find nothing say so through their `skip:` line,
+## which names the path they looked in.
+proc test_real_home {} {
+  set r [__scratch_env XSCHEM_TEST_REAL_HOME]
+  if {$r ne {} && [file pathtype $r] eq {absolute} && [file isdirectory $r]} {
+    return $r
+  }
+  return [__scratch_env HOME]
+}
+
+## The one line, once per process however many times this file is sourced.
+if {![info exists ::__scratch_home_noted]} {
+  set ::__scratch_home_noted 1
+  if {![__scratch_home_armed]} {
+    set __n [file rootname $::__wd_suite]
+    if {$__n eq {}} { set __n <suite> }
+    catch {
+      ::__wd_real_puts stderr "note: this suite is using your real HOME;\
+ tests/headless/run_suites.sh $__n gives it a throwaway one"
+      flush stderr
+    }
+    unset __n
+  }
+}

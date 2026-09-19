@@ -518,3 +518,49 @@ in both locales, partly because this box's `timeout` (uutils) refuses non-UTF-8 
 **After S1-fix7, only a finding in class A or a regression blocks a commit.** A new class-B
 near-miss becomes a follow-up issue, because the committed state will already be far ahead of what
 it replaces.
+
+---
+
+# D20 — Item 2 commits after round 3; round 4 takes the remaining kill-identity edges (driver)
+
+**Round 3 stands.**
+* The regression refuter could **not** refute it.
+* The independent prover measured, on seeded and empty canaries, every documented entry point
+  the G2 guard lists (22 armed launchers). T1 was 87/86/0, per case identical to baseline, and
+  the canary stayed byte-identical in every shape except D13.2's scoped auto-start files.
+* The kill-window recipe left 0 of 20 on both paths (r2base: 12 and 14 of 20).
+* `devdisplay.sh stop` spares decoys.
+
+The safety refuter's remaining findings are, by its own measurements, **present identically in
+the committed base**. `devdisplay.sh stop` kills a recorded WM by argv[0] alone, and a dead
+`xvfb.pid` still reaches the kills. `spawn_reaper`'s orphan sweep ignores the recorded display.
+Its other findings were a lower-severity opt-in, forgeries (a custom dir's deeper symlinks; a
+throwaway-shaped HOME planted under `/tmp`), `winshot.sh`'s standalone build cache in
+`~/.cache`, and G2's textual and `tests/`-only scope (`doc/claude/…/xarm.sh`). So, by D19's
+rule, Item 2 commits now, and round 4 follows.
+
+**The gate is run against a COPY of the real home, not the real one.** Running T1 with
+`HOME=/home/analog` was refused by the session's permission check. That is a reasonable
+place for the user to decide, so it is theirs to run or allow. The main-tree gate therefore
+uses a canary copied from the real `~/.xschem`, `.gitconfig` and `.ngspice_history`, with
+the dev display pinned to scratch `:141`. It must leave the canary byte-identical. **What
+only a real-home run can show** is attach to and auto-start of the user's own `:99` through
+their real state dir. It is recorded as owed to the user, with the exact command.
+
+**Round 4 (S2c-R4):**
+1. `devdisplay.sh`: kill a recorded WM only if its `/proc` environ `DISPLAY=:N` (and HOME) match
+   the state; short-circuit on a dead `xvfb.pid` (`_pid_of` tests liveness). Rows for the
+   round-3 regression refuter's S1 and S3 sabotages, which went green.
+2. `spawn_reaper` orphan sweep: require the recorded display to match the killed process's
+   `DISPLAY`/cmdline.
+3. `winshot.sh` build cache goes to a gitignored directory in the checkout, not
+   `~/.cache`.
+4. Nesting applies D17.5's escape check, so a planted throwaway-shaped HOME whose `.xschem`
+   leads out is refused. D17.5 also walks `.cache` and one more level of `.xschem`.
+5. T1's private-arm residual window: the reaper can find the server before `.xvfb.pid` is
+   written, by an inherited tag, as the shell does. S14 gets a deterministic row.
+6. G2 widens its scope to the whole repository's scripts, and recognises a variable-held
+   binary path, or records why it cannot. `doc/claude/signal_browser_2pane_batch/xarm.sh` is
+   either armed or allowlisted, with its reason.
+7. Recorded, not fixed: `test_wave_markers` hangs when `run_suites.sh` attaches to a persistent
+   dev display (identically in base). It goes into CLAUDE.md.

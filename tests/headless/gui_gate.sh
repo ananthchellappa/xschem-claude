@@ -22,6 +22,12 @@
 #
 # Disable entirely:  export GUI_GATE=0
 
+# UNDER A THROWAWAY HOME (tests/headless/test_home.sh, DECISIONS D7) the drivers
+# carry GUI_GATE_DIR to the tester's real control dir ONLY if that directory
+# already exists. Otherwise this default resolves INSIDE the throwaway, so a
+# stranger's run never creates ~/.claude/gui_test_gate, and any panel launched
+# for it is killed with the run (test_home.sh _th_cleanup). Do not "fix" this
+# default to read XSCHEM_TEST_REAL_HOME: that is exactly the leak it avoids.
 GATE_DIR="${GUI_GATE_DIR:-$HOME/.claude/gui_test_gate}"
 _GATE_PID="$$"
 _GATE_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +56,8 @@ _gate_now() { date +%s; }
 # and if DISPLAY *names* the dev display the run is invisible either way, so a
 # panel there is useless whether or not our pid check would pass.
 _gate_dev_display() {
-  local f="${XSCHEM_DEVDISPLAY_DIR:-$HOME/.claude/xschem_dev_display}/display"
+  # read-only: the dev display belongs to the REAL home even under a throwaway
+  local f="${XSCHEM_DEVDISPLAY_DIR:-${XSCHEM_TEST_REAL_HOME:-$HOME}/.claude/xschem_dev_display}/display"
   [ -r "$f" ] || return 1
   local d; d=$(cat "$f" 2>/dev/null)
   [ -n "$d" ] && [ "$d" = "${DISPLAY:-}" ]
@@ -318,10 +325,20 @@ _gate_launch_widget() {
   # /proc/<pid>/cmdline is the wish command line). Without that pid there is
   # nothing to adopt and nothing to reap.
   local log="$GATE_DIR/widget.log" pid i
+  # THE SHARED PANEL OUTLIVES THIS RUN, SO IT MUST NOT INHERIT A HOME THAT IS
+  # ABOUT TO BE DELETED (DECISIONS D7). Under test_home.sh the driver's HOME is a
+  # throwaway; a panel for the tester's real control dir gets the environment from
+  # before the switch -- a SNAPSHOT of it (D13.16; _gate_panel_env below) --
+  # exactly as the orphaned Xvfb+openbox now holding :99 did not. A panel whose
+  # control dir is INSIDE this run's HOME is private to the run and is killed with
+  # it, so it keeps the run's environment. env execs in place, so $! is still the
+  # wish (the identity check below reads its cmdline).
+  local penv=()
+  _gate_panel_env
   if command -v setsid >/dev/null 2>&1; then
-    setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
+    setsid ${penv[@]+"${penv[@]}"} wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
   else
-    wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
+    ${penv[@]+"${penv[@]}"} wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 &
   fi
   pid=$!
   printf '%s %s' "$pid" "$(_gate_now)" > "$GATE_DIR/widget.launching"
@@ -346,6 +363,73 @@ _gate_launch_widget() {
   rm -f "$GATE_DIR/widget.launching" 2>/dev/null
   _gate_log "panel launch FAILED (wish exited, see $log)"
   return 1
+}
+
+# _gate_panel_env -- fill the caller's `penv` array with the environment a panel
+# is launched with, or leave it empty (the current environment). Empty when
+# nothing is armed (no XSCHEM_TEST_REAL_HOME) or when GATE_DIR lives under a
+# throwaway or custom HOME (a private panel, which dies with the run).
+#
+# THE TESTER'S SHARED PANEL GETS A SNAPSHOT (DECISIONS D13.16), not the current
+# environment with HOME swapped back. test_home.sh records the environment as it
+# was before arming, XSCHEM_TEST_* removed, in XSCHEM_TEST_PRE_ENV (base64 of
+# NUL-separated NAME=VALUE entries), and the shared panel -- the one for the
+# tester's real control dir, which outlives every run by design -- is started
+# from exactly that under `env -i`, plus the CURRENT DISPLAY (the display this
+# gate is for). So it inherits none of the harness variables: no XSCHEM_TEST_*,
+# no git safe.directory GIT_CONFIG_* entry, no carried XSCHEM_DEVDISPLAY_DIR /
+# GUI_GATE_DIR / XAUTHORITY the tester had not set.
+#
+# "Shared" means GATE_DIR IS the tester's own control dir: the real one the arm
+# carried ($XSCHEM_TEST_REAL_HOME/.claude/gui_test_gate), or a GUI_GATE_DIR the
+# tester set BEFORE arming (it is in the snapshot). Every other gate dir outside
+# HOME belongs to whoever set it after arming -- the gate's self-tests point
+# GUI_GATE_DIR at a temp dir and put a STUB `wish` first on PATH -- and keeps
+# the round-1 environment: the current one, with HOME and the XDG_* originals
+# restored. An `env -i` there would drop the stub from PATH and launch a REAL
+# wish at the self-test's fake DISPLAY (:99).
+_gate_panel_env() {
+  penv=()
+  [ -n "${XSCHEM_TEST_REAL_HOME:-}" ] || return 0
+  if [ "${XSCHEM_TEST_REAL_HOME}" != "${HOME:-}" ]; then
+    case "$GATE_DIR/" in "${HOME:-/nonexistent}"/*) return 0 ;; esac
+  fi
+  local e snap=() sgate="" shared=0 gp rp sp
+  if [ -n "${XSCHEM_TEST_PRE_ENV:-}" ]; then
+    while IFS= read -r -d '' e; do
+      case "$e" in
+        XSCHEM_TEST_*|DISPLAY=*) continue ;;
+        GUI_GATE_DIR=*) sgate="${e#GUI_GATE_DIR=}"; snap+=("$e") ;;
+        *=*) snap+=("$e") ;;
+      esac
+    done < <(printf '%s' "$XSCHEM_TEST_PRE_ENV" | base64 -d 2>/dev/null)
+  fi
+  gp=$(cd "$GATE_DIR" 2>/dev/null && pwd -P) || gp="$GATE_DIR"
+  rp=$(cd "$XSCHEM_TEST_REAL_HOME/.claude/gui_test_gate" 2>/dev/null && pwd -P) \
+    || rp="$XSCHEM_TEST_REAL_HOME/.claude/gui_test_gate"
+  [ "$gp" = "$rp" ] && shared=1
+  if [ -n "$sgate" ]; then
+    sp=$(cd "$sgate" 2>/dev/null && pwd -P) || sp="$sgate"
+    [ "$gp" = "$sp" ] && shared=1
+  fi
+  if [ "$shared" = 1 ] && [ "${#snap[@]}" -gt 0 ]; then
+    penv=(env -i "${snap[@]}")
+    [ -n "${DISPLAY:-}" ] && penv+=("DISPLAY=$DISPLAY")
+    return 0
+  fi
+  [ "${XSCHEM_TEST_REAL_HOME}" = "${HOME:-}" ] && return 0
+  penv=(env)
+  local n pre
+  # a shared panel with no usable snapshot: at least none of XSCHEM_TEST_*
+  if [ "$shared" = 1 ]; then
+    for n in $(compgen -e | grep '^XSCHEM_TEST_'); do penv+=(-u "$n"); done
+  fi
+  penv+=("HOME=$XSCHEM_TEST_REAL_HOME")
+  for n in XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME; do
+    pre="XSCHEM_TEST_PRE_$n"
+    [ -n "${!pre+x}" ] && penv+=("$n=${!pre}")
+  done
+  return 0
 }
 
 # _gate_ensure_widget — a panel exists, or one is on its way. Never two.

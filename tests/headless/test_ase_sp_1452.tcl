@@ -1247,8 +1247,11 @@ proc se_binaries {} {
     }
     return $out
   }
-  set home {}
-  if {[info exists ::env(HOME)]} { set home $::env(HOME) }
+  ## The fork is looked up under the tester's REAL home, read-only (D10 of
+  ## doc/claude/outsider_fixes_batch/DECISIONS.md): under a driver HOME is a
+  ## throwaway with no ~/dev in it. `fork2` is the development box's own path and
+  ## is unchanged; where the two name one binary the SESEEN dedupe runs it once.
+  set home [test_real_home]
   return [list [list apt /usr/bin/ngspice] \
                [list fork [file join $home dev ngspice build-ver_50 src ngspice]] \
                [list fork2 /home/analog/dev/ngspice/build-ver_50/src/ngspice]]
@@ -1262,7 +1265,7 @@ set SESEEN {}
 foreach sepair [se_binaries] {
   lassign $sepair setag sebin
   if {$sebin eq {} || ![file executable $sebin]} {
-    puts "SKIPPED: SE $setag end-to-end leg (no executable at '$sebin')"
+    puts "skip: SE/$setag -- no executable at '$sebin', so this end-to-end leg did not run"
     continue
   }
   if {[lsearch -exact $SESEEN [file normalize $sebin]] >= 0} { continue }
@@ -1345,7 +1348,7 @@ set SE3SEEN {}
 foreach sepair [se_binaries] {
   lassign $sepair setag sebin
   if {$sebin eq {} || ![file executable $sebin]} {
-    puts "SKIPPED: SE3 $setag three-port leg (no executable at '$sebin')"
+    puts "skip: SE3/$setag -- no executable at '$sebin', so this three-port leg did not run"
     continue
   }
   if {[lsearch -exact $SE3SEEN [file normalize $sebin]] >= 0} { continue }

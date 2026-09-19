@@ -6,6 +6,14 @@
 # non-zero on FAIL, so it can be wired into CI / run_regression.tcl.
 
 here=$(cd "$(dirname "$0")" && pwd)
+# A THROWAWAY HOME (tests/headless/test_home.sh; DECISIONS D13.1). Measured in
+# round 1: run unarmed, this wrote a 1.2 MB ~/.xschem/simulations/0_examples_top.spice
+# into the tester's home. A POSIX script cannot source that bash file, so it
+# re-execs THROUGH it once: `--run` arms, runs this script as its CHILD and
+# deletes the home when it ends. The guard is identity, not a flag: the
+# wrapper's pid, compared with $PPID. XSCHEM_TEST_HOME=real opts out, loudly.
+[ "${XSCHEM_TEST_HOME_WRAPPED:-}" = "$PPID" ] || exec bash "$here/test_home.sh" --run sh "$0" "$@"
+unset XSCHEM_TEST_HOME_WRAPPED
 repo=$(cd "$here/../.." && pwd)
 xschem="$repo/src/xschem"
 

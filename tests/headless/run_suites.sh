@@ -25,6 +25,20 @@
 #   AUDIT_DISPLAY=none  no DISPLAY; GUI legs self-skip
 #   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
 #
+# HOME: every run gets a THROWAWAY home, deleted at exit, so the suites cannot
+# overwrite your xschem clipboard, ~/.xschem/simulations or window geometry
+# (tests/headless/test_home.sh). XSCHEM_TEST_HOME=real opts out (loudly);
+# XSCHEM_TEST_HOME=<dir> uses that dir and keeps it; XSCHEM_TEST_KEEP_HOME=1
+# keeps the throwaway and prints its path.
+#
+# CWD: it runs from the REPOSITORY ROOT, whatever directory you start it from,
+# after first making any suite path you gave absolute -- as full_audit.sh does.
+# xschem autosaves unsaved work as ./untitled~.sch, so a suite run from your home
+# directory used to overwrite or delete a ~/untitled~.sch of your own (D13.3).
+#
+# SKIPS: a suite's own `skip:` lines (a row it could not run, and why) are
+# printed under its verdict line, indented, whatever the verdict (D13.11).
+#
 # Same fail-open contract as full_audit.sh: no DISPLAY, GUI_GATE=0 or no panel
 # and it just runs. Disable entirely with `export GUI_GATE=0`. A Stop press
 # abandons the remaining runs and exits 3.
@@ -44,6 +58,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 _want_help=0
 for _a in "$@"; do case "$_a" in -h|--help) _want_help=1 ;; esac; done
 if [ "$_want_help" = 0 ]; then
+  # A THROWAWAY HOME FIRST, before the display arm, so openbox on the private
+  # Xvfb and the xvfb-run re-exec both inherit it (tests/headless/test_home.sh;
+  # DECISIONS D4). Refused means refused: never run against the real HOME.
+  # shellcheck source=/dev/null
+  . "$HERE/test_home.sh"
+  test_home_arm || exit $?
   # shellcheck source=/dev/null
   . "$HERE/xvfb_arm.sh"
   xvfb_arm "$0" "$@"
@@ -63,7 +83,7 @@ while [ $# -gt 0 ]; do
     -n|--repeat) REPEAT="${2:-1}"; shift 2 ;;
     --nogui)     MODE=nogui;  shift ;;
     --logdir)    MODE=logdir; shift ;;
-    -h|--help)   sed -n '2,36p' "$0"; exit 0 ;;   # the header block, up to `set -u`
+    -h|--help)   sed -n '2,/^set -u$/{/^set -u$/!p}' "$0"; exit 0 ;;   # the header block, up to `set -u`
     -*)          echo "run_suites: unknown option $1" >&2; exit 2 ;;
     *)           suites+=("$1"); shift ;;
   esac
@@ -72,6 +92,11 @@ done
 if [ "${#suites[@]}" -eq 0 ]; then
   echo "usage: $0 [-n REPEAT] [--nogui|--logdir] <suite> [suite...]" >&2; exit 2
 fi
+# A relative $XSCHEM means the caller's cwd, which is about to change.
+case "$XSCHEM" in
+  /*) ;;
+  */*) [ -e "$XSCHEM" ] && XSCHEM="$(cd "$(dirname "$XSCHEM")" && pwd)/$(basename "$XSCHEM")" ;;
+esac
 if [ ! -x "$XSCHEM" ]; then
   echo "FATAL: xschem binary not found/executable at: $XSCHEM" \
        "(build with: cd src && make, or set \$XSCHEM)" >&2
@@ -87,10 +112,19 @@ resolve() {
   esac
 }
 
-for s in "${suites[@]}"; do
-  f=$(resolve "$s")
+for _i in "${!suites[@]}"; do
+  f=$(resolve "${suites[$_i]}")
   [ -f "$f" ] || { echo "FATAL: no such test file: $f" >&2; exit 1; }
+  # a path relative to the caller's cwd, made absolute BEFORE the cd below
+  case "$f" in /*) ;; *) suites[$_i]="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")" ;; esac
 done
+unset _i
+
+# RUN FROM THE REPOSITORY ROOT (DECISIONS D13.3), as full_audit.sh does. xschem
+# autosaves unsaved work to ./untitled~.sch; from a tester's home directory that
+# OVERWROTE (test_signal_short_nohier_0230) or DELETED (test_crossview_paste) the
+# tester's own ~/untitled~.sch. Litter in the checkout stays a D12 item.
+cd "$REPO" || { echo "FATAL: cannot cd to the repository root $REPO" >&2; exit 1; }
 
 # shellcheck source=/dev/null
 . "$HERE/gui_gate.sh" 2>/dev/null || true
@@ -213,6 +247,11 @@ for _r in $(seq 1 "$REPEAT"); do
       printf '%s\n' "$out" | grep -E '^(FAIL|FATAL)' | sed 's/^/         | /'
       FAIL=$((FAIL + 1))
     fi
+    # EVERY `skip:` line the suite printed, under its verdict (DECISIONS D13.11).
+    # A row that could not run says so with `skip: <row> -- <why>` (D10), and
+    # without this the documented single-suite command swallowed it: a PASS with
+    # 31 rows skipped read exactly like a PASS with none (test_vcd_read's A/RP).
+    printf '%s\n' "$out" | grep -E '^skip:' | sed 's/^/         | /'
   done
 done
 

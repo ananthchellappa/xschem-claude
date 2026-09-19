@@ -606,8 +606,12 @@ xschem raw clear
 # GUARD: absent artifacts must not print anything full_audit scores as a
 # file-wide SKIP ("RESULT: SKIP", "skipped: no X", "SKIP: no X connection"), or
 # every check above is silently discarded.
-set refvcd $::env(HOME)/.xschem/simulations/counter.vcd
-set refraw $::env(HOME)/.xschem/simulations/tb_counter_wrapper_ase.raw
+#
+# Both are looked up in the tester's REAL home and only READ (D10 of
+# doc/claude/outsider_fixes_batch/DECISIONS.md): under a driver HOME is a
+# throwaway that never holds them.
+set refvcd [file join [test_real_home] .xschem simulations counter.vcd]
+set refraw [file join [test_real_home] .xschem simulations tb_counter_wrapper_ase.raw]
 if {[file exists $refvcd] && [file exists $refraw]} {
   xschem raw clear
   eqcheck REF1-raw-read [pcall xschem raw read $refraw tran] 1
@@ -644,9 +648,7 @@ if {[file exists $refvcd] && [file exists $refraw]} {
   }
   xschem raw clear
 } else {
-  puts "note: group REF not run — reference artifacts absent"
-  puts "note:   $refvcd"
-  puts "note:   $refraw"
+  puts "skip: REF -- needs both $refvcd and $refraw, so group REF did not run"
   puts "note: the synthetic groups above cover D3 on their own; REF only pins"
   puts "note: the measured A6 numbers when the real run is still on disk."
 }

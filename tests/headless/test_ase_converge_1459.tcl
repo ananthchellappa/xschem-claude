@@ -1098,8 +1098,11 @@ proc ee_binaries {} {
     foreach b [split $::env(ASE_CONV_NGSPICE) ":"] { incr i ; lappend out [list env$i $b] }
     return $out
   }
-  set home {}
-  if {[info exists ::env(HOME)]} { set home $::env(HOME) }
+  ## The fork is looked up under the tester's REAL home, read-only (D10 of
+  ## doc/claude/outsider_fixes_batch/DECISIONS.md): under a driver HOME is a
+  ## throwaway with no ~/dev in it, and this leg used to vanish there -- 76
+  ## checks becoming 70, still ALL PASS, with nothing but a skip line to say so.
+  set home [test_real_home]
   return [list [list apt /usr/bin/ngspice] \
                [list fork [file join $home dev ngspice build-ver_50 src ngspice]]]
 }
@@ -1111,7 +1114,7 @@ set EESEEN {}
 foreach eepair [ee_binaries] {
   lassign $eepair eetag eebin
   if {![file executable $eebin]} {
-    puts "SKIPPED: EE $eetag leg (no executable at '$eebin')"
+    puts "skip: EE/$eetag -- no executable at '$eebin', so this leg did not run"
     continue
   }
   if {[lsearch -exact $EESEEN [file normalize $eebin]] >= 0} { continue }

@@ -308,10 +308,20 @@ _reaper_xvfb_pid() {
 # test_devdisplay.sh, which exports a throwaway state dir for its whole run and
 # sources this file. A guard that a caller can switch off by setting a variable
 # is documentation, not a guard.
+#
+# ⚠ AND "THE $HOME ONE" MEANS THE TESTER'S REAL HOME, NOT WHATEVER HOME IS NOW
+# (outsider fixes batch, DECISIONS.md D10). The drivers switch HOME to a
+# throwaway for the whole run (D4), so `$HOME/.claude/...` alone would name a
+# state file that never exists, and this half of the guard would go blind in
+# exactly the runs it exists for. The real home travels in XSCHEM_TEST_REAL_HOME.
+# The current $HOME is still read too: consulting one more file can only make a
+# refusal stricter, never weaker. Read-only, like every line of this function.
 _reaper_devdisplays() {
-  local f
-  for f in "${XSCHEM_DEVDISPLAY_DIR:-}/display" "$HOME/.claude/xschem_dev_display/display"; do
-    case "$f" in /display) continue ;; esac
+  local f real="${XSCHEM_TEST_REAL_HOME:-${HOME:-}}"
+  for f in "${XSCHEM_DEVDISPLAY_DIR:-}/display" \
+           "$real/.claude/xschem_dev_display/display" \
+           "${HOME:-}/.claude/xschem_dev_display/display"; do
+    case "$f" in /display|/.claude/*) continue ;; esac
     [ -r "$f" ] && cat "$f" 2>/dev/null && echo
   done
   return 0
@@ -704,9 +714,28 @@ reaper_swept_xvfb() { printf '%s' "$_REAPER_SWEPT_X"; }
 # An unstamped dir is never touched: it may predate this mechanism, or belong to
 # something else entirely. The dir must be under a temp root, checked here and
 # not assumed from the glob.
+#
+# ⚠ A RECORDED PID IS KILLED ONLY IF IT IS STILL THE PROGRAM IT WAS RECORDED AS
+# (DECISIONS D17.6: nothing is killed on a recorded pid alone). The run that
+# wrote it is dead by definition here, so its pids have had all the time in the
+# world to be recycled. Each pidfile names its program as `<file>=<program>`;
+# the three devdisplay.sh writes are known without it -- xvfb.pid is Xvfb,
+# vnc.pid is x11vnc, and wm.pid is whatever the dir's own `wm` record says. A
+# pidfile whose program cannot be named is not killed from.
+_reaper_pidfile_prog() {   # <dir> <file[=prog]>: echo the program, or fail
+  local d="$1" f="$2" w
+  case "$f" in *=*) printf '%s' "${f#*=}"; return 0 ;; esac
+  case "$f" in
+    xvfb.pid) printf 'Xvfb' ;;
+    vnc.pid)  printf 'x11vnc' ;;
+    wm.pid)   w=$(head -n 1 "$d/wm" 2>/dev/null); [ -n "$w" ] && [ "$w" != none ] || return 1
+              printf '%s' "${w##*/}" ;;
+    *) return 1 ;;
+  esac
+}
 reaper_sweep_orphan_runs() {
   local glob="${1:-}" ; shift || true
-  local d f p n=0
+  local d f p n=0 prog a0
   [ -n "$glob" ] || return 0
   for d in $glob; do
     [ -d "$d" ] || continue
@@ -717,10 +746,14 @@ reaper_sweep_orphan_runs() {
     esac
     _reaper_owner_state "$d"; [ $? -eq 1 ] || continue    # only "provably dead"
     for f in "$@"; do
+      prog=$(_reaper_pidfile_prog "$d" "$f") || continue
+      f="${f%%=*}"
       [ -r "$d/$f" ] || continue
       p=$(tr -d ' \t\n' < "$d/$f" 2>/dev/null)
       case "$p" in ''|*[!0-9]*) continue ;; esac
       _reaper_alive "$p" || continue
+      a0=$(_reaper_argv_n "$p" 0) || continue
+      [ "${a0##*/}" = "$prog" ] || continue
       _reaper_kill "$p" && n=$((n + 1))
     done
     rm -rf "$d" 2>/dev/null

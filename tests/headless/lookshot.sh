@@ -20,8 +20,18 @@
 # Display: $LOOK_DISPLAY, default :99 (the persistent dev display).  NEVER the
 # inherited $DISPLAY — on this box that is the user's real screen (CLAUDE.md,
 # the three-X-servers table).
+#
+# HOME: a THROWAWAY one, deleted at exit (tests/headless/test_home.sh; DECISIONS
+# D17.1). Measured unarmed by the round-2 safety refuter: the posed xschem
+# evicted a saved window position from ~/.xschem/geometry, and winshot.sh built
+# its binary into ~/.cache/xschem-winshot. Both now land in the throwaway -- the
+# winshot build with them (a cc run per lookshot, well under a second).
+# XSCHEM_TEST_HOME=real opts out, loudly.
 set -u
 here=$(cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=/dev/null
+. "$here/test_home.sh"
+test_home_arm || exit $?
 repo=$(cd -- "$here/../.." && pwd)
 out=${1:-} ; pose=${2:-} ; shift 2 || true
 name=xschem ; timeout=25 ; settle=400 ; extra=()

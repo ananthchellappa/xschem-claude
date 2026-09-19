@@ -18,6 +18,13 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+# A THROWAWAY HOME (tests/headless/test_home.sh; DECISIONS D13.1). This is a
+# POSIX script and cannot source that bash file, so it re-execs THROUGH it once:
+# `--run` arms, runs this script as its CHILD and deletes the home when it ends.
+# The guard is identity, not a flag: the wrapper's pid, compared with $PPID.
+# XSCHEM_TEST_HOME=real opts out (loudly), as for every other driver.
+[ "${XSCHEM_TEST_HOME_WRAPPED:-}" = "$PPID" ] || exec bash "$HERE/test_home.sh" --run sh "$0" "$@"
+unset XSCHEM_TEST_HOME_WRAPPED
 REPO=$(cd "$HERE/../.." && pwd)
 export REPO
 XSCHEM="$REPO/src/xschem"

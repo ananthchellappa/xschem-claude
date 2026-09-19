@@ -17,6 +17,10 @@
 #   AUDIT_DISPLAY=none  no DISPLAY at all; GUI tests self-SKIP (`winfo exists .`)
 #   AUDIT_SCREEN=WxHxD  pin the virtual screen; default 1920x1080x24
 #
+# HOME: the audit runs under a THROWAWAY home, deleted at exit, so no test can
+# overwrite your xschem clipboard, netlists or window geometry
+# (tests/headless/test_home.sh). XSCHEM_TEST_HOME=real opts out, loudly.
+#
 # Usage:
 #   tests/headless/full_audit.sh                 # all tests, private Xvfb
 #   tests/headless/full_audit.sh test_sweep_diff test_multi_window   # a subset
@@ -40,6 +44,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # (merge 5, doc/claude/suggestions/plan_merge5_fluid_into_open_pdk.md section 5.3).
 # Library mode runs no test, so it needs no display and must never re-exec.
 if [ "${AUDIT_LIB_ONLY:-0}" != "1" ]; then
+  # A THROWAWAY HOME FIRST, before the display arm, so openbox on the private
+  # Xvfb and the xvfb-run re-exec both inherit it (tests/headless/test_home.sh;
+  # DECISIONS D4). Library mode runs nothing and arms nothing.
+  # shellcheck source=/dev/null
+  . "$HERE/test_home.sh"
+  test_home_arm || exit $?
   # shellcheck source=/dev/null
   . "$HERE/xvfb_arm.sh"
   xvfb_arm "$0" "$@"

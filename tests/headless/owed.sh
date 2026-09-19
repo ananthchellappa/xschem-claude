@@ -117,6 +117,13 @@ set -u
 
 OWED_DIR="${XSCHEM_OWED_DIR:-$HOME/.claude/xschem_owed}"
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# THE LEDGER PATH IS FIXED HERE, FROM THE HOME THIS SCRIPT WAS STARTED WITH, and
+# nothing below may recompute it (DECISIONS D13.1). `drain` switches HOME to a
+# throwaway around each SHELL debt it runs -- inside a subshell, so the switch
+# never reaches this process -- and a ledger path derived from HOME after that
+# point would land inside a directory that is deleted a moment later.
+case "$OWED_DIR" in /*) ;; *) OWED_DIR="$(pwd)/$OWED_DIR" ;; esac
+readonly OWED_DIR
 
 _say()  { echo "owed: $*" >&2; }
 _warn() { echo "!! owed WARNING: $1" >&2; }
@@ -1197,7 +1204,27 @@ cmd_drain() {
 
     if [ "$kind" = "sh" ]; then
       echo "   (shell suite: $path -- run directly, it owns its own display arm)"
-      AUDIT_DISPLAY="$display" DISPLAY="$display" bash "$path"; rc=$?
+      # A THROWAWAY HOME AROUND THIS ONE DEBT (DECISIONS D13.1), armed in a
+      # SUBSHELL: its EXIT trap deletes the home when the subshell ends, and
+      # HOME is never switched for this process, whose ledger is OWED_DIR above.
+      # The .tcl arm below needs none of this: run_suites.sh arms for itself.
+      # Measured in round 1: a bare `bash "$path"` here rewrote the tester's
+      # ~/.xschem/geometry. A refused arm is a failed run, never a fall-back to
+      # the real HOME.
+      #   The one exception is a COPY of this file with no test_home.sh beside
+      # it -- test_owed.sh drains through exactly such a copy, to put a stub
+      # run_suites.sh in its place. There is nothing to arm with, so the debt
+      # runs unarmed and says so LOUDLY; the documented tests/headless/owed.sh
+      # always has the helper beside it and always arms.
+      if [ -f "$HERE/test_home.sh" ]; then
+        ( # shellcheck source=/dev/null
+          . "$HERE/test_home.sh" && test_home_arm || exit $?
+          AUDIT_DISPLAY="$display" DISPLAY="$display" bash "$path"
+          _rc=$?; exit "$_rc" ); rc=$?
+      else
+        _warn "no test_home.sh beside this owed.sh ($HERE): running $(basename "$path") WITHOUT a throwaway HOME"
+        AUDIT_DISPLAY="$display" DISPLAY="$display" bash "$path"; rc=$?
+      fi
     else
       AUDIT_DISPLAY="$display" "$HERE/run_suites.sh" "${names[$i]}"; rc=$?
     fi

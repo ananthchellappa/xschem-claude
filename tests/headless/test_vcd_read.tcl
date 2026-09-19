@@ -76,7 +76,11 @@ proc load1 {f} {
 # ===========================================================================
 # A — the reference artifact (the real thing the feature exists for)
 # ===========================================================================
-set ref $::env(HOME)/.xschem/simulations/counter.vcd
+## The reference lives in the tester's REAL home and is only READ here (D10 of
+## doc/claude/outsider_fixes_batch/DECISIONS.md). Under a driver HOME is a
+## throwaway that never holds it, so looking there would skip group A on every
+## driven run, including on the one machine where the artifact exists.
+set ref [file join [test_real_home] .xschem simulations counter.vcd]
 if {[file exists $ref]} {
   eqcheck A1-read [load1 $ref] 1
   eqcheck A2-simtype [xschem raw sim_type] vcd
@@ -116,7 +120,7 @@ if {[file exists $ref]} {
   check ST2-hold-then-edge [expr {[lindex $c 1] == 0 && [lindex $c 2] == 1}] "(hold=[lindex $c 1] edge=[lindex $c 2])"
   xschem raw clear
 } else {
-  puts "SKIPPED: group A (reference $ref absent; run the mixed-signal sim first)"
+  puts "skip: A -- no reference at $ref (run the mixed-signal sim first), so group A did not run"
 }
 
 # ===========================================================================
@@ -644,7 +648,7 @@ xschem raw clear
 
 # THE REAL PAIR: the analog raw and the VCD from the SAME mixed-signal run must
 # coexist, with the analog one still fully readable after the VCD is added.
-set refraw $::env(HOME)/.xschem/simulations/tb_counter_wrapper_ase.raw
+set refraw [file join [test_real_home] .xschem simulations tb_counter_wrapper_ase.raw]
 if {[file exists $refraw] && [file exists $ref]} {
   eqcheck RP1-analog-read [pcall xschem raw read $refraw tran] 1
   eqcheck RP2-analog-simtype [xschem raw sim_type] tran
@@ -663,7 +667,7 @@ if {[file exists $refraw] && [file exists $ref]} {
   eqcheck RP10-analog-points-intact [xschem raw points] $anpts
   xschem raw clear
 } else {
-  puts "SKIPPED: group RP (reference run artifacts absent)"
+  puts "skip: RP -- needs both $refraw and $ref, so group RP did not run"
 }
 
 # ===========================================================================

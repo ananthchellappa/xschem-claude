@@ -24,9 +24,49 @@ proc has_row {row} {
 }
 
 # 1) usable main-window size, as restored from the REAL ~/.xschem/geometry
+#
+# ⚠ UNDER A DRIVER, THE STARTUP RESTORE READ A THROWAWAY. run_suites.sh,
+# full_audit.sh and T1 run every suite with HOME switched to a throwaway
+# (doc/claude/outsider_fixes_batch/DECISIONS.md D4), so the geometry xschem
+# restored at startup came from an empty file -- and this row, the reason the
+# suite exists, would pass while checking nothing (D10). So when HOME is a
+# harness throwaway, the tester's real geometry is COPIED into the throwaway's
+# own config dir and the product's own `set_geom` restores it again, exactly as
+# startup would have. The real file is only ever opened for reading, by the
+# copy; every later write (store_geom on exit) lands in the throwaway.
+#
+# Only a harness throwaway is substituted. Under XSCHEM_TEST_HOME=<dir> the
+# tester asked for THAT configuration -- usually to reproduce a poisoned one --
+# and overwriting its geometry with theirs would destroy the reproduction.
+proc lc_env {n} { expr {[info exists ::env($n)] ? $::env($n) : {}} }
+set lc_real [lc_env XSCHEM_TEST_REAL_HOME]
+set lc_home [lc_env HOME]
+set lc_from startup
+if {[lc_env XSCHEM_TEST_HOME] eq {} && $lc_real ne {} && $lc_home ne {} &&
+    [regexp {^xschem-test-home\.[0-9]+\.[A-Za-z0-9]+$} [file tail $lc_home]] &&
+    [file pathtype $lc_real] eq {absolute} &&
+    [file normalize $lc_real] ne [file normalize $lc_home]} {
+  set lc_src [file join $lc_real .xschem geometry]
+  set lc_dst [file join $::USER_CONF_DIR geometry]
+  ## The copy may only land inside the throwaway HOME -- never under the real
+  ## home, and never in some third place an rc pointed USER_CONF_DIR at.
+  if {[string first "[file normalize $lc_home]/" [file normalize $lc_dst]] != 0} {
+    puts "skip: real-geometry -- USER_CONF_DIR $::USER_CONF_DIR is not inside the throwaway HOME, so nothing is copied and the size row checks the startup restore"
+  } elseif {![file isfile $lc_src]} {
+    puts "skip: real-geometry -- no $lc_src, so the size row checks the throwaway's startup restore only"
+  } elseif {[catch {
+      file mkdir [file dirname $lc_dst]
+      file copy -force -- $lc_src $lc_dst
+      set_geom . [xschem get current_name]
+    } lc_err]} {
+    check "the real geometry is restored" 0 "($lc_src: $lc_err)"
+  } else {
+    set lc_from $lc_src
+  }
+}
 set geom [wm geometry .]
 set n [scan $geom {%dx%d} w h]
-check "main window has a usable size" [expr {$n == 2 && $w >= 300 && $h >= 200}] "(geom=$geom)"
+check "main window has a usable size" [expr {$n == 2 && $w >= 300 && $h >= 200}] "(geom=$geom from=$lc_from)"
 
 # 2) the user's post-init script sources cleanly (--script semantics: the
 #    xschem command exists, unlike rc-style sourcing which predates it)

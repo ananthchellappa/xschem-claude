@@ -42,9 +42,46 @@ REPO=$(cd "$HERE/../.." && pwd)
 #     AUDIT_DISPLAY=:0 tests/headless/gated_xschem.sh --script t.tcl
 # -- where the arm leaves GUI_GATE exactly as the caller set it and this file
 # behaves as it always did.
+#
+# HOME: a THROWAWAY home first, before the display arm, so openbox on the private
+# Xvfb and the xvfb-run re-exec both inherit it (tests/headless/test_home.sh;
+# DECISIONS D4). XSCHEM_TEST_HOME=real runs against your own HOME, loudly.
+# CWD: xschem runs from the repository root (below; DECISIONS D13.3).
+. "$HERE/test_home.sh"
+test_home_arm || exit $?
 . "$HERE/xvfb_arm.sh"
 xvfb_arm "$0" "$@"
 XSCHEM="${XSCHEM:-$REPO/src/xschem}"
+
+# RUN FROM THE REPOSITORY ROOT (DECISIONS D13.3), as full_audit.sh does. xschem
+# autosaves unsaved work to ./untitled~.sch, so a run from your home directory
+# overwrote or deleted a ~/untitled~.sch of your own. Every argument that names
+# a path EXISTING relative to your cwd -- `--script t.tcl`, a schematic, a
+# `--logdir=dir` value -- is made absolute FIRST, so it still means the file you
+# meant. An argument naming a path that does not exist yet (an output you want
+# created) is left as written, and now resolves against the repository root.
+_abs_if_exists() {   # print $1 absolute if it names an existing relative path
+  case "$1" in
+    ''|/*) printf '%s' "$1" ;;
+    *) if [ -e "$1" ]; then
+         if [ -d "$1" ]; then (cd "$1" && pwd)
+         else printf '%s/%s' "$(cd "$(dirname "$1")" && pwd)" "$(basename "$1")"
+         fi
+       else printf '%s' "$1"; fi ;;
+  esac
+}
+_args=()
+for _a in "$@"; do
+  case "$_a" in
+    --*=*) _args+=("${_a%%=*}=$(_abs_if_exists "${_a#*=}")") ;;
+    -*)    _args+=("$_a") ;;
+    *)     _args+=("$(_abs_if_exists "$_a")") ;;
+  esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+unset _args _a
+case "$XSCHEM" in */*) XSCHEM=$(_abs_if_exists "$XSCHEM") ;; esac
+cd "$REPO" || { echo "FATAL: cannot cd to the repository root $REPO" >&2; exit 1; }
 
 if [ ! -x "$XSCHEM" ]; then
   echo "FATAL: xschem binary not found/executable at: $XSCHEM" \

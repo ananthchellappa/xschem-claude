@@ -91,7 +91,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_variant_1470" \
                  "headless/test_ase_simwin_variant_1471" \
                  "headless/test_regression_concurrency_1476" \
-                 "headless/test_issue_stamp"]
+                 "headless/test_issue_stamp" \
+                 "headless/test_home_isolation" \
+                 "headless/test_home_isolation_sh"]
 # ⚠ `test_regression_concurrency_1476` IS THE SUITE FOR THIS DRIVER'S OWN
 # CONCURRENCY DEFECT, and the paragraph below about wall-clock cost is answered
 # up front: measured 2026-09-17 on this tree, **8.5-8.6 s** for 20 checks (8.53,
@@ -491,6 +493,293 @@ proc t1_why {childcode secs} {
   return "crashed, aborted mid-script, or a check failed"
 }
 
+## One header field value, made safe to print (DECISIONS D6). A value with a
+## newline in it would start a line of its own, and one ending in `FAIL` would
+## make T1-RUN-BEGIN score itself -- so every whitespace or control character
+## becomes `_`, and an empty value becomes `-` so the field is never blank.
+## ⚠ AND NO VALUE MAY CARRY SENTINEL TEXT (DECISIONS D13.17): `T1-RUN-` becomes
+## `T1_RUN_`. The in-tree readers anchor `^T1-RUN-END `, so a header could never
+## be mistaken for a trailer by them -- but the round-1 regression refuter put
+## `T1-RUN-END cases=87 ...` inside a hostile $XSCHEM and got it into a KILLED
+## run's header, where an ad-hoc unanchored `grep T1-RUN-END` (the natural thing
+## to type) takes that run as finished.
+proc t1_hdr_word {v} {
+  regsub -all {[[:space:][:cntrl:]]} $v _ v
+  set v [string map {T1-RUN- T1_RUN_} $v]
+  if {$v eq {}} { set v - }
+  return $v
+}
+
+## What `binary=` names (DECISIONS D6, D13.10): the program the cases will
+## actually run, resolved the way `exec` resolves it -- auto_execok, then made
+## absolute. The field exists for the F10 case (no src/xschem, an installed
+## xschem on PATH), and the round-1 header said `binary=xschem` there: the bare
+## word, exactly the one case where the reader needs the path. A name that does
+## not resolve says so rather than posing as a path.
+proc t1_binary_path {cmd} {
+  set r [auto_execok $cmd]
+  if {[llength $r] == 0} { return "unresolved:$cmd" }
+  return [file normalize [lindex $r 0]]
+}
+
+## ---------------------------------------------------------------------------
+## A PRIVATE Xvfb FOR THE DISPLAY ARM (DECISIONS D8 step 3)
+## ---------------------------------------------------------------------------
+## Returns {num env-prefix xvfb-pid wm} on success, {} with ::t1_xvfb_why set on
+## failure -- `noxvfb` meaning no Xvfb is installed, which is the ONE case the
+## arm may report as NODISPLAY.
+##
+## ⚠ IT IS NUMBERED FROM 100 UP, NEVER `xvfb-run -a`, which starts at :99 and so
+## collides with the dev display (F36/0956), and two concurrent T1s can race for
+## one number. The server's own lock file settles that race: a server that
+## loses it exits at once and the next number is tried.
+## ⚠ IT RECORDS ITS PID BEFORE WAITING FOR IT, in the run's own throwaway
+## (`.xvfb.pid`), so that a T1 killed at any later instant leaves a record the
+## next run's sweep (t1_home_sweep) kills it from. A second copy, in a
+## devdisplay-shaped state dir `.xvfb/`, is what lets `devdisplay.sh exec` route
+## to it -- so DISPLAY is set per exec and never in this process's ::env, which
+## headless cases would otherwise inherit (some spawn xschem without --nogui).
+set t1_xvfb_why {}
+
+## ---------------------------------------------------------------------------
+## THE PRIVATE DISPLAY'S REAPER (DECISIONS D13.15)
+## ---------------------------------------------------------------------------
+## A T1 that is killed -9 (or OOM-killed, or loses its terminal: Xvfb survives
+## a SIGHUP, it only resets) never reaches its own kill, and the round-1
+## regression refuter measured the private Xvfb and openbox then living on,
+## reparented to init, holding their lock, until some LATER armed run's sweep
+## found them 305 s on -- "no leak" only if somebody runs again. So the moment
+## the server answers, a small detached reaper starts beside it. Every 5 s it
+## asks whether its owner is still THIS process -- the pid AND its start time,
+## because a pid alone recycles -- and when the owner is gone it stops the WM
+## and the server and exits. It exits on its own too, as soon as the server is
+## gone (the normal path: the owner killed it). It kills only what it can
+## identify, by the same rule as the sweep (D13.7): the program's name AND a
+## HOME in its /proc/<pid>/environ that is exactly the run directory. The next
+## run's sweep stays the backstop.
+## ⚠ `env -i PATH=...`: it inherits no HOME and none of the harness variables,
+## so nothing that looks for a process by this run's HOME mistakes it for part
+## of the run -- and `setsid`, where there is one, so that a signal to T1's
+## process group (a terminal's hangup) does not take the reaper with it.
+## A ZOMBIE OWNER IS A DEAD ONE: a T1 killed -9 lingers in /proc as state Z,
+## start time intact, until its parent reaps it -- which a parent that is not a
+## shell may not do for a long time (measured: the reaper waited on one for
+## over 20 s in row H6 of test_home_isolation.tcl before this line).
+## ⚠ IT STARTS THE MOMENT THE SERVER IS EXEC'D, NOT WHEN IT ANSWERS (D17.7). Round
+## 2 started it after the up-check, and the round-2 regression refuter measured
+## that window at 130-138 ms: a T1 killed -9 inside it left Xvfb :100 serving
+## for five minutes, until an unrelated later run's sweep found it. So the
+## server's own pid, the instant `exec` returns it, is what the reaper is given;
+## the up-check, the lost-race retry and the WM all happen under its watch. It
+## first waits (bounded) for that pid to BECOME Xvfb -- `env HOME=... Xvfb` is
+## still `env` for a moment after the fork -- and exits if it never does; and an
+## owner that dies inside that moment still gets its server stopped once it is
+## one (a second bounded wait, before the stop).
+## ⚠ AND IT KILLS ANYTHING ELSE OF THE DISPLAY'S BY IDENTITY: after the owner
+## dies it also stops any process whose argv[0] is Xvfb or the configured WM
+## and whose HOME is exactly this run directory (unique: mktemp made it). That
+## covers a WM started a moment before its pid could be recorded.
+## Positional: $1 owner pid, $2 its start time, $3 run dir, $4 Xvfb pid,
+## $5 display number, $6 the configured WM's name (or none). The WM's pid is read
+## from the record at reap time.
+set t1_reaper_sh {
+o=$1 ost=$2 rd=$3 xp=$4 n=$5 wn0=${6:-none}
+echo $$ > "$rd/.xvfb/reaper.pid" 2>/dev/null
+st() { s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1; s=${s##*) }; case "$s" in Z*) return 1 ;; esac; set -- $s; printf '%s' "${20}"; }
+ours() {
+  s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  s=${s##*) }; case "$s" in Z*) return 1 ;; esac
+  a=$(tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | head -n 1)
+  [ -n "$2" ] && [ "${a##*/}" = "$2" ] || return 1
+  tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | grep -qxF "HOME=$rd"
+}
+stop() {
+  ours "$1" "$2" || return 0
+  kill "$1" 2>/dev/null
+  i=0; while [ $i -lt 30 ] && ours "$1" "$2"; do sleep 0.1; i=$((i+1)); done
+  ours "$1" "$2" && kill -9 "$1" 2>/dev/null
+  return 0
+}
+sp=
+trap '[ -n "$sp" ] && kill $sp 2>/dev/null; exit 0' TERM
+i=0
+while [ $i -lt 50 ] && [ -d "/proc/$xp" ] && ! ours "$xp" Xvfb; do
+  [ "$(st "$o")" = "$ost" ] || break
+  sleep 0.1; i=$((i+1))
+done
+while :; do
+  [ "$(st "$o")" = "$ost" ] || break
+  ours "$xp" Xvfb || exit 0
+  sleep 5 & sp=$!; wait $sp; sp=
+done
+i=0
+while [ $i -lt 20 ] && [ -n "$(st "$xp")" ] && ! ours "$xp" Xvfb; do sleep 0.1; i=$((i+1)); done
+wp=$(tr -cd 0-9 < "$rd/.xvfb/wm.pid" 2>/dev/null)
+wn=$(head -n 1 "$rd/.xvfb/wm" 2>/dev/null)
+[ -n "$wp" ] && stop "$wp" "$wn"
+stop "$xp" Xvfb
+w15=$(printf '%s' "${wn0##*/}" | cut -c1-15)
+for d in /proc/[0-9]*; do
+  c=; read -r c < "$d/comm" 2>/dev/null
+  case "$c" in Xvfb) a=Xvfb ;; *) [ "$wn0" != none ] && [ -n "$c" ] && [ "$c" = "$w15" ] || continue ; a=${wn0##*/} ;; esac
+  stop "${d#/proc/}" "$a"
+done
+if [ "$(tr -cd 0-9 < "/tmp/.X$n-lock" 2>/dev/null)" = "$xp" ] && ! ours "$xp" Xvfb; then rm -f "/tmp/.X$n-lock"; fi
+rm -f "$rd/.xvfb/reaper.pid"
+exit 0
+}
+proc t1_private_reaper {rd xp n {wm none}} {
+  if {![file isdirectory /proc/self]} { return }
+  if {[catch {set f [open /proc/[pid]/stat r]; set st [read $f]; close $f}]} { return }
+  set ost [lindex [string range $st [expr {[string last ")" $st] + 2}] end] 19]
+  if {![string is integer -strict $ost]} { return }
+  set path /usr/bin:/bin
+  if {[info exists ::env(PATH)] && $::env(PATH) ne {}} { set path $::env(PATH) }
+  set sid {}
+  if {[auto_execok setsid] ne {}} { set sid setsid }
+  set rp {}
+  catch {set rp [exec env -i PATH=$path {*}$sid sh -c $::t1_reaper_sh xschem-t1-reaper [pid] $ost $rd $xp $n [file tail $wm] \
+           </dev/null >/dev/null 2>/dev/null &]}
+  return $rp
+}
+## Stop the reaper of an ATTEMPT this arm abandons (a lost race, a server that
+## never answered): it watches a server that is gone and would otherwise linger
+## until its next 5 s poll -- measured in four-way concurrent runs as a reaper
+## still alive after the run (row H1b). Only the process `exec` returned, and
+## only while its own command line still names the marker and this run dir.
+proc t1_private_reaper_stop {rp rd} {
+  if {![string is integer -strict $rp] || ![t1_home_pid_running $rp]} { return }
+  if {[catch {set f [open /proc/$rp/cmdline r]; fconfigure $f -translation binary
+              set c [split [read $f] \x00]; close $f}]} { return }
+  if {[lsearch -exact $c xschem-t1-reaper] < 0 || [lsearch -exact $c $rd] < 0} { return }
+  t1_home_kill $rp
+}
+
+proc t1_private_xvfb {dd} {
+  set ::t1_xvfb_why {}
+  if {[auto_execok Xvfb] eq {}} { set ::t1_xvfb_why noxvfb ; return {} }
+  if {![file executable $dd]} {
+    set ::t1_xvfb_why "$dd is missing, so nothing could be routed to a private display"
+    return {}
+  }
+  set rd [t1_home_run_dir]
+  if {$rd eq {}} {
+    set ::t1_xvfb_why "no run directory could be made under [t1_home_root] to record it in"
+    return {}
+  }
+  set sd [file join $rd .xvfb]
+  file mkdir $sd
+  set scr 1920x1080x24
+  if {[info exists ::env(DEVDISPLAY_SCREEN)] && $::env(DEVDISPLAY_SCREEN) ne {}} {
+    set scr $::env(DEVDISPLAY_SCREEN)
+  }
+  set wm openbox
+  if {[info exists ::env(DEVDISPLAY_WM)] && $::env(DEVDISPLAY_WM) ne {}} { set wm $::env(DEVDISPLAY_WM) }
+  set tried 0
+  for {set n 100} {$n < 200} {incr n} {
+    if {[file exists /tmp/.X$n-lock] || [file exists /tmp/.X11-unix/X$n]} { continue }
+    incr tried
+    ## HOME = the run directory that records it, in every mode (D13.7): the
+    ## record and the process then name each other, and a sweep or reaper
+    ## that finds a pid in the record kills it only if its HOME says so.
+    ## ⚠ -noreset (S2c-R2-I). An X server resets when its LAST client goes, and
+    ## the up-check below and the WM's claim wait are all short-lived clients
+    ## (xdpyinfo, xprop, xlsclients) that come and go before openbox has
+    ## connected -- so openbox can arrive in the middle of a reset and die with
+    ## "Failed to open the display" (measured: 12 of 360 starts under that exact
+    ## client sequence, 0 of 360 with -noreset; H6 saw it as `wm 0`, and the arm
+    ## then ran WM-LESS). The persistent dev display never resets either: its
+    ## openbox stays connected.
+    if {[catch {exec env HOME=$rd Xvfb :$n -screen 0 $scr -nolisten tcp -noreset </dev/null >/dev/null 2>/dev/null &} xp]} {
+      set ::t1_xvfb_why "Xvfb would not start: $xp"
+      return {}
+    }
+    ## THE REAPER NOW, before anything can wait (D17.7; see t1_reaper_sh).
+    set rp [t1_private_reaper $rd $xp $n $wm]
+    foreach f [list [file join $rd .xvfb.pid] [file join $sd xvfb.pid]] {
+      set h [open $f w] ; puts $h $xp ; close $h
+    }
+    set h [open [file join $sd display] w] ; puts $h :$n ; close $h
+    set penv [list env XSCHEM_DEVDISPLAY_DIR=$sd DEVDISPLAY_NUM=$n]
+    set up 0
+    set lost {}
+    for {set i 0} {$i < 100} {incr i} {
+      if {![t1_home_pid_running $xp]} { break }
+      ## THE LOCK SAYS WHOSE THE NUMBER IS, and it says so before any server
+      ## answers: a lock naming another pid means ours lost the race, whether
+      ## or not it has exited yet. (devdisplay.sh's `status` now applies the same
+      ## rule -- D17.6 -- so it would never call a slow loser up, and waiting
+      ## for it to would cost this arm its 10 s bound and then its display.)
+      set lk [t1_home_read_int /tmp/.X$n-lock]
+      if {$lk ne {} && $lk ne $xp} { set lost $lk ; break }
+      if {![catch {exec {*}$penv $dd status >/dev/null 2>/dev/null}]} { set up 1 ; break }
+      after 100
+    }
+    if {$lost eq {} && $up && [t1_home_read_int /tmp/.X$n-lock] ne $xp} { set lost [t1_home_read_int /tmp/.X$n-lock] }
+    ## ⚠ "UP" MUST MEAN *OUR* SERVER ANSWERS, AND ONLY ITS LOCK SAYS WHOSE IT IS
+    ## (the D13.14 identity rule; S2c-R2-I). `devdisplay.sh status` asks two
+    ## separate questions -- is the recorded pid alive and named Xvfb :$n, and
+    ## does SOMETHING answer on :$n -- and two runs that pick the same free
+    ## number in the same instant get "yes" to both: the server that loses the
+    ## lock does not exit at once (measured: still alive 1.5 s later, 3 of 30
+    ## synchronized pairs), while the winner's answers. Both runs then called
+    ## the winner's display their own, the loser's openbox lost the screen to
+    ## the winner's, and the loser's display cases ran on a server the other
+    ## run would kill when IT finished. So: the lock must name the pid we
+    ## started, or this number went to someone else -- stop ours, try the next.
+    if {$lost ne {}} {
+      puts "display arm: :$n went to a concurrent run (its lock names $lost, not our $xp); trying the next number"
+      t1_home_kill $xp
+      t1_private_reaper_stop $rp $rd
+      catch {file delete -- [file join $rd .xvfb.pid] [file join $sd xvfb.pid]}
+      if {$tried >= 20} { break }
+      continue
+    }
+    if {!$up} {
+      catch {file delete -- [file join $rd .xvfb.pid] [file join $sd xvfb.pid]}
+      t1_private_reaper_stop $rp $rd
+      if {[t1_home_pid_running $xp]} {
+        ## Running but never answering is not a lost race, and trying twenty
+        ## more numbers would cost the run minutes to learn the same thing.
+        t1_home_kill $xp
+        set ::t1_xvfb_why "Xvfb :$n started but did not answer within 10 s"
+        return {}
+      }
+      ## It exited: another server took :$n first. Try the next number.
+      if {$tried >= 20} { break }
+      continue
+    }
+    set wmname none
+    if {$wm ne {none} && [auto_execok $wm] ne {}} {
+      ## Short-lived like its server, and harness state rather than anything
+      ## under test, so it gets the RUN's directory as its home in every mode
+      ## -- including XSCHEM_TEST_HOME=real, where HOME is the tester's own and
+      ## openbox would otherwise leave ~/.cache/openbox there (measured). Its
+      ## cache goes with the run directory.
+      if {![catch {exec env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME \
+                        HOME=$rd DISPLAY=:$n $wm </dev/null >/dev/null 2>/dev/null &} wp]} {
+        set h [open [file join $sd wm.pid] w] ; puts $h $wp ; close $h
+        set h [open [file join $sd wm] w] ; puts $h [file tail $wm] ; close $h
+        set wmname [file tail $wm]
+        ## A toplevel mapped before the WM owns the screen is never reparented
+        ## (devdisplay.sh's _wm_claimed), so wait for the claim, bounded.
+        if {[auto_execok xprop] ne {}} {
+          for {set i 0} {$i < 50} {incr i} {
+            if {![catch {exec xprop -display :$n -root _NET_SUPPORTING_WM_CHECK 2>/dev/null} o] \
+                  && [string match {*window id #*} $o]} { break }
+            if {![t1_home_pid_running $wp]} { set wmname "none ($wm died)" ; break }
+            after 100
+          }
+        }
+      }
+    }
+    set h [open [file join $sd screen] w] ; puts $h $scr ; close $h
+    return [list $n $penv $xp $wmname]
+  }
+  set ::t1_xvfb_why "Xvfb is installed but no display number from :100 up could be started ($tried tried)"
+  return {}
+}
+
 ## ---------------------------------------------------------------------------
 ## THE PUBLISH LOCK -- A SAFETY NET, NOT A GATE (issue 1476 face 4; 0955, 0905)
 ## ---------------------------------------------------------------------------
@@ -707,10 +996,15 @@ fconfigure $fd -buffering line
 ## -- crew.js, CLAUDE.md's greps, a human -- applies them to the whole verdict. A
 ## sentinel that scored itself would be a phantom red manufactured by the fix.
 ## Row V4a of test_regression_concurrency_1476.tcl holds that by measurement.
+## ⚠ `home=` AND `binary=` ARE THE TWO FIELDS A USER CONTROLS (DECISIONS D6):
+## XSCHEM_TEST_HOME picks the first and $XSCHEM spells the second. Both sit
+## BEFORE `canonical=`, which stays last and is ours, and both go through
+## t1_hdr_word -- see there for why.
 puts $fd "T1-RUN-BEGIN pid=[pid] script=[file tail [info script]]\
  start=[clock format $t1_started -format {%Y-%m-%d %H:%M:%S}]\
  planned_cases=[expr {[llength $tcases] + [llength $hcases] + [llength $dcases] + 1}]\
- verdict=$run_log_fn canonical=$log_fn"
+ verdict=$run_log_fn home=[t1_hdr_word [t1_home_kind]] binary=[t1_hdr_word [t1_binary_path $xschem_cmd]]\
+ canonical=$log_fn"
 foreach tc $tcases {
     puts "Start source ${tc}.tcl"
     incr t1_cases
@@ -834,10 +1128,64 @@ foreach tc $tcases {
   ## expects test artifacts.
   set dlogdir [file join [pwd] results .actionlogs]
   file mkdir $dlogdir
-  catch {exec $dd start 2>@1}
+  ## ⚠ WHICH DISPLAY THE ARM RUNS ON (DECISIONS D8). This used to be one line,
+  ## `exec $dd start`, run with whatever HOME this process had -- which for a
+  ## stranger meant a PERSISTENT Xvfb + openbox started into their real home and
+  ## never stopped (audit F36), and under a throwaway HOME is exactly how the
+  ## orphan holding :99 on the developer's box was made: started with a HOME
+  ## that was deleted under it. Now, in order:
+  ##   1. attach to the dev display through the carried state dir;
+  ##   2. auto-start it ONLY if that state dir already exists (the tester has
+  ##      used it before), and only with the PRE-switch environment, so that a
+  ##      long-lived display never inherits a HOME that is about to be deleted;
+  ##   3. otherwise, or if that start fails (exit 4 on a foreign :99), a PRIVATE
+  ##      Xvfb for this run only (t1_private_xvfb), killed when the arm is done;
+  ##   4. NODISPLAY only when no Xvfb is installed at all. An Xvfb that is
+  ##      installed and will not start is a COUNTED failure: turning a broken
+  ##      display into silence is what issue 0891 was.
+  ## ⚠ STEP 3 TURNS 11 UNCOUNTED NODISPLAY LINES INTO 11 COUNTED RUNS on every
+  ## box without a dev display, which is why it was measured green on the
+  ## private arm before it landed (doc/claude/outsider_fixes_batch/receipts/S2c-T.md).
+  set dd_state [file join $env(HOME) .claude xschem_dev_display]
+  if {[info exists env(XSCHEM_DEVDISPLAY_DIR)] && $env(XSCHEM_DEVDISPLAY_DIR) ne {}} {
+    set dd_state $env(XSCHEM_DEVDISPLAY_DIR)
+  }
+  set dd_env {}
+  set dd_why {}
+  set dd_where {}
   set dd_st {}
-  catch {exec $dd status 2>@1} dd_st
-  set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+  set dd_alive 0
+  ## No display case, no display: a driver whose list is empty (1476's staged
+  ## copies) must not start an Xvfb it will never use.
+  if {[llength $dcases]} {
+    catch {exec $dd status 2>@1} dd_st
+    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+  }
+  if {$dd_alive} { set dd_where "attached to the dev display (state dir $dd_state)" }
+  if {[llength $dcases] && !$dd_alive && [file isdirectory $dd_state]} {
+    set dd_so {}
+    catch {exec {*}[t1_home_preswitch_env] $dd start 2>@1} dd_so
+    catch {exec $dd status 2>@1} dd_st
+    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+    if {$dd_alive} {
+      set dd_where "started the dev display (state dir $dd_state, with the pre-switch HOME)"
+    } else {
+      puts "display arm: the dev display in $dd_state would not start\
+ ([string trim [lindex [split [string trim $dd_so] \n] 0]]) -- using a private Xvfb"
+    }
+  }
+  if {[llength $dcases] && !$dd_alive} {
+    set px [t1_private_xvfb $dd]
+    if {[llength $px]} {
+      lassign $px dd_num dd_env dd_xpid dd_wm
+      set dd_alive 1
+      set dd_where "PRIVATE Xvfb :$dd_num for this run only (pid $dd_xpid, wm $dd_wm)"
+    } else {
+      set dd_why $t1_xvfb_why
+      set dd_where "NONE -- $dd_why"
+    }
+  }
+  if {[llength $dcases]} { puts "display arm: $dd_where" }
   foreach dc $dcases {
     puts "Start ${dc}.tcl (display arm)"
     incr t1_cases
@@ -851,9 +1199,16 @@ foreach tc $tcases {
       ## make the trailer itself the thing that lies.
       incr t1_blocks
       puts $fd "${dc}.disp.log"
-      puts $fd "NODISPLAY: ${dc} display arm NOT RUN -- the persistent dev display is not up, so THIS ARM VERIFIED NOTHING. Start it with tests/headless/devdisplay.sh start and run again."
-      puts $fd "Total num fail: 0"
-      puts "NODISPLAY: ${dc} display arm NOT RUN -- this arm verified NOTHING"
+      if {$dd_why eq {noxvfb}} {
+        puts $fd "NODISPLAY: ${dc} display arm NOT RUN -- no Xvfb is installed here, so THIS ARM VERIFIED NOTHING. Install Xvfb (the xvfb package) and run again."
+        puts $fd "Total num fail: 0"
+        puts "NODISPLAY: ${dc} display arm NOT RUN -- this arm verified NOTHING"
+      } else {
+        puts $fd "HARNESS: ${dc} display arm NOT RUN -- Xvfb is installed but no display could be started ($dd_why): FAIL"
+        puts $fd "Total num fail: 1"
+        incr t1_failures
+        puts "DISPLAY ARM FAILED: ${dc} not run -- $dd_why"
+      }
       continue
     }
     set childcode 0
@@ -869,7 +1224,9 @@ foreach tc $tcases {
     ## entirely (the liveness var is $dd_alive and the NODISPLAY prose contains
     ## the words "devdisplay.sh start"). Splitting this across a continuation
     ## reddened V57 on both arms in T1; do not re-wrap it.
-    set dccmd [concat [list $dd exec] $t1_pre [list $xschem_cmd --pipe -q --logdir $dlogdir --script ${dc}.tcl]]
+    ## ⚠ $dd_env IS EMPTY ON THE DEV DISPLAY and names the private Xvfb's state
+    ## dir and number otherwise (D8): the routing is `$dd exec` either way.
+    set dccmd [concat $dd_env [list $dd exec] $t1_pre [list $xschem_cmd --pipe -q --logdir $dlogdir --script ${dc}.tcl]]
     if {[catch {eval exec $dccmd > $dclog 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
@@ -887,6 +1244,10 @@ foreach tc $tcases {
     t1_publish $dclog ${dc}.disp.log
     puts "Finish ${dc}.tcl (display arm)"
   }
+  ## The private display is this run's alone and nothing after this point needs
+  ## it: kill it now rather than at exit. (The dev display, attached or started,
+  ## is persistent by design and is never stopped by T1.)
+  if {[llength $dd_env]} { catch {t1_home_kill_xvfb [t1_home_run_dir]} }
   # xschemtest.tcl: the broad functional/perf harness. GUARDED (issue 0147) --
   # it used to run AFTER results.log was closed and with no catch, so any failure
   # (e.g. an unresolvable binary) aborted the interpreter with a raw Tcl stack
@@ -958,6 +1319,14 @@ foreach tc $tcases {
 } else {
   puts "Couldn't open $run_log_fn to write.  Investigate please."
 }
+## ⚠ THE OWNER DELETES ITS THROWAWAY HOME HERE, AFTER THE TRAILER (DECISIONS D5)
+## -- never before it, because every case and every child of this run lives in
+## that HOME until the last one has been scored. A no-op for a nested run (it
+## owns nothing), for XSCHEM_TEST_HOME=real or =<dir> (nothing to delete but a
+## private display's record), and for XSCHEM_TEST_KEEP_HOME=1 (kept, and said).
+## A run that dies before reaching this line is collected by the next run's
+## sweep, which also kills a private Xvfb it had recorded.
+t1_home_release
 ## ⚠ NOTHING TO RELEASE HERE ANY MORE, AND THAT IS THE POINT. The lock used to be
 ## held for the WHOLE RUN and released at this line on both arms. It is now taken
 ## and dropped around the single file copy above, so by the time control reaches

@@ -55,6 +55,15 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 
+# HOME: a THROWAWAY one for both binaries, deleted at exit
+# (tests/headless/test_home.sh; DECISIONS D17.1). Measured unarmed by the round-2
+# safety refuter: on a fresh home both xschem runs CREATED ~/.xschem and a 34 KB
+# ~/.xschem/xschemrc in the tester's real home. XSCHEM_TEST_HOME=real opts out.
+# Before any argument is read, so `--help`-style misuse is armed too.
+# shellcheck source=/dev/null
+. "$REPO/tests/headless/test_home.sh"
+test_home_arm || exit $?
+
 OLD="${1:-}"
 NEW="${2:-$REPO/src/xschem}"
 
@@ -67,7 +76,9 @@ for b in "$OLD" "$NEW"; do
 done
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/netlist_diff.XXXXXX")"
-cleanup() { if [ "${KEEP:-0}" != "1" ]; then rm -rf "$WORK"; else echo "kept: $WORK"; fi; }
+# The EXIT trap REPLACES the one test_home_arm installed, so the throwaway
+# HOME's owner cleanup runs from it too, last.
+cleanup() { if [ "${KEEP:-0}" != "1" ]; then rm -rf "$WORK"; else echo "kept: $WORK"; fi; _th_cleanup; }
 trap cleanup EXIT
 
 run_arm() {          # $1 = binary, $2 = arm name

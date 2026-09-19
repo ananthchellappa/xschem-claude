@@ -11,14 +11,26 @@
 #   tests/headless/test_devdisplay.sh
 #   tests/headless/run_suites.sh test_devdisplay        # also works
 #
-# This suite deliberately does NOT arm itself: it manages X displays, so it must
-# be the thing deciding which ones exist.
+# DEVDISPLAY_TEST_NUMS / DEVDISPLAY_TEST_FOREIGN_NUMS (space lists) move the
+# display numbers it may take (default 96..89 and 88..85; :99 is never taken).
+#
+# This suite deliberately does NOT arm its DISPLAY: it manages X displays, so it
+# must be the thing deciding which ones exist.
+#
+# Its HOME IS armed (DECISIONS D13.1): the dev display it starts runs openbox and
+# a GUI xschem, and round 1 measured this file creating ~/.cache/openbox and
+# rewriting ~/.xschem/geometry in the tester's real home. Its state dir was
+# always its own temp dir (XSCHEM_DEVDISPLAY_DIR below), never
+# ~/.claude/xschem_dev_display.
 
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 DD="$HERE/devdisplay.sh"
+# shellcheck source=/dev/null
+. "$HERE/test_home.sh"
+test_home_arm || exit $?
 . "$HERE/spawn_reaper.sh"
 
 # BEFORE a display number is chosen: a run of THIS FILE that was SIGKILLed
@@ -43,9 +55,15 @@ note() { echo "--    $*"; }
 skipck() { echo "skip: $*"; skip=$((skip+1)); }
 
 # --- a display number nothing else is using ---------------------------------
+# DEVDISPLAY_TEST_NUMS / DEVDISPLAY_TEST_FOREIGN_NUMS move the two candidate
+# lists (default 96..89 and 88..85) -- so that a run can be kept on numbers
+# assigned to it, and never on :99.
+_NUMS="${DEVDISPLAY_TEST_NUMS:-96 95 94 93 92 91 90 89}"
+_FNUMS="${DEVDISPLAY_TEST_FOREIGN_NUMS:-88 87 86 85}"
 _free_num() {
   local n
-  for n in 96 95 94 93 92 91 90 89; do
+  for n in $_NUMS; do
+    case "$n" in ''|*[!0-9]*|99) continue ;; esac
     [ -S "/tmp/.X11-unix/X$n" ] && continue
     ss -xl 2>/dev/null | grep -q "@/tmp/\.X11-unix/X$n\b" && continue
     [ -e "/tmp/.X$n-lock" ] && continue
@@ -53,8 +71,9 @@ _free_num() {
   done
   return 1
 }
-NUM=$(_free_num) || { echo "RESULT: FAIL (no free display number in 89..96)"; exit 1; }
-FOREIGN=$(DEVDISPLAY_NUM= _free_num_skip=$NUM; for n in 88 87 86 85; do
+NUM=$(_free_num) || { echo "RESULT: FAIL (no free display number in: $_NUMS)"; exit 1; }
+FOREIGN=$(for n in $_FNUMS; do
+            case "$n" in ''|*[!0-9]*|99|"$NUM") continue ;; esac
             [ -S "/tmp/.X11-unix/X$n" ] && continue
             ss -xl 2>/dev/null | grep -q "@/tmp/\.X11-unix/X$n\b" && continue
             [ -e "/tmp/.X$n-lock" ] && continue
@@ -78,13 +97,33 @@ reaper_mark_owner "$STATE"
 # that a half-finished run may have left inconsistent, so the pids are recorded
 # as they appear and killed directly as a backstop.
 #
-# FOREIGN is killed by a display-SCOPED pattern, never `pkill Xvfb`: :99 is the
-# persistent dev display every other suite on this machine is using, and :0 is
-# the user's screen.
+# NOTHING IS KILLED OR UNLOCKED BY NUMBER OR BY PATTERN (DECISIONS D17.6). The
+# FOREIGN server of D11 was stopped with `pkill -f "Xvfb [:]<n>"`, which kills
+# ANY process whose command line merely contains that text, and both X locks
+# were removed by number -- so a concurrent run that took either number after
+# this one freed it lost its lock. Now: FOREIGN is a pid this run started and
+# tracks (reaper_reap_procs re-checks it in /proc before it signals), and a lock
+# goes only if it still names a server this run started, which is gone.
 _dd_track_pids() {   # remember whatever devdisplay.sh has started so far
-  local f
+  local f p
   for f in xvfb.pid wm.pid vnc.pid; do
-    [ -r "$STATE/$f" ] && reaper_track "$(cat "$STATE/$f" 2>/dev/null)"
+    [ -r "$STATE/$f" ] || continue
+    p=$(cat "$STATE/$f" 2>/dev/null)
+    reaper_track "$p"
+    [ "$f" = xvfb.pid ] && case "$p" in ''|*[!0-9]*) ;; *) OURX="$OURX $p" ;; esac
+  done
+  return 0
+}
+OURX=""   # every X server this run started (devdisplay's, and D11's FOREIGN)
+_rm_our_lock() {   # <n>: remove /tmp/.X<n>-lock only if it names a server of ours that is gone
+  local n="$1" lk p
+  lk=$(head -c 32 "/tmp/.X$n-lock" 2>/dev/null | tr -cd 0-9)
+  [ -n "$lk" ] || return 0
+  for p in $OURX; do
+    [ "$p" = "$lk" ] || continue
+    kill -0 "$p" 2>/dev/null && return 0
+    rm -f "/tmp/.X$n-lock" 2>/dev/null
+    return 0
   done
   return 0
 }
@@ -92,14 +131,19 @@ SWEEPPIDS=""
 _cleanup() {
   local p
   XSCHEM_DEVDISPLAY_DIR="$STATE" DEVDISPLAY_NUM="$NUM" "$DD" stop >/dev/null 2>&1
-  [ -n "${FOREIGN:-}" ] && pkill -f "Xvfb [:]$FOREIGN" >/dev/null 2>&1
   reaper_reap_procs
   for p in $SWEEPPIDS; do kill -9 "$p" 2>/dev/null; done
   rm -rf "$STATE" "$EMPTY" ${SWEEPDIRS:-} 2>/dev/null
-  rm -f "/tmp/.X$NUM-lock" "/tmp/.X${FOREIGN:-999}-lock" 2>/dev/null
+  _rm_our_lock "$NUM"
+  [ -n "${FOREIGN:-}" ] && _rm_our_lock "$FOREIGN"
   return 0
 }
-trap _cleanup EXIT INT TERM
+# The EXIT trap REPLACES the one test_home_arm installed, so the throwaway HOME's
+# owner cleanup runs from it, last, once everything that ran under that HOME is
+# down. Only on EXIT: an INT/TERM here runs _cleanup and the suite carries on,
+# and it must not carry on in a deleted HOME.
+trap '_cleanup; _th_cleanup' EXIT
+trap _cleanup INT TERM
 
 note "display :$NUM, state $STATE"
 
@@ -169,6 +213,12 @@ ck "D6 no dev display -> a display was still provided" 1 \
 ck "D6 the fallback is NOT the dev display" 1 \
    "$([ "$fbout" != ":$NUM" ] && echo 1 || echo 0)"
 note "D6 fallback display was '$fbout'"
+# D17.8: and it is never :99 -- the private arm hands xvfb-run `-n <base> -a`
+# with a base of at least 100, where `-a` alone numbered from :99 and took the
+# dev display's number whenever the dev display was down.
+fbn="${fbout#:}"; fbn="${fbn%%.*}"
+ck "D6 the fallback is numbered from 100 up, never :99" 1 \
+   "$(case "$fbn" in ''|*[!0-9]*) echo 0 ;; *) [ "$fbn" -ge 100 ] && echo 1 || echo 0 ;; esac)"
 
 # --- D7: an explicit AUDIT_DISPLAY still wins --------------------------------
 expout=$(AUDIT_DISPLAY=:0 bash "$HERE/xvfb_arm.sh" --arm sh -c 'echo "$DISPLAY"' 2>/dev/null)
@@ -201,6 +251,7 @@ else
   Xvfb ":$FOREIGN" -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
   fpid=$!
   reaper_track "$fpid"
+  OURX="$OURX $fpid"
   i=0; while [ $i -lt 60 ]; do
     ss -xl 2>/dev/null | grep -q "@/tmp/\.X11-unix/X$FOREIGN\b" && break
     i=$((i+1)); sleep 0.1
@@ -279,19 +330,59 @@ LIVED=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_test.XXXXXX")
 SWEEPDIRS="$ORPH $LIVED"
 DEADP=999999; while [ -e "/proc/$DEADP" ]; do DEADP=$((DEADP + 1)); done
 printf '%s %s\n' "$DEADP" 1 > "$ORPH/.reaper_owner"          # a run that is gone
-sleep 300 & OPH=$!
+# Named Xvfb by argv[0], as the dead run's server was: the sweep kills a
+# recorded pid only if it is still the program recorded (D17.6).
+bash -c 'exec -a Xvfb sleep 300' & OPH=$!
 echo "$OPH" > "$ORPH/xvfb.pid"
+# ...and a pid the same dead run recorded as its WM that is now something else
+# entirely -- a recycled pid -- which must survive.
+sleep 300 & RCY=$!
+echo "$RCY" > "$ORPH/wm.pid"; echo openbox > "$ORPH/wm"
 cp "$STATE/.reaper_owner" "$LIVED/.reaper_owner"             # THIS run: alive
-sleep 300 & LVP=$!
+bash -c 'exec -a Xvfb sleep 300' & LVP=$!
 echo "$LVP" > "$LIVED/xvfb.pid"
-SWEEPPIDS="$OPH $LVP"
+SWEEPPIDS="$OPH $LVP $RCY"
+sleep 0.2
 reaper_sweep_orphan_runs "${TMPDIR:-/tmp}/devdisplay_test.*" xvfb.pid wm.pid vnc.pid
 ck "D17 the sweep reclaims the server of a run that is provably dead" 0 \
    "$(kill -0 "$OPH" 2>/dev/null && echo 1 || echo 0)"
 ck "D17 ...and leaves a CONCURRENT run's alone (negative control)" 1 \
    "$(kill -0 "$LVP" 2>/dev/null && echo 1 || echo 0)"
-kill -9 "$OPH" "$LVP" 2>/dev/null; wait "$OPH" "$LVP" 2>/dev/null
+ck "D17b ...and never kills a recorded pid that is no longer the program recorded (a recycled pid)" 1 \
+   "$(kill -0 "$RCY" 2>/dev/null && echo 1 || echo 0)"
+kill -9 "$OPH" "$LVP" "$RCY" 2>/dev/null; wait "$OPH" "$LVP" "$RCY" 2>/dev/null
 rm -rf "$ORPH" "$LIVED" 2>/dev/null; SWEEPDIRS=""; SWEEPPIDS=""
+
+# --- D18: `stop` kills only what it can identify, and unlocks only its own ---
+#
+# The round-2 safety refuter's recipe (DECISIONS D17.6): a state dir whose pid
+# files name processes that are NOT the programs recorded -- here three `sleep`
+# decoys, as a stale dir names whatever a reboot handed its pids to -- and a
+# lock on the display naming one of them. `stop` used to kill every pid it was
+# handed and remove the lock by number: both decoys died ('devdisplay: stopped
+# :191'). The display is this run's own number, down since D13, so the planted
+# lock is ours to plant and to clean up.
+D18S=$(mktemp -d "${TMPDIR:-/tmp}/devdisplay_empty.XXXXXX")
+sleep 300 & DX=$!; sleep 300 & DW=$!; sleep 300 & DV=$!
+SWEEPPIDS="$DX $DW $DV"
+echo "$DX" > "$D18S/xvfb.pid"; echo "$DW" > "$D18S/wm.pid"; echo "$DV" > "$D18S/vnc.pid"
+echo ":$NUM" > "$D18S/display"; echo openbox > "$D18S/wm"
+d18lock=0
+if [ ! -e "/tmp/.X$NUM-lock" ]; then
+  printf '%10d\n' "$DX" > "/tmp/.X$NUM-lock" && d18lock=1
+fi
+XSCHEM_DEVDISPLAY_DIR="$D18S" DEVDISPLAY_NUM="$NUM" "$DD" stop >/dev/null 2>&1
+ck "D18 stop kills no recorded pid that is not the program recorded (three sleep decoys survive)" "1 1 1" \
+   "$(for p in $DX $DW $DV; do kill -0 "$p" 2>/dev/null && printf 1 || printf 0; [ "$p" = "$DV" ] || printf ' '; done)"
+if [ "$d18lock" = 1 ]; then
+  ck "D18 ...and leaves a lock that does not name a server it stopped" 1 \
+     "$([ "$(tr -cd 0-9 < "/tmp/.X$NUM-lock" 2>/dev/null)" = "$DX" ] && echo 1 || echo 0)"
+  [ "$(tr -cd 0-9 < "/tmp/.X$NUM-lock" 2>/dev/null)" = "$DX" ] && rm -f "/tmp/.X$NUM-lock"
+else
+  skipck "D18 lock half (a lock appeared on :$NUM meanwhile -- another run's; not planting over it)"
+fi
+kill -9 $DX $DW $DV 2>/dev/null; wait $DX $DW $DV 2>/dev/null
+rm -rf "$D18S"; SWEEPPIDS=""
 
 # --- D16: nothing this run started outlives it -------------------------------
 #
