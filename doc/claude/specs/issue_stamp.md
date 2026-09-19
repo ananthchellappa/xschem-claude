@@ -216,6 +216,17 @@ two would be the both-words defect in miniature, and the checker refuses it.
 
 The info string after the language word takes the same `key=value` grammar.
 
+**It is read in full.** A fence is *marked* when any word of its info string is
+shaped `key=value`, and a marked fence's info string must then be exactly: at most
+one leading language word (no `=` in it), then `key=value` words only, each key one
+of `quote path fix assert pat state` and each given once. Any other word is a named
+problem and the block is **not evaluated**. The checker used to keep the key=value
+words and drop the rest, so `assert=absent pat="static int" path=src state=holds`
+was checked as a search for the literal `"static` and passed, while the phrase is on
+463 lines of `src` (measured by S1-fix6's refuter; outsider-fixes DECISIONS D19). A
+fence with no key=value word at all is an ordinary code sample, and its info string
+is not read.
+
 ### `quote=` — a block that claims to reproduce tree text
 
 ````
@@ -293,6 +304,13 @@ info string is read. There is no shell and no
 interpolation — a document that can run arbitrary commands when you validate it
 is a document you cannot validate.
 
+**All the `assert=` scans of one gate run share one budget** (60 s), on top of
+each scan's own. A block reached after it is spent is a named problem, never
+evaluated and never passed. Per-scan bounds alone did not bound how many scans a
+corpus asks for: 100 two-line blocks over `path=.` held the gate for 211–253 s
+(measured by S1-fix6's refuter and by S1-fix7). The real corpus's one block costs
+about 70 ms.
+
 `state=` is the interesting half, and it is what makes the tracker close its own
 issues:
 
@@ -329,9 +347,22 @@ plain `tclsh` **and** under `xschem --nogui --pipe -q --script`, so
 
 * A file **carrying** a stamp is validated: grammar, closed vocabularies, `tree=`
   resolves, one stamp only, inside the header window, plus every marked block.
-* A file **without** one is grandfathered **by number** in
-  `issue_stamp_baseline.txt`. A numbered issue file whose number is *not* in that
-  list and which carries no stamp is a failure.
+* A file **without** one is grandfathered **by its exact file name** in
+  `issue_stamp_baseline.txt`. An issue file whose name is *not* in that list and
+  which carries no stamp is a failure.
+* A name in `doc/claude/issues/` that **looks like** an issue file (it begins
+  with a digit and ends in `.md`, in any case) and misses the canonical
+  `NNNN-<slug>.md` is a failure too: the gate would otherwise never read it, so
+  an unstamped `1601_x.md`, `1601.md` or `1601-x.MD` passed unseen (measured
+  red-first by S1-fix7). Attachments such as `NNNN-<slug>.patch` are not issue
+  files and are not matched. The real directory has none of these (1059 entries,
+  1047 canonical, measured at `aa5cece0`).
+* A line anywhere in an issue file that carries a stamp's **body** (a backtick,
+  `v1`, then `claim=`) and is not the stamp line the parser reads is a failure. A
+  stamp that lost its colon (`**STAMP** `, `**Stamp** `, `**STAMP;**`) was prose
+  to the stray-stamp detector, which needs the word and a colon, so its bogus
+  `tree=` was never checked (measured by S1-fix6's refuter). The only lines in the
+  real corpus that carry a body are the ten real stamps.
 
 So the unconverted set can shrink and never grow, and **the gate is green on the
 corpus as it stands** — which is the hard constraint (`D9`): T1's baseline is
@@ -339,7 +370,7 @@ zero counted failures, a standing red is a defect rather than furniture, and a
 checker that failed 1047 files on day one would be quietly disabled, which is
 precisely how a cleanup rots.
 
-### ⚠ The baseline is a list of numbers, not a count
+### ⚠ The baseline is a list of file names: not a count, and not numbers
 
 A count-based non-regression gate passes when one grandfathered file is deleted
 and one unstamped file is added — net zero, defect through. **Match by identity,
@@ -348,6 +379,33 @@ re-learned it twice in one evening: a `pgrep -af run_regression` that answered
 four hits for one run *because the pattern matched the process typing it*, and a
 `grep -lieE` that swallowed its own pattern and "measured" 1050 files in a corpus
 of 1047.
+
+**A number is not an identity here either.** This project's clones mint colliding
+issue numbers (CLAUDE.md records 1349–1353 naming two different defects each).
+While the baseline listed numbers, a new unstamped file filed under a
+grandfathered number inherited the exemption:
+`1349-a-second-defect-under-a-colliding-number.md` passed `ok (0 problems)` on
+every arm (measured by S1-fix6's refuter; outsider-fixes DECISIONS D19). So each
+line is one whole `NNNN-<slug>.md`, and any other line that is not a `#` comment
+(a bare number included) makes the checker refuse the whole baseline by name. The
+conversion was one to one: each of the 1037 numbers named exactly one unstamped
+file, so the grandfathered set of files did not change.
+
+### What the checker runs, and what it reads
+
+The only program it ever runs is **git**. `assert=` is a Tcl scan (§4), and
+`report`'s citation census is a Tcl scan too: it used to run `grep -r`, which
+follows a symbolic link named on its command line, so with `doc/claude/issues` or
+`src` committed as a link out of the checkout the census counted thousands of
+lines outside it (measured by S1-fix6's refuter). Every reader of the corpus
+(the gate, `report`, and the suite's own B1, B4 and D9 census) first asks
+whether `doc/claude/issues` leads out of the checkout, and reads nothing if it
+does. Every git call runs with `GIT_NO_LAZY_FETCH=1`, so no text in an issue
+file can make a partial clone fetch from its remote: a `tree=` naming a blob the
+clone did not hold used to start `git fetch` and `git-upload-pack` and write a new
+pack into `.git`. In a partial clone, a `quote=` whose file is in the revision
+but whose content is not in the checkout is NOT VERIFIED by name; a path the
+revision does not have is still a failure.
 
 ### ⚠ A vacuous green is a broken checker wearing a pass
 
@@ -400,6 +458,23 @@ exercised.
   detected, because the checker is a hygiene tool against honest error and not
   a gate against its own authors: whoever can write the file can simply leave
   the stamp out (outsider-fixes DECISIONS D18).
+* **A checkout whose own path is not valid UTF-8 is unsupported.** A clone under a
+  directory such as `lat\xe9/` (a Latin-1 byte) is falsely red in both locales,
+  measured by S1-fix6's refuter. Under `LANG=C.UTF-8` the path does not round-trip
+  through Tcl, so the history probe cannot find `.git` and reads the clone as an
+  export, and the baseline reads as missing. Under `LANG=C` this box's `timeout`,
+  uutils coreutils 0.8.0, refuses any command line that is not valid UTF-8
+  (*"invalid UTF-8 was detected in one or more arguments"*). Every git call is
+  wrapped in it, so each one fails and every revision reads as unresolved. Paths
+  in UTF-8 (`café`, `日本`, an emoji) are green in both locales. This is recorded
+  rather than fixed (outsider-fixes DECISIONS D19). Rename the directory or clone
+  elsewhere.
+* **In a partial clone, a `quote=` whose content was never fetched is NOT VERIFIED.**
+  The checker never fetches (every git call runs with `GIT_NO_LAZY_FETCH=1`), so
+  the content of an old revision's file is not there to compare against. It is
+  named on a `NOT VERIFIED` line, as a shallow clone's revisions are, and a full
+  clone checks it. A path the revision does not have is still a failure, because
+  that can be read from the revision's trees, which a `blob:none` clone holds.
 * **A green T1 does not mean every suite arm is green.** Do not add a rule of the
   form *"no open issue may claim a red row while T1 is green"*: issue **1436**
   legitimately claims a red display-arm row, because `test_ase_dialogs` sits in

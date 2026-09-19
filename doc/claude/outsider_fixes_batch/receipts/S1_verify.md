@@ -712,3 +712,106 @@ All plants from that run landed in my own clone. The rewritten content is the sa
   * Not measured: a checkout under a directory whose name is not valid UTF-8, run under C.UTF-8. Tcl's own script path would not round-trip there (INFERRED, pre-existing).
   * The suite's istamp_listing, the evidence tool Q5 uses, still silently skips a name that lstat cannot see.
   * Carried over from earlier rounds: summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; quote_holds may still lazily fetch in an online blob:none clone (latent); uutils timeout costs 100 ms per exec; redundant layer I2.
+
+## S1-fix7 refuter (verbatim)
+
+## refuted: True
+## reasoning: S1-fix7 is refuted on one measured regression. I found no class-A failure.
+
+**What reproduced (MEASURED; frozen copies checked against the main tree: checker 6d0592ad, suite c4741eaa, baseline d19e7a82, spec 1d4f8efb; HOME=scratch, DISPLAY unset, every command under timeout):**
+- **Main tree.** tclsh, xschem and T1 spelling each give ALL PASS (93 checks), 0 `skip:` lines, rc 0, case_failed 0. LANG=C tclsh and T1 give the same. CLI: `ok (0 problems)`, 87 parser cases. report: 4689 / 931 / 1200.
+- **Red-first.** The final suite on aa5cece0's checker and baseline gives `8 FAILED`: exactly B1 G3 Q13 Q14 Q15 Q16 Q17 H22.
+- **Stranger shapes, 4 arms each, corpses 0->0.**
+  - ALL PASS 93: full clone, worktree, `we ird[x] %41`, café (also under LANG=C), blob:none.
+  - `--filter=tree:0` (new here): ALL PASS 93.
+  - d1: 90 + 3 named skips (G4 D9h H9).
+  - export and unborn: 86 + 7 skipped.
+  - reinit: RED by design, 3 FAILED (D9 D9h H9), CLI 10 problems.
+- **Genuine defects.** Red sets are identical on final and aa5cece0 bytes:
+  - all four at once: B1 D9 D9h H9;
+  - bogus tree= and blob tree=: D9 D9h H9 each;
+  - unstamped file: B1 D9;
+  - rotted quote: D9.
+- **Every earlier class-A recipe is inert on the final bytes.** Across textplants, rf6, rf6b and rf7, README was unchanged, 0 markers fired and no `&1` appeared.
+  - Injection recipes: `pat=` values `>`, `2>`, `|`, `>file`, `2>&1` and `<` are literal. `2>/dev/null` and `&` are RED. `quote=--output=`, `..`, absolute and `-` paths are refused.
+  - Links and FIFOs: a FIFO, a link to a FIFO, and a link out, as an issue file or as the baseline, are each named in 0.2-0.7 s.
+  - Other earlier recipes: md_strip lines of 50k characters take 0.6 s, and the non-UTF-8 dir token is RED in both locales.
+  - A1: `doc/claude/issues`, `doc/claude` or `doc` linked out gives CORPUS OUTSIDE; report says `not counted`; the suite reds B1 B4 D9 D9h H9 as NOT-READ; 0 output lines mention 9994-9998. `src` linked out, or `src` -> `..`, is `not counted`. `src` holding links to `/`, `..` or itself: report counts are unchanged. A FIFO in `src`, and a link to a FIFO in `tests`: report returns in 0.5 s.
+  - A2 (rf7, blob:none): 0 fetch trace lines and packs 8->8 in every recipe. The absent-blob quote is NOT VERIFIED by name; a missing path and a rotted quote are RED.
+  - A2, suite run in blob:none (tclsh, xschem, T1, CLI): packs 8->8, object files 8->8, no `.git` file changed. Every fetch line in the trace belongs to the suite's own scratch fixtures.
+  - A2, treeless clone: suite packs 12->12. A treeless quote takes the unexercised `tree ... not in this checkout either` branch, with 0 fetch lines.
+  - A3: 100 blocks take 61.4 s, 73 of them named as over the budget.
+- **Hermetic writes hold.** GIT_DIR/GIT_INDEX_FILE pointed at a victim repo, or at the tree under test: byte-identical. Pre-commit hook with `commit -a` and `commit -- README`: rc 0, 0 fixture files in HEAD. Hostile config: 0 markers. Warn config + GIT_TRACE: ALL PASS.
+
+**The regression (MEASURED).** The new H22 fixture `g clone -q --filter=blob:none "$5" partial` runs inside the fixture script, which uses `set -e`. `GIT_NO_LAZY_FETCH` is not in FIXTURE_ENV_UNSET; the suite says so itself at H21: "GIT_NO_LAZY_FETCH is not one of the fixture environment's names". A caller that exports `GIT_NO_LAZY_FETCH=1` therefore makes the clone's checkout fail. `HF_ERR` then takes down every H fixture.
+- Main tree, final bytes: tclsh and T1 spelling each give `RESULT: 20 FAILED (73 passed)`, rc 1, case_failed 1. The reds are H1-H5 H8 H10-H22 and Q7, each `got: FIXTURES NOT BUILT: warning: lazy fetching disabled; some objects may not be available`.
+- Full clone, final bytes: the same 20 FAILED on tclsh and on xschem.
+- aa5cece0's bytes in the same env: tclsh, xschem and T1 each give `ALL PASS (87 checks)`, rc 0.
+- The CLI gate is unaffected (`ok`).
+
+This contradicts the suite's own contract (H21: "the caller's ... GIT_NO_LAZY_FETCH get no vote") and T1's zero baseline. The failure is fail-closed (a false red, not a safety hole). A measured one-word fix exists: adding `GIT_NO_LAZY_FETCH` to FIXTURE_ENV_UNSET gives ALL PASS 93 both with and without the variable exported.
+## class_A:
+## regressions:
+  * MEASURED: new in S1-fix7, not caused by a hostile corpus. When the caller's environment exports GIT_NO_LAZY_FETCH=1, the final suite is RED everywhere, while aa5cece0 stays green.
+- Main tree, tclsh and T1 spelling (`cd tests && ../src/xschem --nogui --pipe -q --script headless/test_issue_stamp.tcl`): `RESULT: 20 FAILED (73 passed)`, rc 1, case_failed 1. The reds are H1 H2 H3 H4 H5 H8 H10 H11 H12 H13 H14 H15 H16 H17 H18 H19 H20 H21 H22 Q7, each `got: FIXTURES NOT BUILT: warning: lazy fetching disabled; some objects may not be available`.
+- A plain full clone gives the same 20 FAILED on tclsh and on xschem.
+- aa5cece0's bytes in the same env and shape: tclsh, xschem and T1 each give `ALL PASS (87 checks)`, rc 0.
+- Cause (READ): the new fixture step `g clone -q --filter=blob:none "$5" partial` (test_issue_stamp.tcl, istamp_hist_fixtures) needs lazy fetch to check out HEAD's blobs. The fixture script is `set -e`, and `GIT_NO_LAZY_FETCH` is not in FIXTURE_ENV_UNSET: the comment in H21 says 'GIT_NO_LAZY_FETCH is not one of the fixture environment's names'. So one failed clone becomes HF_ERR, and every H row plus Q7 fails.
+- This contradicts H21's own contract ('the caller's GIT_SHALLOW_FILE and GIT_NO_LAZY_FETCH get no vote') and T1's ZERO baseline. The variable is a documented git safety switch, the exact one this checker now sets on every call.
+- Remedy, MEASURED in the scratch copy shapes/nlfx: adding GIT_NO_LAZY_FETCH to FIXTURE_ENV_UNSET gives ALL PASS (93 checks) both with GIT_NO_LAZY_FETCH=1 exported and without it. H21 sets and restores the variable itself inside with_fixture_env, so it is unaffected.
+- Logs: /var/tmp/xschem_fixes/s1fix7_verify/logs/runs/nlf_{main,main_t1,fin,fin_xs,pre,pre_t1,pre_xs,x_env,x_plain}.*.log (nlfx_env/nlfx_plain for the remedy).
+## class_B_followups:
+  * Class C, MEASURED: the 'total budget for all the assert= scans' is really a wall clock for the whole gate, started when the gate starts. So slow non-scan work before an assert exhausts it, and the assert is then misreported.
+- Recipe: 240 VALID quote= blocks (distinct ancestor revisions, path=README, the README's first line) appended to stamped 0056. Every one holds.
+- Final bytes: rc 1 in 69.9 s, `1219:72: assertion could not be evaluated -- the search ran past the gate's total budget of 60 s for all the assert= scans of one run`. 1219's real scan takes about 70 ms, so the wording is false.
+- aa5cece0: `ok (0 problems)` in 70.1 s. With 200 blocks both give ok in 57 s.
+- A slow box or filesystem, or slow git, shrinks the same margin; the real corpus reaches 1219 in about 0.4 s here.
+- Suggestion: charge only scan time, or name the cause truthfully. Logs: logs/bd_fin4.log, bd_pre4.log.
+  * Class C, MEASURED (scripts/nearmiss.sh): honest content in a stamped file is falsely red on the final bytes and `ok` on aa5cece0. This follows D19's B1/B2 wording, and the real corpus is unaffected (0 such lines).
+- An mkdocs-style fence ```` ```python title="example.py" ```` is named, because `title=` is an unknown key.
+- ```` ```sh cc=gcc make ```` is named.
+- A stamp body quoted inside a fenced documentation example (`see `v1 claim=open ...``) is named, in both a stamped file and grandfathered 0057.
+- Consider marking a fence only by a KNOWN key, and skipping body detection inside fences.
+  * Efficiency, not class A (MEASURED): nothing bounds the git work that quote= and tree= blocks cause across a whole run.
+- 50 quote blocks with distinct bogus revisions: 16.0 s wall and 0.76 s CPU on the final bytes, and 16.0 s on aa5cece0 (identical, pre-existing).
+- 30 ancestor quotes: 10.7 s on both.
+- New in a blob:none partial clone: each quote of absent content runs an uncached `ls-tree -r` of the whole revision plus 3 execs. 50 blocks took 26.1 s wall and 6.0 s CPU, with packs unchanged.
+- Cost is linear, git calls are timeout-bounded, and the CPU is about 1/17 of A3's per block.
+- Suggestion: cache ls-tree per revision, and count quote work in the run's budget.
+  * Minor, MEASURED: problem output is uncapped. One marked fence whose info string holds 200k stray words (a 404 KB issue file) produces a single 5.8 MB problem line in 0.7 s. It is linear, but the problem text could be capped at the first N words.
+  * Observation, MEASURED: in a --filter=tree:0 clone, a quote of a path the revision never had is NOT VERIFIED by name ('the tree of <rev> is not in this checkout either') rather than RED. That is acceptable under D18 C, which requires RED only in a full clone. No fetch occurred and packs stayed 12->12. This exercises the branch the receipt listed as covered by no row, so a row could hold it.
+## out_of_scope:
+  * Deliberate disguise (NBSP or ZWSP before the stamp, HTML with attributes, tables, links, task lists) was not re-tested; D18 puts it out of scope, and nothing in S1-fix7 changes it.
+  * Report reading whole files into memory (MEASURED with a 300 MB file in tests/): the final Tcl census took 13.9 s and 0.93 GB RSS, against aa5cece0's grep-based report at 35.4 s and 2.57 GB. That is better, not a regression. Counts differ by 10 lines (9831580 vs 9831570); the census is advisory.
+## real_home_check: `md5sum -c --quiet /tmp/claude-1000/-home-analog-dev-xschem-claude/f12b1fd5-2898-41a7-9dd9-9fd4b899f2af/scratchpad/xschem_manifest_fixes.md5` gave rc 0 before any work and rc 0 after all of it.
+- **Real home and other trees.** `find ~/.xschem ~/.claude/xschem_dev_display ~/.claude/gui_test_gate -newer /var/tmp/xschem_fixes/s1fix7_verify/.marker_start` printed nothing. The same find over ~/dev/xschem-op-wcard (excluding .git) printed nothing. :99, devdisplay and gui_test_gate were never touched.
+- **How runs were made.** Every tclsh, xschem, T1, CLI, report and git run used HOME=/var/tmp/xschem_fixes/s1fix7_verify/homes/<tag>, with DISPLAY and GIT_EDITOR unset, under `timeout`.
+- **Main tree.**
+  - It had only clean suite, CLI and report runs, plus the GIT_NO_LAZY_FETCH=1 env runs, with no plant of any kind.
+  - HEAD is still aa5cece0, and the four files are unchanged (6d0592ad c4741eaa d19e7a82 1d4f8efb).
+  - `git status` matches the start.
+  - `tests/headless/.scratch` is empty, and there is no `&1` or `tests/&1`.
+  - Nothing was committed, stashed, reset or checked out.
+- **Where writes went.** Every plant, link, FIFO, partial or treeless clone and git write was under /var/tmp/xschem_fixes/s1fix7_verify/shapes (clones of my own file:// mirror of the main tree), or under its `outside*` and `markers` directories.
+  - The hookclone's two commits stayed in that clone.
+  - Partial-clone remotes were only my scratch mirror and the suite's own scratch psrc.
+  - /dev/zero was never read.
+- **Leftovers.** 0 FIFOs under my scratch, 0 /tmp/istamp_* entries, and a /proc/*/environ scan found 0 live processes with my scratch HOME.
+
+## IMPL deviations + open_problems (S1-fix7 crew):
+  * quote_gap (the partial-clone quote treated as NOT VERIFIED by name) was not in D19's list. A2 forced it: with lazy fetch off, a genuine old quote in a blob:none clone would have gone falsely red. It is fail-closed three ways: a verified revision only, a repository whose own config names a promisor, and the path listed in the revision's trees. H22 holds it with sabotages N2, N3b and N4. It also closes the carried 'offline blob:none quote' limit. The CLI tail wording and D9h's exclusion of such gaps follow from it.
+  * report confines and Tcl-scans src and tests as well as the issues dir. MEASURED: with src linked out, report counted 7000 lines outside the checkout. So there is no grep exec left at all.
+  * B1 also names an unknown key and a repeated key, not only a word that is not key=value. A fence with no key=value word at all is left alone; 0 real fences are affected.
+  * The baseline refuses itself as a whole, by line number, on a bare number or any stray line. An old number-format baseline beside the new checker therefore gives BASELINE UNUSABLE (MEASURED during an rf7 restore slip).
+  * gate is now a wrapper around gate_body, so the run's deadline is cleared on every way out.
+  * One self-test known negative was re-expected: '# see **STAMP:** <full body> in the spec' is exactly what B2 now names. The mention negative now uses `v1 ...`, as Q4 always did.
+  * B1's got value now lists file names, not numbers. D9h leaves partial-clone content gaps out of its empty-skip column; they are still printed by name.
+  * Q5 and H17 now build whitespace-free relative targets. The first final battery measured both red in the 'we ird[x] %41' shape: the scratch path contains a space, and B1 correctly named the two-word info string. The fix was re-proved with sabotages X1 and I3. The suite was re-frozen and the whole battery re-run.
+  * Harness slips, all re-run and none in the owned files: emoji HOME tags broke the xschem binary's startup, re-run with ASCII tags; rf7's restore re-checked-out the old baseline; textplants' markers directory was missing; score.sh was given relative paths; the non-UTF-8-path clone had to be built via mv because uutils refused its own argv.
+  * As in every earlier round, the xschem and T1 arms use the main tree's src/xschem; the shapes were not built.
+  * Redundant layer N3: quote_gap's promisor-value check is held by no row alone, because git config already exits 1 when no promisor key exists. The pair is held by N3b.
+  * Not exercised by any row (READ, fail-closed or advisory): a partial clone that lacks the revision's tree (tree:0), where the quote is NOT VERIFIED by name; and cite_dir silently leaving out a directory it cannot list (report is advisory).
+  * report counts a file as binary only on a NUL byte. grep in a UTF-8 locale also treats encoding errors as binary. The counts measured equal on this tree anyway.
+  * A git older than 2.44 ignores GIT_NO_LAZY_FETCH (INFERRED; this box runs 2.53).
+  * With an emoji in HOME, the xschem binary fails 'Tcl_AppInit(): failure creating $HOME/.xschem'. That is outside these files; cause UNKNOWN, recorded only.
+  * Carried over: lstat-then-open is not atomic; the non-UTF-8 checkout path (now in spec §6); summarize_all drops skip: lines (D12); GIT_ATTR_NOSYSTEM is unmeasured; HAVE_GIT depends on timeout; uutils costs ~100 ms per exec; redundant layer I2; the stale '34 checks' count in spec §5, left as prose.

@@ -72,22 +72,35 @@
 ## attributes, or in a table, a link or a task list: this is a hygiene tool
 ## against honest error, not a gate against its own authors, and whoever can
 ## write the file can leave the stamp out (outsider-fixes DECISIONS D18).  An
-## HONEST near-miss -- an indented or ~~~ fence, `__STAMP:__` -- is named.
+## HONEST near-miss -- an indented or ~~~ fence, `__STAMP:__` -- is named.  And
+## a checkout whose own PATH is not valid UTF-8 is unsupported, and falsely red
+## in both locales: under C.UTF-8 the path does not round-trip through Tcl, and
+## under LANG=C this box's `timeout` (uutils 0.8.0) refuses a non-UTF-8 argv, so
+## every git call fails (MEASURED by S1-fix6's refuter; recorded, not fixed, by
+## D19 -- spec section 6).
 ##
 ## GREEN BY CONSTRUCTION ON THE DAY IT LANDED, AND STILL ABLE TO GO RED.
 ## Enforcement is FORWARD ONLY.  A file that carries a stamp is validated against
-## the grammar; a file that does not is grandfathered BY NAME in
-## issue_stamp_baseline.txt.  A NEW issue file whose number is not in that
+## the grammar; a file that does not is grandfathered BY ITS EXACT FILE NAME in
+## issue_stamp_baseline.txt.  A NEW issue file whose name is not in that
 ## baseline and which carries no stamp is a FAIL.  The unconverted set can
 ## therefore shrink but never grow, and nothing is red on day one.
 ##
-## ⚠ THE BASELINE IS A LIST OF NUMBERS, NOT A COUNT, AND THAT IS DELIBERATE.
+## ⚠ THE BASELINE IS A LIST OF FILE NAMES -- NOT A COUNT, AND NOT NUMBERS EITHER.
 ## A count-based non-regression gate passes when one grandfathered file is
 ## deleted and one unstamped file is added.  This is the harness batch's W12b
 ## lesson -- a shared namespace cannot be scored by counting, only by identity --
 ## and this batch reproduced it twice more (a `pgrep -af` that matches itself; a
 ## `grep -lieE` that swallowed its own pattern and "measured" 1050 files out of
-## 1047).  Match by identity.  Always.
+## 1047).  Match by identity.  Always.  ⚠ AND A NUMBER IS NOT AN IDENTITY HERE
+## (outsider-fixes DECISIONS D19): this project's clones mint colliding numbers
+## (CLAUDE.md records 1349-1353 naming two defects each), and while the baseline
+## listed numbers, a NEW unstamped file under a grandfathered number inherited
+## the exemption -- MEASURED by S1-fix6's refuter and red-first by S1-fix7:
+## `1349-a-second-defect-under-a-colliding-number.md`, no stamp, `ok (0
+## problems)` on every arm.  A name that LOOKS like an issue file and misses the
+## canonical `NNNN-<slug>.md` (`1601_x.md`, `1601.md`, `1601-x.MD`) is named too:
+## the gate would otherwise never read it at all.
 ##
 ## ⚠ AND A VACUOUS GREEN IS A BROKEN CHECKER WEARING A PASS.  There are zero
 ## stamped files today, so every forward check has an empty input set and would
@@ -111,7 +124,10 @@
 ## sits behind --end-of-options (outsider-fixes DECISIONS D16): assert= is
 ## evaluated by reading the files in Tcl, and a quote= block's `<rev>:<path>`
 ## reaches git on STDIN, never on its command line -- see assert_eval and
-## quote_holds for what an exec of corpus text was MEASURED doing.  Revisions
+## quote_holds for what an exec of corpus text was MEASURED doing.  Since D19
+## the ONLY program this file ever runs is git (report's census is a Tcl scan
+## too), and every git call runs with GIT_NO_LAZY_FETCH=1, so no text in an
+## issue file can make a partial clone fetch over its remote (git_env).  Revisions
 ## are asked only where this tree has
 ## history to answer from: in a shallow clone whose HEAD history is cut (for
 ## what lies beyond the cut), a no-.git export and a `git init` with nothing
@@ -172,12 +188,26 @@ namespace eval istamp {
     variable ok_key   {claim tree stamped fix open super by scope}
     variable req_key  {claim tree stamped fix open}
 
-    ## Timeouts, seconds: git, report's census grep (no corpus text in it), and
-    ## the budget of one assert= scan, which is Tcl and therefore cannot be
-    ## bounded by `timeout` -- assert_scan checks its own clock instead.
-    variable t_git   30
-    variable t_grep  60
-    variable t_scan  60
+    ## Timeouts, seconds: git; the budget of ONE assert= scan, which is Tcl and
+    ## therefore cannot be bounded by `timeout` -- assert_scan checks its own
+    ## clock instead; and the budget of ALL the assert= scans of one gate() run
+    ## together (and of one report's census), because a per-scan bound does not
+    ## bound how many scans a corpus asks for.
+    ## ⚠ THE TOTAL IS NOT DECORATION (outsider-fixes DECISIONS D19).  With only
+    ## the per-scan bound, S1-fix6's refuter appended 100 two-line fences
+    ## `assert=absent pat=ZQXNOPE<i> path=. state=holds` -- 5.8 KB of corpus
+    ## text -- to stamped 1219, and the CLI gate took 211 s (MEASURED; 10 blocks
+    ## 21.5 s): a busy Tcl loop neither `timeout` nor the in-suite watchdog can
+    ## interrupt, and about 430 such blocks would have run T1's 900 s per-case
+    ## cap out.  Now the run's scans share one clock, and a block reached after
+    ## it has run out is a NAMED problem, never evaluated and never passed.  The
+    ## real corpus's one block costs ~70 ms of the 60 s.
+    variable t_git        30
+    variable t_scan       60
+    variable t_scan_total 60
+    ## The deadline (clock milliseconds) shared by every scan of the gate() run
+    ## in progress, or "" outside one.  Set and cleared by gate() alone.
+    variable scan_deadline ""
 
     ## ⚠ THE CALLER'S REPOSITORY-LOCATING VARIABLES, REMOVED FROM EVERY git CALL
     ## THIS CHECKER MAKES (istamp::git_in).  The checker describes the tree it
@@ -411,10 +441,29 @@ proc istamp::init {{rootdir ""}} {
 ## value the caller exported can never stand in for it; every name is put back
 ## exactly as it was afterwards.  It carries `noshallow` (below) and nothing
 ## derived from an issue file.
+##
+## ⚠ AND NO CALL EVER FETCHES: `git_always` rides on EVERY call, after `envs`,
+## so no call site can drop it (outsider-fixes DECISIONS D19).  In a partial
+## clone -- `clone --filter=blob:none`, which a CI or a large-repo user makes --
+## git FETCHES an object it does not hold the moment a command asks for it, from
+## the promisor remote, and writes the pack into .git.  GIT_NO_LAZY_FETCH rode
+## only on the shallow walk, so S1-fix6's refuter MEASURED, with a blob:none
+## clone of a file:// mirror and 0056's tree= set to a blob the clone did not
+## hold: `git fetch origin ... --filter=blob:none --stdin`, `git-upload-pack`,
+## `index-pack --promisor` and `maintenance run --auto` in GIT_TRACE, 8 -> 12
+## files in .git/objects/pack, the blob present afterwards -- and a typo'd full
+## SHA did it twice.  Red-first by S1-fix7, and a quote= of an old revision did
+## the same through quote_holds.  With an https or ssh remote that is network
+## I/O and a transport program, started because of text in an issue file, and
+## a write into the repository -- contract A.  git 2.44+ honours the variable;
+## an older git ignores it and fetches (INFERRED from git's release notes).
+namespace eval istamp { variable git_always {GIT_NO_LAZY_FETCH 1} }
 proc istamp::git_env {envs words dir args} {
     variable t_git
     variable git_scrub
     variable no_grafts
+    variable git_always
+    set envs [dict merge $envs $git_always]
     set names [lsort -unique [concat $git_scrub [dict keys $envs]]]
     set saved {}
     foreach v $names {
@@ -475,7 +524,8 @@ proc istamp::git_q  {dir args} { git_run 0 $dir {*}$args }
 ## The CALLER cannot steer it: GIT_SHALLOW_FILE is in git_scrub, removed from
 ## every call, and git_env sets this value after the scrub.  GIT_NO_LAZY_FETCH
 ## rides along so that a walk past a boundary in a partial clone can never
-## fetch history into it (MEASURED: git 2.53 does not today; this keeps it so).
+## fetch history into it (MEASURED: git 2.53 does not today; this keeps it so)
+## -- and since D19 it rides on every call anyway (git_always).
 namespace eval istamp { variable noshallow {GIT_SHALLOW_FILE "" GIT_NO_LAZY_FETCH 1} }
 
 ## git's words for a failure, its first `fatal:` or `error:` line FIRST -- the
@@ -1053,6 +1103,52 @@ proc istamp::find_blocks {text} {
 ## not seen as one) and a backtick in a backtick fence's info string.  Each can
 ## only make this parser see a block markdown does not, or miss one it does --
 ## and a missed quote fence is named by stray_quotes, never passed.
+##
+## ⚠ A MARKED FENCE'S INFO STRING IS READ IN FULL (outsider-fixes DECISIONS
+## D19).  This kept the words shaped `key=value` and silently DROPPED every
+## other one, so a block the grammar calls malformed was evaluated as a
+## different, weaker claim with no word said.  MEASURED by S1-fix6's refuter
+## and red-first by S1-fix7, in stamped 1219 in a full clone: `assert=absent
+## pat="static int" path=src state=holds` -- a phrase on 463 lines of src --
+## said `ok (0 problems)`, because it searched for the literal `"static` and
+## threw `int"` away; `assert=present pat=static nonexistent_zz_symbol ...`
+## -- a phrase on NO line -- said ok too, because it searched for `static`.
+## The stamp's grammar has always refused a token that is not key=value.  So a
+## fence is MARKED when any word of its info string is shaped `key=value`, and
+## then its info string must be exactly: at most one leading language word (no
+## `=` in it), then `key=value` words only, each key known (`fence_keys`) and
+## given once.  Anything else lands in the block's `bad` list, and the gate
+## names the block and does not evaluate it (fail-closed: nothing it claims is
+## passed).  A fence with no key=value word is an ordinary code sample, and
+## its info string is nobody's business (row N2).
+namespace eval istamp { variable fence_keys {quote path fix assert pat state} }
+proc istamp::fence_info {info} {
+    variable fence_keys
+    set words {}
+    foreach t [split [string trim $info]] { if {$t ne ""} { lappend words $t } }
+    set toks {}; set bad {}; set seen {}; set marked 0
+    foreach t $words { if {[regexp {^[a-z]+=} $t]} { set marked 1 ; break } }
+    if {!$marked} { return [list {} {}] }
+    set i 0
+    foreach t $words {
+        incr i
+        if {[regexp {^([a-z]+)=(.*)$} $t -> k v]} {
+            if {$k ni $fence_keys} {
+                lappend bad "`[string range $t 0 39]` has a key the grammar does not know (known: $fence_keys)"
+            } elseif {[dict exists $seen $k]} {
+                lappend bad "`[string range $t 0 39]` gives `$k=` a second time"
+            } else {
+                dict set seen $k 1
+                lappend toks $k $v
+            }
+        } elseif {$i == 1 && [string first = $t] < 0} {
+            ## the language word
+        } else {
+            lappend bad "`[string range $t 0 39]` is not a key=value word"
+        }
+    }
+    return [list $toks $bad]
+}
 proc istamp::fence_scan {text} {
     set out {}
     set opened {}
@@ -1062,6 +1158,7 @@ proc istamp::fence_scan {text} {
     set flen 0
     set readable 0
     set attrs {}
+    set fbad {}
     set body {}
     set startno 0
     foreach ln [split $text \n] {
@@ -1071,13 +1168,9 @@ proc istamp::fence_scan {text} {
                 set fch  [string index $fence 0]
                 set flen [string length $fence]
                 set readable [expr {$ind eq "" && $fch eq "`"}]
-                set toks {}
-                if {$readable} {
-                    foreach t [split [string trim $info]] {
-                        if {[regexp {^([a-z]+)=(.*)$} $t -> k v]} { lappend toks $k $v }
-                    }
-                }
-                set in 1; set attrs $toks; set body {}; set startno $i
+                set toks {}; set bad {}
+                if {$readable} { lassign [fence_info $info] toks bad }
+                set in 1; set attrs $toks; set fbad $bad; set body {}; set startno $i
                 dict set opened $i 0
             }
         } else {
@@ -1085,8 +1178,8 @@ proc istamp::fence_scan {text} {
                 && [string index $cf 0] eq $fch && [string length $cf] >= $flen} {
                 set in 0
                 dict set opened $startno 1
-                if {$readable && [llength $attrs]} {
-                    lappend out [dict create attrs $attrs body [join $body \n] lineno $startno]
+                if {$readable && ([llength $attrs] || [llength $fbad])} {
+                    lappend out [dict create attrs $attrs body [join $body \n] lineno $startno bad $fbad]
                 }
             } else {
                 lappend body $ln
@@ -1177,18 +1270,39 @@ proc istamp::stamp_shaped {c} {
 }
 
 ## Stamp-shaped lines find_stamp does not read.  One problem each.
+##
+## ⚠ AND A LINE CARRYING A STAMP'S BODY IS NAMED WHATEVER PRECEDES IT
+## (outsider-fixes DECISIONS D19).  stamp_shaped needs the word STAMP followed
+## by a COLON, so a stamp that lost its colon was prose: MEASURED by S1-fix6's
+## refuter and red-first by S1-fix7, `**STAMP** `v1 claim=fixed tree=deadbee0
+## ...`` as line 3 of grandfathered 0057 said `ok (0 problems)`, and so did
+## `STAMP `v1 ...``, `**Stamp** `v1 ...``, `**STAMP -**`, `**STAMP;**` and
+## `**STAMP.**` -- one-character typos of the canonical line, whose bogus tree=
+## nothing ever checked.  The body itself -- a backtick, `v1`, then `claim=` --
+## is what nobody writes by accident, so any line holding it that find_stamp
+## does not read is a problem, wherever it sits.  MEASURED 2026-09-18 at
+## aa5cece0, all 1047 numbered issue files: the only lines holding it are the
+## ten real stamps, so the real corpus gains nothing.
 proc istamp::stray_stamps {num text} {
     set out {}
-    if {![regexp -nocase {stamp} $text]} { return $out }
+    set words [regexp -nocase {stamp} $text]
+    set bodies [regexp {`v1[ \t]+claim=} $text]
+    if {!$words && !$bodies} { return $out }
     set i 0
     foreach ln [split $text \n] {
         incr i
         if {[regexp {^\*\*STAMP:\*\*} $ln]} { continue }
-        if {![regexp -nocase {stamp} $ln]} { continue }
-        if {![stamp_shaped [md_strip $ln]]} { continue }
-        set cause [stray_cause $ln]
-        if {$cause eq ""} { set cause "not spelled exactly `**STAMP:**`" }
-        lappend out "$num:$i: a **STAMP:** line the parser does not read ($cause) -- a stamp is read only at column 0 and spelled exactly `**STAMP:**`, so nothing this one states is checked"
+        if {$words && [regexp -nocase {stamp} $ln] && [stamp_shaped [md_strip $ln]]} {
+            set cause [stray_cause $ln]
+            if {$cause eq ""} { set cause "not spelled exactly `**STAMP:**`" }
+            lappend out "$num:$i: a **STAMP:** line the parser does not read ($cause) -- a stamp is read only at column 0 and spelled exactly `**STAMP:**`, so nothing this one states is checked"
+            continue
+        }
+        if {$bodies && [regexp -indices {`v1[ \t]+claim=} $ln at]} {
+            set head [string trim [string range $ln 0 [expr {[lindex $at 0] - 1}]]]
+            set shown [expr {$head eq "" ? "nothing" : "`[string range $head 0 39][expr {[string length $head] > 40 ? "..." : ""}]`"}]
+            lappend out "$num:$i: a line carrying a stamp's body (`v1 claim=...) that is not a **STAMP:** line the parser reads (it is preceded by $shown) -- a stamp is read only at column 0 and spelled exactly `**STAMP:** `, so nothing this one states is checked"
+        }
     }
     return $out
 }
@@ -1344,13 +1458,34 @@ proc istamp::rev_is_ancestor {rev} {
 ## assert_eval.  `cat-file --batch` reads object names from stdin, where Tcl's
 ## exec parses nothing and git has no option to take; it prints raw content (no
 ## textconv, no pager), and the header says whether the name is a FILE.
-proc istamp::quote_holds {rev path body} {
+##
+## Returns {1 ""} (holds), {0 <why>} (a finding), or {-1 <why>}: NOT VERIFIED,
+## because the file is in that revision and its CONTENT is not in this
+## checkout -- a partial clone that never fetched it (quote_gap).  `gapok` is
+## 1 only when the gate has verified the revision itself (rev_verdict `ok`):
+## a revision that does not resolve is never excused this way.
+##
+## ⚠ THE -1 EXISTS BECAUSE NO CALL FETCHES ANY MORE (git_always, D19).  In a
+## blob:none clone the blob of an old revision's file is simply not here; with
+## lazy fetch on, git went and got it (MEASURED red-first, S1-fix7: `git fetch
+## ... --filter=blob:none`, packs 8 -> 12, then `ok`), and with it off,
+## `cat-file --batch` answers `<rev>:<path> missing` -- the same answer as for a
+## path the revision never had.  Reading that as "not a file at that revision"
+## would turn a stranger's partial clone RED over a quote that is fine.  So a
+## `missing` is looked into, from trees alone (which a blob:none clone holds):
+## a path the revision does not have is still RED; a path it has, whose blob a
+## PARTIAL clone does not hold, is NOT VERIFIED by name.
+proc istamp::quote_holds {rev path body {gapok 0}} {
     variable repo
     if {[catch {git_q $repo --no-replace-objects cat-file --batch << "${rev}:${path}\n"} src]} {
         return [list 0 "git cat-file --batch could not read ${rev}:${path}"]
     }
     set nl   [string first \n $src]
     set head [expr {$nl < 0 ? $src : [string range $src 0 [expr {$nl - 1}]]}]
+    if {$gapok && [regexp { missing$} $head]} {
+        set gap [quote_gap $rev $path]
+        if {$gap ne ""} { return [list -1 $gap] }
+    }
     if {![regexp {^[0-9a-f]{40}(?:[0-9a-f]{24})? blob [0-9]+$} $head]} {
         return [list 0 "${rev}:${path} is not a file at that revision (git: [string range $head 0 99])"]
     }
@@ -1360,6 +1495,42 @@ proc istamp::quote_holds {rev path body} {
     if {$n_body eq ""} { return [list 0 "empty quote block"] }
     if {[string first $n_body $n_src] >= 0} { return [list 1 ""] }
     return [list 0 "quoted text is not in ${rev}:${path}"]
+}
+
+## Why `<rev>:<path>` is MISSING here although nothing is wrong with it, or ""
+## when that cannot be shown (and the quote is then RED as before).  Three
+## pieces of evidence, all required, none of them a fetch:
+##   * this repository IS a partial clone: its own config (--local; a promisor
+##     remote, or git's older extensions.partialclone) says so;
+##   * the revision's tree lists the path, as a blob -- `ls-tree -r` reads
+##     trees only, which a blob:none clone holds; the revision is a
+##     rev_token-checked hex behind --end-of-options, and the path is matched
+##     here, in Tcl, never handed to git;
+##   * that blob is not in the store (cat-file -e, git's own hex).
+## A tree that cannot be listed in a partial clone (a tree:0 filter) is the
+## same gap one level up, and is named as such.
+proc istamp::quote_gap {rev path} {
+    variable repo
+    if {![rev_token $rev]} { return "" }
+    if {[catch {git_q $repo config --local --get-regexp {^(remote\..+\.promisor|extensions\.partialclone)$}} cfg]} { return "" }
+    set partial 0
+    foreach ln [split $cfg \n] {
+        if {[regexp {^remote\..+\.promisor[ \t]+(.*)$} $ln -> v] && [string tolower [string trim $v]] in {true yes on 1}} { set partial 1 }
+        if {[regexp {^extensions\.partialclone[ \t]+(\S+)} $ln]} { set partial 1 }
+    }
+    if {!$partial} { return "" }
+    set want [join [lsearch -all -inline -not -exact [path_parts $path] .] /]
+    if {[catch {git_q $repo --no-replace-objects ls-tree -r -z --full-tree --end-of-options $rev} ls]} {
+        return "partial clone: the tree of $rev is not in this checkout either, so whether it holds $path cannot be told without fetching, and this checker never fetches"
+    }
+    foreach ent [split $ls \0] {
+        if {![regexp {^[0-7]+ ([a-z]+) ([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(.*)$} $ent -> type oid name]} { continue }
+        if {$name ne $want} { continue }
+        if {$type ne "blob"} { return "" }
+        if {![catch {git_q $repo cat-file -e --end-of-options $oid}]} { return "" }
+        return "partial clone: $rev has $want, and its content is not in this checkout -- this checker never fetches"
+    }
+    return ""
 }
 
 ## Evaluate a declared assertion about the tree.  Vocabulary is two predicates
@@ -1439,6 +1610,10 @@ proc istamp::assert_eval {kind pat path} {
     if {$pat eq ""} {
         return [list -1 -1 "pat= is empty, and an empty pattern names nothing to look for"]
     }
+    ## The run's shared clock (t_scan_total): once it has run out, a block is
+    ## named without a single file being read.
+    lassign [scan_budget] - bmsg bspent
+    if {$bspent} { return [list -1 -1 $bmsg] }
     ## Text to bytes BEFORE the switch, each through the encoding that made it.
     set rootb [as_bytes $repo [encoding system]]
     set relb  [as_bytes $path utf-8]
@@ -1644,19 +1819,34 @@ proc istamp::resolve_in {root rel} {
 ## file that matches, a path= that is neither file nor directory, the budget
 ## spent.
 proc istamp::assert_scan {target patb} {
-    variable t_scan
-    set deadline [expr {[clock milliseconds] + 1000 * $t_scan}]
+    lassign [scan_budget] deadline bmsg
     lassign [walk_step $target] k ty
     if {$k ne "node"} { error "`[bytes_shown $target]` cannot be looked at" }
     switch -- $ty {
         file      { return [scan_file $target $patb] }
-        directory { return [scan_dir $target $patb $deadline] }
+        directory { return [scan_dir $target $patb $deadline $bmsg] }
         default   { error "`[bytes_shown $target]` is a $ty, not a file or a directory, so it is not opened" }
     }
 }
 
-proc istamp::scan_dir {d patb deadline} {
+## The deadline one scan must meet, as {deadline words spent}: its own t_scan,
+## or the gate() run's shared deadline when that comes first -- with the
+## sentence a scan that misses it throws, and whether it is ALREADY missed.
+proc istamp::scan_budget {} {
     variable t_scan
+    variable t_scan_total
+    variable scan_deadline
+    set now [clock milliseconds]
+    set own [expr {$now + 1000 * $t_scan}]
+    if {$scan_deadline ne "" && $scan_deadline <= $own} {
+        return [list $scan_deadline "the search ran past the gate's total budget of $t_scan_total s for all the assert= scans of one run -- a corpus that asks for more scanning than that is not evaluated past it, and each assertion reached after it is named instead" [expr {$now > $scan_deadline}]]
+    }
+    return [list $own "the search ran past its $t_scan s budget" 0]
+}
+
+proc istamp::scan_dir {d patb deadline {bmsg ""}} {
+    variable t_scan
+    if {$bmsg eq ""} { set bmsg "the search ran past its $t_scan s budget" }
     if {![file readable $d] || ![file executable $d]} {
         error "cannot read the directory `[bytes_shown $d]`"
     }
@@ -1668,7 +1858,7 @@ proc istamp::scan_dir {d patb deadline} {
         set base [string range $k [expr {[string last / $k] + 1}] end]
         if {$base in {. ..}} { continue }
         if {[clock milliseconds] > $deadline} {
-            error "the search ran past its $t_scan s budget"
+            error $bmsg
         }
         ## Built by string from the directory already walked -- the name as
         ## the directory holds it, never through `file join` (see confine_path).
@@ -1683,7 +1873,7 @@ proc istamp::scan_dir {d patb deadline} {
             error "cannot look at `[bytes_shown $p]`, which its directory lists ([bytes_shown [lindex [split $e \n] 0]]) -- what it holds cannot be counted, so the search would come up short"
         }
         switch -- $st(type) {
-            directory { incr n [scan_dir $p $patb $deadline] }
+            directory { incr n [scan_dir $p $patb $deadline $bmsg] }
             file      { incr n [scan_file $p $patb] }
             default   {}
         }
@@ -1721,10 +1911,18 @@ proc istamp::scan_file {f patb} {
 ## ---------------------------------------------------------------------------
 
 ## {1 <set>} read; {0 {}} absent; {-1 {} <why>} present and not usable -- not a
-## regular file (never opened: see not_regular), or unreadable.  ⚠ lstat, not
-## `file exists`, which follows a link: a baseline that was a symbolic link to
-## a file outside the checkout was READ, and one that was a FIFO blocked the
-## gate until an external timeout (MEASURED red-first, S1-fix6).
+## regular file (never opened: see not_regular), unreadable, or a line that is
+## not an issue file's name.  ⚠ lstat, not `file exists`, which follows a
+## link: a baseline that was a symbolic link to a file outside the checkout was
+## READ, and one that was a FIFO blocked the gate until an external timeout
+## (MEASURED red-first, S1-fix6).
+##
+## <set> is keyed by EXACT FILE NAME -- `0057-some-slug.md` -- never by number
+## (see the header: a colliding number is not an identity).  Every line that is
+## not blank or a `#` comment must be one canonical issue file name; anything
+## else makes the whole baseline UNUSABLE, by line: a bare number is the old
+## format, which would exempt every file that ever takes that number, and a
+## line the reader silently skipped would un-grandfather a file without a word.
 proc istamp::load_baseline {} {
     variable baseline
     set s {}
@@ -1738,12 +1936,31 @@ proc istamp::load_baseline {} {
     if {[catch {read_file $baseline} text]} {
         return [list -1 $s "cannot be read ([lindex [split $text \n] 0])"]
     }
+    set i 0
     foreach ln [split $text \n] {
+        incr i
         set ln [string trim $ln]
         if {$ln eq "" || [string index $ln 0] eq "#"} { continue }
-        if {[regexp {^[0-9]{4}$} $ln]} { dict set s $ln 1 }
+        if {[canonical_name $ln]} { dict set s $ln 1 ; continue }
+        if {[regexp {^[0-9]{4}$} $ln]} {
+            return [list -1 {} "has a bare issue number on line $i (`$ln`) -- the baseline grandfathers exact file names (`NNNN-<slug>.md`), because a number would exempt every file that ever takes it, and this project's clones mint colliding numbers"]
+        }
+        return [list -1 {} "has a line that is not an issue file's name on line $i (`[string range $ln 0 59]`) -- every line must be a comment or one `NNNN-<slug>.md`"]
     }
     return [list 1 $s]
+}
+
+## The ONE rule for an issue file's name: four digits, a dash, anything, `.md`.
+## issue_files reads exactly these; load_baseline accepts exactly these.
+proc istamp::canonical_name {n} {
+    return [regexp {^[0-9]{4}-.*\.md$} $n]
+}
+
+## An issue file's name as the corpus spells it -- the UTF-8 reading of its
+## bytes -- whatever the system encoding decoded it as, so that a name in the
+## baseline (a UTF-8 file) matches the name in the listing in every locale.
+proc istamp::name_key {n} {
+    return [encoding convertfrom utf-8 [encoding convertto [encoding system] $n]]
 }
 
 ## ⚠ AN ISSUE FILE, AND THE BASELINE, MUST BE A REGULAR FILE -- asked with
@@ -1803,7 +2020,24 @@ proc istamp::issue_files {} {
     variable issues_dir
     set out {}
     foreach f [lsort [glob -nocomplain -tails -directory $issues_dir *.md]] {
-        if {[regexp {^([0-9]{4})-.*\.md$} $f -> num]} { lappend out $num $f }
+        if {[canonical_name $f] && [regexp {^([0-9]{4})-} $f -> num]} { lappend out $num $f }
+    }
+    return $out
+}
+
+## Names in the issues directory that LOOK like issue files -- they begin with
+## a digit and end in `.md`, in any case -- and miss the canonical name, so
+## issue_files never lists them and the gate would never read them: an
+## unstamped file called `1601_x.md` or `1601.md` or `1601-x.MD` was simply
+## invisible (MEASURED red-first, S1-fix7: `ok (0 problems)` for each).  Named,
+## never opened.  NNNN-<slug>.patch and the like are attachments, not issue
+## files, and are not matched.  MEASURED 2026-09-18 at aa5cece0: the real
+## directory holds 1059 entries, 1047 canonical, and NONE of this shape.
+proc istamp::misnamed_files {} {
+    variable issues_dir
+    set out {}
+    foreach f [lsort [glob -nocomplain -tails -directory $issues_dir *]] {
+        if {[regexp -nocase {^[0-9].*\.md$} $f] && ![canonical_name $f]} { lappend out $f }
     }
     return $out
 }
@@ -1815,7 +2049,20 @@ proc istamp::issue_files {} {
 ## Returns a list of problem strings.  Empty list = green.
 ## `opts` may carry -headerlines N (default 12).
 
+## The run's assert= scans share ONE clock (t_scan_total, see there): set here,
+## cleared on every way out, so a scan outside a gate() run -- a suite row
+## calling assert_eval directly -- has only its own per-scan budget.
 proc istamp::gate {args} {
+    variable scan_deadline
+    variable t_scan_total
+    set scan_deadline [expr {[clock milliseconds] + 1000 * $t_scan_total}]
+    set rc [catch {gate_body {*}$args} res opt]
+    set scan_deadline ""
+    if {$rc} { return -options $opt $res }
+    return $res
+}
+
+proc istamp::gate_body {args} {
     variable issues_dir
     variable ok_claim
     variable last_skips
@@ -1845,6 +2092,9 @@ proc istamp::gate {args} {
         return $problems
     }
     set files [issue_files]
+    foreach f [misnamed_files] {
+        lappend problems "$f: looks like an issue file but is not named `NNNN-<slug>.md` (four digits, a dash, lowercase `.md`), so the gate does not read it as one -- nothing in it is checked, and an unstamped file named this way would pass unseen; rename it"
+    }
 
     foreach {num fname} $files {
         set path [file join $issues_dir $fname]
@@ -1865,8 +2115,9 @@ proc istamp::gate {args} {
         set fs [find_stamp $text]
         set n [dict get $fs n]
         if {$n == 0} {
-            ## Unstamped.  Grandfathered by NAME, or it is a violation.
-            if {![dict exists $base $num]} {
+            ## Unstamped.  Grandfathered by its EXACT FILE NAME, or it is a
+            ## violation -- never by number (see load_baseline).
+            if {![dict exists $base [name_key $fname]]} {
                 lappend problems "$num ($fname): a NEW issue file with no **STAMP:** line. Every issue filed after the convention landed must carry one -- see doc/claude/specs/issue_stamp.md. The unconverted set may shrink, never grow."
             }
             lappend problems {*}[stray_attrs $num $text ""]
@@ -1919,6 +2170,13 @@ proc istamp::gate {args} {
         foreach blk [dict get $scan blocks] {
             set a [dict get $blk attrs]
             set ln [dict get $blk lineno]
+            ## A marked fence whose info string holds a word the grammar does
+            ## not read is NOT evaluated as the weaker claim its readable words
+            ## make (fence_info): it is named, and nothing it claims passes.
+            if {[llength [dict get $blk bad]]} {
+                lappend problems "$num:$ln: a marked fence the parser cannot read in full -- [join [dict get $blk bad] {; }] -- so the block is not evaluated and nothing it claims is checked; write at most one language word, then key=value words only, each key once (pat= is ONE whitespace-free token)"
+                continue
+            }
             if {[dict exists $a quote]} {
                 if {![dict exists $a path]} {
                     lappend problems "$num:$ln: a quote= block must also carry path="
@@ -1948,8 +2206,12 @@ proc istamp::gate {args} {
                 } elseif {$qv eq "bad" && $qwhy ne "unresolved"} {
                     lappend problems "$num:$ln: [rev_problem quote=$q $q $qwhy]"
                 } else {
-                    lassign [quote_holds [dict get $a quote] [dict get $a path] [dict get $blk body]] ok why
-                    if {!$ok} {
+                    ## Only a revision that is VERIFIED may have its missing
+                    ## content excused as a partial clone's (quote_holds).
+                    lassign [quote_holds [dict get $a quote] [dict get $a path] [dict get $blk body] [expr {$qv eq "ok"}]] ok why
+                    if {$ok == -1} {
+                        lappend last_skips "$num:$ln: quote=$q path=[dict get $a path] ($why)"
+                    } elseif {!$ok} {
                         set qn [expr {$qv eq "bad" ? [upstream_note] : ""}]
                         lappend problems "$num:$ln: $why -- a quoted block that no longer matches its source still LOOKS like valid code, and is the direct on-ramp to a fix that damages working code[expr {$qn ne "" ? ".$qn" : ""}]"
                     }
@@ -2117,8 +2379,10 @@ proc istamp::selftest {} {
         if {[rev_token $tok] != $want} { lappend bad "rev_token $tok: got [rev_token $tok], want $want" }
         incr n
     }
+    ## (The mid-sentence mention carries `v1 ...`, not a whole body: since D19 a
+    ## line holding a whole stamp body that is not read is named -- see bc below.)
     set sc [list "  **STAMP:** $s" 1 "> **STAMP:** $s" 1 "**stamp:** $s" 1 \
-                 "# see **STAMP:** $s in the spec" 0 "**STAMP:** $s" 0]
+                 "# see **STAMP:** `v1 ...` in the spec" 0 "**STAMP:** $s" 0]
     foreach {txt want} $sc {
         set got [llength [stray_stamps 9999 $txt]]
         if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: $txt" }
@@ -2186,6 +2450,43 @@ proc istamp::selftest {} {
         if {$got ne $want} { lappend bad "md_strip gave <$got>, want <$want>, for <$txt>" }
         incr n
     }
+    ## D19: a marked fence's info string is read in FULL -- as {attrs-count
+    ## bad-count}.  The refuter's two multi-word pat= spellings, a key the
+    ## grammar does not know, a key given twice; and the known negatives: a
+    ## well-formed marked fence (with and without a language word), and an
+    ## ordinary code fence whose info string has words but no key=value at all.
+    set ic [list {sh assert=absent pat="static int" path=src state=holds} {4 1} \
+                 {sh assert=present pat=static nonexistent_zz_symbol path=src state=holds} {4 1} \
+                 {sh assert=absent pat=x path=src state=holds pth=src} {4 1} \
+                 {sh assert=absent pat=x pat=y path=src state=holds} {4 1} \
+                 {sh assert=absent pat=x path=src state=holds} {4 0} \
+                 {assert=absent pat=x path=src state=holds} {4 0} \
+                 {c quote=d64686a1 path=x} {2 0} \
+                 {text an ordinary title, no attributes} {0 0}]
+    foreach {info want} $ic {
+        lassign [fence_info $info] toks fb
+        set got [list [expr {[llength $toks] / 2}] [llength $fb]]
+        if {$got ne $want} { lappend bad "fence_info read {$got}, want {$want}, for <$info>" }
+        incr n
+    }
+    ## D19: a line holding a stamp's BODY that find_stamp does not read is named
+    ## whatever precedes it -- the refuter's colon-less spellings and a stamp
+    ## quoted mid-sentence -- while the read stamp and prose that happens to
+    ## hold `v1` are not.
+    set bc [list "**STAMP** $s" 1 "STAMP $s" 1 "**Stamp** $s" 1 "**STAMP;** $s" 1 \
+                 "the stamp we meant was $s, never written" 1 "# see **STAMP:** $s in the spec" 1 "**STAMP:** $s" 0 \
+                 "the batch reads `v1 v2 v3` newest-first" 0 "`v1 = 8.333333e-01` is volts" 0]
+    foreach {txt want} $bc {
+        set got [llength [stray_stamps 9999 $txt]]
+        if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: $txt" }
+        incr n
+    }
+    ## D19: the one rule for an issue file's name.
+    set nc [list 1601-x.md 1 1601-.md 1 1601_x.md 0 1601.md 0 1601-x.MD 0 {1601 x.md} 0 160-x.md 0 1601-attempt-1.patch 0]
+    foreach {nm want} $nc {
+        if {[canonical_name $nm] != $want} { lappend bad "canonical_name $nm: got [canonical_name $nm], want $want" }
+        incr n
+    }
     set selftest_n $n
     return $bad
 }
@@ -2210,34 +2511,128 @@ proc istamp::selftest {} {
 ## checker quietly disabled, which is precisely how the cleanup rots.  Report,
 ## do not gate.  The report is D1's work list.
 
-proc istamp::report {} {
+## ⚠ THE CENSUS OBEYS THE GATE'S RULES FOR WHAT IS READ, AND RUNS NOTHING
+## (outsider-fixes DECISIONS D19).  It listed the corpus BEFORE asking
+## issues_dir_problem, and its citation counts were `exec timeout 60
+## /usr/bin/grep -rnoE ... <repo>/<dir>` -- and grep follows a symbolic link it
+## is handed on its command line.  MEASURED by S1-fix6's refuter and red-first by
+## S1-fix7: with doc/claude/issues committed as a link to a directory OUTSIDE
+## the checkout, `report` said `issue files: 0` and named nothing, while its
+## citation count went 4689 -> 9689 -- +5000, exactly the lines planted
+## outside; with src such a link, `src: 7000`, every one of them outside.  Its
+## own comment promised "an advisory census must not read outside the checkout".
+## Now: the corpus directory is asked first and nothing in it is listed when it
+## leads out; each counted directory is resolved from the checkout's real root
+## by resolve_in, like an assert= path=, and one that leads out is refused by
+## name; the count is a Tcl walk (cite_scan) that follows no link below the
+## top and opens no FIFO, under one clock for the whole census.  So `report`
+## runs no program at all, and the checker's only exec is git.
+##
+## report_census answers a dict, and `report` only prints it -- so that suite
+## row Q13 can hold the census to known answers, which nothing did before.
+##   files notopened stamped misnamed  counts over the issue files
+##   corpus     "" or the issues_dir_problem sentence
+##   baseline   the grandfathered count, or why there is none
+##   cites      {label {n why} ...}: n = -1 when not counted, and why says why
+namespace eval istamp { variable cite_re {[A-Za-z0-9_./-]+\.(c|h|tcl|sh|py|md)[:][0-9]+} }
+proc istamp::report_census {} {
     variable repo
     variable issues_dir
-    variable t_grep
-    set files [issue_files]
-    set n 0; set nst 0; set nno 0
-    ## The gate's rules for what is opened (not_regular, issues_dir_problem):
-    ## an advisory census must not read outside the checkout or block either.
-    if {[issues_dir_problem] ne ""} { set files {} }
-    foreach {num fname} $files {
-        incr n
-        set path [file join $issues_dir $fname]
-        if {[not_regular $path] ne "" || [catch {read_file $path} text]} { incr nno ; continue }
-        if {[dict get [find_stamp $text] n] > 0} { incr nst }
-    }
-    puts "issue files                  : $n"
-    puts "carrying a **STAMP:** line   : $nst"
-    if {$nno} { puts "not opened or not readable   : $nno (the gate names each)" }
-    lassign [load_baseline] hb bset bwhy
-    puts "grandfathered (baseline)     : [expr {$hb > 0 ? [dict size $bset] : ($hb == 0 ? "no baseline file" : "baseline $bwhy")}]"
-    foreach {label path} [list "doc/claude/issues" doc/claude/issues \
-                               "src"               src \
-                               "tests"             tests] {
-        set c 0
-        if {![catch {exec timeout $t_grep /usr/bin/grep -rnoE {[A-Za-z0-9_./-]+\.(c|h|tcl|sh|py|md)[:][0-9]+} [file join $repo $path]} out]} {
-            set c [llength [split [string trim $out] \n]]
+    variable t_scan_total
+    set r [dict create files 0 notopened 0 stamped 0 misnamed 0 corpus "" baseline "" cites {}]
+    set dp [issues_dir_problem]
+    dict set r corpus $dp
+    if {$dp eq ""} {
+        foreach {num fname} [issue_files] {
+            dict incr r files
+            set path [file join $issues_dir $fname]
+            if {[not_regular $path] ne "" || [catch {read_file $path} text]} { dict incr r notopened ; continue }
+            if {[dict get [find_stamp $text] n] > 0} { dict incr r stamped }
         }
-        puts [format "coordinate citations in %-20s: %s" $label $c]
+        dict set r misnamed [llength [misnamed_files]]
+    }
+    lassign [load_baseline] hb bset bwhy
+    dict set r baseline [expr {$hb > 0 ? [dict size $bset] : ($hb == 0 ? "no baseline file" : "baseline $bwhy")}]
+    set deadline [expr {[clock milliseconds] + 1000 * $t_scan_total}]
+    set cites {}
+    foreach rel {doc/claude/issues src tests} {
+        if {$rel eq "doc/claude/issues" && $dp ne ""} {
+            lappend cites $rel [list -1 "not counted: the corpus directory leads out of the checkout"]
+            continue
+        }
+        lappend cites $rel [cite_count $rel $deadline]
+    }
+    dict set r cites $cites
+    return $r
+}
+
+## {n ""}, or {-1 why}: the coordinate citations under repo-relative `rel`,
+## counted as `grep -rnoE` counted them (one per match), read in bytes
+## (in_bytes) so every name on disk is seen.  A binary file -- one holding a
+## NUL byte -- is not counted, as grep prints no line for it.
+proc istamp::cite_count {rel deadline} {
+    variable repo
+    variable cite_re
+    set rootb [as_bytes $repo [encoding system]]
+    if {[catch {in_bytes {
+            lassign [resolve_abs $rootb] rst root
+            if {$rst ne "ok"} { error "not counted: the checkout's own path does not resolve" }
+            lassign [resolve_in $root $rel] st where
+            switch -- $st {
+                ok      {}
+                out     { error "not counted: $rel leads out of the checkout through a symbolic link (to `[bytes_shown $where]`), and nothing outside it is read" }
+                missing { error "not counted: $rel is not in this checkout" }
+                default { error "not counted: $rel cannot be resolved ([bytes_shown $where])" }
+            }
+            lassign [walk_step $where] k ty
+            if {$k ne "node" || $ty ne "directory"} { error "not counted: $rel is not a directory" }
+            cite_dir $where $cite_re $deadline
+        }} n]} {
+        return [list -1 $n]
+    }
+    return [list $n ""]
+}
+
+## scan_dir's walk -- no link below the top followed, nothing but regular files
+## opened, every name in bytes -- counting regexp matches instead of lines.
+## An entry that cannot be looked at, or a directory that cannot be read, is
+## left out of the count (the census is advisory, never a verdict).
+proc istamp::cite_dir {d re deadline} {
+    if {[catch {concat [glob -nocomplain -directory $d *] [glob -nocomplain -directory $d -types hidden *]} kids]} { return 0 }
+    set n 0
+    foreach k $kids {
+        set base [string range $k [expr {[string last / $k] + 1}] end]
+        if {$base in {. ..}} { continue }
+        if {[clock milliseconds] > $deadline} { error "not counted: the census ran past its budget" }
+        set p "$d/$base"
+        if {[catch {file lstat $p st}]} { continue }
+        switch -- $st(type) {
+            directory { incr n [cite_dir $p $re $deadline] }
+            file {
+                if {[string index $p 0] ne "/" || [catch {open $p r} fh]} { continue }
+                fconfigure $fh -translation binary
+                set rc [catch {read $fh} data]
+                close $fh
+                if {$rc || [string first \x00 $data] >= 0} { continue }
+                incr n [regexp -all -- $re $data]
+            }
+            default {}
+        }
+    }
+    return $n
+}
+
+proc istamp::report {} {
+    set r [report_census]
+    if {[dict get $r corpus] ne ""} { puts "corpus                       : [dict get $r corpus]" }
+    puts "issue files                  : [dict get $r files]"
+    puts "carrying a **STAMP:** line   : [dict get $r stamped]"
+    if {[dict get $r notopened]} { puts "not opened or not readable   : [dict get $r notopened] (the gate names each)" }
+    if {[dict get $r misnamed]} { puts "named like an issue file, not NNNN-<slug>.md: [dict get $r misnamed] (the gate names each)" }
+    puts "grandfathered (baseline)     : [dict get $r baseline]"
+    foreach {label c} [dict get $r cites] {
+        lassign $c n why
+        puts [format "coordinate citations in %-20s: %s" $label [expr {$n >= 0 ? $n : $why}]]
     }
 }
 
@@ -2285,9 +2680,13 @@ proc istamp::main {argv} {
             ## the verdict -- so a green here can never be read as "verified".
             foreach s $last_skips { puts "ISSUE-STAMP: NOT VERIFIED $s" }
             set nsk [llength $last_skips]
-            ## Only shallow, none and unborn can skip; full and unreadable never do.
+            ## Only shallow, none and unborn skip a REVISION; full and unreadable
+            ## never do.  What a full history can skip is a partial clone's
+            ## missing CONTENT, for a quote= (quote_gap), and it says so.
             switch -- [history_state] {
                 unborn  { set gap "no commits yet" }
+                full    -
+                unreadable { set gap "content a partial clone never fetched" }
                 default { set gap "history absent" }
             }
             set tail [expr {$nsk ? "; $nsk revision(s) NOT VERIFIED -- [history_state]: $gap" : ""}]

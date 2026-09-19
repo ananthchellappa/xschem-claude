@@ -124,6 +124,19 @@ proc check {name got want} {
 ##   H21 the caller's GIT_SHALLOW_FILE cannot steer the probe;
 ##   Q7/Q8  fences close the CommonMark way, and a stamp is recognised in any
 ##       spelling of bold.
+## And from D19 (S1-fix6's refuter, inside D18's threat model):
+##   Q13 report, and this suite's own corpus reads (B1, B4, the D9 census), read
+##       nothing outside the checkout, and report runs no program;
+##   Q14 a gate run's assert= scans share ONE budget, and a block reached after
+##       it is spent is a named problem;
+##   Q15 a marked fence's info string is read in full: a multi-word pat= is a
+##       named problem, never a weaker claim evaluated in silence;
+##   Q16 a line carrying a stamp's body that the parser does not read -- a stamp
+##       that lost its colon -- is a named problem;
+##   Q17 grandfathering is by EXACT FILE NAME, so a new file under a colliding
+##       number is RED, and a name that misses NNNN-<slug>.md is named;
+##   H22 no git call fetches: in a partial clone a quote of content that is not
+##       in the checkout is NOT VERIFIED by name, and nothing is fetched.
 ##
 ## ⚠ AND IN THE ONE STATE THAT IS MEANT TO BE RED -- `unreadable`: a .git that
 ## git cannot read, e.g. git's dubious-ownership refusal in a container whose
@@ -165,7 +178,7 @@ set HAVE_GIT [expr {![catch {exec timeout 30 git --version 2>/dev/null}]}]
 ##   NEEDS_GITBIN   only the git program: the H rows build their own repositories
 set NEEDS_REPO    {S0 S20c Q1 Q2}
 set NEEDS_DEPTH   {G4 H9 D9h}
-set NEEDS_GITBIN  {H0 H1 H2 H3 H4 H5 H8 H10 H11 H12 H13 H14 H15 H16 H17 H18 H19 H20 H21 Q7}
+set NEEDS_GITBIN  {H0 H1 H2 H3 H4 H5 H8 H10 H11 H12 H13 H14 H15 H16 H17 H18 H19 H20 H21 H22 Q7}
 
 set ::SKIPPED {}
 
@@ -784,16 +797,41 @@ proc istamp_read_issue {fname} {
     return [list 1 $t]
 }
 
-check_needs "B1 every numbered issue file is covered -- grandfathered in the baseline OR carrying a stamp" {
+## ⚠ AND NOTHING IN A CORPUS DIRECTORY THAT LEADS OUT OF THE CHECKOUT IS LISTED
+## OR READ HERE EITHER (outsider-fixes DECISIONS D19).  The checker's gate asked
+## issues_dir_problem; this suite's own census did not -- it lstat'ed each FILE,
+## never the directory -- so with doc/claude/issues committed as a link to a
+## copy outside the checkout, B1 printed `got: 1 9997`, a file that exists only
+## outside, and read 9998's stamp out there too (MEASURED by S1-fix6's refuter,
+## red-first by S1-fix7: `1 {9996 9997}`).  B1, B4 and the D9 census now list
+## the corpus ONLY through istamp_corpus_files, which asks the checker's own
+## rule first; when it answers, nothing is listed or read and each is red BY
+## NAME -- a corpus that cannot be read is not a corpus that passed.  They are
+## procs so that row Q13 can point them at a checkout whose corpus directory
+## leads out, and hold them to that.
+proc istamp_corpus_files {} {
+    set dp [istamp::issues_dir_problem]
+    if {$dp ne ""} { return [list $dp {}] }
+    return [list "" [istamp::issue_files]]
+}
+
+## B1's answer: {1 {}} when every file is covered, else what is not.
+proc istamp_b1_got {} {
+    lassign [istamp_corpus_files] dp files
+    if {$dp ne ""} { return [list NOT-READ $dp] }
     lassign [istamp::load_baseline] okb base
     set uncovered {}
-    foreach {num fname} [istamp::issue_files] {
-        if {[dict exists $base $num]} { continue }
+    foreach {num fname} $files {
+        if {[dict exists $base [istamp::name_key $fname]]} { continue }
         lassign [istamp_read_issue $fname] rok text
         if {!$rok} { lappend uncovered "$num:UNREADABLE" ; continue }
-        if {[dict get [istamp::find_stamp $text] n] == 0} { lappend uncovered $num }
+        if {[dict get [istamp::find_stamp $text] n] == 0} { lappend uncovered $fname }
     }
-    list $okb $uncovered
+    return [list $okb $uncovered]
+}
+
+check_needs "B1 every numbered issue file is covered -- grandfathered in the baseline BY ITS EXACT NAME, or carrying a stamp" {
+    istamp_b1_got
 } {1 {}}
 
 ## ⚠ RED WHEN WRITTEN, ON REAL DATA RATHER THAN ON A FIXTURE, AND IT NAMED THE
@@ -809,9 +847,12 @@ check_needs "B1 every numbered issue file is covered -- grandfathered in the bas
 ## missing?", never "did anyone reorder the key list?".  An over-firing row on a
 ## 1047-file corpus is worse than no row, because it gets the checker disabled --
 ## which is D9, and how a cleanup rots.
-check_needs "B4 every stamp in the real corpus round-trips through the formatter with no field lost" {
+## B4's answer: {} when every stamp round-trips, else what was lost.
+proc istamp_b4_got {} {
     set lost {}
-    foreach {num fname} [istamp::issue_files] {
+    lassign [istamp_corpus_files] dp files
+    if {$dp ne ""} { lappend lost NOT-READ $dp }
+    foreach {num fname} $files {
         lassign [istamp_read_issue $fname] rok text
         if {!$rok} { lappend lost $num:UNREADABLE ; continue }
         set fs [istamp::find_stamp $text]
@@ -829,8 +870,32 @@ check_needs "B4 every stamp in the real corpus round-trips through the formatter
             lappend lost $num:[expr {[llength $miss] ? [join $miss ,] : {value-changed}}]
         }
     }
-    set lost
+    return $lost
+}
+
+check_needs "B4 every stamp in the real corpus round-trips through the formatter with no field lost" {
+    istamp_b4_got
 } {}
+
+## The D9 census's reading of the real corpus (used below, in section D9):
+## every well-formed stamp as {num tree stamped}.
+## Answers {stamps unreadable corpus-problem}.
+proc istamp_d9_census {} {
+    set stamps {} ; set unreadable {}
+    lassign [istamp_corpus_files] dp files
+    foreach {num fname} $files {
+        lassign [istamp_read_issue $fname] rok text
+        if {!$rok} { lappend unreadable $num ; continue }
+        set fs [istamp::find_stamp $text]
+        if {[dict get $fs n] != 1} { continue }
+        set p [istamp::parse_stamp [dict get $fs line]]
+        if {[dict get $p ok]} {
+            set f [dict get $p f]
+            lappend stamps [list $num [dict get $f tree] [dict get $f stamped]]
+        }
+    }
+    return [list $stamps $unreadable $dp]
+}
 
 check "B2 a corpus with no baseline file REFUSES rather than emitting 1047 false reds" \
     [lassign [mkcorpus norebase {0001-x.md {# 0001 - x}}] id bf ;
@@ -850,7 +915,7 @@ check "B2 a corpus with no baseline file REFUSES rather than emitting 1047 false
 check "B3 a number still in the baseline does NOT suppress validation of a stamp it carries" \
     [lassign [mkcorpus baseline_no_suppress [list 0001-half-adopted.md "# 0001 - half adopted
 
-**STAMP:** `v1 claim=fixed tree=$REV stamped=2026-09-17 fix=superseded open=0`"] "0001"] id bf ;
+**STAMP:** `v1 claim=fixed tree=$REV stamped=2026-09-17 fix=superseded open=0`"] "0001-half-adopted.md"] id bf ;
      problems_matching $id $bf "must name what replaced it"] \
     1
 
@@ -875,7 +940,7 @@ check "G2 GREEN: the same file with a valid stamp passes" \
 check "G3 GREEN: a grandfathered unstamped file is not touched" \
     [lassign [mkcorpus grandfathered {0001-old-file.md {# 0001 - an old file
 
-Status: OPEN -- measured 2026-08-22, never stamped.}} "0001"] id bf ;
+Status: OPEN -- measured 2026-08-22, never stamped.}} "0001-old-file.md"] id bf ;
      llength [with_corpus $id $bf {istamp::gate}]] \
     0
 
@@ -993,7 +1058,7 @@ check "Q3 RED: a quote= the parser does not read -- indented, ~~~, never closed,
          9004-x.md "# 9004 - x\n\n$q3s\n\n```text\n```c $q3o\n$q3r\n```" \
          9005-x.md "# 9005 - x\n\n$q3s\n\n> ```c $q3o\n> $q3r\n> ```" \
          9006-x.md "# 9006 - x, grandfathered\n\n```c $q3o\n$q3r\n```" \
-         9007-x.md "# 9007 - x\n\n$q3s\n\nThe C reads (`if(c=='\"' && !escape) quote=!quote;`).\n\n```c\nif (c) quote=!quote;\n```"] "9006"] id bf ;
+         9007-x.md "# 9007 - x\n\n$q3s\n\nThe C reads (`if(c=='\"' && !escape) quote=!quote;`).\n\n```c\nif (c) quote=!quote;\n```"] "9006-x.md"] id bf ;
      problems_per_file $id $bf "a quote= the parser does not read" \
          {9001 indented 9002 ~~~ 9003 "never closed" 9004 "inside another fenced block" 9005 blockquote 9006 "no **STAMP:** line" 9007 {}}] \
     {1 1 1 1 1 1 0}
@@ -1013,7 +1078,7 @@ check "Q4 RED: a **STAMP:** line the parser does not read -- indented, in a bloc
          9012-x.md "# 9012 - x\n\n> **STAMP:** $q4b" \
          9013-x.md "# 9013 - x\n\n**stamp:** $q4b" \
          9014-x.md "# 9014 - x\n\n- **STAMP:** $q4b" \
-         9015-x.md "# 9015 - x\n\n**STAMP:** $q4b\n\n# see **STAMP:** `v1 ...` in the spec\n\n1. **Stamp the record** with a token."] "9011\n9013\n9014"] id bf ;
+         9015-x.md "# 9015 - x\n\n**STAMP:** $q4b\n\n# see **STAMP:** `v1 ...` in the spec\n\n1. **Stamp the record** with a token."] "9011-x.md\n9013-x.md\n9014-x.md"] id bf ;
      problems_per_file $id $bf "a **STAMP:** line the parser does not read" \
          {9011 indented 9012 blockquote 9013 "not spelled exactly" 9014 "list item" 9015 {}}] \
     {1 1 1 1 0}
@@ -1193,9 +1258,23 @@ check "Q5 RED/GREEN: assert= patterns that are redirections or pipes to Tcl's ex
                  lassign [istamp::assert_eval absent $p $f] h n w
                  lappend q5_hits [expr {$h == -1 ? "ERR: $w" : $n}]
              }
-             lassign [mkcorpus q5gate [list 9999-x.md "# 9999 - x\n\n**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=0`\n\n```sh assert=absent pat=2>/dev/null path=victim.txt state=holds\nx\n```\n\n```sh assert=absent pat=>$q5_pw path=victim.txt state=holds\nx\n```\n\n```sh assert=absent pat=| path=mark.sh state=holds\nx\n```"] ""] id bf
-             set q5_red [problems_matching $id $bf "HOLDS and it does not (2 hits for 2>/dev/null"]
-             set q5_all [llength [with_corpus $id $bf {istamp::gate}]]
+             ## The `>file` recipe in the CORPUS names its target RELATIVE to ck/,
+             ## and the gate runs with ck/ as the working directory: an issue
+             ## file's pat= is one whitespace-free token (D19 reads the info string
+             ## in full), and this checkout's own path may hold a space -- in the
+             ## stranger shape `we ird[x] %41/xschem` the absolute spelling was two
+             ## words, named as a malformed fence, and this row went red for a tree
+             ## that is fine (MEASURED, S1-fix7).  A regressed checker that ran the
+             ## word as a redirection would still write out/pwned, inside scratch.
+             lassign [mkcorpus q5gate [list 9999-x.md "# 9999 - x\n\n**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=0`\n\n```sh assert=absent pat=2>/dev/null path=victim.txt state=holds\nx\n```\n\n```sh assert=absent pat=>../out/pwned path=victim.txt state=holds\nx\n```\n\n```sh assert=absent pat=| path=mark.sh state=holds\nx\n```"] ""] id bf
+             set q5_cwd [pwd]
+             cd $IJ_CK
+             set q5_rc [catch {
+                 set q5_red [problems_matching $id $bf "HOLDS and it does not (2 hits for 2>/dev/null"]
+                 set q5_all [llength [with_corpus $id $bf {istamp::gate}]]
+             } q5_e]
+             cd $q5_cwd
+             if {$q5_rc} { error $q5_e }
          }
          set q5_clean [expr {[istamp_listing $IJ_ROOT] eq $q5_before
                              && [istamp::read_file [file join $IJ_CK victim.txt]] eq $q5_vict
@@ -1281,7 +1360,7 @@ check "Q8 RED: a stamp in another spelling -- __STAMP:__, <strong>, <b>, plain S
          9024-x.md "# 9024 - x\n\nSTAMP: $q8b" \
          9025-x.md "# 9025 - x\n\n**STAMP**: $q8b" \
          9026-x.md "# 9026 - x\n\nTimestamp: 2026-09-18\n\nStamp: the v2 layout, below.\n\nsee **STAMP:** `v1 ...` mid-sentence"] \
-         "9021\n9022\n9023\n9024\n9025\n9026"] id bf ;
+         "9021-x.md\n9022-x.md\n9023-x.md\n9024-x.md\n9025-x.md\n9026-x.md"] id bf ;
      problems_per_file $id $bf "a **STAMP:** line the parser does not read" \
          {9021 "not spelled exactly" 9022 "not spelled exactly" 9023 "not spelled exactly" \
           9024 "not spelled exactly" 9025 "not spelled exactly" 9026 {}}] \
@@ -1404,7 +1483,7 @@ check "Q10 RED: an assert= the parser does not read -- ~~~, indented, blockquote
          9036-x.md "# 9036 - x\n\n$q10s\n\n````text\n```sh $q10a\nx\n```\n````" \
          9037-x.md "# 9037 - x\n\n$q10s\n\n```sh ASSERT=absent pat=SABOTAGE path=src state=holds\nx\n```" \
          9038-x.md "# 9038 - x, grandfathered\n\n```sh $q10a\nx\n```" \
-         9039-x.md "# 9039 - x\n\n$q10s\n\nThe gate reads assert=absent in a fence, never in prose.\n\n```sh assert=absent pat=ZZQQNOSUCHTOKENZZ path=src state=holds\nx\n```"] "9038"] id bf ;
+         9039-x.md "# 9039 - x\n\n$q10s\n\nThe gate reads assert=absent in a fence, never in prose.\n\n```sh assert=absent pat=ZZQQNOSUCHTOKENZZ path=src state=holds\nx\n```"] "9038-x.md"] id bf ;
      problems_per_file $id $bf "an assert= the parser does not read" \
          {9031 "~~~" 9032 indented 9033 blockquote 9034 "list item" 9035 "never closed" \
           9036 "inside another fenced block" 9037 "not written" 9038 "no **STAMP:** line" 9039 {}}] \
@@ -1514,12 +1593,259 @@ check "Q12 lines of 50k '>' and 20k '- ' markers cost one pass: three files of t
      lassign [mkcorpus longlines [list \
          9051-x.md "# 9051 - x\n\n$q12gt $q12b\n$q12gt $q12b\n$q12gt $q12b" \
          9052-x.md "# 9052 - x\n\n$q12da$q12b\n$q12da$q12b\n$q12da$q12b" \
-         9053-x.md "# 9053 - x\n\n${q12gt}stamp\n${q12gt}stamp\n${q12gt}stamp"] "9051\n9052\n9053"] id bf ;
+         9053-x.md "# 9053 - x\n\n${q12gt}stamp\n${q12gt}stamp\n${q12gt}stamp"] "9051-x.md\n9052-x.md\n9053-x.md"] id bf ;
      set q12t0 [clock milliseconds] ;
      set q12p [problems_per_file $id $bf "a **STAMP:** line the parser does not read" {9051 blockquote 9052 "list item" 9053 {}}] ;
      set q12ms [expr {[clock milliseconds] - $q12t0}] ;
      list {*}$q12p [expr {$q12ms < 2000 ? "fast" : "SLOW: $q12ms ms"}]] \
     {3 3 0 fast}
+
+## ---------------------------------------------------------------------------
+## D19 -- what S1-fix6's refuter found still inside the threat model (D18):
+## readers that ignored the corpus confinement (A), a partial clone fetching
+## because of corpus text (A), no total bound on assert= scans (A), and three
+## honest mistakes passing green (B): a multi-word pat=, a stamp that lost its
+## colon, and a new file under a grandfathered NUMBER.
+## ---------------------------------------------------------------------------
+
+## The fixture for Q13: two plain "checkouts" and, beside them, out/ standing
+## for everything outside.
+##   ck/doc/claude/issues/0001-a.md   unstamped, grandfathered   2 citations
+##                        0002-b.md   stamped                    1 citation
+##                        0003-l.md   -> out/o.md, a LINK: never opened, and a
+##                                       link below the top is never walked
+##                        0004_x.md   misnamed                   1 citation
+##   ck/src/x.c                      3 citations
+##   ck/src/bin.o                    a citation after a NUL byte: binary, 0
+##   ck/src/esc  -> out/             never walked
+##   ck/tests    -> out/             leads out: NOT COUNTED, by name
+##   ck2/doc/claude/issues -> out/   the corpus directory itself leads out:
+##                                   nothing listed, nothing counted
+##   out/o.md       a stamp and 50 citations;  out/many.txt  100 citations;
+##   out/9997-x.md  an issue file that exists only outside
+set RP_ROOT [istamp_own [file join $::ISTAMP_SCRATCH_ROOT istamp_[pid]_rep]]
+set RP_ERR ""
+if {[catch {
+        file delete -force $RP_ROOT
+        set rpi [file join $RP_ROOT ck doc claude issues]
+        set rpo [file join $RP_ROOT out]
+        file mkdir $rpi [file join $RP_ROOT ck src] $rpo [file join $RP_ROOT ck2 doc claude]
+        set rpst "**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=0`"
+        foreach {f body} [list [file join $rpi 0001-a.md] "# 0001\n\nsee src/a.c:1 and src/b.h:22\n" \
+                               [file join $rpi 0002-b.md] "# 0002\n\n$rpst\n\nsee src/c.tcl:3\n" \
+                               [file join $rpi 0004_x.md] "# 0004\n\nsee x.sh:4\n" \
+                               [file join $RP_ROOT ck src x.c] "/* a.c:1 b.h:2 c.py:3 */\n" \
+                               [file join $rpo o.md] "# outside\n\n$rpst\n[string repeat "see o.c:1\n" 50]" \
+                               [file join $rpo many.txt] [string repeat "see o.c:1\n" 100] \
+                               [file join $rpo 9997-x.md] "# 9997 - only outside\n" \
+                               [file join $RP_ROOT base.txt] "0001-a.md\n"] {
+            set fh [open $f w] ; fconfigure $fh -encoding utf-8 ; puts -nonewline $fh $body ; close $fh
+        }
+        set fh [open [file join $RP_ROOT ck src bin.o] w] ; fconfigure $fh -translation binary
+        puts -nonewline $fh "abc\x00 d.c:9\n" ; close $fh
+        file link -symbolic [file join $rpi 0003-l.md] [file join $rpo o.md]
+        file link -symbolic [file join $RP_ROOT ck src esc] $rpo
+        file link -symbolic [file join $RP_ROOT ck tests] $rpo
+        file link -symbolic [file join $RP_ROOT ck2 doc claude issues] $rpo
+    } e]} {
+    set RP_ERR [lindex [split $e \n] 0]
+}
+
+## ⚠ D19 -- `report` OBEYS THE RULES OF WHAT IS READ, AND NO ROW HELD IT BEFORE.
+## It listed the corpus before asking issues_dir_problem and counted citations
+## with a grep exec that follows a symbolic link on its command line: with
+## doc/claude/issues a link out, it said `issue files: 0` while counting 5000
+## citations planted outside (MEASURED by S1-fix6's refuter, red-first by
+## S1-fix7; with src a link out, all 7000 of its "src" citations were outside).
+## And sabotage REP -- report's regular-file check removed -- stayed ALL PASS,
+## because nothing exercised report at all.  Now its census is asked for known
+## answers: {files not-opened stamped misnamed grandfathered, citations in
+## issues src tests, tests refused by name} in ck, then {files, CORPUS named,
+## issues not counted} in ck2.  Nothing under out/ may be read or counted.
+## Then THIS suite's own corpus reads, pointed at ck2: its B1 printed `9997`
+## from outside the checkout in the refuter's recipe, so B1, B4 and the D9
+## census must each answer NOT-READ, by name, and never mention 9997.
+check_needs "Q13 report, and this suite's own corpus reads, read nothing outside the checkout: a linked issue file is not opened, a linked corpus directory is not listed, a directory that leads out is not counted -- and inside, the census's counts are the known ones" {
+    if {$RP_ERR ne ""} {
+        set r "FIXTURE NOT BUILT: $RP_ERR"
+    } else {
+        set a [with_plain_root [file join $RP_ROOT ck] {
+            with_corpus [file join $istamp::repo doc claude issues] [file join $RP_ROOT base.txt] {istamp::report_census}
+        }]
+        set c [dict get $a cites]
+        set r [list [list [dict get $a files] [dict get $a notopened] [dict get $a stamped] [dict get $a misnamed] \
+                          [dict get $a baseline] [lindex [dict get $c doc/claude/issues] 0] [lindex [dict get $c src] 0] \
+                          [lindex [dict get $c tests] 0] [string match "not counted: tests leads out of the checkout*" [lindex [dict get $c tests] 1]]]]
+        set b [with_plain_root [file join $RP_ROOT ck2] {
+            with_corpus [file join $istamp::repo doc claude issues] [file join $RP_ROOT base.txt] {istamp::report_census}
+        }]
+        lappend r [list [dict get $b files] [string match "CORPUS OUTSIDE THE CHECKOUT: *" [dict get $b corpus]] \
+                        [lindex [dict get [dict get $b cites] doc/claude/issues] 0]]
+        ## ...and THIS SUITE's own corpus reads -- B1, B4, the D9 census -- pointed
+        ## at the same ck2: each NOT-READ by name, and none so much as names
+        ## 9997, the issue file that exists only outside.
+        set s [with_plain_root [file join $RP_ROOT ck2] {
+            with_corpus [file join $istamp::repo doc claude issues] [file join $RP_ROOT base.txt] {
+                list [istamp_b1_got] [istamp_b4_got] [istamp_d9_census]
+            }
+        }]
+        lassign $s s1 s4 s9
+        lappend r [list [expr {[lindex $s1 0] eq "NOT-READ"}] [expr {[lindex $s4 0] eq "NOT-READ"}] \
+                        [expr {[lindex $s9 2] ne "" && ![llength [lindex $s9 0]]}] [expr {[string first 9997 $s] < 0}]]
+    }
+    set r
+} {{3 1 1 1 1 4 3 -1 1} {0 1 -1} {1 1 1 1}}
+
+## A plain "checkout" for Q14-Q16: t.txt holds `static int x;` and `static long
+## y;`, so the phrase `static int` is on one line and `static` on two.
+set RB_ROOT [istamp_own [file join $::ISTAMP_SCRATCH_ROOT istamp_[pid]_rb]]
+set RB_ERR ""
+if {[catch {
+        file delete -force $RB_ROOT
+        file mkdir $RB_ROOT
+        set fh [open [file join $RB_ROOT t.txt] w] ; puts $fh "static int x;\nstatic long y;" ; close $fh
+    } e]} {
+    set RB_ERR [lindex [split $e \n] 0]
+}
+set RB_ST "**STAMP:** `v1 claim=open tree=d64686a1 stamped=2026-09-17 fix=none open=0`"
+
+## ⚠ D19 -- A RUN'S assert= SCANS SHARE ONE CLOCK.  Each scan had its own 60 s,
+## and nothing bounded how many: 100 two-line blocks over path=. held the CLI
+## gate for 211 s (MEASURED by S1-fix6's refuter; 253.5 s red-first by
+## S1-fix7), a busy Tcl loop nothing can interrupt.  Here the run's budget is
+## set already spent (t_scan_total -1) for ONE gate over five blocks that would
+## all hold: each is a problem naming the total budget, and nothing is scanned.
+## Then the same five with the budget back: no problem at all -- so the budget,
+## not the blocks, made the first answer -- and the run's deadline is cleared
+## once the gate returns, so a scan outside a gate is never charged to it.
+check_needs "Q14 a gate run's assert= scans share one budget: once it is spent every further block is a NAMED problem and nothing more is scanned; with the budget back the same blocks pass" {
+    if {$RB_ERR ne ""} {
+        set r "FIXTURE NOT BUILT: $RB_ERR"
+    } else {
+        set files {}
+        foreach i {1 2 3 4 5} {
+            lappend files 910$i-x.md "# 910$i - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE$i path=t.txt state=holds\nx\n```"
+        }
+        lassign [mkcorpus q14 $files ""] id bf
+        with_plain_root $RB_ROOT {
+            set q14_saved $istamp::t_scan_total
+            set istamp::t_scan_total -1
+            set q14_rc [catch {with_corpus $id $bf {istamp::gate}} q14_p]
+            set istamp::t_scan_total $q14_saved
+            set q14_cleared [expr {$istamp::scan_deadline eq ""}]
+            set q14_back [with_corpus $id $bf {istamp::gate}]
+        }
+        if {$q14_rc} { error $q14_p }
+        set n 0 ; foreach x $q14_p { if {[string match "91*: assertion could not be evaluated -- the search ran past the gate's total budget*" $x]} { incr n } }
+        set r [list $n [llength $q14_p] [llength $q14_back] $q14_cleared]
+    }
+    set r
+} {5 5 0 1}
+
+## ⚠ D19 -- A MARKED FENCE'S INFO STRING IS READ IN FULL.  fence_scan kept the
+## words shaped key=value and DROPPED the rest, so a malformed block was checked
+## as a weaker claim: `pat="static int"` searched for `"static` (MEASURED by
+## S1-fix6's refuter: the phrase is on 463 lines of src, and `ok (0 problems)`),
+## and `pat=static nonexistent_zz_symbol` searched for `static`.  Each block
+## below is FALSE as its author wrote it, or carries a word the grammar does not
+## know; each must be one problem naming the fence, and not be evaluated.  The
+## known NEGATIVES: a well-formed marked fence, and an ordinary code fence whose
+## info string has words and no key=value at all (row N2's class).
+check_needs "Q15 RED: a marked fence whose info string holds a word the grammar does not read -- a multi-word pat=, an unknown key, a key given twice, a stray word after a quote= -- is a named problem and is not evaluated; a well-formed one and an ordinary code fence are not" {
+    if {$RB_ERR ne ""} {
+        set r "FIXTURE NOT BUILT: $RB_ERR"
+    } else {
+        lassign [mkcorpus q15 [list \
+            9111-x.md "# 9111 - x\n\n$RB_ST\n\n```sh assert=absent pat=\"static int\" path=t.txt state=holds\nx\n```" \
+            9112-x.md "# 9112 - x\n\n$RB_ST\n\n```sh assert=present pat=static nonexistent_zz_symbol path=t.txt state=holds\nx\n```" \
+            9113-x.md "# 9113 - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds pth=t.txt\nx\n```" \
+            9114-x.md "# 9114 - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE pat=static path=t.txt state=holds\nx\n```" \
+            9115-x.md "# 9115 - x\n\n$RB_ST\n\n```c quote=d64686a1 path=t.txt extra\nstatic int x;\n```" \
+            9116-x.md "# 9116 - x\n\n$RB_ST\n\n```sh assert=absent pat=ZQXNOPE path=t.txt state=holds\nx\n```" \
+            9117-x.md "# 9117 - x\n\n$RB_ST\n\n```text an ordinary title, with words\nstatic int x;\n```"] ""] id bf
+        set r [with_plain_root $RB_ROOT {
+            set p [with_corpus $id $bf {istamp::gate}]
+            set out {}
+            foreach n {9111 9112 9113 9114 9115 9116 9117} {
+                set c 0 ; set all 0
+                foreach x $p {
+                    if {![string match "${n}:*" $x]} { continue }
+                    incr all
+                    if {[string first "a marked fence the parser cannot read in full" $x] >= 0} { incr c }
+                }
+                lappend out [list $c $all]
+            }
+            set out
+        }]
+    }
+    set r
+} {{1 1} {1 1} {1 1} {1 1} {1 1} {0 0} {0 0}}
+
+## ⚠ D19 -- A LINE HOLDING A STAMP'S BODY IS NAMED, WHATEVER PRECEDES IT.  The
+## stray-stamp detector needed the word and a COLON, so a stamp that lost its
+## colon was prose: `**STAMP** `v1 claim=fixed tree=deadbee0 ...`` as a
+## grandfathered file's line 3 said `ok (0 problems)`, and so did `STAMP`,
+## `**Stamp**`, `**STAMP -**`, `**STAMP;**` and `**STAMP.**` (MEASURED by
+## S1-fix6's refuter, red-first by S1-fix7).  Each is planted, plus a stamp
+## quoted mid-sentence and a colon-less SECOND stamp under a stamped file's real
+## one.  The known NEGATIVE: prose holding `v1` -- `v1 v2 v3`, a SPICE source
+## `v1 = 8.3e-01`, a stamp mentioned as `v1 ...` -- all of which the real corpus
+## has, and none of which is a body.
+check_needs "Q16 RED: a line carrying a stamp's body that is not the stamp line the parser reads -- colon missing, **Stamp**, STAMP -, STAMP;, STAMP., mid-sentence, a second one -- is a named problem; prose holding v1 is not" {
+    set q16b "`v1 claim=fixed tree=deadbee0 stamped=2026-09-17 fix=taken open=0`"
+    set files {} ; set base {}
+    foreach {n v} [list 9121 "**STAMP** $q16b" 9122 "STAMP $q16b" 9123 "**Stamp** $q16b" 9124 "**STAMP -** $q16b" \
+                        9125 "**STAMP;** $q16b" 9126 "**STAMP.** $q16b" 9127 "the stamp we meant was $q16b, never landed" \
+                        9129 "the batch reads `v1 v2 v3` newest-first; `v1 = 8.333333e-01` is volts; see **STAMP:** `v1 ...` in the spec"] {
+        lappend files $n-x.md "# $n - x\n\n$v\n\nprose."
+        append base "$n-x.md\n"
+    }
+    lappend files 9128-x.md "# 9128 - x\n\n$RB_ST\n**STAMP** $q16b\n\nprose."
+    lassign [mkcorpus q16 $files $base] id bf
+    set r [with_plain_root $RB_ROOT {
+        problems_per_file $id $bf "a line carrying a stamp's body" \
+            {9121 {} 9122 {} 9123 {} 9124 {} 9125 {} 9126 {} 9127 {} 9128 {} 9129 {}}
+    }]
+    set r
+} {1 1 1 1 1 1 1 1 0}
+
+## ⚠ D19 -- GRANDFATHERED BY EXACT FILE NAME, AND A NAME THAT MISSES THE PATTERN
+## IS NAMED.  The baseline held NUMBERS, so a NEW unstamped file under a
+## grandfathered number inherited the exemption: `1349-a-second-defect-under-a-
+## colliding-number.md` passed `ok (0 problems)` on every arm, and CLAUDE.md
+## records 1349-1353 as real cross-clone collisions (MEASURED by S1-fix6's
+## refuter, red-first by S1-fix7).  And a name the glob never listed was never
+## read: `1601_x.md`, `1601.md`, `1601-x.MD`, `1601 x.md`, `160-x.md` each
+## passed.  Here, one gate: the original 1349 (grandfathered by its name) is
+## clean, the second 1349 is a NEW file, each misnamed file is named once, and
+## the known NEGATIVES -- an attachment `1601-attempt-1.patch` and NUMBERING.md
+## -- are not.  Then two baselines the reader must REFUSE rather than half-read:
+## one line a bare number (the old format), one line neither a comment nor a name.
+check_needs "Q17 RED: grandfathering is by EXACT FILE NAME -- a new unstamped file under a grandfathered number is RED -- names that look like issue files and miss NNNN-<slug>.md are named, and a baseline line that is a bare number or not a name refuses the baseline" {
+    lassign [mkcorpus q17 [list \
+        1349-original.md "# 1349 - the original\n\nStatus: OPEN." \
+        1349-a-second-defect-under-a-colliding-number.md "# 1349 - a second defect\n\nStatus: OPEN." \
+        1601_x.md "# 1601\n" 1601.md "# 1601\n" 1601-x.MD "# 1601\n" "1601 x.md" "# 1601\n" 160-x.md "# 160\n" \
+        1601-attempt-1.patch "diff\n" NUMBERING.md "# numbering\n"] "1349-original.md"] id bf
+    set r [with_plain_root $RB_ROOT {
+        set p [with_corpus $id $bf {istamp::gate}]
+        set out {}
+        foreach needle {"1349 (1349-original.md)" "1349 (1349-a-second-defect-under-a-colliding-number.md): a NEW issue file"} {
+            set c 0 ; foreach x $p { if {[string first $needle $x] == 0} { incr c } } ; lappend out $c
+        }
+        set c 0 ; foreach x $p { if {[string match "*: looks like an issue file but is not named*" $x]} { incr c } } ; lappend out $c
+        foreach needle {1601-attempt-1.patch NUMBERING.md} {
+            set c 0 ; foreach x $p { if {[string first $needle $x] >= 0} { incr c } } ; lappend out $c
+        }
+        lappend out [llength $p]
+        set fh [open $bf w] ; puts $fh "# a comment\n1349-original.md\n1349" ; close $fh
+        lappend out [string match "BASELINE UNUSABLE: * bare issue number on line 3 *" [lindex [with_corpus $id $bf {istamp::gate}] 0]]
+        set fh [open $bf w] ; puts $fh "1349-original.md\n1349 original" ; close $fh
+        lappend out [string match "BASELINE UNUSABLE: * not an issue file's name on line 2 *" [lindex [with_corpus $id $bf {istamp::gate}] 0]]
+        set out
+    }]
+    set r
+} {0 1 5 0 0 6 1 1}
 
 ## ---------------------------------------------------------------------------
 ## N -- ANTI-OVERSHOOT.  Green in both directions by construction.
@@ -1604,19 +1930,10 @@ if {[llength $D9_PROBLEMS]} {
 ## The census of the real corpus, read by THIS suite: every well-formed stamp,
 ## as {num tree stamped}.  A file that cannot be read is named, not fatal -- the
 ## gate reports it as a problem, so D9 is the row that goes red on it.
-set D9_STAMPS {}
-set D9_UNREADABLE {}
-foreach {num fname} [istamp::issue_files] {
-    lassign [istamp_read_issue $fname] rok text
-    if {!$rok} { lappend D9_UNREADABLE $num ; continue }
-    set fs [istamp::find_stamp $text]
-    if {[dict get $fs n] != 1} { continue }
-    set p [istamp::parse_stamp [dict get $fs line]]
-    if {[dict get $p ok]} {
-        set f [dict get $p f]
-        lappend D9_STAMPS [list $num [dict get $f tree] [dict get $f stamped]]
-    }
-}
+## Nothing listed or read when the corpus directory leads out (see B1): D9 is
+## red on the gate's own CORPUS problem, and H9 names it below.
+lassign [istamp_d9_census] D9_STAMPS D9_UNREADABLE CORPUS_DP
+if {$CORPUS_DP ne ""} { puts "      the corpus was NOT READ: $CORPUS_DP" }
 if {[llength $D9_UNREADABLE]} {
     puts "      [llength $D9_UNREADABLE] issue file(s) could not be READ: $D9_UNREADABLE"
 }
@@ -1660,8 +1977,15 @@ if {[llength $D9_SKIPS]} {
 ## clone, the gate skipped it by name, and every row stayed green.  The third
 ## column is that skip set, required EMPTY.  Non-vacuous: at least one stamp
 ## verified, and every stamp verified.
+## ⚠ ONE KIND OF SKIP IS NOT AN EXEMPTION, AND IS LEFT OUT OF THAT COLUMN: a
+## partial clone's quote= whose CONTENT was never fetched (D19; quote_gap).  Its
+## revision was verified; the checker never fetches, so the blob is simply not
+## there to compare, and it is printed above as `not verified:` by name.  Held
+## in a full clone it would turn a stranger's blob:none clone RED the day the
+## corpus gains a quote of old content -- today it holds none (MEASURED).
 check_needs "D9h every stamped revision in the real corpus is VERIFIED, and the gate skipped NOTHING -- a history with commits has no exemptions" {
-    list [expr {$D9_VERIFIED > 0}] [expr {$D9_VERIFIED == $D9_NSTAMPED}] $D9_SKIPS
+    list [expr {$D9_VERIFIED > 0}] [expr {$D9_VERIFIED == $D9_NSTAMPED}] \
+         [lsearch -all -inline -not -glob $D9_SKIPS {*(partial clone: *}]
 } {1 1 {}}
 
 check "D9b the self-test is a precondition of any verdict, not a separate command" \
@@ -1755,6 +2079,7 @@ set FIXTURE_ENV_UNSET {
     GIT_DEFAULT_HASH GIT_DEFAULT_REF_FORMAT GIT_TEMPLATE_DIR
     GIT_TEST_ASSUME_DIFFERENT_OWNER
     GIT_QUARANTINE_PATH GIT_ALLOW_PROTOCOL GIT_ATTR_SOURCE
+    GIT_NO_LAZY_FETCH
 }
 set FIXTURE_ENV_SET {GIT_CONFIG_NOSYSTEM 1 GIT_CONFIG_GLOBAL /dev/null GIT_ATTR_NOSYSTEM 1}
 
@@ -1862,6 +2187,15 @@ proc istamp_file_url {path} {
 ##   fdanc       ancsrc (full + a3, branch anc on c2) cloned whole, then `fetch
 ##               --depth 1 origin anc`: the shallow file names c2, an ANCESTOR
 ##               of HEAD with a parent, and again nothing is missing
+## and, for D19 (S1-fix6's refuter measured a partial clone fetching):
+##   partial     psrc (full + p3, which rewrites a.txt, served with
+##               uploadpack.allowFilter) cloned --filter=blob:none: c1:a.txt's
+##               blob -- bl below -- is NOT in it, while its origin, which WOULD
+##               serve it, still exists; so a checker that ever fetches is
+##               caught by the blob turning up
+##   nopromise   full with that same blob's object DELETED: a store missing
+##               content it should hold, and NOT a partial clone -- where a
+##               missing blob is a defect, never a gap to excuse
 ## (bl and tr, printed with the revisions, are full's HEAD:a.txt blob and HEAD's
 ## tree: objects that are in every clone, shallow included, and are not commits.)
 ## orphan, corrupt and noshallow are the fail-closed rows of the probe: each is
@@ -1978,13 +2312,21 @@ proc istamp_hist_fixtures {} {
         g -C ancsrc branch anc "$c2"
         g clone -q --single-branch -b main "$4" fdanc
         g -C fdanc fetch -q --depth 1 origin anc
+        cp -R full psrc
+        echo three > psrc/a.txt && g -C psrc add -f a.txt
+        when "@1767441600 +0000" "@1767441600 +0000" && g -C psrc commit -q -m p3
+        g -C psrc config uploadpack.allowFilter true
+        g clone -q --filter=blob:none "$5" partial
         bl=$(g -C full rev-parse HEAD:a.txt)
         tr=$(g -C full rev-parse 'HEAD^{tree}')
+        cp -R full nopromise
+        rm -f "nopromise/.git/objects/$(printf %s "$bl" | cut -c1-2)/$(printf %s "$bl" | cut -c3-)"
         echo "ISTAMP_REVS $c1 $c2 $f1 $c3 $sq $x1 $s1 $am $am2 $a3 $bl $tr"
     }
     set url  [istamp_file_url [file join $root full]]
     set surl [istamp_file_url [file join $root sidesrc]]
     set aurl [istamp_file_url [file join $root ancsrc]]
+    set purl [istamp_file_url [file join $root psrc]]
     ## The hostile plant goes in AROUND with_fixture_env, never inside it: the
     ## seal is what must defeat it.  Put back exactly as it was, on every path.
     set hostile [list XDG_CONFIG_HOME $plant GIT_QUARANTINE_PATH [file join $plant quarantine]]
@@ -1993,7 +2335,7 @@ proc istamp_hist_fixtures {} {
         if {[info exists ::env($v)]} { lappend hsaved $v $::env($v) }
         set ::env($v) $val
     }
-    set rc [catch {with_fixture_env {exec timeout 60 sh -c $script sh $root $url $surl $aurl 2>@1}} out opt]
+    set rc [catch {with_fixture_env {exec timeout 60 sh -c $script sh $root $url $surl $aurl $purl 2>@1}} out opt]
     foreach {v val} $hostile { unset ::env($v) }
     foreach {v val} $hsaved { set ::env($v) $val }
     if {$rc} { return -options $opt $out }
@@ -2008,7 +2350,7 @@ proc istamp_hist_fixtures {} {
                       orphanc orphanc rootdate rootdate offpath offpath
                       eshallow eshallow reachroot reachroot dangling dangling
                       gitfile gitfile grafts grafts amend amend shamend shamend
-                      fdself fdself fdanc fdanc} {
+                      fdself fdself fdanc fdanc partial partial nopromise nopromise} {
         dict set fx $st [file join $root {*}$sub]
     }
     return $fx
@@ -2560,7 +2902,11 @@ check_needs "H17 no text from an issue file reaches git as an option: quote=--ou
         set c2 [dict get $::HF c2]
         set r [with_fixture_env {
             with_repo [dict get $::HF full] {
-                lassign [mkcorpus h17 [list 9999-x.md "# 9999 - x\n\n**STAMP:** `v1 claim=open tree=$c2 stamped=2026-09-18 fix=none open=0`\n\n```c quote=--output=[file join $pw gate] path=x\none\n```"] ""] id bf
+                ## The target is RELATIVE to the fixture repository git runs in
+                ## (`git -C full`): one whitespace-free token even when this
+                ## checkout's path holds a space (see Q5), and still $pw/gate for
+                ## a regressed checker that handed it to git as an option.
+                lassign [mkcorpus h17 [list 9999-x.md "# 9999 - x\n\n**STAMP:** `v1 claim=open tree=$c2 stamped=2026-09-18 fix=none open=0`\n\n```c quote=--output=../../[file tail $pw]/gate path=x\none\n```"] ""] id bf
                 set named 0
                 foreach p [with_corpus $id $bf {istamp::gate}] {
                     if {[string first "is not a revision" $p] >= 0} { incr named }
@@ -2737,6 +3083,59 @@ check_needs "H21 the caller's GIT_SHALLOW_FILE and GIT_NO_LAZY_FETCH get no vote
     set r
 } {shallow 1 {full 1} 1}
 
+## ⚠ D19 -- NOTHING IN AN ISSUE FILE CAN MAKE A PARTIAL CLONE FETCH.  Only the
+## shallow walk carried GIT_NO_LAZY_FETCH, so in a blob:none clone of a file://
+## mirror a tree= naming a blob the clone did not hold ran `git fetch ...
+## --filter=blob:none`, `git-upload-pack`, `index-pack --promisor` and
+## `maintenance run --auto`, and wrote a new pack into .git (MEASURED by S1-fix6's
+## refuter, red-first by S1-fix7, 8 -> 12 pack files; a quote= of an old
+## revision did the same through quote_holds).  In `partial`, whose origin
+## WOULD serve the blob:
+##   A  tree=c2, quote c1:a.txt "one"   -- the blob is not here: NOT VERIFIED, by
+##      name (a partial clone's gap), never RED and never fetched
+##   B  tree=c2, quote c1:nope.txt      -- a path c1 never had: RED
+##   C  tree=c2, quote c2:b.txt WRONG   -- the blob IS here: a rotted quote, RED
+##   D  tree=c2, quote c2:b.txt "two"   -- the known positive
+##   E  tree=<c1:a.txt's blob, in full> -- does not resolve here: RED
+##   G  tree=c2, quote=<a revision that exists nowhere> path=a.txt -- RED: only
+##      a VERIFIED revision's missing content is ever excused as a gap
+## then F, in `nopromise` (NOT a partial clone, the same blob missing): quote A
+## is RED -- the gap is a partial clone's, and nothing else earns it.
+## As {the state, those per-file {problems skipped} plus the verified count,
+## the one skip naming the partial clone, F's {problems skipped} and verified
+## count, the blob STILL absent afterwards, the pack count unchanged}.
+check_needs "H22 no git call fetches: in a blob:none partial clone whose origin would serve the blob, a quote of content not in the checkout is NOT VERIFIED by name, a missing path and a rotted quote are RED, a tree= naming the absent blob is RED -- and afterwards the blob is still absent" {
+    if {$::HF_ERR ne ""} {
+        set r "FIXTURE NOT BUILT: $::HF_ERR"
+    } else {
+        set pd [dict get $::HF partial]
+        set c1 [dict get $::HF c1]
+        set c2 [dict get $::HF c2]
+        set bl [dict get $::HF bl]
+        set st "v1 claim=open tree=$c2 stamped=2026-09-18 fix=none open=0"
+        set r [with_fixture_env {
+            set packs0 [llength [glob -nocomplain -directory [file join $pd .git objects pack] *]]
+            set v [with_repo $pd {
+                list [istamp::history_state] \
+                     [hcorpus [list [list $st "\n\n```txt quote=$c1 path=a.txt\none\n```"] \
+                                    [list $st "\n\n```txt quote=$c1 path=nope.txt\none\n```"] \
+                                    [list $st "\n\n```txt quote=$c2 path=b.txt\nWRONG\n```"] \
+                                    [list $st "\n\n```txt quote=$c2 path=b.txt\ntwo\n```"] \
+                                    [list "v1 claim=open tree=$bl stamped=2026-09-18 fix=none open=0" ""] \
+                                    [list $st "\n\n```txt quote=[string repeat deadbeef 5] path=a.txt\none\n```"]]] \
+                     [llength [lsearch -all -glob $istamp::last_skips "9001:*partial clone*"]]
+            }]
+            lappend v [with_repo [dict get $::HF nopromise] {
+                hcorpus [list [list $st "\n\n```txt quote=$c1 path=a.txt\none\n```"]]
+            }]
+            set still [catch {exec env GIT_NO_LAZY_FETCH=1 timeout 30 git -C $pd cat-file -e $bl 2>/dev/null}]
+            set packs1 [llength [glob -nocomplain -directory [file join $pd .git objects pack] *]]
+            list {*}$v $still [expr {$packs1 == $packs0}]
+        }]
+    }
+    set r
+} {full {{0 1} {1 0} {1 0} {0 0} {1 0} {1 0} 5} 1 {{1 0} 1} 1 1}
+
 ## ⚠ D16.5 -- FENCES CLOSE THE COMMONMARK WAY, END TO END.  S1-fix4's refuter
 ## planted a 4-backtick quote fence holding an inner ``` line and, below it, a
 ## rotted line: the checker closed the block at the inner line, verified only
@@ -2790,6 +3189,7 @@ check "H6 this tree's history verdict agrees with the evidence on disk (.git, gi
 ## own store, and every other clone is without it.
 check_needs "H9 every stamped revision in the real corpus resolves here and is in HEAD's history -- asked of git directly, not through the gate" {
     set h9_off {}
+    if {$CORPUS_DP ne ""} { lappend h9_off "NOT-READ: $CORPUS_DP" }
     foreach st $D9_STAMPS {
         lassign $st num tree stamped
         set r [dict get $D9_RESOLVES $tree]
