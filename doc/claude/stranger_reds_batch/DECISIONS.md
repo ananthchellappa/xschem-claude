@@ -48,5 +48,12 @@ Three consequences the verifiers measured, all now in the code:
 
 A checkout path containing a space reds 71 rows across five suites, and a read-only
 checkout fails `test_scratch` and `state_roundtrip.tcl`'s temporary file. Both are
-stranger-facing and neither is issue 1485. They are filed as new issues (PLAN.md criterion
-4) and will be scheduled on their own.
+stranger-facing and neither is issue 1485. They are filed as **1490** (a space in the
+checkout path reds 71 rows across five suites) and **1491** (a read-only checkout dies in
+`test_scratch` and in `state_roundtrip.tcl`'s temporary file), per PLAN.md criterion 4, and
+will be scheduled on their own.
+
+1490 is knowingly incomplete: the crew that measured the 71 rows deleted its scratch before
+the rows were written down, so re-measuring and naming them is step 1 of that issue's own
+fix direction. That is the cost of the delete-your-scratch rule, and it is the right trade
+against 192 GB — but a receipt must carry the row names, not only the count.

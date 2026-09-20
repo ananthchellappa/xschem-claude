@@ -3606,10 +3606,17 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
 - **1484** — **an uppercase letter in the checkout path turns five ASE suites red**
   (`sp_1452`, `converge_1459`, `campaign_1462`, `campaign_gui_1464`, `variant_1470`: 18
   counted lines). Isolated for `sp_1452` only (`clonB` red, `clone2` green). ngspice
-  lowercasing the unquoted `wrs2p` path is INFERRED. OPEN.
+  lowercasing the unquoted `wrs2p` path is INFERRED. OPEN. ⚠ **Widened 2026-09-20** by
+  item A: `variant_1470` `OT1` and `sp_1452` `SE1` are now MEASURED (which also closes
+  1485's one unknown), the unquoted interpolation is READ in `sp_export_lines`, and the
+  trigger is a path ngspice's control line cannot take literally — see **1490** for the
+  space reproducer.
 - **1485** — **nine T1 suites go red in a `git archive` export because they read their
   corpus through git** and use git's error text as data: 20 counted lines. The
-  issue-stamp checker's classify-and-skip-by-name is the remedy's shape. OPEN.
+  issue-stamp checker's classify-and-skip-by-name is the remedy's shape. **FIXED
+  2026-09-20 in `1f3f5287`** — by enumerating the same files from the filesystem rather
+  than skipping, because skipping would have gone green by measuring less. Its file
+  carries the numbers; do not re-derive them from this line.
 - **1486** — **suites write xschem's untitled autosave into their cwd, and the checkout's
   op_param project file is the user's, not litter.** Running from `~` overwrote or
   deleted the tester's own `~/untitled~.sch`; that is fixed for `run_suites.sh` and
@@ -3630,7 +3637,23 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   batch closed Item 1 under D21. S1-fix10's files minus the CommonMark opener rule measured
   regression-free. OPEN.
 
-**The next free number is 1490.**
+~~**The next free number is 1490.**~~
+
+- **1490** — **a space in the checkout path reds 71 rows across five suites.** Filed by
+  the stranger-reds batch (D4) from item A's verifier finding R6; same class as **1484**,
+  measured with a space instead of a capital and far larger (71 rows against 18 counted
+  lines). Mechanism READ: `sp_export_lines` in `src/ase.tcl` interpolates `s2p_file`'s
+  absolute path into `wrs2p …` **unquoted**, so a space splits it on ngspice's control line.
+  The five suites and 71 rows are an aggregate — the verifier's logs were deleted with its
+  scratch, so step 1 is to re-measure and name them. OPEN.
+- **1491** — **a read-only checkout dies in `test_scratch` and in `ase_state_roundtrip`'s
+  temporary file**, both of which default to a path inside the tree. Filed by the
+  stranger-reds batch (D4) from item A's verifier finding R7, which the verifier itself
+  scored a nit. The corpus helper is read-only-safe (104 files against a `chmod -R a-w`
+  tree); a read-only tree also cannot be built, so this is reachable only by building
+  elsewhere first. OPEN.
+
+**The next free number is 1492.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
