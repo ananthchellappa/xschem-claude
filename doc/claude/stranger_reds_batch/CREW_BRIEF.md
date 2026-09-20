@@ -19,6 +19,14 @@ then the previous item's receipt in `receipts/` if there is one.
   `~/.claude/gui_test_gate`, `~/.claude/xschem_owed`, the dev display `:99`, or anything
   in `~/dev/xschem-op-wcard`. Work under the scratch root your task names, and **delete it
   when you are done**; state its peak size in your receipt.
+* **Work in a SHORT scratch path, and never inside the session scratchpad.** A checkout
+  path longer than about 73 characters reds `test_op_annot` and `test_annot_hier_0911`:
+  `statusmsg_text` is `char[256]` and the golden carries an absolute path (measured by item
+  B's fix round, which had to move its clone to get its own gate to run). Use the short root
+  your task names.
+* **A receipt carries names, not counts.** "71 rows red across five suites" cost a
+  re-measurement because the rows were never written down and the scratch was deleted. Name
+  the rows, the suites and the check counts.
 * **Never commit.** The driver commits. Leave the tree with your edits in place and say
   exactly which files you changed.
 
