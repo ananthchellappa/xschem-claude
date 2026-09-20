@@ -264,6 +264,17 @@ static void xschem_cmd_help(int argc, const char **argv)
 /* can be used to reach C functions from the Tk shell. */
 static char *not_avail = "Not available in this context. If using --tcl consider using --command";
 
+#ifdef __unix__
+/* What an X-server-derived field of `xschem globals` says when has_x is 0 (no DISPLAY,
+ * or --nogui). Deliberately not a number: the value is unknown, not zero, and a reader
+ * scanning for digits must come away empty rather than with a fabricated figure.
+ * Inside the #ifdef because its only two uses are, and the whole "Xserver options" block
+ * of `xschem globals` is #ifdef __unix__ too: a file-scope static nothing references
+ * warns under -Wall on a non-unix build.
+ * See doc/claude/issues/1483-*.md */
+static char *no_x_display = "<no X server connection>";
+#endif
+
 /* Refuse a mutating `xschem` subcommand on a read-only buffer (issue 0041). The
  * interactive keyboard/menu paths are guarded by readonly_block() (callback.c); this
  * closes the Tcl command surface -- scripts, the persistent/TCP command server and
@@ -6097,10 +6108,29 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
 
 #ifdef __unix__
       my_snprintf(res, S(res), "******* Xserver options: *******\n"); Tcl_AppendResult(interp, res, NULL);
-      my_snprintf(res, S(res), "XMaxRequestSize=%ld\n", XMaxRequestSize(display));
-      Tcl_AppendResult(interp, res, NULL);
-      my_snprintf(res, S(res), "XExtendedMaxRequestSize=%ld\n", XExtendedMaxRequestSize(display));
-      Tcl_AppendResult(interp, res, NULL);
+      /* ISSUE 1483: these two are the only Xlib calls in `xschem globals`, and they were
+       * the only unguarded ones left in the file. `display` is valid ONLY when has_x is 1
+       * (xinit.c sets it from Tk_Display() inside `if(has_x)`); with has_x 0 it is either
+       * NULL (no DISPLAY -- xserver_ok(), draw.c, never assigns it) or a pointer
+       * xserver_ok() already XCloseDisplay()d (--nogui with DISPLAY set). The NULL case
+       * segfaulted mid-script on every headless box, taking four T1 suites with it; the
+       * freed case silently printed whatever survived in the freed block (measured:
+       * XMaxRequestSize=4 against a true 65535). Report the absence instead of faking a
+       * number -- the keys stay so a reader still finds them, and a reader scanning for
+       * digits correctly finds none. Same idiom as `xschem get gc_line_style` (-1 = no X)
+       * and resolve_hilight_style_rgb() (hilight.c).
+       * See doc/claude/issues/1483-four-t1-suites-segfault-mid-run-under-nogui-when-display-is-unset-so-a-headless-box-never-sees-zero.md */
+      if(has_x) {
+        my_snprintf(res, S(res), "XMaxRequestSize=%ld\n", XMaxRequestSize(display));
+        Tcl_AppendResult(interp, res, NULL);
+        my_snprintf(res, S(res), "XExtendedMaxRequestSize=%ld\n", XExtendedMaxRequestSize(display));
+        Tcl_AppendResult(interp, res, NULL);
+      } else {
+        my_snprintf(res, S(res), "XMaxRequestSize=%s\n", no_x_display);
+        Tcl_AppendResult(interp, res, NULL);
+        my_snprintf(res, S(res), "XExtendedMaxRequestSize=%s\n", no_x_display);
+        Tcl_AppendResult(interp, res, NULL);
+      }
 #endif
 
       my_snprintf(res, S(res), "******* Compile options:*******\n"); Tcl_AppendResult(interp, res, NULL);

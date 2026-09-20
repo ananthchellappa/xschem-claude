@@ -8,4 +8,8 @@
 | A fix | 1485 | crew (workflow) | receipts/A-impl.md (fix round) | 9 applied, 3 rejected (2 filed as D4); all nine green in four trees, 1284 checks each | |
 | A gate | 1485 | driver | tests/results.3921145.log | T1 solo: cases=87 blocks=86 counted_failures=0, 87/87 Start/Finish, wc -l 177, home=throwaway | 1f3f5287 |
 | A docs | 1485, 1484 | docs crew | the issue files | 1485 closed as fixed; 1484 widened and given item A's two measured facts; 1490 and 1491 filed; NUMBERING.md now points at 1492 | |
+| B impl | 1483 | crew (workflow) | receipts/B-impl.md | cause located by backtrace (scheduler.c XMaxRequestSize, one statement, all four suites); four suites green headless at 67/85/109/485; T1 headless 87/86/0 and T1 with display 87/86/0, both in the crew's clone | |
+| B verify | 1483 | two adversarial crews | receipts/B-verify.md | 14 findings; a blocker and a must, both the same new test row asserting no-display unconditionally (it reds on the display arm, which is the documented spelling) | |
+| B fix | 1483 | crew (workflow) | receipts/B-verify.md | row branched on the has_x mirror; 8 checks on every arm; sabotages red on the unfixed binary both ways; 7 findings out of scope, recorded as D6 | |
+| B gate | 1483 | driver | tests/results.557418.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=527s, 87/87, wc -l 177, home=throwaway | (this commit) |
 
