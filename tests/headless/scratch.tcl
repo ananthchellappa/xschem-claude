@@ -412,6 +412,271 @@ proc test_real_home {} {
   return [__scratch_env HOME]
 }
 
+## ===========================================================================
+## THE COMMITTED CORPUS, FOR A CHECKOUT THAT MAY HAVE NO `.git` (issue 1485)
+## ===========================================================================
+##
+## A GitHub "Download ZIP", a release tarball and `git archive` all produce a
+## tree with NO `.git`. Nine suites listed their corpus with
+##
+##     catch {exec git -C $repo ls-files -- *.state} out
+##
+## and then walked `$out` -- which, when git fails, is git's ERROR TEXT. That
+## text was used as a file path (`couldn't open "<repo>/fatal: not a git
+## repository ..."`), as an empty list (a row silently measuring nothing), and
+## as a dict to parse (`dict element in quotes followed by ":"`). Three of the
+## nine DIED mid-run. MEASURED 2026-09-20 in a `git archive` export and in a
+## clone with `.git` removed: nine suites red, identical in both shapes.
+##
+## ⚠ TWO RULES, AND THE SECOND IS THE ONE THAT WAS MISSING.
+##
+##   1. NEVER USE GIT'S OUTPUT WHEN GIT FAILED. `catch` returns the error text
+##      in the same variable as the answer, so an unchecked status turns a
+##      diagnostic into data. Check the status; git's stderr is never data.
+##   2. A CORPUS LIST IS NOT A TRACKEDNESS QUESTION. Every one of those rows
+##      wanted "the `.state` files of this checkout", and git was only the
+##      cheapest way to enumerate them. So when git cannot answer, ENUMERATE
+##      THE SAME FILES FROM THE FILESYSTEM: the export carries exactly the
+##      tracked files, the corpus is identical, and coverage does not move.
+##      Skipping would have made the stranger's run green by measuring less --
+##      which is the failure this is meant to prevent, not a fix for it.
+##
+## A row that genuinely needs git (trackedness itself, a revision, a diff) is a
+## different question: it reads `source` / `reason` below and prints its own
+## `skip: <row> -- <why>` line. None of the nine needed to.
+##
+##   3. THE FILESYSTEM ARM IS A SUPERSET OF THE INDEX, SO A ROW THAT READS IT
+##      MUST BE A BOUND, NOT AN EQUALITY. `git ls-files` answers "what is
+##      tracked" and is blind to a file the tester made; the walk is not. So a
+##      row that asserted `tracked == 104` went red the moment somebody saved a
+##      variant of a shipped bench -- ordinary first use of this branch.
+##      MEASURED 2026-09-20 (fix round): one copied `.state` reddens
+##      `test_ase_variant_1470` ST1 and `test_ase_simwin_variant_1471` ST1; a
+##      copied `test_nmos` bench reddens `test_ase_predeck_1439` RD10 and
+##      `test_ase_options_1437` DL5. All four are now floors, as
+##      `test_ase_core` CP1/CP7 and `test_ase_trnoise_1466` NC1 always were.
+##      Their SHAPE halves (`bad` empty, `0 bare`, the option-name set, the
+##      controls) stay exact: a 105th file still has to round-trip.
+##
+## Usage:
+##     set c [test_corpus_files $repo *.state]
+##     foreach f [dict get $c files] { ... }          ;# ABSOLUTE paths, sorted
+##
+## Returns a dict:
+##     files    absolute paths of the matching files, sorted, deduplicated
+##     source   `git` (git answered for THIS checkout) or `fs`
+##     reason   {} when the answer is unqualified; a one-line human reason when
+##              the corpus came from the filesystem, or when git answered for
+##              this checkout and listed NOTHING
+##     skipped  repo-relative directories the walk could not read or would not
+##              follow ({} on the git arm) -- an incomplete answer must SAY so
+##
+## `pattern` is matched with `string match` against the repo-relative path, so
+## `*.state` matches at any depth exactly as git's pathspec does.
+##
+## ⚠ THE WALK IS AN APPROXIMATION OF THE INDEX IN BOTH DIRECTIONS, AND BOTH
+## DIRECTIONS ARE ANNOUNCED RATHER THAN ASSUMED AWAY:
+##   * it sees UNTRACKED files git would not list (rule 3 above);
+##   * it does not descend a symlinked directory, where git's index does not
+##     care that a tracked directory has since become one, and it cannot read a
+##     directory the tester has no permission for. Both are counted into
+##     `skipped` and named in the `note:` line, so a short corpus is never
+##     silent. It never RAISES on either: a corpus read that can die is the
+##     failure shape this whole section exists to remove (MEASURED: one
+##     `chmod 000` directory anywhere in the tree used to kill three suites
+##     outright, with no verdict at all).
+##   * it enumerates dot-files and dot-directories, skipping only `.git` and
+##     `.scratch` (a suite's own throwaway `.state` files, which git never
+##     listed either) BY NAME. `glob *` alone matched no dot-basename at all,
+##     so `*.gitignore`, `*.spiceinit` and `.github/*` answered ZERO on the fs
+##     arm against 8, 5 and 2 on the git arm -- silent, and wrong for the next
+##     caller rather than for today's.
+
+proc __corpus_walk {dir rel pattern accName skipName} {
+  upvar 1 $accName acc $skipName skipped
+  ## `glob -nocomplain` suppresses "no matches", NOT "permission denied" -- so
+  ## both globs are caught. An unreadable directory is a skip, never a raise.
+  if {[catch {glob -nocomplain -directory $dir -tails -types {f l} -- * .*} ents]} {
+    lappend skipped [expr {$rel eq {} ? {.} : $rel}]
+    return
+  }
+  foreach e [lsort $ents] {
+    if {$e eq {.} || $e eq {..}} { continue }
+    set r [expr {$rel eq {} ? $e : "$rel/$e"}]
+    if {[string match $pattern $r]} { lappend acc [file join $dir $e] }
+  }
+  if {[catch {glob -nocomplain -directory $dir -tails -types d -- * .*} dirs]} {
+    lappend skipped [expr {$rel eq {} ? {.} : $rel}]
+    return
+  }
+  foreach e [lsort $dirs] {
+    if {$e eq {.} || $e eq {..}} { continue }
+    if {$e eq {.git} || $e eq {.scratch}} { continue }
+    set sub [file join $dir $e]
+    set r [expr {$rel eq {} ? $e : "$rel/$e"}]
+    ## `file type` does not follow the last component, so a symlinked directory
+    ## is recognised here. It is not descended into (a loop-safe walk would need
+    ## a visited-inode set, and git does not follow one either) -- it is COUNTED.
+    if {[catch {file type $sub} ty]} { lappend skipped $r ; continue }
+    if {$ty eq {link}} { lappend skipped $r ; continue }
+    __corpus_walk $sub $r $pattern acc skipped
+  }
+}
+
+## Is `$a` the same directory as `$b`? Compared by normalized name first and by
+## device+inode second, because git prints a physical path and the suite's
+## `$repo` may reach the same directory through a symlink. On any doubt the
+## caller must fall to the filesystem arm: a wrong `fs` costs a superset and a
+## printed note, a wrong `git` costs a silently TRUNCATED corpus.
+proc __corpus_same_dir {a b} {
+  if {[file normalize $a] eq [file normalize $b]} { return 1 }
+  if {[catch {file stat $a sa}] || [catch {file stat $b sb}]} { return 0 }
+  return [expr {$sa(dev) == $sb(dev) && $sa(ino) == $sb(ino)}]
+}
+
+## WHICH REPOSITORY IS GIT ANSWERING ABOUT? Cached per repo; one bounded exec.
+##
+##   self   `$repo` is the root of a git checkout -- git's answer is about the
+##          files in front of us, and is authoritative even when it is EMPTY.
+##   other  git works here but its toplevel is somebody ELSE's: an export
+##          unpacked inside a tracked `~/src`, a dotfiles repo, a workspace
+##          under version control, or a GIT_DIR/GIT_WORK_TREE exported by a
+##          hook, `git bisect run` or `rebase --exec`. Its list is that
+##          repository's, not this tree's -- and MEASURED 2026-09-20, an outer
+##          repo that had added only `export/sky130A` made `ls-files` answer
+##          50 of 104 files at exit 0, with nothing saying so.
+##   none   git cannot answer at all: no `.git` (the ZIP/tarball/`git archive`
+##          shape this section is about), git not installed, or a refusal such
+##          as `fatal: detected dubious ownership`.
+##
+## ⚠ `self` IS WHAT KEEPS AN EMPTY ANSWER HONEST. Falling back to the
+## filesystem on "git listed nothing" conflates the inner-repo shape with a
+## real defect -- the corpus having stopped being tracked. MEASURED: in a built
+## clone, `git rm --cached -- '*.state'` used to give ALL PASS on all nine
+## suites, every row whose name says "tracked" passing by measuring untracked
+## files. It now leaves the list empty, the rows red, and the note says why.
+proc __corpus_git_scope {repo} {
+  if {[info exists ::__corpus_scope($repo)]} { return $::__corpus_scope($repo) }
+  set pre [__corpus_git_pre]
+  set top {}
+  set r none
+  if {![catch {exec {*}$pre git -C $repo rev-parse --show-toplevel 2>/dev/null} top]} {
+    set top [string trim $top]
+    if {$top ne {}} {
+      set r [expr {[__corpus_same_dir $top $repo] ? {self} : {other}}]
+    }
+  }
+  set ::__corpus_scope($repo) $r
+  return $r
+}
+
+## `timeout git ...` when coreutils is there, plain `git ...` when it is not --
+## a bound on the one blocking `exec` here (a suite's own watchdog cannot fire
+## inside one: test_suite_watchdog_1403 row W13). Resolved ONCE, and never
+## assumed: if `timeout` were missing and the prefix were used anyway, EVERY
+## call would fail and a perfectly good checkout would silently drop to the
+## filesystem arm.
+proc __corpus_git_pre {} {
+  if {![info exists ::__corpus_timeout_pre]} {
+    set ::__corpus_timeout_pre {}
+    set t {}
+    catch {set t [auto_execok timeout]}
+    if {[llength $t]} { set ::__corpus_timeout_pre [concat $t [list 60]] }
+  }
+  return $::__corpus_timeout_pre
+}
+
+proc test_corpus_files {repo pattern} {
+  set reason {}
+  set pre [__corpus_git_pre]
+  set scope [__corpus_git_scope $repo]
+  if {$scope eq {self}} {
+    ## stderr goes to /dev/null on the measuring call, for two reasons: Tcl's
+    ## `exec` raises on ANY stderr output even at exit 0 (a git warning would
+    ## otherwise look like a failure), and git's complaint must not be able to
+    ## reach $gitout at all. The reason string below is a SECOND, separate call
+    ## whose output is used only as human text -- the same shape issue_stamp.tcl
+    ## uses in `git_in`.
+    set gitout {}
+    if {![catch {exec {*}$pre git -C $repo ls-files -- $pattern 2>/dev/null} gitout]} {
+      set files {}
+      foreach rel [split $gitout "\n"] {
+        if {[string trim $rel] eq {}} { continue }
+        lappend files [file join $repo $rel]
+      }
+      ## `-unique`, because an unmerged index prints a conflicted path once per
+      ## stage and a corpus is a set.
+      set files [lsort -unique $files]
+      ## AUTHORITATIVE, INCLUDING WHEN IT IS EMPTY -- see __corpus_git_scope.
+      if {![llength $files]} {
+        set reason "git tracks this checkout and lists NO file matching\
+ $pattern -- the corpus is not tracked here"
+      }
+      return [dict create files $files source git reason $reason skipped {}]
+    }
+    ## git FAILED although this IS a checkout. Whatever came back is a
+    ## complaint, not a file list, and it is dropped on the floor.
+    set why {}
+    catch {exec {*}$pre git -C $repo ls-files -- $pattern 2>@1} why
+    set first [lindex [split [string trim $why] "\n"] 0]
+    set reason "git could not list $repo ($first)"
+  } elseif {$scope eq {other}} {
+    set reason "$repo is not a git checkout of its own -- git here answers for\
+ an enclosing repository, so its list would be that repository's, not this\
+ tree's"
+  } elseif {![file exists [file join $repo .git]]} {
+    set reason "no .git in $repo -- a ZIP download, a release tarball or a\
+ git archive export has none"
+  } else {
+    set why {}
+    catch {exec {*}$pre git -C $repo rev-parse --show-toplevel 2>@1} why
+    set first [lindex [split [string trim $why] "\n"] 0]
+    set reason "git could not answer for $repo ($first)"
+  }
+  set files {}
+  set skipped {}
+  __corpus_walk $repo {} $pattern files skipped
+  return [dict create files [lsort -unique $files] source fs reason $reason \
+                      skipped $skipped]
+}
+
+## The note a suite prints when the corpus needs qualifying: it came from the
+## filesystem rather than git, or the walk could not read part of the tree, or
+## git answered for this checkout and listed nothing. Coverage is unchanged on
+## the ordinary fallback, so this is a `note:` and not a `skip:` -- but the run
+## must still SAY where its corpus came from, or a reader cannot tell an export
+## apart from a checkout whose corpus has gone missing.
+##
+## ⚠ THE PREFIX IS LOAD-BEARING. `run_suites.sh` echoes `^note: corpus-source`
+## under a suite's verdict beside its `skip:` lines, because a PASS in an export
+## otherwise reads exactly like a PASS in a clone through the one command this
+## project documents (D13.11's argument, applied to provenance). It cannot be a
+## bare `note:`: `test_ase_core` has a `note` proc of its own and prints 17
+## diagnostic lines with that prefix.
+proc test_corpus_note {c {what corpus}} {
+  set reason {}
+  catch {set reason [dict get $c reason]}
+  set skipped {}
+  catch {set skipped [dict get $c skipped]}
+  if {$reason eq {} && ![llength $skipped]} { return }
+  set n [llength [dict get $c files]]
+  set tail {}
+  if {[llength $skipped]} {
+    set tail ", [llength $skipped] director[expr {[llength $skipped] == 1 ?\
+ {y} : {ies}}] not read or not followed ([join [lrange $skipped 0 2] {, }])"
+  }
+  catch {
+    if {[dict get $c source] eq {git}} {
+      puts "note: corpus-source -- $what came from git, and git lists NOTHING:\
+ $reason"
+    } else {
+      puts "note: corpus-source -- $what listed from the filesystem, not git:\
+ $reason -- $n file(s) found$tail"
+    }
+    flush stdout
+  }
+}
+
 ## The one line, once per process however many times this file is sourced.
 if {![info exists ::__scratch_home_noted]} {
   set ::__scratch_home_noted 1

@@ -37,7 +37,9 @@
 # directory used to overwrite or delete a ~/untitled~.sch of your own (D13.3).
 #
 # SKIPS: a suite's own `skip:` lines (a row it could not run, and why) are
-# printed under its verdict line, indented, whatever the verdict (D13.11).
+# printed under its verdict line, indented, whatever the verdict (D13.11), and
+# so is a `note: corpus-source -- ...` line, which says a suite listed its
+# corpus from the filesystem because the checkout has no `.git` (issue 1485).
 #
 # Same fail-open contract as full_audit.sh: no DISPLAY, GUI_GATE=0 or no panel
 # and it just runs. Disable entirely with `export GUI_GATE=0`. A Stop press
@@ -252,6 +254,18 @@ for _r in $(seq 1 "$REPEAT"); do
     # without this the documented single-suite command swallowed it: a PASS with
     # 31 rows skipped read exactly like a PASS with none (test_vcd_read's A/RP).
     printf '%s\n' "$out" | grep -E '^skip:' | sed 's/^/         | /'
+    # AND the corpus-provenance line, for the same reason (issue 1485). A suite
+    # that lists its corpus through git falls back to the filesystem in a
+    # checkout with no `.git` -- a ZIP download, a release tarball, a `git
+    # archive` export -- and says so with `note: corpus-source -- ...`. Without
+    # this line that statement never reached the one command this project
+    # documents: MEASURED 2026-09-20, an export's `test_ase_core.log` was
+    # byte-identical in shape to a clone's, the note nowhere in it, so a green
+    # export run was indistinguishable from a green clone run.
+    # It is NOT a bare `^note:`: `note:` is this repo's general diagnostic
+    # prefix (test_ase_core alone prints 17 of them) and echoing all of it
+    # would bury the verdict.
+    printf '%s\n' "$out" | grep -E '^note: corpus-source' | sed 's/^/         | /'
   done
 done
 

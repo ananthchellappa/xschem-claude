@@ -1177,12 +1177,14 @@ check {SX9 the same declared names come back from both binaries' spellings, and 
 ## (test_ase_core CP7), and enabling `sp` on one of them is a USER GESTURE, not
 ## a migration: `sp` declares no `seed_enabled`, so `ase::state_default` still
 ## seeds exactly four rows.
-set SCF {}
-if {![catch {exec git -C $repo ls-files -- *.state} scout]} {
-  foreach screl [split $scout "\n"] {
-    if {[string trim $screl] ne {}} { lappend SCF [file join $repo $screl] }
-  }
-}
+## ⚠ AND THE LIST SURVIVES A CHECKOUT WITH NO `.git` (issue 1485). The `if
+## {![catch ...]}` arm here left `SCF` EMPTY in a `git archive` export, so SC1
+## read `-> {0 {} 0 0 ...}` and the row measured nothing at all (MEASURED
+## 2026-09-20). `test_corpus_files` enumerates the same files from the
+## filesystem when git cannot answer, so SCN is still 104 there.
+set SCCORP [test_corpus_files $repo *.state]
+test_corpus_note $SCCORP "the committed .state corpus"
+set SCF [dict get $SCCORP files]
 set SCBAD {} ; set SCN 0 ; set SCSP 0 ; set SCPORTS 0
 foreach scf $SCF {
   if {![file exists $scf]} { continue }

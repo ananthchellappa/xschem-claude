@@ -712,18 +712,35 @@ check {DL4 and an option the deck can carry is not reported at all} \
 ## regression**, not a catalogue edit.
 check {DL5 after 1439 exactly one committed bench still stores an option that cannot reach the simulator, and no bench loses wnflag any more} \
   [o_ans apply {{} {
+     ## ⚠ NOT `exec git ls-files` BARE (issue 1485): in a checkout with no
+     ## `.git` that RAISED, and the raise landed in the row as its answer --
+     ## `-> {RAISED:fatal: not a git repository ...}`, MEASURED 2026-09-20 in a
+     ## `git archive` export. `test_corpus_files` enumerates the same files
+     ## from the filesystem when git cannot answer, so this row still reads the
+     ## whole corpus there.
      global repo
      set byname [dict create] ; set files 0
-     foreach f [split [exec git -C $repo ls-files] "\n"] {
-       if {![string match *.state $f]} { continue }
-       if {[catch {ase::state_load [file join $repo $f]} st]} { continue }
+     set corpus [test_corpus_files $repo *.state]
+     test_corpus_note $corpus "the committed .state corpus"
+     foreach f [dict get $corpus files] {
+       if {[catch {ase::state_load $f} st]} { continue }
        set d [ase::state_option_delivery ngspice $st]
        if {[llength $d] == 0} { continue }
        incr files
        foreach row $d { dict incr byname [lindex $row 0] }
      }
      set wn 0 ; catch {set wn [dict get $byname wnflag]}
-     return [list $files [lsort [dict keys $byname]] $wn] }}] \
+     ## ⚠ A FLOOR ON THE COUNT, EXACT ON THE OPTION NAMES. In a checkout with
+     ## no `.git` the corpus comes from the filesystem (issue 1485) and
+     ## includes benches the tester saved: MEASURED 2026-09-20, copying the
+     ## shipped `test_stdcells` bench into a second run directory took this row
+     ## to `{2 {acct list} 0}` and reddened it. What the row is actually about
+     ## survives exactly: the undeliverable options in the whole tree are still
+     ## precisely `acct` and `list` -- a NEW inert option anywhere reddens this
+     ## -- and `wn` is still exactly 0, which is the "no bench loses wnflag"
+     ## half. What the floor gives up is "exactly ONE bench", which no longer
+     ## catches a SECOND bench carrying the same two inert rows.
+     return [list [expr {$files >= 1}] [lsort [dict keys $byname]] $wn] }}] \
   {1 {acct list} 0}
 
 } dlerr]} { check {DL0 section DL ran to the end} "RAISED:$dlerr" {} }

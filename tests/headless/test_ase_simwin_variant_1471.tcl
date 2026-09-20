@@ -430,10 +430,15 @@ check {WR4 the dump's missing fix is said in the measured words the window and t
 # ============================================================================
 source [file join $here state_roundtrip.tcl]
 set STR [v_total {ase_state_roundtrip $::repo}]
+## ⚠ A FLOOR, NOT AN EQUALITY -- the same change, and the same measurement, as
+## test_ase_variant_1470's ST1: with no `.git` the corpus comes from the
+## filesystem (issue 1485) and includes the tester's own saved benches, so one
+## copied `.state` reddened this row at `{105 {} 1 1}` while a clone stayed
+## green. `bad` stays exactly empty, so nothing is weakened.
 check {ST1 no state key was added: every committed .state file round-trips byte for byte, and both controls hold} \
-  [v_total {list [dict get $::STR tracked] [dict get $::STR bad] \
+  [v_total {list [expr {[dict get $::STR tracked] >= 104}] [dict get $::STR bad] \
                  [dict get $::STR control_disagrees] [dict get $::STR control_agrees]}] \
-  {104 {} 1 1}
+  {1 {} 1 1}
 
 # ============================================================================
 # SECTION WG -- THE ROW EDITOR, ON A DISPLAY

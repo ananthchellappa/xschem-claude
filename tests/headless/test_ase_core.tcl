@@ -7938,14 +7938,16 @@ check "SE9 the three Stage 5 entries declare the result destination each of them
 ## ⚠ AND WHY THE COUNTS ARE FLOORS WHILE THE SHAPES ARE EXACT. Adding a bench is
 ## ordinary work and must not red this suite; changing what a bench's row LOOKS
 ## LIKE is this batch's subject and must.
-set CPF {}
-if {[catch {exec git -C $repo ls-files -- *.state} cpout]} {
-  set CPF {GIT-LS-FILES-FAILED}
-} else {
-  foreach cprel [split $cpout "\n"] {
-    if {[string trim $cprel] ne {}} { lappend CPF [file join $repo $cprel] }
-  }
-}
+## ⚠ AND THE CORPUS IS LISTED WITHOUT ASSUMING A `.git` (issue 1485). This read
+## `if {[catch {exec git ... ls-files}]} { set CPF {GIT-LS-FILES-FAILED} }` -- a
+## sentinel that was then used as a PATH, so in a `git archive` export CP1-CP4
+## failed and CP7c DIED on `couldn't open "GIT-LS-FILES-FAILED"` after 466 of
+## 675 rows (MEASURED 2026-09-20). `test_corpus_files` falls back to the
+## filesystem, so the export's corpus is the same 104 files and these rows
+## measure the same thing there as here.
+set CPCORP [test_corpus_files $repo *.state]
+test_corpus_note $CPCORP "the committed .state corpus"
+set CPF [dict get $CPCORP files]
 set CPKEYS [dict create] ; set CPAR [dict create]
 set CPN 0 ; set CPRPF {} ; set CPTARGET 0 ; set CPSOURCE 0
 foreach cpf $CPF {

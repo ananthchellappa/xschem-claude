@@ -1076,9 +1076,19 @@ catch {test_sim_registry_isolate}
 # ============================================================================
 source [file join $here state_roundtrip.tcl]
 set STR [ase_state_roundtrip $repo]
+## ⚠ A FLOOR, NOT AN EQUALITY -- as test_ase_core CP1/CP7 and
+## test_ase_trnoise_1466 NC1 always were, and for the reason CP1's comment
+## already gives: adding a bench is ordinary work and must not red this suite.
+## In a checkout with no `.git` the corpus is enumerated from the filesystem
+## (issue 1485), which sees the tester's OWN saved benches too -- MEASURED
+## 2026-09-20: one copied `.state` took this row to `{105 {} 1 1}` and reddened
+## it, while the same file in a clone was green, so the two conditions
+## disagreed. Nothing is weakened: `bad` is still exactly empty, so a 105th
+## file has to round-trip byte for byte like the rest.
 check {ST1 no state key was added: every committed .state file round-trips byte for byte, and both controls hold} \
-  [list [dict get $STR tracked] [dict get $STR bad] [dict get $STR control_disagrees] [dict get $STR control_agrees]] \
-  {104 {} 1 1}
+  [list [expr {[dict get $STR tracked] >= 104}] [dict get $STR bad] \
+        [dict get $STR control_disagrees] [dict get $STR control_agrees]] \
+  {1 {} 1 1}
 
 if {$fail} { puts "RESULT: $fail FAILED ($npass passed)" } \
 else { puts "RESULT: ALL PASS ($npass checks)" }

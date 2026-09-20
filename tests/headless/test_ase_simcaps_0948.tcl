@@ -4347,11 +4347,17 @@ check {W5 the classifier is reachable as a backend hook and the unknown-simulato
 ## reason this classifier is shaped the way it is has gone, and someone should
 ## be told rather than left reading a comment about seven rows that no longer
 ## exist.
+##
+## ⚠ AND THE CORPUS LIST IS NOT `catch {exec git ...}` WITH THE STATUS THROWN
+## AWAY (issue 1485). It was, and the `set W_OUT {}` arm made W6 measure NOTHING
+## in a checkout with no `.git`: `-> {0} (exp {1})`, MEASURED 2026-09-20 in a
+## `git archive` export. `test_corpus_files` enumerates the same files from the
+## filesystem when git cannot answer, so the count is the same there.
 set W_I 0
-if {[catch {exec git -C $repo ls-files -- *.state} W_OUT]} { set W_OUT {} }
-foreach W_REL [split $W_OUT "\n"] {
-  if {[string trim $W_REL] eq {}} { continue }
-  if {[catch {open [file join $repo $W_REL] r} W_FH]} { continue }
+set W_CORP [test_corpus_files $repo *.state]
+test_corpus_note $W_CORP "the committed .state corpus"
+foreach W_F [dict get $W_CORP files] {
+  if {[catch {open $W_F r} W_FH]} { continue }
   set W_TXT [read $W_FH] ; close $W_FH
   foreach W_L [split $W_TXT "\n"] {
     if {[string first {analyses } $W_L] != 0} { continue }

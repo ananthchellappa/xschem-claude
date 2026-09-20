@@ -36,11 +36,28 @@
 #  writer cannot escape the measurement. Issue 1464's crew put it exactly
 #  right: `state_serialize` is not the byte-identity mechanism, `state_save` is.
 #
-#  Usage, from a suite that has already sourced the ASE-L environment:
+#  ⚠ AND IT NO LONGER READS GIT'S ERROR TEXT AS A FILE LIST (issue 1485). The
+#  corpus line here was
+#
+#        catch {exec git -C $repo ls-files -- *.state} out
+#
+#  with the status thrown away, so in a tree with no `.git` -- a GitHub
+#  "Download ZIP", a release tarball, a `git archive` export -- `$out` was
+#  git's complaint, `[file join $repo <complaint>]` became a path, and the two
+#  controls opened it: MEASURED 2026-09-20, `test_ase_trnoise_1466` DIED after
+#  58 ok rows and `test_ase_variant_1470` after 75, both with
+#  `couldn't open "<repo>/fatal: not a git repository ..."`. It now asks
+#  `test_corpus_files` (tests/headless/scratch.tcl), which falls back to
+#  enumerating the same files from the filesystem so the corpus in an export is
+#  the SAME 104 files and no coverage moves.
+#
+#  Usage, from a suite that has already sourced the ASE-L environment AND
+#  tests/headless/scratch.tcl (every caller does; `test_corpus_files` lives
+#  there):
 #
 #        source [file join $repo tests headless state_roundtrip.tcl]
 #        set r [ase_state_roundtrip $repo]
-#        # -> dict: tracked bad control_disagrees control_agrees
+#        # -> dict: tracked bad control_disagrees control_agrees source reason
 #
 #  `bad` is the list of files that did not round-trip; it must be empty, and
 #  `control_disagrees` and `control_agrees` must both be 1.
@@ -48,12 +65,10 @@
 
 proc ase_state_roundtrip {repo {tmp {}}} {
   if {$tmp eq {}} { set tmp [file join [file dirname [info script]] .state_rt_[pid].tmp] }
-  set files {}
-  set out {}
-  catch {exec git -C $repo ls-files -- *.state} out
-  foreach rel [split $out "\n"] {
-    if {[string trim $rel] ne {}} { lappend files [file join $repo $rel] }
-  }
+  ## THE CORPUS, GIT OR NOT -- see the header. Never git's error text.
+  set corpus [test_corpus_files $repo *.state]
+  test_corpus_note $corpus "the committed .state corpus"
+  set files [dict get $corpus files]
 
   set n 0
   set bad {}
@@ -95,5 +110,7 @@ proc ase_state_roundtrip {repo {tmp {}}} {
 
   catch {file delete -force -- $tmp}
   return [dict create tracked $n bad $bad \
-                      control_disagrees $c_dis control_agrees $c_agr]
+                      control_disagrees $c_dis control_agrees $c_agr \
+                      source [dict get $corpus source] \
+                      reason [dict get $corpus reason]]
 }

@@ -696,18 +696,31 @@ check {RD9 an owned pre-deck option leaves the deck entirely, and the run says w
 ## wnflag and got nothing now get it.
 check {RD10 every committed bench that stores wnflag now renders the value} \
   [p_ans apply {{} {
+     ## ⚠ NOT `exec git ls-files` BARE (issue 1485): in a checkout with no
+     ## `.git` that RAISED, and the raise landed in the row as its answer --
+     ## `-> {RAISED:fatal: not a git repository ...} (exp {5 0 5})`, MEASURED
+     ## 2026-09-20 in a `git archive` export. `test_corpus_files` enumerates
+     ## the same files from the filesystem when git cannot answer.
      global repo
      set n 0 ; set bare 0 ; set valued 0
-     foreach f [split [exec git -C $repo ls-files] "\n"] {
-       if {![string match *.state $f]} { continue }
-       if {[catch {ase::state_load [file join $repo $f]} st]} { continue }
+     set corpus [test_corpus_files $repo *.state]
+     test_corpus_note $corpus "the committed .state corpus"
+     foreach f [dict get $corpus files] {
+       if {[catch {ase::state_load $f} st]} { continue }
        if {![ase::option_enabled $st wnflag]} { continue }
        incr n
        set line [ase::opt_line ngspice wnflag [dict get [ase::state_option_map $st] wnflag]]
        if {$line eq {.options wnflag}} { incr bare }
        if {$line eq {.options wnflag=1}} { incr valued }
      }
-     return [list $n $bare $valued] }}] {5 0 5}
+     ## ⚠ A FLOOR ON THE COUNT, EXACT ON THE SHAPE. The corpus is enumerated
+     ## from the filesystem in a checkout with no `.git` (issue 1485) and then
+     ## includes the tester's own saved benches: MEASURED 2026-09-20, copying
+     ## the shipped `test_nmos` bench into a second run directory took this row
+     ## to `{6 0 6}` and reddened it. `bare` must still be exactly 0 and EVERY
+     ## bench that stores wnflag must render the value, which is the claim --
+     ## `valued == n` says it for six benches as well as for five.
+     return [list [expr {$n >= 5}] $bare [expr {$valued == $n}]] }}] {1 0 1}
 
 ## ⚠ AN EMPTY VALUE IS THE ONE PLACE THE SPELLER AND THE OLD RULE DISAGREE
 ## ABOUT NOTHING-VS-SOMETHING. The old rule wrote `.options klu=` -- a card with
