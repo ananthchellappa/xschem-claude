@@ -18,4 +18,8 @@
 | C fix | 1484, 1490 | crew (workflow) | receipts/C-verify.md | 7 applied, 3 rejected with reasons, 2 verifier claims refuted by measurement; 57 rows greened, none newly red | |
 | C gate | 1484, 1490 | driver | tests/results.1030214.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=524s, 87/87, zero peers | (this commit) |
 | C docs | 1484, 1490, 1334 | docs crew | the issue files | 1484 and 1490 closed with the traced mechanism and the full row lists; 1490's headline corrected (147 rows across 17 suites, not 71 across five); 1496 filed for the `.include`/`.lib` class; 1334 annotated, status unchanged, ruling left to the user | |
+| D land | 1489 | crew (workflow) | receipts/D-impl.md | the D21-approved fixes landed from the prepared candidate; suite 93 -> 101 checks; four false alarms measured red-first then green | |
+| D verify | 1489 | two adversarial crews | receipts/D-verify.md | no blocker, no must; ~150 hostile gate invocations, 19 fail-closed fixtures still red, six stranger shapes green with skips named | |
+| D fix | 1489 | crew | receipts/D-verify.md | two findings fixed (a capitalised value disarmed the new check; the corpus-driven pass was outside the time budget, 9.6s -> 2.5s on 90 MB), one refused on measurement (D9), two recorded as documented limits; suite 102 checks | |
+| D gate | 1489 | driver | tests/results.1188390.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=524s, 87/87, zero peers | (this commit) |
 

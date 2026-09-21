@@ -136,3 +136,31 @@ own `.include`, shown by reverting that one change.
   asking the user to rename their folder.** With a general escape that refusal may be
   liftable. That is user-visible product behaviour, so it is the user's call, not the
   batch's: filed as a ruling rather than changed.
+
+# D9 — Item D keeps a red the verifier called a false alarm, and says why (driver)
+
+The fix round was asked to remove three residual findings. It removed two and refused the
+third on measurement, which is the right answer: a true assertion written after a
+Slack-style fence line is RED on the landed checker and was green on `d42fc517`, but under
+a reference CommonMark parser that line is a paragraph and the assertion is never
+evaluated at all. A green there would be a claim passing unread, which D18 rule B forbids.
+`d42fc517` names the same assertion in every other position it does not read; only that
+one shape slipped through, from a parse the reference rejects.
+
+So the verdict stands and the message was fixed instead — it used to point at the innocent
+fence and now names all three lines. Measured to change no verdict: landed against fixed
+is 0 differences over 1061 files, and the whole-corpus diff against `d42fc517` is a single
+`opened`-map entry that changes nothing.
+
+Two limits are documented in the spec rather than coded, for the reason D21 gives: a
+line-based scanner cannot settle nested-container ambiguity, and closing the remaining
+silence would mean naming every unknown word on every unread marked fence — the
+false-alarm class this item exists to close. A suite row pins each limit by measurement so
+nobody re-derives it as a defect.
+
+# D10 — Crews own a subtree of the scratch root, not the root (driver)
+
+The brief handed every item's crew the same scratch root and told each to delete it. One
+crew did exactly that and removed about 2.5 GB of another crew's live work. The rule is
+now: make `<root>/<your label>/`, delete that, never the root. This was the driver's
+mistake, not a crew's.

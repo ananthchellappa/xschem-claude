@@ -202,12 +202,48 @@ namespace eval istamp {
     ## cap out.  Now the run's scans share one clock, and a block reached after
     ## it has run out is a NAMED problem, never evaluated and never passed.  The
     ## real corpus's one block costs ~70 ms of the 60 s.
+    ## ⚠ AND THE TOTAL IS CHARGED WITH SCANNING TIME ONLY (outsider-fixes S1-fix8).
+    ## It was a wall clock started when the gate started, so everything the gate
+    ## did BEFORE an assert= -- every git question a tree= or a quote= asks --
+    ## spent the assert= budget.  MEASURED by S1-fix7's refuter and red-first by
+    ## S1-fix8: 240 VALID quote= blocks in stamped 0056, every one of which holds,
+    ## took the gate past 60 s before it reached 1219's real assertion, and the
+    ## gate said `1219:72: assertion could not be evaluated -- the search ran past
+    ## the gate's total budget of 60 s for all the assert= scans of one run`,
+    ## rc 1, in 74.5 s -- while 1219's own scan takes ~70 ms.  A false sentence and
+    ## a false red, over a corpus with nothing wrong in it.  Now each scan's own
+    ## time is added up (scan_spent_us) and only that is charged: 60 s of
+    ## SCANNING, which is what bounds the busy loop above.
+    ## ⚠ THE WALL CLOCK IS KEPT, UNDER ITS OWN NAME.  Git work was never bounded
+    ## by anything but each call's `timeout` (S1-fix7's refuter: 50 quote= blocks
+    ## of bogus revisions 16 s, and a partial clone runs an `ls-tree -r` per
+    ## absent quote), so a whole gate() run also has a wall-clock budget,
+    ## t_gate_total: once it is spent, every tree=, quote= and assert= the gate
+    ## reaches is a NAMED problem saying that the GATE's time ran out -- never
+    ## charged to whichever assertion happened to come next.  600 s sits under
+    ## T1's 900 s per-case cap, so a corpus that asks for more is named rather
+    ## than killed; the real corpus's whole gate takes well under a second.
     variable t_git        30
     variable t_scan       60
     variable t_scan_total 60
-    ## The deadline (clock milliseconds) shared by every scan of the gate() run
-    ## in progress, or "" outside one.  Set and cleared by gate() alone.
-    variable scan_deadline ""
+    variable t_gate_total 600
+    ## Microseconds of assert= SCANNING charged to the gate() run in progress,
+    ## and that run's wall-clock deadline (clock milliseconds) -- both "" outside
+    ## one.  Set and cleared by gate() alone.
+    variable scan_spent_us ""
+    variable gate_deadline ""
+    ## ⚠ NO PROBLEM LINE IS UNBOUNDED (outsider-fixes S1-fix8).  A problem quotes
+    ## corpus words -- a fence's stray words, a pat=, a path=, a stamp's token --
+    ## and nothing capped them: S1-fix7's refuter MEASURED one marked fence with
+    ## 200k stray words (a 404 KB issue file) print a single 5.8 MB problem line,
+    ## and S1-fix8 red-first a 6.9 MB one, plus 1 MB for a 1 MB pat=, 3 MB for a
+    ## 1 MB path=, and 1 MB for a stamp's 1 MB tree=.  Each quoted word is now
+    ## clipped (clip), a fence names its first fence_bad_shown stray words and
+    ## counts the rest, and gate() cuts any problem or NOT VERIFIED line longer
+    ## than problem_cap characters, saying so -- the backstop for a site nobody
+    ## clipped.
+    variable fence_bad_shown 5
+    variable problem_cap     2000
 
     ## ⚠ THE CALLER'S REPOSITORY-LOCATING VARIABLES, REMOVED FROM EVERY git CALL
     ## THIS CHECKER MAKES (istamp::git_in).  The checker describes the tree it
@@ -866,6 +902,15 @@ proc istamp::rev_problem {what rev why} {
 ## states its tree" having READ those four files in the same session.  A
 ## convention a grep cannot see is a convention that does not exist.
 
+## A corpus word as a problem quotes it: whole when it is at most $n characters,
+## else its first $n and how long it really was (see problem_cap).  String
+## work only.
+proc istamp::clip {s {n 80}} {
+    set len [string length $s]
+    if {$len <= $n} { return $s }
+    return "[string range $s 0 [expr {$n - 1}]]...($len characters)"
+}
+
 proc istamp::parse_stamp {line} {
     variable ok_claim
     variable ok_fix
@@ -884,15 +929,15 @@ proc istamp::parse_stamp {line} {
     }
     set ver [lindex $toks 0]
     if {$ver ne "v1"} {
-        return [dict create ok 0 err "first token must be the schema version `v1`, got `$ver`" f {}]
+        return [dict create ok 0 err "first token must be the schema version `v1`, got `[clip $ver]`" f {}]
     }
     set f [dict create]
     foreach t [lrange $toks 1 end] {
         if {![regexp {^([a-z]+)=(.*)$} $t -> k v]} {
-            return [dict create ok 0 err "token `$t` is not key=value" f {}]
+            return [dict create ok 0 err "token `[clip $t]` is not key=value" f {}]
         }
         if {[lsearch -exact $ok_key $k] < 0} {
-            return [dict create ok 0 err "unknown key `$k` (known: $ok_key)" f {}]
+            return [dict create ok 0 err "unknown key `[clip $k]` (known: $ok_key)" f {}]
         }
         if {[dict exists $f $k]} {
             return [dict create ok 0 err "duplicate key `$k`" f {}]
@@ -906,11 +951,11 @@ proc istamp::parse_stamp {line} {
     }
     set claim [dict get $f claim]
     if {[lsearch -exact $ok_claim $claim] < 0} {
-        return [dict create ok 0 err "claim=$claim is not one of: $ok_claim" f $f]
+        return [dict create ok 0 err "claim=[clip $claim] is not one of: $ok_claim" f $f]
     }
     set fix [dict get $f fix]
     if {[lsearch -exact $ok_fix $fix] < 0} {
-        return [dict create ok 0 err "fix=$fix is not one of: $ok_fix" f $f]
+        return [dict create ok 0 err "fix=[clip $fix] is not one of: $ok_fix" f $f]
     }
     set tree [dict get $f tree]
     ## The a-f requirement is stolen from tools/stampscan.py, and it is there
@@ -918,10 +963,10 @@ proc istamp::parse_stamp {line} {
     ## 141592654 (pi) and produced a driver finding that "193 of 508 cited SHAs
     ## do not resolve".  They were not SHAs.
     if {![rev_token $tree]} {
-        return [dict create ok 0 err "tree=$tree is not a revision (7-40 hex, at least one a-f)" f $f]
+        return [dict create ok 0 err "tree=[clip $tree] is not a revision (7-40 hex, at least one a-f)" f $f]
     }
     if {![regexp {^[0-9]{4}-[0-9]{2}-[0-9]{2}$} [dict get $f stamped]]} {
-        return [dict create ok 0 err "stamped=[dict get $f stamped] is not YYYY-MM-DD" f $f]
+        return [dict create ok 0 err "stamped=[clip [dict get $f stamped]] is not YYYY-MM-DD" f $f]
     }
     ## ⚠ AND IT MUST BE A DAY ON THE CALENDAR.  `0000-00-00` has the right shape
     ## and names no day at all, and while a date rule trusted this field it was
@@ -931,7 +976,7 @@ proc istamp::parse_stamp {line} {
         return [dict create ok 0 err "stamped=[dict get $f stamped] is not a day on the calendar" f $f]
     }
     if {![regexp {^(0|[1-9][0-9]*)$} [dict get $f open]]} {
-        return [dict create ok 0 err "open=[dict get $f open] is not a non-negative integer" f $f]
+        return [dict create ok 0 err "open=[clip [dict get $f open]] is not a non-negative integer" f $f]
     }
     ## ⚠ A SUPERSEDED FIX MUST NAME WHAT REPLACED IT.  This rule exists because
     ## of issue 0442, and 0442 is the sharpest defect in the whole sample: its
@@ -955,14 +1000,14 @@ proc istamp::parse_stamp {line} {
     ## `self`.
     if {[dict exists $f scope] && ![regexp {^[A-Za-z0-9._/-]+$} [dict get $f scope]]} {
         return [dict create ok 0 err \
-            "scope=[dict get $f scope] must be a single token naming an arm, path or door" f $f]
+            "scope=[clip [dict get $f scope]] must be a single token naming an arm, path or door" f $f]
     }
     if {[dict exists $f super]} {
         set s [dict get $f super]
         set ok_super [expr {[regexp {^[0-9]{4}$} $s] || $s eq "self" || [rev_token $s]}]
         if {!$ok_super} {
             return [dict create ok 0 err \
-                "super=$s must be a 4-digit issue number, a revision, or `self`" f $f]
+                "super=[clip $s] must be a 4-digit issue number, a revision, or `self`" f $f]
         }
     }
     return [dict create ok 1 err "" f $f]
@@ -1072,8 +1117,10 @@ proc istamp::find_stamp {text} {
 ## key=value grammar as the stamp:
 ##
 ##   ```c quote=fadb226d path=src/scheduler.c      <- a verifiable quote
-##   ```tcl fix=superseded                          <- a prescription's state
 ##   ```sh assert=absent pat=SABOTAGE path=src/ state=broken
+##   ```tcl fix=superseded                          <- a prescription's state:
+##                                                     a label for the reader,
+##                                                     not marked, never read
 ##
 ## Returns a list of dicts: kind, attrs, body, lineno.
 proc istamp::find_blocks {text} {
@@ -1098,11 +1145,25 @@ proc istamp::find_blocks {text} {
 ##     indented at most 3 spaces, with nothing after it but blanks;
 ##   * a ~~~ fence and an indented fence are fences -- what is inside them is
 ##     text, not a block -- but only a column-0 backtick fence is READ as one
-##     (a quote on any other kind is named by stray_quotes, as before).
-## Not modelled, and stated: containers (a fence inside `>` or a list item is
-## not seen as one) and a backtick in a backtick fence's info string.  Each can
-## only make this parser see a block markdown does not, or miss one it does --
-## and a missed quote fence is named by stray_quotes, never passed.
+##     (a quote on any other kind is named by stray_quotes, as before);
+##   * a backtick fence's info string holds no backtick (outsider-fixes S1-fix9,
+##     kept by S1-fix10; CommonMark's own rule).  A line such as ```` ```make
+##     install``` fails here ```` is an inline code span in a paragraph, the
+##     way Slack-style writing uses it, and it OPENED a fence here: everything
+##     down to the next bare ``` line was text inside that phantom, so a real
+##     ```sh assert=... fence after it was swallowed, named `inside another
+##     fenced block` and never evaluated -- a TRUE assertion went red, a FALSE
+##     one was never called false (READ by S1-fix8's refuter, MEASURED
+##     red-first by S1-fix9 and again by S1-fix10; row Q24).  The same rule
+##     has two consequences markdown-it agrees with, stated in spec section 6:
+##     a pat= cannot hold a backtick (that line is no fence either, and is
+##     named for it), and a ```sh `make` output line is no opener, so the bare
+##     ``` meant to close it opens a fence instead and swallows the next one.
+## Not modelled, and stated: containers.  A fence indented 4 or more spaces
+## (under a nested list item) or inside a `>` blockquote is not seen as a fence
+## by THIS scan; one indented 3 spaces or fewer -- a list item's included -- is.
+## That can only make this parser miss a block markdown reads -- and a missed
+## quote= or assert= fence is named by stray_attrs, never passed.
 ##
 ## ⚠ A MARKED FENCE'S INFO STRING IS READ IN FULL (outsider-fixes DECISIONS
 ## D19).  This kept the words shaped `key=value` and silently DROPPED every
@@ -1114,29 +1175,109 @@ proc istamp::find_blocks {text} {
 ## threw `int"` away; `assert=present pat=static nonexistent_zz_symbol ...`
 ## -- a phrase on NO line -- said ok too, because it searched for `static`.
 ## The stamp's grammar has always refused a token that is not key=value.  So a
-## fence is MARKED when any word of its info string is shaped `key=value`, and
-## then its info string must be exactly: at most one leading language word (no
-## `=` in it), then `key=value` words only, each key known (`fence_keys`) and
-## given once.  Anything else lands in the block's `bad` list, and the gate
-## names the block and does not evaluate it (fail-closed: nothing it claims is
-## passed).  A fence with no key=value word is an ordinary code sample, and
-## its info string is nobody's business (row N2).
-namespace eval istamp { variable fence_keys {quote path fix assert pat state} }
+## MARKED fence's info string must be exactly: at most one leading language
+## word (no `=` in it), then `key=value` words only, each key known
+## (`fence_keys`) and given once.  Anything else lands in the block's `bad`
+## list, and the gate names the block and does not evaluate it (fail-closed:
+## nothing it claims is passed).
+##
+## ⚠ AND A FENCE IS MARKED ONLY BY A KEY OF A BLOCK (fence_marks;
+## outsider-fixes S1-fix8, widened by S1-fix9 below).  S1-fix7 marked a fence
+## when ANY word was shaped `key=value`, and so read every ordinary code fence
+## that carried one as a malformed block: MEASURED by its refuter and red-first
+## by S1-fix8, in stamped 1219, an mkdocs-style ```` ```python title="example.py"
+## ````, ```` ```sh cc=gcc make ```` and ```` ```sh make prefix=/usr install
+## ```` were each `a marked fence the parser cannot read in full`, rc 1 --
+## honest content, false reds, where aa5cece0 said ok.  Those words are the
+## fence's own business.  A fence carrying no key of a block -- `fix=superseded`
+## alone included, a label for the reader that the gate has never evaluated --
+## is an ordinary code sample (rows N2, Q18).
+##
+## ⚠ ...AND BY THE KEYS THAT ONLY A BLOCK CARRIES: path=, pat= AND state=
+## (fence_marks; outsider-fixes S1-fix9).  Marking by quote= and assert= alone
+## lost every block whose marking key was MISSPELLED: `asert=`, `assertion=` or
+## `asserts=` on a FALSE assertion (`pat=SABOTAGE path=src state=holds`, eight
+## real hits), and `qoute=` or `quotes=` on a ROTTED quote (`path=README`, a body
+## not in the file), each said `ok (0 problems)` in stamped 1219 -- the fence was
+## not marked, so its info string was never read -- where d42fc517 named the
+## unknown key (MEASURED by S1-fix8's refuter, red-first by S1-fix9; row Q23).
+## A near-miss an honest author makes by accident is named, never passed
+## (DECISIONS D18-B).  The ordinary fences S1-fix8 freed stay free: a title,
+## cc=, prefix=, hl_lines=, a fix= label carry none of the five (Q18).  A fence
+## marked only by path=, pat= or state= and otherwise well-formed is read and
+## has nothing to evaluate, so it is no problem (`sh path=src/foo.c`); one that
+## also carries a word that is not key=value (`sh path=/tmp ls`) is named, as
+## any marked fence is -- the cost of this rule, stated in spec section 6, and
+## the price of also catching `assert:absent` and `assert absent` (MEASURED:
+## each named here, `ok (0 problems)` at S1-fix8).
+##
+## ⚠ A NEAR-MISS OF quote= OR assert= IS NAMED ONCE, BY stray_attrs.  Another
+## case (`ASSERT=absent`, `Quote=`) or a spacing (`assert = absent`, `assert
+## =absent`, and since S1-fix10 `Assert= absent`, which S1-fix9's refuter
+## MEASURED still named twice, as d42fc517 names it) is matched there in any
+## case and spacing.  A fence now marked by
+## its pat= would also put that word in `bad`, and the file got two problems
+## for one mistake -- d42fc517's double-naming, which S1-fix8 had ended (row
+## Q18's 9188; MEASURED by S1-fix8's refuter on its remedy).  So those words are
+## LEFT to stray_attrs here, and the rest of the info string is read without
+## them -- but only while the key is not ALSO written canonically in the same
+## info string: then stray_attrs is silent for that line and the near-miss is a
+## bad word here, so it is still named exactly once.
+## ⚠ The `bad` list names at most fence_bad_shown words and COUNTS the rest: a
+## fence of 200k stray words printed a 6.9 MB problem line (see problem_cap).
+namespace eval istamp { variable fence_keys {quote path fix assert pat state} ; variable fence_marks {quote assert path pat state} }
 proc istamp::fence_info {info} {
     variable fence_keys
+    variable fence_marks
+    variable fence_bad_shown
     set words {}
     foreach t [split [string trim $info]] { if {$t ne ""} { lappend words $t } }
-    set toks {}; set bad {}; set seen {}; set marked 0
-    foreach t $words { if {[regexp {^[a-z]+=} $t]} { set marked 1 ; break } }
-    if {!$marked} { return [list {} {}] }
-    set i 0
+    set toks {}; set bad {}; set nbad 0; set seen {}; set marked 0; set canon {}
     foreach t $words {
+        if {[regexp {^([a-z]+)=} $t -> k]} {
+            if {$k in $fence_marks} { set marked 1 }
+            if {$k in {quote assert}} { dict set canon $k 1 }
+        }
+    }
+    if {!$marked} { return [list {} {}] }
+    ## The near-miss words stray_attrs names (its own test, on the same info
+    ## string), by word index.
+    set left {}
+    set n [llength $words]
+    foreach k {quote assert} {
+        if {[dict exists $canon $k] || ![regexp -nocase "(^|\[ \t\])$k\[ \t\]*=" $info]} { continue }
+        for {set j 0} {$j < $n} {incr j} {
+            set t [lindex $words $j]
+            if {[regexp -nocase "^$k=" $t]} {
+                dict set left $j 1
+                ## `Assert= absent`: the value came apart from its `=`.
+                if {[regexp -nocase "^$k=\$" $t] && $j + 1 < $n && [string first = [lindex $words $j+1]] < 0} {
+                    incr j
+                    dict set left $j 1
+                }
+            } elseif {[string equal -nocase $t $k] && [string index [lindex $words $j+1] 0] eq "="} {
+                dict set left $j 1
+                incr j
+                dict set left $j 1
+                if {[lindex $words $j] eq "=" && $j + 1 < $n && [string first = [lindex $words $j+1]] < 0} {
+                    incr j
+                    dict set left $j 1
+                }
+            }
+        }
+    }
+    set i 0
+    set j -1
+    foreach t $words {
+        incr j
+        if {[dict exists $left $j]} { continue }
         incr i
+        set why ""
         if {[regexp {^([a-z]+)=(.*)$} $t -> k v]} {
             if {$k ni $fence_keys} {
-                lappend bad "`[string range $t 0 39]` has a key the grammar does not know (known: $fence_keys)"
+                set why "`[string range $t 0 39]` has a key the grammar does not know (known: $fence_keys)"
             } elseif {[dict exists $seen $k]} {
-                lappend bad "`[string range $t 0 39]` gives `$k=` a second time"
+                set why "`[string range $t 0 39]` gives `$k=` a second time"
             } else {
                 dict set seen $k 1
                 lappend toks $k $v
@@ -1144,14 +1285,35 @@ proc istamp::fence_info {info} {
         } elseif {$i == 1 && [string first = $t] < 0} {
             ## the language word
         } else {
-            lappend bad "`[string range $t 0 39]` is not a key=value word"
+            set why "`[string range $t 0 39]` is not a key=value word"
         }
+        if {$why ne "" && [incr nbad] <= $fence_bad_shown} { lappend bad $why }
+    }
+    if {$nbad > $fence_bad_shown} {
+        lappend bad "and [expr {$nbad - $fence_bad_shown}] more word(s) like these, not listed"
     }
     return [list $toks $bad]
 }
+## ⚠ `swallow` IS A DIAGNOSTIC, NOT A RULE.  It changes no verdict; it records
+## which line the CommonMark opener rule sent the block to, so that the author
+## of the one shape that rule costs is pointed at the line that is actually
+## wrong.  MEASURED at 04844d23 (stranger-reds item D, fix round): a TRUE
+## assertion written under a Slack-style ```` ```sh `make` output ```` line is
+## named `9: an assert= the parser does not read (inside another fenced block,
+## where it is text, not a fence)` -- line 9 is the author's own honest fence,
+## the line that swallowed it is the bare ``` at 7, and the line that made THAT
+## an opener is the backtick-info line at 5.  Neither was named, so the message
+## pointed at the innocent fence.  markdown-it (commonmark, 3.0.0) agrees with
+## the parser and not with the author: it renders line 5 as a PARAGRAPH and the
+## ``` below it as a fence whose content is the assert= line, so the red is
+## correct and the block really is text -- what was missing was the reason.
+## Here the rejected line is remembered until a fence opens or closes, and a
+## BARE ``` opener that follows one records it.
 proc istamp::fence_scan {text} {
     set out {}
     set opened {}
+    set swallow {}
+    set btpend 0
     set i 0
     set in 0
     set fch ""
@@ -1165,6 +1327,14 @@ proc istamp::fence_scan {text} {
         incr i
         if {!$in} {
             if {[regexp {^( {0,3})(`{3,}|~{3,})(.*)$} $ln -> ind fence info]} {
+                if {[string index $fence 0] eq "`" && [string first "`" $info] >= 0} {
+                    ## CommonMark: a backtick fence's info string may hold no
+                    ## backtick, so this line opens nothing -- it is a paragraph
+                    ## with inline code in it.  The ``` the author wrote to
+                    ## CLOSE it therefore opens a block instead (stray_why).
+                    set btpend $i
+                    continue
+                }
                 set fch  [string index $fence 0]
                 set flen [string length $fence]
                 set readable [expr {$ind eq "" && $fch eq "`"}]
@@ -1172,11 +1342,16 @@ proc istamp::fence_scan {text} {
                 if {$readable} { lassign [fence_info $info] toks bad }
                 set in 1; set attrs $toks; set fbad $bad; set body {}; set startno $i
                 dict set opened $i 0
+                if {$btpend && $fch eq "`" && [string trim $info] eq ""} {
+                    dict set swallow $i $btpend
+                }
+                set btpend 0
             }
         } else {
             if {[regexp {^ {0,3}(`{3,}|~{3,})[ \t]*$} $ln -> cf]
                 && [string index $cf 0] eq $fch && [string length $cf] >= $flen} {
                 set in 0
+                set btpend 0
                 dict set opened $startno 1
                 if {$readable && ([llength $attrs] || [llength $fbad])} {
                     lappend out [dict create attrs $attrs body [join $body \n] lineno $startno bad $fbad]
@@ -1186,7 +1361,7 @@ proc istamp::fence_scan {text} {
             }
         }
     }
-    return [dict create blocks $out opened $opened]
+    return [dict create blocks $out opened $opened swallow $swallow]
 }
 
 ## ---------------------------------------------------------------------------
@@ -1283,6 +1458,24 @@ proc istamp::stamp_shaped {c} {
 ## does not read is a problem, wherever it sits.  MEASURED 2026-09-18 at
 ## aa5cece0, all 1047 numbered issue files: the only lines holding it are the
 ## ten real stamps, so the real corpus gains nothing.
+##
+## ⚠ INSIDE A FENCE TOO -- A DOCUMENTED LIMIT, NOT AN OVERSIGHT (outsider-fixes
+## DECISIONS D21).  A body quoted in a fenced example (``see `v1 claim=...` ``
+## in a ```text fence) is named here like any other, although markdown renders
+## it as code.  S1-fix8 exempted closed fences and S1-fix9 found them through
+## blockquotes and lists, and each round's refuter then MEASURED new
+## regressions IN THAT EXEMPTION from nested markdown -- a fence shown inside a
+## fence, a blockquoted or 4-indented fence inside an example, a docstring
+## example -- one of them fail-OPEN: a colon-less stamp in prose after such an
+## example passed.  A line-based scan cannot settle which fence a nested
+## container's ``` line belongs to, and a real CommonMark parser is out of
+## scope.  So every stamp body outside the stamp line is named, inside fences
+## included: fail-closed and loud, and the real corpus has none (MEASURED: the
+## only lines holding a body are the ten real stamps).  Row Q19 holds the
+## limit, with Q22.  The workaround, in spec section 6: show a stamp example
+## outside doc/claude/issues/, or break the body -- what is matched is a
+## backtick, `v1`, blanks and `claim=`, so write the example as `v1 ...`, or
+## leave out the backtick before `v1`.
 proc istamp::stray_stamps {num text} {
     set out {}
     set words [regexp -nocase {stamp} $text]
@@ -1323,13 +1516,46 @@ proc istamp::stray_stamps {num text} {
 ## checked, and nothing evaluated it.  MEASURED at 9fbc6fd9, all 1047 numbered
 ## issue files: one line anywhere carries `assert=`, it is 1219:72's column-0
 ## fence in a stamped file, it is read, and the real corpus gains no problem.
+##
+## ⚠ AND A MISSPELLED quote=/assert= IS NAMED HERE, WHATEVER THE FENCES AROUND
+## IT DO (near_miss_key; stranger-reds item D, issue 1489).  Naming a
+## misspelled marking key used to depend on the fence PAIRING up into a block
+## the gate reads, because it was fence_info that named it -- and both pairing
+## rules have a hole on the side the other one closes.  MEASURED red-first on
+## d42fc517 and on the S1-fix10 candidate, in stamped 1601, `asert=absent
+## pat=SABOTAGE path=src state=holds` (eight real hits, so the claim is FALSE)
+## and `qoute=<rev> path=...` over text the file does not hold:
+##   * d42fc517 opens a fence on a Slack-style ```` ```make install``` fails ````
+##     line, so the real fence below it is swallowed as text and NOTHING names
+##     the typo: `ok (0 problems)`, rc 0.
+##   * the S1-fix10 candidate reads that line as inline code, which is correct,
+##     and so pairs the bare ``` meant to CLOSE a ```` ```sh `make` output ````
+##     line as an OPENER instead -- swallowing the real fence below THAT, and
+##     again saying `ok (0 problems)` where d42fc517 said rc 1 (this is the one
+##     regression family S1-fix10's refuter measured, and the reason issue 1489
+##     was filed rather than the patch landed).  Its own typo case -- the
+##     misspelling on a backtick-info line -- goes silent the same way.
+## So the key is tested HERE, on the line's own info string, with no question
+## asked about what fence it sits in: both holes close at once, and the fence
+## pairing keeps the CommonMark rule that is right about structure.  Silent
+## only when a block the gate READ came from this very line, where fence_info
+## already names the word -- so it is named exactly once (D21 item 2).  A line
+## names at most one misspelling, the first: a 200k-word info string must not
+## become 200k problems (see problem_cap).
 proc istamp::stray_attrs {num text scan {keys {quote assert}}} {
     set out {}
-    if {![regexp -nocase {(quote|assert)[ \t]*=} $text]} { return $out }
+    ## The line loop is entered for a canonical quote=/assert= anywhere, or for
+    ## any fence character at all next to any key-shaped word -- a cheap
+    ## superset of "some fence line carries a misspelled marking key", so that a
+    ## file with no fence, or none with a key in it, still costs one regexp.
+    if {![regexp -nocase {(quote|assert)[ \t]*=} $text]
+        && !([regexp {`{3,}|~{3,}} $text] && [regexp {[A-Za-z]=} $text])} { return $out }
     set used {}
+    set readln {}
     set opened {}
     if {$scan ne ""} {
         foreach blk [dict get $scan blocks] {
+            dict set readln [dict get $blk lineno] 1
             foreach k $keys {
                 if {[dict exists [dict get $blk attrs] $k]} { dict set used $k,[dict get $blk lineno] 1 }
             }
@@ -1337,42 +1563,191 @@ proc istamp::stray_attrs {num text scan {keys {quote assert}}} {
         set opened [dict get $scan opened]
     }
     set i 0
+    ## The opener of the block a line at $i sits inside is the LAST opener
+    ## before it: fence_scan records an opener only while it is not already in
+    ## a fence, so anything between that opener and $i is body.  Walked with a
+    ## pointer rather than searched, because $i only grows -- a search per
+    ## problem line would be quadratic in a file of 50 000 fence lines, which
+    ## D18-A does not allow corpus text to buy.
+    set okeys [dict keys $opened]
+    set nok [llength $okeys]
+    set oi 0
+    set prev 0
     foreach ln [split $text \n] {
         incr i
-        if {![regexp -nocase {(quote|assert)[ \t]*=} $ln]} { continue }
+        if {![regexp -nocase {(quote|assert)[ \t]*=} $ln]
+            && ![regexp {(`{3,}|~{3,})} $ln]} { continue }
         if {![regexp {^(```+|~~~+)[ \t]*(.*)$} [md_strip $ln] -> fence info]} { continue }
+        while {$oi < $nok && [lindex $okeys $oi] < $i} { set prev [lindex $okeys $oi] ; incr oi }
         foreach k $keys {
             if {![regexp -nocase "(^|\[ \t\])$k\[ \t\]*=" $info]} { continue }
             if {[dict exists $used $k,$i]} { continue }
-            if {$k eq "quote"} {
-                set never "where no quote is ever verified"
-                set form  "`quote=<revision>`"
-                set tail  "it is never verified, so a quote that has rotted there passes silently"
-                set what  "a quote="
-            } else {
-                set never "where no assert= is ever evaluated"
-                set form  "`assert=absent` or `assert=present`"
-                set tail  "it is never evaluated, so a claim about the tree written there passes silently whether it holds or not"
-                set what  "an assert="
-            }
-            set cause [stray_cause $ln]
-            if {$scan eq ""} {
-                set cause "in a file with no **STAMP:** line, $never"
-            } elseif {$cause ne ""} {
-                set cause "a fence that is $cause"
-            } elseif {[string index $fence 0] eq "~"} {
-                set cause "a ~~~ fence; only ``` fences are read"
-            } elseif {[dict exists $opened $i] && ![dict get $opened $i]} {
-                set cause "a fence that is never closed"
-            } elseif {![dict exists $opened $i]} {
-                set cause "inside another fenced block, where it is text, not a fence"
-            } else {
-                set cause "the attribute is not written $form, lowercase and unspaced"
-            }
-            lappend out "$num:$i: $what the parser does not read ($cause) -- $tail; write it as a closed, column-0 ``` fence in a stamped file"
+            lassign [attr_words $k] never form tail what
+            lappend out "$num:$i: $what the parser does not read ([stray_why $ln $scan $fence $info $i $opened $prev $never "the attribute is not written $form, lowercase and unspaced"]) -- $tail; write it as a closed, column-0 ``` fence in a stamped file"
         }
+        ## The misspellings, tested on this line alone.  A block the gate read
+        ## from this line has already had its whole info string named by
+        ## fence_info, so nothing is said twice.
+        if {[dict exists $readln $i]} { continue }
+        lassign [misspelled_mark $info $keys] word meant
+        if {$word eq ""} { continue }
+        lassign [attr_words $meant] never form tail what
+        lappend out "$num:$i: `[clip $word]` on a fence, which is `$meant=` misspelled, so the parser does not read the block ([stray_why $ln $scan $fence $info $i $opened $prev $never "the key must be written exactly `$meant=`"]) -- $tail; write it as a closed, column-0 ``` fence in a stamped file"
     }
     return $out
+}
+
+## The words one marking key's problem is written with, as
+## {never form tail what}.  This file's own literals, never corpus text.
+proc istamp::attr_words {k} {
+    if {$k eq "quote"} {
+        return [list "where no quote is ever verified" "`quote=<revision>`" \
+            "it is never verified, so a quote that has rotted there passes silently" "a quote="]
+    }
+    return [list "where no assert= is ever evaluated" "`assert=absent` or `assert=present`" \
+        "it is never evaluated, so a claim about the tree written there passes silently whether it holds or not" "an assert="]
+}
+
+## Why the gate does not read the fence-shaped line $ln, whose fence characters
+## are $fence and whose info string is $info, at line $i -- `last` when every
+## structural reason is ruled out and the writing itself is what is wrong.
+## $prev is the opener of the block $i sits inside, where it sits inside one.
+##
+## ⚠ "INSIDE ANOTHER FENCED BLOCK" MUST SAY WHICH ONE (stranger-reds item D,
+## fix round).  This named the author's own honest fence and then described the
+## reason in the abstract, so the one line the author had to look at -- the
+## opener that swallowed it, and, where the CommonMark rule made an opener out
+## of a line written as a closer, the backtick-info line above THAT -- was the
+## one line the message did not carry.  Both line numbers are here now; no
+## verdict changes, only the words (fence_scan's `swallow`).
+proc istamp::stray_why {ln scan fence info i opened prev never last} {
+    set cause [stray_cause $ln]
+    if {$scan eq ""} {
+        return "in a file with no **STAMP:** line, $never"
+    } elseif {$cause ne ""} {
+        return "a fence that is $cause"
+    } elseif {[string index $fence 0] eq "~"} {
+        return "a ~~~ fence; only ``` fences are read"
+    } elseif {[string first "`" $info] >= 0} {
+        ## fence_scan's CommonMark rule (S1-fix9): not a fence at all.
+        return "a ``` line whose info string holds a backtick, which markdown reads as inline code, not a fence"
+    } elseif {[dict exists $opened $i] && ![dict get $opened $i]} {
+        return "a fence that is never closed"
+    } elseif {![dict exists $opened $i]} {
+        if {$prev eq "" || $prev == 0} {
+            return "inside another fenced block, where it is text, not a fence"
+        }
+        set sw {}
+        if {$scan ne "" && [dict exists $scan swallow]} { set sw [dict get $scan swallow] }
+        if {[dict exists $sw $prev]} {
+            return "inside another fenced block, where it is text, not a fence -- the block was opened at line $prev by the ``` that looks like the closer of line [dict get $sw $prev], but line [dict get $sw $prev]'s info string holds a backtick, so markdown reads that line as inline code and it opened no fence at all"
+        }
+        return "inside another fenced block, where it is text, not a fence -- the block was opened at line $prev"
+    }
+    return $last
+}
+
+## The first word of $info shaped `<key>=` whose key is a misspelling of one of
+## $keys, as {word key} -- {"" ""} when there is none.  The canonical spelling
+## in another case or spacing is NOT one: stray_attrs names that already, above.
+##
+## ⚠ AND ONLY WHERE THE FENCE IS VISIBLY A BLOCK, NEVER ON THE KEY ALONE.  One
+## letter separates `assert=` from `asset=`, and `quote=` from `quota=`, and
+## those are ordinary words a code fence may carry for reasons of its own --
+## the false-alarm class this whole item exists to remove.  So a misspelling
+## counts only when the fence says what it is a second way: another key of the
+## grammar in the same info string (`pat=`, `path=`, `state=`, `fix=`, or a
+## marking key spelled right), or a value that is the misspelled key's OWN --
+## `absent` or `present` for assert=, a revision token for quote=.  MEASURED
+## over the whole edit neighbourhood of both keys (285 near misses of `quote`,
+## 335 of `assert`, by enumeration): `js asset=x`, `sh quota=10`, `text
+## assent=y`, `md quite=1` and `sh assort=z` are silent, while `sh
+## asert=absent`, `c qoute=d64686a1`, `sh asert=absent pat=SABOTAGE path=src
+## state=holds` and `c qoute=d64686a1 fix=taken` are named.  A fence whose key
+## AND value are both outside the grammar carries no claim that anything could
+## pass silently; it is stated in spec section 6.
+##
+## ⚠ BOTH HALVES OF THAT TEST FOLD CASE, AND ONE OF THEM DID NOT (stranger-reds
+## item D, fix round).  The key was folded (`string tolower $k`) and the VALUE
+## was compared as written, so a capital letter in the value silently DISARMED
+## the whole check while its lowercase twin was named: MEASURED at 04844d23,
+## one stamped file per corpus, ```` ```sh asert=Absent ````, ```` ```sh
+## asert=PRESENT ```` and ```` ```text qoute=A1314271 ```` each `ok (0
+## problems)`, rc 0, where `asert=absent` and `qoute=a1314271` are rc 1 and
+## named -- and where d42fc517 names all three.  A check a capital letter turns
+## off is a fail-OPEN, which is the direction D18 rule B forbids, and the two
+## halves of one test disagreeing about case is not a rule anybody could state.
+## The value is folded here too.  It buys no new false-alarm surface: the shapes
+## it adds (`asset=Absent`, `quoted=DEADBEEF`) are the case twins of shapes this
+## proc already names, and d42fc517 names them too (MEASURED, both).
+proc istamp::misspelled_mark {info keys} {
+    variable fence_keys
+    set other 0
+    set cand {}
+    foreach t [split [string trim $info]] {
+        if {$t eq ""} { continue }
+        if {![regexp {^([A-Za-z]{1,40})=(.*)$} $t -> k v]} { continue }
+        set lk [string tolower $k]
+        if {$lk in $fence_keys} { set other 1 ; continue }
+        if {[llength $cand]} { continue }
+        foreach m $keys {
+            if {[near_miss_key $lk $m]} { set cand [list $t $m $v] ; break }
+        }
+    }
+    if {![llength $cand]} { return [list "" ""] }
+    lassign $cand word meant val
+    set lv [string tolower $val]
+    if {$other
+        || ($meant eq "assert" && $lv in {absent present})
+        || ($meant eq "quote" && [rev_token $lv])} {
+        return [list $word $meant]
+    }
+    return [list "" ""]
+}
+
+## Is the key $k an honest misspelling of the marking key $t?  One edit away --
+## a letter left out (`asert`), typed twice (`asssert`), typed wrong (`quite`)
+## or typed the wrong way round (`qoute`) -- or a truncation or extension of it
+## (`quot`, `quotes`, `assertion`).  $k itself is not: it is the right spelling.
+##
+## ⚠ THE LENGTH IS BOUNDED BEFORE ANY LOOP RUNS.  $k is corpus text, and the
+## character loops below are O(len) each with an O(len) `string replace` inside
+## one of them -- quadratic in a word an issue file chooses.  A 1 MB word is a
+## word an issue file can hold, so anything outside 4 characters and $t's
+## length plus 3 is answered by two integer comparisons (D18-A: no corpus text
+## ever buys unbounded CPU).  That bound is also the rule: a near miss of a
+## 5- or 6-letter key is 4 to 9 letters long.
+proc istamp::near_miss_key {k t} {
+    set lk [string length $k]
+    set lt [string length $t]
+    if {$k eq $t || $lk < 4 || $lk < $lt - 3 || $lk > $lt + 3} { return 0 }
+    ## a truncation or an extension: `quot`, `quotes`, `assertion`
+    if {$lk < $lt} {
+        if {[string range $t 0 [expr {$lk - 1}]] eq $k} { return 1 }
+    } elseif {[string range $k 0 [expr {$lt - 1}]] eq $t} {
+        return 1
+    }
+    if {$lk == $lt} {
+        ## one letter typed wrong, or two typed the wrong way round
+        set d {}
+        for {set j 0} {$j < $lt} {incr j} {
+            if {[string index $k $j] ne [string index $t $j]} { lappend d $j }
+        }
+        if {[llength $d] == 1} { return 1 }
+        return [expr {[llength $d] == 2 && [lindex $d 1] == [lindex $d 0] + 1
+            && [string index $k [lindex $d 0]] eq [string index $t [lindex $d 1]]
+            && [string index $k [lindex $d 1]] eq [string index $t [lindex $d 0]]}]
+    }
+    ## one letter left out or one typed twice: `asert`, `asssert`
+    if {$lk == $lt - 1 || $lk == $lt + 1} {
+        set long  [expr {$lk > $lt ? $k : $t}]
+        set short [expr {$lk > $lt ? $t : $k}]
+        set n [string length $long]
+        for {set j 0} {$j < $n} {incr j} {
+            if {[string replace $long $j $j] eq $short} { return 1 }
+        }
+    }
+    return 0
 }
 
 ## The quote= half alone -- the proc the self-test and earlier tooling call.
@@ -1478,7 +1853,7 @@ proc istamp::rev_is_ancestor {rev} {
 proc istamp::quote_holds {rev path body {gapok 0}} {
     variable repo
     if {[catch {git_q $repo --no-replace-objects cat-file --batch << "${rev}:${path}\n"} src]} {
-        return [list 0 "git cat-file --batch could not read ${rev}:${path}"]
+        return [list 0 "git cat-file --batch could not read ${rev}:[clip $path 200]"]
     }
     set nl   [string first \n $src]
     set head [expr {$nl < 0 ? $src : [string range $src 0 [expr {$nl - 1}]]}]
@@ -1487,14 +1862,14 @@ proc istamp::quote_holds {rev path body {gapok 0}} {
         if {$gap ne ""} { return [list -1 $gap] }
     }
     if {![regexp {^[0-9a-f]{40}(?:[0-9a-f]{24})? blob [0-9]+$} $head]} {
-        return [list 0 "${rev}:${path} is not a file at that revision (git: [string range $head 0 99])"]
+        return [list 0 "${rev}:[clip $path 200] is not a file at that revision (git: [string range $head 0 99])"]
     }
     set src [expr {$nl < 0 ? "" : [string range $src [expr {$nl + 1}] end]}]
     set n_src  [regsub -all {[ \t\r\n]+} $src  { }]
     set n_body [string trim [regsub -all {[ \t\r\n]+} $body { }]]
     if {$n_body eq ""} { return [list 0 "empty quote block"] }
     if {[string first $n_body $n_src] >= 0} { return [list 1 ""] }
-    return [list 0 "quoted text is not in ${rev}:${path}"]
+    return [list 0 "quoted text is not in ${rev}:[clip $path 200]"]
 }
 
 ## Why `<rev>:<path>` is MISSING here although nothing is wrong with it, or ""
@@ -1521,14 +1896,14 @@ proc istamp::quote_gap {rev path} {
     if {!$partial} { return "" }
     set want [join [lsearch -all -inline -not -exact [path_parts $path] .] /]
     if {[catch {git_q $repo --no-replace-objects ls-tree -r -z --full-tree --end-of-options $rev} ls]} {
-        return "partial clone: the tree of $rev is not in this checkout either, so whether it holds $path cannot be told without fetching, and this checker never fetches"
+        return "partial clone: the tree of $rev is not in this checkout either, so whether it holds [clip $path 200] cannot be told without fetching, and this checker never fetches"
     }
     foreach ent [split $ls \0] {
         if {![regexp {^[0-7]+ ([a-z]+) ([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(.*)$} $ent -> type oid name]} { continue }
         if {$name ne $want} { continue }
         if {$type ne "blob"} { return "" }
         if {![catch {git_q $repo cat-file -e --end-of-options $oid}]} { return "" }
-        return "partial clone: $rev has $want, and its content is not in this checkout -- this checker never fetches"
+        return "partial clone: $rev has [clip $want 200], and its content is not in this checkout -- this checker never fetches"
     }
     return ""
 }
@@ -1605,24 +1980,29 @@ proc istamp::quote_gap {rev path} {
 proc istamp::assert_eval {kind pat path} {
     variable repo
     if {$kind ni {absent present}} {
-        return [list -1 -1 "unknown assert kind `$kind`"]
+        return [list -1 -1 "unknown assert kind `[clip $kind]`"]
     }
     if {$pat eq ""} {
         return [list -1 -1 "pat= is empty, and an empty pattern names nothing to look for"]
     }
-    ## The run's shared clock (t_scan_total): once it has run out, a block is
-    ## named without a single file being read.
+    ## The run's shared budgets (t_scan_total, t_gate_total): once one has run
+    ## out, a block is named without a single file being read.
     lassign [scan_budget] - bmsg bspent
     if {$bspent} { return [list -1 -1 $bmsg] }
     ## Text to bytes BEFORE the switch, each through the encoding that made it.
     set rootb [as_bytes $repo [encoding system]]
     set relb  [as_bytes $path utf-8]
     set patb  [encoding convertto utf-8 $pat]
-    if {[catch {in_bytes {
-            lassign [confine_path $relb $path $rootb] cst target cwhy
+    ## ⚠ ONLY THIS -- the walk and the scan -- IS CHARGED TO THE RUN'S SCANNING
+    ## BUDGET, on every way out (scan_charge; see t_scan_total).
+    set t0 [clock microseconds]
+    set rc [catch {in_bytes {
+            lassign [confine_path $relb [clip $path 200] $rootb] cst target cwhy
             if {$cst ne "ok"} { error $cwhy }
             assert_scan $target $patb
-        }} hits]} {
+        }} hits]
+    scan_charge $t0
+    if {$rc} {
         return [list -1 -1 $hits]
     }
     if {$kind eq "absent"} {
@@ -1711,7 +2091,7 @@ proc istamp::confine_path {rel shown rootb} {
         ok      { return [list ok $where ""] }
         out     { return [list refused "" "path=$shown is refused: it leaves the checkout through a symbolic link (to `[bytes_shown $where]`); $rule"] }
         missing { return [list missing "" "path=$shown does not exist in this checkout"] }
-        default { return [list error "" "path=$shown cannot be resolved: [bytes_shown $where]"] }
+        default { return [list error "" "path=$shown cannot be resolved: [clip [bytes_shown $where] 400]"] }
     }
 }
 
@@ -1829,19 +2209,49 @@ proc istamp::assert_scan {target patb} {
     }
 }
 
-## The deadline one scan must meet, as {deadline words spent}: its own t_scan,
-## or the gate() run's shared deadline when that comes first -- with the
-## sentence a scan that misses it throws, and whether it is ALREADY missed.
+## The deadline one scan must meet, as {deadline words spent}: the EARLIEST of
+## its own t_scan, what is left of the gate() run's scanning time
+## (t_scan_total less scan_spent_us), and the gate() run's wall-clock deadline
+## (t_gate_total) -- with the sentence that names THAT budget, which a scan
+## that misses it throws, and whether it is ALREADY spent.  Outside a gate()
+## run only the scan's own budget applies.
 proc istamp::scan_budget {} {
     variable t_scan
     variable t_scan_total
-    variable scan_deadline
+    variable scan_spent_us
+    variable gate_deadline
     set now [clock milliseconds]
-    set own [expr {$now + 1000 * $t_scan}]
-    if {$scan_deadline ne "" && $scan_deadline <= $own} {
-        return [list $scan_deadline "the search ran past the gate's total budget of $t_scan_total s for all the assert= scans of one run -- a corpus that asks for more scanning than that is not evaluated past it, and each assertion reached after it is named instead" [expr {$now > $scan_deadline}]]
+    set best [list [expr {$now + 1000 * $t_scan}] "the search ran past its $t_scan s budget" 0]
+    if {$scan_spent_us ne ""} {
+        set left [expr {$now + (1000000.0 * $t_scan_total - $scan_spent_us) / 1000.0}]
+        if {$left <= [lindex $best 0]} {
+            set best [list $left "the assert= scans of this run used up the $t_scan_total s of scanning time they share -- only time spent scanning is charged to it, not the rest of the gate's work -- so a corpus that asks for more scanning than that is not evaluated past it, and each assertion reached after it is named instead" [expr {$left <= $now}]]
+        }
     }
-    return [list $own "the search ran past its $t_scan s budget" 0]
+    if {$gate_deadline ne "" && $gate_deadline <= [lindex $best 0]} {
+        set best [list $gate_deadline [gate_msg] [expr {$gate_deadline <= $now}]]
+    }
+    return $best
+}
+
+## Charge the scan that began at clock microseconds $t0 to the gate() run's
+## scanning time, if one is running.
+proc istamp::scan_charge {t0} {
+    variable scan_spent_us
+    if {$scan_spent_us ne ""} {
+        set scan_spent_us [expr {$scan_spent_us + [clock microseconds] - $t0}]
+    }
+}
+
+## Has the gate() run in progress spent its wall-clock budget (t_gate_total)?
+## Never, outside one.  And the words for what is not checked because it has.
+proc istamp::gate_spent {} {
+    variable gate_deadline
+    return [expr {$gate_deadline ne "" && [clock milliseconds] >= $gate_deadline}]
+}
+proc istamp::gate_msg {} {
+    variable t_gate_total
+    return "this gate run used up its total budget of $t_gate_total s of wall-clock time -- every git question a tree= or a quote= asks, and every assert= scan, counts toward it -- so it is not checked, and everything the gate reaches after that is named instead of checked"
 }
 
 proc istamp::scan_dir {d patb deadline {bmsg ""}} {
@@ -2049,17 +2459,39 @@ proc istamp::misnamed_files {} {
 ## Returns a list of problem strings.  Empty list = green.
 ## `opts` may carry -headerlines N (default 12).
 
-## The run's assert= scans share ONE clock (t_scan_total, see there): set here,
-## cleared on every way out, so a scan outside a gate() run -- a suite row
-## calling assert_eval directly -- has only its own per-scan budget.
+## The run's two shared budgets (see t_scan_total): the assert= scans' own
+## scanning time, and the whole run's wall clock.  Set here and cleared on every
+## way out, so a scan outside a gate() run -- a suite row calling assert_eval
+## directly -- has only its own per-scan budget.  And every line the run
+## answers with is capped (cap_lines, problem_cap).
 proc istamp::gate {args} {
-    variable scan_deadline
-    variable t_scan_total
-    set scan_deadline [expr {[clock milliseconds] + 1000 * $t_scan_total}]
+    variable scan_spent_us
+    variable gate_deadline
+    variable t_gate_total
+    variable last_skips
+    set scan_spent_us 0
+    set gate_deadline [expr {[clock milliseconds] + 1000 * $t_gate_total}]
     set rc [catch {gate_body {*}$args} res opt]
-    set scan_deadline ""
+    set scan_spent_us ""
+    set gate_deadline ""
     if {$rc} { return -options $opt $res }
-    return $res
+    set last_skips [cap_lines $last_skips]
+    return [cap_lines $res]
+}
+
+## Each line cut to problem_cap characters, saying so -- the backstop for a
+## corpus word some sentence quotes without clip.
+proc istamp::cap_lines {lines} {
+    variable problem_cap
+    set out {}
+    foreach p $lines {
+        set len [string length $p]
+        if {$len > $problem_cap} {
+            set p "[string range $p 0 [expr {$problem_cap - 1}]] ... (cut: this line has $len characters, and only the first $problem_cap are shown)"
+        }
+        lappend out $p
+    }
+    return $out
 }
 
 proc istamp::gate_body {args} {
@@ -2120,7 +2552,11 @@ proc istamp::gate_body {args} {
             if {![dict exists $base [name_key $fname]]} {
                 lappend problems "$num ($fname): a NEW issue file with no **STAMP:** line. Every issue filed after the convention landed must carry one -- see doc/claude/specs/issue_stamp.md. The unconverted set may shrink, never grow."
             }
-            lappend problems {*}[stray_attrs $num $text ""]
+            if {[gate_spent]} {
+                lappend problems "$num ($fname): the lines in this file that were written to be a quote= or an assert= are not checked -- [gate_msg]"
+            } else {
+                lappend problems {*}[stray_attrs $num $text ""]
+            }
             continue
         }
         if {$n > 1} {
@@ -2138,6 +2574,21 @@ proc istamp::gate_body {args} {
             continue
         }
         set f [dict get $p f]
+        ## ⚠ THE WALL CLOCK IS ASKED BEFORE THE FENCE WORK, NOT AFTER IT
+        ## (stranger-reds item D, fix round).  This check sat BELOW fence_scan
+        ## and stray_attrs, so the one pass over the file that corpus text can
+        ## make expensive was the one pass no budget covered: MEASURED at
+        ## 04844d23 on a corpus of `~~~sh asert=z <N words>` fences, 10 MB
+        ## 0.70 s -> 3.30 s, 20 MB 0.90 -> 5.91, 40 MB 1.40 -> 11.42 against
+        ## d42fc517 -- linear, but a 14x constant bounded by nothing except how
+        ## much text the corpus holds (D18 rule A: corpus text never buys
+        ## unbounded CPU).  Above it, a run past its budget NAMES the file and
+        ## reads no further, which is the same fail-closed answer the tree= and
+        ## quote= questions below already give.
+        if {[gate_spent]} {
+            lappend problems "$num: tree=[dict get $f tree], and every marked block in this file, not checked -- [gate_msg]"
+            continue
+        }
         ## The fences, once: which blocks were read, and which fences opened.
         ## A quote= the parser did not read is reported here, before the
         ## revision question, so it is named whatever the history state.
@@ -2151,6 +2602,8 @@ proc istamp::gate_body {args} {
         ## does not need it still runs: the header window, the grammar and the
         ## baseline are already behind us, and assert= and the mirror check are
         ## grep and dict work.  The date is not consulted.
+        ## ⚠ Once the run's wall clock (t_gate_total) is spent, no more git is
+        ## asked: the file is NAMED, never passed (fail-closed) -- above.
         lassign [rev_verdict [dict get $f tree]] rv rwhy
         switch -- $rv {
             ok   { incr last_verified }
@@ -2200,9 +2653,13 @@ proc istamp::gate_body {args} {
                 ## `bad` falls through to quote_holds, which fails on it by name;
                 ## a revision off HEAD's history is refused HERE, because
                 ## `git show` would find it in this store and pass it.
+                if {[gate_spent]} {
+                    lappend problems "$num:$ln: quote=$q path=[clip [dict get $a path] 200] not checked -- [gate_msg]"
+                    continue
+                }
                 lassign [rev_verdict $q] qv qwhy
                 if {$qv eq "skip"} {
-                    lappend last_skips "$num:$ln: quote=$q path=[dict get $a path] ($qwhy)"
+                    lappend last_skips "$num:$ln: quote=$q path=[clip [dict get $a path] 200] ($qwhy)"
                 } elseif {$qv eq "bad" && $qwhy ne "unresolved"} {
                     lappend problems "$num:$ln: [rev_problem quote=$q $q $qwhy]"
                 } else {
@@ -2210,7 +2667,7 @@ proc istamp::gate_body {args} {
                     ## content excused as a partial clone's (quote_holds).
                     lassign [quote_holds [dict get $a quote] [dict get $a path] [dict get $blk body] [expr {$qv eq "ok"}]] ok why
                     if {$ok == -1} {
-                        lappend last_skips "$num:$ln: quote=$q path=[dict get $a path] ($why)"
+                        lappend last_skips "$num:$ln: quote=$q path=[clip [dict get $a path] 200] ($why)"
                     } elseif {!$ok} {
                         set qn [expr {$qv eq "bad" ? [upstream_note] : ""}]
                         lappend problems "$num:$ln: $why -- a quoted block that no longer matches its source still LOOKS like valid code, and is the direct on-ramp to a fix that damages working code[expr {$qn ne "" ? ".$qn" : ""}]"
@@ -2230,7 +2687,7 @@ proc istamp::gate_body {args} {
                 }
                 set state [dict get $a state]
                 if {$state eq "holds" && !$holds} {
-                    lappend problems "$num:$ln: the file states this assertion HOLDS and it does not ($hits hits for [dict get $a pat] under [dict get $a path])"
+                    lappend problems "$num:$ln: the file states this assertion HOLDS and it does not ($hits hits for [clip [dict get $a pat] 200] under [clip [dict get $a path] 200])"
                 } elseif {$state eq "broken" && $holds} {
                     ## ⚠ THIS IS THE STALE-FIXED DETECTOR, AND IT IS THE WHOLE
                     ## POINT.  7 of 40 sampled files reported finished work as
@@ -2241,7 +2698,7 @@ proc istamp::gate_body {args} {
                     ## this project; this closes the greppable ones.
                     lappend problems "$num:$ln: the file states this assertion is BROKEN, but it now HOLDS -- the defect appears FIXED and the issue was never closed. Re-read it and update the stamp."
                 } elseif {$state ni {holds broken}} {
-                    lappend problems "$num:$ln: state=$state must be holds or broken"
+                    lappend problems "$num:$ln: state=[clip $state] must be holds or broken"
                 }
             }
         }
@@ -2412,13 +2869,17 @@ proc istamp::selftest {} {
         incr n
     }
     ## D16: fences close the CommonMark way -- same character, at least as long,
-    ## indented at most 3 -- as {blocks read, body of the first}.
+    ## indented at most 3 -- as {blocks read, body of the first}.  S1-fix9: and
+    ## open the CommonMark way -- a ``` line whose info string holds a backtick
+    ## is inline code, so it swallows no fence below it.
     set fc [list "````c quote=d64686a1 path=x\na\n```\nb\n````" [list 1 "a\n```\nb"] \
                  "```c quote=d64686a1 path=x\na\n`````\nb" [list 1 a] \
                  "```c quote=d64686a1 path=x\na\n  ```\nb" [list 1 a] \
                  "```c quote=d64686a1 path=x\na\n~~~\n```" [list 1 "a\n~~~"] \
                  "~~~\n```c quote=d64686a1 path=x\na\n```\n~~~" [list 0 {}] \
-                 "  ```text\n```c quote=d64686a1 path=x\na\n  ```" [list 0 {}]]
+                 "  ```text\n```c quote=d64686a1 path=x\na\n  ```" [list 0 {}] \
+                 "```make install``` fails\n\n```sh assert=absent pat=x path=y state=holds\nz\n```" [list 1 z] \
+                 "``` `x` ``` inline\n```c quote=d64686a1 path=x\na\n```" [list 1 a]]
     foreach {txt want} $fc {
         set blks [dict get [fence_scan $txt] blocks]
         set got [list [llength $blks] [expr {[llength $blks] ? [dict get [lindex $blks 0] body] : {}}]]
@@ -2433,14 +2894,82 @@ proc istamp::selftest {} {
     ## D18: an assert= the parser does not read is named as a quote= is -- in a
     ## ~~~ fence, an indented one, a blockquote, one never closed, and in a file
     ## with no stamp -- while a READ assert= fence and assert= in prose are not.
-    ## As {text stamped? want}.
+    ## S1-fix9: and on a ``` line whose info string holds a backtick, which is
+    ## no fence at all.  As {text stamped? want}.
     set a "assert=absent pat=x path=y state=holds"
     set ac [list "~~~sh $a\nz\n~~~" 1 1   "  ```sh $a\n  z\n  ```" 1 1   "> ```sh $a\n> z\n> ```" 1 1 \
                  "```sh $a\nz" 1 1        "```sh $a\nz\n```" 0 1        "```sh $a\nz\n```" 1 0 \
-                 "the gate reads $a in a fence, never in prose" 1 0]
+                 "the gate reads $a in a fence, never in prose" 1 0 \
+                 "```sh assert=absent pat=`x` path=y state=holds\nz\n```" 1 1]
     foreach {txt st want} $ac {
         set got [llength [stray_attrs 9999 $txt [expr {$st ? [fence_scan $txt] : ""}]]]
         if {$got != $want} { lappend bad "stray_attrs found $got, want $want, in ([expr {$st ? "stamped" : "unstamped"}]): [string map [list \n { | }] $txt]" }
+        incr n
+    }
+    ## 1489: a MISSPELLED marking key is named exactly once, whatever the fences
+    ## around it do -- swallowed by a Slack-style ```` ```make install``` fails
+    ## ```` opener (d42fc517's hole), by the bare ``` that the same rule turns
+    ## into an opener (S1-fix10's hole), or on a backtick-info line that is no
+    ## fence at all -- and never twice, because a fence the gate READ has had
+    ## its whole info string named by fence_info.  Each want counts stray_attrs
+    ## PLUS the bad words of every block read, so a move from one to the other
+    ## is not mistaken for a pass.  As {text want}.
+    set f false                     ;# a FALSE claim: SABOTAGE is really in src
+    set fa "asert=absent pat=SABOTAGE path=src state=holds"
+    set fq "qoute=d64686a1 path=src/xschem.h"
+    set mm [list "```sh $fa\nz\n```" 1 \
+                 "```make install``` fails\n\n```sh $fa\nz\n```" 1 \
+                 "```sh `make` output\nq\n```\n\n```sh $fa\nz\n```" 1 \
+                 "```sh asert=absent pat=`SABOTAGE` path=src state=holds\nz\n```" 1 \
+                 "~~~sh $fa\nz\n~~~" 1   "  ```sh $fa\n  z\n  ```" 1   "```sh $fa\nz" 1 \
+                 "```c $fq\nz\n```" 1    "```make install``` fails\n\n```c $fq\nz\n```" 1 \
+                 "```sh asert=absent\nz\n```" 1     "```c qoute=d64686a1\nz\n```" 1 \
+                 "```sh assertion=absent pat=x path=y state=holds\nz\n```" 1 \
+                 "```sh asserts=absent pat=x path=y state=holds\nz\n```" 1 \
+                 "```c quotes=d64686a1 path=x\nz\n```" 1 \
+                 "```c quot=d64686a1 path=x\nz\n```" 1 \
+                 "```sh assert=absent pat=x path=y state=holds\nz\n```" 0 \
+                 "```js asset=x\nz\n```" 0          "```sh quota=10\nz\n```" 0 \
+                 "```text assent=y\nz\n```" 0       "```md quite=1\nz\n```" 0 \
+                 "```sh assort=z\nz\n```" 0         "```c quoted=true\nz\n```" 0 \
+                 "```sh asert=x\nz\n```" 0          "```c qoute=zzz\nz\n```" 0 \
+                 "```python title=\"example.py\"\nz\n```" 0 \
+                 "```sh cc=gcc make\nz\n```" 0      "```tcl fix=superseded\nz\n```" 0 \
+                 "```sh asert=Absent\nz\n```" 1     "```sh asert=PRESENT\nz\n```" 1 \
+                 "```c qoute=D64686A1\nz\n```" 1    "```js asset=Absent\nz\n```" 1 \
+                 "```js asset=X\nz\n```" 0          "```c quoted=TRUE\nz\n```" 0]
+    foreach {txt want} $mm {
+        set sc [fence_scan $txt]
+        set got [llength [stray_attrs 9999 $txt $sc]]
+        foreach blk [dict get $sc blocks] { if {[llength [dict get $blk bad]]} { incr got } }
+        if {$got != $want} { lappend bad "misspelled marking key: named $got time(s), want $want, in: [string map [list \n { | }] $txt]" }
+        incr n
+    }
+    ## 1489 fix round: fence_scan's `swallow` -- the line whose ``` closer the
+    ## CommonMark opener rule turns into an opener, recorded against that opener
+    ## so stray_why can name BOTH lines.  A diagnostic and not a verdict, so it
+    ## is asked of fence_scan directly; the `fc` matrix above already holds that
+    ## the blocks it reads are unchanged.  As {text want-swallow-dict}.
+    set sc9 [list "```sh `make` output\nq\n```\n\n```sh $fa\nz\n```" {3 1} \
+                  "```text\nq\n```\n\n```sh $fa\nz\n```" {} \
+                  "```sh `make` output\nq\n```sh more\nz\n```" {} \
+                  "``` `x` ``` inline\n```c quote=d64686a1 path=x\na\n```" {}]
+    foreach {txt want} $sc9 {
+        set got [dict get [fence_scan $txt] swallow]
+        if {$got ne $want} { lappend bad "fence_scan swallow {$got}, want {$want}, in: [string map [list \n { | }] $txt]" }
+        incr n
+    }
+    ## 1489: and the predicate itself -- one edit away, or a truncation or an
+    ## extension, and bounded in LENGTH before any loop runs (near_miss_key).
+    set nk [list asert assert 1   asssert assert 1   assertion assert 1   asserts assert 1 \
+                 assrt assert 1   sasert assert 1    assert assert 0      asset assert 1 \
+                 insert assert 0  desert assert 0    aasert assert 1 \
+                 qoute quote 1    quotes quote 1     quot quote 1         quote quote 0 \
+                 uqote quote 1    note quote 0       quiet quote 0        abc assert 0 \
+                 [string repeat a 200000] assert 0   [string repeat q 9] quote 0]
+    foreach {k t want} $nk {
+        set got [near_miss_key $k $t]
+        if {$got != $want} { lappend bad "near_miss_key [string range $k 0 20] $t gave $got, want $want" }
         incr n
     }
     ## D18: md_strip in one pass gives the loop's answers.
@@ -2455,6 +2984,14 @@ proc istamp::selftest {} {
     ## grammar does not know, a key given twice; and the known negatives: a
     ## well-formed marked fence (with and without a language word), and an
     ## ordinary code fence whose info string has words but no key=value at all.
+    ## S1-fix8: a title in a MARKED fence is still a bad word, and seven stray
+    ## words are five named plus one "and 2 more"; while a fence marked by no
+    ## key of a block -- an mkdocs title, `cc=gcc make`, `prefix=/usr`, a lone
+    ## fix= -- is not read at all.  S1-fix9: path=, pat= and state= mark a fence
+    ## too, so a misspelled marking key (asert=, assertion=, qoute=, quotes=) is
+    ## a bad word; a near-miss of quote=/assert= in another case or spacing is
+    ## LEFT to stray_attrs (not a bad word here), unless the key is also written
+    ## canonically, when it is one; and a lone path= is read with nothing wrong.
     set ic [list {sh assert=absent pat="static int" path=src state=holds} {4 1} \
                  {sh assert=present pat=static nonexistent_zz_symbol path=src state=holds} {4 1} \
                  {sh assert=absent pat=x path=src state=holds pth=src} {4 1} \
@@ -2462,7 +2999,24 @@ proc istamp::selftest {} {
                  {sh assert=absent pat=x path=src state=holds} {4 0} \
                  {assert=absent pat=x path=src state=holds} {4 0} \
                  {c quote=d64686a1 path=x} {2 0} \
-                 {text an ordinary title, no attributes} {0 0}]
+                 {text an ordinary title, no attributes} {0 0} \
+                 {python title="x.py" assert=absent pat=x path=src state=holds} {4 1} \
+                 {sh assert=absent pat=x path=src state=holds a b c d e f g} {4 6} \
+                 {python title="example.py"} {0 0} \
+                 {sh cc=gcc make} {0 0} \
+                 {sh make prefix=/usr install} {0 0} \
+                 {tcl fix=superseded} {0 0} \
+                 {sh ASSERT=absent pat=x path=src state=holds} {3 0} \
+                 {c QUOTE=d64686a1 path=x} {1 0} \
+                 {sh assert = absent pat=x path=src state=holds} {3 0} \
+                 {sh Assert =absent pat=x path=src state=holds} {3 0} \
+                 {sh Assert= absent pat=x path=src state=holds} {3 0} \
+                 {sh assert=absent ASSERT=present pat=x path=src state=holds} {4 1} \
+                 {sh asert=absent pat=x path=src state=holds} {3 1} \
+                 {sh assertion=absent pat=x path=src state=holds} {3 1} \
+                 {c qoute=d64686a1 path=x} {1 1} \
+                 {c quotes=d64686a1 path=x} {1 1} \
+                 {sh path=src/foo.c} {1 0}]
     foreach {info want} $ic {
         lassign [fence_info $info] toks fb
         set got [list [expr {[llength $toks] / 2}] [llength $fb]]
@@ -2472,13 +3026,30 @@ proc istamp::selftest {} {
     ## D19: a line holding a stamp's BODY that find_stamp does not read is named
     ## whatever precedes it -- the refuter's colon-less spellings and a stamp
     ## quoted mid-sentence -- while the read stamp and prose that happens to
-    ## hold `v1` are not.
+    ## hold `v1` are not.  D21 (S1-fix10): and so is a body INSIDE a fence of
+    ## any kind -- ```, ~~~, four backticks, blockquoted, under a list item, a
+    ## fence shown inside a fence -- the documented limit: no exemption, so
+    ## each of these is ONE problem, as at d42fc517.
     set bc [list "**STAMP** $s" 1 "STAMP $s" 1 "**Stamp** $s" 1 "**STAMP;** $s" 1 \
                  "the stamp we meant was $s, never written" 1 "# see **STAMP:** $s in the spec" 1 "**STAMP:** $s" 0 \
-                 "the batch reads `v1 v2 v3` newest-first" 0 "`v1 = 8.333333e-01` is volts" 0]
+                 "the batch reads `v1 v2 v3` newest-first" 0 "`v1 = 8.333333e-01` is volts" 0 \
+                 "```text\nsee $s\n```" 1 "~~~\n**STAMP** $s\n~~~" 1 "````md\n```\n**STAMP** $s\n```\n````" 1 \
+                 "```text\nsee $s" 1 "```text\nx\n```\n**STAMP** $s" 1 "```text $s\nx\n```" 1 \
+                 "> ```text\n> see $s\n> ```" 1 "1. a\n   - b\n\n     ```text\n     see $s\n     ```" 1 \
+                 "    see $s" 1 "<pre>\nsee $s\n</pre>" 1 \
+                 "```md\n> ```text\n> x\n> ```\n\nsee $s\n```" 1 \
+                 "```make install``` fails\n\n**STAMP** $s\n\n```sh\nx\n```" 1]
     foreach {txt want} $bc {
         set got [llength [stray_stamps 9999 $txt]]
-        if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: $txt" }
+        if {$got != $want} { lappend bad "stray_stamps found $got, want $want, in: [string map [list \n { | }] $txt]" }
+        incr n
+    }
+    ## S1-fix8: a quoted corpus word is clipped, and a line is capped, each
+    ## saying how long it really was.
+    set lc [list [clip abcdef 4] "abcd...(6 characters)" [clip abcd 4] abcd \
+                 [cap_lines [list [string repeat x 5000] ok]] [list "[string repeat x 2000] ... (cut: this line has 5000 characters, and only the first 2000 are shown)" ok]]
+    foreach {got want} $lc {
+        if {$got ne $want} { lappend bad "clip/cap_lines gave <[string range $got 0 60]>, want <[string range $want 0 60]>" }
         incr n
     }
     ## D19: the one rule for an issue file's name.

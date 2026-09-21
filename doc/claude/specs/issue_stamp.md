@@ -216,16 +216,84 @@ two would be the both-words defect in miniature, and the checker refuses it.
 
 The info string after the language word takes the same `key=value` grammar.
 
-**It is read in full.** A fence is *marked* when any word of its info string is
-shaped `key=value`, and a marked fence's info string must then be exactly: at most
-one leading language word (no `=` in it), then `key=value` words only, each key one
-of `quote path fix assert pat state` and each given once. Any other word is a named
-problem and the block is **not evaluated**. The checker used to keep the key=value
-words and drop the rest, so `assert=absent pat="static int" path=src state=holds`
-was checked as a search for the literal `"static` and passed, while the phrase is on
-463 lines of `src` (measured by S1-fix6's refuter; outsider-fixes DECISIONS D19). A
-fence with no key=value word at all is an ordinary code sample, and its info string
-is not read.
+**A fence is *marked* only by a key of a block: `quote=`, `assert=`, `path=`,
+`pat=` or `state=`.** Any other fence is an ordinary code sample and its info string
+is not read, whatever it holds. That includes an mkdocs title
+(```` ```python title="example.py" ````), a build line (```` ```sh cc=gcc make ````,
+```` ```sh make prefix=/usr install ````), `hl_lines=` and a lone `fix=` label. Until
+S1-fix8 a fence was marked by *any* `key=value` word, and those three fences were each
+named as malformed in a stamped file: false reds on honest content (measured by
+S1-fix7's refuter, red-first by S1-fix8). S1-fix8 then marked by `quote=` and
+`assert=` alone, and that lost every block whose marking key was **misspelled**:
+`asert=`, `assertion=` or `asserts=` on a false assertion, and `qoute=` or `quotes=`
+on a rotted quote, each passed `ok (0 problems)` where the checker before it named the
+unknown key (measured by S1-fix8's refuter, red-first by S1-fix9). The other three
+keys only ever appear on a block, so they mark a fence too, and the misspelled key is
+a named problem. A fence marked only by `path=`, `pat=` or `state=` and otherwise
+well-formed has nothing to evaluate and is no problem (```` ```sh path=src/foo.c ````).
+A near-miss of `quote=` or `assert=` in another case or spacing (`ASSERT=`,
+`QUOTE=`, `assert = absent`, `Assert= absent`) is named **once** (§5).
+
+**A misspelled marking key is named wherever it sits, whatever the fences around
+it do.** Marking by the other three keys names a misspelling only where the fence
+pairs up into a block the checker reads — and both pairing rules have a hole on the
+side the other one closes. Before S1-fix9 a Slack-style ```` ```make install```
+fails ```` line opened a fence, so a ```` ```sh asert=absent pat=… ```` fence below
+it was swallowed as text and nothing named the typo: `ok (0 problems)`. With that
+line read correctly as inline code, the bare ```` ``` ```` meant to *close* a
+```` ```sh `make` output ```` line opens a fence instead, and swallows the fence
+below **that** — the same silence, one line further down (both measured red-first,
+issue **1489**). So the key is now tested on the fence line's own info string, by
+the stray-attribute check, with nothing asked about the fences around it: a word
+shaped `key=` whose key is one edit from `quote` or `assert` — a letter left out
+(`asert`), typed twice, typed wrong, typed the wrong way round (`qoute`), or a
+truncation or extension (`quot`, `quotes`, `assertion`) — is a named problem, and
+the fence it sits on is not read. It is named **once**: a fence the checker *does*
+read has had its whole info string named already, and the stray-attribute check is
+silent for that line.
+
+**One letter separates `assert=` from `asset=`, so the fence must say what it is a
+second way.** A misspelling counts only where the info string also carries a key of
+the grammar (`pat=`, `path=`, `state=`, `fix=`, or a marking key spelled right), or
+where the misspelled key's own value is the one that key takes — `absent` or
+`present` for `assert=`, a revision token for `quote=`. So ```` ```sh asert=absent
+````, ```` ```c qoute=d64686a1 ```` and ```` ```sh asert=absent pat=SABOTAGE
+path=src state=holds ```` are named, while ```` ```js asset=x ````,
+```` ```sh quota=10 ````, ```` ```text assent=y ```` and ```` ```c quoted=true ````
+are ordinary code samples. The residue is in §6.
+
+**Both halves of that test ignore case.** `ASERT=absent` and `asert=Absent` are the
+same mistake and are named alike, as are `qoute=A1314271` and `qoute=a1314271`. The
+key was folded and the value was not for one round, so a single capital letter
+turned the whole check off while its lowercase twin was named — measured, and
+fixed, by item D's fix round. A check a capital letter disarms is a silent pass,
+which is the one direction this checker may not fail in.
+
+**Which lines are fences.** A fence is a run of three or more backticks, or of three
+or more tildes, indented at most three spaces, and it closes on a run of the same
+character at least as long, as CommonMark has it. So a fence in a list item indented
+three spaces or fewer is a fence. A backtick fence's info string holds no backtick:
+```` ```make install``` fails here ```` is inline code in a paragraph, the way
+Slack-style writing uses it, and opens nothing. Until S1-fix9 it opened a fence that
+ran to the next bare ```` ``` ```` line, and a real `assert=` fence after it was
+swallowed as text: named, never evaluated, so a true assertion went red and a false
+one was never called false (read by S1-fix8's refuter, red-first by S1-fix9 and
+S1-fix10). The same rule has two consequences, stated in §6.
+Only a **column-0 backtick** fence is *read* as a block. Any other fence (`~~~`, or
+indented one to three spaces) is a fence whose contents are text. A fence indented
+four or more spaces, as under a nested list item, or inside a `>` blockquote, is not a
+fence to the block reader at all. A `quote=` or `assert=` on any fence that is not
+read is a named problem (§5), never a silent pass.
+
+**A marked fence's info string is read in full.** It must be exactly: at most one
+leading language word (no `=` in it), then `key=value` words only, each key one of
+`quote path fix assert pat state` and each given once. Any other word, a title
+included, is a named problem and the block is **not evaluated**. The checker used to
+keep the key=value words and drop the rest, so `assert=absent pat="static int"
+path=src state=holds` was checked as a search for the literal `"static` and passed,
+while the phrase is on 463 lines of `src` (measured by S1-fix6's refuter;
+outsider-fixes DECISIONS D19). The problem names the first five such words and
+counts the rest.
 
 ### `quote=` — a block that claims to reproduce tree text
 
@@ -304,12 +372,23 @@ info string is read. There is no shell and no
 interpolation — a document that can run arbitrary commands when you validate it
 is a document you cannot validate.
 
-**All the `assert=` scans of one gate run share one budget** (60 s), on top of
-each scan's own. A block reached after it is spent is a named problem, never
-evaluated and never passed. Per-scan bounds alone did not bound how many scans a
-corpus asks for: 100 two-line blocks over `path=.` held the gate for 211–253 s
-(measured by S1-fix6's refuter and by S1-fix7). The real corpus's one block costs
-about 70 ms.
+**All the `assert=` scans of one gate run share one budget: 60 s of scanning
+time**, on top of each scan's own 60 s. Only time spent scanning is charged to it. A
+block reached after it is spent is a named problem, never evaluated and never
+passed. Per-scan bounds alone did not bound how many scans a corpus asks for: 100
+two-line blocks over `path=.` held the gate for 211–253 s (measured by S1-fix6's
+refuter and by S1-fix7). The real corpus's one block costs about 70 ms. Until
+S1-fix8 this budget was a wall clock that started with the gate, so git work done
+*before* an assertion spent it. 240 valid `quote=` blocks in 0056 made the gate
+report 1219's 70 ms assertion as having run past the scanning budget: a false red
+with a false reason (measured by S1-fix7's refuter, red-first by S1-fix8).
+
+**A whole gate run also has a wall-clock budget, 600 s**, for everything it does:
+every git question a `tree=` or a `quote=` asks, and every scan. Once it is spent,
+each `tree=`, `quote=` and `assert=` the gate reaches is a named problem saying that
+the gate's time ran out. It is never passed, and never blamed on the assertion that
+came next. 600 s is under T1's 900 s per-case cap, so a corpus that asks for more is
+named rather than killed. The real corpus's whole gate takes well under a second.
 
 `state=` is the interesting half, and it is what makes the tracker close its own
 issues:
@@ -362,7 +441,31 @@ plain `tclsh` **and** under `xschem --nogui --pipe -q --script`, so
   stamp that lost its colon (`**STAMP** `, `**Stamp** `, `**STAMP;**`) was prose
   to the stray-stamp detector, which needs the word and a colon, so its bogus
   `tree=` was never checked (measured by S1-fix6's refuter). The only lines in the
-  real corpus that carry a body are the ten real stamps.
+  real corpus that carry a body are its real stamps (ten when this was written, 17
+  at `32b6a9cd`, measured by S1-fix10). **There is no exception
+  for a body inside a fence**, although markdown renders it as code: an example of
+  the format written in an issue file is named like any other body. That is a
+  documented limit, with its workaround, in §6.
+* Near-misses of a marked fence are named too: a `quote=` or `assert=` written in a
+  `~~~` fence, an indented fence, a blockquote, a list item, a fence never closed, a
+  file with no stamp, a ```` ``` ```` line whose info string holds a backtick, or as
+  `ASSERT=`, `QUOTE=`, `assert =` or `Assert= absent`. Each is **one** problem: a
+  case or spacing near-miss of `quote=`/`assert=` is named by the stray-attribute
+  check alone, and the marked-fence reader leaves that word to it, unless the key is
+  also written correctly in the same info string, where the near-miss is a bad word
+  of the fence instead. A misspelled marking key on a block (`asert=`, `qoute=`) is named
+  as a key the grammar does not know (§4) where the fence is read, and by the
+  stray-attribute check where it is not — so it is named wherever it sits, on a fence
+  swallowed by a phantom one, on a backtick-info line, or alone, and never twice
+  (issue **1489**, §4). It counts as a misspelling only where the fence is visibly a
+  block: another key of the grammar beside it, or the key's own value (`absent`,
+  `present`, a revision).
+* **No problem line is unbounded.** A problem quotes corpus words, and one marked
+  fence of 200k stray words once printed a single 5.8–6.9 MB line (measured by
+  S1-fix7's refuter and red-first by S1-fix8). A quoted word is clipped with its real
+  length, as in `ZZZZ…...(1000000 characters)`. A fence names its first five stray
+  words and counts the rest. Any line still longer than 2000 characters is cut, and
+  says so.
 
 So the unconverted set can shrink and never grow, and **the gate is green on the
 corpus as it stands** — which is the hard constraint (`D9`): T1's baseline is
@@ -469,6 +572,104 @@ exercised.
   in UTF-8 (`café`, `日本`, an emoji) are green in both locales. This is recorded
   rather than fixed (outsider-fixes DECISIONS D19). Rename the directory or clone
   elsewhere.
+* **A stamp body inside a fence is named, as anywhere else** (outsider-fixes
+  DECISIONS D21). ``see `v1 claim=open …` `` in a ```` ```text ```` fence is an
+  example to a reader and to markdown, and the checker names it: every line holding
+  a body — a backtick, `v1`, blanks, then `claim=` — that is not the stamp line is a
+  problem, in a fence or not, at any indentation or blockquote depth. S1-fix8
+  exempted closed fences and S1-fix9 found them through blockquotes and lists, and
+  each round's refuter then measured new regressions **in that exemption** from
+  nested markdown: a fence shown inside a fence, a blockquoted or four-indented fence
+  inside an example, a docstring example. One of them failed **open**: a colon-less
+  stamp in prose after such an example passed. A line-based scanner cannot settle
+  which fence a nested container's ```` ``` ```` line belongs to, and a real
+  CommonMark parser is out of scope, so the exemption was withdrawn. The limit is
+  fail-closed and loud, and the real corpus has no such line. **The workaround:**
+  show a stamp example outside `doc/claude/issues/` (a spec such as this one is not
+  scanned), or break the body so it is no longer one — write `` `v1 …` `` without
+  `claim=`, or leave out the backtick before `v1`. Rows Q19 and Q22 hold the limit.
+* **A stamp written in a fence is still read as one.** A canonical `**STAMP:**` line
+  at column 0 inside a fence is read as a stamp, because the stamp reader does not
+  look at fences. So is `STAMP:` followed by a body, in any emphasis, which is named
+  as a stamp the parser does not read. Both are fail-closed (red), as they were at
+  `aa5cece0`. The real corpus has neither.
+* **Which fences the block reader sees, exactly.** This section said until S1-fix9
+  that *"a fence inside a blockquote or a list item is not seen as a fence"*, which
+  was wrong for a list item: a list-item fence indented three spaces or fewer **is**
+  seen (measured by S1-fix8's refuter). The block reader (`quote=`, `assert=`) sees
+  a fence indented three spaces or fewer, a list item's included, and reads only a
+  column-0 backtick one. It does not see a fence indented four or more spaces (a
+  nested list item's), one inside a `>` blockquote, or one with a list-item marker
+  on its own line (`- ```text`). A `quote=` or `assert=` on any fence it does not
+  read is named, never passed. A block inside a container is therefore never
+  *verified*; write it at column 0.
+* **A backtick in a backtick fence's info string makes it no fence** (§4), as
+  CommonMark has it, and markdown-it agrees on both consequences. **A `pat=` cannot
+  hold a backtick:** ```` ```sh assert=absent pat=`x` … ```` is inline code, not a
+  block, and is named as such, where the checker before S1-fix9 read it. And **a
+  ```` ```sh `make` output ```` line opens nothing**, so the bare ```` ``` ```` meant
+  to close it opens a fence instead, and a real `quote=` or `assert=` fence after it
+  is text inside that one: named as not read, never passed — and since issue **1489**
+  so is a *misspelled* marking key there, which used to be the one thing this
+  swallowing hid (§4). Search for the text
+  without its backticks, and write example output under a plain ```` ```text ````.
+  **That rule moves two verdicts against the older checker, in opposite
+  directions, and both are stated here because a reader will meet them.**
+  *One:* a **true** `assert=` or a holding `quote=` written after such a line is
+  now RED where the older checker passed it. It is not a false alarm — markdown-it
+  (commonmark) renders that line as a paragraph and the ```` ``` ```` under it as a
+  fence whose content is the block, so nothing evaluates the claim, and passing an
+  unevaluated claim is the one thing this checker may not do. The same honest
+  assertion is named in **every** other position the parser does not read —
+  indented, `~~~`, never closed — by this checker and by the older one alike
+  (measured, all three, both). What the older checker had there was an accidental
+  green from a parse the reference rejects. The message names three line numbers:
+  the block's own line, the line that opened the block that swallowed it, and the
+  backtick-info line whose ```` ``` ```` closer became that opener.
+  *Two, and it is a limit rather than a defect:* a `key=value` word on such a
+  swallowed fence whose key is neither of the grammar nor a near miss of `quote=`
+  or `assert=` — ```` ```sh insert=absent pat=… path=… state=holds ```` — is
+  **silent**, where the older checker named it. The older checker named it only
+  because it *read* that fence; in every other unread position — indented, `~~~`,
+  never closed, inside another fence — the older checker is silent on the identical
+  text too (measured, all four, both checkers). Closing it would mean naming every
+  unknown word on every unread marked fence, which false-reds the ordinary code
+  samples this checker was just taught to leave alone (```` ```sh path=/tmp ls ````
+  in an example block), so it is recorded rather than fixed. Nothing evaluable is
+  lost: the key is not `assert=` or `quote=`, so no claim passes — there is no
+  claim. Row Q26 holds both halves.
+* **An ordinary word one letter from a marking key is named if it also looks like a
+  block.** `asset=` is `assert=` with a letter left out and `quota=` is `quote=` with
+  one typed wrong, so ```` ```js asset=absent path=x ```` and ```` ```sh
+  quota=d64686a1 ```` are named as misspellings, and the author must rename the word
+  or move the sample out of `doc/claude/issues/`. A fence carrying such a word on its
+  own — ```` ```js asset=x ````, ```` ```sh quota=10 ````, and the same words in any
+  case (```` ```js asset=X ````) — is an ordinary code sample and is not named (§4).
+  The real corpus has neither, and the fail-closed
+  direction was chosen deliberately: a silent pass on a misspelled `assert=` hides a
+  claim about the tree, while this costs one rename.
+  **The boundary is that both the key and the value must be outside the grammar.**
+  ```` ```sh asert=absnet ```` — a misspelled key *and* a misspelled value, with no
+  other key of the grammar beside it — is silent, where the checker before issue
+  **1489** named it as a key it did not know. It carries no claim anything could
+  pass on: nothing there says `absent`, `present` or a revision, so there is nothing
+  to evaluate and nothing to leave unevaluated. Adding any grammar key back
+  (```` ```sh asert=absnet pat=… path=… state=holds ````) re-arms the check.
+* **A block that lost its marking key entirely is not named.** A fence carrying
+  `pat=`, `path=` and `state=` but no `assert=` at all, or `path=` alone, is read and
+  has nothing to evaluate. Naming it would false-red ordinary code samples that
+  carry a `path=` word. The converse cost of marking by those three keys is stated
+  too: an ordinary code sample whose info string holds one of them **and** a word
+  that is not `key=value` (```` ```sh path=/tmp ls ````) is named as a malformed
+  fence. The real corpus has neither.
+* **The gate's 600 s wall-clock budget depends on the box.** On a machine slow
+  enough that the gate takes longer than that, whatever it reaches afterwards is
+  red, and the problem says why: the gate's time ran out. The real corpus takes well
+  under a second here. The budget is asked **before** a file's fences are scanned,
+  not after: scanning a file is the one pass whose cost the corpus's own text sets,
+  so a run past its budget names the file and reads no further. Measured on a 90 MB
+  corpus of misspelled-key fences with the budget set to 2 s: 9.6 s when the
+  question came after the scan, 2.5 s when it comes before, with the same verdict.
 * **In a partial clone, a `quote=` whose content was never fetched is NOT VERIFIED.**
   The checker never fetches (every git call runs with `GIT_NO_LAZY_FETCH=1`), so
   the content of an old revision's file is not there to compare against. It is
