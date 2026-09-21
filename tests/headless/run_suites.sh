@@ -35,6 +35,9 @@
 # after first making any suite path you gave absolute -- as full_audit.sh does.
 # xschem autosaves unsaved work as ./untitled~.sch, so a suite run from your home
 # directory used to overwrite or delete a ~/untitled~.sch of your own (D13.3).
+# That autosave now goes to a PRIVATE directory per run, deleted at the end, so
+# it does not land in the checkout either (issue 1486; tests/headless/suite_cwd.sh).
+# 51 of the 405 suites write or delete one; nothing else is left behind.
 #
 # SKIPS: a suite's own `skip:` lines (a row it could not run, and why) are
 # printed under its verdict line, indented, whatever the verdict (D13.11), and
@@ -125,8 +128,17 @@ unset _i
 # RUN FROM THE REPOSITORY ROOT (DECISIONS D13.3), as full_audit.sh does. xschem
 # autosaves unsaved work to ./untitled~.sch; from a tester's home directory that
 # OVERWROTE (test_signal_short_nohier_0230) or DELETED (test_crossview_paste) the
-# tester's own ~/untitled~.sch. Litter in the checkout stays a D12 item.
+# tester's own ~/untitled~.sch.
 cd "$REPO" || { echo "FATAL: cannot cd to the repository root $REPO" >&2; exit 1; }
+
+# ... and the autosave itself goes to a PRIVATE directory per run, not into the
+# checkout (issue 1486, which is what was left of D12 here). The cwd stays the
+# repository root because suites resolve fixtures against [pwd]; only $PWD --
+# which is what xschem composes the untitled buffer's path from -- is redirected.
+# tests/headless/suite_cwd.sh has the mechanism and the measurements.
+# shellcheck source=/dev/null
+. "$HERE/suite_cwd.sh"
+suite_cwd_arm "$REPO" || true
 
 # shellcheck source=/dev/null
 . "$HERE/gui_gate.sh" 2>/dev/null || true
@@ -134,7 +146,7 @@ cd "$REPO" || { echo "FATAL: cannot cd to the repository root $REPO" >&2; exit 1
 _nruns=$(( REPEAT * ${#suites[@]} ))
 if type gate_start >/dev/null 2>&1; then
   gate_start "run_suites: $_nruns run(s) [$MODE] ($(basename "${suites[0]}") ...)" || {
-    echo "gui_gate: stopped before start"; exit 3; }
+    echo "gui_gate: stopped before start"; suite_cwd_disarm; exit 3; }
 fi
 
 PASS=0; FAIL=0; SKIP=0; STOPPED=0; i=0
@@ -153,12 +165,16 @@ for _r in $(seq 1 "$REPEAT"); do
       fi
     fi
 
+    # A private $PWD for THIS run, so the untitled autosave lands there and is
+    # deleted with it (issue 1486). Unarmed, suite_cwd_for echoes $PWD and the
+    # `env` is a no-op.
+    _scwd=$(suite_cwd_for "${i}_${name}") || true
     case "$MODE" in
-      nogui)  out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --nogui --script "$f" 2>&1); ec=$? ;;
+      nogui)  out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --nolog --nogui --script "$f" 2>&1); ec=$? ;;
       logdir) tmpd=$(mktemp -d)
-              out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$f" 2>&1); ec=$?
+              out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$f" 2>&1); ec=$?
               rm -rf "$tmpd" ;;
-      *)      out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --script "$f" 2>&1); ec=$? ;;
+      *)      out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --nolog --script "$f" 2>&1); ec=$? ;;
     esac
 
     result=$(printf '%s\n' "$out" | grep -E '^RESULT' | tail -1)
@@ -270,6 +286,7 @@ for _r in $(seq 1 "$REPEAT"); do
 done
 
 type gate_finish >/dev/null 2>&1 && gate_finish
+suite_cwd_disarm      # the private $PWD directories, and every autosave in them
 
 if [ "$STOPPED" = "1" ]; then
   echo "RESULT: STOPPED by the GUI-test control panel" \

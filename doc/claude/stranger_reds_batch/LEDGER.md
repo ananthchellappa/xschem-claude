@@ -22,4 +22,11 @@
 | D verify | 1489 | two adversarial crews | receipts/D-verify.md | no blocker, no must; ~150 hostile gate invocations, 19 fail-closed fixtures still red, six stranger shapes green with skips named | |
 | D fix | 1489 | crew | receipts/D-verify.md | two findings fixed (a capitalised value disarmed the new check; the corpus-driven pass was outside the time budget, 9.6s -> 2.5s on 90 MB), one refused on measurement (D9), two recorded as documented limits; suite 102 checks | |
 | D gate | 1489 | driver | tests/results.1188390.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=524s, 87/87, zero peers | (this commit) |
+| E impl | 1487 | crew (workflow) | receipts/E-impl.md | the verdict carries each case's skip: lines and check count; trailer states skips= | |
+| E verify | 1487 | adversarial crew | receipts/E-verify.md | no blocker; three shoulds, the sharpest being unsanitised carried text able to plant a forged trailer | |
+| E fix | 1487 | crew | receipts/E-verify.md | all four carry sites sanitised (the review had named two); banner-only check counts carried for the two suites that state them; F's guard registered, after measuring that it would otherwise have counted a false failure | |
+| F impl | 1486 | crew (workflow) | receipts/F-impl.md | suites stop writing untitled~.sch into the working directory; new guard suite and a shared cwd arm | |
+| F verify | 1486 | adversarial crew | receipts/F-verify.md | BLOCKER: F's own first fix regressed the product (backup ownership tracked as a boolean where it needs the path); 38 of 406 suites write into their working directory | |
+| F fix | 1486 | crew | receipts/F-verify.md | ownership tracked by path, three new rows; overstated claims scoped to the nine suites and five files actually measured | |
+| E+F gate | 1486, 1487 | driver | tests/results.2325750.log | T1 solo: cases=88 blocks=87 counted_failures=0 skips=5 elapsed=532s, 88/88 Start/Finish, wc -l 260, zero peers | (this commit) |
 

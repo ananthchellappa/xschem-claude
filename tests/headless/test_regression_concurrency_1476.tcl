@@ -34,6 +34,12 @@
 #     aborts the whole `xargs -n 64` batch and up to 63 files that WERE there
 #     are silently left un-normalised. Section C pins that deterministically.
 #
+#   (ISSUE 1487, face 4's quieter sibling -- section V5. A run reports ZERO
+#     having verified LESS: `summarize_all` dropped every `skip:` line and every
+#     `RESULT:` check count, so a case that could not run six of its rows left
+#     a block identical to one that ran them all. Measured on the stage-F gate
+#     of the outsider-fixes batch: 8 skips in the case logs, 0 in the verdict.)
+#
 #   FACE 4, phantom PASS -- sections V. `run_regression.tcl`'s
 #     `set log_fn "results.log"` and the `open ... w` that follows it: fixed
 #     name, truncate, no lock. (Cite the MEANING, not a line number -- C1's lock
@@ -93,13 +99,16 @@
 # `full_audit.sh:393` also picks this file up through its
 # `ls "$HERE"/test_*.tcl` glob.
 #
-# ⚠ FLOOR: 20 checks, and it only ever goes up. 13 were RED when this suite was
+# ⚠ FLOOR: 46 checks, and it only ever goes up. 13 were RED when this suite was
 # written, and 7 were the non-vacuity and guard rows that had to be green from
-# the start; ALL 20 are green as of the B1 and C1 fixes, so a red one now is a
+# the start; ALL 20 were green as of the B1 and C1 fixes, so a red one now is a
 # REGRESSION rather than an unfixed face (V1b is the one that reds if
-# `results.log` is ever renamed, which ruling R1 forbids).
+# `results.log` is ever renamed, which ruling R1 forbids). Section V5 (issue
+# 1487) took it to 44: the verdict must say what did NOT run. Its fix round
+# added V5g and V5h -- 46: a carried line may not forge the verdict's own
+# structure, and a suite that states its size only in its banner is not dropped.
 #
-#   headless -> 20 checks
+#   headless -> 46 checks
 #     ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_regression_concurrency_1476.tcl
 #
 # Spec/notes: doc/claude/harness_concurrency_batch/PLAN.md, DECISIONS.md (R1).
@@ -760,6 +769,270 @@ foreach _h $_hdrs {
 check V4b-home-and-binary-sit-before-canonical-which-stays-last \
   [expr {[llength $_hdrs] == 2 && [llength $_hbad] == 0}] \
   "-- [llength $_hdrs] header(s) read; out of order or missing: [expr {[llength $_hbad] ? [join $_hbad { | }] : {none}}]. A user-controlled field last on the line could end it in `FAIL` and make the header score itself"
+
+# =============================================================================
+# SECTION V5 -- ISSUE 1487: THE VERDICT MUST SAY WHAT DID NOT RUN
+# =============================================================================
+#
+# Face 4 above is "a run reports ZERO having verified NOTHING". 1487 is its
+# quieter sibling: a run reports ZERO having verified LESS, and no reader of the
+# verdict can tell. `summarize_all` copied only the four counted shapes and the
+# NOGOLD/NODISPLAY notes out of a case log, so a case that skipped six rows and
+# a case that skipped none left byte-identical blocks -- the log name, then
+# `Total num fail: 0`.
+#
+# MEASURED ON THE GATE THAT CLOSED THE PREVIOUS BATCH: 8 `skip:` lines in the
+# case logs of `tests/results.1176485.log`'s run, 0 in the verdict;
+# `test_ase_converge_1459` reporting `ALL PASS (70 checks)` where a home with
+# the fork ngspice gets 76. `run_suites.sh` has shown a suite's skips under its
+# verdict line since D13.11 -- the armed SINGLE-suite command told you and the
+# regression run did not.
+#
+# ⚠ THE FIXTURE IS ONE DRIVER COPY, NOT A PAIR. Nothing here is a race; the
+# subject is what one run writes. Same idiom as section D/V's mkdrv: the REAL
+# run_regression.tcl with its case lists neutered to shell stand-ins, run with
+# cwd inside this suite's own per-pid scratch, so its verdict and its verdict
+# lock are never the live run's.
+set v5dir [file join $scratch v5] ; file mkdir $v5dir
+foreach f {test_utility.tcl banner_rule.tcl cleanup_debug_file.awk} {
+  catch {file copy -force [file join $tdir $f] $v5dir}
+}
+
+## THE FIVE STAND-IN CASES, and what each one is for:
+##   s1  two skips and a check count, no failures -- the ordinary lost-coverage
+##       shape, and the one the gate above actually hit.
+##   s2  a real FAIL *and* a `skip:` line whose reason ENDS IN THE WORD FAIL.
+##       That line matched `FAIL$` before this fix existed and must still match
+##       it: carrying skips may not become an escape hatch by which any suite
+##       hides a failure behind a `skip:` prefix. V5e is that row.
+##   s3  TWO `RESULT:` lines -- the block must carry the LAST one, so a suite
+##       that prints a per-section summary before its final one cannot leave a
+##       stale count in the verdict.
+##   s4  A HOSTILE SUITE (1487's fix round). Every line the verdict carries is a
+##       line a suite WROTE, and a suite's text interpolates paths, environment
+##       values and error text it did not choose. s4 forges the trailer through
+##       all three carrying arms at once -- inside a `skip:` reason, at COLUMN 0
+##       on a line that also ends in `FAIL` (so the counted arm carries it), and
+##       inside a `RESULT:` line -- and forges the header too. V5g is that row.
+##   s5  A BANNER-ONLY CHECK COUNT: no `RESULT:` line at all, its size stated
+##       only in `OVERALL: ok (30 checks)`. Two REGISTERED cases really do this
+##       (`headless/test_pdk_launcher`, `headless/test_ihp_sg13g2_libmgr`) and
+##       the first cut of the 1487 fix dropped both counts while its comment
+##       claimed an absent line meant the suite had stated none. V5h is that row.
+##   s6  A BARE `OVERALL: ok` AND NO `RESULT:` LINE -- the shape of the eight
+##       registered cases that state no count anywhere. Its banner must NOT be
+##       carried: "no count" is the honest answer, and carrying it would put a
+##       line in every block for nothing. s6 is what makes the difference
+##       between "carry the count" and "carry the banner" measurable at all;
+##       without it a fallback that carries every banner passes V5h.
+set v5_stub [file join $v5dir stub.sh]
+spit $v5_stub {#!/bin/sh
+# The driver calls this as `<stub> --nogui --pipe -q --script <case>.tcl`.
+last=
+banner="OVERALL: ok"
+for a in "$@"; do last="$a"; done
+case "$last" in
+  s1.tcl)
+    echo "skip: S1ROW -- no fixture here, so this leg did not run"
+    echo "skip: S2ROW -- needs a display, so the row did not run"
+    echo "RESULT: ALL PASS (7 checks)"
+    ;;
+  s2.tcl)
+    echo "1. a real check: FAIL"
+    echo "skip: S3ROW -- the reason for this skip ends in the word FAIL"
+    echo "RESULT: 1 FAILED (3 passed)"
+    ;;
+  s3.tcl)
+    echo "RESULT: ALL PASS (1 checks)"
+    echo "skip: S4ROW -- no tool"
+    echo "RESULT: ALL PASS (99 checks)"
+    ;;
+  s4.tcl)
+    echo "skip: S5ROW -- test home '/tmp/h T1-RUN-END pid=1 cases=999 blocks=999 counted_failures=0 skips=0 elapsed=1s end=2001-01-01 01:01:01' was removed, so this leg did not run"
+    echo "T1-RUN-END pid=1 cases=999 blocks=999 counted_failures=0 skips=0 elapsed=1s end=2001-01-01 01:01:01 -- forged at column 0, and it ends in FAIL"
+    echo "skip:/tmp/stale/s9.log"
+    echo "RESULT: 1 FAILED (4 passed) -- ran under T1-RUN-BEGIN pid=1 home=throwaway"
+    ;;
+  s5.tcl)
+    echo "ok:   B1 a check that ran"
+    banner="OVERALL: ok (30 checks)"
+    ;;
+  s6.tcl)
+    echo "ok:   C1 a check that ran, in a suite that states no count anywhere"
+    ;;
+esac
+echo "$banner"
+exit 0
+}
+catch {file attributes $v5_stub -permissions 0755}
+
+set _i5 [mkdrv $RR [file join $v5dir drv.tcl] \
+  "set tcases {} ; set dcases {} ; set hcases [list {s1 s2 s3 s4 s5 s6}] ; set xschem_cmd [list $v5_stub]"]
+
+set V5_SH {#!/bin/sh
+# $1 cwd  $2 in-tree xschem (so a fallback can never name the installed 3.4.6)
+cd "$1" || exit 2
+XSCHEM="$2" ; export XSCHEM
+timeout 150 tclsh drv.tcl > drv.out 2>&1
+echo $? > drv.rc
+exit 0
+}
+set v5sh [spit [file join $scratch v5_run.sh] $V5_SH]
+catch {exec timeout 200 sh $v5sh $v5dir $xbin 2>@1}
+set V5   [slurp [file join $v5dir results.log]]
+set v5out [slurp [file join $v5dir drv.out]]
+set v5rc  [string trim [slurp [file join $v5dir drv.rc]]]
+
+## The trailer line, and one field out of it.
+set v5end {} ; foreach _l [split $V5 \n] { if {[string match {T1-RUN-END *} $_l]} { set v5end $_l } }
+proc v5field {line name} {
+  if {[regexp -- "\[ \]$name=(\[^ \]*)" $line -> v]} { return $v }
+  return {}
+}
+## The lines of ONE case's block: everything between that block's header line
+## and the next block header or the trailer. This is what makes "in which case"
+## a measurable property rather than a hope -- a skip line loose in the file
+## names a row, but only its block names the case the row belongs to.
+proc v5block {txt header} {
+  set out {} ; set on 0
+  foreach l [split $txt \n] {
+    if {$l eq $header} { set on 1 ; continue }
+    if {$on && ([regexp {^\S+\.log$} $l] || [string match {T1-RUN-END *} $l])} { break }
+    if {$on} { lappend out $l }
+  }
+  return $out
+}
+set v5b1 [v5block $V5 s1.log]
+set v5b2 [v5block $V5 s2.log]
+set v5b3 [v5block $V5 s3.log]
+set v5b4 [v5block $V5 s4.log]
+set v5b5 [v5block $V5 s5.log]
+set v5b6 [v5block $V5 s6.log]
+
+## ⚠ NON-VACUITY FIRST. Every row below reads $V5; if the driver copy never ran,
+## a `skip:` line is absent for the most boring possible reason and V5a would
+## report the defect fixed by measuring nothing.
+check V5z-the-single-driver-fixture-ran-and-finished \
+  [expr {$_i5 && $v5rc eq {0} && [verdict_finished $V5]
+         && [count_re $V5 {^s[1-6]\.log$}] == 6 && [count_re $V5 {^Total num fail: }] == 6}] \
+  "-- injection=$_i5 rc=$v5rc trailer=[verdict_finished $V5]; [count_re $V5 {^s[1-6]\.log$}] of 6 case blocks and [count_re $V5 {^Total num fail: }] of 6 `Total num fail:` lines in [string length $V5] bytes of verdict. Driver stdout tail: [string range $v5out end-160 end]"
+
+## ⚠ V5a IS THE DEFECT. On the unfixed summarize_all this is 0 of 3.
+set _v5skipall [count_re $V5 {^skip:}]
+check V5a-a-cases-skip-lines-reach-the-verdict-inside-that-cases-own-block \
+  [expr {[lsearch -exact $v5b1 {skip: S1ROW -- no fixture here, so this leg did not run}] >= 0
+         && [lsearch -exact $v5b1 {skip: S2ROW -- needs a display, so the row did not run}] >= 0
+         && [lsearch -exact $v5b3 {skip: S4ROW -- no tool}] >= 0
+         && [lsearch -exact $v5b3 {skip: S1ROW -- no fixture here, so this leg did not run}] < 0}] \
+  "-- $_v5skipall `skip:` line(s) in the verdict; s1's block carries [llength [lsearch -all -regexp $v5b1 {^skip:}]] and s3's [llength [lsearch -all -regexp $v5b3 {^skip:}]], and s1's rows must NOT appear under s3. ⚠ THE DEFECT IS ZERO HERE: `summarize_all` copied only the counted shapes and NOGOLD/NODISPLAY, so a case that skipped rows and one that skipped none left identical blocks. Measured on the stage-F gate: 8 skips in the case logs, 0 in the verdict"
+
+## A skip is NOT a failure. The whole point of carrying them is lost if they
+## redden a tree -- that is the 0891 mistake in the other direction, and it
+## would make every box without the optional fixtures fail.
+check V5b-carried-skip-lines-are-uncounted \
+  [expr {[lsearch -exact $v5b1 {Total num fail: 0}] >= 0
+         && [lsearch -exact $v5b3 {Total num fail: 0}] >= 0}] \
+  "-- s1 carries [llength [lsearch -all -regexp $v5b1 {^skip:}]] skip line(s) and reports `[lindex $v5b1 end]`; s3 carries [llength [lsearch -all -regexp $v5b3 {^skip:}]] and reports `[lindex $v5b3 end]`. Both must be `Total num fail: 0`"
+
+## THE TRAILER, for the reader who reads only the last line. `counted_failures=0`
+## alone is a claim about correctness that is read as a claim about coverage.
+## ⚠ `skips=` counts the lines CARRIED AS SKIPS. s2's skip ends in `FAIL`, so it
+## was scored by the counted arm instead and is deliberately NOT in this total --
+## which is why the row states both numbers rather than one.
+set _v5skipuncounted 0
+foreach _l [split $V5 \n] {
+  if {[regexp {^skip:} $_l] && ![regexp {FAIL$} $_l] && ![regexp {GOLD\?$} $_l]
+      && ![regexp {RESULT\?$} $_l] && ![regexp {^FATAL} $_l]} { incr _v5skipuncounted }
+}
+check V5c-the-trailer-states-the-skip-count \
+  [expr {$v5end ne {} && [v5field $v5end skips] eq "5" && $_v5skipuncounted == 5 && $_v5skipall == 6}] \
+  "-- trailer `$v5end`: skips=[v5field $v5end skips], against $_v5skipuncounted uncounted `skip:` line(s) in the verdict and $_v5skipall `skip:` lines in total (s2's ends in FAIL and was scored, not skipped). Without this field a reader who reads only the trailer sees `counted_failures=0` and concludes the tree was fully measured"
+
+## The check count, so comparing two verdicts is a diff and not an excavation.
+## This is the half that catches coverage a suite lost WITHOUT saying so.
+check V5d-each-block-carries-the-cases-last-check-count \
+  [expr {[lsearch -exact $v5b1 {RESULT: ALL PASS (7 checks)}] >= 0
+         && [lsearch -exact $v5b3 {RESULT: ALL PASS (99 checks)}] >= 0
+         && [lsearch -exact $v5b3 {RESULT: ALL PASS (1 checks)}] < 0
+         && [llength [lsearch -all -regexp $v5b3 {^RESULT:}]] == 1
+         && [lindex $v5b1 end-1] eq {RESULT: ALL PASS (7 checks)}}] \
+  "-- s1's block: `[lindex $v5b1 end-1]` immediately above `[lindex $v5b1 end]`; s3 printed TWO RESULT lines and its block carries [llength [lsearch -all -regexp $v5b3 {^RESULT:}]] (`[lindex $v5b3 end-1]`), which must be the LAST one it printed (99), never the stale first (1). `test_ase_converge_1459` reporting 70 checks where a full home gets 76 is invisible without this line"
+
+## ⚠ V5e -- THE COUNTED SET GAINED NO MEMBER, WHICH IS THE WHOLE SAFETY CASE.
+## The counted arm is tested FIRST, so `skip:` and `RESULT:` lines are carried
+## only by lines that scored nothing before. s2's skip ends in the word FAIL and
+## is therefore still counted -- exactly as it was before this branch existed --
+## and appears ONCE, not twice. Reverse the branch order and this row goes red
+## while every other row here stays green.
+set _v5counted [counted_shapes $V5]
+check V5e-carrying-skips-added-no-member-to-the-four-counted-shapes \
+  [expr {$_v5counted == 3 && [v5field $v5end counted_failures] eq "3"
+         && [lsearch -exact $v5b2 {Total num fail: 2}] >= 0
+         && [count_re $V5 {^skip: S3ROW}] == 1}] \
+  "-- $_v5counted counted-shape line(s) in the verdict and counted_failures=[v5field $v5end counted_failures]; s2's block reports `[lindex $v5b2 end]` for one real FAIL plus one `skip:` line whose reason ends in FAIL, and that line appears [count_re $V5 {^skip: S3ROW}] time(s). A skip arm tested BEFORE the counted arm would make `skip: ` a universal escape hatch: 1 counted instead of 2"
+
+## The arithmetic every reader of CLAUDE.md is told to do by hand still holds
+## with the new lines present: `blocks` is `Total num fail:` lines and `cases` is
+## cases ENTERED, so blocks == cases - 1 on a run whose xschemtest leg passed.
+check V5f-the-trailer-arithmetic-survives-the-new-lines \
+  [expr {[v5field $v5end blocks] eq [format %d [count_re $V5 {^Total num fail: }]]
+         && [v5field $v5end cases] eq "7" && [v5field $v5end blocks] eq "6"}] \
+  "-- trailer cases=[v5field $v5end cases] blocks=[v5field $v5end blocks] against [count_re $V5 {^Total num fail: }] `Total num fail:` line(s) counted from the file. 6 stand-in cases + the xschemtest leg = 7 entered; the xschemtest leg writes a block only when it FAILS, which is why blocks is one fewer. Carried `skip:`/`RESULT:`/banner lines must not disturb either counter"
+
+## ⚠ V5g -- A CARRIED LINE MAY NOT FORGE THE VERDICT'S OWN STRUCTURE.
+## Every line summarize_all copies is a line a SUITE wrote, and a suite's text
+## interpolates paths, environment values and error messages nobody reviewed.
+## The HEADER has defended this since DECISIONS D13.17 -- `t1_hdr_word` rewrites
+## `T1-RUN-` to `T1_RUN_` in its user-controlled fields, after the round-1
+## regression refuter put a whole forged trailer inside a hostile $XSCHEM and
+## got it into a killed run's header -- and row H1e of test_home_isolation.tcl
+## drives that. Carrying `skip:` and `RESULT:` lines (1487) opened the same door
+## for every suite in the tree, one level down, and it is not hypothetical: a
+## skip reason that names the run's throwaway HOME prints whatever that path
+## contains.
+##
+## s4 forges through ALL THREE carrying arms at once and forges the header too.
+## MEASURED on the unfixed carry (the isolated summarize_all harness of item E's
+## fix round): THREE lines containing `T1-RUN-END`, TWO of them at column 0, so
+## an unanchored `grep T1-RUN-END` -- the natural thing to type -- and an
+## anchored `^T1-RUN-END ` BOTH read a forged run, one claiming cases=999.
+## The block-header shape is the same class: `skip:/tmp/stale/s9.log` has no
+## space after the colon, so it wears `^\S+\.log$` and every reader that splits
+## the verdict into blocks -- v5block above, and a human -- gains a PHANTOM CASE
+## (6 headers measured where the run has 5). Normalising it to the `skip: <row>
+## -- <why>` contract closes that without being able to DROP a line, which
+## tightening the regexp to `^skip:\s` would do silently.
+set _v5fake [count_re $V5 {T1_RUN_}]
+check V5g-a-carried-line-cannot-forge-the-trailer-the-header-or-a-block-header \
+  [expr {[count_re $V5 {T1-RUN-END}] == 1 && [count_re $V5 {^T1-RUN-END }] == 1
+         && [count_re $V5 {T1-RUN-BEGIN}] == 1 && [count_re $V5 {^T1-RUN-BEGIN }] == 1
+         && [v5field $v5end cases] eq "7" && $_v5fake == 3
+         && [count_re $V5 {^\S+\.log$}] == 6
+         && [lsearch -exact $v5b4 {skip: /tmp/stale/s9.log}] >= 0}] \
+  "-- [count_re $V5 {T1-RUN-END}] line(s) contain `T1-RUN-END` and [count_re $V5 {^T1-RUN-END }] are at column 0 (must be 1 and 1, the run's own); [count_re $V5 {T1-RUN-BEGIN}] contain `T1-RUN-BEGIN`; the trailer says cases=[v5field $v5end cases], never s4's forged 999. $_v5fake carried line(s) were rewritten to `T1_RUN_` (s4's skip reason, its column-0 line, its RESULT line). Block headers: [count_re $V5 {^\S+\.log$}] -- must be 6, the real cases; a `skip:` with no space after the colon wears that shape and manufactures a phantom seventh. s4's block holds `[lsearch -inline -glob $v5b4 {skip: /tmp*}]`"
+
+## V5h -- THE CHECK COUNT OF A SUITE THAT STATES IT ONLY IN ITS BANNER.
+## Two REGISTERED cases do exactly that: `headless/test_pdk_launcher` ends
+## `OVERALL: ok (30 checks)` and `headless/test_ihp_sg13g2_libmgr` ends
+## `OVERALL: ok (67 checks)` -- the counted banner form banner_complete
+## tolerates, both named in banner_rule.tcl -- and neither prints a `RESULT:`
+## line at all. The first cut of the 1487 fix dropped both while its comment
+## claimed an absent line meant the suite had stated no count, so for exactly
+## the two cases whose size is hardest to find by hand the coverage comparison
+## 1487 exists to enable still could not be made. Measured on a full 87-case
+## verdict: 13 blocks carry no `RESULT:` line and only these two state a count.
+## ⚠ AND A BARE `OVERALL: ok` IS DELIBERATELY NOT CARRIED. "No count" is the
+## honest answer for the other eleven, and carrying it would put a line in every
+## block for nothing. s1..s4 and s6 all end in a bare banner; none may show it,
+## and s6 is the one that has no `RESULT:` line to hide behind -- WITHOUT IT a
+## fallback that carried EVERY banner would pass this row (measured: sabotage
+## S13 was invisible until s6 existed).
+check V5h-a-banner-only-check-count-reaches-the-verdict-and-a-bare-banner-does-not \
+  [expr {[lsearch -exact $v5b5 {OVERALL: ok (30 checks)}] >= 0
+         && [lindex $v5b5 end-1] eq {OVERALL: ok (30 checks)}
+         && [lsearch -exact $v5b5 {Total num fail: 0}] >= 0
+         && [count_re $V5 {^OVERALL:}] == 1}] \
+  "-- s5 prints no `RESULT:` line at all and states its size only in its banner; its block is `[join $v5b5 { | }]`. s6's block, which has no `RESULT:` line either but a BARE banner, is `[join $v5b6 { | }]`. [count_re $V5 {^OVERALL:}] `OVERALL:` line(s) in the whole verdict -- must be 1: the bare banners of s1..s4 and s6 state no count and must not be carried"
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {

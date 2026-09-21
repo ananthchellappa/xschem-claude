@@ -6157,11 +6157,20 @@ void write_backup(void)
   }
   write_xschem_file(fd);
   fclose(fd);
+  /* Remember the PATH we just wrote, so every later unlink is of a file this
+   * session demonstrably produced. A "~" we never wrote is a previous session's
+   * crash recovery and is not ours to delete (issue 1486). One slot: writing a
+   * second backup stops tracking the first, which can leave a stray "~" but can
+   * never delete someone else's. */
+  my_strncpy(xctx->backup_owned, bak, S(xctx->backup_owned));
   dbg(1, "write_backup(): wrote %s\n", bak);
 }
 
 /* Remove the current cell's "~" backup file (after a real save, or when the
- * buffer returns to a clean state). No-op if it does not exist. */
+ * buffer returns to a clean state). No-op if it does not exist.
+ * UNCONDITIONAL on purpose: a real save commits the content, and `xschem backup
+ * remove` is an explicit instruction. The ownership-checked variants below are for
+ * the DISCARD paths, where deleting a "~" we did not write is data loss (1486). */
 void remove_backup(void)
 {
   char bak[PATH_MAX];
@@ -6169,6 +6178,39 @@ void remove_backup(void)
   if(!name || !name[0]) return;
   if(!backup_file_name(bak, S(bak), name)) return;
   xunlink(bak);
+  /* only that path stops being ours -- a backup we wrote for a DIFFERENT cell
+   * (an ancestor level, or the untitled buffer we edited before opening this one)
+   * is still ours and must stay tracked. */
+  if(!strcmp(bak, xctx->backup_owned)) xctx->backup_owned[0] = '\0';
+}
+
+/* Discard the current cell's "~" backup ONLY IF THIS SESSION WROTE IT.
+ * For the "discard this buffer's edits" paths (go_back's "No"): dropping the
+ * backup of edits we are throwing away is spec B8, but the buffer may never have
+ * had one written -- autosave_backup off (issue 0601), a read-only suppression,
+ * or a load -- and then the "~" sitting there is a previous session's crash
+ * recovery. Issue 1486. */
+void remove_backup_if_owned(void)
+{
+  char bak[PATH_MAX];
+  const char *name = xctx->sch[xctx->currsch];
+  if(!name || !name[0]) return;
+  if(!backup_file_name(bak, S(bak), name)) return;
+  if(strcmp(bak, xctx->backup_owned)) return; /* not ours: leave it where it is */
+  xunlink(bak);
+  xctx->backup_owned[0] = '\0';
+}
+
+/* Drop whatever "~" this session still owns, wherever it is. For clear_schematic():
+ * the WHOLE buffer (and the hierarchy above it) is being thrown away, so the file
+ * to remove is the one we wrote -- which is not necessarily the one beside the name
+ * currently in xctx->sch[currsch], e.g. after editing untitled and then opening a
+ * cell, or after reloading the same cell. Issue 1486. */
+void drop_owned_backup(void)
+{
+  if(!xctx->backup_owned[0]) return;
+  xunlink(xctx->backup_owned);
+  xctx->backup_owned[0] = '\0';
 }
 
 /* Load cellfile's "~" backup as the current buffer's CONTENT while keeping the
@@ -6348,6 +6390,13 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
    * (and the load-time trim_wires set_modify(1) in cadence mode) never creates or
    * touches a backup. Restored before every return. */
   xctx->no_autosave = 1;
+  /* ⚠ xctx->backup_owned is deliberately NOT cleared here (issue 1486, F fix round).
+   * It holds the PATH we wrote, not "the current buffer has a backup", so a load
+   * cannot make us forget a "~" that is still sitting on disk with our bytes in it.
+   * Clearing it here was measured to regress: load foo.sch, edit (foo~.sch written),
+   * reload foo.sch -- a reload discards the edit -- then File > New left foo~.sch
+   * behind, so the next open offered discarded edits back as crash recovery.
+   * Deleting a foreign "~" is prevented by comparing paths, not by forgetting. */
 
   xctx->prep_hi_structs=0;
   xctx->prep_net_structs=0;

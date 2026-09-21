@@ -72,6 +72,8 @@ fi
 # parent-dir invocation used to make relative fixture paths resolve outside
 # the repo -> startup Tcl error popup -> hang until timeout).
 cd "$REPO" || exit 2
+# ... but xschem's own untitled autosave does not belong in the checkout: see
+# the suite_cwd_arm below, past the AUDIT_LIB_ONLY source-guard (issue 1486).
 
 # Tests that need the action log / CIW open -> run with --logdir <tmp>
 # (test_ase_log_seam_0207 and test_select_at were MISSING from this list until
@@ -450,6 +452,20 @@ fi
 PASS=0 FAIL=0 CRASH=0 SKIP=0
 declare -A STATUS OUT
 
+# A PRIVATE $PWD PER TEST, so xschem's untitled autosave stops landing in the
+# checkout. xschem names the unsaved buffer <$PWD>/untitled.sch and writes
+# <$PWD>/untitled~.sch on the first edit (on purpose -- issue 0060), so with cwd
+# pinned to $REPO above, 51 of the 405 suites drop one in the repository root.
+# That is exactly what makes test_ase_core's C11 and test_op_dump_altshow's H1
+# structurally red INSIDE this audit while both pass when the suite is run alone
+# (issue 0609). The cwd is deliberately NOT moved -- suites resolve fixtures
+# against [pwd] -- only $PWD, which is what xschem composes the buffer path from.
+# Armed AFTER the source-guard: AUDIT_LIB_ONLY=1 must create nothing.
+# Mechanism and measurements: tests/headless/suite_cwd.sh (issue 1486).
+# shellcheck source=/dev/null
+. "$HERE/suite_cwd.sh"
+suite_cwd_arm "$REPO" || true
+
 # Both leak detectors are defined above the source-guard; take their "before"
 # readings here, just ahead of the first test.
 SCRATCH_BEFORE=$(scratch_snapshot)
@@ -463,7 +479,7 @@ TREE_BEFORE=$(tree_delta_snapshot)
 _ntests=${#files[@]}
 if type gate_start >/dev/null 2>&1; then
   gate_start "full_audit: $_ntests tests ($(basename "${files[0]:-?}") ...)" || {
-    echo "gui_gate: stopped before start"; exit 3; }
+    echo "gui_gate: stopped before start"; suite_cwd_disarm; exit 3; }
 fi
 _gate_stopped=0
 
@@ -479,20 +495,23 @@ for testfile in "${files[@]}"; do
     fi
   fi
 
+  # this test's private $PWD (issue 1486); unarmed, this is the cwd and the
+  # `env` prefix is a no-op.
+  _scwd=$(suite_cwd_for "$name") || true
   if in_list "$name" "$logdir_tests"; then
     tmpd=$(mktemp -d)
     if [ "$name" = "test_action_log_libmgr" ]; then
-      out=$(timeout "$TIMEOUT" env XSCHEM_AL_LOGDIR="$tmpd" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$testfile" 2>&1); ec=$?
+      out=$(timeout "$TIMEOUT" env "PWD=$_scwd" XSCHEM_AL_LOGDIR="$tmpd" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$testfile" 2>&1); ec=$?
     else
-      out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$testfile" 2>&1); ec=$?
+      out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --logdir "$tmpd" --script "$testfile" 2>&1); ec=$?
     fi
     rm -rf "$tmpd"
   elif in_list "$name" "$nogui_tests"; then
-    out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --nogui --script "$testfile" 2>&1); ec=$?
+    out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --nolog --nogui --script "$testfile" 2>&1); ec=$?
   elif in_list "$name" "$nolog_tests"; then
-    out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --script "$testfile" 2>&1); ec=$?
+    out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --nolog --script "$testfile" 2>&1); ec=$?
   else
-    out=$(timeout "$TIMEOUT" "$XSCHEM" --pipe -q --nolog --script "$testfile" 2>&1); ec=$?
+    out=$(timeout "$TIMEOUT" env "PWD=$_scwd" "$XSCHEM" --pipe -q --nolog --script "$testfile" 2>&1); ec=$?
   fi
 
   # one verdict, decided by classify() above; the loop only tallies.
@@ -505,6 +524,9 @@ for testfile in "${files[@]}"; do
   esac
   printf '%-8s | %s\n' "${STATUS[$name]}" "$name"
 done
+# the per-test $PWD directories and every untitled~.sch in them (issue 1486).
+# Before the tree/scratch "after" snapshots, so neither can see it.
+suite_cwd_disarm
 
 type gate_finish >/dev/null 2>&1 && gate_finish
 if [ "${_gate_stopped:-0}" = "1" ]; then

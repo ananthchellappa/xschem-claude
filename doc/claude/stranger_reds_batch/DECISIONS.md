@@ -164,3 +164,45 @@ The brief handed every item's crew the same scratch root and told each to delete
 crew did exactly that and removed about 2.5 GB of another crew's live work. The rule is
 now: make `<root>/<your label>/`, delete that, never the root. This was the driver's
 mistake, not a crew's.
+
+# D11 — Items E and F land together, on one gate (driver)
+
+Item F's product change (the backup-ownership repair) and item E's verdict change were in
+the tree at the same time, so no single-item gate exists for either: a T1 taken now
+measures both. The controlled evidence per item is its own fixtures and clone pairs; the
+gate is joint and says so.
+
+# D12 — What items E and F changed about the verdict, and what it costs (driver)
+
+The verdict now carries each case's `skip:` lines and its check count, and the trailer
+states `skips=`. So `counted_failures=0` is a claim about correctness and `skips=` is the
+claim about coverage, and a reader needs both: the previous batch's closing gate carried
+eight `skip:` lines in its case logs and none in its verdict, with one case quietly
+running 70 checks instead of 76.
+
+Three things were measured rather than assumed:
+
+* **A skip never manufactures a red.** The counted arm is tested first, so a skip reason
+  that happens to end in `FAIL` scores exactly as before. Driven over a hostile corpus with
+  0, 1, 12 and 200 skips and forged sentinels: `counted_failures` identical before and after.
+* **Carried text is sanitised, at all four carry sites.** The fix round found the one the
+  review had not: the counted arm copies a case-log line at column 0, where a forged
+  `T1-RUN-END` is a perfect trailer that even an anchored reader accepts. Three forged
+  markers in a verdict became one.
+* **`wc -l` on a green verdict is 260**, read off the gate, and it is now an even worse
+  constant than before: the skip count is environment-dependent (five here, eight on a home
+  that cannot reach the fork ngspice). Read `cases=`, `blocks=`, `counted_failures=` and
+  `skips=` from the trailer.
+
+Registering item F's guard as a T1 case needed a prerequisite the crew measured first: the
+suite printed no completion banner, so registering it as written would have counted a
+failing case while all 13 of its checks passed — issue 0689's false red from the other
+side, in the one file whose baseline is ZERO.
+
+# D13 — The litter defect is not fully closed, and the receipt says so (driver)
+
+Item F armed the three shell drivers; `run_regression.tcl`, the Tcl one, was missed, so T1
+itself still writes `untitled~.sch` into `tests/` — measured during item E's own gate
+window. The guard row checks the shell drivers only and is blind to the Tcl one. Filed
+rather than fixed in a capped round, together with the corpus sweep's wider finding: of 406
+headless suites, 38 write into whatever directory they were run from.

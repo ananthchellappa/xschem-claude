@@ -6459,7 +6459,14 @@ void go_back(int what)
       tcleval(as);
       if(!strcmp(tclresult(), "yes") ) save_ok = save_schematic(xctx->sch[xctx->currsch], 0);
       else if(!strcmp(tclresult(), "") ) return;
-      else remove_backup(); /* "No": discard this level's edits -> drop its cellName~ backup */
+      /* "No": discard this level's edits -> drop its cellName~ backup, BUT ONLY IF
+       * THIS SESSION WROTE IT (issue 1486). The two usually coincide -- a modified
+       * buffer normally means write_backup() ran -- but not when the write was
+       * suppressed: with `autosave_backup` off (issue 0601) or a read-only
+       * suppression, xctx->modified is 1 and no "~" of ours exists, so the
+       * unconditional call deleted a previous session's crash recovery for this
+       * cell. Same defect as clear_schematic()'s above, one call site away. */
+      else remove_backup_if_owned();
     }
     /* do not automatically save if confirm==0. Script developers should take care of this */
     /*
@@ -6557,8 +6564,30 @@ void clear_schematic(int cancel, int symbol)
         /* The current buffer is being discarded (saved above, or the user declined
          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
          * next open unambiguously means a crash, not an intentional discard. (A real
-         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8) */
-        remove_backup();
+         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8)
+         *
+         * ONLY IF THIS SESSION WROTE IT (issue 1486). The buffer being discarded is
+         * most often the pristine startup `untitled` placeholder, and then
+         * <dir>/untitled~.sch is a PREVIOUS session's crash-recovery autosave of
+         * different unsaved work -- the very file xschem_recover_backup() exists to
+         * offer back. Deleting one we never wrote is data loss, and it is measured:
+         * a plain `xschem clear force` with no edit at all removed a seeded
+         * untitled~.sch from the launch directory, which is how a documented test
+         * command destroyed a tester's own ~/untitled~.sch.
+         *
+         * ⚠ B8 HAS TWO DIRECTIONS AND THIS GUARD ONLY ADDRESSES ONE. An earlier
+         * revision of this comment said the invariant was "not weakened but
+         * STRENGTHENED"; it is not. B8 is "a leftover ~ on the next open
+         * unambiguously means a crash", and that is broken both by deleting a ~
+         * we did not write (which destroys a real crash's recovery -- the defect
+         * above) and by LEAVING one we did (which makes a deliberate discard look
+         * like a crash). So the unlink here must still cover EVERY backup this
+         * session wrote, including one whose buffer has since been reloaded or
+         * replaced -- which is why ownership is a PATH (drop_owned_backup) and not
+         * a boolean that load_schematic clears. With the boolean,
+         * `load foo; edit; load foo; clear` measurably left foo~.sch behind.
+         * Issue 1486, F fix round; rows U1/U4 and U3/U5 hold the two directions. */
+        drop_owned_backup();
         xctx->currsch = 0;
         unselect_all(1);
         /* incremental_wire_reroute Phase II: if a fluid stretch gesture is still armed, tearing down

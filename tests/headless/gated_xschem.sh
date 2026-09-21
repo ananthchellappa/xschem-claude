@@ -46,7 +46,9 @@ REPO=$(cd "$HERE/../.." && pwd)
 # HOME: a THROWAWAY home first, before the display arm, so openbox on the private
 # Xvfb and the xvfb-run re-exec both inherit it (tests/headless/test_home.sh;
 # DECISIONS D4). XSCHEM_TEST_HOME=real runs against your own HOME, loudly.
-# CWD: xschem runs from the repository root (below; DECISIONS D13.3).
+# CWD: xschem runs from the repository root (below; DECISIONS D13.3), with its
+# untitled autosave redirected into a private directory that is deleted at the
+# end, so it does not land in the checkout either (issue 1486).
 . "$HERE/test_home.sh"
 test_home_arm || exit $?
 . "$HERE/xvfb_arm.sh"
@@ -83,10 +85,19 @@ unset _args _a
 case "$XSCHEM" in */*) XSCHEM=$(_abs_if_exists "$XSCHEM") ;; esac
 cd "$REPO" || { echo "FATAL: cannot cd to the repository root $REPO" >&2; exit 1; }
 
+# ... and the autosave itself goes to a PRIVATE directory, not into the checkout
+# (issue 1486). xschem composes the untitled buffer's path from $PWD, so only
+# $PWD moves; the cwd stays the repository root, because suites resolve fixtures
+# against [pwd]. tests/headless/suite_cwd.sh has the mechanism and the numbers.
+# shellcheck source=/dev/null
+. "$HERE/suite_cwd.sh"
+suite_cwd_arm "$REPO" || true
+_scwd=$(suite_cwd_for run) || true
+
 if [ ! -x "$XSCHEM" ]; then
   echo "FATAL: xschem binary not found/executable at: $XSCHEM" \
        "(build with: cd src && make, or set \$XSCHEM)" >&2
-  exit 1
+  suite_cwd_disarm; exit 1
 fi
 
 # shellcheck source=/dev/null
@@ -94,15 +105,16 @@ fi
 
 _label="gated_xschem: $(basename "${*:-xschem}" 2>/dev/null || echo xschem)"
 if type gate_start >/dev/null 2>&1; then
-  gate_start "$_label" || { echo "gui_gate: stopped before start" >&2; exit 3; }
+  gate_start "$_label" || { echo "gui_gate: stopped before start" >&2; suite_cwd_disarm; exit 3; }
 fi
 # Hold here if the panel is Paused, BEFORE spending a window on the display.
 if type gate_pause_point >/dev/null 2>&1; then
-  gate_pause_point "$_label" || { echo "gui_gate: STOP" >&2; gate_finish; exit 3; }
+  gate_pause_point "$_label" || { echo "gui_gate: STOP" >&2; suite_cwd_disarm; gate_finish; exit 3; }
 fi
 
-"$XSCHEM" "$@"
+env "PWD=$_scwd" "$XSCHEM" "$@"
 _rc=$?
 
+suite_cwd_disarm
 type gate_finish >/dev/null 2>&1 && gate_finish
 exit "$_rc"

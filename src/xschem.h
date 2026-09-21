@@ -2357,6 +2357,20 @@ typedef struct {
   char hiersep[20];
   int no_undo;
   int no_autosave; /* suppress the cellName~.sch autosave write (e.g. during load) */
+  char backup_owned[PATH_MAX]; /* save.c: the cellName~ backup path THIS session last wrote,
+                       * or "" when we have written none. Set by write_backup(), cleared by
+                       * remove_backup()/remove_backup_if_owned() when they unlink that same
+                       * path, and dropped by drop_owned_backup(). It deliberately survives
+                       * load_schematic(): ownership belongs to the FILE we wrote, not to the
+                       * buffer that happens to be open, so reloading a cell we have already
+                       * backed up does not make us forget our own "~" (issue 1486).
+                       * The point of holding a PATH and not a flag is that every unlink is
+                       * then a file we demonstrably wrote -- a "~" we did not write is a
+                       * PREVIOUS session's crash recovery (xschem_recover_backup offers
+                       * exactly that file) and deleting it is data loss.
+                       * ONE SLOT, so a session that writes a second backup stops tracking
+                       * the first: the failure direction is a leftover "~", never a delete
+                       * of someone else's (issue 1486, F fix round). */
   int draw_single_layer;
   int draw_dots;
   int only_probes;
@@ -3351,6 +3365,8 @@ extern int save_schematic(const char *, int fast); /*  20171020 added return val
 extern int backup_file_name(char *dest, int destsize, const char *src);
 extern void write_backup(void);
 extern void remove_backup(void);
+extern void remove_backup_if_owned(void);
+extern void drop_owned_backup(void);
 extern int load_backup_as(const char *cellfile, int set_title);
 extern int hierarchy_modified(void);
 extern void copy_symbol(xSymbol *dest_sym, xSymbol *src_sym);

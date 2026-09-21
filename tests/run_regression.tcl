@@ -93,7 +93,29 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_regression_concurrency_1476" \
                  "headless/test_issue_stamp" \
                  "headless/test_home_isolation" \
-                 "headless/test_home_isolation_sh"]
+                 "headless/test_home_isolation_sh" \
+                 "headless/test_untitled_autosave_1486"]
+# ⚠ `test_untitled_autosave_1486` GUARDS A PRODUCT DEFECT AND A HARNESS ONE AT
+# ONCE (issue 1486), which is why it is registered here rather than left to
+# `full_audit.sh`'s glob. Its U rows hold `clear_schematic()` to removing only a
+# backup THIS session wrote -- a plain `xschem clear force` used to delete a
+# `untitled~.sch` a previous session had left as crash recovery, i.e. a tester's
+# own unsaved work -- and its D rows hold the three drivers to writing that
+# autosave into a private `$PWD` instead of the directory the run was launched
+# from. Unregistered, a revert of either half is green until somebody runs that
+# one suite by hand. MEASURED before registering: run in exactly this arm's
+# shape (`--nogui --pipe -q --script`, cwd `tests/`, throwaway HOME) it is
+# `RESULT: ALL PASS (13 checks)`, exit 0, ~90 s.
+# ⚠ AND IT HAD TO LEARN THE COMPLETION BANNER FIRST. It printed a `RESULT:` line
+# and no `OVERALL:` line at all, which `run_suites.sh` scores from `^RESULT` and
+# `regression_case_failed` does not: measured, `banner_complete` 0 and
+# `regression_case_failed` 1, so registering it as it stood would have appended
+# `HARNESS: ... did not complete cleanly` and counted a failure in the one file
+# whose baseline is ZERO. That is issue 0689's false red exactly, arriving from
+# the other side -- a suite that passes every one of its own checks, scored a
+# harness failure by a banner rule it never met. The banner was added to the
+# suite in the same change as this line.
+#
 # ⚠ `test_regression_concurrency_1476` IS THE SUITE FOR THIS DRIVER'S OWN
 # CONCURRENCY DEFECT, and the paragraph below about wall-clock cost is answered
 # up front: measured 2026-09-17 on this tree, **8.5-8.6 s** for 20 checks (8.53,
@@ -356,7 +378,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 set log_fn     "results.log"          ;# canonical: the most recent COMPLETED run
 set run_log_fn "results.[pid].log"    ;# this run's own answer, never shared
 
-## The three running totals the trailer reports.
+## The four running totals the trailer reports.
 ## ⚠ NONE OF THEM EXISTED. summarize_all returned nothing and its num_fail was
 ## local, so this driver has never known its own answer -- which is why a
 ## trailer had to be BUILT rather than merely printed, and why every reader has
@@ -364,6 +386,7 @@ set run_log_fn "results.[pid].log"    ;# this run's own answer, never shared
 set t1_cases    0   ;# cases ENTERED -- one per "Start ..." line
 set t1_blocks   0   ;# "Total num fail:" blocks written into the verdict
 set t1_failures 0   ;# counted failures: the number whose baseline is ZERO
+set t1_skips    0   ;# `skip:` lines carried into the verdict (issue 1487) -- NEVER counted
 
 ## $fn is the file to READ; $label is the name to PRINT as the block header.
 ##
@@ -379,16 +402,109 @@ set t1_failures 0   ;# counted failures: the number whose baseline is ZERO
 ## and the read, the other run can publish its own file onto that same name and
 ## be scored instead. Reading the private name while printing the public one is
 ## what closes both at once, and it is one extra argument.
+##
+## ⚠ AND IT IS THE VERDICT'S ONLY WRITER OF COVERAGE, WHICH IS ISSUE 1487.
+## Until then this proc copied exactly two kinds of line out of a case log --
+## the four counted shapes, and the uncounted NOGOLD/NODISPLAY notes -- so a
+## case that could not run six of its rows and one that ran every row left
+## IDENTICAL blocks: the log name, then `Total num fail: 0`. Measured on the
+## stage-F gate that closed the outsider-fixes batch: 8 `skip:` lines in the
+## case logs, 0 in the verdict, `test_ase_converge_1459` reporting 70 checks
+## where a home with the fork ngspice gets 76 -- and the verdict saying ZERO
+## with nothing to distinguish it from the run that got all 76.
+##
+## That is the 0147 rule again, one level down. 0147 was "a case that verified
+## NOTHING must not read as a pass"; this is "a case that verified LESS must not
+## read as a case that verified everything". Both are answered the same way:
+## print it, loudly, and do not count it.
+##
+## ⚠ THE ORDER OF THE BRANCHES IS THE SAFETY PROPERTY, NOT A STYLE CHOICE. The
+## counted arm is tested FIRST, so the four counted shapes cannot gain or lose a
+## member: a `skip:` line whose reason happens to end in the word FAIL scores
+## exactly as it scored before this branch existed. Put the skip arm first and
+## it becomes an escape hatch -- any suite could hide a failure behind a `skip:`
+## prefix. Row V5e pins that by measurement.
+##
+## ⚠ AND EVERY CARRIED LINE IS TEXT A SUITE WROTE, SO IT IS SANITISED -- see
+## t1_carry_line just below, which is this file's own D13.17 rule applied one
+## level down.
+##
+## ONE LINE OF A SUITE'S TEXT, MADE SAFE TO PUT IN THE VERDICT.
+##
+## The header already defends this invariant for its own user-controlled fields:
+## `t1_hdr_word` rewrites `T1-RUN-` to `T1_RUN_` (DECISIONS D13.17) because the
+## round-1 regression refuter put a whole forged trailer inside a hostile
+## $XSCHEM and got it into a killed run's header, where an unanchored
+## `grep T1-RUN-END` -- the natural thing to type -- reads that run as finished.
+## Carrying `skip:` and `RESULT:` lines (issue 1487) opened the same door for
+## every suite in the tree, and it is not hypothetical: a skip reason that names
+## the run's throwaway HOME prints whatever that path contains. MEASURED in item
+## E's verify round -- a real suite driven under a HOME whose name held a forged
+## `T1-RUN-END ...` produced a verdict carrying TWO lines matching it.
+##
+## Exactly two structural shapes are rewritten and nothing else:
+##
+##  1. the sentinel word, as t1_hdr_word does, so only the real trailer and the
+##     real header can carry it;
+##  2. a `skip:` with no space after the colon, which would otherwise be able to
+##     wear the BLOCK-HEADER shape (`^\S+\.log$` -- a whole line, no spaces,
+##     ending in `.log`) and make a reader attribute the lines after it to a
+##     case that does not exist. D10's contract is `skip: <row> -- <why>` and
+##     every emitter in the tree writes the space (measured: zero exceptions
+##     across ~40 sites), so this restores the contract rather than editing a
+##     suite's words -- and, unlike tightening the regexp to `^skip:\s`, it
+##     cannot SILENTLY DROP a future emitter's line, which is the defect 1487 is
+##     about. Tightening the regexp would also diverge from run_suites.sh's
+##     `grep -E '^skip:'`, and a second spelling of a shared shape is what 0689
+##     was.
+##
+## Nothing else is touched. In particular the SCORING shapes are left alone: a
+## `skip:` reason ending in the word FAIL still scores exactly as it did before
+## 1487 existed (row V5e), because the counted arm runs first and this proc is
+## reached only when printing.
+proc t1_carry_line {line} {
+  set line [string map {T1-RUN- T1_RUN_} $line]
+  regsub {^skip:(\S)} $line {skip: \1} line
+  return $line
+}
+
 proc summarize_all {fn fd {label {}}} {
   if {$label eq {}} { set label $fn }
   incr ::t1_blocks
   puts $fd "$label"
   set b [catch "open \"$fn\" r" fdread]
   set num_fail 0
+  set num_skip 0
+  ## The case's LAST `RESULT:` line, held back and printed just above `Total num
+  ## fail:` so every block has the same shape and a reader always finds the
+  ## check count in the same place.
+  ##
+  ## ⚠ AND ITS FALLBACK, WHICH IS NOT COSMETIC. This comment used to claim that
+  ## an ABSENT line means "the suite never stated a count", and that was false
+  ## for two REGISTERED cases: `headless/test_pdk_launcher` ends
+  ## `OVERALL: ok (30 checks)` and `headless/test_ihp_sg13g2_libmgr` ends
+  ## `OVERALL: ok (67 checks)` -- the counted banner shape banner_complete
+  ## tolerates (banner_rule.tcl names both sites) -- and neither prints a
+  ## `RESULT:` line at all. So for exactly those two the coverage comparison
+  ## 1487 exists to enable still could not be made. MEASURED on a full verdict
+  ## of the 87-case tree (`tests/results.1620712.log`): 13 of its 86 blocks
+  ## carry no `RESULT:` line, and only these two state a count anywhere; the
+  ## other 11 are the three NOGOLD tcases and eight suites ending in a BARE
+  ## `OVERALL: ok`, which genuinely state nothing.
+  ##
+  ## So a banner with a parenthesised trailer is kept as the fallback and used
+  ## only when no `RESULT:` line was seen. That adds TWO lines to a full
+  ## verdict, not one per block: a bare banner is not carried, because "no count" is the
+  ## honest answer there. The predicate is banner_rule.tcl's OWN
+  ## `banner_complete`, never a fourth spelling of it -- a copied banner shape
+  ## drifts silently, which is the whole of issue 0689 -- plus one clause for
+  ## "and it actually carries a trailer".
+  set result_line {}
+  set banner_line {}
   if (!$b) {
     while {[gets $fdread line] >=0} {
       if { [regexp {FAIL$} $line] || [regexp {GOLD\?$} $line] || [regexp {RESULT\?$} $line] || [regexp {^FATAL} $line]} {
-        puts $fd $line
+        puts $fd [t1_carry_line $line]
         incr num_fail
       } elseif { [regexp {^(NOGOLD|NODISPLAY)} $line] } {
         # Surface "this case verified NOTHING" in the summary without counting it
@@ -399,9 +515,34 @@ proc summarize_all {fn fd {label {}}} {
         # dev display cannot run the display arm, and turning that into a red
         # would make every headless CI box fail. Turning it into SILENCE is what
         # 0891 actually was, so it is printed, loudly, and not counted.
-        puts $fd $line
+        puts $fd [t1_carry_line $line]
+      } elseif { [regexp {^skip:} $line] } {
+        # Issue 1487. `skip: <row> -- <why>` is a suite saying which of its own
+        # rows did not run and why (DECISIONS D10 of the outsider-fixes batch
+        # made those rows say so by name instead of passing silently).
+        # run_suites.sh has printed them under a suite's verdict since D13.11;
+        # the regression driver threw them away, so the ONE file CLAUDE.md calls
+        # "the only place the answer is" was the only place that could not say
+        # what had not been measured.
+        #
+        # UNCOUNTED, and that is deliberate: a skip is not a failure. Turning
+        # lost coverage into a red would make every box without the optional
+        # fixtures fail, which is the mistake 0891 made in the other direction.
+        puts $fd [t1_carry_line $line]
+        incr num_skip
+      } elseif { [regexp {^RESULT:} $line] } {
+        # The check count, so two verdicts can be compared with `diff` instead
+        # of by excavating 88 case logs. This is the half that catches coverage
+        # a suite lost WITHOUT saying so: `RESULT: ALL PASS (70 checks)` against
+        # a remembered 76 is visible where `Total num fail: 0` is not.
+        set result_line $line
+      } elseif { [banner_complete $line] && [regexp {\([^)]*\)} $line] } {
+        # The fallback for the two banner-only cases -- see `banner_line` above.
+        set banner_line $line
       }
     }
+    if {$result_line eq {} && $banner_line ne {}} { set result_line $banner_line }
+    if {$result_line ne {}} { puts $fd [t1_carry_line $result_line] }
     puts $fd "Total num fail: $num_fail"
     close $fdread
   } else {
@@ -413,6 +554,7 @@ proc summarize_all {fn fd {label {}}} {
     set num_fail 1
   }
   incr ::t1_failures $num_fail
+  incr ::t1_skips    $num_skip
   return $num_fail
 }
 
@@ -1335,9 +1477,18 @@ foreach tc $tcases {
   ## ⚠ AND IT STATES THE ARITHMETIC CLAUDE.md SPELLS OUT BY HAND. `cases` is
   ## Start lines; `blocks` is "Total num fail:" lines, normally one fewer; a
   ## short count is a death even when every line present is green.
+  ##
+  ## ⚠ `skips=` IS HERE BECAUSE OF WHO READS ONLY THIS LINE (issue 1487). A
+  ## reader who reads nothing but the trailer sees `counted_failures=0` and
+  ## concludes the tree is green AND fully measured, and those are two different
+  ## claims. `skips=` separates them: zero failures over N cases, of which this
+  ## many rows announced that they did not run. It is a COUNT, never a verdict
+  ## -- the names are in the `skip:` lines inside the blocks, which is where the
+  ## case they belong to is written. It sits after counted_failures so the two
+  ## are read together, and before `end=`, which stays last.
   set t1_ended [clock seconds]
   puts $fd "T1-RUN-END pid=[pid] cases=$t1_cases blocks=$t1_blocks\
- counted_failures=$t1_failures elapsed=[expr {$t1_ended - $t1_started}]s\
+ counted_failures=$t1_failures skips=$t1_skips elapsed=[expr {$t1_ended - $t1_started}]s\
  end=[clock format $t1_ended -format {%Y-%m-%d %H:%M:%S}]"
   close $fd
 
@@ -1361,7 +1512,13 @@ foreach tc $tcases {
     puts "WARNING: this run's verdict is COMPLETE and is in $run_log_fn -- read that."
   }
   catch {file delete -force $lock_file}
-  puts "VERDICT: this run's answer is $run_log_fn ($t1_failures counted failure(s) over $t1_cases case(s)); published as $log_fn"
+  ## The stdout echo says the same two numbers for the same reason the trailer
+  ## does (issue 1487): "0 counted failures" alone is a claim about correctness
+  ## that reads as a claim about coverage.
+  puts "VERDICT: this run's answer is $run_log_fn ($t1_failures counted failure(s) and $t1_skips skipped row(s) over $t1_cases case(s)); published as $log_fn"
+  if {$t1_skips > 0} {
+    puts "NOTE: $t1_skips row(s) announced that they did NOT run -- `/usr/bin/grep -n '^skip:' $run_log_fn` names them, under the block of the case each belongs to. Zero counted failures is not the same as full coverage."
+  }
 } else {
   puts "Couldn't open $run_log_fn to write.  Investigate please."
 }

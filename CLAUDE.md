@@ -91,9 +91,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   (the repo-root spelling above excepted). Name every case whose `Total num fail:` isn't 0.
 - **Counted lines** (`summarize_all`): ending `FAIL`, `GOLD?` or `RESULT?`, or starting
   `FATAL`.
+- **Uncounted lines** (`summarize_all`): `NOGOLD`/`NODISPLAY` — the case verified nothing —
+  and, since issue **1487**, every `skip:` line a case printed plus that case's last
+  `RESULT:` line with its check count, both inside that case's own block. A `skip:` names a
+  row that did **not** run and is never a failure. ⚠ **`counted_failures=0` is a claim about
+  correctness, not about coverage**: read `skips=` with it, and `/usr/bin/grep -n '^skip:'`
+  the verdict for the names. Before 1487 the verdict was the one file that could not say what
+  had not been measured — the stage-F gate at `7a46275f` carried **8 `skip:` lines in its case
+  logs and 0 in its verdict**, with `test_ase_converge_1459` reporting 70 checks where a home
+  holding the fork ngspice gets 76. The counted arm is still tested **first**, so a `skip:`
+  line whose reason happens to end in `FAIL` scores exactly as it did before (rows `V5a`–`V5f`,
+  `test_regression_concurrency_1476.tcl`).
 - **Read the trailer first**: `T1-RUN-BEGIN pid= script= start= planned_cases= verdict=
   home= binary= canonical=` (line-buffered; survives a kill) and `T1-RUN-END pid= cases=
-  blocks= counted_failures= elapsed= end=`. `home=` is `throwaway`, `real` or `custom`;
+  blocks= counted_failures= skips= elapsed= end=`. `home=` is `throwaway`, `real` or `custom`;
   `binary=` is the path `auto_execok` resolved (a PATH fallback shows). Both are
   sanitised (whitespace replaced, `T1-RUN-` → `T1_RUN_`) and precede `canonical=`, which
   stays last, so no value can end the header in a counted shape or plant a fake sentinel
@@ -111,12 +122,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
 - `couldn't execute "xschem"` or `exit 127` anywhere: the binary never launched and
   nothing in that run is meaningful (issue 0016 Part 4 separates it from the benign
   rc=10 fall-through).
-- **Cases, blocks and lines are three different numbers**; take `cases=`, `blocks=` and
-  `counted_failures=` from `T1-RUN-END`. Cases = `Start` lines; blocks = `Total num
+- **Cases, blocks and lines are three different numbers**; take `cases=`, `blocks=`,
+  `counted_failures=` and `skips=` from `T1-RUN-END`. Cases = `Start` lines; blocks = `Total num
   fail:` lines = cases − 1 on a green run (`xschemtest.tcl` writes one only on failure);
-  `wc -l` moves with the failure count, so never check it against an arithmetic figure.
+  `wc -l` moves with the failure count — and, since issue **1487**, with the number of `skip:`
+  and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
-  blocks, `wc -l` 177 green, 185 with eight failures. To count a list, find `set hcases
+  blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
+  the gate verdict `tests/results.2325750.log` at the 1487 and 1486 fixes, where
+  `headless/test_untitled_autosave_1486` is a 73rd `hcases` entry: **88 cases** (3 + 73 + 11
+  + `xschemtest`), **87 blocks**, **`wc -l` 260 green** (`2` sentinels + `87` headers + `87`
+  `Total num fail:` + `3` NOGOLD + **`5` `skip:`** + **`74` `RESULT:`** + **`2` banner-only
+  counts**; trailer `cases=88 blocks=87 counted_failures=0 skips=5 elapsed=532s`). ⚠ Both new terms are
+  **environment-dependent** — a home that cannot reach the fork ngspice adds three more
+  `skip:` lines — so this figure is even less of a constant than it was. To count a list, find `set hcases
   [list` (not a line number) and pipe it through `/usr/bin/grep -o '"[^"]*"' | wc -l`;
   `grep -c '"headless/'` and `grep -cE '\.log$'` (it matches `canonical=results.log`)
   miscount.
@@ -164,8 +183,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
 - **T1's baseline is ZERO counted failures.** A standing red is a defect, not
   furniture: if T1 is not at zero, say which case and why, per case; never carry a count
   forward. The zero is measured with `DISPLAY` set (unset, four suites segfault: issue
-  1483), and `skip:` lines in case logs never reach the verdict (issue 1487): green is
-  per case, coverage is not in the verdict.
+  1483). **Green is per case, and coverage is a second number**: since issue 1487 the
+  verdict carries each case's `skip:` lines and check count and the trailer states
+  `skips=`, so read `counted_failures=0 skips=N` together — N > 0 means rows that did not
+  run, named in the blocks. Measured 2026-09-20 on the main tree: `cases=88 blocks=87
+  counted_failures=0 skips=5`, the five being `test_op_annot`'s display-only rows on the
+  headless arm.
 - **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
   `banner_died`, `regression_case_failed`); `run_suites.sh` and `full_audit.sh` keep
   their own EREs (`/bin/sh` can't source Tcl), locked to it by section K of
