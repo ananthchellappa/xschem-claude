@@ -846,17 +846,28 @@ check {WR1 a bench that asks for neither emits neither} \
         [c_ans ase::wrnodev_lines ngspice [c_state] restore] \
         [c_lines [c_deck [c_state]] {wrnodev|nodeset|\.include}]] {{} {} {}}
 
+## ⚠ THE EXPECTATION RENDERS THE PATH THE WAY THE CONTROL LINE CAN CARRY IT
+## (issues 1484/1490): `wrnodev` is one of the commands ngspice CASE-FOLDS, so
+## a run directory with a capital or a space in it is handed over through a
+## `setcs` variable instead of written bare -- measured, the bare form wrote
+## `/x/cap/op.ic` for a deck that said `/x/Cap/op.ic`. On an ordinary path this
+## is the bare line it always was, so the row still pins the command and the
+## file; `wr_expect` is what makes it pin them in EVERY tester's directory.
+proc wr_expect {path} {
+  lassign [c_ans ase::backend::ngspice::path_word $path aseops 1] pre word
+  return [concat $pre [list "wrnodev $word"]]
+}
 check {WR2 the save is the simulator's own command, named at the file the\
  bench chose} \
   [c_ans ase::wrnodev_lines ngspice \
      [c_state opstate [list save 1 file $WRPATH]] save] \
-  [list "wrnodev $WRPATH"]
+  [wr_expect $WRPATH]
 
 ## ⚠ A RELATIVE NAME IS TAKEN AGAINST THE RUN DIRECTORY, which is where the
 ## simulator's own working directory is.
 check {WR3 a relative file name lands in the run directory} \
   [c_ans ase::wrnodev_lines ngspice [c_state opstate {save 1 file op.ic}] save] \
-  [list "wrnodev [file join $scratch op.ic]"]
+  [wr_expect [file join $scratch op.ic]]
 
 ## ⚠ THE HEADLINE MEASUREMENT. `wrnodev` writes `.ic`, and `.ic` is an INITIAL
 ## CONDITION for a transient -- not the starting guess it is for an `op`, and
@@ -874,12 +885,48 @@ check {WR4 the default restore re-spells the simulator's own .ic file as\
      [c_state opstate [list restore 1 file $WRPATH]] restore] \
   {{.nodeset v(in) = 5} {.nodeset v(a) = 3.33333} {.nodeset v(b) = 1.66667}}
 
+## ⚠ AND THE RESTORE CARD TAKES THE OTHER HALF OF THE 1484/1490 RULE, which is
+## why this row's expectation is no longer a bare interpolation of `$WRPATH`.
+## `.include` is a DECK CARD, not a control line: it is on ngspice's case
+## whitelist, so a capital resolves bare -- but it is still split at the first
+## space, and unlike the control lines it fails LOUDLY. Measured 2026-09-20 end
+## to end on both binaries, `restore 1 mode force`: a run directory `w s/` gave
+## `Error: Could not find include file /var/tmp/.../w`, `fatal error`, rc 1 and
+## NO RAW FILE AT ALL -- a user who ticks force-restore loses the entire run.
+## Neither quote is kept as part of the name here (the trap that rules out
+## quoting `wrs2p` does not apply to a deck card), so quoting is the answer.
+## `wr_inc` is this suite's OWN statement of that rule, written here rather than
+## borrowed from the emitter, so `WR4b` stays a second opinion.
+proc wr_inc {path} {
+  if {[regexp {^[A-Za-z0-9_./-]+$} $path]} { return ".include $path" }
+  if {[string first ' $path] < 0} { return ".include '$path'" }
+  return ".include \"$path\""
+}
 check {WR4b force is the verbatim include, i.e. the simulator's own .ic\
  semantics, and it is NOT the default} \
   [list [c_ans ase::wrnodev_lines ngspice \
            [c_state opstate [list restore 1 mode force file $WRPATH]] restore] \
         [ase::opstate_get [c_state opstate [list restore 1 file $WRPATH]] mode seed]] \
-  [list [list ".include $WRPATH"] seed]
+  [list [list [wr_inc $WRPATH]] seed]
+
+## ⚠ AND THE ROW A REGRESSION CANNOT WALK PAST, because `WR4b` builds its
+## expectation from the same `$WRPATH` and is therefore blind to the quoting in
+## every tester's own directory at once. These three paths are LITERAL, so the
+## row states the rule instead of agreeing with it: a space must be quoted, a
+## capital must NOT be (the whitelist -- quoting it would still work, but an
+## ordinary deck must not move), and an apostrophe takes the double-quoted form
+## because a single quote cannot carry one.
+check {WR4b2 the force include quotes a path the card would be split at, leaves\
+ a capital bare, and falls back to double quotes for an apostrophe} \
+  [list [c_ans ase::wrnodev_lines ngspice \
+           [c_state opstate {restore 1 mode force file {/v/w s/op.ic}}] restore] \
+        [c_ans ase::wrnodev_lines ngspice \
+           [c_state opstate {restore 1 mode force file /v/Cap/op.ic}] restore] \
+        [c_ans ase::wrnodev_lines ngspice \
+           [c_state opstate {restore 1 mode force file {/v/o'b/op.ic}}] restore]] \
+  [list {{.include '/v/w s/op.ic'}} \
+        {{.include /v/Cap/op.ic}} \
+        [list ".include \"/v/o'b/op.ic\""]]
 
 ## ⚠ THE COMMENT LINES OF THE SIMULATOR'S FILE ARE NOT CARDS, and one of them
 ## carries the circuit TITLE, which begins with `*` and could hold anything.
@@ -1304,7 +1351,15 @@ foreach eepair [ee_binaries] {
   puts $f "c1 a 0 1n"
   puts $f ".control"
   puts $f "op"
-  puts $f "wrnodev $eesave"
+  ## ⚠ THROUGH THE PRODUCT'S OWN ENCODER, and this fixture is where that rule
+  ## was learned: a bare `wrnodev $eesave` in a directory with a capital wrote
+  ## the file into the LOWERCASED sibling, so `stale.ic` never appeared and this
+  ## row reported "the include changed nothing" instead of "the file is missing"
+  ## (issues 1484/1490). A hand-written deck has to speak ngspice as carefully as
+  ## the generated one does.
+  lassign [ase::backend::ngspice::path_word $eesave aseops 1] eepre eeword
+  foreach eel $eepre { puts $f $eel }
+  puts $f "wrnodev $eeword"
   puts $f ".endc"
   puts $f ".end"
   close $f

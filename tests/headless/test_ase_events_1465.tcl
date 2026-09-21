@@ -519,13 +519,65 @@ e_ans ase::event_nodes ngspice $SEM $NEM
 set DWARM [e_deck $SEM $NEM]
 set EMVCD [file join [e_ans ase::rundir $SEM] emcell_ase_evt.vcd]
 
+## ⚠ THE VCD TARGET IS A CONTROL-LINE WORD, NOT A PATH (issues 1484/1490).
+## `eprvcd ... > <path>` splits an unquoted target at the first space -- measured,
+## a run directory `w s/` sent every artifact to a FILE called `w` -- so a target
+## ngspice cannot take literally is handed over through a `setcs` variable
+## instead. Whether that happens depends on the TESTER'S directory, not on the
+## bench, so the rows below ask for the word the emitter will use. `ev_needs` is
+## this suite's OWN opinion of when one is needed, so EV1 is a second opinion.
+proc ev_needs {path} {
+  if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return 1 }
+  return 0
+}
+proc ev_word {path} { return [expr {[ev_needs $path] ? {$asevcd} : $path}] }
+## ⚠ AND WHICH QUOTE IS PART OF THE RULE. A single quote cannot carry an
+## apostrophe, so the emitter falls back to DOUBLE quotes for a path holding
+## one -- measured to round-trip end to end on both binaries. This spelt
+## `'$path'` unconditionally until 2026-09-20, which made `EV1` go FALSELY red
+## for any tester whose own directory contains an apostrophe: the deck said
+## `setcs asevcd = "..."` and the row demanded `'...'`, while every end-to-end
+## row in the same run was green.
+proc ev_quoted {path} {
+  if {[string first ' $path] < 0} { return '$path' }
+  return "\"$path\""
+}
+proc ev_pre  {path} {
+  return [expr {[ev_needs $path] ? [list "setcs asevcd = [ev_quoted $path]"] : {}}]
+}
+## The file the i-th export really names: the word off the `eprvcd` line, or --
+## when the escape is in play -- the value of the i-th `setcs asevcd` line, which
+## is what ngspice would resolve `$asevcd` to at that point in the deck.
+## ⚠ READ WITH ONE ANCHORED REGEXP, NOT `split =`: a path may legally contain
+## `=` (it is in the measured round-trip set), and `[lindex [split $sc =] 1]`
+## returned the first fragment of such a path -- the same shape of silent
+## mis-read this whole section is about, in the reader instead of the emitter.
+proc ev_target {deck i} {
+  set ep [lindex [e_lines $deck {^eprvcd}] $i]
+  set w [lindex $ep end]
+  if {$w ne {$asevcd}} { return $w }
+  set sc [lindex [e_lines $deck {^setcs asevcd }] $i]
+  if {[regexp {^setcs asevcd = '(.*)'$} $sc -> v]}  { return $v }
+  if {[regexp {^setcs asevcd = "(.*)"$} $sc -> v]}  { return $v }
+  return [string trim [lindex [split $sc =] 1] " '"]
+}
+
+## ⚠ THE ESCAPE ITSELF, PINNED ONCE. Every other row in this section asks for
+## `ev_word`, so without this row a fix that stopped escaping would go unnoticed
+## by all of them at once.
+check {EV1 the VCD target is escaped exactly when this tester's own path needs\
+ it, and left bare when it does not} \
+  [list [e_lines $DWARM {^setcs asevcd }] [ev_needs $EMVCD]] \
+  [list [ev_pre $EMVCD] [ev_needs $EMVCD]]
+
 check {EM1 an unmeasured circuit exports nothing} [e_lines $DCOLD {^eprvcd}] {}
 
 check {EM1b the measured deck is the unmeasured deck plus the export line and NOTHING else} \
-  [expr {[join [e_lines $DWARM {^(?!eprvcd)}] "\n"] eq [join [e_lines $DCOLD {^(?!eprvcd)}] "\n"]}] 1
+  [expr {[join [e_lines $DWARM {^(?!eprvcd|setcs asevcd )}] "\n"] eq \
+         [join [e_lines $DCOLD {^(?!eprvcd|setcs asevcd )}] "\n"]}] 1
 
 check {EM2 exactly one line, the inventory's names, to the run's own VCD} \
-  [e_lines $DWARM {^eprvcd}] [list "eprvcd din dout > $EMVCD"]
+  [e_lines $DWARM {^eprvcd}] [list "eprvcd din dout > [ev_word $EMVCD]"]
 
 set it [e_idx $DWARM {^tran }]
 set ig [e_idx $DWARM {quit 1} $it]
@@ -559,18 +611,19 @@ check {EM4 only a transient carries it: an op-only and a dc-only bench export no
 
 set NMANY [e_net many]
 e_ans ase::event_nodes ngspice $SEM $NMANY
-set EM5 [e_lines [e_deck $SEM $NMANY] {^eprvcd}]
+set EM5D [e_deck $SEM $NMANY]
+set EM5 [e_lines $EM5D {^eprvcd}]
 check {EM5 94 nodes are two exports -- 93 names, then 1 -- to two files, because 94 empties the file on both binaries} \
   [list [llength $EM5] \
         [expr {[llength [lindex $EM5 0]] - 3}] [expr {[llength [lindex $EM5 1]] - 3}] \
-        [file tail [lindex [lindex $EM5 0] end]] [file tail [lindex [lindex $EM5 1] end]] \
+        [file tail [ev_target $EM5D 0]] [file tail [ev_target $EM5D 1]] \
         [lindex [lindex $EM5 1] 1]] \
   {2 93 1 emcell_ase_evt.vcd emcell_ase_evt_2.vcd q94}
 
 set NBAD [e_net bad]
 e_ans ase::event_nodes ngspice $SEM $NBAD
 check {EM6 a name the export command cannot take is kept OFF the line -- on 45.2 it would abort the run} \
-  [e_lines [e_deck $SEM $NBAD] {^eprvcd}] [list "eprvcd din > $EMVCD"]
+  [e_lines [e_deck $SEM $NBAD] {^eprvcd}] [list "eprvcd din > [ev_word $EMVCD]"]
 
 set NNONE [e_net none]
 e_ans ase::event_nodes ngspice $SEM $NNONE
@@ -589,7 +642,8 @@ set SCP [e_state cpcell]
 e_ans ase::campaign_prepare ngspice $SCP [e_net nodes2]
 check {EM9 a campaign's nominal deck exports what its shards export -- campaign_prepare asks before it renders} \
   [e_lines [e_slurp [e_ans ase::campaign_deck_path $SCP]] {^eprvcd}] \
-  [list "eprvcd din dout > [file join [e_ans ase::rundir $SCP] cpcell_ase_evt.vcd]"]
+  [list "eprvcd din dout > [ev_word \
+           [file join [e_ans ase::rundir $SCP] cpcell_ase_evt.vcd]]"]
 } err]} { check {EM0 section EM ran to the end} "RAISED:$err" {} }
 
 # ============================================================================
@@ -843,7 +897,7 @@ foreach {tag bin} $EEBINS {
   set eie [e_idx $edeck {^eprvcd }]
   check "EE2/$tag the deck it ran exports the two digital nodes, after the transient's write" \
     [list [e_lines $edeck {^eprvcd}] [expr {$eiw >= 0 && $eie > $eiw}]] \
-    [list [list "eprvcd din dout > $evcd"] 1]
+    [list [list "eprvcd din dout > [ev_word $evcd]"] 1]
 
   check "EE3/$tag the VCD on disk declares both nodes under their ngspice names" \
     [apply {{p} {

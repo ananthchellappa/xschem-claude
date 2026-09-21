@@ -347,6 +347,17 @@ check {NB2 and every reader answers empty for it -- no key, no lines, no carrier
 # NE -- THE EMITTED LINES AND THEIR PLACES
 # ===========================================================================
 proc nz_has {lines text} { return [expr {[lsearch -exact $lines $text] >= 0}] }
+## ⚠ THE `write` LINE MAY NAME A VARIABLE, NOT A PATH (issues 1484/1490). A run
+## directory ngspice cannot take literally -- a capital for a folded command, a
+## space for any of them -- is handed over through a `setcs` line, so the word on
+## the `write` is `$aseraw`. Whether that happens depends on the TESTER'S
+## directory and not on the bench; the escape itself is pinned by rows CP1-CP6 of
+## test_ase_sp_1452.tcl, and these rows are about ORDER.
+proc nz_word {path var folded} {
+  if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return "\$$var" }
+  if {$folded && [regexp {[A-Z]} $path]} { return "\$$var" }
+  return $path
+}
 proc nz_pos {lines text {from 0}} { return [lsearch -exact -start $from $lines $text] }
 
 set NE1L [nz_lines [nz_state [list [nz_row {{src vdd func trnoise na 1m ts 10u}}]]]]
@@ -397,7 +408,7 @@ set NE5CARD [nz_pos $NE5L {tran 1u 2m}]
 set NE5GI [nz_pos $NE5L $NE5G $NE5CARD]
 set NE5RI [nz_pos $NE5L {alter vdd trnoise = [ 0 0 0 0 0 0 0 ]}]
 set NE5ZI [nz_pos $NE5L remzerovec $NE5CARD]
-set NE5WI [nz_pos $NE5L "write [ase::backend::ngspice::raw_file $NE5ST]" $NE5CARD]
+set NE5WI [nz_pos $NE5L "write [nz_word [ase::backend::ngspice::raw_file $NE5ST] aseraw 0]" $NE5CARD]
 check {NE5 every altered source is put back by a zero trnoise, below the guard and\
  above remzerovec and the write} \
   [list [expr {$NE5CARD >= 0 && $NE5GI > $NE5CARD}] \
@@ -796,7 +807,7 @@ set NP4P [list [nz_pos $NP4L {alter vdd trnoise = [ 1m 20n 0 0 0 0 0 ]}] \
                [nz_pos $NP4L $NE5G $NP4CARD] \
                [nz_pos $NP4L $NP4REST] \
                [nz_pos $NP4L remzerovec $NP4DEL] \
-               [nz_pos $NP4L "write [ase::backend::ngspice::raw_file $NPST]" $NP4CARD]]
+               [nz_pos $NP4L "write [nz_word [ase::backend::ngspice::raw_file $NPST] aseraw 0]" $NP4CARD]]
 set NP4LOOP {}
 if {$NP4CARD >= 0 && $NP4DEL > $NP4CARD} { set NP4LOOP [lrange $NP4L $NP4CARD $NP4DEL] }
 check {NP4 the noisy deck gives the noise above the arming, arms the loop on the\

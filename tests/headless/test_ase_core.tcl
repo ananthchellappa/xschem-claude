@@ -904,8 +904,38 @@ set d1_eff [ase::effective_path [nfet_state /models/sky130.lib.spice {}]]
 ## ZERO BYTES on both binaries -- `com_option.c` uses bare `printf` while
 ## ngspice's `>` rebinds `cp_out` -- so the task dump is bracketed in the run log
 ## and only the variable dump reaches the sidecar.
-set expected_deck [string map [list @RAWFILE@ $d1_raw @PLOTMAP@ $d1_map \
-                               @EFFECTIVE@ $d1_eff] {** sch_path: /fixture/nfet_clean.sch
+## ⚠ THE THREE PATHS RESOLVE UNDER THE TESTER'S HOME, AND A THROWAWAY HOME'S
+## `mktemp` SUFFIX IS MIXED CASE ABOUT 96% OF THE TIME. Since issues 1484/1490
+## a path ngspice would mangle is carried through a `setcs` variable instead of
+## written bare, and `set >>` is one of the three commands ngspice case-folds --
+## so on most runs this deck really does carry the escape, and a golden that
+## spelt the bare form would have been a coin flip nobody could reproduce.
+## Each path is therefore substituted as the CONTROL-LINE WORD the emitter will
+## use, with its `setcs` line (or nothing) ahead of it. The golden still pins
+## every position and every other byte.
+##
+## ⚠ AND THE SUBSTITUTION IS THE EMITTER ITSELF, so the ESCAPE half of this
+## golden cannot fail whatever `path_word` emits -- deliberately, but say which
+## half that leaves uncovered. The independent pins are `CP1`-`CP7` of
+## test_ase_sp_1452.tcl and `CM1`/`CM2` of test_ase_meas_1443.tcl, and what they
+## are independent about is the RENDERING -- the quoting, the word, the
+## position. They are NOT independent about the PREDICATE: `cp_needs` there and
+## `ck_word` below are copies of `path_bare_ok`'s regexp and share its blind
+## spot exactly, which is how a path carrying a control character stayed
+## silently lost until 2026-09-20 with every one of these rows green. `CP5b` is
+## the row that carries the predicate, and it states the refusal by name.
+proc d1_pathsub {path var folded} {
+  lassign [ase::backend::ngspice::path_word $path $var $folded] pre word
+  set out {}
+  foreach l $pre { append out $l "\n" }
+  return [list $out $word]
+}
+lassign [d1_pathsub $d1_raw aseraw 0] d1_rawpre d1_rawword
+lassign [d1_pathsub $d1_map asemap 0] d1_mappre d1_mapword
+lassign [d1_pathsub $d1_eff aseeff 1] d1_effpre d1_effword
+set expected_deck [string map [list @RAWFILE@ $d1_rawword @PLOTMAP@ $d1_mapword \
+                               @EFFECTIVE@ $d1_effword @RAWPRE@ $d1_rawpre \
+                               @MAPPRE@ $d1_mappre @EFFPRE@ $d1_effpre] {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
 V1 D GND 1
@@ -929,13 +959,13 @@ if $sim_status ne 0
   quit 1
 end
 remzerovec
-echo "PLOT op 0 |$curplotname|" >> @PLOTMAP@
-write @RAWFILE@
+@MAPPRE@echo "PLOT op 0 |$curplotname|" >> @PLOTMAP@
+@RAWPRE@write @RAWFILE@
 print -i(v1)
 echo ASE-EFFECTIVE-BEGIN
 option
 echo ASE-EFFECTIVE-END
-set >> @EFFECTIVE@
+@EFFPRE@set >> @EFFECTIVE@
 .endc
 .end
 }]
@@ -9263,6 +9293,23 @@ check "WK2b the index is the ROW'S POSITION and never a write counter: a\
  disabled row in front and `op` last in the list make the two answers disagree" \
   $WKREC3 {{op 2} {tran 1}}
 
+## ⚠ THE ARTIFACT PATHS IN A DECK ARE CONTROL-LINE WORDS, NOT PATHS (issues
+## 1484/1490). A path ngspice cannot take literally -- one with a capital in it
+## for a folded command, one with a space for any command -- is handed over
+## through a `setcs` variable, so the word on the line is `$aseraw` or `$asemap`
+## rather than the path. Whether that happens depends on the TESTER'S directory
+## and not on the bench, so the rows that name an artifact ask for the word.
+## The escape itself is pinned by rows CP1-CP7 of test_ase_sp_1452.tcl and CM1/
+## CM2 of test_ase_meas_1443.tcl; these rows are about order and destination.
+## ⚠ THIS IS A COPY OF `path_bare_ok`'s REGEXP AND SHARES ITS BLIND SPOT. It is
+## a second opinion about the RENDERING, never about the decision to escape --
+## see the note above `d1_pathsub`, and `CP5b` for the row that does carry the
+## predicate.
+proc ck_word {path var folded} {
+  if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return "\$$var" }
+  if {$folded && [regexp {[A-Z]} $path]} { return "\$$var" }
+  return $path
+}
 ## The path is ase::plotmap_path's answer and is NEVER the results file's.
 set WKPATHS {}
 foreach wl [split $WKDECK "\n"] {
@@ -9273,7 +9320,7 @@ check "WK3 every record goes to the sidecar ase::plotmap_path names, and the\
   [list [lsort -unique $WKPATHS] \
         [expr {[ase::plotmap_path $WKST] eq \
                [[ase::backend_hook ngspice raw_file] $WKST] ? 1 : 0}]] \
-  [list [list [ase::plotmap_path $WKST]] 0]
+  [list [list [ck_word [ase::plotmap_path $WKST] asemap 0]] 0]
 
 ## ⚠ A DECK WITH NO ENABLED ANALYSIS RESOLVES NEITHER ARTEFACT PATH, and that is
 ## not tidiness: `ase::plotmap_path` RAISES for a state with no design cell, so
@@ -10525,12 +10572,26 @@ check "CK4b N is clamped to \[2, 50\] in both directions, and the shipped value\
 ## TOKEN AS THE RESULTS WRITE, SO THE PATHS GET THEIR OWN ROW. Three claims,
 ## three independent sources: the checkpoint is written to the TMP path, renamed
 ## onto the CHECKPOINT path, and neither is the results path.
+## ⚠ AND THE `shell mv` LINE TAKES THE OTHER QUOTING. ngspice strips single
+## quotes before /bin/sh sees them and keeps double ones, so the escaped form
+## there is `"$aseckt"` and not `$aseckt` -- see ase::backend::ngspice::shell_word
+## for the measurement (issues 1484/1490).
+proc ck_shword {path var} {
+  if {[ck_word $path $var 0] eq $path} { return $path }
+  return "\"\$$var\""
+}
 proc ck_paths {rows} {
   set out {}
   foreach l [split [ck_deck $rows] "\n"] {
     set t [string trim $l]
-    if {[string match {write *} $t]} { lappend out [list W [lindex $t 1]] }
-    if {[string match {shell mv -f *} $t]} { lappend out [list MV [lindex $t 3] [lindex $t 4]] }
+    ## ⚠ BY REGEXP AND NOT BY `lindex`: since issues 1484/1490 the `shell mv`
+    ## line may carry `"$aseckt"`, and `lindex` on the raw string would strip
+    ## the very quotes this row has to see -- ngspice keeps double quotes on a
+    ## `shell` line and that is what makes the move work at all.
+    if {[regexp {^write +([^ ]+)} $t -> ckw]} { lappend out [list W $ckw] }
+    if {[regexp {^shell mv -f +([^ ]+) +([^ ]+)$} $t -> cka ckb]} {
+      lappend out [list MV $cka $ckb]
+    }
   }
   return $out
 }
@@ -10538,9 +10599,10 @@ set CKRAW [[ase::backend_hook ngspice raw_file] $CKST]
 check "CK11 the checkpoint write goes to the .tmp path and is renamed onto the\
  checkpoint path, and neither is the results file" \
   [ck_paths [list $CKBIG]] \
-  [list [list W [ase::ckpt_tmp_path $CKST]] \
-        [list MV [ase::ckpt_tmp_path $CKST] [ase::ckpt_path $CKST]] \
-        [list W $CKRAW]]
+  [list [list W [ck_word [ase::ckpt_tmp_path $CKST] aseckt 0]] \
+        [list MV [ck_shword [ase::ckpt_tmp_path $CKST] aseckt] \
+                 [ck_shword [ase::ckpt_path $CKST] aseckf]] \
+        [list W [ck_word $CKRAW aseraw 0]]]
 
 ## ⚠ `stop after`, NEVER `stop when time`. MEASURED on both binaries:
 ## `stop when time > X` hands the integrator a breakpoint through CKTsetBreak()
@@ -10728,7 +10790,7 @@ foreach l [split $CKDECKBIG "\n"] {
   if {$t eq {if $?sim_status = 0}} { lappend CK21 GUARD }
   if {$t eq {remzerovec} && [llength $CK21] && [string index $l 0] ne { }} { lappend CK21 RZV }
   if {[string match {echo "PLOT tran*} $t]} { lappend CK21 REC }
-  if {$t eq "write $::CKRAW"} { lappend CK21 WRITE }
+  if {$t eq "write [ck_word $::CKRAW aseraw 0]"} { lappend CK21 WRITE }
 }
 check "CK21 the loop goes between the analysis and the guard, and the guard /\
  remzerovec / record / write order is exactly what 0929, 1243 and 1430 left" \

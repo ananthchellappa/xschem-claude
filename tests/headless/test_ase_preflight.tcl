@@ -728,16 +728,44 @@ eqcheck PF218f-the-guard-precedes-remzerovec-and-write \
   [expr {[lsearch -exact $dl {  quit 1}] > 0 &&
          [lsearch -exact $dl {  quit 1}] < [lsearch -exact $dl {remzerovec}] &&
          [lsearch -exact $dl {remzerovec}] < [lsearch -glob $dl {write *}]}] 1
+## The file a control-line word really names: the word itself, or -- when it is
+## a `$var` handed over by a `setcs` line because ngspice could not take the path
+## literally (issues 1484/1490) -- that line's value, quotes off.
+proc pf_resolve {word lines} {
+  if {![string match {$*} $word]} { return $word }
+  set v [string range $word 1 end]
+  foreach l $lines {
+    if {[regexp "^setcs +$v += +(.*)\$" [string trim $l] -> pv]} {
+      return [string trim $pv " '\""]
+    }
+  }
+  return $word
+}
 ## ⚠ AND THE SIDECAR RECORD IS INSIDE THAT SAME BRACKET (issue 1430). The plot
 ## sidecar's whole value is that record N names the row that wrote plot N, so a
 ## record appended for an analysis that then failed to write would put every
 ## later position out by one — silently, because a failed run is the one case
 ## nobody re-reads the file for. The record sits BELOW the guard and IMMEDIATELY
 ## ABOVE the write it describes, and this row pins both halves at once.
+## ⚠ "IMMEDIATELY ABOVE" ALLOWS THE ONE ESCAPE LINE THAT MAY SIT BETWEEN THEM.
+## Since issues 1484/1490 a path ngspice cannot take literally -- a run directory
+## with a capital or a space -- is handed to the `write` through a `setcs`
+## variable defined on the line above it, so on such a tester's machine the gap
+## is one line and not zero. Anything ELSE between the two is still a red: the
+## span is computed and every line in it must be a `setcs`.
+set pfspan {}
+foreach pfi [list [expr {[lsearch -glob $dl {echo "PLOT *}] + 1}]] {
+  for {set pfj $pfi} {$pfj < [lsearch -glob $dl {write *}]} {incr pfj} {
+    lappend pfspan [lindex $dl $pfj]
+  }
+}
+set pfspanok 1
+foreach pfl $pfspan { if {![string match {setcs *} $pfl]} { set pfspanok 0 } }
 eqcheck PF218f2-the-sidecar-record-is-below-the-guard-and-above-its-own-write \
   [expr {[lsearch -glob $dl {echo "PLOT *}] > [lsearch -exact $dl {  quit 1}] &&
          [lsearch -glob $dl {echo "PLOT *}] > [lsearch -exact $dl {remzerovec}] &&
-         [lsearch -glob $dl {echo "PLOT *}] + 1 == [lsearch -glob $dl {write *}]}] 1
+         [lsearch -glob $dl {echo "PLOT *}] < [lsearch -glob $dl {write *}] &&
+         $pfspanok && [llength $pfspan] <= 1}] 1
 ## ...and it goes to the sidecar, never to the results file: two artefacts, two
 ## paths, and an `echo` that landed on the raw would corrupt it beyond reading.
 ## ⚠ `pfmap` IS SEEDED BEFORE THE REGEXP, AND A SABOTAGE IS WHY. Respelling
@@ -751,8 +779,8 @@ set pfmap {NO-RECORD-LINE}
 eqcheck PF218f3-the-record-goes-to-the-sidecar-and-not-to-the-results-file \
   [list [regexp {^echo "PLOT op 0 \|\$curplotname\|" >> (.*)$} \
           [lindex $dl [lsearch -glob $dl {echo "PLOT *}]] -> pfmap] \
-        [expr {[string match {*_ase.plotmap} $pfmap] ? 1 : 0}] \
-        [expr {[string match {*_ase.raw} $pfmap] ? 1 : 0}]] \
+        [expr {[string match {*_ase.plotmap} [pf_resolve $pfmap $dl]] ? 1 : 0}] \
+        [expr {[string match {*_ase.raw} [pf_resolve $pfmap $dl]] ? 1 : 0}]] \
   {1 1 0}
 ## CREW_BRIEF §4: the deck SHAPE is unchanged otherwise — no dot card for the
 ## analyses, no `run`, and the `write` line still names NO VECTORS (upstream

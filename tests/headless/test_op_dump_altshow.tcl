@@ -343,6 +343,30 @@ check_true {X3 nor is one containing a SPACE -- the redirect is unquoted and ngs
   [expr {![ase::op_dump_reachable_dir {/home/u/with space}]}]
 check_true {X4 an unknown directory is not reachable: refusing is what lands on the shape that always works} \
   [expr {![ase::op_dump_reachable_dir {}]}]
+## ⚠ X2 AND X3 ARE NOT THE WHOLE LIST, AND SAYING THEY WERE LET TWO MEASURED
+## FAILURES THROUGH (issues 1484/1490). `show all > <path>` is a bare word on a
+## folded control line, so the question here is exactly the one
+## `ase::backend::ngspice::path_bare_ok $dir 1` asks -- and the lower-case and
+## whitespace tests above are only two of its clauses. MEASURED 2026-09-20 on
+## both binaries, the redirect run for real:
+##
+##   /x/my$dir/f.txt  `Error: dir: no such variable.` / `No such file or
+##                    directory`, rc 0, NOTHING WRITTEN
+##   /x/o'b/f.txt     an error line, rc 0, NOTHING WRITTEN
+##
+## Both used to answer "reachable". Refusing costs only the fast shape -- the
+## per-device dump still runs and still annotates -- so this direction can slow
+## a run and can never lose a number.
+check {X4b the guard asks the same question the deck escape asks, so a path the\
+ redirect cannot survive for ANY reason takes the per-device shape} \
+  [list [ase::op_dump_reachable_dir {/home/u/my$dir}] \
+        [ase::op_dump_reachable_dir "/home/u/b`q"] \
+        [ase::op_dump_reachable_dir {/home/u/br{k}}] \
+        [ase::op_dump_reachable_dir "/home/u/o'b"] \
+        [ase::op_dump_reachable_dir "/home/u/n\nn"] \
+        [ase::op_dump_reachable_dir /home/u/sim] \
+        [ase::op_dump_reachable_dir /home/u/sim-2/run_1.d]] \
+  {0 0 0 0 0 1 1}
 check {X5 a SOUND printer under a MIXED-CASE run directory does not take shape d, and the reason token says which guard refused} \
   [t_tier [dict merge $C_BASE {altshow_op_dump 1}] [file join $scratch OrunMixed]] {c dumppath}
 check {X6 the same printer under a lowercase directory still takes shape d, so the guard is not simply off} \

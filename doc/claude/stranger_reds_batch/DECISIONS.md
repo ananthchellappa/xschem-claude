@@ -99,3 +99,40 @@ The verifiers measured five things outside issue 1483, all on the fixed binary:
   made item B's own gate unrunnable inside the scratch root its crew was assigned.
 
 Each is filed on its own. None is fixed here (PLAN.md criterion 4).
+
+# D7 — Item C: one defect, two faces, and the obvious fix was itself a defect (driver)
+
+Traced, not inferred, on two ngspice builds and confirmed against `inp_readall` in
+ngspice's own `inpcom.c`: a control line splits an unquoted path at the first space, and a
+line whose command is not on ngspice's whitelist is lowercased in full. `wrs2p`, `set`,
+`meas`, `wrnodev` and `show` are on neither list; `write`, `wrdata` and `echo` are. So
+1484's guess (lowercasing) was right for its face, 1490's (word splitting) was right for
+its face, and they are the same word reaching the same parser.
+
+**Quoting the path does not work.** `wrs2p "<path>"` keeps the quotes as part of the
+filename and writes nothing. What works on both binaries is `setcs v = '<path>'` followed
+by `$v`, because `setcs` is whitelisted and `$v` expands after folding. Four characters
+survive no encoding at all (`$`, backquote, `{`, `}`) and are now refused by name rather
+than silently losing the file; measured that none of them ever worked bare either.
+
+**The product consequence, measured outside the suites.** One bench writing six artifacts:
+an ordinary path wrote 6, a path with a capital wrote 3 (three landed in a lowercase
+sibling directory), a path with a space wrote 1 — every artifact collapsed onto one file,
+each clobbering the last, at rc 0 with nothing on stderr. After the fix, 6 of 6 in all
+three. A cell NAME with a capital does it too, in an all-lowercase directory.
+
+**What the adversarial round added, and it was the larger half:** the restore side of the
+saved operating point emits `.include <path>` and was still bare, so a space made the run
+fail outright (`Could not find include file`, rc 1, no output); a path carrying a newline,
+tab or carriage return lost its artifacts silently and is now refused by name; and the
+first round's attribution of one failing row to the user's PDK was wrong — it was ASE-L's
+own `.include`, shown by reverting that one change.
+
+# D8 — Item C's leftovers (driver)
+
+* `.include` and `.lib` cards written by the user's own PDK setup still fail on a path with
+  a space, loudly (rc 1). No quoting fixes `.lib`; it needs its own item.
+* **Issue 1334 is this defect, found earlier and worked around by refusing a feature and
+  asking the user to rename their folder.** With a general escape that refusal may be
+  liftable. That is user-visible product behaviour, so it is the user's call, not the
+  batch's: filed as a ruling rather than changed.

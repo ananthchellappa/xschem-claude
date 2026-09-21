@@ -164,6 +164,31 @@ proc m_scrub {t} {
   global scratch
   return [string map [list $scratch/ {}] $t]
 }
+## ⚠ THE SIDECAR PATH MAY ARRIVE THROUGH A `setcs` VARIABLE, AND WHETHER IT DOES
+## DEPENDS ON THE TESTER'S DIRECTORY, NOT ON THE BENCH. `meas ... >> path` is one
+## of the three commands ngspice CASE-FOLDS (issues 1484/1490: measured writing
+## `/x/cap/f` for a deck that said `/x/Cap/f`), so a scratch directory carrying a
+## capital or a space -- including the throwaway HOME's mixed-case `mktemp`
+## suffix -- hands the path over as `setcs asemsr = '<path>'` plus `$asemsr`.
+##
+## The TP and DK rows below are about WHICH measurement lines are emitted and in
+## what order, not about how the path is carried, so the escape is normalised
+## away here: the `setcs` line is dropped and `$asemsr` reads back as the path it
+## was given. ⚠ EXACTLY, never by pattern -- only a `setcs asemsr` line naming
+## THIS state's own sidecar is removed, so a stray escape, a wrong path or a
+## second variable survives the scrub and reddens the row it belongs to. What
+## carries the path is pinned on its own, by rows CP1-CP6 of
+## tests/headless/test_ase_sp_1452.tcl.
+proc m_unescape {lines path} {
+  lassign [ase::backend::ngspice::path_word $path asemsr 1] pre word
+  if {![llength $pre]} { return $lines }
+  set out {}
+  foreach l $lines {
+    if {$l eq [lindex $pre 0]} { continue }
+    lappend out [string map [list $word $path] $l]
+  }
+  return $out
+}
 proc m_nocomment {t} {
   set out {}
   foreach l [split $t "\n"] { if {[regexp {^\s*#} $l]} { continue } ; lappend out $l }
@@ -1047,7 +1072,10 @@ check {DK2c render_deck calls the block between the write and the walk, above th
   [m_ans apply {{} {
      set b [m_nocomment [info body ase::backend::ngspice::render_deck]]
      set call [string first {meas_block $state $type $ai} $b]
-     set wr   [string first {lappend lines "write [raw_file $state]"} $b]
+     ## ⚠ THE ANCHOR TEXT MOVED WITH ISSUES 1484/1490: the raw path now goes
+     ## through path_word, so the emitter reads `write $_pw_raw` and the
+     ## filesystem path is resolved one line above it.
+     set wr   [string first {lappend lines "write $_pw_raw"} $b]
      set walk [string first {lappend lines "setplot previous"} $b]
      set pr   [string first {foreach pl $printlines} $b]
      set rest [string first {foreach _ol $scopepost} $b]
@@ -1060,10 +1088,58 @@ check {DK2c render_deck calls the block between the write and the walk, above th
 ## measurement FAILS creates the file and leaves it at ZERO BYTES. Opening with
 ## `>` on the first measurement would therefore truncate the whole sidecar
 ## whenever that one row fails.
+## ===========================================================================
+## CM -- THE SIDECAR PATH AS A CONTROL-LINE WORD             issues 1484/1490
+## ===========================================================================
+##
+## ⚠ `m_unescape` ABOVE NORMALISES THE ESCAPE AWAY FOR EVERY OTHER ROW, SO IT
+## WOULD ALSO NORMALISE AWAY ITS ABSENCE. Measured while sabotaging: reverting
+## `meas_block`'s path_word call left all 115 checks green. These two rows are
+## what the scrub is allowed to exist in front of -- they read the block RAW.
+##
+## `meas ... >> path` is one of the three commands ngspice CASE-FOLDS (traced
+## 2026-09-20 on apt 45.2 and the ver_50 fork: with a lowercase sibling present
+## it wrote `/x/cap/f` for a deck that said `/x/Cap/f`), and every command on a
+## control line splits an unquoted path at the first space. `cm_needs` is this
+## suite's OWN opinion of when a word must be escaped, written here rather than
+## borrowed from the emitter, so CM1 is a second opinion and not a tautology.
+proc cm_needs {path} {
+  if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return 1 }
+  return [regexp {[A-Z]} $path]
+}
+set CMST [m_state {{name gain analysis ac kind max target vdb(out)}} \
+                  {{type ac enabled 1 sweep dec points 10 start 1 stop 1meg}}]
+set CMPATH [ase::meas_path $CMST]
+set CMRAW [m_ans ase::backend::ngspice::meas_block $CMST ac 0]
+check {CM1 the sidecar path is handed over through a setcs variable exactly when\
+ this tester's own path needs it, and written bare when it does not} \
+  [list [expr {[llength [lsearch -all -glob $CMRAW {setcs asemsr = *}]]}] \
+        [expr {[llength [lsearch -all -glob $CMRAW {* >> $asemsr}]] > 0}] \
+        [expr {[llength [lsearch -all -glob $CMRAW "* >> $CMPATH"]] > 0}]] \
+  [list [cm_needs $CMPATH] [cm_needs $CMPATH] [expr {![cm_needs $CMPATH]}]]
+
+## ⚠ AND THE ESCAPE IS ONE LINE FOR THE WHOLE BLOCK, ABOVE EVERY LINE THAT USES
+## IT. A per-line escape would be three identical `setcs` lines in a two-row
+## block, and one placed below its first use would send that line to a path that
+## does not exist yet.
+check {CM2 when it is needed the escape is emitted once, and above every line\
+ that reads it} \
+  [m_ans apply {{raw} {
+     set first -1 ; set i -1 ; set uses {}
+     foreach l $raw {
+       incr i
+       if {[string match {setcs asemsr = *} $l]} { if {$first < 0} { set first $i } ; continue }
+       if {[string first {$asemsr} $l] >= 0} { lappend uses $i }
+     }
+     if {$first < 0} { return {none} }
+     foreach u $uses { if {$u < $first} { return {USE-ABOVE-DEFINITION} } }
+     return [list 1 [llength $uses]] }} $CMRAW] \
+  [expr {[cm_needs $CMPATH] ? [list 1 2] : {none}}]
+
 check {DK3 the sidecar is opened by an echo and every measurement appends} \
   [m_ans apply {{} {
      set out {}
-     foreach l [split $::DKDECK "\n"] {
+     foreach l [m_unescape [split $::DKDECK "\n"] [ase::meas_path $::DKST]] {
        if {[regexp {^(echo ASE-MEAS|meas )} $l]} {
          lappend out [string map [list $::scratch/ {}] $l]
        }
@@ -1415,7 +1491,8 @@ proc tp_block {tpls type idx} {
   if {[string match REFUSE:* $rows]} { return $rows }
   set st [tp_state $rows]
   set out {}
-  foreach l [ase::backend::ngspice::meas_block $st $type $idx] {
+  foreach l [m_unescape [ase::backend::ngspice::meas_block $st $type $idx] \
+                        [ase::meas_path $st]] {
     lappend out [m_scrub $l]
   }
   return $out

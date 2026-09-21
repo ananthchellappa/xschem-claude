@@ -1136,6 +1136,15 @@ done
 [ -z "$deck" ] && exit 0
 if grep -q '@FAILMARK@' "$deck"; then echo CAMPAIGN-STUB-FAIL; exit 3; fi
 out=`grep -E '^[ 	]*write[ 	]' "$deck" | head -1 | sed -e 's/^[ 	]*write[ 	][ 	]*//' -e 's/[ 	]*$//'`
+# The deck hands a path ngspice would mangle over through a `setcs` variable
+# instead of writing it bare (issues 1484/1490), so a stand-in that only reads
+# the `write` line sees `$aseraw` and writes a file called that. Resolve it the
+# way ngspice does: take the value out of the matching `setcs` line, quotes off.
+case "$out" in
+  '$'*) v=`echo "$out" | sed 's/^[$]//'`
+        out=`grep -E "^[ 	]*setcs[ 	]+$v[ 	]*=" "$deck" | head -1 \
+             | sed -e "s/^[ 	]*setcs[ 	][ 	]*$v[ 	]*=[ 	]*//" -e "s/^'//" -e "s/'\$//"` ;;
+esac
 if [ -n "$out" ]; then cat @RAW@ > "$out"; fi
 echo CAMPAIGN-STUB-RAN
 exit 0

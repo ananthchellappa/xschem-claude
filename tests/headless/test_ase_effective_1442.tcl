@@ -367,15 +367,27 @@ check {DK3 a bench with no scoped option has no option line inside the block} \
 ## ⚠ ABOVE THE COMPLETION MARKER, NOT BELOW IT. Issue 1433's row CK17 says the
 ## marker is the last line inside `.control`; the first cut of this issue put
 ## the read-back under it and reddened CK17 by name.
+## ⚠ THE BLOCK IS FOUR LINES OR FIVE, and which it is depends on the TESTER'S
+## DIRECTORY, not on the bench. `set >>` is one of the three commands ngspice
+## case-folds (issues 1484/1490: with a lowercase sibling in place it wrote
+## `/x/cap/f` for a deck that said `/x/Cap/f`), so a run directory carrying a
+## capital or a space hands the path over through a `setcs` line above it. The
+## expectation is built the same way the emitter builds it, and the WINDOW is
+## taken from its length -- a fixed -4 would have been a coin flip on the
+## throwaway HOME's mixed-case `mktemp` suffix.
+set DK4WANT [concat [list "echo [ase::effective_marker begin]" {option} \
+                          "echo [ase::effective_marker end]"] \
+                    [lindex [s_ans ase::backend::ngspice::path_word \
+                               [file join $scratch rc_ase.effective] aseeff 1] 0] \
+                    [list "set >> [lindex [s_ans ase::backend::ngspice::path_word \
+                               [file join $scratch rc_ase.effective] aseeff 1] 1]"]]
 check {DK4 the read-back sits above the completion marker and below everything else} \
-  [s_ans apply {{} {
+  [s_ans apply {{n} {
      set st [s_state {{name reltol value 0.05}} {{type tran enabled 1 step 1u stop 100u}}]
      set lines [split [s_deck $st] "\n"]
      set i [lsearch -exact $lines {.endc}]
-     return [lrange $lines [expr {$i-4}] [expr {$i-1}]] }}] \
-  [list "echo [ase::effective_marker begin]" {option} \
-        "echo [ase::effective_marker end]" \
-        "set >> [file join $scratch rc_ase.effective]"]
+     return [lrange $lines [expr {$i-$n}] [expr {$i-1}]] }} [llength $DK4WANT]] \
+  $DK4WANT
 
 ## ⚠ ONLY ONE OF THE TWO IS A REDIRECTION, AND THIS ROW IS WHY THE OTHER IS NOT.
 ## `option > file` writes ZERO BYTES on both binaries.

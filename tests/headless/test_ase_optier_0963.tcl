@@ -190,12 +190,25 @@ o_wr $RAW_CONST "$CONSTHDR"
 # @BLANKET@ answers the probe's wildcard deck; @SAVEOPP@ answers a deck that
 # carries the device-less blanket request; @NORMAL@ answers everything else.
 set STUBTPL {#!/bin/sh
+# The deck hands a path ngspice would mangle over through a `setcs` variable
+# instead of writing it bare (issues 1484/1490), so a stand-in that only reads
+# the `write` line sees `$aseraw` and writes a file called that. Resolve it the
+# way ngspice does: take the value out of the matching `setcs` line, quotes off.
+ase_resolve() {
+  case "$1" in
+    '$'*) v=`echo "$1" | sed 's/^[$]//'`
+          grep -E "^[ 	]*setcs[ 	]+$v[ 	]*=" "$2" | head -1 \
+            | sed -e "s/^[ 	]*setcs[ 	][ 	]*$v[ 	]*=[ 	]*//" -e "s/^'//" -e "s/'\$//" ;;
+    *)    echo "$1" ;;
+  esac
+}
 deck=
 for a in "$@"; do
   if [ -f "$a" ]; then deck="$a"; fi
 done
 if [ -z "$deck" ]; then exit 0; fi
 out=`grep -E '^[ 	]*write[ 	]' "$deck" | head -1 | sed -e 's/^[ 	]*write[ 	][ 	]*//' -e 's/[ 	]*$//'`
+out=`ase_resolve "$out" "$deck"`
 src=@NORMAL@
 if grep -q '\[\*\]' "$deck"; then src=@BLANKET@; fi
 if grep -q 'saveopparams' "$deck"; then src=@SAVEOPP@; fi
@@ -1833,12 +1846,25 @@ proc q_raw {ndev} {
 ## source is the word NONE -- which is the measured shape of a run that exits 0
 ## and produces no results.
 set Q_STUBTPL {#!/bin/sh
+# The deck hands a path ngspice would mangle over through a `setcs` variable
+# instead of writing it bare (issues 1484/1490), so a stand-in that only reads
+# the `write` line sees `$aseraw` and writes a file called that. Resolve it the
+# way ngspice does: take the value out of the matching `setcs` line, quotes off.
+ase_resolve() {
+  case "$1" in
+    '$'*) v=`echo "$1" | sed 's/^[$]//'`
+          grep -E "^[ 	]*setcs[ 	]+$v[ 	]*=" "$2" | head -1 \
+            | sed -e "s/^[ 	]*setcs[ 	][ 	]*$v[ 	]*=[ 	]*//" -e "s/^'//" -e "s/'\$//" ;;
+    *)    echo "$1" ;;
+  esac
+}
 deck=
 for a in "$@"; do
   if [ -f "$a" ]; then deck="$a"; fi
 done
 if [ -z "$deck" ]; then exit 0; fi
 out=`grep -E '^[ 	]*write[ 	]' "$deck" | head -1 | sed -e 's/^[ 	]*write[ 	][ 	]*//' -e 's/[ 	]*$//'`
+out=`ase_resolve "$out" "$deck"`
 if [ -n "$out" ] && [ -f "@SRC@" ]; then cat "@SRC@" > "$out"; fi
 exit 0
 }

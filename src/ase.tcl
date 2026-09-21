@@ -15086,11 +15086,33 @@ proc ase::cap_altshow_verdict {text} {
 # directory annotated all five. The fold is this shape's own regression, not a
 # hazard the older shape shares, so it is refused here rather than survived
 # later.
+## ⚠ AND THE GUARD AND THE ESCAPE MUST AGREE ON WHAT A PATH MAY CONTAIN.
+## `show all > <path>` is a FOLDED command written as a BARE word, so the
+## question this proc asks is exactly the question
+## `ase::backend::ngspice::path_bare_ok $dir 1` asks -- and until 2026-09-20 it
+## asked a narrower one and let two measured failures through:
+##
+##   /x/my$dir/f.txt   `Error: dir: no such variable.` / `No such file or
+##                     directory`, rc 0, NOTHING WRITTEN
+##   /x/o'b/f.txt      an error line, rc 0, NOTHING WRITTEN (both binaries)
+##
+## Both are the same silent loss this guard exists to prevent, one character
+## class away, and neither the lower-case test nor the whitespace test can see
+## them. So it is the same predicate now, said once: a directory outside the
+## bare allow-list is refused. ⚠ A REFUSAL COSTS ONLY THE FAST SHAPE -- the
+## per-device dump still runs and still annotates -- so widening it can slow a
+## run down and can never lose a number, which is the direction issue 1334
+## chose deliberately ("refused here rather than survived later"). Whoever
+## lifts 1334's refusal now that a general escape exists finds the two rules
+## already saying the same thing.
 proc ase::op_dump_reachable_dir {dir} {
   if {$dir eq {}} { return 0 }
   if {[string tolower $dir] ne $dir} { return 0 }
   if {[regexp {[ \t\n]} $dir]} { return 0 }
-  return 1
+  ## caught, and the catch answers REFUSE: a guard that cannot reach its own
+  ## predicate must fall back to the slow shape, never to the fast one
+  if {[catch {ase::backend::ngspice::path_bare_ok $dir 1} ok]} { return 0 }
+  return $ok
 }
 
 # The directory shape d would write its dump into, WITHOUT CREATING IT.
@@ -24476,12 +24498,31 @@ namespace eval ase::backend::ngspice {
         set ckf [ase::ckpt_path $state]
         set ckt [ase::ckpt_tmp_path $state]
         set ckv [dict get $ckplan vector]
+        ## ⚠ THE ESCAPES GO ABOVE THE LOOP, NOT INSIDE IT (issues 1484/1490).
+        ## The paths do not change per iteration, and the loop body is an order
+        ## several other issues pinned by position -- CK13c reads a window of
+        ## four consecutive lines from `unset appendwrite`, so three definitions
+        ## dropped among them would move a bound nobody meant to move.
+        lassign [path_word $ckt aseckt 0] _ck_pre _ck_t
+        lassign [shell_word $ckt aseckt] _ck_spre _ck_st
+        lassign [shell_word $ckf aseckf] _ck_fpre _ck_sf
+        foreach _ckl [concat $_ck_pre $_ck_spre $_ck_fpre] {
+          if {[lsearch -exact $lines $_ckl] < 0} { lappend lines $_ckl }
+        }
         lappend lines {while ckdone = 0}
         lappend lines "  if length($ckv) >= \$cktgt"
         lappend lines {    unset appendwrite}
         lappend lines {    remzerovec}
-        lappend lines "    write $ckt"
-        lappend lines "    shell mv -f $ckt $ckf"
+        ## ⚠ THE TWO LINES NEED DIFFERENT QUOTING (issues 1484/1490). `write`
+        ## is ngspice's own and takes `path_word`; `shell mv` is handed to
+        ## /bin/sh and takes `shell_word`, which is the only place in this file
+        ## where DOUBLE quotes are the right answer. Measured: with a run
+        ## directory called `w s`, the unquoted pair wrote the checkpoint to a
+        ## FILE named after the truncated word and moved nothing -- so a Stop
+        ## salvaged nothing, silently, which is the one outcome this whole
+        ## block exists to prevent.
+        lappend lines "    write $_ck_t"
+        lappend lines "    shell mv -f $_ck_st $_ck_sf"
         lappend lines {    set appendwrite}
         lappend lines "    echo [ase::ckpt_marker done] \$cktgt"
         lappend lines {    let cknext = cknext + ckstep}
@@ -24573,16 +24614,20 @@ namespace eval ase::backend::ngspice {
       # record FORMAT is ase::plotmap_record, in core, read back by exactly one
       # parser.
       if {$pmapf ne {}} {
-        lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $pmapf"
+        lassign [path_word $pmapf asemap 0] _pw_pre _pw_map
+        foreach _pwl $_pw_pre { lappend lines $_pwl }
+        lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $_pw_map"
       }
       # 0963 tier b: the device names ride THIS write and no other. A bare
       # `@dev` on a multi-point write is silently wrong -- dims=1, one
       # non-zero sample parked at index 0, 0.0 everywhere else, no warning.
       # Rows E5 and M1 fail if this condition is loosened.
+      lassign [path_word [raw_file $state] aseraw 0] _pw_pre _pw_raw
+      foreach _pwl $_pw_pre { lappend lines $_pwl }
       if {$type eq {op} && [llength $optier_write]} {
-        lappend lines "write [raw_file $state] all [join $optier_write { }]"
+        lappend lines "write $_pw_raw all [join $optier_write { }]"
       } else {
-        lappend lines "write [raw_file $state]"
+        lappend lines "write $_pw_raw"
       }
       ## --- 1443 (§8a + §8c): THE MEASUREMENTS AND THE POST-PROCESSING -------
       ## ⚠ BELOW THE FIRST `write` AND ABOVE THE WALK, and all four sides of
@@ -24617,13 +24662,17 @@ namespace eval ase::backend::ngspice {
         # the last plot walked to.
         lappend lines "remzerovec"
         if {$pmapf ne {}} {
-          lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $pmapf"
+          lassign [path_word $pmapf asemap 0] _pw_pre _pw_map
+          foreach _pwl $_pw_pre { lappend lines $_pwl }
+          lappend lines "echo \"[ase::plotmap_record $type $ai {$curplotname}]\" >> $_pw_map"
         }
         # A BARE `write` IS ENOUGH HERE and the device names must NOT ride it:
         # 0963 tier b's `all @dev…` list belongs to the operating point's own
         # write and to no other, and `op` produces one plot, so this loop never
         # runs for it.
-        lappend lines "write [raw_file $state]"
+        lassign [path_word [raw_file $state] aseraw 0] _pw_pre _pw_raw
+        foreach _pwl $_pw_pre { lappend lines $_pwl }
+        lappend lines "write $_pw_raw"
       }
       # 0967: the printed outputs sit with the analysis they have always read.
       if {[list $type $ai] eq $printanchor} {
@@ -25029,6 +25078,167 @@ namespace eval ase::backend::ngspice {
     puts -nonewline $f "[join $out "\n"]\n"
     close $f
     return [dict replace $rep status written wrote [llength $lines] shadows $user]
+  }
+
+  # ─── A FILESYSTEM PATH AS ONE WORD ON A CONTROL LINE ──── issues 1484/1490 ──
+  #
+  # ngspice does TWO different things to a `.control` line that ASE-L's own
+  # paths do not survive, and they need two different remedies. Both were
+  # TRACED 2026-09-20 -- decks written by hand, ngspice run, the filesystem
+  # looked at afterwards -- on apt ngspice-45.2 and on the ver_50 fork, with
+  # IDENTICAL results on both.
+  #
+  # 1. WORD SPLITTING, and it is SILENT. `com_write_sparam` takes
+  #    `wl->wl_word`, the FIRST word, and the redirection parser takes the
+  #    first word after `>`/`>>`. A deck carrying
+  #        wrs2p /var/tmp/x/w s/out.s2p
+  #    wrote a complete Touchstone file to `/var/tmp/x/w` -- a FILE where the
+  #    user has a DIRECTORY, one level up from where they asked -- at rc 0
+  #    with nothing on stderr. MEASURED for all of `write`, `wrdata`,
+  #    `echo >>`, `print >>`, `set >>`, `meas >>`, `wrnodev` and `wrs2p`: in a
+  #    directory called `w s` all eight collapsed into ONE file called `w`,
+  #    each clobbering the last.
+  #
+  # 2. CASE FOLDING, and it is silent too. `inp_readall` lowercases every card
+  #    in place unless the command is on a whitelist (`src/frontend/inpcom.c`,
+  #    the `ciprefix("write", cbuf) || ...` chain): `write`, `wrdata`,
+  #    `codemodel`, `osdi`, `pre_osdi`, `echo`, `shell`, `source`, `cd`,
+  #    `load`, `setcs`, `strcmp`, `strstr`, plus `.lib`/`.inc`, plus a separate
+  #    exemption for the token after `>` on `print`/`eprint`/`eprvcd`/
+  #    `asciiplot`. `wrs2p`, `set`, `meas` and `wrnodev` are on NEITHER list.
+  #    MEASURED with a lowercase sibling directory in place beside `Cap/`:
+  #    `write`, `wrdata`, `echo >>` and `print >>` landed in `Cap/`, while
+  #    `set >>`, `meas >>` and `wrnodev` landed in `cap/` -- THE WRONG
+  #    DIRECTORY, at rc 0, with nothing said. With no lowercase sibling,
+  #    `wrs2p` says `.../cap/x.s2p: No such file or directory` on stderr and
+  #    still exits 0, so nothing downstream notices either.
+  #
+  # ⚠ THE OBVIOUS FIX IS THE WRONG ONE, AND IT FAILS ON A PLAIN PATH. Double
+  # quotes are taken LITERALLY by `write`, `wrdata`, `wrs2p` and `wrnodev` --
+  # `wrs2p "/tmp/plain/b.s2p"` answers `"/tmp/plain/b.s2p": No such file or
+  # directory` in a directory with neither a capital nor a space. A quoted
+  # word the simulator keeps the quotes of is a second defect wearing the
+  # fix's clothes, which is why this is measured rather than reasoned.
+  #
+  # WHAT WORKS, ON BOTH BINARIES, FOR EVERY ONE OF THE EIGHT COMMANDS:
+  #
+  #     setcs asepth = '/var/tmp/x/w s/out.s2p'
+  #     wrs2p $asepth
+  #
+  # `setcs` is on the whitelist, so its line keeps its case; single quotes make
+  # its value one word; and `$asepth` is expanded at execution, AFTER the
+  # reader has folded the line it sits on, so the value arrives byte for byte.
+  #
+  # ⚠ EMITTED ONLY WHERE IT IS NEEDED, which is this file's own rule for the
+  # deck (`meas_block`: "an inert line in a generated deck is a line the next
+  # reader has to work out"). A path that is already safe as a bare word is
+  # still written as a bare word, so every bench on an ordinary path renders
+  # the deck it always did, byte for byte.
+
+  # The lines ngspice's lexer and reader can carry a path through, as
+  # `{prelines word}`: `prelines` is {} when the bare path is safe, and one
+  # `setcs` line when it is not. `var` is the shell-variable name to use, and
+  # `folded` says whether ngspice lowercases this command's line (see the
+  # whitelist above). RAISES for a path no encoding carries -- see path_quoted.
+  proc path_word {path var folded} {
+    if {[path_bare_ok $path $folded]} { return [list {} $path] }
+    return [list [list "setcs $var = [path_quoted $path]"] "\$$var"]
+  }
+
+  # Is $path safe as a BARE word on a control line? Deliberately a small
+  # allow-list rather than a list of known-bad characters: a path outside it
+  # takes the quoted route, which is correct for every character measured
+  # below, so the failure direction is "quoted when it need not be".
+  proc path_bare_ok {path folded} {
+    if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return 0 }
+    if {$folded && [regexp {[A-Z]} $path]} { return 0 }
+    return 1
+  }
+
+  # $path as one quoted word for a `setcs` line, or an error naming the
+  # character that cannot be carried.
+  #
+  # ⚠ THE SET OF CHARACTERS IS MEASURED, NOT ASSUMED. Round-tripped through
+  # `setcs`+`$var` on both binaries, one directory per character: space, `"`,
+  # `\`, `;`, `&`, `|`, `<`, `>`, `*`, `?`, `[`, `]`, `~`, `%`, `!`, `#`, `@`,
+  # `(`, `)`, `=`, `+`, `,`, `:`, `-`, `_`, `.` and upper case ALL survive
+  # single quotes. `'` does not (it ends the quote) but survives DOUBLE quotes
+  # on a `setcs` line -- which is a different question from the double quotes
+  # that `wrs2p` keeps literally, because only the `setcs` line is involved.
+  # `$`, backquote and `{`/`}` survive NEITHER: single quotes do not suppress
+  # variable expansion, command substitution or brace expansion in ngspice, and
+  # backslash escaping was measured not to help. A backquote is the worst of
+  # them -- it ran the text as a command and left a file named `bq ` behind.
+  #
+  # So those four are refused, by name, rather than written into the void.
+  #
+  # ⚠ AND SO ARE THE CONTROL CHARACTERS, WHICH THE QUOTES DO NOT REACH EITHER.
+  # A deck is a LINE-ORIENTED format: a newline inside the value splits the
+  # `setcs` line into two deck lines, and no quoting can put it back together.
+  # MEASURED 2026-09-20, both binaries, the real emitter rendering the deck,
+  # one run directory per character, with this proc still ACCEPTING them:
+  #
+  #   nl\nnl   rc 0, nothing on stderr, ZERO artifacts, a 2680-byte stray
+  #            file one level up named after the first half of the directory
+  #   ta\tb, cr\rc, vt\x0bv, ff\x0cf
+  #            rc 0, nothing on stderr, ZERO artifacts anywhere
+  #
+  # That is the SAME SILENT-LOSS SIGNATURE as the defect this escape exists to
+  # remove, produced by the code that claimed to have removed it -- and neither
+  # suite predicate could see it, because `cp_needs` (test_ase_sp_1452) and
+  # `ck_word` (test_ase_core) are copies of `path_bare_ok`'s regexp and share
+  # its blind spot exactly. `ase::op_dump_reachable_dir`, in this same file,
+  # already refuses `[ \t\n]`; this is the same answer said in full.
+  proc path_quoted {path} {
+    if {[regexp {[[:cntrl:]]} $path]} {
+      return -code error "ase: the simulator cannot be given this path --\
+ `[string map [list \n {\n} \t {\t} \r {\r} \x0b {\v} \x0c {\f}] $path]`\
+ contains a control character (a newline, tab, carriage return, vertical tab\
+ or form feed), and a simulator deck is a line-oriented format that no quoting\
+ can carry one through. Move the bench to a path without them."
+    }
+    if {[regexp {[\$`\{\}]} $path]} {
+      return -code error "ase: the simulator cannot be given this path --\
+ `$path` contains one of \$ ` { }, and ngspice expands all four on a control\
+ line whatever it is quoted with. Move the bench to a path without them."
+    }
+    if {[string first ' $path] < 0} { return '$path' }
+    if {[string first \\ $path] < 0} { return "\"$path\"" }
+    return -code error "ase: the simulator cannot be given this path --\
+ `$path` contains both an apostrophe and a backslash, and ngspice has no\
+ quoting that carries the two together. Move the bench to a path without one\
+ of them."
+  }
+
+  # ─── AND THE ONE LINE THAT GOES TO /bin/sh, NOT TO ngspice ──────────────────
+  #
+  # `shell mv -f <a> <b>` is read by ngspice and then handed to a shell, so it
+  # needs BOTH quotings and they fight. MEASURED 2026-09-20 on both binaries,
+  # moving a file into a directory called `w s`:
+  #
+  #   shell mv -f /x/w s/a /x/w s/b        the shell gets four words: NO MOVE
+  #   shell mv -f '/x/w s/a' '/x/w s/b'    ngspice STRIPS the single quotes
+  #                                        before the shell sees them: NO MOVE
+  #   setcs p = '/x/w s/a' … shell mv -f "$p" "$q"        MOVED
+  #
+  # The last one works because ngspice keeps DOUBLE quotes on a `shell` line and
+  # expands the variable inside them, so `/bin/sh` receives one quoted word. It
+  # is the mirror image of the rule above, where double quotes were the trap --
+  # which is why this is a separate proc with its own measurement rather than a
+  # flag on `path_word`.
+  #
+  # A path carrying `"` or a backslash would end that shell quoting, and there
+  # is no second encoding to fall back on, so it is refused by name.
+  proc shell_word {path var} {
+    if {[regexp {["\\]} $path]} {
+      return -code error "ase: the simulator cannot be given this path --\
+ `$path` contains a double quote or a backslash, and the one line ASE-L has to\
+ hand to a shell has no quoting that carries either. Move the bench to a path\
+ without them."
+    }
+    lassign [path_word $path $var 0] pre word
+    if {![llength $pre]} { return [list {} $path] }
+    return [list $pre "\"\$$var\""]
   }
 
   # <rundir>/<cell>_ase.log
@@ -28130,8 +28340,13 @@ $_leg
     set sim [namespace tail [namespace current]]
     set rows [::ase::meas_for $sim $state $type $idx]
     if {![llength $rows]} { return {} }
-    set path [::ase::meas_path $state]
-    set out {}
+    ## THE SIDECAR PATH AS ONE CONTROL-LINE WORD, resolved ONCE for the whole
+    ## block (see path_word): `meas ... >> path` is a line ngspice CASE-FOLDS,
+    ## so the strictest of the three commands in this block decides for all of
+    ## them, and a block that needed the escape would otherwise have used the
+    ## bare path on some of its lines and the variable on others.
+    lassign [path_word [::ase::meas_path $state] asemsr 1] _pw_pre path
+    set out $_pw_pre
     # WHICH ROWS READ THE ANALYSIS'S OWN PLOT, AND WHICH READ A PRODUCER'S
     set own {}
     set prod {}
@@ -28203,6 +28418,10 @@ $_leg
   # rather than the user. Restoring it would be worse: the user's own printed
   # outputs would then report a phase in the unit the measurement above them
   # did not use. The leak is reported instead, by ase::meas_report's caller.
+  ## ⚠ `path` HERE IS ALREADY A CONTROL-LINE WORD, not a filesystem path:
+  ## meas_block resolved it through path_word once for the whole block, so it
+  ## is either the bare path or `$asemsr`. Nothing in this proc may quote it
+  ## again (issues 1484/1490).
   proc meas_group {state rows path} {
     if {![llength $rows]} { return {} }
     set out {}
@@ -28280,6 +28499,15 @@ $_leg
   # everything that changes how the circuit is READ -- the netlist, its includes,
   # its model libraries, its parameters and the bench's `pre_` commands -- and
   # nothing that WRITES: no analysis, no `write`, no redirection.
+  #
+  # ⚠ THIS IS THE SECOND EMITTER OF THE SAME CARDS. `.include`, `.lib`, `.param`
+  # and the `pre_` commands below are emitted a second time here, line for line
+  # beside `render_deck`'s own. It needs no `path_word` today for exactly one
+  # reason -- "nothing that WRITES" means it carries no run-directory-derived
+  # control-line path -- but any quoting added to the `.include`/`.lib` cards
+  # (the issue-1484/1490 class in its loud, deck-card face) has to land in BOTH
+  # places or the probe deck and the run deck stop agreeing about the circuit
+  # they are describing, which is the one thing this proc exists to guarantee.
   proc event_probe {state netlist_text} {
     if {[catch {::ase::netlist_facts $netlist_text} facts]} { return {} }
     if {![dict exists $facts families xspice]} { return {} }
@@ -28407,8 +28635,14 @@ $_leg
     set i 0
     for {set s 0} {$s < [llength $ok] && $i < [::ase::event_vcd_max]} {incr s $n} {
       incr i
+      ## `eprvcd` is on ngspice's `>`-redirection case exemption, so only the
+      ## word splitting of issues 1484/1490 can reach it -- but a spaced path
+      ## still truncates at the space, silently. One `setcs` per file, because
+      ## each group writes a DIFFERENT one.
+      lassign [path_word [::ase::event_vcd_path $state $i] asevcd 0] _pw_pre _pw_vcd
+      foreach _pwl $_pw_pre { lappend out $_pwl }
       lappend out "eprvcd [join [lrange $ok $s [expr {$s + $n - 1}]] { }] >\
- [::ase::event_vcd_path $state $i]"
+ $_pw_vcd"
     }
     return $out
   }
@@ -28912,9 +29146,13 @@ $_leg
       if {[sp_port_field $p num] eq {1}} { set rb [sp_port_field $p z0] ; break }
     }
     if {$rb eq {}} { set rb 50 }
-    return [list "let Rbase = $rb" \
-                 "wrs2p [s2p_file $state $idx]" \
-                 {unlet Rbase}]
+    ## ⚠ `wrs2p` IS ON NEITHER OF ngspice's CASE LISTS, so this line is read
+    ## lowercased and a Touchstone export under `~/Projects/` or
+    ## `~/Documents/My Designs/` went nowhere, or to a truncated sibling file,
+    ## at rc 0. Issues 1484/1490; path_word carries the measurement.
+    lassign [path_word [s2p_file $state $idx] ases2p 1] pre word
+    return [concat [list "let Rbase = $rb"] $pre \
+                   [list "wrs2p $word" {unlet Rbase}]]
   }
 
   # ─── THE `check` LEG: ngspice's OWN RULES OVER THE PORTS TABLE ─────────────
@@ -29459,11 +29697,22 @@ $_leg
   # only the variable dump is redirected into the sidecar. The markers are
   # core's (`ase::effective_marker`); the three words `option`, `set` and `>>`
   # are ngspice's and are therefore here.
+  ## ⚠ AND `set` IS ON NEITHER CASE LIST EITHER (issues 1484/1490). MEASURED
+  ## with a lowercase sibling directory in place, `set >> /x/Cap/f` wrote
+  ## `/x/cap/f` -- the wrong directory, silently, at rc 0. The escape puts one
+  ## extra variable into the dump this very line produces, which
+  ## ase::effective_diff never looks up (it asks only about the bench's own
+  ## option rows) and which lands in the same population as the twelve ngspice
+  ## shell variables already there.
   proc effective_emit {path} {
-    return [list "echo [::ase::effective_marker begin]" \
-                 {option} \
-                 "echo [::ase::effective_marker end]" \
-                 "set >> $path"]
+    ## the escape sits IMMEDIATELY above the line that uses it, not at the top
+    ## of the block: a definition three lines from its use is a line the next
+    ## reader has to hold in their head
+    lassign [path_word $path aseeff 1] pre word
+    return [concat [list "echo [::ase::effective_marker begin]" \
+                         {option} \
+                         "echo [::ase::effective_marker end]"] \
+                   $pre [list "set >> $word"]]
   }
 
   # ⚠ WHAT `option` CALLS EACH SETTING, AND IN WHICH UNIT. Both halves measured
@@ -30316,11 +30565,44 @@ $_leg
       ## A COMMAND, so it belongs inside `.control` -- and after the
       ## `$sim_status` guard, so a failed operating point never overwrites a
       ## good saved one.
-      return [list "wrnodev $path"]
+      ## `wrnodev` is on neither case list either: MEASURED writing
+      ## `/x/cap/n.txt` for a deck that said `/x/Cap/n.txt` (issues 1484/1490).
+      lassign [path_word $path aseops 1] _pw_pre _pw_ops
+      return [concat $_pw_pre [list "wrnodev $_pw_ops"]]
     }
     if {$which ne {restore}} { return {} }
     set mode [::ase::opstate_get $state mode seed]
-    if {$mode eq {force}} { return [list ".include $path"] }
+    ## ⚠ AND THE RESTORE SIDE IS A DECK CARD, NOT A CONTROL LINE, so it takes
+    ## the OTHER half of the rule and it was missed once already. `.include` IS
+    ## on ngspice's case whitelist (`inp_readall`, see path_word above), so a
+    ## capital in the path resolves bare -- but the card is still split at the
+    ## first space, and unlike the control lines it fails LOUDLY. MEASURED
+    ## 2026-09-20 end to end on both binaries, one bench, three run directories,
+    ## `restore 1 mode force`:
+    ##
+    ##   .../plain/run   rc 0, raw written
+    ##   .../Cap/run     rc 0, raw written        (the whitelist)
+    ##   .../w s/run     `Error: Could not find include file /var/tmp/.../w`
+    ##                   `ERROR: fatal error in ngspice, exit(1)`, rc 1,
+    ##                   NO RAW FILE AT ALL -- the whole run lost
+    ##
+    ## ⚠ AND THE QUOTING IS THE OPPOSITE ONE FROM `wrs2p`. A deck card keeps
+    ## neither quote as part of the name: measured, `.include '<path>'` and
+    ## `.include "<path>"` both resolve rc 0 in a `w s` directory AND on an
+    ## ordinary path, with the included `.param` really reaching the circuit
+    ## (`v(1)/i(v1) = -2.2e+03`). So `path_quoted` is right here and the
+    ## double-quote trap that rules out quoting `wrs2p` does not apply.
+    ##
+    ## ⚠ THIS PATH IS ASE-L'S OWN. `ase::opstate_path` joins it onto the run
+    ## directory, so there is no user PDK to ask anyone to rename -- which is
+    ## what separates it from the models `.include`/`.lib` cards, where the path
+    ## is the user's and the failure is loud enough to act on. `folded 0`
+    ## because `.include` is whitelisted; the bare form is kept for an ordinary
+    ## path so no existing deck moves.
+    if {$mode eq {force}} {
+      if {[path_bare_ok $path 0]} { return [list ".include $path"] }
+      return [list ".include [path_quoted $path]"]
+    }
     set txt {}
     if {[catch {
       set fh [open $path r] ; set txt [read $fh] ; close $fh

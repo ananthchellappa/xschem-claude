@@ -188,6 +188,55 @@ proc s_dget {d k} {
   return $v
 }
 
+## ⚠ THE ROWS BELOW HOLD IN EVERY TESTER'S DIRECTORY, and that is deliberate:
+## the scratch root is wherever `XSCHEM_TEST_SCRATCH` or the checkout puts it,
+## so "an ordinary path" is not something this suite can assume. `cp_needs`
+## is the suite's OWN, independent opinion of whether a word has to be escaped
+## -- written here rather than borrowed from the emitter, so a row comparing the
+## two is a second opinion and not a tautology.
+##
+## ⚠ SECOND OPINION ABOUT THE RENDERING, NOT ABOUT THE PREDICATE. This and
+## `ck_word` in test_ase_core.tcl are COPIES of `path_bare_ok`'s regexp, so they
+## agree with it by construction about *whether* a word needs escaping and can
+## only ever disagree about *how* it is escaped. A path carrying a control
+## character was silently lost with every row here green, because all three
+## rejected it as "not bare" and none of them asked what happened next. `CP5b`
+## below is the row that carries the predicate.
+proc cp_needs {path folded} {
+  if {![regexp {^[A-Za-z0-9_./-]+$} $path]} { return 1 }
+  if {$folded && [regexp {[A-Z]} $path]} { return 1 }
+  return 0
+}
+## ⚠ AND THE QUOTE CHOICE IS PART OF THE RULE, NOT A CONSTANT. A single quote
+## cannot carry an apostrophe -- it ends the quote -- so the emitter falls back
+## to DOUBLE quotes for a path holding one, and that fallback was measured to
+## round-trip end to end on both binaries. This spelt `'$path'` unconditionally
+## until 2026-09-20, which made four rows of this suite -- `SL4`, `CP1`, `CP2`,
+## `CP3` -- go FALSELY red for any tester whose own directory contains an
+## apostrophe (`~/O'Brien/xschem/`): measured, the deck was right and the
+## expectation was wrong, while every end-to-end row (`SE1`-`SE3`, `CP6`) was
+## green in the same run. It is still the suite's OWN statement of the rule and
+## not a call to `path_quoted`, so the row stays a second opinion -- but it is
+## now the same rule.
+proc cp_quoted {path} {
+  if {[string first ' $path] < 0} { return '$path' }
+  return "\"$path\""
+}
+## What the deck must carry for one path: `{escaped_line_or_empty word}`.
+proc cp_want {path var folded} {
+  if {[cp_needs $path $folded]} {
+    return [list "setcs $var = [cp_quoted $path]" "\$$var"]
+  }
+  return [list {} $path]
+}
+## The same two, as things that splice: a LIST of zero or one `setcs` lines, and
+## the word itself.
+proc cp_pre  {path var folded} {
+  set p [lindex [cp_want $path $var $folded] 0]
+  return [expr {$p eq {} ? {} : [list $p]}]
+}
+proc cp_word {path var folded} { return [lindex [cp_want $path $var $folded] 1] }
+
 set SPPORTS {ports {{src v1 num 1 z0 50} {src v2 num 2 z0 50}}}
 proc sp_row {args} {
   return [concat {type sp enabled 1 points 3 start 100meg stop 1g} $::SPPORTS $args]
@@ -368,9 +417,10 @@ check {SL4 the Touchstone export is off unless asked for, and when asked for it\
  creates its reference vector and takes it away again} \
   [list [s_ans ase::analysis_setup_emit ngspice [sp_row] post [sp_state {}] 1] \
         [s_ans ase::analysis_setup_emit ngspice [sp_row s2p 1] post [sp_state {}] 1]] \
-  [list {} [list {let Rbase = 50} \
-                 "wrs2p [file join $scratch spbench_ase_sp1.s2p]" \
-                 {unlet Rbase}]]
+  [list {} [concat [list {let Rbase = 50}] \
+              [cp_pre [file join $scratch spbench_ase_sp1.s2p] ases2p 1] \
+              [list "wrs2p [cp_word [file join $scratch spbench_ase_sp1.s2p] ases2p 1]" \
+                    {unlet Rbase}]]]
 
 ## ⚠ `Rbase` IS PORT 1's IMPEDANCE AND NOT THE FIRST ROW'S. The Touchstone header
 ## is `# Hz S RI R <Rbase>` and `span.c:74-178` refers the whole file to port 1,
@@ -1391,6 +1441,271 @@ foreach sepair [se_binaries] {
           [llength $SE3ALL] $SE3SCAL] \
     [list 0 36 {} {} 47 {}]
   if {$se3rc} { puts "  SE3/$setag output: $se3out" }
+}
+
+## ===========================================================================
+## CP -- A PATH THE CONTROL LINE CANNOT TAKE LITERALLY          issues 1484/1490
+## ===========================================================================
+##
+## ⚠ EVERY GREEN T1 EVER TAKEN WAS TAKEN AT A PATH WITH NEITHER A CAPITAL NOR A
+## SPACE, which is why this defect lived for months inside a suite that runs the
+## simulator end to end. The run directory reaches an ngspice `.control` line as
+## a bare word, and ngspice does two things to it that TRACED 2026-09-20 on apt
+## 45.2 and on the ver_50 fork, identically:
+##
+##   word splitting  `wrs2p /x/w s/o.s2p` wrote a complete Touchstone file to
+##                   `/x/w` -- a FILE where the user has a DIRECTORY -- rc 0,
+##                   nothing on stderr. Measured for `write`, `wrdata`,
+##                   `echo >>`, `print >>`, `set >>`, `meas >>`, `wrnodev` and
+##                   `wrs2p`: in `w s/` all eight collapsed into ONE file `w`.
+##   case folding    `inp_readall` lowercases every card whose command is not on
+##                   its whitelist. `write`/`wrdata`/`echo`/`print` are on it;
+##                   `wrs2p`, `set`, `meas` and `wrnodev` are NOT. Measured with
+##                   a lowercase sibling directory present, those four wrote
+##                   into `cap/` for a deck that said `Cap/`.
+##
+## ⚠ AND THE OBVIOUS REMEDY IS THE WRONG ONE: `wrs2p "<path>"` keeps the double
+## quotes as part of the filename and fails on a PLAIN path. CP4 is that row, so
+## nobody "simplifies" the escape into double quotes again.
+## A parent of their own, so the stray-file half of CP6 can say "nothing else
+## in this directory" without tripping over every other section's artifacts.
+set CPWORK  [file join $scratch cpwork]
+file mkdir $CPWORK
+set CPPLAIN [file join $CPWORK cpz]
+set CPCAP   [file join $CPWORK cpA]
+set CPSPACE [file join $CPWORK {cp s}]
+proc cp_lines {rundir} {
+  set st [sp_state [list {type op enabled 1} [sp_row s2p 1]] $rundir]
+  return [split [string trimright [sp_deck $st] "\n"] "\n"]
+}
+proc cp_grep {rundir pat} {
+  set out {}
+  foreach l [cp_lines $rundir] {
+    if {[string match $pat [string trim $l]]} { lappend out [string trim $l] }
+  }
+  return $out
+}
+
+## ⚠ THE NON-VACUITY HALF FIRST. `wrs2p` is a folded command, so it takes the
+## escape whenever the path has a capital OR anything outside the bare set --
+## and takes NONE when it does not. A fix that escaped unconditionally would
+## pass every row below and change every bench's deck for nothing.
+set CP1P [file join $CPPLAIN spbench_ase_sp1.s2p]
+check {CP1 the Touchstone line is escaped exactly when this tester's own path\
+ needs it, and left bare when it does not} \
+  [list [cp_grep $CPPLAIN {wrs2p *}] \
+        [cp_grep $CPPLAIN {setcs ases2p *}]] \
+  [list [list "wrs2p [cp_word $CP1P ases2p 1]"] [cp_pre $CP1P ases2p 1]]
+
+## A capital added to the run directory: the FOLDED command must now escape
+## whatever this tester's root looks like, while `write` -- which ngspice's
+## whitelist spares -- escapes only if the root itself needs it. Both halves, or
+## the row would pass on an escape applied to everything.
+set CP2S [file join $CPCAP spbench_ase_sp1.s2p]
+set CP2R [file join $CPCAP spbench_ase.raw]
+check {CP2 a capital in the run directory escapes the folded command, and the\
+ whitelisted `write` only if the path needs it for another reason} \
+  [list [cp_grep $CPCAP {wrs2p *}] \
+        [cp_grep $CPCAP {setcs ases2p *}] \
+        [cp_grep $CPCAP {write *}] \
+        [cp_grep $CPCAP {setcs aseraw *}] \
+        [llength [cp_pre $CP2S ases2p 1]]] \
+  [list [list "wrs2p [cp_word $CP2S ases2p 1]"] \
+        [cp_pre $CP2S ases2p 1] \
+        [lrepeat 2 "write [cp_word $CP2R aseraw 0]"] \
+        [lrepeat [expr {2 * [llength [cp_pre $CP2R aseraw 0]]}] \
+                 [lindex [cp_pre $CP2R aseraw 0] 0]] \
+        1]
+
+## A space: every one of them needs it, because splitting does not care which
+## list the command is on. The last term is the claim, not an inference.
+set CP3R [file join $CPSPACE spbench_ase.raw]
+check {CP3 a space in the run directory escapes every path-bearing line, the\
+ whitelisted ones included} \
+  [list [cp_grep $CPSPACE {wrs2p *}] \
+        [lsort -unique [cp_grep $CPSPACE {write *}]] \
+        [lsort -unique [cp_grep $CPSPACE {setcs aseraw *}]] \
+        [llength [cp_grep $CPSPACE {echo "PLOT*}]] \
+        [lsort -unique [cp_grep $CPSPACE {echo "PLOT*}]] \
+        [llength [cp_pre $CP3R aseraw 0]]] \
+  [list {{wrs2p $ases2p}} \
+        {{write $aseraw}} \
+        [cp_pre $CP3R aseraw 0] \
+        2 \
+        [list {echo "PLOT op 0 |$curplotname|" >> $asemap} \
+              {echo "PLOT sp 1 |$curplotname|" >> $asemap}] \
+        1]
+
+## ⚠ THE TRAP, AS A ROW. `wrs2p "<path>"` was measured to fail in a directory
+## with neither a capital nor a space -- ngspice answers `"<path>": No such file
+## or directory`, quotes included. So the quoting helper must never reach for
+## double quotes while single quotes will do.
+check {CP4 the quoting helper uses SINGLE quotes, which wrs2p unquotes, and\
+ never double quotes, which it keeps} \
+  [list [s_ans ase::backend::ngspice::path_quoted {/a/b c/d.s2p}] \
+        [s_ans ase::backend::ngspice::path_quoted {/a/Bc/d.s2p}]] \
+  [list {'/a/b c/d.s2p'} {'/a/Bc/d.s2p'}]
+
+## An apostrophe has no single-quoted form and DOES have a double-quoted one on
+## a `setcs` line; `$` has neither, measured.
+check {CP5 an apostrophe falls back to double quotes and a dollar is refused by\
+ name rather than written into the void} \
+  [list [s_ans ase::backend::ngspice::path_quoted {/a/o'b/d.s2p}] \
+        [string match {RAISED:*contains one of*} \
+          [s_ans ase::backend::ngspice::path_quoted {/a/b$c/d.s2p}]] \
+        [string match {RAISED:*contains one of*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/b`c/d.s2p"]]] \
+  [list {"/a/o'b/d.s2p"} 1 1]
+
+## ⚠ THE PREDICATE, NOT THE RENDERING -- WHICH IS THE AXIS THE FIRST CUT OF THIS
+## FIX FAILED ON. `cp_needs` above is an independent copy of the emitter's
+## allow-list, so it is a second opinion about the QUOTING and never about the
+## DECISION to quote; the two share a blind spot exactly. They shared this one:
+## a control character is outside `[A-Za-z0-9_./-]`, so `path_bare_ok` rejected
+## it and `path_quoted` then ACCEPTED it and wrapped it in single quotes.
+## MEASURED 2026-09-20 with the real emitter rendering the deck, one run
+## directory per character, both binaries: `nl<newline>nl` -> rc 0, nothing on
+## stderr, ZERO artifacts and a 2680-byte stray file one level up; `ta<tab>b`,
+## `cr<CR>c`, `vt<VT>v`, `ff<FF>f` -> rc 0, nothing on stderr, ZERO artifacts
+## anywhere. That is the SAME SILENT-LOSS SIGNATURE this escape exists to
+## remove. A deck is line-oriented, so refusal is the only correct answer and
+## there is no better quote to reach for.
+check {CP5b a control character is refused BY NAME rather than quoted into a\
+ deck line that cannot carry it, and the refusal reaches the emitter} \
+  [list [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/n\nn/d.s2p"]] \
+        [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/t\tb/d.s2p"]] \
+        [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/c\rc/d.s2p"]] \
+        [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/v\x0bv/d.s2p"]] \
+        [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_quoted "/a/f\x0cf/d.s2p"]] \
+        [string match {RAISED:*control character*} \
+          [s_ans ase::backend::ngspice::path_word "/a/n\nn/d.s2p" ases2p 1]]] \
+  {1 1 1 1 1 1}
+
+## ⚠ AND THE ONE SHAPE THE DOUBLE-QUOTE FALLBACK IS NOT OBVIOUSLY SAFE FOR, so
+## that whoever tightens it knows what they are allowed to change. A path
+## holding BOTH an apostrophe and a double quote emits a double-quoted word with
+## an unescaped `"` inside it -- which was predicted to break and MEASURED not
+## to: 2026-09-20, both binaries, `setcs v = "/var/tmp/.../a'b"c/o.raw"` plus
+## `write $v` and `wrnodev $w` landed both artifacts in that directory, rc 0,
+## nothing stray. The fallback guards only against a BACKSLASH (which would end
+## the quoting with nothing to fall back to) and that is deliberate.
+check {CP5c a path carrying both an apostrophe and a double quote still renders\
+ one word, and apostrophe-plus-backslash is refused by name} \
+  [list [s_ans ase::backend::ngspice::path_quoted {/a/a'b"c/d.s2p}] \
+        [string match {RAISED:*apostrophe and a backslash*} \
+          [s_ans ase::backend::ngspice::path_quoted {/a/a'b\c/d.s2p}]]] \
+  [list {"/a/a'b"c/d.s2p"} 1]
+
+## ⚠ AND END TO END, WHICH IS THE ROW A REGRESSION CANNOT WALK PAST. The three
+## deck rows above are Tcl reasoning about strings; this one writes the deck,
+## runs the simulator and asks the filesystem. A lowercase sibling of the
+## capital directory is made ON PURPOSE, so a folded write lands somewhere
+## VISIBLE instead of failing to open -- on the base it really does land there.
+foreach cppair [se_binaries] {
+  lassign $cppair cptag cpbin
+  if {$cpbin eq {} || ![file executable $cpbin]} {
+    puts "skip: CP6/$cptag -- no executable at '$cpbin', so this end-to-end leg did not run"
+    continue
+  }
+  if {[info exists CPSEEN] && [lsearch -exact $CPSEEN [file normalize $cpbin]] >= 0} { continue }
+  lappend CPSEEN [file normalize $cpbin]
+  foreach cpdir [list $CPCAP $CPSPACE $CPPLAIN] {
+    file delete -force $cpdir
+    file mkdir $cpdir
+    file mkdir [string tolower $cpdir]
+    ## each case reports only its OWN strays: a truncated word from the
+    ## previous one (`cp`, from `cp s/`) would otherwise redden the case after it
+    foreach cpg [glob -nocomplain -directory $CPWORK *] {
+      if {![file isdirectory $cpg]} { file delete -force $cpg }
+    }
+    set cpst [sp_state [list {type op enabled 1} [sp_row s2p 1]] $cpdir]
+    set cpdeck [file join $cpdir spbench_ase.spice]
+    set cpf [open $cpdeck w] ; puts -nonewline $cpf [sp_deck $cpst] ; close $cpf
+    set cprc [catch {exec $cpbin -b $cpdeck 2>@1} cpout]
+    ## what landed where: the two artifacts, in the directory the deck named,
+    ## and NOTHING in the lowercase sibling or beside it
+    set cps2p [file join $cpdir spbench_ase_sp1.s2p]
+    set cpraw [file join $cpdir spbench_ase.raw]
+    set cpstray {}
+    ## only when there IS a distinct lowercase sibling -- for `cpz` and `cp s`
+    ## the folded name IS the directory itself, and listing it would report the
+    ## run's own artifacts as strays
+    if {[string tolower $cpdir] ne $cpdir} {
+      foreach cpg [glob -nocomplain -directory [string tolower $cpdir] *] {
+        lappend cpstray "lc/[file tail $cpg]"
+      }
+    }
+    foreach cpg [glob -nocomplain -directory $CPWORK *] {
+      if {[file isdirectory $cpg]} { continue }
+      lappend cpstray "beside/[file tail $cpg]"
+    }
+    check "CP6/$cptag/[file tail $cpdir] the Touchstone export and the results\
+ file land in the directory the deck named, and nothing lands beside it" \
+      [list $cprc [file exists $cps2p] [file exists $cpraw] [lsort $cpstray]] \
+      [list 0 1 1 {}]
+    if {$cprc} { puts "  CP6/$cptag output: $cpout" }
+  }
+}
+
+## ⚠ AND THE TRIGGER IS NOT ONLY THE DIRECTORY -- IT IS THE CELL. CP2 and CP3
+## vary the run directory only, and both issue files were written as though a
+## capital or a space could only arrive that way. Every ASE-L sidecar is named
+## `<cell>_ase.*`, so a capital in the CELL NAME alone is enough, on a path that
+## is entirely lower case and holds nothing unusual. MEASURED 2026-09-20 at the
+## product level, `HEAD`'s emitter against this one, same all-lowercase run
+## directory, cell `LACGbench`, ngspice rc 0 both times:
+##
+##   HEAD  LACGbench_ase.plotmap  LACGbench_ase.raw  LACGbench_ase.spice
+##         lacgbench_ase.effective  lacgbench_ase.nodeset  lacgbench_ase_sp1.s2p
+##   fix   all six spelt LACGbench_ase.*
+##
+## Three of six artifacts written under a name the user never asked for and
+## nothing that reads them will look up, silently. This repository contains a
+## cell named exactly `LACG`. The row runs the simulator and asks the
+## filesystem, in a directory where the folded name would be a SIBLING FILE and
+## not a sibling directory -- so the negative half ("and not that one") is a
+## real question and not a missing-directory artefact.
+proc cp_cellstate {rundir cell} {
+  global scratch
+  set st [ase::state_default]
+  dict set st design [dict create cell $cell lib $scratch]
+  dict set st rundir $rundir
+  dict set st simulator ngspice
+  dict set st analyses [list {type op enabled 1} [sp_row s2p 1]]
+  return $st
+}
+set CPCELL [file join $CPWORK cpcell]
+foreach cppair [se_binaries] {
+  lassign $cppair cptag cpbin
+  if {$cpbin eq {} || ![file executable $cpbin]} {
+    puts "skip: CP7/$cptag -- no executable at '$cpbin', so this end-to-end leg did not run"
+    continue
+  }
+  if {[info exists CP7SEEN] && [lsearch -exact $CP7SEEN [file normalize $cpbin]] >= 0} { continue }
+  lappend CP7SEEN [file normalize $cpbin]
+  file delete -force $CPCELL
+  file mkdir $CPCELL
+  set c7st [cp_cellstate $CPCELL SpBench]
+  set c7deck [file join $CPCELL SpBench_ase.spice]
+  set c7f [open $c7deck w] ; puts -nonewline $c7f [ase::backend::ngspice::render_deck \
+    $c7st [sp_netlist]] ; close $c7f
+  set c7rc [catch {exec $cpbin -b $c7deck 2>@1} c7out]
+  ## the folded spelling is a FILE beside the right one, in the same directory
+  check "CP7/$cptag a capital in the CELL NAME alone, on an all-lowercase path,\
+ still lands the Touchstone export and the results file under the name the\
+ bench asked for and not a folded one" \
+    [list $c7rc \
+          [file exists [file join $CPCELL SpBench_ase_sp1.s2p]] \
+          [file exists [file join $CPCELL SpBench_ase.raw]] \
+          [file exists [file join $CPCELL spbench_ase_sp1.s2p]] \
+          [file exists [file join $CPCELL spbench_ase.raw]]] \
+    [list 0 1 1 0 0]
+  if {$c7rc} { puts "  CP7/$cptag output: $c7out" }
 }
 
 puts "RESULT: [expr {$fail ? "$fail FAILED ($npass passed)" : "ALL PASS ($npass checks)"}]"

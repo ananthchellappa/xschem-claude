@@ -13,4 +13,8 @@
 | B fix | 1483 | crew (workflow) | receipts/B-verify.md | row branched on the has_x mirror; 8 checks on every arm; sabotages red on the unfixed binary both ways; 7 findings out of scope, recorded as D6 | |
 | B gate | 1483 | driver | tests/results.557418.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=527s, 87/87, wc -l 177, home=throwaway | (this commit) |
 | B docs | 1483 and its family | docs crew + driver | the issue files | 1483 closed as fixed; 0227 gains four measured witnesses; 0467's "at teardown" corrected and its closure proposed, not taken; 1492-1495 filed; NUMBERING.md now points at 1496 | |
+| C trace+fix | 1484, 1490 | crew (workflow) | receipts/C-impl.md | mechanism traced on two ngspice builds and in ngspice's source; 12 rows named for the capital face, 147 for the space face (1490 said 71); product export 3/6 and 1/6 before, 6/6 after | |
+| C verify | 1484, 1490 | two adversarial crews | receipts/C-verify.md | the restore-side `.include` still bare (rc 1 on a space path); control characters lose artifacts silently; one row's attribution refuted; 26 further path shapes round-trip | |
+| C fix | 1484, 1490 | crew (workflow) | receipts/C-verify.md | 7 applied, 3 rejected with reasons, 2 verifier claims refuted by measurement; 57 rows greened, none newly red | |
+| C gate | 1484, 1490 | driver | tests/results.1030214.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=524s, 87/87, zero peers | (this commit) |
 

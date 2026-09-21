@@ -358,6 +358,18 @@ a_wrbin $RAW_BINCPLX "$TITLE$BINOPHC[a_numblock [expr {8 * 3 * 16}] $ZZGHOST [ex
 # deck's save card -- contract item 3 at the top of this file.
 set COUNT [file join $scratch probe_runs.log]
 set STUBTPL {#!/bin/sh
+# The deck hands a path ngspice would mangle over through a `setcs` variable
+# instead of writing it bare (issues 1484/1490), so a stand-in that only reads
+# the `write` line sees `$aseraw` and writes a file called that. Resolve it the
+# way ngspice does: take the value out of the matching `setcs` line, quotes off.
+ase_resolve() {
+  case "$1" in
+    '$'*) v=`echo "$1" | sed 's/^[$]//'`
+          grep -E "^[ 	]*setcs[ 	]+$v[ 	]*=" "$2" | head -1 \
+            | sed -e "s/^[ 	]*setcs[ 	][ 	]*$v[ 	]*=[ 	]*//" -e "s/^'//" -e "s/'\$//" ;;
+    *)    echo "$1" ;;
+  esac
+}
 echo @MARK@ >> @COUNT@
 deck=
 for a in "$@"; do
@@ -366,6 +378,7 @@ done
 if [ -z "$deck" ]; then exit @RC@; fi
 @WAIT@
 out=`grep -E '^[ 	]*write[ 	]' "$deck" | head -1 | sed -e 's/^[ 	]*write[ 	][ 	]*//' -e 's/[ 	]*$//'`
+out=`ase_resolve "$out" "$deck"`
 src=@NORMAL@
 if grep -q '\[\*\]' "$deck"; then src=@BLANKET@; fi
 if [ -n "$out" ] && [ "$src" != NONE ] && [ -f "$src" ]; then cat "$src" > "$out"; fi
@@ -432,6 +445,18 @@ set S_D11     [a_stub [file join $BIN sim_d11]     d11     $RAW_BOTH $RAW_BCONST
 # K3 runs the same folder names through the REAL program, because a stub can
 # never prove another program's parser.
 set STUBSTRICT {#!/bin/sh
+# The deck hands a path ngspice would mangle over through a `setcs` variable
+# instead of writing it bare (issues 1484/1490), so a stand-in that only reads
+# the `write` line sees `$aseraw` and writes a file called that. Resolve it the
+# way ngspice does: take the value out of the matching `setcs` line, quotes off.
+ase_resolve() {
+  case "$1" in
+    '$'*) v=`echo "$1" | sed 's/^[$]//'`
+          grep -E "^[ 	]*setcs[ 	]+$v[ 	]*=" "$2" | head -1 \
+            | sed -e "s/^[ 	]*setcs[ 	][ 	]*$v[ 	]*=[ 	]*//" -e "s/^'//" -e "s/'\$//" ;;
+    *)    echo "$1" ;;
+  esac
+}
 echo @MARK@ >> @COUNT@
 deck=
 for a in "$@"; do
@@ -440,6 +465,7 @@ done
 if [ -z "$deck" ]; then exit @RC@; fi
 @WAIT@
 line=`grep -E '^[[:blank:]]*write[[:blank:]]' "$deck" | head -1 | sed -e 's/^[[:blank:]]*write[[:blank:]][[:blank:]]*//' -e 's/[[:blank:]]*$//'`
+line=`ase_resolve "$line" "$deck"`
 nw=`printf '%s\n' "$line" | wc -w`
 out=
 if [ "$nw" -eq 1 ]; then
