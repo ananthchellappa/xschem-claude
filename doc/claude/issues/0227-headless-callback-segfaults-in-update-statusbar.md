@@ -1,5 +1,7 @@
 # 0227 — any headless `xschem callback` segfaults: `update_statusbar()` calls `XGetKeyboardControl()` on a NULL / already-closed `Display*`
 
+**STAMP:** `v1 claim=open tree=0eed8a1b stamped=2026-09-20 fix=untried open=3 by=B-docs`
+
 Status: **OPEN**.
 **PRE-EXISTING — not caused by merge 4.** Merge `15c600c6` *did* touch `src/callback.c`
 (`git diff --stat 2f238fdc 15c600c6 -- src/callback.c` → `308 insertions(+), 36 deletions(-)`),
@@ -228,3 +230,114 @@ None of it was run — the tree was built and `make` was out of scope for the au
 Unrelated `/tmp/xschem_emergencysave_{tb_test_evaluated_param,wvhier_leaf,dlatch}_*` dirs
 dated the same day were present from other sessions. Whether they share this cause was not
 checked, so no claim is made about them.
+
+---
+
+# 2026-09-20 — still live at `0eed8a1b`, four witnesses instead of one, and issue 0467 is this defect
+
+Appended by the stranger-reds batch, from item B's out-of-scope findings
+(`doc/claude/stranger_reds_batch/receipts/B-impl.md` §1.4 and §5,
+`receipts/B-verify.md` §4.3, batch decision **D6**). Nothing above is edited; this
+section is the newer word, and the stamp at the head is the newest.
+
+## Still live, measured on a tree that fixed a sibling defect
+
+Issue **1483** was a different statement of the same class — `xschem globals`
+dereferencing `display` with no `has_x` guard — and it was fixed in `2288d437`. **This
+one is untouched by that fix and was re-measured on the fixed binary.** The minimal
+repro in "Repro" above, `env -u DISPLAY`, `--nogui`:
+
+```
+A: about to fire one canvas callback
+EMERGENCY SAVE DIR: /tmp/xschem_emergencysave_untitled_fccgcdbgff
+FATAL: signal 11
+```
+
+`B: survived` never prints. **MEASURED** by item B's implementer.
+
+The site is unchanged and is cited by identity because 0227's own `:8721` has already
+rotted: `XGetKeyboardControl(display, &kbdstate);` is the single occurrence in `src/`,
+inside `update_statusbar()`, which `callback()` calls unconditionally with no `has_x`
+guard anywhere between. READ at `0eed8a1b` (where the line happens to be `callback.c:9891`
+— re-grep rather than requoting that number).
+
+## Four suites, not one
+
+**MEASURED** by item B's fix round, `env -u DISPLAY HOME=<scratch> ./src/xschem --nogui
+--pipe -q --nolog --script tests/headless/<t>.tcl`, on the **fixed** binary:
+
+| suite | rc | verdict | a T1 case? |
+|---|---|---|---|
+| `test_keybind_snap_grid` | 1 | `FATAL: signal 11` | **no** |
+| `test_undo_selection` | 1 | `FATAL: signal 11` | **no** |
+| `test_hilight_case_senders` | 1 | `FATAL: signal 11` | **no** |
+| `test_window_switch_bogus_enter` | 1 | `FATAL: signal 11` | **no** |
+
+`test_keybind_snap_grid` is the messenger this file was filed from.
+`test_hilight_case_senders` and `test_window_switch_bogus_enter` **appear in no issue
+file at all** — they are new witnesses, added here rather than filed separately because
+they are this defect at this site.
+
+T1 membership re-checked by READ at `0eed8a1b`: none of the four is named in
+`tests/run_regression.tcl`, and none is in `full_audit.sh`'s `nogui_tests` list either —
+so `full_audit.sh` runs all four on its X arm, where they pass. **Nothing in this project
+counts this crash**, which is why a green T1 at `counted_failures=0` — including the first
+headless ZERO this tree has ever had — says nothing about it. That is the standing answer
+to step 4 of "Verification this fix would need" above, and the answer is still "no".
+
+## Issue 0467 is this defect, newly diagnosed
+
+**0467 says `test_undo_selection` segfaults "at teardown, after every one of its checks
+has passed", and says nobody has diagnosed it. Both halves are wrong.** MEASURED twice
+independently — by item B's implementer and by its `reproduce` verifier — on the fixed
+binary, `env -u DISPLAY`:
+
+```
+#0  XGetKeyboardControl () from libX11.so.6
+#1  update_statusbar (persistent_command=0, wire_draw_active=0) at callback.c:9891
+#2  callback (win_path=".drw", event=2, mx=100, my=100, key=117, …) at callback.c:10093
+#3  xschem_cmds_c (… argc=10 …) at scheduler.c:2765
+```
+
+It dies **mid-suite**, on an `xschem callback` row, after 20 `ok:` rows — in
+`update_statusbar()`. That is this file's defect exactly, and it means 0467's 20 passing
+rows are the rows *before* the crash rather than the whole suite. **0467 is proposed for
+closure as a duplicate of 0227**; the proposal, the measurement and the reason it is a
+proposal rather than a closure are written into 0467 itself. Do not close it from here.
+
+Read 0227's severity accordingly. The header above says *"no user-visible impact under X;
+it silently truncates any `--nogui` script that fires a canvas event"* — four suites are
+now known to be truncated by it, and one of them has been reported for a month as a
+different bug.
+
+## What has moved out of this file
+
+* **The `display = NULL;` follow-up** that "Suggested fix" recommends in its last
+  paragraph is now filed on its own as issue **1493**, with the measurement that justifies
+  it (`xschem globals` reading `XMaxRequestSize=4` out of freed memory on the
+  `--nogui`-with-`DISPLAY` arm, against a real `65535`) and with the reason it needs a
+  sweep before it lands. It is **not** counted in this file's `open=`; follow the link
+  rather than mirroring its status here.
+* **Four `xschem` verbs that crash headless at other sites** — `fill_reset`,
+  `fullscreen`, `copy_hilights`, `compare_schematics` — are filed as issue **1492**. Same
+  contract, different verbs; 0834 is their stated parent.
+
+## Why it was not fixed by the batch that measured it
+
+Item B was scoped to issue 1483 and capped at one fix round, and this file's own
+"Verification this fix would need" warns that guarding `update_statusbar()` *"clears the
+FIRST headless landmine in `callback()`; the rest of that function is unproven headless
+and later checks may expose more."* Four suites that nothing counts would start running
+further than they ever have. **That is a new item, not a drive-by** — with
+`test_undo_selection` as the red-first fixture, since it is deterministic (20 `ok:` rows,
+then the crash) and the four give four independent confirmations of a fix.
+
+## Still open (3)
+
+1. `update_statusbar()` is still called unconditionally; the one-line guard in "Suggested
+   fix" is unapplied and unverified.
+2. The blast radius is still unmeasured beyond the four suites named above — "Blast
+   radius" reports 101 of 305 files containing `xschem callback`, and how many reach one
+   under `has_x == 0` is still not known.
+3. Nothing counts this class: none of the four suites is a T1 case or in
+   `full_audit.sh`'s `nogui_tests`, so every arm anyone runs is an arm where they pass.

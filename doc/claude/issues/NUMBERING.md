@@ -3653,7 +3653,38 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   tree); a read-only tree also cannot be built, so this is reachable only by building
   elsewhere first. OPEN.
 
-**The next free number is 1492.**
+~~**The next free number is 1492.**~~
+
+- **1492** — **four `xschem` verbs kill the process when there is no display, and `catch`
+  cannot catch it.** `fill_reset`, `fullscreen`, `copy_hilights` (signal 11) and
+  `compare_schematics` (rc **139**). Filed by the stranger-reds batch (D6) from item B's
+  fix round. Pre-existing and not headless-only — `--nogui` with `DISPLAY` set crashes
+  too. **0834** owns the contract (*a Tcl-reachable verb must error, never crash*) and is
+  where these close if a sweep shows one cause. No suite drives them, so nothing counts
+  them. OPEN.
+- **1493** — **`xserver_ok()` closes the display without nulling the global**, so with
+  `--nogui` and `DISPLAY` set a missed `has_x` guard reads freed memory instead of
+  faulting. MEASURED: `xschem globals` returning a fabricated `XMaxRequestSize=4` against
+  a real `65535`, and `test_undo_selection` dying inside libxcb. **This is how issue 1483
+  stayed invisible.** Both item B receipts call it the highest-value follow-up in the
+  area; it needs a sweep first, and the sweep's size is unmeasured — three passes gave
+  three different counts. 0227 recommends the same line in a parenthetical and says
+  "worth fixing separately". OPEN.
+- **1494** — **`run_suites.sh` reports a crashed suite as `NORESULT` and throws the crash
+  text away.** MEASURED: a sweep of all 405 suites through the documented driver found
+  `FATAL: signal` in **zero** output files, in a tree with four real crashes. The FAIL
+  arm one line up already echoes `^(FAIL|FATAL)`; the NORESULT arm does not, while two
+  other echoes (`skip:`, `note: corpus-source`) survive every arm. Same family as
+  **1487**, different file and different lost line. OPEN.
+- **1495** — **a checkout path longer than about 73 characters reds `test_op_annot` and
+  `test_annot_hier_0911`.** `statusmsg_text` is `char[256]`, `cadence::_annot_fit` cuts an
+  over-long status line, and five goldens embed an absolute path in the expected sentence
+  (`test_op_annot` N6/N9/V31b, `test_annot_hier_0911` H6/H13). A T1 in a 111-character
+  root counts **11**. Measured four times, including on the unfixed binary with `DISPLAY`
+  set. Same class as **1484**/**1490**, different mechanism: the fix is test-side, and the
+  product's elision is ratified (A11-12b). OPEN.
+
+**The next free number is 1496.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

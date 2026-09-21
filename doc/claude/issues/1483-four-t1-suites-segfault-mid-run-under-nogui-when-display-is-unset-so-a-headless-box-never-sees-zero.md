@@ -1,8 +1,8 @@
 # 1483 — four T1 suites segfault mid-run under `--nogui` when `DISPLAY` is unset, so a headless box never sees T1 at ZERO
 
-**STAMP:** `v1 claim=open tree=7a46275f stamped=2026-09-18 fix=none open=1 by=F-docs`
+**STAMP:** `v1 claim=fixed tree=2288d437 stamped=2026-09-20 fix=taken open=0 by=driver`
 
-**Status: OPEN — filed 2026-09-18** by the outsider-fixes batch, stage F (docs crew), on
+**Status: FIXED 2026-09-20 in `2288d437`** — filed 2026-09-18 by the outsider-fixes batch, stage F (docs crew), on
 the driver's instruction (`doc/claude/outsider_fixes_batch/DECISIONS.md` D12, corrected
 by D13.12). **Class** product defect — a crash — found through the harness.
 **Related:** **0227** (a headless `xschem callback` segfaults on a NULL `Display*` in
@@ -65,6 +65,53 @@ the CI box, the container, and the SSH session with no forwarding: exactly the s
 the outsider audit was measuring. They clone, build, run the documented command, and get
 eight counted failures in suites nobody touched. By CLAUDE.md's own rule (a standing red
 is a defect, not furniture) that is a red baseline for everyone without an X server.
+
+## RESOLUTION — FIXED 2026-09-20, commit `2288d437`
+
+Both questions below are answered, and both answers are MEASURED. The section is kept as
+filed, because what it guessed and what was true are different in an instructive way.
+
+**The cause is one statement, not a class of paths.** All four suites fault at
+`XMaxRequestSize(display)` in the `xschem globals` branch of `scheduler.c`. Frames #0-#10
+of the backtrace are byte-identical across the four, differing only in the script name.
+`display` is assigned only inside `if(has_x)` (`xinit.c`), so with `has_x` 0 it is NULL
+when `DISPLAY` is unset. A three-line script whose only xschem call is `xschem globals`
+reproduces the crash, so no descend, walk or sub-sheet is involved at all.
+
+**Why `DISPLAY` matters under `--nogui`** is therefore not "something reads the
+environment on the descend path": `--nogui` with a `DISPLAY` set takes the same branch
+with a pointer `xserver_ok()` has already `XCloseDisplay()`d, and printed a fabricated
+`XMaxRequestSize=4` against a true 65535 instead of faulting. The loud mode and the silent
+mode are the same defect; the silent one is why the fatal one survived, because every arm
+anyone ran had a display. That freed-pointer global is now issue **1493**.
+
+**Three of the four reach the call through the product's own `op_annot.tcl`**, inside a
+`catch` that a signal ignores, so this was never a test artefact: a headless user
+annotating operating points crashed.
+
+**The relation to 0227, 0834 and 0467 is REFUTED as a cause.** Those are
+`XGetKeyboardControl` in `callback.c`, reached through `xschem callback`; they still crash
+on this binary and are recorded in 0227 with four measured witnesses (none of them a T1
+case). 0467 is proposed there as a duplicate of 0227, its "at teardown" reading corrected.
+Four further verbs that kill the process headless are issue **1492**.
+
+**Fix direction step 1 is done** (guard in the product, not `DISPLAY` in the harness:
+both Xlib calls branch on `has_x`, and the no-display arm reports `<no X server
+connection>` rather than a number). **Step 2 is done in a different shape than it asked
+for**: it asked for a suite that descends under `env -u DISPLAY`, which would have guarded
+a path that turned out to be innocent. Instead `test_callback_argc` gained three rows
+branching on the `::has_x` mirror, so the guard is counted on every box — including a
+developer desktop with a display, where `run_regression.tcl` hard-codes `--nogui` and
+`has_x` is 0 regardless.
+
+**Measured after the fix:** the four suites pass headless with the check counts they have
+with a display (67, 85, 109, 485); a full T1 with `DISPLAY` unset closes
+`counted_failures=0` where the unfixed binary closes 8, taken twice in independent clones;
+a full T1 with a display stays at 0 (`cases=87 blocks=86 counted_failures=0`, this tree,
+`2288d437`). Reverting the guard reproduces the table above row for row.
+
+Batch record: `doc/claude/stranger_reds_batch/` (item B), DECISIONS D5 and D6, receipts
+`B-impl.md` and `B-verify.md`.
 
 ## What is not known
 
