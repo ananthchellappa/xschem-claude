@@ -1,6 +1,10 @@
 # 0609 — the `untitled~.sch` leak is 80 suites wide; per-suite guards cannot close it
 
-STATUS: **OPEN — measured 2026-08-22**, during the 0601 fix. Related: 0601 (the
+**STAMP:** `v1 claim=partial tree=c84aee78 stamped=2026-09-20 fix=partial open=3 by=stranger-reds`
+
+⚠ **Three of the four drivers were contained on 2026-09-20 (`c84aee78`, issue 1486); the
+count is re-measured and the "fix direction" below is half wrong.** Read the last section
+first. STATUS: **OPEN — measured 2026-08-22**, during the 0601 fix. Related: 0601 (the
 five suites now guarded), 0353 (the two originally filed), 0356 (the delete half),
 0323 (`cd` does not move the buffer name), 0060 (why untitled buffers ARE backed
 up on purpose).
@@ -296,3 +300,97 @@ strictly *less* sensitive than what it replaces, so it ships alone safely; it is
 **containment** that cannot ship before it. With the delta in place, the containment's
 choice of directory no longer matters to `C11` — which is the constraint §3 above was
 written about.
+
+---
+
+## 2026-09-20 — three of the four drivers are contained; `tests/run_regression.tcl` is not
+
+Landed in `c84aee78` under issue **1486** by the stranger-reds batch, item F. Receipts:
+`doc/claude/stranger_reds_batch/receipts/F-impl.md` and `F-verify.md`. This section records
+what shipped against this file's own fix direction, re-measures the headline count, and adds
+**one class this file's sweeps were structurally blind to**.
+
+### What shipped
+
+* **The harness half of this issue's fix direction, for the three shell drivers.** New
+  sourced library `tests/headless/suite_cwd.sh`; `run_suites.sh`, `full_audit.sh` and
+  `gated_xschem.sh` arm a per-run private directory and pass `env "PWD=$_scwd"` on every site
+  that starts the binary, then disarm — including on the early exits, one of which was
+  MEASURED leaving the directory in the checkout.
+* **A product change this file did not ask for and needed.** `clear_schematic()` and
+  `go_back()`'s "No" arm no longer delete a `~` this session did not write; ownership is
+  tracked as the **path** written (`backup_owned`), not as a flag. That half reaches the
+  bare `./src/xschem … --script <t>.tcl`, which no driver arms.
+* **A T1 case**, `tests/headless/test_untitled_autosave_1486.tcl` (13 checks), registered as
+  the 73rd `hcases` entry.
+
+### ⚠ This file's "fix direction" is right about `$env(PWD)` and wrong about the cwd
+
+*"Give each test its own cwd"* was **measured to break suites**: with every suite run from a
+private cwd, `test_reopen_readonly` dies at its line 20 with `error copying "": no such file
+or directory`, because it globs `[file join [pwd] xschem_library …]` and its own header says
+*"cwd = repo root"*. What shipped moves **only `$env(PWD)`**, which leaves Tcl's `pwd` alone
+— and that is exactly the load-bearing detail this file already recorded ("it must set
+`$env(PWD)`, not merely `cd`"). A shell child re-derives `PWD` at startup, so nothing
+downstream is misled by the redirect.
+
+### ⚠ T1 is the fourth driver, and it was not armed
+
+`tests/run_regression.tcl` still runs its cases with no `$env(PWD)` of its own, so **a T1 run
+still writes `untitled~.sch` into `tests/`**. MEASURED: `tests/untitled~.sch`, 571 bytes,
+mtime **2026-09-20 23:23:39**, inside the window of the batch's own gate run
+(`T1-RUN-BEGIN … start=23:22:07` / `T1-RUN-END … end=23:30:59`, `tests/results.2325750.log`)
+— written by the very run that proved the fix. Row `S1` of the new guard suite checks the
+three shell drivers only and is structurally blind to the Tcl one. **This is the outstanding
+half of this issue's containment**, and 1486 defers to this file and to 1480 for it.
+
+**Deliberately not filed as a new number.** 1480 §"Why a sixth number for a leak that is
+already filed five times" is explicit about what re-filing this class costs, and the Tcl
+driver is named in this file's own fix direction — so it is recorded here rather than given a
+seventh number.
+
+**And §3's warning above is now defused on its own terms.** It said the containment would
+make every T1 run red, because `C11` reads the repo root while T1's cwd is `tests/`. `C11`
+and `H1` became **deltas** on 2026-09-17, so the containment's choice of directory no longer
+decides whether T1 reds. What remains is mechanical: a Tcl port of `suite_cwd.sh`, or
+`env PWD=` on the four `exec` sites, plus the sweep that a `$PWD` change for all 88 cases
+deserves.
+
+### The headline count, re-measured by a sharper question
+
+The 2026-08-22 number was *"80 of 116 suites leave `untitled~.sch` in their cwd"*. The 2026-09-20
+sweep asked instead **does a pre-existing `untitled~.sch` survive**, over all 405
+`tests/headless/test_*.tcl`, each in a private directory with its own empty HOME and a seeded
+canary:
+
+| | before the fix | after |
+|---|---|---|
+| suites that destroy a seeded `untitled~.sch` | **51** of 405 | **38** of 405 |
+| … by DELETING it | 17 | **3** |
+| … by OVERWRITING it | 34 | 35 |
+| suites that destroy a seeded `untitled~.sym` | 1 | **0** |
+| suites that leave any OTHER file **in their working directory** | 0 | 0 |
+
+The three remaining deleters are correct — each writes the backup itself first, or deletes
+its own. The 35 overwrites **cannot** be fixed: the buffer really is `<cwd>/untitled.sch` and
+backing it up is what issue **0060** requires.
+
+⚠ **And the issue-0601 guard does not stop the delete half.** `set ::autosave_backup 0`
+returns early from `write_backup()` and has no effect on `remove_backup()`: MEASURED, four of
+the nine guarded suites deleted the seeded canary **while carrying the guard**.
+`test_no_untitled_litter` cannot see this — every one of its rows asks "did the suite leave
+anything behind", never "did a file that was already there survive". That is why the product
+fix, not a wider guard, is what closed the delete.
+
+### ⚠ A second class, which no sweep in this file could see: `cellName~.sch` in the checkout
+
+`backup_file_name()` puts the `~` **beside the cell**, not in `$PWD`. So a sweep that watches
+private working directories — every sweep this file records — is structurally blind to it,
+and the `$PWD` redirect cannot reach it either. **Nine suites write a `cellName~.sch` into
+the checkout**, five files in all; the names are in `tests/headless/suite_cwd.sh`'s header.
+Re-measured in the fix round: with `tests/from_user/before_10~.sch` moved out of the tree,
+the **armed** `run_suites.sh --nogui test_fluid_bodyshove_guards_0132` put it back
+byte-identical (656 bytes, same md5). **It is not a regression** — the pre-fix binary leaves
+the same nine identically. It belongs here and to 1480, and it is a third correction to the
+2026-08-22 line *"the leftover is only ever `untitled~.sch`"*: §3 above corrected it for
+`untitled~.sym`, and this corrects it for a whole second filename shape.

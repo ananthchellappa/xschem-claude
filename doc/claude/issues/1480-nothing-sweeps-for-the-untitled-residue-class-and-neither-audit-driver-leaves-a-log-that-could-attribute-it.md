@@ -1,6 +1,10 @@
 # 1480 — nothing sweeps for the `untitled*` residue class, and neither audit driver leaves a log that could attribute it
 
-**Status: OPEN — measured 2026-09-17** by the harness concurrency batch (receipts
+**STAMP:** `v1 claim=partial tree=c84aee78 stamped=2026-09-20 fix=partial open=2 by=stranger-reds`
+
+⚠ **Re-measured 2026-09-20 (`c84aee78`): §3's T1 measurement reproduces on a fourth run, the
+shell drivers gained a partial answer to §2.1, and there is a SEVENTH residue class. Read the
+last section.** **Status: OPEN — measured 2026-09-17** by the harness concurrency batch (receipts
 `V3.md`, `G1.md`, `H1.md` under `doc/claude/harness_concurrency_batch/`).
 **Subject** `tests/headless/full_audit.sh`, `tests/headless/run_suites.sh`,
 `tests/run_regression.tcl`, and the residue sweep every verification crew in this
@@ -298,3 +302,43 @@ Nothing below has been run. Three separable pieces:
   V3's measurements**, cited not re-run: both files were deleted by G1, so the
   content is no longer on disk to re-measure. Everything else above was
   re-measured on 2026-09-17.
+
+---
+
+## 2026-09-20 — what `c84aee78` changed, and what it did not
+
+Landed under issue **1486** by the stranger-reds batch, item F (receipts
+`doc/claude/stranger_reds_batch/receipts/F-impl.md`, `F-verify.md`). Four facts, and none of
+them closes this issue.
+
+1. **§3 reproduces a fourth time, on a fourth run.** `tests/untitled~.sch`, 571 bytes, mtime
+   **2026-09-20 23:23:39**, inside the window of that batch's own gate
+   (`T1-RUN-BEGIN … start=23:22:07` / `T1-RUN-END … end=23:30:59`,
+   `tests/results.2325750.log`) — a green run, `counted_failures=0`. **T1 was the one driver
+   the containment did not arm**: `run_suites.sh`, `full_audit.sh` and `gated_xschem.sh` now
+   give every suite a private `$env(PWD)`, and `tests/run_regression.tcl` does not. Recorded
+   in **0609** (*"2026-09-20 — three of the four drivers are contained"*) rather than given a
+   number of its own, for the reason this file's own opening section gives.
+2. **§2.1's blindness has a partial answer, not the one §6 item 2 asks for.** Each armed
+   driver now creates `tests/headless/.scratch/_suitecwd_<pid>/<tag>` and, on disarm, **names
+   anything in it that is not an `untitled*`** before removing it (`SUITECWD: unexpected
+   file(s) …`), because neither driver's leak detector can see inside a private `$PWD`. That
+   is a per-run record of what the suites produced; it is still not the machine-readable
+   manifest (run id, start/end, suite names in order) that would answer *"which run wrote
+   this?"* from inside the repo. The directory name carries a pid, and `scratch.tcl`'s
+   dead-pid sweep collects it if a driver is killed before it disarms.
+3. **§2.2 re-measured, unchanged.** `full_audit.sh` reported `TREE: 0 appeared` on a run that
+   put `untitled~.sch` in the repository root, exactly as 0353/0356 record: `git status`
+   honours `.gitignore`, and `*~.sch` is ignored. Still not this issue's to fix.
+4. ⚠ **A seventh residue class, and it is in the CHECKOUT.** `backup_file_name()` puts the
+   `~` beside the **cell**, not in `$PWD`, so **nine suites write a `cellName~.sch` into the
+   tree whatever `$PWD` says** — five files, named in `tests/headless/suite_cwd.sh`'s header.
+   The `$PWD` redirect structurally cannot reach them and a sweep that watches working
+   directories cannot see them. Re-measured: with `tests/from_user/before_10~.sch` moved out
+   of the tree, the **armed** `run_suites.sh --nogui test_fluid_bodyshove_guards_0132` put it
+   back byte-identical, and the pre-fix binary leaves the same nine identically — so it is
+   **not a regression**. §3's table of six classes needs a seventh row, and §6 item 1's
+   proposed `find` needs a third line, over the checkout rather than its top two directories.
+
+**§6 items 1 and 2 remain PROPOSED AND UNMEASURED.** Nothing in this section implemented the
+sweep.

@@ -1,6 +1,6 @@
 # 1488 — `test_wave_markers` hangs when `run_suites.sh` attaches to a persistent dev display
 
-**STAMP:** `v1 claim=open tree=7a46275f stamped=2026-09-18 fix=none open=1 by=F-docs`
+**STAMP:** `v1 claim=open tree=c84aee78 stamped=2026-09-20 fix=none open=2 by=stranger-reds`
 
 **Status: OPEN — filed 2026-09-18** by the outsider-fixes batch, stage F (docs crew), from
 `doc/claude/outsider_fixes_batch/DECISIONS.md` D20.7 ("recorded, not fixed … It goes into
@@ -70,3 +70,24 @@ this cause, or hang on attached displays too, is **not established**.
 `doc/claude/outsider_fixes_batch/receipts/S2c_refute_r3.md` (problems:
 "PRE-EXISTING, not a regression"), `receipts/S2a.md` ("GUI arm" paragraph),
 `DECISIONS.md` D20.7.
+
+---
+
+## 2026-09-20 — a SECOND suite shows the same shape
+
+MEASURED by the stranger-reds batch, item F's fix round
+(`doc/claude/stranger_reds_batch/receipts/F-verify.md` §10), while verifying issue 1486 and
+not looking for this: **`test_load_window_routing` returns `TIMEOUT … (after 200s)` from
+`run_suites.sh` on the persistent dev display `:99`**, and reds four rows (`LR1b`, `LR5b`,
+`LR5e`, `LR6`) on the `--nogui` arm.
+
+**Pre-existing, proved rather than argued:** the crew checked out `src/actions.c`,
+`src/save.c` and `src/xschem.h` at HEAD — i.e. with no product change of item F's at all —
+rebuilt, and ran the same command: the **same four rows, same messages**. Sources restored
+and rebuilt afterwards.
+
+Recorded here rather than filed fresh, on that receipt's own recommendation. It bears
+directly on this file's fix step 3 (*"run the other three S2a suites on an attached display,
+to see whether this is one issue or four"*): whatever the mechanism is, it is **not** unique
+to `test_wave_markers`, and a second name is the cheapest evidence anyone has added to that
+question. `open=2` counts the two suites.

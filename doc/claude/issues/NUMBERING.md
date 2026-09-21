@@ -3698,7 +3698,18 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   ⚠ `test_ase_converge_1459 EE5` was attributed here and **refuted by measurement** — it is
   ASE-L's own `opstate` include and is fixed in `a1314271`. OPEN.
 
-**The next free number is 1497.**
+~~**The next free number is 1497.**~~
+
+- **1497** — **`full_audit.sh` drops per-row `skip:` lines, so its `SUMMARY:` cannot say what
+  was not measured.** Filed by the stranger-reds batch from item E's leftovers: **1487** is
+  the same defect in `tests/run_regression.tcl` and is FIXED in `c84aee78`, while the audit
+  driver still has no per-row skip concept at all. MEASURED at `c84aee78`: the literal
+  `skip:` occurs **0** times in `full_audit.sh`, once in `run_suites.sh` and five times in
+  `run_regression.tcl`; and a passing suite's output is discarded outright (`OUT[$name]` is
+  kept only for FAIL/CRASH/TIMEOUT), so its skips are unrecoverable from the run. Same family
+  as **1494**. OPEN.
+
+**The next free number is 1498.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
