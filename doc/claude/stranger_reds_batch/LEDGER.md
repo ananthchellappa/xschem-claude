@@ -17,4 +17,5 @@
 | C verify | 1484, 1490 | two adversarial crews | receipts/C-verify.md | the restore-side `.include` still bare (rc 1 on a space path); control characters lose artifacts silently; one row's attribution refuted; 26 further path shapes round-trip | |
 | C fix | 1484, 1490 | crew (workflow) | receipts/C-verify.md | 7 applied, 3 rejected with reasons, 2 verifier claims refuted by measurement; 57 rows greened, none newly red | |
 | C gate | 1484, 1490 | driver | tests/results.1030214.log | T1 solo: cases=87 blocks=86 counted_failures=0 elapsed=524s, 87/87, zero peers | (this commit) |
+| C docs | 1484, 1490, 1334 | docs crew | the issue files | 1484 and 1490 closed with the traced mechanism and the full row lists; 1490's headline corrected (147 rows across 17 suites, not 71 across five); 1496 filed for the `.include`/`.lib` class; 1334 annotated, status unchanged, ruling left to the user | |
 

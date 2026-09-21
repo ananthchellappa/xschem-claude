@@ -3684,7 +3684,21 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   set. Same class as **1484**/**1490**, different mechanism: the fix is test-side, and the
   product's elision is ratified (A11-12b). OPEN.
 
-**The next free number is 1496.**
+~~**The next free number is 1496.**~~
+
+- **1496** — **`.include` and `.lib` cards from the user's own PDK setup fail the run
+  outright on a path with a space.** Filed by the stranger-reds batch (D8) from item C's
+  leftovers. Same trigger as **1484**/**1490** and the **opposite failure direction**: those
+  lost artifacts silently at rc 0, these exit **1** with nothing produced. MEASURED on both
+  binaries: bare `.include` and bare `.lib` into a `w s` directory are rc 1; quoting fixes
+  `.include` either way; quoting fixes `.lib` on the fork (46+) and **not on 45.2**; a
+  **relative** `.lib` resolves on both, but only where the deck and the library share a
+  directory — which a PDK elsewhere on disk does not. Causes `test_ase_core` `E1a` `E1b`
+  `E1c` `E1f` and `test_ase_events_1465` `CI2` `CI3` `CI6` `CI8` in a space **checkout**.
+  ⚠ `test_ase_converge_1459 EE5` was attributed here and **refuted by measurement** — it is
+  ASE-L's own `opstate` include and is fixed in `a1314271`. OPEN.
+
+**The next free number is 1497.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
