@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3841,7 +3841,22 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1604.**~~
 
-**The next free number is 1605.**
+- **1605** — **The netlist provenance comment truncates a name at its first parenthesis.**
+  The loose end the 1604 crew named and did not touch: `sanitized_abs_sym_path`
+  (`src/actions.c`) carries the same unanchored `regsub {\(.*}`, in C, and **unguarded** —
+  unlike the two occurrences 1604 deliberately left in `xschem.tcl`, which sit inside an
+  `if {[xschem is_generator ...]}`. Five callers, all netlisters, and every one writes the
+  result into the netlist as a `sym_path:` / `sch_path:` provenance comment from
+  `xctx->sym[i].name` and the schematic filename. So the trigger is netlisting a design
+  that instances a symbol whose file name has a parenthesis — which, after 1604, xschem now
+  happily opens. ⚠ **What the written line ends up saying is NOT measured**, and a
+  wrong-but-plausible path would be worse than an empty one, because a provenance comment
+  exists to be trusted. Fix is to agree with `is_generator`'s grammar, and preferably to
+  CALL it rather than re-spell its ERE a third time. OPEN.
+
+~~**The next free number is 1605.**~~
+
+**The next free number is 1606.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
