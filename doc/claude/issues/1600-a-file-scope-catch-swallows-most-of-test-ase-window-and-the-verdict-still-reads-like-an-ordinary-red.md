@@ -1,11 +1,15 @@
 # 1600 — one file-scope `catch` swallows 83% of `test_ase_window`, and the verdict still reads like an ordinary red
 
-**STAMP:** `v1 claim=open tree=6a0d1126 stamped=2026-09-21 fix=untried open=2 by=ase-l-ux`
+**STAMP:** `v1 claim=partial tree=e92a2abf stamped=2026-09-22 fix=partial open=2 by=1600-core`
 
 **Status: OPEN — filed 2026-09-21** by the ASE-L UX batch's fix round, which **named it
 rather than fixed it** (`doc/claude/ase_l_ux_batch/receipts/verify.md`, the ⚠ under
 *"S3 · FIXED"*, and its *"Left for the driver"* item 3). **Class** harness / verification
 method: lost coverage that reads as a pass.
+**PARTIALLY FIXED 2026-09-22:** `tests/headless/test_ase_core.tcl` — the one suite the
+*"Still open"* item 2 said to do first — is converted; **15 named guards**, measured, see
+*"What was done: `test_ase_core`"* below. `test_ase_window` and **33** other suites are
+untouched.
 **Related, read first:** **1487** (the T1 verdict could not show that a case skipped rows —
 **FIXED** in `c84aee78`; its fix **cannot see this class**, see *"Why 1487's fix does not
 reach this"* below), **1494** (`run_suites.sh` throws a crashed suite's text away),
@@ -156,7 +160,7 @@ Largest by fraction of the file, and the four that are T1 cases:
 | `test_ase_dialogs` | 5699 | 6380 | 89% | **yes** |
 | `test_ase_persist` | 992 | 1181 | 83% | **yes** |
 | `test_ase_window` | 3450 | 4411 | 78% | no |
-| `test_ase_core` | 5324 | 12131 | 43% | **yes** |
+| ~~`test_ase_core`~~ | ~~5324~~ | ~~12131~~ | ~~43%~~ | **yes — CONVERTED 2026-09-22, 15 guards, largest span now 609** |
 | `test_op_annot` | 257 | 16383 | 1% | **yes** |
 
 (`test_ase_window`'s row is the working tree as the ASE-L UX batch leaves it; at `6a0d1126`
@@ -230,10 +234,117 @@ instead of attempting it at the end of a batch.
   catch was measured; what fraction of each suite's *rows* sit inside it was measured for
   `test_ase_window` alone.
 * **Nothing in this file was produced by running anything.** No suite, no binary, no T1.
+  (That is true of the sections above it. Every figure under *"What was done"* below came
+  from a run — of the suite, or of T1 — and says which.)
+
+---
+
+## What was done: `test_ase_core` — MEASURED, 2026-09-22
+
+`tests/headless/test_ase_core.tcl`'s one unnamed 5324-line `catch` is **gone**, cut into
+**15** guards whose handlers are the named-check-row idiom this file already used for
+`HN`, `RS`, `PM`, `MP`, `CK`, `WD` and `MT`. The file is 12131 → 12331 lines. **The biggest
+span a single raise can now swallow is 609 lines, down from 5324 — 8.7×.**
+
+Measured on the arm T1 uses for `hcases` (`--nogui --pipe -q --nolog`), binary built at
+`e92a2abf`, dev display `:99` up. **The suite runs 675 checks and is ALL PASS on both arms
+before and after** — the conversion changes nothing in green, which is the point: `catch`
+evaluates its script in the caller's scope, so every variable and `proc` stays where it was.
+
+### The guards, and what each one costs when it dies
+
+Each row was measured by forcing `error "ZZ1600 …"` at the **head** of that guard and
+counting `^ok:`/`^FAIL:` lines in the whole run. `rows` is the section's own row count,
+recovered as `675 − total + 1` (the +1 is the guard's own failure row, which only exists in
+the red run).
+
+| guard | covers | span | rows | total after a raise at its head | extra named failures |
+|---|---|---|---|---|---|
+| `SD` | `R1`–`R4`, `C2`–`C4`, `B1`, `D1`–`D8` | 699–1308 | 76 | 600 | `C4`, `C5` (the D1 golden) |
+| `OC` | `C0`–`C13`, `D6` op-cards | 1315–1859 | 51 | 625 | — |
+| `PV` | `P1`, `F` | 1866–1930 | 23 | 653 | — |
+| `NL` | `N1`, `N2` | 1946–1998 | 9 | 667 | 12 `BN` rows |
+| `BN` | `BN` | 2005–2424 | 40 | 636 | — |
+| `LG` | `0618`, `E1`–`E4b` | 2440–2654 | 19 | 657 | — |
+| `RG` | `RG`, `SW` | 2693–3164 | 26 | 650 | — |
+| `NT` | `NT1`–`NT21` | 3204–3734 | 22 | 654 | — |
+| `ND` | `NT22`–`NT29`, `NTD1`–`NTD12` | 3741–4317 | 20 | 656 | — |
+| `RT` | `RT` | 4324–4711 | 13 | 663 | — |
+| `DX` | `DX` | 4718–5063 | 8 | 668 | — |
+| `AD` | `AD` | 5070–5204 | 7 | 669 | — |
+| `AG` | `AG` | 5223–5580 | 18 | 658 | — |
+| `EM` | `EM` | 5599–5786 | 9 | 667 | — |
+| `EK` | `EK`, `NS`, `SI` | 5793–6171 | 15 | 661 | — |
+
+**356 of the suite's 675 rows — 53% — were inside the unnamed catch.** In all fifteen runs
+the named guard row appeared carrying the raise text, the `RESULT:` line printed, and the
+`OVERALL:` banner printed. The pristine file was restored and proved by `md5sum` after each.
+
+### The two cascades, and what they cost before they were fixed
+
+Both were found by the sabotage, not by reading, and both are **pre-existing couplings** the
+one big catch had merely hidden:
+
+* **`$render` and `$netlist_text`** (set in `SD`) are read by rows `VB1`–`VB3`, which sit in
+  the region **below** the old arm and have never been guarded by anything. With them inside
+  `SD`'s guard a raise at the head of `SD` aborted the interpreter at `can't read "render":
+  no such variable` — no `RESULT:`, no `OVERALL:`. **On the file as it stood before this
+  change the same raise produced NINE rows and no verdict at all.** Both are now hoisted
+  above the `SD` guard.
+* **`$expected_deck`** (D1's golden, built in `SD`) is compared against by `C4` and `C5` in
+  `OC`. Unset, `OC` *raised* and lost all 51 of its rows; the cost of one dead section was
+  two. It now gets an empty default above the `SD` guard, so those two rows **fail loudly on
+  their own names** and `OC` keeps the other 49. Delta fell from −124 to −75.
+* **`$rundir` and its directory** (`NL`). `$rundir` is read by `BN`, `LG` and `RG`; the
+  directory is created by `N1`'s `ase::netlist`. Hoisting the `set` and adding a `file mkdir`
+  above the guard took `NL`'s blast radius from **−46 rows** (`BN` raised on a missing
+  `bn_stamp_a.txt` and lost 38 of its 40 rows) to **−8, its own rows and nothing else**:
+  `BN` now runs its whole 40 and 12 of them fail **loudly and by name** on a cold facts slot,
+  which is exactly their subject.
+
+### Cascade policy, per section
+
+**Fail loudly everywhere; no `skip:` line was added.** The two dependencies that survive a
+guard — `OC`'s `C4`/`C5` on the D1 golden, and `BN`'s twelve warm-slot rows on `NL` — are
+rows whose *own subject* is the thing that went missing, so their ordinary failure text
+(`{cold {}}` vs `{warm aselib/nfet_clean/schematic}`) says more than a `skip:` would. A
+`skip:` is right when a row *cannot be evaluated*; these can be, and the answer is no.
+
+### What this does NOT fix in this file
+
+* **The region below the `EK` guard is still only partly guarded.** `AC`, `VB`, `PB`, `TF`,
+  `SE`, `LB`, `ISO`, `CP`, `PZ`, `GR` and others sit between the guards, outside all of them;
+  the seven pre-existing guards (`HN`, `RS`, `PM`, `MP`, `CK`, `WD`, `MT`) cover the rest. A
+  raise in an unguarded stretch still aborts the interpreter. Converting that region is the
+  same task again and was not in this one's scope.
+* **The hoisted `set netlist_text`/`set render` are themselves unguarded**, by construction —
+  that is the price of keeping them alive for the unguarded `VB` rows.
+* **`RESULT:` still has no denominator.** This change makes a swallowed section *named*; it
+  does not make the verdict state how many rows it should have run. That is the `skips=`
+  half of 1487's problem and is untouched.
+
+---
 
 ## Still open
 
 1. **`test_ase_window.tcl`** — the restructure described above.
-2. **The other 34 suites**, four of them T1 cases. `test_ase_core` is the one to do first:
-   it is a T1 case, its unnamed body is 5324 lines, and the correct idiom is already in use
-   further down the same file, so the change is a conversion rather than an invention.
+2. **The other 33 suites**, three of them T1 cases (`test_ase_dialogs` 89%,
+   `test_ase_persist` 83%, `test_op_annot` 1%). `test_ase_core` was the fourth and is
+   **done** — see *"What was done"* above. `test_ase_dialogs` is the one to do next: it is a
+   T1 case and its unnamed body is 5699 lines, the largest left in the sweep.
+
+### What the `test_ase_core` pass learned, for whoever does the next one
+
+* **Sabotage at the HEAD of each guard, not the middle.** A head raise is what exposes the
+  cross-section couplings; a middle one finds only the rows below it.
+* **Count rows as `^ok:` plus `^FAIL:` in the whole run, not from `RESULT:`.** A cascade that
+  aborts the interpreter prints neither, and a run with no `RESULT:` line is the finding.
+* **`run_suites.sh` echoes only failing lines** (issue 1494), so diagnose a cascade through
+  `tests/headless/gated_xschem.sh --pipe -q --nolog --nogui --script …` with the whole text
+  captured. It arms `HOME` the same way.
+* **A variable read *below* the old arm is the trap.** Scan for it mechanically: every
+  column-0 `set` inside the body, grepped for `$name` in the region after it. In
+  `test_ase_core` that scan returned five names, of which three (`d`, `st`, `f`) were loop
+  locals and two (`render`, `netlist_text`) were real.
+* **Give an unset dependency an empty default rather than a `skip:`** where the dependent row
+  can still be evaluated — it converts a section-killing raise into one named failing row.

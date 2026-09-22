@@ -643,6 +643,59 @@ proc nfet_state {modelsfile rundir} {
 
 set e1_callback_fired 0
 
+# ==========================================================================
+# SECTION GUARD SD -- issue 1600.  schema, the backend registry and deck render.
+# ==========================================================================
+#
+# ⚠ THIS FILE'S BODY IS CUT INTO NAMED, GUARDED SECTIONS, AND THAT IS A
+# MEASUREMENT RESULT, NOT HOUSE STYLE.  Until issue 1600 the whole 5324-line
+# run from here to section SI sat inside ONE `catch` whose handler said only
+# `UNEXPECTED ERROR: $bigerr`.  Any raise anywhere in it -- a renamed proc, a
+# fixture the environment cannot build, a widget that is not there -- unwound
+# to that one arm, skipped every row between the raise and it, counted ONE
+# failure and named NOTHING.  A verdict of `RESULT: 3 FAILED (13 passed)` is
+# the shape of a small ordinary red and was in fact, in test_ase_window, a run
+# that measured 5% of the suite.  `RESULT:` carries no denominator, so
+# `13 passed` and `675 passed` are typographically the same kind of fact.
+#
+# Each guard's handler is a NAMED CHECK ROW -- the idiom already in use in
+# sections HN, RS, PM, MP, CK, WD and MT below, and in 14 other suites -- so a
+# raise costs that section's rows and no more, and the log carries a row that
+# says which section died and what it raised.
+#
+# ⚠ A NEW SECTION GETS ITS OWN GUARD.  Appending rows to the end of an
+# existing one silently widens that section's blast radius.
+#
+# ⚠ AND A `proc` A LATER SECTION CALLS MUST BE HOISTED OUT OF ITS DEFINING
+# SECTION'S GUARD -- marked `HOISTED OUT OF THE GUARD BELOW` -- or one dead
+# section becomes two.
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `$netlist_text` and
+## `$render` are read by the UNGUARDED region below section EK -- rows VB1,
+## VB2 and VB3 of the verbatim-lines block.  MEASURED, and PRE-EXISTING: with
+## them inside the SD guard a raise at the head of SD aborts the whole
+## interpreter at `can't read "render": no such variable`, with no RESULT
+## and no OVERALL banner at all.  On the file as it stood before issue 1600
+## that same raise produced NINE rows and no verdict.
+set netlist_text {** sch_path: /fixture/nfet_clean.sch
+**.subckt nfet_clean
+XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
+V1 D GND 1
+V2 G GND 1.8
+**.ends
+.GLOBAL GND
+.end
+}
+set render [ase::backend_hook ngspice render_deck]
+
+## AND `expected_deck` GETS AN EMPTY DEFAULT HERE, for the same class of
+## reason and measured the same way: rows C4 and C5 of section OC compare a
+## rendered deck against D1's golden, which SD builds.  Without the default a
+## raise in SD made OC RAISE on `can't read "expected_deck"` and cost OC its
+## whole 51 rows; with it those two rows fail loudly on their own names and
+## OC keeps the other 49.  SD overwrites it at D1.
+set expected_deck {}
+
 if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
@@ -850,15 +903,8 @@ check_true "B1 ngspice registered, all four hooks resolve to commands" $ok
 ## all defence (b) is inert, which `NO-SIM-STATUS` in the log says out loud.
 ## Re-measured 2026-08-17: `Error: sim_status: no such variable.` is printed at
 ## parse time with the `$?` block exactly as without it. Spec §14.3.
-set netlist_text {** sch_path: /fixture/nfet_clean.sch
-**.subckt nfet_clean
-XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
-V1 D GND 1
-V2 G GND 1.8
-**.ends
-.GLOBAL GND
-.end
-}
+## `netlist_text` IS HOISTED ABOVE THE SD GUARD (issue 1600): the unguarded
+## VB rows below section EK read it.
 # the raw-artifact write line (item 11 D3): rundir {} -> the netlist_dir
 # default, resolved through the SAME ase::rundir call render_deck's raw_file
 # hook uses, so the golden stays deterministic on every machine
@@ -969,7 +1015,7 @@ echo ASE-EFFECTIVE-END
 .endc
 .end
 }]
-set render [ase::backend_hook ngspice render_deck]
+## `render` IS HOISTED ABOVE THE SD GUARD (issue 1600), for the same reason.
 set deck [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
 check_true "D1 golden deck for the nfet state" [string equal $deck $expected_deck]
 if {![string equal $deck $expected_deck]} { puts "  D1 got:\n$deck" }
@@ -1258,6 +1304,15 @@ set deck5offi [$render $st $netlist_text]
 check_true "D5 blankets off leave no blanket lines" \
   [expr {![regexp -line {^\.save all$} $deck5off] &&
          ![regexp -line {^\.options savecurrents$} $deck5offi]}]
+
+} sderr]} {
+  check "SD0 sections R1-R4, C2-C4, B1 and D1-D8 ran to the end" "RAISED:$sderr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD OC -- issue 1600.  the op_annot OP-save-card seam.
+# ==========================================================================
+if {[catch {
 
 # --- C0-C12: op_annot device OP save cards into the deck (plan step S4) ------
 # doc/claude/specs/op_annotation.md S4 / issue 0617. `op_annot::save_cards`
@@ -1801,6 +1856,15 @@ check "D6 pre_commands is in the canonical schema order" \
   [lsearch -exact $ase::schema_keys pre_commands] \
   [expr {[lsearch -exact $ase::schema_keys includes] + 1}]
 
+} ocerr]} {
+  check "OC0 sections C0-C13 and D6 (op-cards) ran to the end" "RAISED:$ocerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD PV -- issue 1600.  result_probe keying and ase::format_value.
+# ==========================================================================
+if {[catch {
+
 # --- P1: result_probe keying (UI v2 Outputs Value column) --------------------
 # unnamed outputs (no `name` key) are keyed by their expr; named outputs stay
 # keyed by name (backward compatible: F10/E1c read key `id`)
@@ -1863,8 +1927,25 @@ check "F4 gate off returns raw (set ::ase_eng_notation 0 -> 1.04e-4)" \
 set ::ase_eng_notation 1
 check "F4 gate restored -> 104u again" [ase::format_value 1.04e-4] 104u
 
-# --- N1: ase::netlist on the scratch fixture ---------------------------------
+} pverr]} {
+  check "PV0 sections P1 and F ran to the end" "RAISED:$pverr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD NL -- issue 1600.  the scratch-fixture netlist, which BN, LG and RG read.
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): $rundir is read by
+## sections BN, LG and RG.  Left inside NL's catch, a raise above it would
+## leave the variable unset and turn one dead section into four.
 set rundir [file normalize [file join $scratch run]]
+## The directory too: section BN writes its stamp fixtures into $rundir, and
+## `ase::netlist` (N1) is what creates it.  Without this, a raise in NL cost BN
+## its whole 40 rows on `couldn't open .../run/bn_stamp_a.txt`.
+file mkdir $rundir
+
+if {[catch {
+
+# --- N1: ase::netlist on the scratch fixture ---------------------------------
 set st [nfet_state $models $rundir]
 # --- 0698: the design window must be BOUND before the first ase::netlist -----
 # ase::netlist (src/ase.tcl:866-874) self-loads the design ONLY when no display
@@ -1913,6 +1994,15 @@ set ::netlist_dir [file join $scratch simdefault]
 set stn [ase::state_default]
 check "N2 empty rundir falls back to netlist_dir" [ase::rundir $stn] [file join $scratch simdefault]
 check_true "N2 default rundir was created" [file isdirectory [file join $scratch simdefault]]
+
+} nlerr]} {
+  check "NL0 sections N1 and N2 ran to the end" "RAISED:$nlerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD BN -- issue 1600.  the netlist-facts slot and the precondition banner (1435).
+# ==========================================================================
+if {[catch {
 
 # ============================================================================
 # BN -- THE NETLIST-FACTS SLOT AND THE PRECONDITION BANNER. Stage 6, issue 1435.
@@ -2331,6 +2421,24 @@ check "BN10b and the dialog's own painter goes through the peek, never the\
         [expr {[string first {ase::netlist} \
                   [info body ase::ui::chana_note]] >= 0}]] {1 0}
 
+} bnerr]} {
+  check "BN0 section BN ran to the end" "RAISED:$bnerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD LG -- issue 1600.  the simulation log's provenance framing and the run seam.
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `e_slurp` is called by
+## section RG as well as by LG's own rows.
+## Read a whole file, or {} when it is not there.
+proc e_slurp {p} {
+  if {![file isfile $p]} { return {} }
+  set f [open $p r] ; set d [read $f] ; close $f
+  return $d
+}
+
+if {[catch {
+
 # --- 0618: the simulation log's provenance framing ---------------------------
 # MEASURED BEFORE THE FIX: `string equal $logtext $::execute(data,last)` is 1 --
 # the log file IS the simulator's stdout and nothing else. It carries no command
@@ -2381,12 +2489,6 @@ proc e_logbody {logtext} {
   ## whose last line carried no newline read as NO-FOOTER. The framing therefore
   ## always writes its own \n before `=== exit `, and this excludes it.
   return [string range $rest 0 [expr {$j - 1}]]
-}
-## Read a whole file, or {} when it is not there.
-proc e_slurp {p} {
-  if {![file isfile $p]} { return {} }
-  set f [open $p r] ; set d [read $f] ; close $f
-  return $d
 }
 
 # --- E1: real ngspice end-to-end (guarded leg) -------------------------------
@@ -2549,6 +2651,47 @@ check "E4b 0618 run_done still accepts THREE arguments (test_ase_cosim's shape)"
 check_true "E4b 0618 with no metadata the file is execute(data,last), byte for byte" \
   [string equal [e_slurp $e4b_log] $::execute(data,last)]
 
+} lgerr]} {
+  check "LG0 sections 0618 and E1-E4b ran to the end" "RAISED:$lgerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD RG -- issue 1600.  the second-run refusal (issue 1389) and the Stop warning.
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `rg_ciw`, `rg_body`,
+## `rg_has` and `rg_wr` are called from sections RT, DX, RS/RD, PM/GP/WK/RC,
+## MP, CK and WD -- every one of them BELOW the RG guard.
+## The CIW channel, spied at its own sink rather than at ase::echo, so a row
+## proves the sentence really travelled ase::echo -> notify_safe -> notify ->
+## ciw_echo. Under --nolog `.ciw` is never created, so the shipped ciw_echo
+## no-ops on its `winfo exists` guard and would see nothing.
+proc rg_ciw {script} {
+  set ::rg_said {}
+  set had [expr {[info commands ::ciw_echo] ne {}}]
+  if {$had} { rename ::ciw_echo ::rg_saved_ciw }
+  proc ::ciw_echo {line {tag {}}} { lappend ::rg_said [list $tag $line] ; return {} }
+  catch {uplevel 1 $script}
+  catch {rename ::ciw_echo {}}
+  if {$had} { rename ::rg_saved_ciw ::ciw_echo }
+  return $::rg_said
+}
+## A proc body with its comments dropped, so a sentence quoted in a comment
+## cannot satisfy a row about what the CODE says (test_ase_simcaps's a_body).
+proc rg_body {cmd} {
+  if {![llength [info commands $cmd]]} { return NOPROC }
+  if {[catch {info body $cmd} b]} { return "RAISED:$b" }
+  set out {}
+  foreach l [split $b "\n"] { if {[regexp {^\s*#} $l]} continue ; lappend out $l }
+  return [join $out "\n"]
+}
+proc rg_has {hay needle} { return [expr {[string first $needle $hay] >= 0 ? 1 : 0}] }
+proc rg_wr {path text} {
+  file mkdir [file dirname $path]
+  set fp [open $path w] ; puts -nonewline $fp $text ; close $fp
+}
+
+if {[catch {
+
 # ============================================================================
 # RG -- ISSUE 1389: ASE-L REFUSES A SECOND RUN ON A RESULTS FILE IT IS WRITING
 # ============================================================================
@@ -2602,40 +2745,12 @@ proc rg_execs {script} {
   rename ::rg_saved_execute ::execute
   return [list $::rg_n $rc $r]
 }
-## The CIW channel, spied at its own sink rather than at ase::echo, so a row
-## proves the sentence really travelled ase::echo -> notify_safe -> notify ->
-## ciw_echo. Under --nolog `.ciw` is never created, so the shipped ciw_echo
-## no-ops on its `winfo exists` guard and would see nothing.
-proc rg_ciw {script} {
-  set ::rg_said {}
-  set had [expr {[info commands ::ciw_echo] ne {}}]
-  if {$had} { rename ::ciw_echo ::rg_saved_ciw }
-  proc ::ciw_echo {line {tag {}}} { lappend ::rg_said [list $tag $line] ; return {} }
-  catch {uplevel 1 $script}
-  catch {rename ::ciw_echo {}}
-  if {$had} { rename ::rg_saved_ciw ::ciw_echo }
-  return $::rg_said
-}
-## A proc body with its comments dropped, so a sentence quoted in a comment
-## cannot satisfy a row about what the CODE says (test_ase_simcaps's a_body).
-proc rg_body {cmd} {
-  if {![llength [info commands $cmd]]} { return NOPROC }
-  if {[catch {info body $cmd} b]} { return "RAISED:$b" }
-  set out {}
-  foreach l [split $b "\n"] { if {[regexp {^\s*#} $l]} continue ; lappend out $l }
-  return [join $out "\n"]
-}
-proc rg_has {hay needle} { return [expr {[string first $needle $hay] >= 0 ? 1 : 0}] }
 ## Is there a table entry for this key AT ALL? Deliberately NOT
 ## ase::run_in_flight: that one DROPS a dead lock as it answers, so it can
 ## never tell "run_done released it" from "nobody has looked yet".
 proc rg_tabled {key} {
   if {![info exists ::ase::runlocks]} { return NOVAR }
   return [expr {[dict exists [set ::ase::runlocks] $key] ? 1 : 0}]
-}
-proc rg_wr {path text} {
-  file mkdir [file dirname $path]
-  set fp [open $path w] ; puts -nonewline $fp $text ; close $fp
 }
 ## Reap a run without waiting out its sleep: the door Simulation > Stop uses
 ## (kill_running_cmds <id> -9), then the ordinary completion path.
@@ -3046,6 +3161,48 @@ rg_reap $::rg11id
 }
 
 
+} rgerr]} {
+  check "RG0 sections RG and SW ran to the end" "RAISED:$rgerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD NT -- issue 1600.  the xschem::notify channel (issues 0650, 0658).
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `nt_cx`, `nt_field` and
+## `nt_no_notify` are called from section ND (rows NT22-NT29, NTD1-NTD12)
+## as well as from NT's own rows.
+## Same shape as test_ase_final's `cx`: a raise becomes a value, so one missing
+## proc reddens one row instead of aborting every row after it.
+proc nt_cx {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
+  return $r
+}
+
+## One field of the ::xschem::notify_last witness, with a SPEAKING placeholder
+## when the witness (or the key) is absent -- a bare `dict get` on a missing
+## variable reports "dict element in quotes ...", which names the wrong defect.
+proc nt_field {k} {
+  if {![info exists ::xschem::notify_last]} { return NO-notify_last }
+  if {[catch {dict get $::xschem::notify_last $k} v]} { return NO-KEY-$k }
+  return $v
+}
+
+## Run $body with ::xschem::notify RENAMED AWAY, restoring it on every exit path
+## including a raising body. This is the driver's own reproduction, in-process.
+proc nt_no_notify {body} {
+  set had [expr {[info commands ::xschem::notify] ne {}}]
+  if {$had} { rename ::xschem::notify ::nt_saved_notify }
+  set rc [catch {uplevel 1 $body} e]
+  if {$had} {
+    catch {rename ::xschem::notify {}}
+    catch {rename ::nt_saved_notify ::xschem::notify}
+  }
+  if {$rc} { return [list ERR $e] }
+  return $e
+}
+
+if {[catch {
+
 # ============================================================================
 # NT -- ISSUE 0650: `xschem::notify`, THE ONE NOTIFICATION CHANNEL
 # ============================================================================
@@ -3078,21 +3235,7 @@ rg_reap $::rg11id
 # popup -- are PS14-PS19 in test_ase_log_seam_0207.tcl, because no --nolog
 # suite has a statusbar or a CIW to witness them with.
 
-## Same shape as test_ase_final's `cx`: a raise becomes a value, so one missing
-## proc reddens one row instead of aborting every row after it.
-proc nt_cx {script} {
-  if {[catch {uplevel 1 $script} r]} { return "ERR: $r" }
-  return $r
-}
 
-## One field of the ::xschem::notify_last witness, with a SPEAKING placeholder
-## when the witness (or the key) is absent -- a bare `dict get` on a missing
-## variable reports "dict element in quotes ...", which names the wrong defect.
-proc nt_field {k} {
-  if {![info exists ::xschem::notify_last]} { return NO-notify_last }
-  if {[catch {dict get $::xschem::notify_last $k} v]} { return NO-KEY-$k }
-  return $v
-}
 
 ## Collect every ::ciw_echo call a body makes, as {line tag} pairs. Restores
 ## ::ciw_echo on EVERY exit path including a raising body (f_nudges' engine in
@@ -3467,19 +3610,6 @@ check "NT15 0650 a notice leaves `xschem get statusmsg` and statusmsg_hold\
 # than the 28-char short-form budget: the full channel would record a CLIPPED
 # `short`, the bootstrap records `{}`.
 
-## Run $body with ::xschem::notify RENAMED AWAY, restoring it on every exit path
-## including a raising body. This is the driver's own reproduction, in-process.
-proc nt_no_notify {body} {
-  set had [expr {[info commands ::xschem::notify] ne {}}]
-  if {$had} { rename ::xschem::notify ::nt_saved_notify }
-  set rc [catch {uplevel 1 $body} e]
-  if {$had} {
-    catch {rename ::xschem::notify {}}
-    catch {rename ::nt_saved_notify ::xschem::notify}
-  }
-  if {$rc} { return [list ERR $e] }
-  return $e
-}
 
 ## Run $body with ::xschem::notify replaced by one that RAISES -- a genuine bug
 ## INSIDE the channel, which is the only thing the delegates' catch can still
@@ -3600,6 +3730,15 @@ check "NT21 0658 a channel that RAISES (a real bug inside notify) is caught,\
   [list $nt21_rc [nt_field msg] [nt_field tag] [nt_field short]] \
   [list 0 $NT_LONG_C error {}]
 
+
+} nterr]} {
+  check "NT0e sections NT1-NT21 ran to the end" "RAISED:$nterr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD ND -- issue 1600.  the channel's record/fault/degrade rows (0664, 0665, 0666).
+# ==========================================================================
+if {[catch {
 
 # ============================================================================
 # NT22-NT29 / NTD8-NTD12 -- ISSUES 0664 / 0665 / 0666: THE CHANNEL MUST RECORD
@@ -4175,6 +4314,15 @@ check "NTD12 0664 G5 the FAULT does NOT burn the degraded latch: when the same\
 note "NTD12 the DEGRADED line" [ntd_line_with $ntd11_log {NOTICE CHANNEL DEGRADED}]
 note "NTD12 the FAULT line"    [ntd_line_with $ntd11_log {NOTICE CHANNEL FAULT}]
 
+} nderr]} {
+  check "ND0 sections NT22-NT29 and NTD1-NTD12 ran to the end" "RAISED:$nderr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD RT -- issue 1600.  the hierarchy round trip (issues 0643, 1393).
+# ==========================================================================
+if {[catch {
+
 # --- RT: THE HIERARCHY ROUND TRIP (issue 0643 / issue 1393) ------------------
 # doc/claude/descend_run_batch/PLAN.md item A. The user's words, 2026-09-08:
 # "I descend into x1 and again x1. Now, I click the N&> (Netlist and Run button)
@@ -4560,6 +4708,15 @@ check "RT12 D6: ONE minted head for `the design is not on this window's stack`,\
 note "RT12 the surviving refusal" $rt11msg
 xschem load $rttop
 
+} rterr]} {
+  check "RT0e section RT ran to the end" "RAISED:$rterr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD DX -- issue 1600.  what already works two levels down.
+# ==========================================================================
+if {[catch {
+
 # --- DX: WHAT ALREADY WORKS TWO LEVELS DOWN, PINNED --------------------------
 # doc/claude/descend_run_batch/PLAN.md item C, CREW_BRIEF section 3.
 #
@@ -4903,6 +5060,15 @@ catch {xschem raw clear}
 xschem load $dxtop
 
 
+} dxerr]} {
+  check "DX0e section DX ran to the end" "RAISED:$dxerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD AD -- issue 1600.  the dialog describes THIS session's simulator (issue 1408).
+# ==========================================================================
+if {[catch {
+
 # ============================================================================
 # AD. THE DIALOG DESCRIBES **THIS** SESSION'S SIMULATOR -- ISSUE 1408
 # ============================================================================
@@ -5035,6 +5201,27 @@ check "AD7 the Arguments column shows this simulator's deck line, and for one\
 
 
 
+} aderr]} {
+  check "AD0 section AD ran to the end" "RAISED:$aderr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD AG -- issue 1600.  the four-state resolver (issue 1410).
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `ag_five` is the five-hook
+## ngspice borrow that section HN's `hnsim` fixture registers with, 3000
+## lines below the AG guard.
+proc ag_five {} {
+  return [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      [ase::backend_hook ngspice run_cmd] \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+}
+
+if {[catch {
+
 # ============================================================================
 # AG. THE FOUR-STATE RESOLVER -- ISSUE 1410
 # ============================================================================
@@ -5059,14 +5246,6 @@ proc ag_types {} {
               emit {{role analysis tmpl {zzgate}}}]]
 }
 proc ag_caps {exe a w} { return {known 0} }
-proc ag_five {} {
-  return [dict create \
-    render_deck  [ase::backend_hook ngspice render_deck] \
-    run_cmd      [ase::backend_hook ngspice run_cmd] \
-    log_file     [ase::backend_hook ngspice log_file] \
-    result_probe [ase::backend_hook ngspice result_probe] \
-    raw_file     [ase::backend_hook ngspice raw_file]]
-}
 ase::register_backend agprobe  [dict merge [ag_five] [dict create analysis_types ag_types capabilities ag_caps]]
 ase::register_backend agnoprobe [dict merge [ag_five] [dict create analysis_types ag_types]]
 
@@ -5398,6 +5577,27 @@ check "AG16 declaring the seed key is what puts a type on a new bench and its\
 
 
 
+} agerr]} {
+  check "AG0 section AG ran to the end" "RAISED:$agerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD EM -- issue 1600.  the slot grammar and the expander (issue 1414).
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `em_five` is the five-hook
+## ngspice borrow that section GP's `gpbad` fixture registers with, 3700
+## lines below the EM guard.
+proc em_five {} {
+  return [dict create \
+    render_deck  [ase::backend_hook ngspice render_deck] \
+    run_cmd      [ase::backend_hook ngspice run_cmd] \
+    log_file     [ase::backend_hook ngspice log_file] \
+    result_probe [ase::backend_hook ngspice result_probe] \
+    raw_file     [ase::backend_hook ngspice raw_file]]
+}
+
+if {[catch {
+
 # ============================================================================
 # EM. THE SLOT GRAMMAR AND THE EXPANDER -- ISSUE 1414
 # ============================================================================
@@ -5415,14 +5615,6 @@ check "AG16 declaring the seed key is what puts a type on a new bench and its\
 # which is the difference between a sabotage that reddens a row and one that
 # proves nothing.
 
-proc em_five {} {
-  return [dict create \
-    render_deck  [ase::backend_hook ngspice render_deck] \
-    run_cmd      [ase::backend_hook ngspice run_cmd] \
-    log_file     [ase::backend_hook ngspice log_file] \
-    result_probe [ase::backend_hook ngspice result_probe] \
-    raw_file     [ase::backend_hook ngspice raw_file]]
-}
 ## ⚠ THE TEMPLATE CARRIES A LITERAL **AFTER** THE OPTIONAL SLOT, AND THAT IS WHY
 ## THE ROW CAN FAIL AT ALL. With the optional slot trailing, a body that emits an
 ## empty word and then trims produces a byte-identical answer -- the sabotage
@@ -5590,6 +5782,15 @@ check "EM9 a registry that offers a field no deck line consumes, or consumes a\
   [list {{emb fieldunused shown} {emb noslotfield missing}} {} 0]
 
 
+
+} emerr]} {
+  check "EM0 section EM ran to the end" "RAISED:$emerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD EK -- issue 1600.  one refusal reader and the number alphabet (issue 1415).
+# ==========================================================================
+if {[catch {
 
 # ============================================================================
 # EK. ONE REFUSAL READER, AND SI. THE NUMBER ALPHABET -- ISSUE 1415
@@ -5967,9 +6168,8 @@ check "SI5 a simulator that has not said what its numbers look like has nothing\
   [list ok ok {bad empty}]
 
 
-} bigerr]} {
-  puts "UNEXPECTED ERROR: $bigerr"
-  incr fail
+} ekerr]} {
+  check "EK0 sections EK, NS and SI ran to the end" "RAISED:$ekerr" {}
 }
 
 
