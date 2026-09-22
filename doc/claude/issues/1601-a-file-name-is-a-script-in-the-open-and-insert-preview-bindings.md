@@ -64,6 +64,29 @@ after 200    "file_chooser_draw_preview {$f}"
 
 `after` takes a script. Same brace-termination exposure as site 2, on a different clock.
 
+## Provenance — MEASURED, and it decides whether this is ours
+
+`git log -S` on each binding string, and `git merge-base --is-ancestor <c> main` on each
+commit it names:
+
+| commit | in `main`? | date | what it is |
+|---|---|---|---|
+| `0bb4c9f2` | **yes** | 2022-09-26 | non-blocking file selector — the Open-dialog bind's oldest touch |
+| `f547c86f` | **yes** | 2024-02-17 | preview window made resizable |
+| `e347a251` | **yes** | 2024-02-21 | `load_file_dialog` search/file entry split |
+| `451a949c` | **no** | 2026-06-12 | **ours** — `feat(dialog)`: type/paste-a-path + Recent dropdown |
+| `e1488da4` | **yes** | 2025-03-11 | `xschem rect gui` &c — the Insert-dialog bind's oldest touch |
+| `4cc75cbc` | **yes** | 2026-03-21 | `new_file_browser`: "search all" button |
+| `19a28c65` | **yes** | 2026-05-08 | `new_file_browser`: "search all" reuses the listbox |
+
+**The defective shape is upstream, by four years.** One commit that touched the Open-dialog
+binding is this branch's (`451a949c`), so we have edited the line, but we did not invent
+it. That matters for exactly one reason: the ruling on 1352 offered "leave it as an
+inherited sharp edge" as a real option **because it is the branch the user publishes**, and
+the same option exists here on the same grounds. `git log -S` reports commits where the
+*count* of the string changed, so this table is "who touched it", not "who wrote it"; the
+2022 entry is the floor, not necessarily the origin.
+
 ## Why this is worse than 1352, and why that is a claim to test rather than believe
 
 1352 required the user to type the payload into a dialog. Here the payload is a **file
