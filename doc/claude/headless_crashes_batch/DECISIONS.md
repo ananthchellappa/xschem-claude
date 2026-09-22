@@ -83,3 +83,29 @@ naming.** Five `display` dereferences are real and unguarded but excluded from t
 `psprint.c:333` (needs libjpeg), `draw.c:165` (no-cairo builds), and the `#ifndef __unix__`
 Windows paths in `draw.c` and `xinit.c`. They exist in other builds and no run here can see
 them.
+
+# D6 — the driver told a crew it was alone in a tree that it was not (driver, correction)
+
+D3 said crews that run T1 get their own clone and crews that edit product code do not,
+"and the 1352 crew … is the only crew allowed to". When the 1601 crew was dispatched it
+was given the same sentence: *"You are the only crew editing the main working tree right
+now."*
+
+**That was false, and the crew caught it.** This batch's own workflow runs its Implement
+stage in the main tree, not in a scratch clone — it edited `src/callback.c`, `src/draw.c`,
+`src/hilight.c`, `src/scheduler.c` and `tests/headless/test_callback_argc.tcl` at 14:52
+and rebuilt `src/xschem` at 15:02, while the 1601 crew's T1 was running from 14:50 to
+15:01.
+
+The damage is bounded and the crew bounded it rather than being reassured: the harness
+never builds, so the four `.c` edits were not in the binary its run used; the rebuild
+landed after the run ended; and it re-ran both arms of its own suite against the new
+binary afterwards. But its whole-T1 number is not a clean measurement of its own change,
+and it said so instead of quoting it flat.
+
+**The rule D3 should have stated:** a tree is exclusive only if *every* concurrent worker
+has been told so, and a workflow stage counts as a worker. The driver knew the workflow
+existed and still wrote "you are the only crew", because it was thinking about the crews
+it had dispatched by hand. Going forward the driver re-gates in a throwaway clone of the
+committed state after any change that shared a tree — which is what happens here — and
+does not tell a crew it is alone without checking what else is live.
