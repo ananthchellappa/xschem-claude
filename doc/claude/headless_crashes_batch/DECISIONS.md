@@ -109,3 +109,35 @@ existed and still wrote "you are the only crew", because it was thinking about t
 it had dispatched by hand. Going forward the driver re-gates in a throwaway clone of the
 committed state after any change that shared a tree — which is what happens here — and
 does not tell a crew it is alone without checking what else is live.
+
+# D7 — the identity rule is about `kill`, not only about `pgrep` (crew finding, 2026-09-22)
+
+CLAUDE.md says **"Match shared namespaces by identity, never by pattern or count"**, and
+every example under it is about *detecting* a peer: `pgrep -af run_regression` matching
+your own shell, counting a `results.<pid>.log` as live only when `/proc/<pid>` exists,
+bracketing a character, `ps -eo comm=`.
+
+The 1602 crew found the rule has a second, sharper edge. It ran
+
+```sh
+pkill -f 'tclsh run_regression.tcl'
+```
+
+to stop **its own** T1, and killed this batch's Verify-stage T1 as well — that run's log
+stops at `Start headless/test_op_annot.tcl` with no `T1-RUN-END`, so by CLAUDE.md's own
+rule it did not finish, and its verdict is a **partial that reads green by prefix**.
+
+In the crew's words when it reported itself: *"`pgrep -af run_regression` returning a
+wrong answer costs a paragraph; `pkill -f` on the same pattern costs someone else's run."*
+
+**The discipline, stated as the crew put it:** reach for an exact pid, `/proc/<pid>`
+existence, a bracketed character class or `ps -eo comm=` **the moment a command's scope is
+"every process matching a string" rather than "this process I started"**. The safe
+spellings are the ones CLAUDE.md already lists; what was missing was the recognition that
+they apply to destructive commands and not only to queries.
+
+Two things follow for this batch. The Verify stage's gate is re-run rather than read — a
+prefix of a green run is green, which is exactly the trap (`CLAUDE.md`, "Every prefix of a
+green run is green"). And the crew is credited: it reported its own mistake unprompted, in
+enough detail to identify the victim, which is the only reason the partial was not read as
+a pass.
