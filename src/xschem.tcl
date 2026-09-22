@@ -9077,14 +9077,26 @@ proc file_dialog_place_symbol {} {
   }
 }
 
+## SITE 1 of issue 1601. A binding script is Tcl source, evaluated fresh every
+## time the event fires, so a file NAME spliced into it is CODE. Measured on the
+## shipped Open dialog at f8647d8d: selecting a real schematic called
+## `pwn[set ::CANARY OPEN_DIALOG]ed.sch` and letting the preview pane be exposed
+## executed `set ::CANARY OPEN_DIALOG`. Nobody has to type anything -- the payload
+## arrives as a file in a library directory, a PDK, a tarball or a git checkout.
+## `list` quotes each element for exactly one round of parsing, which is exactly
+## what a binding gets. See doc/claude/issues/1601-*.md.
+## The DIRECT call below is NOT the same exposure and never was: `$f` there is one
+## substitution whose result Tcl does not rescan (measured -- the canary stayed
+## quiet on every direct call). Only the stored script was a defect.
 proc file_dialog_display_preview {f} {
   set type [is_xschem_file $f]
   if { $type ne {0} } {
     if { [winfo exists .load] } {
       .load.l.paneright.draw configure -background {}
-      xschem preview_window draw .load.l.paneright.draw "$f"
-      bind .load.l.paneright.draw <Expose> [subst {xschem preview_window draw .load.l.paneright.draw "$f"}]
-      bind .load.l.paneright.draw <Configure> [subst {xschem preview_window draw .load.l.paneright.draw "$f"}]
+      xschem preview_window draw .load.l.paneright.draw $f
+      set preview_script [list xschem preview_window draw .load.l.paneright.draw $f]
+      bind .load.l.paneright.draw <Expose> $preview_script
+      bind .load.l.paneright.draw <Configure> $preview_script
     }
   } else {
     bind .load.l.paneright.draw <Expose> {}
@@ -9704,7 +9716,7 @@ proc file_chooser_draw_preview {f} {
   if {[winfo exists .ins]} {
     .ins.center.right configure -bg {}
     xschem preview_window create .ins.center.right {}
-    xschem preview_window draw .ins.center.right "$f"
+    xschem preview_window draw .ins.center.right $f
 
 
     ## preview window draw causes a save / restore context.
@@ -9712,8 +9724,23 @@ proc file_chooser_draw_preview {f} {
     ## this rewrites the file_chooser(dirtails) list variable and list loses selection...
     # .ins.center.leftdir.l selection set  [.ins.center.leftdir.l index active]
 
-    bind .ins.center.right <Expose> "xschem preview_window draw .ins.center.right {$f}"
-    bind .ins.center.right <Configure> "xschem preview_window draw .ins.center.right {$f}"
+    ## SITE 2 of issue 1601. The braces used to be INSIDE a double-quoted string
+    ## that $f was interpolated into, so they were not protection: a name holding
+    ## a close brace terminated the group early and the rest of the name became
+    ## script. Measured on a real <Expose> with a schematic whose name was a
+    ## close brace, a semicolon, a `set` command and a reopening brace: it ran.
+    ## `list` builds the same script as data instead.
+    ## ⚠ THE HOSTILE NAME IS DESCRIBED, NOT QUOTED, AND THAT IS DELIBERATE. A
+    ## comment lives inside this proc's brace-quoted body, and Tcl counts braces
+    ## before it ever notices a `#`: an unbalanced brace here silently ends the
+    ## enclosing `if` early, so the lines below it run unguarded and the body's
+    ## own closing brace becomes a command. Measured -- this exact comment, with
+    ## the name quoted verbatim, made file_chooser_draw_preview raise an
+    ## `invalid command name` error naming a close brace, on every call.
+    ## Rows S15, B17 and B18 hold it. See doc/claude/issues/1601-*.md.
+    set preview_script [list xschem preview_window draw .ins.center.right $f]
+    bind .ins.center.right <Expose> $preview_script
+    bind .ins.center.right <Configure> $preview_script
     if {$file_chooser(action) eq {symbol}} {
       file_chooser_place symbol
     }
@@ -9729,7 +9756,12 @@ proc file_chooser_preview {} {
   global file_chooser
   if {[info exists file_chooser(f)]} {
     after cancel ".ins.center.right configure -bg white"
-    after cancel "file_chooser_draw_preview {$file_chooser(f)}"
+    ## SITE 3 of issue 1601, and the half that is easy to get wrong. `after
+    ## cancel` matches on the SCRIPT STRING, so this spelling must be built
+    ## exactly the way the `after 200` below builds it -- both through `list` --
+    ## or the cancel stops matching and a stale preview redraw survives.
+    ## Row C1 of tests/headless/test_preview_name_inject_1601.tcl measures that.
+    after cancel [list file_chooser_draw_preview $file_chooser(f)]
     unset file_chooser(f)
   }
   xschem preview_window close .ins.center.right {}
@@ -9749,7 +9781,12 @@ proc file_chooser_preview {} {
         set file_chooser(abs_filename) $f
         set file_chooser(rel_filename) $dir
         # global used to cancel delayed script
-        after 200 "file_chooser_draw_preview {$f}"
+        ## SITE 4 of issue 1601. `after` takes a script, so the same brace
+        ## termination applied here on a different clock -- and this one needs no
+        ## <Expose> at all, it fires on a 200 ms timer as soon as the entry is
+        ## selected. Built through `list`, in the same spelling as the `after
+        ## cancel` in file_chooser_preview, so the cancel still matches.
+        after 200 [list file_chooser_draw_preview $f]
       } else {
         after 200 {.ins.center.right configure -bg white}
       }

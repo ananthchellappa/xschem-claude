@@ -95,7 +95,26 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_home_isolation" \
                  "headless/test_home_isolation_sh" \
                  "headless/test_untitled_autosave_1486" \
-                 "headless/test_input_line_inject_1352"]
+                 "headless/test_input_line_inject_1352" \
+                 "headless/test_preview_name_inject_1601"]
+# ⚠ `test_preview_name_inject_1601` IS REGISTERED IN BOTH LISTS, for the same
+# reason `test_input_line_inject_1352` below is, and it is the WORSE of the two
+# defects: issue 1601's payload is a FILE NAME, so nobody has to type anything.
+# Four sites spliced the selected file's name into a Tk binding script or an
+# `after` script -- both of which are Tcl SOURCE, reparsed every time they fire.
+# MEASURED through the shipped Open dialog on :99 at f8647d8d: a real schematic
+# called `pwn[set ::CANARY OPEN_DIALOG]ed.sch`, selected with the shipped
+# <ButtonRelease-1> binding, executed its own name the moment the preview pane
+# was exposed. Also stock xschem code, on the branch the user hands out.
+#   headless (here): the S rows (the four sites read out of src/xschem.tcl with
+#     comments stripped) and the C rows (the `after cancel` pairing, which is
+#     plain Tcl and needs no display). 20 checks, plus ONE `skip:` line naming
+#     the 18 B rows it cannot run.
+#   display (`dcases`): the same 19 plus the B rows, which put files with
+#     hostile names on disk, deliver real <Expose> events and drive the real
+#     `load_file_dialog`. 38 checks.
+# The B rows CANNOT run here: they need `toplevel`, `winfo`, `bind` and `event
+# generate`, none of which exists under --nogui.
 # ⚠ `test_input_line_inject_1352` IS REGISTERED IN BOTH LISTS (here and in
 # `dcases` below), and the two arms measure different halves. Issue 1352:
 # `input_line`'s OK button read `eval $cmd \[.dialog.f1.e get\]`, so the text
@@ -360,7 +379,18 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_simwin_variant_1471" \
-                 "headless/test_input_line_inject_1352"]
+                 "headless/test_input_line_inject_1352" \
+                 "headless/test_preview_name_inject_1601"]
+## ⚠ `test_preview_name_inject_1601` IS THE ARM THAT ACTUALLY OPENS THE DIALOG.
+## Its B rows write real schematics whose NAMES are Tcl (`q[set ::PWNED
+## BRACKET]z.sch`, a close-brace escape, a double-quote escape), hand them to the
+## real `file_dialog_display_preview`, `file_chooser_draw_preview` and
+## `file_chooser_preview`, deliver real <Expose> events, let the real 200 ms
+## `after` fire, and finally drive the shipped `load_file_dialog` from the event
+## loop -- asserting a canary in the interpreter never fires. B14 is the row that
+## stops the section passing by not happening: it reports whether the dialog
+## really opened and really previewed the file. The `hcases` copy runs the same
+## file and self-skips all 18.
 ## ⚠ `test_input_line_inject_1352` IS THE ARM THAT ACTUALLY TYPES. Its B rows
 ## open the shipped input_line dialog on this display, put `7 ; set ::ILINJ yes`
 ## (and a `[...]`, a `$...`, a space, a lone `"`, a lone `{`, a lone `}` and an

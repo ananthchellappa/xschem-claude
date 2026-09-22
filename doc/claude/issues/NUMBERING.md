@@ -3775,7 +3775,18 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   ⚠ **Reachability is REASONED, not measured** — whether such a name survives
   `is_xschem_file`, reaches `$f` intact, and gets an `<Expose>` is the first job. The fix is
   `[list ...]` at all four, **together**, because `after cancel` matches on the script
-  string and changing one form without the other silently stops the cancel matching. OPEN.
+  string and changing one form without the other silently stops the cancel matching.
+  **MEASURED AND FIXED 2026-09-22.** All four questions answered on `:99` and the exploit
+  driven through the **shipped Open dialog**: a real schematic named
+  `pwn[set ::CANARY OPEN_DIALOG]ed.sch`, selected with the shipped `<ButtonRelease-1>`
+  binding, executed its own name on the preview pane's `<Expose>`. `is_xschem_file` is
+  itself safe and passes every hostile name except one containing `(` (its generator-arg
+  `regsub` truncates there); `setglob`'s list survives every name intact; and the
+  `after 200` site fires **with no `<Expose>` at all**. One claim in the filing is
+  **corrected**: the direct `xschem preview_window draw … "$f"` call is *not* an exposure —
+  one round of substitution is not rescanned. Fixed with `[list ...]` at all four sites;
+  `tests/headless/test_preview_name_inject_1601.tcl` (both `hcases` and `dcases`, 20 checks
+  headless / 38 on the display arm). FIXED.
 
 ~~**The next free number is 1601.**~~
 
