@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3823,7 +3823,21 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1603.**~~
 
-**The next free number is 1604.**
+- **1604** — **A parenthesis in a file name makes xschem say it is not an xschem file.**
+  `is_xschem_file` opens with `regsub {\(.*} $f {} f` to strip a generator's trailing
+  argument list, but the pattern matches the FIRST parenthesis and everything after it,
+  anywhere. MEASURED in plain tclsh: `bandgap(rev2).sch` is tested as `/lib/bandgap`,
+  `foo (1).sch` as `/lib/foo `, `opamp(v3)_final.sym` as `/lib/opamp`. The truncated path
+  does not exist, so the proc returns 0 — and the Insert dialog then refuses to place the
+  file, shows no preview, and the Open dialog tells the user their own schematic "does not
+  seem to be an xschem file". `foo (1).sch` is what a browser or a copy names a duplicate.
+  Not a security defect: it fails closed. Fix is to anchor the pattern to a TRAILING
+  argument list, ⚠ after surveying how a generator path is really spelled — this issue
+  asserts what the regsub does, not that every generator ends in `)`. OPEN.
+
+~~**The next free number is 1604.**~~
+
+**The next free number is 1605.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
