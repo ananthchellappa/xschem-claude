@@ -1,6 +1,6 @@
 # 1600 — one file-scope `catch` swallows 83% of `test_ase_window`, and the verdict still reads like an ordinary red
 
-**STAMP:** `v1 claim=partial tree=e92a2abf stamped=2026-09-22 fix=partial open=2 by=1600-core`
+**STAMP:** `v1 claim=partial tree=e92a2abf stamped=2026-09-22 fix=partial open=4 by=1600-core`
 
 **Status: OPEN — filed 2026-09-21** by the ASE-L UX batch's fix round, which **named it
 rather than fixed it** (`doc/claude/ase_l_ux_batch/receipts/verify.md`, the ⚠ under
@@ -332,6 +332,30 @@ rows whose *own subject* is the thing that went missing, so their ordinary failu
    `test_ase_persist` 83%, `test_op_annot` 1%). `test_ase_core` was the fourth and is
    **done** — see *"What was done"* above. `test_ase_dialogs` is the one to do next: it is a
    T1 case and its unnamed body is 5699 lines, the largest left in the sweep.
+3. **The UNGUARDED stretches, which this sweep cannot see at all and which are worse.**
+   Added 2026-09-22 by the driver, from the `test_ase_core` crew's own "where I am unsure"
+   list. In that file, **319 of the 675 rows sit outside every guard** — sections `AC`,
+   `VB`, `PB`, `TF`, `SE`, `LB`, `ISO`, `CP`, `PZ`, `GR` and others, lying *between* the
+   named guards with nothing around them. A raise in one of those stretches does not
+   produce a misleading verdict; it produces **no verdict at all** — no `RESULT:` line and
+   no completion banner. MEASURED on the unmodified original: a forced raise in section
+   `SD` (whose `$render` the unguarded `VB` rows read) killed the interpreter after 9 rows.
+
+   T1 still catches this, because the banner rule scores a case with no completion banner
+   as a death. **Run standalone it is much quieter**, and it inverts the sweep's whole
+   premise: the awk program looks for a `catch` that is too big, and cannot see a region
+   with no `catch` at all. **The 35 (now 34) is therefore not the population.** Converting
+   a file's big catch into named guards does not finish that file, and nobody should read
+   a zero-hit sweep as "this suite is done".
+4. **The verdict still has no denominator, and named guards do not give it one.** The
+   idiom puts the guard row *inside* the handler, so a green run emits nothing: 675 checks
+   before this pass, 675 after, with 15 guards added. That is correct and deliberate — all
+   98 call sites in the corpus are failure-only, and inventing a second spelling for one
+   file would be worse. But it means the fix bought **diagnosability, not coverage
+   reporting**: a red run now names which section died, while a green run still cannot say
+   how much of the suite the number represents. The shape that would settle it is a suite
+   declaring its expected row count and the verdict comparing against it. That is a
+   harness change, not a per-suite one, and it is not attempted here.
 
 ### What the `test_ase_core` pass learned, for whoever does the next one
 
