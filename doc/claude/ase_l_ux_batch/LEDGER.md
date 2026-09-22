@@ -129,8 +129,15 @@ as a fix and would otherwise have proposed a trap.
 
 | | |
 |---|---|
-| status | built, attacked, repaired, suites green, T1 clean |
+| status | **DONE**, in TWO commits |
+| commit | `4ddc4900` fix(1398): ASE-L rendered in a typeface nobody chose |
+| follow-up | `2f1fad58` fix(1398): ASE-L came back three points smaller than it went in — see its own row below |
 | T1 | **0 counted failures, 0 launch failures, 0 `exit -1`, 0 NODISPLAY arms** |
+| ledger | rule **1398** (the four type roles and the size; its text says *"EVERY GLYPH IN ASE-L CHANGED and you have not seen it on your own screen"*, so item 2's eyeball debt is filed as a **rule**, not as a `look`), rule **1399** |
+
+⚠ **This block carried NO COMMIT HASH until 2026-09-21**, and the follow-up below had no row
+at all, so `2f1fad58` read as an orphan to anyone auditing the batch. It is not an orphan:
+it is item 2's own consequence.
 
 **Crew.** B1 implement, B2 pin, then three adversaries in parallel: pixels, downstream
 consumers, and the displays that are not `:99`.
@@ -167,3 +174,132 @@ test_wave_sigbrowser_0312   2 FAILED (67 passed)  <- PRE-EXISTING, issue 1399
 **One red that was mine and was litter, not a regression:** `test_ase_core` C11 caught an
 empty `untitled~.sch` dropped in the repo root by this session's own probe launches
 (issue 0609's row, doing exactly its job). Removed; 230 ALL PASS.
+
+## Item 2 follow-up — the size the user could see  (`2f1fad58`, issue 1398)
+
+| | |
+|---|---|
+| status | **DONE** |
+| commit | `2f1fad58` fix(1398): ASE-L came back three points smaller than it went in |
+| diff | `src/cadence_style_rc` **+25**, nothing else |
+
+**Why it exists, and why it is not a separate item.** Item 2 stopped naming `Arial 10` /
+`Courier 13` and took the system face's own size instead. On this box that is a smaller
+number, so the window the user reopened was — in their words — *"noticeably smaller than
+before"*. This commit sets `::ase_font_size 12` in `src/cadence_style_rc:744`, with `set`
+rather than `set_ne`, and all four PDK workareas source that file.
+
+**This is the only recorded user reaction to anything this batch has shipped**, which is
+the reason it gets a row of its own rather than a footnote.
+
+⚠ **AND IT CHANGES HOW LATER ITEMS MUST BE MEASURED.** The user's window runs at
+`ase_font_size 12`, where the mono advance is 10 px and the vars Value column is 143 px
+against 244 px of ink. A measurement taken at the bare default (`ase_font_size 0`, the
+first recon probes) sees 118 px against 203 px and is not the user's window. **Measure
+ASE-L at 12.**
+
+## Item 3 + F2 — the clip, and the answers  (issues 1499 and 1498)
+
+| | |
+|---|---|
+| status | **DONE** for everything that needs no ruling; two rulings raised and NOT assumed |
+| suites | `test_ase_window` **ALL PASS (336)**, floor 295 → 336 / **71** `--nogui` (was 56). *(333 as delivered; the fix round of 2026-09-21 added three rows — `UX1499a9b`, `a9c`, `a11` — see `receipts/verify.md` §"Fix round".)* |
+| T1 | **not run by this crew, by instruction** — the driver gates, solo |
+| ledger | ⚖ **R-U1** (issue 1499, the visible `…`) and ⚖ **R-U2** (issue 1498, `Results > Select`) are **owed to `owed.sh` by the DRIVER**: the implementing crew is forbidden to write `~/.claude` state |
+
+**Recon first, and it changed the item.** `receipts/recon.md` measured the plan against
+today's tree before anything was written. Two of the five pieces were **already delivered**
+and one of the remaining three turned out to need a ruling the plan said it did not:
+
+| stage | verdict | why |
+|---|---|---|
+| 3 (i) tooltip | **LANDED** | still missing, measured clipped at both font sizes, additive, no ruling |
+| 3 (i) visible `…` | **HELD** | ⚖ R-U1. The plan's *"Rulings: none"* rests on a reason that does not hold (the shipped `…` is a menu-label convention), and its stated precondition is **not implementable** — a `ttk::treeview` renders exactly `-values`, so a display-only truncation is impossible and *"Suites: none"* is false |
+| 3 (ii) log hscroll | **LANDED** | still missing; the plan's *"no way to scroll"* corrected to *"undiscoverable"* (measured: `<Shift-MouseWheel>` works), and its *"derive `-width`"* refused as spent by 1398 |
+| 3 (iii) per-pane hscroll | **already shipped** by item 2 — but had **zero** test coverage anywhere; **retro-pinned** here | |
+| F1 one producer | **already shipped**, by `ase_analyses_batch` (1417–1474), past what the plan asked | |
+| F2 the Value column | **LANDED** — the highest-value item of the three | one writer of `results`; the number was on disk; `has_results` already said 1; and Load State showed the **previous** state's number under the new state's output name |
+
+**What landed, by name** (cited by proc, never by line — the plan's own coordinates all
+rotted): `ase::quiet` / `ase::quiet_depth` and a mute check in `ase::echo` (`src/ase.tcl`);
+`ase::ui::results_from_disk`, `results_refill`, `cell_font`, `cell_tip_text`,
+`label_tip_text`, `tip_text`, `tip_motion`, `tip_show`, `tip_cancel`, `tip_attach`
+(`src/ase_window.tcl`); `pane_hscroll` renamed `hscroll_autohide` and reused by
+`log_open`; call sites in `ase::ui::open`, `load_state_commit`, `build_pane`,
+`simulators_dialog` and the status bar.
+
+**Measured before and after, on the same fixture:**
+
+| | before | after |
+|---|---|---|
+| Value cell, raw on disk, window opened | `{}` | `1.177` |
+| Value cell after loading a DIFFERENT state | `10` — the **previous** state's number | `812.3m` — the loaded state's own |
+| Value cell after loading a state with no raw | the last one, still standing | `{}` |
+| notices reaching the notice sink on an open | the readers' run-time narration | **0** |
+| `<Motion>`/`<Leave>` on the three panes | none | armed, all three |
+| hovering the 244 px cell in its 143 px column | nothing | the whole string |
+| log window `$lw.hsb` | does not exist | exists, hidden until a line overflows |
+
+**Sabotage, seven of them, each restored by `cp` from a pristine copy and md5-verified — no
+`git checkout/restore/stash/clean` at any point:**
+
+```
+results_from_disk -> {}            7 FAILED   RD1498a/c2/f2/g2, UX1498a/a2/c
+load_state_commit -> no refill     2 FAILED   UX1498c, UX1498d
+ase::quiet -> no mute              3 FAILED   RD1498g, RD1498h, RD1498h3
+clip gate -> always true           2 FAILED   UX1499a5, UX1499a7
+tip_attach -> no-op                2 FAILED   UX1499a, UX1499a10
+log -xscrollcommand dropped        2 FAILED   UX1499b2, UX1499b5
+pane -xscrollcommand dropped       1 FAILED   UX1499c1
+restored                           ALL PASS (333 checks), md5 clean
+```
+
+**Fix round, 2026-09-21** — three more, on a private Xvfb `:251`. The counts below are
+against the 336-check tree, so each implementer sabotage re-run reds the *same rows* at
++3 passed:
+
+```
+RD1498 block un-wrapped (fixture raise)  2 FAILED (63 passed)  <- of 333: the defect
+  ... same raise, block wrapped          1 FAILED (318 passed) <- of 333: the fix
+health left un-armed                     1 FAILED   UX1499a9b
+tip_show -> pos 0 for every class        1 FAILED   UX1499a11
+tip_attach -> no-op (re-run)             3 FAILED   UX1499a, UX1499a9b, UX1499a10
+results_from_disk -> {} (re-run)         7 FAILED   same seven rows, 329 passed
+load_state_commit -> no refill (re-run)  2 FAILED   same two rows, 334 passed
+clip gate -> always true (re-run)        2 FAILED   same two rows, 334 passed
+restored                           ALL PASS (336 checks), md5 clean
+```
+
+**Neighbouring suites, all on a private Xvfb `:235` with openbox 3.6.1 and a throwaway
+`HOME`:**
+
+```
+test_ase_window          ALL PASS (333)   floor 295 -> 333 / 56 -> 71 --nogui
+test_ase_core            ALL PASS (675)   test_ase_interact    ALL PASS  (64)
+test_ase_persist         ALL PASS (153)   test_ase_final       ALL PASS  (82)
+test_ase_launch          ALL PASS  (44)   test_ase_plot        ALL PASS (151)
+test_ase_savestate_adopt ALL PASS  (27)   test_ase_view        ALL PASS  (36)
+test_ase_simdlg_0937     ALL PASS  (55)   test_ase_simreg_0931 ALL PASS (118)
+test_ase_simcaps_0948    ALL PASS (211)   test_ase_simchoice_1395 ALL PASS (31)
+test_ase_simwin_variant_1471 ALL PASS (21) test_op_annot       ALL PASS (492)
+test_ase_dialogs         4-7 FAILED of 389  <- PRE-EXISTING, display-dependent
+```
+
+⚠ **`test_ase_dialogs`'s reds are PRE-EXISTING and were proved so, not assumed.** The
+two changed source files were replaced with `git show HEAD:` copies and the suite re-run on
+the same display: **the identical rows, the identical values, the identical passed count.**
+Done three times, on three private displays, all openbox 3.6.1, all the same answer.
+
+⚠ **AND THE COUNT IS NOT A GATE BASELINE. This block said "seven reds … the identical 382
+passed" until the fix round of 2026-09-21**, which presented a display-dependent number as
+a fixed fact. Measured: `:235` → **7 FAILED (382 passed)**, rows `G2sens` `G2f` `G8c` ×2
+`GG3` `GG9` `GN1b`; `:241` and `:251` → **4 FAILED (385 passed)**, rows `G2sens` `GG3`
+`GG9` `GN1b`. Suite total **389** on all three; the four are a strict subset and the three
+extra are focus-dependent. **Quote the proof method, never the number** — a crew holding
+7/382 that measures 4/385 reads a four-row improvement that did not happen, and one holding
+4/385 that measures 7/382 reads a regression that did not happen either.
+
+**One risk, named rather than discovered later.** `W1p id output row Value blank pre-run`
+is unmoved and green because its fixture rundir holds no raw. If a future leg ever leaves a
+raw where the `W1` fixture can see it, F2 turns that row red **for a good reason**.
+

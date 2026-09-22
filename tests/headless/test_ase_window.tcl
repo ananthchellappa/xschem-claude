@@ -526,6 +526,181 @@ check "P4 arg_summary dc row" \
   [ase::ui::arg_summary {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01}] \
   {dc V2 0 1.8 0.01}
 
+# =============================================================================
+# RD1498 -- THE OUTPUTS VALUE COLUMN READS THE ANSWERS OFF DISK (headless)
+# =============================================================================
+# `ase::ui::run_finished` was the ONLY writer of the `results` session attr, so
+# the column the window exists to show could only ever display a run THIS
+# process made. Measured on the tree before the fix, with a raw on disk holding
+# `v(vbg) = 1.177085`: `ase::has_results` answered 1, the backend's own reader
+# answered `VBG 1.177085e+00`, and the cell rendered {}.
+#
+# ⚠ AND THE BLANK CELL WAS THE HARMLESS HALF. `results` is a SIBLING sub-key of
+# `state`, so `session_update` left it standing: a session showing `10` still
+# showed `10` after loading a state whose own raw holds 0.812345, under the same
+# output NAME. Row RD1498f is that defect at the data layer and UX1498c is it
+# through the real window. Rows here are headless on purpose -- the reader is a
+# file reader and must not need a display to be pinned.
+
+proc rd1498_raw {path vars} {
+  set out {}
+  append out "Title: * rd1498 fixture\nDate: Sat Sep 12 00:00:00  2026\n"
+  append out "Plotname: Operating Point\nFlags: real\n"
+  append out "No. Variables: [expr {[llength $vars]/2}]\nNo. Points: 1\n"
+  append out "Variables:\n"
+  set i 0
+  foreach {nm v} $vars { append out "\t$i\t$nm\tvoltage\n" ; incr i }
+  append out "Values:\n"
+  set i 0
+  foreach {nm v} $vars {
+    ## `if`, never a ternary `expr` -- the r3_raw lesson: a ternary evaluates
+    ## both string branches as arithmetic and writes a subtraction into the file.
+    if {$i == 0} { append out " 0\t$v\n" } else { append out "\t$v\n" }
+    incr i
+  }
+  append out "\n"
+  set f [open $path w] ; puts -nonewline $f $out ; close $f
+}
+
+## Everything reaching the NOTICE SINK while `script` runs. Shimmed at
+## ::xschem::notify_safe, which is where ase::echo delivers -- NOT at ase::echo
+## itself, because the mute lives INSIDE ase::echo and a shim in front of it
+## would report muted calls as if they had been said.
+proc rd1498_sink {script} {
+  set ::RD1498_SINK {}
+  rename ::xschem::notify_safe ::rd1498_saved_notify
+  proc ::xschem::notify_safe {msg {tag {}}} { lappend ::RD1498_SINK $msg ; return 1 }
+  set rc [catch {uplevel 1 $script} r]
+  catch {rename ::xschem::notify_safe {}}
+  rename ::rd1498_saved_notify ::xschem::notify_safe
+  if {$rc} { return "RAISED:$r" }
+  return $::RD1498_SINK
+}
+
+## ⚠ THE FIXTURE AND THE ROWS SIT INSIDE THEIR OWN `catch`, and the two procs
+## above sit OUTSIDE it on purpose -- the UX1499 block calls `rd1498_raw`, so a
+## death here must not take that block with it.
+##
+## Measured 2026-09-21, with `ase::ui::results_from_disk` deleted: this block
+## raised at file scope, which is INSIDE the outer catch opened above the W
+## section -- so the raise skipped every row between here and that catch's
+## closing arm (the whole L1398 and W sections) and then cascaded into D1398,
+## whose `w1f_colscan` is defined in a section that never ran. The suite still
+## printed a confident verdict: `RESULT: 8 FAILED (42 passed)`, for a suite that
+## runs 333. A plausible wrong number is worse than a loud one (issue 1487: a
+## verdict that does not say what it lost). With this guard the same deletion is
+## ONE counted failure, named, and every other section still runs.
+if {[catch {
+
+set rd_run  [file join $scratch rd1498_run]
+set rd_run2 [file join $scratch rd1498_run2]
+set rd_none [file join $scratch rd1498_norun]
+file mkdir $rd_run $rd_run2 $rd_none
+rd1498_raw [file join $rd_run  nfet_clean_ase.raw] {v(vbg) 1.177085 v(start) 1.803088}
+rd1498_raw [file join $rd_run2 nfet_clean_ase.raw] {v(vbg) 0.812345 v(start) 1.500000}
+
+library_new_view aselib nfet_clean ngspice_state_rd1498 ngspice_state_rd1498
+set rdpath [xschem cellview_path aselib/nfet_clean ngspice_state_rd1498]
+set rdkey  [ase::session_key aselib nfet_clean ngspice_state_rd1498]
+if {$rdpath eq {}} {
+  puts "SKIPPED: RD1498a-i (the fixture state view did not resolve)"
+} else {
+  set rdpath [file normalize $rdpath]
+  ## THE OUTPUT ROWS. `v(vbg)` and `v(start)` are single vectors and are read
+  ## from the raw; `v(nosuch)` is the row the file cannot answer and is what
+  ## makes the reader want to NARRATE -- which is what RD1498g forbids.
+  set rd_outs {{name VBG expr v(vbg) save 1 plot 0}
+               {name START expr v(start) save 1 plot 0}
+               {name MISSING expr v(nosuch) save 1 plot 0}}
+  ase::session_open $rdkey $rdpath
+  set rdst [ase::session_state $rdkey]
+  dict set rdst design {lib aselib cell nfet_clean view schematic}
+  dict set rdst rundir $rd_run
+  dict set rdst outputs $rd_outs
+  ase::session_update $rdkey $rdst
+  ase::session_save $rdkey
+
+  check "RD1498a the reader answers a session whose rundir already holds a raw -- the whole defect: this number was on disk and the column was blank" \
+    [ase::ui::results_from_disk $rdkey] {VBG 1.177085e+00 START 1.803088e+00}
+  check "RD1498b ...and a row the results file cannot answer gets no value rather than a guess" \
+    [dict exists [ase::ui::results_from_disk $rdkey] MISSING] 0
+
+  ## RD1498c: the 0838 gate. A raw OLDER than the deck it claims to describe is
+  ## refused by ase::has_results, so the reader must answer {} for it -- the
+  ## silent-wrong-data case that predicate was written for.
+  set rd_deck [ase::deck_file [ase::session_state $rdkey]]
+  set rd_rawf [file join $rd_run nfet_clean_ase.raw]
+  set f [open $rd_deck w] ; puts $f "* a deck newer than the raw" ; close $f
+  file mtime $rd_rawf [expr {[clock seconds] - 600}]
+  file mtime $rd_deck [clock seconds]
+  check "RD1498c a raw OLDER than the deck it claims to describe is refused, because the gate is ase::has_results and not file existence (issue 0838)" \
+    [list [ase::has_results $rdkey] [ase::ui::results_from_disk $rdkey]] {0 {}}
+  file delete -force $rd_deck
+  check "RD1498c2 ...and with the deck gone the same raw reads again (no deck -> nothing contradicts it)" \
+    [dict exists [ase::ui::results_from_disk $rdkey] VBG] 1
+
+  ## RD1498d: no raw at all.
+  set rdst2 [ase::session_state $rdkey]
+  dict set rdst2 rundir $rd_none
+  ase::session_update $rdkey $rdst2
+  check "RD1498d a rundir with no raw reads as {} -- never as the last session's numbers" \
+    [ase::ui::results_from_disk $rdkey] {}
+
+  ## RD1498e: the write half, and the CLEAR. `results_refill` overwrites; it
+  ## does not merge. This is the Load State defect at the data layer.
+  ase::session_setattr $rdkey results [dict create VBG 9.999999e+00]
+  check "RD1498e a planted number survives until something refills -- the pre-condition of the next row, and the shape the window shipped with" \
+    [ase::session_getattr $rdkey results] {VBG 9.999999e+00}
+  check "RD1498f results_refill CLEARS the attr when disk has nothing to say -- the corner-sweep defect: states share output names by construction, so an inherited number is the PREVIOUS corner's answer under this corner's name" \
+    [list [ase::ui::results_refill $rdkey] [ase::session_getattr $rdkey results]] {{} {}}
+  set rdst3 [ase::session_state $rdkey]
+  dict set rdst3 rundir $rd_run2
+  ase::session_update $rdkey $rdst3
+  ase::session_setattr $rdkey results [dict create VBG 9.999999e+00]
+  check "RD1498f2 ...and when disk DOES have something to say it is the new rundir's answer that lands, not the planted one" \
+    [ase::ui::results_refill $rdkey] {VBG 8.123450e-01 START 1.500000e+00}
+
+  ## RD1498g: SILENCE. The readers narrate the run they are reading -- "the
+  ## results file holds no single-point value for v(nosuch)". On a window OPEN
+  ## nothing ran, so that sentence would describe a run that did not happen, and
+  ## it would be said again on every Load State. Measured before `ase::quiet`:
+  ## that note reaches the sink. The numbers are read either way; only the
+  ## narration is dropped.
+  set rd_said [rd1498_sink {ase::ui::results_from_disk $rdkey}]
+  set rd_resultsaid {}
+  foreach m $rd_said { if {[string match -nocase "*result*" $m]} { lappend rd_resultsaid $m } }
+  check "RD1498g reading the artifacts says NOTHING to the user: a window open is not a run, so the readers' run-time narration must not reach the notice channel" \
+    $rd_resultsaid {}
+  check "RD1498g2 ...and the numbers were still read while it was silent -- silence must not be achieved by not reading" \
+    [dict exists [ase::ui::results_from_disk $rdkey] VBG] 1
+
+  ## RD1498h: the mute is a COUNTER and is restored on every path. A mute left
+  ## standing would silence the whole application for the rest of the session --
+  ## the failure direction has to be a message too many, never an error lost.
+  check "RD1498h ase::echo answers 0 while muted, and the depth is back to 0 afterwards" \
+    [list [ase::quiet {ase::echo "RD1498 must not appear" note}] [ase::quiet_depth]] {0 0}
+  check "RD1498h2 a RAISE inside a quiet block propagates AND restores the channel -- a swallowed error would be a worse defect than the noise this proc removes" \
+    [list [catch {ase::quiet {error rd1498boom}} rd_e] $rd_e [ase::quiet_depth]] \
+    {1 rd1498boom 0}
+  check "RD1498h3 nesting does not un-mute the caller on the inner block's way out" \
+    [ase::quiet {list [ase::quiet {ase::quiet_depth}] [ase::quiet_depth]}] {2 1}
+  set rd_live [rd1498_sink {ase::echo "RD1498 the channel is live again" note}]
+  check "RD1498h4 ...and an ordinary echo still reaches the sink after all of that" \
+    [llength $rd_live] 1
+
+  ## RD1498i: an unknown key is answered, never raised. The window calls this on
+  ## every open and on every Load State; a raise here would kill both gestures.
+  check "RD1498i an unknown session key answers {} without raising" \
+    [list [catch {ase::ui::results_from_disk NOSUCHKEY_1498} rd_r] $rd_r] {0 {}}
+
+  ase::session_close $rdkey
+}
+
+} rd_bigerr]} {
+  puts "UNEXPECTED ERROR (RD1498 block): $rd_bigerr"
+  incr fail
+}
+
 
 # =============================================================================
 # L1398 -- THE FONT AND THEME DERIVATION, AS A RULE RATHER THAN A READING
@@ -3909,6 +4084,313 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  }
 } else {
   puts "D1398 dark/knob/ratchet legs skipped (no DISPLAY)"
+}
+
+# =============================================================================
+# UX1498/UX1499 -- THE ANSWERS IN THE COLUMN, AND THE TEXT THAT FELL OFF
+# =============================================================================
+# Three shipped defects, one window, measured 2026-09-21 before each fix:
+#
+#   1498  Opening a bench whose rundir already holds a raw showed a BLANK Value
+#         column; loading a different state showed the PREVIOUS state's numbers
+#         under the new state's output names (measured: `10` still on screen
+#         after loading a state whose own raw holds 0.812345).
+#   1499  A cell too narrow for its text was cut mid-glyph with no way to read
+#         it -- 244 px of ink in a 143 px column at the user's own font size --
+#         and the simulation log had no horizontal scrollbar, so the `command :
+#         .../ngspice -b ...` line (137 chars against `-width 84`) ran off the
+#         right edge.
+#
+# ⚠ SEPARATE VIEW, SEPARATE WINDOW, LAST IN THE FILE -- the D1398 idiom. The
+# ngspice_state1 session is closed by W8 and its file carries every mutation the
+# W legs made, so nothing above is disturbed and the window numbering the W1
+# rows assert is already spent.
+#
+# ⚠ WHAT IS NOT PINNED HERE, DELIBERATELY: the rendered balloon. `balloon_show`
+# returns early unless the X pointer is PHYSICALLY over the widget, so the
+# pixels are not drivable from a script (the limit `rsel_tip` already declares).
+# What these rows drive is the text the handler resolves and the bindings that
+# reach it -- and the {} arm, which is the anti-vacuity contract: a tooltip on
+# every cell is the failure mode, not the feature.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+ if {[catch {
+
+  set ux_run1 [file join $scratch ux1499_run1]
+  set ux_run2 [file join $scratch ux1499_run2]
+  set ux_none [file join $scratch ux1499_norun]
+  file mkdir $ux_run1 $ux_run2 $ux_none
+  rd1498_raw [file join $ux_run1 nfet_clean_ase.raw] {v(vbg) 1.177085 v(start) 1.803088}
+  rd1498_raw [file join $ux_run2 nfet_clean_ase.raw] {v(vbg) 0.812345 v(start) 1.500000}
+
+  library_new_view aselib nfet_clean ngspice_state_ux1499 ngspice_state_ux1499
+  set uxpath [xschem cellview_path aselib/nfet_clean ngspice_state_ux1499]
+  set uxkey  [ase::session_key aselib nfet_clean ngspice_state_ux1499]
+  if {$uxpath eq {}} {
+    puts "SKIPPED: UX1498/UX1499 (the fixture state view did not resolve)"
+  } else {
+    ase::session_open $uxkey [file normalize $uxpath]
+    set uxst [ase::session_state $uxkey]
+    dict set uxst design {lib aselib cell nfet_clean view schematic}
+    dict set uxst rundir $ux_run1
+    ## THE MONTE CARLO VARIABLE FROM THE AUDIT, verbatim: the string whose sigma
+    ## reference and sigma count are exactly the characters that fall off.
+    ## WIDE and NARROW are the discriminator for row UX1499a7: WIDE is 20
+    ## characters of 12px ink, NARROW is 30 characters of 3px ink. A pixel rule
+    ## and a character-count rule answer them in OPPOSITE directions, which is
+    ## the only way to tell the two rules apart without mutating a widget.
+    dict set uxst variables {{name MCVAR value {agauss(1.8, 'ABSVAR*1.8', 3)}}
+                             {name SHORT value 1.8}
+                             {name WIDE value WWWWWWWWWWWWWWWWWWWW}
+                             {name NARROW value iiiiiiiiiiiiiiiiiiiiii}}
+    dict set uxst outputs {{name VBG expr v(vbg) save 1 plot 0}
+                           {name START expr v(start) save 1 plot 0}}
+    ase::session_update $uxkey $uxst
+    ase::session_save $uxkey
+    ase::session_close $uxkey
+    check "UX open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_ux1499] 1
+    update
+    set uxtop [ase::ui::window_for $uxkey]
+    catch {wm geometry $uxtop 798x520}
+    update ; after 150 ; update
+
+    proc ux_cell {tv nm col} {
+      foreach it [$tv children {}] {
+        if {[$tv set $it name] eq $nm} { return [$tv set $it $col] }
+      }
+      return NOROW
+    }
+    proc ux_item {tv nm} {
+      foreach it [$tv children {}] { if {[$tv set $it name] eq $nm} { return $it } }
+      return {}
+    }
+    ## centre of a cell, with the tv_bbox retry (WSLg can be slow to map)
+    proc ux_xy {tv item col} {
+      set bb [tv_bbox $tv $item $col]
+      if {[llength $bb] != 4} { return {} }
+      lassign $bb x y w h
+      return [list [expr {$x + $w/2}] [expr {$y + $h/2}]]
+    }
+
+    # --- UX1498: the Value column, through the real window -------------------
+    set uxo $uxtop.body.outs.tv
+    check "UX1498a THE COLUMN THE WINDOW EXISTS TO SHOW IS FILLED ON OPEN: the raw was already in this session's rundir and the cell rendered blank before this fix" \
+      [list [ux_cell $uxo VBG value] [ux_cell $uxo START value]] {1.177 1.803}
+    check "UX1498a2 ...and the session attr behind it is the one the reader produced, not a run this process made" \
+      [ase::session_getattr $uxkey results] {VBG 1.177085e+00 START 1.803088e+00}
+
+    ## THE DEFECT ROW. A planted number stands in for "the state you were just
+    ## looking at"; the load must replace it with the loaded state's OWN answer.
+    ## Measured on the shipped code: the cell still read `10`.
+    ase::session_setattr $uxkey results [dict create VBG 9.999999e+00 START 1.0e+00]
+    ase::ui::refresh_output_values $uxkey
+    update
+    check "UX1498b the planted stale number really is on screen first -- the anti-vacuity anchor for the row below" \
+      [ux_cell $uxo VBG value] 10
+    set uxst2 [ase::session_state $uxkey]
+    dict set uxst2 rundir $ux_run2
+    check "UX1498c LOAD STATE NO LONGER SHOWS THE PREVIOUS STATE'S ANSWER: loading a state whose own raw holds 0.812345 replaces the number instead of inheriting it -- in a corner sweep, where states share output names by construction, the inherited one is the wrong corner's answer with nothing on screen to say so" \
+      [list [ase::ui::load_state_commit $uxkey $uxst2] [ux_cell $uxo VBG value]] \
+      {1 812.3m}
+    ase::session_setattr $uxkey results [dict create VBG 7.777777e+00]
+    ase::ui::refresh_output_values $uxkey
+    set uxst3 [ase::session_state $uxkey]
+    dict set uxst3 rundir $ux_none
+    check "UX1498d ...and a state whose rundir holds NO raw CLEARS the column rather than leaving the last one standing" \
+      [list [ase::ui::load_state_commit $uxkey $uxst3] [ux_cell $uxo VBG value]] {1 {}}
+    ## back to the raw-bearing rundir for the rows below
+    set uxst4 [ase::session_state $uxkey]
+    dict set uxst4 rundir $ux_run1
+    ase::ui::load_state_commit $uxkey $uxst4
+    ase::ui::populate $uxkey
+    update ; after 100 ; update
+
+    # --- UX1499a: the clipped-cell tooltip -----------------------------------
+    set uxv $uxtop.body.vars.tv
+    set ux_bnd {}
+    foreach pane {vars ana outs} {
+      foreach ev {<Motion> <Leave>} {
+        if {[bind $uxtop.body.$pane.tv $ev] eq {}} { lappend ux_bnd "$pane$ev" }
+      }
+    }
+    check "UX1499a all three panes carry the hover binding -- there were ZERO <Motion>/<Enter> bindings anywhere on this window before, which is why the audit's headline finding had no mechanism at all" \
+      $ux_bnd {}
+    set ux_mc [ux_item $uxv MCVAR]
+    set ux_sh [ux_item $uxv SHORT]
+    set ux_f  [ase::ui::cell_font $uxv]
+    set ux_ink [font measure $ux_f [$uxv set $ux_mc value]]
+    set ux_w   [$uxv column value -width]
+    check "UX1499a2 the fixture really is clipped in this window -- the row that keeps the three below from passing on a window wide enough to show everything" \
+      [expr {$ux_ink > $ux_w}] 1
+    set ux_p [ux_xy $uxv $ux_mc value]
+    if {[llength $ux_p] != 2} {
+      puts "SKIPPED: UX1499a3-a6 (the vars pane never mapped a cell bbox)"
+    } else {
+      lassign $ux_p ux_cx ux_cy
+      check "UX1499a3 HOVERING A CUT CELL RESOLVES THE WHOLE STRING: the Monte Carlo variable becomes readable without dragging a divider or opening the row editor" \
+        [ase::ui::cell_tip_text $uxv $ux_cx $ux_cy] {agauss(1.8, 'ABSVAR*1.8', 3)}
+      check "UX1499a4 ...and the same text is what the <Motion> handler schedules, so the binding and the resolver agree" \
+        [ase::ui::tip_motion $uxv $ux_cx $ux_cy] {agauss(1.8, 'ABSVAR*1.8', 3)}
+      set ux_p2 [ux_xy $uxv $ux_sh value]
+      check "UX1499a5 A CELL THAT FITS GETS NOTHING -- the anti-vacuity contract; a tooltip on every cell is the failure mode, not the feature" \
+        [expr {[llength $ux_p2] == 2 ? [ase::ui::cell_tip_text $uxv [lindex $ux_p2 0] [lindex $ux_p2 1]] : {SKIP}}] {}
+      check "UX1499a6 the heading strip is not a cell and offers no tip" \
+        [ase::ui::cell_tip_text $uxv $ux_cx 2] {}
+      ## THE GATE IS PIXELS, NOT A CHARACTER COUNT, and these two rows are what
+      ## tells those two rules apart. WIDE is 20 characters of wide ink; NARROW
+      ## is 22 characters of narrow ink. A pixel rule tips WIDE and not NARROW;
+      ## ANY character-count rule -- including `output_display_name`'s own
+      ## 24-character one, which is the truncation idiom already shipped in this
+      ## window -- answers both of them the other way round.
+      ##
+      ## ⚠ NOT TESTED BY DRAGGING A COLUMN, and that is a measurement: the vars
+      ## `value` column is `-stretch 1`, so ttk redistributes a widened column
+      ## straight back to the viewport on the next update, and `-minwidth` (the
+      ## heading's own ink, issue 1398) floors a narrowed one. A drag in either
+      ## direction silently proves nothing.
+      set ux_wi [ux_item $uxv WIDE]
+      set ux_na [ux_item $uxv NARROW]
+      set ux_pw [ux_xy $uxv $ux_wi value]
+      set ux_pn [ux_xy $uxv $ux_na value]
+      set ux_tw [expr {[llength $ux_pw] == 2 ? [ase::ui::cell_tip_text $uxv [lindex $ux_pw 0] [lindex $ux_pw 1]] : {SKIP}}]
+      set ux_tn [expr {[llength $ux_pn] == 2 ? [ase::ui::cell_tip_text $uxv [lindex $ux_pn 0] [lindex $ux_pn 1]] : {SKIP}}]
+      set ux_inkw [font measure $ux_f [$uxv set $ux_wi value]]
+      set ux_inkn [font measure $ux_f [$uxv set $ux_na value]]
+      check "UX1499a7 the gate is PIXELS and not a character count: 20 characters of wide ink (${ux_inkw}px) owe their text while 22 characters of narrow ink (${ux_inkn}px) do not -- the pair a character rule, including this window's own 24-char Name truncation, answers exactly backwards" \
+        [list [expr {$ux_tw ne {}}] $ux_tn \
+              [expr {$ux_inkw > $ux_w && $ux_inkn < $ux_w}]] {1 {} 1}
+    }
+    ## the status bar's name-bearing segments
+    check "UX1499a8 a status segment that fits offers nothing" \
+      [ase::ui::label_tip_text $uxtop.status.state] {}
+    catch {wm geometry $uxtop 520x520}
+    update ; after 250 ; update
+    set ux_narrow [ase::ui::label_tip_text $uxtop.status.state]
+    catch {wm geometry $uxtop 798x520}
+    update ; after 150 ; update
+    if {$ux_narrow eq {} } {
+      puts "SKIPPED: UX1499a9 (this window manager never squeezed the status segment; a clip cannot be measured without one)"
+    } else {
+      check "UX1499a9 ...and the same segment squeezed to a fraction of its text offers the whole of it -- measured, 188px of text in 72px of label at 520px of window" \
+        $ux_narrow {State: ngspice_state_ux1499}
+    }
+    ## ⚠ THE LAST SEGMENT IS THE ONE PLAN.md NAMES, and it was the one left out.
+    ## The bar packs `win sep1 stat sep2 temp sep3 sim sep4 state sep5 health`,
+    ## so `health` is last; stage 3(i) authorises "the status bar's last
+    ## segment" and the first cut of this work armed `sim` and `state` instead.
+    ## All three are armed now. The row below it is the anti-vacuity half: an
+    ## EMPTY segment -- which is what `health` is on all 104 committed benches,
+    ## because none of them sets `runhealth` -- owes nothing, so arming it costs
+    ## a user who never asked for the counters exactly nothing.
+    set ux_segarm {}
+    foreach _s {sim state health} {
+      lappend ux_segarm [expr {[bind $uxtop.status.$_s <Motion>] ne {} &&
+                               [bind $uxtop.status.$_s <Leave>]  ne {}}]
+    }
+    check "UX1499a9b the status bar's LAST segment is armed too -- `health`, the one PLAN.md stage 3(i) actually names, alongside the two name-bearing ones" \
+      $ux_segarm {1 1 1}
+    check "UX1499a9c ...and an EMPTY segment owes nothing however it is hovered: health carries no text until a run asks for the counters, so arming it is invisible on every bench that never did" \
+      [list [$uxtop.status.health cget -text] \
+            [ase::ui::label_tip_text $uxtop.status.health]] {{} {}}
+    ## the Simulators dialog's Program column: a real ngspice path measured
+    ## 371px of ink in a 324px column
+    set uxsd [ase::ui::simulators_dialog $uxkey]
+    update
+    check "UX1499a10 the Simulators dialog's table is armed too -- its Program column is where a full simulator path is cut" \
+      [expr {[bind $uxtop.simdlg.tv <Motion>] ne {} && [bind $uxtop.simdlg.tv <Leave>] ne {}}] 1
+    catch {destroy $uxtop.simdlg}
+    update
+
+    ## ⚠ WHICH ANCHOR THE TIP ASKS FOR. The rendered balloon is not drivable
+    ## from a script -- `balloon_show` returns early unless the X pointer is
+    ## PHYSICALLY over the widget -- but the ARGUMENT is, and that is the part
+    ## that carries the rule. `balloon_clipped`'s header (src/xschem.tcl, issue
+    ## 1368) records `pos 1` for a clipped LABEL, measured, and gives the reason
+    ## as a status bar on the bottom edge of its window, where the vertical FLIP
+    ## is load-bearing; a moved `pos 0` tip was measured landing under the
+    ## pointer and flickering 25 times in 1.5 s. A treeview CELL keeps `pos 0`,
+    ## because `pos 1` anchors at the whole table's corner rather than the row
+    ## under the pointer. Shim, don't hover: the shim records the call the
+    ## handler makes without needing a real pointer.
+    rename ::balloon_show ::ux1499_saved_balloon
+    set ::UX1499_POS {}
+    proc ::balloon_show {w arg pos} { lappend ::UX1499_POS [list [winfo class $w] $pos] }
+    ase::ui::tip_show $uxv {agauss(1.8, 'ABSVAR*1.8', 3)}
+    ase::ui::tip_show $uxtop.status.state {State: something long}
+    ase::ui::tip_show $uxtop.status.health {Health: something long}
+    set ux_pos $::UX1499_POS
+    catch {rename ::balloon_show {}}
+    rename ::ux1499_saved_balloon ::balloon_show
+    check "UX1499a11 a clipped LABEL asks for the WIDGET anchor and a clipped treeview CELL for the POINTER anchor: the status bar sits on the bottom edge of its window, which is where balloon_show's vertical flip is load-bearing (issue 1368), while a cell tip anchored at the whole table's corner would point nowhere near the row under the pointer" \
+      $ux_pos {{Treeview 0} {Label 1} {Label 1}}
+
+    # --- UX1499b: the log window's horizontal scrollbar ----------------------
+    set uxlw [ase::ui::log_open $uxkey]
+    update ; after 120 ; update
+    check "UX1499b1 the log window has a horizontal bar at last: the ngspice invocation -- the answer to the only question anybody asks when a run fails -- was 137 characters against a 84-column widget with no bar and no affordance saying it scrolled" \
+      [list [winfo exists $uxlw.hsb] [$uxlw.hsb cget -orient] [$uxlw.hsb cget -command]] \
+      [list 1 horizontal "$uxlw.t xview"]
+    check "UX1499b2 ...wired through the pane's OWN auto-hide producer, not a second copy of it" \
+      [$uxlw.t cget -xscrollcommand] [list ase::ui::hscroll_autohide $uxlw]
+    ## `winfo manager` of a `grid remove`d widget is {} -- which is itself the
+    ## contract: the bar is BUILT and HIDDEN on an empty log, not created later.
+    check "UX1499b3 the two widget paths three suites address are unchanged, the pack->grid move that lets the bar auto-hide really happened, and the bar starts hidden on an empty log" \
+      [list [winfo exists $uxlw.t] [winfo exists $uxlw.sb] [winfo manager $uxlw.t] \
+            [winfo manager $uxlw.sb] [winfo ismapped $uxlw.hsb]] {1 1 grid grid 0}
+    check "UX1499b4 `-wrap none` and `-width 84` are UNTOUCHED: wrapping destroys the column alignment of simulator output, and re-deriving the width from the font -- which the plan asked for -- makes the window WIDER after issue 1398 cut the mono advance to 8px" \
+      [list [$uxlw.t cget -wrap] [$uxlw.t cget -width]] {none 84}
+    catch {wm geometry $uxlw 700x300}
+    update ; after 150 ; update
+    ase::ui::log_append $uxkey "short line\n"
+    update ; after 100 ; update
+    set ux_short [winfo ismapped $uxlw.hsb]
+    ase::ui::log_append $uxkey "command : /home/analog/dev/ngspice/bin/ngspice -b -D casemode=preserve -r /tmp/x/nfet_clean_ase.raw /tmp/x/nfet_clean_ase.spice\n"
+    update ; after 200 ; update
+    check "UX1499b5 IT APPEARS ONLY WHEN IT IS OWED: unmapped while every line fits, mapped once a 137-char command line does not" \
+      [list $ux_short [winfo ismapped $uxlw.hsb]] {0 1}
+    catch {destroy $uxlw}
+    update
+
+    # --- UX1499c: the per-pane bar that shipped with 1398 and was never pinned
+    ## RETRO-PIN. Three shipped procs (build_pane's bar, the auto-hide callback,
+    ## retune_columns) had ZERO coverage anywhere in tests/, which is how the
+    ## rename to hscroll_autohide could have gone unnoticed. Cheap, and it makes
+    ## the one-producer property above a measured fact rather than a comment.
+    set ux_ph {}
+    foreach pane {vars ana outs} {
+      set pf $uxtop.body.$pane
+      if {![winfo exists $pf.hsb]} { lappend ux_ph "$pane: no bar" ; continue }
+      if {[$pf.tv cget -xscrollcommand] ne [list ase::ui::hscroll_autohide $pf]} {
+        lappend ux_ph "$pane: not wired to the shared producer"
+      }
+      if {[$pf.hsb cget -orient] ne {horizontal}} { lappend ux_ph "$pane: wrong orient" }
+    }
+    check "UX1499c1 all three panes carry a horizontal bar on the same producer the log window uses" $ux_ph {}
+    ## the callback's own contract, driven directly: it maps on a change of
+    ## state and only on a change -- the guard that stops a mapping cascading
+    ## through its own -xscrollcommand.
+    set uxpf $uxtop.body.vars
+    ase::ui::hscroll_autohide $uxpf 0.0 1.0
+    update
+    set ux_fits [winfo ismapped $uxpf.hsb]
+    ase::ui::hscroll_autohide $uxpf 0.0 0.5
+    update
+    set ux_over [winfo ismapped $uxpf.hsb]
+    ase::ui::hscroll_autohide $uxpf 0.0 1.0
+    update
+    check "UX1499c2 the auto-hide contract, driven at the callback: nothing off-screen -> no bar, something off-screen -> a bar, and back" \
+      [list $ux_fits $ux_over [winfo ismapped $uxpf.hsb]] {0 1 0}
+
+    ase::ui::close $uxkey
+    catch {ase::session_close $uxkey}
+    update
+  }
+
+ } ux_bigerr]} {
+  puts "UNEXPECTED ERROR (UX1498/UX1499 block): $ux_bigerr"
+  incr fail
+ }
+} else {
+  puts "UX1498/UX1499 legs skipped (no DISPLAY)"
 }
 
 # --- verdict -----------------------------------------------------------------

@@ -678,6 +678,11 @@ proc ase::ui::open {key lib cell view} {
   bind $top <Control-w> [list ase::ui::close_request $key]
   bind $top <Control-W> [list ase::ui::close_request $key]
   ase::ui::build $key $top
+  # issue 1498: the Outputs Value column reads whatever this session's rundir
+  # already holds, BEFORE the first paint, so `populate` renders the numbers in
+  # one pass rather than blanking and refilling. A session with no usable raw
+  # gets an empty dict here and the column stays blank, exactly as before.
+  ase::ui::results_refill $key
   ase::ui::populate $key
   # item 14 (D6): a state saved with its viewer open relaunches the viewer —
   # FRESH-open only, deliberately not the ase::open_state raise arm
@@ -1171,6 +1176,16 @@ proc ase::ui::build {key top} {
   pack $top.status.win $top.status.sep1 $top.status.stat $top.status.sep2 \
        $top.status.temp $top.status.sep3 $top.status.sim $top.status.sep4 \
        $top.status.state $top.status.sep5 $top.status.health -side left
+  ## issue 1499: the segments that carry a NAME or a built string rather than a
+  ## single word are the ones long enough to be cut. `sim` and `state` are the
+  ## last packed before `health`, so a narrow window takes them first; `health`
+  ## is the LAST segment, which is the one PLAN.md stage 3(i) names, and it is a
+  ## built string ("<prefix> <n> <name>, <n> <name>, ...") so it is clippable
+  ## too. `label_clipped` is the gate and `label_tip_text` returns {} for an
+  ## empty `-text`, so on the 104 committed benches -- none of which set
+  ## `runhealth`, so none of which ever fills this label -- arming it changes
+  ## nothing a user can see. A segment that fits still offers nothing.
+  foreach _seg {sim state health} { ase::ui::tip_attach $top.status.$_seg }
   pack $top.status -side bottom -fill x -pady 2
 
   # right vertical action strip (spec "Action strip"): text placeholders,
@@ -1308,6 +1323,13 @@ proc ase::ui::colw {n head} {
 
 # Show the horizontal scrollbar only while there is something off-screen.
 #
+# ⚠ TWO CONSUMERS, ONE PRODUCER, AND THE NAME SAYS SO SINCE ISSUE 1499. It was
+# `pane_hscroll` while `build_pane` was its only caller; `ase::ui::log_open`
+# now wires the same callback, because the log window's bar wants the identical
+# auto-hide contract (and the identical cascade guard below) and a second copy
+# would drift. All it requires of a caller is a widget `$w` whose bar is
+# `$w.hsb` and which is GRIDDED -- both panes and the log window are.
+#
 # ⚠ THIS EXISTS BECAUSE ISSUE 1398's COLUMN POLICY CAN OVERFLOW THE PANE.
 # The shipped code gave every column -stretch 1, so a narrow window shrank them
 # all and clipped the text in place — ugly, but every column stayed reachable.
@@ -1321,7 +1343,7 @@ proc ase::ui::colw {n head} {
 # The `need != shown` guard is load-bearing, not tidiness: mapping a scrollbar
 # changes the treeview's width, which fires -xscrollcommand again. Acting only
 # on a CHANGE of state ends the cascade after one step.
-proc ase::ui::pane_hscroll {pf first last} {
+proc ase::ui::hscroll_autohide {pf first last} {
   catch {$pf.hsb set $first $last}
   if {![winfo exists $pf.hsb]} { return }
   set need  [expr {$first > 0.0 || $last < 1.0}]
@@ -1364,6 +1386,160 @@ proc ase::ui::retune_columns {top} {
   }
 }
 
+# ─── A CELL TOO NARROW FOR ITS TEXT NOW SAYS SO WHEN YOU HOVER IT ───────────
+# (issue 1499, PLAN.md stage 3(i) -- the half of that stage that needs no
+# ruling. The visible `…` is the other half and is ⚖ R-U1, unanswered.)
+#
+# ⚠ THE AUDIT'S HEADLINE FINDING, AND NOTHING IN THE TREE REACHED IT. Measured
+# 2026-09-21 at the user's own `ase_font_size 12`: a Monte Carlo variable
+# `agauss(1.8, 'ABSVAR*1.8', 3)` is 244 px of ink in a 143 px column, cut
+# mid-token, and the sigma reference and sigma count are exactly the characters
+# that fall off. Zero <Motion>/<Enter> bindings existed on any of the three
+# panes, on the Simulators dialog's Program column or on the status bar, so the
+# only ways to read that value were to drag the column divider or open the row
+# editor.
+#
+# ⚠ AND THE SHIPPED PANE SCROLLBAR CANNOT CLOSE IT -- measured, not argued. At
+# 798 px the vars viewport is 246 px against 244 px of columns, so
+# `hscroll_autohide` correctly leaves the bar UNMAPPED while the cell's ink
+# overflows its own column. Scrolling a pane slides the viewport across the
+# columns; it never widens one. The two defects are orthogonal.
+#
+# ⚠ ONE RENDERER, NOT A SECOND TOOLTIP MECHANISM. `balloon_show`
+# (src/xschem.tcl) is the tree's balloon and is reached here exactly as
+# `ase::ui::rsel_tip_show` reaches it. What is new is the TEXT RESOLVER: a
+# treeview cell is not a widget, so `balloon`'s attach-time string and
+# `balloon_clipped`'s per-WIDGET gate cannot carry it. A label still goes
+# through `label_clipped`, the tree's own gate, rather than a second copy.
+#
+# ⚠ DECLARED LIMIT, inherited from `rsel_tip`: `balloon_show` returns early
+# unless the X pointer is physically over the widget, so the rendered balloon is
+# not drivable from a script. What IS driven, and what the suite rows assert, is
+# the text this family resolves and the bindings that reach it. The pixels are
+# an eyeball debt.
+#
+# The ink margin below which a tip is not worth showing. A ttk cell reserves a
+# few pixels of padding that `font measure` does not know about, so the gate is
+# `ink + cellpad > width`: the failure direction is a tip on a cell that only
+# just fits, never a missing tip on a cell that is cut.
+variable ase::ui::cellpad 6
+
+# The font a treeview actually paints its cells in, resolved through its own
+# style so it follows `ase_font_size` instead of naming a font here.
+proc ase::ui::cell_font {W} {
+  set f {}
+  catch {set f [ttk::style lookup [$W cget -style] -font]}
+  if {$f eq {}} { catch {set f [ttk::style lookup Treeview -font]} }
+  if {$f eq {}} { set f TkDefaultFont }
+  return $f
+}
+
+# The FULL text of the cell under (x,y) when it does not fit its column, else
+# {}. The {} arm is the anti-vacuity contract: a tooltip on every cell is the
+# failure mode, not the feature.
+proc ase::ui::cell_tip_text {W x y} {
+  variable cellpad
+  if {[catch {winfo exists $W} e] || !$e} { return {} }
+  set reg {}
+  catch {set reg [$W identify region $x $y]}
+  if {$reg ne {} && $reg ne {cell}} { return {} }
+  set item {} ; set dc {}
+  catch {set item [$W identify row $x $y]}
+  catch {set dc   [$W identify column $x $y]}
+  if {$item eq {} || $dc eq {}} { return {} }
+  set col {}
+  catch {set col [$W column $dc -id]}
+  if {$col eq {}} { return {} }
+  set txt {}
+  catch {set txt [$W set $item $col]}
+  if {[string trim $txt] eq {}} { return {} }
+  set wpx 0
+  catch {set wpx [$W column $col -width]}
+  if {$wpx <= 1} { return {} }
+  set ink 0
+  if {[catch {font measure [ase::ui::cell_font $W] $txt} ink]} { return {} }
+  if {$ink + $cellpad <= $wpx} { return {} }
+  return $txt
+}
+
+# The same question for a LABEL (the status bar's segments), through the tree's
+# own `label_clipped` gate rather than a second measurement.
+proc ase::ui::label_tip_text {W} {
+  if {[catch {winfo exists $W} e] || !$e} { return {} }
+  set txt {}
+  catch {set txt [$W cget -text]}
+  if {[string trim $txt] eq {}} { return {} }
+  if {[catch {label_clipped $W $txt} c] || !$c} { return {} }
+  return $txt
+}
+
+# What, if anything, is owed at this point of this widget.
+proc ase::ui::tip_text {W x y} {
+  if {[catch {winfo class $W} cls]} { return {} }
+  if {$cls eq {Treeview}} { return [ase::ui::cell_tip_text $W $x $y] }
+  return [ase::ui::label_tip_text $W]
+}
+
+# ⚠ THE ANCHOR IS CHOSEN BY CLASS, the same split `tip_text` already makes, and
+# it is not a style preference.
+#
+#  * A TREEVIEW CELL is pointer-anchored (`pos 0`). The tip belongs to one CELL,
+#    and `pos 1` anchors at the whole table's bottom-left corner -- which for an
+#    eight-row pane can be a long way from the row being hovered.
+#  * A LABEL is widget-anchored (`pos 1`). `balloon_clipped`'s own header
+#    (src/xschem.tcl, issue 1368) records this as MEASURED and gives the reason
+#    in terms of a status bar: "A status bar sits on the bottom edge of its
+#    window, which is exactly where balloon_show's vertical FLIP is
+#    load-bearing", after a moved `pos 0` tip was seen landing under the
+#    pointer, destroyed by its own <Leave>, and flickering 25 times in 1.5 s.
+#    ASE-L's bar is `pack -side bottom`, so it is that widget.
+#
+# The neighbouring `rsel_tip_show` passes 0, and that is NOT a precedent for the
+# labels: it is bound to `$f.tv`, a Treeview, so it is the same answer this proc
+# gives for that class. What the rendered balloon does is not drivable from a
+# script (the declared limit), but WHICH ANCHOR IS ASKED FOR is -- row UX1499a11
+# pins it by shimming `balloon_show`.
+proc ase::ui::tip_show {W txt} {
+  set pos 1
+  if {![catch {winfo class $W} cls] && $cls eq {Treeview}} { set pos 0 }
+  catch {balloon_show $W $txt $pos}
+}
+
+proc ase::ui::tip_cancel {W} {
+  variable tip
+  if {[info exists tip($W,id)]} {
+    catch {after cancel $tip($W,id)}
+    unset tip($W,id)
+  }
+  catch {unset tip($W,txt)}
+  catch {destroy $W.balloon}
+  return 1
+}
+
+# <Motion>: resolve, and reschedule ONLY on a change -- the same
+# no-op-when-nothing-changed discipline `balloon_clipped`'s header records,
+# because a Motion handler that re-arms on every pixel cancels its own pending
+# balloon forever and the tip never appears.
+proc ase::ui::tip_motion {W x y} {
+  variable tip
+  set txt [ase::ui::tip_text $W $x $y]
+  if {[info exists tip($W,txt)] && $tip($W,txt) eq $txt} { return $txt }
+  ase::ui::tip_cancel $W
+  set tip($W,txt) $txt
+  if {$txt eq {}} { return {} }
+  set tip($W,id) [after 700 [list ase::ui::tip_show $W $txt]]
+  return $txt
+}
+
+# Arm one widget. Instance bindings, so the Treeview class bindings (hover
+# highlight, selection) keep running: no `break` anywhere in this family.
+proc ase::ui::tip_attach {W} {
+  bind $W <Motion>  [list ase::ui::tip_motion %W %x %y]
+  bind $W <Leave>   [list ase::ui::tip_cancel %W]
+  bind $W <Destroy> [list ase::ui::tip_cancel %W]
+  return $W
+}
+
 proc ase::ui::build_pane {key top pane columns headings policy} {
   variable colpolicy
   set pf $top.body.$pane
@@ -1384,7 +1560,7 @@ proc ase::ui::build_pane {key top pane columns headings policy} {
   set colpolicy($pf.tv) [list $columns $headings $policy]
   scrollbar $pf.sb  -orient vertical   -command [list $pf.tv yview]
   scrollbar $pf.hsb -orient horizontal -command [list $pf.tv xview]
-  $pf.tv configure -xscrollcommand [list ase::ui::pane_hscroll $pf]
+  $pf.tv configure -xscrollcommand [list ase::ui::hscroll_autohide $pf]
   # ⚠ GRID, NOT PACK, AND THE REASON IS THE HORIZONTAL BAR. `grid remove`
   # remembers the cell, so the bar can appear and vanish without re-deriving a
   # layout; the pack equivalent has to re-pack inside an -xscrollcommand
@@ -1397,6 +1573,8 @@ proc ase::ui::build_pane {key top pane columns headings policy} {
   grid remove $pf.hsb
   grid rowconfigure    $pf 0 -weight 1
   grid columnconfigure $pf 0 -weight 1
+  # issue 1499: hovering a cell too narrow for its text shows the whole string
+  ase::ui::tip_attach $pf.tv
   # multi-select within ONE pane: selecting here clears the other panes
   bind $pf.tv <<TreeviewSelect>> [list ase::ui::pane_selected $key $pane]
   # checkbox cells: a click on an Enable/Plot/Save cell flips the flag and
@@ -2219,6 +2397,89 @@ proc ase::ui::refresh_output_values {key} {
     catch {$tv set $i value [ase::format_value $val]}
     incr i
   }
+}
+
+# ─── THE VALUE COLUMN READS THE ANSWERS OFF DISK (issue 1498, PLAN.md F2) ────
+#
+# ⚠ `run_finished` WAS THE ONLY WRITER OF THE `results` SESSION ATTR, so the
+# Outputs Value column could only ever show a run THIS PROCESS made. Measured
+# 2026-09-21 on a fixture whose raw holds `v(vbg) = 1.177085`: `ase::has_results`
+# answers 1, the backend's own reader answers `VBG 1.177085e+00`, and the cell
+# renders {}. Open yesterday's bench and the column the window exists to show is
+# blank, with the number sitting on disk one proc call away.
+#
+# ⚠ AND THE BLANK CELL WAS THE HARMLESS HALF. `ase::session_update` replaces the
+# `state` sub-key; `results` is a SIBLING sub-key and survived a Load State
+# untouched. Measured on the same fixture: a session showing `10` still showed
+# `10` after loading a state whose own raw holds 0.812345 -- under the same
+# output NAME, with nothing on screen to say so. In a corner sweep, where states
+# share output names by construction, that is the PREVIOUS corner's answer read
+# as this corner's. Same silent-wrong-data class as issue 0838, which is why
+# this proc is called on LOAD as well as on OPEN and why it OVERWRITES rather
+# than fills: when disk has nothing to say, the attr is CLEARED.
+#
+# ⚠ GATED ON `ase::has_results`, WHICH IS NOT `file exists`. It already refuses
+# a raw older than the deck it claims to describe (0838), so a number that
+# reaches the column is current by construction -- which is what makes a
+# "stale result" marker unnecessary rather than merely unbuilt.
+#
+# ⚠ IT CALLS THE REGISTERED `result_probe` HOOK, not the ngspice-internal
+# readers beside it. The partition below decides only whether the LOG has to be
+# read at all; the hook re-partitions and owns the rule. Reaching into
+# `ase::backend::ngspice::result_probe_raw` from here would hardcode one backend
+# into the UI and fork the rule that issue 1429 spent a batch unifying.
+#
+# ⚠ AND IT IS SILENT, THROUGH `ase::quiet`. The readers narrate the run they are
+# reading; on an OPEN there was no run, so every one of those sentences would be
+# a statement about something that did not happen, repeated on every open and
+# every Load State. Muting the narration is what keeps this change invisible
+# except for the numbers -- and therefore what keeps it off the ruling queue.
+#
+# ⚠ THE LOG IS READ ONLY WHEN A ROW NEEDS IT. A simulation log can be tens of
+# megabytes and this runs on every window open; a bench whose rows are all
+# single vectors never opens it.
+proc ase::ui::results_from_disk {key} {
+  if {![ase::session_exists $key]} { return [dict create] }
+  if {![ase::has_results $key]}    { return [dict create] }
+  set st [ase::session_state $key]
+  if {$st eq {}} { return [dict create] }
+  set sim [ase::state_get $st simulator ngspice]
+  set needlog 0
+  foreach o [ase::state_get $st outputs] {
+    if {![dict exists $o expr]} { continue }
+    if {[catch {ase::result_source $sim [dict get $o expr]} src]} { set src log }
+    if {$src ne {raw}} { set needlog 1 }
+  }
+  set logtext {}
+  if {$needlog} {
+    catch {
+      set lf [[ase::backend_hook $sim log_file] $st]
+      if {$lf ne {} && [file isfile $lf]} {
+        ## ::open / ::close -- inside ase::ui a bare `open` reaches
+        ## ase::ui::open and a bare `close` reaches ase::ui::close (issue 1461).
+        set fh [::open $lf r]
+        set logtext [read $fh]
+        ::close $fh
+      }
+    }
+  }
+  set res [dict create]
+  catch {
+    set res [ase::quiet {[ase::backend_hook $sim result_probe] $st $logtext}]
+  }
+  if {[catch {dict size $res}]} { return [dict create] }
+  return $res
+}
+
+# Re-read the answers and repaint the column. The ONE call site shape: every
+# caller that changes WHICH run the window is looking at calls this, and the
+# attr is written even when the answer is empty -- clearing is the whole point
+# on the Load State path.
+proc ase::ui::results_refill {key} {
+  set res [ase::ui::results_from_disk $key]
+  ase::session_setattr $key results $res
+  ase::ui::refresh_output_values $key
+  return $res
 }
 
 # Return/FocusOut on the toolbar temperature entry: numeric -> straight into
@@ -9296,6 +9557,9 @@ proc ase::ui::simulators_dialog {key} {
                     -anchor $anchor -stretch $stretch
   }
   scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  # issue 1499: a real ngspice path measured 371 px of ink in this dialog's
+  # 324 px Program column, so the one string this dialog exists to show was cut.
+  ase::ui::tip_attach $w.tv
   label $w.usel -text {Use this one:} -anchor w
   ttk::combobox $w.use -state readonly -font AseEntryFont \
     -style Ase.TCombobox -textvariable ase::ui::simuse($key)
@@ -11185,7 +11449,16 @@ proc ase::ui::load_state_commit {key st} {
   if {!$rc} {
     catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
  was NOT imported." error}
+    return $rc
   }
+  ## ⚠ issue 1498: THE IMPORTED STATE'S ANSWERS, OR NONE. `session_update`
+  ## replaces the `state` sub-key and `results` is a SIBLING, so before this
+  ## line the previous state's numbers survived the import and were rendered
+  ## under the NEW state's output names -- measured, `10` still on screen after
+  ## loading a state whose own raw holds 0.812345. `results_refill` overwrites
+  ## from the imported state's own rundir, so a state with no usable raw CLEARS
+  ## the column instead of inheriting one.
+  ase::ui::results_refill $key
   return $rc
 }
 
@@ -12008,11 +12281,41 @@ proc ase::ui::log_open {key} {
   }
   toplevel $lw
   wm title $lw "Simulation Log \u2014 [ase::ui::design_cell_name $key]"
+  ## \u2500\u2500\u2500 THE LINE THAT ANSWERS "WHY DID IT FAIL" RAN OFF THE RIGHT EDGE \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  ## (issue 1499, PLAN.md stage 3(ii)). `command : .../ngspice -b -D
+  ## casemode=preserve ...` measured 137 characters against `-width 84`, so 39%
+  ## of the one line anybody opens this window for was off-screen.
+  ##
+  ## \u26a0 IT WAS UNDISCOVERABLE, NOT UNREACHABLE, and the distinction is the whole
+  ## design. Measured on the shipped widget: Text's own class bindings carry
+  ## <Shift-MouseWheel>/<Shift-Button-4/5> and they work on a DISABLED text --
+  ## `xview` moved 0.0 -> 0.0456 on one wheel event. So nothing was trapped;
+  ## there was simply no bar, no affordance and nothing saying the widget
+  ## scrolls sideways. A visible bar is the affordance.
+  ##
+  ## \u26a0 `-wrap none` STAYS: wrapping destroys the column alignment of simulator
+  ## output, which is the other reason this window exists.
+  ## \u26a0 `-width 84` STAYS TOO, and that is a correction to the plan, which asked
+  ## for a font-derived width "worth ~115 columns in the same pixels". That
+  ## arithmetic was spent by issue 1398: the mono advance is now 8 px at size 10
+  ## and 10 px at size 12, so re-deriving 84 columns makes the window WIDER --
+  ## the direction `2f1fad58` exists to correct.
+  ##
+  ## \u26a0 GRID, NOT PACK, FOR THE SAME REASON build_pane IS GRIDDED: `grid remove`
+  ## remembers the cell, so the bar can appear and vanish without re-deriving a
+  ## layout, and the auto-hide callback is the pane's own (one producer). The
+  ## two widget PATHS three suites address -- $lw.t and $lw.sb -- are unchanged.
   text $lw.t -height 24 -width 84 -state disabled -wrap none \
-       -yscrollcommand [list $lw.sb set]
-  scrollbar $lw.sb -orient vertical -command [list $lw.t yview]
-  pack $lw.sb -side right -fill y
-  pack $lw.t -side left -fill both -expand 1
+       -yscrollcommand [list $lw.sb set] \
+       -xscrollcommand [list ase::ui::hscroll_autohide $lw]
+  scrollbar $lw.sb  -orient vertical   -command [list $lw.t yview]
+  scrollbar $lw.hsb -orient horizontal -command [list $lw.t xview]
+  grid $lw.t   -row 0 -column 0 -sticky nsew
+  grid $lw.sb  -row 0 -column 1 -sticky ns
+  grid $lw.hsb -row 1 -column 0 -sticky ew
+  grid remove $lw.hsb
+  grid rowconfigure    $lw 0 -weight 1
+  grid columnconfigure $lw 0 -weight 1
   bind $lw <Control-w> [list destroy $lw]
   bind $lw <Control-W> [list destroy $lw]
   ase::ui::apply_theme $lw

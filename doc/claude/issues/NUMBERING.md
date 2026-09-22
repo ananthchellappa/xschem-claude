@@ -3709,7 +3709,62 @@ stay **open**; each carries an "A7 attempt" section pointing at 1270.
   kept only for FAIL/CRASH/TIMEOUT), so its skips are unrecoverable from the run. Same family
   as **1494**. OPEN.
 
-**The next free number is 1498.**
+~~**The next free number is 1498.**~~
+
+- **1498** — **ASE-L's Outputs Value column never read the answers on disk, and Load State
+  showed the previous state's numbers under the new state's names.** Filed and FIXED by the
+  ASE-L UX batch, stage F2. `ase::ui::run_finished` was the only writer of the `results`
+  session attr, so the column could only ever show a run this process made; MEASURED
+  2026-09-21 with a raw on disk holding `v(vbg) = 1.177085`, `ase::has_results` answered 1,
+  the backend's own reader answered `VBG 1.177085e+00`, and the cell rendered `{}`. The
+  worse half: `results` is a SIBLING sub-key of `state`, so it survived `session_update` and
+  a Load State showed `10` after loading a state whose own raw holds 0.812345 — the
+  corner-sweep case, silent wrong data, same class as **0838**. Fixed by
+  `ase::ui::results_from_disk` / `results_refill` gated on `ase::has_results`, plus
+  `ase::quiet` so the readers' run-time narration is not said on a window open. 20 rows.
+  **⚖ R-U2 open**: should `Results > Select` repoint the column at the selected run?
+
+- **1499** — **ASE-L cut text off mid-glyph with no way to read it, and the simulation log
+  had no horizontal scrollbar.** Filed and PARTIALLY fixed by the ASE-L UX batch, stage 3.
+  MEASURED at the user's own `ase_font_size 12`: 244 px of ink in a 143 px column, zero
+  `<Motion>`/`<Enter>` bindings anywhere on the window, and the 137-character ngspice
+  command line against an 84-column log widget with no bar. The per-pane scrollbar that
+  shipped with **1398** is orthogonal and closes neither (measured). Fixed by a clipped-cell
+  tooltip on the three panes, the Simulators dialog and the status bar, and by a log-window
+  horizontal bar sharing the pane's auto-hide producer (`pane_hscroll` →
+  `hscroll_autohide`). 20 rows, including a retro-pin of 1398's own bar, which had none.
+  **⚖ R-U1 open**: should a cut cell end in a visible `…`, and should the Outputs Name
+  column's 24-character `...` change to match? PARTIAL.
+
+~~**The next free number is 1600.**~~
+
+⚠ **NOTHING WAS LOST BETWEEN 1499 AND 1600.** `1500–1599` is the op-wcard branch's reserved
+band (the table at the head of this file), so **1499 is followed by 1600**. The hundred
+numbers in between are not missing, not skipped by accident, and not available: they belong
+to a checkout this branch cannot see. Do not "reclaim" them.
+
+- **1600** — **One file-scope `catch` swallows 83% of `test_ase_window.tcl`, and the verdict
+  still reads like an ordinary red.** Filed by the ASE-L UX batch's fix round, which named
+  it rather than fixed it. A column-0 `catch` opened above the `H` section closes 3275 lines
+  later (83% of the file at `6a0d1126`) with a handler that prints `UNEXPECTED ERROR:
+  $bigerr` and **names no block**, so a raise anywhere in the `H`/`P`/`L1398`/`W`/`R` body
+  unwinds past every row to that arm and counts one failure. MEASURED: with
+  `ase::ui::results_from_disk` deleted the suite raises at `H4` and prints
+  `RESULT: 3 FAILED (13 passed)` for a suite that runs **333** — at least 317 rows never
+  executed and nothing in the verdict says so. The same proc *stubbed* rather than deleted
+  gives seven named rows and full coverage, which is the whole lesson: a wrong answer is
+  diagnosable, a raise is silent. Same class as **1487** (a verdict that cannot say what it
+  failed to measure), and **1487's fix cannot see it** — a swallowed section emits no
+  `skip:` line, so `skips=0` reads as "nothing lost". The fix round's S3 wrap of one block
+  is the shape of the remedy (A/B: `2 FAILED (63 passed)` un-wrapped → `1 FAILED (318
+  passed)` wrapped, the 15 lost rows being exactly that block's own); 14 suites already use
+  a stronger idiom, a `XX0 section XX ran to the end` check row. **35 of the 406
+  `tests/headless/test_*.tcl` carry the same unnamed whole-body catch, four of them T1
+  cases** — `test_ase_core` (5324 lines), `test_ase_dialogs`, `test_ase_persist`,
+  `test_op_annot`. Not fixed because it is a restructure of a 4000-line suite with a
+  per-block sabotage matrix behind it, not an edit. OPEN.
+
+**The next free number is 1601.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

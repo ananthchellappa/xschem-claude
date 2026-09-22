@@ -312,11 +312,54 @@ namespace eval ase {
 ## stderr is never counted as one (0658 D9), so 0 is the honest answer -- never
 ## a 0 that merely means "I did not check".
 proc ase::echo {msg {tag {}}} {
+  variable quiet_depth
+  ## ⚠ THE MUTE IS READ HERE AND NOWHERE ELSE, so every existing caller keeps
+  ## its contract untouched. 0 is the honest answer for a muted call by the
+  ## same 0652 rule the header states: nothing reached any sink.
+  if {[info exists quiet_depth] && $quiet_depth > 0} { return 0 }
   if {[catch {::xschem::notify_safe $msg $tag} r]} {
     catch {puts stderr "xschem: notice channel unavailable: $r" ; flush stderr}
     return 0
   }
   return $r
+}
+
+# RUN `script` WITH ase::echo SILENCED, AND RESTORE THE CHANNEL WHATEVER HAPPENS.
+#
+# ⚠ IT EXISTS FOR ONE SHAPE: READING ARTIFACTS THE USER DID NOT JUST MAKE.
+# The result readers narrate the run they are reading -- "the results file holds
+# no single-point value for v(out)", "this run: 1 from the file, 0 from the log"
+# -- and those sentences are true of a RUN. Said on a window OPEN, where nothing
+# ran, the same sentences describe a run that did not happen, and they would be
+# said again on every Load State. The numbers are still read; only the narration
+# is dropped. See ase::ui::results_from_disk, the one caller (issue 1498).
+#
+# ⚠ A COUNTER, NOT A FLAG. A nested quiet block must not un-mute its caller on
+# the way out, and the counter is restored on the error path too, so a raise
+# inside `script` cannot leave the application mute for the rest of the session.
+# The failure direction is deliberately "a message is printed that need not be",
+# never "an error is swallowed" -- the error itself propagates untouched, and
+# `-options` carries its stack trace rather than re-raising a flattened copy.
+#
+# ⚠ IT MUTES ase::echo ONLY. `puts stderr`, the action log's own writers and
+# every raise are unaffected: this is not a general silencer and must not become
+# one. Nothing in this file may call it around a script that can WRITE.
+proc ase::quiet {script} {
+  variable quiet_depth
+  if {![info exists quiet_depth]} { set quiet_depth 0 }
+  incr quiet_depth
+  set rc [catch {uplevel 1 $script} res opts]
+  incr quiet_depth -1
+  if {$quiet_depth < 0} { set quiet_depth 0 }
+  return -options $opts $res
+}
+
+# Is ase::echo muted right now? (The predicate the suites assert against -- a
+# depth that never returns to 0 is the failure this exists to make visible.)
+proc ase::quiet_depth {} {
+  variable quiet_depth
+  if {![info exists quiet_depth]} { return 0 }
+  return $quiet_depth
 }
 
 # dict get with a default (states are open dicts: keys may be absent).

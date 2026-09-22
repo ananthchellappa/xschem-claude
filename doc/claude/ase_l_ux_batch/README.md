@@ -3,7 +3,37 @@
 Asked for: *"a detailed analysis of brokenness in UX of the ASE-L. I think fonts, etc
 could stand to improve. How can we make it slick?"*
 
-Nothing here has been implemented. `src/` is untouched. This is analysis and a proposal.
+⚠ **This line said "Nothing here has been implemented. `src/` is untouched" until
+2026-09-21, and it was false by then.** Three of the plan's items have shipped. Measured
+`git diff --stat 437a3add 2f1fad58 -- src/` at the time the sentence was corrected:
+**+742/−56** across `ase_window.tcl`, `xschem.tcl` and `cadence_style_rc`. What is in the
+tree, and what is not:
+
+| item | status | commits |
+|---|---|---|
+| **1** Save State confirm (issue 1396) | **DONE** | `5fb8f465` |
+| **2** fonts and theme (issue 1398) | **DONE**, in TWO commits | `4ddc4900`, then `2f1fad58` (the size the user called *"noticeably smaller than before"*) |
+| **3** the clip: tooltip + log scrollbar (issue 1499) | **DONE for the ruling-free half**; the visible `…` waits on ⚖ R-U1 | see `LEDGER.md` |
+| **F2** the Value column reads the answers (issue 1498) | **DONE** | see `LEDGER.md` |
+| **F1** one producer for pane and deck | **NO-GO — already delivered** by `ase_analyses_batch` (issues 1417–1474), and past what this plan asked for | — |
+| everything else | not started; **gated on the seventeen rulings R-1…R-17**, which are the user's | — |
+
+⚠ **`PLAN.md` IS STALE AND MUST BE READ AS A CLAIM.** Its baseline is `437a3add`; 299
+commits later `src/ase_window.tcl` is **15 177 lines** against the plan's **7 491** — it
+has more than **doubled** — and **every `:NNNN` in it is wrong** (three spot-checked moved
+by +1 300 to +5 000 lines). Its **proc names all still resolve** — cite by name, never by
+the plan's line numbers. Two of its factual claims are refuted in `receipts/recon.md` §1
+and in issue 1499.
+
+⚠ **This paragraph said "12 000+ lines" until the fix round of 2026-09-21.** True as
+written, and it understated the drift the sentence exists to warn about by 3 000 lines —
+"12 000+" reads as a file that grew by half, and the file has doubled. Measured twice, two
+ways, off `git show 6a0d1126:src/ase_window.tcl` (`wc -l` and `awk 'END{print NR}'`, both
+**15 177**; the file ends in a newline, so the two agree); **15 454** in the working tree
+as the implementer left it and **15 480** after the fix round. `receipts/verify.md` N2
+records 15 170 for `6a0d1126`, which is 7 short — take the number above.
+
+The rest of this file is the original analysis and proposal.
 
 | file | what it is |
 |---|---|
@@ -38,8 +68,23 @@ three of those.
 
 ## Not filed yet, deliberately
 
-`PLAN.md` ends with seventeen rulings. They are **not** in `owed.sh` and no issue has
-been minted, because nothing has shipped and a ledger entry is a record of an unratified
-decision that is already in the tree. When the work starts, they go in as one issue
-(next free number is **1396**, per `doc/claude/issues/NUMBERING.md`) and one
-`owed.sh add rule 1396`, per the ledger's own batching rule.
+`PLAN.md` ends with seventeen rulings. They were **not** in `owed.sh` and no issue had
+been minted, because nothing had shipped and a ledger entry is a record of an unratified
+decision that is already in the tree.
+
+⚠ **That is history now, and the numbers in it are wrong.** Work started: issues **1396**,
+**1397**, **1398**, **1399** were minted and rule debts filed for the first four, and items
+3 and F2 minted **1498** and **1499**. The seventeen R-1…R-17 of `PLAN.md` are still
+unratified and still gate everything they gated. **Two more rulings were raised by the work
+itself and belong in the same queue**, both stated in full in their issue files rather than
+here:
+
+* **⚖ R-U1** (issue 1499) — should a cell too narrow for its text end in a visible `…`, and
+  should the Outputs Name column's fixed 24-character `...` change to match? *Gates
+  nothing:* the tooltip half shipped without it.
+* **⚖ R-U2** (issue 1498) — should `Results > Select` repoint the Outputs Value column at
+  the selected run's numbers, knowing that ASE-L cannot then vouch that they describe the
+  deck on screen?
+
+Neither has been filed with `owed.sh`: the implementing crew is forbidden to write
+`~/.claude` state, so **the driver owes those two `owed.sh add rule` entries.**
