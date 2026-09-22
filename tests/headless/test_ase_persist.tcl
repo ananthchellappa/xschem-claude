@@ -57,7 +57,14 @@
 # scratch dir (the committed tree is never written); state shaping goes ONLY
 # through the public ase::state_load/state_save schema on the CLONE.
 #
-# Runs via full_audit's DEFAULT arm (GUI legs self-SKIP without a usable
+# WHERE THIS RUNS — CORRECTED 2026-09-22 (issue 1600), because the sentence
+# that stood here named only full_audit and the one at the foot of the file
+# said this suite was not in T1 at all. BOTH WERE OUT OF DATE. It has been an
+# `hcases` entry in tests/run_regression.tcl since issue 1413, so T1 runs it
+# `--nogui`: THE 49 HEADLESS CHECKS BELOW ARE A T1 NUMBER and the 153 display
+# ones are not. Discounting a real T1 result is the expensive direction to be
+# wrong in, which is why the correction is here rather than left for later.
+# It also runs on full_audit's DEFAULT arm (GUI legs self-SKIP without a usable
 # DISPLAY; run legs additionally self-SKIP without ngspice — the item-14
 # PROOF run must show ZERO SKIPs on G1-G11).
 #
@@ -69,7 +76,11 @@
 # optional per-row `id` key ON DISK). The display number above read 147 while the
 # arm measured 148 before this group landed; a floor only ever goes up, so it
 # passed while being one behind. Both numbers are re-measured here.
-# Standalone repro from the repo ROOT:
+# Standalone repro from the repo ROOT. ⚠ THE ARMED SPELLING IS THE FIRST ONE:
+# it puts HOME on a throwaway and picks the dev display, so your clipboard,
+# geometry and ~/.xschem/simulations are untouched (CLAUDE.md, "the throwaway
+# test home"). The bare one below it keeps your REAL home.
+#   tests/headless/run_suites.sh [--nogui] test_ase_persist
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_ase_persist.tcl
 # (headless arm: add --nogui)
 
@@ -122,6 +133,79 @@ set repo    [file normalize [file join $here .. ..]]           ;# repo root
 source [file join $here scratch.tcl]
 set scratch [test_scratch ase_persist]
 
+# HOISTED ABOVE EVERY GUARD (issue 1600). These are pure string and path joins
+# that cannot raise, and every section below reads them -- `$key` at 60 sites,
+# `$clonelib`/`$rundir` in the G-legs' fixtures. `ase::session_key` is a string
+# join, not a session lookup, so computing it here costs nothing and means a
+# fixture that fails to build reddens SU0 while the sections below fail on
+# their own subjects instead of on `no such variable`.
+set clonelib   [file join $scratch sky130_tests]
+set rundir     [file normalize [file join $scratch run]]
+set schpath    [file normalize \
+  [file join $clonelib test_nfet_final schematic test_nfet_final.sch]]
+set clonestate [file join $clonelib test_nfet_final ngspice_state1 \
+  test_nfet_final.state]
+set key [ase::session_key sky130_tests test_nfet_final ngspice_state1]
+# model resolution exactly as sky130A/cadence_style_rc sets it
+set ::SKYWATER_MODELS [file join $repo sky130A models libs.tech combined]
+
+# ==========================================================================
+# SECTION GUARDS -- issue 1600.  READ THIS BEFORE ADDING A SECTION.
+# ==========================================================================
+# This file's body used to be ONE column-0 `catch` of 992 lines -- 83% of the
+# file -- whose whole handler was `puts "UNEXPECTED ERROR: $bigerr"; incr fail`.
+# It named nothing.  A raise anywhere in it unwound straight to the bottom,
+# skipped every row in between, counted ONE failure, and let the file run on to
+# a `RESULT:` line that reads exactly like an ordinary small red.
+#
+# MEASURED ON THIS FILE, display arm, forced raise at the head of the old body:
+#   before -- `RESULT: 1 FAILED (2 passed)`,   2 rows of 153, no name, and the
+#             log holds ZERO `FAIL:` lines beside a `RESULT:` claiming one
+#   after  -- `RESULT: 12 FAILED (136 passed)`, 148 rows, FX0/BK0/RS0/AP0 named
+# The `RESULT: N FAILED` beside `N-1` `FAIL:` lines is the signature of an
+# unnamed handler: it does `incr fail` without printing a row.
+#
+# The body is now cut into TWENTY-SEVEN guards carrying the NAMED CHECK ROW
+# idiom already used by `test_ase_core`, `test_ase_dialogs` and fourteen other
+# suites, so a raise costs that section's own rows and no more, and the log
+# carries a row saying WHICH section died and WHAT it raised.  The biggest span
+# a single raise can swallow is 104 lines (R6), down from 992.
+#
+# ⚠ A NEW SECTION GETS ITS OWN GUARD.  Appending rows to the end of an existing
+# one silently widens that section's blast radius, and nothing will say so.
+#
+# ⚠ A `proc` OR A VALUE A LATER SECTION NEEDS MUST BE HOISTED OUT OF ITS
+# DEFINING SECTION'S GUARD -- marked `HOISTED` with the reason -- or one dead
+# section becomes two.  Four hoists exist here: the path/key joins above, the
+# four `r7_*` helpers (section R8 calls two of them), the GUI helper procs, and
+# the `key2`/`persistfile`/`rawfile`/`rawbak`/`cv` block inside the display leg.
+#
+# ⚠ TWO HANDLERS PUT A RENAMED GLOBAL PROC BACK -- R6's (six of them) and
+# G10's.  A raise between a rename and its restore leaves a STUB installed for
+# every section below, which the head-raise sabotage cannot see because a head
+# raise fires before the rename.  MEASURED: with the restore removed from R6's
+# handler, a raise in the middle of R6 takes the run from 139 rows to 47.  And
+# each restore is CONDITIONAL on the saved name existing -- measured, an
+# unconditional `rename ase::session_state {}` deletes the real proc when the
+# raise came first, and the handler then dies inside itself: 15 rows, NO
+# `RESULT:` line, NO `OVERALL:` banner, exit 0.
+#
+# ⚠ THE GUARD ROWS ARE FAILURE-ONLY and that is deliberate: the `check` sits
+# INSIDE the handler, so a green run emits none of them and the check totals are
+# unchanged by this pass (49 headless / 153 display, before and after, row for
+# row).  Giving each guard an `else` arm would turn the guards into a
+# DENOMINATOR -- "27 sections declared, 27 ran to the end" -- but every call
+# site in this corpus is failure-only and a second spelling in one file would be
+# worse than none.  That is item 4 of issue 1600, a corpus-wide pass of its own.
+# ==========================================================================
+
+# --- SU: registry isolation + CLONE of the committed cell --------------------
+# GUARDED (issue 1600): the `file copy` of a committed cell and the library.defs
+# write are the two things here that can actually fail. Unguarded they aborted
+# the interpreter -- no RESULT: line, no OVERALL: banner, which T1 scores as a
+# death and a standalone run reports as silence.
+if {[catch {
+
 ## ISOLATION FROM WHOEVER'S ~/.xschem/ase_simulators IS LIVE (issue 1377).
 test_sim_registry_isolate     ;# issue 1377: the registry below is OURS, not ~/.xschem's
 ## G3s/G6/G7/G8/G10 pin FOLDED net names (`v(d)`); a registered
@@ -129,11 +213,7 @@ test_sim_registry_isolate     ;# issue 1377: the registry below is OURS, not ~/.
 check "ISO1377 the suite runs against an empty simulator registry, not the one in ~/.xschem" \
   [test_sim_registry_state] {0 {} {} path}
 
-# model resolution exactly as sky130A/cadence_style_rc sets it
-set ::SKYWATER_MODELS [file join $repo sky130A models libs.tech combined]
-
 # --- fixture: CLONE the committed cell, scratch registry ---------------------
-set clonelib [file join $scratch sky130_tests]
 file mkdir $clonelib
 file copy [file join $repo sky130A xschem_libs sky130_tests test_nfet_final] \
   $clonelib
@@ -146,13 +226,9 @@ set ::XSCHEM_LIBRARY_DEFS [file join $scratch library.defs]
 set ::library_registry_defs_only 1
 set ::XSCHEM_LIBRARY_PATH {}
 
-set rundir  [file normalize [file join $scratch run]]
-set schpath [file normalize \
-  [file join $clonelib test_nfet_final schematic test_nfet_final.sch]]
-set clonestate [file join $clonelib test_nfet_final ngspice_state1 \
-  test_nfet_final.state]
-set key [ase::session_key sky130_tests test_nfet_final ngspice_state1]
+} suerr]} { check {SU0 section SU (registry isolation + cell clone) ran to the end} "RAISED:$suerr" {} }
 
+# --- FX: hermetic rundir -----------------------------------------------------
 if {[catch {
 
 # hermetic rundir: rewrite the CLONE's state file through the public schema
@@ -161,7 +237,10 @@ set cst [ase::state_load $clonestate]
 dict set cst rundir $rundir
 ase::state_save $clonestate $cst
 
+} fxerr]} { check {FX0 section FX (hermetic rundir shaping) ran to the end} "RAISED:$fxerr" {} }
+
 # --- R1: state_default gained the viewer key ---------------------------------
+if {[catch {
 set d [ase::state_default]
 check "R1 state_default has viewer {}" [dict get $d viewer] {}
 # `cosim` joined in §E of doc/claude/specs/mixed_signal_signal_browser.md. It is
@@ -202,7 +281,10 @@ check "R1 exactly the 23 schema keys" [lsort [dict keys $d]] \
           opstrategy opstate runhealth \
           options includes pre_commands cosim viewer sweep}]
 
+} sderr]} { check {SD0 section R1 ran to the end} "RAISED:$sderr" {} }
+
 # --- R2: viewer round-trip byte-stability ------------------------------------
+if {[catch {
 set vgraphs [list \
   [dict create traces {{expr {i(v1) -1 *} name id vec id color 4}} \
                logx 0 logy 0 x1 {} x2 {} y1 {} y2 {} auto 1] \
@@ -226,7 +308,10 @@ check "R2 open/sharedx/rawfile round-tripped" \
         [dict get [dict get $st2b viewer] sharedx] \
         [dict get [dict get $st2b viewer] rawfile]] {1 0 {}}
 
+} vrerr]} { check {VR0 section R2 ran to the end} "RAISED:$vrerr" {} }
+
 # --- R3: old-state compat (no viewer key) ------------------------------------
+if {[catch {
 set old [dict remove [ase::state_default] viewer]
 dict set old zz_custom {kept 1}
 ase::state_save [file join $scratch r3.state] $old
@@ -243,7 +328,10 @@ check "R3 re-save: viewer {} is the last schema line" \
   [lindex $lines3 end-1] {viewer {}}
 check "R3 re-save: unknown key after it" [lindex $lines3 end] {zz_custom {kept 1}}
 
+} oserr]} { check {OS0 section R3 ran to the end} "RAISED:$oserr" {} }
+
 # --- R4: snapshot closed arms (pure, no window) ------------------------------
+if {[catch {
 check "R4 snapshot: no window + no prev -> {}" [wviewer::snapshot tokR4 {}] {}
 set prevd [dict create open 1 sharedx 1 rawfile {} \
   graphs {{traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {} auto 1}}]
@@ -251,6 +339,30 @@ check "R4 snapshot: no window + prev -> open flipped to 0" \
   [wviewer::snapshot tokR4 $prevd] [dict replace $prevd open 0]
 check "R4 snapshot closed arm KEEPS the graphs" \
   [dict get [wviewer::snapshot tokR4 $prevd] graphs] [dict get $prevd graphs]
+
+} snerr]} { check {SN0 section R4 ran to the end} "RAISED:$snerr" {} }
+
+# ⚠ R6 RENAMES SIX REAL PROCS ASIDE AND INSTALLS STUBS, so its guard cannot just
+# report: a raise between the renames at the head of R6 and the restore at its
+# foot would leave `ase::session_state` returning a canned dict and
+# `wviewer::restore` doing nothing FOR EVERY SECTION BELOW -- G2's plot_sim_type
+# row, G8's relaunch, G10 and G11 all read exactly those. So the restore lives
+# in a proc the guard's handler also calls (issue 1600, the test_ase_dialogs
+# precedent). EACH rename is conditional on the saved name existing: an
+# unconditional `rename ase::session_state {}` would DELETE the real proc when
+# the raise happened BEFORE the shim was installed.
+proc r6_unshim {} {
+  foreach {r6_orig r6_name} {r6_o_session_state ase::session_state \
+                             r6_o_last_rawfile ase::last_rawfile \
+                             r6_o_last_vcdfiles ase::last_vcdfiles \
+                             r6_o_plot_sim_type ase::plot_sim_type \
+                             r6_o_wrestore wviewer::restore \
+                             r6_o_echo ::ase::echo} {
+    if {[info commands $r6_orig] eq {}} { continue }
+    catch {rename $r6_name {}}
+    rename $r6_orig $r6_name
+  }
+}
 
 # --- R6: viewer_restore RE-EXPRESSED ON results::resolve, and R604's ONE ------
 #     SENTENCE. Results batch item 6, doc/claude/specs/results_selection.md
@@ -268,6 +380,7 @@ check "R4 snapshot closed arm KEEPS the graphs" \
 # was copied FROM it. The sentences below are the RESOLVER's own text, which the
 # hand-written version never produced anywhere -- that is what makes these
 # checks non-vacuous rather than a re-reading of the source.
+if {[catch {
 set r6_top [ase::state_default]
 set r6_rundir [file join $scratch r6run]
 file mkdir $r6_rundir
@@ -358,15 +471,7 @@ check "R6f open 0 still returns 0 without touching the resolver" \
 
 # restore every shim and PROVE it by body, not by name (a rename that left the
 # shim in place would otherwise poison every leg below it).
-foreach {r6_orig r6_name} {r6_o_session_state ase::session_state \
-                           r6_o_last_rawfile ase::last_rawfile \
-                           r6_o_last_vcdfiles ase::last_vcdfiles \
-                           r6_o_plot_sim_type ase::plot_sim_type \
-                           r6_o_wrestore wviewer::restore \
-                           r6_o_echo ::ase::echo} {
-  rename $r6_name {}
-  rename $r6_orig $r6_name
-}
+r6_unshim
 # ⚠ FIX ROUND: the last element used to be
 # `string first {results::resolve} [info body ase::ui::viewer_restore] >= 0`,
 # and the proc's own COMMENT block contains that literal -- so replacing the
@@ -378,6 +483,8 @@ check "R6 every shim restored" \
         [info procs r6_o_echo] \
         [regexp {\n\s*set res \[results::resolve} [info body ase::ui::viewer_restore]]] \
   {{} {} {} 1}
+
+} rrerr]} { r6_unshim ; check {RR0 section R6 ran to the end} "RAISED:$rrerr" {} }
 
 # --- R7: THE `sim_entry` KEY ON DISK (issue 1395, the 2026-09-08 ruling) ------
 # `sim_entry` is the state key that carries WHICH REGISTERED SIMULATOR this
@@ -418,6 +525,13 @@ proc r7_trip {tag st} {
   return [list [r7_simline $a] [ase::sim_choice_of $back] \
                [expr {[r7_bytes $a] eq [r7_bytes $b]}]]
 }
+# ⚠ THE FOUR PROCS ABOVE ARE DELIBERATELY OUTSIDE R7's GUARD (issue 1600):
+# `r7_lines` and `r7_bytes` are called by SECTION R8 -- from `r8_analine`,
+# `r8_trip`, R8c and R8e. Inside the guard, a raise anywhere in R7's ten rows
+# would take the definitions with it and R8 would die on
+# `invalid command name "r7_lines"`: one dead section becoming two. Nothing in
+# the definitions can raise.
+if {[catch {
 
 # (a) THE EMPTY VALUE IS NOT WRITTEN AT ALL. `sim_entry` is in
 # ase::omit_if_empty for the reason that list states in full: a key added later
@@ -488,6 +602,8 @@ check "R7e ...while the bare word `none` is the PATH program, not an entry" \
 check "R7e ...and an entry really called `none` is spelled {name none}" \
   [r7_handwrite braced {{name none}}] {entry none}
 
+} seerr]} { check {SE0 section R7 ran to the end} "RAISED:$seerr" {} }
+
 # --- R8: THE `id` KEY ON DISK (⚖ R6 / issue 1447) ----------------------------
 # ⚖ R6 was answered *"Add it"* on 2026-09-13: an analysis row may now declare an
 # `id`, so a bench can say "sweep VIN, **and also** sweep temperature" and a
@@ -507,6 +623,7 @@ check "R7e ...and an entry really called `none` is spelled {name none}" \
 # `outputs {{name id expr -i(v1) save 1 plot 0}}` -- a drain current, in another
 # list. R8e drives both at once on disk. (HN7 in test_ase_core.tcl asks the same
 # question of the readers; this asks it of the FILE.)
+if {[catch {
 proc r8_analine {p} {
   return [lsearch -inline -glob [r7_lines $p] {analyses *}]
 }
@@ -585,6 +702,8 @@ check "R8e a bench carrying BOTH the committed output row named id and an\
         [lsearch -inline -glob [r7_lines $r8p] {outputs *}] \
         [ase::analysis_handle_faults $r8oback]] \
   [list {op1 gainac} {outputs {{name id expr -i(v1) save 1 plot 0}}} {}]
+
+} iderr]} { check {ID0 section R8 ran to the end} "RAISED:$iderr" {} }
 
 # --- T-E BOOKKEEPING: WHY THE LEGS DID OR DID NOT RUN ------------------------
 # doc/claude/specs/results_selection.md section 12: T-E is the batch's ONE test
@@ -676,8 +795,43 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return 0
   }
 
-  set mainok [main_ready]
-  set have_ng [expr {[auto_execok ngspice] ne {}}]
+  # --- HOISTED ABOVE EVERY G-GUARD (issue 1600) -----------------------------
+  # The six helper procs above are deliberately outside all of them: G3..G11b
+  # call them, so a guard around the definitions would turn one dead section
+  # into eleven. Nothing in them can raise.
+  #
+  # `mainok`/`have_ng` are read by `if {!$mainok}` immediately below -- which is
+  # a bare structural `if`, outside every guard -- and again by the T-E
+  # bookkeeping BELOW the whole if/else at the foot of the file. Defaulted to 0
+  # so that a raise in the probe reddens MR0 by name and the run still reaches
+  # its verdict; unset, the `if` below raises on `no such variable` with nothing
+  # left to catch it, and the run prints no RESULT: and no OVERALL: at all.
+  # MEASURED, both ways -- see issue 1600's test_ase_persist section.
+  set mainok 0
+  set have_ng 0
+  # Pure string/path joins that G7..G11b read. `ase::session_key` is a string
+  # join; the rest are `file join`. Hoisted out of G8/G7 so that a dead G7 or
+  # G8 costs its own rows and NOT G9/G10/G11/G11b on `no such variable`.
+  set key2 [ase::session_key sky130_tests test_nfet_final ngspice_persist1]
+  set persistfile [file join $clonelib test_nfet_final ngspice_persist1 \
+    test_nfet_final.state]
+  set rawfile [file join $rundir test_nfet_final_ase.raw]
+  set rawbak  [file join $scratch raw_backup.raw]
+  set cv .drw                    ;# G3s sets the mode, G6 re-reads the canvas
+  # Empty/zero DEFAULTS for two values a dead section cannot supply. Neither
+  # can lie its way to a pass: `$truth` 0 makes G8's two readout rows fail on
+  # their own names, and an empty `$vd_live` makes G10/G11/G11b fail on
+  # "no viewer" rather than vanish. (The opposite call is made for `$top` and
+  # `$vtop`: a window that was never opened is not a value any default can
+  # supply, so those cascades are taken and named.)
+  set truth 0
+  set vd_live {}
+
+  # --- MR: the two preconditions, measured -----------------------------------
+  if {[catch {
+    set mainok [main_ready]
+    set have_ng [expr {[auto_execok ngspice] ne {}}]
+  } mrerr]} { check {MR0 section MR (DISPLAY/ngspice preconditions) ran to the end} "RAISED:$mrerr" {} }
 
   if {!$mainok} {
     set te_why {main window never became usable}
@@ -685,6 +839,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   } else {
 
     # --- G1: fresh session, committed-shape state, NO viewer auto-open -------
+    if {[catch {
     check "G1 open_state -> 1" \
       [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
     update
@@ -692,8 +847,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check_true "G1 session window exists" \
       [expr {$top ne {} && [winfo exists $top]}]
     check "G1 viewer {} state opened NO viewer" [wviewer::window_for $key] {}
+    } sserr]} { check {SS0 section G1 ran to the end} "RAISED:$sserr" {} }
 
     # --- G2: Choose Analyses through the REAL dialog -------------------------
+    # \u26a0 `$top` is set by G1 and read by G2..G8. It is a live Tk toplevel, so no
+    # hoist can supply one: a dead G1 cascades, and the point of the guards is
+    # that each dependent section says so under its own name.
+    if {[catch {
     $top.mb.analyses invoke "Choose\u2026"
     update
     set w $top.chana
@@ -708,10 +868,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # ⚠ THIS ROW EXISTS BECAUSE ITS ABSENCE COST 100 CHECKS (issue 1405). When
     # Stage 1 moved the fields under `$w.form` and this file was not moved with
     # them, `$w.source` raised `invalid command name ".ase4.chana.source"`, the
-    # enclosing `catch ... bigerr` swallowed it, and G3..G11 -- measured, the
-    # display arm ran 47 checks where it now runs 147 -- disappeared with NO row
-    # naming what had gone. A raise is not a verdict. This row turns the next
-    # such move into ONE named red with the old and the new path both in it.
+    # enclosing file-scope `catch ... bigerr` swallowed it, and G3..G11 --
+    # measured, the display arm ran 47 checks where it now runs 153 --
+    # disappeared with NO row naming what had gone. A raise is not a verdict.
+    # This row turns the next such move into ONE named red with the old and the
+    # new path both in it.
+    # ⚠ THE `bigerr` CATCH IS GONE (issue 1600, 2026-09-22) AND THIS ROW STILL
+    # EARNS ITS PLACE. The guards would now name the section -- CA0 -- but not
+    # the path, and measured, a raise at the head of G2 still costs 45 of the
+    # 153 rows, because G5, G7 and G8 all need the dc bench this section builds.
+    # A named cascade is cheaper to read than an anonymous one; it is not free.
     check "G2p quick fields are children of the rebuilt .form frame, not of .chana" \
       [list [winfo exists $w.form.source] [winfo exists $w.form.step] \
             [winfo exists $w.source]      [winfo exists $w.step]] {1 1 0 0}
@@ -744,20 +910,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "G2 op row still enabled" [ase::state_get $oprow enabled] 1
     check "G2 plot_sim_type dc" \
       [ase::plot_sim_type [ase::session_state $key]] dc
+    } caerr]} { check {CA0 section G2 ran to the end} "RAISED:$caerr" {} }
 
     # --- G3: REAL <Button-1> on the id row's Plot cell -----------------------
+    if {[catch {
     set otv $top.body.outs.tv
     check "G3 outs pane has the single id row" [llength [$otv children {}]] 1
     check "G3 REAL click on the Plot cell delivered" [tv_cell_click $otv 0 plot] 1
     set orow [lindex [ase::state_get [ase::session_state $key] outputs] 0]
     check "G3 id row plot 1" [ase::state_get $orow plot] 1
     check "G3 id row save still 1" [ase::state_get $orow save] 1
+    } pcerr]} { check {PC0 section G3 ran to the end} "RAISED:$pcerr" {} }
 
     # --- G3s: mark v(d) To Be Saved through the REAL click mode --------------
     # (see the header: without a `.save v(d)` the dc raw carries no v(d) and
     # Direct Plot of the unsaved net cannot land a trace — a real ADE-L user
     # marks the net To Be Saved before running)
-    set cv .drw
+    if {[catch {
     set pre_esc [bind $cv <Key-Escape>]
     $top.mb.outputs.saved invoke {Select On Design}
     update
@@ -778,6 +947,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "G3s v(d) row expr" [ase::state_get $vrow expr] {v(d)}
     check "G3s v(d) row save 1 / plot 0" \
       [list [ase::state_get $vrow save 0] [ase::state_get $vrow plot 0]] {1 0}
+    } sverr]} { check {SV0 section G3s ran to the end} "RAISED:$sverr" {} }
 
     if {!$have_ng} {
       set te_why {ngspice not found}
@@ -787,6 +957,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     } else {
 
       # --- G4: Netlist and Run -> viewer auto-opens with the id trace --------
+      if {[catch {
       $top.mb.sim invoke {Netlist and Run}
       set id4 [ase::session_getattr $key run_id]
       check_true "G4 run started (integer execute id)" \
@@ -817,8 +988,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [expr {[string is integer -strict [rawq {xschem raw index id}]] &&
                [rawq {xschem raw index id}] >= 0}]
       check "G4 redraw rc 0" [catch {xschem redraw}] 0
+      } nrerr]} { check {NR0 section G4 ran to the end} "RAISED:$nrerr" {} }
 
       # --- G5: cursor A + readout vs engine ground truth ---------------------
+      if {[catch {
       set cmenu $vtop.wvmenubar.cursors
       $cmenu invoke [$cmenu index {Cursor A}]
       update
@@ -835,8 +1008,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [expr {[string first "x=[ase::format_value 1.8]" $ta] >= 0}]
       check_true "G5 readout A line carries id=[ase::format_value $truth] (eng notation)" \
         [expr {[string first "id=[ase::format_value $truth]" $ta] >= 0}]
+      } cuerr]} { check {CU0 section G5 ran to the end} "RAISED:$cuerr" {} }
 
       # --- G6: Direct Plot on the D wire -> ONE new graph with v(d) ----------
+      if {[catch {
       set outs_snap [ase::state_get [ase::session_state $key] outputs]
       set pre_esc [bind $cv <Key-Escape>]
       $top.mb.results invoke {Direct Plot}
@@ -856,8 +1031,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "G6 auto graph untouched (still just id)" [gvecs $gs6 0] id
       check "G6 outputs unchanged (Direct Plot writes no outputs)" \
         [ase::state_get [ase::session_state $key] outputs] $outs_snap
+      } dperr]} { check {DP0 section G6 ran to the end} "RAISED:$dperr" {} }
 
       # --- G7: Save State to the scratch view ngspice_persist1 ---------------
+      if {[catch {
       $top.mb.session invoke {Save State}
       update
       set w $top.saveas
@@ -866,8 +1043,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       $w.view insert 0 ngspice_persist1
       send_return $w.view {![winfo exists $top.saveas]}
       check_true "G7 dialog closed (save ran)" [expr {![winfo exists $top.saveas]}]
-      set persistfile [file join $clonelib test_nfet_final ngspice_persist1 \
-        test_nfet_final.state]
       check_true "G7 scratch view state file created" [file isfile $persistfile]
       set pst [ase::state_load $persistfile]
       set vd7 [dict get $pst viewer]
@@ -900,8 +1075,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "G7 snapshot: graph 1 = the exact v(d) trace model dict" \
         [dict get [lindex $g7 1] traces] \
         {{expr v(d) name {} vec v(d) color 4}}
+      } swerr]} { check {SW0 section G7 ran to the end} "RAISED:$swerr" {} }
 
       # --- G8: close + relaunch (the gate's heart) ---------------------------
+      if {[catch {
       # item 16: this session is DIRTY (viewer snapshot at save-time); the menu
       # Close now routes through close_request's save prompt, so tear down
       # directly (behavior-identical to the pre-rewire menu Close).
@@ -910,7 +1087,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check_true "G8 session toplevel gone" [expr {![winfo exists $top]}]
       check_true "G8 viewer closed with the session (item-13 lifecycle)" \
         [expr {![winfo exists $vtop]}]
-      set key2 [ase::session_key sky130_tests test_nfet_final ngspice_persist1]
       check "G8 reopen the scratch view -> 1" \
         [ase::open_state sky130_tests test_nfet_final ngspice_persist1] 1
       update
@@ -958,13 +1134,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [expr {[string first "x=[ase::format_value 1.8]" $ta2] >= 0}]
       check_true "G8 relaunched readout carries id=[ase::format_value $truth] again" \
         [expr {[string first "id=[ase::format_value $truth]" $ta2] >= 0}]
-      # raw backup for G11 (taken while the artifact still exists — G10
-      # deletes it)
-      set rawfile [file join $rundir test_nfet_final_ase.raw]
-      set rawbak [file join $scratch raw_backup.raw]
+      } rlerr]} { check {RL0 section G8 ran to the end} "RAISED:$rlerr" {} }
+
+      # --- BK: raw backup for G11 (taken while the artifact still exists —
+      # G10 deletes it). ⚠ ITS OWN GUARD, not part of G8's (issue 1600): inside
+      # G8 it would be lost to a raise anywhere in that section's eighteen rows,
+      # and G11/G11b would then die restoring a backup nobody took. Out here it
+      # still runs after a dead G8, because the raw it copies is G4's artifact.
+      if {[catch {
       file copy -force $rawfile $rawbak
+      } bkerr]} { check {BK0 section BK (raw backup for G11) ran to the end} "RAISED:$bkerr" {} }
 
       # --- G9: no-auto-open arms ---------------------------------------------
+      if {[catch {
       $top2.mb.session invoke Close
       update
       check_true "G9 session 2 closed" [expr {![winfo exists $top2]}]
@@ -1002,8 +1184,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "G9b NO viewer auto-open (old state)" [wviewer::window_for $key2] {}
       ase::ui::close $key2
       update
+      } naerr]} { check {NA0 section G9 ran to the end} "RAISED:$naerr" {} }
 
       # --- G10: missing-raw arm ----------------------------------------------
+      # ⚠ G10 RENAMES `::ase::echo` ASIDE to capture the restore's sentence. A
+      # raise between the rename and the restore would leave the capture shim
+      # installed for G11, G11b and the T-E row at the foot of the file, so the
+      # guard's handler puts it back -- conditionally, because an unconditional
+      # `rename ::ase::echo {}` would DELETE the real proc when the raise
+      # happened before the shim went in.
+      proc g10_unshim {} {
+        if {[info commands g10_echo_orig] eq {}} { return }
+        catch {rename ::ase::echo {}}
+        rename g10_echo_orig ::ase::echo
+      }
+      if {[catch {
       set pst [ase::state_load $persistfile]
       dict set pst viewer $vd_live
       ase::state_save $persistfile $pst
@@ -1063,8 +1258,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [catch {xschem redraw}] 0
       ase::ui::close $key2
       update
+      } mxerr]} { g10_unshim ; check {MX0 section G10 ran to the end} "RAISED:$mxerr" {} }
 
       # --- G11: rawfile seam (relative name, resolved against rundir) --------
+      if {[catch {
       set pst [ase::state_load $persistfile]
       dict set pst viewer [dict replace $vd_live rawfile test_nfet_final_ase.raw]
       ase::state_save $persistfile $pst
@@ -1084,12 +1281,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       ase::ui::close $key2
       update
       check "G11 session closed clean" [ase::ui::window_for $key2] {}
+      } rserr]} { check {RS0 section G11 ran to the end} "RAISED:$rserr" {} }
 
       # --- G11b: T-E, the RELATIVE half, made DISCRIMINATING -----------------
       # G11 above cannot tell "the stored name was followed" from "the derived
       # default happened to be the same file", because it is. So: a SECOND raw
       # in the same rundir under a name the derived default can never produce.
       # If the seam is honoured, THAT is what the registry ends up holding.
+      if {[catch {
       set altraw [file join $rundir alt_pick.raw]
       file copy -force $rawbak $altraw
       set pst [ase::state_load $persistfile]
@@ -1109,12 +1308,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                [rawq {xschem raw loaded}] >= 0}]
       ase::ui::close $key2
       update
+      # ⚠ INSIDE G11b's GUARD, on purpose: `te_why RAN` is the file's own claim
+      # that the acceptance legs reached their end, and the T-E row at the foot
+      # compares it against the preconditions measured independently. A raise in
+      # G11b therefore costs AP0 *and* the T-E row -- two named reds for one
+      # cause, which is what the T-E comment above asks for. Note the guards
+      # narrow it: a raise in G4..G11 no longer stops G11b from running, so T-E
+      # now reds only when G11b itself dies.
       set te_why RAN
+      } aperr]} { check {AP0 section G11b ran to the end} "RAISED:$aperr" {} }
     }
   }
 
 } else {
   # --- R5: headless open_state on an open-1 state (no Tk side effects) ------
+  if {[catch {
   set cst5 [ase::state_load $clonestate]
   dict set cst5 viewer {open 1 sharedx 0 rawfile {} graphs {}}
   ase::state_save $clonestate $cst5
@@ -1122,6 +1330,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
   check "R5 no viewer window headless" [wviewer::window_for $key] {}
   ase::session_close $key
+  } hlerr]} { check {HL0 section R5 ran to the end} "RAISED:$hlerr" {} }
   puts "gui legs skipped (no DISPLAY)"
 }
 
@@ -1131,6 +1340,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 # cause -- or one that silently never reached its end -- reds this check instead
 # of leaving a matching check count behind. Nothing here prints a SKIP
 # substring: full_audit.sh would score the WHOLE FILE as SKIP on one.
+if {[catch {
 set te_expect {no usable DISPLAY}
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
   if {[info exists mainok] && !$mainok} {
@@ -1144,15 +1354,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 puts "T-E legs: $te_why"
 check "T-E legs: the recorded reason matches the measured preconditions" \
   $te_why $te_expect
-
-} bigerr]} {
-  puts "UNEXPECTED ERROR: $bigerr"
-  incr fail
-}
+} teerr]} { check {TE0 section T-E ran to the end} "RAISED:$teerr" {} }
 
 # --- cleanup + verdict -------------------------------------------------------
+# GUARDED (issue 1600) for the same reason SU is: an unguarded raise here --
+# a scratch dir a `file delete` cannot remove -- used to abort the interpreter
+# between the last row and the verdict, so the run printed neither RESULT: nor
+# OVERALL: and T1 scored it a death rather than a failure with a name.
+if {[catch {
 test_scratch_drop $scratch      ;# early drop; the check below asserts removal
 check "cleanup: scratch removed" [file exists $scratch] 0
+} clerr]} { check {CL0 section cleanup ran to the end} "RAISED:$clerr" {} }
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
@@ -1166,12 +1378,20 @@ if {$fail == 0} {
 # A suite printing `RESULT:` alone is scored a HARNESS FAILURE by T1 however many
 # of its own checks passed, which is issue 0689's shape, filed four times.
 #
-# MEASURED: this suite printed `RESULT:` and nothing else, so it could not be
-# added to T1's case list -- and seven commits of the analyses batch were reported
-# as "T1 at zero" while T1 ran only FOUR test_ase_* suites and never this one.
-# The suites were run separately every time, so the work was verified; the NUMBER
-# was quoted for more than it covered. `test_ase_simcaps_0948` and
-# `test_ase_optier_0963` already emit both, which is exactly why THEY are in T1.
+# MEASURED: this suite ONCE printed `RESULT:` and nothing else, so it could not
+# be added to T1's case list -- and seven commits of the analyses batch were
+# reported as "T1 at zero" while T1 ran only FOUR test_ase_* suites and never
+# this one. The suites were run separately every time, so the work was verified;
+# the NUMBER was quoted for more than it covered. `test_ase_simcaps_0948` and
+# `test_ase_optier_0963` already emitted both, which is why THEY were in T1
+# first.
+# ⚠ CORRECTED 2026-09-22 (issue 1600): read in the present tense, the paragraph
+# above says this file is still outside T1. IT IS NOT. Issue 1413 added the
+# `OVERALL:` line below AND the `headless/test_ase_persist` entry to `hcases`
+# in tests/run_regression.tcl, so T1 runs this suite on its headless arm today
+# and the 49 checks that arm reports ARE a T1 number. A comment that invites a
+# reader to discount a real T1 result is wrong in the direction that costs
+# coverage.
 if {$fail == 0} {
   puts "OVERALL: ok"
 } else {
