@@ -129,17 +129,19 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3482374.log` at the 1601 fix, taken in a throwaway clone
-  of `6f4ee5cc` built from scratch, where `test_input_line_inject_1352` and
-  `test_preview_name_inject_1601` are each registered in **both** lists: **92 cases**
-  (3 + 75 + 13 + `xschemtest`), **91 blocks**, **`wc -l` 274 green** (`2` sentinels + `91`
-  headers + `91` `Total num fail:` + `3` NOGOLD + **`7` `skip:`** + **`78` `RESULT:`** +
-  **`2` banner-only counts**; trailer `cases=92 blocks=91 counted_failures=0 skips=7
-  elapsed=601s`). Three figures in three days: `88/87/skips=5` (`results.2325750.log`, the
-  1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7` here —
-  **each moved by two cases and one skip in a single commit**, because a suite registered in
-  both lists costs two cases and reports one headless self-skip. That is the point of reading
-  the trailer rather than a number written down anywhere, this file included. ⚠ Both new terms are
+  the gate verdict `tests/results.344048.log`, taken in a throwaway clone of `949cc585`
+  built from scratch, where `test_input_line_inject_1352`, `test_preview_name_inject_1601`
+  and `test_generator_paren_1604` are each registered in **both** lists: **94 cases**
+  (3 + 76 + 14 + `xschemtest`), **93 blocks**, **`wc -l` 281 green** (`2` sentinels + `93`
+  headers + `93` `Total num fail:` + `3` NOGOLD + **`8` `skip:`** + **`80` `RESULT:`** +
+  **`2` banner-only counts**; trailer `cases=94 blocks=93 counted_failures=0 skips=8
+  elapsed=579s`). **Four figures in three days**: `88/87/skips=5` (`results.2325750.log`,
+  the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
+  (`results.3482374.log`, 1601) and `94/93/skips=8` here (1604) — **each step is two cases
+  and one skip, from one commit**, because a suite registered in both lists costs two cases
+  and reports one headless self-skip. Anyone checking against a figure written down
+  anywhere, this file included, would have called three green runs red this week. Read the
+  trailer. ⚠ Both new terms are
   **environment-dependent** — a home that cannot reach the fork ngspice adds three more
   `skip:` lines — so this figure is even less of a constant than it was. To count a list, find `set hcases
   [list` (not a line number) and pipe it through `/usr/bin/grep -o '"[^"]*"' | wc -l`;
@@ -192,12 +194,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   1483). **Green is per case, and coverage is a second number**: since issue 1487 the
   verdict carries each case's `skip:` lines and check count and the trailer states
   `skips=`, so read `counted_failures=0 skips=N` together — N > 0 means rows that did not
-  run, named in the blocks. Measured 2026-09-22 in a throwaway clone of `6f4ee5cc`:
-  `cases=92 blocks=91 counted_failures=0 skips=7` — five are `test_op_annot`'s display-only
-  rows on the headless arm; the sixth and seventh belong to `test_input_line_inject_1352` and
-  `test_preview_name_inject_1601`, which self-skip their behavioural rows there because both
-  drive real Tk dialogs and neither `toplevel`, `winfo`, `bind` nor `event generate` exists
-  under `--nogui`. ⚠ **`skips=` is not a constant to check
+  run, named in the blocks. Measured 2026-09-22 in a throwaway clone of `949cc585`:
+  `cases=94 blocks=93 counted_failures=0 skips=8` — five are `test_op_annot`'s display-only
+  rows on the headless arm; the other three belong to `test_input_line_inject_1352`,
+  `test_preview_name_inject_1601` and `test_generator_paren_1604`, which self-skip their
+  behavioural rows there because all three drive real Tk dialogs and neither `toplevel`,
+  `winfo`, `bind` nor `event generate` exists under `--nogui`. ⚠ **`skips=` is not a constant to check
   against**: a suite registered in both lists reports its skip on one arm and its rows on the
   other, so the number moves with what is registered, not only with the environment.
 - **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
