@@ -121,10 +121,16 @@ set fail 0; set npass 0
 #     PRECISION. Most of this file is inside `if {[info exists ::has_x] ...}`,
 #     so HEADLESS runs 37 checks and the DISPLAY arm runs 224. Reporting one
 #     number reads as a floor that fell by 187. ALWAYS REPORT PER ARM.
-#   * `run_regression.tcl` RUNS THIS FILE ON **NEITHER** ARM -- measured, it is
-#     in neither `cases` nor `dcases`. So T1 at zero says NOTHING about any row
-#     here, and a receipt that quotes a T1 zero has not exercised one of them.
-#     The suite runs under full_audit.sh's display arm and under run_suites.sh.
+#   * `run_regression.tcl` RUNS THIS FILE ON THE HEADLESS ARM ONLY -- it is in
+#     `hcases` and NOT in `dcases`, and run_regression.tcl says why at its own
+#     `hcases` comment. So T1 at zero covers the 37 headless rows and says
+#     NOTHING about the 187 display-arm ones; a receipt quoting a T1 zero for a
+#     row inside `if {[info exists ::has_x] ...}` has not exercised it.
+#     ⚠ This paragraph used to read "NEITHER arm -- measured", which was wrong
+#     in the direction that costs coverage: it invited a reader to discount a
+#     real T1 result. Corrected 2026-09-22; re-read run_regression.tcl rather
+#     than trusting either version.
+#     The suite also runs under full_audit.sh's display arm and under run_suites.sh.
 #
 # THE HISTORY:
 #   37 / 215   as this paragraph was written (2026-09-11, HEAD 8bfbbd6f)
@@ -646,6 +652,56 @@ set ::XSCHEM_LIBRARY_PATH {}
 
 set rundir  [file normalize [file join $scratch run]]
 
+# ==========================================================================
+# SECTION GUARDS -- issue 1600.  READ THIS BEFORE ADDING A SECTION.
+# ==========================================================================
+# This file's body used to be ONE column-0 `catch` of 5699 lines -- 89% of the
+# file -- whose whole handler was `puts "UNEXPECTED ERROR: $bigerr"; incr fail`.
+# It named nothing.  A raise anywhere in it (a renamed proc, a widget path that
+# does not exist, a fixture the environment cannot build) unwound straight to
+# the bottom, skipped every row in between, counted ONE failure, and let the
+# file run on to a `RESULT:` line that reads exactly like an ordinary small red.
+# MEASURED on the neighbouring file: `RESULT: 3 FAILED (13 passed)` for a run in
+# which 317 of 333 rows never executed.
+#
+# The body is now cut into TWENTY guards whose handlers are the NAMED CHECK ROW
+# idiom already used by `test_ase_core` and fourteen other suites in this
+# corpus, so a raise costs that section's own rows and no more, and the log
+# carries a row saying WHICH section died and WHAT it raised.
+#
+# ⚠ A NEW SECTION GETS ITS OWN GUARD.  Appending rows to the end of an existing
+# one silently widens that section's blast radius, and nothing will say so.
+#
+# ⚠ AND A `proc` OR A VALUE A LATER SECTION NEEDS MUST BE HOISTED OUT OF ITS
+# DEFINING SECTION'S GUARD -- marked `HOISTED OUT OF THE GUARD BELOW (issue
+# 1600)` with the reason -- or one dead section becomes two.  Three of those
+# exist here: `$key`, `r5_open` and the `sp_*` fixture helpers.
+#
+# ⚠ THE GUARD ROWS ARE FAILURE-ONLY and that is deliberate: the `check` sits
+# INSIDE the handler, so a green run emits none of them and the check totals are
+# unchanged by this pass (37 headless / 389 display, before and after).  Giving
+# each guard an `else` arm would turn the guards into a DENOMINATOR -- "20
+# sections declared, 20 ran to the end" -- but all 98 call sites in this corpus
+# are failure-only and a second spelling in one file would be worse than none.
+# That is item 4 of issue 1600, a corpus-wide pass with its own receipt.
+# ==========================================================================
+## HOISTED OUT OF THE GUARD BELOW (issue 1600): `$key` is read by EVERY section
+## in this file -- 662 sites -- and by the H teardown between the two arms.
+## `ase::session_key` is a pure string join (`return "$lib/$cell/$view"`,
+## src/ase.tcl), so evaluating it out here cannot raise; and a fixture that
+## fails to build then reddens its OWN guard row, with the sections below
+## failing on their own subjects instead of on `can't read "key": no such
+## variable`.  It used to be set in the middle of the fixture, below the two
+## calls that can actually fail.
+set key [ase::session_key aselib nfet_clean ngspice_state1]
+
+# ==========================================================================
+# SECTION GUARD FX -- issue 1600.  The state-view fixture: the two seeded
+# state views (`ngspice_state1` and the differing `ngspice_stateB`) that every
+# section below opens.  It carries no rows of its own, so FX0 is the row that
+# says THE FIXTURE, rather than a test, is what broke -- the one distinction
+# the old unnamed handler could never make.
+# ==========================================================================
 if {[catch {
 
 # seed the state view through the REAL creation backend, then shape the nfet
@@ -655,7 +711,6 @@ library_new_view aselib nfet_clean ngspice_state1 ngspice_state1
 set spath [xschem cellview_path aselib/nfet_clean ngspice_state1]
 if {$spath eq {}} { error "fixture: state view did not resolve" }
 set spath [file normalize $spath]
-set key [ase::session_key aselib nfet_clean ngspice_state1]
 
 ase::session_open $key $spath
 set st [ase::session_state $key]
@@ -677,6 +732,19 @@ set bpath [file normalize [xschem cellview_path aselib/nfet_clean ngspice_stateB
 set stB [ase::state_load $spath]
 dict set stB variables {{name Vgs value 0.9} {name Vds value 1.0}}
 ase::state_save $bpath $stB
+
+} fxerr]} {
+  check "FX0 the state-view fixture built" "RAISED:$fxerr" {}
+}
+
+# ==========================================================================
+# SECTION GUARD HD -- issue 1600.  Sections H1-H4d: the predicate and worker
+# rows, and the ONLY rows in this file that run on BOTH arms (everything below
+# the `::has_x` gate is display-only).  The H teardown that drops the session
+# for the GUI legs is inside this guard on purpose: if H died, its teardown has
+# nothing left to mean, and the GUI guards below name their own failures.
+# ==========================================================================
+if {[catch {
 
 # --- H1: the trailing ro arg threads the session readonly attr (D7) ----------
 check "H1 ro-open returns 1" [ase::open_state aselib nfet_clean ngspice_state1 1] 1
@@ -943,9 +1011,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::session_close $key
 }
 
+} hderr]} {
+  check "HD0 sections H1-H4d ran to the end" "RAISED:$hderr" {}
+}
+
 # --- GUI legs (DISPLAY-guarded partial skip) ---------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
+  # ========================================================================
+  # SECTION GUARD GA -- issue 1600.  Sections G1, G2, G2b, G2c and G2h: the
+  # Choose Analyses door, the dc quick-field round trip, the D6 refusal and its
+  # converse, and the checkbox that reaches the deck.
+  # ========================================================================
+  if {[catch {
   check "G1 open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state1] 1
   update
   set top [ase::ui::window_for $key]
@@ -1175,6 +1253,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [expr {[set i [tv_find $atv type tran]] ne {} ? [$atv set $i args] : {}}]] \
     [list {enabled step stop type} {tran 1n 10u}]
 
+  } gaerr]} {
+    check "GA0 sections G1, G2, G2b, G2c and G2h ran to the end" "RAISED:$gaerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GT -- issue 1600.  Sections G2tf, G2pz, G2a2 and G2sens: the
+  # three Stage-5 forms that can be CHOSEN at all, plus ⚖ R9 A2's read direction.
+  # ========================================================================
+  if {[catch {
   # G2tf: THE TRANSFER FUNCTION CAN BE CHOSEN AT ALL. Stage 5, issue 1426.
   ## ⚠ UNTIL THIS COMMIT `tf` WAS A CELL YOU COULD SELECT AND NOT USE. It was
   ## `registered 1` with a `role probe` card and nothing else, so the grid showed
@@ -1605,6 +1692,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  the bench they were written against" \
     [tv_find $atv type sens] {}
 
+  } gterr]} {
+    check "GT0 sections G2tf, G2pz, G2a2 and G2sens ran to the end" "RAISED:$gterr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GQ -- issue 1600.  Sections G2i-G2k (the Options door closes),
+  # G2e/G2e2 (the ac sweep mode is a control), G2g (the write-back rule), G2d
+  # (the group door), G2dc and G2f.
+  # ========================================================================
+  if {[catch {
   # G2i/G2j/G2k: THE OPTIONS DOOR CLOSES. Issue 1418.
   ## ⚠ THIS EDITOR IS THE DEFECT STAGE 3 IS NAMED FOR. It collected free-text
   ## name/value pairs, round-tripped them through the .state file and showed them
@@ -1925,6 +2022,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::ui::populate $key
   update
 
+  } gqerr]} {
+    check "GQ0 sections G2i-G2k, G2e, G2e2, G2g, G2d, G2dc and G2f ran to the end" "RAISED:$gqerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GS -- issue 1600.  Sections G3-G6: Setup > Design, Model Files,
+  # Save All (with the S4 third blanket) and Simulation Options.
+  # ========================================================================
+  if {[catch {
   # G3: Setup > Design — View list filtered to SCHEMATIC views (nfet_clean
   # also has ngspice_state* views: the filter proof), round trip via OK
   $top.mb.setup invoke "Design\u2026"
@@ -2078,6 +2184,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.simopt.btns.close invoke
   update
 
+  } gserr]} {
+    check "GS0 sections G3, G4, G5, G5b, G5c and G6 ran to the end" "RAISED:$gserr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GV -- issue 1600.  Sections G7, G8, G8b and G8c: Save-As, the
+  # read-only confirm gate, the DIFFERENT-EXISTING-state gate (the row the
+  # silent-clobber defect would have failed) and the keyboard half of it.
+  # ========================================================================
+  if {[catch {
   # G7: Session > Save State — always Save-As, prefilled with the session's
   # own L/C/V; same-target OK is the plain save (clears dirty); an edited
   # View creates the new view (item-02 creation path)
@@ -2279,6 +2395,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check "G8c the whole G8c block wrote NOTHING to the victim" [g8b_read] $vbefore
 
+  } gverr]} {
+    check "GV0 sections G7, G8, G8b and G8c ran to the end" "RAISED:$gverr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GL -- issue 1600.  Sections G9-G9d (the Load State browser),
+  # G10 (the --> strip button) and G11 (no todo stubs left).
+  # ========================================================================
+  if {[catch {
   # G9: Session > Load State — browser filtered to simulation-state views,
   # import + dirty, and the dirty-prompt-first gate
   $top.mb.session invoke {Load State}
@@ -2422,6 +2547,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "G11 no item-07 todo stubs remain" $stub_hits {}
 
+  } glerr]} {
+    check "GL0 sections G9-G9d, G10 and G11 ran to the end" "RAISED:$glerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GE -- issue 1600.  Sections GE1-GE16: item 10's esc-dismiss
+  # legs, one per dialog.
+  # ========================================================================
+  if {[catch {
   # ===========================================================================
   # GE: item 10 esc-dismiss — every dialog dismisses on ESC through its
   # CANCEL path. Per leg: serialize-snapshot the session state, open the
@@ -2876,6 +3010,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [bind $cv <Key-Escape>] $prev
   }
 
+  } geerr]} {
+    check "GE0 sections GE1-GE16 ran to the end" "RAISED:$geerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GD -- issue 1600.  Sections G13 (the casemode question) and
+  # G12 (the session window closes).
+  # ========================================================================
+  if {[catch {
   # --- G13 (casemode item 9, fix round) ---------------------------------------
   # A Direct-Plot / Select-On-Design pick asks the session's profile for the case
   # mode its expressions must be written in (ase::ui::sod_case_mode). That
@@ -2919,12 +3062,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check_true "G12 session window closed" [expr {![winfo exists $top]}]
 
+  } gderr]} {
+    check "GD0 sections G13 and G12 ran to the end" "RAISED:$gderr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GG -- issue 1600.  Section GG: the eleven-cell type grid.
+  # ========================================================================
+  if {[catch {
   # --- GG: THE TYPE GRID -- ISSUE 1411 ---------------------------------------
   # Eleven cells, four per row, each carrying its state as a GLYPH on the label.
   #
   # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW, and `run_regression.tcl` runs this file
-  # on NEITHER of its arms -- so a receipt quoting a T1 zero has not exercised one
-  # of them. The resolver's own contract is in test_ase_core.tcl section AG,
+  # on its HEADLESS arm only (`hcases`, not `dcases`) -- so a receipt quoting a T1
+  # zero has not exercised one of them. The resolver's own contract is in test_ase_core.tcl section AG,
   # deliberately, so it survives that.
   check "GG fixture: a session for the grid rows" \
     [ase::open_state aselib nfet_clean ngspice_state1] 1
@@ -3071,6 +3222,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  in every theme" \
     [llength [dict keys [ase::palette]]] 9
 
+  } ggerr]} {
+    check "GG0 section GG ran to the end" "RAISED:$ggerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GN -- issue 1600.  Section GN: the precondition banner.
+  # ⚠ ITS HANDLER PUTS `ase::netlist` BACK.  GN10 renames the real proc aside
+  # and installs a stub that RAISES; a raise between the two renames would
+  # otherwise leave that stub in place for every section below, turning one dead
+  # section into all of them.  The restore is conditional on the saved name
+  # existing, because an unconditional `rename ase::netlist {}` would DELETE the
+  # real proc on any other raise in this section.
+  # ========================================================================
+  if {[catch {
   # ==========================================================================
   # GN -- THE PRECONDITION BANNER UNDER THE FORM. Stage 6, issue 1435.
   # ==========================================================================
@@ -3358,6 +3523,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
 
 
+  } gnerr]} {
+    ## GN10 parks `ase::netlist` aside and installs a stub that RAISES (issue
+    ## 1600): put the real one back, or a raise between the two renames leaves
+    ## that stub in place for every section below and ONE dead section becomes
+    ## all of them.  Conditional on the SAVED name existing, because an
+    ## unconditional `rename ase::netlist {}` would DELETE the real proc on any
+    ## other raise in this section.
+    if {[info commands ase::netlist_gnsaved] ne {}} {
+      catch {rename ase::netlist {}}
+      catch {rename ase::netlist_gnsaved ase::netlist}
+    }
+    check "GN0 section GN ran to the end" "RAISED:$gnerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GW -- issue 1600.  Section G14: the dialog describes THIS
+  # session's simulator.
+  # ⚠ ITS HANDLER PUTS `::ciw_echo` BACK, for GN's reason: G14 parks the real
+  # echo sink aside to read the notices, and a raise in between would leave
+  # every later section's notices going into `::g14_echo`.
+  # ========================================================================
+  if {[catch {
   # --- G14: THE DIALOG DESCRIBES **THIS** SESSION'S SIMULATOR -----------------
   # Issue 1408, Stage 2 item 2d of doc/claude/ase_analyses_batch/.
   #
@@ -3369,8 +3556,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # `{}`); the dialog asked `ase::analysis_offered` with no argument.
   #
   # ⚠ THESE ROWS ARE ON THE DISPLAY ARM AND `run_regression.tcl` RUNS THIS FILE
-  # ON NEITHER OF ITS ARMS -- measured. So a receipt quoting a T1 zero has NOT
-  # exercised one of them. The schema half is in test_ase_core section AD,
+  # ON ITS HEADLESS ARM ONLY (`hcases`, not `dcases`). So a receipt quoting a T1
+  # zero has NOT exercised one of them. The schema half is in test_ase_core section AD,
   # deliberately, so the contract survives even where these cannot run.
   proc g14_five {} {
     return [dict create \
@@ -3535,6 +3722,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.chana.btns.cancel invoke
   update
 
+  } gwerr]} {
+    ## G14 parks `::ciw_echo` aside (issue 1600): put it back, or every section
+    ## below collects its notices into `::g14_echo` instead.  Conditional on the
+    ## saved name, so a raise before the park cannot delete the real sink.
+    if {[info commands ::g14_saved_ciw] ne {}} {
+      catch {rename ::ciw_echo {}}
+      catch {rename ::g14_saved_ciw ::ciw_echo}
+    }
+    check "GW0 section G14 ran to the end" "RAISED:$gwerr" {}
+  }
+
   # --- GR5: WHAT YOU TYPED SURVIVES A TYPE CLICK -- ⚖ R5, ISSUE 1445 ---------
   # The user ruled on 2026-09-13: *"Make it remember -- that's a more
   # professional UI. We are trying to be better than Cadence"*. That REVERSES
@@ -3550,7 +3748,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # writes" -- defended the commit and was merely attached to the discarding.
   #
   # ⚠ EVERY ROW HERE IS A DISPLAY-ARM ROW and `run_regression.tcl` runs this
-  # file on NEITHER of its arms, so a T1 zero exercises none of them.
+  # file on its HEADLESS arm only, so a T1 zero exercises none of them.
   #
   # ⚠ THE CACHE SLOT IS SPELLED `anedit,tran1` AND NOT `anedit,tran` SINCE ISSUE
   # 1448, AND THAT IS THE FEATURE AND NOT A TYPO. ⚖ R5 keyed the cache by TYPE
@@ -3561,6 +3759,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # (`ase::analysis_seed` -> op dc ac tran, one each), so every GR5/GR6 row
   # below reads the same cache it always did, under the name the user can see.
   # Section GH is where the two-rows-of-a-type case is measured.
+  ## HOISTED OUT OF THE GUARD BELOW (issue 1600): `r5_open` is called by section
+  ## GR6 -- nine of its own rows, at GR6a..GR6h -- as well as by every GR5 row.
+  ## Defined INSIDE the GR guard, a raise anywhere in GR5 would take the proc's
+  ## definition with it and GR6 would die too, on `invalid command name
+  ## "r5_open"`: one dead section becoming two, which is exactly the failure the
+  ## guards exist to stop.  The comment block above belongs to GR5's prose and is
+  ## inert, so it sits outside the guard with the proc.
   proc r5_open {key} {
     set top [ase::ui::window_for $key]
     # ⚠ A BARE `destroy` AND NOT `chana_cancel`: this is the window manager's
@@ -3571,6 +3776,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     return $top.chana
   }
+  # ========================================================================
+  # SECTION GUARD GR -- issue 1600.  Section GR5: what you typed survives a type
+  # click (⚖ R5, issue 1445).  `r5_open` is deliberately ABOVE this guard.
+  # ========================================================================
+  if {[catch {
   check "GR5 fixture: a session for the remembering rows" \
     [ase::open_state aselib nfet_clean ngspice_state1] 1
   update
@@ -3848,6 +4058,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  bytes as never opening the dialog" \
     [ase::state_serialize [ase::session_state $key]] $R5K_BEFORE
 
+  } grerr]} {
+    check "GR0 section GR5 ran to the end" "RAISED:$grerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GO -- issue 1600.  Section GR6: OK writes what the dialog
+  # remembered (issue 1446, Option B).  It calls `r5_open`, which is why that
+  # proc is hoisted above the GR guard rather than living inside it.
+  # ========================================================================
+  if {[catch {
   # --- GR6: OK WRITES WHAT THE DIALOG REMEMBERED -- ISSUE 1446, OPTION B -----
   # ⚖ R5 (GR5, above) made the form REMEMBER. It did not change what OK READS,
   # and `ase::ui::chana_ok` read the LIVE widgets: a value typed under
@@ -4190,6 +4410,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $gw.btns.cancel invoke
   update
 
+  } goerr]} {
+    check "GO0 section GR6 ran to the end" "RAISED:$goerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD GH -- issue 1600.  Section GH: ⚖ R6's GUI half -- the handle
+  # grid, and the second row of a type being reachable at all.
+  # ========================================================================
+  if {[catch {
   # --- GH: THE HANDLE IS VISIBLE, AND THE SECOND ROW OF A TYPE IS REACHABLE --
   # ⚖ R6's GUI half (issue 1448), closing two of issue 1444's three surfaces.
   #
@@ -4655,6 +4884,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [ase::state_serialize [ase::session_state $key]] $GH15BEFORE
 
 
+  } gherr]} {
+    check "GH0 section GH ran to the end" "RAISED:$gherr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD NX -- issue 1600.  Section NX: one list of non-setting keys.
+  # ⚠ ITS HANDLER PUTS `ase::analysis_nonsetting_keys` BACK, for GN's reason:
+  # NX5 narrows the real proc to prove both doors ASK rather than copy, and a
+  # raise in between would leave the narrowed answer for MS, SP and the rest.
+  # ========================================================================
+  if {[catch {
   # --- NX: ONE LIST OF NON-SETTING KEYS -- THE `Options...` HALF -------------
   # Issue 1450. `DECISIONS.md` D4 licenses exactly two optional per-row keys,
   # `id` (⚖ R6's handle) and `x` (issue 1419's verbatim hatch). THREE places kept
@@ -4868,6 +5108,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::ui::populate $key
   update
 
+  } nxerr]} {
+    ## NX5 narrows `ase::analysis_nonsetting_keys` (issue 1600): put the real one
+    ## back, or every section below reads a schema that licenses neither `id` nor
+    ## `x`.  Conditional on the saved name, as in GN.
+    if {[info commands ase::analysis_nonsetting_keys_nxsaved] ne {}} {
+      catch {rename ase::analysis_nonsetting_keys {}}
+      catch {rename ase::analysis_nonsetting_keys_nxsaved ase::analysis_nonsetting_keys}
+    }
+    check "NX0 section NX ran to the end" "RAISED:$nxerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD MS -- issue 1600.  Section MS: the Measurements sub-dialog
+  # (issue 1451), its eight named templates and the Value column.
+  # ========================================================================
+  if {[catch {
   # --- MS: THE MEASUREMENTS SUB-DIALOG (issue 1451, PLAN.md §8b) -------------
   #
   # Issue 1443 shipped the whole DECK half of Stage 8 -- a `measurements` state
@@ -5526,6 +5782,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::ui::populate $key
   update
 
+  } mserr]} {
+    check "MS0 section MS ran to the end" "RAISED:$mserr" {}
+  }
+
   # --- SP: THE PORTS TABLE AND THE MATRIX PICKER (issue 1454, PLAN.md §9a/§9b)
   #
   # Issue 1452 made a setup table EMIT and built no widget. `ports` was a row key
@@ -5543,6 +5803,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ EVERY COLUMN HEADING, THE NOUN AND THE MINIMUM COME FROM THE REGISTRY, and
   # SP3 is the row that says the dialog ASKS rather than knowing. The schema half
   # is `test_ase_sp_1452.tcl` section SX, which runs on both arms.
+  ## HOISTED OUT OF THE GUARD BELOW (issue 1600): the five `sp_*` helpers and the
+  ## `$SPROW`/`$SPBENCH` fixture literals below are used by BOTH SP guards --
+  ## `sp_open_chana`, `sp_type` and `sp_bench` at seventeen sites in SB, and
+  ## `$SPBENCH`/`$SPROW` at six more -- so a raise inside SA must not take them
+  ## with it.  Nothing here touches a widget or the session: the four readers are
+  ## pure, `sp_bench` is a definition, and the two `set`s are literals, so this
+  ## stretch cannot raise where the guarded code can.  The first call that CAN
+  ## raise (`sp_bench $key $SPBENCH`) is the first line inside SA.
   proc sp_open_chana {key idx} {
     set top [ase::ui::window_for $key]
     catch {destroy $top.chana}
@@ -5605,6 +5873,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set SPROW {type sp enabled 1 points 3 start 100meg stop 1g ports {{src v1 num 1 z0 50} {z0 50 src v2 num 2}}}
   set SPBENCH [list {type op enabled 1} $SPROW \
                     {type ac enabled 0 points 10 start 1 stop 1meg}]
+  # ========================================================================
+  # SECTION GUARD SA -- issue 1600.  Sections SP1-SP6b: the ports table, its
+  # registry-driven headings, add/edit/delete, the live note, and Add From
+  # Schematic.  ⚠ SP's own comment wall records this defect being met three
+  # times inside this one section -- `SP7 through SP12 -- THIRTEEN checks --
+  # stopped running, and the row that should have gone red never reported at
+  # all`.  That is what the SA/SB cut is for.
+  # ========================================================================
+  if {[catch {
   sp_bench $key $SPBENCH
 
   ## SP1 -- THE DOOR EXISTS, IT IS PER TYPE, AND IT IS NOT A THIRD COPY OF THE
@@ -5829,6 +6106,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
  words, not the cold ones" \
     [list $SP6BC $SP6BN] [list 0 {This schematic offers no more ports.}]
 
+  } saerr]} {
+    check "SA0 sections SP1-SP6b ran to the end" "RAISED:$saerr" {}
+  }
+
+  # ========================================================================
+  # SECTION GUARD SB -- issue 1600.  Sections SP7-SP14: the matrix picker, the
+  # three-port geometry (issue 1457), the Options-editor defect as a row, the
+  # byte-identity question, and SP14's two real simulator runs.
+  # ========================================================================
+  if {[catch {
   ## SP7 -- THE MATRIX PICKER. ⚠ ITS SIZE IS THE PORTS TABLE'S, which is why it
   ## reads the same row: measured on both binaries, a two-port `sp` run with the
   ## flag OFF answers twelve vectors in three families and a three-port one
@@ -6339,16 +6626,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     if {$sprc} { puts "  SP14/$sptag output: $spout" }
   }
   sp_bench $key $SPBENCH
+  } sberr]} {
+    check "SB0 sections SP7-SP14 ran to the end" "RAISED:$sberr" {}
+  }
 
 } else {
   puts "gui legs skipped (no DISPLAY)"
 }
-
-
-} bigerr]} {
-  puts "UNEXPECTED ERROR: $bigerr"
-  incr fail
-}
+# ⚠ THERE IS NO WHOLE-BODY `catch` HERE ANY MORE (issue 1600).  What used to
+# close at this point was `} bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; incr
+# fail }` -- 5699 lines of body under one handler that named nothing.  Each
+# section now carries its own named guard; do not reintroduce an outer one.
 
 # --- cleanup + verdict -------------------------------------------------------
 catch {file attributes $spath -permissions 0644}

@@ -1,14 +1,16 @@
 # 1600 — one file-scope `catch` swallows 83% of `test_ase_window`, and the verdict still reads like an ordinary red
 
-**STAMP:** `v1 claim=partial tree=e92a2abf stamped=2026-09-22 fix=partial open=4 by=1600-core`
+**STAMP:** `v1 claim=partial tree=d1db4c63 stamped=2026-09-22 fix=partial open=4 by=1600-dialogs`
 
 **Status: OPEN — filed 2026-09-21** by the ASE-L UX batch's fix round, which **named it
 rather than fixed it** (`doc/claude/ase_l_ux_batch/receipts/verify.md`, the ⚠ under
 *"S3 · FIXED"*, and its *"Left for the driver"* item 3). **Class** harness / verification
 method: lost coverage that reads as a pass.
-**PARTIALLY FIXED 2026-09-22:** `tests/headless/test_ase_core.tcl` — the one suite the
-*"Still open"* item 2 said to do first — is converted; **15 named guards**, measured, see
-*"What was done: `test_ase_core`"* below. `test_ase_window` and **33** other suites are
+**PARTIALLY FIXED 2026-09-22:** the two largest T1 cases in the sweep are converted —
+`tests/headless/test_ase_core.tcl` (**15** named guards, span 5324 → 609) and
+`tests/headless/test_ase_dialogs.tcl` (**20** named guards, span 5699 → 659), both measured
+with a per-guard head-raise sabotage; see *"What was done: `test_ase_core`"* and
+*"What was done: `test_ase_dialogs`"* below. `test_ase_window` and **32** other suites are
 untouched.
 **Related, read first:** **1487** (the T1 verdict could not show that a case skipped rows —
 **FIXED** in `c84aee78`; its fix **cannot see this class**, see *"Why 1487's fix does not
@@ -157,7 +159,7 @@ Largest by fraction of the file, and the four that are T1 cases:
 | `test_wave_viewer` | 2373 | 2545 | 93% | no |
 | `test_wave_sigbrowser_2pane` | 802 | 857 | 93% | no |
 | `test_ase_final` | 1348 | 1455 | 92% | no |
-| `test_ase_dialogs` | 5699 | 6380 | 89% | **yes** |
+| ~~`test_ase_dialogs`~~ | ~~5699~~ | ~~6380~~ | ~~89%~~ | **yes — CONVERTED 2026-09-22, 20 guards, largest span now 659** |
 | `test_ase_persist` | 992 | 1181 | 83% | **yes** |
 | `test_ase_window` | 3450 | 4411 | 78% | no |
 | ~~`test_ase_core`~~ | ~~5324~~ | ~~12131~~ | ~~43%~~ | **yes — CONVERTED 2026-09-22, 15 guards, largest span now 609** |
@@ -325,13 +327,195 @@ rows whose *own subject* is the thing that went missing, so their ordinary failu
 
 ---
 
+## What was done: `test_ase_dialogs` — MEASURED, 2026-09-22
+
+`tests/headless/test_ase_dialogs.tcl`'s one unnamed **5699-line** `catch` — the largest
+span left in the sweep, 89% of the file — is **gone**, cut into **20** guards carrying the
+same named-check-row idiom the `test_ase_core` pass used. The file is 6380 → 6659 lines.
+**The biggest span a single raise can now swallow is 659 lines, down from 5699 — 8.7×**,
+and **all 388 of the file's `check`/`check_true` call sites sit inside a guard: zero are
+outside one** (the hole *"Still open"* item 3 names, which cost `test_ase_core` 319 rows,
+does not exist here — measured, not assumed).
+
+⚠ **THIS FILE'S TWO ARMS MEASURE DIFFERENT THINGS.** `run_regression.tcl` runs it in
+`hcases`, i.e. `--nogui`, where the `::has_x` gate skips everything below `H4d`: **37
+checks headless, 389 on the display arm**. The conversion is row-for-row identical on both
+arms before and after — the `ok:`/`FAIL:` name lists `diff` clean — so `37 ALL PASS`
+headless is unchanged, and the display arm's four failures (`G2sens`, `GG3`, `GG9`,
+`GN1b`, all capability-detection rows that answer to what the home can reach) are
+pre-existing and unmoved.
+
+### The guards, and what each one costs when it dies
+
+Each row was measured by forcing `error "ZZ1600 <CODE> head raise"` at the **HEAD** of that
+guard on the **display arm** and counting `^ok:` plus `^FAIL:` over the whole run — never
+from `RESULT:`, which a cascade that aborts the interpreter never prints. Green baseline is
+**389**. The pristine converted file was restored and proved by `md5sum` after every entry
+(`6e22bc85d69193b09959568154122914`, twenty times).
+
+| guard | covers | span | total rows after a head raise | delta | named guard rows that fired |
+|---|---|---|---|---|---|
+| `FX` | the state-view fixture | 31 | 42 | -347 | `FX0` `HD0` `GA0` `GT0` `GQ0` `GS0` `GV0` `GL0` `GE0` `GG0` `GN0` `GW0` `GR0` `GO0` `GH0` `NX0` `MS0` `SA0` `SB0` |
+| `HD` | `H1`-`H4d` | 267 | 353 | -36 | `HD0` |
+| `GA` | `G1`, `G2`, `G2b`, `G2c`, `G2h` | 230 | 169 | -220 | `GA0` `GT0` `GQ0` `GS0` `GV0` `GL0` `GE0` `GD0` |
+| `GT` | `G2tf`, `G2pz`, `G2a2`, `G2sens` | 431 | 369 | -20 | `GT0` |
+| `GQ` | `G2i`-`G2k`, `G2e`, `G2e2`, `G2g`, `G2d`, `G2dc`, `G2f` | 321 | 370 | -19 | `GQ0` |
+| `GS` | `G3`-`G6` | 154 | 357 | -32 | `GS0` |
+| `GV` | `G7`, `G8`, `G8b`, `G8c` | 202 | 355 | -34 | `GV0` |
+| `GL` | `G9`-`G9d`, `G10`, `G11` | 144 | 367 | -22 | `GL0` |
+| `GE` | `GE1`-`GE16` | 455 | 319 | -70 | `GE0` |
+| `GD` | `G13`, `G12` | 44 | 387 | -2 | `GD0` |
+| `GG` | `GG` | 153 | 364 | -25 | `GG0` `GN0` |
+| `GN` | `GN` | 288 | 375 | -14 | `GN0` |
+| `GW` | `G14` | 178 | 381 | -8 | `GW0` |
+| `GR` | `GR5` | 278 | 369 | -20 | `GR0` `GO0` |
+| `GO` | `GR6` | 343 | 381 | -8 | `GO0` |
+| `GH` | `GH` | 466 | 373 | -16 | `GH0` `NX0` |
+| `NX` | `NX` | 214 | 384 | -5 | `NX0` |
+| `MS` | `MS` | 659 | 372 | -17 | `MS0` |
+| `SA` | `SP1`-`SP6b` | 225 | 382 | -7 | `SA0` |
+| `SB` | `SP7`-`SP14` | 511 | 376 | -13 | `SB0` |
+
+`delta` is the whole-run row count minus the green 389, so it already **nets off the guard
+rows the red run adds** — a guard that costs exactly its own `n` rows shows `-(n-1)`. `HD`
+−36 is its 37 rows minus its one guard row; `GD` −2 is its three minus one. Spans are
+measured on the converted file, opener line to closer line.
+
+### The A/B, which is the whole issue in two runs
+
+The **same** raise, on the **same** arm, at the **same** place, once on the file as it
+stood and once on the converted file:
+
+| raise | file as it stood | converted |
+|---|---|---|
+| at the head of the fixture (pristine line 649, the old `if {[catch {` itself) | `UNEXPECTED ERROR: ZZ1600 FX head raise` · `RESULT: 1 FAILED (0 passed)` · **0 rows** | 19 of the 20 guard rows fire carrying `RAISED:`, plus 18 loud named failures on their own subjects · `RESULT: 37 FAILED (5 passed)` · **42 rows** |
+| at the head of section `SP7` (pristine line 5832) | `UNEXPECTED ERROR: …` · **`RESULT: 5 FAILED (371 passed)`** · `OVERALL: notok` · **four `FAIL:` lines in the log** | **`RESULT: 5 FAILED (371 passed)`** · `OVERALL: notok` · **five `FAIL:` lines**, the fifth `FAIL: SB0 sections SP7-SP14 ran to the end -> {RAISED:ZZ1600 SB head raise}` |
+
+**The second row is the sharper one.** The two verdicts are *byte-identical* — same
+`RESULT:`, same `OVERALL:` — and the only difference is in the log: the unnamed handler
+increments `fail` without printing a row, so the pristine run counts **five** failures and
+prints **four**, and the fifth is nameless. Fourteen rows never ran and nothing anywhere
+says so. Guarded, the count and the rows agree and the missing section has a name.
+(That arithmetic — `RESULT:` saying 5 while the log holds 4 — is also why the row count
+here is taken as `^ok:` plus `^FAIL:` over the whole run and never from `RESULT:`.)
+
+### The five cascades, and what they say
+
+Fifteen of the twenty guards cost **their own rows and nothing else**. Five do not, and all
+five are **pre-existing couplings the one big catch had merely hidden**; the sabotage is
+what found every one of them:
+
+* **`FX`, the fixture, is total — and now NAMED nineteen times over.** 42 of 389 rows
+  survive and 19 guard rows fire. Every section opens the state view the fixture seeds, so
+  no hoist can rescue them; what the guards buy is that the log says so nineteen times
+  instead of once, anonymously. (`GD` is the one survivor: `G13`/`G12` ask the simulation
+  configuration dialog a question that needs no session.)
+* **`GA` owns `$top`, and seven later sections read it** — `GT`, `GQ`, `GS`, `GV`, `GL`,
+  `GE`, `GD`. `G1` is where the session window is opened and `$top`/`$atv` are set, and
+  none of those sections re-opens one. A head raise there fires **eight** guard rows and
+  leaves 169 rows. Hoisting `$top` would not help: a window that was never opened is not a
+  value any hoist can supply. The eight further failures it produces (`GN5`–`GN9`, `G14f`,
+  `SP6`, `SP6b`) are loud, named, and on their own subjects — they are the rows that need a
+  netlist the dead sections would have made.
+* **`GG` → `GN` via `$gw` and `$top`** (−25 rather than −12): the precondition-banner rows
+  read the Choose Analyses window the type-grid section built.
+* **`GR` → `GO` via `$R5FIX`** (−20 rather than −13): `GR6` restores the session snapshot
+  `GR5` took, three times, at its own head. An empty default would be worse than the raise —
+  `ase::session_update $key {}` would silently install an empty bench — so this one is left
+  to fail by name.
+* **`GH` → `NX` via `$GHFIX`** (−16 rather than −18 + 0): `NX` keeps **all six** of its own
+  rows and `NX0` fires on its *teardown*, which puts `GH`'s bench back. That is the shape a
+  guard is supposed to produce: the section ran, the section is named, and the reader can
+  see it was the cleanup.
+
+### The hoists
+
+Three, found by the mechanical scan the `test_ase_core` pass prescribed — every `set` in a
+guard's span grepped for `$name` below it, with proc bodies excluded, and every `proc`
+defined in the body grepped for its name across the whole file:
+
+* **`$key`** — read at 662 sites in every section and by the H teardown. It used to be set
+  in the MIDDLE of the fixture, below `library_new_view` and `xschem cellview_path`, the two
+  calls that can actually fail. `ase::session_key` is a pure string join, so it is now
+  computed above the `FX` guard where it cannot raise, and a fixture that fails to build
+  reddens `FX0` while the sections below fail on their own subjects.
+* **`r5_open`** — defined in `GR5`, called by **section `GR6`** at nine of its own row
+  sites. Inside `GR`'s guard, a raise anywhere in `GR5` would take the definition with it
+  and `GR6` would die on `invalid command name "r5_open"`: the "one dead section becomes
+  two" case, verbatim.
+* **the five `sp_*` helpers and `$SPROW`/`$SPBENCH`** — section `SP` is split into `SA`
+  (SP1–SP6b) and `SB` (SP7–SP14), and `sp_open_chana`, `sp_type` and `sp_bench` are called
+  from `SB` seventeen times. Nothing in the hoisted stretch touches a widget or the session:
+  four of the procs are pure readers, `sp_bench` is a definition, and the two `set`s are
+  literals. The first call that CAN raise (`sp_bench $key $SPBENCH`) is the first line
+  inside `SA`.
+
+**No code moved except the one `set key` line.** The other two hoists are insertions only:
+the guard simply opens *below* the definition it used to swallow.
+
+### Three handlers put a renamed global proc back
+
+`GN10`, `G14` and `NX5` each `rename` a real proc aside, install a stub, and rename it back.
+A raise between the two renames would leave the stub installed for every section below — and
+`GN10`'s stub **raises on call**, so one dead section would have become all of them. Those
+three handlers restore before they report, each guarded by `[info commands <saved>] ne {}`,
+because an unconditional `rename ase::netlist {}` would DELETE the real proc on any other
+raise in that section. This was found by reading, not by the sabotage: a head raise fires
+before the rename, so it cannot expose it.
+
+### Cascade policy, per section
+
+**Fail loudly everywhere; no `skip:` line was added**, for the reason the `test_ase_core`
+pass gave. Every surviving dependent here is a row whose *own subject* is the thing that
+went missing — `GN5`'s "the run has not started", `SP6`'s "a bench nobody has netlisted" —
+so its ordinary failure text says strictly more than a `skip:` would. A `skip:` is right
+when a row cannot be evaluated; these can be, and the answer is no.
+
+### What this does NOT fix in this file
+
+* **`RESULT:` still has no denominator.** The check totals are **unchanged** — 37 headless
+  and 389 display, before and after, with twenty guards added — because the idiom puts the
+  `check` inside the handler and a green run therefore emits none of them. That is item 4
+  below, deliberately not done here.
+* **The stale bullet in the file's own floor paragraph.** It says `run_regression.tcl` runs
+  this file *"on **NEITHER** arm — measured, it is in neither `cases` nor `dcases`"*. It is
+  in `hcases` today (`run_regression.tcl`, the `headless/test_ase_dialogs` entry), so the
+  headless 37 ARE a T1 number and the display 389 are not. Left alone by this pass to keep
+  the diff to the guards; it is a one-line correction for whoever is next in the file.
+
+### What this pass adds to the list below, for `test_ase_persist`
+
+* **The verdict can be BYTE-IDENTICAL and still be the defect.** The `SP7` A/B above is two
+  runs printing the same `RESULT:` and the same `OVERALL:`, differing only in whether the
+  log holds four `FAIL:` lines or five. An A/B that compares verdict lines therefore proves
+  nothing; compare the `^FAIL:` lines.
+* **`RESULT:` and the log disagree BY CONSTRUCTION under an unnamed handler.** It does
+  `incr fail` without printing a row, so `RESULT: N FAILED` beside `N-1` `FAIL:` lines in
+  the log IS the signature of a swallowed section — readable in any old transcript without
+  re-running anything.
+* **A teardown at the END of a section is a different fact from the section's rows.** `NX`
+  kept all six of its rows and `NX0` fired on the fixture restore that follows them, so the
+  guard row said *"the section ran and its cleanup broke"*, which a reader can tell apart
+  from *"the section died"*.
+* **Some couplings no hoist can dissolve, and saying so is part of the job.** `$top` is a
+  live Tk window and `$R5FIX` is a session snapshot: an empty default for either would
+  install a plausible wrong value instead of raising. Where the empty default would LIE,
+  take the raise and name it.
+
+---
+
 ## Still open
 
 1. **`test_ase_window.tcl`** — the restructure described above.
-2. **The other 33 suites**, three of them T1 cases (`test_ase_dialogs` 89%,
-   `test_ase_persist` 83%, `test_op_annot` 1%). `test_ase_core` was the fourth and is
-   **done** — see *"What was done"* above. `test_ase_dialogs` is the one to do next: it is a
-   T1 case and its unnamed body is 5699 lines, the largest left in the sweep.
+2. **The other 32 suites**, two of them T1 cases: **`test_ase_persist`** (992 of 1181,
+   83%) and **`test_op_annot`** (257 of 16383, 1% — already 20 named handlers and one small
+   unnamed remnant). `test_ase_core` and `test_ase_dialogs` were the other two and are
+   **done** — see the two *"What was done"* sections above. **`test_ase_persist` is the one
+   to do next**: it is the last T1 case with a large unnamed body, and at 992 lines it is a
+   day's work rather than the two the 5699-line one took. After it, the largest unnamed
+   bodies left are all non-T1: `test_calc_skeleton` (3406), `test_wave_sigbrowser` (3173),
+   `test_ase_window` (3450 in the working tree — item 1), `test_wave_viewer` (2373) and
+   `test_wave_modes` (2157).
 3. **The UNGUARDED stretches, which this sweep cannot see at all and which are worse.**
    Added 2026-09-22 by the driver, from the `test_ase_core` crew's own "where I am unsure"
    list. In that file, **319 of the 675 rows sit outside every guard** — sections `AC`,
