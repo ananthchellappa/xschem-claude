@@ -92,3 +92,55 @@ mean that file is done**, and only a crew that goes looking will ever report it.
 6. ⚠ After **any** comment edit, re-run the suite. A comment inside a Tcl proc body sits in a
    brace-quoted word and Tcl counts braces before it notices the `#`. That broke the product
    twice on 2026-09-22 — once making every call raise, once aborting startup.
+
+## Session close — 2026-09-22, where to pick this up
+
+**Everything below is committed on `fluid-editing` and unpushed.** The user has not been
+asked to push; that is the first thing to offer them.
+
+### Landed this session
+
+| issue | what | commit |
+|---|---|---|
+| **1352** | `input_line`'s OK button ran what you typed as Tcl | `2a22bfb7` |
+| **1601** | four preview bindings ran a FILE NAME as Tcl; exploit driven through the shipped Open dialog before the fix | `6f4ee5cc` |
+| **1604** | a parenthesis in a file name failed the xschem-file test; the driver's prescribed anchor was **wrong** and the survey caught it | `005abc87` |
+| **1602** | the precision box refuses a value it cannot use and says why | `63558796` |
+| **1600** | all four T1 cases converted: `test_ase_core` `5a6da030`, `test_ase_dialogs` `0aa50c3e`, `test_op_annot` `81386d97`, `test_ase_persist` `6c012d1d` | — |
+
+Filed and **not** fixed: **1603** (a symbol with no `type=` is a NULL `strcmp` in 28
+places, one measured), **1605** (the same parenthesis pattern in C, unguarded, on the
+netlist provenance comment), **1606** (an unbounded `sprintf` on `ev_precision` aborts
+xschem, and `xschemrc` reaches it without the dialog gate).
+
+### The one thing genuinely unfinished
+
+**The `headless-crashes-A-B` workflow's Verify stage.** Its Implement stage landed edits to
+`src/callback.c`, `src/draw.c`, `src/hilight.c`, `src/scheduler.c` and
+`tests/headless/test_callback_argc.tcl` **in the main tree, uncommitted** (receipt
+`receipts/A-impl.md`). Its gate run was then killed by another crew's `pkill -f` (D7), so
+**its verdict is a partial that reads green by prefix and must not be quoted**. Whoever
+picks this up: re-gate that work in a throwaway clone before committing any of it.
+
+### Open for the user, in the order to ask
+
+1. **A-0** — the Results Display Window: read the 54 recorded choices, or open the window
+   once and say what jars? Recommendation: look first, then read the six load-bearing ones.
+   (`doc/claude/code_analysis/owed_queue_triage_2026-09-22.md`, Part 1.)
+2. **`rule/1352` and `rule/1601` ride together** — one conversation, not two. Both ask
+   whether to diverge from upstream xschem on the branch the user publishes, and **the
+   recommended shape has already shipped in both cases**. They have to be told that when
+   the question is put.
+3. **`look/precision_refusal_dialog_1602`** — the new refusal wording, verified on `:99`
+   only, never on the real screen.
+4. **`rule/1606`** — what an out-of-range `ev_precision` from a config file should do.
+   1602's "refuse and say why" does not automatically carry to a file read before there is
+   a window to put a message in.
+
+### What to do next, if nobody says otherwise
+
+**Issue 1600 item 3 outranks item 2, and the issue now says so.** `test_ase_core` still has
+**319 of its 675 rows outside every guard**, and it **is** a T1 case; everything left in
+item 2 is a suite that is not. The measurement is a brace-depth scan and takes a minute per
+file — and the sweep that defines the issue is structurally blind to it, so nobody finds it
+without going to look.
