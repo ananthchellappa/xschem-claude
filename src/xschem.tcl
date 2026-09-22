@@ -8516,7 +8516,31 @@ proc hi_descend_canvases {} {
 
 proc is_xschem_file {f} {
   # puts "is_xschem_file $f"
-  regsub {\(.*} $f {} f ;# remove trailing generator args (gen.tcl(....))  if any
+  ## ISSUE 1604. Strip a generator's argument list, and ONLY that.
+  ## The old spelling was an UNANCHORED regsub of {\(.*} -- it ate the FIRST
+  ## open parenthesis and everything after it, anywhere in the string. So an
+  ## ordinary schematic saved as bandgap(rev2).sch was tested for existence as
+  ## /lib/bandgap, which is not there, and this proc answered 0: the Insert
+  ## dialog refused to place the file and showed no preview, and the Open
+  ## dialog accused it of not being an xschem file. Same for foo (1).sch, the
+  ## name a browser or a file manager gives a duplicate.
+  ## THE GRAMMAR BELOW IS is_generator IN src/token.c, CHARACTER FOR CHARACTER:
+  ##     ^[^ \t()]+\([^()]*\)[ \t]*$
+  ## MEASURED through the C entry point, "xschem is_generator": the head admits
+  ## no space, no tab and no parenthesis; the argument list never nests and may
+  ## be empty, as the shipped symbolgen.tcl with an empty list is; and nothing
+  ## but optional whitespace may follow the closing parenthesis.
+  ## Agreeing with is_generator EXACTLY is the point, not merely anchoring to
+  ## the tail. save.c load_schematic and paste.c both ask is_generator whether
+  ## to popen the name, so a name this proc called GENERATOR while is_generator
+  ## refused it would be opened as a plain file and fail. A tail-only anchor
+  ## would do that to a generator living under a directory whose name has a
+  ## space, which is not a generator to C either.
+  ## An absent argument list is legal and must NOT be touched: load_schematic
+  ## and place_symbol call this proc on a bare generator path and append an
+  ## empty argument list themselves once the answer comes back GENERATOR.
+  ## Test: tests/headless/test_generator_paren_1604.tcl
+  regsub {^([^ \t()]+)\([^()]*\)[ \t]*$} $f {\1} f
   if { ![file exists $f] } { return 0
   } elseif { [file isdirectory $f] } { return 0 }
   set a [catch {open "$f" r} fd]

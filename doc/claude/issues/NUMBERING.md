@@ -3831,9 +3831,13 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   does not exist, so the proc returns 0 — and the Insert dialog then refuses to place the
   file, shows no preview, and the Open dialog tells the user their own schematic "does not
   seem to be an xschem file". `foo (1).sch` is what a browser or a copy names a duplicate.
-  Not a security defect: it fails closed. Fix is to anchor the pattern to a TRAILING
-  argument list, ⚠ after surveying how a generator path is really spelled — this issue
-  asserts what the regsub does, not that every generator ends in `)`. OPEN.
+  Not a security defect: it fails closed. **FIXED** at `021876975a`: the survey the issue
+  asked for found the grammar is not "a trailing argument list" but `is_generator` in
+  `src/token.c`, `^[^ \t()]+\([^()]*\)[ \t]*$`, which `save.c` and `paste.c` consult
+  before they `popen` a name — so the Tcl strip is now that ERE character for character,
+  and a tail-only anchor would have put the two out of step for a generator under a
+  directory whose name has a space. Test `tests/headless/test_generator_paren_1604.tcl`,
+  41 checks headless and 46 on the display arm, in both `hcases` and `dcases`. FIXED.
 
 ~~**The next free number is 1604.**~~
 

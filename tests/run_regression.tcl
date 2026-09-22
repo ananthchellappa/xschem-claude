@@ -96,7 +96,29 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_home_isolation_sh" \
                  "headless/test_untitled_autosave_1486" \
                  "headless/test_input_line_inject_1352" \
-                 "headless/test_preview_name_inject_1601"]
+                 "headless/test_preview_name_inject_1601" \
+                 "headless/test_generator_paren_1604"]
+# ⚠ `test_generator_paren_1604` IS REGISTERED IN BOTH LISTS, for the same
+# reason the two below are. Issue 1604: `is_xschem_file` took a generator's
+# argument list off a name with an UNANCHORED regsub, which ate the first open
+# parenthesis and everything after it anywhere in the string, so an ordinary
+# schematic saved as `bandgap(rev2).sch` was tested for existence as
+# `/lib/bandgap` and answered 0 -- the Insert dialog would not place it and drew
+# no preview, and the Open dialog accused it of not being an xschem file.
+# `foo (1).sch` is the name a browser or a file manager gives a duplicate, so
+# this is ordinary input, and it is stock xschem code on the branch the user
+# hands out.
+#   headless (here): the S rows (the shipped proc read out of src/xschem.tcl
+#     with comments stripped, and the anchored pattern compared character for
+#     character with the `is_generator` ERE in src/token.c), the G rows (the
+#     strip lifted out of the shipped file and run over a name table with
+#     `xschem is_generator` as the oracle) and the F rows (real files on disk
+#     with real parenthesised names through the real proc). 41 checks, plus ONE
+#     `skip:` line naming the 5 D rows it cannot run.
+#   display (`dcases`): the same 41 plus the D rows, which build a real Tk
+#     listbox and drive the Insert dialog's own procs. 46 checks.
+# The D rows CANNOT run here: they need `toplevel` and `listbox`, neither of
+# which exists under --nogui.
 # ⚠ `test_preview_name_inject_1601` IS REGISTERED IN BOTH LISTS, for the same
 # reason `test_input_line_inject_1352` below is, and it is the WORSE of the two
 # defects: issue 1601's payload is a FILE NAME, so nobody has to type anything.
@@ -380,7 +402,15 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_simwin_variant_1471" \
                  "headless/test_input_line_inject_1352" \
-                 "headless/test_preview_name_inject_1601"]
+                 "headless/test_preview_name_inject_1601" \
+                 "headless/test_generator_paren_1604"]
+## ⚠ `test_generator_paren_1604` IS THE ARM THAT REACHES THE INSERT DIALOG.
+## Its D rows build the real `.ins` listbox, put a real `bandgap(rev2).sch` and
+## a real `opamp(v3)_final.sym` in `file_chooser(fullpathlist)`, and call the
+## shipped `file_chooser_symbol_or_schematic` and `file_chooser_preview` on
+## them -- D1 asserting the file is actually handed to `file_chooser_place`,
+## which is the cost issue 1604 names first, and D5 that the preview gate opens.
+## The `hcases` copy above runs the same file and self-skips all five.
 ## ⚠ `test_preview_name_inject_1601` IS THE ARM THAT ACTUALLY OPENS THE DIALOG.
 ## Its B rows write real schematics whose NAMES are Tcl (`q[set ::PWNED
 ## BRACKET]z.sch`, a close-brace escape, a double-quote escape), hand them to the
