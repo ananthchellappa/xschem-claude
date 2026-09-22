@@ -31,3 +31,14 @@
 | E+F gate | 1486, 1487 | driver | tests/results.2325750.log | T1 solo: cases=88 blocks=87 counted_failures=0 skips=5 elapsed=532s, 88/88 Start/Finish, wc -l 260, zero peers | (this commit) |
 | E+F docs | 1486, 1487, 1489 | docs crew | the issue files | 1489 and 1487 closed with what the fix does NOT cover (two documented limits and one kept red; the four sanitised carry sites and `cases=88 blocks=87 skips=5`, `wc -l` 260); 1486 closed only PARTLY, `open=4`, with the boolean-vs-path product regression and the unarmed Tcl driver written into it; **1497** filed for `full_audit.sh`; 0609, 1480 and 1488 annotated rather than re-filed; NUMBERING.md now points at 1498 | |
 | CLOSED | all six | driver | PLAN.md §Closing | **batch closed 2026-09-20.** Six items, eight commits: `1f3f5287` (A/1485), `2288d437` (B/1483), `a1314271` (C/1484+1490), `9fcf9177` (D/1489), `c84aee78` (E+F/1487+1486), and the docs commits `2fb377de`, `37b80387`, `04844d23` (plus the brief amendment `0eed8a1b`). Five solo T1 gates, all ZERO counted failures; the last is `cases=88 blocks=87 counted_failures=0 skips=5 elapsed=532s`. Five issues closed, 1486 partial by measurement, eight numbers filed (1490–1497), no item took a fourth round | |
+
+## Correction, 2026-09-21
+
+`8237b7a4` also added `doc/claude/rdw_lists_batch/` and `doc/claude/rdw_sim_batch/`, two
+unrelated batch records that had been sitting untracked in the working tree since
+2026-09-05. They rode along because the driver staged `doc/claude` wholesale instead of
+naming the files it meant, and the commit message does not mention them. The content
+belongs in the repo -- both batches' code and issues shipped long ago, and the briefs are
+the reasoning behind them -- but the message is silent about it, and the commit is already
+pushed, so this note is the correction rather than a rewrite. Stage the files you mean.
+
