@@ -14734,9 +14734,29 @@ proc input_line {txt {cmd {}} {preset {}}  {w 12}} {
   pack .dialog.f1.l .dialog.f1.e -side left
   frame .dialog.f2
 
+  ## ⚠ THE TYPED TEXT IS A VALUE, NOT A SCRIPT (issue 1352).
+  ## This button used to read `eval $cmd \[.dialog.f1.e get\]`. `eval`
+  ## concatenates its arguments into a script and evaluates it, so the entry
+  ## contents were SPLICED INTO A SCRIPT rather than passed as a value: typing
+  ## `7 ; set ::INJECTED yes` into the shipped Simulation > "Set netlist /
+  ## graph / annotation precision" dialog set the precision AND ran the second
+  ## command, `[...]` and `$...` were substituted, and a space, a lone `"` or an
+  ## unbalanced brace raised instead of reaching $cmd. `list` makes the text
+  ## exactly ONE list element whatever it holds, so every caller's fixed $cmd
+  ## prefix -- `set ev_precision`, `xschem set cadsnap`, `xschem line_width`,
+  ## `xschem set netlist_name` -- receives it as a single argument.
+  ## ⚠ THE EMPTINESS GUARD IS NOT DECORATION, it holds the one behaviour `list`
+  ## would otherwise change. With an empty entry the old form appended nothing,
+  ## so `set X` was a harmless READ and every `xschem ...` caller fell short of
+  ## its own `argc` guard and did nothing. Quoted, an empty entry would become
+  ## an explicit `{}` argument: `xschem line_width {}` is `change_linewidth(0)`
+  ## and `xschem set cadsnap {}` is `set_snap(0)` -> the default snap. Pressing
+  ## OK on an emptied field must keep doing nothing.
+  ## Do NOT drop either half: rows S1-S4 of
+  ## tests/headless/test_input_line_inject_1352.tcl are structural and redden.
   button .dialog.f2.ok -text OK  -command  "
-    if { {$cmd} ne {} } {
-      eval $cmd \[.dialog.f1.e get\]
+    if { {$cmd} ne {} && \[.dialog.f1.e get\] ne {} } {
+      eval $cmd \[list \[.dialog.f1.e get\]\]
     }
     set tctx::retval \[.dialog.f1.e get\]
     destroy .dialog

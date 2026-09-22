@@ -94,7 +94,26 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_issue_stamp" \
                  "headless/test_home_isolation" \
                  "headless/test_home_isolation_sh" \
-                 "headless/test_untitled_autosave_1486"]
+                 "headless/test_untitled_autosave_1486" \
+                 "headless/test_input_line_inject_1352"]
+# ⚠ `test_input_line_inject_1352` IS REGISTERED IN BOTH LISTS (here and in
+# `dcases` below), and the two arms measure different halves. Issue 1352:
+# `input_line`'s OK button read `eval $cmd \[.dialog.f1.e get\]`, so the text
+# typed into the shipped Simulation > "Set netlist / graph / annotation
+# precision" dialog was SPLICED INTO A SCRIPT -- `7 ; set ::INJECTED yes` set
+# the precision and ran the second command -- and the same button carries
+# "Set top level netlist name" and View > "Set snap value". Stock xschem code,
+# on the branch the user hands to other people.
+#   headless (here): the S rows, which read the shipped proc out of
+#     src/xschem.tcl and redden if the fix is edited away textually. 7 checks,
+#     ~5 s, plus ONE `skip:` line naming the 27 B rows it cannot run.
+#   display (`dcases`): the same 7 plus the B rows, which open the real Tk
+#     dialog, type the hostile text into the real entry and invoke the real OK
+#     button from the event loop. 34 checks.
+# The B rows CANNOT run here: input_line builds a toplevel and blocks in
+# `tkwait`, and neither `toplevel` nor `winfo` exists under --nogui. Registering
+# it headless-only would have shipped a suite that never once proves the dialog
+# does not execute its input, which is the whole defect.
 # ⚠ `test_untitled_autosave_1486` GUARDS A PRODUCT DEFECT AND A HARNESS ONE AT
 # ONCE (issue 1486), which is why it is registered here rather than left to
 # `full_audit.sh`'s glob. Its U rows hold `clear_schematic()` to removing only a
@@ -340,7 +359,14 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_trnoise_gui_1467" \
-                 "headless/test_ase_simwin_variant_1471"]
+                 "headless/test_ase_simwin_variant_1471" \
+                 "headless/test_input_line_inject_1352"]
+## ⚠ `test_input_line_inject_1352` IS THE ARM THAT ACTUALLY TYPES. Its B rows
+## open the shipped input_line dialog on this display, put `7 ; set ::ILINJ yes`
+## (and a `[...]`, a `$...`, a space, a lone `"`, a lone `{`, a lone `}` and an
+## embedded newline) into the real entry widget, invoke the real OK button from
+## the event loop, and assert the canary never fired while the legitimate value
+## landed. The `hcases` copy above runs the same file and self-skips all of it.
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)
