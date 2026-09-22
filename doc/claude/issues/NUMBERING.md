@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3856,7 +3856,24 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1605.**~~
 
-**The next free number is 1606.**
+- **1606** — **An unbounded `sprintf` on `ev_precision` aborts xschem, and a config file can
+  set it.** `dtoa_eng` (`src/editprop.c`) does `sprintf(s, "%.*g%c", precision, ...)` into a
+  `static char s[80]`, with `precision` arriving from `xctx->ev_precision` through
+  `tclgetintvar` — `atoi()`, which never raises and never validates. MEASURED on the shipped
+  binary: 72 survives at 79 chars, **73 aborts** (`*** buffer overflow detected ***`,
+  SIGABRT, rc 134), and 74/75/80/90/99/100/200/400/1000 all abort. That boundary is where
+  1602's dialog ceiling of 71 comes from. ⚠ **1602 does not close it**: `ev_precision` is an
+  ordinary Tcl global, so `~/.xschem/xschemrc`, `--preinit` and any `tcleval` property reach
+  it without passing the dialog — `set ev_precision 200` in a user's rc is a startup-time
+  landmine that fires the first time a value lands in the `1e12` branch. Two `draw.c`
+  cursor-readout sites share the defect with a wider buffer; `graph_marker_fmt` ignores its
+  own `destsize` but is **not** live, because all four callers sit below a documented
+  `prec > 17` clamp — recorded that way rather than inherited, since overstating one site
+  gets the other two discounted with it. OPEN.
+
+~~**The next free number is 1606.**~~
+
+**The next free number is 1607.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
