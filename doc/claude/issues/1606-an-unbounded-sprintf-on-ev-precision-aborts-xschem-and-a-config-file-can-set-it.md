@@ -1,6 +1,6 @@
 # 1606 — an unbounded `sprintf` on `ev_precision` aborts xschem, and a config file can set it
 
-**STAMP:** `v1 claim=open tree=635587968567 stamped=2026-09-22 fix=untried open=4 by=driver`
+**STAMP:** `v1 claim=open tree=635587968567e4 stamped=2026-09-22 fix=untried open=4 by=driver`
 
 **Status: OPEN — filed 2026-09-22** by the driver, from the 1602 crew's measurement and
 its explicit *"this wants a number and a crew"*. **Class** memory safety — an unbounded
