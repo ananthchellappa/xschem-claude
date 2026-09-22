@@ -252,6 +252,24 @@ set PINEXPR {{vgs {@#1 - @#2}} {vds {@#0 - @#2}}}
 set DERIVED {{gm/id {$gm/$id}}}
 set PARAMS  {{id id 0} {gm gm 1} {gds gds 1} {vth vth 2} {vdsat vdsat 2} {Ids ids 0}}
 
+# =============================================================================
+# SECTIONS A-D — S1 of doc/claude/specs/op_annotation.md: THE NAME BUILDER
+# =============================================================================
+# ⚠ ONE GUARD, NOT SEVERAL, AND THE REASON IS THE FIXTURE CHAIN (issue 1600).
+# A, B, C(top), B(cont), C, D and C4 read as seven headings but they are one
+# straight line: fill the descriptor store -> `xschem load top.sch` -> `xschem
+# descend` to sim_sch_path `x1.` -> measure -> reload leaf.sch for the
+# no-caching row. Every row below the first `xschem load` needs the fixture the
+# rows above it built, so a cut anywhere inside would only move rows from one
+# guard into the next without changing what a raise costs: the rows BEFORE the
+# raise have already printed, and the rows after it have lost the fixture
+# whatever guards them.
+# ⚠ NOTHING HERE IS READ BELOW THE ARM — MEASURED, not assumed. The mechanical
+# scan issue 1600 prescribes (every column-0 `set`/`proc` in the span, grepped
+# for its name past the closer) returns `opa_probe_devproc`, `opa_upper_devproc`,
+# `::opa_devproc_args`, `c10_before`, `c10_rc`, `symf`, `symtext` and the D8
+# locals, and EVERY ONE has zero readers below this guard's closing arm. So
+# there is nothing to hoist and this guard cannot turn one dead section into two.
 if {[catch {
 
 # ===========================================================================
@@ -509,8 +527,8 @@ check {C4 at top level the hierarchy prefix vanishes (no caching)} \
   [list [xschem get sim_sch_path] [rcall {op_annot::devpath M1}]] \
   [list {} [list 0 $G_DEVTOP]]
 
-} bigerr]} {
-  puts "UNEXPECTED ERROR: $bigerr"
+} aderr]} {
+  puts "UNEXPECTED ERROR (sections A-D): $aderr"
   incr fail
 }
 
@@ -2607,9 +2625,33 @@ catch {op_annot::register nmos $k17_good}
 ## ⚠ RESTORE THE D9b DEFAULT. Everything after this point — L, N, O, Q, T — must
 ## see what a user sees. A stray `0` here would make every later row measure an
 ## uncapped formatter and the cap would be untested from row L1 onward.
+## ⚠ GUARDED THOUGH IT IS ONLY ONE ROW (issue 1600). R1 was the ONE `check` call
+## site in this 16383-line file that sat outside every guard, and it makes a
+## BARE `op_annot::max_rows` call: a raise there is not a misleading verdict, it
+## is no verdict at all — the interpreter unwinds past the RESULT/OVERALL block
+## at the foot of the file, so the run prints no banner and no count. MEASURED
+## on the headless arm, same forced raise, same place, unguarded vs guarded:
+## unguarded it printed 119 of 485 rows, NO `RESULT:`, NO `OVERALL:`, no
+## `UNEXPECTED ERROR:` line at all, and EXITED 0 — a reader sees 119 `ok:` lines
+## and a clean exit. Guarded it prints 484 rows, one named UNEXPECTED ERROR,
+## `RESULT: 1 FAILED`, `OVERALL: notok`, exit 1. T1 still scores the unguarded
+## shape as a death by the banner rule; run standalone it is silent.
+## ⚠ THE `set` IS HOISTED ABOVE THE GUARD, AND THAT IS MEASURED, NOT TIDINESS.
+## It is a literal assignment that cannot raise, and rows R2 and R3 below read
+## the default it restores. With it INSIDE the guard a forced raise at the
+## guard's head cost three rows instead of one — R1 plus loud reds on R2 and R3,
+## both answering `{id gm gds vgs vth vds vdsat cgg ft gm/id_long}` against an
+## uncapped formatter. Hoisted, the same raise costs R1 and nothing else.
 set ::op_annot_max_rows 6
+if {[catch {
+
 check {R1 D9b the cap is back to its shipped default after the two lifted sections} \
   [list $::op_annot_max_rows [op_annot::max_rows]] {6 6}
+
+} r1err]} {
+  puts "UNEXPECTED ERROR (section R1): $r1err"
+  incr fail
+}
 
 
 # =============================================================================
