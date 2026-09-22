@@ -353,9 +353,31 @@ rows whose *own subject* is the thing that went missing, so their ordinary failu
    98 call sites in the corpus are failure-only, and inventing a second spelling for one
    file would be worse. But it means the fix bought **diagnosability, not coverage
    reporting**: a red run now names which section died, while a green run still cannot say
-   how much of the suite the number represents. The shape that would settle it is a suite
-   declaring its expected row count and the verdict comparing against it. That is a
-   harness change, not a per-suite one, and it is not attempted here.
+   how much of the suite the number represents.
+
+   **A suite declaring its expected row count is the obvious shape and it is the wrong
+   one.** The number is maintained by hand, so it drifts the first time anyone adds a row;
+   worse, it is environment-dependent — the same suite legitimately runs 70 checks or 76
+   depending on whether the home can reach the fork ngspice (`test_ase_converge_1459`), so
+   a fixed expectation would be red on a correct run.
+
+   **The guards themselves are already the denominator, and the `else` arm is all that is
+   missing.** Give each guard
+   ```tcl
+   } ncerr]} { check {NC0 section NC ran to the end} "RAISED:$ncerr" {} } \
+     else       { check {NC0 section NC ran to the end} {} {} }
+   ```
+   and a green run states *"22 sections declared, 22 ran to the end"* — self-maintaining,
+   because the declaration IS the guard nobody can forget to add, and environment-proof,
+   because a section that legitimately skips its rows still runs to its end. The suite
+   count then carries a coverage fact instead of only a correctness one, and the T1 verdict
+   could summarise it beside `skips=`.
+
+   The cost is the reason it was not done here: **98 call sites across 15 suites**, every
+   one of which changes its check total, which ripples into any row that asserts an exact
+   count. Doing it in one file only would leave two spellings in a corpus whose own comment
+   wall complains about exactly that. So it is a corpus-wide harness pass with its own
+   receipt — not a rider on a per-suite conversion.
 
 ### What the `test_ase_core` pass learned, for whoever does the next one
 
