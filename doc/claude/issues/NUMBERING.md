@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3779,7 +3779,25 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1601.**~~
 
-**The next free number is 1602.**
+- **1602** — **The precision dialog accepts a value that then breaks every number it
+  formats.** `Simulation > Set netlist / graph / annotation precision` is a bare
+  `input_line` with no validation, so `-1`, `2.5`, `abc`, `4x`, `+4`, `0x4`, `6.` and `6.0`
+  all stick and all make `format %.${pr}g` raise inside `to_eng` — from which moment EVERY
+  correctly measured value in the Results Display Window reads `(did not converge)`, a
+  statement about the CIRCUIT, on the surface this feature exists to have pasted into a
+  design review. The gap two closed issues both touched and neither owned: **1345** fixed
+  the *reading* (the window no longer infers non-finite from a declining formatter) and its
+  own rows would still pass with `ev_precision` set to `abc`; **1352** fixed the
+  *injection* and its receipt says input validation here "is a separate defect".
+  ⚠ Filed as CITED, not measured — and `2a22bfb7` changed which strings can reach
+  `ev_precision`, so the eight-value table must be re-taken rather than re-cited. One
+  question is genuinely the user's: refuse and say why, or quietly keep the last good
+  value. **Do not widen it into "validate every dialog"** — `input_line` also carries the
+  netlist name, whose legal value is now almost anything. OPEN.
+
+~~**The next free number is 1602.**~~
+
+**The next free number is 1603.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
