@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3797,7 +3797,22 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1602.**~~
 
-**The next free number is 1603.**
+- **1603** — **A symbol with no `type=` property is a NULL `strcmp` in 28 places.** Found
+  beside the display-crash sweep and explicitly NOT a member of that class: it faults on a
+  NULL string field, and no `has_x` guard touches it. `xschem hier_psprint` on a loaded
+  schematic segfaults headless at `psprint.c:1070` in `ps_draw_symbol()` — MEASURED by the
+  headless-crashes Map crew, the only one of the 28 that has been driven. `xSymbol.type` is
+  optional and its absence is NULL, not `""`: `save.c` initialises it to NULL per symbol and
+  fills it only if the file carries a `type=`, and `copy_symbol()` does the same. Swept at
+  `d9f45e8f`: **45 `strcmp`-on-`type` sites, 17 guarded, 28 not**, and 19 of the 28 are in the
+  netlisters. ⚠ The sweep is a two-line-context pattern match, so **28 is the candidate list,
+  not the defect count**. The hard part is item 3, not the `if`: a blanket `type ? type : ""`
+  answers all 28 at once and is wrong wherever the absence means something other than "not
+  that type". OPEN.
+
+~~**The next free number is 1603.**~~
+
+**The next free number is 1604.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
