@@ -830,6 +830,20 @@ proc rdw::_line {tag text} { return [list $tag [rdw::_oneline $text]] }
 # blanks the row there (op_annot.tcl:2125 emits `id =`) while the window
 # asserted a non-convergence, so the two surfaces DID disagree.
 #
+# ⚠ THE PARAGRAPH ABOVE DESCRIBES A DOOR THAT IS NOW SHUT -- ISSUES 1352 AND
+# 1602 -- AND IT IS KEPT BECAUSE IT IS WHY THIS PROC IS SHAPED AS IT IS.  Two
+# halves of it are no longer true of the shipped tree.  `eval set ev_precision
+# [.dialog.f1.e get]` became `eval $cmd [list [.dialog.f1.e get]]` in 2a22bfb7
+# (issue 1352: the typed text was being run as a script).  And since issue 1602
+# the menu entry routes through `set_ev_precision` (xschem.tcl, just above
+# to_eng), which REFUSES anything that is not a plain decimal integer from 1 to
+# 71 and says so, so none of the eight values above can reach ev_precision from
+# that dialog any more.  THE FALLBACK BELOW IS STILL LOAD-BEARING: a
+# ~/.xschem/xschemrc line `set ev_precision abc` never passes that gate, and
+# 1602 measured a class the old table missed -- `4f`, `4s` and `4e0` do not
+# raise at all, they end the format specifier early and print a DIFFERENT
+# NUMBER (a true 1.11e-05 became `11.1000gu`), which no fallback can catch.
+#
 # THE FIX IS TO ASK, NOT TO INFER.  `op_annot::_finite` (op_annot.tcl:1179) is
 # the discriminator eng_or_blank gates on itself, so consulting it adds no
 # second opinion about what non-finite means -- the drift item R5 exists to

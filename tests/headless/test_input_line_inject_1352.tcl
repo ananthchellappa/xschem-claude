@@ -35,25 +35,50 @@
 # set_snap(0) -> the default snap. Pressing OK on an emptied field must keep
 # doing nothing.
 #
+# ===========================================================================
+# ISSUE 1602 ALSO LIVES HERE -- the precision box accepted a value that broke
+# every number it formats.
+#
+# The same `Simulation > Set netlist / graph / annotation precision` entry used
+# to hand `input_line` the literal command `set ev_precision`, so whatever was
+# typed became the precision. MEASURED through the shipped menu entry at
+# c3ec73a3: `-1  2.5  abc  4x  +4  0x4  6.  6.0` all land VERBATIM, and so --
+# since 2a22bfb7 let a value with a space survive -- do `" "`, `"4 5"` and
+# `"7 ; set ::ILINJ yes"`. Every one of them then broke `format %.${pr}g`.
+# Worse, `4f`, `4s` and `4e0` do NOT raise: they end the format specifier early
+# and print a DIFFERENT NUMBER (a true 1.11e-05 became `11.1000gu`, `11.1gu`,
+# `1.1100e+010gu`), so issue 1345's raw-text fallback never engages.
+#
+# The fix is `proc set_ev_precision` (src/xschem.tcl, above `proc to_eng`),
+# called on `input_line`'s RETURN VALUE -- not as its $cmd, because input_line
+# holds a grab across its OK callback and an alert raised from inside it cannot
+# be clicked. Legal is a whole number 1..71, both bounds measured; the comment
+# wall on the proc records why.
+# ===========================================================================
+#
 # SECTIONS
 #   S0-S5  STRUCTURAL, both arms: the shipped proc carries the quoted form and
 #          the guard, carries no bare `eval $cmd \[.dialog.f1.e get\]` anywhere
 #          in the file once comments are stripped, has exactly one `eval $cmd`,
 #          and the <Return> binding still routes through the same OK button so
 #          the Enter key cannot reach an unguarded path.
+#   P1-P6  STRUCTURAL, both arms, ISSUE 1602: the precision menu entry routes
+#          through set_ev_precision, the literal `set ev_precision` command is
+#          gone from the file, and the proc still carries its digits-only
+#          pattern, its 1..71 range test and its alert_.
 #   B1-B19 BEHAVIOURAL, DISPLAY ARM ONLY: the real dialog is opened, hostile
-#          text is put in the real entry widget, and the real OK button is
+#   P7-P17 text is put in the real entry widget, and the real OK button is
 #          invoked from the event loop. `input_line` builds a Tk toplevel and
 #          waits in `tkwait`, so none of it is reachable under --nogui, where
 #          `toplevel` and `winfo` do not exist -- those rows print `skip:`.
 #
 # ARMED SPELLINGS
 #   tests/headless/run_suites.sh test_input_line_inject_1352            (both)
-#   tests/headless/run_suites.sh --nogui test_input_line_inject_1352    (S only)
+#   tests/headless/run_suites.sh --nogui test_input_line_inject_1352    (S,P1-P6)
 # Registered in tests/run_regression.tcl in BOTH `hcases` (structural rows, the
-# B rows self-skip) and `dcases` (everything).
+# B and P7-P17 rows self-skip) and `dcases` (everything).
 #
-# FLOOR: 7 checks headless (S0-S5), 34 on the display arm. Measured
+# FLOOR: 13 checks headless (S0-S5, P1-P6), 58 on the display arm. Measured
 # 2026-09-22. RAISED, NEVER LOWERED.
 
 set fail 0; set npass 0
@@ -148,10 +173,45 @@ check_true {S5 <Return> routes through the OK button} \
   [expr {[scount $BODY {bind .dialog <Return> {.dialog.f2.ok invoke}}] == 1}]
 
 # ===========================================================================
+# SECTION P1-P6 -- STRUCTURAL, ISSUE 1602. Both arms. These are what reddens if
+# the precision box's validation is edited away without anybody opening a menu.
+# ===========================================================================
+set PBODY [proc_body $FILE set_ev_precision]
+
+## P1 -- the shipped menu entry calls the validator on input_line's RETURN
+## VALUE. The exact line, so a rename or a re-pointing at $cmd reddens.
+check {P1 the precision menu entry routes through set_ev_precision} \
+  [scount $FILE {set_ev_precision [input_line "Enter precision (int 1-71):" {} $ev_precision]}] 1
+
+## P2 -- and the defective form is gone: no caller hands input_line the literal
+## command that made anything typed become the precision.
+check {P2 no `"set ev_precision"` command handed to input_line} \
+  [scount $FILE {"set ev_precision"}] 0
+
+## P3 -- the validator exists at all, so P4-P6 cannot pass by finding nothing.
+check_true {P3 proc set_ev_precision is in src/xschem.tcl} \
+  [expr {$PBODY ne {ZZNOPROC} && $PBODY ne {}}]
+
+## P4 -- the digits-only pattern. Without it `4f`, `4e0`, `2.5` and `abc` walk in.
+check {P4 set_ev_precision matches a plain decimal integer only} \
+  [scount $PBODY {regexp {^0*([0-9]{1,3})$} $t -> d}] 1
+
+## P5 -- the range test. 71 is the largest precision measured safe against
+## dtoa_eng's `static char s[80]`; at 73 the binary aborts with a detected
+## buffer overflow. 0 turns engineering notation off in C but not in Tcl.
+check {P5 set_ev_precision holds the measured 1..71 range} \
+  [scount $PBODY {$n < 1 || $n > 71}] 1
+
+## P6 -- and it SAYS SO. The driver decision on 1602 is refuse-and-tell, not
+## quietly keep the last good value, because the defect's nature is silence.
+check_true {P6 set_ev_precision tells the user it refused} \
+  [expr {[scount $PBODY {alert_ }] == 1}]
+
+# ===========================================================================
 # SECTION B -- BEHAVIOURAL. The real widget, the real OK button, the real
 # event loop. DISPLAY ARM ONLY.
 # ===========================================================================
-set BROWS {B1a/B1b/B2/B3a/B3b/B4/B5/B6/B7/B8/B9/B10/B11a/B11b/B12a/B12b/B13a/B13b/B14/B15/B16a/B16b/B17a/B17b/B18a/B18b/B19}
+set BROWS {B1a/B1b/B2/B3a/B3b/B4/B5/B6/B7/B8/B9/B10/B11a/B11b/B12a/B12b/B13a/B13b/B14/B15/B16a/B16b/B17a/B17b/B18a/B18b/B19/P7a/P7b/P8a/P8b/P9a/P9b/P10a/P10b/P11a/P11b/P11c/P12/P13/P14/P15a/P15b/P16/P17}
 
 if {![info exists ::has_x]} {
   skiprow $BROWS "these rows open the real input_line dialog and invoke its OK\
@@ -325,18 +385,94 @@ if {$r ne {}} {
 }
 catch {xschem set cadsnap $snap_before}
 
-# --- B18: THE ISSUE'S OWN REPRO, through the shipped menu entry -------------
+# --- the precision driver, for B18 and section P ----------------------------
+## ⚠ SINCE ISSUE 1602 THE PRECISION ENTRY CAN OPEN TWO WINDOWS, NOT ONE.
+## `input_line` returns, and `set_ev_precision` then pops an `alert_` toplevel
+## for a value it refuses. `alert_` blocks in `tkwait window .alert`, so
+## `il_menu` -- which only ever destroys `.dialog` -- would hang here until the
+## suite watchdog. This driver polls both windows in one `after` chain.
+## ⚠ IT WAITS FOR alert_ TO BIND <Return> before touching `.alert`: that bind
+## is the first statement after alert_'s own `tkwait visibility`, and destroying
+## the toplevel before then makes THAT tkwait raise instead of returning.
+set ::pr_errlog {}
+proc pr_poke {typed tries state} {
+  if {$state eq {dialog}} {
+    if {[winfo exists .dialog.f2.ok] && [winfo exists .dialog.f1.e]} {
+      set g {}
+      catch {set g [grab current .dialog]}
+      if {$g eq {.dialog} || $tries <= 0} {
+        catch {.dialog.f1.e delete 0 end}
+        catch {.dialog.f1.e insert 0 $typed}
+        if {[catch {.dialog.f2.ok invoke} e]} { set ::pr_err "INVOKE: $e" }
+        catch {destroy .dialog}
+        ## A legal value opens no alert at all, so the second leg gets its own
+        ## short budget -- alert_ is reached within a few event loop passes.
+        set state alert
+        set tries 30
+      }
+    } elseif {$tries <= 0} {
+      set ::pr_err NODIALOG
+      catch {destroy .dialog}
+      return
+    }
+  }
+  if {$state eq {alert}} {
+    if {[winfo exists .alert.b1] && [winfo ismapped .alert] && [bind .alert <Return>] ne {}} {
+      catch {set ::pr_alert [.alert.l1 cget -text]}
+      catch {.alert.b1 invoke}
+      catch {destroy .alert}
+      return
+    }
+    if {$tries <= 0} { catch {destroy .alert} ; return }
+  }
+  set ::pr_after [after 40 [list pr_poke $typed [expr {$tries - 1}] $state]]
+}
+
+## Invoke the shipped precision menu entry and type $typed. Leaves ::pr_alert
+## holding the refusal text, or {} when the value was accepted silently.
+proc pr_menu {typed} {
+  set menu .menubar.simulation
+  set label {Set netlist / graph / annotation precision}
+  if {![winfo exists $menu]} { return "NOMENU $menu" }
+  set n -1
+  catch {set n [$menu index end]}
+  for {set i 0} {$i <= $n} {incr i} {
+    set l {}
+    if {[catch {$menu entrycget $i -label} l]} { continue }
+    if {$l ne $label} { continue }
+    set ::pr_err none ; set ::pr_alert {}
+    set ::pr_after [after 40 [list pr_poke $typed 120 dialog]]
+    set ::pr_guard [after 20000 {catch {destroy .alert} ; catch {destroy .dialog}}]
+    catch {$menu invoke $i}
+    catch {after cancel $::pr_after}
+    catch {after cancel $::pr_guard}
+    catch {destroy .alert}
+    catch {destroy .dialog}
+    if {$::pr_err ne {none}} { lappend ::pr_errlog "precision {$typed} -> $::pr_err" }
+    set ::pr_err none
+    return {}
+  }
+  return "NOENTRY {$label}"
+}
+
+# --- B18: 1352'S OWN REPRO, through the shipped precision menu entry --------
+## ⚠ WHAT B18a MEASURES CHANGED WITH ISSUE 1602, AND IT STILL MEASURES 1352.
+## Before 1602 this row read the hostile text back out of `ev_precision`, which
+## is exactly what 1602 stopped: the value is now REFUSED. The 1352 property --
+## the typed text is handed on as ONE value and never spliced into a script --
+## is now read off the refusal, which quotes back what it was given. A splice
+## would have delivered `7` alone, and the row would see `"7"` in the message.
 set prec_before $::ev_precision
+set ::ev_precision 4
 il_armed
-set r [il_menu .menubar.simulation {Set netlist / graph / annotation precision} \
-                                   {7 ; set ::ILINJ yes}]
+set r [pr_menu {7 ; set ::ILINJ yes}]
 if {$r ne {}} {
   skiprow {B18a/B18b} "the Simulation menu entry could not be reached ($r):\
  this xschem was started without its menubar, so the shipped entry issue 1352\
  was reported against is not there to invoke"
 } else {
-  check {B18a Simulation > Set precision: the hostile text lands as a value} \
-    $::ev_precision {7 ; set ::ILINJ yes}
+  check_true {B18a Simulation > Set precision: the WHOLE hostile text arrived as one value} \
+    [string match {*"7 ; set ::ILINJ yes"*} $::pr_alert]
   check {B18b Simulation > Set precision: `set ::ILINJ yes` did NOT run} \
     [il_fired] no
 }
@@ -347,6 +483,92 @@ catch {set ::ev_precision $prec_before}
 ## never opened would satisfy them without measuring anything, so this row is
 ## what stops the B section passing by not happening.
 check {B19 every drive reached the real OK button} $::il_errlog {}
+
+# ===========================================================================
+# SECTION P7-P17 -- BEHAVIOURAL, ISSUE 1602. The real menu entry, the real
+# dialog, the real refusal. DISPLAY ARM ONLY.
+# ===========================================================================
+set prec_before $::ev_precision
+
+## Type $typed at the real menu entry and assert the precision did not move AND
+## that the user was told, with what they typed quoted back at them.
+proc pr_refused {row typed} {
+  set ::ev_precision 4
+  set r [pr_menu $typed]
+  if {$r ne {}} { skiprow "${row}a/${row}b" "menu entry unreachable ($r)" ; return }
+  check "${row}a refused {$typed}: precision did not move" $::ev_precision 4
+  check_true "${row}b refused {$typed}: and the user was told, naming it" \
+    [string match "*\"$typed\"*" $::pr_alert]
+}
+
+## P7 -- the issue's own `abc`: a value `format %.Ng` raises on.
+pr_refused P7 {abc}
+## P8 -- `4f` is the class that does NOT raise. It ends the format specifier
+## early, so 1345's raw-text fallback never engages and a true 1.11e-05 used to
+## print as `11.1000gu` -- a wrong number wearing engineering notation.
+pr_refused P8 {4f}
+## P9 -- 72 is one past the measured ceiling. At 73 this binary aborts with
+## `*** buffer overflow detected ***` inside dtoa_eng's sprintf.
+pr_refused P9 {72}
+## P10 -- 0 is refused at the floor: eval_expr.y reads it as "engineering off",
+## so C prints 1.11e-05 where Tcl prints 1e+01u, and the two surfaces disagree.
+pr_refused P10 {0}
+
+## P11 -- a hostile string is refused like any other bad value, is quoted back
+## WHOLE (the 1352 property), and still executes nothing.
+set ::ev_precision 4
+il_armed
+set r [pr_menu {9 ; set ::ILINJ yes}]
+if {$r ne {}} {
+  skiprow {P11a/P11b/P11c} "menu entry unreachable ($r)"
+} else {
+  check {P11a a hostile precision does not move the value} $::ev_precision 4
+  check_true {P11b and the refusal quotes the WHOLE string, not its first word} \
+    [string match {*"9 ; set ::ILINJ yes"*} $::pr_alert]
+  check {P11c and nothing was executed} [il_fired] no
+}
+
+## P12-P14 -- a LEGAL value still lands, silently. A validator that refused
+## everything would satisfy P7-P11 perfectly.
+set ::ev_precision 4
+set r [pr_menu {6}]
+if {$r ne {}} { skiprow {P12} "menu entry unreachable ($r)" } else {
+  check {P12 a legal precision lands with no alert} "$::ev_precision|$::pr_alert" {6|}
+}
+set ::ev_precision 4
+set r [pr_menu {71}]
+if {$r ne {}} { skiprow {P13} "menu entry unreachable ($r)" } else {
+  check {P13 71, the measured ceiling, is legal} "$::ev_precision|$::pr_alert" {71|}
+}
+## `format %.007g` and atoi("007") both mean SEVEN, so 007 is legal -- and it is
+## stored normalised, because Tcl's expr would otherwise read a leading-zero
+## value as octal.
+set ::ev_precision 4
+set r [pr_menu {007}]
+if {$r ne {}} { skiprow {P14} "menu entry unreachable ($r)" } else {
+  check {P14 007 is legal and is stored as 7} "$::ev_precision|$::pr_alert" {7|}
+}
+
+## P15 -- an EMPTIED field is Cancel, not an error: nothing changes and nothing
+## is said. input_line's own emptiness guard (issue 1352) is the other half.
+set ::ev_precision 4
+set r [pr_menu {}]
+if {$r ne {}} { skiprow {P15a/P15b} "menu entry unreachable ($r)" } else {
+  check {P15a an emptied field leaves the precision alone} $::ev_precision 4
+  check {P15b an emptied field says nothing} $::pr_alert {}
+}
+
+## P16 -- THE WHOLE POINT. After a refused value the formatter still works, so
+## the Results Display Window and the annotation sheet still print a number.
+set ::ev_precision 4
+pr_menu {abc}
+set fmt IL
+catch {to_eng 1.11e-05} fmt
+check {P16 after a refusal the formatter still formats} $fmt {11.1u}
+
+## P17 -- and every precision drive above really reached the real OK button.
+check {P17 every precision drive reached the real OK button} $::pr_errlog {}
+catch {set ::ev_precision $prec_before}
 
 }
 # --- verdict ---------------------------------------------------------------

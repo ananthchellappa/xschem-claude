@@ -1898,6 +1898,97 @@ proc from_eng {i} {
   return [expr {$n * $mult}]
 }
 
+## ⚠ THE ONE GATE ON ev_precision, AND IT IS THE PRECISION BOX'S OWN -- ISSUE 1602.
+##
+## `Simulation > Set netlist / graph / annotation precision` used to hand
+## `input_line` the literal command `set ev_precision`, so whatever was typed
+## became the precision. MEASURED through the shipped menu entry on the current
+## code (c3ec73a3), every one of these landed VERBATIM in ev_precision:
+##
+##   -1  2.5  abc  4x  +4  0x4  6.  6.0  and -- new since 2a22bfb7, which lets a
+##   value with a space survive -- " ", "4 5" and "7 ; set ::ILINJ yes"
+##
+## and each of them then broke `format %.${pr}g` in to_eng below. Since issue
+## 1345 the Results Display Window no longer calls that a non-convergence: it
+## falls back to the raw text, so the visible damage is now that every correctly
+## measured value prints UNFORMATTED. That is the mild half.
+##
+## ⚠ THE HALF THAT IS NOT MILD: A PRECISION CAN HIJACK THE CONVERSION AND PRINT
+## A DIFFERENT NUMBER, SILENTLY. `format %.${pr}g` pastes the value into a
+## format string, so a trailing conversion character ENDS the specifier and the
+## `g` becomes literal text. MEASURED, for a true 1.11e-05:
+##
+##   ev_precision=4f  -> 11.1000gu       ev_precision=4s  -> 11.1gu
+##   ev_precision=4e0 -> 1.1100e+010gu
+##
+## None of those raises, so 1345's fallback never engages, and the window and the
+## annotation sheet both print a wrong number that reads like a measurement.
+##
+## ⚠ AND THE C SIDE IS NOT IMMUNE EITHER, THOUGH IT FAILS DIFFERENTLY.
+## `tclgetintvar` (scheduler.c) is atoi(), which never raises: it silently uses a
+## DIFFERENT precision from the one typed -- atoi("2.5") is 2, atoi("abc") is 0,
+## atoi("4x") is 4. But `dtoa_eng` (editprop.c) sprintf()s into a `static char
+## s[80]` with an indirect precision and no bound; its own comment says
+## my_snprintf cannot be used there. MEASURED on this binary: with ev_precision
+## at 73 or more, `xschem eval_expr "expr_eng(1e300*1.0)"` dies with
+##   *** buffer overflow detected ***: terminated
+## (SIGABRT, rc 134). 72 survives at exactly 80 bytes for a positive value, and
+## the arithmetic worst case -- a negative value in the same 1e12 branch -- needs
+## one byte more. So 71 is the largest precision PROVEN safe and that is this
+## gate's ceiling. The unbounded sprintf is a separate defect: an xschemrc line
+## reaches ev_precision without passing here.
+##
+## ⚠ THE FLOOR IS 1, ALSO MEASURED. At 0 the two surfaces disagree: eval_expr.y
+## uses `engineering = xctx->ev_precision` as its own on/off flag, so 0 turns
+## engineering notation OFF in C while Tcl's to_eng still formats. For 1.11e-05,
+## C answers 1.11e-05 and Tcl answers 1e+01u. Ruling DD-7 (issue 1341) exists to
+## stop exactly that disagreement, so 0 is refused with the rest.
+##
+## ⚠ WHY THIS IS NOT INSIDE input_line. That proc is shared by the snap value,
+## grid spacing, line width, grid point size, symbol width, crosshair size, the
+## bus replacement characters and the top level netlist name -- and since
+## 2a22bfb7 the netlist name's legal value is very nearly ANY string, spaces
+## included. A generic validator there would have to be either useless or wrong
+## for most of its callers, so the rule lives with the ONE caller whose legal
+## value this is. A second box wanting a rule gets its own proc, not a flag here.
+##
+## ⚠ IT REFUSES, IT DOES NOT QUIETLY KEEP THE LAST GOOD VALUE. Driver decision,
+## issue 1602: the defect's whole nature is SILENCE -- a keystroke that looks
+## like it worked and poisons every number printed afterwards -- and keeping the
+## last good value without saying so swaps one silence for another. This box is
+## reached deliberately from a menu, never in passing, so an explicit refusal
+## cannot be a surprise.
+##
+## An EMPTY value is a silent no-op, not a refusal: that is Cancel, Escape and an
+## emptied entry, and input_line's own emptiness guard (issue 1352) already means
+## pressing OK on an emptied field does nothing. A field holding only a SPACE is
+## not empty and is refused like anything else -- see the guard below.
+## Section P of tests/headless/test_input_line_inject_1352.tcl fences all of it.
+proc set_ev_precision {v} {
+  global ev_precision
+  ## ⚠ ONLY THE EXACT EMPTY STRING IS THE SILENT ARM, and it is tested BEFORE
+  ## the trim: Cancel and Escape return {} and must say nothing, but a field
+  ## holding a single space is something the user typed and gets the refusal
+  ## like any other value the formatter cannot use. Trimming after this test is
+  ## what keeps a stray space around a good number from being refused for a
+  ## reason the user cannot see.
+  if {$v eq {}} { return 0 }
+  set t [string trim $v]
+  ## ⚠ LEADING ZEROS ARE STRIPPED BEFORE THE RANGE TEST ON PURPOSE.
+  ## `format %.077g` and atoi("077") both mean SEVENTY-SEVEN, but Tcl's expr
+  ## reads a leading-zero literal as OCTAL, so comparing "077" numerically would
+  ## test 63 against the ceiling and let 77 through to the sprintf above. The
+  ## 1-to-3 digit bound also keeps a long digit string out of expr as a bignum.
+  set n 0
+  if {[regexp {^0*([0-9]{1,3})$} $t -> d]} { set n [scan $d %d] }
+  if {$n < 1 || $n > 71} {
+    alert_ "\"$v\" is not a precision -- enter a whole number from 1 to 71.\nPrecision is still $ev_precision."
+    return 0
+  }
+  set ev_precision $n
+  return 1
+}
+
 ## convert number to engineering form
 proc to_eng {args} {
   global ev_precision
@@ -18583,8 +18674,20 @@ proc build_widgets { {topwin {} } } {
           input_line {Set netlist file name} {xschem set netlist_name} [xschem get netlist_name] 40
     }
   $topwin.menubar.simulation add command -label "Set netlist / graph / annotation precision" \
-       -command { 
-         input_line "Enter precision (int):" "set ev_precision" $ev_precision
+       -command {
+         ## ISSUE 1602. This used to pass input_line the literal command
+         ## `set ev_precision`, so whatever was typed became the precision and
+         ## broke every number the tree formats afterwards. set_ev_precision
+         ## refuses a value `format %.Ng` and dtoa_eng cannot use, and says so;
+         ## see its comment wall above proc to_eng for the measured bounds and
+         ## for why the rule is not inside input_line.
+         ## ⚠ IT IS CALLED ON input_line'S RETURN VALUE, NOT AS ITS $cmd.
+         ## input_line holds a `grab set .dialog` across the OK callback, so an
+         ## alert_ raised from inside that callback maps a toplevel nobody can
+         ## click or dismiss -- a deadlock, not a message. On the return value
+         ## the grab is already gone. Cancel and Escape return the empty string
+         ## and set_ev_precision treats that as a silent no-op.
+         set_ev_precision [input_line "Enter precision (int 1-71):" {} $ev_precision]
        }
   $topwin.menubar.simulation add checkbutton -label "Show netlist after netlist command" \
      -selectcolor $selectcolor -variable netlist_show -accelerator {Shift+A}

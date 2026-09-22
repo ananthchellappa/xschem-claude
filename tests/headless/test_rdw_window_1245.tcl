@@ -5889,7 +5889,9 @@ check {EN5 engineering notation costs the window none of its vocabulary: the mea
 
 # --- EN6  THE USER'S OWN PRECISION SETTING REACHES THE WINDOW ---------------
 ## `to_eng` reads the global `ev_precision` at call time and the user can set it
-## (xschem.tcl:17740, "Enter precision (int)"). A second formatter in rdw.tcl
+## (the Simulation > "Set netlist / graph / annotation precision" entry, which
+## since issue 1602 routes through `set_ev_precision` and takes a whole number
+## from 1 to 71). A second formatter in rdw.tcl
 ## carrying a hard-coded %.4g would pass EN1 and EN5 and be wrong the first time
 ## the user changed it - and the window and the sheet would then print DIFFERENT
 ## numbers for the same value, which is the one thing this item exists to stop.

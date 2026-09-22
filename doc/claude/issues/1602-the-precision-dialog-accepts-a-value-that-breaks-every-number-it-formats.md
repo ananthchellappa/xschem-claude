@@ -1,10 +1,10 @@
 # 1602 — the precision dialog accepts a value that then breaks every number it formats
 
-**STAMP:** `v1 claim=open tree=2ecb21c2 stamped=2026-09-22 fix=untried open=3 by=driver`
+**STAMP:** `v1 claim=fixed tree=c3ec73a3 stamped=2026-09-22 fix=taken open=1 by=crew1602`
 
-**Status: OPEN — filed 2026-09-22** by the driver, from a gap two closed issues both
-touched and neither owned. **Class** missing input validation with a silent, total
-downstream effect.
+**Status: FIXED — 2026-09-22.** Filed 2026-09-22 by the driver, from a gap two closed
+issues both touched and neither owned. **Class** missing input validation with a silent,
+total downstream effect.
 **Related, read first:** **1345** (the Results Display Window said "(did not converge)"
 when its own formatter merely declined — **FIXED** 2026-09-05; its §28 records *"no
 validation"* on this dialog as the cause it did **not** fix) and **1352**
@@ -12,99 +12,169 @@ validation"* on this dialog as the cause it did **not** fix) and **1352**
 says plainly *"input validation on these dialogs is still absent and is a separate
 defect"*).
 
-⚠ **This file reports no new measurement.** Everything below is CITED from `src/rdw.tcl`'s
-comment wall, from issue 1345, and from the 1352 crew's receipt. The one thing that has
-changed since those were written is stated as a consequence of `2a22bfb7`, not as a
-measurement. **Measuring it is job 1.**
-
 ---
 
 ## The defect
 
-`Simulation ▸ Set netlist / graph / annotation precision` is a bare `input_line` with no
-validation. Whatever you type becomes `ev_precision`.
+`Simulation ▸ Set netlist / graph / annotation precision` was a bare `input_line` with no
+validation. Whatever you typed became `ev_precision`.
 
-CITED from `src/rdw.tcl`'s comment wall above `rdw::_fmt_value`, which records it as
-MEASURED: all eight of `-1`, `2.5`, `abc`, `4x`, `+4`, `0x4`, `6.` and `6.0` stick, and all
-eight make `format %.${pr}g` raise inside `to_eng`.
+## §1 What it actually did — RE-MEASURED, not re-cited
 
-CITED from issue 1345, the measured table:
+The filed version of this issue reported no new measurement and asked for one, because
+`2a22bfb7` changed which strings can reach `ev_precision`. All twenty values below were
+driven through the **shipped menu entry** on a display (`DISPLAY=:99`, tree `c3ec73a3`,
+before the fix), reading `ev_precision` back, then `to_eng 1.11e-05` (the Tcl formatter
+the annotation sheet and the Results window share), `rdw::_value_text 1.11e-05` (the
+window) and `xschem eval_expr {expr_eng(1.11e-05)}` (a **C** consumer, which reaches
+`dtoa_eng` through `tclgetintvar`).
 
-```
-ev_precision=4   : 1.11e-05=>11.1u    0.001=>1m       0.75=>0.75
-ev_precision=-1  : 1.11e-05=>(did not converge)  0.001=>(did not converge)  …
-ev_precision=2.5 : … all eight identical …
-```
+| typed | lands in `ev_precision` | Tcl `to_eng` | RDW shows | C `expr_eng` |
+|---|---|---|---|---|
+| `-1` | `-1` verbatim | **raises** `bad field specifier "-"` | `1.11e-05` raw | `11.1u` |
+| `2.5` | `2.5` verbatim | **raises** `bad field specifier "."` | `1.11e-05` raw | `11u` |
+| `abc` | `abc` verbatim | **raises** `bad field specifier "a"` | `1.11e-05` raw | `1.11e-05` |
+| `4x` | `4x` verbatim | **raises** `expected integer but got "11.1"` | `1.11e-05` raw | `11.1u` |
+| `+4` | `+4` verbatim | **raises** `bad field specifier "+"` | `1.11e-05` raw | `11.1u` |
+| `0x4` | `0x4` verbatim | **raises** `expected integer but got "11.1"` | `1.11e-05` raw | `1.11e-05` |
+| `6.` | `6.` verbatim | **raises** `bad field specifier "."` | `1.11e-05` raw | `11.1u` |
+| `6.0` | `6.0` verbatim | **raises** `bad field specifier "."` | `1.11e-05` raw | `11.1u` |
+| `" "` (one space) | `" "` verbatim | **raises** `bad field specifier " "` | `1.11e-05` raw | `1.11e-05` |
+| `"4 5"` | `4 5` verbatim | **raises** `bad field specifier " "` | `1.11e-05` raw | `11.1u` |
+| `"7 ; set ::ILINJ yes"` | whole string verbatim | **raises** `bad field specifier " "` | `1.11e-05` raw | `11.1u` |
+| `""` (empty) | **unchanged** (stays 4) | `11.1u` | `11.1u` | `11.1u` |
+| `4f` | `4f` verbatim | **`11.1000gu`** | **`11.1000gu`** | `11.1u` |
+| `4e0` | `4e0` verbatim | **`1.1100e+010gu`** | **`1.1100e+010gu`** | `11.1u` |
+| `4s` | `4s` verbatim | **`11.1gu`** | **`11.1gu`** | `11.1u` |
+| `4l` | `4l` verbatim | `11.1u` | `11.1u` | `11.1u` |
+| `007` | `007` verbatim | `11.1u` | `11.1u` | `11.1u` |
+| `0` | `0` verbatim | `1e+01u` | `1e+01u` | **`1.11e-05`** |
+| `17` | `17` verbatim | `11.1u` | `11.1u` | `11.1u` |
+| `4` | `4` verbatim | `11.1u` | `11.1u` | `11.1u` |
 
-**The consequence is total, not partial.** From the moment a bad precision is set, *every
-correctly measured value* in the Results Display Window reads `(did not converge)` — a
-statement about the **circuit**, for numbers the simulator computed perfectly well, on the
-one surface this feature exists to have pasted into a design review.
+**All eight cited values still stick, verbatim.** Nothing normalises them. (Two earlier
+passes of this measurement reported `+4` becoming `4` and `6.` becoming `6.0`; that was an
+`expr {... ? $x : ...}` ternary **in the probe**, which numifies its operand. The table
+above was taken without one.)
 
-## What 1345 fixed, and why this survived it
+### Three things the cited table did not say
 
-1345 fixed the **reading**: the window no longer infers "non-finite" from an empty string
-coming back from `eng_or_blank`, because that proc answers `{}` for two reasons a caller
-cannot tell apart. It now asks `op_annot::_finite` directly, so a declining formatter
-falls back to the raw text — unformatted but **true**.
+1. **The headline consequence has changed.** Since 1345 the Results window no longer prints
+   `(did not converge)` for these; it falls back to the raw text. The damage is now that
+   every correctly measured value prints **unformatted** — `1.11e-05` where the sheet
+   beside it prints `11.1u`. Still wrong, no longer a lie about the circuit.
 
-That is the right fix for the window and it is not in question here. But it treats the
-symptom at the last possible moment. The dialog upstream still accepts `abc`, and the
-formatter still raises on every value; 1345 only stopped the window from lying about
-*why*. **The rows that fence 1345 (`EN8` behavioural, `EN10` structural) would all still
-pass with `ev_precision` set to `abc`** — that is what "fixed the reading" means.
+2. **⚠ There is a class that does NOT raise, and it is worse.** `format %.${pr}g` pastes
+   the precision into a format string, so a trailing conversion character **ends the
+   specifier** and the `g` becomes literal text. A true `1.11e-05` prints as `11.1000gu`
+   at `4f`, `11.1gu` at `4s`, `1.1100e+010gu` at `4e0`. Nothing raises, so 1345's
+   fallback never engages, and the window and the annotation sheet **both** print a
+   different number that reads like a measurement.
 
-## What `2a22bfb7` changed about it, and what it did not
+3. **⚠ The C side is not immune; it fails differently, and at the top of the range it
+   aborts the program.** `tclgetintvar` is `atoi()`, so C never raises — it silently uses
+   a *different* precision (`atoi("2.5")`=2, `atoi("abc")`=0, `atoi("4x")`=4), and at 0 it
+   turns engineering notation **off** (`eval_expr.y` uses the precision as its own on/off
+   flag), which is why `0` makes C answer `1.11e-05` where Tcl answers `1e+01u`. But
+   `dtoa_eng` (`src/editprop.c`) `sprintf()`s into a `static char s[80]` with an indirect
+   precision and no bound — its own comment says `my_snprintf` cannot be used there.
+   MEASURED on this binary:
 
-Before the 1352 fix, typing `7 ; set ::INJECTED yes` left `ev_precision` numeric (`7`),
-because the text was parsed as a script and only the first word reached `set`. After it,
-the whole string lands as the value.
+   ```
+   ev_precision=72  xschem eval_expr {expr_eng(1e300*1.0)}  -> 79 chars, survives
+   ev_precision=73  xschem eval_expr {expr_eng(1e300*1.0)}  -> *** buffer overflow
+                                                               detected ***: terminated
+   ```
 
-The 1352 crew checked the consequence rather than assuming it, and reports: `tclgetintvar`
-is `atoi()`, so `atoi("7 ; set ::ILINJ yes")` is `7` and **every C consumer behaves exactly
-as before**. The Tcl side is the exposed one, because `format %.${pr}g` takes the string.
+   (SIGABRT, rc 134.) The arithmetic worst case — a negative value in the same `1e12`
+   branch — needs one byte more, so **71** is the largest precision proven safe.
+   `draw.c`'s `char tmpstr[100]` overflows at 92 by the same arithmetic.
 
-So `2a22bfb7` neither caused this nor fixed it. ⚠ **But it does change the set of strings
-that can reach `ev_precision`** — a value with a space in it could not survive the old
-splicing and can now — so the eight-value measurement above predates the current code and
-should be re-taken, not re-cited, by whoever takes this.
+## §2 The decision — DRIVER DECISION, taken 2026-09-22
 
-## The shape a fix takes, and the one question inside it
+> **Refuse a value the formatter cannot use, at the dialog, and say why. Do not silently
+> keep the last good value.**
 
-The mechanism is not in doubt: refuse a value the formatter cannot use, at the dialog,
-and say why. `input_line` already returns the typed text to its caller, and the caller is
-one line in `xschem.tcl`'s menu, so the validation has an obvious home that does not
-require a new dialog.
+The reasoning, recorded here because it is also in the code comment: the current
+behaviour's whole problem is **silence** — a keystroke that appears to work and quietly
+poisons every displayed number afterwards. Keeping the last good value without saying so
+replaces one silence with another. And this box is reached **deliberately from a menu**
+rather than in passing, so an explicit refusal cannot be a surprise. If the dialog turns
+out to be unwelcome, it is a one-line change.
 
-**The question that is genuinely the user's** — and it is one question, not three:
+### What counts as a legal precision — both bounds MEASURED, neither guessed
 
-> When you type something the precision box cannot use, should it refuse and tell you, or
-> quietly keep the last good value?
+**A plain decimal integer from 1 to 71 inclusive.** Leading zeros are allowed and are
+stripped (`007` is stored as `7`).
 
-Refusing is louder and cannot be missed; keeping the last good value never interrupts you
-but means a keystroke you made had no effect and nothing said so. The recommendation is
-**refuse and say why**, because the current behaviour's whole problem is silence, and
-because this box is reached deliberately from a menu rather than in passing.
+* **Ceiling 71** is the memory-safety boundary above: 73 aborts this binary inside
+  `dtoa_eng`'s `sprintf`, 72 survives at exactly 80 bytes for a positive value, and the
+  worst case needs one byte more than 72 leaves.
+* **Floor 1** is a surface-agreement boundary: at 0, `eval_expr.y` reads
+  `engineering = xctx->ev_precision` as "engineering off", so C prints `1.11e-05` while
+  Tcl's `to_eng` prints `1e+01u`. Ruling **DD-7** (issue 1341) exists to stop exactly that
+  disagreement. From 1 to 71 the two surfaces agree on every value measured.
+* Everything else is refused because `format %.Ng` either raises on it or — the `4f`
+  class — silently prints something else.
 
-⚠ **Do not widen this into "validate every dialog".** `input_line` also carries snap value,
-grid spacing, line width, grid point size, symbol width, crosshair size, the bus
-replacement characters and the netlist name, and each has a different notion of a legal
-value — the netlist name's is "almost anything", now that `2a22bfb7` lets it hold a space.
-A single generic validator would be the wrong shape. If a per-caller validator is wanted,
-that is a second issue with its own survey.
+## §3 What changed
 
-## Still open
+* **`src/xschem.tcl`, new `proc set_ev_precision`** (immediately above `proc to_eng`),
+  with the measurement wall above it. Empty input is a **silent** no-op (Cancel, Escape,
+  an emptied field); a whitespace-only field is refused like anything else; anything not
+  matching `^0*([0-9]{1,3})$` or outside 1..71 is refused with an `alert_` that quotes
+  back what was typed and states the precision that is still in force.
+* **`src/xschem.tcl`, the `Simulation ▸ Set netlist / graph / annotation precision` menu
+  entry**: `input_line "Enter precision (int):" "set ev_precision" $ev_precision` became
+  `set_ev_precision [input_line "Enter precision (int 1-71):" {} $ev_precision]`.
 
-1. **Re-measure the eight values on the current code** (`2a22bfb7` or later), rather than
-   citing 1345's table. Report what each does to `ev_precision` and to a formatted value.
-2. **Answer the one question above**, then implement it for the precision box only.
-3. **A T1-visible test.** Structural is easy. The behavioural half needs the real dialog on
-   a display, which `tests/headless/test_input_line_inject_1352.tcl` now does for this exact
-   menu entry (rows `B18a`/`B18b`) — extend that suite rather than starting a new one.
+**⚠ Why the validator is called on `input_line`'s RETURN VALUE and not as its `$cmd`.**
+`input_line` holds a `grab set .dialog` across its OK callback. An `alert_` raised from
+inside that callback maps a toplevel that nobody can click or dismiss, because the grab
+sends every pointer and key event to `.dialog` — a deadlock, not a message. On the return
+value the grab is already released. Cancel and Escape return the empty string, which the
+silent arm handles.
 
-## What this issue is NOT
+**⚠ Why the rule is not inside `input_line`.** That proc is shared by the snap value, grid
+spacing, line width, grid point size, symbol width, crosshair size, the bus replacement
+characters and the top level netlist name — and since `2a22bfb7` the netlist name's legal
+value is very nearly **any** string, spaces included. A generic validator there would have
+to be either useless or wrong for most of its callers. A second box wanting a rule gets
+its own proc.
+
+## §4 The test
+
+`tests/headless/test_input_line_inject_1352.tcl` (extended, not replaced — it already
+drove this exact menu entry at `B18a`/`B18b`). Registered in `tests/run_regression.tcl` in
+both `hcases` and `dcases`.
+
+* **P1–P6 structural, both arms**: the menu entry names `set_ev_precision`, the literal
+  `"set ev_precision"` command is gone from the file, and the proc still carries its
+  digits-only pattern, its `1..71` range test and its `alert_`.
+* **P7a–P17 behavioural, display arm**: the real menu entry, the real dialog, the real
+  refusal. `abc`, `4f`, `72`, `0` and `9 ; set ::ILINJ yes` are each refused with the
+  precision unmoved and the user told, naming what they typed; `6`, `71` and `007` land
+  (`007` as `7`); an emptied field changes nothing and says nothing; after a refusal
+  `to_eng` still formats. `P17` is the liveness row — every drive reached the real OK
+  button.
+* **`B18a` now measures the 1352 property off the refusal**, which quotes back the whole
+  string it was given. A splice would have delivered `7` alone.
+* Headless the P7–P17 rows print one `skip:` line, folded into the existing `BROWS` line.
+* Check floor: **13** headless, **58** on the display arm.
+
+## §5 Still open — 1 item, deliberately not taken here
+
+**`dtoa_eng`'s unbounded `sprintf` into `static char s[80]` is still a live defect.** The
+dialog is now not a door to it, but `~/.xschem/xschemrc` is: a line `set ev_precision 200`
+reaches `ev_precision` without passing through `set_ev_precision`, and the first value
+`dtoa_eng` scales into its `T` branch aborts the program. The same arithmetic applies to
+`draw.c`'s four `char tmpstr[100]` sites and to `graph_marker_fmt`, which takes a
+`destsize` and then `sprintf`s past it. Fixing that is a C change to the formatter, not to
+a dialog, and it wants its own issue number.
+
+## §6 What this issue is NOT
 
 It is not a complaint about `to_eng` raising. Raising on `format %.abcg` is correct; the
-defect is that `abc` ever reached it. It is not a request to change what
+defect was that `abc` ever reached it. It is not a request to change what
 `(did not converge)` means — 1345 settled that. And it is not about the injection, which
-`2a22bfb7` closed.
+`2a22bfb7` closed and which `B18`/`P11c` still fence at this entry.
