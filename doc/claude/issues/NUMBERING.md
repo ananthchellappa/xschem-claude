@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3764,7 +3764,22 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `test_op_annot`. Not fixed because it is a restructure of a 4000-line suite with a
   per-block sabotage matrix behind it, not an edit. OPEN.
 
-**The next free number is 1601.**
+- **1601** — **A file NAME is a script in the Open and Insert preview bindings.** The same
+  mistake as **1352** in a different mechanism, found by 1352's own sibling survey, and
+  **strictly more reachable: nobody has to type anything.** Four sites interpolate a
+  filename into a script string — `file_dialog_display_preview` binds `<Expose>` and
+  `<Configure>` with `[subst {... "$f"}]`, so `[`, `$` and `"` in a name are live;
+  `file_chooser_draw_preview` uses `"... {$f}"`, where a `}` in the name ends the brace
+  group; and two `after` sites carry the same string. The payload arrives as a file, so it
+  can come from a shared library directory, a vendor PDK, a tarball or a checkout.
+  ⚠ **Reachability is REASONED, not measured** — whether such a name survives
+  `is_xschem_file`, reaches `$f` intact, and gets an `<Expose>` is the first job. The fix is
+  `[list ...]` at all four, **together**, because `after cancel` matches on the script
+  string and changing one form without the other silently stops the cancel matching. OPEN.
+
+~~**The next free number is 1601.**~~
+
+**The next free number is 1602.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
