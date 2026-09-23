@@ -141,3 +141,40 @@ prefix of a green run is green, which is exactly the trap (`CLAUDE.md`, "Every p
 green run is green"). And the crew is credited: it reported its own mistake unprompted, in
 enough detail to identify the victim, which is the only reason the partial was not read as
 a pass.
+
+# D8 — the fix round reports a standing red the driver cannot reproduce (driver, unresolved)
+
+`receipts/A-verify.md` §5.1 states that **two cases are red on a pristine clone of HEAD**
+and instructs the driver to "name and own" a standing red, citing issue 1456 ("T1 has not
+been at zero since stage 7, and the driver kept reporting that it was"). That instruction
+is right in principle and **the driver is not acting on it, because it does not reproduce
+here.** Both measurements are recorded rather than one being chosen.
+
+| | `test_ase_optier_0963` row `Z6` | `test_ase_variant_1470` row `OT1` |
+|---|---|---|
+| fix round, clone of `63558796`, 4 runs incl. `git checkout -- src` | `1 FAILED (108 passed)` | `1 FAILED (75 passed)` |
+| driver's gate, clean clone of `949cc585`, solo, `results.344048.log` | `ALL PASS (109 checks)` | `ALL PASS (76 checks)` |
+| driver standalone, real parent HOME | `ALL PASS (109 checks)` | `ALL PASS (76 checks)` |
+| driver standalone, **scratch** parent HOME | `ALL PASS (109 checks)` | not run |
+
+**The two trees are code-identical.** `63558796`→`949cc585` is three documentation commits.
+The denominators match too — 108+1 = 109 and 75+1 = 76 — so the same rows ran on both
+sides and exactly one answered differently in each suite.
+
+**The obvious explanation was tested and refuted.** The fix round's parent `HOME` was
+`/var/tmp/xhc/F/home`, so `XSCHEM_TEST_REAL_HOME` pointed at a scratch directory with no
+fork ngspice, and both rows are about a simulator's *capability* answer — the class
+CLAUDE.md flags as environment-dependent. Driving `test_ase_optier_0963` with `HOME` forced
+to an empty scratch directory reproduces nothing: `ALL PASS (109 checks)` either way. So
+the parent HOME is **not** the difference, and the driver's first hypothesis was wrong.
+
+**What is left, unresolved and stated as unresolved.** The one visible difference is load:
+the fix round ran while three concurrent T1s, three builds and several suites were live in
+this machine, and CLAUDE.md already records `test_ase_optier_0963` as having *"reddened
+solo, cause unexplained"*. Four identical observations are not nothing, and a
+load-correlated flake is a real defect in a gate even when the code is fine.
+
+**Decision: do not declare a standing red the driver cannot reproduce, and do not dismiss
+four identical observations either.** The committed tree measures zero here, twice, by two
+methods. If it reddens for anyone else, this entry is the place to start, and the first
+thing to vary is concurrent load rather than the code.
