@@ -190,8 +190,14 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   everything means a header moved).
 - **T1's baseline is ZERO counted failures.** A standing red is a defect, not
   furniture: if T1 is not at zero, say which case and why, per case; never carry a count
-  forward. The zero is measured with `DISPLAY` set (unset, four suites segfault: issue
-  1483). **Green is per case, and coverage is a second number**: since issue 1487 the
+  forward. **Since 2026-09-22 the zero holds on BOTH display arms**, measured in a
+  throwaway clone of `2bf05781`: `DISPLAY=:99` gives `cases=95 blocks=94
+  counted_failures=0 skips=8` (`results.598045.log`) and `DISPLAY` **unset** gives the same
+  (`results.658534.log`). Before that, four suites segfaulted with `DISPLAY` unset (issue
+  1483, then 1492/1493), which is why every earlier figure in this file is a `DISPLAY`-set
+  one. That class is closed at every site the headless-crashes batch could measure — and
+  its receipts name the four blind spots its methods had, so "closed" means "closed where
+  anyone has looked". **Green is per case, and coverage is a second number**: since issue 1487 the
   verdict carries each case's `skip:` lines and check count and the trailer states
   `skips=`, so read `counted_failures=0 skips=N` together — N > 0 means rows that did not
   run, named in the blocks. Measured 2026-09-22 in a throwaway clone of `949cc585`:

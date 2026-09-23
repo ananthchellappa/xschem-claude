@@ -144,3 +144,35 @@ picks this up: re-gate that work in a throwaway clone before committing any of i
 item 2 is a suite that is not. The measurement is a brace-depth scan and takes a minute per
 file — and the sweep that defines the issue is structurally blind to it, so nobody finds it
 without going to look.
+
+## The batch is closed — 2026-09-22, both arms at ZERO
+
+| criterion | verdict |
+|---|---|
+| 1. the fix is in the product and is the cause | **met** — 271 sites enumerated by the compiler, 17 reached with `has_x == 0`, a backtrace per site |
+| 2. measured both ways, full T1 at ZERO on **both** arms | **met** — `DISPLAY=:99`: `cases=95 blocks=94 counted_failures=0 skips=8` (`results.598045.log`); `DISPLAY` unset: identical (`results.658534.log`). Throwaway clone of `2bf05781`, built from scratch, each arm solo |
+| 3. a guard that silently skips work is worse than the crash | **met, and it earned its place** — the fix round caught a violation the *implement* round had introduced: `grabscreen()`'s guard returned without clearing `ui_state & GRABSCREEN`, so one `XK_Print` keypress killed the event switch for the life of the process |
+| 4. T1-visible | **met** — `test_callback_argc` 27 → 50 checks; new `dcases` entry `test_headless_guards_xarm_1492` |
+| 5. rounds capped | **met** — one implement, one adversarial verify, one fix round |
+| 6. scratch per crew, deleted by owner, peak reported | **met** — 239 MB (map), 1.5 GB (fix round), both deleted; 104 KB left under `/var/tmp/xhc` |
+
+**What changed in the world:** before today, running T1 with no display gave four
+segfaulting suites. It now gives the same zero as the display arm. `CLAUDE.md`'s rule that
+the zero is a `DISPLAY`-set-only figure is retired with this commit.
+
+**What "closed" does not mean.** The receipts name four blind spots in the methods used —
+the preprocessor (five real dereferences excluded from this build, including the Windows
+paths and a libjpeg-only one), shadowed locals of the same name, handles cached in `xctx`
+rather than read from the global, and reachability bounded by the workload driven. Three of
+the five crashes fixed here were in that third category, so it is not hypothetical. A full
+"dies without a display" map is strictly larger than this one.
+
+### Still owed from this batch's receipts, not lost
+
+`receipts/A-verify.md` §6 lists what the driver still owns. Filed since: **1607** (the
+`psprint.c` heap over-read, measured). **Not yet filed**, and the receipt holds the
+measurements: §2.2 the `--svg` stub that writes 5 tags and calls it success, §2.3 the
+missing `XSetIOErrorHandler`, §2.6 `fill_reset` refusing where it could work. Also §2.4:
+**issue 0815 is 1492's older twin** and should be closed with it, and the resolution
+sections for 0227, 0834, 0467, 1492 and 1493 are unwritten because `doc/claude/` was fenced
+to the receipts while the crews ran.
