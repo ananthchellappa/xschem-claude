@@ -648,6 +648,17 @@ eqcheck E19-vcd-switchable-in-new-window [pcall xschem raw switch $tmp/t.vcd vcd
 #                         created) and the process then dies before the row can
 #                         read the sentinel
 #   new_process         — forks a real second xschem
+#
+# ⚠ UPDATED 2026-09-22 (the headless-crashes batch, issues 1492 and 0815): the
+# first two no longer SEGFAULT. Both verbs now refuse with a proper Tcl error
+# when has_x is 0 ("… no X server connection (DISPLAY unset, or --nogui / -x
+# given) …"), so a headless run survives them and the rows after them are no
+# longer at risk. That does NOT make them drivable here, and it does not change
+# SC09's job: the refusal is the FIRST statement of each branch, ahead of the
+# `argc > 2` tilde expansion, so the path handling this row scans for is
+# unreachable headless by construction. A source scan is still the only cover
+# those two have — now for a second reason as well as the original one.
+#
 # A source scan is a weaker instrument than a driven row and SC09 says so in
 # its own failure text. It is not a substitute; it is what is left.
 #

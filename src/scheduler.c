@@ -275,6 +275,33 @@ static char *not_avail = "Not available in this context. If using --tcl consider
 static char *no_x_display = "<no X server connection>";
 #endif
 
+/* Refuse an `xschem` subcommand whose whole job needs an X display (issue 1492; the
+ * contract is issue 0834 §4: "reject the verb when has_x is false with a proper Tcl error
+ * ... a clear error is strictly better than a signal 11 plus an emergency-save
+ * directory"). Four verbs -- fill_reset, fullscreen, compare_schematics, grabscreen --
+ * walked straight from their !xctx check into an Xlib call and KILLED THE PROCESS, and
+ * `catch` does not catch SIGSEGV, so the Tcl idiom the product itself uses for "this may
+ * fail" (`if {[catch {xschem ...} e]} ...`, as src/op_annot.tcl does) was no defence.
+ *
+ * WHY REFUSE RATHER THAN SILENTLY NO-OP: each of these verbs IS its X effect -- rebuild
+ * the GCs from new fill patterns, reparent the toplevel, paint a comparison overlay, grab
+ * a screen rectangle. A guard that returned TCL_OK would report success for work that did
+ * not happen. A caller that wants the verb to be optional writes the `catch` it already
+ * writes, and now that catch works.
+ *
+ * has_x, NOT "--nogui": -x / --no_x is a third route to has_x 0 (options.c) and leaves
+ * cli_opt_nogui at 0. Call at the verb's top, after its !xctx check. Shape and placement
+ * mirror scheduler_readonly_reject() below.
+ * See doc/claude/issues/1492-*.md, 0834-*.md */
+static int scheduler_needs_x_reject(Tcl_Interp *interp, const char *subcmd)
+{
+  if(has_x) return 0;
+  Tcl_ResetResult(interp);
+  Tcl_AppendResult(interp, "xschem ", subcmd, ": no X server connection "
+                   "(DISPLAY unset, or --nogui / -x given); this command needs a display", NULL);
+  return 1;
+}
+
 /* Refuse a mutating `xschem` subcommand on a read-only buffer (issue 0041). The
  * interactive keyboard/menu paths are guarded by readonly_block() (callback.c); this
  * closes the Tcl command surface -- scripts, the persistent/TCP command server and
@@ -3070,6 +3097,14 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       char f[PATH_MAX + 100];
       int ret = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 1492. compare_schematics() (xinit.c) builds a whole scratch editor context
+       * whose fourth step is create_gc() -> XCreateBitmapFromData(display, xctx->window,
+       * ...); it then borrows the caller's save_pixmap and cairo contexts and PAINTS the
+       * comparison. With has_x 0 it exited 139 -- before xschem's own SIGSEGV handler
+       * could print anything. (1492 records this crash inside copy_hilights(); the item-A
+       * map re-took the backtrace and the two rows were swapped: it is create_gc(), from
+       * compare_schematics() itself.) See doc/claude/issues/1492-*.md */
+      if(scheduler_needs_x_reject(interp, "compare_schematics")) return TCL_ERROR;
       if(argc > 2) {
         /* issue 0816: `~/` is expanded in C. This used to be
          * `regsub {^~/} {<path>} {<home>/}` handed to tcleval(), which SPLICES
@@ -3122,6 +3157,26 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "copy_hilights"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 1492, WITH A CORRECTION. 1492 files this verb as a no-display crash; it is
+       * NOT one. The item-A map re-took the backtrace: it faults in copy_hilights()
+       * (hilight.c) at `entry = &old_xctx->hilight_table[i]` because get_old_xctx()
+       * returned NULL, it touches zero display sites, and it crashes IDENTICALLY with a
+       * full GUI and has_x 1. So `has_x` is the wrong condition here and would leave the
+       * crash live on the arm everybody runs; the right one is the SOURCE context the
+       * verb copies FROM. `old_xctx` (xinit.c) is set only by a window/tab switch, so it
+       * is NULL in any session that has not made a second window -- which is every
+       * script that calls this verb first. The two product callers (xschem.tcl, both in
+       * the descend-into-new-window path) always run after
+       * `xschem schematic_in_new_window`, so neither is affected.
+       * See doc/claude/issues/1492-*.md and
+       * doc/claude/headless_crashes_batch/receipts/A-map.md §3 */
+      if(!get_old_xctx()) {
+        Tcl_ResetResult(interp);
+        Tcl_AppendResult(interp, "xschem copy_hilights: no previous window or tab to copy "
+                         "highlights from (open one with 'xschem schematic_in_new_window' first)",
+                         NULL);
+        return TCL_ERROR;
+      }
       copy_hilights();
       Tcl_ResetResult(interp);
     }
@@ -3876,6 +3931,15 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int dr = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 1492. free_gc() -> XFreeGC(display, xctx->gc[i]) was the measured fault
+       * (xinit.c), and create_gc() right after it is the same hazard from the other side.
+       * A fill pattern IS a stipple bitmap attached to a GC: with has_x 0 create_gc()
+       * never ran, every xctx->gc[] and xctx->gcstipple[] is 0, and there is nothing to
+       * reset. Refusing rather than no-opping because this verb has no other effect --
+       * init_pixdata() alone would leave the Tcl-side pixdata array copied into a C array
+       * that only create_gc() ever reads, and report success for a reset that did not
+       * happen. See doc/claude/issues/1492-*.md */
+      if(scheduler_needs_x_reject(interp, "fill_reset")) return TCL_ERROR;
       init_pixdata();
       free_gc();
       create_gc();
@@ -3899,8 +3963,28 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[3], "solid")) xctx->fill_type[n]=1;
           else if(!strcmp(argv[3], "stipple")) xctx->fill_type[n]=2;
           else if(!strcmp(argv[3], "empty")) xctx->fill_type[n]=0;
-          free_gc();
-          create_gc();
+          /* NO DISPLAY, NO GCs TO REBUILD -- but the fill type itself still means
+           * something (fix round; issue 1492's family, the sibling of `fill_reset` twenty
+           * lines above). free_gc() -> XFreeGC(display, xctx->gc[i]) and create_gc() ->
+           * XCreateBitmapFromData() are unguarded, and with has_x 0 every gc[] is 0, so
+           * `xschem fill_type 4 solid` KILLED THE PROCESS -- measured on both has_x == 0
+           * arms, the same frame 1492 files for fill_reset. The implement round's sweep
+           * could not see it because it drove every verb BARE and this body is inside
+           * `if(argc > 3)`.
+           * ⚠ IT GUARDS RATHER THAN REFUSES, and that is deliberate: unlike the four
+           * verbs that ARE their X effect, xctx->fill_type[] is read by the HEADLESS
+           * exporters too -- psprint.c (`xctx->fill_pattern && xctx->fill_type[layer]`,
+           * four sites) and svgdraw.c (three) -- so `xschem fill_type <n> solid` followed
+           * by `xschem print ps` is real, display-free work a user asked for, and
+           * refusing it would be acceptance criterion 3's other failure. Only the GC
+           * rebuild is skipped. build_colors() and resetwin() are already has_x-guarded
+           * inside, enable_layers() touches no X, and draw()'s Xlib block is likewise
+           * inside `if(has_x)`, so they stay outside the guard and keep working.
+           * See doc/claude/issues/1492-*.md and receipts/A-verify.md */
+          if(has_x) {
+            free_gc();
+            create_gc();
+          }
           enable_layers();
           build_colors(0.0, 0.0);
           resetwin(1, 0, 1, 0, 0);  /* recreate pixmap. resetwin(create_pixmap, clear_pixmap, force, w, h) */
@@ -4256,6 +4340,12 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "fullscreen"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* ISSUE 1492. toggle_fullscreen() (xinit.c) asks Tk for the toplevel's X id, walks
+       * the window tree with XQueryTree(display, ...) -- the measured fault -- and then
+       * sends the window manager two _NET_WM_STATE messages through window_state(display,
+       * ...). All three need a server, and the Tk toplevel whose id it reads does not
+       * exist with has_x 0 either. See doc/claude/issues/1492-*.md */
+      if(scheduler_needs_x_reject(interp, "fullscreen")) return TCL_ERROR;
       if(argc > 2) toggle_fullscreen(argv[2]);
       else toggle_fullscreen(".drw");
       Tcl_ResetResult(interp);
@@ -6131,6 +6221,20 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         my_snprintf(res, S(res), "XExtendedMaxRequestSize=%s\n", no_x_display);
         Tcl_AppendResult(interp, res, NULL);
       }
+      /* ISSUE 1493, and the ONE thing that makes its fix observable from a test.
+       * xserver_ok() (draw.c) opens a probe connection, closes it, and now NULLS this
+       * global; before that it left it dangling, so has_x 0 had two different pointer
+       * states -- NULL with DISPLAY unset, a freed pointer with DISPLAY set plus --nogui
+       * or -x -- and a guard missed anywhere faulted on one arm while reading freed
+       * memory on the other. That asymmetry is exactly why 1483 lived for months.
+       * Reporting the POINTER (not a value read through it -- this line never
+       * dereferences) lets a row assert 1493's own step 4: what has_x 0 reports with a
+       * DISPLAY set must be what it reports with none. Revert the `display = NULL;` and
+       * this line reads `connected` on the --nogui-with-DISPLAY arm while has_x is 0,
+       * which is the defect stated in one word.
+       * See doc/claude/issues/1493-*.md, and test_callback_argc.tcl's 1493 row. */
+      my_snprintf(res, S(res), "display=%s\n", display ? "connected" : no_x_display);
+      Tcl_AppendResult(interp, res, NULL);
 #endif
 
       my_snprintf(res, S(res), "******* Compile options:*******\n"); Tcl_AppendResult(interp, res, NULL);
@@ -6181,7 +6285,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "grabscreen"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* NEW site, found by the item-A map; it is in no issue file. THIS BRANCH IS THE
+       * DEFECT, not grabscreen() itself: it arms xctx->ui_state |= GRABSCREEN with no
+       * has_x guard, and callback() then dispatches EVERY canvas event into grabscreen()
+       * (draw.c) on that bit alone. So `xschem grabscreen` followed by any button event
+       * -- two lines in a --script file, both inside catch -- killed the process at
+       * WhitePixel(display, screen_number). `grab set -global` is a Tk command with no Tk
+       * to run it, and the grab is a pointer grab on a server there isn't one of.
+       * grabscreen() carries an entry guard too, for a bit armed before a display went
+       * away. See doc/claude/headless_crashes_batch/receipts/A-map.md §2.2
+       *
+       * ⚠ THE REFUSAL IS INSIDE THE #if (moved there by the fix round). Outside it, a
+       * Windows or no-cairo build -- where this branch has always been an empty no-op
+       * returning TCL_OK -- would start returning an error whose text names DISPLAY, a
+       * thing that platform does not have. The crash being guarded is a unix/cairo one,
+       * so the guard belongs on the same arm. */
       #if defined(__unix__) && HAS_CAIRO==1
+      if(scheduler_needs_x_reject(interp, "grabscreen")) return TCL_ERROR;
       xctx->ui_state |= GRABSCREEN;
       tclvareval("grab set -global ", xctx->top_path, ".drw", NULL);
       #endif
@@ -10136,6 +10256,19 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int res = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* 1492's family again, and already a KNOWN headless death: the comment block in
+       * tests/headless/test_raw_read_dispatch.tcl names this verb beside
+       * compare_schematics as one it cannot drive. preview_window() (xinit.c) opens with
+       * Tk_NameToWindow(interp, win_path, mainwindow) on a NULL `mainwindow` -- Tk was
+       * never initialised with has_x 0 -- so `xschem preview_window create .x .x.drw`
+       * killed the process (measured, gdb: #0 Tk_NameToWindow #1 preview_window
+       * #2 xschem_cmds_p). Like the other four this verb IS its X effect: it makes a Tk
+       * child window exist and paints a schematic into it. Its only callers are the file
+       * chooser, the insert dialog and the bindkey cheat sheet (src/xschem.tcl), none of
+       * which can open without Tk, so nothing product-side moves. preview_window() takes
+       * its own entry guard for any future caller.
+       * See doc/claude/issues/1492-*.md and receipts/A-verify.md */
+      if(scheduler_needs_x_reject(interp, "preview_window")) return TCL_ERROR;
       if(argc == 3) res = preview_window(argv[2], "", NULL);
       else if(argc == 4) res = preview_window(argv[2], argv[3], NULL);
       else if(argc == 5) {
@@ -14743,6 +14876,18 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Used by xschem.tcl for configure events (set icon) */
     else if(!strcmp(argv[1], "windowid"))
     {
+      /* ISSUE 1492's family, and the blind spot that hid it (fix round). windowid()
+       * (xinit.c) does `mainwindow = Tk_MainWindow(interp); display = Tk_Display(mainwindow);`
+       * into a LOCAL named `display` that SHADOWS the global -- so the item-A map's
+       * enumeration method (an `__attribute__((deprecated))` on the global, one warning
+       * per use) emitted nothing for this function, exactly as A-map.md §6(b) warned. With
+       * has_x 0 Tk was never initialised, Tk_MainWindow() returns NULL and Tk_Display()
+       * dereferences it: `xschem windowid .drw` KILLED THE PROCESS on both has_x == 0
+       * arms (measured). The sibling site in Tcl_AppInit() has guarded this all along.
+       * The verb IS its X effect (it sets the window manager icon on a toplevel), so it
+       * refuses rather than no-ops; windowid() carries its own entry guard too, for any
+       * future caller. See doc/claude/issues/1492-*.md and receipts/A-verify.md */
+      if(scheduler_needs_x_reject(interp, "windowid")) return TCL_ERROR;
       if(argc > 2) {
         windowid(argv[2]);
       }

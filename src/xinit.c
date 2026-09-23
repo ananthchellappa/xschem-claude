@@ -327,6 +327,18 @@ void windowid(const char *win_path)
   unsigned int framewindow_nchildren;
 
   dbg(1, "windowid(): win_path=%s\n", win_path);
+  /* NO TK, NO WINDOW ID (fix round; issue 1492's family). With has_x 0 Tk was never
+   * initialised, so Tk_MainWindow() returns NULL and the Tk_Display() below dereferences
+   * it -- `xschem windowid .drw` ended the process on both has_x == 0 arms. Tcl_AppInit()
+   * guards the identical pair; this one did not. Note the LOCAL `Display *display`
+   * declared above SHADOWS the global, which is why the item-A map's compiler enumeration
+   * could not see this function at all (A-map.md §6(b)). `gcc -Wshadow` finds them: two in
+   * this file (here and the err() handler at ~:372) and two more in draw.c, measured --
+   * not "the only ones in the tree", which is the kind of count this project has learned
+   * not to quote forward. The scheduler branch refuses the verb with a message naming the
+   * cause; this guard is for any other caller.
+   * See receipts/A-verify.md */
+  if(!has_x) return;
   framewindow_nchildren =0;
   mainwindow=Tk_MainWindow(interp);
   display = Tk_Display(mainwindow);
@@ -1456,6 +1468,18 @@ void toggle_fullscreen(const char *topwin)
   char *toplevel = (xctx->top_path[0] ? xctx->top_path : ".");
 
   dbg(1, "toggle_fullscreen(): topwin=%s\n", topwin);
+  /* GUARD THE FUNCTION, NOT ONLY THE VERB (fix round; issue 1492). The implement round
+   * put its refusal on the `xschem fullscreen` scheduler branch, which left the KEYBOARD
+   * route into the same function wide open: `xschem callback .drw 2 100 100 92 0 0 0` --
+   * the backslash key, handle_key_press() case '\\' -- still ended the process at
+   * XQueryTree(display, topwin_id, ...) below (measured; gdb #0 XQueryTree
+   * #1 toggle_fullscreen #2 callback). An exhaustive KeyPress sweep (ASCII 32-126 plus 60
+   * keysyms x five modifier states) found this to be the one surviving killer, which is
+   * the argument for guarding here: `winfo id .` has no Tk to answer it and the window
+   * manager this function messages does not exist either. The scheduler refusal stays, so
+   * the VERB still reports the cause instead of silently doing nothing.
+   * See doc/claude/issues/1492-*.md and receipts/A-verify.md */
+  if(!has_x) return;
   if(!strcmp(topwin, ".drw")) {
     tcleval( "winfo id .");
     sscanf(tclresult(), "0x%x", (unsigned int *) &topwin_id);
@@ -1562,6 +1586,12 @@ int preview_window(const char *what, const char *win_path, const char *fname)
   static Tk_Window tkpre_window[10] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
   static int semaphore=0;
 
+  /* NO TK, NO PREVIEW PANE (fix round; issue 1492's family). Every branch below starts
+   * with Tk_NameToWindow(interp, win_path, mainwindow), and `mainwindow` is NULL with
+   * has_x 0 -- the process died there. The guard is before the semaphore on purpose: it
+   * must not leave the semaphore raised for the next caller.
+   * See receipts/A-verify.md */
+  if(!has_x) return 0;
   /* avoid reentrant calls for example if an alert box is displayed while loading file to preview,
    * and an Expose event calls another preview draw */
   if(semaphore) return 0;

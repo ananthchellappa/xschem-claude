@@ -72,7 +72,22 @@ int xserver_ok(void)
                      "   A possible reason is that the X server is not running or DISPLAY shell variable\n"
                      "   is incorrectly set.\n"
                      "   Starting Xschem in text only mode.\n\n");
-    } else XCloseDisplay(display);
+    } else {
+      XCloseDisplay(display);
+      /* ISSUE 1493. `display` is the file-scope global (globals.c); apart from this probe
+       * it is assigned only inside `if(has_x)` (xinit.c, from Tk_Display()). Leaving it
+       * pointing at the connection just closed gives has_x==0 TWO different pointer
+       * states: NULL when DISPLAY is unset, and a DANGLING pointer when DISPLAY is set
+       * and --nogui / -x turns has_x off afterwards (main.c runs this before
+       * process_options()). A guard missed anywhere then faults loudly on one arm and
+       * reads freed memory on the other -- measured on issue 1483 as a fabricated
+       * XMaxRequestSize=4 against a true 65535, and, driven further down the same freed
+       * connection, as an abort inside libxcb ("Assertion !xcb_xlib_extra_reply_data_left
+       * failed"). Nulling it makes the two has_x==0 arms agree: the same fault, in the
+       * same frame, on every box -- which is what makes a missed guard findable at all.
+       * See doc/claude/issues/1493-*.md */
+      display = NULL;
+    }
   }
   return has_x;
 }
@@ -201,6 +216,27 @@ int grabscreen(const char *win_path, int event, int mx, int my, KeySym key,
   static int first_motion = 1;
   static int displayh = 0, displayw = 0;
   static unsigned long white = 0;
+
+  /* ISSUE 1492 family (the `grabscreen` entry point, found by the item-A map). Every
+   * branch below needs a live Display*, the root window, xctx->window and a GC, and
+   * callback() dispatches into here on `xctx->ui_state & GRABSCREEN` ALONE -- no event
+   * type, no has_x. With has_x 0 the first statement (WhitePixel, a macro that
+   * dereferences the Display*) faulted on a NULL or already-XCloseDisplay()d pointer.
+   * The `xschem grabscreen` branch in scheduler.c now refuses to ARM the bit without a
+   * display, so this is the second line of defence: a bit armed while a display existed
+   * must not kill the process if one is no longer usable.
+   *
+   * ⚠ IT CLEARS THE BIT, and the first cut of this guard did not (fix round). callback()
+   * routes EVERY canvas event in here while GRABSCREEN is set, so a bare `return 0` left
+   * the bit armed for the life of the process and silently swallowed every later event --
+   * MEASURED through the XK_Print key (callback.c), which armed it with no has_x test:
+   * after one Print, zoom-full moved nothing. A crash replaced by a permanently dead
+   * editor is worse than the crash (PLAN.md criterion 3), so the disarm is the guard.
+   * See doc/claude/issues/1492-*.md, receipts/A-map.md and receipts/A-verify.md */
+  if(!has_x) {
+    xctx->ui_state &= ~GRABSCREEN;
+    return 0;
+  }
 
   if(grab_state == 0 && event == ButtonPress && button == Button1) {
     unsigned long gcvm = GCFunction | GCForeground;

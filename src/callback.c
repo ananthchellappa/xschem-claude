@@ -2118,6 +2118,25 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   int access_cond = !graph_use_ctrl_key || (state & ControlMask);
 
   dbg(1, "uistate=%d, graph_flags=%d\n", xctx->ui_state, xctx->graph_flags);
+  /* NO DISPLAY, NO GRAPH GESTURES (issue 1492 family; the fix round's blocker). The
+   * cairo_save() pair twenty lines below runs UNCONDITIONALLY, and xctx->cairo_save_ctx is
+   * NULL with has_x 0 (create_gc()/resetwin() never ran), so cairo_save(NULL) faults --
+   * MEASURED, gdb, one motion event on a loaded example:
+   *   #0 cairo_save (libcairo) #1 waves_callback #2 callback #3 xschem_cmds_c
+   * Two Tcl lines reach it: `xschem load <an example carrying a graph>; xschem zoom_full;
+   * xschem callback .drw 6 500 400 0 0 0 0`; 23 of the 60 shipped xschem_library/examples
+   * die that way. The implement round's sweep could not see it: its corpus never ran
+   * `xschem load`, so waves_selected() always declined, and the item-A map enumerated
+   * dereferences of the `display` GLOBAL while this function touches none -- it dies on a
+   * handle STORED IN xctx, which is blind spot (c) of receipts/A-map.md §6.
+   * Guarding the whole function, not just the cairo pair: everything past it paints
+   * through xctx->gc[]/gctiled (drawtemprect, draw_graph, draw_selection), all 0 with
+   * has_x 0, so a narrower guard would only move the fault a few frames down. Nothing a
+   * user asked for is skipped -- these are pointer gestures (pan, box zoom, marker drag,
+   * cursors) on a canvas that does not exist -- and the function's normal exit returns 0
+   * too, so no caller sees a different value.
+   * See doc/claude/issues/1492-*.md and receipts/A-verify.md */
+  if(!has_x) return 0;
   /* if(event != -3 && !xctx->raw) return 0; */
   /* The snap grid is a schematic concept and does not apply to graphs (issue
    * 0143 — user: "snap grid does not apply to graph windows"). Override the
@@ -4097,6 +4116,19 @@ static void draw_snap_cursor(int action) {
   int prev_draw_window = xctx->draw_window;
   int prev_draw_pixmap = xctx->draw_pixmap;
 
+  /* NO DISPLAY, NO CURSOR (issue 1492 family, sited by the item-A map). Everything below
+   * paints through xctx->gc[] / xctx->gctiled, and erase_snap_cursor() calls MyXCopyArea()
+   * on xctx->save_pixmap and xctx->window. With has_x 0 create_gc() is never called, so
+   * those are all 0/NULL and the copy faults -- on a NULL GC, note, not on a NULL
+   * Display*, which is why nulling the `display` global (issue 1493) cannot help here and
+   * only a has_x guard can. The test belongs HERE for the same reason the no_snap test
+   * below does: callback()'s `snap_cursor` local is computed before
+   * handle_window_switching() may reassign xctx, and the cadence 'z' arm calls this
+   * drawer directly without consulting any local at all -- six of this function's eight
+   * call sites do not test has_x. Nothing user-visible is skipped: with no X there is no
+   * canvas to put a cursor on.
+   * See doc/claude/issues/1492-*.md */
+  if(!has_x) return;
   if (!xctx->mouse_inside) return;  /* Early exit if mouse is outside */
   /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177): this glyph snaps to the
    * nearest net or symbol pin, and a waveform canvas has neither -- with nothing
@@ -4187,6 +4219,18 @@ void draw_crosshair(int what, int state)
   sdw = xctx->draw_window;
   sdp = xctx->draw_pixmap;
 
+  /* NO DISPLAY, NO CROSSHAIR (issue 1492 family, sited by the item-A map). MEASURED
+   * entry point: `set draw_crosshair 1` then one Motion callback, which reaches
+   * erase_crosshair() -> MyXCopyArea(display, xctx->save_pixmap, xctx->window,
+   * xctx->gc[0], ...). With has_x 0 create_gc() is never called, so the GC, the window
+   * and the pixmap are all 0/NULL and the copy faults -- again on the NULL GC, not on the
+   * Display*, so issue 1493's nulled global cannot help and only this guard can. Sited
+   * here rather than in callback()'s `draw_xhair` local for the reason the comment below
+   * gives at length: draw() (draw.c) and three sites in move.c call this drawer without
+   * consulting any local, so gating only the local would kill the ERASE paths and leave
+   * the PAINT paths live.
+   * See doc/claude/issues/1492-*.md */
+  if(!has_x) return;
   if(!xctx->mouse_inside) return;
   /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177). This is drawn AT
    * mousex_snap/mousey_snap (just below), so on a grid it is the snap grid made
@@ -8701,21 +8745,33 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         xctx->fill_pattern++;
         if(xctx->fill_pattern==2) xctx->fill_pattern=0;
 
+        /* NO DISPLAY, NO STIPPLE GCs (issue 1492 family). The item-A map put these four
+         * XSetFillStyle() sites in its "unguarded but not reached by this workload"
+         * class; they ARE reachable from a user's script -- `xschem callback .drw 2 100
+         * 100 61 0 0 4` (Ctrl-'=') -- and were measured to fault here once 0227's
+         * update_statusbar() guard stopped masking them. xctx->gcstipple[] is created in
+         * create_gc(), which only runs with has_x 1, so with no display every element is
+         * 0. The USER-VISIBLE half of this key -- the fill_pattern state above, the
+         * alert_ messages and the redraw -- is deliberately left OUTSIDE the guard, so a
+         * headless script toggling fill mode still changes the mode it asked to change;
+         * only the GC writes, which have no GC to write to, are skipped. draw() is
+         * already has_x-safe (its Xlib block is inside `if(has_x)`).
+         * See doc/claude/issues/1492-*.md */
         if(xctx->fill_pattern==1) {
          tcleval("alert_ { Stippled pattern fill} {}");
-         for(x=0;x<cadlayers;x++) {
+         if(has_x) for(x=0;x<cadlayers;x++) {
            if(xctx->fill_type[x]==2) XSetFillStyle(display,xctx->gcstipple[x],FillSolid);
            else XSetFillStyle(display,xctx->gcstipple[x],FillStippled);
          }
         }
         else if(xctx->fill_pattern==2) {
          tcleval("alert_ { solid pattern fill} {}");
-         for(x=0;x<cadlayers;x++)
+         if(has_x) for(x=0;x<cadlayers;x++)
           XSetFillStyle(display,xctx->gcstipple[x],FillSolid);
         }
         else  {
          tcleval("alert_ { No pattern fill} {}");
-         for(x=0;x<cadlayers;x++)
+         if(has_x) for(x=0;x<cadlayers;x++)
           XSetFillStyle(display,xctx->gcstipple[x],FillStippled);
         }
 
@@ -8921,9 +8977,25 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
 #if defined(__unix__) && HAS_CAIRO==1
     case XK_Print:
-      xctx->ui_state |= GRABSCREEN;
-      tclvareval(xctx->top_path, ".drw configure -cursor {}" , NULL);
-      tclvareval("grab set -global ", xctx->top_path, ".drw", NULL);
+      /* THE SECOND ARMING SITE FOR GRABSCREEN, and the one the implement round missed
+       * (its §1 row 7 guarded only the `xschem grabscreen` VERB). This key is
+       * Tcl-reachable as `xschem callback .drw 2 <x> <y> 65377 0 0 0`, it armed
+       * ui_state |= GRABSCREEN with no has_x test, and callback() then dispatches EVERY
+       * canvas event into grabscreen() (draw.c) on that bit ALONE. With the verb refusing
+       * but this site open, grabscreen()'s own `if(!has_x) return 0;` returned WITHOUT
+       * clearing the bit, so from one Print key onward every later event was swallowed
+       * and the editor was silently dead -- MEASURED headless: after Print, zoom-full
+       * (key 102) leaves `xorigin yorigin zoom` at `10 -870 1`; without Print the same
+       * key moves it to `104.418 103.093 0.2946`. That is acceptance criterion 3's
+       * failure shape (a guard that silently swallows work a user asked for), reached
+       * from a guard meant to prevent a crash. Both halves are fixed: the bit is not
+       * armed with no display, and grabscreen() clears a bit that somehow got armed.
+       * See receipts/A-verify.md */
+      if(has_x) {
+        xctx->ui_state |= GRABSCREEN;
+        tclvareval(xctx->top_path, ".drw configure -cursor {}" , NULL);
+        tclvareval("grab set -global ", xctx->top_path, ".drw", NULL);
+      }
       break;
 #endif
 
@@ -9926,6 +9998,19 @@ static void update_statusbar(int persistent_command, int wire_draw_active)
 static void handle_expose(int mx,int my,int button,int aux)
 {
   XRectangle xr[1];
+  /* NO DISPLAY, NO EXPOSE (NEW site, found by the item-A map; it is in no issue file).
+   * MEASURED entry point, needing no state at all: `xschem callback <win> 12 ...`. An
+   * Expose is a request from the X server to repaint a region, so with has_x 0 there is
+   * no server, no window, no backing pixmap and no GC to repaint through -- every
+   * statement in this function is a copy or a clip on handles create_gc()/resetwin()
+   * never made, and MyXCopyArea() faulted on the NULL gc[0]. There is nothing a user
+   * asked for to skip: the event is synthetic, and the repaint it names has no surface.
+   * Guarding this function (rather than callback()'s `case Expose:`) also covers any
+   * future caller. 0227's one-line update_statusbar() guard is NOT sufficient for
+   * callback(): with that guard alone, `xschem callback .drw 12 ...` still segfaulted
+   * here -- this is the second landmine in the same function.
+   * See doc/claude/headless_crashes_batch/receipts/A-map.md and doc/claude/issues/0227-*.md */
+  if(!has_x) return;
   MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], mx,my,button,aux,mx,my);
   xr[0].x=(short)mx;
   xr[0].y=(short)my;
@@ -10090,7 +10175,22 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
    * door reached by a keystroke, a click, a menu or a script is caught wherever it lives. */
   check_placement_preview_invariant("callback()");
 
-  update_statusbar(persistent_command, wire_draw_active);
+  /* ISSUE 0227 (with 0834 and 0467, which the item-A map settles as the same site).
+   * update_statusbar() calls XGetKeyboardControl(display, ...) on the unix arm and then
+   * configures a dozen `.statusbar.N` Tk widgets. With has_x 0 the Display* is NULL (no
+   * DISPLAY) or a pointer xserver_ok() already closed (--nogui or -x with DISPLAY set),
+   * and the Xlib call segfaults BEFORE any dispatch -- so EVERY `xschem callback` died,
+   * measured on all 540 window x event x key/button combinations. Four headless suites
+   * were truncated mid-run by it (test_keybind_snap_grid, test_undo_selection,
+   * test_hilight_case_senders, test_window_switch_bogus_enter) and one of them had been
+   * filed for a month as a different bug (0467, "at teardown").
+   * Nothing a user asked for is skipped: every widget this function touches is Tk-only
+   * and does not exist with has_x 0, and the caps/num-lock LED state it reads is a
+   * property of a keyboard attached to an X server there isn't one of. The guard is at
+   * the CALL SITE, matching the ~twenty `if(has_x)` guards already in this file, and it
+   * is `has_x` rather than `--nogui` because -x / --no_x is a third route to has_x 0.
+   * See doc/claude/issues/0227-*.md, 0834-*.md, 0467-*.md */
+  if(has_x) update_statusbar(persistent_command, wire_draw_active);
 
   #if 0
   /* exclude Motion and Expose events */

@@ -226,6 +226,17 @@ void copy_hilights(void)
   Hilight_hashentry **entry, **new_entry;
   Xschem_ctx *old_xctx = get_old_xctx();
 
+  /* ISSUE 1492 (row corrected): there may be no previous context to copy FROM.
+   * `old_xctx` (xinit.c) is set only when a window or tab switch happens, so it is NULL
+   * in any session that has never opened a second one, and the loop below dereferenced it
+   * unconditionally. This is NOT a display defect -- it crashes identically with a full
+   * GUI and has_x 1, and this function touches no X call at all; 1492 pairs it with
+   * create_gc() by a transcription slip that the item-A map re-took and corrected. The
+   * Tcl-reachable route (`xschem copy_hilights`) reports the refusal through the error
+   * path in scheduler.c; this guard covers any future C caller.
+   * See doc/claude/issues/1492-*.md */
+  if(!old_xctx) return;
+
   for(i=0;i<HASHSIZE; ++i) {
     entry = &old_xctx->hilight_table[i];
     new_entry = &xctx->hilight_table[i];

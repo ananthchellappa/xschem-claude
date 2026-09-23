@@ -403,7 +403,17 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_simwin_variant_1471" \
                  "headless/test_input_line_inject_1352" \
                  "headless/test_preview_name_inject_1601" \
-                 "headless/test_generator_paren_1604"]
+                 "headless/test_generator_paren_1604" \
+                 "headless/test_headless_guards_xarm_1492"]
+## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
+## HALF. The headless-crash batch added eleven `has_x` guards, and
+## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui
+## -- can only ever see the has_x == 0 half of any of them. Forcing all of them
+## to fire unconditionally (no statusbar, no crosshair, no snap cursor, no
+## Expose repaint for any GUI user) left twenty display-arm suites BYTE-IDENTICAL
+## and a whole T1 at `counted_failures=0`, measured by that batch's verify round.
+## The rows in this file are the positives only a display can take, so it is a
+## dcase and nothing else; run headless it self-skips with a RESULT line.
 ## ⚠ `test_generator_paren_1604` IS THE ARM THAT REACHES THE INSERT DIALOG.
 ## Its D rows build the real `.ins` listbox, put a real `bandgap(rev2).sch` and
 ## a real `opamp(v3)_final.sym` in `file_chooser(fullpathlist)`, and call the

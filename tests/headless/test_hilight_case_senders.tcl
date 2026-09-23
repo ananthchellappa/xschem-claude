@@ -561,8 +561,18 @@ eqcheck CS84b-source3-primed-at-read-time \
 #     "XSCHEM_GRAPH"; graph_add_nodes_from_list is where the query lands.
 # ---------------------------------------------------------------------------
 proc graph_add_nodes_from_list {nodelist} { set ::captured $nodelist }
-toplevel .graphdialog
-update
+# ⚠ `toplevel` IS A TK COMMAND, AND --nogui HAS NO TK. Until 2026-09-22 this
+# line ended the whole suite headless with `invalid command name "toplevel"`
+# after 21 ok: rows and NO `RESULT:` line at all -- which is how this file, one
+# of issue 0227's four named witnesses, failed the headless-crash batch's
+# criterion 2 ("every affected suite passes with DISPLAY unset with the check
+# count it has with a display") after the product defect that truncated it had
+# been fixed. It is the SUITE's own use of a widget, not a product defect: no
+# has_x guard in src/ can reach it. So the AF block self-skips when there is no
+# Tk and the file now reports a RESULT on both arms; the three rows it owns
+# (CS74, CS75, CS75b) are display-arm rows and say so by name.
+set AF_TK [expr {![catch {toplevel .graphdialog}]}]
+if {$AF_TK} { update }
 # the node tokens the graph was handed; the colour that follows each one is
 # xctx->hilight_color and is not what this suite is about
 proc ctrlk_graph {} {
@@ -592,6 +602,13 @@ proc hier_with_top_raw {mode} {
   xschem descend
   update
 }
+if {!$AF_TK} {
+  foreach _af {CS74-graph-net-hierarchical CS75-graph-current-hierarchical \
+               CS75b-graph-current-prefix-follows-the-token} {
+    puts "skip: $_af -- no Tk in this process (--nogui): the built-in graph sender\
+ needs a live .graphdialog toplevel"
+  }
+} else {
 hier_with_top_raw fold
 reselect instance 2
 set gnf [ctrlk_graph]
@@ -622,6 +639,7 @@ eqcheck CS75b-graph-current-prefix-follows-the-token \
 
 destroy .graphdialog
 update
+}
 
 # ---------------------------------------------------------------------------
 # AG. THE RECEIVER SIDE: hilight_graph_node() (hilight.c), reached per graph
@@ -692,6 +710,24 @@ proc parsed {nodes} {
   return [lsort $out]
 }
 
+# ⚠ THE AG ROWS NEED A REDRAW, AND A REDRAW NEEDS A DISPLAY. `parsed` works by
+# loading a graph, calling `xschem redraw` and reading back what
+# auto_hilight_graph_nodes made of the node names -- and that call sits inside
+# draw()'s `if(has_x)` block, so with --nogui nothing walks the graph nodes and
+# `xschem list_hilights all` is empty. Measured: all six rows return {} headless
+# while the same six are ALL PASS with a display. That is a property of the
+# path under test (a redraw path), not a defect this suite can fix, so the rows
+# name themselves as display-arm rows instead of failing. The file then reports
+# 21 checks + 9 skips headless and 30 checks with a display, and the difference
+# is readable rather than fatal.
+if {![info exists ::has_x]} {
+  foreach _ag {CS76-parse-lowercase-current CS77-parse-mixed-current \
+               CS78-parse-mixed-prefix-both-ways CS79-parse-flat-current \
+               CS80-parse-voltage-both-cases CS81-parse-is-anchored} {
+    puts "skip: $_ag -- no display in this process (--nogui): hilight_graph_node() is\
+ reached only from draw()'s auto_hilight_graph_nodes, which is inside if(has_x)"
+  }
+} else {
 # the shape send_current_to_graph writes, in the two spellings item 4 makes it
 # write. They must parse to the SAME structure, differing only in case.
 eqcheck CS76-parse-lowercase-current [parsed {i(v.x1.vs)}] {{.x1. { vs}}}
@@ -713,6 +749,7 @@ eqcheck CS80-parse-voltage-both-cases \
 # from position 0 regardless and produced the token " (vs" -- a device current
 # named "(vs". Anchored it stays one bare token.
 eqcheck CS81-parse-is-anchored [parsed {zi(vs)}] {{. zi(vs}}
+}
 
 xschem raw clear
 catch {test_scratch_drop $tmp}
