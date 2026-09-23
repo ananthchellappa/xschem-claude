@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3873,7 +3873,23 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1606.**~~
 
-**The next free number is 1607.**
+- **1607** — **A heap over-read makes headless PostScript export non-deterministic.**
+  `create_ps()` allocates `ps_colors` with `cadlayers` entries and then indexes
+  `ps_colors[cadlayers]` for the text pseudo-layer, and the value read reaches the file.
+  MEASURED by the headless-crashes fix round: three exports of the SAME schematic with no
+  display give three different md5s, each carrying **144 `RGB` lines with a component
+  greater than 1** where the PostScript gamut is 0..1. With a display, twice, identical and
+  zero out of gamut. `xschem -p` / `--pdf` is how a design leaves this program for a
+  document, so non-determinism is the part that matters. `svgdraw.c` carries the identical
+  idiom — READ, not measured. ⚠ Not fixed by the round that found it, correctly: every
+  repair changes the exported bytes in 144 places on a path with **no golden and no suite**,
+  and the real question underneath is what colour the text pseudo-layer should be — allocate
+  one more and it is whatever calloc zeroes to, bound the read and it is the last real
+  layer's. Those are different pictures. OPEN.
+
+~~**The next free number is 1607.**~~
+
+**The next free number is 1608.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
