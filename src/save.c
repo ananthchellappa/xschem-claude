@@ -7161,6 +7161,24 @@ static void add_pinlayer_boxes(int *lastr, xRect **bb,
   bb[PINLAYER][i].ellipse_a =  bb[PINLAYER][i].ellipse_b = -1;
   bb[PINLAYER][i].sel = 0;
   bb[PINLAYER][i].fill = 1;
+  /* ISSUE 1342 IS THE `op-wcard` BRANCH'S NUMBER, not this tree's (1342 here is an
+   * unrelated simcaps defect); the batch and its issue files live on that branch. The
+   * long note at the top of src/psprint.c's PS_LW_MAX block says how to read them.
+   *
+   * THE SOURCE OF THE GARBAGE IN THE PostScript BACK END. my_realloc() does
+   * not zero, and this synthesised LCC pin rect set every other field of the xRect and
+   * left `bus` and `id` holding whatever the heap had. `bus` is not cosmetic: every
+   * drawing back end turns it into a LINE WIDTH -- psprint.c's ps_filledrect() computes
+   * `width = bus * xctx->mooz` and hands it to set_lw() -- so an LCC symbol emitted e.g.
+   * `9.78375e+160 setlinewidth`, which is past the single-precision ceiling PostScript
+   * reals have and kills the whole ps2pdf run with /limitcheck. Measured on the shipped
+   * xschem_library/examples/0_examples_top.sch: 99 pages and 305 links in the .ps, TEN
+   * pages and 67 links in the .pdf. Confirmed as the origin with
+   * `valgrind --track-origins=yes`, which names this very my_realloc.
+   * `id` is 0 = never stamped (xschem.h), the value gfx_register() would give a rect
+   * that is not part of a user-editable object set. */
+  bb[PINLAYER][i].bus = 0.0;
+  bb[PINLAYER][i].id = 0;
   /* add to symbol pins remaining attributes from schematic pins, except name= and lab= */
   my_strdup(_ALLOC_ID_, &pin_label, get_sym_template(prop_ptr, "lab"));   /* remove name=...  and lab=... */
   my_strcat(_ALLOC_ID_, &bb[PINLAYER][i].prop_ptr, pin_label);

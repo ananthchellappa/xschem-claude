@@ -97,7 +97,53 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_untitled_autosave_1486" \
                  "headless/test_input_line_inject_1352" \
                  "headless/test_preview_name_inject_1601" \
-                 "headless/test_generator_paren_1604"]
+                 "headless/test_generator_paren_1604" \
+                 "headless/test_hier_pdf_links_1333" \
+                 "headless/test_ps_valid_1350"]
+# ⚠ THE TWO HIERARCHICAL-PDF SUITES ARE IN `hcases` ONLY, AND THAT IS MEASURED.
+# They arrived on this branch with the port of the op-wcard hierarchical-PDF
+# export fix, and until this line neither ran in the gate -- 110 checks of the
+# fix's own coverage, on a feature that on this tree's HEAD CRASHED OUTRIGHT
+# (`xschem hier_psprint` on the shipped xschem_library/examples/0_examples_top.sch
+# gave `FATAL: signal 11` and wrote no file; after the fix, 99/99 pages, 526
+# annotations, ps2pdf exit 0 with empty stderr).
+#
+# WHY `hcases` AND NOT `dcases`: EVERY export either suite measures happens in a
+# SPAWNED `--nogui` child, never in the suite's own interpreter. That is not a
+# convenience -- issue 1341 records that the page scale depends on how many times
+# the hierarchy has been walked in the process, so one child per arm is what makes
+# every measurement a FIRST walk and lets DD-3's absolute (14 congruent link rects
+# at 61.487 x 35.135 pt) be asserted at all. Neither suite creates a widget, and
+# the one `winfo` in test_hier_pdf_links_1333 only labels which arm it printed
+# from. MEASURED both ways on 2026-09-24: with DISPLAY unset and with DISPLAY=:99,
+# `OVERALL: ok (89 checks)` and `OVERALL: ok (21 checks)` either way, same counts,
+# 8.4 s and 29.1 s. A `dcases` entry would cost ~40 s of gate time for zero rows
+# that a display can see.
+#
+#   headless/test_hier_pdf_links_1333 -- 89 checks, ~8 s. The /Link annotations:
+#     the NULL `type` guard that is the crash (S1, S1b run the shipped example),
+#     a link iff a page of that name exists (no dead links, no unlinked pages),
+#     the link rect's shape and hotspot, the RULE-1 border scope, and the H6
+#     navigation strip. Row N25 is the one that states the SHIPPED DEFAULT of
+#     `ps_hier_nav` (`none`, the user's 2026-09-24 ruling); every other N row now
+#     turns the strip on EXPLICITLY, because 19 of them used to rely on the old
+#     `both` default and a default nothing states is a default nobody can change.
+#   headless/test_ps_valid_1350 -- 21 checks, ~29 s. Does what this back end
+#     writes actually DISTIL: it runs ps2pdf and reads the PDF back, over a
+#     90+ sheet corpus. ⚠ ITS ps2pdf GUARD WAS A SILENT GREEN until 2026-09-24 --
+#     `SKIP:` (uppercase, which summarize_all does not collect) plus
+#     `RESULT: ALL PASS` plus exit 0, i.e. 21 imaginary checks on a box without
+#     ghostscript. It now prints a lowercase `skip:` naming rows V1-V21 and a
+#     zero-count banner, so `skips=` in the trailer tells the truth. ps2pdf IS
+#     present here (/usr/bin/ps2pdf), so this case contributes 0 skips on this box.
+#
+# BOTH HAD TO LEARN THE COMPLETION BANNER FIRST, exactly as
+# test_untitled_autosave_1486 did below: they printed a `RESULT:` line and no
+# `OVERALL:` line, which run_suites.sh scores and `regression_case_failed` does
+# not. Registering them as they stood would have appended
+# `HARNESS: ... did not complete cleanly` and counted two failures in the one file
+# whose baseline is ZERO, with all 110 of their own checks passing.
+#
 # ⚠ `test_generator_paren_1604` IS REGISTERED IN BOTH LISTS, for the same
 # reason the two below are. Issue 1604: `is_xschem_file` took a generator's
 # argument list off a name with an UNANCHORED regsub, which ate the first open

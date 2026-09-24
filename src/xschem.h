@@ -3326,6 +3326,28 @@ extern void store_arc(int pos, double x, double y, double r, double a, double b,
 extern int undo_shield_push(void);
 extern void undo_shield_pop(int saved);
 extern void hier_psprint(char **res, int what);
+/* ⚠ 1334, 1338 and the DD-n rulings below are the `op-wcard` branch's numbering, not
+ * this tree's -- see the note at the top of src/psprint.c's PS_LW_MAX block. */
+/* issue 1334 (item H1b, ruling DD-6): does THIS export contain a page whose /Dest
+ * name is `dest`? Built by hier_psprint()'s `what & 4` collect pass, read by
+ * psprint.c's pdfmark emitter. Answers 1 when no export owns a set. */
+extern int hier_psprint_dest_exists(const char *dest);
+/* RULE-1 / issue 1338 (item H4). The /Dest name instance `n`'s link would carry, or
+ * NULL if it can carry none -- the ONE minter, called by psprint.c's pdfmark emitter
+ * and by the collect pass that decides which pages are worth descending into (DD-2). */
+extern const char *hier_psprint_inst_dest(int n);
+/* The /Border (and /C) keys that link must carry: the user's 2026-09-10 ruling,
+ * decided once per export beside the walk that knows the document, read here as a
+ * hash lookup with no Tcl. See src/spice_netlist.c. */
+extern const char *hier_psprint_link_border(const char *dest);
+/* ITEM H6 -- the page navigation strip. The sheets that instantiate the page whose
+ * destination name is `dest` (newline separated, sorted), or NULL if none -- the TOP
+ * page of an export, and every caller that is not a hierarchical print. Read off the
+ * SAME edge set item H4 records for the highlight: no second walk, no second rule. */
+extern const char *hier_psprint_page_parents(const char *dest);
+/* `ps_hier_nav` as bits: 1 = Back button, 2 = parent references. 0 unless a
+ * hierarchical print owns a destination set, which is the /Link emitter's own gate. */
+extern int hier_psprint_nav_mode(void);
 extern int global_spice_netlist(int global, int alert);
 extern int global_spectre_netlist(int global, int alert);
 extern int global_tedax_netlist(int global, int alert);

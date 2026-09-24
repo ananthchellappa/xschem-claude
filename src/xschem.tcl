@@ -2441,6 +2441,28 @@ proc convert_to_pdf {filename dest} {
         if { ![xschem get debug_var] } {
           file delete $filename
         }
+      } else {
+        ## ISSUE 1356 -- SAY SO. This arm did not exist: when $to_pdf failed, the unix path
+        ## fell out of the `if` in silence, so the user asked for a PDF, got no PDF, got no
+        ## message, and was left with a .ps they did not ask for and no reason for it. The
+        ## Windows arm above has always printed to stderr; only unix was mute. That silence
+        ## is why issue 1343 -- ps2pdf dying with /limitcheck on five SHIPPED examples and
+        ## truncating a 99-page export to 10 -- went unreported for as long as it did: the
+        ## failure was real, reproducible and completely invisible. Keep the PostScript,
+        ## which IS correct and which the user can distil by hand or read directly.
+        puts stderr "problems converting postscript to pdf: $to_pdf exited\
+                     $execute(status,last)"
+        if {[info exists execute(data,last)] && $execute(data,last) ne {}} {
+          puts stderr $execute(data,last)
+        }
+        puts stderr "the PostScript is correct and has been kept: $filename"
+        ## `alert_` returns immediately when there is no display (it guards on `has_x`), so
+        ## this is safe from --nogui and from a --script batch run; nowait so a scripted
+        ## export is never blocked on a dialog nobody is there to dismiss. catch anyway:
+        ## a failed export must not become a failed Tcl command on top.
+        catch {alert_ "Could not convert the PostScript to PDF.\n\n$to_pdf exited\
+                $execute(status,last). The PostScript has been kept and is correct:\
+                \n\n$filename" {} 1}
       }
     }
   } else {
@@ -19496,6 +19518,106 @@ set_ne flat_netlist 0
 set_ne netlist_show 0
 set_ne color_ps 1
 set_ne ps_page_title 1 ;# add a title in the top left page corner
+## --------------------------------------------------------------------------
+## ⚠ THE ISSUE NUMBERS IN THIS FILE'S HIERARCHICAL-PDF COMMENTS ARE THE `op-wcard`
+## BRANCH'S NUMBERING, NOT THIS TREE'S.  DO NOT FOLLOW ONE INTO doc/claude/issues/.
+##
+## This code was ported to `fluid-editing` on 2026-09-24 from a finished batch on the
+## `op-wcard` branch. That batch's directory (doc/claude/hier_pdf_links_batch/) and its
+## eighteen issue files stayed there and are NOT in this clone -- deliberately, because
+## EVERY number they use, 1333 through 1360, is already taken HERE by a completely
+## unrelated defect: 1333 here is an op-dump reader with no caller, 1342 a simcaps
+## count, 1350 an annotation-order dump. A reader who follows one of these numbers into
+## this tree's doc/claude/issues/ will find a real file about something else entirely.
+## Read the real ones on the branch that has them:
+##     git -C <an op-wcard clone> show op-wcard:doc/claude/issues/1334-*.md
+##     git -C <an op-wcard clone> show \
+##         op-wcard:doc/claude/hier_pdf_links_batch/DECISIONS.md
+## Nothing has been renumbered, on purpose: the eighteen colliding files are committed
+## in both trees and cited from source comments and commit messages in both. Who moves,
+## if anyone, is the USER'S ruling -- carried as issue 1400 in this tree and issue 1347
+## on op-wcard, both still open.
+## --------------------------------------------------------------------------
+## Issues 1338 / 1339 -- the hierarchical-PDF link preferences. There is no C-side mirror to
+## keep in sync, exactly as for ps_page_title just above: ps_link_bbox is read in
+## src/psprint.c ps_link_pdfmark(), and ps_link_border / ps_link_noborder_libs in
+## src/spice_netlist.c, once per export.
+##
+## ps_link_border IS RATIFIED. The user ruled on 2026-09-10, verbatim: "Only a symbol for a
+## non-PDK cell that has real hierarchy (worth descending into) should have the clickable link
+## highlight in the PDF". Item H4. THREE states, and `0`/`1` still parse as the first and last
+## so an xschemrc written against item H3 keeps its meaning:
+##   none | 0   no border on any link -- what xschem shipped before H4, and the way back
+##   hier       the ruling: a border only on links whose target page has a paged child and is
+##              not in an excluded library.  THE DEFAULT.
+##   all  | 1   a border on every link -- item H3's `ps_link_border 1`, byte for byte
+set_ne ps_link_border hier
+## The "non-PDK" half of the ruling. Regexps in the noprint_libs / nolist_libs idiom, matched
+## against the target page's SCHEMATIC path. A page in one of these libraries is never
+## advertised even when it does have a paged child -- which is the case condition `hier` alone
+## cannot catch, because a PDK that ships transistor-level standard cells IS hierarchical.
+##
+## THE DEFAULT IS THE sky130 PDK, and it is a judgement call: sky130 is the only PDK on this
+## machine and therefore the only one whose library names could be MEASURED rather than
+## guessed (sky130A/xschem_libs/library.defs). A default of {} would preserve behaviour but
+## would not implement the user's ruling. Add a line here, or in ~/.xschem/xschemrc, for
+## another PDK.
+##
+## EVERY PATTERN HERE MUST NAME A PDK LIBRARY, NOT A DIRECTORY NAME THAT A PDK HAPPENS TO USE.
+## These are unanchored regexps matched against the target page's schematic PATH, so a generic
+## component matches anywhere in it. This list shipped for one commit as
+##     {{/sky130_fd_pr/} {/sky130_stdcells/} {/stdcells/}}
+## and the third pattern was a defect: `stdcells` is one of the commonest directory names in an
+## IC project, so `/stdcells/` matched `/home/me/myproject/stdcells/myblock.sch` -- a NON-PDK
+## cell with real hierarchy, which is exactly what the user's ruling grants the highlight to --
+## and it matched this repo's own `sky130_tests/stdcells/schematic/stdcells.sch`, a cell named
+## `stdcells` inside a library that is not a PDK. It also protected nothing: the one library it
+## was meant for, sky130A/xschem_libs/stdcells, ships 76 symbols and ZERO .sch, so its cells get
+## no page, no link and no border by any route. Dropped. Row S81e fences the shape.
+##
+## `sky130_fd_pr` and `sky130_stdcells` are actual sky130 PDK library names and are specific
+## enough to be safe. A default is a claim about someone else's disk: prefer a pattern that is
+## wrong-but-narrow over one that is right-here-and-wide.
+set_ne ps_link_noborder_libs {{/sky130_fd_pr/} {/sky130_stdcells/}}
+set_ne ps_link_bbox full ;# full: hotspot is symbol+texts (grows with the instance name)
+                          # body: hotspot is the symbol body only
+## ITEM H6 -- THE NAVIGATION STRIP. Read in src/spice_netlist.c once per export; drawn in
+## src/psprint.c ps_hier_nav_strip(), in the 10 pt margin band above the drawing, on every
+## page of a HIERARCHICAL export only (a single-page `xschem print` is untouched).
+##
+## Until this preference existed every link the hierarchical PDF carried was one-way,
+## symbol -> child: no way back, no reference to the containing sheet, no outline. The user
+## asked for both, twice ("How difficult to add references on a child cell to have links to
+## parent schematics?", and "did we succeed in putting Back buttons? ... a clickable button
+## means user can keep one hand on the mouse").
+##
+##   none | 0   no strip at all: exactly what xschem shipped before item H6.  THE DEFAULT.
+##   back       the Back button only (a PDF /GoBack named action -- the viewer's own history
+##              Back, so it does nothing for a reader who SCROLLED to the page)
+##   up         the parent references only: `Up: <sheet>`, one clickable name per sheet that
+##              instantiates this cell, however the reader arrived. A cell instantiated in
+##              five places lists five
+##   both       BOTH -- the Back button and the parent references
+## Anything unrecognised takes `both` rather than silently deleting the navigation: an
+## unrecognised value is a user who ASKED for the strip and mistyped which half.
+##
+## ⚠ THE DEFAULT IS `none` BY THE USER'S RULING OF 2026-09-24, AND IT IS NOT AN OVERSIGHT.
+## The op-wcard batch that built this shipped it at `both`, arguing that "today's behaviour"
+## for a brand-new feature is nothing at all, so shipping it off would deliver an empty
+## feature and a variable to find. When that batch's source was ported to this branch the
+## user ruled the other way: bring in the export FIX -- the crash, the lost pages, the dead
+## and the missing /Link annotations, none of which this line touches and all of which are
+## on -- and ship the new VISIBLE navigation off until they have looked at it.
+##
+## The reason is that the strip's PRESENTATION is the crew's own and is UNRATIFIED: a Back
+## link on the top page too, an `Up:` strip on every page, that wording, that position in
+## the top margin. Five choices nobody outside the batch has seen, applied to every page of
+## every hierarchical export. Off is the state that cannot surprise anyone. Nothing is
+## removed: set this to `both` (or `back` / `up`) here or in ~/.xschem/xschemrc and the
+## feature works exactly as built. See doc/claude/issues/1357-*.md in the op-wcard tree and
+## the `rule` debt filed against it; when a presentation is ratified, this is the line to
+## flip. Do not flip it back thinking the `none` was an accident.
+set_ne ps_hier_nav none
 set_ne draw_crosshair 0
 set_ne crosshair_layer 8 ;# Yellow
 set_ne crosshair_size 0

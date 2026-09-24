@@ -404,18 +404,97 @@ static int ps_embedded_graph(int i, double rx1, double ry1, double rx2, double r
   #endif
   return 1;
 }
+/* ISSUE 1342/1343 -- A LINE WIDTH THIS BACK END CANNOT MEAN MUST NOT REACH THE DISTILLER.
+ *
+ * ⚠ READ THE SCOPE OF THAT SENTENCE. It used to read "A NUMBER ...", which promised a
+ * guarantee this file does not make: `set_lw()` is ONE of about a dozen sinks that take a
+ * double straight out of a `.sch` and print it with `%g`. Every numeric field a schematic
+ * carries reaches PostScript unchecked, and `fscanf("%lf")` accepts `inf` and `nan`.
+ * Measured on the FIXED binary: `hsize=inf` emits `inf SCF` -> `/undefined`; `hsize=nan`
+ * -> `/undefined`; `hsize=1e40` -> `/limitcheck`; and an arc radius, an arc angle, a
+ * line/poly/rect coordinate or `dash=2147483647` each kill a document the same way. A
+ * 5-page fixture with one `inf` text size distils to 2 pages, exactly as 1342 did. That
+ * family is issue **1354** and it is NOT fixed here. This function guards line widths.
+ * PostScript reals are SINGLE precision, so any value past ~3.4e38 is a hard
+ * /limitcheck: measured against gs 10.06, `1e38 setlinewidth` distils and
+ * `1e39 setlinewidth` kills the job. And a /limitcheck kills the WHOLE document, not
+ * the one line -- ps2pdf exits 1 and every page after the offending one is lost.
+ * Measured on the shipped xschem_library/examples/0_examples_top.sch: 99 correct pages
+ * and 305 correct links in the PostScript, TEN pages and 67 links after ps2pdf, because
+ * page 11 carries `9.78375e+160 setlinewidth`. Seven of 325 swept sheets died this way,
+ * including sky130_tests/top (86 pages -> 39).
+ *
+ * THIS CLAMP IS THE SECOND LINE OF DEFENCE, NOT THE FIX. The garbage is an uninitialised
+ * read and it is fixed at source: add_pinlayer_boxes() (save.c) synthesises the PINLAYER
+ * rect of an LCC pin into freshly my_realloc'd storage and set every field of it EXCEPT
+ * `bus`, which ps_filledrect() then turns into `width = bus * xctx->mooz` and hands here.
+ * Confirmed with valgrind --track-origins (the origin is that realloc, verbatim). The
+ * clamp stays because an export that DIES is worse than a hairline, because the same sink
+ * is fed by four other call sites, and because NaN/Inf would print as the bare tokens
+ * `nan`/`inf` -- which PostScript reads as executable names, i.e. /undefined.
+ *
+ * C89: no isfinite(). `w != w` is NaN; +Inf fails the upper bound and -Inf the lower.
+ * The bound is 1e6. Once the source is fixed the LARGEST width the whole 325-sheet corpus
+ * emits is **7.96** -- the 197 / 222 / 287 / 348 values the unfixed binary wrote were
+ * garbage too, merely garbage small enough to distil -- so 1e6 is five orders clear of
+ * anything a page can mean and twenty-two clear of nothing. Measured: over the fixed
+ * corpus this clamp fires ZERO times (sabotage: removing it leaves all 325 sheets clean and
+ * reddens only row V21, the user-written `bus=1e300`). */
+/* --------------------------------------------------------------------------
+ * ⚠ THE ISSUE NUMBERS IN THIS FILE'S HIERARCHICAL-PDF COMMENTS ARE THE `op-wcard`
+ * BRANCH'S NUMBERING, NOT THIS TREE'S.  DO NOT FOLLOW ONE INTO doc/claude/issues/.
+ *
+ * This code was ported to `fluid-editing` on 2026-09-24 from a finished batch on the
+ * `op-wcard` branch. That batch's directory (doc/claude/hier_pdf_links_batch/) and its
+ * eighteen issue files stayed there and are NOT in this clone -- deliberately, because
+ * EVERY number they use, 1333 through 1360, is already taken HERE by a completely
+ * unrelated defect: 1333 here is an op-dump reader with no caller, 1342 a simcaps
+ * count, 1350 an annotation-order dump. A reader who follows one of these numbers into
+ * this tree's doc/claude/issues/ will find a real file about something else entirely.
+ * Read the real ones on the branch that has them:
+ *     git -C <an op-wcard clone> show op-wcard:doc/claude/issues/1334-*.md
+ *     git -C <an op-wcard clone> show \
+ *         op-wcard:doc/claude/hier_pdf_links_batch/DECISIONS.md
+ * Nothing has been renumbered, on purpose: the eighteen colliding files are committed
+ * in both trees and cited from source comments and commit messages in both. Who moves,
+ * if anyone, is the USER'S ruling -- carried as issue 1400 in this tree and issue 1347
+ * on op-wcard, both still open.
+ * ------------------------------------------------------------------------ */
+#define PS_LW_MAX 1e6
+#define PS_LW_HAIRLINE 0.5
 static void set_lw(double lw)
 {
- if(lw==0.0)
-   fprintf(fd, "%g setlinewidth\n", 0.5);
- else
-   fprintf(fd, "%g setlinewidth\n", lw / 1.2);
+ double w;
+
+ if(lw==0.0) w = PS_LW_HAIRLINE;
+ else        w = lw / 1.2;
+ if(w != w || w < 0.0 || w > PS_LW_MAX) w = PS_LW_HAIRLINE;
+ fprintf(fd, "%g setlinewidth\n", w);
 }
 
+/* ISSUE 1353 -- THE OTHER HALF OF 1342: `ps_colors[cadlayers]` IS OFF THE END OF THE ARRAY.
+ * `ps_colors` is `my_calloc(cadlayers, sizeof(Ps_color))`, but create_ps() calls
+ * `ps_draw_symbol(c + 1, i, c + 1, ...)` for the text pass when c == cadlayers - 1, and that
+ * pass ends with `if(textlayer != c) set_ps_colors(c)` -- restoring the colour of a layer
+ * index that is not a layer. Confirmed with valgrind: "Invalid read of size 4 ... 8 bytes
+ * after a block of size 264", the block being this array. It is heap garbage, so the RGB
+ * emitted moves with heap layout: three runs of one binary on greycnt.sch printed 136 / 67
+ * / 136 triples like `0.566406 0 1.27608e+07 RGB` (blue = 1.3e7 on a 0..1 scale), and this
+ * item's OTHER change shifted pcb_test2's from a dark blue to a clamped magenta -- which is
+ * how it was found, in the rendered-page comparison rather than in a distiller error.
+ *
+ * It never killed a document, because setrgbcolor CLAMPS to [0,1] rather than raising, so
+ * this is a wrong COLOUR and an invalid READ, not a truncation. Fixed by declining to claim
+ * a colour for a pseudo-layer. The restore is redundant for correctness in any case: every
+ * drawing site sets its own colour before drawing (ps_draw_string_line() opens with
+ * set_ps_colors(layer)), which is why suppressing it is render-identical on 313 of the 314
+ * sheets that distilled cleanly before this item -- measured, gs -r100 -sDEVICE=pgmraw,
+ * page by page. */
 static void set_ps_colors(unsigned int pixel)
 {
 
    dbg(1, "set_ps_colors(): setting color %u\n", pixel);
+   if(pixel >= (unsigned int)cadlayers) return;                       /* issue 1353 */
    if(color_ps) fprintf(fd, "%g %g %g RGB\n",
      (double)ps_colors[pixel].red/256.0, (double)ps_colors[pixel].green/256.0,
      (double)ps_colors[pixel].blue/256.0);
@@ -732,13 +811,237 @@ static void ps_drawline(int gc, double linex1,double liney1,double linex2,double
 
 
 
+/* ISSUE 1352 -- A PostScript NAME LITERAL BUILT FROM USER DATA.
+ * `/foo` ends at the first whitespace or delimiter; PostScript names have NO escape
+ * mechanism (`#xx` is PDF, not PostScript), so the only way to make an arbitrary string
+ * into a name is to substitute the bytes that cannot appear in one. The delimiters are
+ * ( ) < > [ ] { } / % (PLRM 3.1) and whitespace is NUL HT LF FF CR SP.
+ *
+ * Two sites feed this: the page anchor `/Dest /<cell> /DEST` and the annotation the Link
+ * emitter below writes, both minted from a file basename by the same
+ * get_cell_w_ext(sanitize(...)) call. (The literal subtype name is deliberately NOT spelled
+ * here: row S65 of tests/headless/test_hier_pdf_links_1333.tcl counts it in this file and
+ * requires exactly ONE occurrence, because a second copy that happens to agree passes every
+ * behavioural row. It caught this comment on its first draft, which is the row doing its job
+ * for the second time.) A schematic named `my cell.sch` emitted
+ * `/Dest /my cell.sch` and gs died with `/undefined in cell.sch`, taking the whole
+ * document -- measured, exit 1, zero pages. sanitize() does NOT cover this: it rewrites
+ * only generator names (`is_generator()`), so an ordinary file name goes through raw.
+ *
+ * Everything that IS legal in a name passes through byte for byte, high bytes included,
+ * so no cell whose export works today changes its destination spelling. `_` is the
+ * substitute because it is already the character sanitize() uses for the same job.
+ *
+ * The substitution is not injective, so two cells whose names differ only in an illegal
+ * byte would now share one destination -- which is the shape already filed as issues
+ * 1348 and 1349 (a PDF /Dests name tree binds one object per name), reached by a new
+ * route rather than created here: before this change those two cells produced a document
+ * that did not open at all. */
+static const char *ps_name_token(const char *s)
+{
+  static char buf[PATH_MAX];
+  size_t i;
+
+  if(!s) return "";
+  for(i = 0; s[i] && i < sizeof(buf) - 1; i++) {
+    unsigned char c = (unsigned char) s[i];
+    if(c <= ' ' || c == 0x7f ||
+       c == '(' || c == ')' || c == '<' || c == '>' || c == '[' || c == ']' ||
+       c == '{' || c == '}' || c == '/' || c == '%') buf[i] = '_';
+    else buf[i] = (char) c;
+  }
+  buf[i] = '\0';
+  if(!buf[0]) { buf[0] = '_'; buf[1] = '\0'; }
+  return buf;
+}
+
+/* ISSUE 1351 -- THE `font=` ATTRIBUTE IS A PostScript NAME AND A FORMAT STRING, AND IT
+ * WAS NEITHER CHECKED NOR QUOTED.
+ *
+ * Two defects at one site. (a) `my_snprintf(ps_font_family, S(...), textfont)` passed
+ * user data as the FORMAT STRING, so `font=%s` read a vararg that was never pushed.
+ * (b) the value went straight into `/<name> FF`, and a name ends at the first delimiter:
+ * the shipped xschem_library/ngspice_verilog_cosim/counter.sym carries
+ * `font="courier new"`, which with the TEXT_BOLD suffix emits `/courier new-Bold FF` --
+ * gs pushes the name /courier and then EXECUTES `new-Bold`, /undefined, document over.
+ * Measured: xschem_library/examples/0_examples_top.sch stops at page 37 of 99 on this
+ * alone, once the other two defects are out of the way.
+ *
+ * WHAT THIS MAPS, AND WHY IT IS NOT EVERYTHING. Only the GENERIC family names -- the
+ * Cairo/CSS aliases xschem's own on-screen renderer resolves through fontconfig, which
+ * PostScript has never heard of -- plus the two Microsoft "X New" spellings whose space
+ * is the very thing that breaks the token. A real face name (Garamond, DejaVu Sans,
+ * FreeMono) is deliberately NOT mapped: the distiller may actually have it, and
+ * substituting Helvetica for a font gs could resolve would LOSE fidelity. Unmapped names
+ * are only made into a legal token and handed to findfont exactly as before.
+ *
+ * THE MAPPING CHANGES PIXELS ON SHEETS THAT ALREADY WORKED, and that is disclosed rather
+ * than buried: gs substitutes EVERY unknown name with Courier (measured -- /Monospace,
+ * /monospace and /serif all resolve to /Courier), so `font=serif` renders monospaced
+ * today and renders as Times after this change. That is the user's stated intent being
+ * honoured rather than silently discarded, but it IS a typeface change and it is
+ * recorded as a `rule` debt, not decided here. `font=monospace` moves from gs's
+ * substituted Courier to the prolog's RECODED Courier: same face, same metrics, and the
+ * accented glyphs above 127 start working.
+ *
+ * The suffixing below (`-Bold`, `-Oblique`, `-BoldOblique`) then composes on a base-14
+ * base name, so `font="courier new"` + bold reaches the real Courier-Bold instead of
+ * losing its weight to a substitution. */
+static const char *ps_font_token(const char *s)
+{
+  static char buf[80];
+  static const char *alias[] = {
+    "monospace",  "Courier",
+    "mono",       "Courier",
+    "couriernew", "Courier",
+    "courier",    "Courier",
+    "serif",      "Times",
+    "timesnewroman", "Times",
+    "times",      "Times",
+    "sansserif",  "Helvetica",
+    "sans",       "Helvetica",
+    "helvetica",  "Helvetica",
+    "symbol",     "Symbol",
+    NULL, NULL
+  };
+  char key[80];
+  size_t i, k;
+
+  if(!s || !s[0]) return "Helvetica";
+  /* normalisation key: lower case, letters and digits only, so "Courier New",
+   * "courier new" and "CourierNew" are one name and a stray space cannot hide an alias */
+  for(i = 0, k = 0; s[i] && k < sizeof(key) - 1; i++) {
+    unsigned char c = (unsigned char) s[i];
+    if(c >= 'A' && c <= 'Z') key[k++] = (char)(c - 'A' + 'a');
+    else if((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) key[k++] = (char) c;
+  }
+  key[k] = '\0';
+  for(i = 0; alias[i]; i += 2) {
+    if(!strcmp(key, alias[i])) return alias[i + 1];
+  }
+  /* not a generic family: keep the name the user wrote, minus anything that would end
+   * the PostScript name token, and let findfont resolve or substitute it as before */
+  for(i = 0, k = 0; s[i] && k < sizeof(buf) - 1; i++) {
+    unsigned char c = (unsigned char) s[i];
+    if(c <= ' ' || c == 0x7f ||
+       c == '(' || c == ')' || c == '<' || c == '>' || c == '[' || c == ']' ||
+       c == '{' || c == '}' || c == '/' || c == '%') continue;
+    buf[k++] = (char) c;
+  }
+  buf[k] = '\0';
+  if(!buf[0]) return "Helvetica";
+  return buf;
+}
+
+/* ISSUE 1350 -- THE BODY OF A PostScript `(...)` STRING LITERAL, ESCAPED.
+ * A PostScript string literal ends at its matching `)`, and `\` is its escape
+ * introducer (PLRM 3.2.2), so BOTH must be escaped and so must `(`. This loop escaped
+ * `(` and `)` and NOT `\`, which means schematic text containing a single backslash
+ * emitted the four bytes `(\)` -- a string whose only content is an escaped `)` and
+ * which therefore never terminates. gs then reads the rest of the document as string
+ * data until something unbalances, and dies with /syntaxerror.
+ *
+ * Not hypothetical, and not rare: THREE of 325 swept sheets die on it, one of them
+ * sky130_tests/top -- the largest real design in the tree, 86 pages, truncated to 39
+ * at `(tier_tcl\(@lab\\)`. xschem_library/devices/intuitive_interface_cheatsheet.sym
+ * carries a lone `\` as its own text and is instantiated by the shipped
+ * xschem_library/examples/0_examples_top.sch, which is why THAT export stops at
+ * page 34 once the /limitcheck above is out of the way.
+ *
+ * ONE COPY OF THE RULE. The small page title (create_ps(), `(%s) show` from
+ * xctx->current_name) wrote a FILENAME into a string literal with no escaping at all,
+ * so a schematic called `foo(bar).sch` broke the same way. It calls this.
+ *
+ * The high-byte path is unchanged, deliberately: it is the UTF-8 -> chararr recoding the
+ * prolog installs. Verified byte-for-byte over the 325-sheet corpus: the only PostScript
+ * that moves is the sheets that used to carry a bare `\`.
+ *
+ * ⚠ AN EARLIER VERSION OF THIS COMMENT CLAIMED `c + offset` CANNOT EXCEED 255, BY
+ * REASONING RATHER THAN MEASUREMENT, AND IT IS WRONG. The argument was that `offset` is 64
+ * only for the byte after a 0xC3 lead, which is 0x80..0xBF. But `offset` is NOT reset when
+ * that following byte is itself >= 0xC0: a text containing the bytes `C3 C0` emits
+ * `(\400)` and `C3 FF` emits `(\477)`, both past `\377`, which PLRM leaves undefined.
+ * Measured, not reasoned. Ghostscript tolerates them -- ps2pdf still exits 0 -- so this is
+ * a wrong glyph on malformed UTF-8, not a dead document, which is why it is recorded here
+ * rather than fixed inside an item whose subject is documents that die.
+ *
+ * ITEM H6 -- IT ALSO COUNTS, and the two modes are the same traversal on purpose.
+ * The navigation strip below draws parent sheet names in Courier and has to size a
+ * clickable rect around each one, which means it needs the number of GLYPHS the
+ * string will show -- not strlen(). Those differ here in both directions: `(`
+ * becomes two bytes and shows one glyph, and a two-byte UTF-8 sequence becomes one
+ * `\\ddd` and shows one glyph. A rect sized from the escaped bytes is too wide and
+ * pushes the next parent's hotspot under this one's ink. Rather than write a second
+ * copy of the escaping rule to count with -- which is DD-2's exact prohibition, and
+ * the shape of issue 1334 -- `f == NULL` runs the loop and emits nothing. Row N20. */
+static int ps_string_body(FILE *f, const char *s)
+{
+  unsigned char c, offset = 0;
+  int n = 0;
+
+  if(!s) return 0;
+  while( (c = (unsigned char) *s) ) {
+    if(c > 127) {
+      if(c == 195) {offset = 64; s++; continue;}
+      if(c == 194) {s++; continue;}
+      if(f) fprintf(f, "\\%03o", c + offset);
+      ++n;
+      offset = 0;
+    } else {
+      switch(c) {
+        case '(':
+          if(f) fputs("\\(", f);
+          break;
+        case ')':
+          if(f) fputs("\\)", f);
+          break;
+        case '\\':
+          if(f) fputs("\\\\", f);
+          break;
+        default:
+         if(f) fputc(c, f);
+      }
+      ++n;
+    }
+    ++s;
+  }
+  return n;
+}
+
+/* ITEM H6 -- THE ONE /Link ANNOTATION fprintf IN THIS FILE, and it is one fprintf
+ * because DD-2 says a rule two sites must agree on is written once, and because row
+ * S65 of tests/headless/test_hier_pdf_links_1333.tcl counts the subtype literal in
+ * this source and requires exactly ONE occurrence. Three callers now write a Link
+ * annotation -- the symbol hotspot, the Back button and a parent reference -- and
+ * they differ only in the keys between the /Rect and the subtype: a /Dest for the
+ * two that go somewhere by name, a /Action for the one that goes back by history.
+ *
+ * It does NOT normalise the four numbers, and that is deliberate rather than an
+ * omission. ps_link_pdfmark() emits in the page's own flipped user space, where the
+ * CTM's negative y scale means the LARGER PostScript y becomes the SMALLER PDF y
+ * (ruling DD-5, issue 1336); the nav strip emits before that CTM is established, in
+ * plain page points, where it does not. One ordering rule applied to both would put
+ * one of them upside down. Each caller hands in its own convention already ordered,
+ * and rows S60/S61 and N5 assert the result on the PDF, which is the only place the
+ * question has one answer. */
+static void ps_annot_link(FILE *f, double llx, double lly, double urx, double ury,
+                          const char *keys)
+{
+  fprintf(f,
+    "[ "
+    "/Rect [ %g %g %g %g ] "
+    "%s"
+    "/Subtype /Link "
+    "/ANN pdfmark\n",
+    llx, lly, urx, ury, keys);
+}
+
 static void ps_draw_string_line(int layer, char *s, double x, double y, double size,
            short rot, short flip, int lineno, double fontheight, double fontascent,
            double fontdescent, int llength, int no_of_lines, double longest_line)
 {
   double ix, iy;
   short rot1;
-  unsigned char c, offset;
   double line_delta;
   double lines;
   dbg(1, "ps_draw_string_line(): drawing |%s| on layer %d\n", s, layer);
@@ -774,26 +1077,7 @@ static void ps_draw_string_line(int layer, char *s, double x, double y, double s
   if(rot1) fprintf(fd, "%d rotate\n", rot1*90);
   fprintf(fd, "1 -1 scale\n");
   fprintf(fd, "(");
-  offset = 0;
-  while( (c = (unsigned char) *s) ) {
-    if(c > 127) {
-      if(c == 195) {offset = 64;s++; continue;}
-      if(c == 194) {s++; continue;}
-      fprintf(fd, "\\%03o", c + offset);
-      offset = 0;
-    } else
-    switch(c) {
-      case '(':
-        fputs("\\(", fd);
-        break;
-      case ')':
-        fputs("\\)", fd);
-        break;
-      default:
-       fputc(c, fd);
-    }
-    ++s;
-  }
+  ps_string_body(fd, s);
   fprintf(fd, ")\n");
   if     (rot==1 && flip==0) {fprintf(fd, "dup SW pop neg 0 RMT\n");}
   else if(rot==2 && flip==0) {fprintf(fd, "dup SW pop neg 0 RMT\n");}
@@ -966,6 +1250,433 @@ static void ps_drawgrid()
 
 
 
+/* THE ONE /Link pdfmark EMITTER. ps_draw_symbol() has to write this annotation from TWO
+ * places -- the normal path, and the sub-3px branch that draws an instance as a blob and used
+ * to return before ever reaching the normal path (ISSUE 1337) -- and DD-2 of
+ * the op-wcard branch's doc/claude/hier_pdf_links_batch/DECISIONS.md forbids a second copy: two copies of a rule that
+ * must agree IS issue 1334, the defect this batch exists to close. So there is exactly one
+ * fprintf of a /Link pdfmark in this file and it is here. Item H2.
+ *
+ * The four tests below are the ones H1a/H1b measured into the call site, in this order, and
+ * BOTH callers get all four: `type` guarded (1333), subcircuit OR primitive (1335), the
+ * destination resolved from the INSTANCE via get_sch_from_sym() (route 4), and looked up in the
+ * set of pages this export will actually contain (1334). Anything that reaches the fprintf has
+ * passed all four.
+ *
+ * The rest of this comment is H1a's and H1b's, moved out of ps_draw_symbol() with their
+ * emission and otherwise unchanged. It records why this site asks the one question it asks --
+ * ruling DD-6. (Where it says "the local at the top of this function", that local now lives
+ * here, in `type` below; it is the same field and the same guard.)
+ *
+ * ISSUE 1333 -- THE GUARD. `type` is xctx->sym[xctx->inst[n].ptr].type, i.e. the very value
+ * this test used to dereference raw; in ps_draw_symbol() the same field is read as
+ * nullable a few lines after it is loaded (`if( type &&
+ * strcmp(type, "launcher") && ...`). So one reader of the field guarded it and this one
+ * did not, and a symbol with no `type=` attribute segfaulted the ENTIRE hierarchical
+ * export -- not one link, the whole document, mid-write. That symbol ships:
+ * xschem_library/devices/bindkeys_cheatsheet.sym carries `K {}` with no type at all, it is
+ * instantiated by intuitive_interface_cheatsheet.sch, and that in turn by the shipped
+ * example xschem_library/examples/0_examples_top.sch, which died with
+ *     EMERGENCY SAVE DIR: /tmp/xschem_emergencysave_intuitive_interface_cheatsheet_...
+ *     FATAL: signal 11
+ *     while editing: intuitive_interface_cheatsheet
+ * on the binary before this line changed. Use the already-loaded local, guarded.
+ *
+ * ISSUE 1335 -- THE PRIMITIVE. hier_psprint() gives a page to `subcircuit` OR `primitive`
+ * (spice_netlist.c:96); this emitter tested only `subcircuit`, so a primitive WITH a
+ * schematic got a page that nothing linked to -- reachable only by scrolling the PDF.
+ *
+ * EXTENDING THE TYPE TEST ALONE IS NOT A FIX, AND THAT IS MEASURED. Most `type=primitive`
+ * symbols have no schematic at all -- they are defined by their `format=` string (a
+ * B-source, a macromodel subckt pulled from a file). The bare one-line extension put a
+ * link on every one of them: the sweep over the 59 shipped examples caught five new dead
+ * NAMES in eight annotations on three shipped sheets -- inv_bsource / an2 / nr2-1 / or2 on
+ * flop.sch and sr_flop.sch, lm324 on test_lm324.sch -- none of which has a .sch anywhere.
+ * A dead link IS issue 1334, so "fixing" 1335 by manufacturing eight instances of 1334 is
+ * not a fix. H1a shipped an interim `stat` gate on the primitive arm for exactly this;
+ * H1b's dest test below SUBSUMES it and the gate is gone, verified by measurement --
+ * removing it changed no link on any of 75 sheets, because a primitive with no schematic
+ * gets no page and therefore names no dest. That is why these two items are ONE commit:
+ * the primitive arm without H1b's test ships the eight dead links above.
+ *
+ * ISSUE 1334 -- THE DEAD LINKS, and the ONE question this site is allowed to ask.
+ * A link whose /Dest names no page in the document is a silent no-op click:
+ * Ghostscript neither warns nor drops the annotation, so the PDF simply reads as
+ * broken. Two earlier attempts suppressed those by RE-DERIVING hier_psprint()'s page
+ * filter here -- type / noprint_libs / default_schematic read off the instance's BASE
+ * symbol -- and both were refuted on that axis, because get_additional_symbols()
+ * (actions.c:5451) MINTS a separate symbol for every instance-level `schematic=` and
+ * deletes its default_schematic (actions.c:5583-5587), and it is the MINTED symbol
+ * hier_psprint() pages. Reading one object while vetting the other fails in BOTH
+ * directions, and it DELETED live links from shipped sheets
+ * (xschem_library/examples/tb_test_evaluated_param.sch: 2 live links -> 0, both its
+ * pages still printed). See ruling DD-6.
+ *
+ * So this site no longer asks "would that cell get a page?". It asks the question
+ * that is true by construction -- "does this export CONTAIN a page of that name?" --
+ * of hier_psprint_dest_exists(), whose set was built by the same walk that prints the
+ * pages, keyed by the same get_cell_w_ext(sanitize(...)) call that mints the /DEST
+ * anchor at psprint.c's `Add anchor for pdfmarks`. There is no second copy of the
+ * filter to drift, and no way to ask about the wrong symbol object.
+ *
+ * It also SUBSUMES the primitive file test H1a needed here: a `type=primitive`
+ * defined only by its `format=` string has no schematic, so hier_psprint() gives it
+ * no page, so its name is not in the set. Same answer, one rule instead of two, and
+ * this one is right for subcircuits too. (Measured: deleting that test changes no
+ * link on any of 75 swept sheets.)
+ *
+ * The set is keyed on the flat /Dest basename because that is what a PDF destination
+ * IS -- so two same-named cells from different libraries share one destination, and
+ * if either gets a page the click really does navigate. The lookup therefore cannot
+ * suppress a link that works; the failure it can have is keeping a link it might have
+ * dropped, which is the safe side.
+ *
+ * ISSUE 1336 -- WHY THE FOUR NUMBERS COME OUT IN THIS ORDER, AND WHY THAT IS NOT COSMETIC.
+ * PDF 32000-1 s12.5.2 defines /Rect as [lower-left-x lower-left-y upper-right-x upper-right-y].
+ * s7.9.5 tells CONSUMERS to normalise a rectangle given the other way round, which is the only
+ * reason Acrobat, poppler and pdf.js all worked on this file before H2: xschem was emitting
+ *     /Rect [385.366 316.502 446.853 281.367]        <- lly 316.502 > ury 281.367
+ * on every one of greycnt's 14 links. Out of spec, and dependent on reader leniency.
+ *
+ * The numbers handed in here are X_TO_PS()/Y_TO_PS() values, i.e. PostScript USER space, and
+ * the annotation is transformed by the PAGE CTM the distiller reads out of create_ps()'s page
+ * block below:
+ *     -scale*bbox.x1+margin  ...  translate
+ *     scale  -scale  scale                      <- see the `%g %g scale` fprintf in create_ps()
+ * `scale` is (pagey - 2*margin)/dy or (pagex - 2*margin)/dx, which is POSITIVE for every page
+ * size a user can plausibly ask for, so the y factor is NEGATIVE and the mapping is
+ *     x' = tx + scale*x        (order preserving)
+ *     y' = ty - scale*y        (order REVERSING)
+ * Therefore the PDF's lower-left y is the image of the LARGER PostScript y, and its upper-right
+ * y the image of the smaller. Hence lly = max(y1,y2) and ury = min(y1,y2) below, while x is
+ * taken in the natural order. DD-5: that y flip is a fact about THIS CTM, not an invariant, so
+ * the reordering is written against the CTM by name and it is asserted on the distilled PDF --
+ * rows S60/S61/S62 of tests/headless/test_hier_pdf_links_1333.tcl -- never on the PostScript
+ * byte order, which is inverted with respect to the page and correctly so.
+ *
+ * THE ONE CONFIGURATION WHERE THAT SIGN FLIPS IS ISSUE 1344, AND IT IS NOT FIXED HERE. `margin`
+ * is a hardcoded 10, so a `ps_paper_size` with a dimension of 20 pt or less makes `scale`
+ * NEGATIVE and create_ps() emits e.g. `-0.0141243 0.0141243 scale` -- negative x, POSITIVE y.
+ * In that configuration the reordering below inverts the y pair instead of normalising it, i.e.
+ * it is worse than the pre-change binary (measured: 12/12 y-inverted after, 0/12 before). The
+ * whole page is drawn mirrored on the unchanged binary in that configuration, annotations or
+ * not, so 1344 is the page-scale defect and this reordering is downstream of it. No row here
+ * varies `ps_paper_size`, so S60/S61/S62 cannot see it -- said out loud because the crew's
+ * receipt claimed the S60/S62 pair would catch a positive y CTM and it does not.
+ *
+ * min/max rather than a bare swap because nothing here promises x1<=x2 and y1<=y2; today
+ * symbol_bbox() does deliver them ordered, so on every measured sheet this is exactly the old
+ * four numbers reordered and no value moves (measured over 76 sheets, rect-value multisets
+ * identical).
+ *
+ * ISSUE 1337 -- the caller in the sub-3px branch passes THE SAME BOX the normal path passes,
+ * inst.x1..y2, not the inst.xx1..yy2 body box ps_filledrect() draws the blob from. Two reasons:
+ * there is one rect rule in this file rather than two, which is what lets H3 switch it in one
+ * place when it ships `ps_link_bbox` (issue 1339); and select.c:730-778 builds x1..y2 by
+ * storing the body box and THEN unioning every symbol text into it, so x1..y2 strictly contains
+ * the blob and the annotation covers what was drawn. At the zoom that triggers the small branch
+ * the body box is a fraction of a point across, so the text-inflated box is also the only one
+ * with a hotspot a reviewer could hit. Row S64 asserts the containment on the PDF. */
+static void ps_link_pdfmark(FILE *fd, int n, int what, double x1, double y1, double x2, double y2)
+{
+  const char *bbox_pref;
+  const char *border;
+  const char *d;
+  char dest[PATH_MAX];
+  char keys[PATH_MAX + 96];
+  double llx, lly, urx, ury;
+
+  if(what == 7) return;                 /* single-page `xschem print` emits no pdfmarks */
+  /* ITEM H4 moved the FIRST THREE of those four tests -- the `type` guard (1333), the
+   * subcircuit-or-primitive test (1335) and the instance-resolved destination name -- into
+   * hier_psprint_inst_dest() in spice_netlist.c, unchanged and in the same order. They are
+   * shared, not duplicated: the collect pass needs the very same "what would this instance's
+   * link name?" answer to decide which pages are worth descending into (RULE-1, condition A),
+   * and DD-2's rule is that a test two sites must agree on is written once. If they drifted,
+   * the emitter would link one cell while the scope reasoned about another -- which is DD-6's
+   * base-vs-minted confusion in a new costume. */
+  d = hier_psprint_inst_dest(n);
+  if(!d) return;                                                 /* issues 1333 and 1335 */
+  my_strncpy(dest, d, S(dest));
+  if(!hier_psprint_dest_exists(dest)) return;                           /* issue 1334 */
+
+  /* ISSUE 1339 -- WHICH BOX THE HOTSPOT IS, and why it is a preference rather than a fix.
+   * The four numbers handed in are inst.x1..y2, which symbol_bbox() builds by storing the
+   * symbol's drawn body box into inst.xx1..yy2 (select.c:730-740; sym->minx..maxy EXCLUDE
+   * symbol text, actions.c:2528) and THEN unioning every EXPANDED symbol text into x1..y2
+   * (select.c:742-778). `@name` is one of those texts, so the clickable area of a cell grows
+   * with the instance name a user happened to type: measured on two instances of one symbol,
+   * `name=x1` gave a 51.6 pt link rect and `name=xLONGLONGLONGLONGNAME` a 269.3 pt one. On a
+   * dense sheet that gives overlapping hotspots. It is also internally inconsistent: the
+   * sub-3px branch a few lines below draws its blob from inst.xx1..yy2 while the link it emits
+   * covers x1..y2. `ps_link_bbox body` takes the body box instead.
+   *
+   * DD-4: the DEFAULT IS `full`, which is exactly today's behaviour, and it stays `full` until
+   * the user rules (RULE-2). tclgetvar() returns NULL for an unset variable, and NULL takes
+   * the default path -- so this file landing without src/xschem.tcl's `set_ne` line changes no
+   * output. Row S76.
+   *
+   * THE SWITCH IS HERE, INSIDE THE ONE EMITTER, NOT AT EITHER CALL SITE. Both callers pass the
+   * text-inflated box; doing this at the normal call site would silently leave the sub-3px
+   * branch on the old box (H2's sabotage variant E is that mistake). Row S75.
+   *
+   * AND IT DOES NOT FIRE ON A DEGENERATE BODY -- WHERE "DEGENERATE" MEANS NO AREA, NOT NO
+   * EXTENT, AND THE DIFFERENCE IS THE WHOLE OF THIS PARAGRAPH. `body` is a request for a
+   * SMALLER hotspot, never for a missing one: "this batch removes no link from any sheet" is
+   * the control every item in it has been judged on, and an unclickable zero-area rect is a
+   * removed link wearing an annotation. Two shapes reach that:
+   *
+   *   - no graphics but WITH text: xx1==xx2 AND yy1==yy2, while the text-inflated box is
+   *     perfectly good. A symbol drawn entirely out of text IS its text.
+   *   - graphics that collapse to ONE axis plus text -- a bare vertical or horizontal line.
+   *     xx1==xx2 XOR yy1==yy2. This one was SHIPPED BROKEN in H3's first draft, whose test
+   *     was `bx1 != bx2 || by1 != by2` -- "has an extent". A vline passed that test, took the
+   *     body box, and produced `/Rect [15 692.488 15 663.271]`: 0.000 x 29.217 pt, no
+   *     interior, unclickable in every viewer, and NOT caught by the guard below because that
+   *     one is deliberately AND (a fully degenerate rect) for reasons of its own. Measured on
+   *     an hline too: 43.825 x 0.000 pt. The item's own LINKS-LOST control read zero the whole
+   *     time, because the annotation is still emitted -- it is just dead.
+   *
+   * So the body box is used only when it has AREA, and either degeneracy falls back to the
+   * text-inflated box. Row S74. A symbol with neither graphics nor text is degenerate either
+   * way and still gets no link, which is S66 unchanged.
+   *
+   * Scanned to be sure the fallback is not load-bearing on real work: of 2436 `.sym` files in
+   * xschem_library and the sky130 libraries, ZERO are bodyless-but-texted and ZERO are
+   * one-axis degenerate, and a 325-sheet `body` sweep is byte-identical with and without this
+   * test. It fences a shape a user can draw, not one that ships. */
+  bbox_pref = tclgetvar("ps_link_bbox");
+  if(bbox_pref && !strcmp(bbox_pref, "body")) {
+    double bx1, by1, bx2, by2;
+    bx1 = X_TO_PS(xctx->inst[n].xx1);
+    bx2 = X_TO_PS(xctx->inst[n].xx2);
+    by1 = Y_TO_PS(xctx->inst[n].yy1);
+    by2 = Y_TO_PS(xctx->inst[n].yy2);
+    if(bx1 != bx2 && by1 != by2) {   /* AREA, not extent -- see above; `||` here ships a dead link */
+      x1 = bx1; y1 = by1; x2 = bx2; y2 = by2;
+    }
+  }
+
+  llx = (x1 <= x2) ? x1 : x2;
+  urx = (x1 <= x2) ? x2 : x1;
+  lly = (y1 >= y2) ? y1 : y2;   /* the LARGER PostScript y is the SMALLER PDF y: see above */
+  ury = (y1 >= y2) ? y2 : y1;
+
+  /* A ZERO-AREA ANNOTATION IS NOT A LINK, and issue 1337's new call site is the only thing
+   * that can produce one. A `type=subcircuit` symbol with no graphics and no text has
+   * inst.x1==x2 and y1==y2, so it is ALWAYS under the 3-px floor and the pre-1337 binary
+   * returned before ever reaching this emitter -- there was no link to lose. Now there is a
+   * call, and without this test it writes `/Rect [ 985 611.062 985 611.062 ]`: a rect with no
+   * interior, unclickable in every viewer, and a violation of the very llx<urx && lly<ury
+   * property rows S60/S61 assert two lines from here. Row S66 fences it.
+   *
+   * The test is deliberately AND, not OR. A symbol that is zero-WIDE but tall -- a bare
+   * vertical line, no text -- clears the 3-px floor on its y extent, takes the normal path,
+   * and got a (zero-width, spec-legal, merely empty) link from the pre-change binary too.
+   * `||` here would delete that link, and "H2 removes no link from any sheet" is this item's
+   * whole control. So only the fully degenerate case, which is exactly the case 1337 created. */
+  if(llx == urx && lly == ury) return;
+
+  /* ISSUE 1338 -- A LINK NOBODY CAN SEE. The third element of /Border is the border WIDTH
+   * (PDF 32000-1 s12.5.4), so the `[0 0 0]` xschem has always written draws nothing: a reviewer
+   * opening a hierarchical export has no cue that any symbol on the sheet is clickable, and
+   * finds out only by moving the pointer over one. At `ps_link_border 1` the annotation gets
+   * `/Border [0 0 1] /C [0 0 1]` -- a solid 1-unit-wide rectangle on the /Rect, coloured in
+   * DeviceRGB blue. Row S71 asserts both keys on the distilled PDF.
+   *
+   * DD-4: the DEFAULT IS 0, byte-for-byte today's annotation -- the branch substitutes the
+   * literal string "/Border [0 0 0] " that used to be in the format -- and it stays 0 until the
+   * user rules (RULE-1, which needs eyes on a real sheet: a green suite cannot say whether a
+   * blue box on every subcircuit helps a reviewer or clutters the page). Row S70.
+   *
+   * ONE fprintf, not two: DD-2's rule is that this file emits the Link annotation from exactly
+   * one place, and row S65 asserts it STATICALLY -- by counting the subtype literal in this
+   * source -- because a second copy that happens to agree passes every behavioural row. Hence a
+   * string substitution rather than an if/else over two fprintf()s. (That row caught this very
+   * comment when it quoted the literal, which is the row doing its job.)
+   *
+   * ITEM H4 -- RULE-1, AND THE FIRST DEFAULT IN THIS BATCH THAT CHANGES A USER'S OUTPUT. H3
+   * shipped the border at 0, invisible, PENDING A RULING, and the user ruled on 2026-09-10:
+   *     "Only a symbol for a non-PDK cell that has real hierarchy (worth descending into)
+   *      should have the clickable link highlight in the PDF"
+   * So `ps_link_border` is now three states -- `none` (H3's shipped behaviour and the way
+   * back), `hier` (the ruling, THE NEW DEFAULT), `all` (H3's `ps_link_border 1`) -- and `0`
+   * and `1` still parse as `none` and `all`, so an xschemrc written against H3 keeps its
+   * meaning.
+   *
+   * The decision is NOT made here. Which links are advertised is a question about the
+   * DOCUMENT -- does the target page have a paged child, and is it in an excluded library --
+   * and the only thing that knows the document is the walk that builds it. So the scope lives
+   * beside that walk, in spice_netlist.c, and this site does a hash lookup. Two consequences
+   * worth writing down: there is ONE copy of the rule (DD-2), and this line no longer calls
+   * Tcl at all, so the per-link Tcl round trips issue 1346 complains about go from two to one
+   * (`ps_link_bbox` above is still read per link; that is 1346's, untouched here).
+   *
+   * DD-4's byte-identity control DOES NOT APPLY TO THIS ITEM and no row should pretend it
+   * does -- a default that changes the output is the point. What still holds, and what every
+   * H4 row asserts, is that the LINK set and the PAGE set do not move: the ruling scopes the
+   * highlight, never the link. Dropping the unadvertised links would recreate issue 1335 and
+   * break H1b's link-iff-page invariant, which is the control every item in this batch has
+   * been judged on. */
+  border = hier_psprint_link_border(dest);
+
+  /* ITEM H6 moved the fprintf itself into ps_annot_link() -- the Back button and the parent
+   * references above the drawing area are Link annotations too, and DD-2 (and row S65) allow
+   * exactly one emission of the subtype literal in this file. What differs between the three
+   * is only the keys, so that is what each caller builds. */
+  my_snprintf(keys, S(keys), "%s/Dest /%s ", border, ps_name_token(dest)); /* issue 1352 */
+  ps_annot_link(fd, llx, lly, urx, ury, keys);
+}
+
+/* ITEM H6 -- THE PAGE NAVIGATION STRIP.  The half of the user's original request that was
+ * never built:
+ *
+ *     "How difficult to add references on a child cell to have links to parent schematics?"
+ *     "did we succeed in putting Back buttons? I know Alt-Left is a back button, but a
+ *      clickable button means user can keep one hand on the mouse"
+ *
+ * Two things, because they answer different questions, and both are wanted:
+ *
+ *   THE BACK BUTTON is a PDF NAMED ACTION, `/Action << /S /Named /N /GoBack >>`, which
+ *     Ghostscript distils to `/A<</S/Named /N/GoBack>>`. It is the viewer's own history
+ *     Back -- the same operation Alt-Left performs in a viewer that implements it -- so it
+ *     returns the reader wherever they came FROM with
+ *     no knowledge of the hierarchy. ⚠ THAT IS ALSO ITS LIMIT, AND IT IS NOT HIDDEN: a
+ *     reader who SCROLLED to this page rather than clicking into it gets sent back to
+ *     wherever they scrolled from, or nowhere. It is a button for the flow the user
+ *     described -- click into a cell, look, come back -- and nothing more.
+ *   THE PARENT REFERENCE is structural and answers the other question: which sheet contains
+ *     this cell, however the reader arrived. It is a LIST because a cell instantiated in
+ *     five places has five parents -- measured on the user's own design, sky130_tests_ase/
+ *     tb_bandgap, where `not` is instantiated in `bandgap` AND in `bandgap_opamp`. The TOP
+ *     page has no parent and shows no `Up:` line; a page reached through an instance-level
+ *     `schematic=` override names the OVERRIDING sheet, because the edge is minted from the
+ *     instance (hier_psprint_inst_dest(), ruling DD-6); a truly recursive cell names itself.
+ *
+ * WHERE IT SITS, AND WHY THAT IS A PROOF RATHER THAN A HOPE. create_ps() draws the page
+ * inside `margin` (10 pt): the translate below puts the top of the drawing at
+ * pagey - (scaley-scale)*dy - margin, and (scaley-scale)*dy is never negative, so NO part of
+ * the drawing -- and therefore no symbol hotspot -- can reach above pagey - margin. The strip
+ * is emitted BEFORE that translate, so it is in plain page points, and it lives entirely in
+ * that band. A reviewer clicking a symbol cannot hit the Back button, and the suite proves it
+ * by intersecting the two rect sets on the distilled PDF rather than by repeating this
+ * paragraph (rows N6 and N7). The strip does NOT reserve space by shrinking the drawing:
+ * that would move every link rect on every page and break DD-3's control.
+ *
+ * COURIER, AND THAT IS THE ONE PLACE THIS FUNCTION IS OPINIONATED ABOUT TYPE. Every Courier
+ * glyph advances exactly 0.6 em, so a rect computed as glyphs x 0.6 x size matches the ink to
+ * the point with no font-metric table in this file. In Helvetica it would need one, and a
+ * guess would give a hotspot that does not line up with the words under it.
+ *
+ * The strip is drawn only when a hierarchical print owns a destination set -- the same gate
+ * the /Link emitter uses -- so a single-page `xschem print` is untouched (row N16). */
+static void ps_hier_nav_strip(FILE *f, const char *pagedest,
+                              double pagex, double pagey, double margin)
+{
+  const double fs = 7.0;          /* Courier 7 pt: 3.9 pt of cap in a 10 pt band */
+  const double cw = 4.2;          /* 0.6 em, exactly, for every Courier glyph */
+  const char *lc, *tc;
+  const char *parents;
+  const char *p;
+  double x, base, ry0, ry1, right, bw, reserve = 0.0;
+  int mode, total = 0, drawn = 0;
+  char buf[PATH_MAX];
+  char keys[PATH_MAX + 96];
+  char cnt[32];
+
+  mode = hier_psprint_nav_mode();
+  if(mode == 0) return;
+  /* THE BAND HAS TO EXIST. `margin` is 0 when create_ps() sets the media size to the drawing
+   * bbox (fullzoom == 2), and then there is no free band and the small page title is skipped
+   * too. The page-size guards are issue 1354's rule applied to this function's own sinks:
+   * ps_paper_size comes from Tcl through my_atod(), so pagex/pagey can be nan, inf or 1e40,
+   * and every number below is derived from them. !(x > 0) is false for nan. */
+  if(!(margin >= 8.0) || !(pagey > 60.0) || !(pagex > 140.0)) return;
+  if(pagey > 1.0e5 || pagex > 1.0e5) return;
+
+  parents = hier_psprint_page_parents(pagedest);
+  if(!(mode & 1) && (!(mode & 2) || !parents)) return;
+
+  /* a monochrome print asked for no colour; the drawn box and underline are then the whole
+   * cue, which is the same trade `color_ps 0` makes everywhere else in this file. */
+  if(tclgetboolvar("color_ps")) { lc = "0 0 0.55 RGB"; tc = "0 0 0 RGB"; }
+  else                          { lc = "0 0 0 RGB";    tc = "0 0 0 RGB"; }
+
+  ry0   = pagey - margin + 0.4;
+  ry1   = pagey - 0.4;
+  base  = pagey - margin + 3.0;
+  x     = margin + 10.0;                 /* the small page title's own indent */
+  right = pagex - margin - 4.0;
+
+  fprintf(f, "%% xschem hier nav begin\n");
+  fprintf(f, "GS\n0.4 setlinewidth\n/Courier FF %g SCF SF\n", fs);
+  if(mode & 1) {
+    bw = 6.0 * cw + 6.0;                 /* "< Back", 3 pt of padding each side */
+    fprintf(f, "%s\nNP %g %g MT (< Back) show\n", lc, x + 3.0, base);
+    fprintf(f, "NP %g %g %g %g R\n", x, ry0, bw, ry1 - ry0);
+    my_snprintf(keys, S(keys),
+      "/Border [0 0 0] /F 4 /Action << /S /Named /N /GoBack >> ");
+    ps_annot_link(f, x, ry0, x + bw, ry1, keys);
+    x += bw + 10.0;
+  }
+  if((mode & 2) && parents) {
+    for(p = parents; *p; ) {
+      const char *e = strchr(p, '\n');
+      ++total;
+      if(!e) break;
+      p = e + 1;
+    }
+    fprintf(f, "%s\nNP %g %g MT (Up: ) show\n", tc, x, base);
+    x += 4.0 * cw;
+    /* RESERVE THE `+N` COUNT'S WIDTH BEFORE DRAWING, NOT AFTER. `+N` used to be emitted at
+     * whatever x the loop happened to stop at, with no right-margin test of its own -- every
+     * NAME was bounded and the COUNT was not. On a page whose last drawn parent ends just
+     * short of `right`, the count is then drawn past the page edge and CLIPPED by the media
+     * box, so `+32` renders as `+3`: a readable, believable, wrong number, which is worse
+     * than no number at all and is exactly what the truncation exists to prevent. Measured
+     * by this batch's adversary on a 50-parent fixture: ink to 846.6 pt on an 842 pt page,
+     * `+32` shown as `+3`.
+     *
+     * A post-hoc clamp is NOT the fix and was measured too: pulling the count back inside the
+     * margin lands it on top of the last name's ink. The width has to be taken out of the
+     * budget the names are fitted against, and only while more entries remain -- if every
+     * remaining name fits there is no count to draw. `total` bounds the printed value, so
+     * its own decimal width is knowable before the loop runs. The cost is at most one fewer
+     * name drawn on a page that was going to truncate anyway. */
+    my_snprintf(cnt, S(cnt), "+%d", total);
+    reserve = cw * (double) strlen(cnt) + 2.0 * cw;
+    for(p = parents; *p; ) {
+      const char *e = strchr(p, '\n');
+      size_t len = e ? (size_t)(e - p) : strlen(p);
+      double w;
+      if(len >= sizeof(buf)) len = sizeof(buf) - 1;
+      memcpy(buf, p, len);
+      buf[len] = '\0';
+      w = cw * (double) ps_string_body(NULL, buf);   /* GLYPHS, not bytes -- row N20 */
+      /* Stop at the right margin rather than running off the page, and say how many were
+       * not drawn: a silently truncated list is a lie about the hierarchy -- and so is a
+       * truncation count that does not fit on the page, which is why `reserve` is in this
+       * test whenever another entry follows. */
+      if(x + w + (e ? reserve : 0.0) > right) break;
+      if(hier_psprint_dest_exists(buf)) {            /* issue 1334, asked backwards */
+        fprintf(f, "%s\nNP %g %g MT (", lc, x, base);
+        ps_string_body(f, buf);
+        fprintf(f, ") show\n");
+        fprintf(f, "NP %g %g %g %g L\n", x, base - 1.6, x + w, base - 1.6);
+        my_snprintf(keys, S(keys), "/Border [0 0 0] /F 4 /Dest /%s ", ps_name_token(buf));
+        ps_annot_link(f, x, ry0, x + w, ry1, keys);
+        x += w + 2.0 * cw;
+        ++drawn;
+      }
+      if(!e) break;
+      p = e + 1;
+    }
+    if(drawn < total) fprintf(f, "%s\nNP %g %g MT (+%d) show\n", tc, x, base, total - drawn);
+  }
+  fprintf(f, "GR\n");
+  fprintf(f, "%% xschem hier nav end\n");
+}
+
 static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, short rot,
         double xoffset, double yoffset)
                             /* draws current layer only, should be called within  */
@@ -1049,10 +1760,23 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
     #endif
     else if((xctx->inst[n].x2 - xctx->inst[n].x1) * xctx->mooz < 3 &&
                        (xctx->inst[n].y2 - xctx->inst[n].y1) * xctx->mooz < 3) {
+      /* ISSUE 1337. The instance is too small to draw, so it becomes a blob and nothing else on
+       * this sheet is emitted for it -- but it is still THERE, it still has a bounding box, and
+       * on a dense top-level sheet the small subcircuit instances are precisely the ones a
+       * reviewer needs to click through. This `return` used to be reached BEFORE the pdfmark
+       * block, so all of them silently lost their link. Emit it here, from the same one emitter
+       * the normal path uses (ps_link_pdfmark(), above -- DD-2 forbids a second copy), and only
+       * THEN return.
+       * The sibling `RECT_OUTSIDE(...) return;` above is CORRECT and is deliberately left alone:
+       * an instance entirely off the page must get no link. (Measured with an instrumented
+       * build: under hier_psprint() that branch never fires at all, because ps_draw(2,
+       * fullzoom=1) zoom_full()s every page at 0.97 fill. Row S65 fences it statically for the
+       * same reason.) */
       set_ps_colors(SYMLAYER);
       ps_filledrect(SYMLAYER, xctx->inst[n].xx1, xctx->inst[n].yy1, xctx->inst[n].xx2, xctx->inst[n].yy2,
                    0.0,  0, 0, -1, -1);
       xctx->inst[n].flags|=1;
+      ps_link_pdfmark(fd, n, what, x1, y1, x2, y2);
       return;
     }
     else {
@@ -1064,22 +1788,10 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       ps_filledrect(color, xctx->inst[n].xx1, xctx->inst[n].yy1, xctx->inst[n].xx2, xctx->inst[n].yy2,
                     0.0, 2, 0, -1, -1);
     }
-    /* pdfmarks, only if doing hierarchy print and if symbol has a subcircuit */
-    if(what != 7) {
-      char fname[PATH_MAX];
-      if(!strcmp(xctx->sym[xctx->inst[n].ptr].type, "subcircuit")) {
-        get_sch_from_sym(fname, xctx->inst[n].ptr+ xctx->sym, n, 0);
-        fprintf(fd,
-          "[ "
-          "/Rect [ %g %g %g %g ] "
-          "/Border [0 0 0] "
-          "/Dest /%s "
-          "/Subtype /Link "
-          "/ANN pdfmark\n",
-          x1, y1, x2, y2,
-          get_cell_w_ext(sanitize(fname), 0));
-      }
-    }
+    /* ISSUE 1337: the ONE /Link emitter, see ps_link_pdfmark() above. It is called from
+     * exactly two places -- here, and from the sub-3px branch a few lines up, which used to
+     * `return` before ever reaching this point. */
+    ps_link_pdfmark(fd, n, what, x1, y1, x2, y2);
   }
   else if(xctx->inst[n].flags&1)
   {
@@ -1238,9 +1950,9 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
         my_snprintf(ps_font_family, S(ps_font_name), "Helvetica");
         my_snprintf(ps_font_name, S(ps_font_name), "Helvetica");
         textfont = symptr->text[j].font;
-        if( (textfont && textfont[0])) {
-          my_snprintf(ps_font_family, S(ps_font_family), textfont);
-          my_snprintf(ps_font_name, S(ps_font_name), textfont);
+        if( (textfont && textfont[0])) {                              /* issue 1351 */
+          my_snprintf(ps_font_family, S(ps_font_family), "%s", ps_font_token(textfont));
+          my_snprintf(ps_font_name, S(ps_font_name), "%s", ps_font_token(textfont));
         }
         if( symptr->text[j].flags & TEXT_BOLD) {
           if( (symptr->text[j].flags & TEXT_ITALIC) || (symptr->text[j].flags & TEXT_OBLIQUE) ) {
@@ -1304,8 +2016,8 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
         pcy = (pin->y1 + pin->y2) / 2.0;
         tx = pcx + lay.dx; ty = pcy + lay.dy;
         ROTATION(rot, flip, 0.0, 0.0, tx, ty, x1, y1);
-        my_snprintf(ps_font_family, S(ps_font_family), "%s", (pfont && pfont[0]) ? pfont : "Helvetica");
-        my_snprintf(ps_font_name,   S(ps_font_name),   "%s", (pfont && pfont[0]) ? pfont : "Helvetica");
+        my_snprintf(ps_font_family, S(ps_font_family), "%s", ps_font_token(pfont)); /* 1351 */
+        my_snprintf(ps_font_name,   S(ps_font_name),   "%s", ps_font_token(pfont));
         if(text_ps)
           ps_draw_string(plw, pnm,
             ((short)lay.rot + ((flip && ((short)lay.rot & 1)) ? rot+2 : rot)) & 0x3,
@@ -1384,6 +2096,7 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
   char papername[80] = "a4";
   double pagex = 842;
   double pagey = 595;
+  char pagedest[PATH_MAX];             /* ITEM H6: this page's /Dest name, raw */
   xRect boundbox;
   int c,i, textlayer;
   int old_grid;
@@ -1595,15 +2308,33 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
       fprintf(fd, "%%%%BeginPageSetup\n");
       fprintf(fd, "%%%%EndPageSetup\n");
     }
-    /* add small page title */
-    if(tclgetboolvar("ps_page_title") && fullzoom != 2)
-       fprintf(fd, "/Helvetica FF 10 SCF SF NP 20 %g MT (%s) show\n", pagey - 20, xctx->current_name);
+    /* add small page title.
+     * ISSUE 1350: the title is a FILENAME going into a PostScript string literal, so it
+     * goes through the same escaper the schematic texts use -- `foo(bar).sch` used to
+     * emit `(foo(bar).sch)`, which survives only because those parens happen to balance,
+     * and `foo).sch` did not survive at all. */
+    if(tclgetboolvar("ps_page_title") && fullzoom != 2) {
+       fprintf(fd, "/Helvetica FF 10 SCF SF NP 20 %g MT (", pagey - 20);
+       ps_string_body(fd, xctx->current_name);
+       fprintf(fd, ") show\n");
+    }
 
-    /* Add anchor for pdfmarks */
+    /* Add anchor for pdfmarks. ISSUE 1352: a /Dest is a PostScript NAME, and a name ends
+     * at the first whitespace or delimiter -- so a cell whose file name contains a space
+     * emitted `/Dest /my cell.sch`, gs read `/my` and then tried to EXECUTE `cell.sch`,
+     * and the whole export died with /undefined. ps_name_token() is applied HERE and at
+     * the /Link emitter and nowhere else, so the page anchor and the annotation that
+     * points at it cannot disagree about the spelling (DD-2). */
+    my_strncpy(pagedest, get_cell_w_ext(sanitize(xctx->current_name), 0), S(pagedest));
     fprintf(fd,
       "[ "
       "/Dest /%s "
-      "/DEST pdfmark\n", get_cell_w_ext(sanitize(xctx->current_name), 0));
+      "/DEST pdfmark\n", ps_name_token(pagedest));
+    /* ITEM H6 -- the navigation strip, in the margin band ABOVE the drawing, and therefore
+     * emitted HERE: everything below this point is inside the page CTM the translate/scale
+     * two lines down establish. The raw destination name is passed rather than re-derived,
+     * so the anchor and the strip's parent lookup cannot disagree about the page's identity. */
+    ps_hier_nav_strip(fd, pagedest, pagex, pagey, margin);
     scaley = scale = (pagey-2 * margin) / dy;
     dbg(1, "scale=%g pagex=%g pagey=%g dx=%g dy=%g\n", scale, pagex, pagey, dx, dy);
     if(dx * scale > (pagex - 2 * margin)) {
@@ -1736,9 +2467,9 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
       my_snprintf(ps_font_family, S(ps_font_name), "Helvetica");
       my_snprintf(ps_font_name, S(ps_font_name), "Helvetica");
       textfont = xctx->text[i].font;
-      if( (textfont && textfont[0])) {
-        my_snprintf(ps_font_family, S(ps_font_family), textfont);
-        my_snprintf(ps_font_name, S(ps_font_name), textfont);
+      if( (textfont && textfont[0])) {                                /* issue 1351 */
+        my_snprintf(ps_font_family, S(ps_font_family), "%s", ps_font_token(textfont));
+        my_snprintf(ps_font_name, S(ps_font_name), "%s", ps_font_token(textfont));
       }
       if( xctx->text[i].flags & TEXT_BOLD) {
         if( (xctx->text[i].flags & TEXT_ITALIC) || (xctx->text[i].flags & TEXT_OBLIQUE) ) {
