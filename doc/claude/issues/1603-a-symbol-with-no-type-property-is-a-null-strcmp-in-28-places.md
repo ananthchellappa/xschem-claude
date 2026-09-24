@@ -1,6 +1,6 @@
-# 1603 — a symbol with no `type=` property is a NULL `strcmp` in 28 places, one of them measured
+# 1603 — a symbol with no `type=` property is a NULL `strcmp` in 27 places, one of them fixed
 
-**STAMP:** `v1 claim=open tree=d9f45e8f stamped=2026-09-22 fix=untried open=3 by=driver`
+**STAMP:** `v1 claim=partial tree=dc23e730 stamped=2026-09-24 fix=partial open=3 by=driver`
 
 **Status: OPEN — filed 2026-09-22** by the driver, from a crash the headless-crashes
 batch's Map crew found, recorded and explicitly declined as out of its class.
@@ -93,6 +93,25 @@ Line numbers cluster in the **netlisters**: `spice_netlist.c` ×4, `vhdl_netlist
 headless in every batch flow, and a segfault there takes the whole process with it. The
 Map crew found this one by driving *every* `xschem` subcommand with no display; nobody
 had driven `hier_psprint` on a loaded schematic before.
+
+## ONE SITE OF THE TWENTY-EIGHT IS FIXED — `dc23e730`, 2026-09-24
+
+The hierarchical-PDF port closes **exactly the one site this issue measured**, and the
+identification is not by eye: a gdb backtrace of the crash on the pristine tree lands in
+`__strcmp_avx2` ← `ps_draw_symbol` ← `create_ps` ← `ps_draw` ← `hier_psprint`, on the
+statement at `psprint.c:1070`. The test moved into `hier_psprint_inst_dest()` in
+`src/spice_netlist.c`, which opens `if(!type) return NULL;` — one copy, shared with the
+collect pass. After the port, `psprint.c` has **zero** unguarded `strcmp` on `.type`.
+
+**The other twenty-seven stand**, and they are the reason this issue stays open:
+`draw.c:1042`, `editprop.c:1348`, `netlist.c:1030` and `:1354`, `scheduler.c:12009`–`12011`,
+`spectre_netlist.c` ×3, `spice_netlist.c:399`/`:418`/`:567`, `tedax_netlist.c` ×2,
+`token.c` ×3, `verilog_netlist.c:353`, `vhdl_netlist.c` ×7.
+
+⚠ **A correction to this issue's own list.** `spice_netlist.c:96` is a **false positive** of
+the two-line context window the sweep used: that site is guarded two lines earlier by
+`if(!xctx->sym[i].type || …) continue;`. The candidate list is therefore **27**, not 28, and
+this is what the filing meant when it said 28 was a candidate list and not a defect count.
 
 ## Still open
 

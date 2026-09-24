@@ -1,6 +1,6 @@
 # 1607 — a heap over-read makes headless PostScript export non-deterministic
 
-**STAMP:** `v1 claim=open tree=2bf05781 stamped=2026-09-22 fix=untried open=4 by=driver`
+**STAMP:** `v1 claim=partial tree=dc23e730 stamped=2026-09-24 fix=partial open=3 by=driver`
 
 **Status: OPEN — filed 2026-09-22** by the driver, from the headless-crashes batch's fix
 round, which verified it, measured it, and deliberately did not fix it
@@ -67,14 +67,39 @@ Stated in its own words, and the reasoning is sound enough to keep:
   and they do not produce the same output. That needs its own measurement and its own
   issue, not a fix smuggled into a crash-guard commit.
 
+## PARTIALLY FIXED 2026-09-24 in `dc23e730` — the `psprint.c` half, MEASURED
+
+The hierarchical-PDF port from the `op-wcard` branch carries a repair for this site, and
+the determinism it buys was measured rather than argued. `LCC_instances.sch`, nine runs of
+each verb on one binary, `--nogui`:
+
+| | `xschem print ps` | `xschem hier_psprint` | out-of-gamut `RGB` lines |
+|---|---|---|---|
+| before | **6 distinct md5s / 9 runs** | **6 distinct / 9** | **144**, in 4 of the 9 runs |
+| after | **1 md5 / 9** | **1 md5 / 9** | **0 in all 9** |
+
+144 is exactly the figure recorded above, and it varied run to run exactly as this issue
+said it would.
+
+⚠ **The repair is a THIRD answer to item 1, not either of the two this issue named.**
+`set_ps_colors()` gained `if(pixel >= (unsigned int)cadlayers) return;` — so the text
+pseudo-layer gets **no colour emitted at all**, rather than a zeroed entry or the last real
+layer's. That is defensible here because every drawing site sets its own colour first, which
+makes the restore redundant — but it is a decision this issue did not anticipate and it is
+recorded as one.
+
+**`svgdraw.c` remains untouched**, and its consequence did **not** reproduce: five runs of
+`xschem print svg` on `LCC_instances.sch` with the patched binary gave one md5 and zero
+out-of-range `rgb()` components. So the code shape this issue flags there is real and its
+effect is unobserved — which is a different statement from "it is fine", and the next person
+should treat it as unmeasured rather than clean.
+
 ## Still open
 
-1. **Decide what the text pseudo-layer's colour should be**, which is the real question
-   hiding under the off-by-one. Allocating one more entry gives it whatever `my_calloc`
-   zeroes to; bounding the read gives it the last real layer's colour. **They are
-   different pictures**, and neither is obviously right — this is a question about what the
-   exported document should look like, not about the array.
-2. **Fix it, and `svgdraw.c` with it** if the measurement there agrees.
+1. ~~Decide what the text pseudo-layer's colour should be.~~ **Answered in `dc23e730`, by
+   a third option this issue did not list**: emit nothing. See above.
+2. **`svgdraw.c` is still untouched.** Its shape is the same; its consequence did not
+   reproduce in five runs. Unmeasured, not clean.
 3. **A golden for the headless export path.** There is none, which is why a heap over-read
    that changes 144 lines of every file went unnoticed. ⚠ A golden cannot be committed
    until item 1 is settled, or it pins the wrong picture.
