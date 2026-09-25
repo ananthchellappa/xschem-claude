@@ -129,17 +129,19 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1185647.log`, taken in a throwaway clone of `dc23e730`
-  built from scratch, where the hierarchical-PDF port added `test_hier_pdf_links_1333` and
-  `test_ps_valid_1350` to `hcases`: **97 cases** (3 + 78 + 15 + `xschemtest`), **96
-  blocks**, **`wc -l` 290 green** (`2` sentinels + `96`
-  headers + `96` `Total num fail:` + `3` NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** +
-  **`2` banner-only counts**; trailer `cases=97 blocks=96 counted_failures=0 skips=8
-  elapsed=585s`). **Five figures in three days**: `88/87/skips=5` (`results.2325750.log`,
+  the gate verdict `tests/results.1842389.log`, taken in a throwaway clone of `c3a59de4`
+  built from scratch at a short path, where issue 1603 added
+  `test_typeless_symbol_1603` to `hcases`: **98 cases** (3 + 79 + 15 + `xschemtest`), **97
+  blocks**, **`wc -l` 293 green**; trailer `cases=98 blocks=97 counted_failures=0 skips=8
+  elapsed=586s`. The `97/96/skips=8` figure before it was `results.1594312.log` at
+  `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
+  NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
+  **Seven figures in four days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
-  `95/94/skips=8` (`results.598045.log`, the headless-crash batch) and `97/96/skips=8` here
-  (the hierarchical-PDF port). **The step is not a constant**: a suite registered in BOTH
+  `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
+  hierarchical-PDF port) and `98/97/skips=8` here
+  (issue 1603). **The step is not a constant**: a suite registered in BOTH
   lists costs two cases and one headless self-skip; one registered in `hcases` alone costs
   one case and no skip. Anyone checking against a figure written down anywhere, this file
   included, would have called four green runs red this week. Read the trailer. ⚠ Both new terms are
@@ -167,6 +169,19 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   (`test_ase_optier_0963` has reddened solo, cause unexplained) or a real collision (a
   suite hand-run while T1 was live has reddened a gate run). Shared globals beyond
   `/tmp/xschem_emergencysave_*` are unswept.
+  **Second observation, 2026-09-24, recorded as an observation and not as a verdict:**
+  `test_home_isolation` row **`H2b`** reddened once inside a full T1 run at `c3a59de4`
+  (`results.1766057.log`, `counted_failures=1`) and the mechanism is named in the row's own
+  detail — its **fixture** dev display's `openbox` never started, so `running $w2` was false
+  (`openbox  {}`, empty pid). It is that row's own child on a fixture display number, not the
+  real `:99`, which was healthy throughout. It did **not** reproduce: the same suite passed
+  alone in the same clone (116 checks), passed in the main tree at the same commit, and a
+  second full gate of the same commit in the same clone came back
+  `cases=98 blocks=97 counted_failures=0 skips=8` (`results.1842389.log`). Per D8 — do not
+  declare a standing red that cannot be reproduced, and do not dismiss repeated identical
+  observations — this is **one** observation, so nothing was changed for it. If it recurs,
+  suspect `openbox` failing to start under full-run load before suspecting the code, and note
+  that an absent WM falls back silently with only a stderr warning.
 - A T1 number taken before 2026-09-17 while another run was live is not evidence (runs
   then corrupted each other; `exit -1`, which no xschem writes, is the tell). A batch
   driver that serialises its crews is making its own scheduling choice, not the harness's.
