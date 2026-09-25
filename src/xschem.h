@@ -2226,7 +2226,12 @@ typedef struct {
   int extra_raw_n;                  /* number of elements in array */
   int extra_raw_size;               /* size of raw_arr (will be incremented if needed) */
 
-  int ev_precision; /* copied from TCL ev_precision var in draw() and draw_graph() */
+  /* copied from the TCL ev_precision var by THREE writers -- draw(), draw_graph()
+   * (both draw.c) and kklex() (eval_expr.y, once per lexer token, which is the
+   * one the issue-1606 reproducer goes through) -- plus the initial 4 in xinit.c.
+   * Every one of the three passes it through clamp_prec_g(.., DTOA_ENG_BUFSIZE)
+   * first, because it is fed to indirect-precision sprintf()s (issue 1606). */
+  int ev_precision;
   /*    */
   /* data related to all graphs, so not stored in per-graph graph_struct */
   double graph_cursor1_x, graph_cursor2_x;
@@ -3855,6 +3860,31 @@ extern double mylog(double x);
 extern void *my_memmem(const void *haystack, size_t hlen, const void *needle, size_t nlen);
 extern double atof_spice(const char *s);
 extern double atof_eng(const char *s); /* same as atof_spice, but recognizes 'M' as Mega and 'm' as Milli */
+
+/* dtoa_eng()'s shared static return buffer. THE ONE SOURCE for that size: the
+ * precision ceiling issue 1602's dialog publishes (1..71) is
+ * DTOA_ENG_BUFSIZE - 9, and clamp_prec_g() below derives it, so the number 71
+ * is written down nowhere in C. See doc/claude/issues/1606-*.md.
+ * (src/xschem.tcl's `1 to 71` is still a Tcl-side literal -- no getter exists
+ * yet, so that half of the drift is not closed here.) */
+#define DTOA_ENG_BUFSIZE 80
+
+/* Bound an indirect ("%.*g") precision to what `avail` bytes can hold.
+ * Worst case for "%.*g%c" is prec+8 chars (sign, leading digit, point, prec-1
+ * fraction digits, 'e', exponent sign, three exponent digits, suffix), so
+ * prec+9 bytes with the NUL: cap = avail - 9. At avail == 80 that is 71, which
+ * is exactly the ceiling issue 1602's dialog already publishes.
+ * `avail` is the room left for the CONVERSION -- sizeof(buf) minus any literal
+ * bytes elsewhere in the format string. That subtraction is not optional and gcc
+ * will say so: dtoa_eng()'s "%.*gMEG" arm passes sizeof(s) - 2 because "MEG" is
+ * two format bytes wider than the "%c" this arithmetic is written for, and with
+ * the plain avail -Wformat-overflow reports 82 bytes into a destination of 80.
+ * So the published 1..71 is the ceiling for the "%.*g%c" and bare "%.*g" shapes;
+ * a format with more literal bytes gets a lower one from the same formula.
+ * A prec <= 0 is returned UNCHANGED: 0 is eval_expr's "engineering off" flag
+ * (issue 1602) and a negative makes printf use its default, so raising either
+ * would change behaviour rather than bound it. */
+extern int clamp_prec_g(int prec, size_t avail);
 extern char *dtoa_eng(double i, int precision);
 extern char *dtoa_prec(double i);
 extern double my_round(double a);

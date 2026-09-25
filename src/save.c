@@ -2894,14 +2894,19 @@ static void nd_view_forget_key(const char *key)
  * WITHOUT HAS_SNPRINTF, so my_snprintf() is the hand-rolled formatter in
  * util.c, which copies the conversion spec verbatim and cannot see a `*`. Given
  * "%.*g" it reads the double out of the varargs and then lets libc's own
- * sprintf go looking for a precision argument that is no longer there --
- * measured: 1.111 printed as 1.111000061035156. The cursor-B publisher this
- * replaces already used bare sprintf for exactly this format. 100 bytes is
- * ample for one %g. */
+ * sprintf go looking for a precision argument that is no longer there. The
+ * cursor-B publisher this replaces already used bare sprintf for exactly this
+ * format.
+ *
+ * The price of bare sprintf is that the 100 bytes are NOT ample: `prec` is the
+ * publisher's, and for the cursor-B publisher that is xctx->ev_precision, which
+ * a .sch/.sym `tcleval(...)`, an rc file or any script can set. Bounded with
+ * clamp_prec_g (issue 1606); no literal bytes in the format, so the whole buffer
+ * is the conversion's and the ceiling is 91. */
 static void nd_view_set(const char *key, int idx)
 {
   char s[100];
-  sprintf(s, "%.*g", nd_view.prec, nd_view.raw->cursor_b_val[idx]);
+  sprintf(s, "%.*g", clamp_prec_g(nd_view.prec, S(s)), nd_view.raw->cursor_b_val[idx]);
   Tcl_SetVar2(interp, "ngspice::ngspice_data", key, s, TCL_GLOBAL_ONLY);
 }
 

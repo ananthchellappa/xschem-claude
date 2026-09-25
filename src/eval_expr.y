@@ -255,7 +255,15 @@ void eval_expr_clear_table(void)
 static int kklex()
 {
   int c;
-  xctx->ev_precision = tclgetintvar("ev_precision");
+  /* THE writer the issue-1606 reproducer goes through: unconditional, once per
+   * lexer token, and `engineering = xctx->ev_precision` below hands the value
+   * straight to dtoa_eng()'s indirect-precision sprintf. Bounded here as well as
+   * inside dtoa_eng, with DTOA_ENG_BUFSIZE (the tightest consumer) as the cap, so
+   * this is 71 -- issue 1602's published ceiling. clamp_prec_g() leaves 0 alone
+   * deliberately: 0 is this lexer's own "engineering off" flag.
+   * ⚠ NOTE FOR ANYONE GREPPING: src/eval_expr.c is GENERATED from this file by
+   * bison and is gitignored. Edit here. */
+  xctx->ev_precision = clamp_prec_g(tclgetintvar("ev_precision"), DTOA_ENG_BUFSIZE);
   if(!str) { return 0; }
   if(strstr(str, "expr(") == str) {
      lex_state = 1;

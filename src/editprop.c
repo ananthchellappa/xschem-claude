@@ -156,13 +156,70 @@ double atof_eng(const char *s)
 
 
 
+/* Bound an indirect ("%.*g") precision to what `avail` bytes can hold -- see the
+ * contract on the declaration in xschem.h, which is where the arithmetic is
+ * written down. Issue 1606: thirteen sprintf() statements in this tree take
+ * their precision indirectly and none of them bounded it, so a precision from a
+ * .sch/.sym `tcleval(...)`, an rc file or the Tcl var overran the destination and
+ * the fortified sprintf aborted with SIGABRT (rc 134, no emergency save --
+ * main.c's sig_handler does not trap SIGABRT).
+ *
+ * NOT a size_t return and not a size_t parameter for `prec`: printf's `*` takes
+ * an int, and a negative prec is a legal "use the default" request that must
+ * survive unchanged. */
+int clamp_prec_g(int prec, size_t avail)
+{
+  size_t cap;
+  if(prec <= 0) return prec;      /* 0 = eval_expr's "engineering off"; <0 = printf default */
+  /* AN UNDERFLOW GUARD, NOT A SAFETY FLOOR, and that distinction is the whole of
+   * what this line buys. `cap = avail - 9` below is size_t arithmetic, so an
+   * avail under 9 would WRAP to a huge cap and the clamp after it would become a
+   * silent no-op -- i.e. removing this line does not merely lose a floor, it
+   * disables the helper for a small buffer. That is all it does.
+   * THE RETURNED 1 IS NOT ITSELF SAFE: clamp_prec_g(200, 8) returns 1, and
+   * "%.*g%c" at precision 1 on a three-digit-exponent value is "1e+287T" --
+   * 7 chars + NUL = 8 bytes, 9 with a sign -- so for an avail of 2..9 an overflow
+   * is still possible and this function does not prevent it.
+   * UNREACHABLE TODAY. All FOURTEEN call sites, rather than a claim about "every
+   * other caller": 78 at dtoa_eng's "%.*gMEG" arm (sizeof(s) - 2, the smallest in
+   * the tree and the newest -- see the comment on that line); 80 at dtoa_eng's
+   * clamp above the branch, at the three writers (draw(), draw_graph(), kklex(),
+   * all DTOA_ENG_BUFSIZE) and at graph_marker_fmt(), whose four callers all pass
+   * S() of a char[80]; 98 at draw_hcursor()/draw_hcursor_difference()
+   * (S(tmpstr) - 2); 100 at draw_cursor(), draw_cursor_difference(),
+   * waves_callback()'s sx and sy, and nd_view_set(); 1024 at
+   * show_node_measures(). A future caller with a smaller buffer needs more than
+   * this line. Fenced by row H2b of
+   * tests/headless/test_ev_precision_bound_1606.tcl. */
+  if(avail <= 9) return 1;
+  cap = avail - 9;
+  if((size_t)prec > cap) return (int)cap;
+  return prec;
+}
+
 char *dtoa_eng(double i, int precision)
 {
-  static char s[80];
+  static char s[DTOA_ENG_BUFSIZE];
   size_t n;
   int suffix = 0;
   double absi = fabs(i);
   dbg(1,  "dtoa_eng(): i=%.17g, absi=%.17g, precision=%d\n", i, absi, precision);
+  /* ONE clamp, ABOVE the branch, so this function is correct by construction for
+   * all 24 callers -- including graph_marker_text_rec(), whose prec comes from
+   * its own tclgetintvar() and which no writer clamp reaches. The widest shape
+   * below is "%.*g%c", and this clamp is sized for it (cap = sizeof(s) - 9 == 71,
+   * which is the 1..71 ceiling issue 1602's dialog publishes). The "%.*gMEG" arm
+   * is TWO format bytes wider than that and takes a second, tighter clamp of its
+   * own on the line itself -- see the comment there; the value range makes the
+   * two indistinguishable, but the static bound is not the value range.
+   * Without this, a precision of 73 aborted here: `xschem eval_expr
+   * {expr_eng(1e300*1.0)}` -> *** buffer overflow detected ***, rc 134.
+   * (On a build WITHOUT _FORTIFY_SOURCE -- e.g. `./configure --debug`, which
+   * appends -O0 -- the same write instead runs off the end of `s` and the
+   * oversized `n` below lands in xctx->tok_size, which five token.c sites use as
+   * a memcpy length. Derived from the code and the build flags, not driven: this
+   * build fortifies and aborts at the write, so tok_size is never reached.) */
+  precision = clamp_prec_g(precision, sizeof(s));
   if     (absi == 0.0)        {            suffix =  0 ;}
   else if(absi < 0.999999e-23) { i  = 0.0 ; suffix =  0 ;}
   else if(absi > 0.999999e12)  { i /= 1e12; suffix = 'T';}
@@ -179,7 +236,30 @@ char *dtoa_eng(double i, int precision)
   if(suffix) {
     /* can not use my_snprintf() here due to indirect precision */
     if(suffix == 'M')
-      n = sprintf(s, "%.*gMEG", precision, i);
+      /* "MEG" IS THREE FORMAT BYTES WHERE "%c" IS ONE, so this arm's static
+       * worst case is prec+10 chars (prec+7 for "%.*g" plus "MEG") and prec+11
+       * bytes with the NUL -- two more than the clamp above is sized for. At the
+       * 71 that clamp yields, 71+11 == 82 > 80: THE BOUND REALLY IS VIOLATED, and
+       * gcc is the one that found it ("output between 5 and 82 bytes into a
+       * destination of size 80", -Wformat-overflow=, glibc's
+       * __builtin___sprintf_chk). No sweep found it because this arm has already
+       * divided by 1e6, so |i| is in (0.999999, 999.999] and a double in that
+       * range has at most ~55 exact significant decimal digits -- %g strips the
+       * rest, which pins the output near 59 characters at ANY precision (measured
+       * 2026-09-25: driven to 4000 at both signs, longest 58 chars through the
+       * product and 59 in a standalone sweep of the arm's own post-/1e6 range, and
+       * every one of the 192 strings byte-identical at cap 71 and cap 69). The clamp
+       * below
+       * therefore changes no output; it makes the arithmetic true.
+       * `sizeof(s) - 2` is the same accounting as draw_hcursor()'s
+       * `S(tmpstr) - 2` for its two literal spaces: `avail` is the room left for
+       * the CONVERSION, and the two extra literal format bytes are not it.
+       * Fenced by rows K3, Y1a and Y1b of
+       * tests/headless/test_ev_precision_bound_1606.tcl -- there is no row "Y1";
+       * Y1a and Y1b assert the compiler itself reports no
+       * -Wformat-overflow/-Wformat-truncation here, and Y1c asserts that compile can
+       * still emit one. */
+      n = sprintf(s, "%.*gMEG", clamp_prec_g(precision, sizeof(s) - 2), i);
     else
       n = sprintf(s, "%.*g%c", precision, i, suffix);
   } else {

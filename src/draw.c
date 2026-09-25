@@ -4964,7 +4964,11 @@ static void draw_cursor(double active_cursorx, double other_cursorx, int cursor_
   if(xx >= gr->x1 && xx <= gr->x2) {
     drawline(cursor_color, NOW, xx, gr->ry1, xx, gr->ry2, 0.0, 1, NULL);
     if(gr->unitx != 1.0)
-       sprintf(tmpstr, "%.*g%c", xctx->ev_precision, gr->unitx * active_cursorx , gr->unitx_suffix);
+       /* indirect precision, so bounded here rather than by my_snprintf (issue 1606).
+        * The whole buffer is available to the conversion: no literal bytes in the
+        * format. Ceiling 91; a negative value uses the last byte for the sign. */
+       sprintf(tmpstr, "%.*g%c", clamp_prec_g(xctx->ev_precision, S(tmpstr)),
+               gr->unitx * active_cursorx , gr->unitx_suffix);
     else
        my_snprintf(tmpstr, S(tmpstr), "%s",  dtoa_eng(active_cursorx, 5));
     text_bbox(tmpstr, txtsize, txtsize, 2, flip, 0, 0, xx + xoffs, gr->ry2-1, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
@@ -4996,7 +5000,12 @@ static void draw_cursor_difference(double c1, double c2, Graph_ctx *gr)
   diffw = fabs(c2 - c1);
 
   if(gr->unitx != 1.0)
-     sprintf(tmpstr, "%.*g%c", xctx->ev_precision, gr->unitx * diffw , gr->unitx_suffix);
+     /* indirect precision, bounded here (issue 1606). No literal bytes in the
+      * format, so the whole buffer is the conversion's. This site formats
+      * fabs(c2 - c1) times a unit get_unit() never returns <= 0 for, so no sign
+      * is possible and its true ceiling is 92 -- clamped to the uniform 91. */
+     sprintf(tmpstr, "%.*g%c", clamp_prec_g(xctx->ev_precision, S(tmpstr)),
+             gr->unitx * diffw , gr->unitx_suffix);
   else
      my_snprintf(tmpstr, S(tmpstr), "%s",  dtoa_eng(diffw, 5));
   text_bbox(tmpstr, txtsize, txtsize, 2, 0, 1, 0, xx, yy, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
@@ -5026,7 +5035,12 @@ static void draw_hcursor(double active_cursory, int cursor_color, Graph_ctx *gr)
   if(yy >= gr->y1 && yy <= gr->y2) {
     drawline(cursor_color, NOW, gr->rx1 + 10, yy, gr->rx2 - 10, yy, 0.0, 1, NULL);
     if(gr->unity != 1.0)
-       sprintf(tmpstr, " %.*g%c ", xctx->ev_precision, gr->unity * active_cursory , gr->unity_suffix);
+       /* indirect precision, bounded here (issue 1606). The `- 2` is the two
+        * LITERAL SPACES in " %.*g%c " -- one before the conversion, one after --
+        * which are bytes the conversion cannot have. Ceiling 89; a negative value
+        * uses the last byte for the sign. */
+       sprintf(tmpstr, " %.*g%c ", clamp_prec_g(xctx->ev_precision, S(tmpstr) - 2),
+               gr->unity * active_cursory , gr->unity_suffix);
     else
        my_snprintf(tmpstr, S(tmpstr), " %s ",  dtoa_eng(active_cursory, 5));
     text_bbox(tmpstr, txtsize, txtsize, 0, 0, 0, 0, gr->rx1 + 5, yy, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
@@ -5060,7 +5074,12 @@ static void draw_hcursor_difference(double c1, double c2, Graph_ctx *gr)
   if(gr->digital) return;
   diffh = fabs(c2 - c1);
   if(gr->unity != 1.0)
-     sprintf(tmpstr, " %.*g%c ", xctx->ev_precision, gr->unity * diffh , gr->unity_suffix);
+     /* indirect precision, bounded here (issue 1606). The `- 2` is the two LITERAL
+      * SPACES in " %.*g%c ", one on each side of the conversion. This site formats
+      * fabs(c2 - c1) times a unit get_unit() never returns <= 0 for, so no sign is
+      * possible and its true ceiling is 90 -- clamped to the uniform 89. */
+     sprintf(tmpstr, " %.*g%c ", clamp_prec_g(xctx->ev_precision, S(tmpstr) - 2),
+             gr->unity * diffh , gr->unity_suffix);
   else
      my_snprintf(tmpstr, S(tmpstr), " %s ",  dtoa_eng(diffh, 5));
   text_bbox(tmpstr, txtsize, txtsize, 0, 0, 0, 1, xx, yy, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
@@ -5255,7 +5274,23 @@ static void show_node_measures(int measure_p, double measure_x, double measure_p
       double diffx;
       char *fmt1, *fmt2;
       double yy1;
-      int prec = xctx->ev_precision;
+      /* THIS is the 1024-byte indirect-precision site, not draw_graph_variables()
+       * immediately above -- that function exists and owns its own char
+       * tmpstr[1024], but it has no indirect-precision conversion at all. Issue
+       * 1606's plan cited it and sent a reviewer looking in the wrong function;
+       * `nm` cannot settle it either way, because -O2 inlines both statics.
+       *
+       * Bounded for UNIFORMITY, not because this site can overflow (issue 1606).
+       * Both sprintf()s below go into the 1024-byte tmpstr, and "%.*g" can never
+       * emit more than 774 characters at ANY precision, because a double's exact
+       * decimal expansion holds at most 767 significant digits -- so the %g arms
+       * are already safe. The %e arm is the one that CAN grow without limit (%e
+       * zero-pads the fraction), and it is safe only because `prec = 2` is
+       * assigned three lines below, inside the very branch that selects it. Read
+       * that before "hardening" the %g arm: it is the wrong arm.
+       * Note fmt1/fmt2 are char * VARIABLES, not literals -- grepping this site
+       * for a literal "%.*g" finds nothing. */
+      int prec = clamp_prec_g(xctx->ev_precision, S(tmpstr));
 
       if( gr->logx) cursor1 = mylog10(cursor1);
       yy1 = xctx->raw->values[idx][measure_p-1];
@@ -7739,15 +7774,34 @@ int graph_marker_find(int num, int *graph_idx, GraphMarker *out)
  * follows the tooltip. Deliberate, documented divergence. */
 static void graph_marker_fmt(char *dest, int destsize, double v, double unit, int suffix, int prec)
 {
+  if(!dest || destsize <= 0) return;   /* the sprintf arm below writes into dest unbounded */
   if(unit != 1.0 && unit != 0.0 && suffix) {
     /* plain sprintf, NOT my_snprintf: without HAS_SNPRINTF the house
      * my_snprintf is a minimal reimplementation that does not understand the
-     * `*` precision, so "%.*g" made it consume the int `prec` AS THE DOUBLE
-     * (measured: "700.0000000000001136868377216160297393798828125" and a
-     * swallowed suffix). draw_cursor()/the measurement tooltip use raw sprintf
-     * here for exactly this reason. prec is clamped by the caller, so the
-     * longest possible output is ~24 chars + the suffix. */
-    sprintf(dest, "%.*g%c", prec, unit * v, suffix);
+     * `*` precision, so it reads the double out of the varargs and then lets
+     * libc's own sprintf look for a precision argument that is no longer there.
+     * WHAT THAT DOES IS ABI-DEPENDENT, and an earlier revision of this comment
+     * stated only one of the two answers. On x86-64 SysV the integer and SSE
+     * argument areas are separate, so the double arrives INTACT and it is the
+     * SUFFIX that is eaten (MEASURED on this build: 'm' came out as \004).
+     * On Win64 -- and XSchemWin/ exists -- there is ONE argument area, so there
+     * the int `prec` WOULD be consumed as the double instead.
+     * ⚠ THAT HALF IS DERIVED FROM THE ABI, NOT DRIVEN. No Windows toolchain
+     * exists in this tree and nobody here has built one, so do not read it as a
+     * measurement. The figure "700.0000000000001136868377216160297393798828125"
+     * and the swallowed suffix come from this comment's OWN EARLIER REVISION (the
+     * text as of 34913077), which named no platform at all -- so it is not a
+     * Win64 measurement either, and attributing it to one would be inventing
+     * evidence.
+     * Either way the output is wrong, which is why draw_cursor() and the
+     * measurement tooltip use raw sprintf here too.
+     * The price of raw sprintf is that `destsize` buys nothing automatically, so
+     * the precision is bounded against it explicitly (issue 1606). It is the
+     * FUNCTION's job, not the caller's: graph_marker_text_rec's `if(prec > 17)`
+     * is a display choice and a fifth caller with a smaller dest would not be
+     * covered by it. No literal bytes in the format, so the whole of dest is the
+     * conversion's. */
+    sprintf(dest, "%.*g%c", clamp_prec_g(prec, (size_t)destsize), unit * v, suffix);
   }
   else my_snprintf(dest, destsize, "%s", dtoa_eng(v, prec));
 }
@@ -7829,8 +7883,11 @@ static int graph_marker_text_rec(const GraphMarker *mp, int gi,
   /* a getter must not write xctx->ev_precision (draw_graph owns that) */
   prec = tclgetintvar("ev_precision");
   if(prec <= 0) prec = 5;
-  /* clamped so graph_marker_fmt's sprintf can never outgrow its 80-byte buffer
-   * (17 significant digits already round-trips a double exactly) */
+  /* A DISPLAY CHOICE, no longer the safety bound: 17 significant digits already
+   * round-trip a double exactly, so a marker callout showing more is noise in a
+   * readout the user reads at a glance. The safety bound moved INTO
+   * graph_marker_fmt(), which clamps against its own destsize (issue 1606) --
+   * so lowering or raising this 17 cannot reintroduce the overflow. */
   if(prec > 17) prec = 17;
   /* the axis units are read straight off the rect rather than through
    * setup_graph_data(): that returns EARLY for an off-screen graph (RECT_OUTSIDE)
@@ -9008,7 +9065,12 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   int save_prev_idx = -1;   /* the OTHER half of the cursor: where switch_back goes */
   double cursor1, cursor2;
 
-  xctx->ev_precision = tclgetintvar("ev_precision");
+  /* bounded at the WRITE as well as at every use (issue 1606): tclgetintvar is
+   * atoi(), which never raises, and the Tcl var is reachable from a .sch/.sym
+   * `tcleval(...)`, an rc file or any script. DTOA_ENG_BUFSIZE is the tightest
+   * consumer in the tree (dtoa_eng's 80-byte static), so this cap is 71 -- the
+   * same ceiling issue 1602's precision dialog publishes. */
+  xctx->ev_precision = clamp_prec_g(tclgetintvar("ev_precision"), DTOA_ENG_BUFSIZE);
   if(xctx->only_probes) return;
   if(RECT_OUTSIDE( gr->sx1, gr->sy1, gr->sx2, gr->sy2,
       xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2)) return;
@@ -10592,7 +10654,9 @@ void draw(void)
    * global default (1.0) -- headless runs that still reach draw() (e.g. scripted
    * move_objects) then produce clean output instead of per-call Tk warnings. */
   if(has_x) tk_scaling = atof(tcleval("tk scaling"));
-  xctx->ev_precision = tclgetintvar("ev_precision");
+  /* bounded at the WRITE as well as at every use (issue 1606) -- see the same
+   * clamp in draw_graph(). Cap 71, i.e. issue 1602's published ceiling. */
+  xctx->ev_precision = clamp_prec_g(tclgetintvar("ev_precision"), DTOA_ENG_BUFSIZE);
   cairo_font_scale  = tclgetdoublevar("cairo_font_scale");
   set_dotsize_from_snap();   /* reference snap, not the live one (actions.c) */
   xctx->crosshair_layer = tclgetintvar("crosshair_layer");

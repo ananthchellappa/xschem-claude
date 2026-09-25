@@ -100,7 +100,70 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_generator_paren_1604" \
                  "headless/test_hier_pdf_links_1333" \
                  "headless/test_ps_valid_1350" \
-                 "headless/test_typeless_symbol_1603"]
+                 "headless/test_typeless_symbol_1603" \
+                 "headless/test_ev_precision_bound_1606"]
+# ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
+# RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
+# ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
+# buffer and the fortified sprintf killed the process -- `*** buffer overflow
+# detected ***`, SIGABRT, rc 134, and main.c's sig_handler does not trap SIGABRT,
+# so there is no emergency save. It is FILE-BORNE: a .sch with a `floater=true` T
+# record carrying `tcleval([set ::ev_precision 200]...)`, or a .sym with a
+# `format="tcleval(...)"`, sets it while the file is merely opened or netlisted.
+# Most of the suite is STATIC by necessity and this is not laziness: the clamps
+# are deliberately redundant (each writer caps at DTOA_ENG_BUFSIZE - 9 == 71, and
+# each use site caps again against its own buffer), and it was MEASURED in this
+# batch that with either the kklex() clamp or the dtoa_eng clamp alone present the
+# other's removal leaves the behavioural reproducer GREEN, because the survivor
+# prints the same 71-digit string. So each clamp is fenced by a named static row
+# with comments and `#if 0` regions stripped, and the behavioural rows are
+# end-to-end with their own limit stated in their own comment.
+# ⚠ AND THE "IS THIS TEXT ACTUALLY COMPILED" PART IS WHAT THREE ROUNDS OF
+# INDEPENDENT SABOTAGE BROKE, ONCE PER ROUND, WITH A NEW SPELLING EACH TIME. A `//`
+# comment, `#if 0 && 1`, `#ifdef XSCHEM_NEVER`, a `#define` nobody invokes, the
+# statement inside a STRING LITERAL, and three regions that are DEAD on this build
+# but whose conditions were on the suite's own allowlist (`#ifndef __unix__`,
+# `#if HAS_CAIRO!=1`, the `#else` of a `#if 1`) each held a static row's asserted
+# statement on a tree where the real one was DELETED, and the suite reported ALL
+# PASS -- once at draw_hcursor, where the two bytes the `- 2` pays for were really
+# gone, and once at show_node_measures, whose clamp has exactly one fence. So the
+# suite now reads the source through ONE C tokeniser (comments out, string and char
+# literals marked so a needle can only match at a code position) and a THREE-VALUED
+# PREPROCESSOR that drops the branches dead on this build using a MEASURED macro
+# table and walks `#else`/`#elif`. Rows Z0-Z4 fence all of it on synthetic snippets
+# plus one wired-in check; an undecidable condition (`#ifdef XSCHEM_NEVER`) keeps
+# its region and is REPORTED by Z1/Z2 rather than guessed at.
+# ⚠ AND A FOURTH ROUND FOUND THREE MORE, NONE OF THEM A PREPROCESSOR SHAPE: legal C
+# spelled differently from the needle. A fifth unclamped writer with no spaces round
+# its `=`, the same write split over TWO statements through a local, and a new
+# unclamped `sprintf (` with one space before the paren all left the suite at ALL
+# PASS. Matching a character string was the defect, so the rows now normalise
+# whitespace around `= ( ) ,` and `->` on both sides of every match (row Z0c), W4 asks
+# whether every WRITE to the field is clamped rather than whether one string appears,
+# and W4c asks the same of every READ of the Tcl variable, which catches a value that
+# reaches a formatter through a local. ⚠ SEVERAL SHAPES REMAIN OUT OF REACH OF ANY
+# STATIC ROW AND NO COUNT OF THEM IS CLAIMED HERE -- among them `if(0) <the guard>`,
+# a `%.*` split across adjacent string literals, and a macro alias for the field. Five
+# hardening rounds each shipped a number and a crew refuted it every time, because a
+# static row over C text decides a set of SPELLINGS, never a property of the program.
+# The shapes anyone has actually driven are listed in the suite's own header under
+# NAMED LIMITS, as a list that may grow rather than a total; the fences without that
+# weakness are the behavioural rows and the compiler-diagnostic rows.
+# WHY NOT `dcases` TOO: the four draw.c cursor readouts and the callback.c
+# measurement tooltip need a real draw on a real display, but section D spawns its
+# own child through `devdisplay.sh exec` (:99, GUI_GATE=0) -- the same pattern as
+# `test_typeless_symbol_1603`'s N2 and `test_ps_valid_1350`'s V26 -- so a `dcases`
+# entry would cost gate time for zero extra rows. Nothing in the file creates a
+# widget. MEASURED 2026-09-25 with the dev display up: `RESULT: ALL PASS (63
+# checks)` with `--nogui` and without it, same count either way. On a box with NO
+# dev display the D rows self-skip as ONE lowercase `skip:` line (58 checks), so
+# this suite adds one skip there and none here; a box with no C compiler or no
+# Makefile.conf skips Y1a/Y1b/Y1c as a second one. (43/38 as first landed; 51/46 after
+# the first independent sabotage added H2b, W4b, W5b, Z0, Z1, Z2, B0 and B0b
+# -- receipts/C2-repair.md; 58/53 after the second added X1c, X1d, Z0b, Z3, Z4, Y1a and
+# Y1b -- receipts/C3-close.md; 63/58 after the third added W4c, W4d, X1e, Z0c and Y1c --
+# doc/claude/issue_1606_batch/receipts/C4-claims.md.)
+#
 # ⚠ THE TWO HIERARCHICAL-PDF SUITES ARE IN `hcases` ONLY, AND THAT IS MEASURED.
 # They arrived on this branch with the port of the op-wcard hierarchical-PDF
 # export fix, and until this line neither ran in the gate -- 110 checks of the

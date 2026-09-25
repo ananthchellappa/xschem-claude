@@ -2424,13 +2424,27 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       xval = G_X(xctx->mousex);
       if(gr->logx) xval = pow(10, xval);
       if(gr->logy) yval = pow(10, yval);
+      /* Indirect precision, so bounded here rather than by my_snprintf (issue
+       * 1606): the whole buffer is the conversion's (no literal bytes in the
+       * format), giving a ceiling of 91. Unclamped, precision 93 aborted this
+       * block with *** buffer overflow detected ***, rc 134.
+       *
+       * ⚠ THE y GUARD TESTS unity, AND UNTIL ISSUE 1606 IT TESTED unitx while the
+       * body formatted unity -- so a graph with `unity=T` and no `unitx` sent the
+       * y readout through dtoa_eng's 80-byte static instead of this 100-byte sy,
+       * dropping that readout's abort threshold from 93 to 73; and `unitx=T` alone
+       * printed the y value scaled by unity == 1.0 with unity_suffix == 0, i.e.
+       * the %c wrote a NUL where a suffix was meant. Each branch now tests the
+       * axis whose unit it applies. */
       if(gr->unitx != 1.0)
-        sprintf(sx, "%.*g%c", xctx->ev_precision, gr->unitx * xval, gr->unitx_suffix);
+        sprintf(sx, "%.*g%c", clamp_prec_g(xctx->ev_precision, S(sx)),
+                gr->unitx * xval, gr->unitx_suffix);
       else
         my_strncpy(sx, dtoa_eng(xval, xctx->ev_precision), S(sx));
 
-      if(gr->unitx != 1.0)
-        sprintf(sy, "%.*g%c", xctx->ev_precision, gr->unity * yval, gr->unity_suffix);
+      if(gr->unity != 1.0)
+        sprintf(sy, "%.*g%c", clamp_prec_g(xctx->ev_precision, S(sy)),
+                gr->unity * yval, gr->unity_suffix);
       else
         my_strncpy(sy, dtoa_eng(yval, xctx->ev_precision), S(sy));
 
