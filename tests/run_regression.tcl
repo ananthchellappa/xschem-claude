@@ -118,7 +118,11 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # from. MEASURED both ways on 2026-09-24: with DISPLAY unset and with DISPLAY=:99,
 # `OVERALL: ok (89 checks)` and `OVERALL: ok (21 checks)` either way, same counts,
 # 8.4 s and 29.1 s. A `dcases` entry would cost ~40 s of gate time for zero rows
-# that a display can see.
+# that a display can see. (That 21 is the figure OF THAT MEASUREMENT and is left as
+# taken: the 1607 batch appended rows V22-V27 later the same day, so the suite now
+# says 27, re-measured on both arms and still the same count either way. The claim
+# the sentence makes -- that neither suite's count moves with the display -- is what
+# was re-checked, not the absolute.)
 #
 #   headless/test_hier_pdf_links_1333 -- 89 checks, ~8 s. The /Link annotations:
 #     the NULL `type` guard that is the crash (S1, S1b run the shipped example),
@@ -128,14 +132,27 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 #     `ps_hier_nav` (`none`, the user's 2026-09-24 ruling); every other N row now
 #     turns the strip on EXPLICITLY, because 19 of them used to rely on the old
 #     `both` default and a default nothing states is a default nobody can change.
-#   headless/test_ps_valid_1350 -- 21 checks, ~29 s. Does what this back end
+#   headless/test_ps_valid_1350 -- 27 checks, ~31 s. Does what this back end
 #     writes actually DISTIL: it runs ps2pdf and reads the PDF back, over a
 #     90+ sheet corpus. ⚠ ITS ps2pdf GUARD WAS A SILENT GREEN until 2026-09-24 --
 #     `SKIP:` (uppercase, which summarize_all does not collect) plus
 #     `RESULT: ALL PASS` plus exit 0, i.e. 21 imaginary checks on a box without
 #     ghostscript. It now prints a lowercase `skip:` naming rows V1-V21 and a
-#     zero-count banner, so `skips=` in the trailer tells the truth. ps2pdf IS
-#     present here (/usr/bin/ps2pdf), so this case contributes 0 skips on this box.
+#     banner stating what DID run, so `skips=` in the trailer tells the truth.
+#     ps2pdf IS present here (/usr/bin/ps2pdf), so that guard contributes 0 skips
+#     on this box. ⚠ THE GUARD MOVED DOWN in the 1607 batch: rows V22-V27 (export
+#     DETERMINISM -- the same sheet twice, byte for byte, with NO line filtering --
+#     plus the static fence for the set_ps_colors() repair, the SVG colour shape,
+#     a headless-vs-dev-display colour comparison, and V27, the static fence for
+#     the four bounds clamps in svgdraw.c that keep the same over-read out of the
+#     SVG back end -- static because a sabotage measured that no behavioural row
+#     can fence them: one extra byte of environment flips the consequence on and
+#     off) distil nothing and now run ABOVE it, so a box without ghostscript still
+#     scores those six. V26 is the only row here that can skip on a healthy box:
+#     it self-skips with a `skip:` line when `devdisplay.sh status` does not
+#     report the persistent dev display alive, which is one MORE skip on a box
+#     that has none (and on a private-Xvfb run, where there is a DISPLAY but no
+#     dev display).
 #
 # BOTH HAD TO LEARN THE COMPLETION BANNER FIRST, exactly as
 # test_untitled_autosave_1486 did below: they printed a `RESULT:` line and no

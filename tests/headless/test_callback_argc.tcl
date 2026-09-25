@@ -467,6 +467,21 @@ if {![file readable $hc_ex]} {
 # 3's other failure. The second row is that claim, MEASURED rather than
 # asserted: the same schematic exported to PostScript before and after the verb
 # must differ. On the landed binary the first row killed the process.
+#
+# 1607 -- THAT `ne` GOT STRONGER WITHOUT ITS OWN TEXT CHANGING, and a reader of this
+# row should know. `print ps` used to write heap garbage into every export:
+# ps_draw_symbol()'s text pass restored ps_colors[cadlayers], one element past the
+# block, and the value reached the file. So the bytes were not a function of the
+# schematic and the verb alone -- issue 1607 measured three headless exports of one
+# sheet on one binary producing three different files. A `ne` assertion then had a
+# route to truth that did not pass through fill_type, and this row could have stayed
+# green with the verb doing nothing at all. dc23e730 closed that route
+# (set_ps_colors() now emits nothing for an index that is not a layer), so the
+# difference has to come from fill_type: it is a real assertion now. NOT MEASURED: no
+# pre-dc23e730 binary was built to watch this row pass vacuously, and 1607's
+# three-different-files figure is across processes, not across two exports inside one
+# -- this records the assertion's strength, not an observed vacuous pass. Export
+# determinism itself is fenced by V22/V23 of tests/headless/test_ps_valid_1350.tcl.
 if {![file readable $hc_ex]} {
   hc_skip "1492 xschem fill_type survives and still does its display-free half" \
     "fixture not readable: $hc_ex"

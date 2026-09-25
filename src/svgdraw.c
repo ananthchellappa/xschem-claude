@@ -421,6 +421,29 @@ static void svg_draw_string_line(int layer, char *s, double x, double y, double 
   double line_delta;
   double lines;
   char col[20];
+  /* 1607: the only per-object read of svg_colors[], and it has NO local bounds test -- `layer`
+   * is indexed raw. It is safe only because every caller clamps the layer it hands to
+   * svg_draw_string() with `if(x < 0 || x >= cadlayers) x = <a real layer>`, all four of them:
+   * svg_draw_symbol()'s symbol-text loop (textlayer) and its pin-name loop (plw),
+   * svg_draw_annot_overlay(), and svg_draw()'s schematic-text loop. Remove any one of those
+   * clamps and psprint.c's 1353/1607 defect lands in this file. svg_draw()'s
+   * `svg_draw_symbol(c + 1, i, c + 1, ...)` text pass is create_ps()'s shape exactly, and only
+   * the absence of a sink saves it: SVG colour is not sticky graphics state, so there is no
+   * set_ps_colors() and no restore to hand cadlayers to -- colours are emitted ONCE into the
+   * <style> block over i in [0, cadlayers) and elements carry only class="lN". Measured clean
+   * here (valgrind, both display arms) -- but read the next paragraph before trusting that.
+   *
+   * WHAT FENCES THIS, and it is NOT the valgrind zero. With one clamp deleted and a symbol text
+   * forced to a layer past cadlayers, the over-read is real and gives psprint's own signature
+   * (3 contexts, "0 / 4 / 8 bytes after a block of size 264") -- yet its OBSERVABLE consequence
+   * is decided by heap layout: one extra environment variable of ONE byte flipped the malformed
+   * colour it emits on and off. And valgrind itself is only reliable when the index is exactly
+   * cadlayers, where the address lands in the allocator redzone; at a far index it falls inside
+   * unrelated live blocks and is silent 3 runs in 4. So no behavioural row can fence these
+   * clamps. Row V27 of tests/headless/test_ps_valid_1350.tcl does it statically instead, by
+   * asserting all four are present -- delete one and that row reddens in every environment.
+   * V25 there is a well-formedness row over the exported SVG and a useful sampler, not a fence.
+   * Receipts: doc/claude/issue_1607_batch/receipts/{A-svgdraw,D-sabotage}.md. */
   if(color_ps)
     my_snprintf(col, S(col), "#%02x%02x%02x",
       svg_colors[layer].red, svg_colors[layer].green, svg_colors[layer].blue);
@@ -1298,6 +1321,7 @@ void svg_draw(void)
      if(xctx->inst[i].color != -10000) svg_set_hilight(xctx->inst[i].color);
      svg_draw_symbol(c,i,c,0,0,0.0,0.0);
      if(c == cadlayers - 1) {
+       /* 1607: create_ps()'s shape without create_ps()'s sink -- see svg_draw_string_line(). */
        svg_draw_symbol(c + 1 , i, c + 1, 0, 0, 0.0, 0.0); /* ... draw texts */
      }
      svg_clr_hilight();

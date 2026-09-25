@@ -76,40 +76,6 @@ source [file join [file dirname [info script]] scratch.tcl]
 set dir  [test_scratch psvalid]
 set repo [file normalize [file join [file dirname [info script]] .. ..]]
 
-## ⚠ THIS GUARD USED TO BE A PASS THAT HAD ASSERTED NOTHING, and it is worth spelling out
-## why, because the shape is easy to write again. It printed `SKIP: no ps2pdf on this box`
-## and then `RESULT: ALL PASS`, and exited 0. Every reader in this tree scored that GREEN:
-##   - run_suites.sh scores a suite from its `^RESULT` line -> PASS;
-##   - T1's regression_case_failed wants exit 0 and a completion banner -> PASS;
-##   - T1's summarize_all collects lowercase `^skip:` lines into the verdict's `skips=`
-##     count (issue 1487) and `SKIP:` is NOT that line, so the verdict said
-##     `counted_failures=0 skips=0` for a case that ran ZERO of its 21 rows.
-## CLAUDE.md's rule is that `counted_failures=0` is a claim about correctness and `skips=`
-## is the second number that says what was measured at all. A suite that can silently
-## contribute 21 imaginary checks breaks the only place the answer is.
-##
-## So: a lowercase `skip:` line that NAMES the rows that did not run and why, and a banner
-## that states a count of zero. The reason text must not end in the words FAIL, GOLD? or
-## RESULT? -- summarize_all tests those shapes FIRST and a skip matching one is scored as a
-## counted failure (CLAUDE.md, rows V5a-V5f of test_regression_concurrency_1476).
-##
-## EVERY row of this suite needs ps2pdf: the whole point of the file is the opposite of the
-## rest of the batch -- it distils the PostScript and reads the PDF back, because the defect
-## class is xschem writing bytes that are not PostScript and the .ps looks perfect right up
-## to the moment gs dies on it. There is no subset that can run without it, which is why the
-## skip names the whole range rather than a list.
-##
-## `ps2pdf -h` exits non-zero even when it is installed, so the `catch` alone cannot answer
-## the question; the explicit /usr/bin/ps2pdf test is the second half and both must miss.
-if {[catch {exec ps2pdf -h} ] && ![file executable /usr/bin/ps2pdf]} {
-  puts "skip: V1-V21 -- ps2pdf is not installed, so NONE of this suite's 21 rows ran; every\
- row distils the PostScript and reads the PDF back, and there is no .ps-only subset that\
- would fence the right artifact"
-  puts "RESULT: ALL PASS (0 checks -- ps2pdf missing, see the skip: line)"
-  puts "OVERALL: ok (0 checks -- ps2pdf missing)"
-  flush stdout ; exit 0
-}
-
 # ------------------------------------------------------------------ helpers ---
 proc slurp {f} { if {![file exists $f]} { return "" } ; set fd [open $f rb] ; set d [read $fd] ; close $fd ; return $d }
 
@@ -129,19 +95,42 @@ proc slurp {f} { if {![file exists $f]} { return "" } ; set fd [open $f rb] ; se
 ## question is about -- "does what xschem writes actually distil". The shipped `none` output
 ## is that output with the strip removed and nothing else (proved byte for byte by row N25 of
 ## test_hier_pdf_links_1333.tcl), so sweeping the superset covers both.
-proc child_export {dir tag sch ps {pre {}}} {
+##
+## ⚠ THE LAST TWO ARGUMENTS DEFAULT TO WHAT THE FIRST TWENTY-ONE ROWS ALWAYS DID, and they
+## must keep doing so: `hier_psprint` on a `--nogui` child is this suite's subject, and
+## every V1-V21 call site omits both. They exist for the 1607 rows (V22-V27), which need
+## the other two export verbs -- `print ps`, `print svg` -- and, for V26, the DEV DISPLAY.
+##   verb   the xschem subcommand, substituted verbatim into the child script, so a
+##          two-word verb ("print svg") is written as one argument and lands as
+##          `xschem print svg {<file>}`.
+##   arm    `nogui` (today's spelling, unchanged) or `display`, which routes the child
+##          through tests/headless/devdisplay.sh exec -- DISPLAY=:99 and GUI_GATE=0 -- so
+##          an hcases suite can measure the display arm without moving to dcases.
+## ⚠ THE `timeout` GOES INSIDE `devdisplay.sh exec`, NOT AROUND IT. devdisplay.sh runs the
+## command as a child rather than exec'ing over itself, so a timeout wrapped around the
+## script would kill the wrapper and leave xschem alive on :99 with nobody waiting on it.
+## 60 s is a backstop, not a budget: a display child measures ~0.4 s here, and two of them
+## timing out still leaves the suite inside run_suites.sh's 200 s SUITE_TIMEOUT, so a wedged
+## child is a named FAIL from this row rather than a TIMEOUT of the whole suite.
+proc child_export {dir tag sch ps {pre {}} {verb hier_psprint} {arm nogui}} {
   set t [file join $dir $tag.tcl]
   catch {file delete $ps}
   set fd [open $t w]
   puts $fd "set ps_hier_nav both"
   foreach l $pre { puts $fd $l }
   puts $fd "xschem load {$sch}"
-  puts $fd "xschem hier_psprint {$ps}"
+  puts $fd "xschem $verb {$ps}"
   puts $fd "puts CHILD_DONE" ; puts $fd "flush stdout" ; puts $fd "exit 0"
   close $fd
   set here [pwd] ; cd $dir
   set rc 0
-  if {[catch {exec [info nameofexecutable] --nogui --pipe -q --script $t 2>@1} out]} { set rc 1 }
+  if {$arm eq {display}} {
+    set dd [file join $::repo tests headless devdisplay.sh]
+    if {[catch {exec $dd exec timeout 60 [info nameofexecutable] \
+                --pipe -q --script $t 2>@1} out]} { set rc 1 }
+  } else {
+    if {[catch {exec [info nameofexecutable] --nogui --pipe -q --script $t 2>@1} out]} { set rc 1 }
+  }
   cd $here
   return [list $rc [regexp {FATAL: signal} $out] $out]
 }
@@ -224,6 +213,388 @@ proc wsch {path body} {
 }
 
 set sub "type=subcircuit\ntemplate=\"name=x1\""
+
+# ============================================ 1607/1353: IS THE EXPORT DETERMINISTIC? ==
+# ⚠ WHY THESE SIX ROWS SIT HERE, ABOVE THE ps2pdf GATE, AND NOT BESIDE V19/V20 WHERE
+# THEIR ARGUMENT LIVES. The gate below is an `exit 0`. None of V22-V27 distils anything --
+# they read the PostScript and the SVG xschem itself wrote, and nothing else -- so below
+# the gate they would be skipped on a box with no ghostscript for a reason that does not
+# apply to them, and the gate's own skip text would be a lie. Row numbers in this file mean
+# WHEN WRITTEN, never where placed: the physical order is already V1..V11 V21 V12 V18 V19
+# V13 V14 V20 V15 V16 V17.
+#
+# WHAT ISSUE 1607 IS ACTUALLY ABOUT, and what no row in this tree asserted until these.
+# create_ps() allocates ps_colors with my_calloc(cadlayers, sizeof(Ps_color)) and then runs
+# the text pass as ps_draw_symbol(c + 1, i, c + 1, ...) with c == cadlayers - 1; the restore
+# at the end of that pass, `if(textlayer != c) set_ps_colors(c)`, indexes ps_colors[cadlayers]
+# -- one element past the block. The heap value read there went straight into the file, so
+# THE SAME SHEET EXPORTED TWICE HEADLESS PRODUCED TWO DIFFERENT FILES: 6 distinct md5s in 9
+# runs before dc23e730 and 1 in 9 after, and on a display 9 distinct md5s in 9 runs with
+# out-of-gamut colour in EVERY run (doc/claude/issue_1607_batch/receipts/B-display-arm.md).
+# V19 and V20 fence the CONSEQUENCE -- an RGB channel outside 0..1. These fence the
+# PROPERTY, which is the half that still catches a reintroduction whose garbage happens to
+# land inside 0..1.
+#
+# ⚠ AND THEY DO IT WITH NO LINE FILTERING AT ALL, WHICH IS THE POINT OF WRITING THEM.
+# Every other PostScript byte comparison in this tree begins by DROPPING the lines this
+# defect lives in: `ps_filter` (test_hier_pdf_links_1333.tcl) drops every setlinewidth /
+# setlinejoin / setlinecap / RGB line, and `opa_l_normps` plus the warm-up export in
+# `opa_l_print2` (test_op_annot.tcl) drop every ` RGB` line -- two of the three exist
+# BECAUSE of this defect. Rows built on them would have stayed green while 144 lines of
+# every exported file were heap garbage, which is how this survived as long as it did. Do
+# not add a fourth: if a row here ever needs to drop a line to pass, the line is the finding.
+#
+# ⚠ ONE EXPORT PER CHILD PROCESS, which is what child_export already gives. `hier_psprint`
+# is NOT idempotent inside one process -- three calls in one child give run 1 != runs 2 and 3
+# (146088 vs 145896 bytes, 8226 lines of shifted coordinates), which is issue 1341's
+# first-walk page scale and has nothing to do with 1607. An in-process repeat loop would
+# redden here for the wrong defect.
+
+## THE FIXTURE IS V19'S, deliberately: two instances of a symbol that carries a `T {@name}`,
+## so the text pass's pseudo-layer restore -- the exact site 1353/1607 is about -- fires four
+## times over two pages. It is written HERE because V19's block is below the gate and this
+## block must not depend on it; V19 writes the same three files again, identically, and its
+## twenty-one-row text is left untouched on purpose. If you change one copy, change the
+## other, or V19 and V22 stop being about the same sheet.
+file mkdir [file join $dir lib]
+set dtfd [open [file join $dir lib txt.sym] w]
+foreach l [list "v {xschem version=3.4.6 file_version=1.2}" "G {}" "K {$sub}" "V {}" "S {}" "E {}" \
+  "L 4 -30 -20 30 -20 {}" "L 4 30 -20 30 20 {}" "L 4 -30 20 30 20 {}" "L 4 -30 -20 -30 20 {}" \
+  "T {@name} -30 -32 0 0 0.3 0.3 {}"] { puts $dtfd $l }
+close $dtfd
+wsch [file join $dir lib txt.sch] [list "T {leaf} 0 0 0 0 0.4 0.4 {}"]
+wsch [file join $dir txtop.sch] [list "C {txt.sym} 0 0 0 0 {name=x1}" "C {txt.sym} 200 0 0 0 {name=x2}"]
+set txpre  [list "set XSCHEM_LIBRARY_PATH \"[file join $dir lib]\""]
+set lccsch [file join $repo xschem_library examples LCC_instances.sch]
+
+## the verb's output extension, and a tag safe to build a file name from ("print svg" ->
+## print_svg). Not a filter and not a normaliser: nothing here touches the bytes.
+proc det_ext {verb} { if {$verb eq {print svg}} { return svg } ; return ps }
+proc det_tag {verb} { return [string map {{ } _} $verb] }
+
+# V22 (1607) — TWO SEPARATE CHILDREN, THE SAME SHEET, THE SAME BYTES. The whole file is
+# compared, `eq` on two binary slurps, with nothing removed. It reddens on ANY heap-dependent
+# value reaching the output -- the pre-fix state of this very path -- and equally on anyone
+# adding a timestamp, a pid, a temp-file name or an absolute path to an export. All three
+# verbs, because the fix is in set_ps_colors() and `print ps` reaches it as surely as
+# `hier_psprint` does; `print svg` is the back end 1607 flagged as UNMEASURED and receipt A
+# then proved safe, so a row that would notice it changing is worth having.
+# (Sizes measured on this fixture: print ps 4153 B, print svg 3775 B, hier_psprint 5524 B.
+# Those numbers are not asserted -- they move with the page scale and with what the strip
+# draws -- only the equality of the two runs is.)
+set v22bad {} ; set v22det {}
+foreach verb [list {print ps} {print svg} hier_psprint] {
+  set g [det_tag $verb] ; set e [det_ext $verb]
+  set a [file join $dir v22a$g.$e] ; set b [file join $dir v22b$g.$e]
+  lassign [child_export $dir v22a$g [file join $dir txtop.sch] $a $txpre $verb] arc asg
+  lassign [child_export $dir v22b$g [file join $dir txtop.sch] $b $txpre $verb] brc bsg
+  set da [slurp $a] ; set db [slurp $b]
+  lappend v22det "$verb=[string length $da]B"
+  if {$arc != 0 || $brc != 0 || $asg || $bsg || $da eq {} || $da ne $db} {
+    lappend v22bad "$verb:rc=$arc/$brc,sig=$asg/$bsg,bytes=[string length $da]/[string length $db]"
+  }
+}
+check "V22 (1607) two separate --nogui children exporting the SAME sheet write byte-identical\
+ files, for print ps, print svg and hier_psprint -- no filtering, the whole file compared\
+ (HEAD before dc23e730: 6 distinct md5s in 9 runs, from a read one element past ps_colors)" \
+  [expr {[llength $v22bad] == 0}] "(bad={$v22bad} sizes={$v22det})"
+
+# V23 (1607) — THE SAME PROPERTY ON SHIPPED CONTENT, and it is a separate row on purpose.
+# LCC_instances.sch is the sheet the issue and both measurement receipts used, and it
+# instantiates title.sym, whose `T {@time_last_modified}` DRAWS THE SCHEMATIC FILE'S MTIME.
+# That is harmless for two runs against the same checkout -- which is what this row does --
+# and FATAL for a committed golden, which would redden in every fresh clone the moment the
+# file's mtime differs. This row is the evidence that determinism is assertable on real
+# content without one.
+set v23bad {} ; set v23det {}
+foreach verb [list {print ps} {print svg} hier_psprint] {
+  set g [det_tag $verb] ; set e [det_ext $verb]
+  set a [file join $dir v23a$g.$e] ; set b [file join $dir v23b$g.$e]
+  lassign [child_export $dir v23a$g $lccsch $a {} $verb] arc asg
+  lassign [child_export $dir v23b$g $lccsch $b {} $verb] brc bsg
+  set da [slurp $a] ; set db [slurp $b]
+  lappend v23det "$verb=[string length $da]B"
+  if {![file exists $lccsch] || $arc != 0 || $brc != 0 || $asg || $bsg || $da eq {} || $da ne $db} {
+    lappend v23bad "$verb:rc=$arc/$brc,sig=$asg/$bsg,bytes=[string length $da]/[string length $db]"
+  }
+}
+check "V23 (1607) xschem_library/examples/LCC_instances.sch -- the sheet the issue measured,\
+ and the one that draws its own file mtime -- exports byte-identically twice, all three verbs\
+ (a committed golden could not say this: the mtime text differs in every fresh clone)" \
+  [expr {[llength $v23bad] == 0}] "(bad={$v23bad} sizes={$v23det})"
+
+# V24 (1607/1353) — THE STATIC FENCE FOR THE REPAIR, in V11's and V13's shape, and it exists
+# because the repair is the THIRD answer issue 1607 listed for item 1: set_ps_colors() emits
+# NO colour for the pseudo-layer, rather than a zeroed palette entry or the last real layer's.
+# Measured on the display arm (receipt B): the 144 suppressed emissions are dead colour sets,
+# 0 of 36 rasterised pages differ, so the restore was redundant for anything drawn. A future
+# reader who prefers one of the other two answers should have to redden a row that says so by
+# name -- not quietly delete one line and move 144 lines of every exported file.
+set v24src [slurp [file join $repo src psprint.c]]
+set v24re {if\(pixel >= \(unsigned int\)cadlayers\) return;}
+check "V24 (1607/1353) set_ps_colors() refuses an index that is not a layer:\
+ `if(pixel >= (unsigned int)cadlayers) return;` is present in src/psprint.c" \
+  [regexp $v24re $v24src] "(guard=[regexp $v24re $v24src])"
+
+# V25 (1607 item 2) — WHAT THE EXPORTED SVG LOOKS LIKE. A WELL-FORMEDNESS AND REFERENTIAL-
+# INTEGRITY ROW OVER THE ARTIFACT, AND NOT A FENCE FOR svgdraw.c's FOUR BOUNDS CLAMPS. V27
+# below is that fence. This row was first written believing it was one; a sabotage crew then
+# measured it and it is not, and recording that is the point of this block, because the
+# mistake is an easy one to make again.
+#
+# What it DOES assert, on two sheets:
+#  - every `#[0-9a-fA-F]+` token in the file is exactly `#rrggbb`. svgdraw.c prints colour
+#    with `#%02x%02x%02x`, so garbage that fits in a byte is a syntactically VALID colour and
+#    a range check on the value can see nothing. What is detectable is a channel above 255 --
+#    Svg_color's members are `int`, not Ps_color's `unsigned int` -- which prints as more than
+#    two hex digits and breaks the shape.
+#  - every `class="lN"` a drawn element carries resolves to a class the file's own <style>
+#    block defines, and that block is emitted by a loop bounded at cadlayers.
+#
+# ⚠ WHY IT IS NOT THE FENCE, AND THAT IS MEASURED, NOT ARGUED
+# (doc/claude/issue_1607_batch/receipts/D-sabotage.md):
+#  - delete one of the four clamps and this row does not notice. Nothing this suite exports
+#    carries an out-of-range `layer=` token, so the first clause has nothing to look at: 3
+#    runs, 3x ALL PASS.
+#  - even with a fixture forced to `layer=99`, the canonical spelling
+#    `tests/headless/run_suites.sh --nogui test_ps_valid_1350` stayed green 11 runs of 11.
+#  - reaching svg_colors[layer] at all needs THREE coincidences together: an out-of-range
+#    `layer=` token, xctx->enable_layer[layer] reading nonzero so the text is drawn, and the
+#    garbage exceeding 255 so the format emits more than two digits.
+#  - and in the one spelling that could redden, the verdict was decided by ONE BYTE OF
+#    ENVIRONMENT: same binary, same fixture, an extra variable padded to 0/1/10/100 bytes gave
+#    green / red / green / red, 10 reds in 13 runs one way and 0 in 11 the other. The
+#    malformed-token clause is HEAP-DECIDED. It cannot fence a source-level deletion, which is
+#    why V27 is static.
+#
+# ⚠ AND IT IS KEPT, UNWEAKENED, because it asserts something true about a real artifact and it
+# has FIRED for real: where the heap cooperated, the `<text fill=...>` it reads was malformed in
+# 10 of 12 direct children and it printed actual garbage -- `#746e69682d676e69` and
+# `#6f632f67612e666e`, sixteen hex digits each, ASCII fragments of PATHS read out of neighbouring
+# heap. A row that catches that wherever it lands is worth having. A row MISDESCRIBED as the
+# fence is not, because the next reader deletes a clamp and believes it.
+# (Counts observed here: 46 colour tokens / 2 classes used on the fixture, 221 / 9 on
+# LCC_instances, 22 classes defined in both. Those move with the sheet and with cadlayers and
+# are NOT asserted; the shape and the resolution are.)
+set v25bad {} ; set v25det {}
+foreach {v25nm v25sch v25pre} [list fixture [file join $dir txtop.sch] $txpre \
+                                    LCC_instances $lccsch {}] {
+  set f [file join $dir v25$v25nm.svg]
+  lassign [child_export $dir v25$v25nm $v25sch $f $v25pre {print svg}] v25rc v25sg
+  set d [slurp $f]
+  set ntok 0 ; set malformed {}
+  foreach t [regexp -all -inline {#[0-9a-fA-F]+} $d] {
+    incr ntok
+    if {[string length $t] != 7} { lappend malformed $t }
+  }
+  set v25def {}
+  if {[regexp {(?s)<style[^>]*>(.*?)</style>} $d . v25sty]} {
+    foreach {m n} [regexp -all -inline {(?n)^\.l([0-9]+)\{} $v25sty] { lappend v25def $n }
+  }
+  set v25used {} ; set v25undef {}
+  foreach {m n} [regexp -all -inline {class="l([0-9]+)"} $d] { lappend v25used $n }
+  foreach u [lsort -unique $v25used] {
+    if {[lsearch -exact $v25def $u] < 0} { lappend v25undef $u }
+  }
+  lappend v25det "$v25nm: colours=$ntok classes=[llength [lsort -unique $v25used]]/[llength $v25def]"
+  if {$v25rc != 0 || $v25sg || $ntok == 0 || [llength $malformed] || [llength $v25used] == 0 \
+      || [llength $v25undef]} {
+    lappend v25bad "$v25nm:rc=$v25rc,sig=$v25sg,tok=$ntok,malformed={$malformed},undefined={$v25undef}"
+  }
+}
+check "V25 (1607) WELL-FORMEDNESS AND REFERENTIAL INTEGRITY of an exported SVG: every colour\
+ token is exactly #rrggbb (a channel above 255 prints more than two hex digits -- Svg_color's\
+ members are int) and every class=\"lN\" a drawn element references resolves to a class the\
+ file's own <style> block defines. NOT a fence for svgdraw.c's four bounds clamps -- V27 is\
+ that: this row's malformed-token clause is decided by heap layout, one byte of environment\
+ flipped it green/red/green/red" \
+  [expr {[llength $v25bad] == 0}] "(bad={$v25bad} $v25det)"
+
+# V26 (1607 item 4) — HEADLESS AND THE DEV DISPLAY MUST AGREE ON COLOUR, and NOT on bytes.
+# Item 4 asked whether the display path was really clean or only repeatable; receipt B
+# answered it by reverting the fix in a scratch clone -- with a display the same over-read
+# gave 9 distinct md5s in 9 runs and out-of-gamut colour in EVERY one, worse than headless.
+# So the arms have to be compared, and byte equality is the wrong instrument: they genuinely
+# differ, because a display gives has_x a real viewport and the page scale, the translate and
+# the line width all move with it (measured here on LCC_instances: 4468 differing PostScript
+# lines and 1890 differing SVG lines, 72052 vs 71132 B and 77235 vs 145357 B -- ALL of that is
+# geometry, and ALL of it is environment-dependent, down to the window size the throwaway HOME
+# happens to give). The COLOUR MULTISET is the largest invariant that survives the difference
+# and it is exactly what the over-read corrupts: sorted ` RGB` lines for PostScript, sorted
+# `#rrggbb` tokens for SVG. Observed equal at 301 and 221 entries; those two counts are sheet-
+# and heap-neighbourhood-dependent and are NOT asserted, only the equality is.
+# ⚠ This is an hcases suite and it stays one: the display child is spawned through
+# devdisplay.sh exec rather than moving the whole file to dcases. With no dev display the row
+# self-skips with a lowercase `skip:` line naming V26 -- which is a coverage figure in T1's
+# verdict (`skips=`), not a failure, and which is why the reason text must not end in the
+# words FAIL, GOLD? or RESULT?.
+# (hier_psprint's colour multiset was measured arm-identical too; this row keeps to the two
+# single-page verbs, which is what the survey specified and what keeps it under a second.)
+set v26dd [file join $repo tests headless devdisplay.sh]
+if {[catch {exec $v26dd status 2>@1} v26out]} {
+  puts "skip: V26 -- tests/headless/devdisplay.sh status does not report the persistent dev\
+ display alive, so the headless-vs-display colour comparison did not run; bring it up with\
+ tests/headless/devdisplay.sh start"
+} else {
+  set v26bad {} ; set v26det {}
+  foreach verb [list {print ps} {print svg}] {
+    set g [det_tag $verb] ; set e [det_ext $verb]
+    set h [file join $dir v26h$g.$e] ; set x [file join $dir v26d$g.$e]
+    lassign [child_export $dir v26h$g $lccsch $h {} $verb nogui]   hrc hsg
+    lassign [child_export $dir v26d$g $lccsch $x {} $verb display] xrc xsg
+    set dh [slurp $h] ; set dx [slurp $x]
+    if {$verb eq {print svg}} {
+      set ch [lsort [regexp -all -inline {#[0-9a-fA-F]+} $dh]]
+      set cx [lsort [regexp -all -inline {#[0-9a-fA-F]+} $dx]]
+    } else {
+      set ch [lsort [regexp -all -inline {(?n)^\S+ \S+ \S+ RGB$} $dh]]
+      set cx [lsort [regexp -all -inline {(?n)^\S+ \S+ \S+ RGB$} $dx]]
+    }
+    lappend v26det "$verb: colours=[llength $ch]/[llength $cx]\
+ bytes=[string length $dh]/[string length $dx]"
+    if {$hrc != 0 || $xrc != 0 || $hsg || $xsg || [llength $ch] == 0 || $ch ne $cx} {
+      lappend v26bad "$verb:rc=$hrc/$xrc,sig=$hsg/$xsg,colours=[llength $ch]/[llength $cx]"
+    }
+  }
+  check "V26 (1607) the colour a headless export writes and the colour a dev-display export\
+ writes are the SAME MULTISET, for print ps and print svg -- the arms differ in page scale and\
+ line width and must not differ in colour (reverted, the display arm was the worse of the two:\
+ 9 md5s in 9 runs, garbage in every one)" \
+    [expr {[llength $v26bad] == 0}] "(bad={$v26bad} $v26det)"
+}
+
+## the LIVE code of a C file: block comments removed, `#if 0` regions removed, every run of
+## whitespace collapsed to one space. All three are load-bearing for V27 and none is tidiness:
+##  - svgdraw.c's `#if 0` region (the disabled "determine used layers" walk inside svg_draw())
+##    holds a BYTE-FOR-BYTE COPY of the fourth clamp, `if(textlayer < 0 ||  textlayer >=
+##    cadlayers) textlayer = TEXTLAYER;`, double space included. Measured: a whole-file regexp
+##    for that clamp is still GREEN on a copy whose LIVE clamp is deleted -- the dead code
+##    satisfies it, and the naive row is a fence that fences nothing. The strip is a
+##    depth-counting #if/#endif scan and not a non-greedy regexp, so a nested #if inside a
+##    future dead region cannot terminate it early and re-expose the decoy.
+##  - comments go because the 1607 comment above svg_draw_string_line() -- the comment V27 is
+##    cited from -- quotes clamp shapes in prose, and a future reader pasting a clamp into a
+##    comment must not satisfy this row.
+##  - `//` is deliberately NOT treated as a comment start: the file is C89 and its only two
+##    `//` are inside the `http://www.w3.org/...` string literals of the <svg> header, which a
+##    to-end-of-line strip would mangle for no gain.
+proc v27_live {src} {
+  regsub -all {(?s)/\*.*?\*/} $src { } src
+  set out {} ; set dead 0 ; set depth 0
+  foreach ln [split $src \n] {
+    set t [string trim $ln]
+    if {!$dead && [regexp {^#[ \t]*if[ \t]+0[ \t]*$} $t]} { set dead 1 ; set depth 1 ; continue }
+    if {$dead} {
+      if {[regexp {^#[ \t]*(if|ifdef|ifndef)\M} $t]} { incr depth }
+      if {[regexp {^#[ \t]*endif\M} $t]} { incr depth -1 ; if {$depth <= 0} { set dead 0 } }
+      continue
+    }
+    lappend out $ln
+  }
+  regsub -all {\s+} [join $out \n] { } src
+  return $src
+}
+
+## a whitespace-tolerant regexp built from a token list: every metacharacter quoted, the tokens
+## joined with ` ?` so ONE optional space separates each pair. Against the collapsed text above
+## that accepts the shipped spelling, the DOUBLE space clamp 4 actually has, and a reformat that
+## adds or drops a space (`if (x` for `if(x`, `textlayer=c_for_text` for `textlayer = c_for_text`).
+## Measured: a single-space regexp for clamp 4 is RED on the file as shipped. What V27 asserts is
+## the clamp, never its spacing.
+proc v27_pat {toks} {
+  set out {}
+  foreach t $toks { regsub -all {[][\\^$.|?*+(){}]} $t {\\&} t ; lappend out $t }
+  return [join $out { ?}]
+}
+
+# V27 (1607 item 2) — THE STATIC FENCE FOR THE FOUR CLAMPS THAT KEEP THIS DEFECT OUT OF THE SVG
+# BACK END. svg_draw_string_line() reads svg_colors[layer] with NO local bounds test -- `layer`
+# is indexed raw, its only guard being `if(color_ps)`, a colour-mode test -- so the only thing
+# between this back end and 1353/1607 is that every caller clamps the layer first. Delete any
+# one of the four and the over-read is REAL: with one gone and a symbol text forced past
+# cadlayers, valgrind gives psprint's own signature, 3 contexts, "0 / 4 / 8 bytes after a block
+# of size 264" (svg_colors is my_calloc(cadlayers, sizeof(Svg_color)), 22 * 12 here).
+#
+# ⚠ THIS ROW IS STATIC BECAUSE NO BEHAVIOURAL ROW CAN BE THIS FENCE, and that was measured
+# rather than assumed -- see V25's block above and receipts/D-sabotage.md for the numbers: a
+# deleted clamp is invisible to the exported SVG (3 of 3 ALL PASS), a fixture forced to
+# `layer=99` still left the canonical spelling green 11 of 11, and where it could redden at all
+# ONE EXTRA BYTE of environment flipped the verdict. The over-read is deterministic in the
+# SOURCE and random only in its observable consequence, so the instrument has to be the source.
+#
+# The four, cited by ENCLOSING FUNCTION because line numbers rot and identity does (CLAUDE.md):
+#   svg_draw_symbol(), symbol-text loop     textlayer -> c_for_text
+#   svg_draw_symbol(), pin-name loop        plw       -> c_for_text
+#   svg_draw_annot_overlay()                layer     -> TEXTLAYER
+#   svg_draw(), schematic-own-text loop     textlayer -> TEXTLAYER
+#
+# ⚠ EACH PAIR IS ASSERTED BY NAME AND NOTHING HERE COUNTS THE CLAMPS IN THE FILE. Measured: a
+# row asserting "four clamps are present" is GREEN on a copy with the symbol-text clamp DELETED
+# and one unrelated clamp added elsewhere -- it totals four again. The only count checked here
+# is the length of the table below, so that quietly dropping a pair FROM THE TABLE cannot make
+# this row vacuously true; and the detail field lists found and missing by name, so a failure
+# says which clamp went.
+set v27src  [slurp [file join $repo src svgdraw.c]]
+set v27live [v27_live $v27src]
+set v27clamps [list \
+  symbol-text/textlayer->c_for_text   {if ( textlayer < 0 || textlayer >= cadlayers ) textlayer = c_for_text ;} \
+  pin-name/plw->c_for_text            {if ( plw < 0 || plw >= cadlayers ) plw = c_for_text ;} \
+  annot-overlay/layer->TEXTLAYER      {if ( layer < 0 || layer >= cadlayers ) layer = TEXTLAYER ;} \
+  schematic-text/textlayer->TEXTLAYER {if ( textlayer < 0 || textlayer >= cadlayers ) textlayer = TEXTLAYER ;}]
+set v27found {} ; set v27missing {}
+foreach {v27nm v27toks} $v27clamps {
+  if {[regexp [v27_pat $v27toks] $v27live]} { lappend v27found $v27nm } else { lappend v27missing $v27nm }
+}
+set v27ntest [expr {[llength $v27clamps] / 2}]
+check "V27 (1607 item 2) all four bounds clamps that dominate the raw svg_colors\[layer\] read in\
+ svg_draw_string_line() are present in src/svgdraw.c -- symbol text and pin name in\
+ svg_draw_symbol(), svg_draw_annot_overlay(), and svg_draw()'s schematic-text loop -- each\
+ asserted BY NAME and not by count, whitespace-tolerant, with the \#if 0 copy of the fourth one\
+ stripped so dead code cannot stand in for the live clamp" \
+  [expr {[string length $v27src] > 0 && $v27ntest == 4 && [llength $v27missing] == 0}] \
+  "(found={$v27found} missing={$v27missing} tested=$v27ntest src=[string length $v27src]B\
+ live=[string length $v27live]B)"
+
+## ⚠ THIS GUARD USED TO BE A PASS THAT HAD ASSERTED NOTHING, and it is worth spelling out
+## why, because the shape is easy to write again. It printed `SKIP: no ps2pdf on this box`
+## and then `RESULT: ALL PASS`, and exited 0. Every reader in this tree scored that GREEN:
+##   - run_suites.sh scores a suite from its `^RESULT` line -> PASS;
+##   - T1's regression_case_failed wants exit 0 and a completion banner -> PASS;
+##   - T1's summarize_all collects lowercase `^skip:` lines into the verdict's `skips=`
+##     count (issue 1487) and `SKIP:` is NOT that line, so the verdict said
+##     `counted_failures=0 skips=0` for a case that ran ZERO of its 21 rows.
+## CLAUDE.md's rule is that `counted_failures=0` is a claim about correctness and `skips=`
+## is the second number that says what was measured at all. A suite that can silently
+## contribute 21 imaginary checks breaks the only place the answer is.
+##
+## So: a lowercase `skip:` line that NAMES the rows that did not run and why, and a banner
+## that states the count of the rows that DID. The reason text must not end in the words
+## FAIL, GOLD? or RESULT? -- summarize_all tests those shapes FIRST and a skip matching one
+## is scored as a counted failure (CLAUDE.md, rows V5a-V5f of test_regression_concurrency_1476).
+##
+## ⚠ THE GUARD MOVED DOWN HERE, AND THE SKIP NAMES V1-V21 AND NOT THE FILE. Every DISTILLING
+## row needs ps2pdf: the point of this file is the opposite of the rest of its batch -- it
+## distils the PostScript and reads the PDF back, because the defect class is xschem writing
+## bytes that are not PostScript and the .ps looks perfect right up to the moment gs dies on
+## it. There is no .ps-only subset of V1-V21. The 1607 rows above are a different question
+## entirely -- is what xschem wrote the same twice -- and they need no distiller, so they run
+## first and the banner reports what they scored instead of claiming a zero.
+##
+## `ps2pdf -h` exits non-zero even when it is installed, so the `catch` alone cannot answer
+## the question; the explicit /usr/bin/ps2pdf test is the second half and both must miss.
+if {[catch {exec ps2pdf -h} ] && ![file executable /usr/bin/ps2pdf]} {
+  puts "skip: V1-V21 -- ps2pdf is not installed, so none of this suite's 21 DISTILLING rows\
+ ran; every one of them distils the PostScript and reads the PDF back, and there is no\
+ .ps-only subset that would fence the right artifact. V22-V27 need no distiller and did run"
+  if {$fail == 0} {
+    puts "RESULT: ALL PASS ($pass checks -- V1-V21 skipped, ps2pdf missing, see the skip: line)"
+    puts "OVERALL: ok ($pass checks -- V1-V21 skipped, ps2pdf missing)"
+  } else {
+    puts "RESULT: $fail FAILED ($pass passed -- V1-V21 skipped, ps2pdf missing)"
+    puts "OVERALL: notok"
+  }
+  flush stdout ; exit [expr {$fail == 0 ? 0 : 1}]
+}
 
 # ======================================================= 1350: string literals ==
 # V1 — the exact shape that kills the shipped 0_examples_top: ONE backslash as a text.
