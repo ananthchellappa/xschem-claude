@@ -209,6 +209,21 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `winfo`, `bind` nor `event generate` exists under `--nogui`. ⚠ **`skips=` is not a constant to check
   against**: a suite registered in both lists reports its skip on one arm and its rows on the
   other, so the number moves with what is registered, not only with the environment.
+- **Gate in a clone at a SHORT path, or T1 invents 11 failures.** `test_op_annot` (×4, on both
+  arms) and `test_annot_hier_0911` (×3), plus their three `HARNESS: … did not complete cleanly`
+  lines, compare a status-bar sentence that embeds an absolute path — and the product **elides** a
+  sentence too long for the bar, deliberately (`test_op_annot` checks for the `...`, and its own
+  comment records the defect the ellipsis fixed: *"the sentence died mid-token with no `...` to say
+  it had"*). So those suites assume a scratch path short enough not to trigger it. Measured at
+  `97766c66`, same commit, same two suites: a clone under the session scratchpad reaches **173
+  characters** at `tests/headless/.scratch/_op_annot_<pid>/n_nd_empty/n_dev.raw` and gives
+  `counted_failures=11`; the real tree reaches **92** and gives `ALL PASS (485 checks)` +
+  `ALL PASS (15 checks)`; a clone at **84** re-gated clean at `cases=97 blocks=96
+  counted_failures=0 skips=8`. The session scratchpad alone is ~100 characters before the clone
+  name — most of the budget — so **the scratchpad is the wrong place for a gate clone**, and a red
+  there is worth re-running short before it is worth diagnosing. Not a product defect: a user with
+  a deep tree gets a correctly-elided message. Write-up:
+  `doc/claude/issue_1607_batch/LEDGER.md`.
 - **The banner rule lives in `tests/banner_rule.tcl`** (`banner_complete`,
   `banner_died`, `regression_case_failed`); `run_suites.sh` and `full_audit.sh` keep
   their own EREs (`/bin/sh` can't source Tcl), locked to it by section K of

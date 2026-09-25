@@ -125,10 +125,75 @@ any receipt, and **declined to cite it without a source** rather than passing it
 verbatim line it came from is now in `receipts/D-sabotage.md`. That is the second time this batch
 that a crew refused to inherit an unsourced figure from the driver.
 
+## ⚠ The gate went red for a reason that had nothing to do with the change: the clone's PATH DEPTH
+
+Worth writing down, because it cost the driver a full T1 cycle and would cost the next person
+one too.
+
+The first gate of `97766c66` ran in a clone under the session scratchpad and returned
+**`counted_failures=11`**. None of them was in `test_ps_valid_1350`, which reported
+`ALL PASS (27 checks)` / `Total num fail: 0`. The eleven were in `test_op_annot` (4, twice — both
+arms) and `test_annot_hier_0911` (3), plus their three `HARNESS: … did not complete cleanly`
+lines.
+
+The failure text names its own cause. Every one compares a status-bar sentence, and the
+**expected** value carries a full absolute path while the **actual** is elided:
+
+```
+-> {… {Showing device operating-point values on the schematic. There is no results file at...}}
+   (exp {… There is no results file at /tmp/…/scratchpad/gate1607/clone/tests/headless/
+         .scratch/_op_annot_1552325/n_nd_empty/n_dev.raw yet. Run a simulation first.})
+```
+
+**That elision is the product working as designed.** `test_op_annot.tcl` checks for it
+explicitly (`[string range $n15_line end-2 end] eq {...}`) and its own comment records the
+defect the ellipsis *fixed*: *"the sentence died mid-token with no `...` to say it had"*. So the
+message elides once the path pushes it past the bar's width, and these suites assume a scratch
+path short enough that it does not.
+
+Measured, same commit, same two suites:
+
+| scratch path | length | result |
+|---|---|---|
+| `/tmp/claude-1000/-home-analog-dev-xschem-claude/f12b…/scratchpad/gate1607/clone/…` | **173 chars** | 11 counted failures |
+| `/home/analog/dev/xschem-claude/…` (the real tree) | **92 chars** | `ALL PASS (485 checks)` + `ALL PASS (15 checks)` |
+
+**So: gate in a clone at a SHORT path.** The session scratchpad is ~100 characters before the
+clone name, which is already most of the budget. The re-gate used `/tmp/claude-1000/g7/c`
+(84 characters to the same file).
+
+This is a **test-robustness** finding, not a product defect — the elision is deliberate and a
+user with a deep tree gets a correctly-elided message. Not filed as an issue for that reason.
+The durable form of it belongs in `CLAUDE.md`, where the T1 rules live.
+
 ## Resume point
 
-If this batch is picked up cold: Stages A, B and C were dispatched together as one
-measurement round from `cff55068`, with the driver's Stage A prediction registered in
-`DECISIONS.md` E1 beforehand. Nothing has been committed yet. The next action after the
-receipts land is to decide Stage A on the evidence, then implement whatever Stage C's
-survey says is missing.
+**The batch is finished.** Seven stages, all collected, committed as `97766c66` on
+`fluid-editing` ("close issue 1607 — fence the export path, and prove the SVG half is safe").
+Issue 1607 is stamped `claim=fixed fix=taken open=0`.
+`tests/headless/test_ps_valid_1350.tcl` went 21 → 27 checks; T1's `cases=`/`blocks=`/`skips=`
+are unchanged at 97/96/8 because no new suite was registered.
+
+Nothing on this issue is outstanding. What this batch found and deliberately did **not** fix,
+each recorded above with its evidence:
+
+1. **`svg_draw()` leaks `svg_colors`** (264 bytes) on its two `fopen`-failure returns, which
+   skip the `my_free` at the end of the function. Incidental to receipt A, unfiled, too small
+   for its own issue — fold it into the next visit to `svgdraw.c`.
+2. **`tests/headless/test_scratch_home_note.tcl` fails row `C1` at HEAD**, reproduced with this
+   batch's edits stashed. Not a T1 failure, because the suite is not in `hcases`.
+3. **T1 exercises 76 of the 412 `tests/headless/test_*.tcl` suites.** The other 336 run only
+   under `full_audit.sh`. Read the ⚠ above before quoting that number — it is a question about
+   which driver runs what, not 336 defects.
+4. **`ps_filter` and `opa_l_normps`** (plus `opa_l_print2`'s warm-up export) exist *because of*
+   this defect and are now dead weight. Removing them is a small follow-on, kept separate
+   because `ps_filter` also masks issue 1342's `setlinewidth` garbage.
+5. **Neither answer to item 1 that this issue rejected was built**, so the claim that V19's
+   `distinct == 2` clause would catch both is reasoning, not measurement.
+6. **V26's display leg is hardwired to the dev display `:99`**, and deliberately so: it goes
+   through `devdisplay.sh exec`, which pins `DISPLAY` itself, so the suite can stay in `hcases`
+   instead of costing a `dcases` entry. The consequence is that `AUDIT_DISPLAY=:0` does **not**
+   redirect it, so the row has never run against Xwayland. Recorded as a design limit rather
+   than filed as a `suite` debt, because `owed.sh drain` could not clear a debt that no existing
+   knob can satisfy — filing one would have been paperwork, not coverage. If the arm ever
+   matters, V26 needs a knob before it needs a debt.
