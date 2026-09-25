@@ -737,6 +737,8 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
     what = NOW;
     disabled = 1;
   }
+  /* issue 1603: this is the CORRECT twin of the same expression in draw_temp_symbol().
+   * The two must agree; the copy there guarded prop_ptr instead of type and segfaulted. */
   if( (xctx->inst[n].flags & HIDE_INST) || ((xctx->inst[n].ptr + xctx->sym)->flags & HIDE_INST) ||
       (xctx->hide_symbols==1 && (xctx->inst[n].ptr + xctx->sym)->type &&
       !strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "subcircuit") ) ||
@@ -1073,8 +1075,20 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
  if(xctx->inst[n].ptr == -1) return;
  if(!has_x) return;
 
+ /* issue 1603: THIS TEST USED TO GUARD `->prop_ptr` AND THEN DEREFERENCE `->type`.
+  * It must agree, token for token, with the identical expression in draw_symbol()
+  * above -- which reads `->type &&` -- and it did not. The two fields are coupled only
+  * at load time (load_sym_def() in save.c skips set_sym_flags() when prop_ptr is NULL,
+  * so a freshly loaded typeless symbol has BOTH NULL and the wrong guard held by
+  * accident). `xschem setprop symbol <s> device widget` sets prop_ptr WITHOUT calling
+  * set_sym_flags(), breaking the coupling; the next draw_selection() with
+  * hide_symbols == 1 then segfaulted. show_unconnected_pins() reaches the same site.
+  * prop_ptr was NOT load-bearing here and is not kept: type == "subcircuit" implies a
+  * non-NULL prop_ptr (only set_sym_flags() and copy_symbol() ever set type), so the old
+  * prop_ptr test never suppressed a hide the new one allows.
+  * KEEP THIS EXPRESSION AND draw_symbol()'s IDENTICAL. */
  if( (xctx->inst[n].flags & HIDE_INST) || ((xctx->inst[n].ptr + xctx->sym)->flags & HIDE_INST) ||
-     (xctx->hide_symbols==1 && (xctx->inst[n].ptr+ xctx->sym)->prop_ptr &&
+     (xctx->hide_symbols==1 && (xctx->inst[n].ptr+ xctx->sym)->type &&
      !strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "subcircuit") ) ||
      (xctx->hide_symbols == 2) ) {
    hide = 1;

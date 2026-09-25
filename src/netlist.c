@@ -1021,12 +1021,27 @@ static void set_lab_or_pin_inst_attr(int i, int j, const char *node)
   if(node[0] == '#') {
     node++;
   }
-  if(j == 0 && IS_LABEL_OR_PIN(xctx->sym[xctx->inst[i].ptr].type)) {
+  /* issue 1603: IS_LABEL_OR_PIN expands to four UNGUARDED strcmp() on `type` inside
+   * xschem.h, so a pattern sweep for `strcmp(...type...)` cannot see this site at all.
+   * `type` is NULL for a symbol whose global-attribute record is empty or absent.
+   * All seven other uses of this macro in src/*.c write `type && IS_LABEL_OR_PIN(type)`;
+   * this was the only one that did not. MEANING: a typeless symbol is neither a label nor
+   * a pin, so it gets no lab= back-annotation -- the same answer the macro gives for any
+   * other type. See the note on set_sym_flags() in actions.c: prepare_netlist_structs()
+   * normalises NULL to "" before this runs, so this guard is defence in depth -- but it is
+   * MEASURED defence, not style: with that normalisation flipped to my_strdup this is the
+   * FIRST of two segfaults reached by an ordinary `xschem netlist`. */
+  if(j == 0 && xctx->sym[xctx->inst[i].ptr].type &&
+     IS_LABEL_OR_PIN(xctx->sym[xctx->inst[i].ptr].type)) {
     if(!xctx->inst[i].lab || !xctx->inst[i].lab[0]) {
       my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, subst_token(xctx->inst[i].prop_ptr, "lab", node));
       set_inst_flags(&xctx->inst[i]);
 
       if(for_netlist) {
+        /* issue 1603: DO NOT "fix" this strcmp. It is dominated by the guard above -- `type`
+         * has already compared equal to one of label/ipin/opin/iopin to get here, so it
+         * cannot be NULL. And a blanket guard would have to read `type ? strcmp(type,
+         * "label") : 1`, i.e. "typeless => not a label => it IS a port", which is false. */
         if(strcmp(xctx->sym[xctx->inst[i].ptr].type,"label")) port = 1;
         my_strdup(_ALLOC_ID_, &sig_type,get_tok_value(xctx->inst[i].prop_ptr,"sig_type",0));
         my_strdup(_ALLOC_ID_, &verilog_type,get_tok_value(xctx->inst[i].prop_ptr,"verilog_type",0));
@@ -1351,7 +1366,13 @@ static int instcheck(int n, int p)
   int j, sqx, sqy;
   double x0, y0;
   int rects = xctx->sym[inst[n].ptr].rects[PINLAYER];
-  int bus_tap = !strcmp(xctx->sym[inst[n].ptr].type, "bus_tap");
+  /* issue 1603: a declaration initialiser, so it runs before every early return in this
+   * function. `type` is NULL for a symbol whose global-attribute record is empty or absent
+   * (`K {}`, or no G/K record), and a typeless symbol is not a bus tap -- short-circuit to
+   * false. Second of the two segfaults reached with set_sym_flags()'s normalisation flipped
+   * (see the note there in actions.c). */
+  int bus_tap = xctx->sym[inst[n].ptr].type &&
+                !strcmp(xctx->sym[inst[n].ptr].type, "bus_tap");
   int k = inst[n].ptr;
   int shorted_inst = shorted_instance(n, netlist_lvs_ignore);
 

@@ -99,7 +99,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_preview_name_inject_1601" \
                  "headless/test_generator_paren_1604" \
                  "headless/test_hier_pdf_links_1333" \
-                 "headless/test_ps_valid_1350"]
+                 "headless/test_ps_valid_1350" \
+                 "headless/test_typeless_symbol_1603"]
 # ⚠ THE TWO HIERARCHICAL-PDF SUITES ARE IN `hcases` ONLY, AND THAT IS MEASURED.
 # They arrived on this branch with the port of the op-wcard hierarchical-PDF
 # export fix, and until this line neither ran in the gate -- 110 checks of the
@@ -160,6 +161,35 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # not. Registering them as they stood would have appended
 # `HARNESS: ... did not complete cleanly` and counted two failures in the one file
 # whose baseline is ZERO, with all 110 of their own checks passing.
+#
+#   headless/test_typeless_symbol_1603 -- 9 checks, ~4 s. Issue 1603: xSymbol.type
+#     is OPTIONAL and its absence is a NULL POINTER, not "". `xschem sch_pinlist`
+#     on a schematic instancing a symbol whose global-attribute record is empty or
+#     absent (`K {}`, or a .sym with no G/K record) segfaulted TRULY HEADLESS in
+#     two lines of Tcl, and draw_temp_symbol() segfaulted on a display because its
+#     guard named `->prop_ptr` where draw_symbol()'s identical expression names
+#     `->type`. Both are behavioural rows here (N1, N2). Rows S1/S2 are STATIC and
+#     that is measured, not a shortcut: prepare_netlist_structs() calls
+#     reset_caches(), which runs set_sym_flags() over every symbol and HEALS the
+#     NULL to "" before any netlister sees it (260 and 1576 instrumented visits on
+#     the batch's fixture, ZERO NULL), so no input can redden netlist.c's two
+#     guards -- while flipping set_sym_flags()'s one `my_strdup2` to `my_strdup`
+#     reaches both as sequential segfaults. S3 fences that token; S4 fences draw.c
+#     statically so patch (b) is covered on the arm where N2 cannot run.
+#     ⚠ ROWS C1/C2 ARE THE CONTROL AND THEY ARE NOT DECORATION: the issue's own
+#     premise -- "a symbol with no `type=`" -- does NOT produce a NULL, because
+#     set_sym_flags() rewrites a missing token to "". Only an EMPTY OR ABSENT
+#     record does. A fixture that gets that wrong makes every other row in the
+#     file a tautology, so C1 measures the load-time discriminator and C2 fences
+#     the save.c code that makes it one.
+#     `hcases` ONLY, and N2 is the one row that can skip on a healthy box: like
+#     test_ps_valid_1350's V26 it spawns its display child through
+#     `devdisplay.sh exec` (:99, GUI_GATE=0) rather than moving the file to
+#     `dcases`, and self-skips with a lowercase `skip:` line when
+#     `devdisplay.sh status` does not report the dev display alive -- one MORE
+#     skip on a box that has none. MEASURED both ways on 2026-09-24 with the dev
+#     display up: `RESULT: ALL PASS (9 checks)` with `--nogui` and without it,
+#     same count either way. Nothing here creates a widget.
 #
 # ⚠ `test_generator_paren_1604` IS REGISTERED IN BOTH LISTS, for the same
 # reason the two below are. Issue 1604: `is_xschem_file` took a generator's

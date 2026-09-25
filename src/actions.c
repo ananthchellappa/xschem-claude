@@ -1014,6 +1014,22 @@ int set_sym_flags(xSymbol *sym)
   my_strdup2(_ALLOC_ID_, &sym->templ,
              get_tok_value(sym->prop_ptr, "template", 0));
 
+  /* ⚠ issue 1603: THIS my_strdup2 IS LOAD-BEARING FOR THE NETLISTERS. DO NOT make it the
+   * my_strdup this tree uses almost everywhere else.
+   * xSymbol.type is optional and its absence is a NULL pointer: load_sym_def() (save.c)
+   * breaks out before calling this function when the symbol's global-attribute record is
+   * empty or absent (`K {}`, or a .sym with no G/K record), so type stays NULL for such a
+   * symbol. get_tok_value() never returns NULL -- it returns "" for a missing token -- and
+   * my_strdup2 duplicates the empty string, where my_strdup NULLs the destination on an
+   * empty source. So this one call is what converts a NULL type into "".
+   * reset_caches() runs set_sym_flags() over EVERY symbol, and prepare_netlist_structs()
+   * calls reset_caches() first, so every netlister, hilighter and net resolver downstream
+   * sees "" rather than NULL. Measured: with my_strdup here instead, an ordinary
+   * `xschem netlist` on a schematic instancing such a symbol segfaults at the
+   * IS_LABEL_OR_PIN test in set_lab_or_pin_inst_attr() and then at instcheck()'s bus_tap
+   * initialiser, both in netlist.c. Those two sites carry their own guards now, so the
+   * flip no longer crashes -- but nothing else in the netlisters is fenced by anything
+   * except this token. */
   my_strdup2(_ALLOC_ID_, &sym->type,
              get_tok_value(sym->prop_ptr, "type",0));
 
@@ -3033,6 +3049,11 @@ void reset_caches(void)
     set_inst_flags(&xctx->inst[i]);
   }
   for(i = 0; i < xctx->symbols; i++) {
+    /* issue 1603: this unconditional sweep is what makes xSymbol.type non-NULL for the
+     * whole of prepare_netlist_structs() and everything downstream of it, including a
+     * symbol whose prop_ptr is NULL. See the ⚠ note on the type my_strdup2 inside
+     * set_sym_flags(): that normalisation, not the netlisters' own tests, is what keeps
+     * a typeless symbol from being a NULL strcmp in the back ends. */
     set_sym_flags(&xctx->sym[i]);
   }
 }

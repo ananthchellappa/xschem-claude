@@ -12139,10 +12139,24 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       const char *lab;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < xctx->instances; ++i) {
-        if( !strcmp((xctx->inst[i].ptr + xctx->sym)->type, "ipin") ) dir="in";
-        else if( !strcmp((xctx->inst[i].ptr + xctx->sym)->type, "opin") ) dir="out";
-        else if( !strcmp((xctx->inst[i].ptr + xctx->sym)->type, "iopin") ) dir="inout";
-        else dir = NULL;
+        /* issue 1603: xSymbol.type is OPTIONAL and its absence is a NULL pointer, not "".
+         * A symbol whose global-attribute record is empty or absent (`K {}`, or a .sym
+         * with no G/K record at all) never reaches set_sym_flags() -- load_sym_def()
+         * in save.c breaks out on a NULL prop_ptr first -- so type stays NULL and the
+         * three strcmp() arms below were a segfault. `xschem sch_pinlist` on such a
+         * schematic died truly headless, two lines of Tcl, no other state.
+         * ONE test covers all three arms on purpose: they read the same pointer, so
+         * guarding only the first would move the fault to the second immediately.
+         * MEANING: a typeless symbol is not an ipin/opin/iopin, so it contributes no pin
+         * direction. dir stays NULL and the instance is skipped -- exactly what the `else`
+         * arm already does for every other non-pin instance, and not a new behaviour. */
+        const char *type = (xctx->inst[i].ptr + xctx->sym)->type;
+        dir = NULL;
+        if(type) {
+          if( !strcmp(type, "ipin") ) dir="in";
+          else if( !strcmp(type, "opin") ) dir="out";
+          else if( !strcmp(type, "iopin") ) dir="inout";
+        }
         if(dir) {
           lab = xctx->inst[i].lab;
           if(first == 0) Tcl_AppendResult(interp, " ", NULL);
