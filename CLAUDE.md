@@ -129,19 +129,23 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1842389.log`, taken in a throwaway clone of `c3a59de4`
-  built from scratch at a short path, where issue 1603 added
-  `test_typeless_symbol_1603` to `hcases`: **98 cases** (3 + 79 + 15 + `xschemtest`), **97
-  blocks**, **`wc -l` 293 green**; trailer `cases=98 blocks=97 counted_failures=0 skips=8
-  elapsed=586s`. The `97/96/skips=8` figure before it was `results.1594312.log` at
+  the gate verdict `tests/results.2257277.log`, taken in a throwaway clone of `eb20dc62`
+  built from scratch at a short path, where issue 1606 added
+  `test_ev_precision_bound_1606` to `hcases`: **99 cases** (3 + 80 + 15 + `xschemtest`),
+  **98 blocks**, **`wc -l` 296 green**; trailer `cases=99 blocks=98 counted_failures=0
+  skips=8 elapsed=588s`. The `98/97/skips=8` figure before it was `results.1842389.log` at
+  `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Seven figures in four days**: `88/87/skips=5` (`results.2325750.log`,
+  **Eight figures in five days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
-  hierarchical-PDF port) and `98/97/skips=8` here
-  (issue 1603). **The step is not a constant**: a suite registered in BOTH
+  hierarchical-PDF port), `98/97/skips=8` (issue 1603) and `99/98/skips=8` here
+  (issue 1606). ⚠ **`skips=` has now held at 8 across five consecutive figures, and that is
+  a coincidence of what was registered, not a property**: 1604, 1603 and 1606 each went into
+  `hcases` ALONE, which costs one case and no skip, while 1352 and 1601 went into both lists
+  and cost a skip each. **The step is not a constant**: a suite registered in BOTH
   lists costs two cases and one headless self-skip; one registered in `hcases` alone costs
   one case and no skip. Anyone checking against a figure written down anywhere, this file
   included, would have called four green runs red this week. Read the trailer. ⚠ Both new terms are
@@ -177,7 +181,8 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   real `:99`, which was healthy throughout. It did **not** reproduce: the same suite passed
   alone in the same clone (116 checks), passed in the main tree at the same commit, and a
   second full gate of the same commit in the same clone came back
-  `cases=98 blocks=97 counted_failures=0 skips=8` (`results.1842389.log`). Per D8 — do not
+  `cases=98 blocks=97 counted_failures=0 skips=8` (`results.1842389.log`); it has not recurred
+  since, through two further full gates at `c3a59de4` and `eb20dc62`. Per D8 — do not
   declare a standing red that cannot be reproduced, and do not dismiss repeated identical
   observations — this is **one** observation, so nothing was changed for it. If it recurs,
   suspect `openbox` failing to start under full-run load before suspecting the code, and note
