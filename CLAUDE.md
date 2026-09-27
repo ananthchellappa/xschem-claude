@@ -129,11 +129,14 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3308304.log`, taken in a throwaway clone of `cee5945b`
-  built from scratch at a 10-character path, where issue 1610 added
-  `test_generator_shell_1610` to `hcases`: **102 cases** (3 + 83 + 15 + `xschemtest`),
-  **101 blocks**, **`wc -l` 305 green**; trailer `cases=102 blocks=101 counted_failures=0
-  skips=8 elapsed=596s`. The `101/100/skips=8` figure before it was `results.3226734.log`
+  the gate verdict `tests/results.3631374.log`, taken in a throwaway clone of `818ea64c`
+  built from scratch at a 10-character path, where issue 1614 added
+  `test_svg_export_fail_1614` to `hcases`: **104 cases** (3 + 85 + 15 + `xschemtest`),
+  **103 blocks**; trailer `cases=104 blocks=103 counted_failures=0 skips=8 elapsed=600s`.
+  Before it, `103/102/skips=8` twice — `results.3547226.log` at `5d7380b2` and
+  `results.3467604.log` at `69be35d3` (issue 1611's suite) — and `102/101/skips=8` was
+  `results.3308304.log` at `cee5945b` (issue 1610, `wc -l` 305, 596s). The
+  `101/100/skips=8` figure before that was `results.3226734.log`
   at `636bc431`, which registered `test_scratch_home_note` — a suite that had been failing
   at HEAD with nothing running it, so **the fence over T1's own counting predicate was
   itself unfenced**; `wc -l` 302, `elapsed=599s`. Before those, `100/99/skips=8` was
@@ -143,24 +146,27 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Ten figures in six days**: `88/87/skips=5` (`results.2325750.log`,
+  **Twelve figures in six days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
   hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
-  `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair) and
-  `102/101/skips=8` here (issue 1610). ⚠ **`skips=` has now held at 8 across EIGHT
+  `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
+  `102/101/skips=8` (1610), `103/102/skips=8` (1611) and `104/103/skips=8` here (1614).
+  ⚠ **`skips=` has now held at 8 across TEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
-  1606, 1608, 1610 and the `test_scratch_home_note` repair each went into `hcases` ALONE,
-  which costs one case and no skip, while 1352
-  and 1601 went into both lists and cost a skip each. A reader who starts treating 8 as the
+  1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
+  `hcases` ALONE, which costs one case and no skip, while 1352
+  and 1601 went into both lists and cost a skip each. **Ten in a row is past the point where
+  a reader starts treating it as the expected value, which is exactly why this warning gets
+  longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and
   **eight in a row is exactly long enough for someone to start trusting it**.
   **The step is not a constant**: a suite registered in BOTH
   lists costs two cases and one headless self-skip; one registered in `hcases` alone costs
   one case and no skip. Anyone checking against a figure written down anywhere, this file
-  included, would have called six green runs red this week. Read the trailer. ⚠ Both new terms are
+  included, would have called eight green runs red this week. Read the trailer. ⚠ Both new terms are
   **environment-dependent** — a home that cannot reach the fork ngspice adds three more
   `skip:` lines — so this figure is even less of a constant than it was. To count a list, find `set hcases
   [list` (not a line number) and pipe it through `/usr/bin/grep -o '"[^"]*"' | wc -l`;
