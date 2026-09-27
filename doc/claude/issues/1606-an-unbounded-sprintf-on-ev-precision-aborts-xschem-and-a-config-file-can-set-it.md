@@ -252,8 +252,31 @@ where a suffix belonged and the suffix simply vanished (`y=5.011\nx=4.439e-13T`)
 
 Fixed here, because it is at a site this issue owns and it moves this issue's own threshold. It
 is **user-visible in two of six graph configurations** (`y=5.011` → `y=5.011e-12T` with a y unit
-and no x unit), so it is filed as **`rule/1606_graph_y_unit`** for the user, with rows `D3` and
-`D4` pinning whichever answer comes back.
+and no x unit), with rows `D3` and `D4` pinning the shipped answer.
+
+**RATIFIED 2026-09-27, and the ruling should not have been filed.** It went to the user as
+`rule/1606_graph_y_unit` on the grounds that it changes a number read off a screen. Their reply was
+a question rather than an answer — *"we are talking about an 'old' stone age Xschem use case
+scenario where Stefan Schippers would put a graph element on a schematic?"* — and measuring it
+settled the point against the filing:
+
+| where `flags=graph` appears | count |
+|---|---|
+| shipped `xschem_library/` examples | 45 |
+| `sky130A/xschem_libs/sky130_tests/` (PDK fixtures, all dated 2026-09-01) | 37 |
+| the user's own hand-authored designs | 0 |
+| **anywhere in ASE-L** (`src/ase*.tcl`, `src/ase*.c`: the element, its markers, its rawfile handling) | **0** |
+
+ASE-L reaches raw files through its own plot-map and measurement-results machinery and never touches
+the graph element, so **the affected readout is on a surface the user's own direction does not
+use**. The fix stands and still matters — anyone working through Stefan's examples or the PDK test
+schematics now sees the y value in the unit they asked for instead of silently losing it — but it was
+a decision to make and state, not one to queue. The user took the fix and cleared the debt unruled.
+
+⚠ **The transferable lesson, because this tree carries two overlapping UIs**: before filing a ruling
+about anything visible, ask not only *does this reach a person* but *does it reach THIS person*. One
+grep of `src/ase*` answers it, and `xschem_library/` plus `sky130A/xschem_libs/sky130_tests/` are
+other people's content rather than the user's.
 
 ## A hole gcc found that four rounds of sweeps could not
 
