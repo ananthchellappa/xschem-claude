@@ -157,6 +157,74 @@ const char *sanitize(const char *name)
   return s;
 }
 
+/* ISSUE 1610 -- THE GENERATOR'S ARGUMENTS REACHED /bin/sh UNQUOTED, AND A SYMBOL NAME IS
+ * FILE-SUPPLIED. get_generator_command() below builds a string that its callers hand to
+ * popen(), i.e. to a shell. It has always quoted the generator's PATH -- the comment there
+ * still says so -- and then appended the ARGUMENTS verbatim, so every shell metacharacter in
+ * an instance's symbol name was live: `;` `|` `&&` backticks `$( )` and redirections.
+ * Driven at 636bc431, headless, `env -u DISPLAY ./src/xschem --nogui --pipe -q <file>` with no
+ * subcommand, no draw and no netlist: an instance whose symbol name was
+ * `/bin/true(z;/usr/bin/touch <dir>/MARKER)` created the marker file. stat() on the head is
+ * the only gate and it need only name a file that exists.
+ *
+ * ⚠ THIS IS NOT THE BY-DESIGN BEHAVIOUR ISSUE 0823 DECLINES TO REVERSE, and 0823's own
+ * argument is what draws the line: `tcleval(` is a MARKER a reader can see and grep for, and
+ * the UNMARKED doors are the ones worth closing. A generator name announces nothing --
+ * `/bin/true(z;...)` has the same shape as the shipped, honest `res.tcl(@value)`. The feature
+ * means "run this generator with these arguments", where an argument is a number, an
+ * identifier or a model name. Quoting them leaves every legitimate call byte-identical, which
+ * is why this needed no ruling from the user.
+ *
+ * Measured over the shipped libraries, instrument named -- `/usr/bin/grep -rhoE '^C \{[^}]*\
+ * ([^)}]*\)[^}]*\}' --include=*.sch --include=*.sym xschem_library/ sky130A/`: every generator
+ * invocation that ships takes identifiers, `@`-templates or nothing at all
+ * (`mosgen.tcl(@model)`, `res.tcl(@value)`, `tier.tcl(@lab)`, `symbolgen.tcl(buf,@ROUT)`,
+ * `symbolgen.tcl()`). ⚠ NO COUNT IS QUOTED HERE -- named limit L9 of
+ * tests/headless/test_snprintf_fmt_1608.tcl: the figure belongs in a row that re-measures it,
+ * not in a sentence that cannot. None of those shapes needs a shell, so single-quoting
+ * every argument cannot break one.
+ *
+ * ⚠ AND `is_generator()`'s grammar DOES NOT HELP. It is `^[^ \t()]+\([^()]*\)[ \t]*$`, which
+ * excludes only `(` and `)`. `;` `|` `&` `$` and a backtick all pass it, so the grammar is not
+ * a filter and must not be cited as one.
+ *
+ * NOT DEMONSTRATED, and recorded as such rather than as a finding: whether a PROPERTY VALUE
+ * substituted into an `@`-template argument (`res.tcl(@value)` with `value=1k;<command>`)
+ * reaches here already substituted, which would be the same door through an ordinary-looking
+ * symbol name. A probe at 636bc431 did not reproduce it -- the name arrived unsubstituted and
+ * the symbol was simply not found -- so it stays an open question in issue 1610. Quoting
+ * closes it either way, which is the argument for quoting rather than for vetting the name. */
+static char *sh_quote_args(const char *args)
+{
+  size_t need;
+  char *out, *o;
+  const char *p;
+
+  /* Worst case per input byte is 4 ('\'' -> '\'' '\\' '\'' '\''), and each emitted token adds
+   * three bytes of its own (a separating space and the two surrounding quotes); tokens cannot
+   * outnumber input bytes. 7 * len + 4 therefore bounds the result with room for the NUL,
+   * which is why no bound is tested inside the loop below. */
+  need = 7 * strlen(args) + 4;
+  out = my_malloc(_ALLOC_ID_, need);
+  o = out;
+  p = args;
+  while(*p) {
+    while(*p == ' ' || *p == '\t') p++;          /* str_chars_replace() left ( ) , as spaces */
+    if(!*p) break;
+    *o++ = ' ';
+    *o++ = '\'';
+    while(*p && *p != ' ' && *p != '\t') {
+      if(*p == '\'') {                           /* close, emit an escaped quote, reopen */
+        *o++ = '\''; *o++ = '\\'; *o++ = '\''; *o++ = '\'';
+        p++;
+      } else *o++ = *p++;
+    }
+    *o++ = '\'';
+  }
+  *o = '\0';
+  return out;
+}
+
 /* caller must free returned string
  * given xxxx(a,b,c) return /path/to/xxxx a b c
  * if no xxxx generator file found return NULL */
@@ -164,6 +232,7 @@ char *get_generator_command(const char *str)
 {
   char *cmd = NULL;
   char *gen_cmd = NULL;
+  char *qargs = NULL;
   const char *cmd_filename;
   char *spc_idx;
   struct stat buf;
@@ -184,15 +253,49 @@ char *get_generator_command(const char *str)
   /* add quotes to protect spaces in cmd path */
   my_mstrcat(_ALLOC_ID_, &gen_cmd, "\"", cmd_filename, "\"", NULL);
   *spc_idx = ' ';
-  my_strcat(_ALLOC_ID_, &gen_cmd, spc_idx);
+  /* ISSUE 1610: single-quote each argument instead of appending them raw, since the callers
+   * hand this string to popen(). See sh_quote_args() above for why quoting rather than
+   * vetting, and for what the shipped generators actually pass. */
+  qargs = sh_quote_args(spc_idx);
+  my_strcat(_ALLOC_ID_, &gen_cmd, qargs);
+  my_free(_ALLOC_ID_, &qargs);
   #else
   /* tclsh "cmd_filename" a b c */
   /* command tclsh is needed so new TCL windows will NOT open */
   /* quotes are needed for filename if filename has spaces */
   *spc_idx = ' ';
-  int len = 8 + strlen(cmd_filename) + strlen(spc_idx) + 1; /*8="tclsh "+ "\""*2*/
-  gen_cmd = my_malloc(_ALLOC_ID_, len * sizeof(char));
-  my_snprintf(gen_cmd, len, "tclsh \"%s\"%s", cmd_filename, spc_idx);
+  /* ISSUE 1610, the non-__unix__ half, AND IT IS DELIBERATELY A DIFFERENT MECHANISM FROM THE
+   * UNIX ONE ABOVE. This branch's string goes to popen() too, but there popen() runs cmd.exe,
+   * whose quoting is not the shell's -- `^` escapes, `%VAR%` expands inside double quotes, and
+   * a single quote is not a quoting character at all -- so sh_quote_args() would be wrong here
+   * and would read as protection while providing none.
+   *
+   * ⚠ THERE IS NO WINDOWS TOOLCHAIN ON THE MACHINE THIS WAS WRITTEN ON, so nothing here is a
+   * measurement and this comment does not claim one. Issue 1606 shipped a comment that turned
+   * exactly this kind of derivation into a claimed Win64 measurement and had to correct it.
+   * What ships instead is the conservative direction: REFUSE an argument list holding anything
+   * outside a whitelist, rather than attempt a quoting nobody here can verify. Refusing returns
+   * NULL, which is the same answer the callers already handle for "no generator file found".
+   *
+   * The whitelist admits exactly what the shipped generator invocations use -- letters, digits,
+   * `_ . + - / \ : @` and the separators -- so on the evidence in sh_quote_args() above it
+   * refuses no shipped call. A Windows user who needs a wider argument is a bug report with a
+   * real platform behind it, which is worth more than a guess made without one. */
+  {
+    const char *q;
+    for(q = spc_idx; *q; q++) {
+      if( (*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z') || (*q >= '0' && *q <= '9') ) continue;
+      if( *q == ' ' || *q == '\t' || *q == '_' || *q == '.' || *q == '+' || *q == '-' ||
+          *q == '/' || *q == '\\' || *q == ':' || *q == '@' ) continue;
+      dbg(1, "get_generator_command(): refusing generator args, character %d not permitted\n", *q);
+      goto end;                                  /* gen_cmd stays NULL */
+    }
+  }
+  {
+    int len = 8 + strlen(cmd_filename) + strlen(spc_idx) + 1; /*8="tclsh "+ "\""*2*/
+    gen_cmd = my_malloc(_ALLOC_ID_, len * sizeof(char));
+    my_snprintf(gen_cmd, len, "tclsh \"%s\"%s", cmd_filename, spc_idx);
+  }
   #endif
   dbg(1, "get_generator_command(): cmd_filename=%s\n", cmd_filename);
   dbg(1, "get_generator_command(): gen_cmd=%s\n", gen_cmd);
