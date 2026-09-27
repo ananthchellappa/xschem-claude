@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3911,7 +3911,25 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1608.**~~
 
-**The next free number is 1609.**
+- **1609** — **`my_snprintf` fetches every `long` argument as an `int`, and then tells
+  `sprintf` to read eight bytes.** The `d/x/c/u` arm declares one `int i` and does
+  `i = va_arg(args, int)` unconditionally, but the spec gate issue 1608 added **permits the
+  length modifiers `l` and `h` on purpose** (refusing them would change what live callers
+  print), so `nfmt` can be `"%ld"` or `"%lu"`. Two errors then run in sequence: the fetch
+  **truncates** an 8-byte `long` to 4 bytes, and `sprintf` is then told to **read 8 bytes** out
+  of the 4-byte `int`'s promoted vararg slot. On x86-64 SysV they partly cancel — the truncated
+  value is sign-extended back into a full slot and prints — so this is correct **by the ABI's
+  slot layout and by all three live values being small**, not by anything the code does.
+  Three live `l` callers, all in `scheduler.c`: the `XMaxRequestSize` and
+  `XExtendedMaxRequestSize` getters (both `long`) and the window-id getter (an XID in an
+  `unsigned long`). `%hu` is NOT affected: default argument promotion makes an `unsigned short`
+  arrive as an `int`, so the fetch is right and `%hu` truncating on print is right. ⚠ On
+  **Win64** `long` is 4 bytes and the bug is invisible; on **aarch64** a 32-bit argument sits in
+  a 64-bit slot whose upper half is *unspecified*, so the same code can print garbage — that
+  last statement is a reading of the ABI document and **not a measurement**, there being no
+  aarch64 toolchain here. Carried forward, named not fixed, from the 1608 batch. OPEN.
+
+**The next free number is 1610.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
