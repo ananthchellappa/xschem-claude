@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612  1613 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612  1613  1614 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -4008,7 +4008,22 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   1611's lesson, **do not resolve this family by pattern**. Found by the 1611 crew while answering
   a different question. OPEN.
 
-**The next free number is 1614.**
+- **1614** — **a failed SVG export leaves the user's grid switched off, and leaks `svg_colors`.**
+  `svg_draw()` (`src/svgdraw.c`) saves `draw_grid`, sets it to 0 so the exported picture has no
+  grid, and restores it in ONE place, after `fclose`. Between those points it opens the plot file,
+  and **both `fopen` failure paths `return` without restoring anything** -- so an export that
+  fails switches the user's grid off and leaves it off. Driven at `5d7380b2`, headless, into a
+  directory with mode 500: `draw_grid` 1 before, **0 after**, no file created, and the verb
+  reported **rc=0**. The only signal is a `dbg(0, ...)` line on stderr; in the GUI the visible
+  consequence is the grid vanishing from the canvas, which does not point at a failed write. A
+  read-only directory, a full disk or a stale network mount is enough. `svg_colors` is
+  `my_calloc`'d before the `fopen` and leaks on the same two paths (`unused_layer` is allocated
+  after it, so it is unaffected). ⚠ Whether `rc=0` on a failed export is right is a SEPARATE and
+  arguably larger question about the `print` verb's contract, deliberately out of scope and needing
+  its own number -- changing it while fixing the grid would smuggle a user-visible contract change
+  into a bug fix. OPEN.
+
+**The next free number is 1615.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

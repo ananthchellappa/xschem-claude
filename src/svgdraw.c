@@ -1247,26 +1247,53 @@ void svg_draw(void)
     return;
   }
   fill_svg_colors();
-  old_grid=tclgetboolvar("draw_grid");
-  tclsetvar("draw_grid", "0");
   dx=xctx->xrect[0].width;
   dy=xctx->xrect[0].height;
   dbg(1, "svg_draw(): dx=%g  dy=%g\n", dx, dy);
 
+  /* ISSUE 1614 -- THE PLOT FILE IS OPENED BEFORE THE GRID IS TOUCHED, AND THAT ORDER IS THE
+   * FIX. This function switches `draw_grid` off so the exported picture has no grid, and
+   * restores the user's value in exactly ONE place, after fclose() at the end. The two failure
+   * paths below used to sit BETWEEN those two points and `return` without restoring, so an
+   * export that could not open its file SWITCHED THE USER'S GRID OFF AND LEFT IT OFF -- a
+   * read-only directory, a full disk or a stale network mount was enough. Driven at 5d7380b2,
+   * headless, into a directory with mode 500: draw_grid 1 before, 0 after, no file written, and
+   * the verb still reported rc=0, so the only signal was one dbg(0, ...) line on stderr while
+   * the visible consequence in the GUI was the grid vanishing from the canvas.
+   *
+   * Moving the open ABOVE the grid change means there is now NO `return` between
+   * tclsetvar("draw_grid", "0") and its restore, which is the invariant worth keeping and is
+   * cheaper to hold than three copies of a cleanup tail -- a fourth exit added later would
+   * otherwise miss one again, which is how this happened. Row G1 of
+   * tests/headless/test_svg_export_fail_1614.tcl asserts that invariant over the live text, and
+   * row F1 drives the failed export end to end.
+   *
+   * svg_colors is still allocated ABOVE the open, deliberately: on a calloc failure no file has
+   * been created, and moving the allocation below would start leaving a zero-length .svg behind
+   * on that path. The two paths here free it instead.
+   *
+   * ⚠ The rc=0 is NOT fixed here. Whether `xschem print svg` should report failure is a separate
+   * and larger question about that verb's contract, and changing it inside this fix would
+   * smuggle a user-visible contract change into a bug fix. See
+   * doc/claude/issues/1614-a-failed-svg-export-leaves-the-users-grid-switched-off-and-leaks-svg-colors.md */
   if(xctx->plotfile[0]) {
     fd=fopen(xctx->plotfile, "w");
     if(!fd) {
       dbg(0, "can not open file: %s\n", xctx->plotfile);
+      my_free(_ALLOC_ID_, &svg_colors);
       return;
     }
   } else {
     fd=fopen("plot.svg", "w");
     if(!fd) {
       dbg(0, "can not open file: %s\n", "plot.svg");
+      my_free(_ALLOC_ID_, &svg_colors);
       return;
     }
   }
   my_strncpy(xctx->plotfile,"", S(xctx->plotfile));
+  old_grid=tclgetboolvar("draw_grid");
+  tclsetvar("draw_grid", "0");
 
   unused_layer = my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
   #if 0
