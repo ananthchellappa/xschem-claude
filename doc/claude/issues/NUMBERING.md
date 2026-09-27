@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3929,7 +3929,26 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   last statement is a reading of the ABI document and **not a measurement**, there being no
   aarch64 toolchain here. Carried forward, named not fixed, from the 1608 batch. OPEN.
 
-**The next free number is 1610.**
+- **1610** — **a generator symbol name reaches `/bin/sh`, and its arguments are never quoted.**
+  `get_generator_command()` (`src/token.c`) turns an instance symbol name of the shape
+  `head(args)` into a command string that the callers hand to **`popen()`**. It quotes the
+  generator's PATH — its own comment says *"add quotes to protect spaces in cmd path"* — and then
+  appends the ARGUMENTS verbatim, so every shell metacharacter in a symbol name is live: `;`,
+  `|`, `&&`, backticks, `$( )`, redirections. Driven at `636bc431`, headless, no display, no draw,
+  no netlist, no subcommand: a symbol name `/bin/true(z;/usr/bin/touch <scratch>/…)` created the
+  marker file. `stat()` on the head is the only gate, and it only has to name a file that exists.
+  ⚠ **NOT the by-design behaviour issue 0823 declines to reverse**: 0823's own argument is that
+  `tcleval(` is a MARKER a reader can see and grep for, and that the *unmarked* doors are the ones
+  worth closing. A generator name announces nothing — `/bin/true(z;…)` has the same shape as the
+  shipped, honest `res(1k)`. And the feature means *run this generator with these arguments*,
+  where an argument is a number or a model name; quoting them leaves every legitimate call
+  byte-identical, so no ruling is needed. Three call sites reach it (`load_schematic` and
+  `load_sym_def` in `save.c`, one in `paste.c`); the fix belongs in the one function. The
+  non-`__unix__` branch builds `tclsh "<path>"<args>` for `cmd.exe`, whose quoting is not the
+  shell's, and there is no Windows toolchain here — so whatever ships must not claim that branch
+  is measured. OPEN.
+
+**The next free number is 1611.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

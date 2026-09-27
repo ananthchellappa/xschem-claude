@@ -6,6 +6,53 @@ have shipped or been drafted without it being written down anywhere.
 Family context for: 0812 (fixed), 0816, 0817, 0821 (in flight), 0822.
 ⚠ **This issue exists to BOUND claims, not to generate work.**
 
+## 0. ⚠ CORRECTION, 2026-09-27 — SECTION 2'S CENTRAL MEASUREMENT IS REFUTED
+
+This section is at the top, ahead of the original filing, because **the severity changed**. The
+filing below is kept verbatim so the corrections can be read against it; issue 1606 set that
+precedent. Three items, all driven at `636bc431` in a throwaway directory with
+`env -u DISPLAY ./src/xschem --nogui --pipe -q`, no display, no draw, no netlist.
+
+**(a) "It does not fire on load. It fires on DRAW." is FALSE.** Section 2 measured a **text
+floater** (`T {tcleval(...)}`), and for that record it is right — a floater's value is resolved
+when it is drawn. But an **instance's symbol name** is resolved at load, because `load_sym_def()`
+has to put the name through `tcl_hook2()` to find the symbol file at all. Driven, with a marker
+file absent beforehand:
+
+* `xschem load <file>` as the only subcommand, no draw, no netlist, no display — **fired**.
+* A plain `./src/xschem --nogui --pipe -q <file>` with no subcommand at all — **fired**.
+
+So the honest statement is **opening the file is sufficient, headless or not**, and it does not
+depend on the GUI drawing anything. Section 2's parenthetical hedge — that the GUI draw was not
+separately measured and SVG export stood in for it — is now moot in the direction that matters:
+the trigger is earlier than either.
+
+**(b) There is a SECOND door, and it is UNMARKED.** `get_generator_command()` in `src/token.c`
+builds a command from a symbol name of the shape `head(args)` and the callers hand it to
+`popen()`, i.e. `/bin/sh -c`. It quotes the generator's path and appends the **arguments raw**, so
+every shell metacharacter in a symbol name is live. Driven: a symbol name
+`/bin/true(z;/usr/bin/touch <scratch>/FIRED_VIA_SHELL)` created the marker, on a plain open.
+**This needs no `tcleval(` marker**, so by section 3's own argument it is one of the *unmarked*
+doors this file says are worth closing — not part of the by-design behaviour it declines to
+reverse. Filed as its own defect, issue **1610**, and fixable without a ruling, because quoting the
+arguments leaves every legitimate generator call byte-identical.
+
+**(c) Section 5.2's census is now MEASURED**, and the answer is "it is everywhere", which section
+5.2 itself said should then be recorded as settled. Instruments named, per the project's rule
+that a census over source text is a census of spellings:
+`/usr/bin/grep -rlF 'tcleval(' --include=*.sch --include=*.sym` gives **49 files under
+`xschem_library/`** (19 `.sch` + 30 `.sym`) and **68 under `sky130A/`** (38 + 30), **117 in
+total**, plus **5 generator scripts** shipped and referenced under `xschem_library/generators/`.
+So the trust-prompt option is **not** cheaper than it sounds, and a blunt global off-switch would
+break 117 shipped files including the primary PDK path. What that census actually argues for is the
+**trusted-path** shape — evaluate under the install tree and configured library directories,
+render literally elsewhere — which breaks none of the 117 while disarming a sheet that arrived by
+mail, and which needs no blocking prompt and so cannot deadlock a batch or CI run.
+
+**What section 4 still gets right:** the trust model is the user's ruling, not a crew's. It has now
+been recorded as one on the owed ledger (`rule/0823`) rather than left as a sentence inside an
+issue, which is what section 4 asked for and what nobody did.
+
 ## 1. Why this is filed
 
 `grep -l 'untrusted\|threat model' doc/claude/issues/*.md` returns **nothing**
