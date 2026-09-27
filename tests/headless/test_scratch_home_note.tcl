@@ -203,30 +203,90 @@ check "C0 the note a child printed, and a skip: line from each of the [llength $
 
 ## C1 -- T1: run_regression.tcl's OWN summarize_all, lifted out of the file and
 ## evaluated, over a case log holding every line above.
+##
+## ⚠ IT LIFTS EVERY TOP-LEVEL `proc` IN THAT FILE, NOT ONLY summarize_all, AND
+## THAT SHAPE IS THE WHOLE POINT. This row was RED and nobody knew, because it
+## used to lift one proc by name: issue 1487 gave summarize_all a helper, the
+## lifted copy then died on an unknown command, `t1_counted` stayed at its
+## sentinel -1, and the row reported a bare `{1 -1}` that said nothing about
+## why. Two failures compounded -- the probe went stale silently, AND this suite
+## was not registered in run_regression.tcl, so the fence over T1's own counting
+## predicate was itself unfenced. Lifting every proc means the next helper
+## arrives for free; naming the helpers here would be a hand-kept list of the
+## same defect one level up. Only proc DEFINITIONS are lifted, so none of that
+## file's top-level side effects run. Any command still unresolved falls back to
+## the global namespace, which is where banner_rule.tcl's procs already are.
+##
+## The probe's error text rides in the check's own name on failure, so a future
+## break says what command it could not find instead of printing a sentinel.
 set RR [slurp [file join $repo tests run_regression.tcl]]
-set sa_code {}
-set i [string first "proc summarize_all " $RR]
-if {$i >= 0} {
-  set acc {}
-  foreach l [split [string range $RR $i end] "\n"] {
+set t1_procs {}
+set t1_lifted {}
+set acc {}
+set pname {}
+foreach l [split $RR "\n"] {
+  if {$acc eq {}} {
+    if {![regexp {^proc\s+(\S+)\s} $l -> pname]} { continue }
+    set acc "$l\n"
+  } else {
     append acc $l "\n"
-    if {[info complete $acc]} { break }
   }
-  set sa_code $acc
+  if {[info complete $acc]} {
+    lappend t1_procs $pname $acc
+    lappend t1_lifted $pname
+    set acc {}
+  }
 }
+set t1_have_sa [expr {[lsearch -exact $t1_lifted summarize_all] >= 0}]
 set t1_counted -1
-if {$sa_code ne {}} {
+set t1_err {}
+if {$t1_have_sa} {
   namespace eval ::t1probe {}
-  set ::t1_blocks 0 ; set ::t1_failures 0
-  if {![catch {namespace eval ::t1probe $sa_code}]} {
+  set ::t1_blocks 0 ; set ::t1_failures 0 ; set ::t1_skips 0
+  if {![catch {foreach {n c} $t1_procs { namespace eval ::t1probe $c }} t1_err]} {
     set caselog [wr [file join $scratch case.log] "[join $LINES \n]\nOVERALL: ok\n"]
     set vf [open [file join $scratch verdict.log] w]
-    catch {set t1_counted [::t1probe::summarize_all $caselog $vf case.log]}
+    if {[catch {::t1probe::summarize_all $caselog $vf case.log} t1_r]} {
+      set t1_err $t1_r
+    } else {
+      set t1_counted $t1_r
+      set t1_err {}
+    }
     close $vf
   }
 }
-check "C1 T1's own summarize_all counts none of the [llength $LINES] lines (FAIL\$ GOLD?\$ RESULT?\$ ^FATAL)" \
-  [list [expr {$sa_code ne {}}] $t1_counted] {1 0}
+set t1_why ""
+if {$t1_err ne {}} { set t1_why " -- probe could not run: $t1_err" }
+check "C1 T1's own summarize_all, with all [llength $t1_lifted] of run_regression.tcl's procs lifted beside it, counts none of the [llength $LINES] lines (FAIL\$ GOLD?\$ RESULT?\$ ^FATAL)$t1_why" \
+  [list $t1_have_sa $t1_counted] {1 0}
+
+## C1b -- the lift actually reaches every helper summarize_all calls, checked by
+## deriving the list from summarize_all's OWN BODY rather than from a list kept
+## here by hand. Method: take the first bareword of each command position in the
+## lifted body, keep those that run_regression.tcl defines as procs, and require
+## every one of them to exist inside ::t1probe. A hand-kept list is the same
+## defect one level up -- which is what row X1 of
+## tests/headless/test_snprintf_fmt_1608.tcl exists to say.
+##
+## ⚠ This row's NAME describes its METHOD and claims NO COVERAGE. It sees a
+## helper called as a bareword in command position. A helper reached through
+## `eval`, a variable holding a command name, an `uplevel`, or a namespace path
+## is invisible to it, and it says so rather than implying a completeness it does
+## not have.
+set t1_sa_body {}
+foreach {n c} $t1_procs { if {$n eq "summarize_all"} { set t1_sa_body $c } }
+set t1_needs {}
+foreach w [regexp -all -inline {(?:^|[\[\{;\n])\s*([a-zA-Z_][a-zA-Z0-9_:]*)} $t1_sa_body] {
+  if {[regexp {^[a-zA-Z_]} $w] && [lsearch -exact $t1_lifted $w] >= 0 && $w ne "summarize_all"} {
+    if {[lsearch -exact $t1_needs $w] < 0} { lappend t1_needs $w }
+  }
+}
+set t1_missing {}
+foreach w $t1_needs {
+  if {![llength [info commands ::t1probe::$w]]} { lappend t1_missing $w }
+}
+check "C1b every proc run_regression.tcl defines that appears as a bareword in command position inside summarize_all's own lifted body ([llength $t1_needs]: [lsort $t1_needs]) exists in ::t1probe -- sees barewords only, not eval/uplevel/variable dispatch" \
+  [list [expr {[llength $t1_needs] >= 1}] $t1_missing] {1 {}}
 
 ## C2 -- tests/banner_rule.tcl: neither line is a death, and neither turns a
 ## passing case into a failed one.
