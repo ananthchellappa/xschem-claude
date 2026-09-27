@@ -1,6 +1,6 @@
 # 1611 — the VHDL component loop tests the PARENT symbol, so `xschem_libs` is honoured at the top level and silently dropped one level down
 
-**STAMP:** `v1 claim=open tree=cee5945b stamped=2026-09-27 fix=untried open=3 by=driver`
+**STAMP:** `v1 claim=fixed tree=fdf876d3 stamped=2026-09-27 fix=taken open=3 by=driver`
 
 ## The defect
 
@@ -20,7 +20,7 @@ for(j=0;j<xctx->symbols; ++j)
   if(( strcmp(xctx->sym[j].type,"subcircuit")==0 || … ) && check_lib(1, abs_path)
 ```
 
-**Sixteen accesses in that loop; fourteen use `j` and two use `i`.** Both `type` tests, the
+**Fifteen accesses in that loop; thirteen use `j` and two use `i`.** ⚠ An earlier version of this file said *sixteen / fourteen* and both numbers were wrong; `/usr/bin/grep -c` answers 13 because it counts LINES and two lines carry two accesses each, which is named limit L9 of `tests/headless/test_snprintf_fmt_1608.tcl` reproduced exactly. The suite therefore asserts **zero `xctx->sym[i]`** in the region rather than any total. Both `type` tests, the
 `vhdl_primitive` test, the instance-name comparison and all five `rect[PINLAYER][k]` accesses use
 `j`. The two above read the **parent block's** symbol while claiming to filter the **candidate
 component**.
@@ -34,8 +34,16 @@ defect, not a memory defect.
    documented as the list of libraries **not** to netlist or export — actually exclude something.
    Because the path handed to it is the parent's, and the parent has already passed the identical
    test in the caller, the test **always passes** here. So an exclusion is honoured at the top
-   level, where `vhdl_netlist()`'s own component loop spells the same access with `j`, and
+   level, where `global_vhdl_netlist()`'s own component loop spells the same access with `j` — **not** `vhdl_netlist()`, which is the static instance printer at the top of the file — and
    silently ignored one level down.
+
+   ⚠ **The fix stops the DECLARATION only; the instantiation remains.** Driven: with the leaf
+   excluded, `component plug` is gone from the mid-level architecture but `xplug1 : plug port map
+   (…)` is still emitted, with no `entity plug` anywhere. That is a **residual, not a regression** —
+   the instance loop lives in the static `vhdl_netlist()` and never calls `check_lib()`, so it is
+   exactly what the **top** level has always done for a child excluded there. The fix makes the two
+   levels agree. Rows `L5` and `L6` of `tests/headless/test_vhdl_component_index_1611.tcl` pin the
+   residual and the top-level reference respectively.
 
    **Driven** on a three-level fixture (`top` → `mid` → `leaf`) so that parent ≠ candidate:
    with `xschem_libs` set to exclude the leaf's directory, the top-level architecture's component

@@ -653,8 +653,16 @@ int vhdl_block_netlist(FILE *fd, int i, int alert)
         const char *default_schematic;
         if( strboolcmp(get_tok_value(xctx->sym[j].prop_ptr,"vhdl_primitive",0),"true")==0 ) continue;
         /* ISSUE 1611: sym[j], NOT sym[i]. `i` is this function's parameter -- the block being
-         * expanded -- while `j` walks the CANDIDATE components. Fourteen of this loop's sixteen
-         * accesses always used `j`; these two read the parent and were the only ones that did.
+         * expanded -- while `j` walks the CANDIDATE components. Every other access in this loop
+         * already used `j`; these two read the parent and were the only ones that did.
+         * ⚠ NO TOTAL IS QUOTED HERE, DELIBERATELY. An earlier version of this comment said
+         * "fourteen of sixteen" and both numbers were wrong: the loop holds FIFTEEN accesses,
+         * pre-fix 13 `j` + 2 `i`, and `/usr/bin/grep -c` answers 13 because it counts LINES and
+         * two lines carry two accesses each. That is named limit L9 of
+         * tests/headless/test_snprintf_fmt_1608.tcl reproduced exactly. Row P6 of
+         * tests/headless/test_vhdl_component_index_1611.tcl asserts ZERO `xctx->sym[i]` in this
+         * region instead -- exact, immune to an innocently added line, and reddened by reverting
+         * either access.
          * Reading the parent's default_schematic here was also DEAD CODE: the function tests the
          * parent's own default_schematic near its top and returns early, so this could only
          * re-check a value already checked, and `default_schematic=ignore` on a COMPONENT had no
@@ -670,10 +678,19 @@ int vhdl_block_netlist(FILE *fd, int i, int alert)
          * makes `xschem_libs` -- the list of libraries NOT to netlist or export -- exclude
          * anything. Handed the PARENT's path it always passed, because the parent had already
          * passed the identical test in the caller, so an exclusion was honoured at the top level
-         * (vhdl_netlist()'s own component loop spells this with `j`) and silently ignored one
-         * level down. Driven on a three-level fixture: the excluded leaf was declared AND
-         * instantiated inside the mid-level architecture with `grep -c 'entity leaf'` = 0, a
-         * netlist naming an entity it never emits.
+         * (global_vhdl_netlist()'s own component loop spells this with `j`) and silently ignored
+         * one level down. ⚠ NOT vhdl_netlist(), which is the static INSTANCE printer at the top
+         * of this file; an earlier version of this comment named the wrong symbol.
+         *
+         * ⚠ AND THIS FIX STOPS THE DECLARATION ONLY -- THE INSTANTIATION REMAINS. Driven on a
+         * three-level fixture: with the leaf's directory excluded, `component plug` is no longer
+         * emitted in the mid-level architecture but `xplug1 : plug port map (...)` still is, with
+         * no `entity plug` anywhere in the file. That is a RESIDUAL, not a regression, and row L5
+         * of tests/headless/test_vhdl_component_index_1611.tcl pins it: the instance loop lives in
+         * the static vhdl_netlist() and never calls check_lib(), so this is exactly what the TOP
+         * level has always done for a child excluded there, which row L6 measures directly. The
+         * fix makes the two levels AGREE; whether the result is valid VHDL is a separate question
+         * and is labelled derived in that suite, there being no ghdl or nvc on this machine.
          *
          * ⚠ DO NOT "FIX" THE SIBLING LOOP BY PATTERN. global_vhdl_netlist()'s descent loop makes
          * the same call and `i` is CORRECT there -- commit 242523cb, titled "typo fix", changed

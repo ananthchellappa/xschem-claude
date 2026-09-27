@@ -3951,8 +3951,9 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 - **1611** — **the VHDL component loop tests the PARENT symbol, so `xschem_libs` is honoured at
   the top level and silently dropped one level down.** `vhdl_block_netlist(FILE *fd, int i, int
   alert)` in `src/vhdl_netlist.c` takes the block being expanded as `i`; its
-  component-declaration loop walks candidates as `j`. Sixteen accesses in that loop, fourteen use
-  `j`, and **two use `i`**: the `default_schematic` read and the `abs_path` handed to
+  component-declaration loop walks candidates as `j`. FIFTEEN accesses in that loop, thirteen use
+  `j`, and **two use `i`** (⚠ `/usr/bin/grep -c` answers 13 because it counts LINES and two lines
+  carry two accesses each -- named limit L9; the suite asserts ZERO `sym[i]` rather than a total): the `default_schematic` read and the `abs_path` handed to
   `check_lib(1, abs_path)`. Both are symbol-index-for-symbol-index so neither can leave the array
   — a LOGIC defect, not a memory one. Cost: `check_lib` is what makes `xschem_libs` (the list of
   libraries NOT to netlist) exclude anything, and on the parent's path it always passes, because
