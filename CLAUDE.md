@@ -129,11 +129,13 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3631374.log`, taken in a throwaway clone of `818ea64c`
-  built from scratch at a 10-character path, where issue 1614 added
-  `test_svg_export_fail_1614` to `hcases`: **104 cases** (3 + 85 + 15 + `xschemtest`),
-  **103 blocks**; trailer `cases=104 blocks=103 counted_failures=0 skips=8 elapsed=600s`.
-  Before it, `103/102/skips=8` twice — `results.3547226.log` at `5d7380b2` and
+  the gate verdict `tests/results.3703564.log`, taken in a throwaway clone of `00d90845`
+  built from scratch at a 10-character path: **104 cases** (3 + 85 + 15 + `xschemtest`),
+  **103 blocks**, **`wc -l` 311 green**; trailer `cases=104 blocks=103 counted_failures=0
+  skips=8 elapsed=598s`. The same 104/103 was measured one commit earlier at `818ea64c`
+  (`results.3631374.log`, 600s), where issue 1614's suite took the case count up; the two
+  commits between them changed `src/util.c` and that suite only, which is why both were
+  gated. Before them, `103/102/skips=8` twice — `results.3547226.log` at `5d7380b2` and
   `results.3467604.log` at `69be35d3` (issue 1611's suite) — and `102/101/skips=8` was
   `results.3308304.log` at `cee5945b` (issue 1610, `wc -l` 305, 596s). The
   `101/100/skips=8` figure before that was `results.3226734.log`
