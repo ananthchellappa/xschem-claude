@@ -33,6 +33,56 @@ typedef struct {
 
 static Svg_color *svg_colors;
 static char svg_font_weight[80] = "normal"; /* normal, bold, bolder, lighter */
+/* ISSUE 1608 -- THE `font=` ATTRIBUTE WAS THE FORMAT STRING HERE TOO, AND THIS IS THE
+ * UN-FIXED TWIN OF ISSUE 1351.
+ *
+ * Four sites in this file wrote `my_snprintf(svg_font_family, S(svg_font_family), v)`
+ * with `v` a value, not a format: twice `textfont` (a text object's `font=` attribute,
+ * out of a .sch or .sym FILE) and twice `tclgetvar("svg_font_name")`. `xschem print svg`
+ * on a stranger's schematic was therefore enough, headless, with no display and no Tcl
+ * evaluation of any kind. Driven at 91bb1bd7, verbatim:
+ *   font=%-2000d -> "*** buffer overflow detected ***: terminated", rc 134
+ *   font=%nd     -> "*** %n in writable segments detected ***",     rc 134
+ * The second one is the sharp end: `%n` alone survives the scanner in my_snprintf()
+ * because `n` is not a conversion terminator, but `%n` followed by any handled letter IS
+ * a spec, so it is strncpy'd into a WRITABLE stack array and handed to sprintf(). The
+ * only thing standing between a .sch file and an arbitrary write is glibc's
+ * PRINTF_FORTIFY refusal of %n in a non-read-only format -- libc hardening on one
+ * platform, not a property of this code, in a tree that also targets Windows.
+ * Bounding my_snprintf() does NOT close this: `%nd` is three characters producing no
+ * output, so it passes every arithmetic bound. Only the "%s" form below closes it.
+ *
+ * WHY ONLY "%s" HERE, AND NOT psprint.c's ps_font_token(). 1351 fixed two defects at one
+ * site: the format string (same as this one) AND the fact that a PostScript name token
+ * ends at the first delimiter, so `font="courier new"` emitted `/courier new-Bold FF` and
+ * gs EXECUTED `new-Bold`. That second half is PostScript's problem, not SVG's, and
+ * ps_font_token()'s cure would be a REGRESSION here: it maps the generic CSS/Cairo
+ * families onto the base-14 PostScript names (monospace->Courier, serif->Times,
+ * sans-serif->Helvetica) precisely because PostScript has never heard of them -- whereas
+ * SVG's font-family IS that namespace, and a space inside it is legal and meaningful
+ * ("courier new"), not a token terminator. Mapping them would discard the user's stated
+ * family instead of honouring it. So the SVG side needs the "%s" and nothing else.
+ * Carried forward, NOT fixed here and NOT this issue's class: the value still lands
+ * unescaped inside a double-quoted XML attribute at svg_draw_string(), so a `"` in a
+ * font= name can still break the attribute. That is an output-escaping defect, not a
+ * memory write, and it needs its own issue.
+ * THE ONE READER of this array is svg_draw_string_line(), and it carries its own 1608 comment:
+ * the `"%s"` form makes a value too long for char[80] arrive EMPTY instead of truncated, and an
+ * empty family must emit no attribute rather than the invalid `font-family:;`. That guard is
+ * what keeps this whole change output-neutral for every `%`-free value; read it before changing
+ * the emission.
+ * Fenced behaviourally by tests/headless/test_snprintf_fmt_1608.tcl, ONE ROW PER SITE -- and the
+ * reason is ATTRIBUTION, not reachability. ⚠ An earlier version of this sentence said "no one
+ * fixture reaches two of them", and that is measured FALSE: a .sch carrying its own text AND an
+ * instance whose .sym carries a text executes BOTH `textfont` sites in one export. What no
+ * fixture can do is let a row say WHICH site produced the output unless the others are
+ * neutralised, which is exactly what each row's fixture does and what F4b's own comment explains
+ * at length. Rows F1, F2, F3, F4, F4b and F5. svg_draw()'s `textfont`
+ * is F1 and F2, svg_draw_symbol()'s `textfont` is F3, svg_draw()'s `svg_font_name` is F4,
+ * svg_draw_symbol()'s `svg_font_name` is F4b, and F5 is the control that says an ordinary
+ * family name still arrives. The --rcfile twin in xinit.c is F6, F7 and F8 -- not in that list,
+ * because an earlier version of this comment cited F1-F6 and F6 is that twin's row.
+ * See doc/claude/issues/1608-my-snprintf-writes-into-two-fixed-50-byte-buffers-and-checks-the-bound-afterwards.md */
 static char svg_font_family[80] = "Sans-Serif"; /* Serif, Monospace, Helvetica, Arial */
 static char svg_font_style[80] = "normal"; /* normal, italic, oblique */
 static double svg_linew;      /* current width of lines / rectangles */
@@ -475,7 +525,38 @@ static void svg_draw_string_line(int layer, char *s, double x, double y, double 
   fprintf(fd,"<text fill=\"%s\"  xml:space=\"preserve\" font-size=\"%g\" ", col, size*xctx->mooz);
   if(strcmp(svg_font_weight, "normal")) fprintf(fd, "font-weight=\"%s\" ", svg_font_weight);
   if(strcmp(svg_font_style, "normal")) fprintf(fd, "font-style=\"%s\" ", svg_font_style);
-  if(strcmp(svg_font_family, tclgetvar("svg_font_name"))) fprintf(fd, "style=\"font-family:%s;\" ", svg_font_family);
+  /* 1608 -- THE `svg_font_family[0]` HALF IS AN OUTPUT-NEUTRALITY GUARD, NOT A BOUNDS CHECK,
+   * AND IT IS THE ONLY READER OF svg_font_family IN THIS FILE.
+   * `font-family:;` IS NOT A VALID CSS DECLARATION -- an empty value is not a font name -- so a
+   * value that did not fit char[80] must emit NO ATTRIBUTE, which correctly says nothing, rather
+   * than an empty one, which asserts something false about the document. After the `"%s"` fix at
+   * the writer sites, my_snprintf() returns 0 having written only a '\0' when the value does not
+   * fit, so an EMPTY svg_font_family IS the "did not fit" signal and this is where it is read.
+   * The decision lives here and not in my_snprintf(), which ~720 callers share and which must
+   * not grow SVG-specific behaviour.
+   * WHAT THIS MAKES TRUE, measured on a from-scratch build of 91bb1bd7 against this tree, both
+   * the .sch door (svg_draw) and the .sym-via-instance door (svg_draw_symbol), with `font=` runs
+   * of 78, 79, 80, 81 and 2000 characters: for every `font=` / svg_font_name value CONTAINING NO
+   * `%` the exported SVG is now byte-identical to the pre-fix tree's. At 79 characters and below
+   * both trees emit the value verbatim; at 80 and above the pre-fix tree emitted NO ATTRIBUTE --
+   * because with no conversion in the format the tail copy is my_snprintf()'s only writer and it
+   * skips a run that does not fit, leaving svg_font_family holding the svg_font_name it was
+   * pre-loaded with two lines earlier, so the strcmp below matched -- and with this guard so does
+   * this one. Values CONTAINING a `%` are not byte-identical and must not be: those are the
+   * defect (the value WAS the format string), and one of them wrote out of bounds.
+   * ⚠ ONE SITE IS NOT THE PRE-FIX OUTPUT, DELIBERATELY: the pin-name pass below
+   * (svg_font_family from a PINLAYER rect's `name_font`) already used the `"%s"` form at
+   * 91bb1bd7 and has no pre-load of svg_font_name before it, so an 80-character `name_font`
+   * emitted `style="font-family:;"` in BOTH trees -- driven. This guard suppresses that too. It
+   * is the same invalid declaration and the same cure; it is named here rather than left for
+   * someone to find in a diff.
+   * Rows F10, F10b and F11 of tests/headless/test_snprintf_fmt_1608.tcl: F10/F10b redden if the
+   * attribute comes back for an over-long value, F11 is the boundary control that stops them
+   * being satisfied by a binary that dropped the attribute always. F4 and F4b's fixtures had to
+   * change for this guard -- their sabotage observable WAS the empty attribute; see the comment
+   * above F4. */
+  if(svg_font_family[0] && strcmp(svg_font_family, tclgetvar("svg_font_name")))
+    fprintf(fd, "style=\"font-family:%s;\" ", svg_font_family);
   if(rot1) fprintf(fd, "transform=\"translate(%g, %g) rotate(%d)\" ", ix, iy, rot1*90);
   else fprintf(fd, "transform=\"translate(%g, %g)\" ", ix, iy);
   fprintf(fd, ">");
@@ -971,12 +1052,14 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
 
       /* display PINLAYER colored instance texts even if PINLAYER disabled */
       if(xctx->inst[n].color == -PINLAYER ||  xctx->enable_layer[textlayer]) {
-        my_snprintf(svg_font_family, S(svg_font_family), tclgetvar("svg_font_name"));
+        /* 1608: "%s" -- see the comment at svg_font_family's declaration */
+        my_snprintf(svg_font_family, S(svg_font_family), "%s", tclgetvar("svg_font_name"));
         my_snprintf(svg_font_style, S(svg_font_style), "normal");
         my_snprintf(svg_font_weight, S(svg_font_weight), "normal");
         textfont = symptr->text[j].font;
         if( (textfont && textfont[0])) {
-          my_snprintf(svg_font_family, S(svg_font_family), textfont);
+          /* 1608: "%s" -- see the comment at svg_font_family's declaration */
+          my_snprintf(svg_font_family, S(svg_font_family), "%s", textfont);
         }
         if( symptr->text[j].flags & TEXT_BOLD)
           my_snprintf(svg_font_weight, S(svg_font_weight), "bold");
@@ -1378,12 +1461,14 @@ void svg_draw(void)
     /* 0615: the schematic-own-text mirror of the instance-text site above. */
     if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
     if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
-    my_snprintf(svg_font_family, S(svg_font_family), tclgetvar("svg_font_name"));
+    /* 1608: "%s" -- see the comment at svg_font_family's declaration */
+    my_snprintf(svg_font_family, S(svg_font_family), "%s", tclgetvar("svg_font_name"));
     my_snprintf(svg_font_style, S(svg_font_style), "normal");
     my_snprintf(svg_font_weight, S(svg_font_weight), "normal");
     textfont = xctx->text[i].font;
     if( (textfont && textfont[0])) {
-      my_snprintf(svg_font_family, S(svg_font_family), textfont);
+      /* 1608: "%s" -- see the comment at svg_font_family's declaration */
+      my_snprintf(svg_font_family, S(svg_font_family), "%s", textfont);
     }
     if( xctx->text[i].flags & TEXT_BOLD)
       my_snprintf(svg_font_weight, S(svg_font_weight), "bold");

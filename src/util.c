@@ -620,24 +620,188 @@ void actionlog_suppress_pop(void)
 {
   if(actionlog_suppress > 0) actionlog_suppress--;
 }
-#ifdef HAS_SNPRINTF
-size_t my_snprintf(char *str, size_t size, const char *fmt, ...)
-{
-  int  size_of_print;
-  char s[200];
+/* ISSUE 1608 -- THERE WAS AN `#ifdef HAS_SNPRINTF` ARM HERE. IT IS GONE, AND THIS
+ * COMMENT IS WHAT IT LEFT BEHIND.
+ *
+ * WHAT IT WAS: a second definition of my_snprintf() that called vsnprintf() and popped a
+ * modal Tcl alert on truncation. `#else` selected the hand-rolled formatter below.
+ *
+ * IT HAS NEVER COMPILED ON ANY PLATFORM. `HAS_SNPRINTF` is defined nowhere in this tree
+ * -- not in config.h, not in config.h.in, not in XSchemWin/config.h, not in scconfig (which
+ * registers a libs/snprintf probe that hooks.c never require()s), not on any command line.
+ * Five independent proofs, four inherited from issue 1606 and the fifth behavioural: the
+ * macro is absent from every config; `nm -S src/util.o` shows one my_snprintf; `nm -u
+ * src/util.o` lists no vsnprintf; scheduler.c's own `"HAS_SNPRINTF=%s"` line handed `%s`
+ * whatever integer the macro would be; and `xschem globals` prints `HAS_DUP2=1`,
+ * `HAS_POPEN=1`, `HAS_CAIRO=1` and NO `HAS_SNPRINTF=` line at all. That scheduler.c line
+ * was deleted with this arm. Deleting changed not one compiled byte.
+ *
+ * WHY ENABLING IT WAS NEVER SAFE, which is the part worth keeping. THE TWO ARMS' RETURN
+ * VALUES MEAN DIFFERENT THINGS: the arm below returns bytes WRITTEN, vsnprintf() returns
+ * bytes that WOULD HAVE BEEN written. Five live sites consume that return as a length --
+ * my_itoa() and dtoa() here, dtoa_prec() in editprop.c (all three assign it to
+ * xctx->tok_size, which many sites in actions.c read as a length), plus two accumulators:
+ * publish_net_hilight_styles_to_tcl() in hilight.c does `off += my_snprintf(s + off, sz -
+ * off, ...)`, so under vsnprintf semantics `off` passes `sz`, `sz - off` is a size_t and
+ * wraps to ~2^64, and the "safe" arm then writes unbounded; and the @@pin expansion in
+ * translate() (token.c) advances result_pos past the data so the next STR_ALLOC sizes from
+ * a wrong offset. Two further defects sit INSIDE the arm and are themselves evidence
+ * nobody ever built it: `size_of_print >= size` compared an int against a size_t, so a
+ * vsnprintf error return of -1 promoted to a huge size_t and fired the alert; and the
+ * alert's `%d` was handed a size_t.
+ *
+ * AND THE `#ifdef` WAS ITSELF THE HAZARD. See log_action() above in this file: the same
+ * `#ifdef HAS_SNPRINTF` / vsnprintf-versus-vsprintf pair, the unbounded arm the only one
+ * ever compiled, and a 4971-byte Tk menu `-command` script that aborted the editor on a
+ * click with an unsaved schematic in it. "The `#ifdef` read as protection and was
+ * decoration." Measured at 91bb1bd7: `-DHAS_SNPRINTF=` (the natural spelling for an
+ * scconfig feature flag) was a COMPILE ERROR at scheduler.c's line, while
+ * `-DHAS_SNPRINTF=1` COMPILED CLEAN under -Wall and would have crashed at runtime. So the
+ * arm was not a dormant portability seam; it was a switch nobody could safely throw, and
+ * leaving it in place preserved the trap rather than the information. This comment
+ * preserves the information.
+ *
+ * If a platform ever genuinely needs vsnprintf(), the work is the five return-value
+ * consumers above, not a #ifdef.
+ * See doc/claude/issues/1608-my-snprintf-writes-into-two-fixed-50-byte-buffers-and-checks-the-bound-afterwards.md */
 
-  va_list args;
-  va_start(args, fmt);
-  size_of_print = vsnprintf(str, size, fmt, args);
-  if(has_x && size_of_print >=size) { /* output was truncated  */
-    snprintf(s, S(s), "alert_ { Warning: overflow in my_snprintf print size=%d, buffer size=%d} {}",
-             size_of_print, size);
-    tcleval(s);
+/* ISSUE 1608 -- THE SPEC GATE. Every conversion spec my_snprintf() extracts from its
+ * format string passes through here BEFORE it is copied into nfmt[] and handed to
+ * sprintf(). It answers one question: can this spec be executed without writing outside
+ * nfmt[] or nstr[]? Three guards, and each is separately removable so each has its own
+ * reddening row in tests/headless/test_snprintf_fmt_1608.tcl (rows G1, G2, G3, G4, G6, G7,
+ * G12 and G13; the fence map at the head of that file lists which removal reddens which):
+ *
+ * GUARD 1 (`len >= nfmtsize`) -- covers mechanisms (A) AND (B) TOGETHER, DELIBERATELY.
+ *   (A) is `strncpy(nfmt, fmt, l)`; (B) is `nfmt[l] = '\0'`. The span fmt..f holds exactly
+ *   l non-NUL bytes, so strncpy writes exactly l bytes and pads nothing. With nfmt[50]:
+ *   l <= 49 is safe; l == 50 fills the array and then (B) stores the NUL at index 50, ONE
+ *   BYTE PAST, SILENTLY -- a plain array store is not fortified. Driven at 91bb1bd7,
+ *   `--rcfile "%<48 dashes>d"` returned rc 1 and printed `cannot find ` followed by a
+ *   formatted integer. ⚠ NO SUCH INTEGER IS QUOTED HERE, DELIBERATELY: it is
+ *   `va_arg(args, int)` on a vararg nobody pushed, i.e. stack garbage that moves with the
+ *   environment block. Two crews drove it on separate from-scratch 91bb1bd7 builds and no two
+ *   of their runs agreed on the integer; an earlier version of this comment quoted three of
+ *   them anyway, in this same paragraph, which is the second half of named limit L9 -- a figure
+ *   the instrument cannot reproduce is not a measurement. What reproduces exactly is the SHAPE
+ *   -- spec length 49 and 50 both give rc 1 with a
+ *   formatted number in place of the file name, and length 51 or more gives rc 134
+ *   `*** buffer overflow detected ***`, because l >= 51 makes __strncpy_chk abort first. So
+ *   (B)'s threshold is the LOWER one and one guard at
+ *   `len >= 50` stops both, with no value of l where one fires and the other does not.
+ *   Two guards on one path would mean NEITHER had a row that reddens on its own removal,
+ *   which is why this is one guard and why that is written down here (issue 1606 lost a
+ *   whole fencing plan to exactly that).
+ *
+ * GUARD 2 (the whitelist) -- the spec body may hold only flags `- + space #`, digits, and
+ *   `.`, plus the length modifiers `l` and `h`, which live callers in scheduler.c use. EVERY OTHER
+ *   CHARACTER IS REFUSED, and it is a whitelist rather than a blacklist because a digit
+ *   scan silently trusts what it does not recognise. What that closes, all driven at
+ *   91bb1bd7 through `--rcfile` and through a .sch `font=` attribute:
+ *     `%n`  -- `%n` ALONE survives the scanner because `n` is not a conversion terminator,
+ *              but `%nd` IS a spec: it was strncpy'd into nfmt[], a WRITABLE STACK ARRAY,
+ *              and handed to sprintf. `*** %n in writable segments detected ***`, rc 134 --
+ *              i.e. an ATTEMPTED ARBITRARY WRITE whose only obstacle was glibc's
+ *              PRINTF_FORTIFY refusal of %n in a non-read-only format. Libc hardening on
+ *              one platform, not a property of this code. Note it is a 3-character spec
+ *              producing no output, so it passes GUARD 3 and every arithmetic bound.
+ *     `L`   -- `%Lf` is long double, and LDBL_MAX reaches ~1.19e4932: `%.0Lf` of LDBL_MAX
+ *              measures 4933 characters against GUARD 3's estimate of 320. It also
+ *              mis-fetches (the arm does va_arg(args, double)), so `font=%.0Lf` exported
+ *              `font-family:nan` from 10 uninitialised stack bytes. `q`, `z`, `j` and `t`
+ *              go with it: all reachable, all returning garbage, none implemented.
+ *     `*`   -- the width comes from a vararg this function never pushed, so it is stack
+ *              garbage; 5 of 7 environments did not even abort. Unfetchable by design here.
+ *     `'`   -- thousands grouping. Dormant only because nothing in src/ calls setlocale, so
+ *              LC_NUMERIC stays "C". MEASURED, against a locale built with
+ *              `localedef -i en_US -f UTF-8`: `%'.0f` of -DBL_MAX is 412 characters
+ *              (1 sign + 309 digits + 102 separators), `%'.6f` is 419 and `%'.180f` is 593 --
+ *              all past GUARD 3's estimate of 320. ⚠ The figure 419 belongs to `%'.6f`, not
+ *              to `%'.0f`: an earlier version of this comment carried it on the `%'.0f` line,
+ *              taken from a receipt that had DERIVED it ("it would be 419") rather than driven
+ *              it. Upgrading a derivation into a measurement is what issue 1606's adjudications
+ *              C5 and C7 forbid, so the three numbers above are driven and the arithmetic that
+ *              agrees with the first is written out next to it.
+ *   `l` and `h` are permitted because refusing them would change what LIVE CALLERS IN
+ *   scheduler.c print -- `%hu` in the first-selection getter, `%ld` in the XMaxRequestSize and
+ *   XExtendedMaxRequestSize getters and `%lu` in the window-id getter -- and their widest output
+ *   is 20 characters, far inside GUARD 3. ⚠ NO TOTAL IS QUOTED (named limit L9 of the suite):
+ *   an earlier version said "three live callers" and then itemised four, having counted a `%ld`
+ *   that is inside a comment. The spellings are the substance and are what row G5 drives; a
+ *   grep over src/ is how a reader finds the sites, and its number is not this sentence's to
+ *   assert. They still mis-fetch -- the arm does va_arg(args, int)
+ *   and sprintf then reads 8 bytes -- which works only by x86-64 zero-extension. That is a
+ *   SEPARATE defect, named and carried forward in issue 1608, not fixed here.
+ *
+ * GUARD 3 (`max + 320 < nstrsize`) -- bounds mechanism (C), the `sprintf(nstr, nfmt, i)`
+ *   output. A spec can carry only two decimal numbers, a field width and a precision, and
+ *   the output is at most max(width, 311 + precision): measured on this glibc at 91bb1bd7,
+ *   `sprintf("%f", -DBL_MAX)` is 317 = 1 sign + 309 integer digits + 1 point + the default
+ *   precision 6, and `sprintf("%.200f", -DBL_MAX)` is 511 = 311 + 200. Width and precision
+ *   never add, because the output is the max of the two. So "largest digit run in the spec,
+ *   plus 320" over-estimates every conversion GUARD 2 lets through -- ONE loose estimate
+ *   rather than per-arm casework, because issue 1606 shipped a hand-derived per-branch
+ *   bound and gcc found a branch it did not cover. ⚠ AND BECAUSE IT IS AN OVER-ESTIMATE IT
+ *   REFUSES SOME SPECS THAT WOULD HAVE FIT, which is a property of the estimate and not of the
+ *   scratch: `%.192f` is refused because 192 + 320 is 512 and the test is `< 512`, while
+ *   `sprintf("%.192f", -DBL_MAX)` measures 503 characters and nstr[512] holds it comfortably.
+ *   Row G6 drives it and says which of the two reasons applies to which case; row G7 drives
+ *   `%.191f` (502 characters) and says the looseness costs no live caller anything.
+ *   The accumulator is capped at 1000000 so a fifty-digit width cannot wrap a size_t; a
+ *   capped run refuses, which is the safe direction, and row G13 is the row that reddens if
+ *   the cap goes -- without it `%18446744073709551616d` wraps the accumulator to 0, passes
+ *   this guard, and makes my_snprintf return (size_t)-1, which five live sites consume as a
+ *   length. The widest spec any live caller has is `%.17g` (17 + 320 = 337), so
+ *   MY_SNPRINTF_NSTR = 512 accepts every live spec and every precision up to 191. 512 is a
+ *   judgement, not a measurement: 338 is the measured floor.
+ *
+ * THE THREE `sprintf(nstr, nfmt, i)` CALLS BELOW ARE THE DELIBERATE NON-LITERAL FORMATS IN
+ * THIS TREE, and `-Wformat-nonliteral` names them (util.c, three sites; draw.c has two more
+ * of issue 1606's class). They are why row W1 of tests/headless/test_snprintf_fmt_1608.tcl
+ * asserts that no diagnostic falls on a line spelling `my_snprintf(`, and permits exactly
+ * these two shapes by their text, rather than asserting zero diagnostics tree-wide: the clean
+ * tree is NOT at zero, and every diagnostic it does emit is at one of those two shapes. A
+ * tree-wide zero would need a real `#pragma GCC diagnostic` at every one of them, and THIS
+ * TREE HAS NO `#pragma` DIRECTIVE ANYWHERE: `/usr/bin/grep -rln '#pragma' src/` names this
+ * file and nothing else, and the hit in this file is this sentence. ⚠ NO COUNT IS QUOTED
+ * HERE, AND THAT IS DELIBERATE -- see named limit L9 of the suite. The grep reads the file
+ * this sentence lives in, so any number written down here is a hostage to how the sentence
+ * happens to be laid out, and the same claim shipped wrong twice on exactly that: `-rc`
+ * counts LINES, and a rewrite spread the word `#pragma` over three lines of itself. State the
+ * claim, let the reader run `-rln`, and let a row assert anything that has to be a number.
+ * 1608 is not the issue that should introduce a real pragma at draw.c's sites. This gate is
+ * what makes these three safe.
+ *
+ * WHY NOT snprintf(). C89 has no snprintf and that is the entire reason this function
+ * exists; under `./configure --debug` (which asks gcc for -std=c89 -pedantic) snprintf is
+ * not even declared in this include environment. The bound has to be arithmetic.
+ * Derivations and the driven figures: doc/claude/issue_1608_batch/receipts/B-bound-shape.md
+ * and Bv-refute.md. */
+#define MY_SNPRINTF_NSTR 512
+
+static int my_snprintf_spec_ok(const char *spec, size_t len, size_t nfmtsize, size_t nstrsize)
+{
+  size_t i, run, max = 0;
+
+  if(len >= nfmtsize) return 0;                        /* GUARD 1: (A) and (B) together */
+  /* spec[0] is '%' and spec[len-1] is the conversion letter; scan what lies between */
+  for(i = 1; i + 1 < len; i++) {
+    char c = spec[i];
+    if(c >= '0' && c <= '9') {
+      run = 0;
+      while(i + 1 < len && spec[i] >= '0' && spec[i] <= '9') {
+        if(run < 1000000) run = run * 10 + (size_t)(spec[i] - '0');
+        i++;
+      }
+      if(run > max) max = run;
+      i--;
+    }
+    else if(c == '-' || c == '+' || c == ' ' || c == '#' || c == '.') continue;
+    else if(c == 'l' || c == 'h') continue;            /* GUARD 2: the only two permitted */
+    else return 0;                                     /* GUARD 2: whitelist, not blacklist */
   }
-  va_end(args);
-  return size_of_print;
+  return max + 320 < nstrsize;                         /* GUARD 3: (C) */
 }
-#else
 
 /*
    this is a replacement for snprintf(), **however** it implements only
@@ -665,8 +829,9 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       char *sptr;
       sptr = va_arg(args, char *);
       l = fmt - prev;
-      if(n+l > size) {
+      if(n+l >= size) {                 /* 1608 (D): see MY_SNPRINTF_PREFIX_GUARD below */
         overflow = 1;
+        if(n < size) string[n] = '\0';
         break;
       }
       memcpy(string + n, prev, l);
@@ -683,17 +848,25 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       prev = f + 1;
     }
     else if(format_spec && (*f == 'd' || *f == 'x' || *f == 'c' || *f == 'u') ) {
-      char nfmt[50], nstr[50];
-      int i, nlen;
+      char nfmt[50], nstr[MY_SNPRINTF_NSTR];
+      int i, nlen, refuse;
       i = va_arg(args, int);
       l = f - fmt+1;
-      strncpy(nfmt, fmt, l);
-      nfmt[l] = '\0';
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      if(!refuse) {
+        strncpy(nfmt, fmt, l);
+        nfmt[l] = '\0';
+      }
       l = fmt - prev;
-      if(n+l > size) break;
+      if(n+l >= size) {                 /* 1608 (D): see MY_SNPRINTF_PREFIX_GUARD below */
+        overflow = 1;
+        if(n < size) string[n] = '\0';
+        break;
+      }
       memcpy(string + n, prev, l);
       string[n+l] = '\0';
       n += l;
+      if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
       nlen = sprintf(nstr, nfmt, i);
       if(n + nlen + 1 > size) {
         overflow = 1;
@@ -705,18 +878,26 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       prev = f + 1;
     }
     else if(format_spec && (*f == 'p') ) {
-      char nfmt[50], nstr[50];
+      char nfmt[50], nstr[MY_SNPRINTF_NSTR];
       void *i;
-      int  nlen;
+      int  nlen, refuse;
       i = va_arg(args, void *);
       l = f - fmt+1;
-      strncpy(nfmt, fmt, l);
-      nfmt[l] = '\0';
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      if(!refuse) {
+        strncpy(nfmt, fmt, l);
+        nfmt[l] = '\0';
+      }
       l = fmt - prev;
-      if(n+l > size) break;
+      if(n+l >= size) {                 /* 1608 (D): see MY_SNPRINTF_PREFIX_GUARD below */
+        overflow = 1;
+        if(n < size) string[n] = '\0';
+        break;
+      }
       memcpy(string + n, prev, l);
       string[n+l] = '\0';
       n += l;
+      if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
       nlen = sprintf(nstr, nfmt, i);
       if(n + nlen + 1 > size) {
         overflow = 1;
@@ -728,21 +909,26 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       prev = f + 1;
     }
     else if(format_spec && (*f == 'g' || *f == 'e' || *f == 'f')) {
-      char nfmt[50], nstr[50];
+      char nfmt[50], nstr[MY_SNPRINTF_NSTR];
       double i;
-      int nlen;
+      int nlen, refuse;
       i = va_arg(args, double);
       l = f - fmt+1;
-      strncpy(nfmt, fmt, l);
-      nfmt[l] = '\0';
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      if(!refuse) {
+        strncpy(nfmt, fmt, l);
+        nfmt[l] = '\0';
+      }
       l = fmt - prev;
-      if(n+l > size) {
+      if(n+l >= size) {                 /* 1608 (D): see MY_SNPRINTF_PREFIX_GUARD below */
         overflow = 1;
+        if(n < size) string[n] = '\0';
         break;
       }
       memcpy(string + n, prev, l);
       string[n+l] = '\0';
       n += l;
+      if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
       nlen = sprintf(nstr, nfmt, i);
       if(n + nlen + 1 > size) {
         overflow = 1;
@@ -766,7 +952,72 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
   /* fprintf(errfp, "my_snprintf(): returning: |%s|\n", string); */
   return n;
 }
-#endif /* HAS_SNPRINTF */
+/* MY_SNPRINTF_PREFIX_GUARD -- ISSUE 1608 (D), AND WHY THE SPEC REFUSAL FALLS THROUGH IT.
+ *
+ * (D) THE OFF-BY-ONE. Each of the four arms above writes the literal run preceding the
+ * conversion as `memcpy(string + n, prev, l); string[n+l] = '\0';` -- that is n+l+1 bytes,
+ * so it needs n+l < size. The guard read `if(n+l > size)`, so at n+l == size it PASSED and
+ * `string[size]` was written: one byte past THE CALLER'S buffer, on all four arms. `string`
+ * is a pointer parameter, so _FORTIFY_SOURCE cannot size it and emits no check -- THIS ONE
+ * IS SILENT. Driven at 91bb1bd7: svgdraw.c's svg_font_family is char[80], and a text
+ * object whose `font=` value is an 80-character LITERAL RUN FOLLOWED BY A CONVERSION SPEC --
+ * `<80 chars>%d`, so 82 characters in all -- emitted an 80-character font-family, i.e. its NUL
+ * landed at index 80, outside the array. rc 0, no signal, no message. It is `>=` now, which
+ * also makes `size == 0` safe (it used to write string[0]).
+ * ⚠ IT IS THE RUN BEFORE THE `%`, NOT THE LENGTH OF THE VALUE, and an earlier revision of this
+ * sentence said "a `font=` value of exactly 80 characters". That is refuted: re-driven on a
+ * from-scratch build of 91bb1bd7, a plain 80-character `font=` value emits NO font-family
+ * attribute at all, because with no conversion in the format the tail copy is the only writer
+ * on the path and it skips a run that does not fit. Only a conversion arm reaches the store
+ * above, so only `l = fmt - prev == size` can trigger it.
+ *
+ * WHAT THE REFUSAL MUST NOT DO, measured on a tree that did it. The spec gate has to run
+ * before strncpy() -- that is what it guards -- but a `break` there would leave the
+ * caller's buffer ENTIRELY UNWRITTEN, which is not this function's overflow shape. The
+ * existing overflow path (`n + nlen + 1 > size`) breaks AFTER the prefix write, so
+ * string[n] is always '\0' and the caller gets the prefix accumulated so far. A version
+ * that broke before it was built and driven: a planted caller printed
+ * `|/tmp/claude-1000/-ho|` out of uninitialised stack, and the live `--rcfile zz%.192f`
+ * returned RC 0 HAVING SILENTLY SOURCED A DIFFERENT RC FILE instead of reporting `cannot
+ * find zz`. Hence the `refuse` flag: compute the verdict before strncpy, skip strncpy,
+ * fall through the prefix write, THEN break. With that ordering a refusal takes exactly the
+ * path the existing overflow already takes, so it is not a new user-visible shape and
+ * needed no ruling.
+ *
+ * ⚠ `refuse` THEREFORE DOES TWO SEPARABLE THINGS, AND THE `if(!refuse)` WRAPPER ROUND THE
+ * strncpy IS THE HALF THAT STOPS THE WRITE. The other half -- the `break` -- is the half that
+ * shortens the result. Deleting the wrapper alone leaves the break in place, so the return
+ * value and the caller's buffer are unchanged and ONLY the out-of-bounds write comes back:
+ * exactly the pre-1608 shape, since the strncpy was unconditional at 91bb1bd7. It is also the
+ * most plausible refactor there is -- "we break right after, so the copy is harmless" -- and it
+ * was measured to be invisible to every row in the suite in two of the three gated arms, with
+ * 51- and 60-character specs dying `*** buffer overflow detected ***` while the suite reported
+ * ALL PASS. Row G1 covers this wrapper in the d/x/c/u arm and Row G15 covers it in the `p` and
+ * g/e/f arms, each by a 51-character spec: one past nfmt[50], where __strncpy_chk aborts,
+ * rather than at 50, where the array store goes one byte past and nothing complains. Do not
+ * fold the wrapper away.
+ *
+ * The refusal on the (D) guard NUL-terminates at string[n] rather than truncating the run,
+ * because dropping the conversion and everything after it -- keeping the prefix already
+ * written -- is this function's own established idiom, and it leaves the return value n
+ * unchanged. It replaces an out-of-bounds write with an empty-or-short string, never with
+ * an unwritten buffer. Row G14 is the row that reddens if those four `if(n < size)
+ * string[n] = '\0'` writes go: without them `my_snprintf(u, 2, "abcd%d", 7)` returns 0 having
+ * written NOTHING, and the caller reads an uninitialised buffer. ⚠ One shape of that is still
+ * open and is NOT this line's business: a format with no conversion AT ALL that does not fit
+ * -- `my_snprintf(u, 2, "abcd")` -- still leaves the destination untouched, because the tail
+ * copy is the only writer on that path. Named as still open in issue 1608 and as named limit
+ * L8 of the suite.
+ *
+ * The four arms now set `overflow = 1` uniformly here. Two of them used to `break` bare.
+ * That was provably inconsequential -- at break time n + (fmt-prev) >= size while the tail
+ * test uses l = f-prev >= fmt-prev with the same n, so `n+l+1 <= size` is false on every
+ * such path and the tail copy was skipped regardless -- but it was a trap if the arithmetic
+ * ever moved, and these are the lines that just moved. That uniformity is the one change in
+ * this block with NO row, and deliberately: it is behaviourally dead by the proof just given,
+ * so no removal of it can change an observable and no row could redden on one.
+ * Rows G8, G9 and G14 of tests/headless/test_snprintf_fmt_1608.tcl fence the rest: G8 the
+ * canary at index `size`, G9 the refusal's ordering, G14 the refusal's NUL write. */
 size_t my_strdup2(int id, char **dest, const char *src) /* 20150409 duplicates also empty string  */
 {
  size_t len;

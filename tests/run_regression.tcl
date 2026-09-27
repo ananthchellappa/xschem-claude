@@ -101,7 +101,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_hier_pdf_links_1333" \
                  "headless/test_ps_valid_1350" \
                  "headless/test_typeless_symbol_1603" \
-                 "headless/test_ev_precision_bound_1606"]
+                 "headless/test_ev_precision_bound_1606" \
+                 "headless/test_snprintf_fmt_1608"]
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
@@ -547,6 +548,55 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # BOTH REAL SIMULATORS ON THE DISPLAY ARM ONLY: it types noise into the form,
 # presses OK, renders the deck, runs it on apt 45.2 AND the fork, and returns to
 # the form to check its file-size estimate against the file that run wrote.
+#
+# ⚠ `test_snprintf_fmt_1608` IS IN `hcases` ONLY, AND NOTHING IN IT NEEDS A DISPLAY.
+# Issue 1608: FIVE my_snprintf() call sites passed USER DATA AS THE FORMAT STRING --
+# four `font=` attributes in svgdraw.c (out of a .sch or .sym FILE, or out of the Tcl
+# variable `svg_font_name`) and xinit.c's `--rcfile` argument -- so `xschem print svg`
+# on a stranger's schematic was enough, HEADLESS, with no display and no Tcl
+# evaluation. `font=%nd` printed `*** %n in writable segments detected ***` and exited
+# 134: an ATTEMPTED ARBITRARY WRITE whose only obstacle was glibc's PRINTF_FORTIFY,
+# which is libc hardening on one platform and not a property of this code. Bounding the
+# formatter does NOT close that -- `%nd` is three characters producing no output -- so
+# the fix is the `"%s"` form at the five sites, one row each (F1-F4, F4b, F6-F8; F5,
+# F9 and F11 are controls), plus a spec whitelist, a digit-run cap and an off-by-one repair
+# inside my_snprintf() itself, and ONE OUTPUT-NEUTRALITY GUARD in svgdraw.c: after the
+# `"%s"` fix a `font=` value too long for svg_font_family's char[80] arrives EMPTY rather
+# than being left out of the buffer, so the exporter emitted `style="font-family:;"` --
+# an invalid CSS declaration -- where 91bb1bd7 emitted no attribute at all. F10, F10b and
+# F11 fence that: measured against a from-scratch build of 91bb1bd7 over `font=` runs of
+# 78, 79, 80, 81 and 2000 characters on both SVG doors, the exports are byte-identical
+# for every value containing no `%`.
+# WHY `hcases` AND NOT `dcases`: every export is done by a SPAWNED `--nogui` child, no
+# row creates a widget, and section G does not run xschem at all -- it compiles the
+# tree's own src/util.c with the build's own CFLAGS against link stubs and calls
+# my_snprintf() DIRECTLY, one fork per case, so a fortify abort is a recorded outcome
+# instead of the end of the run. MEASURED 2026-09-26 on three arms -- `--nogui` with
+# DISPLAY unset, the dev display `:99` via `devdisplay.sh exec`, and a private Xvfb
+# with no dev display reachable: `RESULT: ALL PASS (37 checks)` on all three, same
+# count, and ZERO `skip:` lines on all three, so this suite adds one case and no skip.
+# A box with no gcc or no `CFLAGS=` line in the generated Makefile.conf skips the G/W/P
+# rows as one lowercase `skip:` line and S3 as a second, and runs only section F, S1,
+# S2 and X1.
+# (28 checks as first landed, then 33, then 34, now 37, because THREE independent sabotage crews
+# in a row found guards that reddened NOTHING. Round one found four -- the spec gate in
+# the `p` arm, GUARD 3's digit-run cap, the (D) refusal's NUL write and
+# svg_draw_symbol()'s `svg_font_name` site -- plus five shipped source comments citing
+# rows that do not exist; those are F4b, G12, G13, G14 and X1, the last of which scans
+# src/ for every citation of this suite's rows and asserts the cited row EXISTS. Round
+# two found a fifth: the `if(!refuse)` WRAPPER round the strncpy inside my_snprintf,
+# which is the half of the fix that stops the out-of-bounds write rather than the half
+# that shortens the result. Removed in the `p` or the g/e/f arm alone, every row stayed
+# green while 51- and 60-character specs died `*** buffer overflow detected ***`. That
+# is G15. Round three added F10, F10b and F11 for the output-neutrality guard above --
+# and found that the guard TOOK F4's AND F4b's SABOTAGE OBSERVABLE AWAY: their reverted
+# shape was that same empty attribute, so with only a real site reverted the suite came
+# back `3 FAILED (31 passed)` with F4 GREEN and the three reds W1, P1 and X1, none of
+# which runs the binary. Both fixtures now carry a literal prefix (`Zz%-2000d`) so the
+# refusal produces a NON-EMPTY wrong family, and both redden again.
+# ⚠ DO NOT CHECK THIS SUITE AGAINST A CHECK COUNT WRITTEN DOWN ANYWHERE: it has
+# moved in every round so far and the suite prints both totals on every run.
+# receipts/C2-close-gaps.md, C2v-audit.md, C3-final.md, C4-output-neutral.md.)
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \

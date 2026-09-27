@@ -3889,7 +3889,29 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1607.**~~
 
-**The next free number is 1608.**
+- **1608** — **`my_snprintf` writes into two fixed 50-byte buffers and checks the bound
+  afterwards.** The tree builds WITHOUT `HAS_SNPRINTF` (defined nowhere: not in `config.h`,
+  not in `config.h.in`, never probed by `scconfig`, no `-D` on the compiler line — confirmed
+  four ways by the 1606 batch including `nm -S src/util.o`, where `my_snprintf` is 1615 bytes),
+  so the hand-rolled `#else` formatter is what compiles. Each of its **three** conversion arms
+  (`d/x/c/u`, `p`, `g/e/f`) opens `char nfmt[50], nstr[50];` and then (C) does
+  `nlen = sprintf(nstr, nfmt, i);` and tests `n + nlen + 1 > size` **after** the write, and
+  (A)/(B) does `strncpy(nfmt, fmt, l); nfmt[l] = '\0';` with `l` the caller's conversion-spec
+  length and no comparison against `sizeof(nfmt)`. **Six unchecked writes in two mechanisms**,
+  of the function's OWN stack, so no caller's buffer size makes it safe — and the function has
+  ~748 callers. ⚠ **Wider than the 1606 batch recorded it**: that note named only float
+  precision, but a field *width* does it with a short spec (`%-2000d`, seven characters, 2000
+  bytes, in the INTEGER arm), and nobody has looked at the `nfmt` half at all. LATENT today —
+  every live float caller is ≤ 24 characters and the only `%f` is `scheduler.c`'s `"%.6f"` on a
+  bounded value — but that is a property of today's format strings, not of the function, and it
+  stops being true the moment someone writes `%-60d`. **It is also the blocker on 1606's own
+  option 3**: teaching this formatter the `*` precision cannot be done without bounding these
+  buffers first, because a working `*` routes exactly the wide conversions they cannot hold.
+  Carried out of the 1606 batch, which found it and deliberately left it. OPEN.
+
+~~**The next free number is 1608.**~~
+
+**The next free number is 1609.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

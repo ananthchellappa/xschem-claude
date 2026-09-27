@@ -7776,8 +7776,9 @@ static void graph_marker_fmt(char *dest, int destsize, double v, double unit, in
 {
   if(!dest || destsize <= 0) return;   /* the sprintf arm below writes into dest unbounded */
   if(unit != 1.0 && unit != 0.0 && suffix) {
-    /* plain sprintf, NOT my_snprintf: without HAS_SNPRINTF the house
-     * my_snprintf is a minimal reimplementation that does not understand the
+    /* plain sprintf, NOT my_snprintf: the house my_snprintf (util.c) is a minimal
+     * reimplementation -- 1608 deleted the never-compiled `#ifdef HAS_SNPRINTF`
+     * vsnprintf arm, so there is now only one -- and it does not understand the
      * `*` precision, so it reads the double out of the varargs and then lets
      * libc's own sprintf look for a precision argument that is no longer there.
      * WHAT THAT DOES IS ABI-DEPENDENT, and an earlier revision of this comment

@@ -36,7 +36,46 @@ extern size_t my_mstrcat(int id, char **str, const char *append_str, ...);
 /* append one key=value attribute, writing an EMPTY value as key="" (issue 0183) */
 extern size_t my_mstrcat_tok(int id, char **str, const char *key, const char *value,
                              const char *tail);
+/* ISSUE 1608 -- THE ATTRIBUTE IS THE DOOR FENCE, AND `-Wformat-nonliteral` IS THE FLAG.
+ * Five call sites used to pass user data to my_snprintf() as the FORMAT STRING -- four
+ * `font=` attributes in svgdraw.c and the --rcfile argument in xinit.c -- and a .sch file
+ * reached an attempted arbitrary write through them (see the comment at svg_font_family's
+ * declaration in src/svgdraw.c). With this attribute gcc diagnoses any such site, and
+ * `tests/headless/test_snprintf_fmt_1608.tcl` row W1 compiles the whole of src/*.c with
+ * `-Wformat -Wformat-nonliteral` and fails on any diagnostic falling on a line that spells
+ * `my_snprintf(`. ⚠ NOT on any diagnostic at all: the clean tree is not at zero. Its
+ * diagnostics sit at the three `sprintf(nstr, nfmt, i)` calls inside my_snprintf() and
+ * draw.c's two `sprintf(tmpstr, fmt1/fmt2, ...)` (issue 1606's class), and W1 permits exactly
+ * those two shapes BY THEIR TEXT rather than by any total -- the total moves the day anyone
+ * adds another deliberate non-literal sprintf, which is a spelling change and not a
+ * regression. Row W2 is its anti-vacuity: without the attribute gcc has no opinion
+ * and W1 would pass on a tree with every door reopened. No decoy in the source text can fool
+ * the compiler's own opinion, which is why those two rows are a fence and a grep is not.
+ * ⚠ TWO DIFFERENT SETS OF FIVE LIVE IN THIS PARAGRAPH AND THEY TAKE DIFFERENT FLAGS. AN
+ * EARLIER VERSION CONFLATED THEM, putting the right claim on the wrong five. Measured over all
+ * of src/*.c at the build's own CFLAGS:
+ *   (i) THE CLEAN TREE'S OWN DIAGNOSTICS -- the sprintf shapes just named. Each one PASSES AN
+ *       ARGUMENT, so each is `[-Wformat-nonliteral]`; `-Wformat -Wformat-security` reports
+ *       NONE of them, and plain `-Wformat` reports none either.
+ *   (ii) THE FIVE CALL SITES 1608 IS ABOUT -- svgdraw.c's four `font=` sites and xinit.c's
+ *       --rcfile site. ALL FIVE ARE ZERO-ARGUMENT calls, and gcc reports a non-literal format
+ *       with no arguments as `[-Wformat-security]`. Driven on a probe with one real site
+ *       reverted: the diagnostic comes out tagged `-Wformat-security` under `-Wformat` ALONE,
+ *       under `-Wformat -Wformat-security`, and under `-Wformat -Wformat-nonliteral` -- the
+ *       tag never becomes `-Wformat-nonliteral`, which is why a filter keyed on that one flag
+ *       name went GREEN on a tree with a real door reopened.
+ * `-Wformat-nonliteral` is what catches the OTHER shape, `my_snprintf(buf, n, userfmt, 7)`,
+ * which -Wformat-security says nothing about at all. So W1 collects the WHOLE `[-Wformat`
+ * family and must, and W2 drives both shapes. Nor does
+ * `-Wformat-overflow` ever apply to a user function carrying this attribute -- only to the
+ * builtins whose destination gcc knows.
+ * The __GNUC__ guard is because this tree also builds under MSVC (XSchemWin/). */
+#if defined(__GNUC__)
+extern size_t my_snprintf(char *str, size_t size, const char *fmt, ...)
+  __attribute__((format(printf, 3, 4)));
+#else
 extern size_t my_snprintf(char *str, size_t size, const char *fmt, ...);
+#endif
 extern size_t my_strcat(int id, char **, const char *);
 extern size_t my_strcat2(int id, char **, const char *);
 extern size_t my_strdup(int id, char **dest, const char *src);

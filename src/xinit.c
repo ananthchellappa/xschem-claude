@@ -1883,7 +1883,10 @@ void swap_windows(int dr)
     new_schematic("switch", wp_j, "", 0);
     resetwin(1, 1, 1, 0, 0);
 
-    my_snprintf(old_win_path, S(old_win_path), "");
+    /* 1608: was `my_snprintf(old_win_path, S(old_win_path), "")`. Byte-identical, and the
+     * format attribute added to my_snprintf() in util.h makes a zero-length format a
+     * -Wformat-zero-length warning in the DEFAULT build, which this tree has none of. */
+    old_win_path[0] = '\0';
     if(dr) draw();
   }
 }
@@ -3519,7 +3522,19 @@ int Tcl_AppInit(Tcl_Interp *inter)
    }
    /* get xschemrc given om cmdline */
    if(cli_opt_rcfile[0]) {
-     my_snprintf(name, S(name), cli_opt_rcfile);
+     /* ISSUE 1608: this was `my_snprintf(name, S(name), cli_opt_rcfile)` -- the --rcfile
+      * command-line argument AS THE FORMAT STRING, reached before the GUI exists. Driven
+      * at 91bb1bd7: `--rcfile '%s'` -> rc 139 SIGSEGV (the %s arm va_arg's a char * nobody
+      * pushed, then strlen's it); `--rcfile '%-2000d'` -> "*** buffer overflow detected
+      * ***", rc 134; `--rcfile '%nd'` -> "*** %n in writable segments detected ***", rc
+      * 134. The twin of the four svgdraw.c sites -- see the comment at svg_font_family's
+      * declaration there for why the bound in my_snprintf() does not close this door and
+      * "%s" does. Fenced by rows F6, F7 and F8 of
+      * tests/headless/test_snprintf_fmt_1608.tcl, which drive `%-2000d`, `%nd` and `%s`
+      * through this option and require the name to come back VERBATIM in the `cannot find`
+      * message; F9 is their control, a --rcfile naming a file that exists. (An earlier version
+      * of this comment cited F3/F4/F6, which are svgdraw.c's rows.) */
+     my_snprintf(name, S(name), "%s", cli_opt_rcfile);
      if(stat(name, &buf) ) {
        /* cli_opt_rcfile given on cmdline is not existing */
        fprintf(errfp, "Tcl_AppInit() err 2: cannot find %s\n", name);

@@ -2890,9 +2890,10 @@ static void nd_view_forget_key(const char *key)
 
 /* Format one variable the way the publisher that armed us would have.
  *
- * BARE sprintf, not my_snprintf, and that is load-bearing: this tree builds
- * WITHOUT HAS_SNPRINTF, so my_snprintf() is the hand-rolled formatter in
- * util.c, which copies the conversion spec verbatim and cannot see a `*`. Given
+ * BARE sprintf, not my_snprintf, and that is load-bearing: my_snprintf() is the
+ * hand-rolled formatter in util.c and always was -- 1608 deleted the
+ * never-compiled `#ifdef HAS_SNPRINTF` vsnprintf arm that suggested otherwise --
+ * and it copies the conversion spec verbatim and cannot see a `*`. Given
  * "%.*g" it reads the double out of the varargs and then lets libc's own
  * sprintf go looking for a precision argument that is no longer there. The
  * cursor-B publisher this replaces already used bare sprintf for exactly this

@@ -36,7 +36,27 @@
 static int parselabel_debug = 0;
 #include "xschem.h"
 
-/*
+/* DEAD BLOCK, KEPT COMMENTED: xschem.h (included above) declares all of these, so this
+ * copy is not compiled and has not been since it was commented out. 1608 re-spells the
+ * my_snprintf line to match util.h, because the stale `int`/`int` version was twice
+ * reported as a live conflicting prototype by crews grepping the text without
+ * depth-counting comments -- `gcc -E` of parselabel.c contains it zero times, and util.h
+ * holds the program's only live declaration. Do not un-comment: util.h's declaration now
+ * also carries __attribute__((format(printf,3,4))), which these copies do not, and two
+ * disagreeing declarations of one function is undefined behaviour.
+ *
+ * MEASURED, so that nobody has to guess what un-commenting would cost:
+ *   the WHOLE block does not build at all -- `extern int xctx;` conflicts with xschem.h's
+ *     `Xschem_ctx *xctx` and `my_free`'s signature disagrees too (gcc: `conflicting types`);
+ *   the my_snprintf line ALONE builds clean, and gives the program two declarations of one
+ *     function, only one of which carries the format attribute;
+ *   the OLD `int`/`int` spelling of that line is a hard compile error (`conflicting types for
+ *     'my_snprintf'`, make rc 2).
+ * The middle case is the plausible edit, and it is the one row S3 of
+ * tests/headless/test_snprintf_fmt_1608.tcl now reddens on: S3 preprocesses this file and
+ * requires EXACTLY ONE declaration of my_snprintf, carrying format(printf, 3, 4). Its first
+ * version only counted declarations taking an `int size`, which the middle case does not have
+ * and the third case could only ever have measured through a binary that had not been rebuilt.
 extern int xctx;
 extern int has_x;
 extern FILE *errfp;
@@ -45,7 +65,7 @@ extern void my_free(int id, void *ptr);
 extern char bus_char[];
 extern const char *tcleval(const char str[]);
 extern void *my_malloc(int id, size_t size);
-extern int  my_snprintf(char *str, int size, const char *fmt, ...);
+extern size_t my_snprintf(char *str, size_t size, const char *fmt, ...);
 */
 #ifndef STRINGPTR
 #define STRINGPTR

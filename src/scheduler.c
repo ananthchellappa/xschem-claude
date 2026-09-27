@@ -6259,9 +6259,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       #ifdef USER_CONF_DIR
       my_snprintf(res, S(res), "USER_CONF_DIR=%s\n", USER_CONF_DIR); Tcl_AppendResult(interp, res, NULL);
       #endif
-      #ifdef HAS_SNPRINTF
-      my_snprintf(res, S(res), "HAS_SNPRINTF=%s\n", HAS_SNPRINTF); Tcl_AppendResult(interp, res, NULL);
-      #endif
+      /* 1608: there was a `#ifdef HAS_SNPRINTF` / "HAS_SNPRINTF=%s" line here. It never
+       * printed, because HAS_SNPRINTF is defined nowhere in this tree -- `xschem globals`
+       * has always emitted HAS_DUP2, HAS_POPEN and HAS_CAIRO and no HAS_SNPRINTF line. It
+       * also handed `%s` whatever integer the macro would have been. Deleted with the dead
+       * my_snprintf arm it advertised; the account of that arm is in src/util.c, above
+       * my_snprintf_spec_ok(). */
     }
 
     /* go_back [what]

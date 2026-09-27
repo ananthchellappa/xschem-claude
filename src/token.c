@@ -4128,8 +4128,9 @@ static void warn_unused_instance_attr(int inst, const char *format)
          * has to look like. ua_value_fault() supplies the middle clause and
          * decides nothing. */
         /* ⚠ THE PER-CENT SIGN ARRIVES AS AN ARGUMENT, and it is not a
-         * stylistic choice. This build compiles the no-HAS_SNPRINTF arm of
-         * my_snprintf() (util.c), a hand-written formatter that does not
+         * stylistic choice. my_snprintf() (util.c) is a hand-written formatter
+         * -- the only one, since 1608 deleted the never-compiled `#ifdef
+         * HAS_SNPRINTF` arm -- and it does not
          * understand "%%": it reads the second per-cent as the start of a new
          * conversion and eats the words after it. Measured, the sentence came
          * out ending "no '@' or '% 536627636n it." */
