@@ -907,6 +907,7 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       if(mod == 'l' && *f == 'd') nlen = sprintf(nstr, nfmt, lv);
       else if(mod == 'l' && (*f == 'u' || *f == 'x')) nlen = sprintf(nstr, nfmt, ulv);
       else nlen = sprintf(nstr, nfmt, i);
+      if(nlen < 0) { overflow = 1; break; }   /* 1612: see MY_SNPRINTF_NEG_GUARD below */
       if(n + nlen + 1 > size) {
         overflow = 1;
         break;
@@ -938,6 +939,7 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       n += l;
       if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
       nlen = sprintf(nstr, nfmt, i);
+      if(nlen < 0) { overflow = 1; break; }   /* 1612: see MY_SNPRINTF_NEG_GUARD below */
       if(n + nlen + 1 > size) {
         overflow = 1;
         break;
@@ -969,6 +971,7 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       n += l;
       if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
       nlen = sprintf(nstr, nfmt, i);
+      if(nlen < 0) { overflow = 1; break; }   /* 1612: see MY_SNPRINTF_NEG_GUARD below */
       if(n + nlen + 1 > size) {
         overflow = 1;
         break;
@@ -991,6 +994,52 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
   /* fprintf(errfp, "my_snprintf(): returning: |%s|\n", string); */
   return n;
 }
+/* MY_SNPRINTF_NEG_GUARD -- ISSUE 1612. `sprintf` MAY RETURN NEGATIVE, AND ONE -1 REACHED
+ * SIZE_MAX.
+ *
+ * All three arms above do `nlen = sprintf(nstr, nfmt, <value>);` and then test
+ * `n + nlen + 1 > size`. `nlen` is an int and C permits sprintf to return a negative value on
+ * an output error. With nlen == -1 that bound becomes `n > size`, which PASSES, and the
+ * `n += nlen` below it DECREMENTS n -- and n is a size_t, so from n == 0 it wraps to SIZE_MAX.
+ *
+ * Driven at 399341ff, each in its own process, with `%lc` of a byte >= 128, where this glibc
+ * returns -1 and sets errno to EILSEQ (checked against a plain-sprintf control):
+ *   "[%lc]"    returned 1 and output `]`            -- the prefix `[` overwritten
+ *   "%lc"      returned 18446744073709551615        -- (size_t)-1, and the log_action comment
+ *                                                      above records FIVE live sites consuming
+ *                                                      this return as a length
+ *   "%lcTAIL"  put the tail memcpy at string + SIZE_MAX, i.e. ONE BYTE BEFORE the caller's
+ *              buffer, rc 0, silent -- `string` is a pointer parameter so _FORTIFY_SOURCE
+ *              cannot size it, the same mechanism as (D) below
+ *
+ * GUARD 3 does not cover this: it bounds what the SPEC can ask for, not what sprintf REPORTS.
+ *
+ * WHERE THE GUARD SITS, and it matters. After the sprintf and BEFORE the bound, but also after
+ * the prefix write -- issue 1608's J3 established by driving it that a refusal breaking earlier
+ * leaves the destination entirely unwritten and the caller reads uninitialised memory. Breaking
+ * here means `n` still holds the prefix length and `string` is NUL-terminated, so the function
+ * returns an honest short length. It can no longer return (size_t)-1 from this path, which was
+ * open question 3 of the issue.
+ *
+ * ⚠ NOT REACHABLE TODAY, and issue 1609's fix is what keeps it that way: `%lc` is deliberately
+ * kept on the `int` fetch, so the tempting shortcut of normalising every integer spec to carry
+ * `l` -- which would have turned all eighteen live `%c` into `%lc` -- was not taken. One of
+ * those eighteen is draw.c's `"%s[%c]"` of gr->unitx_suffix, which is val[0] of a graph
+ * rectangle's `unitx=` attribute OUT OF A .sch FILE. Row M6 of
+ * tests/headless/test_snprintf_fmt_1608.tcl fences that boundary; the rows for this guard fence
+ * the consequence if it is ever crossed.
+ *
+ * ⚠ ONE MECHANISM, NOT TWO. Refusing `%lc` in GUARD 2's whitelist as well was considered and
+ * NOT done: it would be a second guard on the same path, and per CLAUDE.md two guards on one
+ * path means neither has a row that reddens on its own removal -- which cost the 1606 batch a
+ * whole fencing plan. This guard is also the general one: it catches any encoding error on any
+ * conversion, where a `%lc` refusal would catch one spelling.
+ *
+ * ⚠ THE errno READING IS glibc's. C permits a negative return "on an encoding error" without
+ * fixing the mechanism, so the TRIGGER measured here is glibc-specific while the UNCHECKED
+ * RETURN is a defect on every platform. Do not read the driven figures above as the standard's.
+ * See doc/claude/issues/1612-my-snprintf-never-checks-sprintfs-negative-return-and-drives-its-length-to-size-max.md */
+
 /* MY_SNPRINTF_PREFIX_GUARD -- ISSUE 1608 (D), AND WHY THE SPEC REFUSAL FALLS THROUGH IT.
  *
  * (D) THE OFF-BY-ONE. Each of the four arms above writes the literal run preceding the

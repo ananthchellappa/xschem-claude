@@ -1309,6 +1309,12 @@ int main(int argc, char **argv)
     { "MM", "[%lc]",   'i', 65, 0.0, 80 },
     /* M6: issue 1612's boundary -- `%c` of a byte >= 128 must stay a `%c` */
     { "MN", "[%c]",    'i', 233, 0.0, 80 },
+    /* ISSUE 1612: the negative-return guard. `%lc` of a byte >= 128 makes this glibc return
+     * -1 with errno EILSEQ in the "C" locale, and it is the ONE spelling that reaches a
+     * negative sprintf() return through a live arm. NB `%lc` is ACCEPTED (one modifier), so
+     * these are not gate refusals -- they go all the way to the sprintf. */
+    { "NA", "[%lc]",   'i', 233, 0.0, 80 },
+    { "NB", "%lc",     'i', 233, 0.0, 80 },
     /* M4's OTHER TWO ARMS. GUARD 2b lives in the shared gate, so it is arm-independent, and
      * each of these was ACCEPTED before it. `X%llfY` is the sharp one: driven at 9fa31dd0 it
      * returned 6 and printed `X-nanY` from a correctly-pushed 1.5 -- glibc's `ll` on a
@@ -1732,7 +1738,28 @@ check "M6 (1609/1612 `%c` is NOT normalised to `%lc`) `\[%c\]` of 233 returns 3 
  1612's question, not this one's" \
   [expr {[g_ok MN] && [g_ret MN] == 3 && [g_len MN] == 3}] \
   "(cbyte={[lrange [g MN] 0 4]})"
+
+## N1/N2 -- ISSUE 1612, THE NEGATIVE sprintf() RETURN. `%lc` of a byte >= 128 makes this glibc
+## return -1 (errno EILSEQ, "C" locale), and it is the only spelling that carries a negative
+## return through a live arm, because `%lc` is ACCEPTED -- one modifier -- so it is not stopped
+## by the gate and reaches the sprintf.
+##
+## ⚠ BOTH ROWS DRIVE THE d/x/c/u ARM ONLY, and that is not a coverage claim. There are THREE
+## guards, one per arm, and the other two are unreachable behaviourally: `%p` and the g/e/f
+## conversions have no encoding to fail on, so nothing can make their sprintf return negative on
+## this platform. Row N3 asserts all three by source text, and the split is stated here rather
+## than implied: removing the d/x/c/u guard reddens N1, N2 and N3; removing either other guard
+## reddens N3 alone.
+check "N1 (1612) `\[%lc\]` of 233, where sprintf returns -1: the result is the ONE-byte prefix `\[` and the return is 1. Without the guard the unchecked -1 makes `n += nlen` DECREMENT the accumulator, the tail is then copied over offset 0, and the same return of 1 comes back with the result `\]` instead -- so the RETURN alone cannot tell the two apart and this row keys on the output byte" \
+  [expr {[g_ok NA] && [g_ret NA] == 1 && [g_out NA] eq "\["}] \
+  "(NA={[lrange [g NA] 0 5]})"
+
+check "N2 (1612) `%lc` of 233 with no literal around it returns 0, not (size_t)-1. This is the shape that mattered: util.c's own log_action comment records five live sites consuming this return as a length, and without the guard `n += -1` wraps a size_t from 0 to SIZE_MAX and the function returns 18446744073709551615" \
+  [expr {[g_ok NB] && [g_ret NB] == 0}] \
+  "(NB={[lrange [g NB] 0 5]})"
 }
+
+
 
 # ============================================================================
 # SECTION S — WHERE NOTHING ELSE REACHES
@@ -1771,6 +1798,25 @@ proc live_code {src} {
 }
 set s1src [slurp [file join $repo src util.c]]
 set s1live [live_code $s1src]
+
+## N3 -- ISSUE 1612's other two guards, by source text, because nothing can drive them: `%p` and
+## the g/e/f conversions have no encoding to fail on, so nothing makes their sprintf return
+## negative on this platform. N1/N2 drive the d/x/c/u one.
+##
+## ⚠ THE INVARIANT IS "THE REFUSAL PRECEDES THE BOUND", NOT "EVERY sprintf HAS A GUARD", and the
+## difference is a counting trap this row was written wrong once already. `nlen = sprintf(` appears
+## FIVE times in the live text, not three: the d/x/c/u arm branches three ways on the length
+## modifier (issue 1609) and all three alternatives share ONE guard, because they are arms of one
+## if/else chain. Counting "sprintf sites" therefore gives 5 against 3 guards and reads as a
+## missing guard. What is exact is the BOUND: there are three `if(n + nlen + 1 > size)` tests, one
+## per arm, and each must be immediately preceded by the refusal. Named limit L9 permits a count a
+## row re-measures every run, which this is, unlike a count written into a comment.
+set n3bound [regexp -all {if\( *n \+ nlen \+ 1 > size *\)} $s1live]
+set n3guarded [regexp -all \
+  {if\( *nlen < 0 *\) \{ *overflow = 1; *break; *\} *if\( *n \+ nlen \+ 1 > size *\)} $s1live]
+check "N3 (1612) in src/util.c's live text every one of the 3 `if(n + nlen + 1 > size)` bounds is immediately preceded by the `if(nlen < 0) { overflow = 1; break; }` refusal -- 3 and 3. Greps those two spellings on the comment-stripped, whitespace-collapsed text; it deliberately does NOT count `nlen = sprintf(` sites, of which there are five, because the d/x/c/u arm's three length-modifier alternatives share one guard" \
+  [expr {$n3bound == 3 && $n3guarded == 3}] \
+  "(bounds=$n3bound guarded=$n3guarded sprintf_sites=[regexp -all {nlen = sprintf\(} $s1live])"
 check "S1 (1608) after comments, `//` lines and depth-counted `#if 0` regions are removed,\
  src/util.c contains the text `HAS_SNPRINTF` ZERO times and `vsnprintf` zero times, while the\
  ORIGINAL text still contains `HAS_SNPRINTF` (the replacement comment that records what was\
