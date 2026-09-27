@@ -1,10 +1,81 @@
 # 1609 — `my_snprintf` fetches every `long` argument as an `int`, and then tells `sprintf` to read eight bytes
 
-**STAMP:** `v1 claim=open tree=70fd152eaf2 stamped=2026-09-27 fix=untried open=3 by=driver`
+**STAMP:** `v1 claim=open tree=70fd152eaf2 stamped=2026-09-27 fix=untried open=6 by=driver`
 
 Carried forward, named but not fixed, from issue 1608 (`doc/claude/issue_1608_batch/STAGE_C.md`,
 "Also required"). 1608 hardened the formatter against hostile *format strings*; this is the
 remaining defect in how it fetches *arguments*.
+
+## 0. ⚠ CORRECTION, same day — STAGE A REFUTED THE MECHANISM AND TWO CONSEQUENCES
+
+Filed this morning by the driver, measured this afternoon by the Stage A crew, corrected here
+before any fix is written. The filing below is kept verbatim so the corrections can be read
+against it. **The defect is real and the conclusion stands; the reason given for it was wrong.**
+
+**(a) It is ZERO-extension, not sign-extension, and that changes the whole answer.** The shipped
+`src/util.o` carries `mov 0x10(%rsp),%r8d` immediately before `call __sprintf_chk` — a 32-bit
+move into the low half, which on x86-64 zeroes the upper half — and the same instruction appears
+at `-O0`, `-O1`, `-O2`, `-O3` and `-Os`. So the truncated value round-trips **only as unsigned
+32-bit**, and the two halves of the bug agree on exactly **`[0, 2^32)`**. Driven, with a control
+from plain `sprintf` for each: `%ld` of `4294967338` → `42`; `%ld` of `-1` → `4294967295`;
+`%ld` of `LONG_MAX` → `4294967295`; `%ld` of `LONG_MIN` → `0`.
+
+**(b) The XID claim below is REFUTED.** The filing says an XID "at or above 2^31 would print
+sign-extended". It would not: `%lu` of `0x80000001` prints `2147483649`, correct, because
+`0x80000001` is inside the agreeing band. Unsigned values only misprint at or above 2^32, and an
+XID is a CARD32.
+
+**(c) "Correct by the ABI's choice of slot layout" is REFUTED BY THE x86-64 psABI ITSELF**, which
+says the opposite in as many words: *"When a value of a type of class INTEGER is returned or
+passed in a register or on the stack, the excess bits … are **unspecified**"*, with the footnote
+*"the consumer side of those values needs to extend them"*. So even here nothing guarantees this
+works — it is **gcc's instruction selection**, not the ABI, and a different compiler or a future
+gcc is free to break it. That is a **stronger** argument for fixing this than the one filed, and
+it needs no other platform to make it.
+
+**(d) The aarch64 sentence below is OVERSTATED and must not ship as written.** AArch64 W-register
+writes also zero-extend architecturally, and this call's arguments are register-passed, so
+AAPCS64's stack-padding case does not arise. Two portability statements that ARE well-founded
+replace it: **Win64 is LLP64, so `long` is 4 bytes and there is no defect there at all**; and on
+**any big-endian LP64 target the 4-byte read takes the HIGH half, so every value misprints**, not
+only those outside the band. (AAPCS64 release 2025Q4 was fetched and read rather than recalled;
+there is still no aarch64 toolchain or emulator here, so nothing about that target is measured.)
+
+**(e) `open=3` understates it. A per-character whitelist is not a modifier whitelist.**
+`my_snprintf_spec_ok()`'s GUARD 2 scans character by character, so it admits `ll` and `hh` — and
+`%lld`, `%llu`, `%llx`, `%hhd`, `%hhu`, `%lhd`, `%hld`, `%llld` and `%hhhhd` are all **accepted**
+(while `%zd %jd %td %qd %I32d %*d %nd` are correctly refused). No door is open today, but the fix
+must be correct for those spellings, and this is a gap in issue 1608's GUARD 2 relative to its own
+stated intent — J4 of that batch listed `hh` among what it meant to stop. In scope here.
+
+**(f) What is CONFIRMED, and one of them for a better reason than the filing gave.** `%hu` is
+unaffected: `Selected.type` is `unsigned short` and `INT_MAX >= USHRT_MAX`, so `va_arg(args,int)`
+is the correct fetch — verified, not inherited. The `p` arm has no width defect. And no live
+caller can *ever* misprint, not because "the values are small" but because **every value a live
+caller can produce lies inside the agreeing band by construction**: `Display.max_request_size` is
+an `unsigned` in `Xlib.h` and XIDs are CARD32, so neither can reach 2^32. Live readings were
+`XMaxRequestSize=65535`, `XExtendedMaxRequestSize=4194303`, window id `6291739`, `first_sel` =
+`1 0 0`. **So no ruling is owed** — `DECISIONS.md` K3 holds — and Stage C must note that **no live
+caller can be made to redden**, which is why its row has to plant a value.
+
+**(g) Two constraints on the fix, both measured.** One fetch does **not** serve both: `d` wants
+`long` while `u`/`x` want `unsigned long`, and a single signed fetch would make `%lu` of `-1`
+print `18446744073709551615` where it prints `4294967295` today — user-visible, which would turn
+this into a ruling. And `%lc` must be **excluded** from the `l` branch: `wint_t` is 4 bytes on
+glibc and promotes to `int` on Windows, so the existing fetch is already the right width.
+
+**(h) The strongest argument against the "refuse `l`, cast at the call sites" option is a
+measurement, not a preference.** `-Wformat -Wformat-nonliteral` over all 40 `src/*.c` finds
+**zero** argument-type mismatches at any `my_snprintf` call site, and an anti-vacuity probe proves
+gcc would catch both a `long` into `%d` and an `int` into `%ld`. So the format attribute already
+polices every caller, and **the only type mismatch in the whole program is inside `my_snprintf`
+itself**. A hand-written `(int)` cast at each call site would satisfy gcc and convert a
+diagnosable bug into an undiagnosable one.
+
+**(i) A separate and more serious defect fell out of this measurement and is NOT part of 1609.**
+`sprintf`'s **negative return is never checked**, and that is filed as its own issue — see the
+`NUMBERING.md` entry for it. It is not reachable today, but it becomes reachable if this fix takes
+the shortcut of normalising every spec to carry `l`, so it constrains Stage B here.
 
 ## The mechanism
 

@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3970,7 +3970,27 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   pattern. The two loops this project's earlier notes actually suspected are CLEAN — that half is
   refuted; the defect is in the third two-index region, which the suspicion never named. OPEN.
 
-**The next free number is 1612.**
+- **1612** — **`my_snprintf` never checks `sprintf`'s negative return, and a single `-1` drives
+  its length to `SIZE_MAX`.** All three conversion arms do `nlen = sprintf(nstr, nfmt, i);` then
+  `if(n + nlen + 1 > size)`. `nlen` is an `int` and `sprintf` may return negative on an output
+  error; with `nlen == -1` the bound becomes `n > size`, which PASSES, and `n += nlen` decrements a
+  `size_t`, wrapping 0 to `SIZE_MAX`. Driven at `399341ff`, each in its own process, with
+  `%lc` of a byte >= 128 (glibc returns -1, `errno` 84 `EILSEQ`, against a plain-`sprintf`
+  control): `"[%lc]"` returns 1 and outputs `]`, the prefix overwritten; `"%lc"` returns
+  **18446744073709551615** = `(size_t)-1`, which util.c's own comment records **five live sites
+  consuming as a length**; `"%lcTAIL"` puts the tail `memcpy` at `string + SIZE_MAX`, **one byte
+  BEFORE the caller's buffer**, rc 0, silent — `string` is a pointer parameter so
+  `_FORTIFY_SOURCE` cannot size it, which is 1608's J6. A second route to a bogus length that
+  1608's GUARD 3 cap does not cover: the cap bounds what the SPEC asks for, not what `sprintf`
+  REPORTS. ⚠ **Not reachable today, and it is issue 1609's fix that could make it reachable**:
+  normalising every integer spec to carry `l` so one `va_arg`/`sprintf` pair serves all of them
+  would turn all eighteen live `%c` into `%lc`, and `draw.c` formats `"%s[%c]"` with
+  `gr->unitx_suffix`, which is `val[0]` of a graph rect's `unitx=` attribute **out of a `.sch`
+  file**. So 1609 must keep `%lc` out of its `l` branch — also correct independently, since
+  `wint_t` is 4 bytes on glibc and promotes to `int` on Windows. Found by the 1609 Stage A crew
+  while measuring something else. OPEN.
+
+**The next free number is 1613.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
