@@ -130,3 +130,14 @@ instincts about what to call a file.
   probe's integer is `va_arg` on a vararg nobody pushed and gave three different answers on three
   retries. A truncated `long` IS reproducible; stack garbage is not. Know which one you are looking
   at before you write a number down.
+
+## ⚠ If you are handed a git worktree, CHECK ITS BASE BEFORE READING ANYTHING
+
+Measured on this batch's Stage C: the worktree was provisioned at **`052b29f1`**, a commit from
+before this batch existed — no `doc/claude/issue_1609_batch/`, no `test_snprintf_fmt_1608.tcl`, and
+the pre-condensation `CLAUDE.md`. It also had no `Makefile.conf`, `config.h` or `src/Makefile`, so
+`./configure` had to be run.
+
+**A crew that did not notice would have measured a pre-1608 tree and reported it as this one**,
+and every figure in its receipt would have looked plausible. So: `git log --oneline -1` first,
+compare it against the commit the driver named, and reset or say so before you measure anything.

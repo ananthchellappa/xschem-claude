@@ -166,6 +166,20 @@
 #   the (D) refusal's `if(n < size) string[n] = '\0'` -> G14. Removed in all four arms, a
 #     refused conversion leaves the caller's buffer UNWRITTEN again, which is the (E) shape
 #     (D)'s fix exists to avoid.
+#   ISSUE 1609's ADDITIONS TO THE MAP -- one row per single removal, driven:
+#     the `d` branch's `va_arg(args, long)`            -> M1
+#     the `d` branch's `sprintf(nstr, nfmt, lv)`       -> M1 (the other half of the same branch;
+#       each half was removed on its own and each reddened M1 alone)
+#     the `u`/`x` branch's `va_arg(args, unsigned long)` -> M2
+#     the `u`/`x` branch's `sprintf(nstr, nfmt, ulv)`  -> M2
+#     GUARD 2b, `if(nmod) return 0;`                   -> M4, kept honest by M5
+#     `c`'s ABSENCE from both wide branches            -> M8 ONLY, and that is a source-text row
+#       on purpose: driven with `c` added to the `d` branch, EVERY ROW IN THIS FILE STAYED GREEN,
+#       because va_arg advances the same eight-byte slot for `int` and `long` and glibc reads
+#       four bytes for `%lc` whatever was pushed. There is no observable to assert.
+#     the `unsigned long` SPELLING of the `u`/`x` fetch -> M8 ONLY, same reason: a signed fetch
+#       gives byte-identical text for `%lu` and `%lx` on this ABI (driven).
+#     the ABSENCE of `long long` from src/util.c        -> M7
 #   every `row`/`rows` citation of this file in src/ -> X1, which asserts the cited ids EXIST.
 #     Five shipped comments cited rows that did not (`row F13` twice, `rows F7-F12`,
 #     `rows F1-F6`, `rows F3/F4/F6`); the repo has shipped a wrong row name or citation in EVERY
@@ -189,11 +203,23 @@
 #     is the reason GUARD 2 refuses `%n` itself instead of trusting libc.
 #  L3 THE `%s` ARM'S OWN FIELD WIDTH IS STILL DISCARDED. `%-12s` pads nothing, measured; that
 #     arm never builds nfmt. It is a separate output defect, carried forward in issue 1608.
-#  L4 `%ld`/`%lu`/`%hu`/`%hhd` STILL MIS-FETCH. GUARD 2 permits `l` and `h` because refusing
-#     them would change what live callers in scheduler.c print (G5 is that row), and their output is
-#     20 characters at worst, far inside GUARD 3. The arm fetches `va_arg(args, int)` and
-#     sprintf then reads 8 bytes, which works only by x86-64 zero-extension. Named and
-#     carried forward in the issue, not fixed, and NOT fenced here.
+#  L4 ⚠ SUPERSEDED BY ISSUE 1609, AND THE ORIGINAL TEXT IS KEPT BELOW BECAUSE FIVE ROWS IN
+#     SECTION M ARE THE ANSWER TO IT. What it said: "`%ld`/`%lu`/`%hu`/`%hhd` STILL MIS-FETCH.
+#     GUARD 2 permits `l` and `h` because refusing them would change what live callers in
+#     scheduler.c print (G5 is that row), and their output is 20 characters at worst, far inside
+#     GUARD 3. The arm fetches `va_arg(args, int)` and sprintf then reads 8 bytes, which works
+#     only by x86-64 zero-extension. Named and carried forward in the issue, not fixed, and NOT
+#     fenced here."
+#     WHAT IS TRUE NOW: the `d/x/c/u` arm fetches BY THE SPEC'S OWN LENGTH MODIFIER -- a `long`
+#     for `%ld`, an `unsigned long` for `%lu`/`%lx`, an `int` for everything else including
+#     `%lc` -- and rows M1, M2 and M3 drive it. `%hu` and `%hhd` never mis-fetched: a `short` or
+#     a `char` argument promotes to `int`, so `va_arg(args, int)` was and is the correct fetch
+#     for them (their narrowing is glibc's). `%hhd` is now REFUSED, not because it mis-fetched
+#     but because GUARD 2b admits AT MOST ONE length modifier; it has no occurrence in the tree.
+#     THE LIMIT THAT REMAINS: this fix is measured on x86-64 LP64 gcc only. On an LLP64 target
+#     (Win64) `long` is 4 bytes and there was no defect to fix; on a big-endian LP64 target a
+#     4-byte read of an 8-byte slot takes the HIGH half, which is a derivation from endianness
+#     and not a measurement -- there is no such target here. Rows M1-M8 measure THIS machine.
 #  L5 THE VALUE IN THE EXPORTED SVG IS STILL UNESCAPED. `font=` lands inside a double-quoted
 #     XML attribute, so a `"` in the name can still break it. That is an output-escaping
 #     defect, not a memory write, and it needs its own issue. F1-F4 and F4b assert the
@@ -721,7 +747,8 @@ if {[file exists $MKC]} {
 ## AND feeds them to X1's row-id set. X1 additionally asserts that every id here was actually
 ## exercised when gcc IS present, so a renamed or deleted G/W/P row cannot leave a stale name
 ## in the skip line -- the one direction a list like this can be kept honest in.
-set gwp_rows {G1 G2 G3 G4 G5 G6 G7 G8 G9 G10 G11 G12 G13 G14 G15 W1 W2 P1 P2 P3}
+set gwp_rows {G1 G2 G3 G4 G5 G6 G7 G8 G9 G10 G11 G12 G13 G14 G15 W1 W2 P1 P2 P3 \
+              M1 M2 M3 M4 M5 M6}
 if {$CC eq {} || $CFLAGS eq {ZZNONE}} {
   row_skip $gwp_rows "no gcc on PATH ([string length $CC] chars) or no CFLAGS line in the\
  generated Makefile.conf, so neither the formatter can be linked into a driver nor the\
@@ -796,10 +823,17 @@ foreach f [lsort [glob -nocomplain -directory $SRC *.c]] { lappend wsrcs [file t
 set W1 [wcompile $CC $CFLAGS {-Wformat -Wformat-nonliteral} $wsrcs $SRC $cdir w1]
 set w1lines [wdiag_lines [lindex $W1 0]]
 ## THE RULE: a -Wformat-nonliteral diagnostic may fall only on a line that is a plain
-## `sprintf(` with a non-literal format -- the three `sprintf(nstr, nfmt, i)` calls inside
+## `sprintf(` with a non-literal format -- the `sprintf(nstr, nfmt, <value>)` calls inside
 ## my_snprintf itself, which are its whole design and are what my_snprintf_spec_ok() guards,
-## and draw.c's two `sprintf(tmpstr, fmt1/fmt2, ...)` calls, which are issue 1606's class and
+## and draw.c's `sprintf(tmpstr, fmt1/fmt2, ...)` calls, which are issue 1606's class and
 ## carry their own comment saying so. It may NEVER fall on a line spelling `my_snprintf(`.
+## ⚠ NO NUMBER OF SITES IS WRITTEN HERE, AND THAT IS NAMED LIMIT L9 EARNING ITS KEEP. An earlier
+## version of this paragraph said "the three `sprintf(nstr, nfmt, i)` calls" and issue 1609 made
+## it wrong the same week, by splitting the d/x/c/u arm's single call into one per argument type
+## (`i`, `lv`, `ulv`) -- a spelling change and not a regression. The permitted TEXT is
+## `sprintf(nstr, nfmt,` up to the comma, which is why it already covered the new spellings and
+## needed no edit; the two SHAPES this row enumerates are still two. The detail line reports
+## `total_nonliteral_diags` so a reader can see the figure without anyone writing it down.
 ## ⚠ THIS IS THE 1608 PROPERTY AND NOT A TREE-WIDE ZERO. A tree-wide zero would need a real
 ## `#pragma GCC diagnostic` at every one of the deliberate sites, and THIS TREE HAS NO `#pragma`
 ## DIRECTIVE ANYWHERE: `/usr/bin/grep -rln '#pragma' src/` names src/util.c and nothing else, and
@@ -1158,6 +1192,12 @@ static void run_one(const Case *c)
   blob[BLOB - 1] = '\0';
   switch(c->kind) {
     case 'i': ret = my_snprintf(blob, c->size, fmt, (int)c->i); break;
+    /* ISSUE 1609: 'l' pushes a long and 'U' an unsigned long -- which is exactly what `%ld`
+     * and `%lu`/`%lx` ask for, and what util.h's format attribute already forces every real
+     * caller to hand them. The value is PLANTED: see the comment above row M1 for why no live
+     * caller can ever produce one that discriminates. */
+    case 'l': ret = my_snprintf(blob, c->size, fmt, (long)c->i); break;
+    case 'U': ret = my_snprintf(blob, c->size, fmt, (unsigned long)c->i); break;
     case 'd': ret = my_snprintf(blob, c->size, fmt, c->d); break;
     case 's': ret = my_snprintf(blob, c->size, fmt, "xy"); break;
     case 'p': ret = my_snprintf(blob, c->size, fmt, (void *)0x58); break;
@@ -1233,6 +1273,48 @@ int main(int argc, char **argv)
     { "FG", "!g", 'd', 49, 0.0, 80 },
     { "FF", "!f", 'd', 49, 0.0, 80 },
     { "FE", "!e", 'd', 49, 0.0, 80 },
+    /* ===== ISSUE 1609: FETCH BY THE SPEC'S OWN LENGTH MODIFIER =====
+     * Rows M1 (the `long` fetch) and M2 (the `unsigned long` fetch). Every value below is
+     * PLANTED and MUST BE -- see the comment above row M1. */
+    { "L1", "%ld",     'l', 4294967338L, 0.0, 80 },            /* 2^32 + 42 */
+    { "L2", "%ld",     'l', -1L, 0.0, 80 },
+    { "L3", "%ld",     'l', 9223372036854775807L, 0.0, 80 },   /* LONG_MAX */
+    { "L4", "[%12ld]", 'l', 4294967338L, 0.0, 80 },
+    { "L5", "a=%ld b", 'l', 4294967338L, 0.0, 80 },
+    { "L6", "%lu",     'U', 4294967338L, 0.0, 80 },
+    { "L7", "%lx",     'U', 20015998341291L, 0.0, 80 },        /* 0x1234567890AB */
+    { "L8", "%lu",     'U', -1L, 0.0, 80 },                    /* ULONG_MAX */
+    { "L9", "%lx",     'U', -1L, 0.0, 80 },
+    /* M3: the AGREEING BAND [0, 2^32), where the pre-1609 tree was already right and this
+     * fix must therefore change NOTHING. Every live caller's values are in here. */
+    { "LA", "%ld",     'l', 4294967295L, 0.0, 80 },
+    { "LB", "%lu",     'U', 2147483649L, 0.0, 80 },
+    { "LC", "%lx",     'U', 4294967295L, 0.0, 80 },
+    { "LD", "[%12ld]", 'l', 4294967295L, 0.0, 80 },
+    /* M4: GUARD 2b -- a REPEATED or MIXED length modifier is refused. MJ carries a literal
+     * prefix so the refusal's own shape (prefix kept, conversion dropped) is visible too. */
+    { "MA", "%lld",    'l', 42L, 0.0, 80 },
+    { "MB", "%llu",    'U', 42L, 0.0, 80 },
+    { "MC", "%llx",    'U', 42L, 0.0, 80 },
+    { "MD", "%hhd",    'i', -1, 0.0, 80 },
+    { "ME", "%hhu",    'i', 300, 0.0, 80 },
+    { "MF", "%lhd",    'l', 7L, 0.0, 80 },
+    { "MG", "%hld",    'i', 7, 0.0, 80 },
+    { "MH", "%llld",   'l', 7L, 0.0, 80 },
+    { "MI", "%hhhhd",  'i', 7, 0.0, 80 },
+    { "MJ", "X%lldY",  'l', 7L, 0.0, 80 },
+    /* M5: GUARD 2b's anti-vacuity -- a SINGLE modifier still formats, `l` on `c` included */
+    { "MK", "%hd",     'i', -1, 0.0, 80 },
+    { "ML", "%lc",     'i', 65, 0.0, 80 },
+    { "MM", "[%lc]",   'i', 65, 0.0, 80 },
+    /* M6: issue 1612's boundary -- `%c` of a byte >= 128 must stay a `%c` */
+    { "MN", "[%c]",    'i', 233, 0.0, 80 },
+    /* M4's OTHER TWO ARMS. GUARD 2b lives in the shared gate, so it is arm-independent, and
+     * each of these was ACCEPTED before it. `X%llfY` is the sharp one: driven at 9fa31dd0 it
+     * returned 6 and printed `X-nanY` from a correctly-pushed 1.5 -- glibc's `ll` on a
+     * floating conversion is undefined and it does not report an error. */
+    { "MO", "X%llfY",  'd', 0, 1.5, 80 },
+    { "MP", "X%llpY",  'p', 0, 0.0, 80 },
     /* G14: the (D) refusal's NUL write, at a size well below the literal run, one per arm */
     { "N1", "abcd%d", 'i', 7, 0.0, 2 },
     { "N2", "abcd%s", 's', 0, 0.0, 2 },
@@ -1528,6 +1610,128 @@ check "G15 (1608 the `if(!refuse)` WRAPPER ROUND THE strncpy, in the `p` and g/e
   [expr {[g_refused PY] && [g_refused FG] && [g_refused FF] && [g_refused FE] \
          && [g_out PY] eq {} && [g_out FG] eq {} && [g_out FF] eq {} && [g_out FE] eq {}}] \
   "(p51={[g PY]} g51={[g FG]} f51={[g FF]} e51={[g FE]})"
+
+# ----------------------------------------------------------------------------
+# SECTION M — ISSUE 1609: THE ARGUMENT FETCH, NOT THE FORMAT STRING
+# ----------------------------------------------------------------------------
+## ⚠ EVERY VALUE IN SECTION M IS PLANTED, AND IT HAS TO BE. NO LIVE CALLER CAN EVER REDDEN ONE
+## OF THESE ROWS -- not "does not today", but CANNOT, by construction. The pre-1609 arm fetched
+## `va_arg(args, int)` for every spec and then handed that `int` to a `sprintf` reading eight
+## bytes for `%ld`; gcc materialises the argument with a 32-bit register write, which on x86-64
+## zeroes the upper half, so the truncated value round-trips AS AN UNSIGNED 32-BIT QUANTITY and
+## the two halves of the defect agree on exactly [0, 2^32). Every value the tree's own `l`
+## callers can produce lies inside that band: `Display.max_request_size` is an `unsigned` in
+## Xlib.h, and an XID is a CARD32. So a row driving `xschem globals` or the window-id getter
+## would fence NOTHING, forever, however many values it tried. The discriminator has to be a
+## `long` above 2^32 or below 0, and only a planted caller can push one. Measured, with a plain
+## `sprintf` control for each value, in doc/claude/issue_1609_batch/receipts/.
+##
+## ⚠ AND THE FETCH'S CORRECTNESS IS NOT OBSERVABLE FROM THE ARGUMENT LIST EITHER. On x86-64
+## `va_arg(args, int)` and `va_arg(args, long)` advance the SAME one eight-byte slot, so a
+## format with a second conversion after the `%ld` consumes its argument identically under both
+## spellings. That is why these rows read the FORMATTED TEXT and not the subsequent arguments.
+check "M1 (1609 the `long` fetch for `%ld`) a PLANTED `long` outside \[0, 2^32) formats as\
+ itself, byte for byte with a plain-sprintf control: 2^32+42 prints `4294967338`, -1 prints\
+ `-1`, LONG_MAX prints `9223372036854775807`, and the field width and the surrounding literal\
+ runs still work (`\[%12ld\]` and `a=%ld b`). Before the fix these printed `42`, `4294967295`\
+ and `4294967295` -- the low 32 bits, zero-extended. The value is PLANTED and MUST BE: see the\
+ comment above this row for why no live caller can ever produce one. This row reddens when\
+ EITHER half of the `d` branch goes -- the `va_arg(args, long)` or the\
+ `sprintf(nstr, nfmt, lv)` -- each driven separately by removal" \
+  [expr {[g_ok L1] && [g_out L1] eq {4294967338} \
+         && [g_ok L2] && [g_out L2] eq {-1} \
+         && [g_ok L3] && [g_out L3] eq {9223372036854775807} \
+         && [g_ok L4] && [g_out L4] eq {[  4294967338]} \
+         && [g_ok L5] && [g_out L5] eq {a=4294967338 b}}] \
+  "(p32={[g L1]} neg={[g L2]} lmax={[g L3]} w12={[g L4]} run={[g L5]})"
+
+check "M2 (1609 the `unsigned long` fetch for `%lu` and `%lx`) a PLANTED `unsigned long`\
+ outside \[0, 2^32) formats as itself: 2^32+42 prints `4294967338`, 0x1234567890AB prints\
+ `1234567890ab`, ULONG_MAX prints `18446744073709551615` and `ffffffffffffffff`. Before the fix\
+ they printed `42`, `567890ab`, `4294967295` and `ffffffff`. It is a SEPARATE branch from M1's\
+ and it is fenced separately: `d` wants a `long` and `u`/`x` want an `unsigned long`, because\
+ fetching one as the other is only defined while the value is representable in both types. This\
+ row reddens when either half of the `u`/`x` branch goes. ⚠ THE SPLIT IS A TYPE-COMPATIBILITY\
+ REQUIREMENT AND NOT AN OUTPUT ONE, MEASURED: on this ABI a signed and an unsigned fetch of the\
+ same pushed argument produce IDENTICAL text for `%lu` and `%lx`, because both read the same\
+ eight bytes and both conversions reinterpret them. So this row and M1 would both stay green\
+ under a single signed fetch -- which is why the `unsigned long` spelling is asserted by row M8\
+ over the source text as well" \
+  [expr {[g_ok L6] && [g_out L6] eq {4294967338} \
+         && [g_ok L7] && [g_out L7] eq {1234567890ab} \
+         && [g_ok L8] && [g_out L8] eq {18446744073709551615} \
+         && [g_ok L9] && [g_out L9] eq {ffffffffffffffff}}] \
+  "(u32={[g L6]} x48={[g L7]} umax={[g L8]} xmax={[g L9]})"
+
+check "M3 (1609 NEUTRALITY inside the agreeing band -- the property that keeps this fix out of\
+ the user's way) for every value in \[0, 2^32), which is exactly the set the tree's own `l`\
+ callers can produce, the output is UNCHANGED: `%ld` of 2^32-1 is `4294967295`, `%lu` of\
+ 2^31+1 is `2147483649`, `%lx` of 2^32-1 is `ffffffff`, `\[%12ld\]` of 2^32-1 is\
+ `\[  4294967295\]`. Driven before and after against the same driver and the same util.o build\
+ recipe: the whole band table plus every plain `%d`/`%u`/`%x`/`%c` and the live `%hu` came back\
+ BYTE-IDENTICAL, and only the out-of-band lines moved. G5 and G10 hold the `%ld` 65535, `%hu`\
+ 513 and plain-spec halves of the same claim" \
+  [expr {[g_ok LA] && [g_out LA] eq {4294967295} \
+         && [g_ok LB] && [g_out LB] eq {2147483649} \
+         && [g_ok LC] && [g_out LC] eq {ffffffff} \
+         && [g_ok LD] && [g_out LD] eq {[  4294967295]} \
+         && [g_out B9] eq {65535} && [g_out BA] eq {513}}] \
+  "(ld={[g LA]} lu={[g LB]} lx={[g LC]} w12={[g LD]} ld65535={[g_out B9]} hu={[g_out BA]})"
+
+check "M4 (1609 GUARD 2b -- AT MOST ONE length modifier, which is ONE guard and not two) every\
+ REPEATED or MIXED modifier is refused: `%lld`, `%llu`, `%llx`, `%hhd`, `%hhu`, `%lhd`, `%hld`,\
+ `%llld` and `%hhhhd`, and `X%lldY` keeps its `X` and drops the rest, which is this function's\
+ own overflow shape. All nine were ACCEPTED before, because GUARD 2's whitelist was a\
+ PER-CHARACTER loop (`else if(c == 'l' || c == 'h') continue;`) that could not see a\
+ repetition -- so `%llld` reached glibc and came back as the literal `%ld`, with no number in\
+ it at all. `ll` is REFUSED AND NOT IMPLEMENTED because this tree is C89 and C89 has no `long\
+ long`; row M7 is the row that keeps it that way. It is deliberately ONE guard\
+ (`if(nmod) return 0;`) covering both the repeated and the mixed case, because two guards on\
+ one path would mean neither had a row that reddens on its own removal. ⚠ IT IS IN THE SHARED\
+ GATE, SO IT REACHES THE OTHER TWO ARMS TOO, and that closed two things nobody had named:\
+ `X%llfY` returned 6 and printed `X-nanY` from a correctly-pushed 1.5 -- `ll` on a floating\
+ conversion is undefined and glibc reports no error for it -- and `X%llpY` was accepted with the\
+ modifier silently dropped. Both now keep the `X` and drop the rest" \
+  [expr {[g_refused MA] && [g_refused MB] && [g_refused MC] && [g_refused MD] \
+         && [g_refused ME] && [g_refused MF] && [g_refused MG] && [g_refused MH] \
+         && [g_refused MI] \
+         && [g_ok MJ] && [g_out MJ] eq {X} && [g_ret MJ] == 1 \
+         && [g_ok MO] && [g_out MO] eq {X} && [g_ret MO] == 1 \
+         && [g_ok MP] && [g_out MP] eq {X} && [g_ret MP] == 1}] \
+  "(lld={[g MA]} llu={[g MB]} llx={[g MC]} hhd={[g MD]} hhu={[g ME]} lhd={[g MF]}\
+ hld={[g MG]} llld={[g MH]} hhhhd={[g MI]} prefixed={[g MJ]} llf={[g MO]} llp={[g MP]})"
+
+check "M5 (1609 anti-vacuity for M4, and without it M4 passes on a gate that refuses every\
+ modifier) a SINGLE length modifier still formats: `%hd` of -1 is `-1`, `%lc` of 65 is `A` and\
+ `\[%lc\]` is `\[A\]`. G5 carries the two LIVE spellings, `%ld` and `%hu`. Tightening GUARD 2\
+ into a modifier whitelist had to refuse `ll` and `hh` without touching `l` or `h`, and M4\
+ alone cannot tell those two outcomes apart" \
+  [expr {[g_ok MK] && [g_out MK] eq {-1} \
+         && [g_ok ML] && [g_out ML] eq {A} \
+         && [g_ok MM] && [g_out MM] eq {[A]} \
+         && [g_ok B9] && [g_ok BA]}] \
+  "(hd={[g MK]} lc={[g ML]} lcbr={[g MM]} ld={[g B9]} hu={[g BA]})"
+
+## ⚠ M6 IS A FENCE AGAINST A SHORTCUT NOBODY HAS TAKEN, AND THAT IS WHY IT EXISTS. The tempting
+## one-line shape for 1609 is to normalise every integer spec to carry `l` so that one
+## `va_arg`/`sprintf` pair serves the whole arm. That would turn every live `%c` in the tree
+## into `%lc`, and `%lc` of a byte with no multibyte representation makes glibc's sprintf return
+## -1 -- which this function never checks, driving its `size_t` length to SIZE_MAX (issue 1612).
+## One of the tree's `%c` sites is fed a graph rectangle's `unitx=` attribute out of a .sch FILE,
+## so the shortcut would convert an unreachable defect into a file-borne one. This row drives
+## the byte value that triggers it. ⚠ The output bytes are NOT asserted, deliberately: the
+## formatted byte is >= 128 and would be an encoding question rather than a measurement. The
+## return and the length are the discriminators, and under the shortcut they are 1 and 1.
+check "M6 (1609/1612 `%c` is NOT normalised to `%lc`) `\[%c\]` of 233 returns 3 and leaves a\
+ three-byte result -- one literal `\[`, one formatted byte, one literal `\]`. Under the\
+ normalise-to-`l` shortcut this returns 1 with the result `\]`, because glibc's `%lc` of that\
+ value returns -1 and the unchecked negative wraps the accumulated length to SIZE_MAX before\
+ the prefix is overwritten. `%lc` itself stays ACCEPTED and stays on the `int` fetch (M5 drives\
+ it): `wint_t` is four bytes on glibc and promotes to `int` on Windows, so the pre-existing\
+ fetch was already the right width for it. Whether `%lc` should be refused outright is issue\
+ 1612's question, not this one's" \
+  [expr {[g_ok MN] && [g_ret MN] == 3 && [g_len MN] == 3}] \
+  "(cbyte={[lrange [g MN] 0 4]})"
 }
 
 # ============================================================================
@@ -1595,6 +1799,68 @@ check "S2 (1608) the same stripped read of src/scheduler.c contains `HAS_SNPRINT
          && [regexp -all {HAS_SNPRINTF} $s2src] > 0}] \
   "(live_hits=[regexp -all {HAS_SNPRINTF} $s2live]\
  raw_hits=[regexp -all {HAS_SNPRINTF} $s2src] src=[string length $s2src]B)"
+
+## M7 and M8 — ISSUE 1609's TWO SOURCE-TEXT ROWS, AND WHY THEY ARE SOURCE-TEXT ROWS.
+## Both assert something the driven rows CANNOT see, which is the only reason to reach for the
+## weak instrument at all:
+##   M7 asserts an ABSENCE that has no behaviour: a tree that implemented `ll` instead of
+##     refusing it would pass M4 (which only demands a refusal) on a compiler that HAS
+##     `long long`, and then fail to compile under `./configure --debug`'s -std=c89 -pedantic.
+##     The C89 constraint is a property of the text, so the row is over the text.
+##   M8 asserts that `c` is absent from the wide branches. That routing is NOT behaviourally
+##     observable on this ABI -- driven, with the exclusion deliberately sabotaged: `va_arg`
+##     advances the same eight-byte slot for `int` and for `long`, and glibc reads four bytes
+##     for `%lc` whatever type the argument had, so `%lc` printed the same character either
+##     way and every row in this file stayed green. It also asserts the `unsigned long`
+##     SPELLING, which M2 cannot: a signed fetch produces identical text for `%lu` and `%lx`.
+## ⚠ BOTH READ live_code()'s OUTPUT, so a comment quoting the guard, a `//` line and a
+## depth-counted `#if 0` clone are all stripped first -- this tree has defeated a whole-file
+## regexp with each of those. M8 additionally removes ALL whitespace before matching, because a
+## reformatting of `mod == 'l'` to `mod=='l'` is not a regression and must not redden it.
+check "M7 (1609 `ll` is REFUSED, NEVER IMPLEMENTED -- C89 has no `long long`) the\
+ comment-stripped, `//`-stripped, depth-counted-`#if 0`-stripped text of src/util.c contains\
+ the two-word token `long long` ZERO times, while that same stripped text DOES contain\
+ `va_arg(args, long)` -- the second half is the anti-vacuity, so an empty or unstripped read\
+ cannot pass this row. This tree is C89 (`./configure --debug` asks gcc for `-std=c89\
+ -pedantic`, under which `long long` is a diagnostic), so implementing `%lld` was never\
+ available and GUARD 2b refuses it instead; M4 is the row that drives the refusal. A row\
+ asserting only the refusal would stay green on a tree that implemented `ll` under a compiler\
+ that has it" \
+  [expr {[regexp -all {long long} $s1live] == 0 \
+         && [string first {va_arg(args, long)} $s1live] >= 0}] \
+  "(long_long_hits=[regexp -all {long long} $s1live]\
+ wide_fetch_seen=[expr {[string first {va_arg(args, long)} $s1live] >= 0}]\
+ live=[string length $s1live]B)"
+
+## the `;`-delimited statements of the stripped text whose whitespace-free form mentions the
+## modifier test -- i.e. exactly the statements that dispatch on `mod == 'l'`
+set m8stmts {} ; set m8bad {} ; set m8lfetch 0 ; set m8ufetch 0
+foreach frag [split $s1live {;}] {
+  set t $frag
+  regsub -all {\s+} $t {} t
+  if {[string first {mod=='l'} $t] < 0} continue
+  lappend m8stmts $t
+  if {[string first {'c'} $t] >= 0} { lappend m8bad $t }
+  if {[string first {va_arg(args,long)} $t] >= 0} { incr m8lfetch }
+  if {[string first {va_arg(args,unsignedlong)} $t] >= 0} { incr m8ufetch }
+}
+check "M8 (1609 the wide branches never name `c`, and the `u`/`x` one fetches UNSIGNED) taking\
+ every `;`-delimited statement of that same stripped src/util.c text, whitespace removed, whose\
+ text mentions `mod=='l'`: there are at least four of them (two `va_arg` fetches and two\
+ `sprintf` calls), NONE contains the character constant `'c'`, exactly one fetches\
+ `va_arg(args, long)` and exactly one fetches `va_arg(args, unsigned long)`. `%lc` must stay on\
+ the `int` fetch: `wint_t` is four bytes on glibc and promotes to `int` on Windows, and\
+ normalising `%c` to `%lc` is what would make issue 1612 reachable from a .sch file (row M6\
+ drives that boundary). ⚠ THIS IS A SOURCE-TEXT ROW BECAUSE THERE IS NOTHING TO DRIVE:\
+ sabotaged by adding `c` to the `d` branch, `%lc` printed the identical character and every row\
+ in this file stayed green, because `va_arg` advances one eight-byte slot for `int` and for\
+ `long` alike and glibc reads four bytes for `%lc` regardless. The `unsigned long` half is here\
+ for the same reason -- a signed fetch produces byte-identical text for `%lu` and `%lx` on this\
+ ABI, so no driven row can tell them apart" \
+  [expr {[llength $m8stmts] >= 4 && [llength $m8bad] == 0 \
+         && $m8lfetch == 1 && $m8ufetch == 1}] \
+  "(stmts=[llength $m8stmts] naming_c={$m8bad} long_fetches=$m8lfetch\
+ ulong_fetches=$m8ufetch)"
 
 ## S3 — PREPROCESSED, not grepped, because the thing it is about was twice mis-reported by
 ## grepping. Two crews on this batch filed src/parselabel.l's

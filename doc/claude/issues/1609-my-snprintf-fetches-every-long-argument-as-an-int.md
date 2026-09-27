@@ -1,6 +1,6 @@
 # 1609 — `my_snprintf` fetches every `long` argument as an `int`, and then tells `sprintf` to read eight bytes
 
-**STAMP:** `v1 claim=open tree=70fd152eaf2 stamped=2026-09-27 fix=untried open=6 by=driver`
+**STAMP:** `v1 claim=fixed tree=5a85ae36 stamped=2026-09-27 fix=taken open=6 by=1609-stage-C`
 
 Carried forward, named but not fixed, from issue 1608 (`doc/claude/issue_1608_batch/STAGE_C.md`,
 "Also required"). 1608 hardened the formatter against hostile *format strings*; this is the
@@ -58,11 +58,13 @@ an `unsigned` in `Xlib.h` and XIDs are CARD32, so neither can reach 2^32. Live r
 `1 0 0`. **So no ruling is owed** — `DECISIONS.md` K3 holds — and Stage C must note that **no live
 caller can be made to redden**, which is why its row has to plant a value.
 
-**(g) Two constraints on the fix, both measured.** One fetch does **not** serve both: `d` wants
-`long` while `u`/`x` want `unsigned long`, and a single signed fetch would make `%lu` of `-1`
-print `18446744073709551615` where it prints `4294967295` today — user-visible, which would turn
-this into a ruling. And `%lc` must be **excluded** from the `l` branch: `wint_t` is 4 bytes on
-glibc and promotes to `int` on Windows, so the existing fetch is already the right width.
+**(g) Two constraints on the fix. ⚠ THE FIRST ONE'S STATED MECHANISM IS ITSELF REFUTED — see (j)
+below, which supersedes this paragraph's second sentence.** One fetch does **not** serve both: `d`
+wants `long` while `u`/`x` want `unsigned long`. *(Superseded: this paragraph originally added
+"and a single signed fetch would make `%lu` of `-1` print `18446744073709551615` where it prints
+`4294967295` today — user-visible, which would turn this into a ruling." That is false on this ABI.)*
+And `%lc` must be **excluded** from the `l` branch: `wint_t` is 4 bytes on glibc and promotes to
+`int` on Windows, so the existing fetch is already the right width.
 
 **(h) The strongest argument against the "refuse `l`, cast at the call sites" option is a
 measurement, not a preference.** `-Wformat -Wformat-nonliteral` over all 40 `src/*.c` finds
@@ -76,6 +78,32 @@ diagnosable bug into an undiagnosable one.
 `sprintf`'s **negative return is never checked**, and that is filed as its own issue — see the
 `NUMBERING.md` entry for it. It is not reachable today, but it becomes reachable if this fix takes
 the shortcut of normalising every spec to carry `l`, so it constrains Stage B here.
+
+**(j) ⚠ STAGE C REFUTED (g)'s MECHANISM. The signedness of the fetch changes NO output on this
+ABI.** Driven two ways: a two-`va_arg` comparison over the same pushed argument gives identical
+text for `%lu` and `%lx`, and making the real site's fetch signed left every one of the
+behavioural row's outputs **byte-identical**, with only the source-text row red. Both fetches read
+the same eight bytes and both conversions reinterpret them. **The `unsigned long` split is still
+correct**, for the reason Stage A's own §6 gave and not the one (g) gave: the C standard's
+signed/unsigned `va_arg` exception holds only while the value is representable in **both** types.
+But **no behavioural row can fence it**, so the suite asserts the `unsigned long` spelling over the
+source text and the reason lives in the code comment rather than as a preference. Two guards in
+this fix have no behavioural observable at all — that one, and routing `c` away from the `long`
+branch — and both are stated in the row's own name instead of being hidden.
+
+**(k) "Every current output is preserved byte for byte" is FALSE AS WRITTEN and needs its scope.**
+Two things do change, and neither could be otherwise: `%lu` of `ULONG_MAX` goes `4294967295` →
+`18446744073709551615`, which **is the fix working** — printing `4294967295` for `ULONG_MAX` is the
+defect — and `%hhd`/`%hhu` go from formatting to refused. The defensible property, and the one the
+rows assert, is neutrality **inside the agreeing band `[0, 2^32)` plus every plain spec**, which is
+exactly what a live caller can reach. K3 still holds and no ruling is owed.
+
+**(l) The new guard closed TWO defects nothing in this batch had named.** Because it lives in the
+shared spec gate it reaches the other arms: **`X%llfY` returned 6 and printed `X-nanY` from a
+correctly-pushed `1.5`** — glibc's `ll` on a floating conversion is undefined and reports no error —
+and `X%llpY`/`X%hhpY` were accepted with the modifier silently dropped. All three now refuse.
+`%lp`/`%hp` remain accepted-and-ignored, so the carried-forward note about them stands for those two
+spellings only.
 
 ## The mechanism
 

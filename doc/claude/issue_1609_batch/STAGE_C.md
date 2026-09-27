@@ -50,7 +50,17 @@ this tree is C89 and C89 has no `long long`, so implementing it is not available
 1608's GUARD 2 against **its own stated intent**: that batch's J4 listed `hh` among what it meant to
 stop.
 
-**L5. YOU WILL ADD A FOURTH NON-LITERAL `sprintf` TO `util.c`, AND ROW `W1` KNOWS ABOUT THE OTHER
+**L5. ⚠ REFUTED IN ITS MECHANICS BY STAGE C — the edit this adjudication asked for was not the one
+needed.** `W1` permits by the text `sprintf(nstr, nfmt,` **up to the comma**, so it already covered
+`…, lv)` and `…, ulv)`; its matcher needed no change and it stayed green, with
+`total_nonliteral_diags` rising from 5 to 7 and `offending={}`. What actually needed editing was
+**three sentences quoting counts** — `util.c`'s *"THE THREE … CALLS"* and *"(util.c, three sites;
+draw.c has two more)"*, plus `W1`'s own comment — i.e. named limit **L9**, not a permitted list. All
+three are now shape-only and each records that this issue falsified the number in the week it was
+written. The original adjudication follows, kept because its instinct (the change touches W1's
+neighbourhood) was right even though its mechanism was wrong.
+
+**L5 (as written). YOU WILL ADD A FOURTH NON-LITERAL `sprintf` TO `util.c`, AND ROW `W1` KNOWS ABOUT THE OTHER
 THREE.** `W1` of `tests/headless/test_snprintf_fmt_1608.tcl` asserts that no `-Wformat-nonliteral`
 diagnostic falls on a line spelling `my_snprintf(`, and permits exactly the existing shapes **by
 their text**. Branching the `sprintf` call adds one. **Update `W1`'s permitted list in the same

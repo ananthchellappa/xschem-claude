@@ -729,9 +729,23 @@ void actionlog_suppress_pop(void)
  *   an earlier version said "three live callers" and then itemised four, having counted a `%ld`
  *   that is inside a comment. The spellings are the substance and are what row G5 drives; a
  *   grep over src/ is how a reader finds the sites, and its number is not this sentence's to
- *   assert. They still mis-fetch -- the arm does va_arg(args, int)
- *   and sprintf then reads 8 bytes -- which works only by x86-64 zero-extension. That is a
- *   SEPARATE defect, named and carried forward in issue 1608, not fixed here.
+ *   assert. They used to MIS-FETCH -- the arm did va_arg(args, int) for every spec and sprintf
+ *   then read 8 bytes for `%ld`. That was issue 1609, and it is fixed: see
+ *   MY_SNPRINTF_FETCH_GUARD below.
+ *
+ * GUARD 2b (`if(nmod) return 0;`) -- AT MOST ONE length modifier, added by issue 1609. GUARD 2
+ *   above is a PER-CHARACTER whitelist, so on its own it cannot see a repetition: before this
+ *   guard `%lld`, `%llu`, `%llx`, `%hhd`, `%hhu`, `%lhd`, `%hld`, `%llld` and `%hhhhd` were all
+ *   ACCEPTED, which is a gap against GUARD 2's own stated intent -- issue 1608's own
+ *   adjudications listed `hh` among what it meant to stop. Driven at 9fa31dd0 against the
+ *   tree's own util.o: `%llld` reached glibc and came back as the literal text `%ld`, with no
+ *   number in it at all. `ll` is REFUSED AND NOT IMPLEMENTED because this tree is C89 and C89
+ *   has no `long long`; under `./configure --debug` (which asks gcc for -std=c89 -pedantic)
+ *   writing one is a diagnostic. It is deliberately ONE guard covering both the repeated and
+ *   the mixed case: two guards on one path would mean neither had a row that reddens on its own
+ *   removal (issue 1606 lost a whole fencing plan to exactly that). Rows M4 and M5 of
+ *   tests/headless/test_snprintf_fmt_1608.tcl are the pair, and M7 is the row that keeps `ll`
+ *   refused rather than implemented. No live caller carries a repeated modifier.
  *
  * GUARD 3 (`max + 320 < nstrsize`) -- bounds mechanism (C), the `sprintf(nstr, nfmt, i)`
  *   output. A spec can carry only two decimal numbers, a field width and a precision, and
@@ -755,9 +769,13 @@ void actionlog_suppress_pop(void)
  *   MY_SNPRINTF_NSTR = 512 accepts every live spec and every precision up to 191. 512 is a
  *   judgement, not a measurement: 338 is the measured floor.
  *
- * THE THREE `sprintf(nstr, nfmt, i)` CALLS BELOW ARE THE DELIBERATE NON-LITERAL FORMATS IN
- * THIS TREE, and `-Wformat-nonliteral` names them (util.c, three sites; draw.c has two more
- * of issue 1606's class). They are why row W1 of tests/headless/test_snprintf_fmt_1608.tcl
+ * THE `sprintf(nstr, nfmt, <value>)` CALLS BELOW ARE THE DELIBERATE NON-LITERAL FORMATS IN
+ * THIS TREE, and `-Wformat-nonliteral` names them (this file's, plus draw.c's, which are issue
+ * 1606's class). ⚠ NO NUMBER OF SITES IS WRITTEN HERE: an earlier revision said "three" and
+ * issue 1609 made it wrong the same week, by splitting this arm's single call into one per
+ * argument type. The two permitted SHAPES are what W1 matches, and W1's own detail line reports
+ * the diagnostic total so nobody has to write it down. They are why row W1 of
+ * tests/headless/test_snprintf_fmt_1608.tcl
  * asserts that no diagnostic falls on a line spelling `my_snprintf(`, and permits exactly
  * these two shapes by their text, rather than asserting zero diagnostics tree-wide: the clean
  * tree is NOT at zero, and every diagnostic it does emit is at one of those two shapes. A
@@ -779,10 +797,13 @@ void actionlog_suppress_pop(void)
  * and Bv-refute.md. */
 #define MY_SNPRINTF_NSTR 512
 
-static int my_snprintf_spec_ok(const char *spec, size_t len, size_t nfmtsize, size_t nstrsize)
+static int my_snprintf_spec_ok(const char *spec, size_t len, size_t nfmtsize, size_t nstrsize,
+                               int *mod)
 {
   size_t i, run, max = 0;
+  int nmod = 0;
 
+  if(mod) *mod = 0;
   if(len >= nfmtsize) return 0;                        /* GUARD 1: (A) and (B) together */
   /* spec[0] is '%' and spec[len-1] is the conversion letter; scan what lies between */
   for(i = 1; i + 1 < len; i++) {
@@ -797,7 +818,12 @@ static int my_snprintf_spec_ok(const char *spec, size_t len, size_t nfmtsize, si
       i--;
     }
     else if(c == '-' || c == '+' || c == ' ' || c == '#' || c == '.') continue;
-    else if(c == 'l' || c == 'h') continue;            /* GUARD 2: the only two permitted */
+    else if(c == 'l' || c == 'h') {                    /* GUARD 2: the only two permitted */
+      if(nmod) return 0;                               /* GUARD 2b: AT MOST ONE, see 1609 */
+      nmod = 1;
+      if(mod) *mod = c;                                /* 'l' or 'h', for the 1609 fetch */
+      continue;
+    }
     else return 0;                                     /* GUARD 2: whitelist, not blacklist */
   }
   return max + 320 < nstrsize;                         /* GUARD 3: (C) */
@@ -849,10 +875,19 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
     }
     else if(format_spec && (*f == 'd' || *f == 'x' || *f == 'c' || *f == 'u') ) {
       char nfmt[50], nstr[MY_SNPRINTF_NSTR];
-      int i, nlen, refuse;
-      i = va_arg(args, int);
+      int i = 0, nlen, refuse, mod = 0;
+      long lv = 0;
+      unsigned long ulv = 0;
       l = f - fmt+1;
-      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr), &mod);   /* 1608 */
+      /* ISSUE 1609: FETCH BY THE SPEC'S OWN LENGTH MODIFIER, and hand sprintf() an argument
+       * of the type its format asks for. `c` is deliberately NOT in either l branch and
+       * neither branch may ever name it -- see MY_SNPRINTF_FETCH_GUARD below. The gate runs
+       * FIRST because it is what decides `mod`; on a refusal the value fetched here is never
+       * used, because the refusal breaks out below. */
+      if(mod == 'l' && *f == 'd') lv = va_arg(args, long);
+      else if(mod == 'l' && (*f == 'u' || *f == 'x')) ulv = va_arg(args, unsigned long);
+      else i = va_arg(args, int);
       if(!refuse) {
         strncpy(nfmt, fmt, l);
         nfmt[l] = '\0';
@@ -867,7 +902,11 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       string[n+l] = '\0';
       n += l;
       if(refuse) { overflow = 1; break; }    /* 1608: AFTER the prefix write, never before */
-      nlen = sprintf(nstr, nfmt, i);
+      /* ISSUE 1609: the same three-way split as the fetch above, because `"%d"` handed a
+       * `long` is exactly as wrong as `"%ld"` handed an `int`. */
+      if(mod == 'l' && *f == 'd') nlen = sprintf(nstr, nfmt, lv);
+      else if(mod == 'l' && (*f == 'u' || *f == 'x')) nlen = sprintf(nstr, nfmt, ulv);
+      else nlen = sprintf(nstr, nfmt, i);
       if(n + nlen + 1 > size) {
         overflow = 1;
         break;
@@ -883,7 +922,7 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       int  nlen, refuse;
       i = va_arg(args, void *);
       l = f - fmt+1;
-      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr), NULL);   /* 1608 */
       if(!refuse) {
         strncpy(nfmt, fmt, l);
         nfmt[l] = '\0';
@@ -914,7 +953,7 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
       int nlen, refuse;
       i = va_arg(args, double);
       l = f - fmt+1;
-      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr));   /* 1608 */
+      refuse = !my_snprintf_spec_ok(fmt, l, sizeof(nfmt), sizeof(nstr), NULL);   /* 1608 */
       if(!refuse) {
         strncpy(nfmt, fmt, l);
         nfmt[l] = '\0';
@@ -1018,6 +1057,82 @@ size_t my_snprintf(char *string, size_t size, const char *format, ...)
  * so no removal of it can change an observable and no row could redden on one.
  * Rows G8, G9 and G14 of tests/headless/test_snprintf_fmt_1608.tcl fence the rest: G8 the
  * canary at index `size`, G9 the refusal's ordering, G14 the refusal's NUL write. */
+
+/* MY_SNPRINTF_FETCH_GUARD -- ISSUE 1609: THE ARM FETCHED EVERY ARGUMENT AS AN `int` AND THEN
+ * TOLD sprintf TO READ EIGHT BYTES.
+ *
+ * WHAT WAS WRONG. `d x c u` share one arm, and it did `i = va_arg(args, int)` whatever the spec
+ * said. For `%ld` that is a 4-byte read of an 8-byte argument, and then `sprintf(nstr, "%ld", i)`
+ * hands an `int` to a conversion that reads 8 bytes back out. Both halves are wrong and they
+ * used to cancel. They cancel because of GCC'S INSTRUCTION SELECTION, not because of the ABI:
+ * the shipped util.o carried `mov 0x10(%rsp),%r8d` immediately before `call __sprintf_chk`, at
+ * -O0, -O1, -O2, -O3 and -Os, and a 32-bit register write zeroes the upper 32 bits. So the
+ * truncated value round-tripped AS AN UNSIGNED 32-BIT QUANTITY and the two halves agreed on
+ * exactly [0, 2^32) and nowhere else.
+ *
+ * ⚠ AND THE ABI SAYS THE OPPOSITE OF "IT IS CORRECT BY THE SLOT LAYOUT". The x86-64 psABI,
+ * §3.2.3 Parameter Passing, verbatim: "When a value of a type of class INTEGER is returned or
+ * passed in a register or on the stack, the excess bits that would not be present in the memory
+ * representation of the type ... are unspecified", with the footnote "That is, the consumer side
+ * of those values needs to extend them or use short form instruction variants." `sprintf`
+ * reading 8 bytes for `%ld` IS that consumer side, so nothing in the ABI guaranteed this worked
+ * even here, and a different compiler or a future gcc is free to stop making it work. That is a
+ * stronger reason to fix it than any portability argument.
+ *
+ * THE FIX: FETCH BY THE SPEC'S OWN LENGTH MODIFIER. `my_snprintf_spec_ok()` reports the one
+ * permitted modifier through `*mod`, and the arm then fetches a `long` for `%ld`, an
+ * `unsigned long` for `%lu` and `%lx`, and an `int` for everything else -- and branches the
+ * `sprintf` call the same way, because `"%d"` handed a `long` is exactly as wrong as `"%ld"`
+ * handed an `int`. Driven, with a plain-`sprintf` control for each value: `%ld` of 2^32+42 was
+ * `42` and is `4294967338`; of -1 was `4294967295` and is `-1`; `%lx` of 0x1234567890AB was
+ * `567890ab` and is `1234567890ab`; and every value inside [0, 2^32), which is every value any
+ * live caller can produce, is BYTE-IDENTICAL to what it printed before. Rows M1, M2 and M3.
+ *
+ * WHY NOT REFUSE `l` AND CAST AT THE CALL SITES. Because the callers are already policed and
+ * this function is not. util.h declares my_snprintf with `format(printf,3,4)`, and compiling
+ * every .c file under src/ with `-Wformat -Wformat-nonliteral` finds NO argument-type mismatch
+ * at any call
+ * site -- while an anti-vacuity probe confirms gcc catches both a `long` handed to `%d` and an
+ * `int` handed to `%ld`. So the only type mismatch in the program was the one inside here, and
+ * hand-written `(int)` casts at the call sites would have satisfied gcc and converted a
+ * diagnosable bug into an undiagnosable one.
+ *
+ * WHY TWO FETCHES AND NOT ONE. `%ld` wants a `long` and `%lu`/`%lx` want an `unsigned long`.
+ * ⚠ THIS IS A TYPE-COMPATIBILITY REQUIREMENT, NOT AN OUTPUT ONE, AND THE DIFFERENCE MATTERS TO
+ * ANYONE FENCING IT. Driven: on this ABI a signed and an unsigned fetch of the same pushed
+ * argument produce byte-identical text for `%lu` and `%lx`, because both read the same eight
+ * bytes and both conversions reinterpret them -- so NO behavioural row can tell the two
+ * spellings apart, and row M8 asserts the `unsigned long` spelling over the source text for
+ * that reason. The requirement is the standard's: `va_arg` with a type that is not compatible
+ * with the argument's promoted type is undefined behaviour, excepting only a signed/unsigned
+ * pair "and the value is representable in both types" -- which a full-range `unsigned long` is
+ * not. Fetching by signedness as well as by width needs no exception at all.
+ *
+ * WHY `c` IS NOT IN EITHER WIDE BRANCH, AND WHY NOTHING IS NORMALISED. `%lc` is `wint_t`, which
+ * is 4 bytes on glibc and promotes to `int` on Windows, so the `int` fetch was already the right
+ * width for it. And the shortcut that would have made this a one-liner -- normalise every
+ * integer spec to carry `l` so one va_arg/sprintf pair serves the whole arm -- would turn every
+ * live `%c` in the tree into `%lc`, and `%lc` of a byte with no multibyte representation makes
+ * glibc's sprintf return -1, which this function never checks: that is ISSUE 1612, and one of
+ * the tree's `%c` sites is fed a graph rectangle's `unitx=` attribute out of a .sch FILE, so the
+ * shortcut would have converted an unreachable defect into a file-borne one. Row M6 drives that
+ * boundary and row M8 asserts the absence over the text. ⚠ The routing itself is NOT
+ * behaviourally observable here, measured by sabotage: `va_arg` advances the same one eight-byte
+ * slot for `int` and for `long`, and glibc reads four bytes for `%lc` whatever was pushed, so
+ * with `c` deliberately added to the `long` branch `%lc` printed the identical character and
+ * EVERY row in the suite stayed green except M8. That is why M8 is a source-text row.
+ *
+ * OTHER TARGETS, AND WHICH OF THESE SENTENCES IS A MEASUREMENT. Everything above is x86-64 LP64
+ * gcc 15.2.0, driven. Win64 is LLP64: `long` is 4 bytes there, `va_arg(args, int)` was the right
+ * width, and there was no defect on that target at all. On a big-endian LP64 target a 4-byte
+ * read at an 8-byte slot's address takes the HIGH half, so step one is not truncation but the
+ * wrong half outright and every value misprints -- that one is a DERIVATION from endianness;
+ * there is no such target here to drive it on. Nothing is claimed about aarch64: its W-register
+ * writes zero-extend architecturally and these arguments are register-passed, so it is the same
+ * accident as x86-64's, and there is no aarch64 toolchain or emulator here either way.
+ *
+ * Measurements, the instruments that produced them, and what could not be measured:
+ * doc/claude/issue_1609_batch/receipts/. */
 size_t my_strdup2(int id, char **dest, const char *src) /* 20150409 duplicates also empty string  */
 {
  size_t len;
