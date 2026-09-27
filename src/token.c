@@ -3182,7 +3182,8 @@ static int symbol_name_uses_token(int inst, const char *tok)
  * of print_spice_element() so that the two things that now ask "did this
  * setting reach the deck?" -- the warning, and issue 1201's automatic separate
  * copy of the cell -- can never ask the question about two different strings
- * for the same copy. Row AS29 counts the definition and the callers.
+ * for the same copy. Row AS29 of tests/headless/test_auto_specialize_1201.tcl counts the definition
+ * and the callers.
  *
  * A reader would assume the symbol's `format` attribute settles it. It does
  * not, twice over: a copy may bring a format line of its OWN, and an LVS or
@@ -4234,9 +4235,21 @@ static void warn_unused_instance_attr(int inst, const char *format)
          * stylistic choice. my_snprintf() (util.c) is a hand-written formatter
          * -- the only one, since 1608 deleted the never-compiled `#ifdef
          * HAS_SNPRINTF` arm -- and it does not
-         * understand "%%": it reads the second per-cent as the start of a new
-         * conversion and eats the words after it. Measured, the sentence came
-         * out ending "no '@' or '% 536627636n it." */
+         * understand "%%". Its scan loop has no case for it: every `%` sets
+         * format_spec and moves the spec start, so the second per-cent begins a
+         * NEW conversion, the words after it are eaten up to the first character
+         * that terminates a conversion, and a value is fetched with va_arg for an
+         * argument no caller pushed.
+         *
+         * ⚠ AN EARLIER VERSION OF THIS COMMENT QUOTED THE INTEGER THAT CAME OUT,
+         * AND THAT WAS THE DEFECT NAMED LIMIT L9 EXISTS FOR (see the header of
+         * tests/headless/test_snprintf_fmt_1608.tcl). The number is va_arg on a
+         * vararg nobody pushed -- stack garbage that moves with the environment
+         * block -- so it is not a measurement and no two runs need agree on it.
+         * What reproduces exactly is the SHAPE: the sentence ends mid-phrase with
+         * a per-cent sign, a formatted number in place of the remaining words, and
+         * the tail of the original text after it. The %s below is what avoids all
+         * of that, and it is the fix, not a style. */
         my_snprintf(advice, S(advice),
           "The %s drawing does use %s, so the name is right -- but the value "
           "you typed %s, and XSCHEM can only pass a value down when it is one "
@@ -4314,7 +4327,8 @@ int print_spice_element(FILE *fd, int inst)
   /* ISSUE 1201: the four-step resolution that used to stand here, verbatim, in
    * resolve_netlist_format() above -- so that the warning below and the
    * automatic separate copy of a cell can never decide against two different
-   * SPICE lines for the same copy. Row AS29 counts the callers. */
+   * SPICE lines for the same copy. Row AS29 of
+   * tests/headless/test_auto_specialize_1201.tcl counts the callers. */
   resolve_netlist_format(inst, &format);
   if ((name==NULL) || (format==NULL)) {
     my_free(_ALLOC_ID_, &template);
@@ -6198,7 +6212,7 @@ static char *get_pin_attr(const char *token, int inst, int engineering)
        *
        * WHAT SURVIVES IS THE D5 TERM, and it is not optional: drop
        * !raw_is_digital() and a digital database prints logic levels as volts
-       * again. test_backannotate_digital row BA87 is the source witness for all
+       * again. tests/headless/test_backannotate_digital.tcl row BA87 is the source witness for all
        * six lines at once -- it counts every `int live = ` line in this file,
        * requires each to carry raw_is_digital, and requires none to name the
        * switch. Its needle is the bare `int live = `, so do not respell these

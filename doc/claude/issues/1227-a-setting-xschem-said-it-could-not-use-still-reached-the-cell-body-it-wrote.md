@@ -122,6 +122,17 @@ the second per-cent as a new conversion and eats the words after it. The
 sentence came out ending `no '@' or '% 536627636n it.` The per-cent sign is
 passed as a `%s` argument instead, with the reason written beside it.
 
+> ⚠ **Correction, 2026-09-27.** The integer in that quotation is **not
+> reproducible and is not a measurement**: it is `va_arg` on a vararg no caller
+> pushed, i.e. stack garbage that moves with the environment block, and two crews
+> driving the same shape on separate builds got different values. The record above
+> is left as it was written, but **do not re-quote the number** — quote the shape
+> (the sentence ends mid-phrase with a per-cent sign, a formatted number in place
+> of the remaining words, and the tail of the original text after it). This is
+> named limit `L9` of `tests/headless/test_snprintf_fmt_1608.tcl`, and the shipped
+> comment in `src/token.c` that used to carry the same number has been rewritten to
+> state the mechanism instead.
+
 ## Related
 
 **1213** is the issue this is the second half of. **1220** records what is still
