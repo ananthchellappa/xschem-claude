@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3948,7 +3948,29 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   shell's, and there is no Windows toolchain here — so whatever ships must not claim that branch
   is measured. OPEN.
 
-**The next free number is 1611.**
+- **1611** — **the VHDL component loop tests the PARENT symbol, so `xschem_libs` is honoured at
+  the top level and silently dropped one level down.** `vhdl_block_netlist(FILE *fd, int i, int
+  alert)` in `src/vhdl_netlist.c` takes the block being expanded as `i`; its
+  component-declaration loop walks candidates as `j`. Sixteen accesses in that loop, fourteen use
+  `j`, and **two use `i`**: the `default_schematic` read and the `abs_path` handed to
+  `check_lib(1, abs_path)`. Both are symbol-index-for-symbol-index so neither can leave the array
+  — a LOGIC defect, not a memory one. Cost: `check_lib` is what makes `xschem_libs` (the list of
+  libraries NOT to netlist) exclude anything, and on the parent's path it always passes, because
+  the parent already passed the identical test in the caller. Driven on a three-level fixture, the
+  top-level architecture's component list moves with `xschem_libs` while the mid-level one is
+  byte-identical to the unexcluded control, and the excluded leaf is declared AND instantiated
+  with `grep -c 'entity leaf'` = 0 — a netlist naming an entity it never emits. The
+  `default_schematic` half is provably DEAD CODE: the function tests the parent's
+  `default_schematic` near its top and returns early, so `default_schematic=ignore` on a component
+  has no effect. ⚠ History settles intent: `f251918a`, titled *"fix usage of xschem_libs, list of
+  libraries/schematics NOT to netlist / export"*, hoisted the call at three sites and mistyped two;
+  `242523cb`, titled literally *"typo fix"*, repaired the sibling in `global_vhdl_netlist()`'s
+  descent loop, where the symbol index genuinely IS `i`. **The two loops need OPPOSITE answers**,
+  which is why the repair caught one and missed this one, and why no fix here may be applied by
+  pattern. The two loops this project's earlier notes actually suspected are CLEAN — that half is
+  refuted; the defect is in the third two-index region, which the suspicion never named. OPEN.
+
+**The next free number is 1612.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

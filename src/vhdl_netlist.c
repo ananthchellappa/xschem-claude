@@ -652,13 +652,34 @@ int vhdl_block_netlist(FILE *fd, int i, int alert)
       {
         const char *default_schematic;
         if( strboolcmp(get_tok_value(xctx->sym[j].prop_ptr,"vhdl_primitive",0),"true")==0 ) continue;
-        default_schematic = get_tok_value(xctx->sym[i].prop_ptr, "default_schematic", 0);
+        /* ISSUE 1611: sym[j], NOT sym[i]. `i` is this function's parameter -- the block being
+         * expanded -- while `j` walks the CANDIDATE components. Fourteen of this loop's sixteen
+         * accesses always used `j`; these two read the parent and were the only ones that did.
+         * Reading the parent's default_schematic here was also DEAD CODE: the function tests the
+         * parent's own default_schematic near its top and returns early, so this could only
+         * re-check a value already checked, and `default_schematic=ignore` on a COMPONENT had no
+         * effect at all. Driven: `component dsi` was declared although dsi.sym carries the
+         * attribute, and stripping the attribute gave a diff-identical component section. */
+        default_schematic = get_tok_value(xctx->sym[j].prop_ptr, "default_schematic", 0);
         if(!strcmp(default_schematic, "ignore")) continue;
 
         if(!xctx->sym[j].type || (strcmp(xctx->sym[j].type,"primitive")!=0 &&
            strcmp(xctx->sym[j].type,"subcircuit")!=0))
              continue;
-        my_strdup2(_ALLOC_ID_, &abs_path, abs_sym_path(xctx->sym[i].name, ""));
+        /* ISSUE 1611: sym[j], NOT sym[i], and this is the half a user sees. check_lib() is what
+         * makes `xschem_libs` -- the list of libraries NOT to netlist or export -- exclude
+         * anything. Handed the PARENT's path it always passed, because the parent had already
+         * passed the identical test in the caller, so an exclusion was honoured at the top level
+         * (vhdl_netlist()'s own component loop spells this with `j`) and silently ignored one
+         * level down. Driven on a three-level fixture: the excluded leaf was declared AND
+         * instantiated inside the mid-level architecture with `grep -c 'entity leaf'` = 0, a
+         * netlist naming an entity it never emits.
+         *
+         * ⚠ DO NOT "FIX" THE SIBLING LOOP BY PATTERN. global_vhdl_netlist()'s descent loop makes
+         * the same call and `i` is CORRECT there -- commit 242523cb, titled "typo fix", changed
+         * that one from `j` to `i`. The two loops need opposite answers, which is why f251918a
+         * mistyped two sites and the follow-up repaired only one. */
+        my_strdup2(_ALLOC_ID_, &abs_path, abs_sym_path(xctx->sym[j].name, ""));
         if(( strcmp(xctx->sym[j].type,"subcircuit")==0 || strcmp(xctx->sym[j].type,"primitive")==0) &&
             check_lib(1, abs_path)
           ) {
