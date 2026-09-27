@@ -129,11 +129,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2257277.log`, taken in a throwaway clone of `eb20dc62`
-  built from scratch at a short path, where issue 1606 added
-  `test_ev_precision_bound_1606` to `hcases`: **99 cases** (3 + 80 + 15 + `xschemtest`),
-  **98 blocks**, **`wc -l` 296 green**; trailer `cases=99 blocks=98 counted_failures=0
-  skips=8 elapsed=588s`. The `98/97/skips=8` figure before it was `results.1842389.log` at
+  the gate verdict `tests/results.3131395.log`, taken in a throwaway clone of `2fbfa809`
+  built from scratch at a 10-character path, where issue 1608 added
+  `test_snprintf_fmt_1608` to `hcases`: **100 cases** (3 + 81 + 15 + `xschemtest`),
+  **99 blocks**, **`wc -l` 299 green**; trailer `cases=100 blocks=99 counted_failures=0
+  skips=8 elapsed=594s`. The `99/98/skips=8` figure before it was `results.2257277.log` at
+  `eb20dc62` (issue 1606), and `98/97/skips=8` before that was `results.1842389.log` at
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
@@ -141,11 +142,13 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
-  hierarchical-PDF port), `98/97/skips=8` (issue 1603) and `99/98/skips=8` here
-  (issue 1606). ⚠ **`skips=` has now held at 8 across five consecutive figures, and that is
-  a coincidence of what was registered, not a property**: 1604, 1603 and 1606 each went into
-  `hcases` ALONE, which costs one case and no skip, while 1352 and 1601 went into both lists
-  and cost a skip each. **The step is not a constant**: a suite registered in BOTH
+  hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606) and
+  `100/99/skips=8` here (issue 1608). ⚠ **`skips=` has now held at 8 across SIX consecutive
+  figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
+  1606 and 1608 each went into `hcases` ALONE, which costs one case and no skip, while 1352
+  and 1601 went into both lists and cost a skip each. A reader who starts treating 8 as the
+  expected value will call a correct run wrong the next time a suite registers in both.
+  **The step is not a constant**: a suite registered in BOTH
   lists costs two cases and one headless self-skip; one registered in `hcases` alone costs
   one case and no skip. Anyone checking against a figure written down anywhere, this file
   included, would have called four green runs red this week. Read the trailer. ⚠ Both new terms are
@@ -546,6 +549,33 @@ ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 (analysis & decision write-ups), `doc/claude/suggestions/` (session prompts, plans), and
 `doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).
+
+**Do not write down a number nothing re-checks.** Two conventions out of the 1606 and 1608
+batches, both of which cost four to six hardening rounds to learn and are fenced in
+`tests/headless/test_snprintf_fmt_1608.tcl`'s header as limits `L9` and row `X1`:
+
+- **A comment must not quote a count a command produces over the tree's own text.** One
+  sentence there shipped wrong three times, each time inside the revision written to fix the
+  previous one: it quoted `grep -c '#pragma'` as 0, then as 1, and the truth was **3** —
+  because `grep -c` counts *lines* and the correcting rewrite had spread the word `#pragma`
+  across three lines of its own sentence. The comment became its own counterexample. Either a
+  **row** asserts the count, where it is re-measured every run, or the sentence drops the
+  number. Same rule for any figure the instrument cannot reproduce: a `--rcfile` probe's
+  integer is `va_arg` on a vararg nobody pushed, and quoting it gave 32, 112 and 24 on three
+  retries. Quote the shape, not the number.
+- **A test row's NAME must describe its method, not its coverage**, and cross-references must
+  be checked rather than trusted. Rows called "every write to X" and "every indirect-precision
+  sprintf in the tree" were each defeated by one whitespace variant or a `#define` alias, and
+  **five shipped source comments cited rows that do not exist**. Row `X1` now derives the real
+  row set from the suite's own `check` calls — a hand-kept list is the same defect one level
+  up — and catches an id hidden in a block comment, a string literal, a `#if 0` region,
+  another suite, or backticks.
+- ⚠ **A fence keyed to a symptom dies quietly when something else cures the symptom.** Two
+  rows asserted the *absence* of a malformed output; a later change stopped producing that
+  output and both silently stopped fencing anything, with only non-behavioural rows still
+  reddening. Nothing detects this automatically. Prefer asserting the correct shape over
+  asserting a wrong one's absence, and re-run the site-by-site sabotage after any change in
+  the same file.
 
 **Cite code by symbol (proc or function name), not by bare `file:line`**: coordinates
 rot, identity holds (`src/op_annot.tcl` does this on purpose). A line number that cannot
