@@ -129,29 +129,38 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3131395.log`, taken in a throwaway clone of `2fbfa809`
-  built from scratch at a 10-character path, where issue 1608 added
-  `test_snprintf_fmt_1608` to `hcases`: **100 cases** (3 + 81 + 15 + `xschemtest`),
-  **99 blocks**, **`wc -l` 299 green**; trailer `cases=100 blocks=99 counted_failures=0
-  skips=8 elapsed=594s`. The `99/98/skips=8` figure before it was `results.2257277.log` at
+  the gate verdict `tests/results.3308304.log`, taken in a throwaway clone of `cee5945b`
+  built from scratch at a 10-character path, where issue 1610 added
+  `test_generator_shell_1610` to `hcases`: **102 cases** (3 + 83 + 15 + `xschemtest`),
+  **101 blocks**, **`wc -l` 305 green**; trailer `cases=102 blocks=101 counted_failures=0
+  skips=8 elapsed=596s`. The `101/100/skips=8` figure before it was `results.3226734.log`
+  at `636bc431`, which registered `test_scratch_home_note` — a suite that had been failing
+  at HEAD with nothing running it, so **the fence over T1's own counting predicate was
+  itself unfenced**; `wc -l` 302, `elapsed=599s`. Before those, `100/99/skips=8` was
+  `results.3131395.log` at `2fbfa809` (issue 1608, `wc -l` 299, 594s), and
+  `99/98/skips=8` was `results.2257277.log` at
   `eb20dc62` (issue 1606), and `98/97/skips=8` before that was `results.1842389.log` at
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Eight figures in five days**: `88/87/skips=5` (`results.2325750.log`,
+  **Ten figures in six days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
-  hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606) and
-  `100/99/skips=8` here (issue 1608). ⚠ **`skips=` has now held at 8 across SIX consecutive
+  hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
+  `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair) and
+  `102/101/skips=8` here (issue 1610). ⚠ **`skips=` has now held at 8 across EIGHT
+  consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
-  1606 and 1608 each went into `hcases` ALONE, which costs one case and no skip, while 1352
+  1606, 1608, 1610 and the `test_scratch_home_note` repair each went into `hcases` ALONE,
+  which costs one case and no skip, while 1352
   and 1601 went into both lists and cost a skip each. A reader who starts treating 8 as the
-  expected value will call a correct run wrong the next time a suite registers in both.
+  expected value will call a correct run wrong the next time a suite registers in both, and
+  **eight in a row is exactly long enough for someone to start trusting it**.
   **The step is not a constant**: a suite registered in BOTH
   lists costs two cases and one headless self-skip; one registered in `hcases` alone costs
   one case and no skip. Anyone checking against a figure written down anywhere, this file
-  included, would have called four green runs red this week. Read the trailer. ⚠ Both new terms are
+  included, would have called six green runs red this week. Read the trailer. ⚠ Both new terms are
   **environment-dependent** — a home that cannot reach the fork ngspice adds three more
   `skip:` lines — so this figure is even less of a constant than it was. To count a list, find `set hcases
   [list` (not a line number) and pipe it through `/usr/bin/grep -o '"[^"]*"' | wc -l`;
@@ -212,6 +221,18 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   plausible audit with wrong answers. **Rebuild before any audit meant as evidence**; on
   an unexpected red, check the binary before the code (`make -C src` recompiling
   everything means a header moved).
+- **A suite that is not in `run_regression.tcl` is run by NOTHING, and a fence nothing runs
+  rots silently.** Measured 2026-09-27: `test_scratch_home_note` row `C1` lifts T1's own
+  `summarize_all` out of `run_regression.tcl` and evaluates it, to prove the driver does not
+  miscount the `note:` and `skip:` lines these suites print. Issue **1487** gave that proc a
+  helper; the row lifted one proc **by name**, the lifted copy died on an unknown command, and
+  the row had been **red at HEAD** reporting a bare `{1 -1}` that said nothing about why —
+  because the suite was in no list, so only a hand-run could ever have surfaced it. **Write the
+  suite and register it in the same commit.** Two habits came out of it and both generalise:
+  make a probe lift or discover **everything** its target needs rather than a named subset (a
+  hand-kept list is the same defect one level up — the same reason row `X1` of
+  `test_snprintf_fmt_1608.tcl` exists), and put the failure's **cause** in the check's own name,
+  so a future break prints `invalid command name "…"` instead of a sentinel.
 - **T1's baseline is ZERO counted failures.** A standing red is a defect, not
   furniture: if T1 is not at zero, say which case and why, per case; never carry a count
   forward. **Since 2026-09-22 the zero holds on BOTH display arms**, measured in a
