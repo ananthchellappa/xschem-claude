@@ -1365,15 +1365,36 @@ static int instcheck(int n, int p)
   xSymbol * const sym = xctx->sym;
   int j, sqx, sqy;
   double x0, y0;
-  int rects = xctx->sym[inst[n].ptr].rects[PINLAYER];
+  /* ISSUE 1613: `k` is declared FIRST, and the two initialisers below are guarded by it,
+   * because this function used to dereference xctx->sym[inst[n].ptr] three times here and
+   * then test `k >= 0` five times a few lines down -- once per netlist back end. The
+   * function was stating in its own body that ptr may be negative while assuming here that
+   * it cannot be, and only the guarded half can be right: `k >= 0` is dead weight otherwise.
+   *
+   * The `k < 0` values are chosen to PRESERVE BEHAVIOUR, not to bail out: an unlinked symbol
+   * has no pins and is not a bus tap, and the five back-end tests below deliberately let
+   * `k < 0` fall through as "not ignored". An early return here would skip them instead.
+   *
+   * LATENT, and deliberately fixed anyway. match_symbol() (token.c) never returns -1 -- it
+   * loads systemlib/missing.sym, giving a valid placeholder with rects[PINLAYER] == 0 --
+   * link_symbols_to_instances() dereferences the same expression unguarded right after
+   * assigning it, ptr == -1 lives only inside windows no user action can interrupt, and this
+   * site is reached only through instpin_spatial_table, whose sole writer hash_inst_pin() has
+   * one caller, the guarded reset_node_data_and_rehash(). ⚠ Sibling sites in this class are
+   * still unguarded -- name_attached_inst_to_net() and name_attached_inst() in this file, and
+   * break_wires_at_pins() in check.c, while break_wires_at_attach_points() in that same file
+   * guards the identical expression. Per issue 1611's lesson (two sibling loops there needed
+   * OPPOSITE index spellings and a pattern fix would have broken one), that family is NOT to
+   * be resolved by pattern. See doc/claude/issues/1613-*.md */
+  int k = inst[n].ptr;
+  int rects = (k >= 0) ? xctx->sym[k].rects[PINLAYER] : 0;
   /* issue 1603: a declaration initialiser, so it runs before every early return in this
    * function. `type` is NULL for a symbol whose global-attribute record is empty or absent
    * (`K {}`, or no G/K record), and a typeless symbol is not a bus tap -- short-circuit to
    * false. Second of the two segfaults reached with set_sym_flags()'s normalisation flipped
    * (see the note there in actions.c). */
-  int bus_tap = xctx->sym[inst[n].ptr].type &&
-                !strcmp(xctx->sym[inst[n].ptr].type, "bus_tap");
-  int k = inst[n].ptr;
+  int bus_tap = (k >= 0) && xctx->sym[k].type &&
+                !strcmp(xctx->sym[k].type, "bus_tap");
   int shorted_inst = shorted_instance(n, netlist_lvs_ignore);
 
   if(!inst[n].node) return 0;

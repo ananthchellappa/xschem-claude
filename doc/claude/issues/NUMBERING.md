@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612  1613 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -3991,7 +3991,24 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `wint_t` is 4 bytes on glibc and promotes to `int` on Windows. Found by the 1609 Stage A crew
   while measuring something else. OPEN.
 
-**The next free number is 1613.**
+- **1613** — **`instcheck()` dereferences a symbol index in three initialisers, then guards the
+  same value five times.** `instcheck()` (`src/netlist.c`) opens with declaration initialisers
+  that dereference `xctx->sym[inst[n].ptr]` three times — once for `rects`, twice for `bus_tap` —
+  and then tests `k >= 0` (the same `inst[n].ptr`) five times, once per netlist back end, before
+  using it. **The function's own later code says `ptr` may be negative while its initialisers
+  assume it cannot be**, and only the guarded half can be right. ⚠ Declaration initialisers run
+  before every early return, which issue 1603 already had to comment about at this exact site, so
+  no guard placed after them helps. LATENT: `match_symbol()` never returns -1 (it loads
+  `systemlib/missing.sym`), `link_symbols_to_instances()` dereferences the same expression
+  unguarded right after assigning it, `ptr == -1` lives only in windows no user action can
+  interrupt, and this site is reached only via `instpin_spatial_table`, whose sole writer has one
+  guarded caller. Siblings in the same class, unguarded: `name_attached_inst_to_net()` and
+  `name_attached_inst()` (netlist.c) and `break_wires_at_pins()` (check.c) — while
+  `break_wires_at_attach_points()` in the same file guards the identical expression. ⚠ Per issue
+  1611's lesson, **do not resolve this family by pattern**. Found by the 1611 crew while answering
+  a different question. OPEN.
+
+**The next free number is 1614.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

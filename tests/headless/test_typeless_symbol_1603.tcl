@@ -403,13 +403,44 @@ check "S1 (1603) set_lab_or_pin_inst_attr() in src/netlist.c NULL-tests the symb
 
 # S2 — instcheck()'s bus_tap. A DECLARATION INITIALISER, so it runs before every early
 # return in the function: nothing downstream can shield it.
-set s2toks {int bus_tap = xctx->sym[inst[n].ptr].type && ! strcmp ( xctx->sym[inst[n].ptr].type , \"bus_tap\" ) ;}
+#
+# ⚠ THE TOKEN SEQUENCE MOVED ON 2026-09-27 AND THIS ROW CAUGHT IT, which is the row working
+# rather than the row being wrong. Issue **1613** put a `k >= 0` guard in front of this
+# initialiser and re-spelled the subscript from `inst[n].ptr` to the already-declared `k`,
+# because the function dereferenced xctx->sym[inst[n].ptr] in three initialisers and then
+# tested `k >= 0` five times a few lines below — stating in its own body that ptr may be
+# negative while assuming here that it cannot be. **The property THIS row fences is
+# unchanged**: the `.type &&` short-circuit is still what keeps a NULL type out of strcmp,
+# and it is still an initialiser. Only the text in front of it grew. Row S2b fences the new
+# guard separately, so neither row stands in for the other.
+set s2toks {int bus_tap = ( k >= 0 ) && xctx->sym[k].type && ! strcmp ( xctx->sym[k].type , \"bus_tap\" ) ;}
 check "S2 (1603) instcheck() in src/netlist.c short-circuits its `bus_tap` declaration\
  initialiser on a NULL symbol type -- a typeless symbol is not a bus tap. It is an\
  initialiser, so it runs ahead of every early return in that function. Second of the two\
  segfaults reached when set_sym_flags()'s normalisation is flipped" \
   [expr {[string length $s12src] > 0 && [regexp [pat $s2toks] $s12live]}] \
   "(found=[regexp [pat $s2toks] $s12live] src=[string length $s12src]B)"
+
+# S2b — ISSUE 1613, the other half of the same two lines, fenced on its own so that removing
+# either guard reddens exactly one row. `k` must be declared BEFORE both initialisers and both
+# must be guarded by it; the `k < 0` values are chosen to preserve behaviour (an unlinked
+# symbol has no pins and is not a bus tap) rather than to bail out, because the five back-end
+# tests below deliberately let `k < 0` fall through as "not ignored" and an early return would
+# skip them.
+#
+# ⚠ THIS ROW IS NAMED FOR THE TEXT IT GREPS AND CLAIMS NO COUNT. It sees two guarded
+# initialisers in instcheck(). It says nothing about the sibling sites in this class that are
+# still unguarded — name_attached_inst_to_net() and name_attached_inst() in netlist.c, and
+# break_wires_at_pins() in check.c, while break_wires_at_attach_points() in that same file
+# guards the identical expression. Per issue 1611's lesson, where two sibling loops needed
+# OPPOSITE index spellings and a pattern fix would have broken one, that family is not to be
+# resolved by pattern and this row deliberately does not pretend to cover it.
+set s2btoks {int k = inst[n].ptr ; int rects = ( k >= 0 ) ? xctx->sym[k].rects[PINLAYER] : 0 ;}
+check "S2b (1613) instcheck() declares k BEFORE the two initialisers that use it, and guards\
+ rects on k >= 0 with 0 for an unlinked symbol -- greps that one token sequence in\
+ src/netlist.c and claims nothing about the unguarded sibling sites" \
+  [expr {[string length $s12src] > 0 && [regexp [pat $s2btoks] $s12live]}] \
+  "(found=[regexp [pat $s2btoks] $s12live] src=[string length $s12src]B)"
 
 # S3 — THE INVARIANT, AND IT IS ONE TOKEN. set_sym_flags() normalises a missing `type=` to
 # "" with my_strdup2; my_strdup -- the spelling used almost everywhere else in this tree --
