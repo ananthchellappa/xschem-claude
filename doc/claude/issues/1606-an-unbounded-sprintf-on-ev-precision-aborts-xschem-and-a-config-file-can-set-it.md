@@ -2,6 +2,60 @@
 
 **STAMP:** `v1 claim=fixed tree=3491307772a stamped=2026-09-25 fix=taken open=0 by=driver`
 
+
+## ⚠ RATIFIED AND IMPLEMENTED 2026-09-27 — `rule/1606`, the out-of-range writer
+
+**The user ruled: clamp to the largest usable value and say so once**, delivered as a write check
+on the setting so every writer goes through it. Debt `rule/1606` cleared on their word.
+
+**The three filed options were** clamp quietly (what had shipped), clamp and warn once, or refuse
+at startup and keep the current value. The **fourth shape** put to them, and the one taken, was a
+Tcl **write trace** on `ev_precision`: it catches every non-dialog writer through one mechanism —
+an `~/.xschem/xschemrc` line, `--preinit`, a `.sch` floater, any later script — and because it
+corrects **the variable itself** rather than each reader's copy, it also removes a disagreement the
+three filed options all left standing. That disagreement was real: the C side clamps
+(`clamp_prec_g`) while `src/xschem.tcl`'s `to_eng` does `format %.${pr}g` on the raw value.
+
+**Installed from `Tcl_AppInit` (`src/xinit.c`), not from `src/xschem.tcl`**, and that is forced:
+`xschem.tcl` is sourced *after* `--preinit` and after both `xschemrc` files, and its default is
+`set_ne ev_precision 4` — set-if-not-exists. A trace defined there could never see an rc file's
+write, because it would already have happened.
+
+### Two boundaries are NOT what "outside 1..71" suggests, and both were measured
+
+* **`0` is left alone.** It is documented on the C side as `eval_expr`'s *"engineering off"* —
+  `clamp_prec_g` returns any `prec <= 0` untouched — and `to_eng 1234.5` with it gives `1k`.
+  Clamping it to 1 would silently destroy a working, documented setting. Row `T2` fences that, and
+  it is the row that reddens **alone** if anyone later "tidies" the range test.
+* **A negative or a non-number is not clamped to a bound at all**, because there is no sensible
+  bound: both used to **raise inside `to_eng`** (`bad field specifier "-"` / `"a"`). They fall back
+  to `4`, the shipped default, since at startup there may be no previous good value to keep.
+
+Also measured, and it explains why the C/Tcl disagreement survived so long: **`71`, `72` and `200`
+print the same string** for a value whose exact decimal expansion is already exhausted at 71. The
+disagreement is real but invisible for many values.
+
+### What shipped
+
+`> 71` → 71; `0` → unchanged; anything `to_eng` cannot use → 4. One line to stderr naming the value
+and what was used — stderr being the only channel that exists while an rc file is read, the GUI not
+existing yet — and **a repeat of the same offending value says nothing further**, so a script
+writing it in a loop cannot flood the console. The dialog's own validator is untouched and still
+refuses without writing, so the two mechanisms never both speak on the path they share (row `T10`).
+
+⚠ **One bug of my own, caught by an existing row.** The first implementation copied
+`set_ev_precision`'s `[0-9]{1,3}` digit bound, which exists there to keep a long literal out of
+`expr` as a bignum. Copied here it meant a **four-digit** value like `4000` failed the match, fell
+into the not-a-number arm and became **4 instead of 71** — caught by row `B3`, which sweeps
+`4 71 72 73 200 4000`. Replaced by a length test: more than three significant digits is certainly
+above 71, so it clamps without ever reaching `scan`.
+
+**Section T** of `tests/headless/test_ev_precision_bound_1606.tcl`, ten rows, 73 checks up from 63.
+Sabotage-verified, each property reddening on its own: removing the trace reddens `B7` and `T4`–`T9`;
+clamping `0` to 1 reddens `T2` alone; removing the tell-once dedupe reddens `T9` alone. Row **`B7`**
+is the fence for the **file-borne** door and its assertion moved from `AFTER=200` to `AFTER=71` — the
+poison now arrives clamped.
+
 **Status: FIXED 2026-09-25.** Every section below the horizontal rule is the ORIGINAL
 filing, kept verbatim so the corrections can be read against it; **four of its claims were
 measured wrong and are corrected in "What the measurement round found" at the end.**

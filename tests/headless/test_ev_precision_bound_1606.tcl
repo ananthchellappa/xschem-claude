@@ -239,8 +239,9 @@
 # widget, and the one display-needing section spawns its own child on :99, so a
 # `dcases` entry would cost gate time for zero extra rows.
 #
-# FLOOR: 63 checks with the dev display up, 58 without it (D1-D4 and D1b skip as
-# ONE `skip:` line). Measured 2026-09-25, same count on both arms -- the D rows
+# FLOOR: 73 checks with the dev display up, 68 without it (D1-D4 and D1b skip as
+# ONE `skip:` line). Re-measured 2026-09-27, when the rule/1606 ruling shipped and
+# SECTION T added ten rows; it was 63/58 before that. Same count on both arms -- the D rows
 # spawn their own :99 child, so `--nogui` does not suppress them. A box with no C
 # compiler and no Makefile.conf skips Y1a/Y1b/Y1c as a SECOND `skip:` line and reports
 # three fewer (60 with the dev display up, measured). RAISED, NEVER LOWERED.
@@ -2329,6 +2330,17 @@ check_true "B6 the graph-marker callout SURVIVES at ev_precision 200 and shows 1
 ## ⚠ AND THIS ROW IS NOT A SECURITY FENCE. The same mechanism runs arbitrary Tcl
 ## at global level; ev_precision is merely one thing it can reach. All this row
 ## shows is that the OVERFLOW is gone.
+##
+## ⚠ `AFTER` WAS 200 UNTIL THE rule/1606 RULING SHIPPED, AND IT IS 71 NOW. The
+## file's 200 used to land in ev_precision verbatim -- this row asserted exactly
+## that, and the only thing keeping the editor alive was the C-side clamp, so the
+## C and Tcl halves then disagreed about the user's number. The user ruled: clamp
+## to the largest usable value and say so once, implemented as a write trace
+## installed from Tcl_AppInit (src/xinit.c), which corrects THE VARIABLE so both
+## halves read the same thing. So this row is now also the fence for the
+## FILE-BORNE door, which is the one section T does not reach -- T8 drives
+## `--rcfile`, T9 a script write, and neither is a .sch. Changing the 71 below
+## back to 200 is the tell that the trace has been lost.
 set b7sch [file join $dir poison.sch]
 set fd [open $b7sch w]
 foreach l [list {v {xschem version=3.4.8RC file_version=1.3}} {G {}} {K {}} {V {}} \
@@ -2344,11 +2356,12 @@ set b7 [child b7 [list \
   {puts "AFTER=<$::ev_precision>"} \
   {puts "R=<[xschem eval_expr {expr_eng(1e300*1.0)}]>"}]]
 lassign $b7 b7rc b7death b7out
-check_true "B7 a .sch that does nothing but `set ::ev_precision 200` in a floater\
- still poisons ev_precision on open+export (4 -> 200), and the ORDINARY work that\
- follows now survives with 71 significant digits instead of aborting" \
+check_true "B7 a .sch that does nothing but `set ::ev_precision 200` in a floater still REACHES\
+ ev_precision on open+export, and the rule/1606 write guard clamps it there (4 -> 71, not 4 -> 200\
+ as it was before the ruling), so the C and Tcl halves now read the same number and the ORDINARY\
+ work that follows survives with 71 significant digits instead of aborting" \
   [expr {$b7rc == 0 && !$b7death && [done $b7out]
-         && [kv $b7out BEFORE] eq {4} && [kv $b7out AFTER] eq {200}
+         && [kv $b7out BEFORE] eq {4} && [kv $b7out AFTER] eq {71}
          && [sigdigits [kv $b7out R]] == 71}] \
   "(rc=[rcwhy $b7rc] death=$b7death before=[kv $b7out BEFORE] after=[kv $b7out AFTER]\
  digits=[sigdigits [kv $b7out R]])"
@@ -2541,6 +2554,106 @@ check_true "D4 (second defect) with `unitx=T` and no `unity`, the y readout is n
   "(rc=[rcwhy $d4rc] death=$d4death mt=[kv $d4out MT])"
 
 }
+
+# ============================================================================
+# SECTION T -- THE ev_precision WRITE GUARD (the ruling on rule/1606)
+# ============================================================================
+# Issue 1602 gave the precision DIALOG a validator; the dialog was never the only
+# writer. An ~/.xschem/xschemrc line, a `--preinit` script and any later Tcl write
+# the variable directly. The user's ruling was: clamp to the largest usable value
+# and say so once. It is implemented as a Tcl write trace installed from
+# `Tcl_AppInit` in src/xinit.c -- BEFORE --preinit and before either xschemrc,
+# because src/xschem.tcl is sourced after both and its default is `set_ne`, so a
+# trace defined there could never see an rc file's write.
+#
+# ⚠ TWO BOUNDARIES ARE NOT WHAT "OUTSIDE 1..71" SUGGESTS, and both are driven here
+# rather than assumed:
+#   0 IS LEFT ALONE. It is documented on the C side as eval_expr's "engineering
+#     off" (clamp_prec_g returns any prec <= 0 untouched) and `to_eng 1234.5` with
+#     it gives "1k". Clamping it to 1 would silently destroy a working setting, so
+#     row T2 exists to catch anyone who later "tidies" the range test.
+#   A NEGATIVE OR NON-NUMBER is not clamped to a bound at all -- it falls back to
+#     4, the shipped default, because at startup there may be no previous good
+#     value to keep. Before the guard both RAISED inside to_eng (`bad field
+#     specifier "-"` / `"a"`), which T5/T6 also assert is now gone.
+#
+# T1-T6 run IN THIS PROCESS, where the trace is already installed, and assert the
+# CORRECTION. T7/T8 spawn a child, because the message goes to stderr -- the only
+# channel that exists while an rc file is being read, the GUI not existing yet --
+# and stderr cannot be read from inside. T9 is the tell-once dedupe. T10 asserts
+# the dialog validator still refuses on its own without the guard also speaking,
+# i.e. that the two mechanisms do not double up on the one path they share.
+set T_saved $ev_precision
+
+proc t_write {v} {
+  global ev_precision
+  set ev_precision $v
+  return $ev_precision
+}
+check "T1 a value inside the range is written unchanged" [t_write 30] 30
+check "T2 ZERO IS LEFT ALONE -- it is eval_expr's documented \"engineering off\" and to_eng\
+ renders it, so the guard must not treat it as out of range" [t_write 0] 0
+check "T3 the ceiling itself, 71, is written unchanged" [t_write 71] 71
+check "T4 one past the ceiling is clamped to 71, not refused" [t_write 72] 71
+check "T5 a large value is clamped to 71 rather than reaching the formatter" [t_write 200] 71
+check "T6 a non-number falls back to 4, the shipped default, because at startup there may be no\
+ previous good value to keep" [t_write abc] 4
+check "T7 a NEGATIVE falls back to 4 as well, and to_eng no longer raises on it -- before the\
+ guard it gave `bad field specifier \"-\"`" \
+  [list [t_write -1] [catch {to_eng 1234.5}]] {4 0}
+
+## T8/T9 -- the message and the dedupe, in a child process, because stderr is the
+## channel and this suite cannot read its own. The child is the real binary with a
+## real --rcfile, which is the door the ruling was actually about.
+set T_bin [file join $repo src xschem]
+if {![file executable $T_bin]} {
+  skiprow "T8/T9/T10" "no built binary at src/xschem to spawn a child with"
+} else {
+  set T_rc [file join $dir t_rc.tcl]
+  set T_sc [file join $dir t_sc.tcl]
+  set fp [open $T_rc w] ; puts $fp "set ev_precision 200" ; close $fp
+  set fp [open $T_sc w] ; puts $fp "puts \"CHILD final=\$ev_precision\"" ; close $fp
+  set T_env [list env -u DISPLAY $T_bin --nogui --pipe -q --rcfile $T_rc --script $T_sc]
+  set T_out {}
+  catch {eval exec $T_env < /dev/null 2>@1} T_out
+  check "T8 a real --rcfile writing 200 makes the child SAY so on stderr, naming the value and\
+ what was used, and end up at 71" \
+    [list [regexp {ev_precision "200" exceeds the maximum 71 -- using 71} $T_out] \
+          [regexp {CHILD final=71} $T_out]] {1 1}
+
+  ## T9 -- TELL ONCE. Three identical writes, one message; then a DIFFERENT bad
+  ## value speaks again, so the dedupe is keyed to the value and not a one-shot
+  ## latch that would hide a second, different mistake.
+  set fp [open $T_sc w]
+  puts $fp "set ev_precision 300"
+  puts $fp "set ev_precision 300"
+  puts $fp "set ev_precision 300"
+  puts $fp "set ev_precision 400"
+  close $fp
+  set T_env2 [list env -u DISPLAY $T_bin --nogui --pipe -q --script $T_sc]
+  set T_out2 {}
+  catch {eval exec $T_env2 < /dev/null 2>@1} T_out2
+  check "T9 TELL ONCE: three identical bad writes produce exactly one message, and a different\
+ bad value produces one more -- the dedupe is keyed to the value, not a one-shot latch" \
+    [list [regexp -all {ev_precision "300"} $T_out2] \
+          [regexp -all {ev_precision "400"} $T_out2]] {1 1}
+
+  ## T10 -- the dialog path is the ONE path both mechanisms can see, and they must
+  ## not both speak on it. set_ev_precision REFUSES out of range and does not
+  ## write, so the trace never fires and the guard stays silent.
+  set fp [open $T_sc w]
+  puts $fp {proc alert_ {m args} { puts "CHILD alert" }}
+  puts $fp {puts "CHILD rc=[set_ev_precision 200] val=$ev_precision"}
+  close $fp
+  set T_out3 {}
+  catch {eval exec [list env -u DISPLAY $T_bin --nogui --pipe -q --script $T_sc] < /dev/null 2>@1} T_out3
+  check "T10 the dialog validator still refuses 200 on its own -- one alert, the value untouched,\
+ and NO guard message, so the two mechanisms do not double up on the path they share" \
+    [list [regexp -all {CHILD alert} $T_out3] \
+          [regexp {CHILD rc=0 val=4} $T_out3] \
+          [regexp -all {exceeds the maximum} $T_out3]] {1 1 0}
+}
+set ev_precision $T_saved
 
 # --- verdict ---------------------------------------------------------------
 if {$fail == 0} {

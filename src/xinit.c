@@ -3486,6 +3486,86 @@ int Tcl_AppInit(Tcl_Interp *inter)
 
  }
  fprintf(errfp, "Using run time directory XSCHEM_SHAREDIR = %s\n", tclgetvar("XSCHEM_SHAREDIR"));
+
+ /* ISSUE 1606 -- THE ev_precision WRITE GUARD, AND WHY IT IS INSTALLED HERE AND NOT IN
+  * xschem.tcl.
+  *
+  * Issue 1602 gave the precision DIALOG a validator, `set_ev_precision` in src/xschem.tcl,
+  * which accepts 1..71 and refuses anything else with an alert. But the dialog is not the only
+  * writer: a user's ~/.xschem/xschemrc line, a `--preinit` script and any later Tcl all write
+  * the variable directly, and none of them passed a check. Before issue 1606 bounded the C
+  * side, a value of 73 or more killed the editor with unsaved work in it; after 1606 it cannot
+  * crash, and the question of what should happen INSTEAD was the user's, recorded as
+  * `rule/1606`. THE RULING: clamp to the largest usable value and say so once.
+  *
+  * WHY A WRITE TRACE RATHER THAN A CHECK AT EACH WRITER. There is no list of writers to fix --
+  * anyone's rc file is one. A trace on the variable catches every one of them through a single
+  * mechanism, and because it corrects THE VARIABLE ITSELF rather than each reader's copy, the
+  * C half and the Tcl half can no longer disagree about the user's number. That disagreement
+  * was real: the C side clamps (clamp_prec_g in editprop.c) while src/xschem.tcl's `to_eng`
+  * does `format %.${pr}g` on the raw value.
+  *
+  * WHY HERE. `xschem.tcl` is sourced further down this function, AFTER --preinit and after both
+  * xschemrc files, and its default is `set_ne ev_precision 4` -- set-if-not-exists. So a trace
+  * defined in xschem.tcl can never see an rc file's write; it would already have happened. This
+  * is the last point before the first writer runs, which is why the guard is a self-contained
+  * Tcl snippet here instead of a proc in the Tcl layer.
+  *
+  * THE BOUNDARIES ARE MEASURED, NOT ASSUMED, and two of them are not what "outside 1..71"
+  * suggests. Driven on this binary through `to_eng 1234.5`:
+  *   ev_precision=0   -> "1k"      -- WORKS, and 0 is DOCUMENTED on the C side as eval_expr's
+  *                                    "engineering off" (see clamp_prec_g, which returns any
+  *                                    prec <= 0 untouched). So 0 IS LEFT ALONE. Clamping it to
+  *                                    1 would silently destroy a working, documented setting.
+  *   ev_precision=-1  -> raises `bad field specifier "-"` inside to_eng
+  *   ev_precision=abc -> raises `bad field specifier "a"` inside to_eng
+  *   ev_precision=71, 72 and 200 all print the same string for that value, because a double's
+  *                                    exact decimal expansion is already exhausted by 71 -- so
+  *                                    the C/Tcl disagreement above is real but INVISIBLE for
+  *                                    many values, which is precisely why it survived.
+  * Hence: > 71 clamps to 71; 0 passes; anything to_eng cannot use at all falls back to 4, the
+  * shipped default, because there may be no previous good value to keep at startup.
+  *
+  * IT TELLS ONCE. The message names the value and what was used instead, and goes to stderr,
+  * which is the only channel that exists when an rc file is read -- the GUI does not exist yet.
+  * A repeat of the SAME offending value says nothing further, so a script writing it in a loop
+  * cannot flood the console.
+  *
+  * Re-entrancy needs no flag: the correcting write re-fires the trace, the corrected value is
+  * in range, and the second pass writes nothing. Fenced by section T of
+  * tests/headless/test_ev_precision_bound_1606.tcl.
+  * Ruling and options: doc/claude/issues/1606-an-unbounded-sprintf-on-ev-precision-aborts-xschem-and-a-config-file-can-set-it.md */
+ tcleval(
+   "proc ev_precision_guard {args} {\n"
+   "  global ev_precision ev_precision_guard_said\n"
+   "  set v $ev_precision\n"
+   "  set t [string trim $v]\n"
+   "  set fix {}\n"
+   "  set why {}\n"
+   /* ⚠ `[0-9]+`, NOT `[0-9]{1,3}`. set_ev_precision's own regexp bounds the digit run to three
+    * to keep a long literal out of `expr` as a bignum, and copying that here was a BUG caught by
+    * row B3: a four-digit value like 4000 failed the match, fell into the not-a-number arm and
+    * became 4 instead of being clamped to 71. The length test below is what replaces the bound --
+    * more than three significant digits is certainly above 71, so it clamps without ever handing
+    * the string to scan, and only a run of three or fewer reaches scan, where 999 is the most it
+    * can see. `0*` strips leading zeros first, so "0000" is the integer 0 and passes untouched. */
+   "  if {[regexp {^0*([0-9]+)$} $t -> d]} {\n"
+   "    if {[string length $d] > 3 || [scan $d %d] > 71} {\n"
+   "      set fix 71 ; set why \"exceeds the maximum 71\"\n"
+   "    }\n"
+   "  } else {\n"
+   "    set fix 4\n"
+   "    set why \"is not a whole number 1-71\"\n"
+   "  }\n"
+   "  if {$fix eq {}} return\n"
+   "  if {![info exists ev_precision_guard_said] || $ev_precision_guard_said ne $v} {\n"
+   "    set ev_precision_guard_said $v\n"
+   "    puts stderr \"xschem: ev_precision \\\"$v\\\" $why -- using $fix.\"\n"
+   "  }\n"
+   "  set ev_precision $fix\n"
+   "}\n"
+   "trace add variable ev_precision write ev_precision_guard\n");
+
  /* Execute tcl script given on command line with --preinit, before sourcing xschemrc */
  if(cli_opt_preinit_command) {
    tcleval(cli_opt_preinit_command);
