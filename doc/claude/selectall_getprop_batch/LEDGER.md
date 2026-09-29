@@ -7,8 +7,8 @@ Opened 2026-09-29 at `b89fddda`. T1 baseline `cases=107 blocks=106 counted_failu
 | stage | crew receipt | verified by driver | commit | T1 gate |
 |---|---|---|---|---|
 | R recon | `R-recon-A.md` + `R-recon-B.md` **collected** | driver re-ran crew B's central claim, all 4 outputs matched; crew A's refutation accepted on its measured `graph_flags`/`lastsel` evidence | `4f998799` (scaffolding) | n/a, no code |
-| A Ctrl-A select all traces (1617) | `R-recon-A.md` + `A-impl.md` **collected** | driver ratified seam (b), the hazard-deletion over an invented row, and the embedded-graph scope | _pending_ | _pending, gating the tip_ |
-| B getprop arms (1618) | `R-recon-B.md` + `B-impl.md` **collected** | driver re-ran the central claim (4/4 matched), verified the file split, checked the stamp | _pending_ | _pending, held off Stage A_ |
+| A Ctrl-A select all traces (1617) | `R-recon-A.md` + `A-impl.md` **collected** | driver ratified seam (b), the hazard-deletion over an invented row, and the embedded-graph scope | `36365b19` | **GREEN** (tip gate) |
+| B getprop arms (1618) | `R-recon-B.md` + `B-impl.md` **collected** | driver re-ran the central claim (4/4 matched), verified the file split, checked the stamp | `69adfe59` | **GREEN** (tip gate) |
 
 ## Collected notes
 
@@ -103,3 +103,47 @@ between two red runs, which is a technique worth stealing.
 
 Also settled: recon's one open question, by row `CA0` measured in a really-open viewer — nothing
 binds `<Control-Key-a>` on any bindtag of the canvas or toplevel.
+
+## THE BATCH IS CLOSED
+
+Gate of the tip `36365b19`, throwaway clone at a 9-character path, built from scratch, solo:
+
+```
+T1-RUN-END pid=553873 cases=107 blocks=106 counted_failures=0 skips=8 elapsed=621s
+```
+
+zero live-peer lines, `wc -l` 320. **Green on the first attempt** — and the figures are
+*unchanged* from the pre-batch baseline, which both crews predicted for the same reason: each
+suite was already registered and already printed `OVERALL: ok`, so neither stage moved a case
+count or a skip. One gate rather than two, per D16, with the bisect plan stated in advance and
+not needed.
+
+**Four receipts collected.** Two recon, two implementation. Stage R's two crews refuted the
+driver's scouting in both features before any code existed, which is the whole reason D2 put
+that stage first.
+
+### What this batch is worth remembering for
+
+1. **A sabotage survived, and the response was to delete the hazard rather than invent a row**
+   (D14). The 64-cap removal left the suite green because a second clamp downstream keeps the
+   observable answer correct while the write goes one int past a stack array. The crew wrote the
+   honest division — behaviour fenced by a row, memory safety fenced by the shape of the code and
+   nothing else — instead of a green row claiming a guarantee nothing could keep.
+2. **Both recon crews refuted the driver**, and one of them refuted it via a shipped comment that
+   contradicts the line it sits on (`/* select all */` on the row that diverts away from select
+   all). Cross-references are to be checked, not trusted, even when they are adjacent to the code.
+3. **The red-shape trap:** `getprop`'s missing arms returned success-with-empty, not an error, so
+   the obvious red row would have been green before the fix (D3).
+4. **A proof obligation discharged properly** (D5): the census instrument was validated against
+   four deliberately evasive controls *before* its number was quoted, not after it was doubted.
+5. **The driver's own error** (D12): two building crews in one tree, sharing one binary. Concurrent
+   crews that compile get isolated trees; read-only recon may share.
+
+### Left open, deliberately
+
+`rule/1617` — one conversation, three interacting parts (the cursor-A price in the
+`graph_use_ctrl_key 1` profile; discoverability in Help ▸ Keys and a possible Graph menu entry;
+whether covering embedded schematic graphs is wanted). Plus the follow-ons recorded in each issue
+file's `open=` list: `getprop <unknown-type>`'s silent empty success, the stale
+`property_introspection.md`, migrating Ctrl-A to a registered action id, and wish-list item 26,
+which is now unblocked but not implemented.
