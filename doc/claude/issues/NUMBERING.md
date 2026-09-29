@@ -4023,6 +4023,18 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   its own number -- changing it while fixing the grid would smuggle a user-visible contract change
   into a bug fix. OPEN.
 
+- **0514** — **no Tcl accessor for `raw->schname`** (band 0500-0599 is the fluid-editing
+  block; this number was minted in the results batch on 2026-08-19, not newly taken here).
+  A loaded results database is stamped with the schematic it was read against, and Tcl could
+  ask whether the stamp still resolves but not what it SAYS. `xschem get raw_level` +
+  `xschem get schname $lvl` is a confident LIAR in exactly the state that matters, because
+  the raw's level indexes a different stack. FIXED 2026-09-29: one read-only `schname` token
+  beside `rawfile`/`sim_type`, NULL-guarded, fenced by
+  `tests/headless/test_raw_schname_0514.tcl` (20 checks, `hcases`), written red first. ⚠ Its
+  filed severity ("entirely a message-quality one") was too kind: `read_against`, the only
+  source of ruling R804's precise "read against X and you are in Y" clause, has NO PRODUCTION
+  CALLER, so that sentence had never fired for a real user at all. Wiring it is left open.
+
 - **1615** — **the signal browser's status line counts signals neither pane shows.**
   `wviewer::browser_refresh` built the sidebar count as `"[llength $names] of $total signals"`,
   where `$names` is **bar-matched but class-filter blind** -- R11's two checkboxes are applied

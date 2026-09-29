@@ -106,7 +106,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_scratch_home_note" \
                  "headless/test_generator_shell_1610" \
                  "headless/test_vhdl_component_index_1611" \
-                 "headless/test_svg_export_fail_1614"]
+                 "headless/test_svg_export_fail_1614" \
+                 "headless/test_raw_schname_0514"]
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte

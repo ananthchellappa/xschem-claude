@@ -11439,6 +11439,40 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, raw->rawfile, TCL_VOLATILE);
         } else if(argc > 2 && !strcmp(argv[2], "sim_type")) {
           Tcl_SetResult(interp, raw->sim_type, TCL_VOLATILE);
+        /* xschem raw schname
+         *   read-only: the SCHEMATIC THIS DATABASE WAS READ AGAINST, i.e. what
+         *   every reader in save.c stamped into Raw.schname (raw_read(),
+         *   table_read(), new_rawfile(), re-stamped by raw_restamp_design()).
+         *   Issue 0514.
+         *
+         * ⚠ THERE IS NO SUBSTITUTE FOR THIS, AND THE OBVIOUS ONE IS A LIAR.
+         * `xschem get raw_level` answers raw->level and `xschem get schname n`
+         * answers xctx->sch[n] -- the CURRENT stack -- so in exactly the state
+         * the caller needs the answer in (sch_waves_loaded() < 0, because the
+         * user walked to another cell) the pair composes into the cell the user
+         * is STANDING IN, with total confidence. Measured: read against cellA,
+         * then `load -inplace cellB` gives `raw loaded` -1, `get raw_level` 0
+         * and `get schname 0` == cellB. This token answers cellA.
+         * Fenced by tests/headless/test_raw_schname_0514.tcl group C, which
+         * asserts the two DISAGREE in one tuple.
+         *
+         * ⚠ THE NULL IS REACHABLE AND THE NEIGHBOUR ABOVE IS NOT A PRECEDENT.
+         * my_strdup2() with a NULL src leaves the destination NULL (util.c), so
+         * a stamp taken while xctx->sch[currsch] was NULL leaves this NULL, and
+         * free_rawfile() (save.c) nulls it too -- which is why
+         * sch_waves_loaded() (draw.c) and raw_case_mode_schematic() (save.c)
+         * both test `!raw->schname` explicitly. `rawfile` one line up does not
+         * guard its pointer; that is its own reachability argument, not one
+         * made here.
+         *
+         * READ-ONLY on purpose: the stamp is owned by the readers and by
+         * raw_restamp_design(), whose firing condition is itself a ruling
+         * (results_selection.md R110a -- a re-stamp happens only when the
+         * current stamp does NOT already resolve against the stack). A token
+         * that took a value would be a second, unaudited way to move it,
+         * outside that condition. Extra arguments are ignored. */
+        } else if(argc > 2 && !strcmp(argv[2], "schname")) {
+          Tcl_SetResult(interp, raw->schname ? raw->schname : "", TCL_VOLATILE);
         } else if(argc > 2 && !strcmp(argv[2], "vars")) {
           Tcl_SetResult(interp, my_itoa(raw->nvars), TCL_VOLATILE);
         } else if(argc > 2 && !strcmp(argv[2], "list")) {
