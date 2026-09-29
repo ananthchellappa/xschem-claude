@@ -129,10 +129,21 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3703564.log`, taken in a throwaway clone of `00d90845`
-  built from scratch at a 10-character path: **104 cases** (3 + 85 + 15 + `xschemtest`),
-  **103 blocks**, **`wc -l` 311 green**; trailer `cases=104 blocks=103 counted_failures=0
-  skips=8 elapsed=598s`. The same 104/103 was measured one commit earlier at `818ea64c`
+  the gate verdict `tests/results.61417.log`, taken in a throwaway clone of `76c132de`
+  built from scratch at an 11-character path: **105 cases** (3 `tcases` + 85 `hcases` +
+  **16** `dcases` + `xschemtest`), **104 blocks**, **`wc -l` 314 green**; trailer
+  `cases=105 blocks=104 counted_failures=0 skips=8 elapsed=609s`, zero live-peer lines.
+  Issue **1615** took the count up, and it is the **first figure in this series where the
+  new suite went into `dcases` ALONE** (`test_wave_sigbrowser_panes`, whose fenced band is
+  display-only). ⚠ **That commit's FIRST gate was RED at `809c03d1`** —
+  `counted_failures=1`, the failure being the newly registered suite scored
+  `HARNESS: … (exit=0, OVERALL_ok=0, died=0)` with all 88 of its own checks passing, because
+  `wvbs_finish` never emitted the `OVERALL: ok` sentinel `banner_complete` requires. See the
+  two bullets under **Harness rules**; the lesson is that **registering a suite is itself a
+  change that needs gating**, and a suite's own green run says nothing about it.
+  Before that, `104/103/skips=8` was `tests/results.3703564.log` at `00d90845`
+  (3 + 85 + 15 + `xschemtest`, `wc -l` 311, 598s). The same 104/103 was measured one commit
+  earlier at `818ea64c`
   (`results.3631374.log`, 600s), where issue 1614's suite took the case count up; the two
   commits between them changed `src/util.c` and that suite only, which is why both were
   gated. Before them, `103/102/skips=8` twice — `results.3547226.log` at `5d7380b2` and
@@ -154,13 +165,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
   hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
-  `102/101/skips=8` (1610), `103/102/skips=8` (1611) and `104/103/skips=8` here (1614).
-  ⚠ **`skips=` has now held at 8 across TEN
+  `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
+  `105/104/skips=8` here (1615).
+  ⚠ **`skips=` has now held at 8 across ELEVEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
   `hcases` ALONE, which costs one case and no skip, while 1352
-  and 1601 went into both lists and cost a skip each. **Ten in a row is past the point where
+  and 1601 went into both lists and cost a skip each. ⚠⚠ **AND THE ELEVENTH REACHED 8 BY A
+  THIRD MECHANISM, WHICH IS THE CLEAREST PROOF YET THAT THE NUMBER IS NOT A PROPERTY:** issue
+  1615 registered `test_wave_sigbrowser_panes` in **`dcases` ALONE** — the first time in this
+  series — which also costs one case and no skip, but for a different reason (its headless
+  arm is not run at all, rather than run and self-skipped). Three different registration
+  shapes have now produced the same 8, and a fourth (`dcases` alone for a suite that DOES
+  print a lowercase `skip:`) would not. **Eleven in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and
@@ -255,6 +273,34 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   hand-kept list is the same defect one level up — the same reason row `X1` of
   `test_snprintf_fmt_1608.tcl` exists), and put the failure's **cause** in the check's own name,
   so a future break prints `invalid command name "…"` instead of a sentinel.
+- ⚠ **"Run by NOTHING" is the wrong half of that sentence; the right one is "does not gate a
+  commit".** Measured 2026-09-28 (issue **1615**): **334 of the 418 `tests/headless/test_*.tcl`
+  files are in neither `hcases` nor `dcases`** — only **84** are, plus 4 bare-name entries that
+  live in `tests/` rather than `tests/headless/` (`buried_hilight`, `hilight_hier_oracle`,
+  `hilight_hier_dump_replay`, `hilight_xwin_sync_headless`; a census regex requiring the
+  `headless/` prefix reports those four as registered-with-no-file, which is the regex's bug and
+  not a defect). `full_audit.sh` **does** run all 418 — it globs `test_*.tcl` — so the tail is
+  audit-reachable and simply never in front of a gate. The remedy the two readings imply differs:
+  "run by nothing" says register everything, "does not gate" says decide per suite. **What is
+  adopted is the bounded half: a suite you add a fence to, you register in the same commit.**
+- ⚠⚠ **AND "IT PASSES STANDALONE" IS NOT EVIDENCE THAT A SUITE CAN BE REGISTERED.** Registering
+  `test_wave_sigbrowser_panes` gated **red** at `809c03d1` with all 88 of its own checks passing:
+  `HARNESS: … did not complete cleanly (exit=0, OVERALL_ok=0, died=0)` on the line above its own
+  `RESULT: ALL PASS (88 checks)`. `banner_complete` in `tests/banner_rule.tcl` — the only Tcl
+  reader, the one `run_regression.tcl` sources — is `^OVERALL: ok([ \t]+\([^)]*\))?[ \t]*$`, and
+  that file's header says it *"implements no `RESULT: ALL PASS` spelling at all"*. `wvbs_finish`
+  in `tests/headless/wvbs_common.tcl` printed only the `RESULT:` line, so **all fourteen
+  `test_wave_sigbrowser*` suites were structurally unregisterable** — which is the mechanical
+  reason the whole `test_wave_*` family sat outside T1, not an oversight. `run_suites.sh` and
+  `full_audit.sh` carry their own EREs and both accept `RESULT: ALL PASS`, so **the two readers
+  that could see these suites were the two that are not the gate.** Fixed by making `wvbs_finish`
+  emit `OVERALL: ok ($npass checks)` **additively**, `RESULT:` kept last because `summarize_all`
+  publishes a case's last `RESULT:` line (119 suites already printed the sentinel;
+  `wvbs_common.tcl` printed it zero times). Same defect family as issues 0420/0456/0492/0629/0689,
+  whose standing red `banner_rule.tcl` records as *"filed FOUR times and waved through as
+  furniture each time"*. **Before registering any suite, check its epilogue against
+  `banner_complete`, not against `run_suites.sh`.** Write-up:
+  `doc/claude/code_analysis/t1_runs_84_of_418_headless_suites.md`.
 - **T1's baseline is ZERO counted failures.** A standing red is a defect, not
   furniture: if T1 is not at zero, say which case and why, per case; never carry a count
   forward. **Since 2026-09-22 the zero holds on BOTH display arms**, measured in a

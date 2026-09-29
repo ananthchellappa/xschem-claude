@@ -597,9 +597,16 @@ proc wvbs_finish {} {
     # divergence is the mechanical reason all 34 `test_wave_*` suites sat outside
     # T1, not an oversight by whoever wrote them.
     #
-    # ⚠ ADDITIVE ON PURPOSE, AND THE ORDER IS LOAD-BEARING. The `RESULT:` line is
-    # kept, and kept LAST, because `summarize_all` publishes a case's **last**
-    # `RESULT:` line into the verdict and `run_suites.sh` displays it. Adding a
+    # ⚠ ADDITIVE ON PURPOSE. The `RESULT:` line is KEPT, because `summarize_all`
+    # publishes a case's last `RESULT:` line into the verdict and `run_suites.sh`
+    # displays it; removing it would blank both. ⚠ THE ORDER OF THE TWO LINES IS
+    # NOT load-bearing and this comment does not claim it is: `banner_complete`
+    # uses `regexp -line` over the whole captured body, and only one `RESULT:`
+    # line is ever emitted here, so "last" is satisfied either way. The one
+    # precedent in the tree for a suite printing BOTH —
+    # `test_signal_short_nohier_0230.tcl`, which does not source this file — puts
+    # them the other way round, and that suite is a `dcases`/`hcases` citizen
+    # today. Adding a
     # fourth spelling to `banner_rule.tcl` instead was rejected: it would mean
     # re-spelling all three readers plus section K of test_audit_classifier.tcl,
     # and it would force a ruling on the inner-parenthesis divergence that file
