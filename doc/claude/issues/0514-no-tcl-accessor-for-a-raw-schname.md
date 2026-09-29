@@ -238,3 +238,27 @@ registering a suite that printed only `RESULT: ALL PASS` gated **red** with all 
 of its own checks passing, because `run_suites.sh` and `full_audit.sh` accept that
 shape and T1's only Tcl reader does not. **"It passes under `run_suites.sh`" is not
 evidence that a suite can be registered.**
+
+## ⚠ AND THE FOLLOW-ON IS NOT A DROP-IN SUBSTITUTION — measured 2026-09-29
+
+A first reading of "wire `against` from the engine" assumed rows `SEL251`/`SEL252` of
+`test_results_select.tcl` would be unaffected. **They would not.** The fixture reads
+`an.raw` under **cellA**, then loads **cellB**, and asserts `xschem raw loaded` is
+genuinely `-1` *before* `SEL250`/`SEL251` shim `results::_resolves_here`. So the
+shim is not what makes the state non-resolving — the navigation is — and
+`xschem raw schname` therefore has a real answer (`cellA.sch`) in exactly the state
+`SEL251` uses to pin the **fallback** sentence.
+
+Consequence: wiring the engine in makes `SEL251`'s fallback **unreachable in that
+state**, so the row reds and has to be restated rather than carried. And since
+`raw->schname` is effectively never empty (see the static-fence note above), R804c's
+fallback arm may become unreachable in production altogether — which is arguably the
+point (a user would always get the precise sentence), but it means the fallback's
+fence would then guard an arm nothing can reach, which is the rot shape CLAUDE.md
+warns about. Whoever takes it should decide that deliberately.
+
+⚠ A first pass at this analysis guessed the opposite — that the shim would make the
+engine's answer *agree* with the current cell and produce a self-contradictory
+"read against cellB and you are in cellB". That was wrong, and it is recorded because
+it is the plausible mistake: the shim is applied on top of a state that had already
+stopped resolving.

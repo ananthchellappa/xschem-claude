@@ -129,10 +129,13 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.61417.log`, taken in a throwaway clone of `76c132de`
-  built from scratch at an 11-character path: **105 cases** (3 `tcases` + 85 `hcases` +
-  **16** `dcases` + `xschemtest`), **104 blocks**, **`wc -l` 314 green**; trailer
-  `cases=105 blocks=104 counted_failures=0 skips=8 elapsed=609s`, zero live-peer lines.
+  the gate verdict `tests/results.138903.log`, taken in a throwaway clone of `943038f9`
+  built from scratch at a 10-character path: **106 cases** (3 `tcases` + **86** `hcases` +
+  16 `dcases` + `xschemtest`), **105 blocks**, **`wc -l` 317 green**; trailer
+  `cases=106 blocks=105 counted_failures=0 skips=8 elapsed=607s`, zero live-peer lines.
+  Issue **0514** took it there (`test_raw_schname_0514`, `hcases` alone). One commit
+  earlier, `105/104/skips=8` was `tests/results.61417.log` at `76c132de`, a clone at an
+  11-character path, `wc -l` 314, 609s (3 + 85 + 16 + `xschemtest`).
   Issue **1615** took the count up, and it is the **first figure in this series where the
   new suite went into `dcases` ALONE** (`test_wave_sigbrowser_panes`, whose fenced band is
   display-only). ⚠ **That commit's FIRST gate was RED at `809c03d1`** —
@@ -166,8 +169,8 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
-  `105/104/skips=8` here (1615).
-  ⚠ **`skips=` has now held at 8 across ELEVEN
+  `105/104/skips=8` (1615) and `106/105/skips=8` here (0514).
+  ⚠ **`skips=` has now held at 8 across TWELVE
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
@@ -178,7 +181,7 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   series — which also costs one case and no skip, but for a different reason (its headless
   arm is not run at all, rather than run and self-skipped). Three different registration
   shapes have now produced the same 8, and a fourth (`dcases` alone for a suite that DOES
-  print a lowercase `skip:`) would not. **Eleven in a row is well past the point where
+  print a lowercase `skip:`) would not. **Twelve in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and
