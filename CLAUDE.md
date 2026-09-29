@@ -129,12 +129,22 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.138903.log`, taken in a throwaway clone of `943038f9`
-  built from scratch at a 10-character path: **106 cases** (3 `tcases` + **86** `hcases` +
-  16 `dcases` + `xschemtest`), **105 blocks**, **`wc -l` 317 green**; trailer
-  `cases=106 blocks=105 counted_failures=0 skips=8 elapsed=607s`, zero live-peer lines.
-  Issue **0514** took it there (`test_raw_schname_0514`, `hcases` alone). One commit
-  earlier, `105/104/skips=8` was `tests/results.61417.log` at `76c132de`, a clone at an
+  the gate verdict `tests/results.438229.log`, taken in a throwaway clone of `3e307011`
+  built from scratch at a 9-character path: **107 cases** (3 `tcases` + 86 `hcases` +
+  **17** `dcases` + `xschemtest`), **106 blocks**, **`wc -l` 320 green**; trailer
+  `cases=107 blocks=106 counted_failures=0 skips=8 elapsed=621s`, zero live-peer lines.
+  Issue **1616** took it there (`test_wave_viewer`, **`dcases` alone** — the second suite in
+  this series registered that way, after 1615's). ⚠ **That commit's FIRST gate was RED at
+  the same commit** (`results.370291.log`, `counted_failures=3`) and the red was
+  `test_ase_optier_0963`, the known flake, printing the `rc={1}` that the `d6816c00`
+  diagnostic exists to print. **The commit was NOT declared green on that run**: the suite
+  was re-run three times alone (110 checks each) and then the WHOLE T1 was re-run at the
+  same commit, which is the figure quoted above. See the flake paragraph under
+  **Concurrent T1 runs** — a red there is still a red, and re-gating is the handling.
+  One commit earlier, `106/105/skips=8` was `tests/results.138903.log` at `943038f9`, a
+  clone at a 10-character path, `wc -l` 317, 607s (3 + 86 + 16 + `xschemtest`); issue
+  **0514** took it there (`test_raw_schname_0514`, `hcases` alone). Before that,
+  `105/104/skips=8` was `tests/results.61417.log` at `76c132de`, a clone at an
   11-character path, `wc -l` 314, 609s (3 + 85 + 16 + `xschemtest`).
   Issue **1615** took the count up, and it is the **first figure in this series where the
   new suite went into `dcases` ALONE** (`test_wave_sigbrowser_panes`, whose fenced band is
@@ -162,15 +172,15 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Twelve figures in six days**: `88/87/skips=5` (`results.2325750.log`,
+  **Thirteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
   hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
-  `105/104/skips=8` (1615) and `106/105/skips=8` here (0514).
-  ⚠ **`skips=` has now held at 8 across TWELVE
+  `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` here (1616).
+  ⚠ **`skips=` has now held at 8 across THIRTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
@@ -181,7 +191,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   series — which also costs one case and no skip, but for a different reason (its headless
   arm is not run at all, rather than run and self-skipped). Three different registration
   shapes have now produced the same 8, and a fourth (`dcases` alone for a suite that DOES
-  print a lowercase `skip:`) would not. **Twelve in a row is well past the point where
+  print a lowercase `skip:`) would not. ⚠ **Issue 1616 then registered `test_wave_viewer` in
+  `dcases` ALONE as well — the SECOND suite to reach 8 that way — and it is worth knowing why
+  it costs no skip even though its headless arm DOES self-skip 343 of its 402 checks: the
+  self-skip prints uppercase `SKIPPED:`, which `summarize_all` does not count, and in any case
+  the headless arm is never run for a `dcases`-only entry. Two different reasons, same zero.**
+  **Thirteen in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and
@@ -227,6 +242,25 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   skipped: that would have made it invisible rather than legible, and the suite would go
   green while measuring less. **So a red here is still a red** — read the rc it now prints
   before deciding anything, and do not treat the name as permission to ignore it.
+
+  ⚠ **THE NEXT OCCURRENCE ARRIVED, THE rc REPORTING DELIVERED, AND IT REFUTES THE LOAD
+  CORRELATE — 2026-09-29, issue 1616's gate at `3e307011`.** `counted_failures=3`
+  (`results.370291.log`): `X1` reddened with **`NORAW rc={1} wall=12058ms
+  raw={…/_optier0963_397286/xrun/tb_bandgap_ase.raw}`** and `X2` followed with
+  `ZZNOTRUN`, plus the case's `HARNESS: … (exit=1, OVERALL_ok=0, died=0)` line. So the
+  `d6816c00` diagnostic did exactly what it was built for: **rc 1 means ngspice RAN for
+  12 seconds and exited nonzero of its own accord** — not "never ran", not a timeout, not
+  a harness fault — and that was readable from the verdict without a single re-run.
+  ⚠ **But the machine was QUIET**: the only other work that day's session had running
+  ended at 03:14:15 and this T1 ran 03:18:12–03:28:33, no overlap. The sentence above
+  saying "both failures were under load, all six passes on a quiet machine" is therefore
+  **no longer a pattern you may lean on** — a quiet machine now has a failure too. Three
+  immediate re-runs in the SAME clone at the SAME commit then passed at **110 checks**
+  each (the count moves with the environment; 109 was a different home), and the same
+  suite had been green in the previous commit's gate 20 minutes earlier. Per D8 this is
+  recorded as an observation, not a verdict: nothing was retried in the product, nothing
+  was skipped, and **the gate was re-run rather than the red waved through** — which is
+  the only handling this paragraph licenses.
 
   **Second observation, 2026-09-24, recorded as an observation and not as a verdict:**
   `test_home_isolation` row **`H2b`** reddened once inside a full T1 run at `c3a59de4`
