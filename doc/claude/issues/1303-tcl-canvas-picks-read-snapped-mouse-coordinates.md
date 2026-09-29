@@ -1,7 +1,54 @@
 # 1303 — a Tcl canvas pick reads SNAPPED mouse coordinates and can answer for a device the user did not click
 
 🟡 **THE ACCESSOR LANDED 2026-09-04; THE TWO CALLERS ARE NOT FIXED YET.**
-`xschem get mousex` / `mousey` now answer the **unsnapped** schematic
+
+
+## Investigation note, 2026-09-28 — what `test_rdw_keys_1245` is actually doing
+
+`rdw::pick_click` **has been converted** to the unsnapped accessor: it reads
+`xschem get mousex`/`mousey` and falls back to a CIW refusal only if either comes back
+empty. So the caller half of this issue looks done for that proc. But its suite,
+`tests/headless/test_rdw_keys_1245`, fails **six rows deterministically** — F1, C2, V2,
+V3, V7, D1 — identically across four unmodified runs on the dev display. Recorded here
+rather than fixed, because the investigation did not converge and the remaining clue
+needs somebody with a screen.
+
+**What is established (all driven):**
+
+* The fixture and pick points are correct. Row `V0`, the control, passes:
+  `xschem instance_at` at the computed device centres returns `M1`, `M2`, `R1`.
+* The binding seizure is correct. Row `V1` passes: `<ButtonPress-1>` holds
+  `rdw::pick_click; break`, and the release and Escape bindings are taken.
+* **Synthesised motion DOES reach the C side.** Measured standalone on `:99` with a
+  `cmos_inv.sch` fixture: `.drw` carries `<Motion>` bound to
+  `xschem callback %W %T %x %y 0 0 0 %s`, and `event generate .drw <Motion> -x .. -y ..`
+  moved `xschem get mousex` to `136.28,-350.84` for a device centre of `137,-350`,
+  with `instance_at` on those coordinates answering `M2`. So the harness is not
+  fundamentally unable to drive this.
+* **In the failing path the pick reads the drawing area's CORNER.** `pick_click` saw
+  `mousex=813.80876 mousey=-467.43196` with `xorigin=-139.891237113402`,
+  `yorigin=467.4319573697409`, `zoom=0.6071329061019783`. Back-calculated through
+  `user = px*zoom - origin` that is pixel **(1110, 0)** exactly — and `.drw` measured
+  **1110x693**. `mousey` is `-yorigin` to every digit, i.e. `py` is exactly 0. A
+  specific corner, not drift.
+* The CIW line it then emits is its own *"no device under the click"* arm, so the
+  refusal is correct behaviour for the coordinates it was given. **The defect is
+  upstream of the pick, in what set the mouse position.**
+
+**⚠ Two instrumentation traps, both hit, both worth knowing before re-opening this:**
+adding `puts` diagnostics between the Motion and the ButtonPress made the click
+**succeed** (`nblocks` went to 1) — so the failure is sensitive to what runs between
+the events even though it is otherwise deterministic. And wrapping `rdw::pick_click`
+with a rename to log its arguments to a file produced an **empty log**, while an
+earlier run in the same session captured that proc's own CIW message — so the wrapper
+either did not install or was displaced. Neither probe is trustworthy as written.
+
+**Not attempted, deliberately:** no change was made to `rdw::pick_click` or to the
+suite. Changing product code to satisfy a test whose timing can be perturbed by a
+`puts` risks fixing the wrong half, and this project's own rule is never to conclude a
+gesture works on the strength of synthesised events. The next step wants either a real
+pointer (`event generate -warp 1`, which actually moves the cursor) or somebody
+watching the screen.`xschem get mousex` / `mousey` now answer the **unsnapped** schematic
 coordinates, beside the snapped pair that was previously the only thing Tcl
 could ask for. That is the piece that made the defect unfixable rather than the
 fix itself:
