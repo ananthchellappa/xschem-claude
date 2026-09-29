@@ -2537,6 +2537,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
 # --- cleanup + verdict -------------------------------------------------------
 if {$fail == 0} {
+  # ⚠ `OVERALL: ok` IS THE ONLY SENTINEL T1 CAN SCORE, AND WITHOUT IT THIS SUITE
+  # COULD NOT BE REGISTERED AT ALL (issue 1616). `banner_complete` in
+  # tests/banner_rule.tcl — the only Tcl reader, and the one run_regression.tcl
+  # sources — is `^OVERALL: ok([ \t]+\([^)]*\))?[ \t]*$`, and that file's header
+  # says it implements no `RESULT: ALL PASS` spelling at all. So this suite, added
+  # to `dcases` while printing only the `RESULT:` line below, would have been
+  # scored `HARNESS: … did not complete cleanly (exit=0, OVERALL_ok=0, died=0)`
+  # with all 402 of its own checks PASSING — the exact red measured at 809c03d1
+  # for the wvbs family. `run_suites.sh` and `full_audit.sh` carry their own EREs
+  # which DO accept `RESULT: ALL PASS`, which is why every standalone run of this
+  # suite had always looked clean: the two readers that could see it were the two
+  # that are not the gate.
+  #
+  # ⚠ ADDITIVE ON PURPOSE, exactly as `wvbs_finish` in wvbs_common.tcl is. The
+  # `RESULT:` line is KEPT because `summarize_all` publishes a case's LAST
+  # `RESULT:` line into the verdict and `run_suites.sh` displays it; dropping it
+  # would blank both. The order of the two lines is not load-bearing —
+  # `banner_complete` uses `regexp -line` over the whole body — and this comment
+  # does not claim it is.
+  #
+  # This is the THIRD site in this family: wvbs_common.tcl (fourteen suites, issue
+  # 1615), this file, and tests/headless/test_results_select.tcl, which is still
+  # unregistered and still prints no sentinel.
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"

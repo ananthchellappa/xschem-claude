@@ -616,7 +616,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_preview_name_inject_1601" \
                  "headless/test_generator_paren_1604" \
                  "headless/test_headless_guards_xarm_1492" \
-                 "headless/test_wave_sigbrowser_panes"]
+                 "headless/test_wave_sigbrowser_panes" \
+                 "headless/test_wave_viewer"]
 ## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
 ## HALF. The headless-crash batch added eleven `has_x` guards, and
 ## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui
@@ -649,6 +650,17 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## embedded newline) into the real entry widget, invoke the real OK button from
 ## the event loop, and assert the canary never fired while the legitimate value
 ## landed. The `hcases` copy above runs the same file and self-skips all of it.
+## ⚠ `test_wave_viewer` IS A `dcases` ENTRY AND DELIBERATELY NOT AN `hcases` ONE
+## (issue 1616). Measured 2026-09-29 at 59a6fcad: the display arm scores 402
+## checks and the headless arm 59, because G1-G17 -- the viewer-core band, every
+## row that opens a real viewer window -- self-skip without a usable DISPLAY. So
+## 343 of its 402 checks are display-only, and an `hcases` copy would spend a
+## whole case to re-run the 59 non-GUI rows. Same registration shape as
+## `test_wave_sigbrowser_panes` above, and it costs one case and no `skip:` line
+## (its self-skip prints uppercase `SKIPPED:`, which summarize_all does not count).
+## ⚠ Registering it at all required fixing its epilogue first: it printed only
+## `RESULT: ALL PASS`, which `banner_complete` cannot score. See the comment at
+## that suite's verdict block, and CLAUDE.md's Harness rules.
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)
