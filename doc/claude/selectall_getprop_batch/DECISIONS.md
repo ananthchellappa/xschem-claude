@@ -187,3 +187,55 @@ builds hit a transient link failure racing crew A's `make`.
 trees**, or they are serialised. Read-only recon crews may share a tree — Stage R's two crews did,
 with no conflict, because neither compiled anything. Crew B's receipt §8.1 carries the working
 isolated-tree recipe; it is the method, not a workaround.
+
+## D13 — seam (b) accepted: a branch in `waves_callback()`, no new action id
+
+Crew A implemented Ctrl-A as a branch in `waves_callback()` above the cursor-A toggle rather
+than as a new registered action. Ratified by the driver. Two of D10's three traps then **do not
+apply by construction**: `keybindings.csv` is unchanged so `test_bindings_file` stays green
+(trap 3), and `graph.forward` already declares `mutates = 0` (trap 2).
+
+⚠ **The crew fenced trap 2's failure class anyway**, by sabotaging the branch behind
+`readonly_block()` and catching it with two `$::mb_hits` rows. That is the right instinct: a trap
+that cannot fire *today* still fences the shape, and if anyone later migrates to a registered
+action (a clean follow-on) the rows are already there.
+
+## D14 — ⚠ A SABOTAGE SURVIVED, AND THE RIGHT ANSWER WAS TO DELETE THE HAZARD, NOT FAKE A ROW
+
+Removing the 64-entry cap (`GRAPH_MAX_SEL_WAVES`) left the suite at **`ALL PASS (431)`** —
+**not caught**. The reason is instructive: `graph_sel_waves_set` clamps as well, so the
+behavioural row `CA8` still read 64 while `sel[k] = k` wrote **one int past the end of a stack
+array**. A memory error downstream of a clamp is invisible to every behavioural assertion that
+can be written, because the observable answer is correct.
+
+Crew A did **not** invent a row that would have looked like a fence. It **removed the hazard**:
+`ndraw` and `n` are now separate values and `n = ndraw < cap ? ndraw : cap` applies the bound in
+one undeletable expression, with `cap` derived as `sizeof(sel)/sizeof(sel[0])` rather than
+restated.
+
+**And it said plainly which property is fenced by what:** the cap's *behaviour* is fenced by
+`CA8`; its *memory safety* is fenced by the shape of the code and by nothing else. That sentence
+is worth more than a green row would have been. CLAUDE.md warns that a fence keyed to a symptom
+dies quietly when something else cures the symptom — this is the same lesson one level deeper,
+where the symptom is cured by a clamp the fence cannot see past.
+
+## D15 — the change covers embedded graphs too, deliberately
+
+The handler is shared, so Ctrl-A behaves identically over a graph inside an ordinary schematic,
+not only inside the waveform viewer. Probe-verified by crew A. Kept, although the user's wish
+text is prefixed "WV:", because the alternative is the same gesture meaning different things
+depending on where the graph lives — a context-dependent binding is harder to learn than a wider
+one. Recorded in the `rule/1617` conversation as part (3) so the user can redirect it; the
+out-of-scope invariants were confirmed unchanged by probe (bare-canvas Ctrl+A still selects 20,
+`xschem select_all` still 20).
+
+## D16 — one gate of the tip, with a stated bisect plan
+
+Stages A and B are separate commits (D1) but will be gated by **one** T1 of the tip rather than
+two. Justification: they touch disjoint files (`callback.c`/`draw.c`/`xschem.h`/`wave_viewer.tcl`
+versus `scheduler.c`) and disjoint suites (`test_wave_viewer` versus
+`test_getprop_index_bounds`), and T1 names the failing case, so a red **is** attributable by case
+rather than by count. **If the tip gates red, the driver gates `69adfe59` alone to bisect** —
+that is the plan, stated before the run rather than improvised after it. This is not the
+809c03d1 mistake, which was bundling a registration whose red landed on the same case as the
+behaviour change.

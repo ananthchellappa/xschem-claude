@@ -7,7 +7,7 @@ Opened 2026-09-29 at `b89fddda`. T1 baseline `cases=107 blocks=106 counted_failu
 | stage | crew receipt | verified by driver | commit | T1 gate |
 |---|---|---|---|---|
 | R recon | `R-recon-A.md` + `R-recon-B.md` **collected** | driver re-ran crew B's central claim, all 4 outputs matched; crew A's refutation accepted on its measured `graph_flags`/`lastsel` evidence | `4f998799` (scaffolding) | n/a, no code |
-| A Ctrl-A select all traces (1617) | impl **dispatched** | — | — | — |
+| A Ctrl-A select all traces (1617) | `R-recon-A.md` + `A-impl.md` **collected** | driver ratified seam (b), the hazard-deletion over an invented row, and the embedded-graph scope | _pending_ | _pending, gating the tip_ |
 | B getprop arms (1618) | `R-recon-B.md` + `B-impl.md` **collected** | driver re-ran the central claim (4/4 matched), verified the file split, checked the stamp | _pending_ | _pending, held off Stage A_ |
 
 ## Collected notes
@@ -71,3 +71,35 @@ sabotage as a non-defect, with the mechanism, is better than quietly dropping it
 **Driver's own error, recorded as D12:** two building crews in one tree. Crew B routed around it with
 an isolated `git archive` tree but had to swap the shared binary four times to do so, which means
 Stage A's greens must be re-measured by the driver rather than accepted.
+
+### Stage A, collected 2026-09-29 — a sabotage SURVIVED, and that is the best thing in the batch
+
+Baseline taken by the crew before writing a line: `ALL PASS (407 checks)` — so the brief's silence
+about this suite was a gap, not a hidden red. Red `11 FAILED (420 passed)`, then a definitive
+`13 FAILED (424 passed)` after two rows were strengthened. Green `ALL PASS (437 checks)`, +30 rows,
+no case-count or skip movement.
+
+**⚠ The 64-cap sabotage was NOT caught — `ALL PASS (431)`.** `graph_sel_waves_set` clamps as well,
+so the behavioural row still read 64 while `sel[k] = k` wrote one int past a stack array. A memory
+error downstream of a clamp is invisible to every behavioural assertion that can be written,
+because the observable answer stays right.
+
+**What the crew did about it is the model response.** It did not invent a row that would have
+looked like a fence. It **deleted the hazard** — `n = ndraw < cap ? ndraw : cap`, `cap` from
+`sizeof` rather than restated — and then wrote down the honest division: the cap's *behaviour* is
+fenced by `CA8`, its *memory safety* by the shape of the code and by nothing else. A green row
+there would have been worse than that sentence, because it would have claimed a guarantee nothing
+could keep.
+
+**The trap that nearly shipped a lying menu:** `key_filter`'s tail calls `key_cursor_tail` for
+keysym 97 with no modifier test, so the Cursors ▸ Cursor A checkbutton desynced on every Ctrl-A
+while the feature itself worked. Sabotaging the carve-out away moves `CA4` to `{1 0}` and **moves
+no selection row at all** — which is precisely why that row had to exist.
+
+**Three things the crew got wrong and reported:** a malformed Tcl expected-value literal that made
+a green product look red; the unfenced cap above; and `CA7` silently degrading from an invariant to
+a parity check once `CA9` was inserted above it — caught by comparing which row *disappeared*
+between two red runs, which is a technique worth stealing.
+
+Also settled: recon's one open question, by row `CA0` measured in a really-open viewer — nothing
+binds `<Control-Key-a>` on any bindtag of the canvas or toplevel.

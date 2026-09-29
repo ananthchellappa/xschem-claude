@@ -3345,6 +3345,80 @@ int graph_sel_waves_toggle(int i, int wcnt)
   return graph_sel_waves_set(i, sel, n);
 }
 
+/* CTRL+A: SELECT EVERY DRAWN TRACE OF EVERY GRAPH RECT IN THIS WINDOW (issue
+ * 1617, wish_list.txt new-list item 13 "WV: CTRL-A to select all traces").
+ * Returns 1 when any rect's prop string actually changed, so a repeated Ctrl+A
+ * costs no redraw.
+ *
+ * WINDOW-WIDE, NOT THE POINTED STRIP (issue 1617 D8). The selection is ONE set
+ * in the whole window -- the invariant the Button1 cross-strip sweep exists to
+ * keep -- and the shipped Delete consumes it window-wide
+ * (wviewer::delete_selection_at -> selection_pairs folds every strip). A
+ * per-strip "select all" would make "all" mean one thing to the selecting
+ * gesture and another to the deleting one, and the disagreement would be
+ * discovered by destroying something.
+ *
+ * ⚠ A STRIP WITH NO TRACES IS LEFT EXACTLY AS IT IS, not cleared. `n <= 0` would
+ * reach graph_sel_waves_set(i, NULL, 0), which writes `hilight_wave=-1` whenever
+ * the token is merely ABSENT -- so every Ctrl+A would churn the prop string of
+ * every blank strip and report `changed`, costing a redraw to select nothing.
+ * "Select all traces" on a strip with none is a no-op, so this says so.
+ *
+ * ⚠ THE 64 CAP IS A CLAMP, NOT A REFUSAL, and that is deliberate. It is what
+ * graph_sel_waves_set already does (unlike graph_sel_waves_toggle, which refuses
+ * the 65th ADD because a Ctrl+click that silently dropped the trace the user
+ * clicked would be a lie about that one trace). Here the user asked for "all",
+ * the answer is "the first 64", and dropping the whole gesture would be worse
+ * than a bounded one -- so the count is capped here, named on the debug channel,
+ * and MEASURED by row CA8 of tests/headless/test_wave_viewer.tcl rather than
+ * asserted in this comment. No new user-facing sentence is added for it
+ * (issue 1617 D9's "do not pay for an unratified change with new UI").
+ *
+ * ⚠⚠ AND THE BOUND IS APPLIED IN ONE EXPRESSION BECAUSE NO ROW CAN SEE IT.
+ * MEASURED during the sabotage round of issue 1617: written as a separate
+ * `if(n > cap) { dbg(...); n = cap; }` statement, DELETING that statement left
+ * all 431 checks of test_wave_viewer GREEN -- graph_sel_waves_set() clamps too,
+ * so row CA8 still read exactly 64 selected -- while `sel[k] = k` ran one int
+ * past the end of `sel`. That is CLAUDE.md's "a fence keyed to a symptom dies
+ * quietly when something else cures the symptom", reached from the memory side:
+ * a stack write that lands somewhere harmless is invisible to every behavioural
+ * assertion there is. So `ndraw` (what the strip draws) and `n` (what fits) are
+ * separate, `n` is a min() that cannot be deleted without rewriting the
+ * assignment, and the debug line is the only thing the cap statement still owns.
+ *
+ * The node space is the `node` prop token, counted exactly as graph_legend_at()
+ * counts it, so "every drawn trace" means every slot the legend and the engine
+ * agree exists. A trace carrying an empty `vec` reaches no node slot at all
+ * (wviewer::node_index_of_trace) and therefore cannot be selected by anything,
+ * this included -- wviewer::trace_index_of_node already drops it.
+ *
+ * Writes ONLY through graph_sel_waves_set, so the "three sanctioned writers of
+ * that pair" rule in xschem.h still holds: this is a caller, not a fourth writer.
+ * Selection is VIEW state -- no set_modify, no push_undo, exactly as the Ctrl+click
+ * toggle and the plain-click set already are. */
+int graph_sel_waves_all(void)
+{
+  int i, changed = 0;
+  if(!xctx) return 0;
+  for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
+    xRect *r = &xctx->rect[GRIDLAYER][i];
+    int sel[GRAPH_MAX_SEL_WAVES];
+    int cap = (int)(sizeof(sel) / sizeof(sel[0]));  /* the ARRAY's own bound */
+    int ndraw, n, k;
+    if(!(r->flags & 1)) continue;                /* 1: graph, 3: graph_unlocked */
+    ndraw = count_items(get_tok_value(r->prop_ptr, "node", 0), "\n", "\"");
+    if(ndraw <= 0) continue;                     /* nothing drawn: leave it alone */
+    if(ndraw > cap)
+      dbg(0, "graph_sel_waves_all(): graph %d draws %d traces, selecting the first %d\n",
+          i, ndraw, cap);
+    n = ndraw < cap ? ndraw : cap;               /* the ONE bound, not a clamp step */
+    for(k = 0; k < n; ++k) sel[k] = k;
+    if(graph_sel_waves_set(i, sel, n)) changed = 1;
+  }
+  dbg(1, "graph_sel_waves_all(): changed=%d\n", changed);
+  return changed;
+}
+
 /* what == 1: set thick lines,
  * what == 0: restore default
  */

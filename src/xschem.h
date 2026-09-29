@@ -2806,10 +2806,16 @@ extern int graph_wave_at(int i, double px, double py, double tol);
  *   graph_sel_waves_toggle  Ctrl+click: add `wcnt` if absent, remove it if
  *                         present. Returns 1 when it changed something.
  * wave_is_hilighted() is the DRAW-side test and replaces every `gr->hilight_wave
- * == wcnt` comparison. */
+ * == wcnt` comparison.
+ * graph_sel_waves_all() (issue 1617, Ctrl+A) is a CALLER of the three above, not a
+ * fourth writer -- it enumerates each rect's `node` token and hands the result to
+ * graph_sel_waves_set, so the invariant that only those three touch the pair still
+ * holds. WINDOW-WIDE by decision (D8): one set in the whole window, matching what
+ * the Delete path already consumes. Returns 1 when any rect changed. */
 extern int  graph_sel_waves_get(int i, int *out, int max);
 extern int  graph_sel_waves_set(int i, const int *waves, int n);
 extern int  graph_sel_waves_toggle(int i, int wcnt);
+extern int  graph_sel_waves_all(void);
 extern int  wave_is_hilighted(Graph_ctx *gr, int wcnt);
 /* The mid-drag SHRINK PREVIEW as a SET (issue 0192,
  * doc/claude/specs/waveform_viewer_modes.md 19). Same one-writer/one-predicate

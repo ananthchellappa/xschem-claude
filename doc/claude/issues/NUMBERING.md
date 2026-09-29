@@ -4087,13 +4087,34 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1617.**~~
 
-- **1617** — **RESERVED, in flight.** Ctrl-A over a waveform graph selects every drawn trace
-  (wish-list new-list item **13**). Minted 2026-09-29 in batch
-  `doc/claude/selectall_getprop_batch/`; the issue file lands with that stage's commit. ⚠ Recorded
-  here the moment it was minted rather than when it was filed, because a number named nowhere is a
-  number another clone re-mints -- which is exactly how `1333`-`1348` came to mean two defects each
-  (issue 1400). ⚠ Not an empty chord: Ctrl-A over a graph currently TOGGLES CURSOR A, measured, so
-  the item takes an occupied binding; the price is filed as `rule/1617` for the user.
+- **1617** — **Ctrl-A over a waveform graph toggled a cursor instead of selecting the traces.**
+  Wish-list new-list item **13** asked for *"CTRL-A to select all traces"*; the select-and-delete
+  half already shipped (issues 0175, 0176). ⚠ **The chord was NOT empty** -- Ctrl-A over a graph
+  reached `waves_callback()` and **toggled x-cursor A**: measured `graph_flags` 2 -> 0 -> 2 across
+  presses while the selection count stayed 0, versus 0 -> 20 for the same chord over the canvas.
+  ⚠ **The scouting error came from a shipped comment on the line that contradicts it** --
+  `set_input_binding(DEV_KEY,'a',ControlMask,ACTX_OVER_GRAPH,"graph.forward"); /* select all */`,
+  where the comment names the CANVAS meaning that very row diverts away from. So the item TAKES AN
+  OCCUPIED CHORD, and that price is on the user's queue as `rule/1617` (three interacting parts:
+  cursor A in the `graph_use_ctrl_key 1` profile where it was the only such chord; the feature
+  being absent from the generated keybindings help because `generate_keybindings_text` skips
+  `graph.forward` as plumbing; and the handler being shared so embedded schematic graphs are
+  covered too). Fixed with a new `graph_sel_waves_all()` and a branch in `waves_callback()`;
+  **window-wide, not per strip**, because "all" has no strip qualifier and the shipped Delete path
+  is already window-wide. Logs nothing, because selection gestures are not logged in this product
+  -- only mutations are. ⚠ **The trap that would have shipped a lying checkbutton**: `key_filter`'s
+  tail calls `key_cursor_tail` for keysym 97 with NO modifier test, so once C stopped toggling
+  cursor A the mirror still flipped and the Cursors > Cursor A checkbutton desynced on every
+  Ctrl-A -- sabotaging the carve-out away reddens CA4 to `{1 0}` and **moves no selection row at
+  all**. ⚠⚠ **AND ONE SABOTAGE SURVIVED**: removing the 64-entry cap left the suite `ALL PASS (431)`,
+  because `graph_sel_waves_set` clamps too, so the behavioural row still read 64 while `sel[k] = k`
+  wrote one int past a stack array -- a memory error downstream of a clamp that NO behavioural
+  assertion can see. No row was invented to look like a fence; the hazard was deleted
+  (`n = ndraw < cap ? ndraw : cap`, `cap` from `sizeof`), and the honest sentence recorded: the
+  cap's BEHAVIOUR is fenced by CA8, its MEMORY SAFETY by the shape of the code and nothing else.
+  Red `11 FAILED (420 passed)`, then a definitive `13 FAILED (424 passed)`; suite 407 -> 437
+  checks, already `dcases`, no case-count or skip movement. FIXED, the `CA*` band of
+  `tests/headless/test_wave_viewer.tcl`, written red first.
 
 - **1618** — **`getprop` can write a line property from Tcl but never read it back.**
   `xschem setprop` has had `line`/`poly`/`arc` arms since audit 0063 atom 10; `xschem getprop`

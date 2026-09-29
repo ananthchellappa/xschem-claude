@@ -452,7 +452,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # round-trip is asynchronous — gate every generate on Tk reporting $w as
   # the focus owner and retry until $done, an expr evaluated in the CALLER's
   # scope, turns true). Returns 1 on proven delivery, 0 on ~10s timeout.
-  proc send_key {w ev done} {
+  # ⚠ `gargs` (issue 1617) is NOT cosmetic. A graph-context chord is routed by the
+  # POINTER, not by the keystroke: callback() recomputes xctx->mousex/mousey from
+  # the event's own %x/%y for EVERY event type, KeyPress included (src/callback.c,
+  # `xctx->mousex=X_TO_XSCHEM(mx)`), and waves_selected() then asks whether THAT
+  # point is inside a graph rect. A key generated with no -x/-y therefore decides
+  # the graph context from whatever Tk defaults those fields to, which for the
+  # over-graph chords is the difference between reaching waves_callback and
+  # falling through to the schematic canvas verb. Every caller that cares passes
+  # the pixel explicitly; the existing callers pass nothing and are unaffected.
+  proc send_key {w ev done {gargs {}}} {
     for {set i 0} {$i < 200} {incr i} {
       update
       if {[uplevel 1 [list expr $done]]} { return 1 }
@@ -461,7 +470,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         update
         if {[uplevel 1 [list expr $done]]} { return 1 }
         if {[winfo exists $w] && [focus -displayof $w] eq $w} {
-          event generate $w $ev
+          eval [list event generate $w $ev] $gargs
           update
           if {[uplevel 1 [list expr $done]]} { return 1 }
         }
@@ -505,11 +514,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # errors instead of filtering (a swallow-by-error looks exactly like a
   # swallow-by-design: hollow-green). kf_errs guards that class: the
   # product filter must never throw.
+  # kf_last (issue 1617) records the LAST (type, keysym, modifier-state) triple the
+  # filter was handed. It is the only witness that a chord generated with
+  # `event generate` arrived AS THAT CHORD: a `<Control-Key-a>` that lost its
+  # Control bit somewhere in the Tk/WSLg round trip is indistinguishable, from the
+  # product state alone, from a Ctrl-A the code declined to act on.
   rename ::wviewer::key_filter ::wviewer::key_filter_orig
   set ::kf_calls 0
   set ::kf_errs 0
+  set ::kf_last {}
   proc ::wviewer::key_filter {W T x y N K s} {
     incr ::kf_calls
+    set ::kf_last [list $T $N $s]
     if {[catch {::wviewer::key_filter_orig $W $T $x $y $N $K $s} e]} {
       incr ::kf_errs
       puts "  key_filter ERROR: $e"
@@ -2572,6 +2588,294 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       } else {
         puts "SKIPPED: SD5 (graph_coord unavailable)"
       }
+
+      # === CA (issue 1617): CTRL-A OVER A GRAPH SELECTS EVERY DRAWN TRACE =====
+      # wish_list.txt new-list item 13: "WV: CTRL-A to select all traces. Select
+      # and delete traces." The select-and-delete half already ships (issues
+      # 0175/0176); the chord did not.
+      #
+      # ⚠ THIS CHORD WAS OCCUPIED, WHICH IS WHY THE CURSOR ROWS BELOW ARE NOT
+      # DECORATION. Before this issue, Ctrl-A over a graph reached waves_callback
+      # and toggled x-cursor A (measured: graph_flags 2 -> 0 -> 2 across presses
+      # while the selection tokens never moved). So the band has to assert BOTH
+      # halves of the swap -- the selection now happens, and cursor A now does
+      # not -- and the second half is where the trap lives: wviewer::key_filter's
+      # tail calls wviewer::key_cursor_tail for keysym 97 with NO modifier test,
+      # so with only the C side changed the Cursors > Cursor A CHECKBUTTON flips
+      # on every Ctrl-A while the engine's cursor stays off. That desync is
+      # invisible to any row that looks only at the selection.
+      #
+      # ⚠ SCOPE IS WINDOW-WIDE, NOT THE POINTED STRIP (DECISIONS D8). Two strips
+      # with traces, the pointer in strip 0, and strip 1 must come out selected
+      # too -- otherwise "select all" and "delete the selection" (which is
+      # window-wide via wviewer::selection_pairs) would disagree about what "all"
+      # covers, and the disagreement would be discovered by destroying something.
+      #
+      # ⚠ THE PIXEL IS PART OF THE GESTURE. waves_selected() answers from
+      # xctx->mousex/mousey, which callback() recomputes from the EVENT's %x/%y on
+      # a KeyPress too -- so the chord is sent with explicit -x/-y inside strip 0's
+      # band, and a <Motion> to the same pixel first so the Tcl-side over_graph
+      # gate (which reads the mousex_snap MIRROR, not the event) agrees.
+      #
+      # ⚠ EVERY ROW HERE MUST FAIL, NOT THROW (the brief's rule, and the OB-band
+      # lesson from issue 1616): on the unfixed tree the selection readers answer
+      # {} and the strip_bands_px / graph dicts are all well formed, but anything
+      # that indexes a possibly-empty answer is wrapped.
+      proc ca_sel {vdrw gi} {
+        if {[catch {wviewer::selected_waves $vdrw $gi} v]} { return "threw ($v)" }
+        return $v
+      }
+      proc ca_tok {vdrw gi t} {
+        xschem new_schematic switch $vdrw
+        if {[catch {xschem getprop rect 2 $gi $t} v]} { return "threw ($v)" }
+        return $v
+      }
+      # the Cursors > Cursor A checkbutton state and the ENGINE's cursor-A bit,
+      # as ONE value: the pair is the desync, and either alone is blind to it
+      # (build_menubar binds that checkbutton to ::wviewer::cva($token), and
+      # graph_flags bit 2 is what draws the cursor).
+      proc ca_cursorA {vdrw tok} {
+        xschem new_schematic switch $vdrw
+        set bit 0
+        catch {set bit [expr {([xschem get graph_flags] & 2) ? 1 : 0}]}
+        set mir 0
+        catch {set mir [expr {$::wviewer::cva($tok) ? 1 : 0}]}
+        return [list $mir $bit]
+      }
+      # RECOMPUTED before every gesture, never cached: the readout bar the cursor
+      # rows below make visible can repack the canvas, and a stale mid-of-band row
+      # silently becomes a pixel in a different strip -- the same "rescan, do not
+      # reuse" rule wb_far_row carries a few hundred lines up. {} when the strip
+      # has no band -- it falls back to a fraction of the canvas rather than {} so
+      # a missing band cannot make a gesture THROW (the brief's fail-not-throw
+      # rule); CA-fixture asserts the band was really there, so the fallback can
+      # never pass for the real thing silently.
+      proc ca_bands {vdrw} {
+        set bb {}
+        catch {set bb [wviewer::strip_bands_px $vdrw]}
+        return $bb
+      }
+      proc ca_row {vdrw gi} {
+        set bb [ca_bands $vdrw]
+        if {$gi < [llength $bb]} {
+          set b [lindex $bb $gi]
+          if {[llength $b] == 4} {
+            return [expr {int(([lindex $b 1] + [lindex $b 3]) / 2.0)}]
+          }
+        }
+        return [expr {int(0.25 * [winfo height $vdrw])}]
+      }
+      # ONE gesture, so no row can differ from another in how it sends the chord:
+      # a <Motion> to the pixel (so the Tcl-side over_graph gate, which reads the
+      # mousex_snap MIRROR, agrees) and then the chord AT that pixel (so C's
+      # waves_selected, which reads the mirror callback() recomputes from the
+      # event's own %x/%y, agrees too). Returns 1 on proven delivery.
+      proc ca_send {vdrw ev px py} {
+        wb_ev $vdrw <Motion> -x $px -y $py
+        update
+        set k0 $::kf_calls
+        set d [send_key $vdrw $ev {$::kf_calls > $k0} [list -x $px -y $py]]
+        update
+        return $d
+      }
+      # a FRESH two-strip fixture, built from a real trace dict rather than from
+      # add_trace: strip 0 carries TWO traces (so `sel_waves` is exercised -- the
+      # token is written only for a selection of two or more, so a one-trace strip
+      # cannot tell a both-tokens writer from a hilight_wave-only one) and strip 1
+      # carries ONE (so the window-wide row cannot be satisfied by the pointed
+      # strip alone, and so the 1-element `sel_waves`-is-REMOVED invariant is
+      # asserted at the same time).
+      set ca_save [dict get [wviewer::layout_for $tok] graphs]
+      set ca_tr {}
+      foreach G $ca_save {
+        foreach tr [wviewer::dget $G traces {}] {
+          if {[wviewer::dget $tr vec {}] ne {}} { lappend ca_tr $tr }
+        }
+      }
+      check_true "CA fixture: a real trace dict was recovered from the model" \
+        [expr {[llength $ca_tr] >= 1}]
+      if {[llength $ca_tr] >= 1} {
+        set ca_t0 [lindex $ca_tr 0]
+        wviewer::set_graphs $tok [list \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0 $ca_t0]] \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0]]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        xschem new_schematic switch $vdrw
+        set ca_gs [dict get [wviewer::layout_for $tok] graphs]
+        check "CA fixture: node spaces are 2 and 1" \
+          [list [wviewer::node_count [lindex $ca_gs 0]] \
+                [wviewer::node_count [lindex $ca_gs 1]]] {2 1}
+        # the pointer pixel: the middle of strip 0's band
+        set cax [expr {int(0.5 * [winfo width $vdrw])}]
+        check "CA fixture: both strips report a pixel band" \
+          [llength [ca_bands $vdrw]] 2
+
+        # nothing selected, cursor A off, no modal so far -- the baseline every
+        # row below is measured against
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        wviewer::with_edit $tok {
+          xschem setprop rect 2 0 hilight_wave -1
+          xschem setprop rect 2 1 hilight_wave -1
+        }
+        check "CA-setup nothing is selected on either strip" \
+          [list [ca_sel $vdrw 0] [ca_sel $vdrw 1]] {{} {}}
+        check "CA-setup cursor A is off, mirror and engine agree" \
+          [ca_cursorA $vdrw $tok] {0 0}
+        set ca_mb0 $::mb_hits
+
+        # THE GESTURE
+        set ca_del [ca_send $vdrw <Control-Key-a> $cax [ca_row $vdrw 0]]
+        check "CA0 the Ctrl-A reached the viewer's key filter" $ca_del 1
+        check_true "CA0 ...and arrived AS Ctrl+keysym-97 (Control bit set)" \
+          [expr {[llength $::kf_last] == 3 && [lindex $::kf_last 1] == 97 &&
+                 ([lindex $::kf_last 2] & 4) != 0}]
+        # recon could not settle this one and asked for it: nothing may claim
+        # <Control-Key-a> ahead of the generic <KeyPress> the filter is bound to.
+        # Tk canonicalises <Control-a>/<Control-KeyPress-a> to <Control-Key-a>, so
+        # one spelling covers them, and both the canvas's tags and the toplevel's
+        # are swept (a toplevel binding would also fire for the browser's search
+        # entry -- the hazard rdw::popup_menu names).
+        set ca_steal {}
+        foreach ca_tag [concat [bindtags $vdrw] [bindtags $vtop]] {
+          foreach ca_seq [bind $ca_tag] {
+            if {$ca_seq eq {<Control-Key-a>}} { lappend ca_steal [list $ca_tag $ca_seq] }
+          }
+        }
+        check "CA0 nothing binds <Control-Key-a> ahead of the key filter" $ca_steal {}
+
+        # --- the selection, read three ways -------------------------------
+        check "CA1 every trace of the POINTED strip is selected" [ca_sel $vdrw 0] {0 1}
+        check "CA1 ...and of the OTHER strip too (window-wide, D8)" [ca_sel $vdrw 1] {0}
+        # the raw tokens, because `selected_waves` composes them and would report
+        # {0} for a strip whose sel_waves was never written -- the single most
+        # plausible wrong implementation
+        check "CA2 strip 0 wrote BOTH tokens (sel_waves is the set)" \
+          [list [ca_tok $vdrw 0 hilight_wave] [ca_tok $vdrw 0 sel_waves]] {0 {0 1}}
+        check "CA2 strip 1's 1-element selection leaves sel_waves ABSENT" \
+          [list [ca_tok $vdrw 1 hilight_wave] [ca_tok $vdrw 1 sel_waves]] {0 {}}
+        # the shape the shipped Delete path consumes, in MODEL space, through the
+        # one fold both Delete and the multi-trace drag use. This is the row that
+        # says "the existing delete path can act on it" without touching it.
+        check "CA3 selection_pairs gives the Delete path every trace, as {gi ti}" \
+          [wviewer::selection_pairs $vdrw] {{0 0} {0 1} {1 0}}
+
+        # --- the chord's OLD meaning is gone, on both sides of the mirror ---
+        check "CA4 Ctrl-A no longer toggles cursor A (engine AND menu mirror)" \
+          [ca_cursorA $vdrw $tok] {0 0}
+        check "CA4 ...and it popped no read-only modal (selection is view state)" \
+          $::mb_hits $ca_mb0
+
+        # --- BARE `a` still toggles cursor A (the shipping profile keeps it) ---
+        ca_send $vdrw <Key-a> $cax [ca_row $vdrw 0]
+        check "CA5 bare `a` still toggles cursor A, mirror and engine together" \
+          [ca_cursorA $vdrw $tok] {1 1}
+        ca_send $vdrw <Key-a> $cax [ca_row $vdrw 0]
+        check "CA5 ...and off again" [ca_cursorA $vdrw $tok] {0 0}
+
+        # --- IDEMPOTENT: a second Ctrl-A selects the same set, not a toggle ---
+        ca_send $vdrw <Control-Key-a> $cax [ca_row $vdrw 0]
+        # ⚠ the second element is `0`, NOT `{0}`: `list` braces an element only
+        # when it has to, so [list {0 1} {0}] is the STRING "{0 1} 0". Written
+        # `{{0 1} {0}}` this row failed on the FIXED tree reporting
+        # `-> {{0 1} 0} (exp {{0 1} {0}})`, i.e. a green product and a red row.
+        # Do not "restore the symmetry" with CA1's braces -- CA1 asserts the two
+        # strips separately and has no such composition.
+        check "CA6 a second Ctrl-A leaves the same set selected (not a toggle)" \
+          [list [ca_sel $vdrw 0] [ca_sel $vdrw 1]] {{0 1} 0}
+
+        # --- THE OTHER PROFILE, which is where the whole price lands ----------
+        # `graph_use_ctrl_key 1` makes Ctrl the graph ACCESS modifier, and in it
+        # Ctrl+A was the ONLY cursor-A chord (bare `a` there makes
+        # waves_selected() skip and falls through to the schematic `case 'a'`, the
+        # make-symbol dialog). So this is the profile where taking the chord
+        # actually costs a function, and the recon receipt called it "the third
+        # direction the PLAN is missing" for exactly that reason: without a row,
+        # a future change to `access_cond` or to the branch order would move the
+        # behaviour of that profile invisibly.
+        #
+        # ⚠ ONLY the Ctrl half is driven. Bare `a` in this profile reaches the
+        # schematic make-symbol dialog, which tk_messageBox's stub does not cover
+        # -- driving it would pop a real dialog on the dev display and stall the
+        # suite rather than measure anything.
+        set ca_guck 0
+        if {[info exists ::graph_use_ctrl_key]} { set ca_guck $::graph_use_ctrl_key }
+        check "CA9 the shipping profile really is graph_use_ctrl_key 0" $ca_guck 0
+        set ::graph_use_ctrl_key 1
+        wviewer::with_edit $tok {
+          xschem setprop rect 2 0 hilight_wave -1
+          xschem setprop rect 2 0 sel_waves {}
+          xschem setprop rect 2 1 hilight_wave -1
+        }
+        check "CA9 fixture: the selection was cleared before the profile switch" \
+          [list [ca_sel $vdrw 0] [ca_sel $vdrw 1]] {{} {}}
+        ca_send $vdrw <Control-Key-a> $cax [ca_row $vdrw 0]
+        check "CA9 Ctrl-A selects all in the graph_use_ctrl_key 1 profile too" \
+          [list [ca_sel $vdrw 0] [ca_sel $vdrw 1]] {{0 1} 0}
+        check "CA9 ...and cursor A stays put there as well (D9's declared price)" \
+          [ca_cursorA $vdrw $tok] {0 0}
+        set ::graph_use_ctrl_key $ca_guck
+        check "CA9 the profile was put back" $::graph_use_ctrl_key 0
+
+        # --- THE EMPTY CASE: no traces anywhere -> nothing selected, no modal --
+        wviewer::set_graphs $tok [list [wviewer::empty_graph] [wviewer::empty_graph]]
+        wviewer::regenerate $tok
+        xschem new_schematic switch $vdrw
+        set ca_gs [dict get [wviewer::layout_for $tok] graphs]
+        check "CA7 fixture: both strips are now traceless" \
+          [list [wviewer::node_count [lindex $ca_gs 0]] \
+                [wviewer::node_count [lindex $ca_gs 1]]] {0 0}
+        set ca_mb1 $::mb_hits
+        # ⚠ RESET, do not inherit. MEASURED while writing this band: with CA9
+        # inserted above it, CA7's cursor row started passing on the UNFIXED tree
+        # -- CA9's Ctrl-A had toggled cursor A on there and CA7's toggled it off
+        # again, so the row was reading a PARITY rather than an invariant. A row
+        # whose verdict depends on how many gestures ran before it is not a fence.
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        check "CA7 fixture: cursor A is off before the gesture" \
+          [ca_cursorA $vdrw $tok] {0 0}
+        ca_send $vdrw <Control-Key-a> $cax [ca_row $vdrw 0]
+        check "CA7 Ctrl-A on empty strips selects nothing" \
+          [list [ca_sel $vdrw 0] [ca_sel $vdrw 1]] {{} {}}
+        check "CA7 ...and pops no modal" $::mb_hits $ca_mb1
+        check "CA7 ...and still leaves cursor A alone" [ca_cursorA $vdrw $tok] {0 0}
+
+        # --- THE CAP IS A DECLARED LIMIT, AND IT IS MEASURED ------------------
+        # GRAPH_MAX_SEL_WAVES is 64 and graph_sel_waves_set() CLAMPS rather than
+        # refusing, so a strip drawing more than 64 traces gets its first 64
+        # selected -- and a Delete would then delete 64 of them. That is stated
+        # here as a row rather than in a comment, because a comment quoting 64
+        # is a number nothing re-checks. 65 copies of one real trace dict is the
+        # cheap way to reach it (one set_graphs + one regenerate, no ngspice).
+        set ca_many {}
+        for {set ca_k 0} {$ca_k < 65} {incr ca_k} { lappend ca_many $ca_t0 }
+        wviewer::set_graphs $tok \
+          [list [dict replace [wviewer::empty_graph] traces $ca_many]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        xschem new_schematic switch $vdrw
+        check "CA8 fixture: the strip really draws 65 traces" \
+          [wviewer::node_count [lindex [dict get [wviewer::layout_for $tok] graphs] 0]] 65
+        ca_send $vdrw <Control-Key-a> $cax [ca_row $vdrw 0]
+        set ca_big [ca_sel $vdrw 0]
+        check "CA8 the cap holds at 64, the first 64 node indices" \
+          [list [llength $ca_big] [lindex $ca_big 0] [lindex $ca_big end]] {64 0 63}
+
+        # put the WB/SD fixture back for whatever runs after this band
+        wviewer::set_graphs $tok $ca_save
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+      } else {
+        puts "SKIPPED: CA1-CA8 (no trace dict in the model to build a fixture from)"
+      }
+      rename ca_sel {}
+      rename ca_tok {}
+      rename ca_cursorA {}
+      rename ca_row {}
+      rename ca_bands {}
+      rename ca_send {}
 
       rename sd_order {}
       rename sd_ids {}

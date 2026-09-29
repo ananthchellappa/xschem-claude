@@ -2786,6 +2786,51 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         tclvareval("graph_edit_properties ", my_itoa(i), NULL);
       }
     }
+    /* CTRL+A OVER A GRAPH = SELECT EVERY DRAWN TRACE, WINDOW-WIDE (issue 1617,
+     * wish_list.txt new-list item 13: "WV: CTRL-A to select all traces. Select
+     * and delete traces." -- the select-and-delete half shipped with 0175/0176).
+     *
+     * ⚠ THIS TAKES AN OCCUPIED CHORD, IT DOES NOT FILL A GAP, and the branch has
+     * to sit ABOVE the cursor-A toggle below for that reason. Before this issue
+     * Ctrl+A over a strip reached exactly that toggle -- `access_cond` is
+     * `!graph_use_ctrl_key || (state & ControlMask)`, satisfied by the FIRST term
+     * in the shipping profile and by the SECOND when graph_use_ctrl_key is 1 --
+     * so the chord flipped x-cursor A in BOTH profiles (measured: graph_flags
+     * 2 -> 0 -> 2 across presses, selection tokens never moving).
+     *
+     * ⚠ THE PRICE, DECLARED (issue 1617 D9). With graph_use_ctrl_key 0, the
+     * default, nothing is lost: bare `a` still reaches the toggle below. With
+     * graph_use_ctrl_key 1, Ctrl+A was the ONLY cursor-A chord -- bare `a` makes
+     * waves_selected() skip and falls through to the schematic `case 'a'` -- so
+     * that profile reaches cursor A through Cursors > Cursor A only. Ctrl+A over a
+     * graph is documented nowhere and the Cursor A/B menu entries carry no
+     * accelerator, so no printed sentence becomes false; the disposition of cursor
+     * A in that one profile is with the user as a ruling.
+     *
+     * ⚠ THERE IS A TCL HALF AND IT IS NOT OPTIONAL. wviewer::key_filter forwards
+     * keysym 97 and then calls wviewer::key_cursor_tail with NO modifier test, so
+     * without the carve-out added there this branch leaves the Cursors > Cursor A
+     * CHECKBUTTON flipping on every Ctrl+A while the engine's cursor stays put --
+     * a desync nothing but that checkbutton shows. Row CA4 of
+     * tests/headless/test_wave_viewer.tcl asserts the engine bit and the menu
+     * mirror as ONE value, because either alone is blind to it.
+     *
+     * No log line, and that is matching the siblings rather than forgetting
+     * (issue 1617 D11): there is no log_action anywhere in the Button1 selection
+     * arm above either. The logged viewer verbs are the MUTATIONS
+     * (wviewer::delete_items / move_traces / set_wave_hilights). Selection is view
+     * state -- no set_modify, no push_undo, no readonly gate: graph.forward
+     * declares mutates = 0 in action_registry[], which is what keeps a read-only
+     * viewer (and it is read-only for its whole life) from answering this chord
+     * with readonly_block()'s modal instead of a selection.
+     *
+     * need_all_redraw, not need_redraw_master: the bolding changes on strips other
+     * than the master one, and the per-graph loop at the tail re-runs
+     * setup_graph_data() per rect so it reads the tokens just written. Same reason
+     * the cross-strip sweep in the Button1 arm sets it. */
+    else if(event == KeyPress && key == 'a' && (state & ControlMask)) {
+      if(graph_sel_waves_all()) need_all_redraw = 1;
+    }
     /* x cursor1 toggle */
     else if(key == 'a' && access_cond) {
       xctx->graph_flags ^= 2;

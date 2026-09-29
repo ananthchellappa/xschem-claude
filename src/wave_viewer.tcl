@@ -17420,8 +17420,28 @@ proc wviewer::key_filter {W T x y N K s} {
       xschem callback $W $T $x $y $N 0 0 $s
     }
     # item 12 (D8): a/b/s reached the C waves_callback (they are forwarded
-    # only over a graph) — flip the Tcl cursor mirror + refresh the readout
-    if {$T == 2 && ($N == 97 || $N == 98 || $N == 115)} {
+    # only over a graph) — flip the Tcl cursor mirror + refresh the readout.
+    #
+    # ⚠ THE Ctrl+a CARVE-OUT (issue 1617) IS THE SECOND HALF OF A C CHANGE, and
+    # without it the change is half-working in the one way nobody notices. This
+    # tail used to run for keysym 97 with NO modifier test, which was right while
+    # BOTH `a` and Ctrl+a toggled x-cursor A in C. Ctrl+a now SELECTS ALL TRACES
+    # instead (callback.c, the branch above the cursor-A toggle in
+    # waves_callback), so the C cursor does not move — and a tail that flipped
+    # `cva($token)` anyway would desync the Cursors > Cursor A CHECKBUTTON from
+    # the engine on every Ctrl-A. key_cursor_tail's own header already names this
+    # failure mode ("a C-side access_cond refusal the mirror cannot see"); this is
+    # the first case where it is reachable in the SHIPPING profile.
+    #
+    # Shaped like the `fwd` carve-outs for 98/100 above and for the same reason:
+    # `graphkeys` membership and this tail are both unconditional on modifiers,
+    # so a chord whose C meaning stops being the bare key's needs an explicit
+    # exemption at whichever of the two gates it passes. BARE `a` is untouched —
+    # it still forwards and still flips the mirror. Ctrl+s (115) is NOT carved
+    # out: it still swaps the cursors in C, and 115 reaches neither cva nor cvb
+    # in the tail anyway, only the readout refresh it still needs.
+    if {$T == 2 && ($N == 97 || $N == 98 || $N == 115) &&
+        !($N == 97 && ($s & 4))} {
       wviewer::key_cursor_tail $W $N
     }
   }
