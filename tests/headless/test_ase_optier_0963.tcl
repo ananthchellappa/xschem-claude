@@ -3072,10 +3072,29 @@ proc x_run2 {tier analyses gate doctor} {
     names [ase::op_cards_names $blk] devices [ase::op_cards_devices $blk] \
     said [expr {($said eq {NOPROC} || [string match RAISED:* $said]) ? {} : [lindex $said 0]}]]
 }
+## ISSUE 0963 -- WHY A MISSING RAW NAMES ITS REASON. `x_run2` already captures
+## `ase::wait`'s rc, the wall time and the raw path into the dict it returns, and
+## the two readers below used to answer the bare word `NORAW` and drop all of it.
+## That is why this suite spent weeks in CLAUDE.md as "reddens solo, cause
+## unexplained": every failure reported a symptom and discarded the cause one line
+## before it was needed. Fenced by row X8, which is a unit test on hand-built
+## dicts -- a row that had to provoke a real missing raw would be as unreliable as
+## the thing it is diagnosing.
+##
+## Deliberately NOT a retry, a longer timeout or a skip: any of those would make
+## the flake invisible instead of legible, and the suite would be green while
+## measuring less.
+proc x_noraw {r} {
+  set rc {} ; set wall {} ; set rawp {}
+  catch {set rc   [dict get $r rc]}
+  catch {set wall [dict get $r wall]}
+  catch {set rawp [dict get $r raw]}
+  return "NORAW rc={$rc} wall=${wall}ms raw={$rawp}"
+}
 ## How many of the requests came back with a vector, and which devices did not.
 proc x_backfill {r} {
   if {![string is list $r] || [catch {dict get $r raw} raw]} { return NORUN }
-  if {$raw eq {} || ![file isfile $raw]} { return NORAW }
+  if {$raw eq {} || ![file isfile $raw]} { return [x_noraw $r] }   ;# 0963: name the reason (row X8)
   set vars [o_plotvars $raw {Operating Point}]
   if {$vars eq {NO-FILE} || $vars eq {NO-PLOT}} { return $vars }
   set back 0
@@ -3220,13 +3239,57 @@ proc x7_diag_lines {rundir {n 12}} {
 
 proc x_trannodes {r} {
   if {![string is list $r] || [catch {dict get $r raw} raw]} { return NORUN }
-  if {$raw eq {} || ![file isfile $raw]} { return NORAW }
+  if {$raw eq {} || ![file isfile $raw]} { return [x_noraw $r] }   ;# 0963: name the reason (row X8)
   set vars [o_plotvars $raw {Transient Analysis}]
   if {![string is list $vars]} { return $vars }
   set n 0
   foreach v $vars { if {[string first {@} $v] < 0} { incr n } }
   return $n
 }
+# ===========================================================================
+# X8 — A MISSING RAW MUST NAME THE REASON THE RUN ALREADY RECORDED
+# ===========================================================================
+# THIS SUITE IS THE ONE CLAUDE.md NAMES AS REDDENING SOLO WITH "CAUSE
+# UNEXPLAINED", AND THIS ROW IS ABOUT WHY IT STAYED UNEXPLAINED. Measured
+# 2026-09-28 over five runs of the shipped suite: a T1 gate reddened X1 and X2,
+# a local run reddened X7, and three consecutive local runs passed at 109
+# checks. Three distinct signatures, same tree, same commit. Both failures were
+# under load and all three passes were on a quiet machine.
+#
+# Every one of those failures reported the single word `NORAW`, which is a
+# SYMPTOM and conflates at least four causes: the deck never ran, it ran and
+# failed, it timed out, or it wrote nothing. `x_run2` ALREADY CAPTURES the
+# answer -- `ase::wait`'s rc, the wall time and the deck size all go into the
+# dict it returns -- and `x_backfill`/`x_trannodes` then threw that away and
+# said `NORAW`. So the information needed to explain the flake was being
+# discarded one line before it was needed, every time it happened.
+#
+# CLAUDE.md: "A stall must be a named outcome (PASS / FAIL / TIMEOUT /
+# NORESULT), never silence." This row makes the missing-raw answer carry the
+# recorded rc so the NEXT occurrence explains itself in the verdict instead of
+# needing five re-runs to characterise.
+#
+# ⚠ IT DELIBERATELY DOES NOT ADD A RETRY, A LONGER TIMEOUT OR A SKIP. Any of
+# those would make the flake invisible rather than legible, and the suite would
+# then be green while measuring less. The row asserts DIAGNOSIS, not stability.
+#
+# ⚠ AND IT IS A UNIT TEST ON PURPOSE -- hand-built dicts, no simulation. A row
+# that had to provoke a real missing raw would be as unreliable as the thing it
+# is diagnosing, which is the trap this suite is already in.
+set x8_missing [x_backfill [dict create raw /nonexistent/x8.raw rc {TIMEOUT after 300s} \
+                            rawbytes -1 wall 300123 names {} devices {}]]
+set x8_tran    [x_trannodes [dict create raw /nonexistent/x8.raw rc {TIMEOUT after 300s} \
+                            rawbytes -1 wall 300123 names {} devices {}]]
+set x8_empty   [x_backfill [dict create raw {} rc {RUNRAISED:no simulator} \
+                            rawbytes -1 wall 12 names {} devices {}]]
+set x8_norun   [x_backfill {not-a-dict-at-all}]
+check {X8 issue 0963 when the raw is absent both readers answer NORAW WITH the rc x_run2 already recorded, for a path that does not exist and for an empty path alike, while a malformed result still answers NORUN -- so the next unexplained red explains itself in the verdict} \
+  [list [string match {NORAW*TIMEOUT after 300s*} $x8_missing] \
+        [string match {NORAW*TIMEOUT after 300s*} $x8_tran] \
+        [string match {NORAW*RUNRAISED:no simulator*} $x8_empty] \
+        $x8_norun] \
+  [list 1 1 1 NORUN]
+
 puts "MEASURE X bench tick-off rc=[x_num $XG0 rc] raw=[x_num $XG0 rawbytes]bytes\
  tran-node-vectors=[x_trannodes $XG0] (tick-on [x_trannodes $XC])"
 check {X4 issue 0964 asking for device numbers does not change what the\
