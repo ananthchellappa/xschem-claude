@@ -534,6 +534,18 @@ typedef int Tcl_Size;
 #define TEXT_CTX_INSTANCE 1    /* iterating symptr->text[]: a symbol drawn as an instance */
 
 #define S(a) (sizeof(a)/sizeof(a[0]))
+
+/* ONE SPELLING OF "IS THIS A FINITE DOUBLE" FOR THE C SIDE. It lived in draw.c
+ * as GRAPH_MARKER_FINITE, local to the graph-marker parser, and moved here when
+ * issue 0870 needed the same predicate in scheduler.c's `annotate_at` arm. The
+ * comparisons are deliberately against literals rather than DBL_MAX, because
+ * <float.h> is not included anywhere in this tree, and BOTH comparisons are
+ * false for a NaN -- which is the whole reason this is an expression and not an
+ * isnan()/isinf() pair, neither of which exists in C89.
+ * Do not add a second spelling: the Tcl half has exactly one too
+ * (op_annot::_finite, which rdw::_value_text consults rather than re-deciding,
+ * fenced by row EN10 of tests/headless/test_rdw_window_1245.tcl). */
+#define IS_FINITE_DBL(v) ((v) > -1e308 && (v) < 1e308)
 #define BUS_WIDTH 4
 #define POINTINSIDE(xa,ya,x1,y1,x2,y2)  \
  (xa>=x1 && xa<=x2 && ya>=y1 && ya<=y2 )

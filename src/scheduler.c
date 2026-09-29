@@ -2400,13 +2400,57 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "annotate_at"))
     {
       int floaters, rc;
+      double t;
+      char *endp;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "xschem annotate_at <time>: missing time point", TCL_STATIC);
         return TCL_ERROR;
       }
+      /* ISSUE 0870 -- AN UNPARSEABLE TIME USED TO PUBLISH A FABRICATED NUMBER AND REPORT
+       * SUCCESS. atof_spice() answers 0.0 for anything it cannot read, and this arm called it
+       * with nothing between the argument-PRESENCE check above and the publish below. So a typo
+       * became a well-formed request for t = 0, which every transient satisfies: the t = 0
+       * sample went onto the schematic and the verb answered 1. Driven before the fix, with a
+       * four-point transient attached: `annotate_at abc` gave rc 1 and `xschem raw annot` went
+       * from `2 3e-09 0` to `0 0 0`, i.e. a measurement the simulator never produced, on the one
+       * surface whose whole purpose is to be read off a schematic. The spec files it under
+       * ruling D5-1 for that reason, not as a cosmetic defect.
+       *
+       * ⚠ THE PREDICATE IS "A NUMBER BEGINS THE TOKEN", NEVER "THE WHOLE TOKEN IS A NUMBER",
+       * and that is the difference between a fix and a regression. atof_spice() exists to read
+       * SPICE suffixes: `annotate_at 1ns` resolves to 1e-09 and must go on doing so. The house
+       * helper move_objects_slot_is_number() in this same file demands `*endp == '\0'` and would
+       * refuse `1ns` -- do NOT copy it here. So strtod() is used only to ask whether it consumed
+       * anything at all, and its VALUE is discarded; the value that gets validated and published
+       * is atof_spice()'s, because that is the one the schematic will show.
+       *
+       * ⚠ NaN AND Inf NEED THE SECOND CLAUSE, and they are a different failure from `abc`: they
+       * PARSE, so strtod consumes them and they used to reach annot_x verbatim and publish the
+       * clamped endpoint sample. A guard that only asked "did strtod consume anything" lets both
+       * through. IS_FINITE_DBL is xschem.h's one spelling of the predicate, moved there from
+       * draw.c's graph-marker parser rather than written a second time here.
+       *
+       * NOT FIXED, and carried on the issue rather than silently narrowed: `3xyz` still means
+       * 3e6 and `3zzz` still means 3.0, because atof_spice's suffix scanner tolerates trailing
+       * letters. That is pre-existing SPICE-ish leniency and tightening it would be a
+       * user-visible choice, not a defect fix.
+       *
+       * The two shipped GUI doors need no new wording: cadence::annot_tran (utils/annot_mode.tcl)
+       * wraps this verb in a catch and turns a raise into its existing `nodata` refusal, whose
+       * sentence is already ratified and already in the V-section goldens.
+       * Fenced by row V76 of tests/headless/test_op_annot.tcl.
+       * See doc/claude/issues/0870-*.md */
+      endp = NULL;
+      (void)strtod(argv[2], &endp);
+      t = atof_spice(argv[2]);
+      if(endp == argv[2] || !IS_FINITE_DBL(t)) {
+        Tcl_ResetResult(interp);
+        Tcl_AppendResult(interp, "xschem annotate_at <time>: not a time point: ", argv[2], NULL);
+        return TCL_ERROR;
+      }
       floaters = there_are_floaters();
-      rc = backannotate_at_time(atof_spice(argv[2]));
+      rc = backannotate_at_time(t);
       if(rc && floaters) set_modify(-2); /* refresh floater caches: see guard G10 above */
       Tcl_SetResult(interp, rc ? "1" : "0", TCL_STATIC);
     }

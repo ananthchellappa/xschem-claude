@@ -7626,7 +7626,8 @@ void draw_wave_hilight(int erase)
 #define GRAPH_DELTA_STR "D"
 #endif
 
-#define GRAPH_MARKER_FINITE(v) ((v) > -1e308 && (v) < 1e308)
+/* IS_FINITE_DBL moved to xschem.h as IS_FINITE_DBL for issue 0870, which
+ * needed the same predicate in scheduler.c. Same expression, one spelling. */
 
 /* Parse the `markers` token of a prop string into a freshly allocated array.
  * Returns the record count (also written to *n); the caller my_free()s *arr.
@@ -7660,8 +7661,8 @@ int graph_markers_parse(const char *prop_ptr, GraphMarker **arr, int *n)
       dbg(0, "graph_markers_parse(): dropping malformed marker record |%s|\n", tok);
       continue;
     }
-    if(!GRAPH_MARKER_FINITE(m.x) || !GRAPH_MARKER_FINITE(m.y) ||
-       !GRAPH_MARKER_FINITE(m.ldx) || !GRAPH_MARKER_FINITE(m.ldy)) {
+    if(!IS_FINITE_DBL(m.x) || !IS_FINITE_DBL(m.y) ||
+       !IS_FINITE_DBL(m.ldx) || !IS_FINITE_DBL(m.ldy)) {
       dbg(0, "graph_markers_parse(): dropping non-finite marker record |%s|\n", tok);
       continue;
     }
@@ -8543,7 +8544,7 @@ static int graph_marker_add_record(int i, int wave, int dataset, int point,
   int n = 0, prev;
 
   if(graph_marker_ro_refuse()) return 0;
-  if(!GRAPH_MARKER_FINITE(x) || !GRAPH_MARKER_FINITE(y)) {
+  if(!IS_FINITE_DBL(x) || !IS_FINITE_DBL(y)) {
     graph_marker_refuse("xschem: cannot mark a non-finite sample");
     return 0;
   }
@@ -8946,7 +8947,7 @@ int graph_marker_anchor_at(int num, int dataset, int point, int have_xy,
   /* always resolved: it validates the triple even when x/y are supplied */
   if(!graph_marker_sample(gi, m.wave, dataset, point, &x, &y)) return 0;
   if(have_xy) { x = xin; y = yin; }
-  if(!GRAPH_MARKER_FINITE(x) || !GRAPH_MARKER_FINITE(y)) return 0;
+  if(!IS_FINITE_DBL(x) || !IS_FINITE_DBL(y)) return 0;
   m.dataset = dataset;
   m.point = point;
   m.x = x;
@@ -8963,7 +8964,7 @@ int graph_marker_label_offset(int num, double ldx, double ldy)
   int gi = -1;
 
   if(!xctx || num <= 0) return 0;
-  if(!GRAPH_MARKER_FINITE(ldx) || !GRAPH_MARKER_FINITE(ldy)) return 0;
+  if(!IS_FINITE_DBL(ldx) || !IS_FINITE_DBL(ldy)) return 0;
   if(!graph_marker_find(num, &gi, &m)) return 0;
   if(ldx < -2.0) ldx = -2.0;
   if(ldx >  2.0) ldx =  2.0;

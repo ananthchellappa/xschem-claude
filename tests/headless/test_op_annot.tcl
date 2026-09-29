@@ -11637,6 +11637,55 @@ check {V2 a requested time BETWEEN two samples interpolates -- 2.5 ns is exactly
   [opa_t_v {v(d)}] 2.5
 
 # ===========================================================================
+# V76 — ISSUE 0870: A TIME WITH NO NUMBER IN IT IS REFUSED, NOT PUBLISHED AT 0
+# ===========================================================================
+# `atof_spice()` answers 0.0 for anything it cannot parse, and the arm called it
+# with nothing between the argument-PRESENCE check and the publish. So a typo
+# became a well-formed request for t = 0 that every transient satisfies: the
+# verb published the t = 0 sample onto the schematic and answered 1, i.e.
+# SUCCESS. That is a fabricated measurement on a surface whose whole purpose is
+# to be read off a schematic and pasted into a review document, which is why the
+# spec files it under ruling D5-1 rather than as a cosmetic defect.
+#
+# ⚠ THE ROW IS THE PAIR, NOT THE REFUSAL, and the second half is the one that
+# constrains the fix. A verb that refused everything would pass the first half.
+# `atof_spice` exists to read SPICE suffixes, and MEASURED on the shipped binary
+# `annotate_at 1ns` resolves to 1e-09 correctly -- so the predicate has to be
+# "a number BEGINS the token", never "the whole token is a number". The
+# house helper `move_objects_slot_is_number()` in the same file demands
+# `*endp == '\0'` and would refuse `1ns`; this arm must not copy it.
+#
+# ⚠ NaN AND Inf ARE REFUSED TOO, and they are a different failure from `abc`:
+# they parse, so they reach `annot_x` VERBATIM and then publish the clamped
+# endpoint sample. A guard that only checked "did strtod consume anything" would
+# let both through, so they are driven separately rather than assumed to follow.
+#
+# ⚠ WHAT THIS ROW DOES NOT CLAIM, stated because the name would otherwise imply
+# it: `3xyz` still means 3e6 and `3zzz` still means 3.0, because atof_spice's
+# suffix scanner tolerates trailing letters. That is pre-existing SPICE-ish
+# leniency, narrowing it WOULD be a user-visible choice, and it is carried as a
+# follow-up on issue 0870 rather than fixed here. This row names the four tokens
+# it drives and claims nothing about tokens it does not.
+opa_v_at 3e-9                              ;# a known-good publish to compare against
+set v76_before [opa_t_annot]
+set v76_abc    [opa_v_at abc]
+set v76_after  [opa_t_annot]
+set v76_empty  [opa_v_at {}]
+set v76_nan    [opa_v_at nan]
+set v76_inf    [opa_v_at inf]
+set v76_suffix [opa_v_at 1ns]
+set v76_sufann [opa_t_annot]
+set v76_sufval [opa_t_v {v(d)}]
+check {V76 issue 0870: `abc`, the empty string, `nan` and `inf` each RAISE and leave `xschem raw annot` byte-identical to the publish before them, while `1ns` still resolves to 1e-09 and publishes -- the SPICE suffix is what stops the fix being a whole-token number test} \
+  [list [string match {RAISED:*} $v76_abc] \
+        [expr {$v76_after eq $v76_before}] \
+        [string match {RAISED:*} $v76_empty] \
+        [string match {RAISED:*} $v76_nan] \
+        [string match {RAISED:*} $v76_inf] \
+        $v76_suffix $v76_sufann $v76_sufval] \
+  [list 1 1 1 1 1 1 {0 1e-09 0} 1]
+
+# ===========================================================================
 # V3 — THE WINDOW DISCRIMINATOR (guard G5): THE ONE ROW A ZEROED Graph_ctx
 #      CANNOT PASS
 # ===========================================================================
