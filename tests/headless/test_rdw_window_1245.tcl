@@ -6016,15 +6016,77 @@ foreach pr $EN8_BAD {
 if {$EN8_SAVE eq {NOVAR}} { catch {unset ::ev_precision} } else { set ::ev_precision $EN8_SAVE }
 set EN8_BACK  [rw_ans ::rdw::_value_text 1.11e-05]
 set EN8_SHEET [rw_ans ::op_annot::eng_or_blank 1.11e-05]
-## The one HARD literal in the row: at the sharpest of the eight, the pane must
-## read the number the simulator computed.
+## ⚠ THIS LEG USED TO PIN THE LITERAL `1.11e-05`, AND ON 2026-09-28 THAT BECAME
+## WRONG. It set ev_precision to `-1` -- the sharpest of the eight -- and
+## asserted the pane showed the raw text, because `to_eng` declined. Issue
+## 1606's ruling then installed a WRITE GUARD on ev_precision (Tcl_AppInit,
+## src/xinit.c) which corrects all eight of EN8_BAD before any reader sees
+## them, so `-1` becomes 4, the formatter no longer declines, and the pane
+## now reads the engineered `11.1u`.
+##
+## The literal is not merely stale, it was the WRONG KIND of assertion, and
+## this row's own comment above says so: pinning one here fences `to_eng`'s
+## behaviour under a garbage precision, "which this item does not own". So the
+## leg now asserts the CONTRACT instead -- window agrees with sheet -- which is
+## what the rest of the row already does and is true under either regime.
+## Row EN8b carries what this leg used to be worth.
 set ::ev_precision -1
-set EN8_M1 [rw_ans ::rdw::_value_text 1.11e-05]
+set EN8_M1    [rw_ans ::rdw::_value_text 1.11e-05]
+set EN8_M1SH  [rw_ans ::op_annot::eng_or_blank 1.11e-05]
 if {$EN8_SAVE eq {NOVAR}} { catch {unset ::ev_precision} } else { set ::ev_precision $EN8_SAVE }
 check {EN8 a FINITE value the formatter merely declined is never called a non-convergence: with ev_precision set to each of the eight things the shipped precision menu accepts without validation, every measured value still prints what the SHEET prints for it, or its own true raw text where the sheet has no answer at all - never blanked, never `(did not converge)` - while a genuine nan and inf still DO say it, and putting the setting back restores the engineered number} \
   [list $EN8_LIES $EN8_NF $EN8_WORDS $EN8_BLANK \
-        [expr {$EN8_BACK eq $EN8_SHEET}] [rw_bad $EN8_BACK] $EN8_M1] \
-  [list {} {} 0 0 1 0 1.11e-05]
+        [expr {$EN8_BACK eq $EN8_SHEET}] [rw_bad $EN8_BACK] \
+        [expr {$EN8_M1 eq $EN8_M1SH && ![rw_bad $EN8_M1]}]] \
+  [list {} {} 0 0 1 0 1]
+
+# --- EN8b  ISSUE 1345's BRANCH, FENCED WITHOUT THE ev_precision DOOR --------
+## ⚠ THIS ROW EXISTS BECAUSE EN8 STOPPED FENCING ISSUE 1345, and nothing
+## detected that automatically. EN8 reached the defect state -- a FINITE value
+## whose formatter declined -- only by setting ev_precision to one of eight
+## garbage values the shipped menu accepted without validation. Issue 1606's
+## ruling installed a write guard that CORRECTS all eight, so `to_eng` no
+## longer declines and that door is shut. EN8's other legs still pass, because
+## they compare the window against the sheet and the two still agree -- but not
+## one of them exercises the finite-yet-declined branch any more. That is
+## exactly CLAUDE.md's warning that a fence keyed to a SYMPTOM dies quietly
+## when something else cures the symptom, and it was caught only because this
+## suite was run by hand: it is a `suite` debt, not a T1 case.
+##
+## So this row drives the branch DIRECTLY and is indifferent to how a decline
+## arises. It shadows `op_annot::eng_or_blank` to answer {} for a finite value
+## -- which is the one thing `_value_text` must not read as a verdict -- and
+## requires the RAW TEXT back. The other direction is half the row: with the
+## same shadow in place a genuine nan must STILL get the words, or a repair
+## that simply stopped saying them would pass.
+##
+## The shadow is renamed back in the same breath. If this row ever aborts
+## between the two renames the suite's remaining op_annot rows would all see
+## the stub, so the restore is guarded and EN8c asserts the real proc is back.
+set EN8B_FIN {} ; set EN8B_NAN {} ; set EN8B_ERR {}
+if {[llength [info commands ::op_annot::eng_or_blank]]} {
+  rename ::op_annot::eng_or_blank ::op_annot::__en8b_saved
+  proc ::op_annot::eng_or_blank {v} { return {} }
+  set EN8B_ERR [catch {
+    set EN8B_FIN [rw_ans ::rdw::_value_text 1.11e-05]
+    set EN8B_NAN [rw_ans ::rdw::_value_text nan]
+  }]
+  catch {rename ::op_annot::eng_or_blank {}}
+  catch {rename ::op_annot::__en8b_saved ::op_annot::eng_or_blank}
+} else {
+  set EN8B_ERR NOPROC
+}
+check {EN8b a FINITE value whose formatter declines is printed as its own raw text and never as a non-convergence - driven by shadowing op_annot::eng_or_blank to answer {} rather than by a garbage ev_precision, because issue 1606's write guard closed that door and left EN8 fencing nothing. A genuine nan under the same shadow must STILL say the words} \
+  [list $EN8B_ERR $EN8B_FIN [expr {$EN8B_NAN eq $RW_NF}]] \
+  [list 0 1.11e-05 1]
+
+## EN8c -- the shadow really was put back, so no later row in this file is
+## measuring a stub. Cheap, and the failure mode it guards against would
+## otherwise look like a dozen unrelated failures further down.
+check {EN8c op_annot::eng_or_blank is the real proc again after EN8b's shadow, and still answers for an ordinary value} \
+  [list [expr {[rw_ans ::op_annot::eng_or_blank 1.11e-05] ne {}}] \
+        [rw_bad [rw_ans ::op_annot::eng_or_blank 1.11e-05]]] \
+  [list 1 0]
 
 # --- EN9  THE EVALUATING FORMATTER REBASES NUMERIC LITERALS, AND BOTH ------
 # --- SURFACES DO IT TOGETHER ------------------------------------------------
