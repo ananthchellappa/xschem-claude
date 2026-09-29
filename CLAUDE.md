@@ -190,9 +190,23 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   only on evidence (owner pid gone, or `/proc/<pid>/cmdline` no longer the script); one
   that can be neither taken nor broken lets the run proceed UNLOCKED with a warning.
 - **Diagnose a T1 red by case, never by count.** A red can be a flake
-  (`test_ase_optier_0963` has reddened solo, cause unexplained) or a real collision (a
+  (`test_ase_optier_0963` is the known one -- see the measurement below) or a real collision (a
   suite hand-run while T1 was live has reddened a gate run). Shared globals beyond
   `/tmp/xschem_emergencysave_*` are unswept.
+  **`test_ase_optier_0963`, characterised 2026-09-28.** It is NONDETERMINISTIC and the
+  failing row MOVES, which is the tell that separates it from a regression: at one commit,
+  a gate reddened `X1`/`X2`, a local run reddened `X7`, and three consecutive local runs
+  passed at 109 checks; three further runs at the parent commit also passed. Both failures
+  were under load, all six passes on a quiet machine. Every failure reported the bare word
+  `NORAW`, which conflates "never ran", "ran and failed", "timed out" and "wrote nothing" --
+  and `x_run2` had been capturing `ase::wait`'s rc, the wall time and the raw path into its
+  result dict all along while the two readers discarded them. Since `d6816c00` a missing raw
+  answers `NORAW rc={...} wall={...}ms raw={...}`, so **the next occurrence explains itself
+  in the verdict** instead of needing five re-runs. ⚠ Nothing was retried, lengthened or
+  skipped: that would have made it invisible rather than legible, and the suite would go
+  green while measuring less. **So a red here is still a red** — read the rc it now prints
+  before deciding anything, and do not treat the name as permission to ignore it.
+
   **Second observation, 2026-09-24, recorded as an observation and not as a verdict:**
   `test_home_isolation` row **`H2b`** reddened once inside a full T1 run at `c3a59de4`
   (`results.1766057.log`, `counted_failures=1`) and the mechanism is named in the row's own
