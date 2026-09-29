@@ -614,7 +614,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_input_line_inject_1352" \
                  "headless/test_preview_name_inject_1601" \
                  "headless/test_generator_paren_1604" \
-                 "headless/test_headless_guards_xarm_1492"]
+                 "headless/test_headless_guards_xarm_1492" \
+                 "headless/test_wave_sigbrowser_panes"]
 ## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
 ## HALF. The headless-crash batch added eleven `has_x` guards, and
 ## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui

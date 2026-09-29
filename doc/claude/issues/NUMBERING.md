@@ -15,7 +15,7 @@ So the filing sequence is:
 
 ```
 … 0498  0499  0600  0601 …  0698  0699  0800  0801 …
-… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612  1613  1614 …
+… 0998  0999  1200  1201 …  1498  1499  1600  1601  1602  1603  1604  1605  1606  1607  1608  1609  1610  1611  1612  1613  1614  1615 …
 ```
 
 ## `1500–1599`, and the absorption map — for the tree that renumbers
@@ -4023,7 +4023,30 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   its own number -- changing it while fixing the grid would smuggle a user-visible contract change
   into a bug fix. OPEN.
 
-**The next free number is 1615.**
+- **1615** — **the signal browser's status line counts signals neither pane shows.**
+  `wviewer::browser_refresh` built the sidebar count as `"[llength $names] of $total signals"`,
+  where `$names` is **bar-matched but class-filter blind** -- R11's two checkboxes are applied
+  several lines later, to `$entries`, and it is that result the tree, the lower pane and every
+  gesture consume. With the bars empty `$names` *is* the whole inventory, so the sentence
+  degenerated to `<total> of <total>`: measured on the 424-name `tb_bandgap_vars.txt` corpus the
+  caption read **`424 of 424 signals` in all four combinations** while both panes held
+  424 / **190** / 374 / 140 and the tree held 129 / **45** / 129 / 45 nodes -- row 2 being the
+  shipped default, i.e. what the browser said when it opened. The `+N from M other DB` suffix
+  carried the same blindness from the other end: `extra` accumulated the PRE-filter foreign names
+  and `ndbs` was unconditional, so a foreign database the class filter emptied entirely minted no
+  header and no row in the tree and still appeared in the sentence (`+2 from 1 other DB` measured
+  with **both panes empty**). ⚠ It survived the whole two-pane batch because item 12's receipt and
+  spec §7.2 both said "a dozen checks across four files pin `.ph` byte-identically, so nobody else
+  may move that string" -- **measured for this issue, there are 43 such checks, not 12, nine of the
+  ten named ids pin NAVIGATION sentences the caption does not build, and not one of the 43 had to
+  change**, because every fixture that asserts a count is entirely `net`-classed. The three suites
+  that DO seed the discriminating corpus never asserted `.ph`. ⚠ And all fourteen
+  `test_wave_sigbrowser*` suites -- in fact every `test_wave_*` suite -- are in NEITHER `hcases`
+  NOR `dcases`, so the fence would have rotted; `test_wave_sigbrowser_panes` is registered in
+  `dcases` in the same commit and the other thirteen are recorded as a separate decision. FIXED,
+  rows BW80-BW84 of `tests/headless/test_wave_sigbrowser_panes.tcl`, written red first.
+
+**The next free number is 1616.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

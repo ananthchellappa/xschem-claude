@@ -529,18 +529,39 @@ shipped. Three states must be distinguishable, because they have different remed
 The existing `browser_bars_active` already answers the middle case; the third needs its
 twin.
 
-⚠⚠ **STILL OWED AFTER THE WHOLE BATCH, AND DELIBERATELY SO.** TWO-PANE item 18 measured the
-`.ph` question item 12 left open and found it needed no move: the `browser_msg` sentence has
-always landed on `.ph` (`browser_status` writes it, `browser_say` calls that on every
-branch), and `browser_sea_refresh` writes `$f.pw.sea.st` and never `.ph`. What remains open
-is only the **count** line — `"[llength $names] of $total signals"`, which is **bar-matched
-only**, so R11's two boxes move the tree, the sea and the filter entry but *not* that number.
-It is **class-filter blind** and it belongs to the three-state caption above.
+⚠⚠ **SETTLED BY ISSUE 1615, 2026-09-28. THE PARAGRAPH THAT USED TO STAND HERE WAS WRONG ABOUT
+ITS OWN REASON, AND THAT IS THE PART WORTH KEEPING.** TWO-PANE item 18 measured the `.ph`
+question item 12 left open and found it needed no move: the `browser_msg` sentence has always
+landed on `.ph` (`browser_status` writes it, `browser_say` calls that on every branch), and
+`browser_sea_refresh` writes `$f.pw.sea.st` and never `.ph`. What remained open was the
+**count** line — `"[llength $names] of $total signals"` — **bar-matched only**, so R11's two
+boxes moved the tree, the sea and the filter entry but *not* that number.
 
-**Twelve checks pin `.ph` byte-identically** — `BD52` (`_i14`), `BX37`/`BX42`/`BX44`-`BX46`
-(`_i12`), `BH50`/`BH51`/`BH54` (`_i11`) and `BK37` (`_keys`) — so whoever takes the caption
-restates them in the same commit, and **nobody else may move that string.** TWO-PANE item 19
-records the hole; it does not fix it.
+This spec then said: *"Twelve checks pin `.ph` byte-identically — `BD52` (`_i14`),
+`BX37`/`BX42`/`BX44`-`BX46` (`_i12`), `BH50`/`BH51`/`BH54` (`_i11`) and `BK37` (`_keys`) — so
+whoever takes the caption restates them in the same commit, and nobody else may move that
+string."* **Measured for issue 1615, every part of that sentence is misleading:**
+
+* There are **43** checks in the tree that read `.ph`'s text, in ten files, not twelve.
+* "Twelve" reconciles only by counting **`BX37` three times**; the distinct ids are **ten**.
+* **Nine of the ten pin NAVIGATION sentences** (`showing x1.x2`, `no signals under '…'`,
+  `showing the simulation top level`) written by `browser_say`/`browser_msg` — which the count
+  line does not build, so it could never have touched them.
+* Only `BD52` among the named ten carries a count, and the list **omits `BD52b`**, the sole pin
+  anywhere on the `+N from M other DB` suffix.
+* **Not one of the 43 expectations had to change.** Every fixture that asserts a count is
+  entirely `net`-classed, so the class filter removes nothing from it. The one corpus whose
+  classes discriminate — `fixtures/tb_bandgap_vars.txt` — is seeded by three suites (`_panes`,
+  `_keys`, `_sea`) and **none of them ever asserted `.ph`.**
+
+So the sentence forbidding anyone from moving the string was itself the only thing guarding it.
+The number is now **`[llength $seaent]`**, the class-filtered ∩ bar-matched set both panes
+consume, over the unchanged `$total`; the `+N from M other DB` suffix counts post-filter and
+skips a database the class filter emptied. Rows **`BW80`**–**`BW84`** of
+`test_wave_sigbrowser_panes.tcl` assert each number against the live set in the same tuple, and
+that suite is registered in `dcases` — before issue 1615 **no `test_wave_*` suite was in either
+of T1's lists at all.** The caption was deliberately **not** routed through `browser_msg`'s
+three-state formatter above: see issue 1615 for the measurement that rejected it.
 
 ### 7.3 Restoring a multi-selection saved by the shipped version
 

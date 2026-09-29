@@ -582,6 +582,31 @@ proc wvbs_finish {} {
   puts "----"
   puts "$::wvbs_name: $npass passed, $fail failed"
   if {$fail == 0} {
+    # ⚠⚠ THE `OVERALL: ok` SENTINEL IS WHAT T1 CAN SCORE, AND WITHOUT IT NONE OF
+    # THIS FAMILY COULD EVER BE REGISTERED (issue 1615). `banner_complete` in
+    # tests/banner_rule.tcl — the ONLY Tcl reader, and the one run_regression.tcl
+    # sources — is `^OVERALL: ok([ \t]+\([^)]*\))?[ \t]*$`, and that file's own
+    # header says it "implements no `RESULT: ALL PASS` spelling at all". So a
+    # wvbs-based suite added to `hcases` or `dcases` was scored
+    # `HARNESS: … did not complete cleanly (exit=0, OVERALL_ok=0, died=0)` with
+    # every one of its own checks PASSING — measured at 809c03d1, where a T1 gate
+    # came back `counted_failures=1` whose case log read `RESULT: ALL PASS (88
+    # checks)` on the very next line. `run_suites.sh` and `full_audit.sh` carry
+    # their own EREs which DO accept `RESULT: ALL PASS`, which is why every
+    # standalone and audit run of these suites had always looked fine. That
+    # divergence is the mechanical reason all 34 `test_wave_*` suites sat outside
+    # T1, not an oversight by whoever wrote them.
+    #
+    # ⚠ ADDITIVE ON PURPOSE, AND THE ORDER IS LOAD-BEARING. The `RESULT:` line is
+    # kept, and kept LAST, because `summarize_all` publishes a case's **last**
+    # `RESULT:` line into the verdict and `run_suites.sh` displays it. Adding a
+    # fourth spelling to `banner_rule.tcl` instead was rejected: it would mean
+    # re-spelling all three readers plus section K of test_audit_classifier.tcl,
+    # and it would force a ruling on the inner-parenthesis divergence that file
+    # documents as deliberate (`test_ase_bus_bits_0159` emits `(12 checks, 2
+    # group(s) skipped)`). 119 suites in tests/headless already print this
+    # sentinel; this family was the outlier, so the outlier conforms.
+    puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"
     flush stdout
     exit 0

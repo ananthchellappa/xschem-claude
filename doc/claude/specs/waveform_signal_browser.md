@@ -382,7 +382,9 @@ is precisely the mechanism that forces a spec entry and its proc into one commit
   which is the order every index-resolving gesture agrees with.
 - `wviewer::browser_sea_refresh` — `{token}` — repaints the lower pane for the tree's current
   selection and writes the count line on `$f.pw.sea.st`. ⚠ **It never writes `.ph`** — the
-  sidebar status line is `browser_status`'s, and twelve checks pin that string byte-exactly.
+  sidebar status line is `browser_status`'s. ⚠ The claim that "twelve checks pin that string
+  byte-exactly" stood here until issue **1615** measured it: there are 43 checks reading `.ph`,
+  nine of the ten named ids pin NAVIGATION sentences, and not one constrained the count.
 - `wviewer::browser_sea_selection` — `{token}` -> the selected indices. The sea is the
   **multi-select** surface (Shift/Ctrl extend); the tree above it is `-selectmode browse`.
 - `wviewer::browser_devint` — `{token {want {}}}`. R11(a), *show device internals*, default
@@ -1029,7 +1031,7 @@ are the same list, kept here so one file answers "what does this not do"):
 | **FRAC** | The sash is persisted as a **fraction**, so a restore into a different-sized window reproduces the *proportion*, never the pixel row. The same trade `browser_width` makes, one axis over. | two-pane §9 | — |
 | **CTRL-B** | A user who sets `graph_use_ctrl_key 1` **loses their only cursor-B chord**: `access_cond` (`src/callback.c`) makes bare `b` unreachable in that profile and Ctrl+b is now the Signal Browser everywhere. Commented out by default (`src/xschemrc`), so the shipped profile is unaffected. | two-pane §10.8 | — |
 | **SYM-TXT** | Ctrl+b over a graph **embedded in a schematic** now toggles `sym_txt`, because the C row that used to route it was deleted. Nobody asked for it; measured 0 -> 1 and pinned by an inverted check in `tests/headless/test_key_graph_context.tcl`. The **viewer** is unaffected. | two-pane §10.9 | — |
-| **CNT** | The sidebar status line's **count** sentence is still **class-filter blind** — it is bar-matched only, so the two class checkboxes move the tree, the sea and the filter entry but not that number. It belongs to two-pane §7.2's three-state caption and is **still owed**; twelve checks pin the current string byte-exactly, so nobody else may move it. | two-pane §7.2 | — |
+| **CNT** | ~~The sidebar status line's **count** sentence is class-filter blind~~ — **FIXED by issue 1615, 2026-09-28.** It counted the bar-matched set, so with the bars empty it read `<total> of <total>` whatever the two class checkboxes were set to (measured: `424 of 424 signals` in all four combinations while both panes held 424/190/374/140). The numerator is now `[llength $seaent]`, the class-filtered ∩ bar-matched set both panes consume, over the unchanged inventory `$total`; the `+N from M other DB` suffix counts post-filter and drops a database the class filter emptied. ⚠ The "twelve checks pin the current string, so nobody else may move it" claim that stood here was measured and is wrong — there are 43 such checks, nine of the ten named ids pin navigation sentences, and none constrained the count. Rows `BW80`-`BW84` of `test_wave_sigbrowser_panes.tcl` now do. | two-pane §7.2, issue 1615 | 1615 |
 | **SASH-0** | `browser_sash`'s store arm refuses `0`, so spec §9's `sash 0` ("nobody chose a split") cannot be *written* through the accessor — only read. Shipped deliberately; it is what keeps the sea suite's capture/restore safe. Its only witness is `BP78`, added by TWO-PANE item 19 — the hole that keeps TWO-PANE item 14 marked `[F]`. | two-pane §9 | — |
 
 ---

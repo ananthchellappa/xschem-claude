@@ -773,13 +773,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # discriminates and says so in its own name; srccur is asserted through the
   # SIGNAL total (BW60), which is the only place it shows.
   #
-  # ⚠ THE MEASURED SET IS `browserseaent`, NOT THE `.ph` STATUS LINE. The status
-  # line is `"[llength $names] of $total signals"` — BAR-matched, class-filter
-  # blind — and a dozen checks across four files pin it BYTE-IDENTICALLY
-  # (BD52, BX37, BX42, BX44-BX46, BH50, BH51, BH54). `browserseaent` is the
+  # ⚠ THE MEASURED SET IS `browserseaent`, NOT THE `.ph` STATUS LINE. It is the
   # class-filtered ∩ bar-matched set spec §6 calls "one consistent set", it is
   # what BOTH panes consume, and with the bars empty it IS the class-filtered
-  # inventory. Moving the status line is not in this item (see the receipt).
+  # inventory.
+  #
+  # ⚠⚠ THIS COMMENT USED TO END "Moving the status line is not in this item (see
+  # the receipt)", and gave as its reason that "a dozen checks across four files
+  # pin it BYTE-IDENTICALLY (BD52, BX37, BX42, BX44-BX46, BH50, BH51, BH54)".
+  # **ISSUE 1615 MEASURED THAT AND IT WAS WRONG**: there are 43 checks in the tree
+  # that read `.ph`, nine of the ten distinct named ids pin NAVIGATION sentences
+  # the caption does not build, and not one of the 43 constrained the number —
+  # every fixture asserting a count is entirely `net`-classed. The status line was
+  # indeed `"[llength $names] of $total signals"`, BAR-matched and class-filter
+  # blind, and it is now `$seaent`. **Rows BW80-BW84 below are that fence**, and
+  # they live in this file because the 424-name corpus that discriminates is
+  # already loaded here.
 
   # THE CORPUS. The three-name inventory above cannot carry this item's claim —
   # its whole content is `net`-classed, so all four combinations answer 3 and
@@ -980,6 +989,187 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall ::wviewer::browser_devint $tok] [pcall ::wviewer::browser_srccur $tok] \
           [bw_seen $tok] [bw_nodes $TV]] \
     {0 1 190 45}
+
+  # --- BW80-BW84 — ISSUE 1615: THE `.ph` CAPTION'S OWN TWO NUMBERS ----------
+  #
+  # ⚠⚠ THIS BLOCK EXISTS BECAUSE THIS FILE'S OWN HEADER DECLARED THE STATUS LINE
+  # OUT OF SCOPE, and the reason it gave was measured and WRONG. It says: "a
+  # dozen checks across four files pin it BYTE-IDENTICALLY (BD52, BX37, BX42,
+  # BX44-BX46, BH50, BH51, BH54)", and the spec repeats it as "nobody else may
+  # move that string". Issue 1615 enumerated every `.ph`-pinning check in the
+  # tree — there are 43, not 12 — and found that **not one of them constrains
+  # the count**: nine of the ten named ids pin NAVIGATION sentences written by
+  # `browser_say`/`browser_msg`, which the caption does not build, and every
+  # fixture that does assert a count is entirely `net`-classed, so the class
+  # filter removes nothing from it and the caption reads the same either way.
+  # The ONE inventory in the tree that can move the number is the 424-name
+  # corpus loaded above, and the three suites that seed it — this one, `_keys`
+  # and `_sea` — never asserted `.ph` at all. **The caption was free to be
+  # wrong here and nothing in the tree would have said so.** That is the same
+  # shape as `test_scratch_home_note`'s row `C1`: a fence nobody runs, one level
+  # in. So the number is asserted HERE, where the discriminating corpus already
+  # lives, rather than in a new file that would need its own fixture.
+  #
+  # ⚠ THE READ IS OFF THE WIDGET, NEVER OFF `$st`. `browser_refresh` builds the
+  # sentence into a local and hands it to `browser_status`, which is what adds
+  # the `Signal Browser\n` prefix; asserting the local would stay green on a
+  # `browser_status` that dropped the message on the floor.
+  #
+  # ⚠ AND THE NUMERATOR IS ASSERTED AGAINST `browserseaent` IN THE SAME TUPLE,
+  # not on its own. A literal alone is green on a caption that agrees with
+  # nothing; the pairing is spec §6's "one consistent set" stated as a check.
+  # It cannot be satisfied by making BOTH wrong, because `bw_seen` is the very
+  # number `BW60` above pins to `{424 190 374 140}`.
+
+  # The caption's TWO numbers, straight off the label. `no-label` and
+  # `no-count: <text>` are VALUES rather than throws, so "a navigation sentence
+  # is sitting on `.ph`" stays distinguishable from "the numbers moved" — the
+  # distinction `bt_count` makes in `test_wave_sigbrowser.tcl` for the same
+  # widget, and the reason neither returns a bare -1.
+  proc bw_ph {w} {
+    if {[catch {$w cget -text} t]} { return no-label }
+    if {[regexp {([0-9]+) of ([0-9]+) signals} $t - a b]} { return [list $a $b] }
+    return "no-count: $t"
+  }
+  # The FOREIGN panes' own totals, off `browserseadbent`: {<signals> <databases
+  # holding at least one>}. This is what the `+N from M other DB` suffix claims,
+  # so asserting the suffix against THIS rather than against a literal is what
+  # makes the row self-proving. ⚠ THE SECOND ELEMENT COUNTS NON-EMPTY ENTRIES,
+  # not `dict size`: a foreign database whose every signal is class-filtered
+  # away keeps its (empty) key here and mints NO row in the tree, so `dict size`
+  # would agree with the defect instead of catching it.
+  proc bw_dbtot {tok} {
+    if {![info exists ::wviewer::browserseadbent($tok)]} { return {-1 -1} }
+    set n 0 ; set k 0
+    dict for {id ent} $::wviewer::browserseadbent($tok) {
+      incr n [llength $ent]
+      if {[llength $ent]} { incr k }
+    }
+    return [list $n $k]
+  }
+  # the four combinations again, this time reading the CAPTION and the pane set
+  # together. Restores 0/1 on the way out exactly as `bw_four` does, so BW62's
+  # `{0 190}` opening leg is unaffected by this block existing.
+  proc bw_ph_four {tok tv w} {
+    set out {}
+    foreach {d s} {1 1  0 1  1 0  0 0} {
+      bw_combo $tok $tv $d $s
+      lappend out [list [bw_ph $w] [bw_seen $tok]]
+    }
+    bw_combo $tok $tv 0 1
+    return $out
+  }
+
+  # --- BW80: THE HEADLINE ---------------------------------------------------
+  # ⚠ THE DENOMINATOR IS DELIBERATELY STILL 424 IN ALL FOUR. The raw holds 424
+  # names whatever is ticked, and that is the fact that makes the gap legible:
+  # "190 of 424" says 234 are hidden, where "190 of 190" would say nothing and
+  # "424 of 424" says something false.
+  check {BW80 (ISSUE 1615) driven through the widget variables over the 424-name
+         corpus, the `.ph` caption's NUMERATOR is the set both panes consume —
+         asserted against `browserseaent` in the same tuple, with the
+         denominator staying the raw's own 424 in all four combinations} \
+    [bw_ph_four $tok $TV $F.ph] \
+    {{{424 424} 424} {{190 424} 190} {{374 424} 374} {{140 424} 140}}
+
+  # --- BW81: THE SENTENCE A USER ACTUALLY GETS ------------------------------
+  # BW80 reads the numbers out; this reads the whole string, at the ONE
+  # combination R11 ships as the default. Byte-exact, prefix included.
+  check {BW81 (ISSUE 1615) at R11's shipped defaults the whole caption, prefix
+         included, names the 190 signals the panes hold and the 424 the raw has} \
+    [pcall $F.ph cget -text] "Signal Browser\n190 of 424 signals"
+
+  # --- BW82: THE BAR AND THE CLASS FILTER COMPOSE ---------------------------
+  # ⚠ THE PATTERN WAS CHOSEN BY MEASUREMENT, NOT BY EYE, and it has to be: the
+  # bars match the LABEL, not the raw name, so `*x1*` matches ZERO of the 424
+  # (the hierarchy path is not in the label). `*b*` matches 238 — 234 devnode,
+  # 2 net, 2 srcbranch — which is why hiding device internals takes it to 4.
+  # That 238-vs-4 gap is the largest this corpus offers, and before this issue
+  # the caption reported the 238.
+  set bw_ph_bar {}
+  bw_combo $tok $TV 1 1
+  set bw_typed_b [bs_type $F.wvsearch {*b*}]
+  lappend bw_ph_bar [list [bw_ph $F.ph] [bw_seen $tok]]
+  bw_combo $tok $TV 0 1
+  lappend bw_ph_bar [list [bw_ph $F.ph] [bw_seen $tok]]
+  check {BW82 (ISSUE 1615) with a pattern in the bar the caption follows BOTH
+         narrowings — the bar moves the numerator and so does the class filter,
+         and the entry really did take the pattern} \
+    [list $bw_typed_b $bw_ph_bar] \
+    [list {*b*} {{{238 424} 238} {{4 424} 4}}]
+  bs_type $F.wvsearch {}
+  check {BW82 (THE BAR'S RESTORE, ASSERTED) clearing the bar puts the caption
+         back on the whole class-filtered inventory} \
+    [list [bw_ph $F.ph] [bw_seen $tok]] [list {190 424} 190]
+
+  # --- BW83/BW84: THE `+N from M other DB` SUFFIX IS THE SAME DEFECT ---------
+  # ⚠⚠ ONE SENTENCE MUST NOT CARRY ONE FILTERED AND ONE UNFILTERED COUNT. The
+  # All-DBs loop narrows each foreign inventory with `browser_class_filter` and
+  # hands the NARROWED list to both the tree and `browserseadbent` — then
+  # accumulates the PRE-filter list into the suffix. So correcting the current
+  # database's numerator alone would ship a caption whose two halves disagree
+  # about what the checkboxes did, which is worse than either half being wrong.
+  #
+  # TWO foreign databases on purpose, and the second one is the interesting one:
+  # `bw_dbZ` is entirely device-classed, so at R11's defaults the class filter
+  # empties it, it mints NO header and NO row in the tree, and its pane snapshot
+  # is empty — yet it still contributed its full count to `+N` AND a full +1 to
+  # `M`. A sentence claiming signals from a database the user cannot see is the
+  # defect at its plainest.
+  set bw_dbs_was {}
+  if {[info exists ::wviewer::browserdbsigs($tok)]} {
+    set bw_dbs_was $::wviewer::browserdbsigs($tok)
+  }
+  set bw_alldb_was 0
+  if {[info exists ::wviewer::sballdb($F.wvsearch)]} {
+    set bw_alldb_was $::wviewer::sballdb($F.wvsearch)
+  }
+  # ⚠ THE CLASSES ARE ASSERTED, NOT ASSUMED (BW84). A name I merely BELIEVE is
+  # devnode would make BW83's arithmetic agree with the wrong thing.
+  set bw_dbA [list {v(alpha)} {v(x9.beta)} {v(m.x9.mn1#body)} {i(v.x9.vsup)}]
+  set bw_dbZ [list {v(m.x8.mn1#body)} {v(m.x8.mn2#body)}]
+  set ::wviewer::browserdbsigs($tok) \
+    [list [dict create id {d:7} label {bw_a.raw (tran)} names $bw_dbA] \
+          [dict create id {d:8} label {bw_z.raw (tran)} names $bw_dbZ]]
+  set ::wviewer::sballdb($F.wvsearch) 1
+  check {BW84 (BW83's PRECONDITION) the two seeded foreign inventories really
+         carry the classes the next row's arithmetic depends on — mixed in one,
+         entirely device-classed in the other} \
+    [list [llength [::wviewer::browser_class_filter \
+                     [lmap n $bw_dbA {::wviewer::signal_entry $n {}}] 1 1]] \
+          [llength [::wviewer::browser_class_filter \
+                     [lmap n $bw_dbA {::wviewer::signal_entry $n {}}] 0 1]] \
+          [llength [::wviewer::browser_class_filter \
+                     [lmap n $bw_dbA {::wviewer::signal_entry $n {}}] 0 0]] \
+          [llength [::wviewer::browser_class_filter \
+                     [lmap n $bw_dbZ {::wviewer::signal_entry $n {}}] 1 1]] \
+          [llength [::wviewer::browser_class_filter \
+                     [lmap n $bw_dbZ {::wviewer::signal_entry $n {}}] 0 1]]] \
+    {4 3 2 2 0}
+  set bw_ph_db {}
+  bw_combo $tok $TV 1 1
+  lappend bw_ph_db [list [pcall $F.ph cget -text] [bw_dbtot $tok]]
+  bw_combo $tok $TV 0 1
+  lappend bw_ph_db [list [pcall $F.ph cget -text] [bw_dbtot $tok]]
+  check {BW83 (ISSUE 1615) the `+N from M other DB` suffix counts the foreign
+         signals and databases the panes actually hold — asserted against
+         `browserseadbent` in the same tuple, so a database the class filter
+         emptied drops out of BOTH numbers instead of being claimed} \
+    $bw_ph_db \
+    [list [list "Signal Browser\n424 of 424 signals, +6 from 2 other DBs" {6 2}] \
+          [list "Signal Browser\n190 of 424 signals, +3 from 1 other DB" {3 1}]]
+  # RESTORED AND ASSERTED IN THE SAME TUPLE (BW67's lesson): every check after
+  # this one runs against the single-database browser.
+  set ::wviewer::sballdb($F.wvsearch) $bw_alldb_was
+  set ::wviewer::browserdbsigs($tok) $bw_dbs_was
+  bw_combo $tok $TV 0 1
+  check {BW83 (THE FOREIGN RESTORE, ASSERTED) the All-DBs box and the foreign
+         inventory are back where this block found them, and the caption has no
+         suffix at all} \
+    [list [pcall set ::wviewer::sballdb($F.wvsearch)] \
+          [llength $::wviewer::browserdbsigs($tok)] \
+          [pcall $F.ph cget -text]] \
+    [list $bw_alldb_was [llength $bw_dbs_was] "Signal Browser\n190 of 424 signals"]
 
   # --- BW62: THE WIRING, AS A REAL GESTURE ----------------------------------
   # Everything above sets the -variable by hand. This is the click: `invoke`

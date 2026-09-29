@@ -9752,10 +9752,21 @@ proc wviewer::browser_sea_label {token path {id {}}} {
 # §7.2 SAID, on the lower pane's OWN caption. Returns the result list.
 #
 # ⚠⚠ IT WRITES `$f.pw.sea.st`, NOT THE SIDEBAR'S STATUS LINE, AND THE CHOICE WAS
-# FORCED BY MEASUREMENT (receipt §"the status line"). Item 9's `.ph` carries
-# `<matched> of <total> signals` about the WHOLE INVENTORY; §7.2's sentence is
+# FORCED BY MEASUREMENT (receipt §"the status line"). `.ph` carries
+# `<shown> of <total> signals` about the WHOLE INVENTORY; §7.2's sentence is
 # about the SELECTED NODE. They are two facts, and the three ways of putting
 # them on one label were each measured against the suites:
+#
+# ⚠ ISSUE 1615 CORRECTED `.ph`'s NUMERATOR (it was the bar-matched, class-filter
+# blind set; it is now `$seaent`) AND LEFT THIS SEPARATION ALONE — deliberately.
+# Routing `.ph` through the three arms below would make this proc the shared owner
+# of two surfaces with different subjects and put a parenthetical on a sidebar line
+# that alternates with `browser_say`'s navigation sentences. See issue 1615 for the
+# measurement that rejected it. ⚠ AND THE TWO ROW LISTS BELOW ARE STALE AS
+# COVERAGE CLAIMS, kept because they are the record of what item 11 measured:
+# issue 1615 enumerated every check reading `.ph` and found 43, not the ~12 these
+# two lines add up to, with nine of the named ids pinning NAVIGATION sentences
+# rather than a count. Do not re-use either list as "the checks that pin `.ph`".
 #   * REPLACE  — BT24/BT25/BT26/BT27's counts, BD52/BD52b's byte-identity and
 #     BW46's "the search really RAN" proof all move, and the FILTER and AND bar
 #     states stop being distinguishable at the design root (both read `0 of N`),
@@ -11159,8 +11170,29 @@ proc wviewer::browser_refresh {token {reload 0}} {
       lappend groups [list [wviewer::dget $db id {}] [wviewer::dget $db label {}] \
                         $dent \
                         [wviewer::browser_root_label [wviewer::dget $db path {}]]]
-      incr extra [llength $dnames]
-      incr ndbs
+      # --- ISSUE 1615: THE SUFFIX'S TWO NUMBERS, POST-FILTER --------------------
+      # ⚠⚠ ONE SENTENCE MUST NOT CARRY ONE FILTERED AND ONE UNFILTERED COUNT.
+      # `$dnames` is this database's BAR-matched names; `$dent` is what survived
+      # `browser_class_filter` above, and `$dent` is what both the tree
+      # (`lappend groups`) and the lower pane (`browserseadbent`) were handed.
+      # Accumulating `$dnames` therefore claimed signals that are in neither.
+      # MEASURED: a 3-name all-device foreign inventory at R11's defaults mints
+      # NO header and NO row in the tree and leaves its pane snapshot empty, yet
+      # the sentence still read "+3 from 1 other DB".
+      #
+      # ⚠ `ndbs` IS GUARDED ON `$dent`, NOT LEFT UNCONDITIONAL, and that is the
+      # other half: fixing `extra` alone turns that case into "+0 from 1 other
+      # DB", which still names a database the user cannot see. The guard makes
+      # both numbers describe the same thing — what is on screen.
+      #
+      # ⚠ `lappend groups` ABOVE IS DELIBERATELY *NOT* GUARDED TOO. An empty
+      # entry list mints no rows (`browser_rows_multi` has nothing to mint from),
+      # so the group is already invisible, and `browserseadbent` keeping its empty
+      # key is what lets row BW83's `bw_dbtot` tell "this database was emptied"
+      # apart from "this database was never seeded". This issue moves the STATUS
+      # LINE and nothing else; the tree, the panes and every gesture are untouched.
+      incr extra [llength $dent]
+      if {[llength $dent]} { incr ndbs }
     }
   }
   # ⚠⚠ THE TWO BAIL-OUTS CLEAR §F ITEM F5's NOTICE, AND THAT IS ISSUE 0318's
@@ -11187,7 +11219,40 @@ proc wviewer::browser_refresh {token {reload 0}} {
     return 0
   }
   set browserrows($token) $rows
-  set st "[llength $names] of $total signals"
+  # --- ISSUE 1615: THE NUMERATOR IS `$seaent`, NOT `$names` -------------------
+  #
+  # ⚠⚠ `$names` IS BAR-MATCHED BUT CLASS-FILTER BLIND, and for two years this
+  # line reported it. With the bars EMPTY `$names` is the whole inventory, so the
+  # sentence degenerated to "<total> of <total> signals" no matter what R11's two
+  # checkboxes were set to: MEASURED on the 424-name tb_bandgap corpus, the
+  # caption read "424 of 424 signals" in all four combinations while the panes
+  # held 424 / 190 / 374 / 140 and the tree held 129 / 45 / 129 / 45 nodes. That
+  # is not a numerator that is merely different from the panes' — with an empty
+  # bar it was pinned to its own denominator.
+  #
+  # `$seaent` is the class-filtered ∩ bar-matched set built above: the ONE set
+  # spec §6 calls "one consistent set" and the set BOTH panes consume. It is
+  # provably never larger than `$names` (it is `$entries` filtered for membership
+  # of the matched names, and `$entries` is one entry per inventory name), so the
+  # numerator can never exceed the denominator.
+  #
+  # ⚠ THE DENOMINATOR DELIBERATELY STAYS `$total`, the raw's OWN inventory. The
+  # rejected alternative is `[llength $entries]` — "190 of 190 signals" — which
+  # is true and says nothing: the whole point of the sentence is that the gap
+  # between the two numbers is what the checkboxes are hiding. Row BW80 of
+  # tests/headless/test_wave_sigbrowser_panes.tcl pins the denominator at 424
+  # across all four combinations for exactly that reason.
+  #
+  # ⚠ AND THE CAPTION IS *RE-NUMERATED*, NOT ROUTED THROUGH `browser_msg`. The
+  # three-state per-node caption there (`seabars`/`seaclass`/`seacount`) carries
+  # a parenthetical naming WHICH narrowing emptied the pane, and it belongs to
+  # `$f.pw.sea.st` for the SELECTED NODE. Reusing it here would make `browser_msg`
+  # a shared owner of two surfaces with different subjects, put a parenthetical on
+  # a sidebar line that alternates with `browser_say`'s navigation sentences, and
+  # bring BK33's nine-rendering byte-freeze and BK34's one-formatter source oracle
+  # into scope for a change that moves one integer. The gap is already legible
+  # ("190 of 424"), and the pane directly below says why.
+  set st "[llength $seaent] of $total signals"
   if {$ndbs > 0} {
     append st ", +$extra from $ndbs other DB[expr {$ndbs == 1 ? {} : {s}}]"
   }
