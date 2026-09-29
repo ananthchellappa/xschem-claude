@@ -8,7 +8,7 @@ Opened 2026-09-29 at `b89fddda`. T1 baseline `cases=107 blocks=106 counted_failu
 |---|---|---|---|---|
 | R recon | `R-recon-A.md` + `R-recon-B.md` **collected** | driver re-ran crew B's central claim, all 4 outputs matched; crew A's refutation accepted on its measured `graph_flags`/`lastsel` evidence | `4f998799` (scaffolding) | n/a, no code |
 | A Ctrl-A select all traces (1617) | impl **dispatched** | — | — | — |
-| B getprop arms (1618) | `R-recon-B.md` **collected**; impl dispatched | driver re-ran the central claim; all four outputs matched | — | — |
+| B getprop arms (1618) | `R-recon-B.md` + `B-impl.md` **collected** | driver re-ran the central claim (4/4 matched), verified the file split, checked the stamp | _pending_ | _pending, held off Stage A_ |
 
 ## Collected notes
 
@@ -42,3 +42,32 @@ three traps the implementer would otherwise hit (D10).
 **What this says about the batch's own method:** D2 put a recon stage first because the driver's
 scouting had been refuted twice. It was refuted twice more. The recon stage paid for itself in
 both stages before a line of code was written.
+
+### Stage B, collected 2026-09-29 — the widening was PROVEN, not assumed
+
+Red `63 FAILED (40 passed)` -> `ALL PASS (103 checks)`, suite 8 -> 103 checks, no case-count or
+skip movement (already `hcases`, band prints no `skip:`).
+
+**D5's proof obligation was discharged properly.** The instrument was three layers, and it was
+**validated against four deliberately evasive controls BEFORE its number was quoted** — the
+concatenation-built control is caught by the non-literal layer only, i.e. exactly what a literal
+grep misses. 1194 occurrences over 171 files, 12 token-omitted candidates, all 12 inspected, all 12
+false positives. Plus one closure that makes the residual smaller than the census's own confidence:
+the widening keys on `argc`, not token content, so a caller passing an empty token *variable* takes
+the old path byte-identically. That is CLAUDE.md's control-validation rule applied before doubt
+rather than after it.
+
+**Two sabotages changed the fence, which is the whole point of running them.** S5 (poly/arc reading
+the line array) would have survived the first draft because all three types had identical
+properties; S9 (count mix-up) would have survived because every out-of-bounds row used `999999`.
+Both fixed. S1 and S4 segfault the binary, which is the fence proving it guards a real crash.
+
+**One sabotage survived and was reported as a NON-defect, correctly.** S2 removed all four NULL
+guards and nothing crashed, because `Tcl_SetResult(interp, NULL, TCL_VOLATILE)` tolerates NULL —
+which is why the shipped `instance`/`symbol` arms pass `prop_ptr` raw. The crew kept the guards and
+**corrected the test comment** that had claimed those rows were crash fences. Reporting a surviving
+sabotage as a non-defect, with the mechanism, is better than quietly dropping it.
+
+**Driver's own error, recorded as D12:** two building crews in one tree. Crew B routed around it with
+an isolated `git archive` tree but had to swap the shared binary four times to do so, which means
+Stage A's greens must be re-measured by the driver rather than accepted.

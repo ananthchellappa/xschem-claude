@@ -867,7 +867,7 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    for parameters like "vth" modelparam must be 2
    for parameters like "ib" modelparam must be 0
    for parameters like "gm" modelparam must be 1</pre>
-   <li><kbd>       getprop instance|instance_pin|symbol|text ref</kbd></li><pre>
+   <li><kbd>       getprop instance|instance_pin|symbol|text|rect|line|poly|arc|wire ref</kbd></li><pre>
       
        getprop instance inst
    Get the full attribute string of 'inst'
@@ -901,20 +901,35 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    Get value of attribute 'sym_attr' of symbol 'sym_name'
    'with_quotes' (default:0) is an integer passed to get_tok_value()
       
-       getprop rect layer num attr [with_quotes]
+       getprop rect layer num [attr] [with_quotes]
    if '1' is given as 'keep' return backslashes and unescaped quotes if present in value
    Get attribute 'attr' of rectangle number 'num' on layer 'layer'
+   If 'attr' is omitted get the full attribute string
       
-       getprop text num attr
+       getprop line layer num [attr] [with_quotes]
+       getprop poly layer num [attr] [with_quotes]
+       getprop arc  layer num [attr] [with_quotes]
+   Get attribute 'attr' of the line / polygon / arc number 'num' on layer 'layer'
+   If 'attr' is omitted get the full attribute string
+   'with_quotes' (default:0) is an integer passed to get_tok_value()
+   The type name is 'poly', not 'polygon' (the creation verb is 'xschem polygon')
+   A layer or index out of range is an error, as for rect
+      
+       getprop text num [attr]
    Get attribute 'attr' of text number 'num', 'num' can also be the name attribute
    of the text object
    if 'attr' is 'txt_ptr' return the text string
+   if 'attr' is 'size' return the text xscale (display size)
+   If 'attr' is omitted get the full attribute string
       
-       getprop wire num attr
+       getprop wire num [attr]
    Get attribute 'attr' of wire number 'num'
+   If 'attr' is omitted get the full attribute string
       
        ('inst' can be an instance name or instance number)
-       ('pin' can be a pin name or pin number)</pre>
+       ('pin' can be a pin name or pin number)
+   The attribute-omitted forms are what let 'xschem list_tokens' enumerate an
+   object's attribute names.</pre>
    <li><kbd>       get_sch_from_sym inst [symbol]</kbd></li><pre>
    get schematic associated with instance 'inst'
    if inst==-1 and a 'symbol' name is given get sch associated with symbol </pre>

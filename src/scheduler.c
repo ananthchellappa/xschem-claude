@@ -4398,6 +4398,47 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* issue 1618 -- resolve the attribute string of a layered graphic object for
+ * `xschem getprop line|poly|arc <layer> <index> [token] [with_quotes]`.
+ *
+ * Returns the object's prop_ptr and sets *ok = 1. The returned pointer may be
+ * NULL even on success: my_strdup() maps an empty attribute string to NULL, so a
+ * prop-less object legitimately has none, and every caller must cope (the
+ * whole-string form substitutes "", get_tok_value() already accepts NULL).
+ *
+ * On a layer or index out of range it leaves *ok = 0 and an error message in the
+ * interpreter. The bounds discipline is deliberately the issue 0077 one the rect
+ * getprop arm uses, and the same guard the sibling `setprop line|arc|poly` arms
+ * apply to the same two coordinates -- a read arm that skipped it would
+ * reintroduce exactly the 0077 OOB heap read on a new path.
+ *
+ * ONLY prop_ptr is read. dash, fill and bus are caches DERIVED from prop_ptr by
+ * the setprop arms; a read must neither consult nor refresh them, and xLine has
+ * no fill field at all, so there is nothing for a "fill" pseudo-token to mean on
+ * a line. Geometry (x1/y1, the poly point arrays, the arc r/a/b) does not live in
+ * prop_ptr and is reachable through `xschem object`, not here. */
+static const char *getprop_gfx_prop(Tcl_Interp *interp, const char *type,
+                 const char *layer_arg, const char *index_arg, int *ok)
+{
+  int count = -1;
+  int c = atoi(layer_arg);
+  int n = atoi(index_arg);
+  *ok = 0;
+  if(c >= 0 && c < cadlayers) {
+    if(!strcmp(type, "line")) count = xctx->lines[c];
+    else if(!strcmp(type, "poly")) count = xctx->polygons[c];
+    else count = xctx->arcs[c];
+  }
+  if(count < 0 || n < 0 || n >= count) {
+    Tcl_AppendResult(interp, "xschem getprop: ", type, " not found: ", layer_arg, " ", index_arg, NULL);
+    return NULL;
+  }
+  *ok = 1;
+  if(!strcmp(type, "line")) return xctx->line[c][n].prop_ptr;
+  else if(!strcmp(type, "poly")) return xctx->poly[c][n].prop_ptr;
+  else return xctx->arc[c][n].prop_ptr;
+}
+
 /* `xschem g...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 2). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -5871,7 +5912,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
-    /* getprop instance|instance_pin|symbol|text ref
+    /* getprop instance|instance_pin|symbol|text|rect|line|poly|arc|wire ref
      *
      * getprop instance inst
      *   Get the full attribute string of 'inst'
@@ -5905,26 +5946,51 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Get value of attribute 'sym_attr' of symbol 'sym_name'
      *   'with_quotes' (default:0) is an integer passed to get_tok_value()
      *
-     * getprop rect layer num attr [with_quotes]
+     * getprop rect layer num [attr] [with_quotes]
      *   if '1' is given as 'keep' return backslashes and unescaped quotes if present in value
      *   Get attribute 'attr' of rectangle number 'num' on layer 'layer'
+     *   If 'attr' is omitted get the full attribute string (issue 1618)
      *
-     * getprop text num attr
+     * getprop line layer num [attr] [with_quotes]
+     * getprop poly layer num [attr] [with_quotes]
+     * getprop arc  layer num [attr] [with_quotes]
+     *   Get attribute 'attr' of the line / polygon / arc number 'num' on layer
+     *   'layer'. If 'attr' is omitted get the full attribute string.
+     *   'with_quotes' (default:0) is an integer passed to get_tok_value().
+     *   These mirror the `setprop line|arc|poly layer num token [value]` arms,
+     *   which have existed since audit 0063 -- issue 1618 closed the read side of
+     *   that asymmetry. Type name is 'poly', not 'polygon' (matching setprop and
+     *   object_type_from_name(); the *creation* verb is `xschem polygon`).
+     *   A layer or index out of range is an error, as for rect.
+     *
+     * getprop text num [attr]
      *   Get attribute 'attr' of text number 'num', 'num' can also be the name attribute
      *   of the text object
      *   if 'attr' is 'txt_ptr' return the text string
+     *   if 'attr' is 'size' return the text xscale (display size)
+     *   If 'attr' is omitted get the full attribute string (issue 1618)
      *
-     * getprop wire num attr
+     * getprop wire num [attr]
      *   Get attribute 'attr' of wire number 'num'
+     *   If 'attr' is omitted get the full attribute string (issue 1618)
      *
      * ('inst' can be an instance name or instance number)
      * ('pin' can be a pin name or pin number)
+     *
+     * The attribute-omitted forms are what let `xschem list_tokens` enumerate an
+     * object's attribute names: before issue 1618 that worked for instance and
+     * symbol only. An unknown type name still returns TCL_OK with an empty result
+     * (the else-if chain has no terminating else) -- filed, not fixed here.
      */
     else if(!strcmp(argv[1], "getprop"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
-        Tcl_SetResult(interp, "xschem getprop needs instance|instance_pin|wire|symbol|text|rect", TCL_STATIC);
+        /* This message is the only place the dispatcher states which types getprop
+         * serves, so it is extended with the arms, not after them (issue 1618). */
+        Tcl_SetResult(interp,
+          "xschem getprop needs instance|instance_pin|wire|symbol|text|rect|line|poly|arc",
+          TCL_STATIC);
         return TCL_ERROR;
       }
       if(argc > 2 && (!strcmp(argv[2], "instance") || !strcmp(argv[2], "instance_notcl"))) {
@@ -6016,9 +6082,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         else if(argc > 5)
           Tcl_SetResult(interp, (char *)get_tok_value(xctx->sym[i].prop_ptr, argv[4], atoi(argv[5])), TCL_VOLATILE);
 
-      } else if(argc > 2 && !strcmp(argv[2], "rect")) { /* xschem getprop rect c n token */
-        if(argc < 6) {
-          Tcl_SetResult(interp, "xschem getprop rect needs <color> <n> <token>", TCL_STATIC);
+      } else if(argc > 2 && !strcmp(argv[2], "rect")) { /* xschem getprop rect c n [token] */
+        if(argc < 5) {
+          Tcl_SetResult(interp, "xschem getprop rect needs <color> <n> [token] [with_quotes]", TCL_STATIC);
           return TCL_ERROR;
         } else {
           int with_quotes = 0;
@@ -6026,17 +6092,51 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           int n = atoi(argv[4]);
           /* issue 0077: bounds-check the caller-supplied layer/index before subscripting,
            * mirroring the `object #layer,index` range-check. Without this an out-of-range
-           * c/n does an OOB read of xctx->rect[c][n].prop_ptr (crash / memory disclosure). */
+           * c/n does an OOB read of xctx->rect[c][n].prop_ptr (crash / memory disclosure).
+           * issue 1618 moved the arity floor from 6 to 5 (the token is now optional): the
+           * guard stays ABOVE the argc split so the whole-string form is bounds-checked too. */
           if(c < 0 || c >= cadlayers || n < 0 || n >= xctx->rects[c]) {
             Tcl_AppendResult(interp, "xschem getprop: rect not found: ", argv[3], " ", argv[4], NULL);
             return TCL_ERROR;
           }
-          if(argc > 6) with_quotes = atoi(argv[6]);
-          Tcl_SetResult(interp, (char *)get_tok_value(xctx->rect[c][n].prop_ptr, argv[5], with_quotes), TCL_VOLATILE);
+          if(argc < 6) { /* issue 1618: token omitted -> the whole attribute string */
+            Tcl_SetResult(interp, (char *)(xctx->rect[c][n].prop_ptr ? xctx->rect[c][n].prop_ptr : ""),
+                          TCL_VOLATILE);
+          } else {
+            if(argc > 6) with_quotes = atoi(argv[6]);
+            Tcl_SetResult(interp, (char *)get_tok_value(xctx->rect[c][n].prop_ptr, argv[5], with_quotes),
+                          TCL_VOLATILE);
+          }
         }
-      } else if(argc > 2 && !strcmp(argv[2], "text")) { /* xschem getprop text n token */
+      /* issue 1618: xschem getprop line|poly|arc c n [token] [with_quotes]
+       * The three types `setprop` could already write and `getprop` could not read.
+       * One arm for all three: they differ only in which xctx array and count the
+       * layer/index pair addresses, which getprop_gfx_prop() resolves (and where the
+       * issue 0077 bounds guard lives, above the argc split, so BOTH the token and the
+       * whole-string form are range-checked). with_quotes is optional argv[6]
+       * defaulting to 0, copying the rect arm -- deliberately NOT wire/text's
+       * hardcoded 2, whose inconsistency is pre-existing and left alone. */
+      } else if(argc > 2 && (!strcmp(argv[2], "line") || !strcmp(argv[2], "poly") ||
+                             !strcmp(argv[2], "arc"))) {
+        int ok;
+        const char *prop;
         if(argc < 5) {
-          Tcl_SetResult(interp, "xschem getprop text needs <n> <token>", TCL_STATIC);
+          Tcl_AppendResult(interp, "xschem getprop ", argv[2],
+                           " needs <layer> <n> [token] [with_quotes]", NULL);
+          return TCL_ERROR;
+        }
+        prop = getprop_gfx_prop(interp, argv[2], argv[3], argv[4], &ok);
+        if(!ok) return TCL_ERROR;
+        if(argc < 6) { /* token omitted -> the whole attribute string (may be NULL) */
+          Tcl_SetResult(interp, (char *)(prop ? prop : ""), TCL_VOLATILE);
+        } else {
+          int with_quotes = 0;
+          if(argc > 6) with_quotes = atoi(argv[6]);
+          Tcl_SetResult(interp, (char *)get_tok_value(prop, argv[5], with_quotes), TCL_VOLATILE);
+        }
+      } else if(argc > 2 && !strcmp(argv[2], "text")) { /* xschem getprop text n [token] */
+        if(argc < 4) {
+          Tcl_SetResult(interp, "xschem getprop text needs <n> [token]", TCL_STATIC);
           return TCL_ERROR;
         } else {
           int n = get_text(argv[3]);
@@ -6044,7 +6144,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_AppendResult(interp, "xschem getprop: text object not found:", argv[3], NULL);
             return TCL_ERROR;
           }
-          if(!strcmp(argv[4], "txt_ptr"))
+          if(argc < 5) /* issue 1618: token omitted -> the whole attribute string */
+            Tcl_SetResult(interp, (char *)(xctx->text[n].prop_ptr ? xctx->text[n].prop_ptr : ""),
+                          TCL_VOLATILE);
+          else if(!strcmp(argv[4], "txt_ptr"))
             Tcl_SetResult(interp, xctx->text[n].txt_ptr, TCL_VOLATILE);
           else if(!strcmp(argv[4], "size")) { /* pseudo-token: the text's xscale (display size) */
             char buf[40];
@@ -6054,18 +6157,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else
             Tcl_SetResult(interp, (char *)get_tok_value(xctx->text[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
-      } else if(argc > 2 && !strcmp(argv[2], "wire")) { /* xschem getprop wire n token */
-        if(argc < 5) {
-          Tcl_SetResult(interp, "xschem getprop wire needs <n> <token>", TCL_STATIC);
+      } else if(argc > 2 && !strcmp(argv[2], "wire")) { /* xschem getprop wire n [token] */
+        if(argc < 4) {
+          Tcl_SetResult(interp, "xschem getprop wire needs <n> [token]", TCL_STATIC);
           return TCL_ERROR;
         } else {
           int n = atoi(argv[3]);
-          /* issue 0077: bounds-check before subscripting (OOB read otherwise). */
+          /* issue 0077: bounds-check before subscripting (OOB read otherwise). issue 1618
+           * moved the arity floor from 5 to 4; the guard stays above the argc split. */
           if(n < 0 || n >= xctx->wires) {
             Tcl_AppendResult(interp, "xschem getprop: wire not found: ", argv[3], NULL);
             return TCL_ERROR;
           }
-          Tcl_SetResult(interp, (char *)get_tok_value(xctx->wire[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
+          if(argc < 5) /* issue 1618: token omitted -> the whole attribute string */
+            Tcl_SetResult(interp, (char *)(xctx->wire[n].prop_ptr ? xctx->wire[n].prop_ptr : ""),
+                          TCL_VOLATILE);
+          else
+            Tcl_SetResult(interp, (char *)get_tok_value(xctx->wire[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
       }
     }

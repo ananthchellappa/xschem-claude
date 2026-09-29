@@ -160,3 +160,30 @@ gestures are **not** logged — there is no `log_action` anywhere in the Button1
 and that the logged neighbours are the *mutations* (`delete_items`, `move_traces`,
 `set_wave_hilights`). So matching the siblings means logging nothing, and adding a log line
 here would make Ctrl-A the odd one out.
+
+## D12 — the driver put two building crews in one tree, and that was an orchestration error
+
+⚠ **This is the driver's mistake, not a crew's.** Stages A and B were dispatched concurrently
+into the **same working tree with one shared `src/xschem` binary**. Both stages need to build C
+(`scheduler.c` for B; `callback.c`/`draw.c`/`xschem.h` for A), so each crew's `make` compiled the
+other's in-flight work into the binary the other was measuring against.
+
+Crew B noticed and worked around it correctly, by taking its red and its first sabotage battery in
+an **isolated `git archive HEAD` tree** configured and built from scratch. It also reported the
+collateral honestly: it swapped `src/scheduler.c` to pristine and rebuilt the shared binary **four
+times**, so any suite crew A ran inside those windows saw a `getprop`-less binary, and one of its
+builds hit a transient link failure racing crew A's `make`.
+
+**Consequences the driver must act on, not the crews:**
+
+1. **Crew A's greens are suspect until re-measured.** Any suite it ran during those four windows
+   may have been measured against a binary that was not the tree. The driver re-verifies Stage A's
+   result itself rather than accepting the receipt's numbers.
+2. **The T1 gate must not race a live crew.** CLAUDE.md records that a suite hand-run while T1 was
+   live has reddened a gate run, so Stage B's gate waits for Stage A to hand back even though
+   Stage B's own work is finished and committable.
+
+**The rule for the rest of this batch and any future one: concurrent crews that BUILD get isolated
+trees**, or they are serialised. Read-only recon crews may share a tree — Stage R's two crews did,
+with no conflict, because neither compiled anything. Crew B's receipt §8.1 carries the working
+isolated-tree recipe; it is the method, not a workaround.

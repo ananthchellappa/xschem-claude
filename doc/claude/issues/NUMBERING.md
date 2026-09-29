@@ -4085,7 +4085,44 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `test_results_select.tcl`; `dcases` alone, because the display arm scores 402 checks and the
   headless arm 59. FIXED, rows OB1-OB4 of `tests/headless/test_wave_viewer.tcl`, written red first.
 
-**The next free number is 1617.**
+~~**The next free number is 1617.**~~
+
+- **1617** — **RESERVED, in flight.** Ctrl-A over a waveform graph selects every drawn trace
+  (wish-list new-list item **13**). Minted 2026-09-29 in batch
+  `doc/claude/selectall_getprop_batch/`; the issue file lands with that stage's commit. ⚠ Recorded
+  here the moment it was minted rather than when it was filed, because a number named nowhere is a
+  number another clone re-mints -- which is exactly how `1333`-`1348` came to mean two defects each
+  (issue 1400). ⚠ Not an empty chord: Ctrl-A over a graph currently TOGGLES CURSOR A, measured, so
+  the item takes an occupied binding; the price is filed as `rule/1617` for the user.
+
+- **1618** — **`getprop` can write a line property from Tcl but never read it back.**
+  `xschem setprop` has had `line`/`poly`/`arc` arms since audit 0063 atom 10; `xschem getprop`
+  never did. So Tcl could write a property onto a line, watch it reach the file, and get an empty
+  string reading it back -- wish-list old-list item **21** is an **asymmetry, not a hole**.
+  ⚠ **The failure mode is a SILENT SUCCESS, so the obvious fence would have been green on the
+  broken tree**: the `else if` chain in `xschem_cmds_g()` has **no terminating `else`**, so an
+  unknown `argv[2]` falls through every arm and returns `TCL_OK` with an empty result -- `line`,
+  `poly`, `arc` and even `zzz` all answer `rc=0 result=||`. A row shaped "errors today, succeeds
+  tomorrow" passes before the fix; every row asserts the VALUE instead. Fixed with a combined arm
+  via a new static `getprop_gfx_prop()`, in the grammar `setprop`'s own three arms and `getprop`'s
+  `rect` arm already agreed on, so no new grammar was invented. Also adds the **token-omitted
+  whole-string form** for those three AND for `rect`/`text`/`wire` -- which is what actually
+  delivers item 21, because it is what lets `xschem list_tokens` enumerate an object's properties,
+  previously possible for `instance` and nothing else. ⚠ That widening was **conditional on a
+  census and the census was validated against four deliberately evasive controls first** (one is
+  caught only by the non-literal layer): 1194 occurrences over 171 files, 12 token-omitted
+  candidates, all 12 false positives; and the widening keys on `argc`, not token content, so a
+  caller passing an empty token variable takes the old path byte-identically. Red
+  `63 FAILED (40 passed)` -> `ALL PASS (103 checks)`, taken in an isolated tree because a
+  concurrent crew had C files modified in the shared one. Eight sabotages; **two changed the
+  fence** (identical per-type props would have let a wrong-array read survive; every OOB row using
+  `999999` would have let a wrong-count check survive), and one survived and is recorded as a
+  NON-defect -- `Tcl_SetResult(interp, NULL, ...)` tolerates NULL, so a test comment claiming those
+  rows were crash fences was corrected rather than the code changed. FIXED, the `GP*` band of
+  `tests/headless/test_getprop_index_bounds.tcl` (8 -> 103 checks, already `hcases`, no case-count
+  or skip movement), written red first.
+
+**The next free number is 1619.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
