@@ -132,10 +132,35 @@ T1 — and "it passes standalone" is not evidence that it can be registered.**
 
 **They are not being registered.** Reasons, in order of weight:
 
-0. **The banner fix removes the blocker for the thirteen wvbs siblings but not for the
-   other 320**, whose epilogues are unmeasured. Each would have to be checked against
-   `banner_complete` individually, and "it passes standalone" is not evidence — that is
-   the whole finding above.
+0. **The blocker is measured now, and it is almost all of them: 285 of the 334
+   unregistered suites never mention `OVERALL` at all**, so they cannot emit the sentinel
+   and would each be scored a harness failure the moment they were registered. 49 do
+   mention it and are plausibly registerable today. The banner fix in `wvbs_common.tcl`
+   converts fourteen of the 285 in one line; the remaining 271 each need their own
+   epilogue touched. That is a mechanical but non-trivial sweep, and it is a second
+   change, not a side effect of this one.
+
+   ⚠ **THE INSTRUMENT FOR THAT NUMBER HAD TO BE FIXED TWICE, AND THE FIRST TWO ANSWERS
+   WERE BOTH WRONG.** Grepping suite files for the literal `OVERALL: ok` reported **7
+   registered suites without it**, which cannot be true of a gate that came back
+   `counted_failures=0`. Two distinct causes, both worth knowing before anyone re-runs
+   this census:
+
+   * **Six ASE suites build the sentinel dynamically** —
+     `puts "OVERALL: [expr {$fail ? {notok} : {ok}}]"` (`test_ase_sp_1452` and five
+     siblings). A literal grep can never see it.
+   * **One suite inherits it from a sourced prelude** (`test_wave_sigbrowser_panes` via
+     `wvbs_common.tcl`), and a `source [file join …]` resolver whose character class
+     excludes `]` misses `[file dirname [info script]]`, which is the form this tree
+     actually uses.
+
+   Counting any mention of `OVERALL`, with preludes resolved, gives **83 of 84** registered
+   suites, the one exception being the prelude case above — i.e. **84 of 84 once both
+   causes are accounted for, which is exactly what the green gate says.** That agreement
+   is what makes the 285 quotable. This is CLAUDE.md's "do not write down a number nothing
+   re-checks" rule in its other form: **a census is only as good as its agreement with a
+   known-good control**, and the registered set is the control that was sitting right
+   there. The only fully reliable instrument is running the suite and reading its output.
 1. **Cost.** T1 already takes ~600 s at 104 cases. The `test_wave_*` family alone took
    over 20 minutes on the display arm in this measurement, most of it in
    `test_wave_markers`' 200 s timeout. Registering the tail would turn the commit gate
@@ -153,6 +178,20 @@ register in the same commit.* Issue 1615 registered `test_wave_sigbrowser_panes`
 `dcases` for exactly that reason — `dcases` and not `hcases` because the band carrying
 the new rows is display-only. That keeps CLAUDE.md's underlying intent (a new fence must
 be run by the thing that gates) without paying for the tail.
+
+## One concrete casualty, found immediately afterwards
+
+`tests/headless/test_results_select.tcl` is in **neither list** and has its own inline
+epilogue printing only `RESULT: ALL PASS` — so it is blocked the same way, and it does not
+source `wvbs_common.tcl`, so the fix above does not reach it. Its rows `SEL251`/`SEL252`
+pin both forms of ruling **R804**'s sentence, the one the Results Selection feature exists
+for. Measured at the same time: **`read_against` — the only source of the precise
+"read against *X* and you are in *Y*" clause — has no production caller at all.** The only
+`read_against` in the tree outside `results.tcl` is in that suite, at line 1744. So the
+precise sentence has never fired for a real user, its fence is not gated, and issue
+**0514** (the missing `xschem raw schname` accessor) is what would let the engine supply
+the clause instead of a caller who never does. That is the payoff of 0514, and it is
+tracked there rather than here.
 
 **What is left open**, and named so it is a choice rather than an omission: whether the
 project wants a *second* scheduled gate — a `full_audit.sh` run that is actually required
