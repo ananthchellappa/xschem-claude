@@ -222,9 +222,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "CG1 the rect carries no traces" [xschem getprop rect 2 0 node] {}
   check "CG1 one strip -> no active marker token" [xschem getprop rect 2 0 active] {}
   check "CG1 buffer NOT left modified (with_edit discipline)" [xschem get modified] 0
-  check "CG1 next auto-plot run appends its OWN strip" \
-    [pcall {wviewer::ensure_auto_graph $tok}] 1
-  check "CG1 the empty survivor is untouched by that append" [ntraces $tok 0] 0
+  # ⚠ RESTATED, NOT RENUMBERED, BY ISSUE 1616. These two rows used to read "CG1 next
+  # auto-plot run appends its OWN strip" -> 1 and "the empty survivor is untouched by
+  # that append" -> 0 traces. `wviewer::ensure_auto_graph` now CLAIMS a lone empty
+  # strip instead of appending past it, so the old rows did not go off by one -- their
+  # names asserted the append itself, which is the behaviour that was removed. A row
+  # whose name contradicts its literal is worse than a red one, hence a rewrite.
+  #
+  # Why the behaviour changed: appending left the user looking at an empty band above
+  # their waveforms after every run, with every real strip shrunk to make room -- the
+  # defect the issue 0171 follow-up already removed from the Direct-Plot path, whose
+  # `empty_graph_indices` helper is documented as "the indices of the strips a plot
+  # batch may REUSE instead of creating a new one". `plan_plot` has reused empty strips
+  # ever since; this path never did. Measured: with the claim arm disabled,
+  # test_ase_persist reddens 12 rows and test_ase_plot reddens too.
+  #
+  # What these rows now fence is the USER-VISIBLE outcome rather than the mechanism:
+  # after a Clear All, the next run's waveforms fill the window.
+  check "CG1 next auto-plot run CLAIMS the lone empty survivor (issue 1616)" \
+    [pcall {wviewer::ensure_auto_graph $tok}] 0
+  check "CG1 ...so no second strip is appended above or below it" [ngraphs $tok] 1
+  check "CG1 ...and the claimed strip IS the auto strip, still empty" \
+    [list [pcall {wviewer::auto_graph_index $tok}] [ntraces $tok 0]] {0 0}
 
   # --- CG2: what survives a clear -------------------------------------------
   # the explicit requirement: the plot mode is RETAINED, both ways

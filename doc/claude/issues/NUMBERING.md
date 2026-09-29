@@ -4058,7 +4058,34 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `dcases` in the same commit and the other thirteen are recorded as a separate decision. FIXED,
   rows BW80-BW84 of `tests/headless/test_wave_sigbrowser_panes.tcl`, written red first.
 
-**The next free number is 1616.**
+~~**The next free number is 1616.**~~
+
+- **1616** — **a freshly opened waveform viewer has no strip at all.**
+  `wviewer::open` seeded a new token's layout as `[dict create sharedx 0 graphs {}]`, and
+  `wviewer::regenerate` runs `xschem clear_drawing` then places one rect per graph with
+  `foreach G_ $gs` -- so with an empty list it placed **zero** rects and the window came up with
+  no strip, where the user's own `wish_list.txt` new-list item **15** asks for *"one blank graph
+  element"*. ⚠ Not only cosmetic: `regenerate` builds `graphbb` from the same band count, and
+  `graphbb` feeds `over_graph` and the a/b/s key gate, so on a bare-opened viewer the cursor and
+  marker keys had nothing to be "over" and were inert. ⚠ **The invariant existed, but only
+  REACTIVELY, which is why no row caught it**: `display_raw` and `add_trace` each carry
+  `if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }`, and `clear_all_at` /
+  `new_tab_at` always leave exactly one -- so every route a fixture naturally takes to get a
+  viewer worth asserting about repaired the empty list before the assertion ran. The proof was
+  already in the suite: row **G10** opens a fresh viewer, invokes `Add Graph` **twice** and
+  asserts **2** graphs and **2** rects, which only holds if the pre-click state was 0 -- evidence
+  of the defect, recorded as an expectation. Fixed by seeding `graphs [list
+  [wviewer::empty_graph]]`, the expression four other call sites already use; the reactive guards
+  are deliberately LEFT IN, because removing a guard whose route is merely now unreachable is how
+  the dead arm CLAUDE.md warns about gets made. `wviewer::forget`'s comment (*"a fresh open starts
+  from an empty layout"*) is corrected in the same commit. ⚠ Registering the suite came FIRST, as
+  its own commit: `test_wave_viewer.tcl` printed only `RESULT: ALL PASS`, which `banner_complete`
+  cannot score (**measured 0 for the old shape, 1 for the new**), making it the **third** site in
+  1615's defect family after `wvbs_common.tcl` and before the still-unfixed
+  `test_results_select.tcl`; `dcases` alone, because the display arm scores 402 checks and the
+  headless arm 59. FIXED, rows OB1-OB4 of `tests/headless/test_wave_viewer.tcl`, written red first.
+
+**The next free number is 1617.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

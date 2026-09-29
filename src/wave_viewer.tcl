@@ -866,9 +866,15 @@ proc wviewer::token_for_canvas {wp} {
 }
 
 # Drop a token's registry entries (close / <Destroy> cleanup). Idempotent.
-# The trace/graph model and the cursor mirrors die WITH the window: a fresh
-# open starts from an empty layout (persistence across sessions is item 14's
-# `viewer` state key, not this registry).
+# The trace/graph model and the cursor mirrors die WITH the window (persistence
+# across sessions is item 14's `viewer` state key, not this registry).
+# ⚠ Since issue 1616 a fresh open does NOT start from an empty layout -- it starts
+# from ONE BLANK STRIP. This comment used to say "an empty layout", which was true
+# when written and is what made the defect invisible: unsetting `layouts($token)`
+# here is exactly what sends the next `open` back through its
+# `if {![dict exists $layouts $token]}` arm, so whatever that arm seeds is what a
+# reopened viewer gets. Row OB4 of test_wave_viewer.tcl forgets and reopens for
+# precisely that reason -- to prove the seed fires rather than a leftover surviving.
 proc wviewer::forget {token} {
   wviewer::diag "forget         token=$token"
   variable windows
@@ -1440,8 +1446,31 @@ proc wviewer::open {token} {
   catch {pack forget $top.statusbar}
   # item 12: fresh per-window model + cursor mirrors (forget cleared any
   # previous window's state for this token)
+  #
+  # ⚠ ONE BLANK STRIP, NOT ZERO (issue 1616; wish_list.txt new-list item 15,
+  # "WV: Always start with one blank graph element"). This seeded `graphs {}`,
+  # and `regenerate` runs `xschem clear_drawing` then places one rect per graph
+  # with `foreach G_ $gs` -- so an empty list placed ZERO rects and a freshly
+  # opened viewer came up with no strip at all. Not merely cosmetic: `regenerate`
+  # also builds `graphbb` from the same band count, and `graphbb` is what feeds
+  # `over_graph` and the a/b/s key gate, so the cursor and marker keys were inert
+  # on a bare-opened window because there was nothing to be "over".
+  #
+  # ⚠ THE INVARIANT ALREADY HELD EVERYWHERE ANYONE LOOKED, WHICH IS WHY NOTHING
+  # CAUGHT IT. `display_raw` and `add_trace` each carry the same
+  # `if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }` repair, and
+  # `clear_all_at` / `new_tab_at` always leave exactly one -- so every route that
+  # puts content in a viewer fixed the empty list on the way past, and only a bare
+  # open with nothing added could show it. Row `G10` of test_wave_viewer.tcl had
+  # been recording the defect as an expectation all along: it clicks `Add Graph`
+  # TWICE and asserts 2 graphs and 2 rects, which only holds from a base of 0.
+  #
+  # Those reactive guards are LEFT IN deliberately. They are cheap, and removing a
+  # guard because one route can no longer reach it is how an unreachable arm gets
+  # created -- the rot shape CLAUDE.md warns about. Fenced by rows OB1-OB4.
   if {![dict exists $layouts $token]} {
-    dict set layouts $token [dict create sharedx 0 graphs {}]
+    dict set layouts $token \
+      [dict create sharedx 0 graphs [list [wviewer::empty_graph]]]
   }
   set cva($token) 0
   set cvb($token) 0
@@ -3614,6 +3643,41 @@ proc wviewer::ensure_auto_graph {token} {
   set gi [wviewer::auto_graph_index $token]
   if {$gi >= 0} { return $gi }
   set gs [dict get [wviewer::layout_for $token] graphs]
+  # ⚠ CLAIM THE SEEDED STRIP RATHER THAN APPEND PAST IT (issue 1616). Since 1616
+  # `wviewer::open` seeds a virgin viewer with ONE blank strip, so an unconditional
+  # `lappend` here would put the auto-plot graph at index 1 and leave the user
+  # looking at an EMPTY BAND above their waveforms after every run, with every real
+  # strip shrunk to make room for it. That is precisely the defect the issue 0171
+  # follow-up removed from the Direct-Plot path, whose own helper
+  # `empty_graph_indices` is documented as "the indices of the strips a plot batch
+  # may REUSE instead of creating a new one" -- `plan_plot` has reused empty strips
+  # ever since and this proc never did. Making the two agree is applying that
+  # settled precedent, not a new decision about layout.
+  #
+  # ⚠ THE CONDITION IS "EXACTLY ONE EMPTY STRIP", AND THAT REACHES MORE THAN THE
+  # VIRGIN VIEWER -- SAY SO RATHER THAN UNDERSTATE IT. An earlier draft of this
+  # comment claimed the arm fired only for the state `open` seeds "and nothing
+  # else", which is FALSE: `clear_all` (Ctrl-D) also leaves exactly one empty strip,
+  # so a run's auto-plot after a Clear All now claims that strip too. Row `CG1` of
+  # test_wave_clear_all.tcl caught the discrepancy by reddening, and it was restated
+  # rather than renumbered -- its old name, "next auto-plot run appends its OWN
+  # strip", asserted the append this change removes.
+  #
+  # That reach is intended, and it is the same user-visible rule in both places:
+  # after an open OR a Clear All, the next run's waveforms FILL the window instead of
+  # sitting under a blank band. Claiming an empty strip is never destructive --
+  # `graph_is_empty` means zero MODEL traces, so a strip holding `vec`-less traces the
+  # user can still edit is not empty and is never taken.
+  #
+  # Still NOT taken: reusing the first empty strip in a layout that has OTHER strips,
+  # which is what Direct Plot does via `empty_graph_indices`. That would relayout
+  # viewers a user built by hand, so it stays a question for them (issue 1616, open).
+  if {[llength $gs] == 1 && [wviewer::graph_is_empty [lindex $gs 0]]} {
+    set gs [lreplace $gs 0 0 \
+      [dict merge [lindex $gs 0] [dict create auto 1]]]
+    wviewer::set_graphs $token $gs
+    return 0
+  }
   lappend gs [dict merge [wviewer::empty_graph] [dict create auto 1]]
   wviewer::set_graphs $token $gs
   return [expr {[llength $gs] - 1}]

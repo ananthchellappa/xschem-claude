@@ -549,6 +549,83 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set vdrw $vtop.drw
   check_true "G1 viewer canvas exists" [winfo exists $vdrw]
 
+  # --- OB1-OB4: A FRESHLY OPENED VIEWER STARTS WITH ONE BLANK STRIP ----------
+  # issue 1616, wish_list.txt new-list item 15: "WV: Always start with one blank
+  # graph element". This is the FIRST `wviewer::open` in the suite, so the token
+  # has never had a layout -- which is the only state that exercises the seed in
+  # `wviewer::open`, because the seed is guarded by `if {![dict exists $layouts
+  # $token]}`.
+  #
+  # ⚠ THE INVARIANT EXISTED ONLY REACTIVELY BEFORE THIS ISSUE, WHICH IS WHY NO
+  # ROW CAUGHT IT. `wviewer::display_raw` and `wviewer::add_trace` each carry
+  # `if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }`, and
+  # `clear_all` / `new_tab` always leave exactly one -- so every path that PUTS
+  # CONTENT IN a viewer repaired the empty list on the way past, and only a bare
+  # open with nothing added could show the defect. `wviewer::regenerate` iterates
+  # `foreach G_ $gs`, so with an empty list it places ZERO rects: the window came
+  # up with no strip at all, not one blank strip.
+  #
+  # ⚠ OB4 IS NOT A DUPLICATE OF OB1. OB1 could pass on a leftover layout from an
+  # earlier window; OB4 forgets the token first and reopens, so it proves the
+  # SEED fires rather than that something survived. `wviewer::forget` unsets
+  # `layouts($token)` (its own comment says a fresh open starts from an empty
+  # layout -- a sentence issue 1616 makes stale, and which is corrected there).
+  # ⚠ EVERY ROW HERE MUST *FAIL* ON THE BROKEN TREE, NEVER *THROW*. Measured
+  # while writing them: the first cut of OB2 read
+  # `dict get [lindex ... 0] traces` directly, and on the zero-graph tree
+  # `lindex {} 0` is the empty string, so `dict get {} traces` raised
+  # `key "traces" not known in dictionary`. That error hit the file-scope catch,
+  # printed one `UNEXPECTED ERROR:` and ABORTED THE SUITE at 62 of 402 checks --
+  # so a band written to expose one defect hid 340 unrelated checks instead. A
+  # row that throws is strictly worse than a row that fails: it destroys the
+  # coverage around it and reports one opaque line. Hence the explicit catches.
+  set _obg [dict get [wviewer::layout_for $tok] graphs]
+  check "OB1 a virgin open seeds exactly one graph" [llength $_obg] 1
+  if {[catch {llength [dict get [lindex $_obg 0] traces]} _ob2]} {
+    set _ob2 "no-graph-to-inspect ($_ob2)"
+  }
+  check "OB2 ...and that one graph is BLANK (no traces)" $_ob2 0
+  # ⚠ OB3 IS THE ROW THAT REFUTED A ONE-LINE FIX, AND IT HAS TO PUMP THE EVENT
+  # LOOP TO BE HONEST. The model is not the deliverable -- the user has to SEE a
+  # strip -- and seeding the layout alone draws NOTHING: `wviewer::open` never
+  # calls `wviewer::regenerate`, and rects are placed only by `regenerate`. The
+  # only route from `open` to a drawn strip is
+  # `<Configure>` -> `wviewer::on_configure` -> `after idle
+  # wviewer::configure_apply` -> `regenerate`, which needs an event-loop turn,
+  # and `configure_apply` additionally returns early while `winfo width` is <= 1.
+  # Measured: with the seed in place and NO pump, this row read 0 rects.
+  #
+  # The pump is not a weakening. In a live session the idle handler runs within a
+  # frame of the window mapping, so no user can perceive the gap, and nothing
+  # between `open`'s return and the first idle turn puts anything in front of
+  # them. What the row must assert is what the user experiences -- a mapped,
+  # sized window showing one strip -- so it settles the map-time <Configure>
+  # first, exactly as the GF and IX bands do for the same reason.
+  #
+  # `in_ctx` takes the value out through the RETURN, never a variable set inside
+  # the body: that proc runs its script at uplevel #0, so a `set` in there makes a
+  # global and leaves this proc's local untouched (wave_viewer.tcl's own warning).
+  if {![viewer_ready $vtop]} {
+    puts "skip: OB3 needs a mapped viewer canvas (the rect count is a drawn artifact)"
+  } else {
+    for {set i 0} {$i < 60} {incr i} { update; after 20 }
+    if {[catch {wviewer::in_ctx $tok {xschem get rects 2}} _ob3]} {
+      set _ob3 "in_ctx threw ($_ob3)"
+    }
+    check "OB3 ...and it is DRAWN as one layer-2 graph rect" $_ob3 1
+  }
+  # OB4: the SEED fired, not a leftover. `forget` unsets layouts($token), so the
+  # reopen below re-enters the `![dict exists ...]` arm that OB1 tests.
+  wviewer::forget $tok
+  set _ob4open [wviewer::open $tok]
+  check "OB4 reopen after forget returns 1" $_ob4open 1
+  check "OB4 ...and re-seeds one graph (the seed, not a leftover)" \
+    [llength [dict get [wviewer::layout_for $tok] graphs]] 1
+  # re-establish the handles the rest of the G1 band uses: the forget+reopen
+  # above built a NEW toplevel, so the old $vtop/$vdrw are stale.
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+
   # --- G1c: THE VIEWER RECORDS ITS OWN ARRIVAL -------------------------------
   # ⚠ THIS IS INSTRUMENTATION, AND INSTRUMENTATION DIES SILENTLY. Issue 0840's
   # anti-congruence shove shipped dead for days and nobody noticed, because nothing
@@ -804,7 +881,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set gmenu $mb.graph
     check_true "G10 Add Graph entry enabled" \
       [expr {[$gmenu entrycget [$gmenu index {Add Graph}] -state] ne {disabled}}]
-    $gmenu invoke [$gmenu index {Add Graph}]
+    # ⚠ ONE INVOKE, NOT TWO, SINCE ISSUE 1616. `wviewer::open` now seeds one blank
+    # strip, so one `Add Graph` reaches the two-graph state this whole band is
+    # about. Before 1616 the seed was an EMPTY list and this band clicked twice
+    # from a base of ZERO -- which is why `G10 model has 2 graphs` was, all along,
+    # a recording of the defect 1616 fixes rather than an assertion about
+    # stacking. Repaired this way ON PURPOSE rather than by renumbering every
+    # literal to 3: the alternative shifts 27 expected values across G10-G14 and
+    # GF1-GF4, changes the Add Trace dialog's default target strip from index 1 to
+    # 2 (it defaults to the LAST), and leaves three rows whose own names assert a
+    # geometry that no longer exists ("a single graph fills the whole viewport",
+    # "two graphs each fill a half"). Adding one fewer strip keeps every literal,
+    # every index and every stated invariant exactly as measured.
     $gmenu invoke [$gmenu index {Add Graph}]
     update                                 ;# flush any pending <Configure> refit
     check "G10 model has 2 graphs" \
@@ -1132,7 +1220,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     proc gf_near {a b tol} { expr {abs($a - $b) <= $tol} }
 
     # --- GF1: a single graph fills the whole viewport ------------------------
-    $mb.graph invoke [$mb.graph index {Add Graph}]
+    # ⚠ NO `Add Graph` HERE SINCE ISSUE 1616: `wviewer::open` seeds exactly one
+    # blank strip, so the SEEDED strip is the single graph this block measures --
+    # a strictly better fence than clicking one in, because it now proves the
+    # window a user actually gets on open fills the viewport, not one they had to
+    # build first. Adding a strip here would make it two and turn every "fills the
+    # whole viewport" row into a statement about halves.
     update
     xschem new_schematic switch $vdrw
     check "GF1 exactly one graph rect" [xschem get rects 2] 1
@@ -1273,7 +1366,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       expr {[xschem get xorigin] == $cx0 && [xschem get yorigin] == $cy0 &&
             [xschem get zoom] == $cz0}
     }
-    wviewer::add_graph $tok                       ;# one empty graph, fills window
+    # ⚠ NO `add_graph` HERE SINCE ISSUE 1616 -- the reopen above already seeds one
+    # empty graph that fills the window, which is exactly the precondition this
+    # whole band rests on. Adding one would make it TWO, and that is not an
+    # off-by-one: `wviewer::graph_at_pointer` opens with
+    # `if {$n <= 1} { return 0 }`, and the IX legs depend on that short circuit --
+    # this band's own header says it drives `wheel_zoom` with an explicit index
+    # because "a 2-strip pointer position is not reproducible headlessly". A second
+    # strip would make 33 rows depend on the pointer mirror's position instead of
+    # on that guarantee, i.e. non-deterministic rather than merely wrong.
     ix_setrange $tok 0 10 -1 1
     xschem new_schematic switch $vdrw
     check_true "IX-setup rect x1/x2/y1/y2 == 0/10/-1/1" \
