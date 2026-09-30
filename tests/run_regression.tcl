@@ -622,7 +622,27 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_sigbrowser_panes" \
                  "headless/test_wave_viewer" \
                  "headless/test_replay_door_1619" \
-                 "headless/test_select_log_1620"]
+                 "headless/test_select_log_1620" \
+                 "headless/test_add_wire_label"]
+## ⚠ `test_add_wire_label` IS IN **BOTH** LISTS, AND IT COSTS A `skip:` LINE ON
+## PURPOSE (issue 1625). It has been an `hcases` entry for a long time and its
+## create-form rows gate fine there. Issue 1625 moved the "stack the bus tokens"
+## control OFF that form and onto the Edit Properties form, and the six rows that
+## fence the new checkbox (V33-V38) drive real Tk widgets, so they SELF-SKIP under
+## --nogui and NOTHING in T1 was running them -- a fence for a user-visible control
+## that the gate never executed. An adversarial verifier found that, not the crew
+## and not the driver. Registering the `dcases` arm is what makes those six rows
+## gate. ⚠ AND IT COSTS **NO** `skip:` LINE, WHICH IS NOT WHAT EITHER THE
+## ADVERSARIAL VERIFIER OR THE DRIVER FIRST WROTE DOWN. Both predicted the trailer
+## would move off `skips=8`; both were wrong, and the driver caught it only by
+## checking before committing the claim. This suite announces its skipped bands
+## with an UPPERCASE `SKIP:` (three sites: the 0246 W band, V18-V20c, V33-V38),
+## and `summarize_all` counts `^skip:` lowercase -- see its own `regexp {^skip:}`
+## arm. So the expected movement is 112 -> 113 cases, 111 -> 112 blocks, `skips=`
+## UNCHANGED at 8. That is the same mechanism `test_replay_door_1619` used, making
+## this the second both-lists entry to cost no skip, and the sixteenth consecutive
+## 8 -- which CLAUDE.md is at pains to say is a coincidence of what has been
+## registered rather than a property. Read the trailer; do not predict it.
 ## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
 ## HALF. The headless-crash batch added eleven `has_x` guards, and
 ## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui

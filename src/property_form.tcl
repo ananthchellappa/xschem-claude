@@ -303,6 +303,83 @@ proc slickprop::text_bool_value {tok loaded chk0 chk} {
 }
 
 # ===========================================================================
+# INSTANCE-form bool rows (issue 1625).
+#
+# A few instance tokens are per-instance DISPLAY flags rather than attributes the
+# symbol declares. They can therefore NEVER arrive as a template-derived field --
+# only as an undeclared "Extra", where the user would have to know the token's
+# name and spell its value by hand. Those get a checkbox instead, of exactly the
+# descriptor shape text_schema uses for `vcenter` / "Center V", read with
+# bool_checked and written back with bool_value: same core, same semantics (an
+# untouched box returns its loaded value verbatim; a freshly unticked one removes
+# the token).
+#
+# `vjust` (issue 1623) is the one such flag today: on a net label whose `lab=` is
+# a comma-separated bus token list it draws one token per line -- a DISPLAY
+# transform applied by sym_text_vstack() (src/draw.c) at the six render/measure
+# sites, never in the stored string. Its control used to sit on the Add-Wire-Label
+# CREATE form, which the user overruled on 2026-09-30: "When commas are used in
+# the create form, that's multiple labels, not a bus. So the user can only specify
+# bits of a bus using the property edit form." A comma there always separates
+# labels, so every label that form makes is a SINGLE token -- and a single token
+# has nothing to stack. Bits of a bus are specified HERE.
+# Spec: doc/claude/specs/add_wire_label.md. Fence: section V.7 of
+# tests/headless/test_add_wire_label.tcl.
+# ===========================================================================
+
+# The symbol's `type` global attribute, or "" if unavailable. Same load-on-throw
+# shape as template_of, and for the same reason: getprop throws when the symbol is
+# not in this context's table yet (an identity change to a cell not placed this
+# session), and load_symbol keys it under its rel_sym_path, so every name form is
+# tried rather than only the one we were handed.
+proc slickprop::symbol_type {symbol} {
+  if {$symbol eq {}} { return "" }
+  if {![catch {xschem getprop symbol $symbol type} t]} { return [string trim $t] }
+  set abs $symbol
+  catch {set abs [abs_sym_path $symbol]}
+  catch {xschem load_symbol $abs}
+  set rel $abs
+  catch {set rel [rel_sym_path $abs]}
+  foreach ref [list $symbol $abs $rel] {
+    if {$ref ne {} && ![catch {xschem getprop symbol $ref type} t]} { return [string trim $t] }
+  }
+  return ""
+}
+
+# The bool rows the INSTANCE form owns for <symbol>, on top of its
+# template-derived fields. Keyed on the symbol's TYPE, not its file name, so a
+# user's own label symbol (lab_wire, a copied cell, a lib/cell/view ref) gets the
+# control too -- `type=label` is what the netlister itself dispatches on.
+proc slickprop::inst_schema {symbol} {
+  if {[slickprop::symbol_type $symbol] eq "label"} {
+    return [list [dict create tok vjust label {Stack V} widget bool on 1]]
+  }
+  return {}
+}
+
+# The token names inst_schema owns, DERIVED from it rather than hand-kept (a
+# second list is the same defect one level up). build_fields skips these in the
+# generic field loop: a token present in the prop string is also listed by
+# to_fields as an undeclared "Extra", and two widgets for one token would put it
+# in cur(tokens) twice and give collect_changes two contradictory answers.
+proc slickprop::inst_owned {symbol} {
+  set toks {}
+  foreach row [slickprop::inst_schema $symbol] { lappend toks [dict get $row tok] }
+  return $toks
+}
+
+# The value to write back for one of <symbol>'s bool rows, exactly as
+# text_bool_value does for the text panel: the schema knows the on-value, the
+# generic bool_value decides.
+proc slickprop::inst_bool_value {symbol tok loaded chk0 chk} {
+  set on {}
+  foreach row [slickprop::inst_schema $symbol] {
+    if {[dict get $row tok] eq $tok} { set on [dict get $row on]; break }
+  }
+  return [slickprop::bool_value $on $loaded $chk0 $chk]
+}
+
+# ===========================================================================
 # THE FORM (Tk). Built on the core above. State for the single open dialog
 # lives in slickprop::cur(...) (only one Edit Properties dialog exists at a
 # time). Field-building and change-collection are factored out of the modal
@@ -418,10 +495,12 @@ proc slickprop::cellform_ns {symbol} {
 # (not part of the value). Returns the list of token names placed.
 proc slickprop::build_fields {parent prop template} {
   variable cur
+  variable chk
   variable has_name_field
   slickprop::init_fonts
   set ew $::slickprop_entry_width
   array unset cur
+  array unset chk
   # clear any prior field widgets (a rebuild on Next/Prev or Apply reuses the
   # same parent frame; the row widget names .i0/.l0/.e0/.xsep/... would collide)
   foreach w [winfo children $parent] { destroy $w }
@@ -438,6 +517,14 @@ proc slickprop::build_fields {parent prop template} {
       if {[info commands ${cf}::field_custom] ne {}} { catch {set cfcustom [${cf}::field_custom]} }
     }
   }
+  # instance-form BOOL rows for this master (issue 1625, e.g. a net label's `vjust`):
+  # rendered as checkboxes after the loop, and SKIPPED in it -- inst_owned is the
+  # skip list, derived from inst_schema so the two can never drift.
+  set ischema {}; set iowned {}
+  if {[info exists ::symbol] && $::symbol ne {}} {
+    catch {set ischema [slickprop::inst_schema $::symbol]}
+    catch {set iowned  [slickprop::inst_owned  $::symbol]}
+  }
   set r 0
   set extras_started 0
   set has_name_field 0
@@ -446,6 +533,11 @@ proc slickprop::build_fields {parent prop template} {
     set val      [dict get $f value]
     set declared [dict get $f declared]
     set default  [dict get $f default]
+    # A token the instance-form bool rows own (issue 1625) is rendered below as a
+    # CHECKBOX, never here as a text entry. The skip must come before the Extra
+    # divider too: a label whose only undeclared token is `vjust` would otherwise
+    # grow an empty "Extra (undeclared)" heading with nothing under it.
+    if {[lsearch -exact $iowned $tok] >= 0} continue
     # The instance name lives in the dedicated row below the identity block (issue
     # 0058) when the real dialog is up; wire it into cur there and skip the grid row.
     # Without the dialog (the .pf.f core tests) fall through to a normal grid row.
@@ -524,6 +616,36 @@ proc slickprop::build_fields {parent prop template} {
     bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
     incr r
   }
+  # --- instance-form BOOL rows (issue 1625) ---------------------------------
+  # Appended AFTER the template-derived fields (and after any Extra section) so the
+  # generic field order is untouched: these are display flags, not attributes the
+  # symbol declares. Same three columns as a text row -- modified-cue dot | label |
+  # widget -- so they line up with everything above. The tick state lives in
+  # slickprop::chk(<tok>) (an array, wiped with cur on every rebuild) and is read
+  # back by field_value through bool_value, so an untouched box contributes nothing
+  # to collect_changes and the form's cardinal invariant still holds.
+  foreach irow $ischema {
+    set tok [dict get $irow tok]
+    set val [xschem get_tok $prop $tok 2]
+    set chk($tok) [slickprop::bool_checked $tok $val]
+    label $parent.i$r -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
+    label $parent.l$r -text [dict get $irow label] -anchor e -font slickPropLabel
+    checkbutton $parent.e$r -variable ::slickprop::chk($tok) \
+      -command [list slickprop::update_dirty $tok]
+    grid $parent.i$r -row $r -column 0 -padx {2 0} -pady 4
+    grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
+    grid $parent.e$r -row $r -column 2 -sticky w -padx {0 8} -pady 4
+    set cur(ind,$tok)         $parent.i$r
+    set cur(entry,$tok)       $parent.e$r
+    set cur(bool,$tok)        1
+    set cur(on,$tok)          [dict get $irow on]
+    set cur(chk0,$tok)        $chk($tok)
+    set cur(loaded,$tok)      $val
+    set cur(placeholder,$tok) 0
+    lappend cur(tokens) $tok
+    bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
+    incr r
+  }
   grid columnconfigure $parent 1 -minsize 90   ;# fixed label column so labels align
   slickprop::update_name_row   ;# show/hide the dedicated Name row per has_name_field (0058)
   return $cur(tokens)
@@ -561,6 +683,16 @@ proc slickprop::placeholder_out {tok default} {
 # The effective current value of a field's entry (a showing placeholder is empty).
 proc slickprop::field_value {tok} {
   variable cur
+  variable chk
+  # a bool row (issue 1625): the checkbox's tick state decides, through the same
+  # bool_value the text panel uses -- an UNCHANGED box returns its loaded value
+  # verbatim (so `vjust=true` written by hand survives untouched), a freshly ticked
+  # one the schema on-value, a freshly unticked one empty (which apply removes).
+  if {[info exists cur(bool,$tok)] && $cur(bool,$tok)} {
+    set c 0
+    if {[info exists chk($tok)]} { set c $chk($tok) }
+    return [slickprop::bool_value $cur(on,$tok) $cur(loaded,$tok) $cur(chk0,$tok) $c]
+  }
   if {[info exists cur(custom,$tok)] && $cur(custom,$tok)} {
     if {[info commands $cur(cf,$tok)::field_get] ne {}} {
       set v {}; catch {set v [$cur(cf,$tok)::field_get $tok]}; return $v
@@ -1491,6 +1623,9 @@ proc slickprop::edit_form {txtlabel} {
   if {$sel_attr eq {}} { catch {set sel_attr [xschem getprop symbol $symbol select]} }
   set focused 0
   foreach a [list $sel_attr value lab name] {
+    # never a bool row (issue 1625): `selection range` / `icursor` are entry methods
+    # a checkbutton does not have, and a symbol's `select` attr could name one.
+    if {[info exists cur(bool,$a)] && $cur(bool,$a)} continue
     if {$a ne {} && [info exists cur(entry,$a)] && $cur(entry,$a) ne {}} {
       set e $cur(entry,$a)
       focus $e; $e selection range 0 end; $e icursor end

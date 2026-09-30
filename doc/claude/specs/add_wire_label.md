@@ -20,7 +20,7 @@ front — instead of the old "drop an `XXX` label, then edit it" flow (Symbol �
 label / Alt+L, `xschem net_label 1`). That old place-anywhere flow is **removed** (its key/menu
 are repointed to this form).
 
-Three behaviours ship now; one checkbox is reserved (inert) for later work.
+Two behaviours ship now; one checkbox is reserved (inert) for later work.
 
 ### The form
 
@@ -29,7 +29,6 @@ Add Wire Label
   Label Name: [ A B C[2:0]        ]
   [ ] Split bus                         (unchecked by default)
   [ ] Place multiple labels at once     (inert — deferred)
-  [ ] Vertically justified              (stacks the entry, one token per line)
   ------------------------------------------------
   <status line>                         [ Close ]
 ```
@@ -44,19 +43,13 @@ Add Wire Label
   only while a preview is attached.
 - **Split bus** (functional now, **unchecked by default**) — see *Name parsing* below.
 - **Place multiple labels at once** — reserved, disabled. (Semantics TBD by the user.)
-- **Vertically justified** (functional since **issue 1623**) — see *Vertical justification* below.
+- **No vertical-justification box here** — it lived on this form between issues 1623 and 1625 and
+  was moved to the Edit Properties form; see *Vertical justification* below for why.
 
-  ⚠ Until 1623 this line read *"reserved, disabled. (Will later rotate/vcenter the label text.)"*
-  **That reading is wrong and was withdrawn by the user.** The box is not typography, not rotation
-  and not `hcenter`/`vcenter` re-anchoring: it is the LAYOUT of a comma-separated bus token list.
-  The sentence is recorded here because anyone deriving the feature from the old spec instead of
-  from the user's own words builds the wrong thing — and the diagnostic that catches it is that
-  none of those readings would change a single-token label either.
-
-### Vertical justification (`addlabel::split_display_tokens`, `sym_text_vstack`) — issue 1623
+### Vertical justification (`sym_text_vstack`, `slickprop::inst_schema`) — issues 1623, 1625
 
 The user labels a bus by typing a comma-separated token list; their own example, an 8-bit bus, is
-`bg_trim<3:0>,en_fast,iref_trim<2:0>`. The checkbox controls that list's **layout**:
+`bg_trim<3:0>,en_fast,iref_trim<2:0>`. A per-instance `vjust` flag controls that list's **layout**:
 
 * **off** — one line (`bg_trim[3:0],en_fast,iref_trim[2:0]`), i.e. today's behaviour.
 * **on** — stacked, **one token per line, single-spaced, with NO blank line between them**.
@@ -65,16 +58,48 @@ The user labels a bus by typing a comma-separated token list; their own example,
 the user's own diagnostic and the fastest check that an implementation is right. It is **opt-in**,
 which is why a checkbox is the correct control.
 
-**The flag changes tokenisation, not only drawing.** With the box clear a comma means "these are N
-separate labels" and the entry drives the placement queue. With it ticked the same entry is **one**
-label whose `lab=` is the whole comma list — so `addlabel::start_pass` branches on it, calling the
-sibling tokeniser `addlabel::split_display_tokens` (commas **and** whitespace separate; `<>` → `[]`
-per token; runs of separators collapse and empty tokens are dropped) and joining the result with
-commas. `addlabel::expand_names` is untouched: its queue contract is pinned by 14 rows.
-`addlabel::name_ok` gained a comma-list arm — the whole entry is valid iff every token is — because
-its single-name regexp permits at most one bracketed suffix, so before that arm existed the user's
-own example took `status_error` and **never armed a preview at all**. "Split bus" is ignored on the
-vjust path: expanding `B[3:0]` into four bits would stack four lines and break the diagnostic above.
+**⚠ THE CONTROL IS ON THE EDIT PROPERTIES FORM, NOT ON THIS ONE (issue 1625).** Issue 1623 first put
+a "Vertically justified" checkbox on the create form, and made it change **tokenisation**: with the
+box ticked the whole typed entry became ONE label whose `lab=` was the comma list. The user
+overruled that on 2026-09-30, in their own words:
+
+> "When commas are used in the create form, that's multiple labels, not a bus. So the user can only
+> specify bits of a bus using the property edit form."
+
+The consequence is mechanical and not a matter of taste. If a comma in this form **always**
+separates labels, then every label this form produces is a **single token** — and by the
+diagnostic above a single token cannot stack. So a vertical-justification control here has nothing
+to act on. `addlabel::start_pass` is now unconditional (`expand_names $name $split_bus`, no flag,
+no branch), `addlabel::arm` publishes `::label_new_vjust 0` on **every** re-arm so no stale 1 can
+leak into `place_wire_label()`, and the create form carries no such box.
+
+**Where it lives instead.** `slickprop::inst_schema` (`src/property_form.tcl`) contributes one
+bool row — token `vjust`, label **`Stack V`**, on-value `1` — to the Edit Properties form for any
+symbol whose **`type`** is `label` (keyed on the type, not the file name, so a user's own label
+cell gets it too). It is the same descriptor shape and the same `bool_checked` / `bool_value` pair
+the slick text panel uses for `vcenter` / "Center V": a present-and-truthy token opens ticked, an
+untouched box returns its loaded value verbatim (so a hand-written `vjust=true` survives), a
+freshly unticked box removes the token. `slickprop::inst_owned` is the list `build_fields` skips in
+its generic field loop — `vjust` is declared in no template, so a prop that carries it is *also*
+listed by `to_fields` as an undeclared "Extra", and without the skip one token would get two
+widgets.
+
+**So the user's route to a stacked bus label is:** place a label, then in Edit Properties widen
+`lab` to the comma-separated token list and tick `Stack V` — one edit, two fields, one Apply.
+Row **V39** drives exactly that.
+
+**This dissolves the Split-bus question** (`owed.sh` rule debt 1623: *"Split bus is silently ignored
+when Vertically justified is ticked"*). "Split bus" is a create-form control read only by
+`expand_names` inside `start_pass`, which now honours it on every pass; the stacking box is on a
+different form and acts on one already-placed instance. The two can no longer be set on the same
+operation, so neither can silently ignore the other.
+
+**What did NOT change.** `addlabel::split_display_tokens` (commas **and** whitespace separate; `<>`
+→ `[]` per token; runs of separators collapse and empty tokens are dropped) stays, and is still
+reached — it is the per-token validator behind `addlabel::name_ok`'s comma-list arm, which is what
+lets a comma-containing `lab=` (the property-form route) pass name validation at all. It is also
+the Tcl-side statement of the display-line contract `sym_text_vstack()` implements in C, pinned by
+rows V1–V5. `addlabel::expand_names` is untouched: its queue contract is pinned by 14 rows.
 
 **⚠⚠ The stacking is a DISPLAY transform, and no line break may reach any netlist, save or
 expansion path.** Measured at `1f42914d`: with a newline where the commas were, `expandlabel()`
@@ -89,12 +114,17 @@ newline exists only between `translate()` and the draw/measure call, built by `s
 `ps_draw_symbol()` (psprint.c) and `symbol_bbox()` (select.c) — and **never inside `translate()`**,
 whose callers include the netlisters and `save.c`.
 
-The gate is a per-instance `vjust=1` token, written by `place_wire_label()` (`src/actions.c`) from
-`::label_new_vjust`, because `draw_symbol()` copies out of the **shared** `symptr->text[j]` — the
-same reason `text_size_<n>=`, `text_layer_<n>=` and `text_hidden_inst()` are per-instance. It is
-written in C rather than with `xschem setprop` after placement precisely because the modeless form
-re-issues `-place` on every keystroke, which rebuilds the prop: a post-hoc token would be wiped on
-the next re-arm, the same hole that loses a preview's hand-set orientation.
+The gate is a per-instance `vjust` token, because `draw_symbol()` copies out of the **shared**
+`symptr->text[j]` — the same reason `text_size_<n>=`, `text_layer_<n>=` and `text_hidden_inst()`
+are per-instance. Any truthy value stacks and `0`/`false`/`no`/absent does not (`strboolcmp`), which
+is what the form's checkbox mirrors.
+
+⚠ `place_wire_label()` (`src/actions.c`) still *can* write it, from `::label_new_vjust`, and that
+plumbing is deliberately left in place — but since issue 1625 nothing ticks it: `addlabel::arm`
+publishes **0** on every re-arm. That active clear is load-bearing, not tidiness: with no control on
+the form, one stray `::label_new_vjust 1` left by an old script, a replayed action log or a
+pre-1625 session would otherwise stack every label the form placed from then on, with nothing
+anywhere to turn it off. Row **V20c** fences it.
 
 **Brackets.** The stored and drawn spelling is `[hi:lo]`, and the drawn text is identical to the
 netlisted net name. Showing the `<…>` the user typed is deliberately **out of scope**: `<` and `>`
@@ -102,10 +132,16 @@ are ordinary identifier characters to `parselabel.l`, so a label stored that way
 wrong (issue **1624**), and the supported route to angle brackets in output is the
 `bus_replacement_char` preference.
 
-Fence: section **V** of `tests/headless/test_add_wire_label.tcl` (registered in `hcases`). V22
-asserts the SPICE deck is **byte-identical** with the flag on and off; V23 asserts every
-non-comment line of the deck is a whole card; V12/V15/V16/V17 assert the box, the click target and
-the exported SVG all agree on the stacked line count and its even pitch.
+Fence: section **V** of `tests/headless/test_add_wire_label.tcl` (registered in `hcases`; 234
+checks headless, 223 on a Tk arm). V22 asserts the SPICE deck is **byte-identical** with the flag on
+and off; V23 asserts every non-comment line of the deck is a whole card; V12/V15/V16/V17 assert the
+box, the click target and the exported SVG all agree on the stacked line count and its even pitch.
+Issue 1625 adds **V.7** (headless: the create-form control is gone from the source, the schema is
+offered for `type=label` and nothing else, the write-back both ways, the drawing end to end, and
+V39's whole user journey) and **V.8** (a Tk arm only, since `build_fields` makes widgets: one token
+gets one widget, it is a `Checkbutton`, and an untouched box leaves the property string
+byte-identical). V.8 prints an uppercase `SKIP:` under `--nogui`, so it is not counted into T1's
+`skips=`; the armed spelling that runs it is `tests/headless/run_suites.sh test_add_wire_label`.
 
 ### Name parsing (`addlabel::expand_names names split_bus`)
 

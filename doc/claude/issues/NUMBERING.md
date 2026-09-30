@@ -4334,7 +4334,39 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   the row would redden now, and a standing red is a defect rather than furniture, so it lands with the
   fix.
 
-**The next free number is 1625.**
+- **1625** — **the stack control belongs on the property form, because a comma in the CREATE form is
+  always multiple labels.** Corrects the PLACEMENT of 1623's control, not its substance. The user's
+  ruling: *"When commas are used in the create form, that's multiple labels, not a bus. So the user can
+  only specify bits of a bus using the property edit form."* 1623 had put the checkbox on the create
+  form and made it change TOKENISATION (`if {$vjust} { set pending [list [join $toks ,]] }`), which is
+  backwards -- and it follows **mechanically** from the user's own single-token diagnostic that the
+  control could never have belonged there: once commas always split, every label that form produces is
+  a single token, and a single token cannot stack, so the control had nothing to act on. Create form:
+  `vjust` variable, checkbutton and handler removed, `start_pass` reduced to one unconditional line,
+  and `arm` now publishes `::label_new_vjust 0` **actively** because `place_wire_label()` still reads
+  that global. Edit Properties form: new `slickprop::inst_schema`/`inst_owned`/`inst_bool_value`, one
+  bool row `{tok vjust label {Stack V} …}` offered when the symbol's `type` is `label` -- keyed on TYPE
+  not file name, so a user's own label cell gets it, and `inst_owned` is DERIVED from the schema rather
+  than hand-kept. No C change at all: every `.c`/`.h` byte-identical to `15b76bae`. Red `9 FAILED (224
+  passed)`, every row failing and none throwing; green 234 headless / 223 display; **zero row IDs lost**
+  -- five names changed, all five the same IDs restated, proven by `comm` over every `check` name.
+  Adversarially verified by three lenses, all not refuted, and ⚠ **the verification earned its keep
+  twice**: two shipped comments asserted that `split_display_tokens` was still reached through
+  `name_ok`'s comma arm, measurably false (`name_ok`'s only caller is `arm`, commas are already
+  stripped by then, and `property_form.tcl` never routes a `lab=` through it) -- the same shape as the
+  `/* select all */` comment that misled 1617; and **the new checkbox was fenced by rows T1 never ran**,
+  because `V33`-`V38` drive real Tk and the suite was `hcases` ALONE, fixed by registering the `dcases`
+  arm. ⚠⚠ **AND THE DRIVER AND THE VERIFIER BOTH PREDICTED THE TRAILER WOULD MOVE OFF `skips=8`, AND
+  BOTH WERE WRONG**: this suite spells its skipped bands with an uppercase `SKIP:` at three sites and
+  `summarize_all` counts `^skip:` lowercase, so the right expectation is 112 -> 113 cases, 111 -> 112
+  blocks, `skips=` unchanged -- the same mechanism `test_replay_door_1619` used, the second both-lists
+  entry to cost no skip, and the sixteenth consecutive 8. Caught by checking before the claim was
+  committed rather than after the gate contradicted it. FIXED,
+  `tests/headless/test_add_wire_label.tcl`, now in BOTH lists, written red first. `rule/1623` is
+  dissolved by this change (the state it asks about can no longer be entered) but stays on the queue,
+  because only the user clears a rule debt.
+
+**The next free number is 1626.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

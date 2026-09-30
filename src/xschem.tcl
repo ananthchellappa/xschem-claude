@@ -13643,11 +13643,16 @@ proc addpin::open {} {
 # expands bus ranges (B[2:0] -> B[2] B[1] B[0]); "Place multiple labels at once" is reserved
 # (inert) for later.
 #
-# ⚠ "Vertically justified" (issue 1623) OVERTURNS the queue sentence above for its own pass: with
-# it ticked the whole entry is ONE label whose lab= is the comma list, DRAWN one token per line
-# and single-spaced, and "Split bus" is ignored. The stacking is a DISPLAY transform only -- a
-# newline must never reach lab=, because expandlabel() eats it as whitespace and concatenates the
-# tokens into wrong bus-bit names. See sym_text_vstack() (src/draw.c) for the measurement.
+# ⚠ A COMMA HERE ALWAYS SEPARATES LABELS -- nothing in this form changes that (user's ruling,
+# 2026-09-30, issue 1625): "When commas are used in the create form, that's multiple labels, not a
+# bus. So the user can only specify bits of a bus using the property edit form." Issue 1623 briefly
+# put a "Vertically justified" checkbox here that collapsed the typed comma list into ONE stacked
+# label; it is gone, because every label this form makes is a single token and a single token has
+# nothing to stack. The stacking itself is unchanged and general -- a DISPLAY transform applied by
+# sym_text_vstack() (src/draw.c) to any instance carrying `vjust=1` with a comma-containing lab=,
+# never to the stored string, because expandlabel() eats a newline as whitespace and concatenates
+# the tokens into wrong bus-bit names. The flag is now set per instance on the Edit Properties
+# form: slickprop::inst_schema (src/property_form.tcl).
 # Placement is driven by `xschem add_wire_label
 # -place` (arms) + the shared C drop gate (wire_label_try_commit); this form only manages the
 # name queue and re-arms after each committed drop.
@@ -13655,7 +13660,6 @@ namespace eval addlabel {
   variable name           {}
   variable split_bus      0   ;# Split bus unchecked by default (user request)
   variable place_multiple 0   ;# reserved (inert)
-  variable vjust          0   ;# issue 1623: stack the entry, one token per line (opt-in)
   variable armed          0
   variable hook_installed 0
   variable last           {}
@@ -13721,9 +13725,25 @@ proc addlabel::expand_names {s split_bus} {
 # draw". It also never expands a bus range: with the flag on, `busname<3:0>` must render exactly
 # as it does with the flag off, which is the user's own acceptance test for this feature.
 #
-# ⚠ Whitespace separates here as well as a comma, and that is not cosmetic: the joined result
-# becomes the stored lab=, and SPACE(c) in src/token.c counts ' ' and '\t', so a space that
-# reached lab= would make get_tok_value TRUNCATE the label at it.
+# ⚠ Whitespace separates here as well as a comma, and that is not cosmetic: a space that reached
+# lab= would make get_tok_value TRUNCATE the label at it, because SPACE(c) in src/token.c counts
+# ' ' and '\t'.
+#
+# ⚠ ITS CALLER CHANGED AT ISSUE 1625. It was written for a create-form pass that joined these
+# tokens back into one lab=; that pass is gone (a comma on that form always separates labels), so
+# nothing here builds a lab= any more. What it IS, and the only thing it is: the Tcl-side statement
+# of the display-line contract sym_text_vstack() (src/draw.c) implements in C. Rows V1-V5 pin the
+# contract; V12b pins the C side's matching collapse.
+# ⚠ AND IT IS NOT REACHED FROM THE PRODUCT AT ALL -- only from those rows. A first draft of this
+# very comment claimed it "remains reached as the per-token splitter inside addlabel::name_ok's
+# comma-list arm -- the validator a comma-containing lab= must pass". That is FALSE, and an
+# adversarial verifier measured it rather than read it: name_ok's only production caller is
+# addlabel::arm, start_pass -> expand_names has already stripped every comma by then (instrumented,
+# `any_arg_with_comma = 0`), and property_form.tcl never routes a lab= through name_ok at all
+# (`grep -c 'addlabel\|name_ok' src/property_form.tcl` = 0). So name_ok's comma-list arm is dead
+# from the product's side and validates nothing. Recorded rather than deleted because CLAUDE.md's
+# rule is to check a cross-reference instead of trusting it, and this comment was itself the
+# counterexample -- the same shape as the /* select all */ comment that misled issue 1617.
 proc addlabel::split_display_tokens {s} {
   set out {}
   foreach tok [regexp -all -inline {[^,\s]+} $s] {
@@ -13737,11 +13757,21 @@ proc addlabel::split_display_tokens {s} {
 # about to be placed (armed). Valid = a non-empty base of non-bracket chars, optionally followed by
 # ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
 # so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
-# issue 1623: a COMMA LIST is valid iff every one of its tokens is. The "Vertically justified"
-# pass stores the whole list as ONE lab=, and until this branch existed addlabel::arm took the
-# status_error path on the user's own example (bg_trim<3:0>,en_fast,iref_trim<2:0>) and never
-# armed a preview at all -- the regexp below permits at most ONE bracketed suffix and nothing
-# after it. ONE definition of a valid name, applied per token: not a second, looser regexp.
+# issue 1623: a COMMA LIST is valid iff every one of its tokens is -- the regexp below permits at
+# most ONE bracketed suffix and nothing after it, so without this arm the user's own example
+# (bg_trim<3:0>,en_fast,iref_trim<2:0>) took the status_error path. ONE definition of a valid name,
+# applied per token: not a second, looser regexp.
+# ⚠ NOTHING REACHES THIS ARM ANY MORE (issue 1625), and the first version of this comment got that
+# wrong in a way worth keeping as a warning. A comma on the create form always separates labels, so
+# addlabel::arm -- name_ok's ONLY production caller -- can only ever hand it a single token;
+# start_pass -> expand_names has stripped every comma before this point. The comment used to claim
+# the arm "is the validator a comma-containing lab= must pass, and that spelling is now made on the
+# Edit Properties form". The second half is false: property_form.tcl never routes a lab= through
+# name_ok (`grep -c 'addlabel\|name_ok' src/property_form.tcl` = 0), so the Edit Properties route
+# does NOT come through here and a comma-containing lab= is validated by nothing.
+# The arm is kept deliberately anyway -- it is the grammar's statement that a comma list is legal and
+# is checked per token rather than by a looser second regexp -- but it is reached only by rows V6-V10,
+# not by the product. An adversarial verifier measured this; the comment had been believed twice.
 proc addlabel::name_ok {n} {
   if {[string first , $n] >= 0} {
     set toks [addlabel::split_display_tokens $n]
@@ -13805,18 +13835,14 @@ proc addlabel::after_drop {b} {
 # Recompute the queue from the Label Name entry + Split bus, and arm its head. Editing either
 # RESTARTS the pass (fresh queue).
 proc addlabel::start_pass {} {
-  variable name; variable split_bus; variable pending; variable current; variable vjust
-  if {$vjust} {
-    # issue 1623: with "Vertically justified" ticked the SAME typed text is ONE label whose lab=
-    # is the whole comma list -- not the QUEUE of separate labels a comma means with the box
-    # clear. So the flag changes TOKENISATION here, not only the drawing. "Split bus" is
-    # deliberately ignored on this path: expanding B[3:0] into four bits would stack four lines,
-    # and the user's acceptance test is that a single typed name renders identically either way.
-    set toks [addlabel::split_display_tokens $name]
-    if {[llength $toks]} { set pending [list [join $toks ,]] } else { set pending {} }
-  } else {
-    set pending [addlabel::expand_names $name $split_bus]
-  }
+  variable name; variable split_bus; variable pending; variable current
+  # ⚠ UNCONDITIONAL, and that is a ruling (user, 2026-09-30, issue 1625): "When commas are used
+  # in the create form, that's multiple labels, not a bus. So the user can only specify bits of a
+  # bus using the property edit form." Issue 1623 briefly branched here on a "Vertically
+  # justified" checkbox, which collapsed the typed comma list into ONE label; that box is gone
+  # and this proc reads no flag at all. Bits of a bus are spelled on the Edit Properties form
+  # (slickprop::inst_schema, src/property_form.tcl). Rows V18/V19/V24 hold it shut.
+  set pending [addlabel::expand_names $name $split_bus]
   set current [lindex $pending 0]
   addlabel::arm
 }
@@ -13825,7 +13851,7 @@ proc addlabel::start_pass {} {
 # one). `-place` re-issues are undo-safe (the C driver owns one baseline), so calling this on
 # every keystroke / Split-bus toggle is fine.
 proc addlabel::arm {} {
-  variable current; variable armed; variable last; variable pending; variable vjust
+  variable current; variable armed; variable last; variable pending
   if {![winfo exists .addlabel]} { set armed 0; return }
   if {[string trim $current] eq {}} {
     set armed 0; set last {}
@@ -13844,10 +13870,13 @@ proc addlabel::arm {} {
   if {$current eq $last && [addlabel::placing]} return
   set last $current
   set ::label_new_name $current
-  # issue 1623: published on EVERY arm, exactly like the name. place_wire_label() rebuilds the
-  # instance prop from both on each re-arm, so the flag cannot be lost the way a preview's
-  # hand-set orientation is (row V20b) -- and a stale 1 from a previous pass cannot leak either.
-  set ::label_new_vjust $vjust
+  # ⚠ ZERO, republished on EVERY arm, and that is load-bearing (issue 1625, row V20c).
+  # place_wire_label() (src/actions.c) still reads ::label_new_vjust and writes `vjust=1` from it,
+  # but this form no longer offers the flag -- so it must actively CLEAR the global rather than
+  # leave it alone. One stray 1 left by an old script, a replayed action log or a pre-1625 session
+  # would otherwise stack every label this form places from then on, with no control anywhere to
+  # turn it off. The flag is set per instance on the Edit Properties form instead.
+  set ::label_new_vjust 0
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
   set armed 1
   variable drop_snap
@@ -13859,7 +13888,6 @@ proc addlabel::arm {} {
 
 proc addlabel::on_name_change  {} { addlabel::start_pass }
 proc addlabel::on_split_change {} { addlabel::start_pass }
-proc addlabel::on_vjust_change {} { addlabel::start_pass }   ;# issue 1623
 
 # Called from the C drop gate when a click lands OFF copper: keep the user informed.
 proc addlabel::on_reject {} {
@@ -13922,18 +13950,15 @@ proc addlabel::open {} {
   # reserved for later work (add_wire_label.md) -- present but inert
   ttk::checkbutton $w.f.multi -text "Place multiple labels at once" \
      -variable addlabel::place_multiple -state disabled
-  # issue 1623: LIVE. Ticked, the whole comma/space-separated entry becomes ONE label drawn one
-  # token per line, single-spaced. The -command re-arms the preview so the toggle is visible at
-  # once instead of on the next keystroke (mirror of on_split_change).
-  ttk::checkbutton $w.f.vjust -text "Vertically justified" \
-     -variable addlabel::vjust -command addlabel::on_vjust_change
+  # NO vertical-justification box here (issue 1625): a comma in this form always separates
+  # labels, so every label it makes is a single token and a single token has nothing to stack.
+  # The flag is set per instance on the Edit Properties form -- see slickprop::inst_schema.
   catch {$w.f.lname configure -font slickPropLabel}
   catch {$w.f.ename configure -font slickPropValue}
   grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3
   grid $w.f.ename -row 0 -column 1 -sticky we -pady 3
   grid $w.f.split -row 1 -column 0 -columnspan 2 -sticky w -pady {6 0}
   grid $w.f.multi -row 2 -column 0 -columnspan 2 -sticky w
-  grid $w.f.vjust -row 3 -column 0 -columnspan 2 -sticky w
   grid columnconfigure $w.f 1 -weight 1
 
   ttk::label $w.status -anchor w -relief sunken -padding {4 2} \

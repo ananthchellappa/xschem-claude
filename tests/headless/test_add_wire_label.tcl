@@ -845,30 +845,43 @@ xschem unselect_all
 proc winfo {op args} { return 1 }
 set addlabel::name $V_TYPED
 set addlabel::split_bus 0
-set addlabel::vjust 0
 addlabel::start_pass
-check "V18 GUARD with the flag OFF the same typed entry is still a QUEUE of three separate labels" \
+# ⚠ RESTATED at issue 1625 (rows V18-V20c). The user ruled: "When commas are used in the create
+# form, that's multiple labels, not a bus. So the user can only specify bits of a bus using the
+# property edit form." So tokenisation here is UNCONDITIONAL -- these rows used to read "with the
+# flag OFF" / "with the flag ON" and pinned the branch that is now gone. Nothing was deleted: each
+# row still measures the same plumbing, and now asserts the ruling instead of the branch.
+check "V18 a comma in the create form ALWAYS separates labels: the typed entry is a QUEUE of three, and no flag can make it one (the user's ruling)" \
   [list [llength $addlabel::pending] [inst_lab 0]] [list 3 bg_trim\[3:0\]]
-set addlabel::vjust 1
-addlabel::start_pass
-check "V19 with the flag ON the same entry becomes ONE label whose name is the whole comma list, square-bracketed" \
-  $addlabel::pending [list $V_STORED]
-check "V20 the armed preview stores the canonical comma list and carries the per-instance flag -- and the stored value holds ZERO newlines" \
+check "V20 the armed preview stores the HEAD token verbatim with ZERO newlines and carries NO vjust token -- the create form never writes one" \
   [list [inst_lab 0] [regexp -all "\n" [inst_lab 0]] [xschem getprop instance 0 vjust]] \
-  [list $V_STORED 0 1]
+  [list bg_trim\[3:0\] 0 {}]
 # addlabel::arm re-issues `-place` on every keystroke, and place_wire_label rebuilds the prop
-# from scratch each time -- so unlike a preview's hand-set ORIENTATION the flag cannot be lost.
+# from scratch each time -- so the name cannot be lost the way a preview's hand-set ORIENTATION is.
 set addlabel::last {}
 addlabel::arm
-check "V20b the flag and the name both survive a re-arm (the hole that loses a preview's hand-set orientation)" \
-  [list [xschem getprop instance 0 vjust] [inst_lab 0]] [list 1 $V_STORED]
-set addlabel::vjust 0
-set addlabel::last {}
-addlabel::start_pass
-check "V20c clearing the flag re-arms with NO vjust token on the instance" \
+check "V20b the name survives a re-arm and the instance still carries no vjust token" \
   [list [xschem getprop instance 0 vjust] [inst_lab 0]] [list {} bg_trim\[3:0\]]
+# THE STALE-GLOBAL FENCE. place_wire_label() still reads ::label_new_vjust (scheduler.c), so with
+# the checkbox gone the arm must publish 0 on EVERY re-arm. Otherwise one stray 1 -- left by an
+# old script, a replayed action log or a previous pass -- would silently stack every label the
+# form places from then on, with no control anywhere to clear it.
+set ::label_new_vjust 1
+set addlabel::last {}
+addlabel::arm
+check "V20c a stale ::label_new_vjust=1 cannot put a vjust token on a form-placed label -- every arm republishes 0" \
+  [list [xschem getprop instance 0 vjust] $::label_new_vjust] [list {} 0]
+# LAST in this block on purpose: it plants a stray variable in the form's namespace, and on a tree
+# where start_pass still declares `variable vjust` that stray is READ -- so any row after it would
+# be measuring the stray and not the product. v_try keeps a throw legible instead of aborting.
+set V_HAD_VJ [info exists ::addlabel::vjust]
+set ::addlabel::vjust 1
+set V_STRAY [v_try {addlabel::start_pass; llength $addlabel::pending}]
+check "V19 the create form owns NO vjust variable, and a stray one planted in its namespace cannot collapse the comma list into one label -- tokenisation branches on nothing" \
+  [list $V_HAD_VJ $V_STRAY [v_try {lindex $addlabel::pending 0}]] [list 0 3 bg_trim\[3:0\]]
+catch {unset ::addlabel::vjust}
 xschem abort_operation
-set addlabel::armed 0; set addlabel::name {}; set addlabel::vjust 0; set addlabel::last {}
+set addlabel::armed 0; set addlabel::name {}; set addlabel::last {}
 rename winfo {}
 }
 
@@ -910,6 +923,225 @@ check "V23 every non-comment line of the deck is a COMPLETE card: two of them, t
   [list [llength $V_CARDS] [llength [lindex $V_CARDS 0]] \
         [expr {[lsearch -exact $V_BITS [lindex [lindex $V_CARDS 0] 1]] >= 0}]] {2 4 1}
 xschem clear force
+
+# ---------------------------------------------------------------------------
+# V.7 Issue 1625 -- the flag's CONTROL moves to the PROPERTY EDIT form.
+#
+#     THE RULING (user, 2026-09-30, verbatim): "When commas are used in the create form,
+#     that's multiple labels, not a bus. So the user can only specify bits of a bus using the
+#     property edit form."
+#
+#     What follows is mechanical, not a matter of taste. If a comma in the create form ALWAYS
+#     splits (rows V18/V19), then every label that form produces is a SINGLE token -- and a
+#     single token has nothing to stack (rows V4/V13, the user's own diagnostic). So a
+#     vertical-justification control on the create form has nothing to act on. It belongs where
+#     a multi-token bus label can exist, which is the Edit Properties form
+#     (src/property_form.tcl, slickprop::edit_form).
+#
+#     The control is a BOOL row of the same descriptor shape the text panel already uses for
+#     `vcenter` / "Center V" (slickprop::text_schema), read and written back by the same
+#     bool_checked / bool_value pair. It is offered ONLY for a `type=label` symbol, because
+#     `vjust` is a per-instance DISPLAY flag that no symbol template declares -- so it can never
+#     arrive as a template-derived field, only as an undeclared "Extra". That collision is what
+#     row V28 fences.
+#
+#     ⚠ The RENDERER is untouched by 1625: sym_text_vstack() and its six call sites are general
+#     -- any instance carrying a truthy `vjust` with a comma-containing `lab=` stacks, however
+#     that label was made. Rows V11-V17 and V21-V23 above still hold it shut.
+# ---------------------------------------------------------------------------
+set V_LABSYM [find_file_first lab_pin.sym]
+set V_RESSYM [find_file_first res.sym]
+# a fixture holding BOTH masters: `getprop symbol <ref>` resolves only a symbol loaded in this
+# context, so the instances must exist before the schema is queried.
+xschem clear force
+xschem wire 0 0 600 0
+xschem instance $V_LABSYM 100 0 0 0 "name=l1 lab=$V_STORED"
+xschem instance $V_RESSYM 400 0 0 0 {name=R1 value=1k}
+xschem unselect_all
+check "V24 the create-form control is GONE FROM THE SOURCE, not merely inert: addlabel::open builds no vjust checkbutton, on_vjust_change no longer exists, and start_pass holds no branch on any flag -- an inert widget would still invite the user to tick it" \
+  [list [regexp {vjust} [v_try {info body addlabel::open}]] \
+        [expr {[info commands addlabel::on_vjust_change] ne {}}] \
+        [regexp {vjust} [v_try {info body addlabel::start_pass}]]] {0 0 0}
+check "V25 slickprop::inst_schema offers exactly ONE bool row for a type=label symbol: the vjust token, whose on-value is the same 1 place_wire_label() writes" \
+  [v_try {set r [slickprop::inst_schema $::V_LABSYM]
+          list [llength $r] [dict get [lindex $r 0] tok] \
+               [dict get [lindex $r 0] widget] [dict get [lindex $r 0] on]}] {1 vjust bool 1}
+check "V26 the row carries the visible checkbox wording, so the control is a TICK BOX beside Center V and not a free-text token entry the user has to spell" \
+  [v_try {dict get [lindex [slickprop::inst_schema $::V_LABSYM] 0] label}] {Stack V}
+check "V27 GUARD a non-label symbol is offered NOTHING -- vjust is a net-label display flag, not a generic instance attribute, and a resistor form must not grow a checkbox for it" \
+  [v_try {llength [slickprop::inst_schema $::V_RESSYM]}] 0
+check "V28 the form OWNS the token: inst_owned names vjust, and to_fields ALSO lists it (as an undeclared Extra) for a prop that holds it -- so without the owned list ONE token would get TWO widgets and collect_changes would see it twice" \
+  [v_try {set p "name=l1 lab=$::V_STORED vjust=1"
+          set toks {}
+          foreach f [slickprop::to_fields $p [slickprop::template_of $::V_LABSYM]] {
+            lappend toks [dict get $f name]
+          }
+          list [slickprop::inst_owned $::V_LABSYM] \
+               [expr {[lsearch -exact $toks vjust] >= 0}] \
+               [expr {[lsearch -exact $toks lab] >= 0}]}] {vjust 1 1}
+check "V29 GUARD the tick state is read off the token value: absent and vjust=0 open UNTICKED, vjust=1 TICKED -- matching strboolcmp() in sym_text_vstack(), which treats 0 as off" \
+  [v_try {list [slickprop::bool_checked vjust {}] [slickprop::bool_checked vjust 0] \
+               [slickprop::bool_checked vjust 1]}] {0 0 1}
+check "V30 write-back BOTH ways: ticking an unflagged label writes vjust=1, unticking a flagged one REMOVES the token (empty value -> subst_tok <NULL>), and an UNTOUCHED box returns its loaded value VERBATIM -- so collect_changes omits it and an unusual hand-written spelling survives" \
+  [v_try {set off "name=l1 lab=$::V_STORED"
+          set on  "name=l1 lab=$::V_STORED vjust=1"
+          set a [slickprop::apply $off \
+                   [list vjust [slickprop::inst_bool_value $::V_LABSYM vjust {} 0 1]]]
+          set b [slickprop::apply $on \
+                   [list vjust [slickprop::inst_bool_value $::V_LABSYM vjust 1 1 0]]]
+          list [xschem get_tok $a vjust 2] [xschem get_tok $b vjust 2] \
+               [slickprop::inst_bool_value $::V_LABSYM vjust 1 1 1] \
+               [slickprop::inst_bool_value $::V_LABSYM vjust true 1 1]}] {1 {} 1 true}
+# END TO END on the real binary: the prop string the form writes must MOVE THE DRAWING. Installed
+# with `xschem setprop instance <n> allprops`, which is what the form's Apply ultimately performs
+# on the instance; the Tk widget plumbing that gets there is fenced structurally at V32 (a
+# checkbox cannot be built under --nogui, where Tk does not exist).
+xschem clear force
+xschem wire 0 0 800 0
+xschem instance $V_LABSYM 100 0 0 0 "name=l1 lab=$V_STORED"
+xschem instance $V_LABSYM 500 0 0 0 {name=l2 lab=aa,bb}
+xschem unselect_all
+# a row must FAIL, not THROW: inst_bool_value does not exist on the unfixed tree.
+proc v_tick {i on} {
+  if {[catch {
+    set p [xschem getprop instance $i]
+    set v [slickprop::inst_bool_value $::V_LABSYM vjust \
+             [xschem get_tok $p vjust 2] [expr {!$on}] $on]
+    xschem setprop instance $i allprops [slickprop::apply $p [list vjust $v]]
+  } e]} { return "threw ($e)" }
+  return ok
+}
+# ⚠ UNROUNDED heights here, unlike v_h above, and that is not fussiness: text_bbox()'s box carries
+# a zoom-dependent fractional margin (the standing warning at the head of section V), so one line
+# measures 20.27 in this fixture. ROUNDED, the progression is 20 / 41 / 61 and `E1 + 2*(E2-E1)`
+# doubles the rounding error to 62 -- the row failed on arithmetic, not on the product. Measured
+# here at HEAD+1625, which is why the relation is asserted on the raw doubles with a tolerance.
+proc v_hf {i} {
+  set l [lindex [split [xschem instance_bbox $i] "\n"] 0]
+  lassign [lrange [split $l] 1 4] x1 y1 x2 y2
+  return [expr {double($y2) - double($y1)}]
+}
+set V_E1 [v_hf 0]; set V_E1b [v_hf 1]        ;# both one line: a 1-line box height is content-free
+set V_TK1 [v_tick 0 1]; set V_TK2 [v_tick 1 1]
+set V_E3 [v_hf 0]; set V_E2 [v_hf 1]         ;# 3 tokens, 2 tokens
+set V_UN1 [v_tick 0 0]; set V_UN2 [v_tick 1 0]
+set V_B1 [v_hf 0]; set V_B2 [v_hf 1]
+check "V31 END TO END on the real drawing: the ticked prop makes the 3-token label exactly THREE lines tall and the 2-token one exactly TWO (heights in arithmetic progression off the shared one-line height), and unticking collapses both back to the height they opened with" \
+  [list $V_TK1 $V_TK2 $V_UN1 $V_UN2 \
+        [expr {abs($V_E1 - $V_E1b) < 0.01}] [expr {$V_E2 > $V_E1 + 1.0}] \
+        [expr {abs(($V_E3 - $V_E1) - 2*($V_E2 - $V_E1)) < 0.01}] \
+        [expr {abs($V_B1 - $V_E1) < 0.01}] [expr {abs($V_B2 - $V_E1) < 0.01}]] \
+  {ok ok ok ok 1 1 1 1 1}
+check "V32 the core is WIRED INTO the form and not sitting unused: build_fields consults inst_owned (to skip the duplicate Extra) and renders inst_schema, and field_value reads a bool field back through bool_value -- every row above would pass with no checkbox on screen at all" \
+  [list [regexp {inst_owned}  [v_try {info body slickprop::build_fields}]] \
+        [regexp {inst_schema} [v_try {info body slickprop::build_fields}]] \
+        [regexp {cur\(bool,}  [v_try {info body slickprop::field_value}]] \
+        [regexp {bool_value}  [v_try {info body slickprop::field_value}]]] {1 1 1 1}
+
+# THE USER'S WHOLE JOURNEY on the new path, in one row. After 1625 the create form can only make
+# SINGLE-token labels, so the only route to a stacked bus label is: place a label, then on the Edit
+# Properties form widen `lab` to the comma-separated token list AND tick the box -- one edit, two
+# fields, one Apply. This is also the answer to the Split-bus question on the user's queue: "Split
+# bus" is a create-form control consulted only by expand_names inside start_pass, and the box now
+# lives on a different form acting on one already-placed instance, so the two can no longer be set
+# on the same operation at all.
+xschem clear force
+xschem wire 0 0 800 0
+xschem instance $V_LABSYM 100 0 0 0 {name=l1 lab=bg_trim[3:0]}
+xschem instance $V_LABSYM 500 0 0 0 {name=l2 lab=aa}
+xschem unselect_all
+set V_J1 [v_hf 0]; set V_J1b [v_hf 1]          ;# what the create form leaves: one token, one line
+# ONE edit, TWO fields (lab widened AND the box ticked), exactly as one Apply would carry them.
+proc v_journey {i newlab} {
+  if {[catch {
+    set p [xschem getprop instance $i]
+    xschem setprop instance $i allprops [slickprop::apply $p \
+      [list lab $newlab vjust [slickprop::inst_bool_value $::V_LABSYM vjust {} 0 1]]]
+  } e]} { return "threw ($e)" }
+  return ok
+}
+set V_JR1 [v_journey 0 $V_STORED]      ;# 3 tokens
+set V_JR2 [v_journey 1 {aa,bb}]        ;# 2 tokens, for the pitch
+set V_J3 [v_hf 0]; set V_J2 [v_hf 1]
+check "V39 THE USER'S PATH: a create-form label is one token on one line; widening lab= to the comma list and ticking the box in ONE property edit draws it as exactly THREE lines (progression off the two-token sibling), with the STORED value still the canonical comma list holding ZERO newlines, and translate() still answering it unstacked" \
+  [list $V_JR1 $V_JR2 [expr {abs($V_J1 - $V_J1b) < 0.01}] \
+        [expr {$V_J2 > $V_J1 + 1.0}] \
+        [expr {abs(($V_J3 - $V_J1) - 2*($V_J2 - $V_J1)) < 0.01}] \
+        [inst_lab 0] [regexp -all "\n" [inst_lab 0]] [v_try {xschem translate 0 {@lab}}]] \
+  [list ok ok 1 1 1 $V_STORED 0 $V_STORED]
+xschem clear force
+
+# --- V.8 the CHECKBOX itself, on a real Tk arm ------------------------------------------
+# The MIRROR IMAGE of the V.5 guard, and for the opposite reason: these rows need Tk to
+# EXIST, because build_fields makes widgets. So they run on the display arm
+# (`tests/headless/run_suites.sh test_add_wire_label`) and print an uppercase SKIP: on the
+# headless one -- uppercase so summarize_all does not count it into T1's `skips=`, this suite
+# being registered in `hcases` alone. V25-V32 above cover the pure core on both arms; what only
+# these can see is that ONE token gets ONE widget, that it is a tick box and not a text entry,
+# and that an untouched box still leaves the property string byte-identical.
+# Built in a WITHDRAWN toplevel (the recipe tests/property_form/body.tcl uses) so nothing pops
+# up on the display, and `.pf` is destroyed at the end. Every lab= here is a legal net name: an
+# illegal one makes expandlabel() yyerror, which under a real $DISPLAY is a MODAL dialog that
+# hangs the whole suite to a 200s TIMEOUT (measured -- see the V.3 note).
+if {[info commands winfo] eq {}} {
+  puts "SKIP: V33-V38 need a Tk arm (no widgets under --nogui) -- run tests/headless/run_suites.sh test_add_wire_label"
+} else {
+set V_LABSYM [find_file_first lab_pin.sym]
+set V_RESSYM [find_file_first res.sym]
+xschem clear force
+xschem wire 0 0 600 0
+xschem instance $V_LABSYM 100 0 0 0 {name=l1 lab=a,b,c}
+xschem instance $V_RESSYM 400 0 0 0 {name=R1 value=1k}
+xschem unselect_all
+set V_TKOK [v_try {toplevel .pf; wm withdraw .pf; frame .pf.f; pack .pf.f; list ok}]
+set V_LTMPL [slickprop::template_of $V_LABSYM]
+set ::symbol $V_LABSYM
+set V_P1 {name=l1 lab=a,b,c}
+# ⚠ THE COLLISION FIXTURE, and it must hold the token: `vjust` is undeclared in every label
+# template, so a prop that CARRIES it is also listed by to_fields as an "Extra" -- and only then
+# can the generic loop build a SECOND widget for it. Written first with an absent-token prop, this
+# row passed with the skip deleted (measured), because with no token in the prop there is no Extra
+# to collide with. That is the sabotage that named the fixture.
+set V_TOKS [v_try {slickprop::build_fields .pf.f {name=l1 lab=a,b,c vjust=1} $::V_LTMPL}]
+check "V33 ONE token gets ONE widget even when the prop already CARRIES it: vjust is in cur(tokens) exactly once, the whole token list holds no duplicate at all, the widget is a Checkbutton and no 'Extra (undeclared)' divider was drawn" \
+  [list $V_TKOK [v_try {llength [lsearch -all -exact $::V_TOKS vjust]}] \
+        [v_try {expr {[llength $::V_TOKS] == [llength [lsort -unique $::V_TOKS]]}}] \
+        [v_try {winfo class $slickprop::cur(entry,vjust)}] [winfo exists .pf.f.xsep]] \
+  {ok 1 1 Checkbutton 0}
+v_try {slickprop::build_fields .pf.f $::V_P1 $::V_LTMPL}
+check "V34 an ABSENT token opens UNTICKED, and an untouched box yields an EMPTY change set and a byte-identical property string -- the form's cardinal invariant, which a bool row must not break" \
+  [list [v_try {set slickprop::chk(vjust)}] [v_try {slickprop::collect_changes}] \
+        [v_try {slickprop::result}]] [list 0 {} $V_P1]
+set slickprop::chk(vjust) 1
+check "V35 TICKING writes the on-value into the result and touches nothing else: vjust=1 appears and lab= is byte-identical" \
+  [list [v_try {slickprop::field_value vjust}] \
+        [v_try {xschem get_tok [slickprop::result] vjust 2}] \
+        [v_try {xschem get_tok [slickprop::result] lab 2}]] {1 1 a,b,c}
+set V_P2 {name=l1 lab=a,b,c vjust=1}
+v_try {slickprop::build_fields .pf.f $::V_P2 $::V_LTMPL}
+check "V36 a PRESENT token opens TICKED, is still byte-identical when untouched, and UNTICKING removes it while lab= survives" \
+  [list [v_try {set slickprop::chk(vjust)}] [v_try {slickprop::result}] \
+        [v_try {set slickprop::chk(vjust) 0; slickprop::field_value vjust}] \
+        [v_try {xschem get_tok [slickprop::result] vjust 2}] \
+        [v_try {xschem get_tok [slickprop::result] lab 2}]] [list 1 $V_P2 {} {} a,b,c]
+set V_P3 {name=l1 lab=a,b,c vjust=true}
+v_try {slickprop::build_fields .pf.f $::V_P3 $::V_LTMPL}
+set V_T12 [list [v_try {set slickprop::chk(vjust)}] [v_try {slickprop::result}]]
+v_try {slickprop::build_fields .pf.f {name=l1 lab=a,b,c vjust=0} $::V_LTMPL}
+check "V37 a hand-written vjust=true opens TICKED and an untouched box preserves that spelling VERBATIM, while vjust=0 opens UNTICKED -- matching strboolcmp() in sym_text_vstack(), which treats 0 as off" \
+  [concat $V_T12 [list [v_try {set slickprop::chk(vjust)}]]] [list 1 $V_P3 0]
+set ::symbol $V_RESSYM
+set V_RT [v_try {slickprop::template_of $::V_RESSYM}]
+set V_RTOKS [v_try {slickprop::build_fields .pf.f {name=R1 value=1k} $::V_RT}]
+set V_R1 [list [v_try {lsearch -exact $::V_RTOKS vjust}] [info exists slickprop::cur(bool,vjust)]]
+v_try {slickprop::build_fields .pf.f {name=R1 value=1k vjust=1} $::V_RT}
+check "V38 GUARD a resistor form grows no vjust row at all, and a STRAY vjust on a non-label instance is still shown as a plain Extra text entry under its divider -- the owned list must not swallow a token the form does not own" \
+  [concat $V_R1 [list [v_try {winfo class $slickprop::cur(entry,vjust)}] \
+                       [winfo exists .pf.f.xsep]]] {-1 0 Entry 1}
+catch {destroy .pf}
+set ::symbol {}
+xschem clear force
+}
 
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }
