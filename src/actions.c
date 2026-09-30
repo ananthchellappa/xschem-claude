@@ -3755,7 +3755,7 @@ int place_sch_pin(const char *name, const char *dir)
  * lets new_prop_string uniquify the (netlist-irrelevant) refdes. to_push_undo is 0: the modeless
  * `add_wire_label -place` driver owns the single undo baseline across the per-keystroke re-arms.
  * Returns place_symbol()'s result (1 placed, 0 not). */
-int place_wire_label(const char *name)
+int place_wire_label(const char *name, int vjust)
 {
   char symbuf[PATH_MAX];
   char *prop = NULL;
@@ -3765,7 +3765,12 @@ int place_wire_label(const char *name)
   /* copy the resolved path out of the volatile Tcl result BEFORE place_symbol runs its own
    * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
   my_strncpy(symbuf, tcleval("find_file_first lab_pin.sym"), S(symbuf));
-  my_mstrcat(_ALLOC_ID_, &prop, "name=l1 lab=", name, NULL);
+  /* issue 1623: `vjust=1` is the per-instance DISPLAY flag read by sym_text_vstack() (draw.c);
+   * lab= itself stays the canonical comma list, never a newline. Written HERE rather than from
+   * Tcl after placement because the modeless form re-issues `-place` on every keystroke and
+   * this function rebuilds the whole prop each time -- a token applied post-hoc with
+   * `xschem setprop instance` would be wiped by the next re-arm (row V20b). */
+  my_mstrcat(_ALLOC_ID_, &prop, "name=l1 lab=", name, vjust ? " vjust=1" : "", NULL);
   r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
                    4 /* select the new instance */, 1 /* first_call */,
                    0 /* to_push_undo: the -place driver owns the undo baseline */);

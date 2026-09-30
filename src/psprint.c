@@ -1924,6 +1924,9 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
        * so at hide_symbols=2 gf180's whole FET family lost its names. */
       if( hide && text.txt_ptr && !annot_name_token(text.txt_ptr) ) continue;
       txtptr= translate(n, text.txt_ptr);
+      /* issue 1623 -- see sym_text_vstack() (src/draw.c), and the 0615 note below on THIS
+       * back end being the one a partial fix leaves out. */
+      txtptr= sym_text_vstack(n, text.txt_ptr, txtptr);
       ROTATION(rot, flip, 0.0,0.0,text.x0,text.y0,x1,y1);
       textlayer = c_for_text;
       /* do not allow custom text color on hilighted instances */

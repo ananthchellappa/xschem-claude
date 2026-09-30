@@ -752,6 +752,10 @@ void symbol_bbox(int i, double *x1,double *y1, double *x2, double *y2)
      sym_rot = rot;
      dbg(1, "symbol_bbox(): instance %d text n: %d text str=%s\n", i,j, text.txt_ptr? text.txt_ptr:"<NULL>");
      tmp_txt = translate(i, text.txt_ptr);
+     /* issue 1623 -- see sym_text_vstack() (src/draw.c). THE DRAWN THING AND THE CLICKABLE
+      * THING ARE ONE OBJECT (the 1244 note at the head of this function): a stacked label
+      * whose box counted one line would be drawn three lines tall and clickable on one. */
+     tmp_txt = sym_text_vstack(i, text.txt_ptr, tmp_txt);
      dbg(1, "symbol_bbox(): translated text: %s\n", tmp_txt);
      if(tmp_txt && !strncmp(tmp_txt, "@spice", 6)) continue; /* annotator texts not used in bbox */
      ROTATION(rot, flip, 0.0,0.0,text.x0, text.y0,text_x0,text_y0);

@@ -3255,6 +3255,9 @@ extern void draw_string(int layer,int what, const char *str, short rot, short fl
        double x1, double y1, double xscale, double yscale);
 extern void get_sym_text_size(int inst, int text_n, double *xscale, double *yscale);
 extern void get_sym_text_layer(int inst, int text_n, int *layer);
+/* issue 1623: the stacked-bus-label display transform -- see sym_text_vstack() in draw.c.
+ * Called at the SIX sites that render or measure a symbol text, and nowhere on a netlist path. */
+extern const char *sym_text_vstack(int inst, const char *txt_ptr, const char *s);
 extern void draw_symbol(int what,int c, int n,int layer,
             short tmp_flip, short tmp_rot, double xoffset, double yoffset);
 extern void drawrect(int c, int what, double rectx1,double recty1,
@@ -3393,7 +3396,7 @@ extern int place_symbol(int pos, const char *symbol_name, double x, double y, sh
 extern int editing_symbol_view(void);
 extern void place_net_label(int type);
 extern int place_sch_pin(const char *name, const char *dir);
-extern int place_wire_label(const char *name);
+extern int place_wire_label(const char *name, int vjust);
 extern int point_on_wire_or_pin(double x, double y);
 extern int inst_is_netlabel(int i);  /* wire_label_ride.md §5.2: symbol type is exactly "label" */
 extern int wire_label_try_commit(void);

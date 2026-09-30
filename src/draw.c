@@ -683,6 +683,79 @@ void get_sym_text_size(int inst, int text_n, double *xscale, double *yscale)
   }
 }
 
+/* issue 1623 -- "Vertically justified" (doc/claude/specs/add_wire_label.md): a wire label
+ * whose name is a comma-separated bus token list DRAWS one token per line, single-spaced,
+ * while its stored lab= stays the canonical comma list. Returns `s` itself when there is
+ * nothing to do, else a pointer into its own static buffer, valid until the next call --
+ * the same contract translate() has, which these call sites already hold live across their
+ * bodies. sym_text_vstack(-1, NULL, NULL) frees the buffer (called from xwin_exit).
+ *
+ * ⚠⚠ THE NEWLINE IS A DISPLAY-ONLY OBJECT AND MUST NEVER REACH lab=. Measured at 1f42914d:
+ * `xschem expandlabel {bg_trim[3:0]\nen_fast}` answers
+ *   bg_trim[3]en_fast,bg_trim[2]en_fast,bg_trim[1]en_fast,bg_trim[0]en_fast  (4)
+ * where the comma spelling answers the right eight bits. expandlabel()'s grammar
+ * (src/expandlabel.y) eats the newline as whitespace and CONCATENATES the tokens into
+ * plausible-looking, wholly wrong bit names, with no error and no dialog -- and every
+ * netlister plus the bus-highlight machinery goes through it. An UNQUOTED newline is worse
+ * still: SPACE(c) in src/token.c counts '\n', so get_tok_value TRUNCATES the value at it and
+ * the remaining tokens vanish. That is why this transform lives at the six render/measure
+ * sites and NOWHERE ELSE -- in particular NOT inside translate() (src/token.c), whose
+ * callers include netlist.c, spice_netlist.c, spectre_netlist.c, verilog_netlist.c and
+ * save.c. Rows V21/V22/V23 of tests/headless/test_add_wire_label.tcl hold that shut: V22
+ * asserts the SPICE deck is byte-identical with the flag on and off.
+ *
+ * PER INSTANCE, not per symbol: draw_symbol() copies out of the SHARED symptr->text[j], so
+ * the flag travels by instance index exactly as text_size_<n>= / text_layer_<n>= (above) and
+ * text_hidden_inst() do -- see the note above text_hidden() in xschem.h. Scope is the label's
+ * NAME record, the one spelled `@lab`, which is also how `xschem inst_name_text` finds it, so
+ * an annotation record on the same instance (@spice_get_voltage) is untouched.
+ *
+ * Runs of separators collapse and leading/trailing ones are dropped: an empty token would
+ * draw a BLANK line and the feature forbids one (cairo_draw_string_line() returns early on a
+ * zero-length line, but the caller still advances lineno, so the height IS consumed --
+ * measured, lab="a\n\nb" drew its two lines 2x the single pitch apart). */
+const char *sym_text_vstack(int inst, const char *txt_ptr, const char *s)
+{
+  static char *result = NULL;
+  const char *vj = NULL;
+  size_t len, i, out;
+  int sep;
+
+  if(inst == -1 && !txt_ptr && !s) {   /* clear static data in function (xwin_exit) */
+    if(result) my_free(_ALLOC_ID_, &result);
+    return NULL;
+  }
+  if(!xctx || inst < 0 || inst >= xctx->instances) return s;
+  if(!s || !s[0]) return s;
+  /* only the label's own NAME record, and only a list: one token has nothing to stack,
+   * which is the user's own diagnostic that `busname[3:0]` must render identically either way */
+  if(!txt_ptr || strcmp(txt_ptr, "@lab")) return s;
+  if(!strchr(s, ',')) return s;
+  if(xctx->inst[inst].prop_ptr && strstr(xctx->inst[inst].prop_ptr, "vjust")) {
+    vj = get_tok_value(xctx->inst[inst].prop_ptr, "vjust", 0);
+  } else {
+    /* MANDATORY, exactly as in the two readers above: xctx->tok_size is a shared global
+     * side-channel written by get_tok_value(), and a stale nonzero left by an earlier lookup
+     * would make the test below read a NULL `vj`. */
+    xctx->tok_size = 0;
+  }
+  if(!xctx->tok_size || strboolcmp(vj, "true")) return s;
+  len = strlen(s);
+  my_realloc(_ALLOC_ID_, &result, len + 1);
+  out = 0;
+  sep = 1;                             /* 1 at the start: swallow leading separators */
+  for(i = 0; i < len; ++i) {
+    if(s[i] == ',') {
+      sep = 1;
+    } else {
+      if(sep && out) result[out++] = '\n';
+      sep = 0;
+      result[out++] = s[i];
+    }
+  }
+  result[out] = '\0';
+  return result;
+}
 
 /*
  * layer: the set of symbol objects on xschem layer 'layer' to draw
@@ -964,6 +1037,13 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
          my_strdup2(_ALLOC_ID_, &txtptr, translate3(txtptr, 0, xctx->inst[n].prop_ptr,
            xctx->sym[xctx->inst[n].ptr].templ, NULL, NULL));
         dbg(1, "draw_symbol(): after translate3: str=%s\n", txtptr);
+        /* issue 1623: AFTER the site's last transform, not at a uniform position in a diff --
+         * this site and draw_temp_symbol() run translate3() after translate(), the two bbox
+         * sites do not. Guarded: my_strdup2() warns on src == *dest. */
+        {
+          const char *vstacked = sym_text_vstack(n, text.txt_ptr, txtptr);
+          if(vstacked != txtptr) my_strdup2(_ALLOC_ID_, &txtptr, vstacked);
+        }
         draw_string(textlayer, what, txtptr,
           (text.rot + ( (flip && (text.rot & 1) ) ? rot+2 : rot) ) & 0x3,
           flip^text.flip, text.hcenter, text.vcenter,
@@ -1216,6 +1296,11 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
       my_strdup2(_ALLOC_ID_, &txtptr, translate3(txtptr, 0, xctx->inst[n].prop_ptr,
         xctx->sym[xctx->inst[n].ptr].templ, NULL, NULL));
      dbg(1, "draw_temp_symbol(): after translate3: str=%s\n", txtptr);
+     /* issue 1623 -- see the identical site in draw_symbol() above */
+     {
+       const char *vstacked = sym_text_vstack(n, text.txt_ptr, txtptr);
+       if(vstacked != txtptr) my_strdup2(_ALLOC_ID_, &txtptr, vstacked);
+     }
      if(txtptr[0]) draw_temp_string(gc, what, txtptr,
        (text.rot + ( (flip && (text.rot & 1) ) ? rot+2 : rot) ) & 0x3,
        flip^text.flip, text.hcenter, text.vcenter, x0+x1, y0+y1, xscale, yscale);
@@ -10514,6 +10599,9 @@ static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
     if(text_hidden_inst(text.flags, n)) continue;
     get_sym_text_size(n, j, &xscale, &yscale);
     tmp_txt = translate(n, text.txt_ptr);
+    /* issue 1623: the measured box must count the same lines the draw paints, or the click
+     * target and the redraw box disagree with the stack (rows V12/V15) */
+    tmp_txt = sym_text_vstack(n, text.txt_ptr, tmp_txt);
     if(!tmp_txt || !tmp_txt[0]) continue;
     if(!strncmp(tmp_txt, "@spice", 6)) continue; /* annotator texts not part of the visible name */
     ROTATION(rot, flip, 0.0, 0.0, text.x0, text.y0, text_x0, text_y0);

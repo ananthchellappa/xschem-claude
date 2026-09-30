@@ -13640,15 +13640,22 @@ proc addpin::open {} {
 # cursor PREVIEW of the current name (a lab_pin.sym net-label INSTANCE) follows the mouse; a
 # canvas click DROPS it -- but only where its pin lands on copper (a wire or an instance pin),
 # else the drop is refused and the preview stays attached (no stray net-labels). "Split bus"
-# expands bus ranges (B[2:0] -> B[2] B[1] B[0]); "Place multiple labels at once" and "Vertically
-# justified" are reserved (inert) for later. Placement is driven by `xschem add_wire_label
+# expands bus ranges (B[2:0] -> B[2] B[1] B[0]); "Place multiple labels at once" is reserved
+# (inert) for later.
+#
+# ⚠ "Vertically justified" (issue 1623) OVERTURNS the queue sentence above for its own pass: with
+# it ticked the whole entry is ONE label whose lab= is the comma list, DRAWN one token per line
+# and single-spaced, and "Split bus" is ignored. The stacking is a DISPLAY transform only -- a
+# newline must never reach lab=, because expandlabel() eats it as whitespace and concatenates the
+# tokens into wrong bus-bit names. See sym_text_vstack() (src/draw.c) for the measurement.
+# Placement is driven by `xschem add_wire_label
 # -place` (arms) + the shared C drop gate (wire_label_try_commit); this form only manages the
 # name queue and re-arms after each committed drop.
 namespace eval addlabel {
   variable name           {}
   variable split_bus      0   ;# Split bus unchecked by default (user request)
   variable place_multiple 0   ;# reserved (inert)
-  variable vjust          0   ;# reserved (inert)
+  variable vjust          0   ;# issue 1623: stack the entry, one token per line (opt-in)
   variable armed          0
   variable hook_installed 0
   variable last           {}
@@ -13700,12 +13707,51 @@ proc addlabel::expand_names {s split_bus} {
   return $out
 }
 
+# issue 1623 -- the DISPLAY tokeniser for "Vertically justified". Split a Label Name entry into
+# the LINES one stacked label draws: one token per run of commas and/or whitespace, angle brackets
+# normalised to square (the only spelling xschem treats as a bus range -- `<3:0>` is an ordinary
+# identifier to parselabel.l and netlists silently wrong, issue 1624). Runs of separators collapse
+# and empty tokens are dropped, because an empty token would draw a BLANK line and the feature
+# forbids one.
+#
+# A SIBLING of expand_names, not a flag on it, and deliberately so: the two have the same
+# separators today but opposite contracts. expand_names answers "how many SEPARATE labels does
+# this entry place" (a QUEUE -- pinned by the 14 rows in section A of
+# tests/headless/test_add_wire_label.tcl) and this one answers "how many LINES does ONE label
+# draw". It also never expands a bus range: with the flag on, `busname<3:0>` must render exactly
+# as it does with the flag off, which is the user's own acceptance test for this feature.
+#
+# ⚠ Whitespace separates here as well as a comma, and that is not cosmetic: the joined result
+# becomes the stored lab=, and SPACE(c) in src/token.c counts ' ' and '\t', so a space that
+# reached lab= would make get_tok_value TRUNCATE the label at it.
+proc addlabel::split_display_tokens {s} {
+  set out {}
+  foreach tok [regexp -all -inline {[^,\s]+} $s] {
+    lappend out [string map {< \[ > \]} $tok]
+  }
+  return $out
+}
+
 # Placement-time name validity (doc/claude/specs/add_wire_label.md "Name parsing"). The form ACCEPTS
 # any text at entry so paste-from-elsewhere is never fought; a name is validated only when it is
 # about to be placed (armed). Valid = a non-empty base of non-bracket chars, optionally followed by
 # ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
 # so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
+# issue 1623: a COMMA LIST is valid iff every one of its tokens is. The "Vertically justified"
+# pass stores the whole list as ONE lab=, and until this branch existed addlabel::arm took the
+# status_error path on the user's own example (bg_trim<3:0>,en_fast,iref_trim<2:0>) and never
+# armed a preview at all -- the regexp below permits at most ONE bracketed suffix and nothing
+# after it. ONE definition of a valid name, applied per token: not a second, looser regexp.
 proc addlabel::name_ok {n} {
+  if {[string first , $n] >= 0} {
+    set toks [addlabel::split_display_tokens $n]
+    if {![llength $toks]} { return 0 }
+    foreach t $toks { if {![addlabel::name_ok1 $t]} { return 0 } }
+    return 1
+  }
+  return [addlabel::name_ok1 $n]
+}
+proc addlabel::name_ok1 {n} {
   # '#' is reserved for the engine's auto-named nets (get_unnamed_node mints "#net<N>";
   # issue 0156). A user-typed '#' name collides with that private namespace -- fly-lines
   # rule A6 hides it, the fluid-editing guards read it as regenerable, and the netlister
@@ -13759,8 +13805,18 @@ proc addlabel::after_drop {b} {
 # Recompute the queue from the Label Name entry + Split bus, and arm its head. Editing either
 # RESTARTS the pass (fresh queue).
 proc addlabel::start_pass {} {
-  variable name; variable split_bus; variable pending; variable current
-  set pending [addlabel::expand_names $name $split_bus]
+  variable name; variable split_bus; variable pending; variable current; variable vjust
+  if {$vjust} {
+    # issue 1623: with "Vertically justified" ticked the SAME typed text is ONE label whose lab=
+    # is the whole comma list -- not the QUEUE of separate labels a comma means with the box
+    # clear. So the flag changes TOKENISATION here, not only the drawing. "Split bus" is
+    # deliberately ignored on this path: expanding B[3:0] into four bits would stack four lines,
+    # and the user's acceptance test is that a single typed name renders identically either way.
+    set toks [addlabel::split_display_tokens $name]
+    if {[llength $toks]} { set pending [list [join $toks ,]] } else { set pending {} }
+  } else {
+    set pending [addlabel::expand_names $name $split_bus]
+  }
   set current [lindex $pending 0]
   addlabel::arm
 }
@@ -13769,7 +13825,7 @@ proc addlabel::start_pass {} {
 # one). `-place` re-issues are undo-safe (the C driver owns one baseline), so calling this on
 # every keystroke / Split-bus toggle is fine.
 proc addlabel::arm {} {
-  variable current; variable armed; variable last; variable pending
+  variable current; variable armed; variable last; variable pending; variable vjust
   if {![winfo exists .addlabel]} { set armed 0; return }
   if {[string trim $current] eq {}} {
     set armed 0; set last {}
@@ -13788,6 +13844,10 @@ proc addlabel::arm {} {
   if {$current eq $last && [addlabel::placing]} return
   set last $current
   set ::label_new_name $current
+  # issue 1623: published on EVERY arm, exactly like the name. place_wire_label() rebuilds the
+  # instance prop from both on each re-arm, so the flag cannot be lost the way a preview's
+  # hand-set orientation is (row V20b) -- and a stale 1 from a previous pass cannot leak either.
+  set ::label_new_vjust $vjust
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
   set armed 1
   variable drop_snap
@@ -13799,6 +13859,7 @@ proc addlabel::arm {} {
 
 proc addlabel::on_name_change  {} { addlabel::start_pass }
 proc addlabel::on_split_change {} { addlabel::start_pass }
+proc addlabel::on_vjust_change {} { addlabel::start_pass }   ;# issue 1623
 
 # Called from the C drop gate when a click lands OFF copper: keep the user informed.
 proc addlabel::on_reject {} {
@@ -13861,8 +13922,11 @@ proc addlabel::open {} {
   # reserved for later work (add_wire_label.md) -- present but inert
   ttk::checkbutton $w.f.multi -text "Place multiple labels at once" \
      -variable addlabel::place_multiple -state disabled
+  # issue 1623: LIVE. Ticked, the whole comma/space-separated entry becomes ONE label drawn one
+  # token per line, single-spaced. The -command re-arms the preview so the toggle is visible at
+  # once instead of on the next keystroke (mirror of on_split_change).
   ttk::checkbutton $w.f.vjust -text "Vertically justified" \
-     -variable addlabel::vjust -state disabled
+     -variable addlabel::vjust -command addlabel::on_vjust_change
   catch {$w.f.lname configure -font slickPropLabel}
   catch {$w.f.ename configure -font slickPropValue}
   grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3

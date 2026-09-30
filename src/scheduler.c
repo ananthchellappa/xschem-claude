@@ -2167,6 +2167,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!(argc >= 3 && !strcmp(argv[2], "-drop"))) leave_shape_draw_for("Add Wire Label");   /* issue 0269 -- phase 3, the SHAPE twin: see leave_shape_draw_for() (callback.c) */
       if(argc >= 3 && !strcmp(argv[2], "-place")) {
         const char *nm = tclgetvar("label_new_name");
+        /* issue 1623: the Add-Wire-Label form's "Vertically justified" box, reaching C the way
+         * the Add-Pin form's direction does (`add_sch_pin -place` reads ::pin_new_dir). Absent
+         * variable -> NULL -> flag off, which is the right default for a bare scripted call. */
+        const char *vj = tclgetvar("label_new_vjust");
         if(!nm) nm = "";
         /* issue 0265 -- see the add_symbol_pin arm above. Inside the `-place` branch, not beside
          * the wire gate on the line above: that one deliberately also covers the bare form-open
@@ -2198,7 +2202,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         xctx->wirelabel_preview = 1;  /* mark this preview as a constrained net-label */
         unselect_all(1);
-        if(place_wire_label(nm)) {
+        if(place_wire_label(nm, vj && !strboolcmp(vj, "true"))) {
           xctx->need_reb_sel_arr = 1;
           rebuild_selected_array();
           move_objects(START,0,0,0);

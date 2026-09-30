@@ -20,7 +20,7 @@ front — instead of the old "drop an `XXX` label, then edit it" flow (Symbol �
 label / Alt+L, `xschem net_label 1`). That old place-anywhere flow is **removed** (its key/menu
 are repointed to this form).
 
-Two behaviours ship now; two checkboxes are reserved (inert) for later work.
+Three behaviours ship now; one checkbox is reserved (inert) for later work.
 
 ### The form
 
@@ -29,7 +29,7 @@ Add Wire Label
   Label Name: [ A B C[2:0]        ]
   [ ] Split bus                         (unchecked by default)
   [ ] Place multiple labels at once     (inert — deferred)
-  [ ] Vertically justified              (inert — deferred)
+  [ ] Vertically justified              (stacks the entry, one token per line)
   ------------------------------------------------
   <status line>                         [ Close ]
 ```
@@ -44,7 +44,68 @@ Add Wire Label
   only while a preview is attached.
 - **Split bus** (functional now, **unchecked by default**) — see *Name parsing* below.
 - **Place multiple labels at once** — reserved, disabled. (Semantics TBD by the user.)
-- **Vertically justified** — reserved, disabled. (Will later rotate/vcenter the label text.)
+- **Vertically justified** (functional since **issue 1623**) — see *Vertical justification* below.
+
+  ⚠ Until 1623 this line read *"reserved, disabled. (Will later rotate/vcenter the label text.)"*
+  **That reading is wrong and was withdrawn by the user.** The box is not typography, not rotation
+  and not `hcenter`/`vcenter` re-anchoring: it is the LAYOUT of a comma-separated bus token list.
+  The sentence is recorded here because anyone deriving the feature from the old spec instead of
+  from the user's own words builds the wrong thing — and the diagnostic that catches it is that
+  none of those readings would change a single-token label either.
+
+### Vertical justification (`addlabel::split_display_tokens`, `sym_text_vstack`) — issue 1623
+
+The user labels a bus by typing a comma-separated token list; their own example, an 8-bit bus, is
+`bg_trim<3:0>,en_fast,iref_trim<2:0>`. The checkbox controls that list's **layout**:
+
+* **off** — one line (`bg_trim[3:0],en_fast,iref_trim[2:0]`), i.e. today's behaviour.
+* **on** — stacked, **one token per line, single-spaced, with NO blank line between them**.
+
+`busname<3:0>` alone renders identically either way — a single token has nothing to stack. That is
+the user's own diagnostic and the fastest check that an implementation is right. It is **opt-in**,
+which is why a checkbox is the correct control.
+
+**The flag changes tokenisation, not only drawing.** With the box clear a comma means "these are N
+separate labels" and the entry drives the placement queue. With it ticked the same entry is **one**
+label whose `lab=` is the whole comma list — so `addlabel::start_pass` branches on it, calling the
+sibling tokeniser `addlabel::split_display_tokens` (commas **and** whitespace separate; `<>` → `[]`
+per token; runs of separators collapse and empty tokens are dropped) and joining the result with
+commas. `addlabel::expand_names` is untouched: its queue contract is pinned by 14 rows.
+`addlabel::name_ok` gained a comma-list arm — the whole entry is valid iff every token is — because
+its single-name regexp permits at most one bracketed suffix, so before that arm existed the user's
+own example took `status_error` and **never armed a preview at all**. "Split bus" is ignored on the
+vjust path: expanding `B[3:0]` into four bits would stack four lines and break the diagnostic above.
+
+**⚠⚠ The stacking is a DISPLAY transform, and no line break may reach any netlist, save or
+expansion path.** Measured at `1f42914d`: with a newline where the commas were, `expandlabel()`
+(the bison grammar in `src/expandlabel.y` that every netlister and the bus-highlight machinery goes
+through) eats it as whitespace and **concatenates** the tokens into
+`bg_trim[3]en_fast,bg_trim[2]en_fast,…` — four plausible-looking, wholly wrong bit names where the
+comma spelling gives the right eight, with no error and no dialog. An **unquoted** newline is worse
+still: `SPACE(c)` in `src/token.c` counts `'\n'`, so `get_tok_value` truncates `lab=` at it. So the
+newline exists only between `translate()` and the draw/measure call, built by `sym_text_vstack()`
+(`src/draw.c`) at the **six** sites that render or measure a symbol text — `draw_symbol()`,
+`draw_temp_symbol()`, `inst_text_bbox()` (draw.c), `svg_draw_symbol()` (svgdraw.c),
+`ps_draw_symbol()` (psprint.c) and `symbol_bbox()` (select.c) — and **never inside `translate()`**,
+whose callers include the netlisters and `save.c`.
+
+The gate is a per-instance `vjust=1` token, written by `place_wire_label()` (`src/actions.c`) from
+`::label_new_vjust`, because `draw_symbol()` copies out of the **shared** `symptr->text[j]` — the
+same reason `text_size_<n>=`, `text_layer_<n>=` and `text_hidden_inst()` are per-instance. It is
+written in C rather than with `xschem setprop` after placement precisely because the modeless form
+re-issues `-place` on every keystroke, which rebuilds the prop: a post-hoc token would be wiped on
+the next re-arm, the same hole that loses a preview's hand-set orientation.
+
+**Brackets.** The stored and drawn spelling is `[hi:lo]`, and the drawn text is identical to the
+netlisted net name. Showing the `<…>` the user typed is deliberately **out of scope**: `<` and `>`
+are ordinary identifier characters to `parselabel.l`, so a label stored that way netlists silently
+wrong (issue **1624**), and the supported route to angle brackets in output is the
+`bus_replacement_char` preference.
+
+Fence: section **V** of `tests/headless/test_add_wire_label.tcl` (registered in `hcases`). V22
+asserts the SPICE deck is **byte-identical** with the flag on and off; V23 asserts every
+non-comment line of the deck is a whole card; V12/V15/V16/V17 assert the box, the click target and
+the exported SVG all agree on the stacked line count and its even pitch.
 
 ### Name parsing (`addlabel::expand_names names split_bus`)
 

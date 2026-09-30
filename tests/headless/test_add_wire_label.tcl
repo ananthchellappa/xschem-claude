@@ -684,5 +684,232 @@ if {[info commands winfo] ne {}} {
   rename winfo {}
 }
 
+# ---------------------------------------------------------------------------
+# V. Issue 1623 -- "Vertically justified": a comma-separated wire label RENDERS as one
+#    token per line while its stored lab= stays the canonical comma list.
+#
+#    The user labels a bus by typing a comma-separated token list (their example,
+#    `bg_trim<3:0>,en_fast,iref_trim<2:0>`). The checkbox controls that list's LAYOUT:
+#    off -> one line; on -> one token per line, single-spaced, NO blank line between them.
+#    A SINGLE token renders identically either way -- the user's own diagnostic, and the
+#    fastest check that a design is right (row V13).
+#
+#    ⚠⚠ WHY THIS IS A DISPLAY TRANSFORM AND NOT A STORED-STRING ONE. Measured at 1f42914d:
+#    a newline where the commas were makes `expandlabel` (the bison grammar every netlister
+#    and the bus-highlight machinery goes through) eat it as whitespace and CONCATENATE the
+#    tokens into four plausible-looking, wholly wrong bit names where the comma form gives
+#    the right eight -- with no error, no dialog and no yyerror. Row V21 pins both halves of
+#    that measurement; rows V22/V23 assert the SPICE deck does not move at all when the flag
+#    is set. An UNQUOTED newline is worse still: SPACE(c) in src/token.c counts '\n', so
+#    get_tok_value TRUNCATES lab= at it and the remaining tokens vanish.
+#
+#    The geometry rows below assert RELATIONS between boxes measured in the same fixture,
+#    never absolute coordinates: text_bbox()'s box carries a zoom-dependent margin, so the
+#    same label measured 308 units wide in a standalone probe and 302 here, in this suite,
+#    at the same commit.
+# ---------------------------------------------------------------------------
+# a row must FAIL, not THROW: on the unfixed tree the helper below does not exist
+proc v_try {script} { if {[catch {uplevel #0 $script} r]} { return "threw ($r)" } ; return $r }
+
+set V_TYPED  {bg_trim<3:0>,en_fast,iref_trim<2:0>}
+set V_STORED {bg_trim[3:0],en_fast,iref_trim[2:0]}
+
+# --- V.1 the display tokeniser (pure Tcl, no Tk) ---------------------------------------
+# A SIBLING of expand_names, not a change to it: expand_names' contract is "one placement
+# NAME per token (a QUEUE)" and the 14 rows in section A pin it; this one's contract is "one
+# DISPLAY LINE per token of ONE label". Same separators today, deliberately separate.
+check "V1 split_display_tokens gives one token per typed name and normalises angle brackets to square (the netlist-correct spelling)" \
+  [v_try {addlabel::split_display_tokens $V_TYPED}] [list bg_trim\[3:0\] en_fast iref_trim\[2:0\]]
+check "V2 a doubled or trailing separator yields NO empty token -- an empty token would draw a BLANK line, which the feature forbids" \
+  [v_try {addlabel::split_display_tokens {a,,b,}}] {a b}
+check "V3 whitespace separates like a comma -- an unquoted space reaching lab= is a token terminator for get_tok_value and would truncate the value" \
+  [v_try {addlabel::split_display_tokens {a b , c}}] {a b c}
+check "V4 a single typed name is a single token, so it has nothing to stack -- the user's own diagnostic" \
+  [v_try {addlabel::split_display_tokens {busname<3:0>}}] [list busname\[3:0\]]
+check "V5 an entry of separators only yields no tokens at all" \
+  [v_try {addlabel::split_display_tokens { , , }}] {}
+
+# --- V.2 name_ok must accept the comma list, or addlabel::arm never arms ----------------
+check "V6 name_ok accepts a comma list of individually valid names (before this it rejected it, so the vjust entry could never arm a preview)" \
+  [addlabel::name_ok $V_STORED] 1
+check "V7 name_ok accepts the typed angle-bracket comma list too" [addlabel::name_ok $V_TYPED] 1
+check "V8 name_ok still rejects a comma list holding one invalid token" [addlabel::name_ok {a,[2:0],b}] 0
+check "V9 name_ok still rejects a comma list holding a # engine auto-name token" [addlabel::name_ok {a,#n1}] 0
+check "V10 name_ok rejects an entry that is separators only" [addlabel::name_ok {,,}] 0
+
+# --- V.3 the RENDERER: per-instance flag, measured on the drawn/measured geometry -------
+# Placed directly (not through the form) so these rows fence the C side alone. ⚠ Every label
+# here is a LEGAL net name: `xschem select_at` (V15) resolves nets, and an illegal one makes
+# expandlabel() yyerror -- which under a real $DISPLAY is a MODAL tk_messageBox and hangs the
+# whole suite with no upper bound (measured: the display arm timed out at 200s). The
+# collapse-a-doubled-separator row therefore lives in its own fixture at V12b, below.
+xschem clear force
+set V_SYM [find_file_first lab_pin.sym]
+xschem wire 0 0 1200 0
+xschem instance $V_SYM  100 0 0 0 "name=l1 lab=$V_STORED"
+xschem instance $V_SYM  400 0 0 0 "name=l2 lab=$V_STORED vjust=1"
+xschem instance $V_SYM  700 0 0 0 {name=l3 lab=busname[3:0]}
+xschem instance $V_SYM 1000 0 0 0 {name=l4 lab=busname[3:0] vjust=1}
+xschem instance $V_SYM  100 300 0 0 {name=l5 lab=aa,bb vjust=1}
+xschem unselect_all
+check "V11 precondition: five label instances placed" [xschem get instances] 5
+# symbol_bbox() folds each text's box into inst[i].x1..y2, so this measures what is DRAWN,
+# and findnet.c's find_closest_element() uses POINTINSIDE against exactly this box (V15).
+proc v_box {i} {
+  set l [lindex [split [xschem instance_bbox $i] "\n"] 0]
+  lassign [lrange [split $l] 1 4] x1 y1 x2 y2
+  return [list [expr {round($x2-$x1)}] [expr {round($y2-$y1)}]]
+}
+proc v_w {i} { return [lindex [v_box $i] 0] }
+proc v_h {i} { return [lindex [v_box $i] 1] }
+set V_H1 [v_h 0]
+check "V12 the flag makes a 3-token label exactly THREE lines tall and a 2-token one exactly TWO -- box heights in arithmetic progression off the one-line height, so no line is consumed twice and none is skipped" \
+  [list [expr {[v_h 4] > $V_H1}] \
+        [expr {[v_h 1] == $V_H1 + 2*([v_h 4] - $V_H1)}] \
+        [expr {[v_h 2] == $V_H1}]] {1 1 1}
+check "V13 GUARD a SINGLE-token label is IDENTICAL in box with the flag on and off -- one token has nothing to stack (the user's own diagnostic)" \
+  [list [expr {[v_box 2] eq [v_box 3]}] [expr {[v_h 3] == $V_H1}] [expr {[v_w 3] < [v_w 0]}]] {1 1 1}
+check "V14 the flag makes the 3-token label NARROWER than its one-line form, because its longest drawn line is one token and not the whole comma list" \
+  [list [expr {[v_w 1] < [v_w 0]}] [expr {[v_w 1] > 0}]] {1 1}
+# HIT-TEST: two lines below the anchor is inside the stacked label and outside the one-line one.
+check "V15 a point two lines below the anchor CLICKS the stacked label and MISSES the unstacked one -- the click target follows the drawn stack" \
+  [list [lrange [xschem select_at 95 35] 0 1] [lrange [xschem select_at 395 35] 0 1]] {{} {instance 1}}
+xschem unselect_all
+
+# ⚠ THE MECHANISM BOUNDARY, asserted directly. translate() (src/token.c) must answer the
+# CANONICAL comma list for a flagged instance: the stacking is applied to translate()'s RESULT at
+# the six render/measure sites, never inside it, because its callers include netlist.c,
+# spice_netlist.c, spectre_netlist.c, verilog_netlist.c and save.c. Without this row the only
+# netlist fence is V22, and V22 cannot see the mistake: a plain lab_pin top emits no line that
+# routes @lab through translate() at all (measured -- putting the transform inside translate()
+# left the deck byte-identical, so V22 stayed green while the door was wide open).
+check "V15b translate() itself does NOT stack -- @lab on a FLAGGED instance still resolves to the canonical comma list with zero newlines" \
+  [list [xschem translate 1 {@lab}] [regexp -all "\n" [xschem translate 1 {@lab}]]] [list $V_STORED 0]
+check "V15c GUARD and the same holds for the unflagged instance" \
+  [xschem translate 0 {@lab}] $V_STORED
+# NO `xschem saveas` row here on purpose: save_inst() writes inst.prop_ptr VERBATIM (it does not
+# route @lab through translate()), so V20's getprop already pins the stored spelling, and a stray
+# saveas in a registered suite is how a shipped library schematic got gutted once already.
+
+# --- V.4 the EXPORTED drawing: one <text> element per token, evenly pitched -------------
+source [file join [file dirname [info script]] scratch.tcl]
+set V_SC [test_scratch vjust1623]
+xschem zoom_full     ;# mandatory: an object outside the view contributes no <text> at all
+xschem print svg [file join $V_SC v.svg]
+set V_FH [open [file join $V_SC v.svg] r]; set V_SVG [read $V_FH]; close $V_FH
+set V_TXT {}; set V_TY {}
+foreach {m vx vy vt} [regexp -all -inline \
+    {<text[^>]*translate\(([-0-9.eE+]+), *([-0-9.eE+]+)\)[^>]*>([^<]*)</text>} $V_SVG] {
+  lappend V_TXT $vt
+  if {[lsearch -exact {bg_trim[3:0] en_fast iref_trim[2:0]} $vt] >= 0} { lappend V_TY $vy }
+}
+check "V16 the exported drawing carries one <text> element per token for each flagged label and one whole comma line for the same label without the flag" \
+  [lsort $V_TXT] [lsort [list $V_STORED {bg_trim[3:0]} en_fast {iref_trim[2:0]} \
+                              {busname[3:0]} {busname[3:0]} aa bb]]
+# a row must FAIL, not THROW: on the unfixed tree V_TY is empty and the subtraction would raise
+if {[llength $V_TY] != 3} {
+  set V_PITCH [list [llength $V_TY] no-stack no-stack]
+} else {
+  set V_TY [lsort -real $V_TY]
+  set V_D1 [expr {[lindex $V_TY 1] - [lindex $V_TY 0]}]
+  set V_D2 [expr {[lindex $V_TY 2] - [lindex $V_TY 1]}]
+  set V_PITCH [list 3 [expr {$V_D1 > 0}] [expr {abs($V_D1-$V_D2) < 0.01}]]
+}
+check "V17 the stacked lines are SINGLE-spaced: three of them, growing downward, with equal consecutive y deltas -- a blank line would double one delta" \
+  $V_PITCH {3 1 1}
+
+# V12b -- the collapse rule, at the C level, in a fixture of its own. `aa,,bb,` is NOT a legal
+# net name (expandlabel yyerrors on the empty element, and under a real $DISPLAY that error is a
+# modal dialog), so this block places it and measures the box only: no select_at, no netlist, no
+# export. A hand-edited prop, or any future writer that forgets to collapse, can hold this value.
+xschem clear force
+xschem instance $V_SYM 100   0 0 0 {name=l1 lab=aa,bb vjust=1}
+xschem instance $V_SYM 100 300 0 0 {name=l2 lab=aa,,bb, vjust=1}
+xschem unselect_all
+check "V12b a doubled AND a trailing separator in a hand-edited lab= draw EXACTLY what the single-separator form draws -- an empty token would consume a line and appear as the BLANK line the feature forbids" \
+  [list [xschem get instances] [expr {[v_box 0] eq [v_box 1]}] [expr {[v_h 0] > 0}]] {2 1 1}
+
+# --- V.5 the STORED value and the form plumbing -----------------------------------------
+# ⚠ GUARDED exactly as section W above is, and for the same reason: the form procs need a `winfo`
+# stub, and under a real $DISPLAY `proc winfo` REPLACES Tk's builtin while `rename winfo {}`
+# DESTROYS it -- after which every later Tk-dependent path fails. Measured: without this guard the
+# display arm broke `xschem netlist` (rows V22/V23 read an empty netlist dir) with 25 pages of
+# `invalid command name "winfo"`. Uppercase SKIP:, like section W's, so it is not counted into T1's
+# `skips=` -- this suite is registered in `hcases` alone and its rows all run there.
+if {[info commands winfo] ne {}} {
+  puts "SKIP: V18-V20c need a headless run (no Tk) -- the form stub would destroy Tk's own winfo"
+} else {
+xschem clear force
+xschem wire 0 0 400 0
+xschem unselect_all
+proc winfo {op args} { return 1 }
+set addlabel::name $V_TYPED
+set addlabel::split_bus 0
+set addlabel::vjust 0
+addlabel::start_pass
+check "V18 GUARD with the flag OFF the same typed entry is still a QUEUE of three separate labels" \
+  [list [llength $addlabel::pending] [inst_lab 0]] [list 3 bg_trim\[3:0\]]
+set addlabel::vjust 1
+addlabel::start_pass
+check "V19 with the flag ON the same entry becomes ONE label whose name is the whole comma list, square-bracketed" \
+  $addlabel::pending [list $V_STORED]
+check "V20 the armed preview stores the canonical comma list and carries the per-instance flag -- and the stored value holds ZERO newlines" \
+  [list [inst_lab 0] [regexp -all "\n" [inst_lab 0]] [xschem getprop instance 0 vjust]] \
+  [list $V_STORED 0 1]
+# addlabel::arm re-issues `-place` on every keystroke, and place_wire_label rebuilds the prop
+# from scratch each time -- so unlike a preview's hand-set ORIENTATION the flag cannot be lost.
+set addlabel::last {}
+addlabel::arm
+check "V20b the flag and the name both survive a re-arm (the hole that loses a preview's hand-set orientation)" \
+  [list [xschem getprop instance 0 vjust] [inst_lab 0]] [list 1 $V_STORED]
+set addlabel::vjust 0
+set addlabel::last {}
+addlabel::start_pass
+check "V20c clearing the flag re-arms with NO vjust token on the instance" \
+  [list [xschem getprop instance 0 vjust] [inst_lab 0]] [list {} bg_trim\[3:0\]]
+xschem abort_operation
+set addlabel::armed 0; set addlabel::name {}; set addlabel::vjust 0; set addlabel::last {}
+rename winfo {}
+}
+
+# --- V.6 THE BINDING CONSTRAINT: no line break reaches any netlist or expansion path ----
+check "V21 the canonical comma spelling expands to the label's eight bus bits in order, and the NEWLINE spelling concatenates them into four wrong names -- the measurement that makes this display-only" \
+  [list [xschem expandlabel $V_STORED] [xschem expandlabel "bg_trim\[3:0\]\nen_fast"]] \
+  [list {bg_trim[3],bg_trim[2],bg_trim[1],bg_trim[0],en_fast,iref_trim[2],iref_trim[1],iref_trim[0] 8} \
+        {bg_trim[3]en_fast,bg_trim[2]en_fast,bg_trim[1]en_fast,bg_trim[0]en_fast 4}]
+
+proc v_deck {dir vj} {
+  file mkdir $dir
+  set ::netlist_dir $dir
+  xschem clear force
+  xschem wire 0 -30 200 -30
+  xschem wire 0  30 200  30
+  xschem instance [find_file_first res.sym] 100 0 0 0 {name=R1 value=1k}
+  xschem instance [find_file_first lab_pin.sym] 50 -30 0 0 \
+     "name=l1 lab=$::V_STORED[expr {$vj ? { vjust=1} : {}}]"
+  xschem instance [find_file_first lab_pin.sym] 50  30 0 0 {name=l2 lab=GND}
+  xschem unselect_all
+  if {[catch {xschem netlist} e]} { return "NETLIST ERROR: $e" }
+  set f [file join $dir untitled.spice]
+  if {![file exists $f]} { return NODECK }
+  set fh [open $f r]; set d [read $fh]; close $fh
+  return $d
+}
+set V_OFF [v_deck [file join $V_SC ndoff] 0]
+set V_ON  [v_deck [file join $V_SC ndon]  1]
+check "V22 the SPICE deck is byte-identical with the flag on and off -- the flag is a display transform and reaches NO netlist path" \
+  [list [string equal $V_OFF $V_ON] [string match {*R1 bg_trim\[3\] GND 1k*} $V_ON]] {1 1}
+# every PHYSICAL line of the deck is a whole card: a newline in a net name splits one in two.
+set V_CARDS {}
+foreach V_L [split [string trimright $V_ON "\n"] "\n"] {
+  set V_L [string trim $V_L]
+  if {$V_L ne {} && [string index $V_L 0] ne "*"} { lappend V_CARDS $V_L }
+}
+set V_BITS [split [lindex [xschem expandlabel $V_STORED] 0] ,]
+check "V23 every non-comment line of the deck is a COMPLETE card: two of them, the device card holding its four fields on ONE physical line, and its node is a real bus bit of the label" \
+  [list [llength $V_CARDS] [llength [lindex $V_CARDS 0]] \
+        [expr {[lsearch -exact $V_BITS [lindex [lindex $V_CARDS 0] 1]] >= 0}]] {2 4 1}
+xschem clear force
+
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

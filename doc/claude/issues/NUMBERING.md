@@ -4290,7 +4290,29 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   to the implementing crew under one binding constraint: **prove no line break reaches a netlist,
   save or expansion path.** The user ruled that `[3:0]` display is correct for now, so the existing
   `<>`->`[]` normalisation stays and the drawn text keeps matching the netlisted net name. Batch
-  `doc/claude/wire_label_vjust_batch/`. IN FLIGHT.
+  `doc/claude/wire_label_vjust_batch/`. The crew chose the per-instance route: new
+  `sym_text_vstack()` in `src/draw.c`, written to `get_sym_text_layer()`'s exact shape, called at the
+  SIX render/measure sites (`draw_symbol`, `draw_temp_symbol`, `inst_text_bbox`, `svg_draw_symbol`,
+  `ps_draw_symbol`, `symbol_bbox`), gated by a per-instance `vjust=1` on the `@lab` record only --
+  driver-verified that netlist.c, all five netlisters, save.c and token.c do not reference the helper
+  at all, so the netlist safety is STRUCTURAL. ⚠⚠ **AND THE NETLIST FENCE THE DRIVER DEMANDED COULD
+  NOT SEE THE MISTAKE IT EXISTED FOR**: the brief said prove it by measurement and not by reasoning
+  about call graphs, the crew built "the SPICE deck is byte-identical with the flag on and off", and
+  sabotage `S1` -- the transform moved into `translate()`, i.e. the rejected design -- left it GREEN,
+  because a plain `lab_pin` top emits no deck line routing `@lab` through `translate()`. The measured
+  fence was the call-graph argument in disguise. Repaired with `V15b`/`V15c` asserting
+  `xschem translate <inst> {@lab}` returns the comma list with zero newlines. A second surprise in the
+  same family: storing a newline in `lab=` does NOT redden the netlist rows, because `my_mstrcat`
+  writes unquoted and `SPACE(c)` truncates, so the deck stays single-line -- just a deck for a
+  TRUNCATED label. Red `17 FAILED (204 passed)`; green 196 -> 224 headless, 184 -> 207 display. Eight
+  sabotages, ONE survived (`S3`, the `@lab` record gate) and is reported as a gap rather than papered
+  over; `S6` (dropping the `tok_size = 0` else arm copied from the precedent) gives `FATAL: signal 11`,
+  so that arm is load-bearing and not stylistic; `S5` (one of six sites omitted) reddened the box and
+  click rows while the SVG rows stayed green, which is the I1 divergence caught in the act. bbox and
+  hit-test agree with what is drawn, proven by three independent measurements. **No T1 movement** --
+  already `hcases`, 112/111/skips=8 unchanged, only the check count moves. ⚠ The driver's brief quoted
+  156 checks for the fence, copied from the recon; it was 196. FIXED,
+  `tests/headless/test_add_wire_label.tcl`, written red first.
 
 - **1624** — **a bus wire labelled with angle-bracket range syntax netlists SILENTLY WRONG.**
   OPEN, filed 2026-09-29, found while reconnoitring 1623 and not caused by it. **`<3:0>` is not

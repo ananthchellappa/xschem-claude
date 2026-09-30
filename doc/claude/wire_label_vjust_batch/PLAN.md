@@ -87,3 +87,20 @@ The per-instance requirement is real either way: the visible text belongs to the
 
 Issue number and `NUMBERING.md`; the issue file and its `**STAMP:**`; the solo T1 gate in a fresh
 short-path clone; commits and the push; filing rulings; judging whether a red is real.
+
+## Stage A collected 2026-09-30
+
+Issue **1623** delivered, receipt `receipts/A-vjust.md`, gated by the driver. Mechanism: Angle 2
+(`sym_text_vstack()`, six sites, per-instance `vjust=`), with Angle 1 rejected on evidence rather
+than preference — see the issue file.
+
+**The finding that outlives the feature:** the driver demanded a netlist fence and specified it as
+*"prove it by measurement, not by reasoning about call graphs"*. The crew built that fence, and it
+**could not detect the rejected design** — a plain `lab_pin` top emits no deck line that routes
+`@lab` through `translate()`, so the deck was byte-identical either way. A measurement can encode the
+same blind spot as the argument it was meant to replace. The row that actually holds the boundary
+asserts the *expansion* (`xschem translate <inst> {@lab}` has zero newlines), not the *deck*.
+
+Still open and carried out of this batch: `rule/1623` (Split bus is silently ignored when Vertically
+justified is ticked), two `look` debts on the stack's appearance, and the `S3` fence specified as open
+item 5 of the issue.
