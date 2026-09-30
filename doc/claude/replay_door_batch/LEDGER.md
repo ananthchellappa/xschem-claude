@@ -8,12 +8,12 @@ Opened 2026-09-29 at `e05a9769`. T1 baseline `107/106/0/8` (`tests/results.77521
 | stage | crew | receipt | collected | commit | notes |
 |---|---|---|---|---|---|
 | R | 6× wish-list recon (parallel, read-only) | `receipts/R-recon-wishlist.md` | 2026-09-29 | pending | Changed the batch target. Six candidates measured; **four of six list annotations wrong**. Headline: item 3's engine is done and fenced, macro surface is zero. |
-| A | replay door (issue 1619) | `receipts/A-door.md` | — | — | dispatched |
+| A | replay door (issue 1619) | `receipts/A-door.md` | 2026-09-29 | pending gate | **No C change.** Red `32 FAILED (8 passed)` -> `ALL PASS (63 checks)`. 12 sabotages, **none survived**. ⚠ **Refuted the PLAN and the recon both**: a `tools` row gets NO menu (only File is generated), so the literal plan would have shipped an undiscoverable door. Driver re-verified the suite, the banner (`banner_complete`=1, `banner_died`=0), the zero lowercase `skip:` lines and that `replay_action_log` is byte-unchanged. |
 | B | selection gap (issue 1620) | `receipts/B-select.md` | — | — | not yet dispatched |
 
 ## Running totals
 
-* Receipts collected: **1** of 3 planned.
+* Receipts collected: **2** of 3 planned.
 * Commits from this batch: **0**.
 * Issue numbers consumed: **1619**, **1620**.
 * Owed-ledger entries this batch will add: `rule/1619` (replay into current vs fresh session, plus

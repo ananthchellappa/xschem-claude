@@ -16563,7 +16563,7 @@ proc no_open_dialogs {} {
 ## close_ctxmenu_on_leave
 
 set tctx::global_list {
- INITIALINSTDIR INITIALLOADDIR INITIALPROPDIR INITIALTEXTDIR PDK PDK_ROOT SKYWATER_MODELS
+ INITIALINSTDIR INITIALLOADDIR INITIALLOGDIR INITIALPROPDIR INITIALTEXTDIR PDK PDK_ROOT SKYWATER_MODELS
  SKYWATER_STDCELLS XSCHEM_LIBRARY_PATH add_all_windows_drives auto_hilight
  auto_hilight_graph_nodes autofocus_mainwindow auto_set_wire_bus autotrim_wires
  bespice_listen_port big_grid_points
@@ -18593,6 +18593,12 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable pin_rename_propagate
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
+  ## issue 1619 -- the action log's REPLAY DOOR. The engine (replay_action_log) has
+  ## shipped for ages and 29 round-trip suites drive it; this entry, the matching
+  ## actions.csv row tools.replay_action_log and replay_action_log_dialog are the
+  ## only things that ever let a USER reach it. Fenced by rows M1/M2/M3 of
+  ## tests/headless/test_replay_door_1619.tcl (M1 matches this line's exact text).
+  $topwin.menubar.tools add command -label "Replay action log..." -command {replay_action_log_dialog}
   $topwin.menubar.tools add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"
   $topwin.menubar.tools add command -label "Calculator" -command "calc::open"
   $topwin.menubar.tools add command -label "Results Display Window" -command "rdw::open"
@@ -19164,6 +19170,86 @@ proc replay_action_log {file} {
   xschem log_action -suppress pop
   if {$rc} { return -code error $res }
   return $res
+}
+
+# ---- the REPLAY DOOR (issue 1619) ------------------------------------------
+# The seam above has been the engine's in-session replay path since the suppress
+# counter landed, and 29 round-trip suites drive it -- but until issue 1619 NOTHING
+# reached it except typing the proc name into the CIW: no actions.csv row, no menu
+# entry, no keybinding, no chooser. So "macros and script creation from log files"
+# (wish_list.txt old-list item 3) was at zero for want of a door, not an engine.
+# The door is: actions.csv row `tools.replay_action_log` and the Tools-menu entry
+# -> replay_action_log_dialog -> replay_action_log_run -> the seam above.
+# Spec: doc/claude/specs/action_logging.md section 3b.
+#
+# SPLIT IN TWO for the reason every file-chooser entry in this tree is split in
+# two: `tk_getOpenFile` GRABS the display and waits for a human, so no headless
+# run and no Xvfb run can press OK in it (ase::ui::simdlg_browse and
+# wviewer::rawbar_browse declare the same limit in as many words). Everything
+# except the chooser lives in replay_action_log_run, which the fence drives
+# directly -- bands R* and L* of tests/headless/test_replay_door_1619.tcl.
+
+# Replay the action log at $path into the CURRENT session. Returns 1 on a clean
+# replay, 0 otherwise. Never raises: a caller that is a menu entry has nowhere to
+# put an error.
+#
+# WHY IT CATCHES. The seam RE-RAISES, and a log file is executable Tcl, so a
+# syntax or runtime error in the file arrives as a Tcl error. Uncaught from a menu
+# callback that reaches Tk's bgerror and pops a stack trace at a user who merely
+# picked a file. So the outcome is reported on the CIW -- the action log's own
+# feedback channel ([[ciw-feedback-channels]]: ciw_echo, NOT puts/the statusbar)
+# -- and returned as 0/1 for the scripted callers.
+#
+# NO tk_messageBox, DELIBERATELY. A modal box here would make the door's own
+# failure paths undrivable on every arm that has a display (the same modal-vwait
+# stall that hangs a headless probe), so the failure would become the one thing
+# no suite could measure. Known limit of that choice: with the CIW pane closed
+# ciw_echo no-ops, so an interactive user who has closed the CIW sees nothing but
+# the effect. `Raise CIW window` is two entries away on the same menu.
+#
+# WHAT IT CANNOT PROMISE, and says so in its own message: `source` evaluates
+# commands ONE AT A TIME, so a log that fails on line 7 has ALREADY applied lines
+# 1-6. There is no rollback, and there cannot be a cheap one -- each logged verb
+# pushes its OWN undo slot, so a replay is N undo units rather than one, and
+# merging them needs a C-side undo barrier that issue 1619 does not ship (row R2
+# of the fence pins the N so a future barrier shows up as that row moving).
+proc replay_action_log_run {path} {
+  if {$path eq {}} { return 0 }                   ;# chooser cancelled -- not a failure
+  if {[file isdirectory $path] || ![file readable $path]} {
+    catch { ciw_echo "# replay: cannot read action log {$path}" }
+    return 0
+  }
+  if {[catch {replay_action_log $path} res]} {
+    catch { ciw_echo "# replay STOPPED in {$path}: $res" }
+    catch { ciw_echo "# (lines before the failing one have already been applied; undo is per line)" }
+    return 0
+  }
+  catch { ciw_echo "# replayed action log {$path}" }
+  return 1
+}
+
+# The Tools-menu / command-palette entry: pick an action log, then replay it.
+# Chooser only -- see replay_action_log_run for everything that is testable.
+# INITIALLOGDIR follows the house pattern for a per-dialog sticky initial
+# directory: seeded from the session's own open log (so the obvious first answer
+# is the log this session is writing), then remembered across opens.
+proc replay_action_log_dialog {} {
+  global INITIALLOGDIR
+  if {![info exists INITIALLOGDIR] || ![file isdirectory $INITIALLOGDIR]} {
+    set INITIALLOGDIR {}
+    catch {
+      set lf [xschem get actionlog_filename]
+      if {$lf ne {}} { set INITIALLOGDIR [file dirname $lf] }
+    }
+    if {$INITIALLOGDIR eq {} || ![file isdirectory $INITIALLOGDIR]} { set INITIALLOGDIR [pwd] }
+  }
+  set path {}
+  catch { set path [tk_getOpenFile -initialdir $INITIALLOGDIR \
+                      -title {Replay action log} \
+                      -filetypes {{{Action logs} {.log}} {{All files} *}}] }
+  if {$path eq {}} { return 0 }
+  set INITIALLOGDIR [file dirname $path]
+  return [replay_action_log_run $path]
 }
 
 proc eval_user_startup_commands {} {

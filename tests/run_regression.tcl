@@ -107,7 +107,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_generator_shell_1610" \
                  "headless/test_vhdl_component_index_1611" \
                  "headless/test_svg_export_fail_1614" \
-                 "headless/test_raw_schname_0514"]
+                 "headless/test_raw_schname_0514" \
+                 "headless/test_replay_door_1619"]
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
@@ -617,7 +618,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_generator_paren_1604" \
                  "headless/test_headless_guards_xarm_1492" \
                  "headless/test_wave_sigbrowser_panes" \
-                 "headless/test_wave_viewer"]
+                 "headless/test_wave_viewer" \
+                 "headless/test_replay_door_1619"]
 ## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
 ## HALF. The headless-crash batch added eleven `has_x` guards, and
 ## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui
@@ -661,6 +663,20 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## ⚠ Registering it at all required fixing its epilogue first: it printed only
 ## `RESULT: ALL PASS`, which `banner_complete` cannot score. See the comment at
 ## that suite's verdict block, and CLAUDE.md's Harness rules.
+## ⚠ `test_replay_door_1619` IS IN **BOTH** LISTS, AND THAT IS THE ONE SHAPE THE
+## "skips=8 for thirteen figures" warning in CLAUDE.md says costs a `skip:` --
+## except this one does not, and the reason is worth writing down: its ONLY
+## display-dependent rows are M2/M3 (the live Tk Tools-menu entry), whose headless
+## self-skip prints uppercase `SKIPPED:`, which `summarize_all` neither counts nor
+## counts as a skip. So it costs TWO cases and ZERO `skip:` lines. Both arms
+## measure something real: the headless arm runs all of bands D*/P*/R*/C*/X*/L*
+## -- the actions.csv row, the two procs, the behaviour against the real binary,
+## the words the door puts on the CIW (ciw_echo shadowed), the chooser half
+## (tk_getOpenFile shadowed) and the child-process log properties -- and
+## grep-guards the menu line as M1; the
+## display arm additionally proves the menubar really carries the entry with the
+## right -command, which is the half of "the user can reach it" that no grep can
+## establish. Issue 1619 (the action log's replay door).
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)

@@ -4163,7 +4163,29 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   produces `xschem save`, and property edits emit real `xschem setprop ... allprops` lines through
   `log_prop_edit_one()` rather than a `# property-edit` marker. That document is not evidence
   (batch decision **D5**) and is left unedited so the July record is not falsified. Batch
-  `doc/claude/replay_door_batch/`, recon receipt `receipts/R-recon-wishlist.md`. IN FLIGHT.
+  `doc/claude/replay_door_batch/`, recon receipt `receipts/R-recon-wishlist.md`.
+  ⚠ **AND THE PLAN AND THE RECON WERE BOTH WRONG THAT THIS IS "ONE CSV ROW".** `actions.csv`
+  generates **only the File menu**; a `tools` row reaches the command palette and the cheat-sheet and
+  **no menu at all**. That is why `tools.raise_ciw` -- the row BOTH planning documents named as the
+  model to copy -- has no Tools-menu entry (its door is Alt+F5). Implementing the plan literally
+  would have shipped a door discoverable only by opening the palette and already knowing what to
+  search for. The correct model is `tools.net_hilight_style_editor`, which pairs its row with a
+  hand-written menu line; sabotage `S5` now fences that line's presence. Found by the implementing
+  crew, not the driver -- the same lesson as 1617's from a third direction, where there a shipped
+  comment named the meaning its own line diverted away from and here two planning documents agreed
+  with each other about a mechanism neither had measured. Fixed with **no C change**: one csv row,
+  the menu line, and two new Tcl procs over the byte-for-byte unchanged `replay_action_log`
+  (`replay_action_log_run` validates and catches so it never raises; `replay_action_log_dialog` is
+  the `tk_getOpenFile` chooser). Red `32 FAILED (8 passed)` -> `ALL PASS (63 checks)`; the `C*`/`X*`
+  bands were added only because a sabotage survived the first green, and the no-door tree was
+  re-created to observe them red at 35 failed. Twelve sabotages, **none survived**; the most likely
+  wrong implementation (hand-rolled `push; source; pop` losing the `pop` on the error path) is caught
+  by exactly ONE row, `L2`, which proves in a child with a real `--logdir` that the session still
+  logs after a FAILED replay. ⚠ Generalisable: **`ciw_echo` and `tk_getOpenFile` are shadowable**, so
+  nearly every "needs a human to press OK, therefore untestable" comment in this tree is false.
+  FIXED, `tests/headless/test_replay_door_1619.tcl`, registered in **both** `hcases` and `dcases`
+  (109 cases / 108 blocks), written red first. Four things stay open, the sharpest being that a
+  replay is **N undo units, not one**, and not fixable from Tcl.
 
 - **1620** — **`select_all()` and `unselect_all()` are the only wholly unlogged selection
   primitives, so a macro cannot say "select everything, then act".** Measured 2026-09-29 alongside

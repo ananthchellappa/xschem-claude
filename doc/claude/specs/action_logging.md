@@ -104,6 +104,50 @@ Window. Not full-featured for v1.
   open. (If auto-open proves intrusive, an rc toggle may be added later — not
   v1.)
 
+## 3b. Playing a log back — the replay door (issue 1619)
+
+Recording is only half of the stated goal ("*enable macros and script creation
+from log files*", `doc/claude/specs/wish_list.txt` old-list item 3). The engine
+for the other half has been in the tree since the suppress counter landed —
+`replay_action_log` (`src/xschem.tcl`) brackets a `source` of the log in
+`xschem log_action -suppress push/pop`, so the lines re-**execute** without
+re-**logging**, and a log replayed in a fresh process gives a byte-identical log
+back. Until issue 1619 nothing reached it but typing the proc name into the CIW.
+
+- **The door** is **Tools → `Replay action log…`**, `actions.csv` row
+  `tools.replay_action_log` (so it is in the command palette too), →
+  `replay_action_log_dialog` (the `tk_getOpenFile` chooser, with a sticky
+  `INITIALLOGDIR` seeded from the session's own open log) →
+  `replay_action_log_run` (everything testable) → the seam above.
+- **No keybinding.** A real chord needs a C input-binding entry; the row's
+  `accel` column is display-only and is left empty rather than advertising one.
+- **`nolog=1` on the row.** The command opens a modal chooser, and a replayed
+  log must never stop dead waiting for a human — the same reason `file.open`,
+  `place_symbol` and `place_text` are nolog.
+- **It replays into the CURRENT session**, which is what the seam does. Whether a
+  user would rather replay into a fresh one is a separate product question.
+- **Outcome goes to the CIW** (`ciw_echo` — [[ciw-feedback-channels]]), never to
+  a `tk_messageBox`: a modal box here would make the door's own failure paths
+  undrivable on every arm that has a display. A caller gets 1/0 as the return
+  value. Known limit: with the CIW pane closed `ciw_echo` no-ops.
+
+Three properties of a replay that the door reports rather than fixes, all fenced
+by `tests/headless/test_replay_door_1619.tcl`:
+
+1. **A replay is N undo units, not one.** Every logged verb pushes its own undo
+   slot, so undoing a 50-line macro takes 50 undos. There is no Tcl-level
+   grouping primitive (`xschem push_undo` adds a slot, it does not merge the
+   ones the verbs push), so an atomic replay needs a C-side undo barrier. Row R2.
+2. **A malformed log leaves a half-changed schematic.** A log file is executable
+   Tcl and `source` evaluates commands one at a time, so the lines above the
+   failure have already applied and the ones below never run. There is no
+   rollback; the CIW message says so in as many words. Rows R5a/R5b, R6a/R6b.
+3. **A log recorded against a different schematic aborts at the first line whose
+   referent is absent** (e.g. `xschem setprop instance 3 …` → "instance not
+   found"), with the same partial-state consequence. A log recorded through the
+   file dialog usually opens with `xschem load {…}` and so re-establishes its own
+   schematic; this bites a log recorded mid-session. Rows R7a/R7b.
+
 ## 4. Decisions (locked)
 
 1. **Log-line format** = whatever is a valid `xschem …` Tcl command (the
