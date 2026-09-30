@@ -4143,7 +4143,44 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `tests/headless/test_getprop_index_bounds.tcl` (8 -> 103 checks, already `hcases`, no case-count
   or skip movement), written red first.
 
-**The next free number is 1619.**
+- **1619** — **the action log has no replay door, so macros are at zero while the engine is done.**
+  Wish-list old-list item **3** asks for *"logging of all user interactions to enable macros and
+  script creation from log files"* and its own annotation says 25% done. Measured 2026-09-29, the
+  figure is wrong in **both** directions at once, which is why batch decision **D8** replaces it
+  with a structure. The **machinery is finished and safe**: three chokepoints
+  (`dispatch_input_action`, `context_menu_action`, `perform_action`/`core_log_action`) plus ~254
+  opt-in sites, and `replay_action_log` (`src/xschem.tcl`) wraps `source` in the
+  `xschem log_action -suppress push/pop` depth counter so nested composites stay suppressed. A log
+  recorded headless and replayed in a fresh process came back **BYTE-IDENTICAL** -- a log-idempotent
+  round trip -- and 29 suites already drive record->replay per verb. ⚠ **But the MACRO surface is
+  ZERO**: `replay_action_log` has no `actions.csv` row, no menu entry, no keybinding and no file
+  dialog, so the only way to reach it is typing the proc name into the CIW. The one user-facing row
+  this whole feature has is `tools.raise_ciw`. So the item's stated purpose is unreachable for want
+  of a door, not for want of an engine. ⚠ Also established, and it matters more than the gap:
+  `doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md` (July 2026,
+  "roughly 70% landed") **contradicts the code at HEAD in four places** -- Ctrl-X self-logs
+  `xschem cut`, the Delete key produces `xschem delete`, Ctrl-C self-logs `xschem copy`, Ctrl-S
+  produces `xschem save`, and property edits emit real `xschem setprop ... allprops` lines through
+  `log_prop_edit_one()` rather than a `# property-edit` marker. That document is not evidence
+  (batch decision **D5**) and is left unedited so the July record is not falsified. Batch
+  `doc/claude/replay_door_batch/`, recon receipt `receipts/R-recon-wishlist.md`. IN FLIGHT.
+
+- **1620** — **`select_all()` and `unselect_all()` are the only wholly unlogged selection
+  primitives, so a macro cannot say "select everything, then act".** Measured 2026-09-29 alongside
+  1619. Selection is the commonest macro prefix, and it is the one thing a recorded log cannot
+  express: the Ctrl-A arm of the legacy `switch (key)` in `src/callback.c` calls `select_all();`
+  raw, under a `/* select all ... */` comment and with no log line, and a scripted
+  `xschem select_all` produced no line in a measured log either. ⚠ Two measurement traps were paid
+  for establishing this and both generalise. First, **absence of a log line is not absence of
+  coverage** -- a GUI fixture load silently failed (`xschem get instances` = 0 while `file exists`
+  = 1), so every selection-dependent probe read "not logged" when nothing was selected to act on;
+  always assert the EFFECT alongside the log line. Second, **a scripted verb is not the interactive
+  path and badly under-reports** -- headless `xschem <verb>` logged 9 of 20 operations while the
+  same operations driven through `xschem callback` key events logged real replayable commands, so
+  anyone measuring coverage with a `--script` driver concludes the feature is far worse than it is.
+  Batch `doc/claude/replay_door_batch/`. IN FLIGHT.
+
+**The next free number is 1621.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
