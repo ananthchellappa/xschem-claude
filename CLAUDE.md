@@ -129,11 +129,23 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1010173.log`, taken in a throwaway clone of `80dc3bbb`
-  built from scratch at a 9-character path: **112 cases** (3 `tcases` + 89 `hcases` +
-  **19** `dcases` + `xschemtest`), **111 blocks**, **`wc -l` 335 green**; trailer
-  `cases=112 blocks=111 counted_failures=0 skips=8 elapsed=627s`, zero live-peer lines, zero
-  counted shapes. Issue **1620** took it there, registering `test_select_log_1620` in BOTH lists
+  the gate verdict `tests/results.1227234.log`, taken in a throwaway clone of `f3d60af9`
+  built from scratch at a 9-character path: **113 cases** (3 `tcases` + 89 `hcases` +
+  **20** `dcases` + `xschemtest`), **112 blocks**, **`wc -l` 338 green**; trailer
+  `cases=113 blocks=112 counted_failures=0 skips=8 elapsed=620s`, zero live-peer lines, zero
+  counted shapes. Issue **1625** took it there by adding a `dcases` arm to
+  `test_add_wire_label`, which was already in `hcases` -- because the six rows fencing its new
+  Edit-Properties checkbox drive real Tk, self-skip under `--nogui`, and so **were being run by
+  nothing**. ⚠⚠ **BOTH AN ADVERSARIAL VERIFIER AND THE DRIVER PREDICTED THAT REGISTRATION WOULD
+  MOVE THE TRAILER OFF `skips=8`, AND BOTH WERE WRONG** -- the suite announces its skipped bands
+  with an **uppercase `SKIP:`** at three sites and `summarize_all` counts `^skip:` lowercase, so
+  the figure held. The driver caught it by checking `summarize_all`'s own `regexp {^skip:}` arm
+  before committing the claim, rather than after the gate contradicted it. That is the **sixteenth**
+  consecutive 8 and the SECOND both-lists entry to cost none, by the same mechanism
+  `test_replay_door_1619` used. One commit earlier, `112/111/skips=8` was
+  `tests/results.1010173.log` at `80dc3bbb` (3 + 89 + 19 + `xschemtest`, `wc -l` 335, 627s), and the
+  same 112/111 was re-measured at `15b76bae` (`results.1120366.log`, 633s) where issue 1623 changed
+  six C files and moved **no** count at all, only the published check total 196 -> 224. Issue **1620** took it there, registering `test_select_log_1620` in BOTH lists
   and `test_selflog_grep_guard` in `hcases` -- **three** cases at once, and `wc -l` moved by
   **9** = 3 cases x 2 lines + 3 newly published `RESULT:` lines, which is why the delta is worth
   checking against the registration rather than against a remembered number.
@@ -212,7 +224,7 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Fifteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
+  **Sixteen figures in seven days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
@@ -220,9 +232,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
   `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` (1616) and
-  `109/108/skips=8` (1619, which took TWO cases at once) and `112/111/skips=8` here (1620,
-  which took THREE).
-  ⚠ **`skips=` has now held at 8 across FIFTEEN
+  `109/108/skips=8` (1619, which took TWO cases at once) and `112/111/skips=8` (1620,
+  which took THREE) and `113/112/skips=8` here (1625, a second arm for a suite already registered).
+  ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
@@ -253,7 +265,15 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   survived a one-case commit, a two-case commit and a three-case commit unchanged, which is worth
   saying plainly because it is exactly the evidence a reader would use to conclude it is a constant.
   It is not. What actually held is that none of those suites printed a **lowercase** `skip:` line.
-  **Fifteen in a row is well past the point where
+  ⚠ **THE SIXTEENTH IS THE ONE THAT SHOULD SETTLE IT, BECAUSE TWO INDEPENDENT PARTIES PREDICTED IT
+  WRONG.** Issue 1625 added a `dcases` arm to a suite already in `hcases`. An adversarial verifier
+  wrote that this would "cost one case and one `skip:` line, moving the trailer off `skips=8`", and the
+  driver wrote the same thing into a source comment. Both were wrong, and the gate came back
+  `113/112/skips=8`. The reason is the uppercase/lowercase distinction this warning has now recorded
+  three times: the suite prints `SKIP:` and `summarize_all` counts `^skip:`. **If two parties reasoning
+  carefully about registration shape both got it wrong, nobody should be predicting this number at
+  all.** Read the trailer.
+  **Sixteen in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and

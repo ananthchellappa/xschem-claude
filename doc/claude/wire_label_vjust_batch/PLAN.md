@@ -125,3 +125,27 @@ found by this batch's recon and untouched by its fix).
 whether `split_bus` should default ON. Two of the four ruling questions, deliberately unasked while
 the first two were settled — and the recon's finding that a comma ALREADY separates reframes them,
 because the two checkboxes turn out to be the two readings of a comma.
+
+## Stage B collected, batch re-closed 2026-09-30
+
+Issue **1625** delivered and gated green at `f3d60af9`:
+`cases=113 blocks=112 counted_failures=0 skips=8 elapsed=620s` (`tests/results.1227234.log`),
+`wc -l` 338, zero live-peer lines, zero counted shapes. **Both arms of the fence now run inside T1** —
+234 headless and 223 on the display arm.
+
+It corrects 1623's **placement**, on the user's ruling that a comma in the create form is always
+multiple labels. The rendering half is untouched: every `.c` and `.h` is byte-identical to `15b76bae`.
+
+**Run as implement-then-verify, and the verification earned its keep twice** — it found two shipped
+comments asserting a mechanism that does not exist (measurably: the validator's comma arm is
+unreachable from the product), and it found that the new checkbox was fenced by rows T1 never ran.
+Neither was visible to the implementing crew or the driver.
+
+⚠ **And the number nobody should predict got predicted wrong by two parties.** Both the verifier and
+the driver said registering the second arm would move the trailer off `skips=8`. It did not: the suite
+spells its skipped bands `SKIP:` and `summarize_all` counts `^skip:`. Caught before the claim was
+committed. Recorded in CLAUDE.md as the sixteenth consecutive 8.
+
+**Wish item 2 now stands at:** vertical justification done and correctly placed; `place_multiple`
+still inert, which is the remaining half and is a question about which gesture the user wants rather
+than a missing capability.
