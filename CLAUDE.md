@@ -141,6 +141,28 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   was re-run three times alone (110 checks each) and then the WHOLE T1 was re-run at the
   same commit, which is the figure quoted above. See the flake paragraph under
   **Concurrent T1 runs** — a red there is still a red, and re-gating is the handling.
+  ⚠⚠ **AND IT HAPPENED AGAIN THE SAME DAY, WITH THE SAME rc, ON A QUIET MACHINE — SO IT IS NOW
+  TWO IDENTICAL OBSERVATIONS AND NOT A ONE-OFF.** Issue 0619's gate at `acd30d62`
+  (`results.709339.log`) also came back `counted_failures=3`, the same case, the same row `X1`
+  with `NORAW rc={1} wall=11381ms` against the previous `rc={1} wall=12058ms`, `X2` again
+  `ZZNOTRUN`. Nothing else in either run failed. **D8 says not to declare a standing red that
+  cannot be reproduced AND not to dismiss repeated identical observations — this is the second,
+  so the second half now applies.** What the two share and what it rules out: `rc=1` both times,
+  meaning ngspice ran for 11-12 s and exited nonzero of its own accord, so it is not a timeout,
+  not a missing binary and not the harness; both on a quiet machine, so the "under load"
+  correlate from the 2026-09-28 characterisation is dead; both inside a full T1 and never
+  standalone, where the suite passes at 110 checks every time it has been asked. **That last
+  asymmetry is the live lead** — something about the full-run environment, not the load, makes
+  this ngspice invocation fail. Do not spend another gate re-running it without looking at that.
+  ⚠ **But "inside a full T1" is NOT sufficient either, and the re-gate proves it**: `acd30d62`
+  was re-gated in the SAME clone at the SAME commit and came back
+  `cases=107 blocks=106 counted_failures=0 skips=8 elapsed=619s` (`tests/results.775219.log`,
+  `wc -l` 320, zero live-peer lines) with **`test_ase_optier_0963` itself at `ALL PASS (110
+  checks)`**. So the condition is intermittent *within* the full-run environment, not caused by
+  it — which kills "just run it standalone to bisect" as a method, since the only environment
+  that has ever failed also passes most of the time. Whatever is found next has to explain a
+  coin-flip, not a switch. That green run is this commit's gate figure; the red one is
+  `results.709339.log`, kept above because a red that is re-gated away still has to be recorded.
   One commit earlier, `106/105/skips=8` was `tests/results.138903.log` at `943038f9`, a
   clone at a 10-character path, `wc -l` 317, 607s (3 + 86 + 16 + `xschemtest`); issue
   **0514** took it there (`test_raw_schname_0514`, `hcases` alone). Before that,
