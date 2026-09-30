@@ -3,7 +3,7 @@ Incredibly, as hairbally as the code base is, Claude Code is able to handle it. 
 The new list :
 
 1. Pin creation in schematic view with same UX as Cadence. DONE! Claude Code
-2. Wire labels creation in schematic view with Cadence UX. 60% done by Claude Code (need to add support for vertical justification, and place multiple members of bus in one shot)
+2. Wire labels creation in schematic view with Cadence UX. Vertical justification DONE! Claude Code (issue 1623 -- ticking "Vertically justified" stacks the comma-separated tokens one per line, tight-spaced, e.g. bg_trim[3:0] / en_fast / iref_trim[2:0]; a single token renders the same either way, as you said it should). Two things on your queue rather than mine: with that box ticked "Split bus" is silently ignored (rule/1623 -- it needs a message or should grey out), and two appearance calls need your eyes (the stack is left-aligned with a ragged right edge, and it grows downward across the wire). STILL OPEN: place multiple members of a bus in one shot -- note that today a comma ALREADY separates, so typing a,b,c places three labels one per click; what "one shot" should mean is the open question
 3. Double-click to extend connected wire-segment selection. DONE! Claude Code
 4. Cadence style dynamic highlight fly-lines when hovering on wire/label/pin. 70% DONE by Claude Code. Needs polish. Currently only dashed line
 5. Telescopic moving instance across hierarchical boundaries (wait and see - something even CDNS can't do :)

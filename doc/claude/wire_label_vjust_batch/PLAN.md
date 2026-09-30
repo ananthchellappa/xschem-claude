@@ -104,3 +104,24 @@ asserts the *expansion* (`xschem translate <inst> {@lab}` has zero newlines), no
 Still open and carried out of this batch: `rule/1623` (Split bus is silently ignored when Vertically
 justified is ticked), two `look` debts on the stack's appearance, and the `S3` fence specified as open
 item 5 of the issue.
+
+## CLOSED 2026-09-30
+
+Gated green at `15b76bae`: `cases=112 blocks=111 counted_failures=0 skips=8 elapsed=633s`
+(`tests/results.1120366.log`), `wc -l` 335 unchanged, zero live-peer lines, zero counted shapes,
+fresh `git clone --local --no-hardlinks` built from scratch at a 9-character path. The fence reports
+`ALL PASS (224 checks)` inside T1 and `test_ase_optier_0963` was green at 110.
+
+**Delivered:** issue **1623** — the stacked comma-separated bus label. One stage, one crew, one
+receipt. `wc -l` did not move because no case was registered; only the published check count did,
+196 → 224.
+
+**Carried out of this batch, all filed rather than remembered:** `rule/1623` (Split bus silently
+ignored when Vertically justified is ticked), two `look` debts on the stack's appearance, the `S3`
+row specified as open item 5 of the issue, and issue **1624** (the angle-bracket netlist hazard,
+found by this batch's recon and untouched by its fix).
+
+**Out of scope and still open on wish item 2:** "place multiple members of bus in one shot", plus
+whether `split_bus` should default ON. Two of the four ruling questions, deliberately unasked while
+the first two were settled — and the recon's finding that a comma ALREADY separates reframes them,
+because the two checkboxes turn out to be the two readings of a comma.
