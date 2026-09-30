@@ -129,12 +129,24 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.438229.log`, taken in a throwaway clone of `3e307011`
-  built from scratch at a 9-character path: **107 cases** (3 `tcases` + 86 `hcases` +
-  **17** `dcases` + `xschemtest`), **106 blocks**, **`wc -l` 320 green**; trailer
-  `cases=107 blocks=106 counted_failures=0 skips=8 elapsed=621s`, zero live-peer lines.
-  Issue **1616** took it there (`test_wave_viewer`, **`dcases` alone** — the second suite in
-  this series registered that way, after 1615's). ⚠ **That commit's FIRST gate was RED at
+  the gate verdict `tests/results.902414.log`, taken in a throwaway clone of `1041a87f`
+  built from scratch at a 9-character path: **109 cases** (3 `tcases` + 87 `hcases` +
+  **18** `dcases` + `xschemtest`), **108 blocks**, **`wc -l` 326 green**; trailer
+  `cases=109 blocks=108 counted_failures=0 skips=8 elapsed=622s`, zero live-peer lines.
+  Issue **1619** took it there (`test_replay_door_1619`, the replay door for the action log),
+  and ⚠ **it is the first suite in this series registered in BOTH lists that still costs ZERO
+  skips — which falsifies, as a universal, the sentence two paragraphs down saying a suite in
+  both lists costs one headless self-skip.** It costs none because its headless arm self-skips
+  with an **uppercase `SKIPPED:`**, which `summarize_all` does not count; only 2 of its checks
+  are display-only (63 headless, 65 on the display arm). So the both-lists rule is a rule about
+  *lowercase* `skip:` lines, not about registration shape. **That is the FOURTH distinct
+  mechanism to arrive at 8**, after `hcases`-alone, `dcases`-alone, and both-lists-with-a-skip
+  cancelling out. One commit earlier the same figure was `107/106/skips=8` in
+  `tests/results.775219.log` at `acd30d62` (`wc -l` 320, 619s), itself a **re-gate** after the
+  `test_ase_optier_0963` flake reddened the first run at that commit; and before it
+  `tests/results.438229.log` at `3e307011` (107/106, `wc -l` 320, 621s), where issue **1616**
+  took the count up (`test_wave_viewer`, **`dcases` alone** — the second suite in this series
+  registered that way, after 1615's). ⚠ **That commit's FIRST gate was RED at
   the same commit** (`results.370291.log`, `counted_failures=3`) and the red was
   `test_ase_optier_0963`, the known flake, printing the `rc={1}` that the `d6816c00`
   diagnostic exists to print. **The commit was NOT declared green on that run**: the suite
@@ -194,15 +206,16 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Thirteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
+  **Fourteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
   hierarchical-PDF port), `98/97/skips=8` (1603), `99/98/skips=8` (1606),
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
-  `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` here (1616).
-  ⚠ **`skips=` has now held at 8 across THIRTEEN
+  `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` (1616) and
+  `109/108/skips=8` here (1619, which took TWO cases at once).
+  ⚠ **`skips=` has now held at 8 across FOURTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
@@ -218,7 +231,17 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   it costs no skip even though its headless arm DOES self-skip 343 of its 402 checks: the
   self-skip prints uppercase `SKIPPED:`, which `summarize_all` does not count, and in any case
   the headless arm is never run for a `dcases`-only entry. Two different reasons, same zero.**
-  **Thirteen in a row is well past the point where
+  ⚠⚠⚠ **AND THE FOURTEENTH BROKE THE RULE STATED IN THE VERY NEXT PARAGRAPH.** Issue
+  **1619** registered `test_replay_door_1619` in **BOTH** lists -- the shape this file says costs
+  "two cases and one headless self-skip" -- and it cost **two cases and ZERO skips**, taking the
+  count straight from 107/106 to 109/108. The reason is the same uppercase/lowercase distinction
+  1616 turned up, now arriving where it actually contradicts something: the suite's headless arm
+  DOES self-skip its 2 display-only checks (63 headless, 65 on the display arm), but it announces
+  that with an uppercase `SKIPPED:`, and `summarize_all` counts only lowercase `skip:`. **So the
+  both-lists rule below is a rule about the SPELLING a suite uses to announce a skipped row, not
+  about registration shape at all** -- and a fourth distinct mechanism has now produced 8. Anyone
+  who had memorised "both lists costs a skip" would have called this green gate wrong.
+  **Fourteen in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and
