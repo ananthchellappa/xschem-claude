@@ -129,11 +129,17 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.902414.log`, taken in a throwaway clone of `1041a87f`
-  built from scratch at a 9-character path: **109 cases** (3 `tcases` + 87 `hcases` +
-  **18** `dcases` + `xschemtest`), **108 blocks**, **`wc -l` 326 green**; trailer
-  `cases=109 blocks=108 counted_failures=0 skips=8 elapsed=622s`, zero live-peer lines.
-  Issue **1619** took it there (`test_replay_door_1619`, the replay door for the action log),
+  the gate verdict `tests/results.1010173.log`, taken in a throwaway clone of `80dc3bbb`
+  built from scratch at a 9-character path: **112 cases** (3 `tcases` + 89 `hcases` +
+  **19** `dcases` + `xschemtest`), **111 blocks**, **`wc -l` 335 green**; trailer
+  `cases=112 blocks=111 counted_failures=0 skips=8 elapsed=627s`, zero live-peer lines, zero
+  counted shapes. Issue **1620** took it there, registering `test_select_log_1620` in BOTH lists
+  and `test_selflog_grep_guard` in `hcases` -- **three** cases at once, and `wc -l` moved by
+  **9** = 3 cases x 2 lines + 3 newly published `RESULT:` lines, which is why the delta is worth
+  checking against the registration rather than against a remembered number.
+  One commit earlier, `109/108/skips=8` was `tests/results.902414.log` at `1041a87f`
+  (3 + 87 + 18 + `xschemtest`, `wc -l` 326, 622s), where issue **1619** took it there
+  (`test_replay_door_1619`, the replay door for the action log),
   and ⚠ **it is the first suite in this series registered in BOTH lists that still costs ZERO
   skips — which falsifies, as a universal, the sentence two paragraphs down saying a suite in
   both lists costs one headless self-skip.** It costs none because its headless arm self-skips
@@ -206,7 +212,7 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `c3a59de4` (issue 1603), and `97/96/skips=8` before that was `results.1594312.log` at
   `97766c66` (`wc -l` 290 = `2` sentinels + `96` headers + `96` `Total num fail:` + `3`
   NOGOLD + **`8` `skip:`** + **`83` `RESULT:`** + **`2` banner-only counts**).
-  **Fourteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
+  **Fifteen figures in six days**: `88/87/skips=5` (`results.2325750.log`,
   the 1487+1486 fixes), `90/89/skips=6` (`results.2825611.log`, 1352), `92/91/skips=7`
   (`results.3482374.log`, 1601), `94/93/skips=8` (`results.344048.log`, 1604),
   `95/94/skips=8` (`results.598045.log`, the headless-crash batch), `97/96/skips=8` (the
@@ -214,8 +220,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `100/99/skips=8` (1608), `101/100/skips=8` (the `test_scratch_home_note` repair),
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
   `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` (1616) and
-  `109/108/skips=8` here (1619, which took TWO cases at once).
-  ⚠ **`skips=` has now held at 8 across FOURTEEN
+  `109/108/skips=8` (1619, which took TWO cases at once) and `112/111/skips=8` here (1620,
+  which took THREE).
+  ⚠ **`skips=` has now held at 8 across FIFTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
   1606, 1608, 1610, 1611, 1614 and the `test_scratch_home_note` repair each went into
@@ -241,7 +248,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   both-lists rule below is a rule about the SPELLING a suite uses to announce a skipped row, not
   about registration shape at all** -- and a fourth distinct mechanism has now produced 8. Anyone
   who had memorised "both lists costs a skip" would have called this green gate wrong.
-  **Fourteen in a row is well past the point where
+  ⚠ **The FIFTEENTH added THREE cases in one commit and still did not move it** (issue 1620:
+  `test_select_log_1620` in both lists, `test_selflog_grep_guard` in `hcases`). So the number has now
+  survived a one-case commit, a two-case commit and a three-case commit unchanged, which is worth
+  saying plainly because it is exactly the evidence a reader would use to conclude it is a constant.
+  It is not. What actually held is that none of those suites printed a **lowercase** `skip:` line.
+  **Fifteen in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
   expected value will call a correct run wrong the next time a suite registers in both, and

@@ -27,7 +27,7 @@ The old list (what was posted on Go Fund Me a year ago) :
 
 1. Fluid click and drag on objects to move, while maintaining wire connections. DONE! Claude Code
 2. Cadence-style property forms - get a professional look. DONE! Claude Code
-3. Logging of all user interactions to enable macros and script creation from log files. WIP - but 25% DONE by Claude Code
+3. Logging of all user interactions to enable macros and script creation from log files. MACROS NOW WORK end-to-end! Claude Code. Record a session, then Tools > "Replay action log..." plays it back (issue 1619); a recorded log replayed in a fresh process comes back byte-identical. Selection is logged too, so a macro can say "select everything, then act" (issue 1620). Deliberately NOT stated as a percentage any more: the old "25%" was wrong in both directions at once, because the machinery was far past it while macros were at zero for want of a menu entry. What is still missing is named instead -- one undo backs out one command of a replayed macro rather than the whole macro (issue 1621, needs a C-side undo barrier), a malformed log leaves the schematic half-changed, and the 81 legacy key cases are still logged one-by-one rather than structurally
 4. Cadence-style right-mouse click-and-drag to zoom - DONE! Thank you, Chayan Deb. 
 5. Command interpreter window, like Cadence (shows log of commands and system messages, and has a command entry pane). DONE! Claude Code
 6. Cadence-style yellow dot cursor. DONE! Thank you Stefan Schippers! 
