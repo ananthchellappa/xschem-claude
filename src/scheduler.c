@@ -14866,11 +14866,37 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* unselect_all [draw]
      *   Unselect everything. If draw is given and set to '0' no drawing is done */
+    /* THE LOG LIVES HERE, IN THE BRANCH, AND DELIBERATELY NOT IN THE CORE (issue
+     * 1620, doc/claude/specs/action_logging.md §2b). unselect_all() (select.c) has ~87
+     * C call sites -- save_schematic(), the netlister, paste, the font change,
+     * both undo backends, abort_operation() -- and none of those is a user asking
+     * to deselect; a self-log at the core would append a line to Xschem.log after
+     * every save, every netlist and every ESC. This branch is the ONLY deliberate
+     * "deselect everything" spelling: the CIW, a script, a custom rc binding (the
+     * `escape_deselects` note in src/xschem.tcl tells users to bind ESC to exactly
+     * this command). So it is the mirror image of select_all(), which DOES self-log
+     * at its core because both of its callers are a user asking. Rows G2/G4 of
+     * tests/headless/test_select_log_1620.tcl pin the pair, and unselect_all is
+     * therefore kept OUT of S3 in tests/headless/test_selflog_grep_guard.tcl.
+     * THE `dr` ARGUMENT IS PRESERVED IN CANONICAL FORM so a replay is
+     * byte-identical instead of converging after one round -- the same
+     * normalisation the `xschem undo` arm does. Row W5.
+     * NO PHANTOM LINE when nothing was selected: the predicate is the core's own
+     * work gate, plus pin_sel_active for a transient pin-only selection the core
+     * clears outside that gate. Rows W3/W4. */
     else if(!strcmp(argv[1], "unselect_all"))
     {
+      int had_sel;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2) unselect_all(atoi(argv[2]));
-      else unselect_all(1);
+      had_sel = ((xctx->ui_state & SELECTION) || xctx->lastsel || xctx->pin_sel_active) ? 1 : 0;
+      if(argc > 2) {
+        int dr = atoi(argv[2]);
+        unselect_all(dr);
+        if(had_sel) log_action("xschem unselect_all %d", dr);
+      } else {
+        unselect_all(1);
+        if(had_sel) log_action("xschem unselect_all");
+      }
       Tcl_ResetResult(interp);
     }
 

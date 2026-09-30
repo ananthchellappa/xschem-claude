@@ -69,6 +69,51 @@ The plan doc holds the codebase analysis and implementation phasing.
 Known coverage gaps to be closed by minting subcommands (thin wrappers over
 existing C): `pan`, `scroll`, `snap` halve/double, middle-button pan.
 
+### 2b. The selection primitives, and where a self-log may live (issue 1620)
+
+`select_all` and `unselect_all` were the last **wholly unlogged** selection
+primitives, and selection is the commonest macro PREFIX — "select everything,
+then act" — so a recorded log could not express it. Both now record themselves,
+**in two different places, and the asymmetry is the whole point.**
+
+| primitive | log site | why there |
+|---|---|---|
+| `select_all` | **the core**, `select_all()` in `select.c` | exactly two callers — the Ctrl-A arm of the legacy `switch (key)` and the `xschem select_all` scheduler branch (which is what **Edit ▸ Select all** invokes) — and BOTH are a user asking. One site covers key, menu and script. Same arrangement as `select_grow_connected_step()`. |
+| `unselect_all` | **the scheduler branch** | `unselect_all()` is shared machinery with ~87 C call sites — `save_schematic()`, the netlister, paste, the font change, both undo backends, `abort_operation()`. |
+
+**The 87 call sites are not a theoretical objection.** A core self-log was built
+and measured (sabotage S3 of issue 1620): a child that drew two wires and
+deselected once produced **94 phantom `xschem unselect_all` lines**. So the rule
+this section states is *where* a self-log may live, not merely *that* one should:
+
+> **A core may self-log only if every one of its callers is a user asking for that
+> action.** Otherwise the log belongs at the verb boundary, and the core stays
+> silent. `select_all` passes that test; `unselect_all` fails it.
+
+Two further properties, both fenced:
+
+* **No phantom line for a no-op.** `select_all` on an empty drawing and
+  `unselect_all` with nothing selected record nothing — the rule
+  `select_grow_connected_step`'s empty-click return and `select_same_net`'s
+  `nnames == 0` arm already state. `unselect_all`'s predicate is the core's own
+  work gate (`(ui_state & SELECTION) || lastsel`), plus `pin_sel_active` for a
+  transient pin-only selection the core clears outside that gate.
+* **The `dr` argument survives in canonical form**: `xschem unselect_all 0` logs
+  `xschem unselect_all 0`, bare logs bare, so a replay is byte-identical instead
+  of converging after one round. Same normalisation as the `xschem undo` arm.
+
+⚠ **Ctrl-A is an overloaded chord.** Over a waveform graph it selects all TRACES
+(issue 1617, `waves_callback()` + `graph_sel_waves_all()`); only over the
+schematic canvas does it reach `select_all()`. The core self-log means the legacy
+arm needs no log line of its own, so issue 1620 changed no dispatch and the CA*
+band of `tests/headless/test_wave_viewer.tcl` is byte-identical across it.
+
+Fence: `tests/headless/test_select_log_1620.tcl` (bands `G*` where the sites are
+and are not, `W*` the scripted path with its effect, `Z*` the suppress seam, `R*`
+the record→replay round trip, `K*` the real Ctrl-A through `xschem callback`), plus
+the `src/select.c` and `src/scheduler.c` manifest rows and the S2/S3 entries of
+`tests/headless/test_selflog_grep_guard.tcl`.
+
 ## 3. The CIW — live log window
 
 A standalone Tk toplevel, similar in spirit to Virtuoso's Command Interpreter

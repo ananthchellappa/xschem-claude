@@ -108,7 +108,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_vhdl_component_index_1611" \
                  "headless/test_svg_export_fail_1614" \
                  "headless/test_raw_schname_0514" \
-                 "headless/test_replay_door_1619"]
+                 "headless/test_replay_door_1619" \
+                 "headless/test_select_log_1620" \
+                 "headless/test_selflog_grep_guard"]
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
@@ -619,7 +621,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_headless_guards_xarm_1492" \
                  "headless/test_wave_sigbrowser_panes" \
                  "headless/test_wave_viewer" \
-                 "headless/test_replay_door_1619"]
+                 "headless/test_replay_door_1619" \
+                 "headless/test_select_log_1620"]
 ## ⚠ `test_headless_guards_xarm_1492` IS THE ARM THAT MEASURES A GUARD'S OTHER
 ## HALF. The headless-crash batch added eleven `has_x` guards, and
 ## `test_callback_argc` -- an `hcases` entry, on a loop that hard-codes --nogui
@@ -677,6 +680,39 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## display arm additionally proves the menubar really carries the entry with the
 ## right -command, which is the half of "the user can reach it" that no grep can
 ## establish. Issue 1619 (the action log's replay door).
+## ⚠ `test_select_log_1620` IS IN **BOTH** LISTS FOR THE SAME REASON, AND ITS
+## DISPLAY ARM IS THE ONLY ONE THAT MEASURES THE PATH THE USER ACTUALLY TAKES.
+## Issue 1620 made `select_all()` and `unselect_all()` record themselves, and the
+## two paths are not the same instrument: Stage R of the replay-door batch measured
+## a scripted `xschem <verb>` logging 9 of 20 operations while the SAME operations
+## driven as real key events logged real replayable commands. So the headless arm
+## runs bands G*/W*/Z*/R* -- where the two log sites are (and where they must not
+## be), the scripted verb with its EFFECT and a control line, the suppress seam,
+## and the record -> replay round trip both ways -- and the display arm adds K1/K2,
+## which drive a real Ctrl-A over a real canvas through `xschem callback .drw 2` and
+## assert one logged line for it. K1/K2 self-skip headless with an uppercase
+## `SKIPPED:`, which `summarize_all` neither counts nor counts as a skip, so this
+## entry costs TWO cases and ZERO `skip:` lines.
+## ⚠ `test_selflog_grep_guard` IS IN `hcases` ONLY, AND REGISTERING IT AT ALL IS
+## THE POINT: it is the tree's executable INVENTORY of the self-log-at-core
+## migration -- its own header says the audit's root-cause finding, *"we logged
+## verb X, but only from the menu, not the key"*, recurred three or more times
+## AFTER being named, because human discipline does not hold -- and until issue
+## 1620 it gated NOTHING, being one of the 334-of-418 headless suites in neither
+## list. Issue 1620 added two rows to it (the `select_all` core site and the
+## `unselect_all` branch site), and CLAUDE.md's bounded rule is that a suite you
+## add a fence to, you register in the same change.
+## WHY NOT `dcases`: every row is a static scan of source text plus one runtime
+## canary, and none of them opens a window. ⚠ AND WHAT THIS ARM MEASURES IS THE
+## STATIC SCANS ONLY -- the hcases loop passes no `--logdir`, so S5's runtime
+## canary takes its "skipped: no --logdir" arm, which that suite writes as a
+## PASSING check rather than a lowercase `skip:` line, so the verdict cannot say
+## it did not run. S5 runs under `full_audit.sh`'s `logdir_tests` entry and nowhere
+## else; that is pre-existing and was not changed here.
+## ⚠ Registering it also required its epilogue: it printed only `RESULT: ALL PASS`
+## with no pass counter, which `banner_complete` cannot score. A counter and an
+## `OVERALL: ok ($npass checks)` line were added additively -- see the comment at
+## that suite's verdict block.
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)

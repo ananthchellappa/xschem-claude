@@ -2553,6 +2553,34 @@ void select_all(void)
  drawtemprect(xctx->gc[SELLAYER], END, 0.0, 0.0, 0.0, 0.0);
  drawtempline(xctx->gc[SELLAYER], END, 0.0, 0.0, 0.0, 0.0);
  rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
+ /* Self-log at the CORE, not at the `xschem select_all` scheduler branch (issue
+  * 1620, doc/claude/specs/action_logging.md §2b). Selection is the commonest macro
+  * PREFIX -- "select everything, then act" -- and this primitive recorded
+  * nothing, so a recorded log could not express it on EITHER path: a scripted
+  * `xschem select_all` and an interactive Ctrl-A both moved the selection 0 -> N
+  * and wrote no line.
+  * WHY THE CORE: the Ctrl-A arm of the legacy `switch (key)` (handle_key_press,
+  * callback.c) calls this function directly and would otherwise never be logged
+  * -- the recurring issue-0071 structural gap where the logged unit is the
+  * command string but the shared unit is the C function. This is the same
+  * arrangement, for the same reason, as select_grow_connected_step() above. BOTH
+  * callers (that key arm, and the scheduler branch which is what Edit > "Select
+  * all" invokes) are a user asking for it, so one line records per action.
+  * ⚠ THE MIRROR IMAGE IS unselect_all(), WHICH MUST NOT SELF-LOG HERE: it has
+  * ~87 C call sites -- save_schematic(), the netlister, paste, the font change,
+  * both undo backends, abort_operation() -- so a line here would land in the log
+  * after every save and every ESC. Its log lives in its scheduler branch, the
+  * only deliberate "deselect everything" spelling. Rows G1/G2 of
+  * tests/headless/test_select_log_1620.tcl pin both halves.
+  * An EMPTY drawing selects nothing and logs nothing: a no-op must not leave a
+  * replayable phantom line (the rule select_grow_connected_step's empty-click
+  * return and select_same_net's nnames==0 arm both state). log_action() honors
+  * actionlog_suppress, so a replay or a composite scope is silent, and it flushes
+  * any pending select_at first, preserving order.
+  * INVARIANT: entry paths (the scheduler branch, the key arm) must NOT also log
+  * -- fenced by row G3 of test_select_log_1620.tcl and by S3 of
+  * tests/headless/test_selflog_grep_guard.tcl. */
+ if(xctx->lastsel) log_action("xschem select_all");
 }
 
 /* sum of per-layer counts for a graphical object kind (rect/line/poly/arc) */

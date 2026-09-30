@@ -7607,6 +7607,17 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
       }
       else if(rstate == ControlMask) { /* select all (graph routing is data: over_graph -> graph.forward) */
+        /* ⚠ THE COMMENT ABOVE NAMES THE CANVAS MEANING ONLY. The same chord over a
+         * waveform graph selects all TRACES, not this -- the ACTX_OVER_GRAPH row in
+         * init_input_bindings routes it to graph.forward, and waves_callback() owns
+         * it there (issue 1617, fenced by the CA* band of
+         * tests/headless/test_wave_viewer.tcl). Issue 1617's own scouting error was
+         * trusting a "select all" comment sitting on that diverting row.
+         * NO log_action HERE: select_all() SELF-LOGS at its core (select.c), which
+         * is what makes this arm, the Edit > "Select all" menu entry and the
+         * scripted verb record one line each. A line here would double-log the key
+         * (issue 1620; row G3 of tests/headless/test_select_log_1620.tcl and S3 of
+         * test_selflog_grep_guard.tcl fence the invariant). */
         select_all();
       }
       break;

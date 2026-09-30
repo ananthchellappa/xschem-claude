@@ -307,11 +307,12 @@
 #     --script tests/headless/test_selflog_grep_guard.tcl
 
 set ::fails 0
+set ::npass 0
 proc check {name ok {info {}}} {
   set tag [expr {$ok ? {ok:  } : {FAIL:}}]
   if {$info ne {}} { set name "$name  ($info)" }
   puts "$tag $name"; flush stdout
-  if {!$ok} { incr ::fails }
+  if {$ok} { incr ::npass } else { incr ::fails }
 }
 
 set REPO [file normalize [file join [file dirname [info script]] .. ..]]
@@ -326,6 +327,7 @@ proc rxcount {text re} { return [regexp -all -- $re $text] }
 # ---------------------------------------------------------------------------
 set MANIFEST {
   src/scheduler.c {
+    {log_action\("xschem unselect_all}                2 {unselect_all branch, BOTH arg forms (issue 1620): bare at argc==2 and the canonical `xschem unselect_all %d` when a draw flag is given, so a replay is byte-identical rather than converging after one round (the `xschem undo` arm's normalisation). This is the ONE verb in this manifest whose log is in its scheduler BRANCH while a sibling primitive's is in its core, and the asymmetry is deliberate: unselect_all() (select.c) is shared machinery (~87 C call sites) and select_all() is not (2 callers, both a user asking). Hence unselect_all is NOT in S3}
     {log_action\("xschem cut"}                        1 {cut branch}
     {return perform_action\("delete", argc, argv\);}  1 {delete branch routes through the perform_action boundary (Refactor B atom 24 -- a BARE no-arg mutating verb, the near-twin of toggle_ignore/floaters: delete() (select.c) OWNS undo+set_modify+draw and returns void, so run_core adds no push_undo/draw (no-double-push rule). The ONE friction is the argc==2 ARITY GATE (F-validate): run_core returns TCL_ERROR on a malformed `xschem delete <extra>` so log-on-success does not phantom-log the pre-migration silent no-op. The old inline scheduler_readonly_reject("delete") + if(argc==2) log_action("xschem delete") are GONE (the boundary owns both); bare-verb log via core_log_action's `xschem %s` default. The Ctrl-X / XK_Delete inline legacy-switch keys STAY raw + self-logging in callback.c and never reach this branch, so no double-log (the shipped cut arrangement)}
     {return perform_action\("clear_drawing", argc, argv\);} 1 {clear_drawing branch routes through the perform_action boundary (Refactor B atom 27 -- a BARE no-arg SILENT mutation gaining the log + the NEW readonly gate; argc==2 arity gate; core stays raw+silent below the boundary for its seven teardown callers; no undo anywhere -- accepted): pre-migration the verb had NO log (silent free-everything), NO readonly gate (a READ-ONLY view was silently EMPTIED -- the 0041/0051 class, fixed like reset_symbol §42) and an `if(argc==2)` silent-no-op quirk that log-on-success would PHANTOM-log (run_core now rejects extra args -- the one deliberate behaviour tighten). clear_drawing() (actions.c) OWNS nothing (void, no push_undo/set_modify/draw) and is a SHARED teardown primitive of seven raw C flows (load_schematic x3, disk pop_undo, mem_restore_slot, delete_schematic_data, clear_schematic = the separate `xschem clear` verb, debug) -- ALL stay raw+silent below the boundary (audit §4 log-at-the-verb rule); bare-verb log via core_log_action's `xschem %s` default}
@@ -495,6 +497,7 @@ set MANIFEST {
   }
   src/select.c {
     {log_action\("xschem select_grow_connected}       2 {connected-grow core, both forms (atom 1)}
+    {log_action\("xschem select_all"\)}               1 {select-all core (issue 1620): the ONE site that covers the Ctrl-A legacy-switch arm, the Edit > "Select all" menu entry and the scripted verb, because all of them funnel through select_all(). Its MIRROR IMAGE is unselect_all(), whose ~87 machinery call sites (save_schematic, the netlister, paste, the font change, both undo backends, abort_operation) make a core self-log wrong -- that one logs in its SCHEDULER BRANCH instead, so select_all is in S3 below and unselect_all deliberately is not}
   }
   src/editprop.c {
     {(?n)^\s*log_prop_edit_replayable\(type, presel_names\);} 1 {property-dialog per-object replayable emit tail, line-anchored (atom 10 / 0063)}
@@ -614,6 +617,7 @@ set CVERBS {
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
   select_grow_connected select_at library_manager exit
+  select_all unselect_all
   wire line rect arc polygon instance text pan zoom_box paste
   add_symbol_pin add_sch_pin netlist
   move_objects copy_objects load load_new_window
@@ -668,8 +672,15 @@ set sched [srctext src/scheduler.c]
 # scheduler branches must NOT log the replay-fragile relative flip; likewise the
 # `set enable_stretch`/`set orthogonal_wiring` replay arms ARE the coordinate/replay
 # form and must not self-log (a log there would double every replayed line).
+# `select_all` (issue 1620): the log is in select_all()'s CORE (select.c), so the
+# scheduler branch must stay silent or the menu entry and the script double-log.
+# ⚠ Its sibling `unselect_all` is DELIBERATELY ABSENT from this list: that verb's
+# log is IN its scheduler branch on purpose, because unselect_all() is shared
+# machinery with ~87 C call sites (save_schematic, the netlister, paste, the font
+# change, both undo backends, abort_operation) and a core self-log would append a
+# line after every save and every ESC. Adding it here would fail a correct tree.
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
-              go_back select_grow_connected update_net_hilight_style paste
+              go_back select_grow_connected select_all update_net_hilight_style paste
               add_symbol_pin add_sch_pin move_objects copy_objects
               toggle_stretch toggle_orthogonal_wiring
               {set enable_stretch} {set orthogonal_wiring}} {
@@ -1712,6 +1723,24 @@ check "S7 perform_action is defined EXACTLY once" \
 catch {destroy .ciw}; update
 
 puts ""
-puts [expr {$::fails == 0 ? "RESULT: ALL PASS" : "RESULT: $::fails FAILED"}]
+# ⚠ `OVERALL: ok` IS WHAT MAKES THIS SUITE REGISTERABLE, AND IT IS NOT THE
+# `RESULT:` LINE. `banner_complete` in tests/banner_rule.tcl -- the only Tcl
+# reader `tests/run_regression.tcl` sources -- is
+# `^OVERALL: ok([ \t]+\([^)]*\))?[ \t]*$` and implements NO `RESULT: ALL PASS`
+# spelling at all, while `run_suites.sh` and `full_audit.sh` carry their own EREs
+# that DO accept it. So while this file printed only `RESULT:`, the two readers
+# that could score it were the two that are not the gate, and
+# registering it would have gated RED (`OVERALL_ok=0`) with every check passing --
+# exactly what happened to `test_wave_sigbrowser_panes` at 809c03d1 and
+# `test_wave_viewer` before issue 1616. Added ADDITIVELY, and BEFORE the `RESULT:`
+# line, because `summarize_all` publishes a case's LAST `RESULT:` line into the
+# verdict. Issue 1620 registered the suite in `hcases`.
+# ⚠ AND WHAT THE GATE ARM MEASURES IS THE STATIC SCANS ONLY: T1's hcases loop
+# passes no `--logdir`, so the S5 RUNTIME CANARY takes its "skipped: no --logdir"
+# arm -- which is written as a PASSING check rather than a lowercase `skip:` line,
+# so the verdict cannot say it did not run. S5 runs under `full_audit.sh`'s
+# `logdir_tests` entry (see the header) and nowhere else.
+if {$::fails == 0} { puts "OVERALL: ok ($::npass checks)" } else { puts "OVERALL: notok" }
+puts [expr {$::fails == 0 ? "RESULT: ALL PASS ($::npass checks)" : "RESULT: $::fails FAILED ($::npass passed)"}]
 flush stdout
 exit [expr {$::fails != 0}]

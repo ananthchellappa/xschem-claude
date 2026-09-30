@@ -34,6 +34,21 @@ proc loglines {} {
 }
 proc newlines {n0} { lrange [loglines] $n0 end }
 proc has_select_at {n0} { expr {[lsearch -glob [newlines $n0] {xschem select_at *}] >= 0} }
+# ⚠ A `select_at` LINE IS NOT IN THE FILE YET WHEN THE STASH RETURNS. It sits in
+# the one-action HOLDING AREA (doc/claude/specs/action_log_absorb.md, the
+# `actionlog_pending` single slot) so that a following outcome command -- descend
+# is the only consumer today -- can ABSORB it and log the stable result instead of
+# the coordinate gesture. It reaches the file when the NEXT log_action flushes it.
+# So a row that reads the log right after a click must flush FIRST. `set cadsnap
+# <the same value>` is the flush: it logs a line and touches no selection.
+# ⚠ SA5 AND SA7b USED TO OMIT THIS AND PASSED BY ACCIDENT -- what they read was
+# the PREVIOUS row's held line, flushed by the very stash they were testing. Issue
+# 1620 gave `xschem unselect_all` a log line of its own; the held line then flushed
+# one step earlier, and both rows went to {}. The product was right and the rows
+# were reading one operation behind, which is exactly the failure a "read the last
+# line of the log" technique produces. SA8b already did it correctly and is the
+# model. Nothing about the absorb buffer changed.
+proc log_flush {} { uplevel #0 {xschem set cadsnap $cadsnap} }
 # schematic -> screen pixel: screen = (sch + origin) / zoom
 proc sch_to_screen {sx sy} {
   set xo [xschem get xorigin]; set yo [xschem get yorigin]; set z [xschem get zoom]
@@ -89,7 +104,8 @@ check "SA4 nodraw selects without drawing" \
 xschem unselect_all
 set n0 [llength [loglines]]
 catch {xschem select_at $AX $AY}
-set logged [lindex [newlines $n0] end]
+log_flush                                       ;# the held line reaches the file
+set logged [lsearch -inline -glob [newlines $n0] {xschem select_at *}]
 check "SA5 command self-logs select_at" [string match {xschem select_at *} $logged] "(line={$logged})"
 
 # --- SA6: replay round-trip: source the logged line -> same object reselected --
@@ -110,6 +126,7 @@ xschem callback .drw 5 $mx $my 0 1 0 256      ;# ButtonRelease b1 (no motion)
 update idletasks
 check "SA7a interactive click selected the instance" \
   [expr {[llength [xschem selection]] >= 1}] "(sel=[xschem selection] screen=$mx,$my)"
+log_flush                                       ;# the held line reaches the file
 check "SA7b interactive click logged select_at" [has_select_at $n0] "(new=[newlines $n0])"
 
 # --- SA8: interactive SHIFT-click AUGMENTS and logs the ` add` marker ----------

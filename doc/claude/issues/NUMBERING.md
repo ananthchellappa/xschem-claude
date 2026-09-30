@@ -4221,7 +4221,54 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   than a failure to diagnose, because a fence keyed to a symptom dies quietly when something else
   cures the symptom.
 
-**The next free number is 1622.**
+- **1620** — **`select_all` and `unselect_all` were the only wholly unlogged selection primitives.**
+  Issue 1619 made a recorded log playable, which turned this from a curiosity into a real limit:
+  selection is the commonest macro prefix ("select everything, then act") and it was the one thing a
+  log could not express. ⚠ **THE PLAN SAID THE TWO PRIMITIVES ARE SYMMETRIC AND THEY ARE NOT.**
+  `select_all()` self-logs **at its core** because it has exactly TWO call sites and both are a user
+  asking -- the Ctrl-A legacy-switch arm and the scheduler branch that **Edit > Select all** invokes
+  -- so one site covers key, menu and script. `unselect_all()` must **not**: it is shared machinery
+  (~87 C call sites across 19 files -- `save_schematic()`, every netlister, paste, the font change,
+  BOTH undo backends, `abort_operation()`), so its log lives at the **verb boundary**. The cost of the
+  naive symmetric version was **measured, not argued**: sabotage `S3` had a child draw two wires and
+  deselect once, producing **94 phantom `xschem unselect_all` lines**. That number now sits in
+  `doc/claude/specs/action_logging.md` §2b behind the reusable rule it implies, which is worth more
+  than the issue: **a core may self-log only if every one of its callers is a user asking for that
+  action** -- otherwise the log belongs at the verb boundary and the core stays silent. Issue **1617**
+  is provably untouched: the `CA*` band is byte-identical, `test_wave_viewer` `ALL PASS (437 checks)`
+  before and after, and the core self-log made an edit to the Ctrl-A dispatch **unnecessary**, so the
+  only `callback.c` change is a comment -- one that now corrects the misleading `/* select all */`
+  above it. Red `12 FAILED (18 passed)` headless / `13 FAILED (20 passed)` display, and ⚠ **the
+  critical pairing is that `K1`, the EFFECT row, PASSED in the red run while `K2` failed**, so "not
+  logged" could not be confused with "nothing happened" -- the recon's sharpest trap discharged by
+  construction. Seven sabotages, none survived; `S2` (log at the branch instead of the core) reddens
+  `K2` on the **display arm only**, so a scripted-only fence would have passed it. ⚠ The crew also
+  **caused, bisected, attributed and repaired** a regression in `test_select_at`, and the mechanism
+  generalises: **a `select_at` line is not written when the verb returns** -- it sits in a single-slot
+  absorb buffer and reaches the file only when the NEXT `log_action` flushes it, so rows reading the
+  log straight after a click were reading the PREVIOUS row's held line. Fixed on both trees, because a
+  test fix that only works on the fixed tree is not a fix. FIXED, `tests/headless/test_select_log_1620.tcl`
+  (`hcases` and `dcases`) plus the `S3` band of `test_selflog_grep_guard.tcl` (`hcases`); 109 -> 112
+  cases, 108 -> 111 blocks, `skips=` still 8. Four items open, the user-visible one being that the
+  ~10 internal Tcl callers now make the CIW noisier during hierarchy navigation (`rule/1620`).
+
+- **1622** — **`test_select_at` passes only with your real HOME and fails under the armed spelling.**
+  OPEN, filed 2026-09-29 while gating 1620, and **pre-existing** -- established by measurement, not
+  assumed. The suite gives opposite verdicts by launch method: `run_suites.sh test_select_at` (armed,
+  throwaway HOME) gives **5 FAILED**, the `--nogui` armed arm gives **NORESULT**, and an unarmed
+  direct `DISPLAY=:99 ./src/xschem --pipe -q --script` gives **`ALL PASS`**. The first failing row,
+  `action log open`, is the cause and the other four (`SA5`, `SA6b`, `SA7b`, `SA8b`) are downstream --
+  no log opens, so every row reading a line back reports an empty one. ⚠ **So the only verdict this
+  suite currently produces green is the one obtained the way CLAUDE.md tells you NOT to run suites.**
+  It surfaced while the driver suspected 1620's crew of overclaiming `ALL PASS`; a pristine clone of
+  `8ead6bb8` built from scratch gives the **same 5 FAILED** with a **byte-identical** failing row
+  list, so both parties had measured honestly in different environments. The generalisable lesson is
+  about the report rather than the code: **a suite's verdict is only meaningful with its invocation
+  attached** -- "it is green" is not a claim until it says which spelling, and this suite is the proof
+  because both answers reproduce. Unregistered, so it gates nothing today; but the bounded rule means
+  whoever next adds a fence row to it inherits the red.
+
+**The next free number is 1623.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
