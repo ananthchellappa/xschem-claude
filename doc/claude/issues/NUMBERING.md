@@ -4268,7 +4268,51 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   because both answers reproduce. Unregistered, so it gates nothing today; but the bounded rule means
   whoever next adds a fence row to it inherits the red.
 
-**The next free number is 1623.**
+- **1623** — **wire labels: "vertically justified" stacks the comma-separated tokens, one per line.**
+  Wish-list new-list item **2**'s first named gap. ⚠ **The name is a trap and the driver fell in it
+  twice**: "vertically justified" is NOT typography. The user labels a bus by typing a comma-separated
+  token list (their example, `bg_trim[3:0],en_fast,iref_trim[2:0]`) and the flag controls that list's
+  LAYOUT -- off, one line; on, stacked one token per line, single-spaced with **no blank line**. The
+  user's own diagnostic settles which designs are right: **`busname[3:0]` renders identically either
+  way**, because a single token has nothing to stack -- which also disqualifies both of the driver's
+  first two readings (rotate the text along the wire via `lab_orient()`; re-anchor it via
+  `hcenter`/`vcenter`), since neither changes a single-token label either. Opt-in, so the existing
+  greyed-out checkbox is the right control. Three things Stage R measured that shape the work:
+  **multi-line rendering ALREADY works** end to end at **1.1470x** font height on every export path,
+  so the spacing requirement is already met and no rendering engine is needed; ⚠⚠ **a newline must
+  NEVER reach the stored `lab=`** -- measured, it produces a SPICE card split across physical lines,
+  and `expandlabel` swallows the newline as whitespace and CONCATENATES tokens into wrong bit names;
+  and **the comma is already a label separator**, so the user's example places THREE labels today via
+  the queue, meaning the flag changes TOKENISATION and not only display. The two recon crews
+  **disagreed on the mechanism** -- a derived token in `translate()` (one edit covers all six
+  render/measure sites, the codebase's own invariant I1) versus a per-instance `text_vjust_<n>=` read
+  at those six sites (`translate()` has 77 callers including the netlisters) -- and the choice was left
+  to the implementing crew under one binding constraint: **prove no line break reaches a netlist,
+  save or expansion path.** The user ruled that `[3:0]` display is correct for now, so the existing
+  `<>`->`[]` normalisation stays and the drawn text keeps matching the netlisted net name. Batch
+  `doc/claude/wire_label_vjust_batch/`. IN FLIGHT.
+
+- **1624** — **a bus wire labelled with angle-bracket range syntax netlists SILENTLY WRONG.**
+  OPEN, filed 2026-09-29, found while reconnoitring 1623 and not caused by it. **`<3:0>` is not
+  bus-range syntax in xschem**: `<` and `>` are ordinary identifier characters in `parselabel.l`'s
+  `LAB`/`LAB_NUM`/`LAB_NUM_SP` classes, so `bg_trim<3:0>` is ONE scalar net whose name contains those
+  characters. Measured against a subcircuit with one 8-bit bus pin: the square form gives the eight
+  correct nets in order, while `lab=bg_trim<3:0>,en_fast,iref_trim<2:0>` expands to **3** and the
+  short list is **cycled over the eight pins**, shorting three bus bits to one scalar and dropping two
+  bits of `iref_trim`. ⚠ **Zero diagnostics** -- no `yyerror`, no stderr, no dialog; the crew counted
+  and all 14 `yyerror` lines in its run came from a different probe. A reviewer sees eight plausible
+  names in the right column count. Nobody has hit it because `addlabel::expand_names` normalises
+  `<>`->`[]` and is the ONLY path to `::label_new_name`, so the Add Wire Label form protects you --
+  **by accident of implementation, not by design.** Every other route is unprotected: the property
+  editor, `xschem setprop`, paste, an imported or hand-edited `.sch`, a generator. ⚠ And the habit runs
+  the wrong way: this tool's users come from Cadence where `<3:0>` IS the bus syntax, so the population
+  most likely to type the dangerous spelling is the one the tool is aimed at. `hilight_net_pin_mismatches()`
+  (`src/hilight.c`) nearly detects it already but is a user-invoked highlight command, not a
+  netlist-time guard -- reusing its predicate is the concrete first step. No fence yet, deliberately:
+  the row would redden now, and a standing red is a defect rather than furniture, so it lands with the
+  fix.
+
+**The next free number is 1625.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
