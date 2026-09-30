@@ -112,7 +112,14 @@ proc slurp {f} { if {![file exists $f]} { return "" } ; set fd [open $f rb] ; se
 ## 60 s is a backstop, not a budget: a display child measures ~0.4 s here, and two of them
 ## timing out still leaves the suite inside run_suites.sh's 200 s SUITE_TIMEOUT, so a wedged
 ## child is a named FAIL from this row rather than a TIMEOUT of the whole suite.
-proc child_export {dir tag sch ps {pre {}} {verb hier_psprint} {arm nogui}} {
+##   dbg    0 (every V1-V27 call site) or 1, which adds `-d 1` to the child's command line so
+##          the child's own dbg(1, ...) tracing joins the captured output. Row V28 (0619) is
+##          the only caller: it needs to see the colour INDEX ps_draw_symbol() asks for, and
+##          dbg() in set_ps_colors() prints that index BEFORE the 1353 bounds test consumes
+##          it -- which is the only place an out-of-range REQUEST is observable now that the
+##          accessor refuses to act on one. `-q` does not suppress dbg(): errfp is stderr and
+##          `2>@1` collects it (measured: 1813 lines for a two-instance sheet, ~0.4 s).
+proc child_export {dir tag sch ps {pre {}} {verb hier_psprint} {arm nogui} {dbg 0}} {
   set t [file join $dir $tag.tcl]
   catch {file delete $ps}
   set fd [open $t w]
@@ -124,12 +131,14 @@ proc child_export {dir tag sch ps {pre {}} {verb hier_psprint} {arm nogui}} {
   close $fd
   set here [pwd] ; cd $dir
   set rc 0
+  set dflag [list] ; if {$dbg} { set dflag [list -d $dbg] }
   if {$arm eq {display}} {
     set dd [file join $::repo tests headless devdisplay.sh]
     if {[catch {exec $dd exec timeout 60 [info nameofexecutable] \
-                --pipe -q --script $t 2>@1} out]} { set rc 1 }
+                --pipe -q {*}$dflag --script $t 2>@1} out]} { set rc 1 }
   } else {
-    if {[catch {exec [info nameofexecutable] --nogui --pipe -q --script $t 2>@1} out]} { set rc 1 }
+    if {[catch {exec [info nameofexecutable] --nogui --pipe -q {*}$dflag \
+                --script $t 2>@1} out]} { set rc 1 }
   }
   cd $here
   return [list $rc [regexp {FATAL: signal} $out] $out]
@@ -330,6 +339,36 @@ check "V23 (1607) xschem_library/examples/LCC_instances.sch -- the sheet the iss
 # 0 of 36 rasterised pages differ, so the restore was redundant for anything drawn. A future
 # reader who prefers one of the other two answers should have to redden a row that says so by
 # name -- not quietly delete one line and move 144 lines of every exported file.
+#
+# ⚠⚠ AND SINCE ISSUE 0619 (2026-09-29) THIS ROW IS THE *SOLE* FENCE FOR THAT CLAMP. DO NOT
+# DELETE IT, DO NOT "SIMPLIFY" IT, AND DO NOT BELIEVE THE BEHAVIOURAL ROWS THAT LOOK LIKE
+# THEY ALSO COVER IT. Measured, sabotage 1 of doc/claude/issues/receipt-0619-ps-colors.md:
+# delete `if(pixel >= (unsigned int)cadlayers) return;` from set_ps_colors() with 0619's fix
+# in place and the suite reports `1 FAILED (28 passed)` -- THIS ROW, and nothing else.
+# V19, V20, V22, V23 and V26 all stay GREEN with a real out-of-bounds read reinstated.
+#
+# WHY THOSE FIVE STOPPED BEING FENCES, because the reason is the whole trap. They were
+# fences only BECAUSE 0619 WAS UNFIXED. Until 0619, ps_draw_symbol()'s text pass ended
+# `if(textlayer != c) set_ps_colors(c)` and its pin-name pass `if(plw != c) set_ps_colors(c)`
+# with `c == cadlayers`, so the CALLER handed this clamp an out-of-range index once per symbol
+# text and once per pin name -- the clamp had a live exerciser, and deleting it put heap
+# garbage straight into the file where V19/V20 (range) and V22/V23/V26 (determinism) could
+# see it. Measured on that older tree: deleting the clamp WITHOUT 0619's fix reddens EIGHT
+# rows, V20 reporting `bad triples=49153 on 66 sheets`. 0619 repaired the caller -- both pops
+# now restore `c_for_text` -- so no reachable path computes an index past the top any more
+# (row V28 asserts exactly that, and it is NOT a fence for this clamp: it watches the caller,
+# and it stays green when the clamp goes). The clamp is therefore correct, still necessary as
+# the accessor's own contract for every call site in the file, and NO LONGER EXERCISED BY
+# ANYTHING THIS SUITE RUNS. (No count of those call sites is quoted here on purpose: the
+# figure the 0619 filing gives is stale, and a count in a comment is a number nothing
+# re-checks -- CLAUDE.md, and limit L9 of test_snprintf_fmt_1608.tcl.)
+#
+# So a reader who asks "is this clamp behaviourally covered?" will find five green rows and
+# conclude this row is belt-and-braces. It is not: it is the only thing between a deleted
+# clamp and a heap over-read that valgrind called "Invalid read of size 4 ... 8 bytes after a
+# block of size 264", and NOTHING DETECTS ITS REMOVAL. That is the dual of the defect 0619
+# itself was -- a fence keyed to a symptom dying quietly when something else cures the
+# symptom (CLAUDE.md) -- and it is why this row asserts the guard's TEXT and must keep doing so.
 set v24src [slurp [file join $repo src psprint.c]]
 set v24re {if\(pixel >= \(unsigned int\)cadlayers\) return;}
 check "V24 (1607/1353) set_ps_colors() refuses an index that is not a layer:\
@@ -555,6 +594,134 @@ check "V27 (1607 item 2) all four bounds clamps that dominate the raw svg_colors
   "(found={$v27found} missing={$v27missing} tested=$v27ntest src=[string length $v27src]B\
  live=[string length $v27live]B)"
 
+# ================================ 0619: THE CALLER, WHICH 1353 NEVER TOUCHED ==
+# V28/V29 (0619) — 1353 FIXED THE SINK AND LEFT THE CALLER COMPUTING cadlayers AS A COLOUR.
+# V24 above asserts the accessor REFUSES an index that is not a layer; V19/V20 below assert
+# the CONSEQUENCE is gone (no RGB channel outside 0..1, on a dedicated fixture and over a
+# 100+ sheet corpus). Not one of the three says anything about the code that produces the
+# index, and that code is unrepaired: ps_draw_symbol()'s text pass still ends
+# `if(textlayer != c) set_ps_colors(c)` with `c == cadlayers`, and its pin-name pass still
+# ends `if(plw != c) set_ps_colors(c)` the same way. Measured on this fixture at HEAD:
+# FOUR requests for colour 22 with cadlayers == 22. The emitted file is clean only because
+# the accessor throws the index away.
+#
+# ⚠ THIS IS CLAUDE.md's "a fence keyed to a symptom dies quietly when something else cures
+# the symptom", caught in the act. Every existing row here is keyed to the malformed OUTPUT.
+# A change made for a DIFFERENT issue stopped producing that output, so all three went on
+# passing while 0619's own defect sat in the file untouched -- and the issue file still
+# describes the over-read as live. Assert the correct SHAPE (no out-of-range request is
+# made), not the absence of a wrong output.
+#
+# WHY `c_for_text` AND NOT `c` IS THE INTENT, from the history rather than from taste:
+#   70aed29f (upstream, 2025-04-06) introduced c_for_text with the text block still guarded
+#     `layer == cadlayers - 1`. `c` WAS the ambient layer then and `set_ps_colors(c)` was in
+#     range. The pop was correct as written.
+#   6b12969d (upstream, 2025-04-21) moved the text pass one layer PAST the top -- guard to
+#     `layer == cadlayers`, plus `ps_draw_symbol(c + 1, i, c + 1, ...)` in create_ps() -- to
+#     preserve stacking order. It updated the guard and the call and NOT the pop, so `c`
+#     became a pseudo-layer and the pop became a fossil of the world before it.
+#   draw.c and svgdraw.c have the same two clamps and NO pop at all: their colour is not
+#     sticky state, so there is nothing to restore. psprint.c has the pair only because
+#     PostScript colour IS sticky, and the value the push departs from is `c_for_text`.
+# So the pop mirrors the push, and the push compares against `c_for_text`.
+#
+# ⚠ `ps_draw_annot_overlay()`'s `if(layer != c) set_ps_colors(c);` IS CORRECT AND IS LEFT
+# ALONE. It is called from create_ps()'s instance loop as `ps_draw_annot_overlay(i, c)` with
+# `c == cadlayers - 1`, a real layer -- not from ps_draw_symbol(). V29's patterns key on
+# `textlayer` and `plw` so they cannot drag it in.
+#
+# ⚠ WHAT THIS FIX DOES NOT DO, stated here so nobody re-measures it hoping otherwise: it
+# changes no rendered colour. Receipt doc/claude/issue_1607_batch/receipts/B-display-arm.md
+# measured the suppressed restores as dead colour sets -- 0 of 36 rasterised pages differ --
+# because every drawing site emits its own colour first (ps_draw_string_line() opens with
+# set_ps_colors(layer), inside its own GS/GR). What the fix repairs is the PUSH'S GUARD:
+# `if(textlayer != c_for_text)` is an "already at that colour" test, and it is only sound if
+# the ambient really is c_for_text, which it is not while the pop never restores it. So no
+# rasterised or byte-count row can be this fence, and neither of these two rows pretends to
+# be one: V28 watches the index the caller asks for, V29 asserts the shape.
+file mkdir [file join $dir lib]
+set v28sym [file join $dir lib txt0619.sym]
+set v28fd [open $v28sym w]
+## The same body as the V19/V22 fixture symbol PLUS a `show_pinname=true` pin, because the
+## symbol-text pop and the pin-name pop are two separate sites and a fixture with no owned
+## pin reaches only the first (measured: 2 requests for colour 22, not 4).
+foreach l [list "v {xschem version=3.4.6 file_version=1.2}" "G {}" "K {$sub}" "V {}" "S {}" "E {}" \
+  "L 4 -30 -20 30 -20 {}" "L 4 30 -20 30 20 {}" "L 4 -30 20 30 20 {}" "L 4 -30 -20 -30 20 {}" \
+  "B 5 -32.5 -2.5 -27.5 2.5 {name=A dir=in show_pinname=true}" \
+  "T {@name} -30 -32 0 0 0.3 0.3 {}"] { puts $v28fd $l }
+close $v28fd
+wsch [file join $dir lib txt0619.sch] [list "T {leaf0619} 0 0 0 0 0.4 0.4 {}"]
+wsch [file join $dir top0619.sch] \
+  [list "C {txt0619.sym} 0 0 0 0 {name=x1}" "C {txt0619.sym} 200 0 0 0 {name=x2}"]
+## cadlayers comes from the CHILD, printed by the child, so the row cannot drift from the
+## binary it measured; a hardcoded 22 would be a number nothing re-checks (CLAUDE.md).
+set v28pre [concat $txpre [list {puts "CADLAYERS_0619=$::cadlayers"}]]
+set v28bad {} ; set v28det {}
+foreach verb [list {print ps} hier_psprint] {
+  set g [det_tag $verb]
+  lassign [child_export $dir v28$g [file join $dir top0619.sch] \
+           [file join $dir v28$g.[det_ext $verb]] $v28pre $verb nogui 1] v28rc v28sg v28out
+  set v28cad 0
+  regexp {CADLAYERS_0619=([0-9]+)} $v28out . v28cad
+  set v28in 0 ; set v28over {}
+  foreach {m v28ix} [regexp -all -inline {set_ps_colors\(\): setting color ([0-9]+)} $v28out] {
+    if {$v28cad > 0 && $v28ix >= $v28cad} { lappend v28over $v28ix } else { incr v28in }
+  }
+  lappend v28det "$verb: cadlayers=$v28cad inrange=$v28in outofrange=[llength $v28over]\
+ over={[lsort -unique $v28over]}"
+  ## `$v28in == 0` is the INSTRUMENT-LIVENESS clause and it is not decoration: delete the
+  ## dbg() line in set_ps_colors(), or break `-d`, and the out-of-range count falls to zero
+  ## for a reason that has nothing to do with the defect. A row that can pass by seeing
+  ## nothing is the same defect one level up.
+  if {$v28rc != 0 || $v28sg || $v28cad == 0 || $v28in == 0 || [llength $v28over]} {
+    lappend v28bad "$verb:rc=$v28rc,sig=$v28sg,cadlayers=$v28cad,inrange=$v28in,\
+outofrange=[llength $v28over],over={[lsort -unique $v28over]}"
+  }
+}
+check "V28 (0619) THE CALLER: a `-d 1` export never asks set_ps_colors() for an index that is\
+ not a layer. ps_draw_symbol()'s text pass runs at layer == cadlayers, so its two pops --\
+ symbol text and pin name -- must restore c_for_text, the ambient the pushes depart from, and\
+ not `c`, which IS cadlayers there. dbg() prints the index before 1353's bounds test eats it,\
+ so this is the only place the REQUEST is visible now that the accessor refuses to act on one\
+ (HEAD: 4 requests for colour 22 with cadlayers 22, per verb). In-range requests must be\
+ nonzero too, or a dead instrument passes" \
+  [expr {[llength $v28bad] == 0}] "(bad={$v28bad} $v28det)"
+
+# V29 (0619) — THE STATIC FENCE FOR THE SHAPE, in V24's and V27's shape and for V27's reason.
+# V28 catches the out-of-range REQUEST. It does not catch the asymmetry: clamp the fossil
+# instead of repairing it (`if(textlayer != c && c < cadlayers) set_ps_colors(c);`) and V28
+# goes green with the pop still restoring the wrong variable and the push's guard still
+# unsound. So both halves are asserted, each by name, and the fossil spellings are asserted
+# ABSENT as well as the repaired ones PRESENT -- a file containing both would be a half-done
+# edit, and V28 alone would pass it if the live copy happened to be the repaired one.
+set v29src  [slurp [file join $repo src psprint.c]]
+set v29live [v27_live $v29src]
+set v29want [list \
+  symbol-text/pop-restores-c_for_text {if ( textlayer != c_for_text ) set_ps_colors ( c_for_text ) ;} \
+  pin-name/pop-restores-c_for_text    {if ( plw != c_for_text ) set_ps_colors ( c_for_text ) ;}]
+set v29fossil [list \
+  symbol-text/pop-restores-c {if ( textlayer != c ) set_ps_colors ( c ) ;} \
+  pin-name/pop-restores-c    {if ( plw != c ) set_ps_colors ( c ) ;}]
+set v29found {} ; set v29missing {} ; set v29left {}
+foreach {v29nm v29toks} $v29want {
+  if {[regexp [v27_pat $v29toks] $v29live]} { lappend v29found $v29nm } else { lappend v29missing $v29nm }
+}
+foreach {v29nm v29toks} $v29fossil {
+  if {[regexp [v27_pat $v29toks] $v29live]} { lappend v29left $v29nm }
+}
+set v29ntest [expr {([llength $v29want] + [llength $v29fossil]) / 2}]
+check "V29 (0619) both pops in ps_draw_symbol() are SYMMETRIC with their pushes in\
+ src/psprint.c -- `if(textlayer != c_for_text) set_ps_colors(c_for_text);` and\
+ `if(plw != c_for_text) set_ps_colors(c_for_text);` present, and the two fossil spellings\
+ that restore `c` (a pseudo-layer in that pass, since upstream 6b12969d moved the text pass\
+ to layer == cadlayers) absent. Asserted BY NAME, not by count, comments and \#if 0 stripped;\
+ ps_draw_annot_overlay()'s `if(layer != c)` is a DIFFERENT and correct site and is not\
+ matched here" \
+  [expr {[string length $v29src] > 0 && $v29ntest == 4 \
+         && [llength $v29missing] == 0 && [llength $v29left] == 0}] \
+  "(found={$v29found} missing={$v29missing} fossils_left={$v29left} tested=$v29ntest\
+ src=[string length $v29src]B live=[string length $v29live]B)"
+
 ## ⚠ THIS GUARD USED TO BE A PASS THAT HAD ASSERTED NOTHING, and it is worth spelling out
 ## why, because the shape is easy to write again. It printed `SKIP: no ps2pdf on this box`
 ## and then `RESULT: ALL PASS`, and exited 0. Every reader in this tree scored that GREEN:
@@ -585,7 +752,7 @@ check "V27 (1607 item 2) all four bounds clamps that dominate the raw svg_colors
 if {[catch {exec ps2pdf -h} ] && ![file executable /usr/bin/ps2pdf]} {
   puts "skip: V1-V21 -- ps2pdf is not installed, so none of this suite's 21 DISTILLING rows\
  ran; every one of them distils the PostScript and reads the PDF back, and there is no\
- .ps-only subset that would fence the right artifact. V22-V27 need no distiller and did run"
+ .ps-only subset that would fence the right artifact. V22-V29 need no distiller and did run"
   if {$fail == 0} {
     puts "RESULT: ALL PASS ($pass checks -- V1-V21 skipped, ps2pdf missing, see the skip: line)"
     puts "OVERALL: ok ($pass checks -- V1-V21 skipped, ps2pdf missing)"

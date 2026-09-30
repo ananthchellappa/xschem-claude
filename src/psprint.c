@@ -1977,7 +1977,19 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
             x0+x1, y0+y1, xscale, yscale);
         }
       }
-      if(textlayer != c) set_ps_colors(c);
+      /* 0619: RESTORE c_for_text, NOT c. This pass runs at layer == cadlayers (create_ps()
+       * calls ps_draw_symbol(c + 1, i, c + 1, ...) to keep text above geometry), so `c` is a
+       * pseudo-layer here and `set_ps_colors(c)` asked ps_colors[] for an index that is not a
+       * layer -- once per symbol text. 1353 stopped the accessor ACTING on that index; the
+       * request was still made. The pop mirrors the push above, and the push compares against
+       * c_for_text: upstream 70aed29f wrote this pop when the guard was still
+       * `layer == cadlayers - 1`, where `c` WAS the ambient layer, and 6b12969d moved the pass
+       * past the top without updating it. Restoring the ambient is also what makes the push's
+       * "already at that colour" guard sound. draw.c and svgdraw.c need no pop at all (their
+       * colour is not sticky state); ps_draw_annot_overlay()'s `if(layer != c)` is a different
+       * site and correct, its caller passes cadlayers - 1. Rows V28/V29 of
+       * tests/headless/test_ps_valid_1350.tcl. */
+      if(textlayer != c_for_text) set_ps_colors(c_for_text);
     }
 
     /* P6 (doc/claude/specs/cadence_pin_name_text.md §4.2): pin names from the symbol's pin
@@ -2027,7 +2039,7 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
             ((short)lay.rot + ((flip && ((short)lay.rot & 1)) ? rot+2 : rot)) & 0x3,
             flip ^ (short)lay.flip, 0, 0, x0+x1, y0+y1, lay.size, lay.size);
       }
-      if(plw != c) set_ps_colors(c);
+      if(plw != c_for_text) set_ps_colors(c_for_text);   /* 0619, see the symbol-text pop above */
       my_free(_ALLOC_ID_, &pnm);
       my_free(_ALLOC_ID_, &pfont);
     }
