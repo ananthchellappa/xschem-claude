@@ -4202,7 +4202,26 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   anyone measuring coverage with a `--script` driver concludes the feature is far worse than it is.
   Batch `doc/claude/replay_door_batch/`. IN FLIGHT.
 
-**The next free number is 1621.**
+- **1621** — **replaying an action log creates one undo slot per command, not one for the macro.**
+  OPEN, filed 2026-09-29 as a follow-on from **1619**, which is what made it reachable: before the
+  replay door existed there was no way for a user to hit this. Measured by row `R2` of
+  `tests/headless/test_replay_door_1619.tcl` -- a log that creates two wires, replayed, then ONE undo,
+  leaves ONE wire. A user who replays a forty-command macro and dislikes the result presses undo forty
+  times and has no way to learn it was forty; the macro is one action to the person who ran it, so it
+  should be one action to undo. ⚠ **Not fixable from Tcl, which is why it is a separate issue and not
+  1619's problem**: every verb the sourced log invokes pushes its own slot on the way through the C
+  core, and `xschem push_undo` ADDS a slot rather than merging or opening a transaction, so no Tcl
+  wrapper changes the count. The shape a fix needs already exists in C -- `add_pin_stubs()` drops N
+  labels and N stubs under a single `push_undo` -- so the fix is a **C-side undo barrier** a Tcl
+  caller can open and close around a batch of verbs. ⚠ It **compounds** with 1619's open item 2, that
+  a malformed log leaves the schematic half-changed (`source` runs commands one at a time, so a syntax
+  error on line 3 has already applied lines 1-2): a partial replay is exactly when a user most wants a
+  single undo and exactly when they get N with no way to know N. Row `R2` deliberately asserts the
+  PRESENT count, so **it will redden when this is fixed** -- intended, and the row to update rather
+  than a failure to diagnose, because a fence keyed to a symptom dies quietly when something else
+  cures the symptom.
+
+**The next free number is 1622.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
