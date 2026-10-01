@@ -112,7 +112,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_select_log_1620" \
                  "headless/test_selflog_grep_guard" \
                  "headless/test_registered_banner_1626" \
-                 "headless/test_divis_zero_1628"]
+                 "headless/test_divis_zero_1628" \
+                 "headless/test_calc_engine" \
+                 "headless/test_calc_scratch_reuse"]
 ## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
 ## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
 ## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
@@ -148,6 +150,12 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## through `run_suites.sh`, which is the mistake issue 1626 exists for). Row RB6
 ## of `test_registered_banner_1626` re-measures that an `hcases` entry does not
 ## take a no-banner early exit.
+## ⚠ `test_calc_engine` SOURCES `tests/headless/scratch.tcl` and writes a
+## fixture, which the other four calculator suites do not: its band CE9 needs a
+## MULTI-POINT op/dc database -- the first step and the last point have to be
+## different numbers, or no row can say which one Evaluate read -- and nothing
+## committed in the tree is one. Every write is under `tests/headless/.scratch/`
+## and is dropped on the failing exit as well as the passing one.
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte

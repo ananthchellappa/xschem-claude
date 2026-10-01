@@ -30,8 +30,9 @@
 # DATABASE the Calculator works against.  The `self` arm is gone (U6), the
 # Results Dir row PICKS rather than reports (U3), Evaluate refuses and names the
 # next action when there is no result (U7), and `Browse` is ruled permanently
-# inert rather than unfinished (U9).  Evaluate's COMPUTATION is still phase 3's
-# — this is the gate that phase was waiting on.  The four rulings and their
+# inert rather than unfinished (U9).  Evaluate's COMPUTATION LANDED in phase 3
+# (`calc::eval_click` -> `eval_in_token` -> `eval_rpn`, R603-R607); this block was
+# the gate that phase had been waiting on.  The four rulings and their
 # mechanism are in the block above `calc::viewer_tokens`.
 #
 # THE POINT OF THE FILE, once it is finished: the Calculator is an EXPRESSION
@@ -194,6 +195,12 @@ namespace eval calc {
     # hints, because it is the same window-scoped state.  calc::buf_typed says
     # what breaks without it.
     variable fbtext {}
+    # Phase 3 (3.2).  The serial behind R402's `__calc_tmp<N>` destination
+    # names, minted by calc::tmpvec.  INTERPRETER-scoped, like `editcan` and
+    # unlike the three `fb*` above: calc::close must NOT reset it, because a
+    # name minted before a close must not come back after one.  calc::tmpvec
+    # says what re-using a destination costs (landmine L2).
+    variable tmpn 0
     # Phase 2 (2.2).  THE CHARACTERS THE NETLIST ENGINE SPLITS AN EXPRESSION ON,
     # and the whole of them: plot_raw_custom_data() in src/save.c tokenises with
     # my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save).  calc::engine_space is
@@ -645,12 +652,15 @@ proc calc::style_init {} {
 # names the control and the plan phase that will implement it.  A user pressing
 # a button that does nothing and says nothing cannot tell it from a broken one.
 #
-# ⚠ TWO CONTROLS NO LONGER ROUTE STRAIGHT HERE, both by ruling and both still
-# speaking: `Eval` goes through `calc::eval_click`, which refuses in U7's words
-# when there is no result and falls through to this proc when there is one; and
-# `Browse` goes through `calc::browse_inert`, which is not "not implemented" at
-# all but permanently inert (U9).  "Not implemented (phase N)" is a promise, and
-# it may only be made where a phase really is coming.
+# ⚠ TWO CONTROLS NO LONGER ROUTE HERE AT ALL, both by ruling and both still
+# speaking.  `Eval` goes through `calc::eval_click`, which refuses in U7's words
+# when there is no result and RUNS THE ENGINE when there is one -- it does not
+# call this proc on any path (PLAN phase 3.2 landed; an earlier revision of this
+# sentence said it "falls through to this proc when there is one", which was
+# true until Evaluate was built and then stood for a round).  `Browse` goes
+# through `calc::browse_inert`, which is not "not implemented" at all but
+# permanently inert (U9).  "Not implemented (phase N)" is a promise, and it may
+# only be made where a phase really is coming.
 proc calc::inert {what phase} {
     return [calc::status "$what: not implemented (phase $phase)"]
 }
@@ -1177,14 +1187,21 @@ proc calc::results_publish {src} {
     } else {
         set respath $p
     }
-    if {[winfo exists .calc.res.lab]} {
+    # ⚠ `calc::has_win`, NOT a bare `winfo exists`: under --nogui the `winfo`
+    # COMMAND does not exist, so the bare spelling RAISES out of this proc
+    # instead of no-opping (R508's third case).  The raise was swallowed by
+    # `calc::require_result`'s own `catch`, so nothing broke -- but it abandoned
+    # this proc half-done, and phase 3 made that reachable from an entry point
+    # that now does real work.  receipts/B3-final.md item D1 records nine procs
+    # having shipped the same regression.
+    if {[calc::has_win .calc.res.lab]} {
         .calc.res.lab configure -text [calc::results_label $origin]
     }
     # `balloon` re-binds <Enter>/<Leave> on every call (xschem.tcl's balloon), so
     # re-attaching is how a baked-in string is UPDATED — the same property that
     # makes it useless for the 56 function entries makes it right here, where
     # there is one string and it changes rarely.
-    if {[winfo exists .calc.res.path]} {
+    if {[calc::has_win .calc.res.path]} {
         catch {balloon .calc.res.path [calc::results_tip $origin $p $detail]}
     }
     return $respath
@@ -1211,33 +1228,501 @@ proc calc::results_refresh {} {
 # clause 1, landmines L6/L10).  Both are `{}` on every refusing arm, because
 # there is no slot to name.
 #
-# ⚠ SCOPE, and it is a fence rather than an omission: this settles WHICH
-# DATABASE Evaluate reads and what it says when there is none.  The computation
-# is calculator_batch phase 3 (doc/claude/specs/calculator.md R603-R607) and is
-# deliberately NOT built here -- item 10 is the gate that phase was waiting on.
+# ⚠ SCOPE: this proc settles WHICH DATABASE Evaluate reads and what it says when
+# there is none.  The computation itself is NOT here -- it is
+# `calc::eval_in_token` / `calc::eval_rpn` (R603-R607), which phase 3 built on top
+# of this proc's answer.  That is a division of labour, not an omission.
+#
+# ⚠ The two sentences this replaced said the computation "is deliberately NOT
+# built here -- item 10 is the gate that phase was waiting on", present tense,
+# AFTER phase 3 had built it in this same file.  Four live copies of that claim
+# survived the stage that built Evaluate; it corrected the one in
+# test_calc_widgets' CW13 and missed the ones in the product.  The lesson is in
+# the note on `calc::eval_refusal`: a prose claim is the one artefact here that
+# nothing re-runs, so it is the only place a stale statement survives a green
+# suite, a sabotage round AND an adversarial lens.
 proc calc::require_result {} {
     set src [calc::results_source]
     catch {calc::results_publish $src}
     set origin none ; set p {} ; set detail {} ; set type {} ; set idx {}
     foreach {origin p detail type idx} $src break
     if {$origin eq {refused}} {
-        return [dict create ok 0 origin refused path {} type {} idx {} \
+        return [dict create ok 0 origin refused path {} type {} idx {} token {} \
                     msg [calc::busy_msg]]
     }
     if {$p eq {}} {
         # R503f: which "nothing to evaluate against" sentence this world earns.
-        return [dict create ok 0 origin none path {} type {} idx {} \
+        return [dict create ok 0 origin none path {} type {} idx {} token {} \
                     msg [calc::no_result_advice]]
     }
-    return [dict create ok 1 origin $origin path $p type $type idx $idx msg {}]
+    return [dict create ok 1 origin $origin path $p type $type idx $idx \
+                token $detail msg {}]
 }
 
-# W12's press.  The refusal is U7's and it comes BEFORE the phase-3 stub,
-# because "which database" is settled by this item and "what to compute" is not.
+# ---------------------------------------------------------------------------
+# PHASE 3 — THE ENGINE STEP (plan steps 3.1 and 3.2; spec §0, §3, §9 R603-R605)
+#
+# ⚠⚠ NOTHING HERE PARSES AN EXPRESSION, AND THAT IS THE POINT.  Spec §0's own
+# heading is "Most of the engine already exists.  Do not write an expression
+# evaluator": `plot_raw_custom_data()` in src/save.c is an RPN machine carrying
+# the whole of §3.2's operator table, reached from Tcl as
+# `xschem raw add <varname> <expr> [<sweep_var>]` -- src/scheduler.c's own help
+# text gives the example `xschem raw add power {outm outp - i(@r1[i]) *}`.  What
+# follows is a DOOR to it: the destination discipline landmine L2 needs, the
+# point R604 asks for, and the sentence R603 puts on screen.
+#
+# ⚠ WHICH DATABASE is not decided here.  `calc::require_result` settled that
+# (R603, results batch item 10) and `calc::eval_in_token` is what reaches it;
+# `calc::eval_rpn` runs the engine in WHATEVER CONTEXT IS CURRENT and touches no
+# widget at all, which is why tests/headless/test_calc_engine.tcl and
+# tests/headless/test_calc_scratch_reuse.tcl can gate on the `--nogui` arm that
+# the Calculator's three other suites cannot run on.
+# ---------------------------------------------------------------------------
+
+# PLAN 3.1.  The buffer's text -> what the engine is handed.
+#
+# RPN is the default and the only notation that reaches the engine (RULING-5,
+# spec §12.3 and §8.3), so in RPN mode this is the IDENTITY.  It is a proc
+# rather than an inline read for one reason: PLAN phase 8's algebraic mode has
+# to have ONE place to change -- `calc::alg2rpn` goes in front of the return
+# here and nothing else in the file moves.  Row CE1 of
+# tests/headless/test_calc_engine.tcl asserts it has exactly one caller, which
+# is what makes "one place" checkable instead of merely intended.
+#
+# ⚠ IDENTITY MEANS BYTE IDENTITY, WHITESPACE INCLUDED.  The engine tokenises
+# with `my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save)` -- space, tab and
+# newline, with an EMPTY quote set -- and W15 is a multi-line text widget, so a
+# newline inside an expression is a legal delimiter.  Trimming here would
+# silently rewrite what the user typed and collapsing runs would move where
+# tokens break.  `calc::eval_rpn` trims its own copy, once, where the decision
+# "is there anything to evaluate" is made.
+proc calc::rpn_of_text {s} { return $s }
+
+# PLAN 3.1.  The same translation, read off W15.
+#
+# R508: with no window there is no buffer, so this answers {} and writes
+# nothing.  `calc::has_win` is the one site that knows R508's three cases,
+# including --nogui, where the `winfo` command itself is absent and a bare
+# `winfo exists` RAISES.
+proc calc::rpn_of_buffer {} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set s {}
+    catch {set s [.calc.buf get 1.0 end-1c]}
+    return [calc::rpn_of_text $s]
+}
+
+# R402's temporary destination name, minted.
+#
+# ⚠⚠ A NAME IS NEVER RE-USED, AND THAT IS THIS FILE'S WHOLE ANSWER TO LANDMINE
+# L2.  `xschem raw add <name> <expr>` evaluates into the column CALLED <name>
+# (`raw_add_vector()` registers it first, so `plot_raw_custom_data()` resolves
+# `yname` and writes that column rather than the shared scratch one).  A
+# REJECTED expression writes nothing at all -- and `raw add` answers 0, which
+# means "the vector already existed", not "the expression failed", because
+# `raw_add_vector()` DISCARDS the evaluator's return value.  So a Calculator
+# that evaluated into one fixed destination would report the PREVIOUS
+# expression's number for a mistyped one, with nothing on screen to say so.
+# Row SR1 of tests/headless/test_calc_scratch_reuse.tcl measures that in the
+# engine's own voice; a fresh name per evaluation is why the Calculator cannot
+# reach it.
+#
+# An existing name is SKIPPED rather than overwritten -- a previous process's
+# leak, or anything else that owns one, is somebody else's column.  The loop is
+# bounded because a `raw index` that answered >= 0 for every name would
+# otherwise spin; {} means "no free name", which `calc::eval_rpn` refuses on.
+proc calc::tmpvec {} {
+    variable tmpn
+    for {set tries 0} {$tries < 1000} {incr tries} {
+        incr tmpn
+        set n "__calc_tmp$tmpn"
+        set i -1
+        catch {set i [xschem raw index $n]}
+        if {![string is integer -strict $i] || $i < 0} { return $n }
+    }
+    return {}
+}
+
+# R604's first clause: which point the cursor is on, or -1 for "no cursor".
+#
+# `xschem raw annot` answers "<annot_p> <annot_x> <annot_sweep_idx>" for the
+# current database (src/scheduler.c), and `annot_p` is an ABSOLUTE index across
+# all datasets -- src/callback.c's cursor-B publisher sets it to `p`, which it
+# computed from the dataset offset -- so a read using it must pass dataset -1,
+# which `xschem raw value` documents as "n is the absolute position into the
+# whole data file".  `calc::eval_rpn` does exactly that, and one row proves it
+# by putting the cursor on dataset 1's copy of a sample.
+#
+# ⚠⚠ `annot_p >= 0` IS NOT "A CURSOR EXISTS", AND AN EARLIER REVISION OF THIS
+# COMMENT ASSERTED THE OPPOSITE AS MEASURED FACT -- that "annot_p is set only by
+# that publisher, which runs from a graph redraw; no headless route sets it".
+# THAT SENTENCE IS WHAT CAUSED THE DEFECT, and it was false twice over.  TWO
+# routes publish the field with no graph and no redraw:
+#
+#   `xschem annotate_at <t>`  -> backannotate_at_time() -> backannot_pos_at() ->
+#       backannotate_cursor_b_in_db() (src/callback.c).  That IS the cursor
+#       publisher, reached with a requested time instead of a pointer position,
+#       and what it stamps is a genuine cursor R604's first clause applies to.
+#   `xschem update_op`        -> update_op() (src/save.c) sets
+#       `xctx->raw->annot_p = 0` for ANY op/dc database.  That is the shipped
+#       operating-point annotation path -- the verb src/op_annot.tcl drives,
+#       reached from ase::ui::annot_ensure_loaded -- and it is NOT a cursor.
+#       Its own guard tests the sim_type ONLY (issue 0862, in that function's
+#       comment), so a genuine MULTI-POINT `.dc` sweep publishes its FIRST STEP
+#       as the operating point.  Measured on a 3-point dc raw whose v(d) is
+#       6.5 / 6.6 / 6.7: before the publish Evaluate answered 6.7 "at the last
+#       point", which is R604; after it, 6.5 "at the cursor", with no cursor
+#       anywhere -- a wrong number wearing a false explanation.
+#
+# THE DISCRIMINATOR IS THE THIRD FIELD, AND IT IS ALREADY IN THE ANSWER.
+# `xschem raw annot` returns "<annot_p> <annot_x> <annot_sweep_idx>".  The
+# cursor publisher stamps all three and clamps `sweep_idx` to >= 0 before doing
+# so; update_op() never names `annot_sweep_idx` at all, so it keeps the -1 the
+# read paths leave.  So this proc requires BOTH a point and a sweep index, and
+# band CE9 of tests/headless/test_calc_engine.tcl drives both publishers for
+# real -- plus a structural row asserting that exactly one site in the C sets
+# `annot_sweep_idx` to anything but -1, because the moment there are two the
+# test above stops measuring anything.
+#
+# ⚠ ONE STATE IS NOT SEPARATED AND IS DECLARED RATHER THAN GUESSED AT: an
+# `update_op` on a database where a cursor had ALREADY been published leaves
+# that cursor's `annot_sweep_idx` in place while moving `annot_p` to 0, so this
+# proc reads point 0 and calls it a cursor.  The C overwrites `cursor_b_val[]`
+# in the same breath, so the whole published annotation is the operating point's
+# by then and nothing here can recover the cursor's; separating them needs the C
+# to stamp or clear the third field, which is outside this file.  Recorded in
+# doc/claude/calculator_batch/receipts/C2-evaluate-blockers.md.
+#
+# ⚠ IT IS ALSO ITS OWN PROC SO THAT R604's CURSOR CLAUSE CAN BE SHADOWED, which
+# is how band CE4 reaches cursor indices no publisher here produces (dataset 1's
+# copy of a sample, and an index past the end of the data).  CE9 is the band
+# that drives the real field; CE4 is the band that explores it.
+#
+# ⚠ AND IT IS THE NEAREST SAMPLE, NOT AN INTERPOLATION, which is a narrowing of
+# R604 and is said here rather than left to be discovered.  `cursor_b_val[]`
+# holds the interpolated value (`interpolate_yval`, src/callback.c) but only for
+# columns that existed when the cursor was published: `raw_add_vector()` sets a
+# NEW column's entry to 0.0 and nothing recomputes it, so reading an expression
+# column "at the cursor" through that array answers a confident ZERO.  Measured
+# 2026-10-01.  Reading the column at `annot_p` is the honest answer available
+# from here, and R604 is met to one sample of the grid.
+proc calc::eval_cursor_point {} {
+    set a {}
+    if {[catch {xschem raw annot} a]} { return -1 }
+    set f [split [string trim $a]]
+    set p [lindex $f 0]
+    set s [lindex $f 2]
+    # ⚠ THE `$p < 0` HALF IS A BELT AND IS DECLARED UNFENCED, by the same rule
+    # `calc::eval_rpn`'s `raw add` belt is: no state reaches it.  Every writer
+    # of these two fields moves them together -- the publisher stamps both, the
+    # read/reset paths clear both to -1, and `update_op()` moves only annot_p
+    # and only upward -- so `annot_p < 0` with a sweep index present does not
+    # occur, and `calc::eval_rpn` tests `$cp >= 0` again on its own.  Sabotage
+    # C2-1b (this term weakened to "is it an integer") reddened NOTHING, so no
+    # row forces it and it is not claimed as fenced.  It stays because the
+    # alternative in that state is reporting point -1 as a cursor, and because
+    # the proc's contract is "-1 means no cursor" rather than "whatever the verb
+    # said".
+    if {![string is integer -strict $p] || $p < 0} { return -1 }
+    # THE TERM THAT IS FENCED, four ways, by band CE9: an operating-point
+    # publish leaves the third field at -1 and the cursor publisher never does.
+    # Without it `annot_p >= 0` reads `xschem update_op`'s point 0 as a cursor.
+    if {![string is integer -strict $s] || $s < 0} { return -1 }
+    return $p
+}
+
+# Every sentence Evaluate can put on the status line, in ONE place, so that a
+# re-wording is one edit and a check can read the words with no window.  R603's
+# own answer -- the scalar -- is `calc::eval_fmt`'s.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  These are the assistant's words, not the
+# user's; a `rule` debt is filed against them.  U7's refusal (no result at all)
+# is NOT here: it is `calc::no_result_msg`, ruled verbatim, and this proc must
+# not grow a second spelling of it.
+proc calc::eval_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        empty   { return {Nothing to evaluate: the buffer is empty.} }
+        nodata  { return {Evaluate: that result has no simulation data loaded.} }
+        dataset { return "Evaluate: dataset $a is not in the loaded result (it has $b)." }
+        point   { return "Evaluate: that result has no data at point $a." }
+        noname  { return {Evaluate: no free temporary vector name is available.} }
+        nonfinite { return "Evaluate: the result is not a finite number ($a)." }
+        stale   { return "Evaluate refused: the vector $a already exists, so its data could be\
+ a previous expression's." }
+        engine  { return "Evaluate: the engine would not read that expression ($a)." }
+        noctx   { return {Evaluate: the result's waveform window is not there to read from.} }
+        busy    { return {Evaluate: the result's waveform window is busy. Try again.} }
+    }
+    return {}
+}
+
+# Is this the text of a FINITE number?
+#
+# ⚠⚠ `string is double -strict` IS NOT THIS TEST, AND THAT IS WHY THIS PROC
+# EXISTS.  It accepts every IEEE non-finite spelling Tcl understands -- `nan`,
+# `-nan`, `inf`, `-inf`, in any case -- so a numeric check built on it vouches
+# for the SHAPE of an answer and not for its being a number to show.  Measured:
+# `v(ramp) -1 * sqrt()` reported `= -nan  (at the last point)` with ok=1, and
+# `1e300 1e300 *` reported `= inf`.  The ENGINE is not wrong to produce those
+# (sqrt of a negative is NaN in C, and plot_raw_custom_data() does not police
+# overflow); REPORTING one as R603's scalar is, because the status line then
+# carries a confident "(at the last point)" beside a non-number, which is the
+# Cadence failure mode R607 exists to forbid one step further along.
+#
+# WRITTEN AS A POSITIVE TEST -- "does this look like a finite decimal" -- rather
+# than as a list of non-finite spellings to reject, and that is not fastidious:
+# the one writer of these strings is `dtoa()` (src/util.c, `"%.8g"`), and `%g`
+# spells a non-finite differently on different C libraries.  glibc gives `inf`,
+# `-inf`, `nan`, `-nan`; the MSVC runtime this tree also targets (XSchemWin/)
+# gives `1.#INF`, `-1.#IND` and `1.#QNAN`.  A denylist written on THIS machine
+# would pass every one of the Windows spellings straight through and every row
+# here would be green, which is exactly the shape of mistake CLAUDE.md's
+# `#pragma` sentence is made of.  `%.8g` never emits a leading `+`, a hex float
+# or a thousands separator, so the pattern below admits everything a finite
+# value can be and nothing else.
+#
+# TEXTUAL, not arithmetic: `expr {$v == $v}` raises a domain error on a NaN
+# operand in Tcl 8.5+, and this is on an answering path, not a raising one.
+#
+# Band CE10 of tests/headless/test_calc_engine.tcl drives this proc directly
+# with every spelling named above -- including the three this machine cannot
+# produce, which is the only way that half can be fenced at all -- and then
+# drives the behaviour through `calc::eval_rpn`.
+proc calc::eval_finite {v} {
+    return [regexp {^-?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$} [string trim $v]]
+}
+
+# The answer dict, refusing.  ONE SITE, so the key set cannot drift between the
+# refusing paths and the one success path, however many refusing paths there
+# come to be.  Row CE3 asserts the key set, which is where the count belongs.
+#
+# ⚠ THIS COMMENT SAID "the NINE refusal paths" AND THE STAGE THAT WROTE IT ADDED
+# THE TENTH IN THE SAME CHANGE -- the `nonfinite` kind, four lines of its own
+# diff away.  It is quoted here rather than quietly deleted because it is the
+# fourth time in this batch a comment has carried a count nothing re-measures and
+# gone wrong, twice inside the very change that was fixing the previous one.  The
+# rule is CLAUDE.md's: either a ROW asserts the number, where it is re-measured
+# every run, or the sentence states the SHAPE and drops the number.  The shape
+# here is "one site", and that is the property worth having.
+proc calc::eval_refusal {msg {dataset 0} {dest {}} {point -1}} {
+    return [dict create ok 0 value {} at {} point $point dataset $dataset \
+                dest $dest msg $msg]
+}
+
+# PLAN 3.2 — R603/R604/R605 and landmine L2.  Evaluate <rpn> against whatever
+# database is CURRENT and answer one scalar.
+#
+# ⚠⚠ R605 IS THE SHAPE OF THIS PROC, NOT A LINE IN IT.  "Call the engine
+# immediately before reading the scratch column, in the same Tcl command, with
+# nothing in between that could evaluate anything else" is why the point to read
+# and the destination name are both resolved BEFORE the `raw add`, and why the
+# `raw value` is the very next statement after it.  Row SR5 of
+# tests/headless/test_calc_scratch_reuse.tcl asserts that adjacency over this
+# body's own text, with comments stripped, and that no other proc in the
+# namespace reads a value or calls the engine.
+#
+# ⚠ THE GUARD IS `raw add`'s RETURN, READ AS WHAT IT MEANS: 1 = this call
+# CREATED the column, 0 = it was already there and somebody else's evaluation
+# may be in it.  On 0 this refuses rather than report a number it cannot vouch
+# for, and it does NOT delete the column -- it did not make it.  `calc::tmpvec`
+# makes the 0 arm unreachable on an untouched tree, which is why band SR4 forces
+# it by shadowing the minting proc; without the guard the product would hand
+# back the previous expression's value for a rejected one, which is SR1's
+# measured bug with the Calculator's name on it.
+#
+# ⚠ WHAT THIS DOES **NOT** DO, and it is PLAN 3.4's (R607), not a hole left
+# open by accident: it cannot tell a REJECTED expression from one that
+# legitimately evaluates to zero.  `raw_add_vector()` discards the evaluator's
+# -1, so there is no failure to read from Tcl at all, and since issue 0325 a
+# freshly created column is zeroed before evaluation -- so a rejection answers a
+# defined 0.  R607 has to find the failing token by validating every
+# vector-looking token with `xschem raw index` BEFORE the engine runs.  Rows CE5
+# of tests/headless/test_calc_engine.tcl re-measure both halves every run.
+proc calc::eval_rpn {rpn {dataset 0}} {
+    set rpn [string trim $rpn]
+    if {$rpn eq {}} { return [calc::eval_refusal [calc::eval_msg empty] $dataset] }
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::eval_refusal [calc::eval_msg nodata] $dataset]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {![string is integer -strict $dataset] || $dataset < 0 || $dataset >= $nds} {
+        return [calc::eval_refusal [calc::eval_msg dataset $dataset $nds] $dataset]
+    }
+    set np 0
+    catch {set np [xschem raw points $dataset]}
+    if {![string is integer -strict $np] || $np < 1} {
+        return [calc::eval_refusal [calc::eval_msg nodata] $dataset]
+    }
+    # R604, resolved BEFORE the engine runs: the cursor if there is one, else
+    # the last point of the asked-for dataset.  A cursor index is absolute
+    # across datasets (see calc::eval_cursor_point), so the read passes -1.
+    set cp [calc::eval_cursor_point]
+    if {[string is integer -strict $cp] && $cp >= 0} {
+        set at cursor ; set point $cp ; set rdset -1
+    } else {
+        set at last ; set point [expr {$np - 1}] ; set rdset $dataset
+    }
+    set dest [calc::tmpvec]
+    if {$dest eq {}} { return [calc::eval_refusal [calc::eval_msg noname] $dataset] }
+    # ⚠ THE GUARD, AND IT HAS TO COME BEFORE THE ENGINE CALL RATHER THAN AFTER
+    # IT.  `xschem raw add <name> <expr>` is register-OR-FIND and *then*
+    # evaluate, so by the time its return value says "that column was already
+    # there" the engine has already written the caller's expression into
+    # somebody else's column -- measured, row SR1 of
+    # tests/headless/test_calc_scratch_reuse.tcl.  A refusal taken afterwards
+    # could protect the reported number and not the data.  Asking first
+    # protects both, and leaves the other column untouched.
+    set pre -1
+    catch {set pre [xschem raw index $dest]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::eval_refusal [calc::eval_msg stale $dest] $dataset $dest $point]
+    }
+    set rc {} ; set val {}
+    if {[catch {
+        set rc [xschem raw add $dest $rpn]
+        set val [xschem raw value $dest $point $rdset]
+    } e]} {
+        if {$rc eq {1}} { catch {xschem raw del $dest} }
+        return [calc::eval_refusal [calc::eval_msg engine $e] $dataset $dest $point]
+    }
+    # ...and the same question asked of the engine's own answer, as a BELT.  1
+    # means this call created the column.  While the guard above stands this arm
+    # is unreachable -- it needs another writer to have claimed the name between
+    # the `raw index` and the `raw add`, two adjacent statements -- so NO ROW
+    # FORCES IT and it is not claimed as fenced.  It is here because the
+    # alternative, in that race, is reporting a stale number silently, and
+    # because `raw add`'s return is the only thing that knows.
+    if {$rc ne {1}} {
+        return [calc::eval_refusal [calc::eval_msg stale $dest] $dataset $dest $point]
+    }
+    # R402: deleted before returning, on this path and on the one below it.
+    catch {xschem raw del $dest}
+    if {![string is double -strict $val]} {
+        return [calc::eval_refusal [calc::eval_msg point $point] $dataset $dest $point]
+    }
+    # ...and the check the line above does NOT make: `string is double -strict`
+    # accepts `nan` and both infinities, so a non-finite result would be
+    # reported as R603's scalar with a confident "(at the last point)" beside
+    # it.  `calc::eval_finite` is the one place that knows which spellings are
+    # numbers to show, and its comment carries the measurement and the
+    # portability reason it is a positive test rather than a denylist.
+    #
+    # ⚠ NOT A DIVISION-BY-ZERO GUARD.  `1 0 /` answered a garbage number until
+    # issue 1628 fixed `case DIVIS` in the engine itself, which is where the
+    # user ruled it be fixed so every caller benefits;
+    # tests/headless/test_divis_zero_1628.tcl owns that ground and nothing here
+    # duplicates it.  Band CE10 of tests/headless/test_calc_engine.tcl fences
+    # this one.
+    if {![calc::eval_finite $val]} {
+        return [calc::eval_refusal [calc::eval_msg nonfinite $val] $dataset $dest $point]
+    }
+    return [dict create ok 1 value $val at $at point $point dataset $rdset \
+                dest $dest msg {}]
+}
+
+# R603/R604's sentence.  The scalar, and WHICH point it came from, because the
+# status line is the only place the user learns the second half.
+#
+# R603 also asks for the value to be selectable and copyable: `.calc.status.msg`
+# is a readonly ENTRY rather than a label, which is what makes it so, and
+# `calc::build_status` says why.
+proc calc::eval_fmt {d} {
+    set ok 0
+    if {[catch {dict get $d ok} ok]} { return {} }
+    if {!$ok} {
+        set m {}
+        catch {set m [dict get $d msg]}
+        return $m
+    }
+    set v {} ; catch {set v [dict get $d value]}
+    set at {} ; catch {set at [dict get $d at]}
+    return "= $v  ([expr {$at eq {cursor} ? {at the cursor} : {at the last point}}])"
+}
+
+# R603: run the engine step in the context the SELECTED RESULT lives in.
+#
+# ⚠ THE READ TAKES A LOAN AND GIVES IT BACK (issue 0173), and the bracket is the
+# one `calc::session_result` already uses: `wviewer::enter_ctx $tok 1` /
+# `leave_ctx`.  `borrow 1` is issue 0314's arm -- every menu-driven press holds
+# `callback()`'s semaphore and an unborrowed switch is refused 100% of the time
+# from there.  A REFUSED loan is reported as busy, never as "no data" (T-J): a
+# refusal that reads like an answer is the defect that rule exists for.
+#
+# ⚠ AND THE SLOT IS ALREADY CURRENT INSIDE THE LOAN, so nothing here switches
+# databases.  `results::current` (src/results.tcl) returns the registry row
+# whose `cur` flag is set, so the result `calc::require_result` named IS the
+# context's loaded one -- which is also why phase 3 does not need the `type`
+# and `idx` the gate carries for identification.  No `xschem raw switch` and no
+# `xschem raw read` is issued from the Calculator: it reads what the session
+# selected and mutates nothing but its own temporary column.
+proc calc::eval_in_token {tok rpn {dataset 0}} {
+    if {$tok eq {}} { return [calc::eval_refusal [calc::eval_msg noctx] $dataset] }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok 1} ticket]} {
+        return [calc::eval_refusal [calc::eval_msg busy] $dataset]
+    }
+    if {![lindex $ticket 0]} {
+        return [calc::eval_refusal [calc::eval_msg busy] $dataset]
+    }
+    set d {}
+    if {[catch {calc::eval_rpn $rpn $dataset} d]} {
+        set d [calc::eval_refusal [calc::eval_msg engine $d] $dataset]
+    }
+    catch {wviewer::leave_ctx $tok $ticket}
+    return $d
+}
+
+# W12's press.  PLAN 3.2.
+#
+# The order is R603's: WHICH database first (`calc::require_result`, whose
+# refusal is U7's ruled sentence), then WHAT to compute, then the engine inside
+# that database's own context.  The buffer is read BEFORE the loan is taken, so
+# an empty buffer costs no context switch.
+#
+# R508: with no window this is a silent no-op that records nothing.  The guard
+# is here and not only in the callees because `calc::require_result` publishes
+# the Results Dir row as a side effect -- reaching it with no window would be a
+# write, and R508's "records nothing" is about state, not only about raising.
+#
+# ⚠ DECLARED LIMIT, MEASURED RATHER THAN GUESSED: THIS PROC NEVER PASSES A
+# DATASET, so `calc::eval_rpn`'s `{dataset 0}` default stands and -- when no
+# cursor is published -- Evaluate reports the last point of DATASET 0, whatever
+# dataset of a multi-dataset family the user is looking at.  Spec §1.2 keeps the
+# single-raw MULTI-DATASET family (`raw->datasets > 1`) IN v1 scope, so this is
+# a real gap and not a scope boundary; what is missing is the control that says
+# which dataset, and that is the `Family` pick scope (W9/W10), whose `-command`
+# still routes to `calc::inert ... 6` -- PLAN phase 6.  `eval_rpn` already takes
+# the argument, so the seam is in place and nothing here needs re-shaping: the
+# phase-6 press has one value to pass.  Measured on the committed fixture, whose
+# two transient datasets differ on purpose: `v(div)` answers 5 in dataset 0 and
+# 2.5 in dataset 1, and Evaluate answers 5 either way.  Note the CURSOR arm is
+# NOT affected -- `annot_p` is absolute across datasets, so a published cursor
+# reads whichever dataset it actually sits in (band CE4).
+#
+# ⚠ SECOND DECLARED LIMIT: the documented `%<n>` dataset SPELLING reads as a
+# SILENT ZERO from here.  `v(div)%1` typed into the buffer evaluates, answers 0
+# and says nothing, because the suffix belongs to `node_token_split()` on the
+# trace/`node=` path (landmine L5) and not to the inventory lookup the engine
+# resolves names through -- `xschem raw index v(div)%0` is -1, so the engine
+# treats the whole token as an unresolvable vector and issue 0325's zeroed
+# column is what gets read.  The Tcl-side per-dataset reader is `xschem raw
+# values <name> <dataset>`.  NOT FIXED HERE: naming the failing token is
+# R607/PLAN 3.4's job and that is where this stops being silent.  Band CE12 of
+# tests/headless/test_calc_engine.tcl asserts both limits as they stand, so a
+# later phase that closes either one reds a row and has to come back and correct
+# this comment.
 proc calc::eval_click {} {
+    if {![calc::has_win .calc.mode.eval]} { return {} }
     set g [calc::require_result]
     if {![dict get $g ok]} { return [calc::status [dict get $g msg]] }
-    return [calc::inert {Eval} 3]
+    set rpn [calc::rpn_of_buffer]
+    if {[string trim $rpn] eq {}} { return [calc::status [calc::eval_msg empty]] }
+    set tok {}
+    catch {set tok [dict get $g token]}
+    return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -1499,12 +1984,17 @@ proc calc::build_mode {} {
         -command [list calc::inert {Clip} 6]
     pack .calc.mode.clip -side left -padx {8 6} -pady 1
 
-    # ⚠ W12 (Eval) IS NOT PLAIN INERT ANY MORE.  Results batch item 10 settles
-    # WHICH DATABASE Evaluate reads -- the session's selection, through
-    # `calc::require_result` -- and U7's refusal for when there is none.  The
-    # computation is still calculator_batch phase 3's and is NOT built here, so
-    # a press WITH a result still lands on the phase-3 stub; what changed is
-    # that a press with NO result now says the one useful thing instead.
+    # ⚠ W12 (Eval) IS LIVE.  Results batch item 10 settled WHICH DATABASE
+    # Evaluate reads -- the session's selection, through
+    # `calc::require_result` -- and U7's refusal for when there is none;
+    # calculator_batch PLAN 3.2 then built the computation, so a press WITH a
+    # result now reaches the engine through `calc::eval_click` and reports a
+    # scalar (R603/R604).  `calc::inert` is no longer on any Eval path.
+    # ⚠ AN EARLIER REVISION OF THIS COMMENT SAID "a press WITH a result still
+    # lands on the phase-3 stub", and the stage that built Evaluate corrected
+    # that identical sentence in the sibling test suite's CW13 band while
+    # leaving TWO copies of it in this file -- here and above `calc::inert`.
+    # W11 (Plot) is still inert and is PLAN 3.3's.
     foreach {id label phase} {plot Plot 3 eval Eval 3} {
         if {$id eq {eval}} {
             set cmd calc::eval_click

@@ -1151,6 +1151,56 @@ group CB3 {
 }
 
 # =============================================================================
+# CB6 — calculator_batch PLAN 3.1: what the ENGINE is handed is the buffer,
+#       byte for byte
+# =============================================================================
+# ⚠ THIS BAND IS HERE AND NOT IN tests/headless/test_calc_engine.tcl BECAUSE IT
+# NEEDS THE WIDGET.  That suite is an `hcases` entry and owns `calc::rpn_of_text`
+# (the translation, which is the identity in RPN mode and is what PLAN phase 8
+# replaces) plus the R508 arm where `calc::rpn_of_buffer` answers {} with no
+# window.  What it CANNOT measure is the window read itself, and the read has a
+# classic way of being wrong: `.calc.buf get 1.0 end` returns the text widget's
+# implicit trailing newline, so the engine would be handed an expression with a
+# stray delimiter on the end -- harmless to `my_strtok_r`, and NOT harmless to
+# anything later that compares, stores or re-displays the buffer.  Nothing in
+# either suite saw that until this band existed; it was found by sabotaging
+# `end-1c` to `end` and watching every row stay green.
+#
+# It runs before CB4 on purpose: CB4 closes the window and leaves it closed.
+# =============================================================================
+group CB6 {
+    check "CB6 fixture: the window is still open" [pcall winfo exists .calc] 1
+    check "CB6 calc::rpn_of_buffer exists" \
+        [llength [pcall info procs ::calc::rpn_of_buffer]] 1
+    foreach {label s} {
+        empty           {}
+        one-token       {v(ramp)}
+        an-expression   {v(out) v(in) - db20()}
+        trailing-space  {v(a) v(b) + }
+        two-lines       "v(a)\nv(b) +"
+    } {
+        bufset $s
+        check "CB6 what the engine is handed is the buffer, byte for byte ($label)" \
+            [pcall calc::rpn_of_buffer] $s
+    }
+    # ...and it is the WIDGET it reads, not a cached copy: a change made behind
+    # the Calculator's back shows up immediately (R705's "every read is live"
+    # applied to the buffer).
+    bufset {v(a)}
+    pcall .calc.buf insert end { v(b) +}
+    check "CB6 ...and it reads the WIDGET, so an edit made behind its back is visible at once" \
+        [pcall calc::rpn_of_buffer] {v(a) v(b) +}
+    # the keypad route and the engine route agree, which is what makes PLAN
+    # 2.2's separator rule reach the engine at all: CB1 asserts what the key
+    # PUTS in the buffer, this asserts that what is handed on is the same thing.
+    bufset {v(out) v(in)}
+    pcall calc::pad_click /
+    check "CB6 a keypad press's result is what the engine would be handed" \
+        [list [bufget] [pcall calc::rpn_of_buffer]] {{v(out) v(in) /} {v(out) v(in) /}}
+    bufset {}
+}
+
+# =============================================================================
 # CB4 — R508: with no window, every phase-2 entry point is a silent no-op
 # =============================================================================
 # ⚠ CLOSES THE CALCULATOR and leaves it closed; CB5 then needs it closed.

@@ -1307,8 +1307,20 @@ pcall .calc.mode.dest set {Append}
 # ruling — "not implemented (phase 3)" is true and useless to a user who has no
 # results, and the sentence that replaces it names the gesture that fixes it.
 # Plot and Table are deliberately untouched: U7 names Evaluate, and gating the
-# other two would be scope creep (the phase-3 stub is still what a press WITH a
-# result reaches — S27 drives that arm).
+# other two would be scope creep.
+#
+# ⚠ AND THE REST OF THAT SENTENCE IS GONE BECAUSE IT WENT FALSE.  It said "the
+# phase-3 stub is still what a press WITH a result reaches — S27 drives that
+# arm", which was true until calculator_batch PLAN 3.2 built Evaluate: a press
+# with a result now runs the engine and reports a scalar, `calc::inert` is on no
+# Eval path, and S27 was RESTATED to assert the engine step rather than the
+# stub.  This is the FOURTH live copy of that one sentence to be found -- the
+# other three were two comments in src/calculator.tcl and CW13's in
+# test_calc_widgets.tcl -- which is why the stage that found it went looking
+# with a grep rather than from memory.  Two more remain in the SPECS and are
+# recorded in doc/claude/calculator_batch/receipts/C2-evaluate-blockers.md.
+# The row below is what makes this comment checkable: it asserts the refusal
+# only, and S27 asserts what a press WITH a result does.
 foreach {id label phase} {plot Plot 3 eval Eval 3 table Table 10} {
     check "S18 $id text" [pcall .calc.mode.$id cget -text] $label
     check "S18 $id enabled" [btnstate .calc.mode.$id] normal
@@ -3375,13 +3387,52 @@ pcall calc::results_refresh
 check "S27 the multi-analysis fixture is put back" \
     [pcall .calc.res.path get] {/tmp/s26/second_run.raw}
 
-# --- Evaluate WITH a result still lands on the phase-3 stub (SCOPE FENCE) ----
-# Item 10 settles which database Evaluate reads; it does NOT build the
-# computation. A press with a result must therefore still say what it always
-# said, or this item has quietly grown a phase.
+# --- Evaluate WITH a result now COMPUTES (RESTATED, calculator_batch PLAN 3.2)
+# ⚠ THIS ROW USED TO BE A SCOPE FENCE AND IS RESTATED RATHER THAN DELETED.  Its
+# old form asserted `Eval: not implemented (phase 3)` -- correct while results
+# batch item 10 settled WHICH DATABASE Evaluate reads and deliberately did not
+# build the computation.  PLAN phase 3 built it, so the stub is gone and what
+# this band can still assert is the ORDER item 10 actually owns: the database is
+# resolved FIRST, and only then is there a question of what to compute.
+#
+# With a result and an EMPTY buffer the answer names the buffer -- which is
+# itself the proof that the resolution succeeded, because the no-result arm
+# (U7's ruled sentence, asserted below) would have spoken instead.
+pcall calc::status {} 0
+pcall .calc.buf delete 1.0 end
+pcall calc::buf_sync
 pcall .calc.mode.eval invoke
-check "S27 Evaluate WITH a result falls through to the phase-3 stub" \
-    [pcall .calc.status.msg get] {Eval: not implemented (phase 3)}
+check "S27 Evaluate WITH a result gets PAST the gate and names the empty buffer, not a phase" \
+    [pcall .calc.status.msg get] {Nothing to evaluate: the buffer is empty.}
+# ...and with something IN the buffer it reaches the engine step INSIDE the
+# loan: the loan is taken and given back, and the refusal is about the data in
+# that context rather than about the buffer.  This fixture's viewer holds no
+# loaded raw, so "no simulation data" is the right answer and the loan log is
+# the evidence that the engine step ran where the gate said to run it.
+set ::s26_log {}
+pcall calc::status {} 0
+pcall .calc.buf insert end {v(ramp) 2 /}
+pcall calc::buf_sync
+pcall .calc.mode.eval invoke
+# ⚠ THE LOANS ARE COUNTED, NOT MERELY LOOKED FOR, and that is the whole row.
+# `calc::require_result` takes one loan of its own to resolve the selection, so
+# a press that evaluated in THIS window's context -- the arm U6 removed -- would
+# still leave one `enter`/`leave` pair in the log and a "look for one" row would
+# pass over it.  Measured: with `calc::eval_click` rewired to call
+# `calc::eval_rpn` directly instead of `calc::eval_in_token`, the first wording
+# of this row was GREEN on all three calculator suites.  TWO pairs: the gate's,
+# then Evaluate's.
+check "S27 ...and with an expression it runs the engine step inside a SECOND borrowed context, not this window's" \
+    [list [pcall .calc.status.msg get] \
+          [llength [lsearch -all -exact $::s26_log {enter good_tok borrow=1}]] \
+          [llength [lsearch -all -exact $::s26_log {leave good_tok}]]] \
+    {{Evaluate: that result has no simulation data loaded.} 2 2}
+check "S27 ...and the gate hands phase 3 the TOKEN as well as the slot, or there is no context to read in" \
+    [dict get [pcall calc::require_result] token] good_tok
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
+pcall calc::status {} 0
 
 # --- U8: the read is a LOAN, and the viewer is not dragged along -------------
 set ::s26_log {}

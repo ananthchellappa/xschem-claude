@@ -1418,9 +1418,16 @@ group CW13 {
     #
     # ⚠ RESTATED, results batch item 10: TWO MORE ENTRIES, and neither is a
     # phase leaking in early.  `calc::eval_click` (W12) resolves the session's
-    # result and either refuses in U7's ruled words or FALLS THROUGH TO
-    # `calc::inert` — the phase-3 stub is still what a press with a result
-    # reaches, which is why part (b) below still finds it inert.
+    # result and refuses in U7's ruled words when there is none.
+    # ⚠⚠ AND RESTATED AGAIN BY calculator_batch PLAN 3.2: it no longer falls
+    # through to `calc::inert`.  The sentence here used to say the phase-3 stub
+    # was still what a press WITH a result reached, and that was true until
+    # phase 3 built the computation — Evaluate now runs the engine step inside
+    # the result's own context (`calc::eval_in_token` → `calc::eval_rpn`).  What
+    # part (b) below still finds is that it touches neither the buffer nor the
+    # Stack, which is the claim this group actually owns; what a press now SAYS
+    # is `test_calc_skeleton`'s S27 band and
+    # `tests/headless/test_calc_engine.tcl`'s subject.
     # `calc::browse_inert` (Browse) replaced `{calc::status {Browse: not
     # implemented}}`: U9 ruled that control permanently inert rather than
     # unfinished, and "not implemented" is a promise that may only be made

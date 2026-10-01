@@ -4569,7 +4569,29 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
       }
       if(stackptr2 > 2) { /* 3 argument operators */
         if(stack1[i].i == COND) { /*  X cond Y ? --> X if conf == 1 else Y */
-          dbg(0, "%g %g %g\n",  stack2[stackptr2 - 3],  stack2[stackptr2 - 2],  stack2[stackptr2 - 1]);
+          /* LEVEL 1, because this is PER-POINT TRACING. (⚠ An earlier revision
+           * of this comment said "like every other dbg() in this function" and
+           * that is FALSE: the stack-overflow report further up is
+           * `dbg(0, "stack overflow in graph expression parsing. Interrupted")`
+           * and is CORRECTLY level 0 -- it fires once, for a real error the user
+           * must see, where this one fired once per evaluated point for a
+           * perfectly ordinary expression. The distinction is one-shot error
+           * versus per-point trace, not a blanket rule about the function, and
+           * the row that re-measures this reads only the COND arm so it could
+           * never have caught the overclaim.) At level 0 it
+           * printed UNCONDITIONALLY -- debug_var is 0 on an ordinary run
+           * (xinit.c) -- one line of operand triples per EVALUATED POINT, on
+           * every path. raw_add_vector() evaluates over
+           * `0 .. raw->allpoints - 1`, i.e. every point of every dataset, so a
+           * single `xschem raw add x {... ?}` wrote one line per point of the
+           * whole file to stderr. `?` is one of the twelve keys on the
+           * Calculator's keypad (calculator_batch RULING-2), so the first user
+           * to press it and Evaluate flooded their terminal, and the volume
+           * scales with the transient's length. Band CE11 of
+           * tests/headless/test_calc_engine.tcl COUNTS the lines through the
+           * `xschem log` verb; no figure is quoted here, because a comment is
+           * the one artefact in this tree that nothing re-runs. */
+          dbg(1, "%g %g %g\n",  stack2[stackptr2 - 3],  stack2[stackptr2 - 2],  stack2[stackptr2 - 1]);
           stack2[stackptr2 - 3] = stack2[stackptr2 - 2] ? stack2[stackptr2 - 3] : stack2[stackptr2 - 1];
           stackptr2 -= 2;
         }
