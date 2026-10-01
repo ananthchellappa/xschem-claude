@@ -110,7 +110,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_raw_schname_0514" \
                  "headless/test_replay_door_1619" \
                  "headless/test_select_log_1620" \
-                 "headless/test_selflog_grep_guard"]
+                 "headless/test_selflog_grep_guard" \
+                 "headless/test_registered_banner_1626"]
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
@@ -623,7 +624,9 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_viewer" \
                  "headless/test_replay_door_1619" \
                  "headless/test_select_log_1620" \
-                 "headless/test_add_wire_label"]
+                 "headless/test_add_wire_label" \
+                 "headless/test_calc_skeleton" \
+                 "headless/test_calc_widgets"]
 ## ⚠ `test_add_wire_label` IS IN **BOTH** LISTS, AND IT COSTS A `skip:` LINE ON
 ## PURPOSE (issue 1625). It has been an `hcases` entry for a long time and its
 ## create-form rows gate fine there. Issue 1625 moved the "stack the bus tokens"
@@ -733,6 +736,56 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## with no pass counter, which `banner_complete` cannot score. A counter and an
 ## `OVERALL: ok ($npass checks)` line were added additively -- see the comment at
 ## that suite's verdict block.
+## ⚠ `test_calc_skeleton` AND `test_calc_widgets` ARE `dcases` ENTRIES AND
+## DELIBERATELY NOT `hcases` ONES (issue 1626). The Calculator is Tk, and both
+## suites gate on `::has_x`: measured 2026-09-30 at 621c1ff5 on this tree,
+## `test_calc_skeleton`'s headless arm prints `RESULT: ALL PASS (0 checks)` -- a
+## hollow pass its own source comment flags as such -- and `test_calc_widgets`
+## prints `RESULT: SKIP (no X: ...)`. An `hcases` entry for either would spend a
+## whole case measuring NOTHING, which is the inverse of the defect 1626 is about.
+## ⚠ REGISTERING THEM AT ALL REQUIRED FIXING THEIR EPILOGUES FIRST, and that is
+## the whole of issue 1626: both printed only `RESULT: ALL PASS (N checks)`, which
+## `banner_complete` (tests/banner_rule.tcl -- the ONLY Tcl reader, and the one
+## this file sources) cannot score, so every passing check in both suites gated
+## NOTHING for a month while `run_suites.sh` and `full_audit.sh` -- the two
+## readers that are not the gate -- reported them green. (No count here either:
+## the sum was the two suites' then-current totals and both move with the phase;
+## issue 1626's own table carries the dated figures.) Same defect as issue 1615's
+## `test_wave_sigbrowser*` family. An `OVERALL: ok ($npass checks)` line was added
+## additively on the SUCCESS PATH ONLY in each suite, `RESULT:` kept last; see the
+## comment at each suite's verdict block. `test_calc_widgets`'s no-X path
+## deliberately does NOT claim completion -- a `dcases`-only entry never takes it,
+## and a path that announced completion when nothing ran would be a worse defect
+## than the one being fixed.
+## ⚠ AND NOTHING FENCED THE LISTS THEMSELVES until now. A suite's own green run
+## says nothing about whether T1 can score it (1615 cost a red gate proving that),
+## so `headless/test_registered_banner_1626` in `hcases` above now LIFTS THESE TWO
+## LISTS OUT OF THIS FILE'S OWN TEXT at runtime and asserts that every suite they
+## name can emit a line `banner_complete` accepts -- resolving each suite's
+## `source` chain, a command-substitution word, and one level of `set`/`append`
+## assignment, because the tree emits that line several different ways and a
+## one-file text scan reaches only the literal one. No count is quoted here: row
+## `RB4` of that suite re-measures the gap every run and prints the names, and
+## its own control battery says which spellings it accepts and rejects.
+## Its row `RB7` asserts the three entries above are in these lists BY NAME, in
+## the manner of row `V57` of `tests/headless/test_op_annot.tcl` -- measured: both
+## `dcases` entries deleted and the fence still said ALL PASS until that row
+## existed. Its row `RB6` asserts the converse for `hcases`: no `hcases` entry may
+## take a whole-file no-X early exit from which no banner is reachable -- proc
+## calls and the source chain followed, the same machinery the whole-file question
+## uses -- which is the shape both calculator suites have, because `RB2` is
+## arm-blind (limit `L6`) and would stay green while T1 scored such a case a
+## HARNESS failure. ⚠ THAT IS ONE SHAPE ON ONE ARM, not a general guarantee: `L6`
+## in that file's header names what it does not read, and T1's own `HARNESS:` line
+## is still the backstop. It is in `hcases`, so
+## it also checks itself. ⚠ IT IS DELIBERATELY
+## NOT A ROW IN section K of `tests/headless/test_audit_classifier.tcl`, which is
+## where the three banner READERS are locked together and was the obvious home:
+## that suite is in NEITHER list, so a fence placed there would gate nothing --
+## issue 1626's own defect one level up.
+## ⚠ Do not predict this entry's effect on the trailer's `skips=` figure: neither
+## calculator suite emits a lowercase `skip:` line on any arm (measured, all four
+## runs), and `summarize_all`'s own arm is `regexp {^skip:}`.
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)

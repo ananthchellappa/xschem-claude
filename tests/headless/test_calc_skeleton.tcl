@@ -3527,7 +3527,66 @@ catch {destroy .calccbprobe}
     incr fail
 }
 
+## ⚠⚠ THE `OVERALL: ok` SENTINEL IS WHAT T1 CAN SCORE, AND WITHOUT IT THIS SUITE
+## COULD NOT BE REGISTERED AT ALL (issue 1626). `banner_complete` in
+## tests/banner_rule.tcl — the ONLY Tcl reader of the completion-banner rule, and
+## the one tests/run_regression.tcl sources — is
+## `^OVERALL: ok([ \t]+\([^)]*\))?[ \t]*$`, and that file's own header says it
+## "implements no `RESULT: ALL PASS` spelling at all". So registered WITHOUT this
+## line, this suite WOULD HAVE BEEN scored
+## `HARNESS: … did not complete cleanly (exit=0, OVERALL_ok=0, died=0)`
+## with every one of its own checks PASSING.
+## ⚠ THAT IS A CONDITIONAL, AND AN EARLIER REVISION OF THIS COMMENT STATED IT IN
+## THE INDICATIVE PAST ("was scored"), WHICH WAS FALSE. Before issue 1626 this
+## suite was in NEITHER `hcases` NOR `dcases` -- `/usr/bin/grep -n 'calc'
+## tests/run_regression.tcl` returned nothing -- so no T1 run ever scored it at
+## all, and the figure above is DERIVED by running `regression_case_failed` over a
+## captured log, not observed in a verdict. Issue 1615's `809c03d1` gate, by
+## contrast, was a REAL red at `counted_failures=1`; the two are not the same kind
+## of fact and the earlier wording equated them. The sibling suite
+## test_calc_widgets.tcl worded it conditionally and correctly all along. (No count is
+## quoted here on purpose: this suite's check total moves with the phase and with
+## the arm — its `--nogui` arm runs none at all — and CLAUDE.md's rule is that
+## either a row asserts a count, where it is re-measured every run, or the
+## sentence drops it. The arm-by-arm figures as of issue 1626 are in
+## doc/claude/calculator_batch/receipts/A-register-1626.md, which is dated.)
+## `tests/headless/run_suites.sh` and `tests/headless/full_audit.sh` carry their
+## own EREs which DO accept `RESULT: ALL PASS`, which is why every standalone and
+## audit run of this suite had always looked fine: the two readers that could see
+## it are the two that are not the gate.
+##
+## ⚠ ADDITIVE, AND `RESULT:` MUST BE THE LAST `RESULT:` LINE — WHICH IS NOT THE
+## SAME CLAIM AS "AFTER THE BANNER", and an earlier revision of this comment got
+## that wrong. `summarize_all` in run_regression.tcl publishes a case's LAST
+## `^RESULT:` line into the verdict and run_suites.sh does `grep -E '^RESULT' |
+## tail -1`. Both are order-INDEPENDENT: printing `RESULT:` *before* the banner
+## was measured and all three readers stayed green, correctly, because
+## `banner_complete` is `regexp -line` over the whole captured body. So
+## reordering these two lines costs nothing and nothing in the tree catches it.
+## What DOES cost something is a SECOND `RESULT:` line after this one: the
+## published check count silently becomes whatever the last one says, with
+## `counted_failures` and `skips` both still 0 and no reader reddening. The
+## measurement was taken on this batch's sibling suite and is NOT repeated here:
+## it is that suite's own moving check total, and quoting it would be the defect
+## the parenthesis above refuses. Issue 1627's own file carries it, dated. That
+## is issue **1627**,
+## which is OPEN and unfenced, and the way it arrives is a suite with more than
+## one exit path printing a verdict on more than one of them. This suite has two
+## exit paths today (here and the no-DISPLAY gate near the top of the file) and
+## the Calculator's later phases add more, so a new exit path must print its
+## verdict instead of this one, never as well. The precedent for the ordering is
+## `wvbs_finish` in tests/headless/wvbs_common.tcl, whose own comment says the
+## same thing.
+##
+## ⚠ ONLY THIS PATH CLAIMS COMPLETION. The no-DISPLAY arm near the top of this
+## file exits early printing `RESULT: ALL PASS (0 checks)` and deliberately gets
+## NO banner: it ran nothing, and a path that announced completion when nothing
+## ran would be a worse defect than the one 1626 names. The consequence is
+## intended — an `hcases` entry for this suite would be scored a HARNESS failure,
+## loudly, which is the correct answer for a case that measures nothing. It is a
+## `dcases` entry and nothing else.
 if {$fail == 0} {
+    puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"
 } else {
     puts "RESULT: $fail FAILED ($npass passed)"

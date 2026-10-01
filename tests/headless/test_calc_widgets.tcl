@@ -80,13 +80,21 @@ proc check_expr {name cond} {
 proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
 proc ::bgerror {msg} { puts "BGERROR: $msg"; incr ::fail }
 
-# ⚠ WHOLE-FILE gate, and the banner spelling matters.  full_audit.sh's is_skip
-# (:237) runs BEFORE is_pass and matches `RESULT: SKIP`; that is CORRECT for a
+# ⚠ WHOLE-FILE gate, and the banner spelling matters.  full_audit.sh's `is_skip`
+# runs BEFORE its `is_pass` and matches `RESULT: SKIP`; that is CORRECT for a
 # file that ran no checks at all, and wrong for a per-group skip (it would
 # discard every check that did run).  This file has no per-group skip: every
-# group needs Tk, so it is all-or-nothing.  test_calc_skeleton.tcl:100 prints
-# `RESULT: ALL PASS (0 checks)` here, which matches none of the three is_skip
-# spellings and scores a hollow PASS — deliberately not copied.
+# group needs Tk, so it is all-or-nothing.  test_calc_skeleton's own gate prints
+# `RESULT: ALL PASS (0 checks)` where this one prints SKIP, which matches none of
+# the three is_skip spellings and scores a hollow PASS — deliberately not copied.
+#
+# ⚠ TWO BARE `file:line` CITATIONS IN THIS COMMENT HAD ROTTED AND ARE NOW GONE.
+# It cited full_audit.sh's is_skip as "(:237)" -- it is at 287, with is_pass at
+# 227, so the number named neither proc -- and "test_calc_skeleton.tcl:100" for a
+# `puts` that is at 114.  Both are now cited by SYMBOL, which is CLAUDE.md's rule
+# and the reason it exists: coordinates rot, identity holds.  Found by an
+# adversarial claims lens in issue 1626 stage A3, nine lines from an edit made by
+# a stage that believed it had grepped every digit in every comment of this file.
 if {![info exists ::has_x] || [info commands winfo] eq {}} {
     puts "RESULT: SKIP (no X: the Calculator widget inventory is Tk-only)"
     flush stdout
@@ -1473,7 +1481,42 @@ check "CW13 calc::close tore the window down" [winfo exists .calc] 0
 
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }
 
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } \
+## ⚠⚠ THE `OVERALL: ok` SENTINEL IS WHAT T1 CAN SCORE, AND WITHOUT IT THIS SUITE
+## COULD NOT BE REGISTERED AT ALL (issue 1626). `banner_complete` in
+## tests/banner_rule.tcl — the ONLY Tcl reader of the rule, and the one
+## tests/run_regression.tcl sources — accepts `^OVERALL: ok(...)?$` and NO
+## `RESULT: ALL PASS` spelling; `run_suites.sh` and `full_audit.sh` carry their own
+## EREs which DO accept it, so this suite's green checks had always looked fine
+## in the two readers that are not the gate. (No count is quoted: it moves with the
+## phase, and CLAUDE.md's rule is that either a row asserts a count or the sentence
+## drops it. Dated figures are in the issue-1626 receipt.) Registered without this line it would
+## be scored `HARNESS: … did not complete cleanly (exit=0, OVERALL_ok=0, died=0)`
+## with every check passing — issue 1615's first gate at `809c03d1`, exactly.
+##
+## ⚠ ADDITIVE, AND `RESULT:` MUST BE THE LAST `RESULT:` LINE: `summarize_all`
+## publishes a case's LAST `^RESULT:` line into the verdict and run_suites.sh
+## greps the last one. Both are order-independent, so this is a claim about being
+## LAST and not about following the banner. A SECOND `RESULT:` line after this
+## one silently rewrites the published check count to whatever the last one says,
+## with `counted_failures` and `skips` both still 0 and no reader reddening —
+## issue **1627**, OPEN and unfenced. ⚠ THE FIGURE IS DELIBERATELY NOT REPEATED
+## HERE: it was measured on this suite, so quoting it would pin this file's own
+## moving check total inside a comment nothing re-measures, which is the defect
+## the paragraph above refuses. Issue 1627's own file carries it, dated. This
+## file has two exit paths (here and the no-X gate above); a third must print its
+## verdict INSTEAD of one of these, never as well. Precedent: `wvbs_finish` in
+## tests/headless/wvbs_common.tcl.
+##
+## ⚠ THE WHOLE-FILE no-X GATE NEAR THE TOP GETS NO BANNER, DELIBERATELY. It prints
+## `RESULT: SKIP (no X: …)` having run zero checks, and `full_audit.sh`'s is_skip
+## matches that BEFORE is_pass. Adding a completion banner there would make a run
+## in which nothing happened claim it had finished and reported — a worse defect
+## than the one 1626 names, and the hollow-pass shape this file's own gate comment
+## already refuses to copy from test_calc_skeleton. This suite is a `dcases` entry
+## and nothing else, so T1 never takes that path; an `hcases` entry would be
+## scored a HARNESS failure, which is the correct answer for a case that measures
+## nothing.
+if {$fail == 0} { puts "OVERALL: ok ($npass checks)" ; puts "RESULT: ALL PASS ($npass checks)" } \
 else            { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

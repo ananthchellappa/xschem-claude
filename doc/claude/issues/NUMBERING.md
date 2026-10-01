@@ -4366,7 +4366,40 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   dissolved by this change (the state it asks about can no longer be entered) but stays on the queue,
   because only the user clears a rule debt.
 
-**The next free number is 1626.**
+- **1626** — the Calculator's 789 phase-0/1 checks are registered in nothing, because neither
+  `test_calc_skeleton` nor `test_calc_widgets` prints the completion banner. **Measured, not
+  grepped**: `banner_complete` — the only Tcl reader, and the only one `run_regression.tcl` sources —
+  returns **0** on both suites' real output on both arms, while `run_suites.sh` scores them
+  `ALL PASS (545 checks)` and `ALL PASS (244 checks)` on the display arm. So they are
+  **structurally unregisterable**, not merely unregistered, which is the same defect issue **1615**
+  found in the whole `test_wave_sigbrowser*` family and the mechanical reason the Calculator's five
+  Phase-0/1 receipts all came from a reader that is not the gate. ⚠ **A text census said "268 of 421
+  suites print `RESULT` and never `OVERALL`" and that number must not be quoted** — cross-checking it
+  against the registration lists found 7 *registered* suites in the same set, which take the sentinel
+  from a sourced common their own text does not contain. The grep measures file text; the defect is a
+  property of output.
+
+- **1627** — a second trailing `RESULT:` line silently rewrites a case's published check count, with
+  nothing reddening. Found by issue 1626's **sabotage round, aimed at something else**: appending one
+  extra `RESULT: ALL PASS (0 checks)` after a suite's real verdict takes the published count from
+  **244 to 0** while `counted_failures` and `skips` both stay honest at 0, because `summarize_all`
+  publishes a case's *last* `^RESULT:` line and `run_suites.sh` independently does
+  `grep -E '^RESULT' | tail -1`. So it defeats issue **1487**'s coverage instrument without
+  disturbing either number CLAUDE.md teaches a reader to check. ⚠ **`RESULT:` coming AFTER the
+  banner is harmless and was measured to be** — all three readers are order-independent — so the
+  rule is *"be the last `RESULT:` line"*, not *"come after the banner"*, and a fix that asserts an
+  order fixes the wrong thing. Arrives in practice through any suite with more than one exit path
+  printing a verdict on more than one of them. Carries, as its second open item,
+  **`test_audit_classifier` being in neither list** — so section K, the tree's only lock holding the
+  three banner readers in agreement, gates nothing.
+  ⚠ **Minting note: CLAUDE.md's `/usr/bin/grep -lw "$n"` check reported 1627 as TAKEN in two
+  clones, and it was not.** The match was the prose `a real press wrote a 1627-byte …` — a byte
+  count, and `-w` treats `1627-byte` as the word `1627`. In a four-thousand-line prose file,
+  incidental four-digit numbers will collide with any candidate; read the matching line before
+  believing the grep, and the pointer line plus a reserved-band check plus `ls <n>-*` remain the
+  load-bearing tests.
+
+**The next free number is 1628.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
