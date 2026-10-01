@@ -51,8 +51,12 @@
 #         options here), not a hand-written table, and the source-literal scan
 #         anchors on the option-name SUFFIX so the -active*/-highlight*/
 #         -disabled* families are not invisible to it.
-#   CW13  PHASE-1 INERTNESS: every enabled control routes through the stub,
-#         speaks (R506), and changes neither the buffer nor the Stack.
+#   CW13  INERTNESS, PHASE BY PHASE: every enabled control routes through the
+#         phase-1 stub or one of the four procs PLAN phase 2 landed, speaks
+#         (R506) whichever it is, and -- unless its phase HAS landed -- changes
+#         neither the buffer nor the Stack.  ⚠ RESTATED by phase 2; the group's
+#         own comment block says what moved and why the two lists are both
+#         asserted.  Nothing touches the Stack, landed or not: R510 is PLAN 4.3.
 #
 # Needs a DISPLAY (Tk widgets).  Standalone from the repo ROOT:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_widgets.tcl
@@ -1380,7 +1384,8 @@ group CW12 {
 }
 
 # =============================================================================
-# CW13 — PHASE-1 INERTNESS.  Every enabled control is provably inert.
+# CW13 — INERTNESS, PHASE BY PHASE.  Every enabled control is provably inert
+# UNLESS its phase has landed, and then provably wired to that phase's own proc.
 # =============================================================================
 # The plan's rule for phase 1: "every real control exists in its box, correct
 # class and initial state, COMPLETELY INERT".  The trap this group exists for is
@@ -1388,6 +1393,17 @@ group CW12 {
 # green.  So: what a control's -command IS, what pressing it does to the two
 # things the tool owns (the buffer and the Stack), and that it SPEAKS (R506:
 # silence is a bug).
+#
+# ⚠ PHASE 2 LANDED, SO THE GROUP IS NO LONGER A SINGLE CLAIM.  Fifteen controls
+# are now live and the rest are not, and a group that simply widened its
+# allow-list would stop fencing the trap it was built for.  Instead the live set
+# is named ($live2), its SIZE is asserted, the number of them the sweep really
+# pressed is asserted, and every exclusion in the purity sweep is keyed to that
+# same list -- so a control cannot be excused from the purity check without
+# being counted in the size check.  The behaviour itself is NOT measured here:
+# tests/headless/test_calc_buffer.tcl owns it, because this file is the widget
+# INVENTORY and a second file measuring the same behaviour would be the second
+# table R413 forbids, in test form.
 group CW13 {
     set ctrls {}
     foreach w [cwalk .calc] {
@@ -1410,44 +1426,86 @@ group CW13 {
     # unfinished, and "not implemented" is a promise that may only be made
     # where a phase really is coming.  Both were pinned by name here, so the
     # list is the honest place to record the change rather than a hole to widen.
+    #
+    # ⚠ RESTATED BY PHASE 2 (PLAN 2.2/2.3), AND THE LIST IS SPLIT IN TWO.  Four
+    # of these controls are no longer inert: the twelve operator keys
+    # (calc::pad_click, PLAN 2.2) and ClrBuf / Undo / Redo (calc::clr_buf,
+    # calc::buf_undo, calc::buf_redo, PLAN 2.3).  `calc::pad_click` MOVED from
+    # the inert list to the live one rather than being deleted from either,
+    # because the list is the honest place to record which phase a control
+    # belongs to -- the same reason the two results-batch entries above were
+    # pinned by name.  What those four now DO is
+    # tests/headless/test_calc_buffer.tcl's subject; what this group still
+    # asserts is that NOTHING ELSE moved, and the second list is what makes the
+    # first one's claim narrow enough to be worth something.
     set allowed {calc::inert calc::status calc::sel_click calc::sel_refuse
-                 calc::pad_click calc::dest_changed calc::res_toggle
+                 calc::dest_changed calc::res_toggle
                  calc::eval_click calc::browse_inert}
+    set live2 {calc::pad_click calc::clr_buf calc::buf_undo calc::buf_redo}
     set rogue {} ; set mute {}
+    set nlive 0
     foreach w $ctrls {
         set cmd [wcg $w -command]
         if {$cmd eq {}} {
             if {[wcg $w -state] ne {disabled}} { lappend mute $w }
             continue
         }
+        if {[lindex $cmd 0] in $live2} { incr nlive ; continue }
         if {[lindex $cmd 0] ni $allowed} { lappend rogue "$w -> [lindex $cmd 0]" }
     }
-    # ⚠ every one of these four rides on the CONTROL COUNT.  An offender list
+    # ⚠ every one of these rides on the CONTROL COUNT.  An offender list
     # over an empty sweep is empty, so without it "nothing is wired to a later
     # phase" is green on a window with no controls at all.
-    check "CW13 no control is wired to anything but a phase-1 stub" \
+    check "CW13 no control is wired to anything but a phase-1 stub or one of the four phase-2 procs" \
         [list [expr {[llength $ctrls] >= 40}] $rogue] {1 {}}
+    # ...and the phase-2 set is exactly the 12 operator keys + ClrBuf + Undo +
+    # Redo.  Asserted POSITIVELY, because the row above would stay green if a
+    # later hand quietly made a fifteenth control live by adding it to $live2.
+    check "CW13 exactly fifteen controls are wired to a landed phase-2 proc" $nlive 15
     check "CW13 no ENABLED control is silent (R506)" \
         [list [expr {[llength $ctrls] >= 40}] $mute] {1 {}}
 
     # (b) pressing every enabled control changes neither the buffer nor the Stack
+    #
+    # ⚠ RESTATED BY PHASE 2: "every enabled control" is now "every enabled
+    # control whose phase has NOT landed".  A press of one of the fifteen
+    # phase-2 controls really does edit the buffer, so the sentinel is put back
+    # after it and that press is excluded from $touched -- excluded by the same
+    # $live2 list part (a) asserts the size of, so a control cannot be excused
+    # here without being counted there.  R506 still applies to ALL of them:
+    # $silent takes no exclusions at all.
     pcall .calc.buf delete 1.0 end
     pcall .calc.buf insert end {SENTINEL}
+    pcall .calc.buf edit reset
     check "CW13 fixture: the pre-press snapshot is real text" \
         [pcall .calc.buf get 1.0 end-1c] {SENTINEL}
     set stk0 [pcall .calc.stk.list size]
-    set touched {} ; set silent {} ; set npressed 0
+    set touched {} ; set silent {} ; set npressed 0 ; set nlivepressed 0
     foreach w $ctrls {
         if {[wcg $w -state] eq {disabled}} continue
         incr npressed
         pcall calc::status {}
         pcall $w invoke
-        if {[pcall .calc.buf get 1.0 end-1c] ne {SENTINEL}} { lappend touched "buf:$w" }
+        if {[lindex [wcg $w -command] 0] in $live2} {
+            incr nlivepressed
+            pcall .calc.buf delete 1.0 end
+            pcall .calc.buf insert end {SENTINEL}
+            pcall .calc.buf edit reset
+            pcall calc::buf_sync
+        } elseif {[pcall .calc.buf get 1.0 end-1c] ne {SENTINEL}} {
+            lappend touched "buf:$w"
+        }
         if {[pcall .calc.stk.list size] != $stk0} { lappend touched "stk:$w" }
         if {[nsv statusmsg] eq {}} { lappend silent $w }
     }
-    check "CW13 no control touched the buffer or the Stack" \
+    check "CW13 no STILL-INERT control touched the buffer, and NOTHING touched the Stack" \
         [list [expr {$npressed >= 40}] $touched] {1 {}}
+    # ⚠ the live-press count is the anti-vacuity control for the exclusion: if
+    # the sweep pressed none of the fifteen, the row above would be a claim about
+    # a sweep that skipped exactly the controls most likely to be wrong.  Undo
+    # and Redo are disabled at this point (empty history), so thirteen are
+    # pressable, not fifteen.
+    check "CW13 the sweep really pressed the enabled phase-2 controls" $nlivepressed 13
     check "CW13 every one of them wrote a status line" \
         [list [expr {$npressed >= 40}] $silent] {1 {}}
     # the Results Dir toggle was pressed once by the sweep, so put it back
@@ -1455,23 +1513,37 @@ group CW13 {
     check "CW13 the sweep left the Results Dir row expanded again" \
         [nsv rescollapsed] 0
     pcall .calc.buf delete 1.0 end
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
 
-    # (c) the two disabled toolbar buttons stay disabled: R505 makes undo/redo
-    #     cover buffer AND stack as one history, which is phases 2 and 4.
-    check "W22 undo/redo are still disabled after the sweep" \
+    # (c) ⚠ RESTATED BY PHASE 2.  This row said "undo/redo are STILL DISABLED
+    #     after the sweep", which was an inventory claim resting on nothing in
+    #     the window being able to edit the buffer.  PLAN 2.3 wired them to the
+    #     buffer's own history (R505's buffer half; the joined buffer+stack
+    #     history is PLAN 4.4), so what W22 can still assert here is that the
+    #     INITIAL state is the EMPTY-HISTORY state and is reachable again -- the
+    #     line above empties the history, so a window that left them enabled
+    #     anyway would be wrong.  The enable/disable transitions themselves are
+    #     tests/headless/test_calc_buffer.tcl's CB2.
+    check "W22 undo/redo are disabled again once the buffer history is empty" \
         [list [wcg .calc.btb.undo -state] [wcg .calc.btb.redo -state]] \
         {disabled disabled}
-    # (d) and the canvas entries, which are items rather than widgets
+    # (d) and the canvas entries, which are items rather than widgets.  The
+    #     function browser is phase 5 and still inert; the operator key is phase
+    #     2 and is not, so it moved to test_calc_buffer.tcl (CB1).
     pcall .calc.buf insert end {SENTINEL}
+    pcall .calc.buf edit reset
     set stk0 [pcall .calc.stk.list size]
+    pcall calc::status {}
     pcall calc::fn_click average
-    pcall calc::pad_click +
-    check "CW13 a live function entry and an operator key are inert too" \
+    check "CW13 a live function entry is still inert (phase 5)" \
         [list [pcall .calc.buf get 1.0 end-1c] [pcall .calc.stk.list size]] \
         [list {SENTINEL} $stk0]
-    check_expr "CW13 ...and both name the phase that owns them" \
-        {[string match {*not implemented (phase 2)*} [nsv statusmsg]]}
+    check_expr "CW13 ...and names the phase that owns it" \
+        {[string match {*not implemented (phase 5)*} [nsv statusmsg]]}
     pcall .calc.buf delete 1.0 end
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
     pcall calc::status {}
 }
 

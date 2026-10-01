@@ -626,7 +626,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_select_log_1620" \
                  "headless/test_add_wire_label" \
                  "headless/test_calc_skeleton" \
-                 "headless/test_calc_widgets"]
+                 "headless/test_calc_widgets" \
+                 "headless/test_calc_buffer"]
 ## ⚠ `test_add_wire_label` IS IN **BOTH** LISTS, AND IT COSTS A `skip:` LINE ON
 ## PURPOSE (issue 1625). It has been an `hcases` entry for a long time and its
 ## create-form rows gate fine there. Issue 1625 moved the "stack the bus tokens"
@@ -736,13 +737,26 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## with no pass counter, which `banner_complete` cannot score. A counter and an
 ## `OVERALL: ok ($npass checks)` line were added additively -- see the comment at
 ## that suite's verdict block.
-## ⚠ `test_calc_skeleton` AND `test_calc_widgets` ARE `dcases` ENTRIES AND
-## DELIBERATELY NOT `hcases` ONES (issue 1626). The Calculator is Tk, and both
-## suites gate on `::has_x`: measured 2026-09-30 at 621c1ff5 on this tree,
-## `test_calc_skeleton`'s headless arm prints `RESULT: ALL PASS (0 checks)` -- a
-## hollow pass its own source comment flags as such -- and `test_calc_widgets`
-## prints `RESULT: SKIP (no X: ...)`. An `hcases` entry for either would spend a
-## whole case measuring NOTHING, which is the inverse of the defect 1626 is about.
+## ⚠ `test_calc_skeleton`, `test_calc_widgets` AND `test_calc_buffer` ARE
+## `dcases` ENTRIES AND DELIBERATELY NOT `hcases` ONES (issue 1626). The
+## Calculator is Tk, and all three gate on `::has_x`: measured 2026-09-30 at
+## 621c1ff5 on this tree, `test_calc_skeleton`'s headless arm prints
+## `RESULT: ALL PASS (0 checks)` -- a hollow pass its own source comment flags as
+## such -- and `test_calc_widgets` prints `RESULT: SKIP (no X: ...)`. An `hcases`
+## entry for either would spend a whole case measuring NOTHING, which is the
+## inverse of the defect 1626 is about.
+## ⚠ `test_calc_buffer` IS PLAN PHASE 2's BEHAVIOUR FENCE and was added the same
+## way, with its epilogue checked against `banner_complete` BEFORE it was
+## registered rather than after: captured on both arms through the real binary and
+## fed to the predicate this file sources, the display arm answers 1 and the
+## headless arm 0, and `regression_case_failed 0 <display body>` answers 0. That
+## asymmetry IS the reason for `dcases` only, and it is the check issue 1626 exists
+## because nobody ran. Its no-X path copies `test_calc_widgets`' `RESULT: SKIP`
+## spelling and claims no completion, for the same reason. Phase 2 also RESTATED,
+## in place, the phase-1 inertness bands of the other two -- `S19`/`S22` in the
+## skeleton and `CW13` in the inventory -- because the twelve operator keys,
+## ClrBuf, Undo and Redo are no longer inert; both suites' check totals moved up
+## by the rows that restatement added, and neither lost a row.
 ## ⚠ REGISTERING THEM AT ALL REQUIRED FIXING THEIR EPILOGUES FIRST, and that is
 ## the whole of issue 1626: both printed only `RESULT: ALL PASS (N checks)`, which
 ## `banner_complete` (tests/banner_rule.tcl -- the ONLY Tcl reader, and the one

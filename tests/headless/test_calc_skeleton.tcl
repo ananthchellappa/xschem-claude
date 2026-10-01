@@ -1403,29 +1403,68 @@ foreach {id label} $btb {
 }
 check "S19 the other eight are pressable" $badenabled {}
 
-# NO BUTTON MAY ACT ON THE BUFFER YET, and every one of them must still speak.
+# ⚠ RESTATED BY PHASE 2 (PLAN 2.3), IN PLACE. This band used to read "NO
+# BUTTON MAY ACT ON THE BUFFER YET, and every one of them must still speak", and
+# `ClrBuf` is now one of the three toolbar buttons that DOES act on it — the
+# other two are undo/redo, which this band never presses. Both halves of the old
+# claim are kept and narrowed rather than deleted: every button must still
+# SPEAK (R506, and ClrBuf now says what it did instead of naming a phase), and
+# every button that is still INERT must still leave the buffer and the stack
+# alone. What ClrBuf, Undo, Redo and the operator keys now DO is
+# tests/headless/test_calc_buffer.tcl's subject; this file keeps the inventory
+# and the geometry.
 set bufbefore [pcall .calc.buf get 1.0 end]
+# id -> the status line the press must produce. A button whose phase has not
+# landed names that phase; a landed one says what it did.
+array set btbsays {}
+foreach {id label} $btb { set btbsays($id) "$label: not implemented*" }
+set btbsays(clrbuf) {buffer cleared}
+# the ids this band no longer presses for purity, because their phase landed
+set btblive {clrbuf}
 set silent {}
+set npressed 0
 foreach {id label} $btb {
     if {$id in {undo redo}} continue
     pcall calc::status {}
     pcall .calc.btb.$id invoke
-    if {![string match "$label: not implemented*" [pcall .calc.status.msg get]]} {
+    incr npressed
+    if {![string match $btbsays($id) [pcall .calc.status.msg get]]} {
         lappend silent $id=[pcall .calc.status.msg get]
     }
+    # a landed button really did edit the buffer; put the snapshot back so the
+    # purity comparison below is about the buttons that are still inert
+    if {$id in $btblive} {
+        pcall .calc.buf delete 1.0 end
+        pcall .calc.buf insert end [string trimright $bufbefore \n]
+        pcall .calc.buf edit reset
+        pcall calc::buf_sync
+    }
 }
-check "S19 every toolbar button names itself and its phase" $silent {}
+# ⚠ the press COUNT rides along: an empty sweep has an empty offender list, so
+# "every button speaks" would be green over a toolbar with no buttons.
+check "S19 every toolbar button speaks: a phase that has not landed names itself, a landed one says what it did" \
+    [list $npressed $silent] {8 {}}
 # ⚠ the snapshot must be REAL: with no buffer widget both sides are the same
 # "ERR:bad window path name" string and the comparison passes over the very
 # absence it is aimed at (the S16 recall lesson). Positive control, then a
 # value that cannot match when it fails.
 check_true "S19 the pre-press buffer snapshot is real text" \
     [expr {![string match ERR:* $bufbefore] && [string match {*v(out)*} $bufbefore]}]
-check "S19 no toolbar button touched the buffer" \
+check "S19 no STILL-INERT toolbar button touched the buffer" \
     [expr {[string match ERR:* $bufbefore] ? {NO-SNAPSHOT-TO-COMPARE}
                                            : [pcall .calc.buf get 1.0 end]}] $bufbefore
-check "S19 no toolbar button touched the stack" [pcall .calc.stk.list size] 0
-# a disabled button does not fire at all — the sentinel stays put
+check "S19 no toolbar button touched the stack — not even the landed ones" \
+    [pcall .calc.stk.list size] 0
+# ⚠ RESTATED: a disabled button does not fire at all — but the sweep above has
+# now edited the buffer, so undo is no longer disabled by the time we get here
+# and the old spelling of this row measured a NORMAL button. Put the history
+# back to empty first (which is what makes them disabled, R505's buffer half),
+# then press. The claim is unchanged; its precondition now has to be arranged.
+pcall .calc.buf edit reset
+pcall calc::buf_sync
+check "S19 fixture: an empty edit history disables undo/redo again (R505)" \
+    [list [pcall .calc.btb.undo cget -state] [pcall .calc.btb.redo cget -state]] \
+    {disabled disabled}
 pcall calc::status {S19 sentinel}
 pcall .calc.btb.undo invoke
 pcall .calc.btb.redo invoke
@@ -1433,6 +1472,8 @@ check "S19 disabled undo/redo do not fire" \
     [list [winfo exists .calc.btb.undo] [winfo exists .calc.btb.redo] \
           [pcall .calc.status.msg get]] {1 1 {S19 sentinel}}
 pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
 
 # --- S20 the Stack (W23-W25) -------------------------------------------------
 check "S20 .calc.stk class" \
@@ -1785,11 +1826,19 @@ check "S22 every key wears the palette" [list [llength $padbuttons] $padcolor] {
 check "S22 the pad frame wears the panel colour" \
     [pcall .calc.pad cget -background] $c_panel
 
-# INERT, and R506: every key names itself and the phase that will implement it.
-# Insertion at the caret is plan 2.2; the stack composition R510 asks of a
-# binary operator button is phase 4.
+# ⚠ RESTATED BY PHASE 2 (PLAN 2.2), IN PLACE. This band used to assert the
+# keypad was INERT: "every key names itself and the phase that will implement
+# it", and "no key touched the buffer". Phase 2 IS that phase, so the twelve
+# operator keys now insert their token at the caret and say so; WHAT they insert
+# and WHERE is tests/headless/test_calc_buffer.tcl's subject (CB1), not this
+# file's. Two halves of the old claim survive here and are what this file still
+# owns: every key must SPEAK (R506), and NO key may touch the STACK -- the stack
+# composition R510 asks of a binary operator button is PLAN 4.3, not this phase,
+# so a key that pushed a stack entry today would be phase 4 leaking in early.
+# The four USER buttons are phase 9 and are still inert, buffer included.
 pcall .calc.buf delete 1.0 end
 pcall .calc.buf insert end {S22 INERT SENTINEL}
+pcall .calc.buf edit reset
 set padbuf [pcall .calc.buf get 1.0 end]
 set padstk [pcall .calc.stk.list size]
 set padsilent {}
@@ -1798,12 +1847,19 @@ set n 1
 foreach tok $padkeys {
     pcall calc::status {}
     if {![string match ERR:* [pcall .calc.pad.k$n invoke]]} { incr padpressed }
-    if {[pcall .calc.status.msg get] ne "operator $tok: not implemented (phase 2)"} {
+    if {[pcall .calc.status.msg get] ne "operator $tok inserted"} {
         lappend padsilent k$n=[pcall .calc.status.msg get]
     }
     incr n
 }
-check "S22 every operator key names itself and its phase (R506)" $padsilent {}
+check "S22 every operator key names itself and what it did (R506)" $padsilent {}
+# the keys edited the buffer, which is now their job; put the sentinel back so
+# the user buttons' purity check below is about the USER BUTTONS
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {S22 INERT SENTINEL}
+pcall .calc.buf edit reset
+pcall calc::buf_sync
+set userbuf [pcall .calc.buf get 1.0 end]
 set usersilent {}
 foreach i {1 2 3 4} {
     pcall calc::status {}
@@ -1818,17 +1874,19 @@ check_true "S22 the pre-press snapshot is real text" \
            && [string is integer -strict $padstk]}]
 # ⚠ the press COUNT is part of the purity assertion: "nothing was pressed" and
 # "everything was pressed and touched nothing" are the same green otherwise.
-check "S22 no key touched the buffer" \
+check "S22 the four user buttons touched the buffer not at all (phase 9)" \
     [list $padpressed \
-          [expr {[string match ERR:* $padbuf] ? {NO-SNAPSHOT-TO-COMPARE}
+          [expr {[string match ERR:* $userbuf] ? {NO-SNAPSHOT-TO-COMPARE}
                                               : [pcall .calc.buf get 1.0 end]}]] \
-    [list 16 $padbuf]
-check "S22 no key touched the stack" \
+    [list 16 $userbuf]
+check "S22 NO key and no user button touched the stack -- R510 is PLAN 4.3" \
     [list $padpressed \
           [expr {[string is integer -strict $padstk] ? [pcall .calc.stk.list size]
                                                      : {NO-SNAPSHOT-TO-COMPARE}}]] \
     [list 16 $padstk]
 pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
 
 # THE ONE -minsize ITEM 4 WAS SENT TO RE-JUDGE (phase-0 receipt: "the keypad
 # pane sits at its 140px minimum, against ~115px in the reference — phase 1 puts

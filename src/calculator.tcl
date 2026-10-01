@@ -177,6 +177,33 @@ namespace eval calc {
     # R413: the last hover help written to the status area, so that <Leave> can
     # retire ITS line and not somebody else's.
     variable fnhelp {}
+    # Phase 2 (2.3).  Has this Tk got the 8.6-only `edit canundo`/`edit canredo`?
+    # EMPTY means not yet probed; calc::edit_can_probe measures it once and
+    # caches it here, and a test clears it to force a re-measurement.
+    variable editcan {}
+    # ...and when it has NOT, the two conservative history hints the fallback
+    # answers from.  Both 0 on a fresh window, and calc::close puts them back
+    # there.  calc::buf_can states the contract and why over-answering is the
+    # only safe direction.
+    variable fbundo 0
+    variable fbredo 0
+    # ...and the buffer text as of the last calc::buf_sync.  calc::buf_typed
+    # compares against it so that a <KeyRelease> which changed nothing — a
+    # caret move, a modifier, the release of a refused Ctrl+Z — does not raise
+    # the hints and undo a refusal's self-correction.  Reset on close with the
+    # hints, because it is the same window-scoped state.  calc::buf_typed says
+    # what breaks without it.
+    variable fbtext {}
+    # Phase 2 (2.2).  THE CHARACTERS THE NETLIST ENGINE SPLITS AN EXPRESSION ON,
+    # and the whole of them: plot_raw_custom_data() in src/save.c tokenises with
+    # my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save).  calc::engine_space is
+    # the only predicate allowed to answer "already separated", because any
+    # WIDER notion of whitespace suppresses a separator the engine still needs
+    # and fuses two tokens into one (calc::token_sep says what that costs).
+    # Row CB1 of tests/headless/test_calc_buffer.tcl reads the delimiter string
+    # out of that C call site and compares it with this one, so the two copies
+    # cannot drift apart without a red.
+    variable engine_wsp " \t\n"
 }
 
 # The panedwindows this window owns, as
@@ -425,6 +452,9 @@ proc calc::open {} {
 proc calc::close {} {
     variable statusmsg
     variable statushist
+    variable fbundo
+    variable fbredo
+    variable fbtext
     # D5: capture the layout before the widgets go away, and swallow the
     # errors a half-destroyed panedwindow raises.
     catch {calc::save_layout}
@@ -435,6 +465,23 @@ proc calc::close {} {
     # that may no longer be loaded — the same trap R705 names.
     set statusmsg {}
     set statushist {}
+    # ...and so do the 8.5 fallback's two edit-history hints, for exactly the
+    # same reason, and it is R508's own rationale that says so: "The history is
+    # a property of the window: a closed-and-reopened Calculator starts with an
+    # empty one, matching R705's 'nothing stale is resurrected'."  These two
+    # answer "has this window's buffer got an edit history?" and the next
+    # window's buffer has an empty one, so carrying them across a close left a
+    # reopened Calculator able to report a history it did not have -- R505's
+    # "disabled exactly when their history is empty" backwards.  (R705 itself is
+    # about the current RAW and stale vector names; the quoted phrase is the
+    # spec's own gloss of it inside R508, which is the clause that binds here.)
+    # The capability probe (`editcan`) is deliberately NOT cleared: it measures
+    # the INTERPRETER, which a close does not change.  `fbtext` goes with the
+    # hints and not with the probe: it is this window's buffer text, and the
+    # next window's buffer is empty.
+    set fbundo 0
+    set fbredo 0
+    set fbtext {}
 }
 
 # ---------------------------------------------------------------------------
@@ -630,6 +677,24 @@ proc calc::build_status {} {
     pack .calc.status.msg  -side left -fill x -expand 1 -padx 2 -pady 1
 }
 
+# R508's THREE cases, in one place, because they are not the same test.  "No
+# window" means `.calc` was never built, OR it was closed, OR we are under
+# `--nogui`, where Tk is not loaded and the `winfo` COMMAND ITSELF does not
+# exist.  A bare `winfo exists .calc` answers the first two and RAISES
+# `invalid command name "winfo"` on the third — the opposite of R508's "silent
+# no-op that returns cleanly", and it takes the caller down with it, which is
+# the ciw_echo precedent R508 cites.  calc::status asked `info commands winfo`
+# inline from the start; every later entry point asks it through this proc, so
+# the third case cannot be implemented in one of them and forgotten in the next.
+# Rows CB5 of tests/headless/test_calc_buffer.tcl force the third case by
+# renaming ::winfo away (the mechanism row S13 of test_calc_skeleton.tcl
+# already uses for calc::status) and assert, structurally, that no phase-2 proc
+# names `winfo` itself.
+proc calc::has_win {w} {
+    if {[info commands winfo] eq {}} { return 0 }
+    return [winfo exists $w]
+}
+
 # R507/R508/R509.  Write a line to the status area and remember it.
 #
 #   - no window (never built, closed, or --nogui where `winfo` does not exist):
@@ -654,8 +719,7 @@ proc calc::status {{msg {}} {record 1}} {
     variable statusmsg
     variable statushist
     variable histmax
-    if {[info commands winfo] eq {}} { return {} }
-    if {![winfo exists .calc.status.msg]} { return {} }
+    if {![calc::has_win .calc.status.msg]} { return {} }
     set statusmsg $msg
     if {$msg eq {}} { return {} }
     if {!$record} { return $msg }
@@ -1492,13 +1556,32 @@ proc calc::dest_changed {} {
 #
 # The buffer is the one phase-1 control that is not inert, and deliberately so:
 # it is a text widget, and typing into a text widget is the widget working, not
-# a behaviour this phase is wiring.  -undo 1 is the blanket house default on
-# every editable text in the tree (recon/widgets.md §5, 16 sites).
+# a behaviour this phase is wiring.  Its undo option is set the way every other
+# editable text in this tree sets it: src/xschem.tcl and src/ciw.tcl both create
+# theirs with undo ON, and nothing in src/*.tcl creates one with it off.
 #
-# ⚠ Undo/redo are created DISABLED and stay that way here (W22).  R505 makes
-# them cover buffer edits AND stack operations as ONE history, which is phase 2
-# (2.3) and phase 4 (4.4); an undo button that drove only the text widget's own
-# stack would be a different feature wearing the same label.
+# ⚠ AN EARLIER REVISION OF THAT SENTENCE CARRIED A SITE COUNT AND A SECTION
+# POINTER INTO THIS BATCH'S recon DIRECTORY, AND BOTH HALVES WERE WRONG.  The
+# pointer resolved to nothing — that directory was never committed on any branch
+# and is not on disk — and it joins the citations to it already retired from this
+# file.  ⚠ FURTHER LIVE-LOOKING ONES REMAIN HERE (grep this file for that
+# directory name) and are open item 2 of
+# doc/claude/calculator_batch/LEDGER.md; they are not this change's to retire.
+# The count did not reproduce by any spelling either: the undo option
+# occurs more often than it occupies lines, and a grep for it finds every COMMENT
+# that mentions it as well, so a sentence quoting its own count becomes its own
+# counterexample.  That is why the sentence above states the shape, quotes no
+# figure, and deliberately does not spell the option out — the trap CLAUDE.md
+# records from the 1608 batch, where one sentence shipped wrong three times
+# because each rewrite moved the number it was quoting.  The measurement is in
+# doc/claude/calculator_batch/receipts/B3-final.md, where it is dated.
+#
+# ⚠ Undo/redo are created DISABLED (W22).  R505 makes them cover buffer edits
+# AND stack operations as ONE history; phase 2 (2.3) wires the BUFFER HALF, and
+# the joined history is phase 4 (4.4).  Until the stack exists there is nothing
+# to join, so an undo button driving the text widget's own stack is the whole of
+# what R505 can mean here — but it is only half the requirement, and 4.4 is what
+# closes it.  calc::buf_sync is what moves them off `disabled`.
 proc calc::build_buf {} {
     text .calc.buf -height 4 -undo 1 -wrap none -exportselection 1 \
         -relief sunken -borderwidth 1 \
@@ -1512,29 +1595,476 @@ proc calc::build_buf {} {
     # id / label / the plan phase that makes it work.  Order is spec §4's:
     # W17 enter, W18 pop, W19 swap roll clrbuf clrstk, W20 M+, W21 ME,
     # W22 undo redo.
-    foreach {id label phase} {
-        enter  {Enter}  4
-        pop    {Pop}    4
-        swap   {Swap}   4
-        roll   {Roll}   4
-        clrbuf {ClrBuf} 2
-        clrstk {ClrStk} 4
-        mplus  {M+}     9
-        me     {ME}     9
-        undo   {Undo}   2
-        redo   {Redo}   2
+    # id / label / the plan phase that makes it work / the command that does it.
+    #
+    # ⚠ THE FOURTH COLUMN IS THE PROGRESS BAR, AND THE BATCH'S GREP CANNOT SEE
+    # IT.  An empty command means the control is still inert and routes through
+    # the phase stub (defined above build_status, which names the owning phase on
+    # the status line); a non-empty one means that phase landed.  PLAN.md and
+    # LEDGER.md call a LINE grep for that stub's name the batch's progress bar,
+    # and NOT ONE ROW OF THIS TABLE CONTAINS THAT NAME: a row here loses its stub
+    # by gaining a command in this column, not by losing a line.  So the grep
+    # under-reports, by however many table rows have landed, and this table is
+    # where those are.  Do not read the line count as a control count.  (No
+    # figure is quoted on either side of that: both are counts over the tree's
+    # own text and nothing re-measures a number written here.  What IS
+    # re-measured, every run, is rows CW13 of
+    # tests/headless/test_calc_widgets.tcl, which assert how many controls are
+    # wired to a landed phase-2 proc and how many of them a sweep really
+    # pressed.)
+    foreach {id label phase cmd} {
+        enter  {Enter}  4 {}
+        pop    {Pop}    4 {}
+        swap   {Swap}   4 {}
+        roll   {Roll}   4 {}
+        clrbuf {ClrBuf} 2 {calc::clr_buf}
+        clrstk {ClrStk} 4 {}
+        mplus  {M+}     9 {}
+        me     {ME}     9 {}
+        undo   {Undo}   2 {calc::buf_undo}
+        redo   {Redo}   2 {calc::buf_redo}
     } {
+        if {$cmd eq {}} { set cmd [list calc::inert $label $phase] }
         button .calc.btb.$id -text $label -takefocus 0 -padx 3 -pady 0 \
             -background [calc::color panel] \
             -activebackground [calc::color header] \
             -foreground [calc::color fieldfg] \
             -activeforeground [calc::color fieldfg] \
             -disabledforeground [calc::color disabledfg] \
-            -command [list calc::inert $label $phase]
+            -command $cmd
         pack .calc.btb.$id -side left -padx 1 -pady 1
     }
     .calc.btb.undo configure -state disabled
     .calc.btb.redo configure -state disabled
+
+    # R505, the buffer half: the edit history also grows when the user TYPES, so
+    # the two buttons must notice an edit this file did not make.  <KeyRelease>
+    # is late enough — the Text class binding for <KeyPress> has already done
+    # the insert by then — while the editing virtual events run their CLASS
+    # binding after this widget-level one, so those have to wait for idle.
+    #
+    # ⚠ THIS SYNC IS NOT A STATUS LINE, and must never become one.  R506's word
+    # is "operation", not "keystroke", and R507 records why: a line per
+    # keystroke would spend R509's whole 50-entry history on the characters of
+    # one expression, which is the defect R413's `record 0` exists to avoid,
+    # with a faster trigger.  calc::buf_typed changes button state and says
+    # nothing.  Fenced by row CB3 of tests/headless/test_calc_buffer.tcl.
+    bind .calc.buf <KeyRelease> {+calc::buf_typed}
+    # TEXT ENTRY: a paste, a cut, a clear-selection and a middle-click paste
+    # are not Calculator operations -- there is no control in this window for
+    # any of them -- so they change button state and stay silent, like typing.
+    foreach ev {<<Paste>> <<Cut>> <<Clear>> <<PasteSelection>>} {
+        bind .calc.buf $ev {+after idle calc::buf_typed}
+    }
+    # ⚠ AN UNDO IS AN OPERATION WHICHEVER WAY IT IS INVOKED, and these two used
+    # to route to calc::buf_typed -- the handler documented three lines above as
+    # never writing a status line.  So Ctrl+Z changed the buffer and said
+    # nothing, and the line already on the status bar stayed there as a
+    # now-FALSE statement about a buffer that had moved underneath it, which is
+    # worse than the silence R506 forbids.  R506's distinction is operation vs
+    # raw text entry, not button vs keyboard, so these reach the same two procs
+    # the Undo and Redo buttons do.
+    # ⚠ `break` IS LOAD-BEARING: a widget-level binding runs BEFORE the Text
+    # class binding, whose own <<Undo>> script performs `%W edit undo`, so
+    # without it Ctrl+Z would undo TWICE.  Measured on Tk 8.6.17: a widget-level
+    # script ending in `break` cancels the class binding for that event.  The
+    # separator bracketing the class script does is now in calc::buf_undo, so
+    # nothing is lost by cancelling it.  Row CB3 drives both events and asserts
+    # one step and one status line.
+    bind .calc.buf <<Undo>> {+calc::buf_undo ; break}
+    bind .calc.buf <<Redo>> {+calc::buf_redo ; break}
+}
+
+# ---------------------------------------------------------------------------
+# PHASE 2 — "the buffer comes alive" (PLAN steps 2.2, 2.3, 2.4)
+#
+# ⚠ NOTHING HERE PARSES OR EVALUATES ANYTHING.  Spec §0 is headed "The single
+# most important fact", and its first line is that fact: "Most of the engine
+# already exists.  Do not write an expression evaluator."  (An earlier revision
+# of this comment attributed the sentence to the heading itself, which is not
+# what §0 says -- checked against the section.)  The Calculator's deliverable is
+# a STRING that plot_raw_custom_data() can already evaluate; these procs move
+# text into a text widget and say what they did.
+#
+# ⚠ WHITESPACE SEPARATION IS FORCED BY THE ENGINE, NOT CHOSEN.
+# plot_raw_custom_data() in src/save.c tokenises its expression with
+#     my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save)
+# — whitespace delimiters and an EMPTY quote set.  So inserting `+` straight
+# after `v(out)` yields the single token `v(out)+`, which §3.1 looks up as a
+# VECTOR NAME; get_raw_index() fails, and the WHOLE expression returns -1,
+# phases later and with no trace of its cause.  The separator is a correctness
+# requirement.  tests/headless/test_calc_buffer.tcl reproduces that split
+# (engine_tokens) rather than describing it.
+#
+# ⚠ R510 IS NOT THIS PHASE.  Spec §8.2 gives a binary-operator BUTTON stack
+# semantics — consume the top two stack entries and push `<second> <top> <op>`
+# as one entry — and that is PLAN 4.3, after the stack model exists (4.1).
+# Phase 2 gives the keys caret insertion only; 4.3 then puts the stack rule IN
+# FRONT of it, falling back to caret insertion when the stack cannot supply the
+# operands.  Do not read calc::pad_click as finished.  (Spec §8.1 also carried
+# an `R510` until 2026-09-30, when it became R509a; the collision is why.)
+
+# "Is this one character already a separator as far as the netlist engine is
+# concerned?"  The set is `engine_wsp` and NOTHING WIDER.
+#
+# ⚠ THE FIRST IMPLEMENTATION ASKED `string is space`, AND THAT REINTRODUCED THE
+# VERY FUSION THE SEPARATOR RULE EXISTS TO PREVENT.  Tcl's space class is much
+# wider than the engine's three delimiters: it also accepts CR, VT, FF, NBSP and
+# EN-SPACE.  With any of those at the caret the predicate answered "already
+# separated", no separator was written, and plot_raw_custom_data() then saw ONE
+# token (`v(out)<CR>+`), looked it up as a vector name, and the whole expression
+# returned -1.  CR is not a hypothetical: this tree is used over a Windows X
+# server and a paste from a Windows program carries CRs.
+#
+# ⚠ THE EMPTY STRING IS NOT A SEPARATOR HERE, and that is what makes
+# calc::token_sep's two emptiness guards load-bearing.  `string is space {}`
+# answers 1, which silently did the guards' job for them and left them dead
+# code; this predicate answers 0, so "there is no character on that side" and
+# "the character on that side separates" are now different answers, which is
+# what they are.
+proc calc::engine_space {ch} {
+    variable engine_wsp
+    if {$ch eq {}} { return 0 }
+    return [expr {[string first $ch $engine_wsp] >= 0}]
+}
+
+# The separator decision, as a PURE function of what is either side of the
+# caret.  `pre` is the text before the caret, `post` the text after it.  Kept
+# separate from the widget so the whole rule is testable in one place and so a
+# wrong implementation trips a row rather than a plot three phases later.
+#
+# ⚠ BOTH `ne {}` GUARDS ARE LIVE, and they are what stops an EMPTY side from
+# acquiring a separator it does not need: with an empty buffer the token is all
+# there is, and with the caret at the very end there is nothing after it to
+# separate from.  (Under the `string is space` predicate this proc used to ask,
+# both guards were dead — that class accepts the empty string — so deleting
+# them changed nothing, and the sentence that used to be here warned about a
+# consequence on the `post` side that ran the wrong way round.  Rows CB1 assert
+# the behaviour of each side, and the row naming the empty string pins the
+# predicate half.)
+proc calc::token_sep {tok pre post} {
+    set s $tok
+    if {$pre ne {} && ![calc::engine_space [string index $pre end]]} { set s " $s" }
+    if {$post ne {} && ![calc::engine_space [string index $post 0]]} { set s "$s " }
+    return $s
+}
+
+# ⚠ `edit canundo` AND `edit canredo` ARE TK 8.6-ONLY, AND THE USER THIS GUARD
+# PROTECTS IS AN 8.5 ONE.  CLAUDE.md's "Build & run" says the project targets
+# Tcl/Tk 8.4-8.6, and an earlier revision of this comment claimed the guard was
+# for an 8.4 user as well.  It is not, and the claim was checkable: this file
+# cannot run on 8.4 at all — calc::color's body uses `dict exists`/`dict get`,
+# and `dict` is a Tcl 8.5 addition, so an 8.4 interpreter dies with
+# `invalid command name "dict"` at the first widget that asks calc::color for a
+# colour, which is every widget in the window.  (The `dict` calls and the fact
+# that every widget goes through calc::color were both grepped; that `dict`
+# arrived in 8.5 is from Tcl's own documentation, since there is no 8.4
+# interpreter here to run it against.)
+# 8.5 alone is what justifies the guard, and it justifies it completely: the
+# local interpreter is 8.6, so a bare call passes every test here and breaks for
+# an 8.5 user with `bad edit option "canundo"`.  Nothing else in src/*.tcl uses
+# them; the Calculator is the first, which is why there was no house idiom to
+# copy for these two and the one for the 8.4-missing `-stretch` option was
+# copied instead: probe ONCE inside a catch and keep a defined fallback
+# (calc::build_panes's optnever/optalways probe, copied from the one inside
+# load_file_dialog in xschem.tcl -- an earlier revision of this sentence named
+# calc::build, which does not hold that probe).
+#
+# The probe's answer is cached in `editcan` and the cache is writable, so a test
+# can clear it and force a re-measurement.  It is deliberately NOT the only way
+# to reach the fallback: tests/headless/test_calc_buffer.tcl's CB2/8.5 band
+# SHADOWS the widget command so the subcommand is really absent, which is what
+# fences the fallback against an unguarded call site somewhere else in the path.
+proc calc::edit_can_probe {} {
+    variable editcan
+    if {$editcan ne {}} { return $editcan }
+    # R508: with no window there is nothing to measure, and nothing to cache
+    # either — the next real window must probe for itself.
+    if {![calc::has_win .calc.buf]} { return 0 }
+    set editcan [expr {[catch {.calc.buf edit canundo}] ? 0 : 1}]
+    return $editcan
+}
+
+# "Is there anything to undo / redo?"  THE ONLY SITE IN THIS FILE THAT NAMES THE
+# TWO 8.6-ONLY SUBCOMMANDS, which is what row CB2 of
+# tests/headless/test_calc_buffer.tcl asserts over the LIVE proc bodies — so a
+# second call site cannot appear elsewhere without reddening, and a copy parked
+# in a comment cannot satisfy it.
+#
+# THE FALLBACK'S CONTRACT, and it is a declared limit rather than an oversight.
+# Without the subcommands Tk's own stack depth cannot be read, so the fallback
+# answers from two hints (`fbundo`, `fbredo`) that are CONSERVATIVE in one
+# direction only: they may say "there is something" when there is not — and
+# ⚠ THEY CAN NOW ALSO UNDER-ANSWER IN ONE MEASURED CASE, which an earlier
+# revision of this comment flatly denied ("never the reverse").  See the declared
+# limit at the end of this block: the sentence was true before 2026-09-30 and
+# D3's narrowing made it false, so it is corrected rather than left standing.
+# Both hints are 0 on a fresh window; an operation this file performs sets
+# them from what it knows (an insert or a clear really does empty Tk's redo
+# stack, so buf_note_edit sets fbredo 0); a keystroke sets them too, because a
+# <KeyRelease> cannot tell an edit from an arrow key — but ONLY IF THE TEXT
+# REALLY CHANGED, which is the half calc::buf_typed had to learn and the next
+# sentence depends on.  ⚠ A keystroke that changed the text sets fbredo to **0**,
+# not 1: a real edit empties Tk's redo stack, which is what buf_note_edit has
+# always done, and buf_typed disagreed with it until 2026-10-01.  What makes the
+# over-answer safe is that a refused undo or redo REPORTS it and corrects its own
+# hint, so a button refuses once and then goes disabled — it never refuses twice
+# in silence.  ⚠ THAT SENTENCE WAS FALSE UNTIL 2026-09-30 and is now held by two
+# procs rather than one: calc::buf_undo does the correcting, and calc::buf_typed
+# is what stops the next keystroke from immediately undoing it (it used to raise
+# both hints on every <KeyRelease>, so the release of the refused Ctrl+Z itself
+# put the button back to `normal` — refusing forever instead of once).  Rows
+# CB2/8.5 of tests/headless/test_calc_buffer.tcl measure the refusal, the
+# correction surviving a keystroke that changes nothing, and the hint still
+# rising on one that does, all three with the subcommands really absent.
+#
+# ⚠ DECLARED LIMIT, MEASURED AND NOT FIXED -- the fallback can UNDER-answer when
+# an edit leaves the buffer text BYTE-IDENTICAL.  buf_typed's discriminator is
+# "did the text change", so a delete-then-retype-the-same-character sequence
+# grows Tk's real undo stack while the text compares equal, the hint is not
+# raised, and Undo shows disabled over a non-empty history -- R505 backwards, and
+# the one direction the paragraph above used to claim was impossible.
+#
+# Why it is declared rather than fixed, stated so nobody re-derives it: the
+# discriminator that WOULD catch it is `edit modified` (Tk 8.4+, so available on
+# this very path), and wiring it is a real change to the lifecycle this block
+# describes -- a flag with its own clearing semantics that other code may later
+# want.  The blast radius is a Tk **8.5** user only: this file cannot run on 8.4
+# at all, because calc::color's body uses `dict`, which is 8.5+, and it is on
+# every widget's path; the 8.6 branch reads the real stack and never consults
+# these hints.  So the cost is a momentarily-wrong button state for a user on one
+# Tk minor version, against a lifecycle change at the close of a phase.  Whoever
+# takes it: `edit modified` is the instrument, and the case to fence is
+# delete-then-retype, not the refused Ctrl+Z that CB2/8.5 already covers.
+proc calc::buf_can {which} {
+    variable fbundo
+    variable fbredo
+    if {![calc::has_win .calc.buf]} { return 0 }
+    if {[calc::edit_can_probe]} {
+        if {$which eq {undo}} { return [.calc.buf edit canundo] }
+        return [.calc.buf edit canredo]
+    }
+    if {$which eq {undo}} { return $fbundo }
+    return $fbredo
+}
+
+# R505 (buffer half): the two buttons are disabled exactly when their history is
+# empty.  Every phase-2 operation ends here, and so does typing.  R508: a silent
+# no-op with no window.
+# ⚠ NO `catch` AROUND THESE TWO, AND THE FIRST REVISION HAD ONE.  Wrapping the
+# configure calls looks like cheap robustness and it SWALLOWS THE ONE FAILURE
+# THIS WHOLE GUARD EXISTS FOR: with a catch here, an unguarded
+# 8.6-only call inside calc::buf_can raises, the error is eaten, the button
+# keeps whatever state it already had, and on an 8.5 interpreter undo/redo
+# silently freeze with nothing in any log.  THE SHAPE, re-measured by running
+# the sabotage that strips probe and catch out of calc::buf_can both ways:
+# WITH a catch here, every row in the forced-8.5 band that PERFORMS an undo or a
+# redo still passes -- the operations do not go through buf_can, so they work
+# while the buttons freeze -- and what reddens is the structural row, the row
+# that reads the accessor directly, and the rows that read a BUTTON STATE.
+# WITHOUT it, the error reaches the band: the performing rows redden too, the
+# row asserting that nothing raised reddens, and the suite's ::bgerror handler
+# fires out of the synthesised typing.  No count is quoted on purpose
+# (CLAUDE.md: do not write down a number nothing re-checks) -- the band is the
+# measurement, and re-running that sabotage both ways is how to take it again.
+# The existence guard above is what makes the catch unnecessary -- both
+# buttons are created in the same loop in calc::build_buf, so one existing means
+# both do -- and R508's "do not throw" applies to calc::status, not to a proc
+# whose job is to report that the widget layer is wrong.
+# ⚠ AND IT IS ALSO WHERE THE FALLBACK'S TEXT SNAPSHOT IS TAKEN.  calc::buf_typed
+# needs to know whether a keystroke actually changed the text, and every
+# phase-2 operation ends here, so this is the one place the snapshot is always
+# current without four procs having to remember to update it.  It is written
+# AFTER the two configure calls and inside its own window guard, so an R508 call
+# with no window writes nothing at all (rows CB4/CB5 snapshot the whole
+# namespace around every entry point and would say so).
+proc calc::buf_sync {} {
+    variable fbtext
+    if {![calc::has_win .calc.btb.undo]} return
+    .calc.btb.undo configure \
+        -state [expr {[calc::buf_can undo] ? {normal} : {disabled}}]
+    .calc.btb.redo configure \
+        -state [expr {[calc::buf_can redo] ? {normal} : {disabled}}]
+    if {[calc::has_win .calc.buf]} { set fbtext [.calc.buf get 1.0 end-1c] }
+    return
+}
+
+# An edit THIS file made.  It really does clear Tk's redo stack, so the fallback
+# hint for redo can be set to 0 exactly rather than conservatively.
+#
+# ⚠ R508 APPLIES HERE TOO, AND THIS PROC ARRIVED WITHOUT THE GUARD.  It is an
+# entry point — a later phase calls it directly, and the R508 bands of
+# tests/headless/test_calc_buffer.tcl list it — and with no window it WROTE both
+# hints under all three of R508's cases: never built, closed, and --nogui where
+# `winfo` does not exist.  "A silent no-op that returns cleanly" has two halves
+# and only the raising half was fenced, so the write went unnoticed; worse, the
+# state it wrote is exactly what calc::close exists to clear, so a
+# buf_note_edit after a close resurrected the stale hints that item C7 had just
+# been fixed to prevent.  Rows CB4 and CB5 now snapshot the WHOLE calc namespace
+# around every entry point, so this cannot recur silently in a sibling.
+proc calc::buf_note_edit {} {
+    variable fbundo
+    variable fbredo
+    if {![calc::has_win .calc.buf]} return
+    set fbundo 1
+    set fbredo 0
+    calc::buf_sync
+}
+
+# A keystroke.  Button state only — no status line (see build_buf's note on the
+# binding, and R506/R507).
+#
+# ⚠ THE HINTS GO UP ONLY IF THE TEXT REALLY CHANGED, and the first revision
+# raised them on every <KeyRelease> unconditionally.  A <KeyRelease> cannot tell
+# an edit from an arrow key — which is why the conservative over-answer
+# calc::buf_can declares is the right default — but an UNCONDITIONAL raise
+# destroys the one thing that makes the over-answer safe.  The contract is "a
+# refused undo reports it and corrects its own hint, so a button refuses once
+# and then goes disabled".  On the 8.5 fallback the refusal set `fbundo 0` and
+# the NEXT KEYSTROKE set it straight back to 1 — including the <KeyRelease> of
+# the very Ctrl+Z that had just been refused, which arrives after the <<Undo>>
+# binding has run.  So the button refused forever rather than once, and Ctrl+Z
+# and the Undo button disagreed about an empty history: R505's "disabled exactly
+# when their history is empty", broken on that path.
+#
+# `fbtext` is the buffer text as of the last calc::buf_sync, which is where it is
+# captured because every phase-2 operation ends in a sync and so leaves it
+# current; comparing against it makes "a key was released" into "the text
+# changed", which is what an edit is.  A caret move, a selection change, a
+# modifier and the release of a refused Ctrl+Z all leave it equal and raise
+# nothing.  The hints are never LOWERED here — only a refusal does that — so
+# this is strictly a narrowing of when they rise.  Rows CB2/8.5 measure the
+# correction standing through a no-op keystroke AND still rising on a real one;
+# the second is not optional, since "never raise" satisfies the first.
+proc calc::buf_typed {} {
+    variable fbundo
+    variable fbredo
+    variable fbtext
+    if {![calc::has_win .calc.buf]} return
+    if {![calc::edit_can_probe]
+        && [.calc.buf get 1.0 end-1c] ne $fbtext} { set fbundo 1 ; set fbredo 0 }
+    calc::buf_sync
+}
+
+# PLAN 2.2.  Insert `tok` AT THE CARET, whitespace-separated from whatever is
+# either side of it.
+#
+# ⚠ `insert insert`, NOT `insert end`.  Appending to the end passes a test that
+# presses a key with the caret already at the end — which is the obvious test to
+# write — and silently builds the wrong expression every other time.
+#
+# ⚠ ONE PRESS IS ONE UNDOABLE ACTION, and that needs `edit separator` on both
+# sides.  Measured on Tk 8.6.17: with -autoseparators 1 (the default, and what
+# build_buf leaves alone) Tk inserts a separator only when the edit MODE changes,
+# so two consecutive inserts — or a press straight after the user's typing —
+# collapse into a single undo step, and one Undo would then throw away the typing
+# too.  A bare `edit separator` on an empty stack does NOT make `edit canundo`
+# true, so bracketing costs nothing at the start.  Row CB2 asserts the step.
+# ⚠ AND IT MUST NOT LEAVE A SELECTION ARMED TO EAT ITSELF.  Tk's own
+# tk::TextInsert deletes the selection before inserting whenever the caret lies
+# inside it -- its predicate is `[llength [$w tag ranges sel]]` AND
+# `sel.first <= insert` AND `sel.last >= insert`, factored out as
+# ::tk::TextCursorInSelection on 8.6.  A press inserts AT the caret and leaves
+# the caret there, so pressing a key with text selected at the caret left that
+# deletion armed and the next character the user typed silently removed the
+# selected token.  Measured on Tk 8.6.17: with `v(in)` selected and the caret at
+# its start, a `+` press gave `v(out) + v(in)` and one further keystroke left
+# `v(out) + X`.
+# ⚠ WHAT IS FIXED IS THE ARMED STATE, NOT THE POLICY.  R501 makes the buffer
+# free text and a press an insertion at the caret, so a press deliberately does
+# NOT replace the selection; dropping the SELECTION afterwards -- and only when
+# the caret ended up inside it, so a selection elsewhere in the buffer survives
+# -- is what stops a later keystroke deleting text the user never aimed at.
+# The predicate is re-evaluated AFTER the insert on purpose: a caret at the
+# selection's far edge is armed before the insert and not after it, and
+# dropping that selection would be a visible change for no reason.
+proc calc::buf_insert_token {tok} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set pre  [.calc.buf get 1.0 insert]
+    set post [.calc.buf get insert end-1c]
+    set s [calc::token_sep $tok $pre $post]
+    .calc.buf edit separator
+    .calc.buf insert insert $s
+    .calc.buf edit separator
+    if {[llength [.calc.buf tag ranges sel]]
+        && [.calc.buf compare sel.first <= insert]
+        && [.calc.buf compare sel.last >= insert]} {
+        .calc.buf tag remove sel 1.0 end
+    }
+    catch {.calc.buf see insert}
+    calc::buf_note_edit
+    return $s
+}
+
+# An operator key (W30).  PLAN 2.2 + R506.  Phase 4.3 wraps this with R510's
+# stack composition; it does not replace it (see the phase-2 block above).
+proc calc::pad_click {tok} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    calc::buf_insert_token $tok
+    return [calc::status "operator $tok inserted"]
+}
+
+# W19 ClrBuf.  PLAN 2.3 + R506.  One undoable action, like a keypress, so a
+# mis-aimed click is recoverable; and it SAYS WHICH of the two things happened,
+# because "cleared" on an already-empty buffer is a claim about work that was
+# not done (R506: silence is a bug, and so is a misleading line).
+proc calc::clr_buf {} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    if {[.calc.buf get 1.0 end-1c] eq {}} {
+        return [calc::status {buffer already empty}]
+    }
+    .calc.buf edit separator
+    .calc.buf delete 1.0 end
+    .calc.buf edit separator
+    calc::buf_note_edit
+    return [calc::status {buffer cleared}]
+}
+
+# W22 Undo / Redo.  PLAN 2.3, the BUFFER half of R505 — phase 4.4 joins the
+# stack's history to it.  A refusal is reported rather than thrown: `edit undo`
+# raises "nothing to undo" on an empty stack, and R508's reasoning applies to
+# every status-line caller (a proc that throws takes its caller down with it).
+# The refusal also corrects the fallback's hint; see calc::buf_can.
+#
+# ⚠ THESE TWO ARE REACHED BY BOTH ROUTES, the buttons and the keyboard's
+# <<Undo>>/<<Redo>> — see calc::build_buf, which `break`s Tk's class binding so
+# the undo happens once.  Which is why the separator bracketing below is here
+# and not at the binding: Tk's own <<Undo>> class script brackets `edit undo`
+# with separators when -autoseparators is on, because an undo can consume the
+# separator at the top of the stack and the next edit then merges into the
+# undone item.  Routing Ctrl+Z here without that would have made the keyboard
+# route weaker than the one it replaced, and the button route never had it.
+proc calc::buf_undo {} {
+    variable fbundo
+    variable fbredo
+    if {![calc::has_win .calc.buf]} { return {} }
+    set autosep [.calc.buf cget -autoseparators]
+    if {$autosep} { .calc.buf edit separator }
+    if {[catch {.calc.buf edit undo}]} {
+        set fbundo 0
+        calc::buf_sync
+        return [calc::status {nothing to undo}]
+    }
+    if {$autosep} { .calc.buf edit separator }
+    set fbundo 1
+    set fbredo 1
+    calc::buf_sync
+    return [calc::status {edit undone}]
+}
+
+proc calc::buf_redo {} {
+    variable fbundo
+    variable fbredo
+    if {![calc::has_win .calc.buf]} { return {} }
+    if {[catch {.calc.buf edit redo}]} {
+        set fbredo 0
+        calc::buf_sync
+        return [calc::status {nothing to redo}]
+    }
+    set fbundo 1
+    set fbredo 1
+    calc::buf_sync
+    return [calc::status {edit redone}]
 }
 
 # ---------------------------------------------------------------------------
@@ -2131,12 +2661,11 @@ proc calc::build_pad {} {
     }
 }
 
-# An operator key.  Inserting at the caret is plan step 2.2 and the stack
-# composition R510 asks of it is phase 4; this phase names the control and the
-# phase that owns it, and touches nothing.
-proc calc::pad_click {tok} {
-    return [calc::inert "operator $tok" 2]
-}
+# An operator key's -command is calc::pad_click, which PHASE 2 made live: it now
+# lives with the rest of the buffer behaviour, after calc::build_buf.  The
+# phase-2 stub that stood here was a line of its own, which is why the batch's
+# progress grep sees this site go and sees nothing when a control dispatched
+# from calc::build_buf's table lands (that table's own comment says why).
 
 # ---------------------------------------------------------------------------
 # MOUSE-WHEEL SCROLLING (item 13; the user's phase-1 eyeball pass)
