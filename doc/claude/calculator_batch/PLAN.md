@@ -117,7 +117,7 @@ status area.
 | 1.4 | Buffer (W15) + buffer toolbar (W16–W22). Undo/redo created `disabled`. | Text widget accepts typing; toolbar buttons all present and inert | S |
 | 1.5 | Stack (W23–W25): listbox + the four side buttons. | Present, empty | S |
 | 1.6 | **Function browser** (W26–W28): category combobox + scrollable multi-column list, **populated from the spec §7.2 catalogue table** held as one Tcl data structure. | Switching category repopulates; `Special Functions` shows the full list with a working horizontal scrollbar | **M** |
-| 1.7 | Keypad + user buttons (W29–W31). | 16 keys + 4 user buttons, correct labels | S |
+| 1.7 | Keypad + user buttons (W29–W31). | **12 operator keys** + 4 user buttons, correct labels, and **no digit key** | S |
 | 1.8 | Status area (W32–W34) with the 50-entry history dropdown. | `calc::status "text"` writes the line and appends to history | S |
 | 1.9 | Headless widget-inventory test `test_calc_widgets.tcl` covering R101–R113 — every W-row: exists, class, initial state. | Green; sabotage — flip Clip's default to 0, test goes red | **M** |
 | 1.10 | **EYEBALL** against the reference screenshot. | Receipt with a side-by-side note | S |
@@ -132,9 +132,33 @@ phases are all invisible-to-visible, never layout churn.
 | # | Step | Done when | Size |
 |---|---|---|---|
 | 2.1 | Test fixture: generate `tests/headless/data/calc_fixture.raw` per spec §11.2 (tran square wave + ramp, ac single pole, >1 dataset, one op-param vector). Commit it **with its generating deck**. | Fixture loads via `xschem raw read`; `xschem raw info` shows the expected vectors | **M** |
-| 2.2 | Keypad buttons insert into the buffer at the caret. | `7` then `.` then `5` gives `7.5` | S |
+| 2.2 | The twelve operator keys insert their token into the buffer at the caret, **whitespace-separated** from what is already there. | Buffer `v(out) v(in)`, caret at end, press `/` → `v(out) v(in) /`. With the caret mid-text the token lands **at the caret**, not at the end. | S |
 | 2.3 | Clear-buffer, and undo/redo enablement driven by the text widget's own `-undo` stack (R505). | Buttons enable/disable exactly when history is non-empty | S |
 | 2.4 | `calc::status` fires on every buffer mutation (R506). | No silent mutation path remains | S |
+
+### ⚠ Two corrections to this phase, made by the driver 2026-09-30
+
+**Row 2.2's old acceptance criterion was unreachable, and had been for 46 days.** It read
+*"`7` then `.` then `5` gives `7.5`"*, written before **RULING-2** (user, 2026-08-15) removed digits
+from the keypad: `calc::pad_keys` returns the twelve operator tokens and nothing else, so there is
+no `7` key, no `5` key and no `.` key. Spec W30 records that `.` could not be a key even if someone
+wanted one — `strtod(".")` fails, so §3.1 looks the token up as a *vector name* and the whole
+expression returns `-1`. `receipts/01-phase1a.md` flagged this row and row 1.7 on 2026-08-15 as
+*"not mine to edit"*; the request sat unactioned because `LEDGER.md`, where it was recorded for the
+driver, did not exist. See `LEDGER.md`'s opening section.
+
+**Whitespace separation is forced by the engine, not chosen.** Measured at `621c1ff5`:
+`plot_raw_custom_data()` tokenises with `my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save)` —
+whitespace-delimited, with an **empty quote set**. So inserting `+` directly after `v(out)` yields
+the single token `v(out)+`, which §3.1 looks up as a vector name and fails the whole expression with
+`-1`, phases later and with no trace of its cause. The separator is a correctness requirement.
+
+**How 2.2 relates to phase 4.3.** R510 (§8.2) gives a binary-operator *button* stack semantics —
+consume the top two stack entries, push `<second> <top> <op>` as one entry — which is phase **4.3**,
+not this phase. Phase 2 gives the keys their caret insertion, which is what `calc::pad_click`'s own
+`calc::inert "operator $tok" 2` call site says it owns; phase 4.3 then puts the stack rule *in front
+of* it, falling back to caret insertion when the stack cannot supply the operands. Do not read 2.2
+as superseded by R510, and do not implement R510 here.
 
 ---
 

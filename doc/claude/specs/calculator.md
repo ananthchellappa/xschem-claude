@@ -362,9 +362,13 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
   from the startup option database is a legibility bug, not a half-fix: under
   `dark_gui_colorscheme` the option database says `*foreground white`
   (`src/xschem.tcl:15745`), which is invisible on this window's light panels.
-  Fonts stay stock: nothing in the tree themes fonts for a new dialog
-  (`doc/claude/calculator_batch/recon/theming.md` §3), and ASE's named fonts are
-  ASE's.
+  Fonts stay stock: nothing in the tree themes fonts for a new dialog, and ASE's named fonts are
+  ASE's. (⚠ The recon document this sentence used to cite,
+  `doc/claude/calculator_batch/recon/theming.md` §3, **was never committed** — `git log --all`
+  on `doc/claude/calculator_batch/recon/` is empty, so the citation was dangling from the day it
+  was written. The claim itself is re-checkable in the tree and is kept on that basis; the
+  pointer is removed rather than left resolving to nothing. `src/calculator.tcl` carries a second
+  dangling `recon/` citation. See `doc/claude/calculator_batch/LEDGER.md`.)
   **Amended 2026-08-15 by RULING-1** (`doc/claude/calculator_batch/LEDGER.md`). The
   original text ("follow existing xschem dialog theming (`src/resources.tcl`); do
   not hand-set colors") was wrong twice: `resources.tcl` contains no theming at all,
@@ -711,7 +715,7 @@ below are the ones a caller cannot answer for itself and so must not have to.
   status lines mean the operation genuinely happened twice, and hiding the second
   would be the silence R506 forbids. Selecting an entry from `.calc.status.hist`
   re-displays it in `.calc.status.msg` and does **not** re-record it.
-- **R510** W34 says the dropdown **reveals** the messages, and that is a rendering
+- **R509a** W34 says the dropdown **reveals** the messages, and that is a rendering
   requirement, not a data one. ttk sizes a combobox popdown to the combobox's own
   pixel width, and W34 is deliberately a two-character *button* rather than a field,
   so with no correction the list is ~35 px wide and shows `Buf`, `Plo`, `Eva`. The
@@ -720,6 +724,16 @@ below are the ones a caller cannot answer for itself and so must not have to.
   small and the list readable. A check that only asserts `cget -values` tests the
   widget's data, not what the user sees; the suite posts the dropdown and measures
   the listbox against the longest message.
+
+  ⚠ **This clause was `R510` until 2026-09-30 and collided with §8.2's `R510`**, which is
+  the binary-operator stack rule — two unrelated requirements under one number, so a grep
+  for `R510` answered twice and `PLAN.md` step 4.3's *"RPN operator composition (R510–R512)"*
+  pointed at a combobox popdown. It moved rather than §8.2's because the collision was
+  measured and only one side had live citations: §8.2's `R510` is cited seven times in
+  `src/calculator.tcl`, `tests/headless/test_calc_skeleton.tcl` and `PLAN.md`, and this one
+  **nowhere outside `receipts/01-phase1a*.md`** — a dated record, left unedited. `a` rather
+  than a fresh number because it is a rendering clause of R509's history, which is what it
+  was always doing in the `R507–R510` run those receipts name.
 
 ### 8.2 RPN mode (`calc::notation` = `rpn`, the default)
 

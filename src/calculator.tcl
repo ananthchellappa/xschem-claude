@@ -1621,9 +1621,21 @@ proc calc::build_stk {} {
 #   help      one line, R413, short enough for the status entry
 #
 # ⚠ THE ROWS ARE NOT THE RECON'S ROWS VERBATIM.  They were authored by one agent
-# and audited by another (doc/claude/calculator_batch/recon/catalogue_defects.md);
-# the audit's findings are applied HERE, and each one is worth knowing before
-# editing a row:
+# and audited by another; the audit's findings are applied HERE, and each one is
+# worth knowing before editing a row.
+#
+# ⚠ This comment used to cite doc/claude/calculator_batch/recon/catalogue_defects.md
+# for that audit.  THE POINTER WAS DEAD FROM THE DAY IT WAS WRITTEN: `git log --all`
+# on doc/claude/calculator_batch/recon/ is empty -- the directory was never
+# committed on any branch -- and two further places cited documents inside it
+# (doc/claude/specs/calculator.md §5 and issue 0325).  Removed rather than left
+# resolving to nothing, which is the same defect CLAUDE.md records as "five shipped
+# source comments cited rows that do not exist".  Nothing is lost here: unlike the
+# theming recon, this audit's findings are the D-rows below, written out in full, so
+# the citation was a provenance note and not the content.  See
+# doc/claude/calculator_batch/LEDGER.md.
+#
+# The findings:
 #
 #   D1  the special rows carried the category `Special`, but §7.1 names the
 #       combobox value `Special Functions`.  Fixed in the DATA, not by loosening
