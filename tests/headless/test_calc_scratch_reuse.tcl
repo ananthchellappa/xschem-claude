@@ -213,13 +213,20 @@ group SR2 {
         [list [dg $b ok] [near [dg $b value] $Bval 1e-7]] {1 ok}
     # ⚠ THE SHARP CASE, and the one the naive implementation gets wrong.  If
     # Evaluate re-used one destination, B being REJECTED would hand back A's
-    # number with no indication at all (SR1 measured exactly that).  What the
-    # product must do instead is answer for B's own column, which for a
-    # rejected expression is a defined zero -- NEVER A's 5.
+    # number with no indication at all (SR1 measured exactly that).
+    #
+    # ⚠⚠ RESTATED BY PLAN 3.4, AND THE RESTATEMENT IS STRICTLY STRONGER.  This
+    # row used to assert `ok 1` plus "a defined zero" -- the engine's own answer
+    # for a rejected expression since issue 0325 -- because that was the best
+    # the product could do before R607 existed.  Now Evaluate REFUSES and names
+    # the token, so the claim becomes "never A's value AND never a number at
+    # all", with the token in the sentence.  The hazard this band exists for is
+    # unchanged and is still what the rows measure: the answer must never be the
+    # PREVIOUS expression's 5.
     set a2 [pcall calc::eval_rpn $A 0]
     set r2 [pcall calc::eval_rpn $REJECT 0]
-    check "SR2 ⚠ evaluate A, then a REJECTED B: the answer is B's own zero, never A's value" \
-        [list [dg $r2 ok] [near [dg $r2 value] 0 1e-30]] {1 ok}
+    check "SR2 ⚠ evaluate A, then a REJECTED B: the answer is a REFUSAL naming the token, never A's value" \
+        [list [dg $r2 ok] [dg $r2 value] [string match {*v(nosuch)*} [dg $r2 msg]]] {0 {} 1}
     check "SR2 ...and the premise held -- A really did answer 5 immediately before it" \
         [near [dg $a2 value] $Aval 1e-7] ok
     # the other direction too: a rejected expression must not poison the NEXT
@@ -289,20 +296,53 @@ group SR4 {
     check "SR4 fixture: the planted column holds A's numbers" \
         [list [pcall xschem raw add __calc_tmp_sr4 $A] \
               [near [pcall xschem raw value __calc_tmp_sr4 100 0] $Aval 1e-7]] {1 ok}
+    # ⚠⚠ THE TWO PROBE EXPRESSIONS CHANGED ROLES AT PLAN 3.4, AND THE REASON IS
+    # A REAL ORDERING PROPERTY.  Both arms used to be the stale-destination
+    # refusal -- that was the band's point, that the guard is about the COLUMN
+    # and not the expression -- and the REJECT arm reached it because nothing
+    # looked at the tokens first.  R607's pre-flight now runs BEFORE the mint,
+    # so a rejected expression is refused BY NAME and never meets the column
+    # guard at all.  That order is the right one (telling a user their
+    # `__calc_tmp7` collided when what they typed was `v(nosuch)` is useless),
+    # so the REJECT arm now measures the ORDER and `$d2`, the GOOD expression,
+    # carries the whole of the column-guard claim it used to share.
+    #
+    # ⚠ A THIRD ARM IS ADDED so "the guard is about the COLUMN, not the
+    # expression" is still measured against TWO different good expressions
+    # rather than one -- otherwise a product that refused only `$B` would pass.
+    # ⚠⚠ THE PLANTED COLUMN'S DATA IS RE-READ AFTER **EACH** CALL, NOT ONCE AT
+    # THE END, AND THE FIRST DRAFT OF THIS RESTRUCTURE GOT THAT WRONG.  Adding a
+    # third arm that evaluates `$A` again, after `$B`, DESTROYED the end-of-band
+    # data check's observable: with the pre-engine guard removed, `$B` overwrote
+    # the planted 5 with 2.5 and then `$A` wrote 5 back, so the final read saw
+    # exactly the value the row expected and Stage C's sabotage `C` -- the
+    # pre-engine guard removed, the belt kept -- went from ONE red to ZERO.
+    # That is CLAUDE.md's "a fence keyed to a symptom dies quietly when
+    # something else cures the symptom", caused here by the row added beside it.
+    # Three reads, one per call, each immediately after its own call.
     pcall rename ::calc::tmpvec ::sr4_real_tmpvec
     proc ::calc::tmpvec {} { return __calc_tmp_sr4 }
     set d [pcall calc::eval_rpn $REJECT 0]
+    set dat1 [pcall xschem raw value __calc_tmp_sr4 100 0]
     set d2 [pcall calc::eval_rpn $B 0]
+    set dat2 [pcall xschem raw value __calc_tmp_sr4 100 0]
+    set d3 [pcall calc::eval_rpn $A 0]
+    set dat3 [pcall xschem raw value __calc_tmp_sr4 100 0]
     pcall rename ::calc::tmpvec {}
     pcall rename ::sr4_real_tmpvec ::calc::tmpvec
-    check "SR4 ⚠ handed a destination it did not create, eval_rpn REFUSES instead of reading it" \
-        [dg $d ok] 0
+    check "SR4 the planted column's DATA survives EVERY ONE of the three refused calls, read after each -- which is what forces the guard in FRONT of the engine call rather than behind it" \
+        [list [near $dat1 $Aval 1e-7] [near $dat2 $Aval 1e-7] [near $dat3 $Aval 1e-7]] \
+        {ok ok ok}
+    check "SR4 ⚠ a REJECTED expression is refused by TOKEN before the destination is even minted -- R607 is ahead of the column guard, which is why a mistyped name never reports a collision" \
+        [list [dg $d ok] [string match {*v(nosuch)*} [dg $d msg]] \
+              [string match *__calc_tmp_sr4* [dg $d msg]]] {0 1 0}
     check "SR4 ...and it does NOT hand back the planted value" \
         [expr {[near [dg $d value] $Aval 1e-7] eq {ok}}] 0
-    check "SR4 ...and the refusal names the destination, so the message is diagnosable" \
-        [string match *__calc_tmp_sr4* [dg $d msg]] 1
-    check "SR4 ...and the same refusal is taken for a GOOD expression, because the guard is about the COLUMN, not the expression" \
-        [list [dg $d2 ok] [string match *__calc_tmp_sr4* [dg $d2 msg]]] {0 1}
+    check "SR4 ⚠ handed a destination it did not create, eval_rpn REFUSES instead of reading it, and the refusal names the destination" \
+        [list [dg $d2 ok] [string match *__calc_tmp_sr4* [dg $d2 msg]] \
+              [expr {[near [dg $d2 value] $Aval 1e-7] eq {ok}}]] {0 1 0}
+    check "SR4 ...and the same refusal is taken for a SECOND good expression, because the guard is about the COLUMN, not the expression" \
+        [list [dg $d3 ok] [string match *__calc_tmp_sr4* [dg $d3 msg]]] {0 1}
     # ⚠ THE NON-VACUITY CONTROL.  Without it this band would pass on a product
     # that refuses EVERYTHING, which is the cheapest wrong way to be green here.
     set ok [pcall calc::eval_rpn $A 0]
@@ -411,7 +451,25 @@ group SR5 {
     dict for {nm b} $pbody {
         if {[regexp {xschem raw add} $b]} { lappend adders $nm }
     }
-    check "SR5 ...and exactly ONE proc calls the engine" $adders {eval_rpn}
+    check "SR5 ...and exactly ONE proc issues `xschem raw add` DIRECTLY" $adders {eval_rpn}
+    # ⚠⚠ "EXACTLY ONE" IS A CLAIM ABOUT THE DIRECT VERB AND NOTHING ELSE, AND
+    # SINCE PLAN 3.3 THAT DISTINCTION IS LOAD-BEARING RATHER THAN PEDANTIC.
+    # Plot reaches the SAME engine, through `wviewer::add_trace`, which issues
+    # the `raw add` inside src/wave_viewer.tcl where no scan over this namespace
+    # can see it.  Leaving the row's name as "calls the engine" would have made
+    # it quietly false the moment Plot landed.  L2 does NOT apply to that route:
+    # `add_trace`'s destination is a PERSISTENT named vector minted by
+    # `wviewer::auto_expr_name` (which skips every name `xschem raw index`
+    # already resolves) and the trace has to keep reading it, so there is
+    # nothing to delete and no shared scratch column in play.  Asserted, not
+    # claimed -- and derived from the namespace, so a Plot proc that grew its own
+    # `raw add` would redden the row ABOVE instead of escaping this one.
+    set viaviewer {}
+    dict for {nm b} $pbody {
+        if {[regexp {wviewer::(add_trace|plot_signals)} $b]} { lappend viaviewer $nm }
+    }
+    check "SR5 ...and the procs that reach the engine through the VIEWER's door instead are Plot's, which is why no R402 delete belongs there" \
+        $viaviewer {plot_rpn}
     # ...and exactly one proc calls THAT one, which is what keeps the engine
     # step inside the borrowed context R603 names.  A press that called
     # `calc::eval_rpn` straight from `calc::eval_click` would evaluate against

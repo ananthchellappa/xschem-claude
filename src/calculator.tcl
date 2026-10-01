@@ -1311,6 +1311,230 @@ proc calc::rpn_of_buffer {} {
     return [calc::rpn_of_text $s]
 }
 
+# ---------------------------------------------------------------------------
+# PLAN 3.4 / R607 -- NAME WHAT FAILED.  The three procs below are the whole of
+# it, and NONE of them parses or evaluates anything.
+#
+# R607's own words: "Any action whose expression fails to evaluate (-1 from the
+# engine) reports WHICH TOKEN FAILED TO RESOLVE, by re-testing each
+# vector-looking token with `xschem raw index`.  A bare 'expression error' is
+# not acceptable -- this is the single worst failure mode of the Cadence
+# original."
+#
+# ⚠⚠ BOTH HALVES OF THAT PRESCRIBED MECHANISM ARE REFUTED BY MEASUREMENT, and
+# band CE13 of tests/headless/test_calc_engine.tcl re-measures both every run
+# rather than leaving them as prose here:
+#
+#   (a) THERE IS NO -1 TO SEE.  `raw_add_vector()` (src/save.c) discards
+#       `plot_raw_custom_data()`'s return value, so `xschem raw add` answers 1
+#       for a rejected expression exactly as for a good one.  Band CE5 holds
+#       that measurement.
+#   (b) `xschem raw index` ANSWERS -1 FOR OPERATORS, FUNCTIONS AND NUMBERS TOO,
+#       not only for an unresolvable name.  So "vector-looking" has to be
+#       decided BEFORE the verb is asked, by the engine's operator/function/
+#       number alphabet -- and a sweep without that alphabet names `/` as the
+#       failing vector.
+#
+# SO THE ALPHABET IS WHAT DOES THE WORK, AND THIS FILE DOES NOT OWN A COPY OF
+# IT.  `wviewer::validate_rpn <rpn> <names>` (src/wave_viewer.tcl) carries the
+# operator and function tables verbatim from the C and mirrors
+# `get_raw_index()`'s lookup ladder rung for rung through
+# `name_rungs`/`name_index`/`name_lookup`, including the case-fold rules and the
+# ambiguity refusal.  `wviewer::add_trace` ALREADY calls it on exactly this
+# path, which is why PLAN 3.3's Plot gets R607 for free and Evaluate only had to
+# come through the same door.  Writing a second validator here is landmine L5's
+# lesson one level over -- "never parser number two".
+# ---------------------------------------------------------------------------
+
+# The engine's own tokenisation, and nothing else's.
+#
+# `plot_raw_custom_data()` scans with `my_strtok_r(ntok_ptr, " \t\n", "", 0,
+# &ntok_save)` -- space, tab and newline, with an EMPTY quote set -- so these
+# three characters and no others separate tokens, nothing is grouped by quotes
+# or braces, and a run of them is one separator.  Row CE13 reads that delimiter
+# string out of the C function's own call and compares, so the two cannot drift.
+#
+# ⚠ NOT `regexp -all -inline {\S+}`, which is what `wviewer::validate_rpn` uses
+# for its own scan, and the two DO disagree.  MEASURED: `\r`, `\v` and `\f`
+# each split a pair of names into TWO tokens for that regexp and leave them as
+# ONE for the engine; space, tab and newline agree.  The difference is reachable
+# -- W15 is a text widget and a paste can carry a `\r`.  This proc uses the
+# ENGINE's set, because what it is counting is the engine's parse stack
+# (landmine L1).  The divergence is DECLARED rather than papered over -- see
+# `calc::rpn_bad_token`, where an earlier revision of this file tried to paper
+# over it and the attempt did nothing at all.
+proc calc::rpn_tokens {rpn} {
+    set out {}
+    foreach t [split $rpn " \t\n"] {
+        if {$t ne {}} { lappend out $t }
+    }
+    return $out
+}
+
+# Landmine L1's bound: the most tokens the engine will accept.
+#
+# `plot_raw_custom_data()` refuses with `if(stackptr1 >= STACKMAX -2)` BEFORE
+# pushing, and every token pushes exactly one `stack1[]` entry, so the largest
+# expression that evaluates is STACKMAX - 2 tokens.  The number below is that
+# arithmetic, and it is a ROW's job to keep it honest, not this comment's: band
+# CE13 reads `#define STACKMAX` out of src/save.c, does the subtraction, and
+# then drives the engine at the boundary from BOTH sides -- an expression of
+# exactly this many tokens evaluates, one more writes nothing at all.
+#
+# ⚠ THIS IS THE ONE REJECTION CLASS A TOKEN-LEVEL TEST CANNOT SEE, which is why
+# it is a separate guard and not something `wviewer::validate_rpn` could be
+# asked to do: every token of an over-long expression is perfectly valid.
+# MEASURED, and it is not theoretical -- `wviewer::add_trace` returns {}
+# (success) for a 199-token expression while the engine wrote nothing, so Plot
+# needs this guard as much as Evaluate does.
+proc calc::rpn_maxtokens {} { return 198 }
+
+# R607's ONE SITE.  Answers {} when the engine will accept this expression, or a
+# CLAUSE naming what will stop it.  Takes no decision about wording: the two
+# callers prefix the clause with their own verb (`calc::eval_msg badtoken` /
+# `calc::plot_msg badtoken`), so there is one description of the fault and two
+# sentences, never two descriptions.
+#
+# THE ORDER IS DELIBERATE AND IS ASSERTED BY A ROW.  An empty expression is NOT
+# this proc's refusal -- `calc::eval_rpn`'s own `empty` sentence and
+# `calc::plot_msg empty` own that, and answering here as well would give one
+# state two spellings.  The token limit is asked before the alphabet because an
+# over-long expression has no single failing token to name.  And both run BEFORE
+# the destination mint, so a mistyped name is reported as a mistyped name and
+# never as a temporary-column collision (row SR4 of
+# tests/headless/test_calc_scratch_reuse.tcl pins that order).
+#
+# ⚠ FAILS OPEN IF THE VALIDATOR IS NOT THERE.  `wviewer::validate_rpn` lives in
+# a file src/xschem.tcl always sources, so that world does not occur on a
+# shipped tree; it is handled because the alternative is a Calculator that
+# refuses everything if the viewer file is ever split, and because a guard whose
+# absent-dependency behaviour is undeclared is the shape CLAUDE.md records dying
+# quietly.  R607 stops naming tokens in that world and Evaluate keeps working.
+#
+# ⚠⚠ AND IT ASKS THE SAME QUESTION THE SEAM ASKS, WHICH IS NOT THE SAME AS
+# ASKING ONE DATABASE.  `wviewer::add_trace`'s SINGLE-NAME arm validates against
+# the current database and then, on a failure, falls back to
+# `wviewer::resolve_signal_db` -- spec section D1: "validation is against EVERY
+# loaded database, not just the current one".  A pre-flight that stopped at
+# `xschem raw list` therefore REFUSED A PLOT THAT WORKS: measured through a real
+# viewer with two databases loaded, `calc::rpn_bad_token v(xdbonly)` answered
+# "unknown token 'v(xdbonly)' ..." and the press said "Cannot plot: ..." while
+# `wviewer::add_trace` handed the same name back a success and landed the trace
+# with its cross-database `rawfile`/`sim_type` keys.  NAMING A TOKEN THAT IS FINE
+# IS THE WORST SHAPE R607 CAN TAKE -- it sends the user to edit something that
+# was never broken -- so the `tok` argument lets the one caller that plots ask
+# the second question too, through the viewer's own proc rather than a rule
+# restated here.  FAILS OPEN whenever it cannot be sure: a missing
+# `resolve_signal_db`, a raising one, or a hit, all approve and let the seam
+# report its own failure.
+#
+# ⚠ THE SECOND QUESTION IS ASKED ONLY WHERE THE SEAM ASKS IT -- a ONE-token
+# expression.  `add_trace`'s multi-token arm validates against the current
+# database and nothing else, so for an expression the single question already IS
+# the seam's.  The gate here counts the ENGINE's tokens while the seam counts
+# non-space runs; the engine's delimiter set is a SUBSET of that one, so this
+# gate can only ever be more open than the seam's, never less, and the name
+# handed over is `string trim`'s, which is the argument `add_trace` passes.
+#
+# ⚠ EVALUATE DOES NOT PASS A TOKEN, AND THAT IS CORRECT RATHER THAN AN
+# OVERSIGHT.  Evaluate reaches the engine through `xschem raw add`, which
+# resolves names through `get_raw_index()` against the CURRENT database only --
+# measured: `xschem raw index v(xdbonly)` is -1 in that same two-database world.
+# So a name in a loaded-but-not-current database genuinely cannot be evaluated
+# and the refusal naming it is TRUE.  Band CE13 pins the asymmetry from the
+# headless side and band PL7b drives both halves of it against a real viewer.
+#
+# ⚠ MEASURED DISAGREEMENTS BETWEEN THE MIRROR AND THE ENGINE, each pinned by a
+# row in CE13 and none of them hidden (the count is the rows', not this
+# sentence's -- an earlier revision of this paragraph quoted one and disagreed
+# with the two other statements of it in the same change):
+#   * STRICTER -- `nan` and `inf` are NUMBERS to the engine (its number rule is
+#     a strtod PREFIX test) and the mirror declines them.  A false REJECT.  It
+#     costs nothing worth keeping: `calc::eval_finite` would refuse the answer
+#     one step later anyway.
+#   * LOOSER, TWICE OVER, and neither is named by anything here:
+#       - a NEGATIVE `del()` delay.  `case DEL` returns -1 for `!(tmp >= 0.0)`
+#         where `tmp` is a STACK VALUE, not a token, so no token-level test can
+#         see it and every token of `v(lp) -3 del()` resolves.
+#       - a token containing `\r`, `\v` or `\f`.  The engine keeps those INSIDE
+#         a token (it splits only on space, tab and newline) while the
+#         validator's own `\S+` scan breaks on them, so `v(lp)` and `v(sq)`
+#         joined by a `\r` are approved as two good names and handed to the
+#         engine as one unresolvable one.  MEASURED, in both directions.
+#     In both cases the product answers issue 0325's defined zero with no
+#     message.  Declared, pinned by rows in band CE13, and left for a later
+#     stage.
+#   * LOOSER AGAIN, AND THE BROADEST OF THE THREE -- ARITY.  This is a per-TOKEN
+#     alphabet check, so it has no notion of how many operands an operator wants
+#     or of what is left on the stack when the expression ends.  Every token of
+#     `v(lp) +` resolves, and so does every token of `v(lp) v(sq)`.  MEASURED:
+#     both are approved here, the engine accepts both, and `calc::eval_rpn`
+#     answers a CONFIDENT NUMBER with no message.
+#     ⚠ WHICH number was stated WRONGLY TWICE and is now measured: the engine
+#     ends `y[p] = (SPICE_DATA)stack2[0]` (src/save.c, the store at the foot of
+#     the point loop), i.e. the BOTTOM of the stack -- the expression's FIRST
+#     operand, not the leftover one and not an unrelated value.  Measured over
+#     the committed fixture: `1 2 3 +` answers 1 (not the leftover 5), `1 2`
+#     answers 1, `1 2 3` answers 1, and `v(lp) v(sq)` answers v(lp)'s own value
+#     exactly -- which is the FIRST of the two the user typed, where an earlier
+#     revision of this paragraph said "neither of the two".  The sharper true
+#     statement is the useful one: a leftover-stack expression silently reports
+#     its FIRST operand, so the user sees a plausible number belonging to a
+#     signal they really did name.
+#     That is R607's own failure mode one step past an unresolvable
+#     name.  NOT CLOSED, and not cheap to close: it needs an operand-count model
+#     of the engine's operator table, which is landmine L5's "never parser
+#     number two" in its most expensive form, or the `raw set` sentinel below.
+#     Declared, pinned by rows in band CE13.
+#
+# ⚠⚠ AND AN EARLIER REVISION OF THIS PROC CLAIMED TO HAVE FIXED THE SECOND
+# ONE AND DID NOTHING WHATEVER.  It passed `[join $toks { }]` to the validator
+# instead of `$rpn`, with a comment saying that made the two tokenisations
+# "agree by construction".  It cannot: `join` of a ONE-element list is that
+# element, `\r` and all, and the validator then re-splits it exactly as before.
+# Measured, after the comment was written.  The line is gone rather than kept,
+# because a statement that cannot fail reads as a guard and is not one -- and
+# refusing every token that carries one of those characters would not be the fix
+# either, since the engine's number rule is a strtod PREFIX test and `2\r3`
+# really does evaluate as 2, so that would trade a false approve for a false
+# reject.
+#
+# THE METHOD THAT WOULD CLOSE BOTH, measured and not adopted, written up in
+# doc/claude/calculator_batch/receipts/D-plot.md: create the destination column
+# empty, seed one point of it through `xschem raw set`, evaluate into it, and
+# see whether the sentinel survived.  It answers correctly for ALL THREE of the
+# engine's -1 classes -- an unresolvable name, a negative `del()` delay and a
+# stack overflow -- and for a good control.  Not adopted because it needs a
+# SECOND `xschem raw add` caller in this namespace, and row SR5 of
+# tests/headless/test_calc_scratch_reuse.tcl asserts "exactly ONE proc issues
+# `xschem raw add` directly", which is one of the rows carrying the L2
+# discipline C2's round hardened.
+proc calc::rpn_bad_token {rpn {tok {}}} {
+    set toks [calc::rpn_tokens $rpn]
+    set n [llength $toks]
+    if {$n == 0} { return {} }
+    set max [calc::rpn_maxtokens]
+    if {$n > $max} {
+        return "that expression has $n tokens and the engine takes at most $max"
+    }
+    if {[info commands ::wviewer::validate_rpn] eq {}} { return {} }
+    set names {}
+    catch {set names [split [string trim [xschem raw list]] "\n"]}
+    set m {}
+    if {[catch {wviewer::validate_rpn $rpn $names} m]} { return {} }
+    if {$m eq {}} { return {} }
+    # THE SEAM'S SECOND QUESTION.  Only a caller that plots passes a token, and
+    # only a single name reaches `add_trace`'s cross-database arm at all.  Every
+    # way of not knowing approves.
+    if {$tok ne {} && $n == 1} {
+        if {[info commands ::wviewer::resolve_signal_db] eq {}} { return {} }
+        set hit {}
+        if {[catch {wviewer::resolve_signal_db $tok [string trim $rpn]} hit]} { return {} }
+        if {$hit ne {}} { return {} }
+    }
+    return $m
+}
+
 # R402's temporary destination name, minted.
 #
 # ⚠⚠ A NAME IS NEVER RE-USED, AND THAT IS THIS FILE'S WHOLE ANSWER TO LANDMINE
@@ -1449,6 +1673,7 @@ proc calc::eval_msg {kind {a {}} {b {}}} {
         stale   { return "Evaluate refused: the vector $a already exists, so its data could be\
  a previous expression's." }
         engine  { return "Evaluate: the engine would not read that expression ($a)." }
+        badtoken { return "Cannot evaluate: $a." }
         noctx   { return {Evaluate: the result's waveform window is not there to read from.} }
         busy    { return {Evaluate: the result's waveform window is busy. Try again.} }
     }
@@ -1529,14 +1754,21 @@ proc calc::eval_refusal {msg {dataset 0} {dest {}} {point -1}} {
 # back the previous expression's value for a rejected one, which is SR1's
 # measured bug with the Calculator's name on it.
 #
-# ⚠ WHAT THIS DOES **NOT** DO, and it is PLAN 3.4's (R607), not a hole left
-# open by accident: it cannot tell a REJECTED expression from one that
-# legitimately evaluates to zero.  `raw_add_vector()` discards the evaluator's
-# -1, so there is no failure to read from Tcl at all, and since issue 0325 a
-# freshly created column is zeroed before evaluation -- so a rejection answers a
-# defined 0.  R607 has to find the failing token by validating every
-# vector-looking token with `xschem raw index` BEFORE the engine runs.  Rows CE5
-# of tests/headless/test_calc_engine.tcl re-measure both halves every run.
+# ⚠ WHY THE REFUSAL BELOW IS A PRE-FLIGHT AND NOT A CHECK ON THE ENGINE'S
+# ANSWER (R607 / PLAN 3.4, which LANDED -- this paragraph used to say it had
+# not).  Nothing downstream of the engine call can tell a REJECTED expression
+# from one that legitimately evaluates to zero: `raw_add_vector()` discards the
+# evaluator's -1, so there is no failure to read from Tcl at all, and since
+# issue 0325 a freshly created column is zeroed before evaluation, so a
+# rejection answers a defined 0.  That is why `calc::rpn_bad_token` runs BEFORE
+# the engine does, and why the refusal names the token instead of reporting a
+# number.  Bands CE5 and CE13 of tests/headless/test_calc_engine.tcl re-measure
+# both halves every run.
+#
+# ⚠ WHAT IS STILL OPEN IS NAMED WHERE IT IS MEASURED, not here:
+# `calc::rpn_bad_token`'s own header carries the mirror-versus-engine
+# disagreements it cannot see, each pinned by a row in band CE13, and this proc
+# answers issue 0325's defined zero with no message for those.
 proc calc::eval_rpn {rpn {dataset 0}} {
     set rpn [string trim $rpn]
     if {$rpn eq {}} { return [calc::eval_refusal [calc::eval_msg empty] $dataset] }
@@ -1555,6 +1787,25 @@ proc calc::eval_rpn {rpn {dataset 0}} {
     catch {set np [xschem raw points $dataset]}
     if {![string is integer -strict $np] || $np < 1} {
         return [calc::eval_refusal [calc::eval_msg nodata] $dataset]
+    }
+    # R607 / PLAN 3.4, and it runs BEFORE the destination is minted on purpose.
+    # `calc::rpn_bad_token` answers {} or a clause naming the token (or the
+    # token COUNT, for landmine L1) that will stop the engine; the sentence is
+    # `calc::eval_msg`'s.  It sits AFTER the three database checks above because
+    # "no data is loaded" is a truer answer than "unknown token v(lp)" when
+    # nothing is loaded -- no name resolves in an empty database -- and BEFORE
+    # the mint because R402 then has nothing to clean up and because a mistyped
+    # name must not be reported as a temporary-column collision.
+    #
+    # ⚠ WHAT THIS CHANGED, STATED BECAUSE THREE SUITES HAD TO BE RESTATED FOR
+    # IT: a rejected expression used to be REPORTED, as issue 0325's defined
+    # zero with ok=1 and no message, because nothing downstream of the engine
+    # call can tell a rejection from a legitimate zero.  Bands CE5, CE7, CE12
+    # and SR2/SR4 each held a row asserting that, and each now asserts the
+    # refusal instead.
+    set bad [calc::rpn_bad_token $rpn]
+    if {$bad ne {}} {
+        return [calc::eval_refusal [calc::eval_msg badtoken $bad] $dataset]
     }
     # R604, resolved BEFORE the engine runs: the cursor if there is one, else
     # the last point of the asked-for dataset.  A cursor index is absolute
@@ -1702,18 +1953,24 @@ proc calc::eval_in_token {tok rpn {dataset 0}} {
 # NOT affected -- `annot_p` is absolute across datasets, so a published cursor
 # reads whichever dataset it actually sits in (band CE4).
 #
-# ⚠ SECOND DECLARED LIMIT: the documented `%<n>` dataset SPELLING reads as a
-# SILENT ZERO from here.  `v(div)%1` typed into the buffer evaluates, answers 0
-# and says nothing, because the suffix belongs to `node_token_split()` on the
-# trace/`node=` path (landmine L5) and not to the inventory lookup the engine
-# resolves names through -- `xschem raw index v(div)%0` is -1, so the engine
-# treats the whole token as an unresolvable vector and issue 0325's zeroed
-# column is what gets read.  The Tcl-side per-dataset reader is `xschem raw
-# values <name> <dataset>`.  NOT FIXED HERE: naming the failing token is
-# R607/PLAN 3.4's job and that is where this stops being silent.  Band CE12 of
-# tests/headless/test_calc_engine.tcl asserts both limits as they stand, so a
-# later phase that closes either one reds a row and has to come back and correct
-# this comment.
+# ⚠ SECOND LIMIT, NARROWER THAN IT WAS: the documented `%<n>` dataset SPELLING
+# is NOT SUPPORTED from here, but it is no longer SILENT.  `v(div)%1` typed into
+# the buffer is now REFUSED and NAMED, because R607's pre-flight asks
+# `wviewer::validate_rpn`, which mirrors `get_raw_index()`'s ladder -- and the
+# suffix belongs to `node_token_split()` on the trace/`node=` path (landmine L5)
+# and not to the inventory lookup the engine resolves names through.  `xschem
+# raw index v(div)%0` is still -1, so being named is not being parsed; the
+# Tcl-side per-dataset reader is still `xschem raw values <name> <dataset>`.
+#
+# ⚠⚠ AN EARLIER REVISION OF THIS PARAGRAPH SAID THE SPELLING "reads as a SILENT
+# ZERO" and "NOT FIXED HERE: naming the failing token is R607/PLAN 3.4's job",
+# AND PLAN 3.4 LANDED IN THE SAME CHANGE THAT WROTE IT.  Band CE12 of
+# tests/headless/test_calc_engine.tcl restated its rows for the closure in that
+# same change and this sentence was left behind -- the fourth false comment that
+# stage shipped, found by auditing the band's own rows against the prose beside
+# them rather than by a run.  CE12 now asserts limit 1 as it stands and limit 2
+# as CLOSED, so a later phase that moves either one reds a row and has to come
+# back here.
 proc calc::eval_click {} {
     if {![calc::has_win .calc.mode.eval]} { return {} }
     set g [calc::require_result]
@@ -1723,6 +1980,315 @@ proc calc::eval_click {} {
     set tok {}
     catch {set tok [dict get $g token]}
     return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
+}
+
+# ---------------------------------------------------------------------------
+# PLAN 3.3 -- PLOT (R601/R602).  Send the buffer to the waveform viewer.
+#
+# WARN NOTHING HERE DECIDES WHERE A PLOT LANDS, AND THAT IS R601'S EXPLICIT
+# REQUIREMENT: "the destination strip comes from W13 (Append / Replace / New
+# Strip), which must reuse `wviewer::set_plot_dest` rather than reimplementing
+# the choice."  The whole landing policy -- strip creation, empty-strip reuse,
+# the `replace` clear list, the plot mode, the colour cycle -- lives in
+# `wviewer::plot_signals` -> `wviewer::plan_plot` -> `wviewer::add_trace`, which
+# is the seam the tree's other plot gestures come through -- ASE-L's Direct Plot
+# (`ase::ui::dp_finish`) and the signal browser's plot gestures; the callers are
+# found with `grep -n 'wviewer::plot_signals' src/*.tcl` rather than counted
+# here.  This file pushes the combobox's label
+# at `wviewer::set_plot_dest` and calls that seam.  A second landing rule here
+# would be the same defect as a second validator.
+#
+# WARN AND THE TRACE'S DESTINATION COLUMN IS NOT A `__calc_tmp`, SO R402 DOES
+# NOT APPLY TO THIS PATH.  `wviewer::add_trace` materialises a multi-token RPN
+# as a PERSISTENT raw vector named by `wviewer::auto_expr_name` (which skips
+# every name `xschem raw index` already resolves), because the trace has to keep
+# reading it for as long as it is on the canvas.  Deleting it would blank the
+# trace.
+#
+# WARN DECLARED LIMIT, AND IT IS THE VIEWER'S BEHAVIOUR RATHER THAN THIS FILE'S:
+# NOTHING EVER UN-MATERIALISES ONE.  `wviewer::clear_graph_traces` drops the
+# MODEL entry and leaves the column in the in-memory raw, so every Plot press of
+# an expression leaves an `expr<N>` behind for the rest of the session --
+# including a press whose trace a later Replace has just thrown away.  MEASURED,
+# and pinned by band PL4b of tests/headless/test_calc_plot.tcl: after a Replace
+# the trace is gone from the model and `xschem raw index` still resolves its
+# column.  R402's delete is NOT the fix (sabotage P14 applies it here and
+# reddens the data rows wholesale); a correct one has to know that no trace in
+# any tab still reads the column, which is `wviewer::add_trace`'s knowledge.  Landmine L2 is not in play either: the shared scratch column is only
+# written when `plot_raw_custom_data()` is called with `yname == NULL`, which is
+# the graph path and not this one.  Row SR5 of
+# tests/headless/test_calc_scratch_reuse.tcl asserts that this is the only
+# Calculator route to the engine that goes through the viewer's door, so the
+# "exactly ONE proc issues `xschem raw add` directly" claim beside it stays true
+# and stays narrow.
+#
+# WARN R602 ("Plot with no viewer open opens one, then plots") IS UNREACHABLE AS
+# WRITTEN, AND REACHING IT WOULD CONTRADICT A LATER RULING.  Measured: the only
+# source of a result this window has is `calc::results_source`, which walks
+# `wviewer::windows` -- so "there is a result" and "there is an open viewer" are
+# the same fact, and with no viewer `calc::require_result` refuses in U7's ruled
+# words before Plot has anything to plot.  Opening one here is exactly what
+# `calc::no_result_msg`'s own comment forbids: "THE CALCULATOR DOES NOT OFFER TO
+# LAUNCH ASE-L ITSELF: a refusal that opens a window is a second gesture the
+# user did not ask for" (results batch item 10 / R503f, ruled 2026-08-20, after
+# the spec's R602 was written).  So R602's INTENT -- a plot gesture always has
+# somewhere to land -- is met by `wviewer::plan_plot`, which creates or reuses a
+# strip when the open viewer has none; its LETTER is declined, pinned by row
+# PL8, and filed as a `rule` debt because it is a user-visible choice and not
+# mine to settle.
+# ---------------------------------------------------------------------------
+
+# Every sentence Plot can put on the status line, in ONE place.  Same shape and
+# same reason as `calc::eval_msg`, and deliberately NOT the same proc: "Nothing
+# to evaluate" and "Nothing to plot" are different sentences for different
+# gestures, and sharing a table would have meant a `verb` argument threaded
+# through both.
+#
+# WARN UNRATIFIED USER-VISIBLE WORDING.  These are the assistant's words; the
+# `rule` debt filed against `calc::eval_msg`'s sentences is extended to cover
+# these.  U7's refusal (no result at all) is NOT here and must never be
+# re-spelled here: it is `calc::no_result_msg`, ruled verbatim, and Plot reaches
+# it through `calc::require_result` exactly as Evaluate does.
+proc calc::plot_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        empty    { return {Nothing to plot: the buffer is empty.} }
+        badtoken { return "Cannot plot: $a." }
+        noctx    { return {Plot: the result's waveform window is not there to plot into.} }
+        busy     { return {Plot: the result's waveform window is busy. Try again.} }
+        failed   { return "Plot failed: $a." }
+        plotted  { return "Plotted $a ($b)." }
+        dest     { return "Plot destination: $a." }
+        destpend { return "Plot destination: $a (applied when a waveform viewer is open)." }
+        destdrop { return "The viewer was set to $a, which W13 does not offer, so that choice is gone." }
+    }
+    return {}
+}
+
+# The answer dict, refusing.  ONE SITE, for the reason `calc::eval_refusal`
+# carries: the key set cannot drift between the refusing paths and the one
+# success path.
+#
+# ⚠⚠ AND THE `dest` KEY MEANS ONE THING, WHICH IT DID NOT BEFORE: the resolved
+# destination CODE, or empty when nothing resolved one.  The refusing paths were
+# handed W13's LABEL (`New Strip`) while the success and seam-failure paths
+# carried `wviewer::set_plot_dest`'s CODE (`newstrip`), so one key meant two
+# vocabularies depending on which branch answered -- a trap for any later reader
+# that switches on it.  Normalised HERE rather than at the five call sites, for
+# the same reason the dict is built here.  `wviewer::dest_norm` is the one
+# label-to-code map (it is idempotent on a code, which is what makes this safe
+# on the paths that already pass one), and an EMPTY dest is left empty rather
+# than folded to `append`: R508's no-window world resolved nothing, and saying
+# `append` there would invent a destination the user never picked.  Row PL2b
+# asserts the key is a code on every answering path.
+proc calc::plot_refusal {msg {dest {}}} {
+    set code $dest
+    if {$dest ne {}} { catch {set code [wviewer::dest_norm $dest]} }
+    return [dict create ok 0 name {} dest $code msg $msg]
+}
+
+# W13's CURRENT VALUE, as the user sees it.
+#
+# The LABEL is returned verbatim and is never translated here:
+# `wviewer::dest_norm` is the one place that maps a label to a code, and it
+# already accepts all three of W13's spellings (row PL2 asserts that the three
+# the Calculator offers really are three DISTINCT codes to it, so the control
+# cannot be offering a choice the viewer collapses).  R508: with no window there
+# is no combobox, so this answers {} -- which `wviewer::dest_norm` reads as
+# `append`, the harmless policy, for the same reason `wviewer::plot_dest`
+# defaults that way rather than returning a policy that destroys traces.
+proc calc::plot_dest_req {} {
+    if {![calc::has_win .calc.mode.dest]} { return {} }
+    set v {}
+    catch {set v [.calc.mode.dest get]}
+    if {[string trim $v] eq {}} { return {} }
+    return $v
+}
+
+# W13's OFFERED labels, read off the widget.  R508: no window, no list.
+#
+# The widget is the one place the three labels are written down
+# (`calc::build_mode`), so asking it is the only way to decide "W13 cannot
+# express that" without a second copy of the list living here.  Used by
+# `calc::plot_dest_dropped` and nowhere else.
+proc calc::plot_dest_offered {} {
+    if {![calc::has_win .calc.mode.dest]} { return {} }
+    set v {}
+    catch {set v [.calc.mode.dest cget -values]}
+    return $v
+}
+
+# ⚠ R506: A PRESS THAT TAKES AWAY A CHOICE THE USER MADE ELSEWHERE SAYS SO.
+# Answers the sentence for that, or empty when nothing was taken away.
+#
+# `calc::plot_rpn` pushes W13's value at `wviewer::set_plot_dest` on every
+# press, which is R601's requirement and is right while the two controls offer
+# the same destinations.  They do not: `wviewer::dest_labels` has FOUR entries
+# and W13 offers three, so a user who picked `New Tab` from the viewer's own
+# Options menu lost it to the next Calculator press -- silently, because the
+# "Plotted ... (Append)" sentence names where the plot WENT and not what it
+# overwrote.  MEASURED through a real viewer, band PL5e.
+#
+# DECLARED, NOT CLOSED: W13 still offers three (spec section 4), so the choice
+# is still taken away.  What this removes is the silence.  Adding the fourth
+# entry would make this proc answer empty for every press, which is the shape a
+# later phase that widens W13 should leave behind.
+#
+# `prev` and `code` are both CODES.
+#
+# ⚠ AN EARLIER REVISION OF THIS PARAGRAPH DESCRIBED THE OPPOSITE OF THE CODE
+# BELOW, and it is worth being exact because the two readings differ in what the
+# user is told.  It said "an unrecognised `prev` is treated as expressible
+# (nothing to report) rather than as a loss", reasoning that `wviewer::dest_norm`
+# folds what it cannot parse to `append`.  The code never normalises `prev` --
+# `prev` ARRIVES as a code.  What it normalises is each OFFERED LABEL, and it
+# reports a loss when NONE of them maps to `prev`.  So an unrecognised `prev` is
+# treated as a LOSS and does get a sentence, which is the safer of the two
+# behaviours and the one that makes this proc worth having: a destination W13
+# cannot express is exactly the thing the user should be told about.
+proc calc::plot_dest_dropped {prev code} {
+    if {$prev eq {} || $prev eq $code} { return {} }
+    if {[info commands ::wviewer::dest_norm] eq {}} { return {} }
+    set offered [calc::plot_dest_offered]
+    if {![llength $offered]} { return {} }
+    foreach L $offered {
+        set c $L
+        catch {set c [wviewer::dest_norm $L]}
+        if {$c eq $prev} { return {} }
+    }
+    set lab $prev
+    catch {set lab [wviewer::dest_label $prev]}
+    return [calc::plot_msg destdrop $lab]
+}
+
+# The work, INSIDE the selected result's own context.  Answers one dict.
+#
+# Order: R607 first (so a mistyped token is named before anything is written),
+# then the destination push, then the ONE seam.  The destination is pushed
+# rather than passed as `plot_signals`' one-shot `destover` override, and that
+# is a choice with a reason: W13 is a VISIBLE control whose label tells the user
+# where the next plot goes, so the window's own policy must agree with it --
+# and `wviewer::set_plot_dest` logs the change replayably, which a one-shot
+# override deliberately does not.
+#
+# The trace's name is recovered by DIFFING the model's `vec` set across the
+# call, because `wviewer::plot_signals` returns only the failures and the name
+# is `wviewer::auto_expr_name`'s to choose.  When the diff is empty -- the same
+# vector plotted twice -- the sentence falls back to the expression itself,
+# which is still true and still names what was plotted.
+#
+# ⚠⚠ THE DESTINATION IS NAMED BY `wviewer::dest_menu_label`, NOT BY
+# `wviewer::dest_label`, AND THAT IS THE WHOLE OF THIS FILE'S HONESTY ABOUT
+# RULING 24.  Under MULTI plot mode `wviewer::plan_plot` emits no clear key, so
+# `replace` clears nothing and a Replace really is an Append -- declared in that
+# proc's own banner and surfaced to the user in exactly ONE place,
+# `wviewer::dest_menu_label`, which the viewer's Options cascade already reads.
+# THE VIEWER IS NOT WRONG HERE: a Calculator that asserted "Plotted expr1
+# (Replace)" in that mode would be, and said so until band PL5d measured it.
+# Reusing the viewer's label proc rather than re-deriving the clause here is the
+# same discipline as reusing `wviewer::dest_norm`: one place can go stale, two
+# can disagree.
+#
+# ⚠ AND A PUSH CAN TAKE A CHOICE AWAY -- see `calc::plot_dest_dropped`.  The
+# previous destination is read BEFORE the push so the sentence can say what was
+# overwritten; the clause is appended to the seam's failure sentence as well,
+# because the push has already happened by then.
+proc calc::plot_rpn {tok rpn dest} {
+    set before {}
+    catch {
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+            foreach tr [dict get $G traces] { lappend before [dict get $tr vec] }
+        }
+    }
+    set bad [calc::rpn_bad_token $rpn $tok]
+    if {$bad ne {}} {
+        return [calc::plot_refusal [calc::plot_msg badtoken $bad] $dest]
+    }
+    set prev {}
+    catch {set prev [wviewer::plot_dest $tok]}
+    set code {}
+    catch {set code [wviewer::set_plot_dest $dest $tok]}
+    if {$code eq {}} { catch {set code [wviewer::plot_dest $tok]} }
+    set drop [calc::plot_dest_dropped $prev $code]
+    set errs [wviewer::plot_signals $tok [list $rpn]]
+    if {[llength $errs]} {
+        set fm [calc::plot_msg failed [lindex [lindex $errs 0] 1]]
+        if {$drop ne {}} { append fm " " $drop }
+        return [calc::plot_refusal $fm $code]
+    }
+    set nm {}
+    catch {
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+            foreach tr [dict get $G traces] {
+                set v [dict get $tr vec]
+                if {[lsearch -exact $before $v] < 0} { set nm $v }
+            }
+        }
+    }
+    if {$nm eq {}} { set nm [string trim $rpn] }
+    set lab $code
+    catch {set lab [wviewer::dest_menu_label $tok $code]}
+    set pm [calc::plot_msg plotted $nm $lab]
+    if {$drop ne {}} { append pm " " $drop }
+    return [dict create ok 1 name $nm dest $code msg $pm]
+}
+
+# R601: run the plot inside the context the SELECTED RESULT lives in, and PUT
+# THE CONTEXT BACK (issue 0173).  The bracket is `calc::eval_in_token`'s, with
+# one deliberate difference.
+#
+# WARN NO `borrow`, UNLIKE EVALUATE'S READ, AND THE REASON IS WRITTEN INTO
+# `wviewer::enter_ctx`'s OWN CONTRACT: the issue-0314 borrow door is open only
+# for callers whose bodies "run no `update`/`after` ... only READ ... and always
+# restore".  Plot WRITES -- it mutates the viewer's layout, may create a strip
+# and ends in `wviewer::regenerate`, which redraws -- so it is not one of those
+# callers and must not lower somebody else's semaphore.  MEASURED, so the plain
+# door is enough: a Tk button `-command` on the Calculator's own toplevel runs
+# straight off the Tk event loop and NOT inside xschem's `callback()`, so
+# `xschem get semaphore` reads 0 inside this press and the unborrowed switch
+# succeeds.  Row PL1 pins that measurement.  A future Plot reached from a
+# keybinding on a drawing area would hold a callback frame and be REFUSED --
+# loudly, as `busy`, which is the honest outcome and not a silent one.
+proc calc::plot_in_token {tok rpn dest} {
+    if {$tok eq {}} { return [calc::plot_refusal [calc::plot_msg noctx] $dest] }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok} ticket]} {
+        return [calc::plot_refusal [calc::plot_msg busy] $dest]
+    }
+    if {![lindex $ticket 0]} {
+        return [calc::plot_refusal [calc::plot_msg busy] $dest]
+    }
+    set d {}
+    if {[catch {calc::plot_rpn $tok $rpn $dest} d]} {
+        set d [calc::plot_refusal [calc::plot_msg failed $d] $dest]
+    }
+    catch {wviewer::leave_ctx $tok $ticket}
+    return $d
+}
+
+# W11's press.  PLAN 3.3.
+#
+# The order is R603's, the same one Evaluate uses and for the same reason: WHICH
+# database first (`calc::require_result`, whose refusal is U7's ruled sentence),
+# then WHAT to plot, then the viewer inside that database's own context.  The
+# buffer is read BEFORE the loan is taken, so an empty buffer costs no context
+# switch.
+#
+# R508: with no window this is a silent no-op that records nothing.  The guard
+# is here and not only in the callees because `calc::require_result` publishes
+# the Results Dir row as a side effect -- reaching it with no window would be a
+# write, and R508's "records nothing" is about state, not only about raising.
+proc calc::plot_click {} {
+    if {![calc::has_win .calc.mode.plot]} { return {} }
+    set g [calc::require_result]
+    if {![dict get $g ok]} { return [calc::status [dict get $g msg]] }
+    set rpn [calc::rpn_of_buffer]
+    if {[string trim $rpn] eq {}} { return [calc::status [calc::plot_msg empty]] }
+    set tok {}
+    catch {set tok [dict get $g token]}
+    set d [calc::plot_in_token $tok $rpn [calc::plot_dest_req]]
+    set m {}
+    catch {set m [dict get $d msg]}
+    return [calc::status $m]
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -1989,18 +2555,23 @@ proc calc::build_mode {} {
     # `calc::require_result` -- and U7's refusal for when there is none;
     # calculator_batch PLAN 3.2 then built the computation, so a press WITH a
     # result now reaches the engine through `calc::eval_click` and reports a
-    # scalar (R603/R604).  `calc::inert` is no longer on any Eval path.
+    # scalar (R603/R604), and PLAN 3.3 then built Plot the same way, so
+    # `calc::inert` is no longer on EITHER path -- `calc::plot_click` reaches
+    # the waveform viewer through `wviewer::plot_signals` (R601/R602).
     # ⚠ AN EARLIER REVISION OF THIS COMMENT SAID "a press WITH a result still
     # lands on the phase-3 stub", and the stage that built Evaluate corrected
     # that identical sentence in the sibling test suite's CW13 band while
     # leaving TWO copies of it in this file -- here and above `calc::inert`.
-    # W11 (Plot) is still inert and is PLAN 3.3's.
-    foreach {id label phase} {plot Plot 3 eval Eval 3} {
-        if {$id eq {eval}} {
-            set cmd calc::eval_click
-        } else {
-            set cmd [list calc::inert $label $phase]
-        }
+    # WARN W14 (Table) IS THE ONLY ACTION BUTTON ON THIS STRIP STILL INERT -- NOT
+    # the only CONTROL, which is what an earlier revision of this sentence said
+    # and which the three `calc::inert ... 6` calls a few lines above falsify:
+    # the pick-scope radios (W9/W10) and Clip are PLAN phase 6's and are inert
+    # too.  Table is PLAN phase 10's.
+    #
+    # WARN THE `phase` COLUMN IS GONE FROM THIS LOOP, not defaulted: with both
+    # commands live there is no stub to name a phase for, and a `default` arm
+    # that cannot be reached reads as a guard and is not one.
+    foreach {id label cmd} {plot Plot calc::plot_click eval Eval calc::eval_click} {
         button .calc.mode.$id -text $label -takefocus 0 -padx 4 -pady 0 \
             -background [calc::color panel] \
             -activebackground [calc::color header] \
@@ -2015,7 +2586,26 @@ proc calc::build_mode {} {
     # creation, `$w set` for the initial value, and combo_letter_cycle bound
     # because a readonly ttk::combobox does not type-to-cycle by itself
     # (xschem.tcl:10946).  The three values are the ones R601 hands to
-    # wviewer::set_plot_dest in phase 3; the LABELS are fixed here.
+    # wviewer::set_plot_dest -- `calc::plot_dest_req` reads this widget and
+    # `wviewer::dest_norm` is the only thing that maps a label to a code, so the
+    # LABELS are fixed here and translated nowhere.
+    #
+    # WARN THREE, WHERE `wviewer::dest_labels` HAS FOUR: W13 omits `New Tab` on
+    # purpose (spec section 4).  Row PL2 asserts the three offered here are
+    # three DISTINCT codes to `wviewer::dest_norm`.
+    #
+    # ⚠⚠ AN EARLIER REVISION OF THAT SENTENCE WENT ON TO SAY "so the control
+    # cannot be offering a choice the viewer silently collapses", AND THAT IS
+    # FALSE.  `dest_norm` is pure and does map the three labels to three codes,
+    # which is all row PL2 measures; what the viewer does with `replace`
+    # afterwards is a MODE question, and under multi plot mode
+    # `wviewer::plan_plot` emits no clear key at all, so Replace and Append
+    # behave identically (ruling 24, declared in that proc's own banner).  The
+    # omission the Calculator makes good on instead is to SAY so: both status
+    # sentences name the destination through `wviewer::dest_menu_label`, the
+    # viewer's one place for that clause, and band PL5d drives the mode and
+    # asserts both the sentence and the append behaviour.  The fourth
+    # destination's own cost is `calc::plot_dest_dropped`'s.
     ttk::combobox .calc.mode.dest -state readonly -width 10 \
         -values {Append Replace {New Strip}} -takefocus 0 \
         -style Calc.Field.TCombobox
@@ -2034,11 +2624,47 @@ proc calc::build_mode {} {
     pack .calc.mode.table -side left -padx {3 0} -pady 1
 }
 
-# W13's selection is remembered by the widget (that is what a combobox is for)
-# and consumed by phase 3's Plot.  Saying so is R506.
+# W13's selection, PLAN 3.3.  R506: it speaks, and what it says is whether the
+# choice took effect.
+#
+# The widget remembers the value (that is what a combobox is for) and
+# `calc::plot_dest_req` is the one reader of it, so this proc PUSHES rather than
+# stores: with a viewer holding the session's result it hands the label to
+# `wviewer::set_plot_dest` immediately, so the viewer's own Options-menu label
+# agrees with W13 instead of disagreeing silently until the next press.  With no
+# viewer there is nothing to push to and the sentence says so -- `plot_click`
+# pushes again from the same widget, so a destination chosen before a viewer
+# existed still takes effect.
+#
+# WARN THE TOKEN IS READ THROUGH `calc::results_source`, NOT `require_result`,
+# and the difference is deliberate: `require_result` PUBLISHES the Results Dir
+# row as a side effect, which is right for a press that is about to act on the
+# result (U3's one-resolution rule) and wrong for a combobox selection, which
+# has not been asked to re-resolve anything the row shows.
+#
+# WARN `wviewer::set_plot_dest` is NOT called with a {} token: it emits a CIW
+# error when no viewer resolves, and a user picking a destination with no viewer
+# open has done nothing wrong.  That is why the token is tested here first.
+#
+# R508: `calc::has_win` and not a bare `winfo exists`.  The bare spelling RAISES
+# `invalid command name "winfo"` under --nogui, which is R508's third case; this
+# proc shipped with it, it was unreachable while the proc was inert, and
+# widening band CE8 to cover PLAN 3.3's entry points is what surfaced it.
 proc calc::dest_changed {} {
-    if {![winfo exists .calc.mode.dest]} return
-    return [calc::inert "plot destination [.calc.mode.dest get]" 3]
+    if {![calc::has_win .calc.mode.dest]} { return {} }
+    set lab [calc::plot_dest_req]
+    if {$lab eq {}} { return {} }
+    set tok [lindex [calc::results_source] 2]
+    if {$tok eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
+    set code {}
+    catch {set code [wviewer::set_plot_dest $lab $tok]}
+    if {$code eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
+    # `dest_menu_label` and not `dest_label`, for the reason written out in
+    # `calc::plot_rpn`'s header: under multi plot mode `replace` clears nothing,
+    # and the viewer's own label proc is the ONE place that says so.
+    set shown $code
+    catch {set shown [wviewer::dest_menu_label $tok $code]}
+    return [calc::status [calc::plot_msg dest $shown]]
 }
 
 # ---------------------------------------------------------------------------

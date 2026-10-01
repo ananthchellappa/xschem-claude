@@ -1445,9 +1445,18 @@ group CW13 {
     # tests/headless/test_calc_buffer.tcl's subject; what this group still
     # asserts is that NOTHING ELSE moved, and the second list is what makes the
     # first one's claim narrow enough to be worth something.
+    # WARN RESTATED BY calculator_batch PLAN 3.3: `calc::plot_click` joins the
+    # list, and `calc::dest_changed` -- already here -- stopped being a stub in
+    # the same change.  Neither is a phase leaking in early: W11 and W13 are
+    # PLAN 3.3's own controls.  They are pinned BY NAME here for the reason the
+    # two results-batch entries above were: the list is the honest place to
+    # record which phase a control belongs to, and part (b) below still asserts
+    # that pressing them touches neither the buffer nor the Stack, which is the
+    # claim this group actually owns.  What a press now DOES is
+    # tests/headless/test_calc_plot.tcl's subject.
     set allowed {calc::inert calc::status calc::sel_click calc::sel_refuse
                  calc::dest_changed calc::res_toggle
-                 calc::eval_click calc::browse_inert}
+                 calc::eval_click calc::plot_click calc::browse_inert}
     set live2 {calc::pad_click calc::clr_buf calc::buf_undo calc::buf_redo}
     set rogue {} ; set mute {}
     set nlive 0

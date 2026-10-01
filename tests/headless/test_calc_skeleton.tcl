@@ -1295,8 +1295,17 @@ check "S18 both comboboxes are the state the map covers" \
 pcall .calc.mode.dest set {Replace}
 pcall event generate .calc.mode.dest <<ComboboxSelected>>
 update idletasks
-check "S18 choosing a destination says so" [pcall .calc.status.msg get] \
-    {plot destination Replace: not implemented (phase 3)}
+# WARN RESTATED BY calculator_batch PLAN 3.3.  This row asserted
+# `plot destination Replace: not implemented (phase 3)` -- `calc::dest_changed`
+# was a `calc::inert` call site.  It now PUSHES the label at
+# `wviewer::set_plot_dest` on the viewer holding the session's result, and says
+# which of the two happened.  Nothing in this file opens a viewer, so the arm
+# measured here is the no-viewer one, and that is the arm worth having in THIS
+# file: it proves the choice is not silently dropped when there is nowhere to
+# push it.  The push itself is tests/headless/test_calc_plot.tcl's band PL6.
+check "S18 choosing a destination says so, and says the choice is held until there is a viewer" \
+    [pcall .calc.status.msg get] \
+    {Plot destination: Replace (applied when a waveform viewer is open).}
 pcall .calc.mode.dest set {Append}
 
 # the three action buttons are INERT, and each names itself and its phase.
@@ -1321,11 +1330,18 @@ pcall .calc.mode.dest set {Append}
 # recorded in doc/claude/calculator_batch/receipts/C2-evaluate-blockers.md.
 # The row below is what makes this comment checkable: it asserts the refusal
 # only, and S27 asserts what a press WITH a result does.
+# WARN RESTATED AGAIN BY calculator_batch PLAN 3.3, AND THE SPLIT MOVED.  It was
+# `eval` alone that refused in U7's words; Plot now resolves the session's
+# result through the SAME `calc::require_result` and refuses in the SAME ruled
+# sentence, so the U7 arm covers two of the three buttons and `table` is the
+# only one left naming a phase.  That is not scope creep into U7's ruling: the
+# ruling is about what a control says when there is nothing to work against, and
+# Plot acquired that question the moment it stopped being a stub.
 foreach {id label phase} {plot Plot 3 eval Eval 3 table Table 10} {
     check "S18 $id text" [pcall .calc.mode.$id cget -text] $label
     check "S18 $id enabled" [btnstate .calc.mode.$id] normal
     pcall .calc.mode.$id invoke
-    if {$id eq {eval}} {
+    if {$id eq {eval} || $id eq {plot}} {
         check "S18 $id with no result refuses and names the next action (U7)" \
             [pcall .calc.status.msg get] \
             "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."

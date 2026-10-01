@@ -76,11 +76,24 @@
 #   CE11 The engine's three-operand `?` arm must not print one line per
 #        evaluated point.  The count is taken in-process through the `xschem
 #        log` verb, with a control leg proving the capture works.
-#   CE12 Two DECLARED limits, pinned as rows rather than left as prose: Evaluate
-#        always reports dataset 0 because `calc::eval_click` passes no dataset
-#        (the `Family` pick scope is PLAN phase 6), and the documented `%<n>`
-#        dataset spelling reads as a silent zero from the Calculator.  Neither
-#        is fixed; a later phase that closes either reds a row here.
+#   CE12 Declared limits, pinned as rows rather than left as prose.  LIMIT 1
+#        still stands: Evaluate always reports dataset 0 because
+#        `calc::eval_click` passes no dataset (the `Family` pick scope is PLAN
+#        phase 6).  LIMIT 2 -- the documented `%<n>` dataset spelling reading as
+#        a SILENT zero -- was CLOSED by PLAN 3.4 and its rows are restated in
+#        place, which is the band header's own stated purpose working.
+#   CE13 R607 / PLAN 3.4 — what failed, BY NAME.  Both halves of the spec's
+#        prescribed mechanism are refuted by rows here (the engine's -1 never
+#        reaches Tcl; `xschem raw index` answers -1 for operators, functions and
+#        numbers too, so "vector-looking" cannot be decided by the verb).  What
+#        is used instead is `wviewer::validate_rpn`, the ONE validator
+#        `wviewer::add_trace` already calls, plus `calc::rpn_maxtokens` for
+#        landmine L1 -- the one rejection class a token-level test cannot see.
+#        The band also pins the THREE MEASURED disagreements between that Tcl
+#        mirror and the C engine -- one in which the mirror is stricter (`nan` is
+#        a number to the engine) and two in which it is looser (a negative
+#        `del()` delay, and a token joined by `\r`/`\v`/`\f`) -- and declares
+#        what the product does in the two classes nothing here can name.
 #
 # ⚠ BANDS CE9 AND CE11 WRITE A FIXTURE, so this file sources
 # `tests/headless/scratch.tcl` for `test_scratch` rather than inventing a
@@ -671,10 +684,23 @@ group CE5 {
     # column is not touched."  Since issue 0325 raw_add_vector() zeroes a
     # freshly created column BEFORE evaluating, so what a caller sees through a
     # NEW destination is a defined all-zero trace.
-    check "CE5 an unresolvable vector name yields a defined ZERO, not uninitialised heap" \
-        [near [evval {v(nosuch) v(div) +} 0] 0 1e-30] ok
+    # ⚠ ASKED OF THE ENGINE DIRECTLY, NOT THROUGH `calc::eval_rpn`, since PLAN
+    # 3.4.  The engine's behaviour is unchanged -- a rejected expression still
+    # leaves a freshly created column at issue 0325's defined zero -- but the
+    # Calculator no longer reports it: R607's pre-flight refuses first and names
+    # the token (band CE13).  An earlier revision of this row read the zero back
+    # through `evval`, i.e. through the product, and R607 turned it red; the
+    # measurement it was making belongs to the engine and is kept here against
+    # the verb.
+    pcall xschem raw del __calc_t_ce5z
+    pcall xschem raw add __calc_t_ce5z {v(nosuch) v(div) +}
+    check "CE5 an unresolvable vector name yields a defined ZERO in the engine's own column, not uninitialised heap" \
+        [near [pcall xschem raw value __calc_t_ce5z 100 0] 0 1e-30] ok
+    pcall xschem raw del __calc_t_ce5z
     check "CE5 ...and the token really does not resolve, so the premise holds" \
         [pcall xschem raw index v(nosuch)] -1
+    check "CE5 ...and the PRODUCT now refuses that expression by name instead of reporting the zero (R607, band CE13)" \
+        [string match {REFUSED:*v(nosuch)*} [ev {v(nosuch) v(div) +} 0]] 1
     # ⚠⚠ THE FINDING THIS ROW EXISTS TO RE-MEASURE EVERY RUN, and the reason
     # PLAN 3.4 cannot be written as "on engine -1, name the token":
     # raw_add_vector() (src/save.c) DISCARDS plot_raw_custom_data()'s return
@@ -694,8 +720,20 @@ group CE5 {
     # returns -1, which again reaches Tcl as a zero column rather than an error.
     set long {}
     for {set i 0} {$i < 210} {incr i} { append long "v(ramp) " }
-    check "CE5 L1 more than STACKMAX tokens yields a zero column, not a wrong number" \
-        [near [evval $long 0] 0 1e-30] ok
+    pcall xschem raw del __calc_t_ce5L
+    pcall xschem raw add __calc_t_ce5L [string trim $long]
+    check "CE5 L1 more than STACKMAX tokens yields a zero column in the engine, not a wrong number" \
+        [near [pcall xschem raw value __calc_t_ce5L 100 0] 0 1e-30] ok
+    pcall xschem raw del __calc_t_ce5L
+    # ⚠ THE SECOND TERM IS BUILT WITH `append`, NOT WRITTEN AS A BRACED PATTERN.
+    # `string match {...*[pcall calc::rpn_maxtokens]*}` does not substitute (the
+    # braces stop it) and the square brackets are then a string-match CHARACTER
+    # CLASS, so the pattern would quietly match on any one of those letters.
+    set mx [pcall calc::rpn_maxtokens]
+    set pat "REFUSED:*$mx*"
+    check "CE5 L1 ...and the PRODUCT refuses it by COUNT instead, because that class has no failing token to name (band CE13)" \
+        [list [string match {REFUSED:*210*} [ev $long 0]] \
+              [string match $pat [ev $long 0]]] {1 1}
     # ...and the bound is a BOUND, not "long is bad": 50 copies of v(ramp) with
     # 49 `+` is 99 tokens, under STACKMAX-2, and sums to 50 x 10 V at k=100.
     set sum "[string repeat {v(ramp) } 50][string trim [string repeat {+ } 49]]"
@@ -813,8 +851,15 @@ group CE7 {
         [list [dg $d ok] [leaked]] {1 {}}
     check "CE7 ...and the destination it names is gone from the raw" \
         [pcall xschem raw index [dg $d dest]] -1
-    check "CE7 a REJECTED expression leaves nothing behind either" \
-        [list [expr {[dg [pcall calc::eval_rpn {v(nosuch) v(div) +} 0] ok] eq {1}}] [leaked]] {1 {}}
+    # ⚠ RESTATED BY PLAN 3.4.  This row asserted `ok eq 1` -- i.e. that a rejected
+    # expression SUCCEEDED with issue 0325's zero -- which was true until R607's
+    # pre-flight started refusing it by name.  R402's claim is the same and is
+    # now stronger: nothing is left behind BECAUSE no destination is minted at
+    # all.  Both halves are asserted, so a product that stopped refusing would
+    # redden here as well as in CE13.
+    set dr [pcall calc::eval_rpn {v(nosuch) v(div) +} 0]
+    check "CE7 a REJECTED expression is refused by name and leaves nothing behind -- it never reaches the mint" \
+        [list [dg $dr ok] [string match {*v(nosuch)*} [dg $dr msg]] [dg $dr dest] [leaked]] {0 1 {} {}}
     # R402's words are "on every exit path INCLUDING ERROR".  The reachable
     # error path here is a cursor index the data cannot answer, which refuses
     # AFTER the destination has been minted and evaluated.
@@ -855,11 +900,18 @@ group CE8 {
     check_expr "CE8 the namespace enumeration is not vacuous" {[llength [info vars ::calc::*]] >= 17}
     set before [ns_state]
     set raised {}
-    foreach step {{calc::eval_click} {calc::rpn_of_buffer} {calc::rpn_of_text {v(a) v(b) +}}} {
+    # ⚠ FIVE STEPS, NOT THREE, SINCE PLAN 3.3.  `calc::plot_click` is W11's press
+    # and `calc::dest_changed` is W13's selection, and both are entry points
+    # R508 binds on BOTH axes -- raising and writing.  Adding them here rather
+    # than in a band of their own keeps the namespace snapshot around all of
+    # them at once, which is what makes "records nothing" a measurement over the
+    # whole entry-point set instead of per proc.
+    foreach step {{calc::eval_click} {calc::plot_click} {calc::dest_changed} \
+                  {calc::rpn_of_buffer} {calc::rpn_of_text {v(a) v(b) +}}} {
         if {[catch {eval $step} e]} { lappend raised "[lindex $step 0]:$e" }
     }
     set after [ns_state]
-    check "CE8 none of the three raises with no window (R508's third case)" $raised {}
+    check "CE8 none of the five entry points raises with no window (R508's third case)" $raised {}
     check "CE8 ...and none of them WRITES a calc:: namespace variable -- 'records nothing' is about state, not only about raising" \
         [ns_diff $before $after] {}
     check "CE8 ...and .calc was not created -- an entry point must not build a window to refuse" \
@@ -910,27 +962,45 @@ group CE8 {
     # ⚠ DERIVED FROM THE NAMESPACE, NOT LISTED HERE.  CLAUDE.md's limit L9 and
     # row X1 of test_snprintf_fmt_1608.tcl: a hand-kept list is the same defect
     # one level up, and the proc a later step adds is exactly the one nobody
-    # would remember to add.  Phase 3's procs are the `eval_*` and `rpn_of_*`
-    # families plus the destination minter; the count leg is the non-vacuity
-    # control, so a pattern that stopped matching reddens instead of passing.
+    # would remember to add.  The count leg is the non-vacuity control, so a
+    # pattern that stopped matching reddens instead of passing.
+    #
+    # ⚠⚠ THE PATTERN WAS `eval_*` + `rpn_of_*` + `tmpvec` AND IT WOULD HAVE
+    # MISSED EVERY ONE OF PLAN 3.3/3.4'S PROCS.  receipts/C-evaluate.md item 4
+    # predicted exactly that -- "a differently-named proc silently escapes CE8's
+    # guard rows" -- and PLAN 3.3 then added `plot_*` and made `dest_changed`
+    # live, none of which the old three globs match.  Widened to the four
+    # FAMILIES phase 3 actually has (`eval_*`, `rpn_*`, `plot_*`, `dest_*`) plus
+    # the destination minter, and `rpn_of_*` loosened to `rpn_*` so the R607
+    # procs are inside it by name rather than by a list kept here.
     set ph3 {}
     foreach p [lsort [pcall info procs ::calc::*]] {
         set t [namespace tail $p]
-        if {[string match eval_* $t] || [string match rpn_of_* $t] || $t eq {tmpvec}} {
+        if {[string match eval_* $t] || [string match rpn_* $t] \
+            || [string match plot_* $t] || [string match dest_* $t] \
+            || $t eq {tmpvec}} {
             lappend ph3 $t
         }
     }
     check_expr "CE8 the phase-3 proc set was derived from the namespace, not listed" \
-        {[llength $ph3] >= 10}
+        {[llength $ph3] >= 18}
+    # ⚠ DECOMMENTED, for the reason band CE12 spells out at length: this scan
+    # read the RAW `info body`, so a future COMMENT inside one of these procs
+    # naming a `.calc` widget path would move it into the "unguarded" half and
+    # redden a registered T1 fence on an edit that changed no behaviour.  Row
+    # CE12's own non-vacuity leg proves `ce_code` keeps code and drops prose, so
+    # nothing extra is asserted here.
     set unguarded {}
     set pure {}
     foreach p $ph3 {
         set b [pcall info body ::calc::$p]
         if {[string match ERR:* $b]} { lappend unguarded "$p:NO-BODY" ; continue }
+        set b [pcall ce_code $b]
+        if {[string match ERR:* $b]} { lappend unguarded "$p:NO-DECOMMENT" ; continue }
         if {![regexp {\.calc} $b]} { lappend pure $p ; continue }
         if {![regexp {calc::has_win} $b]} { lappend unguarded $p }
     }
-    check "CE8 every phase-3 proc whose body names a .calc widget path also names calc::has_win" \
+    check "CE8 every phase-3 proc whose CODE names a .calc widget path also names calc::has_win" \
         $unguarded {}
     # ⚠ THE EXACT EXPECTED LIST IS WHAT MAKES THIS ROW NON-VACUOUS.  Both
     # `calc::rpn_of_buffer` and `calc::eval_click` name a `.calc` path -- the
@@ -939,9 +1009,9 @@ group CE8 {
     # and this row reddens rather than passing over a measurement it did not
     # make.  That is the hole receipts/B3-final.md item D4 records the phase-2
     # version of this row having had.
-    check "CE8 ...and the ones that name no widget path are the engine-side procs, which is why this file can run headless" \
+    check "CE8 ...and the ones whose CODE names no widget path are the engine-side procs, which is why this file can run headless" \
         [lsort $pure] \
-        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn rpn_of_text tmpvec}
+        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_tokens tmpvec}
 }
 
 # =============================================================================
@@ -1250,14 +1320,23 @@ group CE11 {
 }
 
 # =============================================================================
-# CE12 — TWO DECLARED LIMITS, ASSERTED AS THEY STAND
+# CE12 — ONE DECLARED LIMIT STILL STANDING, AND ONE THAT PLAN 3.4 CLOSED
 # =============================================================================
-# Neither is fixed here and both are stated in `calc::eval_click`'s own comment.
-# They are ROWS and not only prose for the reason CLAUDE.md gives: a declared
+# These are ROWS and not only prose for the reason CLAUDE.md gives: a declared
 # limit nothing re-measures is the one artefact that can go false while every
-# suite stays green.  A later phase that CLOSES either of these reds a row here
-# and has to come back and correct the declaration, which is the behaviour
-# wanted -- these rows are not defending the limits, they are pinning them.
+# suite stays green.  A later phase that CLOSES one reds a row here and has to
+# come back and correct the declaration -- these rows are not defending the
+# limits, they are pinning them.
+#
+# ⚠⚠ AND THAT IS NOT HYPOTHETICAL ANY MORE: PLAN 3.4 closed LIMIT 2 and the
+# rows that pinned the silence went red and were restated rather than deleted.
+# (No count in this sentence: an earlier revision said THREE and the red run
+# printed TWO, which is CLAUDE.md's rule about a number nothing re-measures
+# arriving in the comment written to record the change.)  The limit
+# they pinned was "the documented `%<n>` dataset spelling reads as a SILENT ZERO
+# from the Calculator" -- ok=1, value 0, no message.  R607's pre-flight now
+# names the token.  LIMIT 1 (Evaluate always reports dataset 0) still stands and
+# is still owned by PLAN phase 6.
 # =============================================================================
 group CE12 {
     pcall xschem raw clear
@@ -1306,29 +1385,348 @@ group CE12 {
         [list [near [evval {v(div)} 0] 0.75 1e-7] [lindex [ev {v(div)} 0] 1]] {ok cursor}
     pcall rename ::calc::eval_cursor_point {}
     pcall rename ::ce12_real_cursor ::calc::eval_cursor_point
-    # --- LIMIT 2: the `%<n>` spelling is a silent zero ----------------------
-    # `xschem raw index` does not parse the suffix (band CE5 measures that from
-    # the verb's side); what this band adds is what the CALCULATOR does with it,
-    # which is answer 0 with ok=1 and no message at all.
+    # --- LIMIT 2 IS CLOSED, AND THE DECLARATION IS CORRECTED HERE -----------
+    # ⚠⚠ THIS WAS A DECLARED LIMIT AND PLAN 3.4 CLOSED IT, which is exactly the
+    # behaviour the band header asks for: the rows that pinned the silence went
+    # red and had to be restated rather than quietly deleted.  What they said:
+    # "the documented %<n> dataset spelling reads as a SILENT ZERO from the
+    # Calculator", ok=1, value 0, no message at all.  R607's pre-flight now
+    # names `v(div)%1` as an unresolvable token, because `wviewer::validate_rpn`
+    # mirrors `get_raw_index()`'s ladder and the suffix belongs to
+    # `node_token_split()` on the trace/`node=` path (landmine L5) and not to
+    # the inventory lookup.  So it is no longer silent -- but it is still not
+    # SUPPORTED, and the row below says which of the two it is.
     foreach spelling {{v(div)%0} {v(div)%1}} {
         set d [pcall calc::eval_rpn $spelling 0]
-        check "CE12 limit: the documented %<n> dataset spelling reads as a SILENT ZERO from the Calculator ($spelling)" \
-            [list [dg $d ok] [near [dg $d value] 0 1e-30] [dg $d msg]] {1 ok {}}
+        check "CE12 CLOSED (was a declared limit): the %<n> dataset spelling is now REFUSED BY NAME rather than reading as a silent zero ($spelling)" \
+            [list [dg $d ok] [string match "*$spelling*" [dg $d msg]]] {0 1}
     }
-    check "CE12 ...and the bare name it is built from answers a real number, so the zero is the SUFFIX and not the node" \
+    check "CE12 ...and it is still not SUPPORTED -- being named is not being parsed, and the Tcl-side per-dataset reader is still the only route" \
+        [pcall xschem raw index {v(div)%1}] -1
+    check "CE12 ...and the bare name it is built from answers a real number, so the refusal is about the SUFFIX and not the node" \
         [near [evval {v(div)} 0] 5 1e-7] ok
     check "CE12 ...and the Tcl-side per-dataset reader that DOES take a dataset is `xschem raw values <name> <ds>`" \
         [list [llength [split [string trim [pcall xschem raw values v(div) 1]]]] \
               [near [lindex [split [string trim [pcall xschem raw values v(div) 1]]] end] 2.5 1e-12]] {101 ok}
-    # ⚠ WHY IT IS A LIMIT AND NOT A BUG TO FIX HERE: naming the token that did
-    # not resolve is R607, PLAN 3.4.  Band CE5 holds the measurement that makes
-    # 3.4 buildable at all -- the engine's -1 never reaches Tcl -- so the fix
-    # for the SILENCE is the same work, and splitting it would mean two
-    # validators.  Asserted rather than claimed:
-    check "CE12 ...and the reason it is silent is 3.4's, not a missing check here: `raw add` reports success for a rejected expression" \
+    # ⚠ WHY THE SILENCE WAS 3.4'S TO FIX, kept as a measurement because it is the
+    # reason the Calculator cannot learn this from the engine: `raw add` reports
+    # SUCCESS for the suffixed spelling exactly as for a good one, so nothing
+    # downstream of the engine call can tell them apart.  That is what makes
+    # R607 a PRE-flight rather than a post-mortem, and it is still true.
+    check "CE12 ...and the engine itself still cannot report it: `raw add` reports success for the suffixed spelling, which is why R607 is a PRE-flight" \
         [list [pcall xschem raw add __calc_t_ce12 {v(div)%1}] [pcall xschem raw index v(div)%1]] {1 -1}
     pcall xschem raw del __calc_t_ce12
     check "CE12 ...and that probe column is gone again" [pcall xschem raw index __calc_t_ce12] -1
+    pcall xschem raw clear
+}
+
+# =============================================================================
+# CE13 -- R607 / PLAN 3.4: WHAT FAILED, BY NAME
+# =============================================================================
+# Spec R607: "Any action whose expression fails to evaluate (-1 from the engine)
+# reports WHICH TOKEN FAILED TO RESOLVE, by re-testing each vector-looking token
+# with `xschem raw index`.  A bare 'expression error' is not acceptable -- this
+# is the single worst failure mode of the Cadence original."
+#
+# ⚠⚠ NEITHER HALF OF THAT SENTENCE'S PRESCRIBED MECHANISM WORKS, AND BOTH
+# REFUTATIONS ARE ROWS IN THIS BAND RATHER THAN PROSE.
+#
+#   (a) "on engine -1" -- there is no -1 to see.  `raw_add_vector()` (src/save.c)
+#       discards `plot_raw_custom_data()`'s return value, so `xschem raw add`
+#       answers 1 for a rejected expression exactly as for a good one.  Band CE5
+#       holds that measurement and this band does not repeat it.
+#   (b) "re-test each VECTOR-LOOKING token with `xschem raw index`" -- the verb
+#       answers -1 for every operator, every function and every number as well
+#       as for an unresolvable name, so "vector-looking" has to be decided
+#       FIRST, by the operator/function/number alphabet.  A method without that
+#       alphabet names `/` as the failing vector.  The rows below measure the
+#       verb's answer for each class.
+#
+# WHAT IS USED INSTEAD, and it is not a second validator: `wviewer::validate_rpn
+# <rpn> <names>` in src/wave_viewer.tcl, which carries the alphabet verbatim
+# from the C table and mirrors `get_raw_index()`'s lookup ladder rung for rung
+# (`name_rungs`/`name_index`/`name_lookup`).  `wviewer::add_trace` ALREADY calls
+# it on exactly this path, which is why Plot gets R607 for free and Evaluate
+# only had to join the same door -- L5's lesson one level over.
+#
+# ⚠⚠ AND `add_trace` DOES NOT STOP THERE FOR A SINGLE NAME, which an earlier
+# revision of this paragraph did not say and which cost a blocking defect.  Its
+# single-name arm validates against the CURRENT database and then falls back to
+# `wviewer::resolve_signal_db`, spec §D1's "validation is against EVERY loaded
+# database, not just the current one".  So "the same validator" was not the same
+# QUESTION, and the pre-flight refused -- by name -- a plot the seam performs
+# correctly.  The split is now pinned by rows at the end of this band and driven
+# against two real databases by band PL7b of tests/headless/test_calc_plot.tcl.
+#
+# THE ONE CLASS `validate_rpn` CANNOT SEE is landmine L1: the engine's token
+# limit.  `plot_raw_custom_data()` refuses at `stackptr1 >= STACKMAX - 2` with
+# STACKMAX 200, so 198 tokens evaluate and 199 do not -- and `add_trace` returns
+# {} (success) for the 199-token expression while the engine wrote nothing.
+# `calc::rpn_maxtokens` is that guard and the rows below drive the boundary from
+# BOTH sides and read STACKMAX out of the C, so neither the number nor the
+# arithmetic can drift.
+#
+# AND THE ONE CLASS NOTHING HERE CAN NAME, declared rather than hidden: a
+# negative `del()` delay.  `case DEL` returns -1 for `!(tmp >= 0.0)` where `tmp`
+# is a STACK VALUE, so no token-level test can see it -- every token resolves.
+# The row below pins what the product does instead, so a later stage that closes
+# it reds a row and has to correct this paragraph.
+# =============================================================================
+group CE13 {
+    pcall xschem raw clear
+    check "CE13 fixture: the ac read, whose -3 dB point is hand-derived" \
+        [list [lindex [fread ac] 0] [pcall xschem raw points 0]] {1 20}
+    # --- the two refutations of PLAN 3.4's prescribed method ----------------
+    set cls {}
+    foreach {kind tok} {operator / operator ** function db20() function abs()
+                        number 2 number 1k number -1 vector v(lp)
+                        unresolvable v(nosuch)} {
+        lappend cls "$kind:$tok=[pcall xschem raw index $tok]"
+    }
+    check {CE13 R607(b) `xschem raw index` answers -1 for every operator, function and number as well as for an unresolvable name -- so "vector-looking" cannot be decided by the verb and a method without an alphabet names `/` as the failing vector} \
+        [join $cls " "] \
+        {operator:/=-1 operator:**=-1 function:db20()=-1 function:abs()=-1 number:2=-1 number:1k=-1 number:-1=-1 vector:v(lp)=28 unresolvable:v(nosuch)=-1}
+    # --- the tokeniser: the engine's own delimiter set, read out of the C ----
+    check "CE13 calc::rpn_tokens exists and splits on the engine's three delimiters" \
+        [list [llength [pcall info procs ::calc::rpn_tokens]] \
+              [pcall calc::rpn_tokens "v(lp)\tv(sq)\n/ db20()"]] \
+        {1 {v(lp) v(sq) / db20()}}
+    set sv [srcfile save.c]
+    set delim {}
+    foreach ln [split [ce9_cfun $sv plot_raw_custom_data] \n] {
+        if {[regexp {my_strtok_r\(ntok_ptr, "([^"]*)"} $ln -> d]} { set delim $d }
+    }
+    check {CE13 ...and the delimiter set really is " \t\n", read out of plot_raw_custom_data's own my_strtok_r call} \
+        [list [expr {$sv ne {}}] $delim] [list 1 " \\t\\n"]
+    # --- L1: the token limit, from the C and from both sides of the boundary -
+    set smax {}
+    if {$sv ne {}} {
+        set fh [open $sv r] ; set txt [read $fh] ; close $fh
+        foreach ln [split $txt \n] {
+            if {[regexp {^#define[ \t]+STACKMAX[ \t]+([0-9]+)} $ln -> m]} { set smax $m }
+        }
+    }
+    check "CE13 L1 STACKMAX read out of src/save.c, and calc::rpn_maxtokens is STACKMAX minus 2" \
+        [list $smax [pcall calc::rpn_maxtokens]] {200 198}
+    # ⚠ THE SHAPE OF THE PROBE EXPRESSION IS LOAD-BEARING, and the first draft of
+    # these two rows got it wrong.  `v(sq)` repeated N times pushes N values and
+    # the engine answers the LAST push, so 198 copies and 199 copies both read
+    # back the same number and the boundary was invisible -- the row was red on
+    # a correct engine.  One operand plus N UNARY `abs()` tokens keeps the value
+    # stack at depth 1 while driving the PARSE stack (`stackptr1`, which is what
+    # the limit is on) to exactly N+1, and `v(sq)` is the fixture's AC-1
+    # reference, exactly 1 at every frequency -- so an evaluated expression reads
+    # 1 and a refused one reads issue 0325's zero.  Distinguishable, and neither
+    # value is the token count.
+    foreach {n want val} {198 ok 1 199 over 0} {
+        set e "v(sq)[string repeat { abs()} [expr {$n - 1}]]"
+        set nm "__calc_t_ce13_$n"
+        pcall xschem raw del $nm
+        pcall xschem raw add $nm $e
+        set got [expr {[near [pcall xschem raw value $nm 9 0] $val 1e-7] eq {ok} ? {ok} : {other}}]
+        check "CE13 L1 the engine's own boundary: $n parse-stack tokens is $want -- 198 evaluates to 1, 199 writes nothing and reads issue 0325's zero" \
+            [list [llength [pcall calc::rpn_tokens $e]] $got] [list $n ok]
+        pcall xschem raw del $nm
+    }
+    # --- calc::rpn_bad_token: the ONE R607 site ------------------------------
+    check "CE13 calc::rpn_bad_token exists" [llength [pcall info procs ::calc::rpn_bad_token]] 1
+    check "CE13 R607 the acceptance case: an unresolvable vector name is NAMED, and the name is the one the user typed" \
+        [list [string match {*v(nosuch)*} [pcall calc::rpn_bad_token {v(nosuch) v(sq) /}]] \
+              [string match {*expression error*} [pcall calc::rpn_bad_token {v(nosuch) v(sq) /}]]] {1 0}
+    check "CE13 R607 ...and a GOOD expression is approved, so the gate is not simply refusing everything" \
+        [pcall calc::rpn_bad_token {v(lp) v(sq) / db20()}] {}
+    check "CE13 R607 ...and the clause comes from wviewer::validate_rpn verbatim -- ONE validator, the one add_trace already calls" \
+        [list [pcall calc::rpn_bad_token {v(nosuch) v(sq) /}] \
+              [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]]] \
+        [list [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]] \
+              [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]]]
+    check "CE13 R607 ...and the L1 clause names the COUNT and the LIMIT, because that class has no failing token to name" \
+        [list [expr {[pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]] ne {}}] \
+              [string match {*199*} [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]]] \
+              [string match {*198*} [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]]] \
+              [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 198]]]] {1 1 1 {}}
+    check "CE13 R607 ...and an EMPTY expression is not this proc's refusal -- eval_rpn's own `empty` sentence owns that" \
+        [pcall calc::rpn_bad_token {   }] {}
+    # --- through calc::eval_rpn: the sentence the user actually gets ---------
+    set d [pcall calc::eval_rpn {v(nosuch) v(sq) /} 0]
+    check "CE13 R607 calc::eval_rpn REFUSES a rejected expression and names the token, instead of reporting issue 0325's defined zero" \
+        [list [dg $d ok] [string match {*v(nosuch)*} [dg $d msg]]] {0 1}
+    # ⚠ BOTH OF THE NEXT TWO ROWS CARRY A NON-EMPTINESS TERM, because without one
+    # they PASSED on the unfixed tree: `calc::eval_msg badtoken ...` answered {}
+    # for an unknown kind and `dict get $d msg` was {} on the success path, so
+    # two empty strings compared equal and a row written to be red was green.
+    # Found by running the band before writing the code, which is the whole
+    # reason the order is red-first.
+    set bt [pcall calc::eval_msg badtoken \
+                [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]]]
+    check "CE13 R607 ...and the sentence is calc::eval_msg's, not a second spelling built at the call site" \
+        [list [expr {$bt ne {}}] [dg $d msg]] [list 1 $bt]
+    check "CE13 R607 ...and R402 holds on the new refusal: it is taken BEFORE a destination is minted, so there is nothing to leak" \
+        [list [leaked] [dg $d dest]] {{} {}}
+    check "CE13 R607 ...and the refusal ORDER puts the token ahead of the stale-destination guard, so a mistyped name does not report a column collision" \
+        [list [expr {[dg $d msg] ne {}}] [string match {*__calc_tmp*} [dg $d msg]]] {1 0}
+    # ⚠ THE HAND VALUE HERE IS THE LAST AC POINT, NOT THE -3 dB POINT, and the
+    # first draft of this row quoted the -3 dB one and was red on a correct
+    # tree.  R604 with no cursor published reads the LAST point, which on
+    # `ac lin 20 100 2k` is index 19 = 2000 Hz: |H| = 1/sqrt(5) and
+    # 20*log10(1/sqrt(5)) = -6.989700043360187 (fixture README, the ac table).
+    check "CE13 R607 ...and a good expression still answers over the same database (non-vacuity): the LAST ac point, 2000 Hz, -10*log10(5)" \
+        [near [evval {v(lp) v(sq) / db20()} 0] -6.989700043360187 1e-7] ok
+    # --- the measured DISAGREEMENTS between the mirror and the engine --------
+    # Both directions, because a mirror is only as good as its agreement and
+    # neither of these is visible from the product's own code.
+    check "CE13 the mirror is STRICTER than the engine on an IEEE literal: `nan` is a NUMBER to strtod and the engine evaluates it, while validate_rpn declines it -- a false REJECT, declared" \
+        [list [expr {[pcall wviewer::validate_rpn {nan 1 *} [rawnames]] ne {}}] \
+              [pcall xschem raw add __calc_t_ce13n {nan 1 *}]] {1 1}
+    check "CE13 ...and the engine really produced the non-finite, so the disagreement is the mirror's and not the engine's" \
+        [pcall xschem raw value __calc_t_ce13n 9 0] nan
+    pcall xschem raw del __calc_t_ce13n
+    check "CE13 the mirror is LOOSER than the engine on a negative del() delay: every token resolves, so no token-level test can see it -- a false APPROVE, and the one R607 class nothing here can name" \
+        [list [pcall wviewer::validate_rpn {v(lp) -3 del()} [rawnames]] \
+              [pcall calc::rpn_bad_token {v(lp) -3 del()}]] {{} {}}
+    # ⚠⚠ A THIRD DISAGREEMENT, AND IT WAS FOUND BY AUDITING A COMMENT RATHER
+    # THAN BY A ROW.  `calc::rpn_tokens` splits on the engine's three delimiters;
+    # `wviewer::validate_rpn` scans with `regexp -all -inline` over non-space,
+    # whose class ALSO breaks on carriage return, vertical tab and form feed.  So
+    # two good names joined by a `\r` are approved as two tokens and handed to
+    # the engine as ONE unresolvable one -- a false APPROVE, reachable because
+    # W15 is a text widget and a paste can carry a `\r`.  The product's answer is
+    # issue 0325's defined zero with no message, pinned here so a later stage
+    # that closes it reds a row.
+    #
+    # ⚠ AND AN EARLIER REVISION OF `calc::rpn_bad_token` CLAIMED TO HAVE FIXED
+    # IT BY RE-JOINING THE TOKENS, WHICH DOES NOTHING: `join` of a one-element
+    # list is that element, `\r` and all.  The two legs below measure the
+    # re-join's no-op-ness directly, so the dead fix cannot come back unnoticed.
+    set crj "v(lp)\rv(sq)"
+    set crtoks [pcall calc::rpn_tokens $crj]
+    check "CE13 the mirror DISAGREES ON TOKENISATION: `\r` is one token to the engine and two to validate_rpn's own \S+ scan -- a false APPROVE" \
+        [list [llength $crtoks] \
+              [llength [regexp -all -inline {\S+} $crj]] \
+              [pcall wviewer::validate_rpn $crj [rawnames]] \
+              [pcall calc::rpn_bad_token $crj]] {1 2 {} {}}
+    check "CE13 ...and re-joining the engine's tokens does NOT make them agree, which is why that line is not in the product" \
+        [pcall wviewer::validate_rpn [join $crtoks { }] [rawnames]] {}
+    check "CE13 ...and the engine really cannot resolve the joined token, so the approval is wrong and not merely different" \
+        [pcall xschem raw index $crj] -1
+    set crd [pcall calc::eval_rpn $crj 0]
+    check "CE13 ...and what the product does instead, pinned: a defined ZERO with no message" \
+        [list [dg $crd ok] [near [dg $crd value] 0 1e-30] [dg $crd msg]] {1 ok {}}
+    check "CE13 ...and space, tab and newline do NOT disagree, so the divergence is exactly the three characters named" \
+        [list [llength [pcall calc::rpn_tokens "v(lp) v(sq)"]] \
+              [llength [pcall calc::rpn_tokens "v(lp)\tv(sq)"]] \
+              [llength [pcall calc::rpn_tokens "v(lp)\nv(sq)"]] \
+              [llength [pcall calc::rpn_tokens "v(lp)\vv(sq)"]] \
+              [llength [pcall calc::rpn_tokens "v(lp)\fv(sq)"]]] {2 2 2 1 1}
+    set dd [pcall calc::eval_rpn {v(lp) -3 del()} 0]
+    check "CE13 ...and what the product does instead, pinned so a later stage that closes it reds this row: it answers a defined ZERO with no message at all" \
+        [list [dg $dd ok] [near [dg $dd value] 0 1e-30] [dg $dd msg]] {1 ok {}}
+    check "CE13 ...and a NON-negative del() delay is not affected by the declaration" \
+        [list [dg [pcall calc::eval_rpn {v(lp) 0 del()} 0] ok]] {1}
+    # ⚠⚠ A THIRD BLIND SPOT, NAMED IN STAGE D2 AND DECLARED HERE: ARITY.
+    # `wviewer::validate_rpn` is a per-TOKEN alphabet check, so it has no notion
+    # of how many operands an operator wants or of what is left on the stack
+    # when the expression ends.  Every token of `v(lp) +` resolves; so does
+    # every token of `v(lp) v(sq)`.  MEASURED on this fixture: both are APPROVED
+    # by the validator and by `calc::rpn_bad_token`, the engine accepts both, and
+    # `calc::eval_rpn` answers a confident number with NO message.
+    # ⚠ WHICH number this paragraph got WRONG, corrected 2026-10-01 by
+    # measurement: the engine's store is `y[p] = (SPICE_DATA)stack2[0]`, the
+    # BOTTOM of the stack, so the answer is the expression's FIRST operand.
+    # `1 2 3 +` answers 1, not the leftover 5; `v(lp) v(sq)` answers v(lp)'s own
+    # value exactly, where this said "neither of the two the user typed".  The
+    # true statement is worse for the user and better for the reader: the number
+    # belongs to a signal they really did name, so it looks right.
+    # That is the Cadence failure mode R607 exists to
+    # forbid, one step further along than an unresolvable name, and it is NOT
+    # closed: closing it needs an operand-count model of the engine's ~52
+    # operators, which is landmine L5's "never parser number two" in its most
+    # expensive form, or the `xschem raw set` sentinel this band's own header
+    # describes.  The rows below pin what the product does, so a later stage that
+    # closes it reds them and has to correct this paragraph.
+    foreach {ar label} {{v(lp) +}            {too few operands}
+                        {v(lp) v(sq)}        {a leftover stack}
+                        {+}                  {an operator with no operands at all}} {
+        set ad [pcall calc::eval_rpn $ar 0]
+        check "CE13 ARITY, declared and NOT closed: `$ar` ($label) is APPROVED by the token alphabet and answers a confident number with no message" \
+            [list [pcall wviewer::validate_rpn $ar [rawnames]] \
+                  [pcall calc::rpn_bad_token $ar] \
+                  [dg $ad ok] \
+                  [expr {[dg $ad msg] eq {} ? 1 : 0}] \
+                  [expr {[string is double -strict [dg $ad value]] ? 1 : 0}]] {{} {} 1 1 1}
+    }
+    check "CE13 ARITY ...and it is not merely unvalidated but WRONG: `v(lp) v(sq)` answers neither 1 (the AC-1 reference it ends on) nor a refusal, so a leftover stack is a silently misleading number" \
+        [list [dg [pcall calc::eval_rpn {v(lp) v(sq)} 0] ok] \
+              [expr {[near [dg [pcall calc::eval_rpn {v(lp) v(sq)} 0] value] 1 1e-7] eq {ok} ? 1 : 0}]] {1 0}
+    # --- degraded mode: no validator at all ---------------------------------
+    # `wviewer::validate_rpn` is in a file xschem.tcl always sources, so this
+    # world does not occur on a shipped tree; it is forced because the
+    # alternative to declaring it is a guard that dies silently if the file is
+    # ever split.  FAIL OPEN -- R607 stops naming tokens, Evaluate keeps working.
+    pcall rename ::wviewer::validate_rpn ::ce13_real_validate
+    set nv [pcall calc::rpn_bad_token {v(nosuch) v(sq) /}]
+    set nvd [pcall calc::eval_rpn {v(nosuch) v(sq) /} 0]
+    pcall rename ::ce13_real_validate ::wviewer::validate_rpn
+    check "CE13 with the validator renamed away, calc::rpn_bad_token FAILS OPEN rather than raising or refusing everything" \
+        [list $nv [expr {[string match ERR:* $nv] ? 1 : 0}]] {{} 0}
+    check "CE13 ...and Evaluate still reaches the engine in that world, answering issue 0325's zero as it did before R607" \
+        [list [dg $nvd ok] [near [dg $nvd value] 0 1e-30]] {1 ok}
+    check "CE13 ...and the real validator is back" \
+        [expr {[pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]] ne {}}] 1
+    # --- THE SEAM'S SECOND QUESTION IS PLOT'S, AND NOT EVALUATE'S -----------
+    # ⚠⚠ R607 NAMED A TOKEN THAT WAS FINE, and this is the headless half of the
+    # fence.  `wviewer::add_trace`'s SINGLE-NAME arm validates against the
+    # current database and then falls back to `wviewer::resolve_signal_db`
+    # (spec §D1: "validation is against EVERY loaded database, not just the
+    # current one"), so a pre-flight that stopped at `xschem raw list` refused a
+    # plot that works -- answering "unknown token 'v(xdbonly)'" over a name the
+    # seam resolves.  Naming the WRONG token is worse than naming none: it sends
+    # the user to edit something that was never broken.  Band PL7b of
+    # tests/headless/test_calc_plot.tcl drives that against a real viewer with
+    # two real databases; what these rows add is the SPLIT, which has no window
+    # in it:
+    #   * WITH a token (Plot) the second question is asked.
+    #   * WITHOUT one (Evaluate) it is NOT, and that refusal stays TRUE --
+    #     `xschem raw add` resolves names through `get_raw_index()` against the
+    #     CURRENT database only, so a name in a non-current slot genuinely
+    #     cannot be evaluated.  A later stage must not "fix" Evaluate to match.
+    #   * For an EXPRESSION it is not asked either, because `add_trace`'s
+    #     expression arm does not ask it -- so the two agree in both directions.
+    # The viewer proc is SHIMMED rather than driven, because this file has no
+    # viewer window at all: with the real proc a bogus token resolves nothing,
+    # which is the control leg below.
+    set realres [pcall calc::rpn_bad_token {v(nosuch)} CE13TOK]
+    pcall rename ::wviewer::resolve_signal_db ::ce13_real_resolve
+    proc ::wviewer::resolve_signal_db {token vec} {
+        return [dict create idx 9 path /ce13/other.raw type tran cur 0 label other]
+    }
+    set withtok  [pcall calc::rpn_bad_token {v(nosuch)} CE13TOK]
+    set notok    [pcall calc::rpn_bad_token {v(nosuch)}]
+    set asexpr   [pcall calc::rpn_bad_token {v(nosuch) v(div) +} CE13TOK]
+    set evald    [pcall calc::eval_rpn {v(nosuch)} 0]
+    pcall rename ::wviewer::resolve_signal_db {}
+    proc ::wviewer::resolve_signal_db {token vec} { return -code error {CE13 raising} }
+    set raising  [pcall calc::rpn_bad_token {v(nosuch)} CE13TOK]
+    pcall rename ::wviewer::resolve_signal_db {}
+    set absent   [pcall calc::rpn_bad_token {v(nosuch)} CE13TOK]
+    pcall rename ::ce13_real_resolve ::wviewer::resolve_signal_db
+    check "CE13 R607 WITH a viewer token, a single name some OTHER loaded database has is APPROVED -- the pre-flight asks the same question the seam asks, through the viewer's own proc" \
+        $withtok {}
+    check "CE13 R607 WITHOUT a token the second question is NOT asked, and the refusal stays true: Evaluate's engine call resolves against the CURRENT database only" \
+        [list [expr {$notok ne {}}] [string match {*v(nosuch)*} $notok]] {1 1}
+    check "CE13 R607 ...and an EXPRESSION is not asked either, because add_trace's expression arm does not ask it -- the pre-flight and the seam agree in BOTH directions" \
+        [list [expr {$asexpr ne {}}] [string match {*v(nosuch)*} $asexpr]] {1 1}
+    check "CE13 R607 ...and calc::eval_rpn still REFUSES with the shim live, so Evaluate did not inherit Plot's fail-open" \
+        [list [dg $evald ok] [string match {*v(nosuch)*} [dg $evald msg]]] {0 1}
+    check "CE13 R607 CONTROL: with the REAL resolve_signal_db and no viewer window the same call REFUSES, so the row above measured the shim and not a gate that stopped rejecting things" \
+        [list [expr {$realres ne {}}] [string match {*v(nosuch)*} $realres]] {1 1}
+    check "CE13 R607 ...and a RAISING resolve_signal_db fails OPEN rather than propagating, the same discipline the absent-validator arm above takes" \
+        [list $raising [expr {[string match ERR:* $raising] ? 1 : 0}]] {{} 0}
+    check "CE13 R607 ...and an ABSENT one fails open too -- declared: with that proc gone the seam cannot answer either, so refusing on its behalf would refuse a plot nothing has judged" \
+        $absent {}
+    check "CE13 ...and the real resolve_signal_db is back" \
+        [llength [pcall info procs ::wviewer::resolve_signal_db]] 1
+    check "CE13 the band cleaned up after itself" [leaked] {}
     pcall xschem raw clear
 }
 

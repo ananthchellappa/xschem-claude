@@ -671,7 +671,53 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_add_wire_label" \
                  "headless/test_calc_skeleton" \
                  "headless/test_calc_widgets" \
-                 "headless/test_calc_buffer"]
+                 "headless/test_calc_buffer" \
+                 "headless/test_calc_plot"]
+## ⚠ THE FOUR `headless/test_calc_*` ENTRIES ARE `dcases` AND NOTHING ELSE, AND
+## ONE OF THEM IS THE REASON ISSUE 1626 EXISTS. The Calculator is Tk: each of
+## these four takes a WHOLE-FILE no-X early exit and NONE of them prints a
+## completion banner on it. ⚠ THE EXIT LINES ARE NOT ALL THE SAME SPELLING,
+## and an earlier revision of this paragraph said they were: three print
+## `RESULT: SKIP (...)`, which `full_audit.sh`'s `is_skip` matches, and
+## `headless/test_calc_skeleton` prints `RESULT: ALL PASS (0 checks)` -- a
+## hollow pass that scores PASS having run nothing, which `test_calc_buffer`'s
+## own gate comment calls out and deliberately does not copy. Either way, on an
+## `hcases` loop T1 would score the case
+## `HARNESS: ... did not complete cleanly (exit=0, OVERALL_ok=0, died=0)` with
+## every one of its own checks passing -- issue 1615's incident, and exactly the
+## shape row RB6 of tests/headless/test_registered_banner_1626.tcl refuses for
+## an `hcases` entry. MEASURED for `headless/test_calc_plot` before it was added
+## here, by running `banner_complete` from tests/banner_rule.tcl over both of
+## its real captures: display arm 1, `--nogui` arm 0 with
+## `regression_case_failed` answering 1. The two headless Calculator suites that
+## DO gate on both arms are `headless/test_calc_engine` and
+## `headless/test_calc_scratch_reuse` in `hcases` -- they touch no widget, which
+## is the whole reason they were split out.
+## ⚠ `headless/test_calc_plot` (calculator_batch PLAN 3.3) drives a REAL
+## waveform viewer: it opens an ASE-L session and a viewer window, reads the
+## committed fixture into that viewer's own context, types into the Calculator's
+## buffer and presses Plot, then reads the materialised raw column back and
+## compares it with a HAND-DERIVED decibel value, and it loads a SECOND real
+## database to fence the cross-database case.
+## ⚠⚠ AN EARLIER REVISION OF THIS PARAGRAPH SAID "Nothing in it is reached by
+## renaming a product proc aside", AND THAT WAS FALSE IN THE SAME CHANGE THAT
+## WROTE IT: the suite renames THREE `wviewer::` procs aside. The record matters
+## because band CE4 of `headless/test_calc_engine` reached its target the same
+## way and a false comment shipped behind it for a whole stage. Which, what each
+## stub stands in for, and what drives the REAL proc:
+##   `plot_signals` (band PL5c) -- forced to fail, because once R607's
+##       pre-flight has approved an expression nothing in that file can make the
+##       seam fail. REAL PROC DRIVEN by PL3/PL4/PL5/PL5b/PL5d/PL5e/PL7/PL7b and
+##       by PL5c's own control leg.
+##   `log_action` (band PL6) -- captures the replay line, which is the row's
+##       subject. ⚠ NO ROW IN THAT FILE DRIVES THE REAL ONE: it is a one-line
+##       `catch` around the `xschem log_action` verb, which has its own fence in
+##       `headless/test_replay_door_1619`. Named as a gap, not papered over.
+##   `current_token` (band PL8) -- answers empty, so emptying the viewer
+##       registry really leaves no result. REAL PROC DRIVEN by PL0, through
+##       `calc::require_result` -> `calc::viewer_tokens`.
+## The suite's own header carries the same list, so neither copy can go stale
+## alone without the other contradicting it.
 ## ⚠ `test_add_wire_label` IS IN **BOTH** LISTS, AND IT COSTS A `skip:` LINE ON
 ## PURPOSE (issue 1625). It has been an `hcases` entry for a long time and its
 ## create-form rows gate fine there. Issue 1625 moved the "stack the bus tokens"
