@@ -129,11 +129,34 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1227234.log`, taken in a throwaway clone of `f3d60af9`
-  built from scratch at a 9-character path: **113 cases** (3 `tcases` + 89 `hcases` +
-  **20** `dcases` + `xschemtest`), **112 blocks**, **`wc -l` 338 green**; trailer
-  `cases=113 blocks=112 counted_failures=0 skips=8 elapsed=620s`, zero live-peer lines, zero
-  counted shapes. Issue **1625** took it there by adding a `dcases` arm to
+  the gate verdict `tests/results.1603161.log`, taken in a throwaway clone of `deccdbd1`
+  built from scratch at a 17-character path: **116 cases** (3 `tcases` + **90** `hcases` +
+  **22** `dcases` + `xschemtest`), **115 blocks**, **`wc -l` 347 green**; trailer
+  `cases=116 blocks=115 counted_failures=0 skips=8 elapsed=628s`, zero live-peer lines, zero
+  counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  Issue **1626** took it there, registering **THREE** cases at once: `test_calc_skeleton` and
+  `test_calc_widgets` in `dcases`, and the new `test_registered_banner_1626` in `hcases`. The
+  defect was that **789 passing Calculator checks gated nothing for a month** -- both suites
+  printed only `RESULT: ALL PASS` and `banner_complete` returned **0** on their real output on
+  both arms, the same structural unregisterability issue 1615 found in the whole
+  `test_wave_sigbrowser*` family.
+  ⚠ **`skips=` held at 8 for a SEVENTEENTH consecutive figure, and this time for a reason that is
+  not any of the five mechanisms below**: all three suites emit **no skip announcement at all**,
+  in any case, on any arm -- not a lowercase `skip:`, not an uppercase `SKIP:`, nothing. So there
+  was no spelling subtlety to get wrong, which is worth saying plainly because the previous two
+  figures were both reached by one. ⚠ **The delta was DERIVED, not predicted**: two crews
+  independently lifted `summarize_all` out of this file's own text, ran its regexp arms over real
+  captured output, and both got cases +3 / blocks +3 / counted +0 / skips +0 / `wc -l` +9 before
+  the gate ran -- and `planned_cases` arithmetic agreed at 116. After 1625, where a verifier and
+  the driver both mispredicted this number, deriving it is the only acceptable method.
+  ⚠ **The gate clone is at `~/gc26`, NOT in `/tmp` and NOT in the session scratchpad.** `/tmp` is
+  tmpfs with ~3 GB free here and a clone plus build needs about a gig; the scratchpad is ~100
+  characters before the clone name, which is most of the path budget `test_op_annot` needs.
+  17 characters gives a worst-case probe path of 79, under the 84 that re-gated clean at
+  `97766c66`.
+  One commit earlier, `113/112/0/8` was `tests/results.1227234.log` at `f3d60af9`, a clone at a
+  9-character path (3 + 89 + **20** + `xschemtest`, `wc -l` 338, 620s). Issue **1625** took it
+  there by adding a `dcases` arm to
   `test_add_wire_label`, which was already in `hcases` -- because the six rows fencing its new
   Edit-Properties checkbox drive real Tk, self-skip under `--nogui`, and so **were being run by
   nothing**. ⚠⚠ **BOTH AN ADVERSARIAL VERIFIER AND THE DRIVER PREDICTED THAT REGISTRATION WOULD
@@ -233,7 +256,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `102/101/skips=8` (1610), `103/102/skips=8` (1611), `104/103/skips=8` (1614) and
   `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` (1616) and
   `109/108/skips=8` (1619, which took TWO cases at once) and `112/111/skips=8` (1620,
-  which took THREE) and `113/112/skips=8` here (1625, a second arm for a suite already registered).
+  which took THREE) and `113/112/skips=8` (1625, a second arm for a suite already registered)
+  and `116/115/skips=8` here (**1626**, THREE cases at once -- two `dcases` plus one `hcases` --
+  for suites whose 789 green checks had been gating nothing because neither printed the sentinel).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
@@ -273,6 +298,16 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   three times: the suite prints `SKIP:` and `summarize_all` counts `^skip:`. **If two parties reasoning
   carefully about registration shape both got it wrong, nobody should be predicting this number at
   all.** Read the trailer.
+  ⚠ **THE SEVENTEENTH SHOWS WHAT TO DO INSTEAD, AND IT IS NOT "PREDICT MORE CAREFULLY".** Issue
+  **1626** registered THREE cases at once (two `dcases`, one `hcases`) and came back
+  `116/115/skips=8`. Nobody guessed: two crews independently **lifted `summarize_all` out of this
+  file's own text**, printed its five regexp arms, and ran them over the suites' real captured
+  output -- both arriving at cases +3 / blocks +3 / counted +0 / skips +0 / `wc -l` +9 before the
+  gate ran, with `planned_cases` arithmetic agreeing at 116, and the gate then matching every one.
+  The reason the figure held is also a **sixth** mechanism and the only boring one: all three suites
+  emit **no skip announcement whatsoever**, in any case, on any arm, so there was no spelling to get
+  wrong. **Derive it from the predicate, do not reason about registration shape.** That is a
+  five-minute probe and it has now been right where careful reasoning was twice wrong.
   **Sixteen in a row is well past the point where
   a reader starts treating it as the expected value, which is exactly why this warning gets
   longer rather than shorter each time.** A reader who starts treating 8 as the
