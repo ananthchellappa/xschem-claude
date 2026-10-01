@@ -129,11 +129,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1603161.log`, taken in a throwaway clone of `deccdbd1`
-  built from scratch at a 17-character path: **116 cases** (3 `tcases` + **90** `hcases` +
-  **22** `dcases` + `xschemtest`), **115 blocks**, **`wc -l` 347 green**; trailer
-  `cases=116 blocks=115 counted_failures=0 skips=8 elapsed=628s`, zero live-peer lines, zero
+  the gate verdict `tests/results.1789789.log`, taken in a throwaway clone of `a0d56801`
+  built from scratch at a 17-character path: **117 cases** (3 `tcases` + 90 `hcases` +
+  **23** `dcases` + `xschemtest`), **116 blocks**, **`wc -l` 350 green**; trailer
+  `cases=117 blocks=116 counted_failures=0 skips=8 elapsed=627s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  The Calculator batch's **PLAN phase 2** took it there, registering `test_calc_buffer` in
+  `dcases` alone -- the behaviour fence for a Tk feature, so its headless arm self-skips and an
+  `hcases` entry would measure nothing. ⚠ **`skips=` held at 8 for an EIGHTEENTH consecutive
+  figure, and again the method is the point**: the capture was taken exactly as T1's `dcases` arm
+  takes it and scored with `summarize_all`'s own regexp arms before the gate ran -- zero lowercase
+  `^skip:`, zero uppercase, exactly one `^RESULT:`, `banner_complete=1` -- giving cases +1,
+  blocks +1, counted +0, skips +0, `wc -l` +3, every one of which the gate then matched.
+  One commit earlier, `116/115/0/8` was `tests/results.1603161.log` at `deccdbd1` (3 + 90 +
+  **22** + `xschemtest`, `wc -l` 347, 628s).
   Issue **1626** took it there, registering **THREE** cases at once: `test_calc_skeleton` and
   `test_calc_widgets` in `dcases`, and the new `test_registered_banner_1626` in `hcases`. The
   defect was that **789 passing Calculator checks gated nothing for a month** -- both suites
@@ -257,8 +266,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `105/104/skips=8` (1615) and `106/105/skips=8` (0514) and `107/106/skips=8` (1616) and
   `109/108/skips=8` (1619, which took TWO cases at once) and `112/111/skips=8` (1620,
   which took THREE) and `113/112/skips=8` (1625, a second arm for a suite already registered)
-  and `116/115/skips=8` here (**1626**, THREE cases at once -- two `dcases` plus one `hcases` --
-  for suites whose 789 green checks had been gating nothing because neither printed the sentinel).
+  and `116/115/skips=8` (**1626**, THREE cases at once -- two `dcases` plus one `hcases` --
+  for suites whose 789 green checks had been gating nothing because neither printed the sentinel)
+  and `117/116/skips=8` here (the Calculator batch's PLAN phase 2, `test_calc_buffer` in `dcases`).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
