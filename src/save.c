@@ -4529,8 +4529,26 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
    * of the dataset containing it (spec doc/claude/specs/calculator.md 3.2).
    * The caller's `first` is printed above; this is the window actually
    * evaluated, and it is what tests/headless/test_del_negative_arg.tcl DN12
-   * asserts -- the graph door (src/draw.c:9171, :9221) is the only caller that
-   * passes a first > 0, so without this line the widening is unobservable. */
+   * asserts.
+   *
+   * WARN THIS COMMENT SAID "the graph door (src/draw.c:9171, :9221) is the ONLY
+   * caller that passes a first > 0" AND IT WAS WRONG TWICE -- corrected
+   * 2026-10-01 under issue 1628, which depended on knowing exactly which
+   * callers reach a first > 0 and found the receipt repeating this sentence.
+   * Wrong about the COUNT: there are EIGHT call sites in draw.c, and they split
+   * into TWO families that mean different things --
+   *   - four pass `ofs` / `ofs_end - 1`, the DATASET offset, so first > 0 on
+   *     every dataset after the first (the node-plot, marker and annotate
+   *     doors);
+   *   - four pass a local `first` that is a VISIBLE-RUN scan variable, set by
+   *     walking points and stopping where a plottable run begins. That is
+   *     > 0 on a single-dataset raw whenever the run does not start at point 0
+   *     -- a zoomed x range, or leading unplottable points.
+   * And wrong in FORM: bare file:line citations, which had rotted by ~350
+   * lines by the time anyone read them. Cite by symbol; the engine's callers
+   * are found with `grep -n 'plot_raw_custom_data(' src/draw.c`. The one
+   * caller that passes first = 0 unconditionally is raw_add_vector() in this
+   * file, which is the Calculator's and `xschem raw add`'s door. */
   dbg(1, "plot_raw_custom_data(): evaluated window: first=%d, last=%d\n", first, last);
   my_free(_ALLOC_ID_, &ntok_copy);
   for(p = first ; p <= last; p++) {
@@ -4600,7 +4618,39 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
             } else if(stack2[stackptr2 - 2] == 0.0) {
               stack2[stackptr2 - 2] = 0;
             } else {
-              stack2[stackptr2 - 2] =  y[p - 1];
+              /* x/0 with x != 0: HOLD THE PREVIOUS OUTPUT. The heuristic is
+               * deliberate -- a transient zero crossing in a divisor must not
+               * destroy a whole trace -- and issue 1628 did not remove it; it
+               * fixed the INDEX. `y` is the destination column base and this
+               * loop is `for(p = first; p <= last; p++)`, so `y[p - 1]` is the
+               * previous point THIS pass computed ONLY while p > first:
+               *   p == 0 (what raw_add_vector() passes, first = 0) read y[-1],
+               *     one SPICE_DATA BEFORE the column -- undefined behaviour,
+               *     and the user saw a confident garbage number (`1 0 /` in the
+               *     Calculator answered 8.068092e-321, and the same expression
+               *     gave three different values on three doors).
+               *   p == first > 0 (what the graph door passes: ofs is the offset
+               *     of the dataset the point lives in) read y[first - 1], which
+               *     is IN BOUNDS and therefore invisible to valgrind, but was
+               *     never written by this pass -- stale data from whatever last
+               *     used the shared scratch column. That is landmine L2 of
+               *     doc/claude/specs/calculator.md arriving from inside the
+               *     engine: the same point answered 4, then 400, purely because
+               *     an unrelated expression had been plotted in between.
+               * At p == first there is no previous point, so the answer is 0 --
+               * the choice this very switch already makes for 0/0 two lines up,
+               * which makes it this function's own convention rather than a new
+               * one, and the minimum behavioural change. Rejecting the whole
+               * expression (`return -1`, what an unresolvable vector name does)
+               * was considered and rejected: it would turn a cosmetic
+               * first-point glitch into a vanished trace for every existing
+               * graph that currently survives a transient zero divisor.
+               * Fenced by tests/headless/test_divis_zero_1628.tcl -- DZ1/DZ3c
+               * the p == 0 half, DZ2 the first > 0 half, DZ3a/DZ3b the
+               * heuristic itself, DZ5 the memory property under valgrind, DZ6
+               * the index shape. Twin defect, same function, already fixed:
+               * issue 0325 and tests/headless/test_del_negative_arg.tcl. */
+              stack2[stackptr2 - 2] = p > first ? y[p - 1] : 0.0;
             }
             stackptr2--;
             break;

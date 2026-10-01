@@ -4399,7 +4399,42 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   believing the grep, and the pointer line plus a reserved-band check plus `ls <n>-*` remain the
   load-bearing tests.
 
-**The next free number is 1628.**
+- **1628** — **`x/0` in the RPN engine read before the destination window, and the garbage
+  propagated.** FIXED 2026-10-01 (calculator_batch stage `E-engine-divis-1628`),
+  `doc/claude/issues/1628-divis-by-zero-reads-before-the-destination-window.md`.
+  `plot_raw_custom_data()`'s `DIVIS` arm holds the previous output for `x/0` — a deliberate
+  heuristic, so a transient zero crossing in a divisor does not destroy a trace — but it
+  spelt that as `y[p - 1]` with no test that there IS a previous point in this pass. At
+  `p == 0` (what `raw_add_vector()` passes) that is `y[-1]`, an out-of-bounds read of the
+  heap word before the column, whose value then propagates forward through every later
+  point: `1 0 /` through the Calculator's Evaluate answered `= 8.068092e-321` with `ok=1`.
+  At `p == first > 0` (what the graph and marker doors pass) it is in bounds and invisible
+  to valgrind, and returns whatever the previous pass left in the shared scratch column —
+  landmine L2 arriving from INSIDE the engine; the same marker answered **4**, then **400**.
+  Fixed as `p > first ? y[p - 1] : 0.0`, 0 being what the same switch already answers for
+  `0/0`. ⚠ **Not `p > 0`**, which fixes only the memory half and is sabotage S3 of the new
+  suite. Rejected: `return -1` (a vanished trace for every graph that currently survives a
+  transient zero divisor), a Tcl-side guard (the user ruled it belongs in C), and an IEEE
+  infinity — measured to stop `graph_marker add_at` creating markers at all.
+  Same defect class, same function, already fixed once: **0325**.
+  Fence `tests/headless/test_divis_zero_1628.tcl` (33 checks, `hcases`, written red first:
+  11 rows red before, 0 after) + `tests/headless/divis_zero_child.tcl`.
+  Carries one open item: **0325's `ravg()` sibling is still live on today's binary** and its
+  own instruction (*"scheduled as a crash, not as a cosmetic"*) is still unexecuted.
+
+- **1629** — a negative `ravg()` window walks `prevp` one past the end of `ravg_store()`'s array.
+  **This is issue 0325, one `case` away in the same function, and 0325's own surviving comment
+  describes it**: `case DEL` carried the identical `<= last` bound until 0325 changed it to
+  `< last`, and that comment names `ravg_store()`'s `arr[i][]` (my_calloc()ed with `last + 1`
+  doubles) as one of the two arrays the old bound overran. **0325 fixed the caller that led it to
+  the array and left the array's other caller alone.** The trigger is a NEGATIVE window, which is
+  why it survived: at `p == last` the time term is 0, and `0 > window` is false for any
+  non-negative window, so the walk stops before the bound matters. `ravg()` is a P-route entry in
+  the Calculator's own `calc::catalogue`, typeable into the buffer today, so this is not obscure.
+  Found by an adversarial C-semantics lens during issue **1628**, which was briefed to report
+  same-class defects in the switch rather than fix them — the brief earning its keep.
+
+**The next free number is 1630.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

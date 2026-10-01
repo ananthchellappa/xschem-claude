@@ -64,7 +64,51 @@ have caught a false premise was the thing the false premise was recorded in.
 | — | side items | `receipts/12-del-negative-arg.md`, `12-del-negative-arg-out-of-bounds.md`, `13-phase1-eyeball-punchlist.md`, `14-gui-gate-batch-panel-leak.md` | 2026-08-15 | |
 | 6 | **Stage A — issue 1626, registration** | `receipts/A-register-1626.md` | 2026-09-30 | see below |
 | 7 | **Stage A2 — the seven findings against the fence** | `receipts/A2-fence-fixes-1626.md` | 2026-09-30 | all seven fixed, and then **REFUTED** on verification — see below |
-| 8 | **Stage A3 — close the blockers that refuted A2** | `receipts/A3-close-blockers-1626.md` | 2026-09-30 | see below |
+| 8 | **Stage A3 — close the blockers that refuted A2** | `receipts/A3-close-blockers-1626.md` | 2026-09-30 | cleared; issue 1626 closed, gated **116/115/0/8** at `deccdbd1` |
+| 9 | **Stage B — PLAN phase 2, the buffer comes alive** | `receipts/B-buffer-alive.md` | 2026-09-30 | built; all three lenses **REFUTED** |
+| 10 | **Stage B2 — the eleven findings against phase 2** | `receipts/B2-close-blockers.md` | 2026-09-30 | fixed; two of three lenses **REFUTED** again |
+| 11 | **Stage B3 — final round, scope closed** | `receipts/B3-final.md` | 2026-10-01 | cleared at `REAL_BUT_MINOR`; **phase 2 gated 117/116/0/8 at `a0d56801`** |
+
+### PLAN phase 2 is DONE and gated — `a0d56801`, baseline `3e94bbee`
+
+The twelve operator keys insert at the caret, `ClrBuf` clears, `Undo`/`Redo` are live.
+`tests/headless/test_calc_buffer.tcl`, **121 checks**, `dcases`. 48 rows written red first,
+16 sabotages, three adversarial rounds.
+
+**Two real defects, both found by a lens and neither of them prose:**
+
+* **The separator's first implementation used Tcl's `string is space`**, a strict superset of the
+  engine's `" \t\n"` — 29 characters in the BMP, 26 of them not delimiters. So a pasted CR
+  suppressed the separator, `plot_raw_custom_data()` saw one fused token, and the whole expression
+  returned `-1` phases later with no trace. **The proc implementing the separator rule
+  reintroduced the exact failure the rule exists to prevent.** A row now reads the delimiter
+  literal out of `src/save.c`, so the two cannot drift.
+* **All nine new procs guarded with a bare `winfo exists`**, which *throws* under `--nogui` where
+  that command does not exist — R508's own third case, a contract `calc::status` already honoured
+  and `test_calc_skeleton` row S13 already fenced. A regression against the tree's own rule.
+  `calc::has_win` is now the single site that knows it, and `calc::status` routes through it too.
+
+**And the driver's own near-miss, recorded because the method is the lesson.** Acting on a lens
+note, the driver changed `calc::buf_typed` to set `fbredo 0`, which turned a passing row red. Rather
+than adjust either side, the driver **measured a bare Tk 8.6.17 text widget**: `canredo` goes 1
+after an undo and back to **0** after any new edit. So a real edit clears the redo stack, the 8.6
+branch reports Redo *disabled* after typing, and the fallback answering `normal` was not a
+conservative over-answer but a **contradiction of the branch it approximates** — and a disagreement
+with `calc::buf_note_edit`, which had always set it to 0. The change was right and the row had
+encoded the bug; the row is now re-keyed to assert that **the two branches agree**, so it cannot
+drift from the behaviour it stands in for.
+
+**One limit declared rather than fixed, with its measurement**: the Tk 8.5 fallback can
+*under-answer* when an edit leaves the buffer text byte-identical (delete-then-retype), because
+`buf_typed`'s discriminator is "did the text change". `edit modified` is the instrument. Not wired
+at the close of a phase: `calc::color` uses `dict` (8.5+) and sits on every widget's path, so this
+file cannot run on Tcl 8.4 at all and the blast radius is one Tk minor version, while the 8.6 branch
+reads the real stack and never consults these hints. The comment that claimed the hints "never"
+under-answer is corrected rather than left standing.
+
+**Carried for a later stage, found in passing and deliberately not fixed:** `calc::status_recall`
+and `calc::dest_changed` — both phase-1 procs — still carry a bare `winfo exists` and would raise
+under R508's third case. Neither is reachable without a window today.
 
 ### ⚠ Stage A2 fixed all seven findings and was then REFUTED, for reproducing inside its own file the defect it was convened to remove
 

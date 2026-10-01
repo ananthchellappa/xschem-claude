@@ -111,7 +111,43 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_replay_door_1619" \
                  "headless/test_select_log_1620" \
                  "headless/test_selflog_grep_guard" \
-                 "headless/test_registered_banner_1626"]
+                 "headless/test_registered_banner_1626" \
+                 "headless/test_divis_zero_1628"]
+## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
+## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
+## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
+## Calculator Evaluate and Plot, graph expression traces, `xschem raw add`.
+## `hcases` alone, and NOTHING in it is display-only, which is the surprising part:
+## the half of the defect that needs a caller passing `first > 0` is reached through
+## `xschem graph_marker add_at` -> graph_marker_create_at -> graph_marker_sample, and
+## that evaluates the expression and returns the sample with no X at all. Issue 0325's
+## equivalent band (DN12 of `test_del_negative_arg`) needed a DISPLAY and self-skips
+## without one; this one does not, so there is no second arm to register and no row to
+## skip. It prints NO `skip:` line on any arm -- do not predict the trailer from that
+## sentence, read it (CLAUDE.md records three occasions where careful reasoning about
+## registration shape got the figure wrong).
+## ⚠ `test_del_negative_arg` -- issue 0325, the same defect class in the same function --
+## IS STILL IN NEITHER LIST, and that is pre-existing, not this change. It was left
+## alone deliberately: its DN11/DN12 bands are conditional on valgrind AND a DISPLAY,
+## so registering it is a separate judgement with its own gate, not a free addition.
+## ⚠ THE CALCULATOR HAS FIVE SUITES AND THESE TWO ARE THE ONLY `hcases` ONES.
+## `test_calc_skeleton`, `test_calc_widgets` and `test_calc_buffer` are `dcases`
+## because they build real Tk; `test_calc_engine` and
+## `test_calc_scratch_reuse` are the ENGINE half of calculator_batch PLAN phase 3
+## (`calc::rpn_of_text`, `calc::tmpvec`, `calc::eval_cursor_point`,
+## `calc::eval_rpn`), and not one of those four touches a widget. That is a
+## design choice with a purpose: it puts the arithmetic the Calculator reports --
+## hand-derived against the committed `tests/headless/data/calc_fixture.raw` --
+## and landmine L2's destination discipline in front of the `--nogui` arm, which
+## is the arm the other three cannot run on at all. Spec
+## doc/claude/specs/calculator.md section 11.1 lists both files as headless, which
+## is where the naming comes from.
+## ⚠ NEITHER HAS A NO-X GATE, deliberately: there is nothing in either to skip
+## without a display, so they print their verdict once and `banner_complete`
+## accepts it on every arm (measured through `tests/banner_rule.tcl` itself, not
+## through `run_suites.sh`, which is the mistake issue 1626 exists for). Row RB6
+## of `test_registered_banner_1626` re-measures that an `hcases` entry does not
+## take a no-banner early exit.
 # ⚠ `test_ev_precision_bound_1606` IS IN `hcases` ONLY, AND ITS DISPLAY ROWS STILL
 # RUN. Issue 1606: thirteen sprintf() statements took their precision indirectly
 # ("%.*g") and none bounded it, so a precision of 73 or more overran an 80-byte
