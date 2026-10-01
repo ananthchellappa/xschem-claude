@@ -129,11 +129,22 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1789789.log`, taken in a throwaway clone of `a0d56801`
-  built from scratch at a 17-character path: **117 cases** (3 `tcases` + 90 `hcases` +
-  **23** `dcases` + `xschemtest`), **116 blocks**, **`wc -l` 350 green**; trailer
-  `cases=117 blocks=116 counted_failures=0 skips=8 elapsed=627s`, zero live-peer lines, zero
+  the gate verdict `tests/results.1996257.log`, taken in a throwaway clone of `c2cdb307`
+  built from scratch at a 17-character path: **118 cases** (3 `tcases` + **91** `hcases` +
+  23 `dcases` + `xschemtest`), **117 blocks**, **`wc -l` 353 green**; trailer
+  `cases=118 blocks=117 counted_failures=0 skips=8 elapsed=633s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  Issue **1628** took it there (`test_divis_zero_1628`, **`hcases` alone**) -- a C fix in the RPN
+  engine, not a Calculator change: `plot_raw_custom_data()`'s `DIVIS` arm read `y[p - 1]` at
+  `p == first`, one element BEFORE the destination column, witnessed by valgrind as an
+  *"Invalid read of size 8 … 8 bytes BEFORE a block of size 64"*. ⚠ **`skips=` held at 8 for a
+  NINETEENTH figure and the suite is `hcases` alone with NOTHING display-only in it**, which is the
+  surprising part: the half of the defect needing a caller with `first > 0` is reached through
+  `xschem graph_marker add_at` -> `graph_marker_sample`, which evaluates and returns a sample with
+  no X at all, where issue 0325's equivalent band needs a display and self-skips. Derived from
+  `summarize_all`'s own arms before the run, as every figure since 1625 has been.
+  One commit earlier, `117/116/0/8` was `tests/results.1789789.log` at `a0d56801` (3 + 90 + 23 +
+  `xschemtest`, `wc -l` 350, 627s), the Calculator batch's PLAN phase 2.
   The Calculator batch's **PLAN phase 2** took it there, registering `test_calc_buffer` in
   `dcases` alone -- the behaviour fence for a Tk feature, so its headless arm self-skips and an
   `hcases` entry would measure nothing. ⚠ **`skips=` held at 8 for an EIGHTEENTH consecutive
@@ -268,7 +279,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   which took THREE) and `113/112/skips=8` (1625, a second arm for a suite already registered)
   and `116/115/skips=8` (**1626**, THREE cases at once -- two `dcases` plus one `hcases` --
   for suites whose 789 green checks had been gating nothing because neither printed the sentinel)
-  and `117/116/skips=8` here (the Calculator batch's PLAN phase 2, `test_calc_buffer` in `dcases`).
+  and `117/116/skips=8` (the Calculator batch's PLAN phase 2, `test_calc_buffer` in `dcases`)
+  and `118/117/skips=8` here (**1628**, `test_divis_zero_1628` in `hcases` alone -- an engine fix,
+  and a suite with no display-only row at all).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
