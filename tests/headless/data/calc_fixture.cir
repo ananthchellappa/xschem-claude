@@ -1,0 +1,119 @@
+* calc_fixture.cir -- the generating deck for tests/headless/data/calc_fixture.raw
+*
+* Spec: doc/claude/specs/calculator.md section 11.2.  PLAN row 2.1.
+* Contract, derivations and the regeneration recipe: data/README.md next to this file.
+*
+* GENERATED ONCE AND COMMITTED.  DO NOT REGENERATE IT FROM A TEST --
+* "a fixture that regenerates is a fixture that drifts" (spec section 11.2).
+* This deck writes `calc_fixture.regen.raw`, NOT `calc_fixture.raw`, so that
+* running it in place can never overwrite the committed fixture.
+*
+* Generator: /usr/bin/ngspice 45.2.  See README.md for why that one and not the
+* ngspice-46+ fork build.
+*
+* Every value a test may assert is HAND-DERIVED from this deck below and in the
+* README, never read back out of the run.
+*
+* ---------------------------------------------------------------------------
+* 1. ONE source is both the square wave and the ac drive.
+*
+*    PULSE(0 1 0.9m 0.2m 0.2m 1m 4m): 0 V until 0.9 ms, a 0.2 ms rising edge,
+*    1 ms at 1 V, a 0.2 ms falling edge, period 4 ms.  Every breakpoint
+*    (0.9m 1.1m 2.1m 2.3m, and those +4m and +8m) is an exact multiple of the
+*    0.1 ms `linearize` grid, so the 50 % crossings land ON sample points:
+*      rising  50 % at t = 1.0, 5.0 and 9.0 ms   (sample 10, 50, 90)
+*      falling 50 % at t = 2.2 and 6.2 ms        (sample 22, 62)
+*    `AC 1` makes the same source the 1 V ac reference, so in the ac dataset
+*    v(sq) == 1+0j and `v(lp) v(sq) /` IS the transfer function.
+*
+* 2. The single pole.  clp = 1/(2*pi*rac*fp) puts the pole at EXACTLY
+*    fp = 1 kHz, and `ac lin 20 100 2k` steps by exactly 100 Hz, so 1 kHz is a
+*    sample point (index 9 of 20).  There H = 1/(1+j) = 0.5 - 0.5j exactly,
+*    |H| = 1/sqrt(2), db20(H) = -10*log10(2), phase = -45 degrees.
+*    `twopi` is spelled out because ngspice 45.2's .param evaluator has NO `pi`
+*    constant: `1/(2*pi*rac*fp)` is rejected with "Undefined parameter [pi]".
+*
+* 3. The ramp.  PWL(0 0 10m 10) is a slope of exactly 1 V/ms across the whole
+*    10 ms run, so v(ramp) at sample k is k/10 volts and the level-L crossing is
+*    at exactly t = L ms.
+*
+* 4. rtop/rbot is the DATASET DISCRIMINATOR.  The transient runs twice with
+*    `alter rtop` between the runs, so v(div) is v(ramp)/2 in dataset 0 and
+*    v(ramp)/4 in dataset 1.  No capacitor is involved, so both are exact at
+*    every sample, and i(@rtop[i]) is v(ramp)/2k and v(ramp)/4k.
+*
+* 5. vdc/rdc1/rdc2 exists so the OPERATING POINT dataset carries non-zero,
+*    exactly-computable values: v(dcmid) = 3 V and i(@rdc1[i]) = 1 mA.  At
+*    t = 0 the pulse and the ramp are both 0, so without it the op dataset
+*    would be entirely zeros.
+*
+* 6. m1 exists for exactly one reason: so the raw carries a literal `@m1[gm]`
+*    op-parameter vector, the name shape spec R203/R207 is about.  Note what
+*    ngspice does to the OTHER op-parameter names on the way out: `@m1[id]`,
+*    `@rtop[i]` and `@rdc1[i]` are written as `i(@m1[id])`, `i(@rtop[i])` and
+*    `i(@rdc1[i])` because they are current-typed, while `@m1[gm]` keeps its
+*    bare name because it is an admittance.  That asymmetry is precisely why
+*    R207 says to read names back from the raw inventory instead of building
+*    them.  m1 is a level-1 MOS biased by fixed sources, so gm and id are
+*    time-invariant: the same value at every transient sample, to within solver
+*    noise, and the same again in the op dataset.
+* ---------------------------------------------------------------------------
+
+.param twopi=6.283185307179586
+.param fp=1k
+.param rac=1k
+.param cac='1/(twopi*rac*fp)'
+
+vsq   sq    0     PULSE(0 1 0.9m 0.2m 0.2m 1m 4m) AC 1
+rlp   sq    lp    {rac}
+clp   lp    0     {cac}
+
+vrm   ramp  0     PWL(0 0 10m 10)
+rtop  ramp  div   1k
+rbot  div   0     1k
+
+vdc   dcin  0     5
+rdc1  dcin  dcmid 2k
+rdc2  dcmid 0     3k
+
+vg    g     0     2
+vd    d     0     3
+m1    d g 0 0 nm w=10u l=1u
+.model nm nmos level=1 vto=0.7 kp=100u lambda=0.01
+
+.control
+set filetype=binary
+save v(sq) v(lp) v(ramp) v(div) v(dcmid) @rtop[i] @rdc1[i] @m1[gm] @m1[id]
+
+* ---- tran dataset 0: rtop = 1k, so v(div) = v(ramp)/2 --------------------
+* `linearize` resamples onto the uniform 0.1 ms grid the tran command asked
+* for, which is what puts the pulse breakpoints and the 50 % crossings exactly
+* on sample points.  The variable-step plots (tran1, tran3) are NOT written.
+tran 0.1m 10m
+linearize
+
+* ---- tran dataset 1: rtop = 3k, so v(div) = v(ramp)/4 --------------------
+alter rtop=3k
+tran 0.1m 10m
+linearize
+
+* ---- the ac arm: one pole, at exactly fp --------------------------------
+ac lin 20 100 2k
+
+* ---- the op arm.  rtop goes back to 1k first so the op dataset describes
+*      the circuit AS WRITTEN rather than as altered. ---------------------
+alter rtop=1k
+op
+
+* `write` to an existing file OVERWRITES it (measured on 45.2 -- it does not
+* append), so all four plots go out in ONE command.  The plot names are
+* ngspice's own, and they depend on the ORDER above: `tran2` and `tran4` are
+* the two `linearize` outputs, `ac4` and `op4` the other two.  `.all` is
+* required -- a plot-qualified single vector such as `ac4.v(sq)` is written out
+* under the mangled name `v(ac4.v(sq))`, measured on 45.2.
+* The TRAN plots come FIRST on purpose: xschem's read_dataset() takes the first
+* plot's type when `xschem raw read <file>` is given no type argument, so a
+* bare read selects tran and sees BOTH datasets.
+write calc_fixture.regen.raw tran2.all tran4.all ac4.all op4.all
+.endc
+.end
