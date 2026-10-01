@@ -129,11 +129,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.1996257.log`, taken in a throwaway clone of `c2cdb307`
-  built from scratch at a 17-character path: **118 cases** (3 `tcases` + **91** `hcases` +
-  23 `dcases` + `xschemtest`), **117 blocks**, **`wc -l` 353 green**; trailer
-  `cases=118 blocks=117 counted_failures=0 skips=8 elapsed=633s`, zero live-peer lines, zero
+  the gate verdict `tests/results.2198974.log`, taken in a throwaway clone of `47ea655a`
+  built from scratch at a 17-character path: **120 cases** (3 `tcases` + **93** `hcases` +
+  23 `dcases` + `xschemtest`), **119 blocks**, **`wc -l` 359 green**; trailer
+  `cases=120 blocks=119 counted_failures=0 skips=8 elapsed=631s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  The Calculator batch's **PLAN 3.1-3.2** took it there (`test_calc_engine` and
+  `test_calc_scratch_reuse`, both `hcases`), the stage where Evaluate stopped being a stub.
+  ⚠ **TWENTIETH consecutive `skips=8`, and it is still derived rather than predicted** -- the two
+  captures were taken exactly as the `hcases` arm takes them and scored with `summarize_all`'s own
+  regexp arms before the run: zero lowercase `^skip:`, zero uppercase, one `^RESULT:`,
+  `banner_complete=1` for both, giving cases +2 / blocks +2 / counted +0 / skips +0 / `wc -l` +6,
+  every one of which the gate matched. `planned_cases` agreed independently at 120.
+  One commit earlier, `118/117/0/8` was `tests/results.1996257.log` at `c2cdb307` (3 + **91** +
+  23 + `xschemtest`, `wc -l` 353, 633s), issue 1628's engine fix.
   Issue **1628** took it there (`test_divis_zero_1628`, **`hcases` alone**) -- a C fix in the RPN
   engine, not a Calculator change: `plot_raw_custom_data()`'s `DIVIS` arm read `y[p - 1]` at
   `p == first`, one element BEFORE the destination column, witnessed by valgrind as an
@@ -280,8 +289,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `116/115/skips=8` (**1626**, THREE cases at once -- two `dcases` plus one `hcases` --
   for suites whose 789 green checks had been gating nothing because neither printed the sentinel)
   and `117/116/skips=8` (the Calculator batch's PLAN phase 2, `test_calc_buffer` in `dcases`)
-  and `118/117/skips=8` here (**1628**, `test_divis_zero_1628` in `hcases` alone -- an engine fix,
-  and a suite with no display-only row at all).
+  and `118/117/skips=8` (**1628**, `test_divis_zero_1628` in `hcases` alone -- an engine fix, and a
+  suite with no display-only row at all) and `120/119/skips=8` here (the Calculator batch's
+  PLAN 3.1-3.2, TWO `hcases` suites at once).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
