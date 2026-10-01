@@ -129,11 +129,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2198974.log`, taken in a throwaway clone of `47ea655a`
-  built from scratch at a 17-character path: **120 cases** (3 `tcases` + **93** `hcases` +
-  23 `dcases` + `xschemtest`), **119 blocks**, **`wc -l` 359 green**; trailer
-  `cases=120 blocks=119 counted_failures=0 skips=8 elapsed=631s`, zero live-peer lines, zero
+  the gate verdict `tests/results.2406744.log`, taken in a throwaway clone of `08b860e1`
+  built from scratch at a 17-character path: **121 cases** (3 `tcases` + 93 `hcases` +
+  **24** `dcases` + `xschemtest`), **120 blocks**, **`wc -l` 362 green**; trailer
+  `cases=121 blocks=120 counted_failures=0 skips=8 elapsed=632s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  The Calculator batch's **PLAN 3.3-3.4** took it there (`test_calc_plot`, `dcases` alone), which
+  closes its vertical slice. ⚠ **The registration shape was MEASURED rather than reasoned, and the
+  measurement is the argument**: run through `tests/banner_rule.tcl` before the entry went in, that
+  suite's display arm gives `banner_complete=1` and its `--nogui` arm gives
+  `regression_case_failed(0)=1` -- so an `hcases` entry would have been a standing red, which is
+  issue 1615's incident exactly. **TWENTY-FIRST consecutive `skips=8`**, derived as every figure
+  since 1625 has been.
+  One commit earlier, `120/119/0/8` was `tests/results.2198974.log` at `47ea655a` (3 + **93** + 23
+  + `xschemtest`, `wc -l` 359, 631s), PLAN 3.1-3.2.
   The Calculator batch's **PLAN 3.1-3.2** took it there (`test_calc_engine` and
   `test_calc_scratch_reuse`, both `hcases`), the stage where Evaluate stopped being a stub.
   ⚠ **TWENTIETH consecutive `skips=8`, and it is still derived rather than predicted** -- the two
@@ -291,7 +300,8 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `117/116/skips=8` (the Calculator batch's PLAN phase 2, `test_calc_buffer` in `dcases`)
   and `118/117/skips=8` (**1628**, `test_divis_zero_1628` in `hcases` alone -- an engine fix, and a
   suite with no display-only row at all) and `120/119/skips=8` here (the Calculator batch's
-  PLAN 3.1-3.2, TWO `hcases` suites at once).
+  PLAN 3.1-3.2, TWO `hcases` suites at once) and `121/120/skips=8` here (PLAN 3.3-3.4,
+  `test_calc_plot` in `dcases` alone, chosen by measuring `banner_complete` on both arms first).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
