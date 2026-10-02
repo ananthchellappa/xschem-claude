@@ -1705,8 +1705,19 @@ proc calc::eval_msg {kind {a {}} {b {}}} {
 # or a thousands separator, so the pattern below admits everything a finite
 # value can be and nothing else.
 #
-# TEXTUAL, not arithmetic: `expr {$v == $v}` raises a domain error on a NaN
-# operand in Tcl 8.5+, and this is on an answering path, not a raising one.
+# TEXTUAL, not arithmetic, and this is on an answering path rather than a raising
+# one -- but the MECHANISM this sentence used to give for that was wrong.
+#
+# ⚠ IT SAID `expr {$v == $v}` "raises a domain error on a NaN operand in Tcl
+# 8.5+".  MEASURED ON TCL 8.6.17: it returns `0`, QUIETLY.  Comparison operators
+# on a NaN do not raise at all; what raises is ARITHMETIC (`$v - 0.5` answers
+# `can't use non-numeric floating-point value as operand of "-"`) and `abs($v)`.
+# The conclusion is untouched -- be textual -- and so is the portability argument
+# above it; only the named mechanism was false, and a quiet `0` is a WORSE reason
+# to avoid that test than a raise would have been, because a guard built on it
+# reads as working and silently classes a NaN as a finite number.  Corrected by
+# the `cross` stage (CROSS_CONTRACT §4 item 1), which depends on this proc being
+# the guard that runs BEFORE any arithmetic touches a sample.
 #
 # Band CE10 of tests/headless/test_calc_engine.tcl drives this proc directly
 # with every spelling named above -- including the three this machine cannot
@@ -2289,6 +2300,479 @@ proc calc::plot_click {} {
     set m {}
     catch {set m [dict get $d msg]}
     return [calc::status $m]
+}
+
+
+# ---------------------------------------------------------------------------
+# PLAN 7.1 + 7.2 -- `cross`: the X value where an expression crosses a level.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2aa (R414-R414e) and 7.3
+#          (R401-R405).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md -- D1-D12.  Each proc
+#          below names the clause it implements; where this code and that file
+#          disagree, the file is the contract and this code is the bug.
+# Fence    tests/headless/test_calc_cross.tcl, bands CX0-CX14.
+#
+# WARN `nth` READS FROM BOTH ENDS, AND THAT CAME FROM THE USER, who uses the
+# reference tool professionally: positive counts forward from the start of the
+# sweep, NEGATIVE COUNTS BACK FROM THE END (-1 is the last, -2 the
+# second-to-last), and 0 means every crossing.  R414: behaviour to match, not a
+# design choice of ours.  D1 calls the negative half the single most likely
+# thing to be implemented wrongly, because a forward loop cannot answer "which
+# was last" without reaching the end of the sweep -- so there are TWO scan
+# directions and both early-exit, which is R414c.
+#
+# WARN THE WHOLE SWEEP IS SCANNED, BECAUSE CLIP (R304) IS NOT WIRED.
+# `::calc::clip` has no reader anywhere in the tree and the checkbutton's
+# -command is still `calc::inert` for phase 6, so there is no X window to
+# restrict a measurement to.  PLAN puts Clip's semantics at row 6.6 and this is
+# 7.2.  The reader it will want already exists -- `wviewer::graph_range` -- so
+# this is a wiring gap and not a missing capability, and two things stay
+# undecided and belong to phase 6: which graph is "the target" when a viewer
+# holds several strips, and whether that reader is called inside the existing
+# borrowed-context loan or given its own bracket, since a bare call clobbers the
+# viewer's title (issue 0173).
+#
+# WARN THREE DISPOSITIONS, AND KEEPING THE LAST TWO APART IS THE WHOLE POINT.
+#   measured -- ok 1, the X under `value`; for nth = 0 that is the LIST of every
+#               crossing's X, in sweep order (D2/D8).
+#   absent   -- ok 0, absent 1.  A well-formed request whose answer does not
+#               exist (R414b/D5).  NOT an error, NOT the empty string, and above
+#               all NOT 0, which is a perfectly good X value.
+#   refused  -- ok 0, absent 0.  A request that cannot be interpreted at all
+#               (D7).
+# D7's own sentence for why the last two must stay distinguishable is that it is
+# what lets `settlingTime` tell "you asked me something meaningless" from "this
+# signal never settles", and all seven verbs layered on `cross` propagate both.
+#
+# WARN AND IT ANSWERS RATHER THAN RAISING, WHICH IS STRUCTURAL AND NOT A STYLE
+# CHOICE.  D6: comparison operators on a NaN return 0 quietly, but `expr` on a
+# non-finite operand RAISES -- measured, `can't use non-numeric floating-point
+# value as operand of "-"` for a NaN and `domain error: argument not in valid
+# range` for an infinity.  An unguarded `cross` would therefore THROW where it
+# should refuse, which is why the finiteness gate in `calc::cross_pair` runs
+# BEFORE the predicate rather than filtering what the predicate rejects.
+# ---------------------------------------------------------------------------
+
+# Every sentence `cross` can put on the status line, in ONE place.  Same shape
+# and same reason as `calc::eval_msg` and `calc::plot_msg`, and deliberately not
+# the same proc: Evaluate's vocabulary is Evaluate's.
+#
+# House style, measured off those two: leading verb, colon, one full sentence, a
+# full stop, and the offending value in parentheses.
+#
+# WARN UNRATIFIED USER-VISIBLE WORDING.  These are the assistant's words; the
+# `rule` debt filed against `calc::eval_msg`'s sentences covers these too.  The
+# suite asserts the SHAPE of these sentences (a capital, a colon, the offending
+# value) and never the words, for exactly that reason.
+proc calc::cross_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        empty      { return {Nothing to measure: cross was given an empty expression.} }
+        nodata     { return {Cross: that result has no simulation data loaded.} }
+        dataset    { return "Cross: dataset $a is not in the loaded result (it has $b)." }
+        allpoints  { return "Cross: a measurement reads one dataset at a time, never\
+ allpoints ($a)." }
+        intdataset { return "Cross: the dataset must be a whole number ($a)." }
+        nosweep    { return "Cross: that result has no sweep column to measure an X on\
+ (sim_type $a)." }
+        badnth     { return "Cross: nth counts crossings from either end and must be a\
+ whole number ($a)." }
+        badlevel   { return "Cross: the level is not a finite number ($a)." }
+        badedge    { return "Cross: the edge must be rising, falling or either ($a)." }
+        badtoken   { return "Cannot measure: $a." }
+        noname     { return {Cross: no free temporary vector name is available.} }
+        stale      { return "Cross refused: the vector $a already exists, so its data could\
+ be another expression's." }
+        engine     { return "Cross: the engine would not read that expression ($a)." }
+        absent     { return "Cross: there is no $a $b crossing of that level in this sweep." }
+        listdefer  { return "Cross: nth 0 answers every crossing and the buffer takes one\
+ number (R404), so a destination that can hold a wave has to come first." }
+    }
+    return {}
+}
+
+# The answer dict for every path that did NOT measure something.  ONE SITE, so
+# the key set cannot drift between the refusing paths, the absent path and the
+# one success path -- `calc::eval_refusal`'s reason, and the reason that proc
+# could not simply be reused: its key set has no `absent`, which is the key the
+# two dispositions are told apart by.
+proc calc::cross_refusal {msg {dataset 0} {dest {}}} {
+    return [dict create ok 0 absent 0 value {} dataset $dataset dest $dest msg $msg]
+}
+
+# R414b/D5's answer, built from the one site above so it cannot drift from it.
+#
+# WARN SYMMETRIC BY CONSTRUCTION, WHICH IS WHAT R414b ASKS FOR IN SO MANY WORDS:
+# `-5` and `+5` over three crossings reach this through the same call, so the
+# two ends cannot answer differently.  The SENTENCE may legitimately differ --
+# naming the ordinal that was asked for is the house style -- and so may the
+# minted `dest`, which `calc::tmpvec` never re-uses by design.
+proc calc::cross_absent {msg {dataset 0} {dest {}}} {
+    set d [calc::cross_refusal $msg $dataset $dest]
+    dict set d absent 1
+    return $d
+}
+
+# `5th`, `5th from the end`.  Only an absence sentence uses it: naming the
+# ordinal that was asked for is what tells a reader whether they asked from the
+# wrong end or asked for one crossing too many.
+proc calc::cross_ordinal {n} {
+    set a [expr {abs($n)}]
+    set suf th
+    set r [expr {$a % 100}]
+    if {$r < 11 || $r > 13} {
+        switch -exact -- [expr {$a % 10}] {
+            1 { set suf st }
+            2 { set suf nd }
+            3 { set suf rd }
+        }
+    }
+    if {$n < 0} { return "${a}${suf} from the end" }
+    return "${a}${suf}"
+}
+
+# D3's detection predicate and D4's interpolation, for ONE sample pair, at ONE
+# site.  Answers `<dir> <x>` for a crossing or the empty string for none.
+#
+# WARN THE THREE STEPS ARE IN THIS ORDER AND THE ORDER IS THE DECISION.
+#
+# 1. D6, the FINITENESS GATE, FIRST.  The first draft of D6 said a non-finite
+#    sample was "skipped as a bracket endpoint" and measurement showed that
+#    reading is not strong enough: `-inf < L` is perfectly true, so an infinity
+#    does NOT fail the predicate -- it sails through as a crossing.  Measured on
+#    Tcl 8.6.17, with the level at 0.5: the pair (-inf, 0.6) scores rising 1,
+#    and so does (0.4, inf).  A gate that filtered only what the predicate
+#    rejected would therefore admit a phantom crossing on every infinite
+#    sample, and three of the five such phantoms on a real column interpolate to
+#    exactly the LEFT sample's X -- a plausible time inside the sweep that no
+#    reader would question.  Band CX10 derives both halves.
+#    The gate is `calc::eval_finite`, which is TEXTUAL, and the two obvious
+#    alternatives are both wrong here: `string is double -strict` accepts all
+#    four non-finite spellings (that is the whole reason `calc::eval_finite`
+#    exists), and `expr` comparing a value with itself returns 0 QUIETLY for a
+#    NaN on this Tcl rather than raising, so it would read as a guard and not be
+#    one.
+#    The X endpoints are gated too.  Nothing in the fixture reaches that -- a
+#    sweep column is finite -- so it is a declared belt rather than a fenced
+#    term, and it is here because the alternative in that state is a raise out
+#    of the division instead of an answer.
+#
+# 2. D3's PREDICATE.  rising iff `y0 < L && y1 >= L`; falling iff
+#    `y0 > L && y1 <= L`; `either` is the disjunction, and a pair can satisfy at
+#    most one of the two.  The strict-below / inclusive-above asymmetry is
+#    deliberate: it counts each transition exactly once, and it makes an exact
+#    sample hit (`y1 == L`) a crossing AT that sample for which step 3 already
+#    yields exactly `x1` with no special case -- verified on real data, sample
+#    50 of the fixture's `v(sq)` is bit-exactly 0.5 and this formula returns
+#    exactly `x[50]` (band CX7).
+#
+#    WARN ONE ACCEPTED, ASYMMETRIC LIMIT, AND IT IS PINNED BY BAND CX14 RATHER
+#    THAN LEFT HERE AS PROSE.  A trace that arrives at exactly L, sits flat on
+#    it for several samples and then leaves DOWNWARDS registers a rising
+#    crossing on entry and NO falling crossing on exit, because the departing
+#    pair has `y0 == L`, which is not strictly greater than L.  Accepted for v1
+#    because a threshold is normally mid-swing and exact float equality with it
+#    is vanishingly rare outside rail-clamped digital traces -- but accepted
+#    KNOWINGLY, so CX14 builds a clamped column and states what the behaviour
+#    IS.  A change there is a DECISION, not a regression.
+#
+# 3. D4's INTERPOLATION, which sits BEHIND the predicate and nowhere else.
+#    Linear between the two straddling samples, never snapped to a sample
+#    (R414d); `graph_marker_sample` and `graph_marker_anchor_at` in src/draw.c
+#    do the same arithmetic for the markers, and the latter's own comment
+#    records that snapping to the sample was the pre-issue-0193 behaviour, so it
+#    is not reintroduced here.  The denominator cannot be zero once the
+#    predicate holds, because the predicate puts the endpoints strictly on
+#    opposite sides of L -- but the division is placed behind the predicate
+#    rather than relying on a reader noticing that.
+#
+# WARN AND IT IS ONE PROC BECAUSE BIT-IDENTITY IS A REQUIREMENT, not a nicety.
+# D10 reads the column in BULK for every `nth`, so the forward scan, the
+# backward scan and the nth 0 list all divide the SAME two operands by the SAME
+# formula and their answers are bit-identical, which rows CX3 and CX5 assert
+# with string equality rather than a tolerance.  Two copies of the formula, or a
+# second read path at a different precision, would redden those rows.
+proc calc::cross_pair {x0 x1 y0 y1 L edge} {
+    if {![calc::eval_finite $y0] || ![calc::eval_finite $y1]} { return {} }
+    if {![calc::eval_finite $x0] || ![calc::eval_finite $x1]} { return {} }
+    set rise [expr {$y0 <  $L && $y1 >= $L}]
+    set fall [expr {$y0 >  $L && $y1 <= $L}]
+    if {$rise} {
+        set dir rising
+    } elseif {$fall} {
+        set dir falling
+    } else {
+        return {}
+    }
+    if {$edge ne {either} && $edge ne $dir} { return {} }
+    set x [expr {$x0 + ($L - $y0)*($x1 - $x0)/($y1 - $y0)}]
+    if {![calc::eval_finite $x]} { return {} }
+    return [list $dir $x]
+}
+
+# R414/R414a/R414c/D1/D2 -- the selector, over two materialised columns.
+# Answers `1 <x>`, `1 <list of x>` for nth 0, or `0 {}` for "not that many".
+#
+# WARN TWO SCAN DIRECTIONS, AND D1 CALLS THIS THE SINGLE MOST LIKELY THING TO BE
+# IMPLEMENTED WRONGLY.  A positive `nth` counts forward from the first pair; a
+# NEGATIVE one counts backward from the last pair.  Both stop at the match, so
+# neither traverses a long transient to answer about an edge near its other end.
+# The naive implementation -- walk forward counting, then index from the end --
+# serves only half the API and walks the whole sweep for the other half.
+#
+# WARN THE COUNT IS WITHIN THE SELECTED DIRECTION, NEVER OVERALL (R414a), and
+# that falls out of `edge` being applied inside `calc::cross_pair` rather than
+# as a filter over a set of crossings counted first.  An implementation that
+# counted overall and filtered afterwards answers a FALLING crossing for
+# `rising nth 3` on a column whose third crossing overall is falling, and band
+# CX4 measures exactly that on the inverted square -- chosen because on the
+# fixture's own `v(sq)` at 0.5 the last crossing overall happens to be rising,
+# so `rising -1` equals `either -1` there and an edge-blind implementation
+# passes BY LUCK.
+#
+# WARN AND ZERO IS NOT A SPECIAL CASE BOLTED ON (D2).  Once both signs are
+# ordinals from opposite ends, 0 is the only integer left over, which is why it
+# carries "all" -- a selector sign test, not a magic value checked first.  The
+# PROC answers the whole list because `frequency`, `period_jitter` and
+# `dutyCycle` all need it and they call the proc; it is the UI surface that
+# defers the list case, in `calc::cross_scalar`.
+proc calc::cross_scan {xs ys L nth edge} {
+    set n [llength $ys]
+    set nx [llength $xs]
+    if {$nx < $n} { set n $nx }
+    if {$nth == 0} {
+        set out {}
+        for {set p 1} {$p < $n} {incr p} {
+            set h [calc::cross_pair [lindex $xs [expr {$p-1}]] [lindex $xs $p] \
+                                    [lindex $ys [expr {$p-1}]] [lindex $ys $p] $L $edge]
+            if {[llength $h]} { lappend out [lindex $h 1] }
+        }
+        return [list 1 $out]
+    }
+    set want [expr {abs($nth)}]
+    set seen 0
+    if {$nth > 0} {
+        for {set p 1} {$p < $n} {incr p} {
+            set h [calc::cross_pair [lindex $xs [expr {$p-1}]] [lindex $xs $p] \
+                                    [lindex $ys [expr {$p-1}]] [lindex $ys $p] $L $edge]
+            if {![llength $h]} continue
+            incr seen
+            if {$seen >= $want} { return [list 1 [lindex $h 1]] }
+        }
+    } else {
+        for {set p [expr {$n-1}]} {$p >= 1} {incr p -1} {
+            set h [calc::cross_pair [lindex $xs [expr {$p-1}]] [lindex $xs $p] \
+                                    [lindex $ys [expr {$p-1}]] [lindex $ys $p] $L $edge]
+            if {![llength $h]} continue
+            incr seen
+            if {$seen >= $want} { return [list 1 [lindex $h 1]] }
+        }
+    }
+    return [list 0 {}]
+}
+
+# R414/R414a-e, R401-R403, D1-D12 -- the measurement.
+#
+#   calc::cross <rpn> <level> <nth> <edge> ?<dataset>?
+#
+# WARN THE PRE-FLIGHT IS `calc::eval_rpn`'s, COPIED RATHER THAN INVENTED (D11),
+# because `xschem raw add`'s return value does not mean what it looks like and
+# three separate readings of it are measured defects:
+#
+#   * IT NEVER ANSWERS -1.  Spec section 3.1's "unknown vector means the whole
+#     evaluation returns -1" is true of `plot_raw_custom_data` and FALSE of the
+#     Tcl verb, which discards that return.  A bad expression on a fresh name
+#     answers 1, leaves the vector behind, and it reads back as defined ZEROS --
+#     indistinguishable at the Tcl surface from an expression that legitimately
+#     evaluates to zero.  So `calc::rpn_bad_token` runs BEFORE the engine and
+#     the refusal names the token.
+#   * ITS rc MEANS "did I create the name", NOT "did it evaluate".  Re-adding an
+#     existing name answers 0 and STILL evaluates, writing this caller's
+#     expression into somebody else's column -- so the destination is checked
+#     with `xschem raw index` BEFORE the add, never after it.
+#   * WITH NO RAW LOADED, `values`, `add`, `index` and `datasets` ALL RAISE.
+#     Only `xschem raw loaded` answers, so the gate is built on that one.
+#
+# WARN AND THE CLEANUP CANNOT BE DRIVEN BY THAT RETURN CODE (R402).  A failed
+# add leaves a column behind and still answers 1, so the delete below is
+# unconditional and sits before every return that can follow the add.  Recon's
+# correction to landmine L2 makes this LEAK HYGIENE rather than a staleness
+# remedy: a named column is persistent and independent, so a leaked
+# `__calc_tmp<N>` would stay in `xschem raw list` and in the viewer's inventory
+# for the life of the database.  Band CX13 drives every exit path, including the
+# one where the pre-flight approves an expression the ENGINE then rejects.
+#
+# WARN THE SWEEP COLUMN IS RESOLVED BY NAME, NEVER AS INDEX 0 (D12).  On a
+# transient read `time` happens to be index 0, which is exactly why an index-0
+# implementation scores the same as a correct one on nearly every row -- but the
+# fixture's own operating-point plot has NO sweep column and its index 0 is
+# `v(sq)`, so an index-0 implementation reads a node voltage as an X axis there.
+# The name comes from `xschem raw sim_type` and is resolved with
+# `xschem raw index`; a sim_type that maps to neither `time` nor `frequency` is
+# REFUSED, naming it.  A `dc` sweep is in that refused set and is DECLARED
+# rather than guessed at: its sweep column carries the swept source's own name,
+# so there is no constant to look up, and inventing one would be a wrong answer
+# where a refusal is a true one.  The `ac` arm is not reachable through the
+# committed fixture and is therefore unfenced; it is one `switch` arm beside the
+# fenced one.
+#
+# WARN ONE DATASET, EXPLICIT, DEFAULTING TO 0, AND NEVER ALLPOINTS (D12).  The
+# four accessors disagree about their own default -- `pos_at` 0, `raw value`
+# allpoints, `raw values` 0, `raw points` allpoints -- so this states its
+# dataset rather than inheriting one, and VALIDATES it against
+# `xschem raw datasets` before any accessor sees it, because an out-of-range
+# dataset reaches issue 1632's out-of-bounds read.  Allpoints is refused on its
+# own account: over the fixture the X column has exactly one non-increasing step
+# at the dataset seam, and that step MANUFACTURES a falling crossing at a time
+# inside dataset 0's range which coincides to under 1e-17 with a real RISING
+# crossing.  No caller rejects that by inspection and no tolerance-based row
+# separates the two.
+proc calc::cross {rpn level nth edge {dataset 0}} {
+    # D7, FIRST: a request that cannot be INTERPRETED is refused before any
+    # evaluation happens, and is never reported as an absence.
+    #
+    # WARN INTEGER-VALUED, NOT INTEGER-SPELLED.  `string is integer -strict`
+    # would refuse `1e3`, which IS 1000 -- a perfectly well-formed request for
+    # the thousandth crossing that simply does not exist, so D5 makes it ABSENT
+    # and D7 must not reach it.  `3.0` is the ordinal 3 for the same reason.
+    if {![calc::eval_finite $nth]} {
+        return [calc::cross_refusal [calc::cross_msg badnth $nth]]
+    }
+    set nthv [expr {double($nth)}]
+    if {$nthv != floor($nthv)} {
+        return [calc::cross_refusal [calc::cross_msg badnth $nth]]
+    }
+    set n [expr {entier($nthv)}]
+    if {![calc::eval_finite $level]} {
+        return [calc::cross_refusal [calc::cross_msg badlevel $level]]
+    }
+    set L [expr {double($level)}]
+    if {[lsearch -exact {rising falling either} $edge] < 0} {
+        return [calc::cross_refusal [calc::cross_msg badedge $edge]]
+    }
+    # ...and the empty expression on its own account, because
+    # `calc::rpn_bad_token` answers {} for a clean RPN AND for an empty one, so
+    # a `cross` that trusted that proc alone would send nothing to the engine
+    # and read a column of zeros.
+    set rpn [string trim $rpn]
+    if {$rpn eq {}} { return [calc::cross_refusal [calc::cross_msg empty]] }
+    # D11 rule 1: the one accessor that answers rather than raising.
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::cross_refusal [calc::cross_msg nodata]]
+    }
+    # D12: the dataset, validated against the database before any accessor sees
+    # it.  The refusal names BOTH numbers -- the one asked for and the count the
+    # result has -- which is what makes it evidence that the count was consulted
+    # rather than a range guessed at.
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset]]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]
+    }
+    if {$dataset >= $nds} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]
+    }
+    # D12's last paragraph: the sweep BY NAME, from the sim_type.
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    set sweep {}
+    switch -exact -- $sty {
+        tran { set sweep time }
+        ac   { set sweep frequency }
+    }
+    set six -1
+    if {$sweep ne {}} { catch {set six [xschem raw index $sweep]} }
+    if {$sweep eq {} || ![string is integer -strict $six] || $six < 0} {
+        return [calc::cross_refusal [calc::cross_msg nosweep $sty] $dataset]
+    }
+    # D11 rule 3, and it runs BEFORE the destination is minted so that a
+    # mistyped name is reported as a mistyped name and never as a
+    # temporary-column collision.  The clause is `calc::rpn_bad_token`'s and the
+    # sentence is this file's, which is the same division Evaluate and Plot use.
+    set bad [calc::rpn_bad_token $rpn]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    # D11 rule 4.  `calc::tmpvec` mints `__calc_tmp<N>` and never re-uses a
+    # name; {} means it found none free, which is refused rather than passed to
+    # the engine as an empty destination.
+    set dest [calc::tmpvec]
+    if {$dest eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dest]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    # D10: BOTH columns read in BULK, once each, for EVERY `nth` including 1 and
+    # -1.  There is ONE read path, and that is a reversal of this contract's own
+    # earlier decision rather than an oversight: the per-point door prints
+    # through `dtoa` (`%.8g`), so a crossing interpolated from it carries about
+    # 1e-8 relative error at best, against a sweep column whose documented
+    # headroom is 1e-12.  The fast route cannot produce an answer worth
+    # asserting, so R414c's two scan directions are SEMANTICS over a
+    # materialised list and not an I/O optimisation.
+    set rc {} ; set ys {} ; set xs {}
+    set err [catch {
+        set rc [xschem raw add $dest $rpn]
+        set ys [string trim [xschem raw values $dest $dataset]]
+        set xs [string trim [xschem raw values $sweep $dataset]]
+    } e]
+    # R402, unconditional and before every return below: the cleanup cannot be
+    # driven by the return code.
+    catch {xschem raw del $dest}
+    if {$err} {
+        return [calc::cross_refusal [calc::cross_msg engine $e] $dataset $dest]
+    }
+    # ...and the same belt `calc::eval_rpn` carries, for the same reason and
+    # with the same declared status: 1 means this call created the column.
+    # While the `raw index` above stands this arm needs another writer to have
+    # claimed the name between two adjacent statements, so NO ROW FORCES IT and
+    # it is not claimed as fenced.
+    if {$rc ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    set got [calc::cross_scan $xs $ys $L $n $edge]
+    if {![lindex $got 0]} {
+        return [calc::cross_absent \
+                    [calc::cross_msg absent [calc::cross_ordinal $n] $edge] \
+                    $dataset $dest]
+    }
+    return [dict create ok 1 absent 0 value [lindex $got 1] \
+                dataset $dataset dest $dest msg {}]
+}
+
+# D8 -- the SURFACE's half, which is a different decision from the proc's.
+#
+# The measurement proc answers the whole list for nth 0 because `frequency`,
+# `period_jitter` and `dutyCycle` need it and they call the proc.  The
+# keypad/catalogue path cannot: R404 says a T-route scalar lands in the buffer
+# as a literal NUMBER, and a list of forty-seven crossing times is not something
+# the existing RPN evaluator can eat.  So for v1 this REFUSES the list case with
+# a sentence naming what is missing, and the list case waits for a destination
+# that can hold a wave -- which is what the reference tool returns here,
+# plausibly through `xschem raw table_read`.
+#
+# Deferring a surface with a message is the decision; silently truncating a list
+# to its first element would not be.
+#
+# WARN DECLARED UNFENCED BY THE SUITE, because the surface that calls it does
+# not exist yet: R412's argument dialog is phase 5's and is outside this stage's
+# scope (D9), so this proc is the decision written down where the dialog will
+# find it rather than a wired control.  `tests/headless/test_calc_cross.tcl`
+# fences `calc::cross` itself and says nothing about this wrapper.
+proc calc::cross_scalar {rpn level nth edge {dataset 0}} {
+    if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
+        return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
+    }
+    return [calc::cross $rpn $level $nth $edge $dataset]
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -3359,6 +3843,28 @@ proc calc::fn_reason {route} {
     }
 }
 
+# ⚠ THE `returns` FIELD HAS A RULED, CLOSED VOCABULARY, AND THE SPEC'S OWN §7.2
+# TABLE STEPS OUTSIDE IT FOR ONE ROW.  Row S24 of
+# tests/headless/test_calc_skeleton.tcl is the fence: a `returns` outside
+# `scalar` / `wave` / `bool` / `scalar/wave` is a counted failure there.  §7.2
+# spells `cross` **`scalar/list`**, which is that row's one violation --
+# MEASURED, by lifting S24's own `lsearch` predicate out of the suite and running
+# it over a mutated catalogue: `scalar/list` answers
+# `cross=returnsscalar/list` and `scalar/wave` answers clean.
+#
+# `scalar/wave` is what the row carries, for three reasons and not merely to keep
+# the suite green.  It is the spelling `intersect`, `frequency` and `freq`
+# already use, and those three have `cross`'s exact shape -- one value for an
+# ordinal request, many for "all".  It is what the user eventually gets: the
+# reference tool returns a WAVEFORM for `nth = 0` and CROSS_CONTRACT D8 names
+# that as the destination the list case is waiting for, so this table (which is
+# read by a person) is not promising a Tcl list. And `scalar/list` would describe
+# the measurement proc's internal return rather than the function's answer.
+#
+# ⚠ SO THIS ROW AND SPEC §7.2 DISAGREE BY ONE WORD AND THE DISAGREEMENT IS
+# DELIBERATE, not an oversight -- closing it is a one-word edit in one of two
+# files (widen S24's vocabulary, or respell §7.2) and belongs to whoever owns
+# both.  Recorded here rather than left for the next reader to rediscover.
 proc calc::catalogue {} {
     return {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
@@ -3372,7 +3878,7 @@ proc calc::catalogue {} {
 {lshift {Special Functions} T wave {} {The wave shifted along X by an offset (negative delay)}}
 {sample {Special Functions} T wave {} {Wave values at chosen X points}}
 {root {Special Functions} T scalar {} {The X value where the curve equals zero}}
-{cross {Special Functions} T scalar {} {The X value at the Nth crossing of a threshold}}
+{cross {Special Functions} T scalar/wave {} {The X value at the Nth crossing of a threshold}}
 {intersect {Special Functions} T scalar/wave {} {Where two curves meet: scalar or wave}}
 {compare {Special Functions} T bool {} {Whether two curves agree within a tolerance}}
 {dBm {Special Functions} C wave {log10() 10 * 30 +} {Power in dBm: 10*log10(power in watts) + 30}}

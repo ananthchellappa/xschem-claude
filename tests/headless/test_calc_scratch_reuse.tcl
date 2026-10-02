@@ -433,25 +433,68 @@ group SR5 {
         [list [expr {$iadd >= 0}] [expr {$ival >= 0}]] {1 1}
     check "SR5 R605 ...and the read is the statement IMMEDIATELY after the engine call -- nothing in between" \
         [expr {$ival - $iadd}] 1
-    # ...and no OTHER proc reads one of these columns, which is the other half of
-    # "nothing in between": a second reader could be called later, against a
-    # column a third evaluation has rewritten.  Derived from every proc in the
-    # namespace, not from a list kept here.
-    set readers {}
+    # ⚠⚠ THE TWO ROWS BELOW USED TO READ `{eval_rpn}` -- A ONE-NAME LITERAL --
+    # AND THEY WERE WIDENED FOR `cross` (PLAN 7.2) BY DERIVING THE SET, NOT BY
+    # LENGTHENING THE LITERAL.  While the T route had exactly one member the
+    # literal and the truth coincided; they no longer do.  Writing
+    # `{cross eval_rpn}` would be the same hand-kept list one name longer, and
+    # seven more T-route verbs stand on `cross` (riseTime, slewRate, delay,
+    # dutyCycle, frequency, settlingTime, overshoot), so the next one would have
+    # to edit it again and whoever forgot would meet a red that says nothing
+    # about what is actually wrong.  A hand-kept list is the same defect one
+    # level up -- the reason row X1 of test_snprintf_fmt_1608.tcl exists.
+    #
+    # WHAT IS DERIVED, AND WHY THESE FOUR PROPERTIES.  R402's discipline is that
+    # a proc which evaluates into a temporary column owns that column's whole
+    # life: it MINTS the name (calc::tmpvec), it ADDS through the direct engine
+    # verb, it READS the samples back, and it DELETES the column before it
+    # returns, on every exit path including the error ones.  All four are visible
+    # in a decommented body, so the four sets are computed INDEPENDENTLY and the
+    # claim is that they are the SAME SET.  That is strictly stronger than the
+    # old literal for everything the old literal protected: an engine caller that
+    # forgets the mint, or the delete, or reads back a column it did not create,
+    # reddens here, and the row prints which of the four sets it fell out of.
+    #
+    # ⚠ AND "EXACTLY ONE DIRECT VERB" IS KEPT AS A SEPARATE, NARROW CLAIM rather
+    # than dissolved into the derivation -- see the disjointness row at the foot
+    # of this band.  Plot reaches the SAME engine through `wviewer::add_trace`,
+    # inside src/wave_viewer.tcl where no scan over this namespace can see it,
+    # and L2 does not apply to that route: its destination is a persistent named
+    # vector the trace keeps reading, so there is nothing to delete.  The two
+    # doors must stay DISJOINT, because a proc on both would carry an R402
+    # obligation its viewer half does not know it has.
+    set minters {} ; set adders {} ; set readers {} ; set deleters {} ; set preflight {}
     dict for {nm b} $pbody {
-        if {[regexp {xschem raw value} $b]} { lappend readers $nm }
+        if {[regexp {calc::tmpvec} $b]}        { lappend minters   $nm }
+        if {[regexp {xschem raw add} $b]}      { lappend adders    $nm }
+        if {[regexp {xschem raw value} $b]}    { lappend readers   $nm }
+        if {[regexp {xschem raw del} $b]}      { lappend deleters  $nm }
+        if {[regexp {calc::rpn_bad_token} $b]} { lappend preflight $nm }
     }
     check_expr "SR5 the decommented namespace map is not vacuous -- every proc in it, bodies kept" \
         {[dict size $pbody] >= 25 && [string match {*raw add*} [dict get $pbody eval_rpn]]}
-    check "SR5 exactly ONE proc in the namespace reads a value out of the raw, and it is eval_rpn" \
-        $readers {eval_rpn}
-    # and the engine door, likewise: one caller, so there is one place where L2
-    # can be got wrong.
-    set adders {}
-    dict for {nm b} $pbody {
-        if {[regexp {xschem raw add} $b]} { lappend adders $nm }
+    check "SR5 R402 DERIVED: the procs that MINT a temporary, issue the DIRECT engine verb, READ samples back and DELETE the column are one and the same set -- computed four ways over the decommented namespace, so a caller that skips any one of the four reddens and the row prints which set it fell out of" \
+        [list $adders $minters $readers $deleters] \
+        [list $adders $adders $adders $adders]
+    # ⚠ THE NON-VACUITY LEG, and it is not decoration: four EMPTY lists satisfy
+    # the equality above perfectly, which is how the row would read on a tree
+    # where `info body` answered nothing.  Two names are named here as a positive
+    # CONTROL on the derivation, never as the fence -- the fence is the equality.
+    check_expr "SR5 ...and that derived set is neither empty nor a single name any more: it holds both eval_rpn and cross, which is what makes the four-way equality a claim about real bodies" \
+        {[llength $adders] >= 2 && [lsearch -exact $adders eval_rpn] >= 0 \
+         && [lsearch -exact $adders cross] >= 0}
+    # ...and the fifth property, as a SUBSET claim rather than an equality,
+    # because `plot_rpn` pre-flights too while reaching the engine through the
+    # viewer's door.  Every direct caller must run calc::rpn_bad_token BEFORE the
+    # engine: `xschem raw add` answers 1 for an expression the engine rejected
+    # and leaves defined zeros behind, so there is no failure downstream to read
+    # and a caller that skipped the pre-flight would report a confident zero.
+    set notpreflighted {}
+    foreach nm $adders {
+        if {[lsearch -exact $preflight $nm] < 0} { lappend notpreflighted $nm }
     }
-    check "SR5 ...and exactly ONE proc issues `xschem raw add` DIRECTLY" $adders {eval_rpn}
+    check "SR5 ...and EVERY member of that derived set runs calc::rpn_bad_token, asserted as a subset with the member count riding along so an empty set cannot pass it" \
+        [list [llength $adders] $notpreflighted] [list [llength $adders] {}]
     # ⚠⚠ "EXACTLY ONE" IS A CLAIM ABOUT THE DIRECT VERB AND NOTHING ELSE, AND
     # SINCE PLAN 3.3 THAT DISTINCTION IS LOAD-BEARING RATHER THAN PEDANTIC.
     # Plot reaches the SAME engine, through `wviewer::add_trace`, which issues
@@ -470,6 +513,19 @@ group SR5 {
     }
     check "SR5 ...and the procs that reach the engine through the VIEWER's door instead are Plot's, which is why no R402 delete belongs there" \
         $viaviewer {plot_rpn}
+    # ⚠ THE NARROW HALF OF "EXACTLY ONE DIRECT VERB", now that the direct set has
+    # more than one member: the two doors are DISJOINT.  A proc on both would be
+    # one with an R402 delete obligation on a column the viewer's trace is still
+    # reading -- which is the opposite failure from a leak and would show up as a
+    # vanishing trace, not as a stale number.  Both counts ride along so neither
+    # set can pass this by being empty.
+    set bothdoors {}
+    foreach nm $adders {
+        if {[lsearch -exact $viaviewer $nm] >= 0} { lappend bothdoors $nm }
+    }
+    check "SR5 ...and no proc uses BOTH doors -- derived from the two sets, with both counts riding along" \
+        [list [llength $adders] [llength $viaviewer] $bothdoors] \
+        [list [llength $adders] 1 {}]
     # ...and exactly one proc calls THAT one, which is what keeps the engine
     # step inside the borrowed context R603 names.  A press that called
     # `calc::eval_rpn` straight from `calc::eval_click` would evaluate against

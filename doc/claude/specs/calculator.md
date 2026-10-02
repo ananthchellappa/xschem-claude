@@ -100,6 +100,16 @@ catalogue in §7 must be expressed in it.
 - Any other token is looked up with `get_raw_index()` as a **vector name**.
 - **Unknown vector ⇒ the whole evaluation returns `-1` and the scratch column is not
   touched.** Callers must treat `-1` as "no data", never as "plot whatever is there".
+- ⚠ **That `-1` is the C function's and NO Tcl CALLER CAN SEE IT.** `raw_add_vector()`
+  **discards** `plot_raw_custom_data()`'s return value, so `xschem raw add <name> <expr>`
+  answers **1** for a rejected expression exactly as for a good one, leaves the vector
+  behind, and it reads back as 101 **defined zeros** — indistinguishable at the Tcl surface
+  from an expression that legitimately evaluates to zero. Measured; re-measured every run by
+  band CE5 of `tests/headless/test_calc_engine.tcl`. The two sentences above are true **of
+  the engine** and this clause exists because a §7.3 T-route implementer reading them with
+  R401 will otherwise reach for a `-1` that cannot arrive. What a T route does instead is
+  run `calc::rpn_bad_token` **before** the engine (R607's one site) and refuse naming the
+  token; see `CROSS_CONTRACT.md` D11.
 
 ### 3.2 Operators (complete)
 
@@ -553,7 +563,7 @@ opcode, **✘** = out of scope v1.
 | `lshift` | wave | shift along X | **T** (was "C (`del()` with negative arg) or T"; that recipe is now a *rejected* expression — issue 0325, see below) |
 | `sample` | wave | values at chosen X | T |
 | `root` | scalar | X where curve = 0 | T (`cross` at level 0) |
-| `cross` | scalar | X at Nth threshold crossing | T — **the primitive most timing verbs use** |
+| `cross` | scalar/wave | X at Nth threshold crossing (`nth` reads from either end — §7.2aa) | T — **the primitive most timing verbs use** |
 | `intersect` | scalar/wave | where two curves meet | T |
 | `compare` | bool | curves agree within tol | T |
 | `dBm` | wave | power in dBm | C |
@@ -592,6 +602,48 @@ opcode, **✘** = out of scope v1.
 **Implementation order is exactly: P, then C, then T-on-`cross`, then the rest.** `cross`
 alone unlocks `riseTime` `slewRate` `delay` `dutyCycle` `frequency` `settlingTime`
 `overshoot` — seven of the most-used verbs from one well-tested primitive.
+
+### 7.2aa `cross` argument semantics, and why a negative selector is NOT the `del()` case
+
+`cross(<wave> <level> <nth> <edge>)` returns the **X** value where the expression crosses
+`level`. `edge` is `rising`, `falling` or `either`. **Supplied by the user 2026-10-01**, who
+uses the reference tool professionally; this is behaviour to match, not a design choice of ours.
+
+- **R414** `nth` is an **ordinal selector over the crossings in the chosen direction**, and it
+  reads from **both ends**: positive counts forward from the start of the X range (`1` = first),
+  **negative counts back from the end (`-1` = last, `-2` = second-to-last)**, and `0` means
+  *every* crossing. Zero is not a special case bolted on — once both signs are ordinals from
+  opposite ends, `0` is the only integer left over, which is why it carries "all".
+- **R414a** The count is **within the selected direction**, never overall: `-1` with `rising`
+  is the last *rising* crossing even if a falling one came after it. This follows from positive
+  `nth` and must not be re-decided per sign.
+- **R414b** Out of range is **no value, on both ends and symmetrically** — `-5` and `+5` over
+  three crossings both yield "no crossing", reported the way §7.3's T route reports an absent
+  measurement. It is not an error and not zero. Every verb layered on `cross` propagates it.
+- **R414c ⚠ A negative `nth` cannot be answered by the forward scan a positive one uses.**
+  To know which crossing was *last* you must reach the end of the X range, so the obvious
+  implementation — walk forward counting until the count matches — serves only half the API and
+  silently walks the whole sweep for the other half. Scan **from `last` down towards `first`**
+  when `nth` is negative. Both signs then early-exit, from opposite ends; neither traverses a
+  million-point transient to answer about an edge near the end of it.
+- **R414d** The X value is **interpolated between the two straddling samples**, never snapped to
+  a sample. `graph_marker_sample()` and `graph_marker_anchor_at()` in `src/draw.c` already resolve
+  an interpolated position between samples for the markers — same arithmetic, different consumer,
+  and `graph_marker_anchor_at`'s own comment records that snapping to the sample was the
+  pre-issue-0193 behaviour. Do not reintroduce it here.
+- **R414e** `cross` has **no hysteresis**, matching the reference tool: a noisy signal recrosses
+  a level many times and every recrossing counts. The seven verbs built on it inherit that, so it
+  is a documentation duty in their help text (compare landmine L6) and not a defect to fix.
+
+⚠ **This does NOT contradict the `del()` ruling at §3.2, and the difference is the whole point.**
+Issue 0325 made `del()` **reject** a negative argument; `cross` must **accept** one. The rule
+behind both is not "negatives are refused" — it is that `del()`'s argument is a **magnitude**, a
+distance along X, for which "negative" names a *different operation* (a left shift, routed to `T`
+as `lshift`) rather than an extreme of the same one; whereas `cross`'s `nth` is an **ordinal**,
+and an ordered set has two ends. A later reader tempted to make the two "consistent" would break
+`-1`, which is among the most-used forms there is, because settling time, the final edge of a
+burst and the last crossing before steady state are all naturally expressed from the end. Getting
+it the other way costs two passes: ask for `0`, count the list, then re-measure by index.
 
 ### 7.2a Three corrections this table needed before it could build a catalogue
 

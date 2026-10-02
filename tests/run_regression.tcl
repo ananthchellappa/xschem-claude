@@ -114,7 +114,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_registered_banner_1626" \
                  "headless/test_divis_zero_1628" \
                  "headless/test_calc_engine" \
-                 "headless/test_calc_scratch_reuse"]
+                 "headless/test_calc_scratch_reuse" \
+                 "headless/test_calc_cross"]
 ## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
 ## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
 ## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
@@ -132,7 +133,21 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## IS STILL IN NEITHER LIST, and that is pre-existing, not this change. It was left
 ## alone deliberately: its DN11/DN12 bands are conditional on valgrind AND a DISPLAY,
 ## so registering it is a separate judgement with its own gate, not a free addition.
-## ⚠ THE CALCULATOR HAS FIVE SUITES AND THESE TWO ARE THE ONLY `hcases` ONES.
+## ⚠ `test_calc_cross` IS `hcases` ALONE (calculator_batch PLAN rows 7.1 + 7.2,
+## `doc/claude/calculator_batch/CROSS_CONTRACT.md`). `cross` is a measurement over
+## evaluated samples -- it reads two columns in bulk and divides -- so not one of
+## its bands touches a widget and there is no second arm to register.
+## It carries NO no-X gate and NO whole-file early exit, deliberately: the early
+## exits that `test_calc_buffer` and `test_calc_plot` take print no `OVERALL: ok`, so an
+## `hcases` entry carrying one is scored `HARNESS: ... (exit=0, OVERALL_ok=0,
+## died=0)` with every one of its own checks passing, which is issue 1615's
+## incident exactly. MEASURED before this entry went in, through
+## `tests/banner_rule.tcl` itself rather than through `run_suites.sh`:
+## `banner_complete` 1, `banner_died` 0, `regression_case_failed 0 <body>` 0, with
+## exactly ONE `^RESULT:` line and ZERO `^skip:` lines of either case over the
+## suite's real captured `--nogui` output. Do not read that zero as a prediction
+## about the trailer's `skips=` -- read the trailer.
+## ⚠ THE CALCULATOR HAS SIX SUITES AND THESE THREE ARE THE ONLY `hcases` ONES.
 ## `test_calc_skeleton`, `test_calc_widgets` and `test_calc_buffer` are `dcases`
 ## because they build real Tk; `test_calc_engine` and
 ## `test_calc_scratch_reuse` are the ENGINE half of calculator_batch PLAN phase 3
