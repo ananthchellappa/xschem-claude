@@ -75,6 +75,53 @@ have caught a false premise was the thing the false premise was recorded in.
 | 16 | **Stage E — issue 1628, the engine's `DIVIS` out-of-bounds read** | `receipts/E-engine-divis-1628.md` | 2026-10-01 | a C fix, not a Calculator change; valgrind witnessed *"8 bytes BEFORE a block of size 64"*; turned up issue **1629** |
 | 17 | **Stage F — `cross` recon** | `receipts/F-cross-recon.md` | 2026-10-01 | five crews; **overturned landmine L2 for named `raw add`**, corrected PLAN 7.2's "exact", filed issues **1630/1631/1632** |
 | 18 | **Stage F2/F3 — `cross` red-first suite + implementation** | `receipts/F2-cross-suite-and-implementation.md` | 2026-10-02 | four crews; **reversed the driver's own D10**, 12 false claims retired from one file, SR5 widened as a derivation; `test_calc_cross` 187 checks in `hcases` |
+| 19 | **Stage G — `riseTime`/`delay`/`dutyCycle` recon** | `receipts/G-timing-verbs-recon.md` | 2026-10-02 | four crews; **refuted the driver's evaluate-once helper** (the scan is 27x a column read); user ruled R415 and R416 |
+| 20 | **Stage G2/G3 — the timing verbs' suite + implementation** | `receipts/G2-timing-verbs-suite-and-implementation.md` | 2026-10-02 | five crews; **a NEW parse trap `info complete` cannot see**; a mutation that was a FALSE RED; `test_calc_measure` 125 checks in `hcases`; 16 sabotages, no holes |
+
+### ⚠ Stage G — the driver's second refuted optimisation, and the second ruling-versus-table disagreement
+
+**The evaluate-once helper was pointless and measurement said so.** The plan was a shared
+*evaluate once, scan many* seam so a verb needing two levels would not evaluate twice. On a
+100 000-point column: `raw add` + `raw del` is **0.21 ms**, one bulk column read is **10.3 ms**, and
+**one `nth = 0` scan is 296 ms** — the scan is **27×** a read. Hoisting the evaluation saves ~20 ms of
+~300; on the committed fixture the whole question is 191 µs against 106 µs. The helper was optimising
+the cheap half. And the simple shape is *correct*, established four ways (92 combinations
+bit-identical, the engine deterministic across array growth, 340 churn cycles with nothing leaked,
+two evaluations giving bit-identical X columns) — while **six of ten sharing shapes redden row SR5**.
+All three verbs ship as pure delegates, and SR5 stayed green with **no edit**.
+
+**That is the SECOND performance intuition this batch has had refuted**, after D10, where the faster
+per-point read turned out to print `%.8g` and could not meet the fixture's own 1e-12 tolerance. The
+rule: *a performance number is not a reason on its own, and the shape you were about to optimise may
+not be where the time is.*
+
+⚠⚠ **And the second ruling-versus-table disagreement, this one the driver's own.** Spec §7.2's
+`dutyCycle` row said `scalar` while **R416, written by the driver minutes earlier in the same file**,
+rules it returns a wave. The table contradicted the ruling beside it from the moment the ruling
+existed; the implementation crew found it. The first instance was `cross`, where §7.2 said
+`scalar/list` against a catalogue of `scalar/wave` and S24's closed vocabulary. **Writing a ruling
+obliges re-reading every table in the same section** — and neither time did any suite catch it,
+because a table cell is prose.
+
+### ⚠⚠ Stage G2 — a parse failure `info complete` cannot see
+
+A four-line comment placed **between two `switch` patterns** in `calc::cross_msg` left the braces
+perfectly balanced, `info complete` answering **1**, and Tcl raising *"extra switch pattern with no
+body, this may be due to a comment incorrectly placed outside of a switch body"* out of **every
+sentence in the catalogue** — **34 rows red at once**, three of them `cross`'s.
+
+**The batch's standing brace-balance check is therefore insufficient**, which matters because that
+check was adopted precisely to catch comment-shaped parse damage. A comment is safe above a proc and
+fatal between two `switch` arms, and nothing structural tells them apart. The driver's independent
+confirmation was behavioural, not textual: exercise every message kind and see that none raises
+(23 kinds, `ok=23 raised=0`). **A comment moved inside a `switch` needs a row or a run, never a brace
+count.**
+
+**The most valuable single finding of the stage was a mutation that had been a FALSE RED.** A
+legitimate conforming shared helper was *failing* the delegate rule, so the suite was over-constraining
+the driver's own T1 decision and would have pushed the implementer into a worse shape to satisfy a row.
+A row that is too strict looks exactly like a row that works, which is why it took a mutation pass to
+see.
 
 ⚠ **Rows 12–16 were collected onto this ledger on 2026-10-01, days after their receipts were
 written** — the stages shipped, were gated and were pushed, and the ledger table was simply never
