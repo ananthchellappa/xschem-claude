@@ -129,11 +129,24 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2701197.log`, taken in a throwaway clone of `c4eba95d`
-  at a 17-character path: **122 cases** (3 `tcases` + **94** `hcases` + 24 `dcases` +
-  `xschemtest`), **121 blocks**, **`wc -l` 365 green**; trailer
-  `cases=122 blocks=121 counted_failures=0 skips=8 elapsed=635s`, zero live-peer lines, zero
+  the gate verdict `tests/results.2806916.log`, taken in a throwaway clone of `7f9b9b50`
+  built from scratch at a 17-character path: **123 cases** (3 `tcases` + **95** `hcases` + 24
+  `dcases` + `xschemtest`), **122 blocks**, **`wc -l` 368 green**; trailer
+  `cases=123 blocks=122 counted_failures=0 skips=8 elapsed=634s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  The Calculator batch's **PLAN 7.3** took it there (`test_calc_measure`, **`hcases` alone**, 125
+  checks) -- `riseTime`, `delay` and `dutyCycle`, the first three of the seven verbs the spec layers
+  on `cross`. **TWENTY-THIRD consecutive `skips=8`**, and `wc -l` 368 is the derived figure (365 + 3)
+  matching exactly. Green on the FIRST attempt, which is worth noting only because the previous
+  commit took four.
+  ⚠ **`test_calc_skeleton` ran its DISPLAY arm at `ALL PASS (548 checks)` in this gate**, which is the
+  only reason the catalogue change is verified: that suite holds row **S24**, whose closed `returns`
+  vocabulary is `{scalar wave bool scalar/wave}`, and it is a `dcases` entry that **self-skips to 0
+  checks under `--nogui`**. A crew can only lift S24's predicates and run them headless; the real arm
+  is the gate's. `dutyCycle` moved from `scalar` to `scalar/wave` here, so the arm mattered.
+  One commit earlier, `122/121/0/8` was `tests/results.2701197.log` at `c4eba95d` (3 + 94 + 24 +
+  `xschemtest`, `wc -l` 365, 635s) -- and ⚠ that commit's FIRST gate was RED on
+  `test_home_isolation` rows `H1a`/`H1b`, which has not recurred in the two full gates since.
   The Calculator batch's **`cross`** took it there (`test_calc_cross`, **`hcases` alone**, 187
   checks) -- PLAN rows 7.1+7.2, the measurement layer's keystone, pulled ahead of phases 4-6 at the
   user's request. **TWENTY-SECOND consecutive `skips=8`**, and `wc -l` 365 is the derived figure
@@ -339,7 +352,9 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `test_calc_plot` in `dcases` alone, chosen by measuring `banner_complete` on both arms first)
   and `122/121/skips=8` here (**`cross`**, `test_calc_cross` in `hcases` alone, 187 checks --
   and the one figure in this series whose commit took **FOUR** gate attempts, three lost to a
-  harness kill and one red on an unrelated case, before a clean trailer).
+  harness kill and one red on an unrelated case, before a clean trailer)
+  and `123/122/skips=8` here (**PLAN 7.3**, `test_calc_measure` in `hcases` alone, 125 checks --
+  `riseTime`, `delay`, `dutyCycle`).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
@@ -895,6 +910,17 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   reddening. Nothing detects this automatically. Prefer asserting the correct shape over
   asserting a wrong one's absence, and re-run the site-by-site sabotage after any change in
   the same file.
+- ⚠⚠ **A COMMENT BETWEEN TWO `switch` PATTERNS IS A PARSE ERROR THAT `info complete` CANNOT SEE.**
+  Measured 2026-10-02 in `calc::cross_msg`: a four-line explanatory comment placed between two
+  `switch` arms left the braces perfectly balanced and **`info complete` answering `1`**, while Tcl
+  raised *"extra switch pattern with no body, this may be due to a comment incorrectly placed outside
+  of a switch body"* out of **every** sentence in the catalogue — **34 rows red at once**, three of
+  them in a different suite. A comment is safe above a proc and fatal between two `switch` arms, and
+  **nothing structural distinguishes them**. So the brace-balance scan that this tree's Tcl work
+  relies on (adopted after a literal `{` in a comment silently unbalanced two files, once inside the
+  comment warning about it) is **insufficient on its own**: it catches the unbalanced-brace shape and
+  is blind to this one. The only confirmation is behavioural — exercise every arm of the `switch` and
+  see that none raises. Put explanatory prose **above the proc**, never between patterns.
 
 **Cite code by symbol (proc or function name), not by bare `file:line`**: coordinates
 rot, identity holds (`src/op_annot.tcl` does this on purpose). A line number that cannot
