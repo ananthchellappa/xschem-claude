@@ -129,11 +129,46 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2406744.log`, taken in a throwaway clone of `08b860e1`
-  built from scratch at a 17-character path: **121 cases** (3 `tcases` + 93 `hcases` +
-  **24** `dcases` + `xschemtest`), **120 blocks**, **`wc -l` 362 green**; trailer
-  `cases=121 blocks=120 counted_failures=0 skips=8 elapsed=632s`, zero live-peer lines, zero
+  the gate verdict `tests/results.2701197.log`, taken in a throwaway clone of `c4eba95d`
+  at a 17-character path: **122 cases** (3 `tcases` + **94** `hcases` + 24 `dcases` +
+  `xschemtest`), **121 blocks**, **`wc -l` 365 green**; trailer
+  `cases=122 blocks=121 counted_failures=0 skips=8 elapsed=635s`, zero live-peer lines, zero
   counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
+  The Calculator batch's **`cross`** took it there (`test_calc_cross`, **`hcases` alone**, 187
+  checks) -- PLAN rows 7.1+7.2, the measurement layer's keystone, pulled ahead of phases 4-6 at the
+  user's request. **TWENTY-SECOND consecutive `skips=8`**, and `wc -l` 365 is the derived figure
+  (362 + 3) matching exactly.
+  ⚠⚠ **THIS COMMIT'S FIRST GATE WAS RED AND THE RED WAS NOT THE NEW SUITE.**
+  `tests/results.2565930.log` at the same commit came back `counted_failures=1`, the failure being
+  `test_home_isolation` rows **`H1a`/`H1b`** -- *"with no dev display the arm runs on a private Xvfb
+  numbered from 100"* -- reporting **`rc=0` with an EMPTY display number** (`arm said : (pid )`,
+  `the case saw DISPLAY=`). `test_calc_cross` was `ALL PASS (187 checks)` in that same run, row
+  **`G2`** passed over all **740** scripts (`UNARMED: none`), and row `H2` started a fixture display
+  on `:151` seconds later -- so neither the new suite nor Xvfb itself is implicated. It did **not**
+  reproduce: the suite passes standalone at 116 checks, and the re-gate above has it at
+  `ALL PASS (116 checks)`. **Per D8 this is ONE observation and nothing was changed for it**; the
+  evidence is kept under the session scratchpad. This is the SAME SUITE as the 2026-09-24
+  `H2b` observation below but a **different row**, so it is not a second sighting of that one. If
+  `H1a` recurs, suspect a failed Xvfb *spawn* (which is what `rc=0` plus an empty display looks
+  like) before suspecting the code.
+  ⚠ **Three gate attempts were killed before one completed, and the cause was NOT the product.**
+  Two `run_in_background` gate runs were killed by the harness *"because the system is running low
+  on memory"*, both at roughly case 100. **The diagnosis that memory was to blame was wrong and is
+  recorded here because it is the plausible wrong answer**: the run that COMPLETED had `/tmp` at
+  **5.0 GB** while the two that died had it at **744 MB with 12 GiB available**. What actually
+  worked was **`setsid`** -- taking T1 out of the tool's background-command process tree, after
+  which it ran to completion untouched while the *waiter* watching it was itself killed. So the kill
+  is a property of the harness's wrapper, not of T1's footprint, and the fix is to detach rather
+  than to free memory.
+  ⚠ **But `/tmp` IS tmpfs here, and scratch left in it keeps consuming RAM for the whole session**
+  -- a real standing cost even though it was not this red's cause. This session had **4.4 GB** of
+  finished batches' scratch sitting in `/tmp/claude-1000/...`, i.e. in RAM; removing it took `/tmp`
+  from 5.0 GB to 744 MB and `available` from 7.9 to 12 GiB. The paragraph under **Concurrent T1
+  runs** saying not to serialise on memory remains correct about *T1's* peak, and the
+  gate-clone-path warning already said `/tmp` is tmpfs -- neither says that **your own scratch is
+  charged to RAM until you delete it**. Sweep a finished stage's scratch rather than leaving it.
+  One commit earlier, `121/120/0/8` was `tests/results.2406744.log` at `08b860e1` (3 + 93 + 24 +
+  `xschemtest`, `wc -l` 362, 632s).
   The Calculator batch's **PLAN 3.3-3.4** took it there (`test_calc_plot`, `dcases` alone), which
   closes its vertical slice. ⚠ **The registration shape was MEASURED rather than reasoned, and the
   measurement is the argument**: run through `tests/banner_rule.tcl` before the entry went in, that
@@ -301,7 +336,10 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `118/117/skips=8` (**1628**, `test_divis_zero_1628` in `hcases` alone -- an engine fix, and a
   suite with no display-only row at all) and `120/119/skips=8` here (the Calculator batch's
   PLAN 3.1-3.2, TWO `hcases` suites at once) and `121/120/skips=8` here (PLAN 3.3-3.4,
-  `test_calc_plot` in `dcases` alone, chosen by measuring `banner_complete` on both arms first).
+  `test_calc_plot` in `dcases` alone, chosen by measuring `banner_complete` on both arms first)
+  and `122/121/skips=8` here (**`cross`**, `test_calc_cross` in `hcases` alone, 187 checks --
+  and the one figure in this series whose commit took **FOUR** gate attempts, three lost to a
+  harness kill and one red on an unrelated case, before a clean trailer).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
