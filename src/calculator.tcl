@@ -2365,6 +2365,24 @@ proc calc::plot_click {} {
 # `rule` debt filed against `calc::eval_msg`'s sentences covers these too.  The
 # suite asserts the SHAPE of these sentences (a capital, a colon, the offending
 # value) and never the words, for exactly that reason.
+#
+# ⚠ PLAN 7.3's KINDS LIVE HERE TOO, AND THE COMMENT SAYING SO SITS OUTSIDE THE
+# `switch` BECAUSE A COMMENT BETWEEN TWO PATTERNS IS NOT A COMMENT.  Measured:
+# the first revision of this change put four explanatory lines between
+# `listdefer` and `noswing`, and Tcl answered `extra switch pattern with no
+# body, this may be due to a comment incorrectly placed outside of a switch
+# body` -- a RAISE out of every sentence in the catalogue, which turned 34 rows
+# of tests/headless/test_calc_measure.tcl red at once, including three of
+# `cross`'s own that had nothing to do with the change.  `info complete` was
+# perfectly happy with it: the braces balance, and the error is semantic.
+#
+# The three verbs layered on `cross` (`riseTime`, `delay`, `dutyCycle`) add to
+# THIS catalogue rather than starting a second one, for the reason above -- one
+# builder, one shape, one place a wording ruling lands.  Their sentences name the
+# verb the user clicked rather than opening `Cross:`, which would name a
+# primitive nobody asked for; the one deliberate exception is `listdefer`, which
+# three verbs SHARE on purpose so that the wave destination landing retires one
+# string and not seven.
 proc calc::cross_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         empty      { return {Nothing to measure: cross was given an empty expression.} }
@@ -2387,6 +2405,23 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
         absent     { return "Cross: there is no $a $b crossing of that level in this sweep." }
         listdefer  { return "Cross: nth 0 answers every crossing and the buffer takes one\
  number (R404), so a destination that can hold a wave has to come first." }
+        noswing    { return "Rise time: both reference levels must be supplied,\
+ because the thresholds are percentages of that swing (low '$a', high '$b')." }
+        zeroswing  { return "Rise time: the two reference levels are equal, so\
+ every percentage of the swing names one threshold ($a)." }
+        badref     { return "Rise time: a reference level is not a finite number\
+ ($a)." }
+        badpct     { return "Rise time: a threshold percentage is not a finite\
+ number ($a)." }
+        nohigh     { return "Rise time: the $a low crossing has no high crossing\
+ after it in this sweep." }
+        badcycle   { return "Duty cycle: the cycle must be a whole number ($a)." }
+        nocycle    { return "Duty cycle: that level opens no complete cycle in\
+ this sweep ($a)." }
+        nocycleat  { return "Duty cycle: there is no $a complete cycle at that\
+ level in this sweep." }
+        nofall     { return "Duty cycle: a cycle at that level has no falling\
+ crossing to close its high time ($a)." }
     }
     return {}
 }
@@ -2773,6 +2808,297 @@ proc calc::cross_scalar {rpn level nth edge {dataset 0}} {
         return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
     }
     return [calc::cross $rpn $level $nth $edge $dataset]
+}
+
+# ---------------------------------------------------------------------------
+# PLAN 7.3 -- `riseTime`, `delay` and `dutyCycle`: the first three of the seven
+# verbs layered on `cross`.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2ab (R415-R418), section
+#          7.2aa (R414-R414e, inherited through `cross`) and section 7.3
+#          (R401-R405).
+# Contract doc/claude/calculator_batch/TIMING_CONTRACT.md -- R415, R416, T1-T7.
+#          doc/claude/calculator_batch/CROSS_CONTRACT.md -- D1-D12, STILL IN
+#          FORCE here, because all three answer THROUGH `calc::cross`.  Note
+#          D10 in that file is REVERSED; the live half is its heading.
+# Fence    tests/headless/test_calc_measure.tcl, bands MT0-MT10.
+#
+# WARN ALL THREE ARE PURE DELEGATES ON `calc::cross`, AND THAT IS A MEASURED
+# DECISION RATHER THAN A STYLISTIC ONE (T1).  The driver's own plan was a shared
+# "evaluate once, scan many" helper, so that a verb needing two levels would not
+# evaluate its expression twice.  Recon measured where the time actually goes on
+# a 100 000-point column: one scan costs about 27 times one column read, so
+# hoisting the evaluation saves roughly a fifteenth of the call and the shape it
+# buys is more complicated.  Worse, six of ten candidate sharing shapes REDDEN
+# row SR5 of tests/headless/test_calc_scratch_reuse.tcl, whose trap is a verb
+# reading a named column it did not itself create.  So every verb below calls
+# `cross`, does arithmetic on the answers, opens no door of its own and mints no
+# temporary -- R402 is INHERITED rather than re-implemented, and band MT10
+# derives that as a TRANSITIVE closure over this namespace rather than as a
+# regexp over one body, so a helper in between is permitted and a helper that
+# evaluated for itself is not.
+#
+# WARN THE ANSWER IS `cross`'s OWN DICT, PROPAGATED RATHER THAN REBUILT.  A
+# refusal or an absence is handed back EXACTLY as `cross` built it, which is what
+# keeps D7's two dispositions distinct through a layer without each verb
+# re-encoding them -- and it is how MT10's stub probe can tell that an answer
+# came back through `cross` instead of from samples the verb read for itself.  A
+# MEASURED answer is that same dict with `value` replaced, so the `dataset` a
+# verb reports is the one `cross` actually read and not the argument it was
+# handed; MT2, MT5 and MT8 each tell the two datasets apart by DISPOSITION or by
+# VALUE for exactly that reason.
+#
+# WARN AND THE SHARP EDGE THIS STAGE OWNS IS `nth` 0 AT A LEVEL NOTHING REACHES
+# (T5).  `calc::cross_scan`'s nth 0 arm answers SUCCESS WITH AN EMPTY LIST there
+# -- `ok 1 absent 0 value {}` -- which is declared behaviour pinned by name in
+# the sibling suite, not a defect.  But these verbs are its first real callers,
+# and an empty list arriving in the period arithmetic is exactly how that
+# contract turns into a raise, so each use site GUARDS it and band MT9 is the
+# row rather than this sentence being the remedy.
+# ---------------------------------------------------------------------------
+
+# R415 + T2 -- the time an expression takes to cross from a low threshold to a
+# high one on ONE rising transition.
+#
+#   calc::riseTime <rpn> ?<lo>? ?<hi>? ?<pctlo>? ?<pcthi>? ?<nth>? ?<dataset>?
+#
+# WARN THE REFERENCE LEVELS ARE SUPPLIED AND ARE NEVER DERIVED FROM THE TRACE
+# (R415), WHICH CAME FROM THE USER -- *"Cadence makes you supply them."*  There
+# is no min/max search, no first/last-sample rule and no settled-value
+# estimator anywhere in this proc: `pctlo` and `pcthi` are percentages OF THE
+# SUPPLIED SWING and of nothing the waveform says.  Omitting either reference is
+# a REFUSAL, from either side, which is R414b's disposition split applied here --
+# a malformed request is refused, a well-formed one with no answer reports
+# absent.  That ruling removed what would have been this verb's most delicate
+# part, picking 100 % off a ringing edge, and the engine could not have helped
+# anyway: `min()` and `max()` are two-argument clamps and `avg()` is a running
+# mean, so a percent-of-own-swing verb would have had to scan a column of its own
+# and so could not be a delegate at all.
+#
+# WARN `lo` AND `hi` ARE OPTIONAL WITH AN EMPTY DEFAULT ON PURPOSE, AND THAT IS
+# LOAD-BEARING.  Mandatory positional arguments would make omitting them a Tcl
+# ARITY ERROR -- a THROW -- where R415 demands a refusal, so the shape of the
+# argument list is part of the disposition.  `pctlo`/`pcthi` default to 10 and 90,
+# which is the reference tool's own default for the two thetas and is a default
+# on the THRESHOLDS; R415 is about the SWING, which has no default.
+#
+# WARN THE HIGH CROSSING IS THE FIRST ONE STRICTLY AFTER THE LOW CROSSING OF THE
+# REQUESTED OCCURRENCE (T2), NOT "the nth crossing at each level".  A ringing
+# edge can cross the low threshold three times before crossing the high one
+# once, so taking the nth at each level independently can straddle two different
+# transitions and report a rise time that never happened -- band MT4 drives a
+# column where the naive reading answers a LONGER time at occurrence 2 and a
+# NEGATIVE one at occurrence 3, and keeps occurrence 1 as a control where the two
+# agree.  `nth` keeps R414's own meaning: it selects the LOW crossing, from
+# either end, so -1 anchors the last low excursion and -3 the third from the end.
+# A low crossing that exists with no high crossing after it is an ABSENCE and a
+# different one from running off the end of the low list; MT4 fences both, on two
+# different columns, because one column cannot produce both.
+proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}} {
+    # R415, first: the swing is supplied or the request is refused.  Checked
+    # before anything reaches the database, so a missing swing costs no read --
+    # recon measured D7's request validation at zero accessor calls and this
+    # keeps that property.
+    if {[string trim $lo] eq {} || [string trim $hi] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noswing $lo $hi] $dataset]
+    }
+    if {![calc::eval_finite $lo]} {
+        return [calc::cross_refusal [calc::cross_msg badref $lo] $dataset]
+    }
+    if {![calc::eval_finite $hi]} {
+        return [calc::cross_refusal [calc::cross_msg badref $hi] $dataset]
+    }
+    if {![calc::eval_finite $pctlo]} {
+        return [calc::cross_refusal [calc::cross_msg badpct $pctlo] $dataset]
+    }
+    if {![calc::eval_finite $pcthi]} {
+        return [calc::cross_refusal [calc::cross_msg badpct $pcthi] $dataset]
+    }
+    set swing [expr {double($hi) - double($lo)}]
+    # A ZERO SWING IS REFUSED, and that disposition is D7's reasoning rather
+    # than R415's words: every percentage of a zero swing names the same
+    # threshold, so there is nothing for the two thresholds to be percentages
+    # of and the request cannot be read as a rise time at all.  Declared as a
+    # choice in the suite's own hole list, where a ruling would land.
+    if {$swing == 0.0} {
+        return [calc::cross_refusal [calc::cross_msg zeroswing $lo] $dataset]
+    }
+    set llo [expr {double($lo) + double($pctlo)/100.0*$swing}]
+    set lhi [expr {double($lo) + double($pcthi)/100.0*$swing}]
+    # T2's two steps, in this order and through two delegated measurements.
+    set a [calc::cross $rpn $llo $nth rising $dataset]
+    if {![dict get $a ok]} { return $a }
+    set xlo [dict get $a value]
+    set b [calc::cross $rpn $lhi 0 rising $dataset]
+    if {![dict get $b ok]} { return $b }
+    # T5's guard at the point of use: `value` here is a LIST and may be EMPTY,
+    # because nth 0 at a level nothing reaches answers success with nothing in
+    # it.  The loop below simply finds no candidate and the absence is reported,
+    # which is why no arithmetic can meet an empty operand.
+    set xhi {}
+    foreach x [dict get $b value] {
+        if {$x > $xlo} { set xhi $x ; break }
+    }
+    if {$xhi eq {}} {
+        return [calc::cross_absent \
+                    [calc::cross_msg nohigh \
+                         [calc::cross_ordinal [expr {entier(double($nth))}]]] \
+                    [dict get $b dataset] [dict get $b dest]]
+    }
+    dict set b value [expr {$xhi - $xlo}]
+    return $b
+}
+
+# R417 + T3 -- the time from an edge on one expression to an edge on another.
+#
+#   calc::delay <rpnA> <levelA> <edgeA> <nthA> \
+#               <rpnB> <levelB> <edgeB> <nthB> ?<dataset>?
+#
+# WARN A FULL EDGE SPECIFICATION PER SIDE: level, direction and occurrence are
+# each independent, not one shared level and not one shared occurrence.  Band MT5
+# moves each of the three fields ALONE and requires the answer to move with it,
+# on two different expressions, so a verb measuring one signal twice cannot pass.
+#
+# WARN AND A NEGATIVE ANSWER IS LEGITIMATE AND IS RETURNED, never refused and
+# never absolute-valued.  That follows from a standing project rule rather than
+# taste: ADE-L is a FLOOR, so a restriction ADE-L does not have is a defect, and
+# refusing a delay whose second edge precedes its first would be exactly such a
+# restriction.  Band MT6 asserts the exact negation, the compose-to-zero identity
+# an absolute value breaks, and a zero delay as a MEASUREMENT rather than an
+# absence.
+#
+# WARN `nth` 0 ON EITHER SIDE DEFERS, BEHIND THE VERY SENTENCE `cross` USES FOR
+# ITS OWN nth 0, AND THAT DISPOSITION IS A CHOICE THE CONTRACT DOES NOT STATE.
+# `cross` answers nth 0 with SUCCESS AND A LIST, so a verb that subtracted would
+# reach `can't use non-numeric string as operand of "-"` -- a raise where there
+# should be an answer.  The request is for a wave on at least one side and there
+# is no wave here to subtract from, so it defers, and it reuses `listdefer`
+# rather than minting a second sentence: one deferral string for every verb
+# waiting on the wave destination means the destination landing retires one
+# string and not seven.
+proc calc::delay {rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}} {
+    foreach n [list $nthA $nthB] {
+        if {[calc::eval_finite $n] && [expr {double($n) == 0.0}]} {
+            return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
+        }
+    }
+    set a [calc::cross $rpnA $levelA $nthA $edgeA $dataset]
+    if {![dict get $a ok]} { return $a }
+    set b [calc::cross $rpnB $levelB $nthB $edgeB $dataset]
+    if {![dict get $b ok]} { return $b }
+    # Side B minus side A, with no absolute value and no sign test anywhere near
+    # it: the subtraction is the whole measurement.
+    dict set b value [expr {double([dict get $b value]) - double([dict get $a value])}]
+    return $b
+}
+
+# R416 + R418 + T4 + T5 -- the fraction of each period the expression spends
+# above a level.
+#
+#   calc::dutyCycle <rpn> <level> ?<cycle>? ?<dataset>?
+#
+# WARN IT ANSWERS A WAVE: ONE VALUE PER COMPLETE CYCLE (R416), WHICH CAME FROM
+# THE USER -- *"a wave -- one value per cycle."*  Not the first period and not
+# the mean.  `cycle` 0 is every cycle, mirroring `cross`'s own nth 0, and naming
+# a cycle gives a scalar end to end today; the ordinal reads from either end for
+# the same reason R414's does, so -1 is the last complete cycle.
+#
+# WARN A FRACTION, NEVER A PERCENT (R418), and the reason is shipped prose: the
+# catalogue help already promises *"Fraction of a period the signal spends high"*,
+# so answering 30 against that sentence would make user-visible text false.  Band
+# MT8 enumerates the hundred-times spelling and rejects it.
+#
+# WARN A PERIOD IS ONE RISING CROSSING TO THE NEXT RISING CROSSING, and the high
+# time is the falling crossing INSIDE it minus the opening rising one.  A
+# TRAILING PARTIAL PERIOD IS EXCLUDED -- a last rising crossing with no rising
+# crossing after it opens nothing -- and that exclusion cannot be fenced on the
+# fixture's own square, whose trailing crossing has no fall after it either, so
+# MT8 drives the INVERTED square as well, where closing the last period at the
+# end of the sweep would answer one value too many.
+#
+# WARN T5's GUARD IS HERE AND IT IS WHAT THIS STAGE OWNS.  `cross` answers nth 0
+# at a level nothing reaches with SUCCESS and an EMPTY list, so fewer than two
+# rising crossings means no period opened at all and the answer is an ABSENCE --
+# D5's disposition, since the request is well formed and its answer does not
+# exist.  Without that test the period loop would divide by nothing.  A period
+# with no falling crossing inside it is reported the same way rather than
+# silently dropped, which would renumber every cycle after it; that arm is
+# DECLARED UNREACHABLE through the committed fixture and is therefore not
+# claimed as fenced.
+proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
+    if {![calc::eval_finite $cycle]} {
+        return [calc::cross_refusal [calc::cross_msg badcycle $cycle] $dataset]
+    }
+    set cv [expr {double($cycle)}]
+    if {$cv != floor($cv)} {
+        return [calc::cross_refusal [calc::cross_msg badcycle $cycle] $dataset]
+    }
+    set k [expr {entier($cv)}]
+    set r [calc::cross $rpn $level 0 rising $dataset]
+    if {![dict get $r ok]} { return $r }
+    set f [calc::cross $rpn $level 0 falling $dataset]
+    if {![dict get $f ok]} { return $f }
+    set rs [dict get $r value]
+    set fs [dict get $f value]
+    if {[llength $rs] < 2} {
+        return [calc::cross_absent [calc::cross_msg nocycle $level] \
+                    [dict get $r dataset] [dict get $r dest]]
+    }
+    set series {}
+    set nr [llength $rs]
+    for {set i 0} {$i < $nr - 1} {incr i} {
+        set r0 [lindex $rs $i]
+        set r1 [lindex $rs [expr {$i+1}]]
+        set xf {}
+        foreach x $fs {
+            if {$x > $r0 && $x < $r1} { set xf $x ; break }
+        }
+        if {$xf eq {}} {
+            return [calc::cross_absent [calc::cross_msg nofall $level] \
+                        [dict get $r dataset] [dict get $r dest]]
+        }
+        lappend series [expr {($xf - $r0)/($r1 - $r0)}]
+    }
+    if {$k == 0} {
+        dict set r value $series
+        return $r
+    }
+    set want [expr {abs($k)}]
+    if {$want > [llength $series]} {
+        return [calc::cross_absent \
+                    [calc::cross_msg nocycleat [calc::cross_ordinal $k]] \
+                    [dict get $r dataset] [dict get $r dest]]
+    }
+    if {$k > 0} {
+        dict set r value [lindex $series [expr {$want - 1}]]
+    } else {
+        dict set r value [lindex $series end-[expr {$want - 1}]]
+    }
+    return $r
+}
+
+# D8 + R416 -- the SURFACE's half, which is a different decision from the proc's,
+# exactly as `calc::cross_scalar` is to `calc::cross`.
+#
+# The measurement proc answers the whole per-cycle series because that is what
+# R416 rules the verb MEANS, and because `frequency` and `period_jitter` will
+# want the same derivation.  The keypad and catalogue path cannot take it: R404
+# says a T-route scalar lands in the buffer as a literal number, and a series of
+# per-cycle fractions is not something the existing RPN evaluator can eat.  So
+# the wave case DEFERS behind the sentence `cross` already uses for its own
+# nth 0, and the list waits for a destination that can hold a wave.
+#
+# WARN THAT SENTENCE OPENS *"Cross:"* AND MENTIONS *"nth 0"*, AND A USER WHO
+# CLICKED `dutyCycle` ASKED FOR NEITHER.  The identity is deliberate -- one
+# deferral string for three verbs waiting on one missing destination -- but the
+# wording is UNRATIFIED, the `rule` debt filed against `calc::eval_msg`'s
+# sentences covers it, and if it is ever ruled that each verb speaks for itself
+# then MT8's identity row is where that lands.
+proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0}} {
+    if {[calc::eval_finite $cycle] && [expr {double($cycle) == 0.0}]} {
+        return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
+    }
+    return [calc::dutyCycle $rpn $level $cycle $dataset]
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -3865,6 +4191,18 @@ proc calc::fn_reason {route} {
 # DELIBERATE, not an oversight -- closing it is a one-word edit in one of two
 # files (widen S24's vocabulary, or respell §7.2) and belongs to whoever owns
 # both.  Recorded here rather than left for the next reader to rediscover.
+#
+# ⚠ `dutyCycle` CARRIES `scalar/wave` FOR THE SAME REASON AND BY THE SAME
+# MEASUREMENT, and it was `scalar` until PLAN 7.3 shipped the verb.  R416 (spec
+# §7.2ab, the user's own words -- *"a wave -- one value per cycle"*) makes the
+# default answer a WAVE, one fraction per complete cycle, with a named cycle
+# giving a scalar: `cross`'s exact shape, so it takes `cross`'s spelling.  S24's
+# own predicate was lifted and run before choosing -- the permitted set is
+# `scalar`, `wave`, `bool`, `scalar/wave` and nothing else, and `scalar/list`
+# answers `dutyCycle=returnsscalar/list` there.  `riseTime` and `delay` stay
+# `scalar`: both answer one number, and R417's negative delay is still one
+# number.  Spec §7.2's table row for `dutyCycle` still reads `scalar` and is
+# corrected there, because §7.2ab of the same file rules otherwise.
 proc calc::catalogue {} {
     return {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
@@ -3889,7 +4227,7 @@ proc calc::catalogue {} {
 {delay {Special Functions} T scalar {} {Time from an edge on one signal to an edge on another}}
 {settlingTime {Special Functions} T scalar {} {Time taken to settle and stay inside a band}}
 {overshoot {Special Functions} T scalar {} {Percent by which the wave passes its final value}}
-{dutyCycle {Special Functions} T scalar {} {Fraction of a period the signal spends high}}
+{dutyCycle {Special Functions} T scalar/wave {} {Fraction of a period the signal spends high}}
 {frequency {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
 {freq {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
 {period_jitter {Special Functions} T scalar {} {Spread of the measured period}}

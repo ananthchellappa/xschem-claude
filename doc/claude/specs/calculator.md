@@ -162,11 +162,18 @@ the `-1` return, not the column.
 catalogue's help text and a wrong gloss propagates into 108 rows:
 
 - `max()`/`min()` were glossed the wrong way round. `MAX` returns the **greater** operand
-  (`src/save.c` `case MAX`, ~`:2629`) and `MIN` the lesser, so `max()` raises a wave to a
-  **floor** and `min()` caps it at a **ceiling**. The old text said the opposite.
+  (`src/save.c`, `case MAX` inside `plot_raw_custom_data()`) and `MIN` the lesser, so `max()`
+  raises a wave to a **floor** and `min()` caps it at a **ceiling**. The old text said the opposite.
 - `cph()` unwraps by **360**: `result = ph - 360*floor((ph - prev_ph)/360 + 0.5)`
-  (`case CPH`, ~`:2799`). "No ±180 jumps" was the same fact seen from the output side and
+  (`case CPH`, same function). "No ±180 jumps" was the same fact seen from the output side and
   read as a claim about ±180 wraps; both halves are now stated.
+
+⚠ **Both bullets carried line numbers until 2026-10-02 and both had rotted by ~2100 lines** —
+`case MAX` was cited at `~:2629` and is at **4751**; `case CPH` at `~:2799` and is at **4921**. The
+coordinates are deleted rather than corrected, per this tree's rule that code is cited **by symbol,
+because coordinates rot and identity holds**: a line number that cannot be avoided needs the commit
+it was measured at, and neither of these had one. Found by the `test_calc_measure` stage while
+checking its own citations, which use the symbol and needed no change.
 
 `/` is worth knowing too, and its catalogue help says so: with a zero divisor `case DIVIS`
 (~`:2577`) yields **0** when the dividend is also zero and otherwise `y[p-1]` — the
@@ -572,9 +579,9 @@ opcode, **✘** = out of scope v1.
 | `riseTime` | scalar | low%→high% transition time | T (on `cross`) |
 | `slewRate` | scalar | dV/dt of a transition | T (on `cross`) |
 | `delay` | scalar | edge-to-edge between two signals | T (on `cross`) |
-| `settlingTime` | scalar | time to stay inside a band | T |
-| `overshoot` | scalar | % past final value | T |
-| `dutyCycle` | scalar | high fraction of a period | T (on `cross`) |
+| `settlingTime` | scalar | time to stay inside a band | T (on `cross`) |
+| `overshoot` | scalar | % past final value | T (on `cross`) |
+| `dutyCycle` | scalar/wave | high fraction of a period — one value per cycle (§7.2ab) | T (on `cross`) |
 | `frequency` / `freq` | scalar/wave | frequency from crossings | T (on `cross`) |
 | `period_jitter` / `freq_jitter` | scalar | period/frequency spread | T |
 | `eyeDiagram` | wave | fold over a bit period | T |
@@ -644,6 +651,44 @@ and an ordered set has two ends. A later reader tempted to make the two "consist
 `-1`, which is among the most-used forms there is, because settling time, the final edge of a
 burst and the last crossing before steady state are all naturally expressed from the end. Getting
 it the other way costs two passes: ask for `0`, count the list, then re-measure by index.
+
+### 7.2ab The timing verbs on `cross` — `riseTime`, `delay`, `dutyCycle`
+
+PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one at a time; both
+*simplified* the implementation. Build notes and the driver's own decisions are in
+`doc/claude/calculator_batch/TIMING_CONTRACT.md`.
+
+- **R415** `riseTime`'s reference levels are **SUPPLIED, never derived**. There is no
+  waveform-derived default — no min/max search, no first/last-sample rule, no settled-value
+  estimator — and the thresholds are percentages **of that supplied swing**. **Omitting the swing is
+  a REFUSAL**, which is R414b's disposition split applied here: a malformed request is refused, a
+  well-formed one with no answer reports absent. ⚠ This removed what would have been the verb's most
+  delicate part, picking 100% off a ringing edge, and the engine could not have helped anyway:
+  `min()`/`max()` are two-argument clamps and `avg()` is a running mean, so a percent-of-own-swing
+  verb would have had to evaluate into its own column and scan in Tcl.
+- **R416** `dutyCycle` returns a **WAVE, one value per cycle** — not the first period, not the mean.
+  ⚠ **Its default therefore depends on the waveform destination that R414's `nth = 0` is already
+  waiting on**, and `frequency` will want the same one; three verbs behind one missing piece makes
+  that destination the measurement layer's critical path. v1 ships the proc complete (the full
+  per-cycle series, and a named cycle giving a scalar end to end) with the **UI surface deferred
+  behind the same sentence `cross` uses for `nth = 0`**.
+  ⚠ **§7.2's table row for `dutyCycle` said `scalar` and was FALSE from the moment R416 was
+  written**, three sections below it in this same file; corrected to `scalar/wave` by the 7.3
+  implementation, which is also the spelling `calc::catalogue` carries, because `returns` has a
+  closed vocabulary (`scalar` / `wave` / `bool` / `scalar/wave`) fenced by row S24 of
+  `tests/headless/test_calc_skeleton.tcl`. `riseTime` and `delay` stay `scalar` — each answers one
+  number, R417's negative one included.
+- **R417** (driver, from the ADE-L floor) `delay` takes a full edge specification **per side** —
+  level, direction and occurrence each — and **returns a negative answer** when the second edge
+  precedes the first, rather than refusing. ADE-L permits it, so refusing would be a restriction
+  ADE-L does not have.
+- **R418** (driver, from shipped text) `dutyCycle` reports a **fraction**, never a percent, because
+  the shipped catalogue help already promises *"Fraction of a period the signal spends high"*.
+  Returning `30` against that sentence would make user-visible prose false.
+- ⚠ **All three are PURE DELEGATES on `cross`**, which is a measured decision and not a stylistic
+  one. The scan costs **27×** a column read (296 ms against 10.3 ms on 100 000 points), so an
+  evaluate-once helper saves ~20 ms of ~300 — and six of ten candidate sharing shapes **redden row
+  SR5** of `test_calc_scratch_reuse`, whose trap is a verb reading a named vector it did not create.
 
 ### 7.2a Three corrections this table needed before it could build a catalogue
 

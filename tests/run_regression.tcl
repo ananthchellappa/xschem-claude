@@ -115,7 +115,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_divis_zero_1628" \
                  "headless/test_calc_engine" \
                  "headless/test_calc_scratch_reuse" \
-                 "headless/test_calc_cross"]
+                 "headless/test_calc_cross" \
+                 "headless/test_calc_measure"]
 ## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
 ## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
 ## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
