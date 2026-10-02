@@ -230,12 +230,27 @@ It makes the tool fully usable one phase before the risky integration starts.
 | # | Step | Done when | Size |
 |---|---|---|---|
 | 7.1 | T-route plumbing (R401–R404): temp vector naming, deletion **on every exit path including error**, re-fetch after realloc (landmine L4). | `test_calc_tmpvec_leak.tcl` green including a forced-error path | **M** |
-| 7.2 | **`cross`** — X at the Nth threshold crossing, with interpolation. | Hand-computed crossings on the fixture square wave, exact | **L** |
+| 7.2 | **`cross`** — X at the Nth threshold crossing, with interpolation. `nth` reads from **either end** (R414: `-1` is the last crossing), so there are two scan directions. | Hand-computed crossings on the fixture square wave, **within the fixture README's documented tolerance** — see the correction below | **L** |
 | 7.3 | On `cross`: `riseTime`, `slewRate`, `delay`, `dutyCycle`, `frequency`, `settlingTime`, `overshoot`. | Golden values for all seven | **L** |
 | 7.4 | `average`, `rms`, `stddev`, `integ`, `iinteg`, `peak`. | Golden values | **M** |
 | 7.5 | `bandwidth`, `gainBwProd`, `gainMargin`, `phaseMargin` against the fixture's single-pole AC dataset. | Exact −3 dB point | **M** |
 | 7.6 | `clip`, `flip`, `sample`, `root`, `intersect`, `compare`. | Golden values | **M** |
 | 7.7 | `test_calc_measure.tcl` covering all of the above. | Green; sabotage — off-by-one in `cross` interpolation, ≥3 verbs go red | **M** |
+
+⚠ **Row 7.2's done-when said "exact" until 2026-10-01, and that is not achievable.** The level-0.5
+crossings read back as `0.0009999999999999998`, `0.0022000000000000006`, `0.006199999999999998`
+and `0.008999999999999998`, and `tests/headless/data/calc_fixture.raw`'s own README instructs
+*"Use a tolerance, not equality"*, with a measured-headroom table (1e-12 relative for `time`,
+1e-11 for `v(sq)` at the 50 % samples). Left as written, a crew would have read the row as
+licensing an equality check that cannot pass. Found by the `cross` recon stage **before** any crew
+was handed the row, which is why recon precedes authoring here.
+
+⚠ **`cross` is being built ahead of phases 4–6**, at the user's request, and its contract —
+including the `nth`-from-either-end semantics the **user** supplied, the two scan directions that
+follow, and everything recon overturned — is `doc/claude/calculator_batch/CROSS_CONTRACT.md`.
+Read that before 7.1 or 7.2. Note 7.1 (T-route plumbing) turns out to be **largely already
+present**: `calc::tmpvec` mints `__calc_tmp<N>` with a collision probe and R402's cleanup already
+works, so 7.1 is mostly fencing what exists plus the three pre-flight rules in the contract's D11.
 
 ---
 

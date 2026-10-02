@@ -68,6 +68,130 @@ have caught a false premise was the thing the false premise was recorded in.
 | 9 | **Stage B — PLAN phase 2, the buffer comes alive** | `receipts/B-buffer-alive.md` | 2026-09-30 | built; all three lenses **REFUTED** |
 | 10 | **Stage B2 — the eleven findings against phase 2** | `receipts/B2-close-blockers.md` | 2026-09-30 | fixed; two of three lenses **REFUTED** again |
 | 11 | **Stage B3 — final round, scope closed** | `receipts/B3-final.md` | 2026-10-01 | cleared at `REAL_BUT_MINOR`; **phase 2 gated 117/116/0/8 at `a0d56801`** |
+| 12 | **Stage C — PLAN 3.1–3.2, Evaluate reads the number** | `receipts/C-evaluate.md` | 2026-10-01 | found `annot_p >= 0` misread as "a cursor exists", producing wrong numbers after an operating-point annotation |
+| 13 | **Stage C2 — the blockers against Evaluate** | `receipts/C2-evaluate-blockers.md` | 2026-10-01 | cleared; **gated 120/119/0/8 at `47ea655a`** with `test_calc_engine` + `test_calc_scratch_reuse` |
+| 14 | **Stage D — PLAN 3.3–3.4, Plot draws the curve** | `receipts/D-plot.md` | 2026-10-01 | found `Replace` silently appending in `multi` mode; acceptance asserts trace DATA read back, not a return code |
+| 15 | **Stage D2 — the blockers against Plot** | `receipts/D2-plot-blockers.md` | 2026-10-01 | cleared; **vertical slice gated 121/120/0/8 at `08b860e1`** |
+| 16 | **Stage E — issue 1628, the engine's `DIVIS` out-of-bounds read** | `receipts/E-engine-divis-1628.md` | 2026-10-01 | a C fix, not a Calculator change; valgrind witnessed *"8 bytes BEFORE a block of size 64"*; turned up issue **1629** |
+| 17 | **Stage F — `cross` recon** | `receipts/F-cross-recon.md` | 2026-10-01 | five crews; **overturned landmine L2 for named `raw add`**, corrected PLAN 7.2's "exact", filed issues **1630/1631/1632** |
+| 18 | **Stage F2/F3 — `cross` red-first suite + implementation** | `receipts/F2-cross-suite-and-implementation.md` | 2026-10-02 | four crews; **reversed the driver's own D10**, 12 false claims retired from one file, SR5 widened as a derivation; `test_calc_cross` 187 checks in `hcases` |
+
+⚠ **Rows 12–16 were collected onto this ledger on 2026-10-01, days after their receipts were
+written** — the stages shipped, were gated and were pushed, and the ledger table was simply never
+updated. The batch's own operating model says the driver *"collects that receipt onto the
+`LEDGER.md` and commits"*, and for five consecutive stages that last step was skipped while the
+code went out. Nothing was lost (every receipt exists under `receipts/`), but the ledger stopped
+being an answer to *"how many receipts have been collected?"* — which is the exact question the
+user has asked about this batch before. Recorded rather than quietly backfilled.
+
+### Stage F — `cross` recon, and the three documents it falsified
+
+**`cross` is being built ahead of phases 4–6, at the user's request** (*"Implement cross"*,
+2026-10-01). It is PLAN 7.1 + 7.2, and the spec's own implementation order makes it the keystone:
+*"P, then C, then T-on-`cross`, then the rest"*, with `riseTime` `slewRate` `delay` `dutyCycle`
+`frequency` `settlingTime` `overshoot` all layered on it.
+
+**The `nth` semantics came from the user, not from us.** They supplied that a negative `nth`
+counts back from the end — `-1` the last crossing, `-2` the second-to-last. The driver had the
+right recollection and had talked itself most of the way out of it with two arguments from
+analogy, both worthless: that SKILL has no negative-index idiom (wrong analogy — `nth` is an
+ordinal selector over a derived set, not a list index), and that practitioners get the last
+crossing via `nth = 0` and take the tail (evidence about habit, not capability). A research sweep
+was running when the user answered it in one line. **The lesson recorded:** on a question of fact
+about Cadence behaviour, ask the user — they use the tool professionally, the official docs are
+behind a login, and a ruling is a different thing from a fact.
+
+**What recon falsified, each of which would have become a defect:**
+
+1. **Landmine L2 does not apply to a named `xschem raw add`.** Named columns are persistent and
+   independent; `raw_add_vector()` grows the arrays so the *old* scratch slot becomes the new named
+   column. The `values[nvars]` default is taken only when `yname == NULL`, at twelve `src/draw.c`
+   sites and nowhere else — `/usr/bin/grep -c 'plot_raw_custom_data' src/scheduler.c` is **0**. So
+   L2 is a true statement about graph custom-wave expressions and **not** a statement about the
+   Tcl verb. `cross` carries no re-evaluate-before-reading rule, and R402's delete is leak hygiene
+   rather than a staleness remedy. *The driver's own `CROSS_CONTRACT.md` §3 had asserted the
+   opposite, as a pending question it expected to resolve the other way.*
+2. **PLAN row 7.2's done-when said "exact"** and the fixture README says *"Use a tolerance, not
+   equality"*. Corrected before a crew was handed the row — which is the whole argument for recon
+   preceding authoring.
+3. **`xschem raw add` never returns −1**, so spec §3.1's documented failure value cannot reach a
+   Tcl caller; a bad expression on a fresh name answers **1** and leaves an all-zeros column. The
+   tree already knew: `calc::eval_rpn`'s header says so, and recon confirmed that comment
+   independently.
+4. **D6 as first written was not strong enough.** An `±inf` endpoint *passes* the rising predicate
+   (`-inf < L && 0.6 >= L` is true), so a finiteness filter applied to what the predicate rejects
+   admits a phantom crossing on every infinite sample. The gate must run **first**. And the
+   interpolation arithmetic *raises* on nan/inf — so an unguarded `cross` would **throw rather
+   than refuse**, aborting a whole suite at the file-scope catch.
+
+**Two rows would have passed by luck**, which is the kind of finding that only arrives from
+measuring the fixture rather than reasoning about the feature: `rising nth=-1` on `v(sq)` equals
+`either nth=-1`, because the last crossing overall happens to be rising, so a broken direction
+filter survives — fixed with the inverted square `1 v(sq) -`. And R414d's interpolation is
+unfenceable at level 0.5, where the crossings sit exactly on samples.
+
+**Three defects filed, none fixed:** issue **1630** (`wviewer::interp_value` reports another
+dataset's value at and past the end of the sweep — 2.5 V where the truth is 5 V, on a cursor
+readout), **1631** (`raw pos_at` advertises a crossing finder and is a monotonic bisection; 42 % of
+windows containing a crossing answer `-1` on an oscillating trace), **1632** (`raw values` reads
+`npoints` out of bounds for an out-of-range dataset; valgrind-confirmed, and the garbage became a
+loop bound — 1.1 GB of log in 3m35s).
+
+### ⚠ Stage F2 — the driver's own D10 was reversed by an adversarial lens, and the test row was selecting for abandoning it silently
+
+The driver decided (`CROSS_CONTRACT.md` D10) that `cross` would scan **per point** rather than read
+the column in bulk, so that R414c's bidirectional early exit would save real work: recon measured
+0.11 ms against 15 ms on a 100 000-point trace. **The decision was made on half the data.**
+
+`xschem raw value` returns `dtoa(val)`, and `dtoa()` is `my_snprintf(s, S(s), "%.8g", i)`, while the
+`values` arm formats `"%.16g"`. So the fast door loses eight significant digits —
+`time[9]` is `0.0009000000000000002` in bulk and `0.0009` per point — and a crossing interpolated
+from `%.8g` samples carries ~1e-8 relative error against the fixture README's documented **1e-12**
+tolerance for `time`. **The cheaper route cannot produce an answer good enough to assert.** D10 is
+reversed: bulk always, one read path. 15 ms behind a button press is invisible, and `cross` is only
+ever called from behind a button press.
+
+**The generalisable lesson, recorded in the contract next to the reversal:** recon measured speed
+because speed was the question the driver asked. Nobody asked what the fast door's *precision* was.
+**A performance number is not a reason on its own — the cheaper route has to be shown adequate
+first.**
+
+⚠⚠ **And the way it would have gone wrong is the part worth keeping.** A test row compared the
+`nth = 0` answer against the `nth = 1` answer with string identity, which under two read paths
+could never hold. An implementation that quietly used bulk for everything turned that row **green,
+with nothing else in the suite noticing D10 had been discarded.** So the row was selecting for the
+silent abandonment of a written decision. Reversing it deliberately is the honest version of the
+same outcome — and the pattern to watch for is a row whose only way to pass is for the
+implementation to ignore the spec.
+
+### ⚠ The same precision defect then bit INSIDE the suite, and a header fix landed in one of two places
+
+The repaired suite's bit-inequality legs compared bulk-derived answers against `xschem raw value`
+comparands — the same `%.16g` against `%.8g` mismatch, one level down. Four legs were structurally
+dead: **no value derived from the bulk column can ever be string-equal to a `%.8g` comparand**, so
+they read the same for a snapping implementation as for an interpolating one, while the row's name
+asserted six discriminating inequalities where there were zero. One sibling row survived only
+because `0.001` happens to round-trip through `%.8g`.
+
+Separately, the correction to the header's "three procs" claim landed at line 47 and **not** at line
+221 — **this batch's signature failure reappearing inside the change that fixed it, for the fifth
+time** — and line 221 is the copy an implementer actually reads when changing the representation.
+A count in the same header ("18 remaining rows") drifted to 22 inside the change that quoted it,
+which is the house rule against writing down a number nothing re-checks, failing in a comment again.
+
+**What the two suite rounds did deliver**, and it is why they were worth the wall-clock: 40 mutants
+of a conforming reference, each asserted present and `info complete`, with **zero** aborts across
+all 40 runs. `sweep_as_index0` reddens exactly the two rows written for it; `nth_by_spelling` exactly
+the two integer-valued rows; `per_point_mixed_old_D10` exactly the one D10 fence. Two mutations
+reddened **nothing** — an empty absence message and a lowercase refusal — and both were named as
+holes rather than papered over.
+
+⚠ **The driver wrote issue files and `NUMBERING.md` while a recon crew was live, and the crew's
+tree-state report flagged it unprompted.** No measurement was affected, because no crew reads
+those files. But the rule as recorded at Stage A was *"while a crew holds the tree, the driver
+edits only files no crew measurement reads"*, and the refinement is that **`git status` is itself
+something a crew reads**. Either tell crews up front which files the driver is touching, or expect
+the flag and reconcile it. Expecting the flag is cheaper, and the flag firing is the fence working.
 
 ### PLAN phase 2 is DONE and gated — `a0d56801`, baseline `3e94bbee`
 
@@ -333,6 +457,36 @@ exists so the gap is not read as a lost file.
 6. **Issue 1627** — a second trailing `RESULT:` line silently rewrites a case's published check
    count. Found by Stage A's sabotage round. Not a calculator defect, but the batch's later phases
    add suites with multiple exit paths, which is exactly how it arrives.
+
+7. **Three defects Stage F filed and nothing fixes yet.** Issue **1630** is the one with a
+   user-visible wrong number — `wviewer::interp_value` reports another dataset's value at and past
+   the end of the sweep, 2.5 V where the truth is 5 V on a cursor readout, so it wants doing on its
+   own account rather than as a by-product. Issue **1631** is documentation (`raw pos_at`'s help
+   promises a crossing finder) and is cheap: one sentence saying the search assumes a monotone
+   column. Issue **1632** is memory safety plus a runaway loop and should not wait long. **`cross`
+   steers clear of all three without depending on any of them being fixed** — it validates its
+   dataset against `xschem raw datasets`, never reads `allpoints`, and never touches `pos_at`.
+8. ~~**`calc::catalogue`'s `cross` row says `scalar` where the spec says `scalar/list`.**~~
+   **CLOSED 2026-10-02, and the driver's half of it was the wrong half.** The catalogue row now says
+   `scalar/wave`. `scalar/list` was the *driver's own* uncommitted spec edit and was unshippable:
+   row **S24** of `test_calc_skeleton` (a registered `dcases` case) holds `returns` to the closed
+   vocabulary `{scalar wave bool scalar/wave}`, so `scalar/list` is a **counted failure** there —
+   measured by the implementation crew lifting S24's own predicate and running it over a mutated
+   catalogue, which answered `cross=returnsscalar/list`. The crew shipped `scalar/wave`, flagged the
+   conflict rather than silently respelling the spec, and said plainly that the spec side was not in
+   its permitted edit set. The driver then fixed §7.2. **`scalar/wave` is also the more faithful
+   word, not a compromise**: `intersect`, `frequency` and `freq` already use it for exactly this
+   shape, and the contract's own D8 records that the reference tool returns a *waveform* for
+   `nth = 0`. The Tcl proc returns a Tcl list; the user-facing type is a wave. Those are different
+   statements and only the second belongs in a `returns` column.
+9. **Two false prose claims, both owed by the `cross` commit** rather than filed, because they sit
+   in files it edits: `calc::eval_finite`'s header says `expr {$v == $v}` raises on a NaN operand
+   in Tcl 8.5+, and on 8.6.17 it returns `0` quietly (the proc's *conclusion* is still right — be
+   textual, not arithmetic — only its stated mechanism is wrong); and spec §3.1's *"the whole
+   evaluation returns `-1`"* is true of the C engine and false of `xschem raw add`, which discards
+   it. **This is the batch's recurring failure mode and the reason both are written down here**: a
+   prose claim is the one artefact nothing re-runs, so it is the only place an error survives a
+   green suite, a sabotage round and an adversarial lens.
 
 ## The progress bar
 

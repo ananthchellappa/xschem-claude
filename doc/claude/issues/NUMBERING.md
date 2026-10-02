@@ -4434,7 +4434,37 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   Found by an adversarial C-semantics lens during issue **1628**, which was briefed to report
   same-class defects in the switch rather than fix them — the brief earning its keep.
 
-**The next free number is 1630.**
+- **1630** — `wviewer::interp_value` reports ANOTHER dataset's value at and past the end of the
+  sweep: on the committed two-dataset fixture it answers 2.5 V where dataset 0's `v(div)` is 5 V,
+  at `x = 0.01`, which is the last sample and *inside* the sweep. Three default-dataset
+  conventions meet in one proc and no two agree — `pos_at` searches dataset 0, `raw value` indexes
+  `allpoints`, `raw points` answers `allpoints` — so the "hold the last value" fallback holds the
+  wrong dataset's end. The proc's own comment names the assumption (*"identical for single-dataset
+  raws"*) and that is exactly true and exactly insufficient. Found by the calculator batch's
+  `cross` recon while deciding which accessor `cross` should read samples with — which is how
+  `cross` came to take an explicit dataset instead of inheriting a default.
+- **1631** — `raw pos_at`'s help text promises *"the **first** point `p` where `node[p]` and
+  `node[p+1]` bracket value"* and `raw_get_pos()` is a **monotonic bisection**: it infers one
+  search direction from the two window endpoints, refuses anything not between them, and halves.
+  Measured over all 5151 sub-windows of the fixture's dataset 0, **42% of windows containing a real
+  crossing are answered `-1`** on the non-monotonic `v(sq)` and none of 5151 on the monotonic
+  `v(ramp)`; "first" is false in 527 of 2368 answering windows. No shipped caller is wrong today —
+  both pass the monotone sweep column — so this is filed as **a trap for the next caller**, and
+  `cross` is precisely the next caller that would have reached for it. `vcd_flush()` in
+  `src/vcd_read.c` already clamps backwards VCD timestamps *naming this function as the reason*,
+  so the tree knew the requirement in a file nobody had consulted.
+
+- **1632** — `xschem raw values <name> <dataset>` reads `raw->npoints[dataset]` with **no upper
+  bound**, so any dataset ≥ `datasets` is an out-of-bounds read; valgrind: *"Invalid read of size
+  4 … 0 bytes after a block of size 8"*, and 8 is exactly `2 * sizeof(int)` on the two-dataset
+  fixture. **The garbage becomes a loop bound**: on a plain run it was ≤ 0 and the verb returned a
+  polite empty string, while under valgrind it was large and positive, `for(p = 0; p < np; p++)`
+  ran away, and `get_raw_value()`'s unconditional level-0 `dbg()` printed **46 462 times per 2 MB**
+  until the log hit **1.1 GB** at 3m35s. The sibling `points` arm in the same `switch` guards, and
+  `pos_at` clamps instead — three arms, three dispositions toward the same bad input. Found by the
+  calculator batch's `cross` read-back recon.
+
+**The next free number is 1633.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
