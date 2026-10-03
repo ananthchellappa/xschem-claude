@@ -701,7 +701,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_skeleton" \
                  "headless/test_calc_widgets" \
                  "headless/test_calc_buffer" \
-                 "headless/test_calc_plot"]
+                 "headless/test_calc_plot" \
+                 "headless/test_fluid_editing"]
 ## ⚠ THE FOUR `headless/test_calc_*` ENTRIES ARE `dcases` AND NOTHING ELSE, AND
 ## ONE OF THEM IS THE REASON ISSUE 1626 EXISTS. The Calculator is Tk: each of
 ## these four takes a WHOLE-FILE no-X early exit and NONE of them prints a
@@ -919,6 +920,31 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## ⚠ Do not predict this entry's effect on the trailer's `skips=` figure: neither
 ## calculator suite emits a lowercase `skip:` line on any arm (measured, all four
 ## runs), and `summarize_all`'s own arm is `regexp {^skip:}`.
+## ⚠ `test_fluid_editing` IS IN **BOTH** LISTS, AND THE `hcases` ENTRY ALONE
+## MEASURED NOTHING (issue 1641). That loop hard-codes --nogui, where this suite's
+## X gate takes a whole-file early exit printing `RESULT: SKIP (no X)` and
+## `OVERALL: ok` -- exit 0 plus a banner, so the case PASSED having run ZERO rows,
+## and the verdict carried the words "SKIP (no X)" with no number saying a
+## registered case measured nothing. EVERY gesture row runs on the DISPLAY arm,
+## which nothing was registered to run, and one of them had been RED there: `FE8`
+## pressed a hardcoded schematic point that `sch2scr` rounded 4.3 degrees off its
+## own arc's start angle, at a zoom-out added by a change titled for making
+## endpoint selection more PRECISE. Its press is now derived from the arc's own
+## geometry and the behaviour it fences was measured intact.
+## The `hcases` entry STAYS. It is the crash guard: the gesture path dereferences
+## the absent `.drw` canvas and SIGSEGVs under --nogui, so the gate must keep
+## proving that the self-skip still fires.
+## MEASURED BEFORE THIS ENTRY WENT IN, on both of the suite's real captures taken
+## with the two loops' own command spellings, scored by `banner_complete` from
+## tests/banner_rule.tcl and by `summarize_all` LIFTED out of this file's own text:
+## display arm 28 `ok:` rows, exit 0, banner_complete 1, banner_died 0,
+## regression_case_failed 0, summarize_all counted_failures 0 / skips 0 in a
+## THREE-line block (`RESULT: ALL PASS (28 checks)`); `--nogui` arm 0 rows, exit 0,
+## banner_complete 1, the same three-line block (`RESULT: SKIP (no X)`). So this
+## entry costs one case, one block, no counted failure and NO `skip:` line -- the
+## self-skip is announced with an UPPERCASE `SKIP:` and `summarize_all`'s own arm
+## is `regexp {^skip:}`, the same mechanism `test_replay_door_1619` and
+## `test_add_wire_label` reached 8 by. DERIVED, not predicted; read the trailer.
 ## ---------------------------------------------------------------------------
 ## THE VERDICT NAMES ITSELF, AND NOBODY IS REFUSED (ruling R1, re-decided
 ## 2026-09-17; doc/claude/harness_concurrency_batch/DECISIONS.md)

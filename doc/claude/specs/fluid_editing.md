@@ -32,11 +32,18 @@ Plan + next-session prompt: `doc/claude/suggestions/fluid_editing_session.md`.
     snap-match) — off-grid endpoints grabbable, consistent with rect/arc.
   - **C4.2** dispatch collapsed into `try_grab_shape_point(state, intuitive, already_selected,
     fluid)`.
-- **Test**: `tests/headless/test_fluid_editing.tcl` (26 checks, drives real press/motion/
-  release via `xschem callback`, reads geometry via `saveas`+B/L/A parse; self-skips under
-  `--nogui`; registered in `run_regression` hcases). RED-first + sabotage-verified per phase.
+- **Test**: `tests/headless/test_fluid_editing.tcl` (drives real press/motion/release via
+  `xschem callback`, reads geometry via `saveas`+B/L/A parse). RED-first + sabotage-verified
+  per phase. The check count is **not quoted here**: the suite's own `RESULT:` line is where
+  it is recomputed every run, and a figure copied into prose is one nothing re-checks.
   Gesture tests run at the pristine default zoom; the two zoom-out tests (FE7 thin-bar edge,
   FE8 arc modified-flag) run LAST because `clear force` does not reset zoom.
+  ⚠ It self-skips to **zero rows** under `--nogui`. It is registered in **BOTH** lists: the
+  `hcases` entry is the **crash guard** (the gesture path dereferences the absent `.drw` canvas
+  and SIGSEGVs under `--nogui`) and the `dcases` entry is the one that runs the gestures. For a
+  month it was in `hcases` **alone** — the arm that runs nothing — so every gesture row gated no
+  commit; that is issue **1641**, open item 2, closed by adding the `dcases` entry. Run it by
+  hand with `tests/headless/run_suites.sh test_fluid_editing` (no `--nogui`).
 
 ### Closed design decision: arc radius handle (user call 2026-07-04)
 The spec's third arc handle — **grab center → change radius** — is NOT deliverable via

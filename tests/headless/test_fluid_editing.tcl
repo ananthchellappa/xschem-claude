@@ -12,10 +12,15 @@
 # NEEDS A REAL X DISPLAY (the gesture runs move_objects + Xlib drawtemp; under
 # --nogui the callback path dereferences the absent .drw canvas and SIGSEGVs).
 # So the automated --nogui run_regression harness would crash here -- this test
-# SELF-SKIPS (prints OVERALL: ok and exits 0) when .drw is not viewable, and is
-# meant to be run for real with a display:
+# SELF-SKIPS (prints OVERALL: ok and exits 0) when .drw is not viewable. That
+# self-skip is a CRASH GUARD, not a registration decision: on the --nogui arm this
+# file runs ZERO rows, so an hcases entry alone measures nothing (issue 1641).
+# Run it for real with a display through the armed, gated, Xvfb-arm driver:
 #
-#   ./src/xschem --pipe -q --script tests/headless/test_fluid_editing.tcl
+#   tests/headless/run_suites.sh test_fluid_editing
+#
+# NOT a bare ./src/xschem: that inherits $DISPLAY, which can be the user's own
+# screen, and these rows drive real pointer gestures across it.
 #
 # RED-first: on a build without the grab, a first-click corner/endpoint grab does a
 # WHOLE-OBJECT move (both ends translate), so FE1/FE2 (which assert the OPPOSITE end
@@ -23,7 +28,10 @@
 
 # ---------------------------------------------------------------------------
 # X-availability gate: skip cleanly when there is no usable display (e.g. the
-# --nogui regression harness), so this file is safe to register in hcases.
+# --nogui regression harness), so this file does not SIGSEGV there. It makes the
+# file safe to RUN in hcases; it does not make an hcases entry a FENCE, because
+# zero rows run on that arm (issue 1641 -- the old wording here said "safe to
+# register in hcases" and that was read as the registration decision).
 # ---------------------------------------------------------------------------
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }
@@ -62,6 +70,14 @@ proc check {name ok {detail {}}} {
 proc sch2scr {sx sy} {
   set xo [xschem get xorigin]; set yo [xschem get yorigin]; set z [xschem get zoom]
   return [list [expr {int(round(($sx + $xo)/$z))}] [expr {int(round(($sy + $yo)/$z))}]]
+}
+# screen pixel -> schematic: the INVERSE of sch2scr, i.e. where a press pixel really
+# landed after sch2scr's rounding to a whole pixel. A gesture row aims in schematic
+# units but the product only ever sees the pixel, so this is what the hit tests see
+# (issue 1641: FE8 aimed at a point ON its arc and pressed a pixel 4 degrees off its end).
+proc scr2sch {px py} {
+  set xo [xschem get xorigin]; set yo [xschem get yorigin]; set z [xschem get zoom]
+  return [list [expr {$px*$z - $xo}] [expr {$py*$z - $yo}]]
 }
 
 # --- gesture primitives (event codes: ButtonPress=4, MotionNotify=6, ButtonRelease=5;
@@ -332,8 +348,114 @@ check "FE7 thin bar: body drag MOVES WHOLE bar (all 4 coords change, not an edge
   "(orig=$orig now=[rect_bbox] Z=$Z W=$W H=$H)"
 
 
-# ---- FE8 (finding #3) runs LAST (after FE7): it zooms out, and pressing an arc angular
-# endpoint needs that zoom to select reliably; keeping it last avoids leaking the zoom.
+# ---- arc press diagnostics (issue 1641) ------------------------------------
+# edit_arc_point's control-point handle is a box of half-size ds = cadhalfdotsize*2*zoom
+# around each angular endpoint. cadhalfdotsize is READ FROM THE PRODUCT rather than
+# restated here: a constant copied into a test is a number nothing re-checks, and this
+# one moves with cadsnap (set_dotsize_from_snap). Returns {} if it cannot be read.
+proc cad_ds {} {
+  set v {}
+  catch {
+    foreach ln [split [xschem globals] \n] {
+      if {[regexp {^cadhalfdotsize=([-0-9.eE+]+)$} $ln -> m]} { set v $m }
+    }
+  }
+  if {$v eq {}} { return {} }
+  return [expr {$v * 2.0 * [xschem get zoom]}]
+}
+# Where a press PIXEL really lands relative to the current arc, stated in the terms the
+# two hit tests use. This exists so a future break prints its CAUSE: FE8's old detail
+# printed `a=30`, which is the arc's own STARTING angle, so "the fix regressed" and "the
+# click missed the arc" were the same string (issue 1641 cost a full day to that).
+#   find_closest_arc (does the press SELECT the arc): radial |r_press - r| against
+#     CADWIREMINDIST*zoom*tk_scaling, which GROWS as you zoom out, and the span test
+#     `a <= angle <= a+b`, which has NO angular tolerance at all (1641 open item 3).
+#   edit_arc_point (WHICH control point): the `a+b` end is tested FIRST, so a press that
+#     also falls in that handle box grabs SELECTED3 and changes `b`, leaving `a` alone.
+proc arc_press_diag {px py} {
+  lassign [arc_geom] cx cy r a b
+  if {$cx eq {}} { return "no arc in the buffer" }
+  set pi [expr {acos(-1)}]
+  set z [xschem get zoom]
+  set ds [cad_ds]
+  lassign [scr2sch $px $py] sx sy
+  set ang [expr {fmod(atan2($cy - $sy, $sx - $cx)*180.0/$pi, 360.0)}]
+  if {$ang < 0} { set ang [expr {$ang + 360.0}] }
+  set d [format "press px (%d,%d) -> sch (%.1f,%.1f): angle %.1f vs span %g..%g, r %.1f vs %g" \
+           $px $py $sx $sy $ang $a [expr {$a+$b}] [expr {hypot($sx-$cx, $sy-$cy)}] $r]
+  if {$ds ne {}} {
+    set xb [expr {$cx + $r*cos(($a+$b)*$pi/180.0)}]
+    append d [format ", clear of the a+b handle box by %.2f px" [expr {($sx - ($xb+$ds))/$z}]]
+  }
+  return $d
+}
+# Press point for the `a` control point of the current arc, DERIVED from that arc's own
+# geometry at the live zoom instead of written down as a schematic coordinate. Why it is
+# not simply the endpoint (issue 1641, measured):
+#   * sch2scr rounds to a whole pixel, and one pixel is `zoom` schematic units, so a press
+#     aimed exactly at the endpoint lands up to ~0.71 px away. At this row's zoom-out that
+#     is ~7 degrees of a radius-100 arc, and the span test has no tolerance, so an error
+#     pointing OUTWARD of `a` misses the arc and the press selects NOTHING. (FE3's arc
+#     survives the same rounding only because it has a=0, where the error points inward.)
+#   * so bias INWARD by twice that worst-case angle: dth = asin(0.71*zoom/R).
+#   * and aim at R = r + 4 px rather than on the ring. Outward both shrinks dth and pushes
+#     the press clear of the `a+b` handle box in x -- which must be escaped, or
+#     edit_arc_point grabs the OTHER control point. The press stays inside the `a` handle
+#     box and inside find_closest_arc's radial slack, i.e. it is a real control-point grab.
+# Returns the screen pixel.
+proc arc_a_press_px {} {
+  lassign [arc_geom] cx cy r a b
+  set pi [expr {acos(-1)}]
+  set z [xschem get zoom]
+  set R [expr {$r + 4.0*$z}]
+  set dth [expr {asin(0.71*$z/$R)*180.0/$pi}]
+  set ang [expr {$a + 2.0*$dth}]
+  return [sch2scr [expr {$cx + $R*cos($ang*$pi/180.0)}] [expr {$cy - $R*sin($ang*$pi/180.0)}]]
+}
+
+# Tcl mirror of my_round() in actions.c -- C89 has no round(), so the product rounds
+# half AWAY FROM ZERO, which Tcl's round() also does but int() and floor() do not.
+# Both the snap grid and the committed arc angle go through it, so the derivation below
+# must use the same rule or it disagrees with the product on every .5 case.
+proc my_round_c {v} {
+  expr {$v > 0.0 ? floor($v + 0.5) : ($v < 0.0 ? ceil($v - 0.5) : $v)}
+}
+# The start angle `a` that move_objects COMMITS for an `a` control-point drag released at
+# screen pixel (relpx,relpy), DERIVED from the product's own arithmetic instead of written
+# down. Why a row must assert the committed VALUE and not merely that `a` left its start:
+# a sabotage that committed a constant garbage angle on EVERY arc control-point drag passed
+# every row this suite then had, because all three of its arc assertions were of the form
+# "a is no longer its starting value" -- which any wrong-but-different number satisfies
+# (issue 1641; CLAUDE.md "prefer asserting the correct shape over asserting a wrong one's
+# absence"). The chain, by symbol, in the order the product applies it:
+#   callback()            mousex = X_TO_XSCHEM(px), i.e. scr2sch above;
+#                         mousex_snap = my_round(mousex/cadsnap)*cadsnap
+#   move_objects(START)   for a LONE arc whose sel != SELECTED the move reference x1,y1 is
+#                         the arc's CENTRE, not the mouse -- which is FE8's whole subject
+#   move_objects(END)     arc sel == SELECTED2:
+#                         a = my_round(fmod(atan2(-deltay,deltax)*180/PI + a, 360)), >= 0
+# cadsnap is read from the live interpreter (this suite runs INSIDE xschem), never restated
+# as a constant. Returns {} if cadsnap is unreadable or non-positive, so the caller fails
+# loudly rather than comparing against a silently wrong number. Assumes the schematic snap
+# grid applies, i.e. not a no_snap canvas (true of a schematic window; the ASE waveform
+# viewer sets no_snap and has no arcs).
+proc arc_expected_a {cx cy a relpx relpy} {
+  if {![info exists ::cadsnap]} { return {} }
+  if {![string is double -strict $::cadsnap] || $::cadsnap <= 0} { return {} }
+  set pi [expr {acos(-1)}]
+  set snap [expr {double($::cadsnap)}]
+  lassign [scr2sch $relpx $relpy] rx ry
+  set sx [expr {[my_round_c [expr {$rx/$snap}]]*$snap}]
+  set sy [expr {[my_round_c [expr {$ry/$snap}]]*$snap}]
+  set ang [my_round_c [expr {fmod(atan2(-($sy-$cy), $sx-$cx)*180.0/$pi + $a, 360.0)}]]
+  if {$ang < 0} { set ang [expr {$ang + 360.0}] }
+  return $ang
+}
+
+# ---- FE8 (finding #3) runs LAST (after FE7) because it zooms out and `clear force` does
+# NOT reset zoom, so keeping it here stops that zoom leaking into another row. It does NOT
+# run here because it needs the zoom: the sentence that used to say so had it backwards --
+# the zoom-out is what made the old press point unhittable (issue 1641, measured).
 # ---- FE8 (finding #3): an arc control-point drag that changes geometry must leave the
 # buffer MODIFIED even when the release snaps to the press cell. The arc move reference is
 # its CENTER (not the mouse), so the old "release-cell==press-cell" no-op test wrongly reset
@@ -342,25 +464,81 @@ xschem clear force
 xschem set intuitive_interface 1
 set ::cadence_compat 1; set ::fluid_editing 1
 xschem arc 1200 0 100 30 90 4                                ;# start angle a=30 (nonzero)
-xschem zoom_box -6000 -6000 6000 6000   ;# zoom out: big grab zone + precise-enough endpoint select
+# Zoom out for a big grab zone: ds and find_closest_arc's radial slack both scale with
+# zoom. It does NOT make the endpoint easier to hit -- the span test has no zoom term, so
+# zooming out makes one pixel ~6 degrees of this arc (issue 1641). The press below is
+# derived to survive that.
+xschem zoom_box -6000 -6000 6000 6000
 xschem unselect_all
 xschem saveas $::RBTMP schematic                             ;# named + clean: modified -> 0
 catch {update idletasks}
 check "FE8 pre: buffer clean (modified=0), arc a=30" \
   [expr {[xschem get modified] == 0 && [feq [lindex [arc_geom] 3] 30]}] \
   "(mod=[xschem get modified] arc=[arc_geom])"
-# start endpoint of the a=30 arc: (1200+100cos30, -100sin30) = (1286.6,-50)
-lassign [sch2scr 1286.6 -50]  ex ey
-lassign [sch2scr 1286.6 -160] fx fy
+# Grab the `a` control point. The press pixel is DERIVED from the arc (arc_a_press_px)
+# rather than written down: this row used to aim at the exact endpoint, (1286.6,-50), and
+# at this zoom sch2scr rounded that onto a pixel 4.3 degrees BELOW the arc's own start
+# angle, so the press selected nothing and FE8 was red while the behaviour it fences was
+# intact (issue 1641). A hardcoded pixel would be the same rot one level up -- and the
+# zoom-out on the line above, added to make this endpoint EASIER to hit, is what made the
+# old spelling unhittable.
+lassign [arc_a_press_px] ex ey
+# drag away: the same radius at the far end of the span, so the angle really sweeps.
+lassign [arc_geom] fe8_cx fe8_cy fe8_r fe8_sa fe8_sb
+set fe8_pi [expr {acos(-1)}]
+set fe8_R  [expr {$fe8_r + 4.0*[xschem get zoom]}]
+lassign [sch2scr [expr {$fe8_cx + $fe8_R*cos(($fe8_sa+$fe8_sb)*$fe8_pi/180.0)}] \
+                 [expr {$fe8_cy - $fe8_R*sin(($fe8_sa+$fe8_sb)*$fe8_pi/180.0)}]] fx fy
+# The aim is diagnosed BEFORE the press, because arc_geom does a `saveas` and that clears
+# `modified` -- the very flag FE8 is about.
+set fe8_aim [arc_press_diag $ex $ey]
 gpress   $ex $ey
+# FE8a: the press must actually SELECT the arc. Without this, FE8 below cannot tell a
+# regression from a missed click: both leave the arc at its starting angle (issue 1641).
+set fe8_sel [xschem get lastsel]
+check "FE8a the press SELECTED the arc (lastsel=1), so the gesture below ran at all" \
+  [expr {$fe8_sel == 1}] \
+  "(lastsel=$fe8_sel -- 0 means THE PRESS SELECTED NOTHING, so no gesture happened and\
+FE8's verdict says nothing about the false-clean; $fe8_aim)"
 gmotion  $fx $fy                                             ;# drag away (angle changes)
 gmotion  $ex $ey                                             ;# drag BACK to the press cell
 grelease $ex $ey                                             ;# release in the press cell
 catch {update idletasks}
 set fe8_mod [xschem get modified]                            ;# capture BEFORE arc_geom (saveas clears it)
-set fe8_a   [lindex [arc_geom] 3]
+set fe8_rec [arc_geom]
+set fe8_a   [lindex $fe8_rec 3]
+# The cause clause is COMPUTED, not asserted unconditionally. The unconditional wording this
+# replaces said "a is the starting angle, so the gesture never happened" -- and printed that
+# in the one state FE8 exists to catch, where `a` HAS moved and the flag is the thing that is
+# wrong. A detail written to stop a sentinel being misread must not itself misread it.
+if {![feq $fe8_a $fe8_sa]} {
+  set fe8_why "a MOVED $fe8_sa -> $fe8_a, so the geometry really changed: with mod=$fe8_mod\
+this IS the false-clean this row exists for"
+} elseif {$fe8_sel != 1} {
+  set fe8_why "a is STILL the starting angle ($fe8_sa) and lastsel=$fe8_sel, so the press\
+selected nothing and no gesture happened -- a MISSED PRESS, not a false-clean"
+} else {
+  set fe8_why "a is STILL the starting angle ($fe8_sa) but lastsel=1, so the press DID\
+select and the gesture ran yet left `a` alone -- FE8b below says which control point it got"
+}
 check "FE8 drag-and-return changed the arc AND left buffer MODIFIED (no false-clean)" \
-  [expr {$fe8_mod == 1 && ![feq $fe8_a 30]}] "(mod=$fe8_mod a=$fe8_a)"
+  [expr {$fe8_mod == 1 && ![feq $fe8_a $fe8_sa]}] \
+  "(mod=$fe8_mod a=$fe8_a; $fe8_why; $fe8_aim)"
+# FE8b: and the committed angle must be the RIGHT one. FE8 above, FE3 and FE3c all only ask
+# that `a` is no longer its starting value, so a constant garbage angle committed on every arc
+# control-point drag passes every one of them (measured, issue 1641). This row asserts the
+# whole arc record against the one derived from move_objects' own END arithmetic: the centre,
+# radius and `b` must be untouched (a press that drifted into the `a+b` handle box moves `b`
+# instead -- edit_arc_point tests that box FIRST) and `a` must equal arc_expected_a.
+set fe8_exp [arc_expected_a $fe8_cx $fe8_cy $fe8_sa $ex $ey]
+lassign $fe8_rec fe8_gx fe8_gy fe8_gr fe8_ga fe8_gb
+check "FE8b committed arc == the record derived from move_objects' own arc-END arithmetic" \
+  [expr {$fe8_exp ne {} && [feq $fe8_gx $fe8_cx] && [feq $fe8_gy $fe8_cy] &&
+         [feq $fe8_gr $fe8_r] && [feq $fe8_ga $fe8_exp] && [feq $fe8_gb $fe8_sb]}] \
+  "(arc=$fe8_rec; derived=[list $fe8_cx $fe8_cy $fe8_r $fe8_exp $fe8_sb]; a expected\
+$fe8_exp got $fe8_ga, b expected $fe8_sb got $fe8_gb -- a wrong `a` with everything else\
+intact is a WRONG ANGLE COMMITTED, a moved `b` with `a` unmoved means the press grabbed the\
+OTHER control point; an empty derived value means cadsnap could not be read; $fe8_aim)"
 
 # ---------------------------------------------------------------------------
 file delete -force -- $::RBTMP
