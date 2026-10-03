@@ -78,6 +78,41 @@ have caught a false premise was the thing the false premise was recorded in.
 | 19 | **Stage G — `riseTime`/`delay`/`dutyCycle` recon** | `receipts/G-timing-verbs-recon.md` | 2026-10-02 | four crews; **refuted the driver's evaluate-once helper** (the scan is 27x a column read); user ruled R415 and R416 |
 | 20 | **Stage G2/G3 — the timing verbs' suite + implementation** | `receipts/G2-timing-verbs-suite-and-implementation.md` | 2026-10-02 | five crews; **a NEW parse trap `info complete` cannot see**; a mutation that was a FALSE RED; `test_calc_measure` 125 checks in `hcases`; 16 sabotages, no holes |
 | 21 | **Stage H — the destination for a non-scalar result: recon** | `receipts/H-destination-recon.md` | 2026-10-02 | six crews, two resumed for a second round; **nine driver claims refuted, one of them reproduced INSIDE the correcting contract**; user ruled R419 and R420; route A decided; filed issues **1633–1639** |
+| 22 | **Stage H2/H3 — the wave destination: red-first suite + implementation** | `receipts/H-destination-impl.md` | 2026-10-02 | suite author + implementation crew, both resumed once; **eight more driver claims refuted**; a surviving sabotage closed on the driver's call; SR5 widened 53→54; `test_calc_wave_dest` **89 checks** in `hcases`; **15 of 15 sabotages fenced** |
+| 23 | **Stage I — making a measurement verb clickable: recon** | `CLICK_CONTRACT.md` | 2026-10-02 | one crew; the `insert` field is **forbidden** to hold a template by two registered rows, so the dialog is an M not an S; user ruled **R421**; the greying is deliberate and fenced, but **the message is false** |
+
+### ⚠⚠ Stage H2/H3 — a surviving sabotage, and the driver overruling the crew that found it
+
+**Fifteen sabotages, and the fifteenth survived the first implementation.** Hardcoding the sweep
+column's name instead of reading it from the current database gives `ALL PASS` — because every row in
+the band drives the `tran` fixture, where the name *is* `time`. Against an `ac` database it is
+`frequency` and the hardcoded version is simply wrong. The crew **declared it rather than hiding it**,
+and chose not to fix it on the grounds that a new row moves the published check count, which this
+batch has repeatedly been burned by moving silently.
+
+**The driver overruled that, and the reasoning is the point**: a fence that passes against its own
+defect reads as coverage and is not, which outranks the cost of moving a number — and the number is
+not a baseline at all. Every site carrying it (`OVERALL:`, `RESULT:`, and the both-arm
+`banner_rule`/`summarize_all` capture) is an **instrument that recomputes it**, so the figure was
+re-derived rather than preserved: **89 checks, identical on both arms, delta exactly +1 on each**, and
+the registration delta unchanged. The crew's own note on its error is the sharpest line in the
+receipt: it had **already measured** the live failure mode before deciding not to fence it.
+
+Closing it also fenced the *placement*, which is better than the row alone. Two mutations of the
+suite — dropping the restore so the `ac` database leaks into the next band, and moving the `ac` read
+above the checks that resolve a name against the current database — each reddened **exactly one** row.
+So the ordering is asserted rather than conventional.
+
+### A row caught the implementation, and the implementation was right to yield to it
+
+The crew's first approach reddened row **S27** of `test_calc_skeleton`, which exists to enforce
+**ruling U6** — the Calculator must never evaluate against a raw a legacy path dropped into a
+schematic window. The row's grep cannot distinguish *"resolve a result"* from *"remember which slot to
+put back"*, so it fired on an innocent use. **The crew changed its code rather than the fence**, and
+the replacement is independently better: one `xschem raw info` snapshot carrying name **and** type
+together, both halves being necessary because the fixture's three slots share one path and differ only
+by type. That is the second time this batch a crew has been caught by a registered row and been right
+to treat the row as the authority.
 
 ### ⚠⚠ Stage H — the driver's own contract sprang the trap it was written to close
 

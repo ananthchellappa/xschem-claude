@@ -129,21 +129,48 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2806916.log`, taken in a throwaway clone of `7f9b9b50`
-  built from scratch at a 17-character path: **123 cases** (3 `tcases` + **95** `hcases` + 24
-  `dcases` + `xschemtest`), **122 blocks**, **`wc -l` 368 green**; trailer
-  `cases=123 blocks=122 counted_failures=0 skips=8 elapsed=634s`, zero live-peer lines, zero
-  counted shapes, and `test_ase_optier_0963` at `ALL PASS (110 checks)`.
-  The Calculator batch's **PLAN 7.3** took it there (`test_calc_measure`, **`hcases` alone**, 125
-  checks) -- `riseTime`, `delay` and `dutyCycle`, the first three of the seven verbs the spec layers
-  on `cross`. **TWENTY-THIRD consecutive `skips=8`**, and `wc -l` 368 is the derived figure (365 + 3)
-  matching exactly. Green on the FIRST attempt, which is worth noting only because the previous
-  commit took four.
+  the gate verdict `tests/results.2950103.log`, taken in the `~/gc26` clone at an 18-character
+  path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates clean):
+  **124 cases** (3 `tcases` + **96** `hcases` + 24 `dcases` + `xschemtest`), **123 blocks**,
+  **`wc -l` 371 green**; trailer
+  `cases=124 blocks=123 counted_failures=0 skips=8 elapsed=641s`, zero live-peer lines, zero
+  counted shapes, `test_ase_optier_0963` at `ALL PASS (110 checks)` and `test_home_isolation` at
+  `ALL PASS (116 checks)`.
+  The Calculator batch's **wave destination** took it there (`test_calc_wave_dest`, **`hcases`
+  alone**, 89 checks) -- `calc::wave_dest` plus R420's `xaxis` argument on `dutyCycle`, the
+  destination that `dutyCycle`'s default, `delay`'s `nth = 0` and the unbuilt `frequency` were all
+  waiting on. **TWENTY-FOURTH consecutive `skips=8`**, and `wc -l` 371 is the derived figure
+  (368 + 3) matching exactly. ⚠ **`planned_cases=124` in the header agreed INDEPENDENTLY** with the
+  figure derived from `summarize_all`'s own arms before the run, which is the only method that has
+  been right about this number.
+  ⚠ **`test_calc_scratch_reuse` is 54 here, not 53**: row **SR5** was widened as a derivation because
+  the destination's producer must call `xschem raw add` -- the only way to create a column -- so it
+  lands in SR5's `adders` set without minting a `calc::tmpvec`, reading samples back or deleting.
+  R402's mint-and-delete discipline is about a **temporary** and that column is **persistent**, which
+  is the exemption SR5's own comment already grants `plot_rpn`. **The producer was right and the row
+  was narrow**, which is the opposite of the usual call and was decided by measuring, not by arguing.
+  ⚠⚠ **A SABOTAGE SURVIVED THE FIRST IMPLEMENTATION AND WAS CLOSED RATHER THAN DECLARED.** Hardcoding
+  the sweep column's name instead of reading it from the current database gives `ALL PASS`, because
+  every row in the band drives the `tran` fixture where that name *is* `time`; against an `ac`
+  database it is `frequency`. The crew declared it and chose not to fence it, on the grounds that a
+  new row moves the published check count. **The driver overruled that**: a fence that passes against
+  its own defect reads as coverage and is not -- and the count is **not a baseline**, since every site
+  carrying it (`OVERALL:`, `RESULT:`, and a `banner_rule`/`summarize_all` capture) is an instrument
+  that recomputes it. Re-derived rather than preserved: **88 -> 89, identical on both arms, delta
+  exactly +1 on each**, registration delta unchanged.
+  One commit earlier, `123/122/0/8` was `tests/results.2806916.log` at `7f9b9b50` (3 + 95 + 24 +
+  `xschemtest`, `wc -l` 368, 634s), **PLAN 7.3** (`test_calc_measure`, `hcases` alone, 125 checks) --
+  `riseTime`, `delay` and `dutyCycle`, green on the FIRST attempt where the previous commit took four.
   ⚠ **`test_calc_skeleton` ran its DISPLAY arm at `ALL PASS (548 checks)` in this gate**, which is the
   only reason the catalogue change is verified: that suite holds row **S24**, whose closed `returns`
-  vocabulary is `{scalar wave bool scalar/wave}`, and it is a `dcases` entry that **self-skips to 0
-  checks under `--nogui`**. A crew can only lift S24's predicates and run them headless; the real arm
-  is the gate's. `dutyCycle` moved from `scalar` to `scalar/wave` here, so the arm mattered.
+  vocabulary is now `{scalar wave bool scalar/wave scalar/list}` -- **widened by one term for R419**,
+  with its eight category counts unmoved at `{56 26 12 4 3 3 4 108}` -- and it is a `dcases` entry
+  that **self-skips to 0 checks under `--nogui`**. A crew can only lift S24's predicates and run them
+  headless; the real arm is the gate's. `cross` moved from `scalar/wave` to `scalar/list` here (and,
+  one commit earlier, `dutyCycle` from `scalar` to `scalar/wave`), so the arm mattered both times.
+  ⚠ **The vocabulary is enumerated in THREE other places that move with it**: the `calc::fn_fields`
+  schema comment, the `calc::catalogue` comment (**twice**), and spec R416. A widening that edits only
+  S24 leaves three prose copies lying.
   One commit earlier, `122/121/0/8` was `tests/results.2701197.log` at `c4eba95d` (3 + 94 + 24 +
   `xschemtest`, `wc -l` 365, 635s) -- and ⚠ that commit's FIRST gate was RED on
   `test_home_isolation` rows `H1a`/`H1b`, which has not recurred in the two full gates since.
@@ -173,6 +200,17 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   which it ran to completion untouched while the *waiter* watching it was itself killed. So the kill
   is a property of the harness's wrapper, not of T1's footprint, and the fix is to detach rather
   than to free memory.
+  ⚠⚠ **CONFIRMED AGAIN ON 2026-10-02, AND THIS TIME THE MEMORY FIGURE WAS TAKEN AT THE INSTANT OF
+  THE KILL** — which is what the earlier sighting lacked and why its diagnosis went wrong. The
+  wave-destination gate was launched under `setsid` with an `until`-loop waiter in
+  `run_in_background`. The waiter was killed *"because the system is running low on memory"*;
+  checked immediately afterwards, `free -g` reported **12 GiB available** of 15 with `/tmp` at
+  **721 MB of 7.7 GB**, and the detached `tclsh run_regression.tcl` was **alive at 1:52 with 39
+  cases started**. So the message is not a report about this machine's memory: it fires with ~80% of
+  RAM free. **Expect the waiter to die and treat it as routine** — re-arm it, or poll; the run is
+  unaffected because `setsid` put it in its own session. **FOURTH sighting, and the first that
+  cannot be explained by memory at all.** Never respond to it by freeing memory, shrinking a run, or
+  serialising crews.
   ⚠ **But `/tmp` IS tmpfs here, and scratch left in it keeps consuming RAM for the whole session**
   -- a real standing cost even though it was not this red's cause. This session had **4.4 GB** of
   finished batches' scratch sitting in `/tmp/claude-1000/...`, i.e. in RAM; removing it took `/tmp`
@@ -354,7 +392,10 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and the one figure in this series whose commit took **FOUR** gate attempts, three lost to a
   harness kill and one red on an unrelated case, before a clean trailer)
   and `123/122/skips=8` here (**PLAN 7.3**, `test_calc_measure` in `hcases` alone, 125 checks --
-  `riseTime`, `delay`, `dutyCycle`).
+  `riseTime`, `delay`, `dutyCycle`)
+  and `124/123/skips=8` here (**the wave destination**, `test_calc_wave_dest` in `hcases` alone,
+  89 checks -- and the figure whose `planned_cases` header agreed INDEPENDENTLY with the
+  `summarize_all`-derived prediction, which is now the only method this file endorses).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
