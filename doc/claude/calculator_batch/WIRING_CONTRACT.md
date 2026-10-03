@@ -40,8 +40,11 @@ documents for the second time.
 
 ## 2. The two destinations, and the four callers (derived, not read)
 
-- **A wave with its own X axis** — `calc::wave_dest`, built, gated at 90 checks,
-  and with **ZERO call sites in the product**.  Confirmed: the only non-comment
+- **A wave with its own X axis** — `calc::wave_dest`, built and gated, and at the time
+  this section was written **with ZERO call sites in the product**.  Unit J1 is its first
+  caller.  ⚠ The figure that used to stand here — *"gated at 90 checks"* — is **left out
+  deliberately**: it was already stale when J1 landed (102), and a count written into prose
+  is a number nothing re-checks.  The suite's own `RESULT:` line recomputes it every run.  Confirmed: the only non-comment
   occurrence of the token in `src/` is its own `proc` line.  Its three waiting
   callers are `calc::riseTime` (`nth` 0), `calc::delay` (`nth` 0 on either side)
   and `calc::dutyCycle_scalar` (`cycle` 0).
@@ -350,3 +353,95 @@ off-by-one inside the fill loop, cannot catch a dropped middle sample, and gives
 the X list only two values to be in the wrong order.  **This batch's own lesson is
 that two is not enough.**  J1's row is therefore structurally weaker than it looks
 and must say so rather than claim coverage; the three-point case arrives with J2.
+
+---
+
+## 11. Unit J1, as landed — and the four things it taught that §1–§10 did not know
+
+Commit `486a9635`.  Receipts: `receipts/J1-producer-suite.md` (the suite, three attacks and
+the repair) and `receipts/J1-implementation.md` (the guard's rows, the implementation and an
+independent verification).
+
+```
+red    test_calc_wave_dest  12 FAILED (90 passed)    test_calc_measure  10 FAILED (160 passed)
+green  test_calc_wave_dest  ALL PASS (102 checks)    test_calc_measure  ALL PASS (170 checks)
+unmoved  cross 187   engine 265   scratch_reuse 54
+```
+
+Nine sabotages, all caught.  **Five were re-run against the finished code rather than
+re-read**, because a green run is not evidence that a fence still fences — this batch's most
+expensive lesson, learned from a row whose arm sweep had rotted to 24 of 31 arms while staying
+green for a whole stage.
+
+### (a) The guard went INTO J1, and §10(b) was half right
+
+§10(b) split the surface out of J1 on the grounds that the counted arm cannot observe it.  That
+reasoning was sound and the conclusion was wrong, because the suite crew then measured the
+consequence: **on a producer-only tree a click pastes the whole per-cycle list over the user's
+expression, silently.** A producer-only commit on a public branch is a **regression**, so the
+guard could not wait for J1b.
+
+What §10(b) got right is kept: the **routing decision** is a pure proc (`calc::fn_sink`) and
+gates on the counted arm, while the **act** — the buffer really being left alone, the sentence
+really reaching the widget, the undo still being one step — is display-only and declared.  The
+split was between *decision* and *act*, not between *producer* and *surface*.
+
+### (b) ⚠ A SEQUENCING HAZARD: the row and the key must land in ONE commit
+
+The suite crew asserted the answer's key set **exactly** and declared in writing that adding
+§4's `shape` key would redden it deliberately.  The guard crew then measured both orders:
+
+| tree | result |
+|---|---|
+| the widened key-set row **ahead of** the producer | a gate red for a key nothing sets |
+| the producer **ahead of** the row | a gate red for a key the row does not expect |
+
+So the producer's spec gained one word — merge `{db type xname yname n}` **plus**
+`dict set r shape wave` — and band MT12's ten rows had to land in the **same** commit, because
+on a producer-only tree they are **eight standing reds**.  Recorded in the band's own comment so
+nobody meets it as a gate red.
+
+### (c) The odd-parity switch comment was DRIVEN, not cited
+
+`calc::arg_msg` gained three arms, so the parse trap this batch has been warning everyone about
+became live at a real site.  The crew inserted `# R419 applies` — **three words, odd** — between
+two patterns and measured `3 FAILED (167 passed)` with every arm reporting `RAISED`.
+
+**The fence is a derivation, not a list.** Band MT12 lifts the arm set out of `calc::arg_msg`'s
+own `switch` patterns and asks every one for a sentence, so the ten arms — including the three
+added here — are swept the moment they exist.  That is the repair for the rot recorded in
+CLAUDE.md, applied prospectively for once rather than after a row was found to have rotted.
+
+### (d) ⚠ A declared hole that is ALREADY crossed, measured rather than reasoned about
+
+Row **S24** bounds a sibling sentence family at **72 characters**, and the bound is on
+`calc::fn_reason`, **not** on `calc::arg_msg` — so the three new sentences are swept by nothing.
+The verifier measured them rather than trusting the implementer's figure:
+
+| sentence | length |
+|---|---|
+| the destination sentence at a five-digit serial | **exactly 72** |
+| the shape refusal with a realistic token | **74** |
+| the value refusal with a 20-element value | **319** |
+
+So the hole is not crossable in principle, it is **already crossed**.  The two refusals are
+unreachable through today's click path, so no user can produce them yet; the sentence a user
+*does* meet is filed as a `rule` debt with a 62-character alternative offered.
+
+### What J1 still does NOT do, stated plainly
+
+**No trace appears on screen.** `wviewer::plot_sweeps_arm` still has zero callers, which is
+also why row SR5's `$viaviewer == {plot_rpn}` one-name literal still holds (re-run: 54 checks).
+The user gets a registered two-column database in the Results picker and must plot it
+themselves.  Arming the viewer is J1b.
+
+**`riseTime` and `delay` still defer** (J2 and J3), `frequency` is still catalogued with no
+implementation, and `cross`'s list destination still waits on phase 10's Table.
+
+**The destination is not dropped on success** — a declared leak, because a trace resolves the
+database by registry name and freeing it would free what the user is looking at.  Who frees it
+is still unruled (§10(c)).
+
+⚠ **A wrong Y column is fenced in ONE suite only.** The verifier re-ran CONSTANT-Y and
+`test_calc_measure` answered `ALL PASS`: the WD11 rows in `test_calc_wave_dest` are the whole
+fence.  That is a real bound on coverage, not a note.

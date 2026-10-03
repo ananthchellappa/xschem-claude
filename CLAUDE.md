@@ -129,13 +129,35 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3122206.log` at **`cac6ca61`**, taken in the `~/gc26` clone at an
+  the gate verdict `tests/results.3294880.log` at **`486a9635`**, taken in the `~/gc26` clone at an
   18-character path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates
-  clean): **124 cases** (3 `tcases` + **96** `hcases` + 24 `dcases` + `xschemtest`), **123 blocks**,
-  **`wc -l` 371 green**; trailer
-  `cases=124 blocks=123 counted_failures=0 skips=8 elapsed=645s`, zero live-peer lines, zero
+  clean): **125 cases** (3 `tcases` + **96** `hcases` + **25** `dcases` + `xschemtest`),
+  **124 blocks**, **`wc -l` 374 green**; trailer
+  `cases=125 blocks=124 counted_failures=0 skips=8 elapsed=649s`, zero live-peer lines, zero
   counted shapes, zero nonzero `Total num fail:` lines, and `test_ase_optier_0963` at
   `ALL PASS (110 checks)`.
+  ⚠⚠ **`headless/test_fluid_editing.disp.log` reads `RESULT: ALL PASS (28 checks)` IN THIS VERDICT,
+  WHICH IS THE FIRST TIME THAT SUITE'S GESTURE ROWS HAVE EVER RUN INSIDE A GATE.** Issue **1641**:
+  it had been in `hcases` ALONE for a month, whose loop hard-codes `--nogui`, where it self-skips to
+  **zero** rows and exits 0 with a completion banner — so the case PASSED having measured nothing
+  while its display arm was RED at row `FE8`. The `hcases` entry **stays**, as a crash guard: the
+  gesture path dereferences the absent `.drw` canvas and SIGSEGVs under `--nogui`. Its `hcases`
+  block still reads `RESULT: SKIP (no X)` at line 37 and its `dcases` block reads the 28 checks at
+  line 371 — **two blocks, one suite**, which is what a both-lists registration looks like in a
+  verdict and is worth recognising before diagnosing one of them as a contradiction.
+  ⚠ **The registration delta was DERIVED and matched exactly**: `cases` 124 → 125, `blocks`
+  123 → 124, **`wc -l` 371 → 374**, `counted_failures` 0 and `skips` **8** both unmoved, by lifting
+  `summarize_all` out of `run_regression.tcl`'s own text (16 procs lifted, so a future helper
+  arrives for free) with `banner_complete` **sourced** from `banner_rule.tcl` and run over both
+  arms' real captured output. `planned_cases=125` in the header agreed INDEPENDENTLY. **This is the
+  SEVENTEENTH consecutive `skips=8`, and it held for the by-now-familiar reason**: the suite's
+  self-skip is announced **uppercase** (`SKIP:`) and `summarize_all` counts only lowercase
+  `^skip:` — measured, not predicted (`/usr/bin/grep -c '^skip:'` → 0 on both arms,
+  `/usr/bin/grep -c '^SKIP'` → 1 on the headless one).
+  ⚠ **Stage J1 moved TWO published check counts and no trailer term**: `test_calc_wave_dest`
+  90 → **102** and `test_calc_measure` 160 → **170**, both already in `hcases`. Together with the
+  1641 registration in the same gate, that is one run demonstrating both halves of the rule —
+  a registration moves the trailer, a check count never does.
   ⚠ **PLAN 5.4 moved SIX published check counts and not one trailer term** — `test_calc_measure`
   135 → 160, `test_calc_skeleton` 548 → **573**, `test_calc_widgets` 246 → **259**,
   `test_calc_buffer` 130, `test_suite_watchdog_1403` 32 → **40**, and `test_calc_wave_dest` 89 → 90.
@@ -998,6 +1020,50 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   row set from the suite's own `check` calls — a hand-kept list is the same defect one level
   up — and catches an id hidden in a block comment, a string literal, a `#if 0` region,
   another suite, or backticks.
+- ⚠⚠ **A FIXTURE CAN MAKE A ROW GREEN ON BROKEN CODE, WHICH IS THE MIRROR OF THE LEVEL TRAP AND
+  HAS NOW COST THIS TREE BOTH WAYS.** Measured 2026-10-03 (issue **1643**): row `WD8` of
+  `test_calc_wave_dest.tcl` — the end-to-end row cited as proof the wave destination worked —
+  compared a Y column read back out of the destination, element-wise, with `near` at a **relative**
+  1e-7, driving `v(sq)` at its own level of `1/3`. There the two values it compares are
+  `0.31666666666666676` **twice**: the same double, relative spread **exactly zero**. So a producer
+  writing `y[0]` into both points, writing the column **reversed**, or writing a **constant**, all
+  passed — confirmed by attack. Exactly one series on the committed fixture discriminates
+  (`dutyCycle` on `v(lp)`, relative 1.83e-4); `riseTime` per edge on `v(sq)` agrees to ~4e-15.
+  The other direction is already recorded as `DESTINATION_CONTRACT.md` §11(c): a level of 0.5 put a
+  quantity at 2.2e-16 **inside** a 1e-12 door, making a discrimination row **red on correct code**.
+  **One rule, two faces: a row that compares two numbers must be driven on inputs whose numbers
+  differ by more than its own tolerance, and that must be MEASURED when the row is written.** Carry
+  an explicit distinctness leg so the row cannot go vacuous again if a fixture is regenerated —
+  the non-vacuity discipline the derivation rows already apply to populations, applied to values.
+  ⚠ And the first report of it **quoted the wrong level** (1.8e-15 at 0.5, which `WD8` does not
+  use), understating the defect; that was the fourth quoted-rather-than-derived figure to be wrong
+  in one batch.
+- ⚠⚠ **A COMMIT THAT LANDS HALF A FEATURE CAN BE A REGRESSION, AND "FENCEABLE ON THE COUNTED ARM"
+  IS NOT THE AXIS TO SPLIT ON.** Measured 2026-10-03. Stage J1 was deliberately narrowed to a
+  producer, on the sound ground that the surface half can only be observed on a gate's display arm
+  (`calc::fn_measure` and `calc::buf_set_number` both return early on `calc::has_win .calc.buf`, so
+  under `--nogui` both are no-ops). A crew then measured the consequence: on a producer-only tree
+  the click pasted the measured **list** over the user's expression, silently, because the success
+  arm was unconditional and `buf_set_number` has no numeric check. **That is worse for the user
+  than the refusal it replaced**, on the branch they publish. The split that works is between the
+  **decision** and the **act**: the routing predicate was factored into a pure proc with no Tk, so
+  it gates on the counted arm, while the act — the buffer really being left alone, the sentence
+  really reaching the widget, the undo still being one step — is display-only and **declared**.
+  **Before narrowing a unit, ask what the narrowed tree DOES, not only what it can prove.**
+- ⚠ **A KEY AND THE ROW THAT ASSERTS ITS KEY SET MUST LAND IN ONE COMMIT.** Measured in both
+  directions at one site: a row asserting an answer dict's key set **exactly**, ahead of the
+  producer that sets the new key, is a gate red for a key nothing sets; the producer ahead of the
+  row is a gate red for a key the row does not expect. An exact key-set assertion is the right
+  shape — it is what catches a wiring that puts a live value in a retired key — but it makes the
+  widening a **sequencing** obligation. Say so in the band's own comment, or somebody meets it as
+  a gate red and weakens the row to clear it.
+- ⚠ **A WRITE-UP FILED UNDER `doc/claude/issues/` WITH AN `NNNN-` NAME REDDENS T1, EVEN IF IT IS
+  NOT AN ISSUE.** Row `D9` of `test_issue_stamp` fails on any `doc/claude/issues/NNNN-*.md` with no
+  `**STAMP:**` line, and grandfathering is by **exact file name**. A crew receipt saved there as
+  `1641-receipt-….md` produced `ISSUE-STAMP: 1 problem(s)` immediately; moving it to
+  `doc/claude/code_analysis/` gave `ok (0 problems)`. Receipts and analyses go in
+  `doc/claude/code_analysis/` or a batch's own `receipts/`, never in the issues directory. Check
+  with `tclsh tests/headless/issue_stamp.tcl` after adding any file there.
 - ⚠ **A fence keyed to a symptom dies quietly when something else cures the symptom.** Two
   rows asserted the *absence* of a malformed output; a later change stopped producing that
   output and both silently stopped fencing anything, with only non-behavioural rows still
