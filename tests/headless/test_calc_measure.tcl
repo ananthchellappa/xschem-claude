@@ -1790,9 +1790,15 @@ group MT8 {
         [list [mt_disp [set a [mt_call dutyCycle {v(sq)} 0.5 3]]] [mt_shape [mt_msg $a]] \
               [mt_finite [mt_val $a]]] {absent ok 0}
     # ⚠ WHAT THIS ROW ASSERTS IS IDENTITY WITH `cross`'s SENTENCE, NEVER THE WORDS,
-    # which is what R416 and D8 ask for -- one deferral sentence for every verb
-    # waiting on the wave destination, so the destination landing retires one string
-    # and not seven.  But the identity DOES freeze a user-visible consequence worth
+    # which is what R416 and D8 ask for -- one deferral sentence for every caller
+    # waiting on a destination it has not got, so a landing destination retires one
+    # string rather than one per caller.  ⚠ AND THE CALLERS ARE NOT ALL WAITING ON
+    # THE SAME DESTINATION, which R419 is what changed: `cross`'s own `nth = 0`
+    # answers a LIST of crossing times and wants spec R606's `Table` surface, while
+    # THIS caller's default cycle and `calc::delay`'s `nth = 0` want a wave with its
+    # own X axis, which `calc::wave_dest` builds.  The shared sentence is silent
+    # about which, deliberately -- and that silence is what lets it stay shared.
+    # But the identity DOES freeze a user-visible consequence worth
     # naming: that sentence opens *"Cross:"* and mentions *"nth 0"*, and a user who
     # clicked dutyCycle asked for neither.  THE WORDING IS UNRATIFIED, the `rule`
     # debt filed against `calc::eval_msg`'s sentences covers it, and if it is ever

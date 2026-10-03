@@ -116,7 +116,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_engine" \
                  "headless/test_calc_scratch_reuse" \
                  "headless/test_calc_cross" \
-                 "headless/test_calc_measure"]
+                 "headless/test_calc_measure" \
+                 "headless/test_calc_wave_dest"]
 ## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
 ## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
 ## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
@@ -134,6 +135,18 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## IS STILL IN NEITHER LIST, and that is pre-existing, not this change. It was left
 ## alone deliberately: its DN11/DN12 bands are conditional on valgrind AND a DISPLAY,
 ## so registering it is a separate judgement with its own gate, not a free addition.
+## ⚠ `test_calc_wave_dest` IS `hcases` ALONE (R419-R421,
+## `doc/claude/calculator_batch/DESTINATION_CONTRACT.md`), and the shape was MEASURED
+## rather than reasoned: both arms of that suite run the identical 88 checks, because
+## nothing in it is display-only -- `wviewer::graph_props` is a pure model-to-rect-text
+## generator reachable with no viewer window and no DISPLAY, which is what band WD4's
+## own WD0 row asserts before the band runs. So a `dcases` entry would measure exactly
+## what the `hcases` entry already does, twice. It carries NO no-X gate and NO
+## whole-file early exit, for the reason the `test_calc_cross` note below gives, and
+## `banner_complete` was run over its real captured output on BOTH arms before the entry
+## went in: 1, with `banner_died` 0, exactly ONE `^RESULT:` line and ZERO `^skip:` lines
+## of either case. Do not read that zero as a prediction about the trailer's `skips=` --
+## read the trailer.
 ## ⚠ `test_calc_cross` IS `hcases` ALONE (calculator_batch PLAN rows 7.1 + 7.2,
 ## `doc/claude/calculator_batch/CROSS_CONTRACT.md`). `cross` is a measurement over
 ## evaluated samples -- it reads two columns in bulk and divides -- so not one of

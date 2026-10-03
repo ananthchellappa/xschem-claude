@@ -2502,7 +2502,19 @@ foreach row $rows {
     if {$name eq {}}     { lappend badrow (blank-name) }
     if {$category eq {}} { lappend badrow $name=no-category }
     if {[lsearch -exact {P C T N X} $route] < 0} { lappend badrow $name=route$route }
-    if {[lsearch -exact {scalar wave bool scalar/wave} $returns] < 0} {
+    # ⚠ WIDENED BY EXACTLY ONE TERM FOR R419, 2026-10-02, and the vocabulary is
+    # CLOSED: a `returns` outside this list is a counted failure here.  The user
+    # ruled that `cross` with `nth = 0` answers *"just a list of crossing times
+    # like cadence does"*, so a LIST result and a WAVE result now go to two
+    # different destinations and the field must be able to spell them apart --
+    # `scalar/list` for `cross`, `scalar/wave` for `dutyCycle`, `frequency` and
+    # `freq`, whose "many" case genuinely carries a Y.  `intersect` keeps
+    # `scalar/wave` on purpose: it has no proc yet and respelling it would drag
+    # its user-visible help text, which is a ruling and not an inference.  The
+    # same five words are enumerated in three places in src/calculator.tcl
+    # (`calc::fn_fields`' schema comment and `calc::catalogue`'s own, twice) and
+    # in spec §7.2ab's R416 note, so widening is a four-site edit.
+    if {[lsearch -exact {scalar wave bool scalar/wave scalar/list} $returns] < 0} {
         lappend badrow $name=returns$returns
     }
     if {[string trim $help] eq {}} { lappend badrow $name=no-help }

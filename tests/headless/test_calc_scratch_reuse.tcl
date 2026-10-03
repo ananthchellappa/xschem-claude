@@ -450,10 +450,41 @@ group SR5 {
     # verb, it READS the samples back, and it DELETES the column before it
     # returns, on every exit path including the error ones.  All four are visible
     # in a decommented body, so the four sets are computed INDEPENDENTLY and the
-    # claim is that they are the SAME SET.  That is strictly stronger than the
-    # old literal for everything the old literal protected: an engine caller that
-    # forgets the mint, or the delete, or reads back a column it did not create,
-    # reddens here, and the row prints which of the four sets it fell out of.
+    # claim is about how they relate: an engine caller that forgets the mint, or
+    # the delete, or reads back a column it did not create, reddens here, and the
+    # row prints which set it fell out of.
+    #
+    # ⚠⚠ THE EQUALITY IS ANCHORED ON THE *READERS*, NOT ON THE ADDERS, AND THAT
+    # IS A WIDENING THE R419 DESTINATION STAGE OWED -- the same edit `cross` owed
+    # one stage earlier, and made the same way: by moving the anchor rather than
+    # by lengthening a literal.
+    #
+    # R402's mint-and-delete discipline is about a TEMPORARY -- a column a verb
+    # evaluates into, READS, and must remove before it returns -- and what makes
+    # it temporary is precisely the read-back.  `calc::wave_dest` (R419/R421, the
+    # destination for a result whose X axis is not the loaded sweep) issues the
+    # direct verb because creating a second column is the only thing that verb is
+    # for, but its Y column is PERSISTENT BY DESIGN: the trace keeps reading it
+    # for the life of the database, so there is nothing to mint, nothing to read
+    # back and nothing to delete.  Anchoring on the adders made it a counted
+    # failure for doing the right thing.  That is the very exemption this band's
+    # own comment already grants `calc::plot_rpn` for reaching the engine through
+    # `wviewer::add_trace`; the destination is a THIRD door of the same kind, and
+    # unlike Plot's it is VISIBLE to a scan over this namespace.
+    #
+    # The pre-flight obligation moved with the anchor for the same reason it
+    # exists: `xschem raw add` answers 1 for an expression the engine rejected
+    # and leaves defined zeros behind, so the harm is a caller READING BACK a
+    # confident zero.  A producer handed VALUES, which sends the engine no
+    # expression at all, has no expression to pre-flight and no number to
+    # misreport.
+    #
+    # ⚠ AND THE WIDENING IS FENCED RATHER THAN OPEN: the adders that read nothing
+    # back are asserted as a ONE-NAME LITERAL, exactly as the viewer-door row at
+    # the foot of this band is, so a SECOND add-without-read door reddens here and
+    # has to justify itself instead of inheriting an exemption.  Rows WD10 of
+    # tests/headless/test_calc_wave_dest.tcl carry the same invariant from the
+    # producer's own side.
     #
     # ⚠ AND "EXACTLY ONE DIRECT VERB" IS KEPT AS A SEPARATE, NARROW CLAIM rather
     # than dissolved into the derivation -- see the disjointness row at the foot
@@ -473,28 +504,47 @@ group SR5 {
     }
     check_expr "SR5 the decommented namespace map is not vacuous -- every proc in it, bodies kept" \
         {[dict size $pbody] >= 25 && [string match {*raw add*} [dict get $pbody eval_rpn]]}
-    check "SR5 R402 DERIVED: the procs that MINT a temporary, issue the DIRECT engine verb, READ samples back and DELETE the column are one and the same set -- computed four ways over the decommented namespace, so a caller that skips any one of the four reddens and the row prints which set it fell out of" \
-        [list $adders $minters $readers $deleters] \
-        [list $adders $adders $adders $adders]
-    # ⚠ THE NON-VACUITY LEG, and it is not decoration: four EMPTY lists satisfy
-    # the equality above perfectly, which is how the row would read on a tree
-    # where `info body` answered nothing.  Two names are named here as a positive
+    set notadders {}
+    foreach nm $readers {
+        if {[lsearch -exact $adders $nm] < 0} { lappend notadders $nm }
+    }
+    check "SR5 R402 DERIVED: the procs that MINT a temporary, READ its samples back and DELETE the column are one and the same set, and every one of them issues the DIRECT engine verb -- computed four ways over the decommented namespace, so a caller that skips any one of the four reddens and the row prints which set it fell out of" \
+        [list $readers $minters $deleters $notadders] \
+        [list $readers $readers $readers {}]
+    # ...and the other direction of the widening, as a ONE-NAME LITERAL: an adder
+    # that reads nothing back owes no delete, and there is exactly one such door.
+    set persistent {}
+    foreach nm $adders {
+        if {[lsearch -exact $readers $nm] < 0} { lappend persistent $nm }
+    }
+    check "SR5 R402 ...and the only direct adder that reads NOTHING back is the R419 destination producer, whose Y column is persistent by design -- a literal, like the viewer-door row below, so a SECOND add-without-read door reddens here and has to justify itself rather than inheriting the exemption" \
+        $persistent {wave_dest}
+    # ⚠ THE NON-VACUITY LEG, and it is not decoration: EMPTY lists satisfy the
+    # equality above perfectly, which is how the row would read on a tree where
+    # `info body` answered nothing.  Two names are named here as a positive
     # CONTROL on the derivation, never as the fence -- the fence is the equality.
-    check_expr "SR5 ...and that derived set is neither empty nor a single name any more: it holds both eval_rpn and cross, which is what makes the four-way equality a claim about real bodies" \
-        {[llength $adders] >= 2 && [lsearch -exact $adders eval_rpn] >= 0 \
-         && [lsearch -exact $adders cross] >= 0}
+    # BOTH sets carry a count, because the equality is now over `readers` while
+    # the subset leg is over `adders`, and either one going empty would pass.
+    check_expr "SR5 ...and neither derived set is empty or a single name any more: the readers hold both eval_rpn and cross, and the adders hold strictly more than the readers, which is what makes the equality a claim about real bodies" \
+        {[llength $readers] >= 2 && [lsearch -exact $readers eval_rpn] >= 0 \
+         && [lsearch -exact $readers cross] >= 0 \
+         && [llength $adders] > [llength $readers]}
     # ...and the fifth property, as a SUBSET claim rather than an equality,
     # because `plot_rpn` pre-flights too while reaching the engine through the
-    # viewer's door.  Every direct caller must run calc::rpn_bad_token BEFORE the
-    # engine: `xschem raw add` answers 1 for an expression the engine rejected
-    # and leaves defined zeros behind, so there is no failure downstream to read
-    # and a caller that skipped the pre-flight would report a confident zero.
+    # viewer's door.  Every caller that sends the engine an EXPRESSION and reads
+    # the column back must run calc::rpn_bad_token BEFORE the engine:
+    # `xschem raw add` answers 1 for an expression the engine rejected and leaves
+    # defined zeros behind, so there is no failure downstream to read and such a
+    # caller would report a confident zero.  ⚠ ANCHORED ON THE READERS for that
+    # exact reason -- the R419 destination producer is handed VALUES, sends the
+    # engine no expression and reads nothing back, so it has neither an
+    # expression to pre-flight nor a number to misreport.
     set notpreflighted {}
-    foreach nm $adders {
+    foreach nm $readers {
         if {[lsearch -exact $preflight $nm] < 0} { lappend notpreflighted $nm }
     }
     check "SR5 ...and EVERY member of that derived set runs calc::rpn_bad_token, asserted as a subset with the member count riding along so an empty set cannot pass it" \
-        [list [llength $adders] $notpreflighted] [list [llength $adders] {}]
+        [list [llength $readers] $notpreflighted] [list [llength $readers] {}]
     # ⚠⚠ "EXACTLY ONE" IS A CLAIM ABOUT THE DIRECT VERB AND NOTHING ELSE, AND
     # SINCE PLAN 3.3 THAT DISTINCTION IS LOAD-BEARING RATHER THAN PEDANTIC.
     # Plot reaches the SAME engine, through `wviewer::add_trace`, which issues

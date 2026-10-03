@@ -934,6 +934,11 @@ proc wviewer::forget {token} {
   # It is one-shot and normally already consumed, but a window closed between an
   # arm and its plot_signals would otherwise leave the entry forever.
   variable plotdbs
+  # R419/R421: the armed per-signal X-column list, same rule again, and with
+  # `plotdbs`' own caveat verbatim -- it is one-shot and normally already
+  # consumed, but a window closed between an arm and its plot_signals would
+  # otherwise leave the entry forever.
+  variable plotsweeps
   # §F item F6: the Add Trace dialog's twin of that arm, same rule again — and
   # with plotdbs' own caveat, verbatim: the dialog's <Destroy> is its single
   # owner and normally drops it first, so this is the SWEEP, not the owner. It
@@ -1026,6 +1031,7 @@ proc wviewer::forget {token} {
   catch {unset gripdrag($token)}
   catch {unset sayquiet($token)}
   catch {unset plotdbs($token)}
+  catch {unset plotsweeps($token)}
   catch {unset atddb($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
@@ -3898,6 +3904,12 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   set logy [wviewer::dget $G logy 0]
   set ntoks {}
   set ctoks {}
+  # R419/R421: one `sweep=` token per EMITTED trace, in node order. `swdflt` is
+  # the database's own X name, which the engine's own convention makes the FIRST
+  # raw vector (wviewer::interp_value's comment says so of the same quantity).
+  set swtoks {}
+  set swany 0
+  set swdflt [wviewer::sweep_default]
   foreach tr [wviewer::dget $G traces {}] {
     set vec [wviewer::dget $tr vec {}]
     if {$vec eq {}} { continue }
@@ -3925,6 +3937,9 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
       lappend ntoks $vec
     }
     lappend ctoks [wviewer::dget $tr color 4]
+    set strk [wviewer::sweep_token [wviewer::dget $tr sweep {}]]
+    if {$strk ne {}} { set swany 1 } else { set strk $swdflt }
+    lappend swtoks $strk
   }
   set node [join $ntoks "\n"]
   set color [join $ctoks { }]
@@ -3987,6 +4002,32 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # class that hilight_wave/markers belong to.
   set lmag [wviewer::legend_textmag]
   set lbold [wviewer::legend_bold]
+  # R419/R421 — THE ONE FENCE THIS TOKEN NEEDS, and it is about the LIST LENGTH
+  # rather than about the rendering. `draw_graph()`'s local `sweep_name` carries
+  # the LAST NON-EMPTY `sweep=` token FORWARD BY NAME and is never reset when
+  # `my_strtok_r` runs out, so a list SHORTER than `node=` silently re-axes every
+  # trace after the special one — measured on a three-trace strip, where one
+  # token short moved the third trace to the second's pixel span exactly. An
+  # ABSENT list is a DIFFERENT and louder failure (every trace falls to column 0)
+  # and is the legitimate state for a strip where no trace has its own X.
+  #
+  # ⚠ ALL SEVEN WALKERS CARRY THE TOKEN FORWARD, each with its own copy of the
+  # idiom — graph_fullxzoom, graph_fullyzoom, find_closest_wave, graph_point_at,
+  # wave_hilight_envelope, graph_wave_resolve and draw_graph — so a short list
+  # mis-axes picking, bolding, markers and auto-zoom as well as the drawing. That
+  # is why the fence (band WD4 of tests/headless/test_calc_wave_dest.tcl) asserts
+  # the POSITIVE SHAPE of what this proc emits, upstream of all seven, rather
+  # than a rendering: a pixel fence would miss six of the seven.
+  #
+  # So the token is emitted ONLY when it can be emitted in full: at least one
+  # trace carries its own X, and every ordinary trace has a resolvable default to
+  # name. Emitting nothing keeps every pre-existing strip's rect text
+  # byte-identical, which is what the 127 shipped schematics with embedded graphs
+  # and every golden rect comparison rely on.
+  set swp {}
+  if {$swany && [llength $swtoks] && [lsearch -exact $swtoks {}] < 0} {
+    set swp "sweep=\"[join $swtoks { }]\"\n"
+  }
   set gdash [wviewer::grid_dash_off]
   set gshow [expr {$grid ? {} : "grid=0\n"}]
   # viewer plan item 3: grid on/off is a WINDOW property, not a strip property,
@@ -3999,7 +4040,33 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # window's rects byte-identical to pre-item-3 (the hilight_wave/markers
   # "absent means absent" rule; unlike legendbold, whose 0 must be written
   # because its default is the non-shipped value).
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
+}
+
+# The CURRENT database's own X name — the first raw vector, which is the
+# convention `wviewer::interp_value` already states about the same quantity and
+# the one `new_rawfile()` builds a Calculator destination to match. `{}` when
+# there is no loaded database, or when the name cannot be carried in the
+# whitespace-separated `sweep=` grammar; graph_props then emits NO token list at
+# all rather than a short or a quote-broken one.
+proc wviewer::sweep_default {} {
+  set l {}
+  if {[catch {xschem raw list} l]} { return {} }
+  set l [string trim $l]
+  if {$l eq {}} { return {} }
+  return [wviewer::sweep_token [lindex [split $l "\n"] 0]]
+}
+
+# One `sweep=` token, or `{}` for a name the grammar cannot carry. `get_tok_value`
+# takes the quoted value and `my_strtok_r` splits it on whitespace, so a name
+# holding whitespace or a quote would change the token COUNT — which is the one
+# failure all seven graph walkers turn into a silent re-axing. Refusing the name
+# here is what keeps the count equal to the trace count.
+proc wviewer::sweep_token {s} {
+  set s [string trim $s]
+  if {$s eq {}} { return {} }
+  if {[regexp {[\s\"\\]} $s]} { return {} }
+  return $s
 }
 
 # NEARLY PURE (D4): pre-validate a whitespace-separated RPN expression against
@@ -4738,7 +4805,21 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
 # it. Given one, the name is resolved in THAT database and nowhere else. `{}` is
 # every caller that has only a name, and keeps decision 4 ("the current DB wins,
 # then the first other DB that has the name") exactly as it was.
-proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}}} {
+#
+# `sweep` (R419/R421, doc/claude/calculator_batch/DESTINATION_CONTRACT.md §8) is
+# the NAME OF THE X COLUMN this trace is plotted against, for a result whose X
+# axis is not the loaded sweep — a Calculator destination built by
+# `calc::wave_dest`, whose two columns are its own X and its own Y. `{}` is every
+# caller that plots against the database's own sweep variable, which is every
+# caller before this, and the key is then ABSENT from the trace dict so every
+# existing model dict, state file and emitted rect text stays byte-identical.
+# graph_props turns it into the per-trace `sweep=` token; see its own ⚠ for why
+# a SHORT token list is the silent failure and an absent one is not.
+#
+# ⚠ IT IS THE LAST PARAMETER ON PURPOSE, so every existing six-argument call
+# site is unchanged. Row WD4 of tests/headless/test_calc_wave_dest.tcl asserts
+# the position as well as the name.
+proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}} {sweep {}}} {
   variable windows
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
@@ -4853,6 +4934,9 @@ cannot be carried in a graph node= token (it contains whitespace or one of % \" 
     dict set trd rawfile  [dict get $trdb path]
     dict set trd sim_type [dict get $trdb type]
   }
+  # R419/R421: the trace's OWN X column, same "absent means absent" rule as the
+  # two keys above — a trace on the database's own sweep carries no key at all.
+  if {[string trim $sweep] ne {}} { dict set trd sweep [string trim $sweep] }
   lappend trs $trd
   set G [dict replace $G traces $trs]
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
@@ -7634,6 +7718,41 @@ proc wviewer::plot_dbs_take {token} {
   return $v
 }
 
+# --- R419/R421: the per-signal X COLUMN hand-off ----------------------------
+#
+# ⚠⚠ THE SAME ARMED SHAPE, FOR THE SAME MEASURED REASON, and it is worth saying
+# that the reason is a TEST PIN and not an aesthetic: `plot_signals`' four
+# parameters are asserted as a LITERAL SOURCE STRING by row BM05 of
+# tests/headless/test_wave_sigbrowser.tcl, row GT8 of test_wave_grid.tcl pins
+# graph_props' three, and a FIVE-argument call to plot_signals raises "too many
+# arguments" into `browser_plot_ids`' own catch — so every browser gesture check
+# would read as "the gesture did nothing" rather than as an error. Row WD4 of
+# tests/headless/test_calc_wave_dest.tcl re-measures both arities every run.
+#
+# The one-shot discipline is `plot_dbs_*`' verbatim: `take` CONSUMES, plot_signals
+# takes FIRST THING before any early return, the list is PADDED to the signal
+# count so a short arm cannot hand the tail somebody else's axis, and
+# `wviewer::forget` drops it with the window.
+#
+# ⚠ DECLARED: NOTHING ARMS IT YET. The Calculator's click wiring (R410/R412) is
+# phase 5's, and `calc::wave_dest`'s own caller will be the first armer. It ships
+# with the destination rather than after it because the alternative shape — a
+# fifth parameter — is the one the pins above forbid, and discovering that from a
+# gate is what this comment exists to prevent. `wviewer::add_trace`'s `sweep`
+# parameter is reachable directly in the meantime.
+proc wviewer::plot_sweeps_arm {token sweeps} {
+  variable plotsweeps
+  set plotsweeps($token) $sweeps
+  return {}
+}
+proc wviewer::plot_sweeps_take {token} {
+  variable plotsweeps
+  if {![info exists plotsweeps($token)]} { return {} }
+  set v $plotsweeps($token)
+  unset plotsweeps($token)
+  return $v
+}
+
 # Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
 # the window's plot mode — the ONE seam ase::ui::dp_finish calls. Creates the
 # strips plan_plot asks for, then appends one trace per signal at its planned
@@ -7661,6 +7780,7 @@ proc wviewer::plot_dbs_take {token} {
 # and then fails before the trace loop cannot leak its list into the next one.
 proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   set dbs [wviewer::plot_dbs_take $token]
+  set sweeps [wviewer::plot_sweeps_take $token]
   variable windows
   if {![dict exists $windows $token]} {
     return [list [list {} "unknown viewer window"]]
@@ -7747,11 +7867,16 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   # name), and a caller that supplied a short list must not silently hand the
   # tail somebody else's database.
   set dblist {}
+  # R419/R421: and the per-signal X column, padded by the same rule and for the
+  # same reason — an empty arm must give EVERY signal `{}` (the database's own
+  # sweep) and a short one must not hand the tail somebody else's axis.
+  set swlist {}
   for {set i 0} {$i < [llength $exprs]} {incr i} {
     lappend dblist [expr {$i < [llength $dbs] ? [lindex $dbs $i] : {}}]
+    lappend swlist [expr {$i < [llength $sweeps] ? [lindex $sweeps $i] : {}}]
   }
-  foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist {
-    set err [wviewer::add_trace $token $gi $ex {} $col $db]
+  foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist sw $swlist {
+    set err [wviewer::add_trace $token $gi $ex {} $col $db $sw]
     if {$err ne {}} { lappend errs [list $ex $err] }
   }
   # every add_trace regenerates on success, so the canvas normally already

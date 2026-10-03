@@ -201,6 +201,14 @@ namespace eval calc {
     # name minted before a close must not come back after one.  calc::tmpvec
     # says what re-using a destination costs (landmine L2).
     variable tmpn 0
+    # R419/R420's destination serial, behind `calc::wave_dest`'s `__calc_dest<N>`
+    # REGISTRY names.  INTERPRETER-scoped for the same reason `tmpn` is, and for
+    # a second one that is measured rather than argued: `xschem raw new` on a
+    # name that is ALREADY REGISTERED answers 0, ignores the requested geometry
+    # and keeps the previous evaluation's samples, so a destination name that
+    # came back after a close would freeze the point count at the first call and
+    # serve stale data.  calc::wave_dest says what that costs.
+    variable wdestn 0
     # Phase 2 (2.2).  THE CHARACTERS THE NETLIST ENGINE SPLITS AN EXPRESSION ON,
     # and the whole of them: plot_raw_custom_data() in src/save.c tokenises with
     # my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save).  calc::engine_space is
@@ -2381,8 +2389,34 @@ proc calc::plot_click {} {
 # builder, one shape, one place a wording ruling lands.  Their sentences name the
 # verb the user clicked rather than opening `Cross:`, which would name a
 # primitive nobody asked for; the one deliberate exception is `listdefer`, which
-# three verbs SHARE on purpose so that the wave destination landing retires one
-# string and not seven.
+# the deferring callers SHARE on purpose, so that a landing destination retires
+# one string rather than one per caller.
+#
+# ⚠ R419 SPLIT WHAT THAT ONE STRING IS WAITING FOR, AND THE SENTENCE NO LONGER
+# NAMES A WAVE.  The user ruled that `cross` with `nth = 0` answers *"just a
+# list of crossing times like cadence does"*, so there are TWO destinations:
+# a LIST surface, which `calc::cross_scalar` alone waits on (spec R606, the
+# inert `Table` control), and a WAVEFORM destination, which `calc::delay` with
+# `nth = 0` on either side, `calc::dutyCycle_scalar`'s default cycle and the
+# unbuilt `frequency` wait on.  The callers that defer are enumerated
+# mechanically -- by the enclosing proc of every `listdefer` call site, which is
+# the only method that has been right about this count -- and NOT counted from a
+# sentence: the tree carried a wrong number twice, once as "three verbs behind
+# one missing piece" and once as the correction to it.
+#
+# ⚠⚠ AND THE STRING MUST STAY SHARED.  Rows MT7 and MT8 of
+# tests/headless/test_calc_measure.tcl compare `string equal` against
+# `[calc::cross_msg listdefer]` by IDENTITY and never by words, so REWORDING it
+# costs nothing anywhere while SPLITTING it per caller reddens both.  Band WD9
+# of tests/headless/test_calc_wave_dest.tcl pins the sharing by name, so a
+# future split fails there with a name instead of here with a puzzle.
+#
+# ⚠ `badxaxis` IS R420's, and `dest*` ARE `calc::wave_dest`'s.  Both live in
+# THIS builder rather than in a second one, for the reason the paragraph above
+# gives: one place a wording ruling lands.  None of these sentences is ratified
+# wording; the `rule` debt filed against `calc::eval_msg`'s sentences covers
+# them, and every row that reads one asserts the house SHAPE -- a capital, a
+# colon-space, a full stop -- and never the words.
 proc calc::cross_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         empty      { return {Nothing to measure: cross was given an empty expression.} }
@@ -2404,7 +2438,7 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
         engine     { return "Cross: the engine would not read that expression ($a)." }
         absent     { return "Cross: there is no $a $b crossing of that level in this sweep." }
         listdefer  { return "Cross: nth 0 answers every crossing and the buffer takes one\
- number (R404), so a destination that can hold a wave has to come first." }
+ number (R404), so a destination that can hold more than one has to come first." }
         noswing    { return "Rise time: both reference levels must be supplied,\
  because the thresholds are percentages of that swing (low '$a', high '$b')." }
         zeroswing  { return "Rise time: the two reference levels are equal, so\
@@ -2422,6 +2456,19 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  level in this sweep." }
         nofall     { return "Duty cycle: a cycle at that level has no falling\
  crossing to close its high time ($a)." }
+        badxaxis   { return "Duty cycle: the X axis must be start, number or mid\
+ ($a)." }
+        destempty  { return "Destination: an empty result has nothing to put in\
+ a destination, so none was built." }
+        destlen    { return "Destination: the X and Y lists must be the same\
+ length ($a against $b)." }
+        destvalue  { return "Destination: a value is not a finite number ($a)." }
+        destname   { return "Destination: the two column names must differ and\
+ neither may be empty ($a, $b)." }
+        destalloc  { return "Destination: no database could be built to hold the\
+ result." }
+        destengine { return "Destination: the engine would not build that\
+ database ($a)." }
     }
     return {}
 }
@@ -2791,9 +2838,29 @@ proc calc::cross {rpn level nth edge {dataset 0}} {
 # keypad/catalogue path cannot: R404 says a T-route scalar lands in the buffer
 # as a literal NUMBER, and a list of forty-seven crossing times is not something
 # the existing RPN evaluator can eat.  So for v1 this REFUSES the list case with
-# a sentence naming what is missing, and the list case waits for a destination
-# that can hold a wave -- which is what the reference tool returns here,
-# plausibly through `xschem raw table_read`.
+# a sentence naming what is missing, and the list case waits for a surface that
+# can hold a LIST.
+#
+# ⚠ AN EARLIER REVISION OF THIS COMMENT SAID THE LIST CASE WAITS FOR A
+# DESTINATION THAT CAN HOLD A WAVE, *"which is what the reference tool returns
+# here, plausibly through `xschem raw table_read`"*.  THE USER REFUTED THAT
+# (R419), asked directly and offered three richer shapes: *"just a list of
+# crossing times like cadence does."*  So NO Y AXIS IS INVENTED for `nth = 0` --
+# not the threshold level, not the ordinal, not the sample index -- and this
+# proc is the ONE caller of `listdefer` that waits on the LIST surface (spec
+# R606, the `Table` control, still routed to `calc::inert`) rather than on
+# `calc::wave_dest`.  The waveform destination's callers are `calc::delay` with
+# `nth = 0` on either side, `calc::dutyCycle_scalar`'s default cycle and the
+# unbuilt `frequency`.
+#
+# ⚠ The refuted sentence began as an UNASKED PARENTHETICAL in
+# `doc/claude/calculator_batch/CROSS_CONTRACT.md` D8 and propagated from there
+# into this file, the spec and the catalogue comment, where it was then used to
+# argue about what to build next.  It is recorded here rather than quietly
+# deleted, because the lesson is the one CLAUDE.md states in general terms: an
+# unverified claim about the reference tool must never be written down as fact,
+# since prose is the one artefact nothing re-runs.  Ask the user -- they use the
+# reference tool professionally.
 #
 # Deferring a surface with a message is the decision; silently truncating a list
 # to its first element would not be.
@@ -2973,9 +3040,19 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
 # reach `can't use non-numeric string as operand of "-"` -- a raise where there
 # should be an answer.  The request is for a wave on at least one side and there
 # is no wave here to subtract from, so it defers, and it reuses `listdefer`
-# rather than minting a second sentence: one deferral string for every verb
-# waiting on the wave destination means the destination landing retires one
-# string and not seven.
+# rather than minting a second sentence: one deferral string for every caller
+# waiting on a destination it has not got means a landing destination retires
+# one string rather than one per caller.
+#
+# ⚠ THIS IS A WAVEFORM-DESTINATION CALLER AND `calc::cross_scalar` IS NOT, which
+# is the half R419 changed.  `cross`'s own `nth = 0` answers a LIST of crossing
+# times and wants a LIST surface; a `delay` asked for `nth = 0` on a side is
+# asking for one difference per crossing, which IS a wave with its own X axis --
+# so this caller waits on `calc::wave_dest`, alongside
+# `calc::dutyCycle_scalar`'s default cycle and the unbuilt `frequency`.  The
+# shared sentence is therefore deliberately silent about WHICH destination:
+# rewording it is free, splitting it per caller reddens MT7 and MT8 of
+# tests/headless/test_calc_measure.tcl, which compare it by identity.
 proc calc::delay {rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}} {
     foreach n [list $nthA $nthB] {
         if {[calc::eval_finite $n] && [expr {double($n) == 0.0}]} {
@@ -2995,7 +3072,40 @@ proc calc::delay {rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}} {
 # R416 + R418 + T4 + T5 -- the fraction of each period the expression spends
 # above a level.
 #
-#   calc::dutyCycle <rpn> <level> ?<cycle>? ?<dataset>?
+#   calc::dutyCycle <rpn> <level> ?<cycle>? ?<dataset>? ?<xaxis>?
+#
+# WARN R420 -- THE X AXIS IS AN ARGUMENT WITH A DEFAULT, AND THE USER REFUSED
+# THE PICK-ONE FRAMING THE DRIVER OFFERED.  Asked to choose one X axis for the
+# per-cycle series out of three candidates, they answered: *"Make it an option
+# to the function. Default can be time the cycle started. Other choices you gave
+# can be supported with non default values to this argument."*  So all three
+# ship, and the DEFAULT is the time the cycle started:
+#
+#   start   the opening rising crossing of each period -- THE DEFAULT
+#   number  the cycle's 1-based ordinal, which needs no data at all
+#   mid     the mean of the period's two rising crossings
+#
+# The three were all constructible with no new reading: this proc already
+# computed `r0`, `r1` and `xf` per cycle and DISCARDED all three.  An
+# uninterpretable token is a REFUSAL (D7's disposition, `badxaxis`), and so is
+# the EMPTY token -- the default is the WORD `start`, not the empty string, so
+# that `?<xaxis>?` omitted and `?<xaxis>?` given as {} are distinguishable and
+# only the first means "the default".
+#
+# ⚠ THE ANSWER CARRIES A PARALLEL `sweep` SERIES, which is the key
+# `calc::wave_dest` takes as its X list.  It is a LIST for `cycle` 0 and a
+# SCALAR for a named cycle, parallel to `value` in both shapes, so the invariant
+# holds for the scalar case too.  `calc::wave_dest` is NOT called from here: the
+# verb computes, the surface decides where the answer goes, and MT10's
+# transitive-closure row would redden if a layered verb opened an engine door of
+# its own.
+#
+# ⚠ `calc::dutyCycle_scalar` DELIBERATELY DOES NOT FORWARD `xaxis`.  Its wave
+# case defers and its scalar case lands a NUMBER in the buffer (R404), where an
+# X axis has nowhere to be shown; phase 5's argument dialog (R412) is what will
+# offer the choice, and giving the surface wrapper an argument nothing can
+# surface yet would be a parameter with no caller.  Declared rather than left to
+# be read as an omission.
 #
 # WARN IT ANSWERS A WAVE: ONE VALUE PER COMPLETE CYCLE (R416), WHICH CAME FROM
 # THE USER -- *"a wave -- one value per cycle."*  Not the first period and not
@@ -3025,7 +3135,7 @@ proc calc::delay {rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}} {
 # silently dropped, which would renumber every cycle after it; that arm is
 # DECLARED UNREACHABLE through the committed fixture and is therefore not
 # claimed as fenced.
-proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
+proc calc::dutyCycle {rpn level {cycle 0} {dataset 0} {xaxis start}} {
     if {![calc::eval_finite $cycle]} {
         return [calc::cross_refusal [calc::cross_msg badcycle $cycle] $dataset]
     }
@@ -3034,6 +3144,12 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
         return [calc::cross_refusal [calc::cross_msg badcycle $cycle] $dataset]
     }
     set k [expr {entier($cv)}]
+    # R420, with the request validated before anything reaches the database, so
+    # a mistyped axis costs no read -- the same place and the same reason as the
+    # cycle ordinal above.
+    if {[lsearch -exact {start number mid} $xaxis] < 0} {
+        return [calc::cross_refusal [calc::cross_msg badxaxis $xaxis] $dataset]
+    }
     set r [calc::cross $rpn $level 0 rising $dataset]
     if {![dict get $r ok]} { return $r }
     set f [calc::cross $rpn $level 0 falling $dataset]
@@ -3045,6 +3161,7 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
                     [dict get $r dataset] [dict get $r dest]]
     }
     set series {}
+    set xseries {}
     set nr [llength $rs]
     for {set i 0} {$i < $nr - 1} {incr i} {
         set r0 [lindex $rs $i]
@@ -3058,9 +3175,22 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
                         [dict get $r dataset] [dict get $r dest]]
         }
         lappend series [expr {($xf - $r0)/($r1 - $r0)}]
+        # R420's three axes, all out of the two crossings this period is already
+        # built from.  An if/elseif ladder and NOT a `switch`, deliberately: a
+        # comment between two switch patterns leaves the braces balanced and
+        # `info complete` answering 1 while Tcl raises out of every arm, which
+        # cost this proc's own sibling 34 rows at once one stage earlier.
+        if {$xaxis eq {number}} {
+            lappend xseries [expr {$i + 1}]
+        } elseif {$xaxis eq {mid}} {
+            lappend xseries [expr {($r0 + $r1)/2.0}]
+        } else {
+            lappend xseries $r0
+        }
     }
     if {$k == 0} {
         dict set r value $series
+        dict set r sweep $xseries
         return $r
     }
     set want [expr {abs($k)}]
@@ -3071,8 +3201,10 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
     }
     if {$k > 0} {
         dict set r value [lindex $series [expr {$want - 1}]]
+        dict set r sweep [lindex $xseries [expr {$want - 1}]]
     } else {
         dict set r value [lindex $series end-[expr {$want - 1}]]
+        dict set r sweep [lindex $xseries end-[expr {$want - 1}]]
     }
     return $r
 }
@@ -3086,19 +3218,322 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0}} {
 # says a T-route scalar lands in the buffer as a literal number, and a series of
 # per-cycle fractions is not something the existing RPN evaluator can eat.  So
 # the wave case DEFERS behind the sentence `cross` already uses for its own
-# nth 0, and the list waits for a destination that can hold a wave.
+# nth 0, and waits for a destination that can hold a wave with its own X axis --
+# which `calc::wave_dest` now builds, so what this wrapper is still waiting on
+# is the CLICK (R410/R412, phase 5) and not the destination.
 #
 # WARN THAT SENTENCE OPENS *"Cross:"* AND MENTIONS *"nth 0"*, AND A USER WHO
 # CLICKED `dutyCycle` ASKED FOR NEITHER.  The identity is deliberate -- one
-# deferral string for three verbs waiting on one missing destination -- but the
+# deferral string for every caller waiting on a destination it has not got, so a
+# landing destination retires one string rather than one per caller -- but the
 # wording is UNRATIFIED, the `rule` debt filed against `calc::eval_msg`'s
 # sentences covers it, and if it is ever ruled that each verb speaks for itself
 # then MT8's identity row is where that lands.
+#
+# ⚠ THE CALLERS ARE NOT ALL WAITING ON THE SAME DESTINATION, which is what R419
+# changed and what the previous revision of this comment got wrong by counting
+# verbs instead of destinations.  THIS caller and `calc::delay`'s `nth = 0` want
+# a WAVE; `calc::cross_scalar` wants a LIST (spec R606's `Table`), because the
+# user ruled `cross`'s `nth = 0` answers *"just a list of crossing times like
+# cadence does."*  The sentence stays silent about which, deliberately.
 proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0}} {
     if {[calc::eval_finite $cycle] && [expr {double($cycle) == 0.0}]} {
         return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
     }
     return [calc::dutyCycle $rpn $level $cycle $dataset]
+}
+
+# ---------------------------------------------------------------------------
+# R419/R420 -- THE DESTINATION FOR A RESULT THAT IS A WAVE WITH ITS OWN X AXIS.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2ac (R419-R421), section 7.3
+#          (R401-R405).
+# Contract doc/claude/calculator_batch/DESTINATION_CONTRACT.md -- route A, the
+#          three hazards, the four change sites, the final shape.
+# Fence    tests/headless/test_calc_wave_dest.tcl, bands WD0-WD10.
+#
+# `calc::wave_dest <xs> <ys> ?<xname>? ?<yname>?` takes TWO PARALLEL LISTS and
+# builds a registered database holding exactly those two columns, so a trace can
+# name the Y column against the X column the measurement produced rather than
+# against the loaded sweep.  `calc::wave_dest_drop` removes it and puts the
+# user's selected slot back.  The answer is a dict in `calc::cross`'s own
+# dispositions, built at ONE site (`calc::wave_dest_answer`) so the key set
+# cannot drift between the success path and the refusals:
+#
+#   measured  -- `ok` 1, with `db` the registry name, `type` its sim_type,
+#                `xname`/`yname` the two column names, `n` the point count and
+#                `prev`/`prevtype` the user's slot as captured BEFORE anything
+#   refused   -- `ok` 0 with a sentence in `msg` and nothing registered
+#
+# There is no `absent` disposition: a destination either got built or the request
+# was malformed.  An EMPTY result list is a REFUSAL rather than an absence, and
+# that is a choice -- `cross`'s `nth` 0 at a level nothing reaches answers
+# SUCCESS WITH AN EMPTY LIST (CROSS_CONTRACT T5), so an empty list really does
+# arrive here, and a zero-point database is not a destination.
+#
+# ⚠⚠ THE NAME IS `wave_dest` AND NOT `dest_*`, AND THAT IS A MEASUREMENT RATHER
+# THAN A PREFERENCE.  Row CE8 of tests/headless/test_calc_engine.tcl and row PL9
+# of tests/headless/test_calc_plot.tcl each glob `dest_*` out of this namespace
+# and then assert an EXACT LITERAL LIST of the members whose decommented code
+# names no `.calc` widget path.  A `calc::dest_new` lands in both lists and
+# reddens both -- one on `hcases`, one on the `dcases`-only arm only a gate runs.
+# Neither glob matches `wave_dest`.  Row WD10 re-measures that every run.
+#
+# ⚠ WHY ROUTE A -- `xschem raw new` PLUS `xschem raw set` -- AND NOT AN ASCII
+# TABLE.  `table_read()` is the tree's only reader of `SPICE_DATA_TYPE`, which
+# src/xschem.h defines as 1 (float) while `SPICE_DATA` is `double`, so its
+# parser is a hand-rolled FLOAT one: a fixture crossing time carried through it
+# lands ~1e-7 relative, and 6.9e-8 at the best possible `%.17e` spelling,
+# against the fixture's documented 1e-12 headroom for `time`.  No ASCII spelling
+# rescues it (issue 1633).  `raw set` parses with C `atof()` and stores the
+# double, so a full-precision crossing time round-trips BIT-EXACTLY -- band WD6
+# asserts both halves.
+#
+# ⚠ AND WHY `table` IS THE sim_type.  It is the one odd type that works.  Trace
+# resolution is fully type-agnostic (`xschem raw switch <name> <type>` is what
+# every graph walker calls), while `results::current` answers `{}` rather than
+# the user's selection whenever an odd-typed slot is current -- which is the
+# FAIL-SAFE direction, because the Calculator then refuses with
+# `calc::no_result_msg` instead of serving a number computed against its own
+# scratch output.  An EMPTY sim_type is dead (`{}` enters as `<NULL>` and
+# `results::_is_result_type` maps both to *result*), and the only other
+# non-result reader row is `vcd`, which is also `is_digital` and would draw as
+# logic levels.  This is DEFENCE IN DEPTH and not an alternative to restoring
+# the user's slot: `results::list` DOES list the destination, so it appears in
+# the Results picker whatever its type.
+#
+# ⚠⚠ THE THREE SHIPPED-VERB HAZARDS THIS PROC IS BUILT AROUND, every one of them
+# measured on the bare verbs in band WD0 of the suite:
+#
+#  1. `xschem raw switch <name>` WITH NO TYPE DOES NOT SWITCH BY NAME.  The
+#     by-name arm needs BOTH arguments; with one it falls past the digit arm to
+#     "switch to the next database" and answers rc 1 while landing round-robin
+#     somewhere else.  `switch_back` is no better -- a 1-deep toggle that
+#     verifies nothing, and `node_db_restore`'s own comment records that a
+#     READ-ONLY graph getter already clobbers `extra_prev_idx`.  So every restore
+#     here is `calc::wave_dest_restore`, by name AND type, which is also
+#     index-independent.
+#  2. `xschem raw clear <name> <type>` FORCES THE CURRENT SLOT TO 0, whatever it
+#     was (issue 1636).  `src/ase.tcl`'s `ase::attach_dbs` depends on that, so
+#     it is load-bearing elsewhere and cannot be fixed here -- which is why the
+#     restore is TWO explicit switches and not one: once after filling, and
+#     again after the clear.
+#  3. `xschem raw new` ANSWERS 1 FOR A DATABASE IT DID NOT ALLOCATE (issue 1635)
+#     and answers 0 on a name that is ALREADY REGISTERED, ignoring the requested
+#     geometry and keeping the previous evaluation's samples.  So the return code
+#     is never trusted on its own: a 0 means the name was taken and the loop
+#     mints another, and a 1 is confirmed against `xschem raw points`.
+#
+# ⚠ THE DATABASE IS SIZED EXACTLY TO THE RESULT, which is a correction to the
+# contract rather than a restatement of it.  §7 asked the producer to "hold-pad
+# the tail at the last real value", because `raw_add_vector()` makes every column
+# `allpoints` long and ZERO-FILLS it while `draw_graph` plots the whole dataset --
+# an N-point result in a longer database draws a FALSE DIAGONAL from its last
+# real sample back to (0, 0).  But a longer database is a CHOICE, not a
+# constraint: `xschem raw new <db> table <x> 0 <n-1> 1` yields exactly n points.
+# Sizing it exactly removes the diagonal AT SOURCE instead of painting over it,
+# and it also retires the contract's second note -- that `xschem raw pos_at` is a
+# binary search answering -1 or garbage on a padded column (issue 1637).  Band
+# WD5's point-count row is the live one; its two tail rows are vacuous against an
+# exactly-sized producer and say so.
+#
+# ⚠ R402 IS NOT WHAT THIS PROC OWES, and row SR5 of
+# tests/headless/test_calc_scratch_reuse.tcl was WIDENED for it rather than
+# worked around.  That row derives four sets over this namespace -- the procs
+# that mint a temporary, the ones that issue the direct engine verb, the ones
+# that read samples back and the ones that delete -- and asserts they are ONE
+# set.  This producer is in the second set and in none of the others: creating a
+# second column is only possible through the direct verb, and the Y column is
+# PERSISTENT by design, because the trace keeps reading it for the life of the
+# database.  There is nothing to mint and nothing to delete, which is exactly the
+# exemption SR5's own comment already grants `calc::plot_rpn`.  The destination
+# is a THIRD door of the same kind, and unlike Plot's it is visible to SR5's
+# scan.  It pre-flights no RPN either, because it is handed VALUES and sends the
+# engine no expression at all.
+#
+# DECLARED UNFENCED, so nobody reads a green suite as covering it: leak hygiene
+# across a THROW out of this proc between the create and the restore is the one
+# path that would leave the user on the Calculator's own scratch database, and
+# nothing drives it (suite hole H8).  Every exit path below restores, and the
+# fill is inside one `catch`, which is the reason the window is narrow rather
+# than the reason it is closed.
+# ---------------------------------------------------------------------------
+
+# The one site that names the answer dict's keys, for the success path and every
+# refusal alike -- `calc::cross_refusal`'s reason, and the reason that proc could
+# not simply be reused: its key set is a MEASUREMENT's (`absent`, `value`,
+# `dataset`, `dest`) and a destination answers none of those questions.
+proc calc::wave_dest_answer {ok msg db type xname yname n prev prevtype} {
+    return [dict create ok $ok msg $msg db $db type $type \
+                xname $xname yname $yname n $n prev $prev prevtype $prevtype]
+}
+proc calc::wave_dest_refusal {msg} {
+    return [calc::wave_dest_answer 0 $msg {} {} {} {} 0 {} {}]
+}
+
+# The CURRENT registry slot as `{name type}`, or `{}` when nothing is loaded.
+#
+# ⚠⚠ READ OUT OF `xschem raw info` AND DELIBERATELY NOT OUT OF
+# `xschem raw rawfile` PLUS `xschem raw sim_type`, FOR TWO REASONS AND THE FIRST
+# IS A USER RULING.  U6 (`doc/claude/specs/results_selection.md` §17 decision 6,
+# 2026-08-18) removed the Calculator's `self` arm ENTIRELY: it must never resolve
+# a result out of the raw its OWN context happens to hold, because a legacy path
+# can drop one into a schematic window.  Row S27 of
+# tests/headless/test_calc_skeleton.tcl stands for that ruling as a GREP over
+# this file -- the self-arm reader's verb must appear ZERO times in it -- and a
+# grep cannot tell "resolve a result" from "remember which slot to put back".
+# Rather than widen a ruled fence over an internal registry read, this proc uses
+# the one accessor that is not the self-arm reader.
+#
+# The second reason is independent and would hold anyway: `info` is ONE snapshot
+# that answers the name and the type TOGETHER, where two accessors are two reads
+# that could in principle disagree -- and both halves are needed, because the
+# fixture's three slots share one path and differ only in type, which is exactly
+# the case a name-only capture cannot express.
+#
+# The `(.+)[ \t]+(\S+)` middle is greedy on purpose: the type is the LAST token
+# and the path may hold spaces, so the two cannot be taken as list elements.
+# The `<n> current` line has no second token and therefore cannot match.
+proc calc::wave_dest_cur {} {
+    set t {}
+    if {[catch {xschem raw info} t]} { return {} }
+    set cur {}
+    foreach ln [split $t "\n"] {
+        if {[regexp {^[ \t]*([0-9]+)[ \t]+current[ \t]*$} $ln -> i]} { set cur $i }
+    }
+    if {$cur eq {}} { return {} }
+    foreach ln [split $t "\n"] {
+        if {![regexp {^[ \t]*([0-9]+)[ \t]+(.+)[ \t]+(\S+)[ \t]*$} $ln -> i nm ty]} continue
+        if {$i ne $cur} continue
+        set nm [string trim $nm]
+        if {$nm eq {} || $ty eq {}} { return {} }
+        return [list $nm $ty]
+    }
+    return {}
+}
+
+# The user's slot, restored BY NAME AND TYPE.  Never `switch_back` and never a
+# bare `switch <name>`: see hazard 1 above.  Answers the verb's rc, which says
+# nothing about where it landed -- the suite's restore rows assert the SLOT.
+proc calc::wave_dest_restore {name type} {
+    if {$name eq {} || $type eq {}} { return 0 }
+    set rc 0
+    catch {set rc [xschem raw switch $name $type]}
+    return $rc
+}
+
+proc calc::wave_dest {xs ys {xname calcx} {yname calcy}} {
+    # D7 FIRST, and with nothing registered: a request that cannot be
+    # INTERPRETED is refused before the registry is touched at all, so a
+    # malformed call cannot move the user's selected result.
+    if {[catch {llength $xs} nx]} {
+        return [calc::wave_dest_refusal [calc::cross_msg destvalue $xs]]
+    }
+    if {[catch {llength $ys} ny]} {
+        return [calc::wave_dest_refusal [calc::cross_msg destvalue $ys]]
+    }
+    if {$nx != $ny} {
+        return [calc::wave_dest_refusal [calc::cross_msg destlen $nx $ny]]
+    }
+    if {$nx == 0} {
+        return [calc::wave_dest_refusal [calc::cross_msg destempty]]
+    }
+    if {$xname eq {} || $yname eq {} || $xname eq $yname} {
+        return [calc::wave_dest_refusal [calc::cross_msg destname $xname $yname]]
+    }
+    foreach v $xs {
+        if {![calc::eval_finite $v]} {
+            return [calc::wave_dest_refusal [calc::cross_msg destvalue $v]]
+        }
+    }
+    foreach v $ys {
+        if {![calc::eval_finite $v]} {
+            return [calc::wave_dest_refusal [calc::cross_msg destvalue $v]]
+        }
+    }
+    # Hazard 1: the user's slot, captured BEFORE anything moves, by name AND
+    # type, out of ONE `xschem raw info` snapshot -- see calc::wave_dest_cur for
+    # why that accessor and not the obvious pair.
+    lassign [calc::wave_dest_cur] uname utype
+    # Hazard 3, first half: a name that is already registered answers 0 and
+    # keeps the previous samples, so the rc is read as "was it MINE" and the
+    # serial advances until a creation succeeds.  Bounded for the same reason
+    # `calc::tmpvec`'s loop is.
+    variable wdestn
+    set db {}
+    set n $nx
+    for {set tries 0} {$tries < 1000} {incr tries} {
+        incr wdestn
+        set cand "__calc_dest$wdestn"
+        set rc 0
+        if {[catch {set rc [xschem raw new $cand table \
+                                $xname 0 [expr {$n - 1}] 1]} e]} {
+            calc::wave_dest_restore $uname $utype
+            return [calc::wave_dest_refusal [calc::cross_msg destengine $e]]
+        }
+        if {$rc eq {1}} { set db $cand ; break }
+    }
+    if {$db eq {}} {
+        calc::wave_dest_restore $uname $utype
+        return [calc::wave_dest_refusal [calc::cross_msg destalloc]]
+    }
+    # Hazard 3, second half: rc 1 is also what a database that was NOT allocated
+    # answers, so the only honest test is the point count -- and asserting it
+    # EXACTLY is what keeps the false diagonal unreachable.
+    set pts -1
+    catch {set pts [xschem raw points 0]}
+    if {![string is integer -strict $pts] || $pts != $n} {
+        catch {xschem raw clear $db table}
+        calc::wave_dest_restore $uname $utype
+        return [calc::wave_dest_refusal [calc::cross_msg destalloc]]
+    }
+    set err [catch {
+        xschem raw add $yname {}
+        for {set i 0} {$i < $n} {incr i} {
+            xschem raw set $xname $i [lindex $xs $i]
+            xschem raw set $yname $i [lindex $ys $i]
+        }
+    } e]
+    if {$err} {
+        catch {xschem raw clear $db table}
+        calc::wave_dest_restore $uname $utype
+        return [calc::wave_dest_refusal [calc::cross_msg destengine $e]]
+    }
+    # THE MID-LIFE RESTORE.  `xschem raw new` made the destination current and
+    # `raw set` only ever writes the CURRENT database, so the switch back cannot
+    # happen any earlier than this -- and it cannot be skipped, because
+    # `results::current` would then answer `{}` for as long as the destination
+    # lives.
+    calc::wave_dest_restore $uname $utype
+    return [calc::wave_dest_answer 1 {} $db table $xname $yname $n $uname $utype]
+}
+
+# Remove a destination `calc::wave_dest` built, and put the user's slot back.
+#
+# ⚠ TWO SWITCHES, NOT ONE, and the second one is this proc's whole reason for
+# existing separately: `xschem raw clear <name> <type>` forces the current slot
+# to 0 unconditionally (hazard 2), so a user who was sitting on an `op` slot
+# ends up on slot 0 `tran` with no sentence.  The current slot is captured
+# before the clear; when the CALLER left the destination itself current, the
+# answer's own `prev`/`prevtype` -- captured before the destination existed -- is
+# what the restore uses instead, so a caller that forgot to switch back cannot
+# strand the user on a database that is about to be freed.
+proc calc::wave_dest_drop {answer} {
+    set db {}
+    if {[catch {dict get $answer db} db]} { return 0 }
+    if {$db eq {}} { return 0 }
+    set type table
+    catch {set type [dict get $answer type]}
+    if {$type eq {}} { set type table }
+    lassign [calc::wave_dest_cur] uname utype
+    if {$uname eq $db && $utype eq $type} {
+        set uname {} ; set utype {}
+        catch {set uname [dict get $answer prev]}
+        catch {set utype [dict get $answer prevtype]}
+    }
+    catch {xschem raw clear $db $type}
+    calc::wave_dest_restore $uname $utype
+    return 1
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -4072,7 +4507,12 @@ proc calc::build_stk {} {
 #   category  one of §7.1's, verbatim — see D1 below
 #   route     P primitive · C composed here · T Tcl measurement · N needs a new
 #             C opcode · X out of scope in v1  (§7.2's Route column)
-#   returns   scalar | wave | bool | scalar/wave  — §7.2's Returns column
+#   returns   scalar | wave | bool | scalar/wave | scalar/list  — §7.2's Returns
+#             column.  CLOSED vocabulary, fenced by row S24 of
+#             tests/headless/test_calc_skeleton.tcl; `scalar/list` was added for
+#             R419, and the enumeration is spelled out in four places that move
+#             together (here, calc::catalogue's comment, spec §7.2ab's R416 note
+#             and S24's own `lsearch`)
 #   insert    the RPN the entry emits, or {} where the route does not know yet
 #   help      one line, R413, short enough for the status entry
 #
@@ -4169,40 +4609,54 @@ proc calc::fn_reason {route} {
     }
 }
 
-# ⚠ THE `returns` FIELD HAS A RULED, CLOSED VOCABULARY, AND THE SPEC'S OWN §7.2
-# TABLE STEPS OUTSIDE IT FOR ONE ROW.  Row S24 of
+# ⚠ THE `returns` FIELD HAS A RULED, CLOSED VOCABULARY.  Row S24 of
 # tests/headless/test_calc_skeleton.tcl is the fence: a `returns` outside
-# `scalar` / `wave` / `bool` / `scalar/wave` is a counted failure there.  §7.2
-# spells `cross` **`scalar/list`**, which is that row's one violation --
-# MEASURED, by lifting S24's own `lsearch` predicate out of the suite and running
-# it over a mutated catalogue: `scalar/list` answers
-# `cross=returnsscalar/list` and `scalar/wave` answers clean.
+# `scalar` / `wave` / `bool` / `scalar/wave` / `scalar/list` is a counted failure
+# there.  The vocabulary is enumerated in FOUR places that move together -- here,
+# `calc::fn_fields`' schema comment, spec §7.2ab's R416 note and S24's own
+# `lsearch` -- so widening it is a four-site edit and not a one-site one.
 #
-# `scalar/wave` is what the row carries, for three reasons and not merely to keep
-# the suite green.  It is the spelling `intersect`, `frequency` and `freq`
-# already use, and those three have `cross`'s exact shape -- one value for an
-# ordinal request, many for "all".  It is what the user eventually gets: the
-# reference tool returns a WAVEFORM for `nth = 0` and CROSS_CONTRACT D8 names
-# that as the destination the list case is waiting for, so this table (which is
-# read by a person) is not promising a Tcl list. And `scalar/list` would describe
-# the measurement proc's internal return rather than the function's answer.
+# ⚠⚠ `cross` CARRIES `scalar/list`, AND THE PREVIOUS REVISION OF THIS COMMENT
+# ARGUED FOR `scalar/wave` ON A CLAIM THE USER HAS SINCE REFUTED.  It gave three
+# reasons, and the load-bearing one was that *"the reference tool returns a
+# WAVEFORM for `nth = 0`"*, so a table read by a person should not promise a Tcl
+# list.  R419 killed that: asked directly, with three richer shapes offered, the
+# user chose *"just a list of crossing times like cadence does."*  A list of X
+# values is a list, no Y axis is invented, and the surface that holds it is spec
+# R606's `Table` and not a plot.
 #
-# ⚠ SO THIS ROW AND SPEC §7.2 DISAGREE BY ONE WORD AND THE DISAGREEMENT IS
-# DELIBERATE, not an oversight -- closing it is a one-word edit in one of two
-# files (widen S24's vocabulary, or respell §7.2) and belongs to whoever owns
-# both.  Recorded here rather than left for the next reader to rediscover.
+# It also asserted that this row and spec §7.2 DISAGREED BY ONE WORD on purpose.
+# That conflict no longer exists: §7.2 reads `scalar/list` and so does this row.
+# The stale paragraph is recorded as removed rather than silently dropped,
+# because the driver read it and reproduced its dead claim in the document
+# written to correct dead claims -- which is CLAUDE.md's `grep -c '#pragma'`
+# failure exactly, a correcting sentence becoming its own counterexample.
 #
-# ⚠ `dutyCycle` CARRIES `scalar/wave` FOR THE SAME REASON AND BY THE SAME
-# MEASUREMENT, and it was `scalar` until PLAN 7.3 shipped the verb.  R416 (spec
-# §7.2ab, the user's own words -- *"a wave -- one value per cycle"*) makes the
-# default answer a WAVE, one fraction per complete cycle, with a named cycle
-# giving a scalar: `cross`'s exact shape, so it takes `cross`'s spelling.  S24's
-# own predicate was lifted and run before choosing -- the permitted set is
-# `scalar`, `wave`, `bool`, `scalar/wave` and nothing else, and `scalar/list`
-# answers `dutyCycle=returnsscalar/list` there.  `riseTime` and `delay` stay
-# `scalar`: both answer one number, and R417's negative delay is still one
-# number.  Spec §7.2's table row for `dutyCycle` still reads `scalar` and is
-# corrected there, because §7.2ab of the same file rules otherwise.
+# ⚠ AND THE SPELLING IS NOW LOAD-BEARING RATHER THAN DECORATIVE.  After R419 a
+# LIST result and a WAVE result go to TWO DIFFERENT destinations --
+# `calc::cross_scalar` waits on the `Table` surface, `calc::delay`'s `nth = 0`
+# and `calc::dutyCycle_scalar`'s default wait on `calc::wave_dest` -- so
+# collapsing both into `scalar/wave` would blind this field exactly where the
+# dispatch is about to read it.  `returns` is not user-visible anywhere
+# (`calc::fn_hover` publishes `[lindex $row 5]`, the help field, and the browser
+# canvas renders only `$name`), so its spelling is an engineering decision.
+#
+# ⚠ `intersect` IS DELIBERATELY LEFT AT `scalar/wave` even though its "all" case
+# is the same shape -- X values where two curves meet.  Two reasons: it has no
+# proc yet (PLAN 7.6), so nothing depends on the spelling; and respelling it
+# would drag its USER-VISIBLE help text, *"Where two curves meet: scalar or
+# wave"*.  Changing what a user reads about an unbuilt function to match an
+# inference from a ruling about a different function is not a call to make
+# silently -- one `rule` debt, raised when `intersect` is built.  `frequency` and
+# `freq` stay `scalar/wave` because their "many" case genuinely has a Y: one
+# frequency per cycle.
+#
+# ⚠ `dutyCycle` CARRIES `scalar/wave`, and it was `scalar` until PLAN 7.3 shipped
+# the verb.  R416 (spec §7.2ab, the user's own words -- *"a wave -- one value per
+# cycle"*) makes the default answer a WAVE, one fraction per complete cycle, with
+# a named cycle giving a scalar.  S24's own predicate was lifted and run before
+# choosing.  `riseTime` and `delay` stay `scalar`: both answer one number, and
+# R417's negative delay is still one number.
 proc calc::catalogue {} {
     return {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
@@ -4216,7 +4670,7 @@ proc calc::catalogue {} {
 {lshift {Special Functions} T wave {} {The wave shifted along X by an offset (negative delay)}}
 {sample {Special Functions} T wave {} {Wave values at chosen X points}}
 {root {Special Functions} T scalar {} {The X value where the curve equals zero}}
-{cross {Special Functions} T scalar/wave {} {The X value at the Nth crossing of a threshold}}
+{cross {Special Functions} T scalar/list {} {The X value at the Nth crossing of a threshold}}
 {intersect {Special Functions} T scalar/wave {} {Where two curves meet: scalar or wave}}
 {compare {Special Functions} T bool {} {Whether two curves agree within a tolerance}}
 {dBm {Special Functions} C wave {log10() 10 * 30 +} {Power in dBm: 10*log10(power in watts) + 30}}
