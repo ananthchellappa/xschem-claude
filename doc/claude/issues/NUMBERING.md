@@ -4594,9 +4594,13 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   folded into stage J, because a row asserting it would be **red on correct stage-J code**.
 
 - **1643** — row **`WD8`** of `test_calc_wave_dest.tcl`, the end-to-end row this batch cites as
-  proof of the destination hand-off, drives `v(sq)` — whose two `dutyCycle` values are
-  `{0.3000000000000002 0.29999999999999966}`, a **relative 1.8e-15** against the suite's own
-  `WDTOL` of **1e-7** with `near` comparing relatively. So a producer that writes `y[0]` into both
+  proof of the destination hand-off, drives `v(sq)` at `L = 1/3` — where the two `dutyCycle`
+  fractions are **BIT-IDENTICAL** (`0.31666666666666676` twice, relative spread exactly **0**),
+  compared element-wise with `near` at a relative `WDTOL` of 1e-7. ⚠ The first report of this
+  defect, and a driver commit message repeating it, quoted **1.8e-15 at `L = 0.5`** — a level the
+  row does not use; the real figure is zero and the defect is WORSE than first stated. Fourth
+  quoted-rather-than-derived figure to be wrong in this batch. The X leg is sound: `sweep` comes
+  back a factor of five apart, so the blindness is one leg wide, not the whole row. So a producer that writes `y[0]` into both
   points, or writes the Y column reversed, or writes a constant, **passes it**; confirmed by
   attack. The whole committed fixture is that flat (`riseTime` per edge on `v(sq)` ~4e-15; `v(lp)`
   elements 1 and 2 9e-15) and exactly one series discriminates: `dutyCycle` on `v(lp)` at
