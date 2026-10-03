@@ -175,8 +175,11 @@ gesture did nothing"*.
    both-sides-zero case.
 4. **The `sweep=` carry-forward.**  `draw_graph`'s local `sweep_name` carries the
    **last non-empty** token forward and never resets when `my_strtok_r` runs out, so
-   a short `sweep=` list silently re-axes every later trace — and **all seven
-   walkers** do it.  A short list and an **absent** list are two different failures.
+   a short `sweep=` list silently re-axes every later trace.  A short list and an
+   **absent** list are two different failures.
+
+   ⚠⚠ **THIS BULLET SAID "ALL SEVEN WALKERS" AND IT WAS WRONG — SEE §12.**  The
+   number is kept here, struck, because how it got here is the finding.
 
 ## 8. Unruled, and therefore filed rather than invented
 
@@ -445,3 +448,69 @@ is still unruled (§10(c)).
 ⚠ **A wrong Y column is fenced in ONE suite only.** The verifier re-ran CONSTANT-Y and
 `test_calc_measure` answered `ALL PASS`: the WD11 rows in `test_calc_wave_dest` are the whole
 fence.  That is a real bound on coverage, not a note.
+
+---
+
+## 12. ⚠⚠ §7.4's "all seven walkers" is WRONG — and §10 is where that correction should already have been
+
+Unit J1b's recon derived the `sweep=` reader population over `src/*.c` and then read every site.
+Receipt: `receipts/J1b-recon-and-suite.md`.  Issue **1645** carries the registration half.
+
+| | count | which |
+|---|---|---|
+| **carry the token forward** | **SIX** | `draw_graph`, `find_closest_wave`, `graph_fullyzoom`, `graph_point_at`, `graph_wave_resolve`, `wave_hilight_envelope` |
+| **read it once (first token only)** | **THREE** | `graph_fullxzoom`, `graph_x_extent`, and the others below — **a different defect**, which no carry-forward fence touches |
+| **total readers** | **NINE** | the six above plus three |
+
+⚠ **`graph_fullxzoom` — the FIRST name in the list this contract printed — does not carry forward
+at all.**  It reads the token with `find_nth(get_tok_value(…, "sweep", 0), …)` per contributing
+database.  So the stated set was wrong at its head.
+
+⚠ **Two user-visible readers are in NO list anywhere**: `backannotate_cursor_b_in_db` and
+`waves_callback`'s Button-2 drag-to-position arm, both in `src/callback.c`, both
+`get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL)` with a
+silent `if(idx < 0) idx = 0`.  Those are **cursor-B backannotation to the schematic** and **the
+strip's mouse-to-X mapping** — two surfaces a user touches, missing from the stated blast radius.
+
+### Why the wrong number survived, which is the part worth keeping
+
+**Seven is correct — for a DIFFERENT PREDICATE.**  Rows `NDR2`/`NDR3` of
+`tests/headless/test_node_token_split.tcl` assert that all **seven** `node=` walkers that *sample*
+a database resolve the sweep column **by name** and clamp it against the switched-in `nvars`.  That
+is genuinely seven, because `graph_fullxzoom` resolves per contributing database inside
+`graph_x_extent`.  **The contract took a correct count attached to "resolves by name" and reused it
+for "carries the token forward."**  That is CLAUDE.md's `grep -c '#pragma'` failure exactly: a
+figure that survives because nobody re-derives the predicate behind it.
+
+⚠ And `test_node_token_split` is **registered in neither list** (issue 1645), so the one row that
+re-measures a walker count every run was never run — which is why nothing re-attached the number to
+its predicate.
+
+### ⚠⚠ The process failure, recorded because it is mine
+
+**`receipts/J-wiring-recon-contract.md` already stated both findings exactly** — nine readers, three
+first-token-only, six carry-forward, and the mixed-strip `graph_fullxzoom` consequence — and called
+this contract's sentence *"WRONG TWICE"*.  §10 is the section that exists to record that crew's
+corrections.  It carries **six of them and not this one**, and §7.4 went on reading "all seven
+walkers" with no correction beside it, into every brief built from this document.
+
+**A correction that was measured and then dropped out of the document crews are told to read first
+is worse than one never made**, because it is now load-bearing twice: once as a false fact, and once
+as evidence that this contract's corrections can be trusted.  The shipped comment above
+`wviewer::graph_props` copies the same sentence and must be corrected in the product too.
+
+### And the driver's framing of the risk was overstated — measured both ways
+
+This document told a crew the carry-forward was *"the defect most likely to make J1b silently
+wrong."*  It is not:
+
+- `wviewer::graph_props` emits the token list **in full or not at all** (re-measured over three
+  strip shapes; `WD4` pins it), so the product **cannot produce a short list**; and
+- `calc::wave_dest` makes `calcx` **column 0** of its own database, so with `sweep_idx` initialising
+  to 0 the measured trace draws against its own X **even with no token at all**.
+
+The three defects that **are** live, in order of what a user would notice: the `calcx`/`calcy` name
+collision of issue **1644** (every measurement after the first draws the first one's curve),
+`graph_fullxzoom` being unable to frame a **mixed** strip (`sweep={time tshift time}` frames
+`0..0.01` and the second quantity's extent never enters the union), and an **unconsumed arm**
+persisting to re-axe the next plot in that window.

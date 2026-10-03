@@ -4612,7 +4612,35 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   and fixing the fixture does not raise it: `v(sq)` has three rising crossings, so three is the
   most any verb yields on this fixture.
 
-**The next free number is 1644.**
+- **1644** — `calc::wave_dest` names its two columns `calcx`/`calcy` for **every** destination it
+  builds, and unit J1 never drops one, so coexistence is normal after the second measurement.
+  Measured: two destinations, `__calc_dest1` and `__calc_dest2`, and `xschem raw list` against
+  **each** answers the identical `calcx calcy`. A trace plotted by name resolves through
+  `wviewer::resolve_signal_db`, which returns the **first** slot carrying that name — so
+  **measure a duty cycle, plot it, measure a second, plot it, and the second strip shows the
+  first measurement's curve**, with no error and no way for the user to tell. No row would have
+  seen it: every fence drives ONE destination and the suite's `xschem raw clear` reload sweeps the
+  second slot away between bands. Fix: resolve by registry **index** through
+  `wviewer::plot_dbs_arm` — which makes that arm MANDATORY, the half the destination contract did
+  not say. Unit J1b carries it. A second, independent fix worth considering is to stop minting
+  identical column names at all, which is bound up with the unratified naming ruling.
+
+- **1645** — three suites carrying load-bearing pins are in **neither** `hcases` nor `dcases`:
+  `test_wave_sigbrowser` (`BM05`, `wviewer::plot_signals`' four formals as a literal source
+  string), `test_wave_grid` (`GT8`, `graph_props`' three) and `test_node_token_split`
+  (`NDR2`/`NDR3`, that all seven `node=` walkers resolve the sweep column by name). ⚠ The arity
+  pins are the ones a change is most likely to trip and breaking them fails **silently**: a 5-arg
+  `plot_signals` call raises *"too many arguments"* which `browser_plot_ids`' own `catch`
+  **swallows**, so every downstream gesture check reads as *"the gesture did nothing"*. Green
+  gate, red `full_audit.sh`. ⚠ And the unregistered `test_node_token_split` is part of why a wrong
+  figure persisted: *"all SEVEN walkers carry the `sweep=` token forward"* is wrong (six carry
+  forward, nine read it, three read only the first token) while **seven is right for a different
+  predicate** — resolves-by-name — which is exactly what `NDR2`/`NDR3` assert. Nothing ran them,
+  so nothing re-attached the number to its predicate. Not a call to register the 334-suite tail
+  (1615 settled that); a call to register these three, each of which pins something another
+  suite's green run depends on.
+
+**The next free number is 1646.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
