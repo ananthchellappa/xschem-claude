@@ -129,13 +129,19 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3294880.log` at **`486a9635`**, taken in the `~/gc26` clone at an
+  the gate verdict `tests/results.3417481.log` at **`43a0c557`**, taken in the `~/gc26` clone at an
   18-character path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates
   clean): **125 cases** (3 `tcases` + **96** `hcases` + **25** `dcases` + `xschemtest`),
   **124 blocks**, **`wc -l` 374 green**; trailer
   `cases=125 blocks=124 counted_failures=0 skips=8 elapsed=649s`, zero live-peer lines, zero
   counted shapes, zero nonzero `Total num fail:` lines, and `test_ase_optier_0963` at
-  `ALL PASS (110 checks)`.
+  `ALL PASS (110 checks)`.  The same trailer, to the second, was measured one commit earlier at
+  `486a9635` (`tests/results.3294880.log`, also 649s) — **two consecutive gates where a whole stage
+  landed and not one trailer term moved**, because every suite it touched was already registered.
+  Stage J1b's own counts: `test_calc_wave_dest` 102 → **115**, `test_calc_plot` 105 → **114**,
+  `test_calc_skeleton` 573 → **579**, `test_calc_scratch_reuse` 54 → **56**, with
+  `test_calc_measure` 170, `test_calc_engine` 265, `test_calc_cross` 187, `test_calc_widgets` 259
+  and `test_calc_buffer` 130 unmoved.
   ⚠⚠ **`headless/test_fluid_editing.disp.log` reads `RESULT: ALL PASS (28 checks)` IN THIS VERDICT,
   WHICH IS THE FIRST TIME THAT SUITE'S GESTURE ROWS HAVE EVER RUN INSIDE A GATE.** Issue **1641**:
   it had been in `hcases` ALONE for a month, whose loop hard-codes `--nogui`, where it self-skips to

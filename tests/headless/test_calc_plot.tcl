@@ -457,12 +457,25 @@ group PL1 {
         $::pl1_sem 0
     check "PL1 ...and the button's own command is back" \
         [pcall .calc.mode.plot cget -command] $::pl1_saved
-    # ⚠⚠ THIS IS THE ONLY BAND THAT PRESSES PLOT FROM ANOTHER WINDOW'S CONTEXT,
-    # AND THAT MAKES IT THE ONLY BAND THAT MEASURES THE LOAN AT ALL.  Measured
-    # in Stage D2: `wviewer::open` leaves the xschem context standing IN the
-    # viewer, and `wviewer::enter_ctx` then takes its "already there" fast path
-    # for the fixture read, so `leave_ctx` restores nothing -- every band after
-    # PL0 is already in the viewer's context and the loan is redundant there.
+    # ⚠⚠ THIS BAND PRESSES PLOT FROM ANOTHER WINDOW'S CONTEXT, AND THAT IS WHAT
+    # MAKES IT MEASURE THE LOAN AT ALL.  Measured in Stage D2: `wviewer::open`
+    # leaves the xschem context standing IN the viewer, and `wviewer::enter_ctx`
+    # then takes its "already there" fast path for the fixture read, so
+    # `leave_ctx` restores nothing while the context is the viewer's.
+    #
+    # ⚠ THE TWO SENTENCES THAT USED TO STAND HERE ARE WITHDRAWN, MEASURED 2026-10-03
+    # BY THE CREW THAT ADDED PL10's OWN GIVE-BACK LEG.  They said this was "the
+    # ONLY band that presses Plot from another window's context" and that "every
+    # band after PL0 is already in the viewer's context and the loan is redundant
+    # there".  Both are false now and the second was made false by THIS band: PL1
+    # switches to `.drw` and never switches back, so every later band runs from a
+    # FOREIGN context and every hand-off there takes a REAL loan.  PL10's leg
+    # relies on exactly that, and asserts it rather than assuming it -- it carries
+    # a non-vacuity leg proving `.drw` cannot see the fixture at all, plus its own
+    # explicit context switch, so a reorder of this band cannot silently stop it
+    # measuring the loan.  A comment claiming to be the only site of something is
+    # a claim about the whole file that nothing re-checks: see CLAUDE.md on a row
+    # name describing its coverage rather than its method.
     # A sabotage that removed the bracket from `calc::plot_in_token` ALTOGETHER
     # therefore reddened ZERO rows, because the one band standing somewhere else
     # asserted only `current_win_path` and never that the press had worked.

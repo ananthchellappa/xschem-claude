@@ -514,3 +514,104 @@ collision of issue **1644** (every measurement after the first draws the first o
 `graph_fullxzoom` being unable to frame a **mixed** strip (`sweep={time tshift time}` frames
 `0..0.01` and the second quantity's extent never enters the union), and an **unconsumed arm**
 persisting to re-axe the next plot in that window.
+
+---
+
+## 13. Unit J1b, as landed — the trace draws, and a defect J1 shipped is closed
+
+Commit `43a0c557`.  Receipts: `receipts/J1b-recon-and-suite.md` and
+`receipts/J1b-implementation.md`.
+
+```
+counted  wave_dest 102 → 115   scratch_reuse 54 → 56   measure 170 · engine 265 · cross 187 unmoved
+display  skeleton 573 → 579    plot 105 → 114          widgets 259 · buffer 130 unmoved
+```
+
+Press a measurement button whose answer is a waveform and the curve now appears by itself: its own
+strip, its own X column, a status line naming the verb and the database.  The channel it uses —
+`wviewer::plot_sweeps_arm` — had shipped with a banner reading *"NOTHING ARMS IT YET"* and had never
+had a caller.
+
+### (a) ⚠⚠ J1 shipped a real defect, and the recon found it by asking the obvious question
+
+Issue **1644**.  Every destination's columns are named `calcx`/`calcy`, and J1 never drops a
+destination, so coexistence is the **normal** state after the second measurement.  A trace plotted
+by **name** resolves through `wviewer::resolve_signal_db`, which returns the **first** slot carrying
+that name.  So measure, plot, measure again, plot again — and the second strip showed the **first**
+measurement's curve.  Same shape, no error, nothing on screen to tell them apart.
+
+**No row would have seen it, and the reason generalises**: every fence on the destination drives
+**one** destination, and the suite's `xschem raw clear` reload sweeps the second slot away between
+bands.  The defect needs *two* to exist, so a band that tests one is structurally blind to it.
+⚠ The leak fences are blind for a sibling reason — they glob temporary **column** names over the
+*current* database, while a surviving destination is a registry **slot** nobody switches to.
+
+**Proved at sample level, twice, by two crews independently** — not by a green suite.  Two
+destinations with deliberately different Y samples, the second handed off, then the drawn trace
+found by its `vec`, switched to the `rawfile` that trace actually carries, and the column read back:
+
+| | drawn trace's `rawfile` | samples read out of it |
+|---|---|---|
+| armed | `__calc_dest4` | `0.91 0.82 0.73 0.64 0.55` = **B**, correct |
+| `plot_dbs_arm` deleted | `__calc_dest3` | `0.11 0.22 0.33 0.44 0.55` = **A**, the defect |
+
+So **`wviewer::plot_dbs_arm` is MANDATORY**, which is the half `DESTINATION_CONTRACT.md` never said.
+
+### (b) ⚠ A verifier found a hole the implementer did not declare, and it was closed red-first
+
+Nothing asserted that `calc::wave_in_token` **gives the viewer context back**.  Had
+`wviewer::leave_ctx` been dropped, the user's next action would land in the waveform viewer — and
+**every row in the tree stayed green**.  Row `PL1` already fences the identical property for
+`calc::plot_in_token` with an `.drw`/`.x1.drw` discriminant, so the new leg was modelled on it:
+
+```
+FAIL: PL10 U8 ...and the hand-off GIVES THE CONTEXT BACK ...
+      -> {.drw 1 1 .x1.drw} (exp {.drw 1 1 .drw}) : FAIL
+```
+
+**Exactly one row reddened**, which is what confirms the gap was real rather than redundant.  The
+verifier held the sabotage and said red-first was satisfiable, so it was **closed rather than
+declared** — the third time this batch has made that call and the first time a *verifier* rather
+than the driver forced it.
+
+⚠ The row also carries a **non-vacuity leg** (`xschem raw loaded` in `.drw` is `-1`, so that window
+cannot see the fixture and a hand-off that plotted *must* have switched) and an explicit
+`new_schematic switch` so the foreign context is the row's own.  **Measured: that switch is a no-op
+today**, because `PL1` leaves the context there — written anyway, so a reorder of `PL1` cannot
+silently stop the row measuring the loan.  That is the rot-prevention discipline applied
+prospectively.
+
+### (c) The take is discipline, not tidiness — measured with a NARROWER sabotage
+
+An arm whose caller refuses earlier **persists for that token** and silently re-axes the next plot
+in that window.  The verifier sharpened the implementer's sabotage: instead of deleting both `take`
+lines it **moved** them after the `if {$rc}` return, so only the raise path leaks.  It still
+reddens, printing `{dbs sweeps}` where `{}` is expected.  Hence both takes are unconditional and
+come **before** the branch, copying `wviewer::browser_plot_ids` verbatim including the reason its own
+comment gives.
+
+### (d) Why the destination gets its own strip, and it is correctness not layout
+
+`graph_fullxzoom` **cannot size a MIXED strip**, by design: measured, `sweep={time tshift time}`
+frames `0..0.01` and the second quantity's extent never enters the union, because `graph_x_extent`
+returns 0 for a database that lacks the strip's X quantity.  So a measured trace sharing a strip can
+be drawn **off-window**.  And `wviewer::add_trace` **clamps an out-of-range `gi` to the LAST strip**,
+which is how that mixed strip gets built by accident.  ⚠ Whether a new strip is the right *feel* is
+a separate question and is filed as a `look` debt.
+
+### (e) SR5 was moved by widening its DERIVATION, never by writing a second name down
+
+Its pattern — `wviewer::(add_trace|plot_signals)` — was **itself a hand-kept list of two names**,
+which is the defect one level up.  Measured, it was worse than short: the `wviewer::` procs that
+actually issue `xschem raw add` are **three** (`add_trace`, `paste_traces`, `restore`) and
+`plot_signals` is **not** one of them, so the shipped pattern named one real door and one proxy.  Now
+the door set is derived from the tree and the `calc::` set is asserted with a **floor plus a
+non-vacuity leg**, so the next unit moves a name between sets rather than lowering a number.
+
+### What is still not done
+
+`riseTime` (J2) and `delay` (J3) still defer; `frequency` is catalogued with no implementation;
+`cross`'s **list** destination still waits on phase 10's Table.  The destination is still never
+freed on success — a declared leak whose four candidate shapes are filed as a `rule` debt.  And
+**nobody has looked at any of this**: one `look` debt asks for a single screenshot of a measured
+curve on its own strip, on the real screen rather than Xvfb.
