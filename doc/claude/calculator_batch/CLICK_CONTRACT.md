@@ -180,6 +180,15 @@ and the subtraction then **raises**. `cross_scalar` and `delay` both guard with 
 `riseTime` does not. **A dialog that exposes `nth` turns that raise into a user gesture.** Fix 1639
 first.
 
+⚠ **DONE — 1639 WAS FIXED ON 2026-10-03, SO 5.4 IS NO LONGER BLOCKED ON IT.** `calc::riseTime` now
+defers behind the shared `listdefer` sentence (no new `cross_msg` kind, so no new user-visible
+sentence), fenced by band `MT9b` of `tests/headless/test_calc_measure.tcl`. The paragraph below about
+MT7/MT8 comparing by identity **still governs the dialog**, with one measured refinement: a split
+that reworded the sentence *only for a new caller* was caught by `MT9b`'s identity row and by all
+three `WD9` rows, and **not** by MT7/MT8 — those two read `delay`'s and `dutyCycle_scalar`'s answers,
+so they redden on a split that touches the sentence the *siblings* use. Both routes are fenced; they
+are fenced in different files.
+
 **MT7/MT8 of `test_calc_measure` (`hcases`, gating) compare against `[calc::cross_msg listdefer]` by
 identity.** If the dialog's refusal path rewords or splits that sentence, both redden. And ⚠ the
 dialog's refusals will add arms to the same `switch` in `calc::cross_msg` where **a comment between
@@ -205,3 +214,216 @@ The dialog takes the keyboard, and that is correct here: the user opened it by c
 rule against stealing focus governs **surfacing a message** at a moment the user did not ask for one —
 a modal the user invoked is the opposite case. `rdw::scope_dialog`'s `grab set` + `focus -force` +
 hand-the-keyboard-back teardown is the idiom to copy, teardown included.
+
+## 8. The dialog, specified from the two modals this tree already has
+
+Design crew, 2026-10-03, read-only. **Parent: `rdw::scope_dialog`** (with `scope_dialog_build` /
+`scope_dialog_done`), borrowing the field layout from `ase::ui::dialog_frame` + `dialog_row` and
+`<Return>`→OK from `ase::ui::bus_dialog`. Four parts: namespace state, build, done, wrapper.
+
+**The one line that must be copied verbatim in spirit**, and its own comment says why:
+
+> *"PRE-SET TO CANCEL, BEFORE THE BUILD. A window destroyed by a deadman timer or by a window
+> manager never reaches `scope_dialog_done`, and a stale result would then be read as an answer the
+> user never gave."*
+
+That is R412's Cancel requirement surviving a route that never runs `_done` — i.e. **a stale result
+being read as consent.** `bus_dialog` sets its result on the last line of `_build` instead, so a
+raising build leaves the *previous* answer; that is the half not to copy.
+
+`scope_dialog` wins on every axis that matters for eight fields: conditional field presence, a
+no-Tk guard (`have_tk` + `winfo exists`, returning Cancel), a **caught** build, a `tkwait` guarded
+by `winfo exists` **and** `catch`, a `wm protocol WM_DELETE_WINDOW` → cancel path, and the keyboard
+**handed back** to the previously focused widget. `bus_dialog` restores no focus and has no WM-close
+path.
+
+⚠ **`xschem.tcl`'s `input_line` is the wrong thing to copy, and not only for being single-field**: it
+does `tkwait visibility` *before* the grab, leaves `tkwait window` unguarded, and calls
+`xschem set semaphore … -1` *after* it — so an early destroy raises out of the proc and **leaks the
+semaphore increment, leaving the C side refusing canvas work.** Its re-entrancy guard returns empty,
+which an R412 caller would read as Cancel. Neither recommended parent touches the semaphore; the
+dialog must not either.
+
+### `calc::fn_argspec {name}` — a new proc, pure Tcl, no Tk
+
+Returns `{key label kind required default}` rows, and `{}` for any name with no arguments — which
+also makes the route-T branch's **30-verb fall-through legible** rather than accidental.
+
+| verb | fields |
+|---|---|
+| `cross` | `Level` (real, req) · `Occurrence (Nth)` (int, 1) · `Edge` (enum rising/falling/either) |
+| `riseTime` | `Low level` **req** · `High level` **req** (R415: no derivation) · `Low threshold %` 10 · `High threshold %` 90 · `Occurrence (Nth)` 1 · `Dataset` |
+| `delay` | `Signal A (RPN)` ← buffer · `Level A` · `Edge A` · `Occurrence A (Nth)` · `Signal B (RPN)` · `Level B` · `Edge B` · `Occurrence B (Nth)` |
+| `dutyCycle` | `Level` (req) · `X axis` (enum start/number/mid, default `start` per R420) · `Cycle` · `Dataset` |
+
+⚠ **The dialog validates SHAPE ONLY.** `real` is a finite double (`string is double -strict` **and**
+not inf/nan), `int` is `string is integer -strict`, `enum` is membership, and an RPN field is
+**non-empty text that is never parsed** (R401). **Semantic refusals stay with the verb** — `nth = 0`
+must reach `cross_scalar`/`delay`, because MT7/MT8 compare against `[calc::cross_msg listdefer]` by
+identity, so the dialog must never re-word one of those sentences.
+
+### ⚠ R421 says where ONE operand comes from, and `delay` needs TWO
+
+`delay`'s eight required arguments are **two RPN operands plus three fields per side**. R421 names
+`calc::rpn_of_buffer` as the operand source, which supplies **A only**, and no ruling says where **B**
+comes from. **Driver's decision, recorded rather than assumed**: signal A is pre-filled from the
+buffer, signal B is a typed field, and both become pickable when phase 6's schematic picking lands.
+Filed as a `rule` debt (`calc_argdialog_field_labels_and_delay_second_signal`) together with the
+user-facing field labels above, so either can be overruled.
+
+⚠ **One measurement is owed before coding**: `dutyCycle`'s formals disagree between two live
+documents — `test_calc_measure.tcl`'s header says `<rpn> <level> ?<cycle>? ?<dataset>?` while R420
+adds an `xaxis` option, and `DESTINATION_CONTRACT.md` §6 names neither the argument nor its position.
+Read the shipped proc and settle it; do not infer the order.
+
+### The Cancel fence — S23's existing idiom is NOT sufficient
+
+R412's byte-identical requirement is fenceable only against a buffer read **twice**, with a
+non-trivial sentinel already in it. Capture before: the buffer text, `edit modified`, the status
+history, the status line, and the stack size. Assert all five after Cancel — **plus the undo
+witness**: one `edit undo` must leave the buffer *still* equal to the capture (then `redo`).
+
+**Why S23's `INERT SENTINEL` idiom does not cover it**: it captures the text, a count and a realness
+leg, and checks **none** of `edit modified`, the undo stack or the status history — which are exactly
+the three a touch-then-undo moves while staying byte-identical. Extend it with
+`test_calc_buffer`'s vocabulary. ⚠ **Do not use `edit canundo`** — Tk 8.6 only; that suite's
+`shadow_install`/`shadow_remove` exist to force the 8.5 arm, and `::calc::editcan` is the capability
+cache.
+
+### ⚠⚠ 9. The traps — the first one is a HANG, not a failure
+
+**(a) The three suites that will drive this modal are the only `test_calc_*` suites that never arm
+the watchdog.** They do not `source tests/headless/scratch.tcl`; every sibling does. So
+`XSCHEM_SUITE_WATCHDOG_MS` is never armed in them, and their only `after` uses are small sleeps with
+no deadman. `run_suites.sh` (200 s), T1 (900 s, counted `FAIL`) and `full_audit.sh` (300 s) still
+bound their respective spellings — but **the bare `./src/xschem … --script <suite>` that a developer
+types constantly has no bound at all.** That is `scratch.tcl`'s own declared gap landing on exactly
+the three suites that lack the layer. **Being fixed before the modal exists**, because a hang is
+indistinguishable from slowness and this project has already lost a night to one.
+
+**(b) `event generate` is SYNCHRONOUS** (`-when now` is the default). So a `Button-1` delivered to a
+T-route entry *enters* `fn_click` → `tkwait`, and **the next line of the suite never runs.** S23's
+existing gesture band is Motion / Button-1 / ButtonRelease-1 on three consecutive lines; aimed at one
+of these verbs it blocks on line two. **Arm the poll BEFORE the `event generate`.**
+
+**(c) Copy the poll, never a delay** — `sd_arm` / `sd_poll_modal` / `sd_disarm` in
+`test_rdw_keys_1245.tcl`. Three measured properties, all load-bearing: the condition is
+`[winfo exists $w]` **AND `[grab current] eq $w`** (naming the window, because an unrelated grab
+defeated the `ne {}` form); give-up needs a poll count **AND** a wall-clock deadline (`after 5` is a
+floor — a 900-poll give-up measured 6.0–6.5 s under load, past the 5 s deadman it was believed to sit
+inside); and **both timers are cancelled at the end of every row**, or row N's deadman destroys row
+N+1's dialog. Two sabotage shapes are required, and the second is the one that ships the bug:
+**A** the driver fires before the toplevel exists; **B** it fires inside the wrapper's own `update`,
+window present and grab absent — **B passes under a `winfo exists`-only poll.**
+
+**(d) Keep the grab LOCAL. `grab set $w`, never `grab set -global`.** The tree's only global grabs
+are the print and screen-capture paths. A global grab from the Calculator would freeze the GUI
+gate's Pause/Stop panel — a separate `wish` process — on a run against the user's real screen,
+**disabling their emergency control**. `xvfb_arm.sh` forces `GUI_GATE=0` so the standard arms are
+unaffected; the real screen is not.
+
+**(e) `full_audit.sh` reaches all three suites** through its `test_*.tcl` glob, and none is in
+`nogui_tests` — so a dialog that opens without the `have_tk` guard costs `AUDIT_TIMEOUT` 300 s plus a
+crash row on **every** full audit run.
+
+### The free coverage win
+
+`calc::fn_argspec` needs **no Tk**, so its four specifications — keys, order, labels, kinds,
+requiredness, defaults — belong in `test_calc_measure` (`hcases`, measured on **both** arms) rather
+than in a `dcases`-only suite. That is the largest piece of this stage that can be fenced on the
+counted arm, and it costs nothing.
+
+**What stays display-only, and therefore gate-only**: every row touching `fn_click`, the browser
+fill, the canvas gesture, the dialog and `grab`. `test_calc_skeleton` reports `ALL PASS (0 checks)`
+under `--nogui` and the other two print a no-X skip. Report this stage's green as
+`tests/headless/run_suites.sh <suite>`; a `--nogui` number proves nothing here. **`look` debts owed**:
+the dialog's appearance on the real screen, that R421's provenance sentence fits the status bar
+without eliding, tab order and Return/Escape feel, and that the modal does not open behind `.calc`.
+
+## 10. Corrections from the suite author — four of them change the implementation
+
+**61 rows, red first**: band **MT11** (23) in `test_calc_measure` (`hcases`, **both arms** — the free
+coverage win §8 called for), **S28** (25, sub-bands `/0`–`/6`, `/A`–`/E`, `/Z`) in
+`test_calc_skeleton`, and **CW14** (13) in `test_calc_widgets`. Against the tree with no
+implementation: `19 FAILED (139 passed)` / `15 FAILED (558 passed)` / `9 FAILED (250 passed)`, with
+**zero aborted bands, zero `RAISED:`, zero `UNEXPECTED ERROR`** in all three, and every failure
+naming the absent thing rather than a bare mismatch — `NOPROC:calc::fn_argspec`,
+`NOSUCHKEY:dutyCycle/xaxis`, `NO-MODAL`, `POISON-AN-ANSWER-THE-USER-NEVER-GAVE`. A conforming
+reference took all three green, and the reference was then deleted and the red reproduced.
+
+⚠ **These rows are a STANDING RED in T1 until the implementation lands** — three registered cases
+with `banner_complete` 0 and three `HARNESS:` lines. Published counts when green: **135 → 158**,
+**548 → 573**, **246 → 259**; both `--nogui` arms byte-unchanged; `cases`/`blocks`/`skips`/`wc -l`
+all +0, since all three were already registered.
+
+### (a) `dutyCycle`'s `xaxis` is the FIFTH formal, not the third
+
+```
+proc calc::dutyCycle        {rpn level {cycle 0} {dataset 0} {xaxis start}}
+proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0}}
+```
+
+So §8's field order (`Level · X axis · Cycle · Dataset`) is a **display** order and genuinely differs
+from the formal order. **Compose the call BY KEY, never positionally** — a row measures the divergence
+deliberately. `test_calc_measure`'s own header had said `xaxis` was absent entirely; corrected.
+
+### (b) `dutyCycle_scalar` cannot carry the axis at all
+
+Its formals stop at `dataset`, and a row is red for that. Two legitimate fixes — extend the wrapper,
+or have the click call `calc::dutyCycle` directly. **The driver's preference is to extend the
+wrapper**: the dialog calls the surface, a field the dialog offers must reach the proc, and that
+wrapper's own comment already names phase 5's dialog as the caller it is waiting for. The
+implementer may choose the other **out loud**.
+
+### (c) "Pre-set to cancel" belongs at the top of the BUILD as well as in the wrapper
+
+`rdw::scope_dialog` does it only in the wrapper. A row requires both — one notch stronger than the
+parent — because that is **the only way to measure it without entering `tkwait`**. Declared in the
+row's own comment.
+
+### (d) §9(a) is discharged
+
+All three suites now `source tests/headless/scratch.tcl`; the stall bound landed in a concurrent
+stage, and a derived row in `test_suite_watchdog_1403` now asserts that **every** registered
+event-loop case has one. Likewise §6's *"fix 1639 first"* is discharged — `calc::riseTime` defers
+`nth = 0` behind the shared sentence as of 2026-10-03.
+
+### The sabotage table, and the rows that are the whole fence for their defect
+
+| mutation | reddened |
+|---|---|
+| click calls raw `calc::cross` instead of `cross_scalar` | 5 rows, one reporting a diagnostic count |
+| `-autoseparators` left ON across the replace | **exactly 1** — R421's undo witness |
+| the dialog opens BEFORE the result gate | **exactly 2** |
+| `grab set -global` | **exactly 2** — one reads the mode, one names the proc |
+| pre-set-to-cancel in the wrapper only | **exactly 1** — the poison row |
+| `delay` side B carrying side A's labels | **exactly 2** |
+| no shape validation at all | **exactly 1**, printing the bad value composed into the call |
+
+Both **poll** sabotages redden: weakening the condition to `winfo exists` alone catches the shape
+that ships the bug, and replacing the poll with a fixed delay catches three rows.
+
+### Holes the suite declares — the load-bearing ones
+
+The OK path's measurement is **stubbed**, so these rows fence the **surface**, not the number. **Only
+`cross` is driven through OK**; `delay`'s two-operand call is unfenced (its pre-fill is not). The
+axis's *effect* is unobservable for a scalar answer, so nothing fences it reaching the data. R401's
+*"an rpn field is never parsed"* has nothing observable to assert. Shape validation is driven for one
+field. **And every sentence this gesture prints is unratified**, so the rows assert containment and
+movement, never a string — except `calc::require_result`'s refusal, compared by identity. Five debts
+filed by the driver: four `look` (appearance, the provenance line fitting the status bar without
+eliding, tab order and Return/Escape feel, and that the modal does not open behind `.calc` — whose
+structural half *is* mechanised via `wm transient`) and one `rule`, the click sentence.
+
+### ⚠ Four Tcl traps the suite author hit, worth more than the rows
+
+- **A bare `}` inside a braced word closes it** — hit **twice**, the second time *inside the comment
+  warning about the first*. CLAUDE.md records the same accident, once inside the comment warning
+  about it. The shape recurs because the warning itself is written in the medium it warns about.
+- **A `{args}` stub measures the FIXTURE, not the product.** A recorder stub reddened against
+  *correct* code, because a by-key composition reads `info args`; the stub now derives the real
+  proc's own formals.
+- **`cget` accepts abbreviations**, so `cget -value` on a combobox answers `-values` — a **false
+  red** until caught.
+- **`"$name(…)"` is an array reference**, which is why a leg asserting the click **returns rather
+  than raises** now exists.

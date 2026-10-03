@@ -194,3 +194,23 @@ a line number, name the commit you measured it at.
 
 **Do not write down a number nothing re-checks.** Either a row asserts the count, where it is
 re-measured every run, or your sentence drops the number and states the shape instead.
+
+## ⚠⚠ A SHARED DOC IS NOT SINGLE-WRITER JUST BECAUSE THE DRIVER SAID SO
+
+**Added 2026-10-03, after a near-miss that would have been silent.** A crew was told *"another crew
+is reading this file; it will not write"* — true of that crew, and **false of the driver**, who
+appended a whole new section to the same file while the crew's stage was running. The crew's own edit
+was a read-modify-write in a separate process. Its append and the driver's both survived, **but only
+by luck of timing**: had the driver's write landed between the crew's read and its write, an entire
+design section would have been **silently clobbered, with no conflict and no error**.
+
+Two rules follow, and the second is the driver's:
+
+- **If you must edit a shared document, append rather than rewrite**, and re-read immediately before
+  writing. A whole-file rewrite of a doc somebody else may be editing is an unsynchronised
+  read-modify-write; `git` will not save you, because nothing has been committed yet.
+- **The driver must count itself as a writer.** "No other crew is writing this file" is not the same
+  claim as "this file is not being written". When the driver is recording a contract or a receipt
+  while crews are live, it is a concurrent writer and must say so.
+
+This is the same class as the shared-namespace rule: **match by identity, do not assume exclusivity.**

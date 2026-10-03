@@ -836,6 +836,43 @@ open** (no `DISPLAY`, `GUI_GATE=0`, or a closed panel). Spec:
 - **The watchdog is not a general timeout**: an `after` timer fires only in the event
   loop, so it catches a `vwait`/`tkwait` hang but not a blocking `exec` or busy Tcl loop
   (row W13 of `test_suite_watchdog_1403.tcl`). Bound those externally.
+  ⚠ **THERE IS A THIRD BLIND SHAPE AND NEITHER W13 NOR `scratch.tcl` RECORDS IT: `update
+  idletasks`.** Measured 2026-10-03: it services *idle* events only and **never runs timer
+  callbacks**, so a loop spinning on `update idletasks` is invisible to the watchdog —
+  `fired=0` after 200 ms of it against `fired=1` after a single full `update`. That also
+  explains a confusing observation: a Tk suite can sit at a 1 ms budget without the
+  watchdog firing on its *normal* run while the same suite's `tkwait` hang fires every
+  time. **`update` arms it; `update idletasks` does not.** All three blind shapes need an
+  external bound, not a bigger budget.
+  ⚠ **And a hand-rolled deadline NAMES THE OUTCOME WRONGLY, which is its own defect.**
+  Measured: `after <n> {puts "deadline"; exit 1}` does stop the stall, but `t1_why` scores
+  rc 1 as *"crashed, aborted mid-script, or a check failed"* while rc **124** is *"TIMED
+  OUT"*, and `run_suites.sh` likewise scores FAIL rather than TIMEOUT; it prints on stdout
+  only and names neither the suite nor where it stopped. **Arm `scratch.tcl`'s watchdog
+  rather than inventing a deadline**: it exits 124, prints on both streams, and names the
+  file plus the last row it got past. ⚠ Conversely an **unbounded** stall killed from
+  outside takes the emergency-save path and prints `FATAL: signal 15`, which
+  `banner_died` matches — so it is scored a **death**, not a timeout, and the verdict
+  misdescribes it.
+  ⚠⚠ **AND WHEN A ROW WAS FINALLY WRITTEN TO ASSERT THIS, IT FOUND THREE REGISTERED T1 CASES
+  WITH NO STALL BOUND AT ALL.** Row **`W20h`** of `test_suite_watchdog_1403.tcl` (2026-10-03)
+  derives the population — a registered `hcases`/`dcases` entry whose file issues `vwait`,
+  `tkwait`, `update`, `toplevel` or `grab` **in command position**, 26 of 104 — and derives
+  the predicate over each member's transitive `source` closure. Its first run reddened on
+  `test_fluid_editing`, `test_headless_guards_xarm_1492` and `test_selflog_grep_guard`:
+  each reaches the event loop and arms **no** deadman, so a hang in any of them had no
+  bound but whatever driver happened to wrap it. **They were given the bound rather than the
+  instrument narrowed to fit the tree** — narrowing was the available alternative and is
+  exactly the rot the row exists to prevent. `FLOOR: 32` → `40`, a **ratchet, not a baseline**.
+  ⚠ Two scanning lessons, both measured and both load-bearing: **the scan must be
+  command-position**, because a bare-word scan reports `test_callback_argc` (its only
+  `toplevel` is inside a check's detail *string*) and `test_fluid_editing` (its only `grab`
+  is the English word, *"tolerance grab of an OFF-GRID endpoint"*); and **`update` belongs in
+  the verb list**, because without it the population misses `test_calc_widgets` and
+  `test_calc_buffer` — which drive Tk through `calc::*` and issue no `toplevel` of their own —
+  leaving the hole two-thirds open. Widget-class names (`label`, `text`, `entry`, `place`,
+  `raise`) must stay **out**: `test_calc_scratch_reuse` scans as a `label` user purely
+  because of `foreach {label rpn ds} {`.
 - **Do not gate a whole report on the last check**: report (and where appropriate
   commit) the verified majority, naming what is outstanding.
 
@@ -962,6 +999,38 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   comment warning about it) is **insufficient on its own**: it catches the unbalanced-brace shape and
   is blind to this one. The only confirmation is behavioural — exercise every arm of the `switch` and
   see that none raises. Put explanatory prose **above the proc**, never between patterns.
+  ⚠⚠ **AND THE ONE ROW THAT CONFIRMS THIS BEHAVIOURALLY HAD ALREADY ROTTED, WHICH IS THE WHOLE POINT
+  OF THE RULE TWO BULLETS UP.** Measured 2026-10-03: `test_calc_wave_dest`'s arm-sweep row — the
+  *only* behavioural confirmation anywhere that a `switch` catalogue still parses — drove a
+  **hand-kept list of 24 message kinds against a proc that had 31 arms**. The seven it never asked
+  about (`badxaxis` and six `dest*`) were added by the very stage that wrote the row. Its name claimed
+  *"every arm this stage touches"*, which is **coverage, not method**, so nothing could detect the
+  drift: the row stayed green while silently measuring 24/31. Replaced by a **derivation over the
+  proc's own switch patterns** plus a non-vacuity row, giving `ok=31 raised=0`. **A hand-kept list is
+  the same defect one level up** — exactly what row `X1` of `test_snprintf_fmt_1608.tcl` exists to
+  prevent — and a fence against a parse trap is worth nothing if it only exercises the arms that
+  existed when it was written.
+  ⚠⚠⚠ **AND THE TRAP IS PARITY-DEPENDENT, WHICH THE WARNING ABOVE STATES AS AN ABSOLUTE AND SHOULD
+  NOT.** Measured 2026-10-03 in `calc::fn_argspec`, both directions, same site:
+
+  | comment between two patterns | words, `#` included | result |
+  |---|---|---|
+  | two lines, 26 words | **EVEN** | `ALL PASS (158 checks)` — **a complete no-op** |
+  | `# R415 applies` | **ODD** (3) | **18 rows red at once** |
+
+  The mechanism: `switch`'s single trailing argument is parsed as a **Tcl list**, and every word of
+  the comment becomes an element. An **even** word count re-pairs the list so every real pattern
+  keeps its real body and the comment is swallowed as one harmless pattern/body pair; an **odd**
+  count shifts the pairing by one and Tcl raises out of every arm.
+  **So the consequences are worse than "a comment there is fatal", not better.** A comment in that
+  position can sit green for months and **detonate the moment somebody edits a single word into or
+  out of it** — including into the comment itself, which is how this class keeps recurring (CLAUDE.md
+  already records a literal `{` unbalancing a file *from inside the comment warning about it*, and a
+  suite author hit a bare `}` twice on this batch, the second time inside the comment warning about
+  the first). **A green run proves only that the word count is even**, never that the comment is
+  safe. The rule stands unchanged — prose above the proc, never between patterns — and the only
+  confirmation remains behavioural: exercise every arm, with the arm set **derived from the proc's own
+  switch argument**, and see that none raises.
 
 **Cite code by symbol (proc or function name), not by bare `file:line`**: coordinates
 rot, identity holds (`src/op_annot.tcl` does this on purpose). A line number that cannot

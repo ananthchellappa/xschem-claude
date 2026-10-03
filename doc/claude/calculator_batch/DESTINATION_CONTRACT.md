@@ -496,6 +496,13 @@ The real set is `{cross_scalar delay dutyCycle_scalar}`, and `calc::riseTime` wi
 **if 1639 is fixed by making `riseTime` defer, the band reddens naming the undriven caller** — a fence
 that reports its own obsolescence rather than silently covering less.
 
+⚠ **THAT PREDICTION WAS PAID OUT ON 2026-10-03 AND IT IS THE STRONGEST THING THIS SECTION CAN SAY.**
+1639 was fixed by making `calc::riseTime` defer, and `WD9` reddened on the first run afterwards —
+`{cross_scalar delay dutyCycle_scalar riseTime}` against an expectation of three, naming the caller
+nothing was driving. The remedy was to **drive** the fourth caller in `WD9`'s identity and pairwise
+rows; the derivation was **not** relaxed, and its lower-bound leg moved with it. The set above is
+left as the dated figure it was — read the row, never this sentence.
+
 ### Holes the suite declares, and the two the driver must act on
 
 H1 `wviewer::interp_value` is unfenced here (needs a viewer window and a mixed strip — a `dcases`

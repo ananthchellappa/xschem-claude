@@ -4527,6 +4527,14 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   ⚠ Two defensible fixes, not interchangeable: join the shared `listdefer` sentence — free, because
   MT7/MT8 assert **identity** with `calc::cross_msg listdefer` and count no users, but **splitting
   that sentence per caller reddens both rows** — or refuse under D7.
+  **FIXED 2026-10-03**, the first of the two taken: the request is well formed on the proc's own
+  meaning of `nth` (it selects the LOW crossing and derives the high one), so it names one rise time
+  per low crossing — a wave — and D7's *"cannot be interpreted"* would have been false and would
+  have had to be reversed when the click lands. Fenced by band `MT9b` of `test_calc_measure`; band
+  `WD9` of `test_calc_wave_dest` reddened on the fix as its own comment predicted and was extended
+  to drive the fourth caller. ⚠ One refinement to the warning above, measured by sabotage: a split
+  that gives only the NEW caller its own wording does **not** redden MT7/MT8 — those read `delay`'s
+  and `dutyCycle_scalar`'s answers — it reddens `MT9b`'s identity row and all three `WD9` rows.
 
 - **1640** — `storeobject()` takes `pos` from the caller and **never bounds it**:
   `check_box_storage()` grows the layer array from the *count*, never from the index about to be
@@ -4546,7 +4554,31 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   uncounted gap, increments the count anyway, and `saveas` shows `B 4 0 0 0 0 {}` — the object is
   lost and a degenerate slot 0 is saved in its place. Not a double free despite the message.
 
-**The next free number is 1641.**
+- **1641** — `test_fluid_editing` is in **`hcases` only**, the `hcases` loop hard-codes `--nogui`,
+  and the suite self-skips there to **0** rows: all **26** of its gesture rows run on the display
+  arm alone, which nothing is registered to run. Measured: display arm **26** `ok:`/`FAIL:` lines,
+  exit 1, `RESULT: 1 FAILED (25 passed)`; `--nogui` arm **0** rows, exit 0, `OVERALL: ok`,
+  `banner_complete=1`, `RESULT: SKIP (no X)` — a **pass** with nothing measured, and the skip is
+  announced uppercase so it adds 0 to `skips=`. Same family as 1615/1626/1638, and the worst-placed
+  instance of it because `fluid-editing` is the branch the work lands on. The suite's own header
+  says it is *"safe to register in hcases"*, which is true of the **crash guard** (the gesture path
+  SIGSEGVs on the absent `.drw`) and was read as a registration decision.
+  ⚠ **Row `FE8` has been RED on the display arm, and the row is the suspect, measured.** Its detail
+  `(mod=0 a=30)` reads as the false-clean it fences; `a=30` is the arc's *starting* angle, so
+  nothing changed at all. `xschem get lastsel` is **0** right after the press, and a **one-way**
+  drag from the same point fails identically, which rules out the release-cell no-op the row is
+  about. At the `zoom_box` zoom the row sets (17.316) the arc's r=100 is 5.775 px, so `sch2scr`
+  rounds the press onto a pixel that maps back to **25.7°** on an arc spanning **30..120** — on the
+  ring, 4.3° off the end. The `a=0` fixture arc survives the same rounding because the error points
+  *inward*. From a press one pixel higher the row's own predicate is **TRUE** (`lastsel=1`,
+  `mod=1`, `a` 30 → 64), so **the behaviour `FE8` fences is intact**. Three open items: fix the
+  press point red-first and assert the press landed; then register `dcases` in the same change and
+  gate it (the epilogue is fine — the sentinel is computed — so a `dcases` entry today would be a
+  standing counted red, 1615's incident verbatim); and a product ruling on `find_closest_arc`,
+  whose radial tolerance is zoom-scaled while its angular span test is exact, so zooming out widens
+  the clickable ring and narrows the clickable arc.
+
+**The next free number is 1642.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

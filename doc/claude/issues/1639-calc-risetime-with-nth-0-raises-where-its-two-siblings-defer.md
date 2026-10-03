@@ -1,9 +1,12 @@
 # 1639 — `calc::riseTime` with `nth` 0 RAISES, where both its siblings defer behind a shared sentence
 
-**STAMP:** `v1 claim=open tree=a90ffb98 stamped=2026-10-02 fix=none open=2`
+**STAMP:** `v1 claim=fixed tree=580f7968 stamped=2026-10-03 fix=taken open=0`
 
-Status: **OPEN**, found 2026-10-02 by a calculator batch crew auditing the function catalogue.
-A **live raise in shipped Tcl**, reachable from the proc's public argument list, fenced by nothing.
+Status: **FIXED** 2026-10-03, option **1** below taken — `calc::riseTime` defers behind the shared
+`listdefer` sentence. Found 2026-10-02 by a calculator batch crew auditing the function catalogue.
+Was a **live raise in shipped Tcl**, reachable from the proc's public argument list, fenced by
+nothing. The resolution is at the end of this file; everything between here and it is the dated
+record of the open claim and is NOT edited.
 
 Area: `calc::riseTime` — `src/calculator.tcl`. Its two siblings `calc::delay` and
 `calc::dutyCycle_scalar` guard the same input; `calc::cross`'s `nth` 0 contract and the shared
@@ -129,3 +132,49 @@ Not an arity error. `nth` is the sixth positional with a default of 1, so `0` is
 argument on the proc's published signature; the optional-with-empty-default shape of `lo`/`hi` is
 there precisely so that a malformed request is a refusal rather than a Tcl throw, which is the
 disposition this path breaks.
+
+## Resolution — 2026-10-03, option 1 taken
+
+`calc::riseTime` now **defers** behind the shared `listdefer` sentence, joining `calc::cross_scalar`,
+`calc::delay` and `calc::dutyCycle_scalar`. No new `cross_msg` kind was minted, so no new
+user-visible sentence was introduced.
+
+**Why option 1 and not option 2.** The option-2 argument in this file — that a rise time "per low
+crossing" is a malformed request — does not survive the proc's own published meaning of `nth`.
+`nth` selects the **low** crossing only; the high one is **derived** as the first crossing strictly
+after it (T2, and the proc's own header says so). So `nth` 0 names **exactly one rise time per low
+crossing**, with nothing ambiguous about which pair is meant: a wave with its own X axis, which is
+the shape `calc::dutyCycle`'s default cycle already answers and `calc::wave_dest` already holds.
+D7 refuses a request that cannot be *interpreted*; this one can be, and a later stage will answer
+it. A D7 refusal would also have to be **reversed as user-visible behaviour** once R410/R412's
+argument dialog can route a wave into `calc::wave_dest`, where a deferral retires silently — which
+is the whole reason the sentence is shared. `calc::delay` is the precedent rather than an analogy:
+it is likewise a measurement proc with no `_scalar` wrapper, and it defers inside itself.
+
+**Where the guard sits, and that placement is a decision.** After every request-level check — the
+swing, the two references, the two percentages, the zero swing — and before any threshold
+arithmetic. A deferral promises an answer once a destination lands, and a request with no swing will
+still be malformed then, so a malformed request is refused **as malformed** rather than deferred.
+Band `MT9b` has a row for that ordering, and moving the guard to the top of the proc reddens it.
+
+**Item three is done too**: the comment claiming *"no arithmetic can meet an empty operand"* is
+corrected in place rather than deleted, because the fact that it was a claim about one of the two
+operands is what let this survive a reviewer.
+
+**Fenced by** band `MT9b` of `tests/headless/test_calc_measure.tcl` (`hcases`, gating) — ten rows:
+the hazard re-measured on `cross` itself, the raise gone, the sentence asserted by identity against
+`calc::cross_msg listdefer` and pairwise against `calc::delay`'s own answer, every spelling of the
+ordinal zero deferring, the deferral minting no destination, the malformed-request ordering, a
+non-finite ordinal keeping `cross`'s own refusal, the measuring control, D5's absence still absent,
+and `R402`.
+
+**Band `WD9` of `tests/headless/test_calc_wave_dest.tcl` reddened on the fix, exactly as its own
+comment predicted it would**, naming the undriven fourth caller. It was extended to **drive**
+`calc::riseTime` alongside the other three; the derivation was not relaxed.
+
+**Adjacent hole closed in the same change.** `WD10`'s `calc::cross_msg` arm sweep — the only
+behavioural confirmation that no comment has landed between two `switch` patterns — used a
+**hand-kept list of arm names**, and that list had gone stale against the seven arms the
+wave-destination stage itself added (`badxaxis` and the six `dest*`). The arm set is now **derived
+from the proc's own switch patterns**, with a non-vacuity row beside it. Measured over the real
+proc: every arm answers a non-empty sentence and none raises.

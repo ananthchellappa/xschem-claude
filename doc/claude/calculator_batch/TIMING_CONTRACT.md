@@ -51,6 +51,15 @@ missing piece makes that destination the measurement layer's critical path.
 > `listdefer` call site mechanically, which is the only method that has been right about this number;
 > `calc::riseTime` with `nth = 0` **raises** rather than deferring and is issue **1639**, open.
 >
+> ⚠ **1639 IS NOW FIXED (2026-10-03) AND THE WAVEFORM SET IS FOUR, NOT THREE.** `calc::riseTime`
+> defers behind the same shared sentence, so the callers behind the waveform destination are
+> `calc::dutyCycle_scalar`'s default cycle, `calc::delay` with `nth = 0` on either side,
+> `calc::riseTime` with `nth = 0`, and the unbuilt `frequency`. The count is left wrong above on
+> purpose — the paragraph is about a count having been wrong twice, and correcting it in place would
+> delete the evidence. **Do not quote any number here; band `WD9` of
+> `tests/headless/test_calc_wave_dest.tcl` derives the set every run, which is the only method that
+> has been right about it.**
+>
 > **And "critical path" no longer describes anything**: `calc::wave_dest` shipped with R419/R420, so
 > what the three waveform callers are still waiting on is the **click** (R410/R412, phase 5), not a
 > destination.
