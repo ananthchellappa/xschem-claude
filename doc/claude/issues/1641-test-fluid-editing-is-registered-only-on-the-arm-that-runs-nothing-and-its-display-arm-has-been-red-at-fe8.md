@@ -1,8 +1,32 @@
 # 1641 — `test_fluid_editing` is registered only on the arm that runs nothing, and its display arm has been RED at `FE8`
 
-**STAMP:** `v1 claim=open tree=580f7968 stamped=2026-10-03 fix=none open=3`
+**STAMP:** `v1 claim=partial tree=1271721f stamped=2026-10-03 fix=taken open=1`
 
-Status: **OPEN**, found 2026-10-03 by the calculator batch while auditing which suites actually
+⚠ **TWO OF THREE ITEMS CLOSED 2026-10-03** (`1271721f`), and the record of how is in
+`doc/claude/code_analysis/1641_fe8_repair_and_the_dcases_registration.md`.
+**Item 1, `FE8`'s aim — CLOSED.** Repaired red-first: a new row `FE8a` asserts the press landed
+and was added *before* the press point moved; the press point is now computed from the arc
+(4 px outward, biased inward by twice one pixel's worst-case angular rounding) rather than
+written down. **Item 2, the registration — CLOSED.** A `dcases` entry landed in the same commit,
+derived by lifting `summarize_all` out of `run_regression.tcl`'s own text: `cases` 124 → 125,
+`blocks` 123 → 124, `wc -l` 371 → 374, `counted_failures` and `skips` unchanged, with
+`planned_cases=125` agreeing independently. The `hcases` entry **stays**, as the crash guard.
+Display arm 26 → **28** checks.
+**Item 3, the product ruling on `find_closest_arc` — STILL OPEN**, and now filed as a `rule`
+debt on the `owed.sh` ledger so the user can answer it. ⚠ One measurement sharpens it: derived
+over `src/findnet.c`, **all five** `find_closest_*` functions scale their radial threshold with
+`xctx->zoom`, and `find_closest_arc` is the **only** one that then adds a zoom-**independent**
+predicate. A second mechanism also surfaced and is not in the original write-up:
+`edit_arc_point` tests the `a+b` handle box **first**, and at `FE8`'s zoom the handle half-size
+is 128.1 schematic units against a radius of 100, so the two handle boxes overlap nearly the
+whole arc — escaping the `a+b` box needs an angle under 38.7° while one pixel spans about 7°.
+⚠ **And the adversaries found a hole nobody assigned them**: a *constant garbage angle*
+committed on every arc `a`-control-point drag **passed all 27 rows**, because the band asserted
+that the angle CHANGED and not that it changed CORRECTLY. Closed by new row `FE8b`; rows
+`FE3`, `FE3c` and `FE6` still carry that weakness at the default zoom and are **declared, not
+fixed**.
+
+Status: **PARTIAL**, found 2026-10-03 by the calculator batch while auditing which suites actually
 gate a commit. Pre-existing, and independent of the Calculator.
 
 Area: `tests/headless/test_fluid_editing.tcl` (the suite, rows `FE1`–`FE10b`, `FE7`, `FE8`),
