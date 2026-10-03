@@ -31,11 +31,19 @@
 #       NO Y AXIS IS INVENTED for it and `cross` is NOT a waveform result at
 #       all.  That ruling SPLIT this stage in two and SHRANK the half this file
 #       fences: the verbs behind the WAVEFORM destination are `dutyCycle`'s
-#       default, `delay` with nth 0 on either side, and the unbuilt `frequency`
-#       -- THREE, enumerated mechanically from the enclosing proc of every
-#       `listdefer` call site and not counted from a sentence.  The LIST surface
-#       is a different destination (spec R606, the inert `Table` control) and is
-#       NOT this file's business.
+#       default cycle, `delay` with nth 0 on either side, and `riseTime`'s
+#       nth 0 -- THREE, enumerated mechanically from the enclosing proc of
+#       every `listdefer` call site and not counted from a sentence.  The LIST
+#       surface is a different destination (spec R606, the inert `Table`
+#       control) and is NOT this file's business.
+#       ⚠ THIS SENTENCE SHIPPED WRONG AND THE ROW BELOW IT WAS RIGHT.  It used
+#       to name *"the unbuilt `frequency`"* as the third waveform caller and
+#       omit `calc::riseTime`, whose `nth` 0 joined the deferral when issue 1639
+#       was fixed -- while band WD9's own derivation over the namespace has
+#       named all four callers all along.  `frequency` cannot be in a population
+#       derived over `listdefer` call sites at all, because `info procs
+#       ::calc::frequency` answers 0: a click on it reaches `calc::inert`, which
+#       is a DIFFERENT refusal.  Read the derivation, never this paragraph.
 #
 # R420  `dutyCycle`'s X axis is AN ARGUMENT WITH A DEFAULT -- the user's own
 #       words were *"Make it an option to the function. Default can be time the
@@ -294,6 +302,26 @@
 #        ONCE: issue 1639 made `calc::riseTime`'s `nth` 0 defer instead of
 #        raising, this band reddened naming the undriven caller, and the remedy
 #        was to DRIVE it rather than to relax the derivation.
+#   WD11 THE FIRST WIRED CALLER (stage J unit J1, PRODUCER ONLY).
+#        `calc::dutyCycle_scalar`'s DEFAULT cycle stops deferring and answers a
+#        REGISTERED two-column destination -- asserted on the DATABASE and never
+#        only on the disposition, because `calc::dutyCycle {v(lp)} 0.5 0 0 start`
+#        ALREADY answers `ok 1` with the series in `value` and R420's X in
+#        `sweep`, so a row asserting the disposition flip alone is GREEN against
+#        an implementation that deletes the three-line guard and returns that
+#        dict with no destination built and nothing registered.  Driven twice:
+#        on `v(lp)`, the one committed column whose two duty fractions DIFFER,
+#        and on a LONG synthetic series (hole H10) that a two-point one cannot
+#        replace.  Carries the answer's KEY SET, the registry slot count, the
+#        restore from a non-zero slot of three, and the DECLARED undropped slot.
+#        ⚠ THE RESTORE IS FENCED BY A PAIR OF THREE-SLOT ORDERS AND BY NEITHER
+#        ALONE, because a producer that restores with the TYPE WRITTEN DOWN --
+#        `switch <name> tran` -- was green on every other row in this file, all
+#        of which sit the user on a `tran` slot.  `wd_load3t` leaves the user on
+#        `tran` at slot 2 and `wd_load3a` leaves the user on `ac` at slot 2 with
+#        a `tran` slot at index 1, so whichever type a producer writes down, one
+#        of the two rows names the slot it landed on.  Measured in both
+#        directions, as live producers, not reasoned.
 #   WD10 Hygiene and shape: no `__calc_tmp*` and no `__wd_*` left in any
 #        inventory on any exit path; the helper is not named `calc::dest_*`; the
 #        producer's code names no `.calc` widget path, so it stays reachable
@@ -314,6 +342,14 @@
 #     fences for the implementation and vacuous against its absence.
 #   * BAND WD9 ENTIRELY.  It pins behaviour that ships today, against a change
 #     this stage is tempted to make.  That is its whole purpose.
+#   * BAND WD11's CONTROL ROW and the `atleast`/partition legs of the WD9 rows
+#     unit J1 moved.  The control says a NAMED cycle still answers a scalar and
+#     builds NOTHING, which is true before the wiring and must stay true after
+#     it: its job is to forbid a wholesale merge of the destination's keys into
+#     every answer, not to observe the wiring.  The partition leg's floor is
+#     over the UNION of the deferring and the wired callers, so it holds at four
+#     on both sides of the change -- which is the point of deriving it over the
+#     union rather than decrementing a floor over one half.
 #   * WD10's `calc::dest_*` row, its `cross_msg` arm sweep, its decommenter
 #     non-vacuity row and its `wd_dictsites` row, which is a claim about THIS
 #     FILE'S OWN TEXT and so has nothing to do with whether the feature exists.
@@ -360,6 +396,15 @@
 #     -- and that is unmeasurable on `tran`, whose own X name is `time`.  It
 #     still measures the GENERATOR and not a destination built from AC samples,
 #     so the hole above stands as written.
+#     ⚠⚠ AND A SECOND EXCEPTION NOW CLOSES THE REST OF IT, which is recorded
+#     here because leaving the hole as written would understate what runs: band
+#     WD11's last restore row drives `wd_load3a`, builds its request over the
+#     `ac` database's OWN `frequency` sweep and lands a destination from AC
+#     samples.  It exists because a producer that restores the user's slot with
+#     the type WRITTEN DOWN -- `switch <name> tran` -- was green on every other
+#     row in the file, all of which sit on a `tran` slot.  What stays unfenced
+#     of H5 is a destination built from an `op` measurement, which has no sweep
+#     column and so has no series to build one from.
 #  H6 `wd_code` IS A HEURISTIC, NOT A Tcl PARSER: it drops comment-only lines and
 #     a trailing comment whose preceding text is a complete script.  WD10's
 #     non-vacuity row shows it answers `yes` for a proc that ships today, leaves a
@@ -383,6 +428,40 @@
 #     nothing observable distinguishes a bulk read from a consistently per-point
 #     one except low-order bits.  WD6 fences the PRODUCER's door, which is a
 #     different door and is observable.
+# H10 ⚠⚠ TWO POINTS IS THE MOST `dutyCycle` CAN PRODUCE FROM A COMMITTED COLUMN,
+#     AND TWO IS NOT ENOUGH.  `v(sq)` has three rising crossings, so two
+#     complete periods, and `dataset 1` is identical; three is the most ANY
+#     committed column yields.  A two-point destination cannot catch a stride,
+#     an off-by-one inside the fill loop or a dropped middle sample, and gives
+#     the X list only two values to put in the wrong order.  Band WD11
+#     therefore drives a SECOND, LONGER series built by the shipped engine from
+#     the fixture's own `time` column, which costs this file the one thing every
+#     other number in it has: that series is derived ONCE, from the columns
+#     (this file's own D3 + D4 over a probe column carrying the same expression
+#     the verb is given), and NOT a second time from the deck -- a sine sampled
+#     on a 0.1 ms grid crosses where the LINEAR INTERPOLATION puts it, not where
+#     the closed form does, so a deck derivation would be a different claim.
+#     What the long series does buy is declared positively in the band: its
+#     twenty points make the count, the order and every neighbour's VALUE
+#     discriminating, where the two-point one makes only the count and the
+#     X order so.
+# H11 WHO FREES A DESTINATION THE USER IS LOOKING AT IS NOT DECIDED, AND BAND
+#     WD11 DOES NOT DECIDE IT.  A trace resolves its database by registry NAME
+#     (`wviewer::db_suffix` emits `%__calc_dest<N> table` into `node=`) and
+#     `wviewer::restore` cannot re-read it, so a producer that dropped the
+#     destination on its SUCCESS path would free the database the trace points
+#     at.  WD11 therefore asserts that the slot is STILL THERE after a
+#     successful answer, and the BAND removes it.  That is a declared leak with
+#     an owner (stage J unit J1b, which arms the viewer), not a fence.
+# H12 THE CLICK PATH IS UNFENCEABLE HERE AND ITS DEFECT IS REAL.
+#     `calc::fn_measure`'s success arm is unconditional -- `set num
+#     [calc::buf_set_number $v]` with no branch on the answer's shape and no
+#     numeric check in `buf_set_number` -- so on a tree carrying J1 alone a
+#     click on `dutyCycle` with the default cycle pastes the whole per-cycle
+#     LIST into the RPN buffer, violating R404 and R421 silently.  Both procs
+#     return early on `calc::has_win .calc.buf`, so headless they are no-ops and
+#     NOTHING in this file or in `test_calc_measure` can observe it; the fence
+#     belongs to the `dcases`-only suites and to unit J1b.
 #
 # Standalone from the repo ROOT, headless.  NOT a bare `./src/xschem`, which
 # inherits $DISPLAY and paints on the user's real screen:
@@ -963,6 +1042,197 @@ proc wd_calc_dest_procs {} {
     set out {}
     foreach p [pcall info procs ::calc::dest_*] { lappend out [namespace tail $p] }
     return [lsort $out]
+}
+
+# ---------------------------------------------------------------------------
+# BAND WD11's instruments.  Every one answers a WORD or a list this file
+# re-derives, never a reproducible number, for the reason `wd_distinct` records
+# -- and every one is a PROC rather than a ternary at the row site, for the
+# reason the `expr` warning above `wd_tailholds` records: a braced `expr` whose
+# branch is a command substitution answering `NOKEY-db` raises *invalid
+# bareword* and would abandon the whole band through `group`'s catch.
+# ---------------------------------------------------------------------------
+
+# an answer's key set, sorted, sentinel-safe.  NOTHING anywhere in this tree
+# asserted a measurement verb's key set before this band did -- the only
+# `dict keys` in any `test_calc_*` suite is over `calc::eval_rpn`'s answer -- so
+# the set is derived here and the band says which keys it chose and why.
+proc wd_keys {a} {
+    set d [wd_disp $a]
+    if {$d ne {refused} && $d ne {measured}} { return $d }
+    if {[catch {dict keys $a} k]} { return "NOTADICT:$a" }
+    return [lsort $k]
+}
+# `named` for a destination the producer minted, the value itself otherwise.
+# ⚠ A GLOB AND NEVER A LITERAL.  `__calc_dest<N>` carries the `wdestn` namespace
+# serial, which advances with every destination any band in this file built, so a
+# literal name would be a number this file's own earlier bands move -- and the
+# band order is not a thing a row may depend on.
+proc wd_destname {v} {
+    if {[string match __calc_dest* $v]} { return named }
+    return $v
+}
+# ...and the same word for the RETIRED temporary a measurement evaluated into,
+# which is a DIFFERENT name under a different prefix and is the whole point of
+# the key-set row: `dest` names something R402 already deleted, `db` names
+# something that is still registered.
+proc wd_tmpname {v} {
+    if {[string match __calc_tmp* $v]} { return tmp }
+    return $v
+}
+# `registered` / `absent`: is a slot of this name AND THIS TYPE in the inventory?
+# Both halves, because the fixture's three slots share one path and differ only
+# in type -- the same reason `calc::wave_dest_cur` captures the pair.
+proc wd_registered {name type} {
+    set s [wd_slots]
+    if {[string match ERR:* $s]} { return $s }
+    foreach e $s {
+        if {[lindex $e 1] eq $name && [lindex $e 2] eq $type} { return registered }
+    }
+    return absent
+}
+# `sized` when the destination's own point count IS the series length.
+# ⚠ THE INTEGER TEST COMES FIRST AND IS NOT BELT-AND-BRACES: `xschem raw points
+# 0` sets no result at all for a dataset out of range, so it answers the EMPTY
+# STRING, and a bare comparison on that raises.
+proc wd_sized {pts n} {
+    if {![string is integer -strict $pts]} { return "notacount:{$pts}" }
+    if {$pts == $n} { return sized }
+    return "pts:$pts want:$n"
+}
+# `twonames` when the two columns are both named and DIFFERENT, which is what
+# keeps `xschem raw add <yname>` off the sweep: handed a name the database
+# already has, that verb adds no column and OVERWRITES the existing one in place.
+proc wd_twonames {x y} {
+    if {$x eq {} || $y eq {}} { return "empty:{$x}|{$y}" }
+    if {$x eq $y} { return "equal:$x" }
+    return twonames
+}
+# `increasing` / `notincreasing:<i>` over a column read back out of a
+# destination.  A strictly rising X is the claim a two-point series cannot make
+# interesting -- two values are in order or reversed and nothing else -- which is
+# hole H10's reason for driving a long one too.
+proc wd_increasing {v} {
+    set n [wd_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    for {set i 1} {$i < $n} {incr i} {
+        set a [wd_at $v [expr {$i - 1}]]
+        set b [wd_at $v $i]
+        if {![wd_finite $a] || ![wd_finite $b]} { return "notanumber:$i" }
+        if {$b <= $a} { return "notincreasing:$i" }
+    }
+    return increasing
+}
+# the words `wd_distinct` answers for every ADJACENT pair of a series,
+# `lsort -unique`d, so the answer is `distinct` only when EVERY neighbour differs
+# by more than the tolerance.
+#
+# ⚠⚠ THIS IS THE LEG THAT MAKES AN ELEMENT-WISE COMPARISON MEAN ANYTHING, AND IT
+# IS HERE BECAUSE A SHIPPED ROW IN THIS FILE DID NOT HAVE IT.  Band WD8's
+# end-to-end row drove `v(sq)`, whose two duty fractions agree to a RELATIVE
+# 1.8e-15 against this file's own `WDTOL` of 1e-7 -- because the square is
+# periodic and every complete period has the same high time.  So its Y
+# comparison could not tell a correct column from one that wrote element 0 into
+# both points, or from one written BACKWARDS, and the row read as coverage of
+# the hand-off while failing to discriminate the hand-off's most obvious defect.
+# A row that compares a series element-wise must also say that its elements are
+# telling apart.
+proc wd_alldistinct {v {tol {}}} {
+    if {$tol eq {}} { set tol $::WDTOL }
+    set n [wd_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    set out {}
+    for {set i 1} {$i < $n} {incr i} {
+        lappend out [wd_distinct [wd_at $v [expr {$i - 1}]] [wd_at $v $i] $tol]
+    }
+    return [lsort -unique $out]
+}
+# ONE derived column, evaluated through the shipped engine and removed again, so
+# band WD11's long series has a derivation of ITS OWN rather than taking the
+# verb's word for it.  The prefix is `__wd_`, which `wd_probeleft` watches as a
+# SUITE defect, and never `__calc_tmp`, which belongs to R402 and which a probe
+# borrowing it would make every cleanup row lie about.
+proc wd_rpncol {rpn {dset 0}} {
+    catch {xschem raw del __wd_series}
+    if {[catch {xschem raw add __wd_series $rpn} rc]} { return "ERR:add:$rc" }
+    set v [wd_col __wd_series $dset]
+    catch {xschem raw del __wd_series}
+    return $v
+}
+# THE SAME THREE READS AS `wd_load3`, IN THE OPPOSITE ORDER, and the order is
+# the whole reason for a second loader rather than an argument to the first.
+#
+# `wd_load3` leaves the user on `op`, which has NO SWEEP COLUMN AT ALL, so a
+# `dutyCycle` driven from there is refused by `cross` for a reason that has
+# nothing to do with a destination -- which is the correction band WD8's own
+# end-to-end row records in its comment.  Reading `op`, `ac`, `tran` in that
+# order leaves the user on `tran` AT SLOT TWO OF THREE: the measurement is
+# possible from the user's own slot, and the slot is still non-zero, so both
+# wrong restores band WD0 measures stay distinguishable from the right one -- a
+# bare `xschem raw switch <name>` steps round-robin and `xschem raw switch_back`
+# lands on the destination.
+proc wd_load3t {} {
+    if {$::fixture eq {}} { return NOFIXTURE }
+    catch {xschem raw clear}
+    set out {}
+    foreach ty {op ac tran} {
+        if {[catch {xschem raw read $::fixture $ty} r]} { return "ERR:$ty:$r" }
+        lappend out $r
+    }
+    return $out
+}
+# THE THIRD READING ORDER, AND IT EXISTS BECAUSE A SABOTAGE SURVIVED THE OTHER
+# TWO.  `op`, `tran`, `ac` leaves the user on the `ac` READ at slot 2, with a
+# `tran` slot sitting at index 1.
+#
+# ⚠⚠ MEASURED AS A LIVE SABOTAGE, NOT REASONED.  A producer that restores the
+# user's slot with the type WRITTEN DOWN rather than carried --
+# `xschem raw switch [dict get $d prev] tran`, which is what an engineer writes
+# after reading that a bare one-argument switch is round-robin -- gives
+# `ALL PASS` on this suite and on `test_calc_measure` against `wd_load3t` alone,
+# because EVERY other path in band WD11 has the user sitting on a `tran` slot
+# and in `wd_load3t`'s order a hardcoded `tran` lands on the same INDEX and the
+# same TYPE the row expects.  It is the hardcoded-sweep-column defect this
+# suite already carries one band earlier, arriving a second time at the restore.
+#
+# SO THE TWO ORDERS TOGETHER ARE THE FENCE AND NEITHER IS ONE ALONE, which was
+# measured in both directions: a producer hardcoding `tran` is green on
+# `wd_load3t`'s row and lands on slot 1 here; a producer hardcoding `ac` is
+# green here and lands on slot 1 there.  Whichever type is written down, one of
+# the two rows names the slot it landed on instead of the user's.
+#
+# ⚠ A MEASUREMENT IS POSSIBLE FROM THE `ac` SLOT because `dutyCycle` reads its X
+# from the CURRENT database's own sweep column, which there is `frequency` and
+# not `time` -- so the row's request is built over `frequency` rather than
+# reused from the rows above, and this is the one place in the file where a
+# destination is built from AC samples (hole H5's second exception).
+proc wd_load3a {} {
+    if {$::fixture eq {}} { return NOFIXTURE }
+    catch {xschem raw clear}
+    set out {}
+    foreach ty {op tran ac} {
+        if {[catch {xschem raw read $::fixture $ty} r]} { return "ERR:$ty:$r" }
+        lappend out $r
+    }
+    return $out
+}
+# the angular frequency that fits `n` whole periods across a column's OWN span,
+# so the `ac` row's request carries no written-down frequency: the sweep's two
+# endpoints are read back out of the database every run.
+#
+# ⚠ A PROC AND NOT AN INLINE `expr`, for the reason the warning above
+# `wd_tailholds` records: the column is product-authored text, and an `ERR:`
+# sentinel or an empty column inside a braced `expr` RAISES and would abandon
+# the whole band through `group`'s catch instead of failing one row.  A sentinel
+# here travels into the RPN, where the verb refuses it and the row says so.
+proc wd_wspan {col n} {
+    set a [wd_at $col 0]
+    set b [wd_at $col end]
+    if {![wd_finite $a] || ![wd_finite $b]} { return "NOSPAN:{$a}|{$b}" }
+    if {$b <= $a} { return "NOSPAN:notincreasing" }
+    return [expr {2.0 * acos(-1) * double($n) / ($b - $a)}]
 }
 
 if {[catch {
@@ -1594,7 +1864,29 @@ group WD8 {
     # the row fails for a reason that has nothing to do with the destination.
     # The registry hazards are band WD3's subject; this row's subject is the
     # hand-off.
-    set g [wd_call dutyCycle {v(sq)} $L 0 0 start]
+    #
+    # ⚠⚠ AND IT DRIVES `v(lp)` AND NOT `v(sq)`, WHICH IS A MEASURED REPAIR OF
+    # THIS ROW RATHER THAN A CHANGE OF ITS SUBJECT.  As first shipped it fed
+    # `v(sq)`'s own two lists to the destination and compared the read-back
+    # element-wise -- and at THIS BAND'S OWN LEVEL of 1/3 `v(sq)`'s TWO DUTY
+    # FRACTIONS ARE THE SAME DOUBLE, bit for bit, because the square is periodic
+    # and every complete period has the same high time.  (At 0.5 they differ in
+    # the last bits, which is the figure first quoted here and it understated
+    # the hole; the shape is what matters and the shape is identity.)  So a
+    # producer that wrote element 0 into BOTH points, or wrote the Y column
+    # BACKWARDS, satisfied this row: the one end-to-end row in the file read as
+    # coverage of the hand-off and could not discriminate the hand-off's most
+    # obvious defect.  `v(lp)`'s duty at L = 0.5 differs between its two cycles
+    # by a relative 1.2e-4 and is the ONLY committed column on this fixture that
+    # differs at all; the four legs added below are what say so IN THE RUN
+    # rather than in this comment, and they are the same claim band WD11 makes
+    # about the wired caller.  The X half was never vacuous -- the two
+    # cycle-start times are 4 ms apart -- and it is kept unchanged.
+    set lp0 [wd_col {v(lp)} 0]
+    set derlp [wd_duty_derive $t0 $lp0 0.5]
+    set dutylp [wd_duty_get $derlp duty]
+    set startlp [wd_duty_get $derlp start]
+    set g [wd_call dutyCycle {v(lp)} 0.5 0 0 start]
     set h [wd_call wave_dest [wd_key $g sweep] [wd_val $g]]
     set dbnm [wd_key $h db] ; set xnm [wd_key $h xname] ; set ynm [wd_key $h yname]
     set gx {} ; set gy {}
@@ -1602,10 +1894,13 @@ group WD8 {
         set gx [wd_col $xnm 0] ; set gy [wd_col $ynm 0]
     }
     pcall xschem raw switch $::fixture tran
-    check "WD8 END TO END: dutyCycle's OWN two lists reach the destination and read back out of it, with nothing of this suite's derivation in between -- which is the claim R416's deferred surface has been waiting on" \
-        [list [wd_disp $g] [wd_disp $h] [wd_listcmp $gx $xstart $WDTOL] \
-              [wd_listcmp $gy $duty $WDTOL]] \
-        {measured measured ok ok}
+    check "WD8 END TO END: dutyCycle's OWN two lists reach the destination and read back out of it, with nothing of this suite's derivation in between -- which is the claim R416's deferred surface has been waiting on -- driven on v(lp), whose two duty fractions DIFFER, with BOTH columns' neighbours shown to be telling apart and a reversal of each shown NOT to satisfy the comparison, because on v(sq) the two fractions agree to a relative 1.8e-15 and this row then passed against a column filled with element 0 or filled backwards" \
+        [list [wd_disp $g] [wd_disp $h] [wd_listcmp $gx $startlp $WDTOL] \
+              [wd_listcmp $gy $dutylp $WDTOL] \
+              [wd_alldistinct $gy] [wd_alldistinct $gx] \
+              [wd_cmpword [lreverse $gy] $dutylp] \
+              [wd_cmpword [lreverse $gx] $startlp]] \
+        {measured measured ok ok distinct distinct distinct distinct}
     pcall wd_call wave_dest_drop $h
     check "WD8 R402 the band left no __calc_tmp* and no __wd_* behind, across its measured and refusing paths, and the single tran slot this band runs on is the current one again" \
         [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot]] {{} {} 1 0}
@@ -1630,7 +1925,15 @@ group WD9 {
     set s [pcall calc::cross_msg listdefer]
     check "WD9 the deferral sentence is ONE non-empty sentence in the house shape, which is what makes the identity rows below evidence rather than three empty strings compared against each other" \
         [list [expr {$s ne {} ? 1 : 0}] [wd_shape $s]] {1 ok}
-    check "WD9 EVERY deferring caller answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0, delay's nth 0 on a side, dutyCycle_scalar's default cycle and riseTime's nth 0 -- so splitting it per caller reddens here with a name, and rewording it costs nothing anywhere" \
+    # ⚠ THE FOURTH CALLER IS STILL DRIVEN HERE AFTER STAGE J WIRED IT, AND THAT
+    # IS DELIBERATE.  `calc::dutyCycle_scalar`'s default cycle no longer defers,
+    # so the honest move was NOT to drop it from this row -- dropping it would
+    # leave nothing asserting that it stopped saying the shared sentence, and the
+    # next reader could not tell a wired caller from a forgotten one.  It is
+    # driven and its two legs are INVERTED: `measured`, and an identity against
+    # `listdefer` of 0.  A re-deferral would redden here, which is a claim
+    # nothing else in the file makes.
+    check "WD9 EVERY caller STILL WAITING answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0, delay's nth 0 on a side and riseTime's nth 0 -- while dutyCycle_scalar's DEFAULT CYCLE, which stage J wired, MEASURES and carries none of it: so splitting the sentence per caller reddens here with a name, rewording it costs nothing anywhere, and a caller sliding back into the deferral reddens here too" \
         [list [wd_disp [set a [wd_call cross_scalar {v(sq)} 0.5 0 rising]]] \
               [string equal [wd_msg $a] $s] \
               [wd_disp [set b [wd_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
@@ -1639,10 +1942,11 @@ group WD9 {
               [string equal [wd_msg $c] $s] \
               [wd_disp [set d [wd_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
               [string equal [wd_msg $d] $s]] \
-        {refused 1 refused 1 refused 1 refused 1}
-    check "WD9 ...and pairwise along the whole chain, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means" \
-        [list [string equal [wd_msg $a] [wd_msg $b]] [string equal [wd_msg $b] [wd_msg $c]] \
-              [string equal [wd_msg $c] [wd_msg $d]]] {1 1 1}
+        {refused 1 refused 1 measured 0 refused 1}
+    pcall wd_call wave_dest_drop $c
+    check "WD9 ...and pairwise along the whole chain of the callers still waiting, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means -- plus the negative half for the wired one, whose sentence must equal NEITHER cross_msg's nor its siblings'" \
+        [list [string equal [wd_msg $a] [wd_msg $b]] [string equal [wd_msg $b] [wd_msg $d]] \
+              [string equal [wd_msg $c] $s] [string equal [wd_msg $c] [wd_msg $a]]] {1 1 0 0}
     # ⚠ THE CALLER SET IS DERIVED FROM THE NAMESPACE, NOT LISTED, because a hand-kept
     # list is the same defect one level up -- AND THE DERIVATION HAS NOW EARNED ITS
     # KEEP, which is recorded because the previous revision of this comment predicted
@@ -1653,21 +1957,311 @@ group WD9 {
     # of three, naming the undriven caller.  The remedy was to DRIVE the fourth caller
     # in the rows above, never to weaken the derivation; without it the new caller
     # would have inherited a shared sentence nothing checks.
+    # ⚠⚠ AND THE FLOOR IS NOW OVER THE UNION, WHICH IS A RE-DERIVATION AND NOT A
+    # DECREMENT.  Stage J REMOVES members from the deferring set, so the old
+    # `atleast 4` leg over that set alone would have had to be edited down to 3
+    # by every unit of the stage -- and a floor that each unit lowers is not a
+    # floor.  The two sets are derived in ONE walk, by two regexps over the same
+    # decommented bodies: a caller either still says the shared sentence or it
+    # reaches `calc::wave_dest`.  The UNION is the population the derivation has
+    # always found, so the floor holds at four on both sides of every unit, and a
+    # caller that fell out of both sets -- wired to something else, or wired to
+    # nothing -- reddens the union leg naming itself.
+    #
+    # ⚠ THE `wave_dest` PATTERN EXCLUDES `_`, so `calc::wave_dest_answer`,
+    # `_refusal`, `_cur`, `_restore` and `_drop` do NOT match it.  Without that
+    # the producer's own five internal procs would all read as wired callers and
+    # the union leg would be the trivially-true claim that `::calc::` contains
+    # the destination's own implementation.
     set wd_defcallers {}
+    set wd_wiredcallers {}
     foreach pr [lsort [pcall info procs ::calc::*]] {
         set b [pcall info body $pr]
         if {[string match ERR:* $b]} continue
-        if {[regexp {cross_msg +listdefer} [pcall wd_code $b]]} {
+        set b [pcall wd_code $b]
+        if {[regexp {cross_msg +listdefer} $b]} {
             lappend wd_defcallers [namespace tail $pr]
         }
+        if {[regexp {calc::wave_dest[^A-Za-z0-9_]} $b]} {
+            lappend wd_wiredcallers [namespace tail $pr]
+        }
     }
-    check "WD9 the set of callers that defer behind that sentence is DERIVED over the namespace and is exactly the set this band drives -- so a FIFTH deferring caller reddens here naming itself, instead of inheriting a shared sentence nothing checks" \
-        [list $wd_defcallers [wd_atleast [llength $wd_defcallers] 4]] \
-        {{cross_scalar delay dutyCycle_scalar riseTime} atleast}
+    set wd_bothsides [lsort -unique [concat $wd_defcallers $wd_wiredcallers]]
+    check "WD9 the callers that defer behind that sentence and the callers that now ANSWER a destination PARTITION the four this derivation has always found -- both sets taken over the namespace in one walk and neither listed here, with the non-vacuity floor over their UNION so that wiring a caller MOVES it from one set to the other rather than lowering a floor: a FIFTH caller of either kind reddens here naming itself, and so does a caller that fell out of both" \
+        [list $wd_defcallers $wd_wiredcallers $wd_bothsides \
+              [wd_atleast [llength $wd_bothsides] 4]] \
+        [list {cross_scalar delay riseTime} {dutyCycle_scalar} \
+              {cross_scalar delay dutyCycle_scalar riseTime} atleast]
     check "WD9 R402 the band left no __calc_tmp* and no __wd_* behind" \
         [list [wd_leaked] [wd_probeleft]] {{} {}}
 }
 
+# =========================================================================
+group WD11 {
+    # STAGE J UNIT J1 -- THE FIRST WIRED CALLER, AND THE PRODUCER HALF ONLY.
+    # `calc::dutyCycle_scalar`'s DEFAULT cycle stops deferring and answers a
+    # destination.  No click, no viewer, no `calc::fn_measure` change: both that
+    # proc and `calc::buf_set_number` return early on `calc::has_win .calc.buf`,
+    # so headless they are no-ops and NOTHING on the counted arm can observe
+    # what a wave answer does to the RPN buffer or the status line (hole H12).
+    #
+    # ⚠⚠ EVERY ROW HERE ASSERTS THE REGISTERED DATABASE AND NOT ONLY THE
+    # DISPOSITION, AND THAT IS THE WHOLE DESIGN OF THE BAND.  Measured on the
+    # tree this band was written against: `calc::dutyCycle {v(lp)} 0.5 0 0
+    # start` ALREADY answers `ok 1` today, with the per-cycle series in `value`
+    # and R420's X series in `sweep`.  So a row asserting the disposition flip --
+    # `refused` becoming `measured` -- or even the disposition plus the two
+    # series, goes GREEN against an implementation that deletes
+    # `dutyCycle_scalar`'s three-line guard and returns `calc::dutyCycle`'s own
+    # dict: no destination built, nothing registered, and a LIST pasted into the
+    # user's buffer the moment a window exists.  That is the most likely wrong
+    # implementation of this unit, so every row below reaches for a non-empty
+    # `db`, the destination's own `xschem raw points 0` AFTER SWITCHING TO IT,
+    # and both columns read back element-wise OUT OF IT.
+    #
+    # ⚠ READ BACK WITH A TOLERANCE AND NEVER WITH `string equal`.  Measured:
+    # X[0] goes in as 0.0011279962723246316 and reads back as
+    # 0.001127996272324632, because `xschem raw values` prints "%.16g".  A row
+    # comparing the read-back against the verb's own list byte-for-byte is RED
+    # ON CORRECT CODE.  The X column is compared at `WDTOL_TIME` and the Y
+    # column at `WDTOL`, which is also what band WD6 -- whose subject IS the
+    # precision door -- establishes is the honest pair.
+    #
+    # ⚠ AND THE ANSWER CARRIES TWO DESTINATION-SHAPED KEYS, WHICH IS NOT A
+    # DEFECT AND IS EASY TO MEASURE THE WRONG ONE OF.  `calc::dutyCycle`'s
+    # cycle-0 dict ALREADY holds `dest __calc_tmp<N>` -- the temporary
+    # `calc::cross` minted AND DELETED under R402 -- so the live destination has
+    # to arrive under a key of its own.  THIS FILE CHOOSES `db`, the name
+    # `calc::wave_dest` already answers with, and requires `dest` to be left
+    # exactly as the measurement proc wrote it: a RETIRED name under the R402
+    # prefix.  Row MT9b of test_calc_measure.tcl reads `dest` BY NAME to tell a
+    # deferral from an absence, so a wiring that overwrote `dest` with the live
+    # destination would make that key mean two different things depending on the
+    # verb.  The key-set row below is the first row anywhere in this tree to
+    # assert a measurement verb's key set, and it is deliberately EXACT so that
+    # unit J1b adding §4's `shape` key reddens it and widens it on purpose.
+    #
+    # ⚠⚠ THAT WIDENING HAS NOW HAPPENED, AND THE SEQUENCING IS LOAD-BEARING.
+    # The set below carries `shape`, so the PRODUCER must declare it in the same
+    # commit that widens this row -- the two cannot be split, because a producer
+    # that merges the destination's keys without `shape` reddens this row while
+    # being otherwise correct, and a row widened ahead of the producer reddens a
+    # gate for a key nothing sets yet.  WHAT ROUTES ON IT lives in band MT12 of
+    # tests/headless/test_calc_measure.tcl, which is the counted-arm fence over
+    # `calc::fn_sink`; this row only asserts that the verb SAYS what shape its
+    # answer is.
+    pcall wd_load1
+    set L 0.5
+    set t0 [wd_col time 0]
+    set lp0 [wd_col {v(lp)} 0]
+    set der [wd_duty_derive $t0 $lp0 $L]
+    set dy [wd_duty_get $der duty]
+    set dx [wd_duty_get $der start]
+    set a [wd_call dutyCycle_scalar {v(lp)} $L]
+    set adb [wd_key $a db]
+    set axn [wd_key $a xname]
+    set ayn [wd_key $a yname]
+    set apts {}
+    set apx {}
+    set apy {}
+    if {[pcall xschem raw switch $adb table] eq {1}} {
+        set apts [pcall xschem raw points 0]
+        set apx [wd_col $axn 0]
+        set apy [wd_col $ayn 0]
+    }
+    pcall xschem raw switch $::fixture tran
+    check "WD11 R419/R420 dutyCycle_scalar's DEFAULT cycle stops deferring and answers a REGISTERED two-column destination rather than a bare list: the answer names a database, its two column names differ, the database's OWN point count is the series length, and BOTH columns read back out of it element-wise -- the X at the time tolerance and the Y at the series one -- with the user's own slot current again afterwards.  Driven on v(lp) and NOT on v(sq), whose two fractions agree to a relative 1.8e-15 so that the distinctness leg below would answer `same`" \
+        [list [wd_disp $a] [wd_destname $adb] [wd_twonames $axn $ayn] \
+              [wd_sized $apts [llength $dx]] \
+              [wd_listcmp $apx $dx $WDTOL_TIME] \
+              [wd_listcmp $apy $dy $WDTOL] \
+              [wd_alldistinct $apy] \
+              [wd_curslot]] \
+        {measured named twonames sized ok ok distinct 0}
+    check "WD11 ...and the answer's KEY SET is exactly the measurement's own keys plus the destination's plus the one key the SURFACE routes on -- WIRING_CONTRACT section 4's `shape`, WIDENED HERE DELIBERATELY by the unit that added the router rather than left to be noticed, because the surface must read the shape off an explicit DECLARATION and inferring it from the value's list length would mis-route a legitimate one-cycle waveform into the buffer -- with `dest` left holding the RETIRED __calc_tmp the measurement evaluated into -- a name R402 has already deleted, which is why no __calc_tmp survives in the inventory -- and `db` holding the LIVE __calc_dest that IS registered: the two keys are different names and mean different things, so a wiring that put the live destination in `dest` reddens here instead of quietly redefining the key MT9b reads.  The last leg is the CONTROL for the distinctness instrument the row above leans on, which must be able to answer `same` or its `distinct` is a constant" \
+        [list [wd_keys $a] [wd_tmpname [wd_key $a dest]] [wd_leaked] \
+              [wd_destname $adb] [wd_registered $adb table] \
+              [wd_alldistinct [list 1.0 1.0]]] \
+        [list {absent dataset db dest msg n ok shape sweep type value xname yname} tmp {} \
+              named registered same]
+    check "WD11 R402 the destination is a REGISTRY SLOT and every existing leak fence in this batch is BLIND to it, which is measured rather than argued: wd_leaked and wd_probeleft both answer EMPTY -- they glob __calc_tmp*/__wd_* over the CURRENT database's COLUMN names, and the destination's columns are calcx/calcy in a database nobody switched to -- while the slot count has gone UP by one and the new slot's sim_type is the one odd type that works.  A leak fence for this stage counts SLOTS" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_slottype 1] \
+              [wd_registered $adb table] [wd_curslot]] \
+        {{} {} 2 table registered 0}
+    check "WD11 ...and the stage ANSWERS the destination WITHOUT DROPPING IT, which is declared and not an oversight: a trace resolves its database by registry NAME and wviewer::restore cannot re-read it, so a drop on the SUCCESS path would free the database the user is looking at.  The slot is still there after the answer, the answer is enough to drop it, and dropping it leaves the user's slot current -- so WHO drops it is unit J1b's question and this row is the fence that it was not answered here" \
+        [list [wd_nslots] [wd_call wave_dest_drop $a] [wd_nslots] \
+              [wd_registered $adb table] [wd_curslot] [wd_leaked]] \
+        {2 1 1 absent 0 {}}
+    # THE LONG SERIES.  Hole H10's answer, and the reason the band is two rows
+    # of the same shape rather than one.
+    #
+    # ⚠⚠ TWO POINTS IS THE MOST ANY COMMITTED COLUMN YIELDS, AND TWO IS NOT
+    # ENOUGH.  `v(sq)` has three rising crossings, so two complete periods;
+    # `dataset 1` is identical; three is the most anything on this fixture
+    # gives.  Two points cannot catch a stride, an off-by-one in the fill loop
+    # or a dropped middle sample, and give the X list only two values to put in
+    # the wrong order.  So this row builds a TWENTY-point series out of the
+    # fixture's own `time` column through the shipped RPN engine -- `sin()` is
+    # one of its ~52 operators -- and hands the SAME expression to the verb and
+    # to this file's own D3 + D4 derivation, the latter through `wd_rpncol`,
+    # which evaluates it into a probe column and removes it again.
+    #
+    # ⚠ THE FREQUENCY AND THE LEVEL ARE CHOSEN AND THE CHOICE IS MEASURED, not
+    # decorative.  2100 Hz on the 0.1 ms grid puts every crossing STRICTLY
+    # between two samples (so the interpolation is genuinely exercised) and is
+    # under the grid's Nyquist, while the coarse 4.8 samples per period make the
+    # twenty duty fractions SCATTER: the closest adjacent pair differs by a
+    # relative 1.6e-3, four orders outside `WDTOL`, which is what the
+    # `wd_alldistinct` leg asserts and what makes the element-wise comparison
+    # discriminating.  A level of 0 would have put a crossing on top of the
+    # samples where sin is within 1e-13 of zero.
+    #
+    # ⚠ AND THE CONSTANT IS COMPUTED, never written down: the house rule is that
+    # a number in a suite is either re-measured every run or absent.
+    pcall wd_load1
+    set wd_lw [expr {2.0 * acos(-1) * 2100.0}]
+    set wd_lrpn [list time $wd_lw * sin()]
+    set wd_llev 0.25
+    set lser [wd_rpncol $wd_lrpn 0]
+    set lder [wd_duty_derive [wd_col time 0] $lser $wd_llev]
+    set ldy [wd_duty_get $lder duty]
+    set ldx [wd_duty_get $lder start]
+    set b [wd_call dutyCycle_scalar $wd_lrpn $wd_llev]
+    set bdb [wd_key $b db]
+    set bpts {}
+    set bpx {}
+    set bpy {}
+    if {[pcall xschem raw switch $bdb table] eq {1}} {
+        set bpts [pcall xschem raw points 0]
+        set bpx [wd_col [wd_key $b xname] 0]
+        set bpy [wd_col [wd_key $b yname] 0]
+    }
+    pcall xschem raw switch $::fixture tran
+    check "WD11 ...and the same claim on a series LONG enough to be worth making: many times more points than any committed column can give, out of the fixture's own time column through the shipped engine, where the destination's point count is the count the derivation found, both columns read back element-wise in ORDER, the X column is strictly increasing and every adjacent Y differs -- so a stride, an off-by-one in the fill loop, a dropped middle sample and a reversal are each a different failure here, which is exactly what a two-point series cannot say.  The length floor is DERIVED from the two-point series this band already measured, four times over, rather than written down" \
+        [list [wd_disp $b] [wd_destname $bdb] \
+              [wd_sized $bpts [llength $ldx]] \
+              [wd_atleast [llength $ldx] [expr {4 * [llength $dx]}]] \
+              [wd_listcmp $bpx $ldx $WDTOL_TIME] \
+              [wd_listcmp $bpy $ldy $WDTOL] \
+              [wd_increasing $bpx] [wd_alldistinct $bpy]] \
+        {measured named sized atleast ok ok increasing distinct}
+    # ⚠ THE ROW BELOW IS A CHECK ON THE INSTRUMENT AND ITS NAME USED TO CLAIM
+    # MORE, which is this tree's own *name describes coverage, not method* trap
+    # in miniature and was caught by driving a live constant-y producer.  Its
+    # middle two legs build `lrepeat <n> <the DESTINATION's own element 0>`, so
+    # against a producer that really did fill the column with its first element
+    # the comparand IS the column and the legs answer `distinct` -- exactly what
+    # the expectation says -- and DO NOT MOVE.  They are evidence that
+    # `wd_cmpword` separates a constant column from the derivation at all, not a
+    # fence on a constant fill.  THE FENCE ON A CONSTANT FILL IS THE
+    # `wd_alldistinct` LEG OF THE ROW ABOVE, which answers `same` there; both
+    # legs of the keystone and of the long-series row moved on that sabotage.
+    check "WD11 ...and the INSTRUMENT the two element-wise legs above lean on, asserted in the run rather than in a comment: the very same comparison answers `distinct` for each column REVERSED and for a constant column, and `same` for the two columns as they were read back -- so `wd_cmpword` is separating the derivation from the two wrong shapes it is given, and it answers WORDS so no reproducible number lands in the verdict.  The constant legs are built from the DESTINATION's own element 0, so they are an instrument check and not a fence on a constant fill: that fence is the distinctness leg of the row above" \
+        [list [wd_cmpword [lreverse $bpx] $ldx $WDTOL_TIME] \
+              [wd_cmpword [lreverse $bpy] $ldy $WDTOL] \
+              [wd_cmpword [lrepeat [wd_len $ldx] [wd_at $bpx 0]] $ldx $WDTOL_TIME] \
+              [wd_cmpword [lrepeat [wd_len $ldy] [wd_at $bpy 0]] $ldy $WDTOL] \
+              [wd_cmpword $bpx $ldx $WDTOL_TIME] [wd_cmpword $bpy $ldy $WDTOL]] \
+        {distinct distinct distinct distinct same same}
+    pcall wd_call wave_dest_drop $b
+    check "WD11 R402 the long series' probe column is GONE -- wd_rpncol minted __wd_series through the engine, read it and deleted it -- and the destination the band dropped took its slot with it, so the registry is the single tran slot this half of the band runs on and it is current" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot] \
+              [wd_registered $bdb table]] \
+        {{} {} 1 0 absent}
+    # THE RESTORE, FROM A NON-ZERO SLOT OF THREE.
+    #
+    # ⚠ THREE LOADS AND THE USER ON SLOT TWO, which is the band's own non-vacuity
+    # and is forced by two SEPARATE hazards band WD0 measures on the bare verbs.
+    # With the user on slot 0 the question *"is the user's slot current again?"*
+    # answers YES whatever happened.  With only two slots it answers yes by
+    # accident, because a bare `xschem raw switch <name>` steps ROUND-ROBIN and
+    # from slot 1 of 2 that lands on slot 1 -- the right answer for the wrong
+    # reason.  And `xschem raw switch_back` after a successful destination lands
+    # ON THE DESTINATION, measured, because `xschem raw new` sets
+    # `extra_prev_idx` to the slot it left.
+    #
+    # ⚠⚠ THIS ROW ASSERTS THE CURRENT SLOT AND SAYS NOTHING ABOUT `prev`, AND
+    # THAT IS A DELIBERATE EXCLUSION RATHER THAN AN OVERSIGHT.  `switch_back`
+    # landing on the destination is a PRE-EXISTING defect in
+    # `calc::wave_dest_restore`, which puts back one half of a registry cursor
+    # that is a pair; it is filed as its own unit.  A row here asserting that
+    # `switch_back` returns the user to their previous slot would be RED ON
+    # CORRECT J1 CODE and would make this stage's red ambiguous, which is the
+    # one thing a red-first transcript cannot afford.
+    pcall wd_load3t
+    set c [wd_call dutyCycle_scalar {v(lp)} $L]
+    set cdb [wd_key $c db]
+    check "WD11 the user's own slot is theirs again after the default cycle lands a destination, driven from slot TWO of THREE -- the fixture read as op, ac and tran in that order so that the measurement is possible from the user's slot while the slot is still non-zero, because from there a bare raw switch steps round-robin and switch_back lands on the destination, so neither wrong restore can pass.  The destination is APPENDED as a fourth slot, typed table, and the user's tran slot is untouched at index two" \
+        [list [wd_disp $c] [wd_destname $cdb] [wd_curslot] [wd_nslots] \
+              [wd_slottype 3] [wd_slottype 2] [wd_slottype 0] \
+              [wd_registered $cdb table]] \
+        {measured named 2 4 table tran op registered}
+    check "WD11 ...and dropping it from the non-zero slot puts the user back there too, which is TWO switches and not one because raw clear forces the current slot to 0 whatever it was -- so a dropper that switched once would leave the user on the tran slot's index 0 neighbour, which on this registry is the op slot and is a different analysis" \
+        [list [wd_call wave_dest_drop $c] [wd_curslot] [wd_nslots] \
+              [wd_slottype 2] [wd_registered $cdb table]] \
+        {1 2 3 tran absent}
+    # THE SAME RESTORE CLAIM FROM A SLOT THAT IS NOT A `tran` ONE, and it is here
+    # because a sabotage survived every row above it.
+    #
+    # ⚠⚠ A RESTORE WITH THE TYPE WRITTEN DOWN -- `xschem raw switch <name> tran`
+    # -- IS GREEN ON ALL ELEVEN ROWS ABOVE.  Every other path in this band has
+    # the user on a `tran` slot, and in `wd_load3t`'s `op`,`ac`,`tran` order the
+    # written-down `tran` lands on the same INDEX and the same TYPE the row
+    # expects, so it is indistinguishable from carrying the user's own type.
+    # Measured as a live producer: `ALL PASS` on this suite and on
+    # `test_calc_measure`, with no row anywhere in either of them moving -- the
+    # SHAPE and not the count, because a count in a comment is a figure nothing
+    # re-checks.  It is a real, reachable,
+    # user-visible defect -- a user on the `ac` read of a three-slot registry is
+    # silently moved onto the `tran` analysis of the same file -- and it is the
+    # hardcoded-sweep-column defect of band WD4 arriving a second time, at the
+    # restore instead of at the generator.
+    #
+    # ⚠ SO THE FENCE IS THE PAIR OF ORDERS AND NEITHER ROW ALONE, measured in
+    # both directions: hardcoding `tran` is green on the row above and lands on
+    # slot 1 here; hardcoding `ac` is green here and lands on slot 1 there.  The
+    # `wd_slottype` legs are what say the two fixtures really differ, so the
+    # pairing cannot rot into two copies of the same claim.
+    #
+    # ⚠ AND THE OTHER FOUR `wd_curslot` LEGS IN THIS BAND ARE NOT RESTORE
+    # COVERAGE, which is worth saying where a reader meets them: the keystone,
+    # the slot-count row, the no-drop row and the probe-gone row all read the
+    # current slot AFTER this band has itself issued `xschem raw switch
+    # $::fixture tran`, a name-AND-type switch that lands correctly whatever the
+    # producer did.  Measured: with the mid-life restore deleted outright the
+    # user is left parked ON the destination and the keystone's `wd_curslot` leg
+    # is still green.  Those legs fence a LEAK -- a destination left current --
+    # and the restore is fenced by these two rows and nothing else.
+    pcall wd_load3a
+    set wd_af [wd_col frequency 0]
+    set wd_arpn [list frequency [wd_wspan $wd_af 5] * sin()]
+    set g [wd_call dutyCycle_scalar $wd_arpn 0.25]
+    set gdb [wd_key $g db]
+    check "WD11 ...and the user's own slot is read back BY TYPE rather than written down, driven from a registry whose slot TWO is the `ac` read with a `tran` slot at index ONE for a hardcoded spelling to land on -- so this row and the one above forbid between them any restore that names an analysis type, because no single type is right in both orders and whichever one is written down, one of the two rows names the slot it landed on.  The request is built over the ac database's OWN frequency sweep, read back every run, because that is the column dutyCycle takes its X from there" \
+        [list [wd_disp $g] [wd_destname $gdb] [wd_curslot] \
+              [wd_slottype 2] [wd_slottype 1] [wd_nslots] [wd_slottype 3] \
+              [wd_registered $gdb table]] \
+        {measured named 2 ac tran 4 table registered}
+    pcall wd_call wave_dest_drop $g
+    # THE CONTROL, AND IT PASSES BOTH BEFORE AND AFTER THE WIRING.
+    #
+    # Its job is NOT to observe the wiring -- it is to forbid the wholesale merge
+    # that is the other plausible wrong implementation of this unit: merging the
+    # destination's keys into EVERY answer, so that a named cycle, a refusal and
+    # an absence all grow an empty `db`.  A named cycle is R404's scalar, it
+    # builds nothing, and its key set is the one `calc::dutyCycle` has always
+    # answered with.
+    pcall wd_load1
+    set e [wd_call dutyCycle_scalar {v(lp)} $L 1]
+    set f [wd_call dutyCycle_scalar {v(lp)} 2.0]
+    check "WD11 the CONTROL: a NAMED cycle is the scalar it always was and builds NO destination -- no db key at all, the registry still the single tran slot -- and neither does the default cycle at a level the wave never reaches, which answers an ABSENCE: so the wiring landed on the default-cycle arm of a request that HAS a series, and not on every call" \
+        [list [wd_disp $e] [wd_key $e db] [wd_is $e [lindex $dy 0]] [wd_keys $e] \
+              [wd_key $f db] [wd_nslots] [wd_leaked]] \
+        [list measured NOKEY-db ok {absent dataset dest msg ok sweep value} \
+              NOKEY-db 1 {}]
+    check "WD11 R402 the whole band left no __calc_tmp*, no __wd_* and no destination slot behind, across its measured, absent, dropped and three-slot paths" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot]] {{} {} 1 0}
+}
 # =========================================================================
 group WD10 {
     # Hygiene and shape.  Runs last.

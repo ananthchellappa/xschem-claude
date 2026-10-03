@@ -389,6 +389,32 @@
 #        tests/headless/test_calc_widgets.tcl, both `dcases` ALONE — so only the
 #        gate's DISPLAY arm verifies those, and a `--nogui` number proves nothing
 #        about them.
+#   MT12 stage J unit J1b / R404 / R421 — `calc::fn_sink`, THE ROUTING DECISION
+#        for an answer that is a WAVE, and the second half of the stage that
+#        wires the destination to the verbs that used to refuse.  A PURE
+#        predicate with no Tk in it, so it gates on BOTH arms, and that is the
+#        whole reason it was factored out of `calc::fn_measure`: that proc and
+#        `calc::buf_set_number` BOTH return early on `calc::has_win .calc.buf`,
+#        so a shape branch left inside either is observable on a gate's DISPLAY
+#        arm and nowhere else, and the person this tree is built for reads the
+#        transcript.  The CLOSED vocabulary derived from the proc's own literal
+#        `return` words; the decision over every disposition that vocabulary
+#        admits, fail-closed on both an unknown shape and a non-number; the
+#        cases that tell a DECLARATION apart from an inference over the value's
+#        list LENGTH, which WIRING_CONTRACT section 4 rejects by name; one
+#        sentence per disposition that reaches the user, derived over the
+#        vocabulary rather than listed; the destination sentence NAMING the
+#        destination, never its words; the `calc::arg_msg` arm sweep, which is
+#        the only behavioural confirmation that no comment landed between two of
+#        its switch patterns; and two derived SUBSET claims over the namespace —
+#        no proc pastes into the buffer without asking where the answer goes,
+#        and no caller builds a destination without declaring the shape.
+#        ⚠ WHAT THIS BAND CANNOT SEE is the ACT rather than the DECISION: that
+#        the buffer is really left UNTOUCHED on a wave answer, and that the
+#        sentence really reaches `.calc.status.msg`.  Both are display-only for
+#        the reason above and belong to band S28 of
+#        tests/headless/test_calc_skeleton.tcl and band CW14 of
+#        tests/headless/test_calc_widgets.tcl, both `dcases` ALONE.
 #
 # ⚠ WHICH ROWS OUTSIDE MT0 AND MT1 PASS WITH NO FEATURE PRESENT, DECLARED RATHER
 # THAN LEFT FOR A READER TO NOTICE, because a row that is green on the red run is
@@ -417,6 +443,12 @@
 #     offers is one the verb ACCEPTS" — is HALF vacuous today and says so in its
 #     own output: its two non-member legs already read `refused`, and only its
 #     member count is red, which is the direction that needs the feature.
+#   * MT12's R402 inventory row, which drives no fixture and loads no database
+#     at all, so nothing in it can mint a temporary whether `calc::fn_sink`
+#     exists or not.  ⚠ IT IS THE ONLY ONE IN THAT BAND: MT12's `calc::arg_msg`
+#     arm sweep carries non-vacuity legs that pass today, but the row as a whole
+#     is RED because the arm the routing vocabulary requires does not exist, so
+#     it is not in this list.
 #   * MT1's TWO DERIVATION SELF-CHECKS, each named `DERIVATION SELF-CHECK` in its
 #     own row name: they are arithmetic over this file's deck procs with no column
 #     and no product in them, so no product change can redden either.  They assert
@@ -661,6 +693,22 @@ proc mt_atleast {v n} {
 proc mt_distinct {a b} {
     if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}|{$b}" }
     return [expr {[near $a $b $::MTTOL] eq {ok} ? {same} : {distinct}}]
+}
+# `named` for a destination a wired measurement verb minted, the value itself
+# otherwise -- the word MT8 asserts once stage J's first unit stops deferring
+# the default cycle.
+#
+# ⚠ A GLOB AND NOT A LITERAL, because `__calc_dest<N>` carries a namespace
+# serial that advances with every destination any band built, so a literal name
+# would be a figure this file's own band order moves.
+#
+# ⚠⚠ AND A PROC AND NOT A TERNARY AT THE ROW SITE, for the same reason
+# `mt_distinct` is one: a braced `expr` whose false branch is a command
+# substitution answering `NOKEY-db` raises *invalid bareword*, which `group`'s
+# catch turns into an ABANDONED BAND rather than one failed row.
+proc mt_destname {v} {
+    if {[string match __calc_dest* $v]} { return named }
+    return $v
 }
 # ...the same claim where the candidate is a whole LIST, which is dutyCycle's
 # percent spelling.  Carries the disposition through, so a sentinel cannot
@@ -1887,11 +1935,36 @@ group MT8 {
     # ruled that each verb speaks for itself THIS ROW IS WHERE THAT LANDS -- it
     # reddens, and the fix is to compare against whatever the ruling makes the one
     # deferral sentence, not to drop the row.
-    check "MT8 D8 the UI surface defers the wave case behind the SAME sentence cross already uses for nth=0, rather than truncating the series to its first element" \
+    # ⚠⚠ STAGE J UNIT J1 INVERTED THE FIRST TWO LEGS OF THIS ROW, AND THE ROW WAS
+    # NOT DROPPED.  It used to assert that the surface DEFERS the wave case
+    # behind cross's own sentence; the wiring is exactly that reversal, which the
+    # shipped comment above `calc::riseTime` predicted in those words.  What the
+    # row asserts now is the other side of the same claim and is strictly more:
+    # the default cycle MEASURES, it names a destination of its OWN under the
+    # `__calc_dest` prefix, and `calc::cross_msg listdefer` was RETIRED for this
+    # caller rather than REWORDED -- the identity leg is 0, not a comparison
+    # against a new string -- so the sentence stays shared by the three callers
+    # still waiting, which is what band WD9 of test_calc_wave_dest.tcl derives.
+    # A re-deferral reddens here, and so does a wiring that answered a number
+    # with no database behind it.
+    #
+    # ⚠ THE DESTINATION IS DROPPED BY THIS BAND AND NOT BY THE VERB.  Unit J1
+    # deliberately does not drop on its success path -- a trace resolves the
+    # database by registry NAME, so dropping would free what the user is looking
+    # at -- so the slot survives the call, and the band removes it before its own
+    # R402 row.  ⚠ Note that the R402 row CANNOT SEE it either way: `leaked` and
+    # `probeleft` glob column names out of the CURRENT database, and a leaked
+    # destination is a SLOT whose columns live in a database nobody switched to.
+    # Band WD11 of test_calc_wave_dest.tcl counts slots, which is the only
+    # instrument in this batch that can.
+    check "MT8 D8 the UI surface NO LONGER defers the wave case: the DEFAULT cycle measures and names a REGISTERED destination of its own, while the shared sentence is RETIRED here rather than reworded -- so the identity leg is 0 for this caller and the three still waiting keep it unchanged -- and a NAMED cycle is the scalar it always was, with no destination key at all" \
         [list [mt_disp [set a [mt_call dutyCycle_scalar {v(sq)} 0.5]]] \
               [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
+              [mt_destname [mt_key $a db]] \
               [mt_disp [set b [mt_call dutyCycle_scalar {v(sq)} 0.5 1]]] \
-              [mt_is $b [lindex [mt_duty_series $t0 $q0 0.5] 0]]] {refused 1 measured ok}
+              [mt_is $b [lindex [mt_duty_series $t0 $q0 0.5] 0]] \
+              [mt_key $b db]] {measured 0 named measured ok NOKEY-db}
+    pcall calc::wave_dest_drop $a
     check "MT8 D7 a malformed request is refused here too, and stays distinct from the absence above" \
         [list [mt_disp [mt_call dutyCycle {v(sq)} nan]] \
               [mt_disp [mt_call dutyCycle {} 0.5]] \
@@ -2631,6 +2704,317 @@ group MT11 {
               [expr {[info commands ::calc::arg_values] ne {} ? 1 : 0}]] \
         [list {rpn {v(sq) 2 *} level 0.5 nth 3 edge falling} {} 1]
     check "MT11 R402 this band mints nothing -- it reads specifications and refuses requests, so no `__calc_tmp*` and no `__mt_*` may appear in the inventory because of it" \
+        [list [leaked] [probeleft]] {{} {}}
+}
+
+# ---------------------------------------------------------------------------
+# MT12 -- stage J unit J1b / R404 / R421: `calc::fn_sink`, THE ROUTING DECISION
+# for an answer that is a WAVE.  NO Tk, so it gates on BOTH arms.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2ac (R419-R421), section 7.3
+#          (R401-R405).
+# Contract doc/claude/calculator_batch/WIRING_CONTRACT.md section 4 -- the
+#          explicit `shape` key, and the inference over the value's LENGTH that
+#          section rejects by name.  Section 10(b) splits the stage: J1 is the
+#          PRODUCER (band WD11 of tests/headless/test_calc_wave_dest.tcl), J1b
+#          is this.
+# Fence    this band, plus the key-set row of band WD11, which widens by one key
+#          for the `shape` the producer now declares.
+#
+# ⚠⚠ WHY THE DECISION IS A PROC OF ITS OWN, AND IT IS AN EVIDENCE ARGUMENT
+# RATHER THAN A STYLE ONE.  `calc::fn_measure` and `calc::buf_set_number` BOTH
+# return early on `calc::has_win .calc.buf`, so headless they are no-ops and
+# nothing this suite can drive observes what either does.  A shape branch left
+# inside them would be measured only on a gate's DISPLAY arm -- and the person
+# this tree is built for is remote with a phone and reads the transcript.  A
+# PURE predicate -- given an answer, say where it goes -- is measurable here,
+# every run, which is the same argument that put `calc::fn_argspec` outside the
+# dialog one stage earlier (band MT11's header).
+#
+# ⚠⚠ THE DEFECT THIS BAND EXISTS FOR IS REAL AND IS NOT HYPOTHETICAL.  On a tree
+# carrying J1's producer ALONE, a click on `dutyCycle` with the default cycle
+# reaches `calc::fn_measure`, whose success arm is unconditionally
+# `set num [calc::buf_set_number $v]` with NO branch on the answer's shape and
+# NO numeric check inside `buf_set_number` -- so the whole per-cycle LIST is
+# pasted into the user's RPN buffer, violating R404 (*"a literal number"*) and
+# R421 silently.  A wrong buffer, not an error.  Declared as hole H12 of
+# tests/headless/test_calc_wave_dest.tcl, and the reason the producer may not
+# ship without this half: today's refusal is correct and the producer alone would
+# be a user-visible REGRESSION against it.
+#
+# THE SHAPE, which this band is the specification of:
+#
+#   calc::fn_sink <answer>  ->  one word of a CLOSED vocabulary saying where the
+#                               answer goes.
+#
+#     destination  the answer DECLARES `shape wave`.
+#     buffer       the answer declares `shape scalar`, or declares no `shape` at
+#                  all -- which is every verb that shipped before this stage --
+#                  AND its `value` is a literal number by `calc::eval_finite`.
+#     badshape     the answer declares a `shape` this build does not know.
+#     badvalue     the route is the buffer and the `value` is not a literal
+#                  number.  R404's own words, and the half of hole H12 that
+#                  `calc::buf_set_number` has no check for.
+#     refusal      `ok` is not 1, is missing, or the answer is not a dict.
+#
+# ⚠ FAIL CLOSED, WHICH IS WHY THERE ARE FIVE WORDS AND NOT TWO.  An unknown
+# shape and a non-number both answer a word that is NEITHER the buffer nor the
+# destination, so neither can reach the user's expression by falling through.
+# That is R420's own discipline arriving one layer up: `calc::dutyCycle`
+# validates `xaxis` against a closed member list and REFUSES an unknown token
+# rather than defaulting it, and `cross_msg badxaxis` is the sentence.
+#
+# ⚠ `shape` ABSENT MEANS `buffer`, AND THAT IS A DECLARATION DEFAULT RATHER THAN
+# AN INFERENCE.  It is read from a KEY, over a closed vocabulary, and it cannot
+# be fooled by the data: a one-cycle waveform is a length-1 list and still goes
+# to the destination.  What keeps the default honest is NOT this proc but a
+# derived row at the foot of this band -- every caller that builds a destination
+# also declares the shape -- so a future verb that answers a wave and forgets to
+# say so reddens here instead of pasting a list.
+#
+# ⚠ SECTION 4'S REJECTED DOOR IS ASSERTED POSITIVELY AND NOT DESCRIBED.  Routing
+# on `[llength [dict get $d value]] > 1` is rejected there because a legitimate
+# ONE-cycle waveform has length 1 and would be mis-routed into the buffer -- the
+# same silent-wrong-buffer failure arriving by a second route.  One row below
+# drives the three cases where a length-based router and a declaration-based one
+# disagree, so the rejection is measured in the run rather than argued in a
+# comment.
+#
+# ⚠ WHAT THIS BAND CANNOT SEE, AND IT IS THE ACT RATHER THAN THE DECISION: that
+# `calc::fn_measure` really leaves the buffer untouched on a wave answer, and
+# that the sentence really reaches `.calc.status.msg`.  Both are display-only for
+# the reason at the head of this comment, and belong to band S28 of
+# tests/headless/test_calc_skeleton.tcl and band CW14 of
+# tests/headless/test_calc_widgets.tcl, both `dcases` ALONE -- so only the gate's
+# DISPLAY arm verifies them and a `--nogui` number proves nothing about either.
+# What IS measured here is one structural half of the act: no proc in the
+# namespace reaches `calc::buf_set_number` without naming `calc::fn_sink`.
+#
+# ⚠ THE DESTINATION SENTENCE'S WORDS ARE UNRATIFIED and no row asserts them.
+# The rows assert that it is ONE NON-EMPTY SENTENCE IN THE HOUSE SHAPE and that
+# it NAMES THE DESTINATION, which is how WD9's first row treats the shared
+# deferral sentence; a row asserting the text would redden on the ruling.  The
+# `rule` debt filed against `calc::eval_msg`'s sentences, which already covers
+# `calc::arg_msg`, is extended to it.
+# ---------------------------------------------------------------------------
+
+# the routing decision for one answer, or a legible sentinel -- never a raise,
+# and "the proc is missing" is told apart from "the proc threw" because the two
+# want different fixes.  `ag_spec`'s shape exactly.
+proc sk_sink {d} {
+    if {[info commands ::calc::fn_sink] eq {}} { return "NOPROC:calc::fn_sink" }
+    if {[catch {::calc::fn_sink $d} r]} { return "RAISED:$r" }
+    return $r
+}
+# one route-T sentence, or a legible sentinel.
+proc sk_msg {args} {
+    if {[info commands ::calc::arg_msg] eq {}} { return "NOPROC:calc::arg_msg" }
+    if {[catch {::calc::arg_msg {*}$args} r]} { return "RAISED:$r" }
+    return $r
+}
+# an answer dict built HERE, from the base every verb answers, with the row's
+# own overrides applied BY KEY so a row site never spells the representation.
+#
+# ⚠ `list` PLUS `dict set`, NEVER `dict create`, AND MT10 IS WHY: `mt_dictsites`
+# walks this file for every line that builds a dict with `dict create` and names
+# the enclosing proc, so a band helper spelled that way is a new site and
+# reddens MT10's enumeration row.  Band MT11 made the same choice for the same
+# reason and records having measured it.
+proc sk_ans {args} {
+    set d [list ok 1 absent 0 value {} msg {} dataset 0]
+    foreach {k v} $args { dict set d $k $v }
+    return $d
+}
+# the words `calc::fn_sink` can answer, DERIVED FROM ITS OWN BODY and never
+# listed in this file -- the method WD10's `cross_msg` arm sweep uses, for the
+# reason row X1 of tests/headless/test_snprintf_fmt_1608.tcl exists: a hand-kept
+# list is the same defect one level up.  The one row on this batch that kept one
+# drove a hand-kept list of message kinds against a proc that had grown more arms
+# than the list named, and its name claimed it drove every arm -- coverage, not
+# method -- so nothing could detect the drift.
+#
+# ⚠ THIS IS A CONSTRAINT ON THE IMPLEMENTATION AND IS STATED AS ONE: the
+# vocabulary is read off LITERAL `return <word>` spellings, so a router that
+# answered through a variable would redden the vocabulary row rather than be
+# measured by a derivation that cannot see it.  A trailing space is appended
+# before the scan because the last `return` in a body has a newline after it and
+# the pattern needs one non-word character.
+proc sk_vocab {} {
+    if {[info procs ::calc::fn_sink] eq {}} { return "NOPROC:calc::fn_sink" }
+    set b [pcall info body ::calc::fn_sink]
+    if {[string match ERR:* $b]} { return $b }
+    set out {}
+    foreach {whole w} [regexp -all -inline \
+            {return[ \t]+([a-z][a-z0-9_]*)[^A-Za-z0-9_]} "[mt_decomment $b] "] {
+        lappend out $w
+    }
+    return [lsort -unique $out]
+}
+# the tokens a proc's DECOMMENTED body must not name if a claim about it is to
+# gate on the COUNTED arm: Tk, a widget path, the window guard that makes a proc
+# a headless no-op, the engine and the viewer.  Answers the HITS, so `{}` is the
+# claim and the positive control is a leg of the row beside it.
+proc sk_tkhits {p} {
+    if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    set b [pcall info body ::calc::$p]
+    if {[string match ERR:* $b]} { return $b }
+    set b [mt_decomment $b]
+    set out {}
+    foreach {nm pat} [list winfo winfo tkwait tkwait grab {grab[ \t]} \
+                           toplevel toplevel evgen {event[ \t]+generate} \
+                           widget {\.calc} haswin has_win \
+                           engine {xschem[ \t]} viewer wviewer::] {
+        if {[regexp $pat $b]} { lappend out $nm }
+    }
+    return $out
+}
+# `has` / `missing` for one member of a derived set.  A PROC rather than a
+# ternary at the row site, for the reason `mt_destname` records: a braced `expr`
+# whose branch is a command substitution raises *invalid bareword*, and
+# `group`'s catch turns that into an ABANDONED BAND rather than one failed row.
+proc sk_in {l w} {
+    if {[catch {lsearch -exact $l $w} i]} { return "NOTALIST:{$l}" }
+    return [expr {$i >= 0 ? {has} : {missing}}]
+}
+# `named` when a sentence really carries a name, `missing:<sentence>` otherwise.
+# A GLOB and not a literal, and a WORD and not a number, so no destination
+# serial reaches the T1 verdict -- `mt_destname`'s reason, and this suite's own
+# house rule about reproducible figures in an expectation.
+proc sk_names {s w} {
+    if {[string match NOPROC:* $s]} { return $s }
+    if {[string match RAISED:* $s]} { return $s }
+    if {[string match *$w* $s]} { return named }
+    return "missing:$s"
+}
+# `distinct` / `same` for two SENTENCES -- a WORD, so no user-visible text lands
+# in an expectation and a ruling on the wording reddens nothing.  `mt_distinct`'s
+# reason, for strings rather than for numbers.
+proc sk_differ {a b} { return [expr {[string equal $a $b] ? {same} : {distinct}}] }
+# the vocabulary members that do NOT have a sentence in the house shape, derived
+# over `sk_vocab` -- so the claim is about the METHOD and a word added later
+# cannot escape it.
+#
+# ⚠ `buffer` AND `refusal` ARE EXEMPT AND ARE NAMED HERE RATHER THAN LEFT OUT
+# QUIETLY.  The buffer route's sentence is R404's PROVENANCE line, which
+# `calc::arg_provenance` has composed since PLAN 5.4 and which band MT11's
+# siblings already cover; a refusal carries the VERB's own `msg` through
+# unchanged, which MT7, MT8 and WD9 compare BY IDENTITY, so a sentence of its
+# own here would redden three bands in two files.
+#
+# ⚠ THE HOUSE SHAPE IS ASKED OF THE VOCABULARY'S MEMBERS AND NOT OF EVERY
+# `calc::arg_msg` ARM, and that is measured rather than lazy: the shipped `real`,
+# `int`, `rpn` and `enum` arms are field-validation sentences with no colon in
+# them, so a sweep over every arm would be RED ON SHIPPED PROSE nobody has ruled.
+proc sk_sentences {} {
+    set v [sk_vocab]
+    if {[string match NOPROC:* $v]} { return $v }
+    if {[string match ERR:* $v]} { return $v }
+    set bad {}
+    foreach w $v {
+        if {$w eq {buffer} || $w eq {refusal}} continue
+        set s [sk_msg $w dutyCycle __calc_dest9]
+        if {[string match NOPROC:* $s]} { lappend bad "$w:$s" ; continue }
+        if {[string match RAISED:* $s]} { lappend bad "$w:$s" ; continue }
+        set sh [mt_shape $s]
+        if {$sh ne {ok}} { lappend bad "$w:$sh" }
+    }
+    return $bad
+}
+
+# =========================================================================
+group MT12 {
+    # --- the shape of the solution, which is a fence in its own right --------
+    check "MT12 R404/R421 the routing decision is a PURE PROC with no Tk in it -- `calc::fn_sink` exists and its decommented body names none of winfo, tkwait, grab, toplevel, event generate, a .calc widget path, calc::has_win, the engine or the viewer -- which is the ONLY reason half two's decision can be measured on the counted arm at all: `calc::fn_measure` and `calc::buf_set_number` BOTH return early on `calc::has_win .calc.buf`, so anything left inside either is observable on a gate's DISPLAY arm and nowhere else.  The POSITIVE CONTROL rides along on both of those procs, because an empty hit list over a proc that does not exist is the same empty list" \
+        [list [expr {[info procs ::calc::fn_sink] ne {} ? 1 : 0}] \
+              [sk_tkhits fn_sink] \
+              [sk_in [sk_tkhits fn_measure] widget] \
+              [sk_in [sk_tkhits fn_measure] haswin] \
+              [sk_in [sk_tkhits buf_set_number] haswin] \
+              [sk_tkhits fn_argspec]] \
+        {1 {} has has has {}}
+    # --- the vocabulary, derived from the proc's own text --------------------
+    check "MT12 ...and the words it can answer are a CLOSED vocabulary, DERIVED from the proc's own literal `return` words and never listed in this file -- the method WD10's cross_msg arm sweep uses, because a hand-kept list is the same defect one level up and the one row on this batch that kept one drove a hand-kept list of message kinds against a proc that had grown more arms than the list named, with a name that claimed every arm.  The derivation does not invent a word the proc has no `return` for, which is the leg that keeps an empty failure list below from being an empty set" \
+        [list [sk_vocab] [sk_in [sk_vocab] __mt_no_such_sink__]] \
+        [list {badshape badvalue buffer destination refusal} missing]
+    # --- THE DECISION, over every disposition the vocabulary admits ----------
+    check "MT12 R404/R421 THE ROUTING DECISION, over every disposition that vocabulary admits: a declared WAVE goes to the destination; a declared SCALAR and an answer that declares NOTHING -- which is every verb that shipped before this stage -- both go to the buffer; a shape this build does not know goes NOWHERE; a buffer route carrying something that is not a literal number goes NOWHERE either, which is R404's own words and the half of hole H12 that calc::buf_set_number has no check for; and anything that is not a measured answer at all, a non-dict included, is a refusal.  FAIL CLOSED, so neither an unknown shape nor a non-number can reach the user's expression by falling through" \
+        [list [sk_sink [sk_ans shape wave value {0.3 0.32} db __calc_dest9]] \
+              [sk_sink [sk_ans shape scalar value 0.315]] \
+              [sk_sink [sk_ans value 0.315]] \
+              [sk_sink [sk_ans shape __mt_no_such_shape__ value 0.315]] \
+              [sk_sink [sk_ans shape scalar value {0.3 0.32}]] \
+              [sk_sink [sk_ans value {}]] \
+              [sk_sink [list ok 1]] \
+              [sk_sink [list ok 0 absent 0 value {} dataset 0 msg {Duty cycle: no.}]] \
+              [sk_sink [list ok 0 absent 1 value {} dataset 0 msg {Duty cycle: none.}]] \
+              [sk_sink {an odd number of words is no dict}]] \
+        {destination buffer buffer badshape badvalue badvalue badvalue refusal refusal refusal}
+    # --- section 4's REJECTED DOOR, asserted positively ---------------------
+    check "MT12 ...and the decision is read OFF THE DECLARATION and never inferred from the value's LENGTH, asserted as the three cases where the two implementations disagree: a legitimate ONE-cycle waveform is a length-1 list and still goes to the DESTINATION, an EMPTY declared wave goes there too, and a declared SCALAR carrying a list goes NOWHERE rather than to the destination.  A router that tested the value's list LENGTH instead answers buffer, buffer and destination for those three, which is the rejected door of WIRING_CONTRACT section 4 and the same silent-wrong-buffer failure arriving by a second route; the multi-element declared wave rides along so the row is not three cases of one claim" \
+        [list [sk_sink [sk_ans shape wave value {0.315} db __calc_dest9]] \
+              [sk_sink [sk_ans shape wave value {} db __calc_dest9]] \
+              [sk_sink [sk_ans shape scalar value {0.3 0.32}]] \
+              [sk_sink [sk_ans shape wave value {0.3 0.32} db __calc_dest9]]] \
+        {destination destination badvalue destination}
+    # --- one sentence per disposition that reaches the user ------------------
+    check "MT12 R507 every disposition that reaches the user has a SENTENCE, derived over the vocabulary rather than listed: each word calc::fn_sink can answer except `buffer`, whose sentence is R404's provenance line, and `refusal`, which carries the verb's own msg through unchanged by identity, answers a NON-EMPTY sentence in the house shape through calc::arg_msg -- so a SIXTH disposition added without one reddens here naming itself.  The WORDS are never asserted: they are unratified user-visible wording and a `rule` debt covers them" \
+        [list [sk_vocab] [sk_sentences]] \
+        [list {badshape badvalue buffer destination refusal} {}]
+    check "MT12 ...and the sentence for the one disposition the user will actually see -- a measurement that was a wave and landed in a destination -- NAMES THAT DESTINATION and names the verb, which is the only thing about it this row asserts: one non-empty sentence in the house shape, matched as a GLOB against the name the answer itself gave, so no destination serial lands in the verdict and a RULING on the words reddens nothing here.  WD9's deferral row makes its claim the same way.  The non-vacuity leg is that a DIFFERENT destination name gives a different sentence, so the name is interpolated rather than decoration" \
+        [list [mt_shape [sk_msg destination dutyCycle __calc_dest9]] \
+              [sk_names [sk_msg destination dutyCycle __calc_dest9] __calc_dest9] \
+              [sk_names [sk_msg destination dutyCycle __calc_dest9] dutyCycle] \
+              [sk_differ [sk_msg destination dutyCycle __calc_dest9] \
+                         [sk_msg destination dutyCycle __calc_dest7]]] \
+        {ok named named distinct}
+    # --- the arm sweep, which is the only confirmation of the parity trap ----
+    set sk_arms {}
+    foreach ln [split [mt_decomment [pcall info body ::calc::arg_msg]] "\n"] {
+        if {[regexp {^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)[ \t]+\{[ \t]*return} $ln -> k]} {
+            lappend sk_arms $k
+        }
+    }
+    set sk_armsbad {}
+    foreach k $sk_arms {
+        set m [sk_msg $k Level 1]
+        if {[string match NOPROC:* $m]} { lappend sk_armsbad "$k:RAISED" ; continue }
+        if {[string match RAISED:* $m]} { lappend sk_armsbad "$k:RAISED" ; continue }
+        if {$m eq {}} { lappend sk_armsbad "$k:EMPTY" }
+    }
+    check "MT12 every calc::arg_msg arm -- DERIVED from the proc's own switch patterns and never listed here -- answers a non-empty sentence without raising, which is the only confirmation there is that no comment landed between two of its patterns: that balances the braces, satisfies `info complete`, and is PARITY-DEPENDENT, so an EVEN word count re-pairs the list into a silent no-op while an ODD one makes Tcl raise out of EVERY arm.  A green run proves only that the word count is even.  The arm this band's own vocabulary requires rides along, so the row is red until that arm exists rather than green over the ones that already do, and an unknown kind must still fall through to the empty string rather than raise" \
+        [list $sk_armsbad [sk_in $sk_arms destination] [sk_in $sk_arms empty] \
+              [sk_in $sk_arms __mt_no_such_arm__] \
+              [mt_atleast [llength $sk_arms] 7] \
+              [sk_msg __mt_no_such_arm__ a b]] \
+        {{} has has missing atleast7 {}}
+    # --- the one structural half of the ACT this arm can see ----------------
+    set sk_pasters {} ; set sk_askers {} ; set sk_wired {} ; set sk_declarers {}
+    foreach p [lsort [pcall info procs ::calc::*]] {
+        set nm [namespace tail $p]
+        set b [pcall info body $p]
+        if {[string match ERR:* $b]} continue
+        set b [mt_decomment $b]
+        if {[regexp {calc::buf_set_number} $b]} { lappend sk_pasters $nm }
+        if {[regexp {calc::fn_sink[^A-Za-z0-9_]} $b]} { lappend sk_askers $nm }
+        if {[regexp {calc::wave_dest[^A-Za-z0-9_]} $b]} { lappend sk_wired $nm }
+        if {[regexp {shape[ \t]+wave} $b]} { lappend sk_declarers $nm }
+    }
+    set sk_unasked {}
+    foreach nm $sk_pasters {
+        if {[lsearch -exact $sk_askers $nm] < 0} { lappend sk_unasked $nm }
+    }
+    set sk_silent {}
+    foreach nm $sk_wired {
+        if {[lsearch -exact $sk_declarers $nm] < 0} { lappend sk_silent $nm }
+    }
+    check "MT12 ...and the ONE thing about the act itself this arm can see: every proc in the namespace whose CODE names calc::buf_set_number also names calc::fn_sink, derived over the namespace in one walk with neither set listed here -- so a success arm that pastes into the user's expression without first asking where the answer goes reddens naming itself.  The paster set rides along as a lower bound, because an empty one would make the subset claim vacuous.  That the buffer is really left UNTOUCHED and that the sentence really reaches .calc.status.msg are display-only and are NOT measured by this band" \
+        [list $sk_unasked [mt_atleast [llength $sk_pasters] 1] \
+              [sk_in $sk_pasters fn_measure]] \
+        {{} atleast1 has}
+    check "MT12 ...and what keeps `shape absent means buffer` honest, which is not this proc: every caller that builds a destination also DECLARES the shape, derived over the namespace as a SUBSET claim with a lower bound on the wired set rather than as an exact list -- so a future verb that answers a wave and forgets to say so reddens here naming itself, while units J2 and J3 wiring two more callers move no leg of this row.  The bound is why it cannot pass over an empty set, and the subset is why it does not have to be edited per caller" \
+        [list $sk_silent [mt_atleast [llength $sk_wired] 1]] \
+        {{} atleast1}
+    check "MT12 R402 this band mints nothing and loads no fixture -- it drives a pure routing predicate and a sentence table with no database read at all, so no `__calc_tmp*` and no `__mt_*` may appear in the inventory because of it" \
         [list [leaked] [probeleft]] {{} {}}
 }
 

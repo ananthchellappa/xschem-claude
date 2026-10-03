@@ -3283,26 +3283,58 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0} {xaxis start}} {
 # R416 rules the verb MEANS, and because `frequency` and `period_jitter` will
 # want the same derivation.  The keypad and catalogue path cannot take it: R404
 # says a T-route scalar lands in the buffer as a literal number, and a series of
-# per-cycle fractions is not something the existing RPN evaluator can eat.  So
-# the wave case DEFERS behind the sentence `cross` already uses for its own
-# nth 0, and waits for a destination that can hold a wave with its own X axis --
-# which `calc::wave_dest` now builds, so what this wrapper is still waiting on
-# is the CLICK (R410/R412, phase 5) and not the destination.
+# per-cycle fractions is not something the existing RPN evaluator can eat.
 #
-# WARN THAT SENTENCE OPENS *"Cross:"* AND MENTIONS *"nth 0"*, AND A USER WHO
-# CLICKED `dutyCycle` ASKED FOR NEITHER.  The identity is deliberate -- one
-# deferral string for every caller waiting on a destination it has not got, so a
-# landing destination retires one string rather than one per caller -- but the
-# wording is UNRATIFIED, the `rule` debt filed against `calc::eval_msg`'s
-# sentences covers it, and if it is ever ruled that each verb speaks for itself
-# then MT8's identity row is where that lands.
+# ⚠⚠ SO IT NO LONGER DEFERS.  STAGE J UNIT J1 WIRED THIS WRAPPER TO
+# `calc::wave_dest`, and the sentence it used to answer with is retired HERE and
+# at no other caller: `calc::cross_scalar`, `calc::riseTime` and `calc::delay`
+# still say it, and row WD9 of tests/headless/test_calc_wave_dest.tcl derives
+# both sets over the namespace every run so that a FIFTH caller of either kind
+# reddens naming itself.  The previous revision of this comment claimed the
+# wrapper was *"still waiting on the CLICK"*; the click (PLAN 5.4) landed before
+# this stage did, which is why the producer could go first.
 #
-# ⚠ THE CALLERS ARE NOT ALL WAITING ON THE SAME DESTINATION, which is what R419
-# changed and what the previous revision of this comment got wrong by counting
-# verbs instead of destinations.  THIS caller and `calc::delay`'s `nth = 0` want
-# a WAVE; `calc::cross_scalar` wants a LIST (spec R606's `Table`), because the
-# user ruled `cross`'s `nth = 0` answers *"just a list of crossing times like
-# cadence does."*  The sentence stays silent about which, deliberately.
+# WHAT THE DEFAULT CYCLE ANSWERS NOW: the measurement's own dict with the
+# destination's five keys merged onto it -- `db`, `type`, `xname`, `yname`, `n`
+# -- plus `shape wave`, the explicit DECLARATION `calc::fn_sink` routes on.  The
+# key set is asserted EXACTLY by band WD11 of that suite, which is why the merge
+# is a closed list and not a `dict merge` of the whole answer:
+#
+#  * `dest` IS LEFT HOLDING THE RETIRED `__calc_tmp<N>` the measurement
+#    evaluated into, and the live destination arrives under `db`.  Row MT9b of
+#    tests/headless/test_calc_measure.tcl reads `dest` BY NAME to tell a
+#    deferral from an absence, so overwriting it would make one key mean two
+#    different things depending on the verb.
+#  * `prev`/`prevtype` are NOT merged.  They are the registry cursor
+#    `calc::wave_dest` captured for its own restore, not part of a measurement's
+#    answer, and `calc::wave_dest_drop` reads them off its OWN answer.
+#  * `shape wave` is a DECLARATION and never an inference.  WIRING_CONTRACT
+#    section 4 rejects `[llength [dict get $d value]] > 1` by name, because a
+#    legitimate ONE-cycle waveform is a length-1 list and would be mis-routed
+#    into the buffer.  Band MT12 asserts that rejection positively.
+#
+# ⚠ THE DESTINATION IS NOT DROPPED ON THE SUCCESS PATH, and that is declared
+# rather than forgotten.  A trace resolves its database by registry NAME and
+# `wviewer::restore` cannot re-read it, so dropping on success would free the
+# database the user is looking at.  WHO frees it is hole H11 and is unruled; the
+# undropped slot is a DECLARED LEAK.  The failure paths build nothing, so there
+# is nothing to drop there either.
+#
+# ⚠ AND THE REFUSAL AND THE ABSENCE GO STRAIGHT THROUGH UNTOUCHED.  WD11's
+# CONTROL row forbids merging a `db` key into them: a named cycle is R404's
+# scalar and keeps the key set `calc::dutyCycle` has always answered with, and
+# an absence stays an absence.  A destination that refuses is carried through
+# `calc::cross_refusal` in its own sentence, which is the house disposition for
+# a request whose answer could not be built.
+#
+# ⚠ THE WRAPPER IS WIRED AND `calc::dutyCycle` IS NOT, AND THAT IS A
+# MEASUREMENT.  `calc::wave_dest` issues `xschem raw add`, so row MT10's
+# callee-ward closure over `{riseTime delay dutyCycle}` would print it as an
+# engine door of its own if the verb reached for it -- while nothing in
+# `dutyCycle`'s body names this wrapper, so the wrapper is invisible to that
+# closure.  The architecture sentence in `calc::dutyCycle`'s own comment --
+# *"the verb computes, the surface decides where the answer goes"* -- is
+# therefore enforced by a row and not only stated.
 #
 # ⚠ THE `xaxis` FORMAL ARRIVED WITH PLAN 5.4, WHICH IS THE CALLER THIS WRAPPER'S
 # OWN PREVIOUS COMMENT SAID IT WAS WAITING FOR.  That comment read: *"phase 5's
@@ -3315,18 +3347,32 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0} {xaxis start}} {
 # key against the formals of the SURFACE proc for exactly that reason, and it
 # was red on this proc before the formal existed.
 #
-# ⚠ IT IS FORWARDED AND NOTHING ELSE.  The wrapper's own decision is the
-# `cycle` 0 deferral above it, and the axis has no part in that: the deferred
-# case has no scalar to put an X on, and a NAMED cycle's axis changes only the
-# answer's parallel `sweep` key, which R404's bare number does not read.  So
-# this is a pass-through with the proc's own default -- `start`, R420's ruled
-# default, stated once here and once in the measurement proc because Tcl has no
-# way to inherit one.
+# ⚠ THE `xaxis` IS FORWARDED AND NOTHING ELSE, AND THAT IS WHAT MAKES THE WIRING
+# SHORT.  R420 already selected the axis inside the measurement loop, so the
+# wrapper hands `sweep` and `value` over AS THEY ARE: the destination's X column
+# is whichever axis the user asked for, with no second derivation here that
+# could disagree with the verb's.  `start` is R420's ruled default, stated once
+# here and once in the measurement proc because Tcl has no way to inherit one.
+#
+# ⚠ `sweep` FIRST, `value` SECOND -- X BEFORE Y.  `calc::wave_dest {xs} {ys}`
+# takes the X list first, and swapping them is SILENT on a same-length pair:
+# three rows of band WD11 compare both read-back columns element-wise against
+# this file's own derivation and name every offending element.
 proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0} {xaxis start}} {
-    if {[calc::eval_finite $cycle] && [expr {double($cycle) == 0.0}]} {
-        return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
+    if {!([calc::eval_finite $cycle] && [expr {double($cycle) == 0.0}])} {
+        return [calc::dutyCycle $rpn $level $cycle $dataset $xaxis]
     }
-    return [calc::dutyCycle $rpn $level $cycle $dataset $xaxis]
+    set m [calc::dutyCycle $rpn $level 0 $dataset $xaxis]
+    set mok 0
+    if {[catch {dict get $m ok} mok]} { return $m }
+    if {!$mok} { return $m }
+    set h [calc::wave_dest [dict get $m sweep] [dict get $m value]]
+    if {![dict get $h ok]} {
+        return [calc::cross_refusal [dict get $h msg] $dataset [dict get $m dest]]
+    }
+    foreach k {db type xname yname n} { dict set m $k [dict get $h $k] }
+    dict set m shape wave
+    return $m
 }
 
 # ---------------------------------------------------------------------------
@@ -5281,7 +5327,31 @@ proc calc::fn_argspec {name} {
 # it is `calc::no_result_msg`, ruled verbatim, and this click reaches it through
 # `calc::require_result` exactly as Evaluate does.
 #
-# ⚠ The same no-comment-between-patterns rule governs this `switch` too.
+# ⚠ The same no-comment-between-patterns rule governs this `switch` too, and on
+# this batch it is no longer a warning but a measured incident twice over: a
+# comment there leaves the braces balanced and `info complete` answering 1 while
+# Tcl raises out of EVERY arm, and it is PARITY-DEPENDENT -- an EVEN word count
+# re-pairs the trailing list into a silent no-op and an ODD one detonates.  So a
+# green run proves only that the word count is even, never that the comment is
+# safe.  The last three arms are stage J unit J1b's and carry no comment of
+# their own for exactly that reason; band MT12 of
+# tests/headless/test_calc_measure.tcl sweeps every arm DERIVED from this
+# proc's own switch patterns, which is the only behavioural confirmation there
+# is that the catalogue still parses.
+#
+# THE THREE J1b ARMS, each the sentence for one disposition `calc::fn_sink`
+# answers that reaches the user.  `buffer` has none here -- its sentence is
+# R404's provenance line from `calc::arg_provenance` -- and neither does
+# `refusal`, which carries the VERB's own `msg` through unchanged, compared by
+# IDENTITY in three bands across two files.
+#
+# ⚠ THE `($b)` DETAIL IS UNBOUNDED AND NOTHING TRUNCATES IT.  Row S24 of
+# tests/headless/test_calc_skeleton.tcl bounds a status-line sentence at 72
+# characters -- measured on the shipped window, where a 94-character line died
+# mid-word -- but it sweeps `calc::fn_reason` ONLY, so these are swept by
+# nothing.  `badshape`'s detail is a user-supplied token and `badvalue`'s is the
+# whole rejected value, so no wording fixes it: a TRUNCATION POLICY has to be
+# decided first and nobody has.  Declared, not closed.
 proc calc::arg_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         empty  { return "Nothing to measure: $a was given an empty expression." }
@@ -5291,6 +5361,9 @@ proc calc::arg_msg {kind {a {}} {b {}}} {
         enum   { return "$a must be one of $b." }
         failed { return "Measuring $a did not complete ($b)." }
         nosurf { return "Measuring $a is not available in this build." }
+        destination { return "Measured wave: $a went to $b instead of the buffer." }
+        badshape { return "Measuring $a: that result shape cannot be placed ($b)." }
+        badvalue { return "Measuring $a: the result is not a literal number ($b)." }
     }
     return {}
 }
@@ -5598,6 +5671,77 @@ proc calc::arg_dialog {name} {
     return $arg_result
 }
 
+# ---------------------------------------------------------------------------
+# R404/R421 -- WHERE A MEASURED ANSWER GOES.  Stage J unit J1b.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2ac (R419-R421), section 7.3
+#          (R401-R405).
+# Contract doc/claude/calculator_batch/WIRING_CONTRACT.md section 4 (the
+#          explicit `shape` key and the length inference it rejects by name)
+#          and section 10(b) (which splits the producer from this half).
+# Fence    band MT12 of tests/headless/test_calc_measure.tcl.
+#
+# `calc::fn_sink <answer>` answers ONE WORD of a closed vocabulary:
+#
+#   destination  the answer DECLARES `shape wave`.
+#   buffer       it declares `shape scalar`, or declares no `shape` at all --
+#                which is every verb that shipped before stage J -- AND its
+#                `value` is a literal number by `calc::eval_finite`.
+#   badshape     it declares a `shape` this build does not know.
+#   badvalue     the route is the buffer and the `value` is not a literal
+#                number: missing, empty, a list, or non-finite.
+#   refusal      `ok` is not 1, is missing, or the answer is not a dict.
+#
+# ⚠⚠ WHY THIS IS A PROC OF ITS OWN AND NOT A BRANCH INSIDE `calc::fn_measure`,
+# AND IT IS AN EVIDENCE ARGUMENT RATHER THAN A STYLE ONE.  That proc and
+# `calc::buf_set_number` BOTH return early on `calc::has_win .calc.buf`, so
+# headless they are no-ops and a shape branch left inside either would be
+# measurable only on a gate's DISPLAY arm.  A PURE predicate -- given an answer,
+# say where it goes -- gates on the COUNTED arm every run, which is the same
+# move that put `calc::fn_argspec` outside the dialog one stage earlier.  MT12's
+# first row asserts this body names no Tk, no widget path, no window guard, no
+# engine and no viewer, with both of the above as POSITIVE CONTROLS so that an
+# empty hit list is a measurement rather than a blind regexp.
+#
+# ⚠ FAIL CLOSED, WHICH IS WHY THERE ARE FIVE WORDS AND NOT TWO.  An unknown
+# shape and a non-number each answer a word that is NEITHER `buffer` NOR
+# `destination`, so neither can reach the user's expression by falling through.
+# That is R420's own discipline one layer up: `calc::dutyCycle` validates
+# `xaxis` against a closed member list and REFUSES an unknown token rather than
+# defaulting it.  `calc::buf_set_number` has no numeric check of its own, which
+# is the half of the defect this proc exists for: before it, any verb answering
+# `ok 1` with a LIST in `value` had that list pasted into the RPN buffer, a
+# wrong buffer rather than an error.
+#
+# ⚠ `shape` ABSENT MEANS `buffer`, AND THAT IS A DECLARATION DEFAULT RATHER THAN
+# AN INFERENCE.  It is read from a KEY over a closed vocabulary and cannot be
+# fooled by the data: a one-cycle waveform is a length-1 list and still routes
+# to the destination.  What keeps the default honest is NOT this proc but a
+# derived row -- every caller whose body names `calc::wave_dest` must also
+# declare `shape wave` -- so a future verb that answers a wave and forgets to
+# say so reddens naming itself instead of pasting a list.
+#
+# ⚠ THE VOCABULARY IS READ OFF THIS BODY'S LITERAL `return <word>` SPELLINGS by
+# MT12's derivation, which is a constraint on this implementation and is stated
+# as one: a router that computed into a variable and ended `return $out` would
+# redden that row rather than be measured by a derivation that cannot see it.
+# ---------------------------------------------------------------------------
+proc calc::fn_sink {d} {
+    set ok 0
+    if {[catch {dict get $d ok} ok]} { return refusal }
+    if {$ok ne {1}} { return refusal }
+    set hasdecl 0
+    if {[catch {dict exists $d shape} hasdecl]} { return refusal }
+    set sh scalar
+    if {$hasdecl} { set sh [dict get $d shape] }
+    if {$sh eq {wave}} { return destination }
+    if {$sh ne {scalar}} { return badshape }
+    set v {}
+    if {[catch {dict get $d value} v]} { return badvalue }
+    if {![calc::eval_finite $v]} { return badvalue }
+    return buffer
+}
+
 # The route-T click, end to end.  `calc::eval_click`'s shape exactly, with the
 # dialog between the gate and the measurement:
 #
@@ -5607,7 +5751,39 @@ proc calc::arg_dialog {name} {
 #     empty buffer-> nothing to measure and nothing to ask about
 #     dialog      -> Cancel is silent and byte-identical
 #     measure     -> the verb's own refusal sentence, carried through unchanged
-#     R421        -> the number in the buffer, the provenance on the status line
+#     R404/R421   -> `calc::fn_sink` says where the answer GOES, and only the
+#                    `buffer` word reaches `calc::buf_set_number`: the number in
+#                    the buffer with the provenance on the status line, a WAVE
+#                    left in its destination with a sentence naming it, and an
+#                    unknown shape or a non-number refused rather than pasted
+#
+# ⚠⚠ THE SINK IS ASKED BEFORE ANYTHING IS PASTED, AND THE LADDER FAILS CLOSED.
+# Only the word `buffer` falls through to `calc::buf_set_number`; every other
+# word returns a sentence.  Before stage J unit J1b this arm was an
+# unconditional `set num [calc::buf_set_number $v]` with no branch on the
+# answer's shape and no numeric check inside that proc, so the moment a verb
+# answered `ok 1` carrying a LIST the whole list was pasted into the user's RPN
+# buffer -- R404 (*"a literal number"*) and R421 violated SILENTLY, a wrong
+# buffer rather than an error.  Band MT12 of
+# tests/headless/test_calc_measure.tcl derives, in one walk over the namespace,
+# that no proc reaches `calc::buf_set_number` without naming `calc::fn_sink`,
+# so a second paster added later cannot hide from it.
+#
+# ⚠ AN IF/ELSEIF LADDER AND NOT A `switch`, DELIBERATELY, and for the same
+# reason `calc::dutyCycle`'s three-axis selector is one: a comment between two
+# switch patterns leaves the braces balanced and `info complete` answering 1
+# while Tcl raises out of every arm, and the damage is parity-dependent.  A
+# ladder has no such shape.
+#
+# ⚠ WHAT THIS BRANCH CANNOT BE MEASURED FOR HEADLESS, declared rather than left
+# to be assumed: that the buffer is really left UNTOUCHED on a wave answer, that
+# the sentence really reaches `.calc.status.msg`, and that R421's one-step undo
+# is untouched.  All three need a real text widget -- this proc and
+# `calc::buf_set_number` both return early on `calc::has_win .calc.buf` -- so
+# they belong to band S28 of tests/headless/test_calc_skeleton.tcl and band CW14
+# of tests/headless/test_calc_widgets.tcl, which are `dcases` ALONE and only a
+# gate's DISPLAY arm runs.  The DECISION and the SENTENCE are both on the
+# counted arm, which is the whole reason the decision is a proc.
 #
 # ⚠ THE GATE RUNS BEFORE THE DIALOG, AND SO DOES THE EMPTY-BUFFER CHECK.  Asking
 # the user to fill in four fields and THEN telling them no simulation result is
@@ -5653,6 +5829,20 @@ proc calc::fn_measure {name} {
     }
     set v {}
     catch {set v [dict get $d value]}
+    set sink [calc::fn_sink $d]
+    if {$sink eq {destination}} {
+        set db {}
+        catch {set db [dict get $d db]}
+        return [calc::status [calc::arg_msg destination $name $db]]
+    }
+    if {$sink eq {badshape}} {
+        set sh {}
+        catch {set sh [dict get $d shape]}
+        return [calc::status [calc::arg_msg badshape $name $sh]]
+    }
+    if {$sink ne {buffer}} {
+        return [calc::status [calc::arg_msg badvalue $name $v]]
+    }
     set num [calc::buf_set_number $v]
     return [calc::status [calc::arg_provenance $name $vals $num]]
 }
