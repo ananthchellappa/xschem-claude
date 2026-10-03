@@ -80,6 +80,44 @@ have caught a false premise was the thing the false premise was recorded in.
 | 21 | **Stage H — the destination for a non-scalar result: recon** | `receipts/H-destination-recon.md` | 2026-10-02 | six crews, two resumed for a second round; **nine driver claims refuted, one of them reproduced INSIDE the correcting contract**; user ruled R419 and R420; route A decided; filed issues **1633–1639** |
 | 22 | **Stage H2/H3 — the wave destination: red-first suite + implementation** | `receipts/H-destination-impl.md` | 2026-10-02 | suite author + implementation crew, both resumed once; **eight more driver claims refuted**; a surviving sabotage closed on the driver's call; SR5 widened 53→54; `test_calc_wave_dest` **89 checks** in `hcases`; **15 of 15 sabotages fenced** |
 | 23 | **Stage I — making a measurement verb clickable: recon** | `CLICK_CONTRACT.md` | 2026-10-02 | one crew; the `insert` field is **forbidden** to hold a template by two registered rows, so the dialog is an M not an S; user ruled **R421**; the greying is deliberate and fenced, but **the message is false** |
+| 24 | **Stage I1 — issue 1639, `riseTime`'s unguarded raise** | `receipts/I1-1639.md` | 2026-10-03 | red first; `0`, `0.0` and `-0` raise **identically**, so the guard had to be value-based; the crew **overruled the driver's framing of the disposition** on the proc's own contract; and it found a fence that had **already rotted to 24-of-31 arms** while staying green |
+| 25 | **Stage I2/I3 — the dialog's design, and a stall bound before the modal** | `receipts/I3-watchdog.md` | 2026-10-03 | two crews; a modal in `tkwait` would have turned a test *failure* into an unbounded **hang**; a third watchdog blind shape found (`update idletasks` never runs timers); a hand-rolled deadline **names the outcome wrongly**; zero trailer delta |
+| 26 | **Stage I4 — the stall bound, fenced as a derivation** | `receipts/I4-fence.md` | 2026-10-03 | the row found **three registered T1 cases with no bound at all** and they were given one rather than the instrument narrowed; `update` had to join the verb list or the hole stayed two-thirds open; filed issue **1641** |
+| 27 | **Stage I5/I7 — PLAN 5.4: the argument dialog** | `receipts/I7-dialog-impl.md` | 2026-10-03 | 61 rows red first, green on the FIRST attempt, no row weakened; **a sabotage passed all 61** and was fenced rather than declared; and **the switch-comment parse trap is PARITY-dependent**, which CLAUDE.md had stated as an absolute |
+
+### ⚠⚠ Stage I — the parse trap this batch has been citing at everyone is PARITY-dependent
+
+**The single most valuable finding of the batch, and it corrects the driver's own standing warning.**
+Measured at one site in `calc::fn_argspec`, both directions: a two-line, **26-word** comment between
+two `switch` patterns is a **complete no-op** (`ALL PASS (158 checks)`), while `# R415 applies` —
+**three** words — turns **18 rows red at once**.
+
+`switch`'s single trailing argument is parsed as a **Tcl list**, so every word of the comment becomes
+an element. An **even** total re-pairs the list, every real pattern keeps its real body, and the
+comment is swallowed as one harmless pattern/body pair. An **odd** total shifts the pairing by one
+and Tcl raises out of every arm.
+
+**The consequence is worse than "a comment there is fatal", not better.** Such a comment can sit
+green for months and **detonate the moment somebody edits one word into or out of it** — and this
+class keeps recurring precisely because the warning is written in the medium it warns about: CLAUDE.md
+already records a literal `{` unbalancing a file *from inside the comment warning about it*, and this
+batch's suite author hit a bare `}` twice, the second time **inside the comment warning about the
+first**. **A green run proves only that the word count is even.**
+
+### A sabotage that passed all 61 rows, and the same call made twice
+
+Composing the verb's call **positionally** instead of by key passed **every row in all three
+suites**. The cause is a declared hole meeting a coincidence: only `cross` is driven end-to-end, and
+`cross`'s display order and formal order **coincide**. The verb whose orders diverge — `dutyCycle`,
+whose `xaxis` is the **fifth** formal, not the third — is the one no behavioural row reaches, and the
+failure is silent: it takes the axis where the cycle ordinal belongs and refuses naming a field the
+user never touched.
+
+The implementation crew **added two rows on the counted arm** rather than declaring the hole, plus a
+non-vacuity control recording *why* the behavioural arm is blind. That is the second time this batch
+the driver has ruled that **a sabotage which passes everything is a hole, not a pass**, and that a
+published check count is not a baseline because every site carrying it recomputes it. Both times the
+figure was re-derived rather than hand-edited.
 
 ### ⚠⚠ Stage H2/H3 — a surviving sabotage, and the driver overruling the crew that found it
 

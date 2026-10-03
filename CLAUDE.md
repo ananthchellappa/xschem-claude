@@ -129,13 +129,25 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.2950103.log`, taken in the `~/gc26` clone at an 18-character
-  path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates clean):
-  **124 cases** (3 `tcases` + **96** `hcases` + 24 `dcases` + `xschemtest`), **123 blocks**,
+  the gate verdict `tests/results.3122206.log` at **`cac6ca61`**, taken in the `~/gc26` clone at an
+  18-character path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates
+  clean): **124 cases** (3 `tcases` + **96** `hcases` + 24 `dcases` + `xschemtest`), **123 blocks**,
   **`wc -l` 371 green**; trailer
-  `cases=124 blocks=123 counted_failures=0 skips=8 elapsed=641s`, zero live-peer lines, zero
-  counted shapes, `test_ase_optier_0963` at `ALL PASS (110 checks)` and `test_home_isolation` at
-  `ALL PASS (116 checks)`.
+  `cases=124 blocks=123 counted_failures=0 skips=8 elapsed=645s`, zero live-peer lines, zero
+  counted shapes, zero nonzero `Total num fail:` lines, and `test_ase_optier_0963` at
+  `ALL PASS (110 checks)`.
+  ⚠ **PLAN 5.4 moved SIX published check counts and not one trailer term** — `test_calc_measure`
+  135 → 160, `test_calc_skeleton` 548 → **573**, `test_calc_widgets` 246 → **259**,
+  `test_calc_buffer` 130, `test_suite_watchdog_1403` 32 → **40**, and `test_calc_wave_dest` 89 → 90.
+  Every one of those suites was **already registered**, so `cases`, `blocks`, `counted_failures`,
+  `skips` and even **`wc -l` are all unchanged** — `wc -l` moves with the *number* of `RESULT:` and
+  `skip:` lines, not with the counts inside them. **That is the clean demonstration that a published
+  check count is NOT a baseline**: it is a figure three instruments recompute every run, which is why
+  this batch twice chose to move one rather than leave a sabotage unfenced. 371 was derived both
+  times and matched both times.
+  ⚠ `test_fluid_editing` appears in this verdict as `RESULT: SKIP (no X)` — registered in `hcases`
+  **only**, whose loop hard-codes `--nogui`, so **all 26 of its rows gate nothing** and its display
+  arm has been red at row `FE8`. Issue **1641**; the row is the suspect, not the product.
   The Calculator batch's **wave destination** took it there (`test_calc_wave_dest`, **`hcases`
   alone**, 89 checks) -- `calc::wave_dest` plus R420's `xaxis` argument on `dutyCycle`, the
   destination that `dutyCycle`'s default, `delay`'s `nth = 0` and the unbuilt `frequency` were all
@@ -395,7 +407,11 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `riseTime`, `delay`, `dutyCycle`)
   and `124/123/skips=8` here (**the wave destination**, `test_calc_wave_dest` in `hcases` alone,
   89 checks -- and the figure whose `planned_cases` header agreed INDEPENDENTLY with the
-  `summarize_all`-derived prediction, which is now the only method this file endorses).
+  `summarize_all`-derived prediction, which is now the only method this file endorses)
+  and `124/123/skips=8` **again** at `cac6ca61` (**PLAN 5.4**, the argument dialog -- the first
+  figure in this series where a whole stage landed and **no trailer term moved at all**, because all
+  six suites it touched were already registered; only their published check counts moved, and even
+  `wc -l` held at 371).
   ⚠ **`skips=` has now held at 8 across SIXTEEN
   consecutive
   figures, and that is a coincidence of what was registered, not a property**: 1604, 1603,
