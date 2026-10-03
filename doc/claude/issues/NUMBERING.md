@@ -4464,7 +4464,89 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `pos_at` clamps instead — three arms, three dispositions toward the same bad input. Found by the
   calculator batch's `cross` read-back recon.
 
-**The next free number is 1633.**
+- **1633** — `table_read()` parses ASCII data with a **float** parser although the storage is
+  `double`. It is the tree's only reader of `SPICE_DATA_TYPE`, which `src/xschem.h` sets to `1`
+  (*"Use 1 for float, 2 for double"*) beside `#define SPICE_DATA double`, so the `#if` arm calls
+  `my_atof()` and truncates before the cast widens it back. Two losses stack: single precision
+  (~1e-7) and `my_atof()`'s **eight-fractional-digit** `p10[]` cap, which on a *plain decimal*
+  spelling costs 1e-5 — measured, a real crossing time `0.0009999999999999998` reads back
+  `0.0009999899193644524`, improving only to `6.9e-8` when the same value is spelled `%e`. So the
+  error depends on how the producer formatted the file. ⚠ **Wider than ASCII tables**:
+  `read_raw_ascii_point()` reaches the same parser for every column except the sweep, so an ASCII
+  `.raw` loses it too; a **binary** raw is exact, which is the control. `my_atod()` already exists
+  two functions below with an 18-entry table. Found by the calculator batch's recon, which it cost
+  a design route.
+- **1634** — the **top-level** `xschem table_read <file>` TOGGLES: with a result loaded it takes
+  the clear-**all** arm and never reads the file, so reading one table takes two invocations and
+  the first silently destroys the loaded database. `Tcl_ResetResult` on every path means it answers
+  the empty string whether it read, unloaded or failed. `xschem raw table_read` — the other
+  dispatcher, one word apart — appends in one call and returns 1. The toggle *is* in the arm's own
+  help comment, but there is no argument-free unload spelling, so the documented behaviour is only
+  reachable by passing a filename that is then discarded.
+- **1635** — `xschem raw new` returns **success for a database it failed to allocate**.
+  `new_rawfile()` computes `(int)floor((end - start) / step) + 1` and never tests it: `end < start`
+  gives `-9` and `step = 0` gives `-2147483647`, both printing `my_calloc(0,): allocation failure`
+  and both answering **rc 1** with the broken slot registered and current, every read answering the
+  empty string. Also: the verb's help says the count is `number=(end - start) / step` where the
+  code adds one, and the code's own formula is not robust to binary floating point — `0 → 0.3`
+  step `0.1` gives **3** points ending at 0.2, because `0.3/0.1` is `2.9999999999999996`.
+- **1636** — `xschem raw clear <name> <type>` **silently moves the user's selected analysis**: both
+  targeted clear arms set `extra_idx = 0` *and* `extra_prev_idx = 0` unconditionally, so a user on
+  an **op** slot who clears an unrelated database gets `results::current` reporting `idx 0 … type
+  tran`, with no message and the op slot still present at index 1. ⚠ **Filed as a hazard with a
+  caller-side remedy, not as a fix for the clear arm**: `ase::attach_dbs` relies on the reset — its
+  highest-index-first clear loop is correct only because of it — so the remedy is restore-by-
+  name-and-type plus a fence. Also measured on the same verb: argument-free `xschem raw clear`
+  clears everything, and `raw switch <name>` with no type **ignores the name**, falls into the
+  switch-to-next arm and answers 1 even for a nonexistent file.
+- **1637** — `xschem raw pos_at` answers `-1` **or a wrong index** on a non-monotonic column, and
+  `wviewer::interp_value` asks it about **column 0** whatever the trace's own sweep is
+  (`set sweep [lindex $names 0]`). Measured on a scratch column whose head holds five crossing
+  times and whose tail is `raw_add_vector()`'s zero fill: the value at index 0 answers **4** and
+  three values that are present answer **−1**, against a correct control on `time`. The wrong-index
+  half **refutes issue 1631's** conclusion that the failure mode is false-negative-only, which was
+  measured on `v(sq)` and does not generalise to a flat tail. ⚠ The C-side in-graph measurement
+  (`show_node_measures`, fed by `measure_p`) resolves the per-trace sweep correctly and scans
+  linearly — so the graph and the readout bar disagree about *both* which column and how.
+- **1638** — `tests/headless/test_results_select.tcl` is 191 KB of result-selection fences and is
+  in **neither** `hcases` (95 entries) nor `dcases` (24), so it gates no commit — and it owns the
+  very semantics **1634** and **1636** damage. ⚠ **It cannot simply be registered**: its epilogue
+  prints only `RESULT: ALL PASS`, `banner_complete` returns **0** on its real output and the word
+  `OVERALL` appears **zero** times, so registering it as it stands is issue 1615's standing red
+  verbatim. The fix is additive, one line, `RESULT:` kept last — the shape 1626 used. Nothing was
+  changed; the epilogue check is recorded so the next crew need not re-derive it. (It also reports
+  375 checks armed and 377 bare, so two rows are home-sensitive — quote neither.)
+- **1639** — `calc::riseTime` with `nth` 0 **RAISES**: `can't use non-numeric string as operand of
+  "-"`. `calc::cross`'s `nth` 0 answers success with a LIST, and both siblings guard it —
+  `calc::delay`'s comment names this exact raise as its reason — while `riseTime` passes `nth`
+  through and subtracts. Its own comment claims *"no arithmetic can meet an empty operand"*, which
+  is true of the high-side operand it tests and false of `$xlo`, which comes straight from the
+  caller. Reachable only when the measurement would otherwise have worked (an unreachable swing
+  answers a clean absence), and fenced by **no** row — `test_calc_measure` covers `delay`'s
+  deferral (MT7) and `dutyCycle_scalar`'s (MT8) and never passes 0 as `riseTime`'s sixth argument.
+  ⚠ Two defensible fixes, not interchangeable: join the shared `listdefer` sentence — free, because
+  MT7/MT8 assert **identity** with `calc::cross_msg listdefer` and count no users, but **splitting
+  that sentence per caller reddens both rows** — or refuse under D7.
+
+- **1640** — `storeobject()` takes `pos` from the caller and **never bounds it**:
+  `check_box_storage()` grows the layer array from the *count*, never from the index about to be
+  written, so `pos` at the array's capacity writes one `xRect` past the block. Witnessed under
+  valgrind as an `Invalid write of size 8` *"0 bytes after a block of size 8,800 alloc'd"* by
+  `alloc_xschem_data`, and the allocator metadata then held **`0x4059000000000000`** — the double
+  `100.0`, i.e. the caller's own `y2`. **All three birth doors**: `rect` and `line` at
+  `CADMAXOBJECTS`, `wire` (via `wire_store()`) at `CADMAXWIRES`. ⚠ **A T1 hazard, and
+  `banner_died` is the wrong test** — the abort is at *teardown*, after the script has run to
+  completion (50 further rectangles and a `clear force` all succeeded), so there is no column-0
+  death marker and glibc's sentence goes to stderr; `regression_case_failed` catches it only on its
+  **first** arm, `childcode != 0`, with exit **134**. The accidental route is Part 2: the `rect`
+  verb accepts **no layer argument** (the layer is `xctx->rectcolor`), so
+  `xschem rect <layer> x1 y1 x2 y2` shifts everything left and the caller's `y2` becomes `pos` —
+  and `xschem get rects <layer>` then answers **0**, which reads as "the verb is interactive".
+  Part 3 is the same missing bound on the other side: `rects[c] < pos < maxr[c]` writes into an
+  uncounted gap, increments the count anyway, and `saveas` shows `B 4 0 0 0 0 {}` — the object is
+  lost and a degenerate slot 0 is saved in its place. Not a double free despite the message.
+
+**The next free number is 1641.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

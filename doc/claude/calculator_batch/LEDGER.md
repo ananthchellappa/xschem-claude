@@ -77,8 +77,65 @@ have caught a false premise was the thing the false premise was recorded in.
 | 18 | **Stage F2/F3 — `cross` red-first suite + implementation** | `receipts/F2-cross-suite-and-implementation.md` | 2026-10-02 | four crews; **reversed the driver's own D10**, 12 false claims retired from one file, SR5 widened as a derivation; `test_calc_cross` 187 checks in `hcases` |
 | 19 | **Stage G — `riseTime`/`delay`/`dutyCycle` recon** | `receipts/G-timing-verbs-recon.md` | 2026-10-02 | four crews; **refuted the driver's evaluate-once helper** (the scan is 27x a column read); user ruled R415 and R416 |
 | 20 | **Stage G2/G3 — the timing verbs' suite + implementation** | `receipts/G2-timing-verbs-suite-and-implementation.md` | 2026-10-02 | five crews; **a NEW parse trap `info complete` cannot see**; a mutation that was a FALSE RED; `test_calc_measure` 125 checks in `hcases`; 16 sabotages, no holes |
+| 21 | **Stage H — the destination for a non-scalar result: recon** | `receipts/H-destination-recon.md` | 2026-10-02 | six crews, two resumed for a second round; **nine driver claims refuted, one of them reproduced INSIDE the correcting contract**; user ruled R419 and R420; route A decided; filed issues **1633–1639** |
 
-### ⚠ Stage G — the driver's second refuted optimisation, and the second ruling-versus-table disagreement
+### ⚠⚠ Stage H — the driver's own contract sprang the trap it was written to close
+
+**The worst finding of this stage is a method failure, not a fact.** `DESTINATION_CONTRACT.md` was
+written to correct false prose in the tree, and it **reproduced a dead claim inside itself**: that
+spec §7.2 spells `cross` as `scalar/list`. The string appears **zero** times in
+`doc/claude/specs/calculator.md` and `git log -S` finds it never did — the spec had already been
+corrected, and what the driver read was a **stale source comment** above `calc::catalogue` asserting
+a deliberate one-word disagreement that no longer existed.
+
+That is CLAUDE.md's `grep -c '#pragma'` failure exactly — a correcting sentence becoming its own
+counterexample — and it is recorded because this batch keeps citing that rule at other people. The
+lesson: **a stale comment is not a weaker source than code, it is a more dangerous one.** It reads as
+settled, nothing re-runs it, and a reader inherits it. Grep the claim.
+
+Nine driver claims were refuted in all. Four of the sharper ones: `calc::fn_rows` **does not exist**
+(the proc is `calc::catalogue`); the `nth = 0` deferral is in `calc::cross_scalar`, not `calc::cross`,
+which never defers; `table_read()` is **not** destructive to the loaded result (two crews
+independently measured its guard unreachable through any `raw` verb); and the driver's claim that
+`raw_read()` escapes the float parser is true only of the **binary** path and the sweep column.
+
+**And the verb count was wrong twice.** The tree said *"three verbs behind one missing piece"*; R419
+falsified it; the driver corrected it to **two**; that was also wrong. It is **two destinations** —
+three verbs behind the waveform one (`dutyCycle` default, **`delay` with `nth = 0`**, `frequency`) and
+one behind the list one. `delay` was dropped by reading. A crew got it right by running awk over the
+enclosing proc of every `listdefer` call site, which is the only method that has been right about
+this number.
+
+### The two rulings, and what each removed
+
+**R419 — `cross nth = 0` is a plain list of crossing times.** *"Just a list of crossing times like
+cadence does."* This **refuted a claim the driver had written as fact without ever asking** —
+*"Cadence returns a waveform here"*, a parenthetical in `CROSS_CONTRACT.md` D8 that propagated into
+the published spec and two source comments, and that inflated the dependency used to justify picking
+this stage at all. Offered three shapes, the user chose the plain one and named the reference tool.
+
+**R420 — `dutyCycle`'s X axis is an argument with a default**, defaulting to the time each cycle
+started. *"Make it an option to the function… Other choices you gave can be supported with non
+default values."* The driver had framed three legitimate X axes as a pick-one. **The parameter should
+have been proposed, not the question asked** — when every candidate answer is defensible, the question
+is not which one, it is what the default should be.
+
+### The tension, and a hypothesis that died on its own premise
+
+**Registered is required and registered is poison.** An unregistered slot draws nothing with no
+message at all, legend entry still showing; but a registered route-A database immediately becomes
+`results::current`, so the Calculator could evaluate against its own scratch output and serve a wrong
+number. The driver hypothesised an odd `sim_type` would make it structurally invisible, and sent it
+out **to be attacked**: it survived plottability (resolution is fully type-agnostic) and **died** on
+the premise — `results::current` does not fall through to the user's result, it answers `{}`. So the
+type is a fail-safe backstop worth one row, and the **restore is the primary defence** — and it needs
+**two** explicit `raw switch <name> <type>` calls, because `raw clear` forces `extra_idx = 0` at
+cleanup time and moves the user.
+
+⚠⚠ **The fence for all of it would have passed vacuously.** With the user on slot 0, "after clear ==
+capture?" answers YES and the hazard is invisible. **Fourth vacuous-row trap this batch has caught
+before shipping**, each one found by asking what the row would do if the defect were present rather
+than by checking that it passes.
 
 **The evaluate-once helper was pointless and measurement said so.** The plan was a shared
 *evaluate once, scan many* seam so a verb needing two levels would not evaluate twice. On a

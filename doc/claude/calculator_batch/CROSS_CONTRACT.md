@@ -256,6 +256,35 @@ surface with a message is honest; silently truncating a list to its first elemen
 
 **This is the R404 gap the driver flagged to the user, written down rather than left in a reply.**
 
+#### ⚠⚠ D8's PARENTHETICAL IS REFUTED — SUPERSEDED, NOT DELETED (R419, 2026-10-02)
+
+*"(Cadence returns a waveform here, which is the eventual answer, plausibly via `xschem raw
+table_read`)"* is **false**, and it is the **origin** of every copy of that claim in the tree. It was
+never asked about: the driver wrote an unverified claim about the reference tool down as a fact, in a
+parenthesis, and it then propagated into `src/calculator.tcl` (three comments), into
+`doc/claude/specs/calculator.md`, into `TIMING_CONTRACT.md` and into `DESTINATION_CONTRACT.md` itself,
+where it was used to argue about what to build next.
+
+Asked directly — offered a list in a dialog, dots plotted on the threshold line, or
+crossing-number-against-time — the user answered: *"just a list of crossing times like cadence does."*
+So **R419**: `cross` with `nth = 0` answers a **plain list of crossing times**, no Y axis is invented,
+and the surface that holds it is spec **R606**'s `Table`, not a plot. The second half of the
+parenthetical is dead too, and independently: `table_read()` parses the **float** arm of
+`SPICE_DATA_TYPE` with a hand-rolled parser (issue **1633**), so it could not have carried a crossing
+time at the fixture's 1e-12 headroom even if a waveform had been wanted.
+
+The reasoning above is kept with this correction beside it, exactly as D10's reversal was, because a
+contract that quietly loses a wrong decision teaches nobody — and because the lesson generalises:
+**an unverified claim about the reference tool must never be written down as a fact**, however
+parenthetical, since prose is the one artefact nothing re-runs. The user uses that tool
+professionally; asking costs one message.
+
+⚠ The **shared `listdefer` sentence is still shared**, and the deferring callers are **not** all
+waiting on the same thing: `calc::cross_scalar` waits on the **list** surface (this D8), while
+`calc::delay` with `nth = 0` on either side and `calc::dutyCycle_scalar`'s default cycle wait on the
+**waveform** destination `calc::wave_dest` builds. D9's *"the wave destination for D8"* is therefore
+mis-attributed as well: D8's own dependency is the list surface.
+
 ### D9. Scope boundary for this stage
 
 In: the measurement proc, its plumbing (R401–R403), its refusals, the catalogue row going live,

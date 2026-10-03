@@ -35,10 +35,36 @@ Not the first period, not the mean. The faithful answer, and it has a consequenc
 waiting on** (`CROSS_CONTRACT.md` D8), and `frequency` will want it too. Three verbs behind one
 missing piece makes that destination the measurement layer's critical path.
 
+> ⚠⚠ **BOTH SENTENCES ABOVE ARE REFUTED — SUPERSEDED, NOT DELETED (R419/R420, 2026-10-02).**
+>
+> **The clause is wrong.** `cross`'s `nth = 0` was never waiting on a waveform destination: the user
+> ruled it answers *"just a list of crossing times like cadence does"* (**R419**), so it waits on a
+> **list** surface (spec R606's `Table`). `dutyCycle`'s default does need a waveform destination, but
+> not *that* one. The claim it rested on — that the reference tool returns a waveform for `nth = 0` —
+> began as an unasked parenthetical in `CROSS_CONTRACT.md` D8 and is corrected there.
+>
+> **The count is wrong twice over**, and the driver's first correction of it ("two verbs instead of
+> three") was wrong too. There are **two destinations**: **three** callers behind the waveform one —
+> `calc::dutyCycle_scalar`'s default cycle, **`calc::delay` with `nth = 0` on either side**, and the
+> unbuilt `frequency` — and **one** behind the list one, `calc::cross_scalar`. The verb the driver
+> dropped was `delay`. The real set was established by enumerating the enclosing proc of every
+> `listdefer` call site mechanically, which is the only method that has been right about this number;
+> `calc::riseTime` with `nth = 0` **raises** rather than deferring and is issue **1639**, open.
+>
+> **And "critical path" no longer describes anything**: `calc::wave_dest` shipped with R419/R420, so
+> what the three waveform callers are still waiting on is the **click** (R410/R412, phase 5), not a
+> destination.
+
 **How 7.3 ships without being blocked on it**: the proc returns the full per-cycle series; naming a
 cycle gives a scalar end-to-end today; the default wave case returns its data with the **UI surface
-deferred behind the same message `cross` uses**. When the destination lands, three verbs light up
-at once rather than needing rework.
+deferred behind the same message `cross` uses**. When the destination lands, the callers behind it
+light up rather than needing rework.
+
+⚠ **R420 then made the X axis an ARGUMENT**, which this file could not have anticipated and which the
+driver should have proposed rather than asked: *"Make it an option to the function. Default can be
+time the cycle started. Other choices you gave can be supported with non default values to this
+argument."* `calc::dutyCycle` takes `?<xaxis>?` — `start` (the default), `number`, `mid` — and its
+answer carries a parallel `sweep` series. Full reasoning in `DESTINATION_CONTRACT.md` §6.
 
 ## 2. Decisions the driver makes, and what each rests on
 

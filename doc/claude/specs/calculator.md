@@ -570,7 +570,7 @@ opcode, **✘** = out of scope v1.
 | `lshift` | wave | shift along X | **T** (was "C (`del()` with negative arg) or T"; that recipe is now a *rejected* expression — issue 0325, see below) |
 | `sample` | wave | values at chosen X | T |
 | `root` | scalar | X where curve = 0 | T (`cross` at level 0) |
-| `cross` | scalar/wave | X at Nth threshold crossing (`nth` reads from either end — §7.2aa) | T — **the primitive most timing verbs use** |
+| `cross` | scalar/list | X at Nth threshold crossing (`nth` reads from either end — §7.2aa); `nth = 0` answers a **plain list** of crossing times, R419 | T — **the primitive most timing verbs use** |
 | `intersect` | scalar/wave | where two curves meet | T |
 | `compare` | bool | curves agree within tol | T |
 | `dBm` | wave | power in dBm | C |
@@ -667,17 +667,25 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
   `min()`/`max()` are two-argument clamps and `avg()` is a running mean, so a percent-of-own-swing
   verb would have had to evaluate into its own column and scan in Tcl.
 - **R416** `dutyCycle` returns a **WAVE, one value per cycle** — not the first period, not the mean.
-  ⚠ **Its default therefore depends on the waveform destination that R414's `nth = 0` is already
-  waiting on**, and `frequency` will want the same one; three verbs behind one missing piece makes
-  that destination the measurement layer's critical path. v1 ships the proc complete (the full
-  per-cycle series, and a named cycle giving a scalar end to end) with the **UI surface deferred
-  behind the same sentence `cross` uses for `nth = 0`**.
+  Its default therefore depends on a destination that can hold a wave whose X axis is not the loaded
+  sweep; **see R419–R421 and `doc/claude/calculator_batch/DESTINATION_CONTRACT.md`**. v1 shipped the
+  proc complete (the full per-cycle series, and a named cycle giving a scalar end to end) with the
+  **UI surface deferred behind the same sentence `cross` uses for `nth = 0`**.
+  ⚠ **This ruling was first written with a false clause and a wrong count, and both are corrected
+  here rather than quietly dropped.** It said the default *"depends on the waveform destination that
+  R414's `nth = 0` is already waiting on"* and that *"three verbs behind one missing piece"* made that
+  destination the critical path. R419 refutes the first — `nth = 0` is a **list** and never wanted a
+  waveform — and the count is wrong twice over: there are **two** destinations, with **three** verbs
+  behind the waveform one (`dutyCycle`'s default, **`delay` with `nth = 0` on either side**, and
+  `frequency`) and **one** behind the list one. The verb originally dropped was `delay`; the real set
+  was established by enumerating every `listdefer` call site mechanically, which is the only method
+  that has been right about this number.
   ⚠ **§7.2's table row for `dutyCycle` said `scalar` and was FALSE from the moment R416 was
   written**, three sections below it in this same file; corrected to `scalar/wave` by the 7.3
   implementation, which is also the spelling `calc::catalogue` carries, because `returns` has a
-  closed vocabulary (`scalar` / `wave` / `bool` / `scalar/wave`) fenced by row S24 of
-  `tests/headless/test_calc_skeleton.tcl`. `riseTime` and `delay` stay `scalar` — each answers one
-  number, R417's negative one included.
+  closed vocabulary fenced by row S24 of `tests/headless/test_calc_skeleton.tcl` — now
+  `scalar` / `wave` / `bool` / `scalar/wave` / **`scalar/list`**, widened by one term for R419.
+  `riseTime` and `delay` stay `scalar` — each answers one number, R417's negative one included.
 - **R417** (driver, from the ADE-L floor) `delay` takes a full edge specification **per side** —
   level, direction and occurrence each — and **returns a negative answer** when the second edge
   precedes the first, rather than refusing. ADE-L permits it, so refusing would be a restriction
@@ -689,6 +697,41 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
   one. The scan costs **27×** a column read (296 ms against 10.3 ms on 100 000 points), so an
   evaluate-once helper saves ~20 ms of ~300 — and six of ten candidate sharing shapes **redden row
   SR5** of `test_calc_scratch_reuse`, whose trap is a verb reading a named vector it did not create.
+
+### 7.2ac Where a non-scalar answer goes — R419–R421
+
+Decided 2026-10-02. Full reasoning and measurements:
+`doc/claude/calculator_batch/DESTINATION_CONTRACT.md` and `CLICK_CONTRACT.md`.
+
+- **R419** (**the user**, asked directly) `cross` with `nth = 0` answers a **plain list of crossing
+  times**: *"just a list of crossing times like cadence does."* No Y axis is invented — not the
+  threshold level, not the ordinal, not the sample index — and the surface that holds it is a list,
+  not a plot. Offered three shapes (a list, dots plotted on the threshold line, crossing-number
+  against time), the user chose the plain one and named the reference tool as the reason. ⚠ **This
+  REFUTES a claim this spec previously carried as fact** — that the reference tool returns a waveform
+  here. That claim originated as an unasked parenthetical in `CROSS_CONTRACT.md` D8, propagated into
+  this file and into two source comments, and inflated the dependency that was being used to choose
+  what to build next. **An unverified claim about the reference tool must never be written down as a
+  fact**, however parenthetical: prose is the one artefact nothing re-runs.
+  ⚠ `intersect` has the same shape and is **deliberately not respelled**: it has no proc yet (PLAN
+  7.6), and respelling it would drag its user-visible help text, *"Where two curves meet: scalar or
+  wave"*. One `rule` debt, raised when `intersect` is built.
+- **R420** (**the user**) `dutyCycle`'s X axis is an **argument with a default**, not a fixed choice:
+  *"Make it an option to the function. Default can be time the cycle started. Other choices you gave
+  can be supported with non default values to this argument."* So the default X is **the time each
+  cycle started**, with the cycle number and the cycle midpoint reachable by a non-default value, and
+  `frequency` inherits the same argument. ⚠ The driver had framed three legitimate X axes as a
+  pick-one; **the parameter should have been proposed rather than the question asked.** When every
+  candidate answer is a legitimate thing a user might want to see, the question is not which one — it
+  is what the default should be.
+- **R421** (**the user**) When a measurement verb is invoked from the catalogue, **the measured number
+  replaces the buffer and the expression it came from stays recoverable.** Three parts, none optional:
+  the number lands in the buffer as a literal per R404; the expression it was measured from is spelled
+  out on the status line, which is what R404's *"comment of provenance"* means concretely; and **one**
+  undo restores the expression. ⚠ This fills a hole in R412, which specifies only what **Cancel**
+  does — nothing in any ruling said what **OK** does, nor where the verb's operand comes from, and
+  since the only precedent (`calc::eval_click` → `calc::rpn_of_buffer`) reads the buffer, the buffer
+  was both the question and the answer's destination.
 
 ### 7.2a Three corrections this table needed before it could build a catalogue
 
