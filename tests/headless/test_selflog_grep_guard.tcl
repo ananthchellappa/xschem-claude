@@ -306,6 +306,15 @@
 #   ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #     --script tests/headless/test_selflog_grep_guard.tcl
 
+# A STALL BOUND. S5's runtime canary drives menu actions and reaches the event
+# loop, so a product-side modal `tkwait` (issue 1375's shape) would hang this
+# suite with nothing to end it but whatever driver happens to wrap the run.
+# Sourcing arms XSCHEM_SUITE_WATCHDOG_MS: rc 124 and one line naming this file
+# and the last row it printed, instead of silence. Row W20h of
+# test_suite_watchdog_1403.tcl fails if this line goes; W13 there records what
+# the bound cannot reach. This file has no no-X gate to sit below.
+source [file join [file dirname [info script]] scratch.tcl]
+
 set ::fails 0
 set ::npass 0
 proc check {name ok {info {}}} {

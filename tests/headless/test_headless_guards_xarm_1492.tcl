@@ -57,6 +57,15 @@ if {![info exists ::has_x]} {
   exit 0
 }
 
+# A STALL BOUND, below the gate on purpose: this arm creates real toplevels and
+# drives GUI entry points, so it can be sent into a modal `tkwait` by product
+# code (issue 1375's shape). Sourcing arms XSCHEM_SUITE_WATCHDOG_MS, which turns
+# such a hang into a NAMED outcome -- rc 124 plus one line naming this file and
+# the last row it printed -- rather than a silent run that only a driver's
+# external cap ends. Row W20h of test_suite_watchdog_1403.tcl fails if this line
+# goes; W13 there records what the bound cannot reach.
+source [file join [file dirname [info script]] scratch.tcl]
+
 set no_recent_files 1
 set xg_repo [file normalize [file join [file dirname [file normalize [info script]]] .. ..]]
 

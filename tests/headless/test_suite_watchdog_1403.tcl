@@ -10,7 +10,9 @@
 # doc/claude/code_analysis/a_hung_suite_and_an_unbounded_wait.md
 #
 # Two layers landed, and this suite pins BOTH, because each covers what the
-# other cannot:
+# other cannot -- plus, since 2026-10-03, a third section that asks whether
+# layer 2 is ARMED anywhere (LAYER 2b, rows W20a-W20h; see its own header for
+# why a hand-kept list of suites would have been the same defect one level up):
 #
 #   LAYER 2, rows W1-W13 -- the in-suite watchdog in `scratch.tcl`. It is armed
 #     by the suite being a suite, so it bounds the one command no driver wraps:
@@ -33,14 +35,19 @@
 # code. If somebody later makes the watchdog general, W13 goes red and tells
 # them to rewrite the paragraph -- which is the correct outcome, not a nuisance.
 #
-# ⚠ FLOOR: 32 checks, and it only ever goes up. Both arms report the same
+# ⚠ FLOOR: 40 checks, and it only ever goes up. Both arms report the same
 # number: every child is spawned `--nogui` on purpose, so the rows measure the
 # watchdog and not the display.
 #
-#   headless     -> 32 checks
+#   headless     -> 40 checks
 #       ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_suite_watchdog_1403.tcl
-#   dev display  -> 32 checks
+#   dev display  -> 40 checks
 #       tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog --script tests/headless/test_suite_watchdog_1403.tcl
+#
+# ⚠ AND ONE OF THOSE 40 IS A FIGURE THAT MOVES WITH THE TREE, ON PURPOSE. W20h
+# walks whatever `tests/run_regression.tcl` currently registers, so registering
+# a new Tk-driving case without a stall bound reddens THIS suite. That is the
+# intended ratchet; the figure to read is the row's detail, not this header.
 
 source [file join [file dirname [info script]] scratch.tcl]
 
@@ -440,6 +447,284 @@ check W18a-t1_why-names-124-as-a-timeout \
 check W19a-tcases-synthesizes-a-counted-FAIL \
   [expr {[regexp {HARNESS:[^\n]*t1_why[^\n]*:\s*FAIL} $rr] ? 1 : 0}] \
   "-- a killed case otherwise leaves only what it managed to print, which reads like ordinary failing checks"
+
+
+# =============================================================================
+# LAYER 2b -- THE BOUND MUST BE ARMED WHERE A HANG IS POSSIBLE
+# =============================================================================
+# Rows W1-W13 prove the watchdog WORKS. Nothing proved it was ARMED anywhere.
+#
+# Measured 2026-10-03 (doc/claude/calculator_batch/receipts/I3-watchdog.md, its
+# own section 9): three Calculator GUI suites gained the bound by sourcing
+# `scratch.tcl`, and DELETING THAT LINE FROM ANY OF THEM REDDENED NOTHING in the
+# tree. A guard nothing asserts is a guard a future tidy-up removes in silence,
+# and the next step was measured in the same batch: a row there drove a
+# HAND-KEPT list of 24 names against a catalogue that had grown to 31, stayed
+# green, and silently measured 24 of 31.
+#
+# So both sides are DERIVED, never enumerated -- the lesson of row X1 of
+# test_snprintf_fmt_1608.tcl, where a hand-kept row list was defeated by one
+# whitespace variant, and a hand-kept list of SUITES is the same defect one
+# level up:
+#
+#   POPULATION  the cases `tests/run_regression.tcl` registers -- hcases plus
+#               dcases, lifted from the driver's own text, never from a list
+#               kept here -- whose file issues any of `vwait` `tkwait` `update`
+#               `toplevel` `grab` IN COMMAND POSITION. Those are the three
+#               commands that enter the event loop plus the two that make the
+#               window a modal wait blocks on, and the event loop is the one
+#               place a Tcl `after` timer can fire (row W13).
+#   PREDICATE   the member's transitive `source` closure arms a timer that ENDS
+#               THE PROCESS: either it reaches `scratch.tcl`'s
+#               `after ... __wd_fire`, or the suite carries its own
+#               `after <ms> {... exit ...}`. Sourcing is NOT privileged -- a
+#               suite with its own deadman passes (W20f).
+#
+# ⚠ SCOPE IS *REGISTERED*, NOT EVERY HEADLESS FILE, AND THAT IS A DECISION.
+# CLAUDE.md records that most of the `tests/headless/test_*.tcl` files are in
+# neither case list, and that the rule this project adopted is the bounded half:
+# "a suite you add a fence to, you register in the same commit". An unregistered
+# file gates no commit, so ordering it to arm a bound would be a coverage claim
+# this project has deliberately not made -- while a REGISTERED case that hangs
+# stalls the one run whose baseline is zero. W20a makes the lift itself a row, so
+# a scope that silently became "nothing" cannot read as green.
+#
+# ⚠ COMMAND POSITION IS NOT COSMETIC. Scanned as bare words, THIS tree hands
+# back two false members: `test_callback_argc`'s only `toplevel` sits inside a
+# check's detail STRING, and `test_fluid_editing`'s only `grab` is the English
+# word in "tolerance grab of an OFF-GRID endpoint". Both would have been ordered
+# to arm a bound they cannot use, and a false red on an innocent suite is how a
+# fence gets deleted. W20c and W20d pin the scan against exactly those two
+# shapes.
+#
+# ⚠ AND WIDGET-CLASS NAMES CANNOT GO IN THE VERB LIST. `label`, `text`, `entry`,
+# `place` and `raise` are Tk commands AND ordinary words in a schematic editor's
+# corpus: scanned for them, `test_calc_scratch_reuse` -- which has no `after`,
+# no `vwait`, no `tkwait`, no `grab`, no `toplevel` and no `exec`, so a timer
+# there could never fire -- comes back a Tk driver. The list is verbs only.
+#
+# ⚠ THIS SECTION DELIBERATELY ANALYSES ITS OWN HOST. The fixtures below put
+# `vwait` in command position in this very file, so this suite joins its own
+# population; it sources `scratch.tcl` at the top, so it satisfies its own
+# predicate. Self-inclusion is the honest outcome and is left in.
+
+## The verbs, in one place, so W20c/W20d and the fence read the same list.
+set WD_VERBS [list vwait tkwait grab toplevel update]
+
+## Every word that stands in COMMAND POSITION: the first word of the script, of
+## a bracketed or braced body, or of whatever follows a `;`. Comment fragments
+## are dropped, which is what keeps a `;# ... update the docs` trailer out.
+proc wd_cmdwords {txt} {
+  set w {}
+  foreach frag [split $txt "\n;\[\]\{\}"] {
+    set t [string trim $frag]
+    if {$t eq {}} continue
+    if {[string index $t 0] eq "#"} continue
+    set f [lindex [split $t " \t"] 0]
+    if {$f ne {} && [lsearch -exact $w $f] < 0} { lappend w $f }
+  }
+  return $w
+}
+
+## The event-loop verbs a file issues as COMMANDS, {} for a file that issues
+## none. Reads the file, so a fixture and a real suite go through one code path.
+proc wd_loop_verbs {path} {
+  global WD_VERBS
+  set cw [wd_cmdwords [slurp $path]]
+  set hit {}
+  foreach v $WD_VERBS { if {[lsearch -exact $cw $v] >= 0} { lappend hit $v } }
+  return $hit
+}
+
+## One registered case list, lifted from the driver's OWN TEXT by name rather
+## than by line number: the `set <var> [list` line plus its backslash
+## continuations, then every quoted word. CLAUDE.md records that
+## `grep -c '"headless/'` and `grep -cE '\.log$'` both miscount this.
+proc wd_case_list {txt var} {
+  set blk {} ; set keep 0
+  foreach l [split $txt \n] {
+    if {!$keep && [regexp "^set\\s+$var\\s+\\\[list" $l]} { set keep 1 }
+    if {$keep} {
+      append blk $l "\n"
+      if {![regexp {\\$} $l]} { break }
+    }
+  }
+  set names {}
+  foreach q [regexp -all -inline {"[^"]*"} $blk] {
+    set n [string trim $q \"]
+    if {$n ne {} && [lsearch -exact $names $n] < 0} { lappend names $n }
+  }
+  return $names
+}
+
+## A registered entry resolves under `tests/`, which is where the four bare-name
+## entries live as well as the `headless/` ones. CLAUDE.md notes that a census
+## regex requiring the `headless/` prefix reports those four as
+## registered-with-no-file -- that is the regex's bug, so this does not have one.
+proc wd_case_file {repo name} { return [file join $repo tests $name.tcl] }
+
+## The `.tcl` basenames a line SOURCES, {} if it is not a source command. Any
+## number of them, so a line that sources two files contributes both.
+proc wd_sourced_names {line} {
+  if {[regexp {^[ \t]*#} $line]} { return {} }
+  if {![regexp {(^|\[|;|\{)[ \t]*source[ \t]} $line]} { return {} }
+  set got {}
+  foreach m [regexp -all -inline {[A-Za-z0-9_]+\.tcl} $line] {
+    if {[lsearch -exact $got $m] < 0} { lappend got $m }
+  }
+  return $got
+}
+
+## The transitive `source` closure of a file, resolved against the sourcing
+## file's own directory and then `tests/headless/` and `tests/`. A suite that
+## gets the bound through a common it sources is bounded (W20e).
+proc wd_closure {repo path} {
+  set seen {} ; set q [list $path]
+  while {[llength $q]} {
+    set p [file normalize [lindex $q 0]] ; set q [lrange $q 1 end]
+    if {[lsearch -exact $seen $p] >= 0} continue
+    lappend seen $p
+    foreach l [split [slurp $p] \n] {
+      foreach n [wd_sourced_names $l] {
+        foreach d [list [file dirname $p] [file join $repo tests headless] \
+                        [file join $repo tests]] {
+          set c [file join $d $n]
+          if {[file exists $c]} { lappend q $c ; break }
+        }
+      }
+    }
+  }
+  return $seen
+}
+
+## Does anything in the closure arm a timer that ENDS THE PROCESS? Two shapes,
+## and the second is why "sources scratch.tcl" is not the assertion: a suite
+## that writes its own deadman has a bound and must pass.
+proc wd_arms_bound {repo path} {
+  foreach c [wd_closure $repo $path] {
+    foreach l [split [slurp $c] \n] {
+      if {[regexp {^[ \t]*#} $l]} continue
+      if {[regexp {after\s+\S+\s+(::)?__wd_fire} $l]} { return 1 }
+      if {[regexp {after\s+[0-9]+\s+\{[^\n]*\yexit\y} $l]} { return 1 }
+    }
+  }
+  return 0
+}
+
+## --- W20a: the lift itself, because a lift that returns nothing is green -----
+set wd_reg {}
+foreach wd_v {hcases dcases} {
+  foreach wd_n [wd_case_list $rr $wd_v] {
+    if {[lsearch -exact $wd_reg $wd_n] < 0} { lappend wd_reg $wd_n }
+  }
+}
+set wd_unresolved {}
+foreach wd_n $wd_reg {
+  if {![file exists [wd_case_file $repo $wd_n]]} { lappend wd_unresolved $wd_n }
+}
+## ⚠ THE SIZE RELATION IS HERE BECAUSE A SCOPE NARROWING IS INVISIBLE WITHOUT IT.
+## Measured: dropping `hcases` from the loop above -- one word, the likeliest
+## future edit if somebody decides "the GUI cases are the dcases ones" -- left
+## every row below GREEN, with the fence walking 24 cases instead of 104 and
+## saying nothing about the difference. So this row asserts the set the fence
+## ACTUALLY WALKS against both lifts, rather than asserting that the lifts
+## themselves parsed.
+set wd_h [wd_case_list $rr hcases]
+set wd_d [wd_case_list $rr dcases]
+check W20a-registered-lift-is-not-empty-resolves-and-covers-BOTH-case-lists \
+  [expr {[llength $wd_h] > 0 && [llength $wd_d] > 0 &&
+         [llength $wd_unresolved] == 0 &&
+         [llength $wd_reg] >= [llength $wd_h] &&
+         [llength $wd_reg] >= [llength $wd_d] &&
+         [llength $wd_reg] <= [llength $wd_h] + [llength $wd_d]}] \
+  "-- [llength $wd_h] hcases + [llength $wd_d] dcases = [llength $wd_reg] unique (entries in both lists dedupe, so the union sits between the larger list and the sum);\
+ unresolved: [expr {[llength $wd_unresolved] ? [join $wd_unresolved {, }] : {none}}] -- a lift that quietly returned nothing, or a scope quietly narrowed to one list, would make every row below vacuous"
+
+## --- W20b/W20h: the population, and the fence -------------------------------
+set wd_pop {} ; set wd_bad {} ; set wd_verbs_seen {}
+foreach wd_n [lsort $wd_reg] {
+  set wd_f [wd_case_file $repo $wd_n]
+  set wd_hit [wd_loop_verbs $wd_f]
+  if {![llength $wd_hit]} continue
+  lappend wd_pop $wd_n
+  foreach wd_t $wd_hit {
+    if {[lsearch -exact $wd_verbs_seen $wd_t] < 0} { lappend wd_verbs_seen $wd_t }
+  }
+  if {![wd_arms_bound $repo $wd_f]} { lappend wd_bad $wd_n }
+}
+check W20b-derived-population-is-neither-empty-nor-every-registered-case \
+  [expr {[llength $wd_pop] > 0 && [llength $wd_pop] < [llength $wd_reg]}] \
+  "-- [llength $wd_pop] of [llength $wd_reg]; empty and the fence below measures nothing, all of them and the scan classifies nothing.\
+ Verbs actually seen: [join $wd_verbs_seen {, }]"
+
+## --- W20c-W20g: the two derivations, each on a fixture with a KNOWN answer ---
+## Without these a scanner that found everything, or a detector that answered
+## `1` unconditionally, would leave the fence green while measuring nothing --
+## which is precisely the failure this section exists to prevent, so it is not
+## allowed to be the failure of this section.
+set f_pop_in [write_fixture [file join $scratch wdpop_in.tcl] {puts {a suite that waits}
+vwait ::__never_set__
+exit 0}]
+check W20c-scan-finds-an-event-loop-verb-in-command-position \
+  [expr {[lsearch -exact [wd_loop_verbs $f_pop_in] vwait] >= 0}] \
+  "-- fixture issues `vwait` as a command; got {[wd_loop_verbs $f_pop_in]}"
+
+## The two shapes this tree really contains, side by side in one fixture: the
+## verb inside a double-quoted detail string, and the verb after a `;#` trailer.
+set f_pop_out [write_fixture [file join $scratch wdpop_out.tcl] {check "FE9 tolerance grab of an OFF-GRID endpoint (other end FIXED)" 1 "has_x 1 on this arm; this key would put the real toplevel in fullscreen"
+xschem zoom_box -1 -1 1 1   ;# zoom out: a big grab zone, and then update the docs
+exit 0}]
+check W20d-a-verb-in-a-STRING-or-after-a-semicolon-comment-is-not-a-command \
+  [expr {[llength [wd_loop_verbs $f_pop_out]] == 0}] \
+  "-- the two shapes measured in this tree (test_callback_argc's string `toplevel`, test_fluid_editing's English `grab`); got {[wd_loop_verbs $f_pop_out]}"
+
+## The bound reached through a common, two levels down -- the shape 16 registered
+## suites use for their banner and the shape `wvbs_common.tcl` uses.
+set f_arm_mid [write_fixture [file join $scratch wdarm_mid.tcl] \
+  "$srcline\nputs {a common that pulls the bound in}"]
+set f_arm_clo [write_fixture [file join $scratch wdarm_clo.tcl] \
+  "source \[file join \[file dirname \[info script\]\] wdarm_mid.tcl\]\nvwait ::__never_set__"]
+check W20e-bound-detector-follows-the-transitive-source-closure \
+  [expr {[wd_arms_bound $repo $f_arm_clo] == 1}] \
+  "-- fixture sources a common which sources scratch.tcl; a detector reading only the suite's own text would call this unbounded and order a second bound"
+
+set f_arm_own [write_fixture [file join $scratch wdarm_own.tcl] {after 300000 {puts "suite deadline reached" ; exit 124}
+vwait ::__never_set__}]
+check W20f-bound-detector-accepts-a-suites-OWN-after-exit-deadman \
+  [expr {[wd_arms_bound $repo $f_arm_own] == 1}] \
+  "-- sourcing scratch.tcl is one shape, not the requirement; a suite that writes its own deadman must pass or the fence is a style rule"
+
+## ⚠ THE DECOYS IN THIS FIXTURE ARE THE WHOLE ROW, and the first draft had none.
+## Written as a bare `vwait` with nothing else in it, this row passed under TWO
+## sabotages of `wd_arms_bound` that a reasonable person would write -- "the file
+## mentions scratch.tcl" and "the file calls `after`" -- because the fixture
+## contained neither word to be fooled by. Measured, not suspected: the sabotage
+## pass reddened nothing and that is how these three lines arrived. The fixture
+## therefore carries, deliberately, every near-miss of a bound: `scratch.tcl`
+## named in a comment, `scratch.tcl` named on a code line that is not a `source`,
+## and a small `after` sleep with no script that exits (the shape
+## `test_calc_widgets` really uses).
+set f_arm_non [write_fixture [file join $scratch wdarm_non.tcl] {# deliberately does NOT source scratch.tcl, and names it in prose to prove it
+puts {a mention of scratch.tcl on a line that is not a source command}
+after 25 ; update
+vwait ::__never_set__
+exit 0}]
+check W20g-bound-detector-says-NO-to-a-MENTION-and-to-a-plain-after-sleep \
+  [expr {[wd_arms_bound $repo $f_arm_non] == 0}] \
+  "-- the non-vacuity half of W20e/W20f: a detector keying on the word `scratch.tcl`, or on `after` alone, would keep the fence below green forever; this fixture carries all three decoys"
+
+## --- the fence ---------------------------------------------------------------
+if {[llength $wd_bad]} {
+  set wd_detail "but [llength $wd_bad] of [llength $wd_pop] do: [join $wd_bad {, }]\
+ -- each reaches the event loop and arms NO deadman, so a modal `tkwait` there has no upper bound\
+ except whatever driver happens to wrap it; give it `source scratch.tcl` below its no-X gate,\
+ or its own `after <ms> {... exit ...}`"
+} else {
+  set wd_detail "all [llength $wd_pop] of [llength $wd_reg] registered cases that reach the event loop\
+ arm one, derived from the driver's lists and a command-position scan -- not from a list kept here"
+}
+check W20h-no-registered-event-loop-case-is-left-WITHOUT-a-stall-bound \
+  [expr {[llength $wd_bad] == 0}] "-- $wd_detail"
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {

@@ -89,8 +89,30 @@
 #   calc::riseTime        <rpn> ?<lo>? ?<hi>? ?<pctlo>? ?<pcthi>? ?<nth>? ?<dataset>?
 #   calc::delay           <rpnA> <levelA> <edgeA> <nthA> \
 #                         <rpnB> <levelB> <edgeB> <nthB> ?<dataset>?
-#   calc::dutyCycle       <rpn> <level> ?<cycle>? ?<dataset>?
-#   calc::dutyCycle_scalar <rpn> <level> ?<cycle>? ?<dataset>?
+#   calc::dutyCycle       <rpn> <level> ?<cycle>? ?<dataset>? ?<xaxis>?
+#   calc::dutyCycle_scalar <rpn> <level> ?<cycle>? ?<dataset>? ?<xaxis>?
+#
+# ⚠ THE WRAPPER'S `?<xaxis>?` ARRIVED WITH PLAN 5.4 AND THE TWO PARAGRAPHS
+# BELOW ARE THE DATED RECORD OF WHY IT WAS ABSENT, not a live description.  Hole
+# H9 offered the implementer two fixes -- extend the wrapper, or have the result
+# path call `calc::dutyCycle` directly -- and the wrapper was extended, because
+# the dialog calls the SURFACE and a field the dialog offers must reach the proc
+# it calls.  MT11's surface-formals row is what was red for it.
+#
+# ⚠ `?<xaxis>?` WAS MISSING FROM THE LINE ABOVE UNTIL 2026-10-03, AND THE GAP
+# WAS A MEASUREMENT OWED BY PLAN 5.4 RATHER THAN A TYPO.  R420 made the X axis
+# an argument with a default AFTER this block was written, CLICK_CONTRACT
+# section 8's field table puts `X axis` SECOND in the dialog, and
+# DESTINATION_CONTRACT names neither the argument nor its position -- three live
+# documents, three different answers.  READ OFF THE SHIPPED PROC:
+# `calc::dutyCycle` is `{rpn level {cycle 0} {dataset 0} {xaxis start}}`, so
+# `xaxis` is FIFTH AND LAST, AFTER `dataset`.  The dialog's display order and
+# the proc's formal order therefore DIFFER, which is why band MT11 requires the
+# call to be composed BY KEY and measures that the two orders really diverge.
+# ⚠ And `calc::dutyCycle_scalar` -- the SURFACE wrapper, which is what a click
+# must call -- has no `xaxis` formal at all and forwards four arguments.  Its
+# own shipped comment says that is deliberate and names phase 5's dialog as the
+# caller it is waiting for.  Hole H9 below.
 #
 # `lo` and `hi` are the SUPPLIED reference levels — the swing R415 says the user
 # must give — and they are OPTIONAL WITH AN EMPTY DEFAULT ON PURPOSE: if they
@@ -335,6 +357,15 @@
 #        dataset READ, and the UI surface deferring behind the sentence `cross`
 #        already uses.
 #   MT9  T5 the empty crossing list is GUARDED at the point of use.
+#   MT9b issue 1639 — the NON-EMPTY crossing list, which is the other half of the
+#        same hazard and reaches a DIFFERENT operand: `nth` 0 handed to `riseTime`
+#        put a list on the LOW side of its subtraction and RAISED, where the empty
+#        list MT9 drives is covered by the absence test.  The disposition is
+#        deferral behind the shared `listdefer` sentence, asserted by identity and
+#        pairwise against `delay`; the ordinal is read by VALUE so every spelling
+#        of zero defers; a request that is also MALFORMED is refused as malformed
+#        rather than deferred; and a non-finite ordinal keeps `cross`'s own
+#        refusal, which is what stops the guard trading one raise for another.
 #   MT10 T1 all three are PURE DELEGATES on `calc::cross` — structurally, as a
 #        TRANSITIVE closure that permits a `::calc::` chain and forbids any link
 #        in it reading samples, and behaviourally with `calc::cross` replaced by a
@@ -342,6 +373,22 @@
 #        representation known only in the procs the header enumerates, derived over
 #        this file's own text; and no `__calc_tmp*` surviving any exit path,
 #        refusals and error paths included.
+#   MT11 PLAN 5.4 / R412 — `calc::fn_argspec`, the ARGUMENT SPECIFICATION the
+#        modal dialog is built from, and the one piece of phase 5 that needs no
+#        Tk and therefore gates on BOTH arms.  The four specifications by
+#        literal, one row each so that overruling one verb is a one-row edit;
+#        the shape rules derived over whatever the four actually answer; the
+#        30-verb fall-through swept over the whole catalogue; every key checked
+#        against the formals of BOTH the measurement proc and the SURFACE proc a
+#        click must call; the two enum member lists LIFTED out of their
+#        validators' own bodies and shown to be ACCEPTED by the verbs with no
+#        fixture at all; and a fence on the SHAPE OF THE SOLUTION — a proc, not a
+#        seventh catalogue field.  ⚠ The dialog, the click, the browser gesture
+#        and the `grab` are display-only and are band S28 of
+#        tests/headless/test_calc_skeleton.tcl and band CW14 of
+#        tests/headless/test_calc_widgets.tcl, both `dcases` ALONE — so only the
+#        gate's DISPLAY arm verifies those, and a `--nogui` number proves nothing
+#        about them.
 #
 # ⚠ WHICH ROWS OUTSIDE MT0 AND MT1 PASS WITH NO FEATURE PRESENT, DECLARED RATHER
 # THAN LEFT FOR A READER TO NOTICE, because a row that is green on the red run is
@@ -360,6 +407,16 @@
 #     `mt_shape` rejecting the three malformed sentences it is given, and
 #     `mt_dictsites` — which is a claim about THIS FILE'S OWN TEXT and so has
 #     nothing to do with whether the feature exists.
+#   * MT11's FOUR CONTROL ROWS, which are claims about the tree as it already
+#     stands and not about the feature: route `T` still having no refusal reason
+#     (the property that keeps S23's catalogue-wide click loop away from all 34 T
+#     rows); the clickable set being the four route-T names that have a proc; the
+#     two enum member lists really having been LIFTED out of their validators'
+#     bodies, which is the non-vacuity guard for the drift row beside it; and
+#     this band minting no temporary.  ⚠ A FIFTH row — "every member the dialog
+#     offers is one the verb ACCEPTS" — is HALF vacuous today and says so in its
+#     own output: its two non-member legs already read `refused`, and only its
+#     member count is red, which is the direction that needs the feature.
 #   * MT1's TWO DERIVATION SELF-CHECKS, each named `DERIVATION SELF-CHECK` in its
 #     own row name: they are arithmetic over this file's deck procs with no column
 #     and no product in them, so no product change can redden either.  They assert
@@ -445,6 +502,31 @@
 #     the stubbed `cross`'s sentence THROUGH rather than replacing it with one of
 #     their own — which is how the row knows the refusal came back through `cross`,
 #     but is a constraint on message composition that nothing else states.
+#  H9 `calc::dutyCycle_scalar` CANNOT CARRY R420's X AXIS, and MT11's
+#     surface-formals row is red for that reason as well as for the absent spec.
+#     The wrapper is `{rpn level {cycle 0} {dataset 0}}` and forwards four
+#     arguments; the measurement proc has `{xaxis start}` fifth.  So the
+#     implementer must either give the wrapper the formal and forward it, or have
+#     the result path call `calc::dutyCycle` directly — and this file does NOT
+#     choose between those, because the row it writes is satisfied by both.
+#     ⚠ WHAT IS NOT FENCEABLE HERE AT ALL: whether the axis the dialog collects
+#     reaches the data.  For a NAMED cycle the axis changes only the answer's
+#     parallel `sweep` key and R404 puts a bare NUMBER in the buffer, so nothing
+#     observable at the surface moves with it; the wave case, where it would be
+#     observable, defers.
+#  H10 EVERY FIELD LABEL, AND `cross`'s AND `delay`'s DEFAULT EDGE, ARE
+#     UNRATIFIED USER-VISIBLE TEXT.  The `rule` debt
+#     `calc_argdialog_field_labels_and_delay_second_signal` covers them; MT11
+#     pins each verb's whole field list in ONE row so that an overrule is a
+#     one-row edit, and this entry is the declaration that a green run here is
+#     not ratification.
+#  H11 NOTHING IN THIS FILE TOUCHES THE DIALOG, THE CLICK, THE CANVAS GESTURE OR
+#     THE GRAB.  Those are display-only by construction (CLICK_CONTRACT section
+#     6) and live in band S28 of tests/headless/test_calc_skeleton.tcl and band
+#     CW14 of tests/headless/test_calc_widgets.tcl, both `dcases` ALONE.  A green
+#     `--nogui` run of this file therefore says NOTHING about whether a user can
+#     reach any of the four verbs; it says only that the specification the dialog
+#     will be built from is the ruled one.
 #
 # Standalone from the repo ROOT, headless.  NOT a bare `./src/xschem`, which
 # inherits $DISPLAY and paints on the user's real screen:
@@ -1861,6 +1943,105 @@ group MT9 {
 }
 
 # =========================================================================
+group MT9b {
+    # ISSUE 1639 -- `nth` 0 ARRIVING AT `riseTime`, WHICH IS A THIRD HAZARD CLASS
+    # AND NOT EITHER OF THE TWO ALREADY FENCED ABOVE, which is why it is a band of
+    # its own rather than two more rows in MT3 or MT9.  MT3's hazard is a request
+    # that cannot be INTERPRETED at all.  MT9's is `cross` answering SUCCESS WITH
+    # AN EMPTY LIST at a level no sample reaches.  THIS one is a NON-EMPTY list
+    # arriving on the LOW side of a subtraction: `cross` with `nth` 0 answers
+    # success and a list of every crossing, `riseTime` passed its own `nth`
+    # straight through to the low-side measurement, and the subtraction then met a
+    # list and RAISED -- `can't use non-numeric string as operand of "-"`, a Tcl
+    # error reaching the caller where D7 requires an answer.
+    #
+    # ⚠ THE PROC'S OWN COMMENT CLAIMED THIS PATH WAS GUARDED, AND THE CLAIM WAS
+    # TRUE OF ONE OF THE TWO OPERANDS.  The HIGH side is read with a literal 0, so
+    # its list is covered by the test that reports an absence when no candidate is
+    # found; the LOW side's comes from the caller's `nth` and nothing tested it.
+    # The EMPTY-list case does NOT raise either, which is why this survived a
+    # reviewer: at a swing nothing reaches, the loop finds no candidate and a clean
+    # absence is reported, so a reader probing the degenerate cases first sees a
+    # guard that appears to work.  The path is reachable only when the measurement
+    # would otherwise have SUCCEEDED.
+    #
+    # THE DISPOSITION IS DEFERRAL BEHIND THE SHARED `listdefer` SENTENCE, joining
+    # `calc::cross_scalar`, `calc::delay` and `calc::dutyCycle_scalar`, and this
+    # file states the reason because no contract does.  The request is WELL FORMED
+    # on the proc's own published meaning of `nth`: it selects the LOW crossing,
+    # and the high one is DERIVED as the first strictly after it, so `nth` 0 names
+    # exactly one rise time per low crossing -- a wave with its own X axis, with no
+    # ambiguity for D7 to refuse.  A D7 refusal would say the request cannot be
+    # interpreted, which is false and would have to be REVERSED as user-visible
+    # behaviour when the surface lands; a deferral retires silently, which is the
+    # whole reason `listdefer` is shared.  The rows below assert the identity with
+    # `calc::cross_msg listdefer` and never its words, which are unratified.
+    #
+    # ⚠ WHICH ROWS HERE PASS ON THE PRE-FIX TREE, declared BY KIND so nobody reads
+    # one as the band's red: the hazard re-measurement, which is about `cross` and
+    # not about `riseTime`; the measuring control; the malformed-request ORDER row;
+    # and the non-finite `nth` row.  The last two are not spare -- the order row
+    # reddens if the guard is placed before the request validation, and the
+    # non-finite row reddens if the guard drops its finiteness conjunct and trades
+    # one raise for another.
+    pcall mt_load tran
+    check "MT9b the hazard this band exists for, re-measured here rather than quoted from the issue: calc::cross with nth 0 at a threshold v(sq) DOES reach answers MEASURED with a list of more than one crossing, so riseTime's low side receives success and a list where its subtraction wants one number" \
+        [list [mt_disp [set a [mt_call cross {v(sq)} [sq_thr 0.0 1.0 10] 0 rising]]] \
+              [mt_atleast [mt_len [mt_val $a]] 2]] \
+        {measured atleast2}
+    check "MT9b 1639 riseTime with nth 0 ANSWERS instead of raising: no Tcl error escapes to the caller, which is what can't use non-numeric string as operand of \"-\" was doing, and the answer is a REFUSAL rather than a number computed off a list" \
+        [list [string match RAISED:* [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
+              [mt_disp $a] [mt_finite [mt_val $a]]] {0 refused 0}
+    check "MT9b 1639 ...and the refusal carries the VERY sentence its three siblings defer behind -- asserted by identity against calc::cross_msg listdefer and pairwise against delay's own answer, never by words -- so the fix joined the shared string rather than minting a fourth one, which is what MT7 and MT8 would redden on" \
+        [list [mt_disp [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
+              [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
+              [string equal [mt_msg $a] \
+                   [mt_msg [mt_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
+              [mt_shape [mt_msg $a]]] \
+        {refused 1 1 ok}
+    check "MT9b 1639 the guard reads the ordinal's VALUE and not its SPELLING, which is the same reason cross's own badnth test is integer-VALUED: 0, 0.0, -0 and 0e0 all name the ordinal zero on the published contract, so each defers with the same sentence and a guard comparing the argument against the literal 0 as a string passes the first and raises on the other three" \
+        [list [lmap n {0 0.0 -0 0e0} {mt_disp [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n]}] \
+              [lmap n {0 0.0 -0 0e0} {string equal \
+                   [mt_msg [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n]] \
+                   [pcall calc::cross_msg listdefer]}]] \
+        {{refused refused refused refused} {1 1 1 1}}
+    check "MT9b 1639 the deferral opens NO engine door, which is observable rather than inferred: it carries an EMPTY dest while riseTime's ABSENCE at a swing nothing reaches carries the __calc_tmp name cross minted for it -- so the two paths are told apart by the destination each did or did not mint" \
+        [list [mt_key [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0] dest] \
+              [string match __calc_tmp* \
+                   [mt_key [mt_call riseTime {v(sq)} 100.0 200.0 10 90 1] dest]]] \
+        {{} 1}
+    check "MT9b 1639 a request that is ALSO malformed is refused as MALFORMED and never deferred, which is this file's ordering choice because no contract states one: a deferral promises an answer once a destination lands, and an omitted swing or a zero swing will still be malformed then -- so each carries its own builder's sentence by identity and neither carries listdefer" \
+        [list [string equal [mt_msg [set a [mt_call riseTime {v(sq)} {} {} 10 90 0]]] \
+                   [pcall calc::cross_msg noswing {} {}]] \
+              [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
+              [string equal [mt_msg [set b [mt_call riseTime {v(sq)} 0.5 0.5 10 90 0]]] \
+                   [pcall calc::cross_msg zeroswing 0.5]] \
+              [string equal [mt_msg $b] [pcall calc::cross_msg listdefer]] \
+              [mt_disp $a] [mt_disp $b]] \
+        {1 0 1 0 refused refused}
+    check "MT9b 1639 a non-finite or non-numeric nth keeps cross's OWN badnth refusal and does not get the deferral, which is what the guard's finiteness conjunct buys: converting the argument to a double raises on a non-numeric operand, so a guard written without that conjunct trades one raise for another" \
+        [list [mt_disp [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 nan]]] \
+              [string equal [mt_msg $a] [pcall calc::cross_msg badnth nan]] \
+              [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
+              [string match RAISED:* [set b [mt_call riseTime {v(sq)} 0.0 1.0 10 90 zz]]] \
+              [string equal [mt_msg $b] [pcall calc::cross_msg badnth zz]]] \
+        {refused 1 0 0 1}
+    check "MT9b 1639 the CONTROL that the guard swallows nothing: nth 1 and nth -1 still MEASURE, each equal to the deck's own edge width times the separation of the two supplied-swing thresholds, so a guard refusing every occurrence would redden here" \
+        [list [mt_disp [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 1]]] \
+              [near [mt_val $a] [sq_rt 0.0 1.0 10 90] $MTTOL] \
+              [mt_disp [set b [mt_call riseTime {v(sq)} 0.0 1.0 10 90 -1]]] \
+              [near [mt_val $b] [sq_rt 0.0 1.0 10 90] $MTTOL]] \
+        {measured ok measured ok}
+    check "MT9b 1639 ...and D5's ABSENCE is still an absence rather than the new deferral: an occurrence this sweep has not got answers absent with its own sentence, from either end, so the guard did not convert one disposition into the other" \
+        [list [mt_disp [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 99]]] \
+              [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
+              [mt_disp [mt_call riseTime {v(sq)} 0.0 1.0 10 90 -99]]] \
+        {absent 0 absent}
+    check "MT9b R402 NO __calc_tmp* and no __mt_* survives this band's deferring, refusing, absent and measured paths" \
+        [list [leaked] [probeleft]] {{} {}}
+}
+
+# =========================================================================
 group MT10 {
     # T1.  All three are PURE DELEGATES on `calc::cross`, measured two ways,
     # because neither way alone is enough: a one-level structural regexp cannot see
@@ -1950,6 +2131,507 @@ group MT10 {
     check "MT10 R402 the whole suite leaves no __calc_tmp* and no __mt_* in the inventory, which is the one claim that covers every exit path every band above drove" \
         [list [leaked] [probeleft]] {{} {}}
     pcall xschem raw clear
+}
+
+# ---------------------------------------------------------------------------
+# MT11 -- PLAN 5.4 / R412: `calc::fn_argspec`, the ARGUMENT SPECIFICATION the
+# modal dialog is built from.  NO Tk, so it gates on BOTH arms.
+#
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 8 and 9.
+# Fence    the dialog itself, the click, the browser gesture and the grab are
+#          display-only and live in tests/headless/test_calc_skeleton.tcl
+#          (band S28) and tests/headless/test_calc_widgets.tcl (band CW14),
+#          both `dcases` ALONE.  This band is the largest piece of phase 5 that
+#          can be measured on the counted arm, and it costs nothing.
+#
+# ⚠⚠ WRITTEN RED-FIRST, BEFORE `calc::fn_argspec` EXISTED.  Every row below
+# failed when it was written and each failure named `NOPROC:calc::fn_argspec`
+# rather than raising; the transcript is in the stage receipt.
+#
+# WHY A NEW PROC AND NOT A SEVENTH CATALOGUE FIELD, measured rather than
+# preferred (CLICK_CONTRACT section 3): `insert` is non-empty for all 56 route-P
+# and all 4 route-C rows and EMPTY for all 34 route-T rows, and two registered
+# rows in test_calc_skeleton FORBID filling it for a T row -- so the existing
+# field is not an empty slot waiting for a call template.  A seventh field is
+# worse still: it reddens S24's arity rows and D3's schema row AND SILENTLY
+# SKIPS two S23 loops that `continue` on `llength != 6`, which is a row that
+# stops measuring rather than failing.  The first row of this band is therefore
+# a fence on the SHAPE OF THE SOLUTION and not only on its content.
+#
+# THE SHAPE, which this band is the specification of:
+#
+#   calc::fn_argspec <name>  ->  a list of `{key label kind required default}`
+#                                rows IN DISPLAY ORDER, or {} for any name with
+#                                no arguments.
+#
+#   key       the formal name on the proc the click's result path calls, so the
+#             call can be composed BY KEY.  ⚠ NOT positionally: `dutyCycle`'s
+#             display order and its formal order DELIBERATELY DIFFER and a row
+#             below measures that they do, so an implementation that zips the
+#             spec onto `info args` reddens instead of mis-measuring.
+#   label     the user-visible field label.  UNRATIFIED -- the `rule` debt
+#             `calc_argdialog_field_labels_and_delay_second_signal` covers these
+#             and the one literal row per verb is where an overrule lands.
+#   kind      `real` | `int` | `rpn` | `{enum <member> ...}`.  The dialog
+#             validates SHAPE ONLY (CLICK_CONTRACT section 8): `real` is a
+#             finite double, `int` is `string is integer -strict`, an `rpn` field
+#             is non-empty text that is NEVER PARSED (R401), and an `enum` is
+#             membership in its own member list.  ⚠ SEMANTIC refusals stay with
+#             the verb -- `nth` 0 must reach `cross_scalar`/`delay`, because MT7,
+#             MT8 and MT9b compare against `[calc::cross_msg listdefer]` BY
+#             IDENTITY, so a dialog that re-worded one of those sentences would
+#             redden three bands in this file.
+#   required  1 or 0.  A required field's default is EMPTY -- a required field
+#             carrying a default is a contradiction, and it is a row.
+#   default   the value the field opens at.
+#
+# ⚠ THE MEMBER LISTS ARE LIFTED OUT OF THE VALIDATORS' OWN BODIES, not written
+# out again: `calc::cross` tests `edge` against one literal and `calc::dutyCycle`
+# tests `xaxis` against another, so a dialog offering a fourth edge or a renamed
+# axis is caught by the drift rather than by someone noticing.  `ag_enum_in` is
+# the lift and its non-vacuity control is the row beside it.
+#
+# ⚠ WHAT IS **MINE** AND NOT THE CONTRACT'S, said out loud so an overrule is a
+# one-row edit: CLICK_CONTRACT section 8's table gives labels, kinds, the
+# requiredness of `riseTime`'s two references and `cross`'s level, and the
+# defaults 1 / 10 / 90 / `start`.  It gives NO default for `cross`'s `Edge` nor
+# for any of `delay`'s eight.  This band chooses (a) the KEY NAMES, which are
+# the formals so that the call composes by name; (b) `rising` as the default edge
+# for `cross` and for both of `delay`'s sides -- because `riseTime` measures a
+# rising transition (hole H1) and `calc::dutyCycle` opens its periods on
+# `rising`, so `either`, which conflates two transitions, would be the surprising
+# answer to one click; and (c) a default of 1 for every occurrence field and 0
+# for every dataset field, which is where the shipped formals already sit.
+#
+# ⚠ ONE MEASUREMENT WAS OWED BEFORE THIS BAND COULD BE WRITTEN AND IT CHANGED
+# THE ANSWER.  `dutyCycle`'s formals disagreed between two live documents --
+# this file's own header said `<rpn> <level> ?<cycle>? ?<dataset>?` and R420 adds
+# an X axis.  READ OFF THE SHIPPED PROC: `calc::dutyCycle` is
+# `{rpn level {cycle 0} {dataset 0} {xaxis start}}`, so `xaxis` is FIFTH and
+# LAST, AFTER `dataset`, and NOT third as section 8's field order would suggest.
+# The header above is corrected in the same change.  AND the surface wrapper
+# `calc::dutyCycle_scalar` is `{rpn level {cycle 0} {dataset 0}}` -- it has NO
+# `xaxis` formal at all and forwards four arguments, which its own shipped
+# comment declares deliberate: *"phase 5's argument dialog (R412) is what will
+# offer the choice, and giving the surface wrapper an argument nothing can
+# surface yet would be a parameter with no caller."*  So the row below that
+# checks every key against the SURFACE proc's formals is RED FOR THAT REASON
+# TOO, and it is red on purpose: phase 5 is the caller that comment is waiting
+# for, and the dialog cannot offer an axis the proc it calls cannot take.
+# ---------------------------------------------------------------------------
+
+# the spec for one name, or a legible sentinel -- never a raise, and the two
+# failure modes are told apart because "the proc is missing" and "the proc threw"
+# want different fixes.
+proc ag_spec {name} {
+    if {[info commands ::calc::fn_argspec] eq {}} { return "NOPROC:calc::fn_argspec" }
+    if {[catch {::calc::fn_argspec $name} r]} { return "RAISED:$r" }
+    return $r
+}
+proc ag_ok {s} {
+    if {[string match NOPROC:* $s]} { return 0 }
+    if {[string match RAISED:* $s]} { return 0 }
+    if {[catch {llength $s}]} { return 0 }
+    return 1
+}
+# the rows, or {} when the spec could not be read at all -- so every loop below
+# is over a real list and `foreach` cannot raise on a sentinel.
+proc ag_rows {name} {
+    set s [ag_spec $name]
+    if {![ag_ok $s]} { return {} }
+    return $s
+}
+# a canonical string for a spec, so a literal written with newlines and tabs
+# compares equal to one the product built with single spaces.  Raise-proof: a
+# malformed row answers a sentinel that fails the comparison legibly.
+proc ag_canon {spec} {
+    if {[catch {llength $spec}]} { return "NOTALIST:{$spec}" }
+    set out {}
+    foreach row $spec {
+        if {[catch {lrange $row 0 end} r]} { return "NOTAROW:{$row}" }
+        lappend out $r
+    }
+    return $out
+}
+proc ag_keys {name} {
+    set out {}
+    foreach row [ag_rows $name] {
+        if {[catch {lindex $row 0} k]} continue
+        lappend out $k
+    }
+    return $out
+}
+proc ag_cell {row i} { if {[catch {lindex $row $i} v]} { return "NOTAROW" } ; return $v }
+# the field of one named key, by index, or a sentinel naming what was missing.
+proc ag_field {name key i} {
+    foreach row [ag_rows $name] {
+        if {[ag_cell $row 0] ne $key} continue
+        return [ag_cell $row $i]
+    }
+    return "NOSUCHKEY:$name/$key"
+}
+
+# ⚠ THE CLICKABLE SET IS DERIVED FROM THE TREE, NEVER HAND-KEPT.  A route-T
+# catalogue row that has a proc of its own is a verb this stage makes reachable;
+# the other thirty have no handler and must fall through (CLICK_CONTRACT
+# section 3: "a blanket route-T branch strands 30 verbs with no handler").  A
+# list written out here would be the defect `test_snprintf_fmt_1608` row X1
+# exists to warn about, one level up.
+proc ag_verbs {} {
+    set out {}
+    foreach row [pcall calc::catalogue] {
+        if {[ag_cell $row 2] ne {T}} continue
+        set nm [ag_cell $row 0]
+        if {[info commands ::calc::$nm] ne {}} { lappend out $nm }
+    }
+    return [lsort $out]
+}
+# the proc the click's RESULT PATH must call for a verb: the `_scalar` surface
+# wrapper where one exists, else the verb itself.  CLICK_CONTRACT section 3:
+# "the click must call `calc::cross_scalar`, not `calc::cross` -- the raw proc
+# answers `nth = 0` with success and a *list*, and has no deferral."
+proc ag_surface {verb} {
+    if {[info commands ::calc::${verb}_scalar] ne {}} { return ${verb}_scalar }
+    return $verb
+}
+# the key/value list the result path would compose for one verb, or a legible
+# sentinel -- never a raise.  Added by the implementation stage for the row at
+# the foot of this band; see that row's comment for the measurement that earned
+# it.
+proc ag_vals {verb rpn ans} {
+    if {[info commands ::calc::arg_values] eq {}} { return "NOPROC:calc::arg_values" }
+    if {[catch {::calc::arg_values $verb $rpn $ans} r]} { return "RAISED:$r" }
+    return $r
+}
+proc ag_formals {p} {
+    if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    if {[catch {info args ::calc::$p} a]} { return "RAISED:$a" }
+    return $a
+}
+# `info default` as a two-element answer that never raises: {1 <value>} when the
+# formal has one, {0 {}} when it does not.
+proc ag_default {p formal} {
+    if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    set v {}
+    if {[catch {info default ::calc::$p $formal v} has]} { return [list 0 {}] }
+    return [list $has $v]
+}
+# an enum's member list, lifted out of the validator's OWN body.
+proc ag_enum_in {p var} {
+    if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    if {[catch {info body ::calc::$p} b]} { return "RAISED:$b" }
+    # ⚠ THE NEGATED BRACKET EXPRESSION BELOW SPELLS ITS CLOSE BRACE WITH A
+    # BACKSLASH, AND THAT IS NOT STYLE.  Tcl does not count a backslashed brace
+    # when it scans a braced word and it DOES count a bare one, so the bare
+    # spelling closes the enclosing word right there -- and the file then dies
+    # with `missing close-bracket` reported against the file-scope `catch` a
+    # thousand lines above, naming nothing useful.  MEASURED TWICE while writing
+    # this band: once in the pattern, and then again IN THE COMMENT THAT WARNED
+    # ABOUT IT, which quoted both spellings and so unbalanced the proc body a
+    # second time -- CLAUDE.md records the same accident in the comment warning
+    # about it, and this is why the characters are described here instead of
+    # shown.  The escape is also legal inside an ARE bracket expression, which
+    # POSIX would not allow, so the regexp still means what it reads.
+    set pat {lsearch -exact \{([^\}]*)\} \$%s}
+    if {![regexp [format $pat $var] $b -> lst]} { return "NOLITERAL:$p/$var" }
+    if {[catch {lrange $lst 0 end} r]} { return "NOTALIST:$p/$var" }
+    return $r
+}
+
+# THE FOUR SPECIFICATIONS, BY LITERAL, one row each so that overruling one verb
+# is a one-row edit.  See the header for which parts are section 8's and which
+# are this band's.
+# ⚠ `list` AND NOT `dict create`, AND MT10 IS WHY.  `mt_dictsites` walks this
+# file for every line that builds a dict and names the enclosing proc, so a
+# band-level `dict create` -- even one holding a SPECIFICATION TABLE and not an
+# answer -- is a new site and reddens MT10's enumeration row.  MEASURED: the
+# first draft of this band used `dict create` here and MT10 came back
+# `{BAND-LEVEL mt_asanswer mt_stub_run}`.  The instrument cannot tell the two
+# kinds of dict apart and should not have to; an even-length list is a dict to
+# `dict get` anyway, so nothing is lost.
+set AG_WANT [list \
+    cross {
+        {level   {Level}               real                         1 {}}
+        {nth     {Occurrence (Nth)}    int                          0 1}
+        {edge    {Edge}                {enum rising falling either} 0 rising}
+    } \
+    riseTime {
+        {lo      {Low level}           real                         1 {}}
+        {hi      {High level}          real                         1 {}}
+        {pctlo   {Low threshold %}     real                         0 10}
+        {pcthi   {High threshold %}    real                         0 90}
+        {nth     {Occurrence (Nth)}    int                          0 1}
+        {dataset {Dataset}             int                          0 0}
+    } \
+    delay {
+        {rpnA    {Signal A (RPN)}      rpn                          1 {}}
+        {levelA  {Level A}             real                         1 {}}
+        {edgeA   {Edge A}              {enum rising falling either} 0 rising}
+        {nthA    {Occurrence A (Nth)}  int                          0 1}
+        {rpnB    {Signal B (RPN)}      rpn                          1 {}}
+        {levelB  {Level B}             real                         1 {}}
+        {edgeB   {Edge B}              {enum rising falling either} 0 rising}
+        {nthB    {Occurrence B (Nth)}  int                          0 1}
+    } \
+    dutyCycle {
+        {level   {Level}               real                         1 {}}
+        {xaxis   {X axis}              {enum start number mid}      0 start}
+        {cycle   {Cycle}               int                          0 0}
+        {dataset {Dataset}             int                          0 0}
+    }]
+
+group MT11 {
+    # --- the shape of the solution, which is a fence in its own right --------
+    set agbadarity {}
+    foreach row [pcall calc::catalogue] {
+        if {[catch {llength $row} L] || $L != 6} {
+            lappend agbadarity [ag_cell $row 0]=arity$L
+        }
+    }
+    check "MT11 the argument spec is a PROC and the catalogue is UNTOUCHED: `calc::fn_argspec` exists, `calc::fn_fields` is still the six ruled fields and every catalogue row is still arity 6 -- a spec added as a SEVENTH field reddens S24's arity row and SILENTLY SKIPS two S23 loops that `continue` on `llength != 6`" \
+        [list [expr {[info procs ::calc::fn_argspec] ne {} ? 1 : 0}] \
+              [pcall calc::fn_fields] \
+              [llength [pcall calc::catalogue]] $agbadarity] \
+        [list 1 {name category route returns insert help} 108 {}]
+    # ⚠ THE CONTROL FOR EVERY `{}` BELOW.  An empty answer and a missing proc are
+    # the same empty string to a careless reader; `ag_spec` tells them apart, and
+    # without this row the fall-through sweep would be green on a tree with no
+    # `fn_argspec` at all.
+    check "MT11 the instrument distinguishes a MISSING proc from an EMPTY spec, which is what makes the fall-through sweep below a measurement rather than a tautology" \
+        [list [ag_ok [ag_spec average]] [ag_ok [ag_spec cross]]] {1 1}
+    check "MT11 route T still has NO refusal reason, so the S23 loop that clicks every entry the browser drew still skips all 34 T rows -- the truthful click message belongs in a route-T branch of `calc::fn_click` and NOT in `calc::fn_reason`, where it would make that loop assert the \"is not available\" phrasing over four verbs that ARE available" \
+        [list [pcall calc::fn_reason T] [pcall calc::fn_reason P] \
+              [expr {[pcall calc::fn_reason N] ne {} ? 1 : 0}]] {{} {} 1}
+
+    # --- the clickable set, derived -----------------------------------------
+    check "MT11 the clickable set is DERIVED from the tree -- every route-T catalogue row that has a proc of its own -- and it is the four verbs this stage makes reachable" \
+        [ag_verbs] {cross delay dutyCycle riseTime}
+    set agempty {}
+    set agnswept 0
+    set agnonempty 0
+    foreach row [pcall calc::catalogue] {
+        set nm [ag_cell $row 0]
+        incr agnswept
+        set rows [ag_rows $nm]
+        if {[lsearch -exact [ag_verbs] $nm] >= 0} {
+            if {[llength $rows] == 0} { lappend agempty $nm=EMPTY }
+            incr agnonempty
+            continue
+        }
+        if {[llength $rows] != 0} { lappend agempty $nm=([ag_canon $rows]) }
+    }
+    check "MT11 the 30-verb fall-through is LEGIBLE rather than accidental: every catalogue name that is not one of the four answers an EMPTY spec, and each of the four answers a non-empty one -- swept over the whole table, with both counts riding along so neither direction can be vacuous" \
+        [list $agnswept $agnonempty $agempty] {108 4 {}}
+
+    # --- the four specifications, by literal --------------------------------
+    foreach agv {cross riseTime delay dutyCycle} {
+        check "MT11 the argument spec for $agv is exactly the ruled field list -- key, label, kind, requiredness and default, in DISPLAY order (labels and the edge default are UNRATIFIED: the `rule` debt names them and this row is where an overrule lands)" \
+            [ag_canon [ag_rows $agv]] [ag_canon [dict get $AG_WANT $agv]]
+    }
+
+    # --- the shape rules, derived over whatever the four actually answer -----
+    set agbadshape {} ; set agnfields 0 ; set agkinds {}
+    foreach agv [ag_verbs] {
+        set seenk {} ; set seenl {}
+        foreach row [ag_rows $agv] {
+            incr agnfields
+            if {[catch {llength $row} L] || $L != 5} {
+                lappend agbadshape $agv/[ag_cell $row 0]=arity$L ; continue
+            }
+            foreach {k lbl kind req def} $row break
+            if {$k eq {}}   { lappend agbadshape $agv=blank-key }
+            if {$lbl eq {}} { lappend agbadshape $agv/$k=blank-label }
+            if {[lsearch -exact $seenk $k] >= 0}     { lappend agbadshape $agv/$k=dup-key }
+            if {[lsearch -exact $seenl $lbl] >= 0}   { lappend agbadshape $agv/$k=dup-label($lbl) }
+            lappend seenk $k ; lappend seenl $lbl
+            if {![string is boolean -strict $req]}   { lappend agbadshape $agv/$k=req($req) }
+            set kw [ag_cell $kind 0]
+            lappend agkinds $kw
+            if {$kw eq {enum}} {
+                if {[llength $kind] < 3} { lappend agbadshape $agv/$k=enum<2($kind) }
+            } elseif {[lsearch -exact {real int rpn} $kind] < 0} {
+                lappend agbadshape $agv/$k=kind($kind)
+            }
+            # a required field carrying a default is a contradiction: the dialog
+            # would open pre-answered and still refuse to be left alone.
+            if {$req eq {1} && $def ne {}} { lappend agbadshape $agv/$k=required-with-default($def) }
+        }
+    }
+    check "MT11 every field of every spec is a well-formed five-field row with a closed `kind` vocabulary, a boolean `required`, a key and a label unique WITHIN its verb -- which is the copy-paste `delay` would suffer, both sides carrying side A's labels -- and no required field carrying a default; the field COUNT rides along so an empty population cannot pass" \
+        [list [mt_atleast $agnfields 15] $agbadshape] {atleast15 {}}
+    check "MT11 ...and the kind vocabulary is really exercised: all four words appear across the four specs, so the closed-vocabulary leg above is not a claim about one kind" \
+        [lsort -unique $agkinds] {enum int real rpn}
+
+    # --- R421: ONE operand comes from the buffer, and only `delay` needs two -
+    set agbadrpn {}
+    foreach agv [ag_verbs] {
+        set n 0
+        foreach row [ag_rows $agv] { if {[ag_cell [ag_cell $row 2] 0] eq {rpn}} { incr n } }
+        set want [expr {$agv eq {delay} ? 2 : 0}]
+        if {$n != $want} { lappend agbadrpn $agv=$n/want$want }
+    }
+    check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except `delay`, whose two sides are two operands and whose B side no ruling supplies (driver's recorded decision, filed as a `rule` debt)" \
+        [list [llength [ag_verbs]] $agbadrpn] {4 {}}
+
+    # --- the keys are the formals, in two directions ------------------------
+    set agbadformal {} ; set agnchecked 0
+    foreach agv [ag_verbs] {
+        set fm [ag_formals $agv]
+        if {![ag_ok $fm]} { lappend agbadformal $agv=$fm ; continue }
+        foreach k [ag_keys $agv] {
+            incr agnchecked
+            if {[lsearch -exact $fm $k] < 0} { lappend agbadformal $agv/$k=not-a-formal }
+        }
+    }
+    check "MT11 every key is a FORMAL of the measurement proc, derived with `info args` rather than read off a table -- so a renamed or mistyped key is a failure here instead of a wrong positional argument three phases later; the checked count rides along" \
+        [list [mt_atleast $agnchecked 15] $agbadformal] {atleast15 {}}
+    set agbadsurf {} ; set agnsurf 0
+    foreach agv [ag_verbs] {
+        set sp [ag_surface $agv]
+        set fm [ag_formals $sp]
+        if {![ag_ok $fm]} { lappend agbadsurf $sp=$fm ; continue }
+        foreach k [ag_keys $agv] {
+            incr agnsurf
+            if {[lsearch -exact $fm $k] < 0} { lappend agbadsurf $sp/$k=not-a-formal }
+        }
+    }
+    check "MT11 ...and every key is also a formal of the SURFACE proc the click must call -- the `_scalar` wrapper where one exists, because the raw proc answers `nth` 0 with a list and has no deferral.  ⚠ `calc::dutyCycle_scalar` TAKES NO `xaxis`, which its own shipped comment declares is waiting for exactly this caller, so the dialog cannot offer R420's axis until the wrapper can carry it" \
+        [list [mt_atleast $agnsurf 15] $agbadsurf] {atleast15 {}}
+    # ⚠ THE CALL IS COMPOSED BY KEY AND NOT POSITIONALLY, and this row MEASURES
+    # that the two orders really differ rather than asserting it: `dutyCycle`'s
+    # display order is level / xaxis / cycle / dataset and its formal order is
+    # rpn / level / cycle / dataset / xaxis, so an implementation that zips the
+    # spec onto `info args` gets `xaxis` where `cycle` belongs and measures the
+    # wrong thing silently.
+    set agduty [ag_keys dutyCycle]
+    set agdutyfm [ag_formals dutyCycle]
+    set agdutypos {}
+    foreach k $agdutyfm { if {[lsearch -exact $agduty $k] >= 0} { lappend agdutypos $k } }
+    check "MT11 `dutyCycle`'s DISPLAY order deliberately DIFFERS from its formal order, so the call must be composed BY KEY -- an implementation that zips the spec onto `info args` would hand the verb its X axis where its cycle ordinal belongs" \
+        [list $agduty $agdutypos [expr {$agduty ne $agdutypos ? {differ} : {SAME}}]] \
+        [list {level xaxis cycle dataset} {level cycle dataset xaxis} differ]
+
+    # --- a mandatory formal must be reachable -------------------------------
+    set agunreach {} ; set agnmand 0
+    foreach agv [ag_verbs] {
+        set sp [ag_surface $agv]
+        foreach row [ag_rows $agv] {
+            set k [ag_cell $row 0]
+            set d [ag_default $sp $k]
+            if {[ag_cell $d 0] eq {1}} continue
+            if {[lsearch -exact [ag_formals $sp] $k] < 0} continue
+            incr agnmand
+            if {[ag_cell $row 3] eq {1}} continue
+            if {[ag_cell $row 4] ne {}} continue
+            lappend agunreach $sp/$k=no-value-and-no-formal-default
+        }
+    }
+    check "MT11 a field whose formal has NO default on the proc is either marked required or carries a non-empty default, so the dialog can never compose a call with an empty positional argument the proc has nothing to fall back on -- the mandatory-formal count rides along" \
+        [list [mt_atleast $agnmand 6] $agunreach] {atleast6 {}}
+
+    # --- the defaults agree with the formals that already have them ---------
+    set agbaddef {} ; set agndef 0
+    foreach agv [ag_verbs] {
+        set sp [ag_surface $agv]
+        foreach row [ag_rows $agv] {
+            set k [ag_cell $row 0]
+            set d [ag_default $sp $k]
+            if {[ag_cell $d 0] ne {1}} continue
+            incr agndef
+            if {[ag_cell $row 4] ne [ag_cell $d 1]} {
+                lappend agbaddef $sp/$k=spec([ag_cell $row 4])formal([ag_cell $d 1])
+            }
+        }
+    }
+    check "MT11 wherever the shipped proc ALREADY states a default, the spec's default is that one -- derived with `info default`, so the dialog cannot open on a value the verb would not have chosen for itself; the pair count rides along and is a FLOOR, because extending `dutyCycle_scalar` with `xaxis` correctly adds one" \
+        [list [mt_atleast $agndef 6] $agbaddef] {atleast6 {}}
+
+    # --- the enums come from the validators' own literals --------------------
+    set agedge [ag_enum_in cross edge]
+    set agax [ag_enum_in dutyCycle xaxis]
+    check "MT11 fixture: the two member lists really were LIFTED out of the validators' own bodies -- `calc::cross`'s `edge` test and `calc::dutyCycle`'s `xaxis` test -- so a drift row below is evidence and not an artefact of an empty match" \
+        [list $agedge $agax] {{rising falling either} {start number mid}}
+    set agbadenum {} ; set agnenum 0
+    foreach {agv agk aglit} [list cross edge $agedge dutyCycle xaxis $agax \
+                                  delay edgeA $agedge delay edgeB $agedge] {
+        incr agnenum
+        set kind [ag_field $agv $agk 2]
+        set mem [lrange $kind 1 end]
+        if {[ag_cell $kind 0] ne {enum}} { lappend agbadenum $agv/$agk=notenum($kind) ; continue }
+        if {$mem ne $aglit} { lappend agbadenum $agv/$agk=members($mem)vs($aglit) }
+    }
+    check "MT11 every enum field offers EXACTLY the members its own validator tests against, lifted from the shipped body -- so a dialog offering a fourth edge, or a renamed axis, is caught by the drift instead of by someone noticing a refusal in the field" \
+        [list $agnenum $agbadenum] {4 {}}
+    set agbadmem {} ; set agnmem 0
+    foreach agv [ag_verbs] {
+        foreach row [ag_rows $agv] {
+            set kind [ag_cell $row 2]
+            if {[ag_cell $kind 0] ne {enum}} continue
+            incr agnmem
+            if {[lsearch -exact [lrange $kind 1 end] [ag_cell $row 4]] < 0} {
+                lappend agbadmem $agv/[ag_cell $row 0]=default([ag_cell $row 4])
+            }
+        }
+    }
+    check "MT11 every enum field's default is one of its OWN members, so no field can open on a value its verb would refuse; the enum-field count rides along" \
+        [list [mt_atleast $agnmem 4] $agbadmem] {atleast4 {}}
+    check "MT11 R420 the X axis opens on the time the cycle STARTED, which is the user's own ruling -- *\"Default can be time the cycle started\"* -- and that word is also the shipped formal's default" \
+        [list [ag_field dutyCycle xaxis 4] [ag_cell [ag_default dutyCycle xaxis] 1]] \
+        {start start}
+
+    # --- and the members are REACHABLE: the verbs really take them -----------
+    # ⚠ NO FIXTURE NEEDED, and that is why this row can live on the counted arm:
+    # both validators run BEFORE anything reaches the database, so with no raw
+    # loaded a MEMBER gets past the membership test and lands on the no-data
+    # refusal while a NON-MEMBER is refused by the membership test itself.  The
+    # two sentences are therefore the whole measurement.
+    set agunreachable {} ; set agnreach 0
+    foreach m [lrange [ag_field dutyCycle xaxis 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call dutyCycle {v(sq)} 0.5 0 0 $m]]
+        if {$got eq [pcall calc::cross_msg badxaxis $m]} { lappend agunreachable xaxis/$m }
+    }
+    foreach m [lrange [ag_field cross edge 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call cross {v(sq)} 0.5 1 $m]]
+        if {$got eq [pcall calc::cross_msg badedge $m]} { lappend agunreachable edge/$m }
+    }
+    check "MT11 every member the dialog offers is one the verb ACCEPTS: with no result loaded each member gets past its own membership test and meets the no-data refusal, while a non-member is refused by the membership test itself -- so the two sentences tell acceptance from rejection with no fixture at all" \
+        [list [mt_atleast $agnreach 6] $agunreachable \
+              [expr {[mt_msg [mt_call dutyCycle {v(sq)} 0.5 0 0 sideways]] eq [pcall calc::cross_msg badxaxis sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call cross {v(sq)} 0.5 1 sideways]] eq [pcall calc::cross_msg badedge sideways] ? {refused} : {ACCEPTED}}]] \
+        {atleast6 {} refused refused}
+    # --- and the call REALLY IS composed by key -----------------------------
+    # ⚠⚠ ADDED BY THE IMPLEMENTATION STAGE, AND THE REASON IS A MEASUREMENT THE
+    # SUITE AUTHOR'S OWN HOLE SH2 PREDICTED.  The row above measures only that
+    # `dutyCycle`'s display order and its formal order DIFFER -- which tells an
+    # implementer to compose by key and catches nothing if they do not.  Driven
+    # as a sabotage against the shipped code: composing POSITIONALLY, by zipping
+    # the dialog's answer onto `info args`, passes ALL THREE SUITES -- every one
+    # of MT11's rows, every one of band S28's and every one of CW14's -- because
+    # hole SH2 drives only `cross` through the OK path and `cross`'s two orders
+    # COINCIDE.  So the one verb whose orders diverge is the one no behavioural
+    # row reaches, and the defect it ships is silent: `calc::dutyCycle` would be
+    # handed the X AXIS where its cycle ordinal belongs and refuse with
+    # `badcycle`, naming a field the user never touched.
+    #
+    # This row needs no Tk and no fixture: the composition is a pure function of
+    # the spec, the surface proc's formals and the dialog's answer.
+    # ⚠ THE `cross` LEG IS THE NON-VACUITY CONTROL AND ALSO THE EXPLANATION: it
+    # is the same probe on the verb whose orders coincide, where the positional
+    # and the by-key answers are IDENTICAL -- so it documents, in the file, why
+    # the behavioural arm cannot see this.
+    check "MT11 the call really is COMPOSED BY KEY and not positionally: handed `dutyCycle`'s answer in the dialog's DISPLAY order, each formal of the surface proc is paired with ITS OWN key's value, in FORMAL order, with the buffer's expression under `rpn` -- an implementation that zipped the answer onto `info args` would hand the verb its X axis where the cycle ordinal belongs, which this band's order row only WARNS about and hole SH2 leaves unreachable behaviourally because only `cross`, whose two orders coincide, is driven through OK" \
+        [ag_vals dutyCycle {v(sq) 2 *} \
+             [list level 0.5 xaxis mid cycle 2 dataset 0]] \
+        {rpn {v(sq) 2 *} level 0.5 cycle 2 dataset 0 xaxis mid}
+    check "MT11 ...and the control that says why the behavioural arm is blind to it: on `cross`, whose display order and formal order COINCIDE, the by-key and the positional composition are the same list -- so the row above is the only thing in the three suites that measures the difference; a name with no surface proc composes NOTHING rather than guessing, and the composer's presence rides along so neither leg can be green over a missing proc" \
+        [list [ag_vals cross {v(sq) 2 *} [list level 0.5 nth 3 edge falling]] \
+              [ag_vals __mt_no_such_verb__ {v(sq)} {}] \
+              [expr {[info commands ::calc::arg_values] ne {} ? 1 : 0}]] \
+        [list {rpn {v(sq) 2 *} level 0.5 nth 3 edge falling} {} 1]
+    check "MT11 R402 this band mints nothing -- it reads specifications and refuses requests, so no `__calc_tmp*` and no `__mt_*` may appear in the inventory because of it" \
+        [list [leaked] [probeleft]] {{} {}}
 }
 
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }

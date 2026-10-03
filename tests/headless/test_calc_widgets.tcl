@@ -105,6 +105,44 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
     exit 0
 }
 
+# --- THE SUITE'S OWN STALL BOUND (issue 1403) --------------------------------
+# ⚠ THE GAP THIS CLOSES IS THE BARE SPELLING, NOT A DRIVER.  `run_suites.sh`
+# wraps every arm in `timeout` and `t1_timeout` puts one on each of T1's four
+# `exec` sites, so a run under either driver is already bounded.  The command a
+# developer actually types,
+#     ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_widgets.tcl
+# is wrapped by nothing at all, and a suite that is wedged and a suite that is
+# slow emit byte-identical output -- none.  Sourcing scratch.tcl arms `__wd_fire`
+# (`XSCHEM_SUITE_WATCHDOG_MS`; 0 disables), which prints one line naming this
+# file and the last output it saw, on BOTH streams, and leaves through the
+# wrapped `exit` with 124 -- the code `run_suites.sh` already classifies as
+# TIMEOUT and `t1_why` already scores as a counted FAIL saying TIMED OUT.  A
+# stall therefore becomes a NAMED OUTCOME in every reader that already exists.
+#
+# ⚠ IT BOUNDS A `vwait`/`tkwait` HANG AND NOTHING ELSE.  A Tcl `after` timer
+# fires only when the interpreter reaches the event loop, so a blocking `exec`
+# and a busy Tcl loop are NOT caught; row W13 of test_suite_watchdog_1403.tcl
+# pins that limitation by measurement, and for those two shapes the answer is
+# still an external bound.  MEASURED against a copy of test_calc_skeleton.tcl
+# with a hang injected at the same point: a `vwait` on a variable nothing sets,
+# and a real `grab set` + `tkwait window` modal, both leave through the watchdog
+# with its line on both streams and no death marker; the busy loop and the
+# blocking `exec` both had to be killed from outside, and the external signal
+# took xschem's emergency-save path.  So this is a FLOOR under the unwrapped
+# case, not a substitute for `run_suites.sh`.
+#
+# ⚠ WHY IT MATTERS FOR THIS FILE: the `tkwait` shape is what a modal argument
+# dialog is, and this is the suite that inventories the Calculator's real
+# controls.  The bound goes in BEFORE such a dialog exists, because the first
+# run that hangs is the one that costs a night.
+#
+# ⚠ AFTER THE NO-X GATE AND NOT BEFORE -- where test_calc_plot.tcl puts the same
+# line.  Nothing above the gate can hang, so placing it here leaves the headless
+# arm byte-identical and keeps scratch.tcl's `note:` line off it.  Nothing else
+# scratch.tcl offers is taken: `test_scratch` is never called, so no directory
+# is created, and `test_sim_registry_isolate` is opt-in.
+source [file join [file dirname [info script]] scratch.tcl]
+
 # --- readers that never throw -------------------------------------------------
 # A widget-inventory check must be able to say "not there" as a VALUE.  If
 # absence threw, one missing widget would abort the group and delete every
@@ -1566,6 +1604,355 @@ group CW13 {
 # teardown: the window must not outlive the suite
 calc::close
 check "CW13 calc::close tore the window down" [winfo exists .calc] 0
+
+# =============================================================================
+# CW14 — THE ARGUMENT DIALOG'S WIDGET INVENTORY (R412, PLAN 5.4)
+# =============================================================================
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 8 and 9.
+# Sibling tests/headless/test_calc_measure.tcl band MT11 owns `calc::fn_argspec`
+#         itself -- keys, order, labels, kinds, requiredness, defaults -- because
+#         that proc needs no Tk and so gates on BOTH arms.  Nothing about the
+#         SPECIFICATION is re-measured here.
+# Sibling tests/headless/test_calc_skeleton.tcl band S28 drives the MODAL: the
+#         route-T click, the poll, Cancel's five captures and the undo witness,
+#         R421's three parts, and the two poll sabotages.
+#
+# ⚠⚠ WRITTEN RED-FIRST, BEFORE ANY OF IT EXISTED.  `src/calculator.tcl` had zero
+# `grab`, zero `tkwait` and zero `vwait`, and its only `toplevel` was `.calc`.
+#
+# ⚠ THIS BAND BUILDS THE DIALOG WITHOUT THE MODAL WRAPPER, WHICH IS WHY IT NEEDS
+# NO POLL AND CANNOT HANG.  `calc::arg_dialog_build` returns; `calc::arg_dialog`
+# enters `tkwait`.  An inventory that went through the wrapper would need the
+# whole driver S28 carries, and would still be measuring the same widgets.  That
+# split is also why this band is the right place for CLICK_CONTRACT section 9's
+# `have_tk` concern: a build that is reachable without a modal is a build whose
+# failure modes are reachable without one too.
+#
+# ⚠ IT RUNS AFTER CW13 ON PURPOSE.  `cwalk .calc` descends into CHILD TOPLEVELS,
+# so a `.calc.arg` left standing during CW13's control sweep would have its OK
+# and Cancel buttons swept and `calc::arg_dialog_done` reported as a control
+# wired to something that is not on CW13's allow-list.  The last row below is the
+# fence for that: this band leaves `.calc`'s child list exactly as it found it.
+#
+# ⚠ HOLES, DECLARED RATHER THAN PAPERED OVER.
+#
+#  WH1 THE FIELD WIDGET CLASS IS DELIBERATELY UNFENCED.  Fields are found by
+#      their transport, not by a path or a class, so an entry, a combobox and a
+#      radio group are all acceptable here.  R412 does not choose, and a row that
+#      did would be this file inventing product behaviour.
+#  WH2 NOTHING HERE DRIVES THE MODAL.  No `grab`, no `tkwait`, no Cancel, no OK:
+#      band S28 of tests/headless/test_calc_skeleton.tcl owns all of it, with the
+#      poll a modal needs.  A green run here says the dialog is BUILT right, not
+#      that it BEHAVES right.
+#  WH3 THE LABELS AND THE DEFAULT EDGE ARE UNRATIFIED USER-VISIBLE TEXT; band
+#      MT11 pins the strings and the `rule` debt
+#      `calc_argdialog_field_labels_and_delay_second_signal` is where an
+#      overrule lands.  This band asserts only that each label is RENDERED.
+#  WH4 APPEARANCE, TAB ORDER AND LAYOUT ARE `look` DEBTS.  `wm transient` is the
+#      one structural claim available -- it is what keeps a dialog above its
+#      master -- and it is NOT a claim that the dialog looks right or that it is
+#      positioned sensibly.
+#  WH5 THE `rpn` PRE-FILL IS MEASURED AGAINST `calc::rpn_of_buffer`'s OWN ANSWER
+#      through a buffer this band writes.  It does not measure that a LATER edit
+#      of the buffer while the dialog is up is reflected, or should be.
+#
+# ⚠ NO ROW HERE DEPENDS ON A FIELD BEING AN ENTRY RATHER THAN A COMBOBOX OR A
+# RADIO GROUP.  Fields are found by their TRANSPORT -- a widget whose
+# `-textvariable` or `-variable` is `::calc::argval(<key>)` -- which is the same
+# thing a test or a later phase would have to write to, and is the parent
+# dialog's own idiom (`rdw::scope_dialog`'s radiobuttons carry
+# `-variable ::rdw::scope_choice`).  A path-shaped contract would have forced a
+# widget class choice that R412 does not make.
+
+group CW14 {
+    check "CW14 open returns .calc" [calc::open] .calc
+    update idletasks
+
+    proc cw_spec {name} {
+        if {[info commands ::calc::fn_argspec] eq {}} { return {} }
+        if {[catch {::calc::fn_argspec $name} r]} { return {} }
+        if {[catch {llength $r}]} { return {} }
+        return $r
+    }
+    proc cw_keys {name} {
+        set out {}
+        foreach row [cw_spec $name] { if {![catch {lindex $row 0} k]} { lappend out $k } }
+        return $out
+    }
+    proc cw_row {name key} {
+        foreach row [cw_spec $name] {
+            if {[catch {lindex $row 0} k]} continue
+            if {$k eq $key} { return $row }
+        }
+        return {}
+    }
+    proc cw_cell {row i} { if {[catch {lindex $row $i} v]} { return NOTAROW } ; return $v }
+    # the four verbs this stage makes reachable, DERIVED: a route-T catalogue row
+    # with a proc of its own.  Never a written-out list.
+    proc cw_tverbs {} {
+        set out {}
+        foreach row [pcall calc::catalogue] {
+            if {[catch {lindex $row 2} rt]} continue
+            if {$rt ne {T}} continue
+            set nm [lindex $row 0]
+            if {[info commands ::calc::$nm] ne {}} { lappend out $nm }
+        }
+        return [lsort $out]
+    }
+    # ⚠⚠ AN EXACT OPTION READER, AND IT IS NOT FUSSINESS: `cget` ACCEPTS AN
+    # UNAMBIGUOUS ABBREVIATION, so `cget -value` on a ttk::combobox answers the
+    # whole of `-values` and `cget -text` on an entry answers its
+    # `-textvariable`.  MEASURED while proving this band can pass: the enum leg
+    # read `choices(rising falling either {rising falling either})` -- the three
+    # members PLUS the member list as a fourth choice -- against a conforming
+    # reference, i.e. a FALSE RED on correct code.  `configure <opt>` returns the
+    # option's own spec and its first element is the option's REAL name, so
+    # comparing that name is what makes the read exact.
+    proc cw_opt {w opt} {
+        if {![winfo exists $w]} { return MISSING }
+        if {[catch {$w configure $opt} spec]} { return NOOPT }
+        if {[catch {lindex $spec 0} nm]} { return NOOPT }
+        if {$nm ne $opt} { return NOOPT }
+        if {[catch {lindex $spec 4} v]} { return NOOPT }
+        return $v
+    }
+    # one element of the transport array, as a VALUE and never a raise.
+    proc cw_argval {k} {
+        if {[info exists ::calc::argval($k)]} { return [set ::calc::argval($k)] }
+        return NOVAR
+    }
+    # every widget under the dialog that carries one of the transport elements,
+    # as `{widget key}` pairs in `cwalk` order -- which for a generated dialog is
+    # creation order, i.e. the order the spec was walked in.
+    proc cw_argmap {} {
+        set out {}
+        foreach w [cwalk .calc.arg] {
+            foreach opt {-textvariable -variable} {
+                set v [cw_opt $w $opt]
+                if {[regexp {^::calc::argval\((.+)\)$} $v -> k]} { lappend out [list $w $k] }
+            }
+        }
+        return $out
+    }
+    proc cw_firstorder {} {
+        set seen {}
+        foreach pair [cw_argmap] {
+            set k [lindex $pair 1]
+            if {[lsearch -exact $seen $k] < 0} { lappend seen $k }
+        }
+        return $seen
+    }
+    # the choices a widget offers for an enum field, whatever its class: a
+    # combobox's `-values`, or the `-value` of each radiobutton on the variable.
+    proc cw_choices {k} {
+        set out {}
+        foreach pair [cw_argmap] {
+            if {[lindex $pair 1] ne $k} continue
+            set w [lindex $pair 0]
+            set vals [cw_opt $w -values]
+            if {$vals ne {MISSING} && $vals ne {NOOPT}} {
+                foreach v $vals { if {[lsearch -exact $out $v] < 0} { lappend out $v } }
+            }
+            set one [cw_opt $w -value]
+            if {$one ne {MISSING} && $one ne {NOOPT} && $one ne {}} {
+                if {[lsearch -exact $out $one] < 0} { lappend out $one }
+            }
+        }
+        return $out
+    }
+    proc cw_build {name} {
+        catch {destroy .calc.arg}
+        if {[info commands ::calc::arg_dialog_build] eq {}} { return NOBUILDPROC }
+        if {[catch {::calc::arg_dialog_build $name} r]} { return "ERR:$r" }
+        update idletasks
+        return $r
+    }
+
+    set cw_kids0 [lsort [wkids .calc]]
+
+    # --- the toplevel itself, and the two properties a look debt would need ---
+    # ⚠ `wm transient` IS WHAT MAKES "the modal does not open behind `.calc`"
+    # PARTLY MECHANICAL.  CLICK_CONTRACT section 9 lists that as one of four
+    # `look` debts; a transient window is kept above its master by the window
+    # manager, so this row retires the structural half and leaves the appearance
+    # to eyes.  It is NOT a claim that the dialog looks right.
+    set cw_b [cw_build cross]
+    check "CW14 `calc::arg_dialog_build` really builds `.calc.arg` as a child TOPLEVEL and returns its path, and the window is TRANSIENT for `.calc` -- which is the structural half of the `look` debt \"the modal does not open behind the Calculator\", kept above its master by the window manager rather than by hope" \
+        [list $cw_b [wcls .calc.arg] [pcall wm transient .calc.arg]] \
+        {.calc.arg Toplevel .calc}
+    # ⚠ THE WM-CLOSE PATH AND ESCAPE BOTH GO TO CANCEL, and both are asserted as
+    # BINDINGS rather than driven, because S28 drives the live ones.  A dialog
+    # whose title-bar X does nothing is a modal the user cannot leave; a dialog
+    # whose X reaches `_done ok` answers an argument list the user never gave.
+    check "CW14 the window manager's close button and Escape both reach the dialog's own CANCEL path -- a modal whose title-bar X does nothing cannot be left, and one whose X reaches the OK path answers with an argument list the user never gave" \
+        [list [pcall wm protocol .calc.arg WM_DELETE_WINDOW] \
+              [pcall bind .calc.arg <Key-Escape>]] \
+        [list [list calc::arg_dialog_done .calc.arg cancel] \
+              [list calc::arg_dialog_done .calc.arg cancel]]
+    # ⚠ `<Return>` -> OK is `ase::ui::bus_dialog`'s contribution (CLICK_CONTRACT
+    # section 8): the keyboard shape a person expects of a small form.
+    check "CW14 Return commits the form, which is the keyboard shape a person expects of a small dialog" \
+        [pcall bind .calc.arg <Key-Return>] [list calc::arg_dialog_done .calc.arg ok]
+    check "CW14 OK and Cancel exist as real Buttons wired to the dialog's own `done` proc with the two dispositions, and to nothing else" \
+        [list [wcls .calc.arg.btns.ok] [wcg .calc.arg.btns.ok -command] \
+              [wcls .calc.arg.btns.cancel] [wcg .calc.arg.btns.cancel -command]] \
+        [list Button [list calc::arg_dialog_done .calc.arg ok] \
+              Button [list calc::arg_dialog_done .calc.arg cancel]]
+
+    # --- the one line CLICK_CONTRACT section 8 says must be copied in spirit ---
+    # ⚠ THE PRE-SET IS REQUIRED AT THE TOP OF THE **BUILD**, WHICH IS ONE
+    # NOTCH STRONGER THAN THE PARENT.  `rdw::scope_dialog` pre-sets in the
+    # WRAPPER, just before it calls its build; that covers a raising build too,
+    # and a conforming implementation does both.  Requiring it in the BUILD is
+    # what makes the property measurable WITHOUT entering `tkwait` -- poison the
+    # slot, run the build, read the slot -- and a dialog that pre-set only in the
+    # wrapper would redden here while still being safe, which is a cost this band
+    # accepts in exchange for a row that cannot hang.
+    # ⚠ "PRE-SET TO CANCEL, BEFORE THE BUILD.  A window destroyed by a deadman
+    # timer or by a window manager never reaches `scope_dialog_done`, and a stale
+    # result would then be read as an answer the user never gave."  That is
+    # R412's Cancel requirement surviving a route that never runs `_done` -- i.e.
+    # A STALE RESULT BEING READ AS CONSENT.  `ase::ui::bus_dialog` sets its
+    # result on the LAST LINE of its build instead, so a raising build leaves the
+    # PREVIOUS answer standing; that is the half not to copy, and this row is
+    # what tells the two apart.  It needs no modal at all: poison the slot, run
+    # the build, read the slot.
+    # â  THIS SET IS A CREATOR AND NOT A RESTORER, deliberately, which is the
+    # one place this file breaks its own `nsset` rule -- the poison has to be in
+    # the slot BEFORE the build, and on a tree with no dialog the slot does not
+    # exist.  So whether it pre-existed is recorded and the variable is put back
+    # the way it was found, three lines down.
+    set cw_had_res [info exists ::calc::arg_result]
+    set ::calc::arg_result {POISON-AN-ANSWER-THE-USER-NEVER-GAVE}
+    set cw_b2 [cw_build riseTime]
+    check "CW14 the result slot is PRE-SET TO CANCEL BEFORE the build, so a window killed by a deadman timer or by the window manager -- a route that never reaches `arg_dialog_done` at all -- cannot leave a STALE ANSWER to be read as the user's consent.  Poisoned, built, read: a build that set its result on its last line would leave the poison standing" \
+        [list $cw_b2 [nsv arg_result]] {.calc.arg {}}
+    if {!$cw_had_res} { catch {unset ::calc::arg_result} }
+
+    # --- one field per key, in the spec's order, on the ruled transport -------
+    # ⚠ A NON-EMPTY BUFFER SENTINEL FIRST, because a field of kind `rpn` opens
+    # from the buffer and every other field opens from its spec default -- and
+    # with an empty buffer those two rules give the same answer for `delay`'s two
+    # required signals, so the row would pass a dialog that ignored the buffer.
+    set cw_sent {v(out) v(in) - 2 *}
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end $cw_sent
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
+    check_expr "CW14 fixture: the buffer really holds a non-trivial expression, so the `rpn` pre-fill leg below is not the same claim as the default one" \
+        {[pcall .calc.buf get 1.0 end-1c] eq $cw_sent}
+    set cw_bad {} ; set cw_nfield 0 ; set cw_nverb 0
+    foreach nm [cw_tverbs] {
+        set b [cw_build $nm]
+        if {$b ne {.calc.arg}} { lappend cw_bad $nm=NO-BUILD($b) ; continue }
+        incr cw_nverb
+        set keys [cw_keys $nm]
+        set got [cw_firstorder]
+        if {$got ne $keys} { lappend cw_bad $nm=order($got)want($keys) }
+        foreach k $keys {
+            incr cw_nfield
+            set row [cw_row $nm $k]
+            set hits 0
+            foreach pair [cw_argmap] { if {[lindex $pair 1] eq $k} { incr hits } }
+            if {$hits == 0} { lappend cw_bad $nm/$k=NO-WIDGET ; continue }
+            # THE PRE-FILL, IN ITS TWO CASES.  Every field opens at the default
+            # the spec gives it -- and MT11 already fences that a required
+            # field's default is EMPTY, so that is one claim and not two --
+            # EXCEPT a field of kind `rpn`, which opens at the BUFFER's own
+            # expression.  CLICK_CONTRACT section 8: "signal A is pre-filled
+            # from the buffer, signal B is a typed field", which is the driver's
+            # recorded decision because R421 names `calc::rpn_of_buffer` as the
+            # operand source and `delay` needs TWO operands while no ruling says
+            # where B comes from.  ⚠ The buffer is given a NON-EMPTY sentinel
+            # above, or this leg and the default leg would be the same claim.
+            set cw_want [cw_cell $row 4]
+            if {[cw_cell [cw_cell $row 2] 0] eq {rpn}} { set cw_want $cw_sent }
+            if {[cw_argval $k] ne $cw_want} {
+                lappend cw_bad $nm/$k=prefill([cw_argval $k])want($cw_want)
+            }
+            set kind [cw_cell $row 2]
+            if {[cw_cell $kind 0] ne {enum}} continue
+            set want [lrange $kind 1 end]
+            set off [cw_choices $k]
+            if {[lsort $off] ne [lsort $want]} {
+                lappend cw_bad $nm/$k=choices($off)want($want)
+            }
+        }
+    }
+    check "CW14 every key in every spec has at least one widget carrying its own transport element, the keys appear in the SPEC'S ORDER, each field opens PRE-FILLED at the default the spec gives it -- empty for a required one -- and every enum field offers exactly its own members, whatever widget class it is built from; the verb and field counts both ride along, because a sweep over an empty population is green while measuring nothing" \
+        [list $cw_nverb [expr {$cw_nfield >= 15 ? 1 : 0}] $cw_bad] {4 1 {}}
+    # ⚠ AND NO WIDGET CARRIES A TRANSPORT ELEMENT THE SPEC DOES NOT NAME.  The
+    # sweep above is one-directional: it would pass a dialog that also carried a
+    # fifth field nobody asked for, whose value would then be composed into the
+    # call.
+    set cw_extra {} ; set cw_nmap 0
+    foreach nm [cw_tverbs] {
+        set b [cw_build $nm]
+        if {$b ne {.calc.arg}} continue
+        set keys [cw_keys $nm]
+        foreach pair [cw_argmap] {
+            incr cw_nmap
+            if {[lsearch -exact $keys [lindex $pair 1]] < 0} {
+                lappend cw_extra $nm/[lindex $pair 1]=NOT-IN-THE-SPEC
+            }
+        }
+    }
+    check "CW14 ...and no widget carries a transport element the spec does not name -- the sweep above is one-directional and would pass a dialog that also offered a fifth field nobody asked for, whose value would then be composed into the call" \
+        [list [expr {$cw_nmap >= 15 ? 1 : 0}] $cw_extra] {1 {}}
+    # ⚠ AND THE LABELS ARE REALLY ON SCREEN.  MT11 pins the label STRINGS; this
+    # row says each one is the text of some widget in the dialog, so a spec whose
+    # labels nothing renders would be a table read by nobody.
+    set cw_nolabel {} ; set cw_nlabel 0
+    foreach nm [cw_tverbs] {
+        set b [cw_build $nm]
+        if {$b ne {.calc.arg}} continue
+        set texts {}
+        foreach w [cwalk .calc.arg] {
+            set t [cw_opt $w -text]
+            if {$t ne {MISSING} && $t ne {NOOPT}} { lappend texts $t }
+        }
+        foreach row [cw_spec $nm] {
+            incr cw_nlabel
+            set lbl [cw_cell $row 1]
+            if {[lsearch -exact $texts $lbl] < 0} { lappend cw_nolabel $nm/[cw_cell $row 0]=($lbl) }
+        }
+    }
+    check "CW14 every label the spec gives is the text of some widget in the dialog, so a field the user is asked to fill is a field the user can read -- MT11 pins the strings, this row pins that they are rendered" \
+        [list [expr {$cw_nlabel >= 15 ? 1 : 0}] $cw_nolabel] {1 {}}
+
+    # --- a name with no arguments has no dialog to build ---------------------
+    # ⚠ `average` is route P and `stddev` is route T WITH NO PROC; both answer an
+    # empty spec, and a build over an empty spec would be an empty modal the user
+    # cannot answer.  DERIVED: the first catalogue name whose spec is empty, so
+    # this row cannot be defeated by `average` gaining arguments one day.
+    set cw_noargs {}
+    foreach row [pcall calc::catalogue] {
+        if {[catch {lindex $row 0} nm]} continue
+        if {[llength [cw_spec $nm]] == 0} { set cw_noargs $nm ; break }
+    }
+    catch {destroy .calc.arg}
+    set cw_bn [cw_build $cw_noargs]
+    check "CW14 a verb with no arguments gets no dialog: `arg_dialog_build` over an empty spec must refuse rather than put up an empty modal the user cannot answer -- the subject is DERIVED as the first catalogue name whose spec is empty, so the row survives that name gaining arguments" \
+        [list [expr {[info commands ::calc::arg_dialog_build] ne {} ? 1 : 0}] \
+              [expr {$cw_noargs ne {} ? 1 : 0}] \
+              [expr {$cw_bn eq {.calc.arg} ? {BUILT-AN-EMPTY-MODAL} : {REFUSED}}] \
+              [expr {[winfo exists .calc.arg] ? 1 : 0}]] \
+        {1 1 REFUSED 0}
+
+    # --- teardown, and the reason it is a row -------------------------------
+    catch {destroy .calc.arg}
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
+    pcall calc::status {}
+    update idletasks
+    check "CW14 the dialog leaves `.calc`'s own child list exactly as this band found it -- which is not tidiness: `cwalk .calc` descends into child toplevels, so a `.calc.arg` left standing would put its OK and Cancel buttons into CW13's control sweep and be reported as a control wired to something that is not on that band's allow-list" \
+        [list [expr {[winfo exists .calc.arg] ? 1 : 0}] [lsort [wkids .calc]]] \
+        [list 0 $cw_kids0]
+}
+
+calc::close
+check "CW14 calc::close tore the dialog's parent down too" [winfo exists .calc] 0
 
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }
 

@@ -219,6 +219,27 @@ namespace eval calc {
     # out of that C call site and compares it with this one, so the two copies
     # cannot drift apart without a red.
     variable engine_wsp " \t\n"
+    # Phase 5 (5.4).  R412's argument dialog, four pieces of state.
+    #
+    # `arg_result` is the modal's answer -- a key/value list, or EMPTY for
+    # CANCEL -- and its DEFAULT IS THE CANCEL VALUE on purpose: both
+    # calc::arg_dialog and calc::arg_dialog_build pre-set it before anything
+    # else, because a window killed by a deadman timer or by a window manager
+    # never reaches calc::arg_dialog_done and a stale answer would then be read
+    # as consent the user never gave.
+    variable arg_result {}
+    # ...the live field values, one element per spec key.  This is the dialog's
+    # TRANSPORT: every field widget carries `::calc::argval(<key>)` as its
+    # -textvariable, so no caller and no test depends on a field being an entry
+    # rather than a combobox.
+    variable argval
+    array set argval {}
+    # ...which verb the open dialog is for, so calc::arg_dialog_done can read
+    # its spec back without being told again, and the path of its first field,
+    # so the wrapper can put the keyboard in it.  Both are dialog-scoped and
+    # both are rewritten by every build.
+    variable argfor {}
+    variable argfirst {}
 }
 
 # The panedwindows this window owns, as
@@ -2961,6 +2982,33 @@ proc calc::cross_scalar {rpn level nth edge {dataset 0}} {
 # A low crossing that exists with no high crossing after it is an ABSENCE and a
 # different one from running off the end of the low list; MT4 fences both, on two
 # different columns, because one column cannot produce both.
+#
+# ⚠ WARN `nth` 0 DEFERS BEHIND THE SHARED `listdefer` SENTENCE (ISSUE 1639), AND
+# IT USED TO RAISE.  `cross` answers `nth` 0 with SUCCESS AND A LIST, this proc
+# handed its own `nth` to the LOW-side measurement, and the subtraction then met
+# that list -- `can't use non-numeric string as operand of "-"`, a Tcl error
+# reaching the caller where D7 requires an answer.  The comment inside the proc
+# claimed the path was guarded and was talking about the OTHER operand; see it.
+#
+# The DISPOSITION is a deferral and not a D7 refusal, and the reason is this
+# proc's own published meaning of `nth`: it selects the LOW crossing and the high
+# one is DERIVED as the first strictly after it, so `nth` 0 names exactly one rise
+# time per low crossing -- a WAVE with its own X axis, well formed, with nothing
+# ambiguous for D7 to refuse.  `calc::delay` is the precedent rather than the
+# analogy: it is also a measurement proc with no `_scalar` wrapper and it also
+# defers inside itself.  A D7 refusal would state that the request cannot be
+# interpreted, which is false and would have to be REVERSED as user-visible
+# behaviour once R410/R412's argument dialog can route a wave into
+# `calc::wave_dest`; a deferral retires silently, which is why the sentence is
+# shared in the first place.
+#
+# The guard sits AFTER every request-level check -- the swing, the references, the
+# percentages, the zero swing -- and that order is a decision: a deferral promises
+# an answer once a destination lands, and a request with no swing will still be
+# malformed then, so a malformed request must be refused as malformed rather than
+# deferred.  Band MT9b of tests/headless/test_calc_measure.tcl is the fence for
+# both halves, and band WD9 of tests/headless/test_calc_wave_dest.tcl derives the
+# set of callers that share the sentence, so this one appears there by name.
 proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}} {
     # R415, first: the swing is supplied or the request is refused.  Checked
     # before anything reaches the database, so a missing swing costs no read --
@@ -2990,6 +3038,17 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
     if {$swing == 0.0} {
         return [calc::cross_refusal [calc::cross_msg zeroswing $lo] $dataset]
     }
+    # ISSUE 1639.  `nth` 0 DEFERS, behind the sentence its three siblings share,
+    # and it is placed HERE -- after every request-level check and before any
+    # threshold arithmetic -- for the reason the header's last paragraph gives.
+    # The finiteness conjunct is not belt-and-braces: `double($nth)` RAISES on a
+    # non-numeric operand, so a guard without it would trade one raise for
+    # another, and a non-finite ordinal must keep reaching `cross`'s own `badnth`
+    # refusal.  Integer-VALUED and not integer-spelled, for the reason `cross`
+    # itself is: `0.0`, `-0` and `0e0` all name the ordinal zero.
+    if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
+        return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
+    }
     set llo [expr {double($lo) + double($pctlo)/100.0*$swing}]
     set lhi [expr {double($lo) + double($pcthi)/100.0*$swing}]
     # T2's two steps, in this order and through two delegated measurements.
@@ -2998,10 +3057,18 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
     set xlo [dict get $a value]
     set b [calc::cross $rpn $lhi 0 rising $dataset]
     if {![dict get $b ok]} { return $b }
-    # T5's guard at the point of use: `value` here is a LIST and may be EMPTY,
-    # because nth 0 at a level nothing reaches answers success with nothing in
-    # it.  The loop below simply finds no candidate and the absence is reported,
-    # which is why no arithmetic can meet an empty operand.
+    # T5's guard at the point of use, AND IT COVERS EXACTLY ONE OF THE TWO
+    # OPERANDS -- which is what an earlier revision of this comment got wrong,
+    # and the error is kept here rather than quietly corrected because it is what
+    # made issue 1639 survive a reviewer.  It said *"no arithmetic can meet an
+    # empty operand"*, a claim about `$b` offered as a claim about the
+    # subtraction.  `$b` is read with a LITERAL 0, so its `value` is a list, may
+    # be empty when nothing reaches `lhi`, and the `$xhi eq {}` test below does
+    # cover it.  `$xlo` came straight from the caller's `nth` and nothing tested
+    # it at all: with `nth` 0 it was a LIST, the `$x > $xlo` comparison did not
+    # raise -- a multi-word operand falls back to a string compare -- so the loop
+    # SUCCEEDED and the subtraction was reached with a list.  The guard for that
+    # operand is at the top of this proc, not here.
     set xhi {}
     foreach x [dict get $b value] {
         if {$x > $xlo} { set xhi $x ; break }
@@ -3236,11 +3303,30 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0} {xaxis start}} {
 # a WAVE; `calc::cross_scalar` wants a LIST (spec R606's `Table`), because the
 # user ruled `cross`'s `nth = 0` answers *"just a list of crossing times like
 # cadence does."*  The sentence stays silent about which, deliberately.
-proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0}} {
+#
+# ⚠ THE `xaxis` FORMAL ARRIVED WITH PLAN 5.4, WHICH IS THE CALLER THIS WRAPPER'S
+# OWN PREVIOUS COMMENT SAID IT WAS WAITING FOR.  That comment read: *"phase 5's
+# argument dialog (R412) is what will offer the choice, and giving the surface
+# wrapper an argument nothing can surface yet would be a parameter with no
+# caller."*  R412's dialog now offers R420's X axis, and `calc::fn_measure`
+# composes its call BY KEY against THIS proc's formals -- so a key the dialog
+# offers and this wrapper could not take would be an argument dropped in
+# silence.  Band MT11 of tests/headless/test_calc_measure.tcl checks every spec
+# key against the formals of the SURFACE proc for exactly that reason, and it
+# was red on this proc before the formal existed.
+#
+# ⚠ IT IS FORWARDED AND NOTHING ELSE.  The wrapper's own decision is the
+# `cycle` 0 deferral above it, and the axis has no part in that: the deferred
+# case has no scalar to put an X on, and a NAMED cycle's axis changes only the
+# answer's parallel `sweep` key, which R404's bare number does not read.  So
+# this is a pass-through with the proc's own default -- `start`, R420's ruled
+# default, stated once here and once in the measurement proc because Tcl has no
+# way to inherit one.
+proc calc::dutyCycle_scalar {rpn level {cycle 0} {dataset 0} {xaxis start}} {
     if {[calc::eval_finite $cycle] && [expr {double($cycle) == 0.0}]} {
         return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
     }
-    return [calc::dutyCycle $rpn $level $cycle $dataset]
+    return [calc::dutyCycle $rpn $level $cycle $dataset $xaxis]
 }
 
 # ---------------------------------------------------------------------------
@@ -4970,9 +5056,23 @@ proc calc::fn_unhover {name} {
     return {}
 }
 
-# Clicking an entry.  Insertion is plan phase 5 (R410/R411), so this is inert
-# and says so — except for the N/X rows, which will never be clickable at all
-# and say THAT instead (RULING-3, and the same shape as R202's sel_refuse).
+# Clicking an entry.  P/C-route insertion (R410/R411) is still plan phase 5.1
+# and is inert; the N/X rows will never be clickable at all and say THAT instead
+# (RULING-3, and the same shape as R202's sel_refuse); and a ROUTE-T row goes to
+# calc::fn_measure, which opens R412's argument dialog for the four verbs that
+# have a proc and leaves the other thirty on the inert sentence.
+#
+# ⚠ THE ROUTE-T BRANCH IS HERE AND NOT IN `calc::fn_reason`, AND THAT IS A HARD
+# CONSTRAINT RATHER THAN A PREFERENCE.  One of the twelve `fn_click` sites in
+# tests/ iterates every entry the browser drew and `continue`s only when
+# `calc::fn_reason` answers EMPTY, then asserts that each entry it did click
+# says `function <name> is not available: <reason>`.  Route T is skipped only
+# because that proc answers empty for it, so giving route T a reason would make
+# that loop click all 34 T verbs and assert the "is not available" phrasing over
+# four verbs that ARE available -- reddening a row while telling the user
+# something false in a second place.  Band MT11 of
+# tests/headless/test_calc_measure.tcl gates `fn_reason T` staying empty on the
+# COUNTED arm, so a careless fix cannot wait for a display to be caught.
 proc calc::fn_click {name} {
     set row [calc::fn_row $name]
     if {$row eq {}} { return {} }
@@ -4980,7 +5080,581 @@ proc calc::fn_click {name} {
     if {$why ne {}} {
         return [calc::status "function $name is not available: $why"]
     }
+    if {[lindex $row 2] eq {T}} { return [calc::fn_measure $name] }
     return [calc::inert "function $name" 5]
+}
+
+# ---------------------------------------------------------------------------
+# PLAN 5.4 -- R412 / R421: THE ARGUMENT DIALOG, AND THE ROUTE-T CLICK THAT
+# OPENS IT.
+#
+# Spec     doc/claude/specs/calculator.md sections 7.2aa-7.2ac (R412, R415-R421)
+#          and section 7.3 (R401-R405).
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 8 and 9.
+# Fence    tests/headless/test_calc_measure.tcl band MT11 owns
+#          `calc::fn_argspec` -- keys, display order, labels, kinds,
+#          requiredness and defaults -- because that proc needs NO Tk and so
+#          gates on BOTH arms.  tests/headless/test_calc_skeleton.tcl band S28
+#          drives the CLICK and the MODAL (the browser gesture, the local grab,
+#          Cancel's five captures and its undo witness, R421's three parts, the
+#          result gate's order, and two poll sabotages).
+#          tests/headless/test_calc_widgets.tcl band CW14 owns the dialog's
+#          widget INVENTORY, built WITHOUT the modal wrapper so it cannot hang.
+#
+# WARN THE LAST TWO ARE `dcases` ALONE, SO ONLY A GATE'S DISPLAY ARM VERIFIES
+# THIS CODE.  test_calc_skeleton prints `RESULT: ALL PASS (0 checks)` under
+# `--nogui` and test_calc_widgets prints a no-X skip, so a headless number says
+# nothing at all about the dialog.  The armed spelling is
+# `tests/headless/run_suites.sh test_calc_skeleton test_calc_widgets`.
+#
+# WARN THE GESTURE IS dialog -> measure -> THE NUMBER IN THE BUFFER.  R410's
+# token append is for routes P and C only: a T verb's click never inserts the
+# word `cross`, because R401 says a T-route function "must not parse the
+# expression ... it operates on numbers, never on text" and R404 puts the answer
+# in the buffer as "a literal number with a comment of provenance in the status
+# area".
+#
+# WARN R421, RULED 2026-10-03, IS ONE BEHAVIOUR WITH THREE PARTS AND NONE OF
+# THEM IS OPTIONAL.  Recon found that two halves of this gesture were unstated
+# in every ruling: nothing said what OK does (R412 specifies only Cancel), and
+# nothing said where the verb's expression operand comes from.  The only
+# precedent in this file is `calc::eval_click` -> `calc::require_result` ->
+# `calc::rpn_of_buffer`, which READS THE BUFFER -- so the buffer is both the
+# operand source and R404's destination, and the measured number therefore
+# overwrites the user's expression.  Put to the user with the preserving shape
+# offered first, the answer was *"Replace it, but keep it recoverable."*  So:
+#
+#   1. the number lands in the buffer as a literal, where further arithmetic can
+#      use it (`calc::buf_set_number`);
+#   2. the expression it was measured from is spelled out on the status line
+#      together with the arguments, which is R404's "comment of provenance" made
+#      concrete (`calc::arg_provenance`);
+#   3. ONE undo restores the expression -- not two.  That is the part that will
+#      rot silently, and `calc::buf_set_number` is the whole of it.
+#
+# WARN THE ARGUMENT SPEC IS A PROC AND NOT A SEVENTH CATALOGUE FIELD, MEASURED
+# RATHER THAN PREFERRED.  The `insert` field is non-empty for all 56 route-P and
+# all 4 route-C rows and EMPTY for every route-T row, and two registered rows in
+# test_calc_skeleton FORBID filling it for a T row -- so it is not an empty slot
+# waiting for a call template.  A seventh field would be worse still: it reddens
+# row S24's arity leg and row D3's schema leg AND SILENTLY SKIPS two S23 loops
+# that `continue` on `llength != 6`, which is a row that stops measuring rather
+# than failing.
+#
+# WARN THE MODAL'S PARENT IS `rdw::scope_dialog` (src/rdw.tcl), copied and not
+# invented: the build / done / wrapper split, the result PRE-SET TO CANCEL
+# BEFORE THE BUILD, the `winfo exists` guard, the caught build, the `tkwait`
+# guarded by both `winfo exists` and `catch`, the `WM_DELETE_WINDOW` cancel path
+# and the keyboard HANDED BACK to whatever had it.  The field layout is
+# `ase::ui::dialog_frame` + `dialog_row`'s grid, and `<Return>` -> OK is
+# `ase::ui::bus_dialog`'s contribution.
+#
+# WARN AND `xschem.tcl`'s `input_line` IS THE WRONG THING TO COPY, for more than
+# being single-field: it does `tkwait visibility` BEFORE the grab, leaves
+# `tkwait window` unguarded, and calls `xschem set semaphore ... -1` AFTER it --
+# so an early destroy raises out of the proc and LEAKS the semaphore increment,
+# leaving the C side refusing canvas work.  Nothing here touches the semaphore.
+#
+# WARN THE GRAB IS LOCAL.  `grab set $w`, and the spelling that would take a
+# global one appears nowhere in this namespace -- the tree's only global grabs
+# are the print and screen-capture paths.  A global grab from the Calculator
+# would freeze the GUI gate's Pause/Stop panel, a separate `wish` process, on a
+# run against the user's own screen, DISABLING THEIR EMERGENCY CONTROL.
+# `xvfb_arm.sh` forces `GUI_GATE=0` so the standard arms are unaffected; the
+# real screen is not.  Row S28/D is the fence and it rides the PRESENCE of a
+# local grab alongside the absence of a global one, because an absence-only row
+# was vacuous while no proc here mentioned `grab` at all.
+#
+# WARN THE DIALOG TAKES THE KEYBOARD, AND THAT IS CORRECT HERE.  The standing
+# rule against stealing focus governs SURFACING A MESSAGE at a moment the user
+# did not ask for one; a modal the user opened by clicking is the opposite case.
+# A grab stops the pointer reaching other windows and does NOT move the
+# keyboard -- Tk redirects a key event to the DISPLAY's focus window, not to the
+# window the event names -- so the wrapper takes the focus with `-force` and
+# gives it straight back on the way out.
+#
+# WARN THE DIALOG VALIDATES SHAPE ONLY, AND SEMANTIC REFUSALS STAY WITH THE
+# VERB.  `nth` 0 must reach `calc::cross_scalar` / `calc::delay` /
+# `calc::dutyCycle_scalar` / `calc::riseTime` and meet the ONE shared
+# `calc::cross_msg listdefer` sentence, which bands MT7, MT8, MT9b and WD9
+# compare BY IDENTITY -- so nothing here re-words or splits one of those
+# sentences, and the shape messages below are a separate table for a separate
+# fact, exactly as `calc::plot_msg` is separate from `calc::eval_msg`.
+# ---------------------------------------------------------------------------
+
+# R412's field list for one verb, in DISPLAY order, as rows of
+#     {key label kind required default}
+# and {} for any name with no arguments -- which is also what makes the route-T
+# branch's thirty-verb fall-through LEGIBLE rather than accidental: there are 34
+# route-T catalogue rows and four have procs of their own.
+#
+# `key` is the FORMAL NAME on the proc the result path calls, so the call is
+# composed BY KEY and never positionally.  `calc::dutyCycle`'s display order and
+# its formal order deliberately differ -- level/xaxis/cycle/dataset against
+# rpn/level/cycle/dataset/xaxis -- and band MT11 measures that they do, so an
+# implementation that zipped this spec onto `info args` would hand the verb its
+# X axis where its cycle ordinal belongs.
+#
+# `kind` is `real` | `int` | `rpn` | `{enum <member> ...}`.  A `real` is a finite
+# number by `calc::eval_finite`, which is the predicate the verbs themselves
+# validate with -- one predicate, not a second copy; an `int` is
+# `string is integer -strict`; an `enum` is membership in its own member list;
+# and an `rpn` field is non-empty text that is NEVER PARSED (R401).
+#
+# `required` 1 means the field opens EMPTY and cannot be left so.  A required
+# field carrying a default would be a contradiction -- the dialog would open
+# pre-answered and still refuse to be left alone -- and that is a row.
+#
+# ⚠ THE LABELS, AND `cross`'s AND `delay`'s DEFAULT EDGE, ARE UNRATIFIED
+# USER-VISIBLE TEXT.  The `rule` debt
+# `calc_argdialog_field_labels_and_delay_second_signal` covers them together
+# with the recorded decision that `delay`'s signal B is a TYPED field: R421
+# names the buffer as the operand source and the buffer supplies A only, so
+# where B comes from is nobody's ruling yet.  `rising` is the default edge
+# because `riseTime` measures a rising transition and `calc::dutyCycle` opens
+# its periods on one, so `either`, which conflates two transitions, would be the
+# surprising answer to one click.  MT11 pins each verb's whole field list in ONE
+# row, so an overrule is a one-row edit.
+#
+# ⚠⚠ NO COMMENT MAY STAND BETWEEN TWO OF THE `switch` PATTERNS BELOW, AND THAT
+# IS MEASURED RATHER THAN STYLE.  2026-10-02, in `calc::cross_msg`: a four-line
+# explanatory comment placed between two arms left the braces perfectly balanced
+# and `info complete` answering 1, while Tcl raised *"extra switch pattern with
+# no body, this may be due to a comment incorrectly placed outside of a switch
+# body"* out of EVERY arm -- 34 rows red at once, three of them in a different
+# suite.  A comment is safe above a proc and fatal between two patterns and
+# nothing structural distinguishes them, so a brace-balance scan cannot see it
+# and the only confirmation is behavioural: exercise every arm.
+proc calc::fn_argspec {name} {
+    switch -exact -- $name {
+        cross {
+            return {
+                {level {Level}            real                         1 {}}
+                {nth   {Occurrence (Nth)} int                          0 1}
+                {edge  {Edge}             {enum rising falling either} 0 rising}
+            }
+        }
+        riseTime {
+            return {
+                {lo      {Low level}        real 1 {}}
+                {hi      {High level}       real 1 {}}
+                {pctlo   {Low threshold %}  real 0 10}
+                {pcthi   {High threshold %} real 0 90}
+                {nth     {Occurrence (Nth)} int  0 1}
+                {dataset {Dataset}          int  0 0}
+            }
+        }
+        delay {
+            return {
+                {rpnA   {Signal A (RPN)}     rpn                          1 {}}
+                {levelA {Level A}            real                         1 {}}
+                {edgeA  {Edge A}             {enum rising falling either} 0 rising}
+                {nthA   {Occurrence A (Nth)} int                          0 1}
+                {rpnB   {Signal B (RPN)}     rpn                          1 {}}
+                {levelB {Level B}            real                         1 {}}
+                {edgeB  {Edge B}             {enum rising falling either} 0 rising}
+                {nthB   {Occurrence B (Nth)} int                          0 1}
+            }
+        }
+        dutyCycle {
+            return {
+                {level   {Level}   real                    1 {}}
+                {xaxis   {X axis}  {enum start number mid} 0 start}
+                {cycle   {Cycle}   int                     0 0}
+                {dataset {Dataset} int                     0 0}
+            }
+        }
+    }
+    return {}
+}
+
+# Every sentence the route-T click and its dialog can put on the status line, in
+# ONE place.  Same shape and same reason as `calc::eval_msg` and
+# `calc::plot_msg`, and deliberately NOT the same proc as `calc::cross_msg`:
+# that table's sentences are the VERBS' and three bands compare one of them by
+# identity, so a shape refusal borrowing an arm there would couple two facts
+# that are not the same fact.
+#
+# WARN UNRATIFIED USER-VISIBLE WORDING.  These are the assistant's words; the
+# `rule` debt filed against `calc::eval_msg`'s sentences is extended to cover
+# them.  U7's no-result refusal is NOT here and must never be re-spelled here:
+# it is `calc::no_result_msg`, ruled verbatim, and this click reaches it through
+# `calc::require_result` exactly as Evaluate does.
+#
+# ⚠ The same no-comment-between-patterns rule governs this `switch` too.
+proc calc::arg_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        empty  { return "Nothing to measure: $a was given an empty expression." }
+        real   { return "$a must be a finite number ($b)." }
+        int    { return "$a must be a whole number ($b)." }
+        rpn    { return "$a must not be empty." }
+        enum   { return "$a must be one of $b." }
+        failed { return "Measuring $a did not complete ($b)." }
+        nosurf { return "Measuring $a is not available in this build." }
+    }
+    return {}
+}
+
+# The surface proc the result path must call for a verb: the `_scalar` wrapper
+# where one exists, else the verb itself.
+#
+# ⚠ `calc::cross_scalar` AND NOT `calc::cross`.  The raw proc answers `nth` 0
+# with SUCCESS and a LIST and has no deferral, so a click that reached it would
+# put a list where R404 wants one number; the wrapper's own shipped comment says
+# it is "the decision written down where the dialog will find it".  Row S28/4
+# replaces the raw proc with a COUNTER at the same time as the wrapper with a
+# recorder, and reports the raw call count, so this is measured and not assumed.
+proc calc::arg_surface {name} {
+    if {[info procs ::calc::${name}_scalar] ne {}} { return ${name}_scalar }
+    return $name
+}
+
+# SHAPE validation over the live field values, as the first refusal sentence or
+# {} when every field is well formed.  Nothing here decides anything SEMANTIC:
+# an out-of-range ordinal, an unreachable level and `nth` 0 all pass this and
+# are the verb's to answer.
+proc calc::arg_bad {spec} {
+    variable argval
+    foreach row $spec {
+        set key   [lindex $row 0]
+        set label [lindex $row 1]
+        set kind  [lindex $row 2]
+        set v {}
+        if {[info exists argval($key)]} { set v $argval($key) }
+        switch -exact -- [lindex $kind 0] {
+            enum {
+                if {[lsearch -exact [lrange $kind 1 end] $v] < 0} {
+                    return [calc::arg_msg enum $label \
+                                [join [lrange $kind 1 end] {, }]]
+                }
+            }
+            rpn {
+                if {[string trim $v] eq {}} { return [calc::arg_msg rpn $label] }
+            }
+            int {
+                if {![string is integer -strict [string trim $v]]} {
+                    return [calc::arg_msg int $label $v]
+                }
+            }
+            default {
+                if {![calc::eval_finite $v]} { return [calc::arg_msg real $label $v] }
+            }
+        }
+    }
+    return {}
+}
+
+# The value for every formal of the surface proc, IN FORMAL ORDER, as a
+# key/value list: the buffer's expression under the `rpn` formal where the verb
+# has one, the dialog's answer under its own keys, and STOPPING at the first
+# formal neither of those supplies -- so no positional argument is ever filled
+# with a value nobody chose, and a formal the spec does not cover keeps the
+# proc's own default.
+#
+# ⚠ COMPOSED BY KEY, WHICH IS WHY THIS WALKS `info args` AND INDEXES BY NAME
+# rather than zipping the spec onto it.  `delay` is why the `rpn` entry is a
+# FLOOR and not a special case: its two operands are spec keys (`rpnA`, `rpnB`),
+# pre-filled from the buffer and then typed, so they arrive through the answer
+# like any other field and the `rpn` entry is simply never read.
+proc calc::arg_values {name rpn ans} {
+    set sp [calc::arg_surface $name]
+    if {[info procs ::calc::$sp] eq {}} { return {} }
+    set have [list rpn $rpn]
+    foreach {k v} $ans { lappend have $k $v }
+    set out {}
+    foreach f [info args ::calc::$sp] {
+        if {![dict exists $have $f]} break
+        lappend out $f [dict get $have $f]
+    }
+    return $out
+}
+
+# ...and the call itself, which is the one place the surface proc is reached
+# from.  Separate from `calc::arg_values` so that what was composed can be read
+# back for R421's provenance sentence without calling anything twice.
+proc calc::arg_invoke {name vals} {
+    set call [list ::calc::[calc::arg_surface $name]]
+    foreach {k v} $vals { lappend call $v }
+    return [uplevel #0 $call]
+}
+
+# R404's "comment of provenance", made concrete by R421: the verb, the
+# expression it was measured from, the arguments it was measured with, and the
+# number.  Read off what was actually composed, so the sentence cannot claim an
+# argument the call did not carry.
+#
+# ⚠ BUILT WITH `append` AND NOT WITH ONE INTERPOLATED STRING, AND THAT IS A
+# MEASURED TRAP RATHER THAN A STYLE.  In a double-quoted word `$name(...)` is an
+# ARRAY ELEMENT reference, so the obvious spelling raises
+# `can't read "name(...)": variable isn't array` -- and because the number has
+# already reached the buffer by then, the symptom is a STALE status line rather
+# than a visible error.  Row S28/4 rides the click's own return value for
+# exactly that reason.
+proc calc::arg_provenance {name vals num} {
+    set s $name
+    append s {(}
+    set sep {}
+    foreach {k v} $vals {
+        append s $sep
+        if {$k eq {rpn}} { append s $v } else { append s $k = $v }
+        set sep {, }
+    }
+    append s {) = }
+    append s $num
+    return $s
+}
+
+# R421 parts 1 and 3.  The measured number REPLACES the buffer, as one undoable
+# action, so that ONE undo puts the user's expression back.
+#
+# ⚠⚠ `-autoseparators` IS TURNED OFF ACROSS THE PAIR, AND THAT IS THE WHOLE OF
+# PART THREE.  With it on (the default, and what `calc::build_buf` leaves alone)
+# Tk inserts a separator of its own whenever the edit MODE changes -- so the
+# `delete` and the `insert` below land in two different undo steps, one undo
+# leaves the buffer EMPTY and a second is needed to get the expression back.
+# Measured as a sabotage: leaving it on reddens exactly one row, R421's undo
+# witness in band S28/4, with the undone buffer reading empty.  The explicit
+# separators either side are what make the pair one step once Tk has stopped
+# adding its own.
+#
+# ⚠ THE PREVIOUS SETTING IS READ AND PUT BACK rather than assumed to be 1:
+# `calc::buf_undo` branches on it, and a window whose buffer was configured
+# otherwise must not have that changed by a measurement.
+proc calc::buf_set_number {v} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set n [string trim $v]
+    set auto 1
+    catch {set auto [.calc.buf cget -autoseparators]}
+    catch {.calc.buf configure -autoseparators 0}
+    .calc.buf edit separator
+    .calc.buf delete 1.0 end
+    .calc.buf insert end $n
+    .calc.buf edit separator
+    catch {.calc.buf configure -autoseparators $auto}
+    catch {.calc.buf see insert}
+    calc::buf_note_edit
+    return $n
+}
+
+# R412's modal, part one of three: BUILD.  Returns `.calc.arg`, or {} for a name
+# with no arguments and for a world with no window.
+#
+# ⚠⚠ THE RESULT SLOT IS PRE-SET TO CANCEL ON THE FIRST LINE, BEFORE ANYTHING
+# ELSE.  `rdw::scope_dialog`'s own comment says why: "A window destroyed by a
+# deadman timer or by a window manager never reaches `scope_dialog_done`, and a
+# stale result would then be read as an answer the user never gave."  That is
+# R412's Cancel requirement surviving a route that never runs the `done` proc --
+# i.e. A STALE RESULT BEING READ AS CONSENT.  `ase::ui::bus_dialog` sets its
+# result on the LAST LINE of its build instead, so a raising build leaves the
+# PREVIOUS answer standing; that is the half not to copy.
+#
+# ⚠ THE PARENT PRE-SETS IN THE WRAPPER AND THIS DOES IT IN BOTH, which is one
+# notch stronger and is what makes the property measurable WITHOUT entering
+# `tkwait`: row CW14 poisons the slot, runs the build and reads the slot back.
+#
+# ⚠ A NAME WITH NO ARGUMENTS IS REFUSED RATHER THAN GIVEN AN EMPTY MODAL, which
+# a user could not answer.  That is also the fall-through the route-T branch
+# relies on.
+#
+# ⚠ FIELDS ARE FOUND BY THEIR TRANSPORT AND NOT BY A PATH OR A CLASS.  Every
+# field widget carries `::calc::argval(<key>)` as its `-textvariable` (or a
+# radio group's `-variable`), which is the same thing a later phase or a test
+# has to write to, and is the parent dialog's own idiom.  An `rpn` field opens
+# on the BUFFER's expression; every other field opens on its spec default, which
+# is EMPTY for a required one.
+proc calc::arg_dialog_build {name} {
+    variable arg_result
+    variable argval
+    variable argfor
+    variable argfirst
+    set arg_result {}
+    set argfor {}
+    set argfirst {}
+    catch {destroy .calc.arg}
+    set spec [calc::fn_argspec $name]
+    if {[llength $spec] == 0} { return {} }
+    if {![calc::has_win .calc]} { return {} }
+    calc::style_init
+    set w [toplevel .calc.arg]
+    set argfor $name
+    wm title $w "$name arguments"
+    wm transient $w .calc
+    catch {$w configure -background [calc::color panel]}
+    set f [frame $w.f -background [calc::color panel]]
+    grid columnconfigure $f 1 -weight 1
+    set r 0
+    foreach row $spec {
+        set key  [lindex $row 0]
+        set lbl  [lindex $row 1]
+        set kind [lindex $row 2]
+        set v    [lindex $row 4]
+        if {[lindex $kind 0] eq {rpn}} { set v [calc::rpn_of_buffer] }
+        set argval($key) $v
+        label $f.l$r -text $lbl -anchor w \
+            -background [calc::color panel] -foreground [calc::color fieldfg]
+        if {[lindex $kind 0] eq {enum}} {
+            ttk::combobox $f.v$r -state readonly -style Calc.Field.TCombobox \
+                -values [lrange $kind 1 end] \
+                -textvariable ::calc::argval($key)
+        } else {
+            entry $f.v$r -textvariable ::calc::argval($key) -width 28 \
+                -background [calc::color field] \
+                -foreground [calc::color fieldfg] \
+                -selectbackground [calc::color selectbg] \
+                -selectforeground [calc::color selectfg]
+        }
+        grid $f.l$r -row $r -column 0 -sticky w  -padx {8 6} -pady 2
+        grid $f.v$r -row $r -column 1 -sticky we -padx {0 8} -pady 2
+        if {$argfirst eq {}} { set argfirst $f.v$r }
+        incr r
+    }
+    pack $f -side top -fill both -expand 1 -pady {8 2}
+    set b [frame $w.btns -background [calc::color panel]]
+    button $b.ok     -text OK     -width 8 \
+        -command [list calc::arg_dialog_done $w ok]
+    button $b.cancel -text Cancel -width 8 \
+        -command [list calc::arg_dialog_done $w cancel]
+    pack $b.cancel $b.ok -side right -padx 4
+    pack $b -side bottom -fill x -pady 6 -padx 6
+    bind $w <Key-Escape> [list calc::arg_dialog_done $w cancel]
+    bind $w <Key-Return> [list calc::arg_dialog_done $w ok]
+    wm protocol $w WM_DELETE_WINDOW [list calc::arg_dialog_done $w cancel]
+    return $w
+}
+
+# Part two: DONE.  `how` is `ok` or `cancel`.
+#
+# ⚠ CANCEL IS SILENT AND LEAVES NOTHING BEHIND.  R412's requirement is that the
+# buffer stay BYTE-IDENTICAL, and row S28/3 measures that on five captures --
+# the text, `edit modified`, the status history, the status line and the Stack
+# size -- plus an undo witness, because a dialog that touched the buffer and
+# undid itself is byte-identical while having spent an undo.  So this path
+# writes no status line at all.
+#
+# ⚠ A MALFORMED FIELD KEEPS THE FORM UP AND SAYS WHY, which is the house idiom
+# (`ase::ui`'s Add Variable dialog rejects an empty or duplicate name "with the
+# dialog kept up") and is what lets the user fix the field instead of retyping
+# four of them.  What matters for correctness is that the value is never
+# COMPOSED INTO THE CALL and the buffer does not move; whether the form stays up
+# is unratified and row S28/4 deliberately asserts neither.
+proc calc::arg_dialog_done {w how} {
+    variable arg_result
+    variable argval
+    variable argfor
+    if {$how ne {ok}} {
+        set arg_result {}
+        catch {grab release $w}
+        catch {destroy $w}
+        return {}
+    }
+    set spec [calc::fn_argspec $argfor]
+    set bad [calc::arg_bad $spec]
+    if {$bad ne {}} { return [calc::status $bad] }
+    set d {}
+    foreach row $spec {
+        set k [lindex $row 0]
+        set v {}
+        if {[info exists argval($k)]} { set v $argval($k) }
+        lappend d $k $v
+    }
+    set arg_result $d
+    catch {grab release $w}
+    catch {destroy $w}
+    return {}
+}
+
+# Part three: the WRAPPER.  Answers a `key -> value` dict, or {} for Cancel --
+# which is also the answer when there is no window, when the build refuses and
+# when the window went away before `tkwait` could be entered, because in every
+# one of those the user gave no answer.
+#
+# ⚠ EVERY GUARD HERE IS THE PARENT'S AND NONE IS DECORATION.  The build is
+# CAUGHT (a raising build must not take the click down with it); the returned
+# path is CHECKED, so a build that refused is not grabbed and never entered;
+# `tkwait` is guarded by `winfo exists` AND `catch`, because the `update` just
+# above it can let a timer destroy the window and `tkwait window` on a dead path
+# never returns; and the keyboard is handed back to whatever had it.
+proc calc::arg_dialog {name} {
+    variable arg_result
+    variable argfirst
+    set arg_result {}
+    if {![calc::has_win .calc]} { return {} }
+    set prevfocus {}
+    catch {set prevfocus [focus]}
+    set w {}
+    if {[catch {calc::arg_dialog_build $name} w]} { return {} }
+    if {$w ne {.calc.arg}} { return {} }
+    if {![calc::has_win $w]} { return {} }
+    catch {update}
+    catch {raise $w}
+    catch {grab set $w}
+    catch {focus -force $w}
+    if {$argfirst ne {} && [calc::has_win $argfirst]} { catch {focus $argfirst} }
+    if {[calc::has_win $w]} { catch {tkwait window $w} }
+    catch {grab release $w}
+    if {$prevfocus ne {} && [calc::has_win $prevfocus]} {
+        catch {focus -force $prevfocus}
+    }
+    return $arg_result
+}
+
+# The route-T click, end to end.  `calc::eval_click`'s shape exactly, with the
+# dialog between the gate and the measurement:
+#
+#     empty spec  -> the inert sentence, for the thirty T verbs with no proc
+#     no window   -> R508's silent no-op that returns cleanly
+#     result gate -> U7's ruled refusal, in `calc::require_result`'s own words
+#     empty buffer-> nothing to measure and nothing to ask about
+#     dialog      -> Cancel is silent and byte-identical
+#     measure     -> the verb's own refusal sentence, carried through unchanged
+#     R421        -> the number in the buffer, the provenance on the status line
+#
+# ⚠ THE GATE RUNS BEFORE THE DIALOG, AND SO DOES THE EMPTY-BUFFER CHECK.  Asking
+# the user to fill in four fields and THEN telling them no simulation result is
+# loaded is a form filled for nothing; the same objection applies to an empty
+# buffer, since a T verb measures the buffer's expression.  Rows S28/6 are the
+# fence and compare the no-result refusal BY IDENTITY against what the gate
+# itself answers, never against a sentence re-spelled in a test.
+#
+# ⚠ AND THE REFUSAL A VERB GIVES IS CARRIED THROUGH UNCHANGED.  `nth` 0 reaches
+# the surface wrapper and comes back deferred behind the one shared
+# `calc::cross_msg listdefer` sentence; re-wording it here would redden four
+# bands in two files that compare it by identity.
+proc calc::fn_measure {name} {
+    set spec [calc::fn_argspec $name]
+    if {[llength $spec] == 0} { return [calc::inert "function $name" 5] }
+    if {![calc::has_win .calc.buf]} { return {} }
+    set g [calc::require_result]
+    set gok 0
+    catch {set gok [dict get $g ok]}
+    if {!$gok} {
+        set m {}
+        catch {set m [dict get $g msg]}
+        return [calc::status $m]
+    }
+    set rpn [calc::rpn_of_buffer]
+    if {[string trim $rpn] eq {}} { return [calc::status [calc::arg_msg empty $name]] }
+    set ans [calc::arg_dialog $name]
+    if {$ans eq {}} { return {} }
+    set vals [calc::arg_values $name $rpn $ans]
+    if {[llength $vals] == 0} { return [calc::status [calc::arg_msg nosurf $name]] }
+    set d {}
+    if {[catch {calc::arg_invoke $name $vals} d]} {
+        return [calc::status [calc::arg_msg failed $name $d]]
+    }
+    set ok 0
+    if {[catch {dict get $d ok} ok]} {
+        return [calc::status [calc::arg_msg failed $name $d]]
+    }
+    if {!$ok} {
+        set m {}
+        catch {set m [dict get $d msg]}
+        return [calc::status $m]
+    }
+    set v {}
+    catch {set v [dict get $d value]}
+    set num [calc::buf_set_number $v]
+    return [calc::status [calc::arg_provenance $name $vals $num]]
 }
 
 # ---------------------------------------------------------------------------

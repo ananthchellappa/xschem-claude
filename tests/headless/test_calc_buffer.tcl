@@ -145,6 +145,50 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
     exit 0
 }
 
+# --- THE SUITE'S OWN STALL BOUND (issue 1403) --------------------------------
+# ⚠ THE GAP THIS CLOSES IS THE BARE SPELLING, NOT A DRIVER.  `run_suites.sh`
+# wraps every arm in `timeout` and `t1_timeout` puts one on each of T1's four
+# `exec` sites, so a run under either driver is already bounded.  The command a
+# developer actually types,
+#     ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_buffer.tcl
+# is wrapped by nothing at all, and a suite that is wedged and a suite that is
+# slow emit byte-identical output -- none.  Sourcing scratch.tcl arms `__wd_fire`
+# (`XSCHEM_SUITE_WATCHDOG_MS`; 0 disables), which prints one line naming this
+# file and the last output it saw, on BOTH streams, and leaves through the
+# wrapped `exit` with 124 -- the code `run_suites.sh` already classifies as
+# TIMEOUT and `t1_why` already scores as a counted FAIL saying TIMED OUT.  A
+# stall therefore becomes a NAMED OUTCOME in every reader that already exists.
+#
+# ⚠ IT BOUNDS A `vwait`/`tkwait` HANG AND NOTHING ELSE.  A Tcl `after` timer
+# fires only when the interpreter reaches the event loop, so a blocking `exec`
+# and a busy Tcl loop are NOT caught; row W13 of test_suite_watchdog_1403.tcl
+# pins that limitation by measurement, and for those two shapes the answer is
+# still an external bound.  MEASURED against a copy of test_calc_skeleton.tcl
+# with a hang injected at the same point: a `vwait` on a variable nothing sets,
+# and a real `grab set` + `tkwait window` modal, both leave through the watchdog
+# with its line on both streams and no death marker; the busy loop and the
+# blocking `exec` both had to be killed from outside, and the external signal
+# took xschem's emergency-save path.  So this is a FLOOR under the unwrapped
+# case, not a substitute for `run_suites.sh`.
+#
+# ⚠ WHY IT MATTERS FOR THIS FILE: the `tkwait` shape is what a modal argument
+# dialog is, and this suite types into the Calculator's real buffer widget and
+# drives its real undo/redo bindings.  The bound goes in BEFORE such a dialog
+# exists, because the first run that hangs is the one that costs a night.
+#
+# ⚠ AFTER THE NO-X GATE AND NOT BEFORE -- where test_calc_plot.tcl puts the same
+# line.  Nothing above the gate can hang, so placing it here leaves the headless
+# arm byte-identical and keeps scratch.tcl's `note:` line off it.  Nothing else
+# scratch.tcl offers is taken: `test_scratch` is never called, so no directory
+# is created, and `test_sim_registry_isolate` is opt-in.
+#
+# ⚠ AND IT IS COMPATIBLE WITH BAND CB5, which renames `::winfo` aside globally
+# and says nothing between the rename and the restore may touch Tk: scratch.tcl
+# installs no Tk callback.  Its only standing hooks are a `::puts` proxy that
+# records the last stdout line and a `::exit` wrapper that deletes this
+# process's scratch directories -- of which this suite has none.
+source [file join [file dirname [info script]] scratch.tcl]
+
 # --- readers that answer rather than throw -----------------------------------
 proc bufget {} {
     if {![winfo exists .calc.buf]} { return MISSING }

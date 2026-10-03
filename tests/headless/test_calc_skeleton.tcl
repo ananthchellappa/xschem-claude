@@ -116,6 +116,44 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
     exit 0
 }
 
+# --- THE SUITE'S OWN STALL BOUND (issue 1403) --------------------------------
+# ⚠ THE GAP THIS CLOSES IS THE BARE SPELLING, NOT A DRIVER.  `run_suites.sh`
+# wraps every arm in `timeout` and `t1_timeout` puts one on each of T1's four
+# `exec` sites, so a run under either driver is already bounded.  The command a
+# developer actually types,
+#     ./src/xschem --pipe -q --nolog --script tests/headless/test_calc_skeleton.tcl
+# is wrapped by nothing at all, and a suite that is wedged and a suite that is
+# slow emit byte-identical output -- none.  Sourcing scratch.tcl arms `__wd_fire`
+# (`XSCHEM_SUITE_WATCHDOG_MS`; 0 disables), which prints one line naming this
+# file and the last output it saw, on BOTH streams, and leaves through the
+# wrapped `exit` with 124 -- the code `run_suites.sh` already classifies as
+# TIMEOUT and `t1_why` already scores as a counted FAIL saying TIMED OUT.  A
+# stall therefore becomes a NAMED OUTCOME in every reader that already exists.
+#
+# ⚠ IT BOUNDS A `vwait`/`tkwait` HANG AND NOTHING ELSE.  A Tcl `after` timer
+# fires only when the interpreter reaches the event loop, so a blocking `exec`
+# and a busy Tcl loop are NOT caught; row W13 of test_suite_watchdog_1403.tcl
+# pins that limitation by measurement, and for those two shapes the answer is
+# still an external bound.  MEASURED against a copy of this file with a hang
+# injected at this very point: a `vwait` on a variable nothing sets, and a real
+# `grab set` + `tkwait window` modal, both leave through the watchdog with its
+# line on both streams and no death marker; the busy loop and the blocking
+# `exec` both had to be killed from outside, and the external signal took
+# xschem's emergency-save path.  So this is a FLOOR under the unwrapped case,
+# not a substitute for `run_suites.sh`.
+#
+# ⚠ WHY IT MATTERS FOR THIS FILE: the `tkwait` shape is what a modal argument
+# dialog is, and this is one of the three suites that drive the Calculator's
+# real widgets.  The bound goes in BEFORE such a dialog exists, because the
+# first run that hangs is the one that costs a night.
+#
+# ⚠ AFTER THE NO-X GATE AND NOT BEFORE -- where test_calc_plot.tcl puts the same
+# line.  Nothing above the gate can hang, so placing it here leaves the headless
+# arm byte-identical and keeps scratch.tcl's `note:` line off it.  Nothing else
+# scratch.tcl offers is taken: `test_scratch` is never called, so no directory
+# is created, and `test_sim_registry_isolate` is opt-in.
+source [file join [file dirname [info script]] scratch.tcl]
+
 if {[catch {
 
 # ⚠ BEFORE THE CALCULATOR IS EVER OPENED, and before anything in this file has
@@ -3655,6 +3693,947 @@ check "S27 a FIRST open publishes the row — build_res's own refresh ran" \
     {{(no raw file loaded)} {Results Dir:}}
 check_true "S27 ...and the balloon was attached on that first build too" \
     [string match {*No simulation results are loaded*} [pcall bind .calc.res.path <Enter>]]
+
+# --- S28 the ARGUMENT DIALOG and the route-T click (R412 / R421, PLAN 5.4) ----
+#
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 8 and 9.
+# Sibling tests/headless/test_calc_measure.tcl band MT11 owns `calc::fn_argspec`
+#         -- the keys, order, labels, kinds, requiredness and defaults -- because
+#         that proc needs NO Tk and so gates on BOTH arms.  Nothing about the
+#         specification is re-measured here; this band drives the DIALOG.
+# Sibling tests/headless/test_calc_widgets.tcl band CW14 owns the dialog's
+#         widget INVENTORY -- one field per key, the transport, the pre-fill, the
+#         WM-close path and the keyboard bindings -- built WITHOUT the modal
+#         wrapper, which is why that band needs no poll.
+#
+# ⚠⚠ WRITTEN RED-FIRST, BEFORE ANY OF IT EXISTED.  `src/calculator.tcl` had zero
+# `grab`, zero `tkwait` and zero `vwait`, and its only `toplevel` was `.calc`.
+# Every row below failed when it was written; the transcript is in the receipt.
+#
+# ⚠ THIS BAND IS DISPLAY-ONLY AND THEREFORE GATE-ONLY.  This suite is a `dcases`
+# entry ALONE and prints `RESULT: ALL PASS (0 checks)` under `--nogui`, so a
+# headless number says nothing at all about any row here.  The armed spelling is
+# `tests/headless/run_suites.sh test_calc_skeleton`.
+#
+# THE CONTRACT THIS BAND IS THE SPECIFICATION OF.  CLICK_CONTRACT section 8
+# settles the PARENT (`rdw::scope_dialog`, with its build / done / wrapper split
+# and its result PRE-SET TO CANCEL BEFORE THE BUILD) and leaves the names and
+# the transport to the implementer; a red-first row cannot drive a dialog nobody
+# has named, so this band chooses, following the parent's own vocabulary:
+#
+#   calc::arg_dialog <name>        -> a dict of key -> value, or {} for CANCEL
+#   calc::arg_dialog_build <name>  -> builds and returns `.calc.arg`
+#   calc::arg_dialog_done <w> <how>   `how` is `ok` or `cancel`
+#   .calc.arg                      the child toplevel (transient for `.calc`)
+#   .calc.arg.btns.ok  .calc.arg.btns.cancel
+#   ::calc::argval(<key>)          one element per field, which is what the
+#                                  field widgets are bound to and what a test
+#                                  sets -- so no row here depends on a field
+#                                  being an entry rather than a combobox
+#
+# THE IMPLEMENTATION STAGE MAY OVERRULE ANY OF THAT; what it may not do is leave
+# the two disagreeing silently.  Everything here reaches the product through
+# `ad_*`, so a different choice is an edit to those and not to the rows.
+#
+# ⚠⚠ WHY ROUTE T IS FREE AND WHAT MUST NOT BE TOUCHED TO KEEP IT SO.  There are
+# twelve `fn_click` sites in `tests/` and NOT ONE clicks a route-T verb: ten name
+# a verb literally (`average`, `dft`, `pzbode` -- routes P, N and X), one
+# iterates the literal list `{average dft pzbode}`, and the dangerous-looking one
+# iterates every entry the browser drew and would click all 34 T verbs EXCEPT
+# that it `continue`s when `calc::fn_reason` answers empty -- which it does for
+# T.  So the one-line change someone would reach for to fix the false message
+# below, giving route T a reason, would make that loop assert the "is not
+# available" phrasing over four verbs that ARE available.  The truthful sentence
+# belongs in a route-T branch of `calc::fn_click`, which that loop never reaches,
+# and band MT11 of the sibling suite gates `fn_reason T` staying empty on the
+# COUNTED arm so a careless fix cannot wait for a display.
+#
+# ⚠ AND THE FOUR ROWS ABOVE IN THIS FILE THAT ASSERT THE PHASE-5 SENTENCE DRIVE
+# ROUTE-P `average`, INCLUDING THE ONE THAT REACHES IT INDIRECTLY through
+# `[.calc.fn.list itemcget [lindex $fnitems 0] -text]` -- which resolves to
+# `average` because `fn_fill` lays out item `i = col*nrow + r` and the
+# dictionary-sorted head of Special Functions is `average`.  Wiring route T
+# therefore reddens none of them.  Wiring 5.1, route P's token insertion, would
+# redden six, and is a separate decision with a real cost attached.
+#
+# ⚠⚠ THE FIRST TRAP IS A HANG AND NOT A FAILURE: `event generate` IS SYNCHRONOUS
+# (`-when now` is the default).  A `Button-1` delivered to a T-route entry
+# ENTERS `fn_click` -> `arg_dialog` -> `tkwait`, and THE NEXT LINE OF THIS SUITE
+# NEVER RUNS.  Band S23's existing gesture band is Motion / Button-1 /
+# ButtonRelease-1 on three consecutive lines; aimed at one of these verbs it
+# would block on line two.  So every row here ARMS THE POLL BEFORE THE
+# `event generate`, and the suite's own `XSCHEM_SUITE_WATCHDOG_MS` deadman -- the
+# `source scratch.tcl` near the top of this file -- is the floor under a poll
+# that somehow never fires.
+#
+# ⚠ HOLES, DECLARED RATHER THAN PAPERED OVER.  Each is something this band does
+# NOT measure, said plainly so nobody reads a green run as covering it.
+#
+#  SH1 THE MEASUREMENT IS STUBBED ON THE OK PATH and the result path is not.
+#      R421's operand source is the buffer and a real answer would need a loaded
+#      raw and an open viewer; what this band measures is the SURFACE -- where
+#      the number goes, what the status line says, what ONE undo does, and which
+#      proc the click reached.  Whether the NUMBER is right is
+#      tests/headless/test_calc_cross.tcl's and test_calc_measure.tcl's subject,
+#      on the counted arm.
+#  SH2 ONLY `cross` IS DRIVEN THROUGH THE OK PATH.  The other three are driven
+#      through Cancel, through the result gate and through the empty-buffer
+#      refusal, but no row presses OK on `riseTime`, `delay` or `dutyCycle` --
+#      each would need its own recorder with its own derived formals.  The
+#      STATIC half of the composition is covered on the counted arm instead:
+#      band MT11 derives every key against the formals of both the measurement
+#      proc and the surface proc for all four.  What stays open is `delay`'s
+#      two-operand case, where signal A comes from the buffer and signal B is
+#      typed -- band CW14 fences the PRE-FILL of both, nothing fences the call.
+#  SH3 EVERY SENTENCE THIS GESTURE PUTS ON SCREEN IS UNRATIFIED.  The provenance
+#      line, the route-T fall-through line and the empty-buffer refusal are the
+#      assistant's words; the `rule` debt
+#      `calc_argdialog_field_labels_and_delay_second_signal` covers the field
+#      labels and `delay`'s second signal, and CLICK_CONTRACT section 5 files the
+#      click message separately.  So the rows assert CONTAINMENT and MOVEMENT,
+#      never a string -- except where a sentence is already ruled, which is
+#      `calc::require_result`'s refusal, compared by IDENTITY in S28/6.
+#  SH4 FOUR `look` DEBTS REMAIN AND NONE OF THEM IS FENCEABLE HERE: the dialog's
+#      appearance on the real screen, that R421's provenance line fits the status
+#      bar without eliding, tab order and the feel of Return/Escape, and that the
+#      modal does not open behind `.calc`.  The LAST of those has its structural
+#      half mechanised -- band CW14 asserts `wm transient` -- and the other three
+#      need eyes.
+#  SH5 THE `rpn` FIELD'S "NEVER PARSED" HALF (R401) IS UNFENCED.  A row can show
+#      that a malformed `real` does not reach the verb; there is nothing
+#      observable that distinguishes a dialog which left an RPN field alone from
+#      one that parsed it and happened to accept it.
+#  SH6 THE SHAPE-VALIDATION ROW DRIVES ONE FIELD OF ONE KIND -- a `real` given
+#      text.  A non-integer `int` and a non-member `enum` are the same mechanism
+#      and are not separately driven; MT11 fences that the KINDS are declared,
+#      not that each is enforced.
+#
+# ⚠ THE DRIVER IS A POLL AND NEVER A DELAY, and the three load-bearing
+# properties are measured in `test_rdw_keys_1245.tcl` rather than argued here:
+# the condition is `[winfo exists $w]` AND `[grab current] eq $w` -- NAMING the
+# window, because a bare `ne {}` was defeated by one unrelated grab elsewhere in
+# the program; the give-up needs a poll COUNT and a WALL-CLOCK deadline, because
+# `after 5` is a floor and a 900-poll give-up was timed at 6.0-6.5 s under load,
+# PAST the 5 s deadman it was believed to sit inside; and BOTH TIMERS ARE
+# CANCELLED AT THE END OF EVERY ROW, or row N's deadman destroys row N+1's
+# dialog.  Rows S28/A and S28/B drive the two losing shapes.
+
+check "S28 open returns .calc" [calc::open] .calc
+update idletasks
+
+# ⚠⚠ EACH SUB-BAND BELOW RUNS INSIDE ITS OWN CATCH, AND IN THIS FILE THAT IS NOT
+# OPTIONAL.  Every other band here sits at FILE SCOPE, so a raise anywhere in it
+# is caught by the whole-file `catch … bigerr` at the bottom, which prints ONE
+# `UNEXPECTED ERROR:` and DELETES EVERY ROW BEHIND IT — issue 1616's incident, in
+# which a band written to expose one defect hid 340 unrelated ones.  MEASURED
+# while writing this band: one `expr` with a bareword in it (`$x ? GOT-A-MODAL :
+# NO-MODAL`) aborted the file at S28/1 and the eleven sub-bands after it,
+# including every hygiene row, were never run and reported nothing at all.  So
+# this band borrows the sibling suites' `group` shape — a counted FAIL naming the
+# band, and the bands after it still run.
+proc s28band {name script} {
+    if {[catch {uplevel 1 $script} e]} {
+        puts "FAIL: band $name ABORTED -> $e : FAIL"
+        puts $::errorInfo
+        incr ::fail
+    }
+}
+
+proc ad_buf {} {
+    if {![winfo exists .calc.buf]} { return MISSING }
+    return [pcall .calc.buf get 1.0 end-1c]
+}
+proc ad_spec {name} {
+    if {[info commands ::calc::fn_argspec] eq {}} { return {} }
+    if {[catch {::calc::fn_argspec $name} r]} { return {} }
+    if {[catch {llength $r}]} { return {} }
+    return $r
+}
+proc ad_keys {name} {
+    set out {}
+    foreach row [ad_spec $name] { if {![catch {lindex $row 0} k]} { lappend out $k } }
+    return $out
+}
+# the four verbs this stage makes reachable, DERIVED: a route-T catalogue row
+# with a proc of its own.  Never a written-out list.
+proc ad_verbs {} {
+    set out {}
+    foreach row [pcall calc::catalogue] {
+        if {[catch {lindex $row 2} rt]} continue
+        if {$rt ne {T}} continue
+        set nm [lindex $row 0]
+        if {[info commands ::calc::$nm] ne {}} { lappend out $nm }
+    }
+    return [lsort $out]
+}
+proc ad_tnoproc {} {
+    set out {}
+    foreach row [pcall calc::catalogue] {
+        if {[catch {lindex $row 2} rt]} continue
+        if {$rt ne {T}} continue
+        set nm [lindex $row 0]
+        if {[info commands ::calc::$nm] eq {}} { lappend out $nm }
+    }
+    return [lsort $out]
+}
+
+# --- THE RESULT GATE, STUBBED FOR THE WHOLE BAND ------------------------------
+# WARN THE GATE COMES BEFORE THE DIALOG, AND THAT IS A DECISION THIS BAND MAKES
+# AND MEASURES.  CLICK_CONTRACT section 3 gives the result path as
+# `calc::eval_click`'s shape exactly -- `calc::require_result` gate ->
+# `calc::rpn_of_buffer` -> measure -- and says nothing about where the DIALOG
+# sits in that order.  Asking the user to fill in four fields and THEN telling
+# them no simulation result is loaded is a form filled for nothing, so the gate
+# runs first and row S28/6 below is the fence for it, driven with the gate's own
+# refusal rather than with a stub.
+#
+# WARN SO EVERY ROW THAT NEEDS A DIALOG TO OPEN MUST SUPPLY A RESULT, and this
+# suite has none: `calc::results_source` is already a band-S27 fixture answering
+# from `::s26_cur`, which is empty by now, so the real gate refuses.  The stub
+# below is the smallest thing that gets past it, and it is REMOVED before S28/6
+# with a control row saying so.  `rename`, never `proc`.
+set ad_rrstub 0
+if {[info commands ::calc::require_result] ne {}
+    && [info commands ::ad_keep_rr] eq {}} {
+    rename ::calc::require_result ::ad_keep_rr
+    proc ::calc::require_result {} {
+        return [list ok 1 origin viewer path /tmp/s28/fake.raw type tran idx 0 \
+                     token {s28tok} msg {}]
+    }
+    set ad_rrstub 1
+}
+check "S28 fixture: the result gate is stubbed to answer `ok`, because this suite has no loaded result and the gate runs BEFORE the dialog -- so without this every dialog row below would be measuring a refusal" \
+    [list $ad_rrstub [dg [pcall calc::require_result] ok]] {1 1}
+
+# --- THE MODAL DRIVER ---------------------------------------------------------
+set ::AD_POLL_ID {} ; set ::AD_DEADMAN {} ; set ::AD_POLLS 0
+set ::AD_GAVEUP 0   ; set ::AD_RAN 0 ; set ::AD_DEADLINE 0
+## ⚠ ARMING DISARMS FIRST, AND THAT IS NOT TIDINESS.  Blanking the handles while
+## the chain keeps running means `ad_disarm` can no longer reach it, and a poll
+## is a SELF-RE-ARMING chain that lives seconds -- i.e. across rows -- so it will
+## press OK on whatever dialog a later row has up.  That is a stronger form of
+## the very flake the poll replaces, introduced by the fix for it
+## (test_rdw_keys_1245.tcl row SD9).
+proc ad_arm {script {budget 900} {deadman 5000}} {
+    ad_disarm
+    set ::AD_POLLS 0 ; set ::AD_GAVEUP 0 ; set ::AD_RAN 0
+    set ::AD_DEADLINE [expr {[clock milliseconds] + $deadman - 500}]
+    set ::AD_POLL_ID {}
+    set ::AD_DEADMAN [after $deadman {catch {destroy .calc.arg}}]
+    ad_poll_modal $script $budget
+    return {}
+}
+proc ad_poll_modal {script budget} {
+    set ::AD_POLL_ID {}
+    incr ::AD_POLLS
+    ## ⚠ THE GRAB MUST BE THIS DIALOG'S.  A bare `grab current` answers for EVERY
+    ## grab the application holds on any display, so `ne {}` is satisfied by one
+    ## unrelated grab and the poll then fires during the build's own `update`,
+    ## with the keyboard still wherever it was -- which is exactly the losing
+    ## shape row S28/B exists to forbid.
+    if {[winfo exists .calc.arg] && [grab current] eq {.calc.arg}} {
+        set ::AD_RAN 1
+        uplevel #0 $script
+        return
+    }
+    if {$::AD_POLLS >= $budget || [clock milliseconds] >= $::AD_DEADLINE} {
+        set ::AD_GAVEUP 1 ; return
+    }
+    set ::AD_POLL_ID [after 5 [list ad_poll_modal $script $budget]]
+}
+proc ad_disarm {} {
+    if {$::AD_POLL_ID ne {}} { catch {after cancel $::AD_POLL_ID} }
+    if {$::AD_DEADMAN ne {}} { catch {after cancel $::AD_DEADMAN} }
+    set ::AD_POLL_ID {} ; set ::AD_DEADMAN {} ; set ::AD_DEADLINE 0
+    return {}
+}
+## The two sabotage fixtures delay the REAL build by spinning the EVENT LOOP,
+## which is what display contention does on a loaded box; a busy-wait would prove
+## nothing, because no timer can fire while Tcl is not in the event loop.
+## `rename`, never `proc`, so a stub cannot shadow the thing it replaces.
+proc ad_spin {ms} {
+    set ::AD_SPIN 0
+    after $ms {set ::AD_SPIN 1}
+    vwait ::AD_SPIN
+    return {}
+}
+proc ad_slow_install {when ms} {
+    set ::AD_SLOW_WHEN $when ; set ::AD_SLOW_MS $ms
+    if {[info commands ::calc::arg_dialog_build] eq {}} { return NOBUILDPROC }
+    if {![llength [info commands ::calc::ad_real_build]]} {
+        if {[catch {rename ::calc::arg_dialog_build ::calc::ad_real_build} e]} { return "ERR:$e" }
+    }
+    proc ::calc::arg_dialog_build {args} {
+        if {$::AD_SLOW_WHEN eq {before}} { ad_spin $::AD_SLOW_MS }
+        set w [uplevel 1 [linsert $args 0 ::calc::ad_real_build]]
+        if {$::AD_SLOW_WHEN eq {after}} { ad_spin $::AD_SLOW_MS }
+        return $w
+    }
+    return INSTALLED
+}
+proc ad_slow_none {} {
+    set ::AD_SLOW_WHEN none
+    if {[info commands ::calc::arg_dialog_build] eq {}} { return NOBUILDPROC }
+    if {![llength [info commands ::calc::ad_real_build]]} {
+        if {[catch {rename ::calc::arg_dialog_build ::calc::ad_real_build} e]} { return "ERR:$e" }
+    }
+    proc ::calc::arg_dialog_build {args} { return NO-DIALOG-EVER-BUILT }
+    return INSTALLED
+}
+proc ad_slow_remove {} {
+    set ::AD_SLOW_WHEN none
+    if {![llength [info commands ::calc::ad_real_build]]} { return NOBUILDPROC }
+    catch {rename ::calc::arg_dialog_build {}}
+    if {[catch {rename ::calc::ad_real_build ::calc::arg_dialog_build} e]} { return "ERR:$e" }
+    return [llength [info commands ::calc::arg_dialog_build]]
+}
+
+# --- S28/0  the fall-through: 30 T verbs have no handler and must say so ------
+s28band S28/0 {
+# ⚠ CLICK_CONTRACT section 3: "There are 34 T rows and only 4 have procs; a
+# blanket route-T branch strands 30 verbs with no handler."  The set is DERIVED
+# from the catalogue and the namespace, never written out, and BOTH counts ride
+# along -- a sweep over an empty population is green while measuring nothing,
+# which this batch has now caught five times.
+pcall calc::status {}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {S28 INERT SENTINEL}
+pcall .calc.buf edit reset
+set ad_fallbuf [ad_buf]
+set ad_fallstk [pcall .calc.stk.list size]
+set ad_fallbad {} ; set ad_nfall 0
+foreach nm [ad_tnoproc] {
+    incr ad_nfall
+    pcall calc::status {}
+    ad_arm {} 20 300
+    pcall calc::fn_click $nm
+    update
+    ad_disarm
+    if {[winfo exists .calc.arg]} { lappend ad_fallbad $nm=OPENED-A-DIALOG }
+    if {[pcall .calc.status.msg get] eq {}} { lappend ad_fallbad $nm=SILENT }
+    if {[ad_buf] ne $ad_fallbuf} { lappend ad_fallbad $nm=TOUCHED-BUFFER }
+    if {[pcall .calc.stk.list size] != $ad_fallstk} { lappend ad_fallbad $nm=TOUCHED-STACK }
+}
+check "S28 the 30 route-T verbs with NO proc fall through legibly: each one speaks, none opens a dialog, and none touches the buffer or the Stack -- the set and the sweep count are both DERIVED from the catalogue and the namespace, so a blanket route-T branch that stranded them would redden here" \
+    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {30 4 {}}
+check_true "S28 fixture: the pre-sweep buffer snapshot is real text" \
+    [expr {![string match ERR:* $ad_fallbuf]
+           && [string match {*INERT SENTINEL*} $ad_fallbuf]}]
+}
+
+# --- S28/1  the four BUILT verbs are never told they do not exist -------------
+s28band S28/1 {
+# ⚠ CLICK_CONTRACT section 5: today a click on `cross` prints `function cross:
+# not implemented (phase 5)` and `cross` IS implemented, with 187 gating checks,
+# as are the other three with 135.  The sentence is true about the CLICK and
+# false about the FUNCTION: four built-and-gated verbs currently tell the user
+# they do not exist.  The replacement WORDING is user-visible and unratified, so
+# this row fences only that the `calc::inert` composition is gone -- it is the
+# one claim that can be made without choosing words for the user.
+set ad_liebad {} ; set ad_nlie 0
+foreach nm [ad_verbs] {
+    incr ad_nlie
+    pcall calc::status {}
+    ad_arm {catch {.calc.arg.btns.cancel invoke}} 900 2500
+    pcall calc::fn_click $nm
+    update
+    ad_disarm
+    catch {destroy .calc.arg}
+    set said [pcall .calc.status.msg get]
+    if {[string match {*not implemented*} $said]} {
+        lappend ad_liebad $nm=STILL-SAYS-NOT-IMPLEMENTED
+    }
+    if {[string match {*is not available*} $said]} { lappend ad_liebad $nm=SAYS-UNAVAILABLE }
+}
+check "S28 no verb that IS built is told it is not: none of the four gets `calc::inert`'s phase-5 sentence and none gets `fn_reason`'s \"is not available\" one -- the replacement wording is unratified and deliberately NOT asserted here, so this row says only that the false sentence is gone" \
+    [list $ad_nlie $ad_liebad] {4 {}}
+}
+
+# --- S28/2  a REAL pointer gesture on a T entry opens a REAL modal ------------
+s28band S28/2 {
+# ⚠ THE POINTER IS PARKED SOMEWHERE NEUTRAL FIRST (the issue 1269 lesson in row
+# SD1): a focus-dependent read inherits the pointer position, and parking it on
+# the very window whose state is asserted is the same bug wearing a fix.
+# ⚠ AND THE POLL IS ARMED BEFORE THE `event generate`, WHICH IS THE WHOLE POINT
+# OF THIS ROW: the Button-1 enters `fn_click` -> `tkwait` synchronously, so a
+# driver armed on the line AFTER it would never be armed at all.
+pcall .calc.fn.cat set {Special Functions}
+pcall event generate .calc.fn.cat <<ComboboxSelected>>
+update idletasks
+set ad_target {}
+foreach id [pcall .calc.fn.list find withtag fnentry] {
+    if {[pcall .calc.fn.list itemcget $id -text] eq {cross}} { set ad_target $id ; break }
+}
+set ad_bb [pcall .calc.fn.list bbox $ad_target]
+# â  EVERY NUMBER PROVED NUMERIC BEFORE `expr` SEES IT, and the llength is
+# taken through `catch`: `ERR:invalid command name ".calc.fn.list"` IS a
+# four-element list, and feeding one to `expr` has taken this whole FILE down in
+# the outer catch twice already, with the bands behind it never run.
+set ad_bbok 1
+if {[catch {llength $ad_bb} ad_bbl]} { set ad_bbok 0 ; set ad_bb {} ; set ad_bbl 0 }
+if {$ad_bbl != 4} { set ad_bbok 0 }
+foreach v $ad_bb { if {![string is double -strict $v]} { set ad_bbok 0 } }
+set ::AD_SEEN 0 ; set ::AD_GRABW {} ; set ::AD_GRABKIND {} ; set ::AD_FOCUS UNSET
+set ad_gestured NO-GESTURE
+if {$ad_bbok} {
+    set gx [expr {int(([lindex $ad_bb 0] + [lindex $ad_bb 2]) / 2 - [.calc.fn.list canvasx 0])}]
+    set gy [expr {int(([lindex $ad_bb 1] + [lindex $ad_bb 3]) / 2 - [.calc.fn.list canvasy 0])}]
+    pcall event generate .calc <Motion> -x 5 -y 5
+    update
+    pcall calc::status {}
+    ad_arm {
+        catch {set ::AD_SEEN [expr {[winfo exists .calc.arg] ? 1 : 0}]}
+        catch {set ::AD_GRABW [grab current]}
+        catch {set ::AD_GRABKIND [grab status .calc.arg]}
+        catch {set ::AD_FOCUS [focus]}
+        catch {.calc.arg.btns.cancel invoke}
+    }
+    pcall event generate .calc.fn.list <Motion> -x $gx -y $gy
+    pcall event generate .calc.fn.list <Button-1> -x $gx -y $gy
+    pcall event generate .calc.fn.list <ButtonRelease-1> -x $gx -y $gy
+    update
+    ad_disarm
+    catch {destroy .calc.arg}
+    set ad_gestured [expr {$::AD_SEEN ? {GOT-A-MODAL} : {NO-MODAL}}]
+}
+check "S28 a REAL Motion + Button-1 on the `cross` entry reaches `fn_click` and really OPENS the modal, which holds a LOCAL grab (never `-global`: a global grab would freeze the GUI gate's Pause/Stop panel, a separate `wish` process, on a run against the user's own screen) and really holds the keyboard -- and the poll was armed BEFORE the synchronous `event generate`, or this row could not have returned at all" \
+    [list [expr {$ad_bbok ? 1 : 0}] $ad_gestured $::AD_GRABW $::AD_GRABKIND \
+          [expr {$::AD_FOCUS eq {.calc.arg} || [string match {.calc.arg.*} $::AD_FOCUS] ? 1 : 0}] \
+          $::AD_RAN $::AD_GAVEUP \
+          [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current]] \
+    [list 1 GOT-A-MODAL .calc.arg local 1 1 0 0 {}]
+}
+
+# --- S28/3  R412 CANCEL LEAVES THE BUFFER BYTE-IDENTICAL ---------------------
+s28band S28/3 {
+# ⚠ S23's existing `INERT SENTINEL` IDIOM IS NOT SUFFICIENT HERE, and that is
+# why this row exists rather than an extension of that one.  It captures the
+# text, a count and a realness leg, and checks NONE of `edit modified`, the undo
+# stack or the status history -- which are exactly the three that a dialog which
+# TOUCHED the buffer and then undid itself moves while leaving the text
+# byte-identical.  `calc::buf_insert_token` emits `edit separator`, so that
+# shape is one line of code away.
+# ⚠ `edit canundo` IS TK 8.6 ONLY and is deliberately not used: `edit modified`
+# is 8.4+, and the UNDO WITNESS below is what actually measures the stack -- one
+# `edit undo` after a Cancel must leave the buffer STILL equal to the capture,
+# which a touch-then-undo fails because its undo pops the dialog's own edit.
+# ⚠ AND THE COUNT RIDES ALONG (`ad_ncancel`): "no dialog opened" and "four opened
+# and touched nothing" are otherwise the same green.
+pcall calc::status {}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) - 2 *}
+pcall .calc.buf edit reset
+pcall .calc.buf edit modified 0
+pcall calc::buf_sync
+set ad_c_text [ad_buf]
+set ad_c_mod  [pcall .calc.buf edit modified]
+set ad_c_hist [pcall calc::status_history]
+set ad_c_msg  [pcall .calc.status.msg get]
+set ad_c_stk  [pcall .calc.stk.list size]
+set ad_cbad {} ; set ad_ncancel 0 ; set ad_nundo 0
+foreach nm [ad_verbs] {
+    ad_arm {catch {.calc.arg.btns.cancel invoke}} 900 2500
+    set ans [pcall calc::fn_click $nm]
+    update
+    set ran $::AD_RAN
+    ad_disarm
+    if {[winfo exists .calc.arg]} { lappend ad_cbad $nm=DIALOG-LEFT-BEHIND }
+    catch {destroy .calc.arg}
+    if {!$ran} { lappend ad_cbad $nm=NO-DIALOG-TO-CANCEL ; continue }
+    incr ad_ncancel
+    if {[ad_buf] ne $ad_c_text}                      { lappend ad_cbad $nm=TEXT }
+    if {[pcall .calc.buf edit modified] ne $ad_c_mod} { lappend ad_cbad $nm=MODIFIED }
+    if {[pcall calc::status_history] ne $ad_c_hist}   { lappend ad_cbad $nm=HISTORY }
+    if {[pcall .calc.status.msg get] ne $ad_c_msg}    { lappend ad_cbad $nm=STATUSLINE }
+    if {[pcall .calc.stk.list size] != $ad_c_stk}     { lappend ad_cbad $nm=STACK }
+    # THE UNDO WITNESS.  One undo must leave the buffer STILL equal to the
+    # capture; a dialog that inserted and undid itself passes every leg above
+    # and fails this one, because its undo has already been spent.
+    pcall calc::buf_undo
+    incr ad_nundo
+    if {[ad_buf] ne $ad_c_text} { lappend ad_cbad $nm=UNDO-MOVED-IT }
+    pcall calc::buf_redo
+    if {[ad_buf] ne $ad_c_text} { lappend ad_cbad $nm=REDO-MOVED-IT }
+    # â  THE FOUR MOVING CAPTURES ARE RE-TAKEN HERE, and the fifth is NOT.
+    # The undo witness above is itself an edit: `calc::buf_undo` moves
+    # `edit modified` and writes a status line, so carrying the first capture
+    # forward would redden verb two for the WITNESS's doing and not the dialog's.
+    # The TEXT is deliberately not re-taken -- it is the thing under test and is
+    # compared against the original capture for every verb.
+    pcall .calc.buf edit modified 0
+    pcall calc::status {}
+    set ad_c_mod  [pcall .calc.buf edit modified]
+    set ad_c_hist [pcall calc::status_history]
+    set ad_c_msg  [pcall .calc.status.msg get]
+    set ad_c_stk  [pcall .calc.stk.list size]
+}
+check "S28 R412 Cancel leaves the buffer BYTE-IDENTICAL, measured on FIVE captures and not one: the text, `edit modified` (8.4+, never `edit canundo`), the status history, the status line and the Stack size -- PLUS the undo witness, because a dialog that touched the buffer and undid itself is byte-identical while having spent an undo; the cancelled count and the undo count both ride along, so \"no dialog opened\" and \"four opened and touched nothing\" are different greens" \
+    [list $ad_ncancel $ad_nundo $ad_cbad] {4 4 {}}
+check_true "S28 fixture: the pre-Cancel capture is a real, non-trivial expression and the history was non-empty" \
+    [expr {$ad_c_text eq {v(out) v(in) - 2 *}
+           && [string is boolean -strict $ad_c_mod]}]
+}
+
+# --- S28/4  R421 OK: the NUMBER, the PROVENANCE, and ONE undo ----------------
+s28band S28/4 {
+# ⚠ THREE PARTS, NONE OF THEM OPTIONAL, and part three is the one that will rot
+# silently: a later change to the insertion path could leave the number right and
+# the undo history subtly wrong, and nothing else in the tree would notice.
+#
+# ⚠ THE MEASUREMENT IS STUBBED AND THE RESULT PATH IS NOT.  R421's own operand
+# source is `calc::rpn_of_buffer`, and reaching a real answer would need a loaded
+# raw and an open viewer; what this band is about is the SURFACE -- where the
+# number goes, what the status line says, and what one undo does.  So
+# `calc::require_result` is made to answer `ok` and `calc::cross_scalar` is
+# replaced by a RECORDER returning a known number, which also lets the row assert
+# WHAT the click passed.  `calc::cross` is replaced by a COUNTER at the same time,
+# because CLICK_CONTRACT section 3 requires the click to call the `_scalar`
+# surface wrapper and not the raw proc -- the raw one answers `nth = 0` with
+# success and a LIST and has no deferral, so a click that reached it would turn
+# `nth 0` into a list arriving where R404 wants a number.
+# `rename`, never `proc`, and restored on the way out with a control row saying so.
+set ::AD_REC {} ; set ::AD_RAWCALLS 0
+set ::AD_VALUE 0.0001234
+# ⚠⚠ THE TWO STUBS CARRY THE REAL PROCS' OWN FORMAL NAMES, DERIVED WITH
+# `info args`, AND A `{args}` STUB WOULD HAVE MEASURED THE FIXTURE INSTEAD OF
+# THE PRODUCT.  MEASURED while proving this band can pass: a conforming
+# reference composes the call BY KEY -- walking `info args` of the surface proc
+# and taking each formal's value out of the dialog's answer -- so a stub declared
+# `{args}` makes `info args` answer the single word `args`, no formal matches a
+# key, and the reference correctly calls the stub with NOTHING.  The row then
+# reads an empty argument list and reds against CORRECT code.  A test that
+# replaces a proc must keep the part of its interface the caller reads.
+# ⚠ AND EVERY FORMAL GETS A SENTINEL DEFAULT, so the recorder can report the
+# arguments ACTUALLY PASSED rather than the formals it happens to have: without
+# it a trailing `dataset` would be recorded at its own default and the row could
+# not tell a call of four arguments from a call of five.
+set ad_stubbed 0
+if {[info commands ::calc::cross_scalar] ne {} \
+        && [info commands ::calc::cross] ne {}} {
+    set ad_cs_formals {}
+    foreach ad_f [info args ::calc::cross_scalar] {
+        lappend ad_cs_formals [list $ad_f AD-NOT-GIVEN]
+    }
+    set ad_cx_formals {}
+    foreach ad_f [info args ::calc::cross] {
+        lappend ad_cx_formals [list $ad_f AD-NOT-GIVEN]
+    }
+    rename ::calc::cross_scalar ::ad_keep_cs
+    rename ::calc::cross ::ad_keep_cross
+    proc ::calc::cross_scalar $ad_cs_formals {
+        set ::AD_REC {}
+        foreach f [info args ::calc::cross_scalar] {
+            set v [set $f]
+            if {$v eq {AD-NOT-GIVEN}} break
+            lappend ::AD_REC $v
+        }
+        return [list ok 1 absent 0 value $::AD_VALUE dataset 0 dest {} msg {}]
+    }
+    proc ::calc::cross $ad_cx_formals {
+        incr ::AD_RAWCALLS
+        set pass {}
+        foreach f [info args ::calc::cross] {
+            set v [set $f]
+            if {$v eq {AD-NOT-GIVEN}} break
+            lappend pass $v
+        }
+        return [uplevel 1 [linsert $pass 0 ::ad_keep_cross]]
+    }
+    set ad_stubbed 1
+}
+pcall calc::status {}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+pcall .calc.buf edit modified 0
+pcall calc::buf_sync
+set ad_expr0 [ad_buf]
+set ::AD_RAWCALLS 0 ; set ::AD_REC {}
+set ad_okran 0
+ad_arm {
+    catch {set ::calc::argval(level) 0.375}
+    catch {set ::calc::argval(nth) 3}
+    catch {set ::calc::argval(edge) falling}
+    catch {.calc.arg.btns.ok invoke}
+}
+set ad_clickans [pcall calc::fn_click cross]
+update
+set ad_okran $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+set ad_num [ad_buf]
+set ad_prov [pcall .calc.status.msg get]
+# ⚠ THE CLICK'S OWN RETURN RIDES ALONG, AND IT IS NOT DECORATION.  MEASURED
+# while proving this band can pass: a conforming reference composed R421's
+# provenance sentence as a double-quoted `"$name(...)"`, which in Tcl is an ARRAY
+# ELEMENT reference -- `can't read "name(...)": variable isn't array` -- so the
+# number reached the buffer, the status line kept the PREVIOUS sentence, and the
+# click RAISED into `pcall`.  Without this leg the row above would have been the
+# only witness and would have blamed the sentence rather than the raise.
+check "S28 R421 part 1 -- the measured number REPLACES the buffer as a bare literal (R404: \"a literal number\", where further arithmetic can use it), not as a sentence and not as an opaque handle -- and the click RETURNS rather than raising on the way" \
+    [list $ad_stubbed $ad_okran \
+          [expr {[string match ERR:* $ad_clickans] ? 0 : 1}] \
+          [expr {[string is double -strict $ad_num] ? 1 : 0}] \
+          [expr {[string is double -strict $ad_num]
+                 && abs($ad_num - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}] \
+          [expr {[regexp {^[-+0-9.eE]+$} $ad_num] ? 1 : 0}]] \
+    {1 1 1 1 1 1}
+check "S28 R421 the click calls the SURFACE wrapper `calc::cross_scalar` -- with the buffer's own RPN first and then the dialog's three values in the wrapper's formal order -- and NEVER the raw `calc::cross`, which answers `nth = 0` with success and a list and has no deferral" \
+    [list $ad_stubbed $::AD_REC $::AD_RAWCALLS] \
+    [list 1 [list {v(out) v(in) -} 0.375 3 falling] 0]
+check "S28 R421 part 2 -- the provenance sentence names the VERB, the EXPRESSION it was measured from and the ARGUMENTS it was measured with, which is R404's \"comment of provenance\" made concrete; the wording itself is unratified, so what is asserted is what the sentence must CONTAIN" \
+    [list $ad_stubbed \
+          [expr {[string match {*cross*} $ad_prov] ? 1 : 0}] \
+          [expr {[string match "*$ad_expr0*" $ad_prov] ? 1 : 0}] \
+          [expr {[string match {*0.375*} $ad_prov] ? 1 : 0}] \
+          [expr {[string match {*falling*} $ad_prov] ? 1 : 0}] \
+          [expr {[string match "*$ad_num*" $ad_prov] ? 1 : 0}]] \
+    {1 1 1 1 1 1}
+# ⚠ ONE undo, not two.  `calc::buf_insert_token` already emits
+# `.calc.buf edit separator`, so the mechanism exists; what R421 adds is that the
+# SEPARATOR PLACEMENT must make ONE undo put the user's expression back.  The
+# second leg is what distinguishes one from two: after the single undo the buffer
+# is the expression, and after a redo it is the number again.
+pcall calc::buf_undo
+set ad_undone [ad_buf]
+pcall calc::buf_redo
+set ad_redone [ad_buf]
+check "S28 R421 part 3 -- ONE `edit undo` restores the user's expression, not two: the separator placement is the requirement, and a redo brings the number back.  THIS IS THE PART THAT WILL ROT SILENTLY -- a later change to the insertion path could leave the number right and the history subtly wrong, and nothing else in the tree would notice" \
+    [list $ad_stubbed $ad_undone \
+          [expr {[string is double -strict $ad_redone]
+                 && abs($ad_redone - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}]] \
+    [list 1 {v(out) v(in) -} 1]
+# ...and the sentence really MOVES with the arguments, which is what stops the
+# containment legs above being satisfied by a fixed string that happens to carry
+# the right substrings.
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+set ::AD_REC {}
+ad_arm {
+    catch {set ::calc::argval(level) 0.625}
+    catch {set ::calc::argval(nth) 1}
+    catch {set ::calc::argval(edge) rising}
+    catch {.calc.arg.btns.ok invoke}
+}
+set ad_clickans2 [pcall calc::fn_click cross]
+update
+set ad_okran2 $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+set ad_prov2 [pcall .calc.status.msg get]
+check "S28 R421 ...and the provenance really MOVES with what the user typed: a second measurement at a different level and the other edge gives a DIFFERENT sentence, each carrying its own edge word and not the other's -- so the containment legs above cannot be satisfied by a fixed string" \
+    [list $ad_stubbed $ad_okran2 \
+          [expr {[string match ERR:* $ad_clickans2] ? 0 : 1}] $::AD_REC \
+          [expr {$ad_prov2 ne $ad_prov ? {differ} : {SAME}}] \
+          [expr {[string match {*rising*} $ad_prov2] ? 1 : 0}] \
+          [expr {[string match {*falling*} $ad_prov2] ? 1 : 0}]] \
+    [list 1 1 1 [list {v(out) v(in) -} 0.625 1 rising] differ 1 0]
+# ⚠ SHAPE VALIDATION, FENCED WITHOUT CHOOSING A SENTENCE FOR THE USER.
+# CLICK_CONTRACT section 8: "the dialog validates SHAPE ONLY" -- `real` is a
+# finite double, `int` is `string is integer -strict`, `enum` is membership, and
+# an RPN field is non-empty text that is NEVER PARSED (R401).  What the dialog
+# SAYS about a malformed field, and whether it stays up or closes, are both
+# unratified, so neither is asserted.  What IS asserted is the only thing that
+# matters for correctness: a malformed field must not be COMPOSED INTO THE CALL,
+# and the buffer must not move.
+# ⚠ THE DEADMAN IS SHORT HERE ON PURPOSE.  If the dialog refuses and STAYS UP,
+# `fn_click` is still inside `tkwait` and this row would wait for the deadman; a
+# 1500 ms one makes that cost a second and a half instead of five, and the
+# pre-set-to-cancel slot then answers Cancel, which is the correct outcome for a
+# window the user never got an answer out of.
+set ::AD_REC {}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+set ad_badexpr [ad_buf]
+ad_arm {
+    catch {set ::calc::argval(level) {not-a-number}}
+    catch {set ::calc::argval(nth) 1}
+    catch {set ::calc::argval(edge) rising}
+    catch {.calc.arg.btns.ok invoke}
+} 900 1500
+set ad_badans [pcall calc::fn_click cross]
+update
+set ad_badran $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+check "S28 R412 a malformed field is never COMPOSED INTO THE CALL: with the level set to text that is not a finite double, OK does not reach the measurement proc and the buffer does not move.  What the dialog SAYS, and whether it stays up or closes, are unratified and deliberately NOT asserted -- only that no measurement happened on a value the verb would have had to refuse for it" \
+    [list $ad_stubbed $ad_badran $::AD_REC [ad_buf] \
+          [expr {[string match ERR:* $ad_badans] ? 0 : 1}]] \
+    [list 1 1 {} $ad_badexpr 1]
+if {$ad_stubbed} {
+    catch {rename ::calc::cross_scalar {}}
+    catch {rename ::calc::cross {}}
+    catch {rename ::ad_keep_cs ::calc::cross_scalar}
+    catch {rename ::ad_keep_cross ::calc::cross}
+}
+check "S28 CONTROL: the measurement stubs are off again and the real procs are back, so nothing below this point is measuring a fixture (the result gate stays stubbed until S28/6, which removes it deliberately)" \
+    [list [expr {[info commands ::calc::cross_scalar] ne {} ? 1 : 0}] \
+          [expr {[info commands ::calc::cross] ne {} ? 1 : 0}] \
+          [llength [info commands ::ad_keep_cs]] \
+          [llength [info commands ::ad_keep_cross]]] \
+    {1 1 0 0}
+}
+
+# --- S28/5  Escape is Cancel, through the real keyboard ----------------------
+s28band S28/5 {
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+set ad_esc_text [ad_buf]
+ad_arm {catch {event generate .calc.arg <Key-Escape> -when now}}
+set ad_escans [pcall calc::fn_click cross]
+update
+set ad_escran $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+check "S28 Escape on the argument dialog is CANCEL through the real keyboard -- the dialog goes away, no grab and no window are left, and the buffer is untouched; the poll waits for the GRAB before it types, because Tk delivers a key event to the DISPLAY's focus window rather than to the window the event names, so a driver that waited on `winfo exists` alone would send this Escape somewhere else entirely" \
+    [list $ad_escran [ad_buf] \
+          [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current]] \
+    [list 1 {v(out) v(in) -} 0 {}]
+}
+
+# --- S28/A  SABOTAGE: the driver fires BEFORE the toplevel exists ------------
+s28band S28/A {
+# ⚠ THE FIRST OF THE TWO LOSING SHAPES.  With the build delayed past the fixed
+# delay a bet would have used, a `after <n>`-style driver fires with no window at
+# all: every `catch` inside it hits nothing, the deadman cancels the dialog
+# seconds later, and the row reports a PLAUSIBLE all-zeros tuple.  A POLL waits.
+set ad_sabA [ad_slow_install before 300]
+set ::AD_SAW_A 0
+ad_arm {
+    catch {set ::AD_SAW_A [expr {[winfo exists .calc.arg] ? 1 : 0}]}
+    catch {.calc.arg.btns.cancel invoke}
+}
+set ad_tA [clock milliseconds]
+pcall calc::fn_click cross
+update
+set ad_dtA [expr {[clock milliseconds] - $ad_tA}]
+ad_disarm
+catch {destroy .calc.arg}
+set ad_remA [ad_slow_remove]
+check "S28/A SABOTAGE the driver must not fire before the toplevel exists: with the build delayed 300 ms by spinning the EVENT LOOP -- which is what display contention does, and which a busy-wait could not reproduce because no timer fires while Tcl is outside the event loop -- the poll still lands on a real window and presses Cancel, in well under the deadman.  Under a fixed delay this row reads a plausible all-zeros tuple and burns the full deadman" \
+    [list $ad_sabA $::AD_SAW_A $::AD_RAN $::AD_GAVEUP \
+          [expr {$ad_dtA >= 250 ? 1 : 0}] [expr {$ad_dtA < 3000 ? 1 : 0}] \
+          [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current] $ad_remA] \
+    [list INSTALLED 1 1 0 1 1 0 {} 1]
+}
+
+# --- S28/B  SABOTAGE: the window is there and the GRAB is not ----------------
+s28band S28/B {
+# ⚠⚠ THIS IS THE ONE THAT SHIPS THE BUG, and it is the reason the poll's
+# condition names the window instead of testing `grab current ne {}`.  The delay
+# sits between the build and the wrapper's own `grab set`, so the toplevel EXISTS
+# throughout -- a `winfo exists`-only poll fires HERE, with the keyboard still on
+# whatever had it, and Tk then redirects the keystroke to the DISPLAY's focus
+# window rather than to the window the event names.  A foreign grab is held on
+# `.calc` across the whole row as well, so `[grab current] ne {}` is satisfied
+# too and only `eq {.calc.arg}` waits for the real thing.
+set ad_sabB [ad_slow_install after 200]
+catch {grab set .calc}
+set ::AD_GRABB UNSET ; set ::AD_FOCUSB UNSET
+ad_arm {
+    catch {set ::AD_GRABB [grab current]}
+    catch {set ::AD_FOCUSB [focus]}
+    catch {.calc.arg.btns.cancel invoke}
+}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+pcall calc::fn_click cross
+update
+set ad_ranB $::AD_RAN
+ad_disarm
+catch {grab release .calc}
+catch {destroy .calc.arg}
+set ad_remB [ad_slow_remove]
+check "S28/B SABOTAGE a grab held ANYWHERE ELSE is not this dialog's grab: with `.calc` holding one and the build delayed past the wrapper's own `grab set`, the poll still waits for `.calc.arg` to own the grab AND the keyboard before it presses anything -- under a bare `grab current` tested merely for non-emptiness the driver runs with the window present and the grab absent, which is the shape that PASSES a `winfo exists`-only poll and ships the bug" \
+    [list $ad_sabB $ad_ranB $::AD_GRABB \
+          [expr {$::AD_FOCUSB eq {.calc.arg} || [string match {.calc.arg.*} $::AD_FOCUSB] ? 1 : 0}] \
+          [ad_buf] [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current] $ad_remB] \
+    [list INSTALLED 1 .calc.arg 1 {v(out) v(in) -} 0 {} 1]
+}
+
+# --- S28/C  the poll can fail, but it cannot lie or linger -------------------
+s28band S28/C {
+# ⚠ TWO LEGS, ONE FIXTURE EACH.  (a) No dialog is ever CONSTRUCTED, so the
+# wrapper's own `winfo exists` guard must answer Cancel at once: the poll gives
+# up on its BUDGET and its script must never have run.  (b) A real dialog is
+# built and NOBODY drives it -- `tkwait` is entered for real and only the deadman
+# can end it, which is issue 0803's property asserted under the poll rather than
+# assumed.  A short deadman is passed so the leg costs a third of a second.
+# ⚠ `ad_spin` AND NOT `after <n>`: a bare `after ms` BLOCKS and enters no event
+# loop, so the poll's own timers cannot fire during it and the budget is never
+# spent.  Measured on the parent suite: the give-up leg read 0 that way.
+set ad_noneC [ad_slow_none]
+ad_arm {catch {.calc.arg.btns.ok invoke}} 10
+pcall calc::fn_click cross
+update
+ad_spin 120
+update
+set ad_ranC $::AD_RAN ; set ad_gaveC $::AD_GAVEUP
+ad_disarm
+set ad_remC [ad_slow_remove]
+ad_arm {} 900 400
+set ad_tD [clock milliseconds]
+pcall calc::fn_click cross
+update
+set ad_dtD [expr {[clock milliseconds] - $ad_tD}]
+ad_disarm
+catch {destroy .calc.arg}
+check "S28/C the poll can fail but it cannot lie or linger: with no dialog ever CONSTRUCTED the driver script never runs and the poll gives up on its own budget instead of re-arming forever into the next row; and with a real dialog built and NOBODY driving it the deadman still ends it, `tkwait` returns, and no grab and no window are left behind" \
+    [list $ad_noneC $ad_ranC $ad_gaveC $ad_remC \
+          [expr {$ad_dtD >= 300 ? 1 : 0}] [expr {$ad_dtD < 2500 ? 1 : 0}] \
+          [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current] \
+          $::AD_POLL_ID $::AD_DEADMAN] \
+    [list INSTALLED 0 1 1 1 1 0 {} {} {}]
+}
+
+# --- S28/6  THE GATE RUNS FIRST: no result, no form to fill ------------------
+s28band S28/6 {
+# WARN THE STUB COMES OFF HERE, ON PURPOSE, and the refusal is compared BY
+# IDENTITY against what `calc::require_result` itself answers rather than against
+# a sentence written out here -- U7's words are ruled verbatim and belong to
+# `calc::no_result_msg`, and re-spelling one of them in a test is how two
+# wordings for one fact get shipped.
+# WARN AND THE EMPTY-BUFFER CASE RIDES ALONG.  A T verb measures the buffer's
+# expression, so an empty buffer has nothing to measure and a dialog opened over
+# it is four fields filled for nothing -- the same objection as the no-result
+# case one line up.  The SENTENCE for it is unratified and deliberately not
+# asserted; what is asserted is that something is said and no dialog opens.
+if {$ad_rrstub} {
+    catch {rename ::calc::require_result {}}
+    catch {rename ::ad_keep_rr ::calc::require_result}
+}
+set ad_gate [pcall calc::require_result]
+set ad_gatemsg [dg $ad_gate msg]
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf edit reset
+set ad_gatebad {} ; set ad_ngate 0
+foreach nm [ad_verbs] {
+    incr ad_ngate
+    pcall calc::status {}
+    ad_arm {} 20 300
+    pcall calc::fn_click $nm
+    update
+    ad_disarm
+    if {[winfo exists .calc.arg]} { lappend ad_gatebad $nm=OPENED-A-DIALOG }
+    catch {destroy .calc.arg}
+    if {[pcall .calc.status.msg get] ne $ad_gatemsg} {
+        lappend ad_gatebad $nm=SAID([pcall .calc.status.msg get])
+    }
+}
+check "S28/6 the RESULT GATE runs BEFORE the dialog: with no simulation result loaded a route-T click refuses in `calc::require_result`'s OWN words -- compared by IDENTITY, never re-spelled here -- and never opens a form the user would have filled for nothing" \
+    [list [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}] \
+          [dg $ad_gate ok] [expr {$ad_gatemsg ne {} ? 1 : 0}] \
+          $ad_ngate $ad_gatebad] \
+    {1 0 1 4 {}}
+# ...and the same for an EMPTY buffer, with the gate back to answering `ok`.
+set ad_rr2 0
+if {[info commands ::calc::require_result] ne {} && [info commands ::ad_keep_rr] eq {}} {
+    rename ::calc::require_result ::ad_keep_rr
+    proc ::calc::require_result {} {
+        return [list ok 1 origin viewer path /tmp/s28/fake.raw type tran idx 0 \
+                     token {s28tok} msg {}]
+    }
+    set ad_rr2 1
+}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
+set ad_emptybad {} ; set ad_nempty 0
+foreach nm [ad_verbs] {
+    incr ad_nempty
+    pcall calc::status {}
+    ad_arm {} 20 300
+    pcall calc::fn_click $nm
+    update
+    ad_disarm
+    if {[winfo exists .calc.arg]} { lappend ad_emptybad $nm=OPENED-A-DIALOG }
+    catch {destroy .calc.arg}
+    if {[pcall .calc.status.msg get] eq {}} { lappend ad_emptybad $nm=SILENT }
+    if {[ad_buf] ne {}} { lappend ad_emptybad $nm=TOUCHED-BUFFER }
+}
+if {$ad_rr2} {
+    catch {rename ::calc::require_result {}}
+    catch {rename ::ad_keep_rr ::calc::require_result}
+}
+check "S28/6 ...and an EMPTY buffer is refused before the dialog too: a T verb measures the buffer's expression, so there is nothing to measure and nothing to ask about.  The sentence is unratified and NOT asserted; what is asserted is that one was written, that no form opened, and that the buffer stayed empty" \
+    [list $ad_nempty $ad_emptybad \
+          [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}]] \
+    {4 {} 1}
+}
+
+# --- S28/D  the grab is LOCAL, structurally as well as behaviourally ---------
+s28band S28/D {
+# ⚠ CLICK_CONTRACT section 9(d): the tree's only global grabs are the print and
+# screen-capture paths.  A global grab from the Calculator would freeze the GUI
+# gate's Pause/Stop panel -- a separate `wish` process -- on a run against the
+# user's real screen, DISABLING THEIR EMERGENCY CONTROL.  `xvfb_arm.sh` forces
+# `GUI_GATE=0` so the standard arms are unaffected; the real screen is not.
+# ⚠ THE ABSENCE LEG ALONE WOULD BE VACUOUS -- no `::calc::` proc names `grab` at
+# all today -- so the PRESENCE of a local `grab set` rides along, which is the
+# leg that is red before the dialog exists.  A fence keyed to the absence of a
+# wrong shape dies quietly when something else removes the shape.
+set ad_global {} ; set ad_localgrab {} ; set ad_nproc 0
+foreach p [info procs ::calc::*] {
+    incr ad_nproc
+    set b [pcall info body $p]
+    if {[string match ERR:* $b]} continue
+    if {[regexp {grab[ \t]+set[ \t]+-global} $b] || [regexp {grab[ \t]+-global} $b]} {
+        lappend ad_global $p
+    }
+    if {[regexp {grab[ \t]+set[ \t]} $b]} { lappend ad_localgrab $p }
+}
+check "S28/D the dialog's grab is LOCAL and nothing in the `calc` namespace ever takes a GLOBAL one -- which would freeze the GUI gate's Pause/Stop panel, a separate `wish` process, on a run against the user's own screen.  The PRESENCE of a local `grab set` rides along, because an absence-only row is vacuous while no proc mentions `grab` at all" \
+    [list [expr {$ad_nproc > 50 ? 1 : 0}] $ad_global \
+          [expr {[llength $ad_localgrab] > 0 ? 1 : 0}]] \
+    {1 {} 1}
+}
+
+# --- S28/E  R508: no window, no dialog, no noise -----------------------------
+s28band S28/E {
+# ⚠ CLICK_CONTRACT section 9(e): `full_audit.sh` reaches all three Calculator
+# suites through its `test_*.tcl` glob and none is in `nogui_tests`, so a dialog
+# that opens without a window guard costs `AUDIT_TIMEOUT` 300 s plus a crash row
+# on EVERY full audit run.  This row is DECLARED PARTLY VACUOUS TODAY: with no
+# route-T branch at all, `fn_click` already falls through to `calc::inert` ->
+# `calc::status` -> `calc::has_win` and returns cleanly, so it passes on the red
+# run.  It is a real fence for the implementation and is named as such.
+set ad_nsbefore [llength [info vars ::calc::*]]
+calc::close
+update idletasks
+set ad_closedbad {}
+foreach nm [ad_verbs] {
+    if {[catch {calc::fn_click $nm} r]} { lappend ad_closedbad $nm=RAISED:$r ; continue }
+    if {$r ne {}} { lappend ad_closedbad $nm=SAID:$r }
+    if {[winfo exists .calc.arg]} { lappend ad_closedbad $nm=OPENED-A-DIALOG }
+}
+check "S28/E R508 with no window a route-T click is a silent no-op that RETURNS -- it opens no dialog, enters no `tkwait` and raises nothing.  DECLARED PARTLY VACUOUS on the red run, where `fn_click` reaches `calc::has_win` through `calc::inert` anyway: it is a fence for the implementation, and `full_audit.sh` is the reader it protects, since it globs all three Calculator suites and none is in `nogui_tests`" \
+    [list [llength [ad_verbs]] $ad_closedbad [expr {[winfo exists .calc.arg] ? 1 : 0}] \
+          [grab current]] \
+    {4 {} 0 {}}
+}
+
+# --- S28/Z  HYGIENE ----------------------------------------------------------
+s28band S28/Z {
+check "S28 reopen returns .calc" [calc::open] .calc
+update idletasks
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
+pcall calc::status {}
+check "S28 HYGIENE this band leaves nothing behind: no dialog, no grab, no delayed build wrapper, no stub, and both of its timers disarmed" \
+    [list [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current] \
+          [llength [info commands ::calc::ad_real_build]] \
+          [llength [info commands ::ad_keep_cs]] \
+          $::AD_POLL_ID $::AD_DEADMAN \
+          [expr {[llength [info vars ::calc::*]] >= $ad_nsbefore ? 1 : 0}]] \
+    {0 {} 0 0 {} {} 1}
+}
+
 
 calc::close
 catch {destroy .calccbprobe}

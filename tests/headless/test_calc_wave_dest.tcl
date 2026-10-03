@@ -290,13 +290,18 @@
 #        IDENTITY, so a reworded but still shared sentence costs nothing and a
 #        sentence SPLIT PER CALLER reddens both.  This band pins the sharing by
 #        name, so a future split fails HERE with a name instead of THERE with a
-#        puzzle.  PASSES TODAY.
+#        puzzle.  PASSES TODAY.  ⚠ ITS DERIVED CALLER SET HAS SINCE DELIVERED
+#        ONCE: issue 1639 made `calc::riseTime`'s `nth` 0 defer instead of
+#        raising, this band reddened naming the undriven caller, and the remedy
+#        was to DRIVE it rather than to relax the derivation.
 #   WD10 Hygiene and shape: no `__calc_tmp*` and no `__wd_*` left in any
 #        inventory on any exit path; the helper is not named `calc::dest_*`; the
 #        producer's code names no `.calc` widget path, so it stays reachable
-#        headless; every `calc::cross_msg` arm this stage touches answers without
-#        raising; and the answer-dict key sites in this file are exactly the
-#        procs the header enumerates.
+#        headless; EVERY `calc::cross_msg` arm answers without raising, with the
+#        arm set DERIVED from the proc's own switch patterns because the hand-kept
+#        list it replaced had gone stale against arms this very stage added; and
+#        the answer-dict key sites in this file are exactly the procs the header
+#        enumerates.
 #
 # ---------------------------------------------------------------------------
 # ⚠ WHICH ROWS OUTSIDE WD0 AND WD1 PASS WITH NO FEATURE PRESENT, DECLARED RATHER
@@ -1625,22 +1630,29 @@ group WD9 {
     set s [pcall calc::cross_msg listdefer]
     check "WD9 the deferral sentence is ONE non-empty sentence in the house shape, which is what makes the identity rows below evidence rather than three empty strings compared against each other" \
         [list [expr {$s ne {} ? 1 : 0}] [wd_shape $s]] {1 ok}
-    check "WD9 ALL THREE deferring callers answer THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0, delay's nth 0 on a side, and dutyCycle_scalar's default cycle -- so splitting it per caller reddens here with a name, and rewording it costs nothing anywhere" \
+    check "WD9 EVERY deferring caller answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0, delay's nth 0 on a side, dutyCycle_scalar's default cycle and riseTime's nth 0 -- so splitting it per caller reddens here with a name, and rewording it costs nothing anywhere" \
         [list [wd_disp [set a [wd_call cross_scalar {v(sq)} 0.5 0 rising]]] \
               [string equal [wd_msg $a] $s] \
               [wd_disp [set b [wd_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
               [string equal [wd_msg $b] $s] \
               [wd_disp [set c [wd_call dutyCycle_scalar {v(sq)} 0.5]]] \
-              [string equal [wd_msg $c] $s]] \
-        {refused 1 refused 1 refused 1}
-    check "WD9 ...and pairwise between the callers, so the row cannot be satisfied by three callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means" \
-        [list [string equal [wd_msg $a] [wd_msg $b]] [string equal [wd_msg $b] [wd_msg $c]]] {1 1}
+              [string equal [wd_msg $c] $s] \
+              [wd_disp [set d [wd_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
+              [string equal [wd_msg $d] $s]] \
+        {refused 1 refused 1 refused 1 refused 1}
+    check "WD9 ...and pairwise along the whole chain, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means" \
+        [list [string equal [wd_msg $a] [wd_msg $b]] [string equal [wd_msg $b] [wd_msg $c]] \
+              [string equal [wd_msg $c] [wd_msg $d]]] {1 1 1}
     # ⚠ THE CALLER SET IS DERIVED FROM THE NAMESPACE, NOT LISTED, because a hand-kept
-    # list is the same defect one level up -- and there is a live FOURTH candidate:
-    # `calc::riseTime` with nth 0 RAISES today where its two siblings defer, which is
-    # issue 1639 and is filed OPEN.  If that is fixed by making it defer, this row
-    # reddens saying the band does not drive the new caller, which is a legible
-    # instruction; without the derivation the fourth caller would simply go unfenced.
+    # list is the same defect one level up -- AND THE DERIVATION HAS NOW EARNED ITS
+    # KEEP, which is recorded because the previous revision of this comment predicted
+    # it would.  It named `calc::riseTime` as a live FOURTH candidate: `nth` 0 RAISED
+    # there where its siblings deferred, filed as issue 1639 and OPEN.  1639 was then
+    # fixed by making it defer, and this row reddened exactly as that comment said it
+    # would -- `{cross_scalar delay dutyCycle_scalar riseTime}` against an expectation
+    # of three, naming the undriven caller.  The remedy was to DRIVE the fourth caller
+    # in the rows above, never to weaken the derivation; without it the new caller
+    # would have inherited a shared sentence nothing checks.
     set wd_defcallers {}
     foreach pr [lsort [pcall info procs ::calc::*]] {
         set b [pcall info body $pr]
@@ -1649,9 +1661,9 @@ group WD9 {
             lappend wd_defcallers [namespace tail $pr]
         }
     }
-    check "WD9 the set of callers that defer behind that sentence is DERIVED over the namespace and is exactly the three this band drives -- so a FOURTH deferring caller reddens here naming itself, instead of inheriting a shared sentence nothing checks" \
-        [list $wd_defcallers [wd_atleast [llength $wd_defcallers] 3]] \
-        {{cross_scalar delay dutyCycle_scalar} atleast}
+    check "WD9 the set of callers that defer behind that sentence is DERIVED over the namespace and is exactly the set this band drives -- so a FIFTH deferring caller reddens here naming itself, instead of inheriting a shared sentence nothing checks" \
+        [list $wd_defcallers [wd_atleast [llength $wd_defcallers] 4]] \
+        {{cross_scalar delay dutyCycle_scalar riseTime} atleast}
     check "WD9 R402 the band left no __calc_tmp* and no __wd_* behind" \
         [list [wd_leaked] [wd_probeleft]] {{} {}}
 }
@@ -1692,19 +1704,39 @@ group WD10 {
     # body"* out of EVERY arm -- 34 rows red at once, three of them in another
     # suite.  Nothing structural distinguishes a safe comment above a proc from a
     # fatal one between two patterns, and a brace-balance scan is blind to it.
-    # THE ONLY CONFIRMATION IS BEHAVIOURAL, so this row asks every arm this stage
-    # touches and asserts that none raises and none answers empty.
-    set arms {empty nodata dataset allpoints intdataset nosweep badnth badlevel badedge
-              badtoken noname stale engine absent listdefer noswing zeroswing badref
-              badpct nohigh badcycle nocycle nocycleat nofall}
+    # THE ONLY CONFIRMATION IS BEHAVIOURAL, so this row asks EVERY arm and asserts
+    # that none raises and none answers empty.
+    #
+    # ⚠ THE ARM SET IS DERIVED FROM THE PROC'S OWN BODY, AND THE HAND-KEPT LIST IT
+    # REPLACES IS WHY -- MEASURED, not reasoned.  That list named twenty-four arms
+    # and the proc has more, the shortfall being `badxaxis` and the six `dest*`
+    # sentences THIS STAGE ITSELF ADDED four hundred lines up.  So the one row whose
+    # whole purpose is to catch a comment landing between two switch patterns was
+    # blind to the newest patterns in the file, and its name -- *"every arm this
+    # stage touches"* -- described its coverage rather than its method, which is
+    # exactly the pair of defects row X1 of tests/headless/test_snprintf_fmt_1608.tcl
+    # exists to insist on.  A hand-kept list is the same defect one level up.
+    set arms {}
+    foreach ln [split [pcall wd_code [pcall info body ::calc::cross_msg]] "\n"] {
+        if {[regexp {^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)[ \t]+\{[ \t]*return} $ln -> k]} {
+            lappend arms $k
+        }
+    }
     set bad {}
     foreach k $arms {
         set m [pcall calc::cross_msg $k a b]
         if {[string match ERR:* $m]} { lappend bad "$k:RAISED" ; continue }
         if {$m eq {}} { lappend bad "$k:EMPTY" }
     }
-    check "WD10 every calc::cross_msg arm this stage touches answers a non-empty sentence without raising -- the only confirmation there is that no comment landed between two switch patterns, which balances the braces, satisfies info complete and reddens every arm at once" \
+    check "WD10 every calc::cross_msg arm -- DERIVED from the proc's own switch patterns and never listed here -- answers a non-empty sentence without raising, which is the only confirmation there is that no comment landed between two patterns: that balances the braces, satisfies info complete and reddens every arm at once" \
         $bad {}
+    check "WD10 ...and that derivation is NOT VACUOUS, which it has to show or an empty failure list above would be an empty arm set: it finds the sentence this suite's own WD9 rows read by name, it finds the newest arms added four hundred lines up, it does NOT invent a kind the proc has no pattern for, and it finds at least as many arms as the hand-kept list it replaced" \
+        [list [expr {[lsearch -exact $arms listdefer] >= 0 ? {has} : {missing}}] \
+              [expr {[lsearch -exact $arms badxaxis] >= 0 ? {has} : {missing}}] \
+              [expr {[lsearch -exact $arms destengine] >= 0 ? {has} : {missing}}] \
+              [expr {[lsearch -exact $arms __wd_no_such_kind__] >= 0 ? {has} : {missing}}] \
+              [wd_atleast [llength $arms] 24]] \
+        {has has has missing atleast}
     check "WD10 ...and an UNKNOWN kind still falls through to the empty string rather than raising, so a caller naming an arm that does not exist gets a legible empty message and not a Tcl error" \
         [pcall calc::cross_msg __wd_no_such_kind__] {}
     # ⚠⚠ A REGISTERED `hcases` SUITE WILL REDDEN ON THIS STAGE, AND IT IS NOT A

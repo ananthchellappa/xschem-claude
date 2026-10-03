@@ -36,6 +36,17 @@ if {!$HASX} {
   exit 0
 }
 
+# A STALL BOUND, below the gate on purpose. This suite drives the real gesture
+# through `xschem callback`, which is the path issue 1375 hung on:
+# descend_schematic() -> tcl_call("ask_save") -> a `tkwait` under --script that
+# nothing can click. Sourced here it arms XSCHEM_SUITE_WATCHDOG_MS, so a hang
+# that reaches the event loop becomes a NAMED outcome (rc 124, one line naming
+# this file and the last row it printed) instead of silence. Row W20h of
+# test_suite_watchdog_1403.tcl is what fails if this line is removed; W13 there
+# records what the bound does NOT cover. BELOW the gate, not above it, so the
+# self-skip path stays byte-identical under an unarmed HOME.
+source [file join [file dirname [info script]] scratch.tcl]
+
 update idletasks
 catch { focus -force $WIN }
 update idletasks
