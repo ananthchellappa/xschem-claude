@@ -217,9 +217,16 @@ because the superseded text is the evidence that the attack was worth running.
 
 **This is the most serious finding and it is about existing code, not this stage.**
 `WD8` — the end-to-end row this batch has been citing as proof of the destination
-hand-off — drives the `v(sq)` fixture.  Measured: `dutyCycle` on `v(sq)` at
-`L = 0.5` answers a **two-point series whose values agree to a relative
-1.8e-15**, against the suite's own `WDTOL` of **1e-7**.
+hand-off — drives the `v(sq)` fixture.
+
+⚠⚠ **CORRECTED BY THE DRIVER, AND THE TRUTH IS WORSE THAN THE CRITIC'S FIGURE.**
+The critic measured at `L = 0.5` and quoted a relative 1.8e-15.  **`WD8` sets
+`set L [expr {1.0/3.0}]`**, and there the two per-cycle fractions are
+`0.31666666666666676` **twice** — the same double, relative spread **exactly
+zero** — compared element-wise with `near` at a relative `WDTOL` of **1e-7**.
+Issue **1643** carries the measured table.  This is the fourth
+quoted-rather-than-derived figure to be wrong in this batch, and the correction
+is left visible for that reason.
 
 So a producer that wrote `y[0]` into **both** points, or wrote the Y column
 **reversed**, passes WD8.  The row reads as coverage of the hand-off and does not
@@ -227,8 +234,16 @@ discriminate the hand-off's most obvious defect.  The same holds across the
 fixture: `riseTime` per edge on `v(sq)` agrees to ~4e-15, and on `v(lp)` elements 1
 and 2 agree to 9e-15.
 
-**Only `v(lp)`'s `dutyCycle` at `L = 0.5` discriminates** — `{0.2999385393208259
-0.2999017475874794}`, a relative 1.2e-4.  Every new row in this stage drives
+**Only `v(lp)` discriminates** — at `L = 1/3`, `{0.33106652549724797
+0.3310059686087729}`, a relative **1.83e-4**; at `L = 0.5`, a relative 1.23e-4.
+`L = 1/3` is the better of the two and is also `WD8`'s own level, so changing the
+column alone fixes the row.
+
+⚠ **One thing the critic got wrong in the product's favour: the X leg is SOUND.**
+`sweep` reads back as `{0.0009666666666666667 0.004966666666666667}`, a factor of
+five apart, so `WD8` genuinely does discriminate a wrong X column — which is what
+band `WD8` was written for.  **The blindness is one leg wide, not the whole
+row.**  Every new row in this stage drives
 `v(lp)` and carries an explicit distinctness leg.  This is the *precision band's
 level is load-bearing* trap from `DESTINATION_CONTRACT.md` §11(c) arriving from the
 other direction: there a level made a row **red on correct code**, here a fixture
