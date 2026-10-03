@@ -4578,7 +4578,37 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   whose radial tolerance is zoom-scaled while its angular span test is exact, so zooming out widens
   the clickable ring and narrows the clickable arc.
 
-**The next free number is 1642.**
+- **1642** — `calc::wave_dest_restore` honours the user's **current** slot and destroys their
+  **previous** one. Measured with three databases registered and the cursor parked at
+  `cur=0 prev=1`: after a successful `calc::wave_dest` the pair reads `cur=0 prev=3`, so
+  `xschem raw switch_back` lands on **the destination**; after `calc::wave_dest_drop` it reads
+  `cur=0 prev=0`, so it lands on the slot it is already on. `switch_back` is a **one-deep toggle**
+  and the producer moves the cursor at least twice, so the user's own history is spent either way.
+  Not caught because the destination's suite fences `wd_curslot` across the band and never reads
+  `prev` — and because `DESTINATION_CONTRACT.md` §10's finding that a read-only graph getter
+  clobbers `extra_prev_idx` (the reason `switch_back` was rejected as the restore mechanism) was
+  read as covering the whole pair: declining to **use** `switch_back` does not stop the producer
+  **spending** it. ⚠ A fence needs **three** databases with the user on a non-zero slot, because a
+  bare `raw switch <name>` is round-robin (`0→1`, `1→2`, `2→0`) and a wrong restore lands right by
+  accident on two. Pre-existing in the destination that shipped at `50d13438`; filed rather than
+  folded into stage J, because a row asserting it would be **red on correct stage-J code**.
+
+- **1643** — row **`WD8`** of `test_calc_wave_dest.tcl`, the end-to-end row this batch cites as
+  proof of the destination hand-off, drives `v(sq)` — whose two `dutyCycle` values are
+  `{0.3000000000000002 0.29999999999999966}`, a **relative 1.8e-15** against the suite's own
+  `WDTOL` of **1e-7** with `near` comparing relatively. So a producer that writes `y[0]` into both
+  points, or writes the Y column reversed, or writes a constant, **passes it**; confirmed by
+  attack. The whole committed fixture is that flat (`riseTime` per edge on `v(sq)` ~4e-15; `v(lp)`
+  elements 1 and 2 9e-15) and exactly one series discriminates: `dutyCycle` on `v(lp)` at
+  `L = 0.5`, relative **1.2e-4**. Same family as `DESTINATION_CONTRACT.md` §11(c), where a level
+  made a row **red on correct code**; this is that mechanism from the other side, making a broken
+  implementation look correct. Fix: drive `v(lp)` and carry an explicit **distinctness leg**, so
+  the row cannot silently go vacuous again — the non-vacuity discipline this batch's derivation
+  rows already apply to populations, applied to values. ⚠ Two points is also the structural ceiling
+  and fixing the fixture does not raise it: `v(sq)` has three rising crossings, so three is the
+  most any verb yields on this fixture.
+
+**The next free number is 1644.**
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

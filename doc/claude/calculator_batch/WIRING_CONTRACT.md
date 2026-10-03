@@ -203,3 +203,135 @@ the spec, and two in this directory's own contracts.
 it to four in place**, saying explicitly *"the count is left wrong above on
 purpose."*  That document got there first.  **Leave it alone** — editing it would
 destroy the record it exists to keep.
+
+---
+
+## 10. The completeness critic's corrections — and it overturned §4, §5 and §6
+
+A fourth crew read the three recon receipts adversarially and **re-measured** the
+claims that mattered.  Receipt: `receipts/J-wiring-recon-critic.md`.  Six of its
+findings change this document; they are recorded here rather than edited in above,
+because the superseded text is the evidence that the attack was worth running.
+
+### ⚠⚠ (a) A SHIPPED ROW CANNOT TELL A CORRECT RESULT FROM A WRONG ONE
+
+**This is the most serious finding and it is about existing code, not this stage.**
+`WD8` — the end-to-end row this batch has been citing as proof of the destination
+hand-off — drives the `v(sq)` fixture.  Measured: `dutyCycle` on `v(sq)` at
+`L = 0.5` answers a **two-point series whose values agree to a relative
+1.8e-15**, against the suite's own `WDTOL` of **1e-7**.
+
+So a producer that wrote `y[0]` into **both** points, or wrote the Y column
+**reversed**, passes WD8.  The row reads as coverage of the hand-off and does not
+discriminate the hand-off's most obvious defect.  The same holds across the
+fixture: `riseTime` per edge on `v(sq)` agrees to ~4e-15, and on `v(lp)` elements 1
+and 2 agree to 9e-15.
+
+**Only `v(lp)`'s `dutyCycle` at `L = 0.5` discriminates** — `{0.2999385393208259
+0.2999017475874794}`, a relative 1.2e-4.  Every new row in this stage drives
+`v(lp)` and carries an explicit distinctness leg.  This is the *precision band's
+level is load-bearing* trap from `DESTINATION_CONTRACT.md` §11(c) arriving from the
+other direction: there a level made a row **red on correct code**, here a fixture
+makes a row **green on broken code**.
+
+### ⚠ (b) §4, §5 and §6 bundled too much into J1 — J1 is PRODUCER ONLY
+
+This document put `calc::fn_measure`'s shape branch and the viewer arm inside J1.
+The critic's objection is decisive and is about **evidence**, not scope:
+`calc::fn_measure` and `calc::buf_set_number` **both return early on
+`calc::has_win .calc.buf`**, so headless they are no-ops.  `test_calc_measure`
+(`hcases`) can never observe what a wave answer does to the buffer or the status
+line, and `test_calc_skeleton`/`test_calc_widgets` are `dcases` alone.
+
+So a J1 that bundles the surface produces a red-first transcript **half of which
+the counted arm cannot see** — and the user, who is remote with only a phone, has
+nothing but that transcript.  The unit splits:
+
+| unit | scope | where the evidence lives |
+|---|---|---|
+| **J1** | `calc::dutyCycle_scalar`'s default-cycle arm, **producer only**. No click, no viewer, no `fn_measure` change. | Entirely the **counted arm**. Nothing on its path calls `calc::has_win`. |
+| **J1b** | `calc::fn_measure`'s shape branch (via the pure routing proc of §4) and `wviewer::plot_sweeps_arm`'s first armer. | Gate display arm only, **declared as such**. |
+
+§4's decision — an explicit `shape` key, never inferred from list length — stands
+and belongs to J1b.  §6's warning stands: **J1 alone does not put a trace on the
+screen**, and the report must say so rather than imply a working feature.
+
+### ⚠ (c) The destination's LIFETIME is an open question, and the contract's answer was wrong
+
+`recon:contract` prescribed wrapping the producer-plus-plot sequence so
+`calc::wave_dest_drop` runs on **every** exit path including a raise.  That
+contradicts its own finding that a trace resolves the database **by registry
+name** (`wviewer::db_suffix` emits `%__calc_dest<N> table` into `node=`) and that
+`wviewer::restore` cannot re-read it.
+
+**Dropping on the success path frees the database the user is looking at.**  So:
+the drop belongs on the **failure** paths only, and *who frees a destination the
+user is now looking at* is an open design question nobody has answered.  J1
+**answers** the destination and does not drop it, and **declares the undropped
+slot as a known leak that J1b owns**.
+
+### ⚠ (d) The existing leak fences cannot see this stage's leak
+
+`MT8`'s, `MT9b`'s and `WD9`'s `leaked`/`probeleft` legs glob `__calc_tmp*`,
+`__mt_*` and `__wd_*` over the **current database's column names**.  A wired caller
+that never drops leaks a registry **slot** named `__calc_dest<N>` whose columns are
+`calcx`/`calcy` in a database nobody switches to — measured: three leaked slots
+leave **all four globs empty**.  And every band reloads with `xschem raw clear`,
+which silently sweeps the evidence between bands.
+
+**Only `wd_nslots` counts slots at all.**  A leak fence for this stage must count
+slots, not glob column names.
+
+### ⚠ (e) Two corrections to measured facts this batch has been citing
+
+1. **A bare `raw switch <name>` is ROUND-ROBIN, not slot 0.**
+   `DESTINATION_CONTRACT.md` §7 hazard 1 says it *"answers rc 1 while silently
+   landing on slot 0"*.  Re-measured over three registered slots: rc 1 from every
+   slot, landing `0→1`, `1→2`, `2→0`.  It lands on slot 0 **only from the last
+   slot**.  ⚠ A restore fence written from §7's account would **pass on a two-slot
+   fixture**, which is this batch's own named vacuity trap.
+2. **`switch_back` after a successful `calc::wave_dest` lands on the
+   DESTINATION**, not on the user's slot: parked at `cur=0 prev=1`, the inventory
+   afterwards reads `cur=0 prev=3`, and `switch_back` goes to `cur=3`.  After
+   `wave_dest_drop` the pair reads `cur=0 prev=0`, so the user's `prev=1` is lost
+   there too.  **This is a pre-existing defect in `calc::wave_dest_restore`, not
+   something J1 introduces** — so a J1 row asserting `switch_back` returns the user
+   to their previous slot is **red on correct J1 code**.  It must be filed and
+   fixed as its own unit, or J1's red becomes ambiguous.
+
+### ⚠ (f) Two rows this stage must not rely on
+
+- **`WD9`'s derived-caller keystone cannot double as the stage's fence.**  It
+  reddens *to announce* the stage — both the `{cross_scalar delay dutyCycle_scalar
+  riseTime}` leg and the `atleast 4` leg move — and once its expectation is edited
+  nothing re-asserts that `dutyCycle_scalar` now answers a destination.  **The new
+  claim needs a NEW band**, and the `atleast` leg must be **re-derived, not
+  decremented**, or it stops being a floor.
+- **The answer dict would carry two destination-shaped keys.**
+  `calc::dutyCycle`'s cycle-0 dict already holds `dest __calc_tmp<N>` — the
+  temporary `calc::cross` minted *and deleted*.  Merging the live destination in as
+  `db` leaves a dict with a **retired** name in `dest` and the live one in `db`,
+  and `MT9b`'s sibling rows read `dest` **by name**.  A row written against the
+  wrong key measures the dead one.
+
+### What the cost actually is, apportioned (which `recon:cost` never did)
+
+**J1 moves exactly FOUR rows**, all on the counted arm: `MT8`'s default-cycle row
+and `WD9`'s three sharing rows, plus both suites' published check counts.  `MT7`
+and `MT9b` drive `delay` and `riseTime` only, so they belong to J3 and J2.  No
+trailer term moves, because no suite is being registered.  Nothing display-only
+moves **provided J1 stops at the producer** — `dutyCycle` already carries `returns
+scalar/wave` so S24 holds; no new `-command` so CW13 holds; no `calc::dest_*` proc
+so PL9/CE8 hold; and no `wviewer::*` call from inside `calc::` so **SR5's two
+viewer-door literals hold**, which is the row that makes J1b's viewer arm a
+deliberate choice rather than a free one.
+
+### And the honest limit of J1's own evidence
+
+**Two points is the most `dutyCycle` can ever produce on the committed fixture**
+(`v(sq)` has three rising crossings, so two periods; `dataset 1` is identical), and
+three is the most *anything* yields.  Two points cannot catch a stride or an
+off-by-one inside the fill loop, cannot catch a dropped middle sample, and gives
+the X list only two values to be in the wrong order.  **This batch's own lesson is
+that two is not enough.**  J1's row is therefore structurally weaker than it looks
+and must say so rather than claim coverage; the three-point case arrives with J2.
