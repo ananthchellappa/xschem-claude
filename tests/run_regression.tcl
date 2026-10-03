@@ -137,7 +137,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## so registering it is a separate judgement with its own gate, not a free addition.
 ## ⚠ `test_calc_wave_dest` IS `hcases` ALONE (R419-R421,
 ## `doc/claude/calculator_batch/DESTINATION_CONTRACT.md`), and the shape was MEASURED
-## rather than reasoned: both arms of that suite run the identical 88 checks, because
+## rather than reasoned: both arms of that suite run the IDENTICAL set of checks, because
 ## nothing in it is display-only -- `wviewer::graph_props` is a pure model-to-rect-text
 ## generator reachable with no viewer window and no DISPLAY, which is what band WD4's
 ## own WD0 row asserts before the band runs. So a `dcases` entry would measure exactly

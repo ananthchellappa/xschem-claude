@@ -3807,6 +3807,18 @@ check_true "S27 ...and the balloon was attached on that first build too" \
 #      text.  A non-integer `int` and a non-member `enum` are the same mechanism
 #      and are not separately driven; MT11 fences that the KINDS are declared,
 #      not that each is enforced.
+#  SH7 SUB-BAND S28/7's VIEWER HAND-OFF IS RECORDED, NOT DRIVEN, and its six
+#      buffer captures are green against a tree carrying unit J1 alone.  That is
+#      stated rather than hidden: J1's own receipt declared those three claims as
+#      unobservable on the counted arm and nothing in this tree has ever run
+#      them, so S28/7 is the FIRST thing to measure them -- but the RED in it is
+#      the hand-off leg, which answers `NOPROC` until unit J1b exists.  The
+#      hand-off is stubbed because this suite has no loaded raw at all
+#      (`calc::require_result` is itself a fixture here), so the recorder's `db`
+#      is a fixture string and a live hand-off would chase a database that does
+#      not exist.  That a trace really appears against its own X is band PL10 of
+#      tests/headless/test_calc_plot.tcl, which has a real viewer window, and it
+#      is gate-only for the same reason this band is.
 #
 # ⚠ THE DRIVER IS A POLL AND NEVER A DELAY, and the three load-bearing
 # properties are measured in `test_rdw_keys_1245.tcl` rather than argued here:
@@ -4374,6 +4386,236 @@ check "S28 CONTROL: the measurement stubs are off again and the real procs are b
           [llength [info commands ::ad_keep_cs]] \
           [llength [info commands ::ad_keep_cross]]] \
     {1 1 0 0}
+}
+
+# --- S28/7  R421 ON A WAVE ANSWER: the buffer is LEFT ALONE -----------------
+s28band S28/7 {
+# ⚠⚠ THIS SUB-BAND IS DISPLAY-ONLY AND THEREFORE GATE-ONLY, AND THAT IS NOT A
+# PREFERENCE.  `calc::fn_measure` and `calc::buf_set_number` BOTH return early
+# on `calc::has_win .calc.buf`, so under `--nogui` both are no-ops and this
+# whole suite reports `RESULT: ALL PASS (0 checks)`.  A headless number says
+# NOTHING about any row below.  The armed spelling is
+# `tests/headless/run_suites.sh test_calc_skeleton`, and the gate's display arm
+# is the first and only thing that runs it.
+#
+# WARN WHAT UNIT J1 LEFT UNFENCED, which is why this band exists at all.  J1
+# shipped the shape router (`calc::fn_sink`) and the destination arm of the
+# click, and its own receipt declared THREE claims it could not observe: that
+# the RPN buffer is really left untouched when the answer is a wave, that the
+# destination sentence really reaches `.calc.status.msg`, and that R421's undo
+# is really unmoved.  Hole H12 of tests/headless/test_calc_wave_dest.tcl names
+# the same three.  Nothing in this tree has ever run them.
+#
+# ⚠ AND R421's UNDO CLAIM INVERTS FOR A WAVE, which is the one thing a reader is
+# most likely to get backwards.  S28/4's claim is *"ONE undo restores the
+# expression"*, because a scalar answer PASTES a number and that paste is one
+# undo step.  A wave answer pastes NOTHING, so there is no step to collapse and
+# "one undo restores" would be asserting the wrong thing: the correct assertion
+# is that the undo STATE IS UNCHANGED across the click -- the text, `edit
+# modified`, and `calc::buf_can undo`/`redo` -- which is S28/3's Cancel idiom and
+# not S28/4's one-undo idiom.  Both already exist in this band and the wave arm
+# wants the first.
+#
+# ⚠ THE HINTS AS WELL AS THE HISTORY, and this is a trap for the implementation
+# rather than a remark.  `calc::buf_can` reads the real `edit canundo` stack when
+# `calc::edit_can_probe` is true and falls back to `::calc::fbundo`/`fbredo`
+# otherwise, and those two are set by `calc::buf_note_edit`.  A hand-off that
+# ended with a "refresh the buttons" line would reach `buf_note_edit` and claim
+# *"an undo is available, no redo"* after changing nothing -- the user's undo
+# HINTS moving while their undo HISTORY stood still, which is INVISIBLE on
+# Tk 8.6 where `buf_can` reads the stack.  So both variables are captured.
+#
+# ⚠ TWO PRODUCT PROCS ARE RENAMED ASIDE AND THE SECOND ONE IS THE RED.
+#  (a) `calc::dutyCycle_scalar` -> a RECORDER answering a wave.  `calc::arg_surface`
+#      is literally *"if `::calc::<name>_scalar` exists, return it"*, so the
+#      surface the click reaches is the wrapper and NOT `calc::dutyCycle`; a stub
+#      of the verb would be bypassed.  The recorder carries the real proc's
+#      FORMALS, derived with `info args`, each given a sentinel default -- S28/4's
+#      own comment records what an `args` stub costs: `info args` answers one
+#      word, no formal matches a dialog key, `calc::arg_values` composes NOTHING
+#      and the row reds against correct code.
+#  (b) `calc::wave_in_token` -> a RECORDER capturing what the click handed the
+#      viewer.  THIS PROC DOES NOT EXIST ON A TREE CARRYING J1 ALONE, so the
+#      install leg answers `NOPROC` and every row below is RED naming it.  It is
+#      stubbed rather than driven because this suite has NO loaded raw at all
+#      (`calc::require_result` is itself a fixture here), so the recorder's `db`
+#      is a fixture string and a live hand-off would chase a database that does
+#      not exist.  The viewer half's BEHAVIOUR -- a trace appearing against its
+#      own X -- is band PL10 of tests/headless/test_calc_plot.tcl, which has a
+#      real window.
+#
+# ⚠ AND BAND CW14 OF test_calc_widgets.tcl IS NOT A HOME FOR ANY OF THIS, which
+# is recorded here because two receipts and this stage's own brief say it is.
+# CW14's declared hole WH2 says it in its own words: *"NOTHING HERE DRIVES THE
+# MODAL. No `grab`, no `tkwait`, no Cancel, no OK"* -- it builds through
+# `calc::arg_dialog_build` and never `calc::arg_dialog`, which is exactly why it
+# cannot hang and exactly why it cannot see a click, a buffer edit, an undo or a
+# status sentence.  J1b adds no widget and no `-command`, so CW13's control
+# sweep and CW14's inventory both hold unchanged and neither owes a new row.
+set ::WV_REC {} ; set ::WV_HAND {}
+set ::WV_DB  __s28_dest_fixture
+set ::WV_SERIES {0.25 0.5 0.75}
+set ::WV_SWEEP  {0.001 0.002 0.003}
+set wv_stubbed 0
+set wv_dc_formals {}
+set wv_formals0 {}
+if {[info commands ::calc::dutyCycle_scalar] ne {}
+        && [info commands ::wv_keep_dc] eq {}} {
+    set wv_formals0 [info args ::calc::dutyCycle_scalar]
+    foreach wv_f $wv_formals0 {
+        lappend wv_dc_formals [list $wv_f WV-NOT-GIVEN]
+    }
+    rename ::calc::dutyCycle_scalar ::wv_keep_dc
+    proc ::calc::dutyCycle_scalar $wv_dc_formals {
+        set ::WV_REC {}
+        foreach f [info args ::calc::dutyCycle_scalar] {
+            set v [set $f]
+            if {$v eq {WV-NOT-GIVEN}} break
+            lappend ::WV_REC $v
+        }
+        return [list ok 1 absent 0 shape wave value $::WV_SERIES sweep $::WV_SWEEP \
+                     db $::WV_DB type table xname calcx yname calcy \
+                     n [llength $::WV_SERIES] dataset 0 dest {} msg {}]
+    }
+    set wv_stubbed 1
+}
+# the hand-off recorder.  `NOPROC` here is unit J1b's red.
+set wv_handstub NOPROC
+if {[info commands ::calc::wave_in_token] ne {}
+        && [info commands ::wv_keep_hand] eq {}} {
+    rename ::calc::wave_in_token ::wv_keep_hand
+    proc ::calc::wave_in_token {args} {
+        set ::WV_HAND $args
+        return [list ok 1 msg {}]
+    }
+    set wv_handstub ok
+}
+# the five captures, taken the way S28/3 takes them -- nothing should move.
+pcall calc::status {}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(lp) v(sq) /}
+pcall .calc.buf edit reset
+pcall .calc.buf edit modified 0
+pcall calc::buf_sync
+set wv_text0 [ad_buf]
+set wv_mod0  [pcall .calc.buf edit modified]
+set wv_undo0 [pcall calc::buf_can undo]
+set wv_redo0 [pcall calc::buf_can redo]
+set wv_stk0  [pcall .calc.stk.list size]
+set wv_fb0   [list [pcall set ::calc::fbundo] [pcall set ::calc::fbredo]]
+set wv_hist0 [pcall calc::status_history]
+set ::WV_HAND {} ; set ::WV_REC {}
+ad_arm {
+    catch {set ::calc::argval(level) 0.5}
+    catch {.calc.arg.btns.ok invoke}
+}
+set wv_ans [pcall calc::fn_click dutyCycle]
+update
+set wv_ran $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+set wv_said [pcall .calc.status.msg get]
+set wv_moved {}
+if {[ad_buf] ne $wv_text0}                      { lappend wv_moved TEXT }
+if {[pcall .calc.buf edit modified] ne $wv_mod0} { lappend wv_moved MODIFIED }
+if {[pcall calc::buf_can undo] ne $wv_undo0}     { lappend wv_moved CANUNDO }
+if {[pcall calc::buf_can redo] ne $wv_redo0}     { lappend wv_moved CANREDO }
+if {[pcall .calc.stk.list size] != $wv_stk0}     { lappend wv_moved STACK }
+if {[list [pcall set ::calc::fbundo] [pcall set ::calc::fbredo]] ne $wv_fb0} {
+    lappend wv_moved UNDO-HINTS
+}
+# ...and the undo WITNESS, which is the leg that separates "nothing was pasted"
+# from "something was pasted and undone": with no new step on the stack, one
+# `calc::buf_undo` cannot move the buffer off the capture, and the redo after it
+# cannot either.
+pcall calc::buf_undo
+set wv_undone [ad_buf]
+pcall calc::buf_redo
+set wv_redone [ad_buf]
+check "S28/7 R421 on a WAVE answer the RPN BUFFER IS LEFT ALONE and so is its UNDO STATE -- measured on SIX captures and not one: the text, `edit modified`, `calc::buf_can undo` and `redo`, the Stack size and the two Tk-8.4 fallback hints `calc::buf_note_edit` writes, which a hand-off that refreshed the buttons would move while the history stood still and which is INVISIBLE on Tk 8.6.  ⚠ THE UNDO CLAIM IS THE OPPOSITE OF S28/4's: nothing was pasted, so there is no step to collapse and the assertion is that the state did not move, not that one undo restores.  DISPLAY-ONLY: a --nogui run of this suite reports zero checks" \
+    [list $wv_stubbed $wv_handstub $wv_ran \
+          [expr {[string match ERR:* $wv_ans] ? 0 : 1}] $wv_moved \
+          [expr {$wv_undone eq $wv_text0 ? 1 : 0}] \
+          [expr {$wv_redone eq $wv_text0 ? 1 : 0}]] \
+    [list 1 ok 1 1 {} 1 1]
+check "S28/7 R421 ...and the DESTINATION SENTENCE really reaches `.calc.status.msg` -- asserted through TWO independent witnesses, because a click that composed the sentence and raised on the way out leaves the number right and the field holding the PREVIOUS sentence, which is exactly what S28/4's return-value leg was added for: the click's own return value is the sentence, the widget's `get` is the same string, and it names the verb and the database the answer carried.  The WORDS are not asserted -- all three of this stage's sentences are unratified and carry an open rule debt -- so what is asserted is the agreement and the containment" \
+    [list $wv_stubbed $wv_handstub \
+          [expr {[string match ERR:* $wv_ans] ? 0 : 1}] \
+          [expr {$wv_said eq $wv_ans ? {agree} : {DIFFER}}] \
+          [expr {[string match {*dutyCycle*} $wv_said] ? 1 : 0}] \
+          [expr {[string match "*$::WV_DB*" $wv_said] ? 1 : 0}] \
+          [expr {[pcall calc::status_history] ne $wv_hist0 ? {recorded} : {NOTRECORDED}}]] \
+    [list 1 ok 1 agree 1 1 recorded]
+check "S28/7 the click HANDED THE ANSWER TO THE VIEWER, with the destination the verb named and the token the result gate named -- the half unit J1 deliberately did not do, which is why `wviewer::plot_sweeps_arm` still had zero callers and the user had to find the database in the Results picker and plot it by hand.  The hand-off is RECORDED rather than driven here because this suite has no loaded raw at all; that a trace really appears against its own X is band PL10 of test_calc_plot.tcl, which has a real window, and it is gate-only too" \
+    [list $wv_stubbed $wv_handstub \
+          [expr {[llength $::WV_HAND] >= 2 ? {called} : "args:$::WV_HAND"}] \
+          [expr {[llength $::WV_HAND] >= 1 ? [lindex $::WV_HAND 0] : {}}] \
+          [expr {[llength $::WV_HAND] >= 2 ?
+                 [pcall dict get [lindex $::WV_HAND 1] db] : {}}]] \
+    [list 1 ok called s28tok $::WV_DB]
+check "S28/7 ...and the SURFACE WRAPPER is what the click reached, with the buffer's own RPN first and the dialog's values in the wrapper's formal order -- `calc::arg_surface` is literally if `::calc::<name>_scalar` exists return it, so a recorder on `calc::dutyCycle` would have been bypassed and the row would have measured nothing -- and the default CYCLE really is the all-cycles zero that makes the answer a wave in the first place" \
+    [list $wv_stubbed [lrange $::WV_REC 0 1] \
+          [expr {[lindex $::WV_REC 2] eq {0} ? {allcycles} : "cycle:[lindex $::WV_REC 2]"}]] \
+    [list 1 [list {v(lp) v(sq) /} 0.5] allcycles]
+# THE CONTROL, and it is what separates "the wave arm did nothing" from "the
+# surface is broken for every answer": with the SAME recorder installed but
+# answering a SCALAR, the click must still paste a number and ONE undo must still
+# put the expression back.  Without this leg a click that silently did nothing at
+# all would pass every row above.
+set ::WV_SCALARVAL 0.0004321
+rename ::calc::dutyCycle_scalar ::wv_wave_rec
+proc ::calc::dutyCycle_scalar $wv_dc_formals {
+    set ::WV_REC {}
+    foreach f [info args ::calc::dutyCycle_scalar] {
+        set v [set $f]
+        if {$v eq {WV-NOT-GIVEN}} break
+        lappend ::WV_REC $v
+    }
+    return [list ok 1 absent 0 value $::WV_SCALARVAL dataset 0 dest {} msg {}]
+}
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {v(lp) v(sq) /}
+pcall .calc.buf edit reset
+pcall .calc.buf edit modified 0
+set wv_text1 [ad_buf]
+set ::WV_HAND {}
+ad_arm {
+    catch {set ::calc::argval(level) 0.5}
+    catch {.calc.arg.btns.ok invoke}
+}
+set wv_ans2 [pcall calc::fn_click dutyCycle]
+update
+set wv_ran2 $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+set wv_num [ad_buf]
+pcall calc::buf_undo
+set wv_back [ad_buf]
+check "S28/7 the CONTROL: with the same recorder answering a SCALAR the click still PASTES the number and ONE undo still puts the expression back, and the viewer is NOT handed anything -- so a click that had silently done nothing at all would pass the rows above and fails here, and the wave arm is a branch rather than a break" \
+    [list $wv_ran2 [expr {[string match ERR:* $wv_ans2] ? 0 : 1}] \
+          [expr {[string is double -strict $wv_num] ? 1 : 0}] \
+          [expr {[string is double -strict $wv_num]
+                 && abs($wv_num - $::WV_SCALARVAL)
+                    <= 1e-6 * abs($::WV_SCALARVAL) ? 1 : 0}] \
+          $wv_back $::WV_HAND] \
+    [list 1 1 1 1 {v(lp) v(sq) /} {}]
+catch {rename ::calc::dutyCycle_scalar {}}
+catch {rename ::wv_wave_rec ::calc::dutyCycle_scalar}
+if {$wv_stubbed} {
+    catch {rename ::calc::dutyCycle_scalar {}}
+    catch {rename ::wv_keep_dc ::calc::dutyCycle_scalar}
+}
+if {$wv_handstub eq {ok}} {
+    catch {rename ::calc::wave_in_token {}}
+    catch {rename ::wv_keep_hand ::calc::wave_in_token}
+}
+check "S28/7 CONTROL: both renames are undone and the real procs are back with the formals they had on the way in -- captured before the rename rather than written down -- so nothing below this point is measuring a recorder" \
+    [list [expr {[info commands ::calc::dutyCycle_scalar] ne {} ? 1 : 0}] \
+          [llength [info commands ::wv_keep_dc]] \
+          [llength [info commands ::wv_wave_rec]] \
+          [llength [info commands ::wv_keep_hand]] \
+          [pcall info args ::calc::dutyCycle_scalar]] \
+    [list 1 0 0 0 $wv_formals0]
 }
 
 # --- S28/5  Escape is Cancel, through the real keyboard ----------------------

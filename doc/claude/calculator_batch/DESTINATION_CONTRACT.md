@@ -506,9 +506,20 @@ left as the dated figure it was — read the row, never this sentence.
 ### Holes the suite declares, and the two the driver must act on
 
 H1 `wviewer::interp_value` is unfenced here (needs a viewer window and a mixed strip — a `dcases`
-viewer suite, and it is issue 1637). **H2 the rendering is deliberately unfenced** — all seven walkers
-carry the token forward so a pixel fence would miss six, and the band asserts the positive shape
-upstream of all of them; **that the engine then draws it is a `look` debt.** H4 a restore by captured
+viewer suite, and it is issue 1637). **H2 the rendering is deliberately unfenced** — a pixel fence
+reaches only `draw_graph`, which is one reader of the `sweep=` token among many, so the band asserts
+the positive shape upstream of all of them; **that the engine then draws it is a `look` debt.**
+⚠ **THIS SENTENCE SAID "all seven walkers carry the token forward … a pixel fence would miss six"
+AND IT WAS WRONG TWICE** — same defect as §7.4 of `WIRING_CONTRACT.md`, corrected there in its §12.
+`graph_fullxzoom`, the first name the old list gave, reads field ONE once for the whole rect and
+carries nothing, and the population derived over `src/*.c` is larger than seven, with two
+user-visible readers in `src/callback.c` (`backannotate_cursor_b_in_db` and `waves_callback`'s
+drag-to-position arm) that no list anywhere named. **The number is gone from this sentence on
+purpose**: band **WD12**'s first row of `tests/headless/test_calc_wave_dest.tcl` derives the
+population and both partitions every run and reddens naming a new walker, which is the only form
+CLAUDE.md permits a figure to take. (The seven is right about a *different* predicate — rows
+NDR2/NDR3 of `tests/headless/test_node_token_split.tcl`, seven `node=` walkers resolving the sweep
+column BY NAME — and was reused here without re-deriving the set.) H4 a restore by captured
 *index* is structurally indistinguishable from name+type on this fixture, because `raw new` appends
 and clearing never compacts the user's slot — the band fences the observable end state, which is the
 hazard, and would pass an index-based restore. H5 every measurement reads the `tran` plot; an

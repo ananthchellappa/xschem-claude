@@ -2438,6 +2438,15 @@ proc calc::plot_click {} {
 # wording; the `rule` debt filed against `calc::eval_msg`'s sentences covers
 # them, and every row that reads one asserts the house SHAPE -- a capital, a
 # colon-space, a full stop -- and never the words.
+#
+# ⚠ UNIT J1b's HAND-OFF REFUSALS JOIN THE SAME `dest*` FAMILY, and that is the
+# same argument one step on: the destination is built here, shown from here, and
+# a ruling on how the Calculator talks about a destination has to land in one
+# place or the two halves will drift apart in wording while agreeing in code.
+# Row WD10 of tests/headless/test_calc_wave_dest.tcl DERIVES this proc's arm set
+# out of its own `switch` patterns and exercises every one, which is the only
+# behavioural confirmation that no comment has landed between two patterns -- and
+# that derivation is why no arm count is written in this comment.
 proc calc::cross_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         empty      { return {Nothing to measure: cross was given an empty expression.} }
@@ -2490,6 +2499,16 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  result." }
         destengine { return "Destination: the engine would not build that\
  database ($a)." }
+        destunnamed { return "Destination: the measurement named no destination,\
+ so there is nothing to show." }
+        destnoslot { return "Destination: $a is no longer a registered result, so\
+ the measured wave could not be shown." }
+        destnoview { return "Destination: no waveform viewer holds this result, so\
+ the measured wave was left where it is." }
+        destbusy   { return "Destination: the waveform viewer is busy, so the\
+ measured wave was not shown." }
+        destplot   { return "Destination: the viewer would not plot the measured\
+ wave ($a)." }
     }
     return {}
 }
@@ -3666,6 +3685,168 @@ proc calc::wave_dest_drop {answer} {
     catch {xschem raw clear $db $type}
     calc::wave_dest_restore $uname $utype
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# R419/R421, stage J unit J1b -- THE MEASURED WAVE'S HAND-OFF TO THE VIEWER
+#
+# Unit J1 built the destination and stopped: `calc::wave_dest` left a two-column
+# `table` database registered and the user had to find it in the Results picker
+# and plot it by hand, which is why `wviewer::plot_sweeps_arm` shipped with no
+# callers at all and says so in its own banner.  These procs are the other half
+# -- the click hands the answer to the window the result lives in, and the
+# measured curve appears against its own X.
+#
+# ⚠⚠ THE DESTINATION IS NAMED BY REGISTRY INDEX AND A COLUMN NAME WILL NOT DO.
+# This is the defect unit J1 left live and the expensive one, because it is
+# silent: J1 never drops a destination, so several coexist, and every
+# destination's columns carry the SAME TWO NAMES.  An unarmed
+# `wviewer::add_trace` resolves a bare column name through
+# `wviewer::resolve_signal_db`, which answers the FIRST slot in
+# `signal_list_all` order that has the name -- so a hand-off that passed a name
+# would draw the FIRST measurement's curve for ever after, and would pass every
+# single-measurement row.  Band WD12 of tests/headless/test_calc_wave_dest.tcl
+# drives TWO destinations through the counted arm, and band PL10 of
+# tests/headless/test_calc_plot.tcl reads the SECOND one's curve off the real
+# trace dict in a real window.
+#
+# ⚠ WHY AN ARMED ONE-SHOT CHANNEL AND NOT A FIFTH PARAMETER, which is what it
+# would obviously be.  Both channels' own headers in src/wave_viewer.tcl carry
+# the measurement: `wviewer::plot_signals`' four formals are pinned as a LITERAL
+# SOURCE STRING by row BM05 of tests/headless/test_wave_sigbrowser.tcl and
+# redefined by four-parameter spy stubs in several suites, and
+# `wviewer::graph_props`' three are pinned by row GT8 of test_wave_grid.tcl.  A
+# five-argument call raises *"too many arguments"* into
+# `wviewer::browser_plot_ids`' own `catch`, which SWALLOWS it -- so every browser
+# gesture check would read as "the gesture did nothing" rather than as an error.
+# Row WD4 of test_calc_wave_dest.tcl re-measures both arities every run and is
+# the only one of those pins a T1 gate reaches.
+# ---------------------------------------------------------------------------
+
+# The registry INDEX of the slot holding `db` at `type`, or -1.
+#
+# ⚠ BY PATH AND TYPE OUT OF ONE SNAPSHOT, which is `calc::wave_dest_cur`'s own
+# idiom and for its reason: one `xschem raw info` cannot disagree with itself.
+# The per-line regexp rather than `lindex` is what survives a raw path carrying
+# whitespace or a brace, and the trailing `N current` line cannot match it,
+# having only one field after the index.
+proc calc::wave_slot {db type} {
+    set t {}
+    if {[catch {xschem raw info} t]} { return -1 }
+    foreach ln [split $t "\n"] {
+        if {![regexp {^[ \t]*([0-9]+)[ \t]+(.+)[ \t]+(\S+)[ \t]*$} $ln -> i nm ty]} {
+            continue
+        }
+        if {[string trim $nm] eq $db && $ty eq $type} { return $i }
+    }
+    return -1
+}
+
+# The answer dict for every path that did NOT show the wave.  ONE SITE, so the
+# key set cannot drift between the refusing paths and the one success path --
+# `calc::cross_refusal` and `calc::plot_refusal` exist for the same reason.
+proc calc::wave_refusal {msg} {
+    return [dict create ok 0 db {} sweep {} vec {} msg $msg]
+}
+
+# Hand ONE destination to ONE viewer window: both one-shot channels armed, the
+# plot verb between them, both channels taken back.
+#
+# ⚠⚠ ARM, CALL, TAKE -- AND BOTH TAKES ARE UNCONDITIONAL AND COME BEFORE THE
+# BRANCH ON `rc`.  That is `wviewer::browser_plot_ids`' shape verbatim, including
+# the reason its own comment gives: a take is a *no-op after a real call* (the
+# verb consumes both channels on its first two lines, before it even refuses an
+# unknown window) and a *clear after a stub*.  Measured: an arm whose caller
+# refuses before reaching the verb PERSISTS for that token and silently re-axes
+# the NEXT plot in that window.  `calc::plot_rpn` has three refusal returns ahead
+# of its own plot call and this proc has as many, so the discipline is not
+# tidiness -- it is what keeps a hidden channel honest.
+#
+# ⚠ THE DESTINATION GETS ITS OWN STRIP, through `plot_signals`' EXISTING fourth
+# formal, and that is a measurement and not a preference.  `graph_fullxzoom`
+# fixes ONE x quantity for a whole rect -- the target rect's FIRST `sweep=` token,
+# read once -- and `graph_x_extent` returns 0 for a database that does not have
+# it, so on a MIXED strip the measured wave contributes NOTHING to the X union
+# and is drawn off-window.  `wviewer::add_trace` creates no strip and clamps an
+# out-of-range index to the LAST one, which is exactly how that mixed strip gets
+# built by accident; `plot_signals` runs `plan_plot` and creates strips, so the
+# route is the verb and not the trace.  The new-strip code is READ out of
+# `wviewer::dest_norm` rather than spelled here, which is the discipline
+# `calc::plot_rpn` already follows for the destination labels: one place can go
+# stale, two can disagree.
+#
+# ⚠ WHAT THIS MUST NOT TOUCH, and band WD12 derives all of it over this body
+# rather than reading it.  No `.calc` widget path, no `calc::buf_set_number` and
+# no `calc::buf_note_edit`: the last is the live trap a *refresh the buttons
+# after plotting* line walks into, because it sets the two Tk-8.4 fallback hints
+# `calc::buf_can` reads, so the user's undo HINTS would move while their undo
+# HISTORY stood still -- and that is INVISIBLE on Tk 8.6, where `buf_can` reads
+# the real stack.  No `xschem raw add` of its own either (`add_trace` does that,
+# and row SR5 of tests/headless/test_calc_scratch_reuse.tcl derives it), and no
+# `sweep=` token written onto a rect directly: `wviewer::graph_props` emits that
+# list in full or not at all, and a rect written here would bypass that rule.
+proc calc::wave_show {tok d} {
+    set db {} ; set xn {} ; set yn {} ; set ty table
+    catch {set db [dict get $d db]}
+    catch {set xn [dict get $d xname]}
+    catch {set yn [dict get $d yname]}
+    catch {set ty [dict get $d type]}
+    if {$ty eq {}} { set ty table }
+    if {$db eq {} || $xn eq {} || $yn eq {}} {
+        return [calc::wave_refusal [calc::cross_msg destunnamed]]
+    }
+    set idx [calc::wave_slot $db $ty]
+    if {![string is integer -strict $idx] || $idx < 0} {
+        return [calc::wave_refusal [calc::cross_msg destnoslot $db]]
+    }
+    wviewer::plot_dbs_arm $tok [list $idx]
+    wviewer::plot_sweeps_arm $tok [list $xn]
+    set errs {}
+    set rc [catch {wviewer::plot_signals $tok [list $yn] {} \
+                       [wviewer::dest_norm {New Strip}]} errs]
+    catch {wviewer::plot_dbs_take $tok}
+    catch {wviewer::plot_sweeps_take $tok}
+    if {$rc} {
+        return [calc::wave_refusal [calc::cross_msg destplot $errs]]
+    }
+    # `plot_signals` answers a list of {expr error} pairs and never throws for a
+    # signal that failed, so the empty list is the only success.  The length is
+    # taken under `catch` and defaults to a REFUSAL rather than to zero, because
+    # an answer this proc cannot measure is not an answer it may call a success.
+    set nerr -1
+    catch {set nerr [llength $errs]}
+    if {$nerr != 0} {
+        set why $errs
+        catch {set why [lindex [lindex $errs 0] 1]}
+        return [calc::wave_refusal [calc::cross_msg destplot $why]]
+    }
+    return [dict create ok 1 db $db sweep $xn vec $yn msg {}]
+}
+
+# R601: run the hand-off inside the context the SELECTED RESULT lives in, and PUT
+# THE CONTEXT BACK (issue 0173).  `calc::plot_in_token`'s bracket exactly, and
+# for the reason written into `wviewer::enter_ctx`'s own contract: the issue-0314
+# borrow door is open only to callers whose bodies run no `update`/`after`, only
+# READ, and always restore.  This one WRITES -- it mutates the viewer's layout,
+# creates a strip and ends in a redraw -- so it takes the plain door and must not
+# lower somebody else's semaphore.  A refusal here is LOUD rather than silent,
+# which is the honest outcome for a gesture that would otherwise plot into
+# whichever database this window happens to hold.
+proc calc::wave_in_token {tok d} {
+    if {$tok eq {}} { return [calc::wave_refusal [calc::cross_msg destnoview]] }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok} ticket]} {
+        return [calc::wave_refusal [calc::cross_msg destbusy]]
+    }
+    if {![lindex $ticket 0]} {
+        return [calc::wave_refusal [calc::cross_msg destbusy]]
+    }
+    set h {}
+    if {[catch {calc::wave_show $tok $d} h]} {
+        set h [calc::wave_refusal [calc::cross_msg destplot $h]]
+    }
+    catch {wviewer::leave_ctx $tok $ticket}
+    return $h
 }
 
 # The Browse stub's sentence (U9 / results_selection.md R502).  The button is
@@ -5754,8 +5935,9 @@ proc calc::fn_sink {d} {
 #     R404/R421   -> `calc::fn_sink` says where the answer GOES, and only the
 #                    `buffer` word reaches `calc::buf_set_number`: the number in
 #                    the buffer with the provenance on the status line, a WAVE
-#                    left in its destination with a sentence naming it, and an
-#                    unknown shape or a non-number refused rather than pasted
+#                    HANDED TO THE VIEWER in its own destination with a sentence
+#                    naming it, and an unknown shape or a non-number refused
+#                    rather than pasted
 #
 # ⚠⚠ THE SINK IS ASKED BEFORE ANYTHING IS PASTED, AND THE LADDER FAILS CLOSED.
 # Only the word `buffer` falls through to `calc::buf_set_number`; every other
@@ -5777,13 +5959,27 @@ proc calc::fn_sink {d} {
 #
 # ⚠ WHAT THIS BRANCH CANNOT BE MEASURED FOR HEADLESS, declared rather than left
 # to be assumed: that the buffer is really left UNTOUCHED on a wave answer, that
-# the sentence really reaches `.calc.status.msg`, and that R421's one-step undo
-# is untouched.  All three need a real text widget -- this proc and
-# `calc::buf_set_number` both return early on `calc::has_win .calc.buf` -- so
-# they belong to band S28 of tests/headless/test_calc_skeleton.tcl and band CW14
-# of tests/headless/test_calc_widgets.tcl, which are `dcases` ALONE and only a
-# gate's DISPLAY arm runs.  The DECISION and the SENTENCE are both on the
-# counted arm, which is the whole reason the decision is a proc.
+# the sentence really reaches `.calc.status.msg`, and that R421's undo state is
+# untouched.  All three need a real text widget -- this proc and
+# `calc::buf_set_number` both return early on `calc::has_win .calc.buf` -- so all
+# three belong to sub-band S28/7 of tests/headless/test_calc_skeleton.tcl, which
+# is `dcases` ALONE and only a gate's DISPLAY arm runs.  The DECISION and the
+# SENTENCE are both on the counted arm, which is the whole reason the decision is
+# a proc.
+#
+# ⚠ AND NOT BAND CW14 OF test_calc_widgets.tcl, which an earlier revision of this
+# comment named alongside S28 and which was checked rather than trusted.  CW14's
+# own declared hole WH2 says *"NOTHING HERE DRIVES THE MODAL.  No `grab`, no
+# `tkwait`, no Cancel, no OK"* -- it builds through `calc::arg_dialog_build` and
+# never `calc::arg_dialog`, which is exactly why it cannot hang and exactly why
+# it cannot see a click, a buffer edit, an undo or a status sentence.  A
+# cross-reference to a band that cannot host the claim is worse than none.
+#
+# ⚠ THE VIEWER HALF IS A THIRD READER AGAIN, because S28/7 has no loaded raw at
+# all and RECORDS the hand-off rather than driving it.  That a trace really
+# appears, against its own X and out of the SECOND of two coexisting
+# destinations, is band PL10 of tests/headless/test_calc_plot.tcl -- `dcases`
+# alone as well, and the only registered suite with a real viewer window in it.
 #
 # ⚠ THE GATE RUNS BEFORE THE DIALOG, AND SO DOES THE EMPTY-BUFFER CHECK.  Asking
 # the user to fill in four fields and THEN telling them no simulation result is
@@ -5833,7 +6029,18 @@ proc calc::fn_measure {name} {
     if {$sink eq {destination}} {
         set db {}
         catch {set db [dict get $d db]}
-        return [calc::status [calc::arg_msg destination $name $db]]
+        set tok {}
+        catch {set tok [dict get $g token]}
+        set h [calc::wave_in_token $tok $d]
+        set m [calc::arg_msg destination $name $db]
+        set hok 0
+        catch {set hok [dict get $h ok]}
+        if {$hok ne {1}} {
+            set hm {}
+            catch {set hm [dict get $h msg]}
+            if {$hm ne {}} { append m " " $hm }
+        }
+        return [calc::status $m]
     }
     if {$sink eq {badshape}} {
         set sh {}

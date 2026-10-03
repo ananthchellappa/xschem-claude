@@ -53,7 +53,13 @@
 #        existing names.  This is the row PLAN 3.2's sabotage line is about.
 #   SR5  R605 STRUCTURALLY: the engine call and the read are in ONE proc with
 #        nothing between them that could evaluate anything else, and no other
-#        proc in the file reads a `__calc_tmp` column.  A structural row cannot
+#        proc in the file reads a `__calc_tmp` column.  Plus R402's four-way
+#        equality over the namespace, and the VIEWER's door -- whose door set is
+#        DERIVED out of `::wviewer::` (the procs that issue the direct engine
+#        verb, closed transitively over their callers) rather than spelled as an
+#        alternation of two names, because the alternation named one real door
+#        and one proxy and would have missed a Calculator route through any
+#        other viewer entry point.  A structural row cannot
 #        see everything (receipts/B3-final.md §10.1: it cannot see statement
 #        ORDER in general), which is why SR2 and SR4 carry the behaviour and
 #        this band carries only what text can honestly answer.
@@ -480,9 +486,15 @@ group SR5 {
     # misreport.
     #
     # ⚠ AND THE WIDENING IS FENCED RATHER THAN OPEN: the adders that read nothing
-    # back are asserted as a ONE-NAME LITERAL, exactly as the viewer-door row at
-    # the foot of this band is, so a SECOND add-without-read door reddens here and
-    # has to justify itself instead of inheriting an exemption.  Rows WD10 of
+    # back are asserted as a ONE-NAME LITERAL, so a SECOND add-without-read door
+    # reddens here and has to justify itself instead of inheriting an exemption.
+    # ⚠ THIS SENTENCE USED TO SAY *"exactly as the viewer-door row at the foot of
+    # this band is"*, and that cross-reference went stale the moment the viewer
+    # door became a derived set with a floor -- which is this tree's own rule
+    # about cross-references being checked rather than trusted, caught here
+    # rather than shipped.  The viewer-door row is NOT a literal any more; this
+    # one still is, because the direct engine verb is a door a scan over THIS
+    # namespace can see and the viewer's is not.  Rows WD10 of
     # tests/headless/test_calc_wave_dest.tcl carry the same invariant from the
     # producer's own side.
     #
@@ -517,7 +529,7 @@ group SR5 {
     foreach nm $adders {
         if {[lsearch -exact $readers $nm] < 0} { lappend persistent $nm }
     }
-    check "SR5 R402 ...and the only direct adder that reads NOTHING back is the R419 destination producer, whose Y column is persistent by design -- a literal, like the viewer-door row below, so a SECOND add-without-read door reddens here and has to justify itself rather than inheriting the exemption" \
+    check "SR5 R402 ...and the only direct adder that reads NOTHING back is the R419 destination producer, whose Y column is persistent by design -- a literal, because the direct engine verb is a door a scan over this namespace can see, so a SECOND add-without-read door reddens here and has to justify itself rather than inheriting the exemption" \
         $persistent {wave_dest}
     # ⚠ THE NON-VACUITY LEG, and it is not decoration: EMPTY lists satisfy the
     # equality above perfectly, which is how the row would read on a tree where
@@ -557,12 +569,96 @@ group SR5 {
     # nothing to delete and no shared scratch column in play.  Asserted, not
     # claimed -- and derived from the namespace, so a Plot proc that grew its own
     # `raw add` would redden the row ABOVE instead of escaping this one.
+    #
+    # ⚠⚠ THE DERIVATION BELOW USED TO BE A HAND-KEPT ALTERNATION OF TWO NAMES --
+    # `wviewer::(add_trace|plot_signals)` -- AND THAT IS THE SAME DEFECT ONE
+    # LEVEL UP AS THE LITERAL THIS BAND ALREADY REPLACED TWICE.  Measured: the
+    # `::wviewer::` procs that issue the direct engine verb THEMSELVES are three
+    # (`add_trace`, `paste_traces`, `restore`) and `plot_signals` is not one of
+    # them -- it reaches `add_trace` -- so the shipped pattern named one real
+    # door and one proxy for another, and matched neither `browser_plot_ids`, nor
+    # `paste_traces`, nor any new viewer entry point.  Also measured:
+    # `regexp {wviewer::(add_trace|plot_signals)} wviewer::plot_sweeps_arm`
+    # answers 0, so a Calculator proc that armed the one-shot sweep channel and
+    # then plotted through a third route left this row GREEN at one name while a
+    # second Calculator-to-viewer route existed.  So the DOOR SET is derived out
+    # of the viewer's own namespace -- the direct issuers, closed transitively
+    # over the procs that call them -- and the row matches any member.
+    #
+    # ⚠ AND THE SECOND DODGE IS CLOSED FROM THE OTHER SIDE, not here: `$pbody` is
+    # built over `[info procs ::calc::*]` ONLY, so an armer placed in
+    # `::wviewer::` would escape this row entirely.  Band WD12 of
+    # tests/headless/test_calc_wave_dest.tcl derives the armer set over `::calc::`
+    # and asserts it is NOT EMPTY, which is the leg that fails on that dodge.
+    proc sr_floor {v n} {
+        if {![string is integer -strict $v]} { return "notacount:$v" }
+        if {$v >= $n} { return atleast }
+        return "only:$v"
+    }
+    proc sr_has {l nm} { return [expr {[lsearch -exact $l $nm] >= 0 ? {has} : "MISSING:$nm"}] }
+    set wbody {}
+    foreach p [lsort [pcall info procs ::wviewer::*]] {
+        set b [pcall info body $p]
+        if {[string match ERR:* $b]} continue
+        dict set wbody [namespace tail $p] [sr_code $b]
+    }
+    proc sr_nameref {nm} {
+        set pat {}
+        append pat {wviewer::} $nm {([^A-Za-z0-9_]|$)}
+        return $pat
+    }
+    set direct {}
+    dict for {nm b} $wbody { if {[regexp {xschem raw add} $b]} { lappend direct $nm } }
+    set doors [lsort -unique $direct]
+    for {set it 0} {$it < 40} {incr it} {
+        set grew 0
+        dict for {nm b} $wbody {
+            if {[lsearch -exact $doors $nm] >= 0} continue
+            foreach d $doors {
+                if {[regexp [sr_nameref $d] $b]} { lappend doors $nm ; set grew 1 ; break }
+            }
+        }
+        set doors [lsort -unique $doors]
+        if {!$grew} break
+    }
+    check "SR5 ...and the VIEWER's door set is DERIVED out of the viewer's own namespace instead of spelled as an alternation of two names: the procs whose decommented body issues the direct engine verb, closed transitively over the procs that call them, with a floor on both and the two entry points this batch actually uses named as a positive control -- so a Calculator proc reaching the engine through a THIRD viewer entry point is caught rather than walking past a hand-kept pattern" \
+        [list [sr_floor [llength $direct] 3] [sr_has $direct add_trace] \
+              [expr {[llength $doors] > [llength $direct] ? {wider} : {NOTWIDER}}] \
+              [sr_has $doors plot_signals] [sr_has $doors add_trace] \
+              [sr_floor [dict size $wbody] 100]] \
+        {atleast has wider has has atleast}
     set viaviewer {}
     dict for {nm b} $pbody {
-        if {[regexp {wviewer::(add_trace|plot_signals)} $b]} { lappend viaviewer $nm }
+        foreach d $doors {
+            if {[regexp [sr_nameref $d] $b]} { lappend viaviewer $nm ; break }
+        }
     }
-    check "SR5 ...and the procs that reach the engine through the VIEWER's door instead are Plot's, which is why no R402 delete belongs there" \
-        $viaviewer {plot_rpn}
+    set viaviewer [lsort -unique $viaviewer]
+    # ⚠ A FLOOR AND A MEMBERSHIP, NOT A SNAPSHOT LITERAL, and that is the
+    # treatment this batch gave WD9's keystone when the caller set moved: the
+    # floor is RE-DERIVED when a unit adds a route rather than decremented, and
+    # the two names are a positive control on the derivation.  Plot reaches the
+    # engine through `wviewer::add_trace` and the R419/R421 hand-off through
+    # `wviewer::plot_signals`; both are inside src/wave_viewer.tcl where no scan
+    # over this namespace can see the `raw add` itself.
+    check "SR5 ...and the procs that reach the engine through the VIEWER's door instead are Plot's and the measured-wave hand-off's, which is why no R402 delete belongs to either -- asserted as a floor plus the membership of both, over the derived door set, so a unit that adds a route raises the floor by measuring rather than lowering it" \
+        [list [sr_floor [llength $viaviewer] 2] [sr_has $viaviewer plot_rpn] \
+              [sr_has $viaviewer wave_show] $viaviewer] \
+        [list atleast has has $viaviewer]
+    # ...and the REASON the exemption is sound, derived rather than asserted by
+    # name: a viewer-door proc carries NO R402 obligation at all, because
+    # `add_trace`'s destination is a PERSISTENT named vector the trace keeps
+    # reading.  A proc that both reached the viewer's door AND minted, read back
+    # or deleted a temporary would be one with a delete obligation on a column a
+    # trace is still reading -- a vanishing trace rather than a stale number --
+    # and this leg names it instead of leaving the exemption to a one-name list.
+    set viaowing {}
+    foreach nm $viaviewer {
+        if {[lsearch -exact $minters $nm] >= 0 || [lsearch -exact $readers $nm] >= 0
+                || [lsearch -exact $deleters $nm] >= 0} { lappend viaowing $nm }
+    }
+    check "SR5 ...and NO proc on the viewer's door carries an R402 obligation -- derived against the mint, read-back and delete sets this band already computed, with the viewer set's own count riding along so an empty one cannot pass it" \
+        [list [llength $viaviewer] $viaowing] [list [llength $viaviewer] {}]
     # ⚠ THE NARROW HALF OF "EXACTLY ONE DIRECT VERB", now that the direct set has
     # more than one member: the two doors are DISJOINT.  A proc on both would be
     # one with an R402 delete obligation on a column the viewer's trace is still
@@ -575,7 +671,7 @@ group SR5 {
     }
     check "SR5 ...and no proc uses BOTH doors -- derived from the two sets, with both counts riding along" \
         [list [llength $adders] [llength $viaviewer] $bothdoors] \
-        [list [llength $adders] 1 {}]
+        [list [llength $adders] [llength $viaviewer] {}]
     # ...and exactly one proc calls THAT one, which is what keeps the engine
     # step inside the borrowed context R603 names.  A press that called
     # `calc::eval_rpn` straight from `calc::eval_click` would evaluate against

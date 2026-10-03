@@ -116,6 +116,30 @@
 #        `calc::plot_click`'s own code names no viewer-opening verb.  A later
 #        stage that reverses the ruling reds this band and has to correct the
 #        declaration in `calc::plot_rpn`'s header.
+#   PL10 ⚠ THE MEASURED WAVE APPEARS, AGAINST ITS OWN X (stage J unit J1b), and
+#        this is the ONLY registered suite that can witness it:
+#        `wviewer::signal_list_all` answers `{}` without a viewer window, so
+#        `db_by_index` answers `{}` and `add_trace`'s named-database arm is
+#        unreachable headless.  Builds TWO destinations whose column names are
+#        IDENTICAL -- which is the normal case, because unit J1 never drops one
+#        -- hands the SECOND to the viewer, and reads the REAL trace dict: its
+#        vector, its `sweep` key, and the `rawfile`/`sim_type` pair that says
+#        WHICH database it came from.  An unarmed `add_trace` resolves a bare
+#        column name through `resolve_signal_db`, the first slot in
+#        `signal_list_all` order that has it, so without the database channel
+#        every measurement after the first draws the first one's curve.  Also
+#        asserts the destination got its OWN strip (`graph_fullxzoom` frames a
+#        whole rect from ONE x quantity, so a measured wave on a mixed strip is
+#        drawn off-window -- measured on the bare verbs in band WD12 of
+#        test_calc_wave_dest.tcl), that the generated rect text carries one
+#        `sweep=` token for it, that NEITHER one-shot channel is left armed, and
+#        that the NEXT ordinary press is unaffected.
+#        ⚠ THREE ROWS IN IT PASS TODAY AND ARE DECLARED: the no-arm-left leg
+#        reads empty on a tree where nothing arms anything, the next-press row
+#        is measuring a press that nothing preceded, and the hygiene row is a
+#        claim about this band's own cleanup.  The row beside them that would
+#        catch a leaked arm is band WD12's instrument row, which drives the two
+#        channels directly to show they really do persist when nobody takes them.
 #   PL9  R508: with the window closed, both Plot entry points are silent no-ops
 #        on BOTH axes.  Runs last, because it closes the window.
 #
@@ -1120,6 +1144,215 @@ group PL7b {
         catch {wviewer::leave_ctx $::tok $t3}
     }
     update idletasks
+}
+
+# =============================================================================
+# PL10 — ⚠ THE MEASURED WAVE APPEARS, AGAINST ITS OWN X (stage J unit J1b)
+# =============================================================================
+# WARN THIS IS THE ONLY REGISTERED SUITE THAT CAN WITNESS IT, and that is
+# structural rather than a preference.  `wviewer::signal_list_all` returns `{}`
+# unless `dict exists $windows $token`, so `wviewer::db_by_index` answers `{}`
+# and `wviewer::add_trace`'s NAMED-DATABASE arm is unreachable without a real
+# viewer window.  The counted arm can see what the hand-off ARMED -- band WD12
+# of tests/headless/test_calc_wave_dest.tcl records `wviewer::plot_signals` aside
+# and reads the two channels out of the recorder -- and it cannot see a trace.
+# This file has a real window (fixture PL0), so this band reads the REAL trace
+# dict and the REAL strip layout.  It is a `dcases` entry ALONE and self-skips
+# whole under `--nogui`, so only a gate's display arm runs any of it.
+#
+# WARN AND THE DEFECT IT EXISTS FOR IS THE ONE NOBODY HAD NAMED.  Unit J1 never
+# drops a destination, so several coexist, and two of them carry the IDENTICAL
+# two column names -- measured.  An UNARMED `add_trace` resolves a bare column
+# name through `wviewer::resolve_signal_db`, which answers the FIRST slot in
+# `signal_list_all` order that has the name, so every measurement after the first
+# silently draws the first one's curve.  A hand-off that armed only the sweep
+# channel passes any single-measurement row and is wrong on the second click, so
+# the keystone below builds TWO destinations and asserts the SECOND one's trace
+# names the SECOND one's database.
+#
+# WARN AND THE STRIP IS NOT DECORATION.  Measured on the bare verbs in band WD12:
+# `graph_fullxzoom` fixes ONE x quantity for the whole rect -- the target rect's
+# first `sweep=` token -- and `graph_x_extent` contributes nothing for a database
+# that lacks it, so on a MIXED strip a measured wave is drawn off-window.  That
+# is why the hand-off must go through `wviewer::plot_signals`, which runs
+# `plan_plot` and CREATES strips, and not straight to `wviewer::add_trace`, which
+# creates nothing and clamps an out-of-range strip index to the LAST strip.
+# =============================================================================
+group PL10 {
+    proc pl_dest {xs ys} {
+        set t {}
+        if {[catch {wviewer::enter_ctx $::tok} t]} { return "ERR:$t" }
+        if {![lindex $t 0]} { return REFUSED }
+        set d {}
+        if {[catch {calc::wave_dest $xs $ys} d]} { set d "ERR:$d" }
+        catch {wviewer::leave_ctx $::tok $t}
+        return $d
+    }
+    proc pl_trkeys {tr} {
+        set out {}
+        foreach k {vec sweep rawfile sim_type} { lappend out [dg $tr $k] }
+        return $out
+    }
+    # every strip's trace count, so "its own strip" is a measured shape and not a
+    # total.
+    proc pl_shape {tok} {
+        set out {}
+        if {[catch {dict get [wviewer::layout_for $tok] graphs} gs]} { return -1 }
+        foreach G $gs {
+            if {[catch {dict get $G traces} trs]} { lappend out ERR ; continue }
+            lappend out [llength $trs]
+        }
+        return $out
+    }
+    # the `sweep=` tokens `wviewer::graph_props` emits for a REAL strip, read the
+    # way `draw_graph` reads them.
+    # ⚠ INSIDE THE VIEWER'S OWN CONTEXT, and that is a correction a dry run
+    # against a conforming reference forced rather than a precaution.
+    # `wviewer::graph_props` resolves an ordinary trace's token through
+    # `wviewer::sweep_default`, which is `xschem raw list`'s FIRST line in the
+    # database that is CURRENT RIGHT NOW -- and the Calculator's own context has
+    # no raw loaded, so called from here it answered the empty string, every
+    # ordinary trace took an empty token, and the generator's own
+    # all-or-nothing rule then emitted NO `sweep=` token at all.  Read from
+    # outside the context this row measured the wrong thing and said so.
+    proc pl_sweeptoks {tok gi} {
+        set gs {}
+        if {[catch {dict get [wviewer::layout_for $tok] graphs} gs]} { return ERR }
+        if {$gi < 0 || $gi >= [llength $gs]} { return "NOSTRIP:$gi" }
+        set t {}
+        if {[catch {wviewer::enter_ctx $tok} t]} { return "ERR:$t" }
+        if {![lindex $t 0]} { return REFUSED }
+        set p {}
+        set rc [catch {wviewer::graph_props [lindex $gs $gi] 0 1} p]
+        catch {wviewer::leave_ctx $tok $t}
+        if {$rc} { return "ERR:$p" }
+        if {![regexp -line {^sweep="([^"]*)"$} $p -> v]} { return {} }
+        return [regexp -all -inline {\S+} $v]
+    }
+    proc pl_armleft {tok} {
+        set out {}
+        if {[info exists ::wviewer::plotdbs($tok)]}    { lappend out dbs }
+        if {[info exists ::wviewer::plotsweeps($tok)]} { lappend out sweeps }
+        return [lsort $out]
+    }
+    # --- the fixture, asserted -------------------------------------------
+    set t0 {}
+    if {[catch {wviewer::enter_ctx $::tok} t0]} { set t0 {0 {}} }
+    if {[lindex $t0 0]} {
+        catch {wviewer::clear_all $::tok}
+        catch {wviewer::leave_ctx $::tok $t0}
+    }
+    update idletasks
+    pcall bufset {v(lp)}
+    set pl_said0 [press .calc.mode.plot]
+    pcall bufset {v(sq)}
+    set pl_said1 [press .calc.mode.plot]
+    check "PL10 fixture: two ORDINARY traces are on the canvas first, through the real Plot button, so the strip the hand-off lands on is a populated one and `its own strip` is a claim about a layout rather than about an empty window" \
+        [list [string match {Plotted*} $pl_said0] [string match {Plotted*} $pl_said1] \
+              [expr {[llength [alltraces $::tok]] >= 2 ? {two} : "n=[llength [alltraces $::tok]]"}]] \
+        {1 1 two}
+    set pl_shape0 [pl_shape $::tok]
+    set pl_n0 [llength [alltraces $::tok]]
+    # --- TWO destinations, and the SECOND one is the one plotted ----------
+    set pl_xs {1.0 2.0 3.0 4.0 5.0}
+    set pl_ysA {0.11 0.22 0.33 0.44 0.55}
+    set pl_ysB {0.91 0.82 0.73 0.64 0.55}
+    set pl_A [pl_dest $pl_xs $pl_ysA]
+    set pl_B [pl_dest $pl_xs $pl_ysB]
+    set pl_Adb [dg $pl_A db]
+    set pl_Bdb [dg $pl_B db]
+    # --- the CONTEXT LOAN around the hand-off, measured the way PL1 measures
+    # --- Plot's.
+    # ⚠ WITHOUT THE THREE LINES BELOW AND THE ROW THEY FEED, NOTHING IN THE TREE
+    # ASSERTED THAT `calc::wave_in_token` GIVES THE CONTEXT BACK.  Its bracket is
+    # `calc::plot_in_token`'s -- `wviewer::enter_ctx`, the body under `catch`,
+    # `wviewer::leave_ctx` unconditionally on the way out -- and row PL1 fences
+    # exactly that property for the Plot one, with the SAME discriminant.  A
+    # dropped `leave_ctx` here leaves xschem's current-window pointer standing in
+    # the WAVEFORM VIEWER, so the user's next gesture lands in the wrong window,
+    # and every row in this band still passes: each one reads the viewer's model
+    # through `wviewer::layout_for`, which asks nothing about where the context
+    # is.  That is CLAUDE.md's "a fence keyed to a symptom dies quietly" in its
+    # other direction -- the band measures the PLOT and the loan is the symptom
+    # nobody asked about.
+    #
+    # The switch is EXPLICIT rather than inherited, so the row does not depend on
+    # which window an earlier band happened to leave current.  It is a no-op
+    # today -- measured: the context at this point is already `.drw`, because
+    # PL1's own foreign-context press leaves it there -- and it is written anyway,
+    # because a row whose foreign context arrives from four bands away stops
+    # measuring the loan the moment PL1 is reordered.
+    pcall xschem new_schematic switch .drw
+    set pl_ctx_was [pcall xschem get current_win_path]
+    set pl_drwraw  [pcall xschem raw loaded]
+    set pl_hand [pcall calc::wave_in_token $::tok $pl_B]
+    set pl_ctx_back [pcall xschem get current_win_path]
+    update idletasks
+    set pl_tr {}
+    foreach tr [alltraces $::tok] {
+        if {[dg $tr vec] eq [dg $pl_B yname]} { set pl_tr $tr }
+    }
+    check "PL10 ⚠ the measured wave APPEARS, and it appears against ITS OWN X and out of ITS OWN database -- the claim unit J1 could not make at all, because `wviewer::plot_sweeps_arm` had zero callers and the user was left to find the database in the Results picker.  Read off the REAL trace dict: the trace's vector is the destination's Y column, its `sweep` key is the destination's X column, and its `rawfile`/`sim_type` pair is the destination's own registry entry -- so a hand-off that plotted the column name and let the viewer resolve it reddens here" \
+        [list [expr {[string match ERR:* $pl_hand] ? "RAISED:$pl_hand" : [dg $pl_hand ok]}] \
+              [expr {$pl_tr eq {} ? {NOTRACE} : {found}}] \
+              [pl_trkeys $pl_tr]] \
+        [list 1 found [list [dg $pl_B yname] [dg $pl_B xname] $pl_Bdb table]]
+    check "PL10 ⚠ U8 ...and the hand-off GIVES THE CONTEXT BACK: it ran from ANOTHER window's context, it plotted -- so the loan was TAKEN and not merely attempted -- and `xschem get current_win_path` is the gesture's own window again afterwards, not the viewer's.  PL1 asserts this for `calc::plot_in_token` with the same discriminant; `calc::wave_in_token`'s `wviewer::leave_ctx` had no assertion anywhere, and dropping it leaves the user's next action landing in the waveform viewer while every model row in this band stays green.  The non-vacuity leg is the third one: `.drw` has no raw loaded at all, so a hand-off that plotted must have switched" \
+        [list $pl_ctx_was \
+              [expr {[string match ERR:* $pl_hand] ? "RAISED:$pl_hand" : [dg $pl_hand ok]}] \
+              [expr {[string is integer -strict $pl_drwraw] && $pl_drwraw < 0}] \
+              $pl_ctx_back] \
+        {.drw 1 1 .drw}
+    check "PL10 ⚠⚠ ...and it is the SECOND destination's curve and not the FIRST's, which is the defect this band exists for: two coexisting destinations answer the IDENTICAL two column names, and an unarmed `add_trace` resolves a bare name through `resolve_signal_db` -- the first slot in `signal_list_all` order that has it -- so a hand-off that armed only the sweep channel draws the first measurement for ever after and passes every single-measurement row.  The two databases are asserted to be different names first, or the row would be comparing one thing with itself" \
+        [list [expr {$pl_Adb ne $pl_Bdb ? {differ} : "SAME:$pl_Adb"}] \
+              [dg $pl_tr rawfile] \
+              [expr {[dg $pl_tr rawfile] eq $pl_Adb ? {FIRST} : {notfirst}}]] \
+        [list differ $pl_Bdb notfirst]
+    check "PL10 ...and the destination got its OWN strip: the layout gained exactly one strip, that strip holds exactly the one measured trace, and the strips that were already there are untouched -- which is what `graph_fullxzoom` needs, because it frames a whole rect from ONE x quantity and a measured wave stacked with ordinary ones is drawn off-window (measured on the bare verbs in band WD12 of test_calc_wave_dest.tcl).  A hand-off that reached `wviewer::add_trace` directly creates no strip and clamps to the LAST one, which is exactly that mixed strip" \
+        [list [expr {[llength [pl_shape $::tok]] - [llength $pl_shape0]}] \
+              [expr {[llength [alltraces $::tok]] - $pl_n0}] \
+              [expr {[lsearch -exact [pl_shape $::tok] 1] >= 0 ? {hasown} : {NOOWNSTRIP}}]] \
+        {1 1 hasown}
+    # the strip the measured trace landed on, found rather than assumed
+    set pl_gi -1
+    set pl_gs {}
+    catch {set pl_gs [dict get [wviewer::layout_for $::tok] graphs]}
+    for {set i 0} {$i < [llength $pl_gs]} {incr i} {
+        foreach tr [pcall dict get [lindex $pl_gs $i] traces] {
+            if {[dg $tr vec] eq [dg $pl_B yname]} { set pl_gi $i }
+        }
+    }
+    check "PL10 ...and the rect text the strip generates carries ONE `sweep=` token for its one trace, naming the destination's own X column -- which is the POSITIVE SHAPE band WD4 of test_calc_wave_dest.tcl asserts over a model dict, asserted here over the layout the product actually built.  A SHORT list would carry its last token forward and silently re-axe every later trace, and an ABSENT one would drop every trace to column 0: both are measured behaviourally in band WD12" \
+        [list [expr {$pl_gi >= 0 ? {found} : {NOSTRIP}}] \
+              [pl_sweeptoks $::tok $pl_gi]] \
+        [list found [list [dg $pl_B xname]]]
+    check "PL10 ...and NEITHER one-shot channel is left armed on this window, read without consuming them: an arm whose caller refuses before reaching `plot_signals` persists for that token and silently re-axes the NEXT plot in that window, and the hand-off has at least as many refusal returns as `calc::plot_rpn`'s three" \
+        [pl_armleft $::tok] {}
+    # ...and an ordinary Plot press AFTER the measured one is unaffected, which is
+    # the consequence a leaked arm would have and the one a user would meet.
+    pcall bufset {v(ramp)}
+    set pl_said2 [press .calc.mode.plot]
+    update idletasks
+    set pl_last {}
+    foreach tr [alltraces $::tok] { if {[dg $tr vec] eq {v(ramp)}} { set pl_last $tr } }
+    check "PL10 ...and the NEXT ordinary Plot press is unaffected: its trace carries NO sweep key, NO rawfile and NO sim_type, so it is on the loaded database's own X exactly as it was before the measured wave arrived -- which is the user-visible consequence a leaked arm would have had, asserted positively rather than as the absence of a symptom" \
+        [list [string match {Plotted*} $pl_said2] \
+              [expr {$pl_last eq {} ? {NOTRACE} : {found}}] [pl_trkeys $pl_last]] \
+        {1 found {v(ramp) NOKEY:sweep NOKEY:rawfile NOKEY:sim_type}}
+    # --- hygiene: the destinations are this band's, not the session's -------
+    set pl_dropA [pcall calc::wave_dest_drop $pl_A]
+    set pl_dropB [pcall calc::wave_dest_drop $pl_B]
+    set t1 {}
+    if {[catch {wviewer::enter_ctx $::tok} t1]} { set t1 {0 {}} }
+    if {[lindex $t1 0]} {
+        catch {wviewer::clear_all $::tok}
+        catch {wviewer::leave_ctx $::tok $t1}
+    }
+    pcall bufset {}
+    update idletasks
+    check "PL10 hygiene: both destinations this band built are dropped and the canvas is empty again, so PL8 and PL9 below measure the session rather than this band's leftovers" \
+        [list $pl_dropA $pl_dropB [llength [alltraces $::tok]] [pl_armleft $::tok]] \
+        {1 1 0 {}}
 }
 
 # =============================================================================

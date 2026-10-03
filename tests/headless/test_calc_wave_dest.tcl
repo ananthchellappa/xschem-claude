@@ -273,8 +273,11 @@
 #        `op` slot, which is slot 2 of three.
 #   WD4  §9's ONE FENCE: `wviewer::graph_props` emits exactly one `sweep=` token
 #        per trace, IN NODE ORDER, with the mixed-axis trace in the MIDDLE of
-#        the strip; and a token list is never SHORT, which is the defect all
-#        seven graph walkers share.  Plus `wviewer::add_trace` accepting a sweep,
+#        the strip; and a token list is never SHORT, which is the defect the
+#        carry-forward half of the graph walkers share -- that population is
+#        DERIVED out of src/*.c by band WD12's first row and is deliberately not
+#        a number here, because the number this sentence used to carry was wrong
+#        in four places at once.  Plus `wviewer::add_trace` accepting a sweep,
 #        and -- its LAST row, driven on the AC analysis rather than on `tran` --
 #        that the ordinary traces' token is READ out of the current database and
 #        not assumed to be `time`.  ⚠ That last row was ADDED after the band's
@@ -322,6 +325,21 @@
 #        a `tran` slot at index 1, so whichever type a producer writes down, one
 #        of the two rows names the slot it landed on.  Measured in both
 #        directions, as live producers, not reasoned.
+#   WD12 THE VIEWER HAND-OFF (stage J unit J1b), COUNTED HALF ONLY.  The
+#        `sweep=` reader population DERIVED out of src/*.c and partitioned by
+#        whether the body carries the token forward; one BEHAVIOURAL witness
+#        through the single reader that is both headless and discriminating,
+#        telling a FULL list from a SHORT one from an ABSENT one on a five-trace
+#        strip whose own-X trace is THIRD; `graph_fullxzoom` framing a mixed
+#        strip from one x name, which is why a measured wave needs its OWN strip;
+#        and then the hand-off itself -- derived so that arming one channel
+#        without the other reddens, driven with TWO destinations registered so
+#        that passing a column name instead of a registry INDEX reddens, and
+#        asserted to take both arms back on the refusing and the raising paths.
+#        ⚠ WHAT IT CANNOT SEE: a trace appearing (band PL10 of
+#        test_calc_plot.tcl) and anything the click does to the buffer, the
+#        status line or the undo history (band S28/7 of
+#        test_calc_skeleton.tcl).  Both suites are `dcases` ALONE.
 #   WD10 Hygiene and shape: no `__calc_tmp*` and no `__wd_*` left in any
 #        inventory on any exit path; the helper is not named `calc::dest_*`; the
 #        producer's code names no `.calc` widget path, so it stays reachable
@@ -350,6 +368,17 @@
 #     over the UNION of the deferring and the wired callers, so it holds at four
 #     on both sides of the change -- which is the point of deriving it over the
 #     union rather than decrementing a floor over one half.
+#   * BAND WD12's FIRST FIVE ROWS.  Two are the `sweep=` reader DERIVATION and
+#     its own non-vacuity control, which are claims about src/*.c and have
+#     nothing to do with whether the hand-off exists.  Three are HAZARD rows on
+#     the bare verbs, in band WD0's sense: that the token is load-bearing where
+#     the own-X column is not column 0, that a SHORT list and an ABSENT list are
+#     two different failures, and that `graph_fullxzoom` cannot frame a mixed
+#     strip.  They pass today and they are what make the rows after them worth
+#     reading.  Two more rows in that band are INSTRUMENT rows and pass today for
+#     a reason worth stating: the "no arm left behind" leg reads empty on a tree
+#     where nothing arms anything, so the row beside it drives the channels
+#     directly to show they really do persist when nobody takes them.
 #   * WD10's `calc::dest_*` row, its `cross_msg` arm sweep, its decommenter
 #     non-vacuity row and its `wd_dictsites` row, which is a claim about THIS
 #     FILE'S OWN TEXT and so has nothing to do with whether the feature exists.
@@ -369,12 +398,21 @@
 #     the C-side in-graph measurement is already correct, so only the readout bar
 #     is wrong.  It belongs in the `dcases` viewer suite, not here.
 #  H2 THE RENDERING IS NOT FENCED HERE, ON PURPOSE AND NOT FOR WANT OF A DISPLAY.
-#     All SEVEN graph walkers carry the `sweep=` token forward by name --
-#     `graph_fullxzoom`, `graph_fullyzoom`, `find_closest_wave`, `graph_point_at`,
-#     `wave_hilight_envelope`, `graph_wave_resolve` and `draw_graph` -- so a fence
-#     that only renders misses six of them.  WD4 asserts the POSITIVE SHAPE of
-#     what `graph_props` emits, which is upstream of all seven.  What stays
-#     unmeasured is that the engine then draws it, and that is a `look` debt.
+#     SEVERAL graph walkers read the `sweep=` token and only SOME of them carry
+#     the last non-empty one forward, so a fence that only renders misses the
+#     rest.  ⚠ THIS HOLE USED TO SAY *"all SEVEN walkers carry it forward"* AND
+#     NAME `graph_fullxzoom` FIRST AMONG THEM.  That is wrong twice over:
+#     `graph_fullxzoom` reads field ONE once and carries nothing, and the
+#     population is larger than seven.  The sentence is now a SHAPE and the
+#     membership is DERIVED every run by band WD12's first row, which partitions
+#     the readers and reddens naming any new one -- because the seven was right
+#     about a different predicate (`test_node_token_split.tcl`'s NDR2/NDR3:
+#     seven `node=` walkers resolve the sweep column BY NAME) and was reused for
+#     this one without re-deriving the set.  WD4 asserts the POSITIVE SHAPE of
+#     what `graph_props` emits, which is upstream of every reader, and band WD12
+#     adds ONE behavioural witness through the single reader that is both
+#     headless and discriminating.  What stays unmeasured is that the engine then
+#     DRAWS it, and that is a `look` debt.
 #  H3 `wviewer::add_trace`'s SWEEP KEY ON `trd` IS FENCED ONLY BY ARITY.
 #     `add_trace` answers "unknown viewer window" with no viewer, so the key it
 #     puts on the trace dict cannot be read headless.  WD4 asserts the parameter
@@ -462,6 +500,25 @@
 #     return early on `calc::has_win .calc.buf`, so headless they are no-ops and
 #     NOTHING in this file or in `test_calc_measure` can observe it; the fence
 #     belongs to the `dcases`-only suites and to unit J1b.
+# H13 ⚠ ONE `sweep=` READER OF SIX IS REACHED BEHAVIOURALLY AND THE OTHER FIVE
+#     ARE NOT, MEASURED DOOR BY DOOR RATHER THAN ASSUMED.  Band WD12's witness
+#     goes through `graph_wave_resolve`, which `xschem graph_marker add_at`
+#     reaches headless.  The other five were each tried: `xschem get
+#     graph_closest_wave` answers `{-1 -1}` with no window transform,
+#     `xschem get graph_wave_at` answers empty, `xschem get wave_hilight_points`
+#     answers 0 because it needs a real canvas, `graph_fullyzoom` runs but the
+#     sweep reaches only its custom-data arm, and `draw_graph` needs a canvas
+#     outright.  So the fence over the other five is WD4's positive-shape
+#     assertion, which is upstream of all of them, and the three first-token-only
+#     readers -- including two user-visible surfaces, the cursor-B backannotation
+#     and the strip's mouse-to-X mapping -- are a DIFFERENT defect that no
+#     carry-forward fence touches at all.
+# H14 `wd_csyms` IS A HEURISTIC, NOT A C PARSER, exactly as `wd_code` is not a Tcl
+#     one.  A definition header must start at column 0, its body must open within
+#     twelve lines, and it must end at a line that is an unindented close brace on
+#     its own.  Its non-vacuity is a ROW -- hundreds of symbols, and three named
+#     members found across two files -- so a partition that went empty cannot pass
+#     as agreement; it is not a guarantee against a pathological definition.
 #
 # Standalone from the repo ROOT, headless.  NOT a bare `./src/xschem`, which
 # inherits $DISPLAY and paints on the user's real screen:
@@ -1045,6 +1102,301 @@ proc wd_calc_dest_procs {} {
 }
 
 # ---------------------------------------------------------------------------
+# BAND WD12's instruments: the VIEWER hand-off, and the `sweep=` readers derived
+# out of the C rather than counted from a sentence.
+# ---------------------------------------------------------------------------
+
+# the registry INDEX of a slot named by path AND type.  `wviewer::db_by_index`
+# wants an integer and a COLUMN NAME cannot serve: two coexisting destinations
+# answer the identical two column names, so a hand-off that passes a name
+# instead of an index draws the FIRST destination for ever after -- which is
+# this stage's most expensive wrong implementation and is silent.
+proc wd_rawidx {name type} {
+    foreach s [wd_slots] {
+        if {[lindex $s 1] eq $name && [lindex $s 2] eq $type} { return [lindex $s 0] }
+    }
+    return NOSLOT
+}
+
+# A THREE-COLUMN `table` database whose own-X column is COLUMN ONE, built on the
+# bare `xschem raw` verbs with no Calculator code in it at all.
+#
+# WARN IT EXISTS BECAUSE THE PRODUCT'S OWN SHAPE CANNOT DISCRIMINATE.
+# `calc::wave_dest` builds with `xschem raw new <name> table <xname> 0 n-1 1`,
+# so its X is COLUMN ZERO -- measured, for every destination it has ever built
+# -- and `graph_wave_resolve`'s `sw` initialises to 0.  A destination therefore
+# draws against its own X even with NO `sweep=` token at all, so a row driven
+# only on the product's own database is GREEN whether the token was emitted or
+# not.  Here the own-X column is NOT column 0, and the ordinary database carries
+# a column of the SAME NAME with different samples, so absent, short and full
+# are three different numbers rather than one number three times.
+proc wd_axprobe {n} {
+    catch {xschem raw clear __wd_axprobe table}
+    set rc 0
+    if {[catch {set rc [xschem raw new __wd_axprobe table __wd_pzero 0 \
+                            [expr {$n - 1}] 1]} e]} { return "ERR:new:$e" }
+    if {$rc ne {1}} { return "NONEW:$rc" }
+    if {[catch {xschem raw add __wd_xsel {}} e]} { return "ERR:xsel:$e" }
+    if {[catch {xschem raw add __wd_py {}} e]} { return "ERR:py:$e" }
+    for {set i 0} {$i < $n} {incr i} {
+        catch {xschem raw set __wd_pzero $i [expr {100.0 + $i}]}
+        catch {xschem raw set __wd_xsel  $i [expr {7.0 + 0.5 * $i}]}
+        catch {xschem raw set __wd_py    $i [expr {$i * $i}]}
+    }
+    return [list [pcall xschem raw index __wd_pzero] \
+                 [pcall xschem raw index __wd_xsel] \
+                 [pcall xschem raw index __wd_py]]
+}
+
+# ONE graph rect, created once and re-propped per shape.  ONE, because
+# `graph_shares_x` groups rects by matching `sim_type=` tokens and
+# `wviewer::graph_props` emits no `sim_type` token at all, so a second rect
+# would join this one's shared-X group and a `fullxzoom` row would be measuring
+# the union of two strips.
+set wd_graphmade 0
+proc wd_mkgraph {nodes sweep} {
+    catch {xschem set rectcolor 2}
+    if {!$::wd_graphmade} {
+        if {[catch {xschem rect 0 0 800 400 -1 {flags=graph} 0} e]} { return "ERR:rect:$e" }
+        set ::wd_graphmade 1
+    }
+    foreach {t v} [list x1 0 x2 0.01 y1 -2 y2 2 divx 5 divy 5 dataset -1 \
+                        sim_type tran] {
+        catch {xschem setprop rect 2 0 $t $v}
+    }
+    if {[catch {xschem setprop rect 2 0 node $nodes} e]} { return "ERR:node:$e" }
+    if {$sweep eq {}} {
+        catch {xschem setprop rect 2 0 sweep {}}
+    } elseif {[catch {xschem setprop rect 2 0 sweep $sweep} e]} {
+        return "ERR:sweep:$e"
+    }
+    return ok
+}
+
+# the X the ENGINE resolved for one trace, through the ONE `sweep=` walker that
+# is both headless and discriminating: `xschem graph_marker add_at` reaches
+# `graph_marker_sample` -> `graph_wave_resolve`, and `graph_marker list` hands
+# the resolved X back as field 5 ("%.17g", pinned by the scheduler's own
+# comment).  The other five carry-forward walkers are declared in hole H13.
+proc wd_markx {wave ds pt} {
+    set n {}
+    if {[catch {xschem graph_marker add_at 0 $wave $ds $pt} n]} { return "ERR:$n" }
+    if {$n eq {}} { return NOMARKER }
+    set l {}
+    if {[catch {xschem graph_marker list 0} l]} { return "ERR:list:$l" }
+    set got NOTLISTED
+    foreach m $l { if {[lindex $m 0] eq $n} { set got [lindex $m 5] } }
+    catch {xschem graph_marker delete $n}
+    return $got
+}
+# the X window `graph_fullxzoom` chooses for the whole rect.
+proc wd_fullx {} {
+    if {[catch {xschem setprop rect 2 0 fullxzoom} e]} { return "ERR:$e" }
+    set a {} ; set b {}
+    if {[catch {xschem getprop rect 2 0 x1} a]} { return "ERR:x1:$a" }
+    if {[catch {xschem getprop rect 2 0 x2} b]} { return "ERR:x2:$b" }
+    return [list $a $b]
+}
+# ...and the same span taken out of a COLUMN, so no row writes an interval down.
+proc wd_colspan {name dset} {
+    set c [wd_col $name $dset]
+    if {[string match ERR:* $c]} { return $c }
+    return [list [wd_at $c 0] [wd_at $c end]]
+}
+# two spans agree within the time tolerance, as WORDS.
+proc wd_spanword {got exp} {
+    if {[wd_len $got] ne {2} || [wd_len $exp] ne {2}} { return "notaspan:{$got}|{$exp}" }
+    foreach i {0 1} {
+        set g [wd_at $got $i] ; set e [wd_at $exp $i]
+        if {![wd_finite $g] || ![wd_finite $e]} { return "notfinite:{$g}|{$e}" }
+        if {$e == 0.0} {
+            if {abs($g) > $::WDTOL_TIME} { return "off:{$got}" }
+        } elseif {abs(($g - $e) / double($e)) > $::WDTOL_TIME} { return "off:{$got}" }
+    }
+    return same
+}
+
+# ---------------------------------------------------------------------------
+# THE `sweep=` READER POPULATION, DERIVED OVER `src/*.c` BY ENCLOSING SYMBOL.
+#
+# WARN THIS REPLACES A PROSE COUNT THAT WAS WRONG IN FOUR PLACES.  This file's
+# own band map, its hole H2, and two contract documents all said *"all seven
+# walkers carry the token forward"*.  Derived here and then read site by site:
+# the symbols that read the token do not partition seven-and-nothing, and
+# `graph_fullxzoom` -- the FIRST name on that list -- does not carry anything
+# forward at all.  The seven is right about a DIFFERENT predicate (rows
+# NDR2/NDR3 of tests/headless/test_node_token_split.tcl assert that seven
+# `node=` walkers resolve the sweep column BY NAME), and the count was reused
+# for a predicate nobody re-derived.  That is CLAUDE.md's `grep -c '#pragma'`
+# failure: a figure that survives because the set behind it is never recomputed.
+# So the set is recomputed here, every run, and a new walker lands in one
+# partition or reddens naming itself.
+#
+# `wd_csyms` is a HEURISTIC and not a C parser (hole H14): a definition header
+# starts at column 0, its body opens at the first brace within twelve lines, and
+# it ends at the first line that is an unindented close brace on its own.  Its
+# own non-vacuity is a ROW -- the symbol count and two known members.
+# ---------------------------------------------------------------------------
+proc wd_csyms {file} {
+    set out {}
+    if {[catch {open $file r} fh]} { return $out }
+    set txt [read $fh] ; close $fh
+    set lines [split $txt "\n"]
+    set n [llength $lines]
+    set ob [format %c 123]
+    set cb [format %c 125]
+    set i 0
+    while {$i < $n} {
+        set ln [lindex $lines $i]
+        if {![regexp {^[A-Za-z_][A-Za-z0-9_ \t\*]*\(} $ln]} { incr i ; continue }
+        if {![regexp {([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(} $ln -> sym]} { incr i ; continue }
+        set j $i ; set open -1
+        while {$j < $n && $j < $i + 12} {
+            set l2 [lindex $lines $j]
+            if {[string first ";" $l2] >= 0 && [string first $ob $l2] < 0} { break }
+            if {[string first $ob $l2] >= 0} { set open $j ; break }
+            incr j
+        }
+        if {$open < 0} { incr i ; continue }
+        set body {}
+        set k $open
+        while {$k < $n} {
+            lappend body [lindex $lines $k]
+            if {[lindex $lines $k] eq $cb} { break }
+            incr k
+        }
+        dict set out $sym [join $body "\n"]
+        set i [expr {$k + 1}]
+    }
+    return $out
+}
+# the partition.  A symbol CARRIES THE TOKEN FORWARD if its body assigns the
+# token-walk variable out of the walk (`sweep_name = stok`), which is the
+# assignment that is never undone -- `my_strtok_r` answers NULL once the list is
+# exhausted and the guard then leaves the previous name standing.  Everything
+# else that reads the token reads it ONCE, as field one.
+proc wd_sweepreaders {} {
+    set dir [file normalize [file join [file dirname $::WDSELF] .. .. src]]
+    set carry {} ; set once {} ; set nsym 0
+    foreach f [lsort [glob -nocomplain [file join $dir *.c]]] {
+        set d [wd_csyms $f]
+        incr nsym [dict size $d]
+        dict for {sym b} $d {
+            set hit 0
+            if {[regexp "\"sweep\"" $b]} { set hit 1 }
+            if {[regexp {sweep_name} $b]} { set hit 1 }
+            if {!$hit} continue
+            if {[regexp {sweep_name[ \t]*=[ \t]*stok} $b]} {
+                lappend carry $sym
+            } else {
+                lappend once $sym
+            }
+        }
+    }
+    return [dict create nsym $nsym carry [lsort -unique $carry] \
+                        once [lsort -unique $once]]
+}
+
+# ---------------------------------------------------------------------------
+# THE SPY ON `wviewer::plot_signals`, which is the ONLY way the COUNTED arm can
+# see what the hand-off armed.  Both one-shot channels are consumed INSIDE
+# `plot_signals`, on its first two lines, BEFORE it refuses an unknown window --
+# measured -- so a real call eats the evidence and a real window is a display.
+#
+# WARN THE RECORDER CARRIES THE REAL PROC'S FORMALS AND THEIR DEFAULTS, DERIVED
+# WITH `info args` AND `info default`, AND IT NAMES NOT ONE OF THEM.  A stub
+# declared with an `args` tail makes `info args` answer the single word `args`:
+# WD4's own `{3 grid 4 1 1}` leg would then read four formals as one and redden
+# against correct code, and row BM05 of test_wave_sigbrowser.tcl plus six
+# four-parameter spy stubs elsewhere in tests/ pin the same four.  Band S28/4 of
+# test_calc_skeleton.tcl records this trap from the caller's side, where it made
+# a conforming reference compose an EMPTY argument list.
+# ---------------------------------------------------------------------------
+proc wd_spy_install {{raise 0}} {
+    if {[info commands ::wviewer::plot_signals] eq {}} { return NOPROC }
+    if {[info commands ::wd_keep_ps] ne {}} { return ALREADY }
+    set fs {}
+    foreach a [info args ::wviewer::plot_signals] {
+        set dv {}
+        if {[info default ::wviewer::plot_signals $a dv]} {
+            lappend fs [list $a $dv]
+        } else {
+            lappend fs $a
+        }
+    }
+    set ::WD_SPY_RAISE $raise
+    catch {unset ::WD_SPY}
+    if {[catch {rename ::wviewer::plot_signals ::wd_keep_ps} e]} { return "ERR:$e" }
+    # ⚠ THE RAISING MODE THROWS *BEFORE* CONSUMING, AND THAT ORDER IS THE WHOLE
+    # POINT OF IT -- caught by a dry run against a conforming reference, where a
+    # recorder that took both channels and then threw made the "no arm left
+    # behind" leg GREEN against a hand-off that had no `take` at all.  A real
+    # `plot_signals` consumes on its first two lines, so what the leg has to
+    # measure is the CALLER's own unconditional take, which is
+    # `wviewer::browser_plot_ids`' own idiom and its own comment: a no-op after
+    # a real call, a CLEAR after a stub.  Throwing first is what leaves
+    # something for the caller to clear.
+    proc ::wviewer::plot_signals $fs {
+        set as [info args ::wviewer::plot_signals]
+        set rec {}
+        foreach f $as { dict set rec $f [set $f] }
+        set tk [dict get $rec [lindex $as 0]]
+        if {$::WD_SPY_RAISE} { error {WD12 forced seam failure} }
+        dict set rec dbs    [wviewer::plot_dbs_take $tk]
+        dict set rec sweeps [wviewer::plot_sweeps_take $tk]
+        set ::WD_SPY $rec
+        return {}
+    }
+    return ok
+}
+proc wd_spy_remove {} {
+    if {[info commands ::wd_keep_ps] eq {}} { return NOPROC }
+    catch {rename ::wviewer::plot_signals {}}
+    if {[catch {rename ::wd_keep_ps ::wviewer::plot_signals} e]} { return "ERR:$e" }
+    return ok
+}
+proc wd_spy {k} {
+    if {![info exists ::WD_SPY]} { return NOTCALLED }
+    if {[catch {dict exists $::WD_SPY $k} h]} { return "NOTADICT" }
+    if {!$h} { return "NOKEY-$k" }
+    return [dict get $::WD_SPY $k]
+}
+# what the two one-shot channels STILL hold for a token, read WITHOUT consuming.
+# An arm whose caller refuses before reaching `plot_signals` PERSISTS for that
+# token and silently re-axes the NEXT plot in that window -- `calc::plot_rpn`
+# has three refusal returns ahead of its own `plot_signals` call, and the
+# hand-off will have at least as many.  The non-consuming read is the honest
+# instrument: a `take`-based one would clear the leak it is measuring.
+proc wd_armleft {tok} {
+    set out {}
+    if {[info exists ::wviewer::plotdbs($tok)]}    { lappend out dbs }
+    if {[info exists ::wviewer::plotsweeps($tok)]} { lappend out sweeps }
+    return [lsort $out]
+}
+# the `::calc::` procs whose DECOMMENTED body names a given `::wviewer::` verb.
+proc wd_calc_naming {verb} {
+    set pat {}
+    append pat {wviewer::} $verb {([^A-Za-z0-9_]|$)}
+    set out {}
+    foreach p [lsort [pcall info procs ::calc::*]] {
+        set b [pcall info body $p]
+        if {[string match ERR:* $b]} continue
+        if {[regexp $pat [wd_code $b]]} { lappend out [namespace tail $p] }
+    }
+    return $out
+}
+# ...and the same over a plain regexp, for the `calc::` verbs and widget paths.
+proc wd_calc_matching {pat} {
+    set out {}
+    foreach p [lsort [pcall info procs ::calc::*]] {
+        set b [pcall info body $p]
+        if {[string match ERR:* $b]} continue
+        if {[regexp $pat [wd_code $b]]} { lappend out [namespace tail $p] }
+    }
+    return $out
+}
+
+# ---------------------------------------------------------------------------
 # BAND WD11's instruments.  Every one answers a WORD or a list this file
 # re-derives, never a reproducible number, for the reason `wd_distinct` records
 # -- and every one is a PROC rather than a ternary at the row site, for the
@@ -1532,8 +1884,11 @@ group WD4 {
     # §9's ONE FENCE, and it asserts THE POSITIVE SHAPE rather than the absence
     # of a wrong rendering -- that rule is in CLAUDE.md because a symptom-keyed
     # fence dies quietly when something else cures the symptom, and here it has a
-    # second reason: ALL SEVEN graph walkers carry the `sweep=` token forward
-    # with their own copy of the idiom, so a fence that only renders misses six.
+    # second reason: SEVERAL graph walkers carry the `sweep=` token forward with
+    # their own copy of the idiom, so a fence that only renders misses the rest.
+    # The population is DERIVED in band WD12's first row rather than counted
+    # here -- the count this comment used to carry was wrong, and wrong in four
+    # places at once, which is the reason it is a row now.
     #
     # ⚠ THE MIXED-AXIS TRACE SITS IN THE MIDDLE OF THE STRIP.  In LAST position
     # the carry-forward defect is invisible: there is no later trace for the
@@ -1553,7 +1908,7 @@ group WD4 {
         [list [wd_at $tm 1] [string equal [wd_at $tm 0] [wd_at $tm 2]] \
               [string equal [wd_at $tm 0] calcx]] \
         {calcx 1 0}
-    check "WD4 ...and the ordinary traces' token names a REAL column of the loaded database rather than a literal or an empty string, so the token is resolvable by name the way all seven walkers resolve it" \
+    check "WD4 ...and the ordinary traces' token names a REAL column of the loaded database rather than a literal or an empty string, so the token is resolvable by name the way every walker resolves it" \
         [list [pcall xschem raw index [wd_at $tm 0]] [string equal [wd_at $tm 0] $sw]] \
         {0 1}
     check "WD4 ...and the same claim on a FIVE-trace strip with the own-X trace third, so the count is a property of the generator and not of a three-element coincidence" \
@@ -1584,13 +1939,23 @@ group WD4 {
     # swallows it, so every browser gesture check would read as "the gesture did
     # nothing".  The sweep must therefore travel in the trace dict and through the
     # existing out-of-band one-shot channel, never as a new parameter on either.
-    check "WD4 graph_props keeps its THREE parameters and plot_signals its FOUR, both of which are pinned by rows in other suites -- so the sweep travels in the trace dict and through the armed one-shot channel, never as a new parameter" \
+    # ⚠ AND THE FIRST TWO FORMAL NAMES OF `plot_signals` ARE PINNED TOO, which is
+    # a premise band WD12 leans on rather than a second copy of the arity claim:
+    # that band RENAMES `plot_signals` aside to a recorder -- the only way a
+    # counted arm can see what the hand-off armed, because both one-shot channels
+    # are consumed on this proc's first two lines -- and the recorder reports what
+    # it was handed under those two names.  Pinning them here is what keeps the
+    # recorder from reading a renamed formal as a missing one.
+    check "WD4 graph_props keeps its THREE parameters and plot_signals its FOUR, both of which are pinned by rows in other suites -- so the sweep travels in the trace dict and through the armed one-shot channel, never as a new parameter -- and plot_signals' first two formals keep the names band WD12's recorder reports under" \
         [list [llength [pcall info args ::wviewer::graph_props]] \
               [lindex [pcall info args ::wviewer::graph_props] 2] \
               [llength [pcall info args ::wviewer::plot_signals]] \
+              [lrange [pcall info args ::wviewer::plot_signals] 0 1] \
               [llength [pcall info procs ::wviewer::plot_dbs_arm]] \
-              [llength [pcall info procs ::wviewer::plot_dbs_take]]] \
-        {3 grid 4 1 1}
+              [llength [pcall info procs ::wviewer::plot_dbs_take]] \
+              [llength [pcall info procs ::wviewer::plot_sweeps_arm]] \
+              [llength [pcall info procs ::wviewer::plot_sweeps_take]]] \
+        {3 grid 4 {token exprs} 1 1 1 1}
     # ⚠⚠ THE ONE ROW IN THIS BAND THAT IS NOT DRIVEN ON `tran`, AND IT IS HERE
     # BECAUSE A SABOTAGE SURVIVED THE BAND'S FIRST REVISION.  `set swdflt time`
     # in `wviewer::graph_props` -- hardcoding the ordinary trace's X name instead
@@ -2261,6 +2626,296 @@ group WD11 {
               NOKEY-db 1 {}]
     check "WD11 R402 the whole band left no __calc_tmp*, no __wd_* and no destination slot behind, across its measured, absent, dropped and three-slot paths" \
         [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot]] {{} {} 1 0}
+}
+# =========================================================================
+group WD12 {
+    # STAGE J UNIT J1b -- THE VIEWER HAND-OFF, AND ONLY THE HALF A COUNTED ARM
+    # CAN SEE.
+    #
+    # Unit J1 landed the producer: a default-cycle `dutyCycle` answers a
+    # REGISTERED two-column destination and the click says where it went.  What
+    # it did NOT do is put a trace on the screen -- `wviewer::plot_sweeps_arm`
+    # has ZERO callers and its own banner says so -- so the user gets a database
+    # in the Results picker and has to plot it by hand.  This band is the
+    # WIRING: that the hand-off exists, that it arms BOTH one-shot channels,
+    # that it names the destination by REGISTRY INDEX, and that it takes the
+    # arms back on every exit path.
+    #
+    # WARN WHAT THIS BAND CANNOT SEE, SAID FIRST SO NO GREEN RUN IS READ AS
+    # COVERAGE.  `wviewer::plot_signals` refuses an unknown window, and
+    # `wviewer::signal_list_all` answers `{}` without one, so `add_trace`'s
+    # named-database arm is UNREACHABLE headless and nothing here observes a
+    # trace appearing.  That claim lives in band PL10 of
+    # tests/headless/test_calc_plot.tcl, a `dcases` entry ALONE, and only a
+    # gate's DISPLAY arm runs it.  The three claims about the ACT -- the RPN
+    # buffer really untouched, the sentence really on `.calc.status.msg`,
+    # R421's undo state really unmoved -- are band S28/7 of
+    # tests/headless/test_calc_skeleton.tcl, also `dcases` ALONE and reporting
+    # `ALL PASS (0 checks)` under `--nogui`.
+    #
+    # WARN THE FIRST THREE ROWS PASS TODAY AND ARE DECLARED, not left for a
+    # reader to notice.  They are this band's HAZARD rows, in band WD0's sense:
+    # they establish on the bare verbs that the `sweep=` token is load-bearing,
+    # that a SHORT list and an ABSENT list are two DIFFERENT failures, and that
+    # auto-X-zoom cannot frame a mixed strip -- which is what makes the own-strip
+    # requirement evidence rather than an opinion, and what makes the rows after
+    # them worth reading.
+    pcall wd_load1
+
+    # --- the walker population, DERIVED ---------------------------------
+    set wdsr [pcall wd_sweepreaders]
+    set wdcarry {} ; set wdonce {} ; set wdnsym 0
+    if {![string match ERR:* $wdsr]} {
+        catch {set wdcarry [dict get $wdsr carry]}
+        catch {set wdonce  [dict get $wdsr once]}
+        catch {set wdnsym  [dict get $wdsr nsym]}
+    }
+    set wdboth {}
+    foreach s $wdcarry { if {[lsearch -exact $wdonce $s] >= 0} { lappend wdboth $s } }
+    check "WD12 the `sweep=` reader population is DERIVED over the enclosing C symbol of every line in src/*.c that reads the token, and PARTITIONED by whether the body assigns the token-walk variable out of the walk -- the assignment my_strtok_r never undoes -- so the carry-forward set and the read-it-once set are two measured sets rather than a sentence, the two partitions are disjoint, and a new walker lands in one of them or reddens naming itself.  Four copies of prose in this tree said all seven walkers carry it forward, and the first name on that list does not" \
+        [list $wdcarry $wdonce $wdboth] \
+        [list {draw_graph find_closest_wave graph_fullyzoom graph_point_at graph_wave_resolve wave_hilight_envelope} \
+              {backannotate_cursor_b_in_db graph_fullxzoom graph_x_extent graph_x_union_add graph_x_union_rect waves_callback} \
+              {}]
+    check "WD12 ...and the scanner the row above leans on is not vacuous: it finds hundreds of C symbols across src/*.c, it found the two walkers this band actually drives, and it found the one in a DIFFERENT file from the other eleven -- so an empty or near-empty partition cannot pass as agreement" \
+        [list [expr {[string is integer -strict $wdnsym] && $wdnsym > 200 ? {many} : "nsym=$wdnsym"}] \
+              [expr {[lsearch -exact $wdcarry graph_wave_resolve] >= 0 ? 1 : 0}] \
+              [expr {[lsearch -exact $wdonce graph_fullxzoom] >= 0 ? 1 : 0}] \
+              [expr {[lsearch -exact $wdonce waves_callback] >= 0 ? 1 : 0}]] \
+        {many 1 1 1}
+
+    # --- HAZARD: absent, short and full are three different numbers -------
+    #
+    # WARN THE SPECIAL TRACE SITS THIRD OF FIVE.  In LAST position the
+    # carry-forward is invisible, because there is no later trace for the
+    # carried token to re-axe -- and a three-trace strip makes the claim a
+    # three-element coincidence.
+    #
+    # WARN AND THE DISCRIMINATING INGREDIENT IS THE FIXTURE, NOT THE ROW.  The
+    # probe database's own-X column is COLUMN ONE, and the ordinary database
+    # carries a column of the SAME NAME with different samples.  Both halves are
+    # required: without the first, an absent token still lands on the own-X
+    # column (which is where a real destination's X is, so the product's own
+    # shape cannot discriminate); without the second, a carried token fails to
+    # resolve in the ordinary database and falls back to column 0, which is the
+    # ordinary sweep -- the right answer for the wrong reason.
+    set wdn 12
+    set wdcols [pcall wd_axprobe $wdn]
+    pcall xschem raw switch $::fixture tran
+    pcall xschem raw add __wd_xsel {time 1e-3 +}
+    set wdmainx  [wd_col time 0]
+    set wdmainalt [wd_col __wd_xsel 0]
+    pcall xschem raw switch __wd_axprobe table
+    set wdpzero [wd_col __wd_pzero 0]
+    set wdpsel  [wd_col __wd_xsel 0]
+    pcall xschem raw switch $::fixture tran
+    set wdpt 3
+    set wdnodes "v(sq)\nv(ramp)\n__wd_py%__wd_axprobe table\nv(div)\nv(lp)"
+    set wdgot {}
+    foreach {wdlabel wdsw} [list full {time time __wd_xsel time time} \
+                                 short {time time __wd_xsel} \
+                                 absent {}] {
+        set mk [pcall wd_mkgraph $wdnodes $wdsw]
+        set row {}
+        foreach w {0 1 2 3 4} { lappend row [wd_markx $w 0 $wdpt] }
+        lappend wdgot [list $wdlabel $mk $row]
+    }
+    # every comparand is read out of a COLUMN in the same run; no interval and no
+    # sample value is written down anywhere in this band.
+    set wdTm [wd_at $wdmainx $wdpt]
+    set wdTa [wd_at $wdmainalt $wdpt]
+    set wdPz [wd_at $wdpzero $wdpt]
+    set wdPs [wd_at $wdpsel $wdpt]
+    proc wd_xword {row a b c d e} {
+        set exp [list $a $b $c $d $e]
+        set out {}
+        for {set i 0} {$i < 5} {incr i} {
+            lappend out [wd_distinct [wd_at $row $i] [lindex $exp $i] $::WDTOL_TIME]
+        }
+        return [lsort -unique $out]
+    }
+    check "WD12 the token is LOAD-BEARING and a SHORT list is a DIFFERENT failure from an ABSENT one, measured through the one `sweep=` walker that is both headless and discriminating -- graph_marker add_at reaching graph_wave_resolve -- on a FIVE-trace strip whose own-X trace is THIRD: a FULL list puts the special trace on its own X and every ordinary trace on the loaded sweep, a SHORT list leaves the two traces AFTER the special one carrying its token and silently re-axed onto a same-named column of the ordinary database, and an ABSENT list drops the special trace to column 0 of its own database.  Every comparand is read out of a column in this run" \
+        [list [lindex [lindex $wdgot 0] 1] \
+              [wd_xword [lindex [lindex $wdgot 0] 2] $wdTm $wdTm $wdPs $wdTm $wdTm] \
+              [wd_xword [lindex [lindex $wdgot 1] 2] $wdTm $wdTm $wdPs $wdTa $wdTa] \
+              [wd_xword [lindex [lindex $wdgot 2] 2] $wdTm $wdTm $wdPz $wdTm $wdTm]] \
+        {ok same same same}
+    check "WD12 ...and the instrument cannot have gone vacuous on a regenerated fixture: the four X values the three rows above tell apart are PAIRWISE DISTINCT at the time tolerance, and the probe's own-X column really is column ONE while the ordinary database's same-named column really is not its sweep -- so `same` three times is agreement and not one number compared with itself" \
+        [list [wd_alldistinct [lsort -real [list $wdTm $wdTa $wdPz $wdPs]] $WDTOL_TIME] \
+              $wdcols [pcall xschem raw index time] \
+              [expr {[pcall xschem raw index __wd_xsel] > 0 ? {nonzero} : {ZERO}}]] \
+        {distinct {0 1 2} 0 nonzero}
+
+    # --- HAZARD: auto-X-zoom cannot frame a mixed strip -------------------
+    #
+    # WARN THIS IS WHY THE DESTINATION NEEDS ITS OWN STRIP, and it is the reason
+    # the hand-off must go through `wviewer::plot_signals` (which runs
+    # `plan_plot` and CREATES strips) rather than straight to
+    # `wviewer::add_trace` (which creates nothing and clamps an out-of-range
+    # strip index to the LAST strip, i.e. builds exactly the mixed strip this row
+    # measures).  `graph_x_extent` contains `if(idx < 0) return 0;` with its own
+    # comment saying a database that lacks the target strip's x quantity
+    # contributes nothing to the union -- so on a mixed strip the destination is
+    # drawn off-window, which is a pixel outcome with a headless cause.
+    #
+    # WARN THE COLLIDING COLUMN IS REMOVED FIRST, and the reason is a
+    # measurement rather than tidiness: `graph_x_union_rect` fixes ONE x NAME
+    # for the whole rect and then unions the extent over EVERY contributing
+    # database that HAS a column of that name, so while the ordinary database
+    # still carries a same-named column the own-X-first case frames the union of
+    # both spans and the row would be measuring a third thing.  The collision is
+    # what the marker rows above need and it is the opposite of what this row
+    # needs, which is why the two halves of the band cannot share one fixture.
+    pcall xschem raw switch $::fixture tran
+    catch {xschem raw del __wd_xsel}
+    set wdspans {}
+    pcall wd_mkgraph $wdnodes {time time __wd_xsel time time}
+    lappend wdspans [wd_fullx]
+    pcall wd_mkgraph $wdnodes {__wd_xsel time time time time}
+    lappend wdspans [wd_fullx]
+    pcall wd_mkgraph "__wd_py%__wd_axprobe table" {__wd_xsel}
+    lappend wdspans [wd_fullx]
+    pcall wd_mkgraph "v(sq)\nv(ramp)" {}
+    lappend wdspans [wd_fullx]
+    set wdmainspan [list [wd_at $wdmainx 0] [wd_at $wdmainx end]]
+    set wdprobespan [list [wd_at $wdpsel 0] [wd_at $wdpsel end]]
+    check "WD12 `graph_fullxzoom` sizes the whole rect from ONE x quantity -- the target rect's FIRST token, read once -- so a MIXED strip frames whichever database that token belongs to and the other one contributes NOTHING: own-X third gives the loaded sweep's span and the measured trace is off-window, own-X first gives the measured trace's span and the ordinary traces are, a destination-ONLY strip frames the destination correctly, and a plain strip is unaffected.  Both spans are read out of their columns" \
+        [list [wd_spanword [lindex $wdspans 0] $wdmainspan] \
+              [wd_spanword [lindex $wdspans 1] $wdprobespan] \
+              [wd_spanword [lindex $wdspans 2] $wdprobespan] \
+              [wd_spanword [lindex $wdspans 3] $wdmainspan] \
+              [string equal [wd_spanword $wdmainspan $wdprobespan] same]] \
+        {same same same same 0}
+
+    # --- THE HAND-OFF: derived, so neither half can be skipped ------------
+    #
+    # WARN BOTH CHANNELS OR NEITHER, AND THAT IS THE DEFECT NOBODY HAD NAMED.
+    # Unit J1 never drops a destination, so several coexist -- measured: two
+    # calls gave `__calc_dest1` and `__calc_dest2` and `xschem raw list` on EACH
+    # answers the identical two column names.  An UNARMED `add_trace` resolves a
+    # bare column name through `wviewer::resolve_signal_db`, which answers the
+    # FIRST slot in `signal_list_all` order that has the name, so every
+    # measurement after the first silently draws the first one's curve.  A
+    # hand-off that armed only the sweep channel passes any single-measurement
+    # row and is wrong on the second click.
+    set wdarmers [wd_calc_naming plot_sweeps_arm]
+    set wddbarmers [wd_calc_naming plot_dbs_arm]
+    set wdtakers {}
+    foreach nm $wdarmers {
+        set a [wd_calc_naming plot_sweeps_take]
+        set b [wd_calc_naming plot_dbs_take]
+        set c [wd_calc_naming plot_signals]
+        if {[lsearch -exact $a $nm] >= 0 && [lsearch -exact $b $nm] >= 0 \
+                && [lsearch -exact $c $nm] >= 0} { lappend wdtakers $nm }
+    }
+    check "WD12 the armer is DERIVED over the `::calc::` namespace and not named: the procs that arm the sweep channel are exactly the procs that arm the DATABASE channel, every one of them also names BOTH take partners and the plot verb between them, and the set is not empty -- so arming one channel without the other, or arming without consuming, reddens here naming the proc.  An armer placed in `::wviewer::` instead would leave this set empty, which is why the emptiness leg is a leg and not a comment" \
+        [list $wdarmers [string equal $wdarmers $wddbarmers] $wdtakers \
+              [wd_atleast [llength $wdarmers] 1]] \
+        [list $wdarmers 1 $wdarmers atleast]
+    check "WD12 ...and the set really is reached: at least one `::calc::` proc arms each channel, which is the leg that fails on a tree where NOTHING arms them -- `wviewer::plot_sweeps_arm`'s own banner says it has no callers at all, so this is the row that says unit J1b happened" \
+        [list [wd_atleast [llength $wdarmers] 1] [wd_atleast [llength $wddbarmers] 1] \
+              [expr {[lsearch -exact $wdarmers wave_show] >= 0 ? 1 : 0}]] \
+        {atleast atleast 1}
+
+    # --- THE HAND-OFF, BEHAVIOURALLY, WITH TWO DESTINATIONS COEXISTING -----
+    pcall wd_load1
+    set wdA [wd_call dutyCycle_scalar {v(lp)} 0.5]
+    set wdB [wd_call dutyCycle_scalar {v(lp)} 0.4]
+    set wdAdb [wd_key $wdA db]
+    set wdBdb [wd_key $wdB db]
+    set wdBidx [wd_rawidx $wdBdb table]
+    set wdAidx [wd_rawidx $wdAdb table]
+    set wdtok __wd_notawindow
+    set wdsi [pcall wd_spy_install]
+    set wdans [wd_call wave_show $wdtok $wdB]
+    set wdspydbs [wd_spy dbs]
+    set wdspysw  [wd_spy sweeps]
+    set wdspyex  [wd_spy exprs]
+    set wdspytok [wd_spy token]
+    set wdleft [wd_armleft $wdtok]
+    # ⚠ AND THE FOURTH FORMAL IS WHERE THE OWN STRIP COMES FROM, which is the
+    # correction the row above's hazard forces and it was MEASURED rather than
+    # reasoned: a hand-off that called `plot_signals` with the window's own
+    # destination created NO strip at all -- the Calculator's W13 default is
+    # `Append` -- so the measured trace landed on a populated strip and
+    # `graph_fullxzoom` could not frame it.  `plot_signals`' EXISTING fourth
+    # formal `destover` is the override, so the own strip costs no new parameter
+    # and WD4's `{3 grid 4 ...}` arity leg is untouched; `wviewer::dest_norm`
+    # spells that code `newstrip`, and it is read out of that proc here rather
+    # than written down.
+    set wdnewstrip [pcall wviewer::dest_norm {New Strip}]
+    check "WD12 the hand-off names the destination by REGISTRY INDEX, the X by COLUMN NAME and the STRIP by `plot_signals`' existing fourth formal, driven with TWO destinations registered whose column names are identical: the database channel is armed with the index of the answer's OWN slot and not the other one's and not zero, the sweep channel with that answer's own `xname`, the expression list is that answer's own `yname`, and the destination override is the viewer's own new-strip code -- read out of `wviewer::dest_norm` rather than spelled -- because `graph_fullxzoom` frames a whole rect from ONE x quantity and a measured wave stacked with ordinary traces is drawn off-window.  So a hand-off that passed a column name, armed nothing, or let the window's own Append destination stand, reddens here.  `wviewer::plot_signals` is recorded aside, because both channels are consumed on its first two lines and a real call eats the evidence" \
+        [list $wdsi [wd_disp $wdB] [wd_destname $wdBdb] \
+              [expr {$wdBidx ne $wdAidx ? {differ} : {SAME}}] \
+              $wdspydbs $wdspysw $wdspyex $wdspytok [wd_spy destover] \
+              [expr {$wdnewstrip ne {append} ? {real} : {NOTACODE}}]] \
+        [list ok measured named differ [list $wdBidx] [list [wd_key $wdB xname]] \
+              [list [wd_key $wdB yname]] $wdtok $wdnewstrip real]
+    check "WD12 ...and the one-shot channels are EMPTY afterwards, read without consuming them: the hand-off takes both back unconditionally, which is `wviewer::browser_plot_ids`' own idiom and its own comment -- a no-op after a real call, a clear after a stub -- so an arm cannot survive into the next plot in that window" \
+        [list $wdleft [wd_armleft $wdtok]] {{} {}}
+    # ...and the INSTRUMENT the row above leans on, asserted in the run: the
+    # channels really do persist when nobody takes them, so `{}` is a
+    # measurement and not a constant.
+    pcall wd_wv plot_sweeps_arm $wdtok {__wd_leak}
+    pcall wd_wv plot_dbs_arm $wdtok {7}
+    set wdpersist [wd_armleft $wdtok]
+    pcall wd_wv plot_sweeps_take $wdtok
+    pcall wd_wv plot_dbs_take $wdtok
+    check "WD12 ...and the INSTRUMENT: an arm that nobody takes PERSISTS for that token, so the empty answer above is a measurement rather than a proc that always answers empty -- and a take clears it again" \
+        [list $wdpersist [wd_armleft $wdtok]] {{dbs sweeps} {}}
+
+    # --- THE REFUSAL PATHS GIVE THE ARMS BACK TOO -------------------------
+    catch {unset ::WD_SPY}
+    set wdbad [wd_call wave_show $wdtok [dict replace $wdB db __wd_no_such_db]]
+    set wdbadleft [wd_armleft $wdtok]
+    pcall wd_spy_remove
+    pcall wd_spy_install 1
+    catch {unset ::WD_SPY}
+    set wdraise [wd_call wave_show $wdtok $wdB]
+    set wdraiseleft [wd_armleft $wdtok]
+    pcall wd_spy_remove
+    check "WD12 a hand-off that REFUSES, and one whose seam RAISES, each leave NO arm behind: an unregistered database is refused in a sentence of its own with nothing armed, and a `plot_signals` that throws is caught and answered as a refusal with both channels still taken back -- which is the leak `calc::plot_rpn`'s three refusal returns ahead of its own plot call make live.  The sentence's WORDS are not asserted: they are unratified and carry an open rule debt" \
+        [list [wd_disp $wdbad] [wd_longer [wd_msg $wdbad] 10] $wdbadleft \
+              [wd_disp $wdraise] [wd_longer [wd_msg $wdraise] 10] $wdraiseleft] \
+        {refused long {} refused long {}}
+
+    # --- THE ROUTE, STRUCTURALLY, AND THE ACT IS GATE-ONLY ----------------
+    #
+    # WARN THIS ROW IS A CLAIM ABOUT WIRING AND NOT ABOUT BEHAVIOUR, and the
+    # name says so because this tree has a standing rule about it: a row whose
+    # name describes its COVERAGE rather than its METHOD rots silently.  That
+    # `calc::fn_measure`'s destination arm really leaves the RPN buffer alone,
+    # really puts its sentence on `.calc.status.msg` and really leaves R421's
+    # undo history unmoved is observable ONLY on a display, because both
+    # `fn_measure` and `calc::buf_set_number` return early on
+    # `calc::has_win .calc.buf`.  Band S28/7 of test_calc_skeleton.tcl owns it
+    # and a `--nogui` number says nothing about it.
+    set wdreach [wd_calc_matching {calc::wave_(show|in_token)}]
+    set wdbuf [wd_calc_matching {calc::buf_(set_number|note_edit)}]
+    set wdhandbuf {}
+    foreach nm $wdarmers { if {[lsearch -exact $wdbuf $nm] >= 0} { lappend wdhandbuf $nm } }
+    set wdwidget {}
+    foreach nm $wdarmers {
+        if {[lsearch -exact [wd_calc_matching {\.calc\.}] $nm] >= 0} { lappend wdwidget $nm }
+    }
+    check "WD12 the click's destination arm REACHES the hand-off and the hand-off touches NOTHING the buffer owns -- derived in three walks over the decommented namespace rather than read: `calc::fn_measure` names the hand-off, no armer names `calc::buf_set_number` or `calc::buf_note_edit` (the proc that would move the undo HINTS while the undo HISTORY stood still), and no armer names a `.calc` widget path, which is what keeps this row on the counted arm at all.  THE BEHAVIOUR IS NOT MEASURED HERE: it is display-only, it is band S28/7's, and a green run of this row says only that the wiring is in place" \
+        [list [expr {[lsearch -exact $wdreach fn_measure] >= 0 ? 1 : 0}] \
+              $wdhandbuf $wdwidget \
+              [expr {[lsearch -exact $wdbuf fn_measure] >= 0 ? 1 : 0}]] \
+        {1 {} {} 1}
+
+    # --- hygiene ----------------------------------------------------------
+    pcall wd_call wave_dest_drop $wdA
+    pcall wd_call wave_dest_drop $wdB
+    catch {xschem raw clear __wd_axprobe table}
+    pcall xschem raw switch $::fixture tran
+    catch {xschem raw del __wd_xsel}
+    check "WD12 R402 the band left no __calc_tmp*, no __wd_* probe column, no destination slot and no armed channel behind, and `wviewer::plot_signals` is the real four-formal proc again with no rename standing -- which is the control that nothing below this point is measuring a recorder" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot] \
+              [wd_armleft $wdtok] \
+              [llength [pcall info args ::wviewer::plot_signals]] \
+              [llength [pcall info commands ::wd_keep_ps]]] \
+        {{} {} 1 0 {} 4 0}
 }
 # =========================================================================
 group WD10 {

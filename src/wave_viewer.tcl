@@ -4011,13 +4011,29 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # ABSENT list is a DIFFERENT and louder failure (every trace falls to column 0)
   # and is the legitimate state for a strip where no trace has its own X.
   #
-  # ⚠ ALL SEVEN WALKERS CARRY THE TOKEN FORWARD, each with its own copy of the
-  # idiom — graph_fullxzoom, graph_fullyzoom, find_closest_wave, graph_point_at,
-  # wave_hilight_envelope, graph_wave_resolve and draw_graph — so a short list
-  # mis-axes picking, bolding, markers and auto-zoom as well as the drawing. That
-  # is why the fence (band WD4 of tests/headless/test_calc_wave_dest.tcl) asserts
-  # the POSITIVE SHAPE of what this proc emits, upstream of all seven, rather
-  # than a rendering: a pixel fence would miss six of the seven.
+  # ⚠⚠ THE READERS ARE A POPULATION THIS COMMENT NO LONGER COUNTS, AND THE COUNT
+  # IT USED TO CARRY WAS WRONG TWICE. It said "all seven walkers carry the token
+  # forward" and named `graph_fullxzoom` FIRST among them; that symbol reads field
+  # ONE once, for the whole rect and the whole shared-X group, exactly as its own
+  # comment says, and carries nothing. Derived over src/*.c, the readers partition
+  # into the ones that assign the token-walk variable out of the walk -- where
+  # `my_strtok_r` answers NULL at the end and the guard leaves the previous name
+  # standing, so the name CARRIES FORWARD -- and the ones that read the first
+  # token once; and the population is larger than seven, with two user-visible
+  # readers in src/callback.c that no list anywhere named. Band WD12's first row
+  # of tests/headless/test_calc_wave_dest.tcl DERIVES both partitions every run
+  # and reddens naming a new walker, which is the only form that figure may take:
+  # a sentence that carries a number nothing re-checks is the defect this one was.
+  # (The SEVEN is right about a DIFFERENT predicate -- rows NDR2/NDR3 of
+  # tests/headless/test_node_token_split.tcl: seven `node=` walkers resolve the
+  # sweep column BY NAME -- and was reused here without re-deriving the set.)
+  #
+  # THE CONSEQUENCE IS UNCHANGED. A short list mis-axes picking, bolding, markers
+  # and auto-zoom as well as the drawing, so the fence (band WD4 of
+  # test_calc_wave_dest.tcl) asserts the POSITIVE SHAPE of what this proc emits,
+  # upstream of every reader, rather than a rendering: a pixel fence reaches only
+  # `draw_graph`. Band WD12 adds the one behavioural witness that is both headless
+  # and discriminating, through `xschem graph_marker add_at` -> `graph_wave_resolve`.
   #
   # So the token is emitted ONLY when it can be emitted in full: at least one
   # trace carries its own X, and every ordinary trace has a resolvable default to
