@@ -1,6 +1,6 @@
 # 1650 — `xschem raw add` evaluates every dataset as ONE sweep, so stateful opcodes carry across the boundary
 
-**STAMP:** `v1 claim=open tree=ffa8e040 stamped=2026-10-04 fix=none open=3`
+**STAMP:** `v1 claim=fixed tree=ffa8e040 stamped=2026-10-04 fix=taken open=2`
 
 Status: **OPEN**, found 2026-10-04 by two independent Calculator-batch recon crews, which reached it
 from different directions and agreed on the mechanism and the numbers.
@@ -81,11 +81,80 @@ where the `DIVIS` arm read `y[p - 1]` at `p == first`, witnessed by valgrind as 
 8 bytes *before* the block. A per-dataset loop makes `p == first` happen once per dataset instead of
 once per file, so **every `p == first` guard in that function has to be re-read**, not assumed.
 
-## Outstanding
+## Outstanding, as revised when the fix landed
 
-1. Derive the blast radius of fix (b): every golden value in the tree produced through
-   `xschem raw add` on a multi-dataset raw file.
-2. Re-read every `p == first` guard in `plot_raw_custom_data()` against a per-dataset loop, issue
-   1628's arm included.
-3. Decide whether `sqrt()` of a negative accumulator should refuse or clamp. Fix (b) removes the
-   path that produces it here, but it does not make the opcode safe for a user-typed expression.
+Items 1 and 2 of the original list are **done**: the blast radius was derived (1091 raw-read
+announcements, 66 multi-dataset reads, three distinct files) and every `p == first` guard was
+re-derived from the function's own text and checked per arm, issue 1628's `DIVIS` arm included.
+What remains:
+
+1. Whether `sqrt()` of a negative accumulator should refuse or clamp. The fix removes the path that
+   produced it here -- 101 of 101 dataset-1 points of `v(div) dup() * integ() sqrt()` were `-nan`
+   before and all are finite now -- but it does not make the opcode safe for a user-typed
+   expression that manufactures a negative argument some other way.
+2. `idx()` is now the only **file-global** opcode in a dataset-local family, so `idx() 50 >` used as
+   a per-run mask selects on dataset 0 only. Nothing in the tree asserts that `idx()` stays
+   absolute. Measured unchanged at both doors on every build; recorded as a declared hole rather
+   than changed, because changing it is a user-visible semantic and not a defect anybody reported.
+
+## 2026-10-04 — the fix landed, and part 2 carried a regression of its own
+
+Fixed in three parts: a per-dataset loop in `raw_add_vector()`, a clamp in
+`plot_raw_custom_data()` that raises the token scan's backward-widened `first` back to the start of
+the dataset the caller's `first` belonged to, and the re-enabling of the `#if 0` multi-OP coalesce
+(moved from `scheduler.c`'s `raw add` arm into `raw_add_vector()`, next to the loop it protects).
+Outstanding item 2 above was discharged: row **DS12** of `tests/headless/test_divis_zero_1628.tcl`
+derives the set of `case` arms that test `p == first` from `src/save.c`'s own text and asserts it
+against the set the suite drives, so a stateful arm added later cannot ship unexamined.
+
+⚠⚠ **PART 2 REGRESSED THE MARKER/CURSOR READOUT ON A MULTI-DATASET OPERATING POINT RAW, AND THE
+GATE COULD NOT SEE IT.** `graph_marker_sample()`, `find_closest_wave()` and
+`wave_hilight_envelope()` walk the **real** dataset table and pass `(ofs, ofs_end - 1)`; they do
+**not** apply the coalesce that `graph_x_extent()`, `graph_fullyzoom()` and `draw_graph()` apply.
+On a parametric `.op` every dataset is one point, so those three call the evaluator with
+`first == last`, where the backward widening had been reaching into the neighbouring "datasets" --
+which on such a database are the neighbouring sweep points, and exactly what the opcode wants. The
+clamp removed precisely that. Measured on a 4-dataset single-point OP raw (sweep 1,2,4,7 and
+`v(out)` 2,5,13,22) through `xschem graph_marker add_at`:
+
+| expression | HEAD | loop+clamp | with the repair |
+|---|---|---|---|
+| `v(out) deriv()`  | `{0 3 4 3}` | `{0 0 0 0}` | `{0 3 4 3}` |
+| `v(out) prev()`   | `{2 2 5 13}` | `{2 5 13 22}` (identity) | `{2 2 5 13}` |
+| `v(out) integ()`  | `{0 3.5 18 52.5}` | `{0 0 0 0}` | `{0 3.5 18 52.5}` |
+| `v(out) deriv2()` | `{0 3 4.666666666666667 2.4000000000000008}` | `{0 0 0 0}` | same as HEAD |
+| `v(out) 1 *` (control) | `{2 5 13 22}` | `{2 5 13 22}` | `{2 5 13 22}` |
+
+**Repaired** by one condition at the head of `raw_dataset_start()`: on a multi-dataset single-point
+`op` database the whole file is one dataset, so the clamp has nothing to clamp to. It goes there and
+not as a fourth copy of the coalesce because that function is the single place the clamp asks "where
+does this dataset begin" -- one definition, two call sites, asserted by DS12 -- so one condition
+covers all three doors and any added later.
+
+**Why the gate was blind, and what closed it.** DS10 drove a multi-OP raw through the **Tcl** door
+only; DS13 drove the **marker** door through the **tran** fixture only. The fourth cell of that 2x2
+was covered by neither -- the same shape of hole that made the per-dataset loop's own regression
+invisible, one level in. Band **DS14** is that cell, and its reference is a contract rather than a
+table: the same four points read back as **one** dataset must give the marker door the same series.
+Bands DS15 (the visible-run window family and the y-autorange door), DS16 (`deriv0()`/`deriv20()` at
+the graph door, driven with `sweep=v(ramp)` because on the default sweep they are numerically
+identical to `deriv()`/`deriv2()`), DS17 (dataset 1's **second** point, where `deriv2()` is also
+wrong on HEAD) and DS18 (`idx()`) were added in the same round.
+
+## Still open after that round
+
+1. Outstanding item 1 above -- the blast radius of the per-dataset change across the tree's golden
+   values -- remains underived as a population; what exists instead is the instrument sweep in the
+   closing receipt, which found no red.
+2. Outstanding item 3 above (`sqrt()` of a negative accumulator) is untouched.
+3. **The marker door and the trace door disagree about `integ()` on a parametric `.op`, and always
+   have.** `integ()` widens `first` by one, so the marker evaluates a two-point window and answers
+   one trapezoid (`{0 3.5 18 52.5}`) while the Tcl/trace door coalesces and answers the cumulative
+   integral (`{0 3.5 21.5 74}`). Identical on HEAD and after the repair, so it is not this fix's
+   doing; row DS14d fences today's behaviour and DS14d2 asserts the disagreement exists, so a
+   future change to it is visible. Whether the marker door should coalesce is a product question.
+4. **`idx()` is now the only file-global opcode in a dataset-local family.** It pushes the absolute
+   point index, so a per-run mask typed as `idx() 50 >` is 1 for **every** point of every dataset
+   after the first -- measured on the two-dataset fixture: 50 of dataset 0's 101 points pass, and
+   101 of dataset 1's 101 do. Unchanged by this commit (identical on HEAD); row DS18 now pins it so
+   a change is visible, and whether it should be dataset-local is a product question.

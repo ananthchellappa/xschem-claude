@@ -2691,8 +2691,8 @@ proc wviewer::signal_list {token {statusVar {}}} {
 # it.
 
 # PURE. `xschem raw info`'s output -> {cur <int> dbs {{idx .. path .. type ..} ..}}.
-# The engine prints (src/save.c:2475-2488, extra_rawfile() what == 4, RE-GREPPED
-# 2026-09-02, item A6 having inserted ~96 lines above it) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
+# The engine prints (extra_rawfile()'s what == 4 arm in src/save.c — CITED BY
+# SYMBOL: the line range that stood here was re-grepped twice and rotted twice) `<extra_idx> current` and then one `<i> <rawfile> <sim_type-or-
 # <NULL>>` line per registry slot — and NOTHING AT ALL when no raw is loaded,
 # which is why the empty text has to answer `cur -1` rather than throw.
 #
@@ -2848,7 +2848,7 @@ proc wviewer::signal_list_all {token {statusVar {}}} {
 #
 #  1. SWITCH-ONLY means the DB MUST ALREADY BE IN THE REGISTRY, keyed on the
 #     STORED FULL PATH plus the sim_type, compared with a bare `strcmp`
-#     (save.c:1653-1655, inside the `what == 2` switch arm save.c:1647-1665). So
+#     inside extra_rawfile()'s `what == 2` switch arm (src/save.c). So
 #     the `%` value has to be the path `xschem raw info` reports —
 #     `wviewer::db_label` returns the file TAIL and is NOT usable here.
 #     An empty sim_type is worse than useless: draw_graph substitutes the CURRENT
@@ -2918,8 +2918,8 @@ proc wviewer::db_suffix {tr} {
   if {![wviewer::db_path_safe $rf]} { return {} }
   if {![wviewer::db_path_safe $st]} { return {} }
   # `<NULL>` is how `xschem raw info` SPELLS "this slot has no sim_type"
-  # (save.c:1780), and `extra_rawfile()`'s switch arm skips any slot whose
-  # `sim_type` is NULL before it ever compares (save.c:1653). A `%path <NULL>`
+  # (extra_rawfile()'s `what == 4` arm), and that function's switch arm skips
+  # any slot whose `sim_type` is NULL before it ever compares. A `%path <NULL>`
   # suffix is therefore a suffix that can never switch — the same silent blank
   # the half-suffix rule above exists to prevent, one spelling further out.
   if {$st eq {<NULL>}} { return {} }
@@ -2954,9 +2954,9 @@ proc wviewer::db_suffix {tr} {
 #   rung 1/2   the query itself                       v(MidNode)
 #   rung 3     the v()-wrapped query                  MidNode -> v(MidNode)
 #   rung 4     an anchored, case-blind `i(v.x` prefix rewritten to `i(`
-#              (save.c:2994; `i(v.x1.vp)` -> `i(x1.vp)`)
+#              (get_raw_index()'s rung-4 rewrite; `i(v.x1.vp)` -> `i(x1.vp)`)
 # Each is then looked up EXACTLY and, when folding is allowed, case-folded —
-# that pairing is `raw_lookup_name()` (save.c:2917) and it is why the rungs and
+# that pairing is `raw_lookup_name()` and it is why the rungs and
 # the fold are two separate loops in `name_lookup` below.
 #
 # ⚠ RUNG 4 IS NEW HERE and is the item-5 half of the mirror: item 2 left it
@@ -3004,7 +3004,7 @@ proc wviewer::fold_key {s} {
 # A folded key with TWO distinct spellings is D2's collision and resolves to
 # nothing; byte-identical duplicates (ngspice upstream 0073 writes two identical
 # columns) are ONE distinct spelling and stay resolvable, exactly as
-# raw_build_fold_table() has them (save.c:2867).
+# raw_build_fold_table() has them.
 proc wviewer::name_index {names} {
   set exact {}
   set fold {}
@@ -3021,7 +3021,7 @@ proc wviewer::name_index {names} {
 
 # `ok` | `ambiguous` | `no` for one token against one name index.
 # `fuzzy` 0 is a `distinguish` database: raw_fold_index() returns -1 outright
-# there (save.c:2903), so only the exact rungs may answer.
+# there, so only the exact rungs may answer.
 #
 # ⚠ EXACTS FIRST, ACROSS ALL RUNGS, THEN THE FOLDS. The C interleaves them
 # (exact tok, fold tok, exact v(tok), fold v(tok), ...) and the two orders give
@@ -4131,7 +4131,7 @@ proc wviewer::sweep_token {s} {
 # than by inspection.
 proc wviewer::validate_rpn {rpn varlist {fuzzy {}}} {
   # operator/function tokens verbatim from plot_raw_custom_data
-  # (save.c:1855-1939) — case-SENSITIVE like the C strcmp table
+  # in src/save.c — case-SENSITIVE like the C strcmp table
   set ops {+ - * / ** == != > < >= <= ?}
   set funcs {atan() cph() asin() acos() tan() sin() cos() abs() sgn()
              sqrt() tanh() cosh() sinh() atanh() acosh() asinh() exp()
@@ -4703,14 +4703,14 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
     # `raw clear` + single `raw read` above leave exactly ONE database in the
     # registry, so a trace whose `node=` token ends in `%<rawfile> <sim_type>`
     # asks `extra_rawfile()` to SWITCH to a database that is no longer there.
-    # That arm just returns 0 at `dbg(1)` (save.c:1663) — the strip still LISTS
+    # That arm just returns 0 at `dbg(1)` — the strip still LISTS
     # the signal in its legend and draws nothing, which reads as "that signal is
     # flat", not "the data is gone". MEASURED end to end in two processes:
     # `tests/headless/test_wave_crossdb_trace.tcl`'s XS* leg.
     #
     # AFTER the `raw add` loop, deliberately: `xschem raw read` makes what it
-    # read CURRENT (extra_rawfile()'s read arm, save.c:1626-1627 for a fresh
-    # slot and :1642-1643 when the path was already registered), and those RPN
+    # read CURRENT (extra_rawfile()'s read arm, both for a fresh slot and for
+    # the path-already-registered case), and those RPN
     # vectors belong to the ANALOG raw. The switch back at the end restores it
     # for the same reason
     # `ase::attach_dbs` does — every downstream consumer (annotate_op, `xschem
@@ -4756,7 +4756,7 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
       set p [dict get $e path]
       set t [dict get $e type]
       # the PRIMARY raw is already in the registry under exactly this key; a
-      # second `raw read` of it would only switch to it (save.c:1640-1644).
+      # second `raw read` of it would only switch to it (extra_rawfile()'s read arm).
       # BOTH fields must match: the same file registered under two analyses is
       # two databases (extra_rawfile() keys its switch on file AND sim_type), so
       # `{<rawfile> ac}` beside a `tran` primary is a real second attach.

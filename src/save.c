@@ -1445,7 +1445,92 @@ int raw_add_vector(const char *varname, const char *expr, int sweep_idx)
     }
   }
   if(expr) {
-    plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
+    /* ISSUE 1650: ONE CALL PER DATASET, with that dataset's own extent.
+     *
+     * This used to be a single call over `0 .. allpoints - 1`, i.e. the whole
+     * file as ONE sweep, while the graph door has always passed each dataset's
+     * own `(ofs, ofs_end - 1)` -- the four `ofs` call sites in draw.c.  Every
+     * STATEFUL opcode therefore carried its accumulator across the dataset
+     * boundary, where the sweep variable jumps BACKWARDS (on
+     * tests/headless/data/calc_fixture.raw, `time` is 0.009999999999999995 at
+     * absolute point 100 and 0 at 101, a step of -0.01), so integ() added one
+     * negative trapezoid at the seam, deriv() divided by a negative interval,
+     * and prev()/del()/ravg() answered with the previous dataset's samples.
+     * Measured through the Calculator's own door: `integ(v(sq))` on dataset 1
+     * read 0.001800000000000001 against a true 0.0033999999999999989, and
+     * `sqrt(integ(v(div)^2))` was REFUSED as "not a finite number (-nan)"
+     * because the seam drove the accumulator negative.  The user is already on
+     * this path: calc::fn_argspec offers a `dataset` field on the shipped
+     * riseTime and dutyCycle.
+     *
+     * ⚠ THIS LOOP ALONE IS A REGRESSION, which is why part 2 exists --
+     * plot_raw_custom_data()'s token scan widens `first` BACKWARDS, is
+     * dataset-blind, and the point loop writes at every `p` from there.  See
+     * the clamp comment in plot_raw_custom_data().  Both halves land together
+     * or dataset 0's correct answers are destroyed.
+     *
+     * `break` on a negative return, so a rejected expression (an unresolvable
+     * vector name, or issue 0325's negative del() delay) stops where HEAD's
+     * single call stopped and leaves the rest of the column as it was.
+     *
+     * ⚠ AND A MULTI-DATASET OPERATING POINT RAW HAS TO BE COALESCED FIRST.
+     * A parametric .op writes ONE single-point dataset per parameter value, so
+     * per-dataset evaluation makes `first == last` in every dataset, and
+     * without this transform the pseudo-sweep trapezoid `v(out) integ()` owes
+     * a 4-point multi-OP raw is lost.  Band DS10 asserts the correct series
+     * against a reference derived from the fixture, so no figure is quoted
+     * here.  The product's intent is settled: graph_x_extent(),
+     * graph_fullyzoom() and draw_graph() in src/draw.c all flatten such a
+     * database into one sweep for the duration of the call.
+     * The same transform sat inside an `#if 0` block -- whose own comment read
+     * "seems not necessary..." -- in
+     * scheduler.c's `raw add` arm, where it genuinely was unnecessary while
+     * this function passed `first = 0, last = allpoints - 1` -- that already
+     * flattened the file.  The loop above is what makes it necessary, so it
+     * moved here, next to the loop it protects.
+     *
+     * ⚠ WITHOUT the `sch_waves_loaded() != -1` term the dead block carried.
+     * TWO of the three live sites do not ask for it -- graph_x_extent() guards
+     * only on !raw/!values/!npoints, and draw_graph()'s apply is unguarded
+     * (its restore is guarded, which is why the restore here is unconditional,
+     * below).  graph_fullyzoom() DOES: its whole body sits inside
+     * `if(sch_waves_loaded() >= 0)`.  Requiring it here would therefore
+     * make `xschem raw add` DISAGREE with two of the three on a raw that is
+     * merely read rather than attached to the current schematic -- the opposite
+     * of this fix's purpose.  The restore is unconditional for the same reason:
+     * in draw_graph() the apply is unguarded while the restore is guarded by
+     * sch_waves_loaded(), so a database whose attachment changed mid-call would
+     * keep the clobbered dataset table.  Not this function's bug to fix, but
+     * not one to copy either.
+     *
+     * Fenced by band DS of tests/headless/test_divis_zero_1628.tcl: DS1/DS6
+     * the three-way discrimination, DS9 the evaluated windows, DS10 the
+     * multi-OP raw. */
+    int d, ofs = 0;
+    int save_datasets = -1, save_npoints = -1;
+    if(raw->sim_type && !strcmp(raw->sim_type, "op") &&
+       raw->datasets > 1 && raw->npoints && raw->npoints[0] == 1) {
+      save_datasets = raw->datasets;
+      raw->datasets = 1;
+      save_npoints = raw->npoints[0];
+      raw->npoints[0] = raw->allpoints;
+    }
+    if(raw->datasets > 0 && raw->npoints) {
+      for(d = 0; d < raw->datasets; d++) {
+        int np = raw->npoints[d];
+        if(np <= 0) continue;
+        if(ofs >= raw->allpoints) break;
+        if(ofs + np > raw->allpoints) np = raw->allpoints - ofs;
+        if(plot_raw_custom_data(sweep_idx, ofs, ofs + np - 1, expr, varname) < 0) break;
+        ofs += np;
+      }
+    } else {
+      plot_raw_custom_data(sweep_idx, 0, raw->allpoints -1, expr, varname);
+    }
+    if(save_npoints != -1) { /* restore multiple OP points */
+      raw->datasets = save_datasets;
+      raw->npoints[0] = save_npoints;
+    }
   }
   return res;
 }
@@ -2054,10 +2139,11 @@ static void update_waves_menu_cue(void)
 /* R110 -- doc/claude/specs/results_selection.md section 3.1, issue 0509.
  *
  * A database is bound to the schematic that was current WHEN IT WAS READ:
- * raw->schname / raw->level, stamped by raw_read() (src/save.c:1383-1384) and
- * the other readers, and every name lookup is gated on that stamp still
- * matching the current hierarchy stack (sch_waves_loaded(), src/draw.c:2825 ->
- * get_raw_index(), src/save.c:3477).
+ * raw->schname / raw->level, stamped by raw_read() and the other readers, and every name lookup is gated on that stamp still
+ * matching the current hierarchy stack (sch_waves_loaded() in src/draw.c ->
+ * get_raw_index(), in this file).  CITED BY SYMBOL: the two line numbers that
+ * used to stand here rotted (CLAUDE.md; issue 1650 shifted this file's line
+ * numbers, which is how they rotted).
  *
  * extra_rawfile(what == 1) dedupes: asking to READ a file that is already in
  * the registry only makes it current. Before R110 it left the stamp alone, so
@@ -2086,11 +2172,10 @@ static void update_waves_menu_cue(void)
  * and not an unnoticed one.
  *
  * The case-mode prime is repeated for the reason raw_read() gives at its own
- * call (src/save.c:1391): after the re-stamp the current schematic IS the
- * raw's own one, so this is the one moment the comparison is answerable --
- * and leaving it would let raw_case_mode_schematic()'s descend arm
- * (src/save.c:2877-2883) REPLAY a verdict computed against cell A as this
- * design's answer. Crew ruling, recorded under R110. */
+ * call: after the re-stamp the current schematic IS the raw's own one, so this
+ * is the one moment the comparison is answerable -- and leaving it would let
+ * raw_case_mode_schematic()'s descend arm REPLAY a verdict computed against
+ * cell A as this design's answer. Crew ruling, recorded under R110. */
 static void raw_restamp_design(void)
 {
   int lev;
@@ -4391,9 +4476,69 @@ typedef struct {
   int prevp;
 } Stack1;
 
+/* First absolute point of the dataset that absolute point `point` belongs to,
+ * 0 if the database has no dataset table.  ISSUE 1650: this walk is NOT new --
+ * it is the body of plot_raw_custom_data()'s `del()` token arm, the one token
+ * that was already dataset-aware, lifted here so the clamp below and del()
+ * cannot drift apart.  NOT verbatim: the multi-OP exemption below is new, and
+ * it therefore changes del() too -- see the del() arm.  A hand-written second
+ * copy is the same defect one
+ * level up (CLAUDE.md; row X1 of tests/headless/test_snprintf_fmt_1608.tcl).
+ * The loop returns the containing dataset's start for every point a caller can
+ * legitimately pass.  A `point` at or past allpoints falls out with allpoints
+ * rather than with any dataset's start -- stated because it is NOT obvious from
+ * the loop, and reachable by no caller: raw_add_vector() guards `ofs >=
+ * allpoints`, the four `ofs` sites are bounded by npoints[dset], and the four
+ * visible-run sites have first <= last < allpoints. */
+static int raw_dataset_start(int point)
+{
+  int d, t = 0, start = 0;
+  if(!xctx->raw || !xctx->raw->npoints) return 0;
+  /* ISSUE 1650, THE MULTI-OP EXEMPTION, and the clamp above REGRESSES the
+   * marker/cursor readout without it.
+   *
+   * A parametric .op writes ONE single-point dataset per parameter value, and
+   * every door in src/draw.c plots such a database as ONE pseudo-sweep -- so
+   * for the purpose of the clamp the whole file is one dataset.  FOUR doors
+   * need this and cannot get it from the coalesce: graph_marker_sample(),
+   * graph_point_at(), find_closest_wave() and wave_hilight_envelope() walk the
+   * REAL dataset table
+   * and pass `(ofs, ofs_end - 1)`, which on such a database is `first == last`,
+   * and they do NOT apply the transform graph_x_extent(), graph_fullyzoom() and
+   * draw_graph() apply.  Before the clamp the backward widening of the token
+   * scan reached into the neighbouring "datasets" -- which on this database are
+   * the neighbouring sweep points, and exactly what the opcode wants -- and the
+   * clamp removes precisely that, degenerating every stateful opcode to its
+   * `p == first` reset.  Measured on a 4-dataset single-point OP raw
+   * (sweep 1,2,4,7 and v(out) 2,5,13,22) through `xschem graph_marker add_at`:
+   *   v(out) deriv()  {0 3 4 3}  -> {0 0 0 0}      -> {0 3 4 3} with this
+   *   v(out) prev()   {2 2 5 13} -> {2 5 13 22}    -> {2 2 5 13}
+   *   v(out) integ()  {0 3.5 18 52.5} -> {0 0 0 0} -> restored
+   *   v(out) deriv2() {0 3 4.67 2.4}  -> {0 0 0 0} -> restored
+   *
+   * IT GOES HERE, not as a fourth copy of the coalesce, because this function
+   * is the SINGLE place the clamp asks "where does this dataset begin" -- one
+   * definition and two call sites, asserted by row DS12 of
+   * tests/headless/test_divis_zero_1628.tcl -- so one condition covers the
+   * marker door, find_closest_wave(), wave_hilight_envelope() and any site
+   * added later.  Fenced by band DS14 of that suite, which is the cell DS10
+   * (the Tcl door on a multi-OP raw) and DS13 (the marker door on a tran raw)
+   * between them left open. */
+  if(xctx->raw->sim_type && !strcmp(xctx->raw->sim_type, "op") &&
+     xctx->raw->datasets > 1 && xctx->raw->npoints[0] == 1) return 0;
+  for(d = 0; d < xctx->raw->datasets; d++) {
+    t += xctx->raw->npoints[d];
+    if(t > point) break;
+    start = t;
+  }
+  return start;
+}
+
 int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, const char *yname)
 {
   int i, p, idx;
+  /* ISSUE 1650 part 2: the caller's `first`, before the token scan widens it */
+  int first_in = first;
   const char *n;
   char *endptr, *ntok_copy = NULL, *ntok_save, *ntok_ptr;
   Stack1 stack1[STACKMAX];
@@ -4470,14 +4615,15 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
     else if(!strcmp(n, "e()")) stack1[stackptr1++].i = E; 
     else if(!strcmp(n, "q()")) stack1[stackptr1++].i = Q; /* electron charge */
     else if(!strcmp(n, "del()")) {
-      int d, t = 0, p = 0;
-      /* set 'first' to beginning of dataset containing 'first' */
-      for(d = 0; d < xctx->raw->datasets; d++) {
-        t += xctx->raw->npoints[d];
-        if(t > first) break;
-        p = t;
-      }
-      first = p;
+      /* set 'first' to beginning of dataset containing 'first'.  The walk
+       * itself now lives in raw_dataset_start() above (issue 1650), so this is
+       * no longer the only copy of it.  ⚠ NOT unchanged: that function carries
+       * the multi-OP exemption, so on a parametric .op del() now snaps to 0
+       * instead of to the single-point "dataset", which REPAIRS it -- at the
+       * marker door `v(out) 2.0 del()` read {2 5 13 22} before and {2 5 5 13}
+       * now, and {2 5 5 13} is what the same four points spelled as ONE dataset
+       * give.  A fifth opcode the exemption fixes; band DS14 drives it. */
+      first = raw_dataset_start(first);
       stack1[stackptr1++].i = DEL;
     }
     else if(!strcmp(n, "db20()")) stack1[stackptr1++].i = DB20;
@@ -4549,6 +4695,39 @@ int plot_raw_custom_data(int sweep_idx, int first, int last, const char *expr, c
    * are found with `grep -n 'plot_raw_custom_data(' src/draw.c`. The one
    * caller that passes first = 0 unconditionally is raw_add_vector() in this
    * file, which is the Calculator's and `xschem raw add`'s door. */
+
+  /* ISSUE 1650 part 2: THE WIDENING MUST NOT LEAVE THE CALLER'S DATASET.
+   *
+   * The decrements above are dataset-blind.  Handed a `first` that is a
+   * dataset offset -- which every `ofs` call site in draw.c passes, and which
+   * raw_add_vector() now passes too -- the scan pulls the window back into the
+   * PREVIOUS dataset, and the point loop below WRITES there: `y[p] =
+   * stack2[0]` runs for every p from `first`, so the reset value of this
+   * dataset's pass lands on the previous dataset's last point(s) and destroys
+   * what that dataset's own pass computed.  Measured on
+   * tests/headless/data/calc_fixture.raw before this clamp: `v(sq) integ()` at
+   * dataset 0's last point went from 0.0033999999999999989 (correct) to 0, and
+   * `v(lp) deriv2()` there from 9.9378907186520919 to 17.000849879930215.  The
+   * boundary contamination of this dataset's own values stays too, because the
+   * seam trapezoid is still inside the window -- so the per-dataset loop
+   * WITHOUT this clamp cures nothing and breaks something.
+   *
+   * It also repairs the integ()-then-del() compound: del()'s snap above is fed
+   * integ()'s already-decremented `first`, so it resolves to the PREVIOUS
+   * dataset's start and the window became the whole file.
+   *
+   * raw_dataset_start(0) is 0, so this is a no-op for every caller that passes
+   * first = 0, and a no-op for a visible-run `first` whose widening stays
+   * inside its own dataset -- which is the whole single-dataset case.  It fires
+   * only where the widening would cross a dataset boundary.
+   *
+   * Fenced by band DS of tests/headless/test_divis_zero_1628.tcl; DS9 asserts
+   * the window printed on the next line, which is the only place it is visible.
+   */
+  if(first < first_in) {
+    int ds_start = raw_dataset_start(first_in);
+    if(first < ds_start) first = ds_start;
+  }
   dbg(1, "plot_raw_custom_data(): evaluated window: first=%d, last=%d\n", first, last);
   my_free(_ALLOC_ID_, &ntok_copy);
   for(p = first ; p <= last; p++) {

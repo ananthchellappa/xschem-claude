@@ -11514,25 +11514,18 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(sweep_idx <= 0) sweep_idx = 0;
           }
           if(argc > 4) {
-            #if 0 /* seems not necessary... */
-            int save_datasets = -1, save_npoints = -1;
-            /* transform multiple OP points into a dc sweep */
-            if(sch_waves_loaded()!= -1 && xctx->raw && xctx->raw->sim_type && !strcmp(xctx->raw->sim_type, "op")
-               && xctx->raw->datasets > 1 && xctx->raw->npoints[0] == 1) {
-              save_datasets = xctx->raw->datasets;
-              xctx->raw->datasets = 1;
-              save_npoints = xctx->raw->npoints[0];
-              xctx->raw->npoints[0] = xctx->raw->allpoints;
-            }
-            #endif
+            /* ISSUE 1650.  Two `#if 0` blocks, the first carrying the comment
+             * "seems not necessary...", used to bracket this call, transforming
+             * a multi-dataset single-point Operating Point database into one
+             * sweep and back.
+             * They were dead because raw_add_vector() evaluated the whole file
+             * as one sweep anyway; now that it evaluates each dataset
+             * separately the transform IS necessary, so it lives there, next
+             * to the per-dataset loop it protects, where every caller of
+             * raw_add_vector() gets it rather than only this arm.  See the
+             * comment in raw_add_vector() (src/save.c) for why the dead
+             * blocks' `sch_waves_loaded() != -1` term was not carried over. */
             res = raw_add_vector(argv[3], argv[4], sweep_idx);
-
-            #if 0
-            if(sch_waves_loaded()!= -1 && save_npoints != -1) { /* restore multiple OP points */
-              xctx->raw->datasets = save_datasets;
-              xctx->raw->npoints[0] = save_npoints;
-            }
-            #endif
           } else {
             res = raw_add_vector(argv[3], NULL, 0);
           }

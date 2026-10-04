@@ -15712,11 +15712,11 @@ proc ase::op_report_missing {state meta exitcode} {
 # lies rather than a defect in the data. Measured the same day: merge a
 # `preserve`-cased dump, then ask for it in the schematic's lowercase spelling
 # -- `1.37276e-12`, resolved by rung 2 of save.c's one lookup ladder
-# (raw_lookup_name, ~:4175: exact spelling first, then the case-folded alias).
+# (raw_lookup_name: exact spelling first, then the case-folded alias).
 #
 # RULING -- IT FOLDS UNCONDITIONALLY AND DOES NOT CONSULT THE RUN'S CASE MODE.
-# `distinguish` is the one mode where a fold is not free (raw_case_mode_parse,
-# save.c:2731, maps `preserve` to 0 and ONLY `distinguish` to 1), so this is
+# `distinguish` is the one mode where a fold is not free (raw_case_mode_parse in
+# src/save.c maps `preserve` to 0 and ONLY `distinguish` to 1), so this is
 # stated rather than assumed. Four reasons, in the order that decided it:
 #
 #   1. ONE SIDE CARRIES NO CASE AT ALL. `devs` is lowercase by construction, so
@@ -15725,14 +15725,14 @@ proc ase::op_report_missing {state meta exitcode} {
 #      today's defect unmoved rather than `distinguish` honoured.
 #   2. THE RUN'S REQUESTED MODE IS THE WRONG GATE, and gating on it would be a
 #      NEW false alarm one mode over. What suppresses the C fold rung is
-#      Raw.case_sensitive (raw_fold_index, save.c:4161), a property of the
+#      Raw.case_sensitive (raw_fold_index in src/save.c), a property of the
 #      READ -- not of the mode the simulator was asked for. A `-casemode
 #      distinguish` run writes a mixed-case dump into a database that still
 #      folds, so its rows annotate exactly as `preserve`'s do.
 #   3. Raw.case_sensitive IS the honest gate and cannot be asked from here.
 #      This proc runs from ase::run_done, before this run's raw is attached,
 #      and the database that happens to be loaded describes ANOTHER run --
-#      steering by it is what netlist_case_mode's comment (save.c:3516)
+#      steering by it is what netlist_case_mode's comment in src/save.c
 #      forbids in as many words. Nor is it reachable in practice: `grep -n
 #      'raw read .*-case\|raw case 1' src/*.tcl` still finds no caller
 #      (wave_viewer.tcl:3108's standing note, re-measured 2026-09-08 --
@@ -16195,7 +16195,7 @@ proc ase::design_unreachable_msg {design {remedy {}}} {
 # ⚠ THE SAFETY GATE IS THE HALF THAT IS NOT OBVIOUS, and it is the same one
 # op_annot paid for. go_back is NOT read-only: it calls load_backup_as()
 # whenever a <cell>~.sch sits beside the cell (actions.c:6505), and
-# load_backup_as ends in set_modify(1) (save.c:6197). MEASURED on
+# load_backup_as ends in set_modify(1). MEASURED on
 # sky130_tests_ase/bandgap_opamp with such a `~` beside it. ⚠ THAT `~` IS NOT
 # SHIPPED, whatever the older copies of this note say: `*~.sch` is gitignored
 # (.gitignore:75) and `git ls-files | grep '~.sch'` has always been EMPTY, so a
@@ -16267,7 +16267,7 @@ proc ase::with_design_current {dpath script} {
   }
 
   ## ROW 2 -- modified + autosave ON: CARRY the edits, and do NOT park.
-  ## Parking the flag at 0 makes load_backup_as return early (save.c:6186),
+  ## Parking the flag at 0 makes load_backup_as return early,
   ## which would disable go_back's restore of the ancestors AND the explicit
   ## `xschem load_backup` this trip needs on the way home. So the park is for
   ## the CLEAN case only -- exactly the rule op_annot::_park_backup states at
@@ -19012,14 +19012,16 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
     lappend got $v
   }
   # the analog DB is slot 0: it is the only survivor of the loop above, and
-  # `raw clear <n>` leaves extra_idx at 0 (save.c:2207-2211).
+  # `raw clear <n>` leaves extra_idx at 0 (extra_rawfile()'s what == 3 arm).
+  # ⚠ RE-RESOLVED BY SYMBOL 2026-10-04: the line range that stood here had
+  # rotted onto raw_restamp_design(), a different function entirely.
   if {[llength $got]} { catch {xschem raw switch 0} }
   return [dict create n [expr {1 + [llength $got]}] current 0 vcds $got skipped $skipped]
 }
 
 # The registry slot indices, and the current one; {} / -1 when nothing is
 # loaded. `xschem raw info` prints "<cur> current" then one "<i> <path> <type>"
-# line per slot (save.c:2475-2488, what == 4; re-grepped 2026-09-02, item A6)
+# line per slot (extra_rawfile()'s what == 4 arm in src/save.c; cited by symbol
 # and nothing at all with no raw.
 proc ase::raw_indices {} {
   if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
