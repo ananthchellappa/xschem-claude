@@ -2955,7 +2955,7 @@ group WD12 {
         [list $wdarmers [string equal $wdarmers $wddbarmers] $wdtakers \
               [wd_atleast [llength $wdarmers] 1]] \
         [list $wdarmers 1 $wdarmers atleast]
-    check "WD12 ...and the set really is reached: at least one `::calc::` proc arms each channel, which is the leg that fails on a tree where NOTHING arms them -- `wviewer::plot_sweeps_arm`'s own banner says it has no callers at all, so this is the row that says unit J1b happened" \
+    check "WD12 ...and the set really is reached: at least one `::calc::` proc arms each channel, which is the leg that fails on a tree where NOTHING arms them, and it names `wave_show` by identity rather than counting, so this is the row that says unit J1b happened" \
         [list [wd_atleast [llength $wdarmers] 1] [wd_atleast [llength $wddbarmers] 1] \
               [expr {[lsearch -exact $wdarmers wave_show] >= 0 ? 1 : 0}]] \
         {atleast atleast 1}

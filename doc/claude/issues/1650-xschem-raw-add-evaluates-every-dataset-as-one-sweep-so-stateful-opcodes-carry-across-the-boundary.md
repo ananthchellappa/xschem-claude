@@ -1,6 +1,6 @@
 # 1650 — `xschem raw add` evaluates every dataset as ONE sweep, so stateful opcodes carry across the boundary
 
-**STAMP:** `v1 claim=fixed tree=ffa8e040 stamped=2026-10-04 fix=taken open=2`
+**STAMP:** `v1 claim=fixed tree=81cd51db stamped=2026-10-04 fix=taken open=4`
 
 Status: **OPEN**, found 2026-10-04 by two independent Calculator-batch recon crews, which reached it
 from different directions and agreed on the mechanism and the numbers.
@@ -158,3 +158,57 @@ wrong on HEAD) and DS18 (`idx()`) were added in the same round.
    after the first -- measured on the two-dataset fixture: 50 of dataset 0's 101 points pass, and
    101 of dataset 1's 101 do. Unchanged by this commit (identical on HEAD); row DS18 now pins it so
    a change is visible, and whether it should be dataset-local is a product question.
+
+   ⚠ **The word "only" in that sentence was an assertion when it was written; it is now DERIVED**
+   (2026-10-04, at `81cd51db`), because a hand-list of opcodes is the defect one level up. The
+   question "which opcode sees the absolute point index?" is answerable over the point loop's own
+   text: every other use of `p` in it is either an array subscript, or relative to `first`
+   (`p == first`, `p == first + 1`, `p > first`), or a point index handed to `ravg_store()` and read
+   back at a stored `prevp`. Exactly one line pushes `p` itself as a value, and it is the `IDX` arm:
+
+   ```sh
+   # the point loop runs from `for(p = first ...)` to its own closing comment
+   awk '/^int plot_raw_custom_data/,/^}/' src/save.c \
+     | /usr/bin/grep -nE '(^|[^A-Za-z0-9_[])p([^A-Za-z0-9_]|$)' | /usr/bin/grep -vE '\[p\]|\[p *[-+]'
+   ```
+
+   So `idx()` is the only file-global opcode, and the claim is now reproducible rather than
+   remembered. Two things were checked at the same time and **both came back sound**, which is worth
+   recording because each looked like a live defect on the way in. (a) `ravg_store()`'s row is
+   `my_calloc`ed with `last + 1` doubles while it is indexed at the **absolute** `p`, and its `imax`
+   is `static` across calls — so a per-dataset loop whose second call has a larger `last` would
+   write past a row sized by the first. It does not, because the function is cleared at **every**
+   exit: the tail clear after the point loop, and the `DEL` arm's own clear immediately before its
+   `return -1`. (b) Those are the only two returns reachable after a row is allocated; the other two
+   are in the token scan, before any store. Derive both with
+   `awk 'NR>=<first>,NR<=<last>' src/save.c | /usr/bin/grep -n 'return\|ravg_store(0'` over the
+   function's extent.
+
+### The ruling item 4 is waiting on, in plain words
+
+**When you write `idx()` in a graph expression, on a waveform file that holds more than one run,
+should the point counter restart at each run or keep counting straight through the file?**
+
+`idx()` gives you the number of the sample being evaluated, so you can write things like
+`idx() 50 >` to mean "from the 50th point onward". On a file with one run the two readings are the
+same and nothing is at stake. On a file with several runs they differ, and today's answer is
+"straight through the file" — which is why `idx() 50 >` is true for *every* point of the second run
+and later, measured on the two-run fixture. Three shapes, with what each costs:
+
+* **(a) Restart at each run.** `idx() 50 >` then means "after the 50th point of each run", which is
+  what somebody masking off the settling at the start of every run is reaching for. It also makes
+  `idx()` consistent with every other running function after this fix. The cost is that it changes
+  what an existing expression draws on a multi-run file, and there is no longer any way to name an
+  absolute position in the file.
+* **(b) Leave it counting through the file.** Nothing changes for anybody, and an absolute position
+  stays nameable — but a per-run mask cannot be written at all, and the expression that looks like
+  one silently selects everything.
+* **(c) Both — keep `idx()` as it is and add a second, per-run counter.** This removes the choice
+  rather than making it, at the cost of one new engine opcode; the standing rule for adding one
+  (spec R405) obliges a token string, a table entry and a documentation update alongside it.
+
+**Recommendation: (a).** The absolute reading is only reachable on a multi-run file, which is
+exactly the case where it currently misleads, and nothing shipped is known to depend on it; (c) is
+the right answer instead if naming an absolute position in a multi-run file is something worth
+keeping. Either way `idx()` stays pinned by row `DS18` of `tests/headless/test_divis_zero_1628.tcl`,
+so whichever is chosen, a later drift is visible.

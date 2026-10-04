@@ -4640,7 +4640,52 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   (1615 settled that); a call to register these three, each of which pins something another
   suite's green run depends on.
 
-**The next free number is 1651.**  1650 is taken: `xschem raw add` evaluates every dataset as one sweep.
+- **1651** — two of the three callers that arm `plot_signals`' out-of-band per-signal channels have
+  their one-shot take asserted only by a suite in **neither** `hcases` nor `dcases`. Derived, after
+  the opposite hypothesis (*nothing* fences it) was **refuted**: row `WD12` of
+  `test_calc_wave_dest` — in `hcases` — drives `calc::wave_show` through a refusal **and** a forced
+  raise and asserts both channels empty, with a non-vacuity leg proving an untaken arm persists. The
+  two browser plot routes, `wviewer::browser_plot_ids` and `wviewer::browser_sea_plot_idx`, have no
+  such gated row: `XB10` of `test_wave_crossdb_trace` and the spy bands of
+  `test_wave_sigbrowser_digital` / `test_wave_sigbrowser_sea` are all unregistered. A leaked arm
+  does not error — it silently resolves the next gesture's names against the previous gesture's
+  database, which is issue 0308's wrong answer one gesture on. ⚠ The two halves need different
+  remedies: two of those suites answer `banner_complete` **1** on both arms and can be registered
+  today, while `test_wave_crossdb_trace` answers **0** and needs 1652 first.
+
+- **1652** — `test_del_negative_arg`, `test_raw_ascii_point_bounds` and `test_wave_crossdb_trace`
+  end with a `RESULT:` line and no `OVERALL: ok`, so `banner_complete` answers **0** and
+  `regression_case_failed` **1** on **both** arms: registering any of them scores a `HARNESS: … did
+  not complete cleanly` failure at `ALL PASS`. Issue 0689's shape, now filed a further time.
+  ⚠ Two of the three fence the **C engine**, and one fences the exact function issue 1650 changed:
+  `test_del_negative_arg` holds the `DEL` arm of `plot_raw_custom_data()` (issue 0325, valgrind-
+  confirmed), and `test_raw_ascii_point_bounds` holds `read_raw_ascii_point()` (issue 0213), whose
+  unfixed failure is a SIGABRT in `free_rawfile()` — **editor gone**. So 1650 re-derived every
+  `p == first` guard in that function with the DEL arm's own behavioural suite outside the gate.
+  Fix is one additive `puts "OVERALL: ok ($npass checks)"` per suite, inside the `$fail == 0` branch
+  and above the `RESULT:` line, exactly as 1615, 1413 and 1645 did; registering them is a **second**
+  change whose trailer delta must be derived, not predicted.
+
+- **1653** — the Calculator answers confidently where the answer is meaningless, in two places found
+  while proving the four route-C compositions numerically correct. `dBm`'s `log10() 10 * 30 +` lands
+  on exactly **`-320`** for any non-positive sample, because `mylog10()` in `src/editprop.c` returns
+  a flat `-35`, and nothing distinguishes that from a real reading. ⚠ That helper is shared with the
+  graph's own logarithmic axes at ten sites in `src/callback.c`, so it is **not** a Calculator-local
+  fix. Separately `groupDelay` and `rmsNoise` name their method but not their operand, so clicking
+  `groupDelay` with a magnitude selected returns a plausible number from nonsense input with no
+  refusal — while sibling row `dBm` does name its operand, making this an inconsistency among four
+  rows rather than a missing convention. Both behaviours are pinned by band `CE14` of
+  `tests/headless/test_calc_engine.tcl` (`hcases`, counted arm), so either ruling leaves a drift
+  visible. Two product questions, filed together because the decision in both is how honest the tool
+  should be when it cannot tell what it was handed.
+
+**The next free number is 1654.**
+
+⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
+It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
+captured **that** number instead of the free one — measured 2026-10-04, when it answered `1650`, a
+number already taken. The explanatory clause is kept on its own line below for that reason, and the
+pointer line now holds exactly one number. 1652 is taken.
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of

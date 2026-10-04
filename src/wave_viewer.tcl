@@ -7760,12 +7760,18 @@ proc wviewer::plot_dbs_take {token} {
 # count so a short arm cannot hand the tail somebody else's axis, and
 # `wviewer::forget` drops it with the window.
 #
-# ⚠ DECLARED: NOTHING ARMS IT YET. The Calculator's click wiring (R410/R412) is
-# phase 5's, and `calc::wave_dest`'s own caller will be the first armer. It ships
-# with the destination rather than after it because the alternative shape — a
-# fifth parameter — is the one the pins above forbid, and discovering that from a
-# gate is what this comment exists to prevent. `wviewer::add_trace`'s `sweep`
-# parameter is reachable directly in the meantime.
+# ⚠ WHO ARMS THIS IS RE-DERIVED EVERY RUN AND IS DELIBERATELY NOT RECORDED HERE.
+# Row WD12 of tests/headless/test_calc_wave_dest.tcl derives the armers of both
+# one-shot channels out of the tree's own text and carries a leg that fails on a
+# tree where nothing arms them, so a caller list written here would be the one
+# copy nothing re-checks. An earlier revision of this comment declared that
+# NOTHING ARMED IT YET; `calc::wave_show` has armed it since stage J unit J1b and
+# the sentence outlived its truth, which is recorded rather than silently dropped
+# because a stale claim in a header is read as a measurement.
+# It ships with the destination rather than after it because the alternative
+# shape — a fifth parameter — is the one the pins above forbid, and discovering
+# that from a gate is what this comment exists to prevent. `wviewer::add_trace`'s
+# `sweep` parameter is reachable directly as well.
 proc wviewer::plot_sweeps_arm {token sweeps} {
   variable plotsweeps
   set plotsweeps($token) $sweeps
