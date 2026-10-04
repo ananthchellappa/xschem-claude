@@ -740,3 +740,135 @@ what a padding or repeating producer exploits.  Every row in band MT9c carries a
 distinctness leg, and the band's **control** row asserts the instrument can still answer `same`,
 driven over both blind columns by name — so the `distinct` above it is a measurement of the
 fixture rather than a constant.
+
+---
+
+## 15. Unit J2, as landed — and the fence the DRIVER proposed that was vacuous
+
+Commit `a459b3af`.  Receipts: `receipts/J2-suite-and-attacks.md` and
+`receipts/J2-implementation.md`.
+
+```
+red    wave_dest 11 FAILED (113 passed)    measure 15 FAILED (170 passed)
+green  wave_dest ALL PASS (124)            measure ALL PASS (185)
+unmoved  cross 187 · engine 265 · scratch_reuse 56 · skeleton 579 · plot 114 · widgets 259 · buffer 130
+```
+
+Click `riseTime`, leave the Occurrence field at 0, and every rising edge is measured at once — one
+rise time per **complete** edge, against the time each edge started, drawn on its own strip through
+the channel J1b armed.  Issue 1639's guard was **replaced rather than bypassed**: the `if` test is
+the guard's own, byte for byte, moved below the two threshold computations because it now needs them.
+
+### ⚠⚠ (a) TWO SABOTAGES SURVIVED THE FIRST SUITE, AND BOTH WERE COMPLETE, GREEN, WRONG BUILDS
+
+| | the wrong build | why it looked right |
+|---|---|---|
+| **pairing direction** | drive the **HIGH** crossing list, pairing each high with the last low **before** it | one point per completed **transition**, where a rise time is one per rising **edge**.  **Passed nine suites on both arms.** |
+| **absence guard** | test emptiness on the two **input** crossing lists instead of the **output** series | one line further up, carrying a comment that reads as care about the empty case — and it still ships the `destempty` sentence for a signal that never crossed |
+
+The pairing one is now caught by a single row on **the only shape that can see it**: a signal that
+**rings at the top**, so it crosses its high threshold more often than its low one.  On an ordinary
+edge the two lists interleave 1:1 and the two implementations are byte-identical.  That is worth
+stating as a general point: **a wrong pairing is invisible on well-behaved data**, so the row had to
+mint a request the fixture does not naturally contain.
+
+### ⚠⚠ (b) THE DRIVER PROPOSED A FENCE THAT PASSED AGAINST ITS OWN NAMED DEFECT
+
+The driver asked for a non-negativity leg — a rise time cannot be negative — and **named the two
+keystone rows to put it on**.  The crew measured *before* editing and found that the sabotage the
+leg was named for, hoisting `set xh {}` out of the loop so a dropping edge inherits the previous
+edge's high crossing, **reddens neither keystone**:
+
+```
+keystone  riseTime        n=3  negatives={}      keystone  riseTime_hoist  n=3  negatives={}
+drop      riseTime        n=2  negatives={}      drop      riseTime_hoist  n=3  negatives={-0.002887902076229785}
+```
+
+Both keystones drive a request whose crossing lists interleave 1:1, so **nothing drops and the
+hoisted series is byte-identical there**.  The hoist only emits a negative where a point *drops*.
+
+So the leg went to **three** places, each proven red by a different sabotage — the two keystones via
+a **sign flip**, and the **partial-drop row**, which is the only placement the named sabotage
+reaches.  ⚠ The crew also recorded, in the instrument's own header, **which sabotage each placement
+catches**, so nobody reads one as the other; and it noted honestly that on the keystones the claim
+is a *shape* claim rather than new discrimination, kept because it survives a fixture move where the
+element-wise legs would not.
+
+**This is the third fence in this batch that would have read as coverage and was not — and the first
+the driver proposed.**  The method that caught it is the one this contract keeps arriving at: run the
+named sabotage against the proposed placement *before* writing the row.
+
+### ⚠ (c) A claim in `calc::riseTime`'s own SHIPPED header was measurably false
+
+It said an absence is reported *"in one voice whether the user asked for one edge or all of them."*
+Measured over all three reachable shapes:
+
+| shape | `nth` 0 | `nth` 1 | |
+|---|---|---|---|
+| no low crossing at all | `Rise time: …` | **`Cross: there is no 1st rising crossing…`** | ⚠ **families differ** |
+| lows exist, no highs | `Rise time: …` | `Rise time: …` | same |
+| the only high precedes the only low | `Rise time: …` | `Rise time: …` | same |
+
+On the first shape the ordinal path asks `cross` for the 1st rising crossing of the **low**
+threshold, there is none, and `cross` answers its own `absent` arm **before the rise-time layer is
+reached**.  Narrowed with the correction left visible and the mechanism named.  What survives is the
+narrow claim: the `nth`-0 arm **mints no sentence of its own**.
+
+### What J2 does NOT do
+
+`delay` with `nth` 0 still defers (J3 — and its both-sides-zero case, pairing two crossing lists
+that can differ in length, is still the only open **design** question in the stage).  `frequency` is
+still catalogued with no implementation.  `cross`'s **list** destination still waits on phase 10's
+Table.  ⚠ **No row asserts that `riseTime`'s wave actually draws** — the path is J1b's and is fenced
+there, but not for this verb; declared, and the one `look` debt covers it.
+
+---
+
+## 16. Carried into J3 (`delay`), decided now so it is not invented under pressure
+
+### ⚠⚠ DO NOT COPY J2's NON-NEGATIVITY LEG TO `delay`.  IT WOULD BE RED ON CORRECT CODE
+
+A rise time cannot be negative, so §15(b)'s leg is sound for `riseTime`.  **A delay can.**  Spec
+**R417** gives `delay` a full edge specification per side, and the spec's own §7.2 note says a
+delay answers one number *"R417's negative one included"*; the catalogue even ships a sibling verb
+whose help text reads *"the wave shifted along X by an offset (negative delay)"*.
+
+So the obvious move for J3 — copy `riseTime`'s now-proven shape wholesale — **imports a leg that
+fails on a correct implementation.**  This is the mirror of `DESTINATION_CONTRACT.md` §11(c), where
+a level made a discrimination row red on correct code, and it is worth stating because every other
+part of J2's shape *should* be copied.
+
+### The pairing rule, ruled now, and it dissolves the open design question
+
+The stage has carried *"`delay` with `nth` 0 on both sides pairs two crossing lists that can differ
+in length, where `calc::wave_dest`'s `destlen` refusal fires"* as its **only open design question**
+since §5.  It is no longer open, and the answer needs no new semantic:
+
+> **One delay per COMPLETE pair.**  Iterate the **A** (reference) crossing list, pair each A
+> crossing with the **first B crossing strictly after it**, and **drop** an A crossing that has
+> none.  The X series is the A crossings that paired.
+
+That is **exactly** what J2 ruled for `riseTime` (pair each low crossing with the first high after
+it, drop one that has none) and exactly what R416 already rules for `dutyCycle` (one fraction per
+*complete* cycle).  Three verbs, one rule, which is the point: a user who learns it once should not
+meet a fourth behaviour.
+
+⚠ **And it makes `destlen` unreachable from this caller**, which removes the refusal the question
+was built around — the two lists can no longer differ in length because the Y series is *built
+from* the A list rather than zipped against it.
+
+### Three things J3 must MEASURE rather than assume
+
+1. **The one-sided cases.**  `nth` 0 on side A with an explicit ordinal on side B, and the reverse.
+   The driver is **not** ruling these blind: measure what the shipped verb does today, say what the
+   natural reading is, and **flag the asymmetry** — a series indexed by A when A is the zero side
+   but by B when B is, is the kind of thing that reads as a bug.  If it reaches the user, it is a
+   `rule` debt, not a crew decision.
+2. **Whether the A side is the reference.**  `calc::delay`'s formals are
+   `{rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}}` — confirm from the code which side
+   the existing scalar path treats as the reference before assuming A, because the sign convention
+   of R417's negative delay depends on it.
+3. **The wrong pairing direction, again.**  §15(a) recorded that driving the *other* list is
+   invisible on well-behaved data and passed nine suites.  `delay` has **two independent
+   expressions**, so it has strictly more ways to get this wrong than `riseTime` did.  The row that
+   catches it will again need a **minted** request the fixture does not naturally contain.
