@@ -317,10 +317,10 @@ a colour, a database or an axis. Measured, not inferred from comments. So:
 
 ### ⚠⚠ `wviewer::plot_signals` must NOT gain a fifth parameter
 
-Its signature `{token exprs {colors {}} {destover {}}}` is pinned by **three** spies, and one of them
-is **this batch's own suite** — `tests/headless/test_calc_plot.tcl`, plus
-`test_ase_current_repair.tcl` and a literal-source assertion at row `BM05` of
-`test_wave_sigbrowser.tcl`. A five-argument call raises *"too many arguments"*, which
+Its signature `{token exprs {colors {}} {destover {}}}` is pinned by four-parameter spies, one of
+which is **this batch's own suite** (`tests/headless/test_calc_plot.tcl`, plus
+`test_ase_current_repair.tcl` and others), and by row `BM05` of `test_wave_sigbrowser.tcl`, which
+reads the formal list and the defaults off the interpreter's own parsed proc. A five-argument call raises `wrong # args`, which
 `browser_plot_ids`' own `catch` swallows, so **every gesture check then reads as "the gesture did
 nothing"** rather than as an error. That file's own warning records results-batch item 10 falling
 into exactly this hole when `destover` was added.

@@ -117,7 +117,82 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_scratch_reuse" \
                  "headless/test_calc_cross" \
                  "headless/test_calc_measure" \
-                 "headless/test_calc_wave_dest"]
+                 "headless/test_calc_wave_dest" \
+                 "headless/test_wave_sigbrowser" \
+                 "headless/test_wave_grid" \
+                 "headless/test_node_token_split"]
+## ⚠ THE THREE WAVE/NODE ENTRIES ABOVE ARE ISSUE 1645, and each shape was MEASURED
+## rather than reasoned -- `banner_complete` from tests/banner_rule.tcl, sourced and
+## run over each arm's real captured output, which is the only method CLAUDE.md
+## endorses for this decision. Both sentinel-less suites needed an additive
+## `OVERALL: ok` line first, exactly as issue 1615 did to `wvbs_finish`: that proc
+## matches a whole-line `OVERALL: ok` and NO `RESULT:` spelling at all, so registering
+## a suite that prints only `RESULT: ALL PASS` buys a `HARNESS: ... OVERALL_ok=0 ...
+## : FAIL` line for every arm it is registered on, plus row RB2 of
+## `headless/test_registered_banner_1626`.
+##
+## `headless/test_wave_sigbrowser` is `hcases` ALONE. The `dcases` OMISSION IS A RULED
+## SHAPE, resting on a reported intermittent failure of this suite's display-arm gesture
+## rows BT43/BT44/BM43 that carries no skip announcement; ⚠ nothing here re-measures
+## that flake and the crews that looked did not reproduce it, so it is carried as the
+## basis of the ruling and not as a finding.
+## WHAT THE ENTRY GATES. Issue 1645 repaired row BM05, whose formal-count leg was a
+## whole-file `string first` for the signature of `wviewer::plot_signals` over
+## src/wave_viewer.tcl read as ONE STRING -- it never passed through `wvproc_body`, the
+## only thing that strips comments, and the block comment above `plot_dbs_arm` QUOTED
+## that signature verbatim in order to say it was pinned, so the comment was the row's
+## own evidence. BM05 now reads the formal list with `info args` and the DEFAULTS with
+## `info default`, both off the interpreter's parsed proc, and DERIVES the call-site
+## population from the file's own text (`bs_call_sites`: whole-line comments dropped,
+## the callee matched as a BARE name in COMMAND POSITION, each command taken as a
+## brace-balanced word list), asserting its MEMBERSHIP as an exact set plus every site's
+## ARITY, SPELLING and NAMESPACE-QUALIFICATION. A CONTROL leg runs the same derivation
+## over a source minted in the suite, so which shapes it admits is re-checked every run
+## rather than described in a comment.
+## ⚠ NO CHECK COUNTS ARE WRITTEN IN THIS PARAGRAPH, DELIBERATELY. Earlier revisions
+## quoted two and both were stale inside one commit. A published count is a figure three
+## instruments recompute every run -- `OVERALL:`, `RESULT:`, and a
+## `banner_rule`/`summarize_all` capture -- so it is not a baseline. Read the verdict.
+## ⚠ THE DEFAULTS ARE FENCED TWICE OVER, AND THE SECOND FENCE IS THE OTHER ENTRY'S.
+## `info args` cannot see a default, which is why BM05 carries an `info default` leg.
+## But row GS12 of `headless/test_wave_grid` calls `wviewer::plot_signals $tok {vec_e}`
+## with TWO arguments and asserts its return, so stripping either default reddens that
+## row BEHAVIOURALLY. Measured: with both defaults removed from the real proc, the grid
+## suite's `dcases` arm fails GS12 while its `hcases` arm is ALL PASS and never mentions
+## GS12 at all. The two real callers that rely on the defaults are
+## `wviewer::plot_signals $key $queue $qcolors` in src/ase_window.tcl (THREE arguments)
+## and `wviewer::plot_signals $tok [list $rpn]` in src/calculator.tcl (TWO).
+## ⚠⚠ AND THE REGISTERED ARM MEASURES LESS THAN HALF THIS SUITE. The `--nogui` arm
+## drops whole bands of gesture and viewer rows behind uppercase
+## `SKIPPED: <group> group (Tk/X arm only)` announcements. Uppercase
+## contributes NOTHING to the trailer's `skips=` (`summarize_all` counts `^skip:`
+## lowercase, and this suite prints ZERO of those on either arm), so
+## `counted_failures=0` here is a claim about correctness and not about coverage, and the
+## trailer cannot say so. Those rows are owed a run outside the gate -- do not "fix" it
+## by adding a `dcases` arm until the gesture flake is closed.
+##
+## `headless/test_wave_grid` is in BOTH lists. The `hcases` entry is a `--nogui` CRASH
+## GUARD -- the issues 1483/1492/1493 class, and the same ground on which
+## `headless/test_fluid_editing` keeps its `hcases` entry: the question an `hcases` arm
+## answers is not "which rows does this reach" but "does the product survive being driven
+## with no X at all". ⚠ THAT REASON IS GIVEN HERE BECAUSE IT NEEDS NO MEASUREMENT. An
+## arm-to-arm row-set comparison would need one, and nothing re-checks one.
+## ⚠ The uppercase `SKIPPED` point is still true and still worth keeping: the counted arm
+## drops its GG* band behind `SKIPPED: GG* GUI legs (no DISPLAY)`, uppercase contributes
+## nothing to `skips=`, and the `dcases` arm is what actually measures that band. That is
+## a reason the `dcases` entry is load-bearing; it was never the reason the `hcases` one
+## is.
+##
+## `headless/test_node_token_split` is `hcases` ALONE. ⚠ THE PREMISE OFFERED FOR THAT
+## SHAPE WAS CHECKED AND IS FALSE ON ITS LAST CLAUSE, recorded here so nobody
+## re-derives it from the counts: the two arms report the SAME check count with no skip
+## on either, and that does NOT mean nothing in the suite is display-dependent. Row
+## NINJ3 -- the one asserting that opening a .sch does not EXECUTE the Tcl in a graph
+## `node=` field -- is not arm-gated, so it runs and passes on both arms, but the
+## walker it attacks sits inside an `has_x` guard and never runs headless. It measures
+## nothing here while emitting no skip and moving no count, which is precisely the
+## shape a count comparison is blind to, and the issue 1641 shape. The entry is kept as
+## ruled and the gap is filed rather than papered over.
 ## ⚠ `test_divis_zero_1628` IS `hcases` ALONE, AND IT IS NOT A CALCULATOR SUITE even
 ## though this batch filed it: issue 1628 is a C defect in the RPN ENGINE
 ## (`plot_raw_custom_data()`'s `DIVIS` arm, src/save.c), so it gates every caller --
@@ -702,7 +777,17 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_widgets" \
                  "headless/test_calc_buffer" \
                  "headless/test_calc_plot" \
-                 "headless/test_fluid_editing"]
+                 "headless/test_fluid_editing" \
+                 "headless/test_wave_grid"]
+## ⚠ `headless/test_wave_grid` IS ALSO IN `hcases`, AND THIS IS THE ARM THAT MEASURES
+## (issue 1645): it is where the GG* band runs, which the counted arm drops behind an
+## UPPERCASE `SKIPPED` -- uppercase, so that drop contributes nothing to `skips=` and is
+## invisible in the trailer.
+## ⚠ The `hcases` entry is NOT a second row set; it is a `--nogui` CRASH GUARD, the
+## issues 1483/1492/1493 class, kept on the same ground as
+## `headless/test_fluid_editing`'s. The reason its sibling
+## `headless/test_wave_sigbrowser` is deliberately NOT here is in the paragraph under
+## the `hcases` list.
 ## ⚠ THE FOUR `headless/test_calc_*` ENTRIES ARE `dcases` AND NOTHING ELSE, AND
 ## ONE OF THEM IS THE REASON ISSUE 1626 EXISTS. The Calculator is Tk: each of
 ## these four takes a WHOLE-FILE no-X early exit and NONE of them prints a

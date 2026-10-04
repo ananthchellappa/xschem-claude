@@ -7690,19 +7690,29 @@ proc wviewer::btn2_filter {W T px py state} {
 # --- spec §D1 / DEFECT 2: the per-signal DATABASE hand-off -------------------
 #
 # ⚠⚠ WHY THIS IS AN ARMED HAND-OFF AND NOT `plot_signals`' FIFTH ARGUMENT, which
-# is what it would obviously be. `wviewer::plot_signals`' four-parameter
-# signature is PINNED BY A LITERAL STRING MATCH — tests/headless/
-# test_wave_sigbrowser.tcl BM05 asserts
-# `proc wviewer::plot_signals {token exprs {colors {}} {destover {}}}` appears in
-# this file verbatim, and BM05 also asserts browser_plot_ids calls it as
-# `wviewer::plot_signals $token $names {} $destover` exactly once. Worse, BOTH
-# plot_signals SPIES in that suite are declared with exactly four parameters, so
-# a five-argument call would be "too many arguments", swallowed by
-# browser_plot_ids' own catch, and every BT gesture check there would read as
-# "the gesture did nothing" — the very trap that file's own ⚠ records item 10
-# falling into when `destover` was added. A parallel list is the RIGHT shape
-# (it is exactly `colors`'), and if that pin is ever relaxed this should become
-# `{dbs {}}` and these two procs should go.
+# is what it would obviously be. THE FORMAL COUNT IS PINNED, by rows that read
+# it off the interpreter's own parsed proc with `info args` rather than out of
+# this file's text: row BM05 of tests/headless/test_wave_sigbrowser.tcl and row
+# WD4 of tests/headless/test_calc_wave_dest.tcl both assert it, and BM05 also
+# takes browser_plot_ids' one call to this proc as a brace-balanced word list
+# and asserts its ARGUMENT COUNT. Worse, BOTH plot_signals SPIES in that suite
+# are declared with exactly four parameters, so a five-argument call RAISES,
+# swallowed by browser_plot_ids' own catch, and every BT gesture check there
+# would read as "the gesture did nothing" — the very trap
+# that file's own ⚠ records item 10 falling into when `destover` was added.
+# A parallel list is the RIGHT shape (it is exactly `colors`'), and if that pin
+# is ever relaxed this should become a `dbs` parameter and these two procs
+# should go.
+#
+# ⚠ THIS PARAGRAPH DELIBERATELY DOES NOT REPRODUCE THE SIGNATURE (issue 1645).
+# It used to quote the formal list verbatim, in order to say that the formal
+# list was pinned — and BM05's pin was then a whole-file `string first` for
+# exactly that literal, which this comment satisfied all by itself. A fifth
+# formal added to the proc below left the suite at ALL PASS on its counted arm,
+# the row printing `ok`, because the comment was the row's evidence. Same family
+# as CLAUDE.md's "a comment must not quote a count a command produces over the
+# tree's own text", with the roles swapped. Describe the shape; never restate
+# the string a row greps for.
 #
 # THE ONE-SHOT DISCIPLINE, which is what keeps a hidden channel honest:
 #  * `plot_dbs_take` CONSUMES — it unsets — so a stale arm can never be read
@@ -7738,10 +7748,10 @@ proc wviewer::plot_dbs_take {token} {
 #
 # ⚠⚠ THE SAME ARMED SHAPE, FOR THE SAME MEASURED REASON, and it is worth saying
 # that the reason is a TEST PIN and not an aesthetic: `plot_signals`' four
-# parameters are asserted as a LITERAL SOURCE STRING by row BM05 of
+# parameters are asserted with `info args` on the live proc by row BM05 of
 # tests/headless/test_wave_sigbrowser.tcl, row GT8 of test_wave_grid.tcl pins
-# graph_props' three, and a FIVE-argument call to plot_signals raises "too many
-# arguments" into `browser_plot_ids`' own catch — so every browser gesture check
+# graph_props' three, and a FIVE-argument call to plot_signals RAISES into
+# `browser_plot_ids`' own catch — so every browser gesture check
 # would read as "the gesture did nothing" rather than as an error. Row WD4 of
 # tests/headless/test_calc_wave_dest.tcl re-measures both arities every run.
 #

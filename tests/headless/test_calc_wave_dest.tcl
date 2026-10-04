@@ -2070,9 +2070,9 @@ group WD4 {
         {7 sweep db}
     # ⚠ TWO ARITIES THAT MUST NOT MOVE, measured rather than remembered.  Row GT8
     # of test_wave_grid.tcl asserts graph_props takes exactly three parameters
-    # with the third named `grid`; row BM05 of test_wave_sigbrowser.tcl asserts
-    # plot_signals' four-parameter signature as a LITERAL SOURCE STRING, and a
-    # five-argument call to it raises "too many arguments" into a catch that
+    # with the third named `grid`; row BM05 of test_wave_sigbrowser.tcl reads
+    # plot_signals' four formals off the interpreter's own parsed proc, and a
+    # five-argument call to it raises `wrong # args` into a catch that
     # swallows it, so every browser gesture check would read as "the gesture did
     # nothing".  The sweep must therefore travel in the trace dict and through the
     # existing out-of-band one-shot channel, never as a new parameter on either.

@@ -721,9 +721,10 @@ check "XB9 ... landing on the name rule's answer (blockA)" \
   [xb_rawfiles $tok] [list $vcdA]
 
 # XB10: THE ONE-SHOT DISCIPLINE of the hand-off. The database list reaches
-# plot_signals through a namespace arm rather than a 5th argument (that
-# signature is pinned by a literal string match in test_wave_sigbrowser.tcl —
-# see plot_dbs_arm's ⚠⚠), so the ONLY thing keeping it honest is that
+# plot_signals through a namespace arm rather than a 5th argument (row BM05 of
+# test_wave_sigbrowser.tcl reads that formal count off the interpreter's own
+# parsed proc — see plot_dbs_arm's ⚠⚠, which says why it must not be a literal
+# string match), so the ONLY thing keeping it honest is that
 # plot_dbs_take CONSUMES. A list left armed would silently retarget the NEXT
 # gesture — a Direct Plot, or the lower pane — at the previous one's database.
 xb_reset $tok

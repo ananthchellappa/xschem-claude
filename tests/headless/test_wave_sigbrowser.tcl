@@ -802,6 +802,226 @@ proc bt_d {pat {syn shell} {case 0} {type all}} {
   return [dict create pattern $pat syntax $syn case $case type $type]
 }
 
+# --- a call site's WORD LIST, derived rather than prefix-matched ------------
+#
+# WHY A `regexp -all` OVER A CALL IS NOT A FENCE ON THE ARGUMENT COUNT (issue
+# 1645). BM05's arity leg was a bare
+#   regexp -all {wviewer::plot_signals \$token \$names \{\} \$destover}
+# and that pattern is a PREFIX: nothing after `$destover` is required to be the
+# end of the command, so it answers the same for a FIVE-argument call as for the
+# four-argument one. The COUNTED arm was therefore blind to exactly the mistake
+# the band exists to forbid, and the raise a five-argument call produces goes
+# straight into `browser_plot_ids`' own `catch` -- the swallowed-catch trap
+# src/wave_viewer.tcl's own header predicts, which on a gesture row reads as an
+# EMPTY recorded call rather than as an error.
+#
+# THE METHOD. `bs_call_words_at` scans forward from a given index, balancing
+# braces, and stops at the first CLOSING brace that would close one this scan
+# did not open (the `catch` script's own closer) or at a `;` outside braces, or
+# at a newline that is NOT a backslash continuation. The collected text is the
+# whole LOGICAL command, so a `{}` ARGUMENT is carried rather than mistaken for
+# the end and a reflowed call is not truncated, and the returned list's length
+# is 1 + the argument count. `bs_call_words` is the by-name wrapper: the FIRST
+# occurrence of the literal in whatever body it is handed. A call whose shape
+# stops matching returns {}, which reddens the rows that assert a list -- the
+# intended outcome, because that call site changing is a thing to look at
+# rather than to wave through.
+#
+# ⚠ THE NEWLINE STOP WAS A HOLE OF THE SAME SHAPE AS THE PREFIX IT REPLACED
+# (issue 1646). With the walk stopping at any newline, a FIVE-argument call
+# written across a backslash continuation answered 4 -- the words on its first
+# line -- so the ARITY leg stayed GREEN at BOTH doors, measured, and every red
+# such a call did produce was a truncated-SPELLING red, which a harmless reflow
+# produces too. That the join now carries such a call is the CONTROL leg's claim.
+proc bs_call_words_at {body start} {
+  if {$start < 0} { return {} }
+  set d 0
+  set out {}
+  set n [string length $body]
+  for {set j $start} {$j < $n} {incr j} {
+    set c [string index $body $j]
+    if {$c eq "\{"} {
+      incr d
+    } elseif {$c eq "\}"} {
+      if {$d == 0} { break }
+      incr d -1
+    } elseif {$d == 0 && $c eq ";"} {
+      break
+    } elseif {$d == 0 && $c eq "\n"} {
+      # A BACKSLASH CONTINUATION IS ONE LOGICAL COMMAND, so the walk joins it
+      # rather than stopping at the physical line end. The trailing backslash
+      # run must be ODD, which is Tcl's own rule for when the newline is
+      # escaped rather than literal. The BM05 CONTROL leg asserts the join.
+      if {![regexp {(\\+)$} $out -> bs_bsrun]
+          || [string length $bs_bsrun] % 2 == 0} { break }
+      set out "[string range $out 0 end-1] "
+      continue
+    }
+    append out $c
+  }
+  return [regexp -all -inline {\S+} $out]
+}
+proc bs_call_words {body callee} {
+  return [bs_call_words_at $body [string first $callee $body]]
+}
+
+# --- the callee in COMMAND POSITION on one line, with its own spelling -------
+#
+# Answers a list of {index callee-word} pairs: every occurrence on `$line` of the
+# BARE callee name, optionally namespace-qualified, standing as a whole word in
+# command position. COMMAND POSITION here means that the nearest non-whitespace
+# character before the match is the start of the line, an open BRACKET, a
+# SEMICOLON or an open BRACE. WHICH SHAPES THAT ADMITS AND WHICH IT EXCLUDES IS
+# ASSERTED BY THE BM05 CONTROL LEG, not by this comment.
+#
+# The three opener characters are written \x5b \x3b \x7b rather than literally,
+# so that this block's own braces and brackets balance as raw characters. A
+# literal open brace in a comment has silently unbalanced a file in this tree
+# before (CLAUDE.md records it happening inside the comment warning about it),
+# and `info complete` over the WHOLE file is what catches it -- it answered 0
+# here until these two sites were written this way, while every block answered 1
+# in isolation.
+proc bs_cmd_word_hits {line bare} {
+  set out {}
+  set len [string length $line]
+  set from 0
+  while {$from < $len} {
+    if {![regexp -indices -start $from \
+          "(?:\[A-Za-z_\]\[A-Za-z0-9_\]*::)*${bare}" $line m]} { break }
+    lassign $m a b
+    set from [expr {$b + 1}]
+    # a WHOLE word: no identifier character and no `:` butted against either end
+    if {$a > 0 && [string match {[A-Za-z0-9_:]} [string index $line [expr {$a - 1}]]]} { continue }
+    if {$b + 1 < $len && [string match {[A-Za-z0-9_:]} [string index $line [expr {$b + 1}]]]} { continue }
+    set pre [string trimright [string range $line 0 [expr {$a - 1}]]]
+    if {$pre ne {} && [lsearch -exact [list \x5b \x3b \x7b] [string index $pre end]] < 0} { continue }
+    lappend out [list $a [string range $line $a $b]]
+  }
+  return $out
+}
+
+# --- EVERY call site of one callee in a file, derived ----------------------
+#
+# WHY THE CALL SITES ARE NOT HAND-LISTED (issue 1645). `bs_call_words` above
+# answers for ONE call, so a band wanting "every forward of this callee carries
+# four arguments" had to name the bodies -- and it named ONE of the TWO: the leg
+# asked about `$bm_pids` (`browser_plot_ids`) and nothing else, so a
+# five-ARGUMENT call at `wviewer::browser_sea_plot_idx` was invisible on the
+# counted arm. A hand-kept list of call sites is the same defect one level up --
+# row X1 of tests/headless/test_snprintf_fmt_1608.tcl exists for exactly this --
+# and it is the defect this band was rewritten to remove, so closing the second
+# site by adding a second name is not acceptable.
+#
+# THE METHOD: drop whole-line comments, walk the remaining lines tracking the
+# last `proc` declaration seen at column 0, and for every occurrence of the BARE
+# callee name in COMMAND POSITION (`bs_cmd_word_hits`) hand the text from that
+# point onward to `bs_call_words_at`. The answer is a list of {enclosing-proc
+# callee-word word-list} triples, so one band can assert the MEMBERSHIP of the
+# derived population, every site's ARGUMENT COUNT, every site's SPELLING and
+# whether every site's callee word is NAMESPACE-QUALIFIED.
+#
+# THE CALLEE IS THE BARE NAME, AND KEYING THIS TO THE QUALIFIED LITERAL WAS A
+# HOLE OF ITS OWN (issue 1645). src/wave_viewer.tcl's procs live in the
+# `wviewer` namespace, where an UNQUALIFIED `plot_signals ...` reaches the real
+# proc -- measured in the real binary, where an unqualified four-argument call
+# returns that proc's own answer. A derivation keyed to the literal
+# `wviewer::plot_signals` never saw such a call, so a new door forwarding
+# unqualified with FIVE arguments -- a door that can never work -- was green on
+# every registered arm.
+#
+# AND THE BARE NAME ALONE IS NOT THE REPAIR EITHER: a plain `string first` for
+# `plot_signals` pulls the proc's OWN DECLARATION into the population, where the
+# brace walk runs on into the body, and it strips the `wviewer::` off the real
+# sites' spelling. The COMMAND-POSITION test is what excludes the declaration,
+# because on that line the command word is `proc` and the callee is its first
+# ARGUMENT.
+#
+# WHAT THIS ADMITS IS A ROW, NOT THIS COMMENT: the BM05 CONTROL leg runs this
+# proc over a source minted in that band and asserts which shapes join.
+#
+# TWO DECLARED LIMITS, not re-checked here.  First, a call reached through
+# `uplevel`, `eval` or a variable holding the command name, which is not in
+# command position and does not join.
+#
+# ⚠ Second, and MEASURED rather than supposed: whole-line comments are dropped
+# BEFORE the continuations are joined, so a command whose continuation lands on
+# a `#`-leading line loses that line's words.  Driven across fifteen spellings,
+# exactly one defeats every leg in this band -- a five-argument call continued
+# onto a comment line with its closing word on a line of its own answers arity
+# FOUR where Tcl itself answers FIVE.  Reordering the two steps would fix that
+# case and is deliberately NOT done: this walk's word count already diverges
+# from Tcl's in four of those fifteen spellings while still reaching the right
+# VERDICT in all but this one, and each previous attempt to make a text scan
+# exact here produced a fresh evasion -- a comment copy of the signature, an
+# unqualified callee, then this.  The lesson of issue 1645 is that source text
+# is the wrong instrument for a signature, which is why the `info args` and
+# `info default` legs above carry the weight: no sabotage has ever evaded those.
+proc bs_call_sites {src bare} {
+  set lines {}
+  foreach line [split $src "\n"] {
+    if {[regexp {^\s*#} $line]} { continue }
+    lappend lines $line
+  }
+  set cur {}
+  set out {}
+  set n [llength $lines]
+  for {set k 0} {$k < $n} {incr k} {
+    set line [lindex $lines $k]
+    if {[regexp {^proc[ \t]+(\S+)} $line -> nm]} { set cur $nm }
+    set hits [bs_cmd_word_hits $line $bare]
+    if {$hits eq {}} { continue }
+    set rest [join [lrange $lines $k end] "\n"]
+    foreach hit $hits {
+      lassign $hit bs_hi bs_hw
+      lappend out [list $cur $bs_hw [bs_call_words_at $rest $bs_hi]]
+    }
+  }
+  return $out
+}
+
+# --- the OPTIONAL formals and their default VALUES, off the parsed proc -----
+#
+# ⚠⚠ WHY THIS EXISTS AT ALL, AND WHY ITS ABSENCE WAS A COVERAGE REGRESSION THE
+# BM05 REPAIR ITSELF CAUSED (issue 1645, first finding). The leg that `info
+# args` replaced was a whole-file `string first` for the signature LITERAL, and
+# that literal carried `{colors {}} {destover {}}` inside it -- so, dead pin
+# though it was, it fenced the DEFAULTS as well as the formal count. `info args`
+# reports NAMES ONLY and cannot see a default, so stripping both defaults off
+# the real proc left this suite's counted arm GREEN with zero FAIL lines,
+# measured, while BREAKING two real callers that pass fewer
+# than four arguments and rely on the defaults to fill the rest:
+# `wviewer::plot_signals $key $queue $qcolors` in src/ase_window.tcl (THREE) and
+# `wviewer::plot_signals $tok [list $rpn]` in src/calculator.tcl (TWO). Both
+# were driven against the stripped proc in the real binary and both raised
+# `wrong # args`, so the defaults are load-bearing and not decoration.
+#
+# `info default` is the shape that sees them, and it reads the interpreter's own
+# parsed definition, so -- exactly like `info args` -- no comment quoting the
+# signature can satisfy it and no reflow of the formal list can break it. The
+# DEFAULT VALUE is carried as well as its existence, because `{}` is the claim:
+# a default of `all` on `destover` would change where every short call lands.
+proc bs_formal_defaults {p} {
+  set out {}
+  foreach a [info args $p] {
+    if {[info default $p $a dv]} { lappend out [list $a $dv] }
+  }
+  return $out
+}
+
+# NON-VACUITY PROBES for the `info args` arity predicate below. Minted HERE
+# with a known four and five formals, so the predicate's answer over
+# `::wviewer::plot_signals` is demonstrably a measurement of that proc and not
+# a constant the row would print whatever the tree said.
+proc bs_probe_4formals {token exprs {colors {}} {destover {}}} { return {} }
+proc bs_probe_5formals {token exprs {colors {}} {destover {}} {xaxis {}}} { return {} }
+# ...and a FOUR-formal probe with NO defaults, which is the one the defaults
+# predicate needs: `bs_probe_4formals` and `bs_probe_5formals` both carry
+# defaults on `colors` and `destover`, so a non-vacuity leg built only from
+# those two never demonstrates the predicate answering EMPTY. This one does, so
+# the three probes together show it distinguishing the stripped signature from
+# both of the shapes that are not it.
+proc bs_probe_4nodefault {token exprs colors destover} { return {} }
+
 # ============================================================================
 # BT01-BT09 — SOURCE arm, BOTH arms. `wsrc` was read by the BS group above.
 # ============================================================================
@@ -879,6 +1099,18 @@ check {BT06 exactly one plot_signals call, in browser_plot_ids} \
         [regexp -all {wviewer::plot_signals} $bt_psel] \
         [regexp -all {wviewer::plot_signals} $bt_pat]] \
   [list 1 0 0]
+# ⚠ THE COUNT LEG ABOVE IS BLIND TO THE ARGUMENT COUNT -- it counts occurrences
+# of the NAME, so a five-argument call answers 1 too. This leg takes the whole
+# command as a WORD LIST (bs_call_words, brace-balanced, so the `{}` argument is
+# carried), which is what makes a fifth argument a COUNTED-arm red instead of a
+# BATCH of display-arm gesture rows reading as "the gesture did nothing" -- an
+# EMPTY recorded call, never an error, because the raise is swallowed by
+# browser_plot_ids' own catch (issue 1645). The batch SIZE is not written down:
+# it moves with which door is plucked and with how many rows that door feeds.
+set bt_pscall [bs_call_words $bt_pids {wviewer::plot_signals}]
+check {BT06 ...and that ONE call's command, taken as a brace-balanced WORD LIST rather than prefix-matched, carries exactly FOUR arguments, in this order} \
+  [list [expr {[llength $bt_pscall] - 1}] [join $bt_pscall { }]] \
+  [list 4 {wviewer::plot_signals $token $names {} $destover}]
 check {BT06 the Plot button and both click gestures route through browser_plot_ids} \
   [list [regexp -all {wviewer::browser_plot_ids} $bt_psel] \
         [regexp -all {wviewer::browser_plot_ids} $bt_pat]] \
@@ -1128,7 +1360,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     rename ::wviewer::plot_signals ::wviewer::__bt_real_plot_signals
     # ⚠ THE 4th PARAMETER IS ITEM 10's, AND THE SPY MUST CARRY IT. plot_signals
     # grew a one-shot `destover`; a 3-parameter spy would take the real 4-arg
-    # call as "too many arguments", browser_plot_ids' own catch would swallow it,
+    # call as a `wrong # args` error, browser_plot_ids' own catch would swallow it,
     # and every BT gesture check below would read as "the gesture did nothing".
     # It is RECORDED as well as accepted so item 10's own checks can assert what
     # the cascade passed (BM30/BM31) on this same recorder.
@@ -2169,14 +2401,178 @@ check {BM05 plot_signals resolves the destination ONCE, defaulting to plot_dest}
   [list 1 1 1]
 check_true {BM05 ...and the override is an ARGUMENT that never writes dest($token)} \
   [expr {[regexp -all {set_plot_dest|set dest\(} $bm_ps] == 0}]
-check_true {BM05 the signature really carries the optional destover} \
-  [expr {[string first "proc wviewer::plot_signals \{token exprs \{colors \{\}\} \{destover \{\}\}\}" \
-           $wsrc] >= 0}]
-# ruling 24 / BT06 stay literally true: browser_plot_ids only FORWARDS it
-check {BM05 browser_plot_ids forwards destover and reads no destination itself} \
-  [list [regexp -all {wviewer::plot_signals \$token \$names \{\} \$destover} $bm_pids] \
+# ⚠⚠ THIS LEG USED TO BE A WHOLE-FILE `string first` FOR THE SIGNATURE LITERAL,
+# AND IT WAS A DEAD PIN THAT READ AS LIVE (issue 1645). `$wsrc` is the raw file,
+# comments and all -- it does NOT go through `wvproc_body` -- and the block
+# comment written to EXPLAIN the pin quoted the signature verbatim in order to
+# say it was pinned. So the comment was the row's evidence: with a fifth formal
+# added to the REAL proc and the comment untouched, this suite's counted arm
+# printed `ok: BM05 the signature really carries the optional destover` and
+# its own completion banner. Note the repair could NOT be a tighter predicate
+# over `$wsrc` either: on the tree as it then stood the literal occurred in that
+# comment AS WELL AS in the proc, so a `regexp -all ... == 1` leg would have
+# been RED on correct code. The comment has since been rewritten to describe the
+# shape instead of restating the string, which is a separate fix and not this
+# row's fence -- nothing stops a future comment from quoting it again, and this
+# row no longer cares if one does.
+#
+# The shape below is `info args` on the LIVE proc, read off the interpreter's
+# own parsed definition. It cannot be satisfied by any text in a comment, and it
+# does not break when the formal list is reflowed. Row WD4 of
+# tests/headless/test_calc_wave_dest.tcl uses the same shape and DID redden on
+# the same sabotage (`-> {3 grid 5 ...}`), which is what identified it.
+#
+# TWO LEGS ON PURPOSE, because a count and a spelling are two different claims:
+# the first reddens only when the number of formals moves, the second also when
+# one is renamed. A rename is a real change to the hand-off's contract (band
+# WD12's recorder reports what it was handed under these names) but it is not
+# the `wrong # args` trap, and a single leg could not tell a reader which
+# of the two had happened.
+check {BM05 `info args` on the LIVE ::wviewer::plot_signals counts FOUR formals -- read off the interpreter's parsed proc, so no comment quoting the signature can satisfy it and no reflow of the formal list can break it} \
+  [llength [pcall info args ::wviewer::plot_signals]] 4
+check {BM05 ...and the four formal NAMES in order, which is the SEPARATE claim: a rename reddens this leg and leaves the count leg above green, so the two legs say which of the two changes happened} \
+  [pcall info args ::wviewer::plot_signals] \
+  {token exprs colors destover}
+check {BM05 NON-VACUITY: the same `info args`+`llength` predicate over two probe procs minted in this file with a known four and five formals answers 4 and 5, so the count above is a measurement of plot_signals rather than a constant} \
+  [list [llength [pcall info args bs_probe_4formals]] \
+        [llength [pcall info args bs_probe_5formals]]] \
+  [list 4 5]
+# A THIRD CLAIM, AND ITS ABSENCE WAS A COVERAGE REGRESSION THE TWO LEGS ABOVE
+# CAUSED. `info args` reports NAMES ONLY, so with the whole-file `string first`
+# retired nothing in THIS suite saw the defaults, and stripping both off the real
+# proc left its counted arm GREEN while breaking a THREE-argument caller in
+# src/ase_window.tcl and a TWO-argument one in src/calculator.tcl.
+# ⚠ NOT "nothing anywhere": row GS12 of tests/headless/test_wave_grid.tcl calls
+# `wviewer::plot_signals $tok {vec_e}` with TWO arguments and asserts its return,
+# so stripping either default reddens that row BEHAVIOURALLY -- and GS12 is on
+# that suite's `dcases` arm, which issue 1645 registered. The leg below is the
+# counted-arm half: the optional formals AND their default VALUES, in order, off
+# the interpreter's parsed proc, which no text in a comment can satisfy.
+check {BM05 ...and `info default` on the LIVE proc reports WHICH formals are optional and WHAT each one defaults to -- the claim `info args` structurally cannot make, read off the interpreter's parsed proc so no comment quoting the signature can satisfy it} \
+  [pcall bs_formal_defaults ::wviewer::plot_signals] \
+  {{colors {}} {destover {}}}
+check {BM05 NON-VACUITY: the same `info default` predicate over three probe procs minted in this file -- four formals with defaults, five with defaults, and four with NONE -- answers two pairs, three pairs and EMPTY, so the leg above is a measurement of plot_signals and the predicate is demonstrably able to report the stripped signature} \
+  [list [pcall bs_formal_defaults bs_probe_4formals] \
+        [pcall bs_formal_defaults bs_probe_5formals] \
+        [pcall bs_formal_defaults bs_probe_4nodefault]] \
+  {{{colors {}} {destover {}}} {{colors {}} {destover {}} {xaxis {}}} {}}
+# ruling 24 / BT06 stay literally true: browser_plot_ids only FORWARDS it.
+# ⚠ THE FIRST ELEMENT WAS A PREFIX MATCH AND ACCEPTED A FIFTH ARGUMENT -- see
+# bs_call_words' header. It is now the whole command as a brace-balanced word
+# list, so a five-argument call reddens HERE, on the counted arm, instead of
+# only on the display arm's gesture rows as an empty recorded call.
+set bm_pscall [bs_call_words $bm_pids {wviewer::plot_signals}]
+check {BM05 browser_plot_ids forwards destover and reads no destination itself, the forward taken as a brace-balanced WORD LIST of the whole command rather than prefix-matched, so its ARGUMENT COUNT is asserted and not merely its prefix} \
+  [list [expr {[llength $bm_pscall] - 1}] [join $bm_pscall { }] \
         [regexp -all {plot_dest|plan_plot|dest_prepare|dest_norm} $bm_pids]] \
-  [list 1 0]
+  [list 4 {wviewer::plot_signals $token $names {} $destover} 0]
+
+# THE LEG ABOVE ASKS ABOUT ONE BODY, AND THERE IS MORE THAN ONE CALL SITE.
+# `bm_pids` is `browser_plot_ids`; src/wave_viewer.tcl forwards to
+# `plot_signals` from `browser_sea_plot_idx` as well, with a byte-identical
+# command, and that is the site that was found broken in the inherited tree. The
+# leg above named `$bm_pids` and nothing else, so a five-ARGUMENT call at the
+# other door was invisible on the counted arm.
+#
+# ⚠ WHAT WOULD CATCH IT IS A DISPLAY ARM NOTHING RUNS, AND THAT IS THE POINT.
+# This suite is registered in `hcases` ALONE and
+# `headless/test_wave_sigbrowser_sea`, the other suite over that door, appears in
+# tests/run_regression.tcl ZERO times. A hole whose only witness is unregistered
+# is a hole the gate cannot see, which is why the fence below had to land on the
+# COUNTED arm. (The `dcases` omission is a ruled shape resting on a reported
+# intermittent failure of the gesture rows BT43/BT44/BM43; nothing here
+# re-measures that flake and two crews failed to reproduce it, so it is carried
+# as the basis of the ruling and not as a finding.)
+#
+# ⚠ AND THE REPAIR IS NOT A SECOND NAME. Adding `browser_sea_plot_idx` beside
+# `browser_plot_ids` would close today's hole and leave tomorrow's. The legs
+# below DERIVE the population from the file's own text (`bs_call_sites`:
+# whole-line comments dropped, callee matched as a BARE name in COMMAND
+# POSITION, each command taken as a brace-balanced word list) and assert four
+# different things about it, with a CONTROL leg over a source minted here that
+# shows which shapes the derivation admits.
+#
+# WHAT EACH LEG IS FOR, which is the part that keeps being got wrong:
+#  * MEMBERSHIP is an EXACT SET, and that shape is the whole point of it: it is
+#    the only leg that reddens when the population SHRINKS, because the three
+#    below each answer `lsort -unique` over whatever members remain and are green
+#    over a smaller set. An EMPTIED population reddens all four -- `lsort
+#    -unique {}` is {}, not 4 -- so membership is not the guard against vacuity;
+#    it is the guard against a call site quietly leaving.
+#  * ARITY is the five-argument trap, at whichever site it is planted.
+#  * SPELLING is drift between the doors: they cannot come to pass different
+#    things, and a RE-ORDERED forward reddens here while arity stays green. A
+#    reflow across a continuation is NOT drift, because the walk joins the
+#    physical lines before comparing -- and the join is the CONTROL leg's claim.
+#  * QUALIFICATION is what keeps the population tractable, and it is the leg
+#    that exists because the derivation now matches the BARE name: an
+#    UNQUALIFIED forward reaches the same proc from inside this namespace, so it
+#    joins the population and has to be a thing somebody looks at.
+
+# THE CONTROL SOURCE. Minted here, holding on purpose the six shapes that decide
+# what `bs_call_sites` can and cannot see: an UNQUALIFIED call, a QUALIFIED call,
+# a call REFLOWED ACROSS A BACKSLASH CONTINUATION, the callee's OWN DECLARATION,
+# a whole-line comment carrying a call, and a trailing `;#` carrying one.
+#
+# ⚠⚠ `@CONT@` IS NOT DECORATION, AND WRITING THE CONTINUATION LITERALLY MADE
+# THIS LEG VACUOUS -- measured: with a literal one it passed against the OLD
+# newline-stopping walk, which is the walk it exists to forbid. Tcl collapses a
+# backslash-newline INSIDE a braced literal exactly as it does outside one, so
+# a continuation written here never reaches the derivation and the leg silently
+# tests a one-line five-argument call instead. The `string map` is what puts the
+# two physical lines into the control source.
+set bs_ctlsrc [string map [list @CONT@ "\\\n"] {# wviewer::plot_signals $w $x $y $z
+proc wviewer::ctl_unqual {token names destover} {
+  return [catch {plot_signals $token $names {} $destover $token} e]
+}
+proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+  return {}
+}
+proc wviewer::ctl_qual {token names destover} {
+  return [catch {wviewer::plot_signals $token $names {} $destover} e]
+}
+proc wviewer::ctl_cont {token names destover} {
+  return [catch {wviewer::plot_signals $token $names {} @CONT@                     $destover $token} e]
+}
+proc wviewer::ctl_trailing {token} {
+  set y 2 ;# wviewer::plot_signals $token $token $token $token
+}
+}]
+proc bs_site_summary {sites} {
+  set out {}
+  foreach s $sites {
+    lassign $s p w words
+    lappend out [list $p [expr {[string match {*::*} $w] ? 1 : 0}] \
+                        [expr {[llength $words] - 1}]]
+  }
+  return $out
+}
+check {BM05 CONTROL: bs_call_sites over a source minted in this file holding an unqualified call, a qualified call, a call reflowed across a BACKSLASH CONTINUATION, the callee's own declaration, a whole-line comment carrying a call and a trailing `;#` carrying one, answered as {enclosing-proc qualified arity} per member -- so the derivation is shown admitting all three calls, reporting the unqualified one AS unqualified with its real arity, JOINING the continuation into one logical command so its FIVE arguments are counted rather than the four on its first line, and excluding the declaration and both comments} \
+  [bs_site_summary [bs_call_sites $bs_ctlsrc plot_signals]] \
+  {{wviewer::ctl_unqual 0 5} {wviewer::ctl_qual 1 4} {wviewer::ctl_cont 1 5}}
+
+set bm_sites   [bs_call_sites $wsrc plot_signals]
+set bm_siteprocs {}
+set bm_sitearity {}
+set bm_sitespell {}
+set bm_sitequal  {}
+foreach bm_s $bm_sites {
+  lassign $bm_s bm_sp bm_sq bm_sw
+  lappend bm_siteprocs $bm_sp
+  lappend bm_sitearity [expr {[llength $bm_sw] - 1}]
+  lappend bm_sitespell [join $bm_sw { }]
+  lappend bm_sitequal  [expr {[string match {*::*} $bm_sq] ? 1 : 0}]
+}
+check {BM05 the DERIVED population of plot_signals call sites in src/wave_viewer.tcl, named by enclosing proc and asserted as an EXACT SET -- the shape that reddens when a site LEAVES, which the three `lsort -unique` legs below structurally cannot} \
+  [list [llength $bm_sites] [lsort $bm_siteprocs]] \
+  [list 2 {wviewer::browser_plot_ids wviewer::browser_sea_plot_idx}]
+check {BM05 ...and EVERY site in that derived population carries exactly FOUR arguments, each command taken as a brace-balanced WORD LIST rather than prefix-matched, so a five-ARGUMENT call at either site reddens HERE on the COUNTED arm whenever the whole command survives this file's own comment strip -- the one spelling that does not is declared a limit above, not claimed} \
+  [lsort -unique $bm_sitearity] 4
+check {BM05 ...and every site in that derived population spells the forward identically, which is the SEPARATE claim: the two doors cannot drift apart into passing different things, and a RE-ORDERED forward reddens this leg while leaving the arity leg above green} \
+  [lsort -unique $bm_sitespell] \
+  {{wviewer::plot_signals $token $names {} $destover}}
+check {BM05 ...and every site's CALLEE WORD is NAMESPACE-QUALIFIED, read off the word the derivation matched rather than off the command text, so an unqualified forward -- which from inside this namespace reaches the same proc -- joins the population and reddens here} \
+  [lsort -unique $bm_sitequal] 1
 
 set bm_forget [wvproc_body $wsrc wviewer::forget]
 set bm_tdt    [wvproc_body $wsrc wviewer::tab_drop_transients]

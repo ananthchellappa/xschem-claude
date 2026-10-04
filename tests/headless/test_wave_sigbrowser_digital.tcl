@@ -1671,8 +1671,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # tree's plot route has carried the database since spec §D1's DEFECT 2; the
   # pane's could not, because until F6 it could only ever hold current-DB names.
   #
-  # ⚠ THE SPY TAKES FOUR PARAMETERS — the signature `BM05` pins by literal
-  # string one file over. It reads the armed list through the product's own
+  # ⚠ THE SPY TAKES FOUR PARAMETERS — the formal count `BM05` reads off the
+  # live proc one file over. It reads the armed list through the product's own
   # `plot_dbs_take`, which is where `plot_signals` itself reads it.
   rename ::wviewer::plot_signals ::wviewer::fd_ps_saved
   proc ::wviewer::plot_signals {token exprs {colors {}} {destover {}}} {

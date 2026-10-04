@@ -1407,7 +1407,21 @@ if {$save_gd ne {}} { set ::wviewer_grid_dash_off $save_gd }
 
 puts "----"
 puts "test_wave_grid: $npass passed, $fail failed"
+# ⚠ THE `OVERALL: ok` LINE IS WHAT MAKES THIS SUITE REGISTERABLE IN
+# tests/run_regression.tcl, and it is ADDITIVE -- issue 1645, the same fix
+# issue 1615 applied to `wvbs_finish`. `banner_complete` in
+# tests/banner_rule.tcl is the ONLY Tcl reader of a case's output, it is the one
+# run_regression.tcl sources, and it implements no `RESULT: ALL PASS` spelling
+# at all: a suite printing only the RESULT line scores
+# `HARNESS: ... (exit=0, OVERALL_ok=0, died=0) ... : FAIL` in the verdict with
+# every one of its own checks passing. Measured over this file's real captured
+# output on both arms before the line went in: banner_complete answered 0.
+# `run_suites.sh` and `full_audit.sh` keep their own EREs and both accept
+# `RESULT:`, so the two readers that COULD see this suite were the two that are
+# not the gate. RESULT: stays LAST, because `summarize_all` publishes a case's
+# last RESULT: line.
 if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
   exit 0
 } else {

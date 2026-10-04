@@ -1417,7 +1417,7 @@ eqcheck FS47-agreement-is-quiet "[lindex $r 3] [llength $::fs_echoed]" {hint 0}
 # ase::echo hands the tag straight to the text widget; an undefined Tk tag is
 # legal and styles nothing, so `note` renders exactly like an ordinary result
 # and 5f-1's "the disagreement is visible" would be true of the return value
-# only. (This is a literal-source pin, like BM05's: headless has no Tk widget.)
+# only. (This is a literal-source pin: headless has no Tk widget.)
 set ciwsrc {}
 if {![catch {open [file join $repo src ciw.tcl]} fh]} { set ciwsrc [read $fh]; close $fh }
 check FS47b-ciw-configures-the-note-tag \

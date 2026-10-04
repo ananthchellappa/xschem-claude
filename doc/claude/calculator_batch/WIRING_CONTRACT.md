@@ -142,14 +142,13 @@ two-column database and no trace on screen** — which would be reported as work
 and would not be.  Unit J1 must arm it.
 
 The other door, `wviewer::add_trace`'s 7th parameter `sweep`, is reachable today and
-is pinned by **WD4** (`{7 sweep db}` — seven formals, 7th named `sweep`), which is
-the one gate-visible arity pin among the three.
+is pinned by **WD4** (`{7 sweep db}` — seven formals, 7th named `sweep`).
 
 ⚠ **Do NOT "simplify" the arm/take one-shot into a parameter.**
 `wviewer::plot_signals` must keep four formals (row BM05 of
-`test_wave_sigbrowser.tcl` pins the signature as a **literal source string**, and
-six 4-parameter spy stubs redefine it); `wviewer::graph_props` must keep three (row
-GT8 of `test_wave_grid.tcl`).  A 5-arg call raises *"too many arguments"*, which
+`test_wave_sigbrowser.tcl` reads them off the interpreter's own parsed proc, and
+four-parameter spy stubs redefine it in several suites); `wviewer::graph_props`
+must keep three (row GT8 of `test_wave_grid.tcl`).  A 5-arg call raises `wrong # args`, which
 `browser_plot_ids`' own `catch` **swallows**, so every gesture check reads as *"the
 gesture did nothing"*.
 

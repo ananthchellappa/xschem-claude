@@ -3923,15 +3923,15 @@ proc calc::wave_dest_drop {answer} {
 #
 # ⚠ WHY AN ARMED ONE-SHOT CHANNEL AND NOT A FIFTH PARAMETER, which is what it
 # would obviously be.  Both channels' own headers in src/wave_viewer.tcl carry
-# the measurement: `wviewer::plot_signals`' four formals are pinned as a LITERAL
-# SOURCE STRING by row BM05 of tests/headless/test_wave_sigbrowser.tcl and
-# redefined by four-parameter spy stubs in several suites, and
+# the measurement: `wviewer::plot_signals`' four formals are read off the
+# interpreter's own parsed proc by row BM05 of
+# tests/headless/test_wave_sigbrowser.tcl, which also DERIVES every call site in
+# src/wave_viewer.tcl and asserts each one's argument count, and
 # `wviewer::graph_props`' three are pinned by row GT8 of test_wave_grid.tcl.  A
-# five-argument call raises *"too many arguments"* into
+# five-argument call raises `wrong # args` into
 # `wviewer::browser_plot_ids`' own `catch`, which SWALLOWS it -- so every browser
 # gesture check would read as "the gesture did nothing" rather than as an error.
-# Row WD4 of test_calc_wave_dest.tcl re-measures both arities every run and is
-# the only one of those pins a T1 gate reaches.
+# Row WD4 of test_calc_wave_dest.tcl re-measures both arities every run.
 # ---------------------------------------------------------------------------
 
 # The registry INDEX of the slot holding `db` at `type`, or -1.
