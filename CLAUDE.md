@@ -136,6 +136,57 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `cases=129 blocks=128 counted_failures=0 skips=8 elapsed=643s`, zero live-peer lines, zero
   counted shapes, zero nonzero `Total num fail:` lines.  The SAME trailer, to the second, was
   measured one commit earlier at `5e8a9904` (`tests/results.4111037.log`, also 643s).
+  **Three further figures the same day**, each verified by shape rather than by trusting its own
+  trailer (`wc -l`, counted shapes 0, nonzero `Total num fail:` 0, `Total num fail:` lines = cases − 1,
+  `^skip:` lines, live-peer lines 0): `129/128/0/8` at **`ad982a4a`**
+  (`tests/results.424812.log`, 648s, `wc -l` 386 — three new issue files and a comment-only header
+  repair, so no trailer term moved); `132/131/0/8` at **`72185f2a`**
+  (`tests/results.512689.log`, 657s, `wc -l` 395 — **issue 1652**, three suites given the
+  `OVERALL: ok` sentinel and registered, +3 cases); and `133/132/0/8` at **`062ed56e`**
+  (`tests/results.758838.log`, 651s, `wc -l` **398** — 3 `tcases` + **101** `hcases` + **28**
+  `dcases` + `xschemtest`), whose delta was derived before launch and matched on every term with
+  `planned_cases=133` agreeing independently. **TWENTY-SECOND consecutive `skips=8`.**
+  ⚠⚠ **AND THE LAST OF THOSE THREE IS WHY A RULE IN A BRIEF IS NOT A FENCE.** `test_ase_simcaps_0948`
+  — **already registered and shipping in every gate above** — mapped two real 1110x791 xschem windows
+  on whatever display the gate inherited, because its `a_xe_child` ran
+  `exec /usr/bin/env HOME=$home $XE_BIN {*}$args` with `$args` deliberately carrying none of
+  `--nogui`/`--pipe`/`--norecent`: that *absence* is what its rows assert, so it had **no display gate
+  at all**. T1's `hcases` loop is the one loop that does **not** route its child through
+  `devdisplay.sh` (the driver says so at two places in its own comments), so an `hcases` entry
+  inherits the launching shell's `$DISPLAY` — which here is the user's real Windows X server.
+  ⚠ **The textual predicate the known member suggests finds ZERO real members and ONE false
+  positive**: over all 100 registered `hcases` entries exactly one names `env(DISPLAY)` in code
+  (`test_hier_pdf_links_1333`) and that one gates on `winfo exists` and is clean. So no audit of gate
+  *expressions* could have found this, and the fence belongs on **the driver's exec lines** — the one
+  place the whole population passes through — not in the suites. `env -u DISPLAY` now sits on both
+  un-routed arms (`hccmd` and `xtcmd`, with `env` AFTER `$t1_pre` so `timeout` keeps xschem as its
+  direct child), its neutrality **measured over all 100 suites** rather than argued: 99 of 100
+  identical rc and check count with `DISPLAY` reachable and removed. The population is re-derived
+  every gate by section **`X`** of `test_home_isolation` (rows `X1`–`X4`, `hcases`, 116 → **120**
+  checks) from the driver's own `eval exec` occurrences, so a fifth launch arm joins it by existing.
+  ⚠ **`tests/headless/run_suites.sh --nogui` ATTACHES `:99` and therefore does NOT reproduce T1's
+  `hcases` arm** — `test_del_negative_arg` reports 24 checks through it against 21 in the real arm.
+  That is exactly how the hazard stayed invisible for a month; it is declared and deliberately
+  unchanged, because the blast radius covers `owed.sh drain`, `full_audit.sh` and every hand-run.
+  ⚠⚠ **Two measurement traps produced a FALSE ALARM about the user's screen before the truth came
+  out, and both will recur.** `/proc/<pid>/environ` reports the **exec-time** environment, not the
+  live one, so a shell that ran `unset DISPLAY` still shows the old value there; and `pgrep -f <text>`
+  matches the **launching subshell**, whose cmdline contains the child's text. Together they said a
+  stripped child still had `DISPLAY`. `pgrep -x <comm>` matches the real child, which had none.
+  **Corroborate a display claim with `/usr/bin/grep -l 'map=1' /tmp/Xschem.log.*`**, which is the
+  X server's own side of the story. The race-free probe for the general question is one long-lived
+  `xev -root -event substructure` on a private Xvfb (at or above `AUDIT_XVFB_BASE`): it is the
+  server's own report of every top-level CreateNotify/MapNotify, where an `xwininfo` poll loop can
+  miss a window between polls, and it separates CREATED from MAPPED. Redirect `TMPDIR` or each
+  child's action log lands in `/tmp`.
+  ⚠ **A fixture can empty Tk's undo stack and make a one-step-undo row pass against its own
+  sabotage.** A row asserting one-step undo passed with **both** `edit separator` calls deleted,
+  because the fixture did `.calc.buf edit reset` immediately before the click. Drive it as *"the user
+  typed, THEN clicked"*. The **trailing** separator alone was fenced by nothing in the tree.
+  ⚠ **When triaging a suite, grep `doc/claude/issues/` for the SUITE NAME, not for the symptom.**
+  Four hypotheses filed in one session were refuted because the shape each described was already
+  recorded against that suite by name — issues 1647 and 1413 each hold a knowing `hcases`-alone
+  trade with a matching delta, filed deliberately *"so nobody reads the shape as an oversight"*.
   ⚠⚠ **ISSUE 1650 WAS A C ENGINE FIX THAT MOVED ONE PUBLISHED COUNT (`test_divis_zero_1628`
   33 → **142**) AND NOT ONE TRAILER TERM — and it is recorded here because THE GATE COULD NOT SEE
   THE DEFECT, OR EITHER OF THE TWO WRONG FIXES ATTEMPTED BEFORE THE RIGHT ONE.**
@@ -1234,6 +1285,13 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   safe. The rule stands unchanged — prose above the proc, never between patterns — and the only
   confirmation remains behavioural: exercise every arm, with the arm set **derived from the proc's own
   switch argument**, and see that none raises.
+  ⚠⚠ **THIRD MEASUREMENT, 2026-10-04, AND IT NAMES THE CONSEQUENCE THAT WILL WASTE A SESSION:** the
+  **odd**-word version does not merely redden the display arm, it makes it **TIME OUT after 200 s
+  printing ZERO `FAIL:` lines** — a suite that says nothing at all, which reads like a hung harness
+  rather than a parse error. The **counted** arm meanwhile prints the exact Tcl message out of the
+  derived arm-sweep row. `info complete` answered `1` in both parities, as before. So **diagnose this
+  class on the counted arm**, where the instrument speaks, and treat a display-arm `TIMEOUT` with no
+  reds in a suite whose `switch` catalogue was just edited as this defect until proven otherwise.
 
 **Cite code by symbol (proc or function name), not by bare `file:line`**: coordinates
 rot, identity holds (`src/op_annot.tcl` does this on purpose). A line number that cannot
