@@ -95,6 +95,15 @@
 #        `del()` delay, and a token joined by `\r`/`\v`/`\f`) -- and declares
 #        what the product does in the two classes nothing here can name.
 #
+#   CE14 PLAN 5.3 — the four route-C compositions' NUMBERS.  Their `insert`
+#        strings are pinned as DATA by band S24 of test_calc_skeleton.tcl, a
+#        `dcases` entry; nothing anywhere evaluated one and checked the number
+#        it produces.  The population is derived from `calc::catalogue`'s own
+#        route field and every expected column is computed in this file from the
+#        raw's samples, so no comparison is one evaluator asked twice.  The band
+#        carries its own adjacent-pair distinctness leg per column, the two
+#        definitions `avg()` could have had, and three declared limits.
+#
 # ⚠ BANDS CE9 AND CE11 WRITE A FIXTURE, so this file sources
 # `tests/headless/scratch.tcl` for `test_scratch` rather than inventing a
 # directory discipline of its own: it sweeps corpses, cleans up on the failing
@@ -257,6 +266,165 @@ proc ce9_cfun {path name} {
         append out $ln "\n"
     }
     return $out
+}
+# ---------------------------------------------------------------------------
+# band CE14's readers, and its OWN arithmetic
+# ---------------------------------------------------------------------------
+# one whole column, through the PLURAL accessor.  ⚠ `xschem raw values` is the
+# only spelling CE14 may compare tightly against: it prints "%.16g"
+# (src/scheduler.c, the `values` arm), while `xschem raw value` SINGULAR goes
+# through dtoa()'s "%.8g" -- the format row CE0 reads out of the C -- and
+# ROUNDS, so eight significant digits is all it can show.  The one CE14 row that
+# reads the product's own singular door, through calc::eval_rpn, carries a
+# tolerance that says so.
+proc ce14_vals {name {ds 0}} {
+    if {[catch {xschem raw values $name $ds} v]} { return {} }
+    return [split [string trim $v]]
+}
+# the sweep column's NAME, out of the database that is loaded rather than
+# spelled here.  ⚠ CLAUDE.md records a sabotage that SURVIVED on exactly this:
+# hardcoding the sweep name passed every row in its band, because every row
+# drove a `tran` fixture where the name is `time`, and against this same
+# fixture's `ac` plot it is `frequency`.
+proc ce14_sweepname {} { return [lindex [rawnames] 0] }
+
+# --- arithmetic with NO ENGINE IN IT ---------------------------------------
+# These are what makes CE14 a comparison rather than one evaluator asked twice.
+proc ce14_sq {ys} { set o {} ; foreach y $ys { lappend o [expr {$y * $y}] } ; return $o }
+# the running trapezoidal integral, I[0] = 0 -- `case INTEG`'s recurrence
+proc ce14_trapz {xs ys} {
+    set out [list 0.0] ; set a 0.0
+    for {set i 1} {$i < [llength $xs]} {incr i} {
+        set j [expr {$i - 1}]
+        set a [expr {$a + ([lindex $xs $i] - [lindex $xs $j]) *
+                          ([lindex $ys $j] + [lindex $ys $i]) * 0.5}]
+        lappend out $a
+    }
+    return $out
+}
+# src/editprop.c's mylog10(): log10 of a POSITIVE argument, and the constant
+# -35 otherwise.  Restated rather than cited, because dBm's expectation needs it
+# at this fixture's zero sample and a comparison must not borrow the product's
+# own answer for the case under test.
+proc ce14_mylog10 {x} { if {$x > 0} { return [expr {log10($x)}] } ; return -35.0 }
+
+# the expected COLUMN for one route-C composition, element by element, from the
+# sweep column and the operand column.  Dispatched on the catalogue NAME, so a
+# fifth route-C row arrives with NO expectation, `ce14_elem` answers VACUOUS and
+# CE14's set-equality row reddens -- rather than the band quietly measuring four
+# of five.
+#
+# ⚠ `if`/`elseif` AND DELIBERATELY NOT `switch`.  CLAUDE.md records that a
+# comment between two switch patterns is a parse error `info complete` cannot
+# see, and that it is PARITY-dependent: an even word count is a silent no-op
+# that detonates on a one-word edit, an odd one makes every arm raise.  The
+# prose below has to sit beside the arm it explains, so the construct that
+# tolerates it is the one used.
+#
+# The first-point values are the engine's own documented resets, read out of
+# plot_raw_custom_data() in src/save.c and not guessed: `case AVG` assigns the
+# operand ITSELF at p == first, `case INTEG` and `case DERIV` assign 0.
+proc ce14_expect {name xs ys} {
+    set n [llength $ys]
+    set out {}
+    if {$name eq {rms}} {
+        # sqrt of the running TIME-WEIGHTED mean of y^2: the trapezoidal
+        # integral divided by the span, which is what case AVG computes
+        set I [ce14_trapz $xs [ce14_sq $ys]]
+        for {set p 0} {$p < $n} {incr p} {
+            if {$p == 0} {
+                lappend out [expr {sqrt([lindex $ys 0] * [lindex $ys 0])}]
+            } else {
+                lappend out [expr {sqrt([lindex $I $p] /
+                                        ([lindex $xs $p] - [lindex $xs 0]))}]
+            }
+        }
+    } elseif {$name eq {rmsNoise}} {
+        # sqrt of the running integral of y^2 -- NO division by the span, which
+        # is the whole difference between this composition and `rms`
+        set I [ce14_trapz $xs [ce14_sq $ys]]
+        foreach v $I { lappend out [expr {sqrt($v)}] }
+    } elseif {$name eq {dBm}} {
+        # 10*log10(P) + 30, pointwise, with mylog10()'s floor for P <= 0
+        foreach y $ys { lappend out [expr {10.0 * [ce14_mylog10 $y] + 30.0}] }
+    } elseif {$name eq {groupDelay}} {
+        # the BACKWARD difference of the phase against the sweep, negated and
+        # scaled by 360: degrees per Hz into seconds
+        for {set p 0} {$p < $n} {incr p} {
+            if {$p == 0} {
+                lappend out 0.0
+            } else {
+                set j [expr {$p - 1}]
+                lappend out [expr {(([lindex $ys $p] - [lindex $ys $j]) /
+                                    ([lindex $xs $p] - [lindex $xs $j])) / -360.0}]
+            }
+        }
+    } else {
+        return {}
+    }
+    return $out
+}
+# worst RELATIVE disagreement between two columns, element by element.  Answers
+# `ok`, or a string naming the worst error AND its index, so a failing row needs
+# no re-run to be read.  ⚠ A zero-length expectation answers VACUOUS rather than
+# ok: a loop that iterates no elements passes every comparison, and that is the
+# failure mode this band is built to avoid.
+proc ce14_elem {got exp tol} {
+    if {[llength $exp] == 0} { return VACUOUS }
+    if {[llength $got] != [llength $exp]} {
+        return "LENGTH:[llength $got]!=[llength $exp]"
+    }
+    set w 0.0 ; set wi -1
+    for {set i 0} {$i < [llength $exp]} {incr i} {
+        set a [lindex $got $i] ; set b [lindex $exp $i]
+        if {![string is double -strict $a]} { return "NOTANUMBER:$i:{$a}" }
+        set r [expr {$b == 0 ? abs($a) : abs(($a - $b) / double($b))}]
+        if {$r > $w} { set w $r ; set wi $i }
+    }
+    if {$w <= $tol} { return ok }
+    return "off:worst=$w at=$wi n=[llength $exp]"
+}
+# the smallest ADJACENT-PAIR relative spread in a column, from element $from on.
+# ⚠ THE ADJACENT PAIR, NOT THE RANGE, and CLAUDE.md records why in numbers: a
+# per-edge series whose RANGE was a relative 2.4e-3 -- perfectly adequate
+# looking -- had its adjacent pair (1,2) differing by 2.22e-11, inside the row's
+# own 1e-7 door, because the pole was in periodic steady state.  A producer that
+# repeated one element into the next passed.  Every CE14 elementwise row carries
+# this as a separate leg, so the comparison cannot go vacuous if the fixture is
+# ever regenerated.
+proc ce14_adjmin {lst from} {
+    set m {} ; set mi -1
+    for {set i [expr {$from + 1}]} {$i < [llength $lst]} {incr i} {
+        set a [lindex $lst $i] ; set b [lindex $lst [expr {$i - 1}]]
+        set d [expr {$b == 0 ? ($a == 0 ? 0.0 : 1.0) : abs(($a - $b) / double($b))}]
+        if {$m eq {} || $d < $m} { set m $d ; set mi $i }
+    }
+    if {$m eq {}} { return VACUOUS }
+    return [list $m $mi]
+}
+proc ce14_distinct {lst from floor} {
+    set r [ce14_adjmin $lst $from]
+    if {$r eq {VACUOUS}} { return VACUOUS }
+    if {[lindex $r 0] >= $floor} { return ok }
+    return "tooclose:[lindex $r 0] at=[lindex $r 1] floor=$floor"
+}
+# two single numbers that must be FAR APART, which is how an impostor is fenced:
+# a row that compares two values has to be driven on inputs whose numbers differ
+# by more than its own tolerance, and that has to be MEASURED rather than hoped.
+proc ce14_apart {a b floor} {
+    if {![string is double -strict $a] || ![string is double -strict $b]} {
+        return "NOTANUMBER:{$a}{$b}"
+    }
+    set d [expr {$b == 0 ? abs($a) : abs(($a - $b) / double($b))}]
+    if {$d >= $floor} { return ok }
+    return "tooclose:$d floor=$floor"
+}
+# one field of one catalogue row, by NAME, answering {} rather than raising when
+# the row is gone -- so a population sabotage fails the rows that name it
+# instead of aborting the band and hiding the rest.
+proc ce14_field {byname nm i} {
+    if {[catch {dict get $byname $nm} row]} { return {} }
+    return [lindex $row $i]
 }
 set fixture {}
 foreach cand {tests/headless/data/calc_fixture.raw} {
@@ -1730,6 +1898,273 @@ group CE13 {
     pcall xschem raw clear
 }
 
+# =============================================================================
+# CE14 — PLAN 5.3: the route-C compositions' NUMBERS, on the counted arm
+# =============================================================================
+# WHAT WAS MISSING.  A route-C catalogue row ships a complete RPN string in its
+# `insert` field, built out of opcodes the engine already has, so no C code is
+# written for it.  Band S24 of tests/headless/test_calc_skeleton.tcl pins those
+# STRINGS as data -- but that suite is a `dcases` entry, and NOTHING anywhere
+# evaluated a composition and checked the NUMBER it produces.  A composition can
+# be a perfectly valid RPN string and compute the wrong quantity, and every
+# route-C row shipped with its arithmetic unexamined.  This band evaluates each
+# one against the committed fixture and compares, ELEMENT BY ELEMENT, with
+# arithmetic done in this file.  No count is quoted here: the population is
+# derived below and a row asserts it.
+#
+# ⚠ "INDEPENDENTLY" MEANS WHAT IT SAYS.  Every expected number comes out of
+# `ce14_expect`, which reads the raw file's own samples through the "%.16g"
+# accessor and does the arithmetic in plain Tcl.  No expectation is produced by
+# a second engine call, which would prove only that one evaluator is
+# self-consistent.
+#
+# WHAT THE MEASUREMENT FOUND, for the next reader: all four are RIGHT, and the
+# reason `rms` is right is not the reason its string suggests.  `dup() * avg()
+# sqrt()` reads like the square root of a sample mean, which would be the wrong
+# quantity -- `case AVG` in plot_raw_custom_data() is a TIME-WEIGHTED
+# trapezoidal running mean (the running trapezoidal integral over the span), so
+# the composition is the integral RMS.  The two definitions genuinely differ on
+# this fixture, and the pair of rows under "WHY `rms` IS RIGHT" is what would
+# catch avg() being respelled.  No figure is quoted in this comment; the rows
+# recompute every separation they rely on.
+#
+# ⚠ THE OPERAND IS PART OF THE DRIVE AND CANNOT BE DERIVED.  Every one of these
+# `insert` strings is a SUFFIX: it consumes a value the user has already put on
+# the stack, which is what PLAN 5.1's append-the-token insertion produces.  What
+# that value has to BE differs per row -- `dBm` wants a power in watts (its own
+# help text says so), `groupDelay` wants a PHASE vector against a frequency
+# sweep (its help text does NOT say so -- see the note at the end of this
+# band), `rms` and `rmsNoise` want the signal itself.  Which fixture column is a power and which is a phase
+# is a judgement; what IS derived is that the drive table covers the catalogue's
+# route-C set exactly.
+group CE14 {
+    # --- the population, from the catalogue's own route field -----------------
+    set flds   [pcall calc::fn_fields]
+    set i_name [lsearch -exact $flds name]
+    set i_rt   [lsearch -exact $flds route]
+    set i_ret  [lsearch -exact $flds returns]
+    set i_ins  [lsearch -exact $flds insert]
+    check "CE14 the four field positions are DERIVED from calc::fn_fields' own schema, never counted off the table by hand" \
+        [list [expr {$i_name >= 0}] [expr {$i_rt >= 0}] \
+              [expr {$i_ret >= 0}] [expr {$i_ins >= 0}]] {1 1 1 1}
+    set cat  [pcall calc::catalogue]
+    set cpop {}
+    set byname [dict create]
+    foreach row $cat {
+        if {[llength $row] <= $i_ins} continue
+        dict set byname [lindex $row $i_name] $row
+        if {[lindex $row $i_rt] eq {C}} { lappend cpop [lindex $row $i_name] }
+    }
+    check_expr "CE14 NON-VACUITY: the catalogue is non-empty and the derived route-C population is non-empty -- a derivation that iterates zero rows passes every comparison below, which is this band's own failure mode" \
+        {[llength $cat] > 0 && [llength $cpop] > 0}
+
+    # the drive.  ⚠ NOT a hand-kept census of the catalogue: the row under it
+    # asserts SET EQUALITY against the population derived above, so a fifth
+    # route-C entry reddens this band until somebody gives it an operand and a
+    # measured expectation, and a drive for a row that is no longer route C
+    # reddens too.  Fields: operand, the plot it must be driven on, the
+    # `returns` the drive assumes, and the `insert` string whose numbers were
+    # measured.
+    set drive [dict create \
+        rms        [list {v(ramp)} tran scalar {dup() * avg() sqrt()}] \
+        rmsNoise   [list {v(ramp)} tran scalar {dup() * integ() sqrt()}] \
+        dBm        [list {v(ramp)} tran wave   {log10() 10 * 30 +}] \
+        groupDelay [list {ph(lp)}  ac   wave   {cph() deriv() -360 /}]]
+    check "CE14 SET EQUALITY: every route-C row derived from the catalogue has a drive here, and every drive is still route C -- so a fifth composition reddens this band rather than going unmeasured" \
+        [lsort [dict keys $drive]] [lsort $cpop]
+
+    # --- one pass per derived composition ------------------------------------
+    set ran 0
+    foreach nm [lsort $cpop] {
+        if {![dict exists $drive $nm]} continue
+        lassign [dict get $drive $nm] operand plot pret pins
+        set crow {}
+        if {[dict exists $byname $nm]} { set crow [dict get $byname $nm] }
+        set ins [lindex $crow $i_ins]
+        check "CE14 $nm: the catalogue's `insert` string is the one whose numbers this band measured -- a change to it reddens here and forces a re-measurement rather than silently moving the quantity" \
+            $ins $pins
+        check "CE14 $nm: the catalogue's `returns` is the one this drive assumes" \
+            [lindex $crow $i_ret] $pret
+        pcall xschem raw read $::fixture $plot
+        set sw [ce14_sweepname]
+        set xs [ce14_vals $sw 0]
+        set ys [ce14_vals $operand 0]
+        check_expr "CE14 $nm: the sweep column's NAME came out of the loaded database rather than being spelled in the suite, and both it and the operand read back non-empty and equal length through the %.16g accessor" \
+            {$sw ne {} && [llength $xs] > 1 && [llength $ys] == [llength $xs]}
+        set dest __ce14_[string tolower $nm]
+        set rc  [pcall xschem raw add $dest "$operand $ins"]
+        set got [ce14_vals $dest 0]
+        set exp [ce14_expect $nm $xs $ys]
+        check "CE14 $nm: the engine's WHOLE COLUMN agrees element by element with arithmetic done in this file from the raw's own samples, worst relative <= 1e-12" \
+            [ce14_elem $got $exp 1e-12] ok
+        check "CE14 $nm: DISTINCTNESS -- the smallest ADJACENT-PAIR relative spread in the expected column is at least 1e-6, six orders above the row's own 1e-12 door, so a producer that repeated one element into the next cannot pass.  The statistic is the adjacent pair and NOT the range, and it is measured from the fixture every run so a regenerated fixture cannot make the row above vacuous" \
+            [ce14_distinct $exp 0 1e-6] ok
+        # the product's own door, which is where the Evaluate button goes
+        set d [pcall calc::eval_rpn "$operand $ins" 0]
+        check "CE14 $nm: calc::eval_rpn ACCEPTS the composition -- its R607 pre-flight does not reject any of these opcodes -- and reports R604's `last` at the last point of the asked-for dataset with no message" \
+            [list [dg $d ok] [dg $d at] [dg $d point] [dg $d msg]] \
+            [list 1 last [expr {[llength $xs] - 1}] {}]
+        check "CE14 $nm: ...and the number it answers agrees with this file's own arithmetic at 1e-7, which is all eight significant digits of dtoa()'s %.8g can show -- row CE0 reads that format string out of the C" \
+            [near [dg $d value] [lindex $exp end] 1e-7] ok
+        pcall xschem raw del $dest
+        incr ran
+    }
+    check "CE14 the pass above ran once per derived route-C row" $ran [llength $cpop]
+
+    # --- BOTH DATASETS, and the dataset discriminator in the same place -------
+    # v(div) is v(ramp)/2 in dataset 0 and v(ramp)/4 in dataset 1 (the fixture's
+    # `alter` on rtop), so the two answers differ by a factor the row measures
+    # rather than assumes.  This is also where issue 1650 part 2 is exercised
+    # from the Calculator's side: integ() widens `first` BACKWARDS in the token
+    # scan, and without the clamp to the caller's own dataset, dataset 1's pass
+    # would carry dataset 0's accumulator across a seam where the sweep jumps
+    # backwards.
+    pcall xschem raw read $::fixture tran
+    set dsverdict {} ; set dsapart {}
+    foreach nm [lsort $cpop] {
+        if {![dict exists $drive $nm]} continue
+        lassign [dict get $drive $nm] operand plot pret pins
+        if {$plot ne {tran}} continue
+        set ins [ce14_field $byname $nm $i_ins]
+        set dest __ce14_ds
+        pcall xschem raw add $dest "v(div) $ins"
+        set last {}
+        foreach ds {0 1} {
+            set xs [ce14_vals [ce14_sweepname] $ds]
+            set ys [ce14_vals {v(div)} $ds]
+            set got [ce14_vals $dest $ds]
+            lappend dsverdict [list $nm $ds [ce14_elem $got [ce14_expect $nm $xs $ys] 1e-12]]
+            lappend last [lindex $got end]
+        }
+        lappend dsapart [list $nm [ce14_apart [lindex $last 1] [lindex $last 0] 1e-6]]
+        pcall xschem raw del $dest
+    }
+    set dswant {} ; set dsawant {}
+    foreach e $dsverdict { lappend dswant [list [lindex $e 0] [lindex $e 1] ok] }
+    foreach e $dsapart   { lappend dsawant [list [lindex $e 0] ok] }
+    check_expr "CE14 BOTH DATASETS: the population driven over v(div) across both transient datasets is non-empty" \
+        {[llength $dsverdict] >= 2}
+    check "CE14 BOTH DATASETS: every tran-driven composition agrees element by element with this file's arithmetic in dataset 0 AND in dataset 1, so integ()'s backward widening really is clamped to the caller's dataset" \
+        $dsverdict $dswant
+    check "CE14 ...and the two datasets' last values are at least 1e-6 apart in every one of them, so a dataset-blind producer that always read dataset 0 would be caught by the row above rather than passing it" \
+        $dsapart $dsawant
+
+    # --- WHY `rms` IS RIGHT, which is the one non-obvious thing here ----------
+    pcall xschem raw read $::fixture tran
+    set t  [ce14_vals time 0]
+    set r  [ce14_vals {v(ramp)} 0]
+    set Ir [ce14_trapz $t [ce14_sq $r]]
+    set wmean [expr {sqrt([lindex $Ir end] / ([lindex $t end] - [lindex $t 0]))}]
+    set acc 0.0 ; foreach y $r { set acc [expr {$acc + $y * $y}] }
+    set smean [expr {sqrt($acc / [llength $r])}]
+    pcall xschem raw add __ce14_k "v(ramp) [ce14_field $byname rms $i_ins]"
+    set k [lindex [ce14_vals __ce14_k 0] end]
+    pcall xschem raw del __ce14_k
+    check "CE14 WHY `rms` IS RIGHT: `case AVG` is a TIME-WEIGHTED trapezoidal running mean, so `dup() * avg() sqrt()` is the integral RMS -- the engine's last value matches the trapezoidal mean of y^2 over the span, computed here, at 1e-12" \
+        [near $k $wmean 1e-12] ok
+    check "CE14 ...and it is NOT the UNWEIGHTED sample mean, which is the reading the token `avg()` invites: the two definitions are at least 1e-6 apart on this fixture, so THIS PAIR OF ROWS is what would catch avg() being respelled as a sample mean -- the row above alone would not" \
+        [ce14_apart $smean $k 1e-6] ok
+    # v(ramp) is PWL(0 0 10m 10), a straight line, so the continuous RMS over the
+    # whole window is the peak over sqrt(3) with no simulator in it.  The gap to
+    # the engine's answer is the trapezoid's own discretisation of y^2, which is
+    # quadratic on a straight ramp -- so this leg checks the MEANING at a loose
+    # door and the tight row above fences the arithmetic.  The second leg keeps
+    # the loose door from standing in for the tight one.
+    set anal [expr {[lindex $r end] / sqrt(3.0)}]
+    check "CE14 ANALYTIC `rms`: the straight ramp's continuous RMS is its peak over sqrt(3), and the engine lands within 1e-4 of it -- the residue is the trapezoid rule on a quadratic integrand and nothing else" \
+        [near $k $anal 1e-4] ok
+    check "CE14 ...and that residue is REAL rather than noise: the analytic value and the engine's are at least 1e-6 apart, so the 1e-4 door above cannot be mistaken for the 1e-12 one" \
+        [ce14_apart $anal $k 1e-6] ok
+
+    # --- the same two doors for `groupDelay`, against a closed form -----------
+    pcall xschem raw read $::fixture ac
+    set f  [ce14_vals frequency 0]
+    set ph [ce14_vals {ph(lp)} 0]
+    # the pole frequency DERIVED from the fixture's own phase rather than typed:
+    # a single pole has ph(f) = -atan(f/fp) in degrees, so fp = f0/tan(-ph0).
+    set fp 0.0
+    if {[llength $ph] > 0} {
+        set tn [expr {tan(-[lindex $ph 0] * acos(-1.0) / 180.0)}]
+        if {$tn != 0.0} { set fp [expr {[lindex $f 0] / $tn}] }
+    }
+    pcall xschem raw add __ce14_gd "ph(lp) [ce14_field $byname groupDelay $i_ins]"
+    set gd [ce14_vals __ce14_gd 0]
+    pcall xschem raw del __ce14_gd
+    set gworst 0.0 ; set gwi -1 ; set gn 0
+    for {set i 1} {$i < [llength $f]} {incr i} {
+        set fm [expr {([lindex $f $i] + [lindex $f [expr {$i-1}]]) / 2.0}]
+        set an [expr {1.0 / (2.0 * acos(-1.0) * $fp * (1.0 + ($fm/$fp)*($fm/$fp)))}]
+        set e  [expr {abs(([lindex $gd $i] - $an) / $an)}]
+        if {$e > $gworst} { set gworst $e ; set gwi $i }
+        incr gn
+    }
+    check_expr "CE14 ANALYTIC `groupDelay`: the pole frequency is DERIVED from the fixture's own first phase sample (fp = f0/tan(-ph0)) and lands on the deck's 1 kHz to 1e-9 relative" \
+        {$fp > 0.0 && abs($fp - 1000.0) / 1000.0 < 1e-9}
+    set gverdict ok
+    if {!($gn > 1 && $gworst < 1e-2)} { set gverdict "off:worst=$gworst at=$gwi n=$gn" }
+    check "CE14 ANALYTIC `groupDelay`: the engine matches the single-pole closed form 1/(2*pi*fp*(1+(f/fp)^2)) at each interval's MIDPOINT to 1e-2, at every interval of the sweep -- the residue is a backward difference standing in for a derivative" \
+        $gverdict ok
+
+    # --- a textbook number with no fixture arithmetic in it at all ------------
+    pcall xschem raw read $::fixture tran
+    # ⚠ BRACED AND APPENDED, NOT INTERPOLATED.  `i(@rdc1[i])` inside a
+    # double-quoted word makes `[i]` a COMMAND SUBSTITUTION, and Tcl answers
+    # `invalid command name "i"` -- which aborts the whole band through `group`,
+    # not just this row.  Measured on the first run of this band.
+    set zexpr {i(@rdc1[i])}
+    append zexpr " " [ce14_field $byname dBm $i_ins]
+    pcall xschem raw add __ce14_z $zexpr
+    set z [ce14_vals __ce14_z 0]
+    pcall xschem raw del __ce14_z
+    set zworst 0.0
+    foreach v $z { if {abs($v) > $zworst} { set zworst [expr {abs($v)}] } }
+    set zverdict ok
+    if {!([llength $z] > 1 && $zworst < 1e-10)} { set zverdict "off:worst=$zworst n=[llength $z]" }
+    check "CE14 `dBm` ABSOLUTE: the op-parameter current i(@rdc1\[i\]) is 1 mA by construction and 10*log10(1e-3)+30 is 0 dBm EXACTLY, so the engine answers zero to 1e-10 ABSOLUTE at every point of the dataset (relative error is undefined at zero)" \
+        $zverdict ok
+
+    # --- declared behaviour, pinned as rows rather than left as prose ---------
+    pcall xschem raw add __ce14_fl "0 v(ramp) - [ce14_field $byname dBm $i_ins]"
+    set fl [ce14_vals __ce14_fl 0]
+    pcall xschem raw del __ce14_fl
+    check "CE14 DECLARED: `dBm` of a NON-POSITIVE sample is the finite sentinel -320 and never -inf or nan -- src/editprop.c's mylog10() floors a non-positive argument at -35, and 10*(-35)+30 is -320.  Nothing in the Calculator distinguishes that from a real -320 dBm reading" \
+        [list [lindex $fl 0] [lindex $fl 50] [lindex $fl end] \
+              [string is double -strict [lindex $fl 50]]] {-320 -320 -320 1}
+    pcall xschem raw read $::fixture ac
+    pcall xschem raw add __ce14_uf "v(ramp) [ce14_field $byname dBm $i_ins]"
+    set uf [ce14_vals __ce14_uf 0]
+    set mg [ce14_vals {v(ramp)} 0]
+    pcall xschem raw del __ce14_uf
+    check "CE14 DECLARED: an UNDRIVEN ac column reads back the 1e-35 magnitude floor rather than zero (the README's own trap), so `dBm` of it lands within 1e-7 of the same -320 -- two different inputs, one indistinguishable answer" \
+        [list [expr {[lindex $mg 0] < 1e-30}] [near [lindex $uf 0] -320.0 1e-7]] {1 ok}
+    set gd0 [lindex $gd 0]
+    set g0verdict $gd0
+    if {$gd0 == 0.0} { set g0verdict zero }
+    check "CE14 DECLARED: `groupDelay`'s FIRST element is zero by construction -- `case DERIV` assigns 0 at p == first -- so the first ac point carries no group delay, and the elementwise row above expects exactly that rather than tolerating it" \
+        $g0verdict zero
+    pcall xschem raw add __ce14_cph {ph(lp) cph()}
+    set cp [ce14_vals __ce14_cph 0]
+    pcall xschem raw del __ce14_cph
+    set ndiff 0
+    for {set i 0} {$i < [llength $ph]} {incr i} {
+        if {[lindex $cp $i] != [lindex $ph $i]} { incr ndiff }
+    }
+    check "CE14 DECLARED LIMIT: on this fixture cph() is the IDENTITY on ph(lp) -- the single pole's phase stays inside (-90,0) and never wraps, so not one element differs.  `groupDelay`'s UNWRAP branch is therefore unmeasured by every row above, and reaching it needs a fixture whose phase wraps.  This row is the limit, so a fixture that starts wrapping reddens it instead of silently widening the claim" \
+        [list $ndiff [expr {[llength $ph] > 1}]] {0 1}
+
+    # ⚠ FOR THE READER, AND NOT A DEFECT ROW: `groupDelay`'s help text names the
+    # method (*"the phase slope, degrees per Hz, negated"*) and not the OPERAND,
+    # while `dBm`'s says *"power in watts"*.  Driving the composition on a
+    # magnitude column instead of a phase one is accepted silently and answers a
+    # plausible number, because cph() is a one-argument operator over whatever is
+    # on the stack.  That is a wording question about a user-visible string and
+    # therefore not this band's to settle.
+    set lk {}
+    foreach n [rawnames] { if {[string match __ce14_* $n]} { lappend lk $n } }
+    check "CE14 the band deleted every column it added, by name, and left no Calculator temporary either" \
+        [list $lk [leaked]] {{} {}}
+    pcall xschem raw clear
+}
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }
 
 ## ⚠⚠ THE `OVERALL: ok` SENTINEL IS WHAT T1 CAN SCORE.  `banner_complete` in
