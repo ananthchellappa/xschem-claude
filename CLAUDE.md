@@ -129,12 +129,41 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.4111037.log` at **`5e8a9904`**, taken in the `~/gc26` clone at an
+  the gate verdict `tests/results.296161.log` at **`e3e6039d`**, taken in the `~/gc26` clone at an
   18-character path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates
   clean): **129 cases** (3 `tcases` + **99** `hcases` + **26** `dcases` + `xschemtest`),
   **128 blocks**, **`wc -l` 386 green**; trailer
   `cases=129 blocks=128 counted_failures=0 skips=8 elapsed=643s`, zero live-peer lines, zero
-  counted shapes, zero nonzero `Total num fail:` lines.
+  counted shapes, zero nonzero `Total num fail:` lines.  The SAME trailer, to the second, was
+  measured one commit earlier at `5e8a9904` (`tests/results.4111037.log`, also 643s).
+  ⚠⚠ **ISSUE 1650 WAS A C ENGINE FIX THAT MOVED ONE PUBLISHED COUNT (`test_divis_zero_1628`
+  33 → **142**) AND NOT ONE TRAILER TERM — and it is recorded here because THE GATE COULD NOT SEE
+  THE DEFECT, OR EITHER OF THE TWO WRONG FIXES ATTEMPTED BEFORE THE RIGHT ONE.**
+  `raw_add_vector()` evaluated the whole raw file as one sweep where `src/draw.c` passes each
+  dataset's own `(ofs, ofs_end - 1)`, so every stateful opcode carried its accumulator across the
+  boundary where the sweep jumps backwards. A first fix (a per-dataset loop) took a **correct**
+  `v(sq) integ()` on dataset 0 from 0.0034 to **0** and produced **ZERO REDS across 54 suite runs on
+  both arms**, every verdict and check count byte-identical — because across the whole *registered*
+  multi-dataset population `integ()`, `deriv()`, `deriv2()`, `prev()`, `ravg()` and `avg()` were
+  asserted **ZERO TIMES on any dataset**. A second fix (adding the widening clamp) then broke the
+  marker readout on a parametric `.op` raw where HEAD was **right**, and that was invisible for the
+  same reason one level in: one band drove the OP raw through the Tcl door only, another drove the
+  marker door through the tran fixture only, and the one cell of that 2×2 was covered by neither.
+  **The lesson is not about this engine: "the gate is green" says nothing about an opcode family
+  nothing asserts, and a 2×2 of (door × fixture) needs all four cells before a fix to either is
+  trustworthy.** Discrimination was finally established by BUILDING each sabotage rather than
+  arguing it — 0 failures on the final tree, 4 with the repair removed, 37 on HEAD, 2 on an
+  unconditional snap, 2 without `del()`'s own snap, 3 without the coalesce restore.
+  ⚠ Four measurement traps came out of it, each of which produced a wrong figure first: an awk slurp
+  of `set hcases [list` terminating on `^]` reads the whole file and answers **321/201** instead of
+  99/26 — terminate on the first line **without** a trailing backslash; **the linked binary's md5 is
+  not a restore proof**, because `src/scheduler.c` embeds `char date[] = __DATE__ " : " __TIME__;` so
+  it moves on every recompile of identical source (an individual `.o` such as `save.o` IS
+  reproducible and is the right witness — `save.o` hashing identically across a comment-only pass is
+  how those edits were known to be comment-only); `valgrind env -u DISPLAY ./src/xschem` traces the
+  **`env` wrapper** and reports bogus invalid reads inside coreutils, so `env` must come first; and
+  `xschem raw value` returns through `%.8g` and **rounds** (0.99660236 for a stored
+  0.9966023593882138), so any comparison must use `xschem raw values` (`%.16g`).
   ⚠ **Issue 1645 registered THREE suites at once and EVERY derived term matched** — `cases` +4,
   `blocks` +4, `counted_failures` +0, `skips` +0, **`wc -l` 374 → 386**, with `planned_cases=129` in
   the header agreeing INDEPENDENTLY. Derived four separate times by lifting `summarize_all` whole out
