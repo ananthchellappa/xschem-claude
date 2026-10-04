@@ -1583,18 +1583,33 @@ group CW13 {
         [list [wcg .calc.btb.undo -state] [wcg .calc.btb.redo -state]] \
         {disabled disabled}
     # (d) and the canvas entries, which are items rather than widgets.  The
-    #     function browser is phase 5 and still inert; the operator key is phase
-    #     2 and is not, so it moved to test_calc_buffer.tcl (CB1).
+    #     operator key is phase 2 and moved to test_calc_buffer.tcl (CB1).
+    # ⚠⚠ THESE TWO ROWS USED TO ASSERT THAT A LIVE FUNCTION ENTRY WAS INERT AND
+    #     NAMED PHASE 5.  PLAN 5.1 made that false: a live entry now INSERTS its
+    #     catalogue row's own token (R410).  Replaced rather than deleted, and
+    #     the Stack leg is KEPT -- a click into the buffer must still leave the
+    #     Stack alone, and that is the half this inventory band owns.
+    # ⚠ THE CARET IS PLACED EXPLICITLY, because `calc::buf_insert_token` inserts
+    #     AT THE CARET and a row that does not say where it is measures wherever
+    #     the line above left it.  The token is read off `calc::fn_row`, never
+    #     re-typed here (R413's one table).
     pcall .calc.buf insert end {SENTINEL}
+    pcall .calc.buf mark set insert end-1c
     pcall .calc.buf edit reset
     set stk0 [pcall .calc.stk.list size]
+    set cwtok [lindex [pcall calc::fn_row average] 4]
     pcall calc::status {}
     pcall calc::fn_click average
-    check "CW13 a live function entry is still inert (phase 5)" \
+    check "CW13 a live function entry INSERTS its own catalogue token at the caret and leaves the Stack alone" \
         [list [pcall .calc.buf get 1.0 end-1c] [pcall .calc.stk.list size]] \
-        [list {SENTINEL} $stk0]
-    check_expr "CW13 ...and names the phase that owns it" \
-        {[string match {*not implemented (phase 5)*} [nsv statusmsg]]}
+        [list "SENTINEL $cwtok" $stk0]
+    # ⚠ A `check` AND NOT A `check_expr`: a failed `check_expr` prints `0 (exp 1)`
+    #   and names neither what was said nor what was expected, which for a
+    #   user-visible sentence is the one thing a reader needs.
+    check "CW13 ...and the line it writes names the function and the token, with no \"not implemented\" promise left anywhere in it" \
+        [list [nsv statusmsg] \
+              [string match {*not implemented*} [nsv statusmsg]]] \
+        [list "function average: inserted $cwtok" 0]
     pcall .calc.buf delete 1.0 end
     pcall .calc.buf edit reset
     pcall calc::buf_sync

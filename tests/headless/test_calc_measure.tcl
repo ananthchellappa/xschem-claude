@@ -3833,6 +3833,241 @@ group MT12 {
         [list [leaked] [probeleft]] {{} {}}
 }
 
+# ---------------------------------------------------------------------------
+# MT13 -- PLAN 5.1 / R410: `calc::fn_action`, THE ROUTING DECISION BEHIND A
+# FUNCTION-BROWSER CLICK, FACTORED OUT SO IT GATES ON THE COUNTED ARM.
+#
+# Spec     doc/claude/specs/calculator.md section 7.4 (R410-R413) and section
+#          8.1 (R506).
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 1, 4 and 5.
+# Fence    the ACT -- the token really reaching `.calc.buf`, the one-step undo
+#          and the status sentence really reaching `.calc.status.msg` -- is
+#          display-only and lives in band S23 of
+#          tests/headless/test_calc_skeleton.tcl and band CW13 of
+#          tests/headless/test_calc_widgets.tcl, both `dcases` ALONE.
+#
+# ⚠⚠ WRITTEN RED-FIRST, BEFORE `calc::fn_action` EXISTED.  Every row below
+# failed when it was written and each failure named `NOPROC:calc::fn_action`
+# rather than raising; the transcript is in the stage receipt.
+#
+# WHY A PURE PROC AND NOT A BRANCH INSIDE `calc::fn_click`, which is the shape
+# the defect had.  `calc::buf_insert_token` and `calc::status` both return `{}`
+# with no window, so the whole of the ACT is invisible on the counted arm and
+# every row that could see it would be `dcases`-only -- which is how stage J1
+# shipped a producer whose success arm pasted a measured LIST over the user's
+# expression with nothing registered able to notice.  The axis that works is
+# DECISION versus ACT: this proc is the decision, it needs no Tk, and so the
+# question "does a click on this entry reach a live arm at all" is answered on
+# the arm that gates every commit.
+#
+# THE SHAPE, which this band is the specification of:
+#
+#   calc::fn_action <name>  ->  {insert <token>}      route P or C: R410's token
+#                               {measure}            route T: R412's dialog
+#                               {unavailable <why>}  a dead route (RULING-3)
+#                               {inert}              a live route with no token
+#                               {}                   no such catalogue entry
+#
+# The vocabulary is a list whose FIRST word is the act and whose remainder is
+# the datum that act needs, so the dispatcher is a `switch` on one word and
+# never has to look a second thing up -- which is the property the structural
+# row below asserts, because a dispatcher that re-read the catalogue would have
+# moved half the decision back off this arm.
+#
+# ⚠ `{inert}` IS A DEFENSIVE ARM AND THE CENSUS ROW BELOW IS WHAT SAYS SO.  It
+# is reached by NO catalogue row today -- every row carries a dead route, or
+# route T, or a non-empty `insert` -- so `calc::inert`'s phase-5 promise is now
+# unreachable from a browser click, and that is asserted as a DERIVED property
+# of the live catalogue rather than left as a remark.  A future live row with an
+# empty token would land there and say so instead of inserting an empty string.
+#
+# ⚠ WHAT THIS BAND DOES NOT MEASURE, said out loud: the STATUS SENTENCE.
+# `calc::status` is a silent no-op with no window (R508), so the sentence
+# `function <name>: inserted <token>` cannot be read here at all; it is fenced
+# on the display arm in S23 and CW13, and the rows there compare it against the
+# catalogue's own `insert` field rather than against a re-spelled literal.  The
+# same goes for a `fn_click` that ignored this proc's token and inserted its own
+# `name` formal instead -- that is its formal, not a catalogue read, so the
+# structural row below cannot see it and the display arm is the only reader.
+# ---------------------------------------------------------------------------
+
+# the decision for one name, or a legible sentinel -- never a raise, and "the
+# proc is missing" and "the proc threw" are told apart because they want
+# different fixes.
+proc ac_act {name} {
+    if {[info commands ::calc::fn_action] eq {}} { return "NOPROC:calc::fn_action" }
+    if {[catch {::calc::fn_action $name} r]} { return "RAISED:$r" }
+    return $r
+}
+# the act word of a decision, or the sentinel, so a row comparing words cannot
+# raise on one.  `mt_at` is this file's non-raising `lindex`.
+proc ac_verb {a} {
+    if {[string match NOPROC:* $a] || [string match RAISED:* $a]} { return $a }
+    if {$a eq {}} { return {none} }
+    return [mt_at $a 0]
+}
+
+# =========================================================================
+group MT13 {
+    check "MT13 `calc::fn_action` EXISTS and is a proc of exactly one formal, read off the interpreter with `info args` rather than scanned for out of the file's text -- the instrument that caught every one of the 43 derived sabotages a sibling signature pin slept through" \
+        [list [expr {[info commands ::calc::fn_action] ne {} ? 1 : 0}] \
+              [pcall info args ::calc::fn_action]] \
+        {1 name}
+    # --- the four acts, one name each, each one read off the table -----------
+    # ⚠ THE TOKEN IS COMPARED AGAINST `calc::fn_row`'s OWN `insert` FIELD, never
+    # against a literal spelled here: R413's "one table, not two" is exactly the
+    # defect a test that re-types `avg()` would re-introduce one level up.
+    check "MT13 a route-P name decides INSERT, carrying the `insert` field of its own catalogue row -- compared against `calc::fn_row` BY IDENTITY, so a decision that invented a token or read a second table reddens" \
+        [list [ac_act average] [ac_act integ]] \
+        [list [list insert [lindex [pcall calc::fn_row average] 4]] \
+              [list insert [lindex [pcall calc::fn_row integ] 4]]]
+    check "MT13 a route-C name decides INSERT too, with its whole multi-token recipe intact -- routes P and C differ in whether the engine has one opcode for the job, which is nothing a CLICK can act on, so a branch that refused the four C rows would be an artificial restriction" \
+        [ac_act rms] [list insert [lindex [pcall calc::fn_row rms] 4]]
+    check "MT13 a route-T name decides MEASURE and carries no token -- R401/R404: a T verb's click never inserts the word `cross`, it opens R412's dialog and puts a NUMBER in the buffer" \
+        [list [ac_act cross] [ac_act dutyCycle]] {measure measure}
+    check "MT13 a dead-route name decides UNAVAILABLE and carries `calc::fn_reason`'s OWN sentence for its route, compared BY IDENTITY -- the reason is budgeted for the composed line (fn_reason's own comment) and re-spelling it in a test is how two wordings for one fact get shipped" \
+        [list [ac_act dft] [ac_act pzbode]] \
+        [list [list unavailable [pcall calc::fn_reason N]] \
+              [list unavailable [pcall calc::fn_reason X]]]
+    check "MT13 a name that is in no catalogue row decides NOTHING -- an empty answer, not a raise and not an `inert` promise about a function that does not exist" \
+        [list [ac_act __no_such_function__] [ac_verb [ac_act __no_such_function__]]] \
+        {{} none}
+
+    # --- THE CENSUS, DERIVED OVER THE WHOLE LIVE CATALOGUE ------------------
+    # ⚠ THE POPULATION IS THE CATALOGUE ITSELF AND THE PREDICATES ARE
+    # INDEPENDENT OF THE PROC UNDER TEST: each row's EXPECTED act is derived
+    # from its own route and `insert` field plus `calc::fn_dead_routes`, and the
+    # row reports every DISAGREEMENT by name.  A hand-kept list of names would
+    # be the same defect one level up, and a sweep over an empty population is
+    # green while measuring nothing -- so both counts ride along.
+    set ac_bad {} ; set ac_n 0
+    array unset ac_cnt
+    foreach ac_v {insert measure unavailable inert none} { set ac_cnt($ac_v) 0 }
+    foreach ac_row [pcall calc::catalogue] {
+        incr ac_n
+        set ac_nm [lindex $ac_row 0]
+        set ac_rt [lindex $ac_row 2]
+        set ac_ins [lindex $ac_row 4]
+        set ac_got [ac_act $ac_nm]
+        set ac_w [ac_verb $ac_got]
+        if {[info exists ac_cnt($ac_w)]} { incr ac_cnt($ac_w) } else { set ac_cnt($ac_w) 1 }
+        if {[lsearch -exact [pcall calc::fn_dead_routes] $ac_rt] >= 0} {
+            set ac_want [list unavailable [pcall calc::fn_reason $ac_rt]]
+        } elseif {$ac_rt eq {T}} {
+            set ac_want {measure}
+        } elseif {$ac_ins ne {}} {
+            set ac_want [list insert $ac_ins]
+        } else {
+            set ac_want {inert}
+        }
+        if {$ac_got ne $ac_want} { lappend ac_bad $ac_nm=[ac_verb $ac_got] }
+    }
+    check "MT13 EVERY catalogue row reaches a LIVE arm, derived row by row from its own route and `insert` field against `calc::fn_dead_routes` and `calc::fn_reason` with no name written out here -- a row whose decision disagrees with its own table entry is reported BY NAME, and the sweep count rides along because a walk over an empty catalogue would be this same green" \
+        [list $ac_bad [mt_atleast $ac_n 1]] {{} atleast1}
+    check "MT13 ...and the four-way census of those decisions is the shape the catalogue really has: every row decides INSERT, MEASURE or UNAVAILABLE, ZERO rows decide `inert`, and ZERO decide nothing -- so `calc::inert`'s phase-5 promise is UNREACHABLE from a browser click today, which is a derived property of the live table and the reason the `inert` arm is a DEFENSIVE one" \
+        [list $ac_cnt(insert) $ac_cnt(measure) $ac_cnt(unavailable) \
+              $ac_cnt(inert) $ac_cnt(none) $ac_n] \
+        {60 34 14 0 0 108}
+    # the census above pins four numbers; this row is what keeps the FIRST of
+    # them honest against the field it is supposed to be counting, since
+    # `insert` is the only one of the six catalogue fields the decision reads.
+    set ac_ins_n 0 ; set ac_t_n 0 ; set ac_dead_n 0
+    foreach ac_row [pcall calc::catalogue] {
+        set ac_rt [lindex $ac_row 2]
+        if {[lsearch -exact [pcall calc::fn_dead_routes] $ac_rt] >= 0} { incr ac_dead_n ; continue }
+        if {$ac_rt eq {T}} { incr ac_t_n ; continue }
+        if {[lindex $ac_row 4] ne {}} { incr ac_ins_n }
+    }
+    check "MT13 ...and those three populations are re-derived straight off the table without calling the proc at all, so the census row above is a claim about AGREEMENT between two independent readings and not a number the proc under test got to choose" \
+        [list $ac_ins_n $ac_t_n $ac_dead_n] \
+        [list $ac_cnt(insert) $ac_cnt(measure) $ac_cnt(unavailable)]
+
+    # --- the dispatcher is THIN: the decision may not leak back into it ------
+    # ⚠ `mt_calc_names` DECOMMENTS FIRST, which matters here more than anywhere
+    # else in this file: every claim below is about what `calc::fn_click` CALLS,
+    # and this tree's block comments name `calc::fn_reason` and `calc::fn_row`
+    # repeatedly in prose about exactly this split.
+    set ac_click [pcall mt_calc_names fn_click]
+    check "MT13 `calc::fn_click` CALLS `calc::fn_action` and no longer looks the decision up for itself: its decommented body names neither `calc::fn_row` nor `calc::fn_reason` nor `calc::catalogue`, so the branch that decides cannot drift back off the counted arm one call site at a time" \
+        [list [sk_in $ac_click fn_action] [sk_in $ac_click fn_row] \
+              [sk_in $ac_click fn_reason] [sk_in $ac_click catalogue] \
+              [mt_atleast [llength $ac_click] 1]] \
+        {has missing missing missing atleast1}
+    check "MT13 ...and it still names all four acts' callees -- `calc::fn_insert` for R410's token, `calc::fn_measure` for R412's dialog, `calc::status` for R506's refusal sentence and `calc::inert` for the defensive arm the census above shows nothing reaches -- so a dispatcher that dropped an arm reddens here even though no catalogue row exercises the last of them" \
+        [list [sk_in $ac_click fn_insert] [sk_in $ac_click fn_measure] \
+              [sk_in $ac_click status] [sk_in $ac_click inert]] \
+        {has has has has}
+    check "MT13 NON-VACUITY for the instrument above: `mt_calc_names` really reads a body and really answers `missing` for something that is not in it, measured against `calc::fn_click` itself -- without this leg a lift that silently answered the empty list would make all four `missing` claims pass" \
+        [list [sk_in $ac_click __no_such_callee__] \
+              [sk_in [pcall mt_calc_names __no_such_proc__] anything]] \
+        {missing missing}
+    check "MT13 the ACT for routes P and C is its own proc, a sibling of `calc::fn_measure`: `calc::fn_insert` takes the name AND the token -- read off `info args` -- guards the window itself and reaches `calc::buf_insert_token`, which is the UNCHANGED primitive that already brackets its insert with `edit separator` on both sides for R421 and already supplies R410's space through `calc::token_sep`" \
+        [list [pcall info args ::calc::fn_insert] \
+              [sk_in [pcall mt_calc_names fn_insert] has_win] \
+              [sk_in [pcall mt_calc_names fn_insert] buf_insert_token] \
+              [sk_in [pcall mt_calc_names fn_insert] status] \
+              [sk_in [pcall mt_calc_names fn_insert] fn_row] \
+              [sk_in [pcall mt_calc_names fn_insert] fn_action]] \
+        {{name tok} has has has missing missing}
+
+    # --- EVERY `switch` ARM OF THE DISPATCHER, DRIVEN -----------------------
+    # ⚠⚠ THIS IS THE ONLY CONFIRMATION THERE IS THAT NO COMMENT LANDED BETWEEN
+    # TWO OF `calc::fn_click`'s PATTERNS.  Measured 2026-10-02 in
+    # `calc::cross_msg`: a comment there leaves the braces balanced and
+    # `info complete` answering 1 while Tcl raises *"extra switch pattern with no
+    # body"* out of EVERY arm, and the trap is PARITY-DEPENDENT -- an even word
+    # count is a silent no-op that detonates the moment one word is edited into
+    # or out of it.  Nothing structural distinguishes it and a brace-balance scan
+    # is blind to it.
+    # ⚠ THE ARM SET IS DERIVED FROM THE PROC'S OWN BODY, never listed here: a
+    # hand-kept list is the same defect one level up, and the sibling row this
+    # one is modelled on was measured driving two thirds of its proc's arms
+    # because the list had stopped growing with the code.
+    # ⚠ `calc::fn_action` IS SHADOWED so each act can be forced, which is also
+    # the only way to reach the `inert` arm at all -- the census above is the
+    # row that says no catalogue entry does.  The slot is checked before the
+    # rename and restored on every path.
+    set ac_arms {}
+    foreach ac_ln [split [pcall mt_decomment [pcall info body ::calc::fn_click]] "\n"] {
+        if {[regexp {^[ \t]*([a-z][a-z0-9_]*)[ \t]+\{[ \t]*return} $ac_ln -> ac_k]} {
+            lappend ac_arms $ac_k
+        }
+    }
+    set ac_armbad {}
+    if {[info commands ::calc::fn_action] eq {} || [info commands ::ac_keep_action] ne {}} {
+        set ac_armbad SHADOWSLOTBUSY
+    } else {
+        rename ::calc::fn_action ::ac_keep_action
+        foreach ac_k $ac_arms {
+            proc ::calc::fn_action {name} [list return $ac_k]
+            if {[catch {::calc::fn_click cross} ac_r]} { lappend ac_armbad "$ac_k:RAISED:$ac_r" }
+        }
+        catch {rename ::calc::fn_action {}}
+        catch {rename ::ac_keep_action ::calc::fn_action}
+    }
+    check "MT13 EVERY arm of `calc::fn_click`'s switch is DRIVEN and none raises, with the arm set derived from the proc's own body and `calc::fn_action` shadowed to force each act in turn -- the only confirmation there is that no comment landed between two patterns, which balances the braces, satisfies `info complete` and reddens every arm at once on an odd word count while being a silent no-op on an even one" \
+        $ac_armbad {}
+    check "MT13 ...and that derivation is NOT VACUOUS, or the empty failure list above would be an empty arm set: it finds all four act words the decision can answer, it does NOT invent a fifth, and the shadow was taken and GIVEN BACK -- `calc::fn_action` answers for a real catalogue name again after the sweep" \
+        [list [sk_in $ac_arms insert] [sk_in $ac_arms measure] \
+              [sk_in $ac_arms unavailable] [sk_in $ac_arms inert] \
+              [sk_in $ac_arms __ac_no_such_arm__] [mt_atleast [llength $ac_arms] 4] \
+              [expr {[info commands ::ac_keep_action] eq {} ? 1 : 0}] \
+              [ac_act average]] \
+        [list has has has has missing atleast4 1 \
+              [list insert [lindex [pcall calc::fn_row average] 4]]]
+
+    # --- the pure half really is pure ---------------------------------------
+    check "MT13 R402 this band mints nothing and reads no database -- it drives a pure decision over the catalogue, so no `__calc_tmp*` and no `__mt_*` may appear in the inventory because of it" \
+        [list [leaked] [probeleft]] {{} {}}
+    check "MT13 ...and the decision names no widget at all: its decommented body reaches `calc::fn_row` and `calc::fn_reason` and NOTHING that needs a window, which is what makes every row of this band readable on the arm with no X" \
+        [list [sk_in [pcall mt_calc_names fn_action] fn_row] \
+              [sk_in [pcall mt_calc_names fn_action] fn_reason] \
+              [sk_in [pcall mt_calc_names fn_action] has_win] \
+              [sk_in [pcall mt_calc_names fn_action] status] \
+              [sk_in [pcall mt_calc_names fn_action] buf_insert_token]] \
+        {has has missing missing missing}
+}
+
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }
 
 ## ⚠⚠ THE `OVERALL: ok` SENTINEL IS WHAT T1 CAN SCORE.  `banner_complete` in

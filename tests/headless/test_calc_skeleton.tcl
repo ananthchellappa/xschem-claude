@@ -2367,18 +2367,101 @@ check "S23 leaving does not wipe a message written after the hover" \
     [list $hovok [pcall .calc.status.msg get]] \
     [list {Mean value of the wave over the X range} {something else entirely}]
 
-# a click is INERT and says so; a greyed one refuses and says WHY (RULING-3)
+# A click on a LIVE entry INSERTS the table's own token (R410 / PLAN 5.1); a
+# greyed one refuses and says WHY (RULING-3).
+#
+# ⚠⚠ THESE ROWS USED TO ASSERT THAT A LIVE CLICK DID NOTHING, which was the
+# phase-5 stub's behaviour and not a requirement.  They are REPLACED rather than
+# deleted, and the anti-vacuity discipline they carried is replaced too, now
+# pointing the other way: the old pair rode a click COUNT because "nothing was
+# clicked" and "everything was clicked and touched nothing" are the same green,
+# and the new pair rides a PER-CLICK RECORD because "every click moved the
+# buffer" and "no click moved it" are the same green against a single
+# after-the-fact comparison.
+#
+# ⚠ THE CARET IS PLACED EXPLICITLY.  `calc::buf_insert_token` inserts AT THE
+# CARET -- its own comment records that `insert end` is the trap, because
+# appending passes the obvious test and silently builds the wrong expression
+# every other time -- so a row that does not say where the caret is is not
+# measuring R410's append, it is measuring wherever the previous row left it.
+#
+# ⚠ EVERY EXPECTED TOKEN BELOW IS READ OFF `calc::fn_row`, never re-typed here:
+# R413's "one table, not two" is exactly the defect a test spelling `avg()` out
+# again would re-introduce one level up, and for most catalogue rows the NAME
+# and the TOKEN differ.
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {S23 INERT SENTINEL}
+pcall .calc.buf insert end {S23 CLICK SENTINEL}
+pcall .calc.buf mark set insert end-1c
+pcall .calc.buf edit reset
 set fnbuf [pcall .calc.buf get 1.0 end]
 set fnclicked 0
+set fnmoved {}
 foreach nm {average dft pzbode} {
+    set fnbefore [pcall .calc.buf get 1.0 end]
     if {![string match ERR:* [pcall calc::fn_click $nm]]} { incr fnclicked }
+    set fnafter [pcall .calc.buf get 1.0 end]
+    if {$fnafter eq $fnbefore} { lappend fnmoved $nm=SAME } else { lappend fnmoved $nm=MOVED }
 }
+# ⚠⚠ THE FIXTURE BELOW IS "THE USER TYPED, THEN CLICKED", AND THE OBVIOUS
+# FIXTURE IS VACUOUS -- MEASURED, NOT REASONED.  The first draft of the undo row
+# did `edit reset` immediately BEFORE the click, which empties Tk's undo stack,
+# so a single insert is one step with or without `calc::buf_insert_token`'s
+# `edit separator` bracketing: with BOTH separators deleted this suite still
+# reported ALL PASS and only test_calc_buffer's CB2 reddened.  That is issue
+# 1643's trap -- a fixture making a row green on broken code -- and the fix is to
+# drive the boundary the bracketing actually buys: Tk's `-autoseparators` breaks
+# a step only when the edit MODE changes, and two inserts are the same mode, so
+# without the separator the user's typing and the clicked token COLLAPSE INTO ONE
+# undo item and a single Undo throws the typing away as well.  Measured both
+# ways at this site: with the bracketing, one undo leaves the typed text and a
+# second removes it; without, one undo removes both and there is nothing left.
+# ⚠ So the `edit reset` goes BEFORE the typing, never between the typing and the
+# click, and the SECOND undo is a required leg rather than a tidy-up -- it is
+# what tells "one step" from "collapsed into one".
+set fnavgtok [lindex [pcall calc::fn_row average] 4]
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall .calc.buf insert end {S23 TYPED SENTINEL}
+pcall .calc.buf mark set insert end-1c
+set fnsnap [pcall .calc.buf get 1.0 end]
 pcall calc::status {}
+set fnins [pcall calc::fn_click average]
+check "S23 clicking a live P-route entry INSERTS its own catalogue row's `insert` token at the caret, whitespace-separated (R410) -- the token read off `calc::fn_row` rather than re-typed here, so a dispatch that inserted the NAME a user looks up instead of the string the engine lexes reddens" \
+    [pcall .calc.buf get 1.0 end-1c] "S23 TYPED SENTINEL $fnavgtok"
+check "S23 ...and the line it writes names BOTH the function and the token it inserted, and is what the click RETURNS (R506) -- both halves, because for most catalogue rows the two differ and a sentence carrying one of them loses the half the user needs to check that the right string landed" \
+    [list [pcall .calc.status.msg get] $fnins] \
+    [list "function average: inserted $fnavgtok" "function average: inserted $fnavgtok"]
+set fnundo1 [pcall .calc.buf edit undo]
+set fnafter1 [pcall .calc.buf get 1.0 end]
+set fnundo2 NO-SECOND-STEP
+if {![catch {.calc.buf edit undo}]} {
+    if {[pcall .calc.buf get 1.0 end-1c] eq {}} {
+        set fnundo2 TYPING-WAS-ITS-OWN-STEP
+    } else {
+        set fnundo2 SECOND-STEP-LEFT([pcall .calc.buf get 1.0 end-1c])
+    }
+}
+check "S23 R421 ONE undo after a click that followed the user's OWN TYPING puts the typed expression back BYTE-FOR-BYTE, and the typing is STILL THERE to be undone by a second step -- which is the leg that tells one undoable insert from an insert that collapsed into the typing, and the half that passed with `calc::buf_insert_token`'s `edit separator` bracketing deleted until this fixture stopped resetting the history between the two" \
+    [list $fnundo1 $fnafter1 $fnundo2] \
+    [list {} $fnsnap TYPING-WAS-ITS-OWN-STEP]
+# ⚠ THE OTHER SEPARATOR NEEDS ITS OWN SEQUENCE, and the row above cannot see it.
+# The LEADING one keeps the click out of the user's typing; the TRAILING one
+# keeps the NEXT edit out of the click.  Measured 2026-10-04 at this site: with
+# the trailing separator deleted, this suite AND test_calc_buffer were both
+# ALL PASS, so the leg below is the only reader of it -- and with it present, one
+# undo after further typing removes only the typing and leaves the token.
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall .calc.buf insert end {S23 TYPED SENTINEL}
+pcall .calc.buf mark set insert end-1c
 pcall calc::fn_click average
-check "S23 clicking a live entry is inert and names its phase" \
-    [pcall .calc.status.msg get] {function average: not implemented (phase 5)}
+set fnmid [pcall .calc.buf get 1.0 end]
+pcall .calc.buf insert insert { MORE}
+set fnundo3 [pcall .calc.buf edit undo]
+check "S23 R421 ...and the click's step is CLOSED as well as opened: typing further text after it and undoing once removes only that text and leaves the inserted token standing, which is a DIFFERENT sequence from the row above and the only one either separator's trailing half is visible in" \
+    [list $fnundo3 [pcall .calc.buf get 1.0 end]] [list {} $fnmid]
+check_true "S23 fixture: that sequence really had a token in the buffer to leave standing" \
+    [expr {[string match "*$fnavgtok*" $fnmid] && [string match {*TYPED SENTINEL*} $fnmid]}]
 pcall calc::status {}
 pcall calc::fn_click dft
 check "S23 clicking an N-route entry explains why it cannot be used" \
@@ -2389,17 +2472,78 @@ pcall calc::fn_click pzbode
 check "S23 clicking an out-of-scope entry explains why too" \
     [pcall .calc.status.msg get] {function pzbode is not available: out of scope in v1}
 check_true "S23 the pre-click buffer snapshot is real text" \
-    [expr {![string match ERR:* $fnbuf] && [string match {*INERT SENTINEL*} $fnbuf]}]
-# ⚠ the click COUNT rides along: "nothing was clicked" and "everything was
-# clicked and touched nothing" are the same green otherwise (the S22 lesson).
-check "S23 no function click touched the buffer" \
-    [list $fnclicked \
-          [expr {[string match ERR:* $fnbuf] ? {NO-SNAPSHOT-TO-COMPARE}
-                                             : [pcall .calc.buf get 1.0 end]}]] \
-    [list 3 $fnbuf]
+    [expr {![string match ERR:* $fnbuf] && [string match {*CLICK SENTINEL*} $fnbuf]}]
+# ⚠ the record is PER CLICK and the count rides along, for the reason the block
+# comment above gives: three names, one live and two greyed, and the row says
+# which of the three moved the buffer rather than comparing one snapshot once.
+check "S23 exactly the LIVE click moved the buffer and both greyed ones left it alone, recorded per click as the loop went rather than by one comparison afterwards -- and the click count rides along, so neither an empty sweep nor a sweep where everything moved reads as this green" \
+    [list $fnclicked $fnmoved] {3 {average=MOVED dft=SAME pzbode=SAME}}
 check "S23 no function click touched the stack" \
     [list $fnclicked [pcall .calc.stk.list size]] {3 0}
+# ⚠ EVERY ROW THE DECISION SENDS TO `insert`, CLICKED FOR REAL.  Band MT13 of
+# tests/headless/test_calc_measure.tcl derives on the COUNTED arm that every
+# catalogue row reaches a live arm; this is the only place the ACT is performed
+# for all of them, and it is where a name carrying parentheses or an operator
+# character shows up -- `"$name("` is an ARRAY REFERENCE in Tcl, so a sentence
+# composed one character differently raises on `abs()` and on `pi()` while
+# passing on `average`.  The population is derived from the catalogue and the
+# decision, never listed, and its size rides along because a sweep that selected
+# nothing would report the same empty failure list.
+# ⚠ THE BUFFER IS SEEDED RATHER THAN EMPTIED BEFORE EACH CLICK, and that is
+# measured rather than tidy: against an EMPTY buffer `calc::token_sep` adds no
+# separator, so the token and `calc::buf_insert_token`'s return value are the
+# same string and a sentence reporting the WRONG one of the two passes.  With a
+# seed the separated form differs from the token, so this sweep reads the
+# sentence for every name in the population instead of only for `average`.
+set fnsweepbad {} ; set fnsweepn 0
+foreach fnrow [pcall calc::catalogue] {
+    set fnnm [lindex $fnrow 0]
+    set fnact [pcall calc::fn_action $fnnm]
+    if {[lindex $fnact 0] ne {insert}} continue
+    incr fnsweepn
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end {S23 SW}
+    pcall .calc.buf mark set insert end-1c
+    pcall .calc.buf edit reset
+    pcall calc::status {}
+    if {[catch {calc::fn_click $fnnm} fnr]} { lappend fnsweepbad $fnnm=RAISED:$fnr ; continue }
+    set fnsaid [pcall .calc.status.msg get]
+    if {$fnsaid ne "function $fnnm: inserted [lindex $fnact 1]"} {
+        lappend fnsweepbad $fnnm=SAID($fnsaid)
+    }
+    if {[pcall .calc.buf get 1.0 end-1c] ne "S23 SW [lindex $fnact 1]"} {
+        lappend fnsweepbad $fnnm=BUF([pcall .calc.buf get 1.0 end-1c])
+    }
+}
+check "S23 every catalogue row the decision sends to `insert` is clicked FOR REAL against a SEEDED buffer, and each one appends exactly its own token after the seed and reports exactly that token -- the population derived from the catalogue and the decision rather than listed, with its size riding along, and the only place names carrying parentheses or operator characters are exercised at all" \
+    [list $fnsweepn $fnsweepbad] {60 {}}
 pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::status {}
+# ⚠ THE DISPATCHER'S `inert` ARM, WHICH NO CATALOGUE ROW REACHES.  Band MT13 of
+# tests/headless/test_calc_measure.tcl is what DERIVES that nothing does -- so
+# this is the only place the arm is ever executed, and without it
+# `calc::inert`'s phase-5 promise could rot into a silent no-op for a future
+# live row carrying no token.  `calc::fn_action` is shadowed to force the act and
+# GIVEN BACK, which the row asserts rather than assumes.
+set fninertsaid NO-SHADOW
+if {[info commands ::calc::fn_action] ne {} && [info commands ::s23_keep_action] eq {}} {
+    rename ::calc::fn_action ::s23_keep_action
+    proc ::calc::fn_action {name} { return {inert} }
+    pcall calc::status {}
+    pcall calc::fn_click average
+    set fninertsaid [pcall .calc.status.msg get]
+    catch {rename ::calc::fn_action {}}
+    catch {rename ::s23_keep_action ::calc::fn_action}
+}
+check "S23 the dispatcher's `inert` arm still makes `calc::inert`'s phase-5 promise when the decision asks for it, driven by shadowing `calc::fn_action` because MT13's census derives that no catalogue row reaches it -- and the shadow is handed back, measured by asking the real decision for a real name afterwards" \
+    [list $fninertsaid [llength [info commands ::s23_keep_action]] \
+          [pcall calc::fn_action average]] \
+    [list {function average: not implemented (phase 5)} 0 \
+          [list insert $fnavgtok]]
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
 
 # ...and the wiring really reaches the handler from a real pointer gesture, not
 # only from a direct call. A canvas dispatches item bindings off its own
@@ -2408,6 +2552,7 @@ set clickable [lindex $fnitems 0]
 set cname [pcall .calc.fn.list itemcget $clickable -text]
 set bb [pcall .calc.fn.list bbox $clickable]
 set gestured NO-GESTURE
+set gesturedbuf NO-GESTURE
 # ⚠ all four numeric, not just four elements: `ERR:invalid command name
 # ".calc.fn.list"` IS a four-element list, and feeding it to expr took the whole
 # file down in the outer catch with S24 never run (measured against HEAD).
@@ -2422,9 +2567,20 @@ if {[llength $bb] == 4 && $bbok} {
     pcall event generate .calc.fn.list <ButtonRelease-1> -x $gx -y $gy
     update idletasks
     set gestured [pcall .calc.status.msg get]
+    set gesturedbuf [pcall .calc.buf get 1.0 end-1c]
 }
-check "S23 a real click on an entry reaches its handler" \
-    $gestured "function $cname: not implemented (phase 5)"
+# ⚠ THE BUFFER RIDES ALONG WITH THE SENTENCE, because the whole of the ACT is
+# display-only: a status line is written by `calc::status` and could be reached
+# by a dispatch that said the right thing and inserted nothing, which is the
+# shape stage J1's producer shipped one stage earlier in this batch.  The token
+# is read off the table for the entry the gesture really landed on.
+check "S23 a real pointer gesture on an entry reaches its handler AND its act: the status line names the entry's own token and the token is really in the buffer, both read off `calc::fn_row` for whichever name the canvas's current-item tracking resolved" \
+    [list $gestured $gesturedbuf] \
+    [list "function $cname: inserted [lindex [pcall calc::fn_row $cname] 4]" \
+          [lindex [pcall calc::fn_row $cname] 4]]
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf edit reset
+pcall calc::buf_sync
 
 # switching category REPOPULATES (plan 1.6's "done when")
 pcall .calc.fn.cat set {Constants}

@@ -5504,32 +5504,136 @@ proc calc::fn_unhover {name} {
     return {}
 }
 
-# Clicking an entry.  P/C-route insertion (R410/R411) is still plan phase 5.1
-# and is inert; the N/X rows will never be clickable at all and say THAT instead
-# (RULING-3, and the same shape as R202's sel_refuse); and a ROUTE-T row goes to
-# calc::fn_measure, which opens R412's argument dialog for the four verbs that
-# have a proc and leaves the other thirty on the inert sentence.
+# ---------------------------------------------------------------------------
+# PLAN 5.1 -- R410: WHAT A CLICK ON A FUNCTION-BROWSER ENTRY DOES.
 #
-# ⚠ THE ROUTE-T BRANCH IS HERE AND NOT IN `calc::fn_reason`, AND THAT IS A HARD
-# CONSTRAINT RATHER THAN A PREFERENCE.  One of the twelve `fn_click` sites in
+# Spec     doc/claude/specs/calculator.md section 7.4 (R410-R413), section 8.1
+#          (R506-R508) and section 8.2 (the RPN mode this implements).
+# Contract doc/claude/calculator_batch/CLICK_CONTRACT.md sections 1, 4 and 5.
+# Fence    tests/headless/test_calc_measure.tcl band MT13 owns the DECISION --
+#          every catalogue row's act, derived off its own route and `insert`
+#          field, plus the arm sweep that is the only confirmation no comment
+#          landed between two of the `switch` patterns below.  Bands S23 of
+#          tests/headless/test_calc_skeleton.tcl and CW13 of
+#          tests/headless/test_calc_widgets.tcl own the ACT: the token really
+#          reaching the buffer, the one-step undo, and the sentence.
+#
+# WARN THE DECISION AND THE ACT ARE SPLIT ON PURPOSE, AND THE SPLIT IS WHAT PUTS
+# HALF OF THIS CODE IN FRONT OF A GATE AT ALL.  `calc::buf_insert_token` and
+# `calc::status` both return `{}` with no window (R508), so the whole of the act
+# is invisible on the counted arm and every row able to see it is `dcases`-only.
+# That is exactly how stage J1 shipped a producer whose success arm pasted a
+# measured LIST over the user's expression with nothing registered able to
+# notice.  `calc::fn_action` is therefore a PURE proc -- no Tk, no widget, no
+# status line -- and the question "does a click on this entry reach a live arm"
+# is answered on the arm that gates every commit.
+#
+# WARN RPN IS THE ONLY NOTATION THERE IS TO IMPLEMENT TODAY.  R411's algebraic
+# wrap -- `abs(<buffer>)` rather than an appended token -- is PLAN phase 8, and
+# phase 8 WRAPS this; it does not replace it, exactly as `calc::pad_click`'s own
+# comment says of phase 4.3's stack composition.
+#
+# WARN THE TOKEN IS THE CATALOGUE ROW'S `insert` FIELD AND NOTHING ELSE.  For
+# most rows the NAME and the TOKEN differ -- the browser draws a word a person
+# looks up, and the field holds what the engine lexes -- which is why the
+# sentence below names both: a line naming only one of them loses the half the
+# user needs to check that the right thing landed in their expression.
+#
+# WARN ROUTES P AND C ARE ONE CASE HERE, deliberately.  They differ in whether
+# the engine has a single opcode for the job or the row composes several, which
+# is a fact about the token's CONTENT and nothing a click can act on; the
+# dispatch reads only the `insert` field, so refusing the C rows would be an
+# artificial restriction on rows that carry one.  (How many of each there are is
+# band MT13's census row, not a figure for this comment: a count quoted here is a
+# sentence nothing re-measures, and one in a row is re-measured every run.)
+#
+# WARN `calc::buf_insert_token` IS UNCHANGED AND IS THE RIGHT PRIMITIVE.  It
+# already brackets its insert with `edit separator` on both sides, which is
+# R421's one-undo requirement, and `calc::token_sep` already supplies R410's
+# space on whichever side needs one.  It inserts AT THE CARET rather than at the
+# end -- its own comment records why, and `calc::pad_click` has shipped that for
+# the operator keys since PLAN 2.2 -- so with the caret where typing leaves it
+# an insertion IS R410's append, and with the caret inside the expression it is
+# the thing a user clicking mid-expression meant.
+#
+# WARN THE ROUTE-T BRANCH IS HERE AND NOT IN `calc::fn_reason`, AND THAT IS A
+# HARD CONSTRAINT RATHER THAN A PREFERENCE.  One of the `fn_click` sites in
 # tests/ iterates every entry the browser drew and `continue`s only when
 # `calc::fn_reason` answers EMPTY, then asserts that each entry it did click
-# says `function <name> is not available: <reason>`.  Route T is skipped only
-# because that proc answers empty for it, so giving route T a reason would make
-# that loop click all 34 T verbs and assert the "is not available" phrasing over
-# four verbs that ARE available -- reddening a row while telling the user
-# something false in a second place.  Band MT11 of
+# says `function <name> is not available: <reason>`.  The route-T rows are
+# skipped only because that proc answers empty for them, so giving route T a
+# reason would make that loop click every one of them and assert the "is not
+# available" phrasing over the verbs that ARE available -- reddening a row
+# while telling the user something false in a second place.  Band MT11 of
 # tests/headless/test_calc_measure.tcl gates `fn_reason T` staying empty on the
 # COUNTED arm, so a careless fix cannot wait for a display to be caught.
-proc calc::fn_click {name} {
+# ---------------------------------------------------------------------------
+
+# THE DECISION.  One catalogue entry in, one act out, as a list whose FIRST word
+# is the act and whose remainder is the datum that act needs:
+#
+#   {insert <token>}      route P or C -- R410's token, the row's own `insert`
+#   {measure}             route T -- R412's argument dialog, calc::fn_measure
+#   {unavailable <why>}   a dead route -- RULING-3, calc::fn_reason's sentence
+#   {inert}               a live route carrying no token
+#   {}                    no such catalogue entry
+#
+# so the dispatcher is a `switch` on one word and never has to look a second
+# thing up.  A dispatcher that re-read the catalogue would have moved half the
+# decision back onto the arm that cannot see it, which is what MT13's structural
+# row asserts it has not.
+#
+# ⚠ `{inert}` IS A DEFENSIVE ARM, AND MT13's CENSUS ROW IS WHAT SAYS SO RATHER
+# THAN THIS SENTENCE.  No catalogue row reaches it today -- every row carries a
+# dead route, or route T, or a non-empty token -- so `calc::inert`'s phase-5
+# promise is no longer reachable from a browser click, and that is asserted as a
+# DERIVED property of the live table, re-measured every run.  A future live row
+# with an empty token lands there and says so instead of inserting nothing and
+# claiming it inserted something.
+proc calc::fn_action {name} {
     set row [calc::fn_row $name]
     if {$row eq {}} { return {} }
-    set why [calc::fn_reason [lindex $row 2]]
-    if {$why ne {}} {
-        return [calc::status "function $name is not available: $why"]
+    set route [lindex $row 2]
+    set why [calc::fn_reason $route]
+    if {$why ne {}} { return [list unavailable $why] }
+    if {$route eq {T}} { return {measure} }
+    set tok [lindex $row 4]
+    if {$tok ne {}} { return [list insert $tok] }
+    return {inert}
+}
+
+# THE ACT for routes P and C (R410 + R506).  A sibling of `calc::fn_measure`,
+# which is route T's, and of `calc::pad_click`, which is the operator pad's --
+# all three guard the window, drive one buffer primitive and say what they did.
+# ⚠ THE SENTENCE REPORTS THE TOKEN, NOT `calc::buf_insert_token`'s RETURN VALUE,
+# which is the token with its separators glued on: a user comparing the line
+# against what they see in the buffer should read the catalogue's own string and
+# not a copy carrying leading whitespace.
+proc calc::fn_insert {name tok} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    calc::buf_insert_token $tok
+    return [calc::status "function $name: inserted $tok"]
+}
+
+# THE DISPATCHER.  One `switch` over `calc::fn_action`'s act word.
+#
+# ⚠⚠ NO COMMENT MAY STAND BETWEEN TWO OF THE `switch` PATTERNS BELOW.  Measured
+# 2026-10-02 in `calc::cross_msg`: a comment there leaves the braces balanced and
+# `info complete` answering 1, while Tcl raises *"extra switch pattern with no
+# body"* out of EVERY arm -- and it is PARITY-DEPENDENT, so an even word count is
+# a silent no-op that detonates the moment somebody edits one word into or out of
+# it.  A green run proves only that the word count is even.  Prose goes above the
+# proc, and the only confirmation is behavioural: MT13 derives the arm set from
+# this proc's own body and drives every one of them.
+proc calc::fn_click {name} {
+    set act [calc::fn_action $name]
+    switch -exact -- [lindex $act 0] {
+        insert      { return [calc::fn_insert $name [lindex $act 1]] }
+        measure     { return [calc::fn_measure $name] }
+        unavailable { return [calc::status "function $name is not available: [lindex $act 1]"] }
+        inert       { return [calc::inert "function $name" 5] }
     }
-    if {[lindex $row 2] eq {T}} { return [calc::fn_measure $name] }
-    return [calc::inert "function $name" 5]
+    return {}
 }
 
 # ---------------------------------------------------------------------------

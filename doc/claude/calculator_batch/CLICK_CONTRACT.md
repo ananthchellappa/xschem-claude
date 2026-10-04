@@ -82,9 +82,9 @@ than failing.
 
 | row | status | proving symbol |
 |---|---|---|
-| 5.1 P-route insertion (R410) | **absent** | `calc::fn_click` has no route branch at all; the primitive it needs, `calc::buf_insert_token`, already exists and `calc::pad_click` uses it |
+| 5.1 P-route insertion (R410) | **shipped** 2026-10-04 | `calc::fn_action` (pure, both arms) → `calc::fn_insert` → `calc::buf_insert_token`; `calc::fn_click` is now a four-arm dispatcher |
 | 5.2 hover help (R413) | **shipped** | `calc::fn_hover` / `calc::fn_unhover` |
-| 5.3 C-route functions | **partial** | four recipes live in `calc::catalogue` and S24 pins the strings; no proc, no insertion path, no numeric check |
+| 5.3 C-route functions | **shipped** 2026-10-04 | the four recipes live in `calc::catalogue`, S24 pins the strings, band `CE14` of `test_calc_engine` checks the **numbers** against independent arithmetic, and 5.1's branch is the insertion path |
 | 5.4 argument dialog (R412) | **absent** | zero `grab`, zero `tkwait`, zero `vwait` in `src/calculator.tcl`; its only `toplevel` is `.calc` |
 | 5.5 `data` selector | **absent** | outside this stage, named because the driver's relayed "5.1 + 5.4 remain" omitted it **and** 5.3 |
 
@@ -427,3 +427,33 @@ structural half *is* mechanised via `wm transient`) and one `rule`, the click se
   red** until caught.
 - **`"$name(…)"` is an array reference**, which is why a leg asserting the click **returns rather
   than raises** now exists.
+
+---
+
+## New user-facing text this stage ships, collected for ratification
+
+One sentence, and it is **unratified**. The standing practice is to collect a stage's new
+user-facing sentences into one reviewable place rather than raise them one at a time, so this
+section is that place and the `rule` debt `calc_insert_sentence_R410` points here.
+
+**The sentence:** clicking a live function entry writes `function <name>: inserted <token>` on the
+status line — `function average: inserted avg()`, or `function rms: inserted dup() * avg() sqrt()`.
+
+Three measured facts bear on changing it:
+
+* **Naming both halves is load-bearing, not redundant.** The catalogue's `name` and its `insert`
+  token differ for most live rows — a user clicks `average` and `avg()` is what lands in the
+  buffer — so a sentence naming only one of them hides which. The population where they differ is
+  re-derived by band `MT13` of `tests/headless/test_calc_measure.tcl`, not counted here.
+* **The budget is not a constraint.** `.calc.status.msg` measures 613 px in `TkTextFont` on the
+  shipped window, and the widest sentence this catalogue can compose measures 347 px — the one for
+  `groupDelay`, whose token is the longest. For calibration the refusal sentence
+  (`function <name> is not available: <reason>`) measures 474 px, which is the figure
+  `calc::fn_reason`'s own header records, so the instrument agrees with the one already in the tree.
+  Nothing is near the cliff that truncated the old N-route reason mid-word.
+* **An overrule is a two-site edit.** The sentence is composed in exactly one place,
+  `calc::fn_insert`'s single `calc::status` call, and asserted by one row apiece in `S23` and
+  `CW13`. Every other comparison in the band is by identity against the catalogue table, so nothing
+  else moves.
+
+House style for this surface, already in force elsewhere in it: terse, and acronyms in uppercase.
