@@ -120,7 +120,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_wave_dest" \
                  "headless/test_wave_sigbrowser" \
                  "headless/test_wave_grid" \
-                 "headless/test_node_token_split"]
+                 "headless/test_node_token_split" \
+                 "headless/test_raw_ascii_point_bounds"]
 ## ⚠ THE THREE WAVE/NODE ENTRIES ABOVE ARE ISSUE 1645, and each shape was MEASURED
 ## rather than reasoned -- `banner_complete` from tests/banner_rule.tcl, sourced and
 ## run over each arm's real captured output, which is the only method CLAUDE.md
@@ -207,9 +208,31 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## sentence, read it (CLAUDE.md records three occasions where careful reasoning about
 ## registration shape got the figure wrong).
 ## ⚠ `test_del_negative_arg` -- issue 0325, the same defect class in the same function --
-## IS STILL IN NEITHER LIST, and that is pre-existing, not this change. It was left
-## alone deliberately: its DN11/DN12 bands are conditional on valgrind AND a DISPLAY,
-## so registering it is a separate judgement with its own gate, not a free addition.
+## IS NOW REGISTERED, IN `dcases` ALONE (issue 1652). The sentence that stood here said
+## it was in neither list and that registering it was "a separate judgement with its own
+## gate, not a free addition"; that judgement was made, with its own gate. It needed the
+## completion sentinel first: it printed only `RESULT: ALL PASS`, so a T1 entry scored
+## `HARNESS: ... (exit=0, OVERALL_ok=0, died=0)` with every one of its own checks passing
+## -- the 1615/1626/1645 defect again, and the reason "it passes standalone" is not
+## evidence a suite can be registered. The reason the shape is `dcases` ALONE, which is
+## not what the arm counts suggest, is in the paragraph beside its `dcases` entry: an
+## `hcases` entry MAPS A REAL xschem GUI on whatever `$DISPLAY` the gate inherited, and
+## the counted arm is the one loop that does not route through `devdisplay.sh`.
+## ⚠ `test_raw_ascii_point_bounds` IS `hcases` ALONE (issue 1652, issue 0213's fence).
+## It needed the same sentinel. The shape was MEASURED, not reasoned: the two arms run
+## the IDENTICAL row set, `diff`ed line for line off real captured output, so a `dcases`
+## entry would measure exactly what the `hcases` entry already does, twice -- the same
+## ground as `headless/test_calc_wave_dest`. It takes no no-X gate and no whole-file
+## early exit, and it carries NOTHING display-dependent: `read_raw_ascii_point()` is
+## reached through `xschem raw read` with no window and no DISPLAY. Why it belongs in
+## front of a gate at all: on an unfixed binary the defect is not a failed check, it is
+## a write past `my_calloc(rawvars)` that `xschem raw read` reports as SUCCESS and then
+## a SIGABRT in `free_rawfile()` -- the editor is gone, which is a crash the user
+## experiences.
+## ⚠ AND IT WAS CHECKED FOR THE HAZARD THAT KEPT `test_del_negative_arg` OFF THIS LIST,
+## rather than assumed clear: driven `--nogui` with a DISPLAY set and an X server polled
+## throughout, it mapped ZERO windows and reported the same count as with DISPLAY unset.
+## That is the property an `hcases` entry needs and the property the other suite lacks.
 ## ⚠ `test_calc_wave_dest` IS `hcases` ALONE (R419-R421,
 ## `doc/claude/calculator_batch/DESTINATION_CONTRACT.md`), and the shape was MEASURED
 ## rather than reasoned: both arms of that suite run the IDENTICAL set of checks, because
@@ -778,7 +801,9 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_buffer" \
                  "headless/test_calc_plot" \
                  "headless/test_fluid_editing" \
-                 "headless/test_wave_grid"]
+                 "headless/test_wave_grid" \
+                 "headless/test_del_negative_arg" \
+                 "headless/test_wave_crossdb_trace"]
 ## ⚠ `headless/test_wave_grid` IS ALSO IN `hcases`, AND THIS IS THE ARM THAT MEASURES
 ## (issue 1645): it is where the GG* band runs, which the counted arm drops behind an
 ## UPPERCASE `SKIPPED` -- uppercase, so that drop contributes nothing to `skips=` and is
@@ -788,6 +813,61 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## `headless/test_fluid_editing`'s. The reason its sibling
 ## `headless/test_wave_sigbrowser` is deliberately NOT here is in the paragraph under
 ## the `hcases` list.
+##
+## ⚠⚠ `headless/test_del_negative_arg` IS `dcases` ALONE (issue 1652), AND AN `hcases`
+## ENTRY WOULD PUT A REAL xschem WINDOW ON WHATEVER `$DISPLAY` THE GATE INHERITED. That
+## is the whole reason for the shape and it is the opposite of what the arm counts
+## suggest, so it is recorded as a mechanism rather than as a preference.
+## `set have_disp` in that suite keys on `[info exists ::env(DISPLAY)]` and NOT on
+## `has_x`, so `--nogui` does not turn its two display-dependent bands off: given a
+## DISPLAY, the counted arm runs DN11's graph-door leg and DN12's pair, each of which
+## spawns `$xbin --pipe ... --script <child>` with NO `--nogui`. MEASURED, not inferred
+## -- the suite was driven `--nogui` against a private X server polled throughout, and
+## that server saw a 1110x761 main window plus 325 further widgets, while the same run
+## reported the DISPLAY-arm count rather than the no-DISPLAY one. `hcases` is the one
+## loop here that does not wrap its child in `devdisplay.sh`, so an entry there inherits
+## the launching shell's DISPLAY; on this machine that variable is the human's own
+## screen. `dcases` pins `:99` (or the private Xvfb from `:100`) per exec, so the same
+## bands cannot reach a human's monitor from a gate.
+## ⚠ NOTHING IS LOST BY LEAVING IT OFF `hcases`: the display arm's row set is a strict
+## SUPERSET of the counted arm's -- measured row name by row name, the counted arm being
+## the same set minus DN11's graph-door leg and DN12's two -- so every row an `hcases`
+## entry would run, this entry runs. What is given up is a box with NO X server at all,
+## where this case scores an uncounted `NODISPLAY:`; T1 starts a private Xvfb when the
+## dev display is down (D8), so that is the no-Xvfb box and not the no-dev-display one.
+## ⚠ AND THE OTHER TWO SUITES OF ISSUE 1652 WERE PUT THROUGH THE SAME MEASUREMENT: both
+## mapped ZERO windows driven `--nogui` with a DISPLAY set, which is why one of them is
+## in `hcases` and this one is not. The fix that would make an `hcases` entry safe is a
+## gate on `has_x` as well as on the environment variable, in the suite; that is a
+## behaviour change to a suite and was deliberately NOT bundled into a registration.
+## ⚠ IT ANNOUNCES ITS UNRUN LEGS WITH NO `skip:` LINE AT ALL, ON PURPOSE, so the
+## trailer's `skips=` cannot report a missing valgrind or a missing display and the only
+## signal is this block's own check count. The suite's header gives the reason: a
+## self-skip banner would make `full_audit.sh` score the whole file SKIP and discard
+## every check that DID run. The count is published by `summarize_all` from the block's
+## last `RESULT:` line, which is why it is not written down here.
+##
+## ⚠ `headless/test_wave_crossdb_trace` IS `dcases` ALONE (issue 1652), AND AN `hcases`
+## ENTRY WOULD BE ACTIVELY MISLEADING RATHER THAN MERELY REDUNDANT. Measured on both
+## arms' real captured output: the `--nogui` arm runs the P*/PB*/PS*/PU*/XA* bands and
+## the display arm runs those PLUS the whole XB*/XD*/XR*/XS*/XU*/XV* families -- which
+## is where row `XB10` lives, the only assertion anywhere that
+## `wviewer::browser_plot_ids`' armed per-signal database list is consumed by the plot it
+## belongs to (issue 1651 is that hole; this registration is its precondition). ⚠ And it
+## announces NONE of that: zero `skip:` lines of either case on either arm, measured with
+## `summarize_all`'s own regexp arms. So an `hcases` block would publish a `RESULT: ALL
+## PASS` naming well under half the suite's rows, with no skip line beside it, reading
+## exactly like a complete pass -- the issue 1641 shape, and the shape a count comparison
+## is blind to. The display arm's row set is a strict superset, so nothing is lost.
+## ⚠ It is also the one of issue 1652's three suites that does NOT fence the C engine; it
+## fences `wviewer::*`, which is Tcl. It went in because its display arm is green and
+## clean under `banner_complete`, because it is the cheapest of the three to run, and
+## because leaving it out leaves XB10 run by nothing -- not because it is the same class
+## as the other two.
+## ⚠ It is in `test_suite_watchdog_1403`'s W20h population and the other two are not: it
+## issues `update` in command position. It sources `scratch.tcl`, so the watchdog is
+## armed and W20h is satisfied -- but a future edit that drops that `source` makes this
+## entry W20h's red, and that is what the row is for.
 ## ⚠ THE FOUR `headless/test_calc_*` ENTRIES ARE `dcases` AND NOTHING ELSE, AND
 ## ONE OF THEM IS THE REASON ISSUE 1626 EXISTS. The Calculator is Tk: each of
 ## these four takes a WHOLE-FILE no-X early exit and NONE of them prints a

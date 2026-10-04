@@ -1111,7 +1111,21 @@ check "XS14 ... so a VCD signal can be added in the reopened session" \
   incr fail
 }
 
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } \
+# ISSUE 1652 -- THE COMPLETION SENTINEL, WITHOUT WHICH A T1 ENTRY IS A STANDING RED.
+# `banner_complete` in tests/banner_rule.tcl is the ONLY Tcl reader of a completion
+# banner and the one tests/run_regression.tcl sources; it matches a whole-line
+# `OVERALL: ok` with an optional parenthesised trailer and implements no
+# `RESULT: ALL PASS` spelling at all. run_suites.sh and full_audit.sh carry their own
+# looser EREs that DO accept the `RESULT:` spelling, so "it passes standalone" was
+# never evidence this suite could be registered.
+# ⚠ `RESULT:` MUST STAY LAST among this suite's OWN output: summarize_all publishes a
+# case's LAST `RESULT:` line with its check count, so the sentinel goes ABOVE it.
+# ⚠ Neither line is the last line of this suite's capture -- engine chatter from the
+# child sessions follows on both arms. `banner_complete` is whole-line and
+# position-independent so the sentinel is unaffected, but a reader eyeballing `tail`
+# will see neither banner.
+if {$fail == 0} { puts "OVERALL: ok ($npass checks)"
+                  puts "RESULT: ALL PASS ($npass checks)" } \
 else { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
