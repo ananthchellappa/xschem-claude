@@ -872,3 +872,38 @@ from* the A list rather than zipped against it.
    invisible on well-behaved data and passed nine suites.  `delay` has **two independent
    expressions**, so it has strictly more ways to get this wrong than `riseTime` did.  The row that
    catches it will again need a **minted** request the fixture does not naturally contain.
+
+### ⚠ 4. `delay`'s FORMALS ARE A DIFFERENT SHAPE FROM BOTH SIBLINGS, AND §7.2 UNDERSTATES THE COST
+
+Both verbs wired so far deferred a **trailing formal with a default**:
+
+| verb | formals | the deferring ordinal | position |
+|---|---|---|---|
+| `dutyCycle` | `{rpn level {cycle 0} {dataset 0} {xaxis start}}` | `cycle` | 3 of 5, **has a default** |
+| `riseTime` | `{rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}}` | `nth` | 6 of 7, **has a default** |
+| `delay` | `{rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}}` | `nthA` **and** `nthB` | 4 and 8 of 9, **NEITHER has a default** |
+
+Three consequences, and the third is the one that is not in §7.2.
+
+**(a) There are TWO ordinals, so "`nth` 0" has three meanings** — A every, B every, or both. §16(1)
+already refuses to rule the one-sided cases blind; this table is why that refusal matters more than
+it looks. It is not one deferral with an edge case, it is three distinct requests.
+
+**(b) The wrapper must repeat all nine formals byte for byte.** `calc::riseTime_scalar` repeats its
+verb's seven exactly, for the reason §7.1 gives: `calc::arg_surface` is *"if `::calc::${name}_scalar`
+exists, return it"*, so minting `calc::delay_scalar` silently redirects every click and MT11's
+surface-formals row immediately starts asserting against the new proc. Any formal J3 might want to
+add goes **after `dataset`** — and the pairing rule in this section means it should not need one.
+
+**(c) ⚠ §7.2 says a truncated call means "everything after it silently falls back to its default".
+`delay` HAS NO DEFAULTS TO FALL BACK TO, so the same truncation must RAISE instead.** `arg_values`
+walks `info args` in formal order and `break`s at the first formal it cannot fill; `arg_invoke` then
+appends positionally. Break at `rpnB` and the proc is invoked with four arguments against eight
+mandatory formals. For `riseTime` and `dutyCycle` that path degrades quietly into a default; here the
+degradation mode is a different one, and a raise inside a click handler is not the same user
+experience as a wrong-but-plausible number.
+
+**This is DERIVED from the three proc signatures and `arg_values`' measured behaviour, and it is NOT
+yet measured at the site.** J3 measures it before relying on either reading — the point of recording
+it is that the two readings call for different code, so the question has to be asked before the
+wrapper is written rather than after a green suite. Note which way it goes in this section.
