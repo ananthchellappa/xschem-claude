@@ -2520,6 +2520,242 @@ check L19-both-helpers-refuse-to-nest-in-a-throwaway-shaped-HOME-that-leads-into
   "-- disagreements: [expr {[llength $l19] ? [join $l19 {; }] : {none}}]; the real home byte-identical (the probes' writes landed elsewhere)=[expr {[snap $cL19] eq $sL19}]; TMPDIR left [list [entries $tL19]] (only the three planted homes)"
 stop_pid $sl19
 
+
+## =========================================================================
+## SECTION X -- NO T1 ARM MAY HAND A CHILD THE LAUNCHING SHELL'S DISPLAY
+## =========================================================================
+## The same obligation as the rest of this file, one environment variable
+## along: HOME isolation keeps a run out of the tester's ~/.xschem, and this
+## keeps it off the tester's SCREEN. On this machine `$DISPLAY` is an X server
+## on the human's own desk, set from ~/.profile, so a T1 arm that passes it to
+## a child maps real windows on a monitor somebody is looking at.
+##
+## WHY THE FENCE IS ON THE DRIVER AND NOT ON THE SUITES. The suites were tried
+## first and the measurement refused that shape. Every registered `hcases`
+## entry was run in T1's own `hcases` shape (`--nogui --pipe -q --script`)
+## against a private X server watched with `xev -root -event substructure` --
+## the server's own report of every top-level CreateNotify and MapNotify, so it
+## cannot miss a window between polls the way an `xwininfo` loop can. Two
+## members came back, and their mechanisms have nothing in common:
+##   * one computed its GUI band's gate from `[info exists ::env(DISPLAY)]`
+##     instead of from `::has_x`, so `--nogui` did not turn the band off;
+##   * the other had NO GATE AT ALL -- an unconditional `exec env HOME=...
+##     <binary> -q --nolog <deck>`, whose whole point is that it carries none of
+##     `--nogui`, `--pipe` or `--norecent`.
+## A scan for the first shape cannot see the second. A scan for the second (a
+## launch line with no `--nogui`) was measured NOISY on this tree: of its
+## candidates, some were a backslash continuation whose `--nogui` sat on the
+## previous physical line, one was a command string quoted inside another
+## suite's assertion about this driver, and one routed through
+## `devdisplay.sh exec` and was safe. So the population is not reliably
+## derivable from a hundred suites' text -- while the DRIVER's own launch lines
+## ARE the whole universe of the question, and text is the right instrument for
+## four lines of it. That turns "do any of a hundred suites misbehave?" into
+## "can an arm's child reach a display at all?", which has a certain answer.
+##
+## WHAT THESE ROWS DO NOT COVER, stated rather than chased:
+##   * a suite that sets a display EXPLICITLY for a child (`exec env DISPLAY=:0
+##     ...`). `-u DISPLAY` only removes what would be inherited; a hardcoded
+##     display is a different and louder defect, and nothing here does it.
+##   * a bare `./src/xschem --nogui --pipe -q --script <t>.tcl` typed by hand,
+##     which inherits `$DISPLAY` and is not a T1 arm at all. That is D9's known
+##     exception and G2's subject. The two suite-side repairs that went in with
+##     this section -- a `has_x` gate in test_del_negative_arg.tcl, and
+##     `-u DISPLAY` on the child launch in test_ase_simcaps_0948.tcl -- are what
+##     close that path, and they belong in the suites because only the suite
+##     knows which of its children need a display.
+##   * `full_audit.sh` and `run_suites.sh`, which route through `xvfb_arm.sh`
+##     and so land on the dev display or a private Xvfb, never the screen they
+##     were launched from. ⚠ A consequence worth knowing: `run_suites.sh
+##     --nogui` ATTACHES a display, so it does not reproduce this arm, and a
+##     check count taken through it can differ from the gate's.
+set X_RR [slurp $RRSRC]
+
+## Comments removed BEFORE anything is matched. A predicate that scans a file as
+## text counts every occurrence in it, including the prose written about the
+## predicate (issue 1646: a signature pin was satisfied for a month by the
+## comment that quoted the signature in order to say it was pinned). Blanked
+## rather than dropped, so physical line numbers stay true.
+proc dx_code {txt} {
+  set out {}
+  foreach l [split $txt \n] {
+    if {[regexp {^[ \t]*#} $l]} { lappend out "" ; continue }
+    lappend out [regsub {;[ \t]*#.*$} $l ""]
+  }
+  return $out
+}
+
+## Backslash continuations joined, so a command split across physical lines is
+## ONE unit carrying all its words. Not tidiness: the launch lines in this tree
+## really are wrapped, and a physical-line scan reads the tail of one as a launch
+## with no flags and the head of another as a launch with no binary. Returns
+## {firstline joinedtext} pairs.
+proc dx_logical {lines} {
+  set out {} ; set acc {} ; set first 0 ; set n 0
+  foreach l $lines {
+    incr n
+    if {$acc eq {}} { set first $n }
+    if {[regexp {\\$} $l]} { append acc [string range $l 0 end-1] " " ; continue }
+    append acc $l
+    lappend out [list $first $acc]
+    set acc {}
+  }
+  if {$acc ne {}} { lappend out [list $first $acc] }
+  return $out
+}
+
+## Every variable this driver hands to `eval exec`, in its own text order. THE
+## POPULATION IS DERIVED FROM THE EXEC, NOT FROM A KEYWORD, and that was a
+## correction rather than a first guess: a scan for "a line naming
+## $xschem_cmd" also returns the `T1-RUN-BEGIN` header, which REPORTS the
+## resolved binary in its `binary=` field and launches nothing. Keying on the
+## exec excludes that structurally instead of by a second keyword, and it means
+## a FIFTH arm added later joins the population by existing.
+proc dx_exec_vars {logical} {
+  set v {}
+  foreach pair $logical {
+    foreach m [regexp -all -inline {eval\s+exec\s+\$([A-Za-z_][A-Za-z0-9_]*)} [lindex $pair 1]] {
+      if {[string match "eval*" $m]} continue
+      if {[lsearch -exact $v $m] < 0} { lappend v $m }
+    }
+  }
+  return $v
+}
+
+## For each exec'd variable, the logical line that BUILDS it, and its verdict.
+## Safe means one of exactly two things: the child is routed through
+## `devdisplay.sh exec`, which pins DISPLAY per exec to the dev display or to
+## T1's own private Xvfb (D8); or the display is stripped from the child's
+## environment with `-u DISPLAY`. `no-binary` is not a pass by omission -- it
+## means the arm starts something other than xschem, and X4 covers the one arm
+## that does. Returns {var line text verdict}.
+proc dx_sites {txt} {
+  set lg [dx_logical [dx_code $txt]]
+  set out {}
+  foreach var [dx_exec_vars $lg] {
+    set found 0
+    foreach pair $lg {
+      lassign $pair ln code
+      if {![regexp "^\\s*set\\s+$var\\s" $code]} continue
+      set found 1
+      set binary   [regexp {\$xschem_cmd} $code]
+      set routed   [regexp {\$dd\s+exec} $code]
+      set stripped [regexp -- {-u\s+DISPLAY} $code]
+      lappend out [list $var $ln [string trim $code] \
+         [expr {!$binary ? "no-binary" : (($routed || $stripped) ? "safe" : "INHERITS")}]]
+      break
+    }
+    if {!$found} { lappend out [list $var 0 {} "NO-SET-LINE"] }
+  }
+  return $out
+}
+
+set X_SITES [dx_sites $X_RR]
+set X_BAD {} ; set X_BIN 0 ; set X_SHOW {}
+foreach x_s $X_SITES {
+  lappend X_SHOW "[lindex $x_s 0]@[lindex $x_s 1]=[lindex $x_s 3]"
+  if {[lindex $x_s 3] eq "safe"} { incr X_BIN }
+  if {[lindex $x_s 3] eq "INHERITS" || [lindex $x_s 3] eq "NO-SET-LINE"} {
+    lappend X_BAD "[lindex $x_s 0]@[lindex $x_s 1]: [lindex $x_s 3] -- [lindex $x_s 2]"
+  }
+}
+
+## X1 -- the fence.
+check X1-every-T1-exec-arm-that-starts-the-binary-either-routes-through-devdisplay-or-strips-DISPLAY \
+  [expr {[llength $X_SITES] >= 4 && $X_BIN >= 3 && [llength $X_BAD] == 0}] \
+  "-- [llength $X_SITES] exec arm(s) derived from this driver's own `eval exec \$var` sites: [join $X_SHOW {, }].\
+ At least four are expected (tcases, hcases, dcases, xschemtest) and at least three must start the binary;\
+ a population that shrank means the scan broke, not that the driver got safer.\
+ Arms that would hand a child the launching shell's DISPLAY, or whose command this scan could not find (both must be none): [expr {[llength $X_BAD] ? [join $X_BAD {; }] : {none}}]"
+
+## X2 -- the non-vacuity half, and the only thing that makes X1 worth reading. A
+## predicate that answered `safe` unconditionally, or a scan that found no arms,
+## leaves X1 green forever. Each protection is therefore removed from a COPY of
+## the real driver, one at a time, and the SAME proc must call that arm unsafe --
+## and must be seen to do it AT THE ARM THE EDIT TOUCHED, not merely to count one
+## somewhere. The `edited=` term is in the detail because a `string map` on a
+## token the driver had stopped spelling would plant nothing and pass.
+set X_SAB {}
+foreach {x_tag x_from x_to x_var} [list \
+    hcases-strip  {env -u DISPLAY}  {env}     hccmd \
+    xtest-strip   {env -u DISPLAY}  {env}     xtcmd \
+    dcases-route  {[list $dd exec]} {[list]}  dccmd] {
+  set x_copy [string map [list $x_from $x_to] $X_RR]
+  set x_caught 0
+  foreach x_s [dx_sites $x_copy] {
+    if {[lindex $x_s 0] eq $x_var && [lindex $x_s 3] eq "INHERITS"} { set x_caught 1 }
+  }
+  if {$x_copy eq $X_RR || !$x_caught} {
+    lappend X_SAB "$x_tag on \$$x_var (edited=[expr {$x_copy ne $X_RR}], caught=$x_caught)"
+  }
+}
+check X2-removing-either-protection-from-a-driver-copy-is-CAUGHT-at-the-arm-the-edit-touched \
+  [expr {[llength $X_SAB] == 0}] \
+  "-- three one-token plants on copies of the real driver: the hcases arm's `-u DISPLAY`, xschemtest's, and the dcases arm's `\$dd exec`.\
+ Plants not caught at their own arm (must be none): [expr {[llength $X_SAB] ? [join $X_SAB {; }] : {none}}]"
+
+## X3 -- the three scanner properties, each on a fixture whose answer is known.
+## Without these, a comment stripper that stripped nothing, a continuation joiner
+## that joined nothing, and a site lookup that silently skipped an arm it could
+## not find would all leave X1 green while measuring something else.
+set x_f1 "# set hccmd \[concat \$t1_pre \[list \$xschem_cmd --nogui --pipe\]\]\nset tccmd \[concat \$t1_pre \[list tclsh a.tcl\]\]  ;# not \$xschem_cmd either\neval exec \$tccmd"
+set x_f2 "set hccmd \[concat \$t1_pre \[list env -u DISPLAY \\\n     \$xschem_cmd --nogui --pipe -q --script a.tcl\]\]\neval exec \$hccmd"
+set x_f3 "set hccmd \[concat \$t1_pre \[list env \\\n     \$xschem_cmd --nogui --pipe -q --script a.tcl\]\]\neval exec \$hccmd"
+set x_f4 "eval exec \$ghostcmd"
+set x_v1 {} ; set x_v2 {} ; set x_v3 {} ; set x_v4 {}
+foreach x_s [dx_sites $x_f1] { lappend x_v1 [lindex $x_s 3] }
+foreach x_s [dx_sites $x_f2] { lappend x_v2 [lindex $x_s 3] }
+foreach x_s [dx_sites $x_f3] { lappend x_v3 [lindex $x_s 3] }
+foreach x_s [dx_sites $x_f4] { lappend x_v4 [lindex $x_s 3] }
+check X3-the-scan-ignores-a-launch-that-exists-only-in-a-comment-joins-a-continuation-before-judging-it-and-reports-an-arm-it-cannot-find \
+  [expr {$x_v1 eq {no-binary} && $x_v2 eq {safe} && $x_v3 eq {INHERITS} && $x_v4 eq {NO-SET-LINE}}] \
+  "-- fixture 1 names the binary ONLY in a full-line comment and in a `;#` trailer, and really execs a tclsh arm: got {$x_v1}, must be {no-binary}, or the fence reads prose about itself as code.\
+ Fixture 2 puts `-u DISPLAY` on the FIRST physical line and the binary on the continuation: got {$x_v2}, must be {safe}, or a physical-line scan would call the real driver unsafe.\
+ Fixture 3 is fixture 2 with the strip removed: got {$x_v3}, must be {INHERITS}, or the joiner answers `safe` for everything.\
+ Fixture 4 execs a variable nothing sets: got {$x_v4}, must be {NO-SET-LINE}, or an arm whose command moved out of a `set` line would be silently dropped from the population"
+
+## X4 -- the `tcases` arm, from the other end. Its exec starts `tclsh`, so X1
+## classifies it `no-binary` and asks it nothing; what keeps it safe is that each
+## registered tcase's OWN xschem command line carries `--nogui`, which makes that
+## child's has_x 0 whatever DISPLAY it inherited. The list is lifted from the
+## driver's own text -- a hand-kept list is the same defect one level up (row X1
+## of test_snprintf_fmt_1608.tcl) -- and the count of command lines actually seen
+## is carried, because zero of them is how this row would rot if a tcase were
+## rewritten to build its command somewhere this scan does not look.
+proc dx_case_list {txt var} {
+  set blk {} ; set keep 0
+  foreach l [split $txt \n] {
+    if {!$keep && [regexp "^set\\s+$var\\s+\\\[list" $l]} { set keep 1 }
+    if {$keep} { append blk $l "\n" ; if {![regexp {\\$} $l]} { break } }
+  }
+  set names {}
+  foreach q [regexp -all -inline {"[^"]*"} $blk] {
+    set n [string trim $q \"]
+    if {$n ne {} && [lsearch -exact $names $n] < 0} { lappend names $n }
+  }
+  return $names
+}
+set X_TC [dx_case_list $X_RR tcases]
+set X_TCBAD {} ; set X_TCSEEN 0 ; set X_TCARM {}
+foreach x_s $X_SITES { if {[lindex $x_s 0] eq "tccmd"} { set X_TCARM [lindex $x_s 3] } }
+foreach x_t $X_TC {
+  set x_p [file join $tdir $x_t.tcl]
+  if {![file exists $x_p]} { lappend X_TCBAD "$x_t: no such file under tests/" ; continue }
+  foreach x_pair [dx_logical [dx_code [slurp $x_p]]] {
+    lassign $x_pair x_ln x_code
+    if {![regexp {\$xschem_cmd} $x_code]} continue
+    if {![regexp {\$xschem_cmd['\"]} $x_code] && ![regexp {\$xschem_cmd\s} $x_code]} continue
+    incr X_TCSEEN
+    if {![regexp -- {--nogui} $x_code]} { lappend X_TCBAD "$x_t:$x_ln: [string trim $x_code]" }
+  }
+}
+check X4-the-tcases-arm-starts-tclsh-and-every-registered-tcase-runs-the-binary-with-nogui \
+  [expr {$X_TCARM eq "no-binary" && [llength $X_TC] > 0 && $X_TCSEEN > 0 && [llength $X_TCBAD] == 0}] \
+  "-- the tcases arm itself is classified `$X_TCARM` by X1's own scan (must be `no-binary`: it starts tclsh);\
+ [llength $X_TC] registered tcase(s) ([join $X_TC {, }]) contributing $X_TCSEEN command line(s) that run the binary\
+ (0 would make this row vacuous, which is exactly how it rots);\
+ lines missing `--nogui` (must be none): [expr {[llength $X_TCBAD] ? [join $X_TCBAD {; }] : {none}}]"
+
 cleanup_started
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

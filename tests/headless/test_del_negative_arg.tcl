@@ -42,13 +42,18 @@
 #         loading values[-1] before its own idx == -1 guard).
 #   DN12  del()'s backwards window widening is invisible from `raw add`, which
 #         hardcodes first = 0; only the graph redraw passes a first > 0.
-# Each is conditional on its tool/resource (valgrind, a DISPLAY): missing, and
-# the leg is not run — 24 checks here, 21 with no DISPLAY, 19 with neither.
+# Each is conditional on its tool/resource: valgrind for DN11, and for the
+# graph-door legs a USABLE X CONNECTION IN THIS PROCESS (`::has_x`), not merely
+# a DISPLAY in the environment — see the gate's own comment at `set have_disp`.
+# Missing, and the leg is not run; the display arm's row set is a strict
+# superset of the counted arm's, and the published check count is whatever
+# `RESULT:` prints on the arm you ran, which is the only place it is written.
 # A missing leg is NEVER reported with a self-skip banner: full_audit.sh would
 # score the whole file SKIP and discard every check that did run.
 #
 # Runs headless (no DISPLAY needed for DN1–DN10/DN13).  From the repo ROOT:
-#   tests/headless/run_suites.sh test_del_negative_arg          # all 24
+#   tests/headless/run_suites.sh --nogui test_del_negative_arg   # the counted arm
+#   tests/headless/run_suites.sh test_del_negative_arg           # the display arm
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_del_negative_arg.tcl
 
 source [file join [file dirname [info script]] scratch.tcl]
@@ -237,13 +242,33 @@ xschem raw clear
 # whose x1 clips the first samples off and reads both window lines out of the
 # `-d 1` log.
 #
-# Both are conditional on a tool/resource: no valgrind, or no DISPLAY, and the
+# Both are conditional on a tool/resource: no valgrind, or no X connection in
+# THIS process, and the
 # leg is simply not run (and NOT reported with any of the self-skip banners —
 # full_audit.sh would score the whole file SKIP and discard every check above).
 # ===========================================================================
 set xbin [info nameofexecutable]
 set have_vg [expr {[auto_execok valgrind] ne ""}]
-set have_disp [expr {[info exists ::env(DISPLAY)] && $::env(DISPLAY) ne ""}]
+## ⚠ GATED ON has_x AS WELL AS ON THE ENVIRONMENT VARIABLE, AND THAT IS THE
+## WHOLE SAFETY PROPERTY OF THIS BAND -- not a style choice.  The two legs below
+## spawn `$xbin --pipe ... --script <child>` with NO `--nogui`, so whatever
+## display this process's environment carries, those children MAP A REAL WINDOW
+## ON IT.  Keyed on `::env(DISPLAY)` alone this band stayed ARMED under
+## `--nogui`: measured against a private X server watched with
+## `xev -root -event substructure`, that server saw 200 top-level CreateNotify
+## events and TWO MapNotify events for a 1110x791 window.  T1's `hcases` loop is
+## the one exec site that does not route its child through `devdisplay.sh`, so an
+## `hcases` entry inherits the launching shell's DISPLAY -- on a developer box
+## that is their own screen.  `::has_x` is xschem's own answer to "do I have a
+## usable X connection" (set in xinit.c inside `if(has_x)`, never unset), so it
+## is 0 under `--nogui` and the band turns off there; the house idiom pairs it
+## with `info commands winfo`, which 73 sites in tests/headless spell this way.
+## The environment variable stays in the test because it is what the CHILD
+## inherits -- has_x says this process has X, DISPLAY says the child can get it.
+## The fence that keeps this from regressing is section X of
+## tests/headless/test_home_isolation.tcl (row X1).
+set have_disp [expr {[info exists ::has_x] && [info commands winfo] ne {} \
+                     && [info exists ::env(DISPLAY)] && $::env(DISPLAY) ne ""}]
 set ::env(DN_DIR) $tmp
 set child [file join [file dirname [info script]] del_negative_arg_child.tcl]
 
@@ -266,7 +291,7 @@ if {!$have_vg} {
     if {$rc != 0} { puts "  --- dn11a.log ---" ; catch {puts [exec tail -40 $tmp/dn11a.log]} }
 
     if {!$have_disp} {
-        puts "note: no DISPLAY here; the DN11 graph-door leg was not run"
+        puts "note: no X connection in this process (--nogui, or no DISPLAY); the DN11 graph-door leg was not run"
     } else {
         set ::env(DN_MODE) node
         set ::env(DN_EXPR) {v(a) -2.6e-09 del()}
@@ -279,7 +304,7 @@ if {!$have_vg} {
 }
 
 if {!$have_disp} {
-    puts "note: no DISPLAY here; the DN12 window-widening legs were not run"
+    puts "note: no X connection in this process (--nogui, or no DISPLAY); the DN12 window-widening legs were not run"
 } else {
     set ::env(DN_MODE) node
     set ::env(DN_EXPR) {v(a) 2.6e-09 del()}

@@ -4277,10 +4277,27 @@ a_wr $XE_DECK "* xe\nv1 a 0 1\nr1 a 0 1k\n.end\n"
 ## a broken `exec` here would make the pair green while measuring nothing. The
 ## exit status is therefore carried into the answer, and XE11's own `-q` launch
 ## is measured to exit 0 in about 100 ms.
+## ⚠⚠ AND IT CARRIES `-u DISPLAY`, WHICH IS A SAFETY PROPERTY AND NOT TIDINESS.
+## The child deliberately gets no `--nogui` and no `--pipe` -- that is the whole
+## point of XE11, whose defect was a child with `no_recent_files` 0 -- so with a
+## DISPLAY in its environment it opens one and MAPS A REAL WINDOW.  Measured on a
+## private X server watched with `xev -root -event substructure` while this suite
+## ran in T1's `hcases` shape (`--nogui --pipe -q --script`) with that server in
+## DISPLAY: 200 top-level CreateNotify events and TWO MapNotify events, the
+## larger window 1110x791 -- one per launch below.  T1's `hcases` loop is the one
+## exec site that does not route its child through `devdisplay.sh`, so it
+## inherits the launching shell's DISPLAY; on a developer box that is the human's
+## own screen.  ⚠ Removing DISPLAY does NOT weaken either row, and that was
+## measured before it was done: with `-u DISPLAY` the plain launch still writes
+## `set recentfile {<deck>}` and the `--norecent` launch still writes nothing, so
+## XE11 and XE12 keep the answers they had.  `--nogui` was NOT the fix used,
+## because it changes what the child IS and XE11 is an assertion about a child
+## that has none of those flags.  Fence: row X1 of
+## tests/headless/test_home_isolation.tcl.
 proc a_xe_child {home args} {
   global XE_BIN
   file delete -force -- [file join $home .xschem recent_files]
-  set rc [catch {exec /usr/bin/env HOME=$home $XE_BIN {*}$args 2>@1} out]
+  set rc [catch {exec /usr/bin/env -u DISPLAY HOME=$home $XE_BIN {*}$args 2>@1} out]
   if {$rc} { return "EXECFAIL($rc):$out" }
   set rf [file join $home .xschem recent_files]
   if {![file exists $rf]} { return {NORECENT} }

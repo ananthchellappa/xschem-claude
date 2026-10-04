@@ -1,6 +1,6 @@
 # 1652 — three suites print `RESULT: ALL PASS` and no `OVERALL: ok`, so registering any of them costs a counted failure
 
-**STAMP:** `v1 claim=open tree=81cd51db stamped=2026-10-04 fix=untried open=3`
+**STAMP:** `v1 claim=fixed tree=72185f2a stamped=2026-10-04 fix=taken open=2`
 
 Status: **OPEN**, measured 2026-10-04 by the issue-1645/1650 hole-filing crew. Same defect family
 as issues 0420, 0456, 0492, 0629, 0689, 1413, 1615, 1626 and 1645 — the one `tests/banner_rule.tcl`
@@ -109,10 +109,33 @@ That is issue **1268**'s class (bare `save.c:<line>` citations rot; cite by symb
 defect, and it is noted here only because a crew registering this suite will read that header
 first.
 
+## 2026-10-04 — items 1 and 2 are done, and item 2 turned out to be a display-safety question
+
+The sentinel landed as one additive `puts` per suite (`72185f2a`) and all three are registered and
+gated. Item 2's answer was not decided by coverage: `test_del_negative_arg` gates its Tk bands on
+the presence of `DISPLAY` in the environment rather than on `has_x`, and T1's `hcases` loop is the
+one loop that does not route its child through `devdisplay.sh`, so an `hcases` entry there would
+have mapped a real xschem window on whatever display the gate inherited. It went to `dcases` alone
+on that measurement, and the follow-up commit fixed the gate expression, put `env -u DISPLAY` on the
+driver's two un-routed arms, and added the `hcases` arm back.
+
+⚠ **That follow-up also found a SECOND member of the class already registered and shipping in every
+gate** — `test_ase_simcaps_0948`, whose `a_xe_child` launched a plain GUI xschem with no display gate
+at all, which is why no audit of gate expressions could have found it. Both are repaired and the
+population is now re-derived every gate by section `X` of `test_home_isolation`.
+
 ## Outstanding
 
-1. None of the three emits the completion sentinel; all three remain unregisterable as they stand.
-2. The registration shape for each — `hcases`, `dcases` or both — and the trailer delta it costs are
-   underived.
-3. `test_del_negative_arg`'s header citation `src/save.c:2381` is rotted and unrepaired
+1. `test_del_negative_arg`'s header citation `src/save.c:2381` is rotted and unrepaired
    (issue 1268).
+2. ⚠ **`tests/headless/test_audit_classifier.tcl` is in neither list and is this issue's defect
+   again, one suite over.** It prints lines ending in the word `FAIL` as part of its own check
+   *names* — it classifies audit output, so its subject matter is failure text — and
+   `summarize_all`'s counted shape is a line ENDING in `FAIL`. Registering it as it stands therefore
+   scores several counted failures at `ALL PASS`, the same way the three suites above did, but by a
+   different mechanism: not a missing sentinel but a row name that looks like a verdict. ⚠ It is
+   also the file section K of which locks `run_suites.sh`'s and `full_audit.sh`'s EREs to
+   `banner_rule.tcl`, so it is load-bearing for the harness and worth registering properly rather
+   than leaving out. The fix shape is not the additive `puts` used above; it needs the row names
+   changed so no counted shape appears in them, which is a behaviour-neutral rename whose delta must
+   still be derived.

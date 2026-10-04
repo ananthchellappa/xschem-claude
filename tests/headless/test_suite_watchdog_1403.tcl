@@ -401,23 +401,47 @@ check W15b-kill-after-upgrades-to-SIGKILL [has_text $rr {--kill-after=20}] \
 ## had no positional guard whatever; only the display arm did, through W16a.
 ## These four rows close that, per site, by requiring $t1_pre to come BEFORE the
 ## word list that names the binary. Found by an adversarial review of this diff.
+## ⚠ CONTINUATION-AWARE, AND THAT IS NOT A REFINEMENT -- IT IS THE REPAIR OF A
+## BREAK THIS ROW TOOK. These four rows used to read ONE PHYSICAL LINE and look
+## for a byte-exact needle (`[list $xschem_cmd --nogui`). When the `hcases` and
+## `xschemtest` arms gained `env -u DISPLAY` and wrapped onto a continuation,
+## both rows went red for a change that moved nothing they are about: the needle
+## no longer occurred, and the first physical line no longer held the binary at
+## all. The row two below says exactly why in its own comment -- *"a byte-exact
+## needle reddens on a pure rename or a reflow that changes no behaviour"* -- and
+## said it about W16a while W15c was the one carrying the brittleness. So the
+## command is assembled across its backslash continuations first, and the needle
+## is now the WORD THAT NAMES THE PROGRAM rather than a slice of the command.
 proc rr_cmdline {txt var} {
+  set acc {}
   foreach l [split $txt \n] {
-    if {[regexp -- "set\\s+$var\\s+\\\[concat" $l]} { return $l }
+    if {$acc eq {} && ![regexp -- "set\\s+$var\\s+\\\[concat" $l]} continue
+    if {[regexp {\\$} $l]} { append acc [string range $l 0 end-1] " " ; continue }
+    append acc $l
+    return $acc
   }
-  return {}
+  return $acc
 }
+## ⚠ `env` IS IN THE NEEDLE LIST, not only the binary. Two arms now run the child
+## through `env -u DISPLAY` (section X of test_home_isolation.tcl pins that), so
+## `env` is the program `timeout` actually execs; a `concat [list env -u DISPLAY
+## $xschem_cmd ...] $t1_pre` would put the binary after $t1_pre while leaving the
+## real program in front of it. Whichever of the two words comes FIRST on the
+## line is the one that must come after $t1_pre.
 foreach {_site _var _needle} [list \
-    tcases     tccmd {[list tclsh} \
-    hcases     hccmd {[list $xschem_cmd --nogui} \
-    dcases     dccmd {[list $xschem_cmd --pipe} \
-    xschemtest xtcmd {[list $xschem_cmd --nogui --pipe -q --script xschemtest.tcl}] {
+    tcases     tccmd {tclsh} \
+    hcases     hccmd {$xschem_cmd} \
+    dcases     dccmd {$xschem_cmd} \
+    xschemtest xtcmd {$xschem_cmd}] {
   set _ln [rr_cmdline $rr $_var]
   set _ip [string first {$t1_pre} $_ln]
   set _ic [string first $_needle $_ln]
+  set _ie [string first {[list env } $_ln]
+  if {$_ie >= 0 && ($_ic < 0 || $_ie < $_ic)} { set _ic $_ie }
   check W15c-$_site-prefixes-rather-than-merely-mentions-t1_pre \
     [expr {$_ln ne {} && $_ip >= 0 && $_ic > $_ip}] \
-    "-- \$t1_pre must PRECEDE the words that name the binary; appended instead, the timeout words become the case's argv and nothing is bounded"
+    "-- \$t1_pre must PRECEDE the word that names the program ($_needle, or an `\[list env ` wrapper if it comes first); appended instead, the timeout words become the case's argv and nothing is bounded.\
+ Observed on the command assembled across its continuations: \$t1_pre at $_ip, program word at $_ic"
 }
 ## ⚠ THIS ROW ASSERTS AN ORDERING, NOT A SPELLING, and V57 of test_op_annot.tcl
 ## is where the idiom comes from. A byte-exact needle reddens on a pure rename

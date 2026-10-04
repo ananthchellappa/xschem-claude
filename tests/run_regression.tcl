@@ -121,7 +121,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_sigbrowser" \
                  "headless/test_wave_grid" \
                  "headless/test_node_token_split" \
-                 "headless/test_raw_ascii_point_bounds"]
+                 "headless/test_raw_ascii_point_bounds" \
+                 "headless/test_del_negative_arg"]
 ## ⚠ THE THREE WAVE/NODE ENTRIES ABOVE ARE ISSUE 1645, and each shape was MEASURED
 ## rather than reasoned -- `banner_complete` from tests/banner_rule.tcl, sourced and
 ## run over each arm's real captured output, which is the only method CLAUDE.md
@@ -814,32 +815,30 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## `headless/test_wave_sigbrowser` is deliberately NOT here is in the paragraph under
 ## the `hcases` list.
 ##
-## ⚠⚠ `headless/test_del_negative_arg` IS `dcases` ALONE (issue 1652), AND AN `hcases`
-## ENTRY WOULD PUT A REAL xschem WINDOW ON WHATEVER `$DISPLAY` THE GATE INHERITED. That
-## is the whole reason for the shape and it is the opposite of what the arm counts
-## suggest, so it is recorded as a mechanism rather than as a preference.
-## `set have_disp` in that suite keys on `[info exists ::env(DISPLAY)]` and NOT on
-## `has_x`, so `--nogui` does not turn its two display-dependent bands off: given a
-## DISPLAY, the counted arm runs DN11's graph-door leg and DN12's pair, each of which
-## spawns `$xbin --pipe ... --script <child>` with NO `--nogui`. MEASURED, not inferred
-## -- the suite was driven `--nogui` against a private X server polled throughout, and
-## that server saw a 1110x761 main window plus 325 further widgets, while the same run
-## reported the DISPLAY-arm count rather than the no-DISPLAY one. `hcases` is the one
-## loop here that does not wrap its child in `devdisplay.sh`, so an entry there inherits
-## the launching shell's DISPLAY; on this machine that variable is the human's own
-## screen. `dcases` pins `:99` (or the private Xvfb from `:100`) per exec, so the same
-## bands cannot reach a human's monitor from a gate.
-## ⚠ NOTHING IS LOST BY LEAVING IT OFF `hcases`: the display arm's row set is a strict
-## SUPERSET of the counted arm's -- measured row name by row name, the counted arm being
-## the same set minus DN11's graph-door leg and DN12's two -- so every row an `hcases`
-## entry would run, this entry runs. What is given up is a box with NO X server at all,
-## where this case scores an uncounted `NODISPLAY:`; T1 starts a private Xvfb when the
-## dev display is down (D8), so that is the no-Xvfb box and not the no-dev-display one.
-## ⚠ AND THE OTHER TWO SUITES OF ISSUE 1652 WERE PUT THROUGH THE SAME MEASUREMENT: both
-## mapped ZERO windows driven `--nogui` with a DISPLAY set, which is why one of them is
-## in `hcases` and this one is not. The fix that would make an `hcases` entry safe is a
-## gate on `has_x` as well as on the environment variable, in the suite; that is a
-## behaviour change to a suite and was deliberately NOT bundled into a registration.
+## ⚠⚠ `headless/test_del_negative_arg` IS NOW IN **BOTH** LISTS, AND THE REASON IT WAS
+## `dcases` ALONE WAS A DEFECT THAT HAS SINCE BEEN REPAIRED IN TWO PLACES. The record is
+## kept because the mechanism is the useful part. `set have_disp` in that suite keyed on
+## `[info exists ::env(DISPLAY)]` and NOT on `has_x`, so `--nogui` did not turn its two
+## display-dependent bands off: given a DISPLAY, the counted arm ran DN11's graph-door
+## leg and DN12's pair, each of which spawns `$xbin --pipe ... --script <child>` with NO
+## `--nogui`. MEASURED, not inferred -- driven in this loop's own shape against a private
+## X server watched with `xev -root -event substructure`, that server reported 200
+## top-level CreateNotify events and TWO MapNotify events for an 1110x791 window, while
+## the same run published the DISPLAY-arm check count rather than the no-DISPLAY one.
+## ⚠ THE SAME CENSUS OVER ALL OF `hcases` FOUND A SECOND MEMBER ALREADY REGISTERED HERE,
+## and its mechanism was different: `test_ase_simcaps_0948` launched its XE11/XE12 child
+## with NO DISPLAY GATE AT ALL. So "audit the suites' gate expressions" would not have
+## found it, and the guarantee now sits on the `hcases` exec line itself (`env -u
+## DISPLAY`, pinned by section X of tests/headless/test_home_isolation.tcl). The suite
+## repairs stay, because they also cover a bare hand-typed `./src/xschem --nogui --pipe
+## -q --script <t>.tcl`, which is no T1 arm at all and inherits `$DISPLAY`.
+## ⚠ WHAT THE SECOND ARM BUYS, which is the only reason to carry two: a box with NO Xvfb
+## installed, where the `dcases` entry scores an uncounted `NODISPLAY:` and this suite
+## would otherwise measure NOTHING. The display arm's row set is a strict SUPERSET of the
+## counted arm's -- measured row name by row name, the counted arm being the same set
+## minus DN11's graph-door leg and DN12's two -- so the `hcases` block is not a second
+## row set; it is the floor, plus the `--nogui` crash guard the issues 1483/1492/1493
+## class needs, on the same ground as `headless/test_fluid_editing`'s entry.
 ## ⚠ IT ANNOUNCES ITS UNRUN LEGS WITH NO `skip:` LINE AT ALL, ON PURPOSE, so the
 ## trailer's `skips=` cannot report a missing valgrind or a missing display and the only
 ## signal is this block's own check count. The suite's header gives the reason: a
@@ -2040,7 +2039,29 @@ foreach tc $tcases {
     ## silent direction is face 4 again, one file upstream of the verdict.
     set hclog [t1_run_file $hc .log]
     set childcode 0
-    set hccmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script ${hc}.tcl]]
+    ## ⚠⚠ `env -u DISPLAY` IS THE ONE THING STANDING BETWEEN THIS LOOP AND A REAL
+    ## WINDOW ON THE HUMAN'S MONITOR, and it is here rather than in the suites
+    ## because the suites are the thing that keeps getting it wrong.
+    ## This is the ONLY exec site in this file that starts xschem without routing
+    ## the child through `devdisplay.sh exec`, so without this it inherits
+    ## whatever DISPLAY the shell that launched T1 had -- on a developer box, the
+    ## screen they are looking at. `--nogui` does NOT make that safe: it settles
+    ## what THIS child does, and several registered suites spawn a FURTHER xschem
+    ## with no `--nogui` of its own (the comment at `set t1_xvfb_why` already says
+    ## so). MEASURED, over all of `hcases` driven in exactly this shape against a
+    ## private X server watched with `xev -root -event substructure`: one suite
+    ## mapped two 1110x791 top-level windows, and its launch had NO DISPLAY GATE
+    ## AT ALL -- so no amount of auditing the suites' gate expressions would have
+    ## found it, which is why the guarantee is taken out of the suites' hands and
+    ## put on this line. ⚠ It was measured NEUTRAL before it was done: every
+    ## registered `hcases` suite was run both ways, DISPLAY reachable and DISPLAY
+    ## removed, and the published check count was compared suite by suite.
+    ## ⚠ `env` goes AFTER $t1_pre and BEFORE the binary: `env` execs without
+    ## forking, so `timeout` stays xschem's own direct parent and rc 124 still
+    ## reaches `t1_why`. Section X of tests/headless/test_home_isolation.tcl
+    ## pins this; row X2 there shows the row really does go red without it.
+    set hccmd [concat $t1_pre [list env -u DISPLAY \
+                                    $xschem_cmd --nogui --pipe -q --script ${hc}.tcl]]
     if {[catch {eval exec $hccmd > $hclog 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
@@ -2212,7 +2233,14 @@ foreach tc $tcases {
   puts "Start xschemtest.tcl"
   incr t1_cases
   set xtlog [t1_run_file stefan_xschemtest .log]
-  set xtcmd [concat $t1_pre [list $xschem_cmd --nogui --pipe -q --script xschemtest.tcl]]
+  ## `env -u DISPLAY` for the same reason as the `hcases` loop above: this is the
+  ## other exec site here that starts xschem without `devdisplay.sh exec`, so a
+  ## child it spawns without `--nogui` would land on the launching shell's
+  ## DISPLAY. Measured in exactly this shape against a watched private X server:
+  ## zero top-level windows -- this file only DEFINES `xschemtest`, so the strip
+  ## is a guarantee about what the harness may grow into, not a repair.
+  set xtcmd [concat $t1_pre [list env -u DISPLAY \
+                                  $xschem_cmd --nogui --pipe -q --script xschemtest.tcl]]
   if {[catch {eval exec $xtcmd > $xtlog 2>@1} msg]} {
     ## ⚠ THIS ARM ALSO WRITES ITS OWN BLOCK, so it counts its own block and its
     ## own failure. And note it writes one ONLY WHEN IT FAILS -- which is why the
