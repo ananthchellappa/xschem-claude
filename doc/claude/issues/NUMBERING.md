@@ -4640,7 +4640,7 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   (1615 settled that); a call to register these three, each of which pins something another
   suite's green run depends on.
 
-**The next free number is 1650.**  1646-1649 are taken: 1646 the dead `BM05` pin, 1647 the `test_wave_sigbrowser` display flake, 1648 `test_wave_grid`'s duplicate row ids and uncounted skips, 1649 `test_node_token_split`'s coverage-claim row names.
+**The next free number is 1651.**  1650 is taken: `xschem raw add` evaluates every dataset as one sweep.
 
 ⚠ **That pointer is PER-CLONE, and always was.** It is one line in a tracked, per-branch
 file, so it can see only the checkout you are reading it in. It cannot see another clone of
