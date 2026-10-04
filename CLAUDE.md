@@ -129,12 +129,31 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
-  the gate verdict `tests/results.3546700.log` at **`a459b3af`**, taken in the `~/gc26` clone at an
+  the gate verdict `tests/results.4111037.log` at **`5e8a9904`**, taken in the `~/gc26` clone at an
   18-character path (worst-case `test_op_annot` probe path **80**, inside the 84 that re-gates
-  clean): **125 cases** (3 `tcases` + **96** `hcases` + **25** `dcases` + `xschemtest`),
-  **124 blocks**, **`wc -l` 374 green**; trailer
-  `cases=125 blocks=124 counted_failures=0 skips=8 elapsed=650s`, zero live-peer lines, zero
+  clean): **129 cases** (3 `tcases` + **99** `hcases` + **26** `dcases` + `xschemtest`),
+  **128 blocks**, **`wc -l` 386 green**; trailer
+  `cases=129 blocks=128 counted_failures=0 skips=8 elapsed=643s`, zero live-peer lines, zero
   counted shapes, zero nonzero `Total num fail:` lines.
+  ⚠ **Issue 1645 registered THREE suites at once and EVERY derived term matched** — `cases` +4,
+  `blocks` +4, `counted_failures` +0, `skips` +0, **`wc -l` 374 → 386**, with `planned_cases=129` in
+  the header agreeing INDEPENDENTLY. Derived four separate times by lifting `summarize_all` whole out
+  of `run_regression.tcl`'s own text (16 procs, discovered rather than hand-listed — the first lift
+  died on `invalid command name "t1_timeout"`, which a named subset would have skipped silently) with
+  `banner_complete` **sourced** from `banner_rule.tcl`. **NINETEENTH consecutive `skips=8`**, and the
+  mechanism was measured rather than reasoned for the fifth time: all seven of the new suites' skip
+  announcements are **uppercase**, so `summarize_all`'s lowercase `^skip:` arm counts none.
+  ⚠ Two suites were **structurally unregisterable** first — neither emitted the `OVERALL: ok`
+  sentinel, so registering them as they stood cost **six** counted failures (four `HARNESS:` lines
+  plus rows `RB2` **and** `RB4` of `test_registered_banner_1626`, measured live at
+  `2 FAILED (8 passed)`). One additive `puts "OVERALL: ok ($npass checks)"` per suite cleared all six
+  with the check counts unmoved. Issue 1615's incident verbatim.
+  Published counts this stage moved: `test_wave_sigbrowser` **145** counted (new, `hcases`),
+  `test_wave_grid` **275** counted / **400** display (new, BOTH lists), `test_node_token_split`
+  **174** (new, `hcases`), with `test_calc_wave_dest` 124, `test_calc_measure` 185,
+  `test_registered_banner_1626` 10, `test_suite_watchdog_1403` 40, `test_issue_stamp` 102 and
+  `test_scratch_home_note` 22 all unmoved. `W20h`'s population moved 27 of 104 → **29 of 107** with
+  nothing unbounded, so the `FLOOR: 40` ratchet did not need to move.
   ⚠ **THREE CONSECUTIVE GATES NOW CARRY THAT TRAILER TO THE SECOND** — `486a9635`
   (`tests/results.3294880.log`, 649s), `43a0c557` (`tests/results.3417481.log`, 649s) and this one
   (650s) — **three whole stages landed and not one trailer term moved**, because every suite each of
@@ -617,8 +636,10 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `test_snprintf_fmt_1608.tcl` exists), and put the failure's **cause** in the check's own name,
   so a future break prints `invalid command name "…"` instead of a sentinel.
 - ⚠ **"Run by NOTHING" is the wrong half of that sentence; the right one is "does not gate a
-  commit".** Measured 2026-09-28 (issue **1615**): **334 of the 418 `tests/headless/test_*.tcl`
-  files are in neither `hcases` nor `dcases`** — only **84** are, plus 4 bare-name entries that
+  commit".** Measured 2026-09-28 (issue **1615**): **most `tests/headless/test_*.tcl` files are in
+  neither `hcases` nor `dcases`** — it was 84 of 418 then and 100 of 430 when re-derived on
+  2026-10-03, so **both terms move with the tree and neither is a baseline**; count them, never quote
+  them. Plus 4 bare-name entries that
   live in `tests/` rather than `tests/headless/` (`buried_hilight`, `hilight_hier_oracle`,
   `hilight_hier_dump_replay`, `hilight_xwin_sync_headless`; a census regex requiring the
   `headless/` prefix reports those four as registered-with-no-file, which is the regex's bug and
@@ -914,7 +935,7 @@ open** (no `DISPLAY`, `GUI_GATE=0`, or a closed panel). Spec:
   ⚠⚠ **AND WHEN A ROW WAS FINALLY WRITTEN TO ASSERT THIS, IT FOUND THREE REGISTERED T1 CASES
   WITH NO STALL BOUND AT ALL.** Row **`W20h`** of `test_suite_watchdog_1403.tcl` (2026-10-03)
   derives the population — a registered `hcases`/`dcases` entry whose file issues `vwait`,
-  `tkwait`, `update`, `toplevel` or `grab` **in command position**, 26 of 104 — and derives
+  `tkwait`, `update`, `toplevel` or `grab` **in command position** — and derives
   the predicate over each member's transitive `source` closure. Its first run reddened on
   `test_fluid_editing`, `test_headless_guards_xarm_1492` and `test_selflog_grep_guard`:
   each reaches the event loop and arms **no** deadman, so a hang in any of them had no
@@ -1032,6 +1053,42 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   number. Same rule for any figure the instrument cannot reproduce: a `--rcfile` probe's
   integer is `va_arg` on a vararg nobody pushed, and quoting it gave 32, 112 and 24 on three
   retries. Quote the shape, not the number.
+- ⚠⚠ **AND THE SAME RULE RUNS THE OTHER WAY: A COMMENT MUST NOT QUOTE THE LITERAL A ROW GREPS FOR,
+  BECAUSE THE COMMENT THEN BECOMES THE ROW'S EVIDENCE.** Measured 2026-10-03 (issue **1646**). Row
+  `BM05` of `test_wave_sigbrowser.tcl` pinned `wviewer::plot_signals`' four formals with a whole-file
+  `string first` for the signature literal — a scan that never passes through `wvproc_body`, the only
+  comment stripper. That literal occurred **twice** in `src/wave_viewer.tcl`: the real proc, and a
+  block comment headed *"WHY THIS IS AN ARMED HAND-OFF AND NOT `plot_signals`' FIFTH ARGUMENT"* which
+  quoted the signature verbatim **in order to say that it was pinned**. So a fifth formal on the real
+  proc left the row printing `ok:`, and the pin had been dead for a month while reading as live —
+  worse than an unregistered fence, because `full_audit.sh` globs `test_*.tcl`, does run it, and
+  reports it green. One sentence: **if a predicate scans a file as text, every occurrence in that
+  file counts, including the ones in prose about the predicate.**
+  ⚠⚠⚠ **THE DEEPER LESSON, AND IT IS THE ONE WORTH CARRYING: FOR PINNING A SIGNATURE, SOURCE TEXT IS
+  THE WRONG INSTRUMENT CLASS.** Closing that defect took five rounds, and **every** evasion found was
+  an evasion of a *text-scanning* leg — first the comment copy, then an **unqualified** callee (which
+  from inside the namespace reaches the same proc), then a **backslash continuation** that split the
+  argument list across physical lines. Each fix produced the next evasion. Meanwhile not one of the
+  `info args` / `info default` legs was ever defeated by **any** of the 43 derived sabotages, because
+  they read the interpreter's own parsed proc. Row `WD4` of `test_calc_wave_dest.tcl` had used that
+  shape from the start and caught every break `BM05` slept through. **Pin a signature with
+  `info args`, and its defaults with `info default`** — `info args` reports names only and cannot see
+  a default, which is its own trap: replacing a literal that happened to carry `{colors {}}
+  {destover {}}` inside it silently **dropped** the defaults claim, and stripping both defaults then
+  left the suite green while breaking two real callers. A text scan over call *sites* is still useful
+  (nothing else sees an argument count at a call), but its limits must be **declared** rather than
+  chased: one continuation spelling is still blind, and chasing it further was refused on the grounds
+  that the walk's word count already diverges from Tcl's in four of fifteen measured spellings while
+  still reaching the right verdict in all but that one.
+  ⚠ **A matching process lesson: eight false sentences were found in that change's own comments
+  across five rounds, each round introducing some while fixing the last** — the stage became an
+  instance of its own subject. What ended it was not more careful prose but **less**: for every
+  sentence, name the instrument that re-checks it every run, and if there is none, **delete the
+  sentence rather than correct it**. Twelve deletion groups, including a wall-time figure measured
+  wrong in the third digit, a hand-kept list of six skip ids whose *count* `summarize_all` recomputes
+  and whose *names* nothing does, and a fabricated *"too many arguments"* error quote at **six** live
+  sites — no interpreter produces it; Tcl says `wrong # args: should be "p token exprs ?colors?
+  ?destover?"`.
 - **A test row's NAME must describe its method, not its coverage**, and cross-references must
   be checked rather than trusted. Rows called "every write to X" and "every indirect-precision
   sprintf in the tree" were each defeated by one whitespace variant or a `#define` alias, and
