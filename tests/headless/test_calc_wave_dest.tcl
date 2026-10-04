@@ -1476,6 +1476,35 @@ proc wd_increasing {v} {
     }
     return increasing
 }
+# `nonneg` when every element of a read-back column is a finite number that is
+# not negative, and the offending elements, INDEXED AND WITH THEIR VALUES,
+# otherwise.  The sibling proc is `mt_nonneg` in
+# tests/headless/test_calc_measure.tcl, whose header carries the measurement of
+# which sabotage each placement of this leg catches; the short version is that
+# the subtraction flipped to `$x0 - $xh` is what reddens it HERE, because the
+# `set xh {}` hoist only emits a negative on a request where a point DROPS and
+# this band drives none.
+#
+# ⚠ A RISE TIME CANNOT BE NEGATIVE, AND IT IS WORTH ASSERTING ON THE READ-BACK
+# AND NOT ONLY ON THE SERIES, because the two are different claims: the series
+# is what the verb computed and the read-back is what a column in a registered
+# destination actually holds, with the engine's own "%.16g" door in between.
+# The leg is free -- Y is `$xh - $x0` where the loop guard has already proved
+# `$xh > $x0` -- and it is a claim about the answer's own SHAPE, where the
+# element-wise legs beside it compare against a derivation this file computes.
+proc wd_nonneg {v} {
+    set n [wd_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    set bad {}
+    for {set i 0} {$i < $n} {incr i} {
+        set e [wd_at $v $i]
+        if {![wd_finite $e]} { lappend bad "\[$i\]notanumber:$e" ; continue }
+        if {$e < 0} { lappend bad "\[$i\]neg:$e" }
+    }
+    if {[llength $bad]} { return [join $bad { }] }
+    return nonneg
+}
 # the words `wd_distinct` answers for every ADJACENT pair of a series,
 # `lsort -unique`d, so the answer is `distinct` only when EVERY neighbour differs
 # by more than the tolerance.
@@ -1585,6 +1614,114 @@ proc wd_wspan {col n} {
     if {![wd_finite $a] || ![wd_finite $b]} { return "NOSPAN:{$a}|{$b}" }
     if {$b <= $a} { return "NOSPAN:notincreasing" }
     return [expr {2.0 * acos(-1) * double($n) / ($b - $a)}]
+}
+
+
+# ---------------------------------------------------------------------------
+# BAND WD13's INSTRUMENTS -- stage J unit J2, `riseTime`'s per-edge rise time
+# series arriving at the destination.  Same discipline as WD11's: every one
+# answers a WORD or a list this file re-derives, and every one is a PROC rather
+# than a ternary at the row site.
+# ---------------------------------------------------------------------------
+
+# the element-wise product of two columns, computed IN TCL and never through the
+# engine, so a row comparing the destination's read-back against a derivation
+# over `{v(sq) v(ramp) *}` is not comparing the engine against itself.  The
+# agreement between this and `wd_rpncol`'s engine column is asserted in the run
+# by WD13's own row rather than claimed here.
+proc wd_prod {a b} {
+    if {[regexp {^(ERR|NOTALIST):} $a]} { return $a }
+    if {[regexp {^(ERR|NOTALIST):} $b]} { return $b }
+    if {[catch {llength $a} na]} { return "NOTALIST:{$a}" }
+    if {[catch {llength $b} nb]} { return "NOTALIST:{$b}" }
+    if {$na != $nb} { return "LENMISMATCH:$na|$nb" }
+    set out {}
+    foreach x $a y $b {
+        if {![wd_finite $x] || ![wd_finite $y]} { return "NOTANUMBER:{$x}|{$y}" }
+        lappend out [expr {double($x) * double($y)}]
+    }
+    return $out
+}
+# THE PER-EDGE RISE TIME SERIES, derived from two columns with no verb in it --
+# one rise time per LOW crossing that HAS a high crossing after it, with X the
+# low crossing itself.  Answers `{<X> <Y> <nlow> <nhigh>}` so a row can assert
+# that a point was DROPPED rather than that the fixture had fewer edges.  This
+# is `wd_duty_derive`'s sibling: same D3 + D4 interpolation, a different
+# measurement over it.
+proc wd_rt_derive {xs ys lo hi plo phi} {
+    if {[regexp {^(ERR|NOTALIST|LENMISMATCH|NOTANUMBER):} $ys]} {
+        return [list $ys $ys $ys $ys]
+    }
+    if {[regexp {^(ERR|NOTALIST|LENMISMATCH|NOTANUMBER):} $xs]} {
+        return [list $xs $xs $xs $xs]
+    }
+    set sw [expr {double($hi) - double($lo)}]
+    if {$sw == 0.0} { return [list ZEROSWING ZEROSWING ZEROSWING ZEROSWING] }
+    set llo [expr {double($lo) + double($plo)/100.0*$sw}]
+    set lhi [expr {double($lo) + double($phi)/100.0*$sw}]
+    set los [wd_derive $xs $ys $llo rising]
+    set his [wd_derive $xs $ys $lhi rising]
+    set rx {} ; set ry {}
+    foreach a $los {
+        set b {}
+        foreach h $his {
+            if {$h > $a} { set b $h ; break }
+        }
+        if {$b eq {}} continue
+        lappend rx $a
+        lappend ry [expr {$b - $a}]
+    }
+    return [list $rx $ry [llength $los] [llength $his]]
+}
+proc wd_rt_get {d i} { if {[catch {lindex $d $i} v]} { return "NODERIV:{$d}" } ; return $v }
+proc wd_rt_x   {d} { return [wd_rt_get $d 0] }
+proc wd_rt_y   {d} { return [wd_rt_get $d 1] }
+proc wd_rt_nlo {d} { return [wd_rt_get $d 2] }
+proc wd_rt_nhi {d} { return [wd_rt_get $d 3] }
+# the absolute threshold a supplied swing and a percentage name -- R415's whole
+# content in one line, so the band drives `calc::cross` at the SAME levels the
+# verb will and the X comparand is `cross`'s own answer rather than a second
+# derivation.
+proc wd_rt_thr {lo hi p} {
+    return [expr {double($lo) + double($p)/100.0*(double($hi) - double($lo))}]
+}
+# THE WRONG FILLS A REASONABLE PERSON WRITES, built FROM the correct series so
+# they cannot drift away from it.  A rotation by one; the MIDDLE element
+# replaced by the mean of the endpoints, which is what a producer that filled
+# only the ends and interpolated would write; and the middle replaced by its
+# left neighbour, which is a dropped middle sample whose COUNT survives.  The
+# last two exist only at three points or more -- `lreverse` and `wd_rot1` are
+# THE SAME LIST at two points -- and that is the whole of what unit J2's third
+# point buys over unit J1's two, which the band asserts in the run.
+proc wd_rot1 {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 2} { return $v }
+    return [concat [lrange $v 1 end] [list [lindex $v 0]]]
+}
+proc wd_midmean {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 3} { return "tooshort:$n" }
+    set m [expr {($n - 1) / 2}]
+    return [lreplace $v $m $m [expr {([lindex $v 0] + [lindex $v end]) / 2.0}]]
+}
+proc wd_midleft {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 3} { return "tooshort:$n" }
+    set m [expr {($n - 1) / 2}]
+    return [lreplace $v $m $m [lindex $v [expr {$m - 1}]]]
+}
+# the angular frequency fitting `n` whole periods across a column's own span is
+# `wd_wspan`; this is the same idea for a request the AC slot can actually
+# measure a RISE TIME on.  `v(sq)` is the `AC 1` reference and reads back as a
+# flat magnitude there, and `v(lp)` FALLS monotonically with frequency, so
+# neither has a rising edge at all -- the only rising quantity in that database
+# is the sweep column itself, and one monotone ramp gives ONE edge.  A sine of
+# the sweep gives as many as the span is asked for, with no frequency written
+# down anywhere.
+proc wd_acrpn {col n} {
+    set w [wd_wspan $col $n]
+    if {[regexp {^NOSPAN} $w]} { return $w }
+    return [list frequency $w * sin()]
 }
 
 if {[catch {
@@ -2298,7 +2435,7 @@ group WD9 {
     # driven and its two legs are INVERTED: `measured`, and an identity against
     # `listdefer` of 0.  A re-deferral would redden here, which is a claim
     # nothing else in the file makes.
-    check "WD9 EVERY caller STILL WAITING answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0, delay's nth 0 on a side and riseTime's nth 0 -- while dutyCycle_scalar's DEFAULT CYCLE, which stage J wired, MEASURES and carries none of it: so splitting the sentence per caller reddens here with a name, rewording it costs nothing anywhere, and a caller sliding back into the deferral reddens here too" \
+    check "WD9 EVERY caller STILL WAITING answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0 and delay's nth 0 on a side -- while the two callers stage J has wired, dutyCycle_scalar's DEFAULT CYCLE and riseTime's nth 0, MEASURE and carry none of it: so splitting the sentence per caller reddens here with a name, rewording it costs nothing anywhere, and a caller sliding back into the deferral reddens here too.  ⚠ riseTime is driven at BOTH LAYERS, the verb and the new surface wrapper a click actually reaches, because calc::arg_surface redirects silently the moment that wrapper exists and a row driving only the raw proc would stop measuring what the user gets" \
         [list [wd_disp [set a [wd_call cross_scalar {v(sq)} 0.5 0 rising]]] \
               [string equal [wd_msg $a] $s] \
               [wd_disp [set b [wd_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
@@ -2306,12 +2443,18 @@ group WD9 {
               [wd_disp [set c [wd_call dutyCycle_scalar {v(sq)} 0.5]]] \
               [string equal [wd_msg $c] $s] \
               [wd_disp [set d [wd_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
-              [string equal [wd_msg $d] $s]] \
-        {refused 1 refused 1 measured 0 refused 1}
+              [string equal [wd_msg $d] $s] \
+              [wd_disp [set e [wd_call riseTime_scalar {v(sq)} 0.0 1.0 10 90 0]]] \
+              [string equal [wd_msg $e] $s]] \
+        {refused 1 refused 1 measured 0 measured 0 measured 0}
     pcall wd_call wave_dest_drop $c
-    check "WD9 ...and pairwise along the whole chain of the callers still waiting, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means -- plus the negative half for the wired one, whose sentence must equal NEITHER cross_msg's nor its siblings'" \
-        [list [string equal [wd_msg $a] [wd_msg $b]] [string equal [wd_msg $b] [wd_msg $d]] \
-              [string equal [wd_msg $c] $s] [string equal [wd_msg $c] [wd_msg $a]]] {1 1 0 0}
+    pcall wd_call wave_dest_drop $e
+    check "WD9 ...and pairwise along the whole chain of the callers still waiting, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means -- plus the negative half for EACH wired caller, whose sentence must equal NEITHER cross_msg's nor a still-waiting sibling's.  ⚠ The chain is now TWO callers long, so the positive leg is one comparison: the non-vacuity leg beside it asserts that sentence is non-empty, which is what stops the chain reading as green over two callers that have both fallen silent" \
+        [list [string equal [wd_msg $a] [wd_msg $b]] [wd_longer [wd_msg $b] 0] \
+              [string equal [wd_msg $c] $s] [string equal [wd_msg $c] [wd_msg $a]] \
+              [string equal [wd_msg $d] $s] [string equal [wd_msg $d] [wd_msg $a]] \
+              [string equal [wd_msg $e] $s] [string equal [wd_msg $e] [wd_msg $a]]] \
+        {1 long 0 0 0 0 0 0}
     # ⚠ THE CALLER SET IS DERIVED FROM THE NAMESPACE, NOT LISTED, because a hand-kept
     # list is the same defect one level up -- AND THE DERIVATION HAS NOW EARNED ITS
     # KEEP, which is recorded because the previous revision of this comment predicted
@@ -2355,8 +2498,8 @@ group WD9 {
     check "WD9 the callers that defer behind that sentence and the callers that now ANSWER a destination PARTITION the four this derivation has always found -- both sets taken over the namespace in one walk and neither listed here, with the non-vacuity floor over their UNION so that wiring a caller MOVES it from one set to the other rather than lowering a floor: a FIFTH caller of either kind reddens here naming itself, and so does a caller that fell out of both" \
         [list $wd_defcallers $wd_wiredcallers $wd_bothsides \
               [wd_atleast [llength $wd_bothsides] 4]] \
-        [list {cross_scalar delay riseTime} {dutyCycle_scalar} \
-              {cross_scalar delay dutyCycle_scalar riseTime} atleast]
+        [list {cross_scalar delay} {dutyCycle_scalar riseTime_scalar} \
+              {cross_scalar delay dutyCycle_scalar riseTime_scalar} atleast]
     check "WD9 R402 the band left no __calc_tmp* and no __wd_* behind" \
         [list [wd_leaked] [wd_probeleft]] {{} {}}
 }
@@ -2916,6 +3059,199 @@ group WD12 {
               [llength [pcall info args ::wviewer::plot_signals]] \
               [llength [pcall info commands ::wd_keep_ps]]] \
         {{} {} 1 0 {} 4 0}
+}
+
+# =========================================================================
+group WD13 {
+    # STAGE J UNIT J2 -- THE SECOND WIRED CALLER.  `calc::riseTime`'s `nth` 0
+    # stops deferring and answers the PER-EDGE RISE TIME SERIES; the new surface
+    # wrapper `calc::riseTime_scalar` puts it in a destination.  This band is the
+    # DESTINATION half.  The VERB half -- the series itself, its three
+    # derivations, the dropped point, the two absences and the surface's formal
+    # ORDER -- is band MT9c of tests/headless/test_calc_measure.tcl, and the
+    # click's buffer and status behaviour is display-only and belongs to band
+    # S28 of tests/headless/test_calc_skeleton.tcl.
+    #
+    # ⚠⚠ THREE POINTS, WHICH IS THE CEILING UNIT J1 DECLARED AND THE FIRST TIME
+    # THIS STAGE HAS BEATEN IT.  WD11's own comment records it: `dutyCycle`'s
+    # series on this fixture is TWO points, and two cannot carry a middle element
+    # at all -- so a dropped middle sample, a rotation told apart from a
+    # reversal, and an X misordered anywhere but end-to-end are all invisible
+    # there, and WD11 had to build a TWENTY-point sine series to reach them.
+    # `riseTime`'s series is one rise time per rising edge and `v(sq)` has three
+    # rising crossings, so the committed fixture gives three without an invented
+    # waveform.  The third-point row below builds the wrong fills FROM the
+    # correct series and asserts, in the run, that a two-point reversal and a
+    # two-point rotation are THE SAME LIST while the three-point ones are not.
+    #
+    # ⚠⚠ THE COLUMN IS `{v(sq) v(ramp) *}` AND NEITHER OBVIOUS ONE, MEASURED.
+    # `riseTime`'s per-edge series on `v(sq)` has all three edges agreeing to a
+    # RELATIVE 4.5e-14 -- the square is periodic and every edge has the same
+    # width -- and on `v(lp)` the last two agree to 2.2e-11, because the pole is
+    # in periodic steady state after the first edge.  Both are inside `WDTOL`,
+    # so on either column a Y written backwards, or filled with its own first
+    # element, passes an element-wise read-back.  That is section 10(a)'s WD8
+    # finding -- issue 1643 -- arriving at a second verb, and the answer is the
+    # one that file settled on: drive the column that discriminates, name the
+    # ones that do not, and assert the DISTINCTNESS in the run.  The product of
+    # the square and the ramp scales each edge by the ramp's value there, so
+    # against FIXED absolute thresholds the three edges have three different
+    # widths -- adjacent relative differences of 3.6 and 0.80, seven orders
+    # outside `WDTOL` -- and three low crossings a factor of ten apart.
+    #
+    # ⚠ READ BACK WITH A TOLERANCE AND NEVER WITH `string equal`, for the reason
+    # WD11 records and which was re-measured for this series: Y[1] goes in as
+    # 3.200000000000078e-5 and reads back as 3.200000000000078e-05, and Y[2]
+    # goes in as 1.7777777777776282e-5 and comes back as 1.777777777777628e-05 --
+    # a digit short, because `xschem raw values` prints "%.16g".  A byte-for-byte
+    # comparison is RED ON CORRECT CODE.
+    #
+    # ⚠ THE DERIVATION HAS NO ENGINE IN IT where it can be helped: the comparand
+    # is the element-wise product of the two committed columns computed in Tcl,
+    # and the keystone's first leg asserts in the run that the engine's own
+    # product column agrees with it -- so the two derivations cannot silently
+    # become one.  Measured: they agree to a relative 4.0e-16.
+    #
+    # ⚠ WHICH ROWS HERE PASS WITH NO FEATURE PRESENT, declared BY KIND so nobody
+    # reads one as the band's red: the band's own R402 inventory, and nothing
+    # else.  ⚠ The CONTROL row is NOT in that list even though its JOB is to be
+    # true on both sides of the unit -- it drives the wrapper, which does not
+    # exist yet, so on the red tree it reddens with `NOPROC:calc::riseTime_scalar`
+    # rather than with a missing destination.  It is still a CONTROL and not part
+    # of the unit's fence: what it forbids is a destination merged into EVERY
+    # answer, which unit J1's sabotage table records as `F_merge_always` and
+    # which no other row in either suite catches on its own.  ⚠ Four of the
+    # third-point row's eight legs are satisfied by an absent feature too -- an
+    # empty read-back is distinct from any three-element list -- so the row's red
+    # is its `same` leg and its three instrument legs, which is stated here
+    # because a reader counting red legs would otherwise over-credit it.
+    pcall wd_load1
+    set rLO 0
+    set rHI 1
+    set rPL 10
+    set rPH 90
+    set rT [wd_col time 0]
+    set rTCL [wd_prod [wd_col v(sq) 0] [wd_col v(ramp) 0]]
+    set rRPN {v(sq) v(ramp) *}
+    set rENG [wd_rpncol $rRPN 0]
+    set rD [wd_rt_derive $rT $rTCL $rLO $rHI $rPL $rPH]
+    set rDX [wd_rt_x $rD]
+    set rDY [wd_rt_y $rD]
+    set rLOWX [wd_val [wd_call cross $rRPN [wd_rt_thr $rLO $rHI $rPL] 0 rising 0]]
+    set a [wd_call riseTime_scalar $rRPN $rLO $rHI $rPL $rPH 0]
+    set adb [wd_key $a db]
+    set axn [wd_key $a xname]
+    set ayn [wd_key $a yname]
+    set apts {}
+    set apx {}
+    set apy {}
+    if {[pcall xschem raw switch $adb table] eq {1}} {
+        set apts [pcall xschem raw points 0]
+        set apx [wd_col $axn 0]
+        set apy [wd_col $ayn 0]
+    }
+    pcall xschem raw switch $::fixture tran
+    check "WD13 R419/R415 riseTime_scalar's nth 0 stops deferring and answers a REGISTERED two-column destination rather than a bare list: the answer names a database, its two column names differ, the database's OWN point count is the derived series length, and BOTH columns read back out of it element-wise -- the X at the time tolerance and the Y at the series one -- with the user's own slot current again afterwards.  The comparand is an element-wise product computed in TCL and the first leg asserts the ENGINE's own product column agrees with it, so the derivation and the verb do not share an arithmetic" \
+        [list [wd_cmpword $rENG $rTCL] [wd_disp $a] [wd_destname $adb] \
+              [wd_twonames $axn $ayn] \
+              [wd_sized $apts [llength $rDY]] \
+              [wd_listcmp $apx $rDX $WDTOL_TIME] \
+              [wd_listcmp $apy $rDY $WDTOL] \
+              [wd_nonneg $apy] \
+              [wd_curslot]] \
+        {same measured named twonames sized ok ok nonneg 0}
+    check "WD13 ...and the X the destination holds is calc::cross's OWN low-crossing list, read back at the same supplied-swing threshold the verb uses -- so a producer that put the HIGH crossings, the midpoints or the rise times themselves on the X axis reddens here naming every offending element, which the derivation leg above cannot distinguish from a wrong interpolation.  Every adjacent Y of the read-back differs by more than WDTOL and the X is strictly increasing over TWO comparisons rather than one" \
+        [list [wd_listcmp $apx $rLOWX $WDTOL_TIME] \
+              [wd_sized [llength $rLOWX] [llength $rDY]] \
+              [wd_alldistinct $apy] \
+              [wd_alldistinct $apx] \
+              [wd_increasing $apx]] \
+        {ok sized distinct distinct increasing}
+    check "WD13 ...and the answer's KEY SET is exactly riseTime's own keys plus the SERIES X it now carries plus the destination's plus the shape the surface routes on, with `dest` left holding the RETIRED __calc_tmp the measurement evaluated into -- a name R402 has already deleted, which is why no __calc_tmp survives the inventory -- and `db` holding the LIVE __calc_dest that IS registered: the two keys are different names and mean different things, so a wiring that put the live destination in `dest` reddens here instead of quietly redefining the key band MT9b of the sibling suite reads BY NAME.  The last leg is the CONTROL for the distinctness instrument the row above leans on, which must be able to answer `same` or its `distinct` is a constant" \
+        [list [wd_keys $a] [wd_tmpname [wd_key $a dest]] [wd_leaked] \
+              [wd_destname $adb] [wd_registered $adb table] [wd_key $a shape] \
+              [wd_alldistinct [list 1.0 1.0]]] \
+        [list {absent dataset db dest msg n ok shape sweep type value xname yname} tmp {} \
+              named registered wave same]
+    check "WD13 THE THIRD POINT, measured rather than argued: against the very same element-wise comparison the keystone leans on, the read-back Y REVERSED, ROTATED BY ONE, with its MIDDLE replaced by the mean of the endpoints and with its middle replaced by its left neighbour are each distinct from the derivation while the read-back itself is the same -- and the last three legs show WHY unit J1's two points could not have said it, because at two points a reversal and a rotation are the identical list, at three they are not, and a MIDDLE X out of order is a shape that exists only at three" \
+        [list [wd_cmpword [lreverse $apy] $rDY $WDTOL] \
+              [wd_cmpword [wd_rot1 $apy] $rDY $WDTOL] \
+              [wd_cmpword [wd_midmean $apy] $rDY $WDTOL] \
+              [wd_cmpword [wd_midleft $apy] $rDY $WDTOL] \
+              [wd_cmpword $apy $rDY $WDTOL] \
+              [string equal [lreverse [lrange $rDY 0 1]] [wd_rot1 [lrange $rDY 0 1]]] \
+              [string equal [lreverse $rDY] [wd_rot1 $rDY]] \
+              [wd_increasing [wd_rot1 $rDX]]] \
+        {distinct distinct distinct distinct same 1 0 notincreasing:2}
+    check "WD13 R402 the destination is a REGISTRY SLOT and every existing leak fence in this batch is BLIND to it, re-measured for this caller rather than inherited from unit J1's row: wd_leaked and wd_probeleft both answer EMPTY -- they glob __calc_tmp*/__wd_* over the CURRENT database's COLUMN names, and the destination's columns are calcx/calcy in a database nobody switched to -- while the slot count has gone UP by one and the new slot's sim_type is the one odd type that works" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_slottype 1] \
+              [wd_registered $adb table] [wd_curslot]] \
+        {{} {} 2 table registered 0}
+    check "WD13 ...and this caller ANSWERS the destination WITHOUT DROPPING IT either, which is unit J1's declared leak inherited rather than a new one: the slot is still there after the answer, the answer is enough to drop it, and dropping it leaves the user's slot current.  WHO frees a destination the user is looking at is still unruled, and a producer that dropped on the SUCCESS path would free the database the trace resolves BY NAME" \
+        [list [wd_nslots] [wd_call wave_dest_drop $a] [wd_nslots] \
+              [wd_registered $adb table] [wd_curslot] [wd_leaked]] \
+        {2 1 1 absent 0 {}}
+    # ⚠⚠ THE RESTORE IS DRIVEN FROM BOTH READING ORDERS IN ONE ROW, AND NEITHER
+    # HALF IS A FENCE ALONE -- which WD11 measured in both directions for unit
+    # J1 and which is re-measured here because unit J2 may add a defensive
+    # point-count read-back of its own, and a read-back has to switch.  A
+    # producer that restores the user's slot with the analysis type WRITTEN DOWN
+    # rather than carried lands on the wrong slot in exactly one of the two
+    # orders: with `op ac tran` the user sits on `tran` at slot 2 and a hardcoded
+    # `ac` lands on slot 1; with `op tran ac` the user sits on `ac` at slot 2 and
+    # a hardcoded `tran` lands on slot 1.  Whichever type is written down, one
+    # half of this row names the slot it landed on.
+    #
+    # ⚠ A RISE TIME IS MEASURABLE FROM THE `ac` SLOT, but not on any committed
+    # column there: `v(sq)` is the `AC 1` reference and reads back as a flat
+    # magnitude, `v(lp)` FALLS monotonically with frequency, and the only rising
+    # quantity in that database is the sweep column itself -- which, being one
+    # monotone ramp, has exactly ONE rising edge.  So the request is a sine of
+    # the sweep with the angular frequency READ BACK from the database's own
+    # endpoints every run, which is `wd_wspan`'s reason for existing, and it
+    # carries no written-down frequency.  This is hole H5's `ac` exception
+    # arriving at a second verb.
+    #
+    # ⚠ The two halves are DELIBERATELY one row.  The claim is that the PAIR of
+    # orders is the fence; split across two rows an editor can retune one and
+    # leave the other, and the pairing is exactly what rots.
+    pcall wd_load3t
+    set g1 [wd_call riseTime_scalar $rRPN $rLO $rHI $rPL $rPH 0]
+    set g1db [wd_key $g1 db]
+    set g1cur [wd_curslot]
+    set g1n [wd_nslots]
+    set g1t1 [wd_slottype 1]
+    set g1t3 [wd_slottype 3]
+    pcall wd_load3a
+    set acrpn [wd_acrpn [wd_col frequency 0] 4]
+    set g2 [wd_call riseTime_scalar $acrpn -1 1 $rPL $rPH 0]
+    set g2db [wd_key $g2 db]
+    set g2cur [wd_curslot]
+    set g2n [wd_nslots]
+    set g2t1 [wd_slottype 1]
+    set g2t3 [wd_slottype 3]
+    check "WD13 the user's own slot is theirs again whichever analysis type they were parked on, driven from BOTH three-slot reading orders in ONE row so that a restore naming a type cannot be green on one and red on the other: read op/ac/tran the user is on tran at slot TWO with an ac slot at index ONE for a hardcoded ac to land on, read op/tran/ac the user is on ac at slot TWO with a tran slot at index ONE for a hardcoded tran to land on, and in both the destination is APPENDED as a fourth slot typed table.  The ac half's request is a sine of that database's OWN frequency sweep, read back every run, because no committed ac column has a rising edge at all" \
+        [list [wd_disp $g1] [wd_destname $g1db] $g1cur $g1n $g1t1 $g1t3 \
+              [wd_disp $g2] [wd_destname $g2db] $g2cur $g2n $g2t1 $g2t3] \
+        {measured named 2 4 ac table measured named 2 4 tran table}
+    pcall wd_call wave_dest_drop $g1
+    pcall wd_call wave_dest_drop $g2
+    # ⚠ THE CONTROL.  It forbids the other plausible wrong implementation -- a
+    # destination merged into EVERY answer -- so it is true before this unit and
+    # must stay true after it, and it is DECLARED green on the red run rather
+    # than counted as part of the unit's fence.  No other row in either suite
+    # catches that shape on its own: unit J1's sabotage table records it as
+    # `F_merge_always`, caught only by WD11's equivalent control.
+    pcall wd_load1
+    check "WD13 the CONTROL: a NAMED occurrence is the scalar it always was and builds NO destination -- no db key at all, no shape key, riseTime's historic key set, and the registry still the single tran slot -- and neither does a swing the signal never reaches, which answers an ABSENCE.  So the wiring landed on the nth-0 arm of a request that HAS a series and not on every call" \
+        [list [wd_disp [set c [wd_call riseTime_scalar $rRPN $rLO $rHI $rPL $rPH 1]]] \
+              [wd_key $c db] [wd_key $c shape] [wd_keys $c] \
+              [wd_disp [set d [wd_call riseTime_scalar {v(sq)} 100.0 200.0 10 90 0]]] \
+              [wd_key $d db] [wd_nslots] [wd_leaked]] \
+        [list measured NOKEY-db NOKEY-shape {absent dataset dest msg ok value} \
+              refused NOKEY-db 1 {}]
+    check "WD13 R402 the whole band left no __calc_tmp*, no __wd_* probe column and no destination slot behind, across its measured, absent, dropped and two three-slot paths -- which is what keeps band WD10 below measuring the suite's inventory and not this band's residue" \
+        [list [wd_leaked] [wd_probeleft] [wd_nslots] [wd_curslot]] {{} {} 1 0}
 }
 # =========================================================================
 group WD10 {

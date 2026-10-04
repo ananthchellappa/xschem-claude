@@ -2417,13 +2417,20 @@ proc calc::plot_click {} {
 # NAMES A WAVE.  The user ruled that `cross` with `nth = 0` answers *"just a
 # list of crossing times like cadence does"*, so there are TWO destinations:
 # a LIST surface, which `calc::cross_scalar` alone waits on (spec R606, the
-# inert `Table` control), and a WAVEFORM destination, which `calc::delay` with
-# `nth = 0` on either side, `calc::dutyCycle_scalar`'s default cycle and the
-# unbuilt `frequency` wait on.  The callers that defer are enumerated
-# mechanically -- by the enclosing proc of every `listdefer` call site, which is
-# the only method that has been right about this count -- and NOT counted from a
-# sentence: the tree carried a wrong number twice, once as "three verbs behind
-# one missing piece" and once as the correction to it.
+# inert `Table` control), and a WAVEFORM destination.
+#
+# ⚠ AND STAGE J HAS NOW WIRED TWO OF THAT DESTINATION'S CALLERS, SO THE SET IS
+# SPLIT RATHER THAN LISTED.  `calc::dutyCycle_scalar`'s default cycle (unit J1)
+# and `calc::riseTime_scalar`'s `nth` 0 (unit J2) ANSWER a registered
+# destination and say nothing here; `calc::delay` with `nth = 0` on either side
+# and the unbuilt `frequency` are what is left waiting.  The callers that defer
+# are enumerated mechanically -- by the enclosing proc of every `listdefer` call
+# site, which is the only method that has been right about this count -- and NOT
+# counted from a sentence: the tree carried a wrong number twice, once as "three
+# verbs behind one missing piece" and once as the correction to it.  Band WD9 of
+# tests/headless/test_calc_wave_dest.tcl derives BOTH sets over the namespace
+# every run and asserts they PARTITION, with a floor over their union, so a
+# caller that moves between them moves there rather than lowering a number.
 #
 # ⚠⚠ AND THE STRING MUST STAY SHARED.  Rows MT7 and MT8 of
 # tests/headless/test_calc_measure.tcl compare `string equal` against
@@ -2889,9 +2896,13 @@ proc calc::cross {rpn level nth edge {dataset 0}} {
 # not the threshold level, not the ordinal, not the sample index -- and this
 # proc is the ONE caller of `listdefer` that waits on the LIST surface (spec
 # R606, the `Table` control, still routed to `calc::inert`) rather than on
-# `calc::wave_dest`.  The waveform destination's callers are `calc::delay` with
-# `nth = 0` on either side, `calc::dutyCycle_scalar`'s default cycle and the
-# unbuilt `frequency`.
+# `calc::wave_dest`.  The waveform destination's callers are
+# `calc::dutyCycle_scalar`'s default cycle and `calc::riseTime_scalar`'s `nth` 0,
+# both of which stage J has WIRED and which therefore answer a destination
+# rather than deferring, plus `calc::delay` with `nth = 0` on either side and the
+# unbuilt `frequency`, which are still waiting.  Band WD9 of
+# tests/headless/test_calc_wave_dest.tcl derives the two sets over the namespace
+# rather than reading this sentence.
 #
 # ⚠ The refuted sentence began as an UNASKED PARENTHETICAL in
 # `doc/claude/calculator_batch/CROSS_CONTRACT.md` D8 and propagated from there
@@ -3002,32 +3013,114 @@ proc calc::cross_scalar {rpn level nth edge {dataset 0}} {
 # different one from running off the end of the low list; MT4 fences both, on two
 # different columns, because one column cannot produce both.
 #
-# ⚠ WARN `nth` 0 DEFERS BEHIND THE SHARED `listdefer` SENTENCE (ISSUE 1639), AND
-# IT USED TO RAISE.  `cross` answers `nth` 0 with SUCCESS AND A LIST, this proc
-# handed its own `nth` to the LOW-side measurement, and the subtraction then met
-# that list -- `can't use non-numeric string as operand of "-"`, a Tcl error
-# reaching the caller where D7 requires an answer.  The comment inside the proc
-# claimed the path was guarded and was talking about the OTHER operand; see it.
+# ⚠⚠ WARN `nth` 0 ANSWERS THE WHOLE PER-EDGE SERIES: ONE RISE TIME PER RISING
+# EDGE, WITH A PARALLEL X OF LOW CROSSING TIMES.  Stage J unit J2 REPLACED issue
+# 1639's deferral with the measurement it was promising, so the shared
+# `listdefer` sentence is RETIRED for this caller and for no other.  The history,
+# because it is what makes the shape of the arm non-obvious: `cross` answers
+# `nth` 0 with SUCCESS AND A LIST, this proc used to hand its own `nth` to the
+# LOW-side measurement, and the subtraction then met that list --
+# `can't use non-numeric string as operand of "-"`, a Tcl error reaching the
+# caller where D7 requires an answer.  Issue 1639 bought an answer by deferring;
+# J2 bought the right answer.
 #
-# The DISPOSITION is a deferral and not a D7 refusal, and the reason is this
-# proc's own published meaning of `nth`: it selects the LOW crossing and the high
-# one is DERIVED as the first strictly after it, so `nth` 0 names exactly one rise
-# time per low crossing -- a WAVE with its own X axis, well formed, with nothing
-# ambiguous for D7 to refuse.  `calc::delay` is the precedent rather than the
-# analogy: it is also a measurement proc with no `_scalar` wrapper and it also
-# defers inside itself.  A D7 refusal would state that the request cannot be
-# interpreted, which is false and would have to be REVERSED as user-visible
-# behaviour once R410/R412's argument dialog can route a wave into
-# `calc::wave_dest`; a deferral retires silently, which is why the sentence is
-# shared in the first place.
+# WHY A SERIES AND NOT A REFUSAL, which is the published meaning of `nth` rather
+# than a new decision: `nth` selects the LOW crossing and the high one is DERIVED
+# as the first strictly after it, so `nth` 0 names exactly one rise time per low
+# crossing -- a WAVE with its own X axis, well formed, with nothing ambiguous for
+# D7 to refuse.  That is why the deferral could retire silently rather than
+# having to be REVERSED as user-visible behaviour, which is the whole reason the
+# sentence was shared in the first place.
 #
-# The guard sits AFTER every request-level check -- the swing, the references, the
-# percentages, the zero swing -- and that order is a decision: a deferral promises
-# an answer once a destination lands, and a request with no swing will still be
-# malformed then, so a malformed request must be refused as malformed rather than
-# deferred.  Band MT9b of tests/headless/test_calc_measure.tcl is the fence for
-# both halves, and band WD9 of tests/headless/test_calc_wave_dest.tcl derives the
-# set of callers that share the sentence, so this one appears there by name.
+# ⚠⚠ WARN THE SERIES IS DRIVEN FROM THE LOW CROSSING LIST AND NEVER FROM THE
+# HIGH ONE, pairing each low crossing with the FIRST high crossing STRICTLY after
+# it.  Driving the HIGH list instead -- pairing each high crossing with the last
+# low crossing before it -- answers one point per COMPLETED TRANSITION where a
+# rise time is one per RISING EDGE, and it is NOT a hypothetical: it was driven
+# as a sabotage and passed every suite in this batch on both arms with every
+# check count unmoved, because on the committed fixture's columns the two
+# crossing lists interleave strictly one for one and under strict 1:1
+# interleaving the two directions are provably the same list.  What separates
+# them is a signal that RINGS at the top, where one rising edge crosses the high
+# threshold more than once -- the commonest real transient there is, and what the
+# wrong pairing answers for it is several "rise times" plotted at the SAME X, the
+# later ones being the time from the edge's start to the second and third ring
+# peaks.  Band MT9c of tests/headless/test_calc_measure.tcl mints that signal and
+# is the only thing in the tree that can see the difference.
+#
+# ⚠ WARN A LOW CROSSING WITH NO HIGH CROSSING AFTER IT DROPS THAT POINT -- it is
+# neither padded nor allowed to refuse the whole series.  This is the EMPTY-series
+# ruling applied once per point rather than once per request, and it agrees with
+# R416, which already rules that `dutyCycle` answers one fraction per COMPLETE
+# cycle and silently ignores an incomplete trailing one; two timing verbs
+# disagreeing about the same situation would read to a user as nothing but a bug.
+# Refusing instead would refuse every transient that ends part way up its last
+# edge, which is the common case rather than the odd one.  PADDING a dropped
+# point with its predecessor is the plausible wrong answer and it keeps the
+# length, so no count leg can see it: exactly one row in the tree catches it.
+#
+# ⚠⚠ WARN THE EMPTINESS IS TESTED ON THE OUTPUT SERIES AND NEVER ON THE TWO
+# INPUT CROSSING LISTS, and the difference is user-visible.  Both lists can be
+# NON-EMPTY with the series still empty -- it happens whenever the only high
+# crossing lies BEFORE the only low one -- so a guard on the inputs lets the
+# empty lists through to `calc::wave_dest`, whose `destempty` sentence then tells
+# the user that *"an empty result has nothing to put in a destination"* when the
+# truth is that the signal never completed a transition.  That shape, too, was
+# driven as a sabotage and was a complete, fully green unit.  When the series is
+# empty the verb answers the ABSENCE itself through `calc::cross_msg`'s `nohigh`
+# arm, naming the ordinal zero.
+#
+# ⚠ THAT SENTENCE USED TO CLAIM MORE THAN THE TREE DELIVERS, AND THE CORRECTION
+# IS KEPT VISIBLE RATHER THAN QUIETLY APPLIED, BECAUSE A CORRECTION THAT READS
+# LIKE IT WAS ALWAYS RIGHT TEACHES NOBODY.  It used to say the arm is *"the very
+# `calc::cross_msg` arm the ordinal path already uses for the identical request,
+# so one physical fact is reported in one voice whether the user asked for one
+# edge or all of them"*.  Measured over the empty-series shapes band MT9c of
+# tests/headless/test_calc_measure.tcl enumerates, that holds wherever a LOW
+# crossing EXISTS and is FALSE where none does:
+#
+#   * low crossings exist and not one of them has a high crossing after it, and
+#     the only high crossing lies BEFORE the only low one -- both of those
+#     answer `nohigh` from the ordinal path too, differing only in the ordinal
+#     the sentence names.  One voice, as the old sentence claimed.
+#   * a swing the trace NEVER REACHES AT ALL does not.  `riseTime {v(sq)} 100
+#     200` on the committed fixture, at `nth` 0, answers `nohigh` -- *"the 0th
+#     low crossing has no high crossing after it in this sweep"* -- while the
+#     same request at `nth` 1 never reaches the rise-time layer: `calc::cross`
+#     is asked for the 1st rising crossing of the LOW threshold, the trace has
+#     none, and `cross` answers its OWN `absent` arm, *"there is no 1st rising
+#     crossing of that level in this sweep"*, before any high-side read or any
+#     subtraction happens.  Two voices for one physical fact -- and `nohigh`'s
+#     is the weaker of the two there, because no low crossing exists to have a
+#     high one after it.
+#
+# What survives the measurement is the narrow claim, which is the one worth
+# keeping: the `nth`-0 arm mints no sentence of its own, and every empty series
+# it answers carries an arm `calc::cross_msg` already builds for the ordinal
+# path.  The words are unratified (`rule` debt
+# `calc_wave_dest_empty_result_sentence`) and no row asserts them; the rows
+# assert the disposition, a negative identity against `destempty` and the
+# sentence's FAMILY -- which is why they are green over all of those shapes,
+# the one this paragraph narrows included.
+#
+# The `nth`-0 arm sits AFTER every request-level check -- the swing, the
+# references, the percentages, the zero swing -- and that order is a decision
+# kept from issue 1639: a malformed request must be refused as malformed rather
+# than measured, and a request with no swing names no thresholds to measure
+# between.  It sits after the two threshold computations for the same reason it
+# needs them.  Band MT9b of tests/headless/test_calc_measure.tcl is the fence for
+# the retirement, band MT9c for the series, and band WD9 of
+# tests/headless/test_calc_wave_dest.tcl derives the set of callers that still
+# share the deferral sentence and the set that now answer a destination, so this
+# one appears there by name in the second set.
+#
+# ⚠ THIS PROC DOES NOT PUT THE SERIES ANYWHERE: `calc::riseTime_scalar` does,
+# and that split is enforced by a row rather than only stated.  The destination
+# builder issues an `xschem raw add` of its own, so row MT10's callee-ward
+# closure over the three timing verbs would print it as an engine door inside
+# this proc if it reached for it -- while nothing here names the wrapper, so the
+# wrapper is invisible to that closure.  The verb computes; the surface decides
+# where the answer goes.
 proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}} {
     # R415, first: the swing is supplied or the request is refused.  Checked
     # before anything reaches the database, so a missing swing costs no read --
@@ -3057,19 +3150,42 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
     if {$swing == 0.0} {
         return [calc::cross_refusal [calc::cross_msg zeroswing $lo] $dataset]
     }
-    # ISSUE 1639.  `nth` 0 DEFERS, behind the sentence its three siblings share,
-    # and it is placed HERE -- after every request-level check and before any
-    # threshold arithmetic -- for the reason the header's last paragraph gives.
-    # The finiteness conjunct is not belt-and-braces: `double($nth)` RAISES on a
-    # non-numeric operand, so a guard without it would trade one raise for
-    # another, and a non-finite ordinal must keep reaching `cross`'s own `badnth`
-    # refusal.  Integer-VALUED and not integer-spelled, for the reason `cross`
-    # itself is: `0.0`, `-0` and `0e0` all name the ordinal zero.
-    if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
-        return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
-    }
     set llo [expr {double($lo) + double($pctlo)/100.0*$swing}]
     set lhi [expr {double($lo) + double($pcthi)/100.0*$swing}]
+    # ISSUE 1639's `nth`-0 GUARD, REPLACED BY THE MEASUREMENT IT DEFERRED --
+    # stage J unit J2.  The test it is reached by is the guard's own, unchanged
+    # and for the guard's own reasons: the finiteness conjunct is not
+    # belt-and-braces, because `double($nth)` RAISES on a non-numeric operand and
+    # a non-finite ordinal must keep reaching `cross`'s `badnth` refusal; and it
+    # is integer-VALUED rather than integer-spelled, for the reason `cross`
+    # itself is, since `0.0`, `-0` and `0e0` all name the ordinal zero.  It moved
+    # below the two threshold computations because it now needs them.  Every
+    # WARN governing this arm is above the proc; see the header.
+    if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
+        set lows [calc::cross $rpn $llo 0 rising $dataset]
+        if {![dict get $lows ok]} { return $lows }
+        set highs [calc::cross $rpn $lhi 0 rising $dataset]
+        if {![dict get $highs ok]} { return $highs }
+        set xs {}
+        set ys {}
+        foreach x0 [dict get $lows value] {
+            set xh {}
+            foreach h [dict get $highs value] {
+                if {$h > $x0} { set xh $h ; break }
+            }
+            if {$xh eq {}} continue
+            lappend xs $x0
+            lappend ys [expr {$xh - $x0}]
+        }
+        if {![llength $ys]} {
+            return [calc::cross_absent \
+                        [calc::cross_msg nohigh [calc::cross_ordinal 0]] \
+                        [dict get $highs dataset] [dict get $highs dest]]
+        }
+        dict set highs value $ys
+        dict set highs sweep $xs
+        return $highs
+    }
     # T2's two steps, in this order and through two delegated measurements.
     set a [calc::cross $rpn $llo $nth rising $dataset]
     if {![dict get $a ok]} { return $a }
@@ -3100,6 +3216,94 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
     }
     dict set b value [expr {$xhi - $xlo}]
     return $b
+}
+
+# D8 + R419 -- the SURFACE's half for `riseTime`, which is a different decision
+# from the proc's, exactly as `calc::dutyCycle_scalar` is to `calc::dutyCycle`
+# and `calc::cross_scalar` is to `calc::cross`.  Stage J unit J2.
+#
+# The measurement proc answers the whole per-edge series because that is what
+# `nth` 0 MEANS on its own published contract.  The keypad and catalogue path
+# cannot take it: R404 says a T-route scalar lands in the buffer as a literal
+# number, and a list of per-edge rise times is not something the existing RPN
+# evaluator can eat.  So the default cycle's precedent is followed exactly -- the
+# series goes into a registered two-column database and the answer declares its
+# shape, and the deferral sentence `calc::riseTime` used to answer with is
+# RETIRED at this caller and at no other.
+#
+# ⚠⚠ MINTING THIS PROC SILENTLY REDIRECTS EVERY CLICK ON `riseTime`.
+# `calc::arg_surface` is literally *"if `::calc::<name>_scalar` exists, return
+# it"*, so the wrapper is not opt-in: the moment it exists, the click path and
+# every row that derives the surface start asserting against it instead of
+# against the verb.  That is why it lands in the SAME commit as the rows.
+#
+# ⚠⚠ THE FORMALS ARE `calc::riseTime`'s OWN, IN THE VERB'S OWN ORDER, AND AN
+# EXTRA FORMAL WOULD HAVE TO GO LAST.  `calc::arg_values` walks `info args` of
+# THIS proc in FORMAL order and `break`s at the first formal it has no value for;
+# `calc::arg_invoke` then appends the values POSITIONALLY.  So a formal the
+# dialog cannot answer, placed anywhere but last, TRUNCATES the call and every
+# formal after it falls back to its own default -- MEASURED: with such a formal
+# in the middle the user's `nth` 0 never arrives and the proc receives the
+# default 1, with no error and no refusal, just a different measurement routed
+# into the buffer instead of a destination.  Row MT11's surface-formals row is
+# GREEN on that shape, because it checks MEMBERSHIP only; band MT9c mints two
+# probe surfaces and measures the truncation, and derives this proc's formals
+# against the verb's on both sides so the claim cannot rot into seven names.
+#
+# WHAT `nth` 0 ANSWERS NOW: the measurement's own dict with the destination's
+# five keys merged onto it -- `db`, `type`, `xname`, `yname`, `n` -- plus
+# `shape wave`, the explicit DECLARATION `calc::fn_sink` routes on.  The key set
+# is asserted EXACTLY by band WD13 of tests/headless/test_calc_wave_dest.tcl,
+# which is why the merge is a closed list and not a `dict merge` of the whole
+# answer:
+#
+#  * `dest` IS LEFT HOLDING THE RETIRED `__calc_tmp<N>` the measurement
+#    evaluated into, and the live destination arrives under `db`.  Band MT9b of
+#    tests/headless/test_calc_measure.tcl reads `dest` BY NAME to tell a
+#    deferral from an absence, so overwriting it would make one key mean two
+#    different things depending on the verb.
+#  * `prev`/`prevtype` are NOT merged.  They are the registry cursor the
+#    destination builder captured for its own restore, not part of a
+#    measurement's answer, and `calc::wave_dest_drop` reads them off its OWN
+#    answer.
+#  * `shape wave` is a DECLARATION and never an inference.  A legitimate
+#    SINGLE-edge series is a length-1 list and inferring the shape from the
+#    length would mis-route it into the buffer.
+#
+# ⚠ `sweep` FIRST, `value` SECOND -- X BEFORE Y.  `calc::wave_dest {xs} {ys}`
+# takes the X list first, and swapping them is SILENT on a same-length pair:
+# WD13's read-back rows compare both columns element-wise against a derivation
+# with no engine in it and name every offending element.
+#
+# ⚠ AND THE REFUSAL AND THE ABSENCE GO STRAIGHT THROUGH UNTOUCHED, with no `db`
+# key merged into either.  A named occurrence is R404's scalar and keeps the key
+# set `calc::riseTime` has always answered with; an absence -- including the
+# empty series, which the verb reports itself precisely so the empty list never
+# reaches the destination builder -- stays an absence.  A destination that
+# REFUSES is carried through `calc::cross_refusal` in its own sentence, which is
+# the house disposition for a request whose answer could not be built.
+#
+# ⚠ THE DESTINATION IS NOT DROPPED ON THE SUCCESS PATH, declared rather than
+# forgotten and inherited from unit J1 rather than new.  A trace resolves its
+# database by registry NAME and the viewer cannot re-read it, so dropping on
+# success would free the database the user is looking at.  WHO frees it is
+# unruled; the undropped slot is a DECLARED LEAK, and this caller doubles the
+# rate at which it accumulates.
+proc calc::riseTime_scalar {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}} {
+    if {!([calc::eval_finite $nth] && [expr {double($nth) == 0.0}])} {
+        return [calc::riseTime $rpn $lo $hi $pctlo $pcthi $nth $dataset]
+    }
+    set m [calc::riseTime $rpn $lo $hi $pctlo $pcthi 0 $dataset]
+    set mok 0
+    if {[catch {dict get $m ok} mok]} { return $m }
+    if {!$mok} { return $m }
+    set h [calc::wave_dest [dict get $m sweep] [dict get $m value]]
+    if {![dict get $h ok]} {
+        return [calc::cross_refusal [dict get $h msg] $dataset [dict get $m dest]]
+    }
+    foreach k {db type xname yname n} { dict set m $k [dict get $h $k] }
+    dict set m shape wave
+    return $m
 }
 
 # R417 + T3 -- the time from an edge on one expression to an edge on another.
@@ -3134,8 +3338,12 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
 # is the half R419 changed.  `cross`'s own `nth = 0` answers a LIST of crossing
 # times and wants a LIST surface; a `delay` asked for `nth = 0` on a side is
 # asking for one difference per crossing, which IS a wave with its own X axis --
-# so this caller waits on `calc::wave_dest`, alongside
-# `calc::dutyCycle_scalar`'s default cycle and the unbuilt `frequency`.  The
+# so this caller waits on `calc::wave_dest`.  ⚠ It is now the ONLY BUILT verb
+# still waiting there, which is a correction and not a restatement: this sentence
+# used to say *"alongside `calc::dutyCycle_scalar`'s default cycle and the
+# unbuilt `frequency`"*, and stage J has since wired `dutyCycle_scalar` (unit J1)
+# and `calc::riseTime_scalar`'s `nth` 0 (unit J2), so both ANSWER a destination
+# now.  `frequency` has no proc to wait with.  The
 # shared sentence is therefore deliberately silent about WHICH destination:
 # rewording it is free, splitting it per caller reddens MT7 and MT8 of
 # tests/headless/test_calc_measure.tcl, which compare it by identity.
@@ -3306,10 +3514,13 @@ proc calc::dutyCycle {rpn level {cycle 0} {dataset 0} {xaxis start}} {
 #
 # ⚠⚠ SO IT NO LONGER DEFERS.  STAGE J UNIT J1 WIRED THIS WRAPPER TO
 # `calc::wave_dest`, and the sentence it used to answer with is retired HERE and
-# at no other caller: `calc::cross_scalar`, `calc::riseTime` and `calc::delay`
+# at no other caller the unit touched: `calc::cross_scalar` and `calc::delay`
 # still say it, and row WD9 of tests/headless/test_calc_wave_dest.tcl derives
 # both sets over the namespace every run so that a FIFTH caller of either kind
-# reddens naming itself.  The previous revision of this comment claimed the
+# reddens naming itself.  ⚠ `calc::riseTime` was in that list and is NOT any
+# more -- stage J unit J2 wired `calc::riseTime_scalar`, so it joined THIS side
+# of the partition and WD9 moved it by re-deriving rather than by a decrement.
+# The previous revision of this comment claimed the
 # wrapper was *"still waiting on the CLICK"*; the click (PLAN 5.4) landed before
 # this stage did, which is why the producer could go first.
 #
@@ -4968,8 +5179,18 @@ proc calc::fn_reason {route} {
 # the verb.  R416 (spec §7.2ab, the user's own words -- *"a wave -- one value per
 # cycle"*) makes the default answer a WAVE, one fraction per complete cycle, with
 # a named cycle giving a scalar.  S24's own predicate was lifted and run before
-# choosing.  `riseTime` and `delay` stay `scalar`: both answer one number, and
-# R417's negative delay is still one number.
+# choosing.
+#
+# ⚠ `riseTime` CARRIES `scalar/wave` TOO, AND IT WAS `scalar` UNTIL STAGE J UNIT
+# J2 SHIPPED THE SERIES.  `nth` 0 names one rise time per rising edge -- a wave
+# with its own X axis, which is R416's shape for `dutyCycle` read across to a
+# transition -- while a named occurrence is still one number.  The term was
+# ALREADY in S24's closed vocabulary, which is why this re-spelling widened
+# nothing and moved no count: measured by lifting S24's own `lsearch` predicate
+# and running it, never by reading the list here.  `delay` stays `scalar`: it
+# answers one number and R417's negative delay is still one number, and its own
+# `nth` 0 DEFERS -- a disposition rather than a `returns` value, since the field
+# says what a built answer looks like and not whether one can be built yet.
 proc calc::catalogue {} {
     return {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
@@ -4989,7 +5210,7 @@ proc calc::catalogue {} {
 {dBm {Special Functions} C wave {log10() 10 * 30 +} {Power in dBm: 10*log10(power in watts) + 30}}
 {peak {Special Functions} T wave {} {Locations and values of the wave's peaks}}
 {histo {Special Functions} T wave {} {Histogram of the wave's values}}
-{riseTime {Special Functions} T scalar {} {Time of a transition from a low % level to a high % level}}
+{riseTime {Special Functions} T scalar/wave {} {Time of a transition from a low % level to a high % level}}
 {slewRate {Special Functions} T scalar {} {Rate of change dV/dt of a transition}}
 {delay {Special Functions} T scalar {} {Time from an edge on one signal to an edge on another}}
 {settlingTime {Special Functions} T scalar {} {Time taken to settle and stay inside a band}}
@@ -5400,12 +5621,14 @@ proc calc::fn_click {name} {
 # window the event names -- so the wrapper takes the focus with `-force` and
 # gives it straight back on the way out.
 #
-# WARN THE DIALOG VALIDATES SHAPE ONLY, AND SEMANTIC REFUSALS STAY WITH THE
-# VERB.  `nth` 0 must reach `calc::cross_scalar` / `calc::delay` /
-# `calc::dutyCycle_scalar` / `calc::riseTime` and meet the ONE shared
+# WARN THE DIALOG VALIDATES SHAPE ONLY, AND SEMANTIC DISPOSITIONS STAY WITH THE
+# VERB.  `nth` 0 must reach the verb's own surface and get whatever that surface
+# answers -- `calc::cross_scalar` and `calc::delay` still meet the ONE shared
 # `calc::cross_msg listdefer` sentence, which bands MT7, MT8, MT9b and WD9
-# compare BY IDENTITY -- so nothing here re-words or splits one of those
-# sentences, and the shape messages below are a separate table for a separate
+# compare BY IDENTITY, while `calc::dutyCycle_scalar` (stage J unit J1) and
+# `calc::riseTime_scalar` (unit J2) now answer a DESTINATION and carry none of
+# it.  Either way nothing here re-words, splits or intercepts one of those
+# answers, and the shape messages below are a separate table for a separate
 # fact, exactly as `calc::plot_msg` is separate from `calc::eval_msg`.
 # ---------------------------------------------------------------------------
 

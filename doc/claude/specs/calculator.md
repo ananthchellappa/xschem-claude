@@ -576,7 +576,7 @@ opcode, **✘** = out of scope v1.
 | `dBm` | wave | power in dBm | C |
 | `peak` | wave | peak locations/values | T |
 | `histo` | wave | histogram | T |
-| `riseTime` | scalar | low%→high% transition time | T (on `cross`) |
+| `riseTime` | scalar/wave | low%→high% transition time (one per edge for `nth` 0) | T (on `cross`) |
 | `slewRate` | scalar | dV/dt of a transition | T (on `cross`) |
 | `delay` | scalar | edge-to-edge between two signals | T (on `cross`) |
 | `settlingTime` | scalar | time to stay inside a band | T (on `cross`) |
@@ -685,7 +685,12 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
   implementation, which is also the spelling `calc::catalogue` carries, because `returns` has a
   closed vocabulary fenced by row S24 of `tests/headless/test_calc_skeleton.tcl` — now
   `scalar` / `wave` / `bool` / `scalar/wave` / **`scalar/list`**, widened by one term for R419.
-  `riseTime` and `delay` stay `scalar` — each answers one number, R417's negative one included.
+  ⚠ **`riseTime` carries `scalar/wave` as of stage J unit J2**, and this sentence used to say it stayed
+  `scalar`: `nth` 0 names one rise time per rising edge, which is a wave with its own X axis, exactly
+  R416's shape read across to a transition, while a named occurrence is still one number.  The term was
+  already in the vocabulary above, so nothing widened.  `delay` stays `scalar` — it answers one number,
+  R417's negative one included — and its own `nth` 0 **defers**, which is a disposition and not a
+  `returns` value.
 - **R417** (driver, from the ADE-L floor) `delay` takes a full edge specification **per side** —
   level, direction and occurrence each — and **returns a negative answer** when the second edge
   precedes the first, rather than refusing. ADE-L permits it, so refusing would be a restriction

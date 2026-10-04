@@ -366,6 +366,31 @@
 #        of zero defers; a request that is also MALFORMED is refused as malformed
 #        rather than deferred; and a non-finite ordinal keeps `cross`'s own
 #        refusal, which is what stops the guard trading one raise for another.
+#        â  FOUR OF ITS ROWS MOVED WITH STAGE J UNIT J2, which retired the
+#        deferral for this caller: `nth` 0 now MEASURES a series, carries no
+#        `listdefer` sentence, opens the engine door it needs, and answers the
+#        same series for all four spellings of zero.  `delay` is still driven in
+#        the sentence row and still defers, so the row cannot go green by both
+#        callers falling silent together.  The deferral rows that did NOT move
+#        are the ones about requests that are malformed or non-finite, which are
+#        refusals and not deferrals and were never J2's to change.
+#   MT9c stage J unit J2 â `riseTime`'s `nth` 0 ANSWERING: the per-edge rise
+#        time SERIES, one rise time per rising edge, with a parallel X.  The
+#        edge count is read back off `calc::cross` and never written down;
+#        the Y is derived THREE independent ways (the scalar ordinal path band
+#        MT4 already fences, a Tcl element-wise product of two committed
+#        columns, and the engine's own product column shown to agree with it);
+#        the fixture is `{v(sq) v(ramp) *}` because the two obvious columns
+#        cannot tell a reversed or a constant-filled Y from a correct one at
+#        MTTOL, which is measured in the band's own control row; THREE points,
+#        so a dropped middle sample and a rotation told apart from a reversal
+#        are fenceable for the first time in this stage; a low crossing with no
+#        high after it DROPS that point; an empty series is an ABSENCE and never
+#        a `destempty` destination problem, asserted by family rather than by
+#        words; and the new `calc::riseTime_scalar` surface, whose formals are
+#        derived from the verb's own and whose ORDER is measured on two probe
+#        surfaces that show a mid-list formal silently replacing the user's
+#        ordinal with a default.
 #   MT10 T1 all three are PURE DELEGATES on `calc::cross` — structurally, as a
 #        TRANSITIVE closure that permits a `::calc::` chain and forbids any link
 #        in it reading samples, and behaviourally with `calc::cross` replaced by a
@@ -1061,6 +1086,471 @@ proc mt_duty_series {xs ys L} {
     }
     return $out
 }
+
+# ---------------------------------------------------------------------------
+# BAND MT9c's DERIVATIONS AND INSTRUMENTS -- stage J unit J2, `riseTime`'s
+# per-edge rise time SERIES.  Every one answers a WORD or a list this file
+# re-derives, never a reproducible number, and every one is a PROC rather than
+# an expression written at the row site: a braced `expr` whose branch is a
+# command substitution answering a sentinel raises *invalid bareword*, which
+# `group`'s catch turns into an ABANDONED BAND rather than one failed row.
+# ---------------------------------------------------------------------------
+
+# the element-wise product of two columns, computed IN TCL and never through the
+# engine -- so a row comparing `riseTime`'s series against a derivation over
+# `{v(sq) v(ramp) *}` is not comparing the engine against itself.  Measured on
+# this fixture: the engine's own product column and this one agree to a relative
+# 4.0e-16 over all 101 samples, which is nine orders inside MTTOL, and band MT9c
+# asserts that agreement in the run rather than here in prose.
+proc mt_prod {a b} {
+    if {[string match ERR:* $a]} { return $a }
+    if {[string match ERR:* $b]} { return $b }
+    if {[catch {llength $a} na]} { return "NOTALIST:{$a}" }
+    if {[catch {llength $b} nb]} { return "NOTALIST:{$b}" }
+    if {$na != $nb} { return "LENMISMATCH:$na|$nb" }
+    set out {}
+    foreach x $a y $b {
+        if {![mt_finite $x] || ![mt_finite $y]} { return "NOTANUMBER:{$x}|{$y}" }
+        lappend out [expr {double($x) * double($y)}]
+    }
+    return $out
+}
+# THE PER-EDGE RISE TIME SERIES, derived from two columns with no verb in it:
+# one rise time per LOW crossing that HAS a high crossing after it, with X the
+# low crossing itself -- which is R420's own default choice for `dutyCycle` ("the
+# time the cycle started") read across to a transition.
+#
+# Answers `{<X> <Y> <nlow> <nhigh>}`, and the two counts ride along so a row can
+# assert that a point was DROPPED -- `nlow` greater than the series length --
+# rather than that the fixture only ever had that many edges.  That is the
+# difference between a fence and a fixture property.
+proc mt_rt_derive {xs ys lo hi plo phi} {
+    if {[regexp {^(ERR|NOTALIST|LENMISMATCH|NOTANUMBER):} $ys]} {
+        return [list $ys $ys $ys $ys]
+    }
+    if {[regexp {^(ERR|NOTALIST|LENMISMATCH|NOTANUMBER):} $xs]} {
+        return [list $xs $xs $xs $xs]
+    }
+    set sw [expr {double($hi) - double($lo)}]
+    if {$sw == 0.0} { return [list ZEROSWING ZEROSWING ZEROSWING ZEROSWING] }
+    set llo [expr {double($lo) + double($plo)/100.0*$sw}]
+    set lhi [expr {double($lo) + double($phi)/100.0*$sw}]
+    set los [mt_derive_x $xs $ys $llo rising]
+    set his [mt_derive_x $xs $ys $lhi rising]
+    set rx {} ; set ry {}
+    foreach a $los {
+        set b {}
+        foreach h $his {
+            if {$h > $a} { set b $h ; break }
+        }
+        if {$b eq {}} continue
+        lappend rx $a
+        lappend ry [expr {$b - $a}]
+    }
+    return [list $rx $ry [llength $los] [llength $his]]
+}
+proc mt_rt_get {d i} { if {[catch {lindex $d $i} v]} { return "NODERIV:{$d}" } ; return $v }
+proc mt_rt_x   {d} { return [mt_rt_get $d 0] }
+proc mt_rt_y   {d} { return [mt_rt_get $d 1] }
+proc mt_rt_nlo {d} { return [mt_rt_get $d 2] }
+proc mt_rt_nhi {d} { return [mt_rt_get $d 3] }
+# the two absolute thresholds a supplied swing and two percentages name, so a
+# row can drive `calc::cross` at the SAME levels the verb will and compare the
+# verb's X against `cross`'s own answer rather than against a second derivation.
+proc mt_rt_thr {lo hi p} { return [sq_thr $lo $hi $p] }
+
+# ⚠⚠ A SIGNAL WHOSE HIGH THRESHOLD IS CROSSED MORE OFTEN THAN ITS LOW ONE,
+# WHICH IS THE ONLY SHAPE THAT CAN SEE WHICH WAY A PRODUCER PAIRED THE TWO
+# CROSSING LISTS -- and the committed columns do not have it.  A rise time is
+# one measurement per RISING EDGE, so the series must be driven from the LOW
+# crossings, pairing each with the first high crossing after it.  A producer
+# that drove the HIGH list instead, pairing each high with the last low before
+# it, answers one point per COMPLETED TRANSITION: it keeps X a low crossing,
+# keeps Y a high-minus-low difference, drops the same points, and reaches the
+# same absence -- so every leg the band had before this one is green on it.
+# MEASURED: on `{v(sq) v(ramp) *}` at 10/90 the low list is
+# `{9.2e-4 4.904e-3 8.902e-3}` and the high list `{1.07e-3 4.936e-3 8.92e-3}`,
+# which INTERLEAVE strictly one for one, and under strict 1:1 interleaving the
+# two pairing directions are provably THE SAME LIST.  The partial-drop request
+# cannot separate them either, and for a structural reason: a dropped point is
+# always a SUFFIX of the low list, because if `low[i]` has no high crossing
+# after it then no later low crossing has one either.
+#
+# So the band mints a signal that RINGS at the top: one rising edge per period
+# whose high threshold is crossed TWICE, which is the commonest real transient
+# there is.  `-(sin x + sin 3x / 2)` has a double-humped positive half with a
+# dip between the humps, and an antisymmetric negative half whose own dip would
+# add a second LOW crossing per period -- so the negative half is clamped at a
+# floor ABOVE that dip, which merges the whole sub-threshold region into one
+# flat block and leaves exactly one rising crossing of the low level per period.
+# The floor doubles as the request's own `lo`, which is what the signal's low
+# rail is.  The angular frequency is read back from the sweep column's OWN
+# endpoints every run, so no period is written down anywhere -- `wd_acrpn`'s
+# discipline in the sibling suite, for the same reason.
+proc mt_ringfloor {} { return -0.3 }
+proc mt_ringw {xs n} {
+    set m [mt_len $xs]
+    if {![string is integer -strict $m]} { return $m }
+    if {$m < 2} { return "NOSPAN:$m" }
+    set a [mt_at $xs 0]
+    set b [mt_at $xs end]
+    if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}|{$b}" }
+    set s [expr {double($b) - double($a)}]
+    if {$s <= 0.0} { return "NOSPAN:$s" }
+    return [expr {double($n) * 2.0 * 3.141592653589793 / $s}]
+}
+proc mt_ringrpn {xs n} {
+    set w [mt_ringw $xs $n]
+    if {![mt_finite $w]} { return $w }
+    set w3 [expr {3.0 * $w}]
+    return "0 time $w * sin() - time $w3 * sin() 0.5 * - [mt_ringfloor] max()"
+}
+proc mt_ringcol {xs n} {
+    set w [mt_ringw $xs $n]
+    if {![mt_finite $w]} { return $w }
+    set f [mt_ringfloor]
+    set out {}
+    foreach t $xs {
+        if {![mt_finite $t]} { return "NOTANUMBER:{$t}" }
+        set v [expr {-(sin($w * double($t)) + 0.5 * sin(3.0 * $w * double($t)))}]
+        if {$v < $f} { set v $f }
+        lappend out $v
+    }
+    return $out
+}
+# `atleast<n>` for the EXCESS of one count over another, through a proc rather
+# than a braced `expr` at the row site: either count can be a sentinel, and a
+# command substitution answering one inside `expr` raises *invalid bareword*,
+# which `group`'s catch turns into an ABANDONED BAND rather than one failed row.
+proc mt_excess {a b n} {
+    if {![string is integer -strict $a]} { return "notacount:{$a}" }
+    if {![string is integer -strict $b]} { return "notacount:{$b}" }
+    return [mt_atleast [expr {$a - $b}] $n]
+}
+# `nodup` when no two elements of a series are the same value, and the two
+# counts otherwise.  It is the ONE X-axis claim that is non-vacuous at any
+# length, which `mt_increasing` and `mt_alldistinct` are not: both answer
+# `tooshort:1` on a one-point series, and a wrong pairing direction can produce
+# several points at ONE X where the truth is a single point.
+proc mt_nodup {v} {
+    set n [mt_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    set u [llength [lsort -unique $v]]
+    if {$u == $n} { return nodup }
+    return "dup:$u-of-$n"
+}
+# `nonneg` when every element of a series is a finite number that is not
+# negative, and the offending elements, INDEXED AND WITH THEIR VALUES, otherwise.
+#
+# ⚠ A RISE TIME CANNOT BE NEGATIVE, AND UNTIL THIS PROC NOTHING IN THE TREE SAID
+# SO.  In the shipped implementation Y is positive by construction -- it is
+# `$xh - $x0` where the loop guard has already proved `$xh > $x0` -- so the claim
+# is free, and a free claim about the answer's own SHAPE is worth more than the
+# element-wise comparisons it sits beside: those compare against a derivation
+# this file computes, and would go quiet if the fixture or the derivation moved.
+# Derived over the ANSWER's own list and answering a WORD, for the reason
+# `mt_atleast`, `mt_nodup` and `mt_distinct` do: a row naming a number embeds a
+# reproducible figure in the T1 verdict.
+#
+# ⚠ WHICH SABOTAGE EACH PLACEMENT OF THIS LEG ACTUALLY CATCHES, MEASURED RATHER
+# THAN ASSUMED, because they are NOT the same and a reader would reasonably
+# expect them to be.  Hoisting `set xh {}` out of `calc::riseTime`'s `foreach x0`
+# body makes an edge with no high crossing after it INHERIT the previous edge's
+# high crossing, which emits a negative Y -- but ONLY on a request where a point
+# DROPS, so the partial-drop row is the only placement that sees it, and the
+# whole of tests/headless/test_calc_wave_dest.tcl stays green under that
+# mutation.  Flipping the subtraction to `$x0 - $xh` negates EVERY point of
+# EVERY series instead, and that is what reddens this leg on the keystone rows
+# of both suites.  So neither placement subsumes the other, which is why the
+# leg sits on the keystone AND on the row that drops a point.
+proc mt_nonneg {v} {
+    set n [mt_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    set bad {}
+    for {set i 0} {$i < $n} {incr i} {
+        set e [mt_at $v $i]
+        if {![mt_finite $e]} { lappend bad "\[$i\]notanumber:$e" ; continue }
+        if {$e < 0} { lappend bad "\[$i\]neg:$e" }
+    }
+    if {[llength $bad]} { return [join $bad { }] }
+    return nonneg
+}
+# `samefamily` when two sentences share the word before their first colon, and
+# both families otherwise.  `mt_notfamily` is the negative claim and answers
+# `samefamily:<family>` when they agree, which puts a user-visible word in a
+# row's EXPECTATION -- so this one exists for the POSITIVE claim, where the
+# expectation must survive the `rule` debt filed against the wording.
+proc mt_samefamily {a b} {
+    if {[mt_family $a] eq [mt_family $b]} { return samefamily }
+    return "differ:[mt_family $a]|[mt_family $b]"
+}
+
+# element-wise agreement for a PLAIN list -- a column read back, or a key of an
+# answer that is not `value`.  `mt_islist` is the same comparison for a whole
+# ANSWER and carries the disposition; this one is for the lists that travel
+# beside it.  The COUNT is reported first because a wrong count is a different
+# defect from a wrong value.
+proc mt_listcmp {v exps {tol {}}} {
+    if {$tol eq {}} { set tol $::MTTOL }
+    set n [mt_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n != [llength $exps]} { return "count=$n want=[llength $exps] got={$v}" }
+    set bad {}
+    for {set i 0} {$i < $n} {incr i} {
+        set r [near [mt_at $v $i] [lindex $exps $i] $tol]
+        if {$r ne {ok}} { lappend bad "\[$i\]$r" }
+    }
+    if {[llength $bad]} { return [join $bad { }] }
+    return ok
+}
+# `same` / `distinct` for two whole LISTS, which is what a row showing it can
+# tell a correct fill from a plausible wrong one must assert -- and it answers a
+# WORD so no reproducible number lands in the T1 verdict.  A SENTINEL is carried
+# through rather than collapsed into `distinct`: a missing key really is
+# distinct from the expected list, and answering so would hide WHY behind a word
+# that reads like a measurement.
+proc mt_cmpword {v exps {tol {}}} {
+    if {[regexp {^(NOPROC|RAISED|NOTADICT|NOKEY|NOTALIST|ERR|NODERIV|LENMISMATCH|NOTANUMBER|ZEROSWING):} $v]} { return $v }
+    if {[mt_listcmp $v $exps $tol] eq {ok}} { return same }
+    return distinct
+}
+# the words `mt_distinct` answers for every ADJACENT pair of a series,
+# `lsort -unique`d, so the answer is `distinct` only when EVERY neighbour
+# differs by more than MTTOL.
+#
+# ⚠⚠ THIS IS THE LEG THAT MAKES AN ELEMENT-WISE COMPARISON MEAN ANYTHING, AND
+# THE MEASUREMENT BEHIND IT IS WHY BAND MT9c DRIVES NEITHER OBVIOUS COLUMN.
+# `riseTime`'s per-edge series on `v(sq)` has all three edges agreeing to a
+# RELATIVE 4.5e-14, because the square is periodic and every edge has the same
+# width; on `v(lp)` the last two agree to 2.2e-11, because the pole is in
+# periodic steady state after the first edge.  Both are inside MTTOL, so on
+# either column a Y written backwards, or filled with its own first element,
+# passes an element-wise comparison -- which is issue 1643's finding arriving at
+# a different verb.  The band's own control row asserts that this instrument can
+# still answer `same`, over `v(sq)`, so the `distinct` above it is a measurement
+# and not a constant.
+proc mt_alldistinct {v} {
+    set n [mt_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    set out {}
+    for {set i 1} {$i < $n} {incr i} {
+        lappend out [mt_distinct [mt_at $v [expr {$i - 1}]] [mt_at $v $i]]
+    }
+    return [lsort -unique $out]
+}
+# `increasing` / `notincreasing:<i>` over a series.  With THREE points this is
+# two comparisons and not one, so a middle value out of order is a shape of its
+# own -- which is exactly what a two-point series cannot have.
+proc mt_increasing {v} {
+    set n [mt_len $v]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    for {set i 1} {$i < $n} {incr i} {
+        set a [mt_at $v [expr {$i - 1}]]
+        set b [mt_at $v $i]
+        if {![mt_finite $a] || ![mt_finite $b]} { return "notanumber:$i" }
+        if {$b <= $a} { return "notincreasing:$i" }
+    }
+    return increasing
+}
+# THE WRONG FILLS A REASONABLE PERSON WRITES, built FROM the correct series so
+# they cannot drift away from it.  `mt_rot1` is a rotation by one; `mt_midmean`
+# replaces the MIDDLE element with the mean of the two endpoints, which is what
+# a producer that filled only the ends and interpolated would write; `mt_midleft`
+# replaces it with its left neighbour, which is a dropped middle sample whose
+# COUNT survives.  The last two exist only at three points or more, and that is
+# the whole of what J2's third point buys over J1's two: `lreverse` and `mt_rot1`
+# are THE SAME LIST at two points, and a middle element does not exist there at
+# all.  The band asserts both of those in the run.
+proc mt_rot1 {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 2} { return $v }
+    return [concat [lrange $v 1 end] [list [lindex $v 0]]]
+}
+proc mt_midmean {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 3} { return "tooshort:$n" }
+    set m [expr {($n - 1) / 2}]
+    return [lreplace $v $m $m [expr {([lindex $v 0] + [lindex $v end]) / 2.0}]]
+}
+proc mt_midleft {v} {
+    if {[catch {llength $v} n]} { return "NOTALIST:{$v}" }
+    if {$n < 3} { return "tooshort:$n" }
+    set m [expr {($n - 1) / 2}]
+    return [lreplace $v $m $m [lindex $v [expr {$m - 1}]]]
+}
+# an answer's key set, sorted, sentinel-safe -- band WD11 of the sibling suite
+# chose the destination's key set and this is the same instrument for the half
+# that lives here.
+proc mt_keys {a} {
+    set d [mt_disp $a]
+    if {$d ne {absent} && $d ne {refused} && $d ne {measured}} { return $d }
+    if {[catch {dict keys $a} k]} { return "NOTADICT:$a" }
+    return [lsort $k]
+}
+# THE SENTENCE FAMILIES `calc::cross_msg` BUILDS, DERIVED FROM THE ARM SET IN
+# ITS OWN `switch` ARGUMENT and never listed here.  A hand-kept list is the same
+# defect one level up, and this batch has already shipped one that rotted to 24
+# of 31 arms while staying green.
+#
+# ⚠ A FAMILY -- the word before the first colon -- IS THE ONLY PART OF THESE
+# SENTENCES A ROW MAY LEAN ON.  The words are unratified user-visible wording
+# covered by the `rule` debt filed against `calc::eval_msg`'s sentences, and the
+# wording for an EMPTY measured series is filed separately
+# (`calc_wave_dest_empty_result_sentence`).  So band MT9c asserts that an
+# absence's sentence is in a family this proc really builds and is NOT in
+# `destempty`'s family, which is the claim the driver's call actually makes: an
+# absence is not an error and must not be reported as a destination problem.
+# Whichever arm the implementation reuses, and whatever the ruling later says,
+# no row here moves.
+proc mt_crossmsg_arms {} {
+    if {[info commands ::calc::cross_msg] eq {}} { return "NOPROC:calc::cross_msg" }
+    set b [pcall info body ::calc::cross_msg]
+    if {[string match ERR:* $b]} { return "NOBODY:calc::cross_msg" }
+    set out {}
+    foreach ln [split [mt_decomment $b] "\n"] {
+        if {[regexp {^[ \t]*([a-z][a-zA-Z0-9_]*)[ \t]+\{[ \t]*return} $ln -> nm]} {
+            lappend out $nm
+        }
+    }
+    return [lsort -unique $out]
+}
+proc mt_family {s} {
+    if {[regexp {^([^:]+):} $s -> f]} { return $f }
+    return "NOFAMILY:{$s}"
+}
+proc mt_crossmsg_families {} {
+    set arms [mt_crossmsg_arms]
+    if {[regexp {^(NOPROC|NOBODY):} $arms]} { return $arms }
+    set out {}
+    foreach a $arms {
+        set s [pcall ::calc::cross_msg $a AAA BBB]
+        if {[string match ERR:* $s]} { lappend out "ERR:$a" ; continue }
+        lappend out [mt_family $s]
+    }
+    return [lsort -unique $out]
+}
+proc mt_infamily {s fams} {
+    if {[catch {llength $fams}]} { return "NOTALIST:{$fams}" }
+    if {[lsearch -exact $fams [mt_family $s]] >= 0} { return known }
+    return "unknown:[mt_family $s]"
+}
+proc mt_notfamily {s other} {
+    if {[mt_family $s] eq [mt_family $other]} { return "samefamily:[mt_family $s]" }
+    return elsewhere
+}
+# the SURFACE proc a click reaches, and the formals it will be called with --
+# `calc::arg_values` walks `info args` of that proc in FORMAL order, `break`s at
+# the first formal it has no value for, and `calc::arg_invoke` then appends the
+# values POSITIONALLY.  So a formal the dialog cannot answer, placed anywhere
+# but LAST, TRUNCATES the call silently and every formal after it falls back to
+# its own default.  `mt_ordinal_delivered` is the behavioural half: it reports
+# the ordinal that really reached the proc, so the band measures the truncation
+# instead of warning about it in a comment.
+proc mt_surface {verb} {
+    if {[info commands ::calc::arg_surface] eq {}} { return "NOPROC:calc::arg_surface" }
+    if {[catch {::calc::arg_surface $verb} r]} { return "RAISED:$r" }
+    return $r
+}
+proc mt_argvals {verb rpn ans} {
+    if {[info commands ::calc::arg_values] eq {}} { return "NOPROC:calc::arg_values" }
+    if {[catch {::calc::arg_values $verb $rpn $ans} r]} { return "RAISED:$r" }
+    return $r
+}
+proc mt_argval_of {verb rpn ans key} {
+    set v [mt_argvals $verb $rpn $ans]
+    if {[regexp {^(NOPROC|RAISED):} $v]} { return $v }
+    if {[catch {dict exists $v $key} has]} { return "NOTADICT:{$v}" }
+    if {!$has} { return "TRUNCATED-BEFORE:$key" }
+    return [dict get $v $key]
+}
+# the value a formal really RECEIVES after `arg_values` and `arg_invoke` have
+# both run, measured against a probe surface whose body reports its own
+# arguments -- so the row can show, in the run, that a mid-list formal the
+# dialog cannot answer makes the user's own ordinal fall back to a default.
+proc mt_delivered {verb rpn ans key} {
+    set vals [mt_argvals $verb $rpn $ans]
+    if {[regexp {^(NOPROC|RAISED):} $vals]} { return $vals }
+    if {[info commands ::calc::arg_invoke] eq {}} { return "NOPROC:calc::arg_invoke" }
+    if {[catch {::calc::arg_invoke $verb $vals} r]} { return "RAISED:$r" }
+    if {[catch {dict exists $r $key} has]} { return "NOTADICT:{$r}" }
+    if {!$has} { return "NOKEY-$key" }
+    return [dict get $r $key]
+}
+# `sized` when a series length IS the length this file derived, and the two
+# numbers otherwise -- so a wrong count says what it was and what it should have
+# been without either figure being written down anywhere.
+proc mt_sized {got want} {
+    if {![string is integer -strict $got]} { return "notacount:{$got}" }
+    if {![string is integer -strict $want]} { return "notawant:{$want}" }
+    if {$got == $want} { return sized }
+    return "n:$got want:$want"
+}
+# `strict` when EVERY crossing of one level falls strictly between two samples,
+# `onsample:<x>` otherwise -- R414d, inherited through `cross`, over the whole
+# crossing list rather than over one index, so a fixture regenerated onto a
+# different grid says so instead of quietly making the rows above compare
+# snapped values.
+proc mt_allstrict {xs ys L edge} {
+    set hits [mt_derive_x $xs $ys $L $edge]
+    if {![llength $hits]} { return nocrossing }
+    set out {}
+    set n [llength $xs]
+    foreach x $hits {
+        set p 0
+        for {set i 1} {$i < $n} {incr i} {
+            if {[lindex $xs $i] >= $x} { set p $i ; break }
+        }
+        if {$p < 1} { lappend out NOPAIR ; continue }
+        set xl [lindex $xs [expr {$p-1}]]
+        set xr [lindex $xs $p]
+        if {$x > $xl && $x < $xr} { lappend out strict ; continue }
+        lappend out "onsample:$x"
+    }
+    return [lsort -unique $out]
+}
+proc mt_formals {p} {
+    if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    if {[catch {info args ::calc::$p} a]} { return "RAISED:$a" }
+    return $a
+}
+# `same` / `differ` for two formal lists, so the row that pins the new surface
+# wrapper's signature DERIVES it from `calc::riseTime`'s own rather than writing
+# seven names down -- which is the hand-kept-list defect one level up, and is
+# also what keeps the row correct if the verb ever gains a formal.
+proc mt_sameformals {a b} {
+    if {[regexp {^(NOPROC|RAISED):} $a]} { return $a }
+    if {[regexp {^(NOPROC|RAISED):} $b]} { return $b }
+    if {$a eq $b} { return same }
+    return "differ:{$a}|{$b}"
+}
+proc mt_arginvoke {verb rpn ans} {
+    set vals [mt_argvals $verb $rpn $ans]
+    if {[regexp {^(NOPROC|RAISED):} $vals]} { return $vals }
+    if {[info commands ::calc::arg_invoke] eq {}} { return "NOPROC:calc::arg_invoke" }
+    if {[catch {::calc::arg_invoke $verb $vals} r]} { return "RAISED:$r" }
+    return $r
+}
+proc mt_sink {a} {
+    if {[regexp {^(NOPROC|RAISED):} $a]} { return $a }
+    if {[info commands ::calc::fn_sink] eq {}} { return "NOPROC:calc::fn_sink" }
+    if {[catch {::calc::fn_sink $a} r]} { return "RAISED:$r" }
+    return $r
+}
+# the ordinals 1..n, so the row that reads one scalar per edge derives its own
+# loop bound from `calc::cross`'s answer instead of carrying a count.  Answers
+# the EMPTY list for a non-count, so the enclosing `lmap` cannot raise on a
+# sentinel and the row fails on the comparison instead.
+proc mt_seq {a b} {
+    if {![string is integer -strict $b]} { return {} }
+    set out {}
+    for {set i $a} {$i <= $b} {incr i} { lappend out $i }
+    return $out
+}
+
 # ---------------------------------------------------------------------------
 # MT10's structural instrument.  `info body` carries this tree's enormous block
 # comments, and a comment saying "this proc issues no `xschem raw add` of its
@@ -2062,27 +2552,37 @@ group MT9b {
         [list [mt_disp [set a [mt_call cross {v(sq)} [sq_thr 0.0 1.0 10] 0 rising]]] \
               [mt_atleast [mt_len [mt_val $a]] 2]] \
         {measured atleast2}
-    check "MT9b 1639 riseTime with nth 0 ANSWERS instead of raising: no Tcl error escapes to the caller, which is what can't use non-numeric string as operand of \"-\" was doing, and the answer is a REFUSAL rather than a number computed off a list" \
+    check "MT9b 1639/J2 riseTime with nth 0 still ANSWERS instead of raising -- no Tcl error escapes to the caller, which is what can't use non-numeric string as operand of \"-\" was doing -- and stage J unit J2 made that answer a MEASURED SERIES rather than the deferral 1639 shipped: more than one Y, a PARALLEL sweep of the same length, and a value that is still not a single finite number, so a verb that silently truncated the series to its first element reddens here instead of looking like a success" \
         [list [string match RAISED:* [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
-              [mt_disp $a] [mt_finite [mt_val $a]]] {0 refused 0}
-    check "MT9b 1639 ...and the refusal carries the VERY sentence its three siblings defer behind -- asserted by identity against calc::cross_msg listdefer and pairwise against delay's own answer, never by words -- so the fix joined the shared string rather than minting a fourth one, which is what MT7 and MT8 would redden on" \
+              [mt_disp $a] [mt_finite [mt_val $a]] \
+              [mt_atleast [mt_len [mt_val $a]] 2] \
+              [mt_sized [mt_len [mt_key $a sweep]] [mt_len [mt_val $a]]]] \
+        {0 measured 0 atleast2 sized}
+    check "MT9b 1639/J2 the shared sentence is RETIRED for this caller rather than reworded: riseTime's nth 0 no longer carries calc::cross_msg listdefer -- the identity leg is 0 and so is the pairwise one against delay, which is STILL DRIVEN here and still deferring, so the row cannot go green by both callers falling silent together -- and the sentence delay carries is still the shared one in the house shape.  A wiring that measured while still carrying the deferral sentence reddens here, and so does one that split the string per caller" \
         [list [mt_disp [set a [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
               [string equal [mt_msg $a] [pcall calc::cross_msg listdefer]] \
               [string equal [mt_msg $a] \
-                   [mt_msg [mt_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
-              [mt_shape [mt_msg $a]]] \
-        {refused 1 1 ok}
-    check "MT9b 1639 the guard reads the ordinal's VALUE and not its SPELLING, which is the same reason cross's own badnth test is integer-VALUED: 0, 0.0, -0 and 0e0 all name the ordinal zero on the published contract, so each defers with the same sentence and a guard comparing the argument against the literal 0 as a string passes the first and raises on the other three" \
-        [list [lmap n {0 0.0 -0 0e0} {mt_disp [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n]}] \
-              [lmap n {0 0.0 -0 0e0} {string equal \
+                   [mt_msg [set b [mt_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] ] \
+              [mt_disp $b] \
+              [string equal [mt_msg $b] [pcall calc::cross_msg listdefer]] \
+              [mt_shape [mt_msg $b]]] \
+        {measured 0 0 refused 1 ok}
+    check "MT9b 1639/J2 the arm reads the ordinal's VALUE and not its SPELLING, which is the same reason cross's own badnth test is integer-VALUED: 0, 0.0, -0 and 0e0 all name the ordinal zero on the published contract, so each must now reach the SAME SERIES -- measured ELEMENT FOR ELEMENT against the 0 spelling's own answer and not merely by disposition, so a dispatch that matched the literal 0 as a string and fell through to the scalar path for the other three reddens naming the spelling.  None of the four carries the retired deferral sentence" \
+        [list [lsort -unique [lmap n {0 0.0 -0 0e0} {mt_disp [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n]}]] \
+              [lsort -unique [lmap n {0 0.0 -0 0e0} {mt_islist \
+                   [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n] \
+                   [mt_val [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0]]}]] \
+              [lsort -unique [lmap n {0 0.0 -0 0e0} {string equal \
                    [mt_msg [mt_call riseTime {v(sq)} 0.0 1.0 10 90 $n]] \
-                   [pcall calc::cross_msg listdefer]}]] \
-        {{refused refused refused refused} {1 1 1 1}}
-    check "MT9b 1639 the deferral opens NO engine door, which is observable rather than inferred: it carries an EMPTY dest while riseTime's ABSENCE at a swing nothing reaches carries the __calc_tmp name cross minted for it -- so the two paths are told apart by the destination each did or did not mint" \
-        [list [mt_key [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0] dest] \
+                   [pcall calc::cross_msg listdefer]}]]] \
+        {measured ok 0}
+    check "MT9b 1639/J2 nth 0 now OPENS the engine door it needs and leaves no name behind: where the deferral carried an EMPTY dest -- it answered before reaching the database at all -- the series carries the __calc_tmp name cross minted for it, exactly as the ABSENCE at a swing nothing reaches already did, and R402 has deleted both so neither survives in the inventory.  The two legs that watch the inventory are what stop this row reading as permission to leak" \
+        [list [string match __calc_tmp* \
+                   [mt_key [mt_call riseTime {v(sq)} 0.0 1.0 10 90 0] dest]] \
               [string match __calc_tmp* \
-                   [mt_key [mt_call riseTime {v(sq)} 100.0 200.0 10 90 1] dest]]] \
-        {{} 1}
+                   [mt_key [mt_call riseTime {v(sq)} 100.0 200.0 10 90 1] dest]] \
+              [leaked] [probeleft]] \
+        {1 1 {} {}}
     check "MT9b 1639 a request that is ALSO malformed is refused as MALFORMED and never deferred, which is this file's ordering choice because no contract states one: a deferral promises an answer once a destination lands, and an omitted swing or a zero swing will still be malformed then -- so each carries its own builder's sentence by identity and neither carries listdefer" \
         [list [string equal [mt_msg [set a [mt_call riseTime {v(sq)} {} {} 10 90 0]]] \
                    [pcall calc::cross_msg noswing {} {}]] \
@@ -2112,6 +2612,321 @@ group MT9b {
         {absent 0 absent}
     check "MT9b R402 NO __calc_tmp* and no __mt_* survives this band's deferring, refusing, absent and measured paths" \
         [list [leaked] [probeleft]] {{} {}}
+}
+
+# =========================================================================
+group MT9c {
+    # STAGE J UNIT J2 -- `riseTime`'s `nth` 0 STOPS DEFERRING AND ANSWERS THE
+    # PER-EDGE RISE TIME SERIES: one rise time per rising edge, as a wave with
+    # its own X axis.  This band is the VERB half and it gates on the COUNTED
+    # arm; the DESTINATION half -- the registered two-column database, its
+    # read-back, the slot bookkeeping and the undropped slot -- is band WD13 of
+    # tests/headless/test_calc_wave_dest.tcl, and the click's buffer and status
+    # behaviour is display-only and belongs to band S28 of
+    # tests/headless/test_calc_skeleton.tcl.  Nothing here calls
+    # `calc::wave_dest`, so nothing here needs the registry.
+    #
+    # Spec     doc/claude/specs/calculator.md §7.2ac (R419-R421) and §7.2ab
+    #          (R415, R416's two-destinations correction).
+    # Contract doc/claude/calculator_batch/WIRING_CONTRACT.md §11 (unit J1, the
+    #          worked producer) and §13 (unit J1b).  §7.1 and §7.2 carry the two
+    #          traps this band measures rather than quotes.
+    #
+    # ⚠⚠ THE COLUMN IS `{v(sq) v(ramp) *}` AND NEITHER OF THE TWO OBVIOUS ONES,
+    # AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.  `riseTime`'s per-edge
+    # series on `v(sq)` has all three of its edges agreeing to a RELATIVE 4.5e-14
+    # -- the square is periodic and every edge has the same width -- and on
+    # `v(lp)` the last two agree to 2.2e-11, because the pole is in periodic
+    # steady state after the first edge.  Both are inside this file's own MTTOL
+    # of 1e-7, so on EITHER column a Y written backwards, or filled with its own
+    # first element, passes an element-wise comparison.  That is issue 1643's
+    # finding arriving at a second verb, and this band answers it the way the
+    # contract's §10(a) requires: the column that discriminates is driven, the
+    # ones that do not are named, and the DISTINCTNESS is asserted in the run by
+    # a row that also shows the instrument can still answer `same`.
+    #
+    # The product of the square and the ramp scales each edge by the ramp's
+    # value there, so against FIXED absolute thresholds the three edges have
+    # three different widths: adjacent relative differences of 3.6 and 0.80,
+    # seven orders outside MTTOL.  Its X values are three low crossings a factor
+    # of ten apart.
+    #
+    # ⚠ THREE POINTS, WHICH IS THE FIRST TIME THIS STAGE HAS HAD MORE THAN TWO.
+    # Unit J1 declared its own ceiling: `dutyCycle`'s series on this fixture is
+    # two points, and two cannot carry a middle element at all, so a dropped
+    # middle sample, a rotation told apart from a reversal, and an X misordered
+    # anywhere but end-to-end are all invisible there.  The row below builds
+    # those fills FROM the correct series and asserts, in the run, that a
+    # two-point reversal and a two-point rotation are THE SAME LIST while the
+    # three-point ones are not -- so the third point's value is measured here
+    # rather than claimed.
+    #
+    # ⚠ WHICH ROWS HERE PASS WITH NO FEATURE PRESENT, declared BY KIND so nobody
+    # reads one as the band's red: the `cross` re-measurement that establishes
+    # the edge count, the family-instrument control, and the band's own R402
+    # inventory.  The partial-drop row's non-vacuity legs pass too; its
+    # disposition legs do not.
+    pcall mt_load tran
+    set rtR {v(sq) v(ramp) *}
+    set rtLO 0
+    set rtHI 1
+    set rtPL 10
+    set rtPH 90
+    set rtTLO [mt_rt_thr $rtLO $rtHI $rtPL]
+    set rtTHI [mt_rt_thr $rtLO $rtHI $rtPH]
+    set rtT [mt_col time 0]
+    # DERIVATION 2, over the two committed columns with no engine in it.
+    set rtTCL [mt_prod [mt_col v(sq) 0] [mt_col v(ramp) 0]]
+    set rtENG [mt_addcol __mt_rtprod $rtR 0]
+    set rtD [mt_rt_derive $rtT $rtTCL $rtLO $rtHI $rtPL $rtPH]
+    set rtDY [mt_rt_y $rtD]
+    set rtDX [mt_rt_x $rtD]
+    # ...and the edge count read back off `calc::cross` itself, so no row below
+    # writes down how many edges this fixture has.
+    set rtLOW [mt_call cross $rtR $rtTLO 0 rising 0]
+    set rtNLOW [mt_len [mt_val $rtLOW]]
+    check "MT9c the edge count this band's rows are sized against is read back off calc::cross with a literal 0 rather than written down, and the fixture really has more than two rising edges at the LOW threshold a supplied swing names -- which is what makes the third-point rows below possible at all" \
+        [list [mt_disp $rtLOW] [mt_atleast $rtNLOW 3] [mt_sized [llength $rtDY] $rtNLOW]] \
+        {measured atleast3 sized}
+    check "MT9c R419/R416 riseTime with nth 0 MEASURES the per-edge series instead of deferring: one Y per rising edge and a PARALLEL X of the same length, both sized against the low-crossing count calc::cross answers rather than against a number, and the X is calc::cross's own low-crossing list element for element -- so a verb that answered the HIGH crossings, or the midpoints, reddens on the X leg naming every offending element" \
+        [list [mt_disp [set a [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0]]] \
+              [mt_sized [mt_len [mt_val $a]] $rtNLOW] \
+              [mt_sized [mt_len [mt_key $a sweep]] $rtNLOW] \
+              [mt_listcmp [mt_key $a sweep] [mt_val $rtLOW]] \
+              [mt_finite [mt_val $a]] \
+              [mt_nonneg [mt_val $a]]] \
+        {measured sized sized ok 0 nonneg}
+    # ⚠⚠ THE ROW ABOVE IS BLIND TO WHICH WAY THE TWO CROSSING LISTS WERE
+    # PAIRED, AND SO IS EVERY OTHER ROW IN EITHER SUITE.  That was measured, not
+    # feared: a producer driving the HIGH list and pairing each high crossing
+    # with the last low crossing before it answers one point per COMPLETED
+    # TRANSITION instead of one per RISING EDGE, keeps X a low crossing, keeps Y
+    # a high-minus-low difference, drops the same trailing points and reaches the
+    # same absence -- and passes `test_calc_measure`, `test_calc_wave_dest`,
+    # `test_calc_cross`, `test_calc_engine`, `test_calc_scratch_reuse` and all
+    # four display-arm suites with every check count unmoved.  The reason is in
+    # `mt_ringfloor`'s banner: on `{v(sq) v(ramp) *}` the two crossing lists
+    # interleave strictly one for one, and under strict 1:1 interleaving the two
+    # directions are provably the same list.
+    #
+    # What a user meets is a single rising edge with overshoot ringing -- the
+    # commonest real transient there is.  Correct is one rise time; the wrong
+    # pairing answers one per ring peak, every one of them plotted at the SAME X,
+    # and the later ones are not rise times at all but the time from the edge's
+    # start to the second and third peaks.
+    #
+    # THE REQUEST IS THEREFORE A RINGING SIGNAL, minted here because no
+    # committed column has `nhigh > nlow` at any level pair -- the band's own
+    # non-vacuity legs assert that it does, so the row cannot go quiet if the
+    # fixture is regenerated.  The comparand is the same Tcl-side derivation the
+    # rows above lean on, driven on the one shape where the two pairing
+    # directions disagree, and the engine's own column is asserted against the
+    # Tcl one in the run so the two derivations cannot silently become one.
+    set rgN 3
+    set rgLO [mt_ringfloor]
+    set rgHI 1
+    set rgRPN [mt_ringrpn $rtT $rgN]
+    set rgTCL [mt_ringcol $rtT $rgN]
+    set rgENG [mt_addcol __mt_rtring $rgRPN 0]
+    set rgD [mt_rt_derive $rtT $rgTCL $rgLO $rgHI $rtPL $rtPH]
+    check "MT9c THE PAIRING DIRECTION, on the one shape that can see it: a signal that RINGS at the top crosses its HIGH threshold more often than its LOW one, and a rise time is one measurement per RISING EDGE -- so the series is sized against the LOW-crossing count, its X is the low-crossing list element for element, no two of its points share an X, and the X is strictly increasing.  Three non-vacuity legs say the shape really is the one that discriminates: more than one edge, the high level crossed strictly more often than the low one, and not one point dropped -- so a producer that drove the HIGH list, pairing each high crossing with the last low before it, reddens on the count AND on the duplicated X instead of passing as it does on every other request in this band" \
+        [list [mt_cmpword $rgENG $rgTCL] \
+              [mt_disp [set rga [mt_call riseTime $rgRPN $rgLO $rgHI $rtPL $rtPH 0]]] \
+              [mt_atleast [mt_rt_nlo $rgD] 2] \
+              [mt_excess [mt_rt_nhi $rgD] [mt_rt_nlo $rgD] 1] \
+              [mt_sized [mt_len [mt_rt_y $rgD]] [mt_rt_nlo $rgD]] \
+              [mt_sized [mt_len [mt_val $rga]] [mt_rt_nlo $rgD]] \
+              [mt_islist $rga [mt_rt_y $rgD]] \
+              [mt_listcmp [mt_key $rga sweep] [mt_rt_x $rgD]] \
+              [mt_nodup [mt_key $rga sweep]] \
+              [mt_increasing [mt_key $rga sweep]]] \
+        {same measured atleast2 atleast1 sized sized ok ok nodup increasing}
+    check "MT9c T2 the series IS the scalar path, edge by edge: riseTime at nth 1, 2 ... up to the derived edge count each MEASURES one number, and those numbers are the nth-0 series element for element -- a derivation that runs entirely through the ordinal path bands MT2 and MT4 already fence, so it shares no code with the series arm and a series assembled in the wrong ORDER reddens here" \
+        [list [lsort -unique [lmap n [mt_seq 1 $rtNLOW] \
+                   {mt_disp [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH $n]}]] \
+              [mt_sized [llength [set rtSC [lmap n [mt_seq 1 $rtNLOW] \
+                   {mt_val [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH $n]}]]] $rtNLOW] \
+              [mt_islist [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0] $rtSC]] \
+        {measured sized ok}
+    check "MT9c ...and a SECOND derivation with no engine in it agrees: the element-wise product of the two committed columns computed in Tcl, crossed at the two supplied-swing thresholds by this file's own D3+D4, gives the same Y and the same X -- and the engine's own product column agrees with the Tcl one, asserted in the run so the two derivations cannot silently become one.  Both thresholds cross STRICTLY BETWEEN samples at every edge, so no snapping convention could have produced these numbers" \
+        [list [mt_cmpword $rtENG $rtTCL] \
+              [mt_islist [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0] $rtDY] \
+              [mt_listcmp [mt_key [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0] sweep] $rtDX] \
+              [mt_allstrict $rtT $rtTCL $rtTLO rising] \
+              [mt_allstrict $rtT $rtTCL $rtTHI rising]] \
+        {same ok ok strict strict}
+    check "MT9c the series DISCRIMINATES, and the CONTROL is the two columns this band refuses to drive: every adjacent Y of the answer differs by more than MTTOL and so does every adjacent X, the X is strictly increasing over TWO comparisons rather than one -- and the SAME instrument over v(sq)'s own per-edge series answers `same`, while over v(lp)'s it answers one of each.  So the `distinct` above is a measurement of this fixture and not a constant, and the two blind columns are named by the row that would have been blind on them" \
+        [list [mt_alldistinct [mt_val [set a [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0]]]] \
+              [mt_alldistinct [mt_key $a sweep]] \
+              [mt_increasing [mt_key $a sweep]] \
+              [mt_alldistinct [mt_rt_y [mt_rt_derive $rtT [mt_col v(sq) 0] 0 1 10 90]]] \
+              [mt_alldistinct [mt_rt_y [mt_rt_derive $rtT [mt_col v(lp) 0] 0 1 10 90]]]] \
+        [list distinct distinct increasing same {distinct same}]
+    check "MT9c THE THIRD POINT, measured rather than argued: against the very same element-wise comparison the rows above lean on, the series REVERSED, ROTATED BY ONE, with its MIDDLE replaced by the mean of the endpoints, and with its middle replaced by its left neighbour are each distinct from the answer while the unaltered derivation is the same -- and the last two legs show WHY two points could not have said it, because at two points a reversal and a rotation are the identical list and at three they are not" \
+        [list [mt_cmpword [mt_val [set a [mt_call riseTime $rtR $rtLO $rtHI $rtPL $rtPH 0]]] [lreverse $rtDY]] \
+              [mt_cmpword [mt_val $a] [mt_rot1 $rtDY]] \
+              [mt_cmpword [mt_val $a] [mt_midmean $rtDY]] \
+              [mt_cmpword [mt_val $a] [mt_midleft $rtDY]] \
+              [mt_cmpword [mt_val $a] $rtDY] \
+              [string equal [lreverse [lrange $rtDY 0 1]] [mt_rot1 [lrange $rtDY 0 1]]] \
+              [string equal [lreverse $rtDY] [mt_rot1 $rtDY]]] \
+        {distinct distinct distinct distinct same 1 0}
+    # ⚠ A LOW CROSSING WITH NO HIGH CROSSING AFTER IT IS A PER-POINT HOLE AND THE
+    # POINT IS DROPPED, which is unit J2's own disposition choice and is declared
+    # here because no contract states one.  It follows from the driver's call on
+    # the EMPTY series -- an absence is not an error -- applied once per point
+    # rather than once per request: the series is one rise time per low crossing
+    # THAT HAS a high crossing after it, and when every point drops the whole
+    # answer becomes the absence the next two rows drive.  One rule, two
+    # outcomes.  The alternative, refusing the series, would refuse every
+    # transient that ends part way up its last edge, which is the common case
+    # rather than the odd one.  Refusing instead reddens exactly this row.
+    check "MT9c a low crossing with NO high crossing after it DROPS THAT POINT rather than refusing the series or padding it: the answer is shorter than the low-crossing list, equals the scalar path at the occurrences that DO complete, and the occurrence that does not is still the ABSENCE it always was -- with the non-vacuity leg asserting that a point really was dropped, so the row cannot be satisfied by a fixture that simply had fewer edges" \
+        [list [mt_disp [set p [mt_call riseTime {v(lp)} 0 1 10 99.9 0]]] \
+              [mt_sized [mt_len [mt_val $p]] [llength [mt_rt_y [set pd [mt_rt_derive $rtT [mt_col v(lp) 0] 0 1 10 99.9]]]]] \
+              [mt_atleast [expr {[mt_rt_nlo $pd] - [llength [mt_rt_y $pd]]}] 1] \
+              [mt_islist $p [mt_rt_y $pd]] \
+              [mt_listcmp [mt_key $p sweep] [mt_rt_x $pd]] \
+              [mt_nonneg [mt_val $p]] \
+              [mt_disp [mt_call riseTime {v(lp)} 0 1 10 99.9 [mt_rt_nlo $pd]]]] \
+        {measured sized atleast1 ok ok nonneg absent}
+    # ⚠⚠ THE EMPTY SERIES IS AN ABSENCE AND NEVER A DESTINATION PROBLEM, which
+    # is the driver's call and the one user-visible disposition this unit decides.
+    # `calc::wave_dest` refuses an empty list with `destempty` -- *"an empty
+    # result has nothing to put in a destination, so none was built"* -- a
+    # sentence that is right about the mechanism and WRONG about what happened:
+    # the signal never crossed.  So the verb answers the absence itself and the
+    # surface never reaches the destination at all.
+    #
+    # THE WORDS ARE NOT ASSERTED.  They are unratified, the `rule` debt
+    # `calc_wave_dest_empty_result_sentence` is filed against exactly this
+    # sentence, and both of `calc::cross_msg`'s reusable arms carry an ORDINAL
+    # that reads oddly for `nth` 0.  What the rows assert instead is derived: the
+    # disposition, a NEGATIVE identity against `destempty`, and that the
+    # sentence's family is one `calc::cross_msg` itself builds and is NOT
+    # `destempty`'s -- so whichever arm the implementation reuses, and whatever
+    # the ruling later says, no row here moves.
+    check "MT9c R402/D7 a swing the signal never reaches at all answers an ABSENCE and not a destination problem: the disposition is absent, the sentence is NOT calc::cross_msg destempty by identity, its family is one calc::cross_msg itself builds and is NOT destempty's family -- and the SURFACE answers the same absence, with no db key, so the empty list never reaches calc::wave_dest at all: the last three legs are the ones that fence what the USER reads, because a wrapper that handed an empty list to the destination refuses with destempty and still carries no db key.  The non-vacuity leg asserts the low-crossing list really is empty, so this is the no-crossing shape and not the next row's" \
+        [list [mt_disp [set e [mt_call riseTime {v(sq)} 100.0 200.0 10 90 0]]] \
+              [string equal [mt_msg $e] [pcall calc::cross_msg destempty]] \
+              [mt_infamily [mt_msg $e] [mt_crossmsg_families]] \
+              [mt_notfamily [mt_msg $e] [pcall calc::cross_msg destempty]] \
+              [mt_shape [mt_msg $e]] \
+              [mt_sized [mt_rt_nlo [set ed [mt_rt_derive $rtT [mt_col v(sq) 0] 100.0 200.0 10 90]]] 0] \
+              [mt_key [set se [mt_call riseTime_scalar {v(sq)} 100.0 200.0 10 90 0]] db] \
+              [mt_disp $se] \
+              [string equal [mt_msg $se] [pcall calc::cross_msg destempty]] \
+              [mt_notfamily [mt_msg $se] [pcall calc::cross_msg destempty]]] \
+        {absent 0 known elsewhere ok sized NOKEY-db absent 0 elsewhere}
+    check "MT9c ...and the OTHER empty shape, which is a different cause and therefore a second row: low crossings EXIST and not one of them has a high crossing after it, so every point drops and the series is empty -- same absence at the verb AND at the surface, same negative identity against destempty at both, same family claim, still no db key, with two non-vacuity legs saying the low list is non-empty and the high list is empty so the row cannot be the one above wearing different arguments" \
+        [list [mt_disp [set e [mt_call riseTime {v(lp)} 0 1 10 99.95 0]]] \
+              [string equal [mt_msg $e] [pcall calc::cross_msg destempty]] \
+              [mt_infamily [mt_msg $e] [mt_crossmsg_families]] \
+              [mt_notfamily [mt_msg $e] [pcall calc::cross_msg destempty]] \
+              [mt_atleast [mt_rt_nlo [set ed [mt_rt_derive $rtT [mt_col v(lp) 0] 0 1 10 99.95]]] 1] \
+              [mt_sized [mt_rt_nhi $ed] 0] \
+              [mt_key [set se [mt_call riseTime_scalar {v(lp)} 0 1 10 99.95 0]] db] \
+              [mt_disp $se] \
+              [string equal [mt_msg $se] [pcall calc::cross_msg destempty]] \
+              [mt_notfamily [mt_msg $se] [pcall calc::cross_msg destempty]]] \
+        {absent 0 known elsewhere atleast1 sized NOKEY-db absent 0 elsewhere}
+    # ⚠⚠ AND A THIRD EMPTY SHAPE, WHICH THE TWO ROWS ABOVE ARE STRUCTURALLY
+    # BLIND TO BECAUSE OF THEIR OWN NON-VACUITY LEGS.  Each pins its shape with
+    # a crossing-list COUNT -- the first asserts the low list is empty, the
+    # second that the high list is -- and those are precisely the two tests a
+    # defensive implementer writes if the emptiness is guarded on the INPUT
+    # lists instead of on the OUTPUT series.  The complement is both lists
+    # NON-EMPTY and the series still empty, which happens whenever the only high
+    # crossing lies BEFORE the only low one, and it was driven by nothing in the
+    # tree: an implementation guarding the inputs ships the `destempty` sentence
+    # for it and passes every suite in this batch on both arms.
+    #
+    # THE ORACLE IS THE SHIPPED ORDINAL PATH, not a third hand-picked shape and
+    # not a sentence.  The SAME request at `nth` 1 already answers an absence
+    # today, through code this unit does not touch, so the row asserts that
+    # `nth` 0 agrees with it -- same disposition, and a sentence from the same
+    # `calc::cross_msg` FAMILY.  One physical fact (this low crossing never
+    # completes) must be reported in one voice whether the user asked for one
+    # edge or for all of them.  That is a derivation over the shipped path, so
+    # it cannot rot into a list of shapes, and it pins no words: the `rule` debt
+    # `calc_wave_dest_empty_result_sentence` can reword the whole arm and both
+    # sides of the comparison move together.
+    #
+    # ⚠ What the row DOES constrain, stated so nobody meets it as a surprise:
+    # the `nth`-0 absence must reuse the family the ordinal path already uses
+    # for the identical request, so reaching for `cross_msg absent` on one side
+    # and `nohigh` on the other reddens here.  That is this unit's own internal
+    # choice, declared rather than ruled.  ⚠ The `nth`-1 leg is green on the red
+    # run, by construction -- it is the oracle, not the claim.
+    set seR {v(ramp)}
+    set seD [mt_rt_derive $rtT [mt_col v(ramp) 0] 1 0 10 90]
+    set se0 [mt_call riseTime $seR 1 0 10 90 0]
+    set se1 [mt_call riseTime $seR 1 0 10 90 1]
+    set seS [mt_call riseTime_scalar $seR 1 0 10 90 0]
+    check "MT9c ...and the THIRD empty shape, the one both rows above exclude by their own non-vacuity legs: the low list and the high list are BOTH non-empty and the series is still empty, because the only high crossing lies before the only low one.  The oracle is the SHIPPED ordinal path -- the same request at nth 1 is already an absence today -- so nth 0 must agree with it in disposition AND in calc::cross_msg family, must not be destempty's family, and the SURFACE must answer the same absence with no db key.  Three non-vacuity legs assert the shape: at least one low crossing, at least one high crossing, and a derived series of length zero" \
+        [list [mt_disp $se0] [mt_disp $se1] \
+              [mt_samefamily [mt_msg $se0] [mt_msg $se1]] \
+              [mt_notfamily [mt_msg $se0] [pcall calc::cross_msg destempty]] \
+              [mt_infamily [mt_msg $se0] [mt_crossmsg_families]] \
+              [mt_atleast [mt_rt_nlo $seD] 1] \
+              [mt_atleast [mt_rt_nhi $seD] 1] \
+              [mt_sized [mt_len [mt_rt_y $seD]] 0] \
+              [mt_disp $seS] [mt_key $seS db] \
+              [mt_notfamily [mt_msg $seS] [pcall calc::cross_msg destempty]]] \
+        {absent absent samefamily elsewhere known atleast1 atleast1 sized absent NOKEY-db elsewhere}
+    check "MT9c the FAMILY INSTRUMENT the two absence rows lean on, derived over calc::cross_msg's own switch patterns and never listed: the arm set is large, it builds more than two distinct families, destempty's family is one of them -- so `elsewhere` above is a claim about a family that really exists -- a sentence with no colon in it answers a sentinel rather than a family, and two sentences from one family answer samefamily.  GREEN WITH NO FEATURE PRESENT, declared: it measures the instrument and not the verb" \
+        [list [mt_atleast [llength [mt_crossmsg_arms]] 30] \
+              [mt_atleast [llength [mt_crossmsg_families]] 3] \
+              [mt_infamily [pcall calc::cross_msg destempty] [mt_crossmsg_families]] \
+              [mt_infamily {nocolonhere} [mt_crossmsg_families]] \
+              [mt_notfamily [pcall calc::cross_msg destempty] [pcall calc::cross_msg destlen]] \
+              [mt_notfamily [pcall calc::cross_msg destempty] [pcall calc::cross_msg nohigh 1st]]] \
+        [list atleast30 atleast3 known {unknown:NOFAMILY:{nocolonhere}} samefamily:Destination elsewhere]
+    # ⚠⚠ MINTING `calc::riseTime_scalar` SILENTLY REDIRECTS EVERY CLICK ON
+    # `riseTime`.  `calc::arg_surface` is literally *"if `::calc::<name>_scalar`
+    # exists, return it"*, so the wrapper is not opt-in: the moment it exists,
+    # MT11's surface-formals row starts asserting against it instead of against
+    # the verb.  The wrapper is REQUIRED rather than optional, and that is a
+    # measurement: `calc::wave_dest` issues an `xschem raw add` of its own, so
+    # `mt_direct_raw wave_dest` answers `yes` and an engine door opened inside
+    # `calc::riseTime` would make MT10's callee-ward closure print
+    # `{{} {} wave_dest}` against `{}`.  The verb computes; the surface decides
+    # where the answer goes.
+    check "MT9c R412 the click's SURFACE for riseTime is the new wrapper, and its formals are calc::riseTime's own DERIVED on both sides rather than seven names written down -- so a wrapper that dropped a formal, renamed one, or gained one reddens here naming both lists.  The dialog's own answer then survives the walk: the user's nth 0 reaches arg_values, the composed call answers a DESTINATION, and the destination is dropped by this row so the band leaves no slot" \
+        [list [mt_surface riseTime] \
+              [mt_sameformals [mt_formals riseTime_scalar] [mt_formals riseTime]] \
+              [mt_argval_of riseTime $rtR [list lo $rtLO hi $rtHI pctlo $rtPL pcthi $rtPH nth 0 dataset 0] nth] \
+              [mt_sink [set iv [mt_arginvoke riseTime $rtR [list lo $rtLO hi $rtHI pctlo $rtPL pcthi $rtPH nth 0 dataset 0]]]] \
+              [mt_sink [mt_arginvoke riseTime $rtR [list lo $rtLO hi $rtHI pctlo $rtPL pcthi $rtPH nth 1 dataset 0]]]] \
+        {riseTime_scalar same 0 destination buffer}
+    pcall calc::wave_dest_drop $iv
+    # ⚠⚠ A FORMAL THE DIALOG CANNOT ANSWER, PLACED ANYWHERE BUT LAST, TRUNCATES
+    # THE CALL AND THE USER'S OWN ORDINAL IS SILENTLY REPLACED BY A DEFAULT.
+    # `calc::arg_values` walks the surface proc's formals in FORMAL order and
+    # `break`s at the first one it has no value for; `calc::arg_invoke` then
+    # appends the values POSITIONALLY.  This row MEASURES that on two probe
+    # surfaces of its own -- the same extra formal in the middle and at the end
+    # -- rather than warning about it in a comment, and then removes them.  It is
+    # the only thing in the tree that asserts the ORDER requirement, because
+    # MT11's surface row checks MEMBERSHIP only and is green on the truncating
+    # shape.
+    proc ::calc::__mt_mid_scalar {rpn {lo {}} {hi {}} {dest {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0}} {
+        return [list ok 1 absent 0 msg {} value 0 nth $nth pctlo $pctlo dest $dest]
+    }
+    proc ::calc::__mt_end_scalar {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 0} {dest {}}} {
+        return [list ok 1 absent 0 msg {} value 0 nth $nth pctlo $pctlo dest $dest]
+    }
+    set rtANS [list lo $rtLO hi $rtHI pctlo $rtPL pcthi $rtPH nth 0 dataset 0]
+    check "MT9c R412 THE SILENT TRUNCATION, measured on two probe surfaces this row mints and removes: an extra formal the dialog cannot answer, placed in the MIDDLE, stops arg_values before the ordinal and the proc then receives the DEFAULT 1 where the user asked for 0 -- no error, no refusal, a different measurement.  The same formal placed LAST costs nothing and the ordinal arrives.  MT11's surface row is green on both, which is why this row exists; the four legs are two shapes times what arg_values composed and what the proc really received" \
+        [list [mt_argval_of __mt_mid $rtR $rtANS nth] \
+              [mt_delivered __mt_mid $rtR $rtANS nth] \
+              [mt_argval_of __mt_end $rtR $rtANS nth] \
+              [mt_delivered __mt_end $rtR $rtANS nth]] \
+        {TRUNCATED-BEFORE:nth 1 0 0}
+    catch {rename ::calc::__mt_mid_scalar {}}
+    catch {rename ::calc::__mt_end_scalar {}}
+    check "MT9c R402 the band left no __calc_tmp*, no __mt_* column and neither of the two probe surfaces behind -- which is the hygiene claim for an instrument that writes into the product's OWN namespace, and the reason it is a row rather than a habit is that MT10 and MT11 both derive over ::calc:: and would measure a leftover probe as a product proc" \
+        [list [leaked] [probeleft] [info procs ::calc::__mt_*]] {{} {} {}}
 }
 
 # =========================================================================
