@@ -615,3 +615,128 @@ non-vacuity leg**, so the next unit moves a name between sets rather than loweri
 freed on success — a declared leak whose four candidate shapes are filed as a `rule` debt.  And
 **nobody has looked at any of this**: one `look` debt asks for a single screenshot of a measured
 curve on its own strip, on the real screen rather than Xvfb.
+
+---
+
+## 14. Two things J2 settled before writing any code
+
+### ⚠ (a) AN RPN IS A STRING HERE, NOT A TCL LIST — and `[list $tok]` corrupts it
+
+Unit J2's recon reported that four fixture columns — `@m1[gm]`, `i(@m1[id])`, `i(@rdc1[i])` and
+`i(@rtop[i])` — are *"NOT MEASURABLE AT ALL through `calc::cross`"*, refusing with
+`Cannot measure: unknown token '{@m1[gm]}'`.  **The driver reproduced it, believed it, and was
+about to file it as a user-facing defect.**  It is not one.  The measurements that settled it:
+
+| probe | result |
+|---|---|
+| `xschem raw add __p @m1[gm]` — straight at the engine | **rc 1**, column created.  The engine is fine. |
+| `wviewer::validate_rpn [list {@m1[gm]}] $names` | **refuses** `'{@m1[gm]}'` |
+| `wviewer::validate_rpn {@m1[gm]} $names` | **approves** (empty) |
+| `calc::rpn_of_text` | `proc calc::rpn_of_text {s} { return $s }` — **the identity function** |
+| `calc::rpn_bad_token [calc::rpn_of_text {v(sq) @m1[gm] +}]` | **approves** |
+
+So the user's path is safe, because what they type stays a **string** all the way down.  The
+refusal is produced entirely by constructing the expression as `[list $col]`: Tcl's list
+representation **braces** any element containing `[`, `]`, `{`, `}`, a quote, a backslash or a
+space, and the validator then tokenises that braced form.
+
+**The lesson is for whoever writes the next probe or row**, because this one caught a crew *and*
+the driver in the same hour: in this namespace an RPN is a **string of whitespace-separated
+tokens** (`calc::rpn_tokens` splits on space, tab and newline), and wrapping a single token in
+`list` is not a no-op for any name an analog user actually cares about —
+`xschem raw add`'s own help text uses `i(@r1[i])` as its example.  Pass the string; if you must
+build one, `join` it.  ⚠ And note the asymmetry that makes this easy to get wrong: `[list v(sq)]`
+*is* `v(sq)`, so every probe written against an ordinary node name works and gives false
+confidence.
+
+**No row in J2 rests on the false claim** — the band drives braced literals like `{v(sq)}`, which
+are plain strings — and nothing was filed.  Recorded here rather than nowhere, because the next
+crew to reach for `[list $col]` will reach for it for the same reason.
+
+### (b) The absence ruling had a third shape, and the driver's call did not cover it
+
+The driver told J2 that an empty rise-time series is an **absence**, not a destination problem, and
+to route it through the existing `calc::cross_absent` rather than mint a sentence.  The crew agreed
+after measuring — and found **three** reachable shapes where the ruling named two:
+
+| | condition | series |
+|---|---|---|
+| **A** | no low crossing at all | empty |
+| **B** | low crossings exist, none has a high after it | empty |
+| **C** | ⚠ **PARTIAL** — `nlow = 3`, `nhigh = 2` | **2 points** |
+
+**Shape C is the common real case** — a transient that ends part way up its last edge — and the
+ruling said nothing about it.
+
+**The driver's call, stated so it is not invented twice:** **one rise time per COMPLETE edge**, so
+shape C answers a two-point series.  That is not a new semantic; it is exactly what R416 already
+rules for `dutyCycle`, which answers *"one FRACTION per COMPLETE cycle"* and silently ignores an
+incomplete trailing cycle.  Making `riseTime` refuse, or pad, would make the two verbs disagree
+about the same situation for no reason a user could see.
+
+⚠ **Padding is the plausible wrong answer and it is fenced**: a producer that fills a dropped point
+with its predecessor keeps the length, so a count leg cannot see it.  Exactly one row in the tree
+catches it — the partial-drop row, with both element-wise legs naming the padded element — and
+**nothing in `test_calc_wave_dest` catches it at all**.
+
+### And the third point's value is DIFFERENT from what §11 claimed — smaller in one way, larger in another
+
+§11 said two points *"cannot catch a stride, an off-by-one inside the fill loop, or a dropped
+middle sample"*.  Measured, **the first two are wrong**: a stride and an off-by-one both change the
+**count** (3→2 or 2→1), so the existing count leg already catches them at two points.  But the
+crew's list of what three points genuinely buy is **four items, not the two the driver guessed**,
+and each is a row:
+
+1. **A dropped middle sample whose COUNT SURVIVES** — a producer that pads the gap with its
+   predecessor.  There is no middle to drop at two points, and no count leg can see it.
+2. **Telling a ROTATION from a REVERSAL.**  Asserted in the run, not argued: for a two-element
+   list the two are the same permutation, measured as
+   `[string equal [lreverse [lrange $Y 0 1]] [rot1 [lrange $Y 0 1]]]` → **1**, and for three → **0**.
+3. **A WRONG INTERIOR WITH CORRECT ENDPOINTS** — what a producer that filled only the ends and
+   interpolated writes.  Measured: the mean of the endpoints is 8.22e-5 against a real middle of
+   3.2e-5, a relative 1.57.  Invisible at two points *by construction*.
+4. **A MIDDLE X OUT OF ORDER.**  The monotonicity leg is two comparisons at three points and one
+   at two, so a rotated X answers `notincreasing:2` — **an index that cannot exist in a two-point
+   series.**
+
+⚠ **And the three points bought something J1's longer series did not.**  J1's hole H10 declared
+that its long series is *"derived ONCE, from the columns, because the verb and the derivation are
+handed the identical expression string."*  Here the Y series is **also** compared against
+`calc::riseTime` at `nth` 1, 2 and 3 — one scalar per edge, through the ordinal path that existing
+bands already fence, **sharing no code with the series arm** — and measured byte-identical.  That
+is a second derivation *with no new code in it at all*, which is **strictly better evidence than a
+longer series through the same door.**
+
+### ⚠⚠ (c) MAX-MINUS-MIN IS THE WRONG STATISTIC.  THE ADJACENT PAIR IS THE ONE THAT MATTERS
+
+This is the sharpest measurement of the stage and it is the **third** face of issue 1643.
+
+J1 established that `v(lp)` discriminates where `v(sq)` does not, and that is true **of duty
+fractions**.  It is **false of rise times**, and the reason is physical: the pole is in periodic
+steady state after the first edge.  Measured at `lo=0 hi=1`, 10/90:
+
+```
+Y = {0.0004106982258026196, 0.00040973182841977113, 0.00040973182841067164}
+    adjacent pair (0,1): relative 2.36e-3   ← looks fine
+    adjacent pair (1,2): relative 2.22e-11  ← INSIDE a 1e-7 tolerance
+```
+
+**The max-minus-min spread is 2.4e-3 and reads as perfectly adequate.  The series is still blind,
+on its last pair, at every level tested.**  So a row checking "are these values distinct" answers
+`{distinct same}` — and a producer that repeated the second value into the third would pass.
+
+**On the committed fixture only two columns yield more than one rise time and BOTH are blind on
+Y** — `v(sq)` wholly (relative 4.3e-14), `v(lp)` on its last adjacent pair.  Nine candidate
+expressions were measured and rejected before one worked: the chosen RPN is
+`{v(sq) v(ramp) *}` at 10/90, where the ramp scales each edge so the three widths genuinely differ
+(adjacent relative **3.58** and **0.80**, seven orders outside tolerance), and it was chosen over
+two other working candidates because it is the only one a row can also derive in closed form from
+the fixture's own documented values.
+
+**The rule, generalised:** when a row's discrimination rests on two numbers being different,
+compute the spread of the **pair the row actually compares** — adjacent elements, not the whole
+series' range.  A series can have a wide range and a blind neighbour, and the blind neighbour is
+what a padding or repeating producer exploits.  Every row in band MT9c carries an explicit
+distinctness leg, and the band's **control** row asserts the instrument can still answer `same`,
+driven over both blind columns by name — so the `distinct` above it is a measurement of the
+fixture rather than a constant.

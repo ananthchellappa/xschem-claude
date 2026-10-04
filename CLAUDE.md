@@ -1044,6 +1044,22 @@ batches, both of which cost four to six hardening rounds to learn and are fenced
   ⚠ And the first report of it **quoted the wrong level** (1.8e-15 at 0.5, which `WD8` does not
   use), understating the defect; that was the fourth quoted-rather-than-derived figure to be wrong
   in one batch.
+- ⚠⚠ **AND THE STATISTIC THAT SETTLES IT IS THE ADJACENT PAIR, NOT THE RANGE.** Measured
+  2026-10-03, the third face of the same trap and the one that would have been missed. The lesson
+  above says drive inputs whose numbers differ by more than the tolerance; the obvious way to check
+  that is max minus min, **and it is the wrong statistic.** A per-edge rise-time series on the
+  committed fixture's `v(lp)` column reads
+  `{0.0004106982258026196, 0.00040973182841977113, 0.00040973182841067164}`: the **range** is a
+  relative 2.4e-3 and looks perfectly adequate, while the **adjacent pair (1,2)** differs by
+  **2.22e-11**, inside a 1e-7 door. The cause is physical — the pole is in periodic steady state
+  after the first edge — so it is not a fixture accident that will go away. A row asking "are these
+  distinct" answers `{distinct same}`, and **a producer that repeated the second value into the
+  third passes it.** ⚠ Note this also means a column can discriminate for one verb and not another:
+  `v(lp)`'s *duty fractions* do differ (relative 1.2e-4, which is why stage J1 chose it), while its
+  *rise times* do not. **Compute the spread of the pair the row actually compares**, element by
+  element, and carry the distinctness leg plus a **control** that drives the blind columns by name,
+  so the `distinct` is a measurement of the fixture rather than a constant. Nine candidate
+  expressions were measured and rejected here before one worked.
 - ⚠⚠ **A COMMIT THAT LANDS HALF A FEATURE CAN BE A REGRESSION, AND "FENCEABLE ON THE COUNTED ARM"
   IS NOT THE AXIS TO SPLIT ON.** Measured 2026-10-03. Stage J1 was deliberately narrowed to a
   producer, on the sound ground that the surface half can only be observed on a gate's display arm
