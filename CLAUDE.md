@@ -146,6 +146,54 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   (`tests/results.758838.log`, 651s, `wc -l` **398** — 3 `tcases` + **101** `hcases` + **28**
   `dcases` + `xschemtest`), whose delta was derived before launch and matched on every term with
   `planned_cases=133` agreeing independently. **TWENTY-SECOND consecutive `skips=8`.**
+  **Three more, each verified by shape and each with `wc -l` derived before launch and matched
+  exactly:** `139/138/0/8` at **`529e816e`** (`tests/results.1684611.log`, 766s, `wc -l` **416**;
+  four user-facing fixes, `hcases` 101 → 104 and `dcases` 28 → 31, and **three verify lenses derived
+  416 independently and all three were right**); `140/139/0/8` at **`bafa9c1e`**
+  (`tests/results.1758882.log`, 768s, `wc -l` **419**; issue 0458); and `141/140/0/8` at
+  **`424cb971`** (`tests/results.1832661.log`, 860s, `wc -l` **422**; issue 1605).
+  **TWENTY-SIXTH consecutive `skips=8`**, held each time because every new suite emits zero
+  lowercase `^skip:` lines — measured by sourcing `banner_rule.tcl` before registering, never predicted.
+  ⚠⚠ **AND THE LESSON FROM THOSE THREE IS: BEFORE FIXING A "COSMETIC" OUTPUT, GREP FOR A READER.**
+  Issue 1605 was filed as a netlist *comment* naming the wrong file — `sanitized_abs_sym_path`'s
+  unanchored `regsub {\(.*}` turning `opamp(rev2).sym` into `<cwd>/opamp`, a plausible ABSOLUTE path
+  with the parenthesis and the extension both gone, and `dir(x)/thing.sym` into `<cwd>/dir`, naming a
+  DIRECTORY as the source. The issue insisted on measuring *"whether anything reads these lines
+  back"*, and something does: **`op_annot.tcl` parses `** sch_path:` per block and its own comment
+  says a mismatch against `xschem get schname` "SUPPRESSES the subtree and warns"** — so a schematic
+  whose file name contained a parenthesis silently lost operating-point annotation for its whole
+  subtree. A functional failure, found only because the question was asked. ⚠ The fix CALLS
+  `is_generator()` rather than re-spelling its ERE a third time, and `is_generator(NULL)` turns out to
+  be that function's **cache-free call rather than a predicate**, so the null check must come first.
+  ⚠ Its fence had to netlist a **subcircuit** hierarchy: a primitive device produces no `sym_path:`
+  comment at all, so the first fixture measured nothing while passing.
+  ⚠⚠ **TWO FENCES WERE FOUND READING STRONGER THAN THEY WERE, both by an adversarial pass rather than
+  by the crews that wrote them, and both shapes will recur.** (a) A close-button fence read
+  `wm protocol $w WM_DELETE_WINDOW` and then **destroyed** the window — travelling the `<Destroy>`
+  path and never evaluating the close script — and asserted only that the handler string was
+  non-empty. Measured: a **one-character** regression wiring the title-bar X to the *accepting* value,
+  so closing a prompt without answering would CREATE the cell, leaves every other row in that suite
+  green. **Press the button, and assert what it answers.** (b) A sweep row can be **emptied without a
+  red** when its only leg is a "nothing leaked" list: three such rows were trimmed from 8/12/13 paths
+  to one each with the full check count unmoved. A sweep needs a **riding count** (`[mt_sized $n 9]`).
+  ⚠⚠ **`alert_` IS NOT RE-ENTRANT AND IS THE WRONG CHANNEL FOR A NOTICE.** It builds a FIXED `.alert`
+  toplevel and blocks in `tkwait window .alert` with its `grab set` **commented out**, so the menubar
+  stays live and a second caller throws `window name "alert" already exists in parent` out of a menu
+  `-command` — Tk's background-error dialog where a message was intended. The tree had already ruled
+  on this **twice** (R505g above `waves_gate_blocked`, and `src/ciw.tcl`, whose comment names `alert_`
+  as the wrong precedent for a repeated notice) and already had the right channel: **`xschem::notify`**,
+  four sinks with a reusable non-blocking popup, called as `catch { ::xschem::notify {…} }`.
+  ⚠ **A suite that renames `alert_` to a recorder is doing it to stop a HANG, not to spy.** Moving a
+  spy to the notice channel and dropping that rename made the sabotage **hang instead of redden** —
+  no verdict, no `OVERALL` line, killed by the driver's timeout — and a stall is a worse diagnostic
+  than a red because it reads as a broken harness. Keep both renames.
+  ⚠ **Each suite's `check` has its own signature and they are NOT interchangeable.** The calculator
+  suites are `check {name got want}`; `test_lib_dialog_wayout_0999` is `check {name ok {detail {}}}`,
+  i.e. a BOOLEAN plus a detail string. Passing a list where a boolean is wanted dies with
+  `expected boolean value but got ""` reported at the enclosing `if`'s line, nowhere near the row.
+  ⚠ **A nested `"` inside a `"`-quoted check name silently terminates it and `info complete` still
+  answers 1**, because the braces balance — the same blind spot as the `switch`-comment trap. A row
+  name quoting an error message verbatim is the way in; use single quotes inside it.
   **A fifth figure, `133/132/0/8` again at `1888eb1d`** (`tests/results.1246086.log`, 658s,
   `wc -l` **398 unmoved**) — PLAN 7.3's other four measurement verbs. **Not one trailer term moved**,
   derived before launch because `tests/run_regression.tcl` is not in that diff at all, so `cases` and
