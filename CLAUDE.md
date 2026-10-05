@@ -146,6 +146,55 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   (`tests/results.758838.log`, 651s, `wc -l` **398** — 3 `tcases` + **101** `hcases` + **28**
   `dcases` + `xschemtest`), whose delta was derived before launch and matched on every term with
   `planned_cases=133` agreeing independently. **TWENTY-SECOND consecutive `skips=8`.**
+  **A fifth figure, `133/132/0/8` again at `1888eb1d`** (`tests/results.1246086.log`, 658s,
+  `wc -l` **398 unmoved**) — PLAN 7.3's other four measurement verbs. **Not one trailer term moved**,
+  derived before launch because `tests/run_regression.tcl` is not in that diff at all, so `cases` and
+  `blocks` are structurally incapable of moving; only published counts did (`test_calc_measure`
+  202 → **342**, `test_calc_engine` 312 → **315**, `test_calc_skeleton` 585 → **592**,
+  `test_calc_widgets` 259 → **260**, `test_calc_plot` 114 → **115**, `test_calc_buffer` 130 → **131**,
+  `test_calc_wave_dest` 124 → **125**, with `test_calc_cross` 187 and `test_calc_scratch_reuse` 56
+  unmoved). ⚠ That stage also found CLAUDE.md's own published 579 for `test_calc_skeleton` was
+  **already stale at HEAD** — it was 585 — which is one more reason a published count is not a
+  baseline. **TWENTY-THIRD consecutive `skips=8`.**
+  ⚠⚠⚠ **AND THE LESSON FROM IT IS THE SHARPEST OF THE SERIES: A SUITE CAN PASS ITS FULL COUNT
+  AGAINST A WRONG REPAIR TO THE VERY PREDICATE IT COVERS.** Building four verbs on `calc::cross`
+  exposed two defects in **shipped, gated `calc::riseTime`**. The first: a threshold landing on a rail
+  invents a crossing, because the committed fixture's square wave is exactly `1.0` by the deck and
+  reads `0.99999999999999056` and `1.0000000000000391` in the data, so `calc::cross_pair`'s
+  strict-below / inclusive-above predicate reports a FALLING crossing of `1.0` where the deck has
+  none — `riseTime` answered `0.00028` for a 0.2 ms edge and a new `frequency` answered **256.41 Hz
+  where the deck says exactly 250**. Four candidate tolerances were BUILT and swept and **not one
+  reached the right answer**: the scale available to `cross_pair` is **pair-local** (it sees one level
+  and two samples), so one level gets two different tolerances in adjacent pairs, and a scale from the
+  level alone is undefined at a zero level — which `v(sq)`'s low reference bit-exactly is.
+  **⚠⚠ `test_calc_cross` passed 187/187 against that wrong predicate.** So the keystone's own suite —
+  187 checks written about exactly those three procs — would NOT have stopped the wrong repair, and
+  the only thing that did was building each candidate and sweeping it. The predicate was left alone,
+  the limit declared, and **the rejecting sweep made a ROW** rather than a note, so the next person to
+  try it meets the measurement instead of repeating it.
+  ⚠⚠ **A COMPARAND THAT SHARES THE PRODUCT'S OWN LOOP AGREES WITH ITS BUG BY CONSTRUCTION.** The
+  second defect was an end-pairing loop (`foreach e $ends { if {$e > $x0} { set x1 $e ; break } }`)
+  walking past a transition that never reached the second threshold and consuming a LATER
+  transition's end crossing — a true two-element series came back with three, and `riseTime` reported
+  a **4.02 ms rise time on a 0.2 ms edge**. The suite's own derivation used the IDENTICAL loop, so its
+  comparison leg could never have failed. The repair replaced it with a **single pass over the samples
+  holding at most one open transition**, a shape in which the defect is not expressible — which is the
+  general remedy: make the comparand's *mechanism* different, not just its code.
+  ⚠⚠ **AND A BAND THAT ABORTS DELETES ALL ITS ROWS FROM THE VERDICT AND IS NOT SCORED AS A FAILURE.**
+  Two bands were measured losing **27 of 32** and **all 7** of their rows under ordinary product
+  sabotages, because one reached a bare `expr` on a value that was legitimately the disposition word
+  `absent` (`can't use non-numeric string as operand of "/"`) and the other a bare `dict get` on a
+  raise sentinel (`missing value to go with key`). `group`'s catch turns either into ONE `ABORTED`
+  line and the rest simply vanish, which reads as a harness problem and sends the next reader to debug
+  the product. The suite's own header already forbade the shape — *"no verb ANSWER is ever indexed or
+  measured bare in this file"* — and the accessors existed; the sites were added anyway. **Route every
+  verb answer through the accessor, and make `missing=0` under sabotage an acceptance test**, because
+  a vanished row and a passing row look identical in a green verdict.
+  ⚠ **A delegated red-first crew that dies mid-task leaves a GATE RED with no fix behind it.** One
+  crew was lost to an API timeout *after* planting its red-first row in a registered `hcases` suite
+  and *before* landing the producer change, so the tree carried `counted_failures=1` with a correct
+  row and no repair. Red-first is still right; the handling is that the driver must re-run the touched
+  suites after any crew that does not return, rather than trusting the surviving crews' reports.
   ⚠⚠ **AND THE LAST OF THOSE THREE IS WHY A RULE IN A BRIEF IS NOT A FENCE.** `test_ase_simcaps_0948`
   — **already registered and shipping in every gate above** — mapped two real 1110x791 xschem windows
   on whatever display the gate inherited, because its `a_xe_child` ran
