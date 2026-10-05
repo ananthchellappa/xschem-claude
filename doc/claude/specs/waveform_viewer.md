@@ -1074,9 +1074,13 @@ error on a refusal.
     the second *press* never reaches the filter, and the second *release* finds
     the record already dropped.
 - **The payload is `move_trace` plus ONE `linsert`**, and deliberately **not**
-  `add_graph` — which regenerates on the spot and takes neither an undo point nor
-  a log line, so a strip created that way would land between the capture and the
-  mutation and split one gesture into two half-states. An inserted strip goes
+  `add_graph`. ⚠ The reason here has inverted while the decision stood: this used
+  to read *"takes neither an undo point nor a log line"*, and `add_graph` now
+  takes both — it had been outside undo and outside the macro log, so Add Graph
+  followed by `u` reverted whatever came before it while the strip stayed. That
+  makes calling it from here worse rather than better, because its own
+  `push_undo` would split this one gesture into two undo steps and its own
+  `log_action` would record a strip the replay then creates twice. An inserted strip goes
   **directly below the source** (D-F's reading-order rule, which item 8's split
   follows), and the move itself is the shipped PURE
   `wviewer::move_trace_in_graphs`: marker migration, the `hilight_wave` hand-off

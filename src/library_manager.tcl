@@ -58,6 +58,35 @@ proc libmgr::refocus {w} {
   if {[winfo exists $w]} { catch {focus -force $w.pw.lib.lb} }
 }
 
+# --- every modal prompt's way out ------------------------------------------
+# Issues 0998 and 0999. Every prompt in this file parks in
+# `vwait libmgr::dlg_done`, which comes back only when something WRITES that
+# variable. OK, Cancel, Return and Escape all write it. The window manager's
+# close button writes nothing on its own, and neither does the prompt being
+# destroyed from underneath -- which is what happens when the Library Manager
+# itself is closed over an open prompt. The toplevel goes away and the wait
+# stays, so the press that opened it goes on waiting for an answer that can
+# never arrive, invisibly, until the user quits.
+#
+# Both now mean exactly what Cancel means: 0 is already the only non-accepting
+# value every prompt in this file reads (`if {$ok == 1}` is the accepting arm
+# everywhere), so a user who closes the window gets what they asked for.
+#
+# NO TIMEOUT IS ARMED HERE, deliberately: a window that closes itself while
+# somebody is typing in it is a worse defect than the one being fixed.
+#
+# dlg_vanished exists because <Destroy> fires for every CHILD widget too, and
+# an entry being torn down must not be read as the user cancelling -- only the
+# toplevel itself counts.
+proc libmgr::dlg_vanished {w d} {
+  variable dlg_done
+  if {$w eq $d} { set dlg_done 0 }
+}
+proc libmgr::dlg_way_out {d} {
+  wm protocol $d WM_DELETE_WINDOW [list set libmgr::dlg_done 0]
+  bind $d <Destroy> [list libmgr::dlg_vanished %W $d]
+}
+
 # The optional argument is a list: a single element is a library name; a
 # {lib cell} or {lib cell view} list pre-selects and scrolls to that entry
 # (e.g. `xschem library_manager [xschem get_inst_lcv]`). With no arg this is the
@@ -253,6 +282,7 @@ proc libmgr::maintain_picker {title} {
   grid rowconfigure $d 1 -weight 1
   grid columnconfigure $d 0 -weight 1
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.lb
   vwait libmgr::dlg_done
@@ -981,6 +1011,7 @@ proc libmgr::commit_dialog {title} {
   grid rowconfigure $d 1 -weight 1
   grid columnconfigure $d 0 -weight 1
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.t
   vwait libmgr::dlg_done
@@ -1126,6 +1157,7 @@ proc libmgr::cell_dialog {title srclib srccell} {
   grid $d.b  -        -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.cell; $d.cell selection range 0 end
   vwait libmgr::dlg_done
@@ -1158,6 +1190,7 @@ proc libmgr::simple_prompt {title label {default {}}} {
   grid $d.b -    -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.e; $d.e selection range 0 end
   vwait libmgr::dlg_done
@@ -1185,14 +1218,6 @@ proc libmgr::newlib_browse {entry} {
   set dir [tk_chooseDirectory -parent .libmgr.nl -mustexist 0 \
     -title "New library directory" -initialdir $start]
   if {$dir ne {}} { $entry delete 0 end; $entry insert 0 $dir }
-}
-
-# The New-library window went away without answering. Only the window ITSELF
-# counts: <Destroy> fires for every child widget too, and an entry being torn
-# down must not be read as the user cancelling. Bound in libmgr::newlib_dialog.
-proc libmgr::newlib_vanished {w d} {
-  variable dlg_done
-  if {$w eq $d} { set dlg_done 0 }
 }
 
 # Library name + directory. Returns {name path} or {} on cancel / empty name.
@@ -1233,18 +1258,14 @@ proc libmgr::newlib_dialog {{name {}} {path {}} {msg {}}} {
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
   # EVERY way this window can go away has to end the wait below, or New library
-  # sits waiting for an answer that can never arrive (issue 0998). The title-bar
-  # close button had no handler at all -- press it and the window vanished while
-  # New library went on waiting -- and destroying the Library Manager takes this
-  # child with it the same way. Both now mean exactly what Cancel means.
-  # It matters more here than in the Library Manager's other prompts because
-  # THIS one loops: since 0799 a refused press re-opens the window, and "the
-  # window returned nothing" is the only way out of that loop, so a window that
-  # can vanish without returning is a hang rather than a mistake. The other four
-  # prompts in this file have the same missing handler and do not loop; that is
-  # issue 0999, deliberately not widened into here.
-  wm protocol $d WM_DELETE_WINDOW [list set libmgr::dlg_done 0]
-  bind $d <Destroy> [list libmgr::newlib_vanished %W $d]
+  # sits waiting for an answer that can never arrive (issue 0998). It matters
+  # more here than in this file's other prompts because THIS one loops: since
+  # 0799 a refused press re-opens the window, and "the window returned nothing"
+  # is the only way out of that loop, so a window that can vanish without
+  # returning is a hang rather than one lost press. The rest of the prompts had
+  # the same gap without the loop and are issue 0999; the two handlers this
+  # needed are now libmgr::dlg_way_out, shared by every prompt in the file.
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.name
   vwait libmgr::dlg_done
@@ -1336,6 +1357,7 @@ proc libmgr::view_dialog {title srclib srccell srcview} {
   grid $d.b  -       -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.view; $d.view selection range 0 end
   vwait libmgr::dlg_done
@@ -1380,6 +1402,7 @@ proc libmgr::newview_dialog {lib cell} {
   grid $d.b  -       -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
+  libmgr::dlg_way_out $d
   set dlg_done -1
   catch {grab $d}; focus $d.name
   vwait libmgr::dlg_done

@@ -734,11 +734,29 @@ proc write_net_hilight_style_conf {path} {
 # Startup: restore the persisted net-highlight state. The breadcrumb (if present) flips the seen
 # flag; the style table (only present when the user saved it to the auto-load location) is sourced
 # and recompiled by the file itself. A non-auto-load Save is loaded by the user via --script.
+#
+# issue 0925: source each conf at GLOBAL scope, the same repair load_recent_file took for 0924.
+# Both files persist UNQUALIFIED names (write_net_hilight_editor_seen and
+# write_net_hilight_style_conf emit `set net_hilight_editor_seen 1` / `set net_hilight_style
+# {...}`), and `source` runs in its CALLER's frame -- so inside this proc, which declares only
+# USER_CONF_DIR global, both names became proc-locals and died on return. The style conf's own
+# trailing `catch {xschem update_net_hilight_style}` could not rescue it and made the symptom
+# worse than silence: it recompiles from the GLOBAL, which the source never touched, so the C
+# side re-derived and REPUBLISHED the built-in default table over the user's saved one.
+# `uplevel #0` is Tcl 8.4-safe; the names are unqualified by design here, so unlike 0924 there
+# is no second spelling to reconcile -- only the scope.
+#
+# Fenced by every row of tests/headless/test_nh_editor_persist.tcl that CALLS THIS PROC; the
+# rows there that source the same files by hand at global scope cannot see this defect at all,
+# which is why it survived a month under a green suite. Two spellings of the repair pass all
+# of the behavioural rows and are pinned separately, each by a row built against it: `uplevel 1`
+# (relative) is the global frame only because the one call site is at top level, and the
+# `[list ...]` quoting only matters for a conf path containing a space.
 proc load_net_hilight_conf {} {
   global USER_CONF_DIR
   foreach f {net_hilight_editor_seen net_hilight_style} {
     if {[file exists $USER_CONF_DIR/$f]} {
-      if {[catch {source $USER_CONF_DIR/$f} err]} {
+      if {[catch {uplevel #0 [list source $USER_CONF_DIR/$f]} err]} {
         puts "load_net_hilight_conf: problem sourcing $f: $err"
       }
     }
@@ -18827,14 +18845,61 @@ proc build_widgets { {topwin {} } } {
       list_running_cmds
     }
   }
+  # SAY SO WHEN THERE IS NOTHING TO SHOW. Both bodies used to be a bare
+  # `if {[info exists execute(...,last)]} {viewdata ...}` with no else arm, so
+  # in a fresh session the entry did nothing at all -- no window, no message, no
+  # status line, indistinguishable from a broken menu.
+  #
+  # The condition also tests for emptiness, which is a second state and not
+  # defensiveness: execute_fileevent (above) sets execute(error,last) to the
+  # pipe-close error string, and that is the EMPTY STRING after a clean run, so
+  # the slot EXISTS. `viewdata` maps its toplevel unconditionally, so the old
+  # condition opened a BLANK window there rather than saying there were no
+  # errors -- the common case for anyone who simulates successfully.
+  #
+  # ⚠⚠ `::xschem::notify` AND NOT `alert_`, AND THE FIRST CUT OF THIS FIX GOT IT
+  # WRONG IN A WAY THAT WAS WORSE THAN THE SILENCE IT REPLACED. `alert_` builds a
+  # FIXED `.alert` toplevel and blocks in `tkwait window .alert` with its
+  # `grab set` COMMENTED OUT, so the menubar stays live while the box is up.
+  # These two entries are ADJACENT and both about the last job, so clicking one
+  # and then the other -- or the same one twice -- re-enters `alert_`, and the
+  # second `toplevel .alert` throws `window name "alert" already exists in
+  # parent` out of a menu `-command`: the user gets Tk's background-error dialog
+  # instead of a message. That hazard is already ruled on twice in this tree,
+  # at R505g above `waves_gate_blocked` (which never creates a second box) and
+  # in `src/ciw.tcl`, whose own comment names `alert_` as THE WRONG PRECEDENT
+  # for a repeated notice and says why: a modal would stall a run and the second
+  # notice would raise.
+  #
+  # `::xschem::notify` is the house channel for exactly this -- four sinks, a
+  # reusable NON-BLOCKING popup that appends and raises, and a recorded sink
+  # account -- and it resolves at call time against a signature-compatible
+  # degraded wrapper further down this file, so the name is always there.
+  # `catch` because a notice may not break the entry it is reporting on, which
+  # is the idiom every other caller here uses.
+  #
+  # The condition tests emptiness as well as existence, which is a second state
+  # and not defensiveness: `execute_fileevent` above sets `execute(error,last)`
+  # to the pipe-close error string, and that is the EMPTY STRING after a clean
+  # run, so the slot EXISTS. `viewdata` maps its toplevel unconditionally, so the
+  # old condition opened a BLANK window there rather than saying there were no
+  # errors -- the common case for anyone whose simulation worked.
   $topwin.menubar.simulation add command -label {View last job data} -command {
-    if { [info exists execute(data,last)] } {
+    if { [info exists execute(data,last)] && $execute(data,last) ne {} } {
       viewdata $execute(data,last)
+    } else {
+      catch {
+        ::xschem::notify {No last job data: no job has run yet, or the last one wrote none.}
+      }
     }
   }
   $topwin.menubar.simulation add command -label {View last job errors} -command {
-    if { [info exists execute(error,last)] } {
+    if { [info exists execute(error,last)] && $execute(error,last) ne {} } {
       viewdata $execute(error,last)
+    } else {
+      catch {
+        ::xschem::notify {No last job errors: no job has run yet, or the last one reported none.}
+      }
     }
   }
   $topwin.menubar.simulation add command -label {Utile Stimuli Editor (GUI)} -command {

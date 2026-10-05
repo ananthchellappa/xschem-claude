@@ -4962,14 +4962,49 @@ cannot be carried in a graph node= token (it contains whitespace or one of % \" 
 
 # Graph > Add Graph: append an empty stacked graph (renders as an empty
 # grid) + regenerate.
+#
+# UNDOABLE AND REPLAYABLE, like every other command that changes the strip
+# structure. It was neither until this issue, and the first consequence was the
+# worse one: with no point of its own on the stack, `u` popped whatever the
+# PREVIOUS gesture had pushed, so the previous edit was backed out and the new
+# strip stayed on screen. An operation that is merely not undoable is a
+# limitation; one that makes `u` act on a different edit is a lie about what
+# was undone. The second: a session recorded with `--logdir` and replayed
+# through Tools > Replay Action Log came back WITHOUT the strip, so every later
+# logged line naming a strip index addressed a different strip.
+#
+# Same ordering contract as `move_strip` / `split_strip` / `delete_empty_strips`
+# (read move_strip's header for the why), with one deliberate difference:
+#
+#   1. the capture comes FIRST, and it is the `skip_ranges` form
+#      `capture_live_view_state` — issue 0194. An unconditional capture would
+#      pin every strip's auto axis to whatever regenerate last fitted, so the
+#      next Direct Plot into an auto strip lands off-screen. Appending a strip
+#      must carry the mouse's pan/zoom/selection forward without freezing it.
+#   2. push_undo AFTER the capture, so `u` restores the view the user was
+#      looking at, and BEFORE the append, so the snapshot holds the strip count
+#      the user is taking back to. Snapshot-after-mutate is the shipped bug
+#      class that ordering exists to prevent.
+#   3. exactly ONE regenerate, then exactly ONE fully-resolved log line.
+#
+# No `switch_ctx` guard and no target remap, and neither is an omission: the
+# capture verifies the context itself, and an APPEND moves no existing strip
+# index, so the stored target still points where it did.
+#
+# REPLAY DETERMINISM: the logged line is `add_graph <token>` with the token
+# EXPLICIT, so a replay does not depend on which window is current at replay
+# time, and it carries no index for a replay to get wrong — the append is a
+# pure function of the model a replay reproduces.
 proc wviewer::add_graph {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   wviewer::capture_live_view_state $token   ;# issue 0194: before the append
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
   lappend gs [wviewer::empty_graph]
   wviewer::set_graphs $token $gs
   wviewer::regenerate $token
+  wviewer::log_action [list wviewer::add_graph $token]
   return 1
 }
 
@@ -6702,10 +6737,19 @@ proc wviewer::reuse_strip_for_trace_move {gs from_gi {auto -1} {maxdist 0}} {
 
 # It is `move_trace` with ONE extra step — a `linsert` of an `empty_graph`, and
 # only when no empty strip was there to reuse — and it deliberately does NOT
-# call `add_graph`: add_graph regenerates on the spot and takes neither an undo
-# point nor a log line, so a strip created that way would land between this
-# command's capture and its mutation and split one gesture into two half-states
-# (the very failure the move_strip ordering contract exists to prevent).
+# call `add_graph`.
+#
+# ⚠ THE REASON HAS INVERTED AND THE DECISION HAS NOT. This paragraph used to say
+# `add_graph` *"takes neither an undo point nor a log line"*, and gave that as the
+# reason: a strip created that way would land between this command's capture and
+# its mutation. `add_graph` now takes BOTH — it was outside undo and outside the
+# macro log, so pressing it and then `u` reverted whatever came before while the
+# strip stayed — which makes calling it from here WORSE rather than better: its
+# own `push_undo` would split this one gesture into two undo steps and its own
+# `log_action` would record a strip the replay then creates twice. Same
+# conclusion, opposite mechanism, which is why the sentence was replaced rather
+# than deleted: the ordering contract `move_strip` exists for is what both
+# readings are really about.
 #
 # An INSERTED strip goes DIRECTLY BELOW the source, which is decision D-F's
 # reading-order rule (the same one item 8's split follows). The move itself

@@ -69,6 +69,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_auto_specialize_1201" \
                  "headless/test_hash_extra_node_warn_0165" \
                  "headless/test_lib_new_path_guards_0799" \
+                 "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_descend_doors_1228" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_suite_watchdog_1403" \
@@ -122,7 +123,48 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_grid" \
                  "headless/test_node_token_split" \
                  "headless/test_raw_ascii_point_bounds" \
-                 "headless/test_del_negative_arg"]
+                 "headless/test_del_negative_arg" \
+                 "headless/test_nh_editor_persist" \
+                 "headless/test_wave_add_graph_undo"]
+## `headless/test_wave_add_graph_undo` IS IN BOTH LISTS, and both halves were
+## MEASURED rather than reasoned: each arm was captured exactly as the two loops
+## below capture it (`env -u DISPLAY ... --nogui --pipe -q` and
+## `devdisplay.sh exec ... --pipe -q --logdir ...`) and scored with
+## `banner_complete` SOURCED from tests/banner_rule.tcl, which answered 1 on each
+## with `regression_case_failed` 0 on each -- so neither entry is a standing red.
+## THE REGISTRATION DELTA WAS DERIVED, not predicted: `summarize_all` was lifted
+## whole out of this file's own text (every proc it defines, discovered rather
+## than hand-listed) and run over both real captures, giving cases +2, blocks +2,
+## counted_failures +0, skips +0 and `wc -l` +6. Zero LOWERCASE `skip:` lines on
+## either arm, which is why a both-lists registration costs no skip here -- the
+## counted arm's own self-skip announcement is UPPERCASE and `summarize_all`
+## counts `^skip:`.
+## WHY BOTH ARMS, measured and not argued. The counted arm runs the derivation
+## band (the viewer's Graph menu enumerated out of `wviewer::build_menubar` and
+## each entry's transitive reach of `wviewer::push_undo`/`wviewer::log_action`
+## computed from the file's own call graph) plus a model rig that drives the
+## shipped `wviewer::add_graph` with the three Tk/C collaborators stubbed. The
+## display arm adds the rows that watch a real strip leave a real canvas, and
+## that difference was DEMONSTRATED by attack rather than claimed: with
+## `wviewer::state_apply`'s `regenerate` removed -- a model-only undo -- the
+## counted arm is ALL PASS and the display arm reddens at row `AD3` reporting a
+## model of one strip against a canvas still holding two.
+## `headless/test_nh_editor_persist` IS `hcases` ALONE, and the shape was MEASURED rather
+## than reasoned: both arms were captured exactly as the two loops below capture them
+## (`env -u DISPLAY ... --nogui` and `devdisplay.sh exec ...`) and scored with
+## `banner_complete` SOURCED from tests/banner_rule.tcl, which gave 1 on each and
+## `regression_case_failed` 0 on each -- so a `dcases` entry would not be a standing red.
+## It is not taken because the two arms published the SAME check count: the suite is pure
+## Tcl (two conf writers, the startup reader `load_net_hilight_conf`, and a child
+## interpreter as its value oracle) and touches no Tk at all, so a display arm would run
+## the identical rows a second time and measure nothing new.
+## ⚠ IT WAS IN NEITHER LIST UNTIL NOW, WHICH IS WHY ISSUE 0925 SURVIVED A MONTH -- and the
+## registration alone would not have caught it. Its bands 1-2 source both conf files BY
+## HAND at global script scope, where an unqualified `set` lands where it is wanted, so
+## they were green over a reader that discarded every row. Bands 3-5 call the product's
+## `load_net_hilight_conf`, and band 4 derives the variable population from the bytes the
+## writers emitted rather than from a hand-kept list, so a third persisted variable is
+## covered the day a writer starts emitting it. Issue 0925.
 ## ⚠ THE THREE WAVE/NODE ENTRIES ABOVE ARE ISSUE 1645, and each shape was MEASURED
 ## rather than reasoned -- `banner_complete` from tests/banner_rule.tcl, sourced and
 ## run over each arm's real captured output, which is the only method CLAUDE.md
@@ -778,10 +820,24 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 # ⚠ DO NOT CHECK THIS SUITE AGAINST A CHECK COUNT WRITTEN DOWN ANYWHERE: it has
 # moved in every round so far and the suite prints both totals on every run.
 # receipts/C2-close-gaps.md, C2v-audit.md, C3-final.md, C4-output-neutral.md.)
+## `headless/test_lib_dialog_wayout_0999` IS IN BOTH LISTS, and the shape was
+## MEASURED rather than reasoned: both arms were captured exactly as the two loops
+## below capture them (`env -u DISPLAY ... --nogui` and `devdisplay.sh exec ...`) and
+## scored with `banner_complete` SOURCED from tests/banner_rule.tcl, which gave 1 on
+## each and `regression_case_failed` 0 on each -- so neither entry is a standing red.
+## Both arms are load-bearing and neither subsumes the other. The counted arm runs the
+## derivation band, which asks the interpreter which `libmgr::` procs park in a
+## command-position wait and then requires every one of them to install a close-button
+## way out, so a prompt added later without one reddens the gate's counted arm with
+## nobody editing a list. The display arm is the only place the behaviour itself can be
+## seen: it opens each derived prompt for real, destroys its toplevel without answering
+## it, and asks whether the press came back -- which under `--nogui` cannot run at all,
+## because Tk is not loaded and the band self-skips. Issue 0999.
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_lib_new_path_guards_0799" \
+                 "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
@@ -804,7 +860,24 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_fluid_editing" \
                  "headless/test_wave_grid" \
                  "headless/test_del_negative_arg" \
-                 "headless/test_wave_crossdb_trace"]
+                 "headless/test_wave_crossdb_trace" \
+                 "headless/test_wave_add_graph_undo" \
+                 "headless/test_viewjob_silence"]
+## `headless/test_viewjob_silence` IS IN THIS LIST ALONE, AND THE ARM WAS CHOSEN BY
+## MEASUREMENT RATHER THAN BY THE SHAPE OF THE SUITE. Both captures were taken exactly
+## as the two loops take them -- `env -u DISPLAY ... --nogui` for the counted arm,
+## `devdisplay.sh exec` for this one -- and scored with `banner_complete` SOURCED from
+## tests/banner_rule.tcl. Both arms answered `banner_complete=1` with
+## `regression_case_failed=0`, so the counted arm is registerable; it is left out anyway
+## because it self-skips to ZERO checks (`build_widgets` builds no menubar under
+## --nogui, and the whole subject is menu entries), and issue 1641's defect was exactly
+## a suite sitting green in `hcases` having measured nothing. There is no crash-guard
+## reason to keep the counted entry either: the file self-skips before it touches a
+## widget, so under --nogui it never reaches the code that would dereference one.
+## `headless/test_wave_add_graph_undo` IS ALSO IN `hcases`, AND THIS IS THE ARM
+## THAT MEASURES THE ACT: band `AD*` opens a real viewer and watches a strip
+## leave the CANVAS when `u` is pressed, which the counted arm's model rig cannot
+## see. Measured by attack: see the paragraph under the `hcases` list.
 ## ⚠ `headless/test_wave_grid` IS ALSO IN `hcases`, AND THIS IS THE ARM THAT MEASURES
 ## (issue 1645): it is where the GG* band runs, which the counted arm drops behind an
 ## UPPERCASE `SKIPPED` -- uppercase, so that drop contributes nothing to `skips=` and is

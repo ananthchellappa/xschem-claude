@@ -1,8 +1,31 @@
 # 0925 — saved net-highlight styles are discarded at every startup
 
-**Status:** **OPEN, MEASURED, NOT FIXED.** Found 2026-08-29 by the adversarial
+**Status:** **FIXED 2026-10-05, red first.** Found 2026-08-29 by the adversarial
 review of the [0924](0924-file-open-recent-empties-whenever-a-stock-xschem-touches-the-same-conf.md)
 fix, and re-measured independently before filing.
+
+`load_net_hilight_conf` now sources each conf through `uplevel #0 [list source …]`.
+`tests/headless/test_nh_editor_persist.tcl` is **registered in `hcases`** (arm chosen by
+scoring both captures with `banner_complete` sourced from `tests/banner_rule.tcl`: both
+gave 1 and both published the same check count, and the suite touches no Tk, so a
+`dcases` entry would re-run identical rows). Its bands 3–6 call the product reader; the
+five rows that were red before the repair are `L2`, `L3`, `L4`, `D2` and `L6`.
+
+⚠ **Section 2's description of the symptom was incomplete, and the correction matters
+for anyone writing a row here.** Measured through the writer and then the reader: the
+global does **not** come back empty, it comes back holding the **built-in default
+table**. The style conf's own last line is `catch {xschem update_net_hilight_style}`,
+which recompiles from the global the `source` never touched, so the C side re-derives and
+**republishes the default**. A row asserting "the table is not empty" would have passed
+over the whole defect. Row `L0b` measures that the saved table differs from that default,
+so `L2` cannot go vacuous.
+
+⚠ **Section 5's one-line repair is correct but under-specified in two ways, both found by
+building the sabotage rather than arguing it.** `uplevel 1` (relative) passes every
+behavioural row, because the caller's frame *is* the global frame at the single startup
+call site — row `L8` drives the reader from inside a proc to separate the two spellings.
+And dropping the `[list …]` quoting also passes every row, because no scratch path has a
+space in it — row `L9` points `USER_CONF_DIR` at a directory whose name does.
 
 **This is 0924's read half, unfixed, 1770 lines above the fix, in the same file.**
 
@@ -61,11 +84,17 @@ ignored.** That is why this is filed separately rather than folded into 0924.
 
 ## 4. The test that should have caught it is green
 
-`tests/headless/test_nh_editor_persist.tcl:43-46` sources the conf **itself, at
-global script scope**, instead of calling `load_net_hilight_conf`. At global
-scope the unqualified names land where they are wanted, so the suite's
-persistence checks pass over a product loader that does not work. Nothing in
-`tests/` calls `load_net_hilight_conf` at all (`grep` = 0 hits).
+`test_nh_editor_persist`'s original bands source the conf **itself, at global
+script scope**, instead of calling `load_net_hilight_conf`. At global scope the
+unqualified names land where they are wanted, so the suite's persistence checks
+pass over a product loader that does not work. Nothing in `tests/` called
+`load_net_hilight_conf` at all.
+
+**AND THE SUITE WAS IN NEITHER `hcases` NOR `dcases`**, so even its writer-only
+claims gated nothing — the registration and the reader bands landed together.
+Those hand-sourcing rows are kept, with their names changed to say they are a
+**writer** leg, because they are what separates "the file on disk is wrong" from
+"the reader is wrong" when this area breaks again.
 
 **This is the standing-red class in reverse**: not a red that is furniture, but a
 green that never touched the product path it names.

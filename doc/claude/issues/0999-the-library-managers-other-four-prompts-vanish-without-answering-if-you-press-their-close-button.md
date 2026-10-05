@@ -1,6 +1,6 @@
 # 0999 — the Library Manager's other four prompts vanish without answering if you press their close button
 
-**Status:** OPEN. **Filed 2026-08-31** by the S5 repair pass, while fixing
+**Status:** FIXED 2026-10-05. **Filed 2026-08-31** by the S5 repair pass, while fixing
 `[[0998]]` in the sibling window.
 **Owner:** `src/library_manager.tcl`.
 **Related:** `[[0998]]` (the same defect in **New library…**, fixed there),
@@ -83,3 +83,62 @@ tests/headless/devdisplay.sh exec ./src/xschem --pipe -q --nolog
 ```
 then in the Library Manager, right-click a library → New cell…, and press the
 title-bar X. Nothing further happens; the press never completes.
+
+---
+
+## FIXED, 2026-10-05, in both halves
+
+**The population was DERIVED, and this file's own table was two short.** Asking
+the interpreter which `libmgr::` procs park in a wait in COMMAND POSITION gives
+**seven**, not five:
+
+```
+::libmgr::cell_dialog  ::libmgr::commit_dialog  ::libmgr::maintain_picker
+::libmgr::newlib_dialog  ::libmgr::newview_dialog  ::libmgr::simple_prompt
+::libmgr::view_dialog
+```
+
+`libmgr::commit_dialog` (every check-in's comment box) and
+`libmgr::maintain_picker` (Maintain's library picker) have the same gap and are
+not in the table above. `libmgr::newlib_dialog` is the one `[[0998]]` already
+fixed, so **six** prompts were unguarded.
+
+**Product half.** The two handlers `[[0998]]` gave `newlib_dialog` are now the
+shared `libmgr::dlg_way_out`, called by all seven prompts;
+`libmgr::newlib_vanished` became `libmgr::dlg_vanished` and is no longer a
+private copy. No timeout was armed, for 0998's reason: a window that closes
+itself while somebody is typing is a worse defect than the one being fixed.
+
+**Test half.** `tests/headless/test_lib_dialog_wayout_0999.tcl`, registered in
+BOTH `hcases` and `dcases` (`banner_complete` sourced from
+`tests/banner_rule.tcl` gives 1 on each arm's real captured output, and
+`regression_case_failed` 0 on each). The counted arm derives the population and
+requires every member to install a way out, so a prompt added later without one
+reddens the gate's counted arm with nobody editing a list. The display arm opens
+each derived prompt for real, destroys its toplevel without answering it, and
+asks whether the press came back.
+
+Measured on the unfixed tree, display arm:
+
+```
+RESULT: 16 FAILED (14 passed)
+FAIL: LV2a every prompt in the derived set installs a close-button way out
+      (without='::libmgr::cell_dialog ::libmgr::commit_dialog
+                ::libmgr::maintain_picker ::libmgr::newview_dialog
+                ::libmgr::simple_prompt ::libmgr::view_dialog' of 7)
+FAIL: LV3a simple_prompt comes back when its window goes away unanswered, with
+      nothing poked (rc=0 outcome=gone had-to-poke-it=1 err='')
+FAIL: LV3e and no prompt in the sweep had to be poked to let go (pokes=6)
+```
+
+`had-to-poke-it=1` is the mechanism measured rather than read: after the
+toplevel was destroyed the prompt's `dlg_done` still stood at the `-1` it is set
+to just before the wait, so nothing had ended the wait and only the test writing
+the variable freed it. `newlib_dialog` passed every row in that same run, which
+is what `[[0998]]`'s fix working looks like.
+
+**Same class, elsewhere, NOT fixed here** (so it is on the record rather than in
+a reader's head): `src/alt2_toggle_view.tcl` has one `vwait alt2::dlg_done`
+behind one toplevel with no close-button handler at all — the same defect in a
+different namespace, and its own `dlg_done` variable, so this file's helper does
+not reach it.

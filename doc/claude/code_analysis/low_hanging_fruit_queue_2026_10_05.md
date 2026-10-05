@@ -13,7 +13,7 @@ three items the wish list called open turned out to be shipped, and one it calle
 
 | thread | state |
 |---|---|
-| **IN FLIGHT** — four Tcl-only fixes below (0999, 0925, `add_graph`, the two menu no-ops) | dispatched, red-first, not committed |
+| **DONE, same day** — four Tcl-only fixes below (0999, 0925, `add_graph`, the two menu no-ops) | fixed red-first, each with a new or extended suite registered in the same change; see the tier-2 entries, which now carry their outcome |
 | **BLOCKED ON A REBUILD** — 0458 and 1605 | wait until the calculator batch commits; both relink `src/xschem` |
 | **IN FLIGHT ELSEWHERE** — PLAN 7.5 stability verbs | repair round running in `src/calculator.tcl` |
 
@@ -42,21 +42,21 @@ Area: the `install_shares` list and the `install:` / `uninstall:` rules in `src/
 
 ## Tier 2 — user-experienced defects, each blocked on nothing
 
-* **Issue 0999 — Library Manager prompts hang until quit.** Right-click, pick *New cell…* /
+* ✅ **FIXED — Issue 0999, Library Manager prompts hang until quit.** Right-click, pick *New cell…* /
   *Rename…* / *Copy view…*, close the name box with the **title-bar X** rather than Cancel: the box
   vanishes, nothing happens, and that command stays stuck waiting for an answer it can never get
   until xschem is quit. Six procs in `src/library_manager.tcl` (`simple_prompt`, `cell_dialog`,
   `view_dialog`, `newview_dialog`, `commit_dialog`, `maintain_picker`). The precedent to copy is
   already in the tree: `libmgr::newlib_dialog` with `libmgr::newlib_vanished`, fixed under 0998.
-* **Issue 0925 — saved net-highlight styles silently discarded at every startup.** The dialog
+* ✅ **FIXED — Issue 0925, saved net-highlight styles silently discarded at every startup.** The dialog
   promises the file loads automatically next session; it does not. `write_net_hilight_style_conf` is
   correct, so the file on disk is good — `load_net_hilight_conf` is the broken reader, called at top
   level during startup. Also explains the command palette re-emphasising that entry every session.
-* **`wviewer::add_graph` is outside undo and outside the macro log**, while every sibling
+* ✅ **FIXED — `wviewer::add_graph` WAS outside undo and outside the macro log**, while every sibling
   (`split_strip`, `move_strip`, `move_trace`, `move_traces`, `delete_empty_strips`) is in both. Press
   Add Graph, press `u`, and the undo backs out whatever came *before* while the strip stays. A
   recorded session also replays without the strip.
-* **Simulation ▸ View last job data / View last job errors are silent no-ops.** Both bodies in
+* ✅ **FIXED — Simulation ▸ View last job data / View last job errors were silent no-ops.** Both bodies in
   `build_widgets` are an `if` with no `else`, so in a fresh session the entries do nothing at all —
   no window, no message, no status line.
 * **Issue 1605 — the netlist provenance comment truncates a name at its first parenthesis.** The
@@ -95,3 +95,32 @@ Area: the `install_shares` list and the `install:` / `uninstall:` rules in `src/
 
 * **Cadence-style Search and Replace** (wish new-9) is **built**; found independently by two sweeps.
 * A durable handle for the six non-wire object types (wish old-26 residue) is built.
+
+## 2026-10-05, later the same day — what the four fixes cost, and two lessons
+
+All four landed red-first with a suite each, registered in the same change
+(`hcases` 101 → 104, `dcases` 28 → 31). Two findings are worth carrying because
+both were fences that read stronger than they were, and both were caught by an
+adversarial pass rather than by the crews that wrote them:
+
+* **The 0999 fence never pressed the button it was about.** It read
+  `wm protocol $w WM_DELETE_WINDOW` and then *destroyed* the window, so it
+  travelled the `<Destroy>` path and never evaluated the close-button script; and
+  it asserted only that the handler string was non-empty. Measured: a
+  one-character regression wiring the title-bar X to the **accepting** value —
+  so closing a prompt without answering would CREATE the cell, worse than the
+  hang the issue is about — leaves LV1, LV2 and LV3 **entirely green**. Band
+  **LV4** now evaluates the real script and asserts which value the wait was
+  released with; the same sabotage reddens LV4a alone.
+* **The first cut of the menu fix replaced silence with a Tk "Application
+  Error".** It reported through `alert_`, which builds a fixed `.alert` toplevel
+  and blocks in `tkwait` with its `grab set` commented out — so clicking the two
+  adjacent entries in turn re-entered it and the second `toplevel .alert` threw
+  out of a menu `-command`. The tree already ruled on this twice (R505g above
+  `waves_gate_blocked`, and `src/ciw.tcl`, whose comment names `alert_` as the
+  wrong precedent for a repeated notice), and already had the right channel:
+  `xschem::notify`, four sinks with a reusable non-blocking popup. ⚠ The suite's
+  recorder had renamed `alert_` precisely so a regression to it could not hang
+  the run; moving the spy to the notice channel and dropping that rename made the
+  sabotage **hang instead of redden**, which is a worse diagnostic. Both renames
+  are now kept, and six rows assert `alert_` is called zero times.
