@@ -519,12 +519,41 @@ int set_netlist_dir(int what, const char *dir)
  * the command substitution inside `$a([...])`). */
 
 /* wrapper to TCL function */
-/* remove parameter section of symbol generator before calculating abs path : xxx(a,b) -> xxx */
+/* remove parameter section of symbol generator before calculating abs path : xxx(a,b) -> xxx
+ *
+ * ⚠⚠ THE STRIP IS GATED ON is_generator() AND USED NOT TO BE (issue 1605).
+ * `regsub {\(.*}` is UNANCHORED, so it ate the FIRST parenthesis and everything
+ * after it in ANY name -- which is right for a generator (`xxx(a,b)` -> `xxx`)
+ * and wrong for an ordinary file whose name merely contains one. Measured on an
+ * unmodified tree: `opamp(rev2).sym` came back as `<cwd>/opamp` -- a plausible
+ * ABSOLUTE path with the parenthesis and the extension both gone -- and
+ * `dir(x)/thing.sym` as `<cwd>/dir`, naming a DIRECTORY as the source file. A
+ * provenance comment exists to be trusted, so a wrong-but-plausible one is the
+ * worst of the three outcomes available.
+ *
+ * ⚠ AND IT IS NOT COSMETIC, WHICH IS WHY THE GATE IS HERE RATHER THAN DECLARED.
+ * The five callers are all netlisters writing `sym_path:` / `sch_path:` comments,
+ * and op_annot_deck_index (src/op_annot.tcl) READS `** sch_path:` back and
+ * compares it with `xschem get schname` after every descend; that file's own
+ * comment says a mismatch "SUPPRESSES the subtree and warns". So a schematic
+ * whose file name contains a parenthesis silently lost operating-point
+ * annotation for its whole subtree.
+ *
+ * is_generator() is CALLED rather than its ERE re-spelled, because this would
+ * have been the third copy of `^[^ \t()]+\([^()]*\)[ \t]*$` in the tree and row
+ * S8 of tests/headless/test_generator_paren_1604.tcl already exists to stop the
+ * second one drifting. ⚠ `is_generator(NULL)` is its CACHE-FREE call, not a
+ * predicate, so the null check has to come first and must not be folded away.
+ * Fenced by tests/headless/test_sym_path_paren_1605.tcl. */
 const char *sanitized_abs_sym_path(const char *s, const char *ext)
 {
   tclsetvar("__san_symp_name", s ? s : "");
   tclsetvar("__san_symp_ext", ext ? ext : "");
-  tcleval("abs_sym_path [regsub {\\(.*} $::__san_symp_name {}] $::__san_symp_ext");
+  if(s && is_generator(s)) {
+    tcleval("abs_sym_path [regsub {\\(.*} $::__san_symp_name {}] $::__san_symp_ext");
+  } else {
+    tcleval("abs_sym_path $::__san_symp_name $::__san_symp_ext");
+  }
   return tclresult();
 }
 
