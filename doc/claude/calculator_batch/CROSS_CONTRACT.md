@@ -75,7 +75,19 @@ distant call site is the wrong choice; so is `0`, which is a perfectly good X va
 ### D6. A non-finite sample cannot bracket a crossing — and the test runs BEFORE D3, not inside it
 
 Both endpoints of a candidate pair must be finite, **and that is checked before D3's predicate is
-evaluated at all**. Use `calc::eval_finite`, which is textual.
+evaluated at all**. Use `calc::eval_finite`.
+
+**⚠ CORRECTED 2026-10-05: this said "which is textual", and a predicate that is textual ALONE
+answers the wrong question.** The spelling of a number and the number itself are two different
+things. The four spellings this contract is about — `inf`, `-nan`, `1.#INF`, `-1.#IND` — are what
+`%g` writes for a value that is *already* non-finite, and a text test is exactly right about them.
+What a text test cannot see is an **ordinary decimal literal whose value overflows**: `1e309` is a
+plain mantissa and an exponent one past the double range, it looks like every finite number ever
+written, and `strtod` and Tcl's `double()` both turn it into an infinity. So `calc::eval_finite` now
+has **two legs in a fixed order** — the pattern first, because it is what makes the second leg
+total (`double()` raises on `nan` and on an empty string), then a comparison of the parsed value
+against both infinities. The textual argument in §4 and in the proc's own header is unchanged and
+still governs the first leg; it was never an argument for stopping there.
 
 **⚠ This was written as "skipped as a bracket endpoint" and measurement showed that reading is not
 strong enough.** Two results from the read-back recon, on Tcl 8.6.17:

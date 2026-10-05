@@ -168,11 +168,50 @@ proc check_expr {name cond} {
     if {[catch {uplevel 1 [list expr $cond]} v]} { set v "ERR:$v" }
     check $name [expr {$v eq {1} ? 1 : 0}] 1
 }
-proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
+# WARN THE SENTINEL IS MADE PARSEABLE AS A TCL LIST, AND THAT IS NOT COSMETIC.
+# Tcl's list parser raises on an unmatched open brace or double quote that
+# BEGINS A WORD -- the two characters, derived by sweeping every printable
+# ASCII code rather than assumed -- and a product raise message carries either.
+# So the bare `ERR:$r` this replaces could not be handed to `llength`,
+# `lindex`, `foreach`, `lsort` or `dict keys`, and every site that did turned a
+# product raise into ONE `group ... ABORTED` line that DELETED the whole band
+# from the verdict instead of reddening one row.  That is strictly worse than a
+# failure: the rows vanish, the count moves, and the next reader is sent to
+# debug the product.  CLAUDE.md records the live incident this is not
+# hypothetical about -- a comment between two `switch` patterns made
+# `calc::fn_argspec` raise out of EVERY arm, 18 rows at once.
+#
+# The message is kept VERBATIM whenever it already parses, which is the common
+# case, so a failing row's detail is unchanged except where it could not have
+# been printed at all.  The mapped form is CHECKED rather than trusted, and a
+# message that still will not parse is reduced to a shape that must.
+proc pcall {args} {
+    if {[catch {uplevel 1 $args} r]} { return "ERR:[pcall_listable $r]" }
+    return $r
+}
+proc pcall_listable {s} {
+    if {![catch {llength $s}]} { return $s }
+    set m [string map [list \{ ( \} ) \" '] $s]
+    if {![catch {llength $m}]} { return $m }
+    return [regsub -all {[^A-Za-z0-9 ._:,/()=+*<>?!-]} $s ?]
+}
+# WARN A BAND THAT ABORTS DELETES ITS REMAINING ROWS FROM THE VERDICT, WHICH IS
+# STRICTLY WORSE THAN FAILING, so the name is RECORDED and not only printed.
+# One `FAIL: group ... ABORTED` line among dozens of row failures is easy to
+# read past, and the rows that never ran are invisible -- the check total simply
+# comes in short, which nothing compares against anything.  Measured 2026-10-05
+# in the sibling measurement suite: a product sabotage took MOST of one band's
+# rows out and the verdict showed ONE extra failure.  ⚠ The counts that used to
+# sit in this sentence are gone: they were figures over that file's band sizes,
+# nothing re-measured them, and the next stage to add a row there made them wrong.  `::abortnames` is asserted
+# EMPTY by the band-abort guard at the foot of this file, which names every band
+# that vanished instead of leaving the shortfall to be noticed.
+set ::abortnames {}
 proc group {name script} {
     if {[catch {uplevel 1 $script} e]} {
         puts "FAIL: group $name ABORTED -> $e : FAIL"
         puts $::errorInfo
+        lappend ::abortnames $name
         incr ::fail
     }
 }
@@ -335,12 +374,53 @@ proc bufset {s} {
     update idletasks
     return [pcall .calc.buf get 1.0 end-1c]
 }
-proc press {w} { pcall $w invoke ; update idletasks ; return [pcall .calc.status.msg get] }
+# ⚠⚠ THESE RETURN WHAT THE TOOL SAID, WHICH IS NOT WHAT THE WIDGET HOLDS.
+# `.calc.status.msg` is an Entry with a finite width and no way of saying so, so
+# `calc::status` writes `calc::status_fit` of its sentence -- middle-elided, with
+# a marker -- and records the sentence AS COMPOSED in the history (R509), which
+# is also what it returns.  Both helpers used to read the widget and so could not
+# see past its width: band PL5e's composed `Plotted ... The viewer was set to New
+# Tab ...` line and band PL8's two ruled refusals are all wider than the entry,
+# and the clause each of those rows is about sat in the part that was cut off.
+# Reading the history is what those rows always meant; `shown` below is the
+# separate question of what the user SEES, and band S28/8 of
+# tests/headless/test_calc_skeleton.tcl asserts the two agree through
+# `calc::status_fit` over a derived population.
+proc said {} {
+    set h [pcall calc::status_history]
+    if {[string match ERR:* $h]} { return $h }
+    return [lindex $h 0]
+}
+# `fitted` / `RAW` / `SILENT` -- the widget holds the fitted form of what was
+# said, and it is not empty.
+proc shown {} {
+    set w [pcall .calc.status.msg get]
+    if {$w eq {}} { return SILENT }
+    if {$w ne [pcall calc::status_fit [said]]} { return RAW }
+    return fitted
+}
+proc press {w} { pcall $w invoke ; update idletasks ; return [said] }
+
+# WARN AN INDEX THAT CAME OUT OF THE PRODUCT IS GUARDED BEFORE `lindex` SEES IT.
+# `pcall`'s sentinel is not an integer and `lindex` raises `bad index` on it, so
+# bands PL5b and PL5d used to be DELETED from the verdict by `group`'s catch
+# rather than reddening one row -- which is the failure mode that sends the next
+# reader to debug the product.  Two procs and not one: the index and the value
+# are separate things to be wrong about, and a row gets a sentinel naming which.
+proc pl_atn {v i} {
+    if {![string is integer -strict $i]} { return "NOTANINDEX:{$i}" }
+    if {[catch {lindex $v $i} e]} { return "NOTALIST:{$v}" }
+    return $e
+}
+proc pl_gt {v n} {
+    if {![string is double -strict $v]} { return "NOTANUMBER:{$v}" }
+    return [expr {$v > $n ? 1 : 0}]
+}
 proc destset {label} {
     pcall .calc.mode.dest set $label
     pcall event generate .calc.mode.dest <<ComboboxSelected>>
     update idletasks
-    return [pcall .calc.status.msg get]
+    return [said]
 }
 proc viewer_ready {top} {
     for {set i 0} {$i < 300} {incr i} {
@@ -414,7 +494,12 @@ group PL0 {
     check_expr "PL0 fixture: the viewer canvas is mapped" {[viewer_ready $vtop]}
     # the fixture read goes INSIDE the viewer's context, because that is the
     # context `results::current` is asked about and the one Plot will plot into.
-    set t [pcall wviewer::enter_ctx $::tok]
+    # WARN CAUGHT AT THE CALL AND SUBSTITUTED, which is what the other fifteen
+    # callers of `enter_ctx` in this file already do.  The `pcall` spelling that
+    # used to be here answered a STRING on a raise, and `if {[lindex $t 0]}`
+    # below then raised `expected boolean value` -- deleting band PL0 from the
+    # verdict through `group`'s catch rather than failing one row.
+    if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     set rd {} ; set cur {}
     if {[lindex $t 0]} {
         catch {set rd [xschem raw read $::fixture ac]}
@@ -723,7 +808,7 @@ group PL5b {
     }
     check "PL5b fixture: the window is on Append and the target strip holds more than one trace, so a Replace is observable" \
         [list [pcall wviewer::plot_dest $::tok] \
-              [expr {[lindex $pl5b_before [pcall wviewer::target_strip $::tok]] > 1}]] {append 1}
+              [pl_gt [pl_atn $pl5b_before [pcall wviewer::target_strip $::tok]] 1]] {append 1}
     # ...and now the widget alone, with NO <<ComboboxSelected>>
     pcall .calc.mode.dest set {Replace}
     update idletasks
@@ -737,9 +822,9 @@ group PL5b {
     }
     set gi [pcall wviewer::target_strip $::tok]
     check "PL5b ⚠ the PRESS pushes W13's value: the destination moves to replace and the landing strip is EMPTIED first, with no ComboboxSelected event anywhere" \
-        [list [pcall wviewer::plot_dest $::tok] [lindex $pl5b_after $gi]] {replace 1}
+        [list [pcall wviewer::plot_dest $::tok] [pl_atn $pl5b_after $gi]] {replace 1}
     check "PL5b ...and it is the expression just typed that survived in it, so the clear ran BEFORE the add" \
-        [pcall dict get [lindex [pcall dict get [lindex [pcall dict get [pcall wviewer::layout_for $::tok] graphs] $gi] traces] 0] expr] \
+        [pcall dict get [pl_atn [pcall dict get [pl_atn [pcall dict get [pcall wviewer::layout_for $::tok] graphs] $gi] traces] 0] expr] \
         {v(lp)}
     destset {Append}
 }
@@ -810,7 +895,7 @@ group PL5d {
         lappend pre [llength [pcall dict get $G traces]]
     }
     check "PL5d fixture: single mode, and the target strip holds more than one trace -- so a real Replace would be visible" \
-        [list [pcall wviewer::plot_mode $::tok] [expr {[lindex $pre $gi0] > 1}]] {single 1}
+        [list [pcall wviewer::plot_mode $::tok] [pl_gt [pl_atn $pre $gi0] 1]] {single 1}
     # ...the single-mode CONTROL: Replace here really does clear.
     destset {Replace}
     pcall bufset {v(ramp)}
@@ -821,7 +906,7 @@ group PL5d {
         lappend mid [llength [pcall dict get $G traces]]
     }
     check "PL5d CONTROL in SINGLE mode: Replace empties the landing strip, so the strip really can be cleared on this fixture" \
-        [lindex $mid $gi1] 1
+        [pl_atn $mid $gi1] 1
     # ...and now MULTI.
     check "PL5d the viewer is in multi plot mode" \
         [pcall wviewer::set_plot_mode multi $::tok] multi
@@ -888,8 +973,9 @@ group PL5e {
               [pcall wviewer::plot_dest $::tok]] {newtab newtab}
     pcall bufset {v(lp)}
     set saide [press .calc.mode.plot]
-    check "PL5e ⚠ the press SAYS the New Tab choice is gone, naming it, instead of cancelling it in silence" \
-        [list [string match {Plotted*} $saide] [string match {*New Tab*} $saide]] {1 1}
+    check "PL5e ⚠ the press SAYS the New Tab choice is gone, naming it, instead of cancelling it in silence -- read off the HISTORY, which holds the sentence as composed, because this composed line is wider than the status entry and the clause this row is about is exactly what the entry cuts off" \
+        [list [string match {Plotted*} $saide] [string match {*New Tab*} $saide] [shown]] \
+        {1 1 fitted}
     check "PL5e ...and the measurement behind that sentence: the push really did overwrite the viewer's destination with W13's" \
         [pcall wviewer::plot_dest $::tok] append
     # ...and the non-vacuity: an ordinary press, from a destination W13 CAN
@@ -1424,8 +1510,9 @@ group PL8 {
         [list [string match {*has no waveform viewer*} $saidA] \
               [string match {*open the session's waveforms*} $saidA] \
               [expr {$saidA eq [pcall calc::no_result_msg]}]] {1 1 0}
-    check "PL8 ...and with no session either it is U7's RULED sentence, verbatim, with no second spelling built on the Plot path" \
-        $saidB "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."
+    check "PL8 ...and with no session either it is U7's RULED sentence, verbatim, with no second spelling built on the Plot path -- the literal pinned against the history, with the widget asserted to be `calc::status_fit` of it and not empty" \
+        [list $saidB [shown]] \
+        [list "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select." fitted]
     check "PL8 ...and no viewer window was created by either refusal (R503f: a refusal that opens a window is a second gesture the user did not ask for)" \
         [list $nA $nB] {0 0}
     # ...and the structural half, so the declaration cannot go false silently:
@@ -1537,6 +1624,24 @@ update idletasks
 ## as well -- and prints NO banner, which is what makes a `dcases`-only entry
 ## correct and an `hcases` one a HARNESS failure (row RB6 of
 ## tests/headless/test_registered_banner_1626.tcl).
+# ---------------------------------------------------------------------------
+# THE BAND-ABORT GUARD.  Last, because it is a claim about every band above it.
+#
+# WARN A SITE THAT INDEXES, SLICES, ITERATES, DIVIDES OR TESTS A PRODUCT ANSWER
+# BARE RAISES INSTEAD OF FAILING, `group`'s catch turns that into one line, and
+# every remaining row of the band is gone from the verdict.  That is what this
+# file's `ERR:` sentinel discipline exists to prevent, and the discipline was
+# measured silently false in several bands of several Calculator suites on
+# 2026-10-05.
+#
+# WARN A COUNT IS NOT ENOUGH AND THE NAMES ARE THE POINT.  A shortfall in the
+# check total is a number nothing compares against anything; a named band is a
+# failure about itself.  Derived from `group`'s own bookkeeping, so a band added
+# tomorrow enlists itself.
+# ---------------------------------------------------------------------------
+check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited" \
+    [list [llength $::abortnames] $::abortnames] {0 {}}
+
 if {$fail == 0} {
     puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"

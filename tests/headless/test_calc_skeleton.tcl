@@ -401,6 +401,31 @@ calc::close
 # otherwise hit the outer catch and delete every remaining check
 proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
 
+# ⚠⚠ WHAT THE TOOL SAID IS NO LONGER WHAT THE WIDGET HOLDS, AND SEVERAL ROWS
+# BELOW USED TO READ THE WIDGET FOR BOTH.  `.calc.status.msg` is an Entry with a
+# finite width and no way of saying so, so `calc::status` now writes
+# `calc::status_fit` of its sentence -- middle-elided, with a marker -- and keeps
+# the sentence AS COMPOSED in the history (R509), which is also what it returns.
+# So a row asserting WHICH sentence was said reads the history through this proc;
+# a row asserting what the user SEES reads the widget; and band S28/8 is the one
+# place that asserts the two agree through `calc::status_fit`, over a derived
+# population.  Before the budget existed the widget was both, which is why the
+# repaired rows used to read it -- and why each of them now carries a `spoke` leg
+# as well, so a gesture that said NOTHING cannot pass on a stale history entry.
+proc s_said {} {
+    set h [pcall calc::status_history]
+    if {[string match ERR:* $h]} { return $h }
+    return [lindex $h 0]
+}
+# `fitted` / `RAW` / `SILENT`: the widget holds the fitted form of what was said,
+# and it is not empty.
+proc s_shows {} {
+    set w [pcall .calc.status.msg get]
+    if {$w eq {}} { return SILENT }
+    if {$w ne [pcall calc::status_fit [s_said]]} { return RAW }
+    return fitted
+}
+
 # ⚠ A TK BUTTON UNDER THE POINTER READS BACK `active`, NOT `normal` — FIXER
 # ROUND, results batch item 10 (2026-08-20). `-state active` is Tk's HOVER
 # state (set by the class <Enter> binding), not a widget-state defect, and on
@@ -1378,11 +1403,12 @@ pcall .calc.mode.dest set {Append}
 foreach {id label phase} {plot Plot 3 eval Eval 3 table Table 10} {
     check "S18 $id text" [pcall .calc.mode.$id cget -text] $label
     check "S18 $id enabled" [btnstate .calc.mode.$id] normal
+    pcall calc::status {} 0
     pcall .calc.mode.$id invoke
     if {$id eq {eval} || $id eq {plot}} {
-        check "S18 $id with no result refuses and names the next action (U7)" \
-            [pcall .calc.status.msg get] \
-            "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."
+        check "S18 $id with no result refuses and names the next action (U7) -- the ruled words read off the HISTORY, which holds the sentence as composed, with the widget asserted to be `calc::status_fit` of it and not empty: the status entry has a budget now and elides what does not fit, so the widget alone can no longer carry a literal" \
+            [list [s_said] [s_shows]] \
+            [list "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select." fitted]
     } else {
         check "S18 $id is inert and says so" [pcall .calc.status.msg get] \
             "$label: not implemented (phase $phase)"
@@ -2916,6 +2942,16 @@ check "S24 every help line is short enough for the status entry" \
 # N-route reason made the spectralPower line 94 characters / 666 px, of which 85
 # rendered — the line ended "...no N-route function sh". RULING-3's whole point
 # is that a greyed entry carries information; a sentence cut mid-word does not.
+#
+# ⚠ THIS IS NO LONGER THE ONLY BOUND, and a reader who thinks it is will fence
+# the wrong thing.  Since the status line gained a budget, `calc::status` writes
+# `calc::status_fit` of every sentence -- middle-elided, with a marker -- so the
+# general claim "nothing reaches the entry over its width" belongs to band MT20
+# of tests/headless/test_calc_measure.tcl (every `calc::*_msg` arm, derived) and
+# to band S28/8 below (the same population against the real widget).  The two
+# character bounds here stay because they are about the TABLE: a `help` field or
+# a `fn_reason` that needs eliding is a row somebody should shorten, not a
+# sentence the fitter should rescue.
 set longrefusal {}
 set nrefusals 0
 foreach row $rows {
@@ -3673,9 +3709,9 @@ check_true "S27 U8 ...the window path was really readable (not two empty strings
 set ::wviewer::windows [dict create]
 pcall calc::status {} 0
 pcall .calc.mode.eval invoke
-check "S27 U7 Evaluate with no result refuses in the ruled words" \
-    [pcall .calc.status.msg get] \
-    "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select."
+check "S27 U7 Evaluate with no result refuses in the ruled words -- the literal pinned against the HISTORY, which holds the sentence as composed, with the widget asserted to be `calc::status_fit` of it and not empty" \
+    [list [s_said] [s_shows]] \
+    [list "No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L \u25b8 Results \u25b8 Select." fitted]
 check_true "S27 U7 ...it names the command, and does NOT offer to launch ASE-L" \
     [expr {[string match {*Results*Select*} [set m [pcall calc::no_result_msg]]]
            && [string match {*Run a simulation*} $m]
@@ -3710,9 +3746,9 @@ set ::s26_here [dict create idx 0 path /tmp/s26/here_arm.raw type tran cur 1 \
                     label {here_arm.raw (tran)}]
 pcall calc::status {} 0
 pcall .calc.mode.eval invoke
-set nvmsg [pcall .calc.status.msg get]
+set nvmsg [s_said]
 check "S27 R503f a session with NO viewer is told the obstacle, not 'pick one'" \
-    $nvmsg [pcall calc::no_viewer_msg]
+    [list $nvmsg [s_shows]] [list [pcall calc::no_viewer_msg] fitted]
 check_true "S27 R503f ...and that sentence is not U7's, and does not re-ask the gesture" \
     [expr {[string match {*no waveform viewer*} $nvmsg]
            && [string match {*open the session's waveforms*} $nvmsg]
@@ -3732,7 +3768,7 @@ set ::s26_noresult {sess_noview}
 pcall calc::status {} 0
 pcall .calc.mode.eval invoke
 check "S27 R503f ...and a session that HAS a viewer gets U7's ruled sentence" \
-    [pcall .calc.status.msg get] [pcall calc::no_result_msg]
+    [list [s_said] [s_shows]] [list [pcall calc::no_result_msg] fitted]
 set ::s26_noresult {}
 set ::wviewer::windows [dict create]
 set ::ase::sessions [dict create]
@@ -3741,7 +3777,8 @@ set ::ase::sessions [dict create]
 set ::wviewer::windows [dict create refused_tok [dict create win_path .nosuch1]]
 pcall calc::status {} 0
 pcall .calc.mode.eval invoke
-set evalmsg [pcall .calc.status.msg get]
+set evalmsg [s_said]
+check "S27 T-J ...and the widget shows the fitted form of that same sentence" [s_shows] fitted
 check_true "S27 T-J Evaluate reports a REFUSED loan as refused, not as 'no results'" \
     [expr {[string match {*refused context switch*} $evalmsg]
            && [string match {*not an empty result list*} $evalmsg]
@@ -4182,8 +4219,8 @@ foreach nm [ad_tnoproc] {
     if {[ad_buf] ne $ad_fallbuf} { lappend ad_fallbad $nm=TOUCHED-BUFFER }
     if {[pcall .calc.stk.list size] != $ad_fallstk} { lappend ad_fallbad $nm=TOUCHED-STACK }
 }
-check "S28 the 30 route-T verbs with NO proc fall through legibly: each one speaks, none opens a dialog, and none touches the buffer or the Stack -- the set and the sweep count are both DERIVED from the catalogue and the namespace, so a blanket route-T branch that stranded them would redden here" \
-    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {30 4 {}}
+check "S28 every route-T verb with NO proc falls through legibly: each one speaks, none opens a dialog, and none touches the buffer or the Stack -- the set and the sweep count are both DERIVED from the catalogue and the namespace, so a blanket route-T branch that stranded them would redden here" \
+    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {25 9 {}}
 check_true "S28 fixture: the pre-sweep buffer snapshot is real text" \
     [expr {![string match ERR:* $ad_fallbuf]
            && [string match {*INERT SENTINEL*} $ad_fallbuf]}]
@@ -4213,8 +4250,8 @@ foreach nm [ad_verbs] {
     }
     if {[string match {*is not available*} $said]} { lappend ad_liebad $nm=SAYS-UNAVAILABLE }
 }
-check "S28 no verb that IS built is told it is not: none of the four gets `calc::inert`'s phase-5 sentence and none gets `fn_reason`'s \"is not available\" one -- the replacement wording is unratified and deliberately NOT asserted here, so this row says only that the false sentence is gone" \
-    [list $ad_nlie $ad_liebad] {4 {}}
+check "S28 no verb that IS built is told it is not: no member of the derived clickable set gets `calc::inert`'s phase-5 sentence and none gets `fn_reason`'s \"is not available\" one -- the replacement wording is unratified and deliberately NOT asserted here, so this row says only that the false sentence is gone" \
+    [list $ad_nlie $ad_liebad] {9 {}}
 }
 
 # --- S28/2  a REAL pointer gesture on a T entry opens a REAL modal ------------
@@ -4336,7 +4373,7 @@ foreach nm [ad_verbs] {
     set ad_c_stk  [pcall .calc.stk.list size]
 }
 check "S28 R412 Cancel leaves the buffer BYTE-IDENTICAL, measured on FIVE captures and not one: the text, `edit modified` (8.4+, never `edit canundo`), the status history, the status line and the Stack size -- PLUS the undo witness, because a dialog that touched the buffer and undid itself is byte-identical while having spent an undo; the cancelled count and the undo count both ride along, so \"no dialog opened\" and \"four opened and touched nothing\" are different greens" \
-    [list $ad_ncancel $ad_nundo $ad_cbad] {4 4 {}}
+    [list $ad_ncancel $ad_nundo $ad_cbad] {9 9 {}}
 check_true "S28 fixture: the pre-Cancel capture is a real, non-trivial expression and the history was non-empty" \
     [expr {$ad_c_text eq {v(out) v(in) - 2 *}
            && [string is boolean -strict $ad_c_mod]}]
@@ -4919,15 +4956,15 @@ foreach nm [ad_verbs] {
     ad_disarm
     if {[winfo exists .calc.arg]} { lappend ad_gatebad $nm=OPENED-A-DIALOG }
     catch {destroy .calc.arg}
-    if {[pcall .calc.status.msg get] ne $ad_gatemsg} {
-        lappend ad_gatebad $nm=SAID([pcall .calc.status.msg get])
-    }
+    set ad_gsaid [s_said]
+    if {$ad_gsaid ne $ad_gatemsg} { lappend ad_gatebad $nm=SAID($ad_gsaid) }
+    if {[s_shows] ne {fitted}} { lappend ad_gatebad $nm=[s_shows] }
 }
 check "S28/6 the RESULT GATE runs BEFORE the dialog: with no simulation result loaded a route-T click refuses in `calc::require_result`'s OWN words -- compared by IDENTITY, never re-spelled here -- and never opens a form the user would have filled for nothing" \
     [list [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}] \
           [dg $ad_gate ok] [expr {$ad_gatemsg ne {} ? 1 : 0}] \
           $ad_ngate $ad_gatebad] \
-    {1 0 1 4 {}}
+    {1 0 1 9 {}}
 # ...and the same for an EMPTY buffer, with the gate back to answering `ok`.
 set ad_rr2 0
 if {[info commands ::calc::require_result] ne {} && [info commands ::ad_keep_rr] eq {}} {
@@ -4961,7 +4998,210 @@ if {$ad_rr2} {
 check "S28/6 ...and an EMPTY buffer is refused before the dialog too: a T verb measures the buffer's expression, so there is nothing to measure and nothing to ask about.  The sentence is unratified and NOT asserted; what is asserted is that one was written, that no form opened, and that the buffer stayed empty" \
     [list $ad_nempty $ad_emptybad \
           [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}]] \
-    {4 {} 1}
+    {9 {} 1}
+}
+
+# --- S28/8  THE STATUS LINE'S BUDGET, AGAINST THE REAL ENTRY ------------------
+# The pixel half of band MT20 of tests/headless/test_calc_measure.tcl, which is
+# `hcases` and therefore measures the elision ALGORITHM on a character fallback.
+# Only a display arm can measure the thing a user actually meets: a real `Entry`,
+# a real width, and the font their Tk resolved.  Three claims live here and
+# nowhere else.
+#
+#  (a) THE ROOM IS THE LIVE WIDGET'S.  `calc::status_room` must answer the `px`
+#      unit here and its number must be read off `winfo width`, not cached and
+#      not a constant -- otherwise every fit on a resized window is wrong.
+#  (b) EVERY SENTENCE THE TREE CAN COMPOSE FITS, measured with `font measure`
+#      against the entry's own font, over a population DERIVED from the
+#      namespace: each `calc::*_msg` builder's own `switch` patterns, plus one
+#      provenance line per member of the derived clickable set.
+#  (c) THE CHARACTER FALLBACK NEVER CLAIMS MORE ROOM THAN THERE IS.  This is
+#      what keeps `calc::status_chars` from being a number nothing re-checks: no
+#      member of that population that is short enough for the fallback may
+#      overflow the real entry.  Raising the fallback reddens this row on a real
+#      sentence instead of quietly letting one through.
+#
+# ⚠ A PIXEL WIDTH IS ENVIRONMENT DEPENDENT -- font, DPI, window size, the user's
+# Tk -- so no figure below reaches an expectation.  Every width claim answers a
+# WORD (`fits` / `over`), and the numbers appear only inside a failure detail,
+# where they are what a reader needs.  What (c) asserts is therefore not "80
+# characters is 613 pixels" but the IMPLICATION, re-measured on whatever
+# environment the run happens on.
+#
+# ⚠ THIS BAND WAS CONFIRMED BY A BUILT SABOTAGE RATHER THAN BY ARGUMENT:
+# `calc::status_fit` shadowed to the identity -- which is the tree exactly as it
+# was before this stage -- reddens (b) and the invariant row below, and
+# `calc::status_chars` raised past the measured bound reddens (c).  The receipt
+# carries both transcripts.
+s28band S28/8 {
+proc s88_arms {nm} {
+    if {[info procs ::calc::$nm] eq {}} { return "NOPROC:calc::$nm" }
+    set out {}
+    foreach ln [split [info body ::calc::$nm] "\n"] {
+        if {[regexp {^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)[ \t]+\{[ \t]*return} $ln -> k]} {
+            lappend out $k
+        }
+    }
+    return $out
+}
+proc s88_builders {} {
+    set out {}
+    foreach p [lsort [pcall info procs ::calc::*_msg]] { lappend out [namespace tail $p] }
+    return $out
+}
+proc s88_clickable {} {
+    set out {}
+    foreach row [pcall calc::catalogue] {
+        if {[lindex $row 2] ne {T}} continue
+        set nm [lindex $row 0]
+        if {[info commands ::calc::$nm] eq {}} continue
+        if {[llength [pcall calc::fn_argspec $nm]] == 0} continue
+        lappend out $nm
+    }
+    return [lsort $out]
+}
+# one provenance line per clickable verb, composed through the product's own
+# proc over values built the way `calc::arg_values` builds them.
+proc s88_prov {nm num} {
+    set sp [pcall calc::arg_surface $nm]
+    if {[string match ERR:* $sp]} { return $sp }
+    set have [list rpn {v(sq)}]
+    foreach row [pcall calc::fn_argspec $nm] {
+        set d [lindex $row 4]
+        if {$d eq {}} { set d 0 }
+        lappend have [lindex $row 0] $d
+    }
+    set v {}
+    foreach f [pcall info args ::calc::$sp] {
+        if {![dict exists $have $f]} break
+        lappend v $f [dict get $have $f]
+    }
+    return [pcall calc::arg_provenance $nm $v $num]
+}
+# the whole derived population: every builder arm's sentence, the zero-argument
+# ruled ones, every provenance line, and every hand-off composition.
+proc s88_population {} {
+    set out {}
+    foreach nm [s88_builders] {
+        set a [s88_arms $nm]
+        if {[string match NOPROC:* $a]} { lappend out $a ; continue }
+        if {[llength $a] == 0} {
+            set s [pcall calc::$nm]
+            if {$s ne {}} { lappend out $s }
+            continue
+        }
+        foreach k $a {
+            set s [pcall calc::$nm $k settlingTime groupDelay]
+            if {$s ne {}} { lappend out $s }
+        }
+    }
+    foreach nm [s88_clickable] { lappend out [s88_prov $nm 4999.999999999956] }
+    foreach p {wave_in_token wave_show} {
+        set b [pcall info body ::calc::$p]
+        if {[string match ERR:* $b]} continue
+        foreach {all k} [regexp -all -inline \
+                             {calc::cross_msg[ \t]+([a-zA-Z_][a-zA-Z0-9_]*)} $b] {
+            lappend out [pcall calc::handoff_sentence settlingTime __calc_dest7 0 \
+                             [pcall calc::cross_msg $k __calc_dest7 x]]
+        }
+    }
+    return $out
+}
+set s88_room [pcall calc::status_room]
+set s88_w [pcall winfo width .calc.status.msg]
+set s88_f TkTextFont
+catch {set s88_f [.calc.status.msg cget -font]}
+# the entry's OWN font, passed in rather than reached for, so this helper cannot
+# measure a different font from the one the widget renders with.
+proc s88_px {f s} {
+    set n -1
+    catch {set n [font measure $f $s]}
+    return $n
+}
+set s88_roomn -1
+if {[llength $s88_room] == 2 && [string is integer -strict [lindex $s88_room 1]]} {
+    set s88_roomn [lindex $s88_room 1]
+}
+check "S28/8 (a) the room is the LIVE widget's and not a cached number or a constant: with a real entry mapped `calc::status_room` answers the PIXEL unit, its figure is read off `winfo width` rather than from the character fallback, and it leaves a small allowance for the entry's own border -- so a fit on a resized window uses the width the window has now" \
+    [list [expr {[llength $s88_room] == 2 ? [lindex $s88_room 0] : "SHAPE:$s88_room"}] \
+          [expr {[string is integer -strict $s88_w] && $s88_w > 100 ? 1 : "width:$s88_w"}] \
+          [expr {$s88_roomn > 0 && $s88_roomn < $s88_w
+                 && ($s88_w - $s88_roomn) <= 8 ? {tracks-width} : "room:$s88_roomn/$s88_w"}] \
+          [expr {$s88_roomn != [pcall calc::status_chars] ? {not-the-fallback} : {FALLBACK}}]] \
+    {px 1 tracks-width not-the-fallback}
+set s88_pop [s88_population]
+set s88_bad {} ; set s88_over 0 ; set s88_short 0 ; set s88_unsafe {}
+foreach s $s88_pop {
+    if {[string match NOPROC:* $s] || [string match ERR:* $s]} { lappend s88_bad $s ; continue }
+    set px [s88_px $s88_f $s]
+    if {$px < 0} { lappend s88_bad "NOMEASURE:[string range $s 0 30]" ; continue }
+    if {$px > $s88_roomn} { incr s88_over }
+    if {[string length $s] <= [pcall calc::status_chars]} {
+        incr s88_short
+        if {$px > $s88_roomn} { lappend s88_unsafe "[string length $s]ch/${px}px" }
+    }
+    set f [pcall calc::status_fit $s]
+    set fpx [s88_px $s88_f $f]
+    if {$fpx > $s88_roomn} { lappend s88_bad "STILL-OVER:${fpx}/$s88_roomn:[string range $s 0 30]" }
+}
+check "S28/8 (b) EVERY sentence the tree can compose fits the REAL entry once `calc::status_fit` has seen it, measured with `font measure` against the widget's own font over a population DERIVED from the namespace -- every `calc::*_msg` builder's own switch patterns, the ruled zero-argument sentences, one provenance line per member of the derived clickable set, and one composed hand-off refusal per kind `calc::wave_in_token` and `calc::wave_show` can build.  Band MT20 can only measure this against a character fallback" \
+    $s88_bad {}
+check "S28/8 (b) ...and the sweep is NOT VACUOUS: the population clears a floor, a NON-EMPTY part of it is over the real room BEFORE fitting, and the builder and clickable sets the population is derived from are both non-empty -- so an empty offender list above cannot be an empty sweep" \
+    [list [expr {[llength $s88_pop] >= 80 ? {atleast80} : "only:[llength $s88_pop]"}] \
+          [expr {$s88_over > 0 ? {someover} : {NONEOVER}}] \
+          [expr {[llength [s88_builders]] >= 4 ? 1 : 0}] \
+          [expr {[llength [s88_clickable]] >= 4 ? 1 : 0}]] \
+    {atleast80 someover 1 1}
+check "S28/8 (c) the character fallback NEVER CLAIMS MORE ROOM THAN THERE IS, which is what stops `calc::status_chars` being a number nothing re-checks: no member of that population short enough for the fallback overflows the real entry, measured in pixels in this run.  Raising the fallback reddens this row on a real sentence; the count of members that are short enough rides along so the implication cannot hold over an empty set" \
+    [list $s88_unsafe [expr {$s88_short >= 40 ? {atleast40} : "only:$s88_short"}]] \
+    {{} atleast40}
+# --- the invariant the elision introduces, stated once and asserted here -----
+# The WIDGET holds the fitted text; the RETURN VALUE and the HISTORY hold the
+# sentence as composed.  That is what keeps every caller that does
+# `return [calc::status ...]` -- and every row comparing one of those returns by
+# identity, `calc::browse_inert`'s S27 row among them -- reading the full string,
+# while R509's history combobox can still re-display the whole of it.
+set s88_long {}
+foreach s $s88_pop {
+    if {[string match NOPROC:* $s] || [string match ERR:* $s]} continue
+    if {[string length $s] > [string length $s88_long]} { set s88_long $s }
+}
+pcall calc::status {}
+set s88_hist0 [pcall calc::status_history]
+set s88_ret [pcall calc::status $s88_long]
+set s88_shown [pcall .calc.status.msg get]
+set s88_hist1 [pcall calc::status_history]
+check "S28/8 the elision's own invariant, which no row stated before: the WIDGET holds `calc::status_fit` of the sentence -- shorter, carrying the marker, still opening on its own first words -- while the RETURN VALUE and the HISTORY's newest entry hold the sentence AS COMPOSED.  That is what keeps a caller's `return [calc::status ...]` and R509's re-display reading the whole text, and it is the leg a shadowed `status_fit` reddens.  The history leg is a PREPEND and a CAP rather than a length delta, because R509's 50-entry cap is already reached by this point in the file and a `+1` leg was RED on correct code for that reason" \
+    [list [expr {$s88_ret eq $s88_long ? {return-whole} : {RETURN-CUT}}] \
+          [expr {[lindex $s88_hist1 0] eq $s88_long ? {history-whole} : {HISTORY-CUT}}] \
+          [expr {$s88_shown eq [pcall calc::status_fit $s88_long] ? {widget-fitted} : {WIDGET-RAW}}] \
+          [expr {[string length $s88_shown] < [string length $s88_long] ? {shorter} : {NOTSHORTER}}] \
+          [expr {[string first [pcall calc::status_marker] $s88_shown] >= 0 ? {marked} : {UNMARKED}}] \
+          [expr {[string first [string range $s88_long 0 11] $s88_shown] == 0 ? {opens} : {LOSTHEAD}}] \
+          [expr {[lindex $s88_hist1 1] eq [lindex $s88_hist0 0] ? {prepended} : {NOTPREPENDED}}] \
+          [expr {[llength $s88_hist1] <= [pcall set ::calc::histmax] ? {capped} : {UNCAPPED}}]] \
+    {return-whole history-whole widget-fitted shorter marked opens prepended capped}
+# ...and R421's ANSWER really arriving whole in the widget, which is the finding
+# this band exists for: the line the user reads must END on the complete number.
+set s88_num 4999.999999999956
+set s88_cut {}
+foreach nm [s88_clickable] {
+    set s [s88_prov $nm $s88_num]
+    if {[string match NOPROC:* $s] || [string match ERR:* $s]} { lappend s88_cut "$nm:$s" ; continue }
+    pcall calc::status $s
+    set shown [pcall .calc.status.msg get]
+    if {![string match "* = $s88_num" $shown]} { lappend s88_cut "$nm:WIDGET-CUT" }
+    if {[s88_px $s88_f $shown] > $s88_roomn} { lappend s88_cut "$nm:OVER" }
+}
+check "S28/8 R421 the measured ANSWER reaches the REAL entry whole, for every member of the derived clickable set: the text the widget holds ends on the complete number and measures inside the room.  Measured on the shipped window before this stage, `frequency` rendered `= 49` for that same answer -- a hundredfold-wrong figure with no marker and nothing to say it was a prefix, which is the finding this band closes" \
+    $s88_cut {}
+pcall calc::status {}
+catch {rename ::s88_arms {}}
+catch {rename ::s88_builders {}}
+catch {rename ::s88_clickable {}}
+catch {rename ::s88_prov {}}
+catch {rename ::s88_population {}}
+catch {rename ::s88_px {}}
 }
 
 # --- S28/D  the grab is LOCAL, structurally as well as behaviourally ---------
@@ -5012,7 +5252,7 @@ foreach nm [ad_verbs] {
 check "S28/E R508 with no window a route-T click is a silent no-op that RETURNS -- it opens no dialog, enters no `tkwait` and raises nothing.  DECLARED PARTLY VACUOUS on the red run, where `fn_click` reaches `calc::has_win` through `calc::inert` anyway: it is a fence for the implementation, and `full_audit.sh` is the reader it protects, since it globs all three Calculator suites and none is in `nogui_tests`" \
     [list [llength [ad_verbs]] $ad_closedbad [expr {[winfo exists .calc.arg] ? 1 : 0}] \
           [grab current]] \
-    {4 {} 0 {}}
+    {9 {} 0 {}}
 }
 
 # --- S28/Z  HYGIENE ----------------------------------------------------------

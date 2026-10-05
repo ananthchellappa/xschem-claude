@@ -543,11 +543,50 @@ proc check {name got exp} {
 }
 # any command, with a raise turned into a legible `ERR:` sentinel so the ROW
 # fails instead of the band dying.
-proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
+# WARN THE SENTINEL IS MADE PARSEABLE AS A TCL LIST, AND THAT IS NOT COSMETIC.
+# Tcl's list parser raises on an unmatched open brace or double quote that
+# BEGINS A WORD -- the two characters, derived by sweeping every printable
+# ASCII code rather than assumed -- and a product raise message carries either.
+# So the bare `ERR:$r` this replaces could not be handed to `llength`,
+# `lindex`, `foreach`, `lsort` or `dict keys`, and every site that did turned a
+# product raise into ONE `group ... ABORTED` line that DELETED the whole band
+# from the verdict instead of reddening one row.  That is strictly worse than a
+# failure: the rows vanish, the count moves, and the next reader is sent to
+# debug the product.  CLAUDE.md records the live incident this is not
+# hypothetical about -- a comment between two `switch` patterns made
+# `calc::fn_argspec` raise out of EVERY arm, 18 rows at once.
+#
+# The message is kept VERBATIM whenever it already parses, which is the common
+# case, so a failing row's detail is unchanged except where it could not have
+# been printed at all.  The mapped form is CHECKED rather than trusted, and a
+# message that still will not parse is reduced to a shape that must.
+proc pcall {args} {
+    if {[catch {uplevel 1 $args} r]} { return "ERR:[pcall_listable $r]" }
+    return $r
+}
+proc pcall_listable {s} {
+    if {![catch {llength $s}]} { return $s }
+    set m [string map [list \{ ( \} ) \" '] $s]
+    if {![catch {llength $m}]} { return $m }
+    return [regsub -all {[^A-Za-z0-9 ._:,/()=+*<>?!-]} $s ?]
+}
+# WARN A BAND THAT ABORTS DELETES ITS REMAINING ROWS FROM THE VERDICT, WHICH IS
+# STRICTLY WORSE THAN FAILING, so the name is RECORDED and not only printed.
+# One `FAIL: group ... ABORTED` line among dozens of row failures is easy to
+# read past, and the rows that never ran are invisible -- the check total simply
+# comes in short, which nothing compares against anything.  Measured 2026-10-05
+# in the sibling measurement suite: a product sabotage took MOST of one band's
+# rows out and the verdict showed ONE extra failure.  ⚠ The counts that used to
+# sit in this sentence are gone: they were figures over that file's band sizes,
+# nothing re-measured them, and the next stage to add a row there made them wrong.  `::abortnames` is asserted
+# EMPTY by the band-abort guard at the foot of this file, which names every band
+# that vanished instead of leaving the shortfall to be noticed.
+set ::abortnames {}
 proc group {name script} {
     if {[catch {uplevel 1 $script} e]} {
         puts "FAIL: group $name ABORTED -> $e : FAIL"
         puts $::errorInfo
+        lappend ::abortnames $name
         incr ::fail
     }
 }
@@ -645,6 +684,16 @@ proc wd_key {a k} {
     if {![dict exists $a $k]} { return "NOKEY-$k" }
     return [dict get $a $k]
 }
+# ...and one key REPLACED, which is a dict operation on an answer and raises on
+# a sentinel exactly as `dict get` does.  Band WD12 builds a deliberately
+# unregistered database out of a real answer this way, and the bare spelling
+# deleted that band from the verdict under any sabotage that made the producer
+# raise.
+proc wd_replace {a k v} {
+    set d [wd_disp $a]
+    if {$d ne {refused} && $d ne {measured}} { return $d }
+    return [dict replace $a $k $v]
+}
 
 # ⚠⚠ `llength` AND `lindex` RAISE ON A STRING WHOSE FIRST CHARACTER AFTER A
 # SPACE IS AN UNMATCHED OPEN BRACE.  A verb whose refusal sentence, or whose
@@ -721,10 +770,17 @@ proc wd_islist {a exps {tol {}}} {
 proc wd_listcmp {v exps tol} {
     set n [wd_len $v]
     if {![string is integer -strict $n]} { return $n }
-    if {$n != [llength $exps]} { return "count=$n want=[llength $exps] got={$v}" }
+    # ⚠ THE EXPECTED LIST IS MEASURED THROUGH `wd_len` TOO, and that is not
+    # symmetry for its own sake: band WD13 passes a PRODUCT ANSWER as `exps`
+    # (`cross`'s own crossing list), so a verb that raised made the comparand a
+    # sentinel and the bare `llength` that used to be here took the whole band
+    # out through `group`'s catch instead of failing one row.
+    set m [wd_len $exps]
+    if {![string is integer -strict $m]} { return "EXPS:$m" }
+    if {$n != $m} { return "count=$n want=$m got={$v}" }
     set bad {}
     for {set i 0} {$i < $n} {incr i} {
-        set r [near [wd_at $v $i] [lindex $exps $i] $tol]
+        set r [near [wd_at $v $i] [wd_at $exps $i] $tol]
         if {$r ne {ok}} { lappend bad "\[$i\]$r" }
     }
     if {[llength $bad]} { return [join $bad { }] }
@@ -2435,7 +2491,7 @@ group WD9 {
     # driven and its two legs are INVERTED: `measured`, and an identity against
     # `listdefer` of 0.  A re-deferral would redden here, which is a claim
     # nothing else in the file makes.
-    check "WD9 EVERY caller STILL WAITING answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0 and delay's nth 0 on a side -- while the two callers stage J has wired, dutyCycle_scalar's DEFAULT CYCLE and riseTime's nth 0, MEASURE and carry none of it: so splitting the sentence per caller reddens here with a name, rewording it costs nothing anywhere, and a caller sliding back into the deferral reddens here too.  ⚠ riseTime is driven at BOTH LAYERS, the verb and the new surface wrapper a click actually reaches, because calc::arg_surface redirects silently the moment that wrapper exists and a row driving only the raw proc would stop measuring what the user gets" \
+    check "WD9 EVERY caller STILL WAITING answers THAT SAME SENTENCE BY IDENTITY -- cross_scalar's nth 0 and delay's nth 0 on a side -- while every caller stage J has wired, dutyCycle_scalar's DEFAULT CYCLE, riseTime's and slewRate's nth 0 and frequency_scalar's DEFAULT CYCLE, MEASURES and carries none of it: so splitting the sentence per caller reddens here with a name, rewording it costs nothing anywhere, and a caller sliding back into the deferral reddens here too.  ⚠ riseTime, slewRate and frequency are each driven at BOTH LAYERS, the verb and the surface wrapper a click actually reaches, because calc::arg_surface redirects silently the moment that wrapper exists and a row driving only the raw proc would stop measuring what the user gets" \
         [list [wd_disp [set a [wd_call cross_scalar {v(sq)} 0.5 0 rising]]] \
               [string equal [wd_msg $a] $s] \
               [wd_disp [set b [wd_call delay {v(sq)} 0.5 rising 0 {v(sq)} 0.5 falling 1]]] \
@@ -2445,16 +2501,31 @@ group WD9 {
               [wd_disp [set d [wd_call riseTime {v(sq)} 0.0 1.0 10 90 0]]] \
               [string equal [wd_msg $d] $s] \
               [wd_disp [set e [wd_call riseTime_scalar {v(sq)} 0.0 1.0 10 90 0]]] \
-              [string equal [wd_msg $e] $s]] \
-        {refused 1 refused 1 measured 0 measured 0 measured 0}
+              [string equal [wd_msg $e] $s] \
+              [wd_disp [set g [wd_call slewRate {v(sq)} 0.0 1.0 10 90 0 rising 0]]] \
+              [string equal [wd_msg $g] $s] \
+              [wd_disp [set h [wd_call slewRate_scalar {v(sq)} 0.0 1.0 10 90 0 rising 0]]] \
+              [string equal [wd_msg $h] $s] \
+              [wd_disp [set i [wd_call frequency {v(sq)} 0.5 rising 0 0 start]]] \
+              [string equal [wd_msg $i] $s] \
+              [wd_disp [set j [wd_call frequency_scalar {v(sq)} 0.5 rising 0 0 start]]] \
+              [string equal [wd_msg $j] $s]] \
+        [list refused 1 refused 1 measured 0 measured 0 measured 0 measured 0 \
+              measured 0 measured 0 measured 0]
     pcall wd_call wave_dest_drop $c
     pcall wd_call wave_dest_drop $e
+    pcall wd_call wave_dest_drop $h
+    pcall wd_call wave_dest_drop $j
     check "WD9 ...and pairwise along the whole chain of the callers still waiting, so the row cannot be satisfied by callers that each match cross_msg while differing from each other, which is impossible by construction and is asserted anyway because that is what identity means -- plus the negative half for EACH wired caller, whose sentence must equal NEITHER cross_msg's nor a still-waiting sibling's.  ⚠ The chain is now TWO callers long, so the positive leg is one comparison: the non-vacuity leg beside it asserts that sentence is non-empty, which is what stops the chain reading as green over two callers that have both fallen silent" \
         [list [string equal [wd_msg $a] [wd_msg $b]] [wd_longer [wd_msg $b] 0] \
               [string equal [wd_msg $c] $s] [string equal [wd_msg $c] [wd_msg $a]] \
               [string equal [wd_msg $d] $s] [string equal [wd_msg $d] [wd_msg $a]] \
-              [string equal [wd_msg $e] $s] [string equal [wd_msg $e] [wd_msg $a]]] \
-        {1 long 0 0 0 0 0 0}
+              [string equal [wd_msg $e] $s] [string equal [wd_msg $e] [wd_msg $a]] \
+              [string equal [wd_msg $g] $s] [string equal [wd_msg $g] [wd_msg $a]] \
+              [string equal [wd_msg $h] $s] [string equal [wd_msg $h] [wd_msg $a]] \
+              [string equal [wd_msg $i] $s] [string equal [wd_msg $i] [wd_msg $a]] \
+              [string equal [wd_msg $j] $s] [string equal [wd_msg $j] [wd_msg $a]]] \
+        {1 long 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
     # ⚠ THE CALLER SET IS DERIVED FROM THE NAMESPACE, NOT LISTED, because a hand-kept
     # list is the same defect one level up -- AND THE DERIVATION HAS NOW EARNED ITS
     # KEEP, which is recorded because the previous revision of this comment predicted
@@ -2495,11 +2566,13 @@ group WD9 {
         }
     }
     set wd_bothsides [lsort -unique [concat $wd_defcallers $wd_wiredcallers]]
-    check "WD9 the callers that defer behind that sentence and the callers that now ANSWER a destination PARTITION the four this derivation has always found -- both sets taken over the namespace in one walk and neither listed here, with the non-vacuity floor over their UNION so that wiring a caller MOVES it from one set to the other rather than lowering a floor: a FIFTH caller of either kind reddens here naming itself, and so does a caller that fell out of both" \
+    check "WD9 the callers that defer behind that sentence and the callers that now ANSWER a destination PARTITION the population this derivation finds -- both sets taken over the namespace in one walk, each asserted EXACTLY in the expectation rather than counted in this name, with the non-vacuity floor over their UNION so that wiring a caller MOVES it from one set to the other rather than lowering a floor: a NEW caller of either kind reddens here naming itself, and so does a caller that fell out of both.  ⚠ This name carried the union's SIZE until the union grew past it -- the figure said four while the expectation beside it already enumerated six -- so no size is stated here and the two lists are the evidence" \
         [list $wd_defcallers $wd_wiredcallers $wd_bothsides \
               [wd_atleast [llength $wd_bothsides] 4]] \
-        [list {cross_scalar delay} {dutyCycle_scalar riseTime_scalar} \
-              {cross_scalar delay dutyCycle_scalar riseTime_scalar} atleast]
+        [list {cross_scalar delay} \
+              {dutyCycle_scalar frequency_scalar riseTime_scalar slewRate_scalar} \
+              [list cross_scalar delay dutyCycle_scalar frequency_scalar \
+                    riseTime_scalar slewRate_scalar] atleast]
     check "WD9 R402 the band left no __calc_tmp* and no __wd_* behind" \
         [list [wd_leaked] [wd_probeleft]] {{} {}}
 }
@@ -3009,7 +3082,7 @@ group WD12 {
 
     # --- THE REFUSAL PATHS GIVE THE ARMS BACK TOO -------------------------
     catch {unset ::WD_SPY}
-    set wdbad [wd_call wave_show $wdtok [dict replace $wdB db __wd_no_such_db]]
+    set wdbad [wd_call wave_show $wdtok [wd_replace $wdB db __wd_no_such_db]]
     set wdbadleft [wd_armleft $wdtok]
     pcall wd_spy_remove
     pcall wd_spy_install 1
@@ -3162,7 +3235,7 @@ group WD13 {
         {same measured named twonames sized ok ok nonneg 0}
     check "WD13 ...and the X the destination holds is calc::cross's OWN low-crossing list, read back at the same supplied-swing threshold the verb uses -- so a producer that put the HIGH crossings, the midpoints or the rise times themselves on the X axis reddens here naming every offending element, which the derivation leg above cannot distinguish from a wrong interpolation.  Every adjacent Y of the read-back differs by more than WDTOL and the X is strictly increasing over TWO comparisons rather than one" \
         [list [wd_listcmp $apx $rLOWX $WDTOL_TIME] \
-              [wd_sized [llength $rLOWX] [llength $rDY]] \
+              [wd_sized [wd_len $rLOWX] [llength $rDY]] \
               [wd_alldistinct $apy] \
               [wd_alldistinct $apx] \
               [wd_increasing $apx]] \
@@ -3408,6 +3481,24 @@ group WD10 {
 ## passing (issue 1615).
 ##
 ## ⚠ ONLY THE SUCCESS PATH CLAIMS COMPLETION.
+# ---------------------------------------------------------------------------
+# THE BAND-ABORT GUARD.  Last, because it is a claim about every band above it.
+#
+# WARN A SITE THAT INDEXES, SLICES, ITERATES, DIVIDES OR TESTS A PRODUCT ANSWER
+# BARE RAISES INSTEAD OF FAILING, `group`'s catch turns that into one line, and
+# every remaining row of the band is gone from the verdict.  That is what this
+# file's `ERR:` sentinel discipline exists to prevent, and the discipline was
+# measured silently false in several bands of several Calculator suites on
+# 2026-10-05.
+#
+# WARN A COUNT IS NOT ENOUGH AND THE NAMES ARE THE POINT.  A shortfall in the
+# check total is a number nothing compares against anything; a named band is a
+# failure about itself.  Derived from `group`'s own bookkeeping, so a band added
+# tomorrow enlists itself.
+# ---------------------------------------------------------------------------
+check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited" \
+    [list [llength $::abortnames] $::abortnames] {0 {}}
+
 if {$fail == 0} {
     puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"

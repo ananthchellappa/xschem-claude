@@ -457,3 +457,154 @@ Three measured facts bear on changing it:
   else moves.
 
 House style for this surface, already in force elsewhere in it: terse, and acronyms in uppercase.
+
+---
+
+## Stage J's new user-facing text, collected (the standing obligation, discharged)
+
+**Every sentence below is UNRATIFIED** and covered by the open `rule` debt filed against
+`calc::eval_msg`'s family. No row anywhere asserts the words: the rows assert the house SHAPE (a
+capital, a colon-space, a full stop), identity against the builder that composes them, and WIDTH.
+Reword any of them and nothing reddens.
+
+### 1. The four new verbs' refusals — `calc::cross_msg`
+
+**⚠ THE HEADING USED TO CARRY AN ARM COUNT AND THE COUNT IS GONE, DELIBERATELY.** It was a figure a
+command produces over `calc::cross_msg`'s own text, nothing re-measured it, and the stage that added
+the `oshtinystep` row below would have left it wrong. The arm set is DERIVED every run, in three
+places: `MT17/K` asserts `calc::overshoot`'s own `osh*` arms exactly, `MT14/Q` and `WD10` derive the
+whole proc's arm set from its trailing `switch` argument and exercise every member, and `MT20/B`
+drives every sentence in this table through the width ladder. Read those, not a number here.
+
+EVERY arm in the table was measured against the real `.calc.status.msg` on the shipped window, and
+every one now renders whole at realistic argument values. ⚠ No row count is given, for the reason
+the paragraph above gives about the heading: it would be a figure a command produces over this
+table's own text, and the next stage to add an arm would leave it wrong -- the marker in each row is
+its own evidence and the table is its own count. The ones marked **(shortened)** were over the
+entry's width when this stage's crews wrote them, and the clause being cut was the imperative one — *"must both
+be supplied"*, *"the tolerance must be greater than zero"* — so eliding them would have left a
+sentence a user cannot act on. They were shortened for legibility; the fence is structural (§3).
+
+| arm | sentence | |
+|---|---|---|
+| `slewnoswing` | Slew rate: both reference levels must be supplied (low '…', high '…'). | (shortened) |
+| `slewbadref` | Slew rate: a reference level is not a finite number (…). | |
+| `slewbadpct` | Slew rate: a threshold percentage is not a finite number (…). | |
+| `slewbadedge` | Slew rate: the edge must be rising or falling (…). | |
+| `slewthr` | Slew rate: the low threshold must be below the high one (…, …). | (shortened) |
+| `slewnoend` | Slew rate: the … … transition does not reach its second threshold. | (shortened) |
+| `freqcycle` | Frequency: the cycle must be a whole number (…). | |
+| `freqedge` | Frequency: the edge must be rising or falling (…). | (shortened) |
+| `freqxaxis` | Frequency: the X axis must be start, number or mid (…). | |
+| `freqspan` | Frequency: two crossings of that level fall at the same X (…). | (shortened) |
+| `noperiod` | Frequency: that level opens no complete period in this sweep (…). | |
+| `noperiodat` | Frequency: there is no … complete period at that level in this sweep. | |
+| `oshnoswing` | Overshoot: both reference values must be supplied (initial '…', final '…'). | (shortened) |
+| `oshbadref` | Overshoot: a reference value is not a finite number (…). | |
+| `oshzeroswing` | Overshoot: the initial and final values are equal, so there is no step (…). | (shortened) |
+| `oshnoextremum` | Overshoot: no sample of that expression is a finite number in this dataset. | |
+| `oshtinystep` | Overshoot: the step from … to … is too small for that excursion to be a percentage of it. | (shortened) |
+| `noband` | Settling time: the band needs a final value and a tolerance (final '…', tolerance '…'). | (shortened) |
+| `nostart` | Settling time: the start reference must be supplied. | (shortened) |
+| `badband` | Settling time: the final value or the tolerance is not a finite number (…). | |
+| `badstart` | Settling time: the start reference is not a finite number (…). | |
+| `zeroband` | Settling time: the tolerance must be greater than zero (…). | (shortened) |
+| `nocross` | Settling time: that expression never crosses either edge of the band. | (shortened) |
+| `nosettle` | Settling time: that expression leaves the band and does not come back in this sweep. | |
+| `presettled` | Settling time: that expression had settled at …, before the start …. | (shortened) |
+
+⚠ **The shortening dropped a REASON from several of them**, and that is the cost to weigh. `noband`
+used to explain that the band is the final value plus and minus the tolerance; `freqedge` used to
+explain that a period runs edge to edge. Both facts are in the spec and in the dialog's own field
+labels, and neither survived the entry's width, so the choice was between a short sentence that
+fits and a long one that arrives elided. **If the user wants the reasons back, the answer is not a
+longer sentence — it is a second surface (a tooltip or the help line) that has room for one.**
+
+### 2. One new sentence — `calc::arg_msg destwhere`
+
+> `<verb>`'s wave is in `<destination>`.
+
+It exists because of §3's reordering: when a measured WAVE cannot be handed to the viewer, the
+sentence now LEADS with the refusal, and this is the tail that still says where the wave went.
+Short enough to survive the elision -- a claim row `MT20/B` re-measures through the width ladder
+every run, rather than a character count stated here, which would be a figure for one instantiation
+of a template with two placeholders in it.
+
+### 3. The status line now ELIDES, and says so
+
+`.calc.status.msg` is an `Entry` with a finite width and no way of saying so. Before this stage a
+sentence wider than it simply stopped: no ellipsis, no scrollbar, nothing to say there was more.
+Now `calc::status` writes `calc::status_fit` of its message — **elided from the MIDDLE, with `...`
+where text was dropped** — while the return value and R509's history keep the sentence as composed,
+so the dropdown beside the field still reveals all of it.
+
+What a user sees changes in three places, all for the better and none of them a free choice:
+
+* **A refusal no longer dies mid-word.** It arrives with its head, its `...`, and its `(<detail>)`
+  tail — and that detail is a token the user typed or an error the engine produced, so NO wording
+  could ever have bounded it.
+* **The measured ANSWER is never what gets dropped** (§4).
+* **A hand-off failure is visible at all** (§5).
+
+### 4. ⚖ THE ONE QUESTION THAT IS THE USER'S: value-first or value-last?
+
+**R421 part 2 ratified value-LAST** — `riseTime(v(out), 0.1, 0.9) = <number>`. Measured on the
+shipped window, that is where a wrong number came from: `.calc.status.msg` is 613 px wide in
+`TkTextFont`, `frequency`'s provenance line is wider, and the entry rendered it as far as
+
+> `frequency(v(sq), level=0.5, edge=rising, ...` **`= 49`**
+
+for an answer of **4999.999999999956**. Readable, plausible, and a hundredfold wrong. The majority
+of the clickable verbs overflowed, the ones that fitted being those with the shortest argument
+lists. ⚠ No count is given here, and that is deliberate: the clickable set is **derived** from the
+catalogue by row `MT11` and moves with every verb added, so a figure written into this paragraph
+would be stale the next time one lands. What is re-measured every run is the shape — row `MT20/B`
+asserts that a **non-empty** subset is over budget *before* fitting and that **every** sentence the
+tree can compose fits *after* it, and row `S28/8` asserts the measured answer reaches the real entry
+whole for every member of the derived clickable set.
+
+**What was done without a ruling:** `calc::prov_fit` elides the ARGUMENT LIST, inside the
+parentheses, so the line always ends on the whole value and the order is untouched. The user has
+just typed those arguments into the dialog, so they are the one part of the line they can already
+recover.
+
+**The ruling, for the driver to put to the user:** putting the value FIRST —
+`= 4999.999999999956 — frequency(v(sq), level=0.5, …)` — would make truncation harmless for every
+present and future verb, with no eliding needed at all on most of them. It is strictly safer and it
+generalises. It also contradicts R421 part 2, which the user ruled, and it reads less like a
+sentence. **One question: should the measured value come first on the status line, so that running
+out of room can only ever cost the explanation and never the answer?**
+
+### 5. The hand-off failure now comes FIRST
+
+When a measured wave could not be handed to the viewer, `calc::fn_measure` used to append the
+refusal to the success sentence:
+
+> Measured wave: slewRate went to __calc_dest7 instead of the buffer. Destination: no waveform
+> viewer holds this result, so the measured wave was left where it is.
+
+Over the entry's room for EVERY hand-off failure kind — which is not a figure stated here but the
+`alloverraw` leg of row `MT20/F`, re-derived every run over the kind set `calc::wave_in_token` and
+`calc::wave_show` themselves name. So the half that says THE WAVE WAS NOT DRAWN rendered **not at
+all**, and the user was told their wave had gone somewhere and then went looking for a trace nobody
+had plotted. It now reads, fitted:
+
+> Destination: no waveform viewer holds this result, `...`lewRate's wave is in __calc_dest7.
+
+The refusal's own wording is carried through byte-for-byte (it belongs to `calc::cross_msg`, so one
+ruling on how the Calculator talks about a destination lands in one place); what changed is the
+ORDER and the locator tail. The SUCCESS sentence is unchanged.
+
+### 6. ⚖ A SECOND, SMALLER QUESTION — the family is now inconsistent
+
+These SHIPPED refusals are still as long as the ones that were shortened, and the first three are
+`riseTime`'s own twins of `slewRate`'s: `noswing`, `zeroswing`, `listdefer`, `stale`, `destname`,
+`destnoslot`, `destnoview`. ⚠ They are enumerated rather than counted, here and below, because a
+count of either group is a figure a command produces over the tree and nothing re-measures it; the
+list above is its own evidence. They were left alone deliberately — `listdefer` is compared by
+IDENTITY at row sites in two suites, so rewording it is a mechanical change with a wide blast
+radius, and rewording shipped text that a user may already have learned is not an engineering
+call. So `riseTime` now explains why both reference levels are needed and `slewRate`
+does not, for the same requirement. **Second question, after the first is settled: should the
+shipped refusals be shortened to match?**
+

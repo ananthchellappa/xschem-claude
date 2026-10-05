@@ -527,10 +527,18 @@ proc results::_label {path type} {
 
 # ---------------------------------------------------------------------------
 # R802 -- THE CHANNEL IS CHOSEN BY HOST, AND THERE IS NO OTHER CHANNEL.
-# ASE-L -> ase::echo (src/ase.tcl:138); the viewer sidebar ->
-# wviewer::browser_status (src/wave_viewer.tcl:10538); the Calculator ->
-# calc::status (src/calculator.tcl:637). NEVER `puts`, NEVER the status bar
-# directly -- the house rule.
+# ASE-L -> ase::echo in src/ase.tcl; the viewer sidebar ->
+# wviewer::browser_status in src/wave_viewer.tcl; the Calculator -> calc::status
+# in src/calculator.tcl.  NEVER `puts`, NEVER the status bar directly -- the
+# house rule.
+#
+# ⚠ ALL THREE ARE CITED BY SYMBOL, which is the house rule and not a style
+# choice -- and this sentence is why the rule is worth restating at the site.
+# It carried a `file:line` for each channel; no instrument in this tree
+# re-checks a line number; and the revision that replaced ONE of them with a
+# symbol, giving "line numbers rot" as its reason, left the other two stale in
+# the same breath.  A symbol is checkable by `grep -n 'proc <name>'`, so an
+# instrument for it can exist; a line number is only ever checkable by hand.
 #
 # R802a -- CREW RULING (item 4). THE DEFAULT IS DERIVED FROM WHAT THE CALLER
 # GAVE, and "no channel" is a legitimate answer. `opts host` names it outright;

@@ -577,12 +577,12 @@ opcode, **✘** = out of scope v1.
 | `peak` | wave | peak locations/values | T |
 | `histo` | wave | histogram | T |
 | `riseTime` | scalar/wave | low%→high% transition time (one per edge for `nth` 0) | T (on `cross`) |
-| `slewRate` | scalar | dV/dt of a transition | T (on `cross`) |
+| `slewRate` | scalar/wave | dV/dt of a transition (one per transition for `nth` 0) | T (on `cross`) |
 | `delay` | scalar | edge-to-edge between two signals | T (on `cross`) |
 | `settlingTime` | scalar | time to stay inside a band | T (on `cross`) |
-| `overshoot` | scalar | % past final value | T (on `cross`) |
+| `overshoot` | scalar | % past final value | T, **own engine door — NOT on `cross`** (an extremum is not a crossing; see R418c) |
 | `dutyCycle` | scalar/wave | high fraction of a period — one value per cycle (§7.2ab) | T (on `cross`) |
-| `frequency` / `freq` | scalar/wave | frequency from crossings | T (on `cross`) |
+| `frequency` / `freq` | scalar/wave | frequency from crossings (one per period for `cycle` 0) | T (on `cross`) |
 | `period_jitter` / `freq_jitter` | scalar | period/frequency spread | T |
 | `eyeDiagram` | wave | fold over a bit period | T |
 | `bandwidth` | scalar | X where response drops N dB | T |
@@ -607,8 +607,12 @@ opcode, **✘** = out of scope v1.
 | `getAsciiWave` | wave | load a curve from a text file | T (via `xschem raw table_read`) |
 
 **Implementation order is exactly: P, then C, then T-on-`cross`, then the rest.** `cross`
-alone unlocks `riseTime` `slewRate` `delay` `dutyCycle` `frequency` `settlingTime`
-`overshoot` — seven of the most-used verbs from one well-tested primitive.
+alone unlocks `riseTime` `slewRate` `delay` `dutyCycle` `frequency` and `settlingTime` —
+most of the timing verbs a designer reaches for, from one well-tested primitive.
+⚠ **`overshoot` was in that list and does NOT belong in it**, which the implementation
+measured: an extremum is not a crossing, the RPN engine's `max()`/`min()` are two-operand
+elementwise clamps, no running min/max opcode exists and `xschem raw` has no min/max
+accessor — so it owns its own engine door. R418c.
 
 ### 7.2aa `cross` argument semantics, and why a negative selector is NOT the `del()` case
 
@@ -685,6 +689,19 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
   implementation, which is also the spelling `calc::catalogue` carries, because `returns` has a
   closed vocabulary fenced by row S24 of `tests/headless/test_calc_skeleton.tcl` — now
   `scalar` / `wave` / `bool` / `scalar/wave` / **`scalar/list`**, widened by one term for R419.
+  ⚠ **`frequency` / `freq` SHIPPED with that destination wired**, so the set this correction
+  enumerated is now just `calc::delay`: `calc::dutyCycle_scalar`'s default cycle,
+  `calc::riseTime_scalar`'s and `calc::slewRate_scalar`'s `nth` 0 and `calc::frequency_scalar`'s
+  default cycle all answer a registered destination, and band WD9 of
+  `tests/headless/test_calc_wave_dest.tcl` derives both sides of that partition every run. The two catalogue names
+  are **two real procs** that forward every argument, because `calc::arg_surface` resolves a click
+  through `info procs ::calc::<name>_scalar` and a name with no proc of its own composes nothing. Its
+  `cycle` argument is `dutyCycle`'s word for the same thing and **0 means every period**, which
+  dissolves rather than answers the question of which average to take: the mean of the reciprocals and
+  the reciprocal of the mean are different numbers, and `period_jitter` / `freq_jitter` are catalogued
+  separately for the spread. Its `edge` offers **{rising falling} only** — a period runs between two
+  crossings of the same edge, so `either` would answer alternating half-periods — which is a
+  deliberate divergence from `cross`'s own three-member list.
   ⚠ **`riseTime` carries `scalar/wave` as of stage J unit J2**, and this sentence used to say it stayed
   `scalar`: `nth` 0 names one rise time per rising edge, which is a wave with its own X axis, exactly
   R416's shape read across to a transition, while a named occurrence is still one number.  The term was
@@ -698,7 +715,69 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
 - **R418** (driver, from shipped text) `dutyCycle` reports a **fraction**, never a percent, because
   the shipped catalogue help already promises *"Fraction of a period the signal spends high"*.
   Returning `30` against that sentence would make user-visible prose false.
-- ⚠ **All three are PURE DELEGATES on `cross`**, which is a measured decision and not a stylistic
+- **R418b** (driver, from R415 and from this tree's other settling-time surface) `settlingTime`
+  takes **three required fields** — the final value, an **absolute** tolerance in the signal's own
+  units, and a **start reference** — and the answer is the LAST crossing of either band edge, which
+  must be an **entry**, minus that reference. Nothing is inferred from the trace: inferring the final
+  value is exactly the settled-value estimator R415 removed from `riseTime`, and `ase::meas_templates`'
+  `ts` template in `src/ase.tcl` — commissioned by the same user — already asks for the final value and
+  the tolerance as two required real fields and computes `final ± tol`. Two settling times in one tree
+  disagreeing about that would read as a bug. The tolerance is absolute rather than a percentage
+  because "percent" has two live readings, of the final value and of the step, and the second needs a
+  fourth number. It stays `scalar` and has **no `nth`**: *"and stay"* names the last event by
+  definition, so there is no occurrence to select, no list case and no destination.
+  A malformed request is **refused** (a blank or non-finite field, and a tolerance that is not greater
+  than zero — a band of zero width has nothing to stay inside); a well-formed request this sweep has
+  no answer for is an **absence** in R414b's sense, with three kinds: the trace crosses neither band
+  edge, the last crossing is an exit so the trace ran away, and the settling instant precedes the start
+  reference. ⚠ *"Inside the band for the whole sweep"* and *"never reached the band"* are
+  **indistinguishable** from a pure delegate and share one kind, whose sentence names both readings
+  rather than guessing one; telling them apart needs a sample read and therefore an engine door of the
+  verb's own.
+- **R418c** (driver, from R415 and T3, 2026-10-04) `overshoot` answers
+  `100*(extremum − final)/(final − initial)` and takes **two required references plus a dataset**.
+  They are the two **ends of the step** the excursion is a percentage of, so `final − initial` IS
+  the denominator and `sign(final − initial)` IS the direction — a rising step looks for a MAXIMUM
+  and a falling one for a MINIMUM, and in both cases a wave that passes its final value answers a
+  **positive** percent. Hence **no `edge` argument**: an explicit one would be a second and
+  contradictory way to say the same thing, and whichever won would make one of the two reference
+  fields silently dead. **No `nth`**: there is exactly one extremum per (column, dataset,
+  direction), so there is no occurrence to select. It reports a **percent** and not a fraction,
+  because the shipped catalogue help already promises *"Percent by which the wave passes its final
+  value"* — R418's rule applied in the other direction. A wave that **never passes** its final
+  value answers a **negative** percent, never zero and never an absolute value: T3's ruling read
+  across, and the one thing a designer wants when a settling spec fails is how far short it fell.
+  A malformed request is **refused** (a blank or non-finite reference, and an equal pair — a zero
+  step leaves nothing for the excursion to be a percentage of); the single **absence** is a dataset
+  in which no sample of the expression is a finite number.
+  ⚠ **AND A FOURTH REFUSAL, WHICH IS R607 ARRIVING HERE RATHER THAN A NEW RULING.** This is the one
+  verb in the family that divides by a quantity the user supplies outright, so every reference can
+  be perfectly finite and the ANSWER still not be: measured, `overshoot v(lp) 0 5e-324` answered
+  `ok 1 value Inf`, which R607 forbids and which `calc::fn_sink` caught a layer later as `badvalue`
+  — a shrug where a true statement about the request was available, which is word for word what the
+  equal-pair refusal exists to prevent, arriving by the one route the `== 0.0` test cannot see.
+  **The line is drawn at REPRESENTABILITY and nowhere else**: the step at which the quotient stops
+  being a number depends on the excursion this database happens to have and is
+  `|100*(extremum − final)| / DBL_MAX`, so the test is the computed answer's own finiteness through
+  `calc::eval_finite` and there is no threshold constant anywhere. A **big finite** percent is
+  therefore KEPT — `0` to `1e-300` really is passed by `9.99e+301` percent and a one-ULP step at 1.0
+  really is undershot by `-3.99e+14` percent — because refusing a legitimately computable number is
+  the defect this rule already rules against twice above. Bands MT21/C and MT21/D of
+  `tests/headless/test_calc_measure.tcl` assert both sides of that line from a derivation, MT21/D by
+  re-deriving the boundary from the double format and from the column's own extremum and requiring
+  the verb to flip a decade either side of it, which an invented constant fails.
+  ⚠ **The sweep is REQUIRED although the answer never uses it**, which is a disposition and not a
+  necessity: this quantity has no X in it and would compute on the operating-point plot. It refuses
+  there because an overshoot is a statement about a TRANSITION, because a user clicking four verbs
+  of this family on one database must not get three refusals and one number, and because a refusal
+  can be relaxed later while a shipped number cannot be withdrawn. Band MT17/L of
+  `tests/headless/test_calc_measure.tcl` carries the fact that an answer really was available, so
+  the choice is visible.
+  ⚠ **The extremum is over the WHOLE requested dataset**, because R304's Clip is unwired: on a
+  sweep with several transitions the answer is the worst excursion in the run, and a
+  pre-transition glitch above the final value is reported as overshoot. Declared, not guessed at.
+- ⚠ **`riseTime`, `delay`, `dutyCycle`, `slewRate`, `frequency` and `settlingTime` are PURE
+  DELEGATES on `cross`**, which is a measured decision and not a stylistic
   one. The scan costs **27×** a column read (296 ms against 10.3 ms on 100 000 points), so an
   evaluate-once helper saves ~20 ms of ~300 — and six of ten candidate sharing shapes **redden row
   SR5** of `test_calc_scratch_reuse`, whose trap is a verb reading a named vector it did not create.
@@ -879,6 +958,32 @@ below are the ones a caller cannot answer for itself and so must not have to.
   **nowhere outside `receipts/01-phase1a*.md`** — a dated record, left unedited. `a` rather
   than a fresh number because it is a rendering clause of R509's history, which is what it
   was always doing in the `R507–R510` run those receipts name.
+
+- **R509b** `.calc.status.msg` has a **finite width and no way of saying so**, and a sentence
+  wider than it used to stop mid-token: no ellipsis, no scrollbar, `xview` at 0.0, nothing to
+  say there was more. `calc::status` therefore writes `calc::status_fit` of its message —
+  **elided from the MIDDLE, with `...` where text was dropped** — while the **return value and
+  the history hold the sentence as composed**, so R509's dropdown still reveals all of it and a
+  caller's `return [calc::status …]` still carries the whole string.
+
+  Middle elision rather than tail truncation, because the tail is where the `(<detail>)` clause
+  sits that says *which* value was rejected, and the head is where the instruction is. The room
+  is read off `winfo width` every time, so a wider window elides less.
+
+  ⚠ **R404/R421's PROVENANCE LINE IS FITTED SEPARATELY, by `calc::prov_fit`, and the ANSWER IS
+  NEVER WHAT GETS DROPPED.** R421 part 2 puts the measured value last, so on the shipped window
+  a verb with enough arguments pushed the answer off the end: `frequency` rendered `= 49` for an
+  answer of `4999.999999999956` — a readable, plausible, hundredfold-wrong figure. What is elided
+  is the **argument list, inside the parentheses**, which is the part the user has just typed into
+  the dialog and can recover; the verb's name and the value always survive.
+
+  ⚠ **UNRATIFIED, AND ONE QUESTION IS THE USER'S.** Putting the value FIRST would make truncation
+  harmless for every present and future verb and is strictly safer, but R421 part 2 ratified
+  value-last. That ordering question is recorded in
+  `doc/claude/calculator_batch/CLICK_CONTRACT.md`'s ratification section with the measurement
+  behind it; the elision itself is engineering. Fenced by band MT20 of
+  `tests/headless/test_calc_measure.tcl` (the algorithm, counted arm) and band S28/8 of
+  `tests/headless/test_calc_skeleton.tcl` (the real widget, display arm).
 
 ### 8.2 RPN mode (`calc::notation` = `rpn`, the default)
 

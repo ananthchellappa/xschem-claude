@@ -135,7 +135,33 @@ proc check_expr {name cond} {
     if {[catch {uplevel 1 [list expr $cond]} v]} { set v "ERR:$v" }
     check $name [expr {$v eq {1} ? 1 : 0}] 1
 }
-proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
+# WARN THE SENTINEL IS MADE PARSEABLE AS A TCL LIST, AND THAT IS NOT COSMETIC.
+# Tcl's list parser raises on an unmatched open brace or double quote that
+# BEGINS A WORD -- the two characters, derived by sweeping every printable
+# ASCII code rather than assumed -- and a product raise message carries either.
+# So the bare `ERR:$r` this replaces could not be handed to `llength`,
+# `lindex`, `foreach`, `lsort` or `dict keys`, and every site that did turned a
+# product raise into ONE `group ... ABORTED` line that DELETED the whole band
+# from the verdict instead of reddening one row.  That is strictly worse than a
+# failure: the rows vanish, the count moves, and the next reader is sent to
+# debug the product.  CLAUDE.md records the live incident this is not
+# hypothetical about -- a comment between two `switch` patterns made
+# `calc::fn_argspec` raise out of EVERY arm, 18 rows at once.
+#
+# The message is kept VERBATIM whenever it already parses, which is the common
+# case, so a failing row's detail is unchanged except where it could not have
+# been printed at all.  The mapped form is CHECKED rather than trusted, and a
+# message that still will not parse is reduced to a shape that must.
+proc pcall {args} {
+    if {[catch {uplevel 1 $args} r]} { return "ERR:[pcall_listable $r]" }
+    return $r
+}
+proc pcall_listable {s} {
+    if {![catch {llength $s}]} { return $s }
+    set m [string map [list \{ ( \} ) \" '] $s]
+    if {![catch {llength $m}]} { return $m }
+    return [regsub -all {[^A-Za-z0-9 ._:,/()=+*<>?!-]} $s ?]
+}
 
 # ⚠ CODE, NOT PROSE.  A row that asserts what a proc DOES must read what it
 # executes, or a comment becomes a counterexample and a registered T1 fence goes
@@ -171,10 +197,23 @@ proc ce_code {txt} {
     }
     return [join $out \n]
 }
+# WARN A BAND THAT ABORTS DELETES ITS REMAINING ROWS FROM THE VERDICT, WHICH IS
+# STRICTLY WORSE THAN FAILING, so the name is RECORDED and not only printed.
+# One `FAIL: group ... ABORTED` line among dozens of row failures is easy to
+# read past, and the rows that never ran are invisible -- the check total simply
+# comes in short, which nothing compares against anything.  Measured 2026-10-05
+# in the sibling measurement suite: a product sabotage took MOST of one band's
+# rows out and the verdict showed ONE extra failure.  ⚠ The counts that used to
+# sit in this sentence are gone: they were figures over that file's band sizes,
+# nothing re-measured them, and the next stage to add a row there made them wrong.  `::abortnames` is asserted
+# EMPTY by the band-abort guard at the foot of this file, which names every band
+# that vanished instead of leaving the shortfall to be noticed.
+set ::abortnames {}
 proc group {name script} {
     if {[catch {uplevel 1 $script} e]} {
         puts "FAIL: group $name ABORTED -> $e : FAIL"
         puts $::errorInfo
+        lappend ::abortnames $name
         incr ::fail
     }
 }
@@ -1367,6 +1406,141 @@ group CE10 {
         check "CE10 eval_finite ACCEPTS the finite spelling {$s}, so it is not 'refuse anything unusual'" \
             [pcall calc::eval_finite $s] 1
     }
+    # ---------------------------------------------------------------------
+    # ⚠⚠ THE SPELLING OF A NUMBER AND THE NUMBER ITSELF ARE TWO DIFFERENT
+    # QUESTIONS, AND THE ROWS ABOVE ONLY ASK THE FIRST.  Every entry in the
+    # two tables above is a SPELLING: the refusals are the spellings `%g`
+    # emits for a value that is already non-finite, and the acceptances are
+    # spellings of values that are already finite.  Neither table contains a
+    # DECIMAL LITERAL THAT OVERFLOWS -- a perfectly ordinary mantissa and an
+    # exponent past the double range -- which `strtod` and Tcl's `double()`
+    # both turn into an infinity.  A predicate that is a regexp over the
+    # spelling answers YES to those and the arithmetic downstream then
+    # computes on an infinity, which is the one outcome this whole band
+    # exists to prevent.
+    #
+    # THE POPULATION IS DERIVED FROM THE DOUBLE FORMAT RATHER THAN LISTED.
+    # The overflowing members are built from an exponent sequence, and the
+    # last one is the `%.16g` SPELLING OF THE LARGEST FINITE DOUBLE, itself
+    # derived from the format's own parameters -- which matters because
+    # `%.16g` is the precision `xschem raw values` writes with, so that
+    # spelling is one the BULK DOOR can really emit, and it reads back as an
+    # infinity because sixteen significant digits round the largest double
+    # UP past itself.  `%.8g`, the `dtoa()` precision `xschem raw value`
+    # writes with, rounds the same value DOWN and stays finite; both are
+    # measured here rather than argued.
+    #
+    # ⚠ `ce_spell` IS THE SPELLING LEG ALONE, ON PURPOSE.  It is not a second
+    # opinion about finiteness -- it is the OLD predicate, kept so the row can
+    # show that the population really does reach the gap between the two
+    # questions.  Without that leg the row would be green over a population of
+    # spellings the old predicate already got right.
+    # ---------------------------------------------------------------------
+    proc ce_spell {v} {
+        return [regexp {^-?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$} [string trim $v]]
+    }
+    proc ce_isfinite {v} {
+        if {![ce_spell $v]} { return 0 }
+        set d [expr {double([string trim $v])}]
+        return [expr {$d > -Inf && $d < Inf}]
+    }
+    set ce_dmax [expr {(2.0 - 2.0**-52) * 2.0**1023}]
+    set ce_pop {}
+    for {set ce_k 1} {$ce_k <= 5} {incr ce_k} {
+        lappend ce_pop [format {1e%d} [expr {308 + $ce_k * $ce_k}]]
+        lappend ce_pop [format {-1e%d} [expr {308 + $ce_k * $ce_k}]]
+    }
+    lappend ce_pop [format {%.16g} $ce_dmax]
+    lappend ce_pop [format {%.8g} $ce_dmax]
+    lappend ce_pop [format {%.17g} $ce_dmax]
+    foreach ce_s {0 -0.0 1e308 1e-400 5e-324 .5 nan inf -inf 1.#INF {} abc} {
+        lappend ce_pop $ce_s
+    }
+    set ce_wrong {} ; set ce_gap {} ; set ce_yes 0
+    foreach ce_s $ce_pop {
+        set ce_p [pcall calc::eval_finite $ce_s]
+        set ce_w [ce_isfinite $ce_s]
+        if {$ce_p ne $ce_w} { lappend ce_wrong "{$ce_s}=product:$ce_p want:$ce_w" }
+        if {$ce_p eq {1}} { incr ce_yes }
+        if {[ce_spell $ce_s] && !$ce_w} { lappend ce_gap "{$ce_s}" }
+    }
+    check "CE10 the predicate answers about the NUMBER the arithmetic will see and not about the SPELLING, over a population DERIVED from the double format -- an exponent sequence past the double range, plus the `%.16g`, `%.8g` and `%.17g` spellings of the largest finite double, which is itself derived from the format's own parameters rather than written down.  The contract is the property, not a second regexp: every value the predicate accepts must compare strictly inside the two infinities.  ⚠ THE DISCRIMINATION LEG IS THE POPULATION'S OWN: the members the SPELLING leg alone would have accepted while the number is an infinity must be a NON-EMPTY set, or this row is green over spellings the old predicate already got right -- and the acceptance count rides along so a predicate that refused everything could not pass" \
+        [list $ce_wrong [expr {[llength $ce_gap] > 0 ? {reaches} : {VACUOUS}}] \
+              [expr {$ce_yes > 0 ? {accepts} : {REFUSESALL}}] \
+              [ce_spell [format {%.16g} $ce_dmax]] [ce_isfinite [format {%.16g} $ce_dmax]] \
+              [ce_spell [format {%.8g} $ce_dmax]] [ce_isfinite [format {%.8g} $ce_dmax]]] \
+        {{} reaches accepts 1 0 1 1}
+    # ---------------------------------------------------------------------
+    # ⚠⚠ THE PREDICATE IS ON AN *ANSWERING* PATH, SO IT MAY NOT RAISE ON ANY
+    # STRING ITS OWN REGEXP ADMITS.  That is a separate claim from the row
+    # above, which is about the ANSWER, and it is the claim a second leg bolted
+    # onto the predicate is most likely to break: the regexp's language is much
+    # wider than "a number `%.8g` could have written".  It admits a mantissa of
+    # unbounded length and an exponent of unbounded length, both of which Tcl
+    # promotes to a bignum before `double()` sees them, and `calc::overshoot`'s
+    # own header records that the obvious arithmetic on a hostile string RAISES
+    # (`double("nan")` gives *"floating point value is Not a Number"*,
+    # `double("")` gives *"expected floating-point number"*).  A raise here
+    # would come out of a verb's PRE-FLIGHT, where D7 requires an answer -- the
+    # exact defect this band's first rows are about, one layer down.
+    #
+    # THE POPULATION IS DERIVED FROM THE REGEXP'S OWN ALTERNATIVES, not listed
+    # as numbers: each branch of `[0-9]+\.?[0-9]*` / `\.[0-9]+`, with and
+    # without the sign, with and without an exponent, and each one also taken to
+    # the length where Tcl's own number parser changes representation -- a
+    # mantissa and an exponent long enough to be bignums.  `ce_path` names which
+    # branch each member exercises so the row reports a GAP in the derivation
+    # rather than a silent one.
+    # ---------------------------------------------------------------------
+    proc ce_isfinite2 {v} {
+        set d [expr {double([string trim $v])}]
+        return [expr {$d > -Inf && $d < Inf}]
+    }
+    set ce_long  [string repeat 9 400]
+    set ce_lead  [string repeat 0 400]1
+    set ce_bigex [string repeat 9 20]
+    set ce_tot {} ; set ce_pathsleft {}
+    foreach {ce_path ce_body} [list \
+            intonly       {0 7 00 123456789} \
+            intdot        {1. 42. 0.} \
+            intdotfrac    {0.5 1.25 0.0} \
+            dotfrac       {.5 .0 .00000000000000000000000000001} \
+            signed        {-0 -0.0 -.5 -1. -1.25} \
+            exp           {1e308 1E308 1e+308 1e-308 2e308 1e-400} \
+            expsigned     {-1e308 -2e308 -1e-400} \
+            bigmantissa   [list $ce_long $ce_long.5 -$ce_long $ce_lead] \
+            bigexponent   [list 1e$ce_bigex 1E$ce_bigex 1e-$ce_bigex -1e$ce_bigex \
+                                1e2147483648 1e-2147483648 1e2147483647]] {
+        set ce_seen 0
+        foreach ce_v $ce_body {
+            if {![regexp {^-?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$} $ce_v]} {
+                lappend ce_tot "$ce_path:{[string range $ce_v 0 12]}=NOTADMITTED"
+                continue
+            }
+            incr ce_seen
+            set ce_r [pcall calc::eval_finite $ce_v]
+            if {[string match ERR:* $ce_r]} {
+                lappend ce_tot "$ce_path:{[string range $ce_v 0 12]}=RAISED" ; continue
+            }
+            set ce_w [pcall ce_isfinite2 $ce_v]
+            if {[string match ERR:* $ce_w]} {
+                lappend ce_tot "$ce_path:{[string range $ce_v 0 12]}=PROBERAISED" ; continue
+            }
+            if {$ce_r ne $ce_w} {
+                lappend ce_tot "$ce_path:{[string range $ce_v 0 12]}=product:$ce_r want:$ce_w"
+            }
+        }
+        if {!$ce_seen} { lappend ce_pathsleft $ce_path }
+    }
+    check "CE10 the predicate is TOTAL over its own regexp's language and never raises, over a population DERIVED from that regexp's alternatives -- each branch of the mantissa with and without sign and exponent, plus a mantissa and an exponent long enough that Tcl parses them as bignums rather than as doubles.  THE DISCRIMINATION IS THE PAIRING: every admitted member is also compared against a parsed-finiteness derivation computed here, so a leg that silently swallowed a raise and answered 0 would disagree on the finite members instead of passing.  Each derivation branch must contribute at least one admitted member, or the branch is reported as unexercised rather than quietly dropped" \
+        [list $ce_tot $ce_pathsleft \
+              [pcall calc::eval_finite $ce_long] [pcall ce_isfinite2 $ce_long] \
+              [pcall calc::eval_finite $ce_lead] [pcall ce_isfinite2 $ce_lead] \
+              [pcall calc::eval_finite 1e$ce_bigex]] \
+        {{} {} 0 0 1 1 0}
+    rename ce_isfinite2 {}
+    rename ce_spell {}
+    rename ce_isfinite {}
     foreach {rpn label} {
         {v(ramp) -1 * sqrt()}        {sqrt of a negative -> NaN}
         {1e300 1e300 *}              {overflow -> +Inf}
@@ -2187,6 +2361,24 @@ group CE14 {
 ## this one, never as well.
 ##
 ## ⚠ ONLY THE SUCCESS PATH CLAIMS COMPLETION.
+# ---------------------------------------------------------------------------
+# THE BAND-ABORT GUARD.  Last, because it is a claim about every band above it.
+#
+# WARN A SITE THAT INDEXES, SLICES, ITERATES, DIVIDES OR TESTS A PRODUCT ANSWER
+# BARE RAISES INSTEAD OF FAILING, `group`'s catch turns that into one line, and
+# every remaining row of the band is gone from the verdict.  That is what this
+# file's `ERR:` sentinel discipline exists to prevent, and the discipline was
+# measured silently false in several bands of several Calculator suites on
+# 2026-10-05.
+#
+# WARN A COUNT IS NOT ENOUGH AND THE NAMES ARE THE POINT.  A shortfall in the
+# check total is a number nothing compares against anything; a named band is a
+# failure about itself.  Derived from `group`'s own bookkeeping, so a band added
+# tomorrow enlists itself.
+# ---------------------------------------------------------------------------
+check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited" \
+    [list [llength $::abortnames] $::abortnames] {0 {}}
+
 if {$fail == 0} {
     puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"

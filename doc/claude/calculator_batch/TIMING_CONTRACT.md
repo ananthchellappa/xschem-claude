@@ -115,6 +115,37 @@ crossing strictly after it.** Correct on a clean edge, safe on a ringing one. If
 be something the reference tool specifies differently, it becomes the next single question to the
 user rather than a silent difference.
 
+> **CORRECTION, 2026-10-04 — the rule above is narrower than its own purpose, and the
+> implementation now follows the purpose.** "The first high crossing strictly after it" guards the
+> shape this paragraph describes — the start level crossed several times before the end level once
+> — and is blind to the complementary one: a transition that reaches the start level, **fails** to
+> reach the end level and falls back. There the first end crossing after it belongs to a **later
+> transition**, and both `riseTime` and `slewRate` answered a confident number with `ok=1` for a
+> transition that never happened, which is exactly what this paragraph says must not occur.
+> Measured on the committed fixture, `{v(sq) v(ramp) *}` with `lo` 0 and `hi` 10: the unbounded
+> pairing returned a rise time **longer than the whole edge** for the first occurrence and kept a
+> point in the series for a transition that never happened. `calc::transition_end` now requires the
+> end crossing to fall **before the next start crossing**, at one site for every caller — a count
+> row `MT18/H` re-derives from the interpreter's own parsed bodies rather than a number stated
+> here. Band `MT18` of `tests/headless/test_calc_measure.tcl` drives it and builds the sabotage.
+>
+> ⚠ **The change is LARGEST at the default percentages, which is the spelling a user reaches by
+> opening the argument dialog and pressing go** — and the first publication of this correction named
+> a hand-picked pair where it is smallest. At `pctlo`/`pcthi`'s own defaults on the same column one
+> excursion only reaches the end level, so the series collapses to a **single point** and every
+> ordinal naming a transition that does not reach the end level turns from a measured number into
+> an **absence**. No figure for either pair is given here: row `MT18/E` drives both — the second read off the verb with `info default` — and
+> asserts the two against each other every run, which is the only form in which a number of this
+> kind survives.
+>
+> ⚠ This necessarily changes the worked example above: on a trace that wobbles across the start
+> level, the earlier wobble crossings now answer an **absence** and the measurement is anchored on
+> the last start crossing before the end one. The two situations are the **same data** — several
+> start crossings then one end crossing — so no rule reading only the crossing lists can separate
+> them, and reading the samples is forbidden to these verbs by T1. That disposition is unruled and
+> is recorded as hole `H12` of the suite; it is the single question this paragraph already said
+> would arise.
+
 ### T3. `delay` takes a full edge specification PER SIDE, and a negative answer is legitimate
 
 Level, direction and occurrence are each independent per side — not one shared level, not one shared

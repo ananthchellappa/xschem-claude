@@ -81,7 +81,33 @@ proc check_expr {name cond} {
     if {[catch {uplevel 1 [list expr $cond]} v]} { set v "ERR:$v" }
     check $name [expr {$v eq {1} ? 1 : 0}] 1
 }
-proc pcall {args} { if {[catch {uplevel 1 $args} r]} { return "ERR:$r" } ; return $r }
+# WARN THE SENTINEL IS MADE PARSEABLE AS A TCL LIST, AND THAT IS NOT COSMETIC.
+# Tcl's list parser raises on an unmatched open brace or double quote that
+# BEGINS A WORD -- the two characters, derived by sweeping every printable
+# ASCII code rather than assumed -- and a product raise message carries either.
+# So the bare `ERR:$r` this replaces could not be handed to `llength`,
+# `lindex`, `foreach`, `lsort` or `dict keys`, and every site that did turned a
+# product raise into ONE `group ... ABORTED` line that DELETED the whole band
+# from the verdict instead of reddening one row.  That is strictly worse than a
+# failure: the rows vanish, the count moves, and the next reader is sent to
+# debug the product.  CLAUDE.md records the live incident this is not
+# hypothetical about -- a comment between two `switch` patterns made
+# `calc::fn_argspec` raise out of EVERY arm, 18 rows at once.
+#
+# The message is kept VERBATIM whenever it already parses, which is the common
+# case, so a failing row's detail is unchanged except where it could not have
+# been printed at all.  The mapped form is CHECKED rather than trusted, and a
+# message that still will not parse is reduced to a shape that must.
+proc pcall {args} {
+    if {[catch {uplevel 1 $args} r]} { return "ERR:[pcall_listable $r]" }
+    return $r
+}
+proc pcall_listable {s} {
+    if {![catch {llength $s}]} { return $s }
+    set m [string map [list \{ ( \} ) \" '] $s]
+    if {![catch {llength $m}]} { return $m }
+    return [regsub -all {[^A-Za-z0-9 ._:,/()=+*<>?!-]} $s ?]
+}
 proc ::bgerror {msg} { puts "BGERROR: $msg"; incr ::fail }
 
 # ⚠ WHOLE-FILE gate, and the banner spelling matters.  full_audit.sh's `is_skip`
@@ -194,10 +220,23 @@ proc cwalk {w {acc {}}} {
     foreach c [winfo children $w] { set acc [cwalk $c $acc] }
     return $acc
 }
+# WARN A BAND THAT ABORTS DELETES ITS REMAINING ROWS FROM THE VERDICT, WHICH IS
+# STRICTLY WORSE THAN FAILING, so the name is RECORDED and not only printed.
+# One `FAIL: group ... ABORTED` line among dozens of row failures is easy to
+# read past, and the rows that never ran are invisible -- the check total simply
+# comes in short, which nothing compares against anything.  Measured 2026-10-05
+# in the sibling measurement suite: a product sabotage took MOST of one band's
+# rows out and the verdict showed ONE extra failure.  ⚠ The counts that used to
+# sit in this sentence are gone: they were figures over that file's band sizes,
+# nothing re-measured them, and the next stage to add a row there made them wrong.  `::abortnames` is asserted
+# EMPTY by the band-abort guard at the foot of this file, which names every band
+# that vanished instead of leaving the shortfall to be noticed.
+set ::abortnames {}
 proc group {name script} {
     if {[catch {uplevel 1 $script} e]} {
         puts "FAIL: group $name ABORTED -> $e : FAIL"
         puts $::errorInfo
+        lappend ::abortnames $name
         incr ::fail
     }
 }
@@ -1895,7 +1934,7 @@ group CW14 {
         }
     }
     check "CW14 every key in every spec has at least one widget carrying its own transport element, the keys appear in the SPEC'S ORDER, each field opens PRE-FILLED at the default the spec gives it -- empty for a required one -- and every enum field offers exactly its own members, whatever widget class it is built from; the verb and field counts both ride along, because a sweep over an empty population is green while measuring nothing" \
-        [list $cw_nverb [expr {$cw_nfield >= 15 ? 1 : 0}] $cw_bad] {4 1 {}}
+        [list $cw_nverb [expr {$cw_nfield >= 15 ? 1 : 0}] $cw_bad] {9 1 {}}
     # ⚠ AND NO WIDGET CARRIES A TRANSPORT ELEMENT THE SPEC DOES NOT NAME.  The
     # sweep above is one-directional: it would pass a dialog that also carried a
     # fifth field nobody asked for, whose value would then be composed into the
@@ -2006,6 +2045,24 @@ check "CW14 calc::close tore the dialog's parent down too" [winfo exists .calc] 
 ## and nothing else, so T1 never takes that path; an `hcases` entry would be
 ## scored a HARNESS failure, which is the correct answer for a case that measures
 ## nothing.
+# ---------------------------------------------------------------------------
+# THE BAND-ABORT GUARD.  Last, because it is a claim about every band above it.
+#
+# WARN A SITE THAT INDEXES, SLICES, ITERATES, DIVIDES OR TESTS A PRODUCT ANSWER
+# BARE RAISES INSTEAD OF FAILING, `group`'s catch turns that into one line, and
+# every remaining row of the band is gone from the verdict.  That is what this
+# file's `ERR:` sentinel discipline exists to prevent, and the discipline was
+# measured silently false in several bands of several Calculator suites on
+# 2026-10-05.
+#
+# WARN A COUNT IS NOT ENOUGH AND THE NAMES ARE THE POINT.  A shortfall in the
+# check total is a number nothing compares against anything; a named band is a
+# failure about itself.  Derived from `group`'s own bookkeeping, so a band added
+# tomorrow enlists itself.
+# ---------------------------------------------------------------------------
+check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited" \
+    [list [llength $::abortnames] $::abortnames] {0 {}}
+
 if {$fail == 0} { puts "OVERALL: ok ($npass checks)" ; puts "RESULT: ALL PASS ($npass checks)" } \
 else            { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout
