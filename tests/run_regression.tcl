@@ -125,7 +125,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_raw_ascii_point_bounds" \
                  "headless/test_del_negative_arg" \
                  "headless/test_nh_editor_persist" \
-                 "headless/test_wave_add_graph_undo"]
+                 "headless/test_wave_add_graph_undo" \
+                 "headless/test_utils_install_0458"]
 ## `headless/test_wave_add_graph_undo` IS IN BOTH LISTS, and both halves were
 ## MEASURED rather than reasoned: each arm was captured exactly as the two loops
 ## below capture it (`env -u DISPLAY ... --nogui --pipe -q` and

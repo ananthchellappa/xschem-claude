@@ -201,7 +201,26 @@ bind .drw <Alt-Key-KP_Subtract> {cadence::prev_hilight_style; break}
 # --------------------------------------------------------------------------
 
 # Helper procs (utils/), path-resolved relative to this rc file.
-set _ut [file join [file dirname [file normalize [info script]]] .. utils]
+# ⚠⚠ TWO LAYOUTS, AND THE INSTALLED ONE WAS BROKEN FOR EVERY RECIPIENT OF THIS
+# BRANCH (issue 0458).  In the source tree this file is `src/cadence_style_rc`
+# and the helpers are at `../utils`, so the old unconditional `..` was right
+# there -- which is exactly why the defect was invisible to anyone running from
+# a checkout.  `make install` puts this file in $XSCHEM_SHAREDIR and the helpers
+# in $XSCHEM_SHAREDIR/utils, so `..` resolved to `share/utils`, OUTSIDE the
+# share directory, and the first `source` below died with
+# `couldn't read file ".../share/xschem/../utils/lib_mgr_helpers.tcl"` -- taking
+# the whole Cadence profile with it at its first line, and with it Find
+# Navigator, Instance Update, bus resize and transpose, the clip operations,
+# apply-highlight, the style navigator, select-same-cell, toggle pins/netlabels
+# and the Annotate entries.
+#
+# The SIBLING directory is tried first because that is the installed layout and
+# the one that was failing; the parent's is the fallback and is the source tree's.
+# Both are measured by rows of tests/headless/test_utils_install_0458.tcl, which
+# also derives the file list from utils/ itself rather than from a list here.
+set _utd [file dirname [file normalize [info script]]]
+set _ut [file join $_utd utils]
+if {![file isdirectory $_ut]} { set _ut [file join $_utd .. utils] }
 source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
 source [file join $_ut cadence_clip.tcl]

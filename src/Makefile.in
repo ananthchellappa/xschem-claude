@@ -9,6 +9,14 @@ put /local/src {
 }
 
 # list all files that need to be installed in "$(XSHAREDIR)"
+#
+# NOTE utils/*.tcl is NOT in this list and cannot be: every entry here is
+# installed as `install -f <n> "$(XSHAREDIR)"/<n>`, i.e. the source path and the
+# destination path are the SAME relative name, and the utils/ helpers live one
+# directory up from src/.  They go in through the directory form beside
+# systemlib/ in the install: rule below, which also means a NEW file dropped in
+# utils/ is installed without editing this file -- the hand-kept list is the
+# thing that let issue 0458 happen.
 put /local/install_shares {
  keys.help xschem.help xschem.tcl break.awk convert_to_verilog2001.awk
  flatten.awk flatten_tedax.awk flatten_savenodes.awk make_sym.awk make_sym_lcc.awk
@@ -94,7 +102,8 @@ install: xschem rawtovcd FORCE
 	$(SCCBOX) mkdir -p "$(XSHAREDIR)"
 	$(SCCBOX) install -f xschem "$(BINDIR)"/xschem
 	$(SCCBOX) install -f rawtovcd "$(BINDIR)"/rawtovcd
-	$(SCCBOX) install -f -d systemlib/* "$(XSHAREDIR)"/systemlib @]
+	$(SCCBOX) install -f -d systemlib/* "$(XSHAREDIR)"/systemlib
+	$(SCCBOX) install -f -d ../utils/* "$(XSHAREDIR)"/utils @]
 
 foreach /local/n in /local/install_shares
 	print [@
@@ -108,7 +117,8 @@ distclean: clean
 uninstall: FORCE
 	$(SCCBOX) rm "$(BINDIR)"/xschem
 	$(SCCBOX) rm "$(BINDIR)"/rawtovcd
-	$(SCCBOX) rm "$(XSHAREDIR)"/systemlib/*@]
+	$(SCCBOX) rm "$(XSHAREDIR)"/systemlib/*
+	$(SCCBOX) rm "$(XSHAREDIR)"/utils/*@]
 
 foreach /local/n in /local/install_shares
 	print [@
@@ -117,6 +127,7 @@ end
 
 print [@
 	$(SCCBOX) rm "$(XSHAREDIR)"/systemlib
+	$(SCCBOX) rm "$(XSHAREDIR)"/utils
 	$(SCCBOX) rm "$(XSHAREDIR)"/xschem_library
 	$(SCCBOX) rm "$(XSHAREDIR)"
 @]
