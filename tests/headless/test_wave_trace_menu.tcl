@@ -713,6 +713,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "TG8 the command is fully resolved (indices + explicit token)" \
       [$m entrycget 2 -command] \
       "wviewer::move_trace_to_new_strip $mgi $mti $tok"
+    # --- the DELETE entry, asserted BEFORE the move below changes the layout.
+    # It existed in no row until now: both arms passed with it already added,
+    # which is what an unfenced menu entry looks like.
+    check "TG8 entry 3 is a separator, setting the destructive entry apart the way strip_menu_build sets its own apart" \
+      [$m type 3] separator
+    check "TG8 entry 4 is the Delete Trace command, named with its noun like the two shipped siblings (Delete Empty Strips, Delete All Markers) so it cannot be read as deleting the STRIP" \
+      [list [$m type 4] [$m entrycget 4 -label]] {command {Delete Trace}}
+    check "TG8 Delete Trace is wired to the AUTHORITATIVE deleter with the picked indices and an explicit token -- and NOT to the DEL key's delete_selection_at, which reads the live SELECTION rather than the trace the pointer is over and whose label this menu is showing" \
+      [$m entrycget 4 -command] \
+      [list wviewer::delete_items {} [list [list $mgi $mti]] {} $tok]
+    check "TG8 and the menu ENDS at that entry, so one appended without a row of its own reddens this row rather than shipping unfenced" \
+      [$m index end] 4
     set nbefore [ngraphs $tok]
     $m invoke 2
     check "TG8 invoking the entry performs the move" [ngraphs $tok] [expr {$nbefore + 1}]
@@ -720,6 +732,49 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [llength [vecs_at $tok [expr {$mgi + 1}]]] 1
     check "TG8 unposting removes the widget" [pcall {wviewer::trace_menu_unpost $tok}] 1
     check "TG8 unposting again is a no-op" [pcall {wviewer::trace_menu_unpost $tok}] 0
+
+    # --- TG8d: INVOKING Delete Trace really removes that one trace, and the
+    # undo and the log ride along because delete_items owns them.  Driven on a
+    # FRESH fixture because the move above changed the layout, and the trace
+    # count is read before and after rather than compared with a literal.
+    fill_viewer $tok
+    lassign [pcall {wviewer::trace_menu_pick $vdrw $tpx $tpy}] dgi dti
+    set m2 [pcall {wviewer::trace_menu_build $tok $dgi $dti}]
+    # ⚠⚠ THE TOTAL ACROSS ALL STRIPS, NOT THE COUNT IN ONE OF THEM, AND THE FIRST
+    # DRAFT OF THIS ROW WAS VACUOUS FOR EXACTLY THAT REASON. `$m index <n>` CLAMPS
+    # an out-of-range NUMBER to the last entry, so with the Delete entry removed
+    # `invoke 4` silently invoked entry 2 -- Move to Separate Strip -- which moves
+    # a trace OUT of the picked strip and calls the logger on the way. Both of
+    # this row's original legs therefore passed against a tree with no Delete
+    # entry at all. A move PRESERVES the total and a delete REDUCES it, so the
+    # total is the statistic that separates them; TG8e guards the index as well,
+    # because a clamped invoke must not be able to answer this row again.
+    proc tm_total_traces {tk_} {
+      set n 0
+      for {set g 0} {$g < [ngraphs $tk_]} {incr g} { incr n [llength [vecs_at $tk_ $g]] }
+      return $n
+    }
+    set dbefore [tm_total_traces $tok]
+    check "TG8e the Delete entry is really at index 4 before it is invoked -- asserted because \[menu index\] CLAMPS an out-of-range number to the last entry, so a missing entry would invoke the MOVE instead and this band would measure the wrong action" \
+      [$m2 index end] 4
+    set ::tm_log_seen {}
+    if {[info commands ::wviewer::log_action] ne {}} {
+      rename ::wviewer::log_action ::__tm_real_log_action
+      proc ::wviewer::log_action {args} {
+        lappend ::tm_log_seen $args
+        return [uplevel 1 [linsert $args 0 ::__tm_real_log_action]]
+      }
+    }
+    $m2 invoke 4
+    if {[info commands ::__tm_real_log_action] ne {}} {
+      catch {rename ::wviewer::log_action {}}
+      catch {rename ::__tm_real_log_action ::wviewer::log_action}
+    }
+    check "TG8d invoking Delete Trace reduces the TOTAL number of traces across every strip by exactly one -- the statistic that tells a delete from a move, which merely relocates one and would leave this unchanged" \
+      [tm_total_traces $tok] [expr {$dbefore - 1}]
+    check_true "TG8d and it went through the logger, so a recorded session replays the deletion -- which is the half an entry wired to its own private removal would have lost" \
+      [expr {[llength $::tm_log_seen] >= 1}]
+    catch {pcall {wviewer::trace_menu_unpost $tok}}
 
     # --- TG9/TG10/TG11: the GESTURE ------------------------------------------
     # tk_popup is SPIED, never called: a real popup takes a global grab that
@@ -2537,6 +2592,16 @@ puts "test_wave_trace_menu: $npass passed, $fail failed"
 # invocation is judged by. A suite that says "RESULT: PASS" is reported as FAIL
 # by the harness while printing PASS itself.
 if {$fail == 0} {
+  # `OVERALL: ok` is the ONLY completion banner tests/banner_rule.tcl's
+  # banner_complete accepts, and it is the only reader tests/run_regression.tcl
+  # sources -- so without this line a T1 entry for this suite scores
+  # `HARNESS: ... did not complete cleanly` with every one of its own checks
+  # passing (issues 1615, 1626, 1645, 1652).  run_suites.sh and full_audit.sh
+  # carry their own looser EREs and DO accept the RESULT: spelling, which is
+  # exactly why "it passes standalone" was never evidence this file could be
+  # registered.  Additive, and ABOVE the RESULT line because summarize_all
+  # publishes a case's LAST RESULT line.
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
   exit 0
 } else {

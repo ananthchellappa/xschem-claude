@@ -17899,6 +17899,22 @@ proc wviewer::trace_menu_build {token gi ti} {
   }
   $m add command -label {Move to Separate Strip} \
     -command [list wviewer::move_trace_to_new_strip $gi $ti $token]
+  # DELETE, and it costs one line because the authoritative deleter already does
+  # everything.  `wviewer::delete_items` pushes ONE undo point, writes ONE log
+  # line, remaps markers and filters the selection -- its own comment says so --
+  # so the entry inherits undo and macro replay rather than reimplementing them.
+  # That is also why the entry is `delete_items` and not the DEL key's
+  # `wviewer::delete_selection_at`: that one reads the live SELECTION, which is
+  # not what the pointer is over, and a context menu must act on the trace whose
+  # label this menu is showing.
+  #
+  # Last, after a separator, because it is the destructive one -- the convention
+  # `wviewer::strip_menu_build` already follows.  Labelled with its noun like the
+  # two shipped siblings (`Delete Empty Strips`, `Delete All Markers`) rather than
+  # a bare "Delete", so it cannot be read as deleting the strip.
+  $m add separator
+  $m add command -label {Delete Trace} \
+    -command [list wviewer::delete_items {} [list [list $gi $ti]] {} $token]
   return $m
 }
 
