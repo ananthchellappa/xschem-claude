@@ -127,6 +127,13 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   fail:` lines = cases − 1 on a green run (`xschemtest.tcl` writes one only on failure);
   `wc -l` moves with the failure count — and, since issue **1487**, with the number of `skip:`
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
+  ⚠⚠ **THE CURRENT FIGURE IS THE LAST ONE IN THIS BLOCK, NOT THE FIRST.** The figures below run
+  in the order they were measured, oldest first, so the first one a reader meets is the OLDEST and
+  reading it as current makes a correct gate look wrong. **As of `87ac3cfa` the trailer is
+  `cases=143 blocks=142 counted_failures=0 skips=8` with `wc -l` 428** (3 `tcases` + **107**
+  `hcases` + **32** `dcases` + `xschemtest`), `tests/results.2256072.log`, 870s. Derive your own
+  delta from the registration lists and check it against `planned_cases` in the header; do not
+  carry any figure here forward as a baseline.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
   the gate verdict `tests/results.296161.log` at **`e3e6039d`**, taken in the `~/gc26` clone at an
@@ -136,6 +143,33 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `cases=129 blocks=128 counted_failures=0 skips=8 elapsed=643s`, zero live-peer lines, zero
   counted shapes, zero nonzero `Total num fail:` lines.  The SAME trailer, to the second, was
   measured one commit earlier at `5e8a9904` (`tests/results.4111037.log`, also 643s).
+  **And `143/142/0/8` at `87ac3cfa`** (`tests/results.2256072.log`, 870s, `wc -l` **428 UNMOVED**) —
+  PLAN 7.5's four loop-stability verbs. ⚠ **That run is the cleanest demonstration in this file that
+  a published check count is NOT a baseline**: `test_calc_measure` moved **342 → 444** and
+  `test_calc_engine` **315 → 323**, a hundred and ten new checks, and not one trailer term moved —
+  `wc -l` included, because it tracks the NUMBER of `RESULT:` and `skip:` lines and not the counts
+  inside them. **TWENTY-EIGHTH consecutive `skips=8`.**
+  ⚠⚠ **AND THE LESSON FROM IT COST THE DRIVER A WASTED PASS: READ THE ROW THAT ALREADY DROVE A GUARD
+  BEFORE ADDING IT.** Rows `SO3`/`SO4` of band `MT27` exist, in their own words, *"so that two
+  refusals to add a guard are measurements and not opinions"* — `SO4` drives a loop whose phase is
+  zero at its crossover and asserts bit-exactly **180.0 as the CORRECT answer**, and refutes a
+  `|phase[0]| < 180` precondition with a drive whose answer is right anyway. The driver added both
+  of those guards without reading the rows, measured them "working", and had to revert them: **they
+  refused correct work**, which is the one direction this project's rulings single out (ADE-L is a
+  FLOOR; `calc::delay` already ruled a computable answer is returned, not clamped). A guard that
+  looks right is not evidence; the row that already drove it is.
+  ⚠ **The honest remedy was to WIDEN the declaration, not to add the guard.** Row `MT27/SO6` now
+  derives the hazard's size from the loaded database every run: in an ac database every variable
+  carries a `ph(...)` column, and one with no small-signal response is identically constant, so it
+  answers `phaseMargin` `180 + 0` for ANY loop including an unstable one — **nine of the ten phase
+  columns in the committed fixture** are that shape. The row proposes no guard and says so.
+  ⚠ **Three house traps bit the driver inside one row**, all worth knowing: `pcall {a b c}` passes
+  the braced string as ONE word and dies with `invalid command name "a b c"` (it takes separate
+  arguments, like `pcall mt_load ac`); **`near` answers the WORD `ok`, not a boolean**, so
+  `if {![near …]}` raises `expected boolean value but got "ok"` and takes the whole band out through
+  `group`'s catch; and arithmetic on an accessor's output — **or on a band-level variable set from
+  one** — is counted by the ratchet row `MT29/D` by band, so hoisting it into a variable does not
+  escape it. The fix is a sentinel-safe proc or no arithmetic at all.
   **Three further figures the same day**, each verified by shape rather than by trusting its own
   trailer (`wc -l`, counted shapes 0, nonzero `Total num fail:` 0, `Total num fail:` lines = cases − 1,
   `^skip:` lines, live-peer lines 0): `129/128/0/8` at **`ad982a4a`**
