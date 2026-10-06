@@ -307,6 +307,140 @@ proc ce9_cfun {path name} {
     return $out
 }
 # ---------------------------------------------------------------------------
+# band CE13's ENGINE-SIDE DERIVATION of every token's STACK CONTRACT, read out
+# of `plot_raw_custom_data()`'s own text rather than written here.
+#
+# The engine states arity STRUCTURALLY and in one place: three guards --
+# `if(stackptr2 > 2)`, `if(stackptr2 > 1)` and `if(stackptr2 > 0)` -- each
+# holding the arms of the operators that take that many operands.  It states the
+# NET effect inside each arm, with `stackptr2++`, `stackptr2--` and
+# `stackptr2 -= 2`.  So the contract is DERIVABLE: `pops` is the guard's
+# threshold plus one, and `pushes` is `pops` plus the net.  The push-only
+# opcodes sit BEFORE the first guard and are read from there as `{0 1}`.
+#
+# ⚠ THE TOKEN SPELLINGS COME FROM THE SAME SCAN, so this derivation cannot be
+# satisfied by a table that agrees about `PLUS` and disagrees about `+`: the
+# token-to-opcode map is lifted from the `strcmp(n, "<tok>")` ladder in source
+# order, which is the only place the engine states it at all.
+#
+# ⚠ THE MECHANISM IS DELIBERATELY UNLIKE THE PRODUCT'S.  `calc::rpn_opstack` is
+# a literal table and `calc::rpn_stack_fault` walks a token list; this reads C
+# text and counts braces.  Neither shares a step with the other, which is what a
+# comparand needs -- a derivation that borrowed the product's own loop would
+# agree with its bug by construction.
+#
+# ⚠ COMMENTS ARE STRIPPED TWICE OVER, whole-line by `ce9_cfun` and then inline
+# here, because the brace count is what finds each guard's end and a `{` inside
+# prose would move it.  CLAUDE.md records a literal `{` in a comment silently
+# unbalancing two files, once from inside the comment warning about it.
+proc ce13_cstrip {txt} { return [regsub -all {/\*.*?\*/} $txt {}] }
+# the balanced `{...}` that begins at the first brace after `marker`.
+proc ce13_brace_block {txt marker} {
+    set s [string first $marker $txt]
+    if {$s < 0} { return {} }
+    set o [string first "\{" [string range $txt $s end]]
+    if {$o < 0} { return {} }
+    set p [expr {$s + $o}]
+    set d 0
+    for {set i $p} {$i < [string length $txt]} {incr i} {
+        set c [string index $txt $i]
+        if {$c eq "\{"} { incr d ; continue }
+        if {$c eq "\}"} {
+            incr d -1
+            if {$d == 0} { return [string range $txt $p $i] }
+        }
+    }
+    return {}
+}
+# one opcode's arm inside a guard block, from `case OP:` (or the COND arm's
+# `stack1[i].i == OP)`) to the next `break;` or `case `, and the net stackptr2
+# delta over it.  `{}` when this block does not hold that opcode.
+proc ce13_arm_net {blk op} {
+    set pos -1
+    foreach pat [list "case ${op}:" "stack1\[i\].i == ${op})"] {
+        set q [string first $pat $blk]
+        if {$q >= 0} { set pos $q ; break }
+    }
+    if {$pos < 0} { return {} }
+    set rest [string range $blk [expr {$pos + 1}] end]
+    set e [string length $rest]
+    foreach pat {"break;" "case "} {
+        set q [string first $pat $rest]
+        if {$q >= 0 && $q < $e} { set e $q }
+    }
+    set arm [string range $rest 0 $e]
+    set up [regexp -all {stackptr2\+\+} $arm]
+    set dn [regexp -all {stackptr2--} $arm]
+    set by 0
+    if {![regexp {stackptr2[ \t]*-=[ \t]*([0-9]+)} $arm -> by]} { set by 0 }
+    return [expr {$up - $dn - $by}]
+}
+# ...and the whole map, token -> {pops pushes}, or an `UNCLASSIFIED:<op>` entry
+# for a token the three guards and the push-only region between them do not
+# account for, which is what a new opcode arriving looks like.
+proc ce13_engine_stack {path} {
+    set body [ce13_cstrip [ce9_cfun $path plot_raw_custom_data]]
+    if {$body eq {}} { return NOBODY }
+    set tok2op [dict create]
+    set pend {}
+    foreach ln [split $body \n] {
+        if {[regexp {strcmp\(n, "([^"]*)"\)} $ln -> t]} { set pend $t }
+        if {[regexp {stack1\[stackptr1\+\+\]\.i = ([A-Z0-9_]+)} $ln -> op]} {
+            if {$pend ne {}} { dict set tok2op $pend $op ; set pend {} }
+        }
+    }
+    array set blk {}
+    foreach {marker pops} {{if(stackptr2 > 2)} 3 {if(stackptr2 > 1)} 2
+                           {if(stackptr2 > 0)} 1} {
+        set b [ce13_brace_block $body $marker]
+        if {$b eq {}} { return "NOGUARD:$pops" }
+        set blk($pops) $b
+    }
+    set g [string first {if(stackptr2 > 2)} $body]
+    set f [string first {for(i = 0; i < stackptr1} $body]
+    if {$g < 0 || $f < 0 || $f >= $g} { return NOPREGUARD }
+    set pre [string range $body $f [expr {$g - 1}]]
+    set pushonly {}
+    foreach m [regexp -all -inline {stack1\[i\]\.i == ([A-Z0-9_]+)} $pre] {
+        if {[regexp {^[A-Z0-9_]+$} $m]} { lappend pushonly $m }
+    }
+    set out [dict create]
+    foreach t [lsort [dict keys $tok2op]] {
+        set op [dict get $tok2op $t]
+        set done 0
+        foreach pops {3 2 1} {
+            set net [ce13_arm_net $blk($pops) $op]
+            if {$net eq {}} continue
+            dict set out $t [list $pops [expr {$pops + $net}]]
+            set done 1
+            break
+        }
+        if {$done} continue
+        if {[lsearch -exact $pushonly $op] >= 0} {
+            dict set out $t {0 1}
+        } else {
+            dict set out $t "UNCLASSIFIED:$op"
+        }
+    }
+    return $out
+}
+# two dicts over the same keys, compared as a LIST of the keys they disagree
+# about rather than as two reproducible dumps, so a failing row names the token
+# instead of printing fifty-two pairs.
+proc ce13_dictdiff {a b} {
+    if {[catch {dict keys $a} ka]} { return "NOTADICT-a:$a" }
+    if {[catch {dict keys $b} kb]} { return "NOTADICT-b:$b" }
+    set out {}
+    foreach k [lsort -unique [concat $ka $kb]] {
+        if {![dict exists $a $k]} { lappend out "+$k" ; continue }
+        if {![dict exists $b $k]} { lappend out "-$k" ; continue }
+        if {[dict get $a $k] ne [dict get $b $k]} {
+            lappend out "$k:[dict get $a $k]|[dict get $b $k]"
+        }
+    }
+    return $out
+}
+# ---------------------------------------------------------------------------
 # band CE14's readers, and its OWN arithmetic
 # ---------------------------------------------------------------------------
 # one whole column, through the PLURAL accessor.  ⚠ `xschem raw values` is the
@@ -1218,7 +1352,7 @@ group CE8 {
     # version of this row having had.
     check "CE8 ...and the ones whose CODE names no widget path are the engine-side procs, which is why this file can run headless" \
         [lsort $pure] \
-        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_tokens tmpvec}
+        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_opstack rpn_stack_fault rpn_tokens tmpvec}
 }
 
 # =============================================================================
@@ -1882,11 +2016,44 @@ group CE13 {
               [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]]] \
         [list [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]] \
               [pcall wviewer::validate_rpn {v(nosuch) v(sq) /} [rawnames]]]
-    check "CE13 R607 ...and the L1 clause names the COUNT and the LIMIT, because that class has no failing token to name" \
-        [list [expr {[pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]] ne {}}] \
-              [string match {*199*} [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]]] \
-              [string match {*198*} [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 199]]]] \
-              [pcall calc::rpn_bad_token [string trim [string repeat {v(sq) } 198]]]] {1 1 1 {}}
+    # ⚠ THE PROBE IS THE SAME WELL-FORMED SHAPE THE ENGINE-BOUNDARY ROWS ABOVE
+    # USE, and it has to be: `v(sq)` repeated N times is N tokens whose stack
+    # simulation leaves N values, so once the pre-flight gained a stack contract
+    # the 198-token leg below was refused for ARITY and the row measured the
+    # wrong thing.  One operand plus N-1 unary `abs()` tokens drives the PARSE
+    # stack -- which is what L1 is a bound on -- while leaving the value stack at
+    # depth 1, so this row is about the limit and nothing else.
+    set ce13t198 "v(sq)[string repeat { abs()} 197]"
+    set ce13t199 "v(sq)[string repeat { abs()} 198]"
+    check "CE13 R607 ...and the L1 clause names the COUNT and the LIMIT, because that class has no failing token to name -- driven at 199 and 198 parse-stack tokens on a WELL-FORMED expression, so the limit is the only thing either leg can be answering about" \
+        [list [llength [pcall calc::rpn_tokens $ce13t199]] \
+              [llength [pcall calc::rpn_tokens $ce13t198]] \
+              [expr {[pcall calc::rpn_bad_token $ce13t199] ne {}}] \
+              [string match {*199*} [pcall calc::rpn_bad_token $ce13t199]] \
+              [string match {*198*} [pcall calc::rpn_bad_token $ce13t199]] \
+              [pcall calc::rpn_bad_token $ce13t198]] {199 198 1 1 1 {}}
+    # --- L1's RESERVE: a caller that APPENDS a token must say so -------------
+    # ⚠⚠ THE PRODUCT EXCEEDED ITS OWN STATED LIMIT, and this is the headless
+    # half of the fence.  `calc::gainMargin` and `calc::phaseMargin` pre-flight
+    # the user's phase operand and then send `"<operand> cph()"` to the engine --
+    # ONE TOKEN MORE THAN WAS VALIDATED -- so a 198-token operand passed the
+    # gate and the engine saw 199 and wrote nothing.  The reserve is an argument
+    # rather than a second limit, so there is one arithmetic and one sentence.
+    check "CE13 R607 L1 the reserve makes the gate count the tokens the ENGINE will see and not only the ones the user typed: the same expression at exactly the limit is APPROVED with no reserve and REFUSED with a reserve of one, the refusal naming the user's own count and the reduced limit; a reserve of one accepts one token fewer; and a negative or non-integer reserve is treated as none rather than widening the gate" \
+        [list [pcall calc::rpn_bad_token $ce13t198] \
+              [expr {[pcall calc::rpn_bad_token $ce13t198 {} 1] ne {}}] \
+              [string match {*198*} [pcall calc::rpn_bad_token $ce13t198 {} 1]] \
+              [string match {*197*} [pcall calc::rpn_bad_token $ce13t198 {} 1]] \
+              [pcall calc::rpn_bad_token "v(sq)[string repeat { abs()} 196]" {} 1] \
+              [pcall calc::rpn_bad_token $ce13t198 {} 0] \
+              [pcall calc::rpn_bad_token $ce13t198 {} -3] \
+              [pcall calc::rpn_bad_token $ce13t198 {} xx]] \
+        {{} 1 1 1 {} {} {} {}}
+    check "CE13 R607 L1 ...and with no reserve the clause is UNCHANGED, which is why no caller that appends nothing had to be touched" \
+        [list [pcall calc::rpn_bad_token $ce13t199] \
+              [pcall calc::rpn_bad_token $ce13t199 {} 0]] \
+        [list "that expression has 199 tokens and the engine takes at most 198" \
+              "that expression has 199 tokens and the engine takes at most 198"]
     check "CE13 R607 ...and an EMPTY expression is not this proc's refusal -- eval_rpn's own `empty` sentence owns that" \
         [pcall calc::rpn_bad_token {   }] {}
     # --- through calc::eval_rpn: the sentence the user actually gets ---------
@@ -1965,41 +2132,145 @@ group CE13 {
         [list [dg $dd ok] [near [dg $dd value] 0 1e-30] [dg $dd msg]] {1 ok {}}
     check "CE13 ...and a NON-negative del() delay is not affected by the declaration" \
         [list [dg [pcall calc::eval_rpn {v(lp) 0 del()} 0] ok]] {1}
-    # ⚠⚠ A THIRD BLIND SPOT, NAMED IN STAGE D2 AND DECLARED HERE: ARITY.
-    # `wviewer::validate_rpn` is a per-TOKEN alphabet check, so it has no notion
-    # of how many operands an operator wants or of what is left on the stack
-    # when the expression ends.  Every token of `v(lp) +` resolves; so does
-    # every token of `v(lp) v(sq)`.  MEASURED on this fixture: both are APPROVED
-    # by the validator and by `calc::rpn_bad_token`, the engine accepts both, and
-    # `calc::eval_rpn` answers a confident number with NO message.
-    # ⚠ WHICH number this paragraph got WRONG, corrected 2026-10-01 by
-    # measurement: the engine's store is `y[p] = (SPICE_DATA)stack2[0]`, the
-    # BOTTOM of the stack, so the answer is the expression's FIRST operand.
-    # `1 2 3 +` answers 1, not the leftover 5; `v(lp) v(sq)` answers v(lp)'s own
-    # value exactly, where this said "neither of the two the user typed".  The
-    # true statement is worse for the user and better for the reader: the number
-    # belongs to a signal they really did name, so it looks right.
-    # That is the Cadence failure mode R607 exists to
-    # forbid, one step further along than an unresolvable name, and it is NOT
-    # closed: closing it needs an operand-count model of the engine's ~52
-    # operators, which is landmine L5's "never parser number two" in its most
-    # expensive form, or the `xschem raw set` sentinel this band's own header
-    # describes.  The rows below pin what the product does, so a later stage that
-    # closes it reds them and has to correct this paragraph.
-    foreach {ar label} {{v(lp) +}            {too few operands}
+    # ⚠⚠ THE THIRD BLIND SPOT -- ARITY -- WAS THE BROADEST, AND IT IS NOW CLOSED
+    # AT THIS SITE.  `wviewer::validate_rpn` is a per-TOKEN alphabet check, so it
+    # has no notion of how many operands an operator wants or of what is left on
+    # the stack when the expression ends: every token of `v(lp) +` resolves, and
+    # so does every token of `v(lp) v(sq)`.  It still approves both, and that is
+    # correct for what it is; what changed is that `calc::rpn_bad_token` now
+    # SIMULATES the engine's value stack as well as asking the alphabet, and
+    # refuses any expression that under-supplies an operator or does not end with
+    # exactly one value on the stack.
+    #
+    # WHY THAT CLASS WAS WORTH AN OPERAND-COUNT MODEL after this band spent
+    # months declaring it too expensive: the engine's store is
+    # `y[p] = (SPICE_DATA)stack2[0]`, the BOTTOM of the stack, so a leftover-stack
+    # expression silently reports its FIRST operand -- a plausible number
+    # belonging to a signal the user really did name -- and an operator with no
+    # operands at all is a silent no-op whose column is issue 0325's defined
+    # zero.  Through `calc::phaseMargin` that zero column reads as a phase margin
+    # of exactly 180 degrees: the most reassuring number a stability analysis can
+    # produce, answered for an expression the engine never evaluated as written,
+    # on a loop that may be unstable.  Issue 1653's family, at its worst.
+    #
+    # ⚠ THE MODEL IS NOT PARSER NUMBER TWO, which is landmine L5's objection and
+    # the reason this was declined twice.  It parses NOTHING: it reads the token
+    # list `calc::rpn_tokens` already produces with the engine's own delimiter
+    # set, looks each token up in a flat table of `{pops pushes}` pairs, and adds
+    # up.  The table is the one thing that could drift, and the row below derives
+    # it from `plot_raw_custom_data()`'s own guards and `stackptr2` deltas rather
+    # than trusting it.
+    #
+    # ⚠ WHAT IS STILL NOT CLOSED, and must not be read as closed: a well-formed
+    # expression that is not the one the user meant.  `ph(lp) 4 **` and
+    # `ph(lp) 4 +` are legal RPN and the engine evaluates them exactly as asked,
+    # so the margins they produce are right about a quantity nobody wanted.  No
+    # stack model can see that, and no belt on the phase column can either --
+    # `cph()` legitimately runs past -360 degrees on a high-order loop, so there
+    # is no out-of-range signature to key one to.  Band MT26 of
+    # tests/headless/test_calc_measure.tcl measures both halves of that split.
+    set ce13NAMES [rawnames]
+    foreach {ar label} {{v(lp) +}            {an operator short of an operand}
                         {v(lp) v(sq)}        {a leftover stack}
-                        {+}                  {an operator with no operands at all}} {
+                        {+}                  {an operator with no operands at all}
+                        {dup()}              {a stack verb with nothing to copy}
+                        {exch()}             {a stack verb with nothing to swap}
+                        {ph(lp) 4}           {a DROPPED operator}} {
         set ad [pcall calc::eval_rpn $ar 0]
-        check "CE13 ARITY, declared and NOT closed: `$ar` ($label) is APPROVED by the token alphabet and answers a confident number with no message" \
-            [list [pcall wviewer::validate_rpn $ar [rawnames]] \
-                  [pcall calc::rpn_bad_token $ar] \
+        set ce13bt [pcall calc::rpn_bad_token $ar]
+        set ce13nm "__calc_t_ce13ar"
+        pcall xschem raw del $ce13nm
+        set ce13rc [pcall xschem raw add $ce13nm $ar]
+        set ce13col [pcall xschem raw values $ce13nm 0]
+        pcall xschem raw del $ce13nm
+        check "CE13 ARITY, CLOSED at the pre-flight and not at the engine: `$ar` ($label) is still APPROVED by the token alphabet -- which is all that proc claims -- while calc::rpn_bad_token REFUSES it with a clause, and calc::eval_rpn reports that clause instead of a confident number.  The ENGINE is driven in the same breath and shown to accept it and answer 1, so the refusal is this file's gate and never a rejection downstream that the gate could be credited with" \
+            [list [pcall wviewer::validate_rpn $ar $ce13NAMES] \
+                  [expr {$ce13bt ne {} ? 1 : 0}] \
+                  [expr {[string match {*expression error*} $ce13bt] ? 1 : 0}] \
                   [dg $ad ok] \
-                  [expr {[dg $ad msg] eq {} ? 1 : 0}] \
-                  [expr {[string is double -strict [dg $ad value]] ? 1 : 0}]] {{} {} 1 1 1}
+                  [expr {[dg $ad msg] eq [pcall calc::eval_msg badtoken $ce13bt] ? 1 : 0}] \
+                  [expr {[dg $ad msg] ne {} ? 1 : 0}] \
+                  [dg $ad dest] \
+                  [leaked] \
+                  $ce13rc \
+                  [expr {[string trim $ce13col] ne {} ? 1 : 0}]] {{} 1 0 0 1 1 {} {} 1 1}
     }
-    check "CE13 ARITY ...and it is not merely unvalidated but WRONG: `v(lp) v(sq)` answers neither 1 (the AC-1 reference it ends on) nor a refusal, so a leftover stack is a silently misleading number" \
-        [list [dg [pcall calc::eval_rpn {v(lp) v(sq)} 0] ok] \
-              [expr {[near [dg [pcall calc::eval_rpn {v(lp) v(sq)} 0] value] 1 1e-7] eq {ok} ? 1 : 0}]] {1 0}
+    check "CE13 ARITY ...and the clause DISTINGUISHES the two faults rather than answering one sentence for both, each naming the figure the user can act on: the token that is short and how many operands it had, or the number of values the expression leaves" \
+        [list [string match {*'+'*} [pcall calc::rpn_bad_token {v(lp) +}]] \
+              [string match {*2*} [pcall calc::rpn_bad_token {v(lp) +}]] \
+              [string match {*leaves 2*} [pcall calc::rpn_bad_token {v(lp) v(sq)}]] \
+              [string equal [pcall calc::rpn_bad_token {v(lp) +}] \
+                            [pcall calc::rpn_bad_token {v(lp) v(sq)}]]] {1 1 1 0}
+    # --- the STACK CONTRACT, derived from the C, compared with the table -----
+    set ce13ENG [ce13_engine_stack $sv]
+    set ce13TBL [pcall calc::rpn_opstack]
+    set ce13UNC {}
+    if {![catch {dict keys $ce13ENG} ce13EK]} {
+        foreach ce13k $ce13EK {
+            if {[string match UNCLASSIFIED:* [dict get $ce13ENG $ce13k]]} {
+                lappend ce13UNC "$ce13k=[dict get $ce13ENG $ce13k]"
+            }
+        }
+    } else {
+        set ce13EK "NOTADICT:$ce13ENG"
+    }
+    # the THIRD independent statement of the alphabet: the viewer's own two
+    # literal lists, which is what `validate_rpn` accepts.  Lifted out of that
+    # proc's body rather than copied, so a token added there without a stack
+    # contract here reddens.
+    set ce13VOC {}
+    set ce13vb [pcall info body ::wviewer::validate_rpn]
+    foreach ce13pat {{set ops \{([^\}]*)\}} {set funcs \{([^\}]*)\}}} {
+        if {[regexp $ce13pat $ce13vb -> ce13m]} { lappend ce13VOC {*}$ce13m }
+    }
+    set ce13VOC [lsort -unique $ce13VOC]
+    check "CE13 ARITY the stack contract is DERIVED from plot_raw_custom_data's own three `stackptr2` guards and the deltas inside each arm -- a mechanism that shares no step with the product's flat table -- and the two are asserted to disagree about NOTHING, token by token, with any opcode the guards do not account for named rather than dropped.  The derived set is then asserted EQUAL to the viewer validator's own two literal token lists, which is a third independent statement of the same alphabet, so a token that gained an arm in the C or an entry in either Tcl list without the other two reddens by name.  The size rides along, because a scan that found nothing would make every identity vacuously true" \
+        [list [ce13_dictdiff $ce13ENG $ce13TBL] \
+              $ce13UNC \
+              [expr {[llength $ce13EK] >= 50 ? {atleast50} : "only:[llength $ce13EK]"}] \
+              [expr {[lsort $ce13EK] eq $ce13VOC ? {same} : {DIFFERS}}] \
+              [expr {[llength $ce13VOC] >= 50 ? {atleast50} : "only:[llength $ce13VOC]"}]] \
+        {{} {} atleast50 same atleast50}
+    # ...and the contract is EXERCISED on every token of that derived set, in
+    # three shapes built from the token's own `{pops pushes}` pair: the minimal
+    # well-formed expression (its operands, the token, then enough `+` to reduce
+    # whatever it leaves to one), the same with one operand missing, and the same
+    # with one value too many.  ⚠ A HAND-KEPT LIST WOULD BE THE SAME DEFECT ONE
+    # LEVEL UP: the operator a later stage adds is exactly the one nobody would
+    # remember to add here, and `del()`, `ravg()`, `re()` and `im()` are already
+    # two-operand verbs that LOOK unary, which is the shape a hand list gets
+    # wrong.
+    set ce13WF {} ; set ce13UNDER {} ; set ce13OVER {} ; set ce13SW 0
+    if {![catch {dict keys $ce13TBL} ce13TK]} {
+        foreach ce13k [lsort $ce13TK] {
+            set ce13v [dict get $ce13TBL $ce13k]
+            if {[llength $ce13v] != 2} { lappend ce13WF "$ce13k=BADENTRY" ; continue }
+            foreach {ce13p ce13q} $ce13v break
+            incr ce13SW
+            set ce13e [string trim "[string repeat {v(sq) } $ce13p]$ce13k[string repeat { +} [expr {$ce13q - 1}]]"]
+            if {[pcall calc::rpn_bad_token $ce13e] ne {}} { lappend ce13WF "$ce13k:$ce13e" }
+            if {[pcall calc::rpn_bad_token "$ce13e v(sq)"] eq {}} { lappend ce13OVER $ce13k }
+            if {$ce13p >= 1} {
+                set ce13u [string trim "[string repeat {v(sq) } [expr {$ce13p - 1}]]$ce13k"]
+                if {[pcall calc::rpn_bad_token $ce13u] eq {}} { lappend ce13UNDER $ce13k }
+            }
+        }
+    } else {
+        set ce13WF "NOTADICT:$ce13TBL"
+    }
+    check "CE13 ARITY ...and the gate is driven over EVERY token of that derived set in three shapes composed from the token's OWN pops/pushes pair -- the minimal well-formed expression APPROVED, the same one operand short REFUSED, and the same with one value too many REFUSED -- so the three legs are a measurement over the whole alphabet rather than over the operators somebody happened to think of.  The swept count rides along, because an empty sweep passes all three vacuously" \
+        [list $ce13WF $ce13UNDER $ce13OVER \
+              [expr {$ce13SW >= 50 ? {atleast50} : "only:$ce13SW"}]] \
+        {{} {} {} atleast50}
+    # ...and the stack contract does NOT depend on the mirror, which the
+    # fail-open rows further down would otherwise have waived.
+    pcall rename ::wviewer::validate_rpn ::ce13ar_validate
+    set ce13noval [pcall calc::rpn_bad_token {v(lp) +}]
+    set ce13novalok [pcall calc::rpn_bad_token {v(lp) v(sq) /}]
+    pcall rename ::ce13ar_validate ::wviewer::validate_rpn
+    check "CE13 ARITY ...and it survives the validator being absent, because it reads the token list this file already builds with the engine's own delimiters and consults nothing outside this file -- so the mirror's fail-open widens the ALPHABET question only, and a good expression is still approved in that world" \
+        [list [expr {$ce13noval ne {} ? 1 : 0}] $ce13novalok \
+              [expr {[llength [pcall info procs ::wviewer::validate_rpn]] == 1 ? 1 : 0}]] {1 {} 1}
     # --- degraded mode: no validator at all ---------------------------------
     # `wviewer::validate_rpn` is in a file xschem.tcl always sources, so this
     # world does not occur on a shipped tree; it is forced because the

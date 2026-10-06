@@ -4220,7 +4220,7 @@ foreach nm [ad_tnoproc] {
     if {[pcall .calc.stk.list size] != $ad_fallstk} { lappend ad_fallbad $nm=TOUCHED-STACK }
 }
 check "S28 every route-T verb with NO proc falls through legibly: each one speaks, none opens a dialog, and none touches the buffer or the Stack -- the set and the sweep count are both DERIVED from the catalogue and the namespace, so a blanket route-T branch that stranded them would redden here" \
-    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {25 9 {}}
+    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {21 13 {}}
 check_true "S28 fixture: the pre-sweep buffer snapshot is real text" \
     [expr {![string match ERR:* $ad_fallbuf]
            && [string match {*INERT SENTINEL*} $ad_fallbuf]}]
@@ -4251,7 +4251,7 @@ foreach nm [ad_verbs] {
     if {[string match {*is not available*} $said]} { lappend ad_liebad $nm=SAYS-UNAVAILABLE }
 }
 check "S28 no verb that IS built is told it is not: no member of the derived clickable set gets `calc::inert`'s phase-5 sentence and none gets `fn_reason`'s \"is not available\" one -- the replacement wording is unratified and deliberately NOT asserted here, so this row says only that the false sentence is gone" \
-    [list $ad_nlie $ad_liebad] {9 {}}
+    [list $ad_nlie $ad_liebad] {13 {}}
 }
 
 # --- S28/2  a REAL pointer gesture on a T entry opens a REAL modal ------------
@@ -4373,7 +4373,7 @@ foreach nm [ad_verbs] {
     set ad_c_stk  [pcall .calc.stk.list size]
 }
 check "S28 R412 Cancel leaves the buffer BYTE-IDENTICAL, measured on FIVE captures and not one: the text, `edit modified` (8.4+, never `edit canundo`), the status history, the status line and the Stack size -- PLUS the undo witness, because a dialog that touched the buffer and undid itself is byte-identical while having spent an undo; the cancelled count and the undo count both ride along, so \"no dialog opened\" and \"four opened and touched nothing\" are different greens" \
-    [list $ad_ncancel $ad_nundo $ad_cbad] {9 9 {}}
+    [list $ad_ncancel $ad_nundo $ad_cbad] {13 13 {}}
 check_true "S28 fixture: the pre-Cancel capture is a real, non-trivial expression and the history was non-empty" \
     [expr {$ad_c_text eq {v(out) v(in) - 2 *}
            && [string is boolean -strict $ad_c_mod]}]
@@ -4964,7 +4964,7 @@ check "S28/6 the RESULT GATE runs BEFORE the dialog: with no simulation result l
     [list [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}] \
           [dg $ad_gate ok] [expr {$ad_gatemsg ne {} ? 1 : 0}] \
           $ad_ngate $ad_gatebad] \
-    {1 0 1 9 {}}
+    {1 0 1 13 {}}
 # ...and the same for an EMPTY buffer, with the gate back to answering `ok`.
 set ad_rr2 0
 if {[info commands ::calc::require_result] ne {} && [info commands ::ad_keep_rr] eq {}} {
@@ -4998,7 +4998,7 @@ if {$ad_rr2} {
 check "S28/6 ...and an EMPTY buffer is refused before the dialog too: a T verb measures the buffer's expression, so there is nothing to measure and nothing to ask about.  The sentence is unratified and NOT asserted; what is asserted is that one was written, that no form opened, and that the buffer stayed empty" \
     [list $ad_nempty $ad_emptybad \
           [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}]] \
-    {9 {} 1}
+    {13 {} 1}
 }
 
 # --- S28/8  THE STATUS LINE'S BUDGET, AGAINST THE REAL ENTRY ------------------
@@ -5252,7 +5252,7 @@ foreach nm [ad_verbs] {
 check "S28/E R508 with no window a route-T click is a silent no-op that RETURNS -- it opens no dialog, enters no `tkwait` and raises nothing.  DECLARED PARTLY VACUOUS on the red run, where `fn_click` reaches `calc::has_win` through `calc::inert` anyway: it is a fence for the implementation, and `full_audit.sh` is the reader it protects, since it globs all three Calculator suites and none is in `nogui_tests`" \
     [list [llength [ad_verbs]] $ad_closedbad [expr {[winfo exists .calc.arg] ? 1 : 0}] \
           [grab current]] \
-    {9 {} 0 {}}
+    {13 {} 0 {}}
 }
 
 # --- S28/Z  HYGIENE ----------------------------------------------------------

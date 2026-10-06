@@ -3275,19 +3275,31 @@ group WD13 {
     # a hardcoded `tran` lands on slot 1.  Whichever type is written down, one
     # half of this row names the slot it landed on.
     #
-    # ⚠ A RISE TIME IS MEASURABLE FROM THE `ac` SLOT, but not on any committed
-    # column there: `v(sq)` is the `AC 1` reference and reads back as a flat
-    # magnitude, `v(lp)` FALLS monotonically with frequency, and the only rising
-    # quantity in that database is the sweep column itself -- which, being one
-    # monotone ramp, has exactly ONE rising edge.  So the request is a sine of
-    # the sweep with the angular frequency READ BACK from the database's own
-    # endpoints every run, which is `wd_wspan`'s reason for existing, and it
-    # carries no written-down frequency.  This is hole H5's `ac` exception
-    # arriving at a second verb.
+    # ⚠⚠ THE SECOND HALF NO LONGER MEASURES, AND THAT IS A PRODUCT FIX RATHER
+    # THAN A WEAKENED ROW.  This row used to drive `riseTime_scalar` on the `ac`
+    # slot and assert a destination, on the ground that *"a rise time is
+    # measurable from the `ac` slot"* -- hole H5's `ac` exception arriving at a
+    # second verb.  It is NOT measurable: a rise time is an X span, so what the
+    # verb answered there was a frequency difference in Hz labelled seconds, and
+    # issue 1653's gate in the other direction now refuses it.  Band MT28 of
+    # tests/headless/test_calc_measure.tcl is that change's fence; this row
+    # carries the two consequences for THIS unit's own path, which nothing there
+    # can see:
     #
-    # ⚠ The two halves are DELIBERATELY one row.  The claim is that the PAIR of
-    # orders is the fence; split across two rows an editor can retune one and
-    # leave the other, and the pairing is exactly what rots.
+    #   * the refusal MINTS NOTHING and MOVES NOTHING -- the registry is still
+    #     three slots and the user is still on slot 2 -- so a gate placed after
+    #     the destination was built, which is the plausible wrong placement,
+    #     reddens here naming the slot count.
+    #   * THE PAIRING THE OLD ROW EXISTED FOR IS KEPT, not inherited from a
+    #     cross-reference: `dutyCycle_scalar` is DIMENSIONLESS and is deliberately
+    #     NOT gated, so it still measures on that same `ac` slot and still
+    #     restores the user to slot 2 with a `tran` slot at index ONE for a
+    #     hardcoded `tran` to land on.  That is the leg a restore naming an
+    #     analysis type fails, and it is driven in this row rather than left to
+    #     WD11 -- the pairing is exactly what rots when it is split.
+    #
+    # ⚠ The three halves are DELIBERATELY one row, for the reason the two halves
+    # were: split across rows an editor can retune one and leave the others.
     pcall wd_load3t
     set g1 [wd_call riseTime_scalar $rRPN $rLO $rHI $rPL $rPH 0]
     set g1db [wd_key $g1 db]
@@ -3298,17 +3310,23 @@ group WD13 {
     pcall wd_load3a
     set acrpn [wd_acrpn [wd_col frequency 0] 4]
     set g2 [wd_call riseTime_scalar $acrpn -1 1 $rPL $rPH 0]
-    set g2db [wd_key $g2 db]
     set g2cur [wd_curslot]
     set g2n [wd_nslots]
-    set g2t1 [wd_slottype 1]
-    set g2t3 [wd_slottype 3]
-    check "WD13 the user's own slot is theirs again whichever analysis type they were parked on, driven from BOTH three-slot reading orders in ONE row so that a restore naming a type cannot be green on one and red on the other: read op/ac/tran the user is on tran at slot TWO with an ac slot at index ONE for a hardcoded ac to land on, read op/tran/ac the user is on ac at slot TWO with a tran slot at index ONE for a hardcoded tran to land on, and in both the destination is APPENDED as a fourth slot typed table.  The ac half's request is a sine of that database's OWN frequency sweep, read back every run, because no committed ac column has a rising edge at all" \
+    set g2arm [expr {[string equal [wd_key $g2 msg] \
+                          [pcall calc::cross_msg rtnotran ac]] ? {ownarm} : {OTHERARM}}]
+    set g3 [wd_call dutyCycle_scalar [wd_acrpn [wd_col frequency 0] 5] 0.25]
+    set g3db [wd_key $g3 db]
+    set g3cur [wd_curslot]
+    set g3n [wd_nslots]
+    set g3t1 [wd_slottype 1]
+    set g3t3 [wd_slottype 3]
+    check "WD13 the user's own slot is theirs again whichever analysis type they were parked on, driven from BOTH three-slot reading orders in ONE row so that a restore naming a type cannot be green on one and red on the other -- read op/ac/tran the user is on tran at slot TWO with an ac slot at index ONE for a hardcoded ac to land on, and read op/tran/ac the user is on ac at slot TWO with a tran slot at index ONE for a hardcoded tran to land on, the destination APPENDED as a fourth slot typed table in each.  ⚠ The second order is driven through `dutyCycle_scalar` and not `riseTime_scalar`, because a rise time is an X SPAN and issue 1653's gate in the other direction now refuses it on an ac database: the same request through the gated verb is REFUSED IN ITS OWN ARM, by identity, and that refusal MINTS NOTHING and MOVES NOTHING -- three slots still, the user still on slot 2 -- which is the leg a gate placed after the destination was built would fail" \
         [list [wd_disp $g1] [wd_destname $g1db] $g1cur $g1n $g1t1 $g1t3 \
-              [wd_disp $g2] [wd_destname $g2db] $g2cur $g2n $g2t1 $g2t3] \
-        {measured named 2 4 ac table measured named 2 4 tran table}
+              [wd_disp $g2] $g2arm $g2cur $g2n \
+              [wd_disp $g3] [wd_destname $g3db] $g3cur $g3n $g3t1 $g3t3] \
+        {measured named 2 4 ac table refused ownarm 2 3 measured named 2 4 tran table}
     pcall wd_call wave_dest_drop $g1
-    pcall wd_call wave_dest_drop $g2
+    pcall wd_call wave_dest_drop $g3
     # ⚠ THE CONTROL.  It forbids the other plausible wrong implementation -- a
     # destination merged into EVERY answer -- so it is true before this unit and
     # must stay true after it, and it is DECLARED green on the red run rather

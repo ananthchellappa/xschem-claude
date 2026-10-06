@@ -1934,7 +1934,7 @@ group CW14 {
         }
     }
     check "CW14 every key in every spec has at least one widget carrying its own transport element, the keys appear in the SPEC'S ORDER, each field opens PRE-FILLED at the default the spec gives it -- empty for a required one -- and every enum field offers exactly its own members, whatever widget class it is built from; the verb and field counts both ride along, because a sweep over an empty population is green while measuring nothing" \
-        [list $cw_nverb [expr {$cw_nfield >= 15 ? 1 : 0}] $cw_bad] {9 1 {}}
+        [list $cw_nverb [expr {$cw_nfield >= 15 ? 1 : 0}] $cw_bad] {13 1 {}}
     # ⚠ AND NO WIDGET CARRIES A TRANSPORT ELEMENT THE SPEC DOES NOT NAME.  The
     # sweep above is one-directional: it would pass a dialog that also carried a
     # fifth field nobody asked for, whose value would then be composed into the

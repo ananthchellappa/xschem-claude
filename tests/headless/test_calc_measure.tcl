@@ -825,6 +825,34 @@ proc mt_atleast {v n} {
     return "only:$v"
 }
 
+# ⚠⚠ TWO TOTAL ARITHMETIC HELPERS, AND THEY EXIST BECAUSE MAKING THE ACCESSORS
+# TOTAL DOES NOT MAKE `expr` TOTAL.  Both were row-level `expr`s whose operand
+# came out of an accessor, and each took a whole band out through `group`'s
+# catch when a single `::calc::` proc raised: `double($g8MAX)*pow(...)` in
+# MT23/GBW8, where `$g8MAX` is `pcall calc::extremum`, and
+# `abs(([mt_val ...] - $t)/$t)` in MT27/SO3.  Hoisting them is also what makes
+# them MEASURABLE: an `expr` written at a row site is reachable by no
+# instrument in this file, while a proc is driven by band MT29.
+#
+# A level `db` DECIBELS from a magnitude, in the AMPLITUDE convention
+# `calc::bandwidth` declares.  Total on both arguments, because the magnitude is
+# a product answer and the decibel figure is a row's own number.
+proc mt_dbscale {v db} {
+    if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    if {![mt_finite $db]} { return "NOTADB:{$db}" }
+    return [expr {double($v) * pow(10.0, double($db)/20.0)}]
+}
+# |a - b| / |b|, the relative residual against a TRUTH, total on both sides and
+# NAMING a zero denominator rather than dividing by it -- which is a real shape
+# here and not defensive: a closed form evaluated at a parameter the fixture
+# does not reach answers zero.
+proc mt_relerr {a b} {
+    if {![mt_finite $a]} { return "NOTANUMBER:{$a}" }
+    if {![mt_finite $b]} { return "NOTATRUTH:{$b}" }
+    if {double($b) == 0.0} { return ZERODENOM }
+    return [expr {abs((double($a) - double($b))/double($b))}]
+}
+
 # ⚠⚠ FOUR MORE TOTAL ACCESSORS, AND THEY EXIST BECAUSE THE CLAIM ABOVE WAS TRUE
 # ONE LEVEL IN AND FALSE ONE LEVEL OUT.  `mt_len` and `mt_at` made INDEXING
 # total, and four bands reached a raise anyway, each by a DIFFERENT route: one
@@ -835,9 +863,19 @@ proc mt_atleast {v n} {
 # of total procs was still not enough.  Each raise became one
 # `group ... ABORTED` line and silently deleted every remaining row of its band
 # from the verdict, which is worse than a failure because the reader is sent to
-# debug the product.  Band MT20 derives the population of the shape over this
-# file's own text and asserts it is empty, and drives these procs on a poison
-# sentinel to show they are total.
+# debug the product.
+#
+# ⚠⚠ THE SENTENCE THAT USED TO CLOSE THIS PARAGRAPH NAMED AN INSTRUMENT THAT DID
+# NOT EXIST -- *"band MT20 derives the population of the shape over this file's
+# own text and asserts it is empty, and drives these procs on a poison
+# sentinel"*.  MT20 is the status-line band and does none of those things; no
+# band did, and the claim had been standing while three more bands acquired the
+# same defect one level further out, in ARITHMETIC on a total accessor's output.
+# Band MT29 is that instrument now.  It also records why the text half of the
+# promise was never kept: a scan for the shape reports hundreds of sites across
+# the five calculator suites and is essentially all false -- a guarded site and
+# an unguarded one look the same to a regexp -- so the population is derived from
+# the interpreter's own parsed bodies and DRIVEN instead.
 proc mt_nminus {n k} {
     if {![string is integer -strict $n]} { return $n }
     return [expr {$n - $k}]
@@ -1167,6 +1205,18 @@ proc rawnames {} {
 # R402's watch.  `__calc_tmp*` is the product's prefix; `__mt_*` is this file's
 # own probe prefix, watched separately so a probe that forgot to clean up is
 # reported as a SUITE defect and never as a product leak.
+#
+# ⚠⚠ BOTH OF THESE READ THE LIVE INVENTORY, SO `mt_load` DESTROYS THEIR EVIDENCE.
+# `mt_load` issues `xschem raw clear` before its read, and that removes every
+# registered column INCLUDING a leaked one.  A hygiene row that calls `leaked`
+# or `probeleft` INSIDE the check's own argument list, after a reload the row
+# itself needs for a later leg, therefore reads an empty inventory whatever the
+# product did.  CAPTURE INTO A VARIABLE FIRST, reload second, check third --
+# band MT27 is the worked example and carries the same warning at its own site.
+# Measured by building two real leaks: with the product's unconditional
+# `xschem raw del $dest` sites deleted, every hygiene row that read the
+# inventory before its reload reddened and every row that read it afterwards
+# stayed green over a live leak.
 proc leaked {} {
     set out {}
     foreach n [rawnames] { if {[string match -nocase __calc_tmp* $n]} { lappend out $n } }
@@ -1338,6 +1388,7 @@ proc mt_firstafter {lst x} {
 proc mt_affine {ys k c} {
     if {[string match ERR:* $ys]} { return $ys }
     if {[catch {llength $ys}]} { return "NOTALIST:{$ys}" }
+    if {![mt_finite $k] || ![mt_finite $c]} { return "NOTANUMBER:{$k}|{$c}" }
     set out {}
     foreach y $ys {
         if {![mt_finite $y]} { return "NOTANUMBER:{$y}" }
@@ -1355,6 +1406,7 @@ proc mt_affine {ys k c} {
 # tolerance-based count could not say so.
 proc mt_railcounts {ys L} {
     if {[catch {llength $ys}]} { return "NOTALIST:{$ys}" }
+    if {![mt_finite $L]} { return "NOTALEVEL:{$L}" }
     set on 0 ; set below 0 ; set above 0
     foreach y $ys {
         if {![mt_finite $y]} continue
@@ -1369,6 +1421,7 @@ proc mt_railcounts {ys L} {
 # than quoting it.
 proc mt_dustabove {ys L} {
     if {[catch {llength $ys}]} { return "NOTALIST:{$ys}" }
+    if {![mt_finite $L]} { return "NOTALEVEL:{$L}" }
     set out {}
     foreach y $ys { if {[mt_finite $y] && double($y) > double($L)} { lappend out $y } }
     return $out
@@ -2160,6 +2213,43 @@ proc mt_closure_raw {p} {
     }
     return $out
 }
+# the OWN-DOOR MEMBERS OF THE DERIVED VERB SET inside one verb's closure, itself
+# excepted -- the instrument that separates a verb which delegates to another
+# MEASUREMENT VERB from one that reads samples through a private helper.
+#
+# ⚠ IT IS DERIVED FROM THE PARTITION RATHER THAN FROM A NAME, so the third class
+# below cannot become a hiding place: a verb whose closure reaches a door through
+# something that is NOT a member of the verb set answers the empty list here and
+# fails that class's own claim, instead of being quietly accepted as a delegate.
+proc mt_closure_verbdoors {p owndoor} {
+    set cl [mt_calc_closure $p]
+    if {$cl eq {NOPROC}} { return NOPROC }
+    if {[catch {llength $owndoor}]} { return "NOTALIST:{$owndoor}" }
+    set out {}
+    foreach n $cl {
+        if {$n eq $p} continue
+        if {[lsearch -exact $owndoor $n] >= 0} { lappend out $n }
+    }
+    return [lsort $out]
+}
+# the names appearing in MORE THAN ONE of several lists, so a partition can be
+# asserted as a COVER WITH NO OVERLAP rather than only as a cover.
+#
+# ⚠ THE SORTED-CONCAT LEG ALONE DOES NOT SAY THIS.  A verb landing in two classes
+# makes the concatenation longer, so that leg fails -- but it fails by printing
+# two long verb lists that differ somewhere, which says nothing about WHICH verb
+# was counted twice.  This names it.
+proc mt_overlap {args} {
+    set seen {} ; set dup {}
+    foreach l $args {
+        if {[catch {llength $l}]} { return "NOTALIST:{$l}" }
+        foreach n $l {
+            if {[lsearch -exact $seen $n] >= 0} { lappend dup $n ; continue }
+            lappend seen $n
+        }
+    }
+    return [lsort -unique $dup]
+}
 # ⚠ THE SUITE'S OWN TEXT, not a proc body: the three sites that used to build the
 # answer dict inline were at ROW level, so a scan over `info body` could not have
 # seen them and the comment claiming they did not exist stayed false through one
@@ -2219,6 +2309,46 @@ proc mt_stub_run {script} {
     # scores that as TCL_RETURN = 2, and the row got the right answer with
     # `ERR:` glued to the front of it.  A row that fails for the wrong reason is
     # worse than one that fails, because the next reader debugs the product.
+    if {$rc != 0 && $rc != 2} { return "ERR:$r" }
+    return $r
+}
+
+# ⚠⚠ ...AND THE SAME IDEA FOR ANY VERB BY NAME, WHICH IS WHAT A VERB THAT
+# DELEGATES TO ANOTHER MEASUREMENT VERB NEEDS.  `mt_stub_run` above is hardcoded
+# to `calc::cross`, the one primitive the cross-delegating half is layered on;
+# `calc::gainBwProd` is layered on `calc::bandwidth` instead, so neither that
+# verb nor any future one of its shape can be measured through a `cross` stub at
+# all.  Band MT10 uses this for the third class of its partition and band MT23
+# for the recording half.
+#
+# ⚠ THE ANSWER IS A PARAMETER AND IS NEVER BUILT HERE, which is forced rather
+# than tidy: `mt_dictsites` walks THIS FILE for every `dict create` on a
+# non-comment line and MT10 asserts that set EXACTLY, so a stub composing its own
+# answer would enlist itself there and redden a row about something else.  The
+# caller hands in a dict LITERAL, which that instrument does not see -- the same
+# correction `m21BASE` already had to make.
+#
+# ⚠ `{args}` AND NOT THE VERB'S OWN FORMALS, so one helper serves every verb and
+# the LOG is the argument list exactly as the caller passed it -- which is what
+# MT23's delegation row compares against the user's own request.  The slot is
+# checked BEFORE the rename so a previous failed run inside this interpreter
+# cannot be mistaken for a product defect, the original is restored on BOTH exit
+# paths, and rc 2 is `return` and not an error.
+set mt_vstub_answer {}
+set mt_vstub_log {}
+proc mt_vstub_run {verb ans script} {
+    if {[info commands ::calc::$verb] eq {}} { return "NOPROC:calc::$verb" }
+    if {[info commands ::mt_vstub_keep] ne {}} { return VSTUBSLOTBUSY }
+    rename ::calc::$verb ::mt_vstub_keep
+    set ::mt_vstub_answer $ans
+    set ::mt_vstub_log {}
+    proc ::calc::$verb {args} {
+        lappend ::mt_vstub_log $args
+        return $::mt_vstub_answer
+    }
+    set rc [catch {uplevel 1 $script} r]
+    catch {rename ::calc::$verb {}}
+    catch {rename ::mt_vstub_keep ::calc::$verb}
     if {$rc != 0 && $rc != 2} { return "ERR:$r" }
     return $r
 }
@@ -3677,16 +3807,43 @@ group MT10 {
     # delegate still reddens.  Band WD9 of
     # tests/headless/test_calc_wave_dest.tcl already derives a partition this
     # way for the deferral sentence's callers; this is the same shape.
-    set delegates {} ; set owndoor {}
+    # ⚠⚠ AND NOW IT IS THREE-WAY, FOR THE SAME REASON IT BECAME TWO-WAY, which is
+    # the paragraph above applied a second time rather than an exception carved
+    # out of it.  `calc::gainBwProd` owns NO engine door -- so the old split put
+    # it in the delegating half -- and it reaches `calc::cross` NOWHERE either,
+    # because it is layered on `calc::bandwidth`, which owns a door of its own.
+    # The delegating half's claim is therefore FALSE of it, and the two ways out
+    # were the two this band already refused once: hand-exclude the new verb, or
+    # weaken "must reach cross" for everybody.  Neither is taken.  The set is
+    # split again BY THE SAME STRUCTURAL INSTRUMENTS, the third class carries the
+    # claim that is true of IT -- no door of its own, no `cross`, and a closure
+    # reaching a member of the own-door half -- and the three-way split is
+    # asserted, so a verb that quietly grew a door, or quietly stopped delegating,
+    # MOVES between classes and is measured where it lands.
+    #
+    # ⚠ THE THIRD CLASS IS NOT A HIDING PLACE, and that is what
+    # `mt_closure_verbdoors` is for: its membership test is "reaches an own-door
+    # VERB", derived from the partition, so a verb reading samples through a
+    # private helper lands here with an EMPTY answer and reddens that class's own
+    # row rather than being accepted as a delegate.
+    set owndoor {}
     foreach v $verbs {
-        if {[mt_direct_raw $v] eq {yes}} { lappend owndoor $v ; continue }
-        lappend delegates $v
+        if {[mt_direct_raw $v] eq {yes}} { lappend owndoor $v }
     }
-    check "MT10 T1 the derived verb set PARTITIONS into the verbs that DELEGATE to calc::cross and the verbs that own an engine door of their own, split by the same structural instrument the claims below use -- with a floor on BOTH halves and the partition asserted, so a verb that quietly grew a door moves from one half to the other and is measured there instead of being hand-excluded from a single claim.  ⚠ The two halves are NOT interchangeable: a delegate must reach cross and must read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and each row below says which half it is about.  The membership of one name per half rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor]] \
+    set delegates {} ; set verbdeleg {}
+    foreach v $verbs {
+        if {[mt_direct_raw $v] eq {yes}} continue
+        if {[mt_reaches_cross $v] eq {reaches}} { lappend delegates $v ; continue }
+        lappend verbdeleg $v
+    }
+    check "MT10 T1 the derived verb set PARTITIONS THREE WAYS by the same structural instruments the claims below use -- the verbs that DELEGATE to calc::cross, the verbs that own an engine door of their own, and the verbs that own no door and reach cross NOWHERE because they are layered on another MEASUREMENT VERB -- with a floor on each class and the partition asserted as a cover with no overlap, so a verb that quietly grew a door, or quietly stopped delegating, MOVES between classes and is measured where it lands instead of being hand-excluded from a single claim.  ⚠ The three are NOT interchangeable: a cross-delegate must reach cross and read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and a verb-delegate must do neither while reaching an own-door VERB -- which is what stops the third class being a hiding place for a verb reading samples through a private helper.  The membership of one name per class rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor $verbdeleg]] \
               [mt_atleast [llength $delegates] 3] [mt_atleast [llength $owndoor] 1] \
+              [mt_atleast [llength $verbdeleg] 1] \
               [expr {[lsearch -exact $delegates riseTime] >= 0 ? {has} : {MISSING}}] \
-              [expr {[lsearch -exact $owndoor overshoot] >= 0 ? {has} : {MISSING}}]] \
-        [list $verbs $verbs atleast3 atleast1 has has]
+              [expr {[lsearch -exact $owndoor overshoot] >= 0 ? {has} : {MISSING}}] \
+              [expr {[lsearch -exact $verbdeleg gainBwProd] >= 0 ? {has} : {MISSING}}] \
+              [llength [mt_overlap $delegates $owndoor $verbdeleg]]] \
+        [list $verbs $verbs atleast3 atleast1 atleast1 has has has 0]
     check "MT10 the verb set this band's claims are about is DERIVED from the catalogue and from calc::fn_argspec -- every route-T name with a non-empty argument spec, minus the primitive they are layered on -- so a new layered verb ENLISTS ITSELF in every row below instead of being measured by nothing.  The floor rides along because an empty derivation would make all of them vacuous, and `cross` is asserted absent because it is the one name that must not be in it" \
         [list [mt_atleast [llength $verbs] 3] \
               [expr {[lsearch -exact $verbs cross] < 0 ? {nocross} : {CROSS}}] \
@@ -3719,6 +3876,42 @@ group MT10 {
               [lmap v $owndoor {mt_closure_raw $v}]] \
         [list $verbs $owndoor [lrepeat [llength $owndoor] yes] \
               [lrepeat [llength $owndoor] no] $owndoor]
+    # ...and the THIRD class's complementary claim, which is what stops ITS
+    # existence being an escape hatch.  Structurally: no door of its own, no
+    # `cross` anywhere in its closure, and at least one own-door VERB in it.
+    # Behaviourally: with the verb it is layered on replaced by a REFUSING stub it
+    # must refuse and carry that stub's own sentence through -- so the answer came
+    # back through the delegate rather than from samples it read itself, which is
+    # the half no amount of body-reading can establish.  A `cross` stub cannot
+    # reach this class at all, which is why `mt_vstub_run` exists.
+    # ...and the same for the third class, kept apart rather than merged: these
+    # verbs are driven through a stub on a DIFFERENT proc, and the key-set leg
+    # beside each table is what stops either being a hand-kept list one level up.
+    set stubargs3 [list \
+        gainBwProd {{v(lp)} 3 low 0}]
+    set vdBAD {} ; set vdN 0
+    foreach v $verbdeleg {
+        set doors [mt_closure_verbdoors $v $owndoor]
+        if {[catch {llength $doors} vdL] || $vdL < 1} { lappend vdBAD "$v=NODELEGATE:$doors" ; continue }
+        if {[mt_direct_raw $v] ne {no}} { lappend vdBAD "$v=OWNDOOR" ; continue }
+        if {[mt_reaches_cross $v] ne {no}} { lappend vdBAD "$v=REACHESCROSS" ; continue }
+        incr vdN
+        foreach vdD $doors {
+            set vdR [mt_vstub_run $vdD \
+                {ok 0 absent 0 value {} dataset 0 dest {} msg {Bandwidth: MTSTUB refused this on purpose.}} {
+                set a [mt_call $v {*}[dict get $stubargs3 $v]]
+                return [list [mt_disp $a] [mt_msg $a] [llength $::mt_vstub_log]]
+            }]
+            if {[mt_at $vdR 0] ne {refused}} { lappend vdBAD "$v/$vdD=[mt_at $vdR 0]" ; continue }
+            if {![string match {*MTSTUB*} [mt_at $vdR 1]]} { lappend vdBAD "$v/$vdD=nomarker" ; continue }
+            if {[mt_at $vdR 2] ne {1}} { lappend vdBAD "$v/$vdD=calls:[mt_at $vdR 2]" }
+        }
+    }
+    check "MT10 T1 ...and the THIRD class makes the claim that is true of IT, structurally and behaviourally: it issues no direct engine verb, it reaches calc::cross NOWHERE, and its closure contains at least one own-door VERB derived from the partition -- so a verb reading samples through a private helper lands in this class with an empty delegate list and reddens here instead of being accepted as a delegate.  Then, with the verb it is layered on replaced by a REFUSING stub, it REFUSES and carries that stub's own sentence through, called EXACTLY ONCE -- which is the half no reading of a body can establish, and which a calc::cross stub cannot reach for this class at all.  The probe's own argument table must name exactly this class, so a new verb-delegate enlists itself rather than sitting outside the sweep" \
+        [list $present $verbdeleg $vdBAD [mt_sized $vdN [llength $verbdeleg]] \
+              [lsort [dict keys $stubargs3]] \
+              [llength [info commands ::mt_vstub_keep]]] \
+        [list $verbs $verbdeleg {} sized $verbdeleg 0]
     check "MT10 T1 ...and the closure instrument is NOT vacuous: calc::cross's own closure is itself, every verb's closure is strictly larger than the bare verb, and a name no such proc has answers NOPROC rather than an empty set that would satisfy the row above" \
         [list [mt_calc_closure cross] \
               [lmap v $verbs {expr {[llength [mt_calc_closure $v]] > 1 ? {deeper} : {bare}}}] \
@@ -4071,6 +4264,35 @@ set AG_WANT [list \
         {initial {Initial value}       real                         1 {}}
         {final   {Final value}         real                         1 {}}
         {dataset {Dataset}             int                          0 0}
+    } \
+    bandwidth {
+        {drop     {Drop (dB)}          real                         1 {}}
+        {units    {Units}              {enum magnitude dB}          0 magnitude}
+        {response {Response}           {enum low high band}         0 low}
+        {dataset  {Dataset}            int                          0 0}
+    } \
+    gainBwProd {
+        {drop     {Drop (dB)}          real                         1 {}}
+        {units    {Units}              {enum magnitude dB}          0 magnitude}
+        {response {Response}           {enum low high band}         0 low}
+        {dataset  {Dataset}            int                          0 0}
+    } \
+    gainMargin {
+        {rpnMag  {Loop gain (RPN)}       rpn                          1 {}}
+        {rpnPh   {Loop phase, deg (RPN)} rpn                          1 {}}
+        {gain    {Gain units}            {enum magnitude dB}          0 magnitude}
+        {level   {Phase level, deg}      real                         0 -180}
+        {edge    {Edge}                  {enum falling rising either} 0 falling}
+        {nth     {Occurrence (Nth)}      int                          0 1}
+        {dataset {Dataset}               int                          0 0}
+    } \
+    phaseMargin {
+        {rpnMag  {Loop gain (RPN)}       rpn                          1 {}}
+        {rpnPh   {Loop phase, deg (RPN)} rpn                          1 {}}
+        {gain    {Gain units}            {enum magnitude dB}          0 magnitude}
+        {edge    {Edge}                  {enum falling rising either} 0 falling}
+        {nth     {Occurrence (Nth)}      int                          0 1}
+        {dataset {Dataset}               int                          0 0}
     }]
 
 group MT11 {
@@ -4106,7 +4328,7 @@ group MT11 {
 
     # --- the clickable set, derived -----------------------------------------
     check "MT11 the clickable set is DERIVED from the tree -- every route-T catalogue row that has a proc of its own -- so a verb whose proc lands without its argument spec, or the reverse, reddens here and in the fall-through sweep below rather than composing a call to nothing" \
-        [ag_verbs] {cross delay dutyCycle freq frequency overshoot riseTime settlingTime slewRate}
+        [ag_verbs] {bandwidth cross delay dutyCycle freq frequency gainBwProd gainMargin overshoot phaseMargin riseTime settlingTime slewRate}
     set agempty {}
     set agnswept 0
     set agnonempty 0
@@ -4122,16 +4344,20 @@ group MT11 {
         if {[llength $rows] != 0} { lappend agempty $nm=([ag_canon $rows]) }
     }
     check "MT11 the route-T fall-through is LEGIBLE rather than accidental: every catalogue name that is not one of the clickable set answers an EMPTY spec, and each member of that set answers a non-empty one -- swept over the whole table, with both counts riding along so neither direction can be vacuous" \
-        [list $agnswept $agnonempty $agempty] {108 9 {}}
+        [list $agnswept $agnonempty $agempty] {108 13 {}}
 
     # --- the specifications, by literal, ONE ROW EACH ------------------------
-    # ⚠ `frequency` AND `freq` ARE TWO CATALOGUE NAMES SERVED BY ONE `switch`
-    # ARM through Tcl's documented fall-through, so the two rows below compare
-    # two literals against one spec.  That is deliberate: the fall-through is
-    # what keeps the spec from existing twice in the product, and these two rows
-    # are what would catch a second copy drifting if somebody ever wrote one.
+    # ⚠ TWO PAIRS OF CATALOGUE NAMES ARE NOW SERVED BY ONE `switch` ARM EACH
+    # through Tcl's documented fall-through -- `frequency`/`freq` and
+    # `bandwidth`/`gainBwProd` -- so four of the rows below compare two literals
+    # against one spec.  That is deliberate and it is the point of the shape: the
+    # fall-through is what keeps a spec from existing twice in the product, and
+    # these rows are what would catch a second copy drifting if somebody ever
+    # wrote one.  `gainBwProd` passes every argument straight through to
+    # `calc::bandwidth`, so its spec IS that verb's spec by definition, and row
+    # GBW6 asserts the two are byte-identical through the interpreter as well.
     foreach agv {cross riseTime delay dutyCycle slewRate frequency freq settlingTime \
-                 overshoot} {
+                 overshoot bandwidth gainBwProd gainMargin phaseMargin} {
         check "MT11 the argument spec for $agv is exactly the ruled field list -- key, label, kind, requiredness and default, in DISPLAY order (labels and the edge default are UNRATIFIED: the `rule` debt names them and this row is where an overrule lands)" \
             [ag_canon [ag_rows $agv]] [ag_canon [dict get $AG_WANT $agv]]
     }
@@ -4174,11 +4400,11 @@ group MT11 {
     foreach agv [ag_verbs] {
         set n 0
         foreach row [ag_rows $agv] { if {[ag_cell [ag_cell $row 2] 0] eq {rpn}} { incr n } }
-        set want [expr {$agv eq {delay} ? 2 : 0}]
+        set want [expr {($agv eq {delay} || $agv eq {gainMargin} || $agv eq {phaseMargin}) ? 2 : 0}]
         if {$n != $want} { lappend agbadrpn $agv=$n/want$want }
     }
-    check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except `delay`, whose two sides are two operands and whose B side no ruling supplies (driver's recorded decision, filed as a `rule` debt)" \
-        [list [llength [ag_verbs]] $agbadrpn] {9 {}}
+    check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except the two verbs that take TWO operands and therefore cannot take either from the buffer alone: `delay`, whose B side no ruling supplies, and `gainMargin`, whose second operand is the loop PHASE and has no node-name spelling at all, because `xschem raw add` on an ac database creates one REAL column and no phase sibling" \
+        [list [llength [ag_verbs]] $agbadrpn] {13 {}}
 
     # --- the keys are the formals, in two directions ------------------------
     set agbadformal {} ; set agnchecked 0
@@ -4276,20 +4502,62 @@ group MT11 {
     # exists to avoid.
     set agfqedge [ag_enum_in frequency edge]
     set agfqax [ag_enum_in frequency xaxis]
+    # ⚠ `calc::bandwidth` VALIDATES ITS OWN `response` BEFORE IT TOUCHES THE
+    # DATABASE, for the same reason `calc::slewRate` validates its edge: a verb
+    # that deferred the membership test until after the first accessor would
+    # answer the no-data refusal for a NON-member too, and the control legs below
+    # would redden.  The list is lifted from that body, never written here.
+    set agbwresp [ag_enum_in bandwidth response]
+    # ⚠ AND ITS `units` LIST, WHICH IS THE SAME TWO WORDS THE TWO MARGIN VERBS
+    # ALREADY NAME.  Lifted here as well, and the row asserts the three lifts
+    # EQUAL rather than each against its own literal, so a third spelling of one
+    # concept reddens instead of three rows agreeing with three copies.
+    set agbwunits [ag_enum_in bandwidth units]
+    # ⚠ `calc::gainMargin` VALIDATES BOTH OF ITS ENUMS IN ITS OWN REQUEST
+    # VALIDATION, ABOVE EVERY ACCESSOR, which is a constraint on the
+    # implementation and not an accident of where this lift sits: that verb
+    # refuses a non-ac database, so a membership test placed BELOW the sim_type
+    # gate would answer about the DATABASE for a non-member and the control legs
+    # below would redden.  Both lists are lifted from that body, never written
+    # here, and the EDGE list's member ORDER differs from `cross`'s -- `falling`
+    # first, because a lag-dominated loop's phase DECREASES through the level --
+    # which is itself what makes the drift comparison worth making.
+    set aggmedge [ag_enum_in gainMargin edge]
+    set aggmgain [ag_enum_in gainMargin gain]
+    set agpmedge [ag_enum_in phaseMargin edge]
+    set agpmgain [ag_enum_in phaseMargin gain]
     check "MT11 fixture: the member lists really were LIFTED out of the validators' own bodies -- `calc::cross`'s `edge` test, `calc::dutyCycle`'s `xaxis` test, `calc::slewRate`'s OWN shorter edge test and `calc::frequency`'s own two -- so a drift row below is evidence and not an artefact of an empty match, and both shorter edge lists being strict subsets of cross's is asserted rather than assumed.  `calc::freq` is a pure delegate and carries NO literal of its own, which is asserted here as a NOLITERAL sentinel rather than left to be discovered as an empty match" \
-        [list $agedge $agax $agsledge $agfqedge $agfqax \
+        [list $agedge $agax $agsledge $agfqedge $agfqax $agbwresp $agbwunits \
               [expr {[llength $agsledge] < [llength $agedge] ? {shorter} : {NOTSHORTER}}] \
               [expr {[llength $agfqedge] < [llength $agedge] ? {shorter} : {NOTSHORTER}}] \
-              [ag_enum_in freq edge] [ag_enum_in freq xaxis]] \
+              [ag_enum_in freq edge] [ag_enum_in freq xaxis] \
+              $aggmedge $aggmgain $agpmedge $agpmgain \
+              [expr {[lsort $aggmedge] eq [lsort $agedge] ? {samemembers} : {DIFFER}}] \
+              [expr {$aggmedge ne $agedge ? {reordered} : {SAMEORDER}}] \
+              [expr {$agpmedge eq $aggmedge ? {sameasgm} : {DIFFER}}] \
+              [expr {$agpmgain eq $aggmgain ? {sameasgm} : {DIFFER}}] \
+              [expr {$agbwunits eq $aggmgain ? {sameasgm} : {DIFFER}}]] \
         [list {rising falling either} {start number mid} {rising falling} \
-              {rising falling} {start number mid} shorter shorter \
-              NOLITERAL:freq/edge NOLITERAL:freq/xaxis]
+              {rising falling} {start number mid} {low high band} {magnitude dB} \
+              shorter shorter \
+              NOLITERAL:freq/edge NOLITERAL:freq/xaxis \
+              {falling rising either} {magnitude dB} \
+              {falling rising either} {magnitude dB} samemembers reordered \
+              sameasgm sameasgm sameasgm]
     set agbadenum {} ; set agnenum 0
     foreach {agv agk aglit} [list cross edge $agedge dutyCycle xaxis $agax \
                                   delay edgeA $agedge delay edgeB $agedge \
                                   slewRate edge $agsledge \
                                   frequency edge $agfqedge frequency xaxis $agfqax \
-                                  freq edge $agfqedge freq xaxis $agfqax] {
+                                  freq edge $agfqedge freq xaxis $agfqax \
+                                  bandwidth response $agbwresp \
+                                  bandwidth units $agbwunits \
+                                  gainBwProd response $agbwresp \
+                                  gainBwProd units $agbwunits \
+                                  gainMargin edge $aggmedge \
+                                  gainMargin gain $aggmgain \
+                                  phaseMargin edge $agpmedge \
+                                  phaseMargin gain $agpmgain] {
         incr agnenum
         set kind [ag_field $agv $agk 2]
         set mem [lrange $kind 1 end]
@@ -4297,7 +4565,7 @@ group MT11 {
         if {$mem ne $aglit} { lappend agbadenum $agv/$agk=members($mem)vs($aglit) }
     }
     check "MT11 every enum field offers EXACTLY the members its own validator tests against, lifted from the shipped body -- so a dialog offering a fourth edge, or a renamed axis, is caught by the drift instead of by someone noticing a refusal in the field; the alias's two fields are swept against the literals of the proc it DELEGATES to, which is the only body that has any" \
-        [list $agnenum $agbadenum] {9 {}}
+        [list $agnenum $agbadenum] {17 {}}
     set agbadmem {} ; set agnmem 0
     foreach agv [ag_verbs] {
         foreach row [ag_rows $agv] {
@@ -4359,8 +4627,38 @@ group MT11 {
         set got [mt_msg [mt_call frequency {v(sq)} 0.5 rising 0 0 $m]]
         if {$got eq [pcall calc::cross_msg freqxaxis $m]} { lappend agunreachable freqxaxis/$m }
     }
+    foreach m [lrange [ag_field bandwidth response 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call bandwidth {v(lp)} 3 magnitude $m 0]]
+        if {$got eq [pcall calc::cross_msg bwbadresponse $m]} { lappend agunreachable bwresponse/$m }
+    }
+    foreach m [lrange [ag_field bandwidth units 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call bandwidth {v(lp)} 3 $m low 0]]
+        if {$got eq [pcall calc::cross_msg bwunits $m]} { lappend agunreachable bwunits/$m }
+    }
+    foreach m [lrange [ag_field gainMargin edge 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call gainMargin {v(lp)} {ph(lp)} magnitude -180 $m 1 0]]
+        if {$got eq [pcall calc::cross_msg gmedge $m]} { lappend agunreachable gmedge/$m }
+    }
+    foreach m [lrange [ag_field gainMargin gain 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call gainMargin {v(lp)} {ph(lp)} $m -180 falling 1 0]]
+        if {$got eq [pcall calc::cross_msg gmunits $m]} { lappend agunreachable gmunits/$m }
+    }
+    foreach m [lrange [ag_field phaseMargin edge 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call phaseMargin {v(lp)} {ph(lp)} magnitude $m 1 0]]
+        if {$got eq [pcall calc::cross_msg pmedge $m]} { lappend agunreachable pmedge/$m }
+    }
+    foreach m [lrange [ag_field phaseMargin gain 2] 1 end] {
+        incr agnreach
+        set got [mt_msg [mt_call phaseMargin {v(lp)} {ph(lp)} $m falling 1 0]]
+        if {$got eq [pcall calc::cross_msg pmunits $m]} { lappend agunreachable pmunits/$m }
+    }
     check "MT11 every member the dialog offers is one the verb ACCEPTS: with no result loaded each member gets past its own membership test and meets the no-data refusal, while a non-member is refused by the membership test itself -- so the two sentences tell acceptance from rejection with no fixture at all.  ⚠ slewRate's own shorter edge list is swept here too, and `either` is driven as a NON-member against it: cross accepts that word and slewRate must not, which is the one place the two validators are shown to disagree behaviourally" \
-        [list [mt_atleast $agnreach 13] $agunreachable \
+        [list [mt_atleast $agnreach 23] $agunreachable \
               [expr {[mt_msg [mt_call dutyCycle {v(sq)} 0.5 0 0 sideways]] eq [pcall calc::cross_msg badxaxis sideways] ? {refused} : {ACCEPTED}}] \
               [expr {[mt_msg [mt_call cross {v(sq)} 0.5 1 sideways]] eq [pcall calc::cross_msg badedge sideways] ? {refused} : {ACCEPTED}}] \
               [expr {[mt_msg [mt_call slewRate {v(sq)} 0 1 10 90 1 sideways 0]] eq [pcall calc::cross_msg slewbadedge sideways] ? {refused} : {ACCEPTED}}] \
@@ -4368,8 +4666,14 @@ group MT11 {
               [expr {[mt_msg [mt_call frequency {v(sq)} 0.5 sideways 0 0 start]] eq [pcall calc::cross_msg freqedge sideways] ? {refused} : {ACCEPTED}}] \
               [expr {[mt_msg [mt_call frequency {v(sq)} 0.5 either 0 0 start]] eq [pcall calc::cross_msg freqedge either] ? {refused} : {ACCEPTED}}] \
               [expr {[mt_msg [mt_call frequency {v(sq)} 0.5 rising 0 0 sideways]] eq [pcall calc::cross_msg freqxaxis sideways] ? {refused} : {ACCEPTED}}] \
-              [expr {[mt_msg [mt_call freq {v(sq)} 0.5 either 0 0 start]] eq [pcall calc::cross_msg freqedge either] ? {refused} : {ACCEPTED}}]] \
-        {atleast13 {} refused refused refused refused refused refused refused refused}
+              [expr {[mt_msg [mt_call freq {v(sq)} 0.5 either 0 0 start]] eq [pcall calc::cross_msg freqedge either] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call bandwidth {v(lp)} 3 magnitude sideways 0]] eq [pcall calc::cross_msg bwbadresponse sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call bandwidth {v(lp)} 3 sideways low 0]] eq [pcall calc::cross_msg bwunits sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call gainMargin {v(lp)} {ph(lp)} magnitude -180 sideways 1 0]] eq [pcall calc::cross_msg gmedge sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call gainMargin {v(lp)} {ph(lp)} sideways -180 falling 1 0]] eq [pcall calc::cross_msg gmunits sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call phaseMargin {v(lp)} {ph(lp)} magnitude sideways 1 0]] eq [pcall calc::cross_msg pmedge sideways] ? {refused} : {ACCEPTED}}] \
+              [expr {[mt_msg [mt_call phaseMargin {v(lp)} {ph(lp)} sideways falling 1 0]] eq [pcall calc::cross_msg pmunits sideways] ? {refused} : {ACCEPTED}}]] \
+        {atleast23 {} refused refused refused refused refused refused refused refused refused refused refused refused refused refused}
     # --- and the call REALLY IS composed by key -----------------------------
     # ⚠⚠ ADDED BY THE IMPLEMENTATION STAGE, AND THE REASON IS A MEASUREMENT THE
     # SUITE AUTHOR'S OWN HOLE SH2 PREDICTED.  The row above measures only that
@@ -5005,6 +5309,7 @@ proc mt_offprod {a b k} {
     if {[string match ERR:* $b]} { return $b }
     if {[catch {llength $a} na]} { return "NOTALIST:{$a}" }
     if {[catch {llength $b} nb]} { return "NOTALIST:{$b}" }
+    if {![mt_finite $k]} { return "NOTANUMBER:{$k}" }
     if {$na != $nb} { return "LENMISMATCH:$na|$nb" }
     set out {}
     foreach x $a y $b {
@@ -5157,25 +5462,166 @@ proc mt_absmap {v} {
 # ⚠ A comment INSIDE an arm's body is safe and stays invisible here, which is
 # right rather than a gap: the body is one braced element whatever it contains, so
 # its word count cannot move the pairing.
+#
+# ⚠⚠ AND THE ARM LIST IS THE SWITCH COMMAND'S **LAST** BRACED GROUP, NOT THE FIRST
+# BRACE AFTER THE KEYWORD, BECAUSE THE FIRST-BRACE SCAN WAS VACUOUS FOR A MEMBER OF
+# THIS FENCE'S OWN POPULATION.  `calc::cross_ordinal` spells its header
+# `switch -exact --` on a bracketed `expr` of its own argument -- the arm list's
+# opening brace is therefore NOT the first one on the line.  A scan taking the
+# first brace after the keyword grabbed the one inside that substitution instead,
+# extracted the expression's own three words as if they were an arm list,
+# and answered the sentinel `ODDPAIRING` -- from BOTH parses, which compare EQUAL,
+# so `mt_switch_agree` reported `agree` about nothing.  Built, both parities, at
+# that exact site: the EVEN-word comment was a COMPLETE no-op with every ordinal
+# still correct, and the ODD one was reported `agree` here too and reddened only
+# incidentally, through other rows watching the arms raise.  So this fence saw
+# NEITHER parity at that member.
+#
+# The two corrections, and they are separable: bracketed substitutions are MASKED
+# before any brace is located, so a brace inside one cannot be mistaken for the arm
+# list's; and the arm list is the LAST depth-0 braced group of the command rather
+# than the first, so `switch {$x} {arms}` -- the other shape that puts a brace ahead
+# of the body -- lands on the arms too.
+#
+# ⚠ DECLARED LIMIT: the mask is over brackets alone.  A brace inside a QUOTED
+# string in the switch header is still counted, so `switch -- $x "\{"` would
+# mislocate; that spelling occurs nowhere in the population this fence derives, and
+# chasing it was refused rather than left to be discovered.  `mt_switch_opaque` is
+# the belt: a member whose answer is a SENTINEL rather than an arm set is named as a
+# failure, so a future spelling that defeats the locator reddens by name instead of
+# agreeing with itself.
+#
+# every character inside a bracketed substitution replaced by a space, its NEWLINES
+# INCLUDED, and LENGTH PRESERVED -- so an index into the mask is an index into the
+# original and the body can be sliced out of the real text with its brackets
+# intact.  A backslash escape is carried through with the character it protects, so
+# `\[` neither opens nor closes.  The empty string for an unbalanced bracket, which
+# the caller reports as a sentinel rather than scanning on.
+#
+# ⚠ THE NEWLINES INSIDE A BRACKET ARE BLANKED TOO, and that is deliberate rather
+# than careless about line structure: the group scan below ends a command at the
+# first depth-0 newline, so a substitution spelled across two lines would end the
+# command before its arm list was reached.  Line anchoring is done on the ORIGINAL
+# body and never on the mask, so nothing else depends on the mask's lines.  Case
+# `bracketnl` of `mt_switch_locate` drives exactly that shape.
+proc mt_mask_brackets {s} {
+    set out {} ; set d 0 ; set n [string length $s]
+    for {set i 0} {$i < $n} {incr i} {
+        set c [string index $s $i]
+        if {$c eq "\\"} {
+            append out $c ; incr i
+            if {$i < $n} { append out [string index $s $i] }
+            continue
+        }
+        if {$c eq {[}} { incr d ; append out { } ; continue }
+        if {$c eq {]}} { if {$d > 0} { incr d -1 ; append out { } ; continue } }
+        if {$d > 0} { append out { } ; continue }
+        append out $c
+    }
+    if {$d != 0} { return {} }
+    return $out
+}
+# the brace-balanced groups ONE command carries at brace depth 0, as `{start end}`
+# index pairs into the string scanned, starting at `from`.  The command ends at the
+# first unescaped newline or `;` reached at depth 0, so an arm list spanning lines
+# is one group -- its newlines are at depth 1 -- and nothing after the command is in
+# reach.  `BAD` for a brace that closes too many or never closes.
+proc mt_brace_groups {s from} {
+    set n [string length $s] ; set d 0 ; set g {} ; set st -1
+    for {set i $from} {$i < $n} {incr i} {
+        set c [string index $s $i]
+        if {$c eq "\\"} { incr i ; continue }
+        if {$c eq "\{"} { if {$d == 0} { set st $i } ; incr d ; continue }
+        if {$c eq "\}"} {
+            incr d -1
+            if {$d < 0} { return BAD }
+            if {$d == 0} { lappend g [list $st $i] }
+            continue
+        }
+        if {$d == 0 && ($c eq "\n" || $c eq ";")} break
+    }
+    if {$d != 0} { return BAD }
+    return $g
+}
 proc mt_switch_arms {p {strip 1}} {
     if {[info procs ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
     if {[catch {info body ::calc::$p} b]} { return "NOBODY:calc::$p" }
     if {$strip} { set b [mt_decomment $b] }
     if {![regexp -indices -line {^[ \t]*switch[ \t]} $b mtidx]} { return "NOSWITCH:$p" }
-    set o [string first "\{" $b [lindex $mtidx 0]]
-    if {$o < 0} { return "NOBRACE:$p" }
-    set d 0 ; set n [string length $b] ; set j $o
-    for {} {$j < $n} {incr j} {
-        set c [string index $b $j]
-        if {$c eq "\{"} { incr d ; continue }
-        if {$c eq "\}"} { incr d -1 ; if {$d == 0} break }
-    }
-    if {$d != 0} { return "UNBALANCED:$p" }
+    set m [mt_mask_brackets $b]
+    if {$m eq {}} { return "NOMASK:$p" }
+    set g [mt_brace_groups $m [lindex $mtidx 0]]
+    if {$g eq {BAD}} { return "UNBALANCED:$p" }
+    if {![llength $g]} { return "NOBRACE:$p" }
+    lassign [lindex $g end] o j
     set body [string range $b [expr {$o + 1}] [expr {$j - 1}]]
     if {[catch {llength $body} L]} { return "NOTALIST:$p" }
     if {$L % 2} { return "ODDPAIRING:$p/$L" }
     set out {}
     foreach {mtpat mtbody} $body { lappend out $mtpat }
+    return $out
+}
+# an arm set that is really a SENTINEL -- the one answer `mt_switch_agree` cannot
+# judge, because two parses that fail the same way compare equal.  One spelling,
+# shared with `mt_switch_drive` and with the population leg, so a sentinel added to
+# `mt_switch_arms` cannot be recognised by one reader and missed by another.
+proc mt_switch_isopaque {a} {
+    return [regexp {^(NOPROC|NOBODY|NOSWITCH|NOBRACE|UNBALANCED|NOMASK|NOTALIST|ODDPAIRING):} $a]
+}
+# ⚠⚠ THE LOCATOR DRIVEN ON HEADER SHAPES DIRECTLY, RATHER THAN ON WHATEVER THE
+# PRODUCT HAPPENS TO SPELL TODAY.  `calc::cross_ordinal` was the one member whose
+# header put a brace ahead of the arm list, and while it was misparsed the parity
+# claim for it was an agreement about nothing.  Waiting for the product to grow the
+# next such header is not a fence, so each shape is minted as a synthetic
+# `::calc::` proc, parsed, and removed in the same breath -- the hygiene MT14/N
+# asserts over `::calc::__mt_*`.
+#
+# `<tag>=<arm set joined by />` per case, and each case is here because it
+# DISCRIMINATES one half of the locator: `bracedstring` fails if the FIRST braced
+# group is taken instead of the last, `bracketnl` fails if bracketed substitutions
+# are not masked (its newline would end the command before the arm list), and
+# `evenraw`/`oddraw` are the two parities of a comment between two patterns, read
+# with the raw parse so the comment survives -- the even one must surface the
+# comment's own words AS PATTERNS and the odd one must surface `ODDPAIRING`, which
+# is what makes the agreement test in MT14/Q and Q2 mean something.
+proc mt_switch_locate {} {
+    set cases {}
+    lappend cases plain 1 {switch -- $x {
+        1 {return st}
+        2 {return nd}
+    }}
+    lappend cases bracketexpr 1 {switch -exact -- [expr {$x % 10}] {
+        1 {return st}
+        2 {return nd}
+    }}
+    lappend cases bracedstring 1 {switch -- {$x} {
+        1 {return st}
+        2 {return nd}
+    }}
+    set mtnl "switch -exact -- \[string trim \" \$x\n\"\] "
+    append mtnl {{
+        1 {return st}
+        2 {return nd}
+    }}
+    lappend cases bracketnl 1 $mtnl
+    lappend cases evenraw 0 {switch -- $x {
+        1 {return st}
+        # four words here
+        2 {return nd}
+    }}
+    lappend cases oddraw 0 {switch -- $x {
+        1 {return st}
+        # three words
+        2 {return nd}
+    }}
+    set out {}
+    foreach {mttag mtstrip mtsrc} $cases {
+        set nm ::calc::__mt_locate_$mttag
+        if {[catch {proc $nm {x} $mtsrc}]} { lappend out "$mttag=NOTAPROC" ; continue }
+        set a [mt_switch_arms __mt_locate_$mttag $mtstrip]
+        lappend out "$mttag=[join $a /]"
+    }
+    foreach p [info procs ::calc::__mt_locate_*] { catch {rename $p {}} }
     return $out
 }
 # ⚠⚠ ...AND THE POPULATION THOSE TWO ARE APPLIED TO, DERIVED FROM THE
@@ -5225,6 +5671,68 @@ proc mt_switch_agree {p} {
     if {$a eq $b} { return agree }
     return "differ:{$a}|{$b}"
 }
+# the members of that population whose arm set is a sentinel instead of a list of
+# patterns -- the leg `mt_switch_parity` cannot supply.  Empty is the claim; a name
+# here says that member's parity verdict was an agreement about nothing, which is
+# exactly the state `calc::cross_ordinal` was measured in before the locator was
+# corrected above.
+#
+# ⚠ THE POPULATION IS AN ARGUMENT SO THE LOOP ITSELF CAN BE DRIVEN NON-VACUOUSLY.
+# An empty answer is the whole claim here, and a loop that had stopped looking
+# would also answer empty; the row therefore calls this a second time on a
+# one-member population naming a proc that does not exist, where a working loop
+# must report BOTH its parses.  Defaulting to the derived population keeps the
+# real call a derivation and not a hand-kept list.
+# ⚠⚠ THE `::calc::` PROCS THAT REUSE THE SHARED `empty` ARM, derived through the
+# interpreter from each proc's own DECOMMENTED body.  Row MT14/Q3 drives all of
+# them, which is the arm every per-verb sweep filtered out by prefix.
+#
+# ⚠ DECLARED LIMIT: this is a scan over CALL SITES, which is the only instrument
+# that sees a literal argument at a call -- and it is therefore blind to a call
+# built from a variable, exactly as BW6's `reuses` leg is.  Q3 asserts the DRIVEN
+# key set EQUAL to this population rather than trusting either side alone, so the
+# two have to move together.
+proc mt_empty_reusers {} {
+    set out {}
+    foreach p [lsort [pcall info procs ::calc::*]] {
+        if {[catch {info body $p} b]} continue
+        if {[regexp {calc::cross_msg[ \t]+empty} [mt_decomment $b]]} {
+            lappend out [namespace tail $p]
+        }
+    }
+    return [lsort $out]
+}
+# the request each reuser needs in order to REACH that arm: an empty first operand
+# and every LATER argument valid, because `calc::bandwidth` tests its two enums
+# ABOVE its empty test and a bogus `units` would earn a different refusal.
+proc mt_empty_drives {} {
+    return {cross {{} 0.5 1 rising 0} overshoot {{} 0.0 1.0 0} bandwidth {{} 3 magnitude low 0}}
+}
+# ...and the same request with the operand FILLED, for Q3's non-vacuity leg: a
+# verb answering that refusal unconditionally must fail the row, not pass it.
+proc mt_empty_filled {} {
+    return {cross {{v(sq)} 0.5 1 rising 0} overshoot {{v(sq)} 0.0 1.0 0} \
+            bandwidth {{v(lp)} 3 magnitude low 0}}
+}
+# which of the four per-verb prefixes those sweeps filter on an arm name matches.
+# Empty for the shared arm is the structural reason nothing drove it; the two
+# controls are arms that DO match, so an empty answer cannot come from a predicate
+# that matches nothing.
+proc mt_prefix_hits {arm} {
+    set out {}
+    foreach p {bw* gbw* gm* pm*} { if {[string match $p $arm]} { lappend out $p } }
+    return $out
+}
+proc mt_switch_opaque {{pop {}}} {
+    if {$pop eq {}} { set pop [mt_switch_procs] }
+    set out {}
+    foreach e $pop {
+        set t [lindex [split $e :] 0]
+        if {[mt_switch_isopaque [mt_switch_arms $t 1]]} { lappend out $t }
+        if {[mt_switch_isopaque [mt_switch_arms $t 0]]} { lappend out "$t/raw" }
+    }
+    return [lsort -unique $out]
+}
 # ...and the BEHAVIOURAL half, which is the only confirmation there is: every
 # derived arm is DRIVEN, with the arity read off `info args` so one instrument
 # serves a one-argument proc and a three-argument one, and each must answer a
@@ -5233,9 +5741,7 @@ proc mt_switch_agree {p} {
 # falls through to the empty string.
 proc mt_switch_drive {p} {
     set arms [mt_switch_arms $p 1]
-    if {[regexp {^(NOPROC|NOBODY|NOSWITCH|NOBRACE|UNBALANCED|NOTALIST|ODDPAIRING):} $arms]} {
-        return $arms
-    }
+    if {[mt_switch_isopaque $arms]} { return $arms }
     if {[catch {info args ::calc::$p} na]} { return "NOARGS:$p" }
     set na [llength $na]
     set bad {}
@@ -5927,12 +6433,56 @@ group MT14 {
     # and it says nothing about whether an arm answers correctly.  Q is the
     # behavioural half and covers three of the members; the rest are parse-only, and
     # that is stated rather than left to be discovered.
-    check "MT14/Q2 the parity fence is TOTAL over a population derived from the namespace rather than named: every ::calc:: proc whose decommented body opens a switch in command position is a member, each has exactly ONE such opening so the first-switch scan is total over it, and for EVERY member the decommented parse and the RAW parse agree -- so a comment between two patterns of ANY of them reddens here whichever parity it has, including the even one that is a complete no-op today and detonates when one word is edited.  The population is asserted as a FLOOR and strictly larger than the set row Q drives behaviourally, so a shrinking namespace cannot make this vacuous and nobody can read Q's three names as the whole set" \
+    check "MT14/Q2 the parity fence is TOTAL over a population derived from the namespace rather than named, AND NON-VACUOUS FOR EVERY MEMBER OF IT: every ::calc:: proc whose decommented body opens a switch in command position is a member, each has exactly ONE such opening so the first-switch scan is total over it, and for EVERY member the decommented parse and the RAW parse agree -- so a comment between two patterns of ANY of them reddens here whichever parity it has, including the even one that is a complete no-op today and detonates when one word is edited.  ⚠ THE AGREEMENT ALONE IS NOT ENOUGH AND THIS ROW SAYS SO WITH A SECOND LEG: two parses that FAIL the same way answer the same sentinel and compare EQUAL, which is an agreement about nothing, so NO member's arm set may be a sentinel on either parse -- the state calc::cross_ordinal was measured in, where a scan taking the first brace after the keyword grabbed the one inside the bracketed expression of its own switch header and both parities went undetected.  The predicate's own control runs the SAME LOOP over a one-member population naming a proc that does not exist and requires BOTH its parses reported, so an empty answer cannot come from a detector that recognises nothing or from a loop that stopped looking.  ⚠ AND THE LOCATOR IS DRIVEN ON HEADER SHAPES DIRECTLY instead of waiting for the product to grow the next one: six synthetic ::calc:: procs are minted and removed, each chosen because it DISCRIMINATES one half of it -- a braced match-string fails if the first braced group is taken rather than the last, a substitution carrying a newline fails if brackets are not masked, and the two parities of a comment between two patterns must surface the comment's own words as patterns and ODDPAIRING respectively, which is what gives the agreement test its content.  All four variants were built and each case was measured to redden under exactly the half it names.  The population is asserted as a FLOOR and strictly larger than the set row Q drives behaviourally, so a shrinking namespace cannot make this vacuous and nobody can read Q's three names as the whole set" \
         [list [mt_switch_words [mt_switch_procs] : 1] \
               [mt_switch_words [mt_switch_parity] = 1] \
+              [mt_switch_opaque] \
+              [mt_switch_opaque {__mt_no_such_switch__:1}] \
+              [mt_switch_isopaque [mt_switch_arms cross_msg]] \
+              [mt_switch_locate] \
               [mt_atleast [llength [mt_switch_procs]] 10] \
               [mt_excess [llength [mt_switch_procs]] 3 1]] \
-        [list 1 agree atleast10 atleast1]
+        [list 1 agree {} {__mt_no_such_switch__ __mt_no_such_switch__/raw} 0 \
+              {plain=1/2 bracketexpr=1/2 bracedstring=1/2 bracketnl=1/2 evenraw=1/#/words/2 oddraw=ODDPAIRING:__mt_locate_oddraw/7} \
+              atleast10 atleast1]
+
+    # --- Q3: THE ONE ARM OF `calc::cross_msg` THAT NO BAND NAMED ------------
+    # ⚠⚠ EVERY PER-VERB SWEEP FILTERS THE DERIVED ARM SET TO ITS OWN PREFIX --
+    # BW6 to `bw*`, GBW9 to `gbw*`, GM12 to `gm*`, PM13 to `pm*` -- so the arm that
+    # THREE verbs REUSE rather than re-spell fell between all of them.  Limit L7 of
+    # band MT22 declared that reported-not-repaired; this row repairs it, and the
+    # product comment that used to claim *"the three bands that compare it by
+    # identity stay green"* was false when it was written: no band named the arm.
+    #
+    # The population is derived through the interpreter -- the `::calc::` procs
+    # whose DECOMMENTED body calls `calc::cross_msg empty` -- and the DRIVEN set is
+    # asserted equal to it, so a fourth reuser reddens as an undriven member rather
+    # than joining a sweep that reads as coverage.
+    pcall mt_load tran
+    set q3WANT [pcall calc::cross_msg empty]
+    set q3POP [mt_empty_reusers]
+    set q3DRV [mt_empty_drives]
+    set q3FIL [mt_empty_filled]
+    set q3BAD {} ; set q3VAC {} ; set q3N 0
+    foreach q3v $q3POP {
+        if {![dict exists $q3DRV $q3v]} { lappend q3BAD "$q3v=UNDRIVEN" ; continue }
+        incr q3N
+        set q3a [mt_call $q3v {*}[dict get $q3DRV $q3v]]
+        if {[mt_disp $q3a] ne {refused}} { lappend q3BAD "$q3v=[mt_disp $q3a]" ; continue }
+        if {[mt_msg $q3a] ne $q3WANT} { lappend q3BAD "$q3v=NOTIDENTICAL" ; continue }
+        if {![dict exists $q3FIL $q3v]} { lappend q3VAC "$q3v=NOFILLED" ; continue }
+        if {[mt_msg [mt_call $q3v {*}[dict get $q3FIL $q3v]]] eq $q3WANT} {
+            lappend q3VAC "$q3v=SAMEANYWAY"
+        }
+    }
+    check "MT14/Q3 the SHARED empty-operand arm is compared BY IDENTITY for every verb that reuses it, over a population derived through the interpreter from each ::calc:: proc's own decommented body rather than from a list: each member is driven with an empty first operand and every LATER argument valid -- bandwidth's two enum tests sit ABOVE its empty test, so a bogus units would earn a different refusal and the row would pass against the wrong arm -- and must answer the refusal disposition with cross_msg's own sentence byte for byte.  THE NON-VACUITY LEG DRIVES THE SAME REQUEST WITH THE OPERAND FILLED and requires a DIFFERENT sentence, so a verb that answered this refusal unconditionally fails rather than passes.  The driven key set is asserted EQUAL to the derived population so a fourth reuser reddens as an undriven member; the arm is asserted PRESENT in the catalogue derivation and asserted to match NONE of the four per-verb prefixes those sweeps filter on, which is the structural reason nothing named it; and the sentence is asserted to name cross rather than the calling verb, which is limit L7 of band MT22 turned from prose into a measurement" \
+        [list $q3BAD $q3VAC [mt_sized $q3N 3] $q3POP [lsort [dict keys $q3DRV]] \
+              [expr {$q3WANT ne {} ? {nonempty} : {EMPTYSENTENCE}}] \
+              [string match *cross* $q3WANT] \
+              [expr {[lsearch -exact [pcall mt_switch_arms cross_msg] empty] >= 0 ? {incatalogue} : {MISSING}}] \
+              [mt_prefix_hits empty] [mt_prefix_hits bwnohi] [mt_prefix_hits pmempty]] \
+        [list {} {} sized {bandwidth cross overshoot} {bandwidth cross overshoot} \
+              nonempty 1 incatalogue {} bw* pm*]
 
     # --- N: R402, the band leaks nothing ------------------------------------
     check "MT14/N R402 the band left no __calc_tmp*, no __mt_* column and no probe proc behind -- the hygiene claim for an instrument that mints columns in the product's own inventory, and a row rather than a habit because MT10 and MT11 both derive over ::calc:: and would measure a leftover probe as a product proc" \
@@ -6020,6 +6570,9 @@ proc mt_fq_fromx {xs} {
     if {[catch {llength $xs} n]} { return "NOTALIST:{$xs}" }
     if {$n < 2} { return {} }
     set out {}
+    for {set i 0} {$i < $n} {incr i} {
+        if {![mt_finite [lindex $xs $i]]} { return "NOTANUMBER:\[$i\]{[lindex $xs $i]}" }
+    }
     for {set i 0} {$i < $n - 1} {incr i} {
         set T [expr {double([lindex $xs [expr {$i+1}]]) - double([lindex $xs $i])}]
         if {$T <= 0} { return "NONPOSITIVE:$i" }
@@ -6032,6 +6585,17 @@ proc mt_fq_fromx {xs} {
 proc mt_fq_axis {xs which} {
     if {[catch {llength $xs} n]} { return "NOTALIST:{$xs}" }
     if {$n < 2} { return {} }
+    # ⚠ A LISTNESS GUARD IS NOT A SENTINEL TEST.  `pcall_listable` makes every
+    # sentinel list-parseable ON PURPOSE so `llength` cannot raise on one, and
+    # that very property defeats the guard above: `RAISED:sabotage: cross` is a
+    # valid two-element list, so the loop below ran and `double()` raised on a
+    # word.  Band MT15 vanished through `group`'s catch, deleting the rest of its
+    # rows from the verdict instead of reddening one.  The elements are therefore
+    # gated NUMERICALLY, which is the test the sentinel cannot pass, and band
+    # MT29 drives it.
+    for {set i 0} {$i < $n} {incr i} {
+        if {![mt_finite [lindex $xs $i]]} { return "NOTANUMBER:\[$i\]{[lindex $xs $i]}" }
+    }
     set out {}
     for {set i 0} {$i < $n - 1} {incr i} {
         set a [lindex $xs $i] ; set b [lindex $xs [expr {$i+1}]]
@@ -9286,25 +9850,65 @@ group MT21 {
         dutyCycle    {level 0.5}
         frequency    {level 0.5}
         freq         {level 0.5}
+        bandwidth    {drop 3}
+        gainBwProd   {drop 3}
+        gainMargin   {rpnMag {v(lp)} rpnPh {ph(lp)}}
+        phaseMargin  {rpnMag {v(lp)} rpnPh {ph(lp)}}
     }
-    set m21MISSING {} ; set m21NOREAL {}
+    # the per-verb legs, plus the `real`-field SPLIT.
+    #
+    # ⚠⚠ THE `real`-FIELD POPULATION IS A DERIVED SPLIT RATHER THAN A CLAIM ABOUT
+    # EVERY VERB, AND THE WIDENING IS FORCED BY A MEASUREMENT RATHER THAN BY AN
+    # EXEMPTION.  This used to assert that EVERY derived verb has at least one
+    # `real` field, on the ground that the field sweep below would otherwise drive
+    # nothing for it.  `calc::phaseMargin` makes that false of itself: unity gain
+    # is spelled 1 in a magnitude and 0 in dB, so no single `real` default could
+    # be right in both units and that verb names the level through its `gain`
+    # ENUM -- leaving it with no `real` field at all.  A band whose only shape was
+    # ONE claim about ALL of them had exactly the two ways out band MT10 already
+    # refused twice: hand-exclude the new verb, which is the hand-kept-list defect
+    # one level up, or weaken the claim for everybody.  Neither is taken.  The set
+    # is SPLIT by the same instrument the sweep itself uses, each half carries the
+    # claim that is TRUE of it, and the split is asserted as a cover with no
+    # overlap -- so a verb that quietly lost its `real` fields MOVES between
+    # halves and is measured where it lands.
+    #
+    # ⚠ THE NO-`real` HALF IS NOT A HIDING PLACE.  What the old leg really bought
+    # was that a verb whose spec had gone EMPTY or malformed would show up there
+    # with no `real` fields; so each member of that half must still have a
+    # NON-EMPTY spec whose every field kind is a member of the closed vocabulary
+    # MINUS `real`.  A broken spec therefore still reddens here, by name.
+    set m21MISSING {} ; set m21REAL {} ; set m21NOREAL {} ; set m21NRBAD {}
     foreach m21n $m21V {
         if {![dict exists $m21BASE $m21n]} { lappend m21MISSING "$m21n=NOBASE" ; continue }
         set m21b [dict get $m21BASE $m21n]
         foreach m21k [m21_reqkeys $m21n] {
             if {![dict exists $m21b $m21k]} { lappend m21MISSING "$m21n/$m21k" }
         }
-        if {![llength [m21_realkeys $m21n]]} { lappend m21NOREAL $m21n }
+        if {[llength [m21_realkeys $m21n]]} { lappend m21REAL $m21n ; continue }
+        lappend m21NOREAL $m21n
+        set m21rows [ag_rows $m21n]
+        if {![llength $m21rows]} { lappend m21NRBAD "$m21n=EMPTYSPEC" ; continue }
+        foreach m21row $m21rows {
+            set m21kd [ag_cell [ag_cell $m21row 2] 0]
+            if {[lsearch -exact {enum int rpn} $m21kd] < 0} {
+                lappend m21NRBAD "$m21n/[ag_cell $m21row 0]=kind($m21kd)"
+            }
+        }
     }
-    check "MT21/NV the two populations are DERIVED and the band's own fixture is asserted to cover them: the verbs come from the route-T catalogue rows that have a proc and a field list, their `real` and REQUIRED fields from `calc::fn_argspec`, and the overflowing spellings from the double format -- an exponent sequence past its range plus the `%.16g` spelling of the largest finite double, which is the precision `xschem raw values` writes with.  Every derived verb must have a declared base answer covering every one of its required fields, so a verb added to the catalogue reddens here by NAME rather than being silently skipped; and every one must have at least one `real` field, or the field sweep below would drive nothing for it.  The negative controls show the derivations can answer empty" \
+    check "MT21/NV the two populations are DERIVED and the band's own fixture is asserted to cover them: the verbs come from the route-T catalogue rows that have a proc and a field list, their `real` and REQUIRED fields from `calc::fn_argspec`, and the overflowing spellings from the double format -- an exponent sequence past its range plus the `%.16g` spelling of the largest finite double, which is the precision `xschem raw values` writes with.  Every derived verb must have a declared base answer covering every one of its required fields, so a verb added to the catalogue reddens here by NAME rather than being silently skipped.  ⚠ THE `real`-FIELD POPULATION IS A DERIVED SPLIT and no longer one claim about every verb: ONE clickable verb legitimately has NO `real` field, because the level it measures at is spelled differently in its two gain units and is named by an ENUM instead -- so the set is split by the sweep's own instrument and asserted as a COVER of the derived verb set with no overlap, the swept half carries a floor, and every member of the OTHER half must still have a non-empty spec whose field kinds are the closed vocabulary minus `real`, which is what the old leg really bought and which still reddens on a spec that broke.  The negative controls show the derivations can answer empty" \
         [list [expr {[llength [info procs ::calc::arg_values]] ? 1 : 0}] \
               [expr {[llength [info procs ::calc::arg_invoke]] ? 1 : 0}] \
               [expr {[llength [info procs ::calc::arg_bad]] ? 1 : 0}] \
-              [mt_atleast [llength $m21V] 8] $m21MISSING $m21NOREAL \
+              [mt_atleast [llength $m21V] 8] $m21MISSING \
+              [lsort [concat $m21REAL $m21NOREAL]] \
+              [mt_atleast [llength $m21REAL] 8] $m21NRBAD \
+              [mt_atleast [llength $m21NOREAL] 1] \
               [mt_atleast [llength $m21SP] 4] \
               [m21_realkeys __mt_nosuch_zz] [m21_reqkeys __mt_nosuch_zz] \
               [mt_finite [format {%.16g} $m21DMAX]] [mt_finite 1e308]] \
-        {1 1 1 atleast8 {} {} atleast4 {} {} 0 1}
+        [list 1 1 1 atleast8 {} [lsort $m21V] atleast8 {} atleast1 \
+              atleast4 {} {} 0 1]
 
     # --- A: every `real` field of every clickable verb, every spelling -------
     # ⚠ THE EXPECTATION IS AN IDENTITY AGAINST `nan`, NOT A SENTENCE.  For each
@@ -9354,16 +9958,36 @@ group MT21 {
     }
     # the CONTROL: the same base answers, untouched, must not be refused at all,
     # or every row above would be green over verbs that refuse everything.
-    set m21CTL {}
+    #
+    # ⚠⚠ ASKED ON EITHER OF THE FIXTURE'S TWO ARMS, AND THE WIDENING IS FORCED BY
+    # A MEASUREMENT RATHER THAN AN EXEMPTION FOR ONE VERB.  What this leg exists to
+    # claim is that the base answer is WELL FORMED, so the refusals above are about
+    # the spelling of a field and not about a verb that refuses everything.  A
+    # FREQUENCY-DOMAIN verb refuses a `tran` database on account of the DATABASE --
+    # a true statement about the data, not about the answer -- so the control
+    # re-asks the same request on the `ac` arm and reports only a verb refused on
+    # BOTH.  A verb that really refused everything is refused twice and still lands
+    # here, so nothing is lost; and the `tran` arm is restored afterwards, which
+    # the row asserts rather than assumes.
+    set m21CTL {} ; set m21CTLRE {}
     foreach m21n $m21V {
         set m21a [m21_run $m21n [concat [m21_optdefaults $m21n] [dict get $m21BASE $m21n]]]
-        if {[mt_disp $m21a] eq {refused}} { lappend m21CTL "$m21n=[mt_msg $m21a]" }
+        if {[mt_disp $m21a] eq {refused}} { lappend m21CTLRE $m21n }
+    }
+    if {[llength $m21CTLRE]} {
+        pcall mt_load ac
+        foreach m21n $m21CTLRE {
+            set m21a [m21_run $m21n [concat [m21_optdefaults $m21n] [dict get $m21BASE $m21n]]]
+            if {[mt_disp $m21a] eq {refused}} { lappend m21CTL "$m21n=[mt_msg $m21a]" }
+        }
+        pcall mt_load tran
     }
     check "MT21/A an overflowing decimal literal in any `real` field of any clickable verb is REFUSED, in that verb's own voice, through the SAME `calc::cross_msg` arm the same field reaches for `nan` -- asserted as an identity between the two sentences with each detail mapped out, never by their words, which are unratified.  The detail is the text the USER TYPED and never the overflowed `Inf`, and no sentence may contain `inf` at all.  Driven through `calc::arg_values` plus `calc::arg_invoke`, which is the click's own composition path, over a population derived from `calc::fn_argspec` and the double format.  ⚠ FOUR CONTROLS RIDE ALONG so the row cannot be green over a tree that refuses everything: every field's `nan` request must itself be a refusal (it is the comparand), the raise count is reported separately because a RAISE was one of the four shapes this band was opened for, the sweep counts bound the population from below, and every base answer unmodified must NOT be refused" \
         [list $m21BAD $m21CTL $m21RAISED [mt_atleast $m21N 50] \
               [mt_atleast $m21NANOK 15] \
-              [regexp -nocase {inf} [pcall calc::cross_msg badlevel Inf]]] \
-        {{} {} 0 atleast50 atleast15 1}
+              [regexp -nocase {inf} [pcall calc::cross_msg badlevel Inf]] \
+              [pcall xschem raw sim_type]] \
+        {{} {} 0 atleast50 atleast15 1 tran}
 
     # --- B: and the DIALOG never lets it reach the verb ----------------------
     set m21AB {} ; set m21ABN 0
@@ -9551,11 +10175,5229 @@ group MT21 {
         {{} atleast40 atleast4 present agree}
 
     # --- F: hygiene ---------------------------------------------------------
+    # ⚠ CAPTURED BEFORE THE RELOAD -- see the warning on `leaked` itself.  The
+    # reload is here to leave the transient arm loaded for the next band, and it
+    # clears the inventory on its way, so reading the inventory inside the
+    # check's own argument list below would read it after the evidence was gone.
+    set m21LEAK [leaked]
+    set m21PROBE [probeleft]
     pcall mt_load tran
-    check "MT21 R402 every exit path this band drove cleans up after itself, so no `__calc_tmp*` and no `__mt_*` column is left behind" \
-        [list [leaked] [probeleft]] {{} {}}
+    # ⚠⚠ AND THE PRE-RELOAD CAPTURE ALONE IS VACUOUS FOR THIS BAND.  Measured:
+    # this band's last verb drives all run against a database it cleared on
+    # purpose, so `calc::overshoot` refuses before the mint and leaves nothing
+    # to find -- with the product's unconditional `xschem raw del $dest`
+    # deleted, the capture above stayed empty.  The second leg mints one
+    # temporary deliberately on the reloaded fixture and requires it gone.
+    set m21FRESH [mt_disp [mt_call overshoot {v(lp)} 0 1 0]]
+    set m21LEAK2 [leaked]
+    check "MT21 R402 the inventory is READ TWICE AND BOTH READS ARE EMPTY: once BEFORE this band's reload, which is the only point that can see the paths the band itself drove, and once AFTER A DELIBERATE FRESH MINT on the reloaded fixture, because this band's own last drives refuse against a database it cleared on purpose and so cannot witness a deleted cleanup at all.  The fresh drive's disposition rides along, so a leg that stopped measuring cannot read as cleanliness" \
+        [list $m21LEAK $m21PROBE $m21FRESH $m21LEAK2] {{} {} measured {}}
 }
 
+
+
+# ---------------------------------------------------------------------------
+# MT22 -- `calc::bandwidth`, THE FIRST OF THE LOOP-STABILITY VERBS.  NO Tk, so
+# it gates on BOTH arms.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D3/D4/D6/D10 --
+#          inherited through `calc::cross_pair`, which is the ONLY crossing
+#          primitive this verb uses.
+# Fixture  tests/headless/data/calc_fixture.raw read with an EXPLICIT `ac` type.
+#
+# ⚠⚠ WRITTEN RED-FIRST, BEFORE `calc::bandwidth` EXISTED.  Every behavioural row
+# below failed when it was written and each failure named `NOPROC:calc::bandwidth`
+# rather than raising; the transcript is in the stage receipt.
+#
+# WHY THE USER ASKED FOR IT.  Asked which of the thirty unimplemented measurement
+# verbs mattered, they named *"stability analysis"* and *"the measurements needed
+# to measure capacitance after running an AC analysis"*.  This is the first verb
+# built because the user asked for it by name.
+#
+# THE SIGNATURE THIS BAND IS THE SPECIFICATION OF, pinned through `info args`
+# and `info default` and never through a scan over source text (issue 1646: every
+# text-scanning evasion found there defeated a source-text pin, and no
+# `info args` leg was ever defeated by any of 43 derived sabotages):
+#
+#   calc::bandwidth <rpn> ?<drop>? ?<units>? ?<response>? ?<dataset>?
+#
+# `drop` is REQUIRED and its Tcl formal is the EMPTY STRING, which is
+# `calc::riseTime`'s split and its reason: a mandatory positional would make
+# omission a Tcl ARITY THROW where the house requires a refusal sentence.
+# `response` is `low` / `high` / `band` -- Cadence's own words -- and the member
+# list is LIFTED out of the verb's own validator by MT11's `ag_enum_in`, so a
+# dialog offering a fourth response is caught by the drift.
+#
+# ⚠⚠ FOR AN AC RAW FILE EVERY VARIABLE HAS FOUR ADDRESSABLE COLUMN NAMES, which
+# is the fact this band turns on: `v(lp)` is the magnitude, `ph(lp)` the phase in
+# DEGREES, `re(lp)` and `im(lp)` the rectangular parts, and `frequency` is the
+# sweep itself usable as an ordinary operand.  `read_dataset` in src/save.c stores
+# four doubles per raw variable and derives the three extra names.  ⚠ The OPCODES
+# `re()` and `im()` are two-operand polar-to-rectangular converters and are NOT
+# the column names of the same spelling; nothing in this band uses the opcodes.
+#
+# ---------------------------------------------------------------------------
+# THE THREE DRIVES, AND WHY A SYNTHETIC ONE IS NEEDED AT ALL
+# ---------------------------------------------------------------------------
+# The committed deck is `rlp sq lp {rac}` / `clp lp 0 {cac}` with
+# `cac = 1/(twopi*rac*fp)` and `fp = 1k`, driven `AC 1`, so `v(lp)` is
+# `1/sqrt(1 + (f/1000)^2)` BY CONSTRUCTION -- which is why every expectation in
+# this band is closed-form arithmetic with no simulator in it.
+#
+# ⚠⚠ BUT `v(lp)` IS MONOTONE DECREASING, SO ITS PEAK IS AT INDEX 0, AND THERE
+# SCANNING FROM INDEX 0 INSTEAD OF FROM THE PEAK INDEX GIVES THE IDENTICAL
+# ANSWER.  Measured: 1007.7667365593569 both ways.  The peak-relative-selection
+# claim is therefore BLIND on every `v(lp)` row and on the `low` leg of every
+# drive available, and the two synthetic drives exist for exactly that:
+#
+#   bp  `v(lp) 2 ** frequency *`  is `f/(1 + x^2)`, peak INTERIOR at f = fp
+#   pe  `v(lp) -1 **`             is `sqrt(1 + x^2)`, peak at the LAST sample
+#
+# Both are real transfer functions rather than fictions -- row MT22/BW2 asserts
+# each engine column against its own closed form, point by point -- but neither
+# is a circuit anybody simulated, and no row below describes one as the fixture's
+# own response.
+#
+# ---------------------------------------------------------------------------
+# DECLARED LIMITS
+# ---------------------------------------------------------------------------
+# L1 THE ANSWER IS A CHORD CROSSING, NOT A CURVE CROSSING.  The interpolation is
+#    `calc::cross_pair`'s straight line on the operand's own samples, so against
+#    the analytic pole there is a residual that is the 100 Hz grid's own chord
+#    error.  Row BW1's door is 1e-12 against a line solved through two NAMED
+#    bracketing samples; row BW2's door against the ANALYTIC pole is 1e-2, and
+#    that is declared rather than discovered -- the steeply curved low flank of
+#    the bandpass drive measures two orders worse than the lowpass one, which BW2
+#    asserts in the run as a FLOOR so the row cannot silently become a
+#    restatement of BW1.
+# L2 THE OPERAND'S UNITS ARE THE USER'S TO DECLARE AND THE PRODUCT NEVER GUESSES
+#    THEM.  `magnitude` multiplies and `dB` subtracts; a column handed to the
+#    wrong word is answered at the wrong corner, and that is the declaration's
+#    consequence rather than a defect -- nothing in a column of doubles separates
+#    a dB-valued one from a gain, so a sniffing guard would refuse correct work.
+#    Rows BW14 and BW15 drive which arithmetic each word names and where its
+#    membership test sits; row BW9 drives the `bwnonposref` guard in BOTH
+#    directions, since it belongs to the multiplicative arm alone.  ⚠ This limit
+#    used to say the dB case was answered WRONGLY with no way to say otherwise,
+#    and BW9's second leg asserted that wrong answer as a measurement.
+# L3 THE WHOLE SWEEP IS SCANNED; THERE IS NO X WINDOW.  `::calc::clip` has no
+#    reader anywhere in the tree, so the reference is the peak over the entire
+#    requested dataset and a spurious peak anywhere in the sweep moves every
+#    answer.
+# L4 A LEVEL THE TRACE SITS AT IS NOT CROSSED, inherited from `calc::cross_pair`
+#    and not re-decided here.  Its visible consequence is that `drop` 0 has no
+#    answer, which row BW10 shows is REFUSED rather than surfaced as an absence.
+# L5 `nosweep`, `noname`, `stale` AND `engine` ARE UNFORCED BELTS.  Once the verb
+#    requires `sim_type ac`, `xschem raw index frequency` resolves, so no row can
+#    reach `nosweep`; and NO EXPRESSION WAS FOUND THAT PASSES
+#    `calc::rpn_bad_token` AND MAKES `xschem raw add` RAISE -- seven were built
+#    and every one of them evaluated, so the `engine` arm is unreachable from
+#    here too.  Row BW7 says so as a measurement instead of claiming the arm is
+#    fenced.
+# L6 `band` IS A SPAN, NOT A PAIR.  `hi - lo` is one scalar, so a user wanting
+#    both corners asks twice; that is what keeps the catalogue's `returns scalar`
+#    and therefore S24's closed vocabulary unmoved.
+# L7 `cross`'s `empty` SENTENCE NAMES THE WRONG VERB -- *"cross was given an
+#    empty expression"* -- and this verb reuses it byte-identically, as
+#    `calc::overshoot` already does.  Row BW6's `reuses` leg is what asserts the
+#    reuse, structurally, over this verb's own `calc::cross_msg` call sites.
+#    ⚠ No count of bands is given and the one that used to be was wrong: NO band
+#    in any Calculator suite named the `empty` arm at all, because every per-verb
+#    sweep here filters the derived arm set to its own prefix and the shared arm
+#    matches none of them.  REPAIRED since: row MT14/Q3 derives the reusers from
+#    their own bodies and compares all three refusals against `calc::cross_msg
+#    empty` by identity, and its own legs assert the sentence names `cross`.
+# L8 THE VERB IS UNEXERCISED ON A MULTI-DATASET AC DATABASE.  The fixture's `ac`
+#    arm reads one dataset, so the `dataset` argument's VALIDATION is fenced and
+#    its SELECTION is not.
+# L9 NOTHING HERE IS VERIFIED ON A DISPLAY ARM.  `calc::fn_measure` and
+#    `calc::buf_set_number` both return early on `calc::has_win .calc.buf`, so
+#    that the measured bandwidth really reaches the buffer as one undoable step
+#    belongs to `test_calc_skeleton`'s sub-band **S28/4** -- its part 3, *"ONE
+#    `edit undo` restores the user's expression, not two"* -- which is `dcases`
+#    alone.  ⚠ This limit used to cite S28/7, which is the OPPOSITE claim: that
+#    band is *"R421 ON A WAVE ANSWER: the buffer is LEFT ALONE"*.  S28/4 stubs the
+#    measurement, so what it fences is the SURFACE and not this verb's own number
+#    arriving.
+# ---------------------------------------------------------------------------
+
+# the pole the deck's own `.param` values put the lowpass at, in Hz.  Not a
+# measurement of the fixture: `fp` is written into calc_fixture.cir and `cac` is
+# derived from it, so this is the deck's own number.
+proc bw_fp {} { return 1000.0 }
+# the magnitude of `1/(1 + j f/fp)`, closed.
+proc bw_mag {f} {
+    set x [expr {double($f)/[bw_fp]}]
+    return [expr {1.0/sqrt(1.0 + $x*$x)}]
+}
+# THE CLOSED CORNER OF THE LOWPASS, with the reference taken at the first swept
+# point -- the sample the verb's own peak search lands on for a monotone
+# decreasing response.  `|H(f)| = |H(f0)|*10^(-N/20)` gives
+# `1 + x^2 = (1 + x0^2)*10^(N/10)`.
+proc bw_closed_lp {f0 N} {
+    set x0 [expr {double($f0)/[bw_fp]}]
+    return [expr {[bw_fp]*sqrt((1.0 + $x0*$x0)*pow(10.0, double($N)/10.0) - 1.0)}]
+}
+# ...and of the INTERIOR-peak drive `f/(1 + x^2)`, whose peak is at `f = fp`
+# exactly with value `fp/2` (the derivative vanishes at x = 1).  Its two corners
+# are the roots of `L f^2 - fp^2 f + L fp^2`, so their product is `fp^2` and
+# their sum is `fp^2/L`, and the span is `sqrt((fp^2/L)^2 - 4 fp^2)`.
+proc bw_closed_bp {N which} {
+    set fp [bw_fp]
+    set L [expr {($fp/2.0)*pow(10.0, -double($N)/20.0)}]
+    set s [expr {$fp*$fp/$L}]
+    set d [expr {sqrt($s*$s - 4.0*$fp*$fp)}]
+    if {$which eq {low}}  { return [expr {($s + $d)/2.0}] }
+    if {$which eq {high}} { return [expr {($s - $d)/2.0}] }
+    return $d
+}
+# ...and of the PEAK-AT-THE-LAST-SAMPLE drive `sqrt(1 + x^2)`, whose peak is at
+# the last swept point.  `sqrt(1 + x^2) = peak*10^(-N/20)` gives
+# `1 + x^2 = (1 + xL^2)*10^(-N/10)`.
+proc bw_closed_pe {fL N} {
+    set xL [expr {double($fL)/[bw_fp]}]
+    return [expr {[bw_fp]*sqrt((1.0 + $xL*$xL)*pow(10.0, -double($N)/10.0) - 1.0)}]
+}
+# THE KEYSTONE'S COMPARAND, AND ITS MECHANISM IS DIFFERENT FROM THE PRODUCT'S
+# RATHER THAN ONLY ITS CODE.  A comparand that shared the product's loop would
+# agree with its bug by construction, so this one has NO LOOP, NO PEAK SEARCH and
+# NO `calc::cross_pair`: the suite names the bracket index out of its own
+# knowledge of the fixture, reads exactly those two samples, takes the level from
+# its own closed form, and solves the line once.
+proc bw_line {xs ys k lvl} {
+    set x0 [mt_at $xs $k] ; set x1 [mt_at $xs [expr {$k+1}]]
+    set y0 [mt_at $ys $k] ; set y1 [mt_at $ys [expr {$k+1}]]
+    foreach v [list $x0 $x1 $y0 $y1 $lvl] {
+        if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    }
+    if {double($y1) == double($y0)} { return FLAT }
+    return [expr {$x0 + ($lvl - $y0)*($x1 - $x0)/($y1 - $y0)}]
+}
+# `straddles` when the NAMED pair really brackets the level in the named
+# direction, and the two samples otherwise.  Without this the line above could be
+# solved through the wrong pair after a fixture regeneration and the keystone
+# would compare two wrong numbers; with it the index is self-validating.
+proc bw_straddle {ys k lvl dir} {
+    set y0 [mt_at $ys $k] ; set y1 [mt_at $ys [expr {$k+1}]]
+    if {![mt_finite $y0] || ![mt_finite $y1] || ![mt_finite $lvl]} {
+        return "NOTANUMBER:{$y0}|{$y1}|{$lvl}"
+    }
+    if {$dir eq {falling}} {
+        if {$y0 > $lvl && $y1 <= $lvl} { return straddles }
+    } else {
+        if {$y0 < $lvl && $y1 >= $lvl} { return straddles }
+    }
+    return "nostraddle:{$y0}|{$y1}|{$lvl}"
+}
+# the level a reference and a dB drop name.  AMPLITUDE dB, because the operand is
+# a voltage magnitude: the /10 spelling answers 1738.9 where 1007.8 is right.
+proc bw_level {ref N} {
+    if {![mt_finite $ref] || ![mt_finite $N]} { return "NOTANUMBER:{$ref}|{$N}" }
+    return [expr {double($ref)*pow(10.0, -double($N)/20.0)}]
+}
+# ...and the level a reference and a dB drop name when the OPERAND IS ALREADY IN
+# dB, which is a SUBTRACTION.  A separate proc from `bw_level` rather than a
+# `units` argument on it, so a row can drive both arithmetics on one column and
+# the two comparands cannot collapse into one by a mistyped word.
+proc bw_dblevel {ref N} {
+    if {![mt_finite $ref] || ![mt_finite $N]} { return "NOTANUMBER:{$ref}|{$N}" }
+    return [expr {double($ref) - double($N)}]
+}
+# the LINEAR magnitude a dB value names.  Amplitude dB (20), because every
+# operand this file drives through a dB column is a voltage magnitude; the /10
+# spelling is what row MT22/BW14's own comment records as having been built and
+# measured wrong.
+proc bw_dbmag {db} {
+    if {![mt_finite $db]} { return "NOTANUMBER:{$db}" }
+    return [expr {pow(10.0, double($db)/20.0)}]
+}
+# THE MINIMUM ADJACENT RELATIVE SEPARATION of a set of candidate answers, after
+# sorting.  This is the statistic that says a producer answering ONE number for
+# every request cannot satisfy a row set checking each drive against its own
+# expectation -- and it is the ADJACENT pair rather than the range, because a
+# range of 2.4e-3 has been measured over a series whose adjacent pair was
+# 2.22e-11.
+proc bw_sep {vals} {
+    set n [mt_len $vals]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    foreach v $vals { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    set s [lsort -real $vals]
+    set mn {}
+    for {set i 1} {$i < $n} {incr i} {
+        set a [lindex $s [expr {$i-1}]] ; set b [lindex $s $i]
+        if {double($a) == 0.0} { return "ZEROELEM:$i" }
+        set r [expr {abs(($b - $a)/double($a))}]
+        if {$mn eq {} || $r < $mn} { set mn $r }
+    }
+    return $mn
+}
+# the SMALLER of an answer's two relative distances to its bracketing sample
+# frequencies.  THE VACUITY QUESTION FOR THIS VERB IS NOT WHETHER THE ANSWERS
+# DIFFER FROM EACH OTHER: a producer that returned the bracketing SAMPLE, with no
+# interpolation at all, is non-vacuous in value and vacuous in method, which is
+# issue 1643's class one level up.
+proc bw_offsample {x x0 x1} {
+    foreach v [list $x $x0 $x1] { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    if {double($x0) == 0.0 || double($x1) == 0.0} { return ZEROX }
+    set a [expr {abs(($x - $x0)/double($x0))}]
+    set b [expr {abs(($x - $x1)/double($x1))}]
+    return [expr {$a < $b ? $a : $b}]
+}
+# a measured relative quantity against a FLOOR and against a CEILING, as a WORD
+# each, so no reproducible figure lands in the T1 verdict.
+proc bw_floor {v tol} {
+    if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    if {$v >= $tol} { return "over$tol" }
+    return "under:$v"
+}
+proc bw_ceil {v tol} {
+    if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    if {$v <= $tol} { return "under$tol" }
+    return "over:$v"
+}
+proc bw_exact {a b} {
+    if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}|{$b}" }
+    if {double($a) == double($b)} { return exact }
+    return "off:{$a}|{$b}"
+}
+proc bw_lt {a b} {
+    if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}|{$b}" }
+    if {double($a) < double($b)} { return below }
+    return "notbelow:{$a}|{$b}"
+}
+# the peak's index by a DIFFERENT MECHANISM from the product's single pass: sort
+# a copy and look the top value up.  Gated first, because `lsort -real` RAISES on
+# a column carrying a `-nan`.
+proc bw_pkidx {ys} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    foreach v $ys { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    return [lsearch -exact $ys [lindex [lsort -real -decreasing $ys] 0]]
+}
+# EVERY index whose sample is EXACTLY the column's maximum, by the same sorting
+# mechanism and not by the product's single pass.  `bw_pkidx` answers the first
+# of these; a TIE row needs all of them, because what it has to establish is that
+# the drive really has more than one and that they are not adjacent.
+proc bw_tieidx {ys} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    foreach v $ys { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    set mx [lindex [lsort -real -decreasing $ys] 0]
+    set out {} ; set i 0
+    foreach v $ys { if {$v eq $mx} { lappend out $i } ; incr i }
+    return $out
+}
+# EVERY bracket index at which a column straddles a level in a named direction,
+# through the suite's own straddle predicate and NOT through `calc::cross_pair`.
+# This is the non-vacuity instrument for a row about WHICH crossing is selected:
+# it says how many there were to choose from, which is the one thing such a row
+# cannot assume and cannot borrow from the product.
+proc bw_straddles {ys lvl dir} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    set out {}
+    for {set k 0} {$k < $n - 1} {incr k} {
+        if {[bw_straddle $ys $k $lvl $dir] eq {straddles}} { lappend out $k }
+    }
+    return $out
+}
+# the RELATIVE separation of two numbers as a WORD against a floor, for the legs
+# that say "the alternative reading is a different answer, not the same one".
+proc bw_apart {a b tol} {
+    if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}|{$b}" }
+    if {double($a) == 0.0} { return ZEROREF }
+    set r [expr {abs((double($b) - double($a))/double($a))}]
+    if {$r >= $tol} { return "apart$tol" }
+    return "together:$r"
+}
+# ⚠⚠ THE SUITE'S OWN WHOLE-ALGORITHM SCAN, AND IT IS **NOT** THE KEYSTONE'S
+# COMPARAND.  Rows BW8 and BW10 need to show that a number WAS available where
+# the verb refuses -- that is what keeps an issue-1653 row from going vacuous if
+# the hazard is ever removed upstream -- and for that the suite has to run the
+# measurement the verb declines to run.  It shares the product's SHAPE and would
+# agree with a product bug by construction, so no row compares a verb answer
+# against it.
+proc bw_wouldhave {xs ys drop response} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    set pv {} ; set pi -1 ; set k 0
+    foreach y $ys {
+        if {[mt_finite $y]} { if {$pv eq {} || $y > $pv} { set pv $y ; set pi $k } }
+        incr k
+    }
+    if {$pi < 0} { return NOPEAK }
+    if {double($pv) <= 0.0} { return NONPOSREF }
+    set lvl [bw_level $pv $drop]
+    set hi {} ; set lo {}
+    for {set p [expr {$pi+1}]} {$p < $n} {incr p} {
+        set y0 [mt_at $ys [expr {$p-1}]] ; set y1 [mt_at $ys $p]
+        if {![mt_finite $y0] || ![mt_finite $y1]} continue
+        if {$y0 > $lvl && $y1 <= $lvl} {
+            set hi [bw_line $xs $ys [expr {$p-1}] $lvl] ; break
+        }
+    }
+    for {set p $pi} {$p >= 1} {incr p -1} {
+        set y0 [mt_at $ys [expr {$p-1}]] ; set y1 [mt_at $ys $p]
+        if {![mt_finite $y0] || ![mt_finite $y1]} continue
+        if {$y0 < $lvl && $y1 >= $lvl} {
+            set lo [bw_line $xs $ys [expr {$p-1}] $lvl] ; break
+        }
+    }
+    if {$response eq {low}}  { if {$hi eq {}} { return ABSENT } ; return $hi }
+    if {$response eq {high}} { if {$lo eq {}} { return ABSENT } ; return $lo }
+    if {$hi eq {} || $lo eq {}} { return ABSENT }
+    return [expr {double($hi) - double($lo)}]
+}
+# the RPN for each named drive, in ONE place, so a correction to a drive cannot
+# reach one row and miss another.
+proc bw_rpn {nm} {
+    if {$nm eq {vlp}}  { return {v(lp)} }
+    if {$nm eq {bp}}   { return {v(lp) 2 ** frequency *} }
+    if {$nm eq {pe}}   { return {v(lp) -1 **} }
+    if {$nm eq {dblp}} { return {v(lp) db20()} }
+    if {$nm eq {db4}}  { return {4 v(lp) * db20()} }
+    # THE THREE UNITS DRIVES.  `lin4` is `db4`'s own LINEAR COMPANION -- the same
+    # response, one read in dB and one in magnitude -- which is what lets a row
+    # ask whether the two readings name the same corner instead of only whether
+    # they differ.  `db4up` is `db4` lifted by a constant number of dB, which a
+    # SUBTRACTION cannot move and a multiplication must; and `dbov` is a dB column
+    # whose own value is fine and whose LINEAR equivalent is not representable.
+    #
+    # ⚠ NO PROPERTY OF ANY OF THE THREE IS ASSERTED HERE.  Rows MT22/BW14 and
+    # GBW13 derive every peak, level, bracket and separation in the run.
+    if {$nm eq {lin4}}  { return {4 v(lp) *} }
+    if {$nm eq {db4up}} { return {4 v(lp) * db20() 6 +} }
+    if {$nm eq {dbov}}  { return {v(lp) db20() 6200 +} }
+    if {$nm eq {nan}}  { return {-1 sqrt()} }
+    if {$nm eq {inf}}  { return {0 -1 **} }
+    if {$nm eq {vsq}}  { return {v(sq)} }
+    # THE TWO SELECTION DRIVES, AND THEY ARE THE ONLY THING IN THIS BAND BUILT
+    # FOR A PURPOSE RATHER THAN TAKEN FROM THE DECK.  `calc::bw_peak`'s tie rule
+    # and `calc::bw_scan`'s two `break`s are both about WHICH of several
+    # candidates is selected, and the deck's own three responses each offer
+    # exactly one candidate per side -- a single interior maximum and a single
+    # crossing each way -- so no drive already here can see either choice.
+    #
+    # `tie` clamps a rectified sine with `min()`, which makes the plateau samples
+    # EXACTLY equal to the clamp literal in "%.16g" -- an exact tie is the whole
+    # point, and a near-tie would make the row a statement about rounding.  Its
+    # maxima are separated by valleys that pass through the level, so the first
+    # and last tied indices sit in different lobes.
+    # `ripple` multiplies the same rectified sine by the deck's own bandpass
+    # drive, giving a single unique maximum with several crossings on each side
+    # of it -- which is what a nearest-versus-farthest row needs.
+    #
+    # ⚠ NO PROPERTY OF EITHER DRIVE IS ASSERTED HERE.  Rows MT22/BW12 and
+    # MT22/BW13 DERIVE the tie set, the peak index, the crossing counts and the
+    # separations in the run, so a regenerated fixture reddens there by name
+    # instead of leaving a sentence here claiming a shape the data no longer has.
+    if {$nm eq {tie}}    { return "frequency [bw_sinw] * sin() abs() 0.9 min()" }
+    if {$nm eq {ripple}} { return "frequency [bw_sinw] * sin() abs() v(lp) 2 ** frequency * *" }
+    return {}
+}
+# the radians-per-hertz the two selection drives rectify.  One cycle per 1000 Hz
+# over the committed 100 Hz grid, which is what puts two samples symmetrically
+# inside each quarter-period so a clamp below their common value ties them
+# exactly.  Spelled rather than typed, so no 17-digit literal sits here
+# unchecked; the SHAPE it produces is asserted by the rows, never by this line.
+proc bw_sinw {} { return [expr {2.0*acos(-1.0)/1000.0}] }
+# ...and its column, read back through the engine at "%.16g", through this
+# file's own probe prefix so a forgotten cleanup is a SUITE defect and never a
+# product leak.
+proc bw_col {nm} { return [mt_addcol __mt_bw_$nm [bw_rpn $nm] 0] }
+# ⚠ ONE KEY OF A DICT THAT MIGHT NOT BE ONE, AND A SORT OF A LIST THAT MIGHT NOT
+# BE ONE.  Measured on this band's own first red run: `dict get` on
+# `mt_verb_msg_arms`' `NOPROC:` sentinel RAISES *missing value to go with key*,
+# `group`'s catch turned that into ONE `ABORTED` line, and SIX of this band's
+# eleven rows vanished from the verdict instead of reddening.  That is the
+# failure mode the whole file's sentinel discipline exists for, and it arrived
+# here through a shape `mt_key` does not cover because the dict is not an answer.
+proc bw_dget {d k} {
+    if {[catch {dict exists $d $k} has]} { return "NOTADICT:{$d}" }
+    if {!$has} { return "NOKEY-$k" }
+    return [dict get $d $k]
+}
+proc bw_sortg {v} {
+    if {[catch {lsort $v} r]} { return "NOTALIST:{$v}" }
+    return $r
+}
+# ⚠⚠ THE ONE-FORMULA PROPERTY, AS A COUNT PLUS AN ABSENCE, AND IT IS HERE BECAUSE
+# A BUILT SABOTAGE SURVIVED THE OBVIOUS SPELLING.  Row BW7's first draft asserted
+# that `calc::bw_scan`'s callee set is EXACTLY the crossing primitive, which
+# catches a NEW callee and is blind to a HAND-ROLLED copy of the formula that
+# calls nothing: replacing the forward leg's `calc::cross_pair` with the same
+# arithmetic inline left this whole file at ALL PASS, and it is bit-identical so
+# no behavioural leg can see it either.  CROSS_CONTRACT D10's bit-identity
+# property is a STRUCTURAL claim, so it needs a structural instrument.
+#
+# The predicate: the number of call sites, which must be one per scan direction,
+# AND the absence of a DIVISION anywhere in the decommented body -- an
+# interpolation necessarily divides by the sample difference, so a second copy of
+# the formula cannot hide from this.  Answers `<sites>/<divisions>`, and the row
+# beside it carries the control that the division half can find one.
+proc bw_formula {p} {
+    if {[info commands ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    if {[catch {info body ::calc::$p} b]} { return "NOBODY:calc::$p" }
+    set b [mt_decomment $b]
+    return "[regexp -all {calc::cross_pair} $b]/[regexp -all {/} $b]"
+}
+# which of the four engine doors the verb's own decommented body names, as a
+# sorted list -- MT17/O's shape, for the half of the verb set that owns a door.
+#
+# ⚠ THE PATTERN REQUIRES WHITESPACE AFTER THE SUBCOMMAND, which is a correction
+# made while this row was red: without it `value` matches inside `values` and the
+# answer carried a door the verb does not use.  `mt_direct_raw` has the same
+# prefix overlap and does not care, because it only needs one hit.
+proc bw_doors {p} {
+    if {[info commands ::calc::$p] eq {}} { return "NOPROC:calc::$p" }
+    if {[catch {info body ::calc::$p} b]} { return "NOBODY:calc::$p" }
+    set b [mt_decomment $b]
+    set out {}
+    foreach v {add del value values} {
+        if {[regexp "xschem\[ \t\]+raw\[ \t\]+$v\[ \t\]" $b]} { lappend out $v }
+    }
+    return $out
+}
+
+# =========================================================================
+group MT22 {
+    # --- the fixture, and the two populations every row below leans on -------
+    pcall mt_load ac
+    set bwXS [mt_col frequency 0]
+    set bwF0 [mt_at $bwXS 0]
+    set bwFL [mt_at $bwXS end]
+    array set bwC {}
+    foreach bwn {vlp bp pe dblp db4 vsq tie ripple lin4 db4up dbov} { set bwC($bwn) [bw_col $bwn] }
+    check "MT22/BW0 the fixture really is the AC arm this band needs and the three drives really are the closed forms the expectations are built from: `sim_type` is ac, `frequency` resolves BY NAME and `time` does not, the four addressable column names of one variable all resolve, every drive is accepted by `calc::rpn_bad_token`, and the two SYNTHETIC drives agree with their own closed forms point by point -- which is what licenses calling them transfer functions rather than fictions.  The point count and the sweep's own two ends ride along, so a regenerated fixture reddens here instead of making every door below compare the wrong samples" \
+        [list [pcall xschem raw sim_type] [pcall xschem raw datasets] \
+              [pcall xschem raw index frequency] [pcall xschem raw index time] \
+              [expr {[pcall xschem raw index ph(lp)] >= 0 ? {yes} : {NO}}] \
+              [expr {[pcall xschem raw index re(lp)] >= 0 ? {yes} : {NO}}] \
+              [expr {[pcall xschem raw index im(lp)] >= 0 ? {yes} : {NO}}] \
+              [mt_len $bwXS] $bwF0 $bwFL \
+              [lsort -unique [list [pcall calc::rpn_bad_token [bw_rpn vlp]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn bp]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn pe]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn db4]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn lin4]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn db4up]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn dbov]] \
+                                   [pcall calc::rpn_bad_token [bw_rpn nan]]]] \
+              [bw_ceil [bw_sep [list 1 2]] 2] \
+              [mt_distinctmap2 $bwC(vlp) [lmap bwf $bwXS {bw_mag $bwf}]] \
+              [mt_distinctmap2 $bwC(bp) [lmap bwf $bwXS {expr {double($bwf)/(1.0 + pow(double($bwf)/[bw_fp],2))}}]] \
+              [mt_distinctmap2 $bwC(pe) [lmap bwf $bwXS {expr {sqrt(1.0 + pow(double($bwf)/[bw_fp],2))}}]] \
+              [lsort -unique $bwC(vsq)]] \
+        [list ac 1 0 -1 yes yes yes 20 100 2000 {{}} under2 same same same 1]
+
+    # --- BW1: THE KEYSTONE ---------------------------------------------------
+    # ⚠ THE BRACKET INDEX IS THE SUITE'S OWN FIXTURE KNOWLEDGE AND IS VALIDATED
+    # RATHER THAN TRUSTED: `bw_straddle` asserts the named pair really brackets
+    # the level in the named direction, so an index that stopped being right
+    # reddens by name instead of letting `bw_line` solve through the wrong pair.
+    # ⚠ THE LEVEL IS TAKEN FROM THE CLOSED-FORM REFERENCE, not from the column's
+    # peak, so the comparand does not read the peak at all.  Measured: against
+    # the shipped verb that costs at most 7.9e-16 relative over all nine legs,
+    # three orders inside the door.
+    set bw1BAD {} ; set bw1N 0 ; set bw1ANS {} ; set bw1OFF {}
+    foreach {bw1d bw1N1 bw1resp bw1k} {vlp 1 low 4   vlp 2 low 6   vlp 3 low 9
+                                       vlp 4 low 11  vlp 5 low 13  vlp 6 low 16
+                                       vlp 6.9 low 18
+                                       bp 1.5 low 17  bp 1.5 high 4} {
+        incr bw1N
+        set bw1ys $bwC($bw1d)
+        if {$bw1d eq {vlp}} { set bw1ref [bw_mag $bwF0] } else { set bw1ref [expr {[bw_fp]/2.0}] }
+        set bw1lvl [bw_level $bw1ref $bw1N1]
+        set bw1dir [expr {$bw1resp eq {low} ? {falling} : {rising}}]
+        set bw1st [bw_straddle $bw1ys $bw1k $bw1lvl $bw1dir]
+        if {$bw1st ne {straddles}} { lappend bw1BAD "$bw1d/$bw1N1/$bw1resp=$bw1st" ; continue }
+        set bw1want [bw_line $bwXS $bw1ys $bw1k $bw1lvl]
+        set bw1a [mt_call bandwidth [bw_rpn $bw1d] $bw1N1 magnitude $bw1resp 0]
+        set bw1got [mt_val $bw1a]
+        set bw1r [near $bw1got $bw1want 1e-12]
+        if {$bw1r ne {ok}} { lappend bw1BAD "$bw1d/$bw1N1/$bw1resp=$bw1r" ; continue }
+        lappend bw1ANS $bw1got
+        lappend bw1OFF [bw_offsample $bw1got [mt_at $bwXS $bw1k] [mt_at $bwXS [expr {$bw1k+1}]]]
+    }
+    set bw1MINOFF {}
+    foreach bw1e $bw1OFF {
+        if {![mt_finite $bw1e]} { set bw1MINOFF "NOTANUMBER:{$bw1e}" ; break }
+        if {$bw1MINOFF eq {} || $bw1e < $bw1MINOFF} { set bw1MINOFF $bw1e }
+    }
+    check "MT22/BW1 the answer equals a straight line solved through two NAMED bracketing samples whose index is validated by a straddle test, with the level taken from the deck's own closed-form reference -- so the comparand contains NO loop, NO peak search and NO `calc::cross_pair`, and cannot agree with a scanning bug by construction.  TWO non-vacuity legs are derived in the same run rather than claimed: the nine answers' minimum ADJACENT relative separation clears a floor, so a producer answering one number for every request fails the sweep; and every answer's relative distance to BOTH its bracketing sample frequencies clears a floor, so a producer that returned a bracketing SAMPLE with no interpolation at all fails too -- which is the vacuity question this verb actually has, and the one a value-only distinctness leg misses" \
+        [list $bw1BAD [mt_sized $bw1N 9] [mt_sized [mt_len $bw1ANS] 9] \
+              [bw_floor [bw_sep $bw1ANS] 1e-2] [bw_floor $bw1MINOFF 1e-3]] \
+        {{} sized sized over1e-2 over1e-3}
+
+    # --- BW2: AGREEMENT WITH THE POLE, AT THE GRID'S OWN CHORD ERROR ---------
+    # ⚠ THE DOOR IS 1e-2 AND IT IS DECLARED, not discovered: the low flank of the
+    # bandpass drive is nearly linear in f and far more steeply curved relative to
+    # the 100 Hz step, so its residual is two orders worse than the lowpass one.
+    # ⚠ AND THE RESIDUAL IS ASSERTED FROM BELOW AS WELL, so this row cannot
+    # silently become a restatement of BW1: if the chord interpolation were ever
+    # replaced by a curve solve, every residual would collapse and the floor leg
+    # reddens instead of the row passing over a comparand it no longer tests.
+    set bw2BAD {} ; set bw2N 0 ; set bw2MIN {} ; set bw2MAX {}
+    foreach {bw2d bw2N1 bw2resp} {vlp 1 low   vlp 2 low   vlp 3 low   vlp 4 low
+                                  vlp 5 low   vlp 6 low   vlp 6.9 low
+                                  bp 1.5 low  bp 1.5 high  bp 1.5 band
+                                  bp 1.9 low  bp 1.9 high  bp 1.9 band
+                                  pe 1 high   pe 2 high   pe 3 high   pe 4 high} {
+        incr bw2N
+        if {$bw2d eq {vlp}} {
+            set bw2want [bw_closed_lp $bwF0 $bw2N1]
+        } elseif {$bw2d eq {bp}} {
+            set bw2want [bw_closed_bp $bw2N1 $bw2resp]
+        } else {
+            set bw2want [bw_closed_pe $bwFL $bw2N1]
+        }
+        set bw2got [mt_val [mt_call bandwidth [bw_rpn $bw2d] $bw2N1 magnitude $bw2resp 0]]
+        if {![mt_finite $bw2got]} { lappend bw2BAD "$bw2d/$bw2N1/$bw2resp=$bw2got" ; continue }
+        set bw2rel [expr {abs(($bw2got - $bw2want)/double($bw2want))}]
+        if {$bw2rel > 1e-2} { lappend bw2BAD "$bw2d/$bw2N1/$bw2resp=rel$bw2rel" ; continue }
+        if {$bw2MIN eq {} || $bw2rel < $bw2MIN} { set bw2MIN $bw2rel }
+        if {$bw2MAX eq {} || $bw2rel > $bw2MAX} { set bw2MAX $bw2rel }
+    }
+    check "MT22/BW2 the answer agrees with the pole solution derived from the deck's own `.param` values -- the only expectation in this band with no simulator anywhere in it -- at the committed grid's own chord error, which is why the door is 1e-2 and is declared.  The residual is asserted from BELOW as well as from above, so a curve solve replacing the chord would collapse every residual and redden the floor leg instead of leaving this row as a restatement of BW1; the sweep count rides along so an empty population cannot pass" \
+        [list $bw2BAD [mt_sized $bw2N 17] [bw_ceil $bw2MAX 1e-2] [bw_floor $bw2MIN 1e-5]] \
+        {{} sized under1e-2 over1e-5}
+
+    # --- BW3: SELECTION OUTWARD FROM THE PEAK INDEX --------------------------
+    # ⚠⚠ THIS IS THE ONLY ROW IN THE BAND THAT CAN SEE A SCAN STARTING AT INDEX 0
+    # INSTEAD OF AT THE PEAK.  Measured on `v(lp)`, whose peak IS index 0, the two
+    # readings are the identical number -- so no `v(lp)` row and no `low` leg of
+    # any drive available discriminates, and the claim is carried by the `high`
+    # and `band` legs of a drive whose peak is interior.  Against a scan from 0
+    # those two go ABSENT where the correct answers are numbers.
+    set bw3ys $bwC(bp)
+    set bw3ref [expr {[bw_fp]/2.0}]
+    set bw3lvl [bw_level $bw3ref 1.5]
+    set bw3hi [bw_line $bwXS $bw3ys 17 $bw3lvl]
+    set bw3lo [bw_line $bwXS $bw3ys 4 $bw3lvl]
+    set bw3a [mt_call bandwidth [bw_rpn bp] 1.5 magnitude high 0]
+    set bw3b [mt_call bandwidth [bw_rpn bp] 1.5 magnitude band 0]
+    check "MT22/BW3 the crossing is selected OUTWARD FROM THE PEAK INDEX, measured on a drive whose peak is interior -- the peak index is read by a DIFFERENT mechanism from the product's single pass (sort a copy, look the top value up) and is asserted to be neither the first nor the last sample, so the row knows in the run that the drive still discriminates.  Both legs that a scan from index 0 cannot answer are driven: the lower corner and the span, each against the suite's own two-sample line solve.  The straddle tests ride along so the two bracket indices are validated rather than trusted" \
+        [list [bw_pkidx $bw3ys] \
+              [expr {[bw_pkidx $bw3ys] > 0 ? {interior} : {ATZERO}}] \
+              [expr {[bw_pkidx $bw3ys] < [mt_nminus [mt_len $bw3ys] 1] ? {interior} : {ATEND}}] \
+              [bw_straddle $bw3ys 17 $bw3lvl falling] \
+              [bw_straddle $bw3ys 4 $bw3lvl rising] \
+              [mt_disp $bw3a] [near [mt_val $bw3a] $bw3lo 1e-12] \
+              [mt_disp $bw3b] [near [mt_val $bw3b] [expr {$bw3hi - $bw3lo}] 1e-12]] \
+        {9 interior interior straddles straddles measured ok measured ok}
+
+    # --- BW4: BOTH SCAN DIRECTIONS RUN --------------------------------------
+    # ⚠ CONFINED TO N <= 4 AND IT SAYS SO: at a larger drop the crossing on this
+    # drive walks down to where one or two samples bracket it and the chord error
+    # reaches 5.6e-2, which is outside BW2's declared door.
+    set bw4ys $bwC(pe)
+    set bw4ref [expr {sqrt(1.0 + pow(double($bwFL)/[bw_fp],2))}]
+    set bw4BAD {} ; set bw4N 0
+    foreach {bw4N1 bw4k} {1 16  2 13  3 11  4 8} {
+        incr bw4N
+        set bw4lvl [bw_level $bw4ref $bw4N1]
+        set bw4st [bw_straddle $bw4ys $bw4k $bw4lvl rising]
+        if {$bw4st ne {straddles}} { lappend bw4BAD "$bw4N1=$bw4st" ; continue }
+        set bw4a [mt_call bandwidth [bw_rpn pe] $bw4N1 magnitude high 0]
+        set bw4r [near [mt_val $bw4a] [bw_line $bwXS $bw4ys $bw4k $bw4lvl] 1e-12]
+        if {$bw4r ne {ok}} { lappend bw4BAD "$bw4N1=$bw4r" }
+    }
+    check "MT22/BW4 the BACKWARD scan is measured on its own, on a drive whose peak is the LAST sample so that it is the only direction with anywhere to go: it answers against the suite's own two-sample line solve for every drop in the band this row is confined to, while the two responses that need the forward scan are ABSENT in the verb's own voice.  That is the complement of BW3, which measures the forward direction on a drive with an interior peak.  The peak index is read by the sorting mechanism and asserted to BE the last sample, so the row knows in the run that the drive still has the shape the claim needs, and the straddle test validates each bracket index rather than trusting it" \
+        [list $bw4BAD [mt_sized $bw4N 4] [bw_pkidx $bw4ys] \
+              [mt_nminus [mt_len $bw4ys] 1] \
+              [mt_disp [mt_call bandwidth [bw_rpn pe] 3 magnitude low 0]] \
+              [mt_disp [mt_call bandwidth [bw_rpn pe] 3 magnitude band 0]] \
+              [string equal [mt_msg [mt_call bandwidth [bw_rpn pe] 3 magnitude low 0]] \
+                            [pcall calc::cross_msg bwnohi 3]] \
+              [string equal [mt_msg [mt_call bandwidth [bw_rpn pe] 3 magnitude band 0]] \
+                            [pcall calc::cross_msg bwnohi 3]]] \
+        {{} sized 19 19 absent absent 1 1}
+
+    # --- BW5: THE ABSENCE BOUNDARY, DERIVED FROM TWO SAMPLES ----------------
+    # ⚠ METHOD-VACUOUS BY CONSTRUCTION AND DECLARED SO: at exactly this drop the
+    # answer IS the last sample's own frequency, so this row may carry the
+    # exactness and the boundary and must never be cited for the interpolation.
+    set bw5ys $bwC(vlp)
+    set bw5pk [mt_at $bw5ys 0]
+    set bw5last [mt_at $bw5ys end]
+    set bw5N [expr {-20.0*log10(double($bw5last)/double($bw5pk))}]
+    set bw5at [mt_call bandwidth [bw_rpn vlp] $bw5N magnitude low 0]
+    set bw5up [mt_call bandwidth [bw_rpn vlp] [expr {$bw5N*(1.0 + 1e-9)}] magnitude low 0]
+    set bw5dn [mt_call bandwidth [bw_rpn vlp] [expr {$bw5N*(1.0 - 1e-9)}] magnitude low 0]
+    check "MT22/BW5 the absence boundary is DERIVED from two samples the suite reads -- the peak and the last point of the same column -- and never from a literal: at exactly that drop the answer is the last sample's own frequency EXACTLY, a decade of relative nothing above it the verb is ABSENT, and just below it the verb measures a value strictly inside the sweep.  A pair-loop off-by-one, and an absence that fires one sample early or late, each break one of those three.  The derived drop rides along as a finite number so a broken derivation says so rather than making the three dispositions vacuous" \
+        [list [mt_finite $bw5N] [mt_disp $bw5at] [bw_exact [mt_val $bw5at] $bwFL] \
+              [mt_disp $bw5up] \
+              [string equal [mt_msg $bw5up] [pcall calc::cross_msg bwnohi [expr {$bw5N*(1.0 + 1e-9)}]]] \
+              [mt_disp $bw5dn] [bw_lt [mt_val $bw5dn] $bwFL]] \
+        {1 measured exact absent 1 measured below}
+
+    # --- BW6: EVERY REFUSAL ARM, OVER A DERIVED ARM SET ---------------------
+    # ⚠⚠ THE ARM SET IS DERIVED FROM `calc::cross_msg`'s OWN TRAILING `switch`
+    # ARGUMENT, parsed as the list Tcl parses it, and the set of arms this row
+    # DRIVES is asserted equal to it.  A hand-kept list is the same defect one
+    # level up, and this file's sibling shipped one that drove 24 of its proc's 31
+    # arms for a month while reading as coverage.  This is also the only
+    # behavioural confirmation that the catalogue still PARSES after two big
+    # `switch`es grew arms: an EVEN-word comment between two patterns is a
+    # complete no-op that detonates when one word is edited, and an ODD-word one
+    # makes Tcl raise out of every arm.
+    set bw6ARMS {}
+    foreach bw6a [pcall mt_switch_arms cross_msg] {
+        if {[string match bw* $bw6a]} { lappend bw6ARMS $bw6a }
+    }
+    pcall mt_load ac
+    set bw6PEAK [mt_at $bwC(dblp) 0]
+    set bw6REQ [list \
+        bwnodrop      {ac   {v(lp)}        {}    magnitude low   refused} \
+        bwbaddrop     {ac   {v(lp)}        abc   magnitude low   refused} \
+        bwzerodrop    {ac   {v(lp)}        0     magnitude low   refused} \
+        bwunits       {ac   {v(lp)}        3     bogus     low   refused} \
+        bwbadresponse {ac   {v(lp)}        3     magnitude bogus refused} \
+        bwnoac        {tran {v(lp)}        3     magnitude low   refused} \
+        bwnonposref   {ac   @DBLP@         3     magnitude low   refused} \
+        bwnopeak      {ac   @NAN@          3     magnitude low   absent} \
+        bwnohi        {ac   {v(lp)}        7     magnitude low   absent} \
+        bwnolo        {ac   {v(lp)}        3     magnitude high  absent}]
+    set bw6DET [list bwnodrop {} bwbaddrop abc bwzerodrop 0 bwunits bogus \
+                     bwbadresponse bogus \
+                     bwnoac tran bwnonposref $bw6PEAK bwnopeak {} bwnohi 7 bwnolo 3]
+    set bw6BAD {} ; set bw6DRIVEN {} ; set bw6N 0
+    foreach {bw6k bw6spec} $bw6REQ {
+        lappend bw6DRIVEN $bw6k
+        incr bw6N
+        foreach {bw6db bw6rpn bw6drop bw6unit bw6resp bw6want} $bw6spec break
+        if {$bw6rpn eq {@DBLP@}} { set bw6rpn [bw_rpn dblp] }
+        if {$bw6rpn eq {@NAN@}}  { set bw6rpn [bw_rpn nan] }
+        pcall mt_load $bw6db
+        set bw6a [mt_call bandwidth $bw6rpn $bw6drop $bw6unit $bw6resp 0]
+        if {[mt_disp $bw6a] ne $bw6want} {
+            lappend bw6BAD "$bw6k=[mt_disp $bw6a]" ; continue
+        }
+        set bw6m [mt_msg $bw6a]
+        if {![string equal $bw6m [pcall calc::cross_msg $bw6k [dict get $bw6DET $bw6k]]]} {
+            lappend bw6BAD "$bw6k=WRONG-ARM" ; continue
+        }
+        if {[mt_shape $bw6m] ne {ok}} { lappend bw6BAD "$bw6k=shape" ; continue }
+        if {[mt_family $bw6m] ne {Bandwidth}} { lappend bw6BAD "$bw6k=family" ; continue }
+        if {[pcall calc::status_fit $bw6m] ne $bw6m} { lappend bw6BAD "$bw6k=ELIDES" }
+    }
+    # ⚠ THE MARKER IS REQUIRED ONLY OF AN ARM THE DETAIL REALLY OVERFLOWS, which
+    # is a correction made while this row was red: two of these arms compose a
+    # CONSTANT sentence and ignore both details, so their hostile sentence is the
+    # same short one and there is nothing for `calc::status_fit` to elide.  The
+    # count of arms that DO overflow rides along as the non-vacuity leg, so the
+    # sweep cannot become green by every arm turning constant.
+    set bw6HUGE [string repeat z 500]
+    set bw6HBAD {} ; set bw6HN 0
+    foreach bw6k $bw6ARMS {
+        set bw6s [pcall calc::cross_msg $bw6k $bw6HUGE $bw6HUGE]
+        if {$bw6s eq {}} { lappend bw6HBAD "$bw6k=EMPTY" ; continue }
+        set bw6f [pcall calc::status_fit $bw6s]
+        if {[string length $bw6f] > [pcall calc::status_chars]} { lappend bw6HBAD "$bw6k=OVER" ; continue }
+        if {[string length $bw6s] <= [pcall calc::status_chars]} continue
+        incr bw6HN
+        if {[string first [pcall calc::status_marker] $bw6f] < 0} { lappend bw6HBAD "$bw6k=NOMARKER" ; continue }
+        if {![string match {*.} $bw6f]} { lappend bw6HBAD "$bw6k=NOFULLSTOP" }
+    }
+    set bw6OWN [pcall mt_verb_msg_arms bandwidth bw]
+    check "MT22/BW6 every refusal and absence arm this verb owns is REACHED by a request built from its own argument list, over an arm set DERIVED from `calc::cross_msg`'s own trailing `switch` argument -- the set of arms driven here is asserted EQUAL to that derivation, so an arm added to the table or to the proc without the other reddens by name instead of sitting outside a sweep that reads as coverage.  Per arm: the DISPOSITION the request earns, the arm identity against `calc::cross_msg`'s own sentence, the house shape, the leading verb, and that the sentence fits the entry unelided at the fixture's own detail.  A 500-character detail is driven through every derived arm as the leg no rewording could satisfy, and the arms the verb REUSES from `cross` are derived from its own call sites so re-spelling one here would be visible" \
+        [list $bw6BAD $bw6HBAD [mt_atleast $bw6HN 7] [mt_sized $bw6N [llength $bw6ARMS]] \
+              [bw_sortg $bw6DRIVEN] [bw_sortg $bw6ARMS] \
+              [mt_atleast [llength $bw6ARMS] 9] \
+              [bw_sortg [bw_dget $bw6OWN own]] \
+              [expr {[lsearch -exact [bw_dget $bw6OWN reused] empty] >= 0 ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $bw6OWN reused] nodata] >= 0 ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $bw6OWN reused] badtoken] >= 0 ? {reuses} : {RESPELLS}}]] \
+        [list {} {} atleast7 sized [bw_sortg $bw6ARMS] [bw_sortg $bw6ARMS] atleast9 \
+              [bw_sortg $bw6ARMS] reuses reuses reuses]
+
+    # --- BW7: THE OWN-DOOR OBLIGATIONS, IN THIS PROC'S OWN BODY -------------
+    pcall mt_load ac
+    # ⚠ THE CLOSURE AND NOT THE BODY'S OWN NAMES, which is a SCOPE correction made
+    # while the row was still red: `calc::cross_pair` is named by `calc::bw_scan`
+    # and `calc::extremum` by `calc::bw_peak`, so a one-level scan over the verb's
+    # own body cannot see either.  The closure is the honest scope for *"the
+    # obligation is discharged somewhere the verb reaches"*, and the two legs below
+    # it pin WHERE: `bw_scan` may name the crossing primitive and NOTHING ELSE, and
+    # `bw_peak` may name the extremum helper and nothing else -- so a second
+    # interpolation formula or a second maximum loop appears there by name.
+    set bw7CL [pcall mt_calc_closure bandwidth]
+    set bw7MISS {}
+    foreach bw7n {tmpvec rpn_bad_token bw_peak bw_scan cross_pair eval_finite extremum} {
+        if {[lsearch -exact $bw7CL $bw7n] < 0} { lappend bw7MISS $bw7n }
+    }
+    # ⚠⚠ THE SWEEP CARRIES A RIDING COUNT, A COUNT OF THE DRIVES THAT GOT PAST
+    # THE MINT, AND AN INVENTORY OF THE DISPOSITIONS THEY REACHED, because the
+    # leak leg on its own is `{}` whether the sweep drives every exit path or
+    # ONE.  BUILT rather than argued, in three steps: with all three of this
+    # file's leak sweeps trimmed to a single drive each the whole file stayed at
+    # ALL PASS with the check total unmoved and no row noticing; with an
+    # outcome-driven cleanup in `calc::bandwidth` and the sweeps restored THIS row
+    # was the single red; with the same product sabotage and the trimmed sweeps it
+    # was green again.  So this row's power was a function of a list size nothing
+    # fenced.  The MINTED count is the leg a trimmer cannot satisfy by adding
+    # drives that refuse BEFORE the mint, which is exactly where R402's obligation
+    # does not exist; the disposition inventory is the leg a sweep of eight copies
+    # of one drive cannot satisfy.
+    #
+    # ⚠ THE SEVENTH DRIVE USED TO BE A DUPLICATE OF THE FIRST, so the `high`
+    # response -- the absence on the OTHER side, which this row's name claimed to
+    # drive -- was never driven at all.  It is replaced rather than appended, and
+    # the honest status is a name repair and not a closed hole: no sabotage was
+    # found that only that drive catches, because the verb has ONE unconditional
+    # cleanup covering every post-mint arm, so any outcome-driven cleanup leaks on
+    # a drive that was already here.
+    set bw7LEAK {} ; set bw7N 0 ; set bw7MINT 0 ; set bw7DISP {}
+    foreach {bw7db bw7rpn bw7drop bw7resp} [list ac {v(lp)} 3 low   ac {v(lp)} 7 low \
+                                                 ac [bw_rpn nan] 3 low \
+                                                 ac [bw_rpn dblp] 3 low \
+                                                 ac {zzz} 3 low   ac {v(lp)} 3 bogus \
+                                                 ac {v(lp)} 3 high  tran {v(lp)} 3 low] {
+        pcall mt_load $bw7db
+        incr bw7N
+        set bw7a [pcall mt_call bandwidth $bw7rpn $bw7drop magnitude $bw7resp 0]
+        lappend bw7DISP [mt_disp $bw7a]
+        if {[string match __calc_tmp* [mt_key $bw7a dest]]} { incr bw7MINT }
+        if {[llength [leaked]]} { lappend bw7LEAK "[leaked]@$bw7rpn/$bw7drop/$bw7resp" }
+    }
+    check "MT22/BW7 the verb owns its engine door and discharges every obligation that comes with one, read off its OWN decommented body and its own closure rather than off a habit: it mints through `calc::tmpvec`, pre-flights through `calc::rpn_bad_token`, delegates the peak and the scan to the two pure procs, and issues the direct engine verbs itself.  THE ONE-FORMULA PROPERTY IS MEASURED AS A COUNT PLUS AN ABSENCE -- one `calc::cross_pair` call site per scan direction and NO DIVISION anywhere in either pure proc -- because an exact-callee-set leg is blind to a hand-rolled copy of the same arithmetic, which was BUILT and survived it; an interpolation has to divide, and the control leg shows the division half can find one.  R402's cleanup is then driven over a sweep of requests reaching both the arms that mint a temporary and the arms that refuse before one, with the leak inventory asserted empty after each -- and the sweep's own SIZE, the number of its drives that got PAST the mint, and the set of dispositions they reached all ride along, because the leak leg alone reads the same `{}` over one drive as over all of them.  ⚠ The `engine` arm is NOT among them and is not claimed: no expression was found that passes the pre-flight and makes `xschem raw add` raise" \
+        [list $bw7MISS [bw_doors bandwidth] [pcall mt_direct_raw bandwidth] \
+              [pcall mt_reaches_cross bandwidth] [pcall mt_closure_raw bandwidth] \
+              [bw_sortg [pcall mt_calc_names bw_scan]] \
+              [bw_sortg [pcall mt_calc_names bw_peak]] \
+              [bw_formula bw_scan] [bw_formula bw_peak] \
+              [expr {[lindex [split [bw_formula bandwidth] /] 1] > 0 ? {divides} : {NODIVISION}}] \
+              $bw7LEAK [probeleft] [mt_sized $bw7N 8] [mt_sized $bw7MINT 5] \
+              [lsort -unique $bw7DISP]] \
+        [list {} {add del values} yes no bandwidth cross_pair extremum \
+              2/0 0/0 divides {} {} sized sized {absent measured refused}]
+
+    # --- BW8: ISSUE 1653 -- A TIME-DOMAIN DATABASE IS REFUSED ---------------
+    # ⚠ THE NUMBER THAT WAS AVAILABLE IS RE-MEASURED IN THE SAME RUN rather than
+    # remembered, which is what stops this row going vacuous if the hazard is ever
+    # removed upstream.  The suite runs its own whole-algorithm scan over the tran
+    # arm -- NOT the keystone's comparand, which reads two samples -- to show that
+    # a plausible, confidently wrong number in SECONDS was there for the taking,
+    # and then asserts the verb declines to take it.
+    pcall mt_load tran
+    set bw8TS [mt_col time 0]
+    set bw8LP [mt_col v(lp) 0]
+    set bw8SQ [mt_col v(sq) 0]
+    set bw8W1 [bw_wouldhave $bw8TS $bw8LP 3 low]
+    set bw8W2 [bw_wouldhave $bw8TS $bw8SQ 3 low]
+    set bw8A [mt_call bandwidth {v(lp)} 3 magnitude low 0]
+    check "MT22/BW8 a time-domain database is REFUSED, and the number the verb WOULD have answered is re-measured in the same run instead of being remembered: the suite's own scan over the tran arm produces two finite, plausible, mutually distinct quantities in SECONDS -- which is what a user would have read as a frequency, with a provenance line to match -- while the verb refuses in its own voice, naming the sim_type.  The two sweep names ride along so the row can say WHY the refusal is right: `frequency` does not resolve on this arm at all" \
+        [list [mt_finite $bw8W1] [mt_finite $bw8W2] [mt_distinct $bw8W1 $bw8W2] \
+              [bw_ceil $bw8W1 1.0] [pcall xschem raw index frequency] \
+              [pcall xschem raw index time] [pcall xschem raw sim_type] \
+              [mt_disp $bw8A] \
+              [string equal [mt_msg $bw8A] [pcall calc::cross_msg bwnoac tran]] \
+              [mt_shape [mt_msg $bw8A]]] \
+        {1 1 distinct under1.0 -1 0 tran refused 1 ok}
+
+    # --- BW9: THE NON-POSITIVE-REFERENCE GUARD, SCOPED TO ITS OWN ARITHMETIC -
+    # ⚠⚠ THE GUARD IS ABOUT THE MULTIPLICATION AND NOT ABOUT THE OPERAND, and
+    # that is the half this row used to have backwards.  `ref*10^(-N/20)` with a
+    # non-positive reference names a level at or ABOVE the reference, so the
+    # request has no answer whatever the data says -- but `ref - N` is below the
+    # reference for every finite reference of either sign, so the SAME column
+    # that must be refused in `magnitude` must be ANSWERED in `dB`.  Both
+    # directions are driven here; a guard placed above the units decision passes
+    # the first leg and fails the second.
+    #
+    # ⚠ THE COMPARAND IS THE DECK'S OWN CLOSED FORM, with no simulator, no
+    # sample and no interpolation in it: `bw_closed_lp` is the corner of
+    # `1/(1 + j f/fp)` from the deck's own `.param` values, and a dB drop's
+    # corner is scale-invariant, so it is the true corner of every drive here.
+    # The `dB` reading agrees with it; the `magnitude` reading of the same dB
+    # column is asserted more than a percent away, which is what the user's own
+    # declaration now buys and what nothing could express before the field
+    # existed.  ⚠ That second reading is NOT a defect any more: it is the answer
+    # to what a user who declared `magnitude` asked for, and R412's rulings make
+    # a declared unit the user's to state rather than the product's to guess.
+    #
+    # ⚠ AND THE INVARIANCE LEG USES NO COMPARAND AT ALL: `dblp` and `db4` are the
+    # same response offset by a constant number of dB -- across zero, which is
+    # why one of them trips the guard -- so their `dB` corners must be the same
+    # frequency, and that is true of a subtraction and of nothing else.
+    pcall mt_load ac
+    set bw9A [mt_call bandwidth [bw_rpn dblp] 3 magnitude low 0]
+    set bw9B [mt_call bandwidth [bw_rpn db4]  3 magnitude low 0]
+    set bw9C [mt_call bandwidth [bw_rpn dblp] 3 dB        low 0]
+    set bw9D [mt_call bandwidth [bw_rpn db4]  3 dB        low 0]
+    set bw9L [mt_call bandwidth [bw_rpn lin4] 3 magnitude low 0]
+    set bw9TRUE [bw_closed_lp $bwF0 3]
+    check "MT22/BW9 the non-positive-reference guard is scoped to the MULTIPLICATIVE arithmetic it belongs to, driven in both directions on one column: in `magnitude` a reference at or below zero makes `ref*10^(-N/20)` name a level above the reference and the request is REFUSED in the verb's own voice by identity, while in `dB` the SAME column is ANSWERED, because `ref - N` is below the reference for every finite reference of either sign.  The answered readings are compared against the DECK'S OWN CLOSED FORM -- no simulator, no sample, no interpolation, and scale-invariant for a dB drop -- and the `magnitude` reading of the same dB column is asserted more than a percent away from it, which is what declaring the units now buys.  The invariance leg carries no comparand at all: two dB columns offset by a constant number of dB ACROSS ZERO, so one trips the guard and the other does not, must name the same `dB` corner, and that is true of a subtraction and of nothing else.  The two peaks' signs ride along so a regenerated fixture cannot make either direction vacuous" \
+        [list [bw_ceil [mt_at $bwC(dblp) 0] 0.0] [bw_floor [mt_at $bwC(db4) 0] 1.0] \
+              [mt_disp $bw9A] \
+              [string equal [mt_msg $bw9A] [pcall calc::cross_msg bwnonposref [mt_at $bwC(dblp) 0]]] \
+              [mt_disp $bw9C] [near [mt_val $bw9C] $bw9TRUE 1e-3] \
+              [mt_disp $bw9D] [near [mt_val $bw9D] $bw9TRUE 1e-3] \
+              [near [mt_val $bw9C] [mt_val $bw9D] 1e-12] \
+              [mt_disp $bw9B] [bw_apart [mt_val $bw9B] $bw9TRUE 1e-2] \
+              [mt_disp $bw9L] [near [mt_val $bw9L] $bw9TRUE 1e-3]] \
+        {under0.0 over1.0 refused 1 measured ok measured ok ok measured apart1e-2 measured ok}
+
+    # --- BW10: D7's PARTITION -- AN ABSENCE AND A MALFORMED REQUEST ---------
+    # ⚠ THE TWO MALFORMED DROPS ARE DRIVEN WITH THE DATABASE CLEARED, MT21/E's
+    # shape: a gate that slipped below the first read would answer `nodata` about
+    # a request that was never well posed, and would be caught here.
+    pcall mt_load ac
+    set bw10C {}
+    foreach bw10r {low high band} {
+        set bw10a [mt_call bandwidth [bw_rpn vsq] 3 magnitude $bw10r 0]
+        lappend bw10C [mt_disp $bw10a]
+    }
+    set bw10W0 [bw_wouldhave $bwXS $bwC(vlp) 0 low]
+    set bw10WN [bw_wouldhave $bwXS $bwC(vlp) -3 low]
+    pcall xschem raw clear
+    set bw10Z [mt_call bandwidth {v(lp)} 0 magnitude low 0]
+    set bw10M [mt_call bandwidth {v(lp)} -3 magnitude low 0]
+    set bw10D [mt_call bandwidth {v(lp)} 3 magnitude low 0]
+    check "MT22/BW10 an absence and a malformed request are told APART, which is D7's partition: a response that is CONSTANT over the whole sweep has no bandwidth and is ABSENT for all three responses, while a drop of zero and a NEGATIVE drop are REFUSED -- and the suite's own scan shows both of those would otherwise have been reported as properties of the data, since zero names the peak itself and a negative drop puts the level above it.  Both refusals are driven with the database CLEARED, so a guard that had slipped below the first read would be caught answering about missing data instead of about the request; the cleared database's own refusal rides along as the control that proves the gate order is what makes the difference" \
+        [list $bw10C $bw10W0 $bw10WN [mt_disp $bw10Z] \
+              [string equal [mt_msg $bw10Z] [pcall calc::cross_msg bwzerodrop 0]] \
+              [mt_disp $bw10M] \
+              [string equal [mt_msg $bw10M] [pcall calc::cross_msg bwzerodrop -3]] \
+              [mt_disp $bw10D] \
+              [string equal [mt_msg $bw10D] [pcall calc::cross_msg nodata]]] \
+        {{absent absent absent} ABSENT ABSENT refused 1 refused 1 refused 1}
+
+    # --- BW11: THE SIGNATURE, THROUGH THE INTERPRETER ----------------------
+    # ⚠ `info args` AND `info default`, NEVER A TEXT SCAN.  Issue 1646 cost five
+    # rounds at a sibling site and every evasion found there -- a comment copy of
+    # the signature, an unqualified callee, a backslash continuation -- defeated a
+    # source-text pin, while no `info args` leg was ever defeated by any of the 43
+    # derived sabotages.  `info args` reports names only and CANNOT see a default,
+    # which is its own trap, so `info default` is a separate leg per formal.
+    pcall mt_load ac
+    set bw11OK [mt_call bandwidth [bw_rpn vlp] 3 magnitude low 0]
+    set bw11ROW {}
+    foreach bw11r [pcall calc::catalogue] {
+        if {[lindex $bw11r 0] eq {bandwidth}} { set bw11ROW $bw11r }
+    }
+    check "MT22/BW11 the signature is pinned through the INTERPRETER and not through a scan over source text: the formals exactly, each formal's `info default` separately because `info args` cannot see one, the surface proc the click's result path reaches (the bare name -- there is no `_scalar` wrapper, because there is exactly one peak-relative crossing per side and so nothing to select), the answer's key set compared against `calc::cross`'s own PLUS `ref` by identity -- the one key this verb carries beyond that set, which `calc::gainBwProd` multiplies by and which no second peak search anywhere may recompute -- the sink the answer routes to, and the catalogue's `returns` word -- which stays `scalar`, so S24's closed vocabulary and its eight category counts do not move.  `drop` defaulting to the EMPTY STRING is the leg that makes omission a refusal rather than a Tcl arity throw" \
+        [list [mt_formals bandwidth] \
+              [pcall ag_default bandwidth rpn] [pcall ag_default bandwidth drop] \
+              [pcall ag_default bandwidth units] \
+              [pcall ag_default bandwidth response] [pcall ag_default bandwidth dataset] \
+              [mt_surface bandwidth] \
+              [mt_keys $bw11OK] \
+              [mt_sameformals [mt_keys $bw11OK] \
+                   [lsort [concat [mt_keys [mt_call cross {v(lp)} 0.5 1 rising]] ref]]] \
+              [mt_sink $bw11OK] [mt_disp $bw11OK] \
+              [lindex $bw11ROW 3] [lindex $bw11ROW 2] \
+              [mt_formals bw_peak] [mt_formals bw_scan]] \
+        [list {rpn drop units response dataset} {0 {}} {1 {}} {1 magnitude} {1 low} {1 0} bandwidth \
+              {absent dataset dest msg ok ref value} same buffer measured scalar T \
+              {ys} {xs ys pi lvl}]
+
+    # --- BW12: WHICH OF SEVERAL EQUAL MAXIMA THE SCAN STARTS FROM -----------
+    # ⚠⚠ `calc::bw_peak`'s TIE RULE IS A STATED DESIGN PROPERTY THAT NOTHING
+    # MEASURED, and the consequence is a factor and not a rounding: the chosen
+    # index is where both scans START, so on a column whose maxima are tied at
+    # separated indices the first-tie and last-tie readings are crossings of
+    # DIFFERENT LOBES.  Built before being claimed: replacing `lsearch -exact`
+    # with a last-match search left this whole file at ALL PASS while the upper
+    # corner and the lower corner both moved.
+    #
+    # ⚠ THE DRIVE IS CLAMPED WITH `min()` SO THE TIE IS EXACT IN "%.16g", not
+    # near; `bw_tieidx` derives the tied set by the sorting mechanism and the row
+    # asserts there is more than one and that the first and last are not
+    # adjacent, so a regenerated fixture cannot make this row vacuous.
+    #
+    # ⚠⚠ AND IT RECORDS WHICH READING IS BLIND, which is the leg a later reader
+    # would otherwise delete as redundant: the `band` response subtracts the two
+    # corners and is BIT-IDENTICAL under both tie choices, because both lobes are
+    # the same shape.  So `band` cannot carry this claim and the row says so with
+    # an exactness leg rather than a sentence.
+    set bw12ys $bwC(tie)
+    set bw12TIE [bw_tieidx $bw12ys]
+    set bw12F [mt_at $bw12TIE 0]
+    set bw12L [mt_at $bw12TIE end]
+    set bw12lvl [bw_level [mt_at $bw12ys $bw12F] 3]
+    # the four bracket indices: the nearest crossing each way from the FIRST tie
+    # and from the LAST tie, each validated by the straddle test rather than
+    # trusted, so a wrong index reddens by name instead of solving a wrong line.
+    set bw12RIS [bw_straddles $bw12ys $bw12lvl rising]
+    set bw12FAL [bw_straddles $bw12ys $bw12lvl falling]
+    # nearest falling AFTER the first tie, nearest rising BEFORE it...
+    set bw12hiK {} ; foreach k $bw12FAL { if {$k >= $bw12F} { set bw12hiK $k ; break } }
+    set bw12loK {} ; foreach k [lreverse $bw12RIS] { if {$k < $bw12F} { set bw12loK $k ; break } }
+    # ...and the same two for the LAST tie, which is the reading the row rejects.
+    set bw12hiA {} ; foreach k $bw12FAL { if {$k >= $bw12L} { set bw12hiA $k ; break } }
+    set bw12loA {} ; foreach k [lreverse $bw12RIS] { if {$k < $bw12L} { set bw12loA $k ; break } }
+    set bw12hi [bw_line $bwXS $bw12ys $bw12hiK $bw12lvl]
+    set bw12lo [bw_line $bwXS $bw12ys $bw12loK $bw12lvl]
+    set bw12hiW [bw_line $bwXS $bw12ys $bw12hiA $bw12lvl]
+    set bw12loW [bw_line $bwXS $bw12ys $bw12loA $bw12lvl]
+    set bw12A [mt_call bandwidth [bw_rpn tie] 3 magnitude low 0]
+    set bw12B [mt_call bandwidth [bw_rpn tie] 3 magnitude high 0]
+    set bw12C [mt_call bandwidth [bw_rpn tie] 3 magnitude band 0]
+    check "MT22/BW12 the scan starts from the FIRST of several exactly equal maxima, measured on a clamped drive whose tied set is DERIVED in the run by the sorting mechanism rather than named: the row asserts the set has more than one member and that its first and last are not adjacent, so the drive is known to still discriminate.  Both corners are then compared against the line through the bracketing pair NEAREST the first tie and against the line through the pair nearest the LAST tie -- the reading a last-match tie rule gives -- every one of the four bracket indices derived by the suite's own straddle predicate and validated by it, so no index is trusted and no comparand contains a peak search, a loop or `calc::cross_pair`.  Each corner's separation from its alternative clears a floor, which is what stops the row passing on a drive where the two choices happen to coincide.  ⚠ The `band` response is asserted BIT-IDENTICAL under both choices, which records that it is the blind reading and that this claim cannot be moved onto it" \
+        [list [mt_atleast [mt_len $bw12TIE] 2] \
+              [expr {$bw12L > $bw12F + 1 ? {separated} : "ADJACENT:$bw12TIE"}] \
+              [bw_straddle $bw12ys $bw12hiK $bw12lvl falling] \
+              [bw_straddle $bw12ys $bw12loK $bw12lvl rising] \
+              [bw_straddle $bw12ys $bw12hiA $bw12lvl falling] \
+              [bw_straddle $bw12ys $bw12loA $bw12lvl rising] \
+              [mt_disp $bw12A] [near [mt_val $bw12A] $bw12hi 1e-12] \
+              [mt_disp $bw12B] [near [mt_val $bw12B] $bw12lo 1e-12] \
+              [bw_apart $bw12hi $bw12hiW 1] [bw_apart $bw12lo $bw12loW 1] \
+              [mt_disp $bw12C] \
+              [bw_exact [mt_val $bw12C] [expr {double($bw12hi) - double($bw12lo)}]] \
+              [bw_exact [expr {double($bw12hiW) - double($bw12loW)}] \
+                        [expr {double($bw12hi) - double($bw12lo)}]]] \
+        [list atleast2 separated straddles straddles straddles straddles \
+              measured ok measured ok apart1 apart1 measured exact exact]
+
+    # --- BW13: WHICH OF SEVERAL CROSSINGS ON ONE SIDE IS THE CORNER ---------
+    # ⚠⚠ `calc::bw_scan`'s TWO `break`s ARE THE SEMANTICS -- each corner is the
+    # crossing NEAREST the peak -- AND BOTH WERE UNFENCED IN BOTH DIRECTIONS.
+    # Built: removing the forward `break` moved the upper corner and the span,
+    # removing the backward one moved the lower corner, and in each case every
+    # other check in this file stayed green.  Without a `break` the LAST
+    # assignment of the loop wins, which is the crossing farthest from the peak,
+    # so the verb would be reporting a corner of a different lobe.
+    #
+    # ⚠ THE DRIVE IS CHOSEN SO THAT BOTH DIRECTIONS HAVE SOMETHING TO CHOOSE
+    # BETWEEN, which the deck's own three responses do not: `bw_straddles`
+    # derives every crossing of the level on each side and the row asserts there
+    # are at least two of each, so a regenerated fixture reddens instead of
+    # leaving two of these legs comparing one candidate against itself.
+    set bw13ys $bwC(ripple)
+    set bw13pi [bw_pkidx $bw13ys]
+    set bw13lvl [bw_level [mt_at $bw13ys $bw13pi] 3]
+    set bw13FAL {} ; foreach k [bw_straddles $bw13ys $bw13lvl falling] {
+        if {$k >= $bw13pi} { lappend bw13FAL $k } }
+    set bw13RIS {} ; foreach k [bw_straddles $bw13ys $bw13lvl rising] {
+        if {$k < $bw13pi} { lappend bw13RIS $k } }
+    set bw13hiN [bw_line $bwXS $bw13ys [mt_at $bw13FAL 0] $bw13lvl]
+    set bw13hiF [bw_line $bwXS $bw13ys [mt_at $bw13FAL end] $bw13lvl]
+    set bw13loN [bw_line $bwXS $bw13ys [mt_at $bw13RIS end] $bw13lvl]
+    set bw13loF [bw_line $bwXS $bw13ys [mt_at $bw13RIS 0] $bw13lvl]
+    set bw13A [mt_call bandwidth [bw_rpn ripple] 3 magnitude low 0]
+    set bw13B [mt_call bandwidth [bw_rpn ripple] 3 magnitude high 0]
+    set bw13C [mt_call bandwidth [bw_rpn ripple] 3 magnitude band 0]
+    check "MT22/BW13 each corner is the crossing NEAREST the peak and not the farthest one on that side, driven on a rippled response whose crossing sets BOTH SIDES are derived in the run by the suite's own straddle predicate and asserted to hold at least two candidates each -- which is the leg that stops either direction comparing one candidate against itself.  Per side the answer is compared against the line through the nearest bracketing pair and its separation from the line through the FARTHEST one is asserted to clear a floor, so a scan that kept walking after its first hit reddens on both the value and the separation.  The span is compared against the difference of the two nearest corners, so the response that uses both directions at once is a claim of its own; the peak index is read by the sorting mechanism and asserted interior; and no comparand contains a scan, a peak search or `calc::cross_pair`" \
+        [list [mt_atleast [mt_len $bw13FAL] 2] [mt_atleast [mt_len $bw13RIS] 2] \
+              [expr {$bw13pi > 0 ? {interior} : {ATZERO}}] \
+              [expr {$bw13pi < [mt_nminus [mt_len $bw13ys] 1] ? {interior} : {ATEND}}] \
+              [bw_straddle $bw13ys [mt_at $bw13FAL 0] $bw13lvl falling] \
+              [bw_straddle $bw13ys [mt_at $bw13RIS end] $bw13lvl rising] \
+              [mt_disp $bw13A] [near [mt_val $bw13A] $bw13hiN 1e-12] \
+              [bw_apart $bw13hiN $bw13hiF 1e-1] \
+              [mt_disp $bw13B] [near [mt_val $bw13B] $bw13loN 1e-12] \
+              [bw_apart $bw13loN $bw13loF 1e-1] \
+              [mt_disp $bw13C] \
+              [near [mt_val $bw13C] [expr {double($bw13hiN) - double($bw13loN)}] 1e-12]] \
+        [list atleast2 atleast2 interior interior straddles straddles \
+              measured ok apart1e-1 measured ok apart1e-1 measured ok]
+
+    # --- BW14: WHICH ARITHMETIC EACH `units` WORD NAMES --------------------
+    # ⚠⚠ WRITTEN RED-FIRST AGAINST A VERB THAT HAD NO `units` FORMAL AT ALL.
+    # Every leg below failed when it was written: the `dB` request was refused as
+    # a bad RESPONSE, because the word landed in the next positional argument,
+    # and the five-argument `magnitude` request answered `RAISED:` on a Tcl
+    # arity error.  The defect it closes is a WRONG NUMBER A USER CAN REACH --
+    # `ref*10^(-N/20)` is a RATIO, and an operand already in dB wants `ref - N`,
+    # so a Bode trace whose peak stays above 0 dB was answered at the wrong
+    # corner with no refusal and nothing in the data to distinguish the two.
+    #
+    # ⚠ NO COMPARAND BELOW CONTAINS A LOOP, A PEAK SEARCH OR `calc::cross_pair`.
+    # The peak index comes from the sorting mechanism, the bracket index from
+    # this file's own straddle scan, the two levels from its own two level procs,
+    # and the line is solved once by `bw_line` -- so a comparand cannot agree
+    # with a product bug by construction.
+    #
+    # ⚠⚠ THE LEG THAT SAYS SUBTRACTION IS *RIGHT* AND NOT MERELY DIFFERENT IS
+    # THE PHYSICAL ONE, AND IT IS WHY THE LINEAR COMPANION DRIVE EXISTS.  `db4`
+    # and `lin4` are ONE response read two ways, so the corner read from the dB
+    # column in `dB` and from the magnitude column in `magnitude` is the SAME
+    # frequency.  That agreement is asserted, and asserted NOT EXACT, so the row
+    # cannot pass by one column being read twice; the dB column read as a
+    # magnitude is asserted far from it in the same run.
+    #
+    # ⚠⚠ AND THE SECOND MECHANISM IS A SYMMETRY RATHER THAN A RECOMPUTATION: a
+    # constant number of dB added to a dB operand moves its peak and its level by
+    # the SAME amount, so a subtraction cannot move the corner and a
+    # multiplication must.  `db4up` is `db4` lifted by 6 dB and the two legs read
+    # the two arithmetics' answers to that -- invariant to 1e-12 in `dB`, and
+    # apart by more than a tenth in `magnitude`.  No comparand is involved at all.
+    pcall mt_load ac
+    set bw14N 3.0102999566398116
+    set bw14pi [bw_pkidx $bwC(db4)]
+    set bw14pv [mt_at $bwC(db4) $bw14pi]
+    set bw14LS [bw_dblevel $bw14pv $bw14N]
+    set bw14LM [bw_level   $bw14pv $bw14N]
+    set bw14KS [bw_straddles $bwC(db4) $bw14LS falling]
+    set bw14KM [bw_straddles $bwC(db4) $bw14LM falling]
+    set bw14XS [bw_line $bwXS $bwC(db4) [mt_at $bw14KS 0] $bw14LS]
+    set bw14XM [bw_line $bwXS $bwC(db4) [mt_at $bw14KM 0] $bw14LM]
+    set bw14pil [bw_pkidx $bwC(lin4)]
+    set bw14LL [bw_level [mt_at $bwC(lin4) $bw14pil] $bw14N]
+    set bw14KL [bw_straddles $bwC(lin4) $bw14LL falling]
+    set bw14XL [bw_line $bwXS $bwC(lin4) [mt_at $bw14KL 0] $bw14LL]
+    set bw14DB  [mt_call bandwidth [bw_rpn db4]  $bw14N dB        low 0]
+    set bw14MAG [mt_call bandwidth [bw_rpn db4]  $bw14N magnitude low 0]
+    set bw14LIN [mt_call bandwidth [bw_rpn lin4] $bw14N magnitude low 0]
+    set bw14DEF [mt_call bandwidth [bw_rpn db4]  $bw14N]
+    set bw14UDB [mt_call bandwidth [bw_rpn db4up] $bw14N dB        low 0]
+    set bw14UMG [mt_call bandwidth [bw_rpn db4up] $bw14N magnitude low 0]
+    set bw14HI  [mt_call bandwidth [bw_rpn db4]  $bw14N dB        high 0]
+    check "MT22/BW14 the `units` word names the ARITHMETIC and each word's own answer is compared against a comparand with no loop, no peak search and no `calc::cross_pair` in it: in `dB` the level is the reference MINUS the drop and in `magnitude` it is the reference TIMES a ratio, each solved once through a bracket index this file's own straddle scan derives and asserts to be the only one.  THE LEG THAT SAYS THE SUBTRACTION IS RIGHT RATHER THAN MERELY DIFFERENT IS PHYSICAL: a dB column and its own linear companion are ONE response, so the corner read from one in `dB` and the other in `magnitude` is the same frequency -- asserted to agree, asserted NOT EXACTLY, so the row cannot pass by reading one column twice -- while the dB column read as a magnitude is asserted far from it in the same run.  The second mechanism is a SYMMETRY and involves no comparand at all: a constant number of dB added to the operand cannot move a subtracted corner and must move a multiplied one.  The two levels are asserted apart, the peak indices of the two companion columns asserted equal, the omitted argument asserted bit-identical to `magnitude`, and the response vocabulary asserted still live in `dB` by a monotone drive having no lower corner" \
+        [list [mt_disp $bw14DB]  [near [mt_val $bw14DB]  $bw14XS 1e-12] \
+              [mt_disp $bw14MAG] [near [mt_val $bw14MAG] $bw14XM 1e-12] \
+              [mt_disp $bw14LIN] [near [mt_val $bw14LIN] $bw14XL 1e-12] \
+              [bw_apart [mt_val $bw14DB] [mt_val $bw14MAG] 1e-2] \
+              [bw_exact [mt_val $bw14DEF] [mt_val $bw14MAG]] \
+              [near [mt_val $bw14DB] [mt_val $bw14LIN] 1e-3] \
+              [bw_apart [mt_val $bw14DB] [mt_val $bw14LIN] 1e-6] \
+              [bw_apart [mt_val $bw14MAG] [mt_val $bw14LIN] 1e-2] \
+              [mt_disp $bw14UDB] [near [mt_val $bw14UDB] [mt_val $bw14DB] 1e-12] \
+              [mt_disp $bw14UMG] [bw_apart [mt_val $bw14UMG] [mt_val $bw14MAG] 1e-1] \
+              [bw_apart $bw14LS $bw14LM 1e-2] \
+              [bw_exact $bw14pi $bw14pil] \
+              [mt_len $bw14KS] [mt_len $bw14KM] [mt_len $bw14KL] \
+              [bw_straddle $bwC(db4) [mt_at $bw14KS 0] $bw14LS falling] \
+              [bw_straddle $bwC(db4) [mt_at $bw14KM 0] $bw14LM falling] \
+              [mt_disp $bw14HI] \
+              [string equal [mt_msg $bw14HI] [pcall calc::cross_msg bwnolo $bw14N]]] \
+        [list measured ok measured ok measured ok apart1e-2 exact ok apart1e-6 \
+              apart1e-2 measured ok measured apart1e-1 apart1e-2 exact \
+              1 1 1 straddles straddles absent 1]
+
+    # --- BW15: THE UNITS ENUM, AND WHERE ITS MEMBERSHIP TEST SITS -----------
+    # ⚠ THE MEMBER LIST IS LIFTED FROM THE VALIDATOR'S OWN BODY, FROM THE SPEC,
+    # AND FROM `calc::gainMargin`'s OWN, and the three are asserted equal.  Two
+    # shipped verbs already name these two words; a third spelling of one concept
+    # is the defect this leg exists to catch, and no list is written here.
+    #
+    # ⚠ DRIVEN WITH THE DATABASE CLEARED, which is MT21/E's and BW10's shape and
+    # is the only way to measure WHERE the membership test sits: a member must
+    # reach the no-data refusal and a non-member must be refused on its own
+    # account, so a test that had slipped below the first accessor would answer
+    # about missing data for a non-member and redden here.
+    #
+    # ⚠ THE RESPONSE CONTROL IS WHAT STOPS THE TWO ENUMS MERGING.  `bogus` in the
+    # response field must still earn `bwbadresponse` and in the units field must
+    # earn `bwunits`, with both sentences compared by identity -- a single arm
+    # serving both fields would pass one of those legs and fail the other.
+    pcall mt_load ac
+    set bw15SPEC [lrange [ag_field bandwidth units 2] 1 end]
+    set bw15LIT [ag_enum_in bandwidth units]
+    set bw15GM [ag_enum_in gainMargin gain]
+    pcall xschem raw clear
+    set bw15BAD {} ; set bw15N 0
+    foreach bw15m $bw15LIT {
+        incr bw15N
+        set bw15a [mt_call bandwidth {v(lp)} 3 $bw15m low 0]
+        if {[mt_disp $bw15a] ne {refused}} { lappend bw15BAD "$bw15m=[mt_disp $bw15a]" ; continue }
+        if {![string equal [mt_msg $bw15a] [pcall calc::cross_msg nodata]]} {
+            lappend bw15BAD "$bw15m=[mt_msg $bw15a]"
+        }
+    }
+    set bw15NO [mt_call bandwidth {v(lp)} 3 sideways low 0]
+    set bw15RE [mt_call bandwidth {v(lp)} 3 magnitude bogus 0]
+    set bw15GB [mt_call gainBwProd {v(lp)} 3 sideways low 0]
+    check "MT22/BW15 the `units` member list exists ONCE and its membership test sits ABOVE the first accessor, both measured rather than read: the list is lifted from the validator's own body, from the live spec and from `calc::gainMargin`'s own validator, and the three are asserted equal -- so a third spelling of one concept reddens by name.  With the database CLEARED every member gets PAST the membership test and meets the no-data refusal while a non-member is refused on its own account, which is the only arrangement that distinguishes a test above the first read from one below it.  The response control is what stops the two enums merging: the same bad word earns `bwbadresponse` in one field and `bwunits` in the other, both compared by identity, and the delegate carries the units refusal through byte-identically rather than re-spelling it.  The member count rides along so an empty list cannot pass" \
+        [list $bw15BAD [mt_atleast $bw15N 2] \
+              [expr {$bw15LIT eq $bw15SPEC ? {same} : "DIFFER:{$bw15LIT}|{$bw15SPEC}"}] \
+              [expr {$bw15LIT eq $bw15GM ? {same} : "DIFFER:{$bw15LIT}|{$bw15GM}"}] \
+              [mt_disp $bw15NO] \
+              [string equal [mt_msg $bw15NO] [pcall calc::cross_msg bwunits sideways]] \
+              [mt_shape [mt_msg $bw15NO]] [mt_family [mt_msg $bw15NO]] \
+              [expr {[pcall calc::status_fit [mt_msg $bw15NO]] eq [mt_msg $bw15NO] ? {fits} : {ELIDES}}] \
+              [mt_disp $bw15RE] \
+              [string equal [mt_msg $bw15RE] [pcall calc::cross_msg bwbadresponse bogus]] \
+              [mt_disp $bw15GB] \
+              [string equal [mt_msg $bw15GB] [mt_msg $bw15NO]]] \
+        [list {} atleast2 same same refused 1 ok Bandwidth fits refused 1 refused 1]
+
+    # --- hygiene -----------------------------------------------------------
+    # ⚠ CAPTURED BEFORE THE RELOAD -- see the warning on `leaked` itself.
+    set bwLEAK [leaked]
+    set bwPROBE [probeleft]
+    pcall mt_load ac
+    # ⚠⚠ AND THE PRE-RELOAD CAPTURE ALONE IS VACUOUS FOR THIS BAND, WHICH IS WHY
+    # THE SECOND LEG EXISTS.  Measured: this band's last drives all run against a
+    # DELIBERATELY CLEARED database -- that is BW15's whole method, a membership
+    # test above the first accessor -- so every one of them refuses BEFORE the
+    # mint and leaves nothing to find.  With the product's unconditional
+    # `xschem raw del $dest` deleted, the capture above stayed empty.  So the
+    # row mints one temporary ON PURPOSE on a reloaded fixture and requires the
+    # inventory empty AFTER it, which is the leg a deleted cleanup cannot pass.
+    set bwFRESH [mt_disp [mt_call bandwidth [bw_rpn vlp] 3 magnitude low 0]]
+    set bwLEAK2 [leaked]
+    check "MT22 R402 the inventory is READ TWICE AND BOTH READS ARE EMPTY: once BEFORE this band's reload, which is the only point that can see the paths the band itself drove, and once AFTER A DELIBERATE FRESH MINT on the reloaded fixture, because this band's own last drives all refuse against a cleared database before reaching the mint and so cannot witness a deleted cleanup at all.  The fresh drive's disposition rides along, so a leg that stopped measuring cannot read as cleanliness" \
+        [list $bwLEAK $bwPROBE $bwFRESH $bwLEAK2] {{} {} measured {}}
+    pcall xschem raw clear
+}
+
+# ---------------------------------------------------------------------------
+# MT23 -- `calc::gainBwProd`, THE SECOND LOOP-STABILITY VERB AND THE FIRST PURE
+# DELEGATE ON ANOTHER MEASUREMENT VERB.  NO Tk, so it gates on BOTH arms.
+#
+# Spec     doc/claude/specs/calculator.md section 7.3.
+# Fence    this band, plus the rows that enlist it for FREE and so are not
+#          repeated here: MT10's partition, MT14/Q's argspec arm sweep, MT21's
+#          overflowing-literal sweep, MT22/BW6's `bw*` sweep (which does NOT
+#          reach a `gbw*` arm -- row GBW9 measures that rather than assuming
+#          it) and row SR5 of tests/headless/test_calc_scratch_reuse.tcl.
+#
+#     calc::gainBwProd <rpn> ?<drop>? ?<units>? ?<response>? ?<dataset>?
+#
+# ⚠⚠ THE VERB IS THE PRODUCT (reference gain) x (bandwidth), NOT THE UNITY-GAIN
+# FREQUENCY, and the choice is a MEASUREMENT rather than a preference.  Row
+# GBW10 drives both halves of the argument: the committed fixture's own in-band
+# maximum is BELOW unity gain, so a crossing search for a gain of 1 answers
+# nothing and the unity-gain reading has no answer on this fixture at all; and
+# `calc::cross <gain> 1 1 falling` already IS that frequency, through a verb
+# green since PLAN 7.2 -- so the unity-gain reading would have shipped a second
+# spelling of a shipped verb while leaving the product, the thing that is not
+# available, unbuilt.
+#
+# ⚠⚠ THE REFERENCE IS READ BACK OUT OF THE DELEGATE'S OWN ANSWER AND IS NEVER
+# RECOMPUTED HERE.  `calc::bandwidth` derives a reference from the column and a
+# level from that reference; a second copy of the convention in this verb could
+# disagree with it, and the two halves of a product disagreeing about the
+# reference is exactly the drift this shape exists to prevent.  So
+# `calc::bandwidth` PUBLISHES it as `ref` and this verb multiplies by it -- which
+# is why MT22/BW11's key-set legs moved in the same commit, per CLAUDE.md's rule
+# that a key and the row asserting its key set land together.  There is
+# deliberately NO fallback that recomputes the reference: a fallback IS the
+# drift.  Row GBW1 measures that the delegate is really called with the user's
+# own arguments, GBW2 the arithmetic with no fixture in it at all, and GBW4 the
+# identity `value / bandwidth == ref` at a door no interpolation error fits in.
+#
+# ⚠⚠ THE VERB OWNS NO DATABASE GATE AND MAKES NO ACCESSOR CALL AT ALL, and that
+# is a correction made against the landed delegate rather than a simplification.
+# An earlier design gave it its own `raw loaded` and `raw sim_type` gates; both
+# are already in `calc::bandwidth` (`nodata` and `bwnoac`), so owning them here
+# would be a second vocabulary for one fact -- and it would BREAK MT21/A's
+# detail leg, which requires the refusal a `real` field's overflowing literal
+# earns to quote THE TEXT THE USER TYPED.  A `sim_type` gate ahead of the
+# delegate answers about the database instead, on the `tran` arm that band loads.
+# Row GBW8 drives the time-domain arm and asserts the refusal arrives in the
+# DELEGATE's voice, by identity, with the number it would otherwise have
+# answered re-measured in the same run.
+#
+# ⚠ THE OPERAND'S UNITS ARE DECLARED AND NOT CHECKED (limit L1).  The verb reads
+# its `rpn` as a LINEAR magnitude.  A dB-valued operand that stays above 0 dB
+# throughout the band passes the delegate's non-positive-reference guard and is
+# answered confidently wrong; row GBW11's second leg asserts that hole as a
+# measurement so it moves if the guard is ever widened, which is the shape
+# MT22/BW9 already uses for the delegate's half of the same hazard.  Nothing in
+# the data distinguishes the two readings -- the engine hands the verb doubles
+# with no units -- so this is filed against issue 1653 and not guarded by a
+# guess.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  Every new sentence is the assistant's; the
+# standing `rule` debt filed against `calc::eval_msg`'s sentences is extended to
+# cover them, and every row below asserts the house SHAPE and the ARM IDENTITY
+# and never the words.
+# ---------------------------------------------------------------------------
+
+# ⚠⚠ THE DELEGATE REPLACED BY A RECORDER, WITH THE ANSWER IT RETURNS PASSED IN
+# AS A PARAMETER RATHER THAN BUILT HERE.  `mt_dictsites` walks THIS FILE for
+# every `dict create` on a non-comment line and names the enclosing proc, and
+# MT10 asserts that set EXACTLY -- so a stub composing its own answer would
+# enlist itself there and redden a row about something else.  `m21BASE` is the
+# precedent: that fixture was moved out of `dict create` into a literal for the
+# same reason, and the caller here hands in a dict LITERAL, which the instrument
+# does not see.
+#
+# The slot is checked BEFORE the rename, so a previous failed run inside this
+# interpreter cannot be mistaken for a product defect, and the original is
+# restored on BOTH exit paths.  rc 2 is `return` and not an error -- the sibling
+# `mt_stub_run` shipped its first revision treating it as one.
+set mt_bwst_answer {}
+set mt_bwst_log {}
+proc mt_bwst_run {ans script} {
+    if {[info commands ::calc::bandwidth] eq {}} { return "NOPROC:calc::bandwidth" }
+    if {[info commands ::mt_bwst_keep] ne {}} { return BWSTSLOTBUSY }
+    rename ::calc::bandwidth ::mt_bwst_keep
+    set ::mt_bwst_answer $ans
+    set ::mt_bwst_log {}
+    proc ::calc::bandwidth {rpn {drop {}} {units magnitude} {response low} {dataset 0}} {
+        lappend ::mt_bwst_log [list $rpn $drop $units $response $dataset]
+        return $::mt_bwst_answer
+    }
+    set rc [catch {uplevel 1 $script} r]
+    catch {rename ::calc::bandwidth {}}
+    catch {rename ::mt_bwst_keep ::calc::bandwidth}
+    if {$rc != 0 && $rc != 2} { return "ERR:$r" }
+    return $r
+}
+# the field keys of one verb's spec, in the spec's own order, sentinel-safe --
+# so GBW6 can compare a formal list against a SPEC rather than against a list
+# written down here.
+# `allnondefault` when every argument of a RECORDED call differs from the default
+# of the formal it lands in, or the formals it does not -- derived from
+# `info default` on the real proc and never from a list written here.
+#
+# ⚠⚠ THIS IS THE INSTRUMENT A PASS-THROUGH ROW CANNOT DO WITHOUT, AND GBW1
+# SHIPPED WITHOUT IT.  Recording the delegate's request catches a DROPPED
+# argument only when the value dropped differs from that formal's default,
+# because the recorder carries the same defaults as the proc it replaces -- so an
+# argument driven AT its own default records the same word whether the call
+# passed it or not.  Built: with `$dataset` removed from `calc::gainBwProd`'s one
+# delegating call, this whole file stayed at ALL PASS while a request naming a
+# dataset that does not exist stopped being refused and became an answer about
+# dataset 0.  The leg is per formal and derived, so the next formal added to
+# either proc is covered without this instrument being touched.
+proc gbw_nondefault {prc args} {
+    if {[info commands ::calc::$prc] eq {}} { return "NOPROC:calc::$prc" }
+    if {[catch {info args ::calc::$prc} fs]} { return "NOARGS:calc::$prc" }
+    if {[llength $args] != [llength $fs]} {
+        return "arity:[llength $args]/[llength $fs]"
+    }
+    set same {}
+    foreach f $fs a $args {
+        set d {}
+        if {[catch {info default ::calc::$prc $f d} has]} { return "NODEFAULT:$f" }
+        if {!$has} continue
+        if {$a eq $d} { lappend same $f }
+    }
+    if {[llength $same]} { return "atdefault:$same" }
+    return allnondefault
+}
+proc gbw_speckeys {nm} {
+    set out {}
+    foreach row [pcall calc::fn_argspec $nm] {
+        if {[catch {lindex $row 0} k]} { return "NOTALIST:{$row}" }
+        lappend out $k
+    }
+    return $out
+}
+# THE CLOSED FORM, with no simulator and no fixture in it.  The deck builds
+# H(f) = 1/(1 + j f/fp) with fp = 1000 Hz EXACTLY (cac = 1/(twopi*rac*fp)), so
+# |H| = 1/sqrt(1+x^2) with x = f/1000.  The committed sweep's FIRST point is
+# 100 Hz, so a monotone-decreasing magnitude has its in-band maximum there:
+# ref = k/sqrt(1.01) for a drive scaled by k.  A multiplicative level
+# ref*10^(-N/20) is reached where 1+x^2 = 1.01*10^(N/10).
+#
+# ⚠ THE ANSWER IS THE PRODUCT OF BOTH HALVES, so this proc shares no step with
+# the verb: the verb multiplies a data-derived reference by an interpolated
+# crossing, and this multiplies an analytic reference by an analytic root.
+proc gbw_closed {k ndb} {
+    set ref [expr {double($k)/sqrt(1.01)}]
+    set f   [expr {1000.0*sqrt(1.01*pow(10.0,double($ndb)/10.0) - 1.0)}]
+    return [expr {$ref*$f}]
+}
+# `far` when two numbers differ by at least `floor` relative to the larger, and
+# the measured separation otherwise -- so a negative leg says HOW CLOSE a wrong
+# producer's answer would have been instead of only that it failed.  Sentinel
+# safe on both sides, because both arguments can be a disposition word.
+proc gbw_far {a b floor} {
+    if {![mt_finite $a]} { return "NOTANUMBER:{$a}" }
+    if {![mt_finite $b]} { return "NOTANUMBER:{$b}" }
+    set s [expr {max(abs(double($a)),abs(double($b)))}]
+    if {$s == 0.0} { return zeroscale }
+    set r [expr {abs(double($a)-double($b))/$s}]
+    if {$r >= double($floor)} { return far }
+    return "near:$r"
+}
+# the relative separation itself, as a NUMBER, for the one leg that compares two
+# separations against each other rather than against a floor.
+proc gbw_sep {a b} {
+    if {![mt_finite $a] || ![mt_finite $b]} { return {} }
+    set s [expr {max(abs(double($a)),abs(double($b)))}]
+    if {$s == 0.0} { return {} }
+    return [expr {abs(double($a)-double($b))/$s}]
+}
+# ⚠⚠ THE NEXT THREE EXIST BECAUSE THIS BAND'S FIRST RED RUN ABORTED INSTEAD OF
+# REDDENING, which is the failure mode that DELETES a band's remaining rows from
+# the verdict.  `expr` on a `NOKEY-ref` sentinel -- the honest answer from a
+# delegate that does not publish its reference yet -- raised *expected
+# floating-point number*, `group`'s catch printed ONE line, and SEVEN of this
+# band's rows vanished.  Measured, not imagined: the band-abort guard at the foot
+# of this file named MT23 and the check total came in one BELOW the pre-band
+# baseline.  Every arithmetic site below goes through one of these.
+#
+# a QUOTIENT of two values either of which can be a disposition word, so the
+# identity leg below cannot raise inside `expr` and take the band out through
+# `group`'s catch.
+proc gbw_quot {a b} {
+    if {![mt_finite $a] || ![mt_finite $b]} { return "NOTANUMBER:{$a}/{$b}" }
+    if {double($b) == 0.0} { return zerodenom }
+    return [expr {double($a)/double($b)}]
+}
+# the multiplier at which the product stops being representable, from the double
+# format and the delegate's own two numbers.  `DBL_MAX` is spelled out of the
+# format rather than written down, which is MT21/NV's own instrument.
+proc gbw_kcrit {ref bw} {
+    if {![mt_finite $ref] || ![mt_finite $bw]} { return "NOTANUMBER:{$ref}/{$bw}" }
+    set d [expr {double($ref)*double($bw)}]
+    if {$d == 0.0} { return zeroscale }
+    return [expr {((2.0 - 2.0**-52) * 2.0**1023)/$d}]
+}
+# a WORD for "is this number strictly below that one", total on both sides.
+proc gbw_below {a b} {
+    if {![mt_finite $a]} { return "NOTANUMBER:{$a}" }
+    if {![mt_finite $b]} { return "NOTABOUND:{$b}" }
+    if {double($a) < double($b)} { return below }
+    return "atorabove:$a"
+}
+
+# =========================================================================
+group MT23 {
+    # --- GBW1: THE DELEGATION, MEASURED BY RECORDING THE DELEGATE'S REQUESTS --
+    # ⚠ THIS IS THE ROW EVERY VALUE ROW BELOW WOULD BE GREEN WITHOUT.  An INLINED
+    # copy of the delegate's peak search and scan answers the same numbers on this
+    # fixture and records ZERO calls, which is the one defect a value comparison
+    # cannot see -- and it is the defect that would put a second copy of the
+    # reference convention in the tree.  `missing` is a leg rather than a
+    # shortfall in the check total: a band that aborts through `group`'s catch
+    # deletes its remaining rows from the verdict instead of reddening them.
+    #
+    # ⚠⚠ EVERY ARGUMENT IS DRIVEN OFF ITS OWN DEFAULT, AND `gbw_nondefault`
+    # ASSERTS THAT PER FORMAL FROM `info default`.  This row's first revision drove
+    # `dataset` at 0, which IS that formal's default -- and the recorder carries
+    # the delegate's defaults, so the log read the same `0` whether the delegating
+    # call passed the argument or not.  Built: with `$dataset` removed from
+    # `calc::gainBwProd`'s one delegating call every check in this file still
+    # passed, while the verb stopped refusing a dataset that does not exist and
+    # answered about dataset 0 instead -- an ABSENCE sentence about data the user
+    # did not name, which is worse than the refusal it replaced.  The derived leg
+    # is what stops the next formal reintroducing the hole, and row GBW12 carries
+    # the consequence on the REAL delegate.
+    # ⚠ A SECOND STUB ANSWER, BECAUSE `units` MUST BE DRIVEN OFF ITS DEFAULT TOO
+    # and `dB` mode converts the reference.  `ref 20.0` makes that conversion the
+    # one amplitude-dB identity nobody has to compute -- 20 dB is exactly ten
+    # times -- so the expectation stays a HAND NUMBER, 10.0 x 1250.0, with no
+    # formula at this row site; a power-dB `/10` spelling would answer a hundred
+    # times the bandwidth and fail by a factor of ten.  `g1A` is left alone
+    # because row GBW2 compares its magnitude-mode product against 3.0 x 1250.0.
+    set g1A {ok 1 absent 0 value 1250.0 ref 3.0 dataset 0 dest {} msg {}}
+    set g1B {ok 1 absent 0 value 1250.0 ref 20.0 dataset 0 dest {} msg {}}
+    set g1 [mt_bwst_run $g1B {
+        set bad {} ; set n 0
+        set a [mt_call gainBwProd {v(lp) 7 *} 1.5 dB high 1]
+        incr n
+        if {[mt_disp $a] ne {measured}} { lappend bad "disp=[mt_disp $a]" }
+        return [list $bad $n $::mt_bwst_log [mt_val $a] \
+                     [gbw_nondefault bandwidth {*}[lindex $::mt_bwst_log 0]]]
+    }]
+    check "GBW1 the delegation is REAL and the user's own arguments arrive at `calc::bandwidth` verbatim, measured by RECORDING the delegate's requests rather than by comparing a number: exactly ONE call, carrying the arguments as given and in order, with EVERY argument driven OFF the default of the formal it lands in -- asserted per formal from `info default`, because the recorder carries the delegate's own defaults and an argument driven AT its default records the same word whether the call passed it or not.  An inlined copy of the delegate's peak search and scan answers the SAME number on this fixture while recording zero calls, which is the one defect no value row can see and the one that would put a second copy of the reference convention in the tree; a dropped, defaulted or reordered argument, and a second call (a double measurement), each redden here by name.  The non-vacuity leg is the recorder's own answer coming through, so the row cannot pass over a verb that refuses everything" \
+        [list [mt_at $g1 0] [mt_at $g1 1] [mt_at $g1 2] [mt_at $g1 3] \
+              [llength [info commands ::mt_bwst_keep]] [mt_at $g1 4]] \
+        [list {} 1 [list [list {v(lp) 7 *} 1.5 dB high 1]] 12500.0 0 allnondefault]
+
+    # --- GBW2: THE ARITHMETIC, WITH NO FIXTURE AND NO COLUMN IN IT ------------
+    # ⚠ HOUSE LESSON: A COMPARAND SHARING THE PRODUCT'S OWN LOOP AGREES WITH ITS
+    # BUG BY CONSTRUCTION.  This row's expectation is a HAND NUMBER -- 3.0*1250.0
+    # and 2.0*5.0 -- reached through a stub, so there is no interpolation, no
+    # peak search and no sample anywhere in it.  The SECOND stub is what stops the
+    # row passing on a hardcoded 3750.
+    set g2A {ok 1 absent 0 value 5.0 ref 2.0 dataset 0 dest {} msg {}}
+    set g2a [mt_bwst_run $g1A { return [mt_val [mt_call gainBwProd {v(lp)} 3 magnitude low 0]] }]
+    set g2b [mt_bwst_run $g2A { return [mt_val [mt_call gainBwProd {v(lp)} 3 magnitude low 0]] }]
+    check "GBW2 the product is `ref` TIMES `value`, checked against a HAND NUMBER through a stub so that no fixture, no column, no peak search and no interpolation appears anywhere in the comparand -- which is the house lesson that a derivation sharing the product's own loop agrees with its bug by construction.  TWO different stub answers are driven, so the row cannot be green over a verb that returns a constant; and the legs catch multiplying by the wrong key, returning the delegate's value unchanged, dividing, and dropping to the bare reference" \
+        [list $g2a $g2b [expr {$g2a eq {1250.0} ? {UNMULTIPLIED} : {ok}}] \
+              [expr {$g2a eq {3.0} ? {REFONLY} : {ok}}]] \
+        {3750.0 10.0 ok ok}
+
+    # --- GBW3: THE THREE OWN-ACCOUNT GUARDS, EACH FORCED BY A STUB ------------
+    # Every one is FORCEABLE, which is what makes it a fenced guard and not a
+    # gesture: a shape the delegate does not answer today, a key it does not
+    # carry, and a product that overflows while both operands are finite.
+    # ⚠ THE PASS-THROUGH IS COMPARED BY IDENTITY AGAINST WHAT THE STUB RETURNED,
+    # never by words, which are unratified.
+    set g3W {ok 1 absent 0 value 1250.0 ref 3.0 shape wave dataset 0 dest {} msg {}}
+    set g3N {ok 1 absent 0 value 1250.0 dataset 0 dest {} msg {}}
+    set g3O {ok 1 absent 0 value 1e300 ref 1e300 dataset 0 dest {} msg {}}
+    set g3A {ok 0 absent 1 value {} ref 3.0 dataset 0 dest __calc_tmp_gbwst msg {Bandwidth: MTSTUB found none.}}
+    set g3R {ok 0 absent 0 value {} dataset 0 dest {} msg {Bandwidth: MTSTUB refused this on purpose.}}
+    set g3 [mt_bwst_run {} {
+        set out {}
+        foreach {nm ans want arm} [list \
+                shape    $g3W refused gbwshape \
+                noref    $g3N refused gbwnoref \
+                overflow $g3O refused gbwoverflow \
+                absence  $g3A absent  PASSTHROUGH \
+                refusal  $g3R refused PASSTHROUGH] {
+            set ::mt_bwst_answer $ans
+            set a [mt_call gainBwProd {v(lp)} 3 magnitude low 0]
+            set d [mt_disp $a]
+            if {$d ne $want} { lappend out $nm=$d ; continue }
+            set m [mt_msg $a]
+            if {$arm eq {PASSTHROUGH}} {
+                if {![string equal $m [mt_key $ans msg]]} { lappend out $nm=NOT-IDENTICAL }
+                continue
+            }
+            if {[mt_shape $m] ne {ok}} { lappend out $nm=shape:[mt_shape $m] ; continue }
+            if {[mt_family $m] ne [mt_family [pcall calc::cross_msg gbwshape wave]]} {
+                lappend out $nm=family:[mt_family $m] ; continue
+            }
+        }
+        return $out
+    }]
+    check "GBW3 the three guards this verb owns on its OWN account are each FORCED by a stub rather than argued -- a declared shape other than `scalar` (which would route a number to a wave destination through `calc::fn_sink`), a delegate answer carrying no reference key, and a product that is not representable while BOTH operands are finite -- and each answers in the house shape and in this verb's own sentence family.  The two pass-through legs are the complement: a delegated ABSENCE stays an absence and a delegated REFUSAL stays a refusal, each carrying the delegate's sentence compared BY IDENTITY against what the stub returned and never by its words.  The unmodified stub MEASURING, in row GBW2, is what stops every leg here being green over a verb that refuses everything" \
+        [list $g3 [llength [info commands ::mt_bwst_keep]]] {{} 0}
+
+    # --- GBW4: THE CLOSED FORM, ON THE DRIVE WHERE THE PRODUCT IS VISIBLE -----
+    # ⚠⚠ THE SCALED DRIVE IS NOT A STYLE CHOICE.  This fixture's in-band maximum
+    # is ~1, so on `v(lp)` a producer that NEVER MULTIPLIED answers the bandwidth
+    # itself and lands within a few parts per thousand of the right answer -- the
+    # WD8 class, where a row compares two numbers that barely differ.  The corner
+    # is scale-invariant, so `v(lp) 7 *` moves the product by a factor of seven at
+    # zero fixture cost, and the two separations are compared AGAINST EACH OTHER in
+    # the run so the reason this drive was chosen is a measurement and not a
+    # sentence.
+    #
+    # ⚠ TWO DOORS, DELIBERATELY DIFFERENT.  The IDENTITY leg -- the answer divided
+    # by the delegate's own value equals the delegate's own reference -- is
+    # convention-independent and carries no interpolation at all, so it gets 1e-15.
+    # The CLOSED-FORM leg absorbs the 100 Hz grid's chord error, which this row
+    # re-measures rather than quoting, so it gets 1e-3.
+    pcall mt_load ac
+    set g4B  [mt_call bandwidth   [bw_rpn vlp] 3 magnitude low 0]
+    set g4S  [mt_call gainBwProd  [bw_rpn vlp] 3 magnitude low 0]
+    set g4B7 [mt_call bandwidth   {v(lp) 7 *} 3 magnitude low 0]
+    set g4S7 [mt_call gainBwProd  {v(lp) 7 *} 3 magnitude low 0]
+    set g4sep7 [gbw_sep [mt_val $g4S7] [mt_val $g4B7]]
+    set g4sep1 [gbw_sep [mt_val $g4S]  [mt_val $g4B]]
+    check "GBW4 the answer agrees with the deck's own closed form -- an ANALYTIC reference times an ANALYTIC root of the level equation, with no simulator, no sample and no interpolation in it -- on the drive where the multiplication is VISIBLE, and it satisfies the identity `value / bandwidth == ref` against the delegate's own two numbers at a door fifteen orders tighter.  THREE negative legs ride along with their separations measured in the run: a producer that forgot to multiply, one that answered the bare reference, and one that ignored the operand's scaling.  ⚠ The FOURTH leg is why the scaled drive is used at all: the forgot-to-multiply separation on the UNSCALED drive is compared against the scaled one IN THE RUN and must be at least a hundred times smaller, so a later reader who loosens the door cannot make this row vacuous without reddening it" \
+        [list [mt_disp $g4S7] \
+              [near [mt_val $g4S7] [gbw_closed 7 3] 1e-3] \
+              [near [gbw_quot [mt_val $g4S7] [mt_val $g4B7]] [mt_key $g4B7 ref] 1e-15] \
+              [gbw_far [mt_val $g4S7] [mt_val $g4B7] 1e-2] \
+              [gbw_far [mt_val $g4S7] [mt_key $g4B7 ref] 1e-2] \
+              [gbw_far [mt_val $g4S7] [mt_val $g4S] 1e-2] \
+              [expr {$g4sep7 ne {} && $g4sep1 ne {} && $g4sep7 > 100.0*$g4sep1 \
+                     ? {scaled-is-wider} : "NARROW:$g4sep7/$g4sep1"}] \
+              [near [mt_val $g4S] [gbw_closed 1 3] 1e-3]] \
+        {measured ok ok far far far scaled-is-wider ok}
+
+    # --- GBW5: THE REPRESENTABILITY BOUNDARY, DERIVED FROM THE DOUBLE FORMAT --
+    # ⚠ THE BOUNDARY IS COMPUTED FROM `DBL_MAX` AND FROM THIS COLUMN'S OWN TWO
+    # NUMBERS, so no constant is written here: the product scales linearly in the
+    # drive's own multiplier, so `k_crit = DBL_MAX / (ref * value)` on the
+    # unscaled drive is the multiplier at which it stops being representable.
+    # A guard built on an invented threshold, or one placed on an OPERAND rather
+    # than on the ANSWER, passes the two outer legs and fails at 0.9 -- where the
+    # reference is ~1.6e305 and the product is still finite, which is
+    # `oshtinystep`'s lesson verbatim.
+    set g5K [gbw_kcrit [mt_key $g4B ref] [mt_val $g4B]]
+    set g5BAD {} ; set g5N 0
+    foreach {g5m g5want} {0.5 measured 0.9 measured 1.1 refused 2.0 refused} {
+        if {![mt_finite $g5K]} { lappend g5BAD "$g5m=NOBOUNDARY:$g5K" ; continue }
+        incr g5N
+        set g5a [mt_call gainBwProd "v(lp) [format %.17g [expr {$g5m*double($g5K)}]] *" 3 magnitude low 0]
+        set g5d [mt_disp $g5a]
+        if {$g5d ne $g5want} { lappend g5BAD "$g5m=$g5d" ; continue }
+        if {$g5want eq {measured}} {
+            if {![mt_finite [mt_val $g5a]]} { lappend g5BAD "$g5m=NOTFINITE" ; continue }
+            if {[mt_sink $g5a] ne {buffer}} { lappend g5BAD "$g5m=sink:[mt_sink $g5a]" }
+            continue
+        }
+        if {[mt_shape [mt_msg $g5a]] ne {ok}} { lappend g5BAD "$g5m=shape" ; continue }
+        if {[mt_family [mt_msg $g5a]] ne [mt_family [pcall calc::cross_msg gbwshape wave]]} {
+            lappend g5BAD "$g5m=family:[mt_family [mt_msg $g5a]]"
+        }
+    }
+    check "GBW5 the multiplier at which the product stops being representable is DERIVED from the double format and from this column's own two numbers -- `DBL_MAX / (ref * bandwidth)`, with no constant written anywhere -- and the verb flips across it: a factor of two either side it MEASURES and REFUSES respectively, and at 0.9 of it, where the reference alone is ~1.6e305, it still measures a finite answer that `calc::fn_sink` routes to the buffer.  That 0.9 leg is the one a threshold on an OPERAND rather than on the ANSWER fails, which is `oshtinystep`'s lesson verbatim, and it is also the leg that stops the guard refusing legitimately big finite answers.  The sweep count rides along so an empty population cannot pass" \
+        [list $g5BAD [mt_sized $g5N 4] [mt_finite $g5K]] {{} sized 1}
+
+    # --- GBW6: THE SIGNATURE AND THE SPEC, THROUGH THE INTERPRETER ------------
+    # ⚠⚠ `info args` AND `info default`, NEVER A TEXT SCAN.  Issue 1646 cost five
+    # rounds at a sibling site and every evasion found there -- a comment copy of
+    # the signature, an unqualified callee, a backslash continuation -- defeated a
+    # source-text pin, while no `info args` leg was ever defeated by any of the 43
+    # derived sabotages.  `info args` reports names only and CANNOT see a default,
+    # so `info default` is a separate leg per formal.
+    #
+    # ⚠⚠ THE HAZARD THIS ROW IS REALLY FOR, which is MEASURED and not imagined:
+    # `calc::arg_values` walks the SURFACE proc's `info args` and `break`s at the
+    # first formal it has no value for, and `calc::arg_invoke` then appends
+    # POSITIONALLY.  So if the delegate's spec grows a field and THIS proc's
+    # formals do not, the dialog asks the user for it and this verb silently drops
+    # it -- no error, no refusal, a different measurement.  All three sides are
+    # therefore derived from the interpreter's own parsed procs and from the live
+    # spec, never written down: the formals, the spec's own keys, and the
+    # delegate's formals must agree.
+    pcall mt_load ac
+    set g6ROW {}
+    foreach g6r [pcall calc::catalogue] {
+        if {[lindex $g6r 0] eq {gainBwProd}} { set g6ROW $g6r }
+    }
+    check "GBW6 the signature and the argument spec are pinned through the INTERPRETER and not through a scan over source text: the formals exactly, each formal's `info default` separately because `info args` cannot see one, and -- the leg the measured truncation hazard needs -- the formals after `rpn` asserted EQUAL to the spec's own key list AND equal to the delegate's formals, all three derived rather than written here, so a field added to the delegate's spec without the matching formal here reddens instead of being silently dropped on the way through.  The spec itself is asserted BYTE-IDENTICAL to the delegate's, which is what catches a literal copy of that table drifting; the surface proc is the bare name, because the verb answers one number for every well-formed request and a `_scalar` wrapper would silently redirect every click; and the catalogue's `returns` word stays `scalar`, so S24's closed vocabulary and its eight category counts do not move" \
+        [list [mt_formals gainBwProd] \
+              [pcall ag_default gainBwProd rpn] [pcall ag_default gainBwProd drop] \
+              [pcall ag_default gainBwProd units] \
+              [pcall ag_default gainBwProd response] [pcall ag_default gainBwProd dataset] \
+              [mt_sameformals [mt_range [mt_formals gainBwProd] 1 end] [gbw_speckeys gainBwProd]] \
+              [mt_sameformals [mt_formals gainBwProd] [mt_formals bandwidth]] \
+              [expr {[pcall calc::fn_argspec gainBwProd] eq [pcall calc::fn_argspec bandwidth] \
+                     ? {identical} : {DIFFER}}] \
+              [mt_atleast [llength [gbw_speckeys gainBwProd]] 4] \
+              [mt_surface gainBwProd] \
+              [lindex $g6ROW 3] [lindex $g6ROW 2] \
+              [mt_keys [mt_call gainBwProd [bw_rpn vlp] 3 magnitude low 0]]] \
+        [list {rpn drop units response dataset} {0 {}} {1 {}} {1 magnitude} {1 low} {1 0} same same \
+              identical atleast4 gainBwProd scalar T \
+              {absent dataset dest msg ok ref value}]
+
+    # --- GBW7: THE CLICK'S OWN COMPOSITION PATH, NOT THE PROC ----------------
+    # R404/R421: `calc::fn_sink` says where the answer GOES, and only the word
+    # `buffer` falls through to `calc::buf_set_number`.  Driven through
+    # `calc::arg_values` plus `calc::arg_invoke`, which is what the click really
+    # composes, so a field name here means what it means in the dialog.
+    set g7ANS {drop 3 response low dataset 0}
+    set g7V [mt_argvals gainBwProd {v(lp) 7 *} $g7ANS]
+    set g7A [mt_arginvoke gainBwProd {v(lp) 7 *} $g7ANS]
+    set g7P [pcall calc::arg_provenance gainBwProd $g7V [mt_val $g7A]]
+    check "GBW7 the CLICK's own composition path measures and routes: composed through `calc::arg_values` and `calc::arg_invoke` from a dialog answer keyed by field name, the answer is the same number the proc gives positionally, `calc::fn_sink` says `buffer` -- so the number lands in the user's expression rather than being handed to a wave destination -- and R404's provenance sentence opens on the verb, carries the COMPLETE value with nothing truncated inside the number, and fits the status entry unelided at the headless bound.  The identity against the positional call is the leg that catches a field composed into the wrong formal" \
+        [list [mt_disp $g7A] [mt_sink $g7A] \
+              [expr {[mt_val $g7A] eq [mt_val $g4S7] ? {same} : {DIFFER}}] \
+              [expr {[string first {gainBwProd} $g7P] == 0 ? {opens} : "NO:$g7P"}] \
+              [expr {[string first [mt_val $g7A] $g7P] >= 0 ? {complete} : "TRUNCATED:$g7P"}] \
+              [expr {[pcall calc::status_fit $g7P] eq $g7P ? {fits} : {ELIDES}}]] \
+        {measured buffer same opens complete fits}
+
+    # --- GBW8: THE ISSUE-1653 GUARD, AND WHOSE VOICE IT SPEAKS IN ------------
+    # ⚠ The guard is the DELEGATE'S and is asserted to be, by identity, which is
+    # the house pattern (`calc::riseTime`'s delegated refusals) and the reason this
+    # verb owns no `sim_type` accessor: a second sentence for one fact, and a gate
+    # ahead of the delegate that would answer about the database where MT21/A
+    # requires the refusal to quote the overflowing literal the user typed.
+    # The number the verb WOULD have answered is re-measured HERE rather than
+    # remembered, so the row can say why the refusal is right.
+    pcall mt_load tran
+    set g8T [mt_call gainBwProd {v(lp)} 3 magnitude low 0]
+    set g8Y [mt_col {v(lp)} 0]
+    set g8X [mt_col time 0]
+    set g8MAX [pcall calc::extremum $g8Y max]
+    # ⚠ `mt_dbscale` AND NOT A BARE `expr`: `$g8MAX` is a product answer, so a
+    # raise inside `calc::extremum` makes it the `ERR:` sentinel and `double()`
+    # raised -- which took this whole band out through `group`'s catch, deleting
+    # its remaining rows from the verdict rather than reddening one.  Band MT29
+    # drives it.
+    set g8C [mt_call cross {v(lp)} [mt_dbscale $g8MAX -3.0] 1 falling 0]
+    pcall xschem raw clear
+    set g8U [mt_call gainBwProd {v(lp)} 3 magnitude low 0]
+    check "GBW8 a TIME-DOMAIN database is REFUSED, in the DELEGATE's voice asserted by identity rather than re-spelled here, and the number the verb would otherwise have answered is RE-MEASURED in the same run instead of being remembered: the suite's own extremum and its own falling crossing of a multiplicative level give a finite, plausible quantity in SECONDS, which multiplied by the peak is what a user would have read as a gain-bandwidth product in Hz.  The CLEARED database rides along as the control that the two gates are in the delegate's own order -- it reaches the no-data arm and not the sim-type one -- and the refusal is NOT an absence, which is D7's partition: this is a request that cannot be interpreted, not one the data has no answer to" \
+        [list [mt_disp $g8T] \
+              [string equal [mt_msg $g8T] [pcall calc::cross_msg bwnoac tran]] \
+              [mt_key $g8T absent] \
+              [mt_disp $g8C] [mt_finite [mt_val $g8C]] [mt_finite $g8MAX] \
+              [mt_disp $g8U] \
+              [string equal [mt_msg $g8U] [pcall calc::cross_msg nodata]]] \
+        {refused 1 0 measured 1 1 refused 1}
+
+    # --- GBW9: THE NEW SENTENCE ARMS, DERIVED FROM THE PROC'S OWN SWITCH ------
+    # ⚠⚠ THE ARM SET IS DERIVED FROM `calc::cross_msg`'s OWN TRAILING SWITCH
+    # ARGUMENT and the set driven here is asserted EQUAL to it, so an arm added to
+    # the table or to the verb without the other reddens BY NAME instead of sitting
+    # outside a sweep that reads as coverage -- the defect a sibling row shipped for
+    # a month at 24 of 31 arms.  This is also the only behavioural confirmation that
+    # the catalogue still PARSES after this stage grew this verb's three arms --
+    # the floor leg below is what re-measures that three: an EVEN-word
+    # comment between two patterns is a complete no-op that detonates when one word
+    # is edited, and an ODD-word one makes Tcl raise out of every arm.
+    #
+    # ⚠ AND THE PREFIX QUESTION, MEASURED RATHER THAN ASSUMED: MT22/BW6 sweeps the
+    # arms matching `bw*` and asserts the set it drives EQUALS that derivation, so a
+    # `gbw*` arm landing in that glob would redden a row in another band.  The leg
+    # below drives `string match` over the derived names, which is the same
+    # instrument BW6 uses, instead of reasoning about it.
+    set g9ARMS {}
+    foreach g9a [pcall mt_switch_arms cross_msg] {
+        if {[string match gbw* $g9a]} { lappend g9ARMS $g9a }
+    }
+    set g9OWN [pcall mt_verb_msg_arms gainBwProd gbw]
+    set g9BAD {} ; set g9N 0 ; set g9HUGE [string repeat z 500]
+    foreach g9a $g9ARMS {
+        incr g9N
+        set g9s [pcall calc::cross_msg $g9a 1e300 1010.2]
+        if {$g9s eq {}} { lappend g9BAD "$g9a=EMPTY" ; continue }
+        if {[mt_shape $g9s] ne {ok}} { lappend g9BAD "$g9a=shape" ; continue }
+        if {[mt_family $g9s] ne [mt_family [pcall calc::cross_msg gbwshape wave]]} {
+            lappend g9BAD "$g9a=family:[mt_family $g9s]" ; continue
+        }
+        if {[pcall calc::status_fit $g9s] ne $g9s} { lappend g9BAD "$g9a=ELIDES" ; continue }
+        set g9h [pcall calc::cross_msg $g9a $g9HUGE $g9HUGE]
+        set g9f [pcall calc::status_fit $g9h]
+        if {[string length $g9f] > [pcall calc::status_chars]} { lappend g9BAD "$g9a=OVER" }
+    }
+    set g9CROSSBW {}
+    foreach g9a $g9ARMS { if {[string match bw* $g9a]} { lappend g9CROSSBW $g9a } }
+    check "GBW9 every sentence arm this verb owns is DERIVED from `calc::cross_msg`'s own trailing switch argument -- the set the verb's decommented body reaches is asserted EQUAL to that derivation, so an arm added to one without the other reddens by name rather than sitting outside a sweep that reads as coverage -- and each one composes a non-empty sentence in the house shape and this verb's own family, fits the status entry unelided at the fixture's own detail, and stays inside the budget through `calc::status_fit` at a 500-character detail no wording could bound.  ⚠ The last leg MEASURES the prefix question instead of reasoning about it: MT22/BW6 sweeps the arms matching `bw*` and asserts the set it drives equals that derivation, so a `gbw*` arm caught by that glob would redden a row in another band, and this asserts none is.  The arm count rides along as a floor so an empty derivation drives nothing" \
+        [list $g9BAD [mt_sized $g9N [llength $g9ARMS]] [mt_atleast [llength $g9ARMS] 3] \
+              [bw_sortg [bw_dget $g9OWN own]] [bw_sortg $g9ARMS] $g9CROSSBW] \
+        [list {} sized atleast3 [bw_sortg $g9ARMS] [bw_sortg $g9ARMS] {}]
+
+    # --- GBW10: WHY THE PRODUCT READING AND NOT THE UNITY-GAIN FREQUENCY -----
+    # Both halves of the definition argument, as measurements rather than as
+    # prose: the fixture's own in-band maximum is BELOW unity gain so a crossing
+    # search for a gain of 1 answers nothing, and `calc::cross` already delivers
+    # the unity-gain frequency for any column that does reach it.
+    #
+    # ⚠ THE CONTROL DRIVE HAS TO STRADDLE UNITY AND THE FIRST RED RUN CAUGHT A
+    # DRIVE THAT DOES NOT.  `v(lp) 7 *` was tried first and is ABSENT as well --
+    # it spans 6.97 down to 3.13 over this sweep and never reaches 1 either -- so
+    # the control would have asserted nothing about `calc::cross` while reading as
+    # if it did.  The column spans [0.447k, 0.995k], so the multiplier must sit
+    # strictly between 1.005 and 2.236 for a falling crossing of 1 to exist at
+    # all, and the leg below is what re-measures that every run.
+    pcall mt_load ac
+    set g10Y [mt_col {v(lp)} 0]
+    set g10MAX [pcall calc::extremum $g10Y max]
+    check "GBW10 the definition is a MEASUREMENT rather than a preference, both halves driven here: the committed fixture's own in-band maximum is strictly BELOW unity gain, so a crossing search for a gain of 1 answers NOTHING and the unity-gain reading of this verb has no answer on this fixture at all -- while `calc::cross` at a level of 1 IS that frequency already, for a column that does reach it, which is why building the unity-gain reading would have shipped a second spelling of a shipped verb and left the product unbuilt.  The scaled control is what stops the first leg being a statement about `calc::cross` instead of about the data: the same request on a column lifted above 1 MEASURES" \
+        [list [gbw_below $g10MAX 1.0] \
+              [mt_disp [mt_call cross {v(lp)} 1 1 falling 0]] \
+              [mt_disp [mt_call cross {v(lp) 1.5 *} 1 1 falling 0]] \
+              [mt_finite $g10MAX]] \
+        {below absent measured 1}
+
+    # --- GBW11: THE DELEGATE'S GUARD, SEEN FROM THE PRODUCT -----------------
+    # ⚠⚠ THIS ROW USED TO ASSERT A WRONG ANSWER AS A DECLARED HOLE and now
+    # asserts the right one.  The verb carries no units knowledge of its own: the
+    # word reaches the delegate, the delegate decides the arithmetic, and every
+    # refusal it earns arrives here BYTE-IDENTICAL.  So the two directions of
+    # MT22/BW9's guard are visible from this verb too -- `magnitude` on a column
+    # whose peak is at or below zero is refused in the DELEGATE's voice, and `dB`
+    # on the same column is answered -- and that is the claim this row makes,
+    # because a units decision taken in THIS proc instead of in the delegate
+    # would pass neither leg by identity.
+    pcall mt_load ac
+    set g11DB  [mt_call gainBwProd [bw_rpn db4]  3 dB        low 0]
+    set g11MAG [mt_call gainBwProd [bw_rpn db4]  3 magnitude low 0]
+    set g11NEG [mt_call gainBwProd [bw_rpn dblp] 3 magnitude low 0]
+    set g11NDB [mt_call gainBwProd [bw_rpn dblp] 3 dB        low 0]
+    set g11BW  [mt_call bandwidth  [bw_rpn dblp] 3 dB        low 0]
+    check "GBW11 the units word reaches the DELEGATE and every refusal it earns arrives here byte-identically, which is what makes this verb's answer the delegate's answer rather than a second units convention: `magnitude` on a dB column whose peak is at or below zero is REFUSED in the delegate's own voice, compared by identity against `calc::cross_msg` and NOT by its words, while `dB` on the SAME column MEASURES -- the two directions MT22/BW9 drives one level down, seen from the product.  The measured product is asserted to be the delegate's own bandwidth times the LINEAR magnitude that delegate's published dB reference names, at a door fifteen orders tighter than any interpolation, and the `magnitude` reading of the same dB column is asserted far from the `dB` one in the same run.  This row previously asserted the WRONG answer as a declared hole" \
+        [list [mt_disp $g11NEG] \
+              [string equal [mt_msg $g11NEG] \
+                   [pcall calc::cross_msg bwnonposref [pcall calc::extremum [bw_col dblp] max]]] \
+              [mt_disp $g11NDB] [mt_finite [mt_val $g11NDB]] \
+              [near [gbw_quot [mt_val $g11NDB] [mt_val $g11BW]] \
+                    [bw_dbmag [mt_key $g11BW ref]] 1e-15] \
+              [mt_disp $g11DB] [mt_finite [mt_val $g11DB]] \
+              [mt_disp $g11MAG] \
+              [gbw_far [mt_val $g11DB] [mt_val $g11MAG] 1e-1]] \
+        {refused 1 measured 1 ok measured 1 measured far}
+
+    # --- GBW13: WHAT THE PRODUCT MEANS WHEN THE OPERAND IS IN dB ------------
+    # ⚠⚠ WRITTEN RED-FIRST.  Before the `units` field existed every leg here
+    # reddened: the `dB` request was refused as a bad RESPONSE and the
+    # five-argument `magnitude` request raised a Tcl arity error.
+    #
+    # ⚠⚠ A dB GAIN TIMES A FREQUENCY IS NOT A GAIN-BANDWIDTH PRODUCT, so the
+    # choice this row fences is what `dB` mode MULTIPLIES.  It is the LINEAR
+    # magnitude the dB reference names -- `10^(ref/20)` times the bandwidth --
+    # and not the dB number itself, and not a refusal: the figure is computable
+    # from what the user declared, and R412's rulings plus `calc::delay`'s
+    # precedent say a computable answer is returned rather than withheld.  The
+    # delegate's PUBLISHED `ref` stays in the operand's own units, because that
+    # is the reference the drop was really measured from; this verb converts.
+    #
+    # ⚠ THE COMPARAND IS `gbw_closed`, which shares no step with either verb: an
+    # ANALYTIC reference times an ANALYTIC root of the level equation, with no
+    # simulator, no sample and no interpolation in it.  `dB` mode's answer is
+    # asserted against it, and the `magnitude` reading of the SAME dB column is
+    # asserted far away -- so the row cannot pass on a verb that ignores the
+    # word.  The identity leg then pins WHICH conversion, at 1e-15: the answer
+    # divided by the delegate's own bandwidth equals the linear magnitude the
+    # delegate's own published dB reference names.  A `/10` power-dB spelling
+    # fails that leg by a square.
+    #
+    # ⚠ AND THE OVERFLOW LEG IS ABOUT THE CONVERSION, NOT ABOUT THE DATA: a dB
+    # column can hold a perfectly finite value whose linear equivalent is not
+    # representable, and the control is that the delegate's own bandwidth on that
+    # very drive MEASURES and is finite.  The sentence is this verb's own
+    # `gbwoverflow`, compared by identity against a gain the row DERIVES rather
+    # than writes down.
+    pcall mt_load ac
+    set g13N 3.0102999566398116
+    set g13DB  [mt_call gainBwProd [bw_rpn db4]  $g13N dB        low 0]
+    set g13MAG [mt_call gainBwProd [bw_rpn db4]  $g13N magnitude low 0]
+    set g13LIN [mt_call gainBwProd [bw_rpn lin4] $g13N magnitude low 0]
+    set g13BW  [mt_call bandwidth  [bw_rpn db4]  $g13N dB        low 0]
+    set g13OV  [mt_call gainBwProd [bw_rpn dbov] $g13N dB        low 0]
+    set g13OVB [mt_call bandwidth  [bw_rpn dbov] $g13N dB        low 0]
+    check "GBW13 in `dB` mode the product is the LINEAR magnitude the reference names times the bandwidth, and that choice is fenced three ways: against `gbw_closed`, an analytic reference times an analytic root with no simulator, no sample and no interpolation in it; by the identity that the answer divided by the delegate's own bandwidth equals `10^(ref/20)` of the delegate's own published dB reference, at a door fifteen orders tighter, which a power-dB spelling fails by a square; and against the SAME response read linearly, which must agree while the `magnitude` reading of the dB column must not.  The published `ref` is asserted to stay in the OPERAND's units, so the conversion is this verb's and the delegate's reference still means the number the drop was measured from.  The overflow leg is about the CONVERSION and not the data: a finite dB value whose linear equivalent is unrepresentable is refused in this verb's own voice against a gain the row derives, with the delegate's bandwidth on the same drive measuring finite as the control" \
+        [list [mt_disp $g13DB] [mt_finite [mt_val $g13DB]] \
+              [near [mt_val $g13DB] [gbw_closed 4 $g13N] 1e-3] \
+              [near [gbw_quot [mt_val $g13DB] [mt_val $g13BW]] \
+                    [bw_dbmag [mt_key $g13BW ref]] 1e-15] \
+              [near [mt_key $g13DB ref] [pcall calc::extremum [bw_col db4] max] 1e-15] \
+              [mt_disp $g13LIN] [near [mt_val $g13LIN] [gbw_closed 4 $g13N] 1e-3] \
+              [near [mt_val $g13DB] [mt_val $g13LIN] 1e-3] \
+              [mt_disp $g13MAG] [gbw_far [mt_val $g13MAG] [mt_val $g13DB] 1e-1] \
+              [gbw_far [mt_val $g13MAG] [gbw_closed 4 $g13N] 1e-1] \
+              [mt_disp $g13OVB] [mt_finite [mt_val $g13OVB]] \
+              [mt_disp $g13OV] \
+              [string equal [mt_msg $g13OV] \
+                   [pcall calc::cross_msg gbwoverflow \
+                        [bw_dbmag [mt_key $g13OVB ref]] [mt_val $g13OVB]]] \
+              [mt_shape [mt_msg $g13OV]]] \
+        [list measured 1 ok ok ok measured ok ok measured far far \
+              measured 1 refused 1 ok]
+
+    # --- GBW12: THE DATASET ON THE REAL DELEGATE, AND WHAT IT COSTS ----------
+    # ⚠⚠ THIS VERB OWNS NO DATASET GATE BY DESIGN -- the delegate has three and a
+    # second vocabulary here would be the drift the whole shape exists to prevent
+    # -- so the ONLY thing standing between a request naming a dataset that does
+    # not exist and a confident answer about dataset 0 is that the argument
+    # actually reaches `calc::bandwidth`.  GBW1 records that structurally; this
+    # row drives the consequence, which is what a user experiences.
+    #
+    # ⚠ THE OUT-OF-RANGE INDEX IS DERIVED FROM THE DATABASE, `xschem raw
+    # datasets` itself being the first index that is not in range, so a fixture
+    # regenerated with more datasets reddens nothing and still drives the arm.
+    # The MEASURING leg on dataset 0 is what stops the three refusal legs being
+    # green over a verb that refuses everything.
+    #
+    # ⚠ ALL THREE ARMS ARE THE DELEGATE'S OWN, COMPARED BY IDENTITY and never by
+    # their words -- with the argument dropped the answers are not merely wrong,
+    # they change DISPOSITION from refused to absent and arrive in the bandwidth
+    # absence vocabulary, so the disposition legs carry the claim as much as the
+    # sentence legs do.
+    pcall mt_load ac
+    set g12NDS [pcall xschem raw datasets]
+    set g12OK  [mt_call gainBwProd {v(lp) 7 *} 3 magnitude low 0]
+    set g12OOR [mt_call gainBwProd {v(lp) 7 *} 3 magnitude low $g12NDS]
+    set g12AP  [mt_call gainBwProd {v(lp) 7 *} 3 magnitude low -1]
+    set g12NI  [mt_call gainBwProd {v(lp) 7 *} 3 magnitude low 1.5]
+    check "GBW12 the dataset a request names reaches the delegate, measured by its CONSEQUENCE on the real delegate rather than by the recorder: the three arms only `calc::bandwidth` owns -- an index out of range, the allpoints read, and an index that is not an integer -- each arrive at this verb's answer with the delegate's DISPOSITION and the delegate's own sentence compared by identity, and each echoes back the dataset the request named rather than the one that was measured.  The out-of-range index is DERIVED from `xschem raw datasets` instead of written down, so a regenerated fixture still drives the arm; the measuring leg on dataset 0 is what stops three refusal legs passing over a verb that refuses everything; and the dataset count rides along so a cleared database cannot make the derivation vacuous.  ⚠ With the argument dropped these three become an ABSENCE in the bandwidth vocabulary about data the user did not name, which is why the disposition is a leg beside the sentence" \
+        [list [mt_atleast $g12NDS 1] \
+              [mt_disp $g12OK] [mt_finite [mt_val $g12OK]] [mt_key $g12OK dataset] \
+              [mt_disp $g12OOR] \
+              [string equal [mt_msg $g12OOR] \
+                   [pcall calc::cross_msg dataset $g12NDS $g12NDS]] \
+              [mt_key $g12OOR dataset] \
+              [mt_disp $g12AP] \
+              [string equal [mt_msg $g12AP] [pcall calc::cross_msg allpoints -1]] \
+              [mt_key $g12AP dataset] \
+              [mt_disp $g12NI] \
+              [string equal [mt_msg $g12NI] [pcall calc::cross_msg intdataset 1.5]] \
+              [mt_key $g12NI dataset]] \
+        [list atleast1 measured 1 0 refused 1 $g12NDS refused 1 -1 refused 1 1.5]
+
+    # --- hygiene -------------------------------------------------------------
+    # ⚠ THE INVENTORY IS CAPTURED BEFORE THE RELOAD and the two legs below it
+    # are taken after, which is the only order that works for both: `leaked`
+    # reads a live inventory the reload would have cleared, while the
+    # still-measures leg needs the fixture back.  See the warning on `leaked`.
+    set g13LEAK [leaked]
+    set g13PROBE [probeleft]
+    pcall mt_load ac
+    check "MT23 R402 the inventory READ BEFORE THIS BAND'S RELOAD carries no `__calc_tmp*` and no `__mt_*` column over the exit paths this band drove, and the recorder left the product's own `calc::bandwidth` restored -- which is the claim that stops every band after this one measuring a stubbed namespace" \
+        [list $g13LEAK $g13PROBE [llength [info commands ::mt_bwst_keep]] \
+              [mt_disp [mt_call bandwidth [bw_rpn vlp] 3 magnitude low 0]]] \
+        {{} {} 0 measured}
+    pcall xschem raw clear
+}
+
+
+# ---------------------------------------------------------------------------
+# MT24 -- `calc::gainMargin`, THE THIRD LOOP-STABILITY VERB AND THE FIRST VERB
+# HERE THAT MEASURES A Y OF ONE COLUMN AT AN X FOUND IN ANOTHER.  NO Tk, so it
+# gates on BOTH arms.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D1/D2/D3/D4/D6/D10 --
+#          inherited through `calc::cross_scan` and `calc::cross_pair`, which
+#          are the only crossing primitives this verb uses.
+# Fixture  tests/headless/data/calc_fixture.raw read with an EXPLICIT `ac` type.
+# Fence    this band, plus the rows that enlist it for FREE and so are not
+#          repeated here: MT10's three-way partition (it lands in the OWN-DOOR
+#          class, beside `calc::bandwidth` and `calc::overshoot`), MT11's spec
+#          rows, MT14/Q and Q2's parity sweeps, MT21/A and MT21/B's overflowing
+#          literal sweeps, MT21/G's no-two-arms-one-sentence invariant, and row
+#          SR5 of tests/headless/test_calc_scratch_reuse.tcl.
+#
+#     calc::gainMargin <rpnMag> <rpnPh> ?<gain>? ?<level>? ?<edge>? ?<nth>?
+#                      ?<dataset>?
+#
+# ⚠⚠ TWO `rpn` OPERANDS, WHICH ONLY `calc::delay` HAS DONE BEFORE, AND THE
+# REASON IS A MEASUREMENT RATHER THAN A TASTE.  `xschem raw add` on an `ac`
+# database creates ONE REAL column and no phase sibling, so a node-base-name
+# operand could only ever be driven on a raw file's OWN nodes -- and a DERIVED
+# loop gain, which is what every real stability measurement is since the loop is
+# broken and recombined in the expression, would be unreachable.  Row GM1 pins
+# both formals through the interpreter and row GM4 drives a four-pole loop built
+# entirely in RPN over the committed single-pole pair.
+#
+# ⚠⚠ THE VERB OWNS ITS ENGINE DOOR AND DOES NOT CALL `calc::cross`, WHICH IS A
+# CORRECTION TO THE DESIGN MEASURED AGAINST THE INSTRUMENTS RATHER THAN A
+# SIMPLIFICATION.  The design had it DELEGATE the crossing to `calc::cross` and
+# own a door for the gain -- a HYBRID, which MT10's own-door class forbids in so
+# many words (*"a verb that did both would evaluate the expression twice and
+# report once"*) and which would have cost a FOURTH class in that partition.
+# Three measurements decided it instead of the argument: that shape gates the
+# database TWICE (its own `nodata`/`dataset`/`sim_type` ladder, then `cross`'s
+# again); MT21/A requires an overflowing literal in a `real` field to be refused
+# quoting THE TEXT THE USER TYPED, on the `tran` arm that band loads, so the
+# `level` guard has to sit in this verb's own request validation ABOVE the AC
+# gate and cannot be `cross`'s `badlevel` by delegation; and the sibling verb
+# this stage landed first, `calc::bandwidth`, already owns a door and reaches
+# `calc::cross_pair` directly.  So the family has ONE architecture, the
+# selection is still `calc::cross_scan` -- the same proc `calc::cross` itself
+# selects with, so R414c's two scan directions and D2's `nth` 0 are not a second
+# selector -- and MT10's partition does not move.  Row GM11 reads all of that
+# off the closure.
+#
+# ⚠⚠ `cph()` IS APPENDED TO THE PHASE OPERAND BY THE VERB, and row GM7 measures
+# it in BOTH directions on ONE operand rather than asserting it.  A real
+# simulator's `ph()` column lives in (-180, 180], where a FALLING crossing of
+# -180 needs `y1 <= -180` and only an exact -180 sample satisfies it -- so
+# `calc::cross_pair`'s predicate cannot see the discontinuity at all and the
+# crossing is simply MISSED.  On an already-unwrapped phase the opcode is the
+# bit-exact identity, so it can never hurt.
+#
+# ⚠ THE AC GATE IS THE ISSUE-1653 ANSWER FOR THIS VERB and row GM10 drives it
+# with operands that RESOLVE on the non-ac arm, because the naive drive is
+# refused there for free: `xschem raw index ph(lp)` is -1 on `tran`, so a verb
+# with NO gate at all passes a `ph()`-shaped probe.  `read_dataset()` in
+# src/save.c maps AC Analysis, Spectrum AND SP Analysis all to the one string
+# `ac`, so S-parameter data is inside the accepted set.
+#
+# ⚠ THE `gain` FIELD EXISTS TO DISSOLVE A QUESTION RATHER THAN TO OFFER A
+# CONVENIENCE.  Without it the verb must GUESS whether the operand is a linear
+# magnitude or a dB column, and both guesses answer a confident meaningless
+# number on the other; with it the user declares, and a mismatch is their
+# statement.  Row GM6 drives the declaration, the belt that catches the common
+# mismatch, and the one hole the belt cannot reach.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  Every new sentence and every field label
+# is the assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences is extended to cover them, and every row below asserts the house
+# SHAPE and the ARM IDENTITY and never the words.
+# ---------------------------------------------------------------------------
+
+# the RPN for each named drive, in ONE place, so a correction to a drive cannot
+# reach one row and miss another.  `bw_rpn`'s shape, and an if ladder for
+# `calc::fn_sink`'s stated reason.
+#
+# ⚠ THE TWO SYNTHETIC LOOPS ARE REAL TRANSFER FUNCTIONS AND NOT FICTIONS.  The
+# committed deck is one RC lowpass driven by an ideal 1 V AC source, so
+# `v(lp)` IS |1/(1 + j f/fp)| and `ph(lp)` IS its argument in degrees -- which
+# makes the PAIR (`v(lp) n **`, `ph(lp) n *`) the exact magnitude and phase of
+# H^n, an n-pole loop.  Row GM4's non-vacuity leg asserts that element by
+# element against a closed form with no simulator in it.
+proc gm_rpn {nm} {
+    if {$nm eq {m4}}     { return {v(lp) 4 ** 1.5625 *} }
+    if {$nm eq {p4}}     { return {ph(lp) 4 *} }
+    if {$nm eq {m3}}     { return {v(lp) 3 ** 4 *} }
+    if {$nm eq {p3}}     { return {ph(lp) 3 *} }
+    if {$nm eq {d4}}     { return {v(lp) 4 ** 1.5625 * db20()} }
+    if {$nm eq {d3}}     { return {v(lp) 3 ** 4 * db20()} }
+    if {$nm eq {d10}}    { return {v(lp) 3 ** 10 * db20()} }
+    if {$nm eq {zero}}   { return {v(lp) 0 *} }
+    if {$nm eq {pwrap}}  { return {ph(lp) 3 * 360 + ph(lp) 3 * -180 < ph(lp) 3 * ?} }
+    if {$nm eq {prise}}  { return {ph(lp) -4 * -360 +} }
+    if {$nm eq {p2}}     { return {frequency 1000 - abs() 0.3 * -200 +} }
+    if {$nm eq {own}}    { return {ph(lp)} }
+    if {$nm eq {owninv}} { return {ph(lp) 180 +} }
+    if {$nm eq {re}}     { return {re(lp)} }
+    if {$nm eq {nan}}    { return {-1 sqrt()} }
+    if {$nm eq {vlp}}    { return {v(lp)} }
+    return {}
+}
+# ...and its column, read back through the engine at "%.16g", through this
+# file's own probe prefix so a forgotten cleanup is a SUITE defect and never a
+# product leak.
+proc gm_col {nm} { return [mt_addcol __mt_gm_$nm [gm_rpn $nm] 0] }
+# THE CLOSED FORM, with no simulator, no sample and no interpolation in it.  For
+# `T = k*H^n` with `H = 1/(1 + j f/fp)`, `arg T = -n*atan(f/fp)` and
+# `|T| = k/(1 + (f/fp)^2)^(n/2)`, so the level `lvl` in degrees is reached at
+# `f = fp*tan(-lvl/n)` and the margin there is `-20*log10|T|`.  Answers
+# `{f margin}`.
+#
+# ⚠ THE PRODUCT MULTIPLIES A COLUMN-DERIVED GAIN BY NOTHING AND INTERPOLATES
+# TWO COLUMNS; this solves two analytic equations.  No step is shared.
+proc gm_closed {k n lvl} {
+    foreach v [list $k $n $lvl] { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    if {double($n) == 0.0} { return ZEROPOLES }
+    set x [expr {tan(-double($lvl)/double($n)*acos(-1.0)/180.0)}]
+    set f [expr {[bw_fp]*$x}]
+    set mag [expr {double($k)/pow(1.0 + $x*$x, double($n)/2.0)}]
+    if {$mag <= 0.0} { return NONPOSITIVE }
+    return [list $f [expr {-20.0*log10($mag)}]]
+}
+proc gm_cf {c i} { if {[catch {lindex $c $i} v]} { return "NOTALIST:{$c}" } ; return $v }
+# ...and the closed form for the RISING drive, which is a DIFFERENT function of
+# the same pole and so needs its own solve: that column is `-4*ph(lp) - 360`,
+# i.e. `4*atan(f/fp) - 360` in degrees, so the level `lvl` is reached at
+# `f = fp*tan((360 + lvl)/4)`.  Written separately rather than folded into
+# `gm_closed`, because one proc covering two different drives would have to take
+# a sign flag nothing else needs and the fold is where an error would hide.
+proc gm_closed_rise {lvl} {
+    if {![mt_finite $lvl]} { return "NOTANUMBER:{$lvl}" }
+    set deg [expr {(360.0 + double($lvl))/4.0}]
+    return [expr {[bw_fp]*tan($deg*acos(-1.0)/180.0)}]
+}
+# THE OTHER HALF OF THE SUITE'S OWN TWO-SAMPLE SOLVE.  `bw_line` already solves
+# for the X at a named LEVEL through a named sample pair; this solves for the Y
+# at a named X through a named pair, which is the algebraic inverse and the only
+# other line this band needs.  Both read exactly two samples whose index the
+# suite names out of its own knowledge of the fixture, so neither contains a
+# walk, a bracket search or a peak -- which is why a wrong bracket, an
+# off-by-one or a y0-instead-of-interpolate is not expressible in them.
+proc gm_yline {xs ys k fv} {
+    set x0 [mt_at $xs $k] ; set x1 [mt_at $xs [expr {$k+1}]]
+    set y0 [mt_at $ys $k] ; set y1 [mt_at $ys [expr {$k+1}]]
+    foreach v [list $x0 $x1 $y0 $y1 $fv] {
+        if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    }
+    if {double($x1) == double($x0)} { return FLAT }
+    return [expr {$y0 + ($fv - $x0)*($y1 - $y0)/($x1 - $x0)}]
+}
+# the margin a LINEAR gain names, total on its argument so a disposition word
+# reaching it fails the row instead of raising inside it.
+proc gm_margin {g} {
+    if {![mt_finite $g]} { return "NOTANUMBER:{$g}" }
+    if {double($g) <= 0.0} { return "NONPOSITIVE:{$g}" }
+    return [expr {-20.0*log10(double($g))}]
+}
+# `brackets` when the NAMED sample pair really contains that X, and the two
+# sample X values otherwise -- so a named index is self-validating exactly as
+# `bw_straddle` makes a named level index self-validating, and a regenerated
+# fixture reddens by name instead of letting the line be solved through the
+# wrong pair.
+proc gm_brackets {xs k fv} {
+    set x0 [mt_at $xs $k] ; set x1 [mt_at $xs [expr {$k+1}]]
+    if {![mt_finite $x0] || ![mt_finite $x1] || ![mt_finite $fv]} {
+        return "NOTANUMBER:{$x0}|{$x1}|{$fv}"
+    }
+    set lo $x0 ; set hi $x1
+    if {$lo > $hi} { set lo $x1 ; set hi $x0 }
+    if {$fv >= $lo && $fv <= $hi} { return brackets }
+    return "nobracket:{$x0}|{$x1}|{$fv}"
+}
+# `wrapped` when every sample of a column is inside (-180, 180], and the
+# offenders otherwise -- the leg that makes the wrapped drive a MEASUREMENT of
+# the fixture rather than an assumption about it.
+proc gm_wrapped {ys} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    set out {}
+    foreach v $ys {
+        if {![mt_finite $v]} { lappend out "NOTANUMBER:{$v}" ; continue }
+        if {!($v > -180.0 && $v <= 180.0)} { lappend out $v }
+    }
+    if {[llength $out]} { return $out }
+    return wrapped
+}
+# the INDICES of a column's negative samples, so a row can say WHERE a dB column
+# goes negative and a guard keyed to the CROSSING SAMPLE can be told from one
+# keyed to the whole column.
+proc gm_negs {ys} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return $n }
+    set out {} ; set i 0
+    foreach v $ys {
+        if {![mt_finite $v]} { lappend out "$i:NOTANUMBER" ; incr i ; continue }
+        if {double($v) < 0.0} { lappend out $i }
+        incr i
+    }
+    return $out
+}
+# `fractional` when a number's fractional part is non-zero, the number otherwise.
+#
+# ⚠ THIS IS THE NON-VACUITY TEST FOR AN INTEGER-DIVISION ROW AND IT IS NOT A
+# SECOND COPY OF THE FORMULA.  Tcl's `/` truncates towards zero when BOTH
+# operands are integers, so the defect is observable only on a line whose
+# algebraic answer has a fractional part -- a drive whose answer happens to be
+# integral is green against a truncating implementation and against a correct
+# one.  Asking whether the EXPECTED number is fractional establishes that without
+# the comparand replicating the arithmetic under test, which is what a
+# hand-computed "what the truncation would have given" leg would have done.
+proc gm_frac {v} {
+    if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+    if {double($v) != double(entier(double($v)))} { return fractional }
+    return "integral:$v"
+}
+# EVERY WORD OF A CALL'S ARGUMENT LIST SPELLED AS A DECIMAL INTEGER, or the
+# words that are not -- so the row cannot claim to drive an integer-spelled
+# request over an argument list that quietly carries a double.  A nested list
+# argument (a column) is checked element by element, because `{0 3}` is where
+# the hazard actually lives for `calc::sample_at`.
+proc gm_allint {args} {
+    set bad {}
+    foreach a $args {
+        set words $a
+        if {[catch {llength $a} n]} { set words [list $a] } \
+        elseif {$n <= 1} { set words [list $a] }
+        foreach w $words {
+            if {![string is integer -strict $w]} { lappend bad $w }
+        }
+    }
+    if {[llength $bad]} { return "notinteger:$bad" }
+    return allinteger
+}
+# ⚠⚠ NO STUB IS NEEDED FOR ANY ARM OF THIS VERB, AND THAT IS A MEASURED
+# CORRECTION RATHER THAN AN OMISSION.  The design declared two arms fenceable
+# but not driveable -- `gmnobracket`, on the ground that nothing brackets-fails
+# inside a monotone sweep, and a non-positive crossing gain, on the ground that
+# the column scan refuses first -- and proposed reaching both by shadowing the
+# interpolator.  Both are reachable by a real DRIVE: a column of `-nan` has a
+# bracketing PAIR that is not FINITE, which the interpolator declines for its
+# own reason, and a column of exact zeros has no negative sample for the scan to
+# refuse and interpolates to zero at the crossing.  A real drive is strictly
+# better evidence than a stub, so the stub was deleted rather than kept beside
+# it, and the refusal's wording says `no FINITE sample pair` because that is the
+# predicate it reports on.
+
+# =========================================================================
+group MT24 {
+    # --- GM0: the fixture, and the drives every row below leans on ----------
+    pcall mt_load ac
+    set gmXS [mt_col frequency 0]
+    array set gmC {}
+    foreach gmn {m4 p4 m3 p3 d4 d3 d10 zero pwrap prise p2 own owninv re} {
+        set gmC($gmn) [gm_col $gmn]
+    }
+    set gmBADTOK {}
+    foreach gmn {m4 p4 m3 p3 d4 d3 d10 zero pwrap prise p2 re} {
+        set gmr [pcall calc::rpn_bad_token [gm_rpn $gmn]]
+        if {$gmr ne {}} { lappend gmBADTOK "$gmn=$gmr" }
+    }
+    check "MT24/GM0 the fixture really is the AC arm this band needs and the two synthetic loops really are the closed forms every expectation below is built from: `sim_type` is ac, `frequency` resolves BY NAME and `time` does not, all four addressable column names of one variable resolve, every drive is accepted by `calc::rpn_bad_token`, and the two loops' magnitude and phase columns agree ELEMENT BY ELEMENT with a Tcl closed form for |H^n| and n*arg H -- which is what licenses calling them four-pole and three-pole loops rather than fictions.  The point count and the sweep's own two ends ride along, so a regenerated fixture reddens here instead of making every door below compare the wrong samples" \
+        [list [pcall xschem raw sim_type] [pcall xschem raw datasets] \
+              [pcall xschem raw index frequency] [pcall xschem raw index time] \
+              [expr {[pcall xschem raw index ph(lp)] >= 0 ? {yes} : {NO}}] \
+              [expr {[pcall xschem raw index re(lp)] >= 0 ? {yes} : {NO}}] \
+              [expr {[pcall xschem raw index im(lp)] >= 0 ? {yes} : {NO}}] \
+              [mt_len $gmXS] [mt_at $gmXS 0] [mt_at $gmXS end] $gmBADTOK \
+              [mt_distinctmap2 $gmC(m4) [lmap gmf $gmXS {expr {1.5625*pow([bw_mag $gmf],4)}}]] \
+              [mt_distinctmap2 $gmC(p4) [lmap gmf $gmXS {expr {-4.0*atan(double($gmf)/[bw_fp])*180.0/acos(-1.0)}}]] \
+              [mt_distinctmap2 $gmC(m3) [lmap gmf $gmXS {expr {4.0*pow([bw_mag $gmf],3)}}]] \
+              [mt_distinctmap2 $gmC(p3) [lmap gmf $gmXS {expr {-3.0*atan(double($gmf)/[bw_fp])*180.0/acos(-1.0)}}]]] \
+        [list ac 1 0 -1 yes yes yes 20 100 2000 {} same same same same]
+
+    # --- GM1: THE SIGNATURE AND THE SPEC, THROUGH THE INTERPRETER -----------
+    # ⚠⚠ `info args` AND `info default`, NEVER A TEXT SCAN.  Issue 1646 cost five
+    # rounds at a sibling site and every evasion found there -- a comment copy of
+    # the signature, an unqualified callee, a backslash continuation -- defeated a
+    # source-text pin, while no `info args` leg was ever defeated by any of the 43
+    # derived sabotages.  `info args` reports names only and CANNOT see a default,
+    # which is its own trap, so `info default` is a separate leg per formal.
+    #
+    # ⚠ THE HAZARD THE SPEC-AGAINST-FORMALS LEG IS FOR IS MEASURED AND NOT
+    # IMAGINED: `calc::arg_values` walks the SURFACE proc's `info args` and
+    # `break`s at the first formal it has no value for, and `calc::arg_invoke`
+    # then appends POSITIONALLY -- so a formal inserted anywhere but LAST
+    # TRUNCATES the composed call and every formal after it silently falls back
+    # to its own default.
+    set gm1ROW {}
+    foreach gm1r [pcall calc::catalogue] {
+        if {[lindex $gm1r 0] eq {gainMargin}} { set gm1ROW $gm1r }
+    }
+    check "MT24/GM1 the signature and the argument spec are pinned through the INTERPRETER and not through a scan over source text: the formals exactly, each formal's `info default` separately because `info args` cannot see one, and the spec's own key list asserted EQUAL to the formals after the two expression operands -- all three derived rather than written here, so a renamed, reordered or middle-inserted formal reddens instead of silently truncating the composed call.  The surface proc is the bare name, because the verb answers one number for every well-formed request and a `_scalar` wrapper minted later would silently redirect every click; and the catalogue's `returns` word stays `scalar`, so S24's closed vocabulary and its eight category counts do not move.  The key count rides along and a nonexistent name answers a sentinel, so neither side can be vacuously equal" \
+        [list [mt_formals gainMargin] \
+              [pcall ag_default gainMargin rpnMag] [pcall ag_default gainMargin rpnPh] \
+              [pcall ag_default gainMargin gain] [pcall ag_default gainMargin level] \
+              [pcall ag_default gainMargin edge] [pcall ag_default gainMargin nth] \
+              [pcall ag_default gainMargin dataset] \
+              [mt_sameformals [mt_formals gainMargin] [pcall gbw_speckeys gainMargin]] \
+              [mt_atleast [llength [pcall gbw_speckeys gainMargin]] 7] \
+              [mt_surface gainMargin] [lindex $gm1ROW 3] [lindex $gm1ROW 2] \
+              [mt_formals sample_at] [mt_formals __mt_no_such_proc_zz]] \
+        [list {rpnMag rpnPh gain level edge nth dataset} {0 {}} {0 {}} \
+              {1 magnitude} {1 -180} {1 falling} {1 1} {1 0} same atleast7 \
+              gainMargin scalar T {xs ys f} NOPROC:calc::__mt_no_such_proc_zz]
+
+    # --- GM2: THE TWO ENUMS, LIFTED OUT OF THE VERB'S OWN BODY --------------
+    # ⚠ THE LITERAL SPELLING IN THE PRODUCT IS LOAD-BEARING: `ag_enum_in` lifts a
+    # member list with a regexp over the validator's OWN body, so the drift fence
+    # needs the `lsearch -exact {..} $var` spelling with the members in the
+    # argspec's order.  The positive control on `cross` is what stops a broken
+    # lift passing two rows as vacuously equal.
+    check "MT24/GM2 both enum fields offer EXACTLY the members the verb's own body tests against, LIFTED out of the shipped validator with a regexp rather than written here -- so a dialog offering a third gain unit or a fourth edge, and a verb accepting one the dialog cannot offer, are caught by the drift instead of by someone meeting a refusal in the field.  Each default is asserted to be one of ITS OWN members and to be the default the shipped proc already states.  The positive control is the same lift on `calc::cross`, which is known to carry a literal, so a lift that answered nothing could not pass two legs as equal" \
+        [list [pcall ag_enum_in gainMargin edge] [pcall ag_enum_in gainMargin gain] \
+              [lrange [pcall ag_field gainMargin edge 2] 1 end] \
+              [lrange [pcall ag_field gainMargin gain 2] 1 end] \
+              [pcall ag_field gainMargin edge 4] [pcall ag_field gainMargin gain 4] \
+              [pcall ag_enum_in cross edge] \
+              [pcall ag_enum_in gainMargin __mt_nosuch_zz]] \
+        [list {falling rising either} {magnitude dB} \
+              {falling rising either} {magnitude dB} falling magnitude \
+              {rising falling either} NOLITERAL:gainMargin/__mt_nosuch_zz]
+
+    # --- GM3: THE PARITY TRAP, BEHAVIOURALLY, OVER A DERIVED ARM SET --------
+    # ⚠⚠ A COMMENT BETWEEN TWO `switch` PATTERNS IS A PARSE ERROR `info complete`
+    # CANNOT SEE, AND IT IS PARITY-DEPENDENT: an EVEN word count re-pairs the
+    # trailing list into a silent no-op that detonates the moment one word is
+    # edited, an ODD one makes Tcl raise out of EVERY arm.  This stage wrote
+    # patterns into two big `switch`es.  The arm set is DERIVED from
+    # `calc::cross_msg`'s own trailing switch argument, parsed as the list Tcl
+    # parses it, so the new arms are driven the run they land and a hand-kept
+    # list cannot rot into covering fewer of them than it reads as covering.
+    set gm3ARMS {}
+    foreach gm3a [pcall mt_switch_arms cross_msg] {
+        if {[string match gm* $gm3a]} { lappend gm3ARMS $gm3a }
+    }
+    set gm3BAD {}
+    foreach gm3a $gm3ARMS {
+        set gm3s [pcall calc::cross_msg $gm3a AAA BBB]
+        if {[string match ERR:* $gm3s]} { lappend gm3BAD "$gm3a=RAISED" ; continue }
+        if {$gm3s eq {}} { lappend gm3BAD "$gm3a=EMPTY-FALLTHROUGH" ; continue }
+        if {[mt_shape $gm3s] ne {ok}} { lappend gm3BAD "$gm3a=shape:[mt_shape $gm3s]" ; continue }
+        if {[mt_family $gm3s] ne {Gain margin}} { lappend gm3BAD "$gm3a=family:[mt_family $gm3s]" }
+    }
+    check "MT24/GM3 the parity trap is confirmed BEHAVIOURALLY over an arm set DERIVED from `calc::cross_msg`'s own trailing switch argument and from `calc::fn_argspec`'s: every one of this verb's arms is driven at the arity `info args` reports, none raises, none answers the empty fall-through, each is in the house sentence shape and each opens on THIS verb's name -- and the decommented parse is asserted to AGREE with the raw one for both procs, which is the only thing in the tree that sees an EVEN-word comment between two patterns.  The arm floor rides along so a derivation that answered nothing could not pass, and the two spec arms are driven as well because an argspec that raises takes the dialog down rather than one sentence" \
+        [list $gm3BAD [mt_atleast [llength $gm3ARMS] 10] \
+              [pcall mt_switch_agree cross_msg] [pcall mt_switch_drive cross_msg] \
+              [pcall mt_switch_agree fn_argspec] [pcall mt_switch_drive fn_argspec] \
+              [expr {[lsearch -exact [pcall mt_switch_arms fn_argspec] gainMargin] >= 0 \
+                     ? {present} : {MISSING}}] \
+              [expr {[llength [pcall calc::fn_argspec gainMargin]] > 0 ? {nonempty} : {EMPTY}}]] \
+        [list {} atleast10 agree {} agree {} present nonempty]
+
+    # --- GM4: THE CLOSED FORM, ON THE ON-SAMPLE DRIVE -----------------------
+    # ⚠⚠ THIS ROW IS NON-VACUOUS IN VALUE AND VACUOUS IN METHOD, AND IT SAYS SO
+    # RATHER THAN LEAVING A LATER READER TO DELETE "the redundant other one".
+    # The four-pole loop's -180 crossing falls on a SWEPT SAMPLE, so a producer
+    # with NO interpolation whatsoever answers the same margin here to within a
+    # few ULP -- which is issue 1643's class one level up.  What this row CAN
+    # carry is the exact value at a door fifteen orders tighter than any grid
+    # error, because both halves of the measurement are analytic here: GM5 is
+    # where the interpolation is fenced.
+    set gm4CF [gm_closed 1.5625 4 -180]
+    set gm4A [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 0]
+    check "MT24/GM4 the answer agrees with the deck's own closed form -- an analytic root of `n*atan(f/fp) = 180 deg` and an analytic `-20*log10|T|` at it, with no simulator, no sample and no interpolation anywhere in the comparand -- on the drive whose crossing falls ON a swept sample, where both halves are exact; and the crossing frequency the verb PUBLISHES is asserted against the same closed form beside it, so the X half of the measurement is a claim about this verb rather than about `calc::cross_scan`.  ⚠ THE ROW IS DELIBERATELY VACUOUS IN METHOD and says which row is not: a producer that read the bracketing SAMPLE with no interpolation at all is within a few ULP here, measured in the run as `same`, and GM5 is the row that rejects it" \
+        [list [mt_disp $gm4A] \
+              [near [mt_val $gm4A] [gm_cf $gm4CF 1] 1e-12] \
+              [near [mt_key $gm4A xcross] [gm_cf $gm4CF 0] 1e-12] \
+              [mt_sink $gm4A] \
+              [mt_distinct [mt_val $gm4A] [gm_margin [mt_at $gmC(m4) 9]]] \
+              [mt_finite [gm_cf $gm4CF 1]] [mt_finite [gm_cf $gm4CF 0]]] \
+        {measured ok ok buffer same 1 1}
+
+    # --- GM5: THE INTERPOLATION, OFF-SAMPLE, AGAINST A TWO-SAMPLE SOLVE -----
+    # ⚠⚠ THE COMPARAND'S MECHANISM DIFFERS FROM THE PRODUCT'S RATHER THAN ONLY
+    # ITS CODE.  The suite names the two bracketing sample INDICES, validates each
+    # with its own straddle or bracket test, reads exactly those samples and
+    # solves two lines once.  There is no walk, no scan, no peak and no ordinal in
+    # it, so a wrong bracket, an off-by-one or a y0-instead-of-interpolate is not
+    # expressible in the comparand at all.
+    #
+    # ⚠ THE DISTINCTNESS LEGS ARE CARRIED EXPLICITLY, so the row cannot go vacuous
+    # if the fixture is ever regenerated: the two bracketing GAIN samples' own
+    # adjacent spread and each one's distance from the answer are measured in the
+    # run, and the dB-domain interpolation -- which is the sabotage a closed-form
+    # door at the grid's chord error cannot reject -- is measured as a separate
+    # distance.
+    set gm5XW [bw_line $gmXS $gmC(p3) 16 -180.0]
+    set gm5YW [gm_yline $gmXS $gmC(m3) 16 $gm5XW]
+    set gm5DBW [gm_yline $gmXS $gmC(d3) 16 $gm5XW]
+    set gm5A [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 1 0]
+    set gm5CF [gm_closed 4 3 -180]
+    check "MT24/GM5 the interpolation is measured OFF-SAMPLE against two straight lines solved through two NAMED bracketing sample pairs whose indices are validated by a straddle test and a bracket test -- a comparand with no walk, no scan and no ordinal in it, which cannot agree with a bracketing bug by construction -- at a door nine orders tighter than the grid's own chord error.  THREE negative legs are measured in the run rather than argued: each bracketing GAIN sample read without interpolating, and the SAME crossing interpolated in the dB domain instead of the magnitude domain, which is the sabotage a closed-form door at the chord error cannot reject.  The pair's own adjacent spread rides along so a regenerated fixture that made the two samples coincide reddens here instead of making the row vacuous, and the chord error itself is asserted from BELOW so this row cannot silently become a restatement of GM4" \
+        [list [mt_disp $gm5A] [bw_straddle $gmC(p3) 16 -180.0 falling] \
+              [gm_brackets $gmXS 16 $gm5XW] \
+              [near [mt_val $gm5A] [gm_margin $gm5YW] 1e-9] \
+              [near [mt_key $gm5A xcross] $gm5XW 1e-9] \
+              [gbw_far [mt_val $gm5A] [gm_margin [mt_at $gmC(m3) 16]] 1e-2] \
+              [gbw_far [mt_val $gm5A] [gm_margin [mt_at $gmC(m3) 17]] 1e-2] \
+              [gbw_far [mt_val $gm5A] [expr {-1.0*double($gm5DBW)}] 1e-3] \
+              [bw_floor [gbw_sep [mt_at $gmC(m3) 16] [mt_at $gmC(m3) 17]] 1e-2] \
+              [bw_ceil [gbw_sep [mt_val $gm5A] [gm_cf $gm5CF 1]] 1e-2] \
+              [bw_floor [gbw_sep [mt_val $gm5A] [gm_cf $gm5CF 1]] 1e-5]] \
+        {measured straddles brackets ok ok far far far over1e-2 under1e-2 over1e-5}
+
+    # --- GM6: THE GAIN UNITS ARE A DECLARATION, NOT AN INFERENCE ------------
+    # ⚠ THE AGREEMENT LEG IS DRIVEN ON THE ON-SAMPLE LOOP, AND THAT IS A
+    # MEASUREMENT RATHER THAN A CONVENIENCE.  Interpolating in dB and
+    # interpolating in magnitude are DIFFERENT operations on the same two
+    # samples, so the two declared units agree only where the crossing lands on a
+    # sample; off-sample they differ by the chord asymmetry, which this row
+    # measures as a separate leg rather than hiding behind a loose door.  The
+    # agreement is therefore a claim that the `gain` field is a UNITS DECLARATION
+    # and not two different measurements.
+    #
+    # ⚠ AND THE BELT IS KEYED TO THE WHOLE COLUMN, NOT TO THE CROSSING SAMPLE:
+    # the `d10` drive's only negative sample is the LAST one, outside the
+    # crossing's bracket, so a guard that looked at the crossing alone accepts a
+    # dB column handed as a magnitude and answers confidently.  Its indices are
+    # measured in the run.
+    set gm6ON [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 0]
+    set gm6DB [mt_call gainMargin [gm_rpn d4] [gm_rpn p4] dB -180 falling 1 0]
+    set gm6OFFM [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 1 0]
+    set gm6OFFD [mt_call gainMargin [gm_rpn d3] [gm_rpn p3] dB -180 falling 1 0]
+    set gm6BAD [mt_call gainMargin [gm_rpn d4] [gm_rpn p4] magnitude -180 falling 1 0]
+    set gm6CRX [mt_call gainMargin [gm_rpn d10] [gm_rpn p3] magnitude -180 falling 1 0]
+    set gm6BADU [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] decibels -180 falling 1 0]
+    check "MT24/GM6 the gain units are the USER'S DECLARATION and never an inference: the SAME loop declared `magnitude` and declared `dB` answers the same margin on the ON-SAMPLE drive, where the crossing lands on a sample and both readings are exact -- and the row MEASURES, as its own leg, that the two declarations DIVERGE off-sample, because interpolating in dB and in magnitude are different operations on one pair of samples.  The belt that catches the common mismatch is driven both ways: a dB column declared `magnitude` is REFUSED by identity against the arm, with the offending sample NAMED, while a non-member unit is refused by the membership test.  ⚠ THE BELT IS KEYED TO THE WHOLE COLUMN AND THE ROW PROVES THAT MATTERS: the second dB drive's only negative sample sits OUTSIDE the crossing's bracket, measured here by index, so a guard keyed to the crossing sample alone would accept it and answer" \
+        [list [mt_disp $gm6ON] [mt_disp $gm6DB] \
+              [near [mt_val $gm6DB] [mt_val $gm6ON] 1e-9] \
+              [mt_disp $gm6OFFM] [mt_disp $gm6OFFD] \
+              [gbw_far [mt_val $gm6OFFD] [mt_val $gm6OFFM] 1e-4] \
+              [mt_disp $gm6BAD] \
+              [string equal [mt_msg $gm6BAD] \
+                   [pcall calc::cross_msg gmnotmag [mt_at $gmC(d4) 5]]] \
+              [gm_negs $gmC(d10)] [gm_brackets $gmXS 16 $gm5XW] \
+              [mt_disp $gm6CRX] \
+              [string equal [mt_msg $gm6CRX] \
+                   [pcall calc::cross_msg gmnotmag [mt_at $gmC(d10) 19]]] \
+              [mt_disp $gm6BADU] \
+              [string equal [mt_msg $gm6BADU] [pcall calc::cross_msg gmunits decibels]]] \
+        {measured measured ok measured measured far refused 1 19 brackets refused 1 refused 1}
+
+    # --- GM7: `cph()` IS THE VERB'S, PROVED IN BOTH DIRECTIONS --------------
+    # ⚠ THE NEGATIVE LEG USES `calc::cross` ITSELF rather than a reimplementation,
+    # so it measures the product's own crossing primitive declining the wrapped
+    # column -- which is what makes the positive leg a claim about the verb's
+    # choice instead of a restatement of it.  A text leg rides along and is
+    # DECLARED the weaker of the two.
+    set gm7W [mt_call gainMargin [gm_rpn m3] [gm_rpn pwrap] magnitude -180 falling 1 0]
+    set gm7U [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 1 0]
+    set gm7NO [mt_call cross [gm_rpn pwrap] -180 1 falling 0]
+    set gm7YES [mt_call cross "[gm_rpn pwrap] cph()" -180 1 falling 0]
+    check "MT24/GM7 `cph()` is applied by the VERB, proved in BOTH directions on ONE operand: the same three-pole loop phase handed WRAPPED -- built in RPN with the engine's own conditional, every sample asserted inside (-180, 180] in the run -- and handed UNWRAPPED answer the same margin and the same crossing BIT FOR BIT, while `calc::cross` called directly on the wrapped operand WITHOUT the opcode answers an ABSENCE and WITH it answers the unwrapped column's own crossing.  So the negative leg is the product's own primitive declining the column, not a reimplementation of it.  A text leg over the decommented body rides along and is the weaker of the two, which is said here because a text scan is what issue 1646 cost five rounds to stop trusting" \
+        [list [gm_wrapped $gmC(pwrap)] [mt_disp $gm7W] [mt_disp $gm7U] \
+              [expr {[mt_val $gm7W] eq [mt_val $gm7U] ? {bitidentical} : "DIFFER:[mt_val $gm7W]|[mt_val $gm7U]"}] \
+              [expr {[mt_key $gm7W xcross] eq [mt_key $gm7U xcross] ? {bitidentical} : {DIFFER}}] \
+              [mt_disp $gm7NO] [mt_disp $gm7YES] \
+              [expr {[mt_val $gm7YES] eq [mt_key $gm7U xcross] ? {bitidentical} : {DIFFER}}] \
+              [expr {[string first {cph()} [pcall mt_decomment [pcall info body ::calc::gainMargin]]] >= 0 \
+                     ? {names-it} : {ABSENT}}]] \
+        {wrapped measured measured bitidentical bitidentical absent measured bitidentical names-it}
+
+    # --- GM8: `nth` 0 IS REFUSED, AND ONLY A TWO-CROSSING DRIVE FORCES IT ---
+    # ⚠⚠ BOTH HALVES MEASURED.  This is the `riseTime` trap one verb along: a
+    # multi-word operand falls back to a STRING compare instead of raising, so an
+    # unguarded interpolation succeeds and the arithmetic is reached with a LIST.
+    # On a ONE-crossing drive `calc::cross_scan`'s `nth` 0 arm answers a
+    # ONE-element list, every comparison converts it, and the verb would have
+    # looked perfect; on a TWO-crossing drive it answers two and the same path
+    # answers an EMPTY bracket, which is a FALSE ABSENCE for a good request.  So
+    # the obvious single-crossing drive cannot see the defect and the row says so.
+    set gm8ONE [pcall calc::cross_scan $gmXS $gmC(p3) -180.0 0 falling]
+    set gm8TWO [pcall calc::cross_scan $gmXS $gmC(p2) -180.0 0 either]
+    set gm8A [mt_call gainMargin [gm_rpn m3] [gm_rpn p2] magnitude -180 either 0 0]
+    set gm8B [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 0 0]
+    set gm8C [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 0.0 0]
+    set gm8D [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 1.5 0]
+    set gm8E [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling abc 0]
+    check "MT24/GM8 `nth` 0 is REFUSED rather than silently two-faced, and the row carries the measurement that says WHY the obvious drive cannot see it: `calc::cross_scan`'s `nth` 0 arm answers a ONE-element list on the single-crossing drive -- which every Tcl comparison converts, so an unguarded interpolation would have returned a correct-looking number -- and a TWO-element list on the two-crossing drive, where the same unguarded path answers an empty bracket and the user reads a FALSE ABSENCE for a good request.  The guarded verb answers the shared deferral sentence by identity on BOTH drives.  ⚠ The ordinal is integer-VALUED and not integer-SPELLED, which is `calc::cross`'s own reason: `0.0` names the ordinal zero and reaches the deferral, while a fractional and a non-numeric ordinal are refused through this verb's own arm with the text the user typed" \
+        [list [mt_len $gm8ONE] [mt_len [mt_at $gm8ONE 1]] [mt_len [mt_at $gm8TWO 1]] \
+              [mt_disp $gm8A] \
+              [string equal [mt_msg $gm8A] [pcall calc::cross_msg gmlistdefer]] \
+              [mt_disp $gm8B] \
+              [string equal [mt_msg $gm8B] [pcall calc::cross_msg gmlistdefer]] \
+              [mt_disp $gm8C] \
+              [string equal [mt_msg $gm8C] [pcall calc::cross_msg gmlistdefer]] \
+              [mt_disp $gm8D] \
+              [string equal [mt_msg $gm8D] [pcall calc::cross_msg gmbadnth 1.5]] \
+              [mt_disp $gm8E] \
+              [string equal [mt_msg $gm8E] [pcall calc::cross_msg gmbadnth abc]]] \
+        {2 1 2 refused 1 refused 1 refused 1 refused 1 refused 1}
+
+    # --- GM9: THE `edge` DEFAULT AND THE `nth` SELECTOR ---------------------
+    # ⚠ ZERO FIXTURE COST: both drives are RPN over the committed columns, and
+    # both crossings are known in CLOSED FORM -- the rising one at exactly the
+    # pole frequency, the two-crossing ones at `fp -/+ 200/3` -- so the
+    # expectations contain no simulator at all.
+    set gm9RISE [gm_closed_rise -180]
+    set gm9LO [expr {[bw_fp] - 200.0/3.0}]
+    set gm9HI [expr {[bw_fp] + 200.0/3.0}]
+    set gm9F [mt_call gainMargin [gm_rpn m4] [gm_rpn prise] magnitude -180 falling 1 0]
+    set gm9R [mt_call gainMargin [gm_rpn m4] [gm_rpn prise] magnitude -180 rising 1 0]
+    set gm9E [mt_call gainMargin [gm_rpn m4] [gm_rpn prise] magnitude -180 either 1 0]
+    set gm9N1 [mt_call gainMargin [gm_rpn m3] [gm_rpn p2] magnitude -180 either 1 0]
+    set gm9N2 [mt_call gainMargin [gm_rpn m3] [gm_rpn p2] magnitude -180 either 2 0]
+    set gm9NM [mt_call gainMargin [gm_rpn m3] [gm_rpn p2] magnitude -180 either -1 0]
+    set gm9F2 [mt_call gainMargin [gm_rpn m3] [gm_rpn p2] magnitude -180 falling 2 0]
+    check "MT24/GM9 the `edge` default and the `nth` selector are driven on operands whose crossings are known in CLOSED FORM: on a drive whose phase rises through the level, the default `falling` reports an ABSENCE while `rising` and `either` measure at the analytic crossing -- so an `either` default, which would answer where `falling` must not, reddens here.  On a drive with ONE falling and ONE rising crossing, `nth` 1, 2 and -1 under `either` answer the two analytic frequencies in the right order and from the right end, while `nth` 2 under `falling` is ABSENT -- which is R414a's within-the-selected-direction counting, and what a selector that counted crossings overall and filtered by edge afterwards cannot produce.  The crossing the verb PUBLISHES is what is compared, so the claim is about this verb's answer and not about the primitive" \
+        [list [mt_disp $gm9F] \
+              [string equal [mt_msg $gm9F] \
+                   [pcall calc::cross_msg gmnocross [pcall calc::cross_ordinal 1] falling]] \
+              [mt_disp $gm9R] [near [mt_key $gm9R xcross] $gm9RISE 1e-12] \
+              [mt_disp $gm9E] \
+              [expr {[mt_key $gm9E xcross] eq [mt_key $gm9R xcross] ? {bitidentical} : {DIFFER}}] \
+              [near [mt_key $gm9N1 xcross] $gm9LO 1e-12] \
+              [near [mt_key $gm9N2 xcross] $gm9HI 1e-12] \
+              [near [mt_key $gm9NM xcross] $gm9HI 1e-12] \
+              [mt_disp $gm9F2] \
+              [mt_distinct $gm9LO $gm9HI]] \
+        {absent 1 measured ok measured bitidentical ok ok ok absent distinct}
+
+    # --- GM10: THE AC-ONLY GATE, WITH OPERANDS THAT RESOLVE OFF IT ----------
+    # ⚠⚠ THIS IS THE SABOTAGE THE ROW EXISTS FOR AND IT IS MEASURED: on the
+    # `tran` arm `xschem raw index ph(lp)` is -1, so the NAIVE drive is refused
+    # for a mistyped token and a verb with NO gate at all passes.  Driving both
+    # operands with a name that DOES resolve there separates the gate from the
+    # accident.  The number the verb WOULD have answered is not re-measured here
+    # because the quantity is not even dimensionally a margin on that arm -- what
+    # is measured is that the operands resolve, so the refusal is about the
+    # database and not about the expression.
+    pcall mt_load tran
+    set gm10T [mt_call gainMargin [gm_rpn vlp] {v(lp) 2 *} magnitude -180 falling 1 0]
+    set gm10TN [mt_call gainMargin [gm_rpn vlp] [gm_rpn p3] magnitude -180 falling 1 0]
+    set gm10TIX [pcall xschem raw index ph(lp)]
+    set gm10VIX [pcall xschem raw index v(lp)]
+    pcall mt_load op
+    set gm10O [mt_call gainMargin {v(sq)} {v(sq) 2 *} magnitude -180 falling 1 0]
+    set gm10OTY [pcall xschem raw sim_type]
+    pcall mt_load ac
+    set gm10A [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 0]
+    check "MT24/GM10 the AC-only gate is asserted with operands that RESOLVE on the non-ac arm, so the refusal cannot be a side-effect of an unresolvable name: the `tran` and the operating-point databases are REFUSED through this verb's own arm by identity with the sim_type NAMED, the `ac` database is accepted, and the transient drive uses a node that resolves there for BOTH operands -- which is the leg that separates the gate from the accident, since the phase-shaped operand does NOT resolve on that arm and would have been refused for a mistyped token by a verb with no gate at all.  Both index readings ride along as the measurement of that asymmetry" \
+        [list $gm10TIX [expr {$gm10VIX >= 0 ? {resolves} : {NO}}] \
+              [mt_disp $gm10T] \
+              [string equal [mt_msg $gm10T] [pcall calc::cross_msg gmnotac tran]] \
+              [mt_disp $gm10TN] \
+              [string equal [mt_msg $gm10TN] [pcall calc::cross_msg gmnotac tran]] \
+              [mt_disp $gm10O] \
+              [string equal [mt_msg $gm10O] [pcall calc::cross_msg gmnotac $gm10OTY]] \
+              $gm10OTY [mt_disp $gm10A] [mt_shape [mt_msg $gm10T]]] \
+        {-1 resolves refused 1 refused 1 refused 1 op measured ok}
+
+    # --- GM11: THE OWN-DOOR OBLIGATIONS AND R402, OVER EVERY EXIT PATH ------
+    # ⚠ THE CLOSURE AND NOT THE BODY'S OWN NAMES, which is the SCOPE correction
+    # `calc::bandwidth`'s own row had to make: `calc::cross_pair` is named by
+    # `calc::cross_scan` and not by the verb, so a one-level scan cannot see it.
+    #
+    # ⚠⚠ THE ONE-FORMULA PROPERTY IS MEASURED AS A COUNT PLUS AN ABSENCE, because
+    # an exact-callee-set leg is blind to a HAND-ROLLED copy of the same
+    # arithmetic that calls nothing -- built and measured at the sibling site,
+    # where it left the whole file at ALL PASS and is bit-identical so no
+    # behavioural leg sees it either.  An interpolation necessarily DIVIDES, so
+    # the verb's own decommented body must contain NO division at all and
+    # `calc::sample_at` exactly one, with the control showing the division half
+    # can find one.
+    set gm11CL [pcall mt_calc_closure gainMargin]
+    set gm11MISS {}
+    foreach gm11n {tmpvec rpn_bad_token cross_scan cross_pair sample_at eval_finite} {
+        if {[lsearch -exact $gm11CL $gm11n] < 0} { lappend gm11MISS $gm11n }
+    }
+    # ⚠⚠ THE RIDING LEGS ARE WHY THIS SWEEP CANNOT BE EMPTIED.  Measured on
+    # this file: trimmed to ONE drive it left the whole file at ALL PASS with the
+    # check total unmoved, because `$gm11LEAK` is `{}` over one drive and over
+    # twelve alike.  The count, the number of drives that got past the MINT -- the
+    # only ones R402 has an obligation on -- and the set of dispositions reached
+    # now ride with it; see MT22/BW7's own comment for the three built steps.
+    set gm11LEAK {} ; set gm11N 0 ; set gm11MINT 0 ; set gm11DISP {}
+    foreach {gm11db gm11m gm11p gm11g gm11lv gm11e gm11n2} [list \
+            ac [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 \
+            ac [gm_rpn m3] [gm_rpn own] magnitude -180 falling 1 \
+            ac [gm_rpn d4] [gm_rpn p4] magnitude -180 falling 1 \
+            ac [gm_rpn zero] [gm_rpn p3] magnitude -180 falling 1 \
+            ac [gm_rpn nan] [gm_rpn p3] magnitude -180 falling 1 \
+            ac {zzz(nosuch)} [gm_rpn p3] magnitude -180 falling 1 \
+            ac [gm_rpn m3] {zzz(nosuch)} magnitude -180 falling 1 \
+            ac [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 99 \
+            ac [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 0 \
+            ac [gm_rpn m3] [gm_rpn p3] sideways -180 falling 1 \
+            ac [gm_rpn m3] [gm_rpn p3] magnitude nan falling 1 \
+            tran [gm_rpn vlp] [gm_rpn vlp] magnitude -180 falling 1] {
+        pcall mt_load $gm11db
+        incr gm11N
+        set gm11a [pcall mt_call gainMargin $gm11m $gm11p $gm11g $gm11lv $gm11e $gm11n2 0]
+        lappend gm11DISP [mt_disp $gm11a]
+        if {[string match __calc_tmp* [mt_key $gm11a dest]]} { incr gm11MINT }
+        if {[llength [leaked]]} {
+            lappend gm11LEAK "[leaked]@$gm11m/$gm11p/$gm11g/$gm11n2"
+        }
+    }
+    pcall mt_load ac
+    check "MT24/GM11 the verb owns its engine door and discharges every obligation that comes with one, read off its OWN decommented body and its own CLOSURE rather than off a habit: it mints through `calc::tmpvec`, pre-flights through `calc::rpn_bad_token`, selects through `calc::cross_scan` -- the same proc `calc::cross` selects with, so R414c's two scan directions are not a second selector -- interpolates through its own pure proc, and issues the direct engine verbs itself while reaching `calc::cross` NOWHERE, which is MT10's own-door claim for this class.  THE ONE-FORMULA PROPERTY IS A COUNT PLUS AN ABSENCE: the verb's own body contains NO division at all and the interpolator exactly one, so a second copy of either line cannot hide from it, and the control shows the division half can find one.  R402's cleanup is then driven over a sweep reaching both the arms that mint a temporary and the arms that refuse before one, with the leak inventory asserted empty after each, and the sweep's SIZE, its number of past-the-mint drives and its set of dispositions all ride along -- because the leak leg alone reads the same empty list over one drive as over all of them" \
+        [list $gm11MISS [pcall bw_doors gainMargin] \
+              [pcall mt_direct_raw gainMargin] [pcall mt_reaches_cross gainMargin] \
+              [pcall mt_closure_raw gainMargin] \
+              [pcall bw_formula gainMargin] [pcall bw_formula sample_at] \
+              [bw_sortg [pcall mt_calc_names sample_at]] \
+              [expr {[lindex [split [pcall bw_formula sample_at] /] 1] > 0 ? {divides} : {NODIVISION}}] \
+              $gm11LEAK [probeleft] [mt_sized $gm11N 12] [mt_sized $gm11MINT 6] \
+              [lsort -unique $gm11DISP]] \
+        [list {} {add del values} yes no gainMargin 0/0 0/1 eval_finite divides {} {} \
+              sized sized {absent measured refused}]
+
+    # --- GM12: EVERY ARM OF THIS VERB, EACH DRIVEN BY ITS OWN TRIGGER -------
+    # ⚠⚠ THE SET OF ARMS DRIVEN IS ASSERTED EQUAL TO THE SET DERIVED from
+    # `calc::cross_msg`'s own trailing switch argument, so an arm added to the
+    # table or to the proc without the other reddens BY NAME instead of sitting
+    # outside a sweep that reads as coverage -- which is what a sibling arm sweep
+    # rotted into at 24 of its proc's 31 arms while staying green for a month.
+    #
+    # ⚠ THE REPORTED COUNT IS A LEG, not a shortfall in the check total: a band
+    # that aborts through `group`'s catch DELETES its remaining rows from the
+    # verdict instead of reddening them, so every answer here goes through
+    # `mt_disp`/`mt_msg` and the number of triggers that really reported is
+    # compared against the number of triggers.
+    #
+    # ⚠ EVERY ARM IS A REAL DRIVE AND NOT A STUB.  The two the design called
+    # undriveable are reached by two columns the engine builds: a `-nan` column
+    # whose bracketing pair is not FINITE, and a column of exact zeros that
+    # interpolates to zero at the crossing without carrying a negative sample for
+    # the column scan to refuse first.
+    set gm12ARMS {}
+    foreach gm12a [pcall mt_switch_arms cross_msg] {
+        if {[string match gm* $gm12a]} { lappend gm12ARMS $gm12a }
+    }
+    set gm12BAD {} ; set gm12DRIVEN {} ; set gm12N 0
+    foreach {gm12k gm12spec} [list \
+            gmempty    [list ac {}             [gm_rpn p3]    magnitude -180 falling 1 refused gain] \
+            gmbadlevel [list ac [gm_rpn m3]    [gm_rpn p3]    magnitude nan   falling 1 refused nan] \
+            gmbadnth   [list ac [gm_rpn m3]    [gm_rpn p3]    magnitude -180  falling 1.5 refused 1.5] \
+            gmlistdefer [list ac [gm_rpn m3]   [gm_rpn p3]    magnitude -180  falling 0 refused @NONE@] \
+            gmunits    [list ac [gm_rpn m3]    [gm_rpn p3]    decibels  -180  falling 1 refused decibels] \
+            gmedge     [list ac [gm_rpn m3]    [gm_rpn p3]    magnitude -180  sideways 1 refused sideways] \
+            gmnotac    [list tran [gm_rpn vlp] {v(lp) 2 *}    magnitude -180  falling 1 refused tran] \
+            gmnotmag   [list ac [gm_rpn d4]    [gm_rpn p4]    magnitude -180  falling 1 refused @D4NEG@] \
+            gmnocross  [list ac [gm_rpn m3]    [gm_rpn own]   magnitude -180  falling 1 absent @ORD@] \
+            gmnonpos   [list ac [gm_rpn zero]  [gm_rpn p3]    magnitude -180  falling 1 refused @ZERO@] \
+            gmnobracket [list ac [gm_rpn nan]   [gm_rpn p3]    magnitude -180  falling 1 absent  @XC@] \
+            gmsameop   [list ac [gm_rpn m4]    [gm_rpn m4]    magnitude -180  falling 1 refused @NONE@] \
+            gmsamecol  [list ac [gm_rpn m4] "[gm_rpn m4] 1 *" magnitude -180 falling 1 refused @NONE@]] {
+        lappend gm12DRIVEN $gm12k
+        incr gm12N
+        foreach {gm12db gm12m gm12p gm12g gm12lv gm12e gm12n2 gm12want gm12det} $gm12spec break
+        pcall mt_load $gm12db
+        set gm12a [mt_call gainMargin $gm12m $gm12p $gm12g $gm12lv $gm12e $gm12n2 0]
+        if {[mt_disp $gm12a] ne $gm12want} {
+            lappend gm12BAD "$gm12k=[mt_disp $gm12a]" ; continue
+        }
+        set gm12e2 {}
+        if {$gm12det eq {@NONE@}} {
+            set gm12e2 {}
+        } elseif {$gm12det eq {@D4NEG@}} {
+            set gm12e2 [list [mt_at [gm_col d4] 5]]
+        } elseif {$gm12det eq {@ORD@}} {
+            set gm12e2 [list [pcall calc::cross_ordinal 1] falling]
+        } elseif {$gm12det eq {@ZERO@}} {
+            set gm12e2 [list [gm_yline [mt_col frequency 0] [gm_col zero] 16 \
+                                  [bw_line [mt_col frequency 0] [gm_col p3] 16 -180.0]]]
+        } elseif {$gm12det eq {@XC@}} {
+            set gm12e2 [list [bw_line [mt_col frequency 0] [gm_col p3] 16 -180.0]]
+        } else {
+            set gm12e2 [list $gm12det]
+        }
+        set gm12msg [mt_msg $gm12a]
+        if {![string equal $gm12msg [pcall calc::cross_msg $gm12k {*}$gm12e2]]} {
+            lappend gm12BAD "$gm12k=WRONG-ARM" ; continue
+        }
+        if {[mt_shape $gm12msg] ne {ok}} { lappend gm12BAD "$gm12k=shape" ; continue }
+        if {[mt_family $gm12msg] ne {Gain margin}} { lappend gm12BAD "$gm12k=family" ; continue }
+        if {[pcall calc::status_fit $gm12msg] ne $gm12msg} { lappend gm12BAD "$gm12k=ELIDES" }
+    }
+    pcall mt_load ac
+    set gm12PH [mt_call gainMargin [gm_rpn m3] {} magnitude -180 falling 1 0]
+    set gm12REUSED [pcall mt_verb_msg_arms gainMargin gm]
+    check "MT24/GM12 every refusal and absence arm this verb owns is REACHED by a request built from its own argument list, over an arm set DERIVED from `calc::cross_msg`'s own trailing `switch` argument -- the set driven here is asserted EQUAL to that derivation, so an arm added to the table or to the proc without the other reddens by name instead of sitting outside a sweep that reads as coverage.  Per arm: the DISPOSITION the request earns, the arm identity against `calc::cross_msg`'s own sentence with the DETAIL recomputed by this file, the house shape, the leading verb, and that the sentence fits the entry unelided at the fixture's own detail.  The number of triggers that really REPORTED is a leg, because a band that aborts deletes its rows from the verdict instead of reddening them.  Every arm is a REAL drive, including the two the design called undriveable; the EMPTY-operand arm is driven on BOTH operands and the two sentences are asserted to DIFFER, so a verb that names the wrong one of the two expressions is caught; and the arms the verb REUSES from `cross` are derived from its own call sites, so re-spelling one here would be visible" \
+        [list $gm12BAD [mt_sized $gm12N 13] \
+              [bw_sortg $gm12DRIVEN] [bw_sortg $gm12ARMS] \
+              [mt_atleast [llength $gm12ARMS] 13] \
+              [mt_disp $gm12PH] \
+              [string equal [mt_msg $gm12PH] [pcall calc::cross_msg gmempty phase]] \
+              [expr {[mt_msg $gm12PH] eq [pcall calc::cross_msg gmempty gain] ? {SAMEASGAIN} : {differs}}] \
+              [expr {[lsearch -exact [bw_dget $gm12REUSED reused] nodata] >= 0 ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $gm12REUSED reused] badtoken] >= 0 ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $gm12REUSED reused] intdataset] >= 0 ? {reuses} : {RESPELLS}}] \
+              [bw_sortg [bw_dget $gm12REUSED own]]] \
+        [list {} sized [bw_sortg $gm12ARMS] [bw_sortg $gm12ARMS] atleast13 \
+              refused 1 differs reuses reuses reuses [bw_sortg $gm12ARMS]]
+
+    # --- GM13: THE SENTENCE BUDGET, OVER THE DERIVED ARM SET ----------------
+    # ⚠ THE MARKER IS REQUIRED ONLY OF AN ARM THE DETAIL REALLY OVERFLOWS, which
+    # is the correction `calc::bandwidth`'s own row had to make: an arm composing
+    # a CONSTANT sentence ignores both details, so its hostile sentence is the
+    # same short one and there is nothing to elide.  The count of arms that DO
+    # overflow rides along, so the sweep cannot become green by every arm turning
+    # constant.
+    set gm13HUGE [string repeat z 500]
+    set gm13BAD {} ; set gm13HN 0
+    foreach gm13a $gm12ARMS {
+        set gm13s [pcall calc::cross_msg $gm13a $gm13HUGE $gm13HUGE]
+        if {$gm13s eq {}} { lappend gm13BAD "$gm13a=EMPTY" ; continue }
+        set gm13u [pcall calc::cross_msg $gm13a AAA BBB]
+        if {[string length $gm13u] > [pcall calc::status_chars]} {
+            lappend gm13BAD "$gm13a=UNDETAILED-OVER" ; continue
+        }
+        set gm13f [pcall calc::status_fit $gm13s]
+        if {[string length $gm13f] > [pcall calc::status_chars]} { lappend gm13BAD "$gm13a=OVER" ; continue }
+        if {[string first {Gain margin} $gm13f] != 0} { lappend gm13BAD "$gm13a=NOTOPENING" ; continue }
+        if {[string length $gm13s] <= [pcall calc::status_chars]} continue
+        incr gm13HN
+        if {[string first [pcall calc::status_marker] $gm13f] < 0} { lappend gm13BAD "$gm13a=NOMARKER" }
+    }
+    check "MT24/GM13 the sentence budget is driven over the DERIVED set of this verb's own arms, each with a 500-character detail -- the leg no rewording could satisfy: every sentence fits the room `calc::status_room` reports, still OPENS on the verb's name so the user can tell which measurement refused, and carries the elision marker wherever the detail really overflowed; and the undetailed form of every arm is inside the character fallback.  The count of arms that DO overflow rides along, so the sweep cannot become green by every arm turning into a constant sentence" \
+        [list $gm13BAD [mt_atleast $gm13HN 7] [mt_sized [llength $gm12ARMS] [llength $gm12ARMS]] \
+              [pcall calc::status_room] [pcall calc::status_chars]] \
+        [list {} atleast7 sized {ch 80} 80]
+
+    # --- GM14: THE ANSWER'S KEY SET, EXACTLY, ON ALL THREE DISPOSITIONS -----
+    # ⚠ AN EXACT KEY-SET ASSERTION IS THE RIGHT SHAPE PRECISELY BECAUSE IT CATCHES
+    # A LIVE VALUE PUT IN A RETIRED KEY, and that makes the new `xcross` key a
+    # SEQUENCING obligation: the key and this row land in one commit, or somebody
+    # meets the other half as a gate red and weakens the row to clear it.
+    #
+    # ⚠ `dest` NAMES THE COLUMN THE ANSWER'S VALUE CAME OUT OF on every path that
+    # reached the engine, which is what band MT9b reads BY NAME to tell a deferral
+    # from an absence -- so one key cannot come to mean two things across verbs.
+    set gm14M [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 0]
+    set gm14A [mt_call gainMargin [gm_rpn m3] [gm_rpn own] magnitude -180 falling 1 0]
+    set gm14R [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] sideways -180 falling 1 0]
+    set gm14D [mt_call gainMargin [gm_rpn m3] [gm_rpn p3] magnitude -180 falling 1 7]
+    set gm14XM [mt_call cross [gm_rpn p4] -180 1 falling 0]
+    set gm14XA [mt_call cross [gm_rpn own] -180 1 falling 0]
+    set gm14XR [mt_call cross [gm_rpn p4] -180 1 sideways 0]
+    check "MT24/GM14 the answer's key set is asserted EXACTLY on all three dispositions, DERIVED each time from what `calc::cross` itself answers for the same disposition: the measured one is cross's own PLUS the one key this verb publishes beyond it -- the crossing the margin was measured at, which the X-half rows compare against a closed form and which no second crossing search anywhere may recompute.  `dest` names a minted temporary on every path that reached the engine and is EMPTY on a request refused before the mint, which is what band MT9b reads by name; the dataset is echoed from the request on every disposition; and the out-of-range dataset is refused through `cross`'s own arm by identity, because the dataset belongs to that vocabulary and this verb must not re-spell it" \
+        [list [mt_keys $gm14M] [mt_keys $gm14A] [mt_keys $gm14R] \
+              [mt_sameformals [mt_keys $gm14M] [lsort [concat [mt_keys $gm14XM] xcross]]] \
+              [mt_sameformals [mt_keys $gm14A] [mt_keys $gm14XA]] \
+              [mt_sameformals [mt_keys $gm14R] [mt_keys $gm14XR]] \
+              [mt_disp $gm14XM] [mt_disp $gm14XA] [mt_disp $gm14XR] \
+              [expr {[string match __calc_tmp* [mt_key $gm14M dest]] ? {minted} : "NO:[mt_key $gm14M dest]"}] \
+              [expr {[string match __calc_tmp* [mt_key $gm14A dest]] ? {minted} : "NO:[mt_key $gm14A dest]"}] \
+              [mt_key $gm14R dest] [mt_key $gm14M dataset] [mt_key $gm14R dataset] \
+              [mt_key $gm14M msg] [mt_disp $gm14D] \
+              [string equal [mt_msg $gm14D] \
+                   [pcall calc::cross_msg dataset 7 [pcall xschem raw datasets]]]] \
+        [list {absent dataset dest msg ok value xcross} \
+              {absent dataset dest msg ok value} \
+              {absent dataset dest msg ok value} same same same \
+              measured absent refused minted minted {} 0 0 {} refused 1]
+
+    # --- GM15: THE INVERSE PAIR'S ARITHMETIC, ON INTEGER-SPELLED OPERANDS ---
+    # ⚠⚠ THE HAZARD IS TCL'S `/`, WHICH TRUNCATES WHEN BOTH OPERANDS ARE
+    # INTEGERS, AND BOTH PROCS GROUP LEFT TO RIGHT.  `($L - $y0)*($x1 - $x0)` and
+    # `($f - $x0)*($y1 - $y0)` are integer products whenever every operand is
+    # spelled as a decimal integer, so the division that follows is an integer
+    # division and the straight line is answered at the wrong point -- 1 where
+    # 1.5 is right.  Every caller in the tree happens to force the named operand
+    # to a double today, so the hazard is LATENT, and a row is the only thing
+    # that keeps it latent: `calc::sample_at` is a PUBLIC proc whose documented
+    # contract is to be the exact algebraic inverse of `calc::cross_pair`, and an
+    # inverse that disagrees with itself on the spelling of its argument is not
+    # one.
+    #
+    # ⚠ THE STRUCTURAL LEGS CANNOT SEE THIS, WHICH IS WHY THE ROW IS
+    # BEHAVIOURAL.  GM11 and PM12 measure the ONE-FORMULA property as a call-site
+    # count plus the absence of a division; MT22/BW7 does the same for the other
+    # pure pair.  A reordering of the same expression that divides FIRST keeps the
+    # division count at one and the call-site count unmoved, and was measured to
+    # leave this whole file at ALL PASS.  Counting a formula says nothing about
+    # what the formula answers.
+    #
+    # ⚠ NO FIXTURE, NO COLUMN, NO LOOP AND NO SCAN IN THE COMPARAND: the
+    # expectations are HAND numbers on lines chosen so that two integers bracket
+    # a fractional answer.  `gm_allint` asserts in the run that the integer-spelled
+    # drive really is integer-spelled word by word -- a double slipping into one
+    # of those literals would make every leg pass while measuring nothing -- and
+    # `gm_frac` asserts each expectation has a fractional part, which is the
+    # property that makes a truncation observable at all.
+    #
+    # ⚠ ONE LIMIT, DECLARED RATHER THAN CHASED.  Reordering either expression to
+    # DIVIDE FIRST -- `(L-y0)/(y1-y0)*(x1-x0)` -- is green here, and was built to
+    # confirm it.  That is not a hole left open: the two orders are the same
+    # algebra and on every drive in this row the same double to the bit, so there
+    # is no defect for a row to catch.  What the reordering DOES defeat is the
+    # structural division-count leg, which is why the claim about the formula is
+    # behavioural here and structural there, and neither is the other's backstop.
+    set gm15BAD {} ; set gm15N 0 ; set gm15FRAC {} ; set gm15SPELL {}
+    foreach {gm15p gm15i gm15d gm15w} {
+        cross_pair {0 3 0 2 1}          {0 3 0 2 1.0}          {rising 1.5}
+        cross_pair {0 1 0 4 1}          {0 1 0 4 1.0}          {rising 0.25}
+        cross_pair {0 5 0 8 3}          {0 5 0 8 3.0}          {rising 1.875}
+        sample_at  {{100 200} {0 3} 150} {{100 200} {0 3} 150.0} 1.5
+        sample_at  {{0 2} {0 1} 1}       {{0 2} {0 1} 1.0}       0.5
+        sample_at  {{0 4} {0 3} 1}       {{0 4} {0 3} 1.0}       0.75
+    } {
+        incr gm15N
+        if {$gm15p eq {cross_pair}} {
+            set gm15gi [mt_call cross_pair {*}$gm15i rising]
+            set gm15gd [mt_call cross_pair {*}$gm15d rising]
+            lappend gm15FRAC [gm_frac [mt_at $gm15w 1]]
+        } else {
+            set gm15gi [mt_call sample_at {*}$gm15i]
+            set gm15gd [mt_call sample_at {*}$gm15d]
+            lappend gm15FRAC [gm_frac $gm15w]
+        }
+        lappend gm15SPELL [gm_allint {*}$gm15i]
+        if {$gm15gi ne $gm15w} { lappend gm15BAD "$gm15p/int{$gm15i}={$gm15gi}" }
+        if {$gm15gd ne $gm15w} { lappend gm15BAD "$gm15p/dbl{$gm15d}={$gm15gd}" }
+        if {$gm15gi ne $gm15gd} { lappend gm15BAD "$gm15p{$gm15i}=SPELLINGMATTERS" }
+    }
+    # THE CONTRACT ITSELF, AS A ROUND TRIP, with the one operand a caller names
+    # spelled as an integer on BOTH legs: the X `calc::cross_pair` reports for a
+    # named level, fed back through `calc::sample_at`, is that level again.
+    set gm15H [mt_call cross_pair 0 3 0 2 1 rising]
+    set gm15RT [mt_call sample_at {0 3} {0 2} [mt_at $gm15H 1]]
+    # ⚠ THE ONE CONSEQUENCE ON THE SHIPPED SIDE, DECLARED AND FENCED HERE rather
+    # than left to be noticed later.  Where the whole division used to be an
+    # integer one AND its answer happened to be exactly integral, the number did
+    # not move but its Tcl SPELLING did -- `150.0` where an integer division
+    # produced `150` -- and the only drives that reach it are sweeps whose own
+    # samples are integer-spelled, which is what an `ac` arm at round frequencies
+    # is.  Swept over both fixture arms, every column, nine levels and three
+    # edges before the change was kept: the answers that moved moved in SPELLING
+    # only, and no count of them is written here because nothing re-measures one.
+    # Both halves are legs below, the spelling by identity and the value against
+    # the integer, so a later reader cannot take either for a defect.
+    set gm15SP [mt_call cross_pair 100 200 0 2 1 rising]
+    check "MT24/GM15 the inverse pair answers the same straight line whatever its operands are SPELLED as, which is the behavioural half of a claim the structural legs state and cannot check: each proc is driven twice on one line -- once with every word of the argument list a decimal integer, once with only the named operand respelled as a double -- and the three legs per drive are the integer answer against a HAND number, the double answer against the same hand number, and the two answers against EACH OTHER, so neither a truncation nor a divergence between the two spellings can hide.  The comparand has no fixture, no column, no loop and no scan in it, and the drives are chosen so that two integers bracket a FRACTIONAL answer, which `gm_frac` asserts in the run -- an integral answer is green against a truncating implementation.  `gm_allint` asserts word by word that the integer-spelled drive really is one, so a double slipping into a literal reddens instead of making every leg vacuous; the round trip is the documented contract driven end to end on integer-spelled operands; the drive count rides along so the sweep cannot be emptied; and the ONE consequence on the shipped side is a leg rather than a note -- a drive whose answer is exactly integral is now SPELLED as a double, which the row asserts by identity while asserting the value against the integer, so the spelling change cannot be mistaken for a moved number" \
+        [list $gm15BAD [mt_sized $gm15N 6] [lsort -unique $gm15FRAC] \
+              [lsort -unique $gm15SPELL] $gm15RT \
+              [mt_at $gm15SP 1] [bw_exact [mt_at $gm15SP 1] 150] \
+              [gm_frac [mt_at $gm15SP 1]]] \
+        [list {} sized fractional allinteger 1.0 150.0 exact integral:150.0]
+
+    # --- hygiene -----------------------------------------------------------
+    # ⚠ THE INVENTORY IS CAPTURED BEFORE THE RELOAD and the still-measures leg
+    # is taken after, which is the only order that works for both.  See the
+    # warning on `leaked`: the reload clears the inventory this leg reads.
+    set gmLEAK [leaked]
+    set gmPROBE [probeleft]
+    pcall mt_load ac
+    check "MT24 R402 the inventory READ BEFORE THIS BAND'S RELOAD carries no `__calc_tmp*` and no `__mt_*` column over the exit paths this band drove -- and the verb still MEASURES on the fixture after every refusal, absence and cleared database this band put it through, which is the claim that stops a leak row being green over a verb that stopped working" \
+        [list $gmLEAK $gmPROBE \
+              [mt_disp [mt_call gainMargin [gm_rpn m4] [gm_rpn p4] magnitude -180 falling 1 0]]] \
+        {{} {} measured}
+    pcall xschem raw clear
+}
+
+# =========================================================================
+# MT25 -- `calc::phaseMargin`, THE FOURTH LOOP-STABILITY VERB AND THE MIRROR
+# IMAGE OF THE THIRD.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D1/D2/D3/D4/D6/D7/D10
+#          D11/D12 -- inherited through `calc::cross_scan` and `calc::cross_pair`.
+#
+#     calc::phaseMargin <rpnMag> <rpnPh> ?<gain>? ?<edge>? ?<nth>? ?<dataset>?
+#
+# THE LOOP PHASE WHERE THE LOOP GAIN CROSSES UNITY, PLUS 180 DEGREES, POSITIVE
+# FOR A STABLE LOOP.  `calc::gainMargin` crosses the PHASE at a named level and
+# reads the GAIN there; this crosses the GAIN at unity and reads the PHASE there.
+# The two halves therefore go through the SAME two primitives in the opposite
+# order -- `calc::cross_scan` for the crossing, `calc::sample_at` for the
+# quantity read at it -- which is why this verb adds NO helper of its own.
+#
+# ⚠⚠ THE WRAP IS WHAT MAKES THIS VERB DANGEROUS AND ROW PM7 IS THE ONE TO READ
+# FIRST.  A simulator's own `ph()` column lives in (-180, 180], so on a loop
+# whose crossover sits past the wrap the honest answer and the wrapped answer
+# differ by 360 DEGREES -- an unstable loop reads as a comfortable margin.  The
+# verb appends the engine's `cph()` to the phase operand, exactly as
+# `calc::gainMargin` does, so there is ONE unwrapper in this tree and it is the C
+# opcode; row PM7 drives one operand wrapped and continuous and asserts the two
+# answers are bit-identical, with the un-unwrapped reading measured in the run as
+# the negative leg.
+#
+# ⚠ NO `level` FIELD, WHICH IS THE ONE PLACE THE TWO MARGINS' SPECS DIVERGE AND
+# THE REASON IS A UNITS COUPLING RATHER THAN A PREFERENCE.  -180 degrees is a
+# genuine choice a user might vary, so `calc::gainMargin` offers it; unity gain
+# is NOT a choice, and it is spelled 1 in a magnitude and 0 in dB -- so a single
+# `real` field could not carry a default that was right in both units, and one
+# that was wrong in either would answer confidently at a level the user did not
+# mean.  The `gain` enum therefore does double duty: it declares the operand's
+# units AND names the level.  Row PM1 asserts the consequence -- this is the one
+# clickable verb with NO `real` field at all -- and band MT21/NV derives the
+# split rather than carrying that name.
+#
+# ⚠ THE DRIVES ARE THE COMMITTED FIXTURE'S OWN COLUMNS SCALED IN RPN, so nothing
+# here needs a new raw file.  Because the deck is one RC lowpass driven by an
+# ideal 1 V AC source, `v(lp)` IS |1/(1 + j f/fp)| and `ph(lp)` IS its argument
+# in degrees, which makes (`v(lp) n ** k *`, `ph(lp) n *`) the exact magnitude
+# and phase of a real k-gain n-pole loop.  Row PM0 asserts that element by
+# element against a closed form with no simulator in it, which is what licenses
+# every expectation below; `pm_k` and `pm_n` hold each drive's own two constants
+# ONCE, and both the drive's RPN text and its closed form are built from them.
+# =========================================================================
+
+# the loop gain and the pole count of each scaled drive, ONE definition each:
+# `pm_rpn` builds the drive's own RPN text from them and `pm_closed` solves the
+# closed form from them, so the two cannot come to name different loops.  An
+# if/elseif ladder and not a `switch`, for the reason the product's own verbs use
+# one -- a comment between two patterns is a parse error `info complete` cannot
+# see, and it is parity-dependent.
+proc pm_k {nm} {
+    if {$nm eq {g4}}   { return 1.5625 }
+    if {$nm eq {g13}}  { return 1.3 }
+    if {$nm eq {g20}}  { return 2 }
+    if {$nm eq {g625}} { return 6.25 }
+    if {$nm eq {g3}}   { return 4 }
+    return {}
+}
+proc pm_n {nm} {
+    if {$nm eq {g3}} { return 3 }
+    return 4
+}
+# the RISING drive's own gain, and the two-crossing drive's slope and offset,
+# each held once for the same reason.
+proc pm_rise_k {} { return 0.6 }
+proc pm_two_c {} { return {0.0025 0.4} }
+# THE DRIVES.  Every one is RPN over the committed fixture's own columns, so the
+# band costs no new raw file -- and every constant in them comes from one of the
+# four procs above rather than being typed twice.
+proc pm_rpn {nm} {
+    if {[pm_k $nm] ne {}} { return "v(lp) [pm_n $nm] ** [pm_k $nm] *" }
+    if {$nm eq {ph4}}   { return "ph(lp) [pm_n g4] *" }
+    if {$nm eq {ph3}}   { return "ph(lp) [pm_n g3] *" }
+    if {$nm eq {ph4c}}  { return "[pm_rpn ph4] cph()" }
+    if {$nm eq {pw4}}   { return "[pm_rpn ph4] 360 + [pm_rpn ph4] -180 < [pm_rpn ph4] ?" }
+    if {$nm eq {db4}}   { return "[pm_rpn g4] db20()" }
+    if {$nm eq {db3}}   { return "[pm_rpn g3] db20()" }
+    if {$nm eq {grise}} { return "1 v(lp) [pm_n g4] ** / [pm_rise_k] *" }
+    if {$nm eq {g2x}}   { return "frequency [bw_fp] - abs() [lindex [pm_two_c] 0] * [lindex [pm_two_c] 1] +" }
+    if {$nm eq {vlp}}   { return {v(lp)} }
+    if {$nm eq {nan}}   { return {-1 sqrt()} }
+    return {}
+}
+# ...and its column, read back through the engine at "%.16g", under this file's
+# own probe prefix so a forgotten cleanup is a SUITE defect and never a product
+# leak.
+proc pm_col {nm} { return [mt_addcol __mt_pm_$nm [pm_rpn $nm] 0] }
+# THE CLOSED FORM, with no simulator, no sample and no interpolation in it.  For
+# `T = k*H^n` with `H = 1/(1 + j f/fp)`, `|T| = k/(1 + x^2)^(n/2)` and
+# `arg T = -n*atan(x)` with `x = f/fp`, so unity gain is reached at
+# `x = sqrt(k^(2/n) - 1)` and the phase margin there is `180 - n*atan(x)` in
+# degrees.  Answers `{f margin}`, indexed with `gm_cf`.
+#
+# ⚠ IT IS `gm_closed` READ THE OTHER WAY ROUND AND NOT A COPY OF IT: that proc
+# solves for the f at a named PHASE and reports the gain there, this solves for
+# the f at unity GAIN and reports the phase there.  Neither shares a step with
+# the product, which interpolates two materialised columns through a scan.
+proc pm_closed {k n} {
+    foreach v [list $k $n] { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    if {double($n) == 0.0} { return ZEROPOLES }
+    if {double($k) <= 0.0} { return NONPOSITIVE }
+    set r [expr {pow(double($k), 2.0/double($n))}]
+    if {$r <= 1.0} { return NOCROSSING }
+    set x [expr {sqrt($r - 1.0)}]
+    return [list [expr {[bw_fp]*$x}] \
+                 [expr {180.0 - double($n)*atan($x)*180.0/acos(-1.0)}]]
+}
+# ...and the closed unity-gain frequency of the RISING drive, a DIFFERENT
+# function of the same pole: that column is `k*(1 + x^2)^2`, so unity is reached
+# at `x = sqrt(sqrt(1/k) - 1)`.  Written separately rather than folded in, for
+# `gm_closed_rise`'s reason -- one proc covering two drives would need a flag
+# nothing else wants and the fold is where an error would hide.  Only the
+# FREQUENCY is analytic here, which is why the row using it compares the margin
+# against this file's own two-sample solve instead.
+proc pm_closed_rise {k} {
+    if {![mt_finite $k]} { return "NOTANUMBER:{$k}" }
+    if {double($k) <= 0.0} { return NONPOSITIVE }
+    set r [expr {sqrt(1.0/double($k))}]
+    if {$r <= 1.0} { return NOCROSSING }
+    return [expr {[bw_fp]*sqrt($r - 1.0)}]
+}
+# ...and the two analytic unity crossings of the two-crossing drive, built from
+# `pm_two_c`'s own constants: that column is `s*|f - fp| + o`, piecewise LINEAR
+# in f, so unity is reached at `fp -/+ (1 - o)/s` exactly and a linear
+# interpolation of it is not an approximation at all.  That is what lets the
+# selector row carry analytic expectations with no second fixture.
+proc pm_two_f {which} {
+    set s [lindex [pm_two_c] 0] ; set o [lindex [pm_two_c] 1]
+    if {![mt_finite $s] || ![mt_finite $o]} { return "NOTANUMBER:{$s}|{$o}" }
+    if {double($s) == 0.0} { return FLAT }
+    set d [expr {(1.0 - double($o))/double($s)}]
+    if {$which eq {low}} { return [expr {[bw_fp] - $d}] }
+    return [expr {[bw_fp] + $d}]
+}
+# the margin a loop phase in degrees names, total on its argument so a
+# disposition word reaching it fails the row instead of raising inside it.
+proc pm_margin {p} {
+    if {![mt_finite $p]} { return "NOTANUMBER:{$p}" }
+    return [expr {180.0 + double($p)}]
+}
+# THE MINIMUM ADJACENT RELATIVE SPREAD OF A SERIES IN SWEEP ORDER, which is the
+# statistic issue 1643's third face says to measure -- and NOT the one `bw_sep`
+# answers, because that proc sorts a set of candidate answers first.  A series
+# can have a range of 2.4e-3 with an adjacent pair at 2.22e-11, and a producer
+# that repeated one element into the next passes a row driven on it.
+proc pm_adjmin {l} {
+    set n [mt_len $l]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    foreach v $l { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    set mn {}
+    for {set i 1} {$i < $n} {incr i} {
+        set a [lindex $l [expr {$i-1}]] ; set b [lindex $l $i]
+        set s [expr {max(abs(double($a)),abs(double($b)))}]
+        if {$s == 0.0} { return "ZEROPAIR:$i" }
+        set r [expr {abs(double($b)-double($a))/$s}]
+        if {$mn eq {} || $r < $mn} { set mn $r }
+    }
+    return $mn
+}
+# HOW MANY ELEMENTS OF TWO COLUMNS REALLY DIFFER, so the wrap row's claim that
+# this fixture really wraps is taken in the run rather than asserted in prose.  A
+# COUNT and never the elements, because the elements are "%.16g" figures and a
+# row comparing one would put a reproducible number in the T1 verdict.
+proc pm_ndiff {a b} {
+    set n [mt_len $a] ; set m [mt_len $b]
+    if {![string is integer -strict $n]} { return $n }
+    if {![string is integer -strict $m]} { return $m }
+    if {$n != $m} { return "lengths:$n|$m" }
+    set d 0
+    foreach x $a y $b { if {$x ne $y} { incr d } }
+    return $d
+}
+# `outside` when an index is NOT one of the two a named bracket covers.  This is
+# what makes the units belt's "whole column, not the crossing pair" claim a
+# measurement: on the realistic drive the offending sample sits outside the pair
+# the crossing came from, so a guard keyed to that pair sees neither of them.
+proc pm_outside {i k} {
+    if {![string is integer -strict $i] || ![string is integer -strict $k]} {
+        return "notindices:{$i}|{$k}"
+    }
+    if {$i == $k || $i == $k+1} { return "INSIDE:$i" }
+    return outside
+}
+# the largest sample of a column by a DIFFERENT mechanism from a scan -- sort a
+# copy and take the top -- total on a sentinel so a probe failure fails the row
+# instead of raising inside `lsort -real`, which a `-nan` does.
+proc pm_max {l} {
+    set n [mt_len $l]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    foreach v $l { if {![mt_finite $v]} { return "NOTANUMBER:{$v}" } }
+    return [lindex [lsort -real -decreasing $l] 0]
+}
+
+# =========================================================================
+group MT25 {
+    # --- PM0: the fixture, the drives, and the spreads every door leans on --
+    pcall mt_load ac
+    set pmXS [mt_col frequency 0]
+    array set pmC {}
+    set pmNAMES {g4 g13 g20 g625 g3 ph4 ph3 ph4c pw4 db4 db3 grise g2x vlp}
+    foreach pmn $pmNAMES { set pmC($pmn) [pm_col $pmn] }
+    set pmBADTOK {}
+    foreach pmn $pmNAMES {
+        set pmr [pcall calc::rpn_bad_token [pm_rpn $pmn]]
+        if {$pmr ne {}} { lappend pmBADTOK "$pmn=$pmr" }
+    }
+    set pmCLOSED {}
+    foreach pmn {g4 g13 g20 g625 g3} {
+        lappend pmCLOSED [mt_distinctmap2 $pmC($pmn) \
+            [lmap pmf $pmXS {expr {[pm_k $pmn]*pow([bw_mag $pmf],[pm_n $pmn])}}]]
+    }
+    check "MT25/PM0 the fixture really is the AC arm this band needs and every drive really is the closed form each expectation below is built from: `sim_type` is ac, `frequency` resolves BY NAME and `time` does not, every drive is accepted by `calc::rpn_bad_token`, and the five scaled loops' magnitude columns agree ELEMENT BY ELEMENT with a Tcl closed form for `k*|H|^n` built from the SAME two constants their own RPN text is built from -- which is what licenses calling them k-gain n-pole loops rather than fictions, and what would catch a constant edited into one place and not the other.  The rising and two-crossing drives are checked the same way.  ⚠ THE ADJACENT-PAIR SPREADS ARE MEASURED, NOT THE RANGES: every series a row below compares element-wise is asserted to have its SMALLEST adjacent spread above a floor, so a producer that repeated one element into the next cannot satisfy a door; and the sweep column is asserted to be integer-SPELLED, which is the live hazard the interpolation row fences" \
+        [list [pcall xschem raw sim_type] [pcall xschem raw datasets] \
+              [pcall xschem raw index frequency] [pcall xschem raw index time] \
+              [mt_len $pmXS] [mt_at $pmXS 0] [mt_at $pmXS end] $pmBADTOK \
+              [lsort -unique $pmCLOSED] \
+              [mt_distinctmap2 $pmC(grise) \
+                  [lmap pmf $pmXS {expr {[pm_rise_k]*pow(1.0+pow(double($pmf)/[bw_fp],2),2.0)}}]] \
+              [mt_distinctmap2 $pmC(g2x) \
+                  [lmap pmf $pmXS {expr {[lindex [pm_two_c] 0]*abs(double($pmf)-[bw_fp]) \
+                                         + [lindex [pm_two_c] 1]}}]] \
+              [gm_wrapped $pmC(pw4)] \
+              [mt_atleast [pm_ndiff $pmC(pw4) $pmC(ph4)] 5] \
+              [bw_floor [pm_adjmin $pmXS] 1e-2] \
+              [bw_floor [pm_adjmin $pmC(g4)] 1e-2] \
+              [bw_floor [pm_adjmin $pmC(ph4)] 1e-2] \
+              [bw_floor [pm_adjmin $pmC(g2x)] 1e-2] \
+              [mt_at [gm_negs $pmC(db4)] 0] [llength [gm_negs $pmC(g4)]] \
+              [string is integer -strict [mt_at $pmXS 3]]] \
+        [list ac 1 0 -1 20 100 2000 {} same same same wrapped atleast5 \
+              over1e-2 over1e-2 over1e-2 over1e-2 5 0 1]
+
+    # --- PM1: THE SIGNATURE AND THE SPEC, THROUGH THE INTERPRETER -----------
+    # ⚠⚠ `info args` AND `info default`, NEVER A TEXT SCAN.  Issue 1646 cost five
+    # rounds at a sibling site and every evasion found there -- a comment copy of
+    # the signature, an unqualified callee, a backslash continuation -- defeated a
+    # source-text pin, while no `info args` leg was ever defeated by any of the 43
+    # derived sabotages.  `info args` reports names only and CANNOT see a default,
+    # which is its own trap, so `info default` is a separate leg per formal.
+    #
+    # ⚠ THE NO-`real`-FIELD LEG IS THIS VERB'S DISTINGUISHING PROPERTY AND IS
+    # ASSERTED HERE RATHER THAN LEFT TO BE NOTICED: it is why band MT21/NV now
+    # DERIVES the split between the verbs whose `real` fields that band sweeps and
+    # the ones it legitimately drives nothing for.  The control on `gainMargin`,
+    # which does have one, is what stops the leg passing vacuously.
+    set pm1ROW {}
+    foreach pm1r [pcall calc::catalogue] {
+        if {[lindex $pm1r 0] eq {phaseMargin}} { set pm1ROW $pm1r }
+    }
+    check "MT25/PM1 the signature and the argument spec are pinned through the INTERPRETER and not through a scan over source text: the formals exactly, each formal's `info default` separately because `info args` cannot see one, and the spec's own key list asserted EQUAL to the formals -- all three derived rather than written here, so a renamed, reordered or middle-inserted formal reddens instead of silently truncating the call `calc::arg_values` composes.  The surface proc is the BARE name, because this verb refuses `nth` 0 in its own body and so answers one number for every well-formed request, which leaves a `_scalar` wrapper nothing to defer.  ⚠ IT IS THE ONE CLICKABLE VERB WITH NO `real` FIELD, asserted here with `gainMargin` as the control: unity gain is 1 in a magnitude and 0 in dB, so no single default could be right in both units and the `gain` enum names the level instead of a field the user could get wrong.  The catalogue's `returns` word stays `scalar`, so S24's closed vocabulary and its eight category counts do not move" \
+        [list [mt_formals phaseMargin] \
+              [pcall ag_default phaseMargin rpnMag] [pcall ag_default phaseMargin rpnPh] \
+              [pcall ag_default phaseMargin gain] [pcall ag_default phaseMargin edge] \
+              [pcall ag_default phaseMargin nth] [pcall ag_default phaseMargin dataset] \
+              [mt_sameformals [mt_formals phaseMargin] [pcall gbw_speckeys phaseMargin]] \
+              [mt_atleast [llength [pcall gbw_speckeys phaseMargin]] 6] \
+              [mt_surface phaseMargin] [lindex $pm1ROW 3] [lindex $pm1ROW 2] \
+              [llength [info procs ::calc::phaseMargin_scalar]] \
+              [llength [pcall m21_realkeys phaseMargin]] \
+              [mt_atleast [llength [pcall m21_realkeys gainMargin]] 1] \
+              [pcall m21_reqkeys phaseMargin] \
+              [mt_formals __mt_no_such_proc_zz]] \
+        [list {rpnMag rpnPh gain edge nth dataset} {0 {}} {0 {}} \
+              {1 magnitude} {1 falling} {1 1} {1 0} same atleast6 \
+              phaseMargin scalar T 0 0 atleast1 {rpnMag rpnPh} \
+              NOPROC:calc::__mt_no_such_proc_zz]
+
+    # --- PM2: THE TWO ENUMS, LIFTED OUT OF THE VERB'S OWN BODY --------------
+    # ⚠ THE LITERAL SPELLING IN THE PRODUCT IS LOAD-BEARING: `ag_enum_in` lifts a
+    # member list with a regexp over the validator's OWN body, so the drift fence
+    # needs the `lsearch -exact {..} $var` spelling with the members in the
+    # argspec's order.  The positive control on `cross` is what stops a broken
+    # lift passing two rows as vacuously equal.
+    check "MT25/PM2 both enum fields offer EXACTLY the members the verb's own body tests against, LIFTED out of the shipped validator with a regexp rather than written here -- so a dialog offering a third gain unit or a fourth edge, and a verb accepting one the dialog cannot offer, are caught by the drift instead of by someone meeting a refusal in the field.  Each default is asserted to be one of ITS OWN members and to be the default the shipped proc already states, and the edge list is asserted to carry the same members as `cross`'s in a DIFFERENT order -- `falling` first, because a loop gain FALLS through unity at crossover.  The positive control is the same lift on `calc::cross`, which is known to carry a literal, so a lift that answered nothing could not pass two legs as equal" \
+        [list [pcall ag_enum_in phaseMargin edge] [pcall ag_enum_in phaseMargin gain] \
+              [lrange [pcall ag_field phaseMargin edge 2] 1 end] \
+              [lrange [pcall ag_field phaseMargin gain 2] 1 end] \
+              [pcall ag_field phaseMargin edge 4] [pcall ag_field phaseMargin gain 4] \
+              [expr {[lsort [pcall ag_enum_in phaseMargin edge]] \
+                     eq [lsort [pcall ag_enum_in cross edge]] ? {samemembers} : {DIFFER}}] \
+              [expr {[pcall ag_enum_in phaseMargin edge] \
+                     ne [pcall ag_enum_in cross edge] ? {reordered} : {SAMEORDER}}] \
+              [pcall ag_enum_in cross edge] \
+              [pcall ag_enum_in phaseMargin __mt_nosuch_zz]] \
+        [list {falling rising either} {magnitude dB} \
+              {falling rising either} {magnitude dB} falling magnitude \
+              samemembers reordered {rising falling either} \
+              NOLITERAL:phaseMargin/__mt_nosuch_zz]
+
+    # --- PM3: THE PARITY TRAP, BEHAVIOURALLY, OVER A DERIVED ARM SET --------
+    # ⚠⚠ A COMMENT BETWEEN TWO `switch` PATTERNS IS A PARSE ERROR `info complete`
+    # CANNOT SEE, AND IT IS PARITY-DEPENDENT: an EVEN word count re-pairs the
+    # trailing list into a silent no-op that detonates the moment one word is
+    # edited, an ODD one makes Tcl raise out of EVERY arm.  This stage wrote
+    # patterns into two big `switch`es, so the arm set is DERIVED from
+    # `calc::cross_msg`'s own trailing switch argument, parsed as the list Tcl
+    # parses it -- the new arms are driven the run they land and a hand-kept list
+    # cannot rot into covering fewer of them than it reads as covering.
+    set pm3ARMS {}
+    foreach pm3a [pcall mt_switch_arms cross_msg] {
+        if {[string match pm* $pm3a]} { lappend pm3ARMS $pm3a }
+    }
+    set pm3BAD {}
+    foreach pm3a $pm3ARMS {
+        set pm3s [pcall calc::cross_msg $pm3a AAA BBB]
+        if {[string match ERR:* $pm3s]} { lappend pm3BAD "$pm3a=RAISED" ; continue }
+        if {$pm3s eq {}} { lappend pm3BAD "$pm3a=EMPTY-FALLTHROUGH" ; continue }
+        if {[mt_shape $pm3s] ne {ok}} { lappend pm3BAD "$pm3a=shape:[mt_shape $pm3s]" ; continue }
+        if {[mt_family $pm3s] ne {Phase margin}} { lappend pm3BAD "$pm3a=family:[mt_family $pm3s]" }
+    }
+    check "MT25/PM3 the parity trap is confirmed BEHAVIOURALLY over an arm set DERIVED from `calc::cross_msg`'s own trailing switch argument and from `calc::fn_argspec`'s: every one of this verb's arms is driven at the arity `info args` reports, none raises, none answers the empty fall-through, each is in the house sentence shape and each opens on THIS verb's name -- and the decommented parse is asserted to AGREE with the raw one for both procs, which is the only thing in the tree that sees an EVEN-word comment between two patterns.  The arm floor rides along so a derivation that answered nothing could not pass, and the argspec arm is driven as well because an argspec that raises takes the whole dialog down rather than one sentence" \
+        [list $pm3BAD [mt_atleast [llength $pm3ARMS] 9] \
+              [pcall mt_switch_agree cross_msg] [pcall mt_switch_drive cross_msg] \
+              [pcall mt_switch_agree fn_argspec] [pcall mt_switch_drive fn_argspec] \
+              [expr {[lsearch -exact [pcall mt_switch_arms fn_argspec] phaseMargin] >= 0 \
+                     ? {present} : {MISSING}}] \
+              [expr {[llength [pcall calc::fn_argspec phaseMargin]] > 0 ? {nonempty} : {EMPTY}}]] \
+        [list {} atleast9 agree {} agree {} present nonempty]
+
+    # --- PM4: THE CLOSED FORM, ON THE ON-SAMPLE DRIVE -----------------------
+    # ⚠⚠ THIS ROW IS NON-VACUOUS IN VALUE AND VACUOUS IN METHOD, AND IT SAYS SO
+    # RATHER THAN LEAVING A LATER READER TO DELETE "the redundant other one".  The
+    # 1.5625-gain four-pole loop's unity crossing falls ON a swept sample -- the
+    # magnitude there is bit-exactly 1, asserted in the run -- so a producer with
+    # NO interpolation whatsoever answers the same margin here to within a few
+    # ULP, which is issue 1643's class one level up.  What this row CAN carry is
+    # the exact value at a door fifteen orders tighter than any grid error,
+    # because both halves of the measurement are analytic here: PM5 is where the
+    # interpolation is fenced, and the snap producer is MEASURED as `same` in this
+    # run so nobody reads this row as rejecting it.
+    set pm4CF [pm_closed [pm_k g4] [pm_n g4]]
+    set pm4A [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 0]
+    check "MT25/PM4 the answer agrees with the deck's own closed form -- an analytic root of `k*|H|^n = 1` and the analytic `180 - n*atan(x)` at it, with no simulator, no sample and no interpolation anywhere in the comparand -- on the drive whose unity crossing falls ON a swept sample, where both halves are exact; and the crossover frequency the verb PUBLISHES is asserted against the same closed form beside it, so the X half of the measurement is a claim about this verb rather than about `calc::cross_scan`.  ⚠ THE ROW IS DELIBERATELY VACUOUS IN METHOD and names the row that is not: a producer that read the bracketing SAMPLE with no interpolation at all is within a few ULP here, measured in this run as `same`, and PM5 is the row that rejects it.  The sample's magnitude is asserted bit-exactly 1, so a regenerated fixture that moved the crossing off the grid reddens here instead of quietly loosening the door" \
+        [list [mt_disp $pm4A] \
+              [near [mt_val $pm4A] [gm_cf $pm4CF 1] 1e-12] \
+              [near [mt_key $pm4A xcross] [gm_cf $pm4CF 0] 1e-12] \
+              [mt_sink $pm4A] \
+              [bw_exact [mt_at $pmC(g4) 4] 1] \
+              [mt_distinct [mt_val $pm4A] [pm_margin [mt_at $pmC(ph4) 4]]] \
+              [mt_finite [gm_cf $pm4CF 1]] [mt_finite [gm_cf $pm4CF 0]]] \
+        {measured ok ok buffer exact same 1 1}
+
+    # --- PM5: THE INTERPOLATION, OFF-SAMPLE, AGAINST A TWO-SAMPLE SOLVE -----
+    # ⚠⚠ THE COMPARAND'S MECHANISM DIFFERS FROM THE PRODUCT'S RATHER THAN ONLY
+    # ITS CODE.  For each drive the suite NAMES the bracketing sample index,
+    # validates it with its own straddle and bracket tests, reads exactly those
+    # samples and solves two straight lines once -- `bw_line` for the X at unity
+    # gain and `gm_yline` for the Y at that X.  There is no walk, no scan, no peak
+    # and no ordinal in it, so a wrong bracket, an off-by-one or a
+    # y0-instead-of-interpolate is not expressible in the comparand at all.
+    #
+    # ⚠ THE SNAP PRODUCER IS REJECTED ON BOTH ENDPOINTS OF EVERY DRIVE, which is
+    # the leg PM4 cannot carry.  Four drives are used and not one, because the
+    # grid's own chord error varies between them and a single drive would leave
+    # the door's position looking like a choice: the closed-form residue is
+    # asserted from BELOW as well as above, so this row cannot silently become a
+    # restatement of PM4 either.
+    set pm5BAD {} ; set pm5N 0
+    foreach {pm5d pm5p pm5k} {g13 ph4 2 g20 ph4 5 g625 ph4 11 g3 ph3 11} {
+        incr pm5N
+        set pm5X [bw_line $pmXS $pmC($pm5d) $pm5k 1.0]
+        set pm5Y [gm_yline $pmXS $pmC($pm5p) $pm5k $pm5X]
+        set pm5CF [pm_closed [pm_k $pm5d] [pm_n $pm5d]]
+        set pm5A [mt_call phaseMargin [pm_rpn $pm5d] [pm_rpn $pm5p] magnitude falling 1 0]
+        foreach {pm5w pm5got} [list \
+                disp      [mt_disp $pm5A] \
+                straddle  [bw_straddle $pmC($pm5d) $pm5k 1.0 falling] \
+                bracket   [gm_brackets $pmXS $pm5k $pm5X] \
+                value     [near [mt_val $pm5A] [pm_margin $pm5Y] 1e-9] \
+                xcross    [near [mt_key $pm5A xcross] $pm5X 1e-9] \
+                closed    [near [mt_val $pm5A] [gm_cf $pm5CF 1] 1e-2] \
+                snaphi    [gbw_far [mt_val $pm5A] [pm_margin [mt_at $pmC($pm5p) [expr {$pm5k+1}]]] 1e-2] \
+                snaplo    [gbw_far [mt_val $pm5A] [pm_margin [mt_at $pmC($pm5p) $pm5k]] 1e-2] \
+                chordmax  [bw_ceil [gbw_sep [mt_val $pm5A] [gm_cf $pm5CF 1]] 1e-2] \
+                chordmin  [bw_floor [gbw_sep [mt_val $pm5A] [gm_cf $pm5CF 1]] 1e-5]] {
+            set pm5want [dict get {disp measured straddle straddles bracket brackets \
+                                   value ok xcross ok closed ok snaphi far snaplo far \
+                                   chordmax under1e-2 chordmin over1e-5} $pm5w]
+            if {$pm5got ne $pm5want} { lappend pm5BAD "$pm5d/$pm5w=$pm5got" }
+        }
+    }
+    check "MT25/PM5 the interpolation is measured OFF-SAMPLE on FOUR drives against two straight lines solved through a NAMED bracketing pair whose index is validated by a straddle test and a bracket test -- a comparand with no walk, no scan and no ordinal in it, which cannot agree with a bracketing bug by construction -- at a door seven orders tighter than the grid's own chord error, and against the analytic margin at a door the chord error fits inside.  THE SNAP PRODUCER IS MEASURED AND REJECTED on BOTH endpoints of every drive, which is the WD8-class sabotage the on-sample row sleeps through: a producer that read the sample at or just past the crossing, or either end of the bracket, is one to two orders outside this row's door.  The chord error itself is asserted from BELOW as well as above, so the row cannot silently become a restatement of PM4, and the drive count rides along so an empty sweep could not pass" \
+        [list $pm5BAD [mt_sized $pm5N 4]] {{} sized}
+
+    # --- PM6: THE GAIN UNITS ARE A DECLARATION, NOT AN INFERENCE ------------
+    # ⚠ THE AGREEMENT LEG IS DRIVEN ON THE ON-SAMPLE LOOP, AND THAT IS A
+    # MEASUREMENT RATHER THAN A CONVENIENCE.  Interpolating a crossing in dB and
+    # in magnitude are DIFFERENT operations on the same two samples, so the two
+    # declared units agree only where the crossing lands on a sample; off-sample
+    # they differ by the chord asymmetry, which this row measures as its own leg
+    # rather than hiding behind a loose door.  The agreement is therefore a claim
+    # that `gain` is a UNITS DECLARATION naming the level -- 1 in a magnitude, 0
+    # in dB -- and not two different measurements.
+    #
+    # ⚠⚠ AND THE BELT IS KEYED TO THE WHOLE COLUMN, WHICH THIS ROW PROVES MATTERS
+    # ON THE REALISTIC DRIVE RATHER THAN A CONTRIVED ONE.  The user's buffer is
+    # most likely to hold the expression they were PLOTTING, and a Bode plot is
+    # drawn in dB.  Handed as a magnitude, that column crosses the level 1.0
+    # between two samples NEITHER of which is negative -- measured here by index --
+    # so a guard keyed to the crossing pair accepts it, and the row computes what
+    # the verb WOULD then have answered and asserts it is far from the truth.
+    set pm6WX [bw_line $pmXS $pmC(db4) 3 1.0]
+    set pm6WY [gm_yline $pmXS $pmC(ph4) 3 $pm6WX]
+    set pm6M [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 0]
+    set pm6D [mt_call phaseMargin [pm_rpn db4] [pm_rpn ph4] dB falling 1 0]
+    set pm6OM [mt_call phaseMargin [pm_rpn g3] [pm_rpn ph3] magnitude falling 1 0]
+    set pm6OD [mt_call phaseMargin [pm_rpn db3] [pm_rpn ph3] dB falling 1 0]
+    set pm6BAD [mt_call phaseMargin [pm_rpn db4] [pm_rpn ph4] magnitude falling 1 0]
+    set pm6BADU [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] decibels falling 1 0]
+    check "MT25/PM6 the gain units are the USER'S DECLARATION and never an inference: the SAME loop declared `magnitude` and declared `dB` answers the same margin AND the same crossover on the ON-SAMPLE drive, where the crossing lands on a sample and both readings are exact -- and the row MEASURES, as its own leg, that the two declarations DIVERGE off-sample, because interpolating a crossing in dB and in magnitude are different operations on one pair of samples.  The dB drive being MEASURED at all is the proof that the negativity belt does not run in dB mode, on a column this row shows really does go negative.  ⚠ THE BELT IS KEYED TO THE WHOLE COLUMN AND THIS ROW PROVES THAT MATTERS ON THE LIKELIEST USER ERROR: the dB column handed as a magnitude crosses 1.0 between two samples NEITHER of which is negative -- its first negative index is measured here and asserted OUTSIDE that pair -- so a guard keyed to the crossing pair would accept it, and the margin it would then have answered is computed in this run and asserted FAR from the truth.  A non-member unit is refused by the membership test, by identity against the arm" \
+        [list [mt_disp $pm6M] [mt_disp $pm6D] \
+              [near [mt_val $pm6D] [mt_val $pm6M] 1e-9] \
+              [near [mt_key $pm6D xcross] [mt_key $pm6M xcross] 1e-9] \
+              [mt_disp $pm6OM] [mt_disp $pm6OD] \
+              [gbw_far [mt_val $pm6OD] [mt_val $pm6OM] 1e-3] \
+              [mt_atleast [llength [gm_negs $pmC(db4)]] 10] \
+              [mt_disp $pm6BAD] \
+              [string equal [mt_msg $pm6BAD] \
+                   [pcall calc::cross_msg pmnotmag [mt_at $pmC(db4) 5]]] \
+              [bw_straddle $pmC(db4) 3 1.0 falling] \
+              [pm_outside [mt_at [gm_negs $pmC(db4)] 0] 3] \
+              [gbw_far [pm_margin $pm6WY] [mt_val $pm6M] 1e-1] \
+              [mt_disp $pm6BADU] \
+              [string equal [mt_msg $pm6BADU] [pcall calc::cross_msg pmunits decibels]]] \
+        [list measured measured ok ok measured measured far atleast10 refused 1 \
+              straddles outside far refused 1]
+
+    # --- PM7: `cph()` IS THE VERB'S, AND THE WRAP IS A 360-DEGREE ERROR -----
+    # ⚠⚠ THIS IS THE ROW THE VERB EXISTS TO PASS.  The drive is chosen so that
+    # the unity crossing sits PAST the -180 degree wrap -- both bracketing phase
+    # samples are asserted below -180 in the run, and the wrapped column's
+    # corresponding samples asserted positive -- which is exactly the case a real
+    # simulator's `ph()` column presents and exactly where an unstable loop reads
+    # as a comfortable margin.  The NEGATIVE leg is computed by this file's own
+    # two-sample solve on the WRAPPED column, so the 360-degree answer is measured
+    # rather than asserted, and the row requires the verb's answer to be a whole
+    # relative unit away from it.
+    #
+    # ⚠ THE OPCODE IS APPLIED BY THE VERB AND NOT BY THE DRIVE, proved in both
+    # directions on ONE operand: wrapped and continuous answer BIT-IDENTICALLY.
+    # That is safe because `cph()` is the exact identity on an already-continuous
+    # column -- asserted here as a zero difference count over all twenty samples,
+    # which is also the declared limit L1's mechanism, since the opcode anchors
+    # its branch on the FIRST swept point.  A text leg over the decommented body
+    # rides along and is DECLARED the weaker of the two.
+    set pm7X [bw_line $pmXS $pmC(g625) 11 1.0]
+    set pm7NO [pm_margin [gm_yline $pmXS $pmC(pw4) 11 $pm7X]]
+    set pm7CF [pm_closed [pm_k g625] [pm_n g625]]
+    set pm7W [mt_call phaseMargin [pm_rpn g625] [pm_rpn pw4] magnitude falling 1 0]
+    set pm7U [mt_call phaseMargin [pm_rpn g625] [pm_rpn ph4] magnitude falling 1 0]
+    check "MT25/PM7 `cph()` is applied by the VERB, proved in BOTH directions on ONE operand and on the drive where it is load-bearing: the unity crossing sits PAST the -180 degree wrap -- both bracketing phase samples measured below -180 and the wrapped column's own samples measured POSITIVE there -- and the same loop phase handed WRAPPED, every sample asserted inside (-180, 180], and handed CONTINUOUS answer the same margin and the same crossover BIT FOR BIT, both agreeing with the closed form.  THE NEGATIVE LEG IS A 360-DEGREE ERROR MEASURED IN THIS RUN: the suite solves the wrapped column at the same crossing with its own two-sample line and the verb's answer is asserted a whole relative unit away from it, which is what an unwrapped read of a real simulator's phase column would have put in the buffer.  The opcode is the exact identity on the continuous column, asserted as a zero difference count over every sample, so appending it can never hurt -- which is the other half of the claim" \
+        [list [gm_wrapped $pmC(pw4)] \
+              [bw_lt [mt_at $pmC(ph4) 11] -180] [bw_lt [mt_at $pmC(ph4) 12] -180] \
+              [expr {[mt_at $pmC(pw4) 11] > 0 && [mt_at $pmC(pw4) 12] > 0 \
+                     ? {positive} : {NOTPOSITIVE}}] \
+              [mt_disp $pm7W] [mt_disp $pm7U] \
+              [expr {[mt_val $pm7W] eq [mt_val $pm7U] ? {bitidentical} \
+                     : "DIFFER:[mt_val $pm7W]|[mt_val $pm7U]"}] \
+              [expr {[mt_key $pm7W xcross] eq [mt_key $pm7U xcross] ? {bitidentical} : {DIFFER}}] \
+              [near [mt_val $pm7U] [gm_cf $pm7CF 1] 1e-2] \
+              [gbw_far [mt_val $pm7U] $pm7NO 1e0] \
+              [bw_floor [gbw_sep [mt_val $pm7U] $pm7NO] 1e0] \
+              [pm_ndiff $pmC(ph4) $pmC(ph4c)] \
+              [expr {[string first {cph()} \
+                         [pcall mt_decomment [pcall info body ::calc::phaseMargin]]] >= 0 \
+                     ? {names-it} : {ABSENT}}]] \
+        [list wrapped below below positive measured measured bitidentical bitidentical \
+              ok far over1e0 0 names-it]
+
+    # --- PM8: `nth` 0 IS REFUSED, AND ONLY A TWO-CROSSING DRIVE FORCES IT ---
+    # ⚠⚠ BOTH HALVES MEASURED.  On a ONE-crossing drive `calc::cross_scan`'s
+    # `nth` 0 arm answers a ONE-element list, every Tcl comparison converts it,
+    # and an unguarded interpolation would have returned a correct-looking number;
+    # on a TWO-crossing drive it answers two and the same path answers an EMPTY
+    # bracket, which is a FALSE ABSENCE for a good request.  So the obvious
+    # single-crossing drive cannot see the defect and the row says so.
+    set pm8ONE [pcall calc::cross_scan $pmXS $pmC(g4) 1.0 0 falling]
+    set pm8TWO [pcall calc::cross_scan $pmXS $pmC(g2x) 1.0 0 either]
+    set pm8A [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude either 0 0]
+    set pm8B [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 0 0]
+    set pm8C [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 0.0 0]
+    set pm8D [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1.5 0]
+    set pm8E [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling abc 0]
+    check "MT25/PM8 `nth` 0 is REFUSED rather than silently two-faced, and the row carries the measurement that says WHY the obvious drive cannot see it: `calc::cross_scan`'s `nth` 0 arm answers a ONE-element list on the single-crossing drive -- which every Tcl comparison converts, so an unguarded interpolation would have returned a correct-looking number -- and a TWO-element list on the two-crossing drive, where the same unguarded path answers an empty bracket and the user reads a FALSE ABSENCE for a good request.  The guarded verb answers the deferral sentence by identity on BOTH drives.  ⚠ The ordinal is integer-VALUED and not integer-SPELLED, which is `calc::cross`'s own reason: `0.0` names the ordinal zero and reaches the deferral, while a fractional and a non-numeric ordinal are refused through this verb's own arm quoting the text the user typed" \
+        [list [mt_len $pm8ONE] [mt_len [mt_at $pm8ONE 1]] [mt_len [mt_at $pm8TWO 1]] \
+              [mt_disp $pm8A] \
+              [string equal [mt_msg $pm8A] [pcall calc::cross_msg pmlistdefer]] \
+              [mt_disp $pm8B] \
+              [string equal [mt_msg $pm8B] [pcall calc::cross_msg pmlistdefer]] \
+              [mt_disp $pm8C] \
+              [string equal [mt_msg $pm8C] [pcall calc::cross_msg pmlistdefer]] \
+              [mt_disp $pm8D] \
+              [string equal [mt_msg $pm8D] [pcall calc::cross_msg pmbadnth 1.5]] \
+              [mt_disp $pm8E] \
+              [string equal [mt_msg $pm8E] [pcall calc::cross_msg pmbadnth abc]]] \
+        {2 1 2 refused 1 refused 1 refused 1 refused 1 refused 1}
+
+    # --- PM9: THE `edge` DEFAULT AND THE `nth` SELECTOR ---------------------
+    # ⚠ ZERO FIXTURE COST, AND THE EXPECTATIONS ARE ANALYTIC.  The rising drive
+    # is `k*(1 + x^2)^2`, whose unity crossing is a closed root of the deck's own
+    # pole; the two-crossing drive is piecewise LINEAR in f, so both of its
+    # crossings are exact and a linear interpolation of them is not an
+    # approximation at all.  No simulator appears in either expectation.
+    set pm9F [mt_call phaseMargin [pm_rpn grise] [pm_rpn ph4] magnitude falling 1 0]
+    set pm9R [mt_call phaseMargin [pm_rpn grise] [pm_rpn ph4] magnitude rising 1 0]
+    set pm9E [mt_call phaseMargin [pm_rpn grise] [pm_rpn ph4] magnitude either 1 0]
+    set pm9N1 [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude either 1 0]
+    set pm9N2 [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude either 2 0]
+    set pm9NM [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude either -1 0]
+    set pm9FA [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude falling 1 0]
+    set pm9RI [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude rising 1 0]
+    set pm9F2 [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude falling 2 0]
+    set pm9E3 [mt_call phaseMargin [pm_rpn g2x] [pm_rpn ph4] magnitude either 3 0]
+    check "MT25/PM9 the `edge` default and the `nth` selector are driven on operands whose unity crossings are known in CLOSED FORM: on a drive whose gain RISES through unity, the default `falling` reports an ABSENCE while `rising` and `either` measure at the analytic crossing -- so an `either` default, which would answer where `falling` must not, reddens here.  On a drive with ONE falling and ONE rising crossing, both at analytic frequencies, `nth` 1, 2 and -1 under `either` answer the two in the right order and from the right end, `falling` 1 and `rising` 1 each pick their own, and `falling` 2 is ABSENT -- which is R414a's counting WITHIN the selected direction, and what a selector that counted crossings overall and filtered by edge afterwards cannot produce.  The crossing the verb PUBLISHES is what is compared, so the claim is about this verb's answer and not about the primitive, and the two margins are asserted DISTINCT so a verb answering one number for every request could not pass" \
+        [list [mt_disp $pm9F] [mt_disp $pm9R] [mt_disp $pm9E] \
+              [near [mt_key $pm9R xcross] [pm_closed_rise [pm_rise_k]] 1e-2] \
+              [expr {[mt_val $pm9R] eq [mt_val $pm9E] ? {bitidentical} : {DIFFER}}] \
+              [near [mt_key $pm9N1 xcross] [pm_two_f low] 1e-12] \
+              [near [mt_key $pm9N2 xcross] [pm_two_f high] 1e-12] \
+              [near [mt_key $pm9NM xcross] [pm_two_f high] 1e-12] \
+              [near [mt_key $pm9FA xcross] [pm_two_f low] 1e-12] \
+              [near [mt_key $pm9RI xcross] [pm_two_f high] 1e-12] \
+              [mt_disp $pm9F2] [mt_disp $pm9E3] \
+              [mt_distinct [mt_val $pm9N1] [mt_val $pm9N2]] \
+              [mt_finite [pm_two_f low]] [mt_finite [pm_closed_rise [pm_rise_k]]]] \
+        {absent measured measured ok bitidentical ok ok ok ok ok absent absent distinct 1 1}
+
+    # --- PM10: THE AC GATE, WHICH IS THIS VERB'S ISSUE-1653 ANSWER ----------
+    # ⚠⚠ THE LUCKY GUARD IS NOT RELIED ON AND THIS ROW IS WHAT SHOWS THE
+    # DIFFERENCE.  On a `tran` arm `xschem raw index ph(lp)` is -1, so a
+    # `ph()`-shaped operand is refused by the pre-flight for free -- but the user
+    # may hand ANY expression as the phase, and the row drives operands that BOTH
+    # resolve on that arm, asserted in the run through `calc::rpn_bad_token`.
+    # Everything a confident answer needs is then present: the sweep resolves, the
+    # gain really crosses unity -- `calc::cross` itself answers a crossing in
+    # SECONDS, measured here -- and the arithmetic yields a FINITE number of
+    # degrees.  So the refusal is suppressing a confident meaningless answer and
+    # not declining an impossible request, which is issue 1653's complaint
+    # exactly.
+    pcall mt_load tran
+    set pm10A [mt_call phaseMargin [pm_rpn g4] {v(div) 100 *} magnitude falling 1 0]
+    set pm10X [mt_call cross [pm_rpn g4] 1.0 1 falling 0]
+    set pm10TS [mt_col time 0]
+    set pm10TP [mt_addcol __mt_pm_tp {v(div) 100 *} 0]
+    set pm10W [pm_margin [pcall calc::sample_at $pm10TS $pm10TP [mt_val $pm10X]]]
+    check "MT25/PM10 a time-domain database is REFUSED by `sim_type`, naming it, and the row measures that the refusal is suppressing a confident meaningless answer rather than declining an impossible request -- which is issue 1653's complaint in one drive.  BOTH operands are asserted to RESOLVE on that arm through `calc::rpn_bad_token`, so the gate cannot be mistaken for the accident that `ph(lp)` fails to resolve there; `calc::cross` itself answers a unity-gain crossing on the same gain column, in SECONDS, asserted BELOW one so a reader can see it is not a frequency; and the phase operand interpolated at that crossing yields a FINITE number of degrees.  Every ingredient of a plausible wrong answer is therefore present and the verb refuses anyway.  The refusal is NOT `cross`'s own no-sweep sentence, asserted by identity, and the ac arm is restored afterwards rather than assumed" \
+        [list [pcall xschem raw sim_type] \
+              [pcall calc::rpn_bad_token [pm_rpn g4]] \
+              [pcall calc::rpn_bad_token {v(div) 100 *}] \
+              [mt_disp $pm10A] \
+              [string equal [mt_msg $pm10A] [pcall calc::cross_msg pmnotac tran]] \
+              [expr {[mt_msg $pm10A] eq [pcall calc::cross_msg nosweep tran] \
+                     ? {CROSSSENTENCE} : {ownvoice}}] \
+              [mt_family [mt_msg $pm10A]] \
+              [mt_disp $pm10X] [gbw_below [mt_val $pm10X] 1] [mt_finite $pm10W] \
+              [mt_disp [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 0]]] \
+        [list tran {} {} refused 1 ownvoice {Phase margin} measured below 1 refused]
+
+    # --- PM11: THE ABSENCE IS THIS VERB'S OWN SENTENCE ----------------------
+    # ⚠ THE LINE IS PRINCIPLED RATHER THAN STYLISTIC: a refusal about something
+    # the USER supplied is propagated verbatim, one about something only the VERB
+    # chose must be in the verb's own voice.  `calc::cross`'s absence sentence
+    # reads *"there is no 1st falling crossing of THAT LEVEL in this sweep"*, and
+    # "that level" names nothing the user typed -- unity gain is the VERB's.  The
+    # ordinal still comes from `calc::cross_ordinal`, so `nth -1` reads "1st from
+    # the end" in both voices.
+    pcall mt_load ac
+    set pm11A [mt_call phaseMargin [pm_rpn vlp] [pm_rpn ph4] magnitude falling 1 0]
+    set pm11B [mt_call phaseMargin [pm_rpn g4] [pm_rpn nan] magnitude falling 1 0]
+    check "MT25/PM11 an absence is reported in THIS verb's voice and not by propagating `calc::cross`'s, because the user named no level -- asserted as a non-identity against that sentence and an identity against this verb's own arm, with the ordinal still coming from `calc::cross_ordinal` so the two voices agree about what `nth` means.  The drive is a gain that never reaches unity, which is a PERMANENT property of one real pole driven by a unit source and not a sweep accident: the column's maximum is measured BELOW one in this run, by sorting a copy rather than by a scan.  An absence is distinguished from a refusal on the disposition, the minted destination is still reported so the diagnostic survives it, and the second drive shows the OTHER absence this verb can report -- a crossing nothing FINITE brackets in the phase column, which is reached by a real column of `-nan` rather than by a stub" \
+        [list [mt_disp $pm11A] [mt_shape [mt_msg $pm11A]] \
+              [bw_lt [pm_max $pmC(vlp)] 1] \
+              [expr {[mt_msg $pm11A] eq \
+                     [pcall calc::cross_msg absent [pcall calc::cross_ordinal 1] falling] \
+                     ? {CROSSSENTENCE} : {ownvoice}}] \
+              [string equal [mt_msg $pm11A] \
+                   [pcall calc::cross_msg pmnocross [pcall calc::cross_ordinal 1] falling]] \
+              [mt_family [mt_msg $pm11A]] \
+              [expr {[string match __calc_tmp* [mt_key $pm11A dest]] ? {minted} \
+                     : "NO:[mt_key $pm11A dest]"}] \
+              [mt_disp $pm11B] \
+              [string equal [mt_msg $pm11B] \
+                   [pcall calc::cross_msg pmnobracket [bw_line $pmXS $pmC(g4) 3 1.0]]]] \
+        [list absent ok below ownvoice 1 {Phase margin} minted absent 1]
+
+    # --- PM12: THE OWN DOOR, ITS FOUR OBLIGATIONS, AND R402 -----------------
+    # ⚠ READ OFF THE VERB'S OWN CLOSURE AND BODY rather than off a habit, and the
+    # claim is MT10's own-door claim for this class.  The ONE-FORMULA property is
+    # a count plus an ABSENCE: this verb's body contains NO `calc::cross_pair`
+    # call and NO division at all -- it crosses through `calc::cross_scan` and
+    # interpolates through `calc::sample_at`, which is the one proc in the
+    # namespace that divides for this purpose -- so a second copy of either line
+    # cannot hide from it, and the control shows the division half can find one.
+    #
+    # ⚠ NO FINITENESS GUARD ON THE MARGIN ITSELF IS NEEDED and the absence of a
+    # division is why: the answer is a SUM of 180 and a value `calc::sample_at`
+    # has already gated as finite, so there is no operation left that can produce
+    # an infinity from finite operands.
+    set pm12CL [pcall mt_calc_closure phaseMargin]
+    set pm12MISS {}
+    foreach pm12n {tmpvec rpn_bad_token cross_scan cross_pair sample_at eval_finite} {
+        if {[lsearch -exact $pm12CL $pm12n] < 0} { lappend pm12MISS $pm12n }
+    }
+    # ⚠⚠ THE RIDING LEGS ARE WHY THIS SWEEP CANNOT BE EMPTIED -- the same
+    # repair MT22/BW7 and MT24/GM11 carry, for the same built reason: trimmed to
+    # ONE drive this sweep left the whole file at ALL PASS, because `$pm12LEAK` is
+    # `{}` over one drive and over thirteen alike.
+    set pm12LEAK {} ; set pm12N 0 ; set pm12MINT 0 ; set pm12DISP {}
+    foreach {pm12db pm12m pm12p pm12g pm12e pm12n2} [list \
+            ac [pm_rpn g4]    [pm_rpn ph4] magnitude falling 1 \
+            ac [pm_rpn vlp]   [pm_rpn ph4] magnitude falling 1 \
+            ac [pm_rpn db4]   [pm_rpn ph4] magnitude falling 1 \
+            ac [pm_rpn g4]    [pm_rpn nan] magnitude falling 1 \
+            ac {zzz(nosuch)}  [pm_rpn ph4] magnitude falling 1 \
+            ac [pm_rpn g4]    {zzz(nosuch)} magnitude falling 1 \
+            ac [pm_rpn g4]    [pm_rpn ph4] magnitude falling 99 \
+            ac [pm_rpn g4]    [pm_rpn ph4] magnitude falling 0 \
+            ac [pm_rpn g4]    [pm_rpn ph4] sideways falling 1 \
+            ac [pm_rpn g4]    [pm_rpn ph4] magnitude sideways 1 \
+            ac {}             [pm_rpn ph4] magnitude falling 1 \
+            ac [pm_rpn g4]    {}           magnitude falling 1 \
+            tran [pm_rpn vlp] [pm_rpn vlp] magnitude falling 1] {
+        pcall mt_load $pm12db
+        incr pm12N
+        set pm12a [pcall mt_call phaseMargin $pm12m $pm12p $pm12g $pm12e $pm12n2 0]
+        lappend pm12DISP [mt_disp $pm12a]
+        if {[string match __calc_tmp* [mt_key $pm12a dest]]} { incr pm12MINT }
+        if {[llength [leaked]]} { lappend pm12LEAK "[leaked]@$pm12m/$pm12p/$pm12g/$pm12n2" }
+    }
+    pcall mt_load ac
+    check "MT25/PM12 the verb owns its engine door and discharges every obligation that comes with one, read off its OWN decommented body and its own CLOSURE rather than off a habit: it mints through `calc::tmpvec`, pre-flights through `calc::rpn_bad_token`, selects through `calc::cross_scan` -- the same proc `calc::cross` selects with, so R414c's two scan directions are not a second selector -- interpolates through `calc::sample_at`, the proc `calc::gainMargin` already reads its own quantity with, and issues the direct engine verbs itself while reaching `calc::cross` NOWHERE, which is MT10's own-door claim for this class.  THE ONE-FORMULA PROPERTY IS A COUNT PLUS AN ABSENCE: this verb's body contains no `calc::cross_pair` call and NO division at all, and the interpolator exactly one, so a second copy of either line cannot hide from it and the control shows the division half can find one.  R402's cleanup is then driven over a sweep reaching both the arms that mint a temporary and the arms that refuse before one, with the leak inventory asserted empty after each, and the sweep's SIZE, its number of past-the-mint drives and its set of dispositions all ride along -- because the leak leg alone reads the same empty list over one drive as over all of them" \
+        [list $pm12MISS [pcall bw_doors phaseMargin] \
+              [pcall mt_direct_raw phaseMargin] [pcall mt_reaches_cross phaseMargin] \
+              [pcall mt_closure_raw phaseMargin] \
+              [pcall bw_formula phaseMargin] [pcall bw_formula sample_at] \
+              [expr {[lindex [split [pcall bw_formula sample_at] /] 1] > 0 \
+                     ? {divides} : {NODIVISION}}] \
+              $pm12LEAK [probeleft] [mt_sized $pm12N 13] [mt_sized $pm12MINT 5] \
+              [lsort -unique $pm12DISP]] \
+        [list {} {add del values} yes no phaseMargin 0/0 0/1 divides {} {} \
+              sized sized {absent measured refused}]
+
+    # --- PM13: EVERY ARM OF THIS VERB, EACH DRIVEN BY ITS OWN TRIGGER -------
+    # ⚠⚠ THE SET OF ARMS DRIVEN IS ASSERTED EQUAL TO THE SET DERIVED from
+    # `calc::cross_msg`'s own trailing switch argument, so an arm added to the
+    # table or to the proc without the other reddens BY NAME instead of sitting
+    # outside a sweep that reads as coverage -- which is what a sibling arm sweep
+    # rotted into at 24 of its proc's 31 arms while staying green for a month.
+    #
+    # ⚠ EVERY ARM IS A REAL DRIVE AND NOT A STUB, including the two a reader would
+    # expect to need one: a crossing nothing FINITE brackets is reached with a real
+    # `-nan` phase column, and the empty-operand arm is driven on BOTH operands
+    # with the two sentences asserted to DIFFER, so a verb that names the wrong one
+    # of the two expressions is caught.
+    set pm13ARMS {}
+    foreach pm13a [pcall mt_switch_arms cross_msg] {
+        if {[string match pm* $pm13a]} { lappend pm13ARMS $pm13a }
+    }
+    set pm13BAD {} ; set pm13DRIVEN {} ; set pm13N 0
+    foreach {pm13k pm13spec} [list \
+            pmempty     [list ac {}              [pm_rpn ph4] magnitude falling 1   refused gain] \
+            pmunits     [list ac [pm_rpn g4]     [pm_rpn ph4] decibels  falling 1   refused decibels] \
+            pmedge      [list ac [pm_rpn g4]     [pm_rpn ph4] magnitude sideways 1  refused sideways] \
+            pmbadnth    [list ac [pm_rpn g4]     [pm_rpn ph4] magnitude falling 1.5 refused 1.5] \
+            pmlistdefer [list ac [pm_rpn g4]     [pm_rpn ph4] magnitude falling 0   refused @NONE@] \
+            pmnotac     [list tran [pm_rpn vlp]  {v(lp) 2 *}  magnitude falling 1   refused tran] \
+            pmnotmag    [list ac [pm_rpn db4]    [pm_rpn ph4] magnitude falling 1   refused @DBNEG@] \
+            pmnocross   [list ac [pm_rpn vlp]    [pm_rpn ph4] magnitude falling 1   absent  @ORD@] \
+            pmnobracket [list ac [pm_rpn g4]     [pm_rpn nan] magnitude falling 1   absent  @XC@] \
+            pmsameop    [list ac [pm_rpn g4]     [pm_rpn g4]  magnitude falling 1   refused @NONE@] \
+            pmsamecol   [list ac [pm_rpn g4] "[pm_rpn g4] 1 *" magnitude falling 1  refused @NONE@]] {
+        lappend pm13DRIVEN $pm13k
+        incr pm13N
+        foreach {pm13db pm13m pm13p pm13g pm13e pm13n2 pm13want pm13det} $pm13spec break
+        pcall mt_load $pm13db
+        set pm13a [mt_call phaseMargin $pm13m $pm13p $pm13g $pm13e $pm13n2 0]
+        if {[mt_disp $pm13a] ne $pm13want} {
+            lappend pm13BAD "$pm13k=[mt_disp $pm13a]" ; continue
+        }
+        set pm13e2 {}
+        if {$pm13det eq {@NONE@}} {
+            set pm13e2 {}
+        } elseif {$pm13det eq {@DBNEG@}} {
+            set pm13e2 [list [mt_at [pm_col db4] 5]]
+        } elseif {$pm13det eq {@ORD@}} {
+            set pm13e2 [list [pcall calc::cross_ordinal 1] falling]
+        } elseif {$pm13det eq {@XC@}} {
+            set pm13e2 [list [bw_line [mt_col frequency 0] [pm_col g4] 3 1.0]]
+        } else {
+            set pm13e2 [list $pm13det]
+        }
+        set pm13msg [mt_msg $pm13a]
+        if {![string equal $pm13msg [pcall calc::cross_msg $pm13k {*}$pm13e2]]} {
+            lappend pm13BAD "$pm13k=WRONG-ARM" ; continue
+        }
+        if {[mt_shape $pm13msg] ne {ok}} { lappend pm13BAD "$pm13k=shape" ; continue }
+        if {[mt_family $pm13msg] ne {Phase margin}} { lappend pm13BAD "$pm13k=family" ; continue }
+        if {[pcall calc::status_fit $pm13msg] ne $pm13msg} { lappend pm13BAD "$pm13k=ELIDES" }
+    }
+    pcall mt_load ac
+    set pm13PH [mt_call phaseMargin [pm_rpn g4] {} magnitude falling 1 0]
+    set pm13REUSED [pcall mt_verb_msg_arms phaseMargin pm]
+    check "MT25/PM13 every refusal and absence arm this verb owns is REACHED by a request built from its own argument list, over an arm set DERIVED from `calc::cross_msg`'s own trailing `switch` argument -- the set driven here is asserted EQUAL to that derivation, so an arm added to the table or to the proc without the other reddens by name instead of sitting outside a sweep that reads as coverage.  Per arm: the DISPOSITION the request earns, the arm identity against `calc::cross_msg`'s own sentence with the DETAIL recomputed by this file, the house shape, the leading verb, and that the sentence fits the entry unelided at the fixture's own detail.  The number of triggers that really REPORTED is a leg, because a band that aborts deletes its rows from the verdict instead of reddening them.  The EMPTY-operand arm is driven on BOTH operands with the two sentences asserted to DIFFER; and the arms the verb REUSES from `cross` are derived from its own call sites, so re-spelling one of them here would be visible" \
+        [list $pm13BAD [mt_sized $pm13N 11] \
+              [bw_sortg $pm13DRIVEN] [bw_sortg $pm13ARMS] \
+              [mt_atleast [llength $pm13ARMS] 11] \
+              [mt_disp $pm13PH] \
+              [string equal [mt_msg $pm13PH] [pcall calc::cross_msg pmempty phase]] \
+              [expr {[mt_msg $pm13PH] eq [pcall calc::cross_msg pmempty gain] \
+                     ? {SAMEASGAIN} : {differs}}] \
+              [expr {[lsearch -exact [bw_dget $pm13REUSED reused] nodata] >= 0 \
+                     ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $pm13REUSED reused] badtoken] >= 0 \
+                     ? {reuses} : {RESPELLS}}] \
+              [expr {[lsearch -exact [bw_dget $pm13REUSED reused] intdataset] >= 0 \
+                     ? {reuses} : {RESPELLS}}] \
+              [bw_sortg [bw_dget $pm13REUSED own]]] \
+        [list {} sized [bw_sortg $pm13ARMS] [bw_sortg $pm13ARMS] atleast11 \
+              refused 1 differs reuses reuses reuses [bw_sortg $pm13ARMS]]
+
+    # --- PM14: THE SENTENCE BUDGET, OVER THE DERIVED ARM SET ----------------
+    # ⚠ THE MARKER IS REQUIRED ONLY OF AN ARM THE DETAIL REALLY OVERFLOWS: an arm
+    # composing a CONSTANT sentence ignores both details, so its hostile sentence
+    # is the same short one and there is nothing to elide.  The count of arms that
+    # DO overflow rides along, so the sweep cannot become green by every arm
+    # turning constant.
+    set pm14HUGE [string repeat z 500]
+    set pm14BAD {} ; set pm14HN 0
+    foreach pm14a $pm13ARMS {
+        set pm14s [pcall calc::cross_msg $pm14a $pm14HUGE $pm14HUGE]
+        if {$pm14s eq {}} { lappend pm14BAD "$pm14a=EMPTY" ; continue }
+        set pm14u [pcall calc::cross_msg $pm14a AAA BBB]
+        if {[string length $pm14u] > [pcall calc::status_chars]} {
+            lappend pm14BAD "$pm14a=UNDETAILED-OVER" ; continue
+        }
+        set pm14f [pcall calc::status_fit $pm14s]
+        if {[string length $pm14f] > [pcall calc::status_chars]} {
+            lappend pm14BAD "$pm14a=OVER" ; continue
+        }
+        if {[string first {Phase margin} $pm14f] != 0} {
+            lappend pm14BAD "$pm14a=NOTOPENING" ; continue
+        }
+        if {[string length $pm14s] <= [pcall calc::status_chars]} continue
+        incr pm14HN
+        if {[string first [pcall calc::status_marker] $pm14f] < 0} {
+            lappend pm14BAD "$pm14a=NOMARKER"
+        }
+    }
+    check "MT25/PM14 the sentence budget is driven over the DERIVED set of this verb's own arms, each with a 500-character detail -- the leg no rewording could satisfy: every sentence fits the room `calc::status_room` reports, still OPENS on the verb's name so the user can tell which measurement refused, and carries the elision marker wherever the detail really overflowed; and the undetailed form of every arm is inside the character fallback.  The count of arms that DO overflow rides along, so the sweep cannot become green by every arm turning into a constant sentence" \
+        [list $pm14BAD [mt_atleast $pm14HN 5] \
+              [mt_sized [llength $pm13ARMS] [llength $pm13ARMS]] \
+              [pcall calc::status_room] [pcall calc::status_chars]] \
+        [list {} atleast5 sized {ch 80} 80]
+
+    # --- PM15: THE ANSWER'S KEY SET, EXACTLY, ON ALL THREE DISPOSITIONS -----
+    # ⚠ AN EXACT KEY-SET ASSERTION IS THE RIGHT SHAPE PRECISELY BECAUSE IT CATCHES
+    # A LIVE VALUE PUT IN A RETIRED KEY, and that makes the `xcross` key a
+    # SEQUENCING obligation: the key and this row land in one commit, or somebody
+    # meets the other half as a gate red and weakens the row to clear it.  The
+    # expectation is DERIVED each time from what `calc::cross` itself answers for
+    # the same disposition, so neither side is written down here.
+    set pm15M [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 0]
+    set pm15A [mt_call phaseMargin [pm_rpn vlp] [pm_rpn ph4] magnitude falling 1 0]
+    set pm15R [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] sideways falling 1 0]
+    set pm15D [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 7]
+    set pm15XM [mt_call cross [pm_rpn g4] 1.0 1 falling 0]
+    set pm15XA [mt_call cross [pm_rpn vlp] 1.0 1 falling 0]
+    set pm15XR [mt_call cross [pm_rpn g4] 1.0 1 sideways 0]
+    check "MT25/PM15 the answer's key set is asserted EXACTLY on all three dispositions, DERIVED each time from what `calc::cross` itself answers for the same disposition: the measured one is cross's own PLUS the one key this verb publishes beyond it -- the crossover frequency the margin was read at, which the X-half rows compare against a closed form and which no second crossing search anywhere may recompute.  `dest` names a minted temporary on every path that reached the engine and is EMPTY on a request refused before the mint, which is what band MT9b reads by name; the dataset is echoed from the request on every disposition; and an out-of-range dataset is refused through `cross`'s own arm by identity, because the dataset belongs to that vocabulary and this verb must not re-spell it" \
+        [list [mt_keys $pm15M] [mt_keys $pm15A] [mt_keys $pm15R] \
+              [mt_sameformals [mt_keys $pm15M] [lsort [concat [mt_keys $pm15XM] xcross]]] \
+              [mt_sameformals [mt_keys $pm15A] [mt_keys $pm15XA]] \
+              [mt_sameformals [mt_keys $pm15R] [mt_keys $pm15XR]] \
+              [mt_disp $pm15XM] [mt_disp $pm15XA] [mt_disp $pm15XR] \
+              [expr {[string match __calc_tmp* [mt_key $pm15M dest]] ? {minted} \
+                     : "NO:[mt_key $pm15M dest]"}] \
+              [expr {[string match __calc_tmp* [mt_key $pm15A dest]] ? {minted} \
+                     : "NO:[mt_key $pm15A dest]"}] \
+              [mt_key $pm15R dest] [mt_key $pm15M dataset] [mt_key $pm15R dataset] \
+              [mt_key $pm15M msg] [mt_disp $pm15D] \
+              [string equal [mt_msg $pm15D] \
+                   [pcall calc::cross_msg dataset 7 [pcall xschem raw datasets]]]] \
+        [list {absent dataset dest msg ok value xcross} \
+              {absent dataset dest msg ok value} \
+              {absent dataset dest msg ok value} same same same \
+              measured absent refused minted minted {} 0 0 {} refused 1]
+
+    # --- hygiene -----------------------------------------------------------
+    # ⚠ THE INVENTORY IS CAPTURED BEFORE THE RELOAD and the still-measures leg
+    # is taken after, which is the only order that works for both.  See the
+    # warning on `leaked`: the reload clears the inventory this leg reads.
+    set pmLEAK [leaked]
+    set pmPROBE [probeleft]
+    pcall mt_load ac
+    check "MT25 R402 the inventory READ BEFORE THIS BAND'S RELOAD carries no `__calc_tmp*` and no `__mt_*` column over the exit paths this band drove -- and the verb still MEASURES on the fixture after every refusal, absence and reloaded database this band put it through, which is the claim that stops a leak row being green over a verb that stopped working" \
+        [list $pmLEAK $pmPROBE \
+              [mt_disp [mt_call phaseMargin [pm_rpn g4] [pm_rpn ph4] magnitude falling 1 0]]] \
+        {{} {} measured}
+    pcall xschem raw clear
+}
+
+# =========================================================================
+# BAND MT26's DERIVATIONS AND INSTRUMENTS -- issue 1653's worst shape: AN
+# UNSTABLE LOOP READING AS MAXIMALLY STABLE
+# =========================================================================
+# ⚠⚠ THE DEFECT THIS BAND WAS OPENED FOR, measured against the real binary
+# before a line of it was written: `calc::phaseMargin` answered a confident,
+# unrefused phase margin of EXACTLY 180.0 DEGREES -- the most reassuring number
+# a stability analysis can produce -- from a phase column the engine never
+# evaluated as the user wrote it.  On the committed fixture's UNSTABLE loop
+# (k 6.25, four poles, true margin NEGATIVE) a single mistyped phase operand
+# turned a design that oscillates into one with maximal margin.
+#
+# THE THREE INDEPENDENT ROUTES TO IT, all three driven below:
+#   * a bare operator (`+`, `dup()`, `exch()`, `**`) -- approved by the
+#     per-token alphabet, a silent no-op in the engine, a column of zeros;
+#   * a DROPPED operator (`ph(lp) 4`) -- a leftover stack, where the engine's
+#     store is `y[p] = stack2[0]`, the BOTTOM, so the column is the FIRST
+#     operand's and the answer is right arithmetic on the wrong expression;
+#   * a phase operand at exactly `calc::rpn_maxtokens` -- approved, because the
+#     verb then APPENDS `cph()` and the engine sees one token MORE than was
+#     validated, refuses the lot and writes nothing.
+# The third is the one no report of this defect named, and it reaches the SAME
+# 180.0 by a different road, which is why the reserve is fenced here and not
+# only in the engine suite.
+#
+# ⚠ THE ASYMMETRY IS WHAT MADE IT INVISIBLE, and this band keeps it as a
+# control: the MAGNITUDE operand has two belts (`pmnotmag` and the sibling's
+# `gmnonpos`), so the same malformed text handed as a magnitude was already
+# refused or absented.  Only the phase column had none -- its single consumer is
+# `calc::sample_at`, which tests finiteness and a zero column is finite.
+#
+# ⚠⚠ WHAT THIS BAND DOES NOT CLAIM, stated here because reading it as closed
+# would be worse than the defect: a WELL-FORMED expression that is not the one
+# the user meant.  `ph(lp) 4 **` and `ph(lp) 4 +` are legal RPN; the engine
+# evaluates them exactly as asked and the margins are correct about a quantity
+# nobody wanted.  Both are driven below, approved, and compared against this
+# file's own closed form FOR THOSE EXPRESSIONS -- which is the only honest way
+# to show the product is right about them rather than quietly covering them.
+# No belt on the phase column could separate them either: `cph()` legitimately
+# runs past -360 degrees on a high-order loop, so there is no out-of-range
+# signature to key one to.
+#
+# WARN AND THAT SENTENCE IS A CLAIM ABOUT A RANGE AND NOT ABOUT EVERY BELT, which
+# is worth saying because band MT27 below closes a well-formed operand this one
+# leaves open.  A phase operand that is the SAME EXPRESSION as the gain, or that
+# resolves to the SAME COLUMN, is separable without any range test at all -- a
+# loop gain and a loop phase in degrees cannot be one quantity -- and that shape
+# is the FOURTH route to the same 180.0, reached by the argument dialog's own
+# default state with the user typing nothing.  What stays open after MT27 is
+# narrower than this paragraph implies on its own: a phase operand that is a
+# DIFFERENT magnitude expression, which row MT27/SO3 drives and declares.
+#
+# ⚠ EVERY DRIVE IS THE COMMITTED FIXTURE'S, through `pm_rpn`, so this band costs
+# no new raw file and its constants come from `pm_k`/`pm_n`/`bw_fp` rather than
+# being typed a second time.
+# ---------------------------------------------------------------------------
+# the malformed phase operands, each with the ROUTE it takes named, so a failing
+# row says which of the three it was and a reader does not have to classify four
+# bare strings.  A LIST OF PAIRS and not a dict, because the order is the order
+# the rows report in.
+proc sb_malformed {} {
+    return [list {+}         bareop \
+                 {dup()}     bareop \
+                 {exch()}    bareop \
+                 {**}        bareop \
+                 {ph(lp) 4}  leftover]
+}
+# ...and the well-formed-but-unintended ones, with the margin each really names
+# in closed form.  `x` is the unity-gain abscissa of the drive the row uses, so
+# the two share `pm_closed`'s own algebra and nothing else.
+#
+# ⚠ ONE POLE AND NOT `pm_n`: `ph(lp)` is the argument of a SINGLE RC pole, so
+# the phase at the crossover is `-atan(x)` in degrees whatever the magnitude
+# drive's order is.  That is exactly what makes a dropped `*` plausible -- the
+# answer is one-pole phase, correct arithmetic on a truncated expression -- and
+# writing `pm_n` here would have made the comparand agree with the bug.
+proc sb_onepole_deg {x} {
+    if {![mt_finite $x]} { return "NOTANUMBER:{$x}" }
+    return [expr {-atan(double($x))*180.0/acos(-1.0)}]
+}
+# the unity-gain abscissa of a `k`-gain `n`-pole drive, from `pm_closed`'s root
+# and `bw_fp`, so the two cannot name different frequencies.
+proc sb_x {nm} {
+    set c [pm_closed [pm_k $nm] [pm_n $nm]]
+    if {[mt_len $c] ne 2} { return "NOTAPAIR:{$c}" }
+    set f [mt_at $c 0]
+    if {![mt_finite $f]} { return "NOTANUMBER:{$f}" }
+    return [expr {double($f)/[bw_fp]}]
+}
+# `allzero` when every sample of a column is a literal zero, which is what the
+# engine writes for an expression it refused, and the word is what the row
+# compares -- never the samples, which would put "%.16g" figures in the verdict.
+proc sb_allzero {l} {
+    set n [mt_len $l]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 1} { return "tooshort:$n" }
+    foreach v $l {
+        if {![mt_finite $v]} { return "NOTANUMBER:{$v}" }
+        if {double($v) != 0.0} { return notallzero }
+    }
+    return allzero
+}
+# one operand padded with IDENTITY tokens to an exact engine-token count, for
+# the reserve rows.  `abs()` is the padding because it is unary and the sign of
+# the padded column is irrelevant to a row that asserts a DISPOSITION -- and the
+# count is asserted by the row rather than by this proc's arithmetic.
+proc sb_pad {base n} {
+    set k [mt_len [pcall calc::rpn_tokens $base]]
+    if {![string is integer -strict $k]} { return $k }
+    if {$k > $n} { return "toolong:$k" }
+    return [string trim "$base[string repeat { abs()} [expr {$n - $k}]]"]
+}
+# `names` when a sentence quotes a token count, which is the leg that tells the
+# reserve's refusal from every other refusal the verb can report.
+proc sb_quotes {s n} {
+    if {[string match "*$n*" $s]} { return names }
+    return "missing:$n"
+}
+
+# =========================================================================
+group MT26 {
+    pcall mt_load ac
+    set sbMAG [pm_rpn g4]
+    set sbPH [pm_rpn ph4]
+    set sbMAGU [pm_rpn g625]
+    # --- SB0: every ingredient of the fabricated answer, taken in the run ----
+    # ⚠ THIS ROW IS THE ONE THAT MAKES THE REFUSALS BELOW MEAN SOMETHING.  It
+    # shows the engine ACCEPTS each malformed operand -- `xschem raw add` answers
+    # 1, which is register-or-find and says nothing about the evaluation -- and
+    # writes a column of ZEROS for it, and that the `ph(lp) 4` column is BIT FOR
+    # BIT the `ph(lp)` column, which is the leftover-stack mechanism measured
+    # rather than argued.  So the refusal rows are this file's gate and never a
+    # rejection downstream that the gate could be credited with.
+    set sbRC {} ; set sbZERO {}
+    foreach {sbt sbroute} [sb_malformed] {
+        pcall xschem raw del __mt_sb
+        lappend sbRC [pcall xschem raw add __mt_sb $sbt]
+        lappend sbZERO "$sbroute:[sb_allzero [mt_col __mt_sb 0]]"
+        pcall xschem raw del __mt_sb
+    }
+    set sbFIRSTOP [pm_ndiff [mt_addcol __mt_sb_lo {ph(lp) 4} 0] [mt_col ph(lp) 0]]
+    check "MT26/SB0 every ingredient of the fabricated answer is present and is measured HERE rather than assumed: the sweep is the ac arm, `calc::rpn_tokens` counts what the engine will tokenise, and for each malformed phase operand `xschem raw add` answers 1 -- register-or-find, which says nothing about the evaluation -- while the column it wrote is ALL ZEROS, which `calc::sample_at`'s finiteness test cannot tell from a phase.  The DROPPED-operator column is asserted BIT FOR BIT equal to `ph(lp)`'s own, which is the leftover-stack mechanism -- the engine's store is the BOTTOM of the stack, so the answer is the expression's FIRST operand -- measured instead of argued.  The well-formed phase drive's column is asserted NOT all zeros, so the zero legs are a measurement and not a reader that always answers that word" \
+        [list [pcall xschem raw sim_type] \
+              [lsort -unique $sbRC] $sbZERO $sbFIRSTOP \
+              [sb_allzero [pm_col ph4]] \
+              [mt_sized [llength [sb_malformed]] 10]] \
+        [list ac {1} {bareop:allzero bareop:allzero bareop:allzero bareop:allzero leftover:notallzero} 0 notallzero sized]
+    # --- SB1: the two verbs REFUSE every malformed phase operand ------------
+    # RED BEFORE THE BELT: `phaseMargin` answered `measured` with 180.0 for the
+    # four bare operators and 153.43 for the dropped one, and `gainMargin`
+    # reported an ABSENCE about a phase level that was never computed.
+    set sbBAD {}
+    foreach sbv {phaseMargin gainMargin} {
+        foreach {sbt sbroute} [sb_malformed] {
+            set sba [mt_call $sbv $sbMAG $sbt]
+            set sbd [mt_disp $sba]
+            if {$sbd ne {refused}} { lappend sbBAD "$sbv/$sbroute=$sbd" ; continue }
+            set sbm [mt_msg $sba]
+            set sbclause [pcall calc::rpn_bad_token $sbt]
+            if {$sbclause eq {}} { lappend sbBAD "$sbv/$sbroute=APPROVED" ; continue }
+            if {![string equal $sbm [pcall calc::cross_msg badtoken $sbclause]]} {
+                lappend sbBAD "$sbv/$sbroute=WRONG-ARM" ; continue
+            }
+            if {[mt_shape $sbm] ne {ok}} { lappend sbBAD "$sbv/$sbroute=shape" ; continue }
+            if {[mt_key $sba dest] ne {}} { lappend sbBAD "$sbv/$sbroute=MINTED" ; continue }
+            if {[mt_key $sba value] ne {}} { lappend sbBAD "$sbv/$sbroute=HASVALUE" }
+        }
+    }
+    check "MT26/SB1 every malformed phase operand is REFUSED by BOTH stability verbs, and the refusal is the shared pre-flight's clause carried through each verb's OWN `badtoken` arm by identity -- so neither verb grew a second description of the fault -- in the house sentence shape, with NOTHING in `value` and an EMPTY `dest`, which is what a refusal taken before the mint looks like and what band MT9b reads by name.  The clause itself is asserted non-empty per drive, because an approving pre-flight would make the identity leg compare two empty strings.  Both verbs are driven over the same derived operand set, so a belt added to one and not the other reddens naming the verb" \
+        [list $sbBAD [mt_sized [expr {[llength [sb_malformed]]/2}] 5] [leaked]] \
+        {{} sized {}}
+    # --- SB2: the 180.0 is gone, and the right answer is unmoved ------------
+    set sbCL [pm_closed [pm_k g4] [pm_n g4]]
+    set sbGOOD [mt_call phaseMargin $sbMAG $sbPH]
+    set sbWAS {}
+    foreach {sbt sbroute} [sb_malformed] {
+        set sbv2 [mt_val [mt_call phaseMargin $sbMAG $sbt]]
+        if {[mt_finite $sbv2]} { lappend sbWAS "$sbroute:ANSWERED:$sbv2" }
+    }
+    check "MT26/SB2 the headline, in one row: NOT ONE malformed phase operand still yields a FINITE number from `phaseMargin` -- the leg that would redden on the exact defect, since the value it used to answer was 180.0 -- while the well-formed drive's margin still agrees with the deck's own closed form, an analytic root of `k*|H|^n = 1` and `180 - n*atan(x)` at it with no simulator, no sample and no interpolation in the comparand.  The crossover the verb PUBLISHES is compared beside it, so the X half is a claim about this verb and not about `calc::cross_scan`, and the 180.0 that was answered is asserted DISTINCT from the truth in this run rather than quoted here" \
+        [list $sbWAS [mt_disp $sbGOOD] \
+              [near [mt_val $sbGOOD] [mt_at $sbCL 1] $::MTTOL] \
+              [near [mt_key $sbGOOD xcross] [mt_at $sbCL 0] $::MTTOL] \
+              [mt_distinct 180.0 [mt_at $sbCL 1]]] \
+        {{} measured ok ok distinct}
+    # --- SB3: the UNSTABLE loop, which is why this matters at all -----------
+    set sbCLU [pm_closed [pm_k g625] [pm_n g625]]
+    set sbU [mt_call phaseMargin $sbMAGU $sbPH]
+    set sbUBAD [mt_call phaseMargin $sbMAGU {+}]
+    # the two derived legs, computed OUTSIDE a braced `expr` and guarded, so a
+    # sentinel from `pm_closed` fails the row instead of raising inside it and
+    # taking the band's remaining rows out of the verdict.
+    set sbUTRUE [mt_at $sbCLU 1]
+    set sbUNEG NOTANUMBER ; set sbULIE NOTANUMBER
+    if {[mt_finite $sbUTRUE]} {
+        set sbUNEG [expr {double($sbUTRUE) < 0.0}]
+        set sbULIE [expr {(180.0 - double($sbUTRUE)) > 100.0}]
+    }
+    set sbUVAL [mt_val $sbU]
+    set sbUSIGN NOTANUMBER
+    if {[mt_finite $sbUVAL]} { set sbUSIGN [expr {double($sbUVAL) < 0.0}] }
+    # ⚠ THE CLOSED-FORM DOOR HERE IS THE GRID'S CHORD ERROR AND NOT A TIGHT ONE,
+    # BECAUSE THIS DRIVE'S UNITY CROSSING IS OFF-SAMPLE -- and the residue is
+    # asserted from BELOW as well as above, measured in this run, so the slack
+    # cannot quietly cover a wrong interpolation and the row cannot be read as a
+    # precision claim.  Row MT25/PM5 owns the precision, on this same drive,
+    # against two straight lines at 1e-9; what SB3 asserts is the SIGN and the
+    # size of the lie, which is the half a user acts on.
+    set sbURES [gbw_sep $sbUVAL [gm_cf $sbCLU 1]]
+    check "MT26/SB3 the drive that makes this a correctness defect and not a cosmetic one: the fixture's k-6.25 four-pole loop has a NEGATIVE phase margin in closed form -- asserted negative in this run, from the same analytic root, so a regenerated fixture that made it stable reddens here instead of making the row vacuous -- the verb measures it, the number it reports is asserted negative too, and the single mistyped phase operand that used to turn it into +180.0 is now REFUSED before anything is minted.  ⚠ The closed-form door is the GRID'S CHORD ERROR because this drive's unity crossing is off-sample, and the residue is measured and asserted from BELOW as well as above so the slack cannot cover a wrong interpolation -- row MT25/PM5 owns the precision on this same drive at 1e-9.  The distance between the truth and the 180.0 that was answered is MEASURED here, in degrees, and asserted past a hundred, because the size of the lie is the whole argument for the belt" \
+        [list $sbUNEG [mt_disp $sbU] $sbUSIGN \
+              [near $sbUVAL $sbUTRUE 1e-2] \
+              [bw_ceil $sbURES 1e-2] [bw_floor $sbURES 1e-5] \
+              [mt_disp $sbUBAD] \
+              [mt_key $sbUBAD dest] \
+              $sbULIE] \
+        {1 measured 1 ok under1e-2 over1e-5 refused {} 1}
+    # --- SB4: the split -- what the belt closes and what it must not --------
+    # ⚠ THE SECOND HALF OF THIS ROW IS A CLAIM THAT THE PRODUCT IS *NOT* GUARDED,
+    # and it is here on purpose: a belt that started refusing `ph(lp) 4 +` would
+    # be refusing a legal expression, which is the worst shape R607 can take.
+    set sbX [sb_x g4]
+    set sbP1 [sb_onepole_deg $sbX]
+    set sbPLUSEXP NOTANUMBER
+    if {[mt_finite $sbP1]} { set sbPLUSEXP [expr {180.0 + double($sbP1) + 4.0}] }
+    set sbPLUS [mt_call phaseMargin $sbMAG {ph(lp) 4 +}]
+    set sbPOW [mt_call phaseMargin $sbMAG {ph(lp) 4 **}]
+    check "MT26/SB4 the belt closes MALFORMED expressions and leaves WELL-FORMED ones alone, which is one row because the two are one decision: `ph(lp) 4` leaves two values on the stack and is refused, while `ph(lp) 4 +` is legal RPN, is APPROVED by the pre-flight, and answers EXACTLY this file's own closed form for THAT expression -- one-pole phase at the analytic crossover, plus four, plus 180 -- computed from `pm_closed`'s own root and `atan` and sharing no step with the product.  ⚠ The one-pole term is deliberately NOT `pm_n`: `ph(lp)` is a single RC pole's argument whatever the magnitude drive's order, which is what makes a dropped `*` plausible in the first place, and using `pm_n` here would have made the comparand agree with the bug.  `ph(lp) 4 **` is approved and MEASURED too, and asserted DISTINCT from the true margin -- declared, not covered: no stack model and no range belt can tell a legal expression from the one the user meant" \
+        [list [mt_disp [mt_call phaseMargin $sbMAG {ph(lp) 4}]] \
+              [pcall calc::rpn_bad_token {ph(lp) 4 +}] \
+              [mt_disp $sbPLUS] \
+              [near [mt_val $sbPLUS] $sbPLUSEXP $::MTTOL] \
+              [mt_distinct [mt_val $sbPLUS] [mt_at $sbCL 1]] \
+              [pcall calc::rpn_bad_token {ph(lp) 4 **}] \
+              [mt_disp $sbPOW] \
+              [mt_finite [mt_val $sbPOW]] \
+              [mt_distinct [mt_val $sbPOW] [mt_at $sbCL 1]]] \
+        {refused {} measured ok distinct {} measured 1 distinct}
+    # --- SB5: the RESERVE, and the THIRD route to the same 180.0 ------------
+    # RED BEFORE THE RESERVE: a 198-token phase operand passed the gate,
+    # `"<operand> cph()"` gave the engine 199, the engine wrote nothing, and
+    # `phaseMargin` answered 180.0 -- the same fabricated number by a road no
+    # report of this defect named.
+    # ⚠ TOTAL ON THE LIMIT ITSELF, and no figure for it is written here: band
+    # CE13 of tests/headless/test_calc_engine.tcl reads STACKMAX out of
+    # src/save.c and does the subtraction, so this band takes the number from
+    # the product and only asserts it is a usable integer -- which is what keeps
+    # `$sbMAXN - 1` below from raising and taking the band out of the verdict.
+    set sbMAXN [pcall calc::rpn_maxtokens]
+    if {![string is integer -strict $sbMAXN] || $sbMAXN < 10} { set sbMAXN -1 }
+    set sbP198 [sb_pad $sbPH $sbMAXN]
+    set sbP197 [sb_pad $sbPH [expr {$sbMAXN - 1}]]
+    set sbM198 [sb_pad $sbMAG $sbMAXN]
+    set sbRES {}
+    foreach sbv {phaseMargin gainMargin} {
+        set sba [mt_call $sbv $sbMAG $sbP198]
+        set sbd [mt_disp $sba]
+        if {$sbd ne {refused}} { lappend sbRES "$sbv/198=$sbd" ; continue }
+        set sbclause [pcall calc::rpn_bad_token $sbP198 {} 1]
+        if {$sbclause eq {}} { lappend sbRES "$sbv/198=APPROVED" ; continue }
+        if {![string equal [mt_msg $sba] [pcall calc::cross_msg badtoken $sbclause]]} {
+            lappend sbRES "$sbv/198=WRONG-ARM" ; continue
+        }
+        if {[sb_quotes [mt_msg $sba] $sbMAXN] ne {names}} { lappend sbRES "$sbv/198=nocount" }
+        if {[sb_quotes [mt_msg $sba] [expr {$sbMAXN - 1}]] ne {names}} {
+            lappend sbRES "$sbv/198=nolimit"
+        }
+        if {[mt_disp [mt_call $sbv $sbMAG $sbP197]] eq {refused}} {
+            lappend sbRES "$sbv/197=REFUSED"
+        }
+    }
+    check "MT26/SB5 the verbs stop exceeding their OWN stated input limit, which is the third road to the same fabricated margin: each pre-flights the user's phase operand and then sends `\"<operand> cph()\"` to the engine, ONE TOKEN MORE than was validated, so an operand of exactly `calc::rpn_maxtokens` tokens passed the gate and the engine refused the composed expression and wrote nothing.  Driven on BOTH verbs: the operand at the limit is REFUSED through each verb's own `badtoken` arm by identity, the sentence names the user's OWN count AND the reduced limit -- both read from `calc::rpn_maxtokens` rather than written here -- and one token fewer is NOT refused.  ⚠ THE MAGNITUDE OPERAND IS THE CONTROL and it carries no reserve, because nothing is appended to it: at exactly the limit the verb still MEASURES, so this is a reserve on the operand that really is extended and not a blanket tightening.  The three padded token counts ride along, since a padder that answered a short expression would pass every leg" \
+        [list $sbRES [mt_atleast $sbMAXN 10] \
+              [mt_sized [mt_len [pcall calc::rpn_tokens $sbP198]] $sbMAXN] \
+              [mt_sized [mt_len [pcall calc::rpn_tokens $sbP197]] [expr {$sbMAXN - 1}]] \
+              [mt_sized [mt_len [pcall calc::rpn_tokens $sbM198]] $sbMAXN] \
+              [mt_disp [mt_call phaseMargin $sbM198 $sbPH]] \
+              [near [mt_val [mt_call phaseMargin $sbM198 $sbPH]] [mt_at $sbCL 1] $::MTTOL]] \
+        [list {} atleast10 sized sized sized measured ok]
+    # --- SB6: the absence sentence stops being true about the WRONG column --
+    # RED BEFORE THE BELT: `gainMargin` reported *"no 1st falling crossing of
+    # that phase level in this sweep"* for every malformed-but-approved phase
+    # operand.  That is a true statement about the all-zero column the engine
+    # wrote and FALSE about the expression the user typed, which is the
+    # distinction the whole 1653 family is about.
+    set sbVOICE {}
+    foreach {sbv sbarm} {gainMargin gmnocross phaseMargin pmnocross} {
+        foreach {sbt sbroute} [sb_malformed] {
+            set sba [mt_call $sbv $sbMAG $sbt]
+            set sbm [mt_msg $sba]
+            if {[string equal $sbm [pcall calc::cross_msg $sbarm \
+                                        [pcall calc::cross_ordinal 1] falling]]} {
+                lappend sbVOICE "$sbv/$sbroute=CROSSINGABSENCE"
+            }
+            if {[mt_disp $sba] eq {absent}} { lappend sbVOICE "$sbv/$sbroute=ABSENT" }
+        }
+    }
+    check "MT26/SB6 neither verb reports a CROSSING ABSENCE for a malformed operand any more, which is the half of this defect that was a true sentence about the wrong thing: `gainMargin` answered *no 1st falling crossing of that phase level* -- true of the all-zero column the engine wrote, false of the expression the user typed -- and that sentence is now asserted ABSENT by identity against each verb's own arm over every malformed drive, with the DISPOSITION asserted not to be an absence either.  The control is in the next leg: each verb's crossing-absence arm is still REACHED by a well-formed request whose crossing really does not exist, so this row measures a redirected diagnosis and not a sentence that stopped being producible" \
+        [list $sbVOICE \
+              [mt_disp [mt_call phaseMargin [pm_rpn vlp] $sbPH]] \
+              [string equal [mt_msg [mt_call phaseMargin [pm_rpn vlp] $sbPH]] \
+                            [pcall calc::cross_msg pmnocross \
+                                 [pcall calc::cross_ordinal 1] falling]] \
+              [mt_disp [mt_call gainMargin $sbMAG [pm_rpn vlp]]] \
+              [string equal [mt_msg [mt_call gainMargin $sbMAG [pm_rpn vlp]]] \
+                            [pcall calc::cross_msg gmnocross \
+                                 [pcall calc::cross_ordinal 1] falling]]] \
+        {{} absent 1 absent 1}
+    # --- hygiene -----------------------------------------------------------
+    # ⚠ THE INVENTORY IS CAPTURED BEFORE THE RELOAD and the two still-measures
+    # legs are taken after, which is the only order that works for both.  See
+    # the warning on `leaked`: the reload clears the inventory those legs read.
+    set sbLEAK [leaked]
+    set sbPROBE [probeleft]
+    pcall mt_load ac
+    check "MT26 R402 the inventory READ BEFORE THIS BAND'S RELOAD carries no `__calc_tmp*` and no `__mt_*` column over the exit paths this band drove -- and BOTH verbs still MEASURE on the fixture after every refusal and absence this band put them through, which is the claim that stops a leak row being green over a verb that stopped working" \
+        [list $sbLEAK $sbPROBE \
+              [mt_disp [mt_call phaseMargin $sbMAG $sbPH]] \
+              [mt_disp [mt_call gainMargin $sbMAG $sbPH]]] \
+        {{} {} measured measured}
+    pcall xschem raw clear
+}
+
+# =========================================================================
+# BAND MT27's DERIVATIONS AND INSTRUMENTS -- issue 1653's FOURTH route to the
+# same fabricated 180.0, and the only one THE PRODUCT ITSELF OPENS
+# =========================================================================
+# WARN THE DEFECT THIS BAND WAS OPENED FOR, measured against the real binary
+# before a line of it was written, on the committed fixture's UNSTABLE loop
+# (k 6.25, four poles, true margin NEGATIVE):
+#
+#   pm(dB,  <buffer>, <buffer>) answered  180.0 for a truth of -23.17 degrees
+#   pm(mag, <buffer>, <buffer>) answered  181.0 for the same truth
+#   gm(dB,  <buffer>, <buffer>) answered exactly MINUS THE LEVEL the user typed
+#   gm(mag, <buffer>, <buffer>) answered exactly -20*log10(that level)
+#
+# with the CORRECT crossover frequency published beside each, which makes the
+# number more credible rather than less.  A design that oscillates read as the
+# most reassuring number a stability analysis can produce.
+#
+# WARN AND THE REQUEST THAT PRODUCES IT IS THE DIALOG'S OWN DEFAULT STATE, which
+# is why this route is worse than the three band MT26 fences: those need a
+# mistyped operand, this needs the user to type NOTHING.
+# `calc::arg_dialog_build` pre-fills EVERY `rpn`-kind field from the buffer and
+# both stability verbs have TWO of them, so the Loop gain and the Loop phase
+# fields open holding ONE expression; `calc::arg_bad` validates SHAPE only and
+# has nothing to complain about; and `cph()` is the EXACT IDENTITY on a gain
+# column, so the "phase" read at the crossover is the crossing LEVEL itself.
+# In dB mode that level is 0 and the answer is 180.0 FOR EVERY LOOP -- a
+# constant carrying no measurement at all.
+#
+# WARN WHAT WAS CHOSEN AND WHAT WAS REFUSED, each with the measurement behind it,
+# because a reader meeting only the refusals would reasonably ask for more:
+#
+#  CHOSEN: the two operands may not be ONE EXPRESSION (compared as TOKEN LISTS,
+#    so re-spacing one field does not evade it) and may not be ONE COLUMN
+#    (compared as materialised samples, so a numerically identical re-spelling
+#    does not either).  Neither is a heuristic: a loop gain and a loop phase in
+#    degrees are different quantities and cannot be the same expression or the
+#    same column.  Both are driven below.
+#  REFUSED, A FENCE ON THE LITERAL 180.0: row SO4 measures a LEGITIMATE request
+#    that answers exactly 180.0 -- a loop whose phase is zero at its crossover --
+#    so the fence would refuse correct work, and it would be keyed to a symptom
+#    rather than to a shape.
+#  REFUSED, A `|phase[0]| < 180` PRECONDITION enforcing this verb's own declared
+#    limit L1: row SO4 measures a drive whose first phase sample EXCEEDS 180
+#    degrees and whose answer is nonetheless CORRECT against the closed form,
+#    because the operand is already continuous and `cph()` is the identity on it.
+#    The precondition is therefore not equivalent to L1's hazard and enforcing it
+#    would block correct work.
+#  DECLARED, NOT FENCED: a phase operand that is a DIFFERENT magnitude
+#    expression.  Row SO3 drives one, measures the answer and measures how far
+#    from the truth it is.  Nothing about a degrees-valued column separates it
+#    from a gain column, and row SO4's two refusals are why no invented range
+#    test was substituted for an honest declaration.
+#
+# WARN UNRATIFIED USER-VISIBLE WORDING.  The two new sentences per verb are the
+# assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences covers them.
+# -------------------------------------------------------------------------
+# the `rpn`-kind field KEYS of one verb's own argument spec, DERIVED from
+# `calc::fn_argspec` rather than counted here -- so a verb that grows or loses an
+# expression operand enlists itself in SO0's claim instead of sitting outside it.
+proc so_rpnrows {verb} {
+    set sp [pcall calc::fn_argspec $verb]
+    if {[catch {llength $sp} n]} { return "NOTALIST" }
+    set out {}
+    foreach row $sp {
+        if {[lindex [lindex $row 2] 0] ne {rpn}} continue
+        lappend out [lindex $row 0]
+    }
+    return $out
+}
+# `prefills` when `calc::arg_dialog_build`'s own DECOMMENTED body substitutes the
+# buffer for an `rpn`-kind field, which is what makes both expression fields open
+# holding ONE expression.
+#
+# WARN A TEXT SCAN, AND ITS LIMIT IS DECLARED RATHER THAN CHASED.  That proc
+# builds a real `toplevel` and cannot be reached on the counted arm at all, so
+# there is no `info args`-class instrument for it here.  The scan is total about
+# THE SUBSTITUTION ITSELF; what it cannot see is a second site that undoes it.
+# The behavioural half is `dcases` and belongs to test_calc_skeleton.tcl.
+proc so_prefills {} {
+    if {[info procs ::calc::arg_dialog_build] eq {}} { return NOPROC }
+    if {[catch {info body ::calc::arg_dialog_build} b]} { return NOBODY }
+    foreach ln [split [mt_decomment $b] "\n"] {
+        if {[string first {rpn} $ln] < 0} continue
+        if {[string first {calc::rpn_of_buffer} $ln] < 0} continue
+        return prefills
+    }
+    return NOPREFILL
+}
+# `approves` or the sentence, for `calc::arg_bad` DRIVEN FOR REAL over a field
+# set: the namespace array the dialog writes is written here the same way, so
+# this is the shipped validator's own answer and not a model of it.  The array is
+# snapshotted and put back, because it is the product's and other bands read it.
+proc so_argbad {verb fields} {
+    if {[info commands ::calc::arg_bad] eq {}} { return NOPROC }
+    set sp [pcall calc::fn_argspec $verb]
+    if {[catch {llength $sp}]} { return NOTALIST }
+    array set sosav {}
+    if {[array exists ::calc::argval]} { array set sosav [array get ::calc::argval] }
+    foreach row $sp { set ::calc::argval([lindex $row 0]) [lindex $row 4] }
+    foreach {sok sov} $fields { set ::calc::argval($sok) $sov }
+    set sorc [catch {::calc::arg_bad $sp} sor]
+    array unset ::calc::argval
+    array set ::calc::argval [array get sosav]
+    if {$sorc} { return "RAISED:$sor" }
+    if {$sor eq {}} { return approves }
+    return "refuses:$sor"
+}
+# the unity level one `gain` declaration names, and the margin a verb that read
+# the GAIN column as the phase would publish from it.  ONE constant per unit and
+# no third spelling of either: SO2 asserts both against this file's own
+# two-sample solve of the fixture's own columns, so they are measured rather
+# than remembered.
+proc so_level {gain} { if {$gain eq {dB}} { return 0.0 } ; return 1.0 }
+proc so_fab {gain} { return [expr {180.0 + [so_level $gain]}] }
+# one drive's expression in the declared units, built from `pm_rpn` so the band
+# costs no new fixture column and no constant of its own.
+proc so_expr {nm gain} {
+    if {$gain eq {dB}} { return "[pm_rpn $nm] db20()" }
+    return [pm_rpn $nm]
+}
+# the count of DISTINCT members of a list, so a row can say "five different loops
+# answered one number" without putting "%.16g" figures in the verdict.
+proc so_ndistinct {l} {
+    if {[catch {llength $l} n]} { return "NOTALIST" }
+    if {$n < 1} { return empty }
+    return [llength [lsort -unique $l]]
+}
+# `nodest` / `minted` / the value, for the `dest` key -- the key band MT9b reads
+# BY NAME to tell a refusal taken before the mint from one taken after it.
+proc so_dest {a} {
+    set d [mt_key $a dest]
+    if {$d eq {}} { return nodest }
+    if {[string match __calc_tmp* $d]} { return minted }
+    return "other:$d"
+}
+# the index of the pair that brackets a level in a FALLING series, by a scan this
+# file owns.  Needed because each of SO2's five loops crosses unity in a
+# different pair, so no single hand-written index could serve them.
+proc so_bracket {ys L} {
+    set n [mt_len $ys]
+    if {![string is integer -strict $n]} { return {} }
+    for {set i 1} {$i < $n} {incr i} {
+        set a [mt_at $ys [expr {$i-1}]] ; set b [mt_at $ys $i]
+        if {![mt_finite $a] || ![mt_finite $b]} continue
+        if {double($a) > double($L) && double($b) <= double($L)} { return [expr {$i-1}] }
+    }
+    return {}
+}
+# the smallest INTEGER multiple of a phase column's own first sample whose
+# magnitude reaches 180 degrees -- SO4's drive, derived from the fixture in the
+# run so no scale factor is written down.  Answers the empty string when the
+# column carries no such multiple, so the row fails on the comparison.
+proc so_wrapscale {ph0} {
+    if {![mt_finite $ph0]} { return {} }
+    if {double($ph0) == 0.0} { return {} }
+    for {set s 2} {$s <= 1000} {incr s} {
+        if {abs($s*double($ph0)) >= 180.0} { return $s }
+    }
+    return {}
+}
+# the LARGEST adjacent step of a series, which is what decides whether `cph()` is
+# the identity on it: `case CPH:` in src/save.c moves a sample only where the
+# step reaches 180 degrees.
+proc so_maxstep {l} {
+    set n [mt_len $l]
+    if {![string is integer -strict $n]} { return $n }
+    if {$n < 2} { return "tooshort:$n" }
+    set mx 0.0
+    for {set i 1} {$i < $n} {incr i} {
+        set a [mt_at $l [expr {$i-1}]] ; set b [mt_at $l $i]
+        if {![mt_finite $a] || ![mt_finite $b]} { return NOTANUMBER }
+        set d [expr {abs(double($b) - double($a))}]
+        if {$d > $mx} { set mx $d }
+    }
+    return $mx
+}
+
+# =========================================================================
+group MT27 {
+    pcall mt_load ac
+    set soXS [mt_col frequency 0]
+    set soMAG [pm_rpn g4]
+    set soPH [pm_rpn ph4]
+    set soG4 [pm_col g4]
+
+    # --- SO0: THE INGREDIENTS OF THE DIALOG'S DEFAULT STATE, MEASURED -------
+    # WARN THIS ROW IS WHAT MAKES THE REFUSALS BELOW MEAN SOMETHING.  It shows
+    # the product itself puts one expression in both fields and that the shape
+    # validator has nothing to say about it -- so the refusals are closing a door
+    # the product opens, not guarding against a user doing something perverse.
+    #
+    # WARN `delay` IS THE CONTROL AND IT IS WHY THE REFUSAL IS VERB-LOCAL.  That
+    # verb also has two `rpn` fields, and two EQUAL expressions there is a
+    # legitimate request -- one signal against itself at two different levels is
+    # a pulse width.  So `calc::arg_bad` must keep approving it, asserted here,
+    # and a belt placed in that shared validator would have broken a shipped verb.
+    set so0SAME [so_argbad phaseMargin [list rpnMag $soMAG rpnPh $soMAG]]
+    set so0SAMEG [so_argbad gainMargin [list rpnMag $soMAG rpnPh $soMAG]]
+    set so0DELAY [so_argbad delay [list rpnA $soMAG levelA 1 rpnB $soMAG levelB 1]]
+    set so0CPH [mt_addcol __mt_so_cph "$soMAG cph()" 0]
+    set so0K [so_bracket $soG4 1.0]
+    set so0F [bw_line $soXS $soG4 $so0K 1.0]
+    set so0Y [gm_yline $soXS $soG4 $so0K $so0F]
+    check "MT27/SO0 the fabricated request is the DIALOG'S OWN DEFAULT STATE and every ingredient of it is measured HERE rather than assumed: both stability verbs carry EXACTLY TWO `rpn`-kind fields, derived from `calc::fn_argspec` and asserted equal to each other's, `calc::arg_dialog_build`'s own decommented body substitutes the buffer for an `rpn` field -- so both open holding ONE expression -- and `calc::arg_bad` is DRIVEN over that very field set and APPROVES it, which is why nothing before the verb complains.  The mechanism is measured too: `cph()` is the EXACT IDENTITY on a gain column, asserted as a zero difference count over every sample, and the value a verb reading that column as the phase takes at the crossover is the crossing LEVEL ITSELF, solved here by two different two-sample lines through a pair whose index is validated by comparing its OWN solved abscissa against the deck's ANALYTIC unity crossing -- so a fixture regenerated onto another grid reddens here instead of letting the legs below compare two wrong numbers -- and asserted bit-exact.  ⚠ `delay` IS THE CONTROL: it has two `rpn` fields too, where two equal expressions is a legitimate pulse-width request, and `arg_bad` is asserted to keep APPROVING it -- which is the measurement that put the refusal in the verbs instead of in the shared validator" \
+        [list [pcall xschem raw sim_type] \
+              [so_rpnrows phaseMargin] [so_rpnrows gainMargin] \
+              [mt_sized [llength [so_rpnrows phaseMargin]] 2] \
+              [mt_sized [llength [so_rpnrows gainMargin]] 2] \
+              [so_prefills] $so0SAME $so0SAMEG $so0DELAY \
+              [mt_sized [llength [so_rpnrows delay]] 2] \
+              [mt_sized [pm_ndiff $so0CPH $soG4] 0] \
+              [string is integer -strict $so0K] \
+              [near $so0F [gm_cf [pm_closed [pm_k g4] [pm_n g4]] 0] 1e-12] \
+              [bw_exact $so0Y [so_level magnitude]] \
+              [bw_exact [expr {180.0 + $so0Y}] [so_fab magnitude]] \
+              [probeleft]] \
+        [list ac {rpnMag rpnPh} {rpnMag rpnPh} sized sized prefills \
+              approves approves approves sized sized 1 ok exact exact {}]
+
+    # --- SO1: THE HEADLINE -- ONE EXPRESSION IN BOTH FIELDS IS REFUSED -------
+    # WARN THE RED THIS ROW WAS WRITTEN AGAINST: every one of these eight drives
+    # answered `measured` with a finite number before the belt existed, four of
+    # them at exactly 180.0.
+    set so1BAD {} ; set so1N 0 ; set so1FIN {}
+    foreach so1v {phaseMargin gainMargin} {
+        foreach so1g {magnitude dB} {
+            foreach so1nm {g4 g625} {
+                set so1e [so_expr $so1nm $so1g]
+                incr so1N
+                if {$so1v eq {phaseMargin}} {
+                    set so1a [mt_call phaseMargin $so1e $so1e $so1g falling 1 0]
+                    set so1arm [pcall calc::cross_msg pmsameop]
+                } else {
+                    set so1a [mt_call gainMargin $so1e $so1e $so1g -180 falling 1 0]
+                    set so1arm [pcall calc::cross_msg gmsameop]
+                }
+                set so1id "$so1v/$so1g/$so1nm"
+                lappend so1FIN [mt_finite [mt_val $so1a]]
+                if {[mt_disp $so1a] ne {refused}} {
+                    lappend so1BAD "$so1id=[mt_disp $so1a]" ; continue
+                }
+                if {![string equal [mt_msg $so1a] $so1arm]} {
+                    lappend so1BAD "$so1id=WRONG-ARM" ; continue
+                }
+                if {[mt_shape [mt_msg $so1a]] ne {ok}} {
+                    lappend so1BAD "$so1id=shape" ; continue
+                }
+                if {[so_dest $so1a] ne {nodest}} {
+                    lappend so1BAD "$so1id=[so_dest $so1a]" ; continue
+                }
+                if {[pcall calc::status_fit [mt_msg $so1a]] ne [mt_msg $so1a]} {
+                    lappend so1BAD "$so1id=ELIDES"
+                }
+            }
+        }
+    }
+    set so1TRUTH [pm_closed [pm_k g625] [pm_n g625]]
+    set so1M [gm_cf $so1TRUTH 1]
+    # ...and the leg that pins the refusal's PLACEMENT and not only its
+    # existence: D7 puts a request that cannot be INTERPRETED above every
+    # accessor, so with NOTHING LOADED the same request must still earn this
+    # refusal and never the no-data one.  A guard moved below the database ladder
+    # passes every drive above and fails here.
+    pcall xschem raw clear
+    set so1NL [mt_call phaseMargin $soMAG $soMAG magnitude falling 1 0]
+    set so1NLG [mt_call gainMargin $soMAG $soMAG magnitude -180 falling 1 0]
+    pcall mt_load ac
+    check "MT27/SO1 NOT ONE request whose two operands are ONE EXPRESSION still yields a number from either stability verb -- the leg that reddens on the exact defect, since all eight of these drives answered a finite margin before the belt and four answered exactly 180.0.  Per drive: the disposition is a REFUSAL, the sentence is each verb's OWN arm by identity with the detail recomputed here, it is in the house shape, it fits the status entry unelided, and `dest` is EMPTY -- which is what a refusal taken before the mint looks like and what band MT9b reads by name.  ⚠ THE PLACEMENT IS PINNED TOO AND NOT ONLY THE EXISTENCE: with NOTHING LOADED both verbs still earn THIS refusal and not the no-data one, asserted as an identity against their own arm and a non-identity against that family, which is D7's rule that a request that cannot be INTERPRETED is refused above every accessor -- a guard moved below the database ladder satisfies every drive above and fails here.  The size of the lie is MEASURED in this run rather than quoted: the fixture's k-6.25 four-pole loop is asserted NEGATIVE in closed form, so a regenerated fixture that made it stable reddens here, and the 180.0 a dB-mode reading of it used to publish is asserted more than a hundred degrees away from that truth.  The drive count rides along, so an emptied sweep could not pass" \
+        [list $so1BAD [mt_sized $so1N 8] [lsort -unique $so1FIN] \
+              [bw_ceil $so1M 0] \
+              [bw_floor [expr {abs([so_fab dB] - $so1M)}] 100] \
+              [mt_finite $so1M] \
+              [mt_disp $so1NL] \
+              [string equal [mt_msg $so1NL] [pcall calc::cross_msg pmsameop]] \
+              [mt_notfamily [mt_msg $so1NL] [pcall calc::cross_msg nodata]] \
+              [mt_disp $so1NLG] \
+              [string equal [mt_msg $so1NLG] [pcall calc::cross_msg gmsameop]]] \
+        [list {} sized 0 under0 over100 1 refused 1 elsewhere refused 1]
+
+    # --- SO2: THE dB ANSWER IS A CONSTANT, MEASURED OVER FIVE LOOPS ---------
+    # WARN THE CONSTANCY IS RECONSTRUCTED FROM THE FIXTURE AND NEVER TAKEN FROM
+    # THE VERB, because the verb now refuses and so can no longer be asked what
+    # it used to answer.  For each loop this file solves the GAIN column for the
+    # abscissa where it reaches the unity level, then reads the SAME column back
+    # at that abscissa -- which is what a verb reading the gain as the phase does
+    # -- and the answer is the level itself, for every loop.  So the published
+    # margin was `180 + level`: ONE number for five loops whose true margins are
+    # five different numbers, asserted mutually distinct in the same run.
+    set so2NAMES {g4 g13 g20 g625 g3}
+    set so2TRUTH {} ; set so2RECON {} ; set so2REAL {} ; set so2OK {} ; set so2BAD {}
+    set so2RN 0
+    foreach so2nm $so2NAMES {
+        set so2c [pm_closed [pm_k $so2nm] [pm_n $so2nm]]
+        lappend so2TRUTH [gm_cf $so2c 1]
+        set so2col [pm_col $so2nm]
+        set so2k [so_bracket $so2col 1.0]
+        set so2f [bw_line $soXS $so2col $so2k 1.0]
+        set so2y [gm_yline $soXS $so2col $so2k $so2f]
+        lappend so2RECON [near [expr {180.0 + $so2y}] [so_fab magnitude] 1e-12]
+        set so2a [mt_call phaseMargin [pm_rpn $so2nm] "ph(lp) [pm_n $so2nm] *" \
+                      magnitude falling 1 0]
+        lappend so2REAL [mt_val $so2a]
+        lappend so2OK [near [mt_val $so2a] [gm_cf $so2c 1] 1e-2]
+        foreach so2g {magnitude dB} {
+            set so2e [so_expr $so2nm $so2g]
+            incr so2RN
+            if {[mt_disp [mt_call phaseMargin $so2e $so2e $so2g falling 1 0]] ne {refused}} {
+                lappend so2BAD "$so2nm/$so2g"
+            }
+        }
+    }
+    check "MT27/SO2 the answer the dialog's default state used to publish CARRIED NO MEASUREMENT AT ALL, and the claim is reconstructed from the fixture rather than taken from the verb: over five loops whose closed-form margins are asserted MUTUALLY DISTINCT -- five of five, so no two drives could be the same loop -- the value a reading of the gain column as the phase takes at that loop's own unity crossing is the LEVEL ITSELF every time, solved through each loop's OWN straddling pair because the five cross in five different pairs, so the margin was one number for all five.  All ten requests, both unit declarations, are now REFUSED.  THE CONTROL IS THE OTHER HALF: the same five loops driven with a REAL phase operand still MEASURE, each agreeing with its own closed form inside the grid's chord error, and the five measured margins are asserted mutually DISTINCT -- so the refusal has not simply disabled the verb" \
+        [list $so2BAD [mt_sized $so2RN 10] \
+              [so_ndistinct $so2TRUTH] [lsort -unique $so2RECON] \
+              [so_ndistinct $so2REAL] [lsort -unique $so2OK] \
+              [mt_sized [llength $so2NAMES] 5]] \
+        [list {} sized 5 ok 5 ok sized]
+
+    # --- SO3: THE COLUMN BELT, THE RE-SPACING LEG, AND THE DECLARED LIMIT ----
+    # WARN THREE CLAIMS IN ONE ROW BECAUSE THEY ARE ONE DECISION: what the belt
+    # closes, that it cannot be evaded by re-spacing or by an equal-valued
+    # re-spelling, and what it leaves OPEN.  Separating them would let the third
+    # be dropped as an inconvenience, which is how a declared limit becomes a
+    # silent one.
+    set so3COL [mt_call phaseMargin $soMAG "$soMAG 1 *" magnitude falling 1 0]
+    set so3COLG [mt_call gainMargin $soMAG "$soMAG 1 *" magnitude 0.5 falling 1 0]
+    set so3SP [mt_call phaseMargin $soMAG "v(lp)  [pm_n g4] **   [pm_k g4] *" \
+                   magnitude falling 1 0]
+    set so3GOOD [mt_call phaseMargin $soMAG $soPH magnitude falling 1 0]
+    set so3OPEN [mt_call phaseMargin $soMAG [pm_rpn g3] magnitude falling 1 0]
+    set so3T [gm_cf [pm_closed [pm_k g4] [pm_n g4]] 1]
+    check "MT27/SO3 the belt closes the two shapes a loop phase CANNOT have and is measured not to be evadable by spelling: a phase operand that is a DIFFERENT expression resolving to the SAME COLUMN is refused by both verbs through their own column arm, with `dest` MINTED because that refusal is taken after the engine door, and a RE-SPACED copy of the gain expression is refused through the token arm -- so the comparison is over TOKEN LISTS and not over bytes, which a byte test would have let through.  The well-formed request still MEASURES and agrees with the deck's own closed form.  ⚠ AND THE LIMIT IS DRIVEN RATHER THAN NOTED: a phase operand that is a different MAGNITUDE expression is NOT refused, answers a finite number, and that number is asserted more than a whole relative unit away from the truth -- declared open because nothing about a degrees-valued column separates it from a gain column, which is also why row SO4 refused to substitute an invented range test for this sentence" \
+        [list [mt_disp $so3COL] \
+              [string equal [mt_msg $so3COL] [pcall calc::cross_msg pmsamecol]] \
+              [so_dest $so3COL] \
+              [mt_disp $so3COLG] \
+              [string equal [mt_msg $so3COLG] [pcall calc::cross_msg gmsamecol]] \
+              [so_dest $so3COLG] \
+              [mt_disp $so3SP] \
+              [string equal [mt_msg $so3SP] [pcall calc::cross_msg pmsameop]] \
+              [mt_disp $so3GOOD] [near [mt_val $so3GOOD] $so3T 1e-2] \
+              [mt_disp $so3OPEN] [mt_finite [mt_val $so3OPEN]] \
+              [bw_floor [mt_relerr [mt_val $so3OPEN] $so3T] 1]] \
+        [list refused 1 minted refused 1 minted refused 1 \
+              measured ok measured 1 over1]
+
+    # --- SO4: THE TWO BOUNDS THAT WERE REFUSED, AND WHY --------------------
+    # WARN THIS ROW EXISTS SO THAT TWO REFUSALS TO ADD A GUARD ARE MEASUREMENTS
+    # AND NOT OPINIONS, and it is the whole of this band's answer to "bound the
+    # result".  Each leg drives a request a proposed bound would have rejected
+    # and shows the answer is CORRECT.
+    #
+    # WARN THE SCALE IN THE SECOND LEG IS DERIVED IN THE RUN, as the smallest
+    # integer multiple of the fixture's own first phase sample that reaches 180
+    # degrees, so no factor is written down and a regenerated fixture re-derives
+    # it.  The identity claim is measured too: `cph()` moves a sample only where
+    # the adjacent step reaches 180, so the column's LARGEST step is asserted
+    # below it.
+    set so4Z [mt_call phaseMargin $soMAG {ph(lp) 0 *} magnitude falling 1 0]
+    set so4PH0 [mt_at [mt_col ph(lp) 0] 0]
+    set so4S [so_wrapscale $so4PH0]
+    set so4W [mt_call phaseMargin $soMAG "ph(lp) $so4S *" magnitude falling 1 0]
+    set so4COL [mt_addcol __mt_so_w "ph(lp) $so4S *" 0]
+    set so4CLOSED {}
+    if {[string is integer -strict $so4S]} {
+        set so4CLOSED [expr {180.0 + $so4S*[sb_onepole_deg [sb_x g4]]}]
+    }
+    check "MT27/SO4 the two bounds a reader would ask for are REFUSED WITH A MEASUREMENT AND NOT WITH AN ARGUMENT, each driven as a request the bound would have rejected: a fence on the literal 180.0 would refuse a LEGITIMATE loop whose phase is zero at its crossover, driven here, measured, asserted bit-exactly 180.0 and asserted to be the CORRECT answer to that request -- and it would be keyed to a symptom, which is the class of fence that dies quietly when something else cures the symptom.  A precondition requiring the FIRST phase sample to be inside 180 degrees, enforcing this verb's own declared limit L1 would refuse a drive whose FIRST phase sample exceeds 180 degrees in magnitude and whose answer is nonetheless CORRECT against the closed form, because the operand is already continuous and `cph()` is the identity on it -- asserted as a largest adjacent step BELOW 180.  The multiple is DERIVED from the fixture's own first sample in this run, and is asserted to exist, so neither leg can pass on a constant that stopped applying" \
+        [list [mt_disp $so4Z] [bw_exact [mt_val $so4Z] [so_fab dB]] \
+              [bw_exact [mt_val $so4Z] [pm_margin 0.0]] \
+              [string is integer -strict $so4S] \
+              [bw_floor [expr {abs($so4S*double($so4PH0))}] 180] \
+              [bw_ceil [so_maxstep $so4COL] 180] \
+              [mt_disp $so4W] [near [mt_val $so4W] $so4CLOSED 1e-12] \
+              [mt_finite $so4CLOSED] [probeleft]] \
+        [list measured exact exact 1 over180 under180 measured ok 1 {}]
+
+    # --- SO5: THE ENGINE'S 1e-35 MAGNITUDE FLOOR, DECLARED -----------------
+    # WARN THIS IS A DECLARATION AND THE ROW IS WHAT MAKES IT ONE.
+    # `read_raw_data_block()` in src/save.c substitutes a floor into an undriven
+    # ac MAGNITUDE column -- its own comment says "avoid 0 for dB calculations"
+    # -- so `calc::gainMargin` publishes a finite dB figure for a node with no
+    # small-signal excitation at all.  NOTHING IS CHANGED FOR IT HERE, and the
+    # two reasons are both driven rather than asserted in prose:
+    #
+    #  * A THRESHOLD CANNOT SEPARATE THE FABRICATED FROM THE COMPUTED.  A
+    #    genuinely computed sub-floor magnitude answers a LARGER figure than the
+    #    floored one, so any threshold placed at the floor refuses that computed
+    #    request too.
+    #  * AN EXACT-EQUALITY TEST AGAINST THE C's OWN LITERAL IS EVADED BY ONE
+    #    MULTIPLICATION.  The floored operand times two still answers a finite
+    #    figure, so the fence would pass against its own defect and read as
+    #    coverage.
+    #
+    # The floor is identified HERE WITH NO CONSTANT AT ALL, from the database:
+    # the magnitude sample is nonzero while its own `re` and `im` siblings are
+    # exactly zero, which is the substitution's signature.  The real surface is
+    # issue 1653's `mylog10()` item and its ten log-axis doors in src/callback.c.
+    set so5V [mt_call gainMargin {v(div)} {ph(lp)} magnitude -45 falling 1 0]
+    set so5C [mt_call gainMargin {v(lp) 1e-36 *} {ph(lp)} magnitude -45 falling 1 0]
+    set so5X2 [mt_call gainMargin {v(div) 2 *} {ph(lp)} magnitude -45 falling 1 0]
+    set so5P [mt_call phaseMargin {v(div)} {ph(lp)} magnitude falling 1 0]
+    set so5PD [mt_call phaseMargin {v(div) db20()} {ph(lp)} dB falling 1 0]
+    check "MT27/SO5 the engine's undriven-magnitude floor is DECLARED, and the row drives both reasons no belt was added instead of stating them: the floored column is identified with NO CONSTANT AT ALL -- its magnitude samples are not all zero while its own `re` and `im` siblings are exactly zero, which is the substitution's signature in the database -- and `calc::gainMargin` is asserted to still publish a finite figure above 600 dB from it, so a later change that starts refusing it reddens this declaration instead of quietly outdating it.  A THRESHOLD IS REFUTED: a genuinely computed sub-floor magnitude answers a LARGER figure than the floored one, so a threshold at the floor refuses that request too.  AN EXACT-EQUALITY TEST IS REFUTED: the floored operand times two still answers a finite figure, so the fence would pass against its own defect.  `calc::phaseMargin` is asserted NOT exposed on either unit declaration, because the floored column crosses neither unity nor 0 dB and the verb reports an absence" \
+        [list [sb_allzero [mt_col v(div) 0]] \
+              [sb_allzero [mt_col re(div) 0]] [sb_allzero [mt_col im(div) 0]] \
+              [mt_disp $so5V] [bw_floor [mt_val $so5V] 600] \
+              [mt_disp $so5C] [bw_lt [mt_val $so5V] [mt_val $so5C]] \
+              [mt_disp $so5X2] [mt_finite [mt_val $so5X2]] \
+              [mt_disp $so5P] [mt_disp $so5PD]] \
+        [list notallzero allzero allzero measured over600 measured below \
+              measured 1 absent absent]
+
+    # --- hygiene -----------------------------------------------------------
+    # WARN THE INVENTORY IS CAPTURED BEFORE THE RELOAD, AND THAT IS THE WHOLE
+    # DIFFERENCE BETWEEN THIS ROW AND A VACUOUS ONE.  `mt_load` issues
+    # `xschem raw clear`, which removes every registered column including a
+    # leaked one, so the sibling bands' hygiene rows -- which read the inventory
+    # inside the check's own argument list, after their reload -- can only ever
+    # see an empty one.  Measured: a probe that minted a temporary on this band's
+    # own refusal path and never deleted it was invisible to that spelling.
+    set soLEAK [leaked]
+    set soPROBE [probeleft]
+    pcall mt_load ac
+    # --- SO6: HOW BIG THE DECLARED LIMIT ACTUALLY IS, DERIVED EVERY RUN ------
+    # ⚠⚠ SO3 DECLARES THAT NOTHING SEPARATES A DEGREES-VALUED COLUMN FROM A GAIN
+    # COLUMN, AND DRIVES THAT WITH ONE OPERAND.  The hazard is far wider than one
+    # operand, and this row measures the width instead of leaving it to a reader
+    # to discover: in an ac database every variable carries a `ph(...)` column,
+    # and a variable with no small-signal response has one that is IDENTICALLY
+    # CONSTANT -- so handing it to this verb answers `180 + k`, which for the
+    # usual k of zero is exactly 180.0, the most reassuring stability number
+    # there is, FOR ANY LOOP INCLUDING AN UNSTABLE ONE.
+    #
+    # ⚠ IT PROPOSES NO GUARD, and that is deliberate: SO4 drives a loop whose
+    # phase really is zero at its crossover and asserts bit-exactly 180.0 as the
+    # RIGHT answer, so refusing a constant phase would refuse correct work --
+    # the one direction this project's rulings single out.  The population is
+    # DERIVED from the loaded database rather than listed, so a regenerated
+    # fixture re-measures it and this declaration cannot quietly outdate.
+    #
+    # ⚠ THERE IS NO "DISTANCE FROM 180" LEG, and its absence is deliberate twice
+    # over.  It would be arithmetic on an accessor's output, which the ratchet row
+    # MT29/D counts BY BAND and which takes a band out through `group`'s catch on
+    # a sentinel -- the first draft of this row had it and MT29/D caught it by
+    # name, which is this round's own fence working on a row written after it.
+    # And it is redundant: the good column is asserted to equal the analytic
+    # margin, and that margin is asserted NEGATIVE in the same run, so "far from
+    # 180" follows from the two legs that are already here.
+    #
+    # The size rides along as a floor rather than an equality, because it is a
+    # property of the fixture and not of the product; what the row asserts about
+    # the PRODUCT is that every member answers the same reassuring number on a
+    # loop that is unstable, and that the one VARYING column answers the truth.
+    pcall mt_load ac
+    set so6FLAT {} ; set so6LIVE {}
+    foreach so6n [pcall xschem raw list] {
+        if {![string match ph(* $so6n]} continue
+        if {[catch {set so6v [xschem raw values $so6n 0]}]} continue
+        if {[llength [lsort -unique -real $so6v]] <= 1} {
+            lappend so6FLAT $so6n
+        } else {
+            lappend so6LIVE $so6n
+        }
+    }
+    set so6BAD {}
+    foreach so6n $so6FLAT {
+        set so6a [mt_call phaseMargin [pm_rpn g625] $so6n magnitude falling 1 0]
+        if {[mt_disp $so6a] ne {measured}} { lappend so6BAD "$so6n=[mt_disp $so6a]" ; continue }
+        # ⚠ `near` answers the WORD `ok`, not a boolean, so `if {![near ...]}`
+        # raises `expected boolean value but got "ok"` -- which took this whole
+        # band out through `group`'s catch on the first draft, caught by name by
+        # the band-end guard.  Compared as a word, like every other caller.
+        if {[near [mt_val $so6a] 180.0 1e-12] ne {ok}} { lappend so6BAD "$so6n=[mt_val $so6a]" }
+    }
+    set so6T [gm_cf [pm_closed [pm_k g625] [pm_n g625]] 1]
+    set so6GOOD [mt_call phaseMargin [pm_rpn g625] [pm_rpn ph4] magnitude falling 1 0]
+    check "MT27/SO6 the width of SO3's declared limit, DERIVED from the loaded database every run and not listed: every phase column that is identically constant -- which in an ac database is every variable with no small-signal response -- answers this verb a margin of exactly 180 degrees on a loop whose true margin is NEGATIVE, while the one column that varies answers the truth.  The count rides as a FLOOR because it is the fixture's property and not the product's.  ⚠ This row proposes NO guard and must not be read as asking for one: SO4 drives a loop whose phase really is zero at its crossover and asserts 180.0 as the CORRECT answer there, so a fence on a constant phase would refuse correct work" \
+        [list $so6BAD [mt_atleast [llength $so6FLAT] 2] \
+              [mt_atleast [llength $so6LIVE] 1] \
+              [mt_disp $so6GOOD] \
+              [expr {$so6T < 0.0}] [near [mt_val $so6GOOD] $so6T 1e-2]] \
+        [list {} atleast2 atleast1 measured 1 ok]
+
+    check "MT27 R402 every exit path this band drove cleans up after itself, with the column inventory READ BEFORE THE RELOAD that would have emptied it -- so no `__calc_tmp*` and no `__mt_*` column is left behind by a refusal this band is the only driver of -- and BOTH verbs still MEASURE on the fixture afterwards, which is the claim that stops a leak row being green over a verb that stopped working" \
+        [list $soLEAK $soPROBE \
+              [mt_disp [mt_call phaseMargin $soMAG $soPH magnitude falling 1 0]] \
+              [mt_disp [mt_call gainMargin $soMAG $soPH magnitude -180 falling 1 0]]] \
+        {{} {} measured measured}
+    pcall xschem raw clear
+}
+
+# =========================================================================
+# MT28 -- THE DOMAIN GATE, IN THE DIRECTION NOBODY GATED.  No Tk, so it gates
+# on BOTH arms.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue rows).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D12 -- the sweep BY
+#          NAME, from the sim_type -- which is the mechanism this band is about.
+# Fixture  tests/headless/data/calc_fixture.raw read with an EXPLICIT type, both
+#          `tran` and `ac`, plus the `op` read for the one-voice row.
+#
+# ⚠⚠ WRITTEN RED-FIRST.  Every behavioural row below failed when it was written:
+# the five verbs MEASURED on the `ac` read, all five of their
+# `calc::cross_msg` arms answered the EMPTY STRING, and `calc::acsweep` did not
+# exist.  The transcript is in the stage report.
+#
+# ---------------------------------------------------------------------------
+# WHAT WAS WRONG, MEASURED BEFORE IT WAS FIXED
+# ---------------------------------------------------------------------------
+# Issue 1653 gave the four loop-stability verbs a `sim_type` gate: a bandwidth is
+# a frequency, so `bandwidth`, `gainBwProd`, `gainMargin` and `phaseMargin`
+# refuse a time-domain database rather than answer in seconds.  THE FAMILY WAS
+# GATED IN ONE DIRECTION ONLY.  On the `ac` read of the same fixture the shipped
+# time-domain verbs answered numbers in the SWEEP'S OWN UNIT and labelled them
+# seconds -- a frequency printed as a time, which for a practising user is the
+# tool lying about a measurement rather than a cosmetic defect.
+#
+# THE SPLIT IS DIMENSIONAL AND IT IS MEASURED HERE RATHER THAN ARGUED.  Row
+# MT28/D drives the SAME geometric shape, built in GRID STEPS of whichever sweep
+# column the loaded database has, on both arms:
+#
+#   * the verbs whose answer carries the sweep's unit -- an X span, an X
+#     difference, a Y-per-X rate, or one over an X span -- answer numbers that
+#     differ between the arms by orders of magnitude.  Those are gated.
+#   * the verbs whose answer is DIMENSIONLESS -- `dutyCycle`, a ratio of two X
+#     spans, and `overshoot`, a percentage of a Y excursion -- answer the SAME
+#     NUMBER on both arms for that shape.  Those are NOT gated, and MT28/D is
+#     the row that reddens if somebody gates them.
+#   * `cross` answers the sweep's own X IN THE SWEEP'S OWN UNIT, which is not a
+#     wrong unit on either arm.  On an `ac` database it is the frequency at
+#     which an expression crosses a level, which is what a unity-gain frequency
+#     IS.  It is not gated either.
+#
+# ⚠⚠ THE GATE IS NOT IN `calc::cross`, AND THAT IS A MEASUREMENT RATHER THAN A
+# PREFERENCE.  Symmetry with the four new verbs argues for one shared site, and
+# `calc::cross` is the site all five gated verbs reach.  Three things measured on
+# this tree rule it out, each of which a row below fails by name:
+#
+#   * `calc::cross`'s own `ac` answer is CORRECT, so a gate there would withdraw
+#     a right answer from the user.  MT28/D drives it.
+#   * `calc::dutyCycle` is a `cross` delegate whose answer is dimensionless, so a
+#     gate in `cross` refuses a request that has a right answer.  MT28/D drives
+#     it on both arms and requires the same number.
+#   * the five verbs have NO `raw loaded` check of their own -- they inherit it
+#     from `cross` -- so a gate spelled `sim_type ne tran` fires with NOTHING
+#     LOADED, where `xschem raw sim_type` raises and the local stays empty.  The
+#     no-data refusal is the one MT11 fences for every clickable verb.  MT28/E
+#     is that row, and the gate is therefore spelled `eq ac`.
+#
+# ⚠ ONE DECISION, FIVE ACTS.  `calc::acsweep` is a pure predicate with no Tk: it
+# answers the sim_type when a frequency-domain database is loaded and the empty
+# string otherwise.  Each verb then refuses in ITS OWN VOICE through its own
+# `calc::cross_msg` arm, which is the shape `bwnoac` / `gmnotac` / `pmnotac`
+# already use and the reason the sentence can name the quantity -- *a rise time
+# is a time* -- instead of naming "a measurement".  MT28/G derives
+# `calc::acsweep`'s caller set from the interpreter and asserts it EQUALS the
+# gated set, so a sixth verb gated by open-coding the read reddens by name.
+#
+# ---------------------------------------------------------------------------
+# DECLARED LIMITS
+# ---------------------------------------------------------------------------
+# M1 THE GATE IS `eq ac` AND NOT `ne tran`, so `dc` and `noise` keep whatever
+#    they had.  MT28/E and MT28/F measure the two reasons.  The `op` read is the
+#    only non-tran, non-ac sim_type this fixture can reach at all:
+#    `xschem raw read <f> dc` and `... noise` BOTH FAIL TO READ, which MT28/A
+#    asserts rather than assumes.  A `dc` sweep's own column carries the swept
+#    source's name, so `calc::cross` refuses it through `nosweep` today and
+#    still does.
+# M2 NOTHING HERE ASSERTS THE WORDS of the five new sentences.  They are
+#    unratified user-visible wording, covered by the standing `rule` debt filed
+#    against `calc::eval_msg`'s sentences; the rows assert `mt_shape`, the
+#    FAMILY, the arm IDENTITY and that the sentence fits the status entry.
+# M3 THE `ac` READ IS ONE DATASET, so the `dataset` argument is not exercised
+#    against the gate.  The gate reads the database's sim_type and not a
+#    dataset's, so there is nothing per-dataset to exercise; stated so the
+#    absence is not read as an oversight.
+# M4 THE WAVE-DESTINATION HALF OF THE `_scalar` WRAPPERS IS NOT REACHED.  Each
+#    wrapper returns its principal's answer unchanged when that answer is not a
+#    measurement, which is the path a refusal takes and the one MT28/B2 drives.
+#    Whether a destination would have been minted first is not a question a
+#    refusing principal can raise.
+# M5 THE CLICK IS NOT DRIVEN.  `calc::fn_measure` and `calc::buf_set_number`
+#    both return early on `calc::has_win .calc.buf`, so that the refusal reaches
+#    the status entry and the buffer is left alone is display-only.  MT28/B
+#    asserts the sentence FITS the entry unelided, which is the part that gates
+#    here.
+# M6 `noise` IS A FREQUENCY-DOMAIN SIM_TYPE AND IS NOT GATED BY THIS STAGE.
+#    `calc::cross`'s two-arm map resolves neither `time` nor `frequency` for it,
+#    so the five verbs refuse it through `nosweep` today -- the right
+#    disposition in the wrong voice.  Unreachable from this fixture (M1), so
+#    widening the predicate to cover it would be unfenced in exactly the way the
+#    arm it guards is.  DECLARED, not fixed.
+# ---------------------------------------------------------------------------
+
+# the sweep column of the database AS LOADED, by resolution and never by name:
+# whichever of the two candidates `xschem raw index` resolves.  The `op` read
+# resolves neither and answers the empty string, which is what MT28/F needs.
+proc m28_axis {} {
+    foreach m28n {time frequency} {
+        set m28i -1
+        catch {set m28i [xschem raw index $m28n]}
+        if {[string is integer -strict $m28i] && $m28i >= 0} { return $m28n }
+    }
+    return {}
+}
+# the loaded database's axis geometry, read off the column itself: name, first
+# sample, last sample, point count and grid step.  Every drive below is built
+# out of this, so the SAME TEXT SHAPE is driven on both arms and the axis is the
+# only thing that differs.
+#
+# ⚠ `list` AND NOT `dict create`, AND MT10 IS WHY: `mt_dictsites` walks this
+# file for every `dict create` and names the enclosing proc, so a helper that
+# built its answer that way would enlist itself in the row that derives which
+# procs know the ANSWER representation.  Measured: the first draft of this proc
+# used `dict create` and reddened MT10 on the first run.
+proc m28_geom {} {
+    set m28X [m28_axis]
+    if {$m28X eq {}} { return {} }
+    set m28xs {}
+    catch {set m28xs [string trim [xschem raw values $m28X 0]]}
+    set m28n [mt_len $m28xs]
+    if {![string is integer -strict $m28n] || $m28n < 4} { return {} }
+    set m28a [mt_at $m28xs 0]
+    set m28b [mt_at $m28xs end]
+    if {![mt_finite $m28a] || ![mt_finite $m28b]} { return {} }
+    set m28sp [expr {double($m28b) - double($m28a)}]
+    if {$m28sp <= 0.0} { return {} }
+    return [list name $m28X a $m28a b $m28b n $m28n span $m28sp \
+                step [expr {$m28sp/($m28n - 1)}]]
+}
+# a monotone 0 -> 1 RAMP across the whole sweep, and a TWO-BUMP TRIANGLE TRAIN
+# whose geometry is measured in GRID STEPS so that the shape is the same on a
+# 101-point transient sweep and a 20-point ac one.  Both are expressions this
+# file composes; the engine evaluates them and `calc::cross` finds the
+# crossings, so the comparand's MECHANISM is not the gated verbs' own loop.
+proc m28_ramp {g} {
+    if {$g eq {}} { return {} }
+    return "[bw_dget $g name] [bw_dget $g a] - [bw_dget $g span] /"
+}
+proc m28_tri {g c hw} {
+    return "0 1 [bw_dget $g name] $c - abs() $hw / - 1 * max()"
+}
+proc m28_train {g} {
+    if {$g eq {}} { return {} }
+    set m28s [bw_dget $g step]
+    set m28a [bw_dget $g a]
+    return "[m28_tri $g [expr {double($m28a) + 6*$m28s}] [expr {3*$m28s}]]\
+ [m28_tri $g [expr {double($m28a) + 15*$m28s}] [expr {3*$m28s}]] max()"
+}
+# ---------------------------------------------------------------------------
+# THE DECLARED PARTITION of every CLICKABLE MEASUREMENT VERB.  MT28/A asserts it
+# COVERS the population derived from the catalogue and `calc::fn_argspec`, in
+# both directions, so a verb added to the catalogue appears in `m28UNDECLARED`
+# and reddens BY NAME instead of sitting outside a sweep whose title reads as
+# coverage.  Four parts, and the partition is the band's whole claim about which
+# half of the family each verb is in:
+#
+#   timegate  the verbs this stage gates: their answer carries the sweep's unit.
+#             Each entry is {arm family drive argument-tail}.
+#   alias     a clickable catalogue name that is a pure delegate to a gated
+#             verb and carries no gate of its own.
+#   open      deliberately NOT gated: the answer is dimensionless, or it is the
+#             sweep's own X in the sweep's own unit.
+#   freqgate  gated the OTHER way already, by issue 1653.
+#
+# `@R@` is the ramp, `@T@` the train, `@A@` the axis's first sample --
+# substituted at the drive site, so the table holds no fixture knowledge.
+# ---------------------------------------------------------------------------
+proc m28_timegate {} {
+    return [list \
+        riseTime     [list rtnotran {Rise time}     {@R@ 0 1}] \
+        slewRate     [list srnotran {Slew rate}     {@R@ 0 1 10 90 1 rising}] \
+        delay        [list dlnotran {Delay}         {@R@ 0.2 rising 1 @R@ 0.8 rising 1}] \
+        settlingTime [list stnotran {Settling time} {@R@ 1 0.1 @A@}] \
+        frequency    [list fqnotran {Frequency}     {@T@ 0.5 rising}]]
+}
+proc m28_alias {} { return [list freq frequency] }
+proc m28_open {} {
+    return [list cross {@T@ 0.5 0 rising} \
+                 dutyCycle {@T@ 0.5} \
+                 overshoot {@T@ 0 0.25}]
+}
+proc m28_freqgate {} {
+    return [list bandwidth   {{v(lp)} 3 magnitude low 0} \
+                 gainBwProd  {{v(lp)} 3 magnitude low 0} \
+                 gainMargin  {{v(lp)} {ph(lp)} magnitude -45 falling 1 0} \
+                 phaseMargin {{v(lp)} {ph(lp)} magnitude falling 1 0}]
+}
+# every delegating proc that must INHERIT a gate rather than carry one: the
+# catalogue alias, and the `_scalar` wave wrappers of the gated verbs.  Each is
+# paired with the principal whose sentence it must reproduce by identity.
+proc m28_inherit {} {
+    return [list freq frequency freq_scalar frequency \
+                 frequency_scalar frequency \
+                 riseTime_scalar riseTime slewRate_scalar slewRate]
+}
+# one request, with the three placeholders resolved against the loaded database.
+proc m28_args {spec g} {
+    set m28out {}
+    foreach m28w $spec {
+        switch -exact -- $m28w {
+            @R@ { lappend m28out [m28_ramp $g] }
+            @T@ { lappend m28out [m28_train $g] }
+            @A@ { lappend m28out [bw_dget $g a] }
+            default { lappend m28out $m28w }
+        }
+    }
+    return $m28out
+}
+# the caller set of a proc, derived from the interpreter's own parsed bodies
+# through the same name scanner band MT10 uses, so a gate open-coded in a sixth
+# verb is NOT in it and a gated verb that stopped calling the predicate IS
+# missing from it.
+proc m28_callers {p} {
+    set m28out {}
+    foreach m28q [lsort [info procs ::calc::*]] {
+        set m28nm [namespace tail $m28q]
+        if {$m28nm eq $p} continue
+        if {[lsearch -exact [mt_calc_names $m28nm] $p] >= 0} { lappend m28out $m28nm }
+    }
+    return [lsort -unique $m28out]
+}
+
+# =========================================================================
+group MT28 {
+    # --- A: the two arms, the two derived drives, and the PARTITION ----------
+    pcall mt_load tran
+    set m28GT [m28_geom]
+    set m28RT [m28_ramp $m28GT]
+    set m28TT [m28_train $m28GT]
+    pcall mt_load ac
+    set m28GA [m28_geom]
+    set m28RA [m28_ramp $m28GA]
+    set m28TA [m28_train $m28GA]
+    # the POPULATION, derived from the catalogue and `calc::fn_argspec` the way
+    # bands MT10 and MT11 derive theirs, plus `cross` which `mt_spec_verbs`
+    # excludes by name.
+    set m28POP [lsort -unique [concat cross [pcall mt_spec_verbs]]]
+    set m28DECL [lsort -unique [concat [dict keys [m28_timegate]] \
+                                       [dict keys [m28_alias]] \
+                                       [dict keys [m28_open]] \
+                                       [dict keys [m28_freqgate]]]]
+    set m28UNDECLARED {} ; set m28PHANTOM {}
+    foreach m28v $m28POP {
+        if {[lsearch -exact $m28DECL $m28v] < 0} { lappend m28UNDECLARED $m28v }
+    }
+    foreach m28v $m28DECL {
+        if {[lsearch -exact $m28POP $m28v] < 0} { lappend m28PHANTOM $m28v }
+    }
+    # ...and the DELEGATE SET is asserted EXACTLY against the one derived from
+    # the interpreter over that same population, in both directions, so a verb
+    # that grew or lost an engine door of its own moves between the two and is
+    # named here.  ⚠ `overshoot` is in the OPEN half and is NOT a delegate -- it
+    # owns its own door, which row MT17/O asserts positively -- so the partition
+    # and the delegate set are two different cuts of the same population and the
+    # band must not conflate them.  Measured: a first draft asserted that the
+    # whole open half delegates and reddened on that name.
+    set m28DERIVEDDEL {}
+    foreach m28v $m28POP {
+        if {[pcall mt_reaches_cross $m28v] eq {reaches}} { lappend m28DERIVEDDEL $m28v }
+    }
+    set m28DERIVEDDEL [lsort -unique $m28DERIVEDDEL]
+    # the two sim_types limit M1 declares out of scope, asserted UNREADABLE from
+    # this fixture rather than described that way.
+    set m28UNREAD {}
+    foreach m28t {dc noise} {
+        if {[pcall mt_load $m28t] ne {0}} { lappend m28UNREAD "$m28t=READ" }
+    }
+    pcall mt_load ac
+    check "MT28/A the two arms are the databases this band needs, the two DERIVED DRIVES really are the same geometric shape on each, and the DECLARED PARTITION covers every clickable measurement verb: `sim_type` is tran then ac, the sweep column resolves BY RESOLUTION on both and the other name does not, and both drives are accepted by `calc::rpn_bad_token` on both arms.  The partition is asserted against the population derived from the catalogue and `calc::fn_argspec` in BOTH directions, so a verb added to the catalogue reddens here by name rather than sitting outside a sweep whose title reads as coverage -- and the `calc::cross` DELEGATE SET over that same population is asserted EXACTLY beside it, because the partition and the delegate set are two different cuts of one population and a verb that grew or lost an engine door of its own moves between them.  The two sim_types limit M1 declares out of scope are asserted UNREADABLE from this fixture" \
+        [list [pcall mt_load tran] [pcall xschem raw sim_type] \
+              [bw_dget $m28GT name] [pcall xschem raw index frequency] \
+              [pcall calc::rpn_bad_token $m28RT] [pcall calc::rpn_bad_token $m28TT] \
+              [pcall mt_load ac] [pcall xschem raw sim_type] \
+              [bw_dget $m28GA name] [pcall xschem raw index time] \
+              [pcall calc::rpn_bad_token $m28RA] [pcall calc::rpn_bad_token $m28TA] \
+              $m28UNREAD $m28UNDECLARED $m28PHANTOM \
+              $m28DERIVEDDEL \
+              [mt_atleast [llength $m28POP] 13] \
+              [mt_sized [llength $m28DECL] [llength $m28POP]]] \
+        [list 1 tran time -1 {} {} 1 ac frequency -1 {} {} {} {} {} \
+              {cross delay dutyCycle freq frequency riseTime settlingTime slewRate} \
+              atleast13 sized]
+
+    # --- B: every GATED verb refuses the `ac` read, in its OWN voice ---------
+    set m28BBAD {} ; set m28BOK {} ; set m28BN 0
+    foreach {m28v m28spec} [m28_timegate] {
+        foreach {m28arm m28fam m28tail} $m28spec break
+        incr m28BN
+        pcall mt_load tran
+        set m28a [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        if {[mt_disp $m28a] ne {measured} || ![mt_finite [mt_val $m28a]]} {
+            lappend m28BBAD "$m28v=TRAN-[mt_disp $m28a]" ; continue
+        }
+        lappend m28BOK $m28v
+        pcall mt_load ac
+        set m28b [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        if {[mt_disp $m28b] ne {refused}} {
+            lappend m28BBAD "$m28v=AC-[mt_disp $m28b]" ; continue
+        }
+        set m28m [mt_msg $m28b]
+        if {![string equal $m28m [pcall calc::cross_msg $m28arm ac]]} {
+            lappend m28BBAD "$m28v=WRONG-ARM" ; continue
+        }
+        if {[mt_shape $m28m] ne {ok}} { lappend m28BBAD "$m28v=shape" ; continue }
+        if {[mt_family $m28m] ne $m28fam} { lappend m28BBAD "$m28v=family" ; continue }
+        if {[pcall calc::status_fit $m28m] ne $m28m} { lappend m28BBAD "$m28v=ELIDES" ; continue }
+        if {![regexp -nocase {transient} $m28m]} { lappend m28BBAD "$m28v=NAMESNOSWEEP" }
+    }
+    check "MT28/B every verb of the DECLARED GATED half refuses the `ac` read in its OWN voice, over a request built from that verb's own argument list: the disposition, the arm IDENTITY against `calc::cross_msg`'s own sentence so no word is re-spelled here, the house shape, the FAMILY the sentence opens with, that the sentence fits the status entry UNELIDED at the sim_type's own detail, and that it names the sweep it WANTS rather than only refusing.  ⚠ THE NON-VACUITY LEG IS THE SAME REQUEST ON THE `tran` ARM, which must MEASURE a finite number -- so a gate that refuses everything, and a verb that is simply broken, both fail this row rather than passing it" \
+        [list $m28BBAD [bw_sortg $m28BOK] \
+              [mt_sized $m28BN [llength [dict keys [m28_timegate]]]] \
+              [mt_atleast $m28BN 5]] \
+        [list {} [bw_sortg [dict keys [m28_timegate]]] sized atleast5]
+
+    # --- B2: the DELEGATES that carry no gate of their own inherit one -------
+    set m28WBAD {} ; set m28WN 0
+    foreach {m28w m28p} [m28_inherit] {
+        incr m28WN
+        if {![dict exists [m28_timegate] $m28p]} { lappend m28WBAD "$m28w=NOPRINCIPAL" ; continue }
+        foreach {m28arm m28fam m28tail} [dict get [m28_timegate] $m28p] break
+        pcall mt_load ac
+        set m28g [m28_geom]
+        set m28a [mt_call $m28w {*}[m28_args $m28tail $m28g]]
+        set m28b [mt_call $m28p {*}[m28_args $m28tail $m28g]]
+        if {[mt_disp $m28a] ne {refused}} { lappend m28WBAD "$m28w=[mt_disp $m28a]" ; continue }
+        if {![string equal [mt_msg $m28a] [mt_msg $m28b]]} {
+            lappend m28WBAD "$m28w=NOT-ITS-PRINCIPALS-SENTENCE" ; continue
+        }
+        if {[lsearch -exact [mt_calc_names $m28w] acsweep] >= 0} {
+            lappend m28WBAD "$m28w=HAS-ITS-OWN-GATE"
+        }
+    }
+    check "MT28/B2 every DELEGATING PROC inherits its principal's refusal rather than carrying a gate of its own -- the catalogue's second name for one verb, and the `_scalar` wave wrappers: each refuses the `ac` read with a sentence IDENTICAL to its principal's for the same request, and its own body names the gate predicate NOWHERE, which is the leg that catches a second copy of the decision arriving beside the first.  The set size is a FLOOR so a member deleted from the loop reddens here" \
+        [list $m28WBAD [mt_atleast $m28WN 5]] {{} atleast5}
+
+    # --- B3: the gate sits AFTER the request validation, in every verb -------
+    # ⚠⚠ THIS ROW EXISTS BECAUSE A BUILT SABOTAGE SURVIVED THE FIRST
+    # IMPLEMENTATION.  Every one of the five gate sites carries a comment saying
+    # it is placed after the request validation and before anything reaches the
+    # database -- and moving `settlingTime`'s copy to the very top of the proc
+    # gave `ALL PASS` on this whole suite.  So the placement was five sentences
+    # with no instrument, which is the one thing this house does not allow a
+    # sentence to be.  Each verb is driven on the `ac` arm with ONE MALFORMED
+    # FIELD and must answer THAT FIELD's own refusal, by identity, and not the
+    # domain arm: a user who mistyped an edge must be told about the edge.  The
+    # non-vacuity leg is that the two sentences differ, so the identity cannot be
+    # satisfied by an arm that happens to compose the domain sentence.
+    pcall mt_load ac
+    set m28BAD3 {} ; set m28N3 0
+    foreach {m28v m28spec} [list \
+            riseTime     [list noswing     {{} {}}     {@R@}] \
+            slewRate     [list slewbadedge {sideways}  {@R@ 0 1 10 90 1 sideways}] \
+            delay        [list listdefer   {}          {@R@ 0.5 rising 0 @R@ 0.5 falling 1}] \
+            settlingTime [list nostart     {}          {@R@ 1 0.01}] \
+            frequency    [list freqxaxis   {sideways}  {@T@ 0.5 rising 0 0 sideways}]] {
+        foreach {m28arm m28det m28tail} $m28spec break
+        incr m28N3
+        set m28want [pcall calc::cross_msg $m28arm {*}$m28det]
+        set m28dom [pcall calc::cross_msg \
+                        [lindex [dict get [m28_timegate] $m28v] 0] ac]
+        if {$m28want eq {} || $m28dom eq {}} { lappend m28BAD3 "$m28v=NOSENTENCE" ; continue }
+        if {[string equal $m28want $m28dom]} { lappend m28BAD3 "$m28v=VACUOUS" ; continue }
+        set m28a [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        if {[mt_disp $m28a] ne {refused}} { lappend m28BAD3 "$m28v=[mt_disp $m28a]" ; continue }
+        if {[string equal [mt_msg $m28a] $m28dom]} { lappend m28BAD3 "$m28v=GATE-FIRST" ; continue }
+        if {![string equal [mt_msg $m28a] $m28want]} {
+            lappend m28BAD3 "$m28v=THIRD-SENTENCE:[mt_msg $m28a]"
+        }
+    }
+    check "MT28/B3 THE GATE SITS AFTER THE REQUEST VALIDATION IN EVERY ONE OF THE FIVE VERBS, which was five source comments with no instrument until a BUILT sabotage survived: moving one verb's copy to the top of its proc gave ALL PASS on this whole suite.  Driven on the `ac` arm with ONE MALFORMED FIELD per verb -- a missing swing, a bad edge, an nth of zero, a missing start, a bad X axis -- each of which must earn THAT FIELD's own refusal by identity, so a user who mistyped an edge is told about the edge instead of about the database.  The non-vacuity leg asserts the field sentence and the domain sentence DIFFER, so the identity cannot be satisfied by two arms that compose the same words, and the sweep size is a floor" \
+        [list $m28BAD3 [mt_sized $m28N3 [llength [dict keys [m28_timegate]]]] \
+              [mt_atleast $m28N3 5]] \
+        {{} sized atleast5}
+
+    # --- C: the number the user WOULD have read, re-measured in the run ------
+    # ⚠ THE COMPARAND'S MECHANISM IS DIFFERENT FROM THE GATED VERBS' OWN.  Each
+    # would-be answer is rebuilt out of `calc::cross`'s crossing list on the
+    # SAME `ac` database -- `cross` is in the declared OPEN half and still
+    # answers there -- so this row does not share the loop whose defect it is
+    # about.  Each one must be FINITE and DISTINCT from the transient answer to
+    # the same request, which is what makes the refusal right rather than merely
+    # consistent: the user would have read a PLAUSIBLE number in the wrong unit.
+    pcall mt_load ac
+    set m28GA [m28_geom]
+    set m28RA [m28_ramp $m28GA] ; set m28TA [m28_train $m28GA]
+    set m28X1 [mt_call cross $m28RA 0.1 1 rising]
+    set m28X9 [mt_call cross $m28RA 0.9 1 rising]
+    set m28X2 [mt_call cross $m28RA 0.2 1 rising]
+    set m28X8 [mt_call cross $m28RA 0.8 1 rising]
+    set m28XT [mt_call cross $m28TA 0.5 0 rising]
+    set m28WOULD {}
+    set m28span {}
+    if {[mt_finite [mt_val $m28X9]] && [mt_finite [mt_val $m28X1]]} {
+        set m28span [expr {double([mt_val $m28X9]) - double([mt_val $m28X1])}]
+    }
+    # riseTime: the X span between the 10% and the 90% crossing of the ramp.
+    dict set m28WOULD riseTime $m28span
+    # slewRate: the ramp's own 10%-to-90% swing over that same X span.
+    dict set m28WOULD slewRate [expr {$m28span ne {} && $m28span != 0.0 \
+        ? 0.8/double($m28span) : {}}]
+    # delay: the X difference between the two ramp crossings the request names.
+    dict set m28WOULD delay [expr {[mt_finite [mt_val $m28X8]] && [mt_finite [mt_val $m28X2]] \
+        ? double([mt_val $m28X8]) - double([mt_val $m28X2]) : {}}]
+    # frequency: one over the X span between the train's two rising crossings.
+    set m28T0 [mt_at [mt_val $m28XT] 0] ; set m28T1 [mt_at [mt_val $m28XT] 1]
+    dict set m28WOULD frequency [expr {[mt_finite $m28T0] && [mt_finite $m28T1] \
+        && double($m28T1) != double($m28T0) \
+        ? 1.0/(double($m28T1) - double($m28T0)) : {}}]
+    set m28CBAD {} ; set m28CN 0
+    foreach {m28v m28spec} [m28_timegate] {
+        if {![dict exists $m28WOULD $m28v]} continue
+        incr m28CN
+        set m28wv [dict get $m28WOULD $m28v]
+        if {![mt_finite $m28wv]} { lappend m28CBAD "$m28v=NOTDERIVED:{$m28wv}" ; continue }
+        foreach {m28arm m28fam m28tail} $m28spec break
+        pcall mt_load tran
+        set m28t [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        pcall mt_load ac
+        if {[mt_disp $m28t] ne {measured}} { lappend m28CBAD "$m28v=TRAN-[mt_disp $m28t]" ; continue }
+        if {[mt_distinct $m28wv [mt_val $m28t]] ne {distinct}} {
+            lappend m28CBAD "$m28v=NOT-A-DIFFERENT-NUMBER"
+        }
+    }
+    check "MT28/C the number the user WOULD have read on the `ac` arm is RE-MEASURED in this run instead of being remembered, and through a DIFFERENT MECHANISM from the gated verbs' own: each one is rebuilt out of `calc::cross`'s crossing list on the same ac database -- `cross` is in the declared open half and still answers there -- so this row does not share the loop it is about.  Every would-be answer must be FINITE and DISTINCT from that verb's transient answer to the same request, which is what makes the refusal right rather than merely consistent: a plausible number in the wrong unit is what was being printed.  The count rides along so a derivation that quietly produced nothing cannot pass" \
+        [list $m28CBAD [mt_atleast $m28CN 4]] {{} atleast4}
+
+    # --- D: THE CONTROL, and the row an over-broad gate fails by name --------
+    # ⚠⚠ THIS IS THE ROW THAT MAKES THE SPLIT A MEASUREMENT.  The same shape, in
+    # the same grid steps, on both arms: a verb whose answer is DIMENSIONLESS
+    # must answer the SAME NUMBER on both, and that is the whole reason the open
+    # half is not gated.  It is also the row a gate placed in `calc::cross`, or
+    # spelled `ne tran`, fails by name.
+    set m28DBAD {} ; set m28DN 0 ; set m28DSAME {}
+    foreach {m28v m28tail} [m28_open] {
+        incr m28DN
+        pcall mt_load tran
+        set m28t [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        pcall mt_load ac
+        set m28a [mt_call $m28v {*}[m28_args $m28tail [m28_geom]]]
+        if {[mt_disp $m28t] ne {measured}} { lappend m28DBAD "$m28v=TRAN-[mt_disp $m28t]" ; continue }
+        if {[mt_disp $m28a] ne {measured}} { lappend m28DBAD "$m28v=AC-[mt_disp $m28a]" ; continue }
+        set m28tv [mt_val $m28t] ; set m28av [mt_val $m28a]
+        if {[mt_len $m28tv] ne [mt_len $m28av]} { lappend m28DBAD "$m28v=LENGTH" ; continue }
+        if {$m28v eq {cross}} {
+            # `cross` answers the sweep's own X, so its two arms are the same
+            # SHAPE in two units and not the same number.  What holds for it is
+            # that the ac answer is finite, has the train's own two crossings,
+            # and that they are distinct and increasing -- which is the claim its
+            # four frequency-domain callers are built on.
+            foreach m28e $m28av {
+                if {![mt_finite $m28e]} { lappend m28DBAD "$m28v=AC-NONFINITE" }
+            }
+            if {[mt_distinct [mt_at $m28av 0] [mt_at $m28av 1]] ne {distinct}} {
+                lappend m28DBAD "$m28v=AC-NOT-TWO-CROSSINGS"
+            }
+            if {[mt_distinct [mt_at $m28av 0] [mt_at $m28tv 0]] ne {distinct}} {
+                lappend m28DBAD "$m28v=AC-SAME-AS-TRAN"
+            }
+            continue
+        }
+        set m28n [mt_len $m28tv]
+        if {![string is integer -strict $m28n] || $m28n < 1} { lappend m28DBAD "$m28v=SHAPE" ; continue }
+        set m28allsame 1
+        for {set m28i 0} {$m28i < $m28n} {incr m28i} {
+            if {[near [mt_at $m28av $m28i] [mt_at $m28tv $m28i] $MTTOL] ne {ok}} {
+                lappend m28DBAD "$m28v=ARM-DEPENDENT:[mt_at $m28tv $m28i]|[mt_at $m28av $m28i]"
+                set m28allsame 0
+            }
+        }
+        if {$m28allsame} { lappend m28DSAME $m28v }
+    }
+    # and the four FREQUENCY-DOMAIN verbs must still answer on the ac arm: a gate
+    # placed in `calc::cross_scan` or `calc::cross_pair` instead would take these
+    # out, and nothing else in this band would have said so.
+    pcall mt_load ac
+    set m28FBAD {} ; set m28FN 0
+    foreach {m28v m28tail} [m28_freqgate] {
+        incr m28FN
+        set m28a [mt_call $m28v {*}$m28tail]
+        if {[mt_disp $m28a] eq {refused}} { lappend m28FBAD "$m28v=REFUSED:[mt_msg $m28a]" }
+    }
+    check "MT28/D THE CONTROL, and the row an over-broad gate fails by name: driven on the SAME geometric shape built in the SAME number of grid steps on both arms, every verb of the declared OPEN half still measures on the `ac` read, and the two whose answer is DIMENSIONLESS -- a ratio of two X spans, and a percentage of a Y excursion -- answer the SAME NUMBER element for element, which is what dimensionless means as a measurement instead of as an argument.  `cross` answers the sweep's own X and so carries the finite, two-crossing, mutually-distinct claim its four frequency-domain callers are built on, plus the leg that its ac answer is NOT its tran answer so the row cannot pass over an arm that failed to switch.  ⚠ Those four callers are driven here too, because a gate placed in `calc::cross_scan` or `calc::cross_pair` rather than in the five verbs would withdraw them and nothing else in this band would notice" \
+        [list $m28DBAD $m28FBAD [bw_sortg $m28DSAME] \
+              [mt_sized $m28DN [llength [dict keys [m28_open]]]] \
+              [mt_atleast $m28DN 3] [mt_atleast $m28FN 4]] \
+        [list {} {} {dutyCycle overshoot} sized atleast3 atleast4]
+
+    # --- E: the NO-DATA path is not hijacked, which is why the gate is `eq ac`
+    pcall xschem raw clear
+    set m28EBAD {} ; set m28EN 0
+    set m28ENODATA [pcall calc::cross_msg nodata]
+    foreach {m28v m28spec} [m28_timegate] {
+        foreach {m28arm m28fam m28tail} $m28spec break
+        incr m28EN
+        # the placeholders cannot be resolved with nothing loaded, so the drive is
+        # a plain column name: the point of the row is the sim_type read and not
+        # the expression.
+        set m28a [mt_call $m28v {*}[string map {@R@ {v(sq)} @T@ {v(sq)} @A@ 0} $m28tail]]
+        if {[mt_disp $m28a] ne {refused}} { lappend m28EBAD "$m28v=[mt_disp $m28a]" ; continue }
+        if {![string equal [mt_msg $m28a] $m28ENODATA]} {
+            lappend m28EBAD "$m28v=HIJACKED:[mt_msg $m28a]"
+        }
+    }
+    check "MT28/E WITH NOTHING LOADED every gated verb still answers `calc::cross`'s own NO-DATA refusal, by identity, and never the domain arm -- which is the measured reason the gate is spelled `eq ac` rather than the symmetric `ne tran`.  None of these five has a `raw loaded` check of its own; they inherit it from `cross`, and `xschem raw sim_type` RAISES with nothing loaded, so a `ne tran` test fires on an empty local and tells the user to run a transient analysis when what they have not done is load a result at all.  The non-vacuity legs are the no-data sentence being in the house shape and the sweep's own size" \
+        [list $m28EBAD [mt_shape $m28ENODATA] [mt_atleast $m28EN 5]] {{} ok atleast5}
+
+    # --- F: the `op` read keeps its ONE VOICE -------------------------------
+    pcall mt_load op
+    set m28FOBAD {} ; set m28FON 0
+    set m28OPM [pcall calc::cross_msg nosweep op]
+    foreach {m28v m28tail} [list riseTime {{v(sq)} 0 1} \
+                                 slewRate {{v(sq)} 0 1 10 90 1 rising} \
+                                 delay {{v(sq)} 0.5 rising 1 {v(sq)} 0.5 falling 1} \
+                                 settlingTime {{v(sq)} 1 0.01 0} \
+                                 frequency {{v(sq)} 0.5 rising} \
+                                 overshoot {{v(sq)} 0 0.5 0}] {
+        incr m28FON
+        set m28a [mt_call $m28v {*}$m28tail]
+        if {[mt_disp $m28a] ne {refused}} { lappend m28FOBAD "$m28v=[mt_disp $m28a]" ; continue }
+        if {![string equal [mt_msg $m28a] $m28OPM]} {
+            lappend m28FOBAD "$m28v=OWNVOICE:[mt_msg $m28a]"
+        }
+    }
+    check "MT28/F THE OPERATING-POINT READ KEEPS ITS ONE VOICE, which is the property row MT17/L fences for two verbs and this row extends to the whole gated set plus `overshoot`: every one of them still answers `calc::cross`'s `nosweep` sentence by IDENTITY on the `op` read.  That is the second measured reason the gate is `eq ac`: a `ne tran` spelling would give the five a domain sentence while `overshoot` kept `nosweep`, so a user clicking six verbs on one database would get two different explanations of one fact.  `op` is the only non-tran, non-ac sim_type this fixture can reach, which MT28/A asserts rather than this row claiming" \
+        [list $m28FOBAD [mt_shape $m28OPM] [mt_atleast $m28FON 6]] {{} ok atleast6}
+
+    # --- G: the arms, the parity, and ONE decision site ---------------------
+    pcall mt_load ac
+    set m28ARMS [pcall mt_switch_arms cross_msg]
+    set m28GBAD {}
+    foreach {m28v m28spec} [m28_timegate] {
+        foreach {m28arm m28fam m28tail} $m28spec break
+        if {[lsearch -exact $m28ARMS $m28arm] < 0} { lappend m28GBAD "$m28arm=NOTANARM" ; continue }
+        if {[pcall calc::cross_msg $m28arm ac] eq {}} { lappend m28GBAD "$m28arm=EMPTY" ; continue }
+        if {[lsearch -exact [mt_calc_names $m28v] acsweep] < 0} {
+            lappend m28GBAD "$m28v=OPENCODED"
+        }
+    }
+    check "MT28/G ONE DECISION AND FIVE ACTS, asserted structurally: every gated verb's `calc::cross_msg` arm is a member of the set DERIVED from that proc's own trailing `switch` argument -- so an arm added to the table or to a verb without the other reddens by name -- every one composes a non-empty sentence, and the caller set of the gate predicate DERIVED from the interpreter's own parsed bodies is EQUAL to the gated set, so a sixth verb that open-coded the sim_type read is missing from it and a gated verb that stopped calling it is too.  `mt_switch_agree` rides along as the parity guard: a comment landing between two patterns re-pairs the whole trailing list, which balances the braces and satisfies `info complete` while detonating every arm, and only a behavioural sweep can see it.  The predicate's own answer on the loaded arm is the non-vacuity leg" \
+        [list $m28GBAD [bw_sortg [m28_callers acsweep]] \
+              [bw_sortg [dict keys [m28_timegate]]] \
+              [pcall mt_switch_agree cross_msg] \
+              [mt_atleast [llength $m28ARMS] 40] \
+              [pcall calc::acsweep]] \
+        [list {} [bw_sortg [dict keys [m28_timegate]]] \
+              [bw_sortg [dict keys [m28_timegate]]] agree atleast40 ac]
+
+    # --- H: hygiene ---------------------------------------------------------
+    # ⚠ THE INVENTORY IS CAPTURED BEFORE THE RELOAD and the sim_type leg is
+    # taken after, which is the only order that works for both: the reload is
+    # what puts the transient arm back, and it clears the inventory doing it.
+    # See the warning on `leaked`.
+    set m28LEAK [leaked]
+    set m28PROBE [probeleft]
+    pcall mt_load tran
+    # ⚠⚠ AND THE PRE-RELOAD CAPTURE ALONE IS VACUOUS FOR THIS BAND.  Measured:
+    # this band's last sub-band reloads the fixture and then drives only
+    # `calc::cross_msg` and structural reads, so nothing after that reload mints
+    # at all -- with the product's unconditional `xschem raw del $dest` deleted,
+    # the capture above stayed empty.  The second leg mints one temporary
+    # deliberately on the transient arm this row has just restored, which is
+    # also the arm the gate REFUSES the five ac-only verbs on, so the drive has
+    # to be one that measures there.
+    set m28FRESH [mt_disp [mt_call overshoot {v(lp)} 0 1 0]]
+    set m28LEAK2 [leaked]
+    check "MT28 R402 the inventory is READ TWICE AND BOTH READS ARE EMPTY: once BEFORE this band's reload, which is the only point that can see the paths the band itself drove, and once AFTER A DELIBERATE FRESH MINT on the restored transient arm, because nothing this band drives after its own last reload mints at all and so cannot witness a deleted cleanup.  The band still leaves the transient arm loaded for whatever runs after it, and the fresh drive's disposition rides along so a leg that stopped measuring cannot read as cleanliness" \
+        [list $m28LEAK $m28PROBE [pcall xschem raw sim_type] $m28FRESH $m28LEAK2] \
+        {{} {} tran measured {}}
+}
+
+# ===========================================================================
+# MT29.  ARITHMETIC ON AN ADAPTER'S OUTPUT -- the hazard the adapter itself
+# does NOT cover, and the one that still takes a whole band out of the verdict.
+#
+# WARN THE BARE ACCESSOR WAS THE PREVIOUS DEFECT AND IS CLOSED.  `mt_disp`,
+# `mt_val`, `mt_key`, `mt_msg`, `mt_len`, `mt_at` and `mt_range` are total, so a
+# product answer that is not a measurement reaches a row as a sentinel STRING
+# instead of raising.  The claim that every verb answer goes through one of them
+# is literally true and INSUFFICIENT: `expr` then raises on the sentinel, and
+# `group`'s catch turns that into one `ABORTED` line that DELETES the rest of
+# the band.  Three bands were losing their rows that way when this was written;
+# the sabotage sweep in MT29/C is what measures it, because the shortfall is a
+# check total that nothing compares against anything.
+#
+# WARN⚠ A LISTNESS GUARD IS NOT A SENTINEL TEST, AND THAT IS THE SHARP EDGE.
+# `pcall_listable` makes every sentinel LIST-PARSEABLE on purpose, so `llength`
+# and `lindex` cannot raise on one -- and that very property defeats a
+# `catch {llength ...}` placed in front of arithmetic: the guard passes, the
+# loop runs, and `double()` raises on an element that is a word.  `mt_fq_axis`
+# had exactly that shape; its guard was doing its job and the arithmetic behind
+# it was unguarded.  The raising-operator set is MEASURED in row MT29/A rather
+# than assumed, because `< > <= >= == != eq ne` fall back to a STRING
+# comparison and do not raise -- so a gate written for all of `expr` would be
+# over-broad and a gate written for none of it is this defect.
+#
+# WARN A TEXT SCAN IS THE WRONG INSTRUMENT CLASS FOR THIS, AND THAT WAS MEASURED
+# RATHER THAN ASSUMED.  Two were built and both were useless: a scan for an
+# accessor substitution adjacent to a raising operator answers hundreds of sites
+# across the five calculator suites and is essentially all false, because `?` and
+# `-` next to an accessor are usually operating on the BOOLEAN that an `eq`
+# comparison produced, and because a GUARDED site looks exactly like an unguarded
+# one to a regexp.  No figure is written here, because no instrument recomputes
+# one -- the shape is the finding.  The population below is therefore derived
+# from the INTERPRETER'S OWN PARSED BODIES and driven, which is the same
+# correction row WD4 of test_calc_wave_dest.tcl records against `BM05`'s
+# whole-file `string first`.
+# ===========================================================================
+
+# the `::calc::` closure of a verb WITHOUT stopping at `cross`.  `mt_calc_closure`
+# stops there on purpose -- it is answering T1's "who reads samples" question and
+# `cross` is the one permitted reader -- but a raise can be planted BELOW it, and
+# `extremum`, `sample_at` and `rpn_opstack` are exactly where the realistic
+# single-point defects live.
+proc mt_fullclosure {verbs} {
+    set seen {} ; set q $verbs
+    while {[llength $q]} {
+        set c [lindex $q 0] ; set q [lrange $q 1 end]
+        if {[lsearch -exact $seen $c] >= 0} continue
+        if {[info commands ::calc::$c] eq {}} continue
+        if {[catch {info body ::calc::$c}]} continue
+        lappend seen $c
+        foreach n [mt_calc_names $c] { lappend q $n }
+    }
+    return [lsort $seen]
+}
+# ONE `::calc::` proc replaced by a RAISING stub for the duration of a script --
+# the realistic single-point defect, and the same mechanism `mt_stub_run` uses on
+# `cross`.  Restored on BOTH exit paths, and the slot is checked first so a
+# previous failed run inside this interpreter cannot read as a product defect.
+# A raise AT THE SITE is reported as a value, never re-raised, or this proc would
+# be the thing that deletes the band.
+#
+# ⚠ THE WORD THE STUB RAISES WITH IS NAMED ONCE AND READ BACK BY THE ARRIVAL
+# LEG, because that leg's only honest question is whether the sentinel it sees
+# was caused by THIS stub.  A verb that refuses on the loaded arm answers an
+# uppercase sentinel of its own, which is what made the first spelling vacuous.
+set ::MT29WORD mt29sabotage
+proc mt_raise_under {p script} {
+    if {[info commands ::calc::$p] eq {}} { return "NOPROC:$p" }
+    if {[info commands ::mt_rz_keep] ne {}} { return SLOTBUSY }
+    rename ::calc::$p ::mt_rz_keep
+    proc ::calc::$p {args} { error "$::MT29WORD a raise inside calc:: " }
+    set rc [catch {uplevel 1 $script} r]
+    catch {rename ::calc::$p {}}
+    catch {rename ::mt_rz_keep ::calc::$p}
+    if {$rc} { return "RAISEDHERE:[pcall_listable $r]" }
+    return $r
+}
+# this file's OWN proc names, from its own text, so a helper added later enlists
+# itself.  `mt_dictsites` walks the same way and for the same reason: a one-line
+# proc must not leak its name forward.
+proc mt_ownprocs {} {
+    set f $::MTSELF
+    if {$f eq {} || ![file exists $f]} { return "NOFILE:$f" }
+    if {[catch {open $f r} h]} { return "NOREAD:$h" }
+    set txt [read $h] ; close $h
+    set out {}
+    foreach ln [split $txt "\n"] {
+        if {[regexp {^proc[ \t]+([^ \t\{]+)} $ln -> nm]} { lappend out [namespace tail $nm] }
+    }
+    return [lsort -unique $out]
+}
+# the MATH FUNCTIONS `expr` offers, from the interpreter's own table rather than
+# from a list kept here, so a build with more of them is still swept.
+proc mt_mathfuns {} {
+    set out {}
+    foreach c [info functions] { lappend out $c }
+    return [lsort -unique $out]
+}
+# this file's own text, so the scanner below can be given hand-built input in a
+# control leg instead of needing a second copy of itself.
+proc mt_selftext {} {
+    set f $::MTSELF
+    if {$f eq {} || ![file exists $f]} { return "NOFILE:$f" }
+    if {[catch {open $f r} h]} { return "NOREAD:$h" }
+    set txt [read $h] ; close $h
+    return $txt
+}
+# THE BAND-LEVEL OCCURRENCES of the shape, as a TALLY PER BAND: a math function
+# applied to an accessor substitution, or to a variable set at band level from
+# one.  Band names rather than line numbers, so an ordinary edit does not move
+# the answer.  Lines inside a `proc` are skipped on purpose -- row MT29/A is the
+# instrument there, and it is a DRIVE rather than a scan because a guarded site
+# and an unguarded one are the same text.
+proc mt_bandarith {txt} {
+    set acc {pcall mt_call mt_val mt_key mt_msg mt_disp mt_at mt_range mt_len}
+    set A [join $acc |]
+    set F [join [mt_mathfuns] |]
+    set depth 0 ; set vars {} ; set band TOP ; set tally {}
+    foreach ln [split $txt "\n"] {
+        if {[regexp {^proc[ \t]+} $ln]} { set depth [expr {[info complete $ln] ? 0 : 1}] ; continue }
+        if {$depth && [string index $ln 0] eq "\}"} { set depth 0 ; continue }
+        if {$depth} continue
+        if {[string index [string trimleft $ln] 0] eq "#"} continue
+        if {[regexp {^group[ \t]+([A-Za-z0-9_]+)} $ln -> nm]} { set band $nm ; set vars {} }
+        if {[regexp "^\[ \t\]*set\[ \t\]+(\[A-Za-z_\]\[A-Za-z0-9_\]*)\[ \t\]+\\\[($A)\\M" $ln -> v]} {
+            lappend vars $v
+        }
+        set hit 0
+        if {[regexp "\\m($F)\\(\[^)\]*\\\[($A)\\M" $ln]} { set hit 1 }
+        foreach v [lsort -unique $vars] {
+            if {[regexp "\\m($F)\\(\[ \t\]*\\\$$v\\M" $ln]} { set hit 1 }
+        }
+        if {$hit} { dict incr tally $band }
+    }
+    return $tally
+}
+# THE POPULATION: a proc of this file's own that GUARDS LISTNESS and then applies
+# a raising operator or a math function.  Both halves derived from the
+# interpreter's parsed, decommented body.
+proc mt_guardarith {} {
+    set out {}
+    set funs [mt_mathfuns]
+    foreach n [mt_ownprocs] {
+        if {[info procs ::$n] eq {}} continue
+        if {[catch {info body ::$n} body]} continue
+        set b [mt_decomment $body]
+        if {![regexp {catch[ \t]+\{(llength|lindex|lrange)} $b]} continue
+        set arith 0
+        foreach fn $funs { if {[regexp "\\m$fn\\(" $b]} { set arith 1 ; break } }
+        if {!$arith && [regexp {expr[ \t]*\{[^\}]*[-+*/%][ \t]*[\$\[]} $b]} { set arith 1 }
+        if {!$arith} continue
+        lappend out $n
+    }
+    return [lsort $out]
+}
+# every member driven with the LIST-PARSEABLE poison in each argument position in
+# turn, the other positions taking each of a filler set that includes R420's own
+# axis words and the two edge words -- because a branch selected by a WORD is
+# unreachable with a numeric filler, which is how `mt_fq_axis`'s `mid` arm hid
+# from the first version of this drive.
+proc mt_poisondrive {names} {
+    set pois {RAISED:sabotage: cross}
+    set fill [list {1 2 3} 2 start number mid rising falling]
+    set bad {} ; set n 0
+    foreach p $names {
+        if {[info procs ::$p] eq {}} { lappend bad "$p:NOPROC" ; continue }
+        set fa [info args ::$p]
+        set k [llength $fa]
+        for {set i 0} {$i < $k} {incr i} {
+            foreach f $fill {
+                set a {}
+                for {set j 0} {$j < $k} {incr j} { lappend a [expr {$j == $i ? $pois : $f}] }
+                incr n
+                if {[catch {::$p {*}$a}]} { lappend bad "$p/arg$i" }
+            }
+        }
+    }
+    return [list [lsort -unique $bad] $n]
+}
+
+group MT29 {
+    # --- A: THE DERIVED POPULATION, DRIVEN ----------------------------------
+    set m29POP [mt_guardarith]
+    set m29D [mt_poisondrive $m29POP]
+    # THE CONTROL: the shape the defect had, defined here, so the drive is shown
+    # to discriminate instead of being green over a population it cannot see
+    # through.  Removed again and asserted removed.
+    proc ::mt_m29_ctl {xs which} {
+        if {[catch {llength $xs} n]} { return "NOTALIST:{$xs}" }
+        if {$n < 2} { return {} }
+        return [expr {(double([lindex $xs 0]) + double([lindex $xs 1]))/2.0}]
+    }
+    set m29C [mt_poisondrive mt_m29_ctl]
+    rename ::mt_m29_ctl {}
+    # ...and the raising-operator set, MEASURED here.  The eight that do NOT
+    # raise are the reason the gate is numeric-per-element and not "no expr".
+    set m29R {} ; set m29S {}
+    foreach m29e {{$p - 1} {$p + 1} {$p * 2} {$p / 2} {$p % 2} {$p ** 2} {-$p} {!$p}
+                  {$p && 1} {$p || 1} {$p ? 1 : 2} {$p < 1} {$p > 1} {$p <= 1}
+                  {$p >= 1} {$p == 1} {$p != 1} {$p eq {x}} {$p ne {x}}} {
+        set p {RAISED:sabotage: cross}
+        if {[catch {expr $m29e}]} { lappend m29R $m29e } else { lappend m29S $m29e }
+    }
+    check "MT29/A EVERY proc of this file's own that guards LISTNESS and then applies arithmetic is TOTAL on a list-parseable sentinel -- the population derived from the interpreter's own parsed, decommented bodies and the math-function half of the test derived from `info functions`, so a helper added later enlists itself -- driven with the poison in EACH argument position against a filler set carrying R420's axis words, because a branch selected by a WORD is unreachable with a numeric filler and that is where the defect hid.  THE CONTROL is the shape the defect had, defined and driven and removed in this row, so the drive is shown to discriminate rather than to be green over a population it cannot see through; the drive count and a population floor ride along so neither can be empty.  The raising-operator set is MEASURED in the same row: eight of `expr`'s comparisons fall back to a STRING compare and do NOT raise, which is why the repair gates each element numerically instead of forbidding `expr`" \
+        [list [lindex $m29D 0] \
+              [mt_atleast [llength $m29POP] 6] \
+              [mt_atleast [lindex $m29D 1] 100] \
+              [expr {[llength [lindex $m29C 0]] > 0 ? {control-raises} : {CONTROL-TOTAL}}] \
+              [expr {[info procs ::mt_m29_ctl] eq {} ? {removed} : {LEFTBEHIND}}] \
+              [mt_sized [llength $m29R] 11] [mt_sized [llength $m29S] 8]] \
+        [list {} atleast6 atleast100 control-raises removed sized sized]
+
+    # --- B: THE TWO HOISTED SITES -------------------------------------------
+    # The two row-level `expr`s that took MT23 and MT27 out are now named procs,
+    # which is what puts them in front of a drive at all: an `expr` written at a
+    # row site is reachable by no instrument in this file.
+    set m29SENT [list {RAISED:sabotage: cross} {ERR:sabotage: extremum} \
+                      {NOPROC:calc::nosuch} {NOTADICT:{a b}} {NOKEY-value:x} \
+                      {NOTALIST:{x}} measured absent refused {}]
+    set m29BAD {} ; set m29N 0
+    foreach m29s $m29SENT {
+        incr m29N
+        foreach m29call [list [list mt_dbscale $m29s -3.0] [list mt_dbscale 1.0 $m29s] \
+                              [list mt_relerr $m29s 1.0] [list mt_relerr 1.0 $m29s]] {
+            if {[catch {{*}$m29call} m29e]} { lappend m29BAD "[lindex $m29call 0]:{$m29s}" ; continue }
+            if {[mt_finite $m29e]} { lappend m29BAD "[lindex $m29call 0]:{$m29s}=NUMBER" }
+        }
+    }
+    check "MT29/B the two sites that were row-level `expr`s are PROCS and both are total over the sentinel vocabulary this file can hand them -- every shape its own accessors return, plus the empty string -- answering a non-numeric word in every case rather than raising OR silently producing a number, which is the second half and the one a bare `catch` would miss.  They are also measured to be RIGHT on real inputs, by an identity with no arithmetic in it on one side: minus twenty dB is exactly a tenth, and the relative error of a value against itself is zero while a doubled value is one.  An `expr` written at a row site is reachable by no instrument in this file, so hoisting it is what makes the drive possible at all" \
+        [list $m29BAD [mt_atleast $m29N 8] \
+              [bw_exact [mt_dbscale 10.0 -20.0] 1.0] \
+              [bw_exact [mt_relerr 2.0 2.0] 0.0] \
+              [bw_exact [mt_relerr 4.0 2.0] 1.0] \
+              [mt_relerr 1.0 0.0]] \
+        [list {} atleast8 exact exact exact ZERODENOM]
+
+    # --- C: THE SWEEP IN MINIATURE, which is what found all of this ----------
+    # Every `::calc::` proc in the DERIVED full closure of the verbs the three
+    # affected bands drive is replaced by a RAISING stub, one at a time, and that
+    # band's own arithmetic is re-run.  `rpn_opstack` answering an empty table,
+    # `sample_at` raising and `extremum` raising are realistic single-point
+    # defects rather than artificial ones, which is why the population is the
+    # whole closure and not those three.
+    #
+    # ⚠⚠ THE ARRIVAL LEG COUNTS ONLY A SENTINEL CARRYING THE STUB'S OWN WORD,
+    # AND THE FIRST SPELLING OF IT WAS VACUOUS.  It accepted any uppercase
+    # sentinel shape -- and `calc::phaseMargin` REFUSES on the transient arm, so
+    # `mt_relerr` answered `NOTANUMBER:{refused}` with no stub involved at all.
+    # Built: with `mt_raise_under` altered to rename the proc away and straight
+    # back -- planting nothing -- the row still read `poison-arrived` and the
+    # whole band stayed green.  The sabotage word is the only thing that
+    # distinguishes a sentinel the STUB caused from one the product authored.
+    pcall mt_load tran
+    set m29CL [mt_fullclosure {frequency cross phaseMargin gainBwProd extremum}]
+    set m29R29 {} ; set m29SEEN 0 ; set m29n 0
+    foreach m29p $m29CL {
+        incr m29n
+        foreach m29probe [list \
+            {mt_fq_axis [mt_val [mt_call cross [mt_fq_rpn] 0.4 0 rising 0]] mid} \
+            {mt_fq_fromx [mt_val [mt_call cross [mt_fq_rpn] 0.4 0 rising 0]]} \
+            {mt_dbscale [pcall calc::extremum [mt_col {v(lp)} 0] max] -3.0} \
+            {mt_relerr [mt_val [mt_call phaseMargin {v(lp)} {ph(lp)} magnitude falling 1 0]] 45.0}] {
+            set m29got [mt_raise_under $m29p $m29probe]
+            if {[string match RAISEDHERE:* $m29got]} { lappend m29R29 "$m29p:$m29got" ; continue }
+            if {[string first $::MT29WORD $m29got] >= 0} { incr m29SEEN }
+        }
+    }
+    # ...and the closure really does go BELOW `cross`, asserted as a STRICT
+    # SUPERSET of `mt_calc_closure`'s answer for the same verbs rather than as a
+    # sentence: that proc stops AT `cross` on purpose, and a sweep that inherited
+    # the stopping walk would plant no raise in `extremum`, `sample_at` or the
+    # `rpn_*` table -- which is where the realistic defects are.  Built: with the
+    # stop reinstated the whole band stayed green.
+    set m29STOP [mt_calc_closure cross]
+    set m29FULL [mt_fullclosure cross]
+    set m29BELOW {}
+    foreach m29q $m29FULL { if {[lsearch -exact $m29STOP $m29q] < 0} { lappend m29BELOW $m29q } }
+    check "MT29/C the SWEEP THAT FOUND THIS, in miniature and permanent: every `::calc::` proc in the DERIVED full closure of the verbs the three affected bands drive is replaced by a RAISING stub, one at a time, and that band's own arithmetic is re-run -- so a single-point raise anywhere under a verb reaches a row as a legible word instead of taking the band out through `group`'s catch and deleting its remaining rows.  The closure is asserted to be a STRICT SUPERSET of `mt_calc_closure`'s answer for `cross`, which is `cross` ALONE because that walk stops there, because the realistic defects are BELOW it -- an empty opcode table, a raising `sample_at`, a raising `extremum` -- and a sweep that inherited the stopping walk would never plant a raise in any of them.  The arrival leg counts only a sentinel carrying the STUB'S OWN WORD, because a verb that refuses on this arm answers an uppercase sentinel of its own and the first spelling of this leg was green over a sweep that planted nothing" \
+        [list $m29R29 [mt_atleast $m29n 10] \
+              [expr {$m29SEEN > 0 ? {poison-arrived} : {POISON-NEVER-ARRIVED}}] \
+              [expr {[llength $m29BELOW] > 0 ? {goes-below-cross} : {STOPS-AT-CROSS}}] \
+              [mt_sized [llength $m29STOP] 1] \
+              [mt_atleast [llength $m29BELOW] 3] \
+              [expr {[info commands ::mt_rz_keep] eq {} ? {norename} : {RENAMELEFT}}]] \
+        [list {} atleast10 poison-arrived goes-below-cross sized atleast3 norename]
+
+    # --- D: THE RATCHET OVER WHAT IS LEFT, AND WHY IT IS A RATCHET ----------
+    # ⚠⚠ THE TWO SITES ABOVE ARE NOT THE WHOLE SHAPE AND AN "ASSERT IT IS EMPTY"
+    # ROW IS NOT AVAILABLE.  The same shape -- a MATH FUNCTION applied to an
+    # accessor substitution, or to a variable set at band level from one -- still
+    # occurs at band level in several bands, and the sabotage sweep reaches NONE
+    # of them: every one is either behind a disposition test, or fed from a raw
+    # column rather than from a verb answer.  So they are LATENT, not defects,
+    # and removing them would be churn.
+    #
+    # What a row can do instead is RATCHET: the population is re-derived from
+    # this file's own text every run, as a tally PER BAND -- band names, not line
+    # numbers, so ordinary edits do not move it -- and a NEW site reddens here.
+    # Built: putting either hoisted site back as a row-level `expr` moves the
+    # tally and reddens this row, which is the sabotage every other row in this
+    # band survives.
+    #
+    # ⚠ The scan takes TEXT rather than a file name, so the two controls below
+    # are the same code on hand-built input.  Its limits are declared and not
+    # chased: it sees one physical line at a time, so an application split across
+    # a backslash continuation is invisible to it, and it is blind inside procs by
+    # construction -- row MT29/A is the instrument there, and it is a drive
+    # rather than a scan precisely because a guarded site and an unguarded one
+    # look the same to a regexp.
+    set m29TALLY [mt_bandarith [mt_selftext]]
+    check "MT29/D THE RATCHET over the band-level occurrences of the same shape that remain -- a math function applied to an accessor substitution or to a band-level variable set from one -- derived from this file's own text every run and reported as a tally PER BAND, so a new site reddens by band name while an ordinary edit does not move it.  It is a ratchet and NOT an emptiness claim because the sabotage sweep reaches none of the remaining sites: each is behind a disposition test or fed from a raw column rather than a verb answer, so they are LATENT and removing them would be churn.  The two CONTROLS are the same scanner on hand-built text -- it finds the unguarded shape and does not find the hoisted one -- so the tally is a measurement rather than a constant, and the scanner's blindness inside procs and across a line continuation is declared rather than chased: row MT29/A is the instrument inside a proc, and it is a DRIVE because a guarded site and an unguarded one are the same text.  The last leg is issue 1646's trap made a measurement: this row's own controls quote the shape it greps for, so MT29 must not appear in its own tally" \
+        [list $m29TALLY \
+              [mt_bandarith "group XX \{\n    set v \[mt_val \$a\]\n    set q \[expr \{abs(double(\$v))\}\]\n\}"] \
+              [mt_bandarith "group XX \{\n    set v \[mt_val \$a\]\n    set q \[mt_relerr \$v 1.0\]\n\}"] \
+              [expr {[dict exists $m29TALLY MT29] ? {SELFCOUNTED} : {not-its-own-evidence}}]] \
+        [list {MT19 4 MT22 2 MT26 3 MT27 1 MT28 4} {XX 1} {} not-its-own-evidence]
+
+    # --- E: hygiene ---------------------------------------------------------
+    # ⚠ CAPTURED BEFORE THE RELOAD, and for this band that is the WHOLE claim:
+    # the stub sweep above is the only driver in this file of a verb that raises
+    # PART-WAY THROUGH, i.e. after the mint and before the cleanup, which is
+    # precisely the shape that leaks.  `mt_load` issues `xschem raw clear` and
+    # would have removed the evidence -- see the warning on `leaked` itself.
+    # ⚠ THIS ROW WAS NOT IN THE REPORTED SET OF SEVEN.  It was found by deriving
+    # the population over this file's own text rather than reading a list, which
+    # is the same defect one level up that row X1 of
+    # tests/headless/test_snprintf_fmt_1608.tcl exists to prevent.
+    set m29LEAK [leaked]
+    set m29PROBE [probeleft]
+    pcall mt_load tran
+    # the fresh mint, as the sibling hygiene rows carry: the capture above sees
+    # the sweep's own paths, and this one sees a cleanup deleted outright.
+    set m29FRESH [mt_disp [mt_call overshoot {v(lp)} 0 1 0]]
+    set m29LEAK2 [leaked]
+    check "MT29 R402 the inventory is READ TWICE AND BOTH READS ARE EMPTY: once BEFORE this band's reload, which is the only point that can see the stub sweep's own exit paths -- a verb raising AFTER the mint and BEFORE the cleanup, a shape nothing else in this file drives -- and once AFTER A DELIBERATE FRESH MINT on the restored transient arm, which is the leg a cleanup deleted outright cannot pass.  The band still leaves the transient arm loaded for whatever runs after it, and the fresh drive's disposition rides along so a leg that stopped measuring cannot read as cleanliness" \
+        [list $m29LEAK $m29PROBE [pcall xschem raw sim_type] $m29FRESH $m29LEAK2] \
+        {{} {} tran measured {}}
+}
 
 } bigerr]} { puts "UNEXPECTED ERROR: $bigerr"; puts $::errorInfo; incr fail }
 

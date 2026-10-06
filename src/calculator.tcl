@@ -1551,6 +1551,112 @@ proc calc::rpn_tokens {rpn} {
 # needs this guard as much as Evaluate does.
 proc calc::rpn_maxtokens {} { return 198 }
 
+# ---------------------------------------------------------------------------
+# THE ENGINE'S PER-TOKEN STACK CONTRACT -- `{pops pushes}` for every token
+# `plot_raw_custom_data()` knows, and the one thing in this file that closes
+# issue 1653's worst shape.
+#
+# ⚠⚠ WHY THIS EXISTS, measured rather than argued: `calc::phaseMargin` answered
+# a confident, unrefused phase margin of EXACTLY 180.0 DEGREES -- the most
+# reassuring number a stability analysis can produce -- for a phase operand the
+# engine never evaluated as written.  On the committed fixture's UNSTABLE loop
+# (k 6.25, four poles, true margin NEGATIVE) one mistyped operand turned a
+# design that oscillates into one with maximal margin.  The magnitude operand
+# had two belts already (`pmnotmag`, and the sibling's `gmnonpos`); the phase
+# column had NONE, because its only consumer is `calc::sample_at`, which tests
+# finiteness and a column of zeros is finite.
+#
+# THE ENGINE DOES NOT REFUSE AN UNDER-SUPPLIED OPERATOR -- it SKIPS it.  Its
+# three guards are `if(stackptr2 > 2)`, `if(stackptr2 > 1)` and
+# `if(stackptr2 > 0)`, so a `+` with one operand on the stack falls through
+# every arm, nothing happens, and the point's answer is whatever `stack2[0]`
+# holds: zero for a bare operator, and the expression's FIRST operand for a
+# leftover stack, since the store at the foot of the point loop is
+# `y[p] = (SPICE_DATA)stack2[0]`, the BOTTOM of the stack.  Both read back as
+# ordinary finite numbers, which is why nothing downstream could catch them.
+#
+# ⚠ THIS IS NOT LANDMINE L5's "PARSER NUMBER TWO", which is why the class was
+# declined twice before.  Nothing here parses: `calc::rpn_stack_fault` reads the
+# token list `calc::rpn_tokens` already produces with the engine's own delimiter
+# set, looks each token up in the flat table below, and adds up.  The table is
+# the one thing that could drift from the C, and a ROW re-derives it every run
+# -- band CE13 of tests/headless/test_calc_engine.tcl reads the three guards and
+# the `stackptr2` deltas inside each arm out of `plot_raw_custom_data()`'s own
+# text and asserts this dict agrees token by token, with the token spellings
+# lifted from the same `strcmp(n, "...")` ladder and the alphabet cross-checked
+# against `wviewer::validate_rpn`'s own two literal lists.  So the figures below
+# are not a copy anybody has to keep: three independent statements of them are
+# compared on every run.
+#
+# ⚠ FOUR ENTRIES LOOK UNARY AND ARE NOT, which is the shape a hand-written table
+# gets wrong and a derivation cannot: `del()`, `ravg()`, `re()` and `im()` all
+# sit in the engine's TWO-argument guard.  `exch()` takes two and leaves two,
+# `dup()` takes one and leaves two, and `?` takes three.
+#
+# ⚠ A TOKEN THAT IS NOT IN HERE IS A VALUE -- a number or a vector name -- which
+# is the engine's own fall-through order (`strtod` prefix test, then
+# `get_raw_index()`), and is also what keeps the simulation safe when
+# `wviewer::validate_rpn` is absent and the alphabet question could not be
+# asked at all.
+proc calc::rpn_opstack {} {
+    return [dict create \
+        +        {2 1}  -        {2 1}  *        {2 1}  /        {2 1} \
+        **       {2 1}  ==       {2 1}  !=       {2 1}  >        {2 1} \
+        <        {2 1}  >=       {2 1}  <=       {2 1}  ?        {3 1} \
+        atan()   {1 1}  cph()    {1 1}  asin()   {1 1}  acos()   {1 1} \
+        tan()    {1 1}  sin()    {1 1}  cos()    {1 1}  abs()    {1 1} \
+        sgn()    {1 1}  sqrt()   {1 1}  tanh()   {1 1}  cosh()   {1 1} \
+        sinh()   {1 1}  atanh()  {1 1}  acosh()  {1 1}  asinh()  {1 1} \
+        exp()    {1 1}  ln()     {1 1}  log10()  {1 1}  integ()  {1 1} \
+        avg()    {1 1}  db20()   {1 1}  deriv()  {1 1}  deriv0() {1 1} \
+        deriv2() {1 1}  deriv20() {1 1} prev()   {1 1} \
+        ravg()   {2 1}  max()    {2 1}  min()    {2 1}  im()     {2 1} \
+        re()     {2 1}  del()    {2 1} \
+        exch()   {2 2}  dup()    {1 2} \
+        pi()     {0 1}  k()      {0 1}  e()      {0 1}  q()      {0 1} \
+        idx()    {0 1}]
+}
+
+# ...and the simulation.  Answers {} when the token list will leave the engine
+# with exactly one value on the stack, or a CLAUSE naming what is wrong, in the
+# same register as the token-limit clause above: no verb, no capital, no full
+# stop, because `calc::eval_msg badtoken` / `calc::plot_msg badtoken` /
+# `calc::cross_msg badtoken` wrap it.
+#
+# TWO FAULTS, TWO SENTENCES, because they are two different things for the user
+# to do: an operator that has not got its operands names the operator and how
+# many it found, and an expression that ends with more than one value names the
+# count.  One sentence for both would send the user looking in the wrong place.
+#
+# ⚠ TAKES THE TOKEN LIST AND NOT THE TEXT, deliberately: the engine's delimiter
+# set is `calc::rpn_tokens`' and this proc must not acquire a second opinion
+# about where a token ends.  That divergence is already DECLARED between
+# `calc::rpn_tokens` and the viewer's `\S+` scan (see `calc::rpn_bad_token`),
+# and a third tokenisation here would make it a three-way one.
+proc calc::rpn_stack_fault {toks} {
+    set tbl [calc::rpn_opstack]
+    set depth 0
+    foreach t $toks {
+        set pops 0
+        set pushes 1
+        if {[dict exists $tbl $t]} {
+            set spec [dict get $tbl $t]
+            set pops [lindex $spec 0]
+            set pushes [lindex $spec 1]
+        }
+        if {$depth < $pops} {
+            set word operands
+            if {$pops == 1} { set word operand }
+            return "'$t' needs $pops $word and the expression supplies $depth before it"
+        }
+        set depth [expr {$depth - $pops + $pushes}]
+    }
+    if {$depth != 1} {
+        return "that expression leaves $depth values on the stack instead of one"
+    }
+    return {}
+}
+
 # R607's ONE SITE.  Answers {} when the engine will accept this expression, or a
 # CLAUSE naming what will stop it.  Takes no decision about wording: the two
 # callers prefix the clause with their own verb (`calc::eval_msg badtoken` /
@@ -1626,28 +1732,31 @@ proc calc::rpn_maxtokens {} { return 198 }
 #     In both cases the product answers issue 0325's defined zero with no
 #     message.  Declared, pinned by rows in band CE13, and left for a later
 #     stage.
-#   * LOOSER AGAIN, AND THE BROADEST OF THE THREE -- ARITY.  This is a per-TOKEN
-#     alphabet check, so it has no notion of how many operands an operator wants
-#     or of what is left on the stack when the expression ends.  Every token of
-#     `v(lp) +` resolves, and so does every token of `v(lp) v(sq)`.  MEASURED:
-#     both are approved here, the engine accepts both, and `calc::eval_rpn`
-#     answers a CONFIDENT NUMBER with no message.
-#     ⚠ WHICH number was stated WRONGLY TWICE and is now measured: the engine
-#     ends `y[p] = (SPICE_DATA)stack2[0]` (src/save.c, the store at the foot of
-#     the point loop), i.e. the BOTTOM of the stack -- the expression's FIRST
-#     operand, not the leftover one and not an unrelated value.  Measured over
-#     the committed fixture: `1 2 3 +` answers 1 (not the leftover 5), `1 2`
-#     answers 1, `1 2 3` answers 1, and `v(lp) v(sq)` answers v(lp)'s own value
-#     exactly -- which is the FIRST of the two the user typed, where an earlier
-#     revision of this paragraph said "neither of the two".  The sharper true
-#     statement is the useful one: a leftover-stack expression silently reports
-#     its FIRST operand, so the user sees a plausible number belonging to a
-#     signal they really did name.
-#     That is R607's own failure mode one step past an unresolvable
-#     name.  NOT CLOSED, and not cheap to close: it needs an operand-count model
-#     of the engine's operator table, which is landmine L5's "never parser
-#     number two" in its most expensive form, or the `raw set` sentinel below.
-#     Declared, pinned by rows in band CE13.
+#   * LOOSER AGAIN, AND THE BROADEST OF THE THREE -- ARITY.  The mirror is a
+#     per-TOKEN alphabet check, so it has no notion of how many operands an
+#     operator wants or of what is left on the stack when the expression ends:
+#     every token of `v(lp) +` resolves, and so does every token of
+#     `v(lp) v(sq)`.  It still approves both, and that is correct for what it is.
+#     ⚠ WHAT THAT COST, measured and stated here because the reason this class
+#     was declined twice is in the paragraph this one replaces: the engine ends
+#     `y[p] = (SPICE_DATA)stack2[0]` (src/save.c, the store at the foot of the
+#     point loop), i.e. the BOTTOM of the stack -- the expression's FIRST
+#     operand, not the leftover one and not an unrelated value.  Over the
+#     committed fixture, `1 2 3 +` answers 1 (not the leftover 5) and
+#     `v(lp) v(sq)` answers v(lp)'s own value exactly, so a leftover-stack
+#     expression silently reported a plausible number belonging to a signal the
+#     user really did name; an operator with NO operands is a silent no-op and
+#     answers issue 0325's defined zero.  Through `calc::phaseMargin` that zero
+#     column read as a phase margin of exactly 180.0 degrees on a loop whose
+#     true margin was NEGATIVE.
+#     ⚠ CLOSED HERE, by `calc::rpn_stack_fault` below rather than by the mirror.
+#     The objection on record -- that it needs an operand-count model of the
+#     engine's operator table, which is landmine L5's "never parser number two"
+#     in its most expensive form -- is answered by the model being a FLAT TABLE
+#     and no parser at all, and by a row re-deriving that table from
+#     `plot_raw_custom_data()`'s own guards every run.  See
+#     `calc::rpn_opstack`'s own header for the mechanism and the three
+#     instruments that keep it honest.
 #
 # ⚠⚠ AND AN EARLIER REVISION OF THIS PROC CLAIMED TO HAVE FIXED THE SECOND
 # ONE AND DID NOTHING WHATEVER.  It passed `[join $toks { }]` to the validator
@@ -1671,28 +1780,42 @@ proc calc::rpn_maxtokens {} { return 198 }
 # tests/headless/test_calc_scratch_reuse.tcl asserts "exactly ONE proc issues
 # `xschem raw add` directly", which is one of the rows carrying the L2
 # discipline C2's round hardened.
-proc calc::rpn_bad_token {rpn {tok {}}} {
+proc calc::rpn_bad_token {rpn {tok {}} {extra 0}} {
     set toks [calc::rpn_tokens $rpn]
     set n [llength $toks]
     if {$n == 0} { return {} }
-    set max [calc::rpn_maxtokens]
+    # `extra` RESERVES tokens for a caller that APPENDS to the user's expression
+    # before handing it to the engine, so the gate counts what the engine will
+    # see.  A junk value reserves nothing rather than widening the gate, which
+    # is the fail-safe direction for a guard.
+    if {![string is integer -strict $extra] || $extra < 0} { set extra 0 }
+    set max [expr {[calc::rpn_maxtokens] - $extra}]
     if {$n > $max} {
         return "that expression has $n tokens and the engine takes at most $max"
     }
-    if {[info commands ::wviewer::validate_rpn] eq {}} { return {} }
+    # THE STACK ANSWER IS TAKEN HERE AND RETURNED WHEREVER THE ALPHABET QUESTION
+    # CANNOT BE ASKED OR DOES NOT OBJECT, which is why it is computed before the
+    # mirror is consulted rather than after it.  It depends on nothing outside
+    # this file, so the mirror's fail-open must widen the ALPHABET question only
+    # -- a `v(lp) +` approved because the viewer file was split would be the same
+    # defect this proc was extended to close.
+    set sf [calc::rpn_stack_fault $toks]
+    if {[info commands ::wviewer::validate_rpn] eq {}} { return $sf }
     set names {}
     catch {set names [split [string trim [xschem raw list]] "\n"]}
     set m {}
-    if {[catch {wviewer::validate_rpn $rpn $names} m]} { return {} }
-    if {$m eq {}} { return {} }
+    if {[catch {wviewer::validate_rpn $rpn $names} m]} { return $sf }
+    if {$m eq {}} { return $sf }
     # THE SEAM'S SECOND QUESTION.  Only a caller that plots passes a token, and
     # only a single name reaches `add_trace`'s cross-database arm at all.  Every
-    # way of not knowing approves.
+    # way of not knowing falls back on the stack answer, which for a single name
+    # is {} -- so this is the same approval it always was, except that a lone
+    # OPERATOR with a viewer token is still refused on its arity.
     if {$tok ne {} && $n == 1} {
-        if {[info commands ::wviewer::resolve_signal_db] eq {}} { return {} }
+        if {[info commands ::wviewer::resolve_signal_db] eq {}} { return $sf }
         set hit {}
-        if {[catch {wviewer::resolve_signal_db $tok [string trim $rpn]} hit]} { return {} }
-        if {$hit ne {}} { return {} }
+        if {[catch {wviewer::resolve_signal_db $tok [string trim $rpn]} hit]} { return $sf }
+        if {$hit ne {}} { return $sf }
     }
     return $m
 }
@@ -2551,7 +2674,9 @@ proc calc::plot_click {} {
 #               (D7).
 # D7's own sentence for why the last two must stay distinguishable is that it is
 # what lets `settlingTime` tell "you asked me something meaningless" from "this
-# signal never settles", and all seven verbs layered on `cross` propagate both.
+# signal never settles", and every verb layered on `cross` propagates both.  Band
+# MT28/A of tests/headless/test_calc_measure.tcl is where that population is
+# derived and asserted; no count is written here, because nothing re-checks one.
 #
 # WARN AND IT ANSWERS RATHER THAN RAISING, WHICH IS STRUCTURAL AND NOT A STYLE
 # CHOICE.  D6: comparison operators on a NaN return 0 quietly, but `expr` on a
@@ -2584,7 +2709,7 @@ proc calc::plot_click {} {
 # `cross`'s own that had nothing to do with the change.  `info complete` was
 # perfectly happy with it: the braces balance, and the error is semantic.
 #
-# The three verbs layered on `cross` (`riseTime`, `delay`, `dutyCycle`) add to
+# The verbs layered on `cross` add to
 # THIS catalogue rather than starting a second one, for the reason above -- one
 # builder, one shape, one place a wording ruling lands.  Their sentences name the
 # verb the user clicked rather than opening `Cross:`, which would name a
@@ -2743,6 +2868,77 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  not come back in this sweep." }
         presettled { return "Settling time: that expression had settled at $a,\
  before the start $b." }
+        rtnotran   { return "Rise time: a rise time is a time and needs a\
+ transient sweep (sim_type $a)." }
+        srnotran   { return "Slew rate: a slew rate is per second and needs a\
+ transient sweep (sim_type $a)." }
+        dlnotran   { return "Delay: a delay is a time and needs a transient\
+ sweep (sim_type $a)." }
+        stnotran   { return "Settling time: settling takes time and needs a\
+ transient sweep (sim_type $a)." }
+        fqnotran   { return "Frequency: a period is a time and needs a transient\
+ sweep (sim_type $a)." }
+        bwnodrop   { return {Bandwidth: the drop in dB must be supplied.} }
+        bwbaddrop  { return "Bandwidth: the drop is not a finite number ($a)." }
+        bwzerodrop { return "Bandwidth: the drop must be a positive number of dB\
+ ($a)." }
+        bwbadresponse { return "Bandwidth: the response must be one of low, high\
+ or band ($a)." }
+        bwunits    { return "Bandwidth: the units must be magnitude or dB ($a)." }
+        bwnoac     { return "Bandwidth: a bandwidth is a frequency, so it needs\
+ an AC sweep (sim_type $a)." }
+        bwnonposref { return "Bandwidth: no level is below a non-positive peak\
+ ($a)." }
+        bwnopeak   { return {Bandwidth: no sample of that expression is a finite number in this dataset.} }
+        bwnohi     { return "Bandwidth: the response never falls $a dB below its\
+ peak after the peak." }
+        bwnolo     { return "Bandwidth: the response never rises to $a dB below\
+ its peak before the peak." }
+        gbwshape   { return "Gain-bandwidth product: the bandwidth came back as\
+ a $a, not a number." }
+        gbwnoref   { return {Gain-bandwidth product: the bandwidth did not report its reference gain.} }
+        gbwoverflow { return "Gain-bandwidth product: gain $a times bandwidth $b\
+ is not a number." }
+        gmempty    { return "Gain margin: the loop $a expression must not be empty." }
+        gmunits    { return "Gain margin: the gain units must be magnitude or dB\
+ ($a)." }
+        gmedge     { return "Gain margin: the edge must be falling, rising or\
+ either ($a)." }
+        gmbadlevel { return "Gain margin: the phase level is not a finite number\
+ ($a)." }
+        gmbadnth   { return "Gain margin: nth counts crossings from either end, as\
+ a whole number ($a)." }
+        gmlistdefer { return {Gain margin: nth 0 names every crossing and the buffer takes one number.} }
+        gmnotac    { return "Gain margin: a loop margin needs an AC sweep\
+ (sim_type $a)." }
+        gmnotmag   { return "Gain margin: a loop gain magnitude cannot be negative\
+ ($a)." }
+        gmnocross  { return "Gain margin: no $a $b crossing of that phase level in\
+ this sweep." }
+        gmnobracket { return "Gain margin: no finite sample pair brackets that\
+ crossing ($a)." }
+        gmnonpos   { return "Gain margin: the loop gain is not positive at that\
+ crossing ($a)." }
+        gmsameop   { return {Gain margin: the loop gain and the loop phase cannot be one expression.} }
+        gmsamecol  { return {Gain margin: the loop phase evaluates to the loop gain column, not a phase.} }
+        pmempty    { return "Phase margin: the loop $a expression must not be empty." }
+        pmunits    { return "Phase margin: the gain units must be magnitude or dB\
+ ($a)." }
+        pmedge     { return "Phase margin: the edge must be falling, rising or\
+ either ($a)." }
+        pmbadnth   { return "Phase margin: nth counts crossovers from either end, as\
+ a whole number ($a)." }
+        pmlistdefer { return {Phase margin: nth 0 names every crossover and the buffer takes one number.} }
+        pmnotac    { return "Phase margin: a loop margin needs an AC sweep\
+ (sim_type $a)." }
+        pmnotmag   { return "Phase margin: a loop gain magnitude cannot be negative\
+ ($a)." }
+        pmnocross  { return "Phase margin: no $a $b crossover of unity gain in this\
+ sweep." }
+        pmnobracket { return "Phase margin: no finite sample pair brackets that\
+ crossover ($a)." }
+        pmsameop   { return {Phase margin: the loop gain and the loop phase cannot be one expression.} }
+        pmsamecol  { return {Phase margin: the loop phase evaluates to the loop gain column, not a phase.} }
     }
     return {}
 }
@@ -2767,6 +2963,54 @@ proc calc::cross_absent {msg {dataset 0} {dest {}}} {
     set d [calc::cross_refusal $msg $dataset $dest]
     dict set d absent 1
     return $d
+}
+
+# ---------------------------------------------------------------------------
+# ISSUE 1653, THE OTHER DIRECTION: the sim_type of the loaded database when it
+# is a FREQUENCY-DOMAIN sweep, and the empty string otherwise.
+#
+# Issue 1653 gave the four loop-stability verbs a sim_type gate -- a bandwidth is
+# a frequency, so a transient database is refused rather than answered in Hz.
+# The family was gated in ONE DIRECTION ONLY: on an `ac` database the shipped
+# time-domain verbs answered a number in the SWEEP'S OWN UNIT and labelled it
+# seconds.  This is the decision half of that gate, factored out of the five
+# verbs that act on it so there is ONE place the question is asked and five
+# places it is answered in the asking verb's own voice.
+#
+# Fence tests/headless/test_calc_measure.tcl band MT28, which derives this
+# proc's caller set from the interpreter and asserts it equals the gated set --
+# so a sixth verb that open-codes the read is missing from it, and so is a gated
+# verb that stopped calling it.
+#
+# ⚠⚠ `eq ac` AND NOT THE SYMMETRIC `ne tran`, FOR TWO MEASURED REASONS, both of
+# which band MT28 carries as rows rather than as sentences:
+#
+#   * NONE of the five callers has a `raw loaded` check of its own; they inherit
+#     it from `calc::cross`.  `xschem raw sim_type` RAISES with nothing loaded,
+#     so the local below stays empty -- and a `ne tran` test would therefore
+#     fire on an empty database and tell the user to run a transient analysis
+#     when what they have not done is load a result at all.  MT11 fences that
+#     no-data refusal for every clickable verb; MT28/E fences it here.
+#   * `calc::overshoot` reaches no sim_type gate and refuses the operating-point
+#     plot through `calc::cross`'s `nosweep` arm, which row MT17/L asserts the
+#     five verbs here answer BY IDENTITY -- *"the whole family refuses the
+#     operating-point plot in ONE VOICE"*.  A `ne tran` test would give the five
+#     a domain sentence and leave `overshoot` on `nosweep`, so a user clicking
+#     six verbs on one database would get two explanations of one fact.
+#     MT28/F is that row.
+#
+# The consequence is DECLARED as MT28's limit M6 rather than fixed: `noise` is
+# also a frequency-domain sim_type, `calc::cross`'s two-arm map resolves neither
+# axis for it, and the five verbs refuse it through `nosweep` today -- the right
+# disposition in the wrong voice.  It is unreachable from the committed fixture,
+# so widening this predicate to cover it would be unfenced in exactly the way
+# the arm it guards is.
+# ---------------------------------------------------------------------------
+proc calc::acsweep {} {
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    if {$sty eq {ac}} { return $sty }
+    return {}
 }
 
 # `5th`, `5th from the end`.  Only an absence sentence uses it: naming the
@@ -2862,6 +3106,18 @@ proc calc::cross_ordinal {n} {
 # formula and their answers are bit-identical, which rows CX3 and CX5 assert
 # with string equality rather than a tolerance.  Two copies of the formula, or a
 # second read path at a different precision, would redden those rows.
+#
+# WARN THE `double()` ON `L` IS LOAD-BEARING AND NOT DECORATION.  Tcl's `/`
+# truncates towards zero when both operands are integers and `expr` groups this
+# expression left to right, so with every operand spelled as a decimal integer
+# the numerator `($L - $y0)*($x1 - $x0)` is an integer and the division is an
+# integer division: this proc answered an X of 1 where the line through (0,0) and
+# (3,2) crosses 1 at 1.5.  Forcing the ONE operand a caller names makes the first
+# subtraction a double and every operation after it follows, and it is a no-op
+# when the operand already is one, which is why the shipped rows that compare
+# crossings by string equality do not move.  Row MT24/GM15 of
+# tests/headless/test_calc_measure.tcl drives it, together with the matching
+# `double()` in `calc::sample_at`, on hand numbers with no column in them.
 proc calc::cross_pair {x0 x1 y0 y1 L edge} {
     if {![calc::eval_finite $y0] || ![calc::eval_finite $y1]} { return {} }
     if {![calc::eval_finite $x0] || ![calc::eval_finite $x1]} { return {} }
@@ -2875,7 +3131,7 @@ proc calc::cross_pair {x0 x1 y0 y1 L edge} {
         return {}
     }
     if {$edge ne {either} && $edge ne $dir} { return {} }
-    set x [expr {$x0 + ($L - $y0)*($x1 - $x0)/($y1 - $y0)}]
+    set x [expr {$x0 + (double($L) - $y0)*($x1 - $x0)/($y1 - $y0)}]
     if {![calc::eval_finite $x]} { return {} }
     return [list $dir $x]
 }
@@ -3464,7 +3720,7 @@ proc calc::transition_end {starts ends x0 {whyvar {}}} {
 # ⚠ THIS PROC DOES NOT PUT THE SERIES ANYWHERE: `calc::riseTime_scalar` does,
 # and that split is enforced by a row rather than only stated.  The destination
 # builder issues an `xschem raw add` of its own, so row MT10's callee-ward
-# closure over the three timing verbs would print it as an engine door inside
+# closure over the timing verbs would print it as an engine door inside
 # this proc if it reached for it -- while nothing here names the wrapper, so the
 # wrapper is invisible to that closure.  The verb computes; the surface decides
 # where the answer goes.
@@ -3499,6 +3755,16 @@ proc calc::riseTime {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {dataset 
     }
     set llo [expr {double($lo) + double($pctlo)/100.0*$swing}]
     set lhi [expr {double($lo) + double($pcthi)/100.0*$swing}]
+    # ISSUE 1653's GATE, THE OTHER DIRECTION.  A rise time is an X span, so on an
+    # `ac` database it is a frequency difference in Hz reported as seconds.  AFTER
+    # the request validation above, so the zero-read property on a malformed
+    # request is kept, and BEFORE anything reaches the database.  See
+    # `calc::acsweep` for why the test is `eq ac` and not the symmetric
+    # `ne tran`; band MT28 of tests/headless/test_calc_measure.tcl fences both.
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg rtnotran $sty] $dataset]
+    }
     # ISSUE 1639's `nth`-0 GUARD, REPLACED BY THE MEASUREMENT IT DEFERRED --
     # stage J unit J2.  The test it is reached by is the guard's own, unchanged
     # and for the guard's own reasons: the finiteness conjunct is not
@@ -3915,6 +4181,13 @@ proc calc::slewRate {rpn {lo {}} {hi {}} {pctlo 10} {pcthi 90} {nth 1} {edge ris
         set L2 $llo
     }
     set dv [expr {$L2 - $L1}]
+    # ISSUE 1653's GATE, THE OTHER DIRECTION.  A slew rate is a Y per X, so on an
+    # `ac` database it is volts per Hz reported as volts per second.  Placement
+    # and spelling: see `calc::riseTime`'s own copy and `calc::acsweep`.
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg srnotran $sty] $dataset]
+    }
     if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
         set starts [calc::cross $rpn $L1 0 $edge $dataset]
         if {![dict get $starts ok]} { return $starts }
@@ -4104,6 +4377,14 @@ proc calc::delay {rpnA levelA edgeA nthA rpnB levelB edgeB nthB {dataset 0}} {
         if {[calc::eval_finite $n] && [expr {double($n) == 0.0}]} {
             return [calc::cross_refusal [calc::cross_msg listdefer] $dataset]
         }
+    }
+    # ISSUE 1653's GATE, THE OTHER DIRECTION.  A delay is a difference of two Xs,
+    # so on an `ac` database it is a frequency difference in Hz reported as
+    # seconds.  Placement and spelling: see `calc::riseTime`'s own copy and
+    # `calc::acsweep`.
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg dlnotran $sty] $dataset]
     }
     set a [calc::cross $rpnA $levelA $nthA $edgeA $dataset]
     if {![dict get $a ok]} { return $a }
@@ -4475,6 +4756,17 @@ proc calc::frequency {rpn level {edge rising} {cycle 0} {dataset 0} {xaxis start
     if {[lsearch -exact {start number mid} $xaxis] < 0} {
         return [calc::cross_refusal [calc::cross_msg freqxaxis $xaxis] $dataset]
     }
+    # ISSUE 1653's GATE, THE OTHER DIRECTION, AND THE WORST OF THE FIVE: the
+    # answer is ONE OVER an X span, so on an `ac` database this verb answered a
+    # PERIOD IN SECONDS and labelled it Hz.  Placement and spelling: see
+    # `calc::riseTime`'s own copy and `calc::acsweep`.  `calc::freq`,
+    # `calc::freq_scalar` and `calc::frequency_scalar` are pure delegates and
+    # inherit this refusal; band MT28/B2 asserts each one reproduces this
+    # sentence by identity and carries no gate of its own.
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg fqnotran $sty] $dataset]
+    }
     set r [calc::cross $rpn $level 0 $edge $dataset]
     if {![dict get $r ok]} { return $r }
     set xs [dict get $r value]
@@ -4800,6 +5092,14 @@ proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0}} {
     set t0 [expr {double($start)}]
     set lo [expr {double($final) - $w}]
     set hi [expr {double($final) + $w}]
+    # ISSUE 1653's GATE, THE OTHER DIRECTION.  The answer is `tent - start`, an X
+    # span, so on an `ac` database it is a frequency interval in Hz reported as
+    # seconds.  Placement and spelling: see `calc::riseTime`'s own copy and
+    # `calc::acsweep`.
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg stnotran $sty] $dataset]
+    }
     set calls {}
     foreach {nm L edge} [list entlo $lo rising  exitlo $lo falling \
                               enthi $hi falling exithi $hi rising] {
@@ -4947,9 +5247,11 @@ proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0}} {
 # compute on the operating-point plot -- measured: it would answer a finite
 # number off the single DC point.  It refuses instead, for three reasons: an
 # overshoot is a statement about a TRANSITION and one DC point has none; a user
-# clicking four verbs of this family on one database must not get three refusals
-# and one number; and a refusal can be relaxed later while a shipped number
-# cannot be withdrawn.  Band MT17/L carries the fact that an answer really was
+# clicking several verbs of this family on one database must not get refusals from
+# some of them and a number from another; and a refusal can be relaxed later while
+# a shipped number cannot be withdrawn.  Band MT28/F asserts that ONE VOICE over
+# the whole gated set plus this verb, with the set size as a floor, so the claim
+# is a measurement rather than a count written here.  Band MT17/L carries the fact that an answer really was
 # available, so the choice is visible rather than invisible, and declares that
 # nothing proves it is the better product behaviour.
 #
@@ -5201,6 +5503,1441 @@ proc calc::overshoot {rpn {initial {}} {final {}} {dataset 0}} {
     }
     return [dict create ok 1 absent 0 value $pct \
                 dataset $dataset dest $dest msg {}]
+}
+
+# ---------------------------------------------------------------------------
+# `calc::bandwidth` -- THE FIRST OF THE LOOP-STABILITY VERBS, AND THE FIRST VERB
+# BUILT BECAUSE THE USER ASKED FOR IT BY NAME.  Asked which of the thirty
+# unimplemented measurement verbs mattered, they answered: *"the most useful ones
+# are related to stability analysis and the measurements needed to measure
+# capacitance after running an AC analysis."*
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row:
+#          *"The X value where the response drops by N dB"*).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D3/D4/D6/D10, inherited
+#          through `calc::cross_pair`, which is the only crossing primitive here.
+# Fence    tests/headless/test_calc_measure.tcl band MT22.  No row range is
+#          written here: row MT22/BW6 derives the arm set it drives from
+#          `calc::cross_msg`'s own `switch` argument, so a range in this line is
+#          a figure nothing re-checks.
+#
+#   calc::bandwidth <rpn> ?<drop>? ?<units>? ?<response>? ?<dataset>?
+#
+# ⚠⚠ IT OWNS ITS OWN ENGINE DOOR AND IS NOT A `calc::cross` DELEGATE, AND THAT
+# WAS DECIDED BY BUILDING THE DELEGATE'S BEHAVIOUR AND WATCHING IT FAIL.  The
+# level depends on the response's PEAK, which means reading the column, which
+# `calc::cross` does not expose; and once the column has been read, `cross`'s
+# `nth`/`edge` vocabulary cannot say *"the first crossing on the far side of the
+# peak index"* -- `calc::cross_scan` always starts at pair 1.  Measured on a
+# drive with an interior peak, scanning from index 0 instead of from the peak
+# index makes `high` and `band` answer ABSENT where the correct answers are
+# numbers.  A delegate would also cost two engine evaluations of one expression.
+#
+# ⚠ `drop` IS REQUIRED, AND THE REASON IS NOT ONLY PRECEDENT.  `calc::riseTime`
+# requires the swing and DEFAULTS the percentages, so "required" is not a blanket
+# house rule: what a verb requires is the thing the user must STATE, and what it
+# defaults is the convention inside that stated thing.  Here the reference is
+# DERIVED, so `drop` is the only thing the user tells this verb -- defaulting it
+# would leave a measurement verb with zero required inputs.  Cadence's own
+# `bandwidth(wave, db, type)` has three mandatory arguments and the shipped
+# catalogue help already says *"drops by N dB"*, naming N as the user's.
+# ⚠ Its Tcl formal is the EMPTY STRING rather than a mandatory positional, which
+# is `calc::riseTime`'s split and its reason: a mandatory positional makes
+# omission a Tcl ARITY THROW where the house requires a refusal sentence.
+#
+# ⚠⚠ THE REFERENCE IS THE IN-BAND PEAK, DERIVED, AND NOT THE DC VALUE.  Cadence
+# derives it and ADE-L is a FLOOR, so requiring a reference ADE-L computes would
+# be a restriction ADE-L does not have.  More sharply: A DC VALUE IS NOT IN AN AC
+# SWEEP AT ALL -- `ac lin 20 100 2k` has no f = 0 sample -- so using the first
+# swept point as a DC proxy is issue 1653's shape exactly.  It happens to look
+# right on this fixture, where the first point is within half a percent of the
+# analytic DC gain, and would be wrong on any sweep that starts inside the
+# rolloff.  The peak is a sample; a DC gain is an assumption.  The choice is
+# OBSERVABLE and so is stated rather than left implicit: on the committed fixture
+# a peak reference puts the -3 dB point about one percent away from where a DC
+# reference of exactly 1 would put it, which is far outside any door a row
+# carries.
+#
+# ⚠ THE NAMES.  `response` and not `type`, because `type` is already a key in
+# `calc::wave_dest_answer`'s dict that `calc::fn_measure` reads on the
+# destination branch; `drop` and not `db`, because `db` means *database* at four
+# live sites in this file.  The enum members keep Cadence's own terse words.
+#
+# ⚠ NO `nth` AND NO `edge`.  There is exactly one peak-relative crossing per
+# (column, dataset, side), so there is no occurrence to select -- which also
+# removes the whole `nth 0` family: no list case, no deferral, no waveform
+# destination and no `_scalar` wrapper.  The direction is IMPLIED by `response`:
+# `low` scans forward from the peak for a falling crossing, `high` scans backward
+# for a rising one, and an explicit `edge` would be a second and contradictory
+# way to say the same thing.
+#
+# ⚠⚠ `sim_type` MUST BE `ac`, AND THAT IS ISSUE 1653's ANSWER RATHER THAN A
+# CONVENIENCE.  Measured on the committed fixture's `tran` arm, an unguarded
+# version of this verb answers confident, plausible numbers in SECONDS for
+# several expressions, delivered into the RPN buffer with a provenance line a
+# user reads as a frequency.  `calc::cross` already refuses a sim_type that maps
+# to neither axis and `calc::overshoot` REQUIRES a sweep it never uses, on the
+# ground that *"a refusal can be relaxed later while a shipped number cannot be
+# withdrawn"*.  That applies more strongly here, because this verb's answer
+# carries a unit the data does not support.  A side benefit: with `frequency` the
+# only possible sweep name, hardcoding it is no longer a defect.
+#
+# ⚠⚠ `units` EXISTS BECAUSE THE ENGINE RETURNS NUMBERS WITH NO UNITS, AND IT IS
+# THE USER DECLARING THEM RATHER THAN THE PRODUCT GUESSING.  A drop of N dB from
+# a LINEAR magnitude is the ratio `ref*10^(-N/20)`; from a column already in dB
+# it is `ref - N`.  Nothing in the data distinguishes the two, so for a while
+# this verb assumed the first, and a Bode trace whose peak stayed above 0 dB was
+# answered at the wrong corner, confidently and with no refusal.  The
+# `bwnonposref` guard could not reach that: it only catches a response whose peak
+# is at or below zero, where the multiplicative level lands at or ABOVE the
+# reference and the request has no answer whatever the data says.  Measured on
+# the committed fixture read as `ac`, a 3.0103 dB request against
+# `v(lp) 4 ** 16 * db20()` answered the 7.0029 dB-down frequency.
+# ⚠ AND IT IS DELIBERATELY NOT A HEURISTIC.  No property of a column separates a
+# dB-valued one from a gain -- row MT27/SO3 declares that same limit for the
+# margin verbs' phase operand -- so a sniffing guard would refuse correct work,
+# which is the one failure direction this project's rulings single out.  The
+# field is `calc::gainMargin`'s and `calc::phaseMargin`'s own
+# `{enum magnitude dB}`, the same two words, so one concept has ONE vocabulary
+# here; row MT22/BW15 asserts that by lifting all three member lists.
+# ⚠ `magnitude` IS THE DEFAULT, so a caller written before the field keeps its
+# answer bit-for-bit -- which row MT22/BW14's omitted-argument leg asserts rather
+# than assumes -- and the guard above is scoped to that arm.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  Every new sentence below is the
+# assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences is extended to cover them, and the rows assert the house SHAPE and
+# never the words.
+# ---------------------------------------------------------------------------
+
+# THE PEAK, as `{index value}`, or the empty string when no sample is finite.
+#
+# ⚠ `calc::extremum` AND NOT A SECOND LOOP, so "which sample is the maximum" has
+# one definition in this file and inherits that proc's measured finiteness gate:
+# `expr {"inf" > 0}` answers 1, so an ungated maximum is won by an infinity, and
+# a `-nan` seeds the accumulator.
+#
+# ⚠⚠ THE TIE RULE IS "THE FIRST" AND IT IS A BEHAVIOUR, NOT A DETAIL.
+# `lsearch -exact` over the same "%.16g" list the value came out of takes the
+# first maximal sample.  Which maximum is chosen is the INDEX the scan below
+# starts from, so on a response with two separated equal maxima and a dip
+# between them that falls through the level, the two choices answer about
+# different corners entirely.  Row MT22/BW12 of
+# tests/headless/test_calc_measure.tcl drives a clamped column whose maxima are
+# exactly tied at several separated indices, asserts the answer against the line
+# through the FIRST tie's bracketing pair and against a FLOOR on its separation
+# from the last tie's reading -- no factor is written down here, because that row
+# re-measures it every run.  It also records which reading is BLIND: the `band`
+# response is bit-identical under both choices, so nobody can close this with the
+# cheaper leg.  A change here is a DECISION, not a cleanup.
+proc calc::bw_peak {ys} {
+    set v [calc::extremum $ys max]
+    if {$v eq {}} { return {} }
+    set i [lsearch -exact $ys $v]
+    if {$i < 0} { return {} }
+    return [list $i $v]
+}
+
+# THE SCAN, as `{lo hi}` -- the lower corner and the upper corner, either of them
+# the empty string when that side has no crossing.  Response-agnostic on purpose:
+# the act below picks, so this proc cannot encode a direction twice.
+#
+# ⚠⚠ EVERY CROSSING GOES THROUGH `calc::cross_pair` AND NOTHING ELSE, which
+# makes this the second caller of that proc in the tree and is deliberate.
+# CROSS_CONTRACT D10's bit-identity property is the reason -- *"Two copies of the
+# formula, or a second read path at a different precision, would redden those
+# rows"* -- and it also inherits that proc's finiteness gate and its declared
+# limit that A LEVEL THE TRACE SITS AT IS NOT CROSSED.
+#
+# Forward from `pi+1` asking for a FALLING crossing gives the upper corner;
+# backward from `pi` asking for a RISING one gives the lower corner.  Both run
+# over forward-ordered sample pairs, which is what `calc::cross_pair` takes.
+#
+# ⚠⚠ THE TWO `break`s ARE THE SEMANTICS AND NOT AN OPTIMISATION: EACH CORNER IS
+# THE CROSSING NEAREST THE PEAK.  A response that leaves the level and comes
+# back has several crossings on one side, and without the `break` the loop keeps
+# going and the LAST assignment wins -- which is the crossing FARTHEST from the
+# peak on that side, i.e. a different corner of a different lobe.  Row MT22/BW13
+# of tests/headless/test_calc_measure.tcl drives a rippled response with
+# several crossings on each side of an interior peak and asserts each corner
+# against the line through its NEAREST bracketing pair and against a floor on
+# its separation from the farthest one, in both directions; both `break`s were
+# removed in turn and measured to move the answer while leaving every other
+# check in that file green.  Removing one is a DECISION about which lobe a
+# bandwidth names, not a tidy-up.
+proc calc::bw_scan {xs ys pi lvl} {
+    set n [llength $ys]
+    set nx [llength $xs]
+    if {$nx < $n} { set n $nx }
+    set hi {}
+    for {set p [expr {$pi + 1}]} {$p < $n} {incr p} {
+        set h [calc::cross_pair [lindex $xs [expr {$p-1}]] [lindex $xs $p] \
+                                [lindex $ys [expr {$p-1}]] [lindex $ys $p] \
+                                $lvl falling]
+        if {[llength $h]} { set hi [lindex $h 1] ; break }
+    }
+    set lo {}
+    for {set p $pi} {$p >= 1} {incr p -1} {
+        set h [calc::cross_pair [lindex $xs [expr {$p-1}]] [lindex $xs $p] \
+                                [lindex $ys [expr {$p-1}]] [lindex $ys $p] \
+                                $lvl rising]
+        if {[llength $h]} { set lo [lindex $h 1] ; break }
+    }
+    return [list $lo $hi]
+}
+
+# ...and THE ACT: request validation first at zero accessor calls (D7, and
+# `calc::overshoot`'s own order), then the one engine door, then R402's
+# unconditional cleanup, then the arithmetic.  Every WARN governing this proc is
+# in the block above `calc::bw_peak`; see that header.
+proc calc::bandwidth {rpn {drop {}} {units magnitude} {response low} {dataset 0}} {
+    if {[string trim $drop] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg bwnodrop] $dataset]
+    }
+    # `calc::eval_finite` and NOT `string is double -strict`, which accepts all
+    # four non-finite spellings -- and not a regexp over the spelling either,
+    # because `1e309` is an ordinary decimal literal whose VALUE is an infinity.
+    # Band MT21/A drives every overflowing spelling through this arm.
+    if {![calc::eval_finite $drop]} {
+        return [calc::cross_refusal [calc::cross_msg bwbaddrop $drop] $dataset]
+    }
+    # ⚠ A REQUEST REFUSAL AND NOT A GUARD, which is D7's distinction and is
+    # measured rather than assumed: without this arm `drop` 0 and `drop` -3 both
+    # answer ABSENT -- 0 names the peak itself, which `calc::cross_pair` declines
+    # by design, and a negative drop puts the level ABOVE the peak.  Both are
+    # malformed requests, since "drops by -3 dB" is a rise, and D7 says a request
+    # that cannot be interpreted is refused and never reported as an absence.
+    if {double($drop) <= 0.0} {
+        return [calc::cross_refusal [calc::cross_msg bwzerodrop $drop] $dataset]
+    }
+    # Validated HERE as well as in `calc::arg_bad`, because a script caller
+    # bypasses the dialog -- `calc::cross` validates its `edge` for the same
+    # reason, and MT11's enum rows lift these literals out of this body.
+    #
+    # ⚠ BOTH ENUMS ARE TESTED ABOVE EVERY ACCESSOR, which row MT22/BW15 measures
+    # with the database CLEARED rather than assumes: a membership test below the
+    # first read answers the no-data refusal for a NON-member too, so the two
+    # dispositions would stop telling a malformed request from missing data.
+    if {[lsearch -exact {magnitude dB} $units] < 0} {
+        return [calc::cross_refusal [calc::cross_msg bwunits $units] $dataset]
+    }
+    if {[lsearch -exact {low high band} $response] < 0} {
+        return [calc::cross_refusal [calc::cross_msg bwbadresponse $response] $dataset]
+    }
+    # ...and the empty expression on its own account, for `calc::cross`'s reason:
+    # `calc::rpn_bad_token` answers {} for a clean RPN AND for an empty one.
+    # ⚠ That shipped sentence names *cross*, not the calling verb;
+    # `calc::overshoot` reuses it with the same quirk.  Reused rather than
+    # re-spelled, and row MT14/Q3 of tests/headless/test_calc_measure.tcl is what
+    # holds the reusers to one voice: it derives them from their own bodies,
+    # asserts that set EXACTLY, and compares each one's refusal against
+    # `calc::cross_msg empty` byte for byte, with the operand-filled drive as its
+    # non-vacuity leg.
+    # ⚠ The clause that used to be here claimed *"the three bands that compare it
+    # by identity stay green"*, and it was false when it was written: NO band in
+    # any Calculator suite named the `empty` arm at all, because every per-verb
+    # sweep filters the derived arm set to its own prefix.  Q3 is that repair.
+    set rpn [string trim $rpn]
+    if {$rpn eq {}} { return [calc::cross_refusal [calc::cross_msg empty]] }
+    # D11 rule 1: the one accessor that answers rather than raising with nothing
+    # loaded.
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::cross_refusal [calc::cross_msg nodata]]
+    }
+    # D12, with `calc::overshoot`'s measurements behind it: an unvalidated
+    # out-of-range dataset reads back EMPTY with rc 0 and would be reported as an
+    # absence, and -1 is the ALLPOINTS read.
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset] $dataset]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]
+    }
+    if {$dataset >= $nds} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]
+    }
+    # ⚠ THE ISSUE-1653 GATE.  See the header: a bandwidth is a frequency, so a
+    # time-domain database is refused rather than answered in seconds.
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    if {$sty ne {ac}} {
+        return [calc::cross_refusal [calc::cross_msg bwnoac $sty] $dataset]
+    }
+    # D12's last paragraph: the sweep BY NAME.  An unforced belt once the arm
+    # above stands -- measured, `xschem raw index frequency` is 0 on an `ac` arm
+    # and `index time` is -1 -- and declared as such rather than claimed fenced.
+    set six -1
+    catch {set six [xschem raw index frequency]}
+    if {![string is integer -strict $six] || $six < 0} {
+        return [calc::cross_refusal [calc::cross_msg nosweep $sty] $dataset]
+    }
+    # D11 rule 3, BEFORE the mint, so a mistyped name is reported as a mistyped
+    # name and never as a temporary-column collision.
+    set bad [calc::rpn_bad_token $rpn]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    # D11 rule 4, and the `raw index` question is asked BEFORE the add because
+    # `xschem raw add` is register-OR-FIND and THEN evaluate.
+    set dest [calc::tmpvec]
+    if {$dest eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dest]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    set rc {} ; set ys {} ; set xs {}
+    set err [catch {
+        set rc [xschem raw add $dest $rpn]
+        set ys [string trim [xschem raw values $dest $dataset]]
+        set xs [string trim [xschem raw values frequency $dataset]]
+    } e]
+    # R402, UNCONDITIONAL and before every return below: the cleanup cannot be
+    # driven by the return code, because a failed add leaves a column behind and
+    # still answers 1.
+    catch {xschem raw del $dest}
+    if {$err} {
+        return [calc::cross_refusal [calc::cross_msg engine $e] $dataset $dest]
+    }
+    # The same belt `calc::cross`, `calc::eval_rpn` and `calc::overshoot` carry,
+    # with the same declared status: 1 means this call created the column.  NO ROW
+    # FORCES IT while the `raw index` above stands.
+    if {$rc ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    set pk [calc::bw_peak $ys]
+    if {![llength $pk]} {
+        return [calc::cross_absent [calc::cross_msg bwnopeak] $dataset $dest]
+    }
+    set pi [lindex $pk 0]
+    set pv [lindex $pk 1]
+    # ⚠⚠ THE UNITS THE USER DECLARED PICK THE ARITHMETIC, AND THE GUARD BELONGS
+    # TO ONE OF THEM.  A drop of N dB from a LINEAR magnitude is a RATIO; from a
+    # column that is already in dB it is a SUBTRACTION.  With a non-positive
+    # reference the multiplicative level is at or ABOVE the reference, so
+    # "drops by N dB" names a level above it and the request has no answer
+    # whatever the data says -- while `ref - N` is below the reference for every
+    # finite reference of either sign, so the same column that must be refused
+    # here must be ANSWERED in `dB`.  Row MT22/BW9 drives both directions on one
+    # column, and a guard placed above this decision passes one and fails the
+    # other.
+    #
+    # ⚠ AMPLITUDE dB (20) AND NOT POWER dB (10), because the operand is a voltage
+    # magnitude.  Built as a sabotage rather than argued: the /10 spelling answers
+    # about seventy percent high on the committed fixture's own lowpass and goes
+    # ABSENT on the bandpass drive.  The dB arm carries no 20 at all, which is
+    # the whole point of it.
+    if {$units eq {dB}} {
+        set lvl [expr {double($pv) - double($drop)}]
+    } else {
+        if {double($pv) <= 0.0} {
+            return [calc::cross_refusal [calc::cross_msg bwnonposref $pv] $dataset $dest]
+        }
+        set lvl [expr {double($pv) * pow(10.0, -double($drop)/20.0)}]
+    }
+    set co [calc::bw_scan $xs $ys $pi $lvl]
+    set lo [lindex $co 0]
+    set hi [lindex $co 1]
+    # An IF LADDER AND NOT A `switch`, deliberately, for `calc::fn_sink`'s reason:
+    # a comment between two switch patterns leaves the braces balanced and
+    # `info complete` answering 1 while Tcl raises out of every arm, and the
+    # damage is parity-dependent.  A ladder has no such shape.
+    #
+    # Each absence sentence names WHAT THE USER CAN CHANGE -- the drop they asked
+    # for and the side that was searched -- so the two actions available, ask for
+    # a smaller drop or widen the sweep, are both implied by the sentence.
+    if {$response eq {low}} {
+        if {$hi eq {}} {
+            return [calc::cross_absent [calc::cross_msg bwnohi $drop] $dataset $dest]
+        }
+        set x $hi
+    } elseif {$response eq {high}} {
+        if {$lo eq {}} {
+            return [calc::cross_absent [calc::cross_msg bwnolo $drop] $dataset $dest]
+        }
+        set x $lo
+    } else {
+        if {$hi eq {}} {
+            return [calc::cross_absent [calc::cross_msg bwnohi $drop] $dataset $dest]
+        }
+        if {$lo eq {}} {
+            return [calc::cross_absent [calc::cross_msg bwnolo $drop] $dataset $dest]
+        }
+        set x [expr {double($hi) - double($lo)}]
+    }
+    # `calc::cross`'s key set plus `ref` ALONE, with no `shape` key, so
+    # `calc::fn_sink` answers `buffer` and the catalogue's `returns scalar` does
+    # not move -- which keeps S24's closed `returns` vocabulary unmoved too.
+    #
+    # ⚠⚠ `ref` IS THE REFERENCE THIS CALL MEASURED THE DROP FROM, PUBLISHED SO
+    # THAT NOBODY HAS TO RECOMPUTE IT.  `calc::gainBwProd` is the product of that
+    # reference and this answer, and the alternative -- a second peak search in
+    # that verb -- would be a second copy of this proc's reference convention,
+    # free to disagree with it the moment either moves.  Publishing it is one key
+    # and no new code; recomputing it is a whole engine door and a convention.
+    # The key is `ref` and not `gain` deliberately: this verb's operand is an
+    # arbitrary expression, and only the CALLER knows whether its peak is a gain.
+    # Row MT22/BW11 asserts the key set exactly and names the divergence from
+    # `cross`'s own, which is CLAUDE.md's rule that a key and the row asserting
+    # its key set land in one commit.
+    return [dict create ok 1 absent 0 value $x ref $pv \
+                dataset $dataset dest $dest msg {}]
+}
+
+# ---------------------------------------------------------------------------
+# `calc::gainBwProd` -- THE SECOND LOOP-STABILITY VERB, AND THE FIRST VERB HERE
+# THAT DELEGATES TO ANOTHER MEASUREMENT VERB RATHER THAN TO `calc::cross`.
+#
+# Spec     doc/claude/specs/calculator.md section 7.3.
+# Fence    tests/headless/test_calc_measure.tcl, band MT23,
+#          plus the rows that enlist it without being edited: MT10's partition,
+#          MT14/Q's argspec sweep, MT21's overflowing-literal sweep and
+#          MT22/BW11's key-set row.
+#
+#     calc::gainBwProd <rpn> ?<drop>? ?<units>? ?<response>? ?<dataset>?
+#
+# THE PRODUCT (reference gain) x (bandwidth), AND NOT THE UNITY-GAIN FREQUENCY.
+# Row GBW10 drives both halves of that choice rather than asserting it: this
+# fixture's own in-band maximum is below unity gain, so a crossing search for a
+# gain of 1 answers NOTHING and the unity-gain reading has no answer here at all;
+# and `calc::cross <gain> 1 1 falling` already IS that frequency for a column
+# that does reach it, so building the unity-gain reading would have shipped a
+# second spelling of a shipped verb and left the product -- the figure of merit
+# that is NOT available -- unbuilt.  On a real multi-pole amplifier A0 and BW are
+# each measurable while the unity-gain frequency is an extrapolation.
+#
+# ⚠⚠ THE REFERENCE COMES OUT OF THE DELEGATE'S OWN ANSWER AND IS NEVER
+# RECOMPUTED HERE.  `calc::bandwidth` derives a reference from the column and a
+# level from that reference; a second peak search in this proc would be a second
+# copy of that convention, free to disagree with it the moment either moves, and
+# the two halves of a product disagreeing about the reference is the whole defect
+# this shape exists to prevent.  So that verb publishes `ref` and this one
+# multiplies by it.  There is deliberately NO fallback that recomputes it: a
+# fallback IS the drift, and `gbwnoref` makes the missing key a refusal instead.
+# The consequence runs the other way too and is declared rather than discovered:
+# whatever reference convention `calc::bandwidth` is ruled to use, this verb
+# follows it for free, and a field added to that verb's spec obliges adding the
+# matching formal HERE in the same commit -- row GBW6 is what turns that into a
+# gate red rather than a silent wrong measurement, because `calc::arg_values`
+# walks `info args` and `break`s at the first formal it cannot answer while
+# `calc::arg_invoke` then appends POSITIONALLY.
+#
+# ⚠⚠ THE VERB OWNS NO DATABASE GATE AND MAKES NO ACCESSOR CALL AT ALL, which is
+# a correction measured against the delegate rather than a simplification.  Its
+# own `raw loaded` and `raw sim_type` gates were drafted and then removed: both
+# are already in `calc::bandwidth` (`nodata` and `bwnoac`), so a second pair here
+# would be a second vocabulary for one fact -- and a `sim_type` gate placed AHEAD
+# of the delegate breaks band MT21/A, which requires the refusal an overflowing
+# literal in a `real` field earns to quote THE TEXT THE USER TYPED.  That band
+# loads the `tran` arm, where an own gate would answer about the database
+# instead.  Row GBW8 drives the time-domain arm and asserts the issue-1653
+# refusal arrives, in the delegate's voice, compared by identity.
+#
+# ⚠ SO EVERY REFUSAL AND EVERY ABSENCE PASSES THROUGH BYTE-IDENTICAL, which is
+# `calc::riseTime`'s own line and the house pattern: own checks get their own
+# voice, a delegated refusal keeps the delegate's.  The absence in particular --
+# *the response does not drop N dB in this sweep* -- is ONE physical fact, and a
+# `gainBwProd`-flavoured re-spelling of it would be a second vocabulary for it.
+#
+# ⚠⚠ THE OPERAND'S UNITS ARE THE USER'S TO DECLARE AND THE DELEGATE'S TO ACT ON,
+# AND THIS VERB OWNS EXACTLY ONE CONSEQUENCE OF THAT: a dB gain times a frequency
+# is not a gain-bandwidth product.  The `units` word passes straight through, the
+# delegate picks the arithmetic and publishes `ref` in the OPERAND's own units,
+# and in `dB` mode this verb multiplies the LINEAR MAGNITUDE that reference names
+# -- `10^(ref/20)` -- rather than the dB number itself.  Converting rather than
+# refusing, because the figure is computable from what the user declared and
+# ADE-L is a floor.  Row GBW13 fences the conversion three ways: against the
+# deck's own closed form, by the identity `value/bandwidth == 10^(ref/20)` at a
+# door a power-dB spelling fails by a square, and against the same response read
+# linearly.  Row GBW11 then drives the two directions of the delegate's
+# non-positive-reference guard from here, which is where that row's old
+# declared-hole leg used to assert the WRONG answer.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  The three new sentences are the
+# assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences is extended to cover them.
+# ---------------------------------------------------------------------------
+proc calc::gainBwProd {rpn {drop {}} {units magnitude} {response low} {dataset 0}} {
+    # THE ONE CALL, to the MEASUREMENT proc and not to `calc::arg_surface
+    # bandwidth` -- deliberately, mirroring `calc::riseTime` calling `calc::cross`
+    # and never `calc::cross_scalar`.  A `_scalar` wrapper's job is to decide
+    # where an answer GOES for the click path; this is not a surface, it is
+    # another measurement.  Every argument passes straight through, which is what
+    # row GBW1 records rather than infers.
+    set a [calc::bandwidth $rpn $drop $units $response $dataset]
+    if {![dict get $a ok]} { return $a }
+    # FAILING CLOSED on the shape.  `calc::bandwidth` answers `scalar` today by
+    # declaring no `shape` key at all; were it ever to declare `wave`, the product
+    # would inherit the declaration and `calc::fn_sink` would route a number to a
+    # wave destination.  One `dict exists`, and forceable by a stub, so it is a
+    # fenced guard and not a gesture (row GBW3).
+    set sh scalar
+    if {[dict exists $a shape]} { set sh [dict get $a shape] }
+    if {$sh ne {scalar}} {
+        return [calc::cross_refusal [calc::cross_msg gbwshape $sh] $dataset]
+    }
+    # THE DELEGATE CONTRACT MADE EXPLICIT RATHER THAN ASSUMED.  See the header:
+    # there is no fallback that recomputes the reference, because a fallback is
+    # the drift this verb is shaped to prevent.
+    if {![dict exists $a ref]} {
+        return [calc::cross_refusal [calc::cross_msg gbwnoref] $dataset]
+    }
+    set rf [dict get $a ref]
+    set bw [dict get $a value]
+    # ⚠⚠ A dB GAIN TIMES A FREQUENCY IS NOT A GAIN-BANDWIDTH PRODUCT, so `dB`
+    # mode multiplies the LINEAR MAGNITUDE the reference names and not the dB
+    # number.  The delegate publishes `ref` in the OPERAND's own units, because
+    # that is the reference the drop was really measured from, so the conversion
+    # belongs here and nowhere else -- and it is a conversion rather than a
+    # refusal because the figure is computable from what the user DECLARED:
+    # R412's rulings and `calc::delay`'s own precedent return a computable answer
+    # instead of withholding it, and ADE-L is a floor.
+    #
+    # ⚠ GATED ON FINITENESS FIRST so a non-finite reference -- which only the
+    # stub band can produce, since `calc::bw_peak` answers a finite sample or
+    # nothing -- reaches the arm below with its own value rather than through
+    # `pow`.  An overflowing CONVERSION is then caught by that same arm, which is
+    # why no second sentence exists for it; row GBW13 drives a dB column
+    # whose own value is finite and whose linear equivalent is not, with the
+    # delegate's bandwidth on that very drive measuring finite as the control.
+    if {$units eq {dB} && [calc::eval_finite $rf]} {
+        set rf [expr {pow(10.0, double($rf)/20.0)}]
+    }
+    # ⚠ THE ANSWER'S OWN FINITENESS, NEVER A THRESHOLD ON AN OPERAND, which is
+    # `calc::overshoot`'s `oshtinystep` lesson verbatim: the gain at which the
+    # product stops being representable depends on this column's own maximum and
+    # on the bandwidth this sweep happens to have, so no constant can express it.
+    # A big FINITE product is KEPT, by the same ruling that keeps overshoot's
+    # 9.99e+301 percent.  Row GBW5 derives the boundary from the double format and
+    # the delegate's own two numbers and drives a factor of two either side of it.
+    if {![calc::eval_finite $rf] || ![calc::eval_finite $bw]} {
+        return [calc::cross_refusal [calc::cross_msg gbwoverflow $rf $bw] $dataset]
+    }
+    set p [expr {double($rf) * double($bw)}]
+    if {![calc::eval_finite $p]} {
+        return [calc::cross_refusal [calc::cross_msg gbwoverflow $rf $bw] $dataset]
+    }
+    # THE DELEGATE'S DICT WITH `value` SUBSTITUTED AND NOTHING ELSE TOUCHED, which
+    # is `calc::riseTime`'s shape and the one band MT16/N asserts for it: `dataset`,
+    # `dest` (still holding the retired `__calc_tmp<N>` the measurement evaluated
+    # into, which band MT9b reads BY NAME to tell a deferral from an absence),
+    # `absent`, `msg` and `ref` all survive.  Minimum surface, and the answer IS
+    # the delegate's answer.
+    dict set a value $p
+    return $a
+}
+
+
+# ---------------------------------------------------------------------------
+# `calc::sample_at` -- THE Y OF A SAMPLED COLUMN AT AN X THAT IS NOT A SAMPLE,
+# AND THE EXACT ALGEBRAIC INVERSE OF `calc::cross_pair`'s INTERPOLATION.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D4 -- the straight line
+#          between two straddling samples, never snapped to one (R414d).
+# Fence    tests/headless/test_calc_measure.tcl, rows GM4, GM5 and GM11.
+#
+# `calc::cross_pair` solves `x0 + (L - y0)*(x1 - x0)/(y1 - y0)` for the X at a
+# named LEVEL; this solves `y0 + (f - x0)*(y1 - y0)/(x1 - x0)` for the Y at a
+# named X.  They are the same straight line read the two ways round, which is
+# why the two halves of a margin measurement cannot disagree about what a line
+# IS -- and it is why this proc exists at all rather than the arithmetic being
+# written at its one call site.
+#
+# ⚠ PURE: no Tk and no engine, so it fences entirely on the counted arm.
+#
+# ⚠ THE BRACKET TEST TAKES THE MIN AND THE MAX OF THE PAIR rather than assuming
+# `x0 <= x1`, so a non-monotone sweep is still answered somewhere rather than
+# silently falling through to the end of the scan and reporting an absence.  The
+# FIRST pair that brackets wins, which is the same forward-scan tie rule
+# `calc::cross_scan`'s positive arm uses.
+#
+# ⚠ THE FINITENESS GATE RUNS BEFORE THE ARITHMETIC, D6's order and for D6's
+# measured reason: `expr` on a non-finite operand RAISES where a comparison on
+# one quietly answers 0, so a column carrying a `-nan` would take the caller
+# down instead of being declined.  A pair that is not finite is SKIPPED rather
+# than ending the scan, so one bad sample in the middle of a column does not
+# hide a good pair further along -- and a crossing whose own bracketing pair is
+# not finite answers {}, which the caller reports as an absence naming the X.
+#
+# ⚠ AND THE DEGENERATE PAIR IS ANSWERED, NOT DIVIDED BY.  Two samples at the
+# same X bracket exactly one f, their own, and the honest Y there is the first
+# of the two -- so the division is placed behind that test rather than relying
+# on a reader noticing the denominator cannot be zero.
+#
+# {} means NOTHING FINITE BRACKETS THAT X, which is the one thing a caller must
+# tell apart from a legitimate Y of zero.
+#
+# ⚠⚠ THE `double()` ON `f` IS LOAD-BEARING, AND A REPORT THAT THIS PROC WAS
+# IMMUNE TO INTEGER DIVISION *"exactly as `calc::cross_pair` is"* WAS USED TO
+# DELETE THE ROW THAT WOULD HAVE CAUGHT IT.  Both halves of that were false.
+# Tcl's `/` truncates towards zero when both operands are integers and `expr`
+# groups left to right, so `($f - $x0)*($y1 - $y0)` is an integer numerator
+# whenever every operand is spelled as a decimal integer, and this proc answered
+# 1 where the line through (100,0) and (200,3) reads 1.5 at 150 -- while
+# `calc::cross_pair` had the identical defect in the identical place.  Forcing
+# the one operand a caller names makes the first subtraction a double and
+# everything after it follows; it is a no-op when the operand already is one.
+# Row MT24/GM15 of tests/headless/test_calc_measure.tcl drives both procs on
+# hand numbers, and drives the documented inverse round trip on integer-spelled
+# operands, which is the claim this proc exists to make true.
+# ---------------------------------------------------------------------------
+proc calc::sample_at {xs ys f} {
+    if {![calc::eval_finite $f]} { return {} }
+    set n [llength $ys]
+    set nx [llength $xs]
+    if {$nx < $n} { set n $nx }
+    for {set p 1} {$p < $n} {incr p} {
+        set x0 [lindex $xs [expr {$p-1}]]
+        set x1 [lindex $xs $p]
+        if {![calc::eval_finite $x0] || ![calc::eval_finite $x1]} continue
+        set lo $x0
+        set hi $x1
+        if {$lo > $hi} { set lo $x1 ; set hi $x0 }
+        if {$f < $lo || $f > $hi} continue
+        set y0 [lindex $ys [expr {$p-1}]]
+        set y1 [lindex $ys $p]
+        if {![calc::eval_finite $y0] || ![calc::eval_finite $y1]} continue
+        if {double($x1) == double($x0)} { return [expr {double($y0)}] }
+        set y [expr {$y0 + (double($f) - $x0)*($y1 - $y0)/($x1 - $x0)}]
+        if {![calc::eval_finite $y]} { return {} }
+        return $y
+    }
+    return {}
+}
+
+# ---------------------------------------------------------------------------
+# `calc::gainMargin` -- THE THIRD LOOP-STABILITY VERB, AND THE FIRST VERB HERE
+# THAT MEASURES A Y OF ONE COLUMN AT AN X FOUND IN ANOTHER.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D1/D2/D3/D4/D6/D7/D10
+#          D11/D12 -- inherited through `calc::cross_scan` and `calc::cross_pair`,
+#          which are the only crossing primitives this verb uses.
+# Fence    tests/headless/test_calc_measure.tcl, band MT24 (rows GM0-GM14),
+#          plus the rows that enlist it without being edited: MT10's three-way
+#          partition, MT11's spec rows, MT14/Q and Q2's parity sweeps, MT21/A
+#          and MT21/B's overflowing-literal sweeps, MT21/G's
+#          no-two-arms-one-sentence invariant, and row SR5 of
+#          tests/headless/test_calc_scratch_reuse.tcl.
+#
+#     calc::gainMargin <rpnMag> <rpnPh> ?<gain>? ?<level>? ?<edge>? ?<nth>?
+#                      ?<dataset>?
+#
+# THE GAIN OF THE LOOP WHERE ITS PHASE CROSSES -180 DEGREES, IN dB, POSITIVE FOR
+# A STABLE LOOP.  The user asked for the stability measurements by name, so the
+# two operands are the loop gain and the loop phase and the answer is
+# `-20*log10|T|` at the phase crossover, with the crossover frequency published
+# beside it under `xcross`.
+#
+# ⚠⚠ TWO `rpn` OPERANDS, WHICH ONLY `calc::delay` HAS DONE BEFORE, AND THE
+# REASON IS A MEASUREMENT.  `xschem raw add` on an `ac` database creates ONE
+# REAL column and no phase sibling, so a node-base-name operand could only ever
+# be driven on a raw file's OWN nodes -- and a DERIVED loop gain, which is what
+# every real stability measurement is since the loop is broken and recombined in
+# the expression, would be unreachable.  `calc::arg_dialog_build` pre-fills every
+# `rpn`-kind field from the buffer, so both fields open holding the user's
+# expression and they edit one of them.
+#
+# ⚠⚠ THIS VERB OWNS ITS ENGINE DOOR AND DOES NOT CALL `calc::cross`, WHICH IS A
+# CORRECTION TO THE DESIGN MEASURED AGAINST THE SUITE RATHER THAN A
+# SIMPLIFICATION.  The design had it DELEGATE the crossing to `calc::cross` and
+# own a door for the gain -- a HYBRID.  Three measurements rejected that shape.
+# Band MT10 of the fence derives the verb population and partitions it by these
+# same two structural instruments, and its OWN-DOOR class asserts in so many
+# words that a member reaches `calc::cross` NOWHERE, *"a verb that did both
+# would evaluate the expression twice and report once"* -- so a hybrid costs a
+# fourth class in that partition.  The hybrid also gates the database TWICE, its
+# own `nodata`/`dataset`/`sim_type` ladder and then `cross`'s again.  And band
+# MT21/A requires an overflowing literal in a `real` field to be refused quoting
+# THE TEXT THE USER TYPED, on the `tran` arm that band loads, so the `level`
+# guard has to sit in this verb's own request validation ABOVE the AC gate and
+# cannot be `cross`'s `badlevel` by delegation at all.  `calc::bandwidth`, the
+# sibling verb this stage landed first, already owns a door and reaches
+# `calc::cross_pair` directly, so the loop-stability family now has ONE
+# architecture.
+#
+# ⚠ THE SELECTION IS STILL `calc::cross_scan` AND NOT A SECOND SELECTOR.  That
+# is the same proc `calc::cross` itself selects with, so R414c's two scan
+# directions, R414a's counting WITHIN the selected direction and D2's `nth` 0
+# arm are inherited rather than re-implemented -- and every crossing still goes
+# through `calc::cross_pair` and nothing else, which is CROSS_CONTRACT D10's
+# bit-identity property.  Row GM11 reads the whole claim off the closure and
+# measures the one-formula property as a call-site count plus the ABSENCE of a
+# division in this proc's own body.
+#
+# ⚠⚠ `cph()` IS APPENDED TO THE PHASE OPERAND BY THIS VERB, AND THAT IS
+# MEASURED IN BOTH DIRECTIONS.  A real simulator's `ph()` column lives in
+# (-180, 180], where a FALLING crossing of -180 needs `y1 <= -180` and only an
+# exact -180 sample satisfies it -- so `calc::cross_pair`'s predicate cannot see
+# the discontinuity at all and the crossing is simply MISSED.  On an
+# already-unwrapped phase the opcode is the bit-exact identity, so appending it
+# can never hurt.  Row GM7 drives one operand both ways and asserts the two
+# answers are bit-identical, with `calc::cross` on the wrapped operand WITHOUT
+# the opcode answering an absence as the negative leg.
+#
+# ⚠ WHICH IS WHY THE EMPTY-OPERAND CHECK MUST PRECEDE THE APPEND, measured and
+# not argued: `calc::rpn_bad_token { cph()}` APPROVES, the engine evaluates
+# ` cph()` to a column of twenty zeros, and the crossing search then answers an
+# ABSENCE -- so appending blindly turns an empty operand into a FALSE ABSENCE
+# instead of a refusal.
+#
+# ⚠ THE AC GATE IS THIS VERB'S ISSUE-1653 ANSWER.  A gain margin is read at a
+# FREQUENCY, so a time-domain database is refused rather than answered at a
+# TIME.  It is not restrictive in a way that matters: `read_dataset()` in
+# src/save.c maps AC Analysis, Spectrum AND SP Analysis all to the single string
+# `ac`, so S-parameter data is inside the accepted set.  ⚠ AND THE LUCKY GUARD
+# MUST NOT BE RELIED ON: on a `tran` arm `xschem raw index ph(lp)` is -1, so a
+# `ph()`-shaped operand is refused by the pre-flight for free -- but the user
+# can hand ANY expression as the phase and `v(lp) 4 *` resolves there perfectly
+# well.  Row GM10 drives the gate with operands that DO resolve on that arm, so
+# the gate cannot be mistaken for the accident.
+#
+# ⚠ THE `gain` FIELD EXISTS TO DISSOLVE A QUESTION RATHER THAN TO OFFER A
+# CONVENIENCE, and it is the most consequential row of the spec.  Without it the
+# verb must GUESS whether the operand is a linear magnitude or a dB column, and
+# both guesses answer a confident meaningless number on the other; with it the
+# user declares, and a mismatch is their statement rather than this verb's
+# inference.  BELT AS WELL AS BRACES, because a default is a default: in
+# `magnitude` mode ANY negative sample in the materialised column is refused,
+# naming it.  A loop-gain magnitude cannot be negative, so that is a true
+# statement about the operand and not a guess about intent -- and it bites
+# exactly where it matters, since for any loop with a POSITIVE margin |T| < 1 at
+# the crossing and its dB column IS negative there.
+#
+# ⚠⚠ THE SCAN IS OVER THE WHOLE COLUMN AND NOT OVER THE CROSSING SAMPLE, and
+# row GM6 measures that the difference is real: a drive whose only negative
+# sample is the LAST one is accepted by a crossing-local guard and refused by
+# this one.
+#
+# ⚠ THE LOG IS TAKEN IN TCL AND NEVER THROUGH THE ENGINE'S `db20()`, which is
+# issue 1653's own published example avoided by construction.  `mylog10()` in
+# src/editprop.c is `if(x > 0) return log10(x); else return -35;`, so an engine
+# `db20()` of a zero or negative column answers -700 at EVERY point -- a
+# confident meaningless number nothing downstream can tell from a real -700 dB.
+# Tcl's own `log10` is the right instrument precisely because it is NOT total:
+# `log10(0)` is `-Inf` and `log10(-1.0)` RAISES, which is why the positivity
+# refusal sits above it.
+#
+# ⚠⚠ THE TWO OPERANDS MAY NOT BE ONE EXPRESSION, AND THIS VERB'S OWN
+# FABRICATION IS A PURE FUNCTION OF THE `level` FIELD.  `calc::arg_dialog_build`
+# pre-fills EVERY `rpn`-kind field from the buffer and this verb has TWO of them,
+# so the commonest request it can receive is the user's expression twice -- and
+# `cph()` is the identity on a gain column, so this verb then crossed the GAIN
+# column at the phase level and read the GAIN there, answering exactly MINUS THE
+# LEVEL THE USER TYPED in dB mode, and minus its dB image in `magnitude` mode,
+# for every loop.  Where the gain column does not reach the level at all the
+# answer is a FALSE ABSENCE instead, which is the dialog's -180 default on a
+# Bode-in-dB buffer.  Two refusals, token-list before the accessors and
+# materialised-column after the engine door, for the reasons written out in
+# `calc::phaseMargin`'s header above -- including why neither lives in
+# `calc::arg_bad` and which two bounds on the answer were refused.  Band MT27 of
+# tests/headless/test_calc_measure.tcl owns both, with L10 there as the declared
+# limit of the column half.
+#
+# ⚠ NO FINITENESS GUARD ON THE MARGIN ITSELF, and that is reasoned rather than
+# forgotten: a finite `g > 0` puts `log10(g)` inside the exponent range of a
+# double, so the product is always finite.  `calc::overshoot` needs its
+# `oshtinystep` guard because it divides by a quantity the USER supplies; this
+# verb divides by nothing, which row GM11 asserts over its own body.
+#
+# ⚠ DECLARED LIMITS, AND NO ROW DRIVES THIS ONE.  A SIGNED operand that happens
+# to be POSITIVE across the whole sweep, declared `magnitude`, passes the belt and
+# is answered confidently wrong; nothing in the data distinguishes a positive
+# signed quantity from a magnitude.  `re(lp)` on the committed fixture is a
+# concrete instance and NOTHING MEASURES IT -- band MT24 builds that column into
+# `gmC(re)` and never reads it -- so no figure is quoted here, because the figure
+# that used to be would have been the comment's own only evidence.
+# The mirror is open too and also narrow: a magnitude column declared `dB`
+# returns -|T| as a margin, which is the right disposition with the wrong
+# number.  `cph()` fixes its branch on the FIRST sample, so a loop whose phase
+# has already passed -180 before the first swept frequency has `nth` 1 RELABELLED
+# onto a higher-order crossing of the negative real axis; it cannot MANUFACTURE
+# one, because arg T = -180 + k*360 is the same negative real axis, and the
+# remedy is the user's -- sweep low enough that |arg T| < 180 at the first point.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  Every new sentence and every field label
+# is the assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences is extended to cover them.
+# ---------------------------------------------------------------------------
+proc calc::gainMargin {rpnMag rpnPh {gain magnitude} {level -180} {edge falling} {nth 1} {dataset 0}} {
+    # D7 FIRST, AT ZERO ACCESSOR CALLS: a request that cannot be INTERPRETED is
+    # refused before anything reaches the database, and is never reported as an
+    # absence.  Every WARN governing this proc is in the block above it.
+    set rpnMag [string trim $rpnMag]
+    set rpnPh [string trim $rpnPh]
+    if {$rpnMag eq {}} {
+        return [calc::cross_refusal [calc::cross_msg gmempty gain] $dataset]
+    }
+    if {$rpnPh eq {}} {
+        return [calc::cross_refusal [calc::cross_msg gmempty phase] $dataset]
+    }
+    # THE DIALOG'S OWN DEFAULT STATE, REFUSED -- `calc::phaseMargin`'s guard read
+    # the other way round, and the header says what it used to answer: exactly
+    # MINUS the phase level the user typed, in dB, for every loop.  TOKEN LISTS
+    # and not bytes, so re-spacing one field does not evade it.
+    if {[calc::rpn_tokens $rpnMag] eq [calc::rpn_tokens $rpnPh]} {
+        return [calc::cross_refusal [calc::cross_msg gmsameop] $dataset]
+    }
+    # Validated HERE rather than only in `calc::arg_bad`, because a script
+    # caller bypasses the dialog -- and BEFORE the first accessor, because this
+    # verb refuses a non-ac database and a membership test below that gate would
+    # answer about the DATABASE for a non-member.  MT11's enum rows lift both
+    # literals out of this body, so their spelling is load-bearing.
+    if {[lsearch -exact {magnitude dB} $gain] < 0} {
+        return [calc::cross_refusal [calc::cross_msg gmunits $gain] $dataset]
+    }
+    if {[lsearch -exact {falling rising either} $edge] < 0} {
+        return [calc::cross_refusal [calc::cross_msg gmedge $edge] $dataset]
+    }
+    # `calc::eval_finite` and NOT `string is double -strict`, which accepts all
+    # four non-finite spellings -- and not a regexp over the spelling either,
+    # because `1e309` is an ordinary decimal literal whose VALUE is an infinity.
+    # Band MT21/A drives every overflowing spelling through this arm and
+    # requires the refusal to quote the text the user typed.
+    if {![calc::eval_finite $level]} {
+        return [calc::cross_refusal [calc::cross_msg gmbadlevel $level] $dataset]
+    }
+    set L [expr {double($level)}]
+    # INTEGER-VALUED, NOT INTEGER-SPELLED, which is `calc::cross`'s own reason:
+    # `string is integer -strict` would refuse `1e3`, which IS the ordinal 1000
+    # -- a well-formed request for a crossing that simply does not exist, and so
+    # an ABSENCE rather than a refusal.  `0.0`, `-0` and `0e0` all name zero.
+    if {![calc::eval_finite $nth]} {
+        return [calc::cross_refusal [calc::cross_msg gmbadnth $nth] $dataset]
+    }
+    set nthv [expr {double($nth)}]
+    if {$nthv != floor($nthv)} {
+        return [calc::cross_refusal [calc::cross_msg gmbadnth $nth] $dataset]
+    }
+    set n [expr {entier($nthv)}]
+    # `nth` 0 names EVERY crossing, and a margin per crossing is a list where
+    # R404 wants one literal number in the buffer.  REFUSED here rather than
+    # deferred to a `_scalar` wrapper, because nothing in this namespace CALLS
+    # this verb -- `calc::cross_scalar` exists for the verbs that call
+    # `calc::cross` and need its list -- so `calc::arg_surface` answers the verb
+    # itself and there is one proc instead of two.  Row GM8 measures why the
+    # guard is not tidiness: without it a ONE-crossing drive answers a
+    # correct-looking number and a TWO-crossing drive answers a FALSE ABSENCE.
+    if {$n == 0} {
+        return [calc::cross_refusal [calc::cross_msg gmlistdefer] $dataset]
+    }
+    # D11 rule 1: the one accessor that answers rather than raising with nothing
+    # loaded.
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::cross_refusal [calc::cross_msg nodata]]
+    }
+    # D12, with `calc::overshoot`'s and `calc::bandwidth`'s measurements behind
+    # it: an unvalidated out-of-range dataset reads back EMPTY with rc 0 and
+    # would be reported as an absence, and -1 is the ALLPOINTS read.
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset] $dataset]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]
+    }
+    if {$dataset >= $nds} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]
+    }
+    # THE ISSUE-1653 GATE.  See the header: a gain margin is read at a frequency,
+    # so a time-domain database is refused rather than answered at a time.
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    if {$sty ne {ac}} {
+        return [calc::cross_refusal [calc::cross_msg gmnotac $sty] $dataset]
+    }
+    # D12's last paragraph: the sweep BY NAME.  Resolved directly rather than
+    # through a sim_type `switch`, because the arm above has already established
+    # the sim_type and a `switch` here would carry a dead `tran`/`time` arm no
+    # row could ever drive.  An unforced belt once that arm stands -- measured,
+    # `xschem raw index frequency` is 0 on an `ac` arm -- and declared as such
+    # rather than claimed fenced.
+    set six -1
+    catch {set six [xschem raw index frequency]}
+    if {![string is integer -strict $six] || $six < 0} {
+        return [calc::cross_refusal [calc::cross_msg nosweep $sty] $dataset]
+    }
+    # D11 rule 3, BOTH operands, BEFORE either mint, so a mistyped name is
+    # reported as a mistyped name and never as a temporary-column collision.
+    #
+    # ⚠ THE PHASE OPERAND RESERVES ONE TOKEN, because the engine call below
+    # appends `cph()` to it: without the reserve a phase operand of exactly
+    # `calc::rpn_maxtokens` tokens PASSED this gate, the engine was handed one
+    # token MORE than was validated, refused the lot and wrote nothing -- and
+    # the all-zero column it left behind read as a phase margin of exactly
+    # 180.0 degrees.  That is a third road to issue 1653's worst shape and it is
+    # the one nothing else in this file would have caught.  The MAGNITUDE
+    # operand is sent verbatim and so reserves nothing; band MT26 of
+    # tests/headless/test_calc_measure.tcl drives both and uses the magnitude
+    # one as the control.
+    set bad [calc::rpn_bad_token $rpnMag]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    set bad [calc::rpn_bad_token $rpnPh {} 1]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    # D11 rule 4, and the `raw index` question is asked BEFORE the add because
+    # `xschem raw add` is register-OR-FIND and THEN evaluate.  TWO temporaries,
+    # because the two operands are two expressions; `calc::tmpvec` never re-uses
+    # a name, so the second mint cannot collide with the first.
+    set dp [calc::tmpvec]
+    if {$dp eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set dm [calc::tmpvec]
+    if {$dm eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dp]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dp] $dataset $dp]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dm]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dm] $dataset $dm]
+    }
+    # ONE DOOR, THREE BULK READS, at "%.16g".  `xschem raw value` returns through
+    # "%.8g" and ROUNDS, so a crossing interpolated from it carries about 1e-8
+    # relative error against a sweep whose documented headroom is 1e-12.
+    set rcp {} ; set rcm {} ; set ph {} ; set mg {} ; set xs {}
+    set err [catch {
+        set rcp [xschem raw add $dp "$rpnPh cph()"]
+        set rcm [xschem raw add $dm $rpnMag]
+        set ph [string trim [xschem raw values $dp $dataset]]
+        set mg [string trim [xschem raw values $dm $dataset]]
+        set xs [string trim [xschem raw values frequency $dataset]]
+    } e]
+    # R402, UNCONDITIONAL and before every return below: the cleanup cannot be
+    # driven by the return code, because a failed add leaves a column behind and
+    # still answers 1.  BOTH names, in case the first add succeeded and the
+    # second raised.
+    catch {xschem raw del $dp}
+    catch {xschem raw del $dm}
+    if {$err} {
+        return [calc::cross_refusal [calc::cross_msg engine $e] $dataset $dm]
+    }
+    # The same belt `calc::cross`, `calc::eval_rpn`, `calc::overshoot` and
+    # `calc::bandwidth` carry, with the same declared status: 1 means this call
+    # created the column.  NO ROW FORCES EITHER while the two `raw index` arms
+    # above stand.
+    if {$rcp ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dp] $dataset $dp]
+    }
+    if {$rcm ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dm] $dataset $dm]
+    }
+    # ...AND THE SAME REFUSAL ONE LEVEL DOWN, OVER THE SAMPLES RATHER THAN THE
+    # TEXT, for `calc::phaseMargin`'s reason and with the same declared limit:
+    # two different expressions can resolve to one column and the token test
+    # above cannot see it.  The empty guard is there because two empty reads are
+    # equal and are not a measurement.
+    if {$mg ne {} && $mg eq $ph} {
+        return [calc::cross_refusal [calc::cross_msg gmsamecol] $dataset $dm]
+    }
+    # THE UNITS BELT, BEFORE THE CROSSING SEARCH, so a dB column handed as a
+    # magnitude is reported as what it is even on a loop whose phase never
+    # reaches the level -- where the absence would otherwise mask it.
+    if {$gain eq {magnitude}} {
+        foreach s $mg {
+            if {![calc::eval_finite $s]} continue
+            if {double($s) < 0.0} {
+                return [calc::cross_refusal [calc::cross_msg gmnotmag $s] $dataset $dm]
+            }
+        }
+    }
+    set got [calc::cross_scan $xs $ph $L $n $edge]
+    if {![lindex $got 0]} {
+        return [calc::cross_absent \
+                    [calc::cross_msg gmnocross [calc::cross_ordinal $n] $edge] \
+                    $dataset $dm]
+    }
+    set f [lindex $got 1]
+    set g [calc::sample_at $xs $mg $f]
+    if {$g eq {}} {
+        return [calc::cross_absent [calc::cross_msg gmnobracket $f] $dataset $dm]
+    }
+    if {$gain eq {dB}} {
+        set m [expr {-1.0*double($g)}]
+    } else {
+        if {double($g) <= 0.0} {
+            return [calc::cross_refusal [calc::cross_msg gmnonpos $g] $dataset $dm]
+        }
+        set m [expr {-20.0*log10(double($g))}]
+    }
+    # `calc::cross`'s key set plus `xcross` ALONE, with no `shape` key, so
+    # `calc::fn_sink` answers `buffer` and the catalogue's `returns scalar` does
+    # not move -- which keeps S24's closed `returns` vocabulary unmoved too.
+    #
+    # ⚠ `xcross` IS THE PHASE CROSSOVER THIS CALL MEASURED THE GAIN AT, published
+    # because a margin without the frequency it was read at is half an answer to
+    # the person who asked for it -- and because it is the only way a row can
+    # assert the X half of the measurement against a closed form without
+    # re-deriving it from the primitive.  `dest` names the MAGNITUDE temporary,
+    # which is the column the published value came out of; band MT9b reads that
+    # key BY NAME to tell a deferral from an absence, so it must mean one thing.
+    # Row GM14 asserts the key set EXACTLY on all three dispositions, derived
+    # from what `calc::cross` itself answers, which is CLAUDE.md's rule that a
+    # key and the row asserting its key set land in one commit.
+    return [dict create ok 1 absent 0 value $m xcross $f \
+                dataset $dataset dest $dm msg {}]
+}
+
+# ---------------------------------------------------------------------------
+# `calc::phaseMargin` -- THE FOURTH LOOP-STABILITY VERB, AND `calc::gainMargin`
+# READ THE OTHER WAY ROUND.
+#
+# Spec     doc/claude/specs/calculator.md section 7.2 (the catalogue row).
+# Contract doc/claude/calculator_batch/CROSS_CONTRACT.md D1/D2/D3/D4/D6/D7/D10
+#          D11/D12 -- inherited through `calc::cross_scan` and `calc::cross_pair`,
+#          which are the only crossing primitives this verb uses.
+# Fence    tests/headless/test_calc_measure.tcl, band MT25 (rows PM0-PM15),
+#          plus the rows that enlist it without being edited: MT10's three-way
+#          partition, MT11's spec rows, MT14/Q and Q2's parity sweeps, MT20/B's
+#          sentence budget, MT21/NV's derived `real`-field split, MT21/G's
+#          no-two-arms-one-sentence invariant, and row SR5 of
+#          tests/headless/test_calc_scratch_reuse.tcl.
+#
+#     calc::phaseMargin <rpnMag> <rpnPh> ?<gain>? ?<edge>? ?<nth>? ?<dataset>?
+#
+# THE LOOP PHASE WHERE THE LOOP GAIN CROSSES UNITY, PLUS 180 DEGREES, POSITIVE
+# FOR A STABLE LOOP.  The user asked for the stability measurements by name, so
+# the two operands are the loop gain and the loop phase and the answer is
+# `180 + arg T` at the unity-gain frequency, with that frequency published beside
+# it under `xcross`.
+#
+# ⚠⚠ IT IS THE EXACT MIRROR OF `calc::gainMargin` AND USES THE SAME TWO
+# PRIMITIVES IN THE OPPOSITE ORDER, WHICH IS WHY IT ADDS NO HELPER OF ITS OWN.
+# That verb crosses the PHASE at a named level with `calc::cross_scan` and reads
+# the GAIN at the crossing with `calc::sample_at`; this crosses the GAIN at unity
+# and reads the PHASE there.  `calc::sample_at` is the algebraic inverse of
+# `calc::cross_pair` -- one solves a straight line for the X at a named Y, the
+# other for the Y at a named X -- so the two halves of either margin cannot
+# disagree about what a straight line IS, and the two margins cannot disagree
+# about where a crossing is.
+#
+# ⚠⚠ THE SIGN CONVENTION IS DISSOLVED BY THE RPN OPERAND AND NEEDS NO ENUM.  The
+# answer is `180 + arg T` with `arg T` the loop-gain phase in degrees.  A user
+# whose probe measures `-T` rather than `T` writes `ph(x) 180 +` and gets the
+# other convention, so there is nothing here for a flag or a ruling to settle.
+#
+# ⚠⚠ TWO `rpn` OPERANDS, for `calc::gainMargin`'s measured reason: `xschem raw
+# add` on an `ac` database creates ONE REAL column and no phase sibling, so a
+# node-base-name operand could only ever be driven on a raw file's OWN nodes --
+# and a DERIVED loop gain, which is what every real stability measurement is
+# since the loop is broken and recombined in the expression, would be
+# unreachable.  `calc::arg_dialog_build` pre-fills every `rpn`-kind field from
+# the buffer, so both fields open holding the user's expression and they edit one.
+#
+# ⚠⚠ NO `level` FIELD, WHICH IS THE ONE PLACE THIS SPEC DIVERGES FROM ITS
+# SIBLING'S, AND THE REASON IS A UNITS COUPLING RATHER THAN A PREFERENCE.
+# -180 degrees is a genuine choice a user might vary, so `calc::gainMargin`
+# offers it as a `real` field.  Unity gain is NOT a choice, and it is spelled 1
+# in a magnitude and 0 in dB -- so one `real` default could not be right in both
+# units, and a default that was wrong in either would answer confidently at a
+# level the user did not mean, which is issue 1653's whole complaint.  The `gain`
+# enum therefore does double duty: it declares the operand's units AND names the
+# level.  THE CONSEQUENCE IS STRUCTURAL AND IS FENCED RATHER THAN NOTED: this is
+# the only clickable verb with no `real` field at all, so band MT21/NV now
+# DERIVES the split between the verbs whose `real` fields it sweeps and the ones
+# it legitimately drives nothing for, instead of claiming every verb has one.
+#
+# ⚠⚠ `cph()` IS APPENDED TO THE PHASE OPERAND BY THIS VERB, AND FOR THIS VERB IT
+# IS NOT A CONVENIENCE BUT THE DIFFERENCE BETWEEN A MARGIN AND A 360-DEGREE LIE.
+# A simulator's own `ph()` column lives in (-180, 180].  Where the unity crossing
+# sits past the wrap -- which is exactly where the margin is interesting, because
+# that is an UNSTABLE loop -- the wrapped column reads a large POSITIVE angle and
+# `180 + it` is a comfortable-looking margin several hundred degrees from the
+# truth.  Row PM7 drives one operand both ways on such a crossing and asserts the
+# two answers are bit-identical, with the un-unwrapped reading solved by the
+# suite's own two-sample line as the negative leg.  The opcode is the EXACT
+# IDENTITY on an already-continuous column, measured as a zero difference count
+# over every sample, so appending it can never hurt.
+#
+# ⚠ WHICH IS WHY THE EMPTY-OPERAND CHECK MUST PRECEDE THE APPEND, measured at
+# the sibling site and not argued: `calc::rpn_bad_token { cph()}` APPROVES, the
+# engine evaluates ` cph()` to a column of twenty zeros, and the crossing search
+# then answers an ABSENCE -- so appending blindly turns an empty operand into a
+# FALSE ABSENCE instead of a refusal.
+#
+# ⚠ THE AC GATE IS THIS VERB'S ISSUE-1653 ANSWER, and it is the only guard there
+# is.  A phase margin is read at a FREQUENCY, so a time-domain database is
+# refused rather than answered at a TIME.  ⚠ AND THE LUCKY GUARD MUST NOT BE
+# RELIED ON: on a `tran` arm `xschem raw index ph(lp)` is -1, so a `ph()`-shaped
+# operand is refused by the pre-flight for free -- but the user may hand ANY
+# expression as the phase, and row PM10 drives operands that BOTH resolve there,
+# where `calc::cross` itself answers a unity-gain crossing in SECONDS and the
+# arithmetic yields a finite number of degrees.  Every ingredient of a confident
+# meaningless answer is present and the verb refuses anyway.  Not restrictive in
+# a way that matters: `read_dataset()` in src/save.c maps AC Analysis, Spectrum
+# AND SP Analysis all to the single string `ac`.
+#
+# ⚠ THE `gain` FIELD EXISTS TO DISSOLVE A QUESTION RATHER THAN TO OFFER A
+# CONVENIENCE.  Without it the verb must GUESS whether the operand is a linear
+# magnitude or a dB column, and both guesses answer a confident meaningless
+# number on the other -- measured at the sibling site, a dB gain handed in as a
+# magnitude is read at the wrong frequency entirely.  BELT AS WELL AS BRACES,
+# because a default is a default: in `magnitude` mode ANY negative sample in the
+# materialised column is refused, naming it.  A loop-gain magnitude cannot be
+# negative, so that is a true statement about the operand and not a guess about
+# intent.
+#
+# ⚠⚠ THE BELT SCANS THE WHOLE COLUMN AND NOT THE CROSSING PAIR, and for THIS
+# verb the realistic drive is itself the proof that the difference matters: a
+# Bode plot is drawn in dB, so the user's buffer most likely holds a dB
+# expression, and that column crosses the level 1.0 between two samples NEITHER
+# of which is negative.  Row PM6 measures both the offending sample's index and
+# the crossing's bracket, so a guard keyed to the pair is shown to accept what
+# this one refuses, and the margin it would then have answered is computed in
+# the run and asserted far from the truth.
+#
+# ⚠⚠ THE TWO OPERANDS MAY NOT BE ONE EXPRESSION, AND THAT GUARD IS ABOUT THE
+# DIALOG RATHER THAN ABOUT A PERVERSE USER.  `calc::arg_dialog_build` pre-fills
+# EVERY `rpn`-kind field from the buffer and this verb has TWO of them, so the
+# commonest request it can receive is the user's expression TWICE -- and that
+# answered a confident, unrefused margin of EXACTLY 180.0 in dB mode FOR EVERY
+# LOOP, because the unity level in dB is 0 and `cph()` is the identity on a gain
+# column, so the "phase" read at the crossover was the crossing LEVEL ITSELF.  On
+# the committed fixture's UNSTABLE four-pole loop, true margin negative, a design
+# that oscillates read as maximally stable with the CORRECT crossover frequency
+# published beside it, which makes the number more credible rather than less.
+# TWO refusals, because one expression and one column are two questions: the
+# operands are compared as TOKEN LISTS before any accessor, so re-spacing one
+# field does not evade it, and the materialised COLUMNS are compared after the
+# engine door, so a numerically identical re-spelling does not either.  Neither
+# is a heuristic -- a loop gain and a loop phase in degrees are different
+# quantities and cannot be one expression or one column.  Band MT27 of
+# tests/headless/test_calc_measure.tcl owns both.
+#
+# ⚠⚠ AND `calc::arg_bad` IS NOT WHERE EITHER OF THEM LIVES, which was MEASURED
+# rather than chosen on taste: `delay` has two `rpn` fields too, and two EQUAL
+# expressions there is a legitimate request -- one signal against itself at two
+# different levels is a pulse width -- so a belt in that shared shape validator
+# would have broken a shipped verb.  Row MT27/SO0 drives that validator over
+# this verb's own equal-field set, where it APPROVES, and over `delay`'s, where
+# it must keep approving.  The consequence is that the dialog CLOSES on the
+# refusal instead of staying up with the field flagged, which is declared here
+# rather than worked around: the buffer is untouched either way, and the
+# alternative needed the shared validator to learn a per-verb rule.
+#
+# ⚠⚠ TWO BOUNDS ON THE ANSWER WERE CONSIDERED AND REFUSED, each by a DRIVE and
+# not by an argument, both in row MT27/SO4.  A fence on the literal 180.0 would
+# refuse a LEGITIMATE loop whose phase is zero at its crossover -- the fixture
+# produces one and the row measures it -- and it would be keyed to a SYMPTOM,
+# which is the class of fence that dies quietly when something else cures the
+# symptom.  A precondition requiring the first phase sample to be inside 180
+# degrees, which would have enforced L1 below, would refuse an operand that is
+# already CONTINUOUS and therefore answered correctly: the row drives one whose
+# first sample exceeds 180 degrees, measures the column's largest adjacent step
+# BELOW 180 -- which is what makes `cph()` the identity on it -- and asserts the
+# answer against the closed form.  So neither bound is equivalent to the hazard
+# it would have been sold as closing.
+#
+# ⚠ NO FINITENESS GUARD ON THE MARGIN ITSELF, and that is reasoned rather than
+# forgotten: the answer is a SUM of 180 and a value `calc::sample_at` has already
+# gated as finite, so there is no operation left that could produce an infinity
+# from finite operands.  There is also NO DIVISION anywhere in this body -- row
+# PM12 asserts that as a count plus an absence, which is also what forbids a
+# second copy of the interpolation hiding here.
+#
+# ⚠ DECLARED LIMITS, each with its number in a row rather than only here.
+# L1 BRANCH AMBIGUITY: `cph()` fixes its branch on the FIRST swept point
+# (`case CPH:` in src/save.c returns the sample unchanged at `p == first`), so a
+# loop whose phase has already passed +/-180 before the first swept frequency is
+# answered on the wrong branch and NOTHING DETECTS IT -- a loop measured from
+# 1 Hz with a pole at 0.1 Hz legitimately has ph[0] = -90, and a four-pole loop
+# legitimately reaches -360, so no detector exists that is not also wrong about a
+# legitimate loop.  The remedy is the user's: sweep low enough that
+# |arg T| < 180 at the first point.
+# L2 A true phase step larger than 180 degrees between adjacent samples unwraps
+# the wrong way.  Every unwrapper has this limit, the engine's included; it means
+# a very coarse sweep through a sharp resonance is not measurable.
+# L3 THE NEGATIVITY BELT IS PARTIAL: it refuses a dB series handed in as a
+# magnitude only where that series really goes negative, which it does whenever
+# the crossover is in band -- the realistic case.  A dB series that stops between
+# 0 and +1 dB crosses 1.0 with no negative sample and is answered confidently
+# wrong.  The mirror is open too and also narrow: a magnitude column declared
+# `dB` is read at the wrong level and answered.
+# L4 THE PHASE UNIT IS CARRIED BY A FIELD LABEL AND NOTHING ELSE.  A radian
+# operand returns a confident wrong number.  The house unit is degrees
+# throughout (`ph()`, `cph()`), and a user converts with `57.29577951308232 *`,
+# but the verb cannot tell.
+# L5 GRID ERROR.  The answer is a chord through two swept samples, so a coarse
+# sweep is answered with the chord's error and not the curve's; row PM5 asserts
+# that error from above AND below on four drives, so the figure is re-measured
+# every run rather than written here.
+# L6 ONE `dest` FOR TWO TEMPORARIES: the answer reports the PHASE temporary,
+# which is the column the published value came out of.  The gain temporary's name
+# is not reported, and widening the key set would oblige row PM15 to move in the
+# same commit for a diagnostic.
+# L7 ONE DATASET, inherited from D12, explicit and defaulting to 0, allpoints
+# refused.  The unwrap is per-dataset by construction, because `cph()` restarts
+# at each dataset's own first point and the values read are one dataset's.
+# L8 AN EXACT UNITY HIT AT THE FIRST SAMPLE IS NOT A CROSSING, inherited from
+# `calc::cross_pair`'s strict `y0 > L`, which is CX14's knowingly accepted
+# asymmetry.
+# L10 THE COLUMN COMPARISON IS NOT TOTAL AND THE TOKEN ONE IS.  Two different
+# expressions resolving to ONE column are caught only where `cph()` leaves that
+# column unchanged, which it does wherever no adjacent step reaches 180 degrees;
+# a gain column with a larger jump than that is unwrapped and the comparison
+# misses it.  The token comparison has no such gap.  AND WHAT NEITHER CLOSES,
+# declared because reading it as closed would be worse than the gap: a phase
+# operand that is a DIFFERENT magnitude expression.  Row MT27/SO3 drives one,
+# measures the answer and measures how far from the truth it is.  Nothing about a
+# degrees-valued column separates it from a gain column -- which is the wall
+# issue 1653's item 2 hit, and the reason no range test was substituted for this
+# sentence.
+# L9 WHAT THIS DOES NOT CLOSE: `calc::cross`'s preamble is now duplicated a
+# fourth time.  The right fix is a shared helper that validates and returns the
+# materialised columns, and it is refused here on the tree's own evidence --
+# TIMING_CONTRACT T1 records that six of ten candidate sharing shapes redden row
+# SR5 of tests/headless/test_calc_scratch_reuse.tcl, and `calc::cross` is pinned
+# by a suite of its own, tests/headless/test_calc_cross.tcl.  It is a later
+# refactor with its own gate, not a side effect of a new verb.
+#
+# ⚠ UNRATIFIED USER-VISIBLE WORDING.  Every new sentence and every field label is
+# the assistant's; the standing `rule` debt filed against `calc::eval_msg`'s
+# sentences is extended to cover them.
+# ---------------------------------------------------------------------------
+proc calc::phaseMargin {rpnMag rpnPh {gain magnitude} {edge falling} {nth 1} {dataset 0}} {
+    # D7 FIRST, AT ZERO ACCESSOR CALLS: a request that cannot be INTERPRETED is
+    # refused before anything reaches the database, and is never reported as an
+    # absence.  Every WARN governing this proc is in the block above it.
+    set rpnMag [string trim $rpnMag]
+    set rpnPh [string trim $rpnPh]
+    if {$rpnMag eq {}} {
+        return [calc::cross_refusal [calc::cross_msg pmempty gain] $dataset]
+    }
+    if {$rpnPh eq {}} {
+        return [calc::cross_refusal [calc::cross_msg pmempty phase] $dataset]
+    }
+    # THE DIALOG'S OWN DEFAULT STATE, REFUSED.  See the header: both expression
+    # fields open holding the buffer, so the commonest request this verb can
+    # receive is one expression twice -- which is never a loop margin and used to
+    # answer exactly 180.0 in dB mode for every loop.  TOKEN LISTS and not bytes,
+    # so re-spacing one field does not evade it; band MT27 drives a re-spaced copy.
+    if {[calc::rpn_tokens $rpnMag] eq [calc::rpn_tokens $rpnPh]} {
+        return [calc::cross_refusal [calc::cross_msg pmsameop] $dataset]
+    }
+    # Validated HERE rather than only in `calc::arg_bad`, because a script caller
+    # bypasses the dialog -- and BEFORE the first accessor, because this verb
+    # refuses a non-ac database and a membership test below that gate would answer
+    # about the DATABASE for a non-member.  MT11's enum rows lift both literals
+    # out of this body, so their spelling is load-bearing.
+    if {[lsearch -exact {magnitude dB} $gain] < 0} {
+        return [calc::cross_refusal [calc::cross_msg pmunits $gain] $dataset]
+    }
+    if {[lsearch -exact {falling rising either} $edge] < 0} {
+        return [calc::cross_refusal [calc::cross_msg pmedge $edge] $dataset]
+    }
+    # INTEGER-VALUED, NOT INTEGER-SPELLED, which is `calc::cross`'s own reason:
+    # `string is integer -strict` would refuse `1e3`, which IS the ordinal 1000 --
+    # a well-formed request for a crossover that simply does not exist, and so an
+    # ABSENCE rather than a refusal.  `0.0`, `-0` and `0e0` all name zero.
+    if {![calc::eval_finite $nth]} {
+        return [calc::cross_refusal [calc::cross_msg pmbadnth $nth] $dataset]
+    }
+    set nthv [expr {double($nth)}]
+    if {$nthv != floor($nthv)} {
+        return [calc::cross_refusal [calc::cross_msg pmbadnth $nth] $dataset]
+    }
+    set n [expr {entier($nthv)}]
+    # `nth` 0 names EVERY crossover, and a margin per crossover is a list where
+    # R404 wants one literal number in the buffer.  REFUSED here rather than
+    # deferred to a `_scalar` wrapper, because nothing in this namespace CALLS
+    # this verb -- `calc::cross_scalar` exists for the verbs that call
+    # `calc::cross` and need its list -- so `calc::arg_surface` answers the verb
+    # itself and there is one proc instead of two.  Row PM8 measures why the guard
+    # is not tidiness: without it a ONE-crossover drive answers a correct-looking
+    # number and a TWO-crossover drive answers a FALSE ABSENCE.
+    if {$n == 0} {
+        return [calc::cross_refusal [calc::cross_msg pmlistdefer] $dataset]
+    }
+    # D11 rule 1: the one accessor that answers rather than raising with nothing
+    # loaded.
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::cross_refusal [calc::cross_msg nodata]]
+    }
+    # D12: an unvalidated out-of-range dataset reads back EMPTY with rc 0 and
+    # would be reported as an absence, and -1 is the ALLPOINTS read.
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset] $dataset]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]
+    }
+    if {$dataset >= $nds} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]
+    }
+    # THE ISSUE-1653 GATE.  See the header: a phase margin is read at a frequency,
+    # so a time-domain database is refused rather than answered at a time.
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    if {$sty ne {ac}} {
+        return [calc::cross_refusal [calc::cross_msg pmnotac $sty] $dataset]
+    }
+    # D12's last paragraph: the sweep BY NAME.  Resolved directly rather than
+    # through a sim_type `switch`, because the arm above has already established
+    # the sim_type and a `switch` here would carry a dead `tran`/`time` arm no row
+    # could ever drive.
+    set six -1
+    catch {set six [xschem raw index frequency]}
+    if {![string is integer -strict $six] || $six < 0} {
+        return [calc::cross_refusal [calc::cross_msg nosweep $sty] $dataset]
+    }
+    # D11 rule 3, BOTH operands, BEFORE either mint, so a mistyped name is
+    # reported as a mistyped name and never as a temporary-column collision.
+    #
+    # ⚠ THE PHASE OPERAND RESERVES ONE TOKEN, because the engine call below
+    # appends `cph()` to it: without the reserve a phase operand of exactly
+    # `calc::rpn_maxtokens` tokens PASSED this gate, the engine was handed one
+    # token MORE than was validated, refused the lot and wrote nothing -- and
+    # the all-zero column it left behind read as a phase margin of exactly
+    # 180.0 degrees.  That is a third road to issue 1653's worst shape and it is
+    # the one nothing else in this file would have caught.  The MAGNITUDE
+    # operand is sent verbatim and so reserves nothing; band MT26 of
+    # tests/headless/test_calc_measure.tcl drives both and uses the magnitude
+    # one as the control.
+    set bad [calc::rpn_bad_token $rpnMag]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    set bad [calc::rpn_bad_token $rpnPh {} 1]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    # D11 rule 4, and the `raw index` question is asked BEFORE the add because
+    # `xschem raw add` is register-OR-FIND and THEN evaluate.  TWO temporaries,
+    # because the two operands are two expressions; `calc::tmpvec` never re-uses a
+    # name, so the second mint cannot collide with the first.
+    set dm [calc::tmpvec]
+    if {$dm eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set dp [calc::tmpvec]
+    if {$dp eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dm]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dm] $dataset $dm]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dp]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dp] $dataset $dp]
+    }
+    # ONE DOOR, THREE BULK READS, at "%.16g".  `xschem raw value` returns through
+    # "%.8g" and ROUNDS, so a crossover interpolated from it carries about 1e-8
+    # relative error against a sweep whose documented headroom is 1e-12.  BOTH
+    # operands are read BEFORE the disposition is decided, so a malformed phase
+    # expression is a refusal rather than being hidden behind an absence.
+    set rcm {} ; set rcp {} ; set mg {} ; set ph {} ; set xs {}
+    set err [catch {
+        set rcm [xschem raw add $dm $rpnMag]
+        set rcp [xschem raw add $dp "$rpnPh cph()"]
+        set mg [string trim [xschem raw values $dm $dataset]]
+        set ph [string trim [xschem raw values $dp $dataset]]
+        set xs [string trim [xschem raw values frequency $dataset]]
+    } e]
+    # R402, UNCONDITIONAL and before every return below: the cleanup cannot be
+    # driven by the return code, because a failed add leaves a column behind and
+    # still answers 1.  BOTH names, in case the first add succeeded and the second
+    # raised.
+    catch {xschem raw del $dm}
+    catch {xschem raw del $dp}
+    if {$err} {
+        return [calc::cross_refusal [calc::cross_msg engine $e] $dataset $dp]
+    }
+    # The same belt `calc::cross`, `calc::eval_rpn`, `calc::overshoot`,
+    # `calc::bandwidth` and `calc::gainMargin` carry, with the same declared
+    # status: 1 means this call created the column.  NO ROW FORCES EITHER while
+    # the two `raw index` arms above stand.
+    if {$rcm ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dm] $dataset $dm]
+    }
+    if {$rcp ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dp] $dataset $dp]
+    }
+    # ...AND THE SAME REFUSAL ONE LEVEL DOWN, OVER THE SAMPLES RATHER THAN THE
+    # TEXT, because two different expressions can resolve to one column and the
+    # token test above cannot see it.  Both columns are already materialised, so
+    # this costs one string comparison of two `"%.16g"` reads; the empty guard is
+    # there because two empty reads are equal and are not a measurement.  Its
+    # limit is declared in the header as L10.
+    if {$mg ne {} && $mg eq $ph} {
+        return [calc::cross_refusal [calc::cross_msg pmsamecol] $dataset $dp]
+    }
+    # THE LEVEL IS THE `gain` FIELD'S OTHER JOB.  Unity gain is 1 in a linear
+    # magnitude and 0 in dB, which is why there is no `level` field for the user
+    # to get wrong; row PM6 drives one loop under both declarations and requires
+    # the same answer where the crossing lands on a sample.
+    if {$gain eq {dB}} {
+        set L 0.0
+    } else {
+        set L 1.0
+    }
+    # THE UNITS BELT, BEFORE THE CROSSOVER SEARCH, so a dB column handed as a
+    # magnitude is reported as what it is even on a loop whose gain never reaches
+    # the level -- where the absence would otherwise mask it.  The WHOLE column,
+    # not the crossing pair: see the header.
+    if {$gain eq {magnitude}} {
+        foreach s $mg {
+            if {![calc::eval_finite $s]} continue
+            if {double($s) < 0.0} {
+                return [calc::cross_refusal [calc::cross_msg pmnotmag $s] $dataset $dp]
+            }
+        }
+    }
+    set got [calc::cross_scan $xs $mg $L $n $edge]
+    if {![lindex $got 0]} {
+        return [calc::cross_absent \
+                    [calc::cross_msg pmnocross [calc::cross_ordinal $n] $edge] \
+                    $dataset $dp]
+    }
+    set f [lindex $got 1]
+    set p [calc::sample_at $xs $ph $f]
+    if {$p eq {}} {
+        return [calc::cross_absent [calc::cross_msg pmnobracket $f] $dataset $dp]
+    }
+    set m [expr {180.0 + double($p)}]
+    # `calc::cross`'s key set plus `xcross` ALONE, with no `shape` key, so
+    # `calc::fn_sink` answers `buffer` and the catalogue's `returns scalar` does
+    # not move -- which keeps S24's closed `returns` vocabulary unmoved too.
+    #
+    # ⚠ `xcross` IS THE UNITY-GAIN FREQUENCY THIS CALL MEASURED THE PHASE AT,
+    # published because a margin without the frequency it was read at is half an
+    # answer to the person who asked for it -- and because it is the only way a
+    # row can assert the X half of the measurement against a closed form without
+    # re-deriving it from the primitive.  `dest` names the PHASE temporary, which
+    # is the column the published value came out of; band MT9b reads that key BY
+    # NAME to tell a deferral from an absence, so it must mean one thing.  Row
+    # PM15 asserts the key set EXACTLY on all three dispositions, derived from
+    # what `calc::cross` itself answers, which is CLAUDE.md's rule that a key and
+    # the row asserting its key set land in one commit.
+    return [dict create ok 1 absent 0 value $m xcross $f \
+                dataset $dataset dest $dp msg {}]
 }
 
 # R419/R420 -- THE DESTINATION FOR A RESULT THAT IS A WAVE WITH ITS OWN X AXIS.
@@ -7457,6 +9194,35 @@ proc calc::fn_argspec {name} {
                 {dataset {Dataset}       int  0 0}
             }
         }
+        bandwidth - gainBwProd {
+            return {
+                {drop     {Drop (dB)} real                 1 {}}
+                {units    {Units}     {enum magnitude dB}  0 magnitude}
+                {response {Response}  {enum low high band} 0 low}
+                {dataset  {Dataset}   int                  0 0}
+            }
+        }
+        gainMargin {
+            return {
+                {rpnMag  {Loop gain (RPN)}       rpn                          1 {}}
+                {rpnPh   {Loop phase, deg (RPN)} rpn                          1 {}}
+                {gain    {Gain units}            {enum magnitude dB}          0 magnitude}
+                {level   {Phase level, deg}      real                         0 -180}
+                {edge    {Edge}                  {enum falling rising either} 0 falling}
+                {nth     {Occurrence (Nth)}      int                          0 1}
+                {dataset {Dataset}               int                          0 0}
+            }
+        }
+        phaseMargin {
+            return {
+                {rpnMag  {Loop gain (RPN)}       rpn                          1 {}}
+                {rpnPh   {Loop phase, deg (RPN)} rpn                          1 {}}
+                {gain    {Gain units}            {enum magnitude dB}          0 magnitude}
+                {edge    {Edge}                  {enum falling rising either} 0 falling}
+                {nth     {Occurrence (Nth)}      int                          0 1}
+                {dataset {Dataset}               int                          0 0}
+            }
+        }
     }
     return {}
 }
@@ -7464,9 +9230,10 @@ proc calc::fn_argspec {name} {
 # Every sentence the route-T click and its dialog can put on the status line, in
 # ONE place.  Same shape and same reason as `calc::eval_msg` and
 # `calc::plot_msg`, and deliberately NOT the same proc as `calc::cross_msg`:
-# that table's sentences are the VERBS' and three bands compare one of them by
+# that table's sentences are the VERBS' and many bands compare one of them by
 # identity, so a shape refusal borrowing an arm there would couple two facts
-# that are not the same fact.
+# that are not the same fact.  No count is given: nothing re-checks one, and the
+# last one written here was wrong by a factor of six.
 #
 # WARN UNRATIFIED USER-VISIBLE WORDING.  These are the assistant's words; the
 # `rule` debt filed against `calc::eval_msg`'s sentences is extended to cover
@@ -7490,7 +9257,7 @@ proc calc::fn_argspec {name} {
 # answers that reaches the user.  `buffer` has none here -- its sentence is
 # R404's provenance line from `calc::arg_provenance` -- and neither does
 # `refusal`, which carries the VERB's own `msg` through unchanged, compared by
-# IDENTITY in three bands across two files.
+# IDENTITY wherever a band drives it.
 #
 # ⚠ THE `($b)` DETAIL IS STILL UNBOUNDED AND THAT IS NOW SOMEBODY ELSE'S JOB.
 # `badshape`'s detail is a user-supplied token and `badvalue`'s is the whole
