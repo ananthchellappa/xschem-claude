@@ -162,7 +162,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   here is not RDW's: RDW's published `wm minsize` is a pixel constant because it sizes ONE text pane
   in character cells, while this window's own minimum GROWS with its font (measured 680 px tall at
   sizes 6–12, 728/797/866/**935** at 14/16/18/20 on 1920x1080), so the sashes must be re-derived on
-  every step. Three measurements, each of which produced a wrong version first:
+  every step. ⚠ Those figures are **Xvfb + openbox**; the control itself was then confirmed
+  working by the USER on their own X server (HC-Consult at `172.20.160.1:0`, 2026-10-07), which is
+  the one thing an Xvfb sweep cannot speak to because that server may resolve different font
+  families — so the `look` debt is paid and the band's numbers stand unchallenged on real metrics.
+  What the user confirmed is that the button works; the per-size sweep and the D6 redraw leg remain
+  the suites' evidence, not theirs. Three measurements, each of which produced a wrong version first:
   **(a) A chain that enforces only the panes ABOVE each sash starves the LAST pane.** The shipped
   `calc::pw_list` fraction used as a floor pushes the sash past where the last pane still fits, and
   the keypad IS the last pane of its panedwindow — 143 against a request of 152, i.e. exactly the
