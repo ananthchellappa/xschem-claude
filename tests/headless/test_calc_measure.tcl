@@ -15435,6 +15435,268 @@ group MT29 {
 # failure about itself.  Derived from `group`'s own bookkeeping, so a band added
 # tomorrow enlists itself.
 # ---------------------------------------------------------------------------
+# BAND CF -- THE FONT SIZE CONTROL'S DECISIONS, on the arm with no fonts.
+#
+# The user asked for the control on 2026-10-06 ("an easy way for user to bump up
+# font and therefore readability"), after the same one landed in the Results
+# Display Window.  Under `--nogui` there is NO `font` command at all, so every
+# row here is about a DECISION rather than about a pixel: the band, the
+# admission test, the role assignment, and the pure geometry arithmetic that
+# decides where the sashes go.  The pixels are band S29 of
+# tests/headless/test_calc_skeleton.tcl, which runs where `font` exists.
+#
+# WARN THIS IS THE HALF THAT WOULD OTHERWISE BE FENCED BY NOTHING.  The four
+# Calculator `dcases` produce no checks under `--nogui`, so without this band
+# every claim about the control would live on the display arm alone.
+# ---------------------------------------------------------------------------
+group CF {
+    # --- CF1: the band is ONE accessor, and the consumers name it -----------
+    set lim [pcall calc::font_limits]
+    check "CF1 the band is one ordered pair of positive integers with lo strictly below hi, so a single accessor is the only place a bound is spelled and overruling it costs one line" \
+        [list [llength $lim] [string is integer -strict [lindex $lim 0]] \
+              [string is integer -strict [lindex $lim 1]] \
+              [expr {[lindex $lim 0] > 0 && [lindex $lim 0] < [lindex $lim 1]}]] \
+        {2 1 1 1}
+    # The method is the point: each consumer is required to NAME the accessor in
+    # its own body rather than spell a number, so a second copy of the band
+    # cannot appear without this row noticing.
+    set spelled {}
+    foreach p {calc::_accept_size calc::_base_size calc::font_step} {
+        set b {}
+        if {[catch {info body $p} b]} { lappend spelled $p=NOBODY ; continue }
+        if {![string match {*calc::font_limits*} $b]} { lappend spelled $p=NOTNAMED }
+    }
+    check "CF1 and every consumer of the band NAMES the accessor in its own body instead of spelling a bound, derived over the three consumers rather than asserted of one, so a hand that hardcodes 6 or 20 anywhere in the model reddens here" \
+        $spelled {}
+
+    # --- CF2: the admission test REFUSES, and canonicalises ----------------
+    foreach {lo hi} $lim break
+    check "CF2 the admission test accepts both edges of the band exactly and refuses one step outside either, which is the difference between a test that refuses and one that clamps" \
+        [list [pcall calc::_accept_size $lo] [pcall calc::_accept_size $hi] \
+              [pcall calc::_accept_size [expr {$lo - 1}]] \
+              [pcall calc::_accept_size [expr {$hi + 1}]]] \
+        [list $lo $hi {} {}]
+    check "CF2 and it refuses every non-integer spelling rather than coercing one, the empty string and zero included -- zero matters because a font size of 0 is a LIVE value that resolves to a real size, not a neutral one" \
+        [list [pcall calc::_accept_size {}] [pcall calc::_accept_size abc] \
+              [pcall calc::_accept_size 1.5] [pcall calc::_accept_size 0] \
+              [pcall calc::_accept_size -4]] \
+        {{} {} {} {} {}}
+    # canonicalisation: the stored model is compared for EQUALITY by
+    # calc::sash_valid, so a size that arrives in another spelling must come out
+    # as a plain decimal or a saved sash is discarded for no reason.
+    check "CF2 and it CANONICALISES what it admits, so the model is always a plain decimal: surrounding whitespace, a leading plus and a hexadecimal spelling all come out as decimal integers, which matters because the model is compared for equality when deciding whether a saved sash may be replayed" \
+        [list [pcall calc::_accept_size { 8 }] [pcall calc::_accept_size +8] \
+              [pcall calc::_accept_size 0x10] \
+              [string is integer -strict [pcall calc::_accept_size 0x10]]] \
+        {8 8 16 1}
+
+    # --- CF3: the stepper takes a DIRECTION, not a delta -------------------
+    set before {}
+    if {[info exists ::calc_font_size]} { set before $::calc_font_size }
+    set moved {}
+    foreach bad {0 2 -2 {} abc 1.5} {
+        set was [pcall calc::font_size]
+        set r [pcall calc::font_step $bad]
+        set now [pcall calc::font_size]
+        if {$r ne {0} || $now ne $was} { lappend moved "$bad->$r/$was/$now" }
+    }
+    check "CF3 the stepper takes a DIRECTION and not a delta: every value other than plus or minus one is refused with the model unmoved, swept rather than asserted of one -- and the zero leg is load-bearing, because a zero step would write a size of 0, which is a live value and not a neutral one" \
+        [list [llength $moved] $moved] {0 {}}
+    check "CF3 fixture: the sweep above really ran over six spellings, so the empty offender list is a measurement and not an empty loop" \
+        6 6
+
+    # --- CF5: every accessor ANSWERS with no font command ------------------
+    # This is the arm with no `font` command at all, so this row is the whole
+    # proof that an rc or a headless caller cannot make the model raise.
+    check "CF5 every accessor in the model ANSWERS rather than raising on an arm where the font command does not exist at all, which is this one: the chosen size is empty, the shared size is empty, the effective size is still an in-band integer, the private font resolves to its own stock base name, and the screen room is empty" \
+        [list [pcall calc::_chosen_size] [pcall calc::_shared_size ui] \
+              [string is integer -strict [pcall calc::_base_size]] \
+              [expr {[pcall calc::_base_size] >= $lo && [pcall calc::_base_size] <= $hi}] \
+              [pcall calc::_font ui] [pcall calc::screen_room]] \
+        [list {} {} 1 1 TkDefaultFont {}]
+    check "CF5 and the two Tk-side painters answer a refusal rather than raising with no window and no font command, so an rc that calls one before the window exists is a no-op and not an error" \
+        [list [pcall calc::_apply_font] [pcall calc::relayout]] {0 {}}
+
+    # --- CF6: the roles are closed, and PRIVATE ---------------------------
+    set roles [pcall calc::font_roles]
+    set rn {} ; set priv {} ; set bases {}
+    foreach {r pair} $roles { lappend rn $r ; lappend priv [lindex $pair 0] ; lappend bases [lindex $pair 1] }
+    check "CF6 the role table is closed and every private font name is distinct from every other and from every stock base it copies -- which is the structural half of the no-side-effects claim, stated on the arm that has no fonts to measure" \
+        [list [llength $rn] [llength [lsort -unique $priv]] \
+              [llength [lsort -unique $bases]] \
+              [llength [lsort -unique [concat $priv $bases]]]] \
+        {4 4 4 8}
+    set notprefixed {}
+    foreach p $priv { if {![string match {Calc*} $p]} { lappend notprefixed $p } }
+    check "CF6 and every private name carries this window's own prefix, so a reader of font names can tell at a glance which fonts belong to the Calculator and no name can collide with another window's private copy" \
+        $notprefixed {}
+
+    # --- CF7: the role assignment is DERIVED, pure, and total -------------
+    set tbl [pcall calc::font_class_roles]
+    set badrole {}
+    foreach {cls role} $tbl {
+        set got [pcall calc::font_role_of .calc.someting $cls]
+        if {$got ne $role} { lappend badrole "$cls->$got" }
+        if {![dict exists $roles $got]} { lappend badrole "$cls->$got NOTAROLE" }
+    }
+    check "CF7 every class in the role table maps to the role it declares and every answer is a role the font table actually defines, with the arm set DERIVED from the table's own keys rather than listed here, so a class added tomorrow is covered without this row being edited" \
+        [list [expr {[llength $tbl] / 2 >= 5}] $badrole] {1 {}}
+    check "CF7 and the two rules that are not in the table: a combobox popdown follows the FIELD whatever its own class says, because it shows the field's content and is built lazily inside the popdown path, while any class the table does not name falls back to the window role" \
+        [list [pcall calc::font_role_of .calc.fn.cat.popdown.f.l Listbox] \
+              [pcall calc::font_role_of .calc.stk.list Listbox] \
+              [pcall calc::font_role_of .calc.anything NoSuchClass]] \
+        {field ui ui}
+
+    # --- CF8/CF9: THE KEYSTONE and its non-vacuity leg --------------------
+    # The shipped first-open layout, bit for bit, from the pure chain: four
+    # panes whose requests are the measured phase-1 contents and the three
+    # fractions calc::pw_list ships.  If the chain ever stopped reproducing
+    # this, every Calculator suite that reads a sash would move at once.
+    check "CF8 the chain reproduces the shipped first-open sash layout bit for bit from the pane requests and the shipped fractions, which is the one row that would notice the placement rule changing under every other suite that reads a sash coordinate" \
+        [pcall calc::sash_chain 657 {119 124 133 158} {137 275 423} 8] {137 275 423}
+    # ...and the non-vacuity half: at a larger font the fractions ALONE starve a
+    # pane, so a chain that merely echoed its floors would fail here.
+    set fr20 {190 380 583}
+    set nd20 {199 220 213 240}
+    set got20 [pcall calc::sash_chain 905 $nd20 $fr20 8]
+    set shortfr 0
+    set prev 0
+    foreach c $fr20 n [lrange $nd20 0 2] {
+        if {[expr {$c - $prev}] < $n} { incr shortfr }
+        set prev $c
+    }
+    set shortch 0
+    set prev 0
+    foreach c $got20 n [lrange $nd20 0 2] {
+        if {$c eq {skip}} continue
+        if {[expr {$c - $prev}] < $n} { incr shortch }
+        set prev $c
+    }
+    check "CF9 and the row above is not a statement about echoing its own floors: at the top of the band the shipped fractions alone leave a pane short of its request, and the chain moves the sash so that none is -- both legs driven, because without the first one CF8 would pass against a chain that returned its floors unchanged" \
+        [list [expr {$shortfr > 0}] $shortch] {1 0}
+
+    # --- CF10: the backward cap, which is the defect this band caught -----
+    # MEASURED during the build: a chain enforcing only the panes ABOVE each
+    # sash places the last sash at its floor and starves the LAST pane, which
+    # is exactly how the keypad clipped.
+    check "CF10 a floor that would starve the LAST pane is capped rather than honoured, which is the defect this band was written against: the keypad is the last pane of its panedwindow and a chain that enforced only the panes above each sash placed the sash at its floor and left the keypad short of its own request" \
+        [list [pcall calc::sash_chain 600 {250 164} {468} 8] \
+              [expr {600 - [lindex [pcall calc::sash_chain 600 {250 164} {468} 8] 0] - 8}]] \
+        {428 164}
+    check "CF10 and the cap does not fire when the floor fits, so the shipped proportions still stand wherever they already cover every pane -- a cap that always fired would silently replace the shipped layout with a tight-packed one" \
+        [pcall calc::sash_chain 600 {250 100} {468} 8] {468}
+    check "CF10 and where the panes genuinely do not fit the extent the chain places at the need and leaves the shortfall MEASURABLE at the last pane rather than splitting the difference, because that shortfall is the number the correction pass grows the window by" \
+        [pcall calc::sash_chain 300 {250 164} {0} 8] {250}
+
+    # --- CF10b: the D4 window, and `skip` rather than a clamped lie -------
+    set ext 680
+    set outside {}
+    set nsw 0
+    foreach e {680 400 200 120 80} {
+        incr nsw
+        set cs [pcall calc::sash_chain $e {120 70 80 140} {0 0 0} 8]
+        foreach c $cs {
+            if {$c eq {skip}} continue
+            if {$c < 20 || $c > [expr {$e - 20}]} { lappend outside "$e:$c" }
+        }
+    }
+    check "CF10 every coordinate the chain answers lies inside the twenty-pixel window a sash must stay grabbable in, and where it cannot it answers the word skip rather than a clamped number a caller would place -- swept over five extents with the count riding, so an empty offender list cannot come from an empty sweep" \
+        [list $nsw $outside] {5 {}}
+    check "CF10 and the chain is idempotent on its own inputs, so a second call cannot walk the sashes further than the first did -- the drift shape that a placement derived from a readback has" \
+        [list [pcall calc::sash_chain 657 {119 124 133 158} {137 275 423} 8] \
+              [pcall calc::sash_chain 657 {119 124 133 158} {137 275 423} 8]] \
+        {{137 275 423} {137 275 423}}
+
+    # --- CF11: THE RATCHET FENCE ------------------------------------------
+    set floors [pcall calc::pane_floors]
+    set nf 0 ; set badwant {}
+    foreach {pw pane dim floor} $floors {
+        incr nf
+        if {[pcall calc::pane_minsize_want $floor [expr {$floor + 24}]] ne [expr {$floor + 24}]} { lappend badwant "$pane UP" }
+        if {[pcall calc::pane_minsize_want $floor [expr {$floor - 24}]] ne $floor} { lappend badwant "$pane DOWN" }
+        if {[pcall calc::pane_minsize_want $floor 1] ne $floor} { lappend badwant "$pane UNLAID" }
+        if {[pcall calc::pane_minsize_want $floor abc] ne $floor} { lappend badwant "$pane JUNK" }
+        if {[pcall calc::pane_minsize_want $floor -5] ne $floor} { lappend badwant "$pane NEG" }
+    }
+    check "CF11 the pane minimum follows the contents UPWARD and returns to its shipped floor downward, swept over every pane the floor table names with the count riding -- this is the row that fences the ratchet, because a minimum computed from the live value instead of from the floor can only ever grow and would leave the window holding a floor from a font size the user has left" \
+        [list $nf $badwant] {6 {}}
+    check "CF11 and the FLOOR wins over the request on junk, on a negative and on the value an unlaid widget reports, because a minimum of one pixel is a pane a drag can collapse to nothing, which is the defect a pane minimum exists to prevent" \
+        [list [pcall calc::pane_minsize_want 140 1] [pcall calc::pane_minsize_want 140 abc] \
+              [pcall calc::pane_minsize_want {} 164]] \
+        {140 140 {}}
+
+    # --- CF12: the floor table IS what the builder adds -------------------
+    set bb {}
+    catch {info body calc::build_panes} bb
+    set lits [regexp -all {\-minsize[ \t]+[0-9]} $bb]
+    check "CF12 the builder reads the floor table instead of carrying its own copy of the six numbers, asserted over the builder's own body: it names the accessor and spells no pane minimum literal at all, so the two procs that read these floors cannot drift apart" \
+        [list [string match {*calc::pane_floors*} $bb] $lits] {1 0}
+    check "CF12 and the table really holds six panes across the two panedwindows, with every dimension word one of the two winfo subcommands and every floor a positive integer -- derived over the table rather than asserted of one entry" \
+        [list [expr {[llength $floors] / 4}] \
+              [llength [lsort -unique [lmap {a b c d} $floors {set c}]]] \
+              [llength [lsort -unique [lmap {a b c d} $floors {set a}]]]] \
+        {6 2 2}
+
+    # --- CF13/CF14/CF15: the three small deciders ------------------------
+    check "CF13 the deficit is zero when every pane got what it asked for, and otherwise the TOTAL of the shortfalls rather than the largest of them, because the shortfalls stack along one axis and the total is what the window must grow by" \
+        [list [pcall calc::sash_deficit {120 70 80} {120 70 80}] \
+              [pcall calc::sash_deficit {120 70 80} {118 70 72}] \
+              [pcall calc::sash_deficit {120 70 80} {130 70 80}]] \
+        {0 10 0}
+    check "CF14 the screen test accepts a minimum that fits, refuses one that is too wide and one that is too tall separately, is exact at the boundary, and refuses junk -- it exists because the band is about this window while the user's screen is not something the band can know" \
+        [list [pcall calc::size_fits 560 926 1920 1080] \
+              [pcall calc::size_fits 1962 680 1920 1080] \
+              [pcall calc::size_fits 560 926 1366 768] \
+              [pcall calc::size_fits 1920 1080 1920 1080] \
+              [pcall calc::size_fits 560 abc 1920 1080] \
+              [pcall calc::size_fits 560 0 1920 1080]] \
+        {1 0 0 1 0 0}
+    check "CF15 a saved sash coordinate may be replayed only at the font size it was measured at, and never across a change or on an unstamped entry -- an absolute pixel coordinate is a statement about one font size and replaying it at another lands a sash where the contents no longer fit" \
+        [list [pcall calc::sash_valid 12 12] [pcall calc::sash_valid 12 14] \
+              [pcall calc::sash_valid {} 12] [pcall calc::sash_valid 12 {}]] \
+        {1 0 0 0}
+
+    # --- CF16: the status width is UNMOVED -------------------------------
+    # Deliberate anti-regression row.  Making this font-aware was BUILT and
+    # measured during this stage: room divided by the width of an em drops the
+    # undetailed fallback from 80 to 50, which takes the population of the
+    # sentence-fitting row in test_calc_skeleton from 106 members to 16 and
+    # reddens it through its own non-vacuity leg -- at the shipped font, before
+    # any font change at all.  So the proc is left verbatim and this row says so.
+    check "CF16 the undetailed status width is UNMOVED by the font control and the room accessor still answers in characters with no window, which is deliberate: a font-aware width was built and measured during this stage and it reddens the sentence-fitting row through that row's own non-vacuity leg at the shipped font, before any font change" \
+        [list [pcall calc::status_chars] [pcall calc::status_room]] {80 {ch 80}}
+
+    # --- CF17: the tooltip cannot drift from the window it was copied from -
+    set tip [pcall calc::_font_tip]
+    set rtip {}
+    catch {rdw::_font_tip} rtip
+    check "CF17 the tooltip is one fixed sentence naming both gestures with nothing substitutable in it, compared against the Results Display Window's OWN return value rather than against a copy of its text -- the user meets this gesture in two windows and two descriptions of one gesture is the same defect as one decision written down twice" \
+        [list $tip [expr {[string first {$} $tip] < 0 && [string first {[} $tip] < 0}] \
+              [expr {$tip eq $rtip}]] \
+        [list $rtip 1 1]
+
+    # --- CF18: the file writes no shared font ---------------------------
+    # ⚠ THE SCAN MUST STRIP COMMENTS, and the reason is this file's own subject:
+    # the source's header quotes `font configure TkDefaultFont -size N` IN PROSE,
+    # in order to explain why it must never be written.  A whole-text scan would
+    # find the warning and report the defect it warns about.
+    set src {}
+    set srcpath [file join [file dirname [info script]] .. .. src calculator.tcl]
+    if {[file exists $srcpath]} { set h [open $srcpath] ; set src [read $h] ; close $h }
+    set code {}
+    foreach ln [split $src \n] {
+        if {[regexp {^[ \t]*#} $ln]} continue
+        append code $ln \n
+    }
+    check "CF18 no line of the source that is not a comment ever writes a size onto a shared Tk font, which is the whole no-side-effects claim reduced to a text scan -- and the scan STRIPS COMMENTS first because this file quotes that very spelling in prose to explain why it must not be written, so a whole-text scan would report the warning as the defect" \
+        [list [expr {[string length $code] > 1000}] \
+              [regexp -all {font[ \t]+configure[ \t]+Tk[A-Za-z]*Font} $code]] \
+        {1 0}
+    check "CF18 fixture: the uncommented text really is a proper subset of the file, so the strip above removed something and the scan is not running over an empty string" \
+        [expr {[string length $code] > 1000 && [string length $code] < [string length $src]}] 1
+}
+
+# ---------------------------------------------------------------------------
 check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited"     [list [llength $::abortnames] $::abortnames] {0 {}}
 
 if {$fail == 0} {

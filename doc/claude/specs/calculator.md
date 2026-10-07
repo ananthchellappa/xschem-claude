@@ -380,7 +380,13 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
   `dark_gui_colorscheme` the option database says `*foreground white`
   (`src/xschem.tcl:15745`), which is invisible on this window's light panels.
   Fonts stay stock: nothing in the tree themes fonts for a new dialog, and ASE's named fonts are
-  ASE's. (⚠ The recon document this sentence used to cite,
+  ASE's. **⚠ AMENDED 2026-10-06 BY R114 BELOW, AND THE AMENDMENT IS NARROW.** The window no
+  longer renders in the shared `Tk*` fonts: it renders in four private copies of them, which are
+  byte-for-byte identical to the originals until the user asks otherwise. What this sentence
+  forbids is unchanged — this window still imposes no theme's fonts on anything, and still
+  refuses `ase::theme` for the process-global reason given above, which is the same reason R114
+  uses private copies rather than configuring the shared fonts. (⚠ The recon document this
+  sentence used to cite,
   `doc/claude/calculator_batch/recon/theming.md` §3, **was never committed** — `git log --all`
   on `doc/claude/calculator_batch/recon/` is empty, so the citation was dangling from the day it
   was written. The claim itself is re-checkable in the tree and is kept on that basis; the
@@ -461,6 +467,57 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 | `vn2` | 2 | vn2 | noise power density, V²/Hz | `<vn-expr> dup() *` | ✔ |
 | `sp` `zp` `yp` `hp` `vswr` `gd` `zm` | both | RF block | S/Z/Y/H params, VSWR, group delay, port impedance | — | ✘ disabled |
 | `data` | 2 | data | **pick by name** from the signal-browser inventory | the chosen vector name | ✔ |
+
+- **R114 — the user sets the window's font size, and the window's own geometry follows it.**
+  Asked for by the user on 2026-10-06 (*"I'd like that for the Calculator too - an easy way for
+  user to bump up font and therefore readability"*), after the same control landed in the Results
+  Display Window under issue 1368. The gesture is **RDW's, to the word**, because the user meets
+  it in both windows: an `aA` button at the right end of the buffer toolbar, a hover tooltip
+  reading *click to increase font one unit. Ctrl+click to decrease font one unit* (compared
+  against `rdw::_font_tip`'s own return value, not a copy of its text), plain click +1,
+  Ctrl+click −1.
+  - **Four PRIVATE named fonts, never the shared `Tk*` ones** — `CalcUiFont`, `CalcFieldFont`,
+    `CalcMonoFont`, `CalcMenuFont`, one per role, each a copy of its stock base taken through
+    `font configure` (not `font actual`, which converts a pixel spelling to points behind the
+    user's back). Configuring a shared font would resize the attribute editor, the symbol
+    property editor, the text-input dialog, editpaths, the graph dialog and the notify popup in
+    one click, with nothing on screen saying so; `src/rdw.tcl`'s header enumerates them and names
+    *this window's buffer* among the casualties of making that mistake there.
+  - **The model is the stored integer `::calc_font_size`, never read back off a font.**
+  - **The band is `calc::font_limits` = `{6 20}`, and out-of-band sizes are REFUSED, not
+    clamped.** 6 is RDW's floor. The ceiling is a **screen-margin** limit rather than a clipping
+    one: nothing in this window clips up to 22, but *this* window's published `wm minsize` grows
+    with its font where RDW's is pixel-constant — measured on 1920x1080, 680 px tall at sizes
+    6–12 and 935 at 20 — and a minimum taller than the display is a window the user can
+    neither shrink nor forget. 21 and 22 are reachable and are the **user's** to ask for;
+    unratified under rule debt 1368 with RDW's own band.
+  - **`calc::set_font_size` is transactional against the real screen** as well as the band, since
+    the band cannot know what display the user has: on a 1366x768 screen the derived minimum
+    exceeds the display from about size 16, and `calc::save_layout` persists the geometry.
+  - **The sashes are re-derived, not left where they were.** `calc::sash_chain` is pure
+    arithmetic — each sash far enough past the one above it to give that pane its request,
+    never so far as to starve the panes below it, `calc::pw_list`'s shipped fractions used as
+    **floors** so the shipped first-open layout stands wherever it already fits, and every
+    coordinate inside landmine D4's grabbable window. The two sash measurements it needs
+    (`gap` 8 and `lead` 1 on this Tk) are taken from the **live widget**: `-sashwidth` is 5 and
+    using it leaves a 3 px residual per sash, while conflating the gap with the lead shorts
+    **every** pane by one pixel.
+  - **The pane minimums follow the contents and come back down.** `calc::pane_floors` states
+    phase 0's six numbers once; `calc::apply_pane_minsize` recomputes its raise from those floors
+    on every step rather than from the live value, which would be a one-way ratchet.
+  - **Session-local, like RDW.** `set_ne calc_font_size 0` in `src/xschem.tcl` lets an
+    `~/.xschem/xschemrc` pick the starting size. Persisting a user's choice across restarts is a
+    new capability for the whole `ciw`/`rdw`/`ase`/`calc` cluster and is not this rule.
+  - **Declared, not fixed:** the eight disabled selectors' tooltips stay small (`balloon_show`
+    hard-codes `-font fixed` and has 35+ call sites tree-wide); `calc::popdown_extra`'s 460 px is
+    a fixed widening, so a larger font shows fewer characters per history entry; `calc::fn_fill`
+    resets the browser's scroll position, so a step scrolls it home; and `calc::status_chars`
+    stays at 80 — a font-aware width was **built and measured** and it drops the fallback to
+    50, which reddens `test_calc_skeleton`'s sentence-fitting row through that row's own
+    non-vacuity leg at the shipped font, before any font change at all.
+  - **Fenced by** band `CF` of `tests/headless/test_calc_measure.tcl` (every decision, on the
+    counted arm, where there is no `font` command at all) and band `S29` of
+    `tests/headless/test_calc_skeleton.tcl` (every pixel, on the display arm).
 
 ### 5.1 Rules
 

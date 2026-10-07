@@ -19989,7 +19989,9 @@ set_ne ciw_font_size 10
 ## its dialogs (issue 1398).  0 -- or anything outside 6..32 -- means "follow
 ## TkDefaultFont", which is the shipped default and the reason the window is in
 ## the same face as the CIW, the RDW, the Calculator and the property form
-## instead of the Arial/Courier it used to name and never get.
+## instead of the Arial/Courier it used to name and never get.  (The Calculator
+## is in that face BY DEFAULT and leaves it the moment the user clicks its own aA
+## button -- see calc_font_size below.)
 ##
 ## ⚠ REFUSED, NOT CLAMPED, exactly like rdw_font_size below: an out-of-band
 ## value falls back to the system size rather than silently becoming 32.
@@ -20015,6 +20017,28 @@ set_ne ase_font_size 0
 ## the symbol-property editor, the text-input dialog, editpaths, the graph dialog,
 ## the notify popup and the calculator buffer in the same breath.
 set_ne rdw_font_size 0
+## Calculator text size, in points, for every widget in the Calculator window.
+## 0 -- or anything outside calc::font_limits -- means "follow the stock Tk fonts",
+## so an ~/.xschem/xschemrc can pick the starting size without knowing the window's
+## internals.  Change it at runtime with `calc::set_font_size N`, or with the
+## window's own aA button: plain click +1, Ctrl+click -1.
+##
+## ⚠ THE BAND IS NARROWER THAN RDW'S 6..32 AND THE CIW'S 4..72, FOR A MEASURED
+## REASON RATHER THAN A CAUTIOUS ONE.  Those two windows have a pixel-constant
+## minimum; the Calculator's own published `wm minsize` GROWS with the font (22
+## radiobuttons, 16 keypad keys, 10 toolbar buttons and 3 comboboxes all widen
+## together), running 680 px tall at sizes 6-12 and 926 at size 20 on a 1080 px
+## screen.  Nothing clips up to 22 -- the limit is the screen margin.
+##
+## ⚠ FOUR PRIVATE NAMED FONTS (CalcUiFont / CalcFieldFont / CalcMonoFont /
+## CalcMenuFont, src/calculator.tcl) AND NEVER THE Tk* FONTS THEMSELVES, for the
+## same measured reason as rdw_font_size above -- and note that paragraph names
+## the calculator buffer among what resizing TkFixedFont would have moved.
+## `calc::set_font_size` is also TRANSACTIONAL against the real screen: a size
+## whose derived minimum would not fit the display is refused and restored,
+## because `calc::save_layout` persists the geometry and a window the user can
+## neither shrink nor forget has no workaround.
+set_ne calc_font_size 0
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES

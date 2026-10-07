@@ -113,10 +113,18 @@
 # What this file deliberately does NOT do:
 #   - it does not call ase::ui::apply_theme on .calc.  That proc also imposes
 #     ASE's named fonts (AseLabelFont/AseEntryFont/AseMonoFont) on every widget
-#     it walks, and this is not an ASE window: fonts stay stock here
-#     (recon/theming.md §3 — nothing in the tree themes fonts for a new
-#     dialog).  It also paints every class the same way, and the Calculator
-#     needs the accent on panel HEADERS only.
+#     it walks, and this is not an ASE window.  It also paints every class the
+#     same way, and the Calculator needs the accent on panel HEADERS only.
+#     ⚠ THIS IS A REFUSAL OF THE ASE ROUTE, NOT OF A FONT CONTROL, and the
+#     distinction became load-bearing on 2026-10-06 when the user asked for one
+#     ("an easy way for user to bump up font and therefore readability").  What
+#     is wrong with ase::theme here is its PROCESS-GLOBAL side effect (measured,
+#     next bullet) -- which is the identical objection that chose private named
+#     fonts in rdw.tcl, so it argues FOR this window's own aA button rather than
+#     against it.  The fonts are no longer "stock": they are four private copies
+#     of the stock ones (calc::font_roles), byte-for-byte identical until the
+#     user chooses otherwise.  See the font-control block above
+#     calc::font_limits, and spec R113.
 #   - ⚠ it does not call `ase::theme` either, for the same reason one step
 #     further out.  ase::theme is not a reader: it creates the three Ase* named
 #     fonts and does a PROCESS-GLOBAL `option add *TCombobox*Listbox.font
@@ -321,12 +329,78 @@ proc calc::pw_list {} {
 # every pane at least +6 px (see the table above calc::pw_list).
 proc calc::min_floor {} { return {560 680} }
 
+# THE PHASE-0 PANE FLOORS, IN ONE PLACE, BECAUSE TWO PROCS READ THEM.
+#
+# These are the six numbers `calc::build_panes` used to spell as literals on its
+# own `add` lines.  Nothing here is new and nothing moves: the quadruples below
+# are {panedwindow pane dimension floor}, and the floors are phase 0's own
+# values verbatim (120/70/80/140 down .calc.pw, 250/140 across .calc.pw.bot).
+#
+# ⚠ THE ONLY REASON THEY ARE LIFTED IS THAT `calc::apply_pane_minsize` NEEDS TO
+# BE CALLABLE TWICE.  It raises a pane's -minsize towards what the contents
+# request, which is a one-way ratchet: once the user has stepped the font up and
+# back down, the raised minimum is still sitting at the larger font's request and
+# nothing can lower it, so the window keeps a floor from a size the user is no
+# longer at.  Reading the floor from here lets the raise be recomputed from the
+# ORIGINAL number every time instead of from the last answer -- the same reason
+# `calc::font_size` is the model rather than `font actual`.
+#
+# ⚠ The `dimension` word is the `winfo` subcommand, so it is also the axis: a
+# pane of `.calc.pw` (vertical) is constrained in HEIGHT and a pane of
+# `.calc.pw.bot` (horizontal) in WIDTH.  Do not reorder the pairs on the
+# assumption they are all one axis.
+proc calc::pane_floors {} {
+    return {
+        .calc.pw     .calc.pw.sel      reqheight 120
+        .calc.pw     .calc.pw.buf      reqheight 70
+        .calc.pw     .calc.pw.stk      reqheight 80
+        .calc.pw     .calc.pw.bot      reqheight 140
+        .calc.pw.bot .calc.pw.bot.fn   reqwidth  250
+        .calc.pw.bot .calc.pw.bot.pad  reqwidth  140
+    }
+}
+
+# That pane's own floor, or the empty string if it is not one of the six.  Pure.
+proc calc::pane_floor {pane} {
+    foreach {pw p dim floor} [calc::pane_floors] {
+        if {$p eq $pane} { return $floor }
+    }
+    return {}
+}
+
+# WHAT A PANE'S -minsize SHOULD BE: the larger of its phase-0 floor and what its
+# contents now request.  Pure arithmetic, so the counted arm gates it.
+#
+# ⚠ IT IS THE FLOOR THAT WINS ON JUNK, never the request.  `winfo reqheight` on
+# a widget that has not been laid out answers 1, and a `-minsize 1` pane is one
+# a drag can collapse to nothing -- which is the exact defect landmine D3 exists
+# to prevent.  A non-integer or negative `need` is therefore ignored rather than
+# honoured, and an absent floor (a pane not in the table) answers the empty
+# string so the caller leaves that pane alone.
+proc calc::pane_minsize_want {floor need} {
+    if {![string is integer -strict $floor]} { return {} }
+    if {![string is integer -strict $need] || $need < 0} { return $floor }
+    if {$need > $floor} { return $need }
+    return $floor
+}
+
 proc calc::apply_minsize {} {
     if {![winfo exists .calc]} { return {} }
     foreach {w h} [calc::min_floor] break
     if {[winfo exists .calc.pw.sel]} {
         set need [winfo reqwidth .calc.pw.sel]
         if {[string is integer -strict $need] && $need > $w} { set w $need }
+    }
+    # THE HEIGHT FOLLOWS THE FONT TOO, and `calc::min_floor` is NOT amended for
+    # it.  The floor stays the frozen {560 680} that `test_calc_skeleton` S21 and
+    # `test_calc_widgets` R112 both read on both axes; the derivation lives here,
+    # beside the width's, which is the shape `rdw::apply_minsize` already uses
+    # against a frozen `rdw::min_floor` (row CB7 golds it).  At the shipped font
+    # `calc::win_need` answers under 680 and this is a no-op; above it the
+    # published minimum grows with the panes instead of lying about them.
+    if {[winfo exists .calc.pw]} {
+        set need [lindex [calc::win_need] 1]
+        if {[string is integer -strict $need] && $need > $h} { set h $need }
     }
     wm minsize .calc $w $h
     return [list $w $h]
@@ -365,21 +439,826 @@ proc calc::apply_pane_minsize {} {
     if {![winfo exists .calc.pw] || ![winfo exists .calc.pw.bot]} { return {} }
     update idletasks
     set out {}
+    # THE POPULATION IS STILL THE TWO PANES ITEM 4 FILLED, deliberately.  The
+    # other four panes' contents landed in items 1-2, no finding re-judged them,
+    # and raising a -minsize on a live panedwindow does NOT re-allocate the pane
+    # -- it constrains a drag and the initial distribution.  The clip a user sees
+    # at a larger font comes from where the SASH sits, which `calc::place_panes`
+    # owns.  Widening this loop to six would move four frozen phase-0 literals
+    # that `test_calc_skeleton` S4 reads, for no user-visible gain.
     foreach {pw pane dim} {
-        .calc.pw     .calc.pw.bot      reqheight
-        .calc.pw.bot .calc.pw.bot.pad  reqwidth
+        .calc.pw     .calc.pw.bot      h
+        .calc.pw.bot .calc.pw.bot.pad  w
     } {
         if {![winfo exists $pane]} continue
-        set have [$pw panecget $pane -minsize]
-        set need [winfo $dim $pane]
-        if {[string is integer -strict $have] && [string is integer -strict $need]
-            && $need > $have} {
-            $pw paneconfigure $pane -minsize $need
-            set have $need
+        set floor [calc::pane_floor $pane]
+        # ⚠ THE NEED IS DERIVED, NOT ASKED OF THE PANEDWINDOW.  `.calc.pw.bot`
+        # IS a panedwindow, and a panedwindow's own `winfo reqheight` reports its
+        # current ALLOCATION once it has been laid out, not what its contents
+        # want -- so reading it here would ratchet the minimum up to whatever the
+        # window happens to be at and then refuse to come back down.
+        if {[winfo class $pane] eq {Panedwindow}} {
+            set need [calc::pane_need $pane $dim]
+        } elseif {$dim eq {h}} {
+            set need [winfo reqheight $pane]
+        } else {
+            set need [winfo reqwidth $pane]
         }
-        lappend out $pane $have
+        # ⚠ RECOMPUTED FROM THE FLOOR, NEVER FROM `panecget -minsize`.  Stepping
+        # the font up and back down must land on the original number; reading the
+        # live minimum makes the raise a one-way ratchet (see calc::pane_floors).
+        set want [calc::pane_minsize_want $floor $need]
+        if {$want ne {}} {
+            catch {$pw paneconfigure $pane -minsize $want}
+        } else {
+            set want [$pw panecget $pane -minsize]
+        }
+        lappend out $pane $want
     }
     return $out
+}
+
+# ---------------------------------------------------------------------------
+# THE GEOMETRY DERIVATIONS (the half of the font control that is not the font).
+#
+# ⚠⚠ WHY THIS EXISTS AT ALL, because it is the one thing that makes a font
+# control here bigger than the one in rdw.tcl.  RDW's published `wm minsize` is
+# a pixel constant that does not move with its font: it sizes ONE text pane in
+# character cells and can trade characters for size.  This window cannot.  It
+# holds 22 radiobuttons, 16 keypad keys, 10 toolbar buttons and 3 comboboxes
+# whose labels all grow together, so its own minimum grows with the font --
+# measured on a 1920x1080 Xvfb with openbox, the published minimum height runs
+# 680 at sizes 6-12, 719 at 14, 788 at 16, 857 at 18 and 926 at 20.  A control
+# that moved the fonts and left the sashes where they were would reproduce
+# exactly the clip the comment above `calc::build_panes`' floors already
+# records: `reqwidth .calc.pad` 128 -> 152 at `TkDefaultFont -size 12`, and the
+# keypad rendered 143 against a request of 152.
+#
+# So the sashes are RE-DERIVED on every font step, and the pure arithmetic that
+# decides where they go is split out so the counted arm can gate it (there is no
+# `font` command at all under --nogui, so anything touching a real font is
+# display-only; the DECISION need not be).
+
+# THE TWO SASH MEASUREMENTS A PLACEMENT NEEDS, as a dict {gap N lead N}.
+#
+# ⚠⚠ THERE ARE TWO OF THEM AND ASSUMING ONE IS AN OFF-BY-ONE ON EVERY PANE.
+# MEASURED on `.calc.pw` at `-sashwidth 5 -sashpad 0 -borderwidth 0`:
+#
+#     pane 0  y=0    h=198        sash 0 coord = 199
+#     pane 1  y=206  h=221        sash 1 coord = 428
+#
+#   * `gap`  = 8 -- the distance from the END of one pane to the START of the
+#     next (206 - 198).  NOT `-sashwidth`, which is 5.
+#   * `lead` = 1 -- how far INTO that gap the sash COORDINATE sits
+#     (199 - 198).  So a pane's extent is `coord - y - lead`, and placing a
+#     sash at exactly `y + need` leaves that pane ONE PIXEL SHORT.
+#
+# That single pixel is not cosmetic: it made `.calc.pw.sel` miss its request at
+# every size from 13 up, and the deficit pass could not close it because the
+# panedwindow had ELEVEN pixels spare -- the space was there and the arithmetic
+# was wrong, so growing the window could never help.
+#
+# ⚠ `extent - sum(pane extents)` LOOKS like a shortcut to `gap` and is NOT: it
+# also swallows any UNALLOCATED SLACK, so a panedwindow holding a pane at its
+# -minsize reads one pixel too wide.  Measured: it answered 8 against a real gap
+# of 7 on `.calc.pw.bot`, which placed the keypad one pixel OVER its natural
+# width and reddened `test_calc_widgets` R111 -- a row asserting exact equality,
+# and right to.
+#
+# The fallback is reached only before the window has been laid out, where
+# `winfo height` answers 1 and every other number in sight is a request rather
+# than an allocation.  `calc::relayout` runs `update idletasks` before it
+# measures anything, so the live arm is the normal arm.
+proc calc::sash_metrics {pw} {
+    set out {gap 0 lead 0}
+    if {![llength [info commands winfo]]} { return $out }
+    if {![winfo exists $pw]} { return $out }
+    set panes {}
+    catch {set panes [$pw panes]}
+    if {[llength $panes] < 2} { return $out }
+    set orient vertical
+    catch {set orient [$pw cget -orient]}
+    set vert [expr {$orient eq {vertical}}]
+    # ⚠⚠ THE EXACT MEASUREMENT, AND THE OBVIOUS ONE IS WRONG.  Sash i's
+    # coordinate is where the pane ABOVE it ends; the pane BELOW it starts a
+    # stride further on.  So the stride is the difference between the next
+    # pane's own position and the sash coordinate -- a relationship that holds
+    # whatever the layout is doing.
+    #
+    # ⚠ `extent - sum(pane extents)` LOOKS equivalent and is NOT: it also
+    # swallows any UNALLOCATED SLACK, so a panedwindow holding a pane at its
+    # -minsize reads one pixel too wide.  MEASURED: it answered 8 against a real
+    # stride of 7 on `.calc.pw.bot`, which placed the keypad one pixel over its
+    # natural width and reddened test_calc_widgets' R111 -- a row asserting
+    # exact equality, and right to.
+    set c {}
+    set p0 [lindex $panes 0]
+    set p1 [lindex $panes 1]
+    if {![catch {$pw sash coord 0} c] && [llength $c] == 2
+        && [winfo exists $p0] && [winfo exists $p1]} {
+        set y0  [expr {$vert ? [winfo y $p0] : [winfo x $p0]}]
+        set e0  [expr {$vert ? [winfo height $p0] : [winfo width $p0]}]
+        set y1  [expr {$vert ? [winfo y $p1] : [winfo x $p1]}]
+        set at  [lindex $c [expr {$vert ? 1 : 0}]]
+        set ok 1
+        foreach v [list $y0 $e0 $y1 $at] {
+            if {![string is integer -strict $v]} { set ok 0 }
+        }
+        if {$ok && $e0 > 1} {
+            set gap  [expr {$y1 - ($y0 + $e0)}]
+            set lead [expr {$at - ($y0 + $e0)}]
+            if {$gap >= 0 && $gap <= 64 && $lead >= 0 && $lead <= $gap} {
+                return [list gap $gap lead $lead]
+            }
+        }
+    }
+    # NOT LAID OUT YET.  An estimate, and it is spelled as one: the configured
+    # width plus both pads, with the sash coordinate assumed at the gap's start.
+    # It governs no user-visible geometry, because every caller updates first and
+    # then measures again.
+    set sw 5 ; set sp 0
+    catch {set sw [$pw cget -sashwidth]}
+    catch {set sp [$pw cget -sashpad]}
+    if {![string is integer -strict $sw]} { set sw 5 }
+    if {![string is integer -strict $sp]} { set sp 0 }
+    return [list gap [expr {$sw + 2 * $sp}] lead 0]
+}
+
+# TOTAL SASH OVERHEAD ALONG A PANEDWINDOW'S STACKING AXIS: the inter-pane gap,
+# once per sash.  What `calc::pane_need` adds to the sum of its panes.
+proc calc::sash_overhead {pw} {
+    if {![llength [info commands winfo]]} { return 0 }
+    if {![winfo exists $pw]} { return 0 }
+    set panes {}
+    catch {set panes [$pw panes]}
+    set nsash [expr {[llength $panes] - 1}]
+    if {$nsash < 1} { return 0 }
+    return [expr {$nsash * [dict get [calc::sash_metrics $pw] gap]}]
+}
+
+# WHAT A PANE TREE REALLY NEEDS ALONG ONE AXIS (`h` or `w`), derived RECURSIVELY
+# FROM THE LEAF PANES.
+#
+# ⚠ A PANEDWINDOW'S OWN `winfo reqheight`/`reqwidth` IS NOT THIS NUMBER.  Once
+# laid out it reports the panedwindow's current ALLOCATION, so asking it what it
+# needs answers "whatever I was last given" -- which ratchets and never shrinks.
+# Measured independently by two of the three design passes.
+#
+# Along the panedwindow's own stacking axis the needs ADD (plus the sashes);
+# across it every pane gets the full extent, so they MAX.
+proc calc::pane_need {w axis} {
+    if {![winfo exists $w]} { return 0 }
+    if {$axis ne {h} && $axis ne {w}} { return 0 }
+    if {[winfo class $w] ne {Panedwindow}} {
+        return [expr {$axis eq {h} ? [winfo reqheight $w] : [winfo reqwidth $w]}]
+    }
+    set panes {}
+    catch {set panes [$w panes]}
+    if {![llength $panes]} {
+        return [expr {$axis eq {h} ? [winfo reqheight $w] : [winfo reqwidth $w]}]
+    }
+    set orient vertical
+    catch {set orient [$w cget -orient]}
+    set along [expr {$orient eq {vertical} ? {h} : {w}}]
+    set sum 0 ; set mx 0
+    foreach p $panes {
+        set n [calc::pane_need $p $axis]
+        if {![string is integer -strict $n] || $n < 0} { set n 0 }
+        incr sum $n
+        if {$n > $mx} { set mx $n }
+    }
+    if {$axis ne $along} { return $mx }
+    return [expr {$sum + [calc::sash_overhead $w]}]
+}
+
+# WHAT THE TOPLEVEL NEEDS: {w h}.
+#
+# The WIDTH rule is today's and is unchanged -- `winfo reqwidth .calc.pw.sel`,
+# the widest of the three rows the selector pane holds (see calc::apply_minsize's
+# own comment).  The HEIGHT is the pane tree's derived need plus the status strip,
+# which is packed outside `.calc.pw` and so is not in the tree.
+proc calc::win_need {} {
+    set w 0 ; set h 0
+    if {[winfo exists .calc.pw.sel]} { set w [winfo reqwidth .calc.pw.sel] }
+    if {[winfo exists .calc.pw]}     { set h [calc::pane_need .calc.pw h] }
+    if {[winfo exists .calc.status]} { incr h [winfo reqheight .calc.status] }
+    if {![string is integer -strict $w] || $w < 0} { set w 0 }
+    if {![string is integer -strict $h] || $h < 0} { set h 0 }
+    return [list $w $h]
+}
+
+# WHERE THE SASHES GO: the n absolute coordinates for a panedwindow of n+1
+# panes, given the extent available, each pane's need, and each pane's floor.
+#
+# PURE, so the counted arm gates the placement rule itself with no Tk at all.
+#
+#   coord[i] = max(floor-chain[i], coord[i-1] + needs[i])
+#
+# i.e. each sash sits far enough past the one above it to give the pane between
+# them what it asked for, and never closer to the top than the shipped layout
+# put it.  The floors arrive as absolute coordinates (the caller turns
+# `calc::pw_list`'s fractions into pixels), so the shipped first-open layout
+# STANDS wherever it already covers the need -- a font step moves a sash only
+# where it has to.
+#
+# ⚠ EVERY COORDINATE IS CLAMPED INTO LANDMINE D4'S [20, extent-20] WINDOW, and a
+# clamp that contradicts the chain answers the word `skip` for that sash rather
+# than a number a caller would place.  A sash placed outside that window is one
+# the user cannot grab again.
+#
+# ⚠ RECOMPUTED FROM THE NEEDS ON EVERY CALL, never stepped from its own last
+# answer -- the same discipline as `calc::font_size` being the model.  A chain
+# that reads back what it placed drifts, and `sash place` is exact only if what
+# it is given was not itself derived from a previous placement.
+proc calc::sash_chain {extent needs floors {gap 0} {lead 0}} {
+    if {![string is integer -strict $extent]} { return {} }
+    if {![string is integer -strict $gap] || $gap < 0} { set gap 0 }
+    if {![string is integer -strict $lead] || $lead < 0 || $lead > $gap} { set lead 0 }
+    set n [llength $needs]
+    if {$n < 2} { return {} }
+    # needs, sanitised once, so both passes see the same numbers
+    set nd {}
+    foreach v $needs {
+        if {![string is integer -strict $v] || $v < 0} { lappend nd 0 } else { lappend nd $v }
+    }
+    set lo 20
+    set hi [expr {$extent - 20}]
+    set out {}
+    # `y` is where the pane ABOVE the sash being placed starts.  It advances by
+    # the full `gap`, while the sash COORDINATE sits `lead` into that gap -- the
+    # two differ by one pixel here and conflating them shorts every pane.
+    set y 0
+    for {set i 0} {$i < $n - 1} {incr i} {
+        # FORWARD: this sash must sit far enough past the start of the pane above
+        # it to give that pane its request, plus the lead.  Measured from the
+        # PLACED position of the pane above, not from a running total of the
+        # needs, because a floor may already have pushed it further down.
+        set base [expr {$y + [lindex $nd $i] + $lead}]
+        # BACKWARD: and no further down than leaves every pane BELOW it room for
+        # its own need, the last pane included.
+        set rest 0
+        for {set j [expr {$i + 1}]} {$j < $n} {incr j} { incr rest [lindex $nd $j] }
+        set cap [expr {$extent + $lead - $rest - ($n - 1 - $i) * $gap}]
+        set want $base
+        set floor [lindex $floors $i]
+        if {[string is integer -strict $floor] && $floor > $want} { set want $floor }
+        if {$want > $cap} { set want $cap }
+        # cap below base means the panes genuinely do not fit this extent.  Place
+        # at base anyway: that gives the panes above their needs and leaves the
+        # shortfall MEASURABLE at the last pane, which is what calc::relayout's
+        # deficit pass grows the toplevel by.  Silently splitting the difference
+        # here would hide the one number that makes the correction possible.
+        if {$want < $base} { set want $base }
+        if {$hi < $lo || $want < $lo || $want > $hi} {
+            lappend out skip
+            # the chain still advances, so a skipped sash does not drag every
+            # sash below it back to the top edge
+            set y [expr {$want - $lead + $gap}]
+            continue
+        }
+        lappend out $want
+        set y [expr {$want - $lead + $gap}]
+    }
+    return $out
+}
+
+# HOW MUCH SHORT THE PANES CAME OUT: the total of (need - got) over the panes
+# that got less than they asked for.  Pure.  This is what `calc::relayout` grows
+# the toplevel by on its correction pass, and it is a TOTAL rather than a per
+# pane maximum because the shortfalls stack along one axis.
+proc calc::sash_deficit {needs gots} {
+    set d 0
+    foreach need $needs got $gots {
+        if {![string is integer -strict $need] || ![string is integer -strict $got]} { continue }
+        if {$need > $got} { incr d [expr {$need - $got}] }
+    }
+    return $d
+}
+
+# DOES A DERIVED MINIMUM FIT THE DISPLAY?  Pure, 1 or 0, and 0 on junk.
+#
+# ⚠ THIS IS NOT A DUPLICATE OF THE BAND.  The band stops the font at a size that
+# is unusable on the screen this was measured on; this stops it at a size that
+# is unusable on the screen the user actually has.  On 1366x768 the published
+# minimum already exceeds the display from about size 16, and `calc::save_layout`
+# persists the geometry -- so a window the user can neither shrink nor forget is
+# the one failure mode here with no workaround.
+proc calc::size_fits {needw needh roomw roomh} {
+    foreach v [list $needw $needh $roomw $roomh] {
+        if {![string is integer -strict $v] || $v <= 0} { return 0 }
+    }
+    return [expr {($needw <= $roomw && $needh <= $roomh) ? 1 : 0}]
+}
+
+# MAY A SAVED SASH COORDINATE BE REPLAYED?  Only at the font it was measured at.
+# Pure.  A saved absolute pixel coordinate is a statement about one font size;
+# replaying it at another lands a sash somewhere the contents no longer fit, and
+# the derived plan is strictly better information.  An absent or unparseable
+# stamp means "saved before this feature existed", which is the shipped font.
+proc calc::sash_valid {savedsize cursize} {
+    if {![string is integer -strict $cursize]} { return 0 }
+    if {![string is integer -strict $savedsize]} { return 0 }
+    return [expr {$savedsize == $cursize ? 1 : 0}]
+}
+
+# THE USABLE SCREEN, {w h}, or the empty string with no Tk.  `wm maxsize` is the
+# WM's own answer and already excludes panels where the WM reports them; the
+# vroot is the fallback where it does not.
+proc calc::screen_room {} {
+    if {![llength [info commands winfo]]} { return {} }
+    if {![winfo exists .calc]} { return {} }
+    set r {}
+    if {![catch {wm maxsize .calc} r] && [llength $r] == 2
+        && [string is integer -strict [lindex $r 0]]
+        && [lindex $r 0] > 0 && [lindex $r 1] > 0} {
+        return $r
+    }
+    if {[catch {list [winfo vrootwidth .calc] [winfo vrootheight .calc]} r]} { return {} }
+    return $r
+}
+
+# ---------------------------------------------------------------------------
+# THE FONT SIZE CONTROL (the user's request: "an easy way for user to bump up
+# font and therefore readability", 2026-10-06, after the same control landed in
+# the Results Display Window under issue 1368).
+#
+# The gesture is RDW's, deliberately and to the word, so the user meets the same
+# control twice: an `aA` button, a hover tooltip, click to grow one unit,
+# Ctrl+click to shrink one unit.
+#
+# ⚠⚠ THE ONE-LINER IS THE TRAP, AND rdw.tcl ALREADY MEASURED IT.
+# `font configure TkDefaultFont -size N` reads as a window-local control and is a
+# PROCESS-GLOBAL one: a bare Tk widget's default font IS one of the Tk* shared
+# fonts, so one click here would also resize the attribute editor, the symbol
+# property editor, the text-input dialog, editpaths, the graph dialog and the
+# notify popup -- with nothing on screen saying so.  rdw.tcl's own header
+# enumerates them and names THIS WINDOW'S BUFFER among the casualties of the
+# same mistake made there.  So this window owns PRIVATE NAMED FONTS, exactly as
+# `rdw::_font` and `ciw_font` do.
+#
+# ⚠⚠ AND THIS IS NOT THE THING THE FILE HEADER REFUSES.  That paragraph ("fonts
+# stay stock here") is a refusal of the `ase::ui::apply_theme` / `ase::theme`
+# ROUTE, on the measured ground that `ase::theme` does a process-global
+# `option add *TCombobox*Listbox.font AseEntryFont` that moves every combobox
+# popdown in xschem for the rest of the session.  That is the identical
+# reasoning that chose private named fonts in rdw.tcl -- it argues FOR this
+# design, not against it.  Spec R113 is amended in the same commit.
+#
+# ⚠⚠ THE MODEL IS THE INTEGER, NEVER THE FONT.  MEASURED in rdw.tcl:
+# `font configure X -size -14` -- the PIXEL spelling -- answers
+# `font actual X -size` = 10, in POINTS.  An implementation that increments what
+# it reads back therefore turns a user's pixel size into points and moves it by
+# an unrelated amount on the very first click.  `calc::font_step` reads
+# `calc::font_size` and nothing else.
+#
+# ⚠ `-size 0` IS A LIVE VALUE, NOT A NEUTRAL ONE (it resolves to 12 here).  `0`
+# is safe as the "not chosen yet" sentinel in `::calc_font_size` ONLY because
+# `calc::_accept_size` can never answer it and `calc::font_step` can never reach
+# it.  Do not remove that guard.
+#
+# ⚠ THERE IS NO `switch` ANYWHERE IN THIS FEATURE, on purpose.  The role table
+# is a dict and both refusal sentences are built from `calc::font_limits`, so
+# CLAUDE.md's comment-between-switch-patterns trap -- whose detonation is
+# PARITY-DEPENDENT on the comment's word count, and whose display-arm symptom is
+# a 200 s TIMEOUT printing zero `FAIL:` lines while `info complete` still
+# answers 1 -- is not expressible here.
+
+# THE BAND, ONCE, SO OVERRULING IT COSTS ONE LINE AND ONE GOLDEN ROW.
+#
+# 6 is RDW's floor exactly.  The CEILING is 20 and it is a SCREEN-MARGIN limit,
+# not a clipping one: measured on a 1920x1080 Xvfb with openbox, nothing in this
+# window clips up to size 22, but the window's own published minimum height runs
+# 680 (sizes 6-12), 719 (14), 788 (16), 857 (18), 926 (20), 1018 (22) -- and a
+# minimum of 1018 on a 1080 px screen is a window the user cannot shrink.  20
+# leaves a usable margin; 21 and 22 are reachable and are the USER's to ask for.
+# Unratified under rule debt 1368, with RDW's own band.
+#
+# ⚠ THE BAND IS NOT THE ONLY DEFENCE AND MUST NOT BE TREATED AS ONE.  On a
+# 1366x768 screen the published minimum already exceeds the display from about
+# size 16, so `calc::set_font_size` is transactional against
+# `calc::screen_room` as well.  The band is about this window; the transaction
+# is about the user's actual screen.
+proc calc::font_limits {} { return {6 20} }
+
+# THE ONE ADMISSION TEST.  It REFUSES; it does not clamp.  Silently "fixing" an
+# out-of-band value hides which size the caller actually asked for, which is
+# both `ciw_set_font_size`'s and `rdw::_accept_size`'s own recorded reason for
+# refusing too.  Answers the CANONICAL integer, or the empty string.
+#
+# ⚠ IT IS DELIBERATELY NOT CALLED `_clamp_size`.  A name that says clamp over a
+# proc that refuses is this tree's own documented defect -- a comment naming a
+# fence that does not fence -- one layer down.
+#
+# ⚠ IT CANONICALISES, WHICH `rdw::_accept_size` DOES NOT.  `string is integer`
+# accepts surrounding whitespace and the `0x`/`+` spellings, so that proc hands
+# ` 8 `, `+8` and `0x10` straight back to `font configure`.  Normalising through
+# `expr` means the stored model is always a plain decimal, which matters because
+# it is compared for equality by `calc::sash_valid`.
+proc calc::_accept_size {n} {
+    if {![string is integer -strict $n]} { return {} }
+    if {[catch {expr {$n + 0}} v]} { return {} }
+    if {![string is integer -strict $v]} { return {} }
+    foreach {lo hi} [calc::font_limits] break
+    if {$v < $lo || $v > $hi} { return {} }
+    return $v
+}
+
+# THE FOUR ROLES, AND THE ONLY PLACE A FONT NAME IS SPELLED.
+#   role  -> {private-name shared-base}
+# A role exists where a group of widgets must move together and the stock font
+# behind them differs.  `menu` is separate because TkMenuFont is shared with the
+# main window's menubar and a private copy is the only way to leave that alone.
+proc calc::font_roles {} {
+    return {
+        ui    {CalcUiFont    TkDefaultFont}
+        field {CalcFieldFont TkTextFont}
+        mono  {CalcMonoFont  TkFixedFont}
+        menu  {CalcMenuFont  TkMenuFont}
+    }
+}
+
+# WHICH ROLE A WIDGET CLASS TAKES.  A DICT AND NOT A `switch` -- see the header.
+# Any class not named here is `ui`, which is both the commonest case and the
+# safe one.
+#
+# ⚠ MEASURED: this table reproduces the tree's existing stock assignment over
+# every -font-bearing widget in `.calc` exactly, so it is a statement of what
+# already happens rather than a new opinion about it.
+proc calc::font_class_roles {} {
+    return {
+        Text       mono
+        Entry      field
+        TEntry     field
+        TCombobox  field
+        TSpinbox   field
+        Listbox    ui
+        Menu       menu
+    }
+}
+
+# THE ROLE FOR ONE WIDGET, FROM ITS PATH AND CLASS ONLY.
+#
+# ⚠⚠ NEVER FROM THE FONT IT CURRENTLY CARRIES.  A walk keyed on "whatever stock
+# font this widget has" cannot be run twice: the first pass replaces the stock
+# font with a private one, so the second pass sees its own output and has no way
+# back to the original intent.  Keying on class and path makes the assignment a
+# DECISION -- statable, pure, and therefore gated on the counted arm, where
+# there is no `font` command to key on in the first place.
+#
+# The popdown exception is why the path is a parameter at all: a ttk::combobox's
+# dropdown list is a Listbox created LAZILY inside `*.popdown.*`, and it shows
+# the FIELD's content, so it follows the field and not the UI.
+proc calc::font_role_of {w class} {
+    if {[string match {*.popdown.*} $w]} { return field }
+    set t [calc::font_class_roles]
+    if {[dict exists $t $class]} { return [dict get $t $class] }
+    return ui
+}
+
+# WHAT THE USER CHOSE, or the empty string if they have not chosen.
+proc calc::_chosen_size {} {
+    if {![info exists ::calc_font_size]} { return {} }
+    return [calc::_accept_size $::calc_font_size]
+}
+
+# A ROLE'S SHARED BASE FONT'S OWN SIZE, RAW AND UNCLAMPED, or the empty string.
+# The ONE site in this feature that calls `font actual`, deliberately: the band
+# comparison in `calc::_font` needs a NUMBER, and `font actual` is the only call
+# that always gives one.  Its lossiness (a pixel spelling arrives as points) is
+# exactly why its answer is used for a COMPARISON and never written back.
+proc calc::_shared_size {role} {
+    if {![llength [info commands font]]} { return {} }
+    set t [calc::font_roles]
+    if {![dict exists $t $role]} { return {} }
+    set base [lindex [dict get $t $role] 1]
+    set n {}
+    if {[catch {font actual $base -size} n]} { return {} }
+    if {![string is integer -strict $n]} { return {} }
+    return $n
+}
+
+# WHAT THE WINDOW IS AT WHEN THE USER HAS NOT CHOSEN: the `ui` base's own size,
+# CLAMPED into the band.
+#
+# ⚠ IT CLAMPS WHERE `_accept_size` REFUSES, AND THE DIFFERENCE IS PRINCIPLED:
+# this is a value nobody chose, so there is nobody to refuse.  A stock font
+# outside the band must still yield a usable starting point for the first click.
+proc calc::_base_size {} {
+    set n [calc::_shared_size ui]
+    foreach {lo hi} [calc::font_limits] break
+    if {$n eq {}} { return 10 }
+    if {$n < $lo} { return $lo }
+    if {$n > $hi} { return $hi }
+    return $n
+}
+
+# THE EFFECTIVE SIZE, ALWAYS AN INTEGER.  This is the model, and the only thing
+# `calc::font_step` does arithmetic on.
+proc calc::font_size {} {
+    set n [calc::_chosen_size]
+    if {$n ne {}} { return $n }
+    return [calc::_base_size]
+}
+
+# RDW'S SENTENCE, VERBATIM.  The gesture is the same, so the words are too --
+# two windows describing one gesture differently is the same defect as one
+# decision written down in two places.
+proc calc::_font_tip {} {
+    return {click to increase font one unit. Ctrl+click to decrease font one unit}
+}
+
+# THE PRIVATE FONT FOR A ROLE, created lazily.  Answers the font NAME.
+#
+# ⚠ CREATED FROM `font configure` OF THE BASE, NEVER `font actual`.
+# `font configure` reports the base's own SPELLING -- a pixel size stays a pixel
+# size -- so until the user has actually chosen something the private font is a
+# byte-for-byte copy of the stock one and this whole feature is a no-op at the
+# shipped font.  `font actual` would silently convert that spelling to points.
+#
+# ⚠ THE SIZE IS SET ON EVERY CALL, not only at creation.  A choice that is later
+# withdrawn (the variable unset, or set back out of band) must be able to put
+# the stock size back, and a create-once path can never do that.
+#
+# ⚠ `font create` RAISES on a name that already exists, hence the `lsearch`
+# guard rather than a bare create in a catch -- a catch would also swallow a
+# real failure and leave the caller with a name that does not resolve.
+# On any failure it answers the BASE name and configures nothing, so a broken
+# font never takes the window's text with it.
+proc calc::_font {role} {
+    set t [calc::font_roles]
+    if {![dict exists $t $role]} { set role ui }
+    foreach {name base} [dict get $t $role] break
+    if {![llength [info commands font]]} { return $base }
+    set spec {}
+    if {[catch {font configure $base} spec]} { set spec {} }
+    if {[lsearch -exact [font names] $name] < 0} {
+        if {[catch {eval [list font create $name] $spec}]} { return $base }
+    }
+    set want [calc::_chosen_size]
+    if {$want eq {}} {
+        # NOTHING CHOSEN: keep the base's own spelling if the band has not moved
+        # it, so the private font stays an exact copy.
+        set raw [calc::_shared_size $role]
+        set eff [calc::_base_size]
+        if {$raw ne {} && $raw == $eff && [dict exists $spec -size]} {
+            set want [dict get $spec -size]
+        } else {
+            set want $eff
+        }
+    }
+    catch {font configure $name -size $want}
+    return $name
+}
+
+# LAY EVERY SASH AT AN ABSOLUTE POSITION DERIVED FROM WHAT THE PANES NEED.
+#
+# ⚠⚠ `sash place` AND NOT `sash mark` + `sash dragto`.  MEASURED: the
+# mark/dragto pair DRIFTS -- asked for 251 on sash 0 it landed 200 -- because
+# dragto is relative to the mark and the mark is itself a readback.  `place` is
+# absolute and exact.  `calc::restore_layout_body` keeps mark/dragto on its
+# SAVED-coordinate path, where the D4 window is already measured and the
+# behaviour is shipped; this is the DERIVED path and is new.
+#
+# `calc::pw_list`'s fractions arrive as FLOORS, not as targets, so the shipped
+# first-open proportions stand wherever they already cover each pane's need and
+# a font step moves a sash only where it must.
+proc calc::place_panes {} {
+    if {![llength [info commands winfo]]} { return {} }
+    set out {}
+    foreach ent [calc::pw_list] {
+        foreach {pw orient n fracs} $ent break
+        if {![winfo exists $pw]} continue
+        set axis [calc::sash_axis $orient]
+        set extent [expr {$axis ? [winfo height $pw] : [winfo width $pw]}]
+        if {![string is integer -strict $extent] || $extent <= 1} continue
+        set panes {}
+        catch {set panes [$pw panes]}
+        if {[llength $panes] < 2} continue
+        set needs {}
+        foreach p $panes { lappend needs [calc::pane_need $p [expr {$axis ? {h} : {w}}]] }
+        set floors {}
+        foreach fr $fracs { lappend floors [expr {int($fr * $extent)}] }
+        # the two sash measurements, taken off the live widget (see
+        # calc::sash_metrics: there are two of them and assuming one is an
+        # off-by-one on every pane).
+        set m [calc::sash_metrics $pw]
+        set coords [calc::sash_chain $extent $needs $floors \
+                        [dict get $m gap] [dict get $m lead]]
+        set i 0
+        foreach c $coords {
+            if {$c ne {skip}} {
+                set cur {0 0}
+                catch {set cur [$pw sash coord $i]}
+                if {$axis} {
+                    catch {$pw sash place $i [lindex $cur 0] $c}
+                } else {
+                    catch {$pw sash place $i $c [lindex $cur 1]}
+                }
+            }
+            incr i
+        }
+        lappend out $pw $coords
+    }
+    return $out
+}
+
+# THE ONE GEOMETRY RE-DERIVATION, run after anything that changes a font.
+# Answers {w h placed passes adopted}.
+#
+# ⚠⚠ IT HOLDS `calc::restoring` ACROSS ITS WHOLE BODY (landmine D6).  This proc
+# pumps the idle queue, and by the time it runs `bind .calc <Configure>` exists,
+# so a Configure delivered mid-pump would reach `calc::save_layout` and capture
+# the half-applied layout this proc is in the middle of replacing.
+# `calc::save_layout`'s own header records the symptom -- "a restore that
+# appears to do nothing at all" -- and records that it is INVISIBLE UNDER Xvfb,
+# which runs no WM and so has no pending Configure to deliver.  So the gate's
+# display arm structurally cannot see this defect; it is a landmine here and a
+# `look` debt on the real WM, not a row.
+#
+# ⚠ `winfo exists .calc` IS RE-CHECKED AFTER EVERY PUMP.  `update idletasks` can
+# run anything, `calc::close` included.
+proc calc::relayout {} {
+    variable restoring
+    # ⚠ `winfo` IS ITSELF ABSENT UNDER --nogui, not merely unable to find the
+    # window -- so the existence test must come SECOND.  Measured by row CF5:
+    # the obvious `winfo exists .calc` guard raises `invalid command name
+    # "winfo"` on the counted arm, which is where an rc calling this before the
+    # window is built would land.
+    if {![llength [info commands winfo]]} { return {} }
+    if {![winfo exists .calc]} { return {} }
+    set prev 0
+    if {[info exists restoring]} { set prev $restoring }
+    set restoring 1
+    set placed {} ; set passes 0 ; set adopted 0
+    if {[catch {
+        # 1. the pane minimums come back to their FLOORS first, so the raise
+        #    below is computed from phase 0 and not from the last font's answer.
+        foreach {pw pane dim floor} [calc::pane_floors] {
+            if {[winfo exists $pane]} { catch {$pw paneconfigure $pane -minsize $floor} }
+        }
+        update idletasks
+        if {[winfo exists .calc]} {
+            # 2. the toplevel first, so the panes have the room to be placed in
+            foreach {nw nh} [calc::win_need] break
+            catch {wm minsize .calc 1 1}
+            foreach {cw ch} [list [winfo width .calc] [winfo height .calc]] break
+            if {[string is integer -strict $nw] && $nw > $cw} { set cw $nw }
+            if {[string is integer -strict $nh] && $nh > $ch} { set ch $nh }
+            catch {wm geometry .calc ${cw}x${ch}}
+            update idletasks
+        }
+        # 3. place the sashes, then a BOUNDED correction pass: a pane that came
+        #    out short means the toplevel was not tall enough for the chain, so
+        #    grow by the measured deficit and place again.  At most 4, and the
+        #    count is reported rather than hidden -- an unbounded loop here is a
+        #    hang with no upper bound, which this tree forbids outright.
+        while {$passes < 4 && [winfo exists .calc]} {
+            incr passes
+            set placed [calc::place_panes]
+            update idletasks
+            if {![winfo exists .calc]} break
+            set def 0
+            foreach ent [calc::pw_list] {
+                foreach {pw orient n fracs} $ent break
+                if {![winfo exists $pw]} continue
+                set axis [calc::sash_axis $orient]
+                set panes {}
+                catch {set panes [$pw panes]}
+                set needs {} ; set gots {}
+                foreach p $panes {
+                    lappend needs [calc::pane_need $p [expr {$axis ? {h} : {w}}]]
+                    lappend gots  [expr {$axis ? [winfo height $p] : [winfo width $p]}]
+                }
+                incr def [calc::sash_deficit $needs $gots]
+            }
+            if {$def <= 0} { set adopted 1 ; break }
+            set gh [winfo height .calc]
+            set gw [winfo width .calc]
+            catch {wm geometry .calc ${gw}x[expr {$gh + $def}]}
+            update idletasks
+        }
+        if {[winfo exists .calc]} {
+            calc::apply_pane_minsize
+            calc::apply_minsize
+        }
+    } err]} {
+        set restoring $prev
+        return {}
+    }
+    set restoring $prev
+    if {![winfo exists .calc]} { return {} }
+    return [list [winfo width .calc] [winfo height .calc] $placed $passes $adopted]
+}
+
+# PAINT ONE SUBTREE.  Every widget that HAS a `-font` option gets its role's
+# private font; one that has none is skipped by the `catch`, which is the whole
+# test.  Recurses through `winfo children`, which reaches the menus too.
+proc calc::_paint_tree {w fonts} {
+    if {![llength [info commands winfo]]} { return 0 }
+    if {![winfo exists $w]} { return 0 }
+    set n 0
+    set role [calc::font_role_of $w [winfo class $w]]
+    if {[dict exists $fonts $role]} {
+        if {![catch {$w configure -font [dict get $fonts $role]}]} { incr n }
+    }
+    foreach c [winfo children $w] { incr n [calc::_paint_tree $c $fonts] }
+    return $n
+}
+
+# THE ONE PAINTER.  Resolves the four private fonts, walks `root`, re-fills the
+# function browser (whose canvas items carry an explicit -font and whose row
+# pitch and -scrollregion are recomputed from font metrics by `calc::fn_fill`),
+# then re-derives the geometry.  Answers the number of widgets painted, or 0.
+#
+# `root` is a parameter so `calc::arg_dialog_build` can paint `.calc.arg`, which
+# is a separate toplevel and so is not under `.calc`.
+proc calc::_apply_font {{root .calc}} {
+    if {![llength [info commands font]]} { return 0 }
+    if {![winfo exists $root]} { return 0 }
+    set fonts {}
+    foreach role {ui field mono menu} { dict set fonts $role [calc::_font $role] }
+    set n [calc::_paint_tree $root $fonts]
+    # ⚠ A THEMED WIDGET TAKES ITS FONT FROM THE STYLE, NOT FROM -font, on the
+    # Tk versions where ttk::combobox has no -font at all.  This window already
+    # owns a Calculator-local style for exactly this kind of reason, so setting
+    # it reaches the three comboboxes without touching anyone else's.
+    catch { ttk::style configure Calc.TCombobox -font [dict get $fonts field] }
+    # ⚠ AND A COMBOBOX'S DROPDOWN IS A Listbox CREATED LAZILY, so it does not
+    # exist to be walked.  The pattern must be `*calc*popdown*Listbox.font` and
+    # NOT `*calc*Listbox.font`: MEASURED, the broad pattern also matches
+    # `.calc.stk.list`, so on a reopen the Stack listbox would be created in the
+    # field font instead of the UI font.  Window-rooted, so not process-global.
+    catch { option add *calc*popdown*Listbox.font [dict get $fonts field] }
+    if {$root eq {.calc}} {
+        catch { calc::fn_fill }
+        calc::relayout
+    }
+    return $n
+}
+
+# THE ONE SETTER.  Order-independent: it records the model whether or not the
+# window exists, so an rc may call it before `calc::build`.  Answers 1 on
+# acceptance, 0 on refusal.
+#
+# ⚠ IT IS TRANSACTIONAL AGAINST THE USER'S ACTUAL SCREEN.  The band says what
+# this window can render; it cannot know what display the user has.  On a
+# 1366x768 screen the derived minimum exceeds the display from about size 16,
+# and `calc::save_layout` persists the geometry -- so a size that does not fit
+# is restored rather than left in place, because a window the user can neither
+# shrink nor forget is the one failure here with no workaround.
+proc calc::set_font_size {n} {
+    set v [calc::_accept_size $n]
+    if {$v eq {}} { return 0 }
+    set was {}
+    if {[info exists ::calc_font_size]} { set was $::calc_font_size }
+    set ::calc_font_size $v
+    if {![winfo exists .calc] || ![llength [info commands font]]} { return 1 }
+    calc::_apply_font
+    set room [calc::screen_room]
+    if {[llength $room] == 2} {
+        foreach {nw nh} [calc::win_need] break
+        foreach {rw rh} $room break
+        if {![calc::size_fits $nw $nh $rw $rh]} {
+            if {$was eq {}} { unset -nocomplain ::calc_font_size } else { set ::calc_font_size $was }
+            calc::_apply_font
+            return 0
+        }
+    }
+    return 1
+}
+
+# THE ONE ARITHMETIC DOOR.  `dir` is +1 or -1 and nothing else -- A DIRECTION,
+# NOT A DELTA.  That is half of what keeps the model off the live `-size 0`
+# value: a caller cannot ask for an arbitrary jump through here, so every size
+# the window ever holds is one `_accept_size` already admitted.
+#
+# ⚠ THE REFUSAL AT EACH LIMIT IS RECORDED (`calc::status`'s default `record 1`).
+# The comment above `calc::status` says everything that actually HAPPENS records,
+# which is what R506 asks; a refused click is an event the user caused, it can
+# only occur at the two ends of the band, and so it cannot flood R509's 50-entry
+# history.  `record 0` in this file is for a hover LEGEND, which this is not.
+proc calc::font_step {dir} {
+    if {$dir ne {1} && $dir ne {-1}} { return 0 }
+    foreach {lo hi} [calc::font_limits] break
+    set cur [calc::font_size]
+    set want [expr {$cur + $dir}]
+    if {[calc::_accept_size $want] eq {}} {
+        set edge [expr {$dir > 0 ? $hi : $lo}]
+        set word [expr {$dir > 0 ? {largest} : {smallest}}]
+        catch { calc::status "Font size: already the $word ($edge)." }
+        return 0
+    }
+    if {![calc::set_font_size $want]} {
+        catch { calc::status "Font size: $want does not fit this screen." }
+        return 0
+    }
+    # ⚠ THE SUCCESSFUL STEP SPEAKS TOO, and R506 is why: silence is a bug in
+    # this window.  It is not decoration -- nothing else in the Calculator shows
+    # the current size, so without this line the only readout of the model is
+    # the glyph size itself, which is exactly what a user who cannot read it
+    # comfortably is trying to fix.  Bounded at one line per click.
+    catch { calc::status "Font size: $want." }
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -550,18 +1429,26 @@ proc calc::build {} {
     # D1: the widgets are packed by now, so sash coord is meaningful.
     calc::restore_layout
 
-    # ...and the panes now hold their real contents, so the two minimums item 4
-    # filled can be raised to what those contents ask for (D3).  Before the
-    # <Configure> bind below, so its update idletasks cannot re-enter
-    # save_layout (D6).
-    calc::apply_pane_minsize
-
-    # ...and NOW the panes have a requested width, so the toplevel minimum can
-    # be raised to what the selector grid needs.  Deliberately AFTER the
-    # restore: a geometry saved while the window was clipped is replayed first
-    # and then corrected upward by the new minimum, which is what makes the
-    # clipped state self-heal on reopen instead of persisting for the session.
-    calc::apply_minsize
+    # ...and the panes now hold their real contents, so the font is imposed and
+    # the geometry derived from it.  `calc::_apply_font` is a strict SUPERSET of
+    # the `apply_pane_minsize` + `apply_minsize` pair that used to sit here: it
+    # paints the four private fonts, re-fills the function browser, and then
+    # `calc::relayout` raises the two pane minimums item 4 filled to what their
+    # contents ask for (D3) and raises the toplevel minimum to what the selector
+    # grid and the pane tree need.
+    #
+    # Same POSITION and for the same two reasons the old pair was here: before
+    # the <Configure> bind below, so the `update idletasks` inside cannot
+    # re-enter `calc::save_layout` (D6, and `relayout` holds `calc::restoring`
+    # across its whole body as a second guard); and AFTER `calc::restore_layout`,
+    # so a geometry saved while the window was clipped is replayed first and then
+    # corrected upward, which is what makes a clipped state self-heal on reopen
+    # instead of persisting for the session.
+    #
+    # ⚠ AT THE SHIPPED FONT THIS IS A NO-OP ON THE FONTS THEMSELVES: with nothing
+    # chosen, `calc::_font` copies each base font's own spelling byte for byte.
+    # Only the geometry derivation runs, and it answers what the old pair did.
+    calc::_apply_font
 
     # D2/D5: three capture points — toplevel resize, end of a sash drag, and
     # close.  Together they cover every way the layout can change.
@@ -7856,6 +8743,48 @@ proc calc::build_buf {} {
     .calc.btb.undo configure -state disabled
     .calc.btb.redo configure -state disabled
 
+    # ------------------------------------------------------------------
+    # THE FONT SIZE BUTTON (the user's request, 2026-10-06).  `aA` is RDW's own
+    # glyph pair -- a Tk button has exactly ONE font, so the "second a bigger"
+    # the user described is the capital's cap height against the lowercase
+    # x-height, which is RDW's reasoning and transfers whole.
+    #
+    # ⚠ IT IS CREATED OUTSIDE THE id/label/phase/cmd TABLE ABOVE, deliberately,
+    # so it inherits neither the toolbar's enable/disable logic (every unbuilt
+    # entry there is wired to `calc::inert`) nor S19's label sweep over that
+    # table.  `rdw.tcl` keeps its own `aA` out of `rdw::_buttons` for the same
+    # reason.  This button WORKS; the others are placeholders.
+    #
+    # ⚠ PACKED `-side right`, so it cannot shift the shipped left-to-right
+    # button order the suite asserts.
+    #
+    # ⚠ THIS TOOLBAR IS IN `.calc.pw.buf`, WHOSE WIDTH FEEDS NOTHING.  The mode
+    # strip was the other candidate and was rejected by measurement: it is
+    # packed `-in .calc.pw.sel`, and `calc::apply_minsize` derives the published
+    # minimum WIDTH from `winfo reqwidth .calc.pw.sel` -- so a button there puts
+    # itself inside the one number `wm minsize` is computed from, with ~45 px of
+    # measured headroom and no measurement of whether the strip overtakes the
+    # selector grid at a larger font.
+    button .calc.btb.fsz -text {aA} -takefocus 0 -padx 3 -pady 0 \
+        -background [calc::color panel] \
+        -activebackground [calc::color header] \
+        -foreground [calc::color fieldfg] \
+        -activeforeground [calc::color fieldfg] \
+        -disabledforeground [calc::color disabledfg] \
+        -command {calc::font_step 1}
+    pack .calc.btb.fsz -side right -padx 1 -pady 1
+    # ⚠ THE `break` IS LOAD-BEARING: it cancels the Button class's own
+    # <Button-1>, so exactly ONE arm fires under Control, Control+NumLock and
+    # Control+CapsLock alike.  It costs nothing to pay back here -- MEASURED,
+    # `.calc` carries exactly one toplevel binding and it is <Configure>, so
+    # there is no toplevel <ButtonPress> for the break to starve and RDW's
+    # `_focus_click` repayment must NOT be copied.
+    bind .calc.btb.fsz <Control-Button-1> {calc::font_step -1 ; break}
+    # `balloon` re-binds <Enter>/<Leave> on every call, so it is armed ONCE.
+    # 300 ms rather than the tree's 1000 ms default, matching RDW: the user
+    # should meet the same gesture twice, promptness included.
+    catch {balloon .calc.btb.fsz [calc::_font_tip] 1 0 300}
+
     # R505, the buffer half: the edit history also grows when the user TYPES, so
     # the two buttons must notice an edit this file did not make.  <KeyRelease>
     # is late enough — the Text class binding for <KeyPress> has already done
@@ -8689,7 +9618,17 @@ proc calc::fn_cols {} { return 6 }
 # gap between two columns, and between two rows, in pixels
 proc calc::fn_pad {} { return 14 }
 
-proc calc::fn_font {} { return TkDefaultFont }
+# ⚠ THIS ONE LINE IS THE WHOLE OF THE FUNCTION BROWSER'S FONT SUPPORT.  Its
+# canvas items are created with `-font [calc::fn_font]`, and `calc::fn_fill`
+# already recomputes the row pitch, the per-column widths and the -scrollregion
+# from `font metrics`/`font measure` on every fill -- so a re-fill is all a font
+# change needs here.  `calc::_apply_font` does that re-fill.
+#
+# ⚠ DECLARED, NOT FIXED: `calc::fn_fill` resets `xview`/`yview`, so a font step
+# scrolls this pane back to the top.  Preserving the view would mean mapping a
+# pixel offset through a changed -scrollregion, which is more machinery than the
+# symptom is worth.
+proc calc::fn_font {} { return [calc::_font ui] }
 
 proc calc::build_fn {} {
     frame .calc.fn -background [calc::color panel]
@@ -9591,6 +10530,10 @@ proc calc::arg_dialog_build {name} {
     bind $w <Key-Escape> [list calc::arg_dialog_done $w cancel]
     bind $w <Key-Return> [list calc::arg_dialog_done $w ok]
     wm protocol $w WM_DELETE_WINDOW [list calc::arg_dialog_done $w cancel]
+    # This dialog is a SEPARATE TOPLEVEL and so is not reached by the walk over
+    # `.calc`, but it is part of the same window as far as the user is concerned.
+    # No `relayout` -- it owns no panedwindow and sizes itself to its contents.
+    catch {calc::_apply_font $w}
     return $w
 }
 
@@ -10198,12 +11141,15 @@ proc calc::build_panes {} {
     # pinned minimum that could not follow it.  The floors stay as phase 0 wrote
     # them so the frozen layout is still the starting point; only the raise is
     # new.
-    .calc.pw add .calc.pw.sel -minsize 120
-    .calc.pw add .calc.pw.buf -minsize 70
-    .calc.pw add .calc.pw.stk -minsize 80
-    .calc.pw add .calc.pw.bot -minsize 140
-    .calc.pw.bot add .calc.pw.bot.fn  -minsize 250
-    .calc.pw.bot add .calc.pw.bot.pad -minsize 140
+    # ⚠ THE SIX NUMBERS MOVED TO `calc::pane_floors` AND DID NOT CHANGE.  They
+    # are read from there rather than spelled here because
+    # `calc::apply_pane_minsize` must be able to recompute its raise from the
+    # ORIGINAL floor on every font step, and two copies of a number one of them
+    # raises is a copy that drifts the first time the user clicks.  The `add`
+    # order below is unchanged and is still the pane order.
+    foreach {pw pane dim floor} [calc::pane_floors] {
+        $pw add $pane -minsize $floor
+    }
 
     # Tk 8.4 has no -stretch.  Probe once, then apply through the two vars so
     # the calls below are identical on both.
@@ -10334,6 +11280,14 @@ proc calc::save_layout {} {
         }
     }
     catch {set geom [wm geometry .calc]}
+    # ⚠ STAMP THE FONT THE COORDINATES WERE MEASURED AT.  A saved sash is an
+    # ABSOLUTE pixel coordinate, which is a statement about one font size only;
+    # replaying it at another size lands a sash where the contents no longer
+    # fit.  `calc::restore_layout_body` checks the stamp and falls through to
+    # the derived plan when it does not match, which is strictly better
+    # information than a stale coordinate.
+    variable sashfont
+    catch {set sashfont [calc::font_size]}
 }
 
 proc calc::restore_layout {} {
@@ -10347,8 +11301,20 @@ proc calc::restore_layout {} {
 proc calc::restore_layout_body {} {
     variable sash
     variable geom
+    variable sashfont
 
     if {$geom ne {}} {catch {wm geometry .calc $geom}}
+    # ⚠ A SAVED SASH IS ONLY VALID AT THE FONT IT WAS MEASURED AT.  An unstamped
+    # entry (saved before this feature existed) is the shipped font, which is
+    # what `calc::font_size` answers with nothing chosen -- so the common case
+    # still replays and this changes nothing for a user who never clicks `aA`.
+    set stamp {}
+    if {[info exists sashfont]} { set stamp $sashfont }
+    if {$stamp eq {} && [array size sash]} { set stamp [calc::font_size] }
+    if {![calc::sash_valid $stamp [calc::font_size]]} {
+        # the derived plan is better information than a stale coordinate
+        array unset sash
+    }
     # D1: no sash coordinate is meaningful until the panes have been laid out.
     # idletasks only — `update` would pump X events mid-restore, and events can
     # run anything, including calc::close.

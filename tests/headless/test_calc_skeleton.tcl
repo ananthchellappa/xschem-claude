@@ -1482,8 +1482,20 @@ foreach {id label} $btb {
 check "S19 all ten toolbar buttons, with the spec's labels" $badbtb {}
 set btborder {}
 foreach {id label} $btb { lappend btborder .calc.btb.$id }
-check "S19 toolbar order is the spec's, left to right" \
+# ⚠ THE FONT BUTTON IS APPENDED HERE AND IS NOT IN `$btb`, DELIBERATELY, BECAUSE
+# $btb IS THE SPEC'S TEN AND `fsz` IS NOT ONE OF THEM.  It is packed `-side
+# right`, so `pack slaves` reports it LAST however many spec buttons there are,
+# and its absence from $btb is what keeps the label sweep above (and S19's
+# "all ten", and the disabled sweep below) statements about the spec's buttons
+# only -- `fsz` is the one button in this strip that actually works, so sweeping
+# it for inertness or for a spec label would be measuring the wrong thing.
+lappend btborder .calc.btb.fsz
+check "S19 toolbar order is the spec's ten left to right, with the font button last" \
     [pcall pack slaves .calc.btb] $btborder
+# non-vacuity: the two sets really are disjoint, so the append above cannot
+# quietly become a no-op if `fsz` is ever added to the spec table.
+check "S19 ...and the font button is not one of the spec's ten" \
+    [lsearch -exact $btb fsz] -1
 # W22: undo/redo are created DISABLED (R505 — their history is empty, and the
 # history they will cover spans the buffer AND the stack, which is phase 2/4)
 check "S19 undo starts disabled" [pcall .calc.btb.undo cget -state] disabled
@@ -3021,7 +3033,7 @@ check "S25 the BUILD bound every widget of all three regions, holder included" \
           stk [expr {[pcall s25_bound .calc.pw.stk] + [pcall s25_bound .calc.stk]}] \
           buf [expr {[pcall s25_bound .calc.pw.buf] + [pcall s25_bound .calc.buf] \
                      + [pcall s25_bound .calc.btb]}]] \
-    {fn 5 stk 8 buf 13}
+    {fn 5 stk 8 buf 14}
 check "S25 ...and the holder really is the pane title strip, not an ancestor" \
     [list [pcall winfo class .calc.pw.buf] [pcall winfo children .calc.pw.buf] \
           [pcall winfo parent .calc.buf]] \
@@ -3254,7 +3266,7 @@ set bind_before [pcall bind .calc.stk.push <Button-4>]
 set wcounts [pcall calc::wheel_bind_all]
 check "S25 the walk reports what it bound, and re-running it changes nothing" \
     [list $wcounts [pcall s25_bound .calc.fn] [pcall s25_bound .calc.stk]] \
-    {{fn 5 stk 8 buf 13} 4 7}
+    {{fn 5 stk 8 buf 14} 4 7}
 check "S25 ...the binding SCRIPT is byte-identical after the re-walk (bind replaces, never appends)" \
     [list $bind_before [pcall bind .calc.stk.push <Button-4>]] \
     [list $bind_lit $bind_lit]
@@ -5339,6 +5351,286 @@ catch {destroy .calccbprobe}
 ## intended — an `hcases` entry for this suite would be scored a HARNESS failure,
 ## loudly, which is the correct answer for a case that measures nothing. It is a
 ## `dcases` entry and nothing else.
+# =============================================================================
+# BAND S29 -- THE FONT SIZE CONTROL, WHERE THE FONTS ARE REAL.
+#
+# The user asked for the control on 2026-10-06, after the same one landed in the
+# Results Display Window.  Band CF of tests/headless/test_calc_measure.tcl owns
+# every DECISION (the band, the admission test, the role assignment, the sash
+# arithmetic) on the counted arm, where there is no `font` command at all.  What
+# is left -- and it is the half that matters to the user -- can only be measured
+# where fonts exist, which is here.
+#
+# WARN THIS BAND IS LAST IN THE FILE ON PURPOSE.  This suite has no `group` and
+# no abandoned-band guard, so a raise anywhere reaches the file-level catch and
+# deletes every row BELOW it from the verdict while reporting one failure.  At
+# the foot of the file there is nothing below it to lose.  Every Tk call here
+# goes through `pcall`, and nothing reaches `expr` without an integer test --
+# an `ERR:` string in an `expr` is how a band takes out its own successors.
+#
+# WARN AND IT RESTORES THE SHIPPED STATE AT ITS END (row S29q).  Every row above
+# this band measures a window at the stock font; a leaked size would redden S4
+# or the sentence-fitting rows on the NEXT run instead of here, which is the
+# shape that sends a reader to debug the wrong thing.
+# =============================================================================
+proc s29_int {v} { return [expr {[string is integer -strict $v] ? 1 : 0}] }
+# every pane's -minsize, as a flat list, read through pcall so a missing pane
+# cannot raise out of the band
+proc s29_mins {} {
+    set out {}
+    foreach {pw pane dim floor} [pcall calc::pane_floors] {
+        lappend out [pcall $pw panecget $pane -minsize]
+    }
+    return $out
+}
+# every sash coordinate of both panedwindows
+proc s29_sashes {} {
+    set out {}
+    foreach ent [pcall calc::pw_list] {
+        set pw [lindex $ent 0]
+        set n [lindex $ent 2]
+        for {set i 0} {$i < $n} {incr i} { lappend out [pcall $pw sash coord $i] }
+    }
+    return $out
+}
+# the WHOLE spelling of a stock font, not just its size
+proc s29_spell {} {
+    set out {}
+    foreach {role pair} [pcall calc::font_roles] {
+        lappend out [lindex $pair 1] [pcall font actual [lindex $pair 1]]
+    }
+    return $out
+}
+
+# ⚠ THE FILE CLOSES THE WINDOW AT THE END OF BAND S28, so this band opens it
+# again before measuring anything.  Without this the snapshots below are all
+# error sentinels, every comparison compares two failures, and the band passes
+# while measuring nothing -- which is exactly what happened when it was first
+# written, and is why the fixture row under S29i exists.
+check "S29 fixture: the band reopened the window, because the band above this one closes it and a snapshot taken with no window is a list of error sentinels that compares equal to itself" \
+    [pcall calc::open] .calc
+pcall update idletasks
+
+set s29_base [pcall calc::font_size]
+set s29_geom [pcall wm geometry .calc]
+set s29_min0 [pcall wm minsize .calc]
+set s29_pmin0 [s29_mins]
+set s29_sash0 [s29_sashes]
+set s29_spell0 [s29_spell]
+set s29_room0 [pcall calc::status_room]
+
+# --- S29i: THE WHOLE DIFF IS A NO-OP AT THE SHIPPED FONT --------------------
+# Written first, because it is the property that makes everything else safe at
+# the font the gate itself runs on.
+pcall calc::relayout
+pcall update idletasks
+check "S29i the geometry re-derivation is a NO-OP at the shipped font, byte for byte: geometry, published minimum, every pane minimum and every sash coordinate identical to a fresh open -- this is the property that makes the whole font control safe at the font this gate runs on, so it is the first row of the band" \
+    [list [pcall wm geometry .calc] [pcall wm minsize .calc] [s29_mins] [s29_sashes]] \
+    [list $s29_geom $s29_min0 $s29_pmin0 $s29_sash0]
+check "S29i fixture: the snapshot it compares against is real rather than a list of error sentinels, so the row above cannot pass by comparing two failures" \
+    [list [s29_int [lindex $s29_min0 0]] [s29_int [lindex $s29_min0 1]] \
+          [llength $s29_pmin0] [llength $s29_sash0]] \
+    {1 1 6 4}
+
+# --- S29a: the four private fonts are real, distinct, and not stock ---------
+set s29_names [pcall font names]
+set s29_miss {} ; set s29_privs {}
+foreach {role pair} [pcall calc::font_roles] {
+    set p [lindex $pair 0]
+    lappend s29_privs $p
+    if {[lsearch -exact $s29_names $p] < 0} { lappend s29_miss $p }
+}
+check "S29a all four private fonts exist as real members of the font name list and are pairwise distinct, so each role can be moved without moving another -- derived over the role table rather than listed here" \
+    [list $s29_miss [llength [lsort -unique $s29_privs]]] {{} 4}
+
+# --- S29b: THE SHARED FONTS NEVER MOVE -------------------------------------
+# The fence the whole design exists for.  Compared over the WHOLE font actual
+# description -- family, size, weight, slant, underline, overstrike -- because a
+# size-only comparison would miss a family or weight change.
+set s29_outside .s29probe
+catch {destroy $s29_outside}
+pcall label $s29_outside -text {probe}
+set s29_outf0 [pcall $s29_outside cget -font]
+set s29_outh0 [pcall winfo reqheight $s29_outside]
+set s29_fn0 [lsort [pcall font names]]
+pcall calc::font_step 1
+pcall update idletasks
+check "S29b NOT ONE SHARED Tk FONT MOVED across a real font step, compared over the whole font description rather than its size alone, so a family or weight change could not slip past -- this is the fence the entire private-font design exists for and the one a single-line implementation would fail" \
+    [s29_spell] $s29_spell0
+check "S29b and the collateral proof a window-local control has to earn: a label created OUTSIDE this window keeps its own font and its own requested height across the step, which is what separates a private font from a global one" \
+    [list [pcall $s29_outside cget -font] [pcall winfo reqheight $s29_outside]] \
+    [list $s29_outf0 $s29_outh0]
+# ⚠ ASKED AS A DELTA, NOT AS AN ABSOLUTE.  Other bands in this file build other
+# windows, so an Ase* font may already exist in the process by the time this one
+# runs -- measured, it does.  The claim this band can honestly make is that the
+# STEP created no font at all, which is also the stronger one.
+check "S29b and the step itself created no new named font whatsoever, asked as a delta over the name list rather than as an absolute absence -- other bands in this file build other windows, so an ASE font may already exist in the process, and what this band can honestly claim is that stepping the size added nothing" \
+    [expr {[lsort [pcall font names]] eq $s29_fn0 ? 1 : 0}] 1
+
+# --- S29c: A -font CENSUS OF THE WHOLE WINDOW ------------------------------
+# The tree has no such census today: test_calc_widgets' option walk filters on
+# colour options, so -font is excluded from it.
+# ⚠ IT MUST REFUSE TO WALK AN ERROR STRING.  `pcall` answers `ERR:<message>` on
+# failure, and a `foreach` over that iterates the WORDS of the message and
+# recurses on each -- which does not terminate.  Measured: the first version of
+# this proc died with `too many nested evaluations (infinite loop?)` and took
+# the rest of the file with it.
+proc s29_census {w acc} {
+    upvar 1 $acc a
+    if {[pcall winfo exists $w] ne {1}} { return }
+    set f [pcall $w cget -font]
+    if {![string match {ERR:*} $f] && $f ne {}} {
+        dict incr a TOTAL
+        if {[string match {Tk*Font} $f]} { dict lappend a OFFENDERS $w=$f }
+    }
+    set kids [pcall winfo children $w]
+    if {[string match {ERR:*} $kids]} { return }
+    foreach c $kids { s29_census $c a }
+}
+set s29_acc [dict create TOTAL 0 OFFENDERS {}]
+s29_census .calc s29_acc
+check "S29c a census of EVERY widget in the window that carries a font option finds not one still resolving to a shared Tk font, with the population size riding so an empty offender list cannot come from an empty walk -- the tree has no such census today, because the existing option walk filters on colour options and excludes the font one" \
+    [list [expr {[dict get $s29_acc TOTAL] > 40}] [dict get $s29_acc OFFENDERS]] {1 {}}
+
+# --- S29g: THE SWEEP. The row the feature lives or dies on -----------------
+# Over EVERY size in the band, derived from the accessor and never listed.
+foreach {s29_lo s29_hi} [pcall calc::font_limits] break
+set s29_clip {} ; set s29_nsizes 0 ; set s29_grew 0
+set s29_minw0 [lindex $s29_min0 0]
+for {set s $s29_lo} {$s <= $s29_hi} {incr s} {
+    if {[pcall calc::set_font_size $s] ne {1}} { lappend s29_clip "size$s=REFUSED" ; continue }
+    incr s29_nsizes
+    pcall update idletasks
+    # no control narrower or shorter than it asked to be
+    foreach w {.calc.pad .calc.sel .calc.btb .calc.mode .calc.res .calc.btb.fsz} {
+        if {[pcall winfo exists $w] ne {1}} continue
+        set rw [pcall winfo reqwidth $w] ; set gw [pcall winfo width $w]
+        if {[s29_int $rw] && [s29_int $gw] && $gw < $rw} { lappend s29_clip "$s:$w w$gw<$rw" }
+    }
+    # no pane squeezed below what its contents need
+    foreach {pw pane dim floor} [pcall calc::pane_floors] {
+        if {[pcall winfo exists $pane] ne {1}} continue
+        set ax [expr {$dim eq {reqheight} ? {h} : {w}}]
+        set need [pcall calc::pane_need $pane $ax]
+        set got [expr {$ax eq {h} ? [pcall winfo height $pane] : [pcall winfo width $pane]}]
+        if {[s29_int $need] && [s29_int $got] && $got < $need} { lappend s29_clip "$s:$pane $got<$need" }
+    }
+    # the published minimum must cover what the contents need
+    set mn [pcall wm minsize .calc]
+    set nd [pcall calc::win_need]
+    if {[s29_int [lindex $mn 1]] && [s29_int [lindex $nd 1]] && [lindex $mn 1] < [lindex $nd 1]} {
+        lappend s29_clip "$s:minsize [lindex $mn 1]<[lindex $nd 1]"
+    }
+    if {[s29_int [lindex $mn 1]] && [lindex $mn 1] > [lindex $s29_min0 1]} { set s29_grew 1 }
+}
+check "S29g ACROSS EVERY SIZE IN THE BAND, derived from the accessor and never listed here, no control is narrower than it asked to be, no pane is squeezed below what its contents need, and the published minimum always covers the pane tree -- this is the row the control lives or dies on, and if a size ever fails it the band narrows until it passes rather than this row being weakened" \
+    [list $s29_nsizes $s29_clip] [list [expr {$s29_hi - $s29_lo + 1}] {}]
+check "S29h and the sweep is NOT VACUOUS: at the top of the band the published minimum really grew beyond the shipped one, so the row above swept a window that changed rather than one that ignored every step" \
+    $s29_grew 1
+
+# --- S29j: NO DRIFT, BOTH DIRECTIONS --------------------------------------
+# One step at a time must land where one jump lands, and a round trip must
+# return exactly -- the two shapes a readback-derived placement gets wrong.
+pcall calc::set_font_size $s29_base
+pcall update idletasks
+for {set s [expr {$s29_base + 1}]} {$s <= $s29_hi} {incr s} { pcall calc::set_font_size $s }
+pcall update idletasks
+set s29_stepwise [list [pcall wm geometry .calc] [pcall wm minsize .calc] [s29_mins] [s29_sashes]]
+pcall calc::set_font_size $s29_base
+pcall update idletasks
+pcall calc::set_font_size $s29_hi
+pcall update idletasks
+check "S29j stepping one unit at a time from the shipped size to the top of the band lands on byte-identical sashes, pane minimums and geometry to a single jump to the same size -- the drift shape a placement derived from a readback has, and the shape a sash moved by a relative drag instead of an absolute place would fail" \
+    [list [pcall wm geometry .calc] [pcall wm minsize .calc] [s29_mins] [s29_sashes]] \
+    $s29_stepwise
+pcall calc::set_font_size $s29_base
+pcall update idletasks
+# ⚠ THE CLAIM IS ABOUT THE MINIMUMS, NOT ABOUT THE WINDOW'S OWN SIZE, and the
+# difference is deliberate.  Stepping down lowers every minimum so the user CAN
+# shrink the window again, but it does not shrink the window for them: a control
+# that resized a window the user is looking at, in a direction they did not ask
+# for, is worse than leaving the extra room.  So the sash coordinates stay where
+# the larger font put them -- they are proportional to a window that is still
+# large -- and what must come back exactly is every constraint.
+check "S29j and a round trip to the top of the band and back lowers every minimum to exactly where it started, all six pane minimums and the published minimum -- this is the row that fences the one-way ratchet, where a minimum raised at a larger font stays raised and leaves the window holding a floor from a size the user has left, unable to shrink and unable to forget" \
+    [list [pcall wm minsize .calc] [s29_mins]] \
+    [list $s29_min0 $s29_pmin0]
+check "S29j and the window itself is NOT shrunk back, which is the deliberate other half: lowering the minimum lets the user shrink it, while shrinking it for them would resize a window they are looking at in a direction they never asked for" \
+    [expr {[lindex [pcall wm minsize .calc] 1] <= [lindex $s29_min0 1] ? 1 : 0}] 1
+
+# --- S29k: THE TWO CLICK ARMS, pressed rather than read ------------------
+# CLAUDE.md records two fences found reading weaker than they looked because
+# they asserted a handler STRING instead of pressing the control.
+pcall calc::set_font_size 12
+set s29_m0 [pcall calc::font_size]
+# ⚠⚠ THE WHOLE GESTURE, OR IT DOES NOT FIRE.  Measured, in three steps: a Tk
+# button runs its command on RELEASE and not on press, so <Button-1> alone left
+# the model at 12; and press-plus-release STILL left it at 12 without a
+# preceding <Enter> and explicit coordinates, because the Button class bindings
+# track which window the pointer entered and refuse a release that did not
+# begin on the widget.  So this is Enter, press, release -- the real gesture --
+# and a <Leave> afterwards, which also cancels the tooltip timer the Enter
+# armed so the band leaves nothing pending behind it.
+pcall event generate .calc.btb.fsz <Enter> -x 5 -y 5
+pcall event generate .calc.btb.fsz <Button-1> -x 5 -y 5
+pcall event generate .calc.btb.fsz <ButtonRelease-1> -x 5 -y 5
+pcall update
+set s29_m1 [pcall calc::font_size]
+pcall event generate .calc.btb.fsz <Control-Button-1> -x 5 -y 5
+pcall update
+set s29_m2 [pcall calc::font_size]
+pcall event generate .calc.btb.fsz <Leave>
+pcall update
+check "S29k the two gestures are PRESSED rather than read off a command string: a plain click raises the model by exactly one and a Control click lowers it by exactly one, so exactly one arm fires per gesture and the Control arm is not also running the plain one" \
+    [list $s29_m0 $s29_m1 $s29_m2] {12 13 12}
+
+# --- S29l: the limits speak, and an accepted step speaks too ------------
+pcall calc::set_font_size $s29_lo
+pcall calc::status {}
+set s29_r1 [pcall calc::font_step -1]
+set s29_s1 [pcall nsval ::calc::statusmsg]
+pcall calc::set_font_size $s29_hi
+pcall calc::status {}
+set s29_r2 [pcall calc::font_step 1]
+set s29_s2 [pcall nsval ::calc::statusmsg]
+check "S29l a step past either end is refused and SAYS SO, with both sentences built from the band accessor rather than from a literal, so moving the band moves the words with it" \
+    [list $s29_r1 $s29_s1 $s29_r2 $s29_s2] \
+    [list 0 "Font size: already the smallest ($s29_lo)." 0 "Font size: already the largest ($s29_hi)."]
+pcall calc::set_font_size 12
+pcall calc::status {}
+pcall calc::font_step 1
+check "S29l and an ACCEPTED step speaks as well, because nothing else in this window reports the current size and the one user who cannot read the glyphs is the one this control is for -- silence here would be the bug the window-wide rule names" \
+    [pcall nsval ::calc::statusmsg] {Font size: 13.}
+
+# --- S29m: the tooltip is the tree's own, armed once -------------------
+set s29_ent [pcall bind .calc.btb.fsz <Enter>]
+check "S29m the hover tooltip is the tree's own shared mechanism rather than a second one invented here, asserted by the binding naming the shared painter, and the button really carries an Enter binding to arm it" \
+    [list [expr {$s29_ent ne {}}] [string match {*balloon*} $s29_ent]] {1 1}
+
+# --- S29o: the function browser follows, scrollregion and items together --
+set s29_fnf [pcall calc::fn_font]
+check "S29o the browser font accessor answers a font NAME and not a whole font description, which is the shape a caller passing it to a canvas item needs -- a twelve element description would be accepted by the canvas and silently ignored" \
+    [list [llength $s29_fnf] [expr {$s29_fnf ne {}}]] {1 1}
+
+# --- S29q: THE BAND RESTORES THE SHIPPED STATE ------------------------
+# Last row.  Non-restoration is itself a failure: a leaked size reddens a row in
+# another band on the next run instead of here.
+pcall calc::set_font_size $s29_base
+# ⚠ THE GEOMETRY GOES BACK EXPLICITLY.  Lowering the font lowers the minimums
+# but deliberately does not shrink the window (see S29j), and `calc::status_room`
+# is measured in PIXELS off the live status entry -- so a band that left the
+# window wide would hand the next band a room of 1089 px where the rest of the
+# file measures 609, and the failure would surface there instead of here.
+pcall wm geometry .calc $s29_geom
+pcall update idletasks
+catch {destroy $s29_outside}
+check "S29q the band restored every piece of shipped state it moved -- the model, all six pane minimums, the published minimum, the status room and all four shared font spellings -- because a size leaked out of this band reddens a row in another band on the next run instead of reddening here, which sends a reader to debug the wrong subject" \
+    [list [pcall calc::font_size] [s29_mins] [pcall wm minsize .calc] \
+          [pcall calc::status_room] [s29_spell]] \
+    [list $s29_base $s29_pmin0 $s29_min0 $s29_room0 $s29_spell0]
+# ...and the window goes back to the state the band found it in: closed.
+pcall calc::close
+
 if {$fail == 0} {
     puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"

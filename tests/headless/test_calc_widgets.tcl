@@ -487,10 +487,13 @@ group CW2 {
     check "W08-W14 the mode strip's slaves, in order" [pslaves .calc.mode] \
         [lrange {.calc.mode.off .calc.mode.family .calc.mode.wave .calc.mode.clip
                  .calc.mode.plot .calc.mode.eval .calc.mode.dest .calc.mode.table} 0 end]
+    # `.calc.btb.fsz` is the font-size button and is LAST because it is packed
+    # `-side right`, which is also why adding it could not disturb the spec's
+    # ten: a right-packed slave cannot land between two left-packed ones.
     check "W16-W22 the toolbar's slaves, in order" [pslaves .calc.btb] \
         [lrange {.calc.btb.enter .calc.btb.pop .calc.btb.swap .calc.btb.roll
                  .calc.btb.clrbuf .calc.btb.clrstk .calc.btb.mplus .calc.btb.me
-                 .calc.btb.undo .calc.btb.redo} 0 end]
+                 .calc.btb.undo .calc.btb.redo .calc.btb.fsz} 0 end]
     check "W32-W34 the status bar's slaves" [pslaves .calc.status] \
         {.calc.status.hist .calc.status.msg}
     # gridded containers: `grid slaves` answers in stacking order, which is not
@@ -624,9 +627,18 @@ group CW3 {
         if {[wcg .calc.btb.$id -state] ne {normal}} { lappend en $id }
     }
     check "W17-W21 every other toolbar button is enabled" $en {}
-    check "W16 the toolbar holds exactly the ten spec buttons" \
+    # ⚠ ELEVEN WIDGETS, TEN OF THEM THE SPEC'S.  `fsz` is the font-size button
+    # and is NOT a spec control: the spec's ten are placeholders or buffer/stack
+    # operations, and this one is a view setting that belongs to the window
+    # rather than to the calculator.  It is named here rather than the row being
+    # loosened to "at least ten", so a twelfth arrival still reddens.
+    check "W16 the toolbar holds exactly the spec's ten buttons plus the font button" \
         [lsort [lmap w [wkids .calc.btb] {winfo name $w}]] \
-        {clrbuf clrstk enter me mplus pop redo roll swap undo}
+        {clrbuf clrstk enter fsz me mplus pop redo roll swap undo}
+    check "W16 ...and the font button is a working control, not another inert placeholder" \
+        [list [wcg .calc.btb.fsz -state] [wcg .calc.btb.fsz -text] \
+              [wcg .calc.btb.fsz -command]] \
+        [list normal {aA} {calc::font_step 1}]
 
     # W23-W25 — the Stack
     check "W23 caption" [wcg .calc.stk -text] {Stack}
@@ -1535,8 +1547,18 @@ group CW13 {
                  calc::dest_changed calc::res_toggle
                  calc::eval_click calc::plot_click calc::browse_inert}
     set live2 {calc::pad_click calc::clr_buf calc::buf_undo calc::buf_redo}
+    # ⚠ A THIRD LIST, AND IT IS NOT A HOLE WIDENED IN EITHER OF THE OTHER TWO.
+    # `calc::font_step` is the `aA` button (the user's 2026-10-06 request).  It
+    # is not a phase-1 stub, so it cannot go in $allowed without the word "stub"
+    # becoming false; and it is not one of the fifteen phase-2 controls, so it
+    # cannot go in $live2 without the "exactly fifteen" row below losing its
+    # meaning.  It is a VIEW setting -- it belongs to the window, not to the
+    # calculator -- which is also why it is deliberately NOT excluded from the
+    # buffer/Stack touch sweep in part (b): a font change must touch neither,
+    # and that is a stronger claim than an exclusion would be.
+    set live3 {calc::font_step}
     set rogue {} ; set mute {}
-    set nlive 0
+    set nlive 0 ; set nview 0
     foreach w $ctrls {
         set cmd [wcg $w -command]
         if {$cmd eq {}} {
@@ -1544,6 +1566,7 @@ group CW13 {
             continue
         }
         if {[lindex $cmd 0] in $live2} { incr nlive ; continue }
+        if {[lindex $cmd 0] in $live3} { incr nview ; continue }
         if {[lindex $cmd 0] ni $allowed} { lappend rogue "$w -> [lindex $cmd 0]" }
     }
     # ⚠ every one of these rides on the CONTROL COUNT.  An offender list
@@ -1555,6 +1578,9 @@ group CW13 {
     # Redo.  Asserted POSITIVELY, because the row above would stay green if a
     # later hand quietly made a fifteenth control live by adding it to $live2.
     check "CW13 exactly fifteen controls are wired to a landed phase-2 proc" $nlive 15
+    # ...and exactly ONE view control, for the same reason the row above is
+    # positive: a second one arriving must be a decision, not a silent pass.
+    check "CW13 exactly one control is a view setting (the aA font button)" $nview 1
     check "CW13 no ENABLED control is silent (R506)" \
         [list [expr {[llength $ctrls] >= 40}] $mute] {1 {}}
 
@@ -1573,6 +1599,11 @@ group CW13 {
     check "CW13 fixture: the pre-press snapshot is real text" \
         [pcall .calc.buf get 1.0 end-1c] {SENTINEL}
     set stk0 [pcall .calc.stk.list size]
+    # ⚠ THE SWEEP PRESSES `aA`, WHICH REALLY CHANGES THE FONT AND THEREFORE THE
+    # WINDOW'S GEOMETRY.  Captured here and put back after the sweep, exactly as
+    # the Results Dir toggle below is -- otherwise every later row in this file
+    # measures a window one size larger than the rest of the suite assumes.
+    set fsz0 [pcall calc::font_size]
     set touched {} ; set silent {} ; set npressed 0 ; set nlivepressed 0
     foreach w $ctrls {
         if {[wcg $w -state] eq {disabled}} continue
@@ -1601,6 +1632,12 @@ group CW13 {
     check "CW13 the sweep really pressed the enabled phase-2 controls" $nlivepressed 13
     check "CW13 every one of them wrote a status line" \
         [list [expr {$npressed >= 40}] $silent] {1 {}}
+    # the aA button was pressed once by the sweep, so put the font back
+    check "CW13 fixture: pressing aA really moved the font (or the restore below is vacuous)" \
+        [expr {[pcall calc::font_size] != $fsz0}] 1
+    pcall calc::set_font_size $fsz0
+    check "CW13 the sweep left the font size where it found it" \
+        [pcall calc::font_size] $fsz0
     # the Results Dir toggle was pressed once by the sweep, so put it back
     if {[nsv rescollapsed] eq {1}} { pcall calc::res_toggle }
     check "CW13 the sweep left the Results Dir row expanded again" \
