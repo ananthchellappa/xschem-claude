@@ -4718,7 +4718,17 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   answer costs one line in `calc::pick_click`'s success arm plus two named rows in
   `tests/headless/test_calc_pick.tcl`. Filed with its own `owed.sh add rule`.
 
-**The next free number is 1657.**
+- **1657** — ASE-L matches a run's result plots to its analysis rows **by position**, comparing a
+  sidecar in plot-written order against a walk of the registry in row order — while **both sides
+  already carry the row index** and the matcher discards it. Found in the user's own
+  `tb_bandgap` log, where rows 0 (`op`) and 3 (`tran`) reported each other's plot titles: one
+  crossed pairing, reported twice. ⚠ **Filed rather than fixed on purpose**: keying the match on
+  the row index is two lines and looks obviously right, which is the shape this tree has been
+  burned by twice, and two things are unmeasured first — whether the sidecar is *supposed* to be
+  in row order (in which case the real defect is in its writer), and what the user actually lost
+  downstream, which is what decides the urgency.
+
+**The next free number is 1658.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
