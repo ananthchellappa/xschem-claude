@@ -15696,6 +15696,189 @@ group CF {
         [expr {[string length $code] > 1000 && [string length $code] < [string length $src]}] 1
 }
 
+# ===========================================================================
+# AD — THE ARGUMENT DIALOG'S REFUSAL, AND THE TWO RAISE HELPERS
+# ===========================================================================
+# ⚠⚠ THIS BAND EXISTS BECAUSE THE USER PRESSED OK AND NOTHING HAPPENED, on
+# 2026-10-07: *"When I enter values and press OK, nothing happens."*  They were
+# exactly right, and the cause was not the verb.  `calc::arg_dialog_done`'s
+# refusal arm was `return [calc::status $bad]`, which writes to
+# `.calc.status.msg` -- a widget on `.calc`, while `.calc.arg` holds a LOCAL
+# `grab set` and `focus -force`.  So the refusal was delivered behind a modal the
+# user could not see past, for ALL THIRTEEN verbs that open a dialog and not only
+# the one they happened to be using.
+#
+# ⚠ AND IT IS FENCED HERE, ON THE COUNTED ARM, BECAUSE NOTHING ELSE CAN SEE IT.
+# `calc::arg_dialog_done`, `calc::fn_measure` and `calc::buf_set_number` all
+# return early or are unreachable under `--nogui`, and every suite that drives the
+# real dialog is a `dcases` entry -- `test_calc_skeleton` prints `ALL PASS (0
+# checks)` headless, and `test_calc_widgets`' own band CW14 declares in its hole
+# WH2 that it drives no modal at all.  Measured: the five display suites were
+# ALL GREEN AND UNMOVED after this fix landed, which is precisely why the decision
+# was factored into pure procs.  Stage J1's ruling, applied in advance.
+group AD {
+    # the thirteen specs, DERIVED, so a fourteenth verb joins this band by existing
+    set adverbs {}
+    foreach row [pcall calc::catalogue] {
+        if {[catch {lindex $row 0} nm]} continue
+        if {[llength [pcall calc::fn_argspec $nm]]} { lappend adverbs $nm }
+    }
+    set adverbs [lsort $adverbs]
+    check "AD the population is DERIVED from the catalogue and `calc::fn_argspec` rather than listed here, and it is the whole set of verbs this defect affected -- a fourteenth verb with a dialog joins this band by existing" \
+        [list [mt_atleast [llength $adverbs] 13] [mt_sl_in $adverbs settlingTime] \
+              [mt_sl_in $adverbs cross] [mt_sl_in $adverbs riseTime] \
+              [mt_sl_in $adverbs __ad_no_such_verb__]] \
+        {atleast13 has has has missing:__ad_no_such_verb__}
+    # --- the validator is ONE proc and it answers with ALL of them -------------
+    array unset ::calc::argval
+    array set ::calc::argval {final {} tol {} start {} dataset 0}
+    set adspec [pcall calc::fn_argspec settlingTime]
+    set adall  [pcall calc::arg_trouble $adspec]
+    check "AD `calc::arg_trouble` reports EVERY malformed field and not only the first: three blank required fields answer three sentences, each naming its own field, in spec order.  Before this, discovering them cost three OK presses -- each one invisible" \
+        [list [llength $adall] \
+              [mt_sl_in $adall {Final value must be a finite number ().}] \
+              [mt_sl_in $adall {Tolerance must be a finite number ().}] \
+              [mt_sl_in $adall {Start time must be a finite number ().}]] \
+        {3 has has has}
+    check "AD ...and `calc::arg_bad` keeps its OWN contract as the first of them, so there is ONE validator and not two that can disagree -- its body is the one-line delegation, which is the only arrangement under which that cannot drift" \
+        [list [pcall calc::arg_bad $adspec] \
+              [mt_boolword [regexp {arg_trouble} [mt_decomment [pcall info body ::calc::arg_bad]]] delegates OWNWALK]] \
+        [list {Final value must be a finite number ().} delegates]
+    check "AD `calc::arg_say` composes what the user is told, and is pure: one field reads as itself, several are joined, and an empty list is the empty string rather than a sentence about nothing" \
+        [list [pcall calc::arg_say {}] [pcall calc::arg_say {one}] \
+              [pcall calc::arg_say {one two}]] \
+        [list {} {one} {one two}]
+    # --- an OPTIONAL field left blank is FILLED, not refused -------------------
+    # ⚠ MEASURED BEFORE THE CHANGE: clearing `riseTime`'s `pctlo` -- declared
+    # optional with a default of 10 -- answered `Low threshold % must be a finite
+    # number ().`, so NO `real` field in the whole table could be left blank and
+    # the word `optional` in the spec meant nothing.
+    set adrt [pcall calc::fn_argspec riseTime]
+    set adopt {}
+    foreach row $adrt {
+        if {[lindex $row 3] eq {0} && [string trim [lindex $row 4]] ne {}} {
+            lappend adopt [lindex $row 0]
+        }
+    }
+    # ⚠ THE REQUIRED FIELDS MUST BE GIVEN REAL VALUES OR THIS ROW MEASURES THEM
+    # AND NOT THE OPTIONAL ONES.  `riseTime` carries required `Low level` and
+    # `High level` whose spec default is EMPTY (that is what `required` means in
+    # this table), so seeding every field from its default and then blanking the
+    # optional ones leaves the required pair blank too -- and the row then reads
+    # their correct refusal as its own failure.  That is what the first version of
+    # it did.
+    array unset ::calc::argval
+    foreach row $adrt {
+        set k [lindex $row 0]
+        if {[lindex $row 2] eq {rpn}} { set ::calc::argval($k) {v(lp)} ; continue }
+        if {[lindex $row 3] eq {0}} { set ::calc::argval($k) {} ; continue }
+        set ::calc::argval($k) [expr {[lindex $row 2] eq {int} ? 0 : 1}]
+    }
+    set adblank [pcall calc::arg_trouble $adrt]
+    set adfilled {}
+    foreach k $adopt { lappend adfilled $k [set ::calc::argval($k)] }
+    check "AD an OPTIONAL field left blank is FILLED WITH ITS DEFAULT and accepted, rather than refused -- and the fill is WRITTEN BACK into the dialog's own transport, so the user SEES the number that will be used instead of being told a value they cannot see is fine" \
+        [list $adblank [mt_atleast [llength $adopt] 2] $adfilled] \
+        [list {} atleast2 [lrange [list pctlo 10 pcthi 90 nth 1 dataset 0] 0 [expr {2 * [llength $adopt] - 1}]]]
+    check "AD ...and non-vacuity: at least one spec in the derived population really HAS a blank-able optional field with a default, or the row above is measuring an empty set -- and a REQUIRED field left blank is still refused, which is the half that must not change" \
+        [list [mt_atleast [llength $adopt] 2] \
+              [pcall calc::arg_field_bad {Final value} real {}]] \
+        [list atleast2 {Final value must be a finite number ().}]
+    # --- the per-field judgement is PURE --------------------------------------
+    check "AD `calc::arg_field_bad` is PURE -- it is handed a label, a kind and a value and reads neither `argval` nor the spec -- which is what makes every refusal above a counted-arm claim and only the DELIVERY display-only" \
+        [list [pcall info args ::calc::arg_field_bad] \
+              [mt_boolword [regexp {argval} [mt_decomment [pcall info body ::calc::arg_field_bad]]] READSARGVAL pure] \
+              [pcall calc::arg_field_bad {Dataset} int x] \
+              [pcall calc::arg_field_bad {Edge} {enum rising falling} z] \
+              [pcall calc::arg_field_bad {Expression} rpn {}] \
+              [pcall calc::arg_field_bad {Final value} real -1] \
+              [pcall calc::arg_field_bad {Final value} real 1m]] \
+        [list {label kind v} pure {Dataset must be a whole number (x).} \
+              {Edge must be one of rising, falling.} {Expression must not be empty.} \
+              {} {Final value must be a finite number (1m).}]
+    # ⚠ `1m` IS REFUSED AND THAT IS DELIBERATE AT THIS STAGE.  ASE-L's own forms
+    # accept SI suffixes through `ase::si_parse`, so the tree disagrees with
+    # itself -- but that proc needs a PER-SIMULATOR suffix dict (with no dict it
+    # answers a bare `ok` for `abc` and for `5%` alike, measured) and it carries
+    # its own `M`-means-milli warning arm.  Accepting suffixes here would couple
+    # the Calculator to the registry, which is a decision and not a tidy-up, so it
+    # is DECLARED rather than smuggled in beside a defect fix.
+    check "AD every sentence this band's validator can produce is one of `calc::arg_msg`'s own arms, so the wording is swept by band MT20/B with no edit here and this band asserts no words of its own" \
+        [list [mt_sl_in [mt_sl_builders] arg_msg] \
+              [mt_sl_in [mt_sl_arms arg_msg] real] [mt_sl_in [mt_sl_arms arg_msg] int] \
+              [mt_sl_in [mt_sl_arms arg_msg] enum] [mt_sl_in [mt_sl_arms arg_msg] rpn]] \
+        {has has has has has}
+    # --- the dialog's own slot, and the no-window arm --------------------------
+    # ⚠⚠ THE FIRST VERSION OF THIS ROW DID NOT DISCRIMINATE, AND A BUILT SABOTAGE
+    # IS WHAT FOUND THAT.  It scanned for `argmsg` -- which the proc's own
+    # `variable argmsg` declaration satisfies -- so reverting the refusal arm to
+    # the invisible `return [calc::status $bad]` left the row GREEN.  A fence keyed
+    # to a name that a declaration provides is not keyed to the behaviour at all.
+    # It now requires the WRITE (`set argmsg`), the ALL-FIELDS validator (not
+    # `arg_bad`, which answers only the first), and the composer -- three
+    # independent spellings, so no single revert survives.
+    check "AD the refusal is written to the DIALOG as well as to the status line: the arm WRITES the dialog's own transport, asks the ALL-FIELDS validator rather than the first-only one, composes through `calc::arg_say`, and still calls `calc::status`, which is the durable record `calc::status_history` keeps after the dialog is gone" \
+        [list [mt_boolword [regexp {set[ \t]+argmsg} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] writes SILENT] \
+              [mt_boolword [regexp {calc::arg_trouble} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] allfields FIRSTONLY] \
+              [mt_boolword [regexp {calc::arg_say} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] composes RAW] \
+              [mt_boolword [regexp {calc::status} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] records FORGETS] \
+              [mt_boolword [regexp {set[ \t]+argmsg} [mt_decomment [pcall info body ::calc::arg_dialog_build]]] clears KEEPSSTALE]] \
+        {writes allfields composes records clears}
+    check "AD ...and it is NOT routed through `xschem::notify` or `alert_`: `.calc.arg` holds a LOCAL grab, so a popup would be undismissable, and `alert_` is not re-entrant -- it builds a FIXED `.alert` and blocks in `tkwait` with its own `grab set` commented out, which this tree has ruled on twice (R505g and src/ciw.tcl's own comment)" \
+        [list [regexp -all {notify|alert_} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] \
+              [regexp -all {notify|alert_} [mt_decomment [pcall info body ::calc::arg_dialog_build]]]] \
+        {0 0}
+    check "AD with no window NOTHING in the dialog path raises or writes: the builder answers {} and the dialog's own message variable is left empty, which is the arm an rc calling a setter before the window exists lands on" \
+        [list [pcall calc::arg_dialog_build settlingTime] [pcall set ::calc::argmsg] \
+              [mt_boolword [expr {[info commands winfo] eq {}}] absent PRESENT]] \
+        {{} {} absent}
+    # --- the two raise helpers ------------------------------------------------
+    # The user's words: the design window should be *"raise and focus - the way we
+    # do for other things like the library manager"*, and the waveform viewer
+    # *"should be raised (but not focused)"*.  Those are two DIFFERENT helpers,
+    # and they differ by exactly one line -- `raise_activate_toplevel` is
+    # `raise_toplevel` plus `xschem activate_window`, and that call IS the
+    # keyboard.  This row pins which proc asks for which.
+    check "AD the two raises are told apart by the ONE line that differs: the viewer is lifted with `raise_toplevel` and must NOT name the activating wrapper, because `xschem activate_window` is the half that takes the keyboard -- and the keyboard is handed straight back to the Calculator's buffer, which is the nearest thing to `raised but not focused` that a server advertising no window-manager protocol allows" \
+        [list [mt_boolword [regexp {raise_toplevel} [mt_decomment [pcall info body ::calc::viewer_front]]] lifts NOLIFT] \
+              [regexp -all {raise_activate_toplevel} [mt_decomment [pcall info body ::calc::viewer_front]]] \
+              [mt_boolword [regexp {calc::buf_refocus} [mt_decomment [pcall info body ::calc::viewer_front]]] handsback KEEPS]] \
+        {lifts 0 handsback}
+    check "AD the pick's raise no longer asks for the CHEAP arm: `ifhidden`'s predicate is `winfo ismapped`, which is TRUE of a window merely COVERED by the Calculator, so it took a bare `raise` -- inert on a server with no window-manager protocol, which is exactly what the user reported.  The default `always` mode routes through `raise_activate_toplevel`, byte-for-byte what `libmgr::raise_to_front` does" \
+        [list [regexp -all {ifhidden} [mt_decomment [pcall info body ::calc::pick_arm]]] \
+              [mt_boolword [regexp {design_window} [mt_decomment [pcall info body ::calc::pick_arm]]] asks MISSING]] \
+        {0 asks}
+    check "AD and the fix is in the CALCULATOR and not in the shared proc, which is what keeps `ase::ui::design_window`'s other callers alone -- the two that still pass `ifhidden` gate on a CONTEXT test rather than on visibility, where a re-map is issue 0616's reported defect" \
+        [list [mt_boolword [expr {[info procs ::ase::ui::design_window] ne {}}] exists MISSING] \
+              [mt_atleast [llength [pcall info args ::ase::ui::design_window]] 2] \
+              [pcall info default ::ase::ui::design_window raise_mode __ad_d]] \
+        [list exists atleast2 1]
+    check "AD both helpers and the pick's refocus ANSWER rather than raise with no window, and write nothing: `info commands winfo` is tested FIRST, because under --nogui `winfo` is ABSENT AS A COMMAND and the obvious `winfo exists` guard raises `invalid command name` on exactly this arm" \
+        [list [pcall calc::viewer_front {}] [pcall calc::viewer_front nosuchtoken] \
+              [pcall calc::buf_refocus] [pcall calc::pick_refocus] \
+              [mt_boolword [regexp {info commands winfo} [mt_decomment [pcall info body ::calc::viewer_front]]] guarded UNGUARDED]] \
+        {0 0 0 0 guarded}
+    check "AD Plot must never CREATE a viewer, only find one -- row PL8 of test_calc_plot.tcl scans these procs' own code for a viewer-opening verb and requires ZERO, so the raise goes through `wviewer::window_for`.  Re-derived here on the counted arm, where PL8 cannot run" \
+        [list [regexp -all {wviewer::(open|new_tab|load_new_window)} \
+                   [mt_decomment [pcall info body ::calc::viewer_front]]] \
+              [mt_boolword [regexp {wviewer::window_for} [mt_decomment [pcall info body ::calc::viewer_front]]] finds MISSING]] \
+        {0 finds}
+    check "AD the raise happens on SUCCESS ONLY and AFTER the context loan has closed: a deferred `after 150 _remap_verify` firing inside somebody else's `enter_ctx` bracket would re-map a window from a context about to be swapped back underneath it -- so both call sites read the success key they already have" \
+        [list [mt_boolword [regexp {dict get \$d ok} [mt_decomment [pcall info body ::calc::plot_click]]] gates UNGATED] \
+              [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::plot_click]]] raises MISSING] \
+              [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::fn_measure]]] raises MISSING]] \
+        {gates raises raises}
+    # --- the pick says it where the user is looking ----------------------------
+    check "AD every sentence a CLICK produces goes through `calc::pick_echo`, which writes the design window's own status slot as well as the Calculator's -- because the pick now RAISES the schematic over the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  It is written through `pick(prompt)` so the 80 ms pump keeps it up against C blanking the slot" \
+        [list [regexp -all {calc::status \[} [mt_decomment [pcall info body ::calc::pick_click]]] \
+              [regexp -all {calc::pick_echo} [mt_decomment [pcall info body ::calc::pick_click]]] \
+              [mt_boolword [regexp {pick\(prompt\)} [mt_decomment [pcall info body ::calc::pick_echo]]] viapump DIRECT] \
+              [mt_boolword [regexp {calc::status} [mt_decomment [pcall info body ::calc::pick_echo]]] records FORGETS]] \
+        {0 8 viapump records}
+    check "AD `calc::pick_echo` with nothing armed is still a plain status write and creates no record, so it cannot resurrect a dead mode's prompt" \
+        [list [pcall calc::pick_echo {a sentence}] [info exists ::calc::pick]] {{} 0}
+}
+
 # ---------------------------------------------------------------------------
 check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them -- and the names of any that were are the value here, since the only other evidence is a check total that came in short.  Derived from `group`'s own record rather than a list kept here, so a band added later is covered without this row being edited"     [list [llength $::abortnames] $::abortnames] {0 {}}
 

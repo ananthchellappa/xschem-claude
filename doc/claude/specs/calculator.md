@@ -620,6 +620,25 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 
   The single space is **forced, not chosen**: `calc::token_sep` inserts it because the
   lexer would otherwise read `an_expression+v(sq)` as one unknown token (measured).
+  **The pick raises AND focuses the schematic**, which is the user's own correction
+  (2026-10-07: *"focus is not raising. Really, what I meant was raise and focus - the way
+  we do for other things like the library manager"*). It calls
+  `ase::ui::design_window` in its **default** `always` mode, which routes through
+  `raise_activate_toplevel` — withdraw, deiconify, raise, then `xschem activate_window` —
+  byte-for-byte what `libmgr::raise_to_front` does, plus the `after idle` refocus that
+  proc also has, because the re-map hands the keyboard to the **toplevel** after the canvas
+  has already been focused.
+  ⚠ **An earlier revision passed `ifhidden` and that was the defect.** Its predicate is
+  `winfo ismapped`, which is **true of a window merely covered by the Calculator**, so it
+  took the cheap arm — a bare `raise`, inert on a server advertising no window-manager
+  protocol. The name is a misnomer: it means *if unmapped*, not *if not visible*. The fix
+  belongs in the Calculator and **not** in `ase::ui::design_window`, which has six callers;
+  the two others passing `ifhidden` gate on a **context** test rather than on visibility,
+  where a re-map is issue 0616's reported defect.
+  ⚠ **And because the schematic now deliberately covers the Calculator, every per-click
+  sentence is written to the design window's own status slot as well** — through
+  `pick(prompt)`, so the 80 ms pump keeps it up against C's `update_statusbar()` blanking
+  the slot, *and* directly, so the user reads it in the same frame as their click.
   The mode stays armed after a successful pick, so a second net can be picked without
   re-clicking the selector. Its exits are `Escape` (R306), a re-click on the armed
   selector (R201), a click on another selector, the design window going away, a
@@ -1079,6 +1098,33 @@ it into a silent `-1` for the whole expression.
 - **R411** Clicking a function in algebraic mode **wraps** the current buffer:
   `abs(<buffer>)`. If the buffer is empty it inserts `abs()` with the caret between the
   parens.
+- **R412a** **A refused OK reports *in the dialog*.** `.calc.arg` holds a **local**
+  `grab set` and `focus -force`, so a sentence written to `.calc.status.msg` — a widget on
+  `.calc` — is delivered behind a modal the user cannot see past. The user's own report,
+  2026-10-07: *"When I enter values and press OK, nothing happens."* They were right, and
+  the cause was not the verb; it affected **all thirteen** verbs that open a dialog.
+  The dialog carries its own message slot (`.calc.arg.msg`, `::calc::argmsg`), cleared on
+  every open so a stale refusal cannot greet the next field the user fixes, and the
+  sentence is written **there and to the status line** — the slot is where it is read, the
+  history is where it survives the dialog's destruction.
+  ⚠ **Every** malformed field is named at once, not the first. Discovering three blank
+  required fields used to cost three OK presses, each one invisible.
+  ⚠ **An optional field left blank is filled with its default, not refused.** Measured
+  before this rule existed: clearing `riseTime`'s `pctlo` — declared optional with a
+  default of 10 — answered *"Low threshold % must be a finite number ()."*, so no `real`
+  field in the whole table could be left blank and `optional` meant nothing. The fill is
+  written back into the dialog's own transport, so the user **sees** the number that will
+  be used. A **required** field left blank is still refused.
+  ⚠ Not through `xschem::notify` and not through `alert_`: the local grab would leave a
+  popup undismissable, and `alert_` is not re-entrant (it builds a fixed `.alert` and
+  blocks in `tkwait` with its own `grab set` commented out). This tree has ruled on that
+  twice — R505g and `src/ciw.tcl`'s own comment.
+  ⚠ **SI suffixes are NOT accepted** (`1m`, `100u`). ASE-L's own forms do accept them
+  through `ase::si_parse`, so the tree disagrees with itself — but that proc needs a
+  **per-simulator** suffix dict (with none it answers a bare `ok` for `abc` and `5%` alike,
+  measured) and carries its own `M`-means-milli warning arm. Accepting them here would
+  couple the Calculator to the simulator registry, which is a decision and not a tidy-up.
+  Declared, not smuggled in beside a defect fix.
 - **R412** A function needing extra arguments (`riseTime`, `cross`, `bandwidth`, `clip`, …)
   opens a small argument dialog **before** touching the buffer. Cancel leaves the buffer
   byte-identical.
@@ -1214,6 +1260,27 @@ below are the ones a caller cannot answer for itself and so must not have to.
   destination strip comes from W13 (`Append` / `Replace` / `New Strip`), which must reuse
   `wviewer::set_plot_dest` rather than reimplementing the choice.
 - **R602** Plot with no viewer open opens one (the ASE-L viewer), then plots.
+- **R602a** **A successful plot brings the viewer forward and hands the keyboard straight
+  back.** The user's words, 2026-10-07: *"When Plot button takes an action and Waveform
+  Viewer has been updated, it should be raised (but not focused)."*
+  ⚠ **"Raised but not focused" is not available as such on their server**, and they have
+  been told so. It advertises no window-manager protocol, so a polite `raise` is inert and
+  the only thing that lifts a mapped window is `raise_toplevel`'s withdraw/deiconify
+  **re-map** — which the system treats as an activation. What ships is therefore *lift,
+  then give the keyboard back*: `raise_toplevel` (**never**
+  `raise_activate_toplevel`, whose extra `xschem activate_window` is exactly the half that
+  takes the keyboard and was split out so a raise-without-focus caller could avoid it),
+  then `after idle` back to the Calculator's **buffer**, because that is where the user is
+  typing.
+  ⚠ On **success only**, and **after** the `enter_ctx`/`leave_ctx` bracket has closed: the
+  raise ends in a deferred `after 150 _remap_verify`, and a deferred callback firing inside
+  somebody else's context loan would re-map a window from a context about to be swapped
+  back underneath it.
+  ⚠ Through `wviewer::window_for` and **never** `wviewer::open` — Plot must find a viewer,
+  never create one, which is what row PL8 of `tests/headless/test_calc_plot.tcl` asserts.
+  ⚠ The same rule applies to a **measured wave** reaching a viewer strip
+  (`calc::fn_measure`'s destination arm). That was not in the user's report and is the same
+  defect: an answer produced where it cannot be seen.
 - **R603** **Evaluate** produces a scalar, written to the status area **and** left
   selectable/copyable. It does not modify the buffer.
   **⚠ WHICH DATABASE it produces it FROM was settled by results batch item 10

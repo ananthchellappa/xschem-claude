@@ -5665,6 +5665,84 @@ check "S29q the band restored every piece of shipped state it moved -- the model
 # ...and the window goes back to the state the band found it in: closed.
 pcall calc::close
 
+# ===========================================================================
+# S30 — THE ARGUMENT DIALOG SAYS WHY IT REFUSED, IN THE DIALOG
+# ===========================================================================
+# ⚠⚠ THE USER'S OWN REPORT, 2026-10-07: *"When I enter values and press OK,
+# nothing happens."*  They were right, and the cause was not the verb.
+# `calc::arg_dialog_done`'s refusal arm wrote to `.calc.status.msg` -- a widget on
+# `.calc` -- while `.calc.arg` holds a LOCAL `grab set` and `focus -force`, so the
+# refusal was delivered behind a modal the user could not see past.  All thirteen
+# verbs that open a dialog, not just the one they were using.
+#
+# ⚠ THE PURE HALF IS FENCED ON THE COUNTED ARM by band AD of
+# tests/headless/test_calc_measure.tcl -- the validator, the composer, the
+# optional-field fill and four built sabotages.  THIS band is the half only a
+# display can see: that the sentence actually RENDERS in the dialog, and that the
+# dialog STAYS UP so the user can fix the field.
+#
+# ⚠ A BAND AT THE FOOT OF A FILE MUST OPEN WHAT THE BAND ABOVE CLOSED.  S29 ends
+# with `calc::close`, so every snapshot here would otherwise be an `ERR:` sentinel
+# comparing equal to itself -- a row passing VACUOUSLY, which is this file's own
+# recorded trap.  The fixture row below is what catches it.
+#
+# ⚠ THE DIALOG IS BUILT DIRECTLY, not through `calc::fn_measure`: the builder owns
+# no grab and no `vwait` (that is `calc::arg_dialog`'s), so the whole gesture runs
+# synchronously and needs neither a loaded result nor the `ad_arm` poll harness.
+# ⚠ `if {[catch {...}]}` AND NOT `group`: THIS FILE HAS NO `group` PROC AT ALL.
+# The first version of this band used one -- the idiom every other calculator
+# suite has -- and `invalid command name "group"` raised at FILE SCOPE, outside
+# the big catch that closes above band S29, killing the process before the
+# epilogue.  The verdict then read `NORESULT ... exit 0 -- binary never reported`,
+# which looks like a broken harness and not like a test defect.
+if {[catch {
+    check "S30 fixture: the window was REOPENED, so this band is not comparing two error sentinels -- band S29 above ends with `calc::close`" \
+        [list [pcall calc::open] [pcall calc::has_win .calc.buf]] {.calc 1}
+    update idletasks
+    set w [pcall calc::arg_dialog_build settlingTime]
+    check "S30 fixture: the real dialog was built and carries its own message slot, which is the widget that did not exist before this fix" \
+        [list $w [expr {[winfo exists .calc.arg] ? 1 : 0}] \
+              [expr {[winfo exists .calc.arg.msg] ? 1 : 0}] \
+              [pcall .calc.arg.msg cget -text]] \
+        {.calc.arg 1 1 {}}
+    foreach k {final tol start} { set ::calc::argval($k) {} }
+    pcall .calc.arg.btns.ok invoke
+    update idletasks
+    set msg [pcall .calc.arg.msg cget -text]
+    check "S30 pressing OK with three blank required fields SAYS SO IN THE DIALOG, naming all three at once -- and the dialog STAYS UP, which is the whole point: a refusal the user cannot see and a refusal that closes the form are both the same thing from their chair, namely nothing happening" \
+        [list [expr {[winfo exists .calc.arg] ? 1 : 0}] \
+              [expr {[string first {Final value} $msg] >= 0 ? 1 : 0}] \
+              [expr {[string first {Tolerance} $msg] >= 0 ? 1 : 0}] \
+              [expr {[string first {Start time} $msg] >= 0 ? 1 : 0}] \
+              [expr {$msg eq [pcall calc::arg_say [pcall calc::arg_trouble [pcall calc::fn_argspec settlingTime]]] ? {same} : {DIFFERENT}}]] \
+        {1 1 1 1 same}
+    check "S30 ...and it is ALSO on the status line, which is the durable record `calc::status_history` keeps once the dialog is gone -- the dialog's slot is where it is read, the history is where it survives" \
+        [expr {[lindex [pcall calc::status_history] 0] eq $msg ? {recorded} : [lindex [pcall calc::status_history] 0]}] recorded
+    # ...now fill them and watch the slot clear rather than keep a stale refusal
+    set ::calc::argval(final) 1
+    set ::calc::argval(tol)   5
+    set ::calc::argval(start) 0
+    pcall .calc.arg.btns.ok invoke
+    update idletasks
+    check "S30 a GOOD OK clears the refusal and closes the form, so a stale sentence cannot greet the next field the user fixes" \
+        [list [expr {[winfo exists .calc.arg] ? 1 : 0}] [nsval ::calc::argmsg] \
+              [llength [nsval ::calc::arg_result]]] {0 {} 8}
+    # ⚠ AND A REOPENED DIALOG OPENS CLEAN, which is why `calc::arg_dialog_build`
+    # clears the variable rather than leaving the last refusal in it.
+    set ::calc::argmsg {a stale refusal from last time}
+    pcall calc::arg_dialog_build settlingTime
+    check "S30 a REOPENED dialog opens with an empty message slot rather than last time's refusal" \
+        [list [pcall .calc.arg.msg cget -text] [nsval ::calc::argmsg]] {{} {}}
+    pcall calc::arg_dialog_done .calc.arg cancel
+    check "S30 Cancel still leaves no dialog and no result, unchanged by any of this" \
+        [list [expr {[winfo exists .calc.arg] ? 1 : 0}] [nsval ::calc::arg_result]] {0 {}}
+    pcall calc::close
+} s30err]} {
+    puts "FAIL: band S30 ABORTED -> $s30err : FAIL"
+    puts $::errorInfo
+    incr fail
+}
+
 if {$fail == 0} {
     puts "OVERALL: ok ($npass checks)"
     puts "RESULT: ALL PASS ($npass checks)"

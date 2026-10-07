@@ -427,6 +427,80 @@ group PG6 {
 }
 
 # =============================================================================
+# PG13 — THE RAISE, AND WHERE THE PICK SAYS THINGS NOW
+# =============================================================================
+# ⚠ THE RAISE MODE IS ASSERTED THROUGH THE INTERPRETER'S OWN VIEW OF THE CALL,
+# never a text scan over `calculator.tcl`: `ase::ui::design_window` is renamed to a
+# recorder, which is the method `test_ase_window.tcl` already uses, and the row
+# reads back the argument list it was really handed.  Issue 1646's lesson — every
+# text-scanning leg was eventually evaded; no `info args`-class leg ever was.
+group PG13 {
+    rename ase::ui::design_path pg_real_dp2
+    proc ase::ui::design_path {key} { return $::design }
+    rename ase::ui::design_window pg_real_dw
+    # ⚠ THE SENTINEL IS NOT THE EMPTY STRING.  Passing NO raise mode is exactly
+    # what this row asserts, and `{}` is what `args` then holds -- so initialising
+    # the recorder to `{}` would make "called with no argument" and "never called
+    # at all" the same reading, and the first version of this row passed its own
+    # expectation while `calc::pick_arm` had bailed before the call.
+    set ::pg_dw_args NOTCALLED
+    proc ase::ui::design_window {key args} {
+        set ::pg_dw_args $args
+        return [uplevel 1 [list pg_real_dw $key {*}$args]]
+    }
+    pcall calc::pick_end cancel
+    check "PG13 fixture: the Calculator window and the design window are BOTH still up, so this band is not measuring a closed window -- a band that assumed what the band above it left behind is this file's own recorded trap" \
+        [list [expr {[winfo exists .calc] ? 1 : 0}] [pcall calc::has_win .calc.buf]] {1 1}
+    set said [pcall calc::pick_arm vt]
+    check "PG13 the pick asks for the DEFAULT raise mode and passes NO argument at all, which is what sends it down `raise_activate_toplevel` -- withdraw + deiconify + raise, then `xschem activate_window` -- byte-for-byte what `libmgr::raise_to_front` does and what the user named as correct.  Read off the recorded CALL, never off the source text" \
+        [list $::pg_dw_args [pcall calc::pick_running] $said] \
+        [list {} 1 {selector vt: click a net on the schematic; ESC cancels}]
+    # ⚠ WHY `ifhidden` WAS WRONG, recorded as a row rather than as prose: its
+    # predicate is `winfo ismapped`, which is TRUE of a window merely COVERED by
+    # the Calculator -- so it took the cheap bare-`raise` arm, which is inert on a
+    # server advertising no window-manager protocol.  This leg measures that the
+    # design window really is mapped while the Calculator is up, which is the whole
+    # premise.
+    check "PG13 the premise of that fix, measured: the design window IS mapped while the Calculator is also up, so a raise mode whose test is `winfo ismapped` could never fire for a merely covered window" \
+        [list [winfo ismapped [winfo toplevel $::calc::pick(canvas)]] \
+              [winfo ismapped .calc]] {1 1}
+    rename ase::ui::design_window {}
+    rename pg_real_dw ase::ui::design_window
+    check "PG13 the recorder is handed back, which the band CHECKS rather than assumes" \
+        [list [expr {[info procs ::pg_real_dw] eq {} ? 1 : 0}] \
+              [expr {[info procs ::ase::ui::design_window] ne {} ? 1 : 0}]] {1 1}
+    # --- the sentence lands where the user is now looking ----------------------
+    set cv $::calc::pick(canvas)
+    set slot [pcall ase::ui::sod_statusbar $cv]
+    pcall xschem zoom_full
+    update
+    .calc.buf delete 1.0 end
+    pg_click $cv 50 0
+    check "PG13 a SUCCESSFUL pick's sentence reaches the DESIGN window's own status slot and not only the Calculator's -- which matters precisely because the pick now raises the schematic OVER the Calculator, so `.calc.status.msg` is behind another window for the whole gesture" \
+        [list [pcall $slot cget -text] [lindex [pcall calc::status_history] 0] [pg_buf]] \
+        [list {selector vt: v(lp) from /lp} {selector vt: v(lp) from /lp} {v(lp)}]
+    pg_click $cv 310 0
+    check "PG13 ...and so does a REFUSAL, with its own instruction, so a mis-click is answered where the eye already is" \
+        [list [pcall $slot cget -text] [pg_buf]] \
+        [list {selector vt: M1 is not a net} {v(lp)}]
+    # ⚠ THE PUMP MUST KEEP THE NEW SENTENCE UP, not revert to the arming prompt:
+    # C's `update_statusbar()` blanks this slot on every canvas event, so a direct
+    # write would survive less than one frame.  That is why `calc::pick_echo` goes
+    # through `pick(prompt)`.
+    catch {$slot configure -state normal -text {}}
+    for {set i 0} {$i < 100} {incr i} {
+        update ; after 10
+        if {[pcall $slot cget -text] ne {}} break
+    }
+    check "PG13 the pump keeps the LATEST sentence up rather than reverting to the arming prompt, which is what `calc::pick_echo` writing through `pick(prompt)` buys -- a direct write to the slot would be blanked by C within a frame" \
+        [pcall $slot cget -text] {selector vt: M1 is not a net}
+    pcall calc::pick_end cancel
+    rename ase::ui::design_path {}
+    rename pg_real_dp2 ase::ui::design_path
+}
+
+
+# =============================================================================
 # PG8 — R201: RE-CLICK DISARMS, ANOTHER SELECTOR SWITCHES
 # =============================================================================
 # The gesture is the real one, on the real radiobutton.
