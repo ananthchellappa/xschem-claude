@@ -409,6 +409,57 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
   <fieldfg>}`, and the check that covers it reads the **map**, not the option.
   Ruled by the crew, 2026-08-15 (phase 1b fix round).
 
+- **R114 — the user sets the window's font size, and the window's own geometry follows it.**
+  Asked for by the user on 2026-10-06 (*"I'd like that for the Calculator too - an easy way for
+  user to bump up font and therefore readability"*), after the same control landed in the Results
+  Display Window under issue 1368. The gesture is **RDW's, to the word**, because the user meets
+  it in both windows: an `aA` button at the right end of the buffer toolbar, a hover tooltip
+  reading *click to increase font one unit. Ctrl+click to decrease font one unit* (compared
+  against `rdw::_font_tip`'s own return value, not a copy of its text), plain click +1,
+  Ctrl+click −1.
+  - **Four PRIVATE named fonts, never the shared `Tk*` ones** — `CalcUiFont`, `CalcFieldFont`,
+    `CalcMonoFont`, `CalcMenuFont`, one per role, each a copy of its stock base taken through
+    `font configure` (not `font actual`, which converts a pixel spelling to points behind the
+    user's back). Configuring a shared font would resize the attribute editor, the symbol
+    property editor, the text-input dialog, editpaths, the graph dialog and the notify popup in
+    one click, with nothing on screen saying so; `src/rdw.tcl`'s header enumerates them and names
+    *this window's buffer* among the casualties of making that mistake there.
+  - **The model is the stored integer `::calc_font_size`, never read back off a font.**
+  - **The band is `calc::font_limits` = `{6 20}`, and out-of-band sizes are REFUSED, not
+    clamped.** 6 is RDW's floor. The ceiling is a **screen-margin** limit rather than a clipping
+    one: nothing in this window clips up to 22, but *this* window's published `wm minsize` grows
+    with its font where RDW's is pixel-constant — measured on 1920x1080, 680 px tall at sizes
+    6–12 and 935 at 20 — and a minimum taller than the display is a window the user can
+    neither shrink nor forget. 21 and 22 are reachable and are the **user's** to ask for;
+    unratified under rule debt 1368 with RDW's own band.
+  - **`calc::set_font_size` is transactional against the real screen** as well as the band, since
+    the band cannot know what display the user has: on a 1366x768 screen the derived minimum
+    exceeds the display from about size 16, and `calc::save_layout` persists the geometry.
+  - **The sashes are re-derived, not left where they were.** `calc::sash_chain` is pure
+    arithmetic — each sash far enough past the one above it to give that pane its request,
+    never so far as to starve the panes below it, `calc::pw_list`'s shipped fractions used as
+    **floors** so the shipped first-open layout stands wherever it already fits, and every
+    coordinate inside landmine D4's grabbable window. The two sash measurements it needs
+    (`gap` 8 and `lead` 1 on this Tk) are taken from the **live widget**: `-sashwidth` is 5 and
+    using it leaves a 3 px residual per sash, while conflating the gap with the lead shorts
+    **every** pane by one pixel.
+  - **The pane minimums follow the contents and come back down.** `calc::pane_floors` states
+    phase 0's six numbers once; `calc::apply_pane_minsize` recomputes its raise from those floors
+    on every step rather than from the live value, which would be a one-way ratchet.
+  - **Session-local, like RDW.** `set_ne calc_font_size 0` in `src/xschem.tcl` lets an
+    `~/.xschem/xschemrc` pick the starting size. Persisting a user's choice across restarts is a
+    new capability for the whole `ciw`/`rdw`/`ase`/`calc` cluster and is not this rule.
+  - **Declared, not fixed:** the eight disabled selectors' tooltips stay small (`balloon_show`
+    hard-codes `-font fixed` and has 35+ call sites tree-wide); `calc::popdown_extra`'s 460 px is
+    a fixed widening, so a larger font shows fewer characters per history entry; `calc::fn_fill`
+    resets the browser's scroll position, so a step scrolls it home; and `calc::status_chars`
+    stays at 80 — a font-aware width was **built and measured** and it drops the fallback to
+    50, which reddens `test_calc_skeleton`'s sentence-fitting row through that row's own
+    non-vacuity leg at the shipped font, before any font change at all.
+  - **Fenced by** band `CF` of `tests/headless/test_calc_measure.tcl` (every decision, on the
+    counted arm, where there is no `font` command at all) and band `S29` of
+    `tests/headless/test_calc_skeleton.tcl` (every pixel, on the display arm).
+
 ### 4.2 First-open size, and the toplevel minimum
 
 **Ruled by the crew, 2026-08-15 (phase 1b fix round).** Phase 0 chose
@@ -468,57 +519,6 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 | `sp` `zp` `yp` `hp` `vswr` `gd` `zm` | both | RF block | S/Z/Y/H params, VSWR, group delay, port impedance | — | ✘ disabled |
 | `data` | 2 | data | **pick by name** from the signal-browser inventory | the chosen vector name | ✔ |
 
-- **R114 — the user sets the window's font size, and the window's own geometry follows it.**
-  Asked for by the user on 2026-10-06 (*"I'd like that for the Calculator too - an easy way for
-  user to bump up font and therefore readability"*), after the same control landed in the Results
-  Display Window under issue 1368. The gesture is **RDW's, to the word**, because the user meets
-  it in both windows: an `aA` button at the right end of the buffer toolbar, a hover tooltip
-  reading *click to increase font one unit. Ctrl+click to decrease font one unit* (compared
-  against `rdw::_font_tip`'s own return value, not a copy of its text), plain click +1,
-  Ctrl+click −1.
-  - **Four PRIVATE named fonts, never the shared `Tk*` ones** — `CalcUiFont`, `CalcFieldFont`,
-    `CalcMonoFont`, `CalcMenuFont`, one per role, each a copy of its stock base taken through
-    `font configure` (not `font actual`, which converts a pixel spelling to points behind the
-    user's back). Configuring a shared font would resize the attribute editor, the symbol
-    property editor, the text-input dialog, editpaths, the graph dialog and the notify popup in
-    one click, with nothing on screen saying so; `src/rdw.tcl`'s header enumerates them and names
-    *this window's buffer* among the casualties of making that mistake there.
-  - **The model is the stored integer `::calc_font_size`, never read back off a font.**
-  - **The band is `calc::font_limits` = `{6 20}`, and out-of-band sizes are REFUSED, not
-    clamped.** 6 is RDW's floor. The ceiling is a **screen-margin** limit rather than a clipping
-    one: nothing in this window clips up to 22, but *this* window's published `wm minsize` grows
-    with its font where RDW's is pixel-constant — measured on 1920x1080, 680 px tall at sizes
-    6–12 and 935 at 20 — and a minimum taller than the display is a window the user can
-    neither shrink nor forget. 21 and 22 are reachable and are the **user's** to ask for;
-    unratified under rule debt 1368 with RDW's own band.
-  - **`calc::set_font_size` is transactional against the real screen** as well as the band, since
-    the band cannot know what display the user has: on a 1366x768 screen the derived minimum
-    exceeds the display from about size 16, and `calc::save_layout` persists the geometry.
-  - **The sashes are re-derived, not left where they were.** `calc::sash_chain` is pure
-    arithmetic — each sash far enough past the one above it to give that pane its request,
-    never so far as to starve the panes below it, `calc::pw_list`'s shipped fractions used as
-    **floors** so the shipped first-open layout stands wherever it already fits, and every
-    coordinate inside landmine D4's grabbable window. The two sash measurements it needs
-    (`gap` 8 and `lead` 1 on this Tk) are taken from the **live widget**: `-sashwidth` is 5 and
-    using it leaves a 3 px residual per sash, while conflating the gap with the lead shorts
-    **every** pane by one pixel.
-  - **The pane minimums follow the contents and come back down.** `calc::pane_floors` states
-    phase 0's six numbers once; `calc::apply_pane_minsize` recomputes its raise from those floors
-    on every step rather than from the live value, which would be a one-way ratchet.
-  - **Session-local, like RDW.** `set_ne calc_font_size 0` in `src/xschem.tcl` lets an
-    `~/.xschem/xschemrc` pick the starting size. Persisting a user's choice across restarts is a
-    new capability for the whole `ciw`/`rdw`/`ase`/`calc` cluster and is not this rule.
-  - **Declared, not fixed:** the eight disabled selectors' tooltips stay small (`balloon_show`
-    hard-codes `-font fixed` and has 35+ call sites tree-wide); `calc::popdown_extra`'s 460 px is
-    a fixed widening, so a larger font shows fewer characters per history entry; `calc::fn_fill`
-    resets the browser's scroll position, so a step scrolls it home; and `calc::status_chars`
-    stays at 80 — a font-aware width was **built and measured** and it drops the fallback to
-    50, which reddens `test_calc_skeleton`'s sentence-fitting row through that row's own
-    non-vacuity leg at the shipped font, before any font change at all.
-  - **Fenced by** band `CF` of `tests/headless/test_calc_measure.tcl` (every decision, on the
-    counted arm, where there is no `font` command at all) and band `S29` of
-    `tests/headless/test_calc_skeleton.tcl` (every pixel, on the display arm).
-
 ### 5.1 Rules
 
 - **R201** Exactly one selector is active at a time (radio semantics). Re-clicking the
@@ -535,10 +535,37 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 - **R203** Voltage selectors pick a **net**; current selectors pick an **instance
   terminal**. The two use different pick modes and different hit tests. A voltage selector
   must refuse a terminal-only click and vice versa, with a status message — not silently.
+  The classification is `calc::pick_classify {hit net at}`, a **pure** function of three
+  values already measured at the click site, so every refusal is drivable with no
+  schematic and no canvas:
+  `xschem object_at` at the **un-snapped** point, `ase::ui::sod_net_at` at the same point,
+  and `xschem net_at` at the **snapped** point. It answers one of `net`, `terminal`,
+  `body`, `nothing`.
+  ⚠ The two pairs are not interchangeable and the split is measured, not stylistic. Issue
+  1303 swept 23725 points on `xschem_library/examples/cmos_inv.sch`: **6.4 % of
+  grid-snapped reads miss the object entirely and 0.5 % resolve to a different one**,
+  silently — so the pair that decides what gets inserted is the un-snapped one, with no
+  fallback to the grid pair, because that fallback *is* the defect. `xschem net_at` is a
+  **bit-exact** on-copper predicate (measured on an `nmos4`'s `g` pin: 1 at offset 0, 0 at
+  offset 0.0001), so it is asked at the snapped pair where it can answer at all, and all
+  it can do is turn `body` into `terminal` — i.e. choose between two refusals. No
+  insertion and no outcome turns on it.
 - **R204** The emitted name is exactly what `xschem raw index <name>` resolves. **Before
   inserting, the Calculator verifies the name resolves in the current raw**; if it does
   not, it inserts nothing and reports which name failed. (This is the guard against L3/§3.1
   producing a whole-expression `-1` three steps later, where it is undebuggable.)
+  The ladder is `calc::pick_lookup`, and its order is forced by what each verb does with
+  nothing loaded: **`xschem raw loaded` answers `-1` silently while `xschem raw index` and
+  `xschem raw list` both *raise* `No raw file loaded`** (measured), so `raw loaded >= 0`
+  is asked first and every later rung is caught anyway.
+  ⚠ **The verification runs inside the viewer's own context, not the design window's.**
+  The raw belongs to the waveform viewer, so `xschem raw index` raises in the design
+  window. The name is therefore composed in the **design** context — where `resolved_net`
+  and the hierarchy live — and resolved in the **viewer's**, across
+  `wviewer::enter_ctx`/`leave_ctx` (`calc::pick_in_token`, which is
+  `calc::eval_in_token`'s own bracket). A **refused** ticket is reported as *busy* and
+  never as "that name does not resolve": from outside the loan the two are
+  indistinguishable, and guessing the second blames the user's click for the viewer's lock.
 - **R205** `vn2` is emitted as an expression (`<expr> dup() *`), not as a distinct vector.
   It therefore always contains whitespace, satisfying L3.
 - **R206** `var` inserts the variable's **value**, not its name — the RPN evaluator has no
@@ -547,6 +574,63 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   them from `xctx->sch_path`; read them back from the raw inventory. (Case handling in
   particular: ngspice lower-cases device-card strings silently — see the mixed-signal
   cosim notes.)
+  Implemented as two commands and not one: `xschem raw index <cand>` for the index, then
+  `lindex [split [string trim [xschem raw list]] "\n"] <idx>` for **the raw's own
+  spelling**, which is what gets inserted. The hierarchical half comes from `xschem
+  resolved_net` through `ase::ui::sod_qualify`; this file assembles no name out of
+  `sch_path`.
+  ⚠ **The read-back is what makes R207 enforceable, and the measurement is the reason.**
+  `xschem raw index` is **case-insensitive and also accepts a bare net name**: on the
+  committed tran fixture `index(v(sq))`, `index(V(SQ))`, `index(SQ)` and `index(sq)` all
+  answer **9**. So the index check alone can *never* see a case error, and the byte
+  identity of the inventory read-back against the candidate is the whole fence.
+  ⚠ And it is sound on an **AC** database too, which had to be measured because `vf` is an
+  AC selector: `read_dataset` stores four doubles per AC variable and doubles
+  `raw->nvars`, and `xschem raw list` prints `raw->names[i]` for all `nvars` while `raw
+  index` indexes the same array — so the two agree. Same fixture read as `ac`: 40 rows,
+  `index(v(sq))` 36 → `v(sq)`, `index(ph(sq))` 37 → `ph(sq)`, `index(frequency)` 0. Read
+  as `tran`: 10 rows, `index(v(sq))` 9 → `v(sq)`, `index(time)` 0, **`index(v(time))`
+  −1** — which is why no "skip the sweep column" guard is needed or wanted: the `v(...)`
+  wrap already makes the sweep column unreachable, and a guard on `idx >= 1` would falsely
+  refuse a legitimate index-0 column.
+  A read-back carrying whitespace is **refused rather than inserted**: §3.1's lexer splits
+  on `" \t\n"`, so such a name cannot be evaluated and inserting it would move the
+  failure three steps downstream, which is exactly what R204 exists to prevent.
+- **R208** A net pick is a **sticky mode**, and the buffer gets the **evaluable** name
+  while the status line gets the **Cadence** path. Both halves are the user's ruling
+  (2026-10-07).
+  Cadence's own spelling, `vt("/hier/path/to/net")`, is SKILL syntax that this tree's RPN
+  engine cannot lex (§3.1 splits on whitespace; `calc::rpn_bad_token` answers *unknown
+  token* for it), so taking it literally would need a translation layer in front of the
+  evaluator. What ships instead puts the recognisable half in front of the user beside the
+  half the engine resolves:
+
+  ```
+  buffer:  an_expression+ v(x1.i2.net)
+  status:  selector vt: v(x1.i2.net) from /X1/I2/net
+  ```
+
+  The single space is **forced, not chosen**: `calc::token_sep` inserts it because the
+  lexer would otherwise read `an_expression+v(sq)` as one unknown token (measured).
+  The mode stays armed after a successful pick, so a second net can be picked without
+  re-clicking the selector. Its exits are `Escape` (R306), a re-click on the armed
+  selector (R201), a click on another selector, the design window going away, a
+  navigation that takes the design out of that window's hierarchy stack, and closing the
+  Calculator (R307). A miss — empty canvas, a device body, a terminal, an unresolvable
+  name — refuses **with a sentence** and leaves the mode live, because a mode that ended
+  on a mis-click would be unusable.
+  ⚠ **v1 scope is the four voltage ids** (`vt` `vf` `vdc` `vs`), which §5's table gives
+  one emission. The current ids pick a terminal (R203), §5 gives them `@<dev>[<term>]`,
+  and the tree's only zoom-scaled pin hit test (`find_closest_pin`, `findnet.c`) has **no
+  Tcl door** — so that is a separate unit needing a new read-only `scheduler.c` verb, and
+  the other ten ids keep naming themselves and their phase.
+  ⚠ **A bus refuses and names the bits.** The buffer takes one name and the resolver
+  answers a comma-joined multi-bit string the engine will not evaluate; a bit-chooser
+  dialog opening inside a modal pick is worse. Declared v1 limit.
+  ⚠ **No analysis gate.** `vf` on a `tran` result is not refused: ADE-L is a floor,
+  `v(<net>)` resolves in every analysis, and R204's inventory check is the gate that
+  matters. A row asserts the four ids answer identically, so adding a gate later must move
+  a row.
 
 ---
 
@@ -565,6 +649,21 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   any `%<dataset> <rawfile>` suffix**, obtained through `node_token_split()` (L5).
 - **R303** `family` scope emits the expression **without** a `%<dataset>` restriction;
   `off` scope emits it **with** the current dataset when `raw->datasets > 1`.
+  ⚠ **CORRECTION, MEASURED: `%<dataset>` does not exist on the engine path the Calculator
+  evaluates through, so R302/R303 cannot be implemented by appending it.** `xschem raw
+  index {v(sq) %0}` answers **−1**, and `xschem raw index v(div)%0` likewise: the suffix
+  belongs to `node_token_split()` on the trace / `node=` path (L5) and not to the
+  inventory lookup the RPN engine resolves names through. The dataset is instead
+  `calc::eval_rpn`'s own **argument**, and the per-dataset reader is `xschem raw values
+  <name> <dataset>`. So `off` scope's "with the current dataset" is a property of the
+  **evaluation**, not of the inserted text — which is also why the `off`-scope pick that
+  ships inserts a bare name. The control that chooses the dataset is the `Family` scope
+  (W9/W10), still unbuilt.
+  ⚠ Until `family` and `wave` ARE built, a non-`off` scope **refuses to arm** rather than
+  silently arming the schematic canvas: the mode strip's own `-command` already says the
+  scope is not implemented, and R301 says the canvas is not armed in `wave` scope at all.
+  Tk writes a radiobutton's `-variable` **before** firing `-command`, so `calc::pickscope`
+  really does move when the user clicks `Wave`, and `calc::pick_decide` asks it.
 - **R304** `Clip` on ⇒ evaluation and measurement are restricted to the X range currently
   displayed by the target graph. `Clip` off ⇒ the full X range of the raw.
 - **R305** `Clip` affects **evaluation only**. It never rewrites the buffer text. Two
@@ -572,8 +671,33 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   identical buffer.
 - **R306** Arming a pick must be cancellable with `Escape`, leaving the buffer untouched
   and `calc::selmode` empty.
-- **R307** A pick is a **modal gesture**. Register it so the open_pdk modal-gesture
-  exclusion covers it; do not let a pick survive a window close.
+- **R307** A pick is a **modal gesture**. Register it with the command-mode contract, and
+  do not let a pick survive a window close.
+  ⚠ **CORRECTION: the "open_pdk modal-gesture exclusion" is the wrong mechanism and this
+  rule used to name it.** That exclusion is `op_annot::_assert_idle`, which reads C's
+  `ui_state` against masks **25600** (a pending symbol/text placement) and **256** (a
+  pending paste) to stop a netlist walk tearing either down (issue 0263). A pick is a
+  **pure-Tcl canvas seize** and sets neither bit, so registration buys no coverage there —
+  and needs none: the pick creates no placement and no paste, which is the only thing that
+  exclusion protects against.
+  What the pick *does* register with is **`cmdmode`** (`src/cmdmode.tcl`, issue 0201):
+  `cmdmode::register calc_pick calc::pick_suspend calc::pick_resume`, at source time,
+  guarded on `info commands ::cmdmode::register`. That is the contract a **descend
+  mid-pick** needs — suspend releases the canvas and keeps the record, resume re-latches on
+  the canvas actually landed on (ruling D2), and suspended still counts as running
+  (issue 1308).
+  ⚠ **"Do not survive a window close" needs TWO doors, because `calc::close` is only the
+  `WM_DELETE_WINDOW` handler.** `destroy .calc` cannot remove the pick's bindings: they
+  live on the design window's `.drw`, which is not a descendant of `.calc`. So `calc::build`
+  also binds `<Destroy>` — with a `%W` guard, because `<Destroy>` fires once for every
+  descendant. Issue 1305 measured the shape this prevents in the RDW: a permanently seized
+  canvas, unrecoverable inside the session, in which every click dumps into a dead mode and
+  nothing can be selected again.
+  ⚠ And the **design** window closing is a third exit with no hook available at all — there
+  is no `<Destroy>` on `.drw` that survives its own teardown order and no C hook for "a
+  schematic window closed". `calc::pick_pump` answers it by checking `winfo exists` on the
+  seized canvas every 80 ms, which it is already running to keep the prompt up against C's
+  `update_statusbar()` blanking `.statusbar.10`.
 
 ---
 

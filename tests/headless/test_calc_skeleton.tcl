@@ -1135,8 +1135,18 @@ check "S17 the disabled table is the spec's eight, no more" \
 check "S17 nothing is armed at first open" [nsval ::calc::selmode] {}
 pcall .calc.sel.vt invoke
 check "S17 an enabled selector arms" [nsval ::calc::selmode] vt
-check "S17 arming says so (R506)" [pcall .calc.status.msg get] \
-    {selector vt: signal picking: not implemented (phase 6)}
+# ⚠⚠ THIS ROW MOVED WHEN PLAN PHASE 6 LANDED, AND IT IS READ OFF THE HISTORY
+# RATHER THAN OFF THE WIDGET.  `vt` is now a VOLTAGE selector and arms the real
+# net pick (R208), so with no result loaded it refuses with `calc::no_result_advice`
+# -- U7's RULED sentence, which is 106 characters against a status room of 80, so
+# `.calc.status.msg` holds the ELIDED text and a comparison against the widget
+# could only ever be a comparison against today's elision.  (The overflow is
+# pre-existing issue 0517 and is not fixed here.)  `calc::status_history` is the
+# reader that is not the widget, and the comparand is that proc's OWN return value
+# so the two cannot drift.
+check "S17 arming says so (R506), and for a VOLTAGE selector what it says is the ruled no-result refusal -- read off the history and not off the widget, because that sentence is longer than the status room and the widget holds the elided form" \
+    [list [lindex [pcall calc::status_history] 0] [pcall calc::pick_running]] \
+    [list [pcall calc::no_result_advice] 0]
 set armed {}
 foreach id $want_disabled {
     pcall .calc.sel.$id invoke
@@ -1163,19 +1173,43 @@ check "S17 clicking a disabled selector explains why (R202)" \
 # calc::status ... so that R506 is already true of the inert window") was
 # unverified for the other thirteen: silencing all but vt left the suite at ALL
 # PASS (measured). Each one must arm ITSELF and name itself and its phase.
+# ⚠⚠ THE SENTENCE IS NOW TWO SENTENCES, BECAUSE THE FOURTEEN ARE TWO GROUPS.
+# PLAN phase 6 gave the four VOLTAGE ids (R208's `calc::pick_ids`) a real pick,
+# which with no result loaded refuses with the ruled no-result advice; the other
+# ten still name themselves and their phase, byte for byte as before.  BOTH counts
+# are asserted positively and neither list is kept here -- the split is derived
+# from `calc::pick_ids` -- because this row's own history records that silencing
+# all but `vt` once left the suite at ALL PASS, so a group that quietly emptied
+# would be invisible without a count.
 set selsilent {}
 set selunarmed {}
+set selpick {}
+set selinert {}
+set pickids [pcall calc::pick_ids]
 foreach id $selall {
     if {[lsearch -exact $want_disabled $id] >= 0} continue
     pcall calc::status {}
     pcall .calc.sel.$id invoke
     if {[nsval ::calc::selmode] ne $id} { lappend selunarmed $id=[nsval ::calc::selmode] }
-    if {[pcall .calc.status.msg get] ne "selector $id: signal picking: not implemented (phase 6)"} {
-        lappend selsilent $id=[pcall .calc.status.msg get]
+    set said [lindex [pcall calc::status_history] 0]
+    if {[lsearch -exact $pickids $id] >= 0} {
+        lappend selpick $id
+        if {$said ne [pcall calc::no_result_advice]} { lappend selsilent $id=$said }
+    } else {
+        lappend selinert $id
+        if {$said ne "selector $id: signal picking: not implemented (phase 6)"} {
+            lappend selsilent $id=$said
+        }
     }
 }
 check "S17 every enabled selector arms itself" $selunarmed {}
-check "S17 every enabled selector names itself and its phase (R506)" $selsilent {}
+check "S17 every enabled selector SAYS something, and which sentence it says is decided by whether it is one of the four voltage ids R208 gives a net pick: those four refuse with the ruled no-result advice because nothing is loaded in this suite, the other ten still name themselves and their phase.  Read off the history, since the first of those sentences is longer than the status room" \
+    $selsilent {}
+check "S17 ...and BOTH groups are non-empty, with the split DERIVED from `calc::pick_ids` rather than listed here -- this row's own history is that silencing all but `vt` once left the suite at ALL PASS, so a group that quietly emptied would be invisible without a count" \
+    [list [llength $selpick] [llength $selinert] [lsort $selpick]] \
+    [list 4 10 [lsort $pickids]]
+check "S17 ...and not one of those fourteen presses left a canvas pick mode ARMED, which it must not: this suite loads no result, so every voltage arm refuses before it can seize -- and a residual seize would poison every later row in this file" \
+    [list [pcall calc::pick_running] [pcall calc::pick_id]] {0 {}}
 pcall .calc.sel.vt invoke
 
 # ⚠ THE UNARMED LOOK. Tk's DEFAULT -tristatevalue is the EMPTY STRING, and {}

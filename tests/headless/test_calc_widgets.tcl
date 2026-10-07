@@ -1543,7 +1543,14 @@ group CW13 {
     # that pressing them touches neither the buffer nor the Stack, which is the
     # claim this group actually owns.  What a press now DOES is
     # tests/headless/test_calc_plot.tcl's subject.
-    set allowed {calc::inert calc::status calc::sel_click calc::sel_refuse
+    # ⚠⚠ `calc::sel_click` CAME OFF THIS LIST WHEN PLAN PHASE 6 LANDED, AND THE
+    # REASON IS THAT LEAVING IT ON WOULD HAVE BEEN INVISIBLE.  This row's own name
+    # says "a phase-1 stub or one of the four phase-2 procs"; `calc::sel_click` is
+    # now neither -- for the four voltage ids it arms a real canvas pick (R208) --
+    # and because `$allowed` EXCUSES A NAME, the row would have stayed GREEN while
+    # its own sentence became false.  That is worse than a red: nothing would have
+    # drawn anybody's attention to it.  It moves to `$live6` below.
+    set allowed {calc::inert calc::status calc::sel_refuse
                  calc::dest_changed calc::res_toggle
                  calc::eval_click calc::plot_click calc::browse_inert}
     set live2 {calc::pad_click calc::clr_buf calc::buf_undo calc::buf_redo}
@@ -1557,8 +1564,21 @@ group CW13 {
     # buffer/Stack touch sweep in part (b): a font change must touch neither,
     # and that is a stronger claim than an exclusion would be.
     set live3 {calc::font_step}
+    # ⚠ A FOURTH LIST, AND IT CANNOT GO IN ANY OF THE OTHER THREE.
+    # `calc::sel_click` is PLAN phase 6: for the four voltage ids it arms the net
+    # pick, for the other ten it is still the phase-1 stub.  It cannot stay in
+    # `$allowed`, where the word "stub" would become false for four of the
+    # twenty-two controls that carry it; it cannot go in `$live2`, where the
+    # "exactly fifteen" row would lose its meaning; and it is not a view setting.
+    # ⚠ AND IT IS DELIBERATELY *NOT* EXCLUDED FROM THE BUFFER/STACK TOUCH SWEEP IN
+    # PART (b), for the same reason `$live3` is not: "an arm touches neither" is a
+    # STRONGER claim than an exclusion.  It holds because this suite loads no
+    # result at all, so `calc::require_result` answers `ok 0 origin none` and every
+    # voltage arm refuses before it can touch anything -- which part (b)'s own
+    # `pick_running` leg then checks rather than assumes.
+    set live6 {calc::sel_click}
     set rogue {} ; set mute {}
-    set nlive 0 ; set nview 0
+    set nlive 0 ; set nview 0 ; set npick 0
     foreach w $ctrls {
         set cmd [wcg $w -command]
         if {$cmd eq {}} {
@@ -1567,6 +1587,7 @@ group CW13 {
         }
         if {[lindex $cmd 0] in $live2} { incr nlive ; continue }
         if {[lindex $cmd 0] in $live3} { incr nview ; continue }
+        if {[lindex $cmd 0] in $live6} { incr npick ; continue }
         if {[lindex $cmd 0] ni $allowed} { lappend rogue "$w -> [lindex $cmd 0]" }
     }
     # ⚠ every one of these rides on the CONTROL COUNT.  An offender list
@@ -1581,6 +1602,12 @@ group CW13 {
     # ...and exactly ONE view control, for the same reason the row above is
     # positive: a second one arriving must be a decision, not a silent pass.
     check "CW13 exactly one control is a view setting (the aA font button)" $nview 1
+    # ...and exactly TWENTY-TWO are wired to the phase-6 selector click, which is
+    # all of them: `calc::build_sel` gives every id in `calc::sel_rows` the same
+    # `-command` before eight of them are disabled, and the sweep skips only a
+    # control with an EMPTY `-command`.  Positive, for the same reason the two rows
+    # above are: a twenty-third arriving must be a decision and not a silent pass.
+    check "CW13 exactly twenty-two controls are wired to the phase-6 selector pick" $npick 22
     check "CW13 no ENABLED control is silent (R506)" \
         [list [expr {[llength $ctrls] >= 40}] $mute] {1 {}}
 
@@ -1605,9 +1632,11 @@ group CW13 {
     # measures a window one size larger than the rest of the suite assumes.
     set fsz0 [pcall calc::font_size]
     set touched {} ; set silent {} ; set npressed 0 ; set nlivepressed 0
+    set npickpressed 0
     foreach w $ctrls {
         if {[wcg $w -state] eq {disabled}} continue
         incr npressed
+        if {[lindex [wcg $w -command] 0] in $live6} { incr npickpressed }
         pcall calc::status {}
         pcall $w invoke
         if {[lindex [wcg $w -command] 0] in $live2} {
@@ -1630,6 +1659,16 @@ group CW13 {
     # and Redo are disabled at this point (empty history), so thirteen are
     # pressable, not fifteen.
     check "CW13 the sweep really pressed the enabled phase-2 controls" $nlivepressed 13
+    check "CW13 ...and really pressed the fourteen ENABLED phase-6 selectors, which is what makes the two claims above about them measurements rather than an empty sweep" \
+        $npickpressed 14
+    # ⚠ THE SWEEP ARMS FOURTEEN SELECTORS AND MUST LEAVE NONE OF THEM ARMED.  A
+    # residual canvas seize would poison every later row in this file -- and worse,
+    # it would leave a binding on a design canvas this suite does not own.  It holds
+    # because this suite loads no result at all, so `calc::require_result` answers
+    # `ok 0 origin none` and every voltage arm refuses before it can seize; this row
+    # checks that rather than assuming it.
+    check "CW13 the sweep left no canvas pick mode armed" \
+        [list [pcall calc::pick_running] [pcall calc::pick_id]] {0 {}}
     check "CW13 every one of them wrote a status line" \
         [list [expr {$npressed >= 40}] $silent] {1 {}}
     # the aA button was pressed once by the sweep, so put the font back

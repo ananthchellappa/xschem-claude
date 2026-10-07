@@ -137,9 +137,16 @@
 # Measured against the unmodified tree: `bind .drw <Key-1>` .. `<Key-4>` are
 # the EMPTY STRING both before AND after sourcing src/cadence_style_rc, while
 # <Key-6> and <Key-9> in the same file are not — so the file loads and it is
-# exactly these four keys that are unbound. src/rdw.tcl contains zero `bind`,
-# zero `cmdmode`, zero `instance_at` and zero `update_all_sym_bboxes`, and
-# `cmdmode::registered` answers `ase_sod` alone.
+# exactly these four keys that are unbound.
+# ⚠ TWO FIGURES WERE DELETED FROM THIS PARAGRAPH RATHER THAN CORRECTED, because
+# nothing re-checks either and both had already drifted: it used to say that
+# `src/rdw.tcl` contains zero `bind` and zero `cmdmode`, and that
+# `cmdmode::registered` answers `ase_sod` ALONE.  Item B4 then put both a `bind`
+# and a `cmdmode::register` into that file, and the registry has since grown
+# `rdw_pick` and `calc_pick`.  A pre-change reading of a file the change was about
+# to edit cannot stay true, and row K9 of test_rdw_window_1245.tcl already asserts
+# the registry membership that matters (tolerantly, with `lsearch`, so it does not
+# move when a third mode joins).
 #   GREEN BEFORE THE CHANGE — controls and today's-behaviour rows, evidence
 #   for NOTHING about B4; each says only that B4 broke nothing:
 #     FX0   the canvas is mapped (without it every row below is vacuous)

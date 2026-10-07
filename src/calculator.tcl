@@ -183,6 +183,11 @@ namespace eval calc {
     # W10: Clip, INITIAL 1 (spec §4 W10 says so in bold, and R304 is what it
     # means: evaluation is restricted to the displayed X range).
     variable clip 1
+    # PLAN phase 6: the live net pick's record.  DELIBERATELY NOT SEEDED -- for
+    # an array the normative "nothing is armed" state is ABSENT, which is what
+    # `calc::pick_running` and `calc::pick_id` both read, and what lets a
+    # namespace-diff row see that an absent window wrote nothing at all.
+    variable pick
     # R413: the last hover help written to the status area, so that <Leave> can
     # retire ITS line and not somebody else's.
     variable fnhelp {}
@@ -1367,9 +1372,19 @@ proc calc::open {} {
 proc calc::close {} {
     variable statusmsg
     variable statushist
+    variable selmode
     variable fbundo
     variable fbredo
     variable fbtext
+    # R307, AND IT HAS TO BE FIRST.  `destroy .calc` CANNOT remove the pick's
+    # bindings: they live on the design window's `.drw`, which is not a
+    # descendant of `.calc`, so a close with a pick live would leave that canvas
+    # permanently seized -- every click dumping into a dead mode and nothing
+    # selectable again (issue 1305 measured exactly that shape in the RDW).
+    # ⚠ THIS IS ONLY ONE OF THE TWO DOORS: this proc is the
+    # `WM_DELETE_WINDOW` handler and nothing else, so `calc::build` also binds
+    # `<Destroy>` for the paths that reach a teardown without it.
+    catch {calc::pick_end close}
     # D5: capture the layout before the widgets go away, and swallow the
     # errors a half-destroyed panedwindow raises.
     catch {calc::save_layout}
@@ -1397,6 +1412,12 @@ proc calc::close {} {
     set fbundo 0
     set fbredo 0
     set fbtext {}
+    # ...and the selector grid, for the same reason and with the same argument:
+    # which selector is armed is a property of THIS window, and a reopened
+    # Calculator presents a grid with nothing armed.  `calc::pick_end close`
+    # above deliberately leaves it alone (see its own comment), so this is where
+    # a close clears it -- whether a pick was live or not.
+    set selmode {}
 }
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1430,15 @@ proc calc::build {} {
     toplevel .calc
     wm title .calc {xschem Calculator}
     wm protocol .calc WM_DELETE_WINDOW calc::close
+    # R307's SECOND door.  `calc::close` is the title-bar X and the File menu;
+    # this catches every other teardown (a `destroy .calc` from a test, from a
+    # reopen, from an interpreter shutting a toplevel down) so the pick's
+    # bindings on the design canvas can never outlive this window.
+    # ⚠ THE `%W` GUARD IS REQUIRED, NOT TIDY: <Destroy> fires once for EVERY
+    # descendant of .calc, and without it every widget's destruction would run
+    # the teardown again -- dozens of times, in the middle of a half-dismantled
+    # window.  `+` so a later hand can add to the slot rather than replace this.
+    bind .calc <Destroy> {+if {{%W} eq {.calc}} {catch {calc::pick_end close}}}
     # the FLOOR now; tightened to what the selector grid needs once the panes
     # exist and have a requested width (below, after restore_layout)
     calc::apply_minsize
@@ -8351,8 +8381,9 @@ proc calc::res_toggle {} {
 # ⚠ Tk writes a radiobutton's -variable BEFORE it fires -command
 # (wave_viewer.tcl:17665).  Nothing here diffs old against new, and nothing
 # later may: a -command that decides "did this change?" always sees "no".
-# R201's re-click-to-disarm therefore cannot be a -command diff; it is phase 6
-# and will need its own remembered value.
+# R201's re-click-to-disarm therefore cannot be a -command diff, and it is not
+# one: `calc::pick_id` is the remembered value this paragraph asked for, read by
+# `calc::sel_click` before anything else.
 #
 # ⚠ -selectcolor is the indicator's FIELD colour, NOT its "lit" colour, and
 # getting that backwards paints the grid unreadable.  MEASURED here (a scanline
@@ -8483,11 +8514,28 @@ proc calc::build_sel {} {
     }
 }
 
-# An enabled selector: arming the pick is phase 6 (plan 6.1-6.2).  The radio
-# variable is written by Tk itself — that is the widget's own state, not
-# behaviour this phase is wiring — and nothing else happens.
+# An enabled selector.  The four VOLTAGE ids arm the net pick (R201/R203, the
+# block above); the other ten still name themselves and their phase, because
+# their emission is not `v(<net>)` and their hit test is not this one.
+#
+# ⚠ THIS PROC MUST NEVER WRITE `::calc::selmode` ON A REFUSAL PATH.  Tk writes a
+# radiobutton's -variable BEFORE firing -command and that write STANDS -- four
+# rows of band S17 in tests/headless/test_calc_skeleton.tcl assert `selmode eq
+# $id` after an `invoke` with no result loaded, and they are right to: the grid is
+# showing the user what they clicked.  The only write is the `{}` on the END
+# path, inside `calc::pick_end`.
+#
+# ⚠ AND THE DISARM IS KEYED ON `calc::pick_id`, NOT ON `selmode`.  `selmode` is
+# already the clicked id by the time we are called, so a `selmode`-keyed diff
+# would read EVERY first click as a re-click.  `calc::build_sel`'s own comment
+# predicted this and asked for a remembered value; `pick(id)` is it.
 proc calc::sel_click {id} {
-    return [calc::inert "selector $id: signal picking" 6]
+    if {[lsearch -exact [calc::pick_ids] $id] < 0} {
+        return [calc::inert "selector $id: signal picking" 6]
+    }
+    if {[calc::pick_id] eq $id} { return [calc::pick_end disarm] }
+    if {[calc::pick_running]} { calc::pick_end switch }
+    return [calc::pick_arm $id]
 }
 
 # A disabled selector (spec §1.2 / R202).  Explains, and leaves
@@ -8495,6 +8543,864 @@ proc calc::sel_click {id} {
 proc calc::sel_refuse {id why} {
     return [calc::status "selector $id is not available: $why"]
 }
+
+# ===========================================================================
+# PLAN PHASE 6 -- THE VOLTAGE SELECTORS' NET PICK (spec 5, 5.1, 6; R201,
+# R203, R204, R206, R207, R301, R303, R306, R307)
+# ===========================================================================
+# The user's own words: "when you click on vt ... the schematic associated with
+# the result currently loaded in ASE-L will be focused so that the user can make
+# a selection ... when the user selects the net, the buffer will get populated
+# ... at cursor ... with the vt expression appropriate for that net."
+#
+# ⚠ THE BUFFER GETS THE EVALUABLE XSCHEM NAME AND THE STATUS LINE GETS THE
+# CADENCE PATH -- the user's ruling, 2026-10-07, after being shown the conflict.
+# Their literal `vt("/hierarchical/path/to/net")` is Cadence/SKILL syntax and
+# this tree's RPN engine cannot lex it (`calc::rpn_bad_token` answers `unknown
+# token` for anything the engine's `" \t\n"` lexer does not split), so taking it
+# literally would need a translation layer in front of the evaluator.  What ships:
+#
+#     buffer:  an_expression+ v(x1.i2.net)
+#     status:  selector vt: v(x1.i2.net) from /X1/I2/net
+#
+# so the Cadence path is still in front of the user, as the half they recognise,
+# beside the name the engine will actually resolve.
+#
+# SCOPE, the user's second ruling the same day: the FOUR VOLTAGE selectors
+# (`vt` `vf` `vdc` `vs`), which spec 5's table gives one emission -- `v(<net>)`.
+# `it`/`if`/`idc`/`is` pick an instance TERMINAL (R203: a different hit test),
+# spec 5 gives them `@<dev>[<term>]`, and the only zoom-scaled pin hit test in
+# the tree (`find_closest_pin`, findnet.c) has NO Tcl door at all -- so that is a
+# separate unit needing a new read-only `scheduler.c` verb, and it is named in
+# the refusal the other ten ids still get.
+#
+# ⚠ R301 IS WHY `pick_decide` ASKS `calc::pickscope`.  The mode strip's own
+# -command is still `calc::inert ... 6`, but Tk writes a radiobutton's -variable
+# BEFORE firing -command, so a user who clicks `Wave` DOES move `::calc::pickscope`
+# to `wave` and is then told it is not implemented.  Arming the schematic canvas
+# after that would contradict both the strip's own sentence and R301's "in `wave`
+# scope the schematic canvas is not armed at all".  So a non-`off` scope refuses.
+#
+# WHAT IS REUSED RATHER THAN RE-SPELLED, and why each door is the right one:
+#
+#   `ase::ui::sod_net_at`     the net under a point.  Tries `xschem flylines at`
+#                             first (override_lock=1) and falls back to
+#                             `net_name_at -wire <index>` BY INDEX, so the hit
+#                             test runs once -- the coordinate form would run a
+#                             second, independent `find_closest_obj` and could
+#                             hand the pick to a different object (issue 0204).
+#   `ase::ui::sod_bits`       the bus guard, through `xschem expandlabel`.
+#   `ase::ui::sod_qualify`    the hierarchical name, through `xschem
+#                             resolved_net` -- R207's "read them back, do not
+#                             construct them".  Issues 0161 and 0168.
+#   `ase::ui::sod_expr`       the `v(...)` wrap, `preserve` (see below).
+#   `ase::ui::design_path`    resolve the session's cellview WITHOUT opening it,
+#                             which is what keeps `calc::pick_decide` pure.
+#   `ase::ui::design_window`  focus it, `ifhidden` so an already-visible window
+#                             is not re-raised under the user's hand.
+#   `ase::ui::sod_prompt_set` the design window's own green `.statusbar.10`
+#     / `_clear` / the pump   mode line, and the 80 ms re-assert that survives
+#                             C's `update_statusbar()` blanking it.
+#   `cmdmode::register`       the suspend/resume contract (issue 0201), so a
+#                             descend mid-pick pauses the seize instead of
+#                             stranding it on the parent canvas.
+#   `calc::buf_insert_token`  insertion AT THE CURSOR with the engine's own
+#                             spacing (R410/section 7.4) and both `edit
+#                             separator` calls, so ONE undo removes the name.
+#
+# ⚠ `preserve`, NOT `fold`.  `sod_expr`'s case argument answers "what case will
+# the SIMULATOR be asked for", which is a question about a deck not yet written.
+# Here the database already exists and its names are already whatever ngspice
+# wrote, so the only honest question is what the RAW holds -- and that is asked,
+# once, by `calc::pick_lookup` reading the inventory back.  MEASURED: `sod_expr
+# voltage A fold` gives `v(a)` and `preserve` gives `v(A)`; `xschem raw index` is
+# CASE-INSENSITIVE and also accepts a BARE net name, so `index(V(SQ))`,
+# `index(SQ)` and `index(sq)` all answer 9 on the committed tran fixture and the
+# index check alone can NEVER see a case error.  The byte-identity of the
+# inventory read-back is the whole of R207's fence, which is why it is not
+# optional and why `pick_lookup` returns the RAW's spelling rather than the
+# candidate it was asked about.
+#
+# ⚠ AND THE INVENTORY READ-BACK IS SOUND ON AN AC DATABASE TOO, WHICH HAD TO BE
+# MEASURED BECAUSE `vf` IS AN AC SELECTOR.  `read_dataset` stores four doubles
+# per AC variable and doubles `raw->nvars`; `xschem raw list` prints
+# `raw->names[i]` for all `nvars`, and `raw index` indexes the same array, so the
+# two agree.  On the committed fixture read as `ac`: 40 rows, `index(v(sq))` 36 ->
+# `v(sq)`, `index(ph(sq))` 37 -> `ph(sq)`, `index(frequency)` 0.  Read as `tran`:
+# 10 rows, `index(v(sq))` 9 -> `v(sq)`, `index(time)` 0, `index(v(time))` -1.
+#
+# ⚠ THE UN-SNAPPED PAIR DECIDES; THE SNAPPED PAIR ONLY CHOOSES WORDING.  Issue
+# 1303 measured 23725 points on the shipped cmos_inv.sch: 6.4% of grid-snapped
+# reads miss the object entirely and 0.5% resolve to a DIFFERENT one, silently.
+# So `xschem get mousex`/`mousey` -- the point the cursor is actually on -- is
+# what `object_at` and `sod_net_at` are asked, and there is NO fallback to the
+# grid pair, because that fallback IS the defect.  `xschem net_at` is a bit-exact
+# on-copper predicate (MEASURED on an `nmos4`'s `g` pin: 1 at offset 0, 0 at
+# 0.0001), so it is asked at the SNAPPED pair, where it can actually answer -- and
+# all it can do is turn `body` into `terminal`, i.e. choose between two refusals.
+# No insertion, and no outcome, turns on it.
+#
+# ⚠ R204's VERIFICATION RUNS INSIDE THE VIEWER'S CONTEXT, NOT THE DESIGN
+# WINDOW'S, and that is not tidiness.  `xschem raw index` RAISES `No raw file
+# loaded` in the design window (MEASURED), because the raw belongs to the
+# waveform viewer's context -- so the name is composed in the DESIGN context
+# (where `resolved_net` and the hierarchy live) and resolved in the VIEWER's,
+# across `wviewer::enter_ctx`/`leave_ctx`.  That straddle is `calc::pick_in_token`,
+# and it is `calc::eval_in_token`'s own bracket.  A REFUSED ticket is therefore
+# reported as BUSY and never as "that name does not resolve": the two are
+# indistinguishable from outside the loan, and guessing would blame the user's
+# click for the viewer's lock.
+#
+# ⚠ `raw loaded` IS ASKED FIRST BECAUSE IT ANSWERS AND `raw index` RAISES.
+# MEASURED with nothing loaded: `raw loaded` -> -1 silently, `raw index` and
+# `raw list` both raise.  The ladder is therefore loaded-then-index-then-list,
+# and every rung is caught anyway.
+#
+# ⚠ A MISS KEEPS THE MODE LIVE (rdw's ruling, and the only usable one): empty
+# canvas, a device body, a terminal and an unresolvable name all refuse WITH A
+# SENTENCE and leave the seize in place.  The exits are ESC (R306), a re-click on
+# the armed selector (R201), a click on another selector, the design window going
+# away, a navigation that takes the design out of this window's stack, and closing
+# the Calculator (R307) -- which has TWO doors, because `calc::close` is only the
+# `WM_DELETE_WINDOW` handler and `destroy .calc` cannot remove a binding on
+# `.drw`, which is not a descendant of `.calc`.
+
+# The four ids this phase serves, DERIVED from the grid's own table rather than
+# listed: row 0's first group IS the voltage group (spec 5's table gives all four
+# the same `v(<net>)` emission).  A second table here would be a second place for
+# the scope to drift.
+proc calc::pick_ids {} {
+    return [lindex [lindex [calc::sel_rows] 0] 0]
+}
+
+# The armed selector id, or empty.  R201's remembered value: `calc::build_sel`'s
+# own comment records that Tk writes the radio variable BEFORE firing -command,
+# so a re-click cannot be detected as a -variable diff and needs this.
+proc calc::pick_id {} {
+    variable pick
+    if {![info exists pick(id)]} { return {} }
+    return $pick(id)
+}
+
+# Is a pick live on some canvas?  ⚠ SUSPENDED COUNTS AS RUNNING (issue 1308): a
+# mode paused by a descend is still one the user has to be able to leave, and
+# `pick(canvas)` is what `calc::pick_release` hands back.
+proc calc::pick_running {} {
+    variable pick
+    return [expr {[info exists pick(canvas)] ? 1 : 0}]
+}
+
+# WHAT WAS UNDER THE CLICK, as one of FIVE words, from three values that have
+# ALREADY been measured.  Pure, so R203's refusals are drivable with no schematic
+# and no canvas at all.
+#   $hit  `xschem object_at` at the UN-SNAPPED point: `wire N C ID`,
+#         `instance N C ID`, `text ...`, or empty.
+#   $net  `ase::ui::sod_net_at` at the same point: a net token, or empty.
+#   $at   `xschem net_at` at the SNAPPED point: 1 on copper, 0 off it, or
+#         anything else when it could not be asked.
+# `net` wins outright -- a wire or a net label resolved, which is the whole
+# gesture.  An instance that is ALSO on copper is a device TERMINAL, which is
+# R203's "and vice versa": the current selectors' pick, not this one.
+#
+# ⚠ `unnamed` IS A FIFTH WORD AND IT EXISTS BECAUSE THE FOURTH SENTENCE WAS
+# WRONG.  A wire whose net does not resolve is a REAL case, not a degenerate one:
+# `xschem net_name_at` answers the empty string for a wire the ACTIVE netlist
+# type skips (`spice_ignore` / `lvs_ignore`, netlist.c `skip_wire`), and issue
+# 0160's locked wire reaches the same place.  Folding that into `body` made the
+# refusal read *"that wire is not a net"* about a wire, which is the kind of
+# plausible-wrong sentence that sends a user to look for the defect in their
+# schematic.  It takes the `noname` sentence instead -- the same sentence
+# `calc::pick_name` gives an empty token, because it is the same user-facing
+# fact: nothing there resolves to a net NAME.  Found by a test row, not by a
+# hand: the pure sweep asked what `{wire ...}` plus an empty net answers.
+proc calc::pick_classify {hit net at} {
+    if {[string trim $net] ne {}} { return net }
+    if {[string trim $hit] eq {}} { return nothing }
+    if {[lindex $hit 0] eq {instance} && [string is integer -strict $at] && $at} {
+        return terminal
+    }
+    if {[lindex $hit 0] eq {wire}} { return unnamed }
+    return body
+}
+
+# A short word for what a `body` click landed on, for the sentence.  An instance
+# answers its own name (`R1`), anything else its object word -- never a made-up
+# one, and never the empty string.
+proc calc::pick_what {hit} {
+    set w [lindex $hit 0]
+    if {$w eq {}} { return {that} }
+    if {$w eq {instance}} {
+        set nm {}
+        catch {set nm [xschem getprop instance [lindex $hit 1] name]}
+        if {[string trim $nm] ne {}} { return $nm }
+        return {that device}
+    }
+    return "that $w"
+}
+
+# THE CANDIDATE NAME, from the net token the click resolved.  One answer:
+#   {ok 1 cand v(x1.x2.net5)}
+#   {ok 0 why bus    detail {bus[1] bus[0]}}
+#   {ok 0 why noname detail <token>}
+# The bus guard is here, and not at the click site, so it gates on the counted
+# arm.  R207: the hierarchical half comes from `xschem resolved_net` through
+# `sod_qualify` and is never assembled out of `sch_path` by this file.
+proc calc::pick_name {tok baselvl} {
+    if {[string trim $tok] eq {}} {
+        return [dict create ok 0 why noname detail {}]
+    }
+    set bits [list $tok]
+    catch {set bits [ase::ui::sod_bits $tok]}
+    if {[llength $bits] > 1} {
+        return [dict create ok 0 why bus detail $bits]
+    }
+    set q $tok
+    catch {set q [ase::ui::sod_qualify voltage $tok $baselvl]}
+    if {[string trim $q] eq {}} { set q $tok }
+    set cand {}
+    if {[catch {ase::ui::sod_expr voltage $q preserve} cand]
+        || [string trim $cand] eq {}} {
+        return [dict create ok 0 why noname detail $tok]
+    }
+    return [dict create ok 1 why {} cand $cand]
+}
+
+# THE CADENCE PATH, for the status line only -- never for the buffer and never
+# for a lookup.  Cadence writes a hierarchical net as `/I1/I2/net`; xschem's own
+# `sch_path` is `.x1.x2.` and `sod_rel_path` hands back the part below the
+# session's own level.  Same `$baselvl` as `calc::pick_name` gets, so the two
+# halves of one sentence cannot disagree about where the design starts.
+#
+# ⚠ ONLY THE PATH IS MAPPED, NEVER THE TOKEN, and that is the difference between
+# this and the obvious one-liner.  A leaf net whose own name contains a `.` keeps
+# it (`/x1/x2/a.b`), because mapping the whole string would render that net one
+# level deeper than it is and there is nothing in a token to distinguish the two.
+# ⚠ AN EARLIER REVISION OF THIS COMMENT CLAIMED THE OPPOSITE -- that the leaf's
+# dot DID become a slash, "declared as a limit" -- and row PK5 of
+# tests/headless/test_calc_selector_names.tcl reddened on it the first time it
+# ran.  The code was right and the prose was wrong, which is why the row asserts
+# the behaviour rather than quoting this paragraph.
+proc calc::pick_cadence {tok baselvl} {
+    set rel {}
+    catch {set rel [ase::ui::sod_rel_path $baselvl]}
+    set p /
+    set rel [string trim $rel .]
+    if {$rel ne {}} { append p [string map {. /} $rel] / }
+    # ⚠ THE LEADING `#` GOES, for the same reason `ase::ui::sod_expr` strips it
+    # from the vector name: it is xschem's marker for an UNLABELLED net, not part
+    # of the net's identity, and leaving it in put `/#net1` on the status line
+    # beside a buffer holding `v(net1)` -- two spellings of one net, side by side,
+    # which is exactly the disagreement this sentence exists to prevent.  Found by
+    # measuring the two halves together on a fixture with an unlabelled wire.
+    append p [string trimleft $tok #]
+    return $p
+}
+
+# R204 + R207, asked in whatever context is current.  Answers
+# `{ok 1 why {} name <the raw's own spelling>}` or
+# `{ok 0 why noraw|unresolved|unlexable name {}}`.
+#
+# The name returned is the INVENTORY's, read back by index -- not the candidate.
+# That is the only thing that can catch a case difference, because `raw index`
+# folds case (measured above).  A read-back carrying whitespace is refused rather
+# than inserted: section 3.1's lexer splits on `" \t\n"`, so such a name cannot be
+# evaluated and inserting it would move the failure three steps downstream, which
+# is exactly what R204 exists to prevent.
+proc calc::pick_lookup {cand} {
+    if {[string trim $cand] eq {}} {
+        return [dict create ok 0 why unlexable name {}]
+    }
+    set loaded -1
+    catch {set loaded [xschem raw loaded]}
+    if {![string is integer -strict $loaded] || $loaded < 0} {
+        return [dict create ok 0 why noraw name {}]
+    }
+    set idx -1
+    if {[catch {xschem raw index $cand} idx]} {
+        return [dict create ok 0 why noraw name {}]
+    }
+    if {![string is integer -strict $idx] || $idx < 0} {
+        return [dict create ok 0 why unresolved name {}]
+    }
+    set inv {}
+    if {[catch {xschem raw list} inv]} {
+        return [dict create ok 0 why noraw name {}]
+    }
+    set rows [split [string trim $inv] "\n"]
+    if {$idx >= [llength $rows]} {
+        return [dict create ok 0 why unresolved name {}]
+    }
+    set nm [lindex $rows $idx]
+    if {[string trim $nm] eq {}} {
+        return [dict create ok 0 why unresolved name {}]
+    }
+    if {[regexp {[ \t\n]} $nm]} {
+        return [dict create ok 0 why unlexable name $nm]
+    }
+    return [dict create ok 1 why {} name $nm]
+}
+
+# THE DESIGN'S LEVEL in THIS window's hierarchy stack, or -1 when it is not in
+# it at all.
+#
+# ⚠ WHY THIS IS NOT `ase::ui::sod_base_level`, WHICH WALKS THE SAME STACK.  That
+# proc answers 0 both for "the design IS the top level" and for "the design is
+# not here", because 0 is the right base for a name either way.  Here the
+# difference is the whole point twice over: at arm time it is the read-back that
+# says `ase::ui::design_window` really moved the current window (landmine 17 --
+# `switch_window()` and `switch_tab()` both open `if(xctx->semaphore) return 1`
+# and `raise_window_entry` returns 1 unconditionally, so the call's own answer
+# cannot be trusted), and at click time it is the guard that catches a tab swap
+# or a navigation that took the design out from under a live mode.  So -1 is a
+# fourth answer that proc deliberately does not have, and 0 is still a level.
+proc calc::pick_base {dpath} {
+    if {[string trim $dpath] eq {}} { return -1 }
+    set lvl 0
+    catch {set lvl [xschem get currsch]}
+    if {![string is integer -strict $lvl] || $lvl < 0} { return -1 }
+    for {set l $lvl} {$l >= 0} {incr l -1} {
+        set p {}
+        catch {set p [xschem get schname $l]}
+        if {[string trim $p] eq {}} { continue }
+        set n {}
+        if {[catch {file normalize $p} n]} { continue }
+        if {$n eq $dpath} { return $l }
+    }
+    return -1
+}
+
+# ---------------------------------------------------------------------------
+# EVERY SENTENCE THIS PHASE CAN SAY.
+#
+# ⚠ THE ARITY IS THE HOUSE'S AND IS NOT A STYLE CHOICE.  `{kind {a {}} {b {}}}`
+# is what `mt_sl_sentences` (band MT20/B of tests/headless/test_calc_measure.tcl)
+# calls every `::calc::*_msg` with, and that sweep finds this proc by
+# `info procs ::calc::*_msg` -- so it enrols by existing.  With any OTHER arity
+# the sweep's `pcall` turns each call into a short `ERR:` string, the width check
+# passes on it, and the band goes green while measuring nothing.  `$a` is the
+# selector id in every arm; `$b` is the one detail an arm needs.
+#
+# ⚠ AND THE ARMS ARE WRITTEN `pattern { return ... }`, ONE PER LINE, because
+# `mt_sl_arms` derives them with `^[ \t]*(word)[ \t]*\{[ \t]*return`.  An arm
+# spelled any other way is invisible to the sweep.
+#
+# ⚠⚠ NO PROSE BETWEEN TWO PATTERNS, EVER.  A comment there leaves the braces
+# balanced, `info complete` answers 1, and Tcl raises *"extra switch pattern with
+# no body"* out of EVERY arm -- but only when the comment's word count is ODD,
+# because `switch`'s single trailing argument is parsed as a list and an even
+# count re-pairs harmlessly.  So a green run proves the word count, not the
+# safety.  Measured symptom on the display arm: a 200 s TIMEOUT with zero `FAIL:`
+# lines.  All prose lives here, above the proc.
+#
+# ⚠ THE SUCCESS SENTENCE IS NOT AN ARM.  It needs the id, the name AND the path,
+# which is three values in two detail slots, and it needs FITTING rather than
+# composing -- so it is `calc::pick_fit`, exactly as `calc::prov_fit` is.
+#
+# ⚠ `no_result` AND `busy` ARE NOT ARMS EITHER: those two sentences already
+# exist (`calc::no_result_advice`, which is U7's RULED wording, and
+# `calc::busy_msg`) and `calc::pick_decide` passes them through VERBATIM.  A
+# second spelling of a ruled sentence is the defect the ruling closed.  Both
+# overflow `.calc.status.msg` at 106 and 142 characters against a room of 80 --
+# pre-existing issue 0517, not fixed here, and the reason a test row about them
+# must read `calc::status_history` and not the widget.
+proc calc::pick_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        armed { return "selector $a: click a net on the schematic; ESC cancels" }
+        prompt { return "Calculator $a: click a net to insert its name; ESC cancels" }
+        terminal { return "selector $a: that is a device terminal, not a net" }
+        body { return "selector $a: $b is not a net" }
+        nothing { return "selector $a: nothing under the click; click a wire or a net label" }
+        bus { return "selector $a: $b is a bus; pick one bit" }
+        noname { return "selector $a: nothing there resolves to a net name" }
+        unresolved { return "selector $a: $b is not in this result; nothing inserted" }
+        unlexable { return "selector $a: the result calls that '$b', which the engine cannot read" }
+        noraw { return "selector $a: that result has no simulation data loaded" }
+        nodesign { return "selector $a: cannot resolve this result's design cellview" }
+        busydesign { return "selector $a: the design window is busy; try again" }
+        busyview { return "selector $a: the result's waveform window is busy; try again" }
+        nomouse { return "selector $a: this build cannot report the mouse position; ESC leaves" }
+        scope { return "selector $a: pick scope $b is not implemented (phase 6)" }
+        moved { return "selector $a: this window is on another schematic now; pick cancelled" }
+        dropped { return "selector $a: the design window closed; pick cancelled" }
+        cancelled { return "selector $a: pick cancelled" }
+    }
+    return {}
+}
+
+# THE SUCCESS SENTENCE, COMPOSED AND FITTED IN ONE PLACE.
+#
+# ⚠ `calc::status_fit` IS THE WRONG FITTER FOR THIS SENTENCE AND THE DIFFERENCE
+# IS A PLAUSIBLE WRONG ANSWER ON SCREEN.  It elides the middle of whatever it is
+# given, head-weighted 3/5 -- and the vector NAME is in the head, so a long path
+# makes it cut the name in half and leave something that still looks like a
+# vector name beside a buffer holding a different one.  MEASURED on the character
+# arm, room 80:
+#   status_fit -> selector vt: v(tb1.xdut.xbias.xmirror.xcascode.../XMIRROR/...
+#   pick_fit   -> selector vt: v(tb1.xdut.xbias.xmirror.xcascode.vref_internal)
+#                               from /TB1/...ernal
+# Over five path shapes the name survived 5/5 here and 3/5 through `status_fit`.
+# So the ladder elides the PATH, then drops the ` from <path>` clause entirely,
+# and only then gives up -- the name is never the part that goes.  `prov_fit`'s
+# shape, and `prov_fit`'s reason.
+proc calc::pick_fit {id name path} {
+    set r [calc::status_room]
+    set unit [lindex $r 0]
+    set room [lindex $r 1]
+    set head "selector $id: $name"
+    set s $head
+    if {$path ne {}} { append s " from " $path }
+    if {[calc::status_span $unit $s] <= $room} { return $s }
+    if {$path ne {}} {
+        set lo 0
+        set hi [string length $path]
+        set best {}
+        while {$lo <= $hi} {
+            set keep [expr {($lo + $hi) / 2}]
+            set cand $head
+            append cand " from " [calc::status_elide $path $keep]
+            if {[calc::status_span $unit $cand] <= $room} {
+                set best $cand
+                set lo [expr {$keep + 1}]
+            } else {
+                set hi [expr {$keep - 1}]
+            }
+        }
+        if {$best ne {}} { return $best }
+    }
+    if {[calc::status_span $unit $head] <= $room} { return $head }
+    return $name
+}
+
+# THE WHOLE ARM-TIME DECISION, as data.  `$g` is `calc::require_result`'s dict,
+# taken as an ARGUMENT so every refusal is drivable with a synthetic one on the
+# counted arm.  Answers `{act arm|refuse|inert token <k> msg <sentence>}`.
+#
+# Nothing here opens, raises or focuses anything: `ase::ui::design_path` only
+# RESOLVES the cellview (and answers empty for a viewer-origin result, which has
+# no ASE session and therefore no design to focus).  The act is `calc::pick_arm`'s.
+proc calc::pick_decide {id g} {
+    variable pickscope
+    if {[lsearch -exact [calc::pick_ids] $id] < 0} {
+        return [dict create act inert token {} msg {}]
+    }
+    set scope off
+    catch {set scope $pickscope}
+    if {$scope ne {off}} {
+        return [dict create act refuse token {} \
+                    msg [calc::pick_msg scope $id $scope]]
+    }
+    set ok 0
+    catch {set ok [dict get $g ok]}
+    if {![string is integer -strict $ok]} { set ok 0 }
+    set msg {}
+    catch {set msg [dict get $g msg]}
+    if {!$ok} {
+        if {[string trim $msg] eq {}} { set msg [calc::no_result_advice] }
+        return [dict create act refuse token {} msg $msg]
+    }
+    set tok {}
+    catch {set tok [dict get $g token]}
+    set dpath {}
+    if {[string trim $tok] ne {}} {
+        catch {set dpath [ase::ui::design_path $tok]}
+    }
+    if {[string trim $dpath] eq {}} {
+        return [dict create act refuse token $tok \
+                    msg [calc::pick_msg nodesign $id]]
+    }
+    return [dict create act arm token $tok design $dpath \
+                msg [calc::pick_msg armed $id]]
+}
+
+# ---------------------------------------------------------------------------
+# THE SEIZE.  `rdw::_pick_seize`'s shape, which is `ase::ui::select_on_design`'s
+# with issue 1304's fourth sequence added -- and the fourth one is not optional.
+#
+# ⚠ WITHOUT <B1-Motion> C's RUBBER BAND GETS A START AND NO END.  A motion with
+# Button1Mask calls select_rect(START,1) + unselect_all(1) and sets STARTSELECT
+# (callback.c); the ONLY thing that terminates it is ButtonRelease's
+# select_rect(...,END,-1) -- which the seized release eats.  Measured with the
+# three-sequence seize live: twenty objects selected and still selected after
+# both the release and a real Escape.  A pick must not change the selection
+# (issue 0204), and a one-pixel drift of the hand is enough.
+#
+# ⚠ `focus -force` ON THE CANVAS, not on the toplevel.  `design_window`'s raise
+# just moved keyboard focus to the TOPLEVEL and the seized Button-1 `break`s
+# before the generic <ButtonPress> that would hand focus back to the canvas -- so
+# without this a real ESC never arrives and the mode cannot be left with the key
+# its own prompt names (issue 0204's own note).
+#
+# ⚠ MEASURED ON THIS TREE: `.drw` is a FRAME whose shipped bindings are the
+# GENERIC <Button>/<Key>, so all four predecessors are the EMPTY STRING, and
+# `bind w seq {}` DESTROYS a binding rather than setting an empty one.  That is
+# what makes the restore byte-identical, and it is why a restore written as
+# `bind $cv <X> {}` would pass a string comparison and fail a sequence-list one.
+proc calc::_pick_seize {cv} {
+    variable pick
+    set press "[list calc::pick_click]; break"
+    set esc   "[list calc::pick_end cancel]; break"
+    # ⚠⚠ ISSUE 1305's GUARD: NEVER LATCH OUR OWN SCRIPTS AS THE PREDECESSORS.
+    # A seize of an ALREADY-SEIZED canvas records `calc::pick_click; break` as the
+    # thing to put back, and the restore then re-installs the seize -- a PERMANENT
+    # seize, unrecoverable inside the session, in which every click dumps into a
+    # dead mode and nothing can be selected again.  That is measured, in the RDW,
+    # on this exact shape, and it is the inverse of the user's own ruling that a
+    # command mode must not change the selected set.
+    #
+    # The RDW's own answer to it is a guard in `pick_start` (an already-live mode
+    # re-arms in place rather than releasing and retaking).  This is the same
+    # protection one level lower, where it also covers a record that has become
+    # inaccurate for any other reason: if the slot ALREADY holds our script the
+    # canvas is already ours, so the stored predecessors are left exactly as they
+    # are and only the bindings are re-asserted.  Caught by band PG7 of
+    # tests/headless/test_calc_pick.tcl, which found three of the four slots
+    # restored to `break` after a mode whose record had been falsified.
+    if {[bind $cv <ButtonPress-1>] ne $press} {
+        set pick(prevpress)  [bind $cv <ButtonPress-1>]
+        set pick(prevrel)    [bind $cv <ButtonRelease-1>]
+        set pick(prevesc)    [bind $cv <Key-Escape>]
+        set pick(prevmotion) [bind $cv <B1-Motion>]
+    }
+    foreach k {prevpress prevrel prevesc prevmotion} {
+        if {![info exists pick($k)]} { set pick($k) {} }
+    }
+    set pick(canvas) $cv
+    bind $cv <ButtonPress-1>   $press
+    bind $cv <ButtonRelease-1> {break}
+    bind $cv <Key-Escape>      $esc
+    bind $cv <B1-Motion>       {break}
+    catch {focus -force $cv}
+    return $cv
+}
+
+# Hand all four bindings back, verbatim and under catch (the canvas may be
+# dead), stop the pump and clear the design window's prompt.  ONE proc shared by
+# the end path AND the suspend path, exactly as `ase::ui::sod_release` and
+# `rdw::pick_release` are, so the seize and the restore cannot drift -- which is
+# the whole reason issue 1304's fourth sequence is added in two places and not
+# three.  Returns 1 only if it released a live mode.
+proc calc::pick_release {} {
+    variable pick
+    if {![info exists pick(canvas)]} { return 0 }
+    set cv $pick(canvas)
+    catch {bind $cv <ButtonPress-1>   $pick(prevpress)}
+    catch {bind $cv <ButtonRelease-1> $pick(prevrel)}
+    catch {bind $cv <Key-Escape>      $pick(prevesc)}
+    catch {bind $cv <B1-Motion>       $pick(prevmotion)}
+    if {[info exists pick(pump)]} { catch {after cancel $pick(pump)} }
+    catch {ase::ui::sod_prompt_clear $cv}
+    return 1
+}
+
+# LEAVE THE MODE.  Safe on every arm and with nothing live.  `$why` selects two
+# independent things, and conflating them was a bug worth naming:
+#
+# ⚠ `switch` MUST NOT CLEAR `::calc::selmode`.  Tk writes a radiobutton's
+# -variable BEFORE firing -command, so by the time `calc::sel_click` ends the
+# previous pick the variable ALREADY holds the NEW id -- and clearing it here
+# would leave the grid drawing nothing armed while a pick was armed.  `close`
+# does not clear it either, because `calc::close` resets it beside its own
+# `statusmsg`/`statushist` block.
+#
+# ⚠ AND NEITHER OF THOSE TWO SAYS ANYTHING: on `switch` the new arm's own
+# sentence follows immediately, and on `close` the window carrying the status
+# line is already going away.
+proc calc::pick_end {{why cancel}} {
+    variable pick
+    variable selmode
+    set id [calc::pick_id]
+    set r [calc::pick_release]
+    array unset pick
+    if {$why eq {switch} || $why eq {close}} { return $r }
+    if {$id eq {}} { return $r }
+    set selmode {}
+    set kind cancelled
+    if {$why eq {moved}} { set kind moved }
+    if {$why eq {dropped}} { set kind dropped }
+    catch {calc::status [calc::pick_msg $kind $id]}
+    return $r
+}
+
+# R204's verification, INSIDE the viewer's own context (issue 0173's loan).
+# `calc::eval_in_token`'s bracket, and for the same reason: the raw belongs to
+# the viewer's context, and `xschem raw index` raises in the design window.
+#
+# ⚠ A REFUSED TICKET IS `busyview`, NEVER `unresolved`.  From outside the loan
+# those two are indistinguishable, and guessing the second would blame the user's
+# click for the viewer's lock.
+proc calc::pick_in_token {tok cand} {
+    if {[string trim $tok] eq {}} {
+        return [dict create ok 0 why busyview name {}]
+    }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok 1} ticket]} {
+        return [dict create ok 0 why busyview name {}]
+    }
+    if {![lindex $ticket 0]} {
+        return [dict create ok 0 why busyview name {}]
+    }
+    set d {}
+    if {[catch {calc::pick_lookup $cand} d]} {
+        set d [dict create ok 0 why busyview name {}]
+    }
+    catch {wviewer::leave_ctx $tok $ticket}
+    return $d
+}
+
+# KEEP THE PROMPT UP, AND NOTICE WHEN THE DESIGN WINDOW GOES AWAY.
+#
+# The first job is `ase::ui::sod_prompt_pump`'s: every generic canvas event
+# forwards to C's `update_statusbar()`, which BLANKS `.statusbar.10` whenever no
+# C `ui_state` mode bit is set -- and this is a pure-Tcl mode, so none is.  A
+# light 80 ms re-assert is immune to that and to the focus/creation churn that
+# re-establishes the generic bindings.
+#
+# ⚠ THE SECOND JOB IS THE WHOLE ANSWER TO R307's MISSING CLOSE HOOK.  There is
+# no `<Destroy>` to hang on `.drw` that survives the window's own teardown order
+# and no C hook for "a schematic window closed", so a pick armed on a window the
+# user then closes would be a record pointing at a dead canvas.  Polling
+# `winfo exists` here costs one call per 80 ms while a mode is live and nothing
+# at all otherwise, and it needs no new C.
+proc calc::pick_pump {} {
+    variable pick
+    unset -nocomplain pick(pump)
+    if {![info exists pick(canvas)]} { return 0 }
+    if {[info exists pick(suspended)]} { return 0 }
+    if {![calc::has_win $pick(canvas)]} {
+        calc::pick_end dropped
+        return 0
+    }
+    if {[info exists pick(prompt)]} {
+        catch {ase::ui::sod_prompt_set $pick(canvas) $pick(prompt)}
+    }
+    set pick(pump) [after 80 calc::pick_pump]
+    return 1
+}
+
+# THE CANVAS WIDGET FOR THE CURRENT CONTEXT, or empty.
+#
+# ⚠⚠ `xschem get current_win_path` IS A CONTEXT IDENTIFIER AND IS NOT ALWAYS A
+# LIVE Tk WIDGET PATH.  Under the TABBED interface it answers `.x2.drw` for a
+# schematic whose canvas widget is `.drw`: `winfo exists .x2.drw` is 0, and
+# `xschem windows` gives that row a toplevel of `.` and THE SAME X WINDOW ID as
+# `.drw`, because the tabs share one canvas.  Measured -- the first run of band
+# PG2 of tests/headless/test_calc_pick.tcl refused a perfectly good arm with `the
+# design window is busy`, and the cause was this and not a race.
+#
+# Binding on the C path would have been WORSE THAN REFUSING: `bind .x2.drw <...>`
+# creates bindings for a widget that does not exist, so no gesture would ever
+# arrive, the prompt would sit on the design window saying click a net, and
+# nothing would happen -- a mode that looks armed and is not.  So the widget is
+# resolved out of `xschem windows`' own table: field 0 is the context path, field
+# 1 is the TOPLEVEL, and the canvas is that toplevel's `.drw` (the main window's
+# toplevel is `.`, so its canvas is `.drw` and not `..drw`).
+#
+# ⚠ The tab case also means the seize can outlive the CONTEXT while the WIDGET
+# stays alive -- the user switches tabs and the same `.drw` is now showing another
+# schematic.  That is what `calc::pick_click`'s own `calc::pick_base` guard is
+# for: it answers -1 and the mode ends with the `moved` sentence rather than
+# resolving a net on the wrong sheet.
+proc calc::pick_canvas {} {
+    set cv {}
+    catch {set cv [xschem get current_win_path]}
+    if {$cv eq {}} { return {} }
+    if {[calc::has_win $cv]} { return $cv }
+    set rows {}
+    if {[catch {xschem windows} rows]} { return {} }
+    foreach row $rows {
+        if {[lindex $row 0] ne $cv} { continue }
+        set top [lindex $row 1]
+        if {$top eq {}} { continue }
+        set w [expr {$top eq {.} ? {.drw} : "${top}.drw"}]
+        if {[calc::has_win $w]} { return $w }
+    }
+    return {}
+}
+
+# THE READ-BACK, WITH A BOUNDED SETTLE.  Answers the canvas to seize, or empty.
+#
+# ⚠ THE SETTLE IS NOT DEFENSIVE PADDING; WITHOUT IT THE ARM REFUSES ITS OWN
+# SUCCESS.  `ase::ui::design_window` may have to CREATE a window -- when the
+# design is not already open it runs `xschem load -gui`, and `load_window_routing`
+# opens a new one unless there is a pristine untitled window to reuse -- and C
+# publishes `current_win_path` for that window before Tk has realised the canvas.
+# Measured: the first run of band PG2 of tests/headless/test_calc_pick.tcl got
+# `the design window is busy; try again` on a perfectly good arm, while the row's
+# own re-measurement one statement later found the design present and current.
+# `design_window` already ends in `after 120 [list force_window_repaint ...]`, so
+# it knows the window needs to settle; this is the same acknowledgement on the
+# reading side.
+#
+# ⚠ `update idletasks` AND NOT `update`.  An arm is reached from a `-command`, so
+# a full `update` would process pending button and key events inside it and could
+# re-enter this proc.  It also means the 120 ms repaint timer does NOT fire here
+# (CLAUDE.md: `update idletasks` services idle events only and never runs timer
+# callbacks), which is correct -- the repaint is cosmetic and the geometry pass
+# this waits for is an idle one.
+#
+# ⚠ AND IT IS BOUNDED AND SILENT ABOUT TIME: it answers as soon as both
+# conditions hold, so the common case -- the design already open and current --
+# costs one pass and no wait at all.
+proc calc::pick_settle {dpath} {
+    for {set i 0} {$i < 20} {incr i} {
+        set cv [calc::pick_canvas]
+        if {$cv ne {} && [calc::pick_base $dpath] >= 0} { return $cv }
+        if {[info commands update] eq {}} { return {} }
+        update idletasks
+        after 25
+    }
+    return {}
+}
+
+# ARM THE MODE.  Returns the status sentence it wrote, so a caller can be a
+# one-liner and a test can read the answer without the widget.
+proc calc::pick_arm {id} {
+    variable pick
+    if {![calc::has_win .calc]} { return {} }
+    set d [calc::pick_decide $id [calc::require_result]]
+    set act [dict get $d act]
+    if {$act eq {inert}} {
+        return [calc::inert "selector $id: signal picking" 6]
+    }
+    if {$act ne {arm}} {
+        return [calc::status [dict get $d msg]]
+    }
+    set tok [dict get $d token]
+    set dpath [dict get $d design]
+    set opened 0
+    catch {set opened [ase::ui::design_window $tok ifhidden]}
+    if {!$opened} {
+        return [calc::status [calc::pick_msg nodesign $id]]
+    }
+    set cv [calc::pick_settle $dpath]
+    if {$cv eq {}} {
+        return [calc::status [calc::pick_msg busydesign $id]]
+    }
+    if {[calc::pick_running]} { calc::pick_end switch }
+    calc::_pick_seize $cv
+    set pick(id) $id
+    set pick(token) $tok
+    set pick(design) $dpath
+    set pick(prompt) [calc::pick_msg prompt $id]
+    calc::pick_pump
+    return [calc::status [dict get $d msg]]
+}
+
+# ONE CLICK.  Coordinates DEFAULT to the un-snapped pair and can be passed, which
+# is the test seam -- and issue 1303's acceptance is that the DEFAULT path is the
+# one exercised, because that is where its defect lived.
+#
+# ⚠ THE PAIR READ HERE IS THE LAST MOTION'S POINT, NOT THE PRESS'S.  The seize
+# `break`s the press before C sees it, and C updates both mouse pairs only on
+# events it does see.  A real hand always moves the pointer onto the net before
+# pressing; a caller that presses with no preceding motion reads a stale pair,
+# which is why the suite generates the motion first.
+#
+# ⚠ THE BASE LEVEL IS RE-READ ON EVERY CLICK, not latched at arm time, and that
+# is deliberate: it serves as the navigation guard AND as the level the name is
+# measured from (issue 0168 -- a pick under a session bound to an intermediate
+# cell must match THAT session's deck).  A descend inside the design window is
+# therefore fine and the name follows it; the design leaving this window's stack
+# is what ends the mode.
+proc calc::pick_click {{x {}} {y {}}} {
+    variable pick
+    if {![info exists pick(id)]} { return {} }
+    set id $pick(id)
+    set base [calc::pick_base $pick(design)]
+    if {$base < 0} { return [calc::pick_end moved] }
+    if {$x eq {}} { catch {set x [xschem get mousex]} }
+    if {$y eq {}} { catch {set y [xschem get mousey]} }
+    if {![string is double -strict $x] || ![string is double -strict $y]} {
+        return [calc::status [calc::pick_msg nomouse $id]]
+    }
+    set hit {}
+    catch {set hit [xschem object_at $x $y]}
+    set net {}
+    catch {set net [ase::ui::sod_net_at $x $y $hit]}
+    set at {}
+    catch {set at [xschem net_at [xschem get mousex_snap] [xschem get mousey_snap]]}
+    set cls [calc::pick_classify $hit $net $at]
+    if {$cls eq {nothing}} { return [calc::status [calc::pick_msg nothing $id]] }
+    if {$cls eq {terminal}} { return [calc::status [calc::pick_msg terminal $id]] }
+    if {$cls eq {unnamed}} { return [calc::status [calc::pick_msg noname $id]] }
+    if {$cls ne {net}} {
+        return [calc::status [calc::pick_msg body $id [calc::pick_what $hit]]]
+    }
+    set nm [calc::pick_name $net $base]
+    if {![dict get $nm ok]} {
+        return [calc::status \
+                    [calc::pick_msg [dict get $nm why] $id [dict get $nm detail]]]
+    }
+    set cand [dict get $nm cand]
+    set lk [calc::pick_in_token $pick(token) $cand]
+    if {![dict get $lk ok]} {
+        set det $cand
+        if {[dict get $lk why] eq {unlexable}} { set det [dict get $lk name] }
+        return [calc::status [calc::pick_msg [dict get $lk why] $id $det]]
+    }
+    set name [dict get $lk name]
+    calc::buf_insert_token $name
+    return [calc::status [calc::pick_fit $id $name [calc::pick_cadence $net $base]]]
+}
+
+# ---------------------------------------------------------------------------
+# THE SUSPEND/RESUME CONTRACT (src/cmdmode.tcl, issue 0201).  A descend mid-pick
+# pauses the seize and puts it back on the canvas it LANDS on.
+#
+# ⚠ THE SUSPEND ARM RUNS ON EVERY DESCEND IN EVERY PROFILE FOREVER once this
+# file is sourced, so "0 and no damage when there is nothing to release" is a
+# permanent obligation and not a convenience.
+proc calc::pick_suspend {} {
+    variable pick
+    if {![info exists pick(canvas)]} { return 0 }
+    if {[info exists pick(suspended)]} { return 0 }
+    if {![calc::pick_release]} { return 0 }
+    set pick(suspended) 1
+    return 1
+}
+
+# ⚠ ALL FOUR PREDECESSORS ARE RE-LATCHED FROM THE CANVAS BEING LANDED ON, not
+# carried over from the one the mode was seized on: a new window or tab has its
+# own binding set (`set_bindings` + `clone_canvas_bindings`) and the predecessors
+# latched on the parent do not describe it.  Ruling D2 of issue 0201, and
+# `ase::ui::sod_resume` records the same.  It re-latches by CALLING
+# `calc::_pick_seize`, so the sequence count follows that proc and cannot drift.
+proc calc::pick_resume {{canvas {}}} {
+    variable pick
+    variable selmode
+    if {![info exists pick(suspended)]} { return 0 }
+    if {$canvas eq {} || ![calc::has_win $canvas]} {
+        set canvas {}
+        catch {set canvas $pick(canvas)}
+    }
+    if {$canvas eq {} || ![calc::has_win $canvas]} {
+        set id [calc::pick_id]
+        array unset pick
+        set selmode {}
+        if {$id ne {}} { catch {calc::status [calc::pick_msg dropped $id]} }
+        return 0
+    }
+    unset -nocomplain pick(suspended)
+    calc::_pick_seize $canvas
+    calc::pick_pump
+    return 1
+}
+
+# ⚠ AT SOURCE TIME, AND THAT IS SAFE: `cmdmode.tcl` is pure Tcl, sourced from
+# `xschem.tcl` BEFORE this file, and nothing here touches Tk.  Being source-time
+# is also what lets the counted arm prove the registration happened at all.
+#
+# ⚠ GUARDED, AND NOT FOR TIDINESS -- `rdw::_register_cmdmode`'s own reason: a
+# suite that sources this file into a bare `interp create` slave to prove nothing
+# runs at source time has no `cmdmode` either, so an unguarded call would fail the
+# row that polices this file's --nogui survival.  Inside xschem the contract is
+# always there.
+proc calc::_register_cmdmode {} {
+    if {![llength [info commands ::cmdmode::register]]} { return 0 }
+    ::cmdmode::register calc_pick calc::pick_suspend calc::pick_resume
+    return 1
+}
+calc::_register_cmdmode
 
 # ---------------------------------------------------------------------------
 # W08-W14 — the mode strip (spec §6, plan step 1.3)
