@@ -129,11 +129,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and `RESULT:` lines the cases emitted — so never check it against an arithmetic figure.
   ⚠⚠ **THE CURRENT FIGURE IS THE LAST ONE IN THIS BLOCK, NOT THE FIRST.** The figures below run
   in the order they were measured, oldest first, so the first one a reader meets is the OLDEST and
-  reading it as current makes a correct gate look wrong. **As of `87ac3cfa` the trailer is
+  reading it as current makes a correct gate look wrong. **As of `a43b6332` the trailer is
   `cases=143 blocks=142 counted_failures=0 skips=8` with `wc -l` 428** (3 `tcases` + **107**
-  `hcases` + **32** `dcases` + `xschemtest`), `tests/results.2256072.log`, 870s. Derive your own
-  delta from the registration lists and check it against `planned_cases` in the header; do not
-  carry any figure here forward as a baseline.
+  `hcases` + **32** `dcases` + `xschemtest`), `tests/results.2479856.log`, 879s — the SAME trailer
+  and the same `wc -l` as `87ac3cfa` (`tests/results.2256072.log`, 870s) three stages earlier.
+  Derive your own delta from the registration lists and check it against `planned_cases` in the
+  header; do not carry any figure here forward as a baseline.
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
   the gate verdict `tests/results.296161.log` at **`e3e6039d`**, taken in the `~/gc26` clone at an
@@ -149,6 +150,77 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `test_calc_engine` **315 → 323**, a hundred and ten new checks, and not one trailer term moved —
   `wc -l` included, because it tracks the NUMBER of `RESULT:` and `skip:` lines and not the counts
   inside them. **TWENTY-EIGHTH consecutive `skips=8`.**
+  **And `143/142/0/8` AGAIN at `a43b6332`** (`tests/results.2479856.log`, 879s, `wc -l` **428, still
+  unmoved**) — spec **R114**, the Calculator's `aA` font-size control, which the user asked for by
+  name after the same control landed in the RDW. **TWENTY-NINTH consecutive `skips=8`**, and the
+  fourth stage in a row to move only published counts (`test_calc_measure` 444 → **475**,
+  `test_calc_skeleton` 592 → **612**, `test_calc_widgets` 260 → **264**; cross 187, engine 323,
+  wave_dest 125, scratch_reuse 56, buffer 131, plot 115 all unmoved), because
+  `tests/run_regression.tcl` is not in that diff at all.
+  ⚠⚠ **THE LESSON FROM IT IS ABOUT GEOMETRY ARITHMETIC AND IT COST TWO WRONG IMPLEMENTATIONS,
+  BOTH OF WHICH LOOKED RIGHT AND SWEPT GREEN ON THE ROWS THAT EXISTED AT THE TIME.** A font control
+  here is not RDW's: RDW's published `wm minsize` is a pixel constant because it sizes ONE text pane
+  in character cells, while this window's own minimum GROWS with its font (measured 680 px tall at
+  sizes 6–12, 728/797/866/**935** at 14/16/18/20 on 1920x1080), so the sashes must be re-derived on
+  every step. Three measurements, each of which produced a wrong version first:
+  **(a) A chain that enforces only the panes ABOVE each sash starves the LAST pane.** The shipped
+  `calc::pw_list` fraction used as a floor pushes the sash past where the last pane still fits, and
+  the keypad IS the last pane of its panedwindow — 143 against a request of 152, i.e. exactly the
+  clip the control existed to prevent. A backward cap is not optional.
+  **(b) THERE ARE TWO SASH CONSTANTS AND ASSUMING ONE IS AN OFF-BY-ONE ON EVERY PANE.** Measured on
+  `.calc.pw` at `-sashwidth 5 -sashpad 0 -borderwidth 0`: pane 0 `y=0 h=198` with **sash 0 coord
+  199**, pane 1 `y=206 h=221` with sash 1 at 428. So the inter-pane **`gap` is 8** (not the
+  configured 5) and the sash **COORDINATE sits `lead`=1 into that gap** — a pane's extent is
+  `coord - y - lead`, and placing a sash at `y + need` leaves that pane ONE PIXEL short. ⚠ The tell
+  that this was arithmetic and not space: `.calc.pw.sel` missed its request at every size from 13 up
+  **while the panedwindow had ELEVEN pixels spare**, so the deficit-correction pass ran its full
+  bound and could never close it (`passes 4 adopted 0` at every size). With both measured it
+  converges in **one** pass with zero shortfall across the whole band.
+  **(c) `extent - sum(pane extents)` IS NOT A SHORTCUT TO `gap`.** It also swallows unallocated
+  slack, so it read 8 where the real gap was 7 and placed the keypad one pixel **OVER** its natural
+  width — reddening `test_calc_widgets` **R111**, a row asserting exact equality, and right to.
+  Derive both constants from the live widget (`calc::sash_metrics`), never from `-sashwidth`.
+  ⚠⚠ **AND `winfo` IS ABSENT UNDER `--nogui`, NOT MERELY UNABLE TO FIND THE WINDOW.** So the
+  obvious `if {![winfo exists .calc]}` guard **raises** `invalid command name "winfo"` on the counted
+  arm — the arm an rc calling a setter before the window exists lands on. The `info commands winfo`
+  test must come FIRST, exactly as the `font` one does. Caught by row **`CF5`** of
+  `test_calc_measure`, whose whole purpose is that every accessor ANSWERS rather than raises there;
+  it was written before the bug and found it on its first run.
+  ⚠⚠ **`event generate $btn <Button-1>` ON A Tk BUTTON FIRES NOTHING, AND NEITHER DOES
+  PRESS-PLUS-RELEASE.** Measured in three steps: a Tk button runs its `-command` on RELEASE, so
+  `<Button-1>` alone left the model unmoved; and press+release ALSO left it unmoved without a
+  preceding **`<Enter>` and explicit `-x`/`-y`**, because the Button class bindings track which
+  window the pointer entered and refuse a release that did not begin on the widget. The working
+  gesture is Enter → press → release with coordinates, plus a `<Leave>` to cancel the tooltip timer
+  the Enter armed. Row `S29k`. `invoke` is the other honest spelling, but it tests `-command` and not
+  the binding, so a Control-click arm still needs the real event.
+  ⚠ **A BAND AT THE FOOT OF A FILE MUST OPEN WHAT THE BAND ABOVE CLOSED, and the fixture row is
+  what catches it.** `test_calc_skeleton` ends band S28 with `calc::close`, so S29's snapshots were
+  all `ERR:` sentinels and every comparison compared two failures — the main row **passed
+  vacuously** and only its own paired fixture leg (`the snapshot it compares against is real rather
+  than a list of error sentinels`) reddened. Write the fixture leg for any row whose comparand is a
+  snapshot.
+  ⚠ **A TEXT SCAN OVER A FILE THAT DOCUMENTS ITS OWN HAZARD MUST STRIP COMMENTS FIRST** — issue
+  1646's shape, met head-on rather than rediscovered: row `CF18` scans for `font configure Tk*Font`
+  and `src/calculator.tcl`'s own header quotes that exact spelling **in prose, to explain why it must
+  never be written**. An unstripped scan reports the warning as the defect.
+  ⚠ **CHECK `devdisplay.sh status` AFTER ANY `openbox` CLEANUP.** Twice in one session — once by a
+  design crew, once by the driver — an over-broad openbox kill took down the **shared** dev display's
+  window manager on `:99`, which `status` shows as `wm: openbox (-)` instead of `(Openbox)` and which
+  otherwise **falls back silently** (stderr warning only). The driver's gate was discarded and re-run
+  rather than trusted, because an absent WM changes the display arm's measurements. Match a WM by
+  its display, never by its name; `_NET_SUPPORTING_WM_CHECK` on the root is the confirmation.
+  ⚠⚠ **AND THE STAGE FOUND THAT THE FEATURE IT WAS MIRRORING IS FENCED BY NOTHING (issue 1655).**
+  All three `test_rdw_*` suites print `RESULT:` and no `OVERALL: ok`, and
+  `/usr/bin/grep -c 'rdw' tests/run_regression.tcl` is **0** — so `test_rdw_window_1245`'s `FZ` band,
+  including row **`FZ5`, the row asserting that no global font was touched**, runs in no gate. That is
+  the single claim separating RDW's shipped design from the one-liner
+  (`font configure TkFixedFont -size N`) which works perfectly in the window and silently resizes six
+  other dialogs plus the Calculator's buffer. R114's own fences therefore mirror that band's
+  **method** and not its epilogue, into suites that are already registered. Also filed: **issue
+  1654**, `.calc.pw.buf` carrying `-minsize 70` against a `reqheight` of **124**, so dragging that
+  sash to its own legal floor clips the buffer at the shipped font — a landmine D3 violation with
+  nothing to do with fonts.
   ⚠⚠ **AND THE LESSON FROM IT COST THE DRIVER A WASTED PASS: READ THE ROW THAT ALREADY DROVE A GUARD
   BEFORE ADDING IT.** Rows `SO3`/`SO4` of band `MT27` exist, in their own words, *"so that two
   refusals to add a guard are measurements and not opinions"* — `SO4` drives a loop whose phase is
