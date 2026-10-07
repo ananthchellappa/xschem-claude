@@ -4702,8 +4702,23 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   therefore written to mirror the `FZ` band's METHOD and not its epilogue, into already-registered
   suites. ⚠ The crews also reported the suite **red at HEAD on both arms**; that half is second-hand
   and unconfirmed — re-run before acting on it.
+  ⚠⚠ **CONFIRMED AND CLOSED ON THAT HALF, 2026-10-07, AND THE CAUSE IS THIS ISSUE'S OWN SUBJECT.**
+  Both suites really were red — `test_rdw_window_1245` at `1 FAILED (268 passed)` and
+  `test_rdw_keys_1245` at `1 FAILED (91 passed)` — on their hygiene rows `S2` and `S1`, whose third
+  element is `glob -directory tests/headless untitled*`. The cause was a **four-day-old
+  `tests/headless/untitled~.sch`**, written by some earlier run and gitignored by `*~.sch` so
+  `git status` never showed it. Deleting it put both suites back to `ALL PASS` (269 and 92 checks).
+  **That is this issue's cost made concrete**: a stray artifact reddened two suites for four days and
+  nothing noticed, because nothing runs them.
 
-**The next free number is 1656.**
+- **1656** — a RULING owed to the user, not a defect: in Cadence's calculator, does a voltage
+  selector **stay pressed** after one net pick, or pop out? Sticky has shipped (spec R208) because a
+  mode that stays on can be left with one keystroke while a one-shot mode cannot be extended, and
+  because the RDW's device pick already works that way on the user's own earlier ruling. Either
+  answer costs one line in `calc::pick_click`'s success arm plus two named rows in
+  `tests/headless/test_calc_pick.tcl`. Filed with its own `owed.sh add rule`.
+
+**The next free number is 1657.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

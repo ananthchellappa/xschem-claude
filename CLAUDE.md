@@ -157,6 +157,102 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `test_calc_skeleton` 592 → **612**, `test_calc_widgets` 260 → **264**; cross 187, engine 323,
   wave_dest 125, scratch_reuse 56, buffer 131, plot 115 all unmoved), because
   `tests/run_regression.tcl` is not in that diff at all.
+  **And `145/144/0/8` at `ac45d96e`** (`tests/results.2660209.log`, 888s, `wc -l` **434**) — spec **R208**, the Calculator's voltage
+  selectors picking a net on the schematic, which the user asked for by describing Cadence's own
+  gesture. **THIRTIETH consecutive `skips=8`**, and the first stage in five to move the trailer at
+  all: TWO new suites registered in the same commit that creates them, `test_calc_selector_names`
+  (`hcases`, **71** checks, the decision layer) and `test_calc_pick` (`dcases` ALONE, **47** checks,
+  the seize and the gesture). `test_calc_skeleton` 612 → **614** and `test_calc_widgets` 264 → **267**;
+  measure 475, cross 187, engine 323, wave_dest 125, scratch_reuse 56, buffer 131, plot 115 unmoved.
+  ⚠ **Every term was DERIVED before launch and `planned_cases=145` agreed independently** — lifted by
+  discovering all 16 procs `summarize_all` needs (`banner_complete` **sourced** from
+  `tests/banner_rule.tcl`, which is at `tests/` and NOT `tests/headless/`) and splicing real captured
+  blocks into the real baseline verdict. `skips=` held because neither suite prints a lowercase
+  `^skip:` line: the display-only one self-skips as `RESULT: SKIP (no X: ...)`, where the word SKIP is
+  not at column 0 at all. ⚠ That derivation also found **`tests/results.*.log` in the working tree
+  are Sep-26 FOSSILS** reading `cases=100`; the real verdict lives in the gate clone `~/gc26/tests/`.
+  ⚠⚠ **THE LESSON IS THAT A C-SIDE PATH IS NOT A Tk WIDGET PATH, AND THE WRONG VERSION FAILS SILENTLY
+  IN THE WORST DIRECTION.** `xschem get current_win_path` is a CONTEXT identifier: under the TABBED
+  interface it answers `.x2.drw` for a schematic whose canvas widget is `.drw`, `winfo exists
+  .x2.drw` is **0**, and `xschem windows` gives that row a toplevel of `.` and THE SAME X WINDOW ID as
+  `.drw`. `bind` on it does not fail — it creates bindings for a widget that does not exist, so no
+  gesture ever arrives, the prompt sits on the design window saying *click a net*, and nothing
+  happens: **a mode that looks armed and is not.** Resolve the widget out of `xschem windows`' own
+  table (field 0 is the context path, field 1 the toplevel; the main window's toplevel is `.`, so its
+  canvas is `.drw` and not `..drw`). ⚠ And the C answer cannot be trusted as a read-back either
+  (landmine 17: `switch_window()`/`switch_tab()` both open `if(xctx->semaphore) return 1` and
+  `raise_window_entry` returns 1 unconditionally), so the arm verifies by walking the window's own
+  hierarchy stack for the design path — a walk that must answer **-1** for "not here", which is the
+  one answer `ase::ui::sod_base_level` deliberately does not have because 0 is a legitimate level.
+  ⚠ **A SEIZE MUST NEVER LATCH ITS OWN SCRIPTS AS THE PREDECESSORS.** A re-seize of an
+  already-seized canvas records `calc::pick_click; break` as the thing to put back and the restore
+  re-installs the seize — issue 1305's **permanent** seize, unrecoverable inside the session, every
+  click dumping into a dead mode and nothing selectable again. The RDW guards it in `pick_start`;
+  guard it in the seize too, where it also covers a record falsified any other way. Found by a band
+  that falsified one on purpose and then found three of the four slots restored to `break`.
+  ⚠⚠ **`xschem saveas` OF AN UNTITLED SCHEMATIC — AND `xschem load -gui` OVER A DIRTY UNTITLED SHEET —
+  WRITE AN `untitled~.sch` BACKUP ANCHORED TO THE STARTUP DIRECTORY, AND A `cd` DOES NOT MOVE IT.**
+  Measured both ways. It is gitignored (`*~.sch`), so `git status` never shows it, and it reddens the
+  hygiene rows of both `test_rdw_*` suites. **A FOUR-DAY-OLD ONE WAS SITTING IN `tests/headless/`
+  WITH BOTH OF THEM RED** (`S2` and `S1`, third element `glob -directory tests/headless untitled*`);
+  deleting it restored `ALL PASS (269)` and `ALL PASS (92)`. That is issue **1655**'s cost made
+  concrete — nothing runs those suites, so a stray artifact reddened them for four days unnoticed,
+  and it also confirms the second-hand "red at HEAD" half of that issue. A suite must not leave one:
+  load the real sheet BEFORE anything can trigger the backup, and assert the glob at the foot.
+  ⚠⚠ **AN EVENT'S `-x`/`-y` ARE SCREEN PIXELS AND A CANVAS PICK'S COORDINATES ARE SCHEMATIC UNITS.**
+  `<Motion> -x 50 -y 0` to click schematic (50,0) lands wherever pixel (50,0) happens to be, and the
+  row reports *nothing under the click* for a net that is certainly there. The transform is
+  `X_TO_SCREEN` in `src/xschem.h`: `pixel = (schematic + origin) / zoom`, from `xschem get
+  xorigin`/`yorigin`/`zoom` — and ROUND-TRIP it through `xschem get mousex`/`mousey` rather than
+  trusting it, which is one extra row and makes every later coordinate a measurement.
+  ⚠⚠ **`event generate .calc.buf <KeyPress>` HANGS ON THE DISPLAY ARM, AND `focus -force` FIRST DOES
+  NOT FIX IT.** Measured with no pick armed and the Calculator alone in the process, so it is a
+  property of the harness here. The suite is then killed by its driver's timeout and takes the
+  emergency-save path, printing `FATAL: signal 15` — which `banner_died` scores as a **DEATH**, not a
+  timeout, so the verdict misdescribes it; recognise that shape before diagnosing a hang.
+  ⚠ **And for an UNDO-SEPARATOR claim, `.calc.buf insert` is the STRONGER drive anyway.** Row `CB2`
+  of `test_calc_buffer` establishes that `insert` leaves the edit **unseparated**, so the product's
+  own two `edit separator` calls are then the ONLY thing separating the user's text from the inserted
+  token; with real typing Tk's autoseparators (`-autoseparators 1`, measured) could do that job and
+  the row would pass with BOTH separators deleted. `mark set insert end-1c` after it is required, not
+  tidy: `insert end` leaves the mark past the Text widget's trailing newline.
+  ⚠ **Four smaller traps, each of which produced a wrong answer first:** `xschem object_bbox` DOES
+  NOT EXIST (the readers are `xschem wire_coord` and `xschem instance_bbox`); `object_at`'s **fourth**
+  field is the object `id` and is SESSION-stable, not file-stable (the same instance of the same file
+  read `instance 0 1 1` alone and `instance 0 1 15` after another sheet had been loaded), so compare
+  only fields 0 and 1; a wire label must be a **`lab_pin.sym` instance**, not `lab=` on the wire —
+  both spellings load without complaint and only the instance names the net, so a fixture written
+  `N 0 0 100 0 {lab=lp}` silently measures the auto-named `#net1` path while reading as though it
+  measured the labelled one; and **`[i]` inside a `"`-quoted check name is command substitution**, so
+  a row quoting `raw->names[i]` dies with `invalid command name "i"` — the same blind spot as the
+  nested-quote and `switch`-comment traps, and `expr {... ? absent : PRESENT}` likewise raises
+  `invalid bareword`.
+  ⚠ **THE `terminal` CLASS IS NOT REACHABLE ON `cmos_inv.sch` AT ALL, and that was refuted rather
+  than assumed.** `xschem net_at` is `point_on_wire_or_pin()`, so copper is (every wire segment,
+  endpoints included) ∪ (exact instance pin coordinates) — and on that sheet all 22 pin coordinates
+  of all 14 instances answer `net_at` **1** while `object_at` answers `wire` at 20 of them and the
+  sheet's dashed boundary `poly` at the other two. A walk of every wire at step 0.1 — **5714 probes**
+  — found `object_at` answering `instance` on copper **zero** times: a wire always wins
+  `find_closest_obj` over an instance it crosses. So that class needs a bare-pin fixture, and
+  `xschem instance_pin_coord <i> name <pin>` answers **`{name} x y`** — the pin NAME is element 0, so
+  reading (0,1) probes a name and an x and concludes, wrongly, that `net_at` never answers 1.
+  ⚠ **Two of my own comments were false and the rows caught both**, which is the argument for writing
+  the row even when the code is obviously right: `calc::pick_cadence`'s header declared a limit the
+  code does not have (a dotted leaf name is NOT re-levelled — only the PATH is mapped), and a scan row
+  asserted both *"this body carries no comment"* and *"the strip removed something"*, which is
+  unsatisfiable. For a comment-strip non-vacuity leg, run the stripper on a SHIPPED sibling that does
+  carry one — every proc a new stage writes keeps its prose above itself, so a sibling from the same
+  stage is comment-free too.
+  ⚠ `xschem raw list` enumerates **ALL** `nvars`, including AC's four-column expansion, and `raw
+  index` indexes the same array — so the R207 inventory read-back is sound on an `ac` database too,
+  which had to be measured because `vf` is an AC selector. Same fixture: 40 rows as `ac`
+  (`index(v(sq))` 36 → `v(sq)`, `index(ph(sq))` 37, `index(frequency)` 0), 10 as `tran`
+  (`index(v(sq))` 9, `index(time)` 0, **`index(v(time))` −1**). An earlier note in this session's own
+  summary said `raw list` returns "registered/derived columns only"; it does not.
+  ⚠ `raw index` is **case-insensitive and also accepts a bare net name** (`v(sq)`, `V(SQ)`, `SQ` and
+  `sq` all answer 9), so an index check alone can NEVER see a case error and the byte identity of the
+  inventory read-back is the whole of R207's fence. And `raw loaded` answers −1 silently where `raw
+  index` and `raw list` both **raise** `No raw file loaded`, which is what forces the ladder's order.
   ⚠⚠ **THE LESSON FROM IT IS ABOUT GEOMETRY ARITHMETIC AND IT COST TWO WRONG IMPLEMENTATIONS,
   BOTH OF WHICH LOOKED RIGHT AND SWEPT GREEN ON THE ROWS THAT EXISTED AT THE TIME.** A font control
   here is not RDW's: RDW's published `wm minsize` is a pixel constant because it sizes ONE text pane

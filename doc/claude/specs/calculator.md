@@ -540,7 +540,15 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   schematic and no canvas:
   `xschem object_at` at the **un-snapped** point, `ase::ui::sod_net_at` at the same point,
   and `xschem net_at` at the **snapped** point. It answers one of `net`, `terminal`,
-  `body`, `nothing`.
+  `body`, `unnamed`, `nothing`.
+  ⚠ `unnamed` is a **fifth** class and it exists because the fourth sentence was wrong. A
+  wire whose net does not resolve is a real case, not a degenerate one: `xschem
+  net_name_at` answers the empty string for a wire the **active netlist type** skips
+  (`spice_ignore` / `lvs_ignore`, `netlist.c` `skip_wire`), and issue 0160's locked wire
+  reaches the same place. Folded into `body`, the refusal read *"that wire is not a net"* —
+  about a wire — which is the kind of plausible-wrong sentence that sends a user to look
+  for the defect in their own schematic. It takes the *no name* sentence instead, the same
+  one an empty token earns, because it is the same user-facing fact.
   ⚠ The two pairs are not interchangeable and the split is measured, not stylistic. Issue
   1303 swept 23725 points on `xschem_library/examples/cmos_inv.sch`: **6.4 % of
   grid-snapped reads miss the object entirely and 0.5 % resolve to a different one**,
@@ -617,8 +625,8 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   selector (R201), a click on another selector, the design window going away, a
   navigation that takes the design out of that window's hierarchy stack, and closing the
   Calculator (R307). A miss — empty canvas, a device body, a terminal, an unresolvable
-  name — refuses **with a sentence** and leaves the mode live, because a mode that ended
-  on a mis-click would be unusable.
+  name, a wire with no resolvable name — refuses **with a sentence** and leaves the mode
+  live, because a mode that ended on a mis-click would be unusable.
   ⚠ **v1 scope is the four voltage ids** (`vt` `vf` `vdc` `vs`), which §5's table gives
   one emission. The current ids pick a terminal (R203), §5 gives them `@<dev>[<term>]`,
   and the tree's only zoom-scaled pin hit test (`find_closest_pin`, `findnet.c`) has **no
@@ -629,8 +637,15 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   dialog opening inside a modal pick is worse. Declared v1 limit.
   ⚠ **No analysis gate.** `vf` on a `tran` result is not refused: ADE-L is a floor,
   `v(<net>)` resolves in every analysis, and R204's inventory check is the gate that
-  matters. A row asserts the four ids answer identically, so adding a gate later must move
-  a row.
+  matters. The fence is **structural rather than behavioural**, which is stronger: the two
+  procs that compose and resolve a name are told a token and a level and **never an id**,
+  so they cannot discriminate `vf` from `vt` at all, and the one proc that *is* told an id
+  never asks the database what analysis it holds. A gate added later must change a
+  signature or name an analysis, and either reddens a named row.
+  ⚠ An earlier spelling of that row drove all four ids through `calc::pick_name` and
+  compared the answers — which agree **by construction**, because `$id` appeared in the
+  loop and in nothing the loop called. It was vacuous and is recorded here because the
+  shape recurs: a sweep over a parameter the subject cannot see measures nothing.
 
 ---
 
