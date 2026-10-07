@@ -4679,7 +4679,31 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   visible. Two product questions, filed together because the decision in both is how honest the tool
   should be when it cannot tell what it was handed.
 
-**The next free number is 1654.**
+- **1654** — `.calc.pw.buf` ships a `-minsize` of **70** against a measured `reqheight` of **124**,
+  so dragging that sash to its own legal floor clips the buffer. Landmine D3's contract is that a
+  pane's minimum is the smallest extent at which the contents are still usable, and this one is not.
+  ⚠ Nothing to do with fonts — true at the shipped font and true before spec R114 — found while
+  building the Calculator's font control and filed rather than fixed because `calc::apply_pane_minsize`
+  widening from two panes to six moves **four** frozen phase-0 literals that row S4 of
+  `tests/headless/test_calc_skeleton.tcl` reads, which is a decision about the frozen layout rather
+  than a repair. ⚠ And note what the fix is not: raising a `-minsize` on a live panedwindow does not
+  re-allocate the pane, so this is about the DRAG floor only — the clip at a larger font comes from
+  where the sash sits, which `calc::place_panes` already owns.
+
+- **1655** — all three `test_rdw_*` suites print `RESULT:` and no `OVERALL: ok`, and none is in
+  `hcases` or `dcases`: measured `/usr/bin/grep -c 'rdw' tests/run_regression.tcl` → **0** and zero
+  sentinel lines in all three files. Same family as 0420, 0456, 0492, 0629, 0689, 1413, 1615, 1626,
+  1645 and 1652. ⚠ **It matters more than the usual instance**, which is why it is its own number:
+  `test_rdw_window_1245` holds the `FZ` band — the RDW font control's own fences, including row
+  **FZ5**, the row asserting that no global font was touched. That is the one claim separating the
+  shipped design from the one-liner (`font configure TkFixedFont -size N`) which works perfectly in
+  the window and silently resizes six other dialogs plus the Calculator's buffer, and **nothing runs
+  it.** Found while mirroring that control into the Calculator (spec R114), whose own fences were
+  therefore written to mirror the `FZ` band's METHOD and not its epilogue, into already-registered
+  suites. ⚠ The crews also reported the suite **red at HEAD on both arms**; that half is second-hand
+  and unconfirmed — re-run before acting on it.
+
+**The next free number is 1656.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
