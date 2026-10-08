@@ -277,9 +277,41 @@ proc kx_centre {n} {
 ## it. <Motion> FIRST so mousex_snap updates before the press — without it the
 ## pick reads the previous point and every "the click picked X" leg is a lie
 ## about a click that landed somewhere else (test_sod_pick_no_select_0204 SO11).
+# ⚠⚠ THE `update` PUMPS STALE EVENTS *BEFORE* THE MOTION, NEVER BETWEEN THE
+# MOTION AND THE PRESS, AND THAT ORDER IS THE WHOLE ROW SET.  Measured
+# 2026-10-08 after rows F1/C2/V2/V3/V7/D1 were found failing at HEAD with a
+# moving row set (6, 7, 8 and 10 failures across four runs at ONE commit -- this
+# tree's own tell for a flake rather than a regression), latent since `8a8f66d2`
+# introduced these helpers with the pump in the wrong place.
+#
+# The mechanism, traced end to end rather than guessed.  `-when now` delivers
+# synchronously, so the synthetic Motion sets `mousex`/`mousey` correctly and
+# needs NO pump to take effect.  An `update` placed after it is therefore pure
+# exposure: it is the only point at which foreign events get processed between
+# the motion and the press, and what it processes is the toplevel's WM settle --
+# a `<Configure>` BURST.  `src/xschem.tcl` binds
+# `bind $topwin <Configure> "xschem callback %W %T %x %y 0 %w %h 0"` on a
+# TOPLEVEL, so every descendant's bindtags include it and it fires for
+# `.statusbar.1`, `.`, `.statusbar`, `.toolbar`, `.tabs` and `.drw` alike,
+# handing each widget's position INSIDE ITS PARENT as `%x %y`.  `callback()`
+# (src/callback.c) then runs `xctx->mousex = X_TO_XSCHEM(mx)` UNCONDITIONALLY,
+# above its `switch(event)` -- so a ConfigureNotify writes a widget POSITION
+# into the mouse pair.  Instrumented here: the motion set 136.2803/-170.01365
+# and the `update` left 1260.7161/-742.09501, a point nobody clicked.
+# `rdw::pick_click` reads that pair, `xschem instance_at` answers empty, and the
+# proc takes its "no device under the click" arm -- rc 0, no error text, no
+# window, no block, which is why all six rows read `NO-BLOCK` and none of them
+# raises.  The rows were RIGHT and the product was RIGHT; the helper was racing.
+#
+# ⚠ THE PRODUCT HALF IS A SEPARATE, UNCONFIRMED FINDING AND IS NOT FIXED HERE:
+# that `callback()` clobber is reachable by any `<Configure>` on any descendant,
+# including `.statusbar.1` on a status-text reflow, and `rdw::pick_click` is not
+# its only un-snapped reader -- `calc::pick_click` (R208) reads the same pair.
+# Whether a real hand gesture can see it was NOT established.  Filed; do not
+# treat this helper fix as closing it.
 proc kx_click {ux uy {cv .drw}} {
-  event generate $cv <Motion>          -x [sx $ux] -y [sy $uy] -when now
   update
+  event generate $cv <Motion>          -x [sx $ux] -y [sy $uy] -when now
   event generate $cv <ButtonPress-1>   -x [sx $ux] -y [sy $uy] -when now
   event generate $cv <ButtonRelease-1> -x [sx $ux] -y [sy $uy] -when now
   update
@@ -337,9 +369,10 @@ proc kx_listkind {} {
 # two user-space answers are read back from `xschem get` afterwards.
 proc ux {p} { expr {$p * [xschem get zoom] - [xschem get xorigin]} }
 proc uy {p} { expr {$p * [xschem get zoom] - [xschem get yorigin]} }
+# Same pump order as `kx_click`, for the reason recorded above it.
 proc kx_click_px {px py {cv .drw}} {
-  event generate $cv <Motion>          -x $px -y $py -when now
   update
+  event generate $cv <Motion>          -x $px -y $py -when now
   event generate $cv <ButtonPress-1>   -x $px -y $py -when now
   event generate $cv <ButtonRelease-1> -x $px -y $py -when now
   update
@@ -348,7 +381,15 @@ proc kx_click_px {px py {cv .drw}} {
 ## Button1Mask and is what makes C's motion handler take the rubber-band arm
 ## (callback.c:7250-7260); a motion without it is an ordinary hover. This is
 ## the gesture issue 1304 is about and no other row in either suite makes it.
+# ⚠ THIS ONE GETS THE LEADING PUMP AND KEEPS ITS OWN `update`s.  It carries the
+# identical shape to the two above and therefore the identical exposure, but its
+# rows are GREEN and the intervention above was not measured on a drag -- and the
+# `update` after its ButtonPress is load-bearing, since the rubber-band arm needs
+# the press delivered before the held motions.  Pumping first empties the queue so
+# the later `update`s have no settle burst left to process, which removes the
+# exposure WITHOUT removing anything the gesture depends on.
 proc kx_drag_px {px0 py0 px1 py1 {steps 8} {cv .drw}} {
+  update
   event generate $cv <Motion>        -x $px0 -y $py0 -when now
   update
   event generate $cv <ButtonPress-1> -x $px0 -y $py0 -when now
