@@ -171,6 +171,98 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `^skip:` line: the display-only one self-skips as `RESULT: SKIP (no X: ...)`, where the word SKIP is
   not at column 0 at all. ⚠ That derivation also found **`tests/results.*.log` in the working tree
   are Sep-26 FOSSILS** reading `cases=100`; the real verdict lives in the gate clone `~/gc26/tests/`.
+  **And `145/144/0/8` at `8fdc98ed`** (`~/gc26/tests/results.2971530.log`, 881s, `wc -l` **434
+  UNMOVED**) -- R421a (OK composes a measurement call into the buffer, Eval evaluates it) plus PLAN
+  4.1's expression stack. **THIRTY-FIRST consecutive `skips=8`**, every predicted term matched, and
+  `planned_cases=145` agreed independently -- derived before launch from the one fact that settles it:
+  `tests/run_regression.tcl` is **not in the diff at all** across the five commits, so `cases` and
+  `blocks` were structurally incapable of moving. Published counts: `test_calc_skeleton` 614 -> **627**,
+  `test_calc_widgets` 267 -> **271**, `test_calc_measure` 475 -> **495**, `test_calc_selector_names`
+  71 -> **79**, `test_calc_pick` 47 -> **55**; engine 323, cross 187, wave_dest 125, scratch_reuse 56,
+  buffer 131, plot 115 unmoved. Nothing recompiled: binary md5 unmoved, `.o` md5s unmoved, and zero
+  `.c`/`.h` newer than the binary -- three witnesses, not the `make` message alone, because
+  `scheduler.c`'s `__DATE__` makes the binary's md5 move on any relink.
+  ⚠⚠ **BUT THE FIRST GATE AT THAT COMMIT WAS RED -- `counted_failures=7`, `wc -l` 441
+  (`results.2892484.log`) -- AND THE RED IS THE PART WORTH READING.** One case only,
+  `test_calc_pick`'s **display arm** (6 rows + its HARNESS line); a byte diff of the two verdicts
+  differs in that block and nowhere else. Green standalone, green across the whole Calculator
+  `dcases` chain in T1's own order, green in a full re-gate at the same commit in the same clone.
+  **Five of the six failing rows read *"nothing under the click"*, which is issue 1659's signature**,
+  and the suite drives `<Motion>` then `<ButtonPress-1>` with an `update` between them.
+  ⚠⚠⚠ **ISSUE 1659: `callback()` WRITES `xctx->mousex/mousey` FOR *EVERY* EVENT, ABOVE ITS
+  `switch(event)`, AND `bind $topwin <Configure>` IS BOUND ON A TOPLEVEL -- SO IT FIRES FOR EVERY
+  DESCENDANT AND HANDS THAT WIDGET'S POSITION INSIDE ITS PARENT AS `%x %y`.** Logged `%W` during one
+  settle: `.statusbar.1`, `.`, `.statusbar`, `.toolbar`, `.tabs`, `.drw`. Measured: a synthetic
+  `<Motion> -when now` set the pair to `136.2803/-170.01365` and ONE `update` left it at
+  **`1260.7161/-742.09501`**, a point nobody clicked. `rdw::pick_click` and `calc::pick_click` both
+  read that pair as their documented default, so the pick resolves nothing and takes its "nothing
+  under the click" arm -- **rc 0, no error text, no window, no block: a silent wrong answer.** The
+  alarming half is that `.statusbar.1` reflows on ordinary status-text updates, not only on a resize.
+  **The product half is NOT fixed** (issue 1659, `claim=latent`): what was never established is
+  whether a real hand gesture can land a Configure between the motion and the press, since a real
+  pointer sends a genuine motion first. **Measure that before touching `callback()`.**
+  ⚠⚠ **AND THE TEST FIX IS NOT ONE FIX, IT IS TWO, BECAUSE THE PUMP'S ROLE DIFFERS BY HELPER.**
+  `test_rdw_keys_1245`'s `kx_click`/`kx_click_px` pass **`-when now`**, which delivers synchronously --
+  so their post-motion `update` was **pure exposure** and the fix is to move it in FRONT of the motion
+  (intervention proof: `6 FAILED (86)` -> `ALL PASS (92)` twice, with no product change).
+  `test_calc_pick`'s `pg_click` passes **no `-when now`**, so its events go through the QUEUE and that
+  same `update` is what **DELIVERS** the motion -- moving it would stop the pair being set at all.
+  There the drain goes in FRONT and the delivering pump stays. **Copying the sibling's fix would have
+  broken the suite**, which is why the shape has to be read rather than pattern-matched.
+  ⚠ `pg_click` now also **READS THE PAIR BACK** and counts a divergence, with row `PGC` failing on a
+  nonzero count (55 -> **56** checks): a race that corrupts other rows silently is worse than one that
+  names itself, and the next occurrence arrives as ONE row saying `wanted=X,Y got=X',Y'` instead of six
+  unrelated-looking failures in bands that were not at fault. It is a RACE DETECTOR, not a product
+  fence -- a green run says the clobber did not fire, never that it cannot.
+  ⚠⚠ **THE FLAKE WAS NOT A REGRESSION AND THE BISECT IS THE PROOF: FOUR RUNS AT ONE COMMIT GAVE 6, 7,
+  8 AND 10 FAILURES.** A moving row set is this file's own tell. `424cb971`, seventeen commits before
+  the series, is identically red, and `git log -S` puts the helper's bad pump at `8a8f66d2`, the commit
+  that introduced it -- latent from the day the rows were written. ⚠ **A driver hypothesis was
+  REFUTED by measurement rather than argued down**: the guess was that `c903af6f`'s raises or
+  `ac45d96e`'s canvas seize had reached the RDW; `calc::*` appears **zero times** in that suite and the
+  Calculator is never opened there. Both RDW suites are registered in **nothing**, which is issue
+  **1655**'s cost made concrete twice in one day -- `test_rdw_window_1245` additionally carries a
+  **separate, unfixed** tooltip flake (`HT9`/`HT12`/`HT15`, measured 1/0/3/4/3 failures over five
+  consecutive runs) that this pump fix does not touch.
+  ⚠⚠ **A `calc::*_msg` BUILDER HAS A CONTRACT WITH TWO TERMS AND BREAKING EITHER MAKES ITS SENTENCES
+  UNREACHABLE WHILE EVERYTHING STILL READS GREEN-ISH.** Band `MT20/B` of `test_calc_measure` and band
+  `S28/8` of `test_calc_skeleton` derive the builder population from `info procs ::calc::*_msg`, derive
+  each builder's ARMS by scanning its body for **`pattern { return` on ONE PHYSICAL LINE**, and call
+  each builder with **THREE** arguments. So: **(a)** an `if`-ladder derives ZERO arms, the builder is
+  taken for a zero-argument one, called with none, and its `wrong # args` sentinel **poisons the sweep
+  for every OTHER builder in the file**; **(b)** a `switch` whose bodies sit on the FOLLOWING lines
+  derives zero arms too -- a switch is **necessary and not sufficient**, and this was discovered by
+  announcing the if-ladder fix as done and being wrong; **(c)** a builder taking `{kind {n {}}}` where
+  the five siblings take `{kind a b}` **raises on every arm at once**. All three were committed and
+  all three were caught by those two bands. The ladder was written deliberately, to dodge the
+  `switch`-comment parity trap -- **dodging that trap cost more than the trap**, and the right move is
+  the siblings' shape with no comment between any two patterns.
+  ⚠⚠ **TWO MORE VACUOUS-ROW SHAPES, BOTH FOUND BY ATTACKING A GREEN ROW RATHER THAN BY A RED.**
+  **(a)** `CW13` presses `.calc.mode.eval` and asserts it touches neither buffer nor Stack -- and
+  passes for a reason that is neither of the obvious two: the suite loads **no result**, so
+  `calc::eval_click` returns on the result gate *before it reads the buffer at all*. A composable call
+  was put in the buffer and the row still passed. The sweep's own `SENTINEL` text is not composable
+  either, so a green sweep was **no evidence whatsoever** about the proc R421a had just made able to
+  write the buffer. Fixed by a drive whose leg asserts the splitter really **PARSED** the text.
+  **(b)** `S19`'s *"no toolbar button touched the stack -- not even the landed ones"* would pass
+  vacuously once the stack landed: **Enter pushes one and Pop takes it straight back off**, so the end
+  state is 0 either way and a build where neither did anything is indistinguishable. Restated as a
+  per-press **trajectory** (`{enter=1 pop=0 clrstk=0}`). ⚠ Its `ClrStk` expectation then had to be
+  corrected to the **`noclear`** arm -- by that point in the sweep the stack really is empty, which is
+  the sweep order telling the truth about itself.
+  ⚠⚠ **DO NOT HAND-RUN THE CALCULATOR SUITES BACK TO BACK AND READ THE REDS AS DEFECTS.** A loop of
+  eleven `run_suites.sh` invocations reddened `test_calc_skeleton` and `test_calc_pick`; both passed
+  **standalone** immediately afterwards at their full counts. T1 routes its `dcases` serially through
+  its own wrapper, which is why **T1 is the arbiter and a hand loop is not**. Two suites were nearly
+  diagnosed as broken on that evidence.
+  ⚠ **AND `CW13`'s `$allowed` LIST HAS NOW CLAIMED A THIRD VICTIM-SHAPE, SO TREAT IT AS A STANDING
+  HAZARD RATHER THAN A LIST.** It excuses a control BY NAME, so any proc that stops being a phase-1
+  stub while staying on it leaves the row GREEN and its own sentence FALSE -- recorded for
+  `calc::sel_click` (phase 6), and now `calc::eval_click` (R421a) and the three stack gestures (PLAN
+  4.1). The remedy each time is a new list whose comment states the real reason, kept INSIDE the
+  touch sweep where the claim is stronger than an exclusion -- except where the control is *meant* to
+  move both, which earns an exclusion **paired with a deterministic positive drive**.
+
   ⚠⚠ **THE LESSON IS THAT A C-SIDE PATH IS NOT A Tk WIDGET PATH, AND THE WRONG VERSION FAILS SILENTLY
   IN THE WORST DIRECTION.** `xschem get current_win_path` is a CONTEXT identifier: under the TABBED
   interface it answers `.x2.drw` for a schematic whose canvas widget is `.drw`, `winfo exists

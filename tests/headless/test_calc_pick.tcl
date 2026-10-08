@@ -170,10 +170,45 @@ proc pg_px {x y} {
 # one real canvas click AT A SCHEMATIC POINT: motion first (C updates its mouse
 # pair only on events it SEES, and the seize eats the press), then press, then
 # release.
+#
+# ⚠⚠ THE LEADING `update` DRAINS THE SETTLE BURST, AND IT IS NOT THE SAME FIX THE
+# RDW HELPERS GOT.  Issue 1659: `bind $topwin <Configure>` is bound on a TOPLEVEL,
+# so it fires for every descendant (`.statusbar.1` included, on an ordinary
+# status-text reflow) and hands that widget's position inside its parent to
+# `callback()` as %x %y -- which writes `xctx->mousex/mousey` UNCONDITIONALLY,
+# above its `switch(event)`.  Any `update` that processes a pending Configure
+# therefore overwrites the pair this helper just set, `xschem instance_at`
+# answers empty, and `calc::pick_click` takes its "nothing under the click" arm:
+# rc 0, no error, no insert.  Measured in the sibling suite as 136.2803 ->
+# 1260.7161 across one `update`.
+#
+# ⚠ BUT UNLIKE `kx_click`, THE PUMP HERE CANNOT SIMPLY MOVE.  Those helpers pass
+# `-when now`, which delivers synchronously, so their post-motion `update` was
+# pure exposure.  These events go through the QUEUE, so the `update` after the
+# motion is what DELIVERS it -- removing it would stop the pair being set at all.
+# The drain goes in FRONT instead, so the burst is gone before the motion is sent
+# and the delivering pump has nothing left to process.
+#
+# ⚠ AND THE DRAIN IS NOT TRUSTED: the pair is read back and a divergence is
+# COUNTED, because this exact shape produced a T1 red (six rows of this suite's
+# display arm, five of them reading "nothing under the click") that did not
+# reproduce standalone, in the Calculator `dcases` chain, or in a full re-gate.
+# A race that corrupts other rows silently is worse than one that names itself;
+# row PGC below fails on a nonzero count, so the next occurrence is legible
+# instead of arriving as six unrelated-looking failures.
+set ::PG_CLOBBER 0
+set ::PG_CLOBBER_AT {}
 proc pg_click {cv x y} {
     set p [pg_px $x $y]
+    update
     event generate $cv <Motion> -x [lindex $p 0] -y [lindex $p 1]
     update
+    set gx [expr {round([xschem get mousex])}]
+    set gy [expr {round([xschem get mousey])}]
+    if {abs($gx - $x) > 1 || abs($gy - $y) > 1} {
+        incr ::PG_CLOBBER
+        lappend ::PG_CLOBBER_AT "wanted=$x,$y got=$gx,$gy"
+    }
     event generate $cv <ButtonPress-1> -x [lindex $p 0] -y [lindex $p 1]
     event generate $cv <ButtonRelease-1> -x [lindex $p 0] -y [lindex $p 1]
     update
@@ -181,6 +216,7 @@ proc pg_click {cv x y} {
 # where C thinks the pointer is, in schematic units, after a motion
 proc pg_mouse {cv x y} {
     set p [pg_px $x $y]
+    update
     event generate $cv <Motion> -x [lindex $p 0] -y [lindex $p 1]
     update
     return [list [expr {round([xschem get mousex])}] [expr {round([xschem get mousey])}]]
@@ -710,6 +746,20 @@ check "PGH HYGIENE: the suite creates no `untitled*` file in the repo -- xschem 
     [list [glob -nocomplain [file join $repo untitled*]] $pg_untitled_pre] \
     [list $pg_untitled_pre $pg_untitled_pre]
 
+# ⚠⚠ THE RACE NAMES ITSELF.  Issue 1659's clobber is what turned this suite's
+# display arm red inside one full T1 (`counted_failures=7`, run
+# `~/gc26/tests/results.2892484.log` at `8fdc98ed`) while a re-gate at the SAME
+# commit in the SAME clone came back clean -- six rows, five of them reading
+# "nothing under the click", which is what a pick resolving a clobbered
+# `mousex`/`mousey` looks like.  `pg_click` now drains the settle burst before
+# the motion AND READS THE PAIR BACK; this row fails on any divergence, so a
+# recurrence arrives as ONE row that says what happened rather than as six
+# unrelated-looking failures in bands that were not at fault.
+# ⚠ It is a RACE DETECTOR and not a fence on the product: a green run here says
+# the clobber did not fire during this run, never that it cannot.  The product
+# half is issue 1659 and is deliberately unfixed.
+check "PGC NO CLICK IN THIS SUITE RESOLVED A CLOBBERED MOUSE PAIR: every `pg_click` read its own point back out of C after the delivering pump, within one schematic unit" \
+    [list $::PG_CLOBBER $::PG_CLOBBER_AT] {0 {}}
 check "EVERY band above this one RAN TO ITS END: no band was abandoned through `group`'s catch, which is the failure mode that DELETES a band's remaining rows from the verdict instead of reddening them.  Derived from `group`'s own record rather than a list kept here" [list [llength $::abortnames] $::abortnames] {0 {}}
 
 catch {test_scratch_drop $scratch}
