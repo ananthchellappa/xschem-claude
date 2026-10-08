@@ -1257,6 +1257,29 @@ it into a silent `-1` for the whole expression.
 - **R503** `Pop` (W18) removes the top stack item and puts it in the buffer, **replacing**
   the buffer contents. If the buffer was non-empty, the discarded text goes to the undo
   history.
+- **BUILT 2026-10-08 (PLAN 4.1): R502, R503, R504 and R506's stack half.** The model is
+  `calc::stk_get`/`stk_set`/`stk_push`/`stk_pop`/`stk_clear`/`stk_depth`/`stk_render`, top of stack at
+  index 0, cap `calc::stk_max` = 200 with the oldest dropped and said; the gestures are
+  `calc::stk_enter` (W17), `calc::stk_popped` (W18) and `calc::stk_cleared` (ClrStk), and R421a's Eval
+  press pushes the composed call before the number replaces it.
+  - ⚠ **`.calc.stk.push`, `.calc.stk.pop`, `.calc.stk.del`, `.calc.stk.recall`, `Swap` and `Roll` are
+    STILL INERT, deliberately, and this is the open ruling.** R502/R503 govern the BUFFER TOOLBAR's
+    `Enter` and `Pop`; **W25 says only "the four side buttons"** and nothing in this tree — spec,
+    ledger, issue, or `doc/claude/code_analysis/viva_calculator_explained.md`, which records just the
+    four verb names *"push, pop, delete and recall"* — says what **Del** and **Recall** do, whether
+    they act on the listbox SELECTION or on index 0, or whether the side pair differs from the toolbar
+    pair at all. `Swap`/`Roll` have only W19's *"reorder stack items"*. **Ask the user; do not infer
+    it from the verb names.** Band `S20` of `test_calc_skeleton` holds them inert meanwhile.
+  - ⚠ **R505's joined history is NOT built** (PLAN 4.4). What is built is the half R503 names
+    explicitly: a Pop over a non-empty buffer puts the discarded text in the undo history, via
+    `calc::buf_set_expr`'s paired separators. Undo after a Pop restores the buffer; it does **not**
+    put the entry back on the stack. Declared, not hidden.
+  - ⚠ **A `*_msg` builder's signature is `{kind {a {}} {b {}}}` and that is a contract.**
+    `calc::stk_msg` was first written with two formals and every one of its seven sentences went
+    unreachable: band `MT20/B` and band `S28/8` both derive the builder population from
+    `info procs ::calc::*_msg` and call each with THREE arguments. Taking fewer puts a sentence beyond
+    the only instrument that checks it fits the status line. Same family as the one-physical-line
+    `pattern { return` shape those sweeps also require.
 - **R504** The stack is unbounded in the model but capped at 200 entries in the UI,
   matching `STACKMAX`; pushing at the cap drops the oldest and says so.
 - **R505** Undo/redo (W22) cover buffer edits **and** stack operations, as one history.

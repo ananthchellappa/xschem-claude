@@ -3247,7 +3247,7 @@ proc calc::eval_click {} {
     # refusal is contingent on the raw file's inventory rather than on a keyword
     # list, so this ordering is the fence and the gate is not.
     set m [calc::meas_split $rpn]
-    if {$m ne {}} { return [calc::status [calc::meas_eval $m $g]] }
+    if {$m ne {}} { return [calc::status [calc::meas_eval $m $g $rpn]] }
     return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
 }
 
@@ -10057,12 +10057,12 @@ proc calc::build_buf {} {
     # wired to a landed phase-2 proc and how many of them a sweep really
     # pressed.)
     foreach {id label phase cmd} {
-        enter  {Enter}  4 {}
-        pop    {Pop}    4 {}
+        enter  {Enter}  4 {calc::stk_enter}
+        pop    {Pop}    4 {calc::stk_popped}
         swap   {Swap}   4 {}
         roll   {Roll}   4 {}
         clrbuf {ClrBuf} 2 {calc::clr_buf}
-        clrstk {ClrStk} 4 {}
+        clrstk {ClrStk} 4 {calc::stk_cleared}
         mplus  {M+}     9 {}
         me     {ME}     9 {}
         undo   {Undo}   2 {calc::buf_undo}
@@ -12451,12 +12451,153 @@ proc calc::buf_set_expr {s} {
     return $s
 }
 
+# ---------------------------------------------------------------------------
+# THE EXPRESSION STACK -- PLAN phase 4.1, R502-R506.  Model only; the window's
+# widgets have been in place and inert since phase 1b.
+#
+# ⚠ TOP OF STACK IS INDEX 0 (spec §4 W24), which is why every push is a
+# `linsert ... 0` and never an `lappend`.  `calc::build_stk`'s own header already
+# wrote that direction down before anything could push, for the stated reason
+# that a listbox filled the other way round passes every widget check and gets
+# R511's operand order backwards.
+#
+# ⚠ THE FOUR SIDE BUTTONS (`.calc.stk.push/.pop/.del/.recall`) AND `Swap`/`Roll`
+# STAY INERT, DELIBERATELY.  R502/R503 govern the BUFFER TOOLBAR's `Enter` (W17)
+# and `Pop` (W18); W25 says only "the four side buttons" and NOTHING in this tree
+# -- spec, ledger, issue or the Cadence explainer -- says what `Del` and `Recall`
+# do, nor whether the side pair differs from the toolbar pair.  Guessing a
+# gesture the user has to live with is the one thing this file is not allowed to
+# do, so those six are left saying "not implemented" and the question is the
+# user's.  Band S20 of tests/headless/test_calc_skeleton.tcl keeps them honest.
+#
+# ⚠ R505's joined undo history (buffer edits AND stack operations as ONE
+# history) is PLAN 4.4 and is NOT implemented here.  What IS implemented is the
+# narrower half R503 names explicitly: a Pop that overwrites a non-empty buffer
+# puts the discarded text in the undo history, which it gets for free by going
+# through `calc::buf_set_expr`'s paired separators.  Pressing Undo after a Pop
+# restores the buffer; it does not put the entry back on the stack.  Declared,
+# not hidden.
+
+proc calc::stk_max {} { return 200 }
+
+proc calc::stk_get {} {
+    variable stack
+    if {![info exists stack]} { set stack {} }
+    return $stack
+}
+
+proc calc::stk_depth {} { return [llength [calc::stk_get]] }
+
+# The listbox is a VIEW of the model and is rebuilt from it, never edited
+# alongside it -- two writers would be a second source of truth, and the one
+# thing the widget is asked for anywhere is its `size`.
+proc calc::stk_render {} {
+    if {![calc::has_win .calc.stk.list]} { return 0 }
+    set l [calc::stk_get]
+    catch {.calc.stk.list delete 0 end}
+    foreach e $l { catch {.calc.stk.list insert end $e} }
+    return [llength $l]
+}
+
+proc calc::stk_set {l} {
+    variable stack
+    set stack $l
+    calc::stk_render
+    return [llength $l]
+}
+
+# Answers a DISPOSITION WORD and not a boolean, so the caller's sentence can
+# name what happened without re-deriving it: `empty`, `pushed`, or `capped` when
+# R504's 200-entry cap dropped the oldest entry to make room.
+proc calc::stk_push {s} {
+    set t [string trim $s]
+    if {$t eq {}} { return empty }
+    set l [linsert [calc::stk_get] 0 $t]
+    set w pushed
+    set m [calc::stk_max]
+    if {[llength $l] > $m} {
+        set l [lrange $l 0 [expr {$m - 1}]]
+        set w capped
+    }
+    calc::stk_set $l
+    return $w
+}
+
+proc calc::stk_pop {} {
+    set l [calc::stk_get]
+    if {[llength $l] == 0} { return {} }
+    set top [lindex $l 0]
+    calc::stk_set [lrange $l 1 end]
+    return $top
+}
+
+proc calc::stk_clear {} {
+    set n [calc::stk_depth]
+    calc::stk_set {}
+    return $n
+}
+
+# R506: every operation that changes the buffer or the stack says what happened.
+# Arms on one physical line each, for the reason `calc::meas_msg`'s header
+# records at length.
+#
+# ⚠ THE SIGNATURE IS `{kind {a {}} {b {}}}` AND THAT IS A CONTRACT, NOT A STYLE.
+# This proc was first written `{kind {n {}}}` -- two formals, because only one
+# substitution is ever needed -- and band MT20/B of
+# tests/headless/test_calc_measure.tcl plus band S28/8 of
+# tests/headless/test_calc_skeleton.tcl both reddened on EVERY arm at once with
+# `wrong # args`.  Those sweeps derive the builder population from
+# `info procs ::calc::*_msg` and call each one with THREE arguments, because all
+# five siblings (`eval_msg`, `plot_msg`, `cross_msg`, `pick_msg`, `arg_msg`) take
+# `kind a b`.  Taking fewer puts every sentence here beyond the reach of the only
+# instrument that checks it fits the status line.  `$b` is unused here, as it is
+# in most arms of the siblings.
+proc calc::stk_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        pushed { return "Pushed to the stack ($a deep)." }
+        capped { return "Pushed; the stack was full, so the oldest entry was dropped ($a deep)." }
+        empty { return {Nothing to push: the buffer is empty.} }
+        popped { return "Popped the top of the stack into the buffer ($a left)." }
+        nopop { return {Nothing to pop: the stack is empty.} }
+        cleared { return "Cleared the stack ($a entries)." }
+        noclear { return {Nothing to clear: the stack is already empty.} }
+    }
+    return {}
+}
+
+# R502 -- `Enter` (W17).  Pushes the buffer to the top and clears the buffer;
+# pushing an empty buffer is a no-op WITH a message rather than silence.
+proc calc::stk_enter {} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set w [calc::stk_push [calc::rpn_of_buffer]]
+    if {$w eq {empty}} { return [calc::status [calc::stk_msg empty]] }
+    calc::clr_buf
+    return [calc::status [calc::stk_msg $w [calc::stk_depth]]]
+}
+
+# R503 -- `Pop` (W18).  Takes item 0 and REPLACES the buffer with it; the
+# discarded text reaches the undo history through `calc::buf_set_expr`.
+proc calc::stk_popped {} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    if {[calc::stk_depth] == 0} { return [calc::status [calc::stk_msg nopop]] }
+    calc::buf_set_expr [calc::stk_pop]
+    return [calc::status [calc::stk_msg popped [calc::stk_depth]]]
+}
+
+# R504/R506 -- `ClrStk`.  Clearing an already-empty stack says so.
+proc calc::stk_cleared {} {
+    set n [calc::stk_depth]
+    if {$n == 0} { return [calc::status [calc::stk_msg noclear]] }
+    calc::stk_clear
+    return [calc::status [calc::stk_msg cleared $n]]
+}
+
 # What R421 used to do at OK, moved to Eval unchanged: invoke the verb, read the
 # disposition through `calc::fn_sink`, and route it.  Nothing in the routing
 # moved -- the five-word vocabulary, the destination hand-off, the viewer raise
 # and the provenance sentence are all the committed ones; only the gesture that
 # reaches them changed.  Returns a sentence; the caller does the `calc::status`.
-proc calc::meas_apply {name vals g} {
+proc calc::meas_apply {name vals g {src {}}} {
     set d {}
     if {[catch {calc::arg_invoke $name $vals} d]} {
         return [calc::arg_msg failed $name $d]
@@ -12496,12 +12637,21 @@ proc calc::meas_apply {name vals g} {
     if {$sink ne {buffer}} {
         return [calc::arg_msg badvalue $name $v]
     }
+    # R421a's push, and the REASON is what scopes it: the expression is about to
+    # be destroyed by the number, so it goes onto the stack to stay reachable.
+    # That is also why the DESTINATION arm above does not push -- it leaves the
+    # buffer alone, so nothing is lost and there is nothing to rescue.  `$src` is
+    # the buffer's own bytes; the recomposed form is the fallback, and the two are
+    # measured identical for every verb this path can reach.
+    set keep [string trim $src]
+    if {$keep eq {}} { set keep [calc::meas_compose $name $vals] }
+    catch {calc::stk_push $keep}
     set num [calc::buf_set_number $v]
     return [calc::arg_provenance $name $vals $num]
 }
 
 # Eval's measurement arm: parse, refuse legibly, then apply.
-proc calc::meas_eval {m g} {
+proc calc::meas_eval {m g {src {}}} {
     set name [dict get $m verb]
     set argl [dict get $m args]
     set vals [calc::meas_vals $name $argl]
@@ -12512,7 +12662,7 @@ proc calc::meas_eval {m g} {
     if {[llength $bad] > 0} {
         return [calc::meas_msg fields $name [calc::arg_say $bad]]
     }
-    return [calc::meas_apply $name $vals $g]
+    return [calc::meas_apply $name $vals $g $src]
 }
 
 # ---------------------------------------------------------------------------

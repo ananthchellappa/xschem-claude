@@ -1557,8 +1557,31 @@ set bufbefore [pcall .calc.buf get 1.0 end]
 array set btbsays {}
 foreach {id label} $btb { set btbsays($id) "$label: not implemented*" }
 set btbsays(clrbuf) {buffer cleared}
+# PLAN 4.1 / R502-R504: three more phases landed, so three more buttons say what
+# they did instead of naming a phase.  Globbed, because each sentence carries a
+# live depth -- and compared against `calc::stk_msg`'s OWN output below rather
+# than re-spelt here, which is the discipline the `meas_msg` rows adopted after a
+# re-spelt sentence drifted from the product's.
+set btbsays(enter)  {Pushed to the stack*}
+set btbsays(pop)    {Popped the top of the stack into the buffer*}
+# ⚠ `noclear` AND NOT `cleared`, BY CONSTRUCTION OF THE SWEEP ITSELF: `enter`
+# pushes one and `pop` takes it straight back off, so by the time the loop
+# reaches `clrstk` the stack is genuinely empty and R506's "silence is a bug"
+# arm for that case is the CORRECT sentence.  Measured, not assumed -- the first
+# spelling of this line expected `Cleared the stack*` and reddened, which is the
+# sweep order telling the truth about itself.  A press order that gave ClrStk
+# something to clear would change this expectation.
+set btbsays(clrstk) {Nothing to clear: the stack is already empty.*}
 # the ids this band no longer presses for purity, because their phase landed
-set btblive {clrbuf}
+set btblive {clrbuf enter pop clrstk}
+# ⚠ THE THREE STACK BUTTONS REALLY MOVE THE STACK NOW, so the old row saying
+# "no toolbar button touched the stack -- not even the landed ones" would pass
+# VACUOUSLY: Enter pushes one and Pop takes it straight back off, so the final
+# size is 0 either way and a build where neither did anything would look
+# identical.  The trajectory is recorded per press instead and asserted
+# positively below.
+set stkwatch {enter pop clrstk}
+set stktrace {}
 set silent {}
 set npressed 0
 foreach {id label} $btb {
@@ -1566,6 +1589,7 @@ foreach {id label} $btb {
     pcall calc::status {}
     pcall .calc.btb.$id invoke
     incr npressed
+    if {$id in $stkwatch} { lappend stktrace $id=[pcall .calc.stk.list size] }
     if {![string match $btbsays($id) [pcall .calc.status.msg get]]} {
         lappend silent $id=[pcall .calc.status.msg get]
     }
@@ -1591,8 +1615,21 @@ check_true "S19 the pre-press buffer snapshot is real text" \
 check "S19 no STILL-INERT toolbar button touched the buffer" \
     [expr {[string match ERR:* $bufbefore] ? {NO-SNAPSHOT-TO-COMPARE}
                                            : [pcall .calc.buf get 1.0 end]}] $bufbefore
-check "S19 no toolbar button touched the stack — not even the landed ones" \
-    [pcall .calc.stk.list size] 0
+# ⚠ RESTATED FOR PLAN 4.1, and the restatement is the point: the three landed
+# buttons MUST touch the stack, and the two that cancel each other out mean the
+# end state cannot witness it.  Leg 1 is the per-press trajectory -- Enter takes
+# it to one, Pop back to none, ClrStk leaves it there -- and leg 2 is that
+# everything else left it alone, which is the claim the old row owned.
+check "S19 the three LANDED stack buttons each moved the stack, and no other toolbar button touched it" \
+    [list $stktrace [pcall .calc.stk.list size]] {{enter=1 pop=0 clrstk=0} 0}
+# ...and the sentences the sweep globbed are the product's own, compared by
+# IDENTITY against `calc::stk_msg` rather than re-spelt, so a reworded sentence
+# moves both sides together and a DELETED one reddens here.
+check "S19 ...and the three sentences the sweep matched are `calc::stk_msg`'s own strings, including the `noclear` arm the sweep order actually reaches" \
+    [list [pcall calc::stk_msg pushed 1] [pcall calc::stk_msg popped 0] \
+          [pcall calc::stk_msg noclear] [pcall calc::stk_msg cleared 1]] \
+    [list {Pushed to the stack (1 deep).} {Popped the top of the stack into the buffer (0 left).} \
+          {Nothing to clear: the stack is already empty.} {Cleared the stack (1 entries).}]
 # ⚠ RESTATED: a disabled button does not fire at all — but the sweep above has
 # now edited the buffer, so undo is no longer disabled by the time we get here
 # and the old spelling of this row measured a NORMAL button. Put the history

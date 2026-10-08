@@ -1597,8 +1597,22 @@ group CW13 {
     # REASON, not a measurement, so the row below drives a real composable call
     # through it rather than leaving the claim resting on an empty buffer.
     set live7 {calc::eval_click}
+    # ⚠ A SIXTH LIST: PLAN 4.1 / R502-R504 landed the expression stack, so three
+    # of the ten buffer-toolbar buttons stopped being stubs.  They CANNOT go in
+    # `$allowed` (the word "stub" would be false of them), cannot go in `$live2`
+    # (the "exactly fifteen phase-2 controls" row would lose its meaning), are
+    # not view settings and are not pick arms.
+    # ⚠ AND UNLIKE `$live3`/`$live6`/`$live7`, THESE ARE EXCLUDED FROM THE
+    # BUFFER/STACK TOUCH SWEEP, because they are SUPPOSED to move both: R502's
+    # Enter pushes the buffer and clears it, R503's Pop replaces the buffer.  An
+    # exclusion is the weaker claim, so the sweep's own restore is paired with a
+    # DETERMINISTIC trio below that drives all three in a known stack state and
+    # asserts each one really moved what it is meant to move -- the sweep alone
+    # could not, since the stack starts empty here and Pop and ClrStk both
+    # correctly do nothing to an empty one.
+    set live8 {calc::stk_enter calc::stk_popped calc::stk_cleared}
     set rogue {} ; set mute {}
-    set nlive 0 ; set nview 0 ; set npick 0 ; set neval 0
+    set nlive 0 ; set nview 0 ; set npick 0 ; set neval 0 ; set nstk 0
     foreach w $ctrls {
         set cmd [wcg $w -command]
         if {$cmd eq {}} {
@@ -1609,6 +1623,7 @@ group CW13 {
         if {[lindex $cmd 0] in $live3} { incr nview ; continue }
         if {[lindex $cmd 0] in $live6} { incr npick ; continue }
         if {[lindex $cmd 0] in $live7} { incr neval ; continue }
+        if {[lindex $cmd 0] in $live8} { incr nstk ; continue }
         if {[lindex $cmd 0] ni $allowed} { lappend rogue "$w -> [lindex $cmd 0]" }
     }
     # ⚠ every one of these rides on the CONTROL COUNT.  An offender list
@@ -1653,7 +1668,7 @@ group CW13 {
     # measures a window one size larger than the rest of the suite assumes.
     set fsz0 [pcall calc::font_size]
     set touched {} ; set silent {} ; set npressed 0 ; set nlivepressed 0
-    set npickpressed 0 ; set nevalpressed 0
+    set npickpressed 0 ; set nevalpressed 0 ; set nstkpressed 0
     foreach w $ctrls {
         if {[wcg $w -state] eq {disabled}} continue
         incr npressed
@@ -1663,6 +1678,13 @@ group CW13 {
         pcall $w invoke
         if {[lindex [wcg $w -command] 0] in $live2} {
             incr nlivepressed
+            pcall .calc.buf delete 1.0 end
+            pcall .calc.buf insert end {SENTINEL}
+            pcall .calc.buf edit reset
+            pcall calc::buf_sync
+        } elseif {[lindex [wcg $w -command] 0] in $live8} {
+            incr nstkpressed
+            pcall calc::stk_clear
             pcall .calc.buf delete 1.0 end
             pcall .calc.buf insert end {SENTINEL}
             pcall .calc.buf edit reset
@@ -1687,6 +1709,34 @@ group CW13 {
     # so the count is exact rather than a bound.
     check "CW13 ...and pressed the one phase-7 control (Eval), so the buffer/Stack claim above covers the proc R421a made able to write the buffer" \
         [list $neval $nevalpressed] {1 1}
+    check "CW13 ...and pressed the three phase-4 stack controls, which is what makes their exclusion from the sweep an accounted-for hole rather than a silent one" \
+        [list $nstk $nstkpressed] {3 3}
+    # ⚠⚠ THE POSITIVE CONTROL FOR THAT EXCLUSION, AND THE SWEEP CANNOT SUBSTITUTE
+    # FOR IT.  In the sweep the stack starts empty, so Pop and ClrStk CORRECTLY do
+    # nothing and a build where all three were still stubs would look identical.
+    # Driven here in a known state instead: Enter must push the buffer's text and
+    # clear the buffer (R502), Pop must bring it back and replace the buffer
+    # (R503), ClrStk must empty a NON-empty stack (R504/R506).  Each leg is the
+    # observable, not the sentence.
+    pcall calc::stk_clear
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end {STKPROBE}
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
+    pcall .calc.btb.enter invoke
+    set cw_e [list [pcall .calc.stk.list size] [pcall .calc.buf get 1.0 end-1c]]
+    pcall .calc.btb.pop invoke
+    set cw_p [list [pcall .calc.stk.list size] [pcall .calc.buf get 1.0 end-1c]]
+    pcall calc::stk_push {STKPROBE2}
+    pcall .calc.btb.clrstk invoke
+    set cw_c [pcall .calc.stk.list size]
+    check "CW13 ...and the three really do what R502/R503/R504 say: Enter pushes and clears, Pop restores and replaces, ClrStk empties a non-empty stack" \
+        [list $cw_e $cw_p $cw_c] {{1 {}} {0 STKPROBE} 0}
+    pcall calc::stk_clear
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end {SENTINEL}
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
     # ⚠⚠ AND THIS IS THE ROW THAT STOPS THE CLAIM BEING VACUOUS, WHICH THE SWEEP
     # ALONE CANNOT DO.  The sweep presses Eval with `SENTINEL` in the buffer, and
     # `calc::meas_split SENTINEL` answers {} -- so a green sweep would be equally
