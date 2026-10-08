@@ -4728,7 +4728,16 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   in row order (in which case the real defect is in its writer), and what the user actually lost
   downstream, which is what decides the urgency.
 
-**The next free number is 1658.**
+- **1658** — the Calculator's `settlingTime` tolerance is now a **percent of the step** (the user's
+  ruling, 2026-10-07) while ASE-L's `ts` measure template still computes an **absolute** band — so
+  typing `1` into one surface and `1` into the other asks two different questions of the same
+  waveform. ⚠ **Spec R418b predicted this in its own words** as the reason it chose absolute: *"two
+  settling times in one tree disagreeing about that would read as a bug."* The reasoning stands; only
+  its conclusion was overruled. Filed rather than fixed because ASE-L's is a **deck-level `.meas`**
+  on a form that is part of saved session state, which makes it the user's call and not internal
+  engineering. A `rule` debt asks them.
+
+**The next free number is 1659.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

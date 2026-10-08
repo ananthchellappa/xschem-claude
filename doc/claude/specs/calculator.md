@@ -975,19 +975,48 @@ PLAN row 7.3. **Both rulings below came from the user**, 2026-10-02, asked one a
 - **R418** (driver, from shipped text) `dutyCycle` reports a **fraction**, never a percent, because
   the shipped catalogue help already promises *"Fraction of a period the signal spends high"*.
   Returning `30` against that sentence would make user-visible prose false.
-- **R418b** (driver, from R415 and from this tree's other settling-time surface) `settlingTime`
-  takes **three required fields** — the final value, an **absolute** tolerance in the signal's own
-  units, and a **start reference** — and the answer is the LAST crossing of either band edge, which
-  must be an **entry**, minus that reference. Nothing is inferred from the trace: inferring the final
-  value is exactly the settled-value estimator R415 removed from `riseTime`, and `ase::meas_templates`'
-  `ts` template in `src/ase.tcl` — commissioned by the same user — already asks for the final value and
-  the tolerance as two required real fields and computes `final ± tol`. Two settling times in one tree
-  disagreeing about that would read as a bug. The tolerance is absolute rather than a percentage
-  because "percent" has two live readings, of the final value and of the step, and the second needs a
-  fourth number. It stays `scalar` and has **no `nth`**: *"and stay"* names the last event by
+- **R418b** (**superseded by the user, 2026-10-07; their ruling and the driver's retracted
+  reasoning are both below**) `settlingTime` takes **four required fields** — an **initial** value, a
+  **final** value, a tolerance **as a percent of the step**, and a **start reference** — and the answer
+  is the LAST crossing of either band edge, which must be an **entry**, minus that reference. The band
+  is `final ± (tol/100)·|final − initial|`.
+  Each of the initial and final references is **either a number or a time on the waveform**, chosen by
+  its own `enum` field; a `time` reference reads the y there by **interpolation**
+  (`calc::y_at` → `calc::series_of` → `calc::sample_at`), because nearest-sample snapping is 4 % out
+  on the committed fixture's own ramp — three orders above any tolerance anyone would type.
+  ⚠ **The user's words**: *"For final value, there should be an option to specify the time value at
+  which the y-value of the waveform is used as final value. Tolerance is not clear if that means % or
+  absolute, etc. It should always be % percent."* Asked **percent of what**, they chose the **step**
+  over the final value, because the final-value reading collapses to no band when the final value is
+  zero — which is every differential output settling to 0 V — and accepted the extra field it needs.
+  ⚠ **What this rule used to say, and why it was wrong.** *"The tolerance is absolute rather than a
+  percentage because 'percent' has two live readings, of the final value and of the step, and the
+  second needs a fourth number."* That reasoning identified the real ambiguity and then resolved it by
+  avoiding the question instead of asking it; the user is the authority on what the field means and
+  answered in one line. The field is now labelled **`Tolerance %`**, which is the other half of their
+  complaint — it was the only `real` field of its kind in the whole table carrying no unit in its
+  label, against four that carry `%`, two that carry `(dB)` and one that carries `deg`.
+  ⚠ **AND THE DISAGREEMENT THIS RULE PREDICTED IS NOW REAL, so it is filed rather than left to be
+  discovered**: `ase::meas_templates`' `ts` template in `src/ase.tcl` still computes
+  `vlo = final − tol` / `vhi = final + tol`, i.e. an **absolute** band, and this rule's own warning was
+  that *"two settling times in one tree disagreeing about that would read as a bug."* It still is.
+  Issue **1658** carries it with the evidence; whether ASE-L's deck-level template follows the
+  Calculator is a second question about a surface the user did not mention, and it is theirs.
+  ⚠ Nothing is inferred from the trace **unless the user asks for it by choosing `time`**: inferring
+  the final value *silently* is the settled-value estimator R415 removed from `riseTime`, and that
+  removal stands — what is new is an explicit control, not an inference.
+  ⚠ **The initial value is REQUIRED and defaulting it to the trace's value at `start` was built and
+  reverted.** It is physically the right reading and would have spared the user a field, but resolving
+  it means **reading the database**, which moves a database read into the request-validation stage —
+  and row MT16/H asserts in its own words that *"every REQUEST refusal happens before anything reaches
+  the database"*. Rows MT21/B, MT28/E and MT28/F all caught it immediately: a request-stage drive with
+  no raw loaded answered *"the expression has no value at the time '0'"* instead of naming the field
+  that was wrong. That is a masked refusal, and the measured kind.
+  It stays `scalar` and has **no `nth`**: *"and stay"* names the last event by
   definition, so there is no occurrence to select, no list case and no destination.
-  A malformed request is **refused** (a blank or non-finite field, and a tolerance that is not greater
-  than zero — a band of zero width has nothing to stay inside); a well-formed request this sweep has
+  A malformed request is **refused** (a blank or non-finite field, a tolerance that is not greater
+  than zero — a band of zero width has nothing to stay inside — and **a zero step**, where the initial
+  and final values are equal and a percent of the step is likewise no band at all); a well-formed request this sweep has
   no answer for is an **absence** in R414b's sense, with three kinds: the trace crosses neither band
   edge, the last crossing is an exit so the trace ran away, and the settling instant precedes the start
   reference. ⚠ *"Inside the band for the whole sweep"* and *"never reached the band"* are

@@ -2191,6 +2191,17 @@ proc mt_direct_raw {p} {
 # measurement proc appears here and is missing there -- which is what forces the
 # two halves of a verb into one commit and makes the gap a named red instead of
 # a dialog that composes a call to nothing.
+# THE PERCENT THAT REPRODUCES AN OLD ABSOLUTE TOLERANCE, for a step of exactly
+# 1.0.  ⚠ IT IS EXACT ONLY UNDER THAT CONDITION: both operands of
+# `pct/100` are then exactly representable, so the quotient rounds to the same
+# double the old literal rounded to.  Verified bit-exactly (via `binary format q`,
+# not a string compare) over every tolerance this file drives -- and it is NOT a
+# universal rule: 1-ulp misses were measured at pct 1e-5 vs tol 1e-7, 1e-7 vs
+# 1e-9, 1e-9 vs 1e-11 and 5e-10 vs 5e-12.  So no NEW row may use this helper
+# without re-verifying, and the rows whose step is not 1.0 carry their percent as
+# a literal instead.
+proc st_pct {tol} { return [expr {$tol * 100.0}] }
+
 proc mt_spec_verbs {} {
     set out {}
     foreach row [pcall calc::catalogue] {
@@ -3826,24 +3837,49 @@ group MT10 {
     # VERB", derived from the partition, so a verb reading samples through a
     # private helper lands here with an EMPTY answer and reddens that class's own
     # row rather than being accepted as a delegate.
+    # ⚠⚠ AND NOW IT IS FOUR-WAY, FOR THE THIRD APPLICATION OF THE SAME PARAGRAPH.
+    # `calc::settlingTime` DELEGATES to `calc::cross` -- four calls, unchanged --
+    # and ALSO reads samples, because the user asked (2026-10-07) for its initial
+    # and final references to be readable off the waveform at a time they name, and
+    # a y at a named x is a sample read.  It therefore satisfies the delegating
+    # half's membership test and FALSIFIES that half's claim, which is the exact
+    # situation that made this partition three-way.
+    #
+    # The two ways out are the two this band has now refused twice: hand-exclude
+    # the new verb, or weaken "reads no samples" for every delegate.  Neither is
+    # taken.  The set splits again BY THE SAME STRUCTURAL INSTRUMENTS -- it reaches
+    # cross, and its closure reaches the SHARED series door -- and the fourth class
+    # carries the claim that is true of IT: it reaches cross, it reads samples
+    # through `calc::series_of` and through NO private reader of its own, and the
+    # four-way split is still asserted as a cover with no overlap.
+    #
+    # ⚠ THE FOURTH CLASS IS NOT A HIDING PLACE EITHER, and the same instrument
+    # polices it: its closure's readers must be exactly the shared door.  A verb
+    # that grew a PRIVATE reader lands here with the wrong answer and reddens this
+    # class's own row, which is what `mt_closure_raw` returning anything other than
+    # the shared door's name measures.
     set owndoor {}
     foreach v $verbs {
         if {[mt_direct_raw $v] eq {yes}} { lappend owndoor $v }
     }
-    set delegates {} ; set verbdeleg {}
+    set delegates {} ; set verbdeleg {} ; set sharedoor {}
     foreach v $verbs {
         if {[mt_direct_raw $v] eq {yes}} continue
-        if {[mt_reaches_cross $v] eq {reaches}} { lappend delegates $v ; continue }
+        if {[mt_reaches_cross $v] eq {reaches}} {
+            if {[mt_closure_raw $v] ne {}} { lappend sharedoor $v ; continue }
+            lappend delegates $v ; continue
+        }
         lappend verbdeleg $v
     }
-    check "MT10 T1 the derived verb set PARTITIONS THREE WAYS by the same structural instruments the claims below use -- the verbs that DELEGATE to calc::cross, the verbs that own an engine door of their own, and the verbs that own no door and reach cross NOWHERE because they are layered on another MEASUREMENT VERB -- with a floor on each class and the partition asserted as a cover with no overlap, so a verb that quietly grew a door, or quietly stopped delegating, MOVES between classes and is measured where it lands instead of being hand-excluded from a single claim.  ⚠ The three are NOT interchangeable: a cross-delegate must reach cross and read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and a verb-delegate must do neither while reaching an own-door VERB -- which is what stops the third class being a hiding place for a verb reading samples through a private helper.  The membership of one name per class rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor $verbdeleg]] \
+    check "MT10 T1 the derived verb set PARTITIONS FOUR WAYS by the same structural instruments the claims below use -- the verbs that DELEGATE to calc::cross, the verbs that own an engine door of their own, and the verbs that own no door and reach cross NOWHERE because they are layered on another MEASUREMENT VERB -- with a floor on each class and the partition asserted as a cover with no overlap, so a verb that quietly grew a door, or quietly stopped delegating, MOVES between classes and is measured where it lands instead of being hand-excluded from a single claim.  ⚠ The three are NOT interchangeable: a cross-delegate must reach cross and read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and a verb-delegate must do neither while reaching an own-door VERB -- which is what stops the third class being a hiding place for a verb reading samples through a private helper.  The membership of one name per class rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor $verbdeleg $sharedoor]] \
               [mt_atleast [llength $delegates] 3] [mt_atleast [llength $owndoor] 1] \
-              [mt_atleast [llength $verbdeleg] 1] \
+              [mt_atleast [llength $verbdeleg] 1] [mt_atleast [llength $sharedoor] 1] \
               [expr {[lsearch -exact $delegates riseTime] >= 0 ? {has} : {MISSING}}] \
               [expr {[lsearch -exact $owndoor overshoot] >= 0 ? {has} : {MISSING}}] \
               [expr {[lsearch -exact $verbdeleg gainBwProd] >= 0 ? {has} : {MISSING}}] \
-              [llength [mt_overlap $delegates $owndoor $verbdeleg]]] \
-        [list $verbs $verbs atleast3 atleast1 atleast1 has has has 0]
+              [expr {[lsearch -exact $sharedoor settlingTime] >= 0 ? {has} : {MISSING}}] \
+              [llength [mt_overlap $delegates $owndoor $verbdeleg $sharedoor]]] \
+        [list $verbs $verbs atleast3 atleast1 atleast1 atleast1 has has has has 0]
     check "MT10 the verb set this band's claims are about is DERIVED from the catalogue and from calc::fn_argspec -- every route-T name with a non-empty argument spec, minus the primitive they are layered on -- so a new layered verb ENLISTS ITSELF in every row below instead of being measured by nothing.  The floor rides along because an empty derivation would make all of them vacuous, and `cross` is asserted absent because it is the one name that must not be in it" \
         [list [mt_atleast [llength $verbs] 3] \
               [expr {[lsearch -exact $verbs cross] < 0 ? {nocross} : {CROSS}}] \
@@ -3861,6 +3897,11 @@ group MT10 {
     check "MT10 T1 each verb of the DELEGATING half REACHES calc::cross -- derived as a transitive closure over the ::calc:: names in the decommented bodies, stopping AT cross, so a shared period derivation that itself calls cross is permitted while a verb that never reaches cross at all is not.  The half's own membership rides along, because an empty half would make the sweep vacuous" \
         [list $present $delegates [lmap v $delegates {mt_reaches_cross $v}]] \
         [list $verbs $delegates [lrepeat [llength $delegates] reaches]]
+    check "MT10 T1 the FOURTH class carries the claim that is true of IT and of nothing else: each of its verbs REACHES calc::cross like a delegate AND reads samples like an own-door verb, but through the ONE SHARED series door and through no private reader -- so a verb that grew a reader of its own lands here with the wrong answer and reddens this row rather than passing as a delegate" \
+        [list $present $sharedoor [lmap v $sharedoor {mt_reaches_cross $v}] \
+              [lmap v $sharedoor {mt_closure_raw $v}]] \
+        [list $verbs $sharedoor [lrepeat [llength $sharedoor] reaches] \
+              [lrepeat [llength $sharedoor] series_of]]
     check "MT10 T1 ...and NO proc in any of those closures, cross alone excepted, issues an xschem raw add, values, value or del of its own -- which is SR5's discipline seen from the other side, and which is what forbids T1's evaluate-once helper: such a helper has to evaluate into a column of its own, so it appears here by name" \
         [list $present $delegates [lmap v $delegates {mt_closure_raw $v}]] \
         [list $verbs $delegates [lrepeat [llength $delegates] {}]]
@@ -3937,10 +3978,16 @@ group MT10 {
         slewRate  {{v(sq)} 0 1 10 90 1 rising 0} \
         frequency {{v(sq)} 0.5 rising 1} \
         freq      {{v(sq)} 0.5 rising 1} \
-        settlingTime {{v(sq)} 1 0.01 0}]
+        settlingTime {{v(sq)} 1 1 0 0 0}]
+    # ⚠ THE SWEEP COVERS THE FOURTH CLASS AS WELL, and that is the point of adding
+    # it rather than dropping `settlingTime` from the drive table: a verb that
+    # delegates to `cross` AND owns a shared reader must STILL carry `cross`'s
+    # refusal through, and removing it from the table would have been exactly the
+    # hand-exclusion this band has refused twice.
+    set crossreach [concat $delegates $sharedoor]
     set stub [mt_stub_run {
         set bad {} ; set n 0
-        foreach v $delegates {
+        foreach v $crossreach {
             if {![dict exists $stubargs $v]} { lappend bad "$v=NOARGS" ; continue }
             incr n
             set a [mt_call $v {*}[dict get $stubargs $v]]
@@ -3950,12 +3997,12 @@ group MT10 {
         return [list $bad $n]
     }]
     check "MT10 T1 with ::calc::cross replaced by a refusing stub, EVERY verb of the DELEGATING half REFUSES and carries the stub's own sentence through -- so each answer came back through cross rather than from samples the verb read itself, and the refusal composes rather than being replaced.  The probe's own argument table must name EXACTLY that half, which is the leg that enlists a new delegating verb rather than letting it sit outside the sweep -- and an own-door verb left in the table would redden here too, which is what keeps the partition honest in both directions" \
-        [list $present [lindex $stub 0] [mt_sized [lindex $stub 1] [llength $delegates]] \
+        [list $present [lindex $stub 0] [mt_sized [lindex $stub 1] [llength $crossreach]] \
               [lsort [dict keys $stubargs]]] \
-        [list $verbs {} sized $delegates]
+        [list $verbs {} sized [lsort $crossreach]]
     check "MT10 T1 ...and the stub was called at least once per delegating verb, so the refusals are delegation and not several verbs refusing for their own unrelated reasons" \
-        [list $present [mt_atleast $::mt_stub_calls [llength $delegates]]] \
-        [list $verbs atleast[llength $delegates]]
+        [list $present [mt_atleast $::mt_stub_calls [llength $crossreach]]] \
+        [list $verbs atleast[llength $crossreach]]
     check "MT10 ::calc::cross is RESTORED by that probe and answers the shipped value again, so no row after this one is measuring a stubbed namespace" \
         [list [mt_disp [set a [mt_call cross {v(sq)} 0.5 1 rising]]] \
               [near [mt_val $a] [sq_rise 0.5 0] $MTTOL] \
@@ -4255,10 +4302,13 @@ set AG_WANT [list \
         {dataset {Dataset}             int                          0 0}
     } \
     settlingTime {
-        {final   {Final value}         real                         1 {}}
-        {tol     {Tolerance}           real                         1 {}}
-        {start   {Start time}          real                         1 {}}
-        {dataset {Dataset}             int                          0 0}
+        {initial   {Initial (value or time)} real                   1 {}}
+        {initfrom  {Initial is a}            {enum value time}      0 value}
+        {final     {Final (value or time)}   real                   1 {}}
+        {finalfrom {Final is a}              {enum value time}      0 value}
+        {tol       {Tolerance %}             real                   1 {}}
+        {start     {Start time}              real                   1 {}}
+        {dataset   {Dataset}                 int                    0 0}
     } \
     overshoot {
         {initial {Initial value}       real                         1 {}}
@@ -7479,7 +7529,7 @@ group MT16 {
     # names.  Nothing else in the verb depends on it.
     set stLO [expr {1.0 - 0.01}] ; set stHI [expr {1.0 + 0.01}]
     set stREC [mt_st_record {
-        set a [mt_call settlingTime {v(lp)} 1 0.01 0]
+        set a [mt_call settlingTime {v(lp)} 1 1 0 0 0]
         return [list [mt_st_sig $::mt_st_log $stLO $stHI] [mt_disp $a]]
     }]
     check "MT16/A the verb issues EXACTLY four delegated calc::cross calls, one per NAMED physical band-edge event, each at nth -1 -- measured through a stub that ANSWERS AN ABSENCE rather than a refusal, which is the only shape that can see all four, since MT10's refusing stub returns after the first.  The requests are named by matching their levels against final-tol and final+tol, so no level is written down; a verb that read only the lo edge, swapped lo and hi, asked `rising` for the hi-edge entry, used nth 0, or made three data-dependent calls prints a different four-word list.  With every event absent the answer is an ABSENCE and not a refusal, which is the disposition the whole band hangs on" \
@@ -7520,8 +7570,8 @@ group MT16 {
               [mt_argval_of settlingTime {v(lp)} \
                    {final 1 tol 0.01 start 0 dataset 0} __mt_nokey__] \
               [mt_formals __mt_nosuchverb__]] \
-        [list {rpn final tol start dataset} \
-              {NODEFAULT dflt: dflt: dflt: dflt:0} {} 0 \
+        [list {rpn final tol start dataset initial initfrom finalfrom} \
+              {NODEFAULT dflt: dflt: dflt: dflt:0 dflt: dflt:value dflt:value} {} 0 \
               TRUNCATED-BEFORE:__mt_nokey__ NOPROC:calc::__mt_nosuchverb__]
 
     # --- C: the deck's own closed form, swept over tol, pairs measured -------
@@ -7535,8 +7585,8 @@ group MT16 {
     foreach stTt $stTOLS {
         lappend stCDECK  [sq_rise [expr {1.0 - $stTt}] 2]
         lappend stCDECK2 [expr {[sq_rise [expr {1.0 - $stTt}] 2] - 8.9e-3}]
-        lappend stCGOT   [mt_val [mt_call settlingTime {v(sq)} 1 $stTt 0]]
-        lappend stCGOT2  [mt_val [mt_call settlingTime {v(sq)} 1 $stTt 8.9e-3]]
+        lappend stCGOT   [mt_val [mt_call settlingTime {v(sq)} 1 [st_pct $stTt] 0 0 0]]
+        lappend stCGOT2  [mt_val [mt_call settlingTime {v(sq)} 1 [st_pct $stTt] 8.9e-3 0 0]]
     }
     check "MT16/C the deck's own closed form, swept over SIX tolerances, element for element, at start 0 and again at start 8.9e-3 -- with the ADJACENT-PAIR spread of the compared series carried in the row rather than its range, because the range is the wrong statistic: every neighbour must differ by more than MTTOL for the comparison to mean anything.  This is the row that catches a verb ignoring `tol` and crossing `final` itself, reading `tol` as a PERCENT, forgetting to subtract `start`, taking the FIRST entry instead of the last, and taking the last EXIT -- the reading this unit was first described with" \
         [list [mt_listcmp $stCGOT $stCDECK] [mt_alldistinct $stCGOT] \
@@ -7549,9 +7599,9 @@ group MT16 {
     set stDGOT {} ; set stDEXP {}
     foreach stTt $stDTOLS {
         lappend stDEXP [mt_st_derive $stT $stLP 1 $stTt 0]
-        lappend stDGOT [mt_val [mt_call settlingTime {v(lp)} 1 $stTt 0]]
+        lappend stDGOT [mt_val [mt_call settlingTime {v(lp)} 1 [st_pct $stTt] 0 0 0]]
     }
-    set stD001 [mt_call settlingTime {v(lp)} 1 0.001 0]
+    set stD001 [mt_call settlingTime {v(lp)} 1 0.1 0 0 0]
     check "MT16/D the same claim through a SECOND INSTRUMENT CLASS: the physical pole's column, with the whole algorithm re-derived in this file over the bulk %.16g samples and no product proc anywhere in the expectation -- so a change in how `cross` interpolates shows up here as a disagreement rather than as two numbers wrong in the same direction.  Seven tolerances, every adjacent pair distinct, and the eighth tolerance is the one the trace CANNOT satisfy: v(lp) tops out short of 1 - 0.001, so it answers an ABSENCE whose sentence is cross_msg's own nosettle arm by IDENTITY, and this file's own derivation agrees on that word too" \
         [list [mt_listcmp $stDGOT $stDEXP] [mt_alldistinct $stDGOT] \
               [mt_disp $stD001] \
@@ -7566,8 +7616,8 @@ group MT16 {
     # The inversion reaches the same physical instant through the OTHER edge.
     set stEGOT {} ; set stEINV {} ; set stESAME {}
     foreach stTt {0.05 0.01} {
-        set stEa [mt_val [mt_call settlingTime {v(lp)} 1 $stTt 0]]
-        set stEb [mt_val [mt_call settlingTime {1 v(lp) -} 0 $stTt 0]]
+        set stEa [mt_val [mt_call settlingTime {v(lp)} 1 [st_pct $stTt] 0 0 0]]
+        set stEb [mt_val [mt_call settlingTime {1 v(lp) -} 0 [st_pct $stTt] 0 0 1]]
         lappend stEGOT $stEa ; lappend stEINV $stEb
         lappend stESAME [mt_distinct $stEa $stEb]
     }
@@ -7589,8 +7639,8 @@ group MT16 {
     # of two -- a relative spread of 1.0, which `mt_distinct` re-measures.  The
     # level 2.42 is deliberately not a multiple of the 0.05 grid, so neither
     # crossing lands on a sample.
-    set stF0 [mt_call settlingTime {v(div)} 4.0 1.58 0 0]
-    set stF1 [mt_call settlingTime {v(div)} 4.0 1.58 0 1]
+    set stF0 [mt_call settlingTime {v(div)} 4.0 39.5 0 0 0]
+    set stF1 [mt_call settlingTime {v(div)} 4.0 39.5 0 1 0]
     check "MT16/F THREE of the four delegated measurements come back ABSENT and the verb still answers a NUMBER, which is this verb's one real divergence from riseTime: a riseTime-style guard that returns the delegated answer whenever its `ok` key is false forwards the absence and turns a measuring configuration into an absent one.  THAT 3-of-4 SPLIT IS THE LEG AND NOT A REMARK -- `mt_st_counts` re-derives measured/absent/refused per dataset every run, which is why this name carries that ratio and no count of how many of the band's own configurations a wrong guard would break: nothing re-measures the latter.  The two answers are checked against the divider's own deck relation and their relative spread is re-measured as `distinct` so the dataset really reached the data.  ⚠ This is the consumer row CX9 of test_calc_cross.tcl was written in anticipation of -- the refused-versus-absent split finally has one" \
         [list [mt_st_counts [mt_st_calls {v(div)} 4.0 1.58 0]] \
               [mt_st_counts [mt_st_calls {v(div)} 4.0 1.58 1]] \
@@ -7600,8 +7650,8 @@ group MT16 {
         {m1/a3/r0/x0 m1/a3/r0/x0 ok ok distinct 0 1}
 
     # --- G: a refusal from any delegated call propagates by IDENTITY ---------
-    set stG7 [mt_call settlingTime {v(lp)} 1 0.01 0 7]
-    set stGT [mt_call settlingTime {v(nosuch)} 1 0.01 0]
+    set stG7 [mt_call settlingTime {v(lp)} 1 1 0 7 0]
+    set stGT [mt_call settlingTime {v(nosuch)} 1 1 0 0 0]
     check "MT16/G a REFUSAL from a delegated call propagates BY IDENTITY and is never re-worded or re-classified: an out-of-range dataset and an unknown token both come back `refused` carrying calc::cross's own sentence, compared with `string equal` against cross_msg's arms with the dataset COUNT read off the database rather than written here.  The counts leg shows all four calls refuse, and the CONTROL is the same configuration at dataset 0, which measures -- without it the row would be green over a verb that refused everything" \
         [list [mt_disp $stG7] \
               [string equal [mt_msg $stG7] \
@@ -7611,7 +7661,7 @@ group MT16 {
                    [pcall calc::cross_msg badtoken \
                         [pcall calc::rpn_bad_token {v(nosuch)}]]] \
               [mt_st_counts [mt_st_calls {v(lp)} 1 0.01 7]] \
-              [mt_disp [mt_call settlingTime {v(lp)} 1 0.01 0 0]]] \
+              [mt_disp [mt_call settlingTime {v(lp)} 1 1 0 0 0]]] \
         {refused 1 refused 1 m0/a0/r4/x0 measured}
 
     # --- H: the request refusals happen with NO DATABASE LOADED at all -------
@@ -7620,26 +7670,42 @@ group MT16 {
     # with every field well formed and no database loaded the answer IS `nodata`.
     pcall xschem raw clear
     set stHBAD {} ; set stHN 0
-    foreach {stHf stHt stHs} [list {} 0.01 0   1 {} 0   1 0.01 {} \
-                                   nan 0.01 0  1 nan 0   1 0.01 nan \
-                                   1 0 0        1 -1 0] {
+    # ⚠⚠ THE DRIVES ARE QUADRUPLES NOW, AND THE FOURTH ONE IS NOT COSMETIC.  When
+    # `initial` was added to the verb this loop was converted by appending `0
+    # $stHi` -- and `stHi` WAS NEVER DEFINED, so every drive raised a Tcl error
+    # instead of reaching the product, and the row PASSED ANYWAY because an error
+    # sentinel reads as `refused` just like a real refusal does.  A sweep that
+    # expects only refusals cannot tell a product refusal from a broken drive.
+    # Caught by reading the converted loop, not by a red.
+    # ⚠ AND THE SWEEP IS WIDENED BY THE TWO NEW REQUEST REFUSALS the percent
+    # reading introduced -- a blank initial, and an initial equal to the final (a
+    # percent of a zero step is no band at all) -- because this row's whole claim
+    # is that EVERY request refusal happens before the database is touched.
+    foreach {stHf stHt stHs stHi} [list {} 0.01 0 0   1 {} 0 0   1 0.01 {} 0 \
+                                        nan 0.01 0 0  1 nan 0 0  1 0.01 nan 0 \
+                                        1 0 0 0       1 -1 0 0 \
+                                        1 1 0 {}      1 1 0 1 \
+                                        1 1 0 nan] {
         incr stHN
-        set stHa [mt_call settlingTime {v(lp)} $stHf $stHt $stHs]
+        set stHa [mt_call settlingTime {v(lp)} $stHf $stHt $stHs 0 $stHi]
         if {[mt_disp $stHa] ne {refused}} {
-            lappend stHBAD "($stHf,$stHt,$stHs)=[mt_disp $stHa]" ; continue
+            lappend stHBAD "($stHf,$stHt,$stHs,$stHi)=[mt_disp $stHa]" ; continue
         }
         if {[mt_shape [mt_msg $stHa]] ne {ok}} {
-            lappend stHBAD "($stHf,$stHt,$stHs)=shape"
+            lappend stHBAD "($stHf,$stHt,$stHs,$stHi)=shape"
         }
         if {[string equal [mt_msg $stHa] [pcall calc::cross_msg nodata]]} {
-            lappend stHBAD "($stHf,$stHt,$stHs)=NODATA"
+            lappend stHBAD "($stHf,$stHt,$stHs,$stHi)=NODATA"
+        }
+        if {[string match {ERR:*} [mt_msg $stHa]]} {
+            lappend stHBAD "($stHf,$stHt,$stHs,$stHi)=RAISED"
         }
     }
-    set stHOK [mt_call settlingTime {v(lp)} 1 0.01 0]
+    set stHOK [mt_call settlingTime {v(lp)} 1 1 0 0 0]
     check "MT16/H every REQUEST refusal happens before anything reaches the database, measured with the database CLEARED: a blank final, a blank tolerance, a blank start, a non-finite value in each of the three, and a zero and a negative tolerance all answer `refused` with their own sentence in the house shape and NOT with cross's `nodata`.  A verb that validated after its first delegated call tells the user there is no simulation data when their actual mistake was a blank tolerance.  The NON-VACUITY leg is the gate order itself: with every field well formed and no database loaded the answer IS nodata, carried by identity" \
-        [list [mt_atleast $stHN 8] $stHBAD [mt_disp $stHOK] \
+        [list [mt_atleast $stHN 11] $stHBAD [mt_disp $stHOK] \
               [string equal [mt_msg $stHOK] [pcall calc::cross_msg nodata]]] \
-        {atleast8 {} refused 1}
+        {atleast11 {} refused 1}
     pcall mt_load tran
 
     # --- I: every absence kind on a real column, the three kinds DISTINCT ----
@@ -7654,13 +7720,13 @@ group MT16 {
     # names the two DECK closed forms the two wrong readings answer on
     # `v(sq)` with final 0: the last ENTRY is `sq_fall 0.01 1` and the last EXIT
     # is `sq_rise 0.01 2`, and they must be `mt_distinct`.
-    set stIa [mt_call settlingTime {v(dcmid)} 3 1e-9 0]
-    set stIb [mt_call settlingTime {v(lp)} 5 0.1 0]
-    set stIc [mt_call settlingTime {v(ramp)} 5 0.1 0]
-    set stId [mt_call settlingTime {v(sq)} 0 0.01 0]
-    set stIe [mt_call settlingTime {v(lp)} 1 0.001 0]
-    set stIf [mt_call settlingTime {v(lp)} 1 0.01 9.75e-3]
-    set stIg [mt_call settlingTime {v(dcmid)} 3 1e-12 0]
+    set stIa [mt_call settlingTime {v(dcmid)} 3 1e-8 0 0 2]
+    set stIb [mt_call settlingTime {v(lp)} 5 2.0 0 0 0]
+    set stIc [mt_call settlingTime {v(ramp)} 5 2.0 0 0 0]
+    set stId [mt_call settlingTime {v(sq)} 0 1 0 0 1]
+    set stIe [mt_call settlingTime {v(lp)} 1 0.1 0 0 0]
+    set stIf [mt_call settlingTime {v(lp)} 1 1 9.75e-3 0 0]
+    set stIg [mt_call settlingTime {v(dcmid)} 3 1e-10 0 0 2]
     check "MT16/I every absence kind is reached on a REAL column and the three kinds are DISTINCT sentences: `nocross` twice, on a trace that never leaves the band and on a band the trace never reaches -- the same kind for opposite physical reasons, which is limit L1 measured rather than asserted -- `nosettle` on THREE configurations, and `presettled` on one.  Each is `absent` and not `refused`, because the request is well formed and this sweep simply has no answer; each sentence is in the house shape; and the three are pairwise different strings so a kind collapsed onto another reddens.  The controls: v(dcmid) at a tighter band MEASURES, so `nocross` is a property of the band and not of the column; and the two deck closed forms the two no-exit-check readings would answer on v(sq) are distinct, so `nosettle` cannot be satisfied by a verb that settles nothing" \
         [list [mt_disp $stIa] [mt_disp $stIb] [mt_disp $stIc] [mt_disp $stId] \
               [mt_disp $stIe] [mt_disp $stIf] [mt_disp $stIg] \
@@ -7675,12 +7741,12 @@ group MT16 {
               alldifferent 1 ok ok ok distinct nosettle nocross]
 
     # --- J: the `presettled` boundary is the MEASURED instant ----------------
-    set stJT [mt_val [mt_call settlingTime {v(lp)} 1 0.01 0]]
-    set stJ1 [mt_call settlingTime {v(lp)} 1 0.01 9.7e-3]
-    set stJ2 [mt_call settlingTime {v(lp)} 1 0.01 $stJT]
+    set stJT [mt_val [mt_call settlingTime {v(lp)} 1 1 0 0 0]]
+    set stJ1 [mt_call settlingTime {v(lp)} 1 1 9.7e-3 0 0]
+    set stJ2 [mt_call settlingTime {v(lp)} 1 1 $stJT 0 0]
     check "MT16/J the presettled boundary is the instant the SAME call measures and not a constant: a start just inside it answers a duration that equals the measured instant minus that start, a start just outside it answers `presettled`, and a start AT the instant exactly answers a measured ZERO -- which is the `<` and not `<=` leg, and the reason the disposition is an absence rather than a negative number.  `start` is an ORIGIN and not a second measurement, so a negative duration from it would say the request named the wrong window; delay's negative answer is a different thing, two independent edges in order" \
         [list [mt_disp $stJ1] [near [mt_val $stJ1] [mt_st_minus $stJT 9.7e-3] $MTTOL] \
-              [mt_disp [mt_call settlingTime {v(lp)} 1 0.01 9.75e-3]] \
+              [mt_disp [mt_call settlingTime {v(lp)} 1 1 9.75e-3 0 0]] \
               [mt_disp $stJ2] [near [mt_val $stJ2] 0 $MTTOL] \
               [mt_distinct $stJT 9.7e-3]] \
         {measured ok absent measured ok distinct}
@@ -7705,8 +7771,8 @@ group MT16 {
     }
     set stKMINE {}
     foreach stKa [list $stIa $stIc $stIf $stG7 \
-                       [mt_call settlingTime {v(lp)} {} 0.01 0] \
-                       [mt_call settlingTime {v(lp)} 1 0 0]] {
+                       [mt_call settlingTime {v(lp)} {} 1 0 0 0] \
+                       [mt_call settlingTime {v(lp)} 1 0 0 0 0]] {
         lappend stKMINE [mt_infamily [mt_msg $stKa] [mt_crossmsg_families]]
     }
     check "MT16/K calc::cross_msg still parses and the eight arms this unit adds are really there, with the arm set DERIVED from the proc's own switch patterns and the family derived from the sentences -- never a list of kind names written here, which is the hand-kept-list defect one level up.  The floor over the `Settling time` family is a RATCHET and not a baseline; every derived arm answers a non-empty sentence in the house shape without raising; and every sentence the verb itself produces is in a family this proc really builds, which is the leg that catches an arm reached through a kind nobody added.  ⚠ cross's OWN refusal is deliberately in cross's family and not in this one, which is what propagation BY IDENTITY means" \
@@ -7730,7 +7796,7 @@ group MT16 {
     set stRTOLS {0.1 0.05 0.03 0.02 0.01}
     set stRGOT {} ; set stREXP {} ; set stRW {} ; set stRHI {}
     foreach stTt $stRTOLS {
-        lappend stRGOT [mt_val [mt_call settlingTime $stRR 1 $stTt 0]]
+        lappend stRGOT [mt_val [mt_call settlingTime $stRR 1 [st_pct $stTt] 0 0 0]]
         lappend stREXP [mt_st_derive $stT $stRC 1 $stTt 0]
         set stRwn [mt_st_winner $stRR 1 $stTt]
         lappend stRW $stRwn
@@ -7746,7 +7812,7 @@ group MT16 {
               $stRHIok \
               [mt_st_counts [mt_st_calls $stRR 1 $stRHI]] \
               [mt_distinct [mt_st_entry $stRR 1 $stRHI entlo] \
-                           [mt_val [mt_call settlingTime $stRR 1 $stRHI 0]]] \
+                           [mt_val [mt_call settlingTime $stRR 1 [st_pct $stRHI] 0 0 0]]] \
               [expr {[mt_st_entry $stRR 1 $stRHI entlo] < \
                      [mt_st_entry $stRR 1 $stRHI enthi] ? {earlier} : {NOTEARLIER}}]] \
         [list {} ok ok distinct {enthi entlo} reached m4/a0/r0/x0 distinct earlier]
@@ -7756,7 +7822,7 @@ group MT16 {
     # is asserted EXACTLY, which is what catches a wiring that puts a live value
     # in a retired key -- and it makes any future widening a SEQUENCING
     # obligation rather than a surprise gate red to be cleared by weakening this.
-    set stN [mt_call settlingTime {v(lp)} 1 0.01 0 1]
+    set stN [mt_call settlingTime {v(lp)} 1 1 0 1 0]
     check "MT16/N the answer is cross's OWN dict with `value` replaced, propagated and never rebuilt: the key set is exactly {absent dataset dest msg ok value} -- no `shape`, no `sweep`, no `db` -- so calc::fn_sink reads the default scalar and answers `buffer`, and the number lands in the user's expression with arg_provenance's R421 sentence.  `dataset` is the one cross really read and `dest` still holds the retired __calc_tmp the measurement evaluated into, which band MT9b reads BY NAME to tell a deferral from an absence.  A rebuilt dict that dropped `absent` would make mt_disp answer NOKEY-absent and break the refused/absent split one layer up, and a declared `shape wave` would route a scalar into a destination" \
         [list [mt_keys $stN] [mt_sink $stN] [mt_key $stN dataset] \
               [mt_tmpname [mt_key $stN dest]] [mt_key $stN msg] \
@@ -9845,7 +9911,7 @@ group MT21 {
         riseTime     {lo 0 hi 1}
         slewRate     {lo 0 hi 1}
         delay        {rpnA {v(lp)} levelA 0.5 rpnB {v(sq)} levelB 0.5}
-        settlingTime {final 1.0 tol 0.05 start 0}
+        settlingTime {initial 0 final 1.0 tol 5 start 0}
         overshoot    {initial 0 final 1}
         dutyCycle    {level 0.5}
         frequency    {level 0.5}
@@ -14661,7 +14727,7 @@ proc m28_timegate {} {
         riseTime     [list rtnotran {Rise time}     {@R@ 0 1}] \
         slewRate     [list srnotran {Slew rate}     {@R@ 0 1 10 90 1 rising}] \
         delay        [list dlnotran {Delay}         {@R@ 0.2 rising 1 @R@ 0.8 rising 1}] \
-        settlingTime [list stnotran {Settling time} {@R@ 1 0.1 @A@}] \
+        settlingTime [list stnotran {Settling time} {@R@ 1 10 @A@ 0 0}] \
         frequency    [list fqnotran {Frequency}     {@T@ 0.5 rising}]]
 }
 proc m28_alias {} { return [list freq frequency] }
@@ -14842,7 +14908,7 @@ group MT28 {
             riseTime     [list noswing     {{} {}}     {@R@}] \
             slewRate     [list slewbadedge {sideways}  {@R@ 0 1 10 90 1 sideways}] \
             delay        [list listdefer   {}          {@R@ 0.5 rising 0 @R@ 0.5 falling 1}] \
-            settlingTime [list nostart     {}          {@R@ 1 0.01}] \
+            settlingTime [list nostart     {}          {@R@ 1 1 {} 0 0}] \
             frequency    [list freqxaxis   {sideways}  {@T@ 0.5 rising 0 0 sideways}]] {
         foreach {m28arm m28det m28tail} $m28spec break
         incr m28N3
@@ -15002,7 +15068,7 @@ group MT28 {
     foreach {m28v m28tail} [list riseTime {{v(sq)} 0 1} \
                                  slewRate {{v(sq)} 0 1 10 90 1 rising} \
                                  delay {{v(sq)} 0.5 rising 1 {v(sq)} 0.5 falling 1} \
-                                 settlingTime {{v(sq)} 1 0.01 0} \
+                                 settlingTime {{v(sq)} 1 1 0 0 0} \
                                  frequency {{v(sq)} 0.5 rising} \
                                  overshoot {{v(sq)} 0 0.5 0}] {
         incr m28FON
@@ -15730,20 +15796,30 @@ group AD {
               [mt_sl_in $adverbs __ad_no_such_verb__]] \
         {atleast13 has has has missing:__ad_no_such_verb__}
     # --- the validator is ONE proc and it answers with ALL of them -------------
-    array unset ::calc::argval
-    array set ::calc::argval {final {} tol {} start {} dataset 0}
+    # ⚠ EVERY NON-REQUIRED FIELD IS SEEDED FROM ITS OWN SPEC DEFAULT, or this row
+    # measures them too.  `settlingTime` gained two `enum` fields whose default is
+    # `value`; leaving them unset makes `argval` answer `{}`, which correctly fails
+    # the enum check and gave FIVE sentences where this row is about the three
+    # REQUIRED ones.  Seeded from the spec rather than listed, so a new optional
+    # field joins without an edit here.
     set adspec [pcall calc::fn_argspec settlingTime]
+    array unset ::calc::argval
+    foreach row $adspec {
+        if {[lindex $row 3] eq {1}} { set ::calc::argval([lindex $row 0]) {} ; continue }
+        set ::calc::argval([lindex $row 0]) [lindex $row 4]
+    }
     set adall  [pcall calc::arg_trouble $adspec]
     check "AD `calc::arg_trouble` reports EVERY malformed field and not only the first: three blank required fields answer three sentences, each naming its own field, in spec order.  Before this, discovering them cost three OK presses -- each one invisible" \
         [list [llength $adall] \
-              [mt_sl_in $adall {Final value must be a finite number ().}] \
-              [mt_sl_in $adall {Tolerance must be a finite number ().}] \
+              [mt_sl_in $adall {Initial (value or time) must be a finite number ().}] \
+              [mt_sl_in $adall {Final (value or time) must be a finite number ().}] \
+              [mt_sl_in $adall {Tolerance % must be a finite number ().}] \
               [mt_sl_in $adall {Start time must be a finite number ().}]] \
-        {3 has has has}
+        {4 has has has has}
     check "AD ...and `calc::arg_bad` keeps its OWN contract as the first of them, so there is ONE validator and not two that can disagree -- its body is the one-line delegation, which is the only arrangement under which that cannot drift" \
         [list [pcall calc::arg_bad $adspec] \
               [mt_boolword [regexp {arg_trouble} [mt_decomment [pcall info body ::calc::arg_bad]]] delegates OWNWALK]] \
-        [list {Final value must be a finite number ().} delegates]
+        [list {Initial (value or time) must be a finite number ().} delegates]
     check "AD `calc::arg_say` composes what the user is told, and is pure: one field reads as itself, several are joined, and an empty list is the empty string rather than a sentence about nothing" \
         [list [pcall calc::arg_say {}] [pcall calc::arg_say {one}] \
               [pcall calc::arg_say {one two}]] \

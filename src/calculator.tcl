@@ -3838,6 +3838,14 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  number ($a)." }
         zeroband   { return "Settling time: the tolerance must be greater than\
  zero ($a)." }
+        noinitial  { return "Settling time: the band is a percent of the step, so it\
+ needs an initial value as well as a final one." }
+        tinyband   { return "Settling time: $a % of a step of $b is too small to be a\
+ band at all." }
+        zerostep   { return "Settling time: the initial and final values are the same\
+ ($a), so a percent of the step is no band at all." }
+        notatime   { return "Settling time: the expression has no value at the time\
+ '$a' -- no two samples bracket it." }
         nocross    { return "Settling time: that expression never crosses either\
  edge of the band." }
         nosettle   { return "Settling time: that expression leaves the band and does\
@@ -4229,6 +4237,95 @@ proc calc::cross_scan {xs ys L nth edge} {
 # inside dataset 0's range which coincides to under 1e-17 with a real RISING
 # crossing.  No caller rejects that by inspection and no tolerance-based row
 # separates the two.
+# ---------------------------------------------------------------------------
+# THE ONE SERIES DOOR: an expression's samples and the sweep's, both as lists.
+#
+# `calc::cross` has this sequence inline -- validate the dataset, resolve the
+# SWEEP BY NAME from the sim_type, pre-flight the tokens, mint a temporary,
+# `xschem raw add`, read BOTH columns in bulk at %.16g, and delete the temporary
+# UNCONDITIONALLY ahead of every return (R402).  Two later verbs need exactly the
+# same thing for a different question -- `value` wants the y at a named x, and
+# `settlingTime`'s references can be read off the waveform at a named time -- and
+# building it twice is the second-table defect this tree keeps paying for.
+#
+# ⚠ `calc::cross` IS DELIBERATELY NOT REFACTORED ONTO THIS, AND THAT IS A STATED
+# TRADE RATHER THAN AN OVERSIGHT.  187 gated checks measure that proc, and moving
+# its acquisition inside a feature commit is a separate unit with its own risk.
+# What stops the two copies drifting is not hope: a row drives BOTH and compares
+# the series element for element, so a change to either that is not a change to
+# both reddens.  That is a measured equivalence instead of a duplicated
+# intention.
+#
+# ⚠ `xschem raw value <name> <n>` IS NOT A DOOR TO THIS.  It is point-INDEX based
+# and returns through `%.8g`, so it ROUNDS (0.99660236 for a stored
+# 0.9966023593882138).  The bulk reader `xschem raw values` is `%.16g`.
+#
+# ⚠ THE DELETE IS UNCONDITIONAL AND BEFORE EVERY RETURN BELOW IT, never driven by
+# the add's return code: a failed add can still have created the column.
+proc calc::series_of {rpn dataset} {
+    if {[string trim $rpn] eq {}} {
+        return [dict create ok 0 why empty xs {} ys {} dest {}]
+    }
+    set nds 0
+    if {[catch {xschem raw datasets} nds]} {
+        return [dict create ok 0 why nodata xs {} ys {} dest {}]
+    }
+    if {![string is integer -strict $nds] || $nds < 1} {
+        return [dict create ok 0 why nodata xs {} ys {} dest {}]
+    }
+    if {![string is integer -strict $dataset] || $dataset < 0 || $dataset >= $nds} {
+        return [dict create ok 0 why dataset xs {} ys {} dest {}]
+    }
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    set sweep {}
+    switch -exact -- $sty {
+        tran { set sweep time }
+        ac   { set sweep frequency }
+    }
+    set six -1
+    if {$sweep ne {}} { catch {set six [xschem raw index $sweep]} }
+    if {$sweep eq {} || ![string is integer -strict $six] || $six < 0} {
+        return [dict create ok 0 why nosweep xs {} ys {} dest {} sim $sty]
+    }
+    set bad [calc::rpn_bad_token $rpn]
+    if {$bad ne {}} {
+        return [dict create ok 0 why badtoken xs {} ys {} dest {} detail $bad]
+    }
+    set dest [calc::tmpvec]
+    if {$dest eq {}} {
+        return [dict create ok 0 why noname xs {} ys {} dest {}]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dest]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [dict create ok 0 why stale xs {} ys {} dest $dest]
+    }
+    set xs {} ; set ys {}
+    catch {
+        xschem raw add $dest $rpn
+        set ys [string trim [xschem raw values $dest $dataset]]
+        set xs [string trim [xschem raw values $sweep $dataset]]
+    }
+    catch {xschem raw del $dest}
+    if {[llength $xs] < 2 || [llength $ys] < 2} {
+        return [dict create ok 0 why nosamples xs $xs ys $ys dest $dest]
+    }
+    return [dict create ok 1 why {} xs $xs ys $ys dest $dest \
+                dataset $dataset sweep $sweep sim $sty]
+}
+
+# THE Y OF AN EXPRESSION AT A NAMED X, interpolated.  `calc::sample_at` is the
+# arithmetic (it solves the straddling line and is R414d read the other way
+# round); this is the door that gets it its two series.  Answers {} for "no
+# finite sample pair brackets that x", which is an ABSENCE and not a refusal.
+proc calc::y_at {rpn x dataset} {
+    if {![calc::eval_finite $x]} { return {} }
+    set d [calc::series_of $rpn $dataset]
+    if {![dict get $d ok]} { return {} }
+    return [calc::sample_at [dict get $d xs] [dict get $d ys] $x]
+}
+
 proc calc::cross {rpn level nth edge {dataset 0}} {
     # D7, FIRST: a request that cannot be INTERPRETED is refused before any
     # evaluation happens, and is never reported as an absence.
@@ -6039,9 +6136,48 @@ proc calc::freq_scalar {rpn level {edge rising} {cycle 0} {dataset 0} \
 # `nocross`, because distinguishing them needs the value of one sample and
 # therefore an engine door of this proc's own.  The sentence names BOTH readings
 # instead of guessing one, and row MT16/I drives both configurations.
-proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0}} {
+# ⚠⚠ THE TOLERANCE IS A PERCENT OF THE STEP, WHICH IS THE USER'S OWN RULING
+# (2026-10-07), AND IT USED TO BE AN ABSOLUTE HALF-WIDTH.  Their words:
+# *"Tolerance is not clear if that means % or absolute, etc. It should always be %
+# percent."*  Asked percent OF WHAT, they chose the STEP -- `|final - initial|` --
+# over percent of the final value, because the final-value reading COLLAPSES TO NO
+# BAND when the final value is zero, which is every differential output settling to
+# 0 V.  So the verb takes an `initial` reference it did not have.
+#
+# ⚠ AND EACH REFERENCE IS EITHER A NUMBER OR A TIME, which is the other half of
+# what they asked for: *"there should be an option to specify the time value at
+# which the y-value of the waveform is used as final value."*  `initfrom`/`finalfrom`
+# say which, so ONE field serves both readings rather than the form growing two
+# fields per reference.  The y is read through `calc::y_at` -> `calc::series_of` ->
+# `calc::sample_at`, which INTERPOLATES: nearest-sample snapping is 4% out on the
+# committed fixture's own ramp, three orders above any tolerance anyone would type.
+#
+# ⚠ THE NEW FORMALS GO AFTER `dataset`, NOT BESIDE THE REFERENCES THEY BELONG
+# WITH, and that is forced: `calc::arg_values` walks `info args` IN ORDER and
+# BREAKS at the first formal the spec does not supply, so re-ordering would strand
+# every formal after the insertion point.  The DIALOG's field order is independent
+# -- it renders the spec, and `arg_values` looks each formal up by name -- so the
+# user sees Initial before Final regardless of this signature.
+proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0} \
+                         {initial {}} {initfrom value} {finalfrom value}} {
     if {[string trim $final] eq {} || [string trim $tol] eq {}} {
         return [calc::cross_refusal [calc::cross_msg noband $final $tol] $dataset]
+    }
+    # ⚠⚠ `initial` IS REQUIRED, AND THE OBVIOUS KINDNESS -- DEFAULTING IT TO THE
+    # WAVEFORM'S VALUE AT `start` -- WAS BUILT AND REVERTED.  It is physically the
+    # right reading and it would have spared the user a field, but resolving it
+    # means READING THE DATABASE, and that would move a database read into the
+    # REQUEST-VALIDATION stage.  Row MT16/H asserts in its own words that *"every
+    # REQUEST refusal happens before anything reaches the database"*, and rows
+    # MT21/B, MT28/E and MT28/F all caught it immediately: a request-stage drive
+    # with no raw loaded answered *"the expression has no value at the time '0'"*
+    # instead of naming the field that was wrong.  The user accepted the extra field
+    # when asked, so requiring it is their own choice and not a shortcut.
+    if {[string trim $initial] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noinitial] $dataset]
+    }
+    if {![calc::eval_finite $initial]} {
+        return [calc::cross_refusal [calc::cross_msg badband $initial] $dataset]
     }
     if {[string trim $start] eq {}} {
         return [calc::cross_refusal [calc::cross_msg nostart] $dataset]
@@ -6055,7 +6191,71 @@ proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0}} {
     if {![calc::eval_finite $start]} {
         return [calc::cross_refusal [calc::cross_msg badstart $start] $dataset]
     }
-    set w [expr {double($tol)}]
+    # ⚠ THE DATASET IS VALIDATED BEFORE EITHER REFERENCE IS RESOLVED, because a
+    # `time` reference reads the database and would otherwise report a BAD DATASET
+    # as *"no value at that time"* -- a masked refusal, blaming the user's time for
+    # a number they typed in another field.  Found by a probe that passed the
+    # arguments in the wrong order and got exactly that sentence.  `calc::cross`
+    # validates the same thing with the same arm further down; this is the earlier
+    # of the two and must agree with it.
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset]]
+    }
+    # ⚠ AND ITS RANGE, not only that it is a whole number.  `calc::y_at` answers
+    # `{}` for every reason there is, so an out-of-range dataset reaching a `time`
+    # reference would be reported as *"no value at that time"* -- blaming the time
+    # the user typed for a number they typed in another field.  `calc::cross`
+    # validates the same range further down with the same arm, and the two must
+    # agree; this is the earlier of the two and exists only because a `time`
+    # reference reads the database before `cross` is ever called.
+    set stnds 0
+    catch {set stnds [xschem raw datasets]}
+    if {[string is integer -strict $stnds] && $stnds > 0
+        && ($dataset < 0 || $dataset >= $stnds)} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $stnds] $dataset]
+    }
+    set sty [calc::acsweep]
+    if {$sty ne {}} {
+        return [calc::cross_refusal [calc::cross_msg stnotran $sty] $dataset]
+    }
+    # ⚠⚠ THE SIM_TYPE GATE IS ABOVE THIS, AND THE FIRST VERSION HAD IT BELOW --
+    # with a comment claiming the opposite was deliberate.  A `time` reference is
+    # meaningless outside a transient sweep, so on an AC database the resolution
+    # failed first and answered *"the expression has no value at the time '0'"*
+    # where the right sentence is *"a settling time is a time and needs a transient
+    # sweep"*.  That is a masked refusal: it blames the user's time field for the
+    # analysis they loaded.  Rows MT28/E and MT28/F caught it by name.
+    # THE TWO REFERENCES, each a number or a time on the waveform.
+    set fy [expr {double($final)}]
+    set iy [expr {double($initial)}]
+    if {$finalfrom eq {time}} {
+        set fy [calc::y_at $rpn $final $dataset]
+        if {$fy eq {}} {
+            return [calc::cross_refusal [calc::cross_msg notatime $final] $dataset]
+        }
+    }
+    if {$initfrom eq {time} && [string trim $initial] ne {}} {
+        set iy [calc::y_at $rpn $initial $dataset]
+        if {$iy eq {}} {
+            return [calc::cross_refusal [calc::cross_msg notatime $initial] $dataset]
+        }
+    }
+    set step [expr {abs(double($fy) - double($iy))}]
+    if {$step == 0.0} {
+        return [calc::cross_refusal [calc::cross_msg zerostep $fy] $dataset]
+    }
+    # the percent, applied to the step.  `tol` is a PERCENT, so 1 means 1 %.
+    # ⚠ THE TOLERANCE'S OWN SIGN IS CHECKED BEFORE THE MULTIPLICATION, because
+    # after it `zeroband`'s sentence would be FALSE: with `tol` a percent a band can
+    # reach zero by UNDERFLOW rather than by the user typing zero, and that arm
+    # quotes what they typed.  Measured: `tol 1e-200` against a step of `1e-300`
+    # underflows to exactly 0.0 and answered *"the tolerance must be greater than
+    # zero (1e-200)"* -- a sentence wrong about its own argument.  Not a user
+    # scenario at that scale; the SHAPE is, which is why these are now two facts.
+    if {double($tol) <= 0.0} {
+        return [calc::cross_refusal [calc::cross_msg zeroband $tol] $dataset]
+    }
+    set w [expr {double($tol) / 100.0 * $step}]
     # A BAND OF ZERO WIDTH HAS NOTHING TO STAY INSIDE, and a negative tolerance
     # names an empty band -- `calc::riseTime`'s `zeroswing` disposition
     # transposed.  ⚠ `calc::arg_bad` accepts 0 and -1 as finite `real`s and a
@@ -6063,19 +6263,19 @@ proc calc::settlingTime {rpn {final {}} {tol {}} {start {}} {dataset 0}} {
     # refusal a user can reach by filling in the dialog; the other four are this
     # proc's contract, reachable from a script.
     if {$w <= 0.0} {
-        return [calc::cross_refusal [calc::cross_msg zeroband $tol] $dataset]
+        return [calc::cross_refusal [calc::cross_msg tinyband $tol $step] $dataset]
     }
     set t0 [expr {double($start)}]
-    set lo [expr {double($final) - $w}]
-    set hi [expr {double($final) + $w}]
+    # ⚠ THE BAND CENTRES ON THE RESOLVED y, NOT ON `$final`.  In the `time`
+    # reading `$final` IS A TIME, so centring on it would put the band at a
+    # coordinate on the wrong axis -- a number that looks plausible and is
+    # nonsense.
+    set lo [expr {$fy - $w}]
+    set hi [expr {$fy + $w}]
     # ISSUE 1653's GATE, THE OTHER DIRECTION.  The answer is `tent - start`, an X
     # span, so on an `ac` database it is a frequency interval in Hz reported as
     # seconds.  Placement and spelling: see `calc::riseTime`'s own copy and
     # `calc::acsweep`.
-    set sty [calc::acsweep]
-    if {$sty ne {}} {
-        return [calc::cross_refusal [calc::cross_msg stnotran $sty] $dataset]
-    }
     set calls {}
     foreach {nm L edge} [list entlo $lo rising  exitlo $lo falling \
                               enthi $hi falling exithi $hi rising] {
@@ -10615,7 +10815,7 @@ proc calc::catalogue {} {
 {riseTime {Special Functions} T scalar/wave {} {Time of a transition from a low % level to a high % level}}
 {slewRate {Special Functions} T scalar/wave {} {Rate of change dV/dt of a transition}}
 {delay {Special Functions} T scalar {} {Time from an edge on one signal to an edge on another}}
-{settlingTime {Special Functions} T scalar {} {Time taken to settle and stay inside a band}}
+{settlingTime {Special Functions} T scalar {} {Time to settle inside a band of +/-tol % of the step}}
 {overshoot {Special Functions} T scalar {} {Percent by which the wave passes its final value}}
 {dutyCycle {Special Functions} T scalar/wave {} {Fraction of a period the signal spends high}}
 {frequency {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
@@ -11252,10 +11452,13 @@ proc calc::fn_argspec {name} {
         }
         settlingTime {
             return {
-                {final   {Final value} real 1 {}}
-                {tol     {Tolerance}   real 1 {}}
-                {start   {Start time}  real 1 {}}
-                {dataset {Dataset}     int  0 0}
+                {initial   {Initial (value or time)} real 1 {}}
+                {initfrom  {Initial is a}            {enum value time} 0 value}
+                {final     {Final (value or time)}   real 1 {}}
+                {finalfrom {Final is a}              {enum value time} 0 value}
+                {tol       {Tolerance %}             real 1 {}}
+                {start     {Start time}              real 1 {}}
+                {dataset   {Dataset}                 int  0 0}
             }
         }
         overshoot {
