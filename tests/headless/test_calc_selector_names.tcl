@@ -212,7 +212,7 @@ group PK1 {
     foreach id $all { if {[lsearch -exact $dis $id] < 0} { lappend enab $id } }
     set others {}
     foreach id $enab { if {[lsearch -exact $ids $id] < 0} { lappend others $id } }
-    check "PK1 `calc::pick_ids` is DERIVED from the selector grid's own table and not a second list: it equals row 0's first group of `calc::sel_rows` element for element, which is spec §5's voltage group, and the four ids are exactly the ones §5 gives a `v(<net>)` emission" \
+    check "PK1 `calc::pick_ids` is DERIVED from the selector grid's own table and not a second list: it equals row 0's first group of `calc::sel_rows` element for element, which is spec §5's VOLTAGE group -- the group, and not the `Emits into buffer` column, which is what made these four look alike and is the defect R208a corrects" \
         [list $ids $der [expr {$ids eq $der ? {same} : {DIFFERENT}}]] \
         [list {vt vf vdc vs} {vt vf vdc vs} same]
     check "PK1 the grid's population rides along, so a twenty-third selector or a ninth disabled one has to move a number here rather than quietly joining or leaving the pick's scope" \
@@ -232,23 +232,102 @@ group PK1 {
     check "PK1 R208's scope boundary is a ROUTING decision and is drivable here: every one of the ten enabled non-voltage ids answers `inert` -- which is what keeps their shipped `calc::inert ... phase 6` sentence -- and not one of the four voltage ids does" \
         [list [lsort $inert] [lsort $armed]] \
         [list [lsort $others] [lsort $ids]]
-    # R208's no-analysis-gate ruling, asserted STRUCTURALLY rather than by
-    # driving four ids through a proc that cannot see them.
+    # ⚠⚠ THIS ROW IS THE SUPERSESSION OF ITS OWN PREVIOUS SELF, AND THAT IS WHAT
+    # ITS OLD WORDING ASKED FOR.  It used to assert *"there is NO analysis gate and
+    # one cannot be added quietly"*, ending *"a gate added later must change a
+    # signature or name one of these verbs, and either reddens this row"*.  A gate
+    # was added later -- by the USER, on 2026-10-07: *"vt and vf both put
+    # v(netname) in the calculator buffer. We need different functions because vt
+    # and vf are different things."*  So the row reddened exactly as designed and
+    # is RESTATED to assert the gate, never weakened to tolerate it.
     #
-    # ⚠ THE FIRST VERSION OF THIS ROW WAS VACUOUS AND IS RECORDED BECAUSE THE
-    # SHAPE RECURS: it called `calc::pick_name A 0` once per id and compared the
-    # four answers, which agree BY CONSTRUCTION because neither proc is told an
-    # id -- `$id` appeared in the loop and in nothing the loop called.  The
-    # honest claim is exactly that: an analysis gate is NOT EXPRESSIBLE in the
-    # name path without adding a parameter to one of these signatures, and
-    # `calc::pick_decide` -- the one proc that IS told an id -- never asks what
-    # analysis the database holds.  Either change moves a row here.
+    # ⚠ THE HALF THAT DOES NOT CHANGE IS THE ONE THAT MATTERS: `calc::pick_name`
+    # and `calc::pick_lookup` must STILL be unable to discriminate, because the
+    # gate belongs where the id is already in hand.  A later hand "fixing" this by
+    # threading an analysis through the name path moves these two signatures and
+    # reddens here.
     set dbody [pk_decomment [pcall info body ::calc::pick_decide]]
-    check "PK1 R208: there is NO analysis gate and one cannot be added quietly.  `vf` on a `tran` result is NOT refused -- ADE-L is a FLOOR, `v(<net>)` resolves in every analysis, and R204's inventory check is the gate that matters -- and the fence is structural: the two procs that compose and resolve a name are told a TOKEN and a LEVEL and never an id, so they cannot discriminate `vf` from `vt`; and the one proc that IS told an id never asks the database what analysis it holds.  A gate added later must change a signature or name one of these verbs, and either reddens this row" \
+    set nbody [pk_decomment [pcall info body ::calc::pick_name]]
+    set lbody [pk_decomment [pcall info body ::calc::pick_lookup]]
+    check "PK1 R208a: there IS an analysis gate and it lives where the id already is.  `calc::pick_decide` asks the loaded database's own analysis; `calc::pick_name` and `calc::pick_lookup` are told a TOKEN and a LEVEL and still CANNOT discriminate, which is what keeps the gate in one place -- a later hand threading an analysis through the name path moves these two signatures and reddens here" \
         [list [pcall info args ::calc::pick_name] [pcall info args ::calc::pick_lookup] \
-              [pk_word [regexp {sim_type|sim type|analysis|raw[ \t]+type} $dbody] NAMESTYPE silent] \
-              [pk_word [regexp {\mtran\M|\mac\M|\mdc\M|\mnoise\M} $dbody] NAMESANALYSIS silent]] \
-        [list {tok baselvl} {cand} silent silent]
+              [pk_word [regexp {pick_analysis} $dbody] gates UNGATED] \
+              [pk_word [regexp {pick_analysis|sim_type|analysis} $nbody] NAMEDISCRIMINATES silent] \
+              [pk_word [regexp {pick_analysis|sim_type|analysis} $lbody] LOOKUPDISCRIMINATES silent]] \
+        [list {tok baselvl} {cand} gates silent silent]
+    # --- the gate itself, with synthetic dicts -------------------------------
+    # ⚠ WHY THIS IS NOT A COSMETIC COMPLAINT, measured and carried as a row: the
+    # ONE buffer text `v(lp)` resolves in all three databases and answers a
+    # DIFFERENT NUMBER in each, and `calc::pick_lookup` approves it every time.
+    # That is the wrong-number-with-no-way-to-tell the gate exists to stop.
+    set pkvals {}
+    foreach ty {tran ac op} {
+        pk_read $ty
+        set lk [pcall calc::pick_lookup v(lp)]
+        # ⚠ THE *LAST* SAMPLE, NOT THE FIRST.  At t=0 a transient and an operating
+        # point agree by construction, so the first sample gives only TWO distinct
+        # values and the row read `n2` -- measuring a coincidence rather than the
+        # divergence it is about.
+        lappend pkvals $ty [pk_fld $lk ok] [lindex [pcall xschem raw values v(lp) 0] end]
+    }
+    pcall xschem raw clear
+    check "PK1 R208a's PREMISE, re-measured every run: the same buffer text resolves in ALL THREE analyses -- `calc::pick_lookup` answers ok each time -- and reads a DIFFERENT number in each.  Without the gate nothing in the buffer, the status line or the refusal vocabulary could say which of these the user was looking at" \
+        [list [lindex $pkvals 1] [lindex $pkvals 4] [lindex $pkvals 7] \
+              [pk_sized [llength [lsort -unique [list [lindex $pkvals 2] [lindex $pkvals 5] [lindex $pkvals 8]]]] 3]] \
+        {1 1 1 n3}
+    check "PK1 the analysis table is ONE table keyed on the same four ids as the pick's scope, and it is complete in both directions -- a fifth id with no analysis, or an analysis with no id, reddens here" \
+        [list [pcall calc::pick_analyses] \
+              [lsort [pcall dict keys [pcall calc::pick_analyses]]] [lsort $ids] \
+              [pcall calc::pick_analysis op] [pcall calc::pick_analysis {}]] \
+        [list {vt tran vf ac vdc op vs dc} {vdc vf vs vt} {vdc vf vs vt} {} {}]
+    # ⚠ THE DESIGN RESOLUTION IS STUBBED, because it sits AFTER the gate and
+    # refuses for its own reason -- so without it all eight drives answer `refuse`
+    # and the row cannot tell a gate refusal from a missing cellview.  That is what
+    # the first spelling of it did.  The stub supplies ASE's resolution; it does not
+    # share the gate.
+    rename ase::ui::design_path pk_real_dp
+    proc ase::ui::design_path {key} { return /tmp/__pk_fake__/cell.sch }
+    set pkgate {}
+    foreach {id ty} {vt tran vt ac vf ac vf tran vdc op vdc tran vs dc vs ac} {
+        lappend pkgate [pk_fld [pcall calc::pick_decide $id \
+            [dict create ok 1 token k type $ty]] act]
+    }
+    rename ase::ui::design_path {}
+    rename pk_real_dp ase::ui::design_path
+    check "PK1 ...and the stub was handed back, which the band CHECKS rather than assumes" \
+        [pcall ase::ui::design_path __pk_nosuch__] {}
+    check "PK1 R208a drivable with no database at all: each voltage id ARMS on its own analysis and REFUSES on another -- four matches and four mismatches, so the row cannot pass by refusing everything or by arming everything" \
+        $pkgate {arm refuse arm refuse arm refuse arm refuse}
+    check "PK1 ...and the refusal NAMES BOTH analyses, in the user's words rather than the simulator's -- acronyms uppercase, one map shared with the success sentence so they cannot disagree" \
+        [list [pk_fld [pcall calc::pick_decide vf [dict create ok 1 token k type tran]] msg] \
+              [pk_fld [pcall calc::pick_decide vdc [dict create ok 1 token k type ac]] msg] \
+              [pcall calc::analysis_word tran] [pcall calc::analysis_word ac] \
+              [pcall calc::analysis_word op] [pcall calc::analysis_word dc] \
+              [pcall calc::analysis_word __pk_unknown__]] \
+        [list {selector vf: needs an AC result; this one is transient} \
+              {selector vdc: needs an operating point result; this one is AC} \
+              transient AC {operating point} {DC sweep} __pk_unknown__]
+    check "PK1 the ARTICLE is chosen and not hardcoded, which the first spelling of this got wrong (`needs an tran result`, `an dc result`) -- a sentence the user reads has to read" \
+        [list [pcall calc::pick_wants vt] [pcall calc::pick_wants vf] \
+              [pcall calc::pick_wants vdc] [pcall calc::pick_wants vs] \
+              [pcall calc::pick_wants op]] \
+        [list {a transient result} {an AC result} {an operating point result} \
+              {a DC sweep result} {its own analysis}]
+    rename ase::ui::design_path pk_real_dp2
+    proc ase::ui::design_path {key} { return /tmp/__pk_fake__/cell.sch }
+    set pkunk [list [pk_fld [pcall calc::pick_decide vt [dict create ok 1 token k]] act] \
+                    [pk_fld [pcall calc::pick_decide vt [dict create ok 1 token k type {}]] act]]
+    rename ase::ui::design_path {}
+    rename pk_real_dp2 ase::ui::design_path
+    check "PK1 a result whose analysis is UNKNOWN is NOT refused: an empty or absent `type` arms, because refusing on a fact nobody established would be a restriction ADE-L does not have -- the one direction this project's rulings single out" \
+        $pkunk {arm arm}
+    check "PK1 the SUCCESS sentence names the analysis in the HEAD of the line, not the elided tail -- the user's whole complaint was that nothing said WHICH analysis produced a number, so a long path must not push it off" \
+        [list [pcall calc::pick_fit vt v(lp) /lp tran] \
+              [pcall calc::pick_fit vf v(lp) /lp ac] \
+              [pcall calc::pick_fit vt v(lp) /lp]] \
+        [list {selector vt: v(lp) (transient) from /lp} \
+              {selector vf: v(lp) (AC) from /lp} \
+              {selector vt: v(lp) from /lp}]
 }
 
 # ===========================================================================

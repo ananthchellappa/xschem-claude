@@ -500,6 +500,12 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 
 `calc::selmode` holds one of these ids. Selecting one arms a pick (§6).
 
+⚠ **The `Emits into buffer` column is what made the four voltage selectors look alike, and
+it is not the whole of what distinguishes them — the `ngspice / xschem source` column is.**
+All four emit `v(<net>)` as *text*; what differs is the database that name is resolved in,
+and **R208a** is the rule that enforces it. Reading this table as "all four do the same
+thing" is the defect the user reported on 2026-10-07.
+
 | id | row | Label | ngspice / xschem source | Emits into buffer | v1 |
 |---|---|---|---|---|---|
 | `vt` | 1 | vt | tran raw, node voltage | `v(<net>)` | ✔ |
@@ -654,14 +660,53 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
   ⚠ **A bus refuses and names the bits.** The buffer takes one name and the resolver
   answers a comma-joined multi-bit string the engine will not evaluate; a bit-chooser
   dialog opening inside a modal pick is worse. Declared v1 limit.
-  ⚠ **No analysis gate.** `vf` on a `tran` result is not refused: ADE-L is a floor,
-  `v(<net>)` resolves in every analysis, and R204's inventory check is the gate that
-  matters. The fence is **structural rather than behavioural**, which is stronger: the two
-  procs that compose and resolve a name are told a token and a level and **never an id**,
-  so they cannot discriminate `vf` from `vt` at all, and the one proc that *is* told an id
-  never asks the database what analysis it holds. A gate added later must change a
-  signature or name an analysis, and either reddens a named row.
-  ⚠ An earlier spelling of that row drove all four ids through `calc::pick_name` and
+- **R208a** **There IS an analysis gate, and it is the user's own correction of R208.**
+  Their words, 2026-10-07: *"vt and vf both put `v(netname)` in the calculator buffer. We
+  need different functions because vt and vf are different things."*
+  ⚠ **R208 as first written said the opposite** — *"No analysis gate … a row asserts the
+  four ids behave identically"* — reasoned from ADE-L being a floor and from `v(<net>)`
+  resolving in every analysis. That reasoning was wrong about the thing that matters, and
+  the measurement says so: on the committed fixture the one buffer text `v(lp)` answers
+  **0.99830244** read as `tran`, **0.4472136** read as `ac` and **0** read as `op`, and
+  `calc::pick_lookup` approves it in all three — because `xschem raw index` is a name
+  lookup in whatever database happens to be loaded. On an `op` read `v(sq)` is even index
+  0. So nothing in the buffer, the status line or the refusal vocabulary could say which of
+  those numbers the user was looking at. **R204's inventory check is measured not to
+  discriminate**, which is exactly what the superseded clause leaned on.
+  Each voltage selector names one analysis — `vt` transient, `vf` AC, `vdc` operating
+  point, `vs` DC sweep (§5's table, read as what it always said) — and arming one against
+  a result of another analysis **refuses, naming both**: *"selector vf: needs an AC result;
+  this one is transient"*. A successful pick's sentence names the analysis it read, in the
+  **head** of the line, so a long path cannot push it off.
+  ⚠ **Why a gate and not a tag in the buffer text.** A spelling like `v(bg)@ac` cannot
+  resolve as the tree stands: `ase::attach_dbs` **drops every analog slot but the one just
+  read**, so the Calculator sees exactly one analysis at a time, and a tag would need it to
+  re-read a database on demand — which falsifies `calc::eval_in_token`'s header, fights
+  that invariant, and would be undone by the next run's attach. That is a change to ASE-L's
+  attach policy, not a Calculator change. The gate is right under every spelling, so it
+  ships first; Cadence's own `VT("/net")` notation is its own unit.
+  ⚠⚠ **A CONSEQUENCE WORTH STATING PLAINLY: at most ONE of the four voltage selectors can
+  arm against any given result.** The Calculator holds one database at a time, so on a
+  transient result `vt` arms and `vf`/`vdc`/`vs` all refuse — by design, and with a sentence
+  that says which analysis is loaded, so the user knows to pick a different result rather
+  than wondering why a button did nothing. This is why the "press another selector" path
+  now means *end the live pick, then judge the new id*: the release must happen before the
+  judgement, or a refusal would leave the previous selector's seize on the canvas.
+  ⚠ **`vdc` is mapped to `op` alone and the limit is declared, not guessed.** `src/save.c`
+  notes that a multi-point "Operating Point" raw read as `op` is stored as `dc`, and nobody
+  has measured that case — the committed fixture has neither a DC sweep nor a multi-point
+  op. Accepting `dc` for `vdc` would make a DC-sweep raw answer with its **last sweep
+  point**, a plausible wrong number; refusing it costs a sentence that names what is
+  loaded, which the user can act on and report. Preferring the legible refusal over the
+  plausible-wrong number is the recoverable direction, and widening the table is one line.
+  ⚠ The gate is asked in `calc::pick_decide`, which already has the id and already carries
+  the loaded database's `type` from `calc::require_result` — so it costs no new query, and
+  `calc::pick_name` and `calc::pick_lookup` keep signatures that **cannot** discriminate
+  (band PK1 pins them). The analysis words shown to the user are one map
+  (`calc::analysis_words`), so the refusal and the success sentence cannot disagree, and
+  they are the user's words rather than the simulator's: *transient*, *AC*, *operating
+  point*, *DC sweep*.
+  ⚠ An earlier spelling of PK1's row drove all four ids through `calc::pick_name` and
   compared the answers — which agree **by construction**, because `$id` appeared in the
   loop and in nothing the loop called. It was vacuous and is recorded here because the
   shape recurs: a sweep over a parameter the subject cannot see measures nothing.

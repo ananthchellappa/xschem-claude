@@ -225,10 +225,17 @@ group PG1 {
     if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     set rd {}
     if {[lindex $t 0]} {
-        catch {set rd [xschem raw read $::fixture ac]}
+        catch {set rd [xschem raw read $::fixture tran]}
         catch {wviewer::leave_ctx $::tok $t}
     }
-    check "PG1 fixture: the ac raw is read into the VIEWER's context" $rd 1
+    # ⚠ READ AS `tran`, AND THE ANALYSIS NOW MATTERS.  R208a gates each voltage
+    # selector on the loaded analysis, so a fixture read as `ac` makes every `vt`
+    # row in this file refuse -- which is exactly what happened when the gate
+    # landed, and the gate was right.  `vt` is the id these bands drive, so the
+    # database must be the transient one; the MISMATCH is driven on purpose by its
+    # own band below.
+    check "PG1 fixture: the transient raw is read into the VIEWER's context, which is the analysis `vt` needs -- R208a refuses a voltage selector against another analysis, so this pairing is load-bearing and not incidental" \
+        [list $rd [dict get [pcall calc::require_result] type]] {1 tran}
     check "PG1 fixture: `calc::open` builds the window and the Calculator's own resolver finds THAT viewer -- without this row every band below could pass against a refusal" \
         [list [pcall calc::open] [dg [pcall calc::require_result] ok] \
               [dg [pcall calc::require_result] token]] \
@@ -495,6 +502,19 @@ group PG13 {
     check "PG13 the pump keeps the LATEST sentence up rather than reverting to the arming prompt, which is what `calc::pick_echo` writing through `pick(prompt)` buys -- a direct write to the slot would be blanked by C within a frame" \
         [pcall $slot cget -text] {selector vt: M1 is not a net}
     pcall calc::pick_end cancel
+    # --- R208a with a REAL window and a REAL database -------------------------
+    # ⚠ `vf` IS THE AC SELECTOR AND THIS RESULT IS TRANSIENT, so arming it must
+    # refuse, seize nothing, and say which analysis is loaded.  This is the user's
+    # own complaint driven end to end: before R208a, `vf` here would have armed and
+    # a click would have inserted `v(lp)` reading a TRANSIENT number under an AC
+    # selector, with nothing anywhere able to say so.
+    set vfsaid [pcall calc::pick_arm vf]
+    check "PG13 R208a end to end: `vf` against a TRANSIENT result refuses, seizes NOTHING and names both analyses -- before this, it armed and a click inserted a transient number under an AC selector with nothing able to say so.  The canvas is read from the id captured above, because a refusal leaves no record to read it from, which is itself the claim" \
+        [list $vfsaid [pcall calc::pick_running] [pcall calc::pick_id] \
+              [expr {[info exists ::calc::pick] ? 1 : 0}] [pg_binds $cv]] \
+        [list {selector vf: needs an AC result; this one is transient} 0 {} 0 \
+              [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                    [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
     rename ase::ui::design_path {}
     rename pg_real_dp2 ase::ui::design_path
 }
@@ -515,15 +535,24 @@ group PG8 {
               [lindex [pcall calc::status_history] 0]] \
         [list 0 {} {} {selector vt: pick cancelled}]
     pg_press .calc.sel.vt
+    set cv8 $::calc::pick(canvas)
     pg_press .calc.sel.vf
-    check "PG8 clicking ANOTHER voltage selector ends the first pick and arms the second, and `::calc::selmode` follows the NEW id rather than being cleared -- clearing it on the switch path would leave the grid drawing nothing armed while a pick was armed" \
+    # ⚠⚠ THIS ROW WAS RESTATED BY R208a AND THE REASON IS A REAL CONSEQUENCE OF THE
+    # GATE, NOT A TEST ARTEFACT: each voltage id names ONE analysis and the
+    # Calculator can hold only ONE database at a time (`ase::attach_dbs` drops the
+    # others), so AT MOST ONE OF THE FOUR CAN EVER ARM against a given result.
+    # Its old form pressed `vt` then `vf` and expected both to arm, which is now
+    # impossible by construction.  What still matters -- and is what it was really
+    # about -- is that pressing another selector ENDS the live pick and releases the
+    # canvas BEFORE the new id is judged, so no seize can be left behind.
+    check "PG8 pressing ANOTHER voltage selector ENDS the live pick and releases the canvas before the new id is judged -- and under R208a the new id then refuses, because each voltage selector names one analysis and only one of the four can arm against a given result.  `::calc::selmode` follows the pressed id either way, which is Tk's own write and the grid showing the user what they clicked" \
         [list [pcall calc::pick_running] [pcall calc::pick_id] [set ::calc::selmode] \
               [lindex [pcall calc::status_history] 0]] \
-        [list 1 vf vf {selector vf: click a net on the schematic; ESC cancels}]
-    check "PG8 ...and exactly ONE canvas is seized after the switch, not two: the end path ran before the new arm took the slots" \
-        [list [pg_sized [llength [array names ::calc::pick canvas]] 1] \
-              [pcall bind $::calc::pick(canvas) <ButtonPress-1>]] \
-        [list n1 {calc::pick_click; break}]
+        [list 0 {} vf {selector vf: needs an AC result; this one is transient}]
+    check "PG8 ...and NO canvas is left seized after the switch: the end path ran, so the four slots are back at their predecessors rather than carrying a dead mode's scripts -- issue 1305's permanent seize is what this forecloses" \
+        [list [expr {[info exists ::calc::pick] ? 1 : 0}] [pg_binds $cv8]] \
+        [list 0 [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                      [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
     pcall calc::pick_end cancel
     check "PG8 a NON-voltage selector is still inert and arms nothing, which is R208's scope boundary with a real press behind it" \
         [list [pg_word [expr {[pcall calc::sel_click op] ne {}}] speaks SILENT] \

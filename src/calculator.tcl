@@ -8753,6 +8753,79 @@ proc calc::pick_ids {} {
     return [lindex [lindex [calc::sel_rows] 0] 0]
 }
 
+# WHICH ANALYSIS EACH VOLTAGE SELECTOR IS ABOUT.  Spec section 5's own table,
+# read as what it always said: `vt` is the TRAN raw, `vf` the AC raw, `vdc` the
+# `.op` values, `vs` the DC sweep.  One table, beside `calc::sel_rows`.
+#
+# ⚠⚠ THIS EXISTS BECAUSE THE USER FOUND THE FOUR SELECTORS PRODUCING THE SAME
+# THING, 2026-10-07: *"vt and vf both put v(netname) in the calculator buffer. We
+# need different functions because vt and vf are different things."*  They are
+# right, and it is not a cosmetic complaint -- MEASURED on the committed fixture,
+# the one buffer text `v(lp)` answers:
+#     0.99830244  read as tran
+#     0.4472136   read as ac     (the magnitude)
+#     0           read as op
+# and `calc::pick_lookup` approves it in ALL THREE, because `xschem raw index` is
+# a name lookup in whatever database happens to be loaded.  On an `op` read
+# `v(sq)` is even index 0.  So nothing in the buffer, the status line or the
+# refusal vocabulary could say which of those numbers the user was looking at.
+#
+# ⚠ WHY THIS IS A GATE AND NOT A TAG IN THE BUFFER TEXT.  A spelling like
+# `v(bg)@ac` cannot resolve as the tree stands: `ase::attach_dbs` DROPS every
+# analog slot but the one just read (its own comment: "drop everything that is not
+# the DB just read"), so the Calculator sees exactly ONE analysis at a time and a
+# tag would need it to re-read a database on demand -- which falsifies
+# `calc::eval_in_token`'s header, fights that invariant, and would be undone by the
+# next run's attach.  That is a change to ASE-L's attach policy, not a Calculator
+# change.  The gate is right under every spelling we might later choose, so it
+# ships first; Cadence's own `VT("/net")` notation is its own unit.
+#
+# ⚠ `vdc` IS MAPPED TO `op` ALONE AND THE LIMIT IS DECLARED, NOT GUESSED.
+# `src/save.c` carries a note that a MULTI-POINT "Operating Point" raw read as
+# `op` is stored as `dc`, and nobody has measured that case -- the committed
+# fixture has no dc sweep and no multi-point op.  Accepting `dc` for `vdc` would
+# make a DC-sweep raw answer `vdc` with its last sweep point, which is a
+# plausible WRONG number; refusing it costs a legible sentence that NAMES what is
+# loaded, which the user can act on and report.  Preferring the legible refusal
+# over the plausible-wrong number is the recoverable direction, and widening this
+# table is one line if the measurement says so.
+proc calc::pick_analyses {} {
+    return {vt tran vf ac vdc op vs dc}
+}
+
+proc calc::pick_analysis {id} {
+    set t [calc::pick_analyses]
+    if {![dict exists $t $id]} { return {} }
+    return [dict get $t $id]
+}
+
+# THE ANALYSIS IN THE USER'S OWN WORDS, not the simulator's.  `tran`/`ac`/`op`/`dc`
+# are what `xschem raw sim_type` answers and what the table above is keyed on;
+# they are not what goes on a status line.  The house rule is terse copy with
+# acronyms in UPPERCASE, and these are the words Cadence uses for the same four
+# things.  One map, so the refusal and the success sentence cannot disagree.
+proc calc::analysis_words {} {
+    return {tran transient ac AC op {operating point} dc {DC sweep}}
+}
+
+proc calc::analysis_word {type} {
+    set t [calc::analysis_words]
+    if {[string trim $type] eq {} || ![dict exists $t $type]} { return $type }
+    return [dict get $t $type]
+}
+
+# ...and the same thing as a phrase, so `calc::pick_msg`'s arm can stay a single
+# `return` (the sweep in band MT20/B finds an arm only by `^pattern {return`).
+#
+# ⚠ THE ARTICLE IS CHOSEN, not hardcoded: the first version said *"needs an tran
+# result"* and *"an dc result"*.  A sentence the user reads has to read.
+proc calc::pick_wants {id} {
+    set w [calc::analysis_word [calc::pick_analysis $id]]
+    if {$w eq {}} { return {its own analysis} }
+    set art [expr {[string match {[AaEeIiOoUu]*} $w] ? {an} : {a}}]
+    return "$art $w result"
+}
+
 # The armed selector id, or empty.  R201's remembered value: `calc::build_sel`'s
 # own comment records that Tk writes the radio variable BEFORE firing -command,
 # so a re-click cannot be detected as a -variable diff and needs this.
@@ -9000,6 +9073,7 @@ proc calc::pick_msg {kind {a {}} {b {}}} {
         busyview { return "selector $a: the result's waveform window is busy; try again" }
         nomouse { return "selector $a: this build cannot report the mouse position; ESC leaves" }
         scope { return "selector $a: pick scope $b is not implemented (phase 6)" }
+        analysis { return "selector $a: needs [calc::pick_wants $a]; this one is [calc::analysis_word $b]" }
         moved { return "selector $a: this window is on another schematic now; pick cancelled" }
         dropped { return "selector $a: the design window closed; pick cancelled" }
         cancelled { return "selector $a: pick cancelled" }
@@ -9022,11 +9096,15 @@ proc calc::pick_msg {kind {a {}} {b {}}} {
 # So the ladder elides the PATH, then drops the ` from <path>` clause entirely,
 # and only then gives up -- the name is never the part that goes.  `prov_fit`'s
 # shape, and `prov_fit`'s reason.
-proc calc::pick_fit {id name path} {
+proc calc::pick_fit {id name path {analysis {}}} {
     set r [calc::status_room]
     set unit [lindex $r 0]
     set room [lindex $r 1]
     set head "selector $id: $name"
+    # ⚠ THE ANALYSIS IS PART OF THE HEAD AND NOT PART OF THE ELIDED TAIL.  The
+    # user's whole complaint was that nothing said WHICH analysis produced a
+    # number, so it must not be the first thing a long path pushes off the line.
+    if {$analysis ne {}} { append head " (" [calc::analysis_word $analysis] ")" }
     set s $head
     if {$path ne {}} { append s " from " $path }
     if {[calc::status_span $unit $s] <= $room} { return $s }
@@ -9077,6 +9155,18 @@ proc calc::pick_decide {id g} {
     if {!$ok} {
         if {[string trim $msg] eq {}} { set msg [calc::no_result_advice] }
         return [dict create act refuse token {} msg $msg]
+    }
+    # THE ANALYSIS GATE.  `calc::require_result` already carries the loaded
+    # database's own `type` from `results::current`, so this costs no new query --
+    # and it is asked HERE, where the id is in hand, rather than in
+    # `calc::pick_name` or `calc::pick_lookup`, which are told a token and a level
+    # and must stay unable to discriminate (band PK1 pins their signatures).
+    set want [calc::pick_analysis $id]
+    set got {}
+    catch {set got [dict get $g type]}
+    if {$want ne {} && [string trim $got] ne {} && $got ne $want} {
+        return [dict create act refuse token {} \
+                    msg [calc::pick_msg analysis $id $got]]
     }
     set tok {}
     catch {set tok [dict get $g token]}
@@ -9472,7 +9562,11 @@ proc calc::pick_click {{x {}} {y {}}} {
     }
     set name [dict get $lk name]
     calc::buf_insert_token $name
-    return [calc::pick_echo [calc::pick_fit $id $name [calc::pick_cadence $net $base]]]
+    set an {}
+    catch {set an [xschem raw sim_type]}
+    if {[string match ERR:* $an]} { set an {} }
+    return [calc::pick_echo \
+                [calc::pick_fit $id $name [calc::pick_cadence $net $base] $an]]
 }
 
 # ---------------------------------------------------------------------------
