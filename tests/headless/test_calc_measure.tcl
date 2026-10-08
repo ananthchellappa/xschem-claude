@@ -5070,10 +5070,11 @@ group MT12 {
     foreach nm $sk_wired {
         if {[lsearch -exact $sk_declarers $nm] < 0} { lappend sk_silent $nm }
     }
-    check "MT12 ...and the ONE thing about the act itself this arm can see: every proc in the namespace whose CODE names calc::buf_set_number also names calc::fn_sink, derived over the namespace in one walk with neither set listed here -- so a success arm that pastes into the user's expression without first asking where the answer goes reddens naming itself.  The paster set rides along as a lower bound, because an empty one would make the subset claim vacuous.  That the buffer is really left UNTOUCHED and that the sentence really reaches .calc.status.msg are display-only and are NOT measured by this band" \
+    check "MT12 ...and the ONE thing about the act itself this arm can see: every proc in the namespace whose CODE names calc::buf_set_number also names calc::fn_sink, derived over the namespace in one walk with neither set listed here -- so a success arm that pastes into the user's expression without first asking where the answer goes reddens naming itself.  The paster set rides along as a lower bound, because an empty one would make the subset claim vacuous.  That the buffer is really left UNTOUCHED and that the sentence really reaches .calc.status.msg are display-only and are NOT measured by this band.  R421a MOVED the paster out of `calc::fn_measure` and into `calc::meas_apply`, which the Eval press reaches rather than the catalogue click -- the subset claim is unchanged and deliberately names neither, so the move cost this row one expected name and no coverage" \
         [list $sk_unasked [mt_atleast [llength $sk_pasters] 1] \
+              [sk_in $sk_pasters meas_apply] \
               [sk_in $sk_pasters fn_measure]] \
-        {{} atleast1 has}
+        {{} atleast1 has missing}
     check "MT12 ...and what keeps `shape absent means buffer` honest, which is not this proc: every caller that builds a destination also DECLARES the shape, derived over the namespace as a SUBSET claim with a lower bound on the wired set rather than as an exact list -- so a future verb that answers a wave and forgets to say so reddens here naming itself, while units J2 and J3 wiring two more callers move no leg of this row.  The bound is why it cannot pass over an empty set, and the subset is why it does not have to be edited per caller" \
         [list $sk_silent [mt_atleast [llength $sk_wired] 1]] \
         {{} atleast1}
@@ -9700,9 +9701,9 @@ group MT20 {
             lappend slComposers [namespace tail $p]
         }
     }
-    check "MT20/F ...and the composition is a PURE PROC the click reaches rather than four lines inside `calc::fn_measure`, derived over the decommented namespace -- which is the only reason the two rows above can run on the counted arm at all, since `fn_measure` returns early on `calc::has_win .calc.buf`" \
+    check "MT20/F ...and the composition is a PURE PROC the gesture reaches rather than four lines inside the gesture's own proc, derived over the decommented namespace -- which is the only reason the two rows above can run on the counted arm at all, since every proc that reaches it returns early on `calc::has_win .calc.buf`.  R421a moved the reaching proc from `calc::fn_measure` (the catalogue click) to `calc::meas_apply` (the Eval press); the derivation names neither, so what this row asserts is that the composition is still SOMEBODY's pure callee and not inlined" \
         [list $slComposers [expr {[info procs ::calc::handoff_sentence] ne {} ? 1 : 0}]] \
-        {fn_measure 1}
+        {meas_apply 1}
 
     # --- G: hygiene ----------------------------------------------------------
     check "MT20 R402 the band composes sentences and reads no database at all, so no `__calc_tmp*` and no `__mt_*` column may appear" \
@@ -15942,8 +15943,9 @@ group AD {
     check "AD the raise happens on SUCCESS ONLY and AFTER the context loan has closed: a deferred `after 150 _remap_verify` firing inside somebody else's `enter_ctx` bracket would re-map a window from a context about to be swapped back underneath it -- so both call sites read the success key they already have" \
         [list [mt_boolword [regexp {dict get \$d ok} [mt_decomment [pcall info body ::calc::plot_click]]] gates UNGATED] \
               [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::plot_click]]] raises MISSING] \
+              [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::meas_apply]]] raises MISSING] \
               [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::fn_measure]]] raises MISSING]] \
-        {gates raises raises}
+        {gates raises raises MISSING}
     # --- the pick says it where the user is looking ----------------------------
     check "AD every sentence a CLICK produces goes through `calc::pick_echo`, which writes the design window's own status slot as well as the Calculator's -- because the pick now RAISES the schematic over the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  It is written through `pick(prompt)` so the 80 ms pump keeps it up against C blanking the slot" \
         [list [regexp -all {calc::status \[} [mt_decomment [pcall info body ::calc::pick_click]]] \

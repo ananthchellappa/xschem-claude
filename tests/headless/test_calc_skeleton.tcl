@@ -4239,6 +4239,42 @@ proc ad_slow_remove {} {
     return [llength [info commands ::calc::arg_dialog_build]]
 }
 
+# --- R421a: THE SECOND GESTURE -----------------------------------------------
+# ⚠ THE MEASUREMENT MOVED ONE PRESS LATER AND THE ROWS MOVED WITH IT.  R421a
+# (the user, 2026-10-08) supersedes R421: OK now COMPOSES a comma-separated call
+# into the buffer and measures nothing, and the Eval press on that call is what
+# invokes the verb, routes the answer through `calc::fn_sink` and writes the
+# provenance.  Every row in S28/4 and S28/7 that used to assert a number, a
+# provenance sentence, a destination hand-off or a viewer raise AT OK now
+# asserts it after this press, and the OK press gets its own claim: the composed
+# text, read back through the product's own splitter.
+#
+# `invoke` and not a synthesized `<Button-1>`, which is band S27's own idiom at
+# six sites in this file: `calc::eval_click` is the button's `-command` and
+# `invoke` returns its result, which is `calc::status`'s return and therefore the
+# sentence AS COMPOSED -- the second witness S28/4's return-value leg already
+# rides on.  DECLARED: `invoke` exercises the `-command` and not the binding; the
+# binding is band S23's and CW13's subject and no row here claims it.  There is
+# no modal on this path, so unlike the OK press it cannot hang and needs no poll.
+proc ad_eval {} { return [pcall .calc.mode.eval invoke] }
+
+# A composed call read back through `calc::meas_split`, as `{verb arglist}`.
+# ⚠ EVERY REFUSAL ANSWERS A NON-EMPTY SENTINEL, never `{}`: `{}` is what
+# `meas_split` legitimately answers for a plain RPN expression, so a row
+# comparing against `{}` could not tell "it is not a call" from "the proc is not
+# there" from "it raised" -- and a comparison between two failures is the vacuous
+# row this file's own band S29 fixture leg exists to catch.
+proc ad_split {s} {
+    if {[info commands ::calc::meas_split] eq {}} { return NOSPLITPROC }
+    set m [pcall calc::meas_split $s]
+    if {[string match ERR:* $m]} { return $m }
+    if {$m eq {}} { return NOTACALL }
+    set v [pcall dict get $m verb]
+    set a [pcall dict get $m args]
+    if {[string match ERR:* $v] || [string match ERR:* $a]} { return "NOKEYS:$m" }
+    return [list $v $a]
+}
+
 # --- S28/0  the fall-through: 30 T verbs have no handler and must say so ------
 s28band S28/0 {
 # ⚠ CLICK_CONTRACT section 3: "There are 34 T rows and only 4 have procs; a
@@ -4501,6 +4537,12 @@ pcall calc::buf_sync
 set ad_expr0 [ad_buf]
 set ::AD_RAWCALLS 0 ; set ::AD_REC {}
 set ad_okran 0
+## ⚠ THE PRE-PRESS HISTORY ENTRY, because `calc::status {}` CLEARS THE WIDGET
+## AND NOT THE HISTORY.  `s_said` reads the newest history entry, so a gesture
+## that said nothing at all would pass a `spoke` leg on whatever band S27 left
+## behind.  The rows below therefore assert that the newest entry MOVED, which is
+## the same discipline the repaired S27 rows carry.
+set ad_said0 [s_said]
 ad_arm {
     catch {set ::calc::argval(level) 0.375}
     catch {set ::calc::argval(nth) 3}
@@ -4512,8 +4554,24 @@ update
 set ad_okran $::AD_RAN
 ad_disarm
 catch {destroy .calc.arg}
+## ⚠ R421a: TWO GESTURES, AND THE CAPTURES ARE TAKEN BETWEEN THEM.  OK leaves
+## a COMPOSED CALL and an invitation to evaluate it; the Eval press leaves the
+## NUMBER and the provenance.  The recorder's log is read TWICE for the same
+## reason -- `$ad_recok` is what the surface wrapper was handed by OK, which must
+## be NOTHING, and `$::AD_REC` after the press is what Eval handed it.  Those two
+## legs sit in ONE row below so neither can be vacuous: a recorder nothing ever
+## reached would fail the second while passing the first.
+set ad_built [ad_buf]
+set ad_said [s_said]
+set ad_shows [s_shows]
+set ad_recok $::AD_REC
+set ad_rawok $::AD_RAWCALLS
+set ad_evalans [ad_eval]
+update
 set ad_num [ad_buf]
 set ad_prov [pcall .calc.status.msg get]
+set ad_prov_said [s_said]
+set ad_prov_shows [s_shows]
 # ⚠ THE CLICK'S OWN RETURN RIDES ALONG, AND IT IS NOT DECORATION.  MEASURED
 # while proving this band can pass: a conforming reference composed R421's
 # provenance sentence as a double-quoted `"$name(...)"`, which in Tcl is an ARRAY
@@ -4521,39 +4579,74 @@ set ad_prov [pcall .calc.status.msg get]
 # number reached the buffer, the status line kept the PREVIOUS sentence, and the
 # click RAISED into `pcall`.  Without this leg the row above would have been the
 # only witness and would have blamed the sentence rather than the raise.
-check "S28 R421 part 1 -- the measured number REPLACES the buffer as a bare literal (R404: \"a literal number\", where further arithmetic can use it), not as a sentence and not as an opaque handle -- and the click RETURNS rather than raising on the way" \
+check "S28 R421a part 1 -- OK COMPOSES A CALL INTO THE BUFFER AND MEASURES NOTHING: the buffer holds `cross(...)` on one line, and the four values the user typed come back out of the product's own `calc::meas_split` IN ORDER with the buffer's own RPN first.  THE ROUND TRIP IS THE CLAIM AND NOT THE SPELLING -- the separator and the paren shape are the product's and are never re-spelt here, so a ruling on the composed form reddens nothing -- and the click RETURNS rather than raising on the way" \
     [list $ad_stubbed $ad_okran \
           [expr {[string match ERR:* $ad_clickans] ? 0 : 1}] \
+          [expr {[string match {cross(*)} $ad_built] ? 1 : 0}] \
+          [expr {[string first "\n" $ad_built] < 0 ? {oneline} : {MULTILINE}}] \
+          [ad_split $ad_built]] \
+    [list 1 1 1 1 oneline [list cross [list {v(out) v(in) -} 0.375 3 falling]]]
+check "S28 R421a part 1b -- THE EVAL PRESS ON THAT COMPOSED CALL IS WHAT MEASURES: the number REPLACES the call in the buffer as a bare literal (R404: \"a literal number\", where further arithmetic can use it), not as a sentence and not as an opaque handle, and the press RETURNS rather than raising.  This is R421's own part 1, retargeted onto the gesture the user now makes; what it replaced is asserted above rather than assumed, so the pair cannot both pass on a buffer nothing wrote" \
+    [list $ad_stubbed \
+          [expr {[string match ERR:* $ad_evalans] ? 0 : 1}] \
+          [expr {$ad_evalans eq {} ? {SILENT} : {spoke}}] \
           [expr {[string is double -strict $ad_num] ? 1 : 0}] \
           [expr {[string is double -strict $ad_num]
                  && abs($ad_num - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}] \
           [expr {[regexp {^[-+0-9.eE]+$} $ad_num] ? 1 : 0}]] \
-    {1 1 1 1 1 1}
-check "S28 R421 the click calls the SURFACE wrapper `calc::cross_scalar` -- with the buffer's own RPN first and then the dialog's three values in the wrapper's formal order -- and NEVER the raw `calc::cross`, which answers `nth = 0` with success and a list and has no deferral" \
-    [list $ad_stubbed $::AD_REC $::AD_RAWCALLS] \
-    [list 1 [list {v(out) v(in) -} 0.375 3 falling] 0]
-check "S28 R421 part 2 -- the provenance sentence names the VERB, the EXPRESSION it was measured from and the ARGUMENTS it was measured with, which is R404's \"comment of provenance\" made concrete; the wording itself is unratified, so what is asserted is what the sentence must CONTAIN" \
+    {1 1 spoke 1 1 1}
+# ⚠ NEW (R421a).  THE INVITATION IS PART OF THE GESTURE, NOT DECORATION.  OK
+# no longer answers the user's question -- it hands back an expression and asks
+# for a second press -- so a silent OK would look exactly like a broken verb.
+# The WORDS are unratified (hole SH3) and are NOT asserted: what is asserted is
+# that a sentence was written, that it is the one the product's own builder
+# composes (by identity, never re-spelt here), that the widget holds
+# `calc::status_fit` of it and is not empty, and that the newest HISTORY entry
+# MOVED -- which is what stops this passing on a stale entry S27 left behind.
+check "S28 R421a ...and OK SAYS SO: the compose press writes a sentence, it is `calc::meas_msg built`'s own string compared by IDENTITY rather than re-spelt, the widget shows the fitted form of it, R509 recorded it, and it NAMES THE VERB -- so a user who pressed OK and got an expression is told why, and an OK that silently rewrote their buffer reddens here" \
+    [list $ad_stubbed \
+          [expr {$ad_said eq {} ? {SILENT} : {spoke}}] \
+          [expr {$ad_said ne $ad_said0 ? {moved} : {STALE}}] \
+          [expr {$ad_said eq [pcall calc::meas_msg built cross] ? {identical} : "said:$ad_said"}] \
+          $ad_shows \
+          [expr {[string match {*cross*} $ad_said] ? 1 : 0}]] \
+    {1 spoke moved identical fitted 1}
+check "S28 R421a the EVAL PRESS calls the SURFACE wrapper `calc::cross_scalar` -- with the buffer's own RPN first and then the dialog's three values in the wrapper's formal order -- and NEVER the raw `calc::cross`, which answers `nth = 0` with success and a list and has no deferral.  ⚠ AND THE OK PRESS CALLED NEITHER OF THEM, which is the whole of R421a.  The empty recorder log at OK is NOT a vacuous leg: the SAME recorder in the SAME row is asserted NON-EMPTY one gesture later, so the two legs cannot both pass against a recorder nothing ever reached" \
+    [list $ad_stubbed $ad_recok $ad_rawok $::AD_REC $::AD_RAWCALLS] \
+    [list 1 {} 0 [list {v(out) v(in) -} 0.375 3 falling] 0]
+check "S28 R421a part 2 -- THE EVAL PRESS writes the provenance sentence, which names the VERB, the EXPRESSION it was measured from, the ARGUMENTS it was measured with and the NUMBER: R404's \"comment of provenance\" made concrete, one gesture later than R421 put it.  The wording is unratified (SH3) so what is asserted is CONTAINMENT; the leg that it DIFFERS from the sentence OK left behind is what catches a wiring that measured at OK after all, and the `fitted` leg is what stops a sentence reaching the history and not the widget" \
     [list $ad_stubbed \
           [expr {[string match {*cross*} $ad_prov] ? 1 : 0}] \
           [expr {[string match "*$ad_expr0*" $ad_prov] ? 1 : 0}] \
           [expr {[string match {*0.375*} $ad_prov] ? 1 : 0}] \
           [expr {[string match {*falling*} $ad_prov] ? 1 : 0}] \
-          [expr {[string match "*$ad_num*" $ad_prov] ? 1 : 0}]] \
-    {1 1 1 1 1 1}
+          [expr {[string match "*$ad_num*" $ad_prov] ? 1 : 0}] \
+          $ad_prov_shows \
+          [expr {$ad_prov_said ne $ad_said ? {differ} : {SAME}}]] \
+    {1 1 1 1 1 1 fitted differ}
 # ⚠ ONE undo, not two.  `calc::buf_insert_token` already emits
 # `.calc.buf edit separator`, so the mechanism exists; what R421 adds is that the
 # SEPARATOR PLACEMENT must make ONE undo put the user's expression back.  The
 # second leg is what distinguishes one from two: after the single undo the buffer
 # is the expression, and after a redo it is the number again.
 pcall calc::buf_undo
-set ad_undone [ad_buf]
+set ad_undone1 [ad_buf]
+pcall calc::buf_undo
+set ad_undone2 [ad_buf]
+set ad_canredo [pcall calc::buf_can redo]
 pcall calc::buf_redo
-set ad_redone [ad_buf]
-check "S28 R421 part 3 -- ONE `edit undo` restores the user's expression, not two: the separator placement is the requirement, and a redo brings the number back.  THIS IS THE PART THAT WILL ROT SILENTLY -- a later change to the insertion path could leave the number right and the history subtly wrong, and nothing else in the tree would notice" \
-    [list $ad_stubbed $ad_undone \
-          [expr {[string is double -strict $ad_redone]
-                 && abs($ad_redone - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}]] \
-    [list 1 {v(out) v(in) -} 1]
+set ad_redone1 [ad_buf]
+pcall calc::buf_redo
+set ad_redone2 [ad_buf]
+check "S28 R421a part 3 -- ONE `edit undo` PER GESTURE, AND THERE ARE NOW TWO GESTURES: the first undo takes the number back to the COMPOSED CALL and the second takes that back to the user's own expression, with two redos walking it forward again.  BOTH separator pairs are fenced by this one row -- `calc::buf_set_expr`'s at OK and `calc::buf_set_number`'s at Eval -- and either of them left to Tk's autoseparators splits or collapses a step and reddens here.  THIS IS THE PART THAT WILL ROT SILENTLY: a later change to EITHER insertion path could leave the number right and the history subtly wrong, and nothing else in the tree would notice.  The composed text is re-asserted as a comparand rather than trusted, so neither undo leg can compare two failures" \
+    [list $ad_stubbed \
+          [expr {[string match {cross(*)} $ad_built] ? 1 : 0}] \
+          $ad_undone1 $ad_undone2 \
+          [expr {$ad_canredo ? {recoverable} : {LOST}}] \
+          $ad_redone1 \
+          [expr {[string is double -strict $ad_redone2]
+                 && abs($ad_redone2 - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}]] \
+    [list 1 1 $ad_built {v(out) v(in) -} recoverable $ad_built 1]
 # ...and the sentence really MOVES with the arguments, which is what stops the
 # containment legs above being satisfied by a fixed string that happens to carry
 # the right substrings.
@@ -4572,14 +4665,83 @@ update
 set ad_okran2 $::AD_RAN
 ad_disarm
 catch {destroy .calc.arg}
+set ad_built2 [ad_buf]
+set ad_evalans2 [ad_eval]
+update
 set ad_prov2 [pcall .calc.status.msg get]
-check "S28 R421 ...and the provenance really MOVES with what the user typed: a second measurement at a different level and the other edge gives a DIFFERENT sentence, each carrying its own edge word and not the other's -- so the containment legs above cannot be satisfied by a fixed string" \
+check "S28 R421a ...and BOTH ARTIFACTS really MOVE with what the user typed: a second measurement at a different level and the other edge COMPOSES a different call -- which splits back to its own three values and not the first measurement's -- and then EVALUATES to a different provenance sentence, each carrying its own edge word and not the other's.  So neither the composed text above nor the containment legs above can be satisfied by a fixed string, and the two artifacts are shown to move INDEPENDENTLY rather than one being read off the other" \
     [list $ad_stubbed $ad_okran2 \
-          [expr {[string match ERR:* $ad_clickans2] ? 0 : 1}] $::AD_REC \
+          [expr {[string match ERR:* $ad_clickans2] ? 0 : 1}] \
+          [expr {[string match ERR:* $ad_evalans2] ? 0 : 1}] \
+          [ad_split $ad_built2] \
+          [expr {$ad_built2 ne $ad_built ? {differ} : {SAME}}] \
+          $::AD_REC \
           [expr {$ad_prov2 ne $ad_prov ? {differ} : {SAME}}] \
           [expr {[string match {*rising*} $ad_prov2] ? 1 : 0}] \
           [expr {[string match {*falling*} $ad_prov2] ? 1 : 0}]] \
-    [list 1 1 1 [list {v(out) v(in) -} 0.625 1 rising] differ 1 0]
+    [list 1 1 1 1 [list cross [list {v(out) v(in) -} 0.625 1 rising]] differ \
+          [list {v(out) v(in) -} 0.625 1 rising] differ 1 0]
+# ⚠ NEW (R421a).  THE BUFFER IS NOW A VALIDATOR SURFACE AND NOTHING FENCED
+# IT.  The dialog's fields are validated by `calc::arg_bad`/`calc::arg_trouble`,
+# which the row below drives; but a composed call sits in an EDITABLE Text
+# widget, so a wrong arity and a malformed value can now reach
+# `calc::meas_eval` without ever passing through a form.  `calc::meas_vals` and
+# `calc::meas_trouble` are that door's validator and these rows are its only
+# behavioural fence.  In each case the Eval press must REFUSE in a sentence,
+# must NOT reach the surface wrapper, and must LEAVE THE USER'S TEXT ALONE -- a
+# refusal that cleared the buffer would destroy an expression they had just
+# typed by hand, which is strictly worse than the refusal it replaced.
+#
+# ⚠ AND THE THIRD IS THE REGRESSION FENCE FOR EVERY EXISTING USER: a plain
+# RPN expression must still fall through `calc::meas_split` to the ENGINE.  That
+# is the one thing R421a could break for a gesture nobody asked to change, and
+# `meas_split`'s own declared limit -- catalogue and syntax, never the loaded
+# database -- is what makes it worth a row rather than an argument.
+#
+# `s_said` is captured BEFORE each press, because `calc::status {}` clears the
+# widget and NOT the history: without that leg a press that said nothing passes
+# on whatever the previous row left behind.
+proc ad_evalrefuse {txt} {
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end $txt
+    pcall .calc.buf edit reset
+    pcall .calc.buf edit modified 0
+    pcall calc::buf_sync
+    set h0 [s_said]
+    set ::AD_REC {} ; set ::AD_RAWCALLS 0
+    set ans [ad_eval]
+    update
+    return [list ans $ans buf [ad_buf] rec $::AD_REC raw $::AD_RAWCALLS \
+                said [s_said] shows [s_shows] \
+                spoke [expr {[s_said] ne $h0 ? {spoke} : {SILENT}}]]
+}
+set ad_r_arity [ad_evalrefuse {cross(v(out) v(in) -, 0.375)}]
+set ad_r_field [ad_evalrefuse {cross(v(out) v(in) -, not-a-number, 3, falling)}]
+set ad_r_plain [ad_evalrefuse {v(out) v(in) -}]
+check "S28 R421a NEW -- a call whose ARITY does not match the verb's formals is refused AT THE EVAL PRESS: a sentence is written, the surface wrapper is NOT reached, the raw proc is not reached either, and the text the user typed is left BYTE-IDENTICAL.  The sentence is compared by IDENTITY against `calc::meas_msg arity`'s own string with the count DERIVED from `calc::meas_formals`, so no arity is written out here and a verb gaining a formal moves the row with it" \
+    [list $ad_stubbed [dg $ad_r_arity buf] [dg $ad_r_arity rec] [dg $ad_r_arity raw] \
+          [expr {[string match ERR:* [dg $ad_r_arity ans]] ? 0 : 1}] \
+          [dg $ad_r_arity spoke] [dg $ad_r_arity shows] \
+          [expr {[dg $ad_r_arity said] eq \
+                     [pcall calc::meas_msg arity cross \
+                          [llength [pcall calc::meas_formals cross]]] ?
+                 {identical} : "said:[dg $ad_r_arity said]"}]] \
+    [list 1 {cross(v(out) v(in) -, 0.375)} {} 0 1 spoke fitted identical]
+check "S28 R421a NEW -- a MALFORMED VALUE typed into a composed call is refused at the Eval press through the SAME predicate the dialog uses (`calc::arg_field_bad`), so a value typed into the buffer is held to the rule a value typed into the form is held to: a sentence is written, the surface wrapper is NOT reached, and the user's text does not move.  The WORDS are unratified (SH3): what is asserted is that the refusal is NON-EMPTY, names the verb, and is a DIFFERENT sentence from the arity refusal above" \
+    [list $ad_stubbed [dg $ad_r_field buf] [dg $ad_r_field rec] [dg $ad_r_field raw] \
+          [expr {[string match ERR:* [dg $ad_r_field ans]] ? 0 : 1}] \
+          [dg $ad_r_field spoke] [dg $ad_r_field shows] \
+          [expr {[string match {*cross*} [dg $ad_r_field said]] ? 1 : 0}] \
+          [expr {[dg $ad_r_field said] ne [dg $ad_r_arity said] ? {differ} : {SAME}}]] \
+    [list 1 {cross(v(out) v(in) -, not-a-number, 3, falling)} {} 0 1 spoke fitted 1 differ]
+check "S28 R421a NEW -- A PLAIN RPN EXPRESSION STILL FALLS THROUGH TO THE ENGINE, which is the one thing R421a could have broken for a gesture nobody asked to change: `calc::meas_split` answers that this is NOT a call, the measurement layer is not reached (no surface wrapper, no raw proc), the buffer is NOT replaced by a number, and the Eval press still says something about the data.  The DECISION leg and the ACT legs are both carried, because a press that silently did nothing would satisfy either one alone" \
+    [list $ad_stubbed [ad_split {v(out) v(in) -}] [dg $ad_r_plain buf] \
+          [dg $ad_r_plain rec] [dg $ad_r_plain raw] \
+          [expr {[string is double -strict [dg $ad_r_plain buf]] ? {NUMBER} : {expression}}] \
+          [expr {[string match ERR:* [dg $ad_r_plain ans]] ? 0 : 1}] \
+          [dg $ad_r_plain spoke] \
+          [expr {[string match {*=*} [dg $ad_r_plain said]] ? {PROVENANCE} : {notprovenance}}]] \
+    [list 1 NOTACALL {v(out) v(in) -} {} 0 expression 1 spoke notprovenance]
 # ⚠ SHAPE VALIDATION, FENCED WITHOUT CHOOSING A SENTENCE FOR THE USER.
 # CLICK_CONTRACT section 8: "the dialog validates SHAPE ONLY" -- `real` is a
 # finite double, `int` is `string is integer -strict`, `enum` is membership, and
@@ -4729,13 +4891,70 @@ if {[info commands ::calc::wave_in_token] ne {}
     }
     set wv_handstub ok
 }
-# the five captures, taken the way S28/3 takes them -- nothing should move.
+# ⚠⚠ R421a MOVED THE CAPTURES ONE GESTURE LATER, AND THAT IS THE WHOLE EDIT TO
+# THIS SUB-BAND.  OK now WRITES the buffer -- it composes the call there, which
+# is the ruling -- so *"the buffer is left alone"* can no longer be a claim about
+# the OK press, and taking the captures before it would assert the OPPOSITE of
+# the product.  They are therefore taken with the COMPOSED CALL already in the
+# buffer and compared across the EVAL PRESS, which is where a wave answer now
+# arrives.  The claim's strength is unchanged; its subject moved.
+#
+# ⚠⚠ AND THE UNDO WITNESS GETS STRONGER RATHER THAN WEAKER.  Before R421a the
+# capture was taken on an EMPTY undo stack, so the witness was *"one undo cannot
+# move the buffer off the capture"*.  There is now exactly ONE step on the stack
+# -- OK's compose -- so the witness is *"one undo lands on the USER's own
+# expression"*, which is false the moment the Eval press pushes a step of its own
+# whether or not it also pops it: a paste that stayed moves the TEXT, a
+# paste-and-undo leaves the text identical and moves `canredo`, and a paste whose
+# step the undo swallowed leaves the first undo on the COMPOSED CALL instead.
+#
+# ⚠⚠ AND THE FALLBACK HINTS NEED A COUNTER NOW, BECAUSE THE CAPTURE IS NO
+# LONGER ZERO.  Before R421a the captures were taken on a buffer nothing had
+# written, so `::calc::fbundo`/`fbredo` read 0/0 and a hand-off that "refreshed
+# the buttons" moved them.  OK's compose writes the buffer first, so those two
+# already hold EXACTLY what a spurious refresh would write and the comparison
+# went blind.  The claim is kept by counting the calls instead:
+# `calc::buf_note_edit` is renamed to a DELEGATING counter, so the real proc
+# still runs for the undo witness while the Eval press's own count is readable.
+# The hint capture is KEPT as well, because it still catches a refresh that
+# writes something different.  `rename`, never `proc`, installed AFTER the OK
+# press so it measures Eval alone, and restored with a control row saying so.
 pcall calc::status {}
 pcall .calc.buf delete 1.0 end
 pcall .calc.buf insert end {v(lp) v(sq) /}
 pcall .calc.buf edit reset
 pcall .calc.buf edit modified 0
 pcall calc::buf_sync
+set wv_user0 [ad_buf]
+set wv_said0 [s_said]
+set ::WV_HAND {} ; set ::WV_REC {}
+ad_arm {
+    catch {set ::calc::argval(level) 0.5}
+    catch {.calc.arg.btns.ok invoke}
+}
+set wv_okans [pcall calc::fn_click dutyCycle]
+update
+set wv_ran $::AD_RAN
+ad_disarm
+catch {destroy .calc.arg}
+# what the OK press alone did: a composed call, the surface wrapper NOT called,
+# nothing handed to the viewer.
+set wv_built [ad_buf]
+set wv_recok $::WV_REC
+set wv_handok $::WV_HAND
+# the `buf_note_edit` counter, installed between the two presses.
+set ::WV_NOTE 0
+set wv_notestub 0
+if {[info commands ::calc::buf_note_edit] ne {}
+        && [info commands ::wv_keep_note] eq {}} {
+    rename ::calc::buf_note_edit ::wv_keep_note
+    proc ::calc::buf_note_edit {args} {
+        incr ::WV_NOTE
+        return [uplevel 1 [linsert $args 0 ::wv_keep_note]]
+    }
+    set wv_notestub 1
+}
+# the six captures, taken the way S28/3 takes them -- nothing below should move.
 set wv_text0 [ad_buf]
 set wv_mod0  [pcall .calc.buf edit modified]
 set wv_undo0 [pcall calc::buf_can undo]
@@ -4743,16 +4962,10 @@ set wv_redo0 [pcall calc::buf_can redo]
 set wv_stk0  [pcall .calc.stk.list size]
 set wv_fb0   [list [pcall set ::calc::fbundo] [pcall set ::calc::fbredo]]
 set wv_hist0 [pcall calc::status_history]
-set ::WV_HAND {} ; set ::WV_REC {}
-ad_arm {
-    catch {set ::calc::argval(level) 0.5}
-    catch {.calc.arg.btns.ok invoke}
-}
-set wv_ans [pcall calc::fn_click dutyCycle]
+set ::WV_NOTE 0
+set wv_ans [ad_eval]
 update
-set wv_ran $::AD_RAN
-ad_disarm
-catch {destroy .calc.arg}
+set wv_notewave $::WV_NOTE
 set wv_said [pcall .calc.status.msg get]
 set wv_moved {}
 if {[ad_buf] ne $wv_text0}                      { lappend wv_moved TEXT }
@@ -4764,38 +4977,51 @@ if {[list [pcall set ::calc::fbundo] [pcall set ::calc::fbredo]] ne $wv_fb0} {
     lappend wv_moved UNDO-HINTS
 }
 # ...and the undo WITNESS, which is the leg that separates "nothing was pasted"
-# from "something was pasted and undone": with no new step on the stack, one
-# `calc::buf_undo` cannot move the buffer off the capture, and the redo after it
-# cannot either.
+# from "something was pasted and undone": with no new step on the stack, ONE
+# `calc::buf_undo` lands on the user's OWN expression and the redo after it puts
+# the composed call back.
 pcall calc::buf_undo
 set wv_undone [ad_buf]
 pcall calc::buf_redo
 set wv_redone [ad_buf]
-check "S28/7 R421 on a WAVE answer the RPN BUFFER IS LEFT ALONE and so is its UNDO STATE -- measured on SIX captures and not one: the text, `edit modified`, `calc::buf_can undo` and `redo`, the Stack size and the two Tk-8.4 fallback hints `calc::buf_note_edit` writes, which a hand-off that refreshed the buttons would move while the history stood still and which is INVISIBLE on Tk 8.6.  ⚠ THE UNDO CLAIM IS THE OPPOSITE OF S28/4's: nothing was pasted, so there is no step to collapse and the assertion is that the state did not move, not that one undo restores.  DISPLAY-ONLY: a --nogui run of this suite reports zero checks" \
-    [list $wv_stubbed $wv_handstub $wv_ran \
-          [expr {[string match ERR:* $wv_ans] ? 0 : 1}] $wv_moved \
-          [expr {$wv_undone eq $wv_text0 ? 1 : 0}] \
-          [expr {$wv_redone eq $wv_text0 ? 1 : 0}]] \
-    [list 1 ok 1 1 {} 1 1]
-check "S28/7 R421 ...and the DESTINATION SENTENCE really reaches `.calc.status.msg` -- asserted through TWO independent witnesses, because a click that composed the sentence and raised on the way out leaves the number right and the field holding the PREVIOUS sentence, which is exactly what S28/4's return-value leg was added for: the click's own return value is the sentence, the widget's `get` is the same string, and it names the verb and the database the answer carried.  The WORDS are not asserted -- all three of this stage's sentences are unratified and carry an open rule debt -- so what is asserted is the agreement and the containment" \
+check "S28/7 R421a on a WAVE answer the EVAL PRESS LEAVES THE RPN BUFFER ALONE and so does its UNDO STATE -- measured on SIX captures and not one: the text, `edit modified`, `calc::buf_can undo` and `redo`, the Stack size, and the two Tk-8.4 fallback hints, PLUS a delegating COUNTER on `calc::buf_note_edit`, which is the leg that replaces the hint comparison now that OK's compose has already written exactly the values a spurious refresh would write.  ⚠ THE CAPTURES SIT BETWEEN THE TWO PRESSES, because OK now composes INTO the buffer: the claim is about the press that measures, not the press that asks.  ⚠ AND THE UNDO CLAIM IS STILL THE OPPOSITE OF S28/4's -- nothing was pasted, so the assertion is that one undo lands on the USER's own expression, which is false the moment Eval pushed a step of its own whether or not it also popped it.  DISPLAY-ONLY: a --nogui run of this suite reports zero checks" \
+    [list $wv_stubbed $wv_handstub $wv_notestub $wv_ran \
+          [expr {[string match ERR:* $wv_okans] ? 0 : 1}] \
+          [expr {[string match ERR:* $wv_ans] ? 0 : 1}] \
+          [ad_split $wv_built] \
+          $wv_moved \
+          [expr {$wv_notewave == 0 ? {quiet} : "noted:$wv_notewave"}] \
+          [expr {$wv_undone eq $wv_user0 ? 1 : 0}] \
+          [expr {$wv_redone eq $wv_built ? 1 : 0}]] \
+    [list 1 ok 1 1 1 1 \
+          [list dutyCycle [list {v(lp) v(sq) /} 0.5 0 0 start]] {} quiet 1 1]
+check "S28/7 R421a ...and the DESTINATION SENTENCE really reaches `.calc.status.msg` AT THE EVAL PRESS -- asserted through TWO independent witnesses, because a press that composed the sentence and raised on the way out leaves the field holding the PREVIOUS sentence, which is exactly what S28/4's return-value leg was added for: the press's own return value is the sentence, the widget's `get` is the same string, and it names the verb and the database the answer carried.  ⚠ AND IT IS NOT THE SENTENCE OK LEFT BEHIND, which is the leg that catches a wiring that handed the wave to the viewer at OK after all.  The WORDS are not asserted -- all of this stage's sentences are unratified and carry an open rule debt -- so what is asserted is the agreement, the containment and the movement" \
     [list $wv_stubbed $wv_handstub \
           [expr {[string match ERR:* $wv_ans] ? 0 : 1}] \
           [expr {$wv_said eq $wv_ans ? {agree} : {DIFFER}}] \
           [expr {[string match {*dutyCycle*} $wv_said] ? 1 : 0}] \
           [expr {[string match "*$::WV_DB*" $wv_said] ? 1 : 0}] \
-          [expr {[pcall calc::status_history] ne $wv_hist0 ? {recorded} : {NOTRECORDED}}]] \
-    [list 1 ok 1 agree 1 1 recorded]
-check "S28/7 the click HANDED THE ANSWER TO THE VIEWER, with the destination the verb named and the token the result gate named -- the half unit J1 deliberately did not do, which is why `wviewer::plot_sweeps_arm` still had zero callers and the user had to find the database in the Results picker and plot it by hand.  The hand-off is RECORDED rather than driven here because this suite has no loaded raw at all; that a trace really appears against its own X is band PL10 of test_calc_plot.tcl, which has a real window, and it is gate-only too" \
+          [expr {[pcall calc::status_history] ne $wv_hist0 ? {recorded} : {NOTRECORDED}}] \
+          [expr {$wv_ans ne $wv_okans ? {differ} : {SAME}}] \
+          [expr {[string match "*$::WV_DB*" $wv_okans] ? {OKNAMEDDB} : {okquiet}}]] \
+    [list 1 ok 1 agree 1 1 recorded differ okquiet]
+check "S28/7 R421a the EVAL PRESS HANDED THE ANSWER TO THE VIEWER, with the destination the verb named and the token the result gate named -- the half unit J1 deliberately did not do, which is why `wviewer::plot_sweeps_arm` still had zero callers and the user had to find the database in the Results picker and plot it by hand.  ⚠ AND THE OK PRESS HANDED IT NOTHING, which is R421a: a composing press that also plotted would be the gesture the user retracted.  That leg is not vacuous -- the same recorder in the same row is asserted CALLED one gesture later -- and it answers a WORD rather than the empty string, so `never called` and `called with nothing` are different greens.  The hand-off is RECORDED rather than driven here because this suite has no loaded raw at all; that a trace really appears against its own X is band PL10 of test_calc_plot.tcl, which has a real window, and it is gate-only too" \
     [list $wv_stubbed $wv_handstub \
+          [expr {[llength $wv_handok] == 0 ? {untouched} : "handed:$wv_handok"}] \
           [expr {[llength $::WV_HAND] >= 2 ? {called} : "args:$::WV_HAND"}] \
-          [expr {[llength $::WV_HAND] >= 1 ? [lindex $::WV_HAND 0] : {}}] \
+          [expr {[llength $::WV_HAND] >= 1 ? [lindex $::WV_HAND 0] : {NOTCALLED}}] \
           [expr {[llength $::WV_HAND] >= 2 ?
-                 [pcall dict get [lindex $::WV_HAND 1] db] : {}}]] \
-    [list 1 ok called s28tok $::WV_DB]
-check "S28/7 ...and the SURFACE WRAPPER is what the click reached, with the buffer's own RPN first and the dialog's values in the wrapper's formal order -- `calc::arg_surface` is literally if `::calc::<name>_scalar` exists return it, so a recorder on `calc::dutyCycle` would have been bypassed and the row would have measured nothing -- and the default CYCLE really is the all-cycles zero that makes the answer a wave in the first place" \
-    [list $wv_stubbed [lrange $::WV_REC 0 1] \
-          [expr {[lindex $::WV_REC 2] eq {0} ? {allcycles} : "cycle:[lindex $::WV_REC 2]"}]] \
-    [list 1 [list {v(lp) v(sq) /} 0.5] allcycles]
+                 [pcall dict get [lindex $::WV_HAND 1] db] : {NOTCALLED}}]] \
+    [list 1 ok untouched called s28tok $::WV_DB]
+check "S28/7 R421a ...and the SURFACE WRAPPER is what the EVAL PRESS reached, with the buffer's own RPN first and the dialog's values in the wrapper's formal order -- `calc::arg_surface` is literally if `::calc::<name>_scalar` exists return it, so a recorder on `calc::dutyCycle` would have been bypassed and the row would have measured nothing -- the default CYCLE really is the all-cycles zero that makes the answer a wave in the first place, and the call carries the verb's FULL arity, DERIVED from `calc::meas_formals` rather than counted out here, so the round trip through the composed text dropped no argument.  ⚠ AND THE OK PRESS REACHED IT NOT AT ALL" \
+    [list $wv_stubbed \
+          [expr {[llength $wv_recok] == 0 ? {untouched} : "called:$wv_recok"}] \
+          [lrange $::WV_REC 0 1] \
+          [expr {[lindex $::WV_REC 2] eq {0} ? {allcycles} : "cycle:[lindex $::WV_REC 2]"}] \
+          [expr {[llength $::WV_REC] ==
+                 [llength [pcall calc::meas_formals dutyCycle]] ?
+                 {full-arity} : "arity:[llength $::WV_REC]"}]] \
+    [list 1 untouched [list {v(lp) v(sq) /} 0.5] allcycles full-arity]
 # THE CONTROL, and it is what separates "the wave arm did nothing" from "the
 # surface is broken for every answer": with the SAME recorder installed but
 # answering a SCALAR, the click must still paste a number and ONE undo must still
@@ -4827,17 +5053,30 @@ update
 set wv_ran2 $::AD_RAN
 ad_disarm
 catch {destroy .calc.arg}
+set wv_built2 [ad_buf]
+set ::WV_NOTE 0
+set wv_evalans2 [ad_eval]
+update
+set wv_notescalar $::WV_NOTE
 set wv_num [ad_buf]
 pcall calc::buf_undo
-set wv_back [ad_buf]
-check "S28/7 the CONTROL: with the same recorder answering a SCALAR the click still PASTES the number and ONE undo still puts the expression back, and the viewer is NOT handed anything -- so a click that had silently done nothing at all would pass the rows above and fails here, and the wave arm is a branch rather than a break" \
+set wv_back1 [ad_buf]
+pcall calc::buf_undo
+set wv_back2 [ad_buf]
+check "S28/7 the CONTROL: with the same recorder answering a SCALAR the SAME TWO GESTURES still compose and then PASTE the number, and ONE undo PER GESTURE still walks it back -- the number to the composed call, the call to the user's expression -- while the viewer is NOT handed anything.  So a gesture pair that had silently done nothing at all would pass every row above and fails here, and the wave arm is a branch rather than a break.  ⚠ AND THIS IS ALSO THE `buf_note_edit` COUNTER'S POSITIVE CONTROL: the wave row asserts ZERO calls across its Eval press, which would be satisfied by a counter nothing could ever reach, and this path MUST reach it" \
     [list $wv_ran2 [expr {[string match ERR:* $wv_ans2] ? 0 : 1}] \
+          [expr {[string match ERR:* $wv_evalans2] ? 0 : 1}] \
+          [ad_split $wv_built2] \
           [expr {[string is double -strict $wv_num] ? 1 : 0}] \
           [expr {[string is double -strict $wv_num]
                  && abs($wv_num - $::WV_SCALARVAL)
                     <= 1e-6 * abs($::WV_SCALARVAL) ? 1 : 0}] \
-          $wv_back $::WV_HAND] \
-    [list 1 1 1 1 {v(lp) v(sq) /} {}]
+          [expr {$wv_back1 eq $wv_built2 ? 1 : 0}] $wv_back2 \
+          [expr {[llength $::WV_HAND] == 0 ? {untouched} : "handed:$::WV_HAND"}] \
+          [expr {$wv_notescalar >= 1 ? {noted} : {NOTNOTED}}] \
+          [expr {$wv_text1 eq {v(lp) v(sq) /} ? 1 : 0}]] \
+    [list 1 1 1 [list dutyCycle [list {v(lp) v(sq) /} 0.5 0 0 start]] 1 1 \
+          1 {v(lp) v(sq) /} untouched noted 1]
 catch {rename ::calc::dutyCycle_scalar {}}
 catch {rename ::wv_wave_rec ::calc::dutyCycle_scalar}
 if {$wv_stubbed} {
@@ -4848,13 +5087,19 @@ if {$wv_handstub eq {ok}} {
     catch {rename ::calc::wave_in_token {}}
     catch {rename ::wv_keep_hand ::calc::wave_in_token}
 }
-check "S28/7 CONTROL: both renames are undone and the real procs are back with the formals they had on the way in -- captured before the rename rather than written down -- so nothing below this point is measuring a recorder" \
+if {$wv_notestub} {
+    catch {rename ::calc::buf_note_edit {}}
+    catch {rename ::wv_keep_note ::calc::buf_note_edit}
+}
+check "S28/7 CONTROL: all THREE renames are undone and the real procs are back with the formals they had on the way in -- captured before the rename rather than written down -- so nothing below this point is measuring a recorder.  `calc::buf_note_edit` is the third, added with R421a's counter, and it matters more than the other two: every undo hint in the rest of this file goes through it" \
     [list [expr {[info commands ::calc::dutyCycle_scalar] ne {} ? 1 : 0}] \
           [llength [info commands ::wv_keep_dc]] \
           [llength [info commands ::wv_wave_rec]] \
           [llength [info commands ::wv_keep_hand]] \
+          [expr {[info commands ::calc::buf_note_edit] ne {} ? 1 : 0}] \
+          [llength [info commands ::wv_keep_note]] \
           [pcall info args ::calc::dutyCycle_scalar]] \
-    [list 1 0 0 0 $wv_formals0]
+    [list 1 0 0 0 1 0 $wv_formals0]
 }
 
 # --- S28/5  Escape is Cancel, through the real keyboard ----------------------

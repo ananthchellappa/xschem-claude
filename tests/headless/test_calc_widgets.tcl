@@ -1543,6 +1543,10 @@ group CW13 {
     # that pressing them touches neither the buffer nor the Stack, which is the
     # claim this group actually owns.  What a press now DOES is
     # tests/headless/test_calc_plot.tcl's subject.
+    # ⚠ `calc::eval_click` LEFT THIS LIST FOR `$live7` WHEN R421a LANDED, for the
+    # same reason `calc::sel_click` left it for `$live6`: it can now write the
+    # buffer, so "stub" is false of it.  `calc::plot_click` stays -- R603/PL4 keep
+    # Plot off the buffer, and that is asserted in test_calc_plot.tcl.
     # ⚠⚠ `calc::sel_click` CAME OFF THIS LIST WHEN PLAN PHASE 6 LANDED, AND THE
     # REASON IS THAT LEAVING IT ON WOULD HAVE BEEN INVISIBLE.  This row's own name
     # says "a phase-1 stub or one of the four phase-2 procs"; `calc::sel_click` is
@@ -1552,7 +1556,7 @@ group CW13 {
     # drawn anybody's attention to it.  It moves to `$live6` below.
     set allowed {calc::inert calc::status calc::sel_refuse
                  calc::dest_changed calc::res_toggle
-                 calc::eval_click calc::plot_click calc::browse_inert}
+                 calc::plot_click calc::browse_inert}
     set live2 {calc::pad_click calc::clr_buf calc::buf_undo calc::buf_redo}
     # ⚠ A THIRD LIST, AND IT IS NOT A HOLE WIDENED IN EITHER OF THE OTHER TWO.
     # `calc::font_step` is the `aA` button (the user's 2026-10-06 request).  It
@@ -1577,8 +1581,24 @@ group CW13 {
     # voltage arm refuses before it can touch anything -- which part (b)'s own
     # `pick_running` leg then checks rather than assumes.
     set live6 {calc::sel_click}
+    # ⚠ A FIFTH LIST, AND IT IS HERE FOR EXACTLY THE REASON `calc::sel_click` GOT
+    # THE FOURTH.  R421a (the user, 2026-10-08) made `calc::eval_click` able to
+    # WRITE THE BUFFER: on a buffer holding a composed measurement call it routes
+    # `calc::meas_split` -> `calc::meas_eval` -> `calc::meas_apply`, whose buffer
+    # arm ends `calc::buf_set_number` and REPLACES the user's expression.  So the
+    # word "stub" in this row's own name became false for it, and because
+    # `$allowed` EXCUSES A NAME the row would have stayed GREEN while its sentence
+    # rotted -- the `sel_click` incident verbatim, one phase later.
+    # ⚠ AND IT IS DELIBERATELY *NOT* EXCLUDED FROM THE BUFFER/STACK TOUCH SWEEP IN
+    # PART (b), like `$live3` and `$live6`: "a press touches neither" is a STRONGER
+    # claim than an exclusion.  It holds because this suite loads no result, so
+    # `calc::require_result` answers `ok 0 origin none` and `calc::eval_click`
+    # returns on the result gate BEFORE it reads the buffer at all.  That is a
+    # REASON, not a measurement, so the row below drives a real composable call
+    # through it rather than leaving the claim resting on an empty buffer.
+    set live7 {calc::eval_click}
     set rogue {} ; set mute {}
-    set nlive 0 ; set nview 0 ; set npick 0
+    set nlive 0 ; set nview 0 ; set npick 0 ; set neval 0
     foreach w $ctrls {
         set cmd [wcg $w -command]
         if {$cmd eq {}} {
@@ -1588,6 +1608,7 @@ group CW13 {
         if {[lindex $cmd 0] in $live2} { incr nlive ; continue }
         if {[lindex $cmd 0] in $live3} { incr nview ; continue }
         if {[lindex $cmd 0] in $live6} { incr npick ; continue }
+        if {[lindex $cmd 0] in $live7} { incr neval ; continue }
         if {[lindex $cmd 0] ni $allowed} { lappend rogue "$w -> [lindex $cmd 0]" }
     }
     # ⚠ every one of these rides on the CONTROL COUNT.  An offender list
@@ -1632,11 +1653,12 @@ group CW13 {
     # measures a window one size larger than the rest of the suite assumes.
     set fsz0 [pcall calc::font_size]
     set touched {} ; set silent {} ; set npressed 0 ; set nlivepressed 0
-    set npickpressed 0
+    set npickpressed 0 ; set nevalpressed 0
     foreach w $ctrls {
         if {[wcg $w -state] eq {disabled}} continue
         incr npressed
         if {[lindex [wcg $w -command] 0] in $live6} { incr npickpressed }
+        if {[lindex [wcg $w -command] 0] in $live7} { incr nevalpressed }
         pcall calc::status {}
         pcall $w invoke
         if {[lindex [wcg $w -command] 0] in $live2} {
@@ -1661,6 +1683,35 @@ group CW13 {
     check "CW13 the sweep really pressed the enabled phase-2 controls" $nlivepressed 13
     check "CW13 ...and really pressed the fourteen ENABLED phase-6 selectors, which is what makes the two claims above about them measurements rather than an empty sweep" \
         $npickpressed 14
+    # ⚠ the same anti-vacuity control for the FIFTH list, and it is one control,
+    # so the count is exact rather than a bound.
+    check "CW13 ...and pressed the one phase-7 control (Eval), so the buffer/Stack claim above covers the proc R421a made able to write the buffer" \
+        [list $neval $nevalpressed] {1 1}
+    # ⚠⚠ AND THIS IS THE ROW THAT STOPS THE CLAIM BEING VACUOUS, WHICH THE SWEEP
+    # ALONE CANNOT DO.  The sweep presses Eval with `SENTINEL` in the buffer, and
+    # `calc::meas_split SENTINEL` answers {} -- so a green sweep would be equally
+    # green on a build where Eval pasted over every composable call it was given.
+    # This drives a call the splitter really parses, with the SAME absent result,
+    # and asserts the refusal still wins: leg 3 is the parse (so the drive cannot
+    # go vacuous if the grammar changes), leg 4 is the buffer, byte-identical.
+    set cw_call {cross(v(out) v(in) -, 0.375, 3, falling)}
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end $cw_call
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
+    pcall calc::status {}
+    set cw_gate [pcall dict get [pcall calc::require_result] ok]
+    set cw_parsed [expr {[pcall calc::meas_split $cw_call] ne {} ? {PARSED} : {NOTPARSED}}]
+    pcall .calc.mode.eval invoke
+    set cw_after [pcall .calc.buf get 1.0 end-1c]
+    check "CW13 ...and with a call the splitter REALLY parses in the buffer, Eval with no result still refuses at the result gate and leaves the buffer byte-identical -- the drive the sweep's own SENTINEL cannot make, since that text is not composable and would pass against a build that pasted over every call it was handed" \
+        [list $cw_gate $cw_parsed [expr {$cw_after eq $cw_call ? {IDENTICAL} : $cw_after}] \
+              [expr {[nsv statusmsg] ne {} ? {SPOKE} : {SILENT}}]] \
+        {0 PARSED IDENTICAL SPOKE}
+    pcall .calc.buf delete 1.0 end
+    pcall .calc.buf insert end {SENTINEL}
+    pcall .calc.buf edit reset
+    pcall calc::buf_sync
     # ⚠ THE SWEEP ARMS FOURTEEN SELECTORS AND MUST LEAVE NONE OF THEM ARMED.  A
     # residual canvas seize would poison every later row in this file -- and worse,
     # it would leave a binding on a design canvas this suite does not own.  It holds

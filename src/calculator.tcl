@@ -3242,6 +3242,12 @@ proc calc::eval_click {} {
     if {[string trim $rpn] eq {}} { return [calc::status [calc::eval_msg empty]] }
     set tok {}
     catch {set tok [dict get $g token]}
+    # R421a.  A composed measurement call is routed to the measurement layer
+    # BEFORE the engine sees it -- `calc::rpn_bad_token` cannot lex one, and its
+    # refusal is contingent on the raw file's inventory rather than on a keyword
+    # list, so this ordering is the fence and the gate is not.
+    set m [calc::meas_split $rpn]
+    if {$m ne {}} { return [calc::status [calc::meas_eval $m $g]] }
     return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
 }
 
@@ -12192,18 +12198,277 @@ proc calc::fn_measure {name} {
     if {$ans eq {}} { return {} }
     set vals [calc::arg_values $name $rpn $ans]
     if {[llength $vals] == 0} { return [calc::status [calc::arg_msg nosurf $name]] }
+    set txt [calc::meas_compose $name $vals]
+    if {$txt eq {}} { return [calc::status [calc::meas_msg nocompose $name]] }
+    calc::buf_set_expr $txt
+    return [calc::status [calc::meas_msg built $name]]
+}
+
+# ---------------------------------------------------------------------------
+# R421a -- OK BUILDS THE EXPRESSION, Eval EVALUATES IT.  (the user, 2026-10-08)
+#
+# This SUPERSEDES R421, which was also the user's and said the opposite: "the
+# measured number replaces the buffer".  Their words on the change, verbatim:
+# "instead of giving me the expression : cross(_expr_that_was_in_buffer_when_
+# cross_invoked LEVEL EDGE_NUM) it directly prints the value in the buffer ...
+# the cross expression should show up in the Calculator buffer and, if the user
+# presses the Eval button, the expression should be evaluated and value used to
+# replace buffer expression".  R421's retracted reasoning is kept beside the
+# ruling in doc/claude/specs/calculator.md rather than deleted, per house
+# practice; R404's "literal number in the buffer" and R603's "Evaluate does not
+# modify the buffer" are narrowed by the same ruling and say so there.
+#
+# ⚠ THE COMPOSED FORM IS COMMA-SEPARATED, AND THAT IS A MEASUREMENT RATHER THAN
+# A PREFERENCE.  The engine's lexer splits on " \t\n" ONLY and treats parens as
+# ordinary name characters -- `cross(v(lp) 0.5 1)` lexes as the three tokens
+# `cross(v(lp)`, `0.5`, `1)`, of which only the first is refused and the last
+# passes as a NUMBER by the strtod prefix test.  So whitespace cannot delimit
+# the arguments: argument 1 is itself a whitespace-separated RPN expression of
+# unknown length.  Splitting from the RIGHT by the verb's arity was built and
+# rejected -- `delay`, `gainMargin` and `phaseMargin` each carry TWO `rpn`
+# operands, and no arity count can find the boundary between them.  A top-level
+# comma can, for every verb, and it is also the spelling Cadence shows.
+#
+# ⚠ AND THE COMPOSED TEXT IS NEVER HANDED TO THE ENGINE.  `calc::eval_click`
+# routes a recognised call to `calc::meas_eval` BEFORE `calc::eval_in_token`, so
+# `calc::rpn_bad_token` never sees it.  That ordering is the fence, NOT the
+# gate's current rejection of the 34 verb names: the gate's alphabet is the raw
+# file's own inventory (`v(lp)` passes because the literal string `v(lp)` IS a
+# column name, not by any `v(`-rule), so a database carrying a column spelled
+# like a verb would flip it to accept.  Measured both ways.
+#
+# ⚠ DECLARED LIMIT: `calc::meas_split` consults the catalogue and the syntax,
+# never the loaded database.  A raw column literally spelled
+# `cross(v(lp), 0.5, 1, rising)` -- balanced, comma-separated, route-T head,
+# exact arity -- would be taken as a call.  Checking the inventory here would
+# need the viewer context loan that `calc::eval_in_token` has not taken yet, and
+# half-checking it outside the loan would ask the wrong database.  No SPICE name
+# has that shape; the limit is written down rather than guarded.
+
+# The argument separator, in one place, so the composer and the splitter cannot
+# disagree about it.
+proc calc::meas_sep {} { return {, } }
+
+# Depth check.  Answers 1 for text whose parentheses do not balance, INCLUDING
+# text that closes one it never opened -- which is the arm that refuses
+# `f(a) g(b)`, where the `$`-anchored greedy peel below spans both calls and
+# hands back an inner text of `a) g(b`.
+proc calc::meas_paren_bad {s} {
+    set d 0
+    foreach c [split $s {}] {
+        if {$c eq {(}} { incr d }
+        if {$c eq {)}} {
+            incr d -1
+            if {$d < 0} { return 1 }
+        }
+    }
+    return [expr {$d != 0}]
+}
+
+# One argument's whitespace, flattened.  The buffer is a multi-line Text widget
+# and a newline is a legal engine delimiter, so an operand read out of it can
+# carry runs and newlines; inside a composed call they are decoration.  This is
+# the ONE place this file rewrites the user's whitespace, and it rewrites a
+# COMPOSED artifact rather than what they typed -- `calc::rpn_of_text`'s byte
+# identity is untouched.
+proc calc::meas_flat {s} {
+    return [string trim [regsub -all {[ \t\n\r]+} $s { }]]
+}
+
+# `vals` is `calc::arg_values`' key/value list: FORMAL order, `rpn` first.  The
+# composed form carries every argument including the ones the user left at their
+# default, so the arity is fixed per verb and the split back is exact.
+#
+# ⚠ BUILT WITH `append`, NOT WITH ONE INTERPOLATED STRING.  In a double-quoted
+# word `$name(...)` is an ARRAY ELEMENT reference and the obvious spelling
+# raises `can't read "name(...)": variable isn't array`.  Same trap, same site,
+# as the one `calc::arg_provenance`'s header records.
+proc calc::meas_compose {name vals} {
+    if {[llength $vals] == 0} { return {} }
+    set a {}
+    set sep {}
+    foreach {k v} $vals {
+        set t [calc::meas_flat $v]
+        if {$t eq {}} { return {} }
+        if {[string first {,} $t] >= 0} { return {} }
+        if {[calc::meas_paren_bad $t]} { return {} }
+        append a $sep $t
+        set sep [calc::meas_sep]
+    }
+    set s $name
+    append s {(} $a {)}
+    return $s
+}
+
+# Split on TOP-LEVEL commas only, so a nested `v(a,b)`-shaped operand cannot be
+# torn in half.  Always answers at least one element, so a caller can compare
+# its length against the verb's arity and refuse rather than guess.
+proc calc::meas_args {inner} {
+    set out {}
+    set cur {}
+    set d 0
+    foreach c [split $inner {}] {
+        if {$c eq {(}} { incr d }
+        if {$c eq {)}} { incr d -1 }
+        if {$c eq {,} && $d == 0} {
+            lappend out [string trim $cur]
+            set cur {}
+            continue
+        }
+        append cur $c
+    }
+    lappend out [string trim $cur]
+    return $out
+}
+
+# Is this name a measurement verb this window can actually compose a call for?
+# Route T is the discriminator (every T row carries an EMPTY `insert` field,
+# which is what makes it clean), and a live `calc::fn_argspec` is what separates
+# the 13 built verbs from the 21 that still fall through to `calc::inert`.
+proc calc::meas_verb {name} {
+    set row [calc::fn_row $name]
+    if {$row eq {}} { return 0 }
+    if {[lindex $row 2] ne {T}} { return 0 }
+    if {[llength [calc::fn_argspec $name]] == 0} { return 0 }
+    return 1
+}
+
+# The formal names the composed call carries, in the order it carries them,
+# DERIVED from `calc::arg_values` rather than re-listed.  That matters: the
+# argument dialog's DISPLAY order deliberately differs from the procs' formal
+# order (`dutyCycle` shows level/xaxis/cycle/dataset against a formal
+# rpn/level/cycle/dataset/xaxis), and `calc::arg_invoke` composes BY KEY.  A
+# positional zip onto a display-ordered list would hand `dutyCycle` its X axis
+# where its cycle ordinal belongs; deriving the order from the same proc that
+# built the call is the only spelling that cannot drift from it.
+proc calc::meas_formals {name} {
+    set spec [calc::fn_argspec $name]
+    if {[llength $spec] == 0} { return {} }
+    set ans {}
+    foreach f $spec { lappend ans [lindex $f 0] x }
+    set out {}
+    foreach {k v} [calc::arg_values $name x $ans] { lappend out $k }
+    return $out
+}
+
+# Syntax and catalogue only -- no database, by declared limit above.  Answers
+# {} for anything that is not a composable call, which is every plain RPN
+# expression, so the Eval path falls through to the engine unchanged.
+proc calc::meas_split {s} {
+    set t [string trim $s]
+    if {$t eq {}} { return {} }
+    set head {}
+    set inner {}
+    if {![regexp {^([A-Za-z_][A-Za-z_0-9]*)\((.*)\)$} $t -> head inner]} { return {} }
+    if {![calc::meas_verb $head]} { return {} }
+    if {[calc::meas_paren_bad $inner]} { return {} }
+    return [dict create verb $head args [calc::meas_args $inner]]
+}
+
+# Zip the parsed arguments onto the formals.  Refuses on arity rather than
+# padding or truncating: a short call would otherwise reach the verb with a
+# default the user never saw.
+proc calc::meas_vals {name argl} {
+    set fm [calc::meas_formals $name]
+    if {[llength $fm] == 0} { return {} }
+    if {[llength $argl] != [llength $fm]} { return {} }
+    set out {}
+    foreach f $fm a $argl { lappend out $f $a }
+    return $out
+}
+
+# Every malformed argument at once, through the SAME predicate the dialog uses
+# (`calc::arg_field_bad`), so a value typed into the buffer by hand is held to
+# the rule a value typed into the form is held to.  R412a's "every malformed
+# field is named at once" applies here for the same reason it applies there.
+proc calc::meas_trouble {name vals} {
+    set spec [calc::fn_argspec $name]
+    set msgs {}
+    foreach {k v} $vals {
+        if {$k eq {rpn}} {
+            if {[string trim $v] eq {}} { lappend msgs [calc::meas_msg noexpr $name] }
+            continue
+        }
+        foreach f $spec {
+            if {[lindex $f 0] ne $k} { continue }
+            set b [calc::arg_field_bad [lindex $f 1] [lindex $f 2] $v]
+            if {$b ne {}} { lappend msgs $b }
+        }
+    }
+    return $msgs
+}
+
+# The sentences this stage owns.
+#
+# ⚠⚠ A `switch` WHOSE EVERY ARM PUTS `return` ON THE PATTERN'S OWN PHYSICAL LINE,
+# AND BOTH HALVES OF THAT SENTENCE WERE LEARNED BY GETTING IT WRONG.
+#
+# This was first written as an `if` ladder, deliberately, to dodge the parity trap
+# CLAUDE.md records -- a comment between two `switch` patterns is a parse error
+# whose blast radius is every arm at once and which `info complete` cannot see.
+# That cost more than it saved.  Band MT20/B of tests/headless/test_calc_measure.tcl
+# and band S28/8 of tests/headless/test_calc_skeleton.tcl both derive a
+# `calc::*_msg` builder's arm set by scanning its body, find ZERO arms in a
+# ladder, conclude the builder takes no arguments, call it with none, and record
+# `wrong # args` -- so these five sentences were fitted against the status-line
+# budget by NOTHING, and the error sentinel poisoned the sweep for every OTHER
+# builder in the file too.
+#
+# The ladder was then rewritten as a `switch` with its bodies on the FOLLOWING
+# lines, and THAT DID NOT FIX IT EITHER: both readers match `pattern { return` on
+# ONE PHYSICAL LINE, so a body on the next line derives as no arm at all and the
+# red was unchanged.  A `switch` is necessary and not sufficient; the one-line
+# shape is the part the instruments actually read, which is why all five siblings
+# (`eval_msg`, `plot_msg`, `cross_msg`, `pick_msg`, `arg_msg`) are written this
+# way.  Keep the arms on one line each, however long the sentence gets.
+#
+# The parity trap is avoided the way the siblings avoid it: NO comment between
+# any two patterns, prose above the proc only.
+proc calc::meas_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        built { return "$a: expression in the buffer. Press Eval to evaluate it." }
+        nocompose { return "$a: cannot build an expression from those arguments." }
+        noexpr { return "$a: there is no expression to measure." }
+        arity { return "$a takes $b arguments." }
+        fields { return "$a: $b" }
+    }
+    return {}
+}
+
+proc calc::buf_set_expr {s} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set auto 1
+    catch {set auto [.calc.buf cget -autoseparators]}
+    catch {.calc.buf configure -autoseparators 0}
+    .calc.buf edit separator
+    .calc.buf delete 1.0 end
+    .calc.buf insert end $s
+    catch {.calc.buf mark set insert end-1c}
+    .calc.buf edit separator
+    catch {.calc.buf configure -autoseparators $auto}
+    catch {.calc.buf see insert}
+    calc::buf_note_edit
+    return $s
+}
+
+# What R421 used to do at OK, moved to Eval unchanged: invoke the verb, read the
+# disposition through `calc::fn_sink`, and route it.  Nothing in the routing
+# moved -- the five-word vocabulary, the destination hand-off, the viewer raise
+# and the provenance sentence are all the committed ones; only the gesture that
+# reaches them changed.  Returns a sentence; the caller does the `calc::status`.
+proc calc::meas_apply {name vals g} {
     set d {}
     if {[catch {calc::arg_invoke $name $vals} d]} {
-        return [calc::status [calc::arg_msg failed $name $d]]
+        return [calc::arg_msg failed $name $d]
     }
     set ok 0
     if {[catch {dict get $d ok} ok]} {
-        return [calc::status [calc::arg_msg failed $name $d]]
+        return [calc::arg_msg failed $name $d]
     }
     if {!$ok} {
         set m {}
         catch {set m [dict get $d msg]}
-        return [calc::status $m]
+        return $m
     }
     set v {}
     catch {set v [dict get $d value]}
@@ -12218,26 +12483,36 @@ proc calc::fn_measure {name} {
         catch {set hok [dict get $h ok]}
         set hm {}
         catch {set hm [dict get $h msg]}
-        # ⚠ THE SAME DEFECT AS Plot's AND IT WAS NOT IN THE USER'S REPORT: a
-        # measured WAVE lands on a viewer strip and nothing brings that window
-        # forward, so the answer is produced where it cannot be seen.  Same
-        # condition (success only), same place (after `wave_in_token`'s own
-        # context loan has closed), same helper.
         if {[string is integer -strict $hok] && $hok} {
             catch {calc::viewer_front $tok}
         }
-        return [calc::status [calc::handoff_sentence $name $db $hok $hm]]
+        return [calc::handoff_sentence $name $db $hok $hm]
     }
     if {$sink eq {badshape}} {
         set sh {}
         catch {set sh [dict get $d shape]}
-        return [calc::status [calc::arg_msg badshape $name $sh]]
+        return [calc::arg_msg badshape $name $sh]
     }
     if {$sink ne {buffer}} {
-        return [calc::status [calc::arg_msg badvalue $name $v]]
+        return [calc::arg_msg badvalue $name $v]
     }
     set num [calc::buf_set_number $v]
-    return [calc::status [calc::arg_provenance $name $vals $num]]
+    return [calc::arg_provenance $name $vals $num]
+}
+
+# Eval's measurement arm: parse, refuse legibly, then apply.
+proc calc::meas_eval {m g} {
+    set name [dict get $m verb]
+    set argl [dict get $m args]
+    set vals [calc::meas_vals $name $argl]
+    if {[llength $vals] == 0} {
+        return [calc::meas_msg arity $name [llength [calc::meas_formals $name]]]
+    }
+    set bad [calc::meas_trouble $name $vals]
+    if {[llength $bad] > 0} {
+        return [calc::meas_msg fields $name [calc::arg_say $bad]]
+    }
+    return [calc::meas_apply $name $vals $g]
 }
 
 # ---------------------------------------------------------------------------

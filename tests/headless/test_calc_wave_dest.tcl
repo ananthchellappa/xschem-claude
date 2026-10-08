@@ -3114,11 +3114,12 @@ group WD12 {
     foreach nm $wdarmers {
         if {[lsearch -exact [wd_calc_matching {\.calc\.}] $nm] >= 0} { lappend wdwidget $nm }
     }
-    check "WD12 the click's destination arm REACHES the hand-off and the hand-off touches NOTHING the buffer owns -- derived in three walks over the decommented namespace rather than read: `calc::fn_measure` names the hand-off, no armer names `calc::buf_set_number` or `calc::buf_note_edit` (the proc that would move the undo HINTS while the undo HISTORY stood still), and no armer names a `.calc` widget path, which is what keeps this row on the counted arm at all.  THE BEHAVIOUR IS NOT MEASURED HERE: it is display-only, it is band S28/7's, and a green run of this row says only that the wiring is in place" \
-        [list [expr {[lsearch -exact $wdreach fn_measure] >= 0 ? 1 : 0}] \
+    check "WD12 the click's destination arm REACHES the hand-off and the hand-off touches NOTHING the buffer owns -- derived in three walks over the decommented namespace rather than read: `calc::meas_apply` names the hand-off -- R421a moved the destination arm there from `calc::fn_measure`, so this row also asserts the click's own proc no longer carries it -- no armer names `calc::buf_set_number` or `calc::buf_note_edit` (the proc that would move the undo HINTS while the undo HISTORY stood still), and no armer names a `.calc` widget path, which is what keeps this row on the counted arm at all.  THE BEHAVIOUR IS NOT MEASURED HERE: it is display-only, it is band S28/7's, and a green run of this row says only that the wiring is in place" \
+        [list [expr {[lsearch -exact $wdreach meas_apply] >= 0 ? 1 : 0}] \
               $wdhandbuf $wdwidget \
-              [expr {[lsearch -exact $wdbuf fn_measure] >= 0 ? 1 : 0}]] \
-        {1 {} {} 1}
+              [expr {[lsearch -exact $wdbuf meas_apply] >= 0 ? 1 : 0}] \
+              [expr {[lsearch -exact $wdreach fn_measure] >= 0 ? 1 : 0}]] \
+        {1 {} {} 1 0}
 
     # --- hygiene ----------------------------------------------------------
     pcall wd_call wave_dest_drop $wdA

@@ -1106,6 +1106,45 @@ Decided 2026-10-02. Full reasoning and measurements:
   since the only precedent (`calc::eval_click` → `calc::rpn_of_buffer`) reads the buffer, the buffer
   was both the question and the answer's destination.
 
+- **R421a** (**the user**, 2026-10-08) **SUPERSEDES R421.** OK **builds the expression**; **Eval**
+  evaluates it. The argument dialog's OK composes a call of the verb over the expression that was in
+  the buffer when the verb was invoked, and **puts that call text in the buffer** — it measures
+  nothing. Pressing **Eval** on a buffer holding such a call evaluates it and **replaces the buffer
+  with the value**. The user's words: *"instead of giving me the expression :
+  cross(_expr_that_was_in_buffer_when_cross_invoked LEVEL EDGE_NUM) it directly prints the value in
+  the buffer"* and *"the cross expression should show up in the Calculator buffer and, if the user
+  presses the Eval button, the expression should be evaluated (and expression pushed onto top of
+  stack!) and value used to replace buffer expression"*.
+  - **R421's reasoning is retracted but kept above**, per house practice, because it was ratified and
+    its hole-filling argument about R412 still reads as sound — what it got wrong was the *gesture*,
+    not the analysis. A reader meeting R421 alone must not implement it.
+  - **R404 is narrowed by this ruling, not repealed.** A scalar still lands in the buffer "as a
+    literal number with a comment of provenance in the status area" — but at **Eval**, not at the
+    catalogue click. The provenance sentence and the one-step undo are both unchanged and still
+    required; only what triggers them moved.
+  - **R603's "It does not modify the buffer" is narrowed to NON-measurement expressions.** Eval on a
+    plain RPN expression still leaves the buffer alone. ⚠ **Whether a plain RPN Eval should also
+    replace the buffer and push is NOT ruled** — the user's instruction was about a composed
+    measurement call, and extending it to every expression would change a gesture they did not ask
+    about. Open; raise it with the stack's own ruling rather than guessing.
+  - ⚠ **The composed form is comma-separated, and that is forced rather than chosen.** The engine's
+    lexer splits on `" \t\n"` only and treats parentheses as ordinary name characters, so
+    `cross(v(lp) 0.5 1)` lexes as `cross(v(lp)` / `0.5` / `1)` — and the trailing `1)` **passes the
+    gate as a number** by the strtod prefix test. Whitespace therefore cannot delimit the arguments,
+    because argument 1 is itself a whitespace-separated RPN expression of unknown length. Splitting
+    from the right by the verb's arity was built and **rejected**: `delay`, `gainMargin` and
+    `phaseMargin` each carry **two** `rpn` operands and no arity count can find the boundary between
+    them. A top-level comma can, for every verb, and it is what Cadence shows.
+  - ⚠ **The fence is the routing order, NOT the engine's gate.** `calc::eval_click` routes a
+    recognised call to the measurement layer **before** `calc::rpn_bad_token` sees it. The gate's
+    accept set is the raw file's own inventory — `v(lp)` passes because the literal string `v(lp)`
+    *is* a column name, not by any `v(`-rule — so a database carrying a column spelled like a verb
+    would flip its refusal to an accept. Measured both ways; do not rely on it.
+  - **Declared limit:** `calc::meas_split` consults the catalogue and the syntax, never the loaded
+    database. A raw column literally spelled `cross(v(lp), 0.5, 1, rising)` would be taken as a call.
+    Checking the inventory there would need a viewer context loan Eval has not taken yet, and
+    half-checking it outside the loan would ask the wrong database.
+
 ### 7.2a Three corrections this table needed before it could build a catalogue
 
 Ruled by the crew, 2026-08-15 (phase 1d), from `recon/catalogue_defects.md`. The catalogue
@@ -1377,6 +1416,12 @@ below are the ones a caller cannot answer for itself and so must not have to.
   session has no waveform viewer lands in the host window's context, which U6
   closes — issue **0516**. Evaluate refuses there, naming the obstacle rather
   than re-asking for the gesture (R503f).
+  ⚠ **NARROWED BY R421a (§7.2ac, the user, 2026-10-08): "does not modify the buffer" now holds
+  for NON-measurement expressions only.** Eval on a buffer holding a composed measurement call
+  (`cross(v(out) v(in) -, 0.375, 3, falling)`) evaluates it and replaces the buffer with the
+  value, because that is the gesture R421a moved here from the catalogue click. Eval on a plain
+  RPN expression is unchanged. Whether the plain case should behave the same way is **open** and
+  is recorded at R421a, not here.
 - **R604** Evaluate on a wave-valued expression reports the value at the **current cursor**
   if one exists, else at the last point, and **says which** in the message.
 - **R605** Evaluate must call the engine **immediately before reading** the scratch column
