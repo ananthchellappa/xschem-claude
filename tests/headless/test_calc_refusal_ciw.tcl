@@ -57,6 +57,30 @@
 ## reaches only the empty state; arms that need a loaded result are covered by
 ## band A and by the tee being inside calc::status.
 ##
+## BAND P IS THE BEHAVIOURAL FENCE; BAND A IS A BEST-EFFORT TEXT LINT.  Band P
+## presses every control it derives, live, and reads the line back out of all
+## three sinks (the status history, the CIW pane, the log file), so what it
+## asserts is what the user sees.  Band A reads source text, which is the wrong
+## instrument class for proving a claim about behaviour (CLAUDE.md), so its
+## evasions are DECLARED here rather than chased.  Each of the following was
+## measured: the sabotage was written into a handler and band A stayed green.
+##   * One physical line holding an 'if' and an 'elseif' (or 'else') branch,
+##     where one branch speaks and the other is a bare 'return': the speaker in
+##     the sibling branch is credited to the silent return, because the line is
+##     the unit of classification, not the branch.
+##   * A speaker written AFTER the 'return' on the same line, as in 'return ;
+##     calc::status ...': the speaker is unreachable and is still credited.
+##   * The variable form of the sentence wrapped in double quotes instead of
+##     written bare: the rule that a variable sentence must be proved non-empty
+##     is keyed to the bare spelling, so the quoted spelling is not tested.
+##   * A namespace-qualified variable as the sentence, as in '$::calc::m' or
+##     '$calc::m': the same rule does not see it, so it is credited as spoken.
+##   * A braced literal whose text merely names a speaker, as in a 'return'
+##     whose value is a braced string containing the word 'calc::status': the
+##     name is matched as text and the arm is credited as speaking.
+## A green band A therefore says no arm was found silent by these spellings,
+## never that no arm is silent; a red is worth reading, a green is not proof.
+##
 ## Display-only (the status line is a no-op without Tk: R508), so this suite is
 ## registered in `dcases` alone.  The log-file legs need `--logdir`, which T1's
 ## display arm passes; under `run_suites.sh`'s default `--nolog` arm they are
