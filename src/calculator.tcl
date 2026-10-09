@@ -10750,6 +10750,11 @@ proc calc::build_stk {} {
         -foreground [calc::color fieldfg] \
         -selectbackground [calc::color selectbg] \
         -selectforeground [calc::color selectfg]
+    # calc_feedback_batch items 7 and 8: double-click recalls the entry under
+    # the pointer into the buffer, right-click offers Copy.  Neither alters the
+    # stack.  See calc::stk_recall_at and calc::stk_menu_at.
+    bind .calc.stk.list <Double-Button-1> {calc::stk_recall_at %W %x %y}
+    bind .calc.stk.list <Button-3> {calc::stk_menu_at %W %x %y %X %Y}
     # ⚠ the scrollbar takes the palette too.  It was the one widget in this
     # file created with no colours at all, and it showed: a stock grey80 bar
     # with a #b3b3b3 trough (sampled: (204,204,204)) against a #f2f2f2 panel,
@@ -12758,6 +12763,83 @@ proc calc::stk_pop {} {
     return $top
 }
 
+# The model's entry at index `idx` (0 = top), or {} for any index that names no
+# entry.  Entries are never empty (calc::stk_push refuses an empty push), so {}
+# is unambiguous.  A strict integer only: `end` and `end-1` are refused, since
+# the callers hand it a listbox row number and nothing else.
+proc calc::stk_entry {idx} {
+    if {![string is integer -strict $idx]} { return {} }
+    set l [calc::stk_get]
+    if {$idx < 0 || $idx >= [llength $l]} { return {} }
+    return [lindex $l $idx]
+}
+
+# The listbox row UNDER the pointer at widget coordinates (x, y), or -1.
+# ⚠ NOT `nearest` ALONE: Tk's `nearest` answers the LAST row for a click in the
+# empty area below it, so a double-click on blank space would recall an entry
+# the user never pointed at.  The row's own bbox has to contain y.
+proc calc::stk_row_at {w x y} {
+    if {![calc::has_win $w]} { return -1 }
+    if {[$w size] == 0} { return -1 }
+    set i [$w nearest $y]
+    set bb [$w bbox $i]
+    if {[llength $bb] != 4} { return -1 }
+    lassign $bb bx by bw bh
+    if {$y < $by || $y >= $by + $bh} { return -1 }
+    return $i
+}
+
+# calc_feedback_batch item 7: "Double-clicking one of the expressions saved in
+# the Calculator stack should populate the Calculator buffer with that
+# expression - effectively recalling it."  The entry STAYS on the stack -- this
+# is a recall, not Pop -- and the buffer write goes through calc::buf_set_expr,
+# so it is one undo step exactly as Pop's is.  The listbox is a view; the text
+# comes from the model.
+proc calc::stk_recall {idx} {
+    if {![calc::has_win .calc.buf]} { return {} }
+    set e [calc::stk_entry $idx]
+    if {$e eq {}} { return [calc::status [calc::stk_msg norecall]] }
+    # A triple-click is a Double-Button-1 as well; recalling text the buffer
+    # already holds would add an undo step that changes nothing.
+    if {[.calc.buf get 1.0 end-1c] ne $e} { calc::buf_set_expr $e }
+    return [calc::status [calc::stk_msg recalled [expr {$idx + 1}]]]
+}
+
+proc calc::stk_recall_at {w x y} {
+    return [calc::stk_recall [calc::stk_row_at $w $x $y]]
+}
+
+# calc_feedback_batch item 8: "Right-click on an expression in the Calculator
+# stack should provide a context menu enabling the user to copy that expression
+# to clipboard."  The `--` is the documented spelling for data that may start
+# with `-` (a negated operand); Tk never parses the LAST word as an option, so
+# row D10 of tests/headless/test_calc_stack_gestures.tcl passes without it too.
+proc calc::stk_copy {idx} {
+    set e [calc::stk_entry $idx]
+    if {$e eq {} || ![calc::has_win .calc]} { return [calc::status [calc::stk_msg nocopy]] }
+    clipboard clear -displayof .calc
+    clipboard append -displayof .calc -- $e
+    return [calc::status [calc::stk_msg copied [expr {$idx + 1}]]]
+}
+
+# Selects the row it was posted for, so the user sees which entry Copy means;
+# the selection is view state, not the stack.  No row under the pointer posts
+# nothing and says so.
+proc calc::stk_menu_at {w x y X Y} {
+    set i [calc::stk_row_at $w $x $y]
+    if {$i < 0} { return [calc::status [calc::stk_msg nocopy]] }
+    catch {$w selection clear 0 end}
+    catch {$w selection set $i}
+    catch {$w activate $i}
+    set m $w.menu
+    if {[string match *.list $w]} { set m [winfo parent $w].menu }
+    if {![winfo exists $m]} { menu $m -tearoff 0 }
+    $m delete 0 end
+    $m add command -label Copy -command [list calc::stk_copy $i]
+    tk_popup $m $X $Y
+    return $m
+}
+
 proc calc::stk_clear {} {
     set n [calc::stk_depth]
     calc::stk_set {}
@@ -12788,6 +12870,10 @@ proc calc::stk_msg {kind {a {}} {b {}}} {
         nopop { return {Nothing to pop: the stack is empty.} }
         cleared { return "Cleared the stack ($a entries)." }
         noclear { return {Nothing to clear: the stack is already empty.} }
+        recalled { return "Recalled stack entry $a into the buffer." }
+        norecall { return {Nothing to recall: no stack entry under the pointer.} }
+        copied { return "Copied stack entry $a to the clipboard." }
+        nocopy { return {Nothing to copy: no stack entry under the pointer.} }
     }
     return {}
 }
