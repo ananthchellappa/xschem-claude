@@ -1248,12 +1248,22 @@ it into a silent `-1` for the whole expression.
   popup undismissable, and `alert_` is not re-entrant (it builds a fixed `.alert` and
   blocks in `tkwait` with its own `grab set` commented out). This tree has ruled on that
   twice — R505g and `src/ciw.tcl`'s own comment.
-  ⚠ **SI suffixes are NOT accepted** (`1m`, `100u`). ASE-L's own forms do accept them
-  through `ase::si_parse`, so the tree disagrees with itself — but that proc needs a
-  **per-simulator** suffix dict (with none it answers a bare `ok` for `abc` and `5%` alike,
-  measured) and carries its own `M`-means-milli warning arm. Accepting them here would
-  couple the Calculator to the simulator registry, which is a decision and not a tidy-up.
-  Declared, not smuggled in beside a defect fix.
+  ⚠ ~~**SI suffixes are NOT accepted**~~ — superseded by **R412b**.
+- **R412b** **Engineering notation is accepted in every `real` argument** (the user,
+  2026-10-08, calc_feedback_batch item 4: *"100u for 100e-6 ... We need to support
+  engineering notation as well!"*). One predicate, `calc::arg_field_bad`, judges every
+  measurement argument from both doors — the dialog's OK and Eval on a composed call typed
+  in the buffer — so every argument dialog gains it at once. The reader is
+  `calc::num_read`: ngspice's alphabet (`f p n u m k meg g t a mil`, case-insensitive,
+  letters may follow a factor as in `100us`), Calculator-local rather than
+  `ase::si_parse` because the verb must get the **same double** the scientific spelling
+  gives — the factor is folded into the exponent as text (`100u` → `100e-6`), never
+  multiplied. The buffer, the stack and the provenance sentence keep what the user typed;
+  only the verb is handed the scientific text (`calc::meas_numeric`).
+  ⚠ **A bare uppercase `M` is refused** with its own sentence naming `m` and `meg`:
+  ngspice reads `1M` as milli silently, and a user who typed it meant mega. That choice is
+  the assistant's and is owed to the user as rule `calc_eng_capital_M`.
+  Fence: `tests/headless/test_calc_engnum.tcl` (both lists).
 - **R412** A function needing extra arguments (`riseTime`, `cross`, `bandwidth`, `clip`, …)
   opens a small argument dialog **before** touching the buffer. Cancel leaves the buffer
   byte-identical.

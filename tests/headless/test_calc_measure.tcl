@@ -15869,17 +15869,20 @@ group AD {
               [pcall calc::arg_field_bad {Edge} {enum rising falling} z] \
               [pcall calc::arg_field_bad {Expression} rpn {}] \
               [pcall calc::arg_field_bad {Final value} real -1] \
-              [pcall calc::arg_field_bad {Final value} real 1m]] \
+              [pcall calc::arg_field_bad {Final value} real 1m] \
+              [expr {[pcall calc::arg_field_bad {Final value} real 1M] eq \
+                     [pcall calc::arg_msg capM {Final value} 1M] ? {capM} : {NOTCAPM}}]] \
         [list {label kind v} pure {Dataset must be a whole number (x).} \
               {Edge must be one of rising, falling.} {Expression must not be empty.} \
-              {} {Final value must be a finite number (1m).}]
-    # ⚠ `1m` IS REFUSED AND THAT IS DELIBERATE AT THIS STAGE.  ASE-L's own forms
-    # accept SI suffixes through `ase::si_parse`, so the tree disagrees with
-    # itself -- but that proc needs a PER-SIMULATOR suffix dict (with no dict it
-    # answers a bare `ok` for `abc` and for `5%` alike, measured) and it carries
-    # its own `M`-means-milli warning arm.  Accepting suffixes here would couple
-    # the Calculator to the registry, which is a decision and not a tidy-up, so it
-    # is DECLARED rather than smuggled in beside a defect fix.
+              {} {} capM]
+    # `1m` IS ACCEPTED SINCE calc_feedback_batch ITEM 4 (the user, 2026-10-08:
+    # "We need to support engineering notation as well!").  This row used to
+    # assert it refused, declared as a stage decision; the user has now ruled.
+    # The parser is `calc::num_read`, Calculator-local with ngspice's alphabet
+    # (band E6 of tests/headless/test_calc_engnum.tcl keeps the two equal)
+    # rather than `ase::si_parse`, which needs a per-simulator dict and answers
+    # a multiplied double where the Calculator needs the scientific TEXT.  A
+    # bare uppercase `M` is refused with its own sentence (`capM`), the last leg.
     check "AD every sentence this band's validator can produce is one of `calc::arg_msg`'s own arms, so the wording is swept by band MT20/B with no edit here and this band asserts no words of its own" \
         [list [mt_sl_in [mt_sl_builders] arg_msg] \
               [mt_sl_in [mt_sl_arms arg_msg] real] [mt_sl_in [mt_sl_arms arg_msg] int] \

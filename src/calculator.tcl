@@ -3027,6 +3027,61 @@ proc calc::eval_finite {v} {
     return [expr {$d > -Inf && $d < Inf}]
 }
 
+# A NUMBER AS A USER TYPES ONE INTO A MEASUREMENT ARGUMENT: `calc::eval_finite`'s
+# plain decimals, plus SPICE's scale factors (calc_feedback_batch item 4, the
+# user: "100u for 100e-6 ... We need to support engineering notation as well!").
+#
+# Answers `{ok <text>}`, `{capM {}}` or `{bad {}}`.  <text> is the SCIENTIFIC
+# spelling the user would otherwise have typed: the factor is folded into the
+# exponent as text (`100u` -> `100e-6`), never multiplied, so the verb gets the
+# same double the scientific spelling gives -- `100 * 1e-6` is not `1e-4`.  A
+# plain number comes back byte-identical.  `mil` is the one factor that is not
+# a power of ten and is the one that is multiplied.
+#
+# The alphabet is ngspice's (`::ase::backend::ngspice::si_suffixes`; band E6 of
+# tests/headless/test_calc_engnum.tcl keeps the two equal), case-insensitive,
+# longest match first so `meg` is never read as `m`.  Letters may follow a
+# factor (`100us`), as ngspice allows.  ONE departure, decided here and owed to
+# the user as rule calc_eng_capital_M: a bare uppercase `M` is `capM`, refused,
+# because ngspice reads it as milli silently and a user who typed it meant mega.
+proc calc::num_read {v} {
+    set t [string trim $v]
+    if {[calc::eval_finite $t]} { return [list ok $t] }
+    set mant {} ; set ex {} ; set rest {}
+    if {![regexp {^(-?(?:[0-9]+\.?[0-9]*|\.[0-9]+))(?:[eE]([-+]?[0-9]+))?([A-Za-z]+)$} \
+              $t -> mant ex rest]} {
+        return {bad {}}
+    }
+    set low [string tolower $rest]
+    if {[string match meg* $low]} {
+        set suf meg
+    } elseif {[string match mil* $low]} {
+        set suf mil
+    } else {
+        set suf [string index $low 0]
+    }
+    if {$suf eq {m} && [string index $rest 0] eq {M}} { return {capM {}} }
+    set pow [dict create meg 6 t 12 g 9 k 3 m -3 u -6 n -9 p -12 f -15 a -18]
+    if {$ex eq {}} { set ex 0 }
+    set ex [regsub {^([-+]?)0+([0-9])} $ex {\1\2}]
+    if {$suf eq {mil}} {
+        set out [format %.17g [expr {double("${mant}e$ex") * 25.4e-6}]]
+    } elseif {[dict exists $pow $suf]} {
+        set out "${mant}e[expr {$ex + [dict get $pow $suf]}]"
+    } else {
+        return {bad {}}
+    }
+    if {![calc::eval_finite $out]} { return {bad {}} }
+    return [list ok $out]
+}
+
+# ...the text alone, or {} when it is not a number.
+proc calc::num_eng {v} {
+    set r [calc::num_read $v]
+    if {[lindex $r 0] ne {ok}} { return {} }
+    return [lindex $r 1]
+}
+
 # The answer dict, refusing.  ONE SITE, so the key set cannot drift between the
 # refusing paths and the one success path, however many refusing paths there
 # come to be.  Row CE3 asserts the key set, which is where the count belongs.
@@ -11663,6 +11718,7 @@ proc calc::arg_msg {kind {a {}} {b {}}} {
         badshape { return "Measuring $a: that result shape cannot be placed ($b)." }
         badvalue { return "Measuring $a: the result is not a literal number ($b)." }
         nodialog { return "Measuring $a: the argument dialog did not open ($b)." }
+        capM { return "$a: M is milli in SPICE; type m or meg ($b)." }
     }
     return {}
 }
@@ -11778,7 +11834,9 @@ proc calc::arg_field_bad {label kind v} {
             }
         }
         default {
-            if {![calc::eval_finite $v]} { return [calc::arg_msg real $label $v] }
+            set r [calc::num_read $v]
+            if {[lindex $r 0] eq {capM}} { return [calc::arg_msg capM $label $v] }
+            if {[lindex $r 0] ne {ok}} { return [calc::arg_msg real $label $v] }
         }
     }
     return {}
@@ -12505,6 +12563,25 @@ proc calc::meas_trouble {name vals} {
     return $msgs
 }
 
+# The values the VERB is handed: every `real` argument in the scientific
+# spelling `calc::num_read` derives, everything else untouched.  Applied only at
+# the invocation, so the buffer, the stack and the provenance sentence keep what
+# the user typed (`100u`) and no verb has to learn a second number syntax.
+proc calc::meas_numeric {name vals} {
+    set spec [calc::fn_argspec $name]
+    set out {}
+    foreach {k v} $vals {
+        foreach f $spec {
+            if {[lindex $f 0] eq $k && [lindex $f 2] eq {real}} {
+                set n [calc::num_eng $v]
+                if {$n ne {}} { set v $n }
+            }
+        }
+        lappend out $k $v
+    }
+    return $out
+}
+
 # The sentences this stage owns.
 #
 # ⚠⚠ A `switch` WHOSE EVERY ARM PUTS `return` ON THE PATTERN'S OWN PHYSICAL LINE,
@@ -12744,7 +12821,7 @@ proc calc::meas_apply {name vals g {src {}}} {
     set d {}
     set tok {}
     catch {set tok [dict get $g token]}
-    if {[catch {calc::meas_in_token $tok $name $vals} d]} {
+    if {[catch {calc::meas_in_token $tok $name [calc::meas_numeric $name $vals]} d]} {
         return [calc::arg_msg failed $name $d]
     }
     set ok 0
