@@ -15573,14 +15573,30 @@ group CF {
         6 6
 
     # --- CF5: every accessor ANSWERS with no font command ------------------
-    # This is the arm with no `font` command at all, so this row is the whole
-    # proof that an rc or a headless caller cannot make the model raise.
-    check "CF5 every accessor in the model ANSWERS rather than raising on an arm where the font command does not exist at all, which is this one: the chosen size is empty, the shared size is empty, the effective size is still an in-band integer, the private font resolves to its own stock base name, and the screen room is empty" \
-        [list [pcall calc::_chosen_size] [pcall calc::_shared_size ui] \
-              [string is integer -strict [pcall calc::_base_size]] \
-              [expr {[pcall calc::_base_size] >= $lo && [pcall calc::_base_size] <= $hi}] \
-              [pcall calc::_font ui] [pcall calc::screen_room]] \
-        [list {} {} 1 1 TkDefaultFont {}]
+    # On the counted arm there is no `font` command at all, so the first row is
+    # the whole proof that an rc or a headless caller cannot make the model
+    # raise.  The suite is also run on the display arm, where `font` EXISTS and
+    # the same accessors give that arm's own answers -- the first version of
+    # this row asserted the no-font answers unconditionally and was red there
+    # (a counted-arm claim stated as if it held everywhere).  So the arm is
+    # read, not assumed, and each arm gets the row whose claim is true on it.
+    if {[info commands font] eq {}} {
+        check "CF5 every accessor in the model ANSWERS rather than raising on an arm where the font command does not exist at all, which is this one: the chosen size is empty, the shared size is empty, the effective size is still an in-band integer, the private font resolves to its own stock base name, and the screen room is empty" \
+            [list [pcall calc::_chosen_size] [pcall calc::_shared_size ui] \
+                  [string is integer -strict [pcall calc::_base_size]] \
+                  [expr {[pcall calc::_base_size] >= $lo && [pcall calc::_base_size] <= $hi}] \
+                  [pcall calc::_font ui] [pcall calc::screen_room]] \
+            [list {} {} 1 1 TkDefaultFont {}]
+    } else {
+        check "CF5 on the display arm, where the font command EXISTS but no Calculator window does, every accessor still ANSWERS: the chosen size is empty, the shared size is the stock base's own integer, the effective size is an in-band integer, the private font resolves to the role's OWN private name from the role table rather than the stock base, and the screen room is empty because there is no window to measure" \
+            [list [pcall calc::_chosen_size] \
+                  [string is integer -strict [pcall calc::_shared_size ui]] \
+                  [string is integer -strict [pcall calc::_base_size]] \
+                  [expr {[pcall calc::_base_size] >= $lo && [pcall calc::_base_size] <= $hi}] \
+                  [expr {[pcall calc::_font ui] eq [lindex [pcall dict get [pcall calc::font_roles] ui] 0]}] \
+                  [pcall calc::screen_room]] \
+            [list {} 1 1 1 1 {}]
+    }
     check "CF5 and the two Tk-side painters answer a refusal rather than raising with no window and no font command, so an rc that calls one before the window exists is a no-op and not an error" \
         [list [pcall calc::_apply_font] [pcall calc::relayout]] {0 {}}
 
@@ -15908,10 +15924,15 @@ group AD {
         [list [regexp -all {notify|alert_} [mt_decomment [pcall info body ::calc::arg_dialog_done]]] \
               [regexp -all {notify|alert_} [mt_decomment [pcall info body ::calc::arg_dialog_build]]]] \
         {0 0}
+    # The fixture legs are ARM-NEUTRAL: the first version asserted `winfo` was
+    # absent, which holds only on the counted arm and reddened the display arm
+    # where the claim (no WINDOW, not no Tk) is equally true.  So it asserts the
+    # thing the claim is about -- no `.calc` before, and no `.calc.arg` created.
     check "AD with no window NOTHING in the dialog path raises or writes: the builder answers {} and the dialog's own message variable is left empty, which is the arm an rc calling a setter before the window exists lands on" \
-        [list [pcall calc::arg_dialog_build settlingTime] [pcall set ::calc::argmsg] \
-              [mt_boolword [expr {[info commands winfo] eq {}}] absent PRESENT]] \
-        {{} {} absent}
+        [list [mt_boolword [pcall calc::has_win .calc] PRESENT absent] \
+              [pcall calc::arg_dialog_build settlingTime] [pcall set ::calc::argmsg] \
+              [mt_boolword [pcall calc::has_win .calc.arg] CREATED absent]] \
+        {absent {} {} absent}
     # --- the two raise helpers ------------------------------------------------
     # The user's words: the design window should be *"raise and focus - the way we
     # do for other things like the library manager"*, and the waveform viewer
