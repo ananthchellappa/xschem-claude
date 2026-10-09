@@ -153,13 +153,21 @@ group R0 {
         [list [string first $hov [ciw_text]] [string first $hov [log_tail $l0]]] {-1 -1}
     check "R0e the status line itself still shows the recorded probe (the tee did not replace the first sink)" \
         [lindex [calc::status_history] 0] $probe
+    # Focus is put on a KNOWN widget first, and a leg proves it landed there:
+    # without that, f0 is whatever an earlier call left behind -- including
+    # the CIW, if the tee had already stolen it -- and the row only compares
+    # one copy with the copy before it.
+    catch {focus -force .calc.buf}
+    update
     set f0 {}
     catch {set f0 [focus]}
+    check "R0f0 fixture: the keyboard focus sits on the Calculator buffer before the probe, so R0f compares against a known widget" \
+        $f0 .calc.buf
     calc::status "focus probe"
     update
     set f1 {}
     catch {set f1 [focus]}
-    check "R0f the tee does not move the keyboard focus" $f1 $f0
+    check "R0f the tee does not move the keyboard focus off the widget the user was typing in" $f1 $f0
 }
 
 # --- band P: press every control the user can press, in the empty state -------
@@ -279,6 +287,13 @@ proc script_proc {s} {
 }
 # the procs that speak by themselves
 set ::speakers {calc::status calc::inert calc::pick_echo}
+# A speaker is matched as a whole COMMAND NAME, never as a substring: a line
+# writing calc::statusmsg (the status bar's variable) or calling
+# calc::status_fit / calc::status_history shows text on the Calculator and
+# reaches neither the CIW nor the log, so it must NOT count as speaking.
+proc speaks_in {t} {
+    regexp {(^|[\s\[;\{])(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)} $t
+}
 # DECLARED SILENT ARMS: proc + the arm's own text.  Each must match EXACTLY once.
 #   * Cancel is the user's own choice and R412 requires it to leave nothing;
 #     the same `return {}` text ends the ACCEPTED path, whose caller
@@ -309,16 +324,13 @@ proc classify {p lines} {
             continue
         }
         set cls {}
-        foreach s $::speakers {
-            if {[string first $s $t] >= 0} { set cls speaks ; break }
-        }
-        if {$cls eq {} && [string first calc::status $prev] >= 0} { set cls speaks }
+        if {[speaks_in $t]} { set cls speaks }
+        if {$cls eq {} && [speaks_in $prev]} { set cls speaks }
         # `return $v` where an earlier line set v from a speaker
         if {$cls eq {} && [regexp {return \$(\w+)} $t -> rv]} {
             foreach sl $lines {
-                foreach sp $::speakers {
-                    if {[regexp "set\\s+$rv\\s+\\\[$sp\\M" [string trim $sl]]} { set cls speaks }
-                }
+                set slt [string trim $sl]
+                if {[regexp "^set\\s+$rv\\s+\\\[" $slt] && [speaks_in $slt]} { set cls speaks }
             }
         }
         if {$cls eq {} && [regexp {return \[calc::(\w+)} $t -> dp] && [info procs ::calc::$dp] ne {}} {
@@ -408,6 +420,27 @@ group A {
     rename ::calc::zz_silent_probe {}
     check "A4 the classifier is not vacuous: a synthetic silent arm is reported UNCLASSIFIED and its speaking arm is not" \
         [list [lindex $s 0 2] [lindex $s 1 2]] {UNCLASSIFIED speaks}
+    # An arm that writes the status bar's VARIABLE (or calls a status_*
+    # sibling) shows text on the Calculator and reaches neither the CIW nor the
+    # log -- the user's reported defect -- so it must come out UNCLASSIFIED,
+    # whether the write is on the return line or the line before it.
+    proc ::calc::zz_bar_only_probe {} {
+        if {1} { set ::calc::statusmsg [calc::plot_msg empty] ; return {} }
+        if {2} {
+            set ::calc::statusmsg x
+            return {}
+        }
+        if {3} { calc::status_fit ; return {} }
+        if {4} { calc::status_history ; return {} }
+        if {5} { calc::status x ; return {} }
+        return [::calc::status x]
+    }
+    set s [classify ::calc::zz_bar_only_probe [decomment [info body ::calc::zz_bar_only_probe]]]
+    rename ::calc::zz_bar_only_probe {}
+    set got {}
+    foreach a $s { lappend got [lindex $a 2 0] }
+    check "A4b a status-bar-only arm (writes calc::statusmsg, or calls calc::status_fit / status_history) is UNCLASSIFIED, while a real calc::status call still speaks" \
+        $got {UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks speaks}
     check "A5 the three speakers really route through calc::status, and calc::status really calls the tee" \
         [list [regexp {calc::status} [info body ::calc::inert]] \
               [regexp {calc::status} [info body ::calc::pick_echo]] \
