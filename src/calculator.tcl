@@ -3714,8 +3714,12 @@ proc calc::plot_click {} {
     set tok {}
     catch {set tok [dict get $g token]}
     set d [calc::plot_in_token $tok $rpn [calc::plot_dest_req]]
-    set m {}
+    # Never `set m {}`: calc::status records nothing for an empty sentence, so
+    # an answer with no msg would make this press silent.  Every plot_in_token
+    # arm carries one today; the default is what the user hears if one stops.
+    set m [calc::plot_msg failed {the plot gave no answer}]
     catch {set m [dict get $d msg]}
+    if {$m eq {}} { set m [calc::plot_msg failed {the plot gave no answer}] }
     # ⚠ AFTER the `enter_ctx`/`leave_ctx` bracket has CLOSED, and only on success.
     # `raise_toplevel` ends in a deferred `after 150 _remap_verify`, and a deferred
     # callback that fired inside somebody else's context loan would re-map a window
@@ -12245,7 +12249,13 @@ proc calc::arg_dialog {name} {
         calc::status [calc::arg_msg nodialog $name {no dialog was built}]
         return {}
     }
-    if {![calc::has_win $w]} { return {} }
+    # The Calculator is up (checked above), so a dialog that is already gone is
+    # a refusal, not R508's no-window no-op, and fn_measure would read the empty
+    # answer as the user's Cancel: say so.
+    if {![calc::has_win $w]} {
+        calc::status [calc::arg_msg nodialog $name {it closed before it was shown}]
+        return {}
+    }
     catch {update}
     catch {raise $w}
     catch {grab set $w}
@@ -12407,8 +12417,10 @@ proc calc::fn_measure {name} {
     set gok 0
     catch {set gok [dict get $g ok]}
     if {!$gok} {
-        set m {}
+        # never empty: calc::status records nothing for an empty sentence
+        set m [calc::no_result_advice]
         catch {set m [dict get $g msg]}
+        if {$m eq {}} { set m [calc::no_result_advice] }
         return [calc::status $m]
     }
     set rpn [calc::rpn_of_buffer]

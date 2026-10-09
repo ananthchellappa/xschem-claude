@@ -30,9 +30,12 @@
 ##   * band A reads every handler those controls name, closed over the procs
 ##     they DELEGATE to (`return [calc::X ...]`), strips comments, and classifies
 ##     every `return` arm: it speaks (through calc::status / calc::inert /
-##     calc::pick_echo), delegates to a proc that is itself classified, sits
-##     behind a no-window guard (derived from what its condition tests, never
-##     from the line merely naming a window), or is one of the declared silent
+##     calc::pick_echo -- and only when the call is handed a recorded,
+##     non-empty sentence: record 0, an empty literal, or a `$m` that can be
+##     left `{}` is silent), delegates to a proc that is itself classified, sits
+##     behind a no-window guard (derived from what its condition tests, on a
+##     window path that really exists, never from the line merely naming a
+##     window), or is one of the declared silent
 ##     arms below.  Each handler's reachable END is classified as well, so a
 ##     path that runs off the end of the proc without a word is named too.
 ##     Anything else is an UNCLASSIFIED silent arm and reddens the row by name.
@@ -46,7 +49,10 @@
 ## The line is missing from the CIW only if the CIW was never created.
 ##
 ## DECLARED LIMITS: band A reads source text, so an arm written across a
-## backslash continuation, or a `return` produced by `eval`, is not seen; the
+## backslash continuation, or a `return` produced by `eval`, is not seen; a
+## speaker handed a `[builder ...]` substitution is credited without proving
+## the builder's answer non-empty; a guard must name a
+## literal window path, so one naming `$w` must speak instead; the
 ## behavioural band P is the cross-check for the arms it can reach.  Band P
 ## reaches only the empty state; arms that need a loaded result are covered by
 ## band A and by the tee being inside calc::status.
@@ -290,13 +296,36 @@ group P {
 }
 
 # --- band A: every return arm of every handler, classified --------------------
-# comment lines dropped, and a line whose `[` is still open (or that ends in a
-# backslash) joined to the next, so a call spanning lines is one arm's text
+# A TRAILING `;#` comment is a comment too: `return {} ;# was: calc::status x`
+# is a silent return, and the speaker named inside its comment must not be
+# credited.  The comment text is cut from the first `;#` outside a "-quoted
+# string, and any `}` it carried is put back so the line's brace depth (which
+# closes the enclosing one-line body) is unchanged.
+proc strip_tail_comment {l} {
+    set i 0
+    while {[regexp -indices -start $i {;\s*#} $l r]} {
+        set pre [string range $l 0 [expr {[lindex $r 0] - 1}]]
+        set q [expr {[regexp -all {"} $pre] - [regexp -all {\\"} $pre]}]
+        if {$q % 2 == 0} {
+            set x [string map [list "\\\{" {} "\\\}" {}] [string range $l [lindex $r 0] end]]
+            set close [expr {[regexp -all {\}} $x] - [regexp -all {\{} $x]}]
+            set out [string trimright $pre]
+            if {$close > 0} { append out " " [string repeat "\}" $close] }
+            return $out
+        }
+        set i [expr {[lindex $r 1] + 1}]
+    }
+    return $l
+}
+# comment lines dropped (whole-line and trailing `;#`), and a line whose `[` is
+# still open (or that ends in a backslash) joined to the next, so a call
+# spanning lines is one arm's text
 proc decomment {body} {
     set out {}
     set acc {}
     foreach l [split $body \n] {
         if {$acc eq {} && [regexp {^\s*#} $l]} { continue }
+        set l [strip_tail_comment $l]
         if {$acc ne {}} { set l "$acc [string trim $l]" }
         set open [expr {[regexp -all {\[} $l] - [regexp -all {\]} $l]}]
         if {$open > 0 || [string index $l end] eq "\\"} {
@@ -324,8 +353,92 @@ set ::speakers {calc::status calc::inert calc::pick_echo}
 # writing calc::statusmsg (the status bar's variable) or calling
 # calc::status_fit / calc::status_history shows text on the Calculator and
 # reaches neither the CIW nor the log, so it must NOT count as speaking.
-proc speaks_in {t} {
-    regexp {(^|[\s\[;\{])(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)} $t
+#
+# And a speaker CALL speaks only when what it is handed is a sentence that gets
+# recorded.  `calc::status` returns before recording or teeing for an EMPTY
+# message, and records nothing for `record` other than 1 (hover legends), so:
+#   * `calc::status MSG R` with R anything but a literal 1 is silent;
+#   * an empty literal message (`{}`, `""`, or none at all) is silent;
+#   * a `$v` message speaks only when v is assigned in the proc, and EVERY
+#     assignment to it (`set v X` anywhere, under catch or if included) gives
+#     it a non-empty literal or a command substitution; a v that can be left
+#     `{}` (`set m {}` then `catch {set m [...]}`) cannot be vouched for, nor
+#     can a formal the caller supplies;
+#   * any other message (a `[builder ...]` substitution, a non-empty literal or
+#     quoted string) speaks.  A builder's answer is not proven non-empty here
+#     (declared in the header).
+#   * calc::inert always speaks (its sentence is built from a literal).
+# Tcl words of a text: whitespace-separated, re-joined while a word is not yet
+# a complete Tcl word (open bracket, brace or quote).
+proc tcl_words {s} {
+    set out {} ; set acc {}
+    foreach w [regexp -all -inline {\S+} $s] {
+        if {$acc ne {}} { set w "$acc $w" }
+        set b [expr {[regexp -all {\[} $w] - [regexp -all {\]} $w]}]
+        if {$b != 0 || ![info complete $w]} { set acc $w ; continue }
+        set acc {}
+        lappend out $w
+    }
+    if {$acc ne {}} { lappend out $acc }
+    return $out
+}
+# Every speaker call on a line, in order: {name argtext}, the call ending at
+# the first `]`, `;`, `}` or end of line at which its argument text is complete.
+proc speaker_calls {t} {
+    set out {} ; set i 0
+    set re {(^|[\s\[;\{])(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)}
+    while {[regexp -indices -start $i $re $t all pre colons nm]} {
+        set j [expr {[lindex $nm 1] + 1}]
+        set n [string length $t]
+        set k $j
+        while {$k < $n} {
+            set c [string index $t $k]
+            if {$c in {] ; \}}} {
+                set a [string range $t $j [expr {$k - 1}]]
+                if {[info complete $a] && [regexp -all {\[} $a] == [regexp -all {\]} $a]} { break }
+            }
+            incr k
+        }
+        lappend out [list [string range $t {*}$nm] [string range $t $j [expr {$k - 1}]]]
+        set i [expr {[lindex $nm 1] + 1}]
+    }
+    return $out
+}
+proc empty_word {w} { expr {$w eq "\{\}" || $w eq "\"\""} }
+proc call_speaks {call lines} {
+    lassign $call nm argt
+    if {$nm eq {inert}} { return 1 }
+    set ws [tcl_words $argt]
+    if {[llength $ws] == 0 || [empty_word [lindex $ws 0]]} { return 0 }
+    if {$nm eq {status} && [llength $ws] >= 2 && [lindex $ws 1] ne {1}} { return 0 }
+    set m [lindex $ws 0]
+    if {[regexp {^\$\{?(\w+)\}?$} $m -> v]} {
+        set seen 0
+        foreach l $lines {
+            set i 0
+            while {[regexp -indices -start $i "(^|\[\\s\\\[;\{\])set\\s+$v\\s+" $l r]} {
+                set vw [lindex [tcl_words [string range $l [expr {[lindex $r 1] + 1}] end]] 0]
+                # drop the closers that end the ENCLOSING command, not the word
+                while {[string index $vw end] in {\} \] ;}} {
+                    set x [string map [list "\\\{" {} "\\\}" {} "\\\[" {} "\\\]" {}] $vw]
+                    set c [string index $vw end]
+                    if {$c eq {;} || ($c eq "\}" && [regexp -all {\}} $x] > [regexp -all {\{} $x]) \
+                            || ($c eq {]} && [regexp -all {\]} $x] > [regexp -all {\[} $x])} {
+                        set vw [string range $vw 0 end-1]
+                    } else { break }
+                }
+                if {$vw eq {} || [empty_word $vw]} { return 0 }
+                set seen 1
+                set i [expr {[lindex $r 1] + 1}]
+            }
+        }
+        return $seen
+    }
+    return 1
+}
+proc speaks_in {t {lines {}}} {
+    foreach c [speaker_calls $t] { if {[call_speaks $c $lines]} { return 1 } }
+    return 0
 }
 # DECLARED SILENT ARMS: proc + the arm's own text.  Each must match EXACTLY once.
 #   * Cancel is the user's own choice and R412 requires it to leave nothing;
@@ -360,8 +473,9 @@ proc line_depths {lines} {
 # A statement that speaks UNCONDITIONALLY when it runs: the speaker is the
 # line's own command (optionally under catch, or as `set v [speaker`), never a
 # call buried inside an if/foreach/switch body on that line.
-proc speaks_stmt {t} {
-    regexp {^((catch\s+\{\s*)|(set\s+\w+\s+\[\s*))?(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)} $t
+proc speaks_stmt {t {lines {}}} {
+    if {![regexp {^((catch\s+\{\s*)|(set\s+\w+\s+\[\s*))?(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)} $t]} { return 0 }
+    return [call_speaks [lindex [speaker_calls $t] 0] $lines]
 }
 # The PREV-LINE rule: a BARE `return ...` (the return is the line's own
 # command, not the body of a one-line if) speaks when the statement directly
@@ -391,9 +505,13 @@ proc guard_line {t} {
     set cond [lindex $t 1]
     if {[string first && $cond] >= 0} { return 0 }
     foreach term [split [string map [list || \x01] $cond] \x01] {
-        if {![regexp {^\s*!\s*\[\s*(::)?(calc::has_win|winfo\s+exists)\s+[^\s\[\]]+\s*\]\s*$} $term]} {
+        if {![regexp {^\s*!\s*\[\s*(::)?(calc::has_win|winfo\s+exists)\s+([^\s\[\]]+)\s*\]\s*$} $term -> - - w]} {
             return 0
         }
+        # the window must be REAL: a guard naming a path that never exists
+        # (`.calc.mode.plott`) fires every time, a silent refusal shaped like
+        # a guard.  Measured live, with the Calculator open (fixture F1).
+        if {![regexp {^\.[\w.]+$} $w] || ![winfo exists $w]} { return 0 }
     }
     return 1
 }
@@ -418,7 +536,7 @@ proc end_arm {p lines} {
     if {[regexp {^return(\s|$)} $t]} { return [list $p $t return] }
     set last [expr {[llength $lines] - 1}]
     while {$last > $i && [string trim [lindex $lines $last]] eq {}} { incr last -1 }
-    if {$last == $i && [speaks_stmt $t]} { return [list $p "<falls off the end after: $t>" speaks] }
+    if {$last == $i && [speaks_stmt $t $lines]} { return [list $p "<falls off the end after: $t>" speaks] }
     return [list $p "<falls off the end after: $t>" UNCLASSIFIED]
 }
 proc classify {p lines} {
@@ -431,7 +549,7 @@ proc classify {p lines} {
         set d [lindex $deps $i]
         set bare [regexp {^return(\s|$)} $t]
         set cls {}
-        if {[speaks_in $t]} { set cls speaks }
+        if {[speaks_in $t $lines]} { set cls speaks }
         if {$cls eq {} && $bare && $i > 0} {
             set j [expr {$i - 1}]
             while {$j >= 0 && [string trim [lindex $lines $j]] eq {}} { incr j -1 }
@@ -440,7 +558,7 @@ proc classify {p lines} {
                 if {[lindex $deps $j] == $d && ![string match "\}*" $pt] \
                         && [string index $pt end] ne "\{" \
                         && ![regexp {(^|[;\{\[]\s*)return(\s|$|\])} $pt] \
-                        && [speaks_stmt $pt]} {
+                        && [speaks_stmt $pt $lines]} {
                     set cls speaks
                 }
             }
@@ -454,12 +572,15 @@ proc classify {p lines} {
                 if {$pd > $m} { continue }
                 set m $pd
                 if {[regexp "^set\\s+$rv\\s" $pt]} {
-                    if {[speaks_stmt $pt]} { set cls speaks }
+                    if {[speaks_stmt $pt $lines]} { set cls speaks }
                     break
                 }
             }
         }
-        if {$cls eq {} && [regexp {return \[calc::(\w+)} $t -> dp] && [info procs ::calc::$dp] ne {}} {
+        # a speaker is not a delegate: `return [calc::status {}]` handed to
+        # calc::status is judged above by its argument, never excused here
+        if {$cls eq {} && [regexp {return \[calc::(\w+)} $t -> dp] && [info procs ::calc::$dp] ne {} \
+                && "calc::$dp" ni $::speakers} {
             set cls [list delegates ::calc::$dp]
         }
         if {$cls eq {} && [guard_line $t]} { set cls guard }
@@ -669,6 +790,43 @@ group A {
     foreach a $s { lappend got [lindex $a 2 0] }
     check "A4f through classify, a refusal that merely mentions has_win is UNCLASSIFIED and a real no-window guard is still guarded" \
         $got {UNCLASSIFIED guard speaks}
+    # What a speaker is HANDED decides whether it speaks.  The silent shapes,
+    # in order: a record-0 call (a legend, never recorded or teed), an empty
+    # literal sentence, a `$m` that can be left `{}`, a guard naming a window
+    # that never exists (a typo), and a silent return whose trailing `;#`
+    # comment names a speaker.  The speaking shapes after them -- a builder
+    # substitution, a non-empty literal, a `$m` every assignment of which is a
+    # sentence, record given as 1, a comment that only follows a speaking
+    # return, a real guard -- keep the probe from passing by calling
+    # everything silent.
+    proc ::calc::zz_arg_probe {rpn} {
+        if {1} { return [calc::status [calc::eval_msg empty] 0] }
+        if {2} { return [calc::status {}] }
+        if {3} {
+            set m {}
+            catch {set m [calc::eval_msg empty]}
+            return [calc::status $m]
+        }
+        if {![calc::has_win .calc.mode.plott]} { return {} }
+        if {5} { return {} } ;# was: calc::status [calc::eval_msg empty]
+        if {6} { return [calc::status [calc::eval_msg empty]] }
+        if {7} { return [calc::status "x: $rpn"] }
+        if {8} {
+            set n [calc::eval_msg empty]
+            catch {set n [calc::plot_msg empty]}
+            return [calc::status $n]
+        }
+        if {9} { return [calc::status x 1] }
+        if {10} { return [calc::status x] } ;# a comment after a speaker
+        if {![calc::has_win .calc.mode.plot]} { return {} }
+        return [calc::status x]
+    }
+    set s [classify ::calc::zz_arg_probe [decomment [info body ::calc::zz_arg_probe]]]
+    rename ::calc::zz_arg_probe {}
+    set got {}
+    foreach a $s { lappend got [lindex $a 2 0] }
+    check "A4g a speaker handed record 0, an empty sentence, or a \$m that can be left empty is UNCLASSIFIED (never a delegate either), as are a guard naming a window that does not exist and a silent return whose trailing comment names a speaker; real sentences, record 1, a speaker before a comment and a real guard are not" \
+        $got {UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks speaks speaks speaks speaks guard speaks}
     set fell {}
     set nret 0
     set nsp 0

@@ -19357,9 +19357,12 @@ proc replay_action_log {file} {
 # NO tk_messageBox, DELIBERATELY. A modal box here would make the door's own
 # failure paths undrivable on every arm that has a display (the same modal-vwait
 # stall that hangs a headless probe), so the failure would become the one thing
-# no suite could measure. Known limit of that choice: with the CIW pane closed
-# ciw_echo no-ops, so an interactive user who has closed the CIW sees nothing but
-# the effect. `Raise CIW window` is two entries away on the same menu.
+# no suite could measure. Known limit of that choice: closing the CIW only
+# WITHDRAWS `.ciw` (its WM_DELETE_WINDOW handler in src/ciw.tcl), so its pane
+# survives and ciw_echo still writes the outcome into it -- but an interactive
+# user who has closed the CIW sees nothing but the effect until they raise it
+# again; only a CIW that was never created loses the line. `Raise CIW window`
+# is two entries away on the same menu.
 #
 # WHAT IT CANNOT PROMISE, and says so in its own message: `source` evaluates
 # commands ONE AT A TIME, so a log that fails on line 7 has ALREADY applied lines
