@@ -9503,15 +9503,35 @@ proc calc::pick_release {} {
 # ⚠ AND NEITHER OF THOSE TWO SAYS ANYTHING: on `switch` the new arm's own
 # sentence follows immediately, and on `close` the window carrying the status
 # line is already going away.
+#
+# ⚠ `picked` IS R208b's END: the pick resolved a net and the mode is one-shot.
+# It says nothing NEW -- the success sentence `calc::pick_echo` already wrote is
+# the last word on both channels -- and it leaves that sentence on the design
+# window's slot in its NEUTRAL state, so the user reads what was inserted where
+# they clicked while the slot no longer looks like a live mode.  C blanks it on
+# the next canvas event, which is the right lifetime for a confirmation.  An
+# ESC (or any `cancel`) that lands between the resolving press and its release
+# is the same end: the name is already in the buffer, so `cancelled` would lie.
 proc calc::pick_end {{why cancel}} {
     variable pick
     variable selmode
     set id [calc::pick_id]
+    if {$why eq {cancel} && [info exists pick(done)]} { set why picked }
+    set cv {}
+    set said {}
+    catch {set cv $pick(canvas)}
+    catch {set said $pick(prompt)}
     set r [calc::pick_release]
     array unset pick
     if {$why eq {switch} || $why eq {close}} { return $r }
     if {$id eq {}} { return $r }
     set selmode {}
+    if {$why eq {picked}} {
+        if {$cv ne {} && $said ne {}} {
+            catch {[ase::ui::sod_statusbar $cv] configure -state normal -text $said}
+        }
+        return $r
+    }
     set kind cancelled
     if {$why eq {moved}} { set kind moved }
     if {$why eq {dropped}} { set kind dropped }
@@ -9711,7 +9731,7 @@ proc calc::pick_arm {id} {
 # one frame.  So the newest sentence BECOMES the prompt and the pump keeps it up.
 # The arming instruction it replaces has already been read by then; a refusal
 # carries its own instruction ("click a wire or a net label") and a success names
-# what was inserted, which is the sticky mode's own affordance.
+# what was inserted -- and `calc::pick_end picked` (R208b) leaves it on the slot.
 #
 # Both channels are written: the status line is the durable record
 # `calc::status_history` keeps, and R509 keeps the history.
@@ -9733,6 +9753,7 @@ proc calc::pick_echo {s} {
 proc calc::pick_click {{x {}} {y {}}} {
     variable pick
     if {![info exists pick(id)]} { return {} }
+    if {[info exists pick(done)]} { return [calc::pick_end picked] }
     set id $pick(id)
     set base [calc::pick_base $pick(design)]
     if {$base < 0} { return [calc::pick_end moved] }
@@ -9771,8 +9792,37 @@ proc calc::pick_click {{x {}} {y {}}} {
     set an {}
     catch {set an [xschem raw sim_type]}
     if {[string match ERR:* $an]} { set an {} }
-    return [calc::pick_echo \
-                [calc::pick_fit $id $name [calc::pick_cadence $net $base] $an]]
+    set s [calc::pick_echo \
+               [calc::pick_fit $id $name [calc::pick_cadence $net $base] $an]]
+    calc::pick_done
+    return $s
+}
+
+# R208b: A PICK THAT RESOLVED A NET IS ONE-SHOT, and the mode ends ON THE RELEASE
+# of the resolving click rather than inside its press.  The user's words
+# (doc/claude/calc_feedback_batch/BATCH.md item 9): *"Clicking on one of the
+# Selectors (such as vt or vf) is a one-time thing ... ESC should not be required
+# to exit that mode"*.  A MISS still leaves the mode armed with its sentence.
+#
+# ⚠ WHY NOT END INSIDE THE PRESS.  The press is `break`ed before C sees it, so C
+# has no button down.  Hand the four slots back mid-click and the rest of the
+# SAME click reaches C: a one-pixel drift with Button1 held is a <B1-Motion>
+# that runs select_rect(START) + unselect_all (the hazard `calc::_pick_seize`'s
+# fourth slot exists for), and the release lands on C with no press behind it.
+# So the seize stays whole until the release, and only the release slot is
+# re-pointed at the end path.  `calc::_pick_seize`'s latch guard compares the
+# PRESS slot only, so this re-point can never be latched as a predecessor, and
+# `calc::pick_release` restores the release slot from `pick(prevrel)` as always.
+#
+# ⚠ A RELEASE THAT NEVER COMES (a caller driving `calc::pick_click` with no
+# button at all, or a suspend/resume between press and release) is covered by
+# `calc::pick_click` itself: the next press on a finished pick ends it.
+proc calc::pick_done {} {
+    variable pick
+    if {![info exists pick(canvas)]} { return 0 }
+    set pick(done) 1
+    catch {bind $pick(canvas) <ButtonRelease-1> "[list calc::pick_end picked]; break"}
+    return 1
 }
 
 # ---------------------------------------------------------------------------

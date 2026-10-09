@@ -213,6 +213,31 @@ proc pg_click {cv x y} {
     event generate $cv <ButtonRelease-1> -x [lindex $p 0] -y [lindex $p 1]
     update
 }
+# the resolving click WITH THE HAND DRIFTING while the button is down: press at
+# one schematic point, a Button1-held motion to another, release there.  It is
+# the drive that tells an end ON THE RELEASE from an end INSIDE THE PRESS --
+# with the slots handed back mid-click, the held motion reaches C as a rubber
+# band (select_rect START + unselect_all) and the release closes it over
+# whatever the rectangle covers.  `-state 256` is Button1Mask.  The drift is
+# SEVERAL motions, as a hand's is: C starts the band on the first held motion
+# past its stickiness threshold and grows it on the later ones, so a single
+# motion would open and close a zero-size band and select nothing either way.
+proc pg_drift_click {cv x y x2 y2} {
+    set p [pg_px $x $y] ; set q [pg_px $x2 $y2]
+    update
+    event generate $cv <Motion> -x [lindex $p 0] -y [lindex $p 1]
+    update
+    event generate $cv <ButtonPress-1> -x [lindex $p 0] -y [lindex $p 1]
+    update
+    foreach f {0.1 0.4 0.7 1.0} {
+        set mx [expr {int(round([lindex $p 0] + $f * ([lindex $q 0] - [lindex $p 0])))}]
+        set my [expr {int(round([lindex $p 1] + $f * ([lindex $q 1] - [lindex $p 1])))}]
+        event generate $cv <Motion> -x $mx -y $my -state 256
+        update
+    }
+    event generate $cv <ButtonRelease-1> -x [lindex $q 0] -y [lindex $q 1] -state 256
+    update
+}
 # where C thinks the pointer is, in schematic units, after a motion
 proc pg_mouse {cv x y} {
     set p [pg_px $x $y]
@@ -373,7 +398,8 @@ group PG3 {
     .calc.buf insert end {an_expression+}
     .calc.buf mark set insert end-1c
     set typed [pg_buf]
-    pg_click $::calc::pick(canvas) 50 0
+    set cv3 $::calc::pick(canvas)
+    pg_click $cv3 50 0
     set after [pg_buf]
     check "PG3 the user's own example, end to end: with `an_expression+` typed, a click on the wire labelled `lp` leaves the buffer holding that text plus the vector name, separated by exactly ONE space -- and the space is FORCED, not chosen, because §3.1's lexer splits on whitespace and would read `an_expression+v(lp)` as one unknown token" \
         [list $typed $after [pcall calc::rpn_bad_token an_expression+v(lp)]] \
@@ -384,22 +410,41 @@ group PG3 {
         [list [pcall .calc.buf edit undo] [pg_buf] \
               [pcall .calc.buf edit undo] [pg_buf]] \
         [list {} {an_expression+} {} {}]
-    check "PG3 the mode is STILL LIVE after a successful pick (R208's sticky mode), so a second net can be picked without re-clicking the selector" \
-        [list [pcall calc::pick_running] [pcall calc::pick_id] \
-              [pcall bind $::calc::pick(canvas) <ButtonPress-1>]] \
-        [list 1 vt {calc::pick_click; break}]
-    .calc.buf delete 1.0 end
-    pg_click $::calc::pick(canvas) 50 100
-    check "PG3 ...measured by doing it: a second click on a different net inserts that net's name, so the mode really is reusable" \
-        [pg_buf] {v(sq)}
+    # ⚠⚠ R208b, THE USER'S OWN CORRECTION OF R208's STICKY MODE (2026-10-08,
+    # doc/claude/calc_feedback_batch/BATCH.md item 9): *"Clicking on one of the
+    # Selectors (such as vt or vf) is a one-time thing ... ESC should not be
+    # required to exit that mode"*.  A pick that RESOLVED a net ends the mode by
+    # itself and hands the four slots back byte-identically.  The fence is the
+    # gesture the user makes next: a second click on the canvas, which must reach
+    # xschem as an ordinary click -- it SELECTS the wire and inserts nothing.
+    check "PG3 R208b: a pick that RESOLVED a net is ONE-SHOT -- the mode ends by itself on the click, `::calc::selmode` is cleared so the selector grid shows nothing armed, and no ESC is needed" \
+        [list [pcall calc::pick_running] [pcall calc::pick_id] [set ::calc::selmode] \
+              [expr {[info exists ::calc::pick] ? 1 : 0}]] \
+        [list 0 {} {} 0]
+    check "PG3 R208b ...and all four gesture slots are handed back BYTE-IDENTICALLY, the EMPTY-vs-ABSENT distinction included, so the canvas is xschem's own again" \
+        [pg_binds $cv3] \
+        [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+              [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]
+    check "PG3 R208b ...and the success sentence is still the last thing the Calculator said: ending the mode does not overwrite it with a `cancelled`" \
+        [lindex [pcall calc::status_history] 0] {selector vt: v(lp) from /lp}
     check "PG3 R208: a pick SELECTS NOTHING on the schematic (issue 0204) -- the probe is read-only and the user's own ruling is that a command mode must not change the selected set" \
         [list [pcall xschem selection] [pcall xschem get lastsel]] {{} 0}
+    .calc.buf delete 1.0 end
+    pg_click $cv3 50 100
+    set sel3 [pcall xschem get lastsel]
+    check "PG3 R208b measured by doing it: a SECOND click on the canvas is ordinary xschem -- it inserts nothing into the buffer, leaves the mode off, and SELECTS the wire under it, which is what xschem does with a click when no mode holds the canvas" \
+        [list [pg_buf] [pcall calc::pick_running] [pg_word [expr {$sel3 >= 1}] selected "lastsel=$sel3"]] \
+        [list {} 0 selected]
+    pcall xschem unselect_all
+    pcall xschem unhilight_all
 }
 
 # =============================================================================
 # PG4 — R203's REFUSALS, WITH REAL CLICKS
 # =============================================================================
 group PG4 {
+    # PG3's success ended the mode (R208b), so this band arms its own.
+    pcall calc::pick_arm vt
     .calc.buf delete 1.0 end
     .calc.buf insert end {keepme}
     set cv $::calc::pick(canvas)
@@ -417,8 +462,26 @@ group PG4 {
                    {selector vt: that is a device terminal, not a net} keepme 1]
     check "PG4 ...and the seize is still in place after both refusals, which is the claim `still live` actually rests on" \
         [pcall bind $cv <ButtonPress-1>] {calc::pick_click; break}
-    check "PG4 nothing was selected by any of it (issue 0204), after a success and two refusals" \
+    check "PG4 nothing was selected by any of it (issue 0204), after two refusals" \
         [list [pcall xschem selection] [pcall xschem get lastsel]] {{} 0}
+    # R208b's other half: the mode a miss left armed ends on the FIRST click that
+    # resolves, so a mis-click costs the user nothing but the second try.
+    .calc.buf delete 1.0 end
+    # the user's own selection is IN PLACE before the gesture, so the row below
+    # can see it survive -- an empty selection cannot be cleared, and C's band
+    # clears whatever is selected the moment a held motion passes its threshold.
+    pcall xschem select instance M1
+    set sel0 [pcall xschem selection]
+    pg_drift_click $cv 50 0 600 300
+    check "PG4 R208b: after two refusals the mode is still the SAME pick, and the first click that resolves a net inserts it and ends the mode with the four slots handed back" \
+        [list [pg_buf] [pcall calc::pick_running] [set ::calc::selmode] [pg_binds $cv]] \
+        [list {v(lp)} 0 {} [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                                 [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
+    check "PG4 ...and that resolving click LEFT THE USER'S SELECTION EXACTLY AS IT WAS, although the hand DRIFTED across the sheet with the button down: the mode ends on the RELEASE, so the held motion and the release are still eaten by the seize -- ended inside the press instead, the held motion reaches C as a rubber band whose first act is unselect_all" \
+        [list [pg_word [expr {$sel0 ne {}}] seeded EMPTY] [pcall xschem selection] [pcall xschem get lastsel]] \
+        [list seeded $sel0 1]
+    pcall xschem unselect_all
+    pcall calc::pick_arm vt
 }
 
 # =============================================================================
@@ -519,9 +582,11 @@ group PG13 {
     update
     .calc.buf delete 1.0 end
     pg_click $cv 50 0
-    check "PG13 a SUCCESSFUL pick's sentence reaches the DESIGN window's own status slot and not only the Calculator's -- which matters precisely because the pick now raises the schematic OVER the Calculator, so `.calc.status.msg` is behind another window for the whole gesture" \
-        [list [pcall $slot cget -text] [lindex [pcall calc::status_history] 0] [pg_buf]] \
-        [list {selector vt: v(lp) from /lp} {selector vt: v(lp) from /lp} {v(lp)}]
+    check "PG13 a SUCCESSFUL pick's sentence reaches the DESIGN window's own status slot and not only the Calculator's -- which matters precisely because the pick now raises the schematic OVER the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  Under R208b the mode has ENDED by then, so the slot holds the sentence in its neutral state rather than as a live prompt" \
+        [list [pcall $slot cget -text] [pcall $slot cget -state] \
+              [lindex [pcall calc::status_history] 0] [pg_buf] [pcall calc::pick_running]] \
+        [list {selector vt: v(lp) from /lp} normal {selector vt: v(lp) from /lp} {v(lp)} 0]
+    pcall calc::pick_arm vt
     pg_click $cv 310 0
     check "PG13 ...and so does a REFUSAL, with its own instruction, so a mis-click is answered where the eye already is" \
         [list [pcall $slot cget -text] [pg_buf]] \
@@ -598,11 +663,11 @@ group PG14 {
         set ref [dg $d value]
         catch {wviewer::leave_ctx $::tok $t}
     }
-    check "PG14 fixture: the pick inserted `v(sq)`, the mode is still armed, the reference is a real finite crossing, and the context current at the press is the DESIGN window's and NOT the viewer's -- the exact state the user pressed Eval in, so the row below cannot pass by the viewer happening to be current" \
+    check "PG14 fixture: the pick inserted `v(sq)`, the mode ENDED by itself (R208b), the reference is a real finite crossing, and the context current at the press is the DESIGN window's and NOT the viewer's -- the exact state the user pressed Eval in, so the row below cannot pass by the viewer happening to be current" \
         [list $picked [pcall calc::pick_running] \
               [pg_word [string is double -strict $ref] finite $ref] \
               [pg_word [expr {$vwp ne {} && $cwp0 ne $vwp}] designctx "cwp=$cwp0 viewer=$vwp"]] \
-        {v(sq) 1 finite designctx}
+        {v(sq) 0 finite designctx}
     pg_press .calc.mode.eval
     set got [pg_buf]
     check "PG14 Eval after a pick REPLACES the buffer with the measured value and PUSHES the expression onto the stack, exactly as it does for the same text typed -- the user's item 1" \
@@ -612,9 +677,9 @@ group PG14 {
     check "PG14 ...and the status line is the provenance sentence, not a refusal" \
         [pg_word [string match {cross(*) = *} [lindex [pcall calc::status_history] 0]] provenance \
              [lindex [pcall calc::status_history] 0]] provenance
-    check "PG14 ...and the press PUT THE CONTEXT BACK: the design window is still current and the pick is still armed, so the loan the measurement took is invisible to the gesture around it" \
+    check "PG14 ...and the press PUT THE CONTEXT BACK: the design window is still current and nothing was re-armed, so the loan the measurement took is invisible to the gesture around it" \
         [list [pcall xschem get current_win_path] [pcall calc::pick_running]] \
-        [list $cwp0 1]
+        [list $cwp0 0]
     pcall calc::pick_end cancel
     pcall calc::stk_set {}
     .calc.buf delete 1.0 end

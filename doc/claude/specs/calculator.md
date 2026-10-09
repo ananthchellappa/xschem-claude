@@ -610,7 +610,7 @@ thing" is the defect the user reported on 2026-10-07.
   A read-back carrying whitespace is **refused rather than inserted**: §3.1's lexer splits
   on `" \t\n"`, so such a name cannot be evaluated and inserting it would move the
   failure three steps downstream, which is exactly what R204 exists to prevent.
-- **R208** A net pick is a **sticky mode**, and the buffer gets the **evaluable** name
+- **R208** A net pick is a **mode** (one-shot on success since R208b), and the buffer gets the **evaluable** name
   while the status line gets the **Cadence** path. Both halves are the user's ruling
   (2026-10-07).
   Cadence's own spelling, `vt("/hier/path/to/net")`, is SKILL syntax that this tree's RPN
@@ -645,13 +645,29 @@ thing" is the defect the user reported on 2026-10-07.
   sentence is written to the design window's own status slot as well** — through
   `pick(prompt)`, so the 80 ms pump keeps it up against C's `update_statusbar()` blanking
   the slot, *and* directly, so the user reads it in the same frame as their click.
-  The mode stays armed after a successful pick, so a second net can be picked without
-  re-clicking the selector. Its exits are `Escape` (R306), a re-click on the armed
+  ⚠ **Superseded by R208b**: the mode used to stay armed after a successful pick. Its
+  other exits are `Escape` (R306), a re-click on the armed
   selector (R201), a click on another selector, the design window going away, a
   navigation that takes the design out of that window's hierarchy stack, and closing the
   Calculator (R307). A miss — empty canvas, a device body, a terminal, an unresolvable
   name, a wire with no resolvable name — refuses **with a sentence** and leaves the mode
   live, because a mode that ended on a mis-click would be unusable.
+- **R208b** **A pick that resolves a net is ONE-SHOT** — the user's correction of R208's
+  sticky mode, 2026-10-08 (`doc/claude/calc_feedback_batch/BATCH.md` item 9): *"Clicking
+  on one of the Selectors (such as vt or vf) is a one-time thing. User is not expected to
+  click on multiple nets in the schematic. so, ESC should not be required to exit that
+  "mode"."* The name is inserted, the success sentence is written to both status
+  channels, and the mode ends **on the release of that same click**: `::calc::selmode`
+  clears, the four seized slots are handed back byte-identically, and the design window's
+  slot keeps the success sentence in its neutral state until C next blanks it. The end
+  waits for the release, not the press, because the press never reached C — handing the
+  slots back mid-click would let a held drift reach C as a rubber band (`select_rect`
+  START + `unselect_all`), which clears the user's selection (row PG4's drift drive).
+  A **miss** still refuses with its sentence and **leaves the mode armed** — the
+  assistant's choice, recorded as owed rule `calc_r208b_miss_stays_armed`. An ESC
+  between the resolving press and its release ends the mode as `picked`, not
+  `cancelled`, since the name is already in the buffer. The RDW's pick
+  (`rdw::pick_*`) shares no code with this one and is unchanged.
   ⚠ **v1 scope is the four voltage ids** (`vt` `vf` `vdc` `vs`), which §5's table gives
   one emission. The current ids pick a terminal (R203), §5 gives them `@<dev>[<term>]`,
   and the tree's only zoom-scaled pin hit test (`find_closest_pin`, `findnet.c`) has **no
