@@ -1849,6 +1849,12 @@ proc calc::status {{msg {}} {record 1}} {
 # point every notice suite stubs), each is caught, and neither moves the focus.
 # The log line is a `#= ` comment, so Xschem.log stays replayable.
 #
+# A CLOSED CIW STILL RECEIVES THE LINE: closing the CIW only withdraws `.ciw`
+# (its WM_DELETE_WINDOW script in src/ciw.tcl), the pane survives, and the line
+# is waiting there when the CIW is reopened -- so the `ciw` sink is reported
+# then too.  Only a CIW that was never created misses it (::ciw_echo no-ops).
+# Fenced by row R0g of tests/headless/test_calc_refusal_ciw.tcl.
+#
 # Returns the sinks that really took the line; `calc::ciw_last` keeps it.
 proc calc::ciw_say {msg} {
     variable ciwlast

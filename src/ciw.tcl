@@ -545,8 +545,10 @@ proc ciw_echo {line {tag {}}} {
 ## window 2, and editor contexts are 3,4,5,... For an editor window the caller omits
 ## 'name' and it is filled in from the active schematic's cell. Deduped on
 ## ::last_active_window so repeated FocusIn events (and WSLg focus thrash) log only on an
-## actual change of the active window. Safe no-op when the CIW is closed (ciw_echo
-## no-ops). Spec: doc/claude/specs/window_numbering.md.
+## actual change of the active window. Safe no-op when the CIW was never created
+## (ciw_echo no-ops); when the CIW is CLOSED it is only withdrawn (its WM_DELETE_WINDOW
+## script in ciw_create), so the line still lands in the pane and is there when it is
+## reopened. Spec: doc/claude/specs/window_numbering.md.
 proc notify_window_active {num {name {}}} {
   global last_active_window
   if {[info exists last_active_window] && $last_active_window eq $num} return

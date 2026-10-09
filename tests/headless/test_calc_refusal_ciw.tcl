@@ -31,11 +31,19 @@
 ##     they DELEGATE to (`return [calc::X ...]`), strips comments, and classifies
 ##     every `return` arm: it speaks (through calc::status / calc::inert /
 ##     calc::pick_echo), delegates to a proc that is itself classified, sits
-##     behind a no-window guard, or is one of the declared silent arms below.
+##     behind a no-window guard (derived from what its condition tests, never
+##     from the line merely naming a window), or is one of the declared silent
+##     arms below.  Each handler's reachable END is classified as well, so a
+##     path that runs off the end of the proc without a word is named too.
 ##     Anything else is an UNCLASSIFIED silent arm and reddens the row by name.
 ##     A synthetic silent proc is fed to the same classifier as the
 ##     non-vacuity leg, and every declared exemption must match exactly once
 ##     so a stale one reddens too.
+##
+## A CLOSED CIW STILL RECEIVES THE LINE (row R0g): closing the CIW withdraws
+## `.ciw` (its WM_DELETE_WINDOW script in src/ciw.tcl) and the pane survives,
+## so a refusal made while it is closed is in the pane when it is reopened.
+## The line is missing from the CIW only if the CIW was never created.
 ##
 ## DECLARED LIMITS: band A reads source text, so an arm written across a
 ## backslash continuation, or a `return` produced by `eval`, is not seen; the
@@ -168,6 +176,31 @@ group R0 {
     set f1 {}
     catch {set f1 [focus]}
     check "R0f the tee does not move the keyboard focus off the widget the user was typing in" $f1 $f0
+    # A CLOSED CIW STILL HEARS IT.  The CIW's close is its own WM_DELETE_WINDOW
+    # script (src/ciw.tcl, ciw_create), which WITHDRAWS `.ciw` rather than
+    # destroying it, so the pane still exists and ::ciw_echo writes into it:
+    # the line is waiting there when the user reopens the CIW.  The close is
+    # driven by evaluating that protocol script -- not by a hand-written
+    # `wm withdraw` -- so the row measures what the title-bar X really does.
+    # A line is lost from the CIW only when the CIW was never created (then
+    # ::ciw_echo no-ops and calc::ciw_say does not report the `ciw` sink).
+    set wasmapped [winfo ismapped .ciw]
+    set closer [wm protocol .ciw WM_DELETE_WINDOW]
+    catch {uplevel #0 $closer}
+    update
+    set c0 [ciw_text]
+    set cprobe "closed-ciw probe [clock clicks]"
+    calc::status $cprobe
+    update idletasks
+    set sinks {}
+    catch {set sinks [dict get [calc::ciw_last] sinks]}
+    check "R0g a refusal made while the CIW is CLOSED (its own close script run) still lands in the CIW pane, which survives the close, and ciw_say reports the ciw sink" \
+        [list [expr {$closer ne {}}] [winfo exists .ciw.l.t] [expr {[winfo exists .ciw] ? [winfo ismapped .ciw] : {gone}}] \
+              [regexp -all -- [string map {. \\.} "Calculator: $cprobe"] [string range [ciw_text] [string length $c0] end]] \
+              [expr {"ciw" in $sinks}]] \
+        {1 1 0 1 1}
+    if {$wasmapped} { catch {wm deiconify .ciw} ; update }
+    if {![winfo exists .ciw.l.t]} { catch {ciw_create} }
 }
 
 # --- band P: press every control the user can press, in the empty state -------
@@ -341,6 +374,53 @@ proc speaks_stmt {t} {
 # assignment to v is `set v [speaker ...`.  Walking backwards, a line
 # dominates when its start depth is <= every depth seen so far and it is not
 # inside a block a `}` line closed; an assignment in a sibling branch does not.
+# A NO-WINDOW GUARD is DERIVED from what its condition tests, never from the
+# line merely mentioning a window: the line must be exactly `if {COND} {
+# return ... }`, and COND must be one term or an `||` of terms, EVERY one of
+# which is a negated window test, `![calc::has_win W]` or `![winfo exists W]`.
+# Only then does the return fire solely when a window is missing, which is
+# R508's silent no-op.  A condition that ANDs a window test with anything else
+# (`... eq {} && [calc::has_win .calc.buf]`), ORs one with a non-window term,
+# or tests a window un-negated fires while the window is up, so it is a
+# refusal and must speak like any other.  Parsed as a Tcl list, so a line that
+# does not parse is simply not a guard.
+proc guard_line {t} {
+    if {[catch {llength $t} n] || $n != 3 || [lindex $t 0] ne {if}} { return 0 }
+    set body [string trim [lindex $t 2]]
+    if {![regexp {^return(\s|$)} $body] || [string first {;} $body] >= 0} { return 0 }
+    set cond [lindex $t 1]
+    if {[string first && $cond] >= 0} { return 0 }
+    foreach term [split [string map [list || \x01] $cond] \x01] {
+        if {![regexp {^\s*!\s*\[\s*(::)?(calc::has_win|winfo\s+exists)\s+[^\s\[\]]+\s*\]\s*$} $term]} {
+            return 0
+        }
+    }
+    return 1
+}
+# THE REACHABLE END.  A path that runs off the end of a proc returns silently
+# with no `return` line for classify to see, so every handler's end is
+# classified too: the proc's LAST top-level statement (start depth 0) must be
+# an explicit `return` -- whose own arm classify already judged -- or a single
+# line that speaks unconditionally.  Anything else (an `if`/`switch`/`foreach`
+# block, an assignment, an empty body) means some path falls through without a
+# word, and the end is reported UNCLASSIFIED under the arm text
+# `<falls off the end after: ...>`.  An end can only be reached through the
+# last top-level statement, so this one statement decides it.  Returns
+# {p text cls} with cls `return` for an explicit return.
+proc end_arm {p lines} {
+    set deps [line_depths $lines]
+    set i -1
+    for {set k 0} {$k < [llength $lines]} {incr k} {
+        if {[lindex $deps $k] == 0 && [string trim [lindex $lines $k]] ne {}} { set i $k }
+    }
+    if {$i < 0} { return [list $p {<falls off the end after: (empty body)>} UNCLASSIFIED] }
+    set t [string trim [lindex $lines $i]]
+    if {[regexp {^return(\s|$)} $t]} { return [list $p $t return] }
+    set last [expr {[llength $lines] - 1}]
+    while {$last > $i && [string trim [lindex $lines $last]] eq {}} { incr last -1 }
+    if {$last == $i && [speaks_stmt $t]} { return [list $p "<falls off the end after: $t>" speaks] }
+    return [list $p "<falls off the end after: $t>" UNCLASSIFIED]
+}
 proc classify {p lines} {
     set out {}
     set deps [line_depths $lines]
@@ -382,7 +462,7 @@ proc classify {p lines} {
         if {$cls eq {} && [regexp {return \[calc::(\w+)} $t -> dp] && [info procs ::calc::$dp] ne {}} {
             set cls [list delegates ::calc::$dp]
         }
-        if {$cls eq {} && [regexp {has_win|winfo exists} $t]} { set cls guard }
+        if {$cls eq {} && [guard_line $t]} { set cls guard }
         if {$cls eq {}} {
             foreach e $::exempt {
                 if {[lindex $e 0] eq $p && [lindex $e 1] eq $t} { set cls [list exempt [lindex $e 2]] ; break }
@@ -410,17 +490,21 @@ group A {
     if {[regexp {calc::pick_click} [info body ::calc::_pick_seize]]} {
         lappend roots ::calc::pick_click
     }
-    set todo $roots ; set seen {} ; set arms {}
+    set todo $roots ; set seen {} ; set arms {} ; set ends {}
     while {[llength $todo]} {
         set p [lindex $todo 0] ; set todo [lrange $todo 1 end]
         if {$p in $seen} { continue }
         lappend seen $p
         if {[string trimleft $p :] in $::speakers} { continue }
-        foreach a [classify $p [decomment [info body $p]]] {
+        set lines [decomment [info body $p]]
+        foreach a [classify $p $lines] {
             lappend arms $a
             set cls [lindex $a 2]
             if {[lindex $cls 0] eq {delegates}} { lappend todo [lindex $cls 1] }
         }
+        set e [end_arm $p $lines]
+        lappend ends $e
+        if {[lindex $e 2] ne {return}} { lappend arms $e }
     }
     set bad {} ; set n(speaks) 0 ; set n(delegates) 0 ; set n(guard) 0 ; set n(exempt) 0
     set hits {}
@@ -448,7 +532,10 @@ group A {
     check "A2 every declared silent arm matched exactly its declared number of times (once unless stated), so a stale or duplicated exemption reddens" $stale {}
     check "A3 riding count: more arms speak than are exempt, and the classifier saw real arms" \
         [list [expr {$n(speaks) > 3 * $n(exempt)}] [expr {[llength $arms] > 40}]] {1 1}
-    set ad [classify ::calc::arg_dialog [decomment [info body ::calc::arg_dialog]]]
+    set adl [decomment [info body ::calc::arg_dialog]]
+    set ad [classify ::calc::arg_dialog $adl]
+    set ade [end_arm ::calc::arg_dialog $adl]
+    if {[lindex $ade 2] ne {return}} { lappend ad $ade }
     set adbad {}
     foreach a $ad {
         if {[lindex $a 2] eq {UNCLASSIFIED} && [lindex $a 1] ne {return $arg_result}} {
@@ -523,6 +610,75 @@ group A {
     foreach a $s { lappend got [lindex $a 2 0] }
     check "A4c a silent arm directly under a speaking arm, after a speaker in another block, or handing off a variable set by a speaker only in a sibling branch is UNCLASSIFIED; same-block speakers and dominating hand-offs still speak" \
         $got {speaks UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks speaks speaks}
+    # Fall-through: the first probe is the verifier's sabotage shape (the
+    # speaking return sits INSIDE the if, nothing follows it); the others are
+    # an assignment as the last statement, an empty body, a speaking last
+    # statement (must speak) and an explicit last return (must be `return`).
+    proc ::calc::zz_fall_probe1 {rpn} {
+        if {[string trim $rpn] ne {}} {
+            set m x
+            return [calc::status $m]
+        }
+    }
+    proc ::calc::zz_fall_probe2 {} { set x 1 }
+    proc ::calc::zz_fall_probe3 {} {}
+    proc ::calc::zz_fall_probe4 {} {
+        if {1} { return [calc::status a] }
+        calc::status b
+    }
+    proc ::calc::zz_fall_probe5 {} {
+        if {1} { return [calc::status a] }
+        return [calc::status b]
+    }
+    set got {}
+    foreach k {1 2 3 4 5} {
+        set pp ::calc::zz_fall_probe$k
+        lappend got [lindex [end_arm $pp [decomment [info body $pp]]] 2]
+        rename $pp {}
+    }
+    check "A4d a handler path that runs off the end of the proc with no return is UNCLASSIFIED (speaking return only inside an if, last statement an assignment, empty body), while a speaking last statement speaks and an explicit last return is left to its own arm" \
+        $got {UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks return}
+    # Guards are derived from the condition: only an all-negated window test
+    # (alone or ||-joined) is a guard.  The third line is the verifier's
+    # sabotage; the rest are an || with a non-window term, an un-negated test,
+    # a guard whose body does more than return, and an ||-joined pair of
+    # real window tests (a guard).
+    set got {}
+    foreach t [list \
+        {if {![calc::has_win .calc.buf]} { return {} }} \
+        {if {![winfo exists .calc]} { return {} }} \
+        {if {[string trim $rpn] eq {} && [calc::has_win .calc.buf]} { return {} }} \
+        {if {![calc::has_win .calc.buf] || $rpn eq {}} { return {} }} \
+        {if {[calc::has_win .calc.buf]} { return {} }} \
+        {if {![calc::has_win .calc.buf]} { set x 1 ; return {} }} \
+        {if {![calc::has_win .calc.buf] || ![::calc::has_win .calc]} { return {} }} ] {
+        lappend got [guard_line $t]
+    }
+    check "A4e a no-window guard is derived from what its condition tests: only a negated has_win / winfo exists, alone or ||-joined, is a guard; ANDed with a real condition, ORed with one, un-negated, or with a body that does more than return, it is not" \
+        $got {1 1 0 0 0 0 1}
+    # The same sabotage, end to end through classify: the guard-shaped
+    # refusal arm comes out UNCLASSIFIED rather than guarded.
+    proc ::calc::zz_guard_probe {rpn} {
+        if {[string trim $rpn] eq {} && [calc::has_win .calc.buf]} { return {} }
+        if {![calc::has_win .calc.buf]} { return {} }
+        return [calc::status x]
+    }
+    set s [classify ::calc::zz_guard_probe [decomment [info body ::calc::zz_guard_probe]]]
+    rename ::calc::zz_guard_probe {}
+    set got {}
+    foreach a $s { lappend got [lindex $a 2 0] }
+    check "A4f through classify, a refusal that merely mentions has_win is UNCLASSIFIED and a real no-window guard is still guarded" \
+        $got {UNCLASSIFIED guard speaks}
+    set fell {}
+    set nret 0
+    set nsp 0
+    foreach q $seen { if {[string trimleft $q :] in $::speakers} { incr nsp } }
+    foreach e $ends {
+        if {[lindex $e 2] eq {return}} { incr nret } else { lappend fell "[lindex $e 0]: [lindex $e 1] ([lindex $e 2])" }
+    }
+    check "A7 every handler's reachable end was classified, and every one ends in an explicit return -- a handler that can run off its end is named here ([llength $ends] ends over [llength $seen] procs, $nret explicit returns, the three speakers excluded)" \
+        [list [llength $ends] [expr {[llength $ends] == [llength $seen] - $nsp}] $fell] \
+        [list [llength $ends] 1 {}]
     check "A5 the three speakers really route through calc::status, and calc::status really calls the tee" \
         [list [regexp {calc::status} [info body ::calc::inert]] \
               [regexp {calc::status} [info body ::calc::pick_echo]] \
