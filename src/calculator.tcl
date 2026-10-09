@@ -12000,6 +12000,48 @@ proc calc::buf_set_number {v} {
     return $n
 }
 
+# A choice field takes its value from the keyboard by first letter
+# (calc_feedback_batch item 5: "press t or v key to select one or the other").
+# A readonly ttk::combobox does not type-to-select by itself, and every `enum`
+# field of every argument dialog is one, built in `calc::arg_dialog_build`.
+#
+# THE DECISION: `values` the field offers, `current` its value, `ch` the one
+# character typed.  Answers the value to select, or {} for "not mine".  A letter
+# is matched case-blind against each value's first character, CYCLING forward
+# from the current value so two values sharing a letter are both reachable.
+# Anything but one letter or digit answers {}.  Pure; band P of
+# tests/headless/test_calc_arg_keys.tcl gates it on both arms.
+proc calc::choice_pick {values current ch} {
+    if {[string length $ch] != 1} { return {} }
+    if {![string is alnum -strict $ch]} { return {} }
+    set n [llength $values]
+    if {$n == 0} { return {} }
+    set start [lsearch -exact $values $current]
+    for {set k 1} {$k <= $n} {incr k} {
+        set v [lindex $values [expr {($start + $k) % $n}]]
+        if {[string equal -nocase [string index $v 0] $ch]} { return $v }
+    }
+    return {}
+}
+
+# THE ACT: the `<KeyPress>` binding's body.  Answers 1 when the key selected a
+# value (the binding then breaks), 0 otherwise.
+# ⚠ IT MUST ANSWER 0 FOR EVERY KEY IT DOES NOT USE.  The house helper's
+# `<Key> {combo_letter_cycle %W %A; break}` breaks on EVERY key, which is fine on
+# the Calculator's own `-takefocus 0` comboboxes and would be wrong here: Tab is
+# an `all`-tag binding and Return/Escape are the dialog toplevel's, and a break
+# on the widget tag hides all three.  Band K drives each through a focused field.
+# A Control or Alt chord (state bits 4 and 8) selects nothing.
+proc calc::choice_key {w ch state} {
+    if {[string is integer -strict $state] && ($state & 12)} { return 0 }
+    set v {}
+    catch {set v [calc::choice_pick [$w cget -values] [$w get] $ch]}
+    if {$v eq {}} { return 0 }
+    $w set $v
+    catch {event generate $w <<ComboboxSelected>>}
+    return 1
+}
+
 # R412's modal, part one of three: BUILD.  Returns `.calc.arg`, or {} for a name
 # with no arguments and for a world with no window.
 #
@@ -12062,6 +12104,7 @@ proc calc::arg_dialog_build {name} {
             ttk::combobox $f.v$r -state readonly -style Calc.Field.TCombobox \
                 -values [lrange $kind 1 end] \
                 -textvariable ::calc::argval($key)
+            bind $f.v$r <KeyPress> {if {[calc::choice_key %W %A %s]} break}
         } else {
             entry $f.v$r -textvariable ::calc::argval($key) -width 28 \
                 -background [calc::color field] \
