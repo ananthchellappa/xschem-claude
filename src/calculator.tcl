@@ -1799,6 +1799,9 @@ proc calc::status_fit {s} {
 #
 # Returns the message it wrote, so a caller can `return [calc::status ...]`.
 #
+# A RECORDED line is also copied to the CIW pane and the action log through
+# calc::ciw_say below (spec R507a); hover help, passing `record 0`, is not.
+#
 # ⚠ `record` — added by item 4, ruled by the crew and written into spec R507.
 # It defaults to 1, so every existing caller and every existing check keeps the
 # contract it had.  The one caller that passes 0 is R413's HOVER HELP, and the
@@ -1821,7 +1824,54 @@ proc calc::status {{msg {}} {record 1}} {
         set statushist [lrange $statushist 0 [expr {$histmax - 1}]]
     }
     catch {.calc.status.hist configure -values $statushist}
+    catch {calc::ciw_say $msg}
     return $msg
+}
+
+# THE TEE TO THE CIW (calc_feedback_batch items 2 and 3).  The user's words:
+# "When Calculator does nothing after a button press, the explanation should be
+# available in the CIW, along with status bar of Calculator" and "these things
+# aren't being logged in the CIW log and log file".  Measured before this
+# existed: calc::status wrote the Entry's variable and its own history and
+# nothing else, so no refusal ever reached the CIW pane or Xschem.log.
+#
+# Called by calc::status for every line it RECORDS, which is every refusal in
+# this file (calc::inert and calc::pick_echo both speak through calc::status),
+# so a refusal arm added later reaches the CIW without being remembered.  Hover
+# help passes `record 0` and is not teed: it is a legend, not an event.
+#
+# ⚠ THE TWO SINKS ARE xschem::notify's OWN FIRST TWO, CALLED BY NAME -- NOT
+# xschem::notify ITSELF.  notify's sink 3 writes the DRAWING window's shared
+# `.statusbar.12` whenever the CIW is not mapped, and the Calculator already has
+# a status line of its own in front of the user; a Calculator message on the
+# design window too would be a third copy in a field shared with *BUSY*.
+# `::ciw_echo` and `::xschem::notify_log` are resolved at call time (the spy
+# point every notice suite stubs), each is caught, and neither moves the focus.
+# The log line is a `#= ` comment, so Xschem.log stays replayable.
+#
+# Returns the sinks that really took the line; `calc::ciw_last` keeps it.
+proc calc::ciw_say {msg} {
+    variable ciwlast
+    set line "Calculator: [string map [list \n { } \r { } \t { }] $msg]"
+    set sinks {}
+    if {[info commands ::ciw_echo] ne {}} {
+        if {![catch {::ciw_echo $line}] && [calc::has_win .ciw.l.t]} {
+            lappend sinks ciw
+        }
+    }
+    if {[info commands ::xschem::notify_log] ne {}} {
+        set ok 0
+        if {![catch {::xschem::notify_log $line {}} ok] && $ok eq {1}} {
+            lappend sinks log
+        }
+    }
+    set ciwlast [dict create msg $msg line $line sinks $sinks]
+    return $sinks
+}
+proc calc::ciw_last {} {
+    variable ciwlast
+    if {![info exists ciwlast]} { return {} }
+    return $ciwlast
 }
 
 # The history, newest first.  Public because every test and every later phase
@@ -11301,7 +11351,7 @@ proc calc::fn_click {name} {
         unavailable { return [calc::status "function $name is not available: [lindex $act 1]"] }
         inert       { return [calc::inert "function $name" 5] }
     }
-    return {}
+    return [calc::status "function $name is not in the catalogue"]
 }
 
 # ---------------------------------------------------------------------------
@@ -11612,6 +11662,7 @@ proc calc::arg_msg {kind {a {}} {b {}}} {
         destwhere { return "$a's wave is in $b." }
         badshape { return "Measuring $a: that result shape cannot be placed ($b)." }
         badvalue { return "Measuring $a: the result is not a literal number ($b)." }
+        nodialog { return "Measuring $a: the argument dialog did not open ($b)." }
     }
     return {}
 }
@@ -12074,8 +12125,14 @@ proc calc::arg_dialog {name} {
     set prevfocus {}
     catch {set prevfocus [focus]}
     set w {}
-    if {[catch {calc::arg_dialog_build $name} w]} { return {} }
-    if {$w ne {.calc.arg}} { return {} }
+    if {[catch {calc::arg_dialog_build $name} w]} {
+        calc::status [calc::arg_msg nodialog $name $w]
+        return {}
+    }
+    if {$w ne {.calc.arg}} {
+        calc::status [calc::arg_msg nodialog $name {no dialog was built}]
+        return {}
+    }
     if {![calc::has_win $w]} { return {} }
     catch {update}
     catch {raise $w}

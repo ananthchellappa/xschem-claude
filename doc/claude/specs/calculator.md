@@ -1320,6 +1320,14 @@ below are the ones a caller cannot answer for itself and so must not have to.
   50-entry cap on tooltips for functions the user never clicked, evicting the messages the
   history exists to let them re-read. Everything that actually *happens* still records,
   which is what R506 asks for.
+- **R507a** (calc_feedback_batch items 2+3, 2026-10-08) Every line `calc::status`
+  **records** is also copied to the CIW pane and to the action log file as
+  `Calculator: <msg>`, through `calc::ciw_say` — xschem::notify's own first two sinks
+  (`::ciw_echo`, `::xschem::notify_log`), called by name, never notify's statusbar
+  fallback, and never moving the focus. Hover help (`record 0`) is not copied. Because
+  every refusal speaks through `calc::status`, every refusal reaches the CIW by
+  construction. Copying successes too is unratified (owed rule `calc_ciw_tee_scope`).
+  Fenced by `tests/headless/test_calc_refusal_ciw.tcl` (dcases).
 - **R508** With no window — `.calc` not built, already closed, or `--nogui` where
   `winfo` does not exist — it is a **silent no-op that returns cleanly**, and records
   nothing. Rationale: it is called from stubs, from teardown paths and from headless

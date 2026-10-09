@@ -862,6 +862,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_buffer" \
                  "headless/test_calc_plot" \
                  "headless/test_calc_pick" \
+                 "headless/test_calc_refusal_ciw" \
                  "headless/test_fluid_editing" \
                  "headless/test_wave_grid" \
                  "headless/test_del_negative_arg" \
