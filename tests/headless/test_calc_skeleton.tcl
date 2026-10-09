@@ -4192,6 +4192,34 @@ if {[info commands ::calc::require_result] ne {}
 }
 check "S28 fixture: the result gate is stubbed to answer `ok`, because this suite has no loaded result and the gate runs BEFORE the dialog -- so without this every dialog row below would be measuring a refusal" \
     [list $ad_rrstub [dg [pcall calc::require_result] ok]] {1 1}
+# ⚠ AND THE LOAN IS SHIMMED FOR THE STUB'S TOKEN, because Eval's measurement
+# arm now runs the verb INSIDE the result's own context (`calc::meas_in_token`,
+# calculator feedback batch item 1) and `s28tok` names no viewer, so the real
+# `wviewer::enter_ctx` refuses it.  The shim GRANTS the loan for `s28tok` alone
+# without switching anything, records the bracket, and delegates every other
+# token to the real door; the measurement recorder reads `::AD_INLOAN`, so a
+# row below can assert the verb ran INSIDE the bracket and not merely near it.
+# Removed beside the result-gate stub in S28/6.  `rename`, never `proc`.
+set ::AD_LOAN {} ; set ::AD_INLOAN 0 ; set ::AD_RECLOAN NOTCALLED
+set ad_loanstub 0
+if {[info commands ::wviewer::enter_ctx] ne {}
+    && [info commands ::ad_keep_enter] eq {}} {
+    rename ::wviewer::enter_ctx ::ad_keep_enter
+    rename ::wviewer::leave_ctx ::ad_keep_leave
+    proc ::wviewer::enter_ctx {token {borrow 0}} {
+        if {$token ne {s28tok}} { return [::ad_keep_enter $token $borrow] }
+        lappend ::AD_LOAN "enter borrow=$borrow"
+        set ::AD_INLOAN 1
+        return {1 {}}
+    }
+    proc ::wviewer::leave_ctx {token ticket} {
+        if {$token ne {s28tok}} { return [::ad_keep_leave $token $ticket] }
+        lappend ::AD_LOAN leave
+        set ::AD_INLOAN 0
+        return 1
+    }
+    set ad_loanstub 1
+}
 
 # --- THE MODAL DRIVER ---------------------------------------------------------
 set ::AD_POLL_ID {} ; set ::AD_DEADMAN {} ; set ::AD_POLLS 0
@@ -4546,6 +4574,7 @@ if {[info commands ::calc::cross_scalar] ne {} \
     rename ::calc::cross ::ad_keep_cross
     proc ::calc::cross_scalar $ad_cs_formals {
         set ::AD_REC {}
+        set ::AD_RECLOAN $::AD_INLOAN
         foreach f [info args ::calc::cross_scalar] {
             set v [set $f]
             if {$v eq {AD-NOT-GIVEN}} break
@@ -4603,7 +4632,10 @@ set ad_said [s_said]
 set ad_shows [s_shows]
 set ad_recok $::AD_REC
 set ad_rawok $::AD_RAWCALLS
+set ::AD_LOAN {} ; set ::AD_RECLOAN NOTCALLED
 set ad_evalans [ad_eval]
+set ad_loanlog $::AD_LOAN
+set ad_recloan $::AD_RECLOAN
 update
 set ad_num [ad_buf]
 set ad_prov [pcall .calc.status.msg get]
@@ -4651,6 +4683,9 @@ check "S28 R421a ...and OK SAYS SO: the compose press writes a sentence, it is `
 check "S28 R421a the EVAL PRESS calls the SURFACE wrapper `calc::cross_scalar` -- with the buffer's own RPN first and then the dialog's three values in the wrapper's formal order -- and NEVER the raw `calc::cross`, which answers `nth = 0` with success and a list and has no deferral.  ⚠ AND THE OK PRESS CALLED NEITHER OF THEM, which is the whole of R421a.  The empty recorder log at OK is NOT a vacuous leg: the SAME recorder in the SAME row is asserted NON-EMPTY one gesture later, so the two legs cannot both pass against a recorder nothing ever reached" \
     [list $ad_stubbed $ad_recok $ad_rawok $::AD_REC $::AD_RAWCALLS] \
     [list 1 {} 0 [list {v(out) v(in) -} 0.375 3 falling] 0]
+check "S28 item 1 (calculator feedback batch) -- THE EVAL PRESS RAN THE VERB INSIDE THE RESULT'S OWN CONTEXT: one loan taken with the issue-0314 borrow, released after, and the surface wrapper was reached WHILE it was held.  Before this the verb ran in whatever context was current, so after a selector pick -- which leaves the DESIGN window current -- every measurement answered 'no simulation data loaded'; band PG14 of test_calc_pick.tcl drives that end to end" \
+    [list $ad_loanstub $ad_loanlog $ad_recloan] \
+    [list 1 [list {enter borrow=1} leave] 1]
 check "S28 R421a part 2 -- THE EVAL PRESS writes the provenance sentence, which names the VERB, the EXPRESSION it was measured from, the ARGUMENTS it was measured with and the NUMBER: R404's \"comment of provenance\" made concrete, one gesture later than R421 put it.  The wording is unratified (SH3) so what is asserted is CONTAINMENT; the leg that it DIFFERS from the sentence OK left behind is what catches a wiring that measured at OK after all, and the `fitted` leg is what stops a sentence reaching the history and not the widget" \
     [list $ad_stubbed \
           [expr {[string match {*cross*} $ad_prov] ? 1 : 0}] \
@@ -5269,6 +5304,16 @@ if {$ad_rrstub} {
     catch {rename ::calc::require_result {}}
     catch {rename ::ad_keep_rr ::calc::require_result}
 }
+if {$ad_loanstub} {
+    catch {rename ::wviewer::enter_ctx {}}
+    catch {rename ::wviewer::leave_ctx {}}
+    catch {rename ::ad_keep_enter ::wviewer::enter_ctx}
+    catch {rename ::ad_keep_leave ::wviewer::leave_ctx}
+}
+check "S28/6 CONTROL: the loan shim is off again with the result-gate stub, and the real door is back" \
+    [list [llength [info commands ::ad_keep_enter]] [llength [info commands ::ad_keep_leave]] \
+          [pcall ::wviewer::enter_ctx s28tok]] \
+    {0 0 {0 {}}}
 set ad_gate [pcall calc::require_result]
 set ad_gatemsg [dg $ad_gate msg]
 pcall .calc.buf delete 1.0 end

@@ -12592,6 +12592,42 @@ proc calc::stk_cleared {} {
     return [calc::status [calc::stk_msg cleared $n]]
 }
 
+# Calculator feedback batch item 1 (2026-10-08): the verb runs INSIDE the
+# selected result's own context, through the issue-0173 loan -- the bracket
+# `calc::eval_in_token` has given the plain-RPN arm since phase 3.
+#
+# ⚠⚠ WITHOUT IT EVAL ANSWERED FROM WHICHEVER CONTEXT WAS CURRENT, AND A PICK
+# MAKES THAT THE SCHEMATIC.  `calc::pick_arm` raises and activates the design
+# window, so after a selector pick the current context is the design's, which
+# has no raw: every measurement verb's `xschem raw ...` then answered "no data"
+# and the press refused with `Cross: that result has no simulation data loaded.`,
+# buffer and stack untouched -- while the SAME text typed worked whenever the
+# viewer's context happened to be current.  Measured, and fenced end to end by
+# band PG14 of tests/headless/test_calc_pick.tcl with the real pick gesture.
+#
+# `borrow 1` for the reason `calc::eval_in_token` passes it: the verbs only read
+# and mint/delete their own temporary, run no `update`/`after`, and the context
+# is always put back before the caller's destination hand-off takes its own
+# (plain) loan.  A refused loan is reported as busy, never as "no data".  A
+# raise from the verb is re-raised AFTER the context is restored, so the
+# caller's `arg_msg failed` arm still names it.
+proc calc::meas_in_token {tok name vals} {
+    if {[string trim $tok] eq {}} {
+        return [dict create ok 0 msg [calc::eval_msg noctx]]
+    }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok 1} ticket]} {
+        return [dict create ok 0 msg [calc::eval_msg busy]]
+    }
+    if {![lindex $ticket 0]} {
+        return [dict create ok 0 msg [calc::eval_msg busy]]
+    }
+    set rc [catch {calc::arg_invoke $name $vals} d]
+    catch {wviewer::leave_ctx $tok $ticket}
+    if {$rc} { return -code error $d }
+    return $d
+}
+
 # What R421 used to do at OK, moved to Eval unchanged: invoke the verb, read the
 # disposition through `calc::fn_sink`, and route it.  Nothing in the routing
 # moved -- the five-word vocabulary, the destination hand-off, the viewer raise
@@ -12599,7 +12635,9 @@ proc calc::stk_cleared {} {
 # reaches them changed.  Returns a sentence; the caller does the `calc::status`.
 proc calc::meas_apply {name vals g {src {}}} {
     set d {}
-    if {[catch {calc::arg_invoke $name $vals} d]} {
+    set tok {}
+    catch {set tok [dict get $g token]}
+    if {[catch {calc::meas_in_token $tok $name $vals} d]} {
         return [calc::arg_msg failed $name $d]
     }
     set ok 0

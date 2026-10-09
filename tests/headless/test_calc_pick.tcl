@@ -557,6 +557,70 @@ group PG13 {
 
 
 # =============================================================================
+# PG14 — EVAL AFTER A PICK: THE MEASUREMENT RUNS IN THE RESULT'S OWN CONTEXT
+# =============================================================================
+# The user's report, verbatim in doc/claude/calc_feedback_batch/BATCH.md item 1:
+# Eval "does nothing" on `cross(v(vbg), 0.5, 1, rising)` just after a `vt` pick,
+# and the SAME text typed works.  Measured on this arm: the pick ends with the
+# DESIGN window's context current (`ase::ui::design_window` raised and activated
+# it), and `calc::meas_apply` invoked the verb in WHATEVER context was current --
+# so `calc::series_of` asked the schematic's context for a raw it never had and
+# the press answered `Cross: that result has no simulation data loaded.` with the
+# buffer and the stack untouched.  The typed press worked only because the
+# viewer's context happened to be current.  The plain-RPN arm never had this
+# defect: `calc::eval_in_token` has taken the issue-0173 loan since phase 3.
+#
+# ⚠ THE DRIVE IS THE USER'S OWN: a real press on `.calc.sel.vt`, a real canvas
+# click on the `sq` wire, the composed call in the buffer, then a real press on
+# `.calc.mode.eval`.  The composition goes through `calc::buf_set_expr`, which is
+# what the argument dialog's OK writes with -- the dialog itself is band S28's.
+group PG14 {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    set vwp {}
+    catch {set vwp [dict get $::wviewer::windows $::tok win_path]}
+    pg_press .calc.sel.vt
+    set cv $::calc::pick(canvas)
+    pcall xschem zoom_full
+    update
+    .calc.buf delete 1.0 end
+    pg_click $cv 50 100
+    set picked [pg_buf]
+    set expr "cross($picked, 0.5, 1, rising)"
+    pcall calc::buf_set_expr $expr
+    set cwp0 [pcall xschem get current_win_path]
+    # the reference, taken INSIDE the viewer's context by the test itself, so the
+    # row compares the press against the verb's own answer and not a constant
+    set ref NOREF
+    if {![catch {wviewer::enter_ctx $::tok} t] && [lindex $t 0]} {
+        set m [pcall calc::meas_split $expr]
+        set d [pcall calc::arg_invoke cross [pcall calc::meas_vals cross [dg $m args]]]
+        set ref [dg $d value]
+        catch {wviewer::leave_ctx $::tok $t}
+    }
+    check "PG14 fixture: the pick inserted `v(sq)`, the mode is still armed, the reference is a real finite crossing, and the context current at the press is the DESIGN window's and NOT the viewer's -- the exact state the user pressed Eval in, so the row below cannot pass by the viewer happening to be current" \
+        [list $picked [pcall calc::pick_running] \
+              [pg_word [string is double -strict $ref] finite $ref] \
+              [pg_word [expr {$vwp ne {} && $cwp0 ne $vwp}] designctx "cwp=$cwp0 viewer=$vwp"]] \
+        {v(sq) 1 finite designctx}
+    pg_press .calc.mode.eval
+    set got [pg_buf]
+    check "PG14 Eval after a pick REPLACES the buffer with the measured value and PUSHES the expression onto the stack, exactly as it does for the same text typed -- the user's item 1" \
+        [list [pg_word [expr {[string is double -strict $got] && [string is double -strict $ref] && $got == $ref}] value "buf=$got ref=$ref"] \
+              [pcall calc::stk_get]] \
+        [list value [list $expr]]
+    check "PG14 ...and the status line is the provenance sentence, not a refusal" \
+        [pg_word [string match {cross(*) = *} [lindex [pcall calc::status_history] 0]] provenance \
+             [lindex [pcall calc::status_history] 0]] provenance
+    check "PG14 ...and the press PUT THE CONTEXT BACK: the design window is still current and the pick is still armed, so the loan the measurement took is invisible to the gesture around it" \
+        [list [pcall xschem get current_win_path] [pcall calc::pick_running]] \
+        [list $cwp0 1]
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
 # PG8 — R201: RE-CLICK DISARMS, ANOTHER SELECTOR SWITCHES
 # =============================================================================
 # The gesture is the real one, on the real radiobutton.
