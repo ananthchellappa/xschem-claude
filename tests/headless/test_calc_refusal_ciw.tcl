@@ -314,23 +314,69 @@ set ::exempt {
     {::calc::pick_end {return $r} picked}
     {::calc::fn_measure {if {$ans eq {}} { return {} }} cancel}
 }
+# Brace depth at the START of each decommented line (escaped braces ignored).
+proc line_depths {lines} {
+    set d 0 ; set out {}
+    foreach l $lines {
+        lappend out $d
+        set x [string map [list "\\\{" {} "\\\}" {}] $l]
+        incr d [expr {[regexp -all {\{} $x] - [regexp -all {\}} $x]}]
+    }
+    return $out
+}
+# A statement that speaks UNCONDITIONALLY when it runs: the speaker is the
+# line's own command (optionally under catch, or as `set v [speaker`), never a
+# call buried inside an if/foreach/switch body on that line.
+proc speaks_stmt {t} {
+    regexp {^((catch\s+\{\s*)|(set\s+\w+\s+\[\s*))?(::)?calc::(status|inert|pick_echo)(\s|\]|;|\}|$)} $t
+}
+# The PREV-LINE rule: a BARE `return ...` (the return is the line's own
+# command, not the body of a one-line if) speaks when the statement directly
+# before it IN THE SAME BLOCK is a speaking statement.  "Same block" is
+# measured: equal start depth, and the previous line neither closes a block
+# (`}` / `} else {`) nor opens one, nor is itself a return.  A return line is
+# never a predecessor, so a silent arm right under a speaking arm is not
+# credited with its neighbour's sentence.
+# The HAND-OFF rule: a bare `return $v` speaks when the last DOMINATING
+# assignment to v is `set v [speaker ...`.  Walking backwards, a line
+# dominates when its start depth is <= every depth seen so far and it is not
+# inside a block a `}` line closed; an assignment in a sibling branch does not.
 proc classify {p lines} {
     set out {}
-    set prev {}
-    foreach l $lines {
-        set t [string trim $l]
-        if {![regexp {(^|[;\{\[]\s*)return(\s|$|\])} $t]} {
-            if {$t ne {} && $t ne "\}"} { set prev $t }
-            continue
-        }
+    set deps [line_depths $lines]
+    set n [llength $lines]
+    for {set i 0} {$i < $n} {incr i} {
+        set t [string trim [lindex $lines $i]]
+        if {![regexp {(^|[;\{\[]\s*)return(\s|$|\])} $t]} { continue }
+        set d [lindex $deps $i]
+        set bare [regexp {^return(\s|$)} $t]
         set cls {}
         if {[speaks_in $t]} { set cls speaks }
-        if {$cls eq {} && [speaks_in $prev]} { set cls speaks }
-        # `return $v` where an earlier line set v from a speaker
-        if {$cls eq {} && [regexp {return \$(\w+)} $t -> rv]} {
-            foreach sl $lines {
-                set slt [string trim $sl]
-                if {[regexp "^set\\s+$rv\\s+\\\[" $slt] && [speaks_in $slt]} { set cls speaks }
+        if {$cls eq {} && $bare && $i > 0} {
+            set j [expr {$i - 1}]
+            while {$j >= 0 && [string trim [lindex $lines $j]] eq {}} { incr j -1 }
+            if {$j >= 0} {
+                set pt [string trim [lindex $lines $j]]
+                if {[lindex $deps $j] == $d && ![string match "\}*" $pt] \
+                        && [string index $pt end] ne "\{" \
+                        && ![regexp {(^|[;\{\[]\s*)return(\s|$|\])} $pt] \
+                        && [speaks_stmt $pt]} {
+                    set cls speaks
+                }
+            }
+        }
+        if {$cls eq {} && $bare && [regexp {^return \$(\w+)\s*$} $t -> rv]} {
+            set m $d
+            for {set j [expr {$i - 1}]} {$j >= 0} {incr j -1} {
+                set pt [string trim [lindex $lines $j]]
+                set pd [lindex $deps $j]
+                if {[string match "\}*" $pt]} { set m [expr {min($m, $pd - 1)}] ; continue }
+                if {$pd > $m} { continue }
+                set m $pd
+                if {[regexp "^set\\s+$rv\\s" $pt]} {
+                    if {[speaks_stmt $pt]} { set cls speaks }
+                    break
+                }
             }
         }
         if {$cls eq {} && [regexp {return \[calc::(\w+)} $t -> dp] && [info procs ::calc::$dp] ne {}} {
@@ -344,7 +390,6 @@ proc classify {p lines} {
         }
         if {$cls eq {}} { set cls UNCLASSIFIED }
         lappend out [list $p $t $cls]
-        set prev $t
     }
     return $out
 }
@@ -441,6 +486,43 @@ group A {
     foreach a $s { lappend got [lindex $a 2 0] }
     check "A4b a status-bar-only arm (writes calc::statusmsg, or calls calc::status_fit / status_history) is UNCLASSIFIED, while a real calc::status call still speaks" \
         $got {UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks speaks}
+    # A silent arm placed directly under a speaking arm, or under a speaking
+    # statement in ANOTHER block, must not borrow that sentence; nor may a
+    # `return $v` whose speaking assignment sits in a sibling branch.  The
+    # last three arms are the shapes that really speak, so the probe cannot
+    # pass by calling everything silent.
+    proc ::calc::zz_neighbour_probe {rpn} {
+        if {$rpn eq {}} { return [calc::status x] }
+        if {[llength $rpn] > 0} { return {} }
+        if {1} { calc::status y }
+        if {2} { return {} }
+        if {3} {
+            calc::status z
+        }
+        return {}
+        if {4} {
+            set v [calc::status w]
+        } else {
+            set v {}
+        }
+        return $v
+        if {5} {
+            set u [calc::status u]
+            return $u
+        }
+        if {6} {
+            calc::status q
+            return {}
+        }
+        set s [calc::pick_echo k]
+        return $s
+    }
+    set s [classify ::calc::zz_neighbour_probe [decomment [info body ::calc::zz_neighbour_probe]]]
+    rename ::calc::zz_neighbour_probe {}
+    set got {}
+    foreach a $s { lappend got [lindex $a 2 0] }
+    check "A4c a silent arm directly under a speaking arm, after a speaker in another block, or handing off a variable set by a speaker only in a sibling branch is UNCLASSIFIED; same-block speakers and dominating hand-offs still speak" \
+        $got {speaks UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED UNCLASSIFIED speaks speaks speaks}
     check "A5 the three speakers really route through calc::status, and calc::status really calls the tee" \
         [list [regexp {calc::status} [info body ::calc::inert]] \
               [regexp {calc::status} [info body ::calc::pick_echo]] \
