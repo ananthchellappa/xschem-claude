@@ -123,6 +123,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_engnum" \
                  "headless/test_calc_arg_keys" \
                  "headless/test_calc_stack_gestures" \
+                 "headless/test_calc_quotes" \
                  "headless/test_wave_sigbrowser" \
                  "headless/test_wave_grid" \
                  "headless/test_node_token_split" \
@@ -869,6 +870,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_engnum" \
                  "headless/test_calc_arg_keys" \
                  "headless/test_calc_stack_gestures" \
+                 "headless/test_calc_quotes" \
                  "headless/test_fluid_editing" \
                  "headless/test_wave_grid" \
                  "headless/test_del_negative_arg" \

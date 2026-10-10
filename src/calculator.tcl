@@ -2938,6 +2938,7 @@ proc calc::eval_msg {kind {a {}} {b {}}} {
         badtoken { return "Cannot evaluate: $a." }
         noctx   { return {Evaluate: the result's waveform window is not there to read from.} }
         busy    { return {Evaluate: the result's waveform window is busy. Try again.} }
+        quote   { return {Cannot evaluate: a double quote is not closed.} }
     }
     return {}
 }
@@ -3142,7 +3143,7 @@ proc calc::eval_refusal {msg {dataset 0} {dest {}} {point -1}} {
 # disagreements it cannot see, each pinned by a row in band CE13, and this proc
 # answers issue 0325's defined zero with no message for those.
 proc calc::eval_rpn {rpn {dataset 0}} {
-    set rpn [string trim $rpn]
+    set rpn [calc::rpn_unquote [string trim $rpn]]
     if {$rpn eq {}} { return [calc::eval_refusal [calc::eval_msg empty] $dataset] }
     set lv -1
     catch {set lv [xschem raw loaded]}
@@ -3351,6 +3352,7 @@ proc calc::eval_click {} {
     if {![dict get $g ok]} { return [calc::status [dict get $g msg]] }
     set rpn [calc::rpn_of_buffer]
     if {[string trim $rpn] eq {}} { return [calc::status [calc::eval_msg empty]] }
+    if {[calc::quote_bad $rpn]} { return [calc::status [calc::eval_msg quote]] }
     set tok {}
     catch {set tok [dict get $g token]}
     # R421a.  A composed measurement call is routed to the measurement layer
@@ -11836,7 +11838,7 @@ proc calc::arg_trouble {spec} {
 proc calc::arg_field_bad {label kind v} {
     switch -exact -- [lindex $kind 0] {
         enum {
-            if {[lsearch -exact [lrange $kind 1 end] $v] < 0} {
+            if {[lsearch -exact [lrange $kind 1 end] [calc::word_unquote $v]] < 0} {
                 return [calc::arg_msg enum $label [join [lrange $kind 1 end] {, }]]
             }
         }
@@ -12480,13 +12482,59 @@ proc calc::fn_measure {name} {
 # disagree about it.
 proc calc::meas_sep {} { return {, } }
 
+# CADENCE-STYLE QUOTING (calc_feedback_batch, the user, 2026-10-10: text pasted
+# from Cadence must work, so `cross(v("vbg"), 0.5, 1, "rising")` is the same
+# call as `cross(v(vbg), 0.5, 1, rising)`).  Three procs, all pure, and the
+# buffer and the stack never see their output -- they keep what was typed.
+#
+# Measured before this change, on the committed tran fixture: the quoted enum
+# was refused as `cross: Edge must be one of rising, falling, either.`, and the
+# quoted net reached the verb verbatim and was refused by `calc::rpn_bad_token`
+# as an unknown token `v("lp")` -- in plain Eval too, where `v("lp")` alone
+# answered the same.  The engine's lexer has an EMPTY quote set, so nothing
+# downstream of this file can learn the spelling.
+#
+# WHERE IT IS APPLIED: at the two places the buffer's text is handed to
+# something that evaluates it -- `calc::meas_numeric` (every measurement verb,
+# every `rpn` operand and every word argument) and `calc::eval_rpn` (plain
+# Eval).  `calc::arg_field_bad`'s enum arm judges the stripped word, so the
+# dialog and a call typed in the buffer agree.  Plot is NOT a door here.
+#
+# ⚠ DECLARED LIMIT: Cadence's leading-slash net paths (`v("/vbg")`,
+# `VT("/vbg")`) are not translated; `/vbg` is not a raw column name, so they
+# are refused naming the token, as before.
+
+# 1 when the text carries an odd number of double quotes.  There is no escape,
+# so a quote cannot appear inside a quoted word and the parity is the test.
+proc calc::quote_bad {s} {
+    return [expr {[regexp -all {"} $s] % 2}]
+}
+
+# One matching pair of double quotes taken off a word argument; anything else
+# comes back untouched, so `"rising` stays malformed and is refused.
+proc calc::word_unquote {v} {
+    set t [string trim $v]
+    if {[regexp {^"([^"]*)"$} $t -> w]} { return $w }
+    return $v
+}
+
+# A double-quoted name inside v(...)/i(...) becomes the bare one, in any case
+# and wherever it sits in an RPN expression.  An expression with no quotes comes
+# back byte-identical.
+proc calc::rpn_unquote {rpn} {
+    return [regsub -all {(^|[^A-Za-z0-9_@])([vViI])\("([^"]*)"\)} $rpn {\1\2(\3)}]
+}
+
 # Depth check.  Answers 1 for text whose parentheses do not balance, INCLUDING
 # text that closes one it never opened -- which is the arm that refuses
 # `f(a) g(b)`, where the `$`-anchored greedy peel below spans both calls and
 # hands back an inner text of `a) g(b`.
 proc calc::meas_paren_bad {s} {
     set d 0
+    set q 0
     foreach c [split $s {}] {
+        if {$c eq "\""} { set q [expr {!$q}] }
+        if {$q} { continue }
         if {$c eq {(}} { incr d }
         if {$c eq {)}} {
             incr d -1
@@ -12532,16 +12580,19 @@ proc calc::meas_compose {name vals} {
 }
 
 # Split on TOP-LEVEL commas only, so a nested `v(a,b)`-shaped operand cannot be
-# torn in half.  Always answers at least one element, so a caller can compare
-# its length against the verb's arity and refuse rather than guess.
+# torn in half -- and never inside double quotes, where a comma or a paren is
+# part of a quoted name.  Always answers at least one element, so a caller can
+# compare its length against the verb's arity and refuse rather than guess.
 proc calc::meas_args {inner} {
     set out {}
     set cur {}
     set d 0
+    set q 0
     foreach c [split $inner {}] {
-        if {$c eq {(}} { incr d }
-        if {$c eq {)}} { incr d -1 }
-        if {$c eq {,} && $d == 0} {
+        if {$c eq "\""} { set q [expr {!$q}] }
+        if {!$q && $c eq {(}} { incr d }
+        if {!$q && $c eq {)}} { incr d -1 }
+        if {!$q && $c eq {,} && $d == 0} {
             lappend out [string trim $cur]
             set cur {}
             continue
@@ -12637,11 +12688,16 @@ proc calc::meas_numeric {name vals} {
     set spec [calc::fn_argspec $name]
     set out {}
     foreach {k v} $vals {
+        if {$k eq {rpn}} { set v [calc::rpn_unquote $v] }
         foreach f $spec {
-            if {[lindex $f 0] eq $k && [lindex $f 2] eq {real}} {
+            if {[lindex $f 0] ne $k} { continue }
+            set kind [lindex [lindex $f 2] 0]
+            if {$kind eq {real}} {
                 set n [calc::num_eng $v]
                 if {$n ne {}} { set v $n }
             }
+            if {$kind eq {enum}} { set v [calc::word_unquote $v] }
+            if {$kind eq {rpn}} { set v [calc::rpn_unquote $v] }
         }
         lappend out $k $v
     }

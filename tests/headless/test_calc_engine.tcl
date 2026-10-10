@@ -1352,7 +1352,7 @@ group CE8 {
     # version of this row having had.
     check "CE8 ...and the ones whose CODE names no widget path are the engine-side procs, which is why this file can run headless" \
         [lsort $pure] \
-        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_opstack rpn_stack_fault rpn_tokens tmpvec}
+        {eval_cursor_point eval_finite eval_fmt eval_in_token eval_msg eval_refusal eval_rpn plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_opstack rpn_stack_fault rpn_tokens rpn_unquote tmpvec}
 }
 
 # =============================================================================
