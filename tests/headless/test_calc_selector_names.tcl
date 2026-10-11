@@ -298,21 +298,39 @@ group PK1 {
         [pcall ase::ui::design_path __pk_nosuch__] {}
     check "PK1 R208a drivable with no database at all: each voltage id ARMS on its own analysis and REFUSES on another -- four matches and four mismatches, so the row cannot pass by refusing everything or by arming everything" \
         $pkgate {arm refuse arm refuse arm refuse arm refuse}
-    check "PK1 ...and the refusal NAMES BOTH analyses, in the user's words rather than the simulator's -- acronyms uppercase, one map shared with the success sentence so they cannot disagree" \
+    check "PK1 ...and the refusal NAMES THE ANALYSIS THE RESULT LACKS, in the user's words rather than the simulator's -- acronyms uppercase, one map shared with the success sentence so they cannot disagree.  (R208c restated this sentence: it used to say `needs an AC result; this one is transient`, which stopped being the reason once a selector could read a sibling analysis of the same run)" \
         [list [pk_fld [pcall calc::pick_decide vf [dict create ok 1 token k type tran]] msg] \
               [pk_fld [pcall calc::pick_decide vdc [dict create ok 1 token k type ac]] msg] \
               [pcall calc::analysis_word tran] [pcall calc::analysis_word ac] \
               [pcall calc::analysis_word op] [pcall calc::analysis_word dc] \
               [pcall calc::analysis_word __pk_unknown__]] \
-        [list {selector vf: needs an AC result; this one is transient} \
-              {selector vdc: needs an operating point result; this one is AC} \
+        [list {selector vf: this result has no AC analysis} \
+              {selector vdc: this result has no operating point analysis} \
               transient AC {operating point} {DC sweep} __pk_unknown__]
-    check "PK1 the ARTICLE is chosen and not hardcoded, which the first spelling of this got wrong (`needs an tran result`, `an dc result`) -- a sentence the user reads has to read" \
-        [list [pcall calc::pick_wants vt] [pcall calc::pick_wants vf] \
-              [pcall calc::pick_wants vdc] [pcall calc::pick_wants vs] \
-              [pcall calc::pick_wants op]] \
-        [list {a transient result} {an AC result} {an operating point result} \
-              {a DC sweep result} {its own analysis}]
+    # --- R208c: the gate asks the RESULT'S FILE, not the current slot ----------
+    # The user, 2026-10-11: *"A simulation could have both AC and TRAN
+    # simulations. The vt or vf need to intelligently pick FROM the loaded
+    # results."*  So a result whose CURRENT analysis is transient arms `vf` when
+    # its raw file also holds an AC plot.  The SAME synthetic dict with the path
+    # removed is the control: it refuses, so the arm is the file's answer and
+    # not a constant.  `vs` is the negative on the real file -- the committed
+    # fixture writes tran, AC and op and no DC sweep -- so the row cannot pass by
+    # arming everything.
+    rename ase::ui::design_path pk_real_dp3
+    proc ase::ui::design_path {key} { return /tmp/__pk_fake__/cell.sch }
+    set pkpres {}
+    foreach id {vt vf vdc vs} {
+        lappend pkpres [pk_fld [pcall calc::pick_decide $id \
+            [dict create ok 1 token k type tran path [pk_fixture]]] act]
+    }
+    set pkctl [pk_fld [pcall calc::pick_decide vf [dict create ok 1 token k type tran path {}]] act]
+    set pkvs [pk_fld [pcall calc::pick_decide vs \
+        [dict create ok 1 token k type tran path [pk_fixture]]] msg]
+    rename ase::ui::design_path {}
+    rename pk_real_dp3 ase::ui::design_path
+    check "PK1 R208c: against a TRANSIENT-current result whose raw file also holds AC and op plots, `vt`, `vf` and `vdc` all ARM and `vs` REFUSES naming the DC sweep the run never wrote; the same `vf` dict with no file refuses -- so presence is read from the file" \
+        [list $pkpres $pkctl $pkvs [pcall calc::raw_analyses [pk_fixture]] [pcall calc::raw_analyses {}]] \
+        [list {arm arm arm refuse} refuse {selector vs: this result has no DC sweep analysis} {tran ac op} {}]
     rename ase::ui::design_path pk_real_dp2
     proc ase::ui::design_path {key} { return /tmp/__pk_fake__/cell.sch }
     set pkunk [list [pk_fld [pcall calc::pick_decide vt [dict create ok 1 token k]] act] \

@@ -3143,8 +3143,13 @@ proc calc::eval_refusal {msg {dataset 0} {dest {}} {point -1}} {
 # disagreements it cannot see, each pinned by a row in band CE13, and this proc
 # answers issue 0325's defined zero with no message for those.
 proc calc::eval_rpn {rpn {dataset 0}} {
-    set rpn [calc::rpn_unquote [string trim $rpn]]
+    set rpn [string trim $rpn]
     if {$rpn eq {}} { return [calc::eval_refusal [calc::eval_msg empty] $dataset] }
+    # R208c: a qualified token is evaluated ONLY in its own analysis, whoever
+    # called -- `calc::aq_run` makes that analysis current before it gets here.
+    set aq [calc::aq_guard $rpn]
+    if {$aq ne {}} { return [calc::eval_refusal $aq $dataset] }
+    set rpn [calc::rpn_unquote [calc::aq_strip $rpn]]
     set lv -1
     catch {set lv [xschem raw loaded]}
     if {![string is integer -strict $lv] || $lv < 0} {
@@ -3268,6 +3273,259 @@ proc calc::eval_fmt {d} {
     return "= $v  ([expr {$at eq {cursor} ? {at the cursor} : {at the last point}}])"
 }
 
+# ---------------------------------------------------------------------------
+# R208c -- ANALYSIS-QUALIFIED VOLTAGES: `vt(net)`, `vf(net)`, `vdc(net)`,
+# `vs(net)`.  The user, 2026-10-11: *"A simulation could have both AC and TRAN
+# simulations. The vt or vf need to intelligently pick FROM the loaded
+# results."*  Each token is `v(net)` read from ONE analysis of the CURRENT
+# result's raw file -- tran, ac, op and dc respectively, the table being
+# `calc::pick_analyses`, the same one the selectors use -- so `vf(lp)` answers
+# the AC magnitude while a transient is what the viewer shows.
+#
+# ⚠ WHY THIS DOES NOT BREACH U6 (`doc/claude/results_batch/DECISIONS.md`).  U6
+# removed the Calculator's `self` arm: it must never resolve a RESULT out of a
+# raw its own context happens to hold.  It says nothing against reading a
+# second analysis of the result the session already selected -- U11 in the same
+# file rules that one run IS one result and its analyses are "dimensions inside
+# a result", available at once.  The file read here is always the one the
+# CURRENT slot already names (`calc::wave_dest_cur`), never a path from
+# anywhere else, so which RESULT is read is still decided by the session alone.
+#
+# THE MECHANISM, and every step is measured on the committed fixture:
+#   * `xschem raw read <file> <type>` is the ENTER verb, not `raw switch`.  On a
+#     slot that is already registered it only switches (and re-binds only a
+#     slot bound to another schematic); on one that is not, it reads that
+#     analysis and appends it.  `raw switch` would also do, but it runs
+#     `update_op()` when it lands on a one-point op -- which publishes operating
+#     point annotation and re-arms the global `ngspice::ngspice_data` as a side
+#     effect of a READ.  `read` never does.
+#   * The restore is the same verb by name AND type when the user's slot was
+#     bound here (`raw loaded` >= 0, which every Calculator read requires), and
+#     `calc::wave_dest_restore` otherwise -- never `switch_back` and never a
+#     bare `switch <name>` (that proc's hazard 1).
+#   * A slot this proc ADDED is cleared afterwards, so the registry the viewer
+#     and the Results list read is the one the user had.  `raw clear` forces the
+#     current slot to 0 (issue 1636), which is why the restore runs a second
+#     time after it.
+#   * The final slot is COMPARED with the snapshot, and a mismatch is a refusal
+#     naming it: a number computed while the user's selection was lost is not
+#     reported.
+#
+# PRESENCE is decided from the file's own `Plotname:` records through
+# `ase::cap_raw_plots`, which seeks past every binary payload instead of
+# loading it (issue 0971's measurement: a real results file is tens of MB), and
+# maps them with `src/save.c`'s `read_dataset()` substrings.  It is asked live
+# on every press, never cached (R705).  ⚠ `Integrated Noise` is NOT counted as
+# an operating point although `read_dataset()` reads it under `op`: a `vdc` on a
+# noise-only run would otherwise answer a noise integral.
+#
+# ⚠ DECLARED LIMIT: ONLY QUALIFIED TOKENS ARE ANALYSIS-CHECKED.  A plain
+# `v(net)` still evaluates against whatever analysis is current, exactly as
+# before -- and inside an expression that carries a qualifier it is evaluated
+# in that qualifier's analysis, because one expression is evaluated in one
+# database.  Two DIFFERENT analyses in one expression are refused: the engine
+# has no way to combine columns of two databases.
+#
+# ⚠ AND A QUALIFIED TOKEN IS NEVER EVALUATED AGAINST ANOTHER ANALYSIS, WHOEVER
+# CALLS.  `calc::aq_guard` is asked inside `calc::eval_rpn`, inside
+# `calc::aq_arg_invoke` (every measurement verb) and inside `calc::plot_rpn`, in
+# whatever database is current at that moment -- so a door that forgets the
+# bracket refuses instead of serving the wrong analysis's number.
+# Leading-slash Cadence paths (`vt("/lp")`) are not tokens here at all and stay
+# refused naming the text (row Q6 of tests/headless/test_calc_quotes.tcl).
+# ---------------------------------------------------------------------------
+
+# The token, bare or with one pair of Cadence quotes.  Groups: 1 the character
+# before (or the start), 2 the id as typed, 3 a quoted net, 4 a bare net.
+proc calc::aq_rx {} {
+    return {(^|[^A-Za-z0-9_@.])([vV](?:[tT]|[fF]|[dD][cC]|[sS]))\((?:"([^"/()[:space:]][^"()[:space:]]*)"|([^"/()[:space:]][^"()[:space:]]*))\)}
+}
+
+# The ids in the text, lowercased, in order of appearance (repeats kept).
+proc calc::aq_ids {s} {
+    set out {}
+    foreach {all pre id q b} [regexp -all -inline [calc::aq_rx] $s] {
+        lappend out [string tolower $id]
+    }
+    return $out
+}
+
+# The text with every qualified token rewritten to `v(net)`.  Text with no
+# qualified token comes back byte-identical.
+proc calc::aq_strip {s} {
+    return [regsub -all [calc::aq_rx] $s {\1v(\3\4)}]
+}
+
+# THE PRESS-TIME DECISION, pure: `{ok 1 type <t> id <id>}` with an empty type
+# when the text carries no qualifier, or `{ok 0 msg <sentence>}` when it mixes
+# two analyses.
+proc calc::aq_plan {s} {
+    set type {}
+    set id {}
+    foreach i [calc::aq_ids $s] {
+        set t [calc::pick_analysis $i]
+        if {$type eq {}} { set type $t ; set id $i ; continue }
+        if {$t ne $type} {
+            return [dict create ok 0 type {} id {} msg [calc::aq_msg mixed $id $i]]
+        }
+    }
+    return [dict create ok 1 type $type id $id msg {}]
+}
+
+# The analyses a raw file holds, as sim types, from its `Plotname:` records.
+proc calc::raw_analyses {path} {
+    if {[string trim $path] eq {}} { return {} }
+    if {[info commands ::ase::cap_raw_plots] eq {}} { return {} }
+    set plots {}
+    if {[catch {ase::cap_raw_plots $path} plots]} { return {} }
+    set out {}
+    foreach p $plots {
+        set n [string tolower [lindex $p 0]]
+        set t {}
+        if {[string first {transient analysis} $n] >= 0} {
+            set t tran
+        } elseif {[string first {dc transfer characteristic} $n] >= 0} {
+            set t dc
+        } elseif {[string first {noise spectral density curves} $n] >= 0} {
+            set t noise
+        } elseif {[string first {operating point} $n] >= 0} {
+            set t op
+        } elseif {[string first {ac analysis} $n] >= 0 || [string first spectrum $n] >= 0
+                  || [string first {sp analysis} $n] >= 0} {
+            set t ac
+        }
+        if {$t ne {} && [lsearch -exact $out $t] < 0} { lappend out $t }
+    }
+    return $out
+}
+
+# How many slots the registry holds, from the one `raw info` snapshot.  Same
+# line grammar as `calc::wave_dest_cur`.
+proc calc::aq_nslots {} {
+    set t {}
+    if {[catch {xschem raw info} t]} { return 0 }
+    set n 0
+    foreach ln [split $t "\n"] {
+        if {[regexp {^[ \t]*[0-9]+[ \t]+current[ \t]*$} $ln]} continue
+        if {[regexp {^[ \t]*[0-9]+[ \t]+(.+)[ \t]+(\S+)[ \t]*$} $ln]} { incr n }
+    }
+    return $n
+}
+
+# Put the user's slot back.  `$bound` is whether it answered `raw loaded` >= 0
+# before anything moved.
+proc calc::aq_restore {name type bound} {
+    if {$bound} {
+        catch {xschem raw read $name $type}
+        return
+    }
+    calc::wave_dest_restore $name $type
+}
+
+# A qualified token in `$s` whose analysis is not the CURRENT database's: a
+# refusal sentence, else {}.  Asked inside every evaluation door.
+proc calc::aq_guard {s} {
+    set p [calc::aq_plan $s]
+    if {![dict get $p ok]} { return [dict get $p msg] }
+    set want [dict get $p type]
+    if {$want eq {}} { return {} }
+    set cur [calc::wave_dest_cur]
+    if {$cur eq {} || [lindex $cur 1] eq $want} { return {} }
+    return [calc::aq_msg guard [dict get $p id] [lindex $cur 1]]
+}
+
+# Run `$cmd` with the `$an` analysis of the CURRENT result's raw file current,
+# and put the user's slot back whatever happens.  Answers
+# `{ok 1 rc <catch code> value <result>}` or `{ok 0 msg <sentence>}`.  An empty
+# `$an`, or one that is already current, runs `$cmd` where it stands.
+proc calc::aq_run {an cmd} {
+    set cur [calc::wave_dest_cur]
+    if {$an eq {} || [lindex $cur 1] eq $an} {
+        set rc [catch {uplevel #0 $cmd} v]
+        return [dict create ok 1 rc $rc value $v]
+    }
+    if {$cur eq {}} {
+        return [dict create ok 0 msg [calc::eval_msg nodata]]
+    }
+    set name [lindex $cur 0]
+    set type [lindex $cur 1]
+    if {[lsearch -exact [calc::raw_analyses $name] $an] < 0} {
+        return [dict create ok 0 msg [calc::aq_msg absent $an]]
+    }
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    set bound [expr {[string is integer -strict $lv] && $lv >= 0}]
+    set before [calc::aq_nslots]
+    set rd 0
+    catch {set rd [xschem raw read $name $an]}
+    set added [expr {[calc::aq_nslots] > $before}]
+    set rc 0
+    set v {}
+    set ran 0
+    if {$rd eq {1} && [calc::wave_dest_cur] eq [list $name $an]} {
+        set ran 1
+        set rc [catch {uplevel #0 $cmd} v]
+    }
+    calc::aq_restore $name $type $bound
+    if {$added} {
+        catch {xschem raw clear $name $an}
+        calc::aq_restore $name $type $bound
+    }
+    if {[calc::wave_dest_cur] ne $cur} {
+        return [dict create ok 0 msg [calc::aq_msg restore $type]]
+    }
+    if {!$ran} {
+        return [dict create ok 0 msg [calc::aq_msg noread $an]]
+    }
+    return [dict create ok 1 rc $rc value $v]
+}
+
+# Plain Eval inside the loan: the engine step, in the qualifier's analysis.
+proc calc::eval_in_ctx {rpn {dataset 0} {an {}}} {
+    set r [calc::aq_run $an [list calc::eval_rpn $rpn $dataset]]
+    if {![dict get $r ok]} {
+        return [calc::eval_refusal [dict get $r msg] $dataset]
+    }
+    if {[dict get $r rc]} { return -code error [dict get $r value] }
+    return [dict get $r value]
+}
+
+# A measurement verb's invocation, with every qualified operand guarded in the
+# CURRENT database and rewritten to `v(net)`.  A refusal answers the verbs' own
+# `{ok 0 msg}` shape.
+proc calc::aq_arg_invoke {name vals} {
+    set out {}
+    foreach {k v} $vals {
+        set g [calc::aq_guard $v]
+        if {$g ne {}} { return [dict create ok 0 msg $g] }
+        lappend out $k [calc::aq_strip $v]
+    }
+    return [calc::arg_invoke $name $out]
+}
+
+# The same, in the qualifier's analysis.
+proc calc::meas_in_ctx {name vals {an {}}} {
+    set r [calc::aq_run $an [list calc::aq_arg_invoke $name $vals]]
+    if {![dict get $r ok]} { return [dict create ok 0 msg [dict get $r msg]] }
+    if {[dict get $r rc]} { return -code error [dict get $r value] }
+    return [dict get $r value]
+}
+
+# Every sentence R208c can say.  Builder contract as `calc::pick_msg`'s: three
+# arguments, one `pattern { return ... }` per physical line, and no prose
+# between patterns.  `$a` is an id (`mixed`, `guard`, `plot`) or a sim type.
+proc calc::aq_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        mixed { return "Cannot evaluate: ${a}() and ${b}() read different analyses" }
+        absent { return "Cannot evaluate: this result has no [calc::analysis_word $a] analysis" }
+        noread { return "Cannot evaluate: could not read the [calc::analysis_word $a] analysis" }
+        restore { return "Cannot evaluate: could not return to the [calc::analysis_word $a] analysis" }
+        guard { return "Cannot evaluate ${a}(): the loaded analysis is [calc::analysis_word $b]" }
+        plot { return "Cannot plot ${a}(): the waveform viewer shows [calc::analysis_word $b]" }
+    }
+    return {}
+}
+
 # R603: run the engine step in the context the SELECTED RESULT lives in.
 #
 # ⚠ THE READ TAKES A LOAN AND GIVES IT BACK (issue 0173), and the bracket is the
@@ -3281,10 +3539,14 @@ proc calc::eval_fmt {d} {
 # databases.  `results::current` (src/results.tcl) returns the registry row
 # whose `cur` flag is set, so the result `calc::require_result` named IS the
 # context's loaded one -- which is also why phase 3 does not need the `type`
-# and `idx` the gate carries for identification.  No `xschem raw switch` and no
-# `xschem raw read` is issued from the Calculator: it reads what the session
-# selected and mutates nothing but its own temporary column.
-proc calc::eval_in_token {tok rpn {dataset 0}} {
+# and `idx` the gate carries for identification.  The Calculator reads what the
+# session selected and mutates nothing but its own temporary column -- with ONE
+# bounded exception, R208c: an expression carrying `vt()`/`vf()`/`vdc()`/`vs()`
+# is evaluated in that analysis of the SAME result's raw file, through
+# `calc::aq_run`, which reads it on demand, evaluates, and restores the user's
+# exact slot (clearing any slot it added) before the loan is given back.  No
+# other file is ever read and plain `v()` text moves nothing.
+proc calc::eval_in_token {tok rpn {dataset 0} {an {}}} {
     if {$tok eq {}} { return [calc::eval_refusal [calc::eval_msg noctx] $dataset] }
     set ticket {}
     if {[catch {wviewer::enter_ctx $tok 1} ticket]} {
@@ -3294,7 +3556,7 @@ proc calc::eval_in_token {tok rpn {dataset 0}} {
         return [calc::eval_refusal [calc::eval_msg busy] $dataset]
     }
     set d {}
-    if {[catch {calc::eval_rpn $rpn $dataset} d]} {
+    if {[catch {calc::eval_in_ctx $rpn $dataset $an} d]} {
         set d [calc::eval_refusal [calc::eval_msg engine $d] $dataset]
     }
     catch {wviewer::leave_ctx $tok $ticket}
@@ -3355,13 +3617,23 @@ proc calc::eval_click {} {
     if {[calc::quote_bad $rpn]} { return [calc::status [calc::eval_msg quote]] }
     set tok {}
     catch {set tok [dict get $g token]}
+    # R208c: which analysis the text asks for, decided once for the whole press
+    # and refused here when it asks for two.  The text itself is not rewritten:
+    # the verbs' provenance sentence and the stack keep what was typed.
+    set q [calc::aq_plan $rpn]
+    if {![dict get $q ok]} { return [calc::status [dict get $q msg]] }
+    set an [dict get $q type]
+    dict set g analysis $an
     # R421a.  A composed measurement call is routed to the measurement layer
     # BEFORE the engine sees it -- `calc::rpn_bad_token` cannot lex one, and its
     # refusal is contingent on the raw file's inventory rather than on a keyword
     # list, so this ordering is the fence and the gate is not.
     set m [calc::meas_split $rpn]
     if {$m ne {}} { return [calc::status [calc::meas_eval $m $g $rpn]] }
-    return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
+    if {$an eq {}} {
+        return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
+    }
+    return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn 0 $an]]]
 }
 
 # ---------------------------------------------------------------------------
@@ -3575,6 +3847,20 @@ proc calc::plot_dest_dropped {prev code} {
 # overwritten; the clause is appended to the seam's failure sentence as well,
 # because the push has already happened by then.
 proc calc::plot_rpn {tok rpn dest} {
+    # R208c: Plot draws in the database the viewer already shows and never
+    # switches it, so a qualified token for ANOTHER analysis is refused rather
+    # than plotted from the wrong one; one for the shown analysis is plotted as
+    # the plain name.
+    set p [calc::aq_plan $rpn]
+    if {![dict get $p ok]} { return [calc::plot_refusal [dict get $p msg] $dest] }
+    if {[dict get $p type] ne {}} {
+        set cur [calc::wave_dest_cur]
+        if {[lindex $cur 1] ne [dict get $p type]} {
+            return [calc::plot_refusal \
+                        [calc::aq_msg plot [dict get $p id] [lindex $cur 1]] $dest]
+        }
+        set rpn [calc::aq_strip $rpn]
+    }
     set before {}
     catch {
         foreach G [dict get [wviewer::layout_for $tok] graphs] {
@@ -9093,15 +9379,17 @@ proc calc::pick_ids {} {
 # `v(sq)` is even index 0.  So nothing in the buffer, the status line or the
 # refusal vocabulary could say which of those numbers the user was looking at.
 #
-# ⚠ WHY THIS IS A GATE AND NOT A TAG IN THE BUFFER TEXT.  A spelling like
-# `v(bg)@ac` cannot resolve as the tree stands: `ase::attach_dbs` DROPS every
-# analog slot but the one just read (its own comment: "drop everything that is not
-# the DB just read"), so the Calculator sees exactly ONE analysis at a time and a
-# tag would need it to re-read a database on demand -- which falsifies
-# `calc::eval_in_token`'s header, fights that invariant, and would be undone by the
-# next run's attach.  That is a change to ASE-L's attach policy, not a Calculator
-# change.  The gate is right under every spelling we might later choose, so it
-# ships first; Cadence's own `VT("/net")` notation is its own unit.
+# ⚠ AND SINCE R208c (the user, 2026-10-11: *"A simulation could have both AC
+# and TRAN simulations. The vt or vf need to intelligently pick FROM the loaded
+# results."*) THE ID IS CARRIED IN THE BUFFER TEXT, not only checked at arm
+# time: a pick inserts `vt(lp)`, `vf(lp)`, `vdc(lp)` or `vs(lp)`, and
+# evaluation reads that token from ITS analysis of the current result's raw
+# file through `calc::aq_run`.  So ALL FOUR selectors can arm against one result
+# -- the first version of this gate armed at most one, because `ase::attach_dbs`
+# keeps a single slot and the Calculator could only see that one; a selector now
+# refuses only when the run wrote no such analysis at all.  This table is the
+# one both halves read: the gate in `calc::pick_decide` and the token's meaning
+# in `calc::aq_plan`.
 #
 # ⚠ `vdc` IS MAPPED TO `op` ALONE AND THE LIMIT IS DECLARED, NOT GUESSED.
 # `src/save.c` carries a note that a MULTI-POINT "Operating Point" raw read as
@@ -9135,18 +9423,6 @@ proc calc::analysis_word {type} {
     set t [calc::analysis_words]
     if {[string trim $type] eq {} || ![dict exists $t $type]} { return $type }
     return [dict get $t $type]
-}
-
-# ...and the same thing as a phrase, so `calc::pick_msg`'s arm can stay a single
-# `return` (the sweep in band MT20/B finds an arm only by `^pattern {return`).
-#
-# ⚠ THE ARTICLE IS CHOSEN, not hardcoded: the first version said *"needs an tran
-# result"* and *"an dc result"*.  A sentence the user reads has to read.
-proc calc::pick_wants {id} {
-    set w [calc::analysis_word [calc::pick_analysis $id]]
-    if {$w eq {}} { return {its own analysis} }
-    set art [expr {[string match {[AaEeIiOoUu]*} $w] ? {an} : {a}}]
-    return "$art $w result"
 }
 
 # The armed selector id, or empty.  R201's remembered value: `calc::build_sel`'s
@@ -9396,7 +9672,7 @@ proc calc::pick_msg {kind {a {}} {b {}}} {
         busyview { return "selector $a: the result's waveform window is busy; try again" }
         nomouse { return "selector $a: this build cannot report the mouse position; ESC leaves" }
         scope { return "selector $a: pick scope $b is not implemented (phase 6)" }
-        analysis { return "selector $a: needs [calc::pick_wants $a]; this one is [calc::analysis_word $b]" }
+        analysis { return "selector $a: this result has no [calc::analysis_word [calc::pick_analysis $a]] analysis" }
         moved { return "selector $a: this window is on another schematic now; pick cancelled" }
         dropped { return "selector $a: the design window closed; pick cancelled" }
         cancelled { return "selector $a: pick cancelled" }
@@ -9484,12 +9760,24 @@ proc calc::pick_decide {id g} {
     # and it is asked HERE, where the id is in hand, rather than in
     # `calc::pick_name` or `calc::pick_lookup`, which are told a token and a level
     # and must stay unable to discriminate (band PK1 pins their signatures).
+    #
+    # R208c (2026-10-11) moved the question from "is the CURRENT analysis this
+    # one" to "does the current RESULT hold this analysis": the token the pick
+    # inserts (`vf(lp)`) is evaluated in its own analysis of the same raw file,
+    # so `vf` arms on a transient-current result whose run also wrote an AC
+    # plot.  Presence is the file's own `Plotname:` records
+    # (`calc::raw_analyses`); a result whose file cannot be scanned keeps the
+    # old answer, its current type.
     set want [calc::pick_analysis $id]
     set got {}
     catch {set got [dict get $g type]}
     if {$want ne {} && [string trim $got] ne {} && $got ne $want} {
-        return [dict create act refuse token {} \
-                    msg [calc::pick_msg analysis $id $got]]
+        set path {}
+        catch {set path [dict get $g path]}
+        if {[lsearch -exact [calc::raw_analyses $path] $want] < 0} {
+            return [dict create act refuse token {} \
+                        msg [calc::pick_msg analysis $id $got]]
+        }
     }
     set tok {}
     catch {set tok [dict get $g token]}
@@ -9663,7 +9951,7 @@ proc calc::pick_end {{why cancel}} {
 # ⚠ A REFUSED TICKET IS `busyview`, NEVER `unresolved`.  From outside the loan
 # those two are indistinguishable, and guessing the second would blame the user's
 # click for the viewer's lock.
-proc calc::pick_in_token {tok cand} {
+proc calc::pick_in_token {tok cand {an {}}} {
     if {[string trim $tok] eq {}} {
         return [dict create ok 0 why busyview name {}]
     }
@@ -9674,12 +9962,30 @@ proc calc::pick_in_token {tok cand} {
     if {![lindex $ticket 0]} {
         return [dict create ok 0 why busyview name {}]
     }
-    set d {}
-    if {[catch {calc::pick_lookup $cand} d]} {
-        set d [dict create ok 0 why busyview name {}]
-    }
+    set d [calc::pick_lookup_in $cand $an]
     catch {wviewer::leave_ctx $tok $ticket}
     return $d
+}
+
+# R208c: the lookup asked IN THE ANALYSIS THE SELECTOR NAMES, so the name
+# inserted is that database's own spelling.  `calc::pick_lookup` itself stays
+# blind to the analysis (band PK1); the bracket is `calc::aq_run`'s.  A slot
+# that could not be entered is `noraw`, the sentence for "that result has no
+# data loaded".
+proc calc::pick_lookup_in {cand {an {}}} {
+    set r [calc::aq_run $an [list calc::pick_lookup $cand]]
+    if {![dict get $r ok] || [dict get $r rc]} {
+        return [dict create ok 0 why noraw name {}]
+    }
+    return [dict get $r value]
+}
+
+# THE TOKEN A SELECTOR INSERTS: the raw's own spelling with its `v` replaced by
+# the selector's id, so `v(lp)` read back for `vf` goes in as `vf(lp)` (R208c).
+# A read-back that is not `v(...)` (a bare net name) is wrapped whole.
+proc calc::aq_qualify {id name} {
+    if {[regexp {^[vV]\((.*)\)$} $name -> inner]} { return "$id\($inner\)" }
+    return "$id\($name\)"
 }
 
 # KEEP THE PROMPT UP, AND NOTICE WHEN THE DESIGN WINDOW GOES AWAY.
@@ -9898,17 +10204,15 @@ proc calc::pick_click {{x {}} {y {}}} {
                     [calc::pick_msg [dict get $nm why] $id [dict get $nm detail]]]
     }
     set cand [dict get $nm cand]
-    set lk [calc::pick_in_token $pick(token) $cand]
+    set an [calc::pick_analysis $id]
+    set lk [calc::pick_in_token $pick(token) $cand $an]
     if {![dict get $lk ok]} {
         set det $cand
         if {[dict get $lk why] eq {unlexable}} { set det [dict get $lk name] }
         return [calc::pick_echo [calc::pick_msg [dict get $lk why] $id $det]]
     }
-    set name [dict get $lk name]
+    set name [calc::aq_qualify $id [dict get $lk name]]
     calc::buf_insert_token $name
-    set an {}
-    catch {set an [xschem raw sim_type]}
-    if {[string match ERR:* $an]} { set an {} }
     set s [calc::pick_echo \
                [calc::pick_fit $id $name [calc::pick_cadence $net $base] $an]]
     calc::pick_done
@@ -12500,6 +12804,11 @@ proc calc::meas_sep {} { return {, } }
 # Eval).  `calc::arg_field_bad`'s enum arm judges the stripped word, so the
 # dialog and a call typed in the buffer agree.  Plot is NOT a door here.
 #
+# The ANALYSIS-QUALIFIED forms (`vt("lp")`, `vf("lp")`, ...) are not this
+# proc's: `calc::aq_strip` (R208c) takes their quotes off together with the
+# qualifier, at the doors that evaluate in an analysis -- so this regex stays
+# `v`/`i` only and its byte-identity on everything else is unchanged.
+#
 # ⚠ DECLARED LIMIT: Cadence's leading-slash net paths (`v("/vbg")`,
 # `VT("/vbg")`) are not translated; `/vbg` is not a raw column name, so they
 # are refused naming the token, as before.
@@ -12998,7 +13307,7 @@ proc calc::stk_cleared {} {
 # (plain) loan.  A refused loan is reported as busy, never as "no data".  A
 # raise from the verb is re-raised AFTER the context is restored, so the
 # caller's `arg_msg failed` arm still names it.
-proc calc::meas_in_token {tok name vals} {
+proc calc::meas_in_token {tok name vals {an {}}} {
     if {[string trim $tok] eq {}} {
         return [dict create ok 0 msg [calc::eval_msg noctx]]
     }
@@ -13009,7 +13318,7 @@ proc calc::meas_in_token {tok name vals} {
     if {![lindex $ticket 0]} {
         return [dict create ok 0 msg [calc::eval_msg busy]]
     }
-    set rc [catch {calc::arg_invoke $name $vals} d]
+    set rc [catch {calc::meas_in_ctx $name $vals $an} d]
     catch {wviewer::leave_ctx $tok $ticket}
     if {$rc} { return -code error $d }
     return $d
@@ -13024,7 +13333,13 @@ proc calc::meas_apply {name vals g {src {}}} {
     set d {}
     set tok {}
     catch {set tok [dict get $g token]}
-    if {[catch {calc::meas_in_token $tok $name [calc::meas_numeric $name $vals]} d]} {
+    # R208c: the analysis the press's text qualified, carried in `$g` by
+    # `calc::eval_click`.  Passed only when there is one, so a replacement of
+    # `calc::meas_in_token` with the shipped three-argument shape still works.
+    set an {}
+    catch {set an [dict get $g analysis]}
+    set extra [expr {$an eq {} ? {} : [list $an]}]
+    if {[catch {calc::meas_in_token $tok $name [calc::meas_numeric $name $vals] {*}$extra} d]} {
         return [calc::arg_msg failed $name $d]
     }
     set ok 0

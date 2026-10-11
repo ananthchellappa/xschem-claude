@@ -502,19 +502,21 @@ layout means *do not redecorate*; it never meant *ship a control off the window*
 
 ⚠ **The `Emits into buffer` column is what made the four voltage selectors look alike, and
 it is not the whole of what distinguishes them — the `ngspice / xschem source` column is.**
-All four emit `v(<net>)` as *text*; what differs is the database that name is resolved in,
-and **R208a** is the rule that enforces it. Reading this table as "all four do the same
-thing" is the defect the user reported on 2026-10-07.
+They used to emit `v(<net>)` as *text* alike, with the database that name is resolved in
+as the only difference (**R208a**). Reading this table as "all four do the same thing" is
+the defect the user reported on 2026-10-07. **Since R208c (2026-10-11) the analysis is in
+the text**: each voltage selector emits its own analysis-qualified token, which reads that
+analysis of the current result's raw file whatever analysis is current.
 
 | id | row | Label | ngspice / xschem source | Emits into buffer | v1 |
 |---|---|---|---|---|---|
-| `vt` | 1 | vt | tran raw, node voltage | `v(<net>)` | ✔ |
+| `vt` | 1 | vt | tran raw, node voltage | `vt(<net>)` (R208c) | ✔ |
 | `it` | 2 | it | tran raw, device terminal current | `i(<dev>)` or `@<dev>[<term>]` | ✔ |
-| `vf` | 1 | vf | ac raw, node voltage (complex) | `v(<net>)` | ✔ |
+| `vf` | 1 | vf | ac raw, node voltage (complex) | `vf(<net>)` (R208c) | ✔ |
 | `if` | 2 | if | ac raw, terminal current | as `it` | ✔ |
-| `vdc` | 1 | vdc | op raw / `.op` values | `v(<net>)` | ✔ |
+| `vdc` | 1 | vdc | op raw / `.op` values | `vdc(<net>)` (R208c) | ✔ |
 | `idc` | 2 | idc | op raw, terminal current | as `it` | ✔ |
-| `vs` | 1 | vs | dc-sweep raw, node voltage | `v(<net>)` | ✔ |
+| `vs` | 1 | vs | dc-sweep raw, node voltage | `vs(<net>)` (R208c) | ✔ |
 | `is` | 2 | is | dc-sweep raw, terminal current | as `it` | ✔ |
 | `op` | 1 | op | device op parameter, one value | `@<dev>[<param>]` | ✔ |
 | `opt` | 2 | opt | device op parameter vs time | `@<dev>[<param>]` from tran raw | ✔ |
@@ -620,8 +622,8 @@ thing" is the defect the user reported on 2026-10-07.
   half the engine resolves:
 
   ```
-  buffer:  an_expression+ v(x1.i2.net)
-  status:  selector vt: v(x1.i2.net) from /X1/I2/net
+  buffer:  an_expression+ vt(x1.i2.net)
+  status:  selector vt: vt(x1.i2.net) (transient) from /X1/I2/net
   ```
 
   The single space is **forced, not chosen**: `calc::token_sep` inserts it because the
@@ -677,6 +679,10 @@ thing" is the defect the user reported on 2026-10-07.
   answers a comma-joined multi-bit string the engine will not evaluate; a bit-chooser
   dialog opening inside a modal pick is worse. Declared v1 limit.
 - **R208a** **There IS an analysis gate, and it is the user's own correction of R208.**
+  ⚠ **Amended by R208c (2026-10-11)**: the gate now asks whether the current result's raw
+  file *holds* the selector's analysis, not whether that analysis is the current one, and
+  the "at most ONE selector can arm" consequence below no longer holds. The refusal
+  sentence is now *"selector vf: this result has no AC analysis"*.
   Their words, 2026-10-07: *"vt and vf both put `v(netname)` in the calculator buffer. We
   need different functions because vt and vf are different things."*
   ⚠ **R208 as first written said the opposite** — *"No analysis gate … a row asserts the
@@ -701,8 +707,9 @@ thing" is the defect the user reported on 2026-10-07.
   that invariant, and would be undone by the next run's attach. That is a change to ASE-L's
   attach policy, not a Calculator change. The gate is right under every spelling, so it
   ships first; Cadence's own `VT("/net")` notation is its own unit.
-  ⚠⚠ **A CONSEQUENCE WORTH STATING PLAINLY: at most ONE of the four voltage selectors can
-  arm against any given result.** The Calculator holds one database at a time, so on a
+  ⚠⚠ **SUPERSEDED BY R208c — kept as the record of why it was once true. A CONSEQUENCE
+  WORTH STATING PLAINLY: at most ONE of the four voltage selectors can arm against any
+  given result.** The Calculator holds one database at a time, so on a
   transient result `vt` arms and `vf`/`vdc`/`vs` all refuse — by design, and with a sentence
   that says which analysis is loaded, so the user knows to pick a different result rather
   than wondering why a button did nothing. This is why the "press another selector" path
@@ -726,6 +733,57 @@ thing" is the defect the user reported on 2026-10-07.
   compared the answers — which agree **by construction**, because `$id` appeared in the
   loop and in nothing the loop called. It was vacuous and is recorded here because the
   shape recurs: a sweep over a parameter the subject cannot see measures nothing.
+
+- **R208c** **Analysis-qualified voltages: `vt(net)`, `vf(net)`, `vdc(net)`, `vs(net)`.**
+  The user's ruling, 2026-10-11: *"A simulation could have both AC and TRAN simulations.
+  The vt or vf need to intelligently pick FROM the loaded results."* (following their
+  2026-10-07 *"vt and vf both put v(netname) in the calculator buffer. We need different
+  functions because vt and vf are different things."*). One ASE-L run writes one raw file
+  with one plot per analysis (issue 0929), and U11 rules that run is ONE result whose
+  analyses are dimensions inside it — so a token naming an analysis reads a sibling plot of
+  the result the session already selected, which U6 (no `self` arm: never resolve a result
+  out of the Calculator's own context) does not forbid.
+  - **The tokens.** `vt` → `tran`, `vf` → `ac`, `vdc` → `op`, `vs` → `dc`, the table being
+    `calc::pick_analyses`. Bare or with Cadence quotes (`vf("lp")`); an uppercase id is
+    accepted too. A leading-slash Cadence path (`vt("/lp")`) is not a token and stays refused
+    naming the text (§3.1, row Q6).
+  - **The selectors** insert the qualified token, spelled with the selected analysis's own
+    column name read back inside that analysis (`calc::pick_lookup_in`), and the success
+    sentence names the analysis: *"selector vf: vf(lp) (AC) from /lp"*. A selector arms
+    when the result's raw file holds its analysis — presence is read live from the file's
+    own `Plotname:` records (`calc::raw_analyses`, through `ase::cap_raw_plots`, which seeks
+    past every binary payload) — and refuses only when the run wrote none: *"selector vs:
+    this result has no DC sweep analysis"*.
+  - **Evaluation** (Eval, measurement verbs through Eval): the press decides the analysis
+    once (`calc::aq_plan`). None: unchanged. Two different ones: refused, *"Cannot
+    evaluate: vt() and vf() read different analyses"*. One: inside the viewer's context
+    loan, `calc::aq_run` snapshots the current slot, enters `(rawfile, analysis)` with
+    `xschem raw read` (which switches to a registered slot or reads it on demand, and never
+    runs `update_op()`), evaluates with the qualified tokens rewritten to `v(...)`, restores
+    the exact slot, clears any slot it added (and restores again, issue 1636), and compares
+    the final slot with the snapshot — a mismatch is a refusal. `xschem raw info` is
+    byte-identical before and after. A run with no such analysis: *"Cannot evaluate: this
+    result has no AC analysis"*.
+  - **Plot** draws in the database the viewer shows and never switches it: a token for that
+    analysis is plotted as the plain name; any other is refused, *"Cannot plot vf(): the
+    waveform viewer shows transient"* — never plotted from the wrong column.
+  - **The guard.** A qualified token is never evaluated against another analysis whoever
+    calls: `calc::aq_guard` is asked inside `calc::eval_rpn`, every measurement verb's
+    invocation and `calc::plot_rpn`, so a door that forgets the bracket refuses (*"Cannot
+    evaluate vf(): the loaded analysis is transient"*) instead of serving a wrong number.
+  - Every refusal goes through `calc::status` (which tees the CIW); the buffer and the stack
+    keep what was typed.
+  - ⚠ **DECLARED LIMIT: only qualified tokens are analysis-checked.** A plain `v(net)` still
+    reads whatever analysis is current, exactly as before R208c; inside an expression that
+    carries a qualifier it is read in that qualifier's analysis, because one expression is
+    evaluated in one database.
+  - ⚠ An on-demand read costs one parse of that plot per press; nothing is cached (R705).
+    An already-registered sibling slot bound to another schematic is re-bound to the
+    viewer's by the enter verb — the same re-binding `raw select` does for a run's
+    analyses (R301a).
+  - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT9),
+    rows PK1 of `test_calc_selector_names`, PG3/PG8/PG13/PG14 and band PG15 of
+    `test_calc_pick` (display arm: the real presses through the real loan).
 
 ---
 

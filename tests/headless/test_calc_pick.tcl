@@ -403,9 +403,14 @@ group PG3 {
     set after [pg_buf]
     check "PG3 the user's own example, end to end: with `an_expression+` typed, a click on the wire labelled `lp` leaves the buffer holding that text plus the vector name, separated by exactly ONE space -- and the space is FORCED, not chosen, because §3.1's lexer splits on whitespace and would read `an_expression+v(lp)` as one unknown token" \
         [list $typed $after [pcall calc::rpn_bad_token an_expression+v(lp)]] \
-        [list {an_expression+} {an_expression+ v(lp)} {unknown token 'an_expression+v(lp)' (not an operator/function, number or raw variable)}]
-    check "PG3 ...and the status line names the vector AND the Cadence path, which is R208's whole arrangement: the half the engine resolves beside the half the user recognises" \
-        [lindex [pcall calc::status_history] 0] {selector vt: v(lp) from /lp} 
+        [list {an_expression+} {an_expression+ vt(lp)} {unknown token 'an_expression+v(lp)' (not an operator/function, number or raw variable)}]
+    # R208c: the buffer gets the ANALYSIS-QUALIFIED token (`vt(lp)`, which reads
+    # v(lp) from the transient analysis of the result whatever is current) and the
+    # sentence names the analysis -- read from the selector's own table, where the
+    # earlier sentence asked `xschem raw sim_type` in the DESIGN window's context,
+    # which holds no raw, so the analysis never actually appeared on this arm.
+    check "PG3 ...and the status line names the vector, its analysis AND the Cadence path, which is R208's whole arrangement: the half the engine resolves beside the half the user recognises" \
+        [lindex [pcall calc::status_history] 0] {selector vt: vt(lp) (transient) from /lp}
     check "PG3 ONE undo removes exactly the name and leaves the typing, and a second removes the typing -- which is what the two `edit separator` calls in `calc::buf_insert_token` buy and the only thing that measures them" \
         [list [pcall .calc.buf edit undo] [pg_buf] \
               [pcall .calc.buf edit undo] [pg_buf]] \
@@ -426,7 +431,7 @@ group PG3 {
         [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
               [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]
     check "PG3 R208b ...and the success sentence is still the last thing the Calculator said: ending the mode does not overwrite it with a `cancelled`" \
-        [lindex [pcall calc::status_history] 0] {selector vt: v(lp) from /lp}
+        [lindex [pcall calc::status_history] 0] {selector vt: vt(lp) (transient) from /lp}
     check "PG3 R208: a pick SELECTS NOTHING on the schematic (issue 0204) -- the probe is read-only and the user's own ruling is that a command mode must not change the selected set" \
         [list [pcall xschem selection] [pcall xschem get lastsel]] {{} 0}
     .calc.buf delete 1.0 end
@@ -475,7 +480,7 @@ group PG4 {
     pg_drift_click $cv 50 0 600 300
     check "PG4 R208b: after two refusals the mode is still the SAME pick, and the first click that resolves a net inserts it and ends the mode with the four slots handed back" \
         [list [pg_buf] [pcall calc::pick_running] [set ::calc::selmode] [pg_binds $cv]] \
-        [list {v(lp)} 0 {} [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+        [list {vt(lp)} 0 {} [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
                                  [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
     check "PG4 ...and that resolving click LEFT THE USER'S SELECTION EXACTLY AS IT WAS, although the hand DRIFTED across the sheet with the button down: the mode ends on the RELEASE, so the held motion and the release are still eaten by the seize -- ended inside the press instead, the held motion reaches C as a rubber band whose first act is unselect_all" \
         [list [pg_word [expr {$sel0 ne {}}] seeded EMPTY] [pcall xschem selection] [pcall xschem get lastsel]] \
@@ -585,12 +590,12 @@ group PG13 {
     check "PG13 a SUCCESSFUL pick's sentence reaches the DESIGN window's own status slot and not only the Calculator's -- which matters precisely because the pick now raises the schematic OVER the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  Under R208b the mode has ENDED by then, so the slot holds the sentence in its neutral state rather than as a live prompt" \
         [list [pcall $slot cget -text] [pcall $slot cget -state] \
               [lindex [pcall calc::status_history] 0] [pg_buf] [pcall calc::pick_running]] \
-        [list {selector vt: v(lp) from /lp} normal {selector vt: v(lp) from /lp} {v(lp)} 0]
+        [list {selector vt: vt(lp) (transient) from /lp} normal {selector vt: vt(lp) (transient) from /lp} {vt(lp)} 0]
     pcall calc::pick_arm vt
     pg_click $cv 310 0
     check "PG13 ...and so does a REFUSAL, with its own instruction, so a mis-click is answered where the eye already is" \
         [list [pcall $slot cget -text] [pg_buf]] \
-        [list {selector vt: M1 is not a net} {v(lp)}]
+        [list {selector vt: M1 is not a net} {vt(lp)}]
     # ⚠ THE PUMP MUST KEEP THE NEW SENTENCE UP, not revert to the arming prompt:
     # C's `update_statusbar()` blanks this slot on every canvas event, so a direct
     # write would survive less than one frame.  That is why `calc::pick_echo` goes
@@ -603,19 +608,26 @@ group PG13 {
     check "PG13 the pump keeps the LATEST sentence up rather than reverting to the arming prompt, which is what `calc::pick_echo` writing through `pick(prompt)` buys -- a direct write to the slot would be blanked by C within a frame" \
         [pcall $slot cget -text] {selector vt: M1 is not a net}
     pcall calc::pick_end cancel
-    # --- R208a with a REAL window and a REAL database -------------------------
-    # ⚠ `vf` IS THE AC SELECTOR AND THIS RESULT IS TRANSIENT, so arming it must
-    # refuse, seize nothing, and say which analysis is loaded.  This is the user's
-    # own complaint driven end to end: before R208a, `vf` here would have armed and
-    # a click would have inserted `v(lp)` reading a TRANSIENT number under an AC
-    # selector, with nothing anywhere able to say so.
+    # --- R208c with a REAL window and a REAL database -------------------------
+    # ⚠⚠ THIS ROW USED TO ASSERT THE OPPOSITE and was restated by the user's own
+    # ruling, 2026-10-11: *"A simulation could have both AC and TRAN simulations.
+    # The vt or vf need to intelligently pick FROM the loaded results."*  Under
+    # R208a `vf` against this TRANSIENT-current result refused; the committed
+    # fixture's run also wrote an AC plot, so `vf` now ARMS, and the click inserts
+    # `vf(lp)` -- a token that reads the AC analysis whatever is current -- with
+    # the AC spelling read back from the AC database itself.  The refusal half
+    # (a run with NO AC plot) is fenced on the counted arm, row PK1 of
+    # test_calc_selector_names and band AT5 of test_calc_analysis_tokens.
+    .calc.buf delete 1.0 end
     set vfsaid [pcall calc::pick_arm vf]
-    check "PG13 R208a end to end: `vf` against a TRANSIENT result refuses, seizes NOTHING and names both analyses -- before this, it armed and a click inserted a transient number under an AC selector with nothing able to say so.  The canvas is read from the id captured above, because a refusal leaves no record to read it from, which is itself the claim" \
-        [list $vfsaid [pcall calc::pick_running] [pcall calc::pick_id] \
-              [expr {[info exists ::calc::pick] ? 1 : 0}] [pg_binds $cv]] \
-        [list {selector vf: needs an AC result; this one is transient} 0 {} 0 \
-              [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
-                    [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
+    check "PG13 R208c end to end: `vf` against a TRANSIENT-current result whose run also wrote AC ARMS, on the same canvas" \
+        [list $vfsaid [pcall calc::pick_running] [pcall calc::pick_id]] \
+        [list {selector vf: click a net on the schematic; ESC cancels} 1 vf]
+    pg_click $cv 50 0
+    check "PG13 ...and a click on the lp wire inserts vf(lp) and says AC in the head of the sentence, and the one-shot mode ends" \
+        [list [pg_buf] [lindex [pcall calc::status_history] 0] [pcall calc::pick_running]] \
+        [list {vf(lp)} {selector vf: vf(lp) (AC) from /lp} 0]
+    .calc.buf delete 1.0 end
     rename ase::ui::design_path {}
     rename pg_real_dp2 ase::ui::design_path
 }
@@ -659,7 +671,10 @@ group PG14 {
     set ref NOREF
     if {![catch {wviewer::enter_ctx $::tok} t] && [lindex $t 0]} {
         set m [pcall calc::meas_split $expr]
-        set d [pcall calc::arg_invoke cross [pcall calc::meas_vals cross [dg $m args]]]
+        # R208c: the operand is the pick's qualified token, so the reference
+        # goes through the verb door's own guard-and-rewrite, in the viewer's
+        # (transient) context where `vt()` is the current analysis.
+        set d [pcall calc::aq_arg_invoke cross [pcall calc::meas_vals cross [dg $m args]]]
         set ref [dg $d value]
         catch {wviewer::leave_ctx $::tok $t}
     }
@@ -667,7 +682,7 @@ group PG14 {
         [list $picked [pcall calc::pick_running] \
               [pg_word [string is double -strict $ref] finite $ref] \
               [pg_word [expr {$vwp ne {} && $cwp0 ne $vwp}] designctx "cwp=$cwp0 viewer=$vwp"]] \
-        {v(sq) 0 finite designctx}
+        {vt(sq) 0 finite designctx}
     pg_press .calc.mode.eval
     set got [pg_buf]
     check "PG14 Eval after a pick REPLACES the buffer with the measured value and PUSHES the expression onto the stack, exactly as it does for the same text typed -- the user's item 1" \
@@ -682,6 +697,82 @@ group PG14 {
         [list $cwp0 0]
     pcall calc::pick_end cancel
     pcall calc::stk_set {}
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
+# PG15 — R208c THROUGH THE REAL LOAN: Eval and Plot on analysis-qualified tokens
+# =============================================================================
+# The user, 2026-10-11: "A simulation could have both AC and TRAN simulations.
+# The vt or vf need to intelligently pick FROM the loaded results."  The counted
+# arm (tests/headless/test_calc_analysis_tokens.tcl) drives the bracket in the
+# current context; this band drives the PRESSES, which take the viewer's
+# context loan, with the viewer's database TRANSIENT throughout.  The viewer's
+# registry is snapshotted INSIDE its own context before and after, because that
+# is the registry an on-demand read would leak into.
+proc pg15_viewer {script} {
+    set out ERR:noloan
+    if {![catch {wviewer::enter_ctx $::tok} t] && [lindex $t 0]} {
+        set out [pcall uplevel #0 $script]
+        catch {wviewer::leave_ctx $::tok $t}
+    }
+    return $out
+}
+group PG15 {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    # the references, measured by the test in the viewer's own context and
+    # undone before the snapshot: read AC, take v(lp)'s last sample, drop it
+    set ref [pg15_viewer {
+        set r {}
+        set ::PG15CUR [calc::wave_dest_cur]
+        xschem raw read $::fixture ac
+        lappend r [lindex [xschem raw values v(lp) 0] end]
+        xschem raw clear $::fixture ac
+        xschem raw read $::fixture tran
+        lappend r [lindex [xschem raw values v(lp) 0] end]
+        set r
+    }]
+    set info0 [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}]
+    check "PG15 fixture: the viewer's database is TRANSIENT, and v(lp) reads two numbers far apart in AC and in transient -- so a press that read the wrong analysis cannot pass" \
+        [list [lindex [lindex $info0 1] 1] [expr {abs([lindex $ref 0] - [lindex $ref 1]) > 0.1}]] \
+        {tran 1}
+    set wantac "= [format %.8g [lindex $ref 0]]  (at the last point)"
+    set wanttr "= [format %.8g [lindex $ref 1]]  (at the last point)"
+    set got {}
+    foreach txt {vf(lp) vt(lp) {vf("lp")}} {
+        .calc.buf delete 1.0 end
+        .calc.buf insert end $txt
+        pg_press .calc.mode.eval
+        lappend got [lindex [pcall calc::status_history] 0] [pg_buf]
+    }
+    check "PG15 a real Eval press on vf(lp) answers the AC value, on vt(lp) the transient one, and on the Cadence-quoted vf(\"lp\") the AC one again -- with the viewer showing transient throughout -- and the buffer keeps what was typed" \
+        $got [list $wantac vf(lp) $wanttr vt(lp) $wantac {vf("lp")}]
+    check "PG15 ...and the viewer's registry and current slot are byte-identical after the three presses: the AC slot read on demand was cleared and transient restored" \
+        [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}] $info0
+    .calc.buf delete 1.0 end
+    .calc.buf insert end {bandwidth(vf(lp), 3, magnitude, low, 0)}
+    pg_press .calc.mode.eval
+    set bw [pg_buf]
+    check "PG15 a measurement call on vf(lp) through Eval -- bandwidth, which refuses anything but an AC sweep -- replaces the buffer with a finite frequency and pushes what was typed, with the viewer on transient" \
+        [list [string is double -strict $bw] [expr {[string is double -strict $bw] && $bw > 1.0}] [pcall calc::stk_get]] \
+        [list 1 1 [list {bandwidth(vf(lp), 3, magnitude, low, 0)}]]
+    pcall calc::stk_set {}
+    set typed {vt(lp) vf(lp) +}
+    .calc.buf delete 1.0 end
+    .calc.buf insert end $typed
+    pg_press .calc.mode.eval
+    check "PG15 two analyses in one expression are REFUSED through calc::status, which tees the CIW, and the buffer keeps the text" \
+        [list [lindex [pcall calc::status_history] 0] [pg_buf]] \
+        [list {Cannot evaluate: vt() and vf() read different analyses} $typed]
+    .calc.buf delete 1.0 end
+    .calc.buf insert end vf(lp)
+    pg_press .calc.mode.plot
+    check "PG15 Plot of vf(lp) while the viewer shows transient is REFUSED naming both -- never plotted from the transient column" \
+        [list [lindex [pcall calc::status_history] 0] [pg_buf]] \
+        [list {Cannot plot vf(): the waveform viewer shows transient} vf(lp)]
+    check "PG15 ...and after all of it the viewer's registry is still byte-identical" \
+        [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}] $info0
     .calc.buf delete 1.0 end
 }
 
@@ -701,23 +792,37 @@ group PG8 {
         [list 0 {} {} {selector vt: pick cancelled}]
     pg_press .calc.sel.vt
     set cv8 $::calc::pick(canvas)
-    pg_press .calc.sel.vf
-    # ⚠⚠ THIS ROW WAS RESTATED BY R208a AND THE REASON IS A REAL CONSEQUENCE OF THE
-    # GATE, NOT A TEST ARTEFACT: each voltage id names ONE analysis and the
-    # Calculator can hold only ONE database at a time (`ase::attach_dbs` drops the
-    # others), so AT MOST ONE OF THE FOUR CAN EVER ARM against a given result.
-    # Its old form pressed `vt` then `vf` and expected both to arm, which is now
-    # impossible by construction.  What still matters -- and is what it was really
-    # about -- is that pressing another selector ENDS the live pick and releases the
-    # canvas BEFORE the new id is judged, so no seize can be left behind.
-    check "PG8 pressing ANOTHER voltage selector ENDS the live pick and releases the canvas before the new id is judged -- and under R208a the new id then refuses, because each voltage selector names one analysis and only one of the four can arm against a given result.  `::calc::selmode` follows the pressed id either way, which is Tk's own write and the grid showing the user what they clicked" \
+    pg_press .calc.sel.vs
+    # ⚠⚠ RESTATED TWICE.  R208a made the second selector refuse because only one
+    # analysis could be read; R208c (the user, 2026-10-11) lets every analysis the
+    # RUN wrote be read, so `vf` now arms here.  What this row was always about --
+    # pressing another selector ENDS the live pick and releases the canvas BEFORE
+    # the new id is judged -- is driven with `vs`, which still refuses because the
+    # committed fixture's run wrote no DC sweep, so a refusal can still not leave a
+    # seize behind.  The arming half is the next two rows.
+    check "PG8 pressing ANOTHER voltage selector ENDS the live pick and releases the canvas before the new id is judged -- `vs` then refuses because this run wrote no DC sweep (R208c).  `::calc::selmode` follows the pressed id either way, which is Tk's own write and the grid showing the user what they clicked" \
         [list [pcall calc::pick_running] [pcall calc::pick_id] [set ::calc::selmode] \
               [lindex [pcall calc::status_history] 0]] \
-        [list 0 {} vf {selector vf: needs an AC result; this one is transient}]
+        [list 0 {} vs {selector vs: this result has no DC sweep analysis}]
     check "PG8 ...and NO canvas is left seized after the switch: the end path ran, so the four slots are back at their predecessors rather than carrying a dead mode's scripts -- issue 1305's permanent seize is what this forecloses" \
         [list [expr {[info exists ::calc::pick] ? 1 : 0}] [pg_binds $cv8]] \
         [list 0 [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
                       [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
+    pg_press .calc.sel.vt
+    pg_press .calc.sel.vf
+    check "PG8 R208c: pressing `vf` while `vt` is armed SWITCHES to it -- the run wrote AC too, so the new id arms on the same canvas" \
+        [list [pcall calc::pick_running] [pcall calc::pick_id] [set ::calc::selmode] \
+              [lindex [pcall calc::status_history] 0]] \
+        [list 1 vf vf {selector vf: click a net on the schematic; ESC cancels}]
+    set pg8prev {}
+    foreach k {prevpress prevrel prevesc prevmotion} {
+        set v NOKEY ; catch {set v $::calc::pick($k)} ; lappend pg8prev $v
+    }
+    pcall calc::pick_end cancel
+    check "PG8 ...and the switched-to mode recorded the canvas's ORIGINAL predecessors, not `vt`'s seize scripts, so ending it hands the four slots back empty -- issue 1305's permanent seize, foreclosed on the arming path too" \
+        [list $pg8prev [pg_binds $cv8]] \
+        [list {{} {} {} {}} [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                                 [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
     pcall calc::pick_end cancel
     check "PG8 a NON-voltage selector is still inert and arms nothing, which is R208's scope boundary with a real press behind it" \
         [list [pg_word [expr {[pcall calc::sel_click op] ne {}}] speaks SILENT] \

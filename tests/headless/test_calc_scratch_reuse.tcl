@@ -677,13 +677,22 @@ group SR5 {
     # `calc::eval_rpn` straight from `calc::eval_click` would evaluate against
     # whatever raw THIS window has -- the `self` arm U6 removed -- and would
     # redden nothing else in this file, so the row is here rather than assumed.
+    #
+    # ⚠ RESTATED FOR R208c (2026-10-11), NOT WIDENED: the one caller is now
+    # `calc::eval_in_ctx`, the body of the loan that runs the engine in the
+    # analysis an expression's `vt()`/`vf()`/`vdc()`/`vs()` names -- and the
+    # claim is kept whole by asserting the SECOND hop too: exactly one proc calls
+    # `eval_in_ctx`, and it is the one holding the loan.  A press that called
+    # either straight from `calc::eval_click` reddens one of the two.
     set callers {}
+    set ctxcallers {}
     dict for {nm b} $pbody {
         if {$nm eq {eval_rpn}} { continue }
         if {[regexp {calc::eval_rpn} $b]} { lappend callers $nm }
+        if {$nm ne {eval_in_ctx} && [regexp {calc::eval_in_ctx} $b]} { lappend ctxcallers $nm }
     }
-    check "SR5 ...and exactly ONE proc calls eval_rpn, the one that holds the context loan" \
-        $callers {eval_in_token}
+    check "SR5 ...and exactly ONE proc calls eval_rpn, and exactly ONE calls THAT one, the one that holds the context loan" \
+        [list $callers $ctxcallers] {eval_in_ctx eval_in_token}
 }
 
 # =============================================================================
