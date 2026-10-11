@@ -2508,6 +2508,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
           xctx->extra_prev_idx = 0;
           if(xctx->extra_raw_n) {
             xctx->raw = xctx->extra_raw_arr[0];
+            /* free_rawfile() just painted the cue grey, and a database is still
+             * current: repaint it from that one (see update_waves_menu_cue). */
+            update_waves_menu_cue();
           } else {
             tcleval("array unset ngspice::ngspice_data");
             xctx->raw = NULL;
@@ -2547,6 +2550,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
           xctx->extra_prev_idx = 0;
           if(xctx->extra_raw_n) {
             xctx->raw = xctx->extra_raw_arr[0];
+            /* free_rawfile() just painted the cue grey, and a database is still
+             * current: repaint it from that one (see update_waves_menu_cue). */
+            update_waves_menu_cue();
           } else {
             tcleval("array unset ngspice::ngspice_data");
             xctx->raw = NULL;

@@ -761,8 +761,17 @@ analysis of the current result's raw file whatever analysis is current.
     `xschem raw read` (which switches to a registered slot or reads it on demand, and never
     runs `update_op()`), evaluates with the qualified tokens rewritten to `v(...)`, restores
     the exact slot, clears any slot it added (and restores again, issue 1636), and compares
-    the final slot with the snapshot — a mismatch is a refusal. `xschem raw info` is
-    byte-identical before and after. A run with no such analysis: *"Cannot evaluate: this
+    the whole `xschem raw info` text with the snapshot — a mismatch is a refusal (band AT11).
+    `xschem raw info` is byte-identical before and after. The slot a read added is found
+    by the registry DIFF (a read appends) and cleared BY INDEX, never re-matched by type:
+    a multi-point `Operating Point` plot read as `op` is stored as sim type `dc`, and a
+    type match both failed the press and left one stray `<file> dc` slot per press (band
+    AT10). While the bracket runs, `calc::aq_guard` accepts the analysis the bracket
+    entered (`calc::aq_active`) rather than the stored type. `xschem raw clear` now
+    repaints the design window's Waves menu cue from the slot it leaves current, so a
+    bracket no longer greys it under a loaded database (band AT12, display arm; declared
+    limit: with the user's slot other than slot 0 the cue describes slot 0, a state ASE-L
+    never reaches). A run with no such analysis: *"Cannot evaluate: this
     result has no AC analysis"*.
   - **Plot** draws in the database the viewer shows and never switches it: a token for that
     analysis is plotted as the plain name; any other is refused, *"Cannot plot vf(): the
@@ -781,8 +790,12 @@ analysis of the current result's raw file whatever analysis is current.
     An already-registered sibling slot bound to another schematic is re-bound to the
     viewer's by the enter verb — the same re-binding `raw select` does for a run's
     analyses (R301a).
-  - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT9),
-    rows PK1 of `test_calc_selector_names`, PG3/PG8/PG13/PG14 and band PG15 of
+  - ⚠ A multi-point operating point SHOWN in the viewer is stored as `dc`, so Plot of
+    `vdc(...)` against it is refused naming the DC sweep (declared; the stored type is the
+    only one `xschem raw info` reports).
+  - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT11;
+    display arm: band AT12; registered in both lists), rows PK1 of
+    `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and band PG15 of
     `test_calc_pick` (display arm: the real presses through the real loan).
 
 ---

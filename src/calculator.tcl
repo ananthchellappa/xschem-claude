@@ -3429,15 +3429,54 @@ proc calc::aq_guard {s} {
     if {![dict get $p ok]} { return [dict get $p msg] }
     set want [dict get $p type]
     if {$want eq {}} { return {} }
+    variable aq_active
+    if {[info exists aq_active] && $aq_active eq $want} { return {} }
     set cur [calc::wave_dest_cur]
     if {$cur eq {} || [lindex $cur 1] eq $want} { return {} }
     return [calc::aq_msg guard [dict get $p id] [lindex $cur 1]]
 }
 
+# The `raw info` text, or {} when the verb raises: the snapshot `calc::aq_run`
+# compares WHOLE, so a slot added, left behind or reordered is seen and not only
+# a different current one.
+proc calc::aq_info {} {
+    set t {}
+    if {[catch {xschem raw info} t]} { return {} }
+    return $t
+}
+
+# The registry index of the current slot, from the same snapshot's
+# `<n> current` line, or -1.
+proc calc::aq_curidx {} {
+    foreach ln [split [calc::aq_info] "\n"] {
+        if {[regexp {^[ \t]*([0-9]+)[ \t]+current[ \t]*$} $ln -> i]} { return $i }
+    }
+    return -1
+}
+
+# The analysis `calc::aq_run` has made current, while `$cmd` runs inside it, so
+# `calc::aq_guard` can accept the entered slot by WHAT THE BRACKET ENTERED rather
+# than by the stored sim type -- which is not always the analysis read: a
+# multi-point `Operating Point` plot is stored as `dc` (read_dataset() in
+# src/save.c).  Empty outside a bracket.
+namespace eval calc { variable aq_active {} }
+
 # Run `$cmd` with the `$an` analysis of the CURRENT result's raw file current,
 # and put the user's slot back whatever happens.  Answers
 # `{ok 1 rc <catch code> value <result>}` or `{ok 0 msg <sentence>}`.  An empty
 # `$an`, or one that is already current, runs `$cmd` where it stands.
+#
+# ⚠ THE SLOT THE READ ADDED IS FOUND BY THE REGISTRY DIFF, NEVER RE-MATCHED BY
+# TYPE.  `xschem raw read <f> op` of a multi-point operating point stores the
+# slot as sim type `dc`, so a test of "the current slot is {<f> op}" failed on a
+# read that succeeded, and `raw clear <f> op` -- which matches on the STORED
+# type -- missed the slot, leaving one stray `<f> dc` per press in the Results
+# list (band AT10 of tests/headless/test_calc_analysis_tokens.tcl).  A read
+# appends, so the slots it added are the indices from the old count up, and
+# they are cleared BY INDEX, highest first.  `raw clear` then forces slot 0
+# (issue 1636), so the user's slot is restored a second time, and the WHOLE
+# `raw info` text is compared with the snapshot: a mismatch is a refusal
+# (band AT11).
 proc calc::aq_run {an cmd} {
     set cur [calc::wave_dest_cur]
     if {$an eq {} || [lindex $cur 1] eq $an} {
@@ -3455,26 +3494,39 @@ proc calc::aq_run {an cmd} {
     set lv -1
     catch {set lv [xschem raw loaded]}
     set bound [expr {[string is integer -strict $lv] && $lv >= 0}]
+    set info0 [calc::aq_info]
     set before [calc::aq_nslots]
     set rd 0
     catch {set rd [xschem raw read $name $an]}
-    set added [expr {[calc::aq_nslots] > $before}]
+    set after [calc::aq_nslots]
+    set here [calc::wave_dest_cur]
+    set entered 0
+    if {$rd eq {1} && [lindex $here 0] eq $name} {
+        if {$after > $before} {
+            set entered [expr {[calc::aq_curidx] >= $before}]
+        } else {
+            set entered [expr {[lindex $here 1] eq $an}]
+        }
+    }
     set rc 0
     set v {}
-    set ran 0
-    if {$rd eq {1} && [calc::wave_dest_cur] eq [list $name $an]} {
-        set ran 1
+    if {$entered} {
+        variable aq_active
+        set aq_active $an
         set rc [catch {uplevel #0 $cmd} v]
+        set aq_active {}
     }
     calc::aq_restore $name $type $bound
-    if {$added} {
-        catch {xschem raw clear $name $an}
+    if {$after > $before} {
+        for {set k [expr {$after - 1}]} {$k >= $before} {incr k -1} {
+            catch {xschem raw clear $k}
+        }
         calc::aq_restore $name $type $bound
     }
-    if {[calc::wave_dest_cur] ne $cur} {
+    if {[calc::aq_info] ne $info0} {
         return [dict create ok 0 msg [calc::aq_msg restore $type]]
     }
-    if {!$ran} {
+    if {!$entered} {
         return [dict create ok 0 msg [calc::aq_msg noread $an]]
     }
     return [dict create ok 1 rc $rc value $v]

@@ -23,8 +23,20 @@
 # the fixture is ~0.998 read as tran, ~0.447 read as AC and exactly 0 read as
 # op, and band AT2 carries the distinctness leg that measures that every run.
 #
+# REGISTERED IN BOTH LISTS.  Every band but AT12 runs on the counted arm; AT12
+# (the design window's Waves menu cue after an on-demand read and its clear) can
+# only be seen with a display, and announces an uppercase SKIP without one.
+#
+# DECLARED LIMIT (AT12): `xschem raw clear` makes slot 0 current and now repaints
+# the cue from it (src/save.c, extra_rawfile what == 3); `raw switch` and a
+# dedupe `raw read` repaint nothing.  So when the user's slot is NOT slot 0 and
+# slot 0 is bound to a different schematic, the cue after a bracket describes
+# slot 0.  ASE-L never reaches that state (ase::attach_dbs keeps one slot); the
+# row drives the one-slot shape ASE-L leaves.
+#
 # Standalone from the repo ROOT, armed (throwaway HOME, never $DISPLAY):
 #   tests/headless/run_suites.sh --nogui test_calc_analysis_tokens
+#   tests/headless/run_suites.sh test_calc_analysis_tokens
 
 source [file join [file dirname [info script]] scratch.tcl]
 
@@ -331,6 +343,137 @@ group AT9 {
     }
     check "AT9 every arm of calc::aq_msg, derived from its own switch, answers a non-empty sentence of at most 80 characters without raising -- and there are at least six" \
         [list $bad [expr {[llength $arms] >= 6}]] {{} 1}
+}
+
+# THE MULTI-POINT OPERATING POINT FILE: the single-analysis cut followed by the
+# fixture's own `Operating Point` plot with its point count doubled and its one
+# point repeated.  read_dataset() stores such a plot as sim type `dc`, not `op`
+# (save.c: "multi-point OP is equivalent to a DC sweep"), which is the shape
+# that made `calc::aq_run` re-match its added slot by the WRONG type.
+proc at_mop {} {
+    set out [file join $::scratch mop.raw]
+    if {$::single eq {} || ![file exists $::single]} { return NOSINGLE }
+    set f [open $::fixture r]
+    fconfigure $f -translation binary
+    set all [read $f]
+    close $f
+    set p [string first "Plotname: Operating Point" $all]
+    if {$p < 0} { return NOOP }
+    set t [string last "Title:" $all $p]
+    if {$t < 0} { return NOTITLE }
+    set seg [string range $all $t end]
+    set b [string first "Binary:\n" $seg]
+    if {$b < 0} { return NOBINARY }
+    set hdr [string range $seg 0 [expr {$b + 7}]]
+    if {![regexp {No\. Variables:[ \t]*([0-9]+)} $hdr -> nv]} { return NONV }
+    if {![regsub {No\. Points:[ \t]*1\n} $hdr "No. Points: 2\n" hdr2]} { return NOPOINTS }
+    set pay [string range $seg [expr {$b + 8}] [expr {$b + 8 + $nv * 8 - 1}]]
+    if {[string length $pay] != $nv * 8} { return SHORT }
+    set g [open $::single r]
+    fconfigure $g -translation binary
+    set head [read $g]
+    close $g
+    set o [open $out w]
+    fconfigure $o -translation binary
+    puts -nonewline $o "$head$hdr2$pay$pay"
+    close $o
+    return $out
+}
+
+# =============================================================================
+# AT10 -- A MULTI-POINT OPERATING POINT: the added slot is found by the registry
+# DIFF, not re-matched by type, so it is entered, evaluated and cleared
+# =============================================================================
+group AT10 {
+    set mop [at_mop]
+    check "AT10 fixture: the multi-point-OP file was built, holds tran and op, and its op plot really is stored as sim type dc (the shape under test)" \
+        [list [file exists $mop] [pcall calc::raw_analyses $mop] \
+              [pcall xschem raw clear] [pcall xschem raw read $mop op] \
+              [lindex [calc::wave_dest_cur] 1]] \
+        {1 {tran op} 1 1 dc}
+    set rop [lindex [pcall xschem raw values v(lp) 0] end]
+    pcall xschem raw clear
+    pcall xschem raw read $mop tran
+    set rtr [lindex [pcall xschem raw values v(lp) 0] end]
+    check "AT10 DISTINCTNESS, measured: v(lp) in that file's tran and op plots differ far beyond 1e-7" \
+        [expr {[string is double -strict $rop] && [string is double -strict $rtr] && abs($rtr - $rop) > 0.1}] 1
+    set i0 [at_info]
+    set c0 [calc::wave_dest_cur]
+    set bad {}
+    set moved {}
+    for {set k 1} {$k <= 3} {incr k} {
+        set d [pcall calc::eval_in_ctx {vdc(lp)} 0 op]
+        set n [near [fld $d value] $rop]
+        if {$n ne {near}} { lappend bad "press$k:$n:[fld $d msg]" }
+        if {[at_info] ne $i0 || [calc::wave_dest_cur] ne $c0} { lappend moved "press$k:[at_info]" }
+    }
+    check "AT10 three vdc(lp) presses with tran current each answer the op plot's value -- not a 'could not read' refusal" \
+        $bad {}
+    check "AT10 ...and after EVERY press 'raw info' and the current slot are byte-identical: no stray '<f> dc' slot accumulates" \
+        $moved {}
+    set lk [pcall calc::pick_lookup_in v(lp) op]
+    check "AT10 the vdc selector's lookup in that file resolves v(lp) and leaves 'raw info' byte-identical" \
+        [list [fld $lk ok] [fld $lk name] [expr {[at_info] eq $i0}]] {1 v(lp) 1}
+    check "AT10 THE GUARD inside the bracket accepts the entered slot although it is stored as dc: vdc(lp) through calc::aq_run to calc::eval_rpn is not refused" \
+        [near [fld [fld [pcall calc::aq_run op [list calc::eval_rpn {vdc(lp)} 0]] value] value] $rop] near
+    check "AT10 ...and the bracket's own state is back to empty after it (a later bracket-less door is guarded again)" \
+        [fld [pcall calc::eval_rpn {vdc(lp)}] msg] {Cannot evaluate vdc(): the loaded analysis is transient}
+}
+
+# =============================================================================
+# AT11 -- THE FINAL-SLOT COMPARISON: a restore that does not land is a refusal
+# =============================================================================
+group AT11 {
+    at_load ac
+    pcall xschem raw read $::fixture tran
+    set c0 [calc::wave_dest_cur]
+    set i0 [at_info]
+    rename ::calc::aq_restore ::calc::aq_restore__at11
+    proc ::calc::aq_restore {name type bound} { return }
+    set r [pcall calc::aq_run ac [list calc::eval_rpn {vf(lp)} 0]]
+    rename ::calc::aq_restore {}
+    rename ::calc::aq_restore__at11 ::calc::aq_restore
+    set landed [calc::wave_dest_cur]
+    check "AT11 fixture: the user's slot is tran at index 1 with AC at index 0, so a restore that does nothing really leaves AC current" \
+        [list [lindex $c0 1] [lindex $landed 1]] {tran ac}
+    check "AT11 with calc::aq_restore stubbed to a no-op, calc::aq_run REFUSES with the restore sentence naming the user's analysis -- it does not report the AC value as a success" \
+        [list [fld $r ok] [fld $r msg]] \
+        [list 0 [calc::aq_msg restore tran]]
+    pcall xschem raw switch [lindex $c0 0] [lindex $c0 1]
+    check "AT11 ...and the real restore is back in place: the same press now answers ok with the registry unchanged" \
+        [list [fld [pcall calc::aq_run ac [list calc::eval_rpn {vf(lp)} 0]] ok] [expr {[at_info] eq $i0}]] \
+        {1 1}
+}
+
+# =============================================================================
+# AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
+# leave the design window's cue as the user's database says, not grey
+# =============================================================================
+group AT12 {
+    if {[info commands winfo] eq {} || ![winfo exists .drw]} {
+        puts "SKIP (no X): AT12 the Waves menu cue is painted only with a display"
+    } else {
+        set wp [xschem get current_win_path]
+        proc at_cue {wp} {
+            set v NOVAR
+            catch {set v [set ::tctx::${wp}_waves]}
+            set m NOMENU
+            catch {set m [.menubar entrycget Waves -background]}
+            return [list $v $m]
+        }
+        at_load tran
+        set c0 [at_cue $wp]
+        set l0 [pcall xschem raw loaded]
+        check "AT12 fixture: with the transient database read the cue is Green on the variable and the menu, and it is loaded" \
+            [list $c0 [expr {$l0 >= 0}]] {{Green Green} 1}
+        set got {}
+        foreach {tokn an} {vf(lp) ac vdc(lp) op vf(lp) ac} {
+            pcall calc::eval_in_ctx $tokn 0 $an
+            lappend got "$tokn:[at_cue $wp]:[pcall xschem raw loaded]"
+        }
+        check "AT12 after vf(lp), vdc(lp) and vf(lp) again -- each an on-demand read and clear -- the cue is still Green on both and the database still loaded" \
+            $got [list "vf(lp):Green Green:$l0" "vdc(lp):Green Green:$l0" "vf(lp):Green Green:$l0"]
+    }
 }
 
 catch {xschem raw clear}
