@@ -3432,8 +3432,42 @@ proc calc::aq_guard {s} {
     variable aq_active
     if {[info exists aq_active] && $aq_active eq $want} { return {} }
     set cur [calc::wave_dest_cur]
-    if {$cur eq {} || [lindex $cur 1] eq $want} { return {} }
+    if {$cur eq {}} { return {} }
+    if {[lindex $cur 1] eq $want} {
+        if {[calc::aq_present [lindex $cur 0] $want] == 0} {
+            return [calc::aq_msg absent $want]
+        }
+        return {}
+    }
     return [calc::aq_msg guard [dict get $p id] [lindex $cur 1]]
+}
+
+# The registry's slots as `{name type}` pairs in index order, from one
+# `raw info` snapshot (`calc::wave_slot`'s line grammar).
+proc calc::aq_rows {} {
+    set out {}
+    foreach ln [split [calc::aq_info] "\n"] {
+        if {[regexp {^[ \t]*[0-9]+[ \t]+current[ \t]*$} $ln]} continue
+        if {[regexp {^[ \t]*[0-9]+[ \t]+(.+)[ \t]+(\S+)[ \t]*$} $ln -> nm ty]} {
+            lappend out [list [string trim $nm] $ty]
+        }
+    }
+    return $out
+}
+
+# Whether the raw file `$name` holds the `$an` analysis: 1 yes, 0 no, -1 when
+# its `Plotname:` records could not be read at all.  Asked even when the CURRENT
+# slot's stored type already equals `$an`, because the stored type is not the
+# analysis: a multi-point `Operating Point` plot is stored as `dc`
+# (read_dataset() in src/save.c), so a `vs()` there would read an operating
+# point as a DC sweep (band AT14 of tests/headless/test_calc_analysis_tokens.tcl).
+# ⚠ -1 runs in place on that path, as it did before R208c: a slot whose file
+# cannot be scanned (not a file path, or `ase::cap_raw_plots` absent) evaluated
+# then, and refusing it now would take away an answer nobody showed was wrong.
+proc calc::aq_present {name an} {
+    set have [calc::raw_analyses $name]
+    if {[llength $have] == 0} { return -1 }
+    return [expr {[lsearch -exact $have $an] >= 0}]
 }
 
 # The `raw info` text, or {} when the verb raises: the snapshot `calc::aq_run`
@@ -3464,7 +3498,8 @@ namespace eval calc { variable aq_active {} }
 # Run `$cmd` with the `$an` analysis of the CURRENT result's raw file current,
 # and put the user's slot back whatever happens.  Answers
 # `{ok 1 rc <catch code> value <result>}` or `{ok 0 msg <sentence>}`.  An empty
-# `$an`, or one that is already current, runs `$cmd` where it stands.
+# `$an`, or one that is already current and present in the file, runs `$cmd`
+# where it stands.
 #
 # ⚠ THE SLOT THE READ ADDED IS FOUND BY THE REGISTRY DIFF, NEVER RE-MATCHED BY
 # TYPE.  `xschem raw read <f> op` of a multi-point operating point stores the
@@ -3477,8 +3512,27 @@ namespace eval calc { variable aq_active {} }
 # (issue 1636), so the user's slot is restored a second time, and the WHOLE
 # `raw info` text is compared with the snapshot: a mismatch is a refusal
 # (band AT11).
+#
+# ⚠ EXCEPT THE PRESS'S OWN ANSWER.  A verb answering a WAVE (riseTime/slewRate
+# nth 0, the dutyCycle/frequency series) registers a `__calc_destN table`
+# destination through `calc::wave_dest` while `$cmd` runs, and that slot must
+# OUTLIVE the bracket: it is what the hand-off draws.  Such slots, new since the
+# read and named and typed as `calc::wave_dest` mints them, are neither cleared
+# nor counted as a leak -- the expected text is the snapshot plus them,
+# appended.  Counting them made every wave press from a non-current analysis
+# refuse with a false "could not return" and leave the destination behind (band
+# AT13; PG15w of tests/headless/test_calc_pick.tcl).  Any other slot is still a
+# refusal.  The read-added indices are cleared only while they still hold the
+# slot the read added, so a destination can never be cleared in their place.
+#
+# ⚠ AND PRESENCE IS ASKED EVEN WHEN THE STORED TYPE ALREADY MATCHES: see
+# `calc::aq_present` (band AT14).
 proc calc::aq_run {an cmd} {
     set cur [calc::wave_dest_cur]
+    if {$an ne {} && [lindex $cur 1] eq $an
+        && [calc::aq_present [lindex $cur 0] $an] == 0} {
+        return [dict create ok 0 msg [calc::aq_msg absent $an]]
+    }
     if {$an eq {} || [lindex $cur 1] eq $an} {
         set rc [catch {uplevel #0 $cmd} v]
         return [dict create ok 1 rc $rc value $v]
@@ -3510,20 +3564,36 @@ proc calc::aq_run {an cmd} {
     }
     set rc 0
     set v {}
+    set rowsr [calc::aq_rows]
+    set dests {}
     if {$entered} {
         variable aq_active
         set aq_active $an
         set rc [catch {uplevel #0 $cmd} v]
         set aq_active {}
+        foreach row [calc::aq_rows] {
+            if {[lsearch -exact $rowsr $row] >= 0} continue
+            if {[regexp {^__calc_dest[0-9]+$} [lindex $row 0]]
+                && [lindex $row 1] eq {table}} {
+                lappend dests $row
+            }
+        }
     }
     calc::aq_restore $name $type $bound
     if {$after > $before} {
         for {set k [expr {$after - 1}]} {$k >= $before} {incr k -1} {
+            if {[lindex [calc::aq_rows] $k] ne [lindex $rowsr $k]} continue
             catch {xschem raw clear $k}
         }
         calc::aq_restore $name $type $bound
     }
-    if {[calc::aq_info] ne $info0} {
+    set want $info0
+    set k $before
+    foreach row $dests {
+        append want "$k [lindex $row 0] [lindex $row 1]\n"
+        incr k
+    }
+    if {[calc::aq_info] ne $want} {
         return [dict create ok 0 msg [calc::aq_msg restore $type]]
     }
     if {!$entered} {

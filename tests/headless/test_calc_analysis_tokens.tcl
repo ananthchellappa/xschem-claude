@@ -446,6 +446,114 @@ group AT11 {
 }
 
 # =============================================================================
+# AT13 -- A WAVE-SHAPED VERB THROUGH THE BRACKET: the destination the verb builds
+# inside the entered analysis is HANDED OFF, not cleared and not refused
+#
+# `riseTime` with nth 0 and the `dutyCycle` series answer a WAVE: the verb calls
+# `calc::wave_dest`, which registers a persistent `__calc_destN table` slot
+# INSIDE the bracket.  That slot is the press's answer and outlives it; the
+# on-demand analysis slot does not.  The values are compared with the SAME call
+# made with the transient database current, where no bracket runs at all -- a
+# mechanism with no registry diff in it.
+# =============================================================================
+proc at_dests {} {
+    set out {}
+    foreach ln [split [at_info] "\n"] {
+        if {[regexp {^[ \t]*[0-9]+[ \t]+(__calc_dest[0-9]+)[ \t]+table[ \t]*$} $ln -> n]} { lappend out $n }
+    }
+    return $out
+}
+proc at_dropall {} {
+    foreach n [at_dests] { calc::wave_dest_drop [dict create db $n type table] }
+}
+group AT13 {
+    set calls [list {riseTime(vt(sq), 0, 1, 10, 90, 0, 0)} {dutyCycle(vt(sq), 0.5, 0, 0, start)}]
+    set ctl {}
+    foreach txt $calls {
+        at_load tran
+        set d [at_meas $txt]
+        lappend ctl [list [fld $d ok] [fld $d shape] [fld $d value]]
+        at_dropall
+    }
+    set nctl {}
+    foreach c $ctl { lappend nctl [llength [lindex $c 2]] }
+    check "AT13 control: with tran current (no bracket) both verbs answer a wave of at least two points" \
+        [list [lindex $ctl 0 0] [lindex $ctl 0 1] [expr {[lindex $nctl 0] >= 2}] \
+              [lindex $ctl 1 0] [lindex $ctl 1 1] [expr {[lindex $nctl 1] >= 2}]] \
+        {1 wave 1 1 wave 1}
+    foreach shape {{ac} {tran ac}} {
+        set k 0
+        foreach txt $calls {
+            set want [lindex $ctl $k 2]
+            incr k
+            catch {xschem raw clear}
+            foreach t $shape { pcall xschem raw read $::fixture $t }
+            set c0 [calc::wave_dest_cur]
+            set i0 [at_info]
+            set d [at_meas $txt]
+            set db [fld $d db]
+            set dests [at_dests]
+            set nrows 0
+            foreach ln [split $i0 "\n"] {
+                if {[regexp {^[0-9]+ \S} $ln] && ![regexp {^[0-9]+ current$} $ln]} { incr nrows }
+            }
+            check "AT13 \[$shape, AC current\] $txt answers ok with shape wave and a destination db, NOT the restore refusal" \
+                [list [fld $d ok] [fld $d shape] [string match {__calc_dest*} $db] [fld $d msg]] \
+                [list 1 wave 1 {}]
+            check "AT13 \[$shape, AC current\] $txt ...its values are the transient control's, element for element" \
+                [expr {[fld $d value] eq $want}] 1
+            check "AT13 \[$shape, AC current\] $txt ...the user's AC slot is current again and the registry is the user's slots PLUS exactly that one destination, appended" \
+                [list [expr {[calc::wave_dest_cur] eq $c0}] $dests \
+                      [expr {[string first "$nrows $db table" [at_info]] >= 0}]] \
+                [list 1 [list $db] 1]
+            at_dropall
+            check "AT13 \[$shape, AC current\] $txt ...and dropping the destination leaves the registry byte-identical to before the press" \
+                [list [expr {[at_info] eq $i0}] [expr {[calc::wave_dest_cur] eq $c0}]] {1 1}
+        }
+    }
+    at_load ac
+    set i0 [at_info]
+    proc ::at13_leak {} {
+        lassign [calc::wave_dest_cur] n t
+        xschem raw new __at13_leak table x 0 1 1
+        calc::wave_dest_restore $n $t
+        return leaked
+    }
+    set r [pcall calc::aq_run tran ::at13_leak]
+    set leaked [expr {[string first __at13_leak [at_info]] >= 0}]
+    check "AT13 THE EXEMPTION IS NARROW: a slot that is NOT a calc destination, added inside the bracket, is still refused with the restore sentence (and left visible, not silently cleared)" \
+        [list [fld $r ok] [fld $r msg] $leaked] [list 0 [calc::aq_msg restore ac] 1]
+    rename ::at13_leak {}
+    catch {xschem raw clear __at13_leak table}
+    at_load tran
+}
+
+# =============================================================================
+# AT14 -- PRESENCE IS CHECKED EVEN WHEN THE STORED TYPE MATCHES: a multi-point
+# operating point is stored as `dc`, and `vs()` on it must not read it as a sweep
+# =============================================================================
+group AT14 {
+    set mop [at_mop]
+    catch {xschem raw clear}
+    pcall xschem raw read $mop op
+    set c0 [calc::wave_dest_cur]
+    set i0 [at_info]
+    check "AT14 fixture: the multi-point-OP slot is current and stored as dc, and the file holds no DC sweep" \
+        [list [lindex $c0 1] [pcall calc::raw_analyses $mop]] {dc {tran op}}
+    set d [pcall calc::eval_in_ctx {vs(lp)} 0 dc]
+    check "AT14 vs(lp) with that dc-stored operating point current is REFUSED naming the missing DC sweep, not evaluated in place" \
+        [list [fld $d ok] [fld $d msg] [expr {[at_info] eq $i0}]] \
+        [list 0 [calc::aq_msg absent dc] 1]
+    check "AT14 ...and the bracket-less door refuses too: calc::eval_rpn handed vs(lp) there does not read the operating point as a sweep" \
+        [list [fld [pcall calc::eval_rpn {vs(lp)}] ok] [fld [pcall calc::eval_rpn {vs(lp)}] msg]] \
+        [list 0 [calc::aq_msg absent dc]]
+    set rop [lindex [pcall xschem raw values v(lp) 0] end]
+    check "AT14 control: vdc(lp) on the same slot still answers the operating point's value" \
+        [near [fld [pcall calc::eval_in_ctx {vdc(lp)} 0 op] value] $rop] near
+    at_load tran
+}
+
+# =============================================================================
 # AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
 # leave the design window's cue as the user's database says, not grey
 # =============================================================================

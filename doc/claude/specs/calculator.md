@@ -762,7 +762,14 @@ analysis of the current result's raw file whatever analysis is current.
     runs `update_op()`), evaluates with the qualified tokens rewritten to `v(...)`, restores
     the exact slot, clears any slot it added (and restores again, issue 1636), and compares
     the whole `xschem raw info` text with the snapshot — a mismatch is a refusal (band AT11).
-    `xschem raw info` is byte-identical before and after. The slot a read added is found
+    `xschem raw info` is byte-identical before and after, with ONE exception that is the
+    press's own answer: a verb answering a WAVE (`riseTime`/`slewRate` with nth 0, the
+    `dutyCycle`/`frequency` series) registers a `__calc_destN table` destination inside
+    the bracket, and that slot is KEPT, appended after the user's slots, and handed to the
+    viewer. Before 2026-10-11's repair the bracket counted it as a leak, refused the press
+    with a false *"could not return to the AC analysis"* and left the destination behind
+    (band AT13, and PG15w through the real press). The exemption is by name and type
+    only; any other slot a command leaves is still refused. The slot a read added is found
     by the registry DIFF (a read appends) and cleared BY INDEX, never re-matched by type:
     a multi-point `Operating Point` plot read as `op` is stored as sim type `dc`, and a
     type match both failed the press and left one stray `<file> dc` slot per press (band
@@ -793,9 +800,14 @@ analysis of the current result's raw file whatever analysis is current.
   - ⚠ A multi-point operating point SHOWN in the viewer is stored as `dc`, so Plot of
     `vdc(...)` against it is refused naming the DC sweep (declared; the stored type is the
     only one `xschem raw info` reports).
-  - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT11;
-    display arm: band AT12; registered in both lists), rows PK1 of
-    `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and band PG15 of
+  - **Presence is asked even when the stored type matches.** For the same reason, `vs(...)`
+    with that `dc`-stored operating point current is refused, *"Cannot evaluate: this
+    result has no DC sweep analysis"*, by `calc::aq_run` and by `calc::aq_guard` alike,
+    because the file's own `Plotname:` records hold no DC sweep (band AT14). A file whose
+    records cannot be read at all evaluates in place as before R208c.
+  - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT11,
+    AT13, AT14; display arm: band AT12; registered in both lists), rows PK1 of
+    `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and bands PG15/PG15w of
     `test_calc_pick` (display arm: the real presses through the real loan).
 
 ---

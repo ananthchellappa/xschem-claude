@@ -777,6 +777,58 @@ group PG15 {
 }
 
 # =============================================================================
+# PG15w — R208c: A WAVE-SHAPED VERB ON vt() WITH THE VIEWER ON AC
+# =============================================================================
+# `riseTime` with nth 0 answers a wave, so the verb builds a `__calc_destN`
+# destination INSIDE the bracket's on-demand transient slot.  The press must
+# hand that destination to the viewer -- not refuse with "could not return",
+# and not leave it as a stray slot the hand-off never drew.  The viewer is put
+# on AC for the band and back on transient after it.
+group PG15w {
+    pcall calc::stk_set {}
+    set setup [pg15_viewer {
+        xschem raw read $::fixture ac
+        list [xschem raw info] [calc::wave_dest_cur]
+    }]
+    check "PG15w fixture: the viewer's database is now AC" [lindex [lindex $setup 1] 1] ac
+    set typed {riseTime(vt(sq), 0, 1, 10, 90, 0, 0)}
+    .calc.buf delete 1.0 end
+    .calc.buf insert end $typed
+    pg_press .calc.mode.eval
+    set st [lindex [pcall calc::status_history] 0]
+    set after [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}]
+    set dests {}
+    foreach ln [split [lindex $after 0] "\n"] {
+        if {[regexp {^[0-9]+ (__calc_dest[0-9]+) table$} $ln -> n]} { lappend dests $n }
+    }
+    set olddests {}
+    foreach ln [split [lindex $setup 0] "\n"] {
+        if {[regexp {^[0-9]+ (__calc_dest[0-9]+) table$} $ln -> n]} { lappend olddests $n }
+    }
+    set new {}
+    foreach n $dests { if {[lsearch -exact $olddests $n] < 0} { lappend new $n } }
+    check "PG15w a real Eval press on riseTime(vt(sq), ...) with nth 0 and the viewer on AC hands ONE new destination to the viewer, saying so -- not 'could not return to the AC analysis'" \
+        [list [llength $new] $st] \
+        [list 1 [calc::arg_msg destination riseTime [lindex $new 0]]]
+    check "PG15w ...the viewer is still on AC, and its registry is what it was plus that destination, appended" \
+        [list [lindex [lindex $after 1] 1] \
+              [expr {[lindex $after 0] eq "[lindex $setup 0][expr {[llength [split [string trim [lindex $setup 0]] \n]] - 1}] [lindex $new 0] table\n"}]] \
+        {ac 1}
+    pg15_viewer {
+        foreach ln [split [xschem raw info] "\n"] {
+            if {[regexp {^[0-9]+ (__calc_dest[0-9]+) table$} $ln -> n]} {
+                calc::wave_dest_drop [dict create db $n type table]
+            }
+        }
+        xschem raw clear $::fixture ac
+        xschem raw switch $::fixture tran
+    }
+    check "PG15w ...and once the band's own AC slot and the destination are dropped the viewer is back on transient" \
+        [lindex [lindex [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}] 1] 1] tran
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
 # PG8 — R201: RE-CLICK DISARMS, ANOTHER SELECTOR SWITCHES
 # =============================================================================
 # The gesture is the real one, on the real radiobutton.
