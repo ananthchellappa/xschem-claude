@@ -715,10 +715,12 @@ analysis of the current result's raw file whatever analysis is current.
   than wondering why a button did nothing. This is why the "press another selector" path
   now means *end the live pick, then judge the new id*: the release must happen before the
   judgement, or a refusal would leave the previous selector's seize on the canvas.
-  ⚠ **`vdc` is mapped to `op` alone and the limit is declared, not guessed.** `src/save.c`
-  notes that a multi-point "Operating Point" raw read as `op` is stored as `dc`, and nobody
-  has measured that case — the committed fixture has neither a DC sweep nor a multi-point
-  op. Accepting `dc` for `vdc` would make a DC-sweep raw answer with its **last sweep
+  ⚠ **`vdc` is mapped to `op` alone.** `src/save.c` stores a multi-point "Operating
+  Point" plot read as `op` under sim type `dc`. ⚠ **SUPERSEDED BY R208c:** this paragraph
+  used to say nobody had measured that case; bands AT10 and AT14 of
+  `test_calc_analysis_tokens` now measure it every run, on a multi-point-op file built from
+  the committed fixture — `vdc` reads it, and `vs` is refused there because presence comes
+  from the file's `Plotname:` records, not the stored type. Accepting `dc` for `vdc` would make a DC-sweep raw answer with its **last sweep
   point**, a plausible wrong number; refusing it costs a sentence that names what is
   loaded, which the user can act on and report. Preferring the legible refusal over the
   plausible-wrong number is the recoverable direction, and widening the table is one line.
@@ -750,7 +752,9 @@ analysis of the current result's raw file whatever analysis is current.
   - **The selectors** insert the qualified token, spelled with the selected analysis's own
     column name read back inside that analysis (`calc::pick_lookup_in`), and the success
     sentence names the analysis: *"selector vf: vf(lp) (AC) from /lp"*. A selector arms
-    when the result's raw file holds its analysis — presence is read live from the file's
+    when the result's raw file holds its analysis — asked always, through
+    `calc::aq_present`, even when the stored type equals the selector's analysis (band
+    AT14: `vs` does not arm on a `dc`-stored multi-point operating point) — presence is read live from the file's
     own `Plotname:` records (`calc::raw_analyses`, through `ase::cap_raw_plots`, which seeks
     past every binary payload) — and refuses only when the run wrote none: *"selector vs:
     this result has no DC sweep analysis"*.
@@ -782,7 +786,10 @@ analysis of the current result's raw file whatever analysis is current.
     result has no AC analysis"*.
   - **Plot** draws in the database the viewer shows and never switches it: a token for that
     analysis is plotted as the plain name; any other is refused, *"Cannot plot vf(): the
-    waveform viewer shows transient"* — never plotted from the wrong column.
+    waveform viewer shows transient"* — never plotted from the wrong column. A token whose
+    analysis equals the shown database's stored type is still asked `calc::aq_guard`'s
+    presence check, so `vs(lp)` on a `dc`-stored multi-point operating point is refused
+    with Eval's own *"Cannot evaluate: this result has no DC sweep analysis"* (band AT14).
   - **The guard.** A qualified token is never evaluated against another analysis whoever
     calls: `calc::aq_guard` is asked inside `calc::eval_rpn`, every measurement verb's
     invocation and `calc::plot_rpn`, so a door that forgets the bracket refuses (*"Cannot
@@ -793,6 +800,10 @@ analysis of the current result's raw file whatever analysis is current.
     reads whatever analysis is current, exactly as before R208c; inside an expression that
     carries a qualifier it is read in that qualifier's analysis, because one expression is
     evaluated in one database.
+  - **Every qualified token is seen**, adjacent ones included (`vf(lp)vt(lp)` is refused
+    with the mixed sentence), and a refusal naming a token names it **as typed**:
+    `vf(nosuch)` is refused naming `'vf(nosuch)'`, not the `v(nosuch)` it is rewritten to
+    for the engine (`calc::aq_name_back`, in Eval, Plot and the verbs' door; band AT15).
   - ⚠ An on-demand read costs one parse of that plot per press; nothing is cached (R705).
     An already-registered sibling slot bound to another schematic is re-bound to the
     viewer's by the enter verb — the same re-binding `raw select` does for a run's
@@ -806,7 +817,7 @@ analysis of the current result's raw file whatever analysis is current.
     because the file's own `Plotname:` records hold no DC sweep (band AT14). A file whose
     records cannot be read at all evaluates in place as before R208c.
   - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT11,
-    AT13, AT14; display arm: band AT12; registered in both lists), rows PK1 of
+    AT13–AT15; display arm: band AT12; registered in both lists), rows PK1 of
     `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and bands PG15/PG15w of
     `test_calc_pick` (display arm: the real presses through the real loan).
 

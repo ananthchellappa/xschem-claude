@@ -3149,6 +3149,7 @@ proc calc::eval_rpn {rpn {dataset 0}} {
     # called -- `calc::aq_run` makes that analysis current before it gets here.
     set aq [calc::aq_guard $rpn]
     if {$aq ne {}} { return [calc::eval_refusal $aq $dataset] }
+    set typed $rpn
     set rpn [calc::rpn_unquote [calc::aq_strip $rpn]]
     set lv -1
     catch {set lv [xschem raw loaded]}
@@ -3181,7 +3182,7 @@ proc calc::eval_rpn {rpn {dataset 0}} {
     # call can tell a rejection from a legitimate zero.  Bands CE5, CE7, CE12
     # and SR2/SR4 each held a row asserting that, and each now asserts the
     # refusal instead.
-    set bad [calc::rpn_bad_token $rpn]
+    set bad [calc::aq_name_back $typed [calc::rpn_bad_token $rpn]]
     if {$bad ne {}} {
         return [calc::eval_refusal [calc::eval_msg badtoken $bad] $dataset]
     }
@@ -3335,25 +3336,78 @@ proc calc::eval_fmt {d} {
 # refused naming the text (row Q6 of tests/headless/test_calc_quotes.tcl).
 # ---------------------------------------------------------------------------
 
-# The token, bare or with one pair of Cadence quotes.  Groups: 1 the character
-# before (or the start), 2 the id as typed, 3 a quoted net, 4 a bare net.
+# The token, bare or with one pair of Cadence quotes.  Groups: 1 the id as
+# typed, 2 a quoted net, 3 a bare net.  It carries NO left-context group: the
+# "not inside a longer name" test is `calc::aq_scan`'s, made on the character
+# before each match.  A consumed left-context group made `regexp -all` miss the
+# second of two ADJACENT tokens (`vf(lp)vt(lp)`: the first match had already
+# eaten the `)` the second needed as its prefix), so a mixed expression read as
+# one analysis (band AT15 of tests/headless/test_calc_analysis_tokens.tcl).
 proc calc::aq_rx {} {
-    return {(^|[^A-Za-z0-9_@.])([vV](?:[tT]|[fF]|[dD][cC]|[sS]))\((?:"([^"/()[:space:]][^"()[:space:]]*)"|([^"/()[:space:]][^"()[:space:]]*))\)}
+    return {([vV](?:[tT]|[fF]|[dD][cC]|[sS]))\((?:"([^"/()[:space:]][^"()[:space:]]*)"|([^"/()[:space:]][^"()[:space:]]*))\)}
+}
+
+# Every qualified token in `$s`, in order, as `{first last id net}`: the
+# character range of the token as typed, its id lowercased, its net unquoted.
+# A match whose previous character is a name character is inside a longer name
+# and is skipped.
+proc calc::aq_scan {s} {
+    set out {}
+    set rx [calc::aq_rx]
+    set i 0
+    while {[regexp -start $i -indices -- $rx $s all id q b]} {
+        lassign $all a e
+        if {$a > 0 && [regexp {[A-Za-z0-9_@.]} [string index $s [expr {$a - 1}]]]} {
+            set i [expr {$a + 1}]
+            continue
+        }
+        if {[lindex $q 0] >= 0} {
+            set net [string range $s [lindex $q 0] [lindex $q 1]]
+        } else {
+            set net [string range $s [lindex $b 0] [lindex $b 1]]
+        }
+        lappend out [list $a $e [string tolower [string range $s [lindex $id 0] [lindex $id 1]]] $net]
+        set i [expr {$e + 1}]
+    }
+    return $out
 }
 
 # The ids in the text, lowercased, in order of appearance (repeats kept).
 proc calc::aq_ids {s} {
     set out {}
-    foreach {all pre id q b} [regexp -all -inline [calc::aq_rx] $s] {
-        lappend out [string tolower $id]
-    }
+    foreach m [calc::aq_scan $s] { lappend out [lindex $m 2] }
     return $out
 }
 
 # The text with every qualified token rewritten to `v(net)`.  Text with no
 # qualified token comes back byte-identical.
 proc calc::aq_strip {s} {
-    return [regsub -all [calc::aq_rx] $s {\1v(\3\4)}]
+    set out {}
+    set i 0
+    foreach m [calc::aq_scan $s] {
+        lassign $m a e id net
+        append out [string range $s $i [expr {$a - 1}]] "v($net)"
+        set i [expr {$e + 1}]
+    }
+    append out [string range $s $i end]
+    return $out
+}
+
+# A refusal clause computed on the REWRITTEN text, with each quoted `'v(net)'`
+# put back as the user typed it (`'vf(nosuch)'`), so the sentence names what is
+# in the buffer.  A rewritten form that the typed text ALSO carries literally is
+# left alone: there the clause may be naming the plain token.
+proc calc::aq_name_back {typed clause} {
+    if {$clause eq {}} { return $clause }
+    set map {}
+    foreach m [calc::aq_scan $typed] {
+        lassign $m a e id net
+        set plain "v($net)"
+        if {[string first $plain $typed] >= 0} continue
+        lappend map "'$plain'" "'[string range $typed $a $e]'"
+    }
+    if {![llength $map]} { return $clause }
+    return [string map $map $clause]
 }
 
 # THE PRESS-TIME DECISION, pure: `{ok 1 type <t> id <id>}` with an empty type
@@ -3622,7 +3676,12 @@ proc calc::aq_arg_invoke {name vals} {
         if {$g ne {}} { return [dict create ok 0 msg $g] }
         lappend out $k [calc::aq_strip $v]
     }
-    return [calc::arg_invoke $name $out]
+    set r [calc::arg_invoke $name $out]
+    set m {}
+    if {[catch {dict get $r ok} ok] || $ok ne {0} || [catch {dict get $r msg} m]} { return $r }
+    foreach {k v} $vals { set m [calc::aq_name_back $v $m] }
+    dict set r msg $m
+    return $r
 }
 
 # The same, in the qualifier's analysis.
@@ -3971,8 +4030,11 @@ proc calc::plot_dest_dropped {prev code} {
 proc calc::plot_rpn {tok rpn dest} {
     # R208c: Plot draws in the database the viewer already shows and never
     # switches it, so a qualified token for ANOTHER analysis is refused rather
-    # than plotted from the wrong one; one for the shown analysis is plotted as
-    # the plain name.
+    # than plotted from the wrong one; one for the shown analysis is asked
+    # `calc::aq_guard` -- the presence check Eval's doors ask, since the stored
+    # type is not the analysis (a multi-point operating point is stored as `dc`,
+    # band AT14) -- and then plotted as the plain name.
+    set typed $rpn
     set p [calc::aq_plan $rpn]
     if {![dict get $p ok]} { return [calc::plot_refusal [dict get $p msg] $dest] }
     if {[dict get $p type] ne {}} {
@@ -3981,6 +4043,8 @@ proc calc::plot_rpn {tok rpn dest} {
             return [calc::plot_refusal \
                         [calc::aq_msg plot [dict get $p id] [lindex $cur 1]] $dest]
         }
+        set aq [calc::aq_guard $rpn]
+        if {$aq ne {}} { return [calc::plot_refusal $aq $dest] }
         set rpn [calc::aq_strip $rpn]
     }
     set before {}
@@ -3989,7 +4053,7 @@ proc calc::plot_rpn {tok rpn dest} {
             foreach tr [dict get $G traces] { lappend before [dict get $tr vec] }
         }
     }
-    set bad [calc::rpn_bad_token $rpn $tok]
+    set bad [calc::aq_name_back $typed [calc::rpn_bad_token $rpn $tok]]
     if {$bad ne {}} {
         return [calc::plot_refusal [calc::plot_msg badtoken $bad] $dest]
     }
@@ -9513,10 +9577,13 @@ proc calc::pick_ids {} {
 # one both halves read: the gate in `calc::pick_decide` and the token's meaning
 # in `calc::aq_plan`.
 #
-# ⚠ `vdc` IS MAPPED TO `op` ALONE AND THE LIMIT IS DECLARED, NOT GUESSED.
-# `src/save.c` carries a note that a MULTI-POINT "Operating Point" raw read as
-# `op` is stored as `dc`, and nobody has measured that case -- the committed
-# fixture has no dc sweep and no multi-point op.  Accepting `dc` for `vdc` would
+# ⚠ `vdc` IS MAPPED TO `op` ALONE.  `src/save.c`'s `read_dataset()` stores a
+# MULTI-POINT "Operating Point" plot read as `op` under sim type `dc`; that case
+# is MEASURED by bands AT10 and AT14 of
+# tests/headless/test_calc_analysis_tokens.tcl, on a file built from the
+# committed fixture at run time: `vdc` reads it, and `vs` -- whose analysis
+# equals the stored type -- is refused there because presence is asked from the
+# file's `Plotname:` records, not from the stored type.  Accepting `dc` for `vdc` would
 # make a DC-sweep raw answer `vdc` with its last sweep point, which is a
 # plausible WRONG number; refusing it costs a legible sentence that NAMES what is
 # loaded, which the user can act on and report.  Preferring the legible refusal
@@ -9890,13 +9957,20 @@ proc calc::pick_decide {id g} {
     # plot.  Presence is the file's own `Plotname:` records
     # (`calc::raw_analyses`); a result whose file cannot be scanned keeps the
     # old answer, its current type.
+    #
+    # Presence is asked ALWAYS, through `calc::aq_present` -- the helper Eval's
+    # guard asks -- and not only when the stored type differs: a multi-point
+    # operating point is STORED as `dc`, so `vs` would otherwise arm on a run
+    # that wrote no DC sweep and its click resolve nothing (band AT14 of
+    # tests/headless/test_calc_analysis_tokens.tcl).
     set want [calc::pick_analysis $id]
     set got {}
     catch {set got [dict get $g type]}
-    if {$want ne {} && [string trim $got] ne {} && $got ne $want} {
+    if {$want ne {}} {
         set path {}
         catch {set path [dict get $g path]}
-        if {[lsearch -exact [calc::raw_analyses $path] $want] < 0} {
+        set pr [calc::aq_present $path $want]
+        if {$pr == 0 || ($pr < 0 && [string trim $got] ne {} && $got ne $want)} {
             return [dict create act refuse token {} \
                         msg [calc::pick_msg analysis $id $got]]
         }

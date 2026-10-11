@@ -550,9 +550,71 @@ group AT14 {
     set rop [lindex [pcall xschem raw values v(lp) 0] end]
     check "AT14 control: vdc(lp) on the same slot still answers the operating point's value" \
         [near [fld [pcall calc::eval_in_ctx {vdc(lp)} 0 op] value] $rop] near
+    # PLOT asks presence too: the stored type `dc` equals vs()'s analysis, so a
+    # gate on the stored type alone lets this through to the viewer seam (where
+    # this token-less call would fail as `Plot failed`, a different sentence).
+    set p [pcall calc::plot_rpn __at_notoken__ {vs(lp)} replace]
+    check "AT14 Plot of vs(lp) with that dc-stored operating point current is REFUSED naming the missing DC sweep -- the same sentence Eval gives -- and never reaches the viewer seam" \
+        [list [fld $p ok] [fld $p msg] [expr {[at_info] eq $i0}]] \
+        [list 0 [calc::aq_msg absent dc] 1]
+    # THE SELECTOR GATE asks presence even when the result's stored type equals
+    # the selector's analysis.  The design resolution is stubbed because it sits
+    # AFTER the gate; `vdc` on the same dict is the control that arms, so the
+    # refusal is the file's answer and not a blanket one.
+    rename ase::ui::design_path at14_real_dp
+    proc ase::ui::design_path {key} { return /tmp/__at14_fake__/cell.sch }
+    set gdc [dict create ok 1 token k type dc path $mop]
+    set dvs [pcall calc::pick_decide vs $gdc]
+    set dvd [pcall calc::pick_decide vdc $gdc]
+    rename ase::ui::design_path {}
+    rename at14_real_dp ase::ui::design_path
+    check "AT14 the vs selector does NOT arm on a result stored as dc whose file holds no DC sweep (got = want = dc), refusing with the selector's absent sentence; vdc on the same result arms" \
+        [list [fld $dvs act] [fld $dvs msg] [fld $dvd act]] \
+        [list refuse [calc::pick_msg analysis vs] arm]
+    check "AT14 ...and the stub was handed back" [pcall ase::ui::design_path __at14_nosuch__] {}
     at_load tran
 }
 
+
+# =============================================================================
+# AT15 -- ADJACENCY AND NAMING: every qualified token is seen even with no
+# separator before it, and a refusal names the token AS TYPED, not the `v(net)`
+# it is rewritten to for the engine
+# =============================================================================
+group AT15 {
+    check "AT15 calc::aq_ids sees BOTH ids in adjacent 'vf(lp)vt(lp)' (no separator between them) and the second of three in 'vt(a)vf(b)vs(c)'" \
+        [list [pcall calc::aq_ids {vf(lp)vt(lp)}] [pcall calc::aq_ids {vt(a)vf(b)vs(c)}]] \
+        {{vf vt} {vt vf vs}}
+    check "AT15 calc::aq_strip rewrites both adjacent tokens, and still leaves a token inside a longer name alone" \
+        [list [pcall calc::aq_strip {vf(lp)vt(lp)}] [pcall calc::aq_strip {xvt(a)vf(b)}]] \
+        {v(lp)v(lp) xvt(a)v(b)}
+    at_load tran
+    check "AT15 ...so adjacent analyses are REFUSED with the mixed sentence, by the plan and by both bracket-less doors" \
+        [list [fld [pcall calc::aq_plan {vf(lp)vt(lp)}] msg] \
+              [fld [pcall calc::eval_rpn {vf(lp)vt(lp)}] msg] \
+              [fld [pcall calc::plot_rpn __at_notoken__ {vf(lp)vt(lp)} replace] msg]] \
+        [lrepeat 3 {Cannot evaluate: vf() and vt() read different analyses}]
+    set typed [list {vf(nosuch)} {vf("nosuch")} {VF(nosuch) 2 *}]
+    set got {}
+    foreach t $typed {
+        set m [fld [pcall calc::eval_in_ctx $t 0 ac] msg]
+        lappend got [list [expr {[string first "'[lindex $t 0]'" $m] >= 0}] \
+                          [expr {[string first {'v(nosuch)'} $m] >= 0}] \
+                          [string match {*unknown token*} $m]]
+    }
+    check "AT15 Eval of an unknown net under a qualifier is refused naming the token AS TYPED (vf(nosuch), vf(\"nosuch\"), VF(nosuch)) and never the rewritten v(nosuch)" \
+        $got [lrepeat 3 {1 0 1}]
+    check "AT15 control: a PLAIN v(nosuch) is still named as typed, v(nosuch)" \
+        [string match {*'v(nosuch)'*} [fld [pcall calc::eval_in_ctx {v(nosuch)} 0 {}] msg]] 1
+    at_load ac
+    set pm [fld [pcall calc::plot_rpn __at_notoken__ {vf(nosuch)} replace] msg]
+    set cm [fld [at_meas {cross(vf(nosuch), 0.5, 1, rising)}] msg]
+    at_load tran
+    check "AT15 ...and Plot and a measurement verb name it as typed too" \
+        [list [string match {*'vf(nosuch)'*} $pm] [string match {*'v(nosuch)'*} $pm] \
+              [string match {*'vf(nosuch)'*} $cm] [string match {*'v(nosuch)'*} $cm]] \
+        {1 0 1 0}
+}
 # =============================================================================
 # AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
 # leave the design window's cue as the user's database says, not grey
