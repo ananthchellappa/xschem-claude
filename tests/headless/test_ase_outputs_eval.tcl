@@ -38,6 +38,10 @@
 #        (derived without the router, FLOOR 9) routes as infix and shows
 #        the value the former print path gave, on a synthetic circuit built
 #        from the row's own reads with the bench's own analyses
+#   OE17 R208d's migration of the committed benches kept each row's meaning:
+#        a committed table of {state name old new analysis why}, each old text
+#        read in its analysis equal to its new text, on a synthetic results
+#        file holding all four analyses (hermetic, counted arm)
 #   OE14 no output text can stop the run: an unticked leading-zero number or
 #        deep nesting neither raises nor refuses
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
@@ -510,6 +514,197 @@ group OE12 {
         [list [val $res lp] [val $res ns] [expr {$note ne {}}] \
               [expr {[string first v(lp) $note] >= 0}] [expr {[string first v(nosuch) $note] >= 0}]] \
         {wave ABSENT 1 0 1}
+}
+
+# =============================================================================
+# OE17 -- R208d'S MIGRATION OF THE COMMITTED BENCHES KEPT EACH ROW'S MEANING
+# =============================================================================
+# The migration rewrote committed Outputs rows to their qualified spelling
+# (`clk` -> `vt(clk)`, `Vcc/I(Vr)` -> `vdc(Vcc)/idc(Vr)`).  OE13 reads a row
+# against a print of its OWN migrated text, so it cannot see a migrated row
+# whose meaning moved.  This band pins the migration itself: the committed
+# table tests/headless/data/r208d_migration.txt holds every rewritten row as
+# {state name old new analysis why}, and
+#   * the committed state must hold `new` for that row;
+#   * `analysis` must be enabled in the bench and be R-OUT4's own reading of
+#     it (calc::et_default over the enabled analyses) unless `why` says why
+#     the migration ruled otherwise;
+#   * `old`, read in `analysis` (the caller names it, as the former reader
+#     did), must evaluate to EXACTLY what `new` evaluates to with no analysis
+#     named, on a synthetic results file per bench that holds all four
+#     analyses with a different number of points and a different value per
+#     analysis -- so a qualifier naming another analysis, or any change to
+#     the arithmetic, answers something else.
+# A DISTINCTNESS leg reads `old` in another analysis of the same file and
+# requires it to differ, so the equality above cannot hold because the
+# fixture is blind.
+proc oe17_table {} {
+    set f [open [file join $::here data r208d_migration.txt] r]
+    set t [read $f]
+    close $f
+    set out {}
+    foreach ln [split $t "\n"] {
+        if {[string trim $ln] eq {} || [string index $ln 0] eq {#}} continue
+        lappend out $ln
+    }
+    return $out
+}
+# A positive number that differs per signal, per analysis and per point.
+proc oe17_val {sig aidx k} {
+    set h 0
+    foreach c [split [string tolower $sig] {}] { set h [expr {($h * 31 + [scan $c %c]) % 9973}] }
+    return [expr {1.0 + $h / 1000.0 + $aidx * 100.0 + $k * 0.25}]
+}
+proc oe17_rawname {sig} {
+    if {[string first ( $sig] >= 0} { return $sig }
+    return "v($sig)"
+}
+# ngspice's ASCII results format, four plots: op, dc, ac, tran.
+proc oe17_raw {path sigs} {
+    set plots {
+        {op   {Operating Point}            real    {}           1}
+        {dc   {DC transfer characteristic} real    v(v-sweep)   3}
+        {ac   {AC Analysis}                complex frequency    4}
+        {tran {Transient Analysis}         real    time         5}
+    }
+    set f [open $path w]
+    set aidx 0
+    foreach p $plots {
+        lassign $p an pname flags sweep np
+        incr aidx
+        set vars {}
+        if {$sweep ne {}} { lappend vars $sweep }
+        foreach s $sigs { lappend vars [oe17_rawname $s] }
+        puts $f "Title: oe17\nDate: oe17\nPlotname: $pname\nFlags: $flags"
+        puts $f "No. Variables: [llength $vars]\nNo. Points: $np\nVariables:"
+        set i 0
+        foreach v $vars {
+            set ty [expr {[string match -nocase i(* $v] ? {current} : {voltage}}]
+            if {$v eq {time}} { set ty time } elseif {$v eq {frequency}} { set ty frequency }
+            puts $f "\t$i\t$v\t$ty"
+            incr i
+        }
+        puts $f "Values:"
+        for {set k 0} {$k < $np} {incr k} {
+            set first 1
+            foreach v $vars {
+                if {$v eq $sweep} {
+                    set x [expr {$an eq {ac} ? pow(10.0, $k) : $k * 1e-9 + ($an eq {dc} ? 0.5 * $k : 0)}]
+                } else {
+                    set x [oe17_val $v $aidx $k]
+                }
+                set s [format %.15e $x]
+                if {$flags eq {complex}} { append s ",[format %.15e [expr {$x * 0.1}]]" }
+                puts $f [expr {$first ? " $k\t$s" : "\t$s"}]
+                set first 0
+            }
+            puts $f ""
+        }
+    }
+    close $f
+}
+proc oe17_enabled {st} {
+    set en {}
+    foreach a [dict get $st analyses] {
+        if {[dict get $a enabled] eq {1}} { lappend en [dict get $a type] }
+    }
+    return $en
+}
+group OE17 {
+    set repo [file normalize [file join $::here .. ..]]
+    set rows [oe17_table]
+    set bystate [dict create]
+    foreach r $rows { dict lappend bystate [lindex $r 0] $r }
+    set nostate {}
+    set moved {}
+    set badan {}
+    set unequal {}
+    set blind {}
+    set nrules 0
+    set nruled 0
+    set ok 0
+    set k 0
+    dict for {fn rs} $bystate {
+        incr k
+        set st {}
+        if {[catch {set fh [open [file join $repo $fn] r]; set st [read $fh]; close $fh}]} {
+            lappend nostate $fn
+            continue
+        }
+        set have [dict create]
+        foreach o [dict get $st outputs] {
+            if {[dict exists $o name]} { dict set have [dict get $o name] [dict get $o expr] }
+        }
+        set en [oe17_enabled $st]
+        set sigs {}
+        foreach r $rs {
+            lassign $r - nm old new an why
+            if {![dict exists $have $nm] || [dict get $have $nm] ne $new} {
+                set cur ABSENT
+                if {[dict exists $have $nm]} { set cur [dict get $have $nm] }
+                lappend moved "$fn $nm: committed [list $cur] table [list $new]"
+            }
+            set meas [expr {[calc::meas_split [ase::output_calc_text $old]] ne {}}]
+            set rule [calc::et_default $en $meas]
+            if {$an ni $en || ($an ne $rule && [string trim $why] eq {})} {
+                lappend badan "$fn $nm: analysis=$an enabled={$en} rule=$rule"
+            }
+            if {$why eq {}} { incr nrules } else { incr nruled }
+            foreach t [list $old $new] {
+                foreach s [calc::eval_text_signals [calc::aq_strip [ase::output_calc_text $t]]] {
+                    if {$s ni $sigs} { lappend sigs $s }
+                }
+            }
+        }
+        set raw [file join $::scratch oe17_$k.raw]
+        oe17_raw $raw $sigs
+        # one evaluation per analysis, not per row: the new texts together,
+        # and the old texts grouped by the analysis they are read in
+        set newt {}
+        foreach r $rs { lappend newt [ase::output_calc_text [lindex $r 3]] }
+        set dns [calc::eval_texts $newt $raw {}]
+        set byan [dict create]
+        set i 0
+        foreach r $rs {
+            set an [lindex $r 4]
+            set alt [expr {$an eq {tran} ? {op} : {tran}}]
+            dict lappend byan $an [list $i [ase::output_calc_text [lindex $r 2]] read]
+            dict lappend byan $alt [list $i [ase::output_calc_text [lindex $r 2]] alt]
+            incr i
+        }
+        set dos [lrepeat [llength $rs] {}]
+        set dxs [lrepeat [llength $rs] {}]
+        dict for {an js} $byan {
+            set ts {}
+            foreach j $js { lappend ts [lindex $j 1] }
+            foreach j $js d [calc::eval_texts $ts $raw $an] {
+                if {[lindex $j 2] eq {read}} { lset dos [lindex $j 0] $d } else { lset dxs [lindex $j 0] $d }
+            }
+        }
+        foreach r $rs dn $dns do $dos dx $dxs {
+            lassign $r - nm old new an why
+            set alt [expr {$an eq {tran} ? {op} : {tran}}]
+            if {![dict get $dn ok] || $dn ne $do} {
+                lappend unequal "$fn $nm: old([list $old] in $an)=[list $do] new([list $new])=[list $dn]"
+            } else {
+                incr ok
+            }
+            if {![dict get $dx ok] || [dict get $dx value] eq [dict get $dn value]} {
+                lappend blind "$fn $nm: [list $old] in $alt reads [list $dx] against [list $dn] in $an"
+            }
+        }
+        file delete -force $raw
+    }
+    check "OE17 fixture: the table is read and every state it names is committed (rows, states it could not open)" \
+        [list [expr {[llength $rows] > 0}] $nostate] {1 {}}
+    check "OE17 every migrated row the table names is committed with EXACTLY the table's new text (rows that moved)" \
+        $moved {}
+    check "OE17 every row's analysis is enabled in its bench and is R-OUT4's own reading of it unless the table says why the migration ruled otherwise (both kinds present; rows that disagree)" \
+        [list [expr {$nrules > 0}] [expr {$nruled > 0}] $badan] {1 1 {}}
+    check "OE17 MEANING: every old text read in its analysis evaluates to EXACTLY what its migrated text evaluates to, on a results file holding all four analyses (rows that answered, rows that differ)" \
+        [list [expr {$ok == [llength $rows]}] $unequal] {1 {}}
+    check "OE17 DISTINCTNESS: the same old text read in another analysis of the same file answers a value, and a different one, so the equality above is not a blind fixture (rows that did not)" \
+        $blind {}
 }
 
 # =============================================================================

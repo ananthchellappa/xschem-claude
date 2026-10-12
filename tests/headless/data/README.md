@@ -363,3 +363,15 @@ regenerated in place:
 ```
 21330 bytes   md5 23bf926f6def8fe4525a881e80fcdd1a
 ```
+
+---
+
+## `r208d_migration.txt`
+
+Not a simulation artefact: the record of R208d's migration of the committed benches' Outputs
+rows to their qualified spelling (commit `1e987ffd`, less the rows `d2d25b1c` put back), one
+`{state name old new analysis why}` list per line. Band **OE17** of
+`tests/headless/test_ase_outputs_eval.tcl` reads it and requires each committed row to hold
+`new`, and `old` read in `analysis` to evaluate to exactly what `new` does on a synthetic
+four-analysis results file the band writes into its scratch. Edit a migrated bench row and
+its line here together.
