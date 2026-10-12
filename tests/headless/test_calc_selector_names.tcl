@@ -83,11 +83,15 @@ proc ::bgerror {msg} { puts "BGERROR: $msg : FAIL"; incr ::fail }
 # the pick-capable ids, re-derived from the grid's own table RATHER THAN read
 # from calc::pick_ids -- that is the whole point of PK1's comparison.
 proc pk_rows {} { return [pcall calc::sel_rows] }
+# R208e (2026-10-12): the pick serves the FIRST GROUP OF BOTH ROWS -- spec 5's
+# voltage group on row 0 and its current group on row 1.
 proc pk_derived_ids {} {
     set r [pk_rows]
     if {[string match ERR:* $r]} { return $r }
-    return [lindex [lindex $r 0] 0]
+    return [concat [lindex [lindex $r 0] 0] [lindex [lindex $r 1] 0]]
 }
+proc pk_derived_vids {} { return [lindex [lindex [pk_rows] 0] 0] }
+proc pk_derived_iids {} { return [lindex [lindex [pk_rows] 1] 0] }
 # every id in the grid, in table order
 proc pk_all_ids {} {
     set out {}
@@ -212,14 +216,22 @@ group PK1 {
     foreach id $all { if {[lsearch -exact $dis $id] < 0} { lappend enab $id } }
     set others {}
     foreach id $enab { if {[lsearch -exact $ids $id] < 0} { lappend others $id } }
-    check "PK1 `calc::pick_ids` is DERIVED from the selector grid's own table and not a second list: it equals row 0's first group of `calc::sel_rows` element for element, which is spec §5's VOLTAGE group -- the group, and not the `Emits into buffer` column, which is what made these four look alike and is the defect R208a corrects" \
+    check "PK1 `calc::pick_ids` is DERIVED from the selector grid's own table and not a second list: it equals the first group of BOTH rows of `calc::sel_rows` element for element -- spec §5's VOLTAGE group and, since R208e, its CURRENT group -- the groups, and not the `Emits into buffer` column, which is what made the voltage four look alike and is the defect R208a corrects" \
         [list $ids $der [expr {$ids eq $der ? {same} : {DIFFERENT}}]] \
-        [list {vt vf vdc vs} {vt vf vdc vs} same]
+        [list {vt vf vdc vs it if idc is} {vt vf vdc vs it if idc is} same]
     check "PK1 the grid's population rides along, so a twenty-third selector or a ninth disabled one has to move a number here rather than quietly joining or leaving the pick's scope" \
-        [list [pk_sized [llength $all] 22] [pk_sized [llength $ids] 4] \
+        [list [pk_sized [llength $all] 22] [pk_sized [llength $ids] 8] \
               [pk_sized [llength $enab] 14] [pk_sized [llength $dis] 8] \
-              [pk_sized [llength $others] 10]] \
-        {n22 n4 n14 n8 n10}
+              [pk_sized [llength $others] 6]] \
+        {n22 n8 n14 n8 n6}
+    # R208e: WHAT a pick picks is the id's GROUP, read off the same table --
+    # a net for the voltage group, a source instance for the current group.
+    set kinds {}
+    foreach id [concat $ids op data __pk_nosuch__] { lappend kinds [pcall calc::pick_kind $id] }
+    check "PK1 R208e: `calc::pick_kind` answers `voltage` for row 0's first group, `current` for row 1's, and EMPTY for every other id -- derived from the same table, so a selector that moves group changes what its pick picks with no second edit" \
+        [list [pk_derived_vids] [pk_derived_iids] $kinds] \
+        [list {vt vf vdc vs} {it if idc is} \
+              {voltage voltage voltage voltage current current current current {} {} {}}]
     # R208: the ten other ENABLED ids are not in scope and must say so, through
     # the same `calc::inert` route they used before this stage existed.
     set inert {}
@@ -229,7 +241,7 @@ group PK1 {
         set act [pk_fld $d act]
         if {$act eq {inert}} { lappend inert $id } else { lappend armed $id }
     }
-    check "PK1 R208's scope boundary is a ROUTING decision and is drivable here: every one of the ten enabled non-voltage ids answers `inert` -- which is what keeps their shipped `calc::inert ... phase 6` sentence -- and not one of the four voltage ids does" \
+    check "PK1 R208's scope boundary is a ROUTING decision and is drivable here: every one of the six enabled ids outside the two pick groups answers `inert` -- which is what keeps their shipped `calc::inert ... phase 6` sentence -- and not one of the eight pick ids does" \
         [list [lsort $inert] [lsort $armed]] \
         [list [lsort $others] [lsort $ids]]
     # ⚠⚠ THIS ROW IS THE SUPERSESSION OF ITS OWN PREVIOUS SELF, AND THAT IS WHAT
@@ -275,11 +287,13 @@ group PK1 {
         [list [lindex $pkvals 1] [lindex $pkvals 4] [lindex $pkvals 7] \
               [pk_sized [llength [lsort -unique [list [lindex $pkvals 2] [lindex $pkvals 5] [lindex $pkvals 8]]]] 3]] \
         {1 1 1 n3}
-    check "PK1 the analysis table is ONE table keyed on the same four ids as the pick's scope, and it is complete in both directions -- a fifth id with no analysis, or an analysis with no id, reddens here" \
+    check "PK1 the analysis table is ONE table keyed on the same eight ids as the pick's scope, and it is complete in both directions -- a ninth id with no analysis, or an analysis with no id, reddens here -- and the evaluator's token table IS that table, not a second copy of it (R208e)" \
         [list [pcall calc::pick_analyses] \
               [lsort [pcall dict keys [pcall calc::pick_analyses]]] [lsort $ids] \
-              [pcall calc::pick_analysis op] [pcall calc::pick_analysis {}]] \
-        [list {vt tran vf ac vdc op vs dc} {vdc vf vs vt} {vdc vf vs vt} {} {}]
+              [pcall calc::pick_analysis op] [pcall calc::pick_analysis {}] \
+              [expr {[pcall calc::aq_analyses] eq [pcall calc::pick_analyses] ? {same} : {DIFFERENT}}]] \
+        [list {vt tran vf ac vdc op vs dc it tran if ac idc op is dc} \
+              {idc if is it vdc vf vs vt} {idc if is it vdc vf vs vt} {} {} same]
     # ⚠ THE DESIGN RESOLUTION IS STUBBED, because it sits AFTER the gate and
     # refuses for its own reason -- so without it all eight drives answer `refuse`
     # and the row cannot tell a gate refusal from a missing cellview.  That is what
@@ -288,7 +302,8 @@ group PK1 {
     rename ase::ui::design_path pk_real_dp
     proc ase::ui::design_path {key} { return /tmp/__pk_fake__/cell.sch }
     set pkgate {}
-    foreach {id ty} {vt tran vt ac vf ac vf tran vdc op vdc tran vs dc vs ac} {
+    foreach {id ty} {vt tran vt ac vf ac vf tran vdc op vdc tran vs dc vs ac
+                     it tran it ac if ac if tran idc op idc tran is dc is ac} {
         lappend pkgate [pk_fld [pcall calc::pick_decide $id \
             [dict create ok 1 token k type $ty]] act]
     }
@@ -296,8 +311,8 @@ group PK1 {
     rename pk_real_dp ase::ui::design_path
     check "PK1 ...and the stub was handed back, which the band CHECKS rather than assumes" \
         [pcall ase::ui::design_path __pk_nosuch__] {}
-    check "PK1 R208a drivable with no database at all: each voltage id ARMS on its own analysis and REFUSES on another -- four matches and four mismatches, so the row cannot pass by refusing everything or by arming everything" \
-        $pkgate {arm refuse arm refuse arm refuse arm refuse}
+    check "PK1 R208a drivable with no database at all: each of the eight pick ids ARMS on its own analysis and REFUSES on another -- eight matches and eight mismatches, the current ids gated exactly as the voltage ones (R208e), so the row cannot pass by refusing everything or by arming everything" \
+        $pkgate {arm refuse arm refuse arm refuse arm refuse arm refuse arm refuse arm refuse arm refuse}
     check "PK1 ...and the refusal NAMES THE ANALYSIS THE RESULT LACKS, in the user's words rather than the simulator's -- acronyms uppercase, one map shared with the success sentence so they cannot disagree.  (R208c restated this sentence: it used to say `needs an AC result; this one is transient`, which stopped being the reason once a selector could read a sibling analysis of the same run)" \
         [list [pk_fld [pcall calc::pick_decide vf [dict create ok 1 token k type tran]] msg] \
               [pk_fld [pcall calc::pick_decide vdc [dict create ok 1 token k type ac]] msg] \
@@ -642,6 +657,132 @@ group PK2b {
 }
 
 # ===========================================================================
+# PK12 — R208e: THE CURRENT SELECTORS' SOURCE PICK
+# ===========================================================================
+# `it`/`if`/`idc`/`is` pick a VOLTAGE SOURCE or AMMETER instance by its body and
+# insert `it(<inst>)` (or `if`/`idc`/`is`).  The rule for "is this click a
+# source" is ASE-L Select-On-Design's, and it is ONE rule:
+# `ase::ui::sod_source_at` answers the instance name for a hit whose
+# `cell::type` is `vsource` or `ammeter`, and both `ase::ui::sod_click` and
+# `calc::pick_click` call it -- so the two gestures cannot disagree about which
+# devices count.  Device TERMINAL currents stay out (they need a pin hit test
+# with no Tcl door) and are named in the refusal.
+#
+# The sheet is written as text for PK2b's measured reason (a driven `saveas`
+# drops an `untitled~.sch` in the repo root).  Every probe point is DERIVED
+# from the instance's own bbox, never typed.
+proc pk_bbox_mid {i} {
+    set b [pcall xschem instance_bbox $i]
+    if {![regexp {Instance:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)} $b -> x1 y1 x2 y2]} { return "SHAPE:$b" }
+    return [list [expr {($x1 + $x2) / 2.0}] [expr {($y1 + $y2) / 2.0}]]
+}
+proc pk_iprobe {x y} {
+    set hit [pcall xschem object_at $x $y]
+    set src [pcall ase::ui::sod_source_at $hit]
+    return [list [lindex $hit 0] $src [pcall calc::pick_iclassify $hit $src]]
+}
+group PK12 {
+    # --- the pure half -------------------------------------------------------
+    set pure {}
+    foreach {h src} [list {instance 0 1 1} V1 {instance 0 1 1} {} {wire 3 4 7} {} \
+                          {text 1 2 3} {} {} {} {} V1] {
+        lappend pure [pcall calc::pick_iclassify $h $src]
+    }
+    check "PK12 R208e's classification is PURE over two measured values: a hit the shared source rule NAMED is a `source`, any other hit -- a device body, a wire, a text -- is `other`, and an empty hit is `nothing` even if a stale name were handed in, so a click on empty canvas can never insert a source" \
+        $pure {source other other other nothing nothing}
+    check "PK12 ...and the vocabulary is CLOSED at three words" [lsort -unique $pure] {nothing other source}
+    # --- ONE rule, shared with ASE-L Select-On-Design --------------------------
+    set sodb [pk_decomment [pcall info body ::ase::ui::sod_click]]
+    set pcb  [pk_decomment [pcall info body ::calc::pick_click]]
+    set ruleb [pk_decomment [pcall info body ::ase::ui::sod_source_at]]
+    check "PK12 the source rule is ONE proc that BOTH gestures call: ASE-L's Select-On-Design click and the Calculator's pick reach `ase::ui::sod_source_at`, and only that proc reads `cell::type` -- so a third source type added there reaches both, and neither can drift" \
+        [list [pk_word [regexp {ase::ui::sod_source_at} $sodb] sod MISSING] \
+              [pk_word [regexp {ase::ui::sod_source_at} $pcb] calc MISSING] \
+              [pk_word [regexp {cell::type} $ruleb] rule NORULE] \
+              [pk_word [regexp {cell::type} $sodb] SODCOPY one] \
+              [pk_word [regexp {cell::type} $pcb] CALCCOPY one] \
+              [pcall info args ::ase::ui::sod_source_at]] \
+        {sod calc rule one one hit}
+    check "PK12 the rule ANSWERS rather than raising on a hit it cannot read: empty, a wire, and an instance index that does not exist all answer the empty string" \
+        [list [pcall ase::ui::sod_source_at {}] [pcall ase::ui::sod_source_at {wire 0 1 1}] \
+              [pcall ase::ui::sod_source_at {instance 9999 1 1}]] {{} {} {}}
+    # --- the live half, on a sheet that has every class ------------------------
+    set pkscr [test_scratch calcpick]
+    set pksch [file join $pkscr isrc.sch]
+    set pkfh [open $pksch w]
+    puts $pkfh "v {xschem version=3.4.8RC file_version=1.3}"
+    foreach k {G K V S F E} { puts $pkfh "$k {}" }
+    puts $pkfh "N 600 0 700 0 {}"
+    puts $pkfh "C {vsource.sym} 0 0 0 0 {name=V1 value=1}"
+    puts $pkfh "C {ammeter.sym} 200 0 0 0 {name=Vam}"
+    puts $pkfh "C {nmos4.sym} 400 0 0 0 {name=M1 model=nmos w=5u l=0.18u del=0 m=1}"
+    puts $pkfh "C {lab_pin.sym} 600 0 0 0 {name=l1 sig_type=std_logic lab=n1}"
+    close $pkfh
+    check "PK12 fixture: the sheet loads with its four instances and the two sources really carry the cell types the rule reads, so the live rows below measure the rule and not a symbol that failed to resolve" \
+        [list [expr {[pcall xschem load $pksch] ne {} ? 1 : 0}] \
+              [pk_sized [llength [pcall xschem objects -type instance]] 4] \
+              [pcall xschem getprop instance 0 cell::type] [pcall xschem getprop instance 1 cell::type] \
+              [pcall xschem getprop instance 2 cell::type]] \
+        {1 n4 vsource ammeter nmos}
+    set mv [pk_bbox_mid 0] ; set ma [pk_bbox_mid 1] ; set mm [pk_bbox_mid 2]
+    check "PK12 a click anywhere on a voltage source's or an ammeter's BODY names that instance and classifies `source`; a MOSFET body and a labelled wire are `other`; empty canvas is `nothing` -- each the whole triple, so a failure says which reader moved" \
+        [list [pk_iprobe {*}$mv] [pk_iprobe {*}$ma] [pk_iprobe {*}$mm] \
+              [pk_iprobe 650 0] [pk_iprobe 9999 9999]] \
+        {{instance V1 source} {instance Vam source} {instance {} other} {wire {} other} {{} {} nothing}}
+    test_scratch_drop $pkscr
+    # --- the name ---------------------------------------------------------------
+    check "PK12 `calc::pick_iname` composes `i(<inst>)` with the instance's CASE PRESERVED -- the database decides the spelling, through R204's read-back -- and an empty token refuses as `noname` rather than composing `i()`; its signature is pinned with `info args`" \
+        [list [pk_fld [pcall calc::pick_iname V1 0] cand] [pk_fld [pcall calc::pick_iname Vam 0] cand] \
+              [pk_fld [pcall calc::pick_iname {} 0] ok] [pk_fld [pcall calc::pick_iname {} 0] why] \
+              [pcall info args ::calc::pick_iname]] \
+        {i(V1) i(Vam) 0 noname {tok baselvl}}
+    # the hierarchical half is `sod_qualify current`'s, ASE's own -- stubbed to
+    # show the DELEGATION, which a hand-assembled path would not pass.
+    rename ase::ui::sod_qualify pk_real_qualify
+    proc ase::ui::sod_qualify {kind token {baselvl 0}} {
+        if {$kind eq {current}} { return "v.x1.$token" }
+        return "WRONGKIND:$kind"
+    }
+    set hq [pk_fld [pcall calc::pick_iname V1 1] cand]
+    rename ase::ui::sod_qualify {}
+    rename pk_real_qualify ase::ui::sod_qualify
+    check "PK12 a descended source's name is `ase::ui::sod_qualify current`'s -- the same branch-prefix rule Select-On-Design writes into a deck -- and the stub was put back" \
+        [list $hq [pcall ase::ui::sod_qualify current V1 0]] {i(v.x1.V1) V1}
+    check "PK12 the token a current pick inserts puts the selector id where the read-back's `i` is, any case, exactly as a voltage pick replaces `v`" \
+        [list [pcall calc::aq_qualify it i(v1)] [pcall calc::aq_qualify idc I(Vam)] \
+              [pcall calc::aq_qualify is i(v.x1.v1)] [pcall calc::aq_qualify vt v(lp)]] \
+        {it(v1) idc(Vam) is(v.x1.v1) vt(lp)}
+    # --- R204/R207 on a database that holds source currents ---------------------
+    set pkscr2 [test_scratch calcpick]
+    set praw [file join $pkscr2 isrc.raw]
+    set fh [open $praw w]
+    puts $fh "Title: pk12\nDate: pk12\nPlotname: Transient Analysis\nFlags: real"
+    puts $fh "No. Variables: 4\nNo. Points: 2\nVariables:"
+    puts $fh "\t0\ttime\ttime\n\t1\tv(n1)\tvoltage\n\t2\ti(v1)\tcurrent\n\t3\ti(vam)\tcurrent"
+    puts $fh "Values:\n 0\t0.0\n\t1.0\n\t-1e-3\n\t2e-3\n\n 1\t1e-6\n\t1.5\n\t-1.5e-3\n\t2.5e-3\n"
+    close $fh
+    pcall xschem raw clear
+    set rd [pcall xschem raw read $praw tran]
+    set lk [pcall calc::pick_lookup [pk_fld [pcall calc::pick_iname V1 0] cand]]
+    set la [pcall calc::pick_lookup [pk_fld [pcall calc::pick_iname Vam 0] cand]]
+    set ln [pcall calc::pick_lookup [pk_fld [pcall calc::pick_iname Vnone 0] cand]]
+    pcall xschem raw clear
+    test_scratch_drop $pkscr2
+    check "PK12 R204/R207 for a SOURCE: the composed `i(V1)` resolves in a database holding the source's branch current and comes back in the RAW's own spelling, which is what the token is built from; a source the result does not hold is `unresolved` and nothing is inserted" \
+        [list $rd [pk_fld $lk ok] [pk_fld $lk name] [pk_fld $la name] [pk_fld $ln ok] [pk_fld $ln why] \
+              [pcall calc::aq_qualify it [pk_fld $lk name]]] \
+        {1 1 i(v1) i(vam) 0 unresolved it(v1)}
+    # --- the sentences -----------------------------------------------------------
+    check "PK12 the current selectors say their own gesture and their own refusals, terse, each inside the status room: arm, prompt, a click on nothing, and a click on anything that is not a source -- which names terminal currents as not supported rather than leaving the user to wonder" \
+        [list [pcall calc::pick_msg iarmed it] [pcall calc::pick_msg iprompt it] \
+              [pcall calc::pick_msg inothing it] [pcall calc::pick_msg notsource idc]] \
+        [list {selector it: click a voltage source or ammeter; ESC cancels} \
+              {Calculator it: click a voltage source or ammeter for its current; ESC cancels} \
+              {selector it: nothing under the click; click a voltage source or ammeter} \
+              {selector idc: pick a voltage source or ammeter; terminal currents not supported}]
+}
+
+# ===========================================================================
 # PK5 — THE CADENCE PATH (R208's status half)
 # ===========================================================================
 # The buffer gets `v(x1.x2.net5)` and the status line gets `/X1/X2/net5`: the
@@ -712,8 +853,9 @@ group PK6 {
         [list [pk_atleast [llength $arms] 15] \
               [pk_in $arms armed] [pk_in $arms terminal] [pk_in $arms bus] \
               [pk_in $arms unresolved] [pk_in $arms noraw] [pk_in $arms cancelled] \
-              [pk_in $arms prompt] [pk_in $arms __pk_no_such_arm__]] \
-        {atleast15 has has has has has has has missing:__pk_no_such_arm__}
+              [pk_in $arms prompt] [pk_in $arms iarmed] [pk_in $arms iprompt] \
+              [pk_in $arms inothing] [pk_in $arms notsource] [pk_in $arms __pk_no_such_arm__]] \
+        {atleast15 has has has has has has has has has has has missing:__pk_no_such_arm__}
     check "PK6 an UNKNOWN kind answers the empty string rather than raising, which is what keeps a wiring mistake from taking a band out through `group`'s catch" \
         [list [pcall calc::pick_msg __pk_no_such_arm__ vt] [pcall calc::pick_msg {} vt]] {{} {}}
     check "PK6 every sentence fits the status line WITHOUT the fitter having to elide it, which is a stronger claim than `status_fit` can rescue it and is the one this band can make because these sentences are short by construction" \
@@ -833,13 +975,15 @@ group PK8 {
         lappend armd [pk_fld [pcall calc::pick_decide $id [dict create ok 1 token k]] act]
     }
     set one [pcall calc::pick_decide vt [dict create ok 1 token k]]
+    set onei [pcall calc::pick_decide it [dict create ok 1 token k]]
     rename ase::ui::design_path {}
     rename pk_real_designpath ase::ui::design_path
-    check "PK8 with a result loaded and a resolvable design, ALL FOUR voltage ids answer `arm` and carry the design path forward beside the token, so the act has both without resolving anything twice -- and the arming sentence names the id and the gesture" \
+    check "PK8 with a result loaded and a resolvable design, ALL EIGHT pick ids answer `arm` and carry the design path forward beside the token, so the act has both without resolving anything twice -- and the arming sentence names the id and the gesture, a NET for a voltage id and a SOURCE for a current one (R208e)" \
         [list $armd [pk_fld $one act] [pk_fld $one token] [pk_fld $one design] \
-              [pk_fld $one msg]] \
-        [list {arm arm arm arm} arm k /tmp/__pk_fake__/cell.sch \
-              {selector vt: click a net on the schematic; ESC cancels}]
+              [pk_fld $one msg] [pk_fld $onei msg]] \
+        [list {arm arm arm arm arm arm arm arm} arm k /tmp/__pk_fake__/cell.sch \
+              {selector vt: click a net on the schematic; ESC cancels} \
+              {selector it: click a voltage source or ammeter; ESC cancels}]
     check "PK8 ...and the stub was really put back, which the band checks rather than assumes -- a leaked rename would make every later row in this file measure a fake resolver" \
         [pcall ase::ui::design_path __pk_nosuch_key__] {}
     # R301/R303: a scope the strip says is unimplemented must not arm the canvas
@@ -947,14 +1091,15 @@ group PK11 {
                     {calc::pick_end moved} {calc::pick_release} {calc::pick_running} \
                     {calc::pick_id} {calc::pick_pump} {calc::pick_suspend} \
                     {calc::pick_resume} {calc::pick_resume .nosuch.drw} \
-                    {calc::sel_click vt} {calc::sel_click op}] {
+                    {calc::sel_click vt} {calc::sel_click op} \
+                    {calc::pick_arm it} {calc::sel_click idc}] {
         lappend ans [pcall {*}$c]
     }
     set after [pk_nssnap]
     set raised {}
     foreach a $ans { if {[string match ERR:* $a]} { lappend raised $a } }
-    check "PK11 with no `winfo` and no window, EVERY entry point of the pick ANSWERS rather than raising -- the arm, the click with and without coordinates, all four end reasons, the release, the pump, suspend, resume with and without a canvas, and both routes through the selector click" \
-        [list $raised [pk_sized [llength $ans] 16]] {{} n16}
+    check "PK11 with no `winfo` and no window, EVERY entry point of the pick ANSWERS rather than raising -- the arm, the click with and without coordinates, all four end reasons, the release, the pump, suspend, resume with and without a canvas, and every route through the selector click -- a current id's (R208e) included" \
+        [list $raised [pk_sized [llength $ans] 18]] {{} n18}
     check "PK11 ...and not one of them WROTE anything, which is R508's `records nothing` about STATE and not only about raising: the whole `::calc` namespace is diffed, variable by variable and array element by array element, so a write to something this row does not name is still caught" \
         [expr {$before eq $after ? {unwritten} : "WROTE:[pk_nsdiff $before $after]"}] unwritten
     check "PK11 `::calc::pick` is still ABSENT, not empty: for an array the normative `nothing is armed` state is absent, which is what `calc::pick_running` and `calc::pick_id` both read -- and a seeded array would make `nothing armed` indistinguishable from `the record was cleared`" \

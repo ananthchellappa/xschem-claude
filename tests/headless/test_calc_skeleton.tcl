@@ -1174,9 +1174,10 @@ check "S17 clicking a disabled selector explains why (R202)" \
 # unverified for the other thirteen: silencing all but vt left the suite at ALL
 # PASS (measured). Each one must arm ITSELF and name itself and its phase.
 # ⚠⚠ THE SENTENCE IS NOW TWO SENTENCES, BECAUSE THE FOURTEEN ARE TWO GROUPS.
-# PLAN phase 6 gave the four VOLTAGE ids (R208's `calc::pick_ids`) a real pick,
-# which with no result loaded refuses with the ruled no-result advice; the other
-# ten still name themselves and their phase, byte for byte as before.  BOTH counts
+# PLAN phase 6 gave the four VOLTAGE ids a real pick and R208e the four CURRENT
+# ids (together `calc::pick_ids`), which with no result loaded refuse with the
+# ruled no-result advice; the other six still name themselves and their phase,
+# byte for byte as before.  BOTH counts
 # are asserted positively and neither list is kept here -- the split is derived
 # from `calc::pick_ids` -- because this row's own history records that silencing
 # all but `vt` once left the suite at ALL PASS, so a group that quietly emptied
@@ -1203,12 +1204,12 @@ foreach id $selall {
     }
 }
 check "S17 every enabled selector arms itself" $selunarmed {}
-check "S17 every enabled selector SAYS something, and which sentence it says is decided by whether it is one of the four voltage ids R208 gives a net pick: those four refuse with the ruled no-result advice because nothing is loaded in this suite, the other ten still name themselves and their phase.  Read off the history, since the first of those sentences is longer than the status room" \
+check "S17 every enabled selector SAYS something, and which sentence it says is decided by whether it is one of the eight pick ids (R208's four voltage ids and R208e's four current ids): those eight refuse with the ruled no-result advice because nothing is loaded in this suite, the other six still name themselves and their phase.  Read off the history, since the first of those sentences is longer than the status room" \
     $selsilent {}
 check "S17 ...and BOTH groups are non-empty, with the split DERIVED from `calc::pick_ids` rather than listed here -- this row's own history is that silencing all but `vt` once left the suite at ALL PASS, so a group that quietly emptied would be invisible without a count" \
     [list [llength $selpick] [llength $selinert] [lsort $selpick]] \
-    [list 4 10 [lsort $pickids]]
-check "S17 ...and not one of those fourteen presses left a canvas pick mode ARMED, which it must not: this suite loads no result, so every voltage arm refuses before it can seize -- and a residual seize would poison every later row in this file" \
+    [list 8 6 [lsort $pickids]]
+check "S17 ...and not one of those fourteen presses left a canvas pick mode ARMED, which it must not: this suite loads no result, so every pick arm refuses before it can seize -- and a residual seize would poison every later row in this file" \
     [list [pcall calc::pick_running] [pcall calc::pick_id]] {0 {}}
 pcall .calc.sel.vt invoke
 

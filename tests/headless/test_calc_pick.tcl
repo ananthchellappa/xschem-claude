@@ -80,6 +80,10 @@ puts $f {N 0 100 100 100 {}}
 puts $f {C {lab_pin.sym} 0 0 0 0 {name=l1 sig_type=std_logic lab=lp}}
 puts $f {C {lab_pin.sym} 0 100 0 0 {name=l2 sig_type=std_logic lab=sq}}
 puts $f {C {nmos4.sym} 300 0 0 0 {name=M1 model=nmos w=5u l=0.18u del=0 m=1}}
+# R208e (band PG18): a voltage source and an ammeter, well clear of everything
+# above, whose names are the CURRENT columns of the raw band PG18 writes.
+puts $f {C {vsource.sym} -400 0 0 0 {name=Vsq value=1}}
+puts $f {C {ammeter.sym} -400 300 0 0 {name=Vam}}
 close $f
 
 # ⚠⚠ THE DESIGN SHEET IS LOADED *BEFORE* ANYTHING ELSE, AND THAT IS A HYGIENE
@@ -944,6 +948,148 @@ group PG17 {
               [lindex $pls 1] [lindex $pls 2]] \
         [list named [pcall calc::ix_plot_say [calc::ix_msg noright *]] \
               {Cannot plot: cross() answers a number, not a waveform.}]
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
+# PG18 — R208e: THE CURRENT SELECTORS PICK A VOLTAGE SOURCE OR AN AMMETER
+# =============================================================================
+# `it`/`if`/`idc`/`is` arm exactly as the voltage selectors do -- the press, the
+# raise, the four seized slots, the prompt on the design window, ESC, one-shot
+# on success, a miss leaves the mode armed -- and a click anywhere on a source's
+# BODY inserts `it(<inst>)`, by the rule ASE-L Select-On-Design uses
+# (`ase::ui::sod_source_at`).  Anything else is refused naming terminal
+# currents as not supported.  The committed fixture holds no source branch
+# current, so this band reads a small ASCII raw of its own into the VIEWER's
+# context and puts the committed one back at its foot, which a row checks.
+proc pg18_inst {nm} {
+    set n [pcall xschem get instances]
+    if {![string is integer -strict $n]} { return -1 }
+    for {set i 0} {$i < $n} {incr i} {
+        if {[pcall xschem getprop instance $i name] eq $nm} { return $i }
+    }
+    return -1
+}
+proc pg18_mid {nm} {
+    set b [pcall xschem instance_bbox [pg18_inst $nm]]
+    if {![regexp {Instance:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)} $b -> x1 y1 x2 y2]} { return {0 0} }
+    return [list [expr {round(($x1 + $x2) / 2.0)}] [expr {round(($y1 + $y2) / 2.0)}]]
+}
+group PG18 {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    set info0 [pg15_viewer {xschem raw info}]
+    set ::pg18raw [file join $::scratch pg18.raw]
+    set fh [open $::pg18raw w]
+    puts $fh "Title: pg18\nDate: pg18\nPlotname: Transient Analysis\nFlags: real"
+    puts $fh "No. Variables: 4\nNo. Points: 3\nVariables:"
+    puts $fh "\t0\ttime\ttime\n\t1\tv(lp)\tvoltage\n\t2\ti(vsq)\tcurrent\n\t3\ti(vam)\tcurrent"
+    puts $fh "Values:"
+    puts $fh " 0\t0.0\n\t0.25\n\t-0.125\n\t0.0625\n"
+    puts $fh " 1\t1e-3\n\t0.5\n\t-0.25\n\t0.03125\n"
+    puts $fh " 2\t2e-3\n\t0.75\n\t-0.375\n\t0.015625\n"
+    close $fh
+    set rd [pg15_viewer {xschem raw read $::pg18raw tran}]
+    check "PG18 fixture: the band's raw -- one transient holding both sources' branch currents -- is what the Calculator now resolves against" \
+        [list $rd [dg [pcall calc::require_result] path] [dg [pcall calc::require_result] type]] \
+        [list 1 [file normalize $::pg18raw] tran]
+    # --- the arm, by a real press on the real radiobutton -------------------
+    pg_press .calc.sel.it
+    set cv {}
+    catch {set cv $::calc::pick(canvas)}
+    # the prompt is kept up by the 80 ms pump against C blanking the slot on
+    # the press's own events, so it is read after two pump periods
+    after 200 {set ::pg18w 1} ; vwait ::pg18w
+    check "PG18 fixture: the raised design's two sources carry the cell types the shared rule reads" \
+        [list [pcall xschem getprop instance [pg18_inst Vsq] cell::type] \
+              [pcall xschem getprop instance [pg18_inst Vam] cell::type]] \
+        {vsource ammeter}
+    check "PG18 a real press on `it` arms a pick exactly as `vt` does -- the design is raised, the canvas seized, all four slots taken -- and the sentence and the design window's prompt say what THIS pick wants: a voltage source or an ammeter" \
+        [list [lindex [pcall calc::status_history] 0] [pcall calc::pick_running] [pcall calc::pick_id] \
+              [set ::calc::selmode] \
+              [pg_word [expr {$cv ne {} && [winfo exists $cv]}] live DEAD] \
+              [pcall bind $cv <ButtonPress-1>] [pcall bind $cv <B1-Motion>] \
+              [pcall [pcall ase::ui::sod_statusbar $cv] cget -text]] \
+        [list {selector it: click a voltage source or ammeter; ESC cancels} 1 it it live \
+              {calc::pick_click; break} break \
+              {Calculator it: click a voltage source or ammeter for its current; ESC cancels}]
+    # --- the misses: each refuses, leaves the buffer alone, keeps the mode ------
+    pcall xschem zoom_full
+    update
+    .calc.buf delete 1.0 end
+    .calc.buf insert end {keepme}
+    .calc.buf mark set insert end-1c
+    check "PG18 fixture: the empty point the miss row clicks really is empty canvas, read back from `object_at`" \
+        [pcall xschem object_at 150 250] {}
+    set res {}
+    foreach pt {{310 0} {50 0} {150 250}} {
+        pg_click $cv {*}$pt
+        lappend res [lindex [pcall calc::status_history] 0] [pg_buf] [pcall calc::pick_running]
+    }
+    check "PG18 a current selector REFUSES a device that is not a source, and a wire, naming terminal currents as not supported -- and empty canvas with its own sentence; after each the buffer is byte-identical and the mode still live, as a voltage miss leaves it" \
+        $res [list \
+            {selector it: pick a voltage source or ammeter; terminal currents not supported} keepme 1 \
+            {selector it: pick a voltage source or ammeter; terminal currents not supported} keepme 1 \
+            {selector it: nothing under the click; click a voltage source or ammeter} keepme 1]
+    # --- the hit --------------------------------------------------------------
+    pg_click $cv {*}[pg18_mid Vsq]
+    check "PG18 a click on the voltage source's BODY inserts `it(vsq)` -- the raw's own spelling with the selector's id where its `i` was -- at the cursor after the typing, and the status line names the analysis and the Cadence path of the instance" \
+        [list [pg_buf] [lindex [pcall calc::status_history] 0]] \
+        [list {keepme it(vsq)} {selector it: it(vsq) (transient) from /Vsq}]
+    check "PG18 ...and the pick is ONE-SHOT (R208b): the mode ended, the grid shows nothing armed, the four slots are handed back byte-identically, and nothing was selected" \
+        [list [pcall calc::pick_running] [set ::calc::selmode] [pg_binds $cv] \
+              [pcall xschem selection]] \
+        [list 0 {} [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                         [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]] {}]
+    # Eval of what was inserted reads the source's current, not some other column
+    .calc.buf delete 1.0 end
+    .calc.buf insert end {it(vsq)}
+    pg_press .calc.mode.eval
+    set ev [lindex [pcall calc::status_history] 0]
+    check "PG18 Eval of the inserted token answers the source's branch current at the last point -- the column the pick named, distinct from the voltage beside it in the same raw" \
+        [list $ev [pcall calc::eval_fmt [calc::eval_in_token $::tok {vt(lp)} 0 tran]]] \
+        [list {= -0.375  (at the last point)} {= 0.75  (at the last point)}]
+    # --- the ammeter, through `it` again, a press after a miss ------------------
+    .calc.buf delete 1.0 end
+    pg_press .calc.sel.it
+    pg_click $cv {*}[pg18_mid Vam]
+    check "PG18 an AMMETER body is a source too, by the same rule" \
+        [list [pg_buf] [lindex [pcall calc::status_history] 0] [pcall calc::pick_running]] \
+        [list {it(vam)} {selector it: it(vam) (transient) from /Vam} 0]
+    # --- R204: a source the result does not hold inserts nothing ----------------
+    .calc.buf delete 1.0 end
+    .calc.buf insert end {keepme}
+    pcall xschem setprop instance Vam name Vgone fast
+    pg_press .calc.sel.it
+    pg_click $cv {*}[pg18_mid Vgone]
+    check "PG18 R204 for a source: a source the RESULT does not hold inserts NOTHING, names the current it looked for, and keeps the mode live" \
+        [list [pg_buf] [lindex [pcall calc::status_history] 0] [pcall calc::pick_running]] \
+        [list keepme {selector it: i(Vgone) is not in this result; nothing inserted} 1]
+    pcall xschem setprop instance Vgone name Vam fast
+    # --- ESC -----------------------------------------------------------------------
+    event generate $cv <Key-Escape>
+    update
+    check "PG18 a real Escape ends a current pick exactly as it ends a voltage one, slots handed back" \
+        [list [pg_buf] [set ::calc::selmode] [pcall calc::pick_running] \
+              [lindex [pcall calc::status_history] 0] [pg_binds $cv]] \
+        [list keepme {} 0 {selector it: pick cancelled} \
+              [list [list <ButtonPress-1> 0 {}] [list <ButtonRelease-1> 0 {}] \
+                    [list <Key-Escape> 0 {}] [list <B1-Motion> 0 {}]]]
+    # --- the analysis gate applies to a current id as to a voltage one ----------
+    pg_press .calc.sel.idc
+    check "PG18 `idc` reads the operating point and this result has none, so it REFUSES to arm, naming the analysis" \
+        [list [lindex [pcall calc::status_history] 0] [pcall calc::pick_running]] \
+        [list {selector idc: this result has no operating point analysis} 0]
+    pcall calc::pick_end cancel
+    set ::calc::selmode {}
+    pcall xschem unselect_all
+    # --- put the committed raw back ------------------------------------------
+    pg15_viewer {xschem raw clear $::pg18raw tran}
+    pg15_viewer {xschem raw read $::fixture tran}
+    check "PG18 the band put the viewer's registry back exactly as it found it, so every band below reads the committed fixture" \
+        [list [expr {[pg15_viewer {xschem raw info}] eq $info0 ? {same} : [pg15_viewer {xschem raw info}]}] \
+              [dg [pcall calc::require_result] path]] \
+        [list same [file normalize $::fixture]]
     .calc.buf delete 1.0 end
 }
 

@@ -9809,9 +9809,9 @@ proc calc::build_sel {} {
     }
 }
 
-# An enabled selector.  The four VOLTAGE ids arm the net pick (R201/R203, the
-# block above); the other ten still name themselves and their phase, because
-# their emission is not `v(<net>)` and their hit test is not this one.
+# An enabled selector.  The four VOLTAGE ids arm the net pick and the four
+# CURRENT ids the source pick (R201/R203/R208e, the block above); the other six
+# still name themselves and their phase.
 #
 # ⚠ THIS PROC MUST NEVER WRITE `::calc::selmode` ON A REFUSAL PATH.  Tk writes a
 # radiobutton's -variable BEFORE firing -command and that write STANDS -- four
@@ -9862,12 +9862,12 @@ proc calc::sel_refuse {id why} {
 # beside the name the engine will actually resolve.
 #
 # SCOPE, the user's second ruling the same day: the FOUR VOLTAGE selectors
-# (`vt` `vf` `vdc` `vs`), which spec 5's table gives one emission -- `v(<net>)`.
-# `it`/`if`/`idc`/`is` pick an instance TERMINAL (R203: a different hit test),
-# spec 5 gives them `@<dev>[<term>]`, and the only zoom-scaled pin hit test in
-# the tree (`find_closest_pin`, findnet.c) has NO Tcl door at all -- so that is a
-# separate unit needing a new read-only `scheduler.c` verb, and it is named in
-# the refusal the other ten ids still get.
+# (`vt` `vf` `vdc` `vs`).  R208e (2026-10-12) added the FOUR CURRENT selectors
+# (`it` `if` `idc` `is`), which pick a voltage source or ammeter by its BODY --
+# Select-On-Design's rule, `ase::ui::sod_source_at` -- and insert `it(<inst>)`.
+# Device TERMINAL currents stay out: the only zoom-scaled pin hit test in the
+# tree (`find_closest_pin`, findnet.c) has NO Tcl door, so they are named as not
+# supported in the current selectors' refusal.
 #
 # ⚠ R301 IS WHY `pick_decide` ASKS `calc::pickscope`.  The mode strip's own
 # -command is still `calc::inert ... 6`, but Tk writes a radiobutton's -variable
@@ -9981,12 +9981,23 @@ proc calc::sel_refuse {id why} {
 # `WM_DELETE_WINDOW` handler and `destroy .calc` cannot remove a binding on
 # `.drw`, which is not a descendant of `.calc`.
 
-# The four ids this phase serves, DERIVED from the grid's own table rather than
-# listed: row 0's first group IS the voltage group (spec 5's table gives all four
-# the same `v(<net>)` emission).  A second table here would be a second place for
-# the scope to drift.
+# The eight ids the pick serves, DERIVED from the grid's own table rather than
+# listed: row 0's first group IS the voltage group and row 1's first group the
+# current group (spec 5).  A second table here would be a second place for the
+# scope to drift.  R208e (2026-10-12) added the current group: a current
+# selector picks a voltage source or ammeter instance, not a net.
 proc calc::pick_ids {} {
-    return [lindex [lindex [calc::sel_rows] 0] 0]
+    set r [calc::sel_rows]
+    return [concat [lindex [lindex $r 0] 0] [lindex [lindex $r 1] 0]]
+}
+
+# WHAT an id's pick picks: `voltage` (a net) for row 0's first group, `current`
+# (a voltage source or ammeter instance) for row 1's, empty otherwise.
+proc calc::pick_kind {id} {
+    set r [calc::sel_rows]
+    if {[lsearch -exact [lindex [lindex $r 0] 0] $id] >= 0} { return voltage }
+    if {[lsearch -exact [lindex [lindex $r 1] 0] $id] >= 0} { return current }
+    return {}
 }
 
 # WHICH ANALYSIS EACH VOLTAGE SELECTOR IS ABOUT.  Spec section 5's own table,
@@ -10031,18 +10042,17 @@ proc calc::pick_ids {} {
 # over the plausible-wrong number is the recoverable direction, and widening this
 # table is one line if the measurement says so.
 proc calc::pick_analyses {} {
-    return {vt tran vf ac vdc op vs dc}
+    return {vt tran vf ac vdc op vs dc it tran if ac idc op is dc}
 }
 
-# EVERY QUALIFIED TOKEN AND ITS ANALYSIS: the four voltage selectors' table
-# above, and the four CURRENT ids beside them (R208c, the user 2026-10-12: "in
-# Cadence ADE, there is no such thing as v(signal_name). It always has to be VT,
-# VF, etc.").  `it`/`if`/`idc`/`is` read `i(name)` from the same analyses
-# `vt`/`vf`/`vdc`/`vs` read `v(net)` from.  The current SELECTORS are still not
-# armed (picking a terminal is PLAN phase 6), so `calc::pick_analyses` keeps the
-# four the pick serves and this table is what the evaluator reads.
+# EVERY QUALIFIED TOKEN AND ITS ANALYSIS: the selectors' own table above, which
+# since R208e holds the four CURRENT ids beside the four voltage ones (R208c, the
+# user 2026-10-12: "in Cadence ADE, there is no such thing as v(signal_name). It
+# always has to be VT, VF, etc.").  `it`/`if`/`idc`/`is` read `i(name)` from the
+# same analyses `vt`/`vf`/`vdc`/`vs` read `v(net)` from.  One table: the
+# evaluator's tokens and the pick's gate cannot disagree.
 proc calc::aq_analyses {} {
-    return [concat [calc::pick_analyses] {it tran if ac idc op is dc}]
+    return [calc::pick_analyses]
 }
 
 proc calc::aq_analysis {id} {
@@ -10122,6 +10132,18 @@ proc calc::pick_classify {hit net at} {
     return body
 }
 
+# R208e: WHAT A CURRENT SELECTOR'S CLICK LANDED ON, as one of three words, from
+# two values already measured: `$hit` (`xschem object_at` at the un-snapped
+# point) and `$src` (`ase::ui::sod_source_at $hit`, the source rule ASE-L's
+# Select-On-Design uses).  `source` when the rule named an instance, `nothing`
+# for an empty hit (whatever `$src` says), `other` for anything else -- a device
+# body, a wire, a terminal.  Pure, so every refusal is drivable with no canvas.
+proc calc::pick_iclassify {hit src} {
+    if {[string trim $hit] eq {}} { return nothing }
+    if {[string trim $src] ne {}} { return source }
+    return other
+}
+
 # A short word for what a `body` click landed on, for the sentence.  An instance
 # answers its own name (`R1`), anything else its object word -- never a made-up
 # one, and never the empty string.
@@ -10158,6 +10180,26 @@ proc calc::pick_name {tok baselvl} {
     if {[string trim $q] eq {}} { set q $tok }
     set cand {}
     if {[catch {ase::ui::sod_expr voltage $q preserve} cand]
+        || [string trim $cand] eq {}} {
+        return [dict create ok 0 why noname detail $tok]
+    }
+    return [dict create ok 1 why {} cand $cand]
+}
+
+# R208e: THE CANDIDATE NAME OF A SOURCE'S CURRENT, `{ok 1 why {} cand i(V1)}`
+# or `{ok 0 why noname detail {}}`.  The hierarchical half is
+# `ase::ui::sod_qualify current` -- the branch-prefix rule Select-On-Design
+# writes into a deck -- and the wrap `ase::ui::sod_expr current ... preserve`;
+# R204's read-back then decides the spelling.
+proc calc::pick_iname {tok baselvl} {
+    if {[string trim $tok] eq {}} {
+        return [dict create ok 0 why noname detail {}]
+    }
+    set q $tok
+    catch {set q [ase::ui::sod_qualify current $tok $baselvl]}
+    if {[string trim $q] eq {}} { set q $tok }
+    set cand {}
+    if {[catch {ase::ui::sod_expr current $q preserve} cand]
         || [string trim $cand] eq {}} {
         return [dict create ok 0 why noname detail $tok]
     }
@@ -10306,6 +10348,10 @@ proc calc::pick_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         armed { return "selector $a: click a net on the schematic; ESC cancels" }
         prompt { return "Calculator $a: click a net to insert its name; ESC cancels" }
+        iarmed { return "selector $a: click a voltage source or ammeter; ESC cancels" }
+        iprompt { return "Calculator $a: click a voltage source or ammeter for its current; ESC cancels" }
+        inothing { return "selector $a: nothing under the click; click a voltage source or ammeter" }
+        notsource { return "selector $a: pick a voltage source or ammeter; terminal currents not supported" }
         terminal { return "selector $a: that is a device terminal, not a net" }
         body { return "selector $a: $b is not a net" }
         nothing { return "selector $a: nothing under the click; click a wire or a net label" }
@@ -10443,8 +10489,10 @@ proc calc::pick_decide {id g} {
         return [dict create act refuse token $tok \
                     msg [calc::pick_msg nodesign $id]]
     }
+    set armed armed
+    if {[calc::pick_kind $id] eq {current}} { set armed iarmed }
     return [dict create act arm token $tok design $dpath \
-                msg [calc::pick_msg armed $id]]
+                msg [calc::pick_msg $armed $id]]
 }
 
 # ---------------------------------------------------------------------------
@@ -10638,7 +10686,7 @@ proc calc::pick_lookup_in {cand {an {}}} {
 # the selector's id, so `v(lp)` read back for `vf` goes in as `vf(lp)` (R208c).
 # A read-back that is not `v(...)` (a bare net name) is wrapped whole.
 proc calc::aq_qualify {id name} {
-    if {[regexp {^[vV]\((.*)\)$} $name -> inner]} { return "$id\($inner\)" }
+    if {[regexp {^[vViI]\((.*)\)$} $name -> inner]} { return "$id\($inner\)" }
     return "$id\($name\)"
 }
 
@@ -10776,7 +10824,8 @@ proc calc::pick_arm {id} {
     set pick(id) $id
     set pick(token) $tok
     set pick(design) $dpath
-    set pick(prompt) [calc::pick_msg prompt $id]
+    set pick(prompt) [calc::pick_msg \
+        [expr {[calc::pick_kind $id] eq {current} ? {iprompt} : {prompt}}] $id]
     calc::pick_pump
     return [calc::status [dict get $d msg]]
 }
@@ -10841,23 +10890,38 @@ proc calc::pick_click {{x {}} {y {}}} {
     }
     set hit {}
     catch {set hit [xschem object_at $x $y]}
-    set net {}
-    catch {set net [ase::ui::sod_net_at $x $y $hit]}
-    set at {}
-    catch {set at [xschem net_at [xschem get mousex_snap] [xschem get mousey_snap]]}
-    set cls [calc::pick_classify $hit $net $at]
-    if {$cls eq {nothing}} { return [calc::pick_echo [calc::pick_msg nothing $id]] }
-    if {$cls eq {terminal}} { return [calc::pick_echo [calc::pick_msg terminal $id]] }
-    if {$cls eq {unnamed}} { return [calc::pick_echo [calc::pick_msg noname $id]] }
-    if {$cls ne {net}} {
-        return [calc::pick_echo [calc::pick_msg body $id [calc::pick_what $hit]]]
+    if {[calc::pick_kind $id] eq {current}} {
+        set src {}
+        catch {set src [ase::ui::sod_source_at $hit]}
+        set cls [calc::pick_iclassify $hit $src]
+        if {$cls eq {nothing}} { return [calc::pick_echo [calc::pick_msg inothing $id]] }
+        if {$cls ne {source}} { return [calc::pick_echo [calc::pick_msg notsource $id]] }
+        set nm [calc::pick_iname $src $base]
+        if {![dict get $nm ok]} {
+            return [calc::pick_echo [calc::pick_msg noname $id]]
+        }
+        set cand [dict get $nm cand]
+        set path [calc::pick_cadence $src $base]
+    } else {
+        set net {}
+        catch {set net [ase::ui::sod_net_at $x $y $hit]}
+        set at {}
+        catch {set at [xschem net_at [xschem get mousex_snap] [xschem get mousey_snap]]}
+        set cls [calc::pick_classify $hit $net $at]
+        if {$cls eq {nothing}} { return [calc::pick_echo [calc::pick_msg nothing $id]] }
+        if {$cls eq {terminal}} { return [calc::pick_echo [calc::pick_msg terminal $id]] }
+        if {$cls eq {unnamed}} { return [calc::pick_echo [calc::pick_msg noname $id]] }
+        if {$cls ne {net}} {
+            return [calc::pick_echo [calc::pick_msg body $id [calc::pick_what $hit]]]
+        }
+        set nm [calc::pick_name $net $base]
+        if {![dict get $nm ok]} {
+            return [calc::pick_echo \
+                        [calc::pick_msg [dict get $nm why] $id [dict get $nm detail]]]
+        }
+        set cand [dict get $nm cand]
+        set path [calc::pick_cadence $net $base]
     }
-    set nm [calc::pick_name $net $base]
-    if {![dict get $nm ok]} {
-        return [calc::pick_echo \
-                    [calc::pick_msg [dict get $nm why] $id [dict get $nm detail]]]
-    }
-    set cand [dict get $nm cand]
     set an [calc::pick_analysis $id]
     set lk [calc::pick_in_token $pick(token) $cand $an]
     if {![dict get $lk ok]} {
@@ -10867,8 +10931,7 @@ proc calc::pick_click {{x {}} {y {}}} {
     }
     set name [calc::aq_qualify $id [dict get $lk name]]
     calc::buf_insert_token $name
-    set s [calc::pick_echo \
-               [calc::pick_fit $id $name [calc::pick_cadence $net $base] $an]]
+    set s [calc::pick_echo [calc::pick_fit $id $name $path $an]]
     calc::pick_done
     return $s
 }
@@ -14208,7 +14271,9 @@ proc calc::et_default {have meas} {
 }
 
 # The refusal for `calc::et_default`'s {}: the analyses, in UPPERCASE, and the
-# qualifier that picks each one (R208c's `calc::pick_analyses`).
+# VOLTAGE qualifier that picks each one (R208c's `calc::pick_analyses`; the
+# current ids it also holds since R208e name the same analyses, so offering
+# them too would only lengthen the sentence).
 proc calc::et_ambiguous {have} {
     set names {}
     set quals {}
@@ -14217,6 +14282,7 @@ proc calc::et_ambiguous {have} {
         if {$a eq {op}} continue
         lappend names [string toupper $a]
         dict for {id ty} $pick {
+            if {[calc::pick_kind $id] ne {voltage}} continue
             if {$ty eq $a} { lappend quals "${id}(...)" }
         }
     }

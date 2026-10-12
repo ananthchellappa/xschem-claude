@@ -15973,12 +15973,14 @@ group AD {
               [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::fn_measure]]] raises MISSING]] \
         {gates raises raises MISSING}
     # --- the pick says it where the user is looking ----------------------------
+    # The echo count is a RATCHET, not a baseline: R208e's current selectors
+    # added three (empty canvas, not a source, an empty source name) -> 11.
     check "AD every sentence a CLICK produces goes through `calc::pick_echo`, which writes the design window's own status slot as well as the Calculator's -- because the pick now RAISES the schematic over the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  It is written through `pick(prompt)` so the 80 ms pump keeps it up against C blanking the slot" \
         [list [regexp -all {calc::status \[} [mt_decomment [pcall info body ::calc::pick_click]]] \
               [regexp -all {calc::pick_echo} [mt_decomment [pcall info body ::calc::pick_click]]] \
               [mt_boolword [regexp {pick\(prompt\)} [mt_decomment [pcall info body ::calc::pick_echo]]] viapump DIRECT] \
               [mt_boolword [regexp {calc::status} [mt_decomment [pcall info body ::calc::pick_echo]]] records FORGETS]] \
-        {0 8 viapump records}
+        {0 11 viapump records}
     check "AD `calc::pick_echo` with nothing armed is still a plain status write and creates no record, so it cannot resurrect a dead mode's prompt" \
         [list [pcall calc::pick_echo {a sentence}] [info exists ::calc::pick]] {{} 0}
 }

@@ -1550,7 +1550,7 @@ group CW13 {
     # ⚠⚠ `calc::sel_click` CAME OFF THIS LIST WHEN PLAN PHASE 6 LANDED, AND THE
     # REASON IS THAT LEAVING IT ON WOULD HAVE BEEN INVISIBLE.  This row's own name
     # says "a phase-1 stub or one of the four phase-2 procs"; `calc::sel_click` is
-    # now neither -- for the four voltage ids it arms a real canvas pick (R208) --
+    # now neither -- for the eight pick ids it arms a real canvas pick (R208, R208e) --
     # and because `$allowed` EXCUSES A NAME, the row would have stayed GREEN while
     # its own sentence became false.  That is worse than a red: nothing would have
     # drawn anybody's attention to it.  It moves to `$live6` below.
@@ -1569,8 +1569,8 @@ group CW13 {
     # and that is a stronger claim than an exclusion would be.
     set live3 {calc::font_step}
     # ⚠ A FOURTH LIST, AND IT CANNOT GO IN ANY OF THE OTHER THREE.
-    # `calc::sel_click` is PLAN phase 6: for the four voltage ids it arms the net
-    # pick, for the other ten it is still the phase-1 stub.  It cannot stay in
+    # `calc::sel_click` is PLAN phase 6: for the eight pick ids (R208, R208e) it arms the
+    # canvas pick, for the other six it is still the phase-1 stub.  It cannot stay in
     # `$allowed`, where the word "stub" would become false for four of the
     # twenty-two controls that carry it; it cannot go in `$live2`, where the
     # "exactly fifteen" row would lose its meaning; and it is not a view setting.

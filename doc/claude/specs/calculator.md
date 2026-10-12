@@ -511,7 +511,7 @@ analysis of the current result's raw file whatever analysis is current.
 | id | row | Label | ngspice / xschem source | Emits into buffer | v1 |
 |---|---|---|---|---|---|
 | `vt` | 1 | vt | tran raw, node voltage | `vt(<net>)` (R208c) | ✔ |
-| `it` | 2 | it | tran raw, device terminal current | `it(<dev>)` (R208c; the pick is not armed yet) | ✔ |
+| `it` | 2 | it | tran raw, source branch current | `it(<src>)` (R208c; picked since R208e) | ✔ |
 | `vf` | 1 | vf | ac raw, node voltage (complex) | `vf(<net>)` (R208c) | ✔ |
 | `if` | 2 | if | ac raw, terminal current | `if(<dev>)`, as `it` | ✔ |
 | `vdc` | 1 | vdc | op raw / `.op` values | `vdc(<net>)` (R208c) | ✔ |
@@ -541,7 +541,10 @@ analysis of the current result's raw file whatever analysis is current.
   asks for carries the same sentence, through `balloon` (`src/xschem.tcl:12729`), the
   tree's one tooltip mechanism.
 - **R203** Voltage selectors pick a **net**; current selectors pick an **instance
-  terminal**. The two use different pick modes and different hit tests. A voltage selector
+  terminal**. The two use different pick modes and different hit tests.
+  ⚠ **Amended by R208e (2026-10-12)**: the current selectors pick a **voltage source or
+  ammeter instance by its body**, not a terminal; device terminal currents are refused
+  naming them as not supported, because a pin hit test has no Tcl door. A voltage selector
   must refuse a terminal-only click and vice versa, with a status message — not silently.
   The classification is `calc::pick_classify {hit net at}`, a **pure** function of three
   values already measured at the click site, so every refusal is drivable with no
@@ -670,6 +673,8 @@ analysis of the current result's raw file whatever analysis is current.
   between the resolving press and its release ends the mode as `picked`, not
   `cancelled`, since the name is already in the buffer. The RDW's pick
   (`rdw::pick_*`) shares no code with this one and is unchanged.
+  ⚠ **Superseded by R208e (2026-10-12)** for the current ids: they are armed now, on a
+  source pick. The paragraph below is the record of the scope before it.
   ⚠ **v1 scope is the four voltage ids** (`vt` `vf` `vdc` `vs`), which §5's table gives
   one emission. The current ids pick a terminal (R203), §5 gives them `@<dev>[<term>]`,
   and the tree's only zoom-scaled pin hit test (`find_closest_pin`, `findnet.c`) has **no
@@ -838,6 +843,31 @@ analysis of the current result's raw file whatever analysis is current.
     `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and bands PG15/PG15w of
     `test_calc_pick` (display arm: the real presses through the real loan).
 
+- **R208e** **The current selectors `it`/`if`/`idc`/`is` pick a voltage source or ammeter.**
+  The driver's decision (2026-10-12), open to the user's overruling: a click **anywhere on
+  the body** of an instance whose `cell::type` is `vsource` or `ammeter` inserts
+  `it(<inst>)` (or `if`/`idc`/`is`), exactly as ASE-L's Select-On-Design maps such a click
+  to `i(<inst>)`. The rule is **one proc**, `ase::ui::sod_source_at {hit}`, called by both
+  `ase::ui::sod_click` and `calc::pick_click`, so the two gestures cannot disagree about
+  which devices have a current to pick. Everything else mirrors the voltage selectors:
+  the same arm (raise and focus the design, four seized slots, the prompt on the design
+  window's slot), the same analysis gate (`calc::pick_analyses` now holds all eight ids and
+  `calc::aq_analyses` IS that table), R204's verify-then-insert read-back (the raw spells a
+  branch current `i(vsq)`, so the token is `it(vsq)`), one-shot on success (R208b), a
+  miss refusing with a sentence and leaving the mode armed, ESC, and the Cadence path on
+  the status line (`selector it: it(vsq) (transient) from /Vsq`). The hierarchical name is
+  `ase::ui::sod_qualify current`'s branch-prefix rule (`i(v.x1.v1)`).
+  - Sentences: arm *"selector it: click a voltage source or ammeter; ESC cancels"*;
+    prompt *"Calculator it: click a voltage source or ammeter for its current; ESC
+    cancels"*; empty canvas *"selector it: nothing under the click; click a voltage source
+    or ammeter"*; any other object — a MOSFET body, a wire, a terminal — *"selector it:
+    pick a voltage source or ammeter; terminal currents not supported"*.
+  - **Declared limit:** device **terminal** currents (`@m1[id]`-style) are not picked —
+    the tree's only zoom-scaled pin hit test (`find_closest_pin`) has no Tcl door.
+  - Code: `calc::pick_kind`, `calc::pick_iclassify` (pure), `calc::pick_iname`,
+    `ase::ui::sod_source_at`. Fences: band PK12 of
+    `tests/headless/test_calc_selector_names.tcl` (decision, `hcases`) and band PG18 of
+    `tests/headless/test_calc_pick.tcl` (gesture, `dcases`).
 - **R208d** **An unqualified signal names no analysis, and the Calculator refuses it.** The
   user, 2026-10-12: *"in Cadence ADE, there is no such thing as v(signal_name). It always has to
   be VT, VF, etc. VT is a waveform. value(VT("blahblah") time_point) is a number that ADE-L can
@@ -857,8 +887,8 @@ analysis of the current result's raw file whatever analysis is current.
     which refuses before its dialog opens (*"Cannot measure: …"*). Each refusal goes
     through `calc::status` (CIW tee); the buffer keeps what was typed and the stack is not
     pushed. The stack gestures move text and evaluate nothing, so they are not doors. The
-    **voltage selectors already insert qualified tokens** (R208c); the current selectors
-    (`it`/`if`/`idc`/`is`) are not armed yet and insert nothing.
+    **voltage selectors already insert qualified tokens** (R208c), and since R208e so do
+    the current selectors (`it(<src>)` and its three siblings).
   - **What is not refused:** qualified tokens; the sweep scale (`time`, `frequency`); a device
     parameter `@m1[gm]` (no Calculator spelling exists — Cadence writes `OP("inst" "param")`;
     declared, read as before); a wrapped raw name other than `v()`/`i()` (`ph(lp)`, which

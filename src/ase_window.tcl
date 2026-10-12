@@ -3064,6 +3064,23 @@ proc ase::ui::sod_net_at {x y hit} {
   return $name
 }
 
+# THE SOURCE RULE: the instance name when `$hit` (an `xschem object_at` answer)
+# is a voltage source or an ammeter -- a `cell::type` of `vsource` or `ammeter`
+# -- and the empty string for anything else, including a hit it cannot read.
+# ONE rule with two callers: this file's Select-On-Design click and the
+# Calculator's current selectors (`calc::pick_click`, calculator.md R208e), so
+# the two gestures cannot disagree about which devices have a current to pick.
+proc ase::ui::sod_source_at {hit} {
+  if {[lindex $hit 0] ne {instance}} { return {} }
+  set n [lindex $hit 1]
+  set ctype {}
+  catch {set ctype [xschem getprop instance $n cell::type]}
+  if {[lsearch -exact {vsource ammeter} $ctype] < 0} { return {} }
+  set nm {}
+  catch {set nm [xschem getprop instance $n name]}
+  return $nm
+}
+
 # One mode click. Bare x/y (the canvas binding) read the last snapped mouse
 # position — kept current by the generic <Motion> binding that still flows to
 # C; tests pass explicit schematic coordinates (replayable). Classification
@@ -3115,16 +3132,8 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # click stays silent exactly as before.
   set hit [xschem object_at $x $y]
   set kind {}
-  set token {}
-  if {[lindex $hit 0] eq {instance}} {
-    set n [lindex $hit 1]
-    set ctype {}
-    catch {set ctype [xschem getprop instance $n cell::type]}
-    if {[lsearch -exact {vsource ammeter} $ctype] >= 0} {
-      set kind current
-      set token [xschem getprop instance $n name]
-    }
-  }
+  set token [ase::ui::sod_source_at $hit]
+  if {$token ne {}} { set kind current }
   if {$kind eq {}} {
     set net [ase::ui::sod_net_at $x $y $hit]
     if {$net ne {}} {
