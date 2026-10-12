@@ -199,13 +199,14 @@ set pidx [string first "\nprint -i(v1)\n" $deck]
 set widx [string first "\nwrite $rawpath\n" $deck]
 set aidx [string first "\nset appendwrite\n" $deck]
 set eidx [string first "\n.endc\n" $deck]
-## The prints now sit BELOW the writes -- they are emitted after the analysis
-## loop, and the writes moved INTO it. They still run against the last
-## analysis's plot, which is where they ran before.
+## The Outputs pane's `print -i(v1)` used to sit below the writes. Since
+## 2026-10-11 the deck carries no print for an output at all (the user ruled
+## output expressions out of the netlist, ase_l.md R-OUT1), so the row asserts
+## its absence.
 check_true "V1 0929 appendwrite then writes, all inside .control and before\
- .endc, with the prints below them" \
-  [expr {$cidx >= 0 && $aidx > $cidx && $widx > $aidx && $pidx > $widx &&
-         $eidx > $pidx}]
+ .endc, and no output print anywhere" \
+  [expr {$cidx >= 0 && $aidx > $cidx && $widx > $aidx && $pidx < 0 &&
+         $eidx > $widx}]
 
 # --- V2: all analyses disabled -> NO write line ------------------------------
 set st2 $st
