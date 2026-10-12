@@ -666,19 +666,92 @@ Operating Point`, `Distortion Operating Point` and `NOISE Operating Point` all
 read back as a plain `op`. Capturing one would make Annotate Operating Point
 publish the wrong numbers, so the registry marks them and the walk skips them.
 
-### Where one output row's number comes from (⚖ R3, ANSWERED 2026-09-12)
+### Where one output row's number comes from (⚖ R3, ANSWERED 2026-09-12; log half SUPERSEDED 2026-10-11)
 
-Both readers ship, and one proc states the rule:
+As answered on 2026-09-12, both readers shipped and one proc stated the rule:
 
 > **a row whose expression names exactly one vector reads the results file;
 > anything else reads the `print` log.**
 
-`ase::result_source` is the whole of that rule, deliberately — it is the single
-place a later change would have to touch. The rule is also **stated on screen**,
-which is what the ruling asked for. Issue **1243** was the user's own earlier
-ruling about the print anchor, and this extends it rather than reversing it:
-`render_deck`'s print anchor is untouched and every expression row still reads
-exactly the log 1243 anchored.
+⚠ **The log half is gone** (next section): the deck carries no `print` line,
+and "anything else" is now **evaluated by the Calculator on the results file**.
+`ase::result_source` still draws the line and is still the single place it
+lives; the rule is still **stated on screen**, once per run. Issue **1243**'s
+substance — the Value column is a scalar column and shows the operating point
+when the run has one — is kept by R-OUT4 below rather than by a print anchor.
+
+### Outputs are computed after the run, never in the netlist (ruling 2026-10-11)
+
+The user, verbatim: *"Why would expressions in the outputs pane of ASE-L go to
+the netlist? They are computations made using the result of the simulation!
+They should not influence the input to the simulator."* ADE-L is the floor
+(`doc/claude/code_analysis/ade_parity_gaps_2026_10_11.md`).
+
+- **R-OUT1 — nothing derived from an output expression enters the deck.**
+  `render_deck` emits no `print` line for any output, in any analysis shape (it
+  used to place one per ticked row at the operating point, issues 0967/1243).
+  `ase::backend::ngspice::print_arg` and `result_probe_log` are deleted. Rows:
+  `test_ase_outputs_eval` OE1/OE5, `test_ase_optier_0963` P1–P4/E17,
+  `test_ase_core` WK4/D1, `test_ase_meas_1443` DK2/DK2c.
+- **R-OUT2 — every row is answered from the run's results file.** The
+  registered `result_probe` hook (`ase::backend::ngspice::result_probe`) sends a
+  row naming one vector (`ase::result_source` = `raw`) to `result_probe_raw`,
+  which reads its single-point value exactly as before, and every other row to
+  `result_probe_calc`, which evaluates the text with **`calc::eval_texts`** —
+  the Calculator's pure evaluator (calculator.md R609): no window, no buffer, no
+  viewer, the raw registry put back byte-identical. The same hook runs on run
+  finish (`ase::run_done` → `ase::ui::run_finished`), on window open and on
+  Load State (`ase::ui::results_from_disk` / `results_refill`), so all three
+  re-evaluate. The log is never read for a value. Rows: OE3, OE5;
+  `test_ase_core` P1, RS1–RS4b, RD10–RD14; `test_ase_result_case` NCR1–NCR3.
+- **R-OUT3 — the save list is the only netlist effect.** `ase::output_save_cards`
+  is the one body: every Save-ticked **plain** row (one whitespace-free token
+  that is not a measurement call, `ase::output_is_plain`) emits `.save
+  <signal>` exactly as before (R208c qualifiers and Cadence quotes stripped,
+  `ase::output_signal`); **then, only if those narrowed the deck**, every signal
+  any expression row reads (`calc::eval_text_signals`), ticked or not, each
+  once. An expression's tick never narrows a deck: a bench whose only ticked
+  rows are expressions gets no card and ngspice keeps everything.
+  `ase::saves_narrowed` reads the same body. **Measured 2026-10-11** on the
+  registry's ngspice-46+ (`build-ver_50`), a divider with `op` + `tran` and an
+  explicit `write`: no `.save` → every plot holds every node voltage and source
+  current; `.save v(out)` → the operating point holds **v(out) alone** and the
+  transient **time + v(out)** — ANY `.save` keeps only what is listed;
+  `.save v(out)` + `.save v(mid)` → those two; `.save all` + `.save v(out)` →
+  everything. ASE-L emits `.save all` only for the Save-All-Voltages tick, a
+  6g-1 widening or the 6g-3 phantom guard, so a default bench with one ticked
+  row IS narrowed — which is why the expressions' signals ride along. `.save
+  -i(v1)` is accepted and saves `i(v1)` (measured), so a negated row's card
+  stays verbatim. Rows: OE1, OE2, OE7.
+- **R-OUT4 — what a row reads.** A plain signal with a single-point value shows
+  the operating point, the number `print` used to give: **measured equal on a
+  real run** (OE7) — a voltage string for string (`%.6e`), a current to the
+  print's own precision (ngspice prints a current with one digit fewer,
+  `-3.33333e-04` beside the file's `-3.333333e-04`). An unqualified expression
+  reads the operating point when the run has one, else the file's first
+  analysis; an unqualified **measurement call** reads the run's first
+  non-operating-point analysis; `vt()`/`vf()`/`vdc()`/`vs()` read their own
+  (R208c). **A run with no operating point** shows `wave` for a plain signal
+  (it was blank under the prints) and still answers measurements. The one
+  ngspice idiom a committed bench relies on, a negated single signal
+  (`-i(v1)`), is handed to the Calculator as `i(v1) -1 *`
+  (`ase::output_calc_text`); any other ngspice infix text (`v(a)*2`) is refused
+  with the Calculator's sentence — the expression field speaks the Calculator's
+  postfix now. Names match as the Calculator matches them (its own
+  case-folding, refusing an ambiguous one); the casemode ladder still governs
+  the single-vector reader.
+- **R-OUT5 — what the Value cell shows.** A scalar: `%.6e`, then
+  `ase::format_value` (engineering notation). A waveform (a plain expression on
+  a multi-point analysis, or a verb answering a wave): the word **`wave`** —
+  never a last point. A refusal: the Calculator's sentence. No results file: no
+  value at all, as before. Plotting a verb-valued wave from Outputs is **not
+  built**; the Plot tick keeps plotting plain RPN rows as before. Row OE6.
+- **R-OUT6 — declared limits.** Sweeps, corners and Monte Carlo: **dataset 0
+  only**. The Measurements dialog (`.meas`) and campaigns are unchanged. The
+  Value cell is painted by `ase::ui::refresh_output_values` writing
+  `[ase::format_value $val]`; its Tk half is covered by `test_ase_window`, which
+  is not registered. Old state files load unchanged (no field added); their
+  values are now computed rather than printed.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
@@ -699,8 +772,9 @@ tests never ran.
 
 Stage 6g, issue **1434**, and the sharpest measured behaviour in the subsystem.
 
-ASE-L emits one `.save <expr>` card per ticked row of the Outputs pane, and one
-ticked output is the shape of every committed bench here. Measured on both
+ASE-L emits one `.save <signal>` card per ticked plain row of the Outputs pane
+(since 2026-10-11 an expression row contributes the signals it reads instead,
+R-OUT3), and one ticked output is the shape of every committed bench here. Measured on both
 binaries, identically:
 
 | deck | result |
@@ -1101,7 +1175,9 @@ Design Window does not raise/open the schematic — fix in this rework.
 - **Outputs** (right bottom): columns Name, Value, Plot (checkbox), Save
   (checkbox), Save Options. Value column USER-LOCKED 2026-07-21: filled
   after a successful run (op/scalar results evaluated per row), blank
-  before the first run. Name shows the user-given name if named, else as
+  before the first run. Since 2026-10-11 every row is computed after the run
+  from the results file (R-OUT1..R-OUT6): a number, `wave`, or the
+  Calculator's refusal sentence. Name shows the user-given name if named, else as
   much of the expression as fits. Save Options auto-displays `allv` (item is
   a voltage and blanket save-all-voltages is on) or `alli` (terminal current
   + save-all-currents on); blank otherwise.

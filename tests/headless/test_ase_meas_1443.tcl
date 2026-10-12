@@ -1028,8 +1028,11 @@ check {DK1b the state key defaults to empty and is omitted from the serialized f
 ##      whole record;
 ##   3. ABOVE the `setplot previous` walk -- get_measure2 measures the CURRENT
 ##      plot (com_measure2.c:1661) and the walk leaves a different one current;
-##   4. ABOVE the printed outputs (0967/1243) and above the per-analysis option
-##      restores (§7e), which are end-of-row anchors belonging to other issues.
+##   4. ABOVE the per-analysis option restores (§7e), an end-of-row anchor
+##      belonging to another issue. (It was also bounded above the Outputs
+##      pane's `print` lines until 2026-10-11, when the user ruled output
+##      expressions out of the netlist and the prints went; DK2 now asserts the
+##      deck carries none.)
 ## Issue 1442's sabotage S24 was this same case and it SURVIVED the first time,
 ## because the row's bound admitted the wrong placement. This row bounds all
 ## four sides.
@@ -1038,7 +1041,7 @@ set DKST [m_state {{name gain analysis ac kind max target vdb(out)}} \
 dict set DKST outputs {{name out expr v(out) save 1}}
 dict set DKST options {{name itl4 value 200 analysis ac}}
 set DKDECK [m_deck $DKST]
-check {DK2 the measurement block sits below the guard and the write, and above the walk, the prints and the option restores} \
+check {DK2 the measurement block sits below the guard and the write, and above the walk and the option restores, and the deck prints no output} \
   [m_ans apply {{} {
      set d $::DKDECK
      set g [m_at $d {^  quit 1$}]
@@ -1048,7 +1051,7 @@ check {DK2 the measurement block sits below the guard and the write, and above t
      set r [m_last $d {^option itl4=}]
      return [list [expr {$g >= 0 && $g < $m}] \
                   [expr {$w >= 0 && $w < $m}] \
-                  [expr {$p >= 0 && $m < $p}] \
+                  [expr {$p < 0}] \
                   [expr {$r >= 0 && $m < $r}]] }}] {1 1 1 1}
 
 ## ⚠ NON-VACUITY FOR DK2: every anchor it names is really in that deck. A row
@@ -1059,7 +1062,7 @@ check {DK2b every anchor DK2 bounds against is really in that deck} \
      return [list [expr {[m_at $d {^  quit 1$}] >= 0}] \
                   [expr {[m_at $d {^write }] >= 0}] \
                   [expr {[m_at $d {^meas ac gain }] >= 0}] \
-                  [expr {[m_at $d {^print }] >= 0}] \
+                  [expr {[m_at $d {^\.save v\(out\)$}] >= 0}] \
                   [expr {[m_last $d {^option itl4=}] > [m_at $d {^option itl4=}]}]] }}] {1 1 1 1 1}
 
 ## ⚠ AND THE SAME FOUR BOUNDS, READ OFF render_deck's OWN BODY. DK2 can only
@@ -1068,7 +1071,7 @@ check {DK2b every anchor DK2 bounds against is really in that deck} \
 ## row reads the emitter instead, so a block moved above the write, below the
 ## walk, below the prints or below the option restores is caught whatever the
 ## fixture does. Issue 1442's S24 hid in exactly that gap.
-check {DK2c render_deck calls the block between the write and the walk, above the prints and above the restores} \
+check {DK2c render_deck calls the block between the write and the walk and above the restores, and emits no print for an output} \
   [m_ans apply {{} {
      set b [m_nocomment [info body ase::backend::ngspice::render_deck]]
      set call [string first {meas_block $state $type $ai} $b]
@@ -1077,11 +1080,11 @@ check {DK2c render_deck calls the block between the write and the walk, above th
      ## filesystem path is resolved one line above it.
      set wr   [string first {lappend lines "write $_pw_raw"} $b]
      set walk [string first {lappend lines "setplot previous"} $b]
-     set pr   [string first {foreach pl $printlines} $b]
+     set pr   [string first {printlines} $b]
      set rest [string first {foreach _ol $scopepost} $b]
-     return [list [expr {$call > 0 && $wr > 0 && $walk > 0 && $pr > 0 && $rest > 0}] \
+     return [list [expr {$call > 0 && $wr > 0 && $walk > 0 && $rest > 0}] \
                   [expr {$wr < $call}] [expr {$call < $walk}] \
-                  [expr {$call < $pr}] [expr {$call < $rest}]] }}] {1 1 1 1 1}
+                  [expr {$pr < 0}] [expr {$call < $rest}]] }}] {1 1 1 1 1}
 
 ## ⚠ THE SIDECAR IS OPENED BY A COMMAND THAT CANNOT FAIL, AND EVERY MEASUREMENT
 ## APPENDS. MEASURED 2026-09-13 on both binaries: a `meas … > file` whose

@@ -1007,7 +1007,6 @@ end
 remzerovec
 @MAPPRE@echo "PLOT op 0 |$curplotname|" >> @PLOTMAP@
 @RAWPRE@write @RAWFILE@
-print -i(v1)
 echo ASE-EFFECTIVE-BEGIN
 option
 echo ASE-EFFECTIVE-END
@@ -1887,15 +1886,21 @@ proc p1val {res k} {
   if {[catch {dict exists $res $k} e] || !$e} { return $res }
   return [dict get $res $k]
 }
-set logtext_p1 "Some banner line\n-i(v1) = 4.096837e-04\nNo. of Data Rows : 1\n"
+## Since 2026-10-11 no row is read from the log (ase_l.md R-OUT2): the keying is
+## driven over a real results file, the committed Calculator fixture, whose
+## operating point holds i(@m1[id]) = 8.7035e-04 -- so the negated row reads
+## -8.703500e-04, which no zero or sign slip can pass.
+set p1raw [file join [file dirname [info script]] data calc_fixture.raw]
+file copy -force $p1raw [file join $scratch p1key_ase.raw]
 set stp [ase::state_default]
-dict set stp outputs {{expr -i(v1) save 1}}
+dict set stp design {lib rl cell p1key view schematic}
+dict set stp rundir $scratch
+dict set stp outputs {{expr -i(@m1[id]) save 1}}
 check "P1 result_probe keys unnamed outputs by expr" \
-  [p1val [p1probe $stp $logtext_p1] -i(v1)] 4.096837e-04
-set stp [ase::state_default]
-dict set stp outputs {{name id expr -i(v1) save 1}}
+  [p1val [p1probe $stp {}] -i(@m1\[id\])] -8.703500e-04
+dict set stp outputs {{name id expr -i(@m1[id]) save 1}}
 check "P1 named output still keyed by name" \
-  [p1val [p1probe $stp $logtext_p1] id] 4.096837e-04
+  [p1val [p1probe $stp {}] id] -8.703500e-04
 
 # --- F: ase::format_value engineering-notation display (item 09) -------------
 # F1 suffix table, F2 out-of-range %g fallback, F3 non-numeric verbatim,
@@ -8777,8 +8782,10 @@ foreach rsx {v(mid) v(In) i(v1) v(in,mid) -i(v1) Transfer_function
              a[0] @r1[i] @r1 -onoise_total {"a[0]"} 42 {}} {
   lappend RSANS [ase::result_source ngspice $rsx]
 }
+## (`log` is the proc's word for "not one vector": since 2026-10-11 such a row
+## is evaluated by the Calculator on the results file, ase_l.md R-OUT2.)
 check "RS1 the rule routes every measured output shape: a single vector to the\
- results file, an expression to the print log" $RSANS \
+ results file's single-point values, an expression to the Calculator" $RSANS \
   [list raw raw raw log log raw raw raw raw raw raw \
         log log log log log log log log log log]
 
@@ -8795,89 +8802,70 @@ check "RS1b an adapter with no out_decompose sends every parenthesised form to\
   [list [ase::result_source r3nohook v(mid)] [ase::result_source r3nohook v(in,mid)] \
         [ase::result_source r3nohook Transfer_function]] {log log raw}
 
-## ⚠ SEPARABILITY, STRUCTURALLY. This is the property the driver asked for in
-## as many words: C is the SUPERSET of A and B, so a later ruling must remove a
-## reader rather than invalidate the work. Neither reader may name the other,
-## and neither may name the rule — otherwise deleting one of them is an edit to
-## the survivor instead of a deletion.
+## ⚠ SEPARABILITY, STRUCTURALLY, RESTATED 2026-10-11. ⚖ R3's log reader is gone
+## with the prints (ase_l.md R-OUT1); its place is the Calculator reader. The
+## property is the same: neither reader names the other or the rule, so the
+## dispatcher alone decides which one a row meets.
 set RSRAW [rg_body ::ase::backend::ngspice::result_probe_raw]
-set RSLOG [rg_body ::ase::backend::ngspice::result_probe_log]
-check "RS2 neither ⚖ R3 reader names the other or names the rule, so a ruling\
- of A or B deletes a proc instead of editing one" \
-  [list [rg_has $RSRAW result_probe_log] [rg_has $RSRAW logtext] \
+set RSCALC [rg_body ::ase::backend::ngspice::result_probe_calc]
+check "RS2 neither reader names the other or names the rule, and the log reader\
+ and the print-argument quoter are gone" \
+  [list [rg_has $RSRAW result_probe_calc] [rg_has $RSRAW calc::] \
         [rg_has $RSRAW ase::result_source] \
-        [rg_has $RSLOG result_probe_raw] [rg_has $RSLOG raw_file] \
-        [rg_has $RSLOG raw_scalars] [rg_has $RSLOG ase::result_source]] \
-  {0 0 0 0 0 0 0}
+        [rg_has $RSCALC result_probe_raw] [rg_has $RSCALC raw_scalars] \
+        [rg_has $RSCALC ase::result_source] \
+        [llength [info commands ::ase::backend::ngspice::result_probe_log]] \
+        [llength [info commands ::ase::backend::ngspice::print_arg]]] \
+  {0 0 0 0 0 0 0 0}
 
-## ⚠ SEPARABILITY, BEHAVIOURALLY — AND THIS IS THE ROW THAT COSTS SOMETHING.
-## RS2 only says the bodies do not mention each other. This one performs both
-## later rulings by stubbing ase::result_source to one fixed answer, which is
-## literally what ruling A (`return raw`) and ruling B (`return log`) do to that
-## proc, and shows the whole surface changing from that one edit:
-##   ruled A -> `v(a)*2` loses its number and `Transfer_function` keeps its one
-##   ruled B -> `Transfer_function` loses its number and `v(a)*2` keeps its one
-## A fixture whose rows did not DISAGREE could not adjudicate this, so the state
-## deliberately carries one of each.
-rg_wr [file join $scratch rsep_ase.raw] \
-  [r3_raw {{{Operating Point} real {v(mid) 1.285714285714286e+00}}
-           {{Transfer Function} real {v(Transfer_function) 4.285714285714286e-01}}}]
-set RSST [r3_state rsep {{name {} expr v(mid) save 1}
-                         {name {} expr Transfer_function save 1}
-                         {name {} expr {v(a)*2} save 1}}]
-set RSLOGTXT "v(mid) = 1.285714e+00\nTransfer_function = 9.999999e+09\nv(a)*2 = 2.571429e+00\n"
+## ⚠ SEPARABILITY, BEHAVIOURALLY. Stubbing ase::result_source to one fixed answer
+## sends EVERY row to one reader, and the whole surface follows that one edit:
+##   all `raw`  -> the expression row is a single-point lookup of the text
+##                 `v(lp) 2 * 1 +`, finds nothing and has NO value
+##   all `log`  -> the vector row is evaluated by the Calculator and gets the
+##                 same operating-point number the file reader gave it
+## The fixture is the committed Calculator raw (a real binary results file),
+## whose operating point holds v(dcmid) = 3, so the expression `v(dcmid) 2 * 1 +`
+## is 7 -- a number no single-point lookup of the vector could produce.
+set RSFX [file join [file dirname [info script]] data calc_fixture.raw]
+file copy -force $RSFX [file join $scratch rsep_ase.raw]
+set RSST [r3_state rsep {{name {} expr v(dcmid) save 1}
+                         {name {} expr {v(dcmid) 2 * 1 +} save 1}}]
+set RSLOGTXT "v(dcmid) = 9.999999e+09\nv(dcmid) 2 * 1 + = 7.777777e+00\n"
 set RSC [r3_probe $RSST $RSLOGTXT]
 set RSA [r3_ruled raw {r3_probe $RSST $RSLOGTXT}]
 set RSB [r3_ruled log {r3_probe $RSST $RSLOGTXT}]
-## The fixture log carries a DIFFERENT number for `Transfer_function`
-## (9.999999e+09) from the one in the results file (4.285714e-01), so the row
-## can say WHICH READER answered and not merely that a number appeared:
-##   C (ships) -> the results file's number, because the name is one vector
-##   A         -> the same, and the expression row loses its number
-##   B         -> the LOG's rival number, and the expression row keeps its one
-## ⚠ A fixture whose two sources agreed could not adjudicate this at all.
-check "RS3 stubbing the ONE rule proc performs ruling A and ruling B end to\
- end: A drops the expression, B takes the log's rival number for the vector" \
-  [list [r3_val $RSC v(mid)] [r3_val $RSC Transfer_function] [r3_val $RSC v(a)*2] \
-        [r3_val $RSA Transfer_function] [r3_val $RSA v(a)*2] \
-        [r3_val $RSB Transfer_function] [r3_val $RSB v(a)*2]] \
-  [list 1.285714e+00 4.285714e-01 2.571429e+00 \
-        4.285714e-01 ABSENT 9.999999e+09 2.571429e+00]
+check "RS3 the vector reads the file, the expression the Calculator; stubbing the\
+ rule to all-file drops the expression, to all-Calculator keeps both -- and no\
+ number the log carries is ever taken" \
+  [list [r3_val $RSC v(dcmid)] [r3_val $RSC {v(dcmid) 2 * 1 +}] \
+        [r3_val $RSA v(dcmid)] [r3_val $RSA {v(dcmid) 2 * 1 +}] \
+        [r3_val $RSB v(dcmid)] [r3_val $RSB {v(dcmid) 2 * 1 +}]] \
+  [list 3.000000e+00 7.000000e+00 3.000000e+00 ABSENT 3.000000e+00 7.000000e+00]
 
-## ⚠ AND UNDER RULING A THE tf NUMBER IS STILL THE RAWFILE'S, NOT THE LOG'S.
-## The fixture log deliberately carries a DIFFERENT number for
-## `Transfer_function` (9.999999e+09) so that a reader silently falling back to
-## the log cannot pass RS3 by accident.
-check "RS3b the rawfile answer is the rawfile's: the log's rival number for the\
- same name is never taken" \
-  [list [r3_val $RSC Transfer_function] [rg_has $RSLOGTXT 9.999999e+09]] \
-  {4.285714e-01 1}
-
-## ⚠ THE RULE IS STATED ON SCREEN, which is what ⚖ R3's ANSWER asks for
-## in as many words. Spied at ::ciw_echo, so the row proves the sentence really
-## travelled ase::echo -> notify_safe -> notify -> ciw_echo.
+## ⚠ THE RULE IS STATED ON SCREEN, spied at ::ciw_echo, so the row proves the
+## sentence really travelled ase::echo -> notify_safe -> notify -> ciw_echo.
 set RSSAID [rg_ciw {r3_probe $RSST $RSLOGTXT}]
 set RSRULE {}
 foreach s $RSSAID {
-  if {[rg_has [lindex $s 1] {names exactly one vector}]} { set RSRULE $s }
+  if {[rg_has [lindex $s 1] {naming one signal}]} { set RSRULE $s }
 }
 check "RS4 the rule is said on screen, with the split this run took" \
   [list [expr {$RSRULE ne {}}] [lindex $RSRULE 0] \
-        [rg_has [lindex $RSRULE 1] {read from the results file}] \
-        [rg_has [lindex $RSRULE 1] {read from the print log}] \
-        [rg_has [lindex $RSRULE 1] {2 from the file, 1 from the log}]] \
+        [rg_has [lindex $RSRULE 1] {from the results file}] \
+        [rg_has [lindex $RSRULE 1] {evaluated by the Calculator}] \
+        [rg_has [lindex $RSRULE 1] {1 signal, 1 expression}]] \
   {1 note 1 1 1}
 
-## ⚠ THE SENTENCE IS COMPUTED FROM THE RULE, NOT WRITTEN OUT AS PROSE, so a
-## later ruling of A or B leaves it telling the truth without being edited.
+## ⚠ THE SENTENCE IS COMPUTED FROM THE RULE, NOT WRITTEN OUT AS PROSE.
 set RSSAIDA [r3_ruled raw {rg_ciw {r3_probe $RSST $RSLOGTXT}}]
 set RSRULEA {}
 foreach s $RSSAIDA {
-  if {[rg_has [lindex $s 1] {names exactly one vector}]} { set RSRULEA $s }
+  if {[rg_has [lindex $s 1] {naming one signal}]} { set RSRULEA $s }
 }
-check "RS4b under ruling A the same sentence says 3 from the file and 0 from\
- the log, with no edit to it" \
-  [rg_has [lindex $RSRULEA 1] {3 from the file, 0 from the log}] 1
+check "RS4b with the rule stubbed to all-file the same sentence says 2 signal,\
+ 0 expression, with no edit to it" \
+  [rg_has [lindex $RSRULEA 1] {2 signal, 0 expression}] 1
 
 # --- RD: the two readers over canned results files --------------------------
 
@@ -9099,32 +9087,31 @@ check "RD8b the missing-vector sentence names the vector row and never the\
  expression row" \
   [list [rg_has $RD8BM nosuchvector] [rg_has $RD8BM {v(mid)*7}]] {1 0}
 
-## ⚠ THE READER NEVER FALLS BACK TO THE LOG, AND THIS IS THE ROW THAT SAYS SO.
-## The rule on screen tells a user WHERE a row's number came from; a fallback
-## would make that sentence false, and it would make a later ruling of ⚖ R3 A
-## two changes instead of one. The fixture is the exact trap: `v(gone)` is not
-## in the results file and IS in the log, with a number a fallback would
-## happily show.
+## ⚠ NO READER FALLS BACK TO THE LOG, AND THIS IS THE ROW THAT SAYS SO. The
+## fixture is the exact trap: `v(gone)` is not in the results file and IS in the
+## log, with a number a fallback would happily show; so is the expression. Since
+## 2026-10-11 the expression is the Calculator's, which cannot read this
+## hand-written ASCII fixture and SAYS so -- a sentence, never the log's 8.4.
 set RD12 [r3_probe [r3_state rd1 {{name {} expr v(gone) save 1}
-                                  {name {} expr {v(gone)*2} save 1}}] \
-  "v(gone) = 4.200000e+00\nv(gone)*2 = 8.400000e+00\n"]
-check "RD12 a single-vector row absent from the results file gets NO value,\
- even though the log has one for it" \
-  [list [r3_val $RD12 v(gone)] [r3_val $RD12 v(gone)*2]] {ABSENT 8.400000e+00}
+                                  {name {} expr {v(gone) 2 *} save 1}}] \
+  "v(gone) = 4.200000e+00\nv(gone) 2 * = 8.400000e+00\n"]
+check "RD12 a single-vector row absent from the results file gets NO value, and\
+ an expression gets the Calculator's sentence, even though the log has numbers\
+ for both" \
+  [list [r3_val $RD12 v(gone)] [string match {Cannot evaluate*} [r3_val $RD12 {v(gone) 2 *}]]] \
+  {ABSENT 1}
 
 ## ⚠ THE TWO READERS' ANSWERS MERGE INTO ONE DICT, keyed exactly as
 ## ase::ui::output_result_key looks them up: `name` when the row has one, else
 ## the `expr` as stored. Nothing about the KEY changes in issue 1429 — only
 ## where the number was read.
-rg_wr [file join $scratch rd10_ase.raw] \
-  [r3_raw {{{Operating Point} real {v(mid) 1.285714285714286e+00}}}]
-set RD10 [r3_probe [r3_state rd10 {{name vm expr v(mid) save 1}
-                                   {name {} expr {v(mid)*2} save 1}}] \
-  "v(mid)*2 = 2.571429e+00\n"]
+file copy -force $RSFX [file join $scratch rd10_ase.raw]
+set RD10 [r3_probe [r3_state rd10 {{name vm expr v(dcmid) save 1}
+                                   {name {} expr {v(dcmid) 2 *} save 1}}] {}]
 check "RD10 one dict, both readers, keyed by name-or-expr as the Outputs pane\
  looks them up" \
-  [list [r3_val $RD10 vm] [r3_val $RD10 v(mid)*2] [r3_val $RD10 v(mid)]] \
-  {1.285714e+00 2.571429e+00 ABSENT}
+  [list [r3_val $RD10 vm] [r3_val $RD10 {v(dcmid) 2 *}] [r3_val $RD10 v(dcmid)]] \
+  {3.000000e+00 6.000000e+00 ABSENT}
 
 ## ⚠ WHY THE MERGE ORDER IN THE DISPATCHER CANNOT CHANGE AN ANSWER, and the
 ## row that keeps it that way. The dispatcher's comment claims RAW WINS A KEY
@@ -9135,13 +9122,12 @@ check "RD10 one dict, both readers, keyed by name-or-expr as the Outputs pane\
 ## exactly (a key read by nothing is a key checked by nothing), so it is
 ## asserted here. A sabotage that breaks the partition reddens RS3, RD8b and
 ## RD12; this row is what says WHY the order beneath it is inert.
-set RD13ST [r3_state rd10 {{name {} expr v(mid) save 1}
-                           {name {} expr {v(mid)*2} save 1}}]
+set RD13ST [r3_state rd10 {{name {} expr v(dcmid) save 1}
+                           {name {} expr {v(dcmid) 2 *} save 1}}]
 set RD13R [ase::backend::ngspice::result_probe_raw \
-  [dict set RD13ST outputs {{name {} expr v(mid) save 1}}]]
-set RD13L [ase::backend::ngspice::result_probe_log \
-  [dict set RD13ST outputs {{name {} expr {v(mid)*2} save 1}}] \
-  "v(mid)*2 = 2.571429e+00\n"]
+  [dict set RD13ST outputs {{name {} expr v(dcmid) save 1}}]]
+set RD13L [ase::backend::ngspice::result_probe_calc \
+  [dict set RD13ST outputs {{name {} expr {v(dcmid) 2 *} save 1}}]]
 set RD13BOTH {}
 foreach k [dict keys $RD13R] {
   if {[dict exists $RD13L $k]} { lappend RD13BOTH $k }
@@ -9149,7 +9135,7 @@ foreach k [dict keys $RD13R] {
 check "RD13 the two readers' answers have disjoint keys, which is why the\
  dispatcher's merge order is inert" \
   [list [dict keys $RD13R] [dict keys $RD13L] $RD13BOTH] \
-  [list v(mid) v(mid)*2 {}]
+  [list v(dcmid) {{v(dcmid) 2 *}} {}]
 
 ## ⚠ THE DISPATCHER MUST NOT RAISE FOR A STATE THAT HAS NO RESULTS FILE PATH,
 ## and that is a production contract and not a test convenience:
@@ -9161,9 +9147,9 @@ set RD14ST [ase::state_default]
 dict set RD14ST outputs {{name {} expr v(mid) save 1}
                          {name {} expr {v(mid)*2} save 1}}
 set RD14 [r3_probe $RD14ST "v(mid)*2 = 2.571429e+00\n"]
-check "RD14 a state with no design cell answers its log rows and does not\
- raise" \
-  [list [r3_val $RD14 v(mid)] [r3_val $RD14 v(mid)*2]] {ABSENT 2.571429e+00}
+check "RD14 a state with no design cell does not raise, and with no results\
+ file neither reader records anything -- the log's number included" \
+  [list [r3_val $RD14 v(mid)] [r3_val $RD14 v(mid)*2]] {ABSENT ABSENT}
 
 ## ⚠ THE CASEMODE NOTE IS SAID ONCE PER RUN, NOT ONCE PER READER. The dispatcher
 ## resolves the case rule and hands the same answer to both halves; a reader
@@ -9540,14 +9526,18 @@ set WKNODECK RAISED-NOTHING
 if {[catch {$WKRENDER $WKNONE "* wk\nv1 in 0 dc 1\nr1 in out 1k\n.end\n"} WKNODECK]} {
   set WKNODECK "RAISED:$WKNODECK"
 }
+## The fourth term was `1` until 2026-10-11: such a deck still carried the
+## Outputs pane's `print` line. The user ruled an output expression out of the
+## netlist, so it carries none (ase_l.md R-OUT1), and its save card instead.
 check "WK4 a deck with no enabled analysis has no sidecar record, no\
  appendwrite and no write -- and still renders for a state with no design cell,\
  which is what keeps the sidecar path inside the appendwrite guard" \
   [list [regexp {echo "PLOT } $WKNODECK] [regexp -line {^set appendwrite$} $WKNODECK] \
         [regexp -line {^write } $WKNODECK] \
-        [regexp -line {^print v\(out\)$} $WKNODECK] \
+        [regexp -line {^print } $WKNODECK] \
+        [regexp -line {^\.save v\(out\)$} $WKNODECK] \
         [string match RAISED:* $WKNODECK]] \
-  {0 0 0 1 0}
+  {0 0 0 0 1 0}
 
 ## ⚠ THE WALK, AND WHY ITS FIXTURE IS STUBBED. No type in the SHIPPED registry
 ## captures more than one plot — `ac`'s and `pz`'s second plots are `opinfo` and

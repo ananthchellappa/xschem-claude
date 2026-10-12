@@ -878,32 +878,22 @@ check {G-LEADER the save-everything word and the named outputs stay ABOVE the\
   $GL {1 1}
 
 # ============================================================================
-# P. THE PRINTED OUTPUTS READ THE OPERATING POINT (issues 0967, 1243)
+# P. NO OUTPUT REACHES THE DECK AS A `print` (ruling 2026-10-11)
 # ============================================================================
-# The Outputs pane has a Value column, and it is filled in after a run from the
-# deck's `print` lines -- see ase::backend::ngspice::result_probe, which accepts
-# a scalar `<expr> = <number>` line and nothing else. `print` reads whichever
-# plot the simulator is standing in.
+# Until 2026-10-11 the Outputs pane's Value column was filled from `print`
+# lines the deck carried, and this section pinned WHERE they sat: with the
+# operating point whenever one was enabled (issue 1243, the user's ruling), and
+# by the enabled set rather than the emit order (issue 0967).
 #
-# ⚠ THE RULING THESE ROWS PIN CHANGED, AND THE USER MADE IT (issue 1243,
-# 2026-09-02). 0967 froze the anchor against an unrelated checkbox and said in
-# this very comment that WHICH analysis the column reads was "the user's ruling
-# to make". They made it, on their own tb_bandgap: with op and tran both
-# enabled the pane showed nothing, with op alone it showed values, and they
-# called the first one wrong. So the prints now follow the OPERATING POINT
-# whenever one is enabled.
-#
-# WHY THAT IS THE ONLY READABLE ANSWER. On a multi-point plot `print VBG` emits
-# a paged `Index time vbg` table -- measured on the user's run log, 20,514 rows
-# per printed output and 108,275 log lines for five of them, from which
-# result_probe extracts nothing at all. The scalar column had never had a value
-# to show for a transient. Nothing displayed therefore changes VALUE here: a
-# number appears where the column was empty, which is what keeps this clear of
-# ruling D5-1.
-#
-# The anchor order is the canonical `op dc ac tran` with `op` moved LAST so
-# last-enabled-wins picks it. With the operating point off the two orders choose
-# the same analysis, so every op-less deck renders byte for byte as it did.
+# The user then ruled: "Why would expressions in the outputs pane of ASE-L go
+# to the netlist? They are computations made using the result of the
+# simulation! They should not influence the input to the simulator." So the
+# deck carries no `print` for an output in ANY shape, and the Value column is
+# evaluated after the run from the results file (ase_l.md R-OUT1/R-OUT2) --
+# where an unqualified row still reads the operating point when there is one,
+# which is 1243's substance (test_ase_outputs_eval). What these rows now pin is
+# that the analysis order is exactly what it was and nothing is printed: the
+# same four shapes, each with its `print` entries gone.
 proc o_ctlshape {deck} {
   set out {}
   foreach l [o_control $deck] {
@@ -930,20 +920,17 @@ if {$DP1 ne {NOPROC} && ![string match RAISED:* $DP1]} {
   set P1 [list [o_ctlshape $DP1] [o_prints $DP1]]
 }
 check {P1 with the device requests moved and the operating point running last,\
- the outputs the user asked to see are printed from the OPERATING POINT -- they\
- sit after its write, which is the last thing the deck does} \
-  $P1 [list {tran save op print print} {{print v(out)} {print v(mid)}}]
+ the analysis order is unchanged and no output is printed} \
+  $P1 [list {tran save op} {}]
 
 set DP2 [o_render [o_state $AN_BOTH 0 $OUTS] $NL]
 set P2 NOPROC
 if {$DP2 ne {NOPROC} && ![string match RAISED:* $DP2]} {
   set P2 [list [o_ctlshape $DP2] [o_prints $DP2]]
 }
-check {P2 the control: with the tick off nothing is reordered and the operating\
- point runs FIRST, and the prints follow it there -- the anchor is the enabled\
- set, not the emit order, so the transient that runs after them does not take\
- the column} \
-  $P2 [list {op print print tran} {{print v(out)} {print v(mid)}}]
+check {P2 the control: with the tick off nothing is reordered, the operating\
+ point runs FIRST, and no output is printed} \
+  $P2 [list {op tran} {}]
 
 set DP3 [o_render [o_state $AN_OP {} $OUTS] $NL]
 set DP4 [o_render [o_state $AN_NONE {} $OUTS] $NL]
@@ -952,29 +939,19 @@ if {$DP3 ne {NOPROC} && ![string match RAISED:* $DP3] &&
     $DP4 ne {NOPROC} && ![string match RAISED:* $DP4]} {
   set P3 [list [o_ctlshape $DP3] [o_ctlshape $DP4]]
 }
-check {P3 an operating-point-only run prints from the operating point, and a\
- run with no analysis at all still carries its print lines -- neither shape is\
- reordered, so neither moves} \
-  $P3 {{op print print} {print print}}
+check {P3 an operating-point-only run and a run with no analysis at all print\
+ nothing} \
+  $P3 {op {}}
 
-## P4 -- THE HALF THE USER HAS NOT RULED ON, PINNED SO IT CANNOT DRIFT. With no
-## operating point enabled there is no scalar analysis to anchor to, and the
-## prints stay exactly where they always sat: after the transient, where
-## `print` emits a table and the Value column stays EMPTY. That is unchanged
-## behaviour, not a fix -- what a scalar column should show for a waveform (the
-## final point? t=0? nothing at all?) is a separate ruling, and it is on the
-## owed ledger as one. This row exists so that whoever answers it has to come
-## here and say so, rather than discovering afterwards that a transient-only
-## bench quietly started reporting a number.
+## P4 -- a transient-only run prints nothing either. Its Value column is the
+## Calculator's `wave` marker now (ase_l.md R-OUT5), not an empty cell.
 set DP5 [o_render [o_state $AN_TRAN {} $OUTS] $NL]
 set P4 NOPROC
 if {$DP5 ne {NOPROC} && ![string match RAISED:* $DP5]} {
   set P4 [o_ctlshape $DP5]
 }
-check {P4 issue 1243 a transient-only run is UNCHANGED -- with no operating\
- point to anchor to the prints stay after the transient, and the Value column\
- stays as empty as it has always been} \
-  $P4 {tran print print}
+check {P4 a transient-only run prints nothing} \
+  $P4 {tran}
 
 # ============================================================================
 # S. WHAT THE USER IS TOLD
@@ -1760,12 +1737,9 @@ check {E16 issue 0968 with a transient in the same run the device requests are\
  timepoint} \
   $E16 {{tran op} 5 1 0 0}
 
-## 0967 IS SETTLED NOW, AND NOT BY THIS CHANGE. Which analysis the Outputs Value
-## column reads was the user's ruling to make and they made it -- the operating
-## point (issue 1243, section P). What this row still says is 0967's own claim,
-## which outlives the ruling: the answer comes from the ENABLED SET, so moving
-## the device requests cannot move it. Sabotage the emit order and this row does
-## not budge; sabotage the anchor order and it does.
+## 0967's claim -- that a checkbox about device parameters cannot move what the
+## Outputs Value column reads -- now holds because the deck carries no output
+## line for it to move (ruling 2026-10-11). Kept as the op+tran sample of P.
 set E17 NOPROC
 if {$EABO ne {NOPROC} && ![string match RAISED:* $EABO]} {
   set e17 {} ; set e17seen {}
@@ -1776,10 +1750,9 @@ if {$EABO ne {NOPROC} && ![string match RAISED:* $EABO]} {
   }
   set E17 $e17
 }
-check {E17 issues 0967+1243 the Outputs Value column reads the OPERATING POINT\
- on an op+tran bench -- and it reads it because the operating point is enabled,\
- not because the device requests moved} \
-  $E17 {op op}
+check {E17 issue 0967 on an op+tran bench with the device requests moved, no\
+ output is printed after any analysis} \
+  $E17 {}
 
 set RDBODY [o_body ::ase::backend::ngspice::render_deck]
 check {E18 issues 0966+0968 STRUCTURAL nothing device-related is written as a\

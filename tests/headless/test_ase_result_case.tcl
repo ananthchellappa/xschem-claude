@@ -30,35 +30,15 @@
 # empty one). Rung 2 is OFF under `distinguish`, because there the log line
 # beside a stale row belongs to a DIFFERENT signal (measured, above).
 #
-# Legs (NC*):
-#   NC222  the defect itself: requested preserve, measured fold
-#   NC223  rung 1 is unchanged — exact spelling, first line wins
-#   NC224  delivered preserve still matches exactly
-#   NC225  the `distinguish` gate: no lenient match, and its positive control
-#   NC226  D2 — two case-variant labels decline, and SAY SO; one label twice
-#          is not a collision
-#   NC226e the LADDER'S ORDER: rung 1 before rung 2, so an exactly-spelled row
-#          inside a collision reads its own line and is never declined
-#   NC227  the `\W` escape survives rung 2 (parentheses, dots and quotes stay
-#          literal)
-#   NC230  what the run DELIVERED outranks what it REQUESTED (spec §15.4b): a
-#          log that announces `casemode=distinguish` turns rung 2 off even for
-#          a `fold` request, it is announced once, and the detector is pinned
-#          by a positive control
-#   NC228  the REAL simulator, when there is one (skipped, never failed) —
-#          NC228d is the §15.4b run on the case-capable binary
-#   NCR*   ⚖ R3's DISPATCHER (issue 1429), over this file's own subject: a row
-#          naming exactly one vector reads the RESULTS FILE and an expression
-#          reads this log, the rawfile reader obeys the SAME casemode ladder,
-#          and both answers land in one dict
+# ⚠⚠ SINCE 2026-10-11 THE LOG IS NOT READ AT ALL. The user ruled that an
+# output expression must not reach the netlist (ase_l.md R-OUT1), so the deck
+# carries no `print`, `result_probe_log` is gone and its rows (NC222-NC230,
+# NC228, NC228d) are retired. What survives is the ladder's other half:
 #
-# ⚠ EVERY ROW ABOVE NCR DRIVES `result_probe_log` BY NAME (issue 1429), because
-# the registered `result_probe` hook is now a dispatcher and every expression in
-# this file names exactly one vector. THE SWAP IS ONE LINE, and that is the
-# property ⚖ R3's Option C was chosen for, and it was ANSWERED 2026-09-12: it
-# is the SUPERSET of A and B, so a ruling of A or B would have deleted a reader
-# rather than invalidating this file.
-# ⚠ THE COUNT IS A FLOOR: 28 -> 31 with section NCR.
+# Legs:
+#   NCR*   the DISPATCHER: a row naming exactly one vector reads the RESULTS
+#          FILE through the same casemode ladder (fold on rung 2, off under a
+#          delivered `distinguish`), and an expression is the Calculator's
 #
 # True headless (no X, no Tk). Run from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_result_case.tcl
@@ -132,371 +112,24 @@ reset_sim
 proc casemode {m} { set ::sim_case_mode $m }
 casemode fold
 
-## ⚠ `$probe` IS THE LOG READER BY NAME, SINCE ISSUE 1429 — and the swap being
-## ONE LINE is itself the finding. This suite's subject is the casemode LADDER,
-## which is the print-log half of ⚖ R3's Option C. The registered
-## `result_probe` hook is now a DISPATCHER: it asks ase::result_source where a
-## row's number comes from and sends a row whose expression names exactly one
-## vector to the RESULTS FILE instead. Every expression in this file —
-## `v(In)`, `v(MidNode)`, `v(a.b)` — names exactly one vector, so driving the
-## dispatcher here would measure the rawfile reader under this file's name and
-## leave the ladder it is about untested.
-##
-## ⚠ ⚖ R3 WAS ANSWERED 2026-09-12 — Option C, RATIFIED, in the user's words
-## *"both with a rule is right, keep it"*. Section NCR at the foot of this file
-## is what keeps the dispatcher honest, and it asserts that the two readers give
-## the SAME number out of two different files — which is why the ruling could
-## only ever have moved which file is read, not which number is shown.
-set probe ::ase::backend::ngspice::result_probe_log
+set probe [ase::backend_hook ngspice result_probe]
 proc outstate {outputs} {
   set st [ase::state_default]
   dict set st outputs $outputs
   return $st
 }
 
-# The log text below is BYTE-FOR-BYTE from the runs quoted in the header, not a
-# hand-written approximation: `/usr/local/bin/ngspice -b` on a deck with
-# `V1 In 0 3` / `R1 In MidNode 1k` / `R2 MidNode 0 1k`, `print v(In)`.
-set LOG_FOLDED "Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\n\
-v(in) = 3.000000e+00\nv(midnode) = 1.500000e+00\ni(v1) = -1.50000e-03\n"
-set LOG_KEPT "Doing analysis at TEMP = 27.000000 and TNOM = 27.000000\n\
-v(In) = 3.000000e+00\nv(MidNode) = 1.500000e+00\ni(V1) = -1.50000e-03\n"
-
 if {[catch {
 
 # ===========================================================================
-# NC222 — THE DEFECT. Requested `preserve`, measured `fold` (DECISIONS B4's
-# run-and-report path): we ship `v(In)`, the simulator answers `v(in)`.
+# NC222-NC230, NC228, NC228d -- RETIRED 2026-10-11 WITH THE LOG READER.
+# They pinned the casemode ladder of `result_probe_log`, which read the Outputs
+# Value column out of ngspice `print` lines. The user ruled output expressions
+# out of the netlist (ase_l.md R-OUT1), so the deck prints nothing and there is
+# no log to read: every row is answered from the results file. The ladder lives
+# on in the results-file reader, pinned by NCR1/NCR2 below; an expression row is
+# the Calculator's, which matches names the way the Calculator always does.
 # ===========================================================================
-casemode preserve
-set row {expr v(In) save 1}
-set res [pcall $probe [outstate [list $row]] $LOG_FOLDED]
-check "NC222 a mixed-case expr reads its FOLDED echo (the empty Value column)" \
-  [cell $res $row] 3.000000e+00
-## the whole point of the item is a pane cell, so drive the pane's own key proc
-## for a NAMED row too: the KEY must stay the name, untouched by any of this
-set nrow {name vin expr v(In) save 1}
-set res [pcall $probe [outstate [list $nrow]] $LOG_FOLDED]
-check "NC222b a NAMED row keeps its key and gains the value" \
-  [list [cell $res $nrow] [pcall dict keys $res]] {3.000000e+00 vin}
-## a current, in the negated `-i(...)` form ase.tcl:1115 and test_ase_core D1
-## already use for a source branch
-set crow {expr -i(Vs) save 1}
-set res [pcall $probe [outstate [list $crow]] \
-   "i(vs) = -1.50000e-03\n-i(vs) = 4.096837e-04\n"]
-check "NC222c the folded echo of a negated current is read too" \
-  [cell $res $crow] 4.096837e-04
-## and the row that has NO echo at all still records nothing — the ladder must
-## not invent a value out of a neighbouring line
-set mrow {expr v(NoSuchNet) save 1}
-set res [pcall $probe [outstate [list $mrow]] $LOG_FOLDED]
-check "NC222d a name the log never mentions still records nothing" \
-  [list [cell $res $mrow] [pcall dict size $res]] {{} 0}
-
-# ===========================================================================
-# NC223 — rung 1 unchanged: the expression's own spelling, first line wins
-# ===========================================================================
-casemode fold
-set frow {expr v(in) save 1}
-set res [pcall $probe [outstate [list $frow]] $LOG_FOLDED]
-check "NC223 the ordinary fold run matches exactly, as it always did" \
-  [cell $res $frow] 3.000000e+00
-## two analyses printing the same vector: FIRST wins, on rung 1 and rung 2 alike
-set res [pcall $probe [outstate [list $frow]] \
-  "v(in) = 1.000000e+00\nv(in) = 2.000000e+00\n"]
-check "NC223b two echoes of the SAME spelling: the first wins (rung 1)" \
-  [cell $res $frow] 1.000000e+00
-
-# ===========================================================================
-# NC224 — delivered `preserve`: both sides carry the case, rung 1 answers
-# ===========================================================================
-casemode preserve
-set res [pcall $probe [outstate [list $row]] $LOG_KEPT]
-check "NC224 delivered preserve matches exactly (rung 2 not needed)" \
-  [cell $res $row] 3.000000e+00
-
-# ===========================================================================
-# NC225 — the `distinguish` GATE. Measured on build-ver_50: `print v(in)`
-# against a design that only has `In` prints NOTHING, so the `v(In)` line two
-# rows down belongs to a DIFFERENT signal. A lenient match there is a wrong
-# number, not a rescue.
-# ===========================================================================
-casemode distinguish
-set srow {expr v(in) save 1}
-set res [pcall $probe [outstate [list $srow]] $LOG_KEPT]
-check "NC225 under distinguish a stale folded row gets NO value" \
-  [list [cell $res $srow] [pcall dict size $res]] {{} 0}
-## POSITIVE CONTROL: the same log and the same row under `preserve` DO resolve,
-## so NC225 is the mode gate and not a pattern that cannot match at all
-casemode preserve
-set res [pcall $probe [outstate [list $srow]] $LOG_KEPT]
-check "NC225b the same row under preserve resolves — NC225 is the GATE" \
-  [cell $res $srow] 3.000000e+00
-## and the gate does not touch rung 1: an exact spelling still reads
-casemode distinguish
-set res [pcall $probe [outstate [list $row]] $LOG_KEPT]
-check "NC225c distinguish still reads an EXACT match" [cell $res $row] 3.000000e+00
-
-# ===========================================================================
-# NC226 — D2: decline when two differently-cased labels are on offer, and SAY
-# SO. This is the failure mode a flag-on-the-regexp `-nocase` would have.
-# ===========================================================================
-casemode fold
-said_clear
-set erow {expr v(En) save 1}
-set res [pcall $probe [outstate [list $erow]] \
-  "v(en) = 1.000000e+00\nv(EN) = 2.000000e+00\n"]
-check "NC226 two case-variant labels: NOTHING is recorded (D2, no guess)" \
-  [list [cell $res $erow] [pcall dict size $res]] {{} 0}
-check "NC226b the decline reaches the CIW at tag `error`, naming both labels" \
-  [said_count {*v(En)*v(EN), v(en)*} error] 1
-## ONE spelling appearing twice is NOT a collision — the rule counts SPELLINGS,
-## not lines, or every two-analysis run would lose its values
-set res [pcall $probe [outstate [list $row]] \
-  "v(in) = 1.000000e+00\nv(in) = 2.000000e+00\n"]
-check "NC226c the same folded spelling twice is not ambiguous — first wins" \
-  [cell $res $row] 1.000000e+00
-## a declining row must not poison the rest of the pane
-said_clear
-set res [pcall $probe [outstate [list $erow $row]] \
-  "v(en) = 1.000000e+00\nv(EN) = 2.000000e+00\nv(in) = 3.000000e+00\n"]
-check "NC226d one ambiguous row does not cost the other rows their values" \
-  [list [cell $res $erow] [cell $res $row]] {{} 3.000000e+00}
-## LADDER ORDER, pinned: rung 1 runs BEFORE rung 2. Inside the very collision
-## NC226 declines, a row spelled EXACTLY as one of the labels must read its own
-## line and must NOT be declined — invert the two rungs and this is the only
-## check that notices (verifier finding, item 11 fix round).
-said_clear
-set xrow {expr v(EN) save 1}
-set res [pcall $probe [outstate [list $xrow]] \
-  "v(en) = 1.000000e+00\nv(EN) = 2.000000e+00\n"]
-check "NC226e an EXACT spelling inside a collision is read by rung 1, never declined" \
-  [list [cell $res $xrow] [said_count {*differ only in case*}]] {2.000000e+00 0}
-
-# ===========================================================================
-# NC227 — the `\W` escape. It is what makes `v(In)`'s parentheses literal, and
-# rung 2 must not lose it: an unescaped `(` turns the expression into a capture
-# group and `.` matches anything.
-# ===========================================================================
-set drow {expr v(A.B) save 1}
-set res [pcall $probe [outstate [list $drow]] "v(axb) = 9.000000e+00\n"]
-check "NC227 rung 2 keeps `.` literal — v(A.B) does not match v(axb)" \
-  [list [cell $res $drow] [pcall dict size $res]] {{} 0}
-set res [pcall $probe [outstate [list $drow]] "v(a.b) = 9.000000e+00\n"]
-check "NC227b ...and DOES match the real v(a.b)" [cell $res $drow] 9.000000e+00
-## print_arg quotes a bracketed name and ngspice echoes the quotes (issue 0167);
-## a hand-typed `A[0]` must still find the folded, quoted echo
-set brow {expr {A[0]} save 1}
-set res [pcall $probe [outstate [list $brow]] "\"a\[0\]\" = 1.500000e+00\n"]
-check "NC227c a bracketed hand-typed row finds its quoted folded echo" \
-  [cell $res $brow] 1.500000e+00
-
-# ===========================================================================
-# NC229 — where the mode comes from. Item 9 §13.4: the RUN'S REQUEST, resolved
-# through the profile authority — and asked in the READ-ONLY form, because
-# `::set_sim_defaults` is not a read (with the Simulation Configuration dialog
-# open it slurps every unsaved `cmd` edit back into `sim()` and defeats that
-# dialog's Cancel; item 9 reproduced it).
-# ===========================================================================
-casemode preserve
-rename ::set_sim_defaults ase_rc_real_ssd
-set ::ssd_calls 0
-proc ::set_sim_defaults {args} {
-  incr ::ssd_calls
-  uplevel 1 [linsert $args 0 ase_rc_real_ssd]
-}
-set res [pcall $probe [outstate [list $row]] $LOG_FOLDED]
-set nssd $::ssd_calls
-rename ::set_sim_defaults {}
-rename ase_rc_real_ssd ::set_sim_defaults
-check "NC229 reading a log never calls set_sim_defaults (it cannot commit dialog edits)" [list $nssd [cell $res $row]] {0 3.000000e+00}
-## and the PROFILE ROW outranks the global floor: a row that says `distinguish`
-## gates rung 2 off while the floor still says `preserve`
-reset_sim
-casemode preserve
-# ⚠ THE ENTRY MUST BE RUNNABLE, and the first draft of this row used
-# `/nonexistent/ngspice` on the theory that a probe is never launched here. It is
-# not -- but ase::sim_casemode_requested REFUSES to read a mode off an entry
-# whose program cannot be started (a request must not be attributed to a
-# simulator that is not going to run; test_sim_casemode_registry CS155f is that
-# rule), so the floor answered and this row measured the floor against itself.
-# `/bin/sh` is a program that certainly exists and is certainly never run here.
-pcall ase::sim_register {rc probe sim} /bin/sh -casemode distinguish
-set pst [outstate [list $srow]]
-set res [pcall $probe $pst $LOG_KEPT]
-check "NC229b the registered simulator's mode outranks the floor (its distinguish, floor preserve)" \
-  [pcall dict size $res] 0
-# ⚠ THE ENTRY IS DELIBERATELY UNRUNNABLE, and that is not a mistake in the
-# fixture: what is being asserted is that the requested MODE is read off the
-# entry, which is a question about the record and not about the program. An
-# entry that pointed at a real binary would let a reader believe the answer came
-# from a measurement.
-check "NC229c ...and it really is the entry answering, not the floor" \
-  [pcall ase::sim_casemode_requested ngspice] distinguish
-reset_sim
-
-# ===========================================================================
-# NC230 — WHAT THE RUN DELIVERED OUTRANKS WHAT IT ASKED FOR (spec §15.4b).
-# `~/.spiceinit` overrides `-D casemode=` (CREW_BRIEF §4) and item 7's probe /
-# item 8's report only run for a NON-`fold` request (§12.6), so a plain `fold`
-# run against a `set casemode=distinguish` init file is measured by nobody. The
-# log below is line-for-line from such a run (build-ver_50, HOME holding that
-# init file, deck `V1 In 0 DC 3` / `R1 In 0 1k`, cards `print v(in)` and
-# `print v(In)`; only the banner's long third sentence is elided): the `v(in)`
-# card printed NO value, so a request-gated rung 2
-# would hand that row the `v(In)` line — the wrong-number-in-the-Value-column
-# failure §15.4 exists to prevent.
-# ===========================================================================
-# each line exactly as the run printed it (the banner is verbatim but for its
-# third sentence, elided as a paragraph of prose the matcher never looks at)
-set LOG_DIST_LINES {
-  {Warning: casemode 'distinguish' is experimental. Identifier identity is case sensitive.}
-  {Warning: no vector named 'in'; 'In' differs only in case (casemode=distinguish)}
-  {Warning from checkvalid: vector in is not available or has zero length.}
-  {}
-  {Circuit: * item 11 delivered distinguish}
-  {}
-  {Doing analysis at TEMP = 27.000000 and TNOM = 27.000000}
-  {}
-  {No. of Data Rows : 1}
-  {v(In) = 3.000000e+00}
-}
-set LOG_DIST_BANNER [lindex $LOG_DIST_LINES 0]
-set LOG_DIST [join $LOG_DIST_LINES \n]\n
-casemode fold
-said_clear
-set inrow {expr v(in) save 1}
-set res [pcall $probe [outstate [list $inrow $row]] $LOG_DIST]
-check "NC230 a fold REQUEST against a distinguish-DELIVERING log fabricates nothing" \
-  [list [cell $res $inrow] [cell $res $row] [pcall dict size $res]] \
-  {{} 3.000000e+00 1}
-## POSITIVE CONTROL: strip the two case warnings out of that same log and the
-## folded row DOES resolve through rung 2 — so NC230 pins the DETECTOR and not
-## a pattern that could never match.
-set LOG_NOTELL {}
-foreach l [split $LOG_DIST \n] {
-  if {[string match {Warning*case*} $l]} { continue }
-  append LOG_NOTELL $l \n
-}
-set res [pcall $probe [outstate [list $inrow]] $LOG_NOTELL]
-check "NC230b the same log without the case warnings resolves — NC230 is the DETECTOR" \
-  [cell $res $inrow] 3.000000e+00
-## and the BANNER ALONE is enough: ver_50 prints it on EVERY distinguish run,
-## mismatch or not (measured), while the per-miss warning only appears when a
-## card happens to miss. A later row must not be fabricated just because this
-## particular log had no miss in it.
-set res [pcall $probe [outstate [list $inrow]] \
-  "$LOG_DIST_BANNER\nv(In) = 3.000000e+00\n"]
-check "NC230c the distinguish BANNER alone forces the strict path" \
-  [list [cell $res $inrow] [pcall dict size $res]] {{} 0}
-## the surprise is ANNOUNCED, once per log, at tag `note` — and a run that
-## ASKED for distinguish learns nothing from its own log, so it stays quiet.
-said_clear
-set res [pcall $probe [outstate [list $inrow $row]] $LOG_DIST]
-set n_fold [said_count {*casemode=distinguish*asked for 'fold'*} note]
-casemode distinguish
-said_clear
-set res [pcall $probe [outstate [list $inrow $row]] $LOG_DIST]
-set n_dist [said_count {*casemode=distinguish*} note]
-casemode fold
-check "NC230d the delivered-mode override is announced once, and not when it was requested" \
-  [list $n_fold $n_dist] {1 0}
-
-
-# ===========================================================================
-# NC228 — THE REAL SIMULATOR. The only leg here that measures rather than
-# asserts: it re-takes §F3 and drives the whole deck -> ngspice -> probe chain.
-# Skipped, never failed, when no ngspice is installed, and it prints no
-# substring full_audit.sh scores a whole file on.
-# ===========================================================================
-set NGSTOCK {}
-foreach c {/usr/local/bin/ngspice /usr/bin/ngspice} {
-  if {[file executable $c]} { set NGSTOCK $c ; break }
-}
-if {$NGSTOCK eq {}} {
-  puts "note: NC228 not run (no released ngspice on this machine)"
-} else {
-  set rd [file join $scratch run]
-  file mkdir $rd
-  set st [ase::state_default]
-  dict set st design {lib l cell rc view schematic}
-  dict set st rundir $rd
-  dict set st models {}
-  dict set st analyses {{type op enabled 1}}
-  dict set st outputs {{expr v(In) save 1 plot 0} {expr v(MidNode) save 1 plot 0}}
-  set deck [pcall [ase::backend_hook ngspice render_deck] $st \
-    "* item 11 case echo\nV1 In 0 3\nR1 In MidNode 1k\nR2 MidNode 0 1k\n.end\n"]
-  set df [file join $rd rc.cir]
-  set f [open $df w] ; puts -nonewline $f $deck ; close $f
-  set logtext {}
-  catch {exec $NGSTOCK -b $df 2>@1} logtext
-  ## §F3 itself, re-measured: the released simulator answers a `v(In)` card in
-  ## LOWER CASE. If this ever stops being true the item's premise is gone.
-  check "NC228 F3 re-measured: a released ngspice echoes v(In) as `v(in)`" \
-    [list [regexp -line {^v\(in\) = } $logtext] \
-          [regexp -line {^v\(In\) = } $logtext]] {1 0}
-  casemode preserve
-  set res [pcall $probe $st $logtext]
-  set r1 {expr v(In) save 1 plot 0}
-  set r2 {expr v(MidNode) save 1 plot 0}
-  check "NC228b the real folded log fills BOTH mixed-case Value cells" \
-    [list [approx [cell $res $r1] 3.0] [approx [cell $res $r2] 1.5]] {1 1}
-  ## and the same real log under `distinguish` is refused, end to end
-  casemode distinguish
-  set res [pcall $probe $st $logtext]
-  check "NC228c the same real log records NOTHING under distinguish" \
-    [pcall dict size $res] 0
-  if {$fail} { puts "  log was:\n$logtext" }
-}
-
-# ===========================================================================
-# NC228d — the DELIVERED-mode override, on the real case-capable binary. This
-# is the reproducer of the fix-round finding, end to end: a plain `fold` run
-# (no -D on our side, nothing for item 7/8 to probe) whose ~/.spiceinit says
-# `set casemode=distinguish`. Skipped, never failed, when build-ver_50 is
-# absent or has stopped honouring the setting — ver_50 keeps moving, so this
-# asserts on MEASURED output, never on "this build has fix X".
-# ===========================================================================
-set NGVER /home/qflow/dev/ngspice_test/build-ver_50/src/ngspice
-set dlog {}
-if {[file executable $NGVER]} {
-  set dd [file join $scratch dist]
-  file mkdir $dd
-  set f [open [file join $dd .spiceinit] w]
-  puts $f "set casemode=distinguish" ; close $f
-  set f [open [file join $dd d.spice] w]
-  puts $f "* item 11 delivered distinguish"
-  puts $f "V1 In 0 DC 3"
-  puts $f "R1 In 0 1k"
-  puts $f ".control"
-  puts $f "op"
-  puts $f "print v(in)"
-  puts $f "print v(In)"
-  puts $f "quit"
-  puts $f ".endc"
-  puts $f ".end"
-  close $f
-  ## cwd must BE the deck's directory: `.spiceinit` is read from there, and
-  ## CREW_BRIEF §4 says run fixtures from a scratch dir
-  set cwd0 [pwd]
-  catch {cd $dd ; exec env HOME=$dd $NGVER -b d.spice 2>@1} dlog
-  catch {cd $cwd0}
-}
-if {![regexp -nocase {casemode[ =]'?distinguish|differs only in case} $dlog] \
-    || ![regexp -line {^v\(In\) = } $dlog]} {
-  puts "note: NC228d not run (no case-capable ngspice honouring casemode here)"
-} else {
-  ## the run asked for nothing — a virgin sim() floor, i.e. `fold`
-  reset_sim
-  casemode fold
-  set res [pcall $probe [outstate [list $inrow $row]] $dlog]
-  check "NC228d a real distinguish-delivering run under a fold REQUEST fabricates nothing" \
-    [list [cell $res $inrow] [approx [cell $res $row] 3.0] [pcall dict size $res]] \
-    {{} 1 1}
-  if {$fail} { puts "  dlog was:\n$dlog" }
-}
-casemode fold
-
 
 # ===========================================================================
 # NCR — ⚖ R3's DISPATCHER over this file's own subject (issue 1429).
@@ -547,12 +180,9 @@ reset_sim
 casemode fold
 set NCRST [ncr_state ncr {{expr v(In) save 1 plot 0}}]
 set NCR1 [pcall $NCRD $NCRST {}]
-set NCR2 [pcall $probe $NCRST $LOG_FOLDED]
-check "NCR1 ⚖ R3: `v(In)` names one vector, so the dispatcher reads it from the\
- RESULTS FILE — with no log at all — and the two readers agree to the digit" \
-  [list [cell $NCR1 {expr v(In) save 1 plot 0}] \
-        [cell $NCR2 {expr v(In) save 1 plot 0}]] \
-  {3.000000e+00 3.000000e+00}
+check "NCR1 `v(In)` names one vector, so the dispatcher reads it from the\
+ RESULTS FILE -- with no log at all -- through the folded spelling" \
+  [cell $NCR1 {expr v(In) save 1 plot 0}] 3.000000e+00
 
 ## ⚠ AND THE RAWFILE READER OBEYS THE SAME LADDER, not a second one. The
 ## fixture above is the FOLDED spelling; rung 2 is what matches it, and rung 2
@@ -564,15 +194,15 @@ check "NCR2 the results-file reader is gated by the SAME delivered-casemode\
   [pcall dict size $NCR3] 0
 
 ## ⚠ THE ROUTING IS THE RULE'S, AND IT IS ONE PROC. An expression that does NOT
-## name exactly one vector still reads the log, which is the half issue 1243
-## ruled on and which ⚖ R3 Option C leaves exactly as it was.
+## name exactly one vector is the Calculator's (2026-10-11), evaluated on the
+## same results file -- 2 x 3 -- and never the log's rival 9.9.
 set NCR4 [pcall $NCRD [ncr_state ncr {{expr v(In) save 1 plot 0}
-                                      {expr {v(In)*2} save 1 plot 0}}] \
-  "v(in)*2 = 6.000000e+00\n"]
+                                      {expr {v(In) 2 *} save 1 plot 0}}] \
+  "v(in) 2 * = 9.900000e+00\n"]
 check "NCR3 one dict, two sources: the vector from the file and the expression\
- from the log" \
+ from the Calculator on the same file, never from the log" \
   [list [cell $NCR4 {expr v(In) save 1 plot 0}] \
-        [cell $NCR4 {expr {v(In)*2} save 1 plot 0}]] \
+        [cell $NCR4 {expr {v(In) 2 *} save 1 plot 0}]] \
   {3.000000e+00 6.000000e+00}
 casemode fold
 } err]} { puts "FATAL: $err" ; incr fail }

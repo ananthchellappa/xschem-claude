@@ -9316,12 +9316,90 @@ proc ase::analysis_resultvecs {sim type} {
 proc ase::saves_narrowed {state} {
   if {$state eq {}} { return 0 }
   if {[ase::state_get $state save_all_v 0] eq {1}} { return 0 }
+  return [expr {[llength [ase::output_save_cards $state]] > 0}]
+}
+
+# ─── THE OUTPUTS PANE'S SAVE LIST (ase_l.md R-OUT3, ruling 2026-10-11) ──────
+#
+# The user: "Why would expressions in the outputs pane of ASE-L go to the
+# netlist? They are computations made using the result of the simulation! They
+# should not influence the input to the simulator."  So an output EXPRESSION is
+# never written into the deck; it is evaluated after the run from the results
+# file (ase::backend::ngspice::result_probe).  Its only netlist effect is that
+# the signals it reads are saved.
+#
+# MEASURED 2026-10-11 on the registry's ngspice-46+ (build-ver_50), a divider
+# deck with `op` + `tran` and an explicit `write`: with no `.save` every plot
+# holds every node voltage and source current; with `.save v(out)` the operating
+# point holds v(out) ALONE and the transient time + v(out) -- ANY `.save` card
+# keeps ONLY what is listed; `.save all` + `.save v(out)` gives everything back.
+#
+# So, the cards, in order:
+#   * every Save-ticked PLAIN row -- one signal, `ase::output_is_plain` -- as
+#     its signal (verbatim but for R208c's `vt()`/`vf()`/`vdc()`/`vs()` and
+#     Cadence quotes, which ngspice does not read): exactly the card it has
+#     always been;
+#   * then, ONLY IF those narrowed the deck, every signal an expression row
+#     reads (`calc::eval_text_signals`), ticked or not, each once -- without
+#     them the expression would find nothing to evaluate.
+# A bench whose only ticked rows are expressions gets NO card, so ngspice keeps
+# everything: an expression's tick never narrows a deck.  Answers the card
+# arguments, `.save` not included.
+proc ase::output_save_cards {state} {
+  if {$state eq {}} { return {} }
+  set plain {}
+  set reads {}
   foreach o [ase::state_get $state outputs] {
-    if {[ase::state_get $o save 0] ne {1}} { continue }
-    if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
-    return 1
+    if {![dict exists $o expr]} { continue }
+    set ex [string trim [dict get $o expr]]
+    if {$ex eq {}} { continue }
+    if {[ase::output_is_plain $ex]} {
+      if {[ase::state_get $o save 0] eq {1}} { lappend plain [ase::output_signal $ex] }
+      continue
+    }
+    if {[info commands ::calc::eval_text_signals] eq {}} { continue }
+    foreach sg [calc::eval_text_signals $ex] { lappend reads $sg }
   }
-  return 0
+  if {![llength $plain]} { return {} }
+  set out $plain
+  foreach sg $reads {
+    if {[lsearch -exact $out $sg] < 0} { lappend out $sg }
+  }
+  return $out
+}
+
+# A PLAIN output row names one signal: one whitespace-free token that is not a
+# Calculator measurement call.  `v(out)`, `VBG`, `i(VCC)`, `@m1[gm]`,
+# `vt(out)`.  Anything else is an expression.
+proc ase::output_is_plain {ex} {
+  set e [string trim $ex]
+  if {$e eq {} || [regexp {\s} $e]} { return 0 }
+  if {[info commands ::calc::meas_split] ne {} && [calc::meas_split $e] ne {}} { return 0 }
+  return 1
+}
+
+# The text the Calculator is handed for an output row.  The one ngspice idiom
+# a committed bench relies on, a NEGATED SINGLE SIGNAL (`-i(v1)`, the current
+# INTO a source's positive terminal), is spelled in the Calculator's postfix as
+# `i(v1) -1 *`; everything else is passed unchanged, so an expression is held to
+# the Calculator's own syntax and refused, with a sentence, where it does not
+# parse.  ngspice itself saves `-i(v1)` as `i(v1)` (measured 2026-10-11), so
+# the `.save` card stays the row's text verbatim.
+proc ase::output_calc_text {ex} {
+  set e [string trim $ex]
+  if {[regexp {^-([^-\s]\S*)$} $e -> rest] && [ase::output_is_plain $rest]
+      && ![string is double -strict $e]} {
+    return "$rest -1 *"
+  }
+  return $e
+}
+
+# The signal a plain row's text names, as ngspice spells it: R208c's
+# `vt(n)`/`vf(n)`/`vdc(n)`/`vs(n)` read `v(n)`, and `v("n")` is `v(n)`.
+proc ase::output_signal {ex} {
+  set e [string trim $ex]
+  if {[info commands ::calc::aq_strip] eq {}} { return $e }
+  return [calc::rpn_unquote [calc::aq_strip $e]]
 }
 
 # The enabled class A types on this bench, in emit order -- {} when nothing
@@ -17582,34 +17660,32 @@ proc ase::run_log_write {logpath meta data exitcode} {
 
 # ═══ ⚖ R3 — WHERE ONE OUTPUT ROW'S NUMBER COMES FROM (issue 1429) ═══════════
 #
-# ⚠ THIS PROC IS THE WHOLE OF THE RULE, AND THAT IS DELIBERATE. ⚖ R3 was
-# ANSWERED on 2026-09-12 — Option C, in the user's own words: *"both with a
-# rule is right, keep it"*. What ships here is RATIFIED, not a recommendation.
-# C is the SUPERSET of A and B, and the reduction paths below are kept as the
-# record of a shape built to be reduced rather than rewritten — they are no
-# longer a pending outcome:
-#
-#   ruled A (rawfile only)  -> this body becomes `return raw`, and
-#                              ase::backend::ngspice::result_probe_log is
-#                              deleted whole;
-#   ruled B (print log only)-> this body becomes `return log`, and
-#                              ase::backend::ngspice::result_probe_raw and
-#                              ase::raw_scalars are deleted whole.
+# ⚠⚠ SUPERSEDED IN HALF ON 2026-10-11. ⚖ R3 was answered Option C on
+# 2026-09-12 (*"both with a rule is right, keep it"*): single vectors from the
+# results file, everything else from ngspice `print` lines in the log. The user
+# then ruled: *"Why would expressions in the outputs pane of ASE-L go to the
+# netlist? They are computations made using the result of the simulation! They
+# should not influence the input to the simulator."* So the deck carries no
+# `print` line, and the "log" half below now means "evaluated by the Calculator
+# on the results file" (ase::backend::ngspice::result_probe_calc, ase_l.md
+# R-OUT2). This proc still draws the line, unchanged: `raw` rows read their
+# single-point value with ase::raw_scalars exactly as before, and every other
+# row -- plus every `raw` row the file holds no single-point value for -- goes
+# to the Calculator. Wherever the text below says "the print log", read that.
 #
 # NEITHER READER CALLS THE OTHER AND NEITHER READS THE OTHER'S SOURCE. The
 # dispatcher (ase::backend::ngspice::result_probe) partitions the output rows by
-# this proc's answer and hands each reader a state carrying only its own rows,
-# so a reader does not know the rule exists. That is the property the receipt
-# claims and rows RS1-RS3 / RD10 are what hold it.
+# this proc's answer and hands each reader a state carrying only its own rows.
 #
-# ⚠ AND DECISIONS.md RECORDS R3 AS EXTENDING ISSUE 1243, NOT REVERSING IT. 1243
-# is the user's own ruling that the `print` lines go with the operating point.
-# It stands untouched: render_deck's print anchor is not touched by this issue,
-# and every expression row still reads exactly the log 1243 anchored.
+# ⚠ ISSUE 1243's RULING STANDS IN SUBSTANCE: the Value column is a SCALAR column
+# and an unqualified row shows the operating point when the run has one -- now
+# because the Calculator reads the operating point by default, not because a
+# print sits there.
 #
 # ── THE RULE ────────────────────────────────────────────────────────────────
-#   A row whose expression NAMES EXACTLY ONE VECTOR reads the results file.
-#   Anything else reads the print log.
+#   A row whose expression NAMES EXACTLY ONE VECTOR reads the results file's
+#   single-point values. Anything else is evaluated by the Calculator on the
+#   results file (2026-10-11; it read the print log before).
 #
 # and it is stated ON SCREEN, once per run, by the dispatcher.
 #
@@ -23868,10 +23944,11 @@ namespace eval ase::backend::ngspice {
         lappend lines ".save all"
       }
     }
-    foreach o [ase::state_get $state outputs] {
-      if {[ase::state_get $o save 0] eq {1}} {
-        lappend lines ".save [dict get $o expr]"
-      }
+    # The Outputs pane's save list (ase_l.md R-OUT3): a ticked plain signal, and
+    # -- only when that has narrowed the deck -- every signal an output
+    # EXPRESSION reads.  An expression itself never reaches the netlist.
+    foreach _sc [ase::output_save_cards $state] {
+      lappend lines ".save $_sc"
     }
     # --- the op_annot device operating-point save cards (plan step S4) -------
     # A PURE CONSUMER: the block was built by op_annot::save_cards at netlist
@@ -24230,87 +24307,14 @@ namespace eval ase::backend::ngspice {
     # the emit loop below can iterate the ENABLED ROWS and still produce exactly
     # this order. `op_last` is the 0964 variant, unchanged in effect.
     set op_last 0
-    # --- 0967: WHERE THE PRINTED OUTPUTS SIT IS NOT THE REORDER'S TO DECIDE --
-    # `print` reads whichever plot the simulator is standing in, and these lines
-    # used to sit after every analysis -- so before the 0964 reorder above they
-    # read the LAST analysis of `op dc ac tran`, and after it they would have
-    # read the operating point instead. The Outputs pane's Value column is filled
-    # from them (see result_probe), so ticking a box about DEVICE numbers would
-    # have changed which analysis that column reports, with nothing said. That is
-    # ruling D5-1's class, and the tick that caused it is about something else
-    # entirely.
-    #
-    # So the anchor is computed from the ENABLED SET alone and the emit order
-    # cannot move it. WHICH analysis it picks is issue 1243's ruling, below --
-    # 0967 only established that a checkbox about device parameters does not get
-    # to answer that question. Rows P1/P2/P3 of
-    # tests/headless/test_ase_optier_0963.tcl.
-    set printlines {}
-    foreach o [ase::state_get $state outputs] {
-      if {[ase::state_get $o save 0] eq {1}} {
-        lappend printlines "print [ase::backend::ngspice::print_arg [dict get $o expr]]"
-      }
-    }
-    # --- 1243: THE PRINTS GO WITH THE OPERATING POINT WHEN THERE IS ONE -----
-    # RULED BY THE USER 2026-09-02, on their own tb_bandgap: "in the ASE-L
-    # output pane, nothing is displayed for values if both OP and TRAN are
-    # enabled, whereas, if only OP is enabled, then values are displayed after
-    # simulation."
-    #
-    # ⚠ THIS IS THE RULING ISSUE 0967 DEFERRED, and section P of
-    # tests/headless/test_ase_optier_0963.tcl said so in as many words: "0967 IS
-    # NOT BEING SETTLED HERE. Which analysis the Outputs Value column reads is
-    # the user's ruling to make." 0967 measured the two candidate answers and
-    # chose neither; it only froze the answer against an unrelated checkbox. The
-    # deferred half is settled here, and the rows in section P now pin the
-    # ruling rather than the freeze.
-    #
-    # WHY THE OPERATING POINT AND NOT "THE LAST ANALYSIS". The Value column is a
-    # SCALAR column: `result_probe` accepts `<expr> = <number>` and nothing else,
-    # and `print` reads whichever plot the simulator is standing in. On a
-    # multi-point plot `print VBG` emits a paged `Index time vbg` TABLE, so the
-    # column has never had a value to show for a transient -- measured on the
-    # user's own run log, 20,514 rows per printed output and 108,275 log lines
-    # for five of them, from which `result_probe` extracts exactly nothing. The
-    # operating point is the only analysis in the set that yields a scalar, so
-    # "prefer the last analysis" was preferring the one answer that cannot be
-    # read.
-    #
-    # ⚠ NOTHING DISPLAYED CHANGES VALUE, and that is what keeps this clear of
-    # ruling D5-1. With op+tran the column was EMPTY before this line, so no
-    # number is being replaced by a differently-measured one; a number appears
-    # where there was none, and it is the operating point's. Side effect,
-    # measured on the same bench: the run log loses those ~102,000 table rows.
-    #
-    # THE ORDER BELOW IS THE ANCHOR'S, NOT THE EMIT ORDER'S. It is the canonical
-    # `op dc ac tran` with `op` moved to the END so that last-enabled-wins picks
-    # it whenever it is enabled. With the operating point OFF the two orders
-    # select the same analysis, so every op-less deck -- transient-only included
-    # -- renders byte-identically and its Value column stays exactly as empty or
-    # as full as it was.
-    #
-    # ⚠ TRANSIENT-ONLY IS STILL BLANK, deliberately and on the ledger. What a
-    # scalar column should show for a waveform (the final point? t=0? nothing?)
-    # is a separate ruling, recorded as a `rule` debt rather than guessed at
-    # here -- guessing would put an unlabelled number beside a row, which is the
-    # defect 0967 was filed about.
-    #
-    # ── STAGE 1: THE EIGHTH COPY IS GONE. This was its OWN `foreach type
-    # {dc ac tran op}` -- a separate literal from the emit order's, twelve lines
-    # below it, governed by issue 1243's ruling rather than 0964's, and the copy
-    # most likely to be missed because it does not look like the other seven.
-    # It is exactly `ase::analysis_emit_order` under the `op`-last variant: that
-    # walk is ranked dc/ac/tran/op and takes the LAST match, which is what
-    # "last-enabled-wins, with op winning whenever it is enabled" means. Two
-    # rows of one type still resolve to the later row, because the index is part
-    # of the sort key and the sort is stable (row D7i).
-    set printanchor {}
-    set porder [ase::analysis_emit_order $state 1 [namespace tail [namespace current]]]
-    if {[llength $porder]} {
-      set plast [lindex $porder end]
-      set printanchor [list [lindex $plast 2] [lindex $plast 1]]
-    }
-    set printsdone 0
+    # --- NO `print` LINES (2026-10-11) --------------------------------------
+    # The Outputs pane used to put one `print <expr>` per ticked row at the
+    # operating point (issues 0967, 1243) and read its Value column back out of
+    # the log.  The user ruled that an output expression is a computation ON the
+    # results and must not influence the input to the simulator, so the column
+    # is now filled after the run from the results file
+    # (ase::backend::ngspice::result_probe, ase_l.md R-OUT1..R-OUT6) and the
+    # deck carries no line for an output at all beyond its save list above.
     if {[llength $optier_ctl] || [llength $optier_post]} { set op_last 1 }
     # --- 1401: THE LOOP WALKS THE ROWS, AND THE RANK ONLY ORDERS THEM -------
     # It used to be `foreach type {op dc ac tran} { foreach a [analyses] { if
@@ -24719,11 +24723,6 @@ namespace eval ase::backend::ngspice {
         foreach _pwl $_pw_pre { lappend lines $_pwl }
         lappend lines "write $_pw_raw"
       }
-      # 0967: the printed outputs sit with the analysis they have always read.
-      if {[list $type $ai] eq $printanchor} {
-        foreach pl $printlines { lappend lines $pl }
-        set printsdone 1
-      }
       ## --- §7e + §7g rule 1: PUT THEM BACK ----------------------------------
       ## ⚠ AT THE END OF THIS ROW'S BLOCK AND NOT IMMEDIATELY AFTER THE ANALYSIS
       ## LINE. Everything between the two -- the `$sim_status` guard, the
@@ -24765,11 +24764,6 @@ namespace eval ase::backend::ngspice {
       if {$type eq {tran} && [dict size $evnodes]} {
         foreach _el [event_lines $state $evnodes] { lappend lines $_el }
       }
-    }
-    # A deck with no enabled analysis at all still carries its print lines, in
-    # the one place there is for them -- exactly where they were before.
-    if {!$printsdone} {
-      foreach pl $printlines { lappend lines $pl }
     }
     # waveform-viewer raw artifact (item 11 D3): with a .control block,
     # ngspice's `-b -r <file>` is DEAD (re-probed 2026-08-29: with a .control
@@ -25306,139 +25300,12 @@ namespace eval ase::backend::ngspice {
     return [file join [ase::rundir $state] ${cell}_ase.raw]
   }
 
-  # `print` argument for an output expression. ngspice's expression parser reads
-  # the `[0]` in `print a[0]` as a SUBSCRIPT of a vector named `a`, so a bus-bit
-  # name prints nothing at all — "Warning from checkvalid: vector a is not
-  # available or has zero length" (measured, ngspice-42; `print v(a[0])`,
-  # `print {a[0]}` and `print a\[0\]` fail the same way). Double-quoting makes it
-  # a literal vector name: `print "a[0]"` prints `"a[0]" = 1.500000e+00`. The
-  # `.save` side is NOT affected — `.save a[0]` saves the vector correctly — and
-  # quoting a `@dev[param]` name is harmless (measured), so the rule is simply:
-  # a bracketed expression is quoted. result_probe_log below accepts the quoted
-  # label ngspice then echoes.
-  proc print_arg {ex} {
-    if {[string first {[} $ex] < 0} { return $ex }
-    if {[string first {"} $ex] >= 0} { return $ex }   ;# hand-quoted already
-    return "\"$ex\""
-  }
-
-  # ─── ⚖ R3, THE PRINT-LOG READER (renamed from `result_probe`, issue 1429) ──
-  # ⚠ THE BODY BELOW IS UNCHANGED except for where `mode` comes from. It was
-  # the whole of `result_probe`; `result_probe` is now the dispatcher further
-  # down, and this proc reads only the rows ase::result_source sent here --
-  # every expression that does not name exactly one vector, which is the half
-  # ⚖ R3's Option B exists to protect and issue 1243 is the user's ruling
-  # about. Nothing in this reader knows that ase::result_source exists.
-  #
-  # Parse `<expr> = <float>` lines out of the log text (e.g.
-  # `-i(v1) = 4.096837e-04`, or `"a[0]" = 1.5` for a print_arg-quoted bit)
-  # -> results dict, for every state output whose line appears. Keyed by the
-  # output's `name` when present and non-empty, else by its `expr` (UI v2: the
-  # Outputs pane needs a Value for unnamed rows too); outputs without an `expr`
-  # are skipped.
-  #
-  # CASE (casemode batch item 11; spec doc/claude/specs/simulator_profiles.md
-  # §15). `print` does NOT always echo the spelling it was given: measured today
-  # on this tree, a deck whose net is drawn `In` and whose card says
-  # `print v(In)` echoes `v(in) = 3.000000e+00` on every folding binary
-  # (`/usr/local/bin/ngspice`, and build-ver_50 under `-D casemode=fold`),
-  # while build-ver_50 under `-D casemode=preserve` echoes `v(In)` (PLAN §F3).
-  # A literal match therefore silently leaves the Outputs pane's Value column
-  # EMPTY for every mixed-case expression whenever the run folded and the
-  # expression did not -- B4's run-and-report path (requested `preserve`,
-  # measured `fold`), and equally a `fold` run whose expression came from
-  # anywhere other than item 9's pick path (the Add/Edit Output dialog stores
-  # what was typed, ase_window.tcl output_editor_ok; a hand-written state file
-  # stores what it says).
-  #
-  # So the match is a LADDER, the same shape every other lookup in this batch
-  # uses (item 2's get_raw_index, item 5's resolve_signal_db):
-  #
-  #   1. the expression's own spelling, first-wins -- unchanged, and it is what
-  #      answers under `fold` (both sides folded) and delivered `preserve`
-  #      (both sides case-kept);
-  #   2. a case-insensitive pass, WHICH DECLINES TO GUESS when the log offers
-  #      more than one differently-cased label for it (DECISIONS.md D2's
-  #      no-alias-on-collision rule: `v(EN)` binding to `v(en) = ...` is a wrong
-  #      number in a Value column, which is worse than an empty one).
-  #
-  # Rung 2 is OFF under `distinguish`, and that is not caution, it is measured:
-  # there `print v(in)` against a design that only has `In` prints NOTHING
-  # (a checkvalid warning), so an ungated rung 2 hands the `v(in)` row the
-  # `v(In) = 3.000000e+00` line sitting beside it -- a number for a signal the
-  # simulator just said it does not have. That mode's contract is byte-exact
-  # (item 2 suppresses its own folded rung on a case_sensitive database for the
-  # same reason), and item 8 refuses a `distinguish` run that is not confirmed
-  # to be delivered, so nothing is lost by being strict here.
-  #
-  # The mode is the RUN'S REQUEST (item 9 §13.4's ruling), asked in item 9's
-  # READ-ONLY form (`init 0`): a probe is a question, and `::set_sim_defaults`
-  # is not a read. Resolved once per log, not once per output row.
-  #
-  # ...BUT THE REQUEST IS ONLY THE FLOOR, because the request is not what the
-  # binary did (spec §15.4b). `~/.spiceinit` overrides `-D casemode=` (CREW_BRIEF
-  # §4), and item 7's capability probe / item 8's mismatch report only run for a
-  # request that is NOT `fold` (§12.6), so a plain `fold` run against a
-  # `set casemode=distinguish` init file is measured by nobody. Measured today
-  # on build-ver_50: that run answers `print v(in)` on a design that only has
-  # `In` with `Warning: no vector named 'in'; 'In' differs only in case
-  # (casemode=distinguish)` and NO value line, while `v(In) = 3.000000e+00`
-  # prints two lines away -- so a request-gated rung 2 hands the `v(in)` row
-  # the number belonging to a signal the simulator explicitly refused it.
-  # The log ANNOUNCES the delivery, so read it: a distinguish banner or a
-  # differs-only-in-case warning forces the strict path regardless of the
-  # request. A false positive costs an empty Value cell, which is exactly the
-  # pre-item-11 behaviour -- the safe direction (§14.2's over-approximate rule).
-  #
-  # The KEY is untouched by all of this: `name` when the row has one, else the
-  # `expr` exactly as stored. Only the MATCH is case-blind -- fold the key and a
-  # named row's value lands where ase::ui::output_result_key will not look.
-  proc result_probe_log {state logtext {mode {}}} {
-    set results [dict create]
-    # ⚠ `mode` IS AN ARGUMENT NOW (issue 1429), AND ITS DEFAULT KEEPS THIS
-    # READER STANDALONE. ⚖ R3's dispatcher resolves the case rule once and
-    # hands the same answer to both readers, so the note below is not echoed
-    # twice per run; a caller that has no dispatcher -- a suite row driving the
-    # log half directly -- passes nothing and gets exactly the old behaviour.
-    if {$mode eq {}} { set mode [result_casemode $state $logtext] }
-    foreach o [ase::state_get $state outputs] {
-      if {![dict exists $o expr]} { continue }
-      set ex [dict get $o expr]
-      set rkey $ex
-      if {[dict exists $o name] && [dict get $o name] ne {}} {
-        set rkey [dict get $o name]
-      }
-      # every non-word character backslash-escaped, so the parentheses and
-      # brackets of `v(In)` / `"a[0]"` are literals and not regexp syntax; the
-      # label is captured so rung 2 can see WHICH spelling it matched
-      regsub -all {\W} $ex {\\&} esc
-      set pat [format {^\s*"?(%s)"?\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
-      if {[regexp -line $pat $logtext -> lbl val]} {
-        dict set results $rkey $val
-        continue
-      }
-      if {$mode eq {distinguish}} { continue }
-      set labels {}
-      foreach {whole lbl val} [regexp -all -inline -line -nocase $pat $logtext] {
-        if {[lsearch -exact $labels $lbl] < 0} { lappend labels $lbl }
-      }
-      if {![llength $labels]} { continue }
-      if {[llength $labels] > 1} {
-        # D2: decline, and SAY SO. An empty Value cell with no explanation is
-        # the defect this item exists to remove; replacing it with a silently
-        # arbitrary number would be a worse one.
-        ::ase::echo "ase: result -- output '$ex' matches [llength $labels]\
- log labels that differ only in case ([join [lsort $labels] {, }]), so no\
- value is recorded for it: which one it means cannot be known, and a guess\
- would put a wrong number in the Outputs pane." error
-        continue
-      }
-      # exactly one spelling on offer -- take its FIRST line, as rung 1 does
-      regexp -line -nocase $pat $logtext -> lbl val
-      dict set results $rkey $val
-    }
-    return $results
-  }
+  # ─── THE PRINT-LOG READER IS GONE (2026-10-11) ────────────────────────────
+  # `print_arg` and `result_probe_log` read the Outputs pane's Value column out
+  # of `print` lines the deck used to carry.  The user ruled that an output
+  # expression must not reach the netlist, so there are no such lines and no
+  # log to read: every row is answered from the results file, by
+  # `result_probe_raw` below or by the Calculator (`result_probe_calc`).
 
   # ─── THE CASE RULE, RESOLVED ONCE AND SHARED BY BOTH ⚖ R3 READERS ─────────
   # The ladder above is the casemode batch's, unchanged; this proc is only its
@@ -25501,7 +25368,8 @@ namespace eval ase::backend::ngspice {
   # that differ are a question this reader cannot answer, and the sidecar that
   # could is Stage 6c's and is not built. It declines and says so, exactly as
   # the log reader declines on a case collision (D2).
-  proc result_probe_raw {state {mode fold}} {
+  proc result_probe_raw {state {mode fold} {missvar {}}} {
+    if {$missvar ne {}} { upvar 1 $missvar miss ; set miss {} }
     set results [dict create]
     set path {}
     catch {set path [raw_file $state]}
@@ -25551,6 +25419,7 @@ namespace eval ase::backend::ngspice {
     # already reported, loudly, by ase::attach_dbs and ase::raw_content_verdict;
     # saying it again per output row would be noise, and a probe called with a
     # scratch state has no run behind it to describe.
+    if {$missvar ne {}} { set miss $missing }
     if {[llength $missing] && $path ne {} && [file isfile $path]} {
       ::ase::echo "ase: result -- the results file holds no single-point value\
  for [join $missing {, }], so [expr {[llength $missing] == 1 ? {that row has}\
@@ -25593,47 +25462,106 @@ namespace eval ase::backend::ngspice {
     return $out
   }
 
-  # ─── ⚖ R3's DISPATCHER — THE REGISTERED `result_probe` HOOK ────────────────
-  # It partitions the output rows by ase::result_source and hands each reader a
-  # state carrying ONLY its own rows, so neither reader knows the rule exists.
+  # ─── THE CALCULATOR READER (ase_l.md R-OUT2, ruling 2026-10-11) ────────────
+  # Every row `result_probe_raw` does not answer -- an expression, a measurement
+  # call, and (for its `wave` only) a single vector with no single-point
+  # value -- is evaluated AFTER
+  # the run from the run's results file by `calc::eval_texts`, the Calculator's
+  # pure evaluator: no window, no buffer, no viewer, and the registry put back
+  # exactly.  What the Value cell gets:
+  #   a scalar   -> `%.6e`, `print`'s own rendering (see result_probe_raw), so
+  #                 ase::format_value renders it like every other value;
+  #   a waveform -> the word `wave`: a last point is not the answer, and a
+  #                 scalar column must not show one as if it were;
+  #   a refusal  -> the Calculator's own sentence, naming what is wrong.
+  # An unqualified row reads the operating point when the run has one (issue
+  # 1243's scalar); a measurement call reads the run's first other analysis.
+  # Sweeps, corners and Monte Carlo: dataset 0 only.
   #
-  # ⚠ IF ⚖ R3 IS RULED A, THIS BODY BECOMES
-  #     `return [result_probe_raw $state [result_casemode $state $logtext]]`
-  # and result_probe_log is deleted. IF RULED B, it becomes
-  #     `return [result_probe_log $state $logtext]`
-  # and result_probe_raw, raw_spellings, raw_scalar_format and ase::raw_scalars
-  # are deleted. Either way ase::result_source goes with the half it chose
-  # between. That is the property Option C was recommended for.
+  # ⚠ NOTHING IS RECORDED WHEN THERE IS NO RESULTS FILE, as the raw reader
+  # records nothing: ase::attach_dbs and ase::raw_content_verdict already say
+  # so, and a sentence per row would be noise.
+  proc result_probe_calc {state} {
+    set results [dict create]
+    set rows [ase::state_get $state outputs]
+    if {![llength $rows]} { return $results }
+    if {[info commands ::calc::eval_texts] eq {}} { return $results }
+    set path {}
+    catch {set path [raw_file $state]}
+    if {$path eq {} || ![file isfile $path]} { return $results }
+    set texts {}
+    foreach o $rows { lappend texts [ase::output_calc_text [dict get $o expr]] }
+    foreach o $rows d [calc::eval_texts $texts $path {}] {
+      set rkey [dict get $o expr]
+      if {[dict exists $o name] && [dict get $o name] ne {}} {
+        set rkey [dict get $o name]
+      }
+      dict set results $rkey [output_value_text $d]
+    }
+    return $results
+  }
+
+  # One `calc::eval_text` answer as the Value cell's text.
+  proc output_value_text {d} {
+    set ok 0
+    catch {set ok [dict get $d ok]}
+    if {$ok ne {1}} {
+      set m {}
+      catch {set m [dict get $d msg]}
+      return $m
+    }
+    if {[dict get $d kind] eq {wave}} { return wave }
+    return [raw_scalar_format [dict get $d value]]
+  }
+
+  # ─── THE REGISTERED `result_probe` HOOK ────────────────────────────────────
+  # ⚖ R3 (issue 1429) split the rows by ase::result_source between the results
+  # file and the print log.  The log half is gone with the prints (2026-10-11):
+  # a row naming exactly one vector still reads its single-point value straight
+  # from the file (`result_probe_raw`, unchanged -- the number `print` gave, byte
+  # for byte, row RD6); every other row, and every single vector the file holds
+  # no single-point value for, is evaluated by the Calculator
+  # (`result_probe_calc`).  Neither reader calls the other.  `logtext` is read
+  # only for the case rule.
   #
-  # ⚠ THE RULE IS STATED ON SCREEN, ONCE PER RUN, and it is computed from the
-  # chooser's own answers rather than written out as prose -- so under a later
-  # ruling of A or B the sentence tells the truth without being edited.
-  #
-  # ⚠ RAW WINS A KEY CLASH. Two rows can only share a results key by carrying
-  # the same `name`, which the Outputs pane does not offer; the order is fixed
-  # here so it is not an accident of dict traversal.
+  # ⚠ THE RULE IS STATED ON SCREEN, ONCE PER RUN.
+  # ⚠ THE FILE READER WINS A KEY CLASH, as before: two rows share a key only by
+  # sharing a `name`, which the pane does not offer.
   proc result_probe {state logtext} {
     set mode [result_casemode $state $logtext]
     set sim [ase::state_get $state simulator ngspice]
     set rawrows {}
-    set logrows {}
+    set calcrows {}
     foreach o [ase::state_get $state outputs] {
       if {![dict exists $o expr]} { continue }
       if {[ase::result_source $sim [dict get $o expr]] eq {raw}} {
         lappend rawrows $o
       } else {
-        lappend logrows $o
+        lappend calcrows $o
       }
     }
-    if {[llength $rawrows] || [llength $logrows]} {
-      ::ase::echo "ase: results -- a row whose expression names exactly one\
- vector is read from the results file; anything else is read from the print\
- log. This run: [llength $rawrows] from the file, [llength $logrows] from the\
- log." note
+    if {[llength $rawrows] || [llength $calcrows]} {
+      ::ase::echo "ase: results -- a row naming one signal reads its\
+ single-point value from the results file; every other row is evaluated by\
+ the Calculator on the results file. This run: [llength $rawrows] signal,\
+ [llength $calcrows] expression." note
     }
-    set results [result_probe_log [dict set state outputs $logrows] $logtext $mode]
-    foreach {k v} [result_probe_raw [dict set state outputs $rawrows] $mode] {
-      dict set results $k $v
+    set missing {}
+    set results [result_probe_raw [dict set state outputs $rawrows] $mode missing]
+    foreach {k v} [result_probe_calc [dict set state outputs $calcrows]] {
+      if {![dict exists $results $k]} { dict set results $k $v }
+    }
+    # A single vector the file holds no single-point value for is asked of the
+    # Calculator too, and only its `wave` is taken: a transient-only run's
+    # `v(out)` is a waveform, and the cell says so.  Anything else stays as the
+    # raw reader left it -- NO value, with its note on screen -- so a run that
+    # computed nothing still shows nothing (rows RD4, RD5).
+    set again {}
+    foreach o $rawrows {
+      if {[lsearch -exact $missing [dict get $o expr]] >= 0} { lappend again $o }
+    }
+    foreach {k v} [result_probe_calc [dict set state outputs $again]] {
+      if {$v eq {wave} && ![dict exists $results $k]} { dict set results $k $v }
     }
     return $results
   }

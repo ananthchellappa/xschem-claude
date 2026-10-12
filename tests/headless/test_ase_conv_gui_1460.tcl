@@ -1308,8 +1308,23 @@ foreach {eetag eebin} $EEBINS {
     set f [open $p w]
     puts -nonewline $f [ase::backend::ngspice::render_deck $st $EENL]
     close $f
+    ## The converged value is read from the RESULTS FILE the deck writes: since
+    ## 2026-10-11 the deck carries no `print` for an output (ase_l.md R-OUT1),
+    ## so the log no longer shows `v(1) = ...`. The file is removed first so a
+    ## run that writes nothing cannot be read as the previous run's answer.
+    set eeraw [ase::backend::ngspice::raw_file $st]
+    file delete -force $eeraw
     set rc [catch {exec $eebin -b $p 2>@1} out]
     set ::EE($ee_on) [list $rc $out]
+    set ::EEV($ee_on) {}
+    catch {
+      foreach pl [ase::raw_scalars $eeraw] {
+        foreach {nm v} [lindex $pl 1] {
+          ## the fork writes this node `V(1)`, apt `v(1)` (measured)
+          if {[string equal -nocase $nm v(1)]} { set ::EEV($ee_on) [format %.6e $v] }
+        }
+      }
+    }
     set ::EEDECK($ee_on) [string trim [lindex [lsearch -inline -all \
       [split [ase::backend::ngspice::render_deck $st $EENL] "\n"] {optran *}] 0]]
   }
@@ -1320,7 +1335,7 @@ foreach {eetag eebin} $EEBINS {
   check "EE1/$eetag the transient rung's box really means OFF: the deck ASE-L\
  renders converges with it ticked and DIES with it cleared, one argument apart" \
     [list $::EEDECK(1) [lindex $::EE(1) 0] \
-            [regexp {v\(1\) = 1\.41367} [lindex $::EE(1) 1]] \
+            [regexp {^1\.41367} $::EEV(1)] \
           $::EEDECK(0) [lindex $::EE(0) 0] \
             [expr {[string first {The operating point could not be simulated successfully} \
                      [lindex $::EE(0) 1]] >= 0}]] \

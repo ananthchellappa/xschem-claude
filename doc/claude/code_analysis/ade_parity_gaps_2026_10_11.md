@@ -22,9 +22,17 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
 ## Where we differ from Cadence today
 
 ### Outputs pane (ASE-L)
-1. Expressions go into the netlist (`.save <expr>` and ngspice `print`, read back by `result_probe`)
-   instead of being computed afterwards from the results (`src/ase.tcl`, `src/ase_window.tcl`).
-2. So the Expression field takes ngspice syntax, not Calculator syntax.
+1. ~~Expressions go into the netlist (`.save <expr>` and ngspice `print`, read back by `result_probe`)
+   instead of being computed afterwards from the results.~~ **Done (Outputs build item 1):** the
+   deck carries no `print` for any output; every row is evaluated after the run from the results
+   file — a single vector by the file reader, everything else by the Calculator's pure evaluator
+   `calc::eval_texts` — on run finish, on open and on Load State. The Value cell shows a number,
+   `wave`, or the Calculator's refusal sentence. Spec ase_l.md R-OUT1..R-OUT6, calculator.md R609.
+2. ~~So the Expression field takes ngspice syntax, not Calculator syntax.~~ **Done:** it takes
+   Calculator syntax (postfix RPN, measurement calls, `vt()`/`vf()`/`vdc()`/`vs()`, quotes). One
+   ngspice idiom is kept for committed benches, a negated single signal (`-i(v1)`); any other
+   ngspice infix (`v(a)*2`) is refused with a sentence. The Calculator's own gaps (postfix, no
+   slash paths) now apply here — see *Expression language* below.
 3. Measurements are a separate dialog (`Outputs > Measurements…`, ngspice `.meas`,
    `ase::ui::measurements_dialog`), and their results go to the run log, not the Outputs table.
    ❓ In ADE a measurement is just another output expression.
@@ -33,8 +41,11 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
 6. No button to send the Calculator buffer to Outputs, or back (spec R608, PLAN row 10.4, not built;
    calculator.md open question 4 unruled). R608 as written would put a Calculator expression into
    today's ngspice field, which is exactly item 1's defect.
-7. To check: in ngspice, any `.save` line may make it keep **only** the listed signals unless
-   `.save all` is also emitted. Not yet measured.
+7. ~~To check: in ngspice, any `.save` line may make it keep **only** the listed signals.~~
+   **Measured 2026-10-11** on the registry's ngspice-46+: yes — any `.save` keeps only what is
+   listed, in every plot; `.save all` beside it restores everything. ASE-L now saves a ticked plain
+   signal as before and, whenever that narrows the deck, every signal an expression reads; an
+   expression's own tick never narrows (ase_l.md R-OUT3).
 
 ### Expression language
 1. Plain arithmetic is postfix (`v(a) v(b) +`), not normal algebra (`v(a) + v(b)`).
@@ -69,7 +80,7 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
 3. Two picking behaviours are waiting on the user's rulings: whether a selector stays pressed after a
    pick (`rule/1656`), and what happens after a click that misses (`rule/calc_r208b_miss_stays_armed`).
 
-## The agreed first build step
+## The agreed first build step (DONE 2026-10-11 — see Outputs items 1, 2 and 7 above)
 
 Take Outputs expressions out of the netlist, and compute them after the run from the results.
 

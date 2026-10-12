@@ -3145,8 +3145,12 @@ Values:
       check_true "W6 log window non-empty" [expr {[string trim $wtxt] ne {}}]
       check_true "W6 log window has the Data Rows banner" \
         [string match "*No. of Data Rows*" $wtxt]
-      check_true "W6 log window has the -i(v1) result line" \
-        [regexp -- {-i\(v1\)\s*=\s*[-+0-9.eE]+} $wtxt]
+      ## Inverted 2026-10-11: the deck carries no `print` for an output (the
+      ## user ruled output expressions out of the netlist, ase_l.md R-OUT1),
+      ## so the log has no `-i(v1) = ...` line -- and the Value cell below is
+      ## still filled, from the results file.
+      check_true "W6 log window has NO -i(v1) print line" \
+        [expr {![regexp -- {-i\(v1\)\s*=\s*[-+0-9.eE]+} $wtxt]}]
       check "W6 status light Green on success" \
         [$top.status.stat cget -background] Green
       check "W6 status text back to Ready" [$top.status.stat cget -text] {Status: Ready}

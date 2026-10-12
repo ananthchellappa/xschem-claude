@@ -2435,34 +2435,18 @@ proc ase::ui::refresh_output_values {key} {
 # every Load State. Muting the narration is what keeps this change invisible
 # except for the numbers -- and therefore what keeps it off the ruling queue.
 #
-# ⚠ THE LOG IS READ ONLY WHEN A ROW NEEDS IT. A simulation log can be tens of
-# megabytes and this runs on every window open; a bench whose rows are all
-# single vectors never opens it.
+# ⚠ THE LOG IS NEVER READ (2026-10-11). It used to be, for rows answered by
+# ngspice `print` lines; the deck carries none now, and every row is answered
+# from the results file -- an expression by the Calculator (ase_l.md R-OUT2).
 proc ase::ui::results_from_disk {key} {
   if {![ase::session_exists $key]} { return [dict create] }
   if {![ase::has_results $key]}    { return [dict create] }
   set st [ase::session_state $key]
   if {$st eq {}} { return [dict create] }
   set sim [ase::state_get $st simulator ngspice]
-  set needlog 0
-  foreach o [ase::state_get $st outputs] {
-    if {![dict exists $o expr]} { continue }
-    if {[catch {ase::result_source $sim [dict get $o expr]} src]} { set src log }
-    if {$src ne {raw}} { set needlog 1 }
-  }
+  ## No row reads the log any more (2026-10-11): every Value comes from the
+  ## results file, by the raw reader or the Calculator (ase_l.md R-OUT2).
   set logtext {}
-  if {$needlog} {
-    catch {
-      set lf [[ase::backend_hook $sim log_file] $st]
-      if {$lf ne {} && [file isfile $lf]} {
-        ## ::open / ::close -- inside ase::ui a bare `open` reaches
-        ## ase::ui::open and a bare `close` reaches ase::ui::close (issue 1461).
-        set fh [::open $lf r]
-        set logtext [read $fh]
-        ::close $fh
-      }
-    }
-  }
   set res [dict create]
   catch {
     set res [ase::quiet {[ase::backend_hook $sim result_probe] $st $logtext}]
