@@ -3363,7 +3363,7 @@ proc calc::eval_fmt {d} {
 # eaten the `)` the second needed as its prefix), so a mixed expression read as
 # one analysis (band AT15 of tests/headless/test_calc_analysis_tokens.tcl).
 proc calc::aq_rx {} {
-    return {([vV](?:[tT]|[fF]|[dD][cC]|[sS]))\((?:"([^"/()[:space:]][^"()[:space:]]*)"|([^"/()[:space:]][^"()[:space:]]*))\)}
+    return {([vViI](?:[tT]|[fF]|[dD][cC]|[sS]))\((?:"([^"/()[:space:]][^"()[:space:]]*)"|([^"/()[:space:]][^"()[:space:]]*))\)}
 }
 
 # Every qualified token in `$s`, in order, as `{first last id net}`: the
@@ -3398,14 +3398,15 @@ proc calc::aq_ids {s} {
     return $out
 }
 
-# The text with every qualified token rewritten to `v(net)`.  Text with no
-# qualified token comes back byte-identical.
+# The text with every qualified token rewritten to the engine's spelling:
+# `v(net)` for a voltage id, `i(name)` for a current one (the id's first
+# letter).  Text with no qualified token comes back byte-identical.
 proc calc::aq_strip {s} {
     set out {}
     set i 0
     foreach m [calc::aq_scan $s] {
         lassign $m a e id net
-        append out [string range $s $i [expr {$a - 1}]] "v($net)"
+        append out [string range $s $i [expr {$a - 1}]] "[string index $id 0]($net)"
         set i [expr {$e + 1}]
     }
     append out [string range $s $i end]
@@ -3421,7 +3422,7 @@ proc calc::aq_name_back {typed clause} {
     set map {}
     foreach m [calc::aq_scan $typed] {
         lassign $m a e id net
-        set plain "v($net)"
+        set plain "[string index $id 0]($net)"
         if {[string first $plain $typed] >= 0} continue
         lappend map "'$plain'" "'[string range $typed $a $e]'"
     }
@@ -3436,7 +3437,7 @@ proc calc::aq_plan {s} {
     set type {}
     set id {}
     foreach i [calc::aq_ids $s] {
-        set t [calc::pick_analysis $i]
+        set t [calc::aq_analysis $i]
         if {$type eq {}} { set type $t ; set id $i ; continue }
         if {$t ne $type} {
             return [dict create ok 0 type {} id {} msg [calc::aq_msg mixed $id $i]]
@@ -9612,6 +9613,23 @@ proc calc::pick_analyses {} {
     return {vt tran vf ac vdc op vs dc}
 }
 
+# EVERY QUALIFIED TOKEN AND ITS ANALYSIS: the four voltage selectors' table
+# above, and the four CURRENT ids beside them (R208c, the user 2026-10-12: "in
+# Cadence ADE, there is no such thing as v(signal_name). It always has to be VT,
+# VF, etc.").  `it`/`if`/`idc`/`is` read `i(name)` from the same analyses
+# `vt`/`vf`/`vdc`/`vs` read `v(net)` from.  The current SELECTORS are still not
+# armed (picking a terminal is PLAN phase 6), so `calc::pick_analyses` keeps the
+# four the pick serves and this table is what the evaluator reads.
+proc calc::aq_analyses {} {
+    return [concat [calc::pick_analyses] {it tran if ac idc op is dc}]
+}
+
+proc calc::aq_analysis {id} {
+    set t [calc::aq_analyses]
+    if {![dict exists $t $id]} { return {} }
+    return [dict get $t $id]
+}
+
 proc calc::pick_analysis {id} {
     set t [calc::pick_analyses]
     if {![dict exists $t $id]} { return {} }
@@ -14264,7 +14282,7 @@ proc calc::ix_msg {kind {a {}} {b {}}} {
 }
 
 # The R208c / ngspice signal wrappers an infix text names a signal through.
-proc calc::ix_wrappers {} { return {v i vt vf vdc vs} }
+proc calc::ix_wrappers {} { return {v i vt vf vdc vs it if idc is} }
 
 # The index of the `)` closing the `(` at `$i`, quote-aware, or -1.
 proc calc::ix_close {s i} {

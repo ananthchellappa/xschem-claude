@@ -511,13 +511,13 @@ analysis of the current result's raw file whatever analysis is current.
 | id | row | Label | ngspice / xschem source | Emits into buffer | v1 |
 |---|---|---|---|---|---|
 | `vt` | 1 | vt | tran raw, node voltage | `vt(<net>)` (R208c) | ✔ |
-| `it` | 2 | it | tran raw, device terminal current | `i(<dev>)` or `@<dev>[<term>]` | ✔ |
+| `it` | 2 | it | tran raw, device terminal current | `it(<dev>)` (R208c; the pick is not armed yet) | ✔ |
 | `vf` | 1 | vf | ac raw, node voltage (complex) | `vf(<net>)` (R208c) | ✔ |
-| `if` | 2 | if | ac raw, terminal current | as `it` | ✔ |
+| `if` | 2 | if | ac raw, terminal current | `if(<dev>)`, as `it` | ✔ |
 | `vdc` | 1 | vdc | op raw / `.op` values | `vdc(<net>)` (R208c) | ✔ |
-| `idc` | 2 | idc | op raw, terminal current | as `it` | ✔ |
+| `idc` | 2 | idc | op raw, terminal current | `idc(<dev>)`, as `it` | ✔ |
 | `vs` | 1 | vs | dc-sweep raw, node voltage | `vs(<net>)` (R208c) | ✔ |
-| `is` | 2 | is | dc-sweep raw, terminal current | as `it` | ✔ |
+| `is` | 2 | is | dc-sweep raw, terminal current | `is(<dev>)`, as `it` | ✔ |
 | `op` | 1 | op | device op parameter, one value | `@<dev>[<param>]` | ✔ |
 | `opt` | 2 | opt | device op parameter vs time | `@<dev>[<param>]` from tran raw | ✔ |
 | `var` | 1 | var | ASE-L design variable | the variable's **numeric value** | ✔ |
@@ -736,7 +736,8 @@ analysis of the current result's raw file whatever analysis is current.
   loop and in nothing the loop called. It was vacuous and is recorded here because the
   shape recurs: a sweep over a parameter the subject cannot see measures nothing.
 
-- **R208c** **Analysis-qualified voltages: `vt(net)`, `vf(net)`, `vdc(net)`, `vs(net)`.**
+- **R208c** **Analysis-qualified signals: `vt(net)`, `vf(net)`, `vdc(net)`, `vs(net)`, and the
+  currents `it()`, `if()`, `idc()`, `is()`.**
   The user's ruling, 2026-10-11: *"A simulation could have both AC and TRAN simulations.
   The vt or vf need to intelligently pick FROM the loaded results."* (following their
   2026-10-07 *"vt and vf both put v(netname) in the calculator buffer. We need different
@@ -747,7 +748,20 @@ analysis of the current result's raw file whatever analysis is current.
   out of the Calculator's own context) does not forbid.
   - **The tokens.** `vt` → `tran`, `vf` → `ac`, `vdc` → `op`, `vs` → `dc`, the table being
     `calc::pick_analyses`. Bare or with Cadence quotes (`vf("lp")`); an uppercase id is
-    accepted too. A leading-slash Cadence path (`vt("/lp")`) is not a token and stays refused
+    accepted too.
+  - **The current tokens (2026-10-12).** `it(name)`, `if(name)`, `idc(name)` and `is(name)`
+    are the same four analyses for a current: each reads `i(name)` from its own analysis of
+    the current result's raw file, exactly as the voltage token reads `v(net)` — same
+    bracket (`calc::aq_run`), same guard (`calc::aq_guard`), same mixed refusal (*"Cannot
+    evaluate: it() and vf() read different analyses"*), same case rule (`IT(v1)` and
+    `Idc("v1")` are accepted). `calc::aq_analyses` is the eight-entry table the evaluator
+    reads; `calc::pick_analyses` keeps the four voltage ids the net pick serves, because the
+    current SELECTORS are not armed yet (picking a terminal is PLAN phase 6). `calc::aq_strip`
+    rewrites a current token to `i(name)` for the engine and the save list
+    (`ase::output_signal`, `calc::eval_text_signals`), and the infix translator reads all
+    eight as signals (`calc::ix_wrappers`). The user's ruling that prompted them: *"in
+    Cadence ADE, there is no such thing as v(signal_name). It always has to be VT, VF,
+    etc."* Band AT16 of `test_calc_analysis_tokens`. A leading-slash Cadence path (`vt("/lp")`) is not a token and stays refused
     naming the text (§3.1, row Q6).
   - **The selectors** insert the qualified token, spelled with the selected analysis's own
     column name read back inside that analysis (`calc::pick_lookup_in`), and the success
@@ -817,7 +831,7 @@ analysis of the current result's raw file whatever analysis is current.
     because the file's own `Plotname:` records hold no DC sweep (band AT14). A file whose
     records cannot be read at all evaluates in place as before R208c.
   - Fences: `tests/headless/test_calc_analysis_tokens.tcl` (counted arm: bands AT1–AT11,
-    AT13–AT15; display arm: band AT12; registered in both lists), rows PK1 of
+    AT13–AT16; display arm: band AT12; registered in both lists), rows PK1 of
     `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and bands PG15/PG15w of
     `test_calc_pick` (display arm: the real presses through the real loan).
 

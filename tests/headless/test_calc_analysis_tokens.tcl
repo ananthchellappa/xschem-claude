@@ -615,6 +615,56 @@ group AT15 {
               [string match {*'vf(nosuch)'*} $cm] [string match {*'v(nosuch)'*} $cm]] \
         {1 0 1 0}
 }
+
+# =============================================================================
+# AT16 -- THE CURRENT TOKENS: `it()`, `if()`, `idc()` and `is()` are R208c's
+# voltage tokens for a current (the user, 2026-10-12: "in Cadence ADE, there is
+# no such thing as v(signal_name). It always has to be VT, VF, etc.").  Same
+# table, same bracket, same guard; rewritten to `i(...)` for the engine.
+# The fixture's `i(@rtop[i])` reads 0.005 as tran and exactly 0 as op, and the
+# distinctness leg measures that every run.
+# =============================================================================
+group AT16 {
+    check "AT16 the eight ids map to their analyses through calc::aq_analysis -- the four current ids to the same four analyses as the voltage ones" \
+        [lmap i {vt vf vdc vs it if idc is} {pcall calc::aq_analysis $i}] \
+        {tran ac op dc tran ac op dc}
+    check "AT16 calc::aq_ids finds every current token, bare or quoted, any case, in order -- and nothing inside a longer name" \
+        [pcall calc::aq_ids {it(v1) IF("v2") + Idc(x.y) xis(a) is(b) i(c)}] \
+        {it if idc is}
+    check "AT16 calc::aq_strip rewrites a current token to i(name) and a voltage one to v(name), side by side" \
+        [pcall calc::aq_strip {IDC("@rtop[i]") vdc(lp) / it(v1)}] \
+        {i(@rtop[i]) v(lp) / i(v1)}
+    check "AT16 calc::aq_plan: a current and a voltage token of ONE analysis plan that analysis; of two analyses they are refused with the mixed sentence naming both ids" \
+        [list [fld [pcall calc::aq_plan {idc(v1) vdc(a) /}] type] \
+              [fld [pcall calc::aq_plan {it(v1) vf(a) /}] msg]] \
+        [list op {Cannot evaluate: it() and vf() read different analyses}]
+    check "AT16 the infix translator reads the four current tokens as signals (calc::ix_wrappers)" \
+        [lmap w {it if idc is} {expr {$w in [calc::ix_wrappers]}}] {1 1 1 1}
+    set cur {i(@rtop[i])}
+    set nm {@rtop[i]}
+    set rt [at_ref tran $cur] ; set ro [at_ref op $cur]
+    check "AT16 DISTINCTNESS, measured: the fixture's current reads differently as tran and op, by more than the row tolerance" \
+        [expr {abs($rt - $ro) > 1e-4}] 1
+    at_load op
+    set i0 [at_info]
+    set dt [pcall calc::eval_in_ctx "it($nm)" 0 tran]
+    check "AT16 it(@rtop\[i\]) with the OPERATING POINT current answers the transient's last point, and the registry is byte-identical afterwards" \
+        [list [near [fld $dt value] $rt] [expr {[at_info] eq $i0}]] {near 1}
+    at_load tran
+    set dd [pcall calc::eval_in_ctx "idc($nm)" 0 op]
+    check "AT16 idc(@rtop\[i\]) with the TRANSIENT current answers the operating point (exactly 0), not the transient's last point" \
+        [near [fld $dd value] $ro] near
+    check "AT16 THE GUARD covers the current tokens: calc::eval_rpn handed if(...) with a transient current refuses naming if()" \
+        [fld [pcall calc::eval_rpn "if($nm)"] msg] \
+        {Cannot evaluate if(): the loaded analysis is transient}
+    check "AT16 R609 reads a current token from a cold registry: calc::eval_text idc(...) is a SCALAR equal to the operating point" \
+        [list [fld [pcall calc::eval_text "idc($nm)" $::fixture {}] kind] \
+              [near [fld [pcall calc::eval_text "idc($nm)" $::fixture {}] value] $ro]] \
+        {scalar near}
+    check "AT16 the save list reads a current token as the i() vector it names (calc::eval_text_signals, ase::output_signal)" \
+        [list [pcall calc::eval_text_signals "idc($nm)*2"] [pcall ase::output_signal {IT("v1")}]] \
+        [list [list $cur] {i(v1)}]
+}
 # =============================================================================
 # AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
 # leave the design window's cue as the user's database says, not grey
