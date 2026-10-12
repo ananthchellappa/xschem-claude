@@ -962,10 +962,14 @@ group PG17 {
         pg_press .calc.mode.plot
         lappend pls [lindex [pcall calc::status_history] 0]
     }
+    # ⚠ THE EXPECTED SENTENCES ARE LITERALS.  This row used to compare the
+    # translator's refusal against `calc::ix_plot_say` applied to the same
+    # message -- the very proc under test -- so a Plot press that stopped
+    # translating stayed green here (only ET17, on the counted arm, saw it).
     check "PG17 Plot refuses in its OWN verb: an unknown signal named as typed, the translator's sentence as Plot's, and a measurement operand as a number that is not a waveform" \
         [list [pg_word [expr {[string match {Cannot plot:*vt(nosuch)*} [lindex $pls 0]] && [string first {'v(nosuch)} [lindex $pls 0]] < 0}] named [lindex $pls 0]] \
               [lindex $pls 1] [lindex $pls 2]] \
-        [list named [pcall calc::ix_plot_say [calc::ix_msg noright *]] \
+        [list named {Cannot plot: '*' has no value after it.} \
               {Cannot plot: cross() answers a number, not a waveform.}]
     .calc.buf delete 1.0 end
 }

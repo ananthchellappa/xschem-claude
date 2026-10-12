@@ -600,6 +600,13 @@ group OE12 {
 # A DISTINCTNESS leg reads `old` in another analysis of the same file and
 # requires it to differ, so the equality above cannot hold because the
 # fixture is blind.
+# A WAVE answer is compared at EVERY point, not only the last: `eval_texts`
+# reports a wave by its last point, so a migration whose meaning moved
+# everywhere but there would pass the equality above.  Each wave row's old and
+# new texts are read through `value(<text>, x)` at each sweep point the fixture
+# wrote (`oe17_x`, the same table the file is built from), and every adjacent
+# pair of those points must differ, so the comparison cannot go vacuous on a
+# flat column.
 proc oe17_table {} {
     set f [open [file join $::here data r208d_migration.txt] r]
     set t [read $f]
@@ -621,6 +628,12 @@ proc oe17_rawname {sig} {
     if {[string first ( $sig] >= 0} { return $sig }
     return "v($sig)"
 }
+# The sweep value of point `$k` of analysis `$an`, as the file writes it.
+proc oe17_x {an k} {
+    if {$an eq {ac}} { return [format %.15e [expr {pow(10.0, $k)}]] }
+    return [format %.15e [expr {$k * 1e-9 + ($an eq {dc} ? 0.5 * $k : 0)}]]
+}
+proc oe17_np {an} { return [dict get {op 1 dc 3 ac 4 tran 5} $an] }
 # ngspice's ASCII results format, four plots: op, dc, ac, tran.
 proc oe17_raw {path sigs} {
     set plots {
@@ -651,11 +664,11 @@ proc oe17_raw {path sigs} {
             set first 1
             foreach v $vars {
                 if {$v eq $sweep} {
-                    set x [expr {$an eq {ac} ? pow(10.0, $k) : $k * 1e-9 + ($an eq {dc} ? 0.5 * $k : 0)}]
+                    set s [oe17_x $an $k]
                 } else {
-                    set x [oe17_val $v $aidx $k]
+                    set s [format %.15e [oe17_val $v $aidx $k]]
                 }
-                set s [format %.15e $x]
+                set x [expr {double($s)}]
                 if {$flags eq {complex}} { append s ",[format %.15e [expr {$x * 0.1}]]" }
                 puts $f [expr {$first ? " $k\t$s" : "\t$s"}]
                 set first 0
@@ -686,6 +699,11 @@ group OE17 {
     set nruled 0
     set ok 0
     set k 0
+    set nwave 0
+    set npts 0
+    set wavediff {}
+    set lastoff {}
+    set flat {}
     dict for {fn rs} $bystate {
         incr k
         set st {}
@@ -754,6 +772,35 @@ group OE17 {
             if {![dict get $dx ok] || [dict get $dx value] eq [dict get $dn value]} {
                 lappend blind "$fn $nm: [list $old] in $alt reads [list $dx] against [list $dn] in $an"
             }
+            # a WAVE, at every point: old in its analysis, new with none named
+            if {[dict get $dn ok] && [dict get $dn kind] eq {wave}} {
+                set ot {} ; set nt {}
+                for {set p 0} {$p < [oe17_np $an]} {incr p} {
+                    lappend ot "value([ase::output_calc_text $old], [oe17_x $an $p])"
+                    lappend nt "value([ase::output_calc_text $new], [oe17_x $an $p])"
+                }
+                set ov {} ; set nv {}
+                foreach d [calc::eval_texts $ot $raw $an] { lappend ov [expr {[dict get $d ok] ? [dict get $d value] : "REFUSED:[dict get $d msg]"}] }
+                foreach d [calc::eval_texts $nt $raw {}] { lappend nv [expr {[dict get $d ok] ? [dict get $d value] : "REFUSED:[dict get $d msg]"}] }
+                incr nwave
+                incr npts [llength $nv]
+                if {$ov ne $nv} {
+                    lappend wavediff "$fn $nm: old([list $old] in $an)=[list $ov] new([list $new])=[list $nv]"
+                }
+                set lv [lindex $nv end] ; set av [dict get $dn value]
+                # the answer comes back through `%.8g`, a sample through
+                # `%.16g`, and an AC db() row's two paths differ in the sixth
+                # digit; adjacent points differ by far more (oe17_val's 0.25)
+                if {![string is double -strict $lv] || ![string is double -strict $av]
+                    || abs($lv - $av) > abs($av) * 1e-5} {
+                    lappend lastoff "$fn $nm: sampled last [lindex $nv end], answered [dict get $dn value]"
+                }
+                for {set p 1} {$p < [llength $nv]} {incr p} {
+                    if {[lindex $nv $p] eq [lindex $nv [expr {$p - 1}]]} {
+                        lappend flat "$fn $nm: points [expr {$p - 1}] and $p both read [lindex $nv $p]"
+                    }
+                }
+            }
         }
         file delete -force $raw
     }
@@ -767,6 +814,10 @@ group OE17 {
         [list [expr {$ok == [llength $rows]}] $unequal] {1 {}}
     check "OE17 DISTINCTNESS: the same old text read in another analysis of the same file answers a value, and a different one, so the equality above is not a blind fixture (rows that did not)" \
         $blind {}
+    check "OE17 MEANING AT EVERY POINT: every row whose answer is a WAVE reads EXACTLY the same through its old text in its analysis and its new text, at every sweep point of the file and not only the last (rows that differ)" \
+        $wavediff {}
+    check "OE17 ...and the sampling is NOT VACUOUS: wave rows exist and were sampled at more points than one each, the sampled last point IS the answer the row compared above, and no two adjacent points of a sampled wave read the same number -- so a column flat between points could not hide a difference (wave rows > 0, points > 2 per row, last-point mismatches, flat pairs)" \
+        [list [expr {$nwave > 0}] [expr {$nwave > 0 && $npts > 2 * $nwave}] $lastoff $flat] {1 1 {} {}}
 }
 
 # =============================================================================
