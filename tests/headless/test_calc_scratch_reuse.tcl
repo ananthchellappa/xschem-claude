@@ -691,20 +691,39 @@ group SR5 {
     # reads a NAMED results file and puts the registry back -- so it cannot
     # evaluate against "whatever raw this window has" either.  The press must
     # reach neither door directly.
+    #
+    # ⚠ WIDENED BY ONE NAME FOR R610 (2026-10-12), AND THE CLAIM KEPT WHOLE BY
+    # TWO MORE HOPS RATHER THAN BY TRUST.  `calc::et_domain_value` evaluates one
+    # divisor or log argument of a SCALAR Output at the answer's own point, so
+    # it is the pure evaluator's step asking the engine a second question about
+    # the same database -- the one `calc::et_run`'s bracket loaded by name.  It
+    # satisfies both things this row protects: R402 is `eval_rpn`'s own (it
+    # mints and deletes its temporary inside its body, which SR6 drives on every
+    # refusing path), and the context is the bracket's because its ONLY caller
+    # is `calc::et_domain`, whose ONLY caller is `calc::et_one`.  Those two hops
+    # are asserted below, so a press -- or any other proc -- that calls either
+    # one reddens here exactly as one calling `eval_rpn` would.  Routing it
+    # through `et_one` by passing the engine verb as a command prefix was
+    # rejected: that hides an `eval_rpn` caller from this very scan instead of
+    # fencing it.
     set callers {}
     set ctxcallers {}
     set onecallers {}
     set runcallers {}
+    set dvcallers {}
+    set domcallers {}
     dict for {nm b} $pbody {
         if {$nm eq {eval_rpn}} { continue }
         if {[regexp {calc::eval_rpn} $b]} { lappend callers $nm }
         if {$nm ne {eval_in_ctx} && [regexp {calc::eval_in_ctx} $b]} { lappend ctxcallers $nm }
         if {$nm ne {et_one} && [regexp {calc::et_one} $b]} { lappend onecallers $nm }
         if {$nm ne {et_run} && [regexp {calc::et_run} $b]} { lappend runcallers $nm }
+        if {$nm ne {et_domain_value} && [regexp {calc::et_domain_value} $b]} { lappend dvcallers $nm }
+        if {$nm ne {et_domain} && [regexp {calc::et_domain\M} $b]} { lappend domcallers $nm }
     }
-    check "SR5 ...and exactly TWO procs call eval_rpn -- the loan's body and the pure evaluator's step -- each reached by exactly one proc: the loan holder, and the file bracket, which only the batch door calls" \
-        [list [lsort $callers] $ctxcallers $onecallers $runcallers] \
-        {{et_one eval_in_ctx} eval_in_token et_run eval_texts}
+    check "SR5 ...and exactly THREE procs call eval_rpn -- the loan's body, the pure evaluator's step, and that step's R610 domain probe -- each reached by exactly one proc: the loan holder, the file bracket (which only the batch door calls), and the domain check (which only the step calls)" \
+        [list [lsort $callers] $ctxcallers $onecallers $runcallers $dvcallers $domcallers] \
+        {{et_domain_value et_one eval_in_ctx} eval_in_token et_run eval_texts et_domain et_one}
 }
 
 # =============================================================================
