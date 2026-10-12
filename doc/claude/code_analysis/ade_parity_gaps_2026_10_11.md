@@ -66,9 +66,13 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    name), engineering suffixes and measurement calls as operands, translated to the engine's
    postfix; postfix still accepted (calculator.md R610). Malformed one-token infix
    (`2(Vcc-Vss)`) is refused with a sentence, as ADE-L reports a syntax error. **Still open:**
-   the Calculator window's buffer Eval and Plot take postfix only; `x/0` answers `0` (engine
-   DIVIS rule, issue 1628) where ADE-L gives an infinity — declared, not fixed; likewise
-   `ln(0)` answers the engine's clamp (−35), not −inf. Third fix round (same day): no text
+   the Calculator window's buffer Eval and Plot take postfix only. ~~`x/0` answers `0` (engine
+   DIVIS rule, issue 1628); `ln(0)` answers the engine's clamp (−35).~~ **Done 2026-10-12:**
+   a scalar Outputs answer that divided by zero or took a log of a value ≤ 0 is refused with
+   a sentence (*division by zero* / *log of zero or a negative value*), as the old `print`
+   path showed no value and ADE-L shows no clamped number — measured on the bundled
+   `tb_ft_test_2` bench, whose `db(i(vd)/i(vg))` (0/0 at the operating point) had read
+   −700. Waves and the C engine are unchanged (calculator.md R610, rows ET14, OE15). Third fix round (same day): no text
    raises (leading-zero numbers read as decimal, deep nesting refused with a sentence), a
    space before a call's parenthesis is accepted, `Cross(...)` is refused naming `cross`, the
    sweep scale alone is a wave, and a bare `@r1[i]` reads the raw's `i(@r1[i])` as `print` did

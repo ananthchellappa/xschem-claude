@@ -22,6 +22,7 @@
 #   OE2  an expression's tick never narrows a deck
 #   OE3  post-run fill through the registered `result_probe` hook: scalars,
 #        `wave`, refusals, a negated current, a measurement
+#   OE15 a scalar 0/0, x/0 or db(0) row shows the refusal, never a number
 #   OE4  a transient-only run: a plain signal reads `wave`, not a last point
 #   OE5  an OLD state file loads unchanged and fills its Value column on open
 #        (ase::ui::results_from_disk, the open/Load State path)
@@ -189,6 +190,26 @@ group OE3 {
     set res2 [pcall [ase::backend_hook ngspice result_probe] [oe_state oe3 $outs] {}]
     check "OE3 with NO results file nothing is recorded -- no sentence per row either" \
         [pcall dict size $res2] 0
+}
+
+# =============================================================================
+# OE15 -- A SCALAR THAT DIVIDED BY ZERO OR TOOK A LOG OF ZERO SHOWS NO NUMBER
+# (calculator.md R610).  The bundled tb_ft_test_2 bench's db(i(vd)/i(vg)) is
+# 0/0 at the operating point: the old print path showed no value, and the
+# engine's DIVIS rule plus mylog10's floor made the cell read -700.
+# =============================================================================
+group OE15 {
+    file copy -force $::fixture [file join $::scratch oe15_ase.raw]
+    set outs {{name dz expr db(v(lp)/v(lp)) save 1}
+              {name xz expr v(dcmid)/v(lp) save 1}
+              {name lz expr db(v(lp)) save 1}
+              {name ok expr v(dcmid)/2 save 1}}
+    set res [pcall [ase::backend_hook ngspice result_probe] [oe_state oe15 $outs] {}]
+    check "OE15 the Value cell of a scalar 0/0, x/0 and db(0) row is the refusal sentence, never -700 or 0; a nonzero division (v(dcmid)/2, v(dcmid) is 3) still reads its number" \
+        [list [val $res dz] [val $res xz] [val $res lz] [val $res ok]] \
+        [list {Cannot evaluate: division by zero} {Cannot evaluate: division by zero} \
+              {Cannot evaluate: log of zero or a negative value} 1.500000e+00]
+    file delete -force [file join $::scratch oe15_ase.raw]
 }
 
 # =============================================================================

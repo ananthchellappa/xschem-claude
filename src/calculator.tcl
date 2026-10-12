@@ -13730,6 +13730,8 @@ proc calc::et_msg {kind {a {}} {b {}}} {
         alias { return "Cannot evaluate: the results file is already loaded and could not be re-read" }
         ambiguous { return "Cannot evaluate: this result has $a; write $b" }
         internal { return "Cannot evaluate: the expression could not be read ($a)" }
+        divzero { return "Cannot evaluate: division by zero" }
+        logzero { return "Cannot evaluate: log of zero or a negative value" }
     }
     return {}
 }
@@ -13999,6 +14001,8 @@ proc calc::et_one {p dataset} {
         if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} {
             return [calc::et_answer wave [dict get $d value] $np]
         }
+        set dom [calc::et_domain $rpn $dataset]
+        if {$dom ne {}} { return [calc::et_refuse $dom] }
         return [calc::et_answer scalar [dict get $d value]]
     }
     set name [dict get $m verb]
@@ -14016,6 +14020,92 @@ proc calc::et_one {p dataset} {
     set msg [calc::et_get $d msg]
     if {$msg eq {}} { set msg [calc::arg_msg failed $name $d] }
     return [calc::et_refuse $msg]
+}
+
+# A SCALAR answer that divided by zero or took a log of a value <= 0 is refused
+# (calculator.md R610).  The engine answers both with a number -- DIVIS gives 0
+# for x/0 (issue 1628's ruled rule, kept: the Calculator window and waveforms
+# depend on it) and `mylog()`/`mylog10()` floor at -35 (issue 1653), so db(0)
+# is -700 -- and an Outputs Value cell must not show it as a result: ngspice's
+# print refused, and ADE-L shows no clamped number either.  So the C engine is
+# left alone and the question is asked HERE, of the engine itself: postfix
+# `$rpn` is split into the self-contained sub-expressions the stack builds, and
+# every divisor (`/`'s top operand) and every log argument (`ln()`, `log10()`,
+# `db20()`) is evaluated on its own at the same point.  Answers {} or the
+# sentence.  Only for a scalar answer: a wave is never refused for a zero at
+# some of its points.  A check inside a branch of `?` (`X C Y ?` is X when C is
+# nonzero, else Y) applies only when C picks that branch.  A divisor or argument
+# that does not evaluate to a finite number is left to the answer's own checks.
+proc calc::et_domain {rpn dataset} {
+    set toks [calc::rpn_tokens $rpn]
+    set hit 0
+    foreach t $toks { if {$t in {/ ln() log10() db20()}} { set hit 1 } }
+    if {!$hit} { return {} }
+    set tbl [calc::rpn_opstack]
+    set st {}
+    foreach t $toks {
+        if {![dict exists $tbl $t]} {
+            lappend st [list [list $t] {}]
+            continue
+        }
+        lassign [dict get $tbl $t] pops pushes
+        if {[llength $st] < $pops} { return {} }
+        set args [lrange $st end-[expr {$pops - 1}] end]
+        if {$pops == 0} { set args {} }
+        set st [lrange $st 0 end-$pops]
+        set sub {}
+        set chk {}
+        foreach a $args {
+            set sub [concat $sub [lindex $a 0]]
+            set chk [concat $chk [lindex $a 1]]
+        }
+        if {$t eq {?}} {
+            lassign $args ax ac ay
+            set ct [lindex $ac 0]
+            set chk [lindex $ac 1]
+            foreach c [lindex $ax 1] { lappend chk [list {*}[lrange $c 0 1] [concat [lindex $c 2] [list [list $ct 1]]]] }
+            foreach c [lindex $ay 1] { lappend chk [list {*}[lrange $c 0 1] [concat [lindex $c 2] [list [list $ct 0]]]] }
+        }
+        if {$t eq {/}} { lappend chk [list divzero [lindex $args end 0] {}] }
+        if {$t in {ln() log10() db20()}} { lappend chk [list logzero [lindex $args end 0] {}] }
+        lappend sub $t
+        if {$t eq {exch()}} {
+            lappend st [lindex $args 1] [lindex $args 0]
+        } elseif {$t eq {dup()}} {
+            lappend st [lindex $args 0] [list [lindex $args 0 0] {}]
+        } elseif {$pushes == 1} {
+            lappend st [list $sub $chk]
+        } else {
+            return {}
+        }
+    }
+    foreach e $st {
+        foreach c [lindex $e 1] {
+            lassign $c kind arg guards
+            set on 1
+            foreach g $guards {
+                lassign $g ct want
+                set cv [calc::et_domain_value $ct $dataset]
+                if {$cv eq {} || ($cv != 0) != $want} { set on 0 ; break }
+            }
+            if {!$on} continue
+            set v [calc::et_domain_value $arg $dataset]
+            if {$v eq {}} continue
+            if {$kind eq {divzero} && $v == 0} { return [calc::et_msg divzero] }
+            if {$kind eq {logzero} && $v <= 0} { return [calc::et_msg logzero] }
+        }
+    }
+    return {}
+}
+
+# One sub-expression of `calc::et_domain`, evaluated by the engine at the
+# answer's own point: its finite number, or {}.
+proc calc::et_domain_value {toks dataset} {
+    set d [calc::eval_rpn [join $toks { }] $dataset 0]
+    if {![dict get $d ok]} { return {} }
+    set v [string trim [dict get $d value]]
+    if {![calc::eval_finite $v]} { return {} }
+    return [regsub {^(-?)0+([0-9])} $v {\1\2}]
 }
 
 # Does postfix `$rpn` vary along the sweep?  Only through a signal operand, the
@@ -14107,9 +14197,9 @@ proc calc::eval_text_signals {text} {
 #      text `2M` are REFUSED: one token can never be two postfix values, and
 #      handing them to the engine answered `2`, `10000`, `1` and `0.002`
 #      silently (verifier, 2026-10-11).
-# DECLARED LIMIT: division by an operand that is zero answers 0, the engine's
-# deliberate DIVIS hold-previous rule (src/save.c, issue 1628) -- not a
-# refusal and not inf.  Row ET12 `DECLARED` measures it.
+# A SCALAR answer that divided by zero, or took a log of a value <= 0, is
+# refused (`calc::et_domain`), never shown as the engine's DIVIS 0 or its log
+# floor.  Band ET14 measures it.
 # No text is both a complete postfix expression of two or more tokens and a
 # complete infix one, because a postfix expression of two or more tokens always
 # puts two values side by side, which infix never does -- so the order of 1 and

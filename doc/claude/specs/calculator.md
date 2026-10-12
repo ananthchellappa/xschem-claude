@@ -1671,10 +1671,7 @@ below are the ones a caller cannot answer for itself and so must not have to.
   nine committed ngspice-infix bench rows equal the former `print` path on the registry
   ngspice. **Declared limits:** the Calculator window's buffer Eval and Plot are not
   routed through it (they still take postfix); `?` (the conditional) has no infix form;
-  Cadence slash paths (`/net`) stay refused (Q6); **a division by an operand that is
-  zero answers 0** — the engine's deliberate DIVIS hold rule (`src/save.c`, issue
-  1628), now reachable from infix, so `Vcc/I(Vr)` with a zero current shows `0` where
-  ADE-L shows an infinity; measured by row ET12 `DECLARED LIMIT`. OE13's population is
+  Cadence slash paths (`/net`) stay refused (Q6). OE13's population is
   derived without the router and carries a `FLOOR: 9` ratchet, so a routing change that
   stopped reading the committed rows as infix reddens it.
   **No text raises** (third fix round, 2026-10-11, verifier at `a21d2cd2`): an Outputs
@@ -1693,9 +1690,24 @@ below are the ones a caller cannot answer for itself and so must not have to.
   spells `i(@r1[i])`, is read through that spelling when the raw does not know the bare
   one — the save list keeps the bare `.save @r1[i]`. Row ET13 of `test_calc_eval_text`;
   OE14 of `test_ase_outputs_eval` (an unticked `v(out)*09` or 400-deep text beside a
-  ticked `v(out)` renders the deck and passes the pre-flight). **Declared limit:**
-  `ln(0)`, `log10(0)` and `db(0)` answer the engine's clamp (`ln(0)` = −35, measured by
-  ET13 `DECLARED`), not −inf.
+  ticked `v(out)` renders the deck and passes the pre-flight).
+  **A scalar that divided by zero or took a log of a value ≤ 0 is refused** (2026-10-12,
+  measured on the bundled `tb_ft_test_2` bench, whose `db(i(vd)/i(vg))` is 0/0 at the
+  operating point: the old `print` path refused it and showed no value, while the
+  engine's DIVIS rule answers 0 for x/0 (issue 1628) and `mylog10()`'s floor made
+  `db(0)` −700, so the Value cell showed a confident −700). `calc::eval_text` asks the
+  engine itself (`calc::et_domain`): the postfix is split into the self-contained
+  sub-expressions its stack builds, and every divisor (`/`'s top operand) and every
+  argument of `ln()`, `log10()` and `db20()` is evaluated alone at the answer's point;
+  a zero divisor answers *Cannot evaluate: division by zero* and a log argument ≤ 0
+  *Cannot evaluate: log of zero or a negative value*, the first fault in postfix order
+  winning (so `db(0/0)` names the division). Infix and RPN alike, a nested
+  measurement's number included. A check inside a branch of `?` applies only when the
+  condition picks that branch. **Scope is the SCALAR answer**: a wave is never refused
+  for a zero at some of its points (`db(vt(lp))` on a transient starting at 0 stays a
+  wave), and the C engine's DIVIS and `mylog10()` are unchanged — the Calculator window
+  and the waveforms keep them. Band ET14 of `test_calc_eval_text`; OE15 of
+  `test_ase_outputs_eval` (the Value cell reads the sentence).
 
 ---
 

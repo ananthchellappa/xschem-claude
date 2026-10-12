@@ -526,13 +526,12 @@ group ET12 {
         [list [far 2.0 [expr {2 * ($dc + 1)}]] [far 10000.0 [expr {10000 * $dc}]]] {1 1}
     check "ET12 the multi-token side-by-side shape is STILL handed to RPN (its own sentence follows), and a single bus-style raw name still reads as RPN" \
         [lmap t {{v(lp) v(dcmid)} a<3>} {dict get [calc::ix_route $t] mode}] {rpn rpn}
-    # DECLARED LIMIT (calculator.md R610): a division by an operand that is zero
-    # answers 0 -- the engine's deliberate DIVIS hold rule, issue 1628 -- not a
-    # refusal and not inf.  Measured here so a change to it reddens this row
-    # and the declaration is revisited; v(lp) is exactly 0 at the operating
-    # point (band ET1's distinctness leg).
-    check "ET12 DECLARED LIMIT, measured: v(dcmid)/v(lp) at the operating point, where v(lp) is exactly 0, answers 0 (engine DIVIS rule), and so does a literal 1/0" \
-        [list [et_v v(lp)] [et_v {v(dcmid)/v(lp)}] [et_v {1/0}]] {0 0 0}
+    # A scalar that divided by zero is REFUSED (calculator.md R610, band ET14):
+    # the engine's DIVIS rule answers 0 there (issue 1628), and the old print
+    # path showed no value.  v(lp) is exactly 0 at the operating point.
+    check "ET12 a scalar division by an operand that is zero is REFUSED, never the engine's 0: v(dcmid)/v(lp) at the operating point (v(lp) exactly 0) and a literal 1/0" \
+        [list [et_v v(lp)] [et_m {v(dcmid)/v(lp)}] [et_m {1/0}]] \
+        [list 0 "Cannot evaluate: division by zero" "Cannot evaluate: division by zero"]
     set cr [et_v {cross(vt(lp), 0.5, 1, rising)} {}]
     set bw [et_v {bandwidth(vf(lp), 3, magnitude, low, 0)} {}]
     set n2 [pcall calc::eval_text {cross(vt(lp), 0.5, 1, rising)*2} $::fixture {}]
@@ -570,9 +569,8 @@ group ET12 {
 # turns anything else that raises into a refusal (the BACKSTOP row sabotages the
 # lexer to prove it).
 #
-# DECLARED LIMIT (calculator.md R610): `ln(0)`, `log10(0)` and `db(0)` answer
-# the engine's clamp (a large negative number), not -inf.  Row `DECLARED` below
-# measures `ln(0)` so a change to it reddens and the declaration is revisited.
+# `ln(0)`, `log10(0)` and `db(0)` are REFUSED as scalars (band ET14), never the
+# engine's clamp.
 proc et_s {t} { return [pcall calc::eval_text_signals $t] }
 group ET13 {
     set z {v(dcmid)*09 09*v(dcmid) -09 -v(dcmid)*08 {- 08} 010*v(dcmid) {0009.5*v(dcmid)}}
@@ -637,8 +635,75 @@ group ET13 {
         $bare -1
     check "ET13 PARITY: an ngspice device-current parameter typed bare, @rdc1 with its i parameter, times 2, reads the raw's i(...) spelling (as print did), and the save list carries the bare spelling ngspice's .save takes" \
         [list [near [et_v {@rdc1[i]*2}] [expr {2 * $ir}]] [et_s {@rdc1[i]*2}]] [list near [list {@rdc1[i]}]]
-    check "ET13 DECLARED LIMIT, measured: ln(0) answers the engine's clamp -35, not -inf" \
-        [et_v ln(0)] -35
+    check "ET13 ln(0) is REFUSED, not the engine's clamp -35 (band ET14)" \
+        [et_m ln(0)] "Cannot evaluate: log of zero or a negative value"
+}
+
+# =============================================================================
+# ET14 -- A SCALAR THAT DIVIDED BY ZERO OR TOOK A LOG OF A VALUE <= 0 IS REFUSED
+# (calculator.md R610; measured on the bundled tb_ft_test_2 bench, 2026-10-12)
+# =============================================================================
+# The bench's row db(i(vd)/i(vg)) reads 0/0 at the operating point.  The old
+# ngspice print path refused it and showed no value; the engine answers 0 for
+# x/0 (its DIVIS rule, issue 1628) and db(0) hits mylog10's floor, so the Value
+# cell showed a confident -700.  A SCALAR answer is refused naming the cause.
+# A WAVE is not refused for a zero at some of its points: the transient's v(lp)
+# starts at exactly 0 (fixture leg below) and db / 1/x of it stay waves.
+group ET14 {
+    set dz "Cannot evaluate: division by zero"
+    set lz "Cannot evaluate: log of zero or a negative value"
+    check "ET14 the builder's two sentences are the ones the rows below expect (calc::et_msg divzero / logzero)" \
+        [list [calc::et_msg divzero] [calc::et_msg logzero]] [list $dz $lz]
+    set rows [list \
+        0/0                     $dz \
+        1/0                     $dz \
+        {v(lp)/v(lp)}           $dz \
+        {v(dcmid)/v(lp)}        $dz \
+        {db(i(@m1[id])/v(lp))}  $dz \
+        {db(v(lp)/v(lp))}       $dz \
+        {1 0 /}                 $dz \
+        db(0)                   $lz \
+        db(v(lp))               $lz \
+        db20(v(lp))             $lz \
+        db10(v(lp))             $lz \
+        ln(0)                   $lz \
+        log(v(lp))              $lz \
+        log10(0)                $lz \
+        ln(-v(dcmid))           $lz \
+        {0 db20()}              $lz \
+        {v(lp) ln()}            $lz]
+    set bad {}
+    set n 0
+    foreach {t want} $rows {
+        incr n
+        set d [pcall calc::eval_text $t $::fixture op]
+        if {[fld $d ok] ne {0} || [fld $d msg] ne $want || [fld $d value] ne {}} {
+            lappend bad "$t=[fld $d ok]/[fld $d value]/[fld $d msg]"
+        }
+    }
+    check "ET14 REFUSED at the operating point, no value: 0/0, x/0 (literal, signal, nested in db), db/db20/db10/ln/log/log10 of zero, ln of a negative, and the same in RPN (rows driven, then the misses)" \
+        [list $n $bad] {17 {}}
+    check "ET14 fixture: v(lp) is exactly 0 and v(dcmid) is not, at the operating point, so the rows above divide by and take logs of a true zero" \
+        [list [et_v v(lp)] [far [et_v v(dcmid)] 0]] {0 1}
+    check "ET14 CONTROL: a nonzero division and a log of a positive value still ANSWER -- v(dcmid)/2, 1/v(dcmid), 0/v(dcmid), db(v(dcmid)), ln(v(dcmid)), and RPN 'v(dcmid) 2 /'" \
+        [list [near [et_v {v(dcmid)/2}] [expr {$dc / 2.0}]] [near [et_v {1/v(dcmid)}] [expr {1.0 / $dc}]] \
+              [near [et_v {0/v(dcmid)}] 0.0] [near [et_v db(v(dcmid))] [expr {20 * log10($dc)}]] \
+              [near [et_v ln(v(dcmid))] [expr {log($dc)}]] [near [et_v {v(dcmid) 2 /}] [expr {$dc / 2.0}]]] \
+        {near near near near near near}
+    check "ET14 the CONDITIONAL picks: a division by zero in the branch '?' does NOT take is not a refusal ('1 v(lp) / v(lp) 0 != 7 ?' answers 7), and in the branch it does take, it is ('1 v(lp) / 1 7 ?')" \
+        [list [near [et_v {1 v(lp) / v(lp) 0 != 7 ?}] 7.0] [et_m {1 v(lp) / 1 7 ?}]] [list near $dz]
+    check "ET14 a NESTED measurement's number divides too: cross(...)/0 on the transient is refused" \
+        [et_m {cross(vt(lp), 0.5, 1, rising)/0} {}] $dz
+    et_load tran
+    set lp0 [lindex [pcall xschem raw values v(lp) 0] 0]
+    catch {xschem raw clear}
+    check "ET14 WAVE fixture: the transient's v(lp) starts at exactly 0" $lp0 0
+    check "ET14 a WAVE is not refused for a zero at some of its points: db(vt(lp)) and 1/vt(lp) on the transient are waves" \
+        [list [fld [pcall calc::eval_text db(vt(lp)) $::fixture {}] kind] \
+              [fld [pcall calc::eval_text 1/vt(lp) $::fixture {}] kind]] {wave wave}
+    set b [pcall calc::eval_texts [list 1/0 v(dcmid)] $::fixture op]
+    check "ET14 a refused row in a batch costs only itself, and the registry is EMPTY after the band" \
+        [list [fld [lindex $b 0] msg] [near [fld [lindex $b 1] value] $dc] [et_info]] [list $dz near {}]
 }
 
 # =============================================================================
