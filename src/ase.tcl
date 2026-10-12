@@ -9341,10 +9341,10 @@ proc ase::saves_narrowed {state} {
 #     always been;
 #   * then, ONLY IF those narrowed the deck, every signal an expression row
 #     reads (`calc::eval_text_signals`), ticked or not, each once -- without
-#     them the expression would find nothing to evaluate.  Only a token that is
-#     itself one signal is a read: a token the Calculator cannot parse (an
-#     ngspice infix row such as `Vcc/I(Vr)` is ONE such token) is refused after
-#     the run with a sentence, and its text never becomes a card.
+#     them the expression would find nothing to evaluate.  Infix is read as
+#     the Calculator reads it (calculator.md R610): `Vcc/I(Vr)` reads `Vcc` and
+#     `I(Vr)`, each its own card; the expression's text never becomes one, and
+#     a text the Calculator refuses before any read makes none.
 # A bench whose only ticked rows are expressions gets NO card, so ngspice keeps
 # everything: an expression's tick never narrows a deck.  Answers the card
 # arguments, `.save` not included, each once.
@@ -9357,11 +9357,18 @@ proc ase::output_save_cards {state} {
   return $out
 }
 
-# The same cards, each paired with the output row's text it came from:
-# -> {{<row expr> <card>} ...}, plain cards first, then the reads, duplicates
-# kept (two rows reading one signal are two rows to report).  ONE body for the
-# deck (ase::output_save_cards) and the pre-flight (ase::preflight_scan), so the
-# gate checks exactly what the deck will carry and nothing else.
+# The same cards, each with the output row's text it came from and its role:
+# -> {{<row expr> <card> plain|read} ...}, plain cards first, then the reads,
+# duplicates kept (two rows reading one signal are two rows to report).  ONE
+# body for the deck (ase::output_save_cards) and the pre-flight
+# (ase::preflight_scan).  A `read` card comes from an output EXPRESSION, which
+# never refuses a run (ase_l.md R-OUT3a): the pre-flight skips it, and a read
+# the circuit lacks is reported in that row's Value after the run.  MEASURED
+# 2026-10-11 on the registry's ngspice-46+: `.save v(out)` + `.save v(nosuch)`
+# (or `i(vnosuch)`, or a bare `nosuch`) runs at rc 0 and writes v(out) alone, in
+# the operating point and the transient both -- so the card is left in the deck,
+# harmless.  A text the Calculator refuses before any read
+# (`calc::eval_text_signals` answers {}) makes no card at all.
 proc ase::output_card_sources {state} {
   if {$state eq {}} { return {} }
   set plain {}
@@ -9372,13 +9379,13 @@ proc ase::output_card_sources {state} {
     if {$ex eq {}} { continue }
     if {[ase::output_is_plain $ex]} {
       if {[ase::state_get $o save 0] eq {1}} {
-        lappend plain [list $ex [ase::output_signal $ex]]
+        lappend plain [list $ex [ase::output_signal $ex] plain]
       }
       continue
     }
     if {[info commands ::calc::eval_text_signals] eq {}} { continue }
     foreach sg [calc::eval_text_signals [ase::output_calc_text $ex]] {
-      if {[ase::output_is_signal $sg]} { lappend reads [list $ex $sg] }
+      if {[ase::output_is_signal $sg]} { lappend reads [list $ex $sg read] }
     }
   }
   if {![llength $plain]} { return {} }
@@ -9416,10 +9423,11 @@ proc ase::output_is_signal {e} {
 # The text the Calculator is handed for an output row.  The one ngspice idiom
 # a committed bench relies on, a NEGATED SINGLE SIGNAL (`-i(v1)`, the current
 # INTO a source's positive terminal), is spelled in the Calculator's postfix as
-# `i(v1) -1 *`; everything else is passed unchanged, so an expression is held to
-# the Calculator's own syntax and refused, with a sentence, where it does not
-# parse.  ngspice itself saves `-i(v1)` as `i(v1)` (measured 2026-10-11), so
-# the `.save` card stays the row's text verbatim.
+# `i(v1) -1 *` -- the postfix the Calculator's infix translator (calculator.md
+# R610) also gives it; everything else is passed unchanged, so an expression is
+# held to the Calculator's own syntax (postfix or infix) and refused, with a
+# sentence, where it does not parse.  ngspice itself saves `-i(v1)` as `i(v1)`
+# (measured 2026-10-11), so the `.save` card stays the row's text verbatim.
 proc ase::output_calc_text {ex} {
   set e [string trim $ex]
   if {[regexp {^-([^-\s]\S*)$} $e -> rest] && [ase::output_is_signal $rest]
@@ -14070,16 +14078,16 @@ proc ase::preflight_scan {state netlist_text} {
   set absent {}
   set unknown {}
   set seen [dict create]
-  ## THE CARDS THE DECK WILL CARRY, AND NOTHING ELSE (ase_l.md R-OUT3a,
-  ## 2026-10-11). An output expression never reaches the deck, so it cannot
-  ## make ngspice write the constants plot and must not block the run -- its
-  ## Value says what is wrong after the run.  What DOES reach the deck is
-  ## ase::output_card_sources' answer: a ticked plain row's signal, and, once
-  ## that narrowed the deck, every signal an expression reads, ticked or not.
-  ## Each is reported against the row it came from, so the offer below still
+  ## THE PLAIN CARDS THE DECK WILL CARRY, AND NOTHING ELSE (ase_l.md R-OUT3a,
+  ## 2026-10-11). An output EXPRESSION, ticked or not, never blocks a run: it
+  ## is a computation on the results, its Value says what is wrong after the
+  ## run, and the `read` cards it adds to a narrowed deck are measured harmless
+  ## when absent (ase::output_card_sources).  So only a ticked plain row's card
+  ## is checked, against the row it came from, so the offer below still
   ## repairs that row's own text.
   foreach src [ase::output_card_sources $state] {
-    lassign $src ex card
+    lassign $src ex card role
+    if {$role ne {plain}} continue
     foreach id [ase::preflight_idents $card] {
       lassign $id kind ident
       set skey [list $ex $ident]
@@ -25523,8 +25531,10 @@ namespace eval ase::backend::ngspice {
   #                 scalar column must not show one as if it were;
   #   a refusal  -> the Calculator's own sentence, naming what is wrong.
   # An unqualified row reads the operating point when the run has one (issue
-  # 1243's scalar); a measurement call reads the run's first other analysis.
-  # Sweeps, corners and Monte Carlo: dataset 0 only.
+  # 1243's scalar); a measurement call reads the run's one other analysis, and
+  # is refused with a sentence asking for vt()/vf()/vs() when there are two or
+  # more (calc::et_default).  Infix (`Vcc/I(Vr)`) is the Calculator's too
+  # (calculator.md R610).  Sweeps, corners and Monte Carlo: dataset 0 only.
   #
   # ⚠ NOTHING IS RECORDED WHEN THERE IS NO RESULTS FILE, as the raw reader
   # records nothing: ase::attach_dbs and ase::raw_content_verdict already say

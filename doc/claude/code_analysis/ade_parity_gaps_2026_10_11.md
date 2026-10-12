@@ -32,12 +32,15 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    Calculator had left loaded as that stale slot, showing the previous run's number beside a plain
    row from the new run; the evaluator now always reads the file on disk (`calc::et_alias`).
 2. ~~So the Expression field takes ngspice syntax, not Calculator syntax.~~ **Done:** it takes
-   Calculator syntax (postfix RPN, measurement calls, `vt()`/`vf()`/`vdc()`/`vs()`, quotes). One
-   ngspice idiom is kept for committed benches, a negated single signal (`-i(v1)`); any other
-   ngspice infix (`v(a)*2`, `Vcc/I(Vr)`) is refused with a sentence, and (fix round, same day)
-   its text no longer reaches the deck as a `.save` card either — nine committed bench rows had
-   that shape and now show the refusal where a printed number used to be (ase_l.md R-OUT3). The Calculator's own gaps (postfix, no
-   slash paths) now apply here — see *Expression language* below.
+   Calculator syntax (postfix RPN, measurement calls, `vt()`/`vf()`/`vdc()`/`vs()`, quotes) and,
+   since the second fix round (same day), ADE-L's **infix** (`Vcc/I(Vr)`, `(Vcc-Vss)/I(Vsil)`,
+   `db(i(vd)/i(vg))`, a measurement call as an operand) — calculator.md R610. The nine committed
+   bench rows with that shape, which had briefly shown a refusal, show a value again, equal to
+   the former `print` path on the registry ngspice (row OE13); their reads, never their text,
+   are `.save` cards (ase_l.md R-OUT3). The Calculator's remaining gap here: no slash paths.
+   An unqualified row on a run with two or more analyses besides the operating point is now
+   refused asking for `vt()`/`vf()` instead of reading the first (it showed an AC frequency for
+   a `cross` meant for the transient) — calculator.md R609, ase_l.md R-OUT4.
 3. Measurements are a separate dialog (`Outputs > Measurements…`, ngspice `.meas`,
    `ase::ui::measurements_dialog`), and their results go to the run log, not the Outputs table.
    ❓ In ADE a measurement is just another output expression.
@@ -50,12 +53,19 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    **Measured 2026-10-11** on the registry's ngspice-46+: yes — any `.save` keeps only what is
    listed, in every plot; `.save all` beside it restores everything. ASE-L now saves a ticked plain
    signal as before and, whenever that narrows the deck, every signal an expression reads; an
-   expression's own tick never narrows (ase_l.md R-OUT3). The run's pre-flight now checks
-   exactly those cards, so an output expression never blocks a run (R-OUT3a), and the lone-op
+   expression's own tick never narrows (ase_l.md R-OUT3). The run's pre-flight checks only the
+   ticked plain rows' cards, so an output expression — ticked or not — never blocks or refuses
+   a run (R-OUT3a, second fix round: an unticked expression's absent signal used to refuse the
+   simulation; measured that ngspice ignores an absent `.save` card at rc 0), and the lone-op
    phantom guard counts the cards rather than ticked rows (R-OUT3b).
 
 ### Expression language
-1. Plain arithmetic is postfix (`v(a) v(b) +`), not normal algebra (`v(a) + v(b)`).
+1. ~~Plain arithmetic is postfix (`v(a) v(b) +`), not normal algebra (`v(a) + v(b)`).~~ **Done
+   for ASE-L Outputs (`calc::eval_text`), 2026-10-11:** infix with ADE's operators, precedence,
+   functions (`db`, `db20`, `db10`, `log`, `mag`, `pow` mapped exactly; the engine's own by
+   name), engineering suffixes and measurement calls as operands, translated to the engine's
+   postfix; postfix still accepted (calculator.md R610). **Still open:** the Calculator
+   window's buffer Eval and Plot take postfix only.
 2. Signal names are xschem net names (`lp`). Cadence slash paths (`/lp`, `/I0/net`) are refused
    (row Q6 of `test_calc_quotes`).
 3. Quotes are accepted but not required. ❓ Cadence requires them.
@@ -63,7 +73,9 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    space-separated with `nil` placeholders, like `cross(VT("/vbg") 0.5 1 "rising" nil nil)`. That was a
    verifier's guess and is unconfirmed.
 5. A plain `v(net)` reads whichever analysis is showing; only `vt()`/`vf()`/`vdc()`/`vs()` choose their
-   own. ❓ Whether Cadence has an unqualified form at all.
+   own. ❓ Whether Cadence has an unqualified form at all. In ASE-L Outputs an unqualified text
+   reads the operating point, or the run's one other analysis, and is refused when that would be
+   a guess between two (calculator.md R609).
 6. A plain expression with no measurement gives the value at the last point, or at the cursor, rather
    than the whole waveform.
 7. Missing ADE functions: `ymax`, `ymin`, `value`, `peakToPeak`, `unityGainFreq`.

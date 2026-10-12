@@ -1609,19 +1609,65 @@ below are the ones a caller cannot answer for itself and so must not have to.
   link, else a copy, in `calc::et_tmpdir`, deleted afterwards), the user's slot is never
   touched, and an alias that cannot be made is a refusal (`calc::et_msg alias`), never a
   read of the stale slot. Rows: ET11 of `test_calc_eval_text`, OE8 of
-  `test_ase_outputs_eval`. It accepts plain RPN, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
+  `test_ase_outputs_eval`. It accepts plain RPN, **infix (R610)**, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
   calls (`cross(...)`, `bandwidth(...)`, ...), checked by `calc::meas_prepare` — the
-  same check the Eval press uses (`calc::meas_eval`). Analysis: a qualifier's own;
-  else `<analysis>`; else the operating point for plain RPN and the first
-  non-operating-point analysis for a measurement call (`calc::et_default`). Plain RPN is
-  read at the **last point, never a viewer cursor** (`calc::eval_rpn`'s `usecursor` 0);
-  `kind wave` means the answer has more than one point, and its value is not the answer.
-  Declared limits: `<dataset>` reaches plain RPN only (a verb takes its dataset from its
-  own arguments); a wave-valued verb's wave is discarded. The Eval press itself does
-  **not** route through R609, because it reads the selected result's own slot at the
-  cursor and hands waves to the viewer; it shares R609's argument check. Suite:
+  same check the Eval press uses (`calc::meas_eval`) — all decided with no database by
+  `calc::et_check`. **Analysis:** a qualifier's own; else `<analysis>`; else
+  (`calc::et_default`, fix round 2026-10-11) plain text reads the operating point when
+  the file has one, and otherwise — and always for a text carrying a measurement call —
+  the file's **one** analysis besides the operating point. **When the file holds two or
+  more besides the operating point and the text carries no qualifier, it is refused**:
+  *"Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)"*
+  (`calc::et_ambiguous`). It used to pick the first silently, and an unqualified
+  `cross(v(out),0.1,1,falling)` on an op+AC+tran bench answered an AC frequency
+  (7.642227e+05). Rows: ET2 of `test_calc_eval_text`. Plain RPN is read at the **last
+  point, never a viewer cursor** (`calc::eval_rpn`'s `usecursor` 0); `kind wave` means
+  the answer varies along a multi-point analysis (a signal operand, or a running
+  function such as `integ()`), and its value is not the answer; an expression of
+  numbers and measurement results alone is a `scalar`. Declared limits: `<dataset>`
+  reaches plain RPN only (a verb takes its dataset from its own arguments); a
+  wave-valued verb's wave is discarded. **The Calculator window's Eval press does not
+  route through R609 and keeps its own rule:** it reads the selected result's own slot
+  at the cursor, a plain `v()` follows the analysis that result is showing, it hands
+  waves to the viewer, and it does **not** read infix yet (R610's declared limit); it
+  shares R609's measurement-argument check. Suite:
   `tests/headless/test_calc_eval_text.tcl`. `calc::eval_text_signals` answers the
-  vectors a text reads, for ASE-L's save list.
+  vectors a text reads, for ASE-L's save list — and **nothing** for a text
+  `calc::et_check` refuses (a postfix stack fault, an unknown function, a short
+  measurement call), so no save card is made from a text that will never be evaluated.
+- **R610** **Infix — ADE-L's expression language** (fix round 2026-10-11; ADE-L is the
+  floor). `calc::eval_text` reads normal algebra by translating it to the engine's own
+  postfix — a real tokenizer (`calc::ix_lex`) and a precedence-climbing parser
+  (`calc::ix_expr`); the engine then evaluates the postfix exactly as if it had been
+  typed. Accepted: `+ - * /`; `^` and `**` (power, right-associative, binding tighter
+  than unary minus: `-2^2` is −4); the six comparisons; unary `-`/`+`; parentheses;
+  numbers with `calc::num_read`'s engineering suffixes (`100u`, `1meg`; a bare `M`
+  refused as everywhere else); signal operands `v(..)`/`i(..)` in any case
+  (`I(Vr)`), R208c's `vt()`/`vf()`/`vdc()`/`vs()`, and bare raw names (`Vcc`, `@m1[gm]`),
+  which the engine resolves case-insensitively; function calls (`calc::ix_fns`): every
+  one-value engine function by its own name (`sqrt`, `abs`, `exp`, `ln`, `log10`, the
+  trigonometric and hyperbolic ones, `min`/`max` of two, `integ`, `avg`, `deriv`, ...,
+  derived from `calc::rpn_opstack`), plus six ADE/ngspice names mapped where the mapping
+  is exact — `db`/`db20` = 20·log10 of the magnitude (`abs() db20()`), `db10` =
+  10·log10 of it, `log` = natural log (SKILL's), `mag` = `abs()`, `pow(a,b)` = `a b **`;
+  an unknown function or a wrong argument count is refused with a sentence
+  (`calc::ix_msg`). **A measurement call may be an operand** (`bandwidth(vf(out),3,
+  magnitude,low,0)*2`): it is measured first, in the same analysis, and its number
+  replaces it; one answering a waveform there is refused, and so is a measurement inside
+  a measurement's argument. A measurement call's expression arguments may themselves be
+  infix (`cross(vt(a)-vt(b), 0.5, 1, rising)`). **Infix or RPN** is decided by
+  `calc::ix_route` alone: several space-separated tokens forming a complete postfix
+  expression are RPN, unchanged; a text that does not lex as infix is RPN; one that
+  parses as infix is infix; one that fails because two values sit side by side is RPN;
+  a single token with no operator character is RPN (`a<3>`); anything else is refused
+  naming the fault. A postfix expression of two or more tokens always puts two values
+  side by side, which infix never does, so no text is both — every committed RPN text
+  evaluates byte-identically. Rows: ET12 (routing, values, refusals,
+  nesting) and ET9 of `test_calc_eval_text`; OE13 of `test_ase_outputs_eval` proves the
+  nine committed ngspice-infix bench rows equal the former `print` path on the registry
+  ngspice. **Declared limits:** the Calculator window's buffer Eval and Plot are not
+  routed through it (they still take postfix); `?` (the conditional) has no infix form;
+  Cadence slash paths (`/net`) stay refused (Q6).
 
 ---
 

@@ -697,7 +697,7 @@ They should not influence the input to the simulator."* ADE-L is the floor
   registered `result_probe` hook (`ase::backend::ngspice::result_probe`) sends a
   row naming one vector (`ase::result_source` = `raw`) to `result_probe_raw`,
   which reads its single-point value exactly as before, and every other row to
-  `result_probe_calc`, which evaluates the text with **`calc::eval_texts`** —
+  `result_probe_calc`, which evaluates the text — postfix or infix — with **`calc::eval_texts`** —
   the Calculator's pure evaluator (calculator.md R609): no window, no buffer, no
   viewer, the raw registry put back byte-identical. The same hook runs on run
   finish (`ase::run_done` → `ase::ui::run_finished`), on window open and on
@@ -715,8 +715,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
   <signal>` exactly as before (R208c qualifiers and Cadence quotes stripped,
   `ase::output_signal`); **then, only if those narrowed the deck**, every signal
   any expression row reads (`calc::eval_text_signals`), ticked or not, each
-  once — and only a read that is itself one signal: a token the Calculator
-  cannot parse never becomes a card. An expression's tick never narrows a deck: a bench whose only ticked
+  once — and only a read that is itself one signal, out of a text the Calculator
+  accepts before any read (`calc::et_check`): a text it refuses (`v(a) v(b)`,
+  `foo(v(a))`, `cross(v(a), 0.5)`) makes no card at all. An expression's tick never narrows a deck: a bench whose only ticked
   rows are expressions gets no card and ngspice keeps everything.
   `ase::saves_narrowed` reads the same body. **Measured 2026-10-11** on the
   registry's ngspice-46+ (`build-ver_50`), a divider with `op` + `tran` and an
@@ -725,8 +726,11 @@ They should not influence the input to the simulator."* ADE-L is the floor
   transient **time + v(out)** — ANY `.save` keeps only what is listed;
   `.save v(out)` + `.save v(mid)` → those two; `.save all` + `.save v(out)` →
   everything. ASE-L emits `.save all` only for the Save-All-Voltages tick, a
-  6g-1 widening or the 6g-3 phantom guard, so a default bench with one ticked
-  row IS narrowed — which is why the expressions' signals ride along. `.save
+  6g-1 widening, the 6g-3 phantom guard, or the operating-point tier's own
+  leader (guard G-LEADER, issue 0964: `op_annot::save_cards` puts `.save all`
+  above its device cards whenever its block is non-empty), so a default bench
+  with one ticked row and no device cards IS narrowed — which is why the
+  expressions' signals ride along. `.save
   -i(v1)` is accepted and saves `i(v1)` (measured), so a negated row's card
   stays verbatim. Rows: OE1, OE2, OE7.
   ⚠ **An ngspice INFIX row is an expression, not a plain signal (fix round
@@ -736,19 +740,32 @@ They should not influence the input to the simulator."* ADE-L is the floor
   (in-out)/i(v1)` keeps **everything** (the card is ignored). Either way the
   text was in the deck, contradicting R-OUT1. Nine committed bench rows have
   this shape (`dc_ntap1`, `dc_ptap1`, `dc_res_temp`, `iso_dc_res`, and one
-  nested `db(i(vd)/i(vg))`); they now add no card and their Value is the
-  Calculator's refusal (R-OUT4). Row OE11 derives that over every committed
-  `.state` file.
-- **R-OUT3a — the pre-flight checks the cards and nothing else.**
+  nested `db(i(vd)/i(vg))`). Since the Calculator reads infix (calculator.md
+  R610) each is an expression whose READS are cards (`Vcc`, `I(Vr)`), its text
+  never one, and its Value is a number again — **equal to what the former
+  `print` path gave**, measured on the registry ngspice for every one of them
+  on a synthetic circuit built from the row's own reads with its bench's own
+  analyses (row OE13; the benches themselves need PDK models this machine does
+  not have). Row OE11 derives the card shape over every committed `.state` file.
+- **R-OUT3a — the pre-flight checks the plain cards and nothing else; an
+  output EXPRESSION can never block or refuse a run.**
   `ase::preflight_scan`, which `ase::preflight_gate` reads, walks
-  `ase::output_card_sources` — the same body as the deck's cards, each paired
-  with the row it came from — so it checks exactly what the deck will carry. A
-  ticked expression adds no card, cannot make ngspice write the constants plot,
-  and **does not block the run** (its Value says what is wrong afterwards);
-  Calculator quoted forms (`v("out") 2 *`) are checked unquoted; a signal an
-  UNTICKED expression reads IS checked once the deck is narrowed, because it
-  becomes a card; a ticked `vt(x)` is checked as `v(x)`. The repair offer still
-  rewrites the row's own text. Row OE9.
+  `ase::output_card_sources` — the same body as the deck's cards, each with the
+  row it came from and its role, `plain` or `read` — and checks the **plain**
+  cards only (a ticked plain row's signal; a ticked `vt(x)` is checked as
+  `v(x)`). An expression, ticked or not, is a computation on the results: the
+  signals it reads still become `read` cards on a narrowed deck, but they are
+  **not** checked, and one the circuit lacks is reported in that row's Value
+  after the run. Fix round 2026-10-11: an UNTICKED expression's absent signal
+  used to be checked once the deck was narrowed, and refused the whole
+  simulation. **Measured 2026-10-11** on the registry's ngspice-46+: `.save
+  v(out)` + `.save v(nosuch)` (likewise `i(vnosuch)` or a bare `nosuch`) runs at
+  rc 0 and writes `v(out)` alone, in the operating point and the transient both
+  — so an absent read card is left in the deck, harmless. ⚠ Declared: on the
+  apt ngspice whose lone-op save grows a phantom `i(all)`, an absent read card
+  makes R-OUT3b count two cards where one vector exists, so the `.save all`
+  leader is not emitted for it. The repair offer still rewrites the row's own
+  text. Row OE9.
 - **R-OUT3b — the op phantom guard counts the deck's vectors.**
   `ase::saves_op_phantom_risk` asks whether `ase::output_save_cards` holds
   exactly one card, not whether one row is ticked: a ticked plain row plus a
@@ -760,16 +777,20 @@ They should not influence the input to the simulator."* ADE-L is the floor
   real run** (OE7) — a voltage string for string (`%.6e`), a current to the
   print's own precision (ngspice prints a current with one digit fewer,
   `-3.33333e-04` beside the file's `-3.333333e-04`). An unqualified expression
-  reads the operating point when the run has one, else the file's first
-  analysis; an unqualified **measurement call** reads the run's first
-  non-operating-point analysis; `vt()`/`vf()`/`vdc()`/`vs()` read their own
-  (R208c). **A run with no operating point** shows `wave` for a plain signal
-  (it was blank under the prints) and still answers measurements. The one
-  ngspice idiom a committed bench relies on, a negated single signal
-  (`-i(v1)`), is handed to the Calculator as `i(v1) -1 *`
-  (`ase::output_calc_text`); any other ngspice infix text (`v(a)*2`) is refused
-  with the Calculator's sentence — the expression field speaks the Calculator's
-  postfix now. Names match as the Calculator matches them (its own
+  reads the operating point when the run has one; otherwise, and always for an
+  unqualified **measurement call**, the run's ONE analysis besides the
+  operating point — and when the run has two or more (op+AC+tran) the row is
+  **refused** with *"Cannot evaluate: this result has TRAN and AC; write
+  vt(...) or vf(...)"* instead of guessing (calculator.md R609; it used to read
+  the first and showed an AC frequency for a `cross` meant for the transient);
+  `vt()`/`vf()`/`vdc()`/`vs()` read their own (R208c). **A run with no
+  operating point** shows `wave` for a plain signal (it was blank under the
+  prints) and still answers measurements. The expression field speaks the
+  Calculator's language: postfix, measurement calls, and — since R610 — ADE-L's
+  **infix** (`Vcc/I(Vr)`, `db(i(vd)/i(vg))`, `bandwidth(vf(out),3,magnitude,
+  low,0)*2`). The negated single signal (`-i(v1)`) is still handed over as
+  `i(v1) -1 *` (`ase::output_calc_text`), the same postfix the translator
+  gives it. Names match as the Calculator matches them (its own
   case-folding, refusing an ambiguous one); the casemode ladder still governs
   the single-vector reader.
 - **R-OUT5 — what the Value cell shows.** A scalar: `%.6e`, then

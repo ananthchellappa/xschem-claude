@@ -13633,11 +13633,15 @@ proc calc::meas_prepare {m} {
 # carries the last point only so a caller can see it is a number; it is not the
 # answer and the Outputs pane does not show it.
 #
+# WHAT TEXT.  Postfix, a measurement call, and -- R610, the block headed
+# "INFIX" below -- ADE-L's infix algebra, translated to the same postfix.
+#
 # WHICH ANALYSIS.  A `vt()`/`vf()`/`vdc()`/`vs()` token chooses its own (R208c)
 # and two different ones are refused.  Otherwise `<analysis>` when non-empty;
-# otherwise the file's operating point for plain RPN (the scalar the Value column
-# has always shown, issue 1243) and its first non-operating-point analysis for a
-# measurement call, falling back to whatever the file holds first.
+# otherwise `calc::et_default`: the file's operating point for plain text (the
+# scalar the Value column has always shown, issue 1243), else the file's ONE
+# other analysis -- and a refusal asking for a qualifier when it has two or
+# more, rather than a guess (`calc::et_ambiguous`).
 #
 # THE REGISTRY IS PUT BACK EXACTLY.  The file is read with `xschem raw read
 # <path> <analysis>` -- path AND type -- the evaluation runs, every slot the read
@@ -13707,24 +13711,53 @@ proc calc::et_msg {kind {a {}} {b {}}} {
         noplots { return "Cannot evaluate: the results file holds no analysis" }
         restore { return "Cannot evaluate: could not restore the loaded results" }
         alias { return "Cannot evaluate: the results file is already loaded and could not be re-read" }
+        ambiguous { return "Cannot evaluate: this result has $a; write $b" }
     }
     return {}
 }
 
-# The analysis an unqualified text reads, out of the file's own `$have`.
+# The analysis an unqualified text reads, out of the file's own `$have`, or {}
+# when that would be a GUESS: the file holds more than one analysis other than
+# the operating point and nothing says which (ADE-L parity, 2026-10-11 -- an
+# unqualified `cross(v(out),...)` on an op+AC+tran run used to answer an AC
+# frequency).  Plain text reads the operating point when there is one (issue
+# 1243's scalar); a measurement never does while another analysis exists.
 proc calc::et_default {have meas} {
-    if {$meas} {
-        foreach a $have { if {$a ne {op}} { return $a } }
-    } elseif {[lsearch -exact $have op] >= 0} {
-        return op
-    }
+    if {!$meas && [lsearch -exact $have op] >= 0} { return op }
+    set other {}
+    foreach a $have { if {$a ne {op}} { lappend other $a } }
+    if {[llength $other] == 1} { return [lindex $other 0] }
+    if {[llength $other] > 1} { return {} }
     return [lindex $have 0]
 }
 
-# Everything decided BEFORE the registry is touched: the text, the analysis and,
-# for a measurement call, its checked arguments.  A plan that is a refusal never
-# reaches a read.
-proc calc::et_plan {text have analysis} {
+# The refusal for `calc::et_default`'s {}: the analyses, in UPPERCASE, and the
+# qualifier that picks each one (R208c's `calc::pick_analyses`).
+proc calc::et_ambiguous {have} {
+    set names {}
+    set quals {}
+    set pick [calc::pick_analyses]
+    foreach a $have {
+        if {$a eq {op}} continue
+        lappend names [string toupper $a]
+        dict for {id ty} $pick {
+            if {$ty eq $a} { lappend quals "${id}(...)" }
+        }
+    }
+    return [calc::et_msg ambiguous [calc::et_join $names and] [calc::et_join $quals or]]
+}
+
+proc calc::et_join {words conj} {
+    if {[llength $words] < 2} { return [join $words] }
+    return "[join [lrange $words 0 end-1] {, }] $conj [lindex $words end]"
+}
+
+# Everything that needs NO database: the text, its analysis qualifier, and its
+# translation (a measurement call's checked arguments, or the postfix and any
+# measurement operands of an infix or RPN text).  A refusal here is a refusal
+# before any read -- and, for the save list, a text whose signals are not
+# reads at all (`calc::eval_text_signals`).
+proc calc::et_check {text} {
     set t [string trim $text]
     if {$t eq {}} { return [calc::et_refuse [calc::et_msg empty]] }
     if {[calc::quote_bad $t]} { return [calc::et_refuse [calc::eval_msg quote]] }
@@ -13732,18 +13765,47 @@ proc calc::et_plan {text have analysis} {
     if {![dict get $q ok]} { return [calc::et_refuse [dict get $q msg]] }
     set m [calc::meas_split $t]
     set vals {}
+    set rpn {}
+    set subs {}
     if {$m ne {}} {
-        set p [calc::meas_prepare $m]
+        set p [calc::ix_meas_prep $m]
         if {![dict get $p ok]} { return [calc::et_refuse [dict get $p msg]] }
         set vals [dict get $p vals]
+    } else {
+        set r [calc::ix_route $t]
+        if {[dict get $r mode] eq {refuse}} { return [calc::et_refuse [dict get $r msg]] }
+        set rpn [dict get $r rpn]
+        set sf [calc::rpn_stack_fault [calc::rpn_tokens $rpn]]
+        if {$sf ne {}} { return [calc::et_refuse [calc::eval_msg badtoken $sf]] }
+        foreach st [dict get $r subs] {
+            set sm [calc::meas_split $st]
+            if {$sm eq {}} { return [calc::et_refuse [calc::ix_msg nestbad $st {}]] }
+            set p [calc::ix_meas_prep $sm]
+            if {![dict get $p ok]} { return [calc::et_refuse [dict get $p msg]] }
+            lappend subs [list [dict get $sm verb] [dict get $p vals]]
+        }
     }
-    set an [dict get $q type]
+    return [dict create ok 1 type [dict get $q type] meas $m vals $vals \
+                rpn $rpn subs $subs text $t msg {}]
+}
+
+# Everything decided BEFORE the registry is touched: `calc::et_check`, then the
+# analysis.  A plan that is a refusal never reaches a read.
+proc calc::et_plan {text have analysis} {
+    set c [calc::et_check $text]
+    if {![dict get $c ok]} { return $c }
+    set an [dict get $c type]
     if {$an eq {}} { set an [string trim $analysis] }
-    if {$an eq {}} { set an [calc::et_default $have [expr {$m ne {}}]] }
+    if {$an eq {}} {
+        set meas [expr {[dict get $c meas] ne {} || [llength [dict get $c subs]]}]
+        set an [calc::et_default $have $meas]
+        if {$an eq {}} { return [calc::et_refuse [calc::et_ambiguous $have]] }
+    }
     if {[lsearch -exact $have $an] < 0} {
         return [calc::et_refuse [calc::aq_msg absent $an]]
     }
-    return [dict create ok 1 an $an meas $m vals $vals text $t]
+    dict set c an $an
+    return $c
 }
 
 # The path to READ `$path` through, and the directory to delete afterwards.
@@ -13836,15 +13898,39 @@ proc calc::et_run {path an plans dataset} {
     return $out
 }
 
-# One plan, inside the bracket.
+# One plan, inside the bracket.  A measurement operand of an expression is
+# measured first and its number put in place of its placeholder; it must answer
+# a number.
 proc calc::et_one {p dataset} {
     set m [dict get $p meas]
     if {$m eq {}} {
+        set rpn [dict get $p rpn]
+        set map {}
+        set k 0
+        foreach sub [dict get $p subs] {
+            lassign $sub name vals
+            set d {}
+            if {[catch {calc::aq_arg_invoke $name [calc::meas_numeric $name $vals]} d]} {
+                return [calc::et_refuse [calc::arg_msg failed $name $d]]
+            }
+            set sink [calc::fn_sink $d]
+            if {$sink eq {destination}} { return [calc::et_refuse [calc::ix_msg nestwave $name]] }
+            if {$sink ne {buffer}} {
+                set msg [calc::et_get $d msg]
+                if {$msg eq {}} { set msg [calc::ix_msg nestbad $name [calc::et_get $d value]] }
+                return [calc::et_refuse $msg]
+            }
+            set v [string trim [dict get $d value]]
+            if {![calc::eval_finite $v]} { return [calc::et_refuse [calc::ix_msg nestbad $name $v]] }
+            lappend map [calc::ix_marker $k] $v
+            incr k
+        }
+        set rpn [string map $map $rpn]
         set np 0
         catch {set np [xschem raw points $dataset]}
-        set d [calc::eval_rpn [dict get $p text] $dataset 0]
+        set d [calc::eval_rpn $rpn $dataset 0]
         if {![dict get $d ok]} { return [calc::et_refuse [dict get $d msg]] }
-        if {[string is integer -strict $np] && $np > 1} {
+        if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} {
             return [calc::et_answer wave [dict get $d value] $np]
         }
         return [calc::et_answer scalar [dict get $d value]]
@@ -13866,6 +13952,27 @@ proc calc::et_one {p dataset} {
     return [calc::et_refuse $msg]
 }
 
+# Does postfix `$rpn` vary along the sweep?  Only through a signal operand or
+# one of `calc::ix_wavy`'s tokens: `2 3 +`, or a measurement's number times
+# two, is one number on any analysis.
+proc calc::et_wavy {rpn} {
+    foreach tok [calc::rpn_tokens $rpn] {
+        if {$tok in [calc::ix_wavy]} { return 1 }
+        if {[calc::et_operand $tok]} { return 1 }
+    }
+    return 0
+}
+
+# Is postfix token `$tok` a signal operand -- not an operator, a function, a
+# number or the sweep scale?
+proc calc::et_operand {tok} {
+    if {[dict exists [calc::rpn_opstack] $tok]} { return 0 }
+    if {[string match {*()} $tok]} { return 0 }
+    if {[regexp {^[-+]?(\d|\.\d)} $tok]} { return 0 }
+    if {[lsearch -exact {time frequency} [string tolower $tok]] >= 0} { return 0 }
+    return 1
+}
+
 proc calc::et_get {d k} {
     set v {}
     catch {set v [dict get $d $k]}
@@ -13873,40 +13980,437 @@ proc calc::et_get {d k} {
 }
 
 # The raw vectors an expression READS, for the save list (ase_l.md R-OUT3): every
-# operand token of a plain RPN text, or of each expression argument of a
-# measurement call, after R208c's qualifiers are rewritten to `v(net)` and the
-# quotes are taken off.  An operator, a `name()` function, a number and the sweep
-# scale (`time`, `frequency`) are not vectors.  No database is read.
+# operand token of its postfix -- typed, or translated from infix -- and of each
+# expression argument of a measurement call, at the top or as an operand, after
+# R208c's qualifiers are rewritten to `v(net)` and the quotes are taken off.  An
+# operator, a function, a number and the sweep scale (`time`, `frequency`) are
+# not vectors.  A text `calc::et_check` refuses reads NOTHING, so no card is made
+# from a text that will never be evaluated.  No database is read.
 proc calc::eval_text_signals {text} {
-    set t [string trim $text]
-    if {$t eq {} || [calc::quote_bad $t]} { return {} }
+    set c [calc::et_check $text]
+    if {![dict get $c ok]} { return {} }
     set exprs {}
-    set m [calc::meas_split $t]
-    if {$m eq {}} {
-        lappend exprs $t
+    if {[dict get $c meas] ne {}} {
+        set calls [list [list [dict get [dict get $c meas] verb] [dict get $c vals]]]
     } else {
-        set name [dict get $m verb]
-        set vals [calc::meas_vals $name [dict get $m args]]
-        set rpnkeys {rpn}
-        foreach f [calc::fn_argspec $name] {
-            if {[lindex $f 2] eq {rpn}} { lappend rpnkeys [lindex $f 0] }
-        }
+        lappend exprs [dict get $c rpn]
+        set calls [dict get $c subs]
+    }
+    foreach call $calls {
+        lassign $call name vals
+        set keys [calc::ix_rpnkeys $name]
         foreach {k v} $vals {
-            if {[lsearch -exact $rpnkeys $k] >= 0} { lappend exprs $v }
+            if {$k in $keys} { lappend exprs $v }
         }
     }
-    set ops {+ - * / ** == != > < >= <= ?}
     set out {}
     foreach e $exprs {
         foreach tok [calc::rpn_tokens [calc::rpn_unquote [calc::aq_strip $e]]] {
-            if {[lsearch -exact $ops $tok] >= 0} { continue }
-            if {[string match {*()} $tok]} { continue }
-            if {[regexp {^[-+]?(\d|\.\d)} $tok]} { continue }
-            if {[lsearch -exact {time frequency} [string tolower $tok]] >= 0} { continue }
+            if {[string first "\u0001" $tok] >= 0} continue
+            if {![calc::et_operand $tok]} continue
             if {[lsearch -exact $out $tok] < 0} { lappend out $tok }
         }
     }
     return $out
+}
+
+# ---------------------------------------------------------------------------
+# INFIX -- ADE-L's expression language (calculator.md R610; ase_l.md R-OUT2).
+#
+# Cadence ADE-L's Outputs take normal algebra -- `Vcc/I(Vr)`,
+# `(Vcc-Vss)/I(Vsil)`, `db(i(vd)/i(vg))` -- and ADE-L is the FLOOR, so
+# `calc::eval_text` takes it too.  It is TRANSLATED into the engine's own
+# postfix by a real tokenizer (`calc::ix_lex`) and a precedence-climbing parser
+# (`calc::ix_expr`), and the engine evaluates the postfix exactly as if it had
+# been typed: there is no second evaluator.
+#
+# INFIX OR RPN, decided by `calc::ix_route` and nothing else, in this order:
+#   1. several space-separated tokens that make a complete postfix expression
+#      (`calc::rpn_stack_fault` answers {}) -> RPN, unchanged;
+#   2. the text does not lex as infix -> RPN (its own refusals follow);
+#   3. it parses as infix -> infix;
+#   4. it does not, because two values sit side by side (`v(a) v(b) +` with a
+#      malformed tail) -> RPN; a single token with no operator character in it
+#      -> RPN (a raw name such as `a<3>`); anything else -> refused naming the
+#      fault.
+# No text is both a complete postfix expression of two or more tokens and a
+# complete infix one, because a postfix expression of two or more tokens always
+# puts two values side by side, which infix never does -- so the order of 1 and
+# 3 changes no meaning; it only keeps every committed RPN text byte-identical.
+#
+# WHAT INFIX MEANS HERE.  `+ - * /`, `^` and `**` (power, right-associative,
+# binding tighter than unary minus: `-2^2` is -4), the six comparisons, unary
+# `-`/`+`, parentheses, numbers with `calc::num_read`'s engineering suffixes (a
+# bare `M` refused as it is everywhere), signal operands `v(..)`/`i(..)` in any
+# case, R208c's `vt()`/`vf()`/`vdc()`/`vs()`, bare raw names (`Vcc`, `@m1[gm]`),
+# function calls (`calc::ix_fns`), and a measurement call AS AN OPERAND
+# (`bandwidth(vf(out),3,"low")*2`) whose answer is a single number.  A
+# measurement call's own expression arguments may be infix too; a measurement
+# inside one of those is refused.
+# ---------------------------------------------------------------------------
+
+# Every function an infix call may name, as `name {nargs {postfix tokens}}`.
+# The engine's own one-value functions are DERIVED from `calc::rpn_opstack`
+# (`sqrt` -> `sqrt()`, `max` two arguments -> `max()`); `dup()` and `exch()`
+# leave two values and are not functions.  Six ADE/ngspice names are mapped
+# where the mapping is exact: `db` and `db20` are 20*log10 of the MAGNITUDE
+# (the engine's `db20()` takes no absolute value, so `abs()` goes first),
+# `db10` is 10*log10 of it, `log` is the natural log (SKILL's `log`), `mag` is
+# `abs()`, and `pow(a,b)` is `a b **`.
+proc calc::ix_fns {} {
+    set out [dict create]
+    dict for {tok spec} [calc::rpn_opstack] {
+        if {![regexp {^([a-z0-9]+)\(\)$} $tok -> nm]} continue
+        if {[lindex $spec 1] != 1} continue
+        dict set out $nm [list [lindex $spec 0] [list $tok]]
+    }
+    dict set out db   {1 {abs() db20()}}
+    dict set out db20 {1 {abs() db20()}}
+    dict set out db10 {1 {abs() log10() 10 *}}
+    dict set out log  {1 {ln()}}
+    dict set out mag  {1 {abs()}}
+    dict set out pow  {2 {**}}
+    return $out
+}
+
+# The sentences the translator owns.  Builder contract as `calc::aq_msg`'s:
+# three arguments, one `pattern { return ... }` per physical line, and no prose
+# between patterns.
+proc calc::ix_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        unknownfn { return "Cannot evaluate: unknown function '$a'." }
+        arity { return "Cannot evaluate: $a takes $b." }
+        noright { return "Cannot evaluate: '$a' has no value after it." }
+        noleft { return "Cannot evaluate: a value is missing before '$a'." }
+        open { return "Cannot evaluate: a parenthesis is not closed." }
+        close { return "Cannot evaluate: ')' has no matching '('." }
+        number { return "Cannot evaluate: '$a' is not a number." }
+        capM { return "Cannot evaluate: '$a': M is milli in SPICE; type m or meg." }
+        side { return "Cannot evaluate: '$a' follows a value with no operator between them." }
+        nestwave { return "Cannot evaluate: $a gives a waveform here, so it cannot be part of an expression." }
+        nestarg { return "Cannot evaluate: a measurement inside $a's argument is not supported." }
+        nestbad { return "Cannot evaluate: $a's answer is not a number ($b)." }
+    }
+    return {}
+}
+
+# The R208c / ngspice signal wrappers an infix text names a signal through.
+proc calc::ix_wrappers {} { return {v i vt vf vdc vs} }
+
+# The index of the `)` closing the `(` at `$i`, quote-aware, or -1.
+proc calc::ix_close {s i} {
+    set d 0
+    set q 0
+    set n [string length $s]
+    for {set k $i} {$k < $n} {incr k} {
+        set c [string index $s $k]
+        if {$c eq "\""} { set q [expr {!$q}] ; continue }
+        if {$q} continue
+        if {$c eq "("} { incr d }
+        if {$c eq ")"} {
+            incr d -1
+            if {$d == 0} { return $k }
+        }
+    }
+    return -1
+}
+
+# THE TOKENIZER.  Answers `{ok 1 toks {{type text} ...}}` or `{ok 0}` when the
+# text is not infix at all (a bare quote, a character no rule reads).  Types:
+# `num` (text = `calc::num_read`'s scientific spelling), `bad` (a number that is
+# not one; text = as typed, `capM` flagged in a third element), `sig` (a signal
+# operand, verbatim), `meas` (a whole measurement call, verbatim), `fn` (a
+# function name, lowercased; its `(` follows as `lp`), `op`, `lp`, `rp`, `comma`.
+proc calc::ix_lex {s} {
+    set toks {}
+    set n [string length $s]
+    set i 0
+    while {$i < $n} {
+        set c [string index $s $i]
+        if {[string is space $c]} { incr i ; continue }
+        set rest [string range $s $i end]
+        set two [string range $rest 0 1]
+        if {$two in {** == != <= >=}} {
+            lappend toks [list op $two]
+            incr i 2
+            continue
+        }
+        if {$c in {+ - * / ^ < >}} {
+            lappend toks [list op $c]
+            incr i
+            continue
+        }
+        if {$c eq "("} { lappend toks {lp (} ; incr i ; continue }
+        if {$c eq ")"} { lappend toks {rp )} ; incr i ; continue }
+        if {$c eq ","} { lappend toks {comma ,} ; incr i ; continue }
+        if {[regexp {^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?[A-Za-z]*} $rest m]} {
+            set r [calc::num_read $m]
+            switch -exact -- [lindex $r 0] {
+                ok { lappend toks [list num [lindex $r 1]] }
+                capM { lappend toks [list bad $m capM] }
+                default { lappend toks [list bad $m] }
+            }
+            incr i [string length $m]
+            continue
+        }
+        if {[regexp {^[A-Za-z_#@][A-Za-z0-9_.:#$@\[\]]*} $rest m]} {
+            set j [expr {$i + [string length $m]}]
+            if {[string index $s $j] eq "("} {
+                set lo [string tolower $m]
+                if {$lo in [calc::ix_wrappers] || [calc::meas_verb $m]} {
+                    set e [calc::ix_close $s $j]
+                    if {$e < 0} { return {ok 0} }
+                    set typ sig
+                    if {$lo ni [calc::ix_wrappers]} { set typ meas }
+                    lappend toks [list $typ [string range $s $i $e]]
+                    set i [expr {$e + 1}]
+                    continue
+                }
+                lappend toks [list fn $lo]
+                set i $j
+                continue
+            }
+            lappend toks [list sig $m]
+            set i $j
+            continue
+        }
+        return {ok 0}
+    }
+    return [dict create ok 1 toks $toks]
+}
+
+# THE PARSER: precedence climbing over `calc::ix_lex`'s tokens, emitting the
+# engine's postfix.  A measurement operand becomes a placeholder token, and its
+# text is collected in `ix_subs`.  Faults raise `IX <kind> <a> <b>`, caught by
+# `calc::ix_parse`.
+proc calc::ix_binprec {op} {
+    switch -exact -- $op {
+        == - != - < - > - <= - >= { return {1 left} }
+        + - - { return {2 left} }
+        * - / { return {3 left} }
+        ^ - ** { return {5 right} }
+    }
+    return {}
+}
+
+proc calc::ix_peek {} {
+    variable ix_t
+    variable ix_p
+    return [lindex $ix_t $ix_p]
+}
+
+proc calc::ix_fault {kind {a {}} {b {}}} {
+    return -code error [list IX $kind $a $b]
+}
+
+# An operator must be followed by a value.
+proc calc::ix_need {op} {
+    set t [calc::ix_peek]
+    if {$t eq {} || [lindex $t 0] in {rp comma}} { calc::ix_fault noright $op }
+}
+
+# The text of the token that ended an operand early: the end of the text is
+# an unclosed parenthesis, anything else a value with no operator before it.
+proc calc::ix_after {} {
+    set t [calc::ix_peek]
+    if {$t eq {}} { calc::ix_fault open }
+    calc::ix_fault side [lindex $t 1]
+}
+
+proc calc::ix_expr {minprec} {
+    variable ix_p
+    set lhs [calc::ix_unary]
+    while 1 {
+        set t [calc::ix_peek]
+        if {[lindex $t 0] ne {op}} break
+        set pa [calc::ix_binprec [lindex $t 1]]
+        if {$pa eq {} || [lindex $pa 0] < $minprec} break
+        incr ix_p
+        set next [lindex $pa 0]
+        if {[lindex $pa 1] eq {left}} { incr next }
+        calc::ix_need [lindex $t 1]
+        set rhs [calc::ix_expr $next]
+        set op [lindex $t 1]
+        if {$op eq {^}} { set op ** }
+        set lhs [concat $lhs $rhs [list $op]]
+    }
+    return $lhs
+}
+
+proc calc::ix_unary {} {
+    variable ix_p
+    set t [calc::ix_peek]
+    if {[lindex $t 0] eq {op} && [lindex $t 1] in {- +}} {
+        incr ix_p
+        calc::ix_need [lindex $t 1]
+        set x [calc::ix_expr 5]
+        if {[lindex $t 1] eq {+}} { return $x }
+        if {[llength $x] == 1 && [calc::eval_finite [lindex $x 0]]} {
+            set v [lindex $x 0]
+            if {[string index $v 0] eq {-}} { return [list [string range $v 1 end]] }
+            return [list "-$v"]
+        }
+        return [concat $x {-1 *}]
+    }
+    return [calc::ix_primary]
+}
+
+proc calc::ix_primary {} {
+    variable ix_p
+    variable ix_subs
+    set t [calc::ix_peek]
+    lassign $t ty tx flag
+    switch -exact -- $ty {
+        num { incr ix_p ; return [list $tx] }
+        sig { incr ix_p ; return [list $tx] }
+        bad {
+            if {$flag eq {capM}} { calc::ix_fault capM $tx }
+            calc::ix_fault number $tx
+        }
+        meas {
+            incr ix_p
+            set k [llength $ix_subs]
+            lappend ix_subs $tx
+            return [list [calc::ix_marker $k]]
+        }
+        lp {
+            incr ix_p
+            set x [calc::ix_expr 0]
+            if {[lindex [calc::ix_peek] 0] ne {rp}} { calc::ix_after }
+            incr ix_p
+            return $x
+        }
+        fn { return [calc::ix_call] }
+        op { calc::ix_fault noleft $tx }
+        rp { calc::ix_fault noleft ) }
+        comma { calc::ix_fault noleft , }
+    }
+    calc::ix_fault open
+}
+
+# A call `name(a, b, ...)`: the arguments' postfix in order, then the
+# function's own tokens.
+proc calc::ix_call {} {
+    variable ix_p
+    set nm [lindex [calc::ix_peek] 1]
+    set fns [calc::ix_fns]
+    if {![dict exists $fns $nm]} { calc::ix_fault unknownfn $nm }
+    lassign [dict get $fns $nm] want suffix
+    incr ix_p
+    incr ix_p
+    set args {}
+    if {[lindex [calc::ix_peek] 0] eq {rp}} {
+        incr ix_p
+    } else {
+        while 1 {
+            lappend args [calc::ix_expr 0]
+            set t [calc::ix_peek]
+            if {[lindex $t 0] eq {comma}} { incr ix_p ; continue }
+            if {[lindex $t 0] eq {rp}} { incr ix_p ; break }
+            calc::ix_after
+        }
+    }
+    if {[llength $args] != $want} {
+        set w "$want arguments"
+        if {$want == 1} { set w "1 argument" }
+        if {$want == 0} { set w "no argument" }
+        calc::ix_fault arity $nm $w
+    }
+    set out {}
+    foreach a $args { set out [concat $out $a] }
+    return [concat $out $suffix]
+}
+
+# The placeholder a nested measurement's number replaces at evaluation time.
+# It carries no whitespace, so it is one engine token, and no character a user
+# can type.
+proc calc::ix_marker {k} { return "\u0001$k\u0001" }
+
+# Parse a token list.  Answers `{ok 1 rpn <tokens> subs <texts>}` or
+# `{ok 0 side 0|1 msg <sentence>}`; `side 1` is the two-values-side-by-side
+# fault `calc::ix_route` hands to RPN.
+proc calc::ix_parse {toks} {
+    variable ix_t $toks
+    variable ix_p 0
+    variable ix_subs {}
+    if {![llength $toks]} { return [dict create ok 0 side 0 msg [calc::et_msg empty]] }
+    if {[catch {calc::ix_expr 0} out]} {
+        if {[lindex $out 0] ne {IX}} { return -code error $out }
+        lassign $out - kind a b
+        return [dict create ok 0 side [expr {$kind eq {side}}] msg [calc::ix_msg $kind $a $b]]
+    }
+    if {$ix_p < [llength $ix_t]} {
+        lassign [lindex $ix_t $ix_p] ty tx
+        if {$ty eq {rp}} { return [dict create ok 0 side 0 msg [calc::ix_msg close]] }
+        if {$ty eq {comma}} { return [dict create ok 0 side 0 msg [calc::ix_msg noleft ,]] }
+        return [dict create ok 0 side 1 msg [calc::ix_msg side $tx]]
+    }
+    return [dict create ok 1 rpn $out subs $ix_subs]
+}
+
+# INFIX OR RPN -- the rule in the block header, and nothing else decides it.
+# Answers `{mode rpn rpn <text> subs {}}`, `{mode infix rpn <text> subs
+# <measurement texts>}` or `{mode refuse msg <sentence>}`.  The RPN text of an
+# infix answer is the engine's postfix, space-separated.
+proc calc::ix_route {text} {
+    set t [string trim $text]
+    set rt [calc::rpn_tokens $t]
+    if {[llength $rt] > 1 && [calc::rpn_stack_fault $rt] eq {}} {
+        return [dict create mode rpn rpn $t subs {}]
+    }
+    set lx [calc::ix_lex $t]
+    if {![dict get $lx ok]} { return [dict create mode rpn rpn $t subs {}] }
+    set p [calc::ix_parse [dict get $lx toks]]
+    if {[dict get $p ok]} {
+        return [dict create mode infix rpn [join [dict get $p rpn] { }] subs [dict get $p subs]]
+    }
+    if {[dict get $p side]} { return [dict create mode rpn rpn $t subs {}] }
+    if {[llength $rt] == 1 && ![regexp {[-+*/^(),]} $t]} {
+        return [dict create mode rpn rpn $t subs {}]
+    }
+    return [dict create mode refuse msg [dict get $p msg]]
+}
+
+# A measurement call's checked arguments, each expression argument translated
+# by `calc::ix_route` -- so `cross(v(a)-v(b), 0, 1, rising)` reads as ADE writes
+# it.  Answers `{ok 1 vals <vals>}` or `{ok 0 msg <sentence>}`.
+proc calc::ix_meas_prep {m} {
+    set p [calc::meas_prepare $m]
+    if {![dict get $p ok]} { return $p }
+    set name [dict get $m verb]
+    set keys [calc::ix_rpnkeys $name]
+    set out {}
+    foreach {k v} [dict get $p vals] {
+        if {$k in $keys} {
+            set r [calc::ix_route $v]
+            switch -exact -- [dict get $r mode] {
+                refuse { return [dict create ok 0 msg [dict get $r msg]] }
+                infix {
+                    if {[llength [dict get $r subs]]} {
+                        return [dict create ok 0 msg [calc::ix_msg nestarg $name]]
+                    }
+                    set v [dict get $r rpn]
+                }
+            }
+        }
+        lappend out $k $v
+    }
+    return [dict create ok 1 vals $out msg {}]
+}
+
+# The formals of verb `$name` that carry an expression.
+proc calc::ix_rpnkeys {name} {
+    set out {rpn}
+    foreach f [calc::fn_argspec $name] {
+        if {[lindex $f 2] eq {rpn}} { lappend out [lindex $f 0] }
+    }
+    return $out
+}
+
+# Postfix tokens whose answer is a WAVEFORM even with no signal operand: they
+# accumulate along the sweep or read its index.
+proc calc::ix_wavy {} {
+    return {integ() avg() ravg() deriv() deriv0() deriv2() deriv20() prev() del() idx()}
 }
 
 # ---------------------------------------------------------------------------

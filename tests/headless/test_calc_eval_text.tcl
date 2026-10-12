@@ -86,6 +86,31 @@ proc et_ref {type {net v(lp)} {ds 0}} {
     return $v
 }
 proc et_info {} { return [pcall xschem raw info] }
+# A copy of the committed raw keeping only the plots whose analysis type is in
+# `$keep` (walked plot by plot: `Binary:` then nvars * npoints doubles, two per
+# value when the plot is complex).
+proc et_cut {out keep} {
+    set fh [open $::fixture rb] ; set all [read $fh] ; close $fh
+    set at 0
+    set res {}
+    while {[set p [string first "Plotname:" $all $at]] >= 0} {
+        set b [string first "Binary:\n" $all $p]
+        set hdr [string range $all $p $b]
+        if {![regexp {No\. Variables:[ \t]*([0-9]+)} $hdr -> nv]} { return NOHDR }
+        if {![regexp {No\. Points:[ \t]*([0-9]+)} $hdr -> np]} { return NOHDR }
+        set w [expr {[string first complex $hdr] >= 0 ? 16 : 8}]
+        set end [expr {$b + 8 + $nv * $np * $w - 1}]
+        set n [string tolower $hdr]
+        set ty {}
+        foreach {k t} {{transient analysis} tran {ac analysis} ac {operating point} op} {
+            if {[string first $k $n] >= 0} { set ty $t }
+        }
+        if {$ty in $keep} { append res [string range $all $at $end] }
+        set at [expr {$end + 1}]
+    }
+    set fh [open $out wb] ; puts -nonewline $fh $res ; close $fh
+    return ok
+}
 
 # =============================================================================
 # ET0 -- THE DOOR EXISTS, and it is the one this suite drives
@@ -146,13 +171,28 @@ group ET2 {
     set ref [pcall calc::aq_arg_invoke cross [list rpn v(lp) level 0.5 nth 1 edge rising]]
     catch {xschem raw clear}
     set mc [pcall calc::eval_text {cross(v(lp), 0.5, 1, rising)} $::fixture {}]
-    check "ET2 an unqualified MEASUREMENT reads the first non-operating-point analysis (here tran): the same number calc::cross gives on a transient registry the test loaded itself" \
-        [list [fld $ref ok] [fld $mc ok] [fld $mc kind] [near [fld $mc value] [fld $ref value]]] \
+    check "ET2 an unqualified MEASUREMENT on a result holding TWO analyses besides the operating point (tran and AC) is REFUSED, naming both and the qualifiers that pick them -- never a silent pick (ADE-L parity, 2026-10-11: it used to answer an AC frequency on an op+AC+tran bench)" \
+        [list [fld $mc ok] [fld $mc msg]] \
+        {0 {Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)}}
+    set cut [file join [test_scratch et2] tran_op.raw]
+    check "ET2 fixture: a cut of the committed raw holding the transient and the operating point, with no AC" \
+        [list [et_cut $cut {tran op}] [calc::raw_analyses $cut]] {ok {tran op}}
+    set mc1 [pcall calc::eval_text {cross(v(lp), 0.5, 1, rising)} $cut {}]
+    check "ET2 ...with exactly ONE analysis besides the operating point, the same unqualified measurement reads it: the number calc::cross gives on a transient registry the test loaded itself" \
+        [list [fld $ref ok] [fld $mc1 ok] [fld $mc1 kind] [near [fld $mc1 value] [fld $ref value]]] \
         {1 1 scalar near}
-    check "ET2 calc::et_default, the rule itself: plain -> op when present else first; measurement -> first non-op else op" \
+    set cut2 [file join [test_scratch et2] tran_ac.raw]
+    check "ET2 fixture: a cut holding the transient and AC, with no operating point" \
+        [list [et_cut $cut2 {tran ac}] [calc::raw_analyses $cut2]] {ok {tran ac}}
+    set pl [pcall calc::eval_text {v(lp) 2 *} $cut2 {}]
+    check "ET2 ...where an unqualified PLAIN expression is refused the same way (no operating point to default to, two analyses to guess between), while the operating-point default of a plain text stands where there is one (above)" \
+        [list [fld $pl ok] [fld $pl msg]] \
+        {0 {Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)}}
+    check "ET2 calc::et_default, the rule itself: plain -> op when present; otherwise the ONE non-op analysis, {} (refuse) when there are two or more" \
         [list [pcall calc::et_default {tran ac op} 0] [pcall calc::et_default {tran ac} 0] \
-              [pcall calc::et_default {op tran} 1] [pcall calc::et_default {op} 1]] \
-        {op tran tran op}
+              [pcall calc::et_default {op tran} 1] [pcall calc::et_default {op} 1] \
+              [pcall calc::et_default {tran ac op} 1] [pcall calc::et_default {tran} 0]] \
+        {op {} tran op {} tran}
 }
 
 # =============================================================================
@@ -195,14 +235,14 @@ group ET4 {
         set d [pcall calc::eval_text $t $::fixture {}]
         lappend rows [list [fld $d ok] [fld $d msg]]
     }
-    check "ET4 empty, unknown name, two analyses, an analysis the run lacks, wrong arity, ngspice infix syntax and an unclosed quote are each REFUSED with a sentence" \
+    check "ET4 empty, unknown name, two analyses, an analysis the run lacks, wrong arity, a negated current the result lacks (infix -- the sentence names the signal, not the text) and an unclosed quote are each REFUSED with a sentence" \
         $rows [list \
             {0 {Cannot evaluate: the expression is empty}} \
             {0 {Cannot evaluate: unknown token 'nosuch' (not an operator/function, number or raw variable).}} \
             {0 {Cannot evaluate: vt() and vf() read different analyses}} \
             {0 {Cannot evaluate: this result has no DC sweep analysis}} \
             {0 {cross takes 4 arguments.}} \
-            {0 {Cannot evaluate: unknown token '-i(v1)' (not an operator/function, number or raw variable).}} \
+            {0 {Cannot evaluate: unknown token 'i(v1)' (not an operator/function, number or raw variable).}} \
             {0 {Cannot evaluate: a double quote is not closed.}}]
     check "ET4 a missing results file and an empty path are refused without touching the registry" \
         [list [fld [pcall calc::eval_text v(lp) /nonexistent/x.raw {}] msg] \
@@ -321,11 +361,18 @@ group ET8 {
 group ET9 {
     check "ET9 calc::eval_text_signals: qualifiers rewritten to v(), quotes removed, operators/functions/numbers/scale dropped, duplicates once, both RPN arguments of a two-signal verb" \
         [list [pcall calc::eval_text_signals {cross(vt("lp"), 0.5, 1, rising)}] \
-              [pcall calc::eval_text_signals {v(a) i(v1) * abs() 2 / time v(a) +}] \
+              [pcall calc::eval_text_signals {v(a) i(v1) * abs() 2 / time + v(a) +}] \
               [pcall calc::eval_text_signals {delay(vt(a), 0.5, rising, 1, vt(b), 0.5, rising, 1)}] \
               [pcall calc::eval_text_signals {@m1[gm]}] \
               [pcall calc::eval_text_signals {}]] \
         [list v(lp) {v(a) i(v1)} {v(a) v(b)} [list {@m1[gm]}] {}]
+    check "ET9 INFIX reads its operands as the save list needs them: the nine committed bench shapes, a nested measurement, and a measurement with an infix argument" \
+        [lmap t {Vcc/I(Vr) (Vcc-Vss)/I(Vsil) db(i(vd)/i(vg)) {bandwidth(vf(out), 3, magnitude, low, 0)*2} {cross(vt(a)-vt(b), 0.5, 1, rising)}} \
+             {pcall calc::eval_text_signals $t}] \
+        {{Vcc I(Vr)} {Vcc Vss I(Vsil)} {i(vd) i(vg)} v(out) {v(a) v(b)}}
+    check "ET9 a text refused before any read reads NOTHING, so it can make no save card: an RPN stack fault, an unknown function, a short measurement call, a trailing operator" \
+        [lmap t {{v(a) v(b)} foo(v(a)) {cross(v(a), 0.5)} v(a)*} {pcall calc::eval_text_signals $t}] \
+        {{} {} {} {}}
 }
 
 # =============================================================================
@@ -383,6 +430,105 @@ group ET11 {
         [glob -nocomplain -directory [calc::et_tmpdir] xschem_calc_et_[pid]_*] {}
     catch {xschem raw clear}
     test_scratch_drop $d
+}
+
+# =============================================================================
+# ET12 -- INFIX (calculator.md R610): ADE-L's algebra, translated to the
+# engine's postfix, and RPN still RPN
+# =============================================================================
+proc et_v {t {an op}} { return [fld [pcall calc::eval_text $t $::fixture $an] value] }
+proc et_m {t {an op}} { return [fld [pcall calc::eval_text $t $::fixture $an] msg] }
+group ET12 {
+    check "ET12 ROUTING, the ambiguous shapes (mode, postfix): a single token, postfix with spaces, infix with none, unary minus, infix WITH spaces, the committed '-1 *' idiom, a bare name with no operator character, and two values side by side" \
+        [lmap t {v(lp) {v(lp) 2 *} v(lp)*2 -v(lp) {v(lp) - v(dcmid)} {v(lp) -1 *} a<3> {v(lp) v(dcmid)}} {
+            set r [calc::ix_route $t] ; list [dict get $r mode] [dict get $r rpn]}] \
+        {{infix v(lp)} {rpn {v(lp) 2 *}} {infix {v(lp) 2 *}} {infix {v(lp) -1 *}} {infix {v(lp) v(dcmid) -}} {rpn {v(lp) -1 *}} {rpn a<3>} {rpn {v(lp) v(dcmid)}}}
+    et_load op
+    set dc [lindex [pcall xschem raw values v(dcmid) 0] 0]
+    set gm [lindex [pcall xschem raw values @m1\[gm\] 0] 0]
+    set id [lindex [pcall xschem raw values i(@m1\[id\]) 0] 0]
+    set ir [lindex [pcall xschem raw values i(@rdc1\[i\]) 0] 0]
+    catch {xschem raw clear}
+    check "ET12 fixture: the operating-point operands are nonzero and pairwise distinct (3, 1.339e-3, 8.7e-4, 1e-3), so no value row below can pass by reading another operand" \
+        [list [far $dc $gm] [far $gm $id] [far $id $ir] [far $ir $dc] [far $ir 0] [far $id 0]] {1 1 1 1 1 1}
+    set rows [list \
+        {v(dcmid)/i(@rdc1[i])}        [expr {$dc / $ir}] \
+        {(v(dcmid)-1)/2}              [expr {($dc - 1) / 2.0}] \
+        {2*v(dcmid)^2}                [expr {2 * $dc ** 2}] \
+        {-v(dcmid)^2}                 [expr {-($dc ** 2)}] \
+        {2^3^2}                       512.0 \
+        {v(dcmid)-1-1}                [expr {$dc - 2}] \
+        {v(dcmid)/3/2}                [expr {$dc / 6.0}] \
+        {2 * (v(dcmid) + 1)}          [expr {2 * ($dc + 1)}] \
+        {db(i(@m1[id])/@m1[gm])}      [expr {20 * log10(abs($id / $gm))}] \
+        {db20(-v(dcmid))}             [expr {20 * log10($dc)}] \
+        {db(-v(dcmid))}               [expr {20 * log10($dc)}] \
+        {-v(dcmid)+1}                 [expr {-$dc + 1}] \
+        {db10(v(dcmid))}              [expr {10 * log10($dc)}] \
+        {log(v(dcmid))}               [expr {log($dc)}] \
+        {LN(v(dcmid))}                [expr {log($dc)}] \
+        {log10(v(dcmid))}             [expr {log10($dc)}] \
+        {pow(v(dcmid),2)}             [expr {$dc ** 2}] \
+        {max(v(dcmid),5)}             5.0 \
+        {min(v(dcmid),5)}             $dc \
+        {abs(-v(dcmid))}              $dc \
+        {mag(-v(dcmid))}              $dc \
+        {sqrt(v(dcmid))}              [expr {sqrt($dc)}] \
+        {DCMID*1k}                    [expr {$dc * 1000}] \
+        {V(DCMID)+100u}               [expr {$dc + 100e-6}] \
+        {-i(@m1[id])}                 [expr {-$id}] \
+        {v(dcmid) > 2}                1.0 \
+        {v(dcmid)+1 == 4}             1.0 \
+        {pi()*2}                      [expr {2 * acos(-1)}]]
+    set bad {}
+    set n 0
+    foreach {t want} $rows {
+        incr n
+        set got [et_v $t]
+        if {[near $got $want] ne {near}} { lappend bad "$t=$got/$want" }
+    }
+    check "ET12 VALUES: every infix row (precedence, associativity, ^ over unary minus, functions, the six ADE/ngspice names db db20 db10 log mag pow, any case, bare names, engineering suffixes, comparisons) equals the value the TEST computes from the raw's own operands (rows driven, then the misses)" \
+        [list $n $bad] {28 {}}
+    check "ET12 DISCRIMINATION, measured: the wrong precedence or associativity gives a different number for the rows that pin them -- (2*3)^2, (-3)^2, (2^3)^2, 3-(1-1), 3/(3/2)" \
+        [list [far [expr {(2 * $dc) ** 2}] [expr {2 * $dc ** 2}]] [far 9.0 -9.0] [far 64.0 512.0] \
+              [far [expr {$dc}] [expr {$dc - 2}]] [far [expr {$dc / 1.5}] [expr {$dc / 6.0}]]] {1 1 1 1 1}
+    check "ET12 the same RPN text still evaluates as RPN: 'v(dcmid) 2 *' and the committed '-1 *' idiom" \
+        [list [near [et_v {v(dcmid) 2 *}] [expr {2 * $dc}]] [near [et_v {i(@m1[id]) -1 *}] [expr {-$id}]]] {near near}
+    check "ET12 REFUSALS, each a sentence naming the fault: unknown function, wrong arity (two and zero), a trailing operator, a leading operator, an unclosed and an unopened parenthesis, a bare M, a malformed number, an empty argument" \
+        [lmap t {foo(v(dcmid)) max(v(dcmid)) pi(2) v(dcmid)* *v(dcmid) (v(dcmid) v(dcmid)) 2M*v(dcmid) 2x*v(dcmid) max(v(dcmid),)} {et_m $t}] \
+        [list "Cannot evaluate: unknown function 'foo'." \
+              "Cannot evaluate: max takes 2 arguments." \
+              "Cannot evaluate: pi takes no argument." \
+              "Cannot evaluate: '*' has no value after it." \
+              "Cannot evaluate: a value is missing before '*'." \
+              "Cannot evaluate: a parenthesis is not closed." \
+              "Cannot evaluate: ')' has no matching '('." \
+              "Cannot evaluate: '2M': M is milli in SPICE; type m or meg." \
+              "Cannot evaluate: '2x' is not a number." \
+              "Cannot evaluate: a value is missing before ')'."]
+    set cr [et_v {cross(vt(lp), 0.5, 1, rising)} {}]
+    set bw [et_v {bandwidth(vf(lp), 3, magnitude, low, 0)} {}]
+    set n2 [pcall calc::eval_text {cross(vt(lp), 0.5, 1, rising)*2} $::fixture {}]
+    check "ET12 NESTED: a measurement call as an operand is measured first and its number used -- cross(...)*2, -cross(...), bandwidth(...)/1k -- and the answer is a SCALAR though the transient has 101 points" \
+        [list [calc::eval_finite $cr] [near [fld $n2 value] [expr {2 * $cr}]] [fld $n2 kind] \
+              [near [et_v {-cross(vt(lp), 0.5, 1, rising)} {}] [expr {-$cr}]] \
+              [near [et_v {bandwidth(vf(lp), 3, magnitude, low, 0)/1k} {}] [expr {$bw / 1000.0}]]] \
+        {1 near scalar near near}
+    check "ET12 NESTED with a signal: v(lp) minus its own crossing time is a WAVE on the transient (an operand still varies)" \
+        [fld [pcall calc::eval_text {vt(lp)-cross(vt(lp), 0.5, 1, rising)} $::fixture {}] kind] wave
+    set ar [et_v {cross(vt(lp)*2, 1, 1, rising)} {}]
+    check "ET12 a measurement's expression argument may be infix: cross(vt(lp)*2, 1, ...) equals cross(vt(lp) 2 *, 1, ...) and, the same edge, cross(vt(lp), 0.5, ...)" \
+        [list [calc::eval_finite $ar] [near $ar [et_v {cross(vt(lp) 2 *, 1, 1, rising)} {}]] [near $ar $cr]] \
+        {1 near near}
+    check "ET12 refused: a wave-valued measurement as an operand, a measurement inside a measurement's argument, and two analyses across a nested call" \
+        [list [et_m {riseTime(vt(sq), 0, 1, 10, 90, 0, 0)*2} {}] \
+              [et_m {cross(vt(lp)*cross(vt(lp), 0.5, 1, rising), 0.5, 1, rising)} {}] \
+              [et_m {cross(vt(lp), 0.5, 1, rising)*vf(lp)} {}]] \
+        [list "Cannot evaluate: riseTime gives a waveform here, so it cannot be part of an expression." \
+              "Cannot evaluate: a measurement inside cross's argument is not supported." \
+              "Cannot evaluate: vt() and vf() read different analyses"]
+    check "ET12 a constant expression is a scalar on a many-point analysis too ('2 3 +' on the transient), and the registry is still EMPTY after the band" \
+        [list [fld [pcall calc::eval_text {2 3 +} $::fixture tran] kind] [et_info]] {scalar {}}
 }
 
 # =============================================================================

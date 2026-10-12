@@ -33,6 +33,9 @@
 #   OE11 an infix expression is not a plain signal; its text never reaches
 #        the deck (derived over every committed bench row)
 #   OE12 the no-value note agrees with the cell (a `wave` row is not named)
+#   OE13 REAL ngspice: every committed ngspice-infix bench row (derived) shows
+#        the value the former print path gave, on a synthetic circuit built
+#        from the row's own reads with the bench's own analyses
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
 #        `print` gave, the expression's signal was saved, and the deck carries
 #        no print -- skipped with a lowercase skip: line when absent
@@ -171,10 +174,10 @@ group OE3 {
     check "OE3 a measurement call is the Calculator's own number, %.6e" \
         [list [dict get $xref ok] [val $res x]] [list 1 [format %.6e [dict get $xref value]]]
     check "OE3 plain RPN 'v(dcmid) 2 * 1 +' is 7, computed after the run" [val $res y] 7.000000e+00
-    check "OE3 a refusal is the Calculator's sentence, naming what is wrong -- including ngspice's infix syntax, which is not the Calculator's" \
+    check "OE3 a refusal is the Calculator's sentence, naming what is wrong; and INFIX is the Calculator's own syntax too (calculator.md R610), so 'v(dcmid)*2' is 6 -- ADE-L's algebra, computed after the run" \
         [list [val $res bad] [val $res infix]] \
         [list {Cannot evaluate: unknown token 'nosuch' (not an operator/function, number or raw variable).} \
-              {Cannot evaluate: unknown token 'v(dcmid)*2' (not an operator/function, number or raw variable).}]
+              6.000000e+00]
     catch {xschem raw clear}
     set i0 [pcall xschem raw info]
     pcall [ase::backend_hook ngspice result_probe] [oe_state oe3 $outs] {}
@@ -306,10 +309,11 @@ group OE8 {
 # OE9 -- THE PRE-FLIGHT CHECKS WHAT REACHES THE DECK, AND NOTHING ELSE
 # =============================================================================
 # ase::preflight_gate refuses a run whose `.save` card names something the
-# circuit lacks.  Since outputs stopped reaching the deck, the cards are
-# ase::output_save_cards' answer -- so that, and only that, is what the scan
-# reads.  A ticked expression adds no card and must not block the run; a signal
-# an expression reads DOES add a card once the deck is narrowed, and is checked.
+# circuit lacks.  Only a ticked PLAIN row's card is checked: an output
+# EXPRESSION, ticked or not, can never block or refuse a run (R-OUT3a, fix
+# round 2026-10-11).  The signals an expression reads still become cards on a
+# narrowed deck -- measured harmless when absent on the registry ngspice -- and
+# a missing one is reported in that row's Value after the run.
 proc oe9_gate {outs} {
     set rc [catch {ase::preflight_gate [oe_state oe9 $outs $::AN_OPTRAN] $::NL} e]
     return [list $rc [expr {[string first REFUSED $e] >= 0}]]
@@ -325,18 +329,29 @@ group OE9 {
     check "OE9 a ticked expression naming a node the circuit lacks adds no card (output_save_cards is empty), so it does not block the run either -- its Value says what is wrong after the run" \
         [list [ase::output_save_cards [oe_state oe9 {{expr {v(typo) 2 *} save 1}}]] \
               [oe9_gate {{expr {v(typo) 2 *} save 1}}]] {{} {0 0}}
-    check "OE9 an UNTICKED expression's signal that DOES become a card (the deck is narrowed by v(out)) IS checked and refused" \
+    check "OE9 an UNTICKED expression whose absent signal DOES become a card (the deck is narrowed by v(out)) does NOT block the run: the card is in the deck, the gate passes" \
         [list [ase::output_save_cards [oe_state oe9 {{expr v(out) save 1} {expr {v(typo) 2 *} save 0}}]] \
-              [oe9_gate {{expr v(out) save 1} {expr {v(typo) 2 *} save 0}}]] {{v(out) v(typo)} {1 1}}
+              [oe9_gate {{expr v(out) save 1} {expr {v(typo) 2 *} save 0}}]] {{v(out) v(typo)} {0 0}}
+    check "OE9 ...nor does a TICKED one, in infix, on the same narrowed deck" \
+        [oe9_gate {{expr v(out) save 1} {expr {v(typo)*2} save 1}}] {0 0}
+    check "OE9 control: the ticked PLAIN row's own absent card on that deck IS still refused" \
+        [oe9_gate {{expr v(typo) save 1} {expr {v(out)*2} save 0}}] {1 1}
     check "OE9 a ticked plain row in R208c's vt() form is checked as the card it becomes, v(typo)" \
         [oe9_gate {{expr vt(typo) save 1}}] {1 1}
     set outs {{expr v(nope1) save 1} {expr {v(nope2) v(nope3) -} save 0}
               {expr {v(nope4) 2 *} save 1} {expr -i(vnope5) save 1}}
-    set cards [ase::output_save_cards [oe_state oe9 $outs]]
+    set srcs [ase::output_card_sources [oe_state oe9 $outs]]
     set want {}
-    foreach c $cards { foreach id [ase::preflight_idents $c] { lappend want [lindex $id 1] } }
-    check "OE9 DERIVED: on a bench where every name is absent, the scan's absent identifiers are exactly the identifiers of the cards the deck gets (cards, then the set)" \
-        [list [llength $cards] [oe9_absent $outs]] [list 5 [lsort -unique $want]]
+    set nplain 0
+    foreach sc $srcs {
+        if {[lindex $sc 2] ne {plain}} continue
+        incr nplain
+        foreach id [ase::preflight_idents [lindex $sc 1]] { lappend want [lindex $id 1] }
+    }
+    check "OE9 DERIVED: on a bench where every name is absent, the scan's absent identifiers are exactly the identifiers of the PLAIN cards (role read off ase::output_card_sources) -- the deck carries more cards than that, and their reads are not checked (cards, plain cards, then the set)" \
+        [list [llength $srcs] $nplain [oe9_absent $outs]] [list 5 2 [lsort -unique $want]]
+    check "OE9 every card source carries a role, and the roles are exactly plain and read" \
+        [lsort -unique [lmap sc $srcs {lindex $sc 2}]] {plain read}
 }
 
 # =============================================================================
@@ -373,8 +388,12 @@ group OE11 {
     check "OE11 control: one signal, in every committed spelling, is plain" \
         [lmap e {v(out) i(vdd) -i(v1) @m1[gm] -i(@m1[id]) VBG vt("x") v(a,b) x1.out a[3]} {ase::output_is_plain $e}] \
         {1 1 1 1 1 1 1 1 1 1}
-    check "OE11 a narrowed deck carries a signal-shaped card for the infix row's NOTHING: neither its text nor an unparsed token of it" \
-        [ase::output_save_cards [oe_state oe11 {{expr v(out) save 1} {expr Vcc/I(Vr) save 1}}]] v(out)
+    check "OE11 a narrowed deck carries the infix row's READS, each its own single-signal card (Vcc and I(Vr)), and never its text" \
+        [ase::output_save_cards [oe_state oe11 {{expr v(out) save 1} {expr Vcc/I(Vr) save 1}}]] {v(out) Vcc I(Vr)}
+    check "OE11 a text the Calculator refuses before any read makes NO card: a postfix stack fault, an unknown function, a short measurement call, a trailing operator" \
+        [ase::output_save_cards [oe_state oe11 {{expr v(out) save 1} {expr {v(za) v(zb)} save 0}
+                                               {expr foo(v(zc)) save 0} {expr {cross(v(zd), 0.5)} save 0}
+                                               {expr v(ze)* save 1}}]] v(out)
     set rows [oe11_committed_rows]
     set ninfix 0
     set bad {}
@@ -494,6 +513,128 @@ if {$NG eq {}} {
             [val $res dbl] [format %.6e [expr {2.0 * [lindex $pr 2]}]]
         check "OE7 DISTINCTNESS: the three printed numbers differ pairwise, so no row could pass by reading another's" \
             [llength [lsort -unique $pr]] 3
+    }
+
+    # =========================================================================
+    # OE13 -- THE COMMITTED INFIX ROWS, ON THE REAL SIMULATOR
+    # =========================================================================
+    # Nine committed bench rows are ngspice infix (`Vcc/I(Vr)`,
+    # `(Vcc-Vss)/I(Vsil)`, `db(i(vd)/i(vg))`): they showed a printed number,
+    # then a refusal once Outputs left the netlist, and show a value again now
+    # that the Calculator reads infix (calculator.md R610).  Their benches need
+    # PDK models this machine does not have, so each row runs on a SYNTHETIC
+    # circuit built from the signals the row itself reads (derived by
+    # calc::eval_text_signals: a bare name or v() is a node held by its own
+    # source, an i() is a 0 V source fed through its own resistor), with the
+    # bench's OWN analyses rendered by ASE-L's own deck.  The reference is the
+    # former print path, run on the same circuit: `op` then `print <row>` --
+    # where issue 1243 anchored the prints whenever the operating point is on,
+    # as it is on all of these benches.
+    proc oe13_rows {} {
+        set out {}
+        if {[catch {exec git -C [file normalize [file join $::here .. ..]] ls-files *.state} lst]} { return ERR }
+        foreach fn [split [string trim $lst] "\n"] {
+            set fp [file join [file normalize [file join $::here .. ..]] $fn]
+            if {[catch {set fh [open $fp r]}]} continue
+            set t [read $fh] ; close $fh
+            if {[catch {dict get $t outputs} outs]} continue
+            set an {}
+            catch {set an [dict get $t analyses]}
+            foreach o $outs {
+                if {![dict exists $o expr]} continue
+                set e [string trim [dict get $o expr]]
+                if {[ase::output_is_plain $e]} continue
+                if {[calc::meas_split $e] ne {}} continue
+                if {[dict get [calc::ix_route $e] mode] ne {infix}} continue
+                lappend out [list $fn $o $an]
+            }
+        }
+        return $out
+    }
+    # The supply the odd-numbered read currents flow from is the bench's own DC
+    # sweep source when it sweeps one (so the sweep moves the reads), steps
+    # from 2 to 3 V at 1 ns in a transient, and every such resistor has a
+    # temperature coefficient, so a temperature sweep moves them too; the
+    # even-numbered ones flow from a fixed 1.5 V, so a RATIO of two currents
+    # moves as well.  The reads therefore differ between the operating point
+    # and the other analysis, which is what the discrimination row measures.
+    proc oe13_circuit {reads an} {
+        set sup vsup
+        foreach a $an {
+            if {[dict exists $a source] && [string tolower [dict get $a source]] ne {temp}} {
+                set sup [dict get $a source]
+            }
+        }
+        set nl "* oe13\n$sup nsup 0 dc 2 pwl(0 2 1n 3)\nvnfix nfix 0 dc 1.5\n"
+        set k 0
+        set j 0
+        foreach r $reads {
+            incr k
+            if {[regexp {^[iI]\((.+)\)$} $r -> src]} {
+                incr j
+                set from [expr {$j % 2 ? {nsup} : {nfix}}]
+                append nl "$src cx$k 0 dc 0\nrx$k $from cx$k [expr {1000 * $k + 137}] tc1=0.01\n"
+            } else {
+                regexp {^[vV]\((.+)\)$} $r -> r
+                append nl "vfix$k $r 0 dc [expr {0.75 + 0.5 * $k}]\n"
+            }
+        }
+        return "$nl.end\n"
+    }
+    group OE13 {
+        set rows [oe13_rows]
+        set n 0
+        set bad {}
+        set far {}
+        set said {}
+        foreach row $rows {
+            lassign $row fn o an
+            incr n
+            set ex [dict get $o expr]
+            set reads [calc::eval_text_signals $ex]
+            set nl [oe13_circuit $reads $an]
+            set d [file join $::scratch oe13_$n]
+            file mkdir $d
+            set st [oe_state oe13_$n [list [dict create name r expr $ex save [dict get $o save] plot 0]] $an]
+            dict set st rundir $d
+            set deck [pcall [ase::backend_hook ngspice render_deck] $st $nl]
+            set df [file join $d oe13.cir]
+            set f [open $df w] ; puts -nonewline $f $deck ; close $f
+            catch {exec env -u DISPLAY HOME=$::scratch timeout 120 $::NG -b $df 2>@1} log
+            set res [pcall [ase::backend_hook ngspice result_probe] $st $log]
+            set pf [file join $d oe13p.cir]
+            set f [open $pf w]
+            puts -nonewline $f [string map [list ".end\n" ""] $nl]
+            puts $f ".control\nop\nprint $ex\n.endc\n.end"
+            close $f
+            catch {exec env -u DISPLAY HOME=$::scratch timeout 60 $::NG -b $pf 2>@1} plog
+            set pv NOPRINT
+            foreach ln [split $plog "\n"] {
+                if {[regexp {^\S.*\s=\s+(\S+)\s*$} $ln -> v] && [string is double -strict $v]} { set pv $v }
+            }
+            set got [val $res r]
+            lappend said "$fn [list $ex] value=$got print=$pv"
+            if {![string is double -strict $got] || ![string is double -strict $pv]
+                || abs($got - $pv) > abs($pv) * 1e-5} {
+                lappend bad "$fn:$ex got=$got print=$pv"
+            }
+            set other {}
+            foreach a $an {
+                if {[dict get $a enabled] eq {1} && [dict get $a type] ne {op}} { set other [dict get $a type] }
+            }
+            if {$other ne {}} {
+                set w [calc::eval_text [ase::output_calc_text $ex] [file join $d oe13_${n}_ase.raw] $other]
+                if {![dict get $w ok] || ![string is double -strict $got]
+                    || abs([dict get $w value] - $got) <= abs($got) * 1e-5} {
+                    lappend far "$ex:$other=[dict get $w value]/[dict get $w msg]"
+                }
+            }
+        }
+        foreach l $said { puts "note: OE13 $l" }
+        check "OE13 DERIVED over every committed bench row (git ls-files *.state): every ngspice-infix row now shows a VALUE, equal (to print's precision) to what the former print path gave on the registry ngspice for the same circuit and the bench's own analyses (population > 0, misses)" \
+            [list [expr {$n > 0}] $bad] {1 {}}
+        check "OE13 DISCRIMINATION, measured per row: the same text read in the bench's other enabled analysis (its last point) differs, so a value read from the wrong analysis could not pass" \
+            $far {}
     }
 }
 
