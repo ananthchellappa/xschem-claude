@@ -678,7 +678,7 @@ group PG14 {
         set ref [dg $d value]
         catch {wviewer::leave_ctx $::tok $t}
     }
-    check "PG14 fixture: the pick inserted `v(sq)`, the mode ENDED by itself (R208b), the reference is a real finite crossing, and the context current at the press is the DESIGN window's and NOT the viewer's -- the exact state the user pressed Eval in, so the row below cannot pass by the viewer happening to be current" \
+    check "PG14 fixture: the pick inserted `vt(sq)`, the mode ENDED by itself (R208b), the reference is a real finite crossing, and the context current at the press is the DESIGN window's and NOT the viewer's -- the exact state the user pressed Eval in, so the row below cannot pass by the viewer happening to be current" \
         [list $picked [pcall calc::pick_running] \
               [pg_word [string is double -strict $ref] finite $ref] \
               [pg_word [expr {$vwp ne {} && $cwp0 ne $vwp}] designctx "cwp=$cwp0 viewer=$vwp"]] \

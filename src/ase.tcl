@@ -25530,10 +25530,13 @@ namespace eval ase::backend::ngspice {
   #   a waveform -> the word `wave`: a last point is not the answer, and a
   #                 scalar column must not show one as if it were;
   #   a refusal  -> the Calculator's own sentence, naming what is wrong.
-  # An unqualified row reads the operating point when the run has one (issue
-  # 1243's scalar); a measurement call reads the run's one other analysis, and
-  # is refused with a sentence asking for vt()/vf()/vs() when there are two or
-  # more (calc::et_default).  Infix (`Vcc/I(Vr)`) is the Calculator's too
+  # A qualified token (`vdc(out)`, `vt(out)`, `if(vd)`) reads the analysis it
+  # names (calculator.md R208c).  A plain SIGNAL row (one bare name) is handed
+  # over qualified by R-OUT4's reading -- the operating point when the run has
+  # one (issue 1243's scalar), else its one other analysis -- and stays
+  # unqualified when that would be a guess (calc::et_default).  Any other row
+  # that reads an unqualified signal is refused with the Calculator's sentence
+  # offering the qualified spellings (R208d, ase_l.md R-OUT4a).  Infix (`Vcc/I(Vr)`) is the Calculator's too
   # (calculator.md R610).  Sweeps, corners and Monte Carlo: dataset 0 only.
   #
   # ⚠ NOTHING IS RECORDED WHEN THERE IS NO RESULTS FILE, as the raw reader
