@@ -83,13 +83,43 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
 4. Measurement arguments are comma-separated and positional. ❓ Cadence's own buffer text may be
    space-separated with `nil` placeholders, like `cross(VT("/vbg") 0.5 1 "rising" nil nil)`. That was a
    verifier's guess and is unconfirmed.
-5. A plain `v(net)` reads whichever analysis is showing; only `vt()`/`vf()`/`vdc()`/`vs()` choose their
+5. ~~A plain `v(net)` reads whichever analysis is showing; only `vt()`/`vf()`/`vdc()`/`vs()` choose their
    own. ❓ Whether Cadence has an unqualified form at all. In ASE-L Outputs an unqualified text
    reads the operating point, or the run's one other analysis, and is refused when that would be
-   a guess between two (calculator.md R609).
+   a guess between two (calculator.md R609).~~ **Ruled and done 2026-10-12.** The user: *"in
+   Cadence ADE, there is no such thing as v(signal_name). It always has to be VT, VF, etc. … For
+   now, in ASE-L, v(something) will be meaningless"*, and for the Calculator window too: *"I said
+   waveform viewer ok. How would it be ok for Calculator?"* An unqualified `v()`, `i()` or bare
+   node is **refused** in an ASE-L Outputs expression and at every Calculator press that
+   evaluates the buffer (Eval, Plot, a measurement's click), with a sentence offering the
+   qualified spellings the result holds — *"Cannot evaluate: v(out) names no analysis; write
+   vt(out) or vdc(out)"* (calculator.md R208d; ase_l.md R-OUT4a). The current tokens
+   `it()`/`if()`/`idc()`/`is()` exist beside the voltage ones (R208c). A plain SIGNAL row of the
+   Outputs pane (one name, ADE-L's *signal* output) keeps its reading; the waveform viewer's own
+   graph expressions keep plain `v()` for now. Device parameters (`@m1[gm]`) have no qualified
+   spelling yet — ADE's `OP("inst" "param")` is not built.
+   - **Committed benches migrated:** every row whose analysis is obvious (1296 rows in 45
+     `.state` files, counted by the 2026-10-12 migration: one analysis enabled, or the Plot tick on a single sweep, plus the nine
+     infix rows — the eight IHP resistance rows `Vcc/I(Vr)`-shaped are Save-only on an op+DC
+     bench, read at the operating point exactly as their former `print` was, so they became
+     `vdc(Vcc)/idc(Vr)`; `tb_ft_test_2`'s `db(i(vd)/i(vg))` is the AC current gain of an fT
+     bench and became `db(if(vd)/if(vg))`). The ambiguous plain rows (op plus another analysis,
+     no Plot tick deciding it), the `let`/`meas` vector names and the device parameters were
+     left as they were and still work as signal rows. ⚠ **Thirteen obvious rows were put back
+     unmigrated**, measured on the real benches: a bare name is not checked by the run's
+     pre-flight (R-OUT3a) and a qualified one is, so `x1.F1` → `vdc(x1.F1)` turned
+     `bandgap`, `bandgap_opamp`, `charge_pump` and `test_carry_lookahead` from benches that
+     RUN (with those rows reading no value) into benches the pre-flight REFUSES, because those
+     names are not in the circuit at all (`x1.F1`, `x1.F2`, `x1.ADJ2`, `x1.zminus`; `vbg`,
+     `x1.plus`, `x1.minus`, `x1.adj`; `x1.HV2A`, `x1.G3A`, `x1.g2b`, `x1.g2a`; `xxx`). They
+     are stale rows for the user to repair or delete, not a qualifier to choose.
 6. A plain expression with no measurement gives the value at the last point, or at the cursor, rather
    than the whole waveform.
-7. Missing ADE functions: `ymax`, `ymin`, `value`, `peakToPeak`, `unityGainFreq`.
+7. Missing ADE functions: `ymax`, `ymin`, ~~`value`~~, `peakToPeak`, `unityGainFreq`. **`value(wave,
+   x)` done 2026-10-12** (calculator.md R422): the wave's value at an X point of its own sweep,
+   interpolated linearly, refused outside the sweep; a catalogue verb, so the buffer, the
+   function browser and an Outputs row (as a call or an infix operand) all take
+   `value(vt(out), 1u)`.
 8. About 20 functions appear in the Calculator's list but do nothing yet, including `stddev`, `clip`,
    `sample`, `peak`, `compare`, the jitter functions and `eyeDiagram`. Others are deferred altogether
    (`dft`, `psd`, `spectrum`, `thd`, `harmonic*`, `convolve`).
