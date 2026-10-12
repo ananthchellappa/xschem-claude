@@ -242,14 +242,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [ase::state_get [ase::session_state $key] outputs] $before
 
     # I5: vsource click queues the source current i(v1); the committed
-    # -i(v1) row is a DIFFERENT string and must survive beside it
+    # row naming the same source is a DIFFERENT string and must survive
+    # beside it, not be deduped away by the click. RESTATED after R208d
+    # (1e987ffd) migrated the committed row from -i(v1) to -idc(v1): the
+    # committed row is now READ from the committed state file rather than
+    # spelled here, so a later migration cannot strand the row again, and
+    # a leg asserts it really is a different string from the clicked one
+    # (otherwise "survives beside it" would be vacuous).
+    set i5_committed [lindex [ase::state_get [ase::state_load [file join \
+      $repo sky130A xschem_libs sky130_tests test_nfet_final ngspice_state1 \
+      test_nfet_final.state]] outputs] 0]
     ase::ui::sod_click $key 600 -300
     update
     set outs [ase::state_get [ase::session_state $key] outputs]
     check_true "I5 vsource click queues i(v1)" \
       [string match "*{name {} expr i(v1) plot 0 save 1}*" $outs]
-    check_true "I5 committed -i(v1) row still present" \
-      [string match "*{name id expr -i(v1) save 1 plot 0}*" $outs]
+    check "I5 the committed row names source v1 under a different string than the click" \
+      [list [dict get $i5_committed name] [dict get $i5_committed expr] \
+        [expr {[dict get $i5_committed expr] ne {i(v1)}}]] {id -idc(v1) 1}
+    check_true "I5 committed row survives beside the clicked one" \
+      [expr {[lsearch -exact $outs $i5_committed] >= 0}]
 
     # I6: non-source instance (M1 subcircuit) queues NOTHING (v1 scope)
     set before [ase::state_get [ase::session_state $key] outputs]
