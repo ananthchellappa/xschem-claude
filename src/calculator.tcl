@@ -13706,6 +13706,7 @@ proc calc::et_msg {kind {a {}} {b {}}} {
         nofile { return "Cannot evaluate: no results file" }
         noplots { return "Cannot evaluate: the results file holds no analysis" }
         restore { return "Cannot evaluate: could not restore the loaded results" }
+        alias { return "Cannot evaluate: the results file is already loaded and could not be re-read" }
     }
     return {}
 }
@@ -13745,10 +13746,52 @@ proc calc::et_plan {text have analysis} {
     return [dict create ok 1 an $an meas $m vals $vals text $t]
 }
 
+# The path to READ `$path` through, and the directory to delete afterwards.
+# `xschem raw read <f> <type>` does not read a file whose path is already in the
+# registry under that type: it SWITCHES to the loaded slot (extra_rawfile() in
+# src/save.c), which can hold an earlier run's results -- OP annotation and the
+# Calculator both leave such slots behind, and a re-run overwrites the file
+# under them.  The registry is keyed on the path STRING, so a private alias of
+# the file (a symbolic link, else a copy) is read as a new slot from the file on
+# disk, and the user's slot is never touched.  Answers `{<path> {}}` when no slot
+# names the path, `{<alias> <dir>}` when one does, and `{}` when the alias could
+# not be made -- a refusal, never a silent read of the stale slot (band ET11 of
+# tests/headless/test_calc_eval_text.tcl).
+proc calc::et_alias {path} {
+    set hit 0
+    foreach row [calc::aq_rows] {
+        if {[lindex $row 0] eq $path} { set hit 1 }
+    }
+    if {!$hit} { return [list $path {}] }
+    set dir [file join [calc::et_tmpdir] xschem_calc_et_[pid]_[clock microseconds]]
+    if {[catch {file mkdir $dir}]} { return {} }
+    set a [file normalize [file join $dir [file tail $path]]]
+    if {[catch {file link -symbolic $a $path}] && [catch {file copy -force $path $a}]} {
+        catch {file delete -force $dir}
+        return {}
+    }
+    return [list $a $dir]
+}
+
+# Where `calc::et_alias` makes its private directory: $TMPDIR, $TEMP, $TMP, /tmp.
+proc calc::et_tmpdir {} {
+    foreach v {TMPDIR TEMP TMP} {
+        if {[info exists ::env($v)] && [file isdirectory $::env($v)]} {
+            return $::env($v)
+        }
+    }
+    return /tmp
+}
+
 # The bracket: read `$path`'s `$an`, evaluate every plan in `$plans`, put the
 # registry back exactly.  Answers one dict per plan.
 proc calc::et_run {path an plans dataset} {
     set n [llength $plans]
+    set al [calc::et_alias $path]
+    if {![llength $al]} {
+        return [lrepeat $n [calc::et_refuse [calc::et_msg alias]]]
+    }
+    set rpath [lindex $al 0]
     set info0 [calc::aq_info]
     set n0 [calc::aq_nslots]
     set cur [calc::wave_dest_cur]
@@ -13756,10 +13799,10 @@ proc calc::et_run {path an plans dataset} {
     catch {set lv [xschem raw loaded]}
     set bound [expr {[string is integer -strict $lv] && $lv >= 0}]
     set rd 0
-    catch {set rd [xschem raw read $path $an]}
+    catch {set rd [xschem raw read $rpath $an]}
     set here [calc::wave_dest_cur]
     set entered 0
-    if {$rd eq {1} && [lindex $here 0] eq $path} {
+    if {$rd eq {1} && [lindex $here 0] eq $rpath} {
         if {[calc::aq_nslots] > $n0} {
             set entered [expr {[calc::aq_curidx] >= $n0}]
         } else {
@@ -13783,6 +13826,7 @@ proc calc::et_run {path an plans dataset} {
         catch {xschem raw clear $k}
     }
     if {$cur ne {}} { calc::aq_restore [lindex $cur 0] [lindex $cur 1] $bound }
+    if {[lindex $al 1] ne {}} { catch {file delete -force [lindex $al 1]} }
     if {[calc::aq_info] ne $info0} {
         return [lrepeat $n [calc::et_refuse [calc::et_msg restore]]]
     }

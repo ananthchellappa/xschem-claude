@@ -24,6 +24,8 @@
 #   OE5  an OLD state file loads unchanged and fills its Value column on open
 #        (ase::ui::results_from_disk, the open/Load State path)
 #   OE6  the Value cell's text is ase::format_value of the answer
+#   OE8  a stale slot of the results file (OP annotation, the Calculator) is
+#        not read in place of the new run's file
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
 #        `print` gave, the expression's signal was saved, and the deck carries
 #        no print -- skipped with a lowercase skip: line when absent
@@ -253,6 +255,47 @@ group OE6 {
 }
 
 # =============================================================================
+# OE8 -- A STALE SLOT FOR THE RESULTS FILE IS NOT READ IN THE NEW RUN'S PLACE
+# =============================================================================
+# OP annotation or the Calculator can leave the results file loaded; the user
+# re-runs and ngspice overwrites the file.  `xschem raw read` of that path
+# would SWITCH to the old slot, so the expression row would show the previous
+# run's number next to a plain row that parses the new file directly.  The new
+# file differs from the loaded one only in v(dcmid): 3 loaded, 5 on disk.
+proc oe8_patched {src dst net val} {
+    set fh [open $src rb] ; set b [read $fh] ; close $fh
+    set at [string last "Plotname: Operating Point" $b]
+    set hdr [string range $b $at [expr {[string first "Binary:\n" $b $at] - 1}]]
+    set nv {} ; set idx {}
+    regexp {No\. Variables:[ \t]*([0-9]+)} $hdr -> nv
+    regexp "\t(\[0-9\]+)\t[string map {( \\( ) \\)} $net]\t" $hdr -> idx
+    if {$nv eq {} || $idx eq {}} { return NOPATCH }
+    set off [expr {[string length $b] - 8 * $nv + 8 * $idx}]
+    set b [string replace $b $off [expr {$off + 7}] [binary format d $val]]
+    set fh [open $dst wb] ; puts -nonewline $fh $b ; close $fh
+    return ok
+}
+group OE8 {
+    set p [file join $::scratch oe8_ase.raw]
+    set q [file join $::scratch oe8_new.raw]
+    file copy -force $::fixture $p
+    check "OE8 fixture: the new run's file was written with v(dcmid) patched to 5" \
+        [oe8_patched $::fixture $q v(dcmid) 5.0] ok
+    set outs {{name a expr v(dcmid) save 1} {name b expr {v(dcmid) 1 *} save 1}}
+    catch {xschem raw clear}
+    xschem raw read $p op
+    set i0 [pcall xschem raw info]
+    file copy -force $q $p
+    set res [pcall [ase::backend_hook ngspice result_probe] [oe_state oe8 $outs] {}]
+    check "OE8 with the OLD run's results loaded (v(dcmid) = 3), both the plain row and the expression row read the NEW file (5) -- one Value column, one run" \
+        [list [val $res a] [val $res b]] {5.000000e+00 5.000000e+00}
+    check "OE8 ...and the loaded slot is left as it was (registry text, its own 3)" \
+        [list [expr {[pcall xschem raw info] eq $i0}] [lindex [pcall xschem raw values v(dcmid) 0] 0]] {1 3}
+    catch {xschem raw clear}
+    file delete -force $p $q
+}
+
+# =============================================================================
 # OE7 -- THE REAL SIMULATOR (the ASE-L registry's ngspice)
 # =============================================================================
 proc oe_registry_ngspice {} {
@@ -289,13 +332,13 @@ if {$NG eq {}} {
         set raw [file join $d oe7_ase.raw]
         check "OE7 the registry ngspice ran the rendered deck and wrote the results file" \
             [list [file isfile $raw] [oe_lines $deck {^print(\s|$)}]] {1 {}}
-        check "OE7 the expression's signal v(mid) is in the file although only v(out) and i(v1) were ticked -- the save list narrowed the deck and carried it" \
+        check "OE7 the results file holds the two analyses the deck asked for, op and tran (calc::raw_analyses)" \
             [lsort [calc::raw_analyses $raw]] {op tran}
         catch {xschem raw clear}
         xschem raw read $raw op
         set have [split [string trim [xschem raw list]] "\n"]
         catch {xschem raw clear}
-        check "OE7 ...its operating point holds exactly the three saved vectors" \
+        check "OE7 its operating point holds exactly three vectors (raw list): the ticked v(out) and i(v1), plus the expression's signal v(mid), which was NOT ticked -- the save list narrowed the deck and carried it" \
             [lsort $have] [lsort {v(out) i(v1) v(mid)}]
         set res [pcall [ase::backend_hook ngspice result_probe] $st $log]
         # THE FORMER PRINT, measured on the same netlist by a deck that still

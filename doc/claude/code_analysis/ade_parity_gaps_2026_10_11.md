@@ -28,6 +28,9 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    file — a single vector by the file reader, everything else by the Calculator's pure evaluator
    `calc::eval_texts` — on run finish, on open and on Load State. The Value cell shows a number,
    `wave`, or the Calculator's refusal sentence. Spec ase_l.md R-OUT1..R-OUT6, calculator.md R609.
+   Repaired the same day: an expression row read a results file that OP annotation or the
+   Calculator had left loaded as that stale slot, showing the previous run's number beside a plain
+   row from the new run; the evaluator now always reads the file on disk (`calc::et_alias`).
 2. ~~So the Expression field takes ngspice syntax, not Calculator syntax.~~ **Done:** it takes
    Calculator syntax (postfix RPN, measurement calls, `vt()`/`vf()`/`vdc()`/`vs()`, quotes). One
    ngspice idiom is kept for committed benches, a negated single signal (`-i(v1)`); any other

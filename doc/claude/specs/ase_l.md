@@ -702,7 +702,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
   viewer, the raw registry put back byte-identical. The same hook runs on run
   finish (`ase::run_done` → `ase::ui::run_finished`), on window open and on
   Load State (`ase::ui::results_from_disk` / `results_refill`), so all three
-  re-evaluate. The log is never read for a value. Rows: OE3, OE5;
+  re-evaluate. The log is never read for a value. A loaded slot of the same
+  results file (OP annotation, the Calculator) is never read in the new run's
+  place: R609 reads the file on disk (`calc::et_alias`), so the plain and the
+  expression rows of one Value column always show one run. Rows: OE3, OE5, OE8;
   `test_ase_core` P1, RS1–RS4b, RD10–RD14; `test_ase_result_case` NCR1–NCR3.
 - **R-OUT3 — the save list is the only netlist effect.** `ase::output_save_cards`
   is the one body: every Save-ticked **plain** row (one whitespace-free token

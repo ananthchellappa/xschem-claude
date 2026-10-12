@@ -329,6 +329,63 @@ group ET9 {
 }
 
 # =============================================================================
+# ET11 -- A STALE SLOT FOR THE SAME FILE IS NEVER READ IN THE FILE'S PLACE
+# =============================================================================
+# `xschem raw read <f> <type>` SWITCHES to an existing slot keyed on the same
+# path and type instead of reading the file (extra_rawfile() in src/save.c).
+# OP annotation or the Calculator can leave such a slot behind; the user then
+# re-runs, the file on disk changes, and an Outputs row must show the NEW run.
+# So the slot pre-loaded here holds DIFFERENT content from the file on disk:
+# the fixture's operating point with v(dcmid) = 3, then the file is overwritten
+# by a copy whose v(dcmid) is patched to 5 at its own binary offset.
+proc et11_patched {src dst net val} {
+    set fh [open $src rb] ; set b [read $fh] ; close $fh
+    set at [string last "Plotname: Operating Point" $b]
+    set hdr [string range $b $at [expr {[string first "Binary:\n" $b $at] - 1}]]
+    set nv {} ; set idx {}
+    regexp {No\. Variables:[ \t]*([0-9]+)} $hdr -> nv
+    regexp "\t(\[0-9\]+)\t[string map {( \\( ) \\)} $net]\t" $hdr -> idx
+    if {$nv eq {} || $idx eq {}} { return "NOPATCH" }
+    set off [expr {[string length $b] - 8 * $nv + 8 * $idx}]
+    set b [string replace $b $off [expr {$off + 7}] [binary format d $val]]
+    set fh [open $dst wb] ; puts -nonewline $fh $b ; close $fh
+    return ok
+}
+group ET11 {
+    set d [test_scratch et11]
+    set p [file join $d run.raw]
+    set q [file join $d new.raw]
+    file copy -force $::fixture $p
+    check "ET11 fixture: the new run's file was written with v(dcmid) patched" \
+        [et11_patched $::fixture $q v(dcmid) 5.0] ok
+    catch {xschem raw clear}
+    xschem raw read $q op
+    set new [lindex [pcall xschem raw values v(dcmid) 0] 0]
+    catch {xschem raw clear}
+    xschem raw read $p op
+    set old [lindex [pcall xschem raw values v(dcmid) 0] 0]
+    set i0 [et_info]
+    file copy -force $q $p
+    xschem raw read $p op
+    set i2 [et_info]
+    set sw [lindex [pcall xschem raw values v(dcmid) 0] 0]
+    check "ET11 DISTINCTNESS, measured: the stale slot's v(dcmid) (3) and the file's (5) differ by more than the row tolerance, and re-reading the overwritten path SWITCHES to the stale slot (registry text unmoved, value still the old one) -- so the hazard is live" \
+        [list [far $old $new] [expr {$i0 eq $i2}] [near $sw $old]] {1 1 near}
+    set e [pcall calc::eval_text v(dcmid) $p {}]
+    set b [pcall calc::eval_texts [list v(dcmid) {v(dcmid) 1 *}] $p op]
+    set st [pcall xschem raw values v(dcmid) 0]
+    check "ET11 with a stale slot for the same path and type loaded, eval_text and eval_texts read the FILE ON DISK (5), not the slot (3)" \
+        [list [near [fld $e value] $new] [near [fld [lindex $b 0] value] $new] \
+              [near [fld [lindex $b 1] value] $new]] {near near near}
+    check "ET11 ...and the user's stale slot is left EXACTLY as it was: same registry text, still current, still holding its own 3" \
+        [list [expr {[et_info] eq $i2}] [near [lindex $st 0] $old]] {1 near}
+    check "ET11 ...and the private alias it read through is gone: no xschem_calc_et_<pid>_* left in calc::et_tmpdir" \
+        [glob -nocomplain -directory [calc::et_tmpdir] xschem_calc_et_[pid]_*] {}
+    catch {xschem raw clear}
+    test_scratch_drop $d
+}
+
+# =============================================================================
 # ET10 -- THE CALCULATOR'S EVAL SHARES THE CHECK (a pure refactor)
 # =============================================================================
 group ET10 {

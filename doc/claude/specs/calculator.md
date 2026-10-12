@@ -1600,8 +1600,16 @@ below are the ones a caller cannot answer for itself and so must not have to.
   `<rawpath>` itself with `xschem raw read <path> <analysis>` (path AND type), evaluates,
   clears every slot the read or a wave-valued verb added (by index, highest first),
   restores the user's slot by name and type, and compares the whole `xschem raw info`
-  text with its snapshot — a mismatch is a refusal, never a silent difference. It
-  accepts plain RPN, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
+  text with its snapshot — a mismatch is a refusal, never a silent difference.
+  **It always reads the file on disk.** `xschem raw read` of a path and type the
+  registry already holds SWITCHES to that slot instead of reading (`extra_rawfile()` in
+  `src/save.c`), and OP annotation or the Calculator can leave such a slot holding an
+  earlier run's results under a file a re-run has overwritten. So when any slot names
+  the path, `calc::et_alias` reads through a private alias of the file (a symbolic
+  link, else a copy, in `calc::et_tmpdir`, deleted afterwards), the user's slot is never
+  touched, and an alias that cannot be made is a refusal (`calc::et_msg alias`), never a
+  read of the stale slot. Rows: ET11 of `test_calc_eval_text`, OE8 of
+  `test_ase_outputs_eval`. It accepts plain RPN, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
   calls (`cross(...)`, `bandwidth(...)`, ...), checked by `calc::meas_prepare` — the
   same check the Eval press uses (`calc::meas_eval`). Analysis: a qualifier's own;
   else `<analysis>`; else the operating point for plain RPN and the first
