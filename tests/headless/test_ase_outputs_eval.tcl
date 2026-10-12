@@ -37,6 +37,8 @@
 #        (derived without the router, FLOOR 9) routes as infix and shows
 #        the value the former print path gave, on a synthetic circuit built
 #        from the row's own reads with the bench's own analyses
+#   OE14 no output text can stop the run: an unticked leading-zero number or
+#        deep nesting neither raises nor refuses
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
 #        `print` gave, the expression's signal was saved, and the deck carries
 #        no print -- skipped with a lowercase skip: line when absent
@@ -353,6 +355,27 @@ group OE9 {
         [list [llength $srcs] $nplain [oe9_absent $outs]] [list 5 2 [lsort -unique $want]]
     check "OE9 every card source carries a role, and the roles are exactly plain and read" \
         [lsort -unique [lmap sc $srcs {lindex $sc 2}]] {plain read}
+}
+
+# =============================================================================
+# OE14 -- NO OUTPUT TEXT CAN STOP THE RUN, HOWEVER IT IS SPELLED (fix round
+# 2026-10-11, verifier at a21d2cd2)
+# =============================================================================
+# An UNTICKED `v(out)*09` used to make the deck render and the pre-flight scan
+# RAISE (Tcl's octal reading of `09`), so ase::run_deck never started the
+# simulator.  Same for a deep nesting.  Each row is now an ordinary text: it is
+# read for the save list without raising, and the run proceeds.
+group OE14 {
+    set ::sim_case_mode fold
+    foreach {nm txt} [list zero {v(out)*09} deep "[string repeat ( 400]v(out)[string repeat ) 400]"] {
+        set outs [list {expr v(out) save 1} [list expr $txt save 0]]
+        set d [oe_deck [oe_state oe13 $outs $::AN_OPTRAN]]
+        set sc [pcall ase::preflight_scan [oe_state oe13 $outs $::AN_OPTRAN] $::NL]
+        check "OE14 an UNTICKED $nm row beside a ticked v(out): the deck renders (no raise), the pre-flight scan runs (no raise), and the gate passes" \
+            [list [string match ERR:* $d] [string match ERR:* $sc] [oe9_gate $outs]] {0 0 {0 0}}
+        check "OE14 ...and the deck carries v(out)'s card" \
+            [expr {[llength [oe_lines $d {^\.save .*v\(out\)}]] > 0}] 1
+    }
 }
 
 # =============================================================================

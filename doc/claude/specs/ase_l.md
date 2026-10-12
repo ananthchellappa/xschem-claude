@@ -765,7 +765,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
   apt ngspice whose lone-op save grows a phantom `i(all)`, an absent read card
   makes R-OUT3b count two cards where one vector exists, so the `.save all`
   leader is not emitted for it. The repair offer still rewrites the row's own
-  text. Row OE9.
+  text. Row OE9. **No output text raises** either (third fix round,
+  2026-10-11): an unticked `v(out)*09` (Tcl's octal `09`) or a 400-deep
+  nesting used to raise out of the deck render and the scan, so the simulator
+  never started; both are now ordinary texts (calculator.md R610). Row OE14.
 - **R-OUT3b — the op phantom guard counts the deck's vectors.**
   `ase::saves_op_phantom_risk` asks whether `ase::output_save_cards` holds
   exactly one card, not whether one row is ticked: a ticked plain row plus a

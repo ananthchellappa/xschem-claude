@@ -3027,9 +3027,17 @@ proc calc::eval_msg {kind {a {}} {b {}}} {
 # on this Tcl, so `$d == $d` would work for a NaN by accident and say nothing
 # about an overflow; `-Inf < $d < Inf` is false for a NaN, for `Inf` and for
 # `-Inf` alike, which is the whole property in one expression.
+#
+# ⚠ A LEADING-ZERO INTEGER (`09`, `-08`) IS READ AS DECIMAL, ITS REDUNDANT ZEROS
+# DROPPED FIRST.  Tcl reads such a text as OCTAL, and `double(09)` RAISES -- out
+# of a predicate, and so out of an ASE-L Outputs row before the run (band ET13
+# of tests/headless/test_calc_eval_text.tcl).  `calc::num_read` drops the same
+# zeros from the text it hands on, so no accepted number reaches an `expr` with
+# them.
 proc calc::eval_finite {v} {
     set v [string trim $v]
     if {![regexp {^-?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$} $v]} { return 0 }
+    set v [regsub {^(-?)0+([0-9])} $v {\1\2}]
     set d [expr {double($v)}]
     return [expr {$d > -Inf && $d < Inf}]
 }
@@ -3042,7 +3050,9 @@ proc calc::eval_finite {v} {
 # spelling the user would otherwise have typed: the factor is folded into the
 # exponent as text (`100u` -> `100e-6`), never multiplied, so the verb gets the
 # same double the scientific spelling gives -- `100 * 1e-6` is not `1e-4`.  A
-# plain number comes back byte-identical.  `mil` is the one factor that is not
+# plain number comes back byte-identical, except that redundant leading zeros
+# are dropped (`09` -> `9`, `010` -> `10`: decimal, never Tcl's octal).  `mil` is
+# the one factor that is not
 # a power of ten and is the one that is multiplied.
 #
 # The alphabet is ngspice's (`::ase::backend::ngspice::si_suffixes`; band E6 of
@@ -3052,7 +3062,7 @@ proc calc::eval_finite {v} {
 # the user as rule calc_eng_capital_M: a bare uppercase `M` is `capM`, refused,
 # because ngspice reads it as milli silently and a user who typed it meant mega.
 proc calc::num_read {v} {
-    set t [string trim $v]
+    set t [regsub {^(-?)0+([0-9])} [string trim $v] {\1\2}]
     if {[calc::eval_finite $t]} { return [list ok $t] }
     set mant {} ; set ex {} ; set rest {}
     if {![regexp {^(-?(?:[0-9]+\.?[0-9]*|\.[0-9]+))(?:[eE]([-+]?[0-9]+))?([A-Za-z]+)$} \
@@ -3080,6 +3090,12 @@ proc calc::num_read {v} {
     }
     if {![calc::eval_finite $out]} { return {bad {}} }
     return [list ok $out]
+}
+
+# An INTEGER argument as typed, its redundant leading zeros dropped: Tcl reads
+# `010` as octal 8 and refuses `09`, where the user means ten and nine.
+proc calc::int_read {v} {
+    return [regsub {^([-+]?)0+([0-9])} [string trim $v] {\1\2}]
 }
 
 # ...the text alone, or {} when it is not a number.
@@ -12349,7 +12365,7 @@ proc calc::arg_field_bad {label kind v} {
             if {[string trim $v] eq {}} { return [calc::arg_msg rpn $label] }
         }
         int {
-            if {![string is integer -strict [string trim $v]]} {
+            if {![string is integer -strict [calc::int_read $v]]} {
                 return [calc::arg_msg int $label $v]
             }
         }
@@ -13204,6 +13220,7 @@ proc calc::meas_numeric {name vals} {
                 set n [calc::num_eng $v]
                 if {$n ne {}} { set v $n }
             }
+            if {$kind eq {int}} { set v [calc::int_read $v] }
             if {$kind eq {enum}} { set v [calc::word_unquote $v] }
             if {$kind eq {rpn}} { set v [calc::rpn_unquote $v] }
         }
@@ -13712,6 +13729,7 @@ proc calc::et_msg {kind {a {}} {b {}}} {
         restore { return "Cannot evaluate: could not restore the loaded results" }
         alias { return "Cannot evaluate: the results file is already loaded and could not be re-read" }
         ambiguous { return "Cannot evaluate: this result has $a; write $b" }
+        internal { return "Cannot evaluate: the expression could not be read ($a)" }
     }
     return {}
 }
@@ -13757,7 +13775,21 @@ proc calc::et_join {words conj} {
 # measurement operands of an infix or RPN text).  A refusal here is a refusal
 # before any read -- and, for the save list, a text whose signals are not
 # reads at all (`calc::eval_text_signals`).
+#
+# NO TEXT RAISES OUT OF HERE.  An Outputs row's text reaches this through the
+# save list (`calc::eval_text_signals`) BEFORE the run, so a raise would stop the
+# simulator for a row the user may not even have ticked (ase_l.md R-OUT3a).
+# The translator refuses every malformed shape it knows with its own sentence;
+# a raise from anything below is a defect, turned into a refusal naming it
+# rather than a blocked run (band ET13).
 proc calc::et_check {text} {
+    if {[catch {calc::et_check_text $text} c]} {
+        return [calc::et_refuse [calc::et_msg internal $c]]
+    }
+    return $c
+}
+
+proc calc::et_check_text {text} {
     set t [string trim $text]
     if {$t eq {}} { return [calc::et_refuse [calc::et_msg empty]] }
     if {[calc::quote_bad $t]} { return [calc::et_refuse [calc::eval_msg quote]] }
@@ -13898,6 +13930,40 @@ proc calc::et_run {path an plans dataset} {
     return $out
 }
 
+# An ngspice device parameter typed bare, `@r1[i]`, is what the user `.save`s
+# and what ngspice's own `print` reads; the raw file spells a CURRENT parameter
+# `i(@r1[i])`.  So a bare `@...` operand the loaded raw does not know, whose
+# `i(...)` spelling it does, is read through that spelling.  Anything else is
+# left for the engine's own unknown-token sentence.  Needs the loaded raw.
+proc calc::et_resolve {rpn} {
+    if {[string first @ $rpn] < 0} { return $rpn }
+    set out {}
+    foreach tok [calc::rpn_tokens $rpn] {
+        if {[string index $tok 0] eq {@}} {
+            set k -1
+            catch {set k [xschem raw index $tok]}
+            if {$k eq {-1}} {
+                set k2 -1
+                catch {set k2 [xschem raw index "i($tok)"]}
+                if {[string is integer -strict $k2] && $k2 >= 0} { set tok "i($tok)" }
+            }
+        }
+        lappend out $tok
+    }
+    return [join $out { }]
+}
+
+# ...and the expression arguments of measurement call `$name`.
+proc calc::et_resolve_vals {name vals} {
+    set keys [calc::ix_rpnkeys $name]
+    set out {}
+    foreach {k v} $vals {
+        if {$k in $keys} { set v [calc::et_resolve $v] }
+        lappend out $k $v
+    }
+    return $out
+}
+
 # One plan, inside the bracket.  A measurement operand of an expression is
 # measured first and its number put in place of its placeholder; it must answer
 # a number.
@@ -13910,7 +13976,7 @@ proc calc::et_one {p dataset} {
         foreach sub [dict get $p subs] {
             lassign $sub name vals
             set d {}
-            if {[catch {calc::aq_arg_invoke $name [calc::meas_numeric $name $vals]} d]} {
+            if {[catch {calc::aq_arg_invoke $name [calc::et_resolve_vals $name [calc::meas_numeric $name $vals]]} d]} {
                 return [calc::et_refuse [calc::arg_msg failed $name $d]]
             }
             set sink [calc::fn_sink $d]
@@ -13925,7 +13991,7 @@ proc calc::et_one {p dataset} {
             lappend map [calc::ix_marker $k] $v
             incr k
         }
-        set rpn [string map $map $rpn]
+        set rpn [calc::et_resolve [string map $map $rpn]]
         set np 0
         catch {set np [xschem raw points $dataset]}
         set d [calc::eval_rpn $rpn $dataset 0]
@@ -13938,7 +14004,7 @@ proc calc::et_one {p dataset} {
     set name [dict get $m verb]
     set d {}
     if {[catch {calc::aq_arg_invoke $name \
-                    [calc::meas_numeric $name [dict get $p vals]]} d]} {
+                    [calc::et_resolve_vals $name [calc::meas_numeric $name [dict get $p vals]]]} d]} {
         return [calc::et_refuse [calc::arg_msg failed $name $d]]
     }
     switch -exact -- [calc::fn_sink $d] {
@@ -13952,12 +14018,13 @@ proc calc::et_one {p dataset} {
     return [calc::et_refuse $msg]
 }
 
-# Does postfix `$rpn` vary along the sweep?  Only through a signal operand or
-# one of `calc::ix_wavy`'s tokens: `2 3 +`, or a measurement's number times
+# Does postfix `$rpn` vary along the sweep?  Only through a signal operand, the
+# sweep scale itself (`time`, `frequency`), or one of `calc::ix_wavy`'s tokens: `2 3 +`, or a measurement's number times
 # two, is one number on any analysis.
 proc calc::et_wavy {rpn} {
     foreach tok [calc::rpn_tokens $rpn] {
         if {$tok in [calc::ix_wavy]} { return 1 }
+        if {[string tolower $tok] in {time frequency}} { return 1 }
         if {[calc::et_operand $tok]} { return 1 }
     }
     return 0
@@ -14100,6 +14167,8 @@ proc calc::ix_msg {kind {a {}} {b {}}} {
         nestwave { return "Cannot evaluate: $a gives a waveform here, so it cannot be part of an expression." }
         nestarg { return "Cannot evaluate: a measurement inside $a's argument is not supported." }
         nestbad { return "Cannot evaluate: $a's answer is not a number ($b)." }
+        case { return "Cannot evaluate: write '$b', not '$a'." }
+        deep { return "Cannot evaluate: the expression is nested more than $a deep." }
     }
     return {}
 }
@@ -14171,19 +14240,29 @@ proc calc::ix_lex {s} {
         }
         if {[regexp {^[A-Za-z_#@][A-Za-z0-9_.:#$@\[\]]*} $rest m]} {
             set j [expr {$i + [string length $m]}]
-            if {[string index $s $j] eq "("} {
-                set lo [string tolower $m]
+            set lo [string tolower $m]
+            set j2 $j
+            if {$lo in [calc::ix_wrappers] || [calc::meas_verb $lo]
+                || [dict exists [calc::ix_fns] $lo]} {
+                while {[string is space -strict [string index $s $j2]]} { incr j2 }
+            }
+            if {[string index $s $j2] eq "("} {
+                if {$m ne $lo && [calc::meas_verb $lo]} {
+                    lappend toks [list bad $m case $lo]
+                    set i $j2
+                    continue
+                }
                 if {$lo in [calc::ix_wrappers] || [calc::meas_verb $m]} {
-                    set e [calc::ix_close $s $j]
+                    set e [calc::ix_close $s $j2]
                     if {$e < 0} { return {ok 0} }
                     set typ sig
                     if {$lo ni [calc::ix_wrappers]} { set typ meas }
-                    lappend toks [list $typ [string range $s $i $e]]
+                    lappend toks [list $typ "$m[string range $s $j2 $e]"]
                     set i [expr {$e + 1}]
                     continue
                 }
                 lappend toks [list fn $lo]
-                set i $j
+                set i $j2
                 continue
             }
             lappend toks [list sig $m]
@@ -14233,8 +14312,16 @@ proc calc::ix_after {} {
     calc::ix_fault side [lindex $t 1]
 }
 
+# The deepest nesting the parser descends into before refusing: every
+# parenthesis, unary sign, `^` and call recurses through `calc::ix_expr`, and an
+# unbounded descent raises Tcl's own "too many nested evaluations" (verifier,
+# 2026-10-11).  Far above anything the engine's token cap could evaluate.
+proc calc::ix_maxdepth {} { return 100 }
+
 proc calc::ix_expr {minprec} {
     variable ix_p
+    variable ix_depth
+    if {[incr ix_depth] > [calc::ix_maxdepth]} { calc::ix_fault deep [calc::ix_maxdepth] }
     set lhs [calc::ix_unary]
     while 1 {
         set t [calc::ix_peek]
@@ -14250,6 +14337,7 @@ proc calc::ix_expr {minprec} {
         if {$op eq {^}} { set op ** }
         set lhs [concat $lhs $rhs [list $op]]
     }
+    incr ix_depth -1
     return $lhs
 }
 
@@ -14275,12 +14363,13 @@ proc calc::ix_primary {} {
     variable ix_p
     variable ix_subs
     set t [calc::ix_peek]
-    lassign $t ty tx flag
+    lassign $t ty tx flag lo
     switch -exact -- $ty {
         num { incr ix_p ; return [list $tx] }
         sig { incr ix_p ; return [list $tx] }
         bad {
             if {$flag eq {capM}} { calc::ix_fault capM $tx }
+            if {$flag eq {case}} { calc::ix_fault case $tx $lo }
             calc::ix_fault number $tx
         }
         meas {
@@ -14350,6 +14439,7 @@ proc calc::ix_parse {toks} {
     variable ix_t $toks
     variable ix_p 0
     variable ix_subs {}
+    variable ix_depth 0
     if {![llength $toks]} { return [dict create ok 0 side 0 kind empty msg [calc::et_msg empty]] }
     if {[catch {calc::ix_expr 0} out]} {
         if {[lindex $out 0] ne {IX}} { return -code error $out }

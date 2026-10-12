@@ -559,6 +559,89 @@ group ET12 {
 }
 
 # =============================================================================
+# ET13 -- NO TEXT RAISES, AND FIVE PRINT-PATH PARITY SHAPES (fix round
+# 2026-10-11, verifier at a21d2cd2)
+# =============================================================================
+# An Outputs row's text is read BEFORE the run, for the save list, so a raise
+# out of the translator stopped the simulator for a row the user had not even
+# ticked.  Two raises were measured: a leading-zero integer (`09`: Tcl reads it
+# as octal and `double(09)` raises) and a deep nesting (Tcl's own "too many
+# nested evaluations").  Each is now a value or a sentence, and `calc::et_check`
+# turns anything else that raises into a refusal (the BACKSTOP row sabotages the
+# lexer to prove it).
+#
+# DECLARED LIMIT (calculator.md R610): `ln(0)`, `log10(0)` and `db(0)` answer
+# the engine's clamp (a large negative number), not -inf.  Row `DECLARED` below
+# measures `ln(0)` so a change to it reddens and the declaration is revisited.
+proc et_s {t} { return [pcall calc::eval_text_signals $t] }
+group ET13 {
+    set z {v(dcmid)*09 09*v(dcmid) -09 -v(dcmid)*08 {- 08} 010*v(dcmid) {0009.5*v(dcmid)}}
+    set want [list [expr {9 * $dc}] [expr {9 * $dc}] -9.0 [expr {-8 * $dc}] -8.0 [expr {10 * $dc}] [expr {9.5 * $dc}]]
+    check "ET13 LEADING ZEROS read as DECIMAL and never raise: v*09, 09*v, -09, -v*08, '- 08', 010*v (10, not octal 8), 0009.5*v" \
+        [lmap t $z w $want {near [et_v $t] $w}] {near near near near near near near}
+    check "ET13 LEADING ZEROS fixture: octal 010 (8) and decimal 010 (10) give different answers, so the 010 row discriminates" \
+        [far [expr {8 * $dc}] [expr {10 * $dc}]] 1
+    check "ET13 ...and the save list reads them without raising (the run is never blocked)" \
+        [lmap t $z {et_s $t}] {v(dcmid) v(dcmid) {} v(dcmid) {} v(dcmid) v(dcmid)}
+    check "ET13 calc::num_read drops redundant leading zeros (09 010 -08 007u 00 0.5), and calc::eval_finite reads them as decimal instead of raising (09 010 -08 0 0.5 all finite)" \
+        [list [lmap v {09 010 -08 007u 00 0.5} {pcall calc::num_read $v}] \
+              [lmap v {09 010 -08 0 0.5} {pcall calc::eval_finite $v}]] \
+        {{{ok 9} {ok 10} {ok -8} {ok 7e-6} {ok 0} {ok 0.5}} {1 1 1 1 1}}
+    set c2 [et_v {cross(vt(lp), 0.5, 2, rising)} {}]
+    check "ET13 fixture: the first and second rising edges differ, so the nth legs below discriminate" [far $cr $c2] 1
+    check "ET13 an INTEGER argument 010 is TEN, not octal 8, and 09 is nine: each answers exactly what its decimal spelling answers, and the 8th and 10th answers differ (so the 010 leg discriminates)" \
+        [list [expr {[et_m {cross(vt(lp), 0.5, 8, rising)} {}] ne [et_m {cross(vt(lp), 0.5, 10, rising)} {}]}] \
+              [expr {[et_m {cross(vt(lp), 0.5, 010, rising)} {}] eq [et_m {cross(vt(lp), 0.5, 10, rising)} {}]}] \
+              [expr {[et_m {cross(vt(lp), 0.5, 09, rising)} {}] eq [et_m {cross(vt(lp), 0.5, 9, rising)} {}]}]] \
+        {1 1 1}
+    set deep [list [string repeat ( 400]v(dcmid)[string repeat ) 400] \
+                   [string repeat - 3001]v(dcmid) \
+                   [string repeat abs( 2000]v(dcmid)[string repeat ) 2000] \
+                   2[string repeat ^2 3000]]
+    set dsent "Cannot evaluate: the expression is nested more than [calc::ix_maxdepth] deep."
+    check "ET13 DEEP NESTING is refused with a sentence, never raised: 400 parentheses, 3001 unary minuses, 2000 nested abs(), 3000 chained ^ (then the save list reads nothing from each)" \
+        [list [lmap t $deep {et_m $t}] [lmap t $deep {et_s $t}]] \
+        [list [lrepeat 4 $dsent] {{} {} {} {}}]
+    check "ET13 ...and the cap is not near ordinary text: 50 parentheses still evaluate to v(dcmid)" \
+        [near [et_v [string repeat ( 50]v(dcmid)[string repeat ) 50]] $dc] near
+    set b [pcall calc::eval_texts [list [lindex $deep 0] v(dcmid)] $::fixture op]
+    check "ET13 ...and a deep text in a batch costs only its own row: its sibling still has its value" \
+        [list [fld [lindex $b 0] msg] [near [fld [lindex $b 1] value] $dc]] [list $dsent near]
+    check "ET13 a 500-deep nest of measurement calls and of vt( is refused or read, never raised" \
+        [lmap t [list [string repeat cross( 500] [string repeat vt( 500]] {
+            list [string match ERR:* [pcall calc::eval_text $t $::fixture {}]] [string match ERR:* [et_s $t]]}] \
+        {{0 0} {0 0}}
+    # BACKSTOP: anything that raises below calc::et_check is a refusal naming it.
+    rename ::calc::ix_lex ::calc::ix_lex_saved
+    proc ::calc::ix_lex {s} { error "sabotage" }
+    set bs [list [fld [pcall calc::eval_text v(dcmid)*2 $::fixture op] msg] [et_s v(dcmid)*2]]
+    rename ::calc::ix_lex {}
+    rename ::calc::ix_lex_saved ::calc::ix_lex
+    check "ET13 BACKSTOP: with the lexer made to raise, eval_text REFUSES with a sentence naming the error and the save list reads nothing -- nothing raises" \
+        $bs [list "Cannot evaluate: the expression could not be read (sabotage)" {}]
+    check "ET13 BACKSTOP control: with the lexer restored, the same text evaluates" \
+        [near [et_v v(dcmid)*2] [expr {2 * $dc}]] near
+    check "ET13 PARITY: a space between a function or signal name and its parenthesis is read as the call -- sqrt (v), abs (v-7), v (dcmid)*2, cross (vt(lp),...)" \
+        [list [near [et_v {sqrt (v(dcmid))}] [expr {sqrt($dc)}]] [near [et_v {abs (v(dcmid)-7)}] [expr {abs($dc - 7)}]] \
+              [near [et_v {v (dcmid)*2}] [expr {2 * $dc}]] [near [et_v {cross (vt(lp), 0.5, 1, rising)} {}] $cr]] \
+        {near near near near}
+    check "ET13 PARITY: a measurement name in another case is refused naming the right spelling (SKILL is case-sensitive), not reported as an unknown function" \
+        [et_m {Cross(vt(lp), 0.5, 1, rising)} {}] "Cannot evaluate: write 'cross', not 'Cross'."
+    set tw [pcall calc::eval_text time $::fixture tran]
+    check "ET13 PARITY: the sweep scale alone is a WAVE on the transient (101 points), not its last point as a scalar" \
+        [list [fld $tw kind] [fld $tw points]] {wave 101}
+    et_load op
+    set bare [pcall xschem raw index @rdc1\[i\]]
+    catch {xschem raw clear}
+    check "ET13 PARITY fixture: the raw does NOT know the bare spelling of @rdc1's i parameter (index -1) -- it spells that current inside i(...) -- so the row below measures the resolution" \
+        $bare -1
+    check "ET13 PARITY: an ngspice device-current parameter typed bare, @rdc1 with its i parameter, times 2, reads the raw's i(...) spelling (as print did), and the save list carries the bare spelling ngspice's .save takes" \
+        [list [near [et_v {@rdc1[i]*2}] [expr {2 * $ir}]] [et_s {@rdc1[i]*2}]] [list near [list {@rdc1[i]}]]
+    check "ET13 DECLARED LIMIT, measured: ln(0) answers the engine's clamp -35, not -inf" \
+        [et_v ln(0)] -35
+}
+
+# =============================================================================
 # ET10 -- THE CALCULATOR'S EVAL SHARES THE CHECK (a pure refactor)
 # =============================================================================
 group ET10 {

@@ -1677,6 +1677,25 @@ below are the ones a caller cannot answer for itself and so must not have to.
   ADE-L shows an infinity; measured by row ET12 `DECLARED LIMIT`. OE13's population is
   derived without the router and carries a `FLOOR: 9` ratchet, so a routing change that
   stopped reading the committed rows as infix reddens it.
+  **No text raises** (third fix round, 2026-10-11, verifier at `a21d2cd2`): an Outputs
+  row is read for the save list before the run, so a raise stopped the simulator for a
+  row the user had not ticked. A number with redundant leading zeros reads as
+  **decimal** — `09` is nine and `010` ten, never Tcl's octal (which raised on `09` and
+  read `010` as 8) — in `calc::num_read`, `calc::eval_finite` and an integer measurement
+  argument (`calc::int_read`); nesting deeper than `calc::ix_maxdepth` (100) is refused
+  with a sentence instead of raising Tcl's "too many nested evaluations"; and
+  `calc::et_check` turns anything else that raises into a refusal naming it. Five
+  print-path parity shapes: a space between a function or signal name and its
+  parenthesis is the call (`sqrt (v(a))`, `cross (vt(a),...)`); a measurement name in
+  another case is refused naming the right spelling (`Cross` → *write 'cross'*; SKILL is
+  case-sensitive); the sweep scale alone (`time`, `frequency`) is a wave, not its last
+  point; and an ngspice device-current parameter typed bare (`@r1[i]`), which the raw
+  spells `i(@r1[i])`, is read through that spelling when the raw does not know the bare
+  one — the save list keeps the bare `.save @r1[i]`. Row ET13 of `test_calc_eval_text`;
+  OE14 of `test_ase_outputs_eval` (an unticked `v(out)*09` or 400-deep text beside a
+  ticked `v(out)` renders the deck and passes the pre-flight). **Declared limit:**
+  `ln(0)`, `log10(0)` and `db(0)` answer the engine's clamp (`ln(0)` = −35, measured by
+  ET13 `DECLARED`), not −inf.
 
 ---
 

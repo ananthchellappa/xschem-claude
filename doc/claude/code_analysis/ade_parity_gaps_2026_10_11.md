@@ -67,7 +67,12 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    postfix; postfix still accepted (calculator.md R610). Malformed one-token infix
    (`2(Vcc-Vss)`) is refused with a sentence, as ADE-L reports a syntax error. **Still open:**
    the Calculator window's buffer Eval and Plot take postfix only; `x/0` answers `0` (engine
-   DIVIS rule, issue 1628) where ADE-L gives an infinity — declared, not fixed.
+   DIVIS rule, issue 1628) where ADE-L gives an infinity — declared, not fixed; likewise
+   `ln(0)` answers the engine's clamp (−35), not −inf. Third fix round (same day): no text
+   raises (leading-zero numbers read as decimal, deep nesting refused with a sentence), a
+   space before a call's parenthesis is accepted, `Cross(...)` is refused naming `cross`, the
+   sweep scale alone is a wave, and a bare `@r1[i]` reads the raw's `i(@r1[i])` as `print` did
+   (calculator.md R610, row ET13).
 2. Signal names are xschem net names (`lp`). Cadence slash paths (`/lp`, `/I0/net`) are refused
    (row Q6 of `test_calc_quotes`).
 3. Quotes are accepted but not required. ❓ Cadence requires them.
