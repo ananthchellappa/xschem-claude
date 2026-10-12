@@ -166,9 +166,9 @@ group OE3 {
               {name nid expr -i(@m1[id]) save 1}
               {name w expr vt(lp) save 1}
               {name x expr {cross(vt(lp), 0.5, 1, rising)} save 1}
-              {name y expr {v(dcmid) 2 * 1 +} save 1}
-              {name bad expr {nosuch 2 *} save 1}
-              {name infix expr {v(dcmid)*2} save 1}}
+              {name y expr {vdc(dcmid) 2 * 1 +} save 1}
+              {name bad expr {vdc(nosuch) 2 *} save 1}
+              {name infix expr {vdc(dcmid)*2} save 1}}
     set res [pcall [ase::backend_hook ngspice result_probe] [oe_state oe3 $outs] {}]
     set xref [calc::eval_text {cross(vt(lp), 0.5, 1, rising)} $::fixture {}]
     check "OE3 plain signals read the OPERATING POINT (0 and 3 -- distinct), a device parameter its op value, and a negated current the negative of its op value" \
@@ -177,10 +177,10 @@ group OE3 {
     check "OE3 a waveform answer is the word wave, never a last point" [val $res w] wave
     check "OE3 a measurement call is the Calculator's own number, %.6e" \
         [list [dict get $xref ok] [val $res x]] [list 1 [format %.6e [dict get $xref value]]]
-    check "OE3 plain RPN 'v(dcmid) 2 * 1 +' is 7, computed after the run" [val $res y] 7.000000e+00
-    check "OE3 a refusal is the Calculator's sentence, naming what is wrong; and INFIX is the Calculator's own syntax too (calculator.md R610), so 'v(dcmid)*2' is 6 -- ADE-L's algebra, computed after the run" \
+    check "OE3 plain RPN 'vdc(dcmid) 2 * 1 +' is 7, computed after the run" [val $res y] 7.000000e+00
+    check "OE3 a refusal is the Calculator's sentence, naming what is wrong AS TYPED; and INFIX is the Calculator's own syntax too (calculator.md R610), so 'vdc(dcmid)*2' is 6 -- ADE-L's algebra, computed after the run" \
         [list [val $res bad] [val $res infix]] \
-        [list {Cannot evaluate: unknown token 'nosuch' (not an operator/function, number or raw variable).} \
+        [list {Cannot evaluate: unknown token 'vdc(nosuch)' (not an operator/function, number or raw variable).} \
               6.000000e+00]
     catch {xschem raw clear}
     set i0 [pcall xschem raw info]
@@ -200,16 +200,50 @@ group OE3 {
 # =============================================================================
 group OE15 {
     file copy -force $::fixture [file join $::scratch oe15_ase.raw]
-    set outs {{name dz expr db(v(lp)/v(lp)) save 1}
-              {name xz expr v(dcmid)/v(lp) save 1}
-              {name lz expr db(v(lp)) save 1}
-              {name ok expr v(dcmid)/2 save 1}}
+    set outs {{name dz expr db(vdc(lp)/vdc(lp)) save 1}
+              {name xz expr vdc(dcmid)/vdc(lp) save 1}
+              {name lz expr db(vdc(lp)) save 1}
+              {name ok expr vdc(dcmid)/2 save 1}}
     set res [pcall [ase::backend_hook ngspice result_probe] [oe_state oe15 $outs] {}]
-    check "OE15 the Value cell of a scalar 0/0, x/0 and db(0) row is the refusal sentence, never -700 or 0; a nonzero division (v(dcmid)/2, v(dcmid) is 3) still reads its number" \
+    check "OE15 the Value cell of a scalar 0/0, x/0 and db(0) row is the refusal sentence, never -700 or 0; a nonzero division (vdc(dcmid)/2, vdc(dcmid) is 3) still reads its number" \
         [list [val $res dz] [val $res xz] [val $res lz] [val $res ok]] \
         [list {Cannot evaluate: division by zero} {Cannot evaluate: division by zero} \
               {Cannot evaluate: log of zero or a negative value} 1.500000e+00]
     file delete -force [file join $::scratch oe15_ase.raw]
+}
+
+# =============================================================================
+# OE16 -- AN UNQUALIFIED EXPRESSION ROW IS REFUSED; A SIGNAL ROW IS NOT (the
+# user, 2026-10-12: "in ASE-L, v(something) will be meaningless ... If it's
+# obvious the user means operating point, just convert v(blah) to vdc(blah)").
+# An EXPRESSION row's Value is the Calculator's refusal offering the qualified
+# spellings; a plain SIGNAL row -- ADE-L's "signal" output, one name to save
+# and plot -- keeps R-OUT4's reading: its single-point value, the operating
+# point.  A negated current (-i(...)) is a signal row too.
+# =============================================================================
+group OE16 {
+    file copy -force $::fixture [file join $::scratch oe16_ase.raw]
+    set outs {{name e1 expr v(dcmid)*2 save 1}
+              {name e2 expr {v(dcmid) 2 *} save 1}
+              {name e3 expr {cross(v(lp), 0.5, 1, rising)} save 1}
+              {name q1 expr vdc(dcmid)*2 save 1}
+              {name s1 expr v(dcmid) save 1}
+              {name s2 expr vdc(dcmid) save 1}
+              {name s3 expr dcmid save 1}
+              {name s4 expr -i(@m1[id]) save 1}}
+    set res [pcall [ase::backend_hook ngspice result_probe] [oe_state oe16 $outs] {}]
+    set w {Cannot evaluate: v(dcmid) names no analysis; write vt(dcmid), vf(dcmid) or vdc(dcmid)}
+    check "OE16 an unqualified EXPRESSION row -- infix, postfix, a measurement call -- shows the refusal offering the run's qualified spellings, never an operating-point number" \
+        [list [val $res e1] [val $res e2] [val $res e3]] \
+        [list $w $w {Cannot evaluate: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)}]
+    check "OE16 ...its qualified form reads the number (vdc(dcmid)*2 is 6), and a plain SIGNAL row -- wrapped, qualified, bare, or a negated current -- keeps its operating-point value" \
+        [list [val $res q1] [val $res s1] [val $res s2] [val $res s3] [val $res s4]] \
+        {6.000000e+00 3.000000e+00 3.000000e+00 3.000000e+00 -8.703500e-04}
+    check "OE16 ...and a qualified signal row is PLOTTED as the raw's own name: the waveform viewer keeps plain v(), so ase::ui::plot_map_expr rewrites vt(out) to v(out) and a negated -idc(v1) to the RPN i(v1) -1 *" \
+        [list [pcall ase::ui::plot_map_expr {vt(out)}] [pcall ase::ui::plot_map_expr {-idc(v1)}] \
+              [pcall ase::ui::plot_map_expr {VF("x1.n")}] [pcall ase::ui::plot_map_expr {v(out)}]] \
+        [list v(out) {i(v1) -1 *} {v(x1.n)} v(out)]
+    file delete -force [file join $::scratch oe16_ase.raw]
 }
 
 # =============================================================================
@@ -234,7 +268,7 @@ group OE4 {
     check "OE4 fixture: the cut holds the transient alone" \
         [calc::raw_analyses [file join $::scratch oe4_ase.raw]] tran
     set res [pcall [ase::backend_hook ngspice result_probe] \
-                 [oe_state oe4 {{name lp expr v(lp) save 1} {name x expr {cross(v(lp), 0.5, 1, rising)} save 1}
+                 [oe_state oe4 {{name lp expr v(lp) save 1} {name x expr {cross(vt(lp), 0.5, 1, rising)} save 1}
                                 {name s expr vdc(lp) save 1}}] {}]
     check "OE4 with no operating point a plain signal reads wave (it was blank under the prints), a measurement still answers, and an op-qualified row says the run has none" \
         [list [val $res lp] [string is double -strict [val $res x]] [val $res s]] \
@@ -315,7 +349,7 @@ group OE8 {
     file copy -force $::fixture $p
     check "OE8 fixture: the new run's file was written with v(dcmid) patched to 5" \
         [oe8_patched $::fixture $q v(dcmid) 5.0] ok
-    set outs {{name a expr v(dcmid) save 1} {name b expr {v(dcmid) 1 *} save 1}}
+    set outs {{name a expr v(dcmid) save 1} {name b expr {vdc(dcmid) 1 *} save 1}}
     catch {xschem raw clear}
     xschem raw read $p op
     set i0 [pcall xschem raw info]
@@ -505,7 +539,7 @@ if {$NG eq {}} {
         file mkdir $home
         set outs {{name out expr v(out) save 1 plot 0}
                   {name cur expr i(v1) save 1 plot 0}
-                  {name dbl expr {v(mid) 2 *} save 0 plot 0}}
+                  {name dbl expr {vdc(mid) 2 *} save 0 plot 0}}
         set st [oe_state oe7 $outs $::AN_OPTRAN]
         dict set st rundir $d
         set deck [oe_deck $st]
@@ -632,6 +666,8 @@ if {$NG eq {}} {
         set far {}
         set said {}
         set notinfix {}
+        set nop 0
+        set nsweep 0
         foreach row $rows {
             lassign $row fn o an
             incr n
@@ -650,10 +686,15 @@ if {$NG eq {}} {
             set f [open $df w] ; puts -nonewline $f $deck ; close $f
             catch {exec env -u DISPLAY HOME=$::scratch timeout 120 $::NG -b $df 2>@1} log
             set res [pcall [ase::backend_hook ngspice result_probe] $st $log]
+            # R208d (2026-10-12): the committed rows now NAME their analysis
+            # (`vdc(Vcc)/idc(Vr)`), so the print reference is the row as
+            # ngspice spells it (`calc::aq_strip`), and a row qualified for a
+            # SWEEP is a wave whose Value cell reads the word, not a number.
+            set an13 [dict get [calc::aq_plan $ex] type]
             set pf [file join $d oe13p.cir]
             set f [open $pf w]
             puts -nonewline $f [string map [list ".end\n" ""] $nl]
-            puts $f ".control\nop\nprint $ex\n.endc\n.end"
+            puts $f ".control\nop\nprint [calc::aq_strip $ex]\n.endc\n.end"
             close $f
             catch {exec env -u DISPLAY HOME=$::scratch timeout 60 $::NG -b $pf 2>@1} plog
             set pv NOPRINT
@@ -661,7 +702,13 @@ if {$NG eq {}} {
                 if {[regexp {^\S.*\s=\s+(\S+)\s*$} $ln -> v] && [string is double -strict $v]} { set pv $v }
             }
             set got [val $res r]
-            lappend said "$fn [list $ex] value=$got print=$pv"
+            lappend said "$fn [list $ex] analysis=$an13 value=$got print=$pv"
+            if {$an13 ni {op {}}} {
+                incr nsweep
+                if {$got ne {wave}} { lappend bad "$fn:$ex ($an13) got=$got want=wave" }
+                continue
+            }
+            incr nop
             if {![string is double -strict $got] || ![string is double -strict $pv]
                 || abs($got - $pv) > abs($pv) * 1e-5} {
                 lappend bad "$fn:$ex got=$got print=$pv"
@@ -671,7 +718,7 @@ if {$NG eq {}} {
                 if {[dict get $a enabled] eq {1} && [dict get $a type] ne {op}} { set other [dict get $a type] }
             }
             if {$other ne {}} {
-                set w [calc::eval_text [ase::output_calc_text $ex] [file join $d oe13_${n}_ase.raw] $other]
+                set w [calc::eval_text [calc::aq_strip [ase::output_calc_text $ex]] [file join $d oe13_${n}_ase.raw] $other]
                 if {![dict get $w ok] || ![string is double -strict $got]
                     || abs([dict get $w value] - $got) <= abs($got) * 1e-5} {
                     lappend far "$ex:$other=[dict get $w value]/[dict get $w msg]"
@@ -679,8 +726,10 @@ if {$NG eq {}} {
             }
         }
         foreach l $said { puts "note: OE13 $l" }
-        check "OE13 DERIVED over every committed bench row (git ls-files *.state): every ngspice-infix row now shows a VALUE, equal (to print's precision) to what the former print path gave on the registry ngspice for the same circuit and the bench's own analyses (population > 0, misses)" \
-            [list [expr {$n > 0}] $bad] {1 {}}
+        check "OE13 DERIVED over every committed bench row (git ls-files *.state): every ngspice-infix row qualified for the OPERATING POINT shows a VALUE equal (to print's precision) to what the former print path gave on the registry ngspice for the same circuit and the bench's own analyses, and every row qualified for a SWEEP shows the word wave (population > 0, op rows > 0, misses)" \
+            [list [expr {$n > 0}] [expr {$nop > 0}] $bad] {1 1 {}}
+        check "OE13 every committed infix row NAMES ITS ANALYSIS (R208d): none is left unqualified, so none is refused for reading v() or i() with no analysis -- the op/sweep split above is a cover of the population" \
+            [list [expr {$nop + $nsweep}] $n] [list $n $n]
         # The population is every committed non-plain, non-measurement row --
         # derived WITHOUT asking the router, so a routing change that stopped
         # reading these as infix cannot shrink it silently (verifier,
@@ -689,7 +738,7 @@ if {$NG eq {}} {
         # bench that adds such a row raises it; one that loses a row reddens.
         check "OE13 POPULATION: every committed non-plain, non-measurement Outputs row (derived without the router) ROUTES AS INFIX, and there are at least nine of them (FLOOR: 9; count >= floor, then rows that did not route infix)" \
             [list [expr {$n >= 9}] $notinfix] {1 {}}
-        check "OE13 DISCRIMINATION, measured per row: the same text read in the bench's other enabled analysis (its last point) differs, so a value read from the wrong analysis could not pass" \
+        check "OE13 DISCRIMINATION, measured per OPERATING-POINT row: the same text read in the bench's other enabled analysis (its last point) differs, so a value read from the wrong analysis could not pass" \
             $far {}
     }
 }

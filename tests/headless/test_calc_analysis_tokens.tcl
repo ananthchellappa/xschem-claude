@@ -666,6 +666,38 @@ group AT16 {
         [list [list $cur] {i(v1)}]
 }
 # =============================================================================
+# AT17 -- AN UNQUALIFIED SIGNAL NAMES NO ANALYSIS (the user, 2026-10-12: "in
+# Cadence ADE, there is no such thing as v(signal_name) ... in ASE-L,
+# v(something) will be meaningless", and for the Calculator too: "I said
+# waveform viewer ok. How would it be ok for Calculator?").  The DECISION:
+# `calc::uq_first` finds the first unqualified v()/i()/bare name a Calculator
+# text reads -- in postfix, infix and a measurement call's expression
+# arguments -- and `calc::uq_say` builds the refusal offering the qualified
+# spellings the result really has.  The presses that refuse with it are band
+# PG16 of tests/headless/test_calc_pick.tcl (display arm).
+# =============================================================================
+group AT17 {
+    set texts [list {v(lp)} {V("lp") 2 *} {lp*2} {vt(lp) i(v1) /} \
+                    {cross(v(lp), 0.5, 1, rising)} {2*value(v(lp), 1m)} {x1.n<3> 2 *}]
+    check "AT17 calc::uq_first names the FIRST unqualified signal as typed, with its family and name: a wrapped v(), a quoted V(), a bare node in infix, an i() beside a qualified voltage, a measurement call's operand, a nested call's operand, and a bare hierarchical bus bit in postfix" \
+        [lmap t $texts {pcall calc::uq_first $t}] \
+        [list {v(lp) v lp} [list {V("lp")} v lp] {lp v lp} {i(v1) i v1} {v(lp) v lp} {v(lp) v lp} {x1.n<3> v x1.n<3>}]
+    set clean [list {vdc(a)/idc(b)} {vt(lp) 2 *} {@m1[gm]*2} {time} {frequency 2 *} \
+                    {value(vt(lp), 1m)} {bandwidth(vf(lp), 3, magnitude, low, 0)*2} {cross(vt(lp), 0.5, 1, rising)} {2 3 +}]
+    check "AT17 ...and finds NOTHING in qualified text, a device parameter (no Calculator spelling exists for one), the sweep scale, numbers, and measurement calls whose operands are qualified -- their enum and number arguments are not signals" \
+        [lmap t $clean {pcall calc::uq_first $t}] [lrepeat [llength $clean] {}]
+    check "AT17 calc::uq_say offers the qualified spellings for the analyses the result HAS, in the selectors' order: a voltage on tran+AC+op, a current on op+DC sweep, and all four when the analyses are unknown" \
+        [list [pcall calc::uq_say {v(out) v out} {tran ac op}] \
+              [pcall calc::uq_say {I(V1) i V1} {op dc}] \
+              [pcall calc::uq_say {out v out} {}]] \
+        [list {Cannot evaluate: v(out) names no analysis; write vt(out), vf(out) or vdc(out)} \
+              {Cannot evaluate: I(V1) names no analysis; write idc(V1) or is(V1)} \
+              {Cannot evaluate: out names no analysis; write vt(out), vf(out), vdc(out) or vs(out)}]
+    check "AT17 ...and Plot and a measurement say it in their own verb" \
+        [list [pcall calc::uq_say {v(out) v out} {tran} unqualplot] [pcall calc::uq_say {v(out) v out} {tran} unqualmeas]] \
+        [list {Cannot plot: v(out) names no analysis; write vt(out)} {Cannot measure: v(out) names no analysis; write vt(out)}]
+}
+# =============================================================================
 # AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
 # leave the design window's cue as the user's database says, not grey
 # =============================================================================

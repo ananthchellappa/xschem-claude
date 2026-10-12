@@ -829,6 +829,52 @@ group PG15w {
 }
 
 # =============================================================================
+# PG16 — AN UNQUALIFIED SIGNAL IS REFUSED BY EVERY PRESS THAT EVALUATES THE
+# BUFFER (the user, 2026-10-12: "I said waveform viewer ok. How would it be ok
+# for Calculator?").  Eval, Plot and a measurement's click each refuse
+# v(lp), a bare node and an unqualified current with one sentence offering the
+# qualified spellings this result holds (tran, AC, op), and touch nothing: the
+# buffer keeps what was typed, the stack is not pushed, no dialog opens, and
+# the viewer's registry is byte-identical.  The decision is band AT17 of
+# tests/headless/test_calc_analysis_tokens.tcl.
+# =============================================================================
+group PG16 {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    set info0 [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}]
+    set got {}
+    foreach txt {v(lp) {lp 2 *} {cross(v(lp), 0.5, 1, rising)} {vt(lp) i(@rtop[i]) /}} {
+        .calc.buf delete 1.0 end
+        .calc.buf insert end $txt
+        pg_press .calc.mode.eval
+        lappend got [list [lindex [pcall calc::status_history] 0] [expr {[pg_buf] eq $txt}] [pcall calc::stk_get]]
+    }
+    set wv {Cannot evaluate: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)}
+    check "PG16 a real Eval press on v(lp), on a bare node in postfix, on a measurement call over v(lp) and on an unqualified current beside a qualified voltage is REFUSED naming the first unqualified read and offering this result's spellings -- the buffer keeps the text and nothing is pushed" \
+        $got [list [list $wv 1 {}] \
+                   [list {Cannot evaluate: lp names no analysis; write vt(lp), vf(lp) or vdc(lp)} 1 {}] \
+                   [list $wv 1 {}] \
+                   [list {Cannot evaluate: i(@rtop[i]) names no analysis; write it(@rtop[i]), if(@rtop[i]) or idc(@rtop[i])} 1 {}]]
+    .calc.buf delete 1.0 end
+    .calc.buf insert end v(lp)
+    pg_press .calc.mode.plot
+    check "PG16 a real Plot press on v(lp) is REFUSED the same way, in Plot's verb, and the buffer keeps the text" \
+        [list [lindex [pcall calc::status_history] 0] [pg_buf]] \
+        [list {Cannot plot: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)} v(lp)]
+    set deadman [after 4000 {catch {.calc.arg.btns.cancel invoke}}]
+    set fm [pcall calc::fn_measure cross]
+    after cancel $deadman
+    set opened [expr {[winfo exists .calc.arg] ? 1 : 0}]
+    catch {destroy .calc.arg}
+    check "PG16 a measurement click (cross) on a buffer holding v(lp) is refused BEFORE its dialog opens, in the measurement's verb, and the buffer keeps the text" \
+        [list $fm $opened [pg_buf]] \
+        [list {Cannot measure: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)} 0 v(lp)]
+    check "PG16 ...and after every refusal the viewer's registry and current slot are byte-identical" \
+        [pg15_viewer {list [xschem raw info] [calc::wave_dest_cur]}] $info0
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
 # PG8 — R201: RE-CLICK DISARMS, ANOTHER SELECTOR SWITCHES
 # =============================================================================
 # The gesture is the real one, on the real radiobutton.

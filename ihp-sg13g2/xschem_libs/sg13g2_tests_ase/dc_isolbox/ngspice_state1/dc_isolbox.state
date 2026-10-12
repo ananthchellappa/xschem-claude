@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {{name temp value 27}}
 analyses {{type op enabled 0} {type dc enabled 1 source I0 start -1m stop 1m step 1u} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name nwellnet expr nwell_net save 1 plot 1} {name isosubnet expr isosub_net save 1 plot 1}}
+outputs {{name nwellnet expr vs(nwell_net) save 1 plot 1} {name isosubnet expr vs(isosub_net) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

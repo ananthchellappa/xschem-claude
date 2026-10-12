@@ -3752,7 +3752,10 @@ check "S27 Evaluate WITH a result gets PAST the gate and names the empty buffer,
 # the evidence that the engine step ran where the gate said to run it.
 set ::s26_log {}
 pcall calc::status {} 0
-pcall .calc.buf insert end {v(ramp) 2 /}
+# R208d (2026-10-12): Eval refuses an unqualified v(), so the expression is
+# R208c's `vt()` -- whose bracket finds no data in this viewer and answers the
+# same no-data sentence, inside the same second loan.
+pcall .calc.buf insert end {vt(ramp) 2 /}
 pcall calc::buf_sync
 pcall .calc.mode.eval invoke
 # ⚠ THE LOANS ARE COUNTED, NOT MERELY LOOKED FOR, and that is the whole row.
@@ -4409,6 +4412,11 @@ s28band S28/2 {
 # ⚠ AND THE POLL IS ARMED BEFORE THE `event generate`, WHICH IS THE WHOLE POINT
 # OF THIS ROW: the Button-1 enters `fn_click` -> `tkwait` synchronously, so a
 # driver armed on the line AFTER it would never be armed at all.
+# R208d (2026-10-12): a measurement's click refuses a buffer that reads an
+# unqualified name BEFORE the dialog -- and S28/0's sentinel is three bare
+# words -- so the gesture is made over a text that reads none.
+pcall .calc.buf delete 1.0 end
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.fn.cat set {Special Functions}
 pcall event generate .calc.fn.cat <<ComboboxSelected>>
 update idletasks
@@ -4473,7 +4481,13 @@ s28band S28/3 {
 # and touched nothing" are otherwise the same green.
 pcall calc::status {}
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) - 2 *}
+# R208d (2026-10-12): the Calculator refuses an unqualified v() at Eval AND at
+# a measurement's click, so the S28 bands' buffers read the sweep scale alone
+# (`time 3 -`, `time 3 - 2 *`, `time 3 /`): a text with no unqualified signal
+# and no analysis qualifier, so the press neither refuses nor brackets an
+# analysis, and the verbs here are recorders that never read it.  They were
+# `v(out) v(in) -`-shaped before; nothing in these rows measured the signals.
+pcall .calc.buf insert end {time 3 - 2 *}
 pcall .calc.buf edit reset
 pcall .calc.buf edit modified 0
 pcall calc::buf_sync
@@ -4522,7 +4536,7 @@ foreach nm [ad_verbs] {
 check "S28 R412 Cancel leaves the buffer BYTE-IDENTICAL, measured on FIVE captures and not one: the text, `edit modified` (8.4+, never `edit canundo`), the status history, the status line and the Stack size -- PLUS the undo witness, because a dialog that touched the buffer and undid itself is byte-identical while having spent an undo; the cancelled count and the undo count both ride along, so \"no dialog opened\" and \"four opened and touched nothing\" are different greens" \
     [list $ad_ncancel $ad_nundo $ad_cbad] {14 14 {}}
 check_true "S28 fixture: the pre-Cancel capture is a real, non-trivial expression and the history was non-empty" \
-    [expr {$ad_c_text eq {v(out) v(in) - 2 *}
+    [expr {$ad_c_text eq {time 3 - 2 *}
            && [string is boolean -strict $ad_c_mod]}]
 }
 
@@ -4596,7 +4610,7 @@ if {[info commands ::calc::cross_scalar] ne {} \
 }
 pcall calc::status {}
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 pcall .calc.buf edit modified 0
 pcall calc::buf_sync
@@ -4654,7 +4668,7 @@ check "S28 R421a part 1 -- OK COMPOSES A CALL INTO THE BUFFER AND MEASURES NOTHI
           [expr {[string match {cross(*)} $ad_built] ? 1 : 0}] \
           [expr {[string first "\n" $ad_built] < 0 ? {oneline} : {MULTILINE}}] \
           [ad_split $ad_built]] \
-    [list 1 1 1 1 oneline [list cross [list {v(out) v(in) -} 0.375 3 falling]]]
+    [list 1 1 1 1 oneline [list cross [list {time 3 -} 0.375 3 falling]]]
 check "S28 R421a part 1b -- THE EVAL PRESS ON THAT COMPOSED CALL IS WHAT MEASURES: the number REPLACES the call in the buffer as a bare literal (R404: \"a literal number\", where further arithmetic can use it), not as a sentence and not as an opaque handle, and the press RETURNS rather than raising.  This is R421's own part 1, retargeted onto the gesture the user now makes; what it replaced is asserted above rather than assumed, so the pair cannot both pass on a buffer nothing wrote" \
     [list $ad_stubbed \
           [expr {[string match ERR:* $ad_evalans] ? 0 : 1}] \
@@ -4682,7 +4696,7 @@ check "S28 R421a ...and OK SAYS SO: the compose press writes a sentence, it is `
     {1 spoke moved identical fitted 1}
 check "S28 R421a the EVAL PRESS calls the SURFACE wrapper `calc::cross_scalar` -- with the buffer's own RPN first and then the dialog's three values in the wrapper's formal order -- and NEVER the raw `calc::cross`, which answers `nth = 0` with success and a list and has no deferral.  ⚠ AND THE OK PRESS CALLED NEITHER OF THEM, which is the whole of R421a.  The empty recorder log at OK is NOT a vacuous leg: the SAME recorder in the SAME row is asserted NON-EMPTY one gesture later, so the two legs cannot both pass against a recorder nothing ever reached" \
     [list $ad_stubbed $ad_recok $ad_rawok $::AD_REC $::AD_RAWCALLS] \
-    [list 1 {} 0 [list {v(out) v(in) -} 0.375 3 falling] 0]
+    [list 1 {} 0 [list {time 3 -} 0.375 3 falling] 0]
 check "S28 item 1 (calculator feedback batch) -- THE EVAL PRESS RAN THE VERB INSIDE THE RESULT'S OWN CONTEXT: one loan taken with the issue-0314 borrow, released after, and the surface wrapper was reached WHILE it was held.  Before this the verb ran in whatever context was current, so after a selector pick -- which leaves the DESIGN window current -- every measurement answered 'no simulation data loaded'; band PG14 of test_calc_pick.tcl drives that end to end" \
     [list $ad_loanstub $ad_loanlog $ad_recloan] \
     [list 1 [list {enter borrow=1} leave] 1]
@@ -4718,12 +4732,12 @@ check "S28 R421a part 3 -- ONE `edit undo` PER GESTURE, AND THERE ARE NOW TWO GE
           $ad_redone1 \
           [expr {[string is double -strict $ad_redone2]
                  && abs($ad_redone2 - $::AD_VALUE) <= 1e-6 * abs($::AD_VALUE) ? 1 : 0}]] \
-    [list 1 1 $ad_built {v(out) v(in) -} recoverable $ad_built 1]
+    [list 1 1 $ad_built {time 3 -} recoverable $ad_built 1]
 # ...and the sentence really MOVES with the arguments, which is what stops the
 # containment legs above being satisfied by a fixed string that happens to carry
 # the right substrings.
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 set ::AD_REC {}
 ad_arm {
@@ -4751,8 +4765,8 @@ check "S28 R421a ...and BOTH ARTIFACTS really MOVE with what the user typed: a s
           [expr {$ad_prov2 ne $ad_prov ? {differ} : {SAME}}] \
           [expr {[string match {*rising*} $ad_prov2] ? 1 : 0}] \
           [expr {[string match {*falling*} $ad_prov2] ? 1 : 0}]] \
-    [list 1 1 1 1 [list cross [list {v(out) v(in) -} 0.625 1 rising]] differ \
-          [list {v(out) v(in) -} 0.625 1 rising] differ 1 0]
+    [list 1 1 1 1 [list cross [list {time 3 -} 0.625 1 rising]] differ \
+          [list {time 3 -} 0.625 1 rising] differ 1 0]
 # ⚠ NEW (R421a).  THE BUFFER IS NOW A VALIDATOR SURFACE AND NOTHING FENCED
 # IT.  The dialog's fields are validated by `calc::arg_bad`/`calc::arg_trouble`,
 # which the row below drives; but a composed call sits in an EDITABLE Text
@@ -4787,9 +4801,9 @@ proc ad_evalrefuse {txt} {
                 said [s_said] shows [s_shows] \
                 spoke [expr {[s_said] ne $h0 ? {spoke} : {SILENT}}]]
 }
-set ad_r_arity [ad_evalrefuse {cross(v(out) v(in) -, 0.375)}]
-set ad_r_field [ad_evalrefuse {cross(v(out) v(in) -, not-a-number, 3, falling)}]
-set ad_r_plain [ad_evalrefuse {v(out) v(in) -}]
+set ad_r_arity [ad_evalrefuse {cross(time 3 -, 0.375)}]
+set ad_r_field [ad_evalrefuse {cross(time 3 -, not-a-number, 3, falling)}]
+set ad_r_plain [ad_evalrefuse {time 3 -}]
 check "S28 R421a NEW -- a call whose ARITY does not match the verb's formals is refused AT THE EVAL PRESS: a sentence is written, the surface wrapper is NOT reached, the raw proc is not reached either, and the text the user typed is left BYTE-IDENTICAL.  The sentence is compared by IDENTITY against `calc::meas_msg arity`'s own string with the count DERIVED from `calc::meas_formals`, so no arity is written out here and a verb gaining a formal moves the row with it" \
     [list $ad_stubbed [dg $ad_r_arity buf] [dg $ad_r_arity rec] [dg $ad_r_arity raw] \
           [expr {[string match ERR:* [dg $ad_r_arity ans]] ? 0 : 1}] \
@@ -4798,22 +4812,22 @@ check "S28 R421a NEW -- a call whose ARITY does not match the verb's formals is 
                      [pcall calc::meas_msg arity cross \
                           [llength [pcall calc::meas_formals cross]]] ?
                  {identical} : "said:[dg $ad_r_arity said]"}]] \
-    [list 1 {cross(v(out) v(in) -, 0.375)} {} 0 1 spoke fitted identical]
+    [list 1 {cross(time 3 -, 0.375)} {} 0 1 spoke fitted identical]
 check "S28 R421a NEW -- a MALFORMED VALUE typed into a composed call is refused at the Eval press through the SAME predicate the dialog uses (`calc::arg_field_bad`), so a value typed into the buffer is held to the rule a value typed into the form is held to: a sentence is written, the surface wrapper is NOT reached, and the user's text does not move.  The WORDS are unratified (SH3): what is asserted is that the refusal is NON-EMPTY, names the verb, and is a DIFFERENT sentence from the arity refusal above" \
     [list $ad_stubbed [dg $ad_r_field buf] [dg $ad_r_field rec] [dg $ad_r_field raw] \
           [expr {[string match ERR:* [dg $ad_r_field ans]] ? 0 : 1}] \
           [dg $ad_r_field spoke] [dg $ad_r_field shows] \
           [expr {[string match {*cross*} [dg $ad_r_field said]] ? 1 : 0}] \
           [expr {[dg $ad_r_field said] ne [dg $ad_r_arity said] ? {differ} : {SAME}}]] \
-    [list 1 {cross(v(out) v(in) -, not-a-number, 3, falling)} {} 0 1 spoke fitted 1 differ]
+    [list 1 {cross(time 3 -, not-a-number, 3, falling)} {} 0 1 spoke fitted 1 differ]
 check "S28 R421a NEW -- A PLAIN RPN EXPRESSION STILL FALLS THROUGH TO THE ENGINE, which is the one thing R421a could have broken for a gesture nobody asked to change: `calc::meas_split` answers that this is NOT a call, the measurement layer is not reached (no surface wrapper, no raw proc), the buffer is NOT replaced by a number, and the Eval press still says something about the data.  The DECISION leg and the ACT legs are both carried, because a press that silently did nothing would satisfy either one alone" \
-    [list $ad_stubbed [ad_split {v(out) v(in) -}] [dg $ad_r_plain buf] \
+    [list $ad_stubbed [ad_split {time 3 -}] [dg $ad_r_plain buf] \
           [dg $ad_r_plain rec] [dg $ad_r_plain raw] \
           [expr {[string is double -strict [dg $ad_r_plain buf]] ? {NUMBER} : {expression}}] \
           [expr {[string match ERR:* [dg $ad_r_plain ans]] ? 0 : 1}] \
           [dg $ad_r_plain spoke] \
           [expr {[string match {*=*} [dg $ad_r_plain said]] ? {PROVENANCE} : {notprovenance}}]] \
-    [list 1 NOTACALL {v(out) v(in) -} {} 0 expression 1 spoke notprovenance]
+    [list 1 NOTACALL {time 3 -} {} 0 expression 1 spoke notprovenance]
 # ⚠ SHAPE VALIDATION, FENCED WITHOUT CHOOSING A SENTENCE FOR THE USER.
 # CLICK_CONTRACT section 8: "the dialog validates SHAPE ONLY" -- `real` is a
 # finite double, `int` is `string is integer -strict`, `enum` is membership, and
@@ -4829,7 +4843,7 @@ check "S28 R421a NEW -- A PLAIN RPN EXPRESSION STILL FALLS THROUGH TO THE ENGINE
 # window the user never got an answer out of.
 set ::AD_REC {}
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 set ad_badexpr [ad_buf]
 ad_arm {
@@ -4993,7 +5007,7 @@ if {[info commands ::calc::wave_in_token] ne {}
 # press so it measures Eval alone, and restored with a control row saying so.
 pcall calc::status {}
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(lp) v(sq) /}
+pcall .calc.buf insert end {time 3 /}
 pcall .calc.buf edit reset
 pcall .calc.buf edit modified 0
 pcall calc::buf_sync
@@ -5066,7 +5080,7 @@ check "S28/7 R421a on a WAVE answer the EVAL PRESS LEAVES THE RPN BUFFER ALONE a
           [expr {$wv_undone eq $wv_user0 ? 1 : 0}] \
           [expr {$wv_redone eq $wv_built ? 1 : 0}]] \
     [list 1 ok 1 1 1 1 \
-          [list dutyCycle [list {v(lp) v(sq) /} 0.5 0 0 start]] {} quiet 1 1]
+          [list dutyCycle [list {time 3 /} 0.5 0 0 start]] {} quiet 1 1]
 check "S28/7 R421a ...and the DESTINATION SENTENCE really reaches `.calc.status.msg` AT THE EVAL PRESS -- asserted through TWO independent witnesses, because a press that composed the sentence and raised on the way out leaves the field holding the PREVIOUS sentence, which is exactly what S28/4's return-value leg was added for: the press's own return value is the sentence, the widget's `get` is the same string, and it names the verb and the database the answer carried.  ⚠ AND IT IS NOT THE SENTENCE OK LEFT BEHIND, which is the leg that catches a wiring that handed the wave to the viewer at OK after all.  The WORDS are not asserted -- all of this stage's sentences are unratified and carry an open rule debt -- so what is asserted is the agreement, the containment and the movement" \
     [list $wv_stubbed $wv_handstub \
           [expr {[string match ERR:* $wv_ans] ? 0 : 1}] \
@@ -5093,7 +5107,7 @@ check "S28/7 R421a ...and the SURFACE WRAPPER is what the EVAL PRESS reached, wi
           [expr {[llength $::WV_REC] ==
                  [llength [pcall calc::meas_formals dutyCycle]] ?
                  {full-arity} : "arity:[llength $::WV_REC]"}]] \
-    [list 1 untouched [list {v(lp) v(sq) /} 0.5] allcycles full-arity]
+    [list 1 untouched [list {time 3 /} 0.5] allcycles full-arity]
 # THE CONTROL, and it is what separates "the wave arm did nothing" from "the
 # surface is broken for every answer": with the SAME recorder installed but
 # answering a SCALAR, the click must still paste a number and ONE undo must still
@@ -5111,7 +5125,7 @@ proc ::calc::dutyCycle_scalar $wv_dc_formals {
     return [list ok 1 absent 0 value $::WV_SCALARVAL dataset 0 dest {} msg {}]
 }
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(lp) v(sq) /}
+pcall .calc.buf insert end {time 3 /}
 pcall .calc.buf edit reset
 pcall .calc.buf edit modified 0
 set wv_text1 [ad_buf]
@@ -5146,9 +5160,9 @@ check "S28/7 the CONTROL: with the same recorder answering a SCALAR the SAME TWO
           [expr {$wv_back1 eq $wv_built2 ? 1 : 0}] $wv_back2 \
           [expr {[llength $::WV_HAND] == 0 ? {untouched} : "handed:$::WV_HAND"}] \
           [expr {$wv_notescalar >= 1 ? {noted} : {NOTNOTED}}] \
-          [expr {$wv_text1 eq {v(lp) v(sq) /} ? 1 : 0}]] \
-    [list 1 1 1 [list dutyCycle [list {v(lp) v(sq) /} 0.5 0 0 start]] 1 1 \
-          1 {v(lp) v(sq) /} untouched noted 1]
+          [expr {$wv_text1 eq {time 3 /} ? 1 : 0}]] \
+    [list 1 1 1 [list dutyCycle [list {time 3 /} 0.5 0 0 start]] 1 1 \
+          1 {time 3 /} untouched noted 1]
 catch {rename ::calc::dutyCycle_scalar {}}
 catch {rename ::wv_wave_rec ::calc::dutyCycle_scalar}
 if {$wv_stubbed} {
@@ -5177,7 +5191,7 @@ check "S28/7 CONTROL: all THREE renames are undone and the real procs are back w
 # --- S28/5  Escape is Cancel, through the real keyboard ----------------------
 s28band S28/5 {
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 set ad_esc_text [ad_buf]
 ad_arm {catch {event generate .calc.arg <Key-Escape> -when now}}
@@ -5189,7 +5203,7 @@ catch {destroy .calc.arg}
 check "S28 Escape on the argument dialog is CANCEL through the real keyboard -- the dialog goes away, no grab and no window are left, and the buffer is untouched; the poll waits for the GRAB before it types, because Tk delivers a key event to the DISPLAY's focus window rather than to the window the event names, so a driver that waited on `winfo exists` alone would send this Escape somewhere else entirely" \
     [list $ad_escran [ad_buf] \
           [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current]] \
-    [list 1 {v(out) v(in) -} 0 {}]
+    [list 1 {time 3 -} 0 {}]
 }
 
 # --- S28/A  SABOTAGE: the driver fires BEFORE the toplevel exists ------------
@@ -5237,7 +5251,7 @@ ad_arm {
     catch {.calc.arg.btns.cancel invoke}
 }
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 pcall calc::fn_click cross
 update
@@ -5250,7 +5264,7 @@ check "S28/B SABOTAGE a grab held ANYWHERE ELSE is not this dialog's grab: with 
     [list $ad_sabB $ad_ranB $::AD_GRABB \
           [expr {$::AD_FOCUSB eq {.calc.arg} || [string match {.calc.arg.*} $::AD_FOCUSB] ? 1 : 0}] \
           [ad_buf] [expr {[winfo exists .calc.arg] ? 1 : 0}] [grab current] $ad_remB] \
-    [list INSTALLED 1 .calc.arg 1 {v(out) v(in) -} 0 {} 1]
+    [list INSTALLED 1 .calc.arg 1 {time 3 -} 0 {} 1]
 }
 
 # --- S28/C  the poll can fail, but it cannot lie or linger -------------------
@@ -5317,7 +5331,7 @@ check "S28/6 CONTROL: the loan shim is off again with the result-gate stub, and 
 set ad_gate [pcall calc::require_result]
 set ad_gatemsg [dg $ad_gate msg]
 pcall .calc.buf delete 1.0 end
-pcall .calc.buf insert end {v(out) v(in) -}
+pcall .calc.buf insert end {time 3 -}
 pcall .calc.buf edit reset
 set ad_gatebad {} ; set ad_ngate 0
 foreach nm [ad_verbs] {

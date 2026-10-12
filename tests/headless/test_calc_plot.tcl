@@ -468,7 +468,13 @@ proc ns_diff {before after} {
 #   index  0 ->  f =  100: |H| = 1/sqrt(1.01), db20 = -20*log10(sqrt(1.01))
 #   index  9 ->  f = 1000: |H| = 1/sqrt(2),    db20 = -10*log10(2)   <- the -3 dB point
 #   index 19 ->  f = 2000: |H| = 1/sqrt(5),    db20 = -10*log10(5)
-set GAIN   {v(lp) v(sq) / db20()}
+# R208d (2026-10-12): the Calculator's Plot refuses an unqualified v(), so
+# every text this suite TYPES carries R208c's `vf()` -- the viewer here shows
+# the fixture's AC analysis.  The trace records the text as the viewer reads it,
+# qualifiers rewritten to the raw's own names (`calc::aq_strip`), which is
+# GAINV; the buffer keeps what was typed, which is GAIN.
+set GAIN   {vf(lp) vf(sq) / db20()}
+set GAINV  {v(lp) v(sq) / db20()}
 set DB_0   -0.04321373782642570
 set DB_9   -3.010299956639812
 set DB_19  -6.989700043360187
@@ -687,8 +693,8 @@ group PL3 {
 # =============================================================================
 group PL4 {
     set tr [lindex [alltraces $::tok] 0]
-    check "PL4 the trace records the EXPRESSION the user typed, byte for byte" \
-        [pcall dict get $tr expr] $::GAIN
+    check "PL4 the trace records the EXPRESSION the user typed as the viewer reads it -- byte for byte but for R208c's qualifiers, rewritten to the raw's own names (calc::aq_strip)" \
+        [list [pcall dict get $tr expr] [pcall calc::aq_strip $::GAIN]] [list $::GAINV $::GAINV]
     check "PL4 ...and its `vec` is a raw vector that really exists in the viewer's context, so the trace is not a dangling name" \
         [expr {[vecidx $::tok $::PL3_VEC] >= 0}] 1
     check "PL4 ...and that vector is NOT a `__calc_tmp` one: R402's delete discipline belongs to Evaluate's scratch column, not to a trace that has to keep reading its own" \
@@ -731,7 +737,7 @@ group PL4b {
         [list [expr {[lsearch -exact [tracevecs $::tok] $gone] >= 0}] \
               [expr {[vecidx $::tok $gone] >= 0}]] {1 1}
     destset {Replace}
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     press .calc.mode.plot
     check "PL4b the Replace threw the expression's TRACE away" \
         [list [lsearch -exact [tracevecs $::tok] $gone] [llength [alltraces $::tok]]] {-1 1}
@@ -749,20 +755,20 @@ group PL4b {
 group PL5 {
     # Append: a second press accumulates in the same strip.
     destset {Append}
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     press .calc.mode.plot
     check "PL5 Append accumulates: two presses, one strip, two traces" \
         [list [ngraphs $::tok] [llength [alltraces $::tok]]] {1 2}
     # New Strip: forces a fresh one and lands there.
     destset {New Strip}
-    pcall bufset {v(sq)}
+    pcall bufset {vf(sq)}
     press .calc.mode.plot
     check "PL5 New Strip forces a fresh strip and lands the trace in it" \
         [list [ngraphs $::tok] [llength [alltraces $::tok]]] {2 3}
     # Replace: empties the landing strip before adding.  The target is the strip
     # the last single-mode plot landed in, which New Strip just moved.
     destset {Replace}
-    pcall bufset {v(ramp)}
+    pcall bufset {vf(ramp)}
     press .calc.mode.plot
     check "PL5 Replace empties the landing strip first: the strip count holds and the TOTAL trace count falls back" \
         [list [ngraphs $::tok] [llength [alltraces $::tok]]] {2 3}
@@ -800,7 +806,7 @@ group PL5 {
 group PL5b {
     # start from a known-Append window, pushed the ordinary way
     destset {Append}
-    pcall bufset {v(dcmid)}
+    pcall bufset {vf(dcmid)}
     press .calc.mode.plot
     set pl5b_before {}
     foreach G [pcall dict get [pcall wviewer::layout_for $::tok] graphs] {
@@ -814,7 +820,7 @@ group PL5b {
     update idletasks
     check "PL5b the viewer's destination is still Append, because nothing has pushed yet -- the premise of the row below" \
         [pcall wviewer::plot_dest $::tok] append
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     press .calc.mode.plot
     set pl5b_after {}
     foreach G [pcall dict get [pcall wviewer::layout_for $::tok] graphs] {
@@ -885,9 +891,9 @@ group PL5c {
 # =============================================================================
 group PL5d {
     destset {Append}
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     press .calc.mode.plot
-    pcall bufset {v(sq)}
+    pcall bufset {vf(sq)}
     press .calc.mode.plot
     set gi0 [pcall wviewer::target_strip $::tok]
     set pre {}
@@ -898,7 +904,7 @@ group PL5d {
         [list [pcall wviewer::plot_mode $::tok] [pl_gt [pl_atn $pre $gi0] 1]] {single 1}
     # ...the single-mode CONTROL: Replace here really does clear.
     destset {Replace}
-    pcall bufset {v(ramp)}
+    pcall bufset {vf(ramp)}
     press .calc.mode.plot
     set gi1 [pcall wviewer::target_strip $::tok]
     set mid {}
@@ -923,7 +929,7 @@ group PL5d {
     set n0 [llength [alltraces $::tok]]
     check "PL5d fixture: there are traces on the canvas for a Replace to have destroyed" \
         [expr {$n0 > 0}] 1
-    pcall bufset {v(dcmid)}
+    pcall bufset {vf(dcmid)}
     set saidp [press .calc.mode.plot]
     check "PL5d ⚠ AND IT REALLY APPENDS: the total trace count GROWS by exactly one, which a Replace that cleared its landing strip could not do" \
         [expr {[llength [alltraces $::tok]] - $n0}] 1
@@ -933,7 +939,7 @@ group PL5d {
     # ...and the NON-VACUITY of the sentence rows: Append in multi mode says
     # nothing extra, so the clause above tracks the destination and not the mode.
     set saida [destset {Append}]
-    pcall bufset {v(div)}
+    pcall bufset {vf(div)}
     set saidq [press .calc.mode.plot]
     check "PL5d non-vacuity: Append in the same mode carries NO extra clause, so the clause belongs to Replace and not to multi mode as such" \
         [list [string match {*append*} $saida] [string match {*Append*} $saida] \
@@ -971,7 +977,7 @@ group PL5e {
     check "PL5e fixture: the viewer takes the FOURTH destination from its own Options menu, which W13 cannot express" \
         [list [pcall wviewer::set_plot_dest {New Tab} $::tok] \
               [pcall wviewer::plot_dest $::tok]] {newtab newtab}
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     set saide [press .calc.mode.plot]
     check "PL5e ⚠ the press SAYS the New Tab choice is gone, naming it, instead of cancelling it in silence -- read off the HISTORY, which holds the sentence as composed, because this composed line is wider than the status entry and the clause this row is about is exactly what the entry cuts off" \
         [list [string match {Plotted*} $saide] [string match {*New Tab*} $saide] [shown]] \
@@ -980,7 +986,7 @@ group PL5e {
         [pcall wviewer::plot_dest $::tok] append
     # ...and the non-vacuity: an ordinary press, from a destination W13 CAN
     # express, carries no such clause.
-    pcall bufset {v(sq)}
+    pcall bufset {vf(sq)}
     set saidf [press .calc.mode.plot]
     check "PL5e non-vacuity: a press from a destination W13 DOES offer carries no such clause" \
         [list [string match {Plotted*} $saidf] [string match {*New Tab*} $saidf] \
@@ -1047,16 +1053,16 @@ group PL6 {
 # =============================================================================
 group PL7 {
     set n0 [llength [alltraces $::tok]]
-    pcall bufset {v(nosuch) v(sq) /}
+    pcall bufset {vf(nosuch) vf(sq) /}
     set said [press .calc.mode.plot]
     check "PL7 R607 an unresolvable token is NAMED, and it is the name the user typed" \
-        [list [string match {*v(nosuch)*} $said] [string match {*expression error*} $said]] {1 0}
+        [list [string match {*vf(nosuch)*} $said] [string match {*expression error*} $said]] {1 0}
     check "PL7 ...and nothing was plotted" [llength [alltraces $::tok]] $n0
     # L1: the one class `wviewer::add_trace` does NOT catch.  MEASURED: handed a
     # 199-token expression it returns {} (success) while the engine wrote
     # nothing, so without `calc::rpn_maxtokens` Plot would report a trace it had
     # just filled with issue 0325's zeros.
-    set long [string trim [string repeat {v(sq) } 199]]
+    set long [string trim [string repeat {vf(sq) } 199]]
     pcall bufset $long
     set said2 [press .calc.mode.plot]
     set mx [pcall calc::rpn_maxtokens]
@@ -1070,7 +1076,7 @@ group PL7 {
     set addsaid NORUN
     if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     if {[lindex $t 0]} {
-        catch {set addsaid [wviewer::add_trace $::tok 0 $long]}
+        catch {set addsaid [wviewer::add_trace $::tok 0 [calc::aq_strip $long]]}
         catch {wviewer::leave_ctx $::tok $t}
     }
     check "PL7 ...and the CONTROL for that guard: wviewer::add_trace ACCEPTS the 199-token expression, which is exactly why calc::rpn_maxtokens has to exist" \
@@ -1122,19 +1128,25 @@ group PL7b {
     if {[catch {open $second w} fh]} {
         check "PL7b fixture: the second ascii raw could be written" "ERR:$fh" ok
     } else {
+        # ⚠ AN AC DATABASE, the same analysis the viewer shows: since R208d
+        # (2026-10-12) a Calculator Plot text names its analysis (`vf()`), and
+        # Plot draws in the analysis the viewer shows -- so the foreign slot
+        # this band is about is a SECOND AC result, which is what a `vf()`
+        # token can honestly reach.  (A foreign TRANSIENT slot under a `vt()`
+        # token is refused by R208c's Plot guard before any lookup.)
         puts $fh "Title: * a SECOND database for band PL7b -- one uniquely named signal"
         puts $fh "Date: Thu Oct  1 00:00:00  2026"
-        puts $fh "Plotname: Transient Analysis"
-        puts $fh "Flags: real"
+        puts $fh "Plotname: AC Analysis"
+        puts $fh "Flags: complex"
         puts $fh "No. Variables: 2"
         puts $fh "No. Points: 3"
         puts $fh "Variables:"
-        puts $fh "\t0\ttime\ttime"
+        puts $fh "\t0\tfrequency\tfrequency"
         puts $fh "\t1\tv(xdbonly)\tvoltage"
         puts $fh "Values:"
-        foreach {p tv vv} {0 0.0 11.0 1 1.0e-09 22.0 2 2.0e-09 33.0} {
-            puts $fh "$p\t$tv"
-            puts $fh "\t$vv"
+        foreach {p tv vv} {0 100.0 11.0 1 200.0 22.0 2 300.0 33.0} {
+            puts $fh "$p\t$tv,0.0"
+            puts $fh "\t$vv,0.0"
             puts $fh ""
         }
         close $fh
@@ -1146,7 +1158,7 @@ group PL7b {
     set rd2 {} ; set curnames {} ; set curidx NORUN
     if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     if {[lindex $t 0]} {
-        catch {set rd2 [xschem raw read $second tran]}
+        catch {set rd2 [xschem raw read $second ac]}
         catch {set rd2 "$rd2 [xschem raw switch $::fixture ac]"}
         catch {set curnames [split [string trim [xschem raw list]] "\n"]}
         catch {set curidx [xschem raw index {v(xdbonly)}]}
@@ -1163,7 +1175,7 @@ group PL7b {
     # --- THE ROW THE DEFECT WAS FOUND BY: the trace LANDS ------------------
     destset {Append}
     set n0 [llength [alltraces $::tok]]
-    pcall bufset {v(xdbonly)}
+    pcall bufset {vf(xdbonly)}
     set said [press .calc.mode.plot]
     check "PL7b ⚠⚠ THE TRACE LANDS: a single token naming a signal in a LOADED-BUT-NOT-CURRENT database is PLOTTED, not refused by name" \
         [list [expr {[llength [alltraces $::tok]] - $n0}] [string match {Plotted*} $said]] {1 1}
@@ -1181,7 +1193,7 @@ group PL7b {
     check "PL7b ...and the landed trace carries the FOREIGN database's path and type, so it reads from that slot and not from the current one" \
         [list [pcall dict get $tr expr] \
               [expr {[pcall dict get $tr rawfile] eq $second}] \
-              [pcall dict get $tr sim_type]] [list {v(xdbonly)} 1 tran]
+              [pcall dict get $tr sim_type]] [list {v(xdbonly)} 1 ac]
     # --- and the pre-flight's own answer, directly -------------------------
     set t2 {}
     set bt_tok NORUN ; set bt_notok NORUN ; set bt_bad NORUN
@@ -1221,20 +1233,20 @@ group PL7b {
     # Evaluate's refusal is TRUE: `xschem raw add` resolves against the current
     # database only, measured by the `raw index` row above.
     set saide [press .calc.mode.eval]
-    check "PL7b ⚠ AND EVALUATE STILL REFUSES THE SAME NAME, which is correct rather than a leftover: the engine resolves names against the CURRENT database only" \
-        [list [string match {Cannot evaluate:*} $saide] [string match {*v(xdbonly)*} $saide]] {1 1}
+    check "PL7b ⚠ AND EVALUATE STILL REFUSES THE SAME NAME, which is correct rather than a leftover: the engine resolves names against the CURRENT database only -- named as typed" \
+        [list [string match {Cannot evaluate:*} $saide] [string match {*vf(xdbonly)*} $saide]] {1 1}
     # ...and a bad token is still refused on the PLOT path too, by name
-    pcall bufset {v(reallynosuch)}
+    pcall bufset {vf(reallynosuch)}
     set saidr [press .calc.mode.plot]
     check "PL7b ...and the PLOT path still refuses a genuinely unknown name BY NAME, before the seam can clear a strip for it" \
-        [list [string match {Cannot plot:*} $saidr] [string match {*v(reallynosuch)*} $saidr]] {1 1}
+        [list [string match {Cannot plot:*} $saidr] [string match {*vf(reallynosuch)*} $saidr]] {1 1}
     # ...and the multi-token case is unaffected: the seam validates an
     # expression against the current database and nothing else, so a foreign
     # name inside one is refused by both, which is agreement and not a gap.
-    pcall bufset {v(xdbonly) v(lp) /}
+    pcall bufset {vf(xdbonly) vf(lp) /}
     set saidx [press .calc.mode.plot]
     check "PL7b ...and an EXPRESSION naming it is refused by both, because `add_trace`'s expression arm never asks the second question either -- the two now agree in both directions" \
-        [list [string match {Cannot plot:*} $saidx] [string match {*v(xdbonly)*} $saidx]] {1 1}
+        [list [string match {Cannot plot:*} $saidx] [string match {*vf(xdbonly)*} $saidx]] {1 1}
     pcall bufset {}
     set t3 {}
     if {[catch {wviewer::enter_ctx $::tok} t3]} { set t3 {0 {}} }
@@ -1342,9 +1354,9 @@ group PL10 {
         catch {wviewer::leave_ctx $::tok $t0}
     }
     update idletasks
-    pcall bufset {v(lp)}
+    pcall bufset {vf(lp)}
     set pl_said0 [press .calc.mode.plot]
-    pcall bufset {v(sq)}
+    pcall bufset {vf(sq)}
     set pl_said1 [press .calc.mode.plot]
     check "PL10 fixture: two ORDINARY traces are on the canvas first, through the real Plot button, so the strip the hand-off lands on is a populated one and `its own strip` is a claim about a layout rather than about an empty window" \
         [list [string match {Plotted*} $pl_said0] [string match {Plotted*} $pl_said1] \
@@ -1429,7 +1441,7 @@ group PL10 {
         [pl_armleft $::tok] {}
     # ...and an ordinary Plot press AFTER the measured one is unaffected, which is
     # the consequence a leaked arm would have and the one a user would meet.
-    pcall bufset {v(ramp)}
+    pcall bufset {vf(ramp)}
     set pl_said2 [press .calc.mode.plot]
     update idletasks
     set pl_last {}

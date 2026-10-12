@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerRES.lib} section res_typ}}
 variables {{name temp value 27}}
 analyses {{type op enabled 1} {type dc enabled 1 source Vres start 0 stop 3 step 0.01} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name VccIVr expr Vcc/I(Vr) save 1 plot 0} {name ivr expr i(vr) save 1 plot 1}}
+outputs {{name VccIVr expr vdc(Vcc)/idc(Vr) save 1 plot 0} {name ivr expr i(vr) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

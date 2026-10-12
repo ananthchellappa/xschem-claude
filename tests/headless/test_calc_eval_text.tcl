@@ -158,36 +158,42 @@ group ET1 {
 # ET2 -- WHICH ANALYSIS an unqualified text reads
 # =============================================================================
 group ET2 {
-    set p [pcall calc::eval_text v(lp) $::fixture {}]
-    check "ET2 plain v(lp) with no analysis given reads the OPERATING POINT -- the scalar issue 1243 gave the Value column" \
-        [list [fld $p kind] [near [fld $p value] [dict get $::REF op]]] {scalar near}
+    # R208d (2026-10-12) took the plain SIGNAL out of this band: `v(lp)` with no
+    # analysis is now refused (band ET16).  What the default still decides is a
+    # text that reads no signal of its own -- a device parameter, which has no
+    # qualified spelling, and the sweep scale -- so the rule is driven on those.
+    set gmref [et_ref op {@m1[gm]}]
+    set p [pcall calc::eval_text {@m1[gm]} $::fixture {}]
+    check "ET2 a device parameter with no analysis given reads the OPERATING POINT -- the scalar issue 1243 gave the Value column" \
+        [list [fld $p kind] [near [fld $p value] $gmref]] {scalar near}
     set pt [pcall calc::eval_text v(lp) $::fixture tran]
-    check "ET2 ...and with analysis tran given it reads the transient: a wave ending at the transient reference" \
+    check "ET2 ...and v(lp) with analysis tran GIVEN reads the transient: a wave ending at the transient reference (the caller named the analysis)" \
         [list [fld $pt kind] [near [fld $pt value] [dict get $::REF tran]]] {wave near}
     set q [pcall calc::eval_text {vt(lp)} $::fixture ac]
     check "ET2 a qualifier OVERRIDES the analysis argument: vt(lp) asked with analysis ac still reads the transient" \
         [near [fld $q value] [dict get $::REF tran]] near
     et_load tran
-    set ref [pcall calc::aq_arg_invoke cross [list rpn v(lp) level 0.5 nth 1 edge rising]]
+    set ref [pcall calc::aq_arg_invoke cross [list rpn time level 0.001 nth 1 edge rising]]
     catch {xschem raw clear}
-    set mc [pcall calc::eval_text {cross(v(lp), 0.5, 1, rising)} $::fixture {}]
+    set mc [pcall calc::eval_text {cross(time, 0.001, 1, rising)} $::fixture {}]
     check "ET2 an unqualified MEASUREMENT on a result holding TWO analyses besides the operating point (tran and AC) is REFUSED, naming both and the qualifiers that pick them -- never a silent pick (ADE-L parity, 2026-10-11: it used to answer an AC frequency on an op+AC+tran bench)" \
         [list [fld $mc ok] [fld $mc msg]] \
         {0 {Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)}}
     set cut [file join [test_scratch et2] tran_op.raw]
     check "ET2 fixture: a cut of the committed raw holding the transient and the operating point, with no AC" \
         [list [et_cut $cut {tran op}] [calc::raw_analyses $cut]] {ok {tran op}}
-    set mc1 [pcall calc::eval_text {cross(v(lp), 0.5, 1, rising)} $cut {}]
+    set mc1 [pcall calc::eval_text {cross(time, 0.001, 1, rising)} $cut {}]
     check "ET2 ...with exactly ONE analysis besides the operating point, the same unqualified measurement reads it: the number calc::cross gives on a transient registry the test loaded itself" \
         [list [fld $ref ok] [fld $mc1 ok] [fld $mc1 kind] [near [fld $mc1 value] [fld $ref value]]] \
         {1 1 scalar near}
     set cut2 [file join [test_scratch et2] tran_ac.raw]
     check "ET2 fixture: a cut holding the transient and AC, with no operating point" \
         [list [et_cut $cut2 {tran ac}] [calc::raw_analyses $cut2]] {ok {tran ac}}
-    set pl [pcall calc::eval_text {v(lp) 2 *} $cut2 {}]
-    check "ET2 ...where an unqualified PLAIN expression is refused the same way (no operating point to default to, two analyses to guess between), while the operating-point default of a plain text stands where there is one (above)" \
-        [list [fld $pl ok] [fld $pl msg]] \
-        {0 {Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)}}
+    set pl [pcall calc::eval_text {time 2 *} $cut2 {}]
+    set pv [pcall calc::eval_text {v(lp) 2 *} $cut2 {}]
+    check "ET2 ...where a text reading no signal is refused the same way (no operating point to default to, two analyses to guess between), and an unqualified v(lp) there is offered the two spellings THAT result holds" \
+        [list [fld $pl ok] [fld $pl msg] [fld $pv msg]] \
+        {0 {Cannot evaluate: this result has TRAN and AC; write vt(...) or vf(...)} {Cannot evaluate: v(lp) names no analysis; write vt(lp) or vf(lp)}}
     check "ET2 calc::et_default, the rule itself: plain -> op when present; otherwise the ONE non-op analysis, {} (refuse) when there are two or more" \
         [list [pcall calc::et_default {tran ac op} 0] [pcall calc::et_default {tran ac} 0] \
               [pcall calc::et_default {op tran} 1] [pcall calc::et_default {op} 1] \
@@ -231,18 +237,18 @@ group ET3 {
 # =============================================================================
 group ET4 {
     set rows {}
-    foreach t [list {} nosuch {vt(lp) vf(lp) +} {vs(lp)} {cross(vt(lp), 0.5)} {-i(v1)} {v("lp}] {
+    foreach t [list {} vdc(nosuch) {vt(lp) vf(lp) +} {vs(lp)} {cross(vt(lp), 0.5)} {-idc(v1)} {v("lp}] {
         set d [pcall calc::eval_text $t $::fixture {}]
         lappend rows [list [fld $d ok] [fld $d msg]]
     }
-    check "ET4 empty, unknown name, two analyses, an analysis the run lacks, wrong arity, a negated current the result lacks (infix -- the sentence names the signal, not the text) and an unclosed quote are each REFUSED with a sentence" \
+    check "ET4 empty, unknown name, two analyses, an analysis the run lacks, wrong arity, a negated current the result lacks (infix -- the sentence names the signal AS TYPED, not the text) and an unclosed quote are each REFUSED with a sentence" \
         $rows [list \
             {0 {Cannot evaluate: the expression is empty}} \
-            {0 {Cannot evaluate: unknown token 'nosuch' (not an operator/function, number or raw variable).}} \
+            {0 {Cannot evaluate: unknown token 'vdc(nosuch)' (not an operator/function, number or raw variable).}} \
             {0 {Cannot evaluate: vt() and vf() read different analyses}} \
             {0 {Cannot evaluate: this result has no DC sweep analysis}} \
             {0 {cross takes 4 arguments.}} \
-            {0 {Cannot evaluate: unknown token 'i(v1)' (not an operator/function, number or raw variable).}} \
+            {0 {Cannot evaluate: unknown token 'idc(v1)' (not an operator/function, number or raw variable).}} \
             {0 {Cannot evaluate: a double quote is not closed.}}]
     check "ET4 a missing results file and an empty path are refused without touching the registry" \
         [list [fld [pcall calc::eval_text v(lp) /nonexistent/x.raw {}] msg] \
@@ -418,7 +424,7 @@ group ET11 {
     set sw [lindex [pcall xschem raw values v(dcmid) 0] 0]
     check "ET11 DISTINCTNESS, measured: the stale slot's v(dcmid) (3) and the file's (5) differ by more than the row tolerance, and re-reading the overwritten path SWITCHES to the stale slot (registry text unmoved, value still the old one) -- so the hazard is live" \
         [list [far $old $new] [expr {$i0 eq $i2}] [near $sw $old]] {1 1 near}
-    set e [pcall calc::eval_text v(dcmid) $p {}]
+    set e [pcall calc::eval_text vdc(dcmid) $p {}]
     set b [pcall calc::eval_texts [list v(dcmid) {v(dcmid) 1 *}] $p op]
     set st [pcall xschem raw values v(dcmid) 0]
     check "ET11 with a stale slot for the same path and type loaded, eval_text and eval_texts read the FILE ON DISK (5), not the slot (3)" \
@@ -781,6 +787,36 @@ group ET15 {
         [list [et_s "value(vt(lp), 1m)"] [fld [calc::meas_split {value(vt(lp), 1m)}] verb]] \
         [list v(lp) value]
     check "ET15 the registry is EMPTY after the band" [et_info] {}
+}
+
+# =============================================================================
+# ET16 -- AN UNQUALIFIED SIGNAL IS REFUSED (the user, 2026-10-12: "in ASE-L,
+# v(something) will be meaningless").  An Outputs text that reads v(), i() or
+# a bare node with no analysis of its own is refused with a sentence offering
+# the qualified spellings this result has -- it is never read at the operating
+# point by default any more.  A caller that NAMES the analysis (the third
+# argument) is not refused: it said which one.  A device parameter (@m1[gm]) has
+# no Calculator spelling and is read as before (declared).
+# =============================================================================
+group ET16 {
+    set w {Cannot evaluate: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)}
+    check "ET16 v(lp), cross(v(lp), ...) and 2*value(v(lp), 1m) are REFUSED with no analysis argument, offering the fixture's three analyses' spellings" \
+        [list [et_m v(lp) {}] [et_m {cross(v(lp), 0.5, 1, rising)} {}] [et_m {2*value(v(lp), 1m)} {}]] \
+        [list $w $w $w]
+    check "ET16 ...an infix row reading a voltage and a current names the FIRST unqualified read, a bare node is named as typed, and an unqualified current is offered the current tokens" \
+        [list [et_m {v(dcmid)/i(@rtop[i])} {}] [et_m {dcmid*2} {}] [et_m {vdc(dcmid)/i(@rtop[i])} {}]] \
+        [list {Cannot evaluate: v(dcmid) names no analysis; write vt(dcmid), vf(dcmid) or vdc(dcmid)} \
+              {Cannot evaluate: dcmid names no analysis; write vt(dcmid), vf(dcmid) or vdc(dcmid)} \
+              {Cannot evaluate: i(@rtop[i]) names no analysis; write it(@rtop[i]), if(@rtop[i]) or idc(@rtop[i])}]
+    check "ET16 CONTROL: the qualified form answers -- vdc(dcmid)*2 is a scalar at the operating point" \
+        [fld [pcall calc::eval_text {vdc(dcmid)*2} $::fixture {}] kind] scalar
+    check "ET16 a caller that NAMES the analysis is not refused: v(dcmid)*2 read as op answers 6" \
+        [near [et_v {v(dcmid)*2} op] 6.0] near
+    check "ET16 a device parameter has no qualified spelling and is read as before: @m1\[gm\]*2 with no analysis argument answers" \
+        [fld [pcall calc::eval_text {@m1[gm]*2} $::fixture {}] ok] 1
+    check "ET16 the save list still carries an unqualified row's reads, so the run keeps what the row names and the refusal arrives as a sentence after it" \
+        [et_s {v(dcmid)/i(@rtop[i])}] [list v(dcmid) {i(@rtop[i])}]
+    check "ET16 the registry is EMPTY after the band" [et_info] {}
 }
 
 # =============================================================================

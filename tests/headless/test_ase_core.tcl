@@ -8825,22 +8825,22 @@ check "RS2 neither reader names the other or names the rule, and the log reader\
 ##   all `log`  -> the vector row is evaluated by the Calculator and gets the
 ##                 same operating-point number the file reader gave it
 ## The fixture is the committed Calculator raw (a real binary results file),
-## whose operating point holds v(dcmid) = 3, so the expression `v(dcmid) 2 * 1 +`
+## whose operating point holds v(dcmid) = 3, so the expression `vdc(dcmid) 2 * 1 +`
 ## is 7 -- a number no single-point lookup of the vector could produce.
 set RSFX [file join [file dirname [info script]] data calc_fixture.raw]
 file copy -force $RSFX [file join $scratch rsep_ase.raw]
 set RSST [r3_state rsep {{name {} expr v(dcmid) save 1}
-                         {name {} expr {v(dcmid) 2 * 1 +} save 1}}]
-set RSLOGTXT "v(dcmid) = 9.999999e+09\nv(dcmid) 2 * 1 + = 7.777777e+00\n"
+                         {name {} expr {vdc(dcmid) 2 * 1 +} save 1}}]
+set RSLOGTXT "v(dcmid) = 9.999999e+09\nvdc(dcmid) 2 * 1 + = 7.777777e+00\n"
 set RSC [r3_probe $RSST $RSLOGTXT]
 set RSA [r3_ruled raw {r3_probe $RSST $RSLOGTXT}]
 set RSB [r3_ruled log {r3_probe $RSST $RSLOGTXT}]
 check "RS3 the vector reads the file, the expression the Calculator; stubbing the\
  rule to all-file drops the expression, to all-Calculator keeps both -- and no\
  number the log carries is ever taken" \
-  [list [r3_val $RSC v(dcmid)] [r3_val $RSC {v(dcmid) 2 * 1 +}] \
-        [r3_val $RSA v(dcmid)] [r3_val $RSA {v(dcmid) 2 * 1 +}] \
-        [r3_val $RSB v(dcmid)] [r3_val $RSB {v(dcmid) 2 * 1 +}]] \
+  [list [r3_val $RSC v(dcmid)] [r3_val $RSC {vdc(dcmid) 2 * 1 +}] \
+        [r3_val $RSA v(dcmid)] [r3_val $RSA {vdc(dcmid) 2 * 1 +}] \
+        [r3_val $RSB v(dcmid)] [r3_val $RSB {vdc(dcmid) 2 * 1 +}]] \
   [list 3.000000e+00 7.000000e+00 3.000000e+00 ABSENT 3.000000e+00 7.000000e+00]
 
 ## ⚠ THE RULE IS STATED ON SCREEN, spied at ::ciw_echo, so the row proves the
@@ -9107,10 +9107,10 @@ check "RD12 a single-vector row absent from the results file gets NO value, and\
 ## where the number was read.
 file copy -force $RSFX [file join $scratch rd10_ase.raw]
 set RD10 [r3_probe [r3_state rd10 {{name vm expr v(dcmid) save 1}
-                                   {name {} expr {v(dcmid) 2 *} save 1}}] {}]
+                                   {name {} expr {vdc(dcmid) 2 *} save 1}}] {}]
 check "RD10 one dict, both readers, keyed by name-or-expr as the Outputs pane\
  looks them up" \
-  [list [r3_val $RD10 vm] [r3_val $RD10 {v(dcmid) 2 *}] [r3_val $RD10 v(dcmid)]] \
+  [list [r3_val $RD10 vm] [r3_val $RD10 {vdc(dcmid) 2 *}] [r3_val $RD10 v(dcmid)]] \
   {3.000000e+00 6.000000e+00 ABSENT}
 
 ## ⚠ WHY THE MERGE ORDER IN THE DISPATCHER CANNOT CHANGE AN ANSWER, and the

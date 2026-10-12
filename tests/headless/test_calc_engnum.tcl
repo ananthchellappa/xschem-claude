@@ -289,9 +289,12 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         proc ::calc::require_result {} { return [dict create ok 1 origin stub path x type tran idx 0 token D msg {}] }
         rename ::calc::meas_in_token ::d_keep_mit
         set ::DREC {}
-        proc ::calc::meas_in_token {tok name vals} {
+        # R208d (2026-10-12): Eval refuses an unqualified v(), so the composed
+        # call carries R208c's `vt()` and the recorder takes the analysis the
+        # press passes, running the verb through its guarded door.
+        proc ::calc::meas_in_token {tok name vals {an {}}} {
             lappend ::DREC $vals
-            return [calc::arg_invoke $name $vals]
+            return [calc::aq_arg_invoke $name $vals]
         }
         proc d_fill {initial final} {
             array unset ::calc::argval
@@ -306,7 +309,7 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         check "D1 the settlingTime dialog's OK ACCEPTS 100u and 1.5m as times: no refusal, and the answer carries what the user typed" \
             [list $ok $::calc::argmsg [dict get $res initial] [dict get $res final]] \
             {{} {} 100u 1.5m}
-        set vals [pcall calc::arg_values settlingTime {v(lp)} $res]
+        set vals [pcall calc::arg_values settlingTime {vt(lp)} $res]
         set txt [pcall calc::meas_compose settlingTime $vals]
         pcall calc::buf_set_expr $txt
         pcall calc::stk_clear
@@ -318,8 +321,8 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         check "D2 ...and Eval on the composed call replaces the buffer with the SAME number the scientific spelling measures, pushes the user's text, and says so on the status line" \
             [list $txt [expr {$buf eq $want}] [lindex [calc::stk_get] 0] \
                   [expr {[lindex [calc::status_history] 0] eq $said && $said ne {}}]] \
-            [list {settlingTime(v(lp), 1.5m, 10, 0, 0, 100u, time, time)} 1 \
-                  {settlingTime(v(lp), 1.5m, 10, 0, 0, 100u, time, time)} 1]
+            [list {settlingTime(vt(lp), 1.5m, 10, 0, 0, 100u, time, time)} 1 \
+                  {settlingTime(vt(lp), 1.5m, 10, 0, 0, 100u, time, time)} 1]
         # the dialog's OK, refusing a bare M -- never silently
         d_fill 100u 1.5M
         set ::calc::statushist {}
@@ -333,7 +336,7 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
                   [expr {[lsearch -exact [dict get $last sinks] ciw] >= 0}]] \
             {1 1 1 1 1}
         # Eval refusing a malformed value typed into the buffer
-        pcall calc::buf_set_expr {settlingTime(v(lp), 1.5m, 10, 0, 0, 100x, time, time)}
+        pcall calc::buf_set_expr {settlingTime(vt(lp), 1.5m, 10, 0, 0, 100x, time, time)}
         set ::DREC {}
         set said [pcall calc::eval_click]
         update
@@ -342,7 +345,7 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
             [list $::DREC [string trim [.calc.buf get 1.0 end]] \
                   [expr {$said ne {} && [lindex [calc::status_history] 0] eq $said}] \
                   [expr {[dict get $last msg] eq $said}] [string match {*100x*} $said]] \
-            [list {} {settlingTime(v(lp), 1.5m, 10, 0, 0, 100x, time, time)} 1 1 1]
+            [list {} {settlingTime(vt(lp), 1.5m, 10, 0, 0, 100x, time, time)} 1 1 1]
         rename ::calc::require_result {}
         rename ::d_keep_rr ::calc::require_result
         rename ::calc::meas_in_token {}

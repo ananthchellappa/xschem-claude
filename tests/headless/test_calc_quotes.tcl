@@ -297,16 +297,20 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         proc ::calc::require_result {} { return [dict create ok 1 origin stub path x type tran idx 0 token D msg {}] }
         rename ::calc::meas_in_token ::d_keep_mit
         set ::DREC {}
-        proc ::calc::meas_in_token {tok name vals} {
+        # R208d (2026-10-12): Eval refuses an unqualified v(), so the band's texts
+        # carry R208c's `vt()` and the recorders take the analysis the press
+        # passes, running the verb through its guarded door (the fixture's
+        # transient is current, so `vt()` reads in place).
+        proc ::calc::meas_in_token {tok name vals {an {}}} {
             lappend ::DREC $vals
-            return [calc::arg_invoke $name $vals]
+            return [calc::aq_arg_invoke $name $vals]
         }
         rename ::calc::eval_in_token ::d_keep_eit
-        proc ::calc::eval_in_token {tok rpn {dataset 0}} {
+        proc ::calc::eval_in_token {tok rpn {dataset 0} {an {}}} {
             lappend ::DREC $rpn
             return [calc::eval_rpn $rpn $dataset]
         }
-        set typed {cross(v("lp"), 0.5, 1, "rising")}
+        set typed {cross(vt("lp"), 0.5, 1, "rising")}
         pcall calc::buf_set_expr $typed
         pcall calc::stk_clear
         set ::DREC {}
@@ -318,7 +322,7 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
             [list [expr {$buf eq $want && $want ne {}}] [lindex [calc::stk_get] 0] \
                   [expr {[lindex [calc::status_history] 0] eq $said && $said ne {}}]] \
             [list 1 $typed 1]
-        set typed {v("lp") v("sq") +}
+        set typed {vt("lp") vt("sq") +}
         pcall calc::buf_set_expr $typed
         set ::DREC {}
         set said [pcall calc::eval_click]

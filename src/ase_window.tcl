@@ -2311,6 +2311,10 @@ proc ase::ui::sod_merge {outputs ex flavor} {
 # verbatim after a trim; add_trace's validate_rpn is the backstop.
 proc ase::ui::plot_map_expr {ex} {
   set ex [string trim $ex]
+  ## R208c/R208d (calculator.md): a row may name its analysis -- `vt(out)`,
+  ## `-idc(v1)` -- and the waveform viewer reads the raw's own names, so the
+  ## qualifiers are rewritten to `v(...)`/`i(...)` before the viewer sees them.
+  if {[info commands ::calc::aq_strip] ne {}} { set ex [calc::aq_strip $ex] }
   if {[llength [regexp -all -inline {\S+} $ex]] != 1} { return $ex }
   if {[string index $ex 0] eq {-} && [string length $ex] > 1} {
     return "[string range $ex 1 end] -1 *"

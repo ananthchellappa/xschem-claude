@@ -779,7 +779,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
   the operating point, the number `print` used to give: **measured equal on a
   real run** (OE7) — a voltage string for string (`%.6e`), a current to the
   print's own precision (ngspice prints a current with one digit fewer,
-  `-3.33333e-04` beside the file's `-3.333333e-04`). An unqualified expression
+  `-3.33333e-04` beside the file's `-3.333333e-04`). ⚠ **Since R-OUT4a (2026-10-12) an
+  expression that reads an unqualified signal is refused** — the default below now governs
+  only a text reading no unqualified signal (a device parameter, the sweep scale) and the
+  plain signal rows ASE-L hands over qualified. An unqualified expression
   reads the operating point when the run has one; otherwise, and always for an
   unqualified **measurement call**, the run's ONE analysis besides the
   operating point — and when the run has two or more (op+AC+tran) the row is
@@ -796,6 +799,35 @@ They should not influence the input to the simulator."* ADE-L is the floor
   gives it. Names match as the Calculator matches them (its own
   case-folding, refusing an ambiguous one); the casemode ladder still governs
   the single-vector reader.
+- **R-OUT4a — an unqualified EXPRESSION is refused; a SIGNAL row is not (2026-10-12).** The
+  user: *"in Cadence ADE, there is no such thing as v(signal_name). It always has to be VT,
+  VF, etc. … For now, in ASE-L, v(something) will be meaningless. … If it's obvious the user
+  means operating point, just convert v(blah) to vdc(blah)."* So an Outputs **expression**
+  (anything `ase::output_is_plain` is not: infix, postfix, a measurement call) that reads
+  `v()`, `i()` or a bare node with no analysis of its own shows the Calculator's refusal in
+  its Value cell, offering the spellings this run holds — *"Cannot evaluate: v(out) names no
+  analysis; write vt(out) or vdc(out)"* (calculator.md R208d). It is never read at the
+  operating point by default any more. Its reads still ride as save cards (R-OUT3), so the run
+  keeps what the row names.
+  - **A plain SIGNAL row keeps R-OUT4's reading, by decision.** One name, optionally negated
+    (`v(out)`, `out`, `-i(v1)`, `vdc(out)`), is ADE-L's *signal* output — a name to save and
+    plot, which ADE-L shows as a wave or a value without an analysis call around it — not an
+    expression. It still saves (`.save <signal>`), still plots (the waveform viewer keeps plain
+    `v()`, and a qualified row is plotted as the raw's own name), and its Value is still the
+    single-point (operating-point) number, or `wave` when the run has none: the
+    single-vector reader is unchanged, and a row the Calculator answers is handed over
+    **qualified by R-OUT4's own reading** (`calc::uq_qualify` with `calc::et_default`: the
+    operating point when the run has one, else its one other analysis). Where that would be a
+    guess (no operating point and two or more other analyses) the cell reads R208d's
+    sentence. This keeps every existing bench's plain rows working unchanged; the committed
+    benches' **obvious** rows were migrated to their qualified spelling anyway (the operating
+    point bench's `x1.F1` → `vdc(x1.F1)`, a transient bench's `out` → `vt(out)`, a DC-sweep bench's `i(vr1)` → `is(vr1)`; see
+    `doc/claude/code_analysis/ade_parity_gaps_2026_10_11.md`), and the ambiguous ones were
+    left for the user.
+  - **A device parameter (`@m1[gm]`) has no qualified spelling** (Cadence's `OP("inst"
+    "param")` is not built) and is read as before, in a plain row or an expression.
+  - Rows: OE16 of `test_ase_outputs_eval`; OE3/OE4/OE7/OE8/OE15 restated with qualified
+    expressions; ET16 of `test_calc_eval_text`.
 - **R-OUT5 — what the Value cell shows.** A scalar: `%.6e`, then
   `ase::format_value` (engineering notation). A waveform (a plain expression on
   a multi-point analysis, or a verb answering a wave): the word **`wave`** —

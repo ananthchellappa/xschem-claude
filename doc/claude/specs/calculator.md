@@ -810,10 +810,13 @@ analysis of the current result's raw file whatever analysis is current.
     evaluate vf(): the loaded analysis is transient"*) instead of serving a wrong number.
   - Every refusal goes through `calc::status` (which tees the CIW); the buffer and the stack
     keep what was typed.
-  - ⚠ **DECLARED LIMIT: only qualified tokens are analysis-checked.** A plain `v(net)` still
+  - ⚠ ~~**DECLARED LIMIT: only qualified tokens are analysis-checked.** A plain `v(net)` still
     reads whatever analysis is current, exactly as before R208c; inside an expression that
     carries a qualifier it is read in that qualifier's analysis, because one expression is
-    evaluated in one database.
+    evaluated in one database.~~ **SUPERSEDED BY R208d (2026-10-12) at every door the user
+    types into**: a plain `v(net)` is now refused there. The engine below the doors
+    (`calc::eval_rpn`, the verbs) still reads a plain name in the current database, which is
+    what the doors hand it after `calc::aq_strip`.
   - **Every qualified token is seen**, adjacent ones included (`vf(lp)vt(lp)` is refused
     with the mixed sentence), and a refusal naming a token names it **as typed**:
     `vf(nosuch)` is refused naming `'vf(nosuch)'`, not the `v(nosuch)` it is rewritten to
@@ -834,6 +837,46 @@ analysis of the current result's raw file whatever analysis is current.
     AT13–AT16; display arm: band AT12; registered in both lists), rows PK1 of
     `test_calc_selector_names`, PG3/PG4/PG8/PG13/PG14 and bands PG15/PG15w of
     `test_calc_pick` (display arm: the real presses through the real loan).
+
+- **R208d** **An unqualified signal names no analysis, and the Calculator refuses it.** The
+  user, 2026-10-12: *"in Cadence ADE, there is no such thing as v(signal_name). It always has to
+  be VT, VF, etc. VT is a waveform. value(VT("blahblah") time_point) is a number that ADE-L can
+  display in output pane. For a waveform, it just says "wave". So, to keep it simple, we'll
+  worry about the waveform viewer later. For now, in ASE-L, v(something) will be
+  meaningless."* — and, correcting a first scope that kept the Calculator window out of it:
+  *"I said waveform viewer ok. How would it be ok for Calculator?"*
+  - **What is refused.** A text the Calculator evaluates that reads `v(...)`, `i(...)` (any
+    case, quoted or not) or a bare node name with no analysis of its own. The sentence names
+    the first such read **as typed** and offers the qualified spellings for the analyses the
+    result really holds (from its file's own `Plotname:` records), in the selectors' order:
+    *"Cannot evaluate: v(out) names no analysis; write vt(out), vf(out) or vdc(out)"*; for a
+    current, *"…write idc(V1) or is(V1)"*; all four when the analyses cannot be read.
+  - **Where.** R609's evaluator when its analysis argument is empty (ASE-L Outputs
+    expressions); and in the Calculator window **Eval** (plain RPN and a measurement call),
+    **Plot** (*"Cannot plot: …"*) and a **measurement's click** in the function browser,
+    which refuses before its dialog opens (*"Cannot measure: …"*). Each refusal goes
+    through `calc::status` (CIW tee); the buffer keeps what was typed and the stack is not
+    pushed. The stack gestures move text and evaluate nothing, so they are not doors. The
+    **voltage selectors already insert qualified tokens** (R208c); the current selectors
+    (`it`/`if`/`idc`/`is`) are not armed yet and insert nothing.
+  - **What is not refused:** qualified tokens; the sweep scale (`time`, `frequency`); a device
+    parameter `@m1[gm]` (no Calculator spelling exists — Cadence writes `OP("inst" "param")`;
+    declared, read as before); a wrapped raw name other than `v()`/`i()` (`ph(lp)`, which
+    exists only in an AC plot); a measurement call's number and enum arguments; and a caller
+    of `calc::eval_text` that names the analysis in its third argument.
+  - **The waveform viewer's own graph expressions keep plain `v()`**: that is not this door.
+    Plot rewrites the buffer's qualified tokens to the raw's own names (`calc::aq_strip`)
+    before it hands them to the viewer, so a trace records `v(lp)` for a typed `vf(lp)`.
+  - **Declared limit:** a bare name is offered the VOLTAGE spellings — the Calculator cannot
+    tell a node from another bare vector (`Transfer_function`, `onoise_total`) without a
+    database, so such a vector inside an expression is refused too; a plain ASE-L Outputs
+    row naming it alone is a signal row and is unaffected.
+  - Code: `calc::uq_first` (the decision, pure), `calc::uq_say` / `calc::uq_offer` (the
+    sentence), `calc::uq_qualify` (ASE-L's plain signal rows, ase_l.md R-OUT4), arms
+    `unqual`/`unqualplot`/`unqualmeas` of `calc::aq_msg`. Fences: band AT17 of
+    `test_calc_analysis_tokens` (counted), ET16 and the restated ET2/ET4 of
+    `test_calc_eval_text`, OE16 of `test_ase_outputs_eval`, PG16 of `test_calc_pick`
+    (display arm: the real presses).
 
 ---
 
@@ -1651,7 +1694,9 @@ below are the ones a caller cannot answer for itself and so must not have to.
   `test_ase_outputs_eval`. It accepts plain RPN, **infix (R610)**, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
   calls (`cross(...)`, `bandwidth(...)`, ...), checked by `calc::meas_prepare` — the
   same check the Eval press uses (`calc::meas_eval`) — all decided with no database by
-  `calc::et_check`. **Analysis:** a qualifier's own; else `<analysis>`; else
+  `calc::et_check`. **An unqualified `v()`/`i()`/bare node is refused when `<analysis>` is
+  empty (R208d, 2026-10-12)**, with the sentence offering the qualified spellings this file
+  holds. **Analysis:** a qualifier's own; else `<analysis>`; else
   (`calc::et_default`, fix round 2026-10-11) plain text reads the operating point when
   the file has one, and otherwise — and always for a text carrying a measurement call —
   the file's **one** analysis besides the operating point. **When the file holds two or
@@ -1669,7 +1714,8 @@ below are the ones a caller cannot answer for itself and so must not have to.
   route through R609 and keeps its own rule:** it reads the selected result's own slot
   at the cursor, a plain `v()` follows the analysis that result is showing, it hands
   waves to the viewer, and it does **not** read infix yet (R610's declared limit); it
-  shares R609's measurement-argument check. Suite:
+  shares R609's measurement-argument check. ⚠ Amended by R208d: its "plain `v()` follows the
+  analysis that result is showing" is gone — Eval refuses an unqualified name. Suite:
   `tests/headless/test_calc_eval_text.tcl`. `calc::eval_text_signals` answers the
   vectors a text reads, for ASE-L's save list — and **nothing** for a text
   `calc::et_check` refuses (a postfix stack fault, an unknown function, a short

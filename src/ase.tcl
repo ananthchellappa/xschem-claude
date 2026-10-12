@@ -25548,7 +25548,22 @@ namespace eval ase::backend::ngspice {
     catch {set path [raw_file $state]}
     if {$path eq {} || ![file isfile $path]} { return $results }
     set texts {}
-    foreach o $rows { lappend texts [ase::output_calc_text [dict get $o expr]] }
+    set dflt {}
+    if {[info commands ::calc::uq_qualify] ne {}} {
+      set dflt [calc::et_default [calc::raw_analyses $path] 0]
+    }
+    foreach o $rows {
+      set ex [dict get $o expr]
+      set t [ase::output_calc_text $ex]
+      ## A plain SIGNAL row is ADE-L's "signal" output, not an expression: the
+      ## Calculator refuses an unqualified name (calculator.md R208d), so the
+      ## row is handed over qualified by R-OUT4's own reading -- the operating
+      ## point when the run has one, else its one other analysis.  When that is
+      ## a guess (two or more), it stays unqualified and the cell reads the
+      ## Calculator's sentence offering the spellings.
+      if {$dflt ne {} && [ase::output_is_plain $ex]} { set t [calc::uq_qualify $t $dflt] }
+      lappend texts $t
+    }
     foreach o $rows d [calc::eval_texts $texts $path {}] {
       set rkey [dict get $o expr]
       if {[dict exists $o name] && [dict get $o name] ne {}} {

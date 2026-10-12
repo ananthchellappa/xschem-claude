@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {{name temp value 27}}
 analyses {{type op enabled 0} {type dc enabled 1 source V1 start -20.7 stop 3 step 1m} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name iVmda expr i(Vmda) save 1 plot 1} {name ivmda1 expr i(vmda1) save 1 plot 1}}
+outputs {{name iVmda expr is(Vmda) save 1 plot 1} {name ivmda1 expr is(vmda1) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

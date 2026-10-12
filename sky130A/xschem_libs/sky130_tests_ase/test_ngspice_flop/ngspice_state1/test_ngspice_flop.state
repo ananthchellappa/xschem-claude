@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 1100n step 0.2n}}
-outputs {{name ain expr a_in save 1 plot 1} {name aclk expr a_clk save 1 plot 1} {name aout expr a_out save 1 plot 1}}
+outputs {{name ain expr vt(a_in) save 1 plot 1} {name aclk expr vt(a_clk) save 1 plot 1} {name aout expr vt(a_out) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

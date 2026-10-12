@@ -196,13 +196,14 @@ check "NCR2 the results-file reader is gated by the SAME delivered-casemode\
 ## ⚠ THE ROUTING IS THE RULE'S, AND IT IS ONE PROC. An expression that does NOT
 ## name exactly one vector is the Calculator's (2026-10-11), evaluated on the
 ## same results file -- 2 x 3 -- and never the log's rival 9.9.
+## R208d (2026-10-12): an expression names its analysis, so it is `vdc(In)`.
 set NCR4 [pcall $NCRD [ncr_state ncr {{expr v(In) save 1 plot 0}
-                                      {expr {v(In) 2 *} save 1 plot 0}}] \
-  "v(in) 2 * = 9.900000e+00\n"]
+                                      {expr {vdc(In) 2 *} save 1 plot 0}}] \
+  "vdc(in) 2 * = 9.900000e+00\n"]
 check "NCR3 one dict, two sources: the vector from the file and the expression\
  from the Calculator on the same file, never from the log" \
   [list [cell $NCR4 {expr v(In) save 1 plot 0}] \
-        [cell $NCR4 {expr {v(In) 2 *} save 1 plot 0}]] \
+        [cell $NCR4 {expr {vdc(In) 2 *} save 1 plot 0}]] \
   {3.000000e+00 6.000000e+00}
 casemode fold
 } err]} { puts "FATAL: $err" ; incr fail }

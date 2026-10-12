@@ -3339,12 +3339,15 @@ proc calc::eval_fmt {d} {
 # an operating point although `read_dataset()` reads it under `op`: a `vdc` on a
 # noise-only run would otherwise answer a noise integral.
 #
-# ⚠ DECLARED LIMIT: ONLY QUALIFIED TOKENS ARE ANALYSIS-CHECKED.  A plain
-# `v(net)` still evaluates against whatever analysis is current, exactly as
-# before -- and inside an expression that carries a qualifier it is evaluated
-# in that qualifier's analysis, because one expression is evaluated in one
-# database.  Two DIFFERENT analyses in one expression are refused: the engine
-# has no way to combine columns of two databases.
+# ⚠ A PLAIN `v(net)` IS REFUSED AT EVERY DOOR THE USER TYPES INTO (R208d,
+# 2026-10-12, the block below `calc::aq_msg`): Eval, Plot, a measurement's click
+# and R609 with no analysis argument.  BELOW the doors the engine still reads a
+# plain name in the current database -- that is what the doors hand it after
+# `calc::aq_strip` -- so a plain `v()` reaching `calc::eval_rpn` directly is read
+# in whatever analysis is current, and inside an expression carrying a
+# qualifier, in that qualifier's (one expression, one database).  Two DIFFERENT
+# analyses in one expression are refused: the engine has no way to combine
+# columns of two databases.
 #
 # ⚠ AND A QUALIFIED TOKEN IS NEVER EVALUATED AGAINST ANOTHER ANALYSIS, WHOEVER
 # CALLS.  `calc::aq_guard` is asked inside `calc::eval_rpn`, inside
@@ -3723,8 +3726,161 @@ proc calc::aq_msg {kind {a {}} {b {}}} {
         restore { return "Cannot evaluate: could not return to the [calc::analysis_word $a] analysis" }
         guard { return "Cannot evaluate ${a}(): the loaded analysis is [calc::analysis_word $b]" }
         plot { return "Cannot plot ${a}(): the waveform viewer shows [calc::analysis_word $b]" }
+        unqual { return "Cannot evaluate: $a names no analysis; write $b" }
+        unqualplot { return "Cannot plot: $a names no analysis; write $b" }
+        unqualmeas { return "Cannot measure: $a names no analysis; write $b" }
     }
     return {}
+}
+
+# ---------------------------------------------------------------------------
+# R208d -- AN UNQUALIFIED SIGNAL NAMES NO ANALYSIS.
+#
+# The user, 2026-10-12: *"in Cadence ADE, there is no such thing as
+# v(signal_name). It always has to be VT, VF, etc. ... For now, in ASE-L,
+# v(something) will be meaningless."*  And, correcting a scope that had kept
+# the Calculator out of it: *"I said waveform viewer ok. How would it be ok for
+# Calculator?"*  So a text the CALCULATOR evaluates -- an ASE-L Outputs
+# expression (R609), and the buffer at every press that evaluates it (Eval,
+# Plot, a measurement's click) -- is refused when it reads `v(...)`, `i(...)`
+# or a bare node name with no analysis of its own, with one sentence offering
+# the qualified spellings the result really holds:
+#     Cannot evaluate: v(out) names no analysis; write vt(out) or vdc(out)
+# The waveform viewer's own graph expressions are NOT this door and keep `v()`.
+#
+# WHAT IS NOT REFUSED, each for a reason:
+#   * a qualified token (R208c), voltage or current;
+#   * the sweep scale, `time` and `frequency` -- an axis, not a signal;
+#   * a device parameter `@m1[gm]` -- no Calculator spelling exists for one
+#     (Cadence writes `OP("inst" "param")`), so it is read as before (declared);
+#   * a wrapped name other than v()/i() (`ph(lp)`, the raw's AC phase column):
+#     it names its own analysis by existing only there;
+#   * a measurement call's number, enum and integer arguments: only its
+#     EXPRESSION arguments (`calc::ix_rpnkeys`) are signals.
+# THE CALLER THAT NAMES THE ANALYSIS is not refused: `calc::eval_text`'s third
+# argument says which one, so it is asked only when that argument is empty --
+# which is how ASE-L calls it.  A plain SIGNAL row of ASE-L's Outputs pane is
+# ADE-L's "signal" output (one name to save and plot), not an expression, and
+# ASE-L hands it over qualified by R-OUT4's reading (`calc::uq_qualify`).
+#
+# The decision is pure and needs no database (`calc::uq_first`); the sentence
+# needs the result's analyses, read from its file's own `Plotname:` records
+# (`calc::raw_analyses`).  Bands AT17 (decision, counted arm), ET16 (R609),
+# OE16 (ASE-L), PG16 (the presses, display arm).
+
+# One postfix operand token: `{typed family name}` when it is an unqualified
+# signal, else {}.
+proc calc::uq_token {tok} {
+    set t [string trim $tok]
+    if {$t eq {}} { return {} }
+    if {[regexp -- "^[calc::aq_rx]\$" $t]} { return {} }
+    if {[regexp {^([vViI])\((.*)\)$} $t -> f inner]} {
+        set inner [string trim $inner]
+        regexp {^"(.*)"$} $inner -> inner
+        return [list $t [string tolower $f] $inner]
+    }
+    if {[string index $t 0] eq {@}} { return {} }
+    if {[string tolower $t] in {time frequency}} { return {} }
+    if {[regexp {^[A-Za-z_][A-Za-z0-9_.:#$<>\[\]]*$} $t]} { return [list $t v $t] }
+    return {}
+}
+
+# The postfix expressions a Calculator text reads signals through: the text
+# itself translated (`calc::ix_route`), each measurement operand's expression
+# arguments, or a measurement call's own.  A text the translator refuses reads
+# nothing here -- its own sentence is the more useful one.
+proc calc::uq_exprs {text} {
+    set t [string trim $text]
+    if {$t eq {}} { return {} }
+    set m [calc::meas_split $t]
+    if {$m ne {}} { return [calc::uq_meas_exprs $m] }
+    set r {}
+    if {[catch {calc::ix_route $t} r]} { return [list $t] }
+    if {[dict get $r mode] eq {refuse}} { return {} }
+    set out [list [dict get $r rpn]]
+    foreach st [dict get $r subs] {
+        set sm [calc::meas_split $st]
+        if {$sm ne {}} { set out [concat $out [calc::uq_meas_exprs $sm]] }
+    }
+    return $out
+}
+
+proc calc::uq_meas_exprs {m} {
+    set name [dict get $m verb]
+    set keys [calc::ix_rpnkeys $name]
+    set out {}
+    foreach {k v} [calc::meas_vals $name [dict get $m args]] {
+        if {$k ni $keys} continue
+        set r {}
+        if {[catch {calc::ix_route $v} r] || [dict get $r mode] eq {refuse}} {
+            lappend out $v
+            continue
+        }
+        lappend out [dict get $r rpn]
+    }
+    return $out
+}
+
+# THE DECISION: the first unqualified signal `$text` reads, as
+# `{typed family name}`, or {}.
+proc calc::uq_first {text} {
+    foreach e [calc::uq_exprs $text] {
+        foreach tok [calc::rpn_tokens $e] {
+            if {[string first "\u0001" $tok] >= 0} continue
+            if {![calc::et_operand $tok]} continue
+            set u [calc::uq_token $tok]
+            if {$u ne {}} { return $u }
+        }
+    }
+    return {}
+}
+
+# The qualified spellings of `$name` for the analyses in `$have`, in the
+# selectors' order; all four when none of `$have` is one of them.
+proc calc::uq_offer {fam name have} {
+    set ids [expr {$fam eq {i} ? {it if idc is} : {vt vf vdc vs}}]
+    set ok {}
+    foreach id $ids {
+        if {[calc::aq_analysis $id] in $have} { lappend ok "$id\($name\)" }
+    }
+    if {![llength $ok]} {
+        foreach id $ids { lappend ok "$id\($name\)" }
+    }
+    return [calc::et_join $ok or]
+}
+
+# The refusal, in `calc::aq_msg`'s `$kind` (`unqual`, `unqualplot`, `unqualmeas`).
+proc calc::uq_say {u have {kind unqual}} {
+    lassign $u typed fam name
+    return [calc::aq_msg $kind $typed [calc::uq_offer $fam $name $have]]
+}
+
+# Every unqualified signal of POSTFIX `$text` rewritten to the `$an` analysis's
+# token -- `v(out)`, `out` -> `vdc(out)`, `i(v1)` -> `idc(v1)` for `op`.  For
+# ASE-L's plain SIGNAL rows, which R-OUT4 reads in a known analysis.  Text with
+# nothing to rewrite, or an `$an` no token names, comes back unchanged.
+proc calc::uq_qualify {text an} {
+    set vid {} ; set iid {}
+    dict for {id ty} [calc::aq_analyses] {
+        if {$ty ne $an} continue
+        if {[string index $id 0] eq {v}} { set vid $id } else { set iid $id }
+    }
+    if {$vid eq {}} { return $text }
+    set out {}
+    set moved 0
+    foreach tok [calc::rpn_tokens $text] {
+        if {[calc::et_operand $tok]} {
+            set u [calc::uq_token $tok]
+            if {$u ne {}} {
+                lassign $u typed fam name
+                set tok "[expr {$fam eq {i} ? $iid : $vid}]($name)"
+                set moved 1
+            }
+        }
+        lappend out $tok
+    }
+    if {!$moved} { return $text }
+    return [join $out { }]
 }
 
 # R603: run the engine step in the context the SELECTED RESULT lives in.
@@ -3816,6 +3972,14 @@ proc calc::eval_click {} {
     set rpn [calc::rpn_of_buffer]
     if {[string trim $rpn] eq {}} { return [calc::status [calc::eval_msg empty]] }
     if {[calc::quote_bad $rpn]} { return [calc::status [calc::eval_msg quote]] }
+    # R208d: a signal with no analysis of its own is refused, offering the
+    # spellings this result holds.  Before the loan, so a refusal costs none.
+    set u [calc::uq_first $rpn]
+    if {$u ne {}} {
+        set p {}
+        catch {set p [dict get $g path]}
+        return [calc::status [calc::uq_say $u [calc::raw_analyses $p]]]
+    }
     set tok {}
     catch {set tok [dict get $g token]}
     # R208c: which analysis the text asks for, decided once for the whole press
@@ -4205,6 +4369,15 @@ proc calc::plot_click {} {
     if {![dict get $g ok]} { return [calc::status [dict get $g msg]] }
     set rpn [calc::rpn_of_buffer]
     if {[string trim $rpn] eq {}} { return [calc::status [calc::plot_msg empty]] }
+    # R208d, as Eval: a signal with no analysis of its own is refused.  The
+    # waveform viewer's OWN graph expressions keep plain v(); this is the
+    # Calculator's buffer.
+    set u [calc::uq_first $rpn]
+    if {$u ne {}} {
+        set p {}
+        catch {set p [dict get $g path]}
+        return [calc::status [calc::uq_say $u [calc::raw_analyses $p] unqualplot]]
+    }
     set tok {}
     catch {set tok [dict get $g token]}
     set d [calc::plot_in_token $tok $rpn [calc::plot_dest_req]]
@@ -13111,6 +13284,14 @@ proc calc::fn_measure {name} {
     }
     set rpn [calc::rpn_of_buffer]
     if {[string trim $rpn] eq {}} { return [calc::status [calc::arg_msg empty $name]] }
+    # R208d: the buffer's expression is what the verb will measure, so a signal
+    # with no analysis of its own is refused BEFORE the dialog asks for fields.
+    set u [calc::uq_first $rpn]
+    if {$u ne {}} {
+        set p {}
+        catch {set p [dict get $g path]}
+        return [calc::status [calc::uq_say $u [calc::raw_analyses $p] unqualmeas]]
+    }
     set ans [calc::arg_dialog $name]
     if {$ans eq {}} { return {} }
     set vals [calc::arg_values $name $rpn $ans]
@@ -13818,8 +13999,11 @@ proc calc::meas_prepare {m} {
 # WHAT TEXT.  Postfix, a measurement call, and -- R610, the block headed
 # "INFIX" below -- ADE-L's infix algebra, translated to the same postfix.
 #
-# WHICH ANALYSIS.  A `vt()`/`vf()`/`vdc()`/`vs()` token chooses its own (R208c)
-# and two different ones are refused.  Otherwise `<analysis>` when non-empty;
+# WHICH ANALYSIS.  A `vt()`/`vf()`/`vdc()`/`vs()` token -- or a current's
+# `it()`/`if()`/`idc()`/`is()` -- chooses its own (R208c) and two different ones
+# are refused.  With `<analysis>` EMPTY, a text that reads an unqualified
+# `v()`/`i()`/bare node is refused naming it (R208d, `calc::uq_first`).
+# Otherwise `<analysis>` when non-empty;
 # otherwise `calc::et_default`: the file's operating point for plain text (the
 # scalar the Value column has always shown, issue 1243), else the file's ONE
 # other analysis -- and a refusal asking for a qualifier when it has two or
@@ -13993,6 +14177,10 @@ proc calc::et_check_text {text} {
 proc calc::et_plan {text have analysis} {
     set c [calc::et_check $text]
     if {![dict get $c ok]} { return $c }
+    if {[string trim $analysis] eq {}} {
+        set u [calc::uq_first $text]
+        if {$u ne {}} { return [calc::et_refuse [calc::uq_say $u $have]] }
+    }
     set an [dict get $c type]
     if {$an eq {}} { set an [string trim $analysis] }
     if {$an eq {}} {

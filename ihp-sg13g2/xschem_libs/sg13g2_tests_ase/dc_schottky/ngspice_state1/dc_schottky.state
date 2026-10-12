@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerDIO.lib} section dio_tt}}
 variables {{name temp value 27}}
 analyses {{type op enabled 0} {type dc enabled 1 source I0 start -1m stop 1m step 1u} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name net1 expr net1 save 1 plot 1}}
+outputs {{name net1 expr vs(net1) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}
