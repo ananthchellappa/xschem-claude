@@ -34,7 +34,9 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
 2. ~~So the Expression field takes ngspice syntax, not Calculator syntax.~~ **Done:** it takes
    Calculator syntax (postfix RPN, measurement calls, `vt()`/`vf()`/`vdc()`/`vs()`, quotes). One
    ngspice idiom is kept for committed benches, a negated single signal (`-i(v1)`); any other
-   ngspice infix (`v(a)*2`) is refused with a sentence. The Calculator's own gaps (postfix, no
+   ngspice infix (`v(a)*2`, `Vcc/I(Vr)`) is refused with a sentence, and (fix round, same day)
+   its text no longer reaches the deck as a `.save` card either — nine committed bench rows had
+   that shape and now show the refusal where a printed number used to be (ase_l.md R-OUT3). The Calculator's own gaps (postfix, no
    slash paths) now apply here — see *Expression language* below.
 3. Measurements are a separate dialog (`Outputs > Measurements…`, ngspice `.meas`,
    `ase::ui::measurements_dialog`), and their results go to the run log, not the Outputs table.
@@ -48,7 +50,9 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    **Measured 2026-10-11** on the registry's ngspice-46+: yes — any `.save` keeps only what is
    listed, in every plot; `.save all` beside it restores everything. ASE-L now saves a ticked plain
    signal as before and, whenever that narrows the deck, every signal an expression reads; an
-   expression's own tick never narrows (ase_l.md R-OUT3).
+   expression's own tick never narrows (ase_l.md R-OUT3). The run's pre-flight now checks
+   exactly those cards, so an output expression never blocks a run (R-OUT3a), and the lone-op
+   phantom guard counts the cards rather than ticked rows (R-OUT3b).
 
 ### Expression language
 1. Plain arithmetic is postfix (`v(a) v(b) +`), not normal algebra (`v(a) + v(b)`).

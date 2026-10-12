@@ -1000,8 +1000,12 @@ eqcheck PF221q-an-X-card-wrapped-before-its-master-still-names-the-master \
 ## Nothing proved the scan looked past the FIRST identifier of a row: truncating
 ## the ident loop to `lrange ... 0 0` left all 74 checks green, and a
 ## `.save v(a)-v(typo)` sailing through would have been invisible.
+## ⚠ RESTATED 2026-10-11 (ase_l.md R-OUT3a): an output expression no longer
+## reaches the deck, so the scan reads the CARDS (ase::output_card_sources). A
+## multi-identifier row is now a Calculator expression whose signals become cards
+## once a ticked plain row narrows the deck -- the v(TOPNET) row here.
 set ::sim_case_mode fold
-set sd21 [pcall ase::preflight_scan [mkstate $RD c {{expr v(TOPNET)-v(nosuchnode) save 1}}] $NL]
+set sd21 [pcall ase::preflight_scan [mkstate $RD c {{expr v(TOPNET) save 1} {expr {v(TOPNET) v(nosuchnode) -} save 1}}] $NL]
 eqcheck PF221r-a-derived-row-is-checked-past-its-first-identifier \
   [list [llength [dg $sd21 absent]] [dgn [lindex [dg $sd21 absent] 0] ident]] {1 nosuchnode}
 set sdd21 [pcall ase::preflight_scan [mkstate $RD c {{expr v(TOPNET,nosuchnode) save 1}}] $NL]
@@ -1014,7 +1018,7 @@ eqcheck PF221s-a-differential-row-is-checked-on-BOTH-nodes \
 ## Read off with a regexp so the count, the plural and the verb are all pinned
 ## without depending on the em dash's byte sequence.
 said_clear
-set ch21 [catch {ase::preflight_gate [mkstate $RD c {{expr v(nosuchnode)-v(alsonot) save 1}}] $NL} eh21]
+set ch21 [catch {ase::preflight_gate [mkstate $RD c {{expr v(TOPNET) save 1} {expr {v(nosuchnode) v(alsonot) -} save 1}}] $NL} eh21]
 set n21 {} ; set p21 X ; set v21 {}
 catch {regexp {REFUSED[^0-9]*([0-9]+) output expression(s?) (names?) } $eh21 -> n21 p21 v21}
 eqcheck PF221t-the-refusal-head-counts-EXPRESSIONS-not-identifiers \
@@ -1046,9 +1050,9 @@ eqcheck PF221w-both-halves-of-a-differential-row-are-absent-WITH-corrections \
         [dgn [lindex [dg $sdif absent] 1] correction]] {2 OUTP OUTN}
 eqcheck PF221x-the-offer-repairs-a-differential-row-WHOLE \
   [pcall ase::preflight_fixed_expr [dg $sdif absent]] {v(OUTP,OUTN)}
-set sder [pcall ase::preflight_scan [mkstate $RD c {{expr v(outp)-v(outn) save 1}}] $NLD]
+set sder [pcall ase::preflight_scan [mkstate $RD c {{expr v(OUTP) save 1} {expr {v(outp) v(outn) -} save 1}}] $NLD]
 eqcheck PF221y-the-offer-repairs-a-derived-row-WHOLE \
-  [pcall ase::preflight_fixed_expr [dg $sder absent]] {v(OUTP)-v(OUTN)}
+  [pcall ase::preflight_fixed_expr [dg $sder absent]] {v(OUTP) v(OUTN) -}
 ## ONE offer per expression on the CIW, not two mutually exclusive halves
 said_clear
 set cd21 [catch {ase::preflight_gate [mkstate $RD c {{expr v(outp,outn) save 1}}] $NLD} ed21]
@@ -1065,13 +1069,13 @@ file mkdir $RD4
 putfile [file join $RD4 dcell.spice] $NLD
 putfile [file join $RD4 dif.state] \
   "design {lib dlib cell dcell view schematic} rundir [list $RD4] outputs\
- {{expr v(outp,outn) save 1} {expr v(outp)-v(outn) save 1}}"
+ {{expr v(outp,outn) save 1} {expr {v(outp) v(outn) -} save 1}}"
 pcall ase::session_open dfk [file join $RD4 dif.state]
 said_clear
 set nfx21 [pcall ase::preflight_fix_session dfk]
 eqcheck PF221aa-one-call-repairs-EVERY-identifier-of-EVERY-row \
   [list $nfx21 [pcall ase::state_get [ase::session_state dfk] outputs]] \
-  {2 {{expr v(OUTP,OUTN) save 1} {expr v(OUTP)-v(OUTN) save 1}}}
+  {2 {{expr v(OUTP,OUTN) save 1} {expr {v(OUTP) v(OUTN) -} save 1}}}
 ## the property the partial rewrite silently destroyed
 eqcheck PF221ab-and-the-repaired-session-passes-the-gate-it-just-failed \
   [catch {ase::preflight_gate [ase::session_state dfk] $NLD}] 0

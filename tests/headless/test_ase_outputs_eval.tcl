@@ -6,8 +6,10 @@
 # netlist? They are computations made using the result of the simulation! They
 # should not influence the input to the simulator."
 #
-# Spec     doc/claude/specs/ase_l.md R-OUT1..R-OUT6; calculator.md R609
-# Code     src/ase.tcl ase::output_save_cards, ase::output_is_plain,
+# Spec     doc/claude/specs/ase_l.md R-OUT1..R-OUT6, R-OUT3a, R-OUT3b; calculator.md R609
+# Code     src/ase.tcl ase::output_save_cards, ase::output_card_sources,
+#          ase::output_is_plain, ase::output_is_signal, ase::preflight_scan,
+#          ase::saves_op_phantom_risk,
 #          ase::output_calc_text, ase::backend::ngspice::result_probe /
 #          result_probe_calc / output_value_text; src/ase_window.tcl
 #          ase::ui::results_from_disk; src/calculator.tcl calc::eval_texts
@@ -26,6 +28,11 @@
 #   OE6  the Value cell's text is ase::format_value of the answer
 #   OE8  a stale slot of the results file (OP annotation, the Calculator) is
 #        not read in place of the new run's file
+#   OE9  the pre-flight checks the cards that reach the deck and nothing else
+#   OE10 the op phantom guard counts the deck's vectors, not ticked rows
+#   OE11 an infix expression is not a plain signal; its text never reaches
+#        the deck (derived over every committed bench row)
+#   OE12 the no-value note agrees with the cell (a `wave` row is not named)
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
 #        `print` gave, the expression's signal was saved, and the deck carries
 #        no print -- skipped with a lowercase skip: line when absent
@@ -293,6 +300,118 @@ group OE8 {
         [list [expr {[pcall xschem raw info] eq $i0}] [lindex [pcall xschem raw values v(dcmid) 0] 0]] {1 3}
     catch {xschem raw clear}
     file delete -force $p $q
+}
+
+# =============================================================================
+# OE9 -- THE PRE-FLIGHT CHECKS WHAT REACHES THE DECK, AND NOTHING ELSE
+# =============================================================================
+# ase::preflight_gate refuses a run whose `.save` card names something the
+# circuit lacks.  Since outputs stopped reaching the deck, the cards are
+# ase::output_save_cards' answer -- so that, and only that, is what the scan
+# reads.  A ticked expression adds no card and must not block the run; a signal
+# an expression reads DOES add a card once the deck is narrowed, and is checked.
+proc oe9_gate {outs} {
+    set rc [catch {ase::preflight_gate [oe_state oe9 $outs $::AN_OPTRAN] $::NL} e]
+    return [list $rc [expr {[string first REFUSED $e] >= 0}]]
+}
+proc oe9_absent {outs} {
+    set sc [ase::preflight_scan [oe_state oe9 $outs $::AN_OPTRAN] $::NL]
+    return [lsort -unique [lmap r [dict get $sc absent] {dict get $r ident}]]
+}
+group OE9 {
+    set ::sim_case_mode fold
+    check "OE9 a ticked expression in the Calculator's QUOTED form, on a node the circuit has, does not block the run" \
+        [oe9_gate {{expr {v("out") 2 *} save 1}}] {0 0}
+    check "OE9 a ticked expression naming a node the circuit lacks adds no card (output_save_cards is empty), so it does not block the run either -- its Value says what is wrong after the run" \
+        [list [ase::output_save_cards [oe_state oe9 {{expr {v(typo) 2 *} save 1}}]] \
+              [oe9_gate {{expr {v(typo) 2 *} save 1}}]] {{} {0 0}}
+    check "OE9 an UNTICKED expression's signal that DOES become a card (the deck is narrowed by v(out)) IS checked and refused" \
+        [list [ase::output_save_cards [oe_state oe9 {{expr v(out) save 1} {expr {v(typo) 2 *} save 0}}]] \
+              [oe9_gate {{expr v(out) save 1} {expr {v(typo) 2 *} save 0}}]] {{v(out) v(typo)} {1 1}}
+    check "OE9 a ticked plain row in R208c's vt() form is checked as the card it becomes, v(typo)" \
+        [oe9_gate {{expr vt(typo) save 1}}] {1 1}
+    set outs {{expr v(nope1) save 1} {expr {v(nope2) v(nope3) -} save 0}
+              {expr {v(nope4) 2 *} save 1} {expr -i(vnope5) save 1}}
+    set cards [ase::output_save_cards [oe_state oe9 $outs]]
+    set want {}
+    foreach c $cards { foreach id [ase::preflight_idents $c] { lappend want [lindex $id 1] } }
+    check "OE9 DERIVED: on a bench where every name is absent, the scan's absent identifiers are exactly the identifiers of the cards the deck gets (cards, then the set)" \
+        [list [llength $cards] [oe9_absent $outs]] [list 5 [lsort -unique $want]]
+}
+
+# =============================================================================
+# OE10 -- THE OP PHANTOM GUARD COUNTS VECTORS IN THE DECK, NOT TICKED ROWS
+# =============================================================================
+group OE10 {
+    set an {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+    set r1 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1} {expr {v(out) 2 *} save 1}} $an]]
+    set r2 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1} {expr {v(mid) 2 *} save 0}} $an]]
+    set r3 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1}} $an]]
+    check "OE10 one card in the deck is the lone-op-save risk however many rows are ticked; two cards are not; control: a lone ticked plain row is" \
+        [list $r1 $r2 $r3] {1 0 1}
+}
+
+# =============================================================================
+# OE11 -- AN INFIX EXPRESSION IS NOT A PLAIN SIGNAL, AND ITS TEXT NEVER REACHES THE DECK
+# =============================================================================
+proc oe11_committed_rows {} {
+    set root [file normalize [file join $::here .. ..]]
+    set rows {}
+    if {[catch {exec git -C $root ls-files *.state} lst]} { return ERR }
+    foreach fn [split [string trim $lst] "\n"] {
+        if {[catch {set fh [open [file join $root $fn] r]}]} continue
+        set t [read $fh] ; close $fh
+        if {[catch {dict get $t outputs} outs]} continue
+        foreach o $outs { if {[dict exists $o expr]} { lappend rows $o } }
+    }
+    return $rows
+}
+group OE11 {
+    check "OE11 output_is_plain: an infix or nested form is an expression" \
+        [lmap e {Vcc/I(Vr) (Vcc-Vss)/I(Vsil) v(dcmid)*2 db(i(vd)/i(vg)) 2*vdb(x)} {ase::output_is_plain $e}] \
+        {0 0 0 0 0}
+    check "OE11 control: one signal, in every committed spelling, is plain" \
+        [lmap e {v(out) i(vdd) -i(v1) @m1[gm] -i(@m1[id]) VBG vt("x") v(a,b) x1.out a[3]} {ase::output_is_plain $e}] \
+        {1 1 1 1 1 1 1 1 1 1}
+    check "OE11 a narrowed deck carries a signal-shaped card for the infix row's NOTHING: neither its text nor an unparsed token of it" \
+        [ase::output_save_cards [oe_state oe11 {{expr v(out) save 1} {expr Vcc/I(Vr) save 1}}]] v(out)
+    set rows [oe11_committed_rows]
+    set ninfix 0
+    set bad {}
+    foreach o $rows {
+        set e [string trim [dict get $o expr]]
+        if {[regexp {[*/+]|.-|\)\S} $e] && ![ase::output_is_plain $e]} { incr ninfix }
+        foreach c [ase::output_save_cards [oe_state oe11 [list {expr v(anchor) save 1} $o]]] {
+            if {[regexp {[*/+]|^\(|.-} $c]} { lappend bad $c }
+        }
+    }
+    check "OE11 DERIVED over every committed bench row (git ls-files *.state): there ARE infix rows, and not one of them yields a card that is not a single signal (count > 0, offenders)" \
+        [list [expr {$ninfix > 0}] [lsort -unique $bad]] {1 {}}
+}
+
+# =============================================================================
+# OE12 -- THE NOTE ON SCREEN AGREES WITH THE CELL
+# =============================================================================
+proc oe12_said {script} {
+    set ::oe12 {}
+    set had [expr {[info commands ::ciw_echo] ne {}}]
+    if {$had} { rename ::ciw_echo ::oe12_saved }
+    proc ::ciw_echo {line {tag {}}} { lappend ::oe12 $line ; return {} }
+    catch {uplevel 1 $script} r
+    catch {rename ::ciw_echo {}}
+    if {$had} { rename ::oe12_saved ::ciw_echo }
+    return [list $r $::oe12]
+}
+group OE12 {
+    oe_tran_only [file join $::scratch oe12_ase.raw]
+    lassign [oe12_said {[ase::backend_hook ngspice result_probe] \
+        [oe_state oe12 {{name lp expr v(lp) save 1} {name ns expr v(nosuch) save 1}}] {}}] res said
+    set note {}
+    foreach l $said { if {[string match {*no single-point value*} $l]} { set note $l } }
+    check "OE12 a transient-only plain row's cell is wave, and the no-value note does NOT name it; a vector the file lacks still has no value and IS named" \
+        [list [val $res lp] [val $res ns] [expr {$note ne {}}] \
+              [expr {[string first v(lp) $note] >= 0}] [expr {[string first v(nosuch) $note] >= 0}]] \
+        {wave ABSENT 1 0 1}
 }
 
 # =============================================================================

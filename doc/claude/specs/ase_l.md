@@ -708,12 +708,15 @@ They should not influence the input to the simulator."* ADE-L is the floor
   expression rows of one Value column always show one run. Rows: OE3, OE5, OE8;
   `test_ase_core` P1, RS1–RS4b, RD10–RD14; `test_ase_result_case` NCR1–NCR3.
 - **R-OUT3 — the save list is the only netlist effect.** `ase::output_save_cards`
-  is the one body: every Save-ticked **plain** row (one whitespace-free token
-  that is not a measurement call, `ase::output_is_plain`) emits `.save
+  is the one body: every Save-ticked **plain** row (ONE signal, optionally
+  negated: a wrapper call with no nested parenthesis such as `v(out)`/`v(a,b)`,
+  a device parameter `@m1[gm]`, or a bare vector name, and not a measurement
+  call — `ase::output_is_plain` / `ase::output_is_signal`) emits `.save
   <signal>` exactly as before (R208c qualifiers and Cadence quotes stripped,
   `ase::output_signal`); **then, only if those narrowed the deck**, every signal
   any expression row reads (`calc::eval_text_signals`), ticked or not, each
-  once. An expression's tick never narrows a deck: a bench whose only ticked
+  once — and only a read that is itself one signal: a token the Calculator
+  cannot parse never becomes a card. An expression's tick never narrows a deck: a bench whose only ticked
   rows are expressions gets no card and ngspice keeps everything.
   `ase::saves_narrowed` reads the same body. **Measured 2026-10-11** on the
   registry's ngspice-46+ (`build-ver_50`), a divider with `op` + `tran` and an
@@ -726,6 +729,32 @@ They should not influence the input to the simulator."* ADE-L is the floor
   row IS narrowed — which is why the expressions' signals ride along. `.save
   -i(v1)` is accepted and saves `i(v1)` (measured), so a negated row's card
   stays verbatim. Rows: OE1, OE2, OE7.
+  ⚠ **An ngspice INFIX row is an expression, not a plain signal (fix round
+  2026-10-11).** `Vcc/I(Vr)` is one whitespace-free token, and the first cut
+  emitted it as `.save Vcc/I(Vr)`. Measured on the same ngspice: `.save
+  out/i(v1)` keeps **only `i(v1)`** (the infix half silently dropped) and `.save
+  (in-out)/i(v1)` keeps **everything** (the card is ignored). Either way the
+  text was in the deck, contradicting R-OUT1. Nine committed bench rows have
+  this shape (`dc_ntap1`, `dc_ptap1`, `dc_res_temp`, `iso_dc_res`, and one
+  nested `db(i(vd)/i(vg))`); they now add no card and their Value is the
+  Calculator's refusal (R-OUT4). Row OE11 derives that over every committed
+  `.state` file.
+- **R-OUT3a — the pre-flight checks the cards and nothing else.**
+  `ase::preflight_scan`, which `ase::preflight_gate` reads, walks
+  `ase::output_card_sources` — the same body as the deck's cards, each paired
+  with the row it came from — so it checks exactly what the deck will carry. A
+  ticked expression adds no card, cannot make ngspice write the constants plot,
+  and **does not block the run** (its Value says what is wrong afterwards);
+  Calculator quoted forms (`v("out") 2 *`) are checked unquoted; a signal an
+  UNTICKED expression reads IS checked once the deck is narrowed, because it
+  becomes a card; a ticked `vt(x)` is checked as `v(x)`. The repair offer still
+  rewrites the row's own text. Row OE9.
+- **R-OUT3b — the op phantom guard counts the deck's vectors.**
+  `ase::saves_op_phantom_risk` asks whether `ase::output_save_cards` holds
+  exactly one card, not whether one row is ticked: a ticked plain row plus a
+  ticked expression reading the same signal is ONE vector (the risk), a ticked
+  plain row plus an unticked expression reading another is TWO (no `.save all`
+  leader needed). Row OE10.
 - **R-OUT4 — what a row reads.** A plain signal with a single-point value shows
   the operating point, the number `print` used to give: **measured equal on a
   real run** (OE7) — a voltage string for string (`%.6e`), a current to the
@@ -746,7 +775,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
 - **R-OUT5 — what the Value cell shows.** A scalar: `%.6e`, then
   `ase::format_value` (engineering notation). A waveform (a plain expression on
   a multi-point analysis, or a verb answering a wave): the word **`wave`** —
-  never a last point. A refusal: the Calculator's sentence. No results file: no
+  never a last point. The on-screen "no single-point value" note names only the
+  rows still without a value after the Calculator was asked, so a row whose
+  cell reads `wave` is never also reported as having none (row OE12). A refusal: the Calculator's sentence. No results file: no
   value at all, as before. Plotting a verb-valued wave from Outputs is **not
   built**; the Plot tick keeps plotting plain RPN rows as before. Row OE6.
 - **R-OUT6 — declared limits.** Sweeps, corners and Monte Carlo: **dataset 0

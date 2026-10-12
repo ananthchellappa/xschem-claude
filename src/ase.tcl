@@ -9341,11 +9341,28 @@ proc ase::saves_narrowed {state} {
 #     always been;
 #   * then, ONLY IF those narrowed the deck, every signal an expression row
 #     reads (`calc::eval_text_signals`), ticked or not, each once -- without
-#     them the expression would find nothing to evaluate.
+#     them the expression would find nothing to evaluate.  Only a token that is
+#     itself one signal is a read: a token the Calculator cannot parse (an
+#     ngspice infix row such as `Vcc/I(Vr)` is ONE such token) is refused after
+#     the run with a sentence, and its text never becomes a card.
 # A bench whose only ticked rows are expressions gets NO card, so ngspice keeps
 # everything: an expression's tick never narrows a deck.  Answers the card
-# arguments, `.save` not included.
+# arguments, `.save` not included, each once.
 proc ase::output_save_cards {state} {
+  set out {}
+  foreach p [ase::output_card_sources $state] {
+    set c [lindex $p 1]
+    if {[lsearch -exact $out $c] < 0} { lappend out $c }
+  }
+  return $out
+}
+
+# The same cards, each paired with the output row's text it came from:
+# -> {{<row expr> <card>} ...}, plain cards first, then the reads, duplicates
+# kept (two rows reading one signal are two rows to report).  ONE body for the
+# deck (ase::output_save_cards) and the pre-flight (ase::preflight_scan), so the
+# gate checks exactly what the deck will carry and nothing else.
+proc ase::output_card_sources {state} {
   if {$state eq {}} { return {} }
   set plain {}
   set reads {}
@@ -9354,28 +9371,46 @@ proc ase::output_save_cards {state} {
     set ex [string trim [dict get $o expr]]
     if {$ex eq {}} { continue }
     if {[ase::output_is_plain $ex]} {
-      if {[ase::state_get $o save 0] eq {1}} { lappend plain [ase::output_signal $ex] }
+      if {[ase::state_get $o save 0] eq {1}} {
+        lappend plain [list $ex [ase::output_signal $ex]]
+      }
       continue
     }
     if {[info commands ::calc::eval_text_signals] eq {}} { continue }
-    foreach sg [calc::eval_text_signals $ex] { lappend reads $sg }
+    foreach sg [calc::eval_text_signals [ase::output_calc_text $ex]] {
+      if {[ase::output_is_signal $sg]} { lappend reads [list $ex $sg] }
+    }
   }
   if {![llength $plain]} { return {} }
-  set out $plain
-  foreach sg $reads {
-    if {[lsearch -exact $out $sg] < 0} { lappend out $sg }
-  }
-  return $out
+  return [concat $plain $reads]
 }
 
-# A PLAIN output row names one signal: one whitespace-free token that is not a
-# Calculator measurement call.  `v(out)`, `VBG`, `i(VCC)`, `@m1[gm]`,
-# `vt(out)`.  Anything else is an expression.
+# A PLAIN output row names one signal, optionally negated (`-i(v1)`, the one
+# ngspice idiom committed benches rely on; ngspice saves it as `i(v1)`):
+# see ase::output_is_signal.  Anything else -- `Vcc/I(Vr)`, `v(a) 2 *`,
+# `db(i(vd)/i(vg))`, a measurement call -- is an expression.
 proc ase::output_is_plain {ex} {
   set e [string trim $ex]
+  if {[string index $e 0] eq {-} && [string index $e 1] ne {-}} {
+    set e [string range $e 1 end]
+  }
+  return [ase::output_is_signal $e]
+}
+
+# ONE SIGNAL, as a single whitespace-free token in one of three shapes:
+#   a wrapper call with no nested parenthesis   v(out) i(vdd) v(a,b) vt("x")
+#   a device parameter                          @m1[gm]  @m.x1.m1[id]
+#   a bare vector name                          VBG  x1.out  a[3]  #net1
+# and not a Calculator measurement call.  An operator anywhere outside the one
+# wrapper (`Vcc/I(Vr)`) or a nested call is not one signal.
+proc ase::output_is_signal {e} {
+  set e [string trim $e]
   if {$e eq {} || [regexp {\s} $e]} { return 0 }
   if {[info commands ::calc::meas_split] ne {} && [calc::meas_split $e] ne {}} { return 0 }
-  return 1
+  if {[regexp {^[A-Za-z][A-Za-z0-9_]*\([^()]*\)$} $e]} { return 1 }
+  if {[regexp {^@[^\s()\[\]]+\[[^\s()\[\]]+\]$} $e]} { return 1 }
+  if {[regexp {^[A-Za-z_#][A-Za-z0-9_.:#$<>\[\]]*$} $e]} { return 1 }
+  return 0
 }
 
 # The text the Calculator is handed for an output row.  The one ngspice idiom
@@ -9387,7 +9422,7 @@ proc ase::output_is_plain {ex} {
 # the `.save` card stays the row's text verbatim.
 proc ase::output_calc_text {ex} {
   set e [string trim $ex]
-  if {[regexp {^-([^-\s]\S*)$} $e -> rest] && [ase::output_is_plain $rest]
+  if {[regexp {^-([^-\s]\S*)$} $e -> rest] && [ase::output_is_signal $rest]
       && ![string is double -strict $e]} {
     return "$rest -1 *"
   }
@@ -9514,13 +9549,11 @@ proc ase::saves_op_phantom_risk {sim state {opcards 0}} {
     if {[ase::state_get $a type] eq {op}} { set opon 1 ; break }
   }
   if {!$opon} { return 0 }
-  set n 0
-  foreach o [ase::state_get $state outputs] {
-    if {[ase::state_get $o save 0] ne {1}} { continue }
-    if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
-    incr n
-  }
-  return [expr {$n == 1 ? 1 : 0}]
+  ## THE VECTORS THE DECK WILL CARRY, NOT THE TICKED ROWS (2026-10-11). Since
+  ## outputs stopped reaching the deck a ticked expression adds no card and an
+  ## unticked one can add several (ase::output_save_cards), so a row count both
+  ## missed the lone save it guards and invented one that was not there.
+  return [expr {[llength [ase::output_save_cards $state]] == 1 ? 1 : 0}]
 }
 
 # --- 6g-2: THE PHANTOM COLUMN, FILTERED WHERE A VECTOR LIST REACHES A USER ---
@@ -14037,11 +14070,17 @@ proc ase::preflight_scan {state netlist_text} {
   set absent {}
   set unknown {}
   set seen [dict create]
-  foreach o [ase::state_get $state outputs] {
-    if {[ase::state_get $o save 0] ne {1}} continue
-    set ex [ase::state_get $o expr]
-    if {$ex eq {}} continue
-    foreach id [ase::preflight_idents $ex] {
+  ## THE CARDS THE DECK WILL CARRY, AND NOTHING ELSE (ase_l.md R-OUT3a,
+  ## 2026-10-11). An output expression never reaches the deck, so it cannot
+  ## make ngspice write the constants plot and must not block the run -- its
+  ## Value says what is wrong after the run.  What DOES reach the deck is
+  ## ase::output_card_sources' answer: a ticked plain row's signal, and, once
+  ## that narrowed the deck, every signal an expression reads, ticked or not.
+  ## Each is reported against the row it came from, so the offer below still
+  ## repairs that row's own text.
+  foreach src [ase::output_card_sources $state] {
+    lassign $src ex card
+    foreach id [ase::preflight_idents $card] {
       lassign $id kind ident
       set skey [list $ex $ident]
       if {[dict exists $seen $skey]} continue
@@ -25419,14 +25458,23 @@ namespace eval ase::backend::ngspice {
     # already reported, loudly, by ase::attach_dbs and ase::raw_content_verdict;
     # saying it again per output row would be noise, and a probe called with a
     # scratch state has no run behind it to describe.
-    if {$missvar ne {}} { set miss $missing }
+    ## A CALLER THAT ASKS FOR THE MISSING ROWS SAYS SO ITSELF: result_probe
+    ## asks the Calculator about them next, and a transient-only `v(out)` then
+    ## shows `wave` -- a note naming it as having no value would contradict the
+    ## cell beside it.
+    if {$missvar ne {}} { set miss $missing ; return $results }
     if {[llength $missing] && $path ne {} && [file isfile $path]} {
-      ::ase::echo "ase: result -- the results file holds no single-point value\
- for [join $missing {, }], so [expr {[llength $missing] == 1 ? {that row has}\
- : {those rows have}}] no value: a multi-point vector is not a scalar, and a\
- run that computed nothing writes only the constants plot." note
+      ::ase::echo [missing_note $missing] note
     }
     return $results
+  }
+
+  # The note for single-vector rows the results file holds no value for.
+  proc missing_note {missing} {
+    return "ase: result -- the results file holds no single-point value\
+ for [join $missing {, }], so [expr {[llength $missing] == 1 ? {that row has}\
+ : {those rows have}}] no value: a multi-point vector is not a scalar, and a\
+ run that computed nothing writes only the constants plot."
   }
 
   # `%.6e`, and non-numeric text verbatim. See result_probe_raw's header for
@@ -25562,6 +25610,19 @@ namespace eval ase::backend::ngspice {
     }
     foreach {k v} [result_probe_calc [dict set state outputs $again]] {
       if {$v eq {wave} && ![dict exists $results $k]} { dict set results $k $v }
+    }
+    # ...and only the rows that are STILL without a value are named on screen
+    # (ase_l.md R-OUT5): a row whose cell now reads `wave` has one.
+    set still {}
+    foreach o $again {
+      set rkey [dict get $o expr]
+      if {[dict exists $o name] && [dict get $o name] ne {}} { set rkey [dict get $o name] }
+      if {![dict exists $results $rkey]} { lappend still [dict get $o expr] }
+    }
+    set path {}
+    catch {set path [raw_file $state]}
+    if {[llength $still] && $path ne {} && [file isfile $path]} {
+      ::ase::echo [missing_note $still] note
     }
     return $results
   }
