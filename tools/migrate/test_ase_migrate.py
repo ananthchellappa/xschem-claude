@@ -94,7 +94,7 @@ if HAVE:
                      ["type", "dc", "enabled", "0"],
                      ["type", "ac", "enabled", "0"],
                      ["type", "tran", "enabled", "0"]],
-        "outputs": [["name", "id", "expr", "-i(v1)", "save", "1", "plot", "0"]],
+        "outputs": [["name", "id", "expr", "-idc(v1)", "save", "1", "plot", "0"]],
         "save_all_v": "0",
         "save_all_i": "0",
         "options": [["name", "savecurrents", "value", "1"]],
