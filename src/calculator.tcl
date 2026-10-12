@@ -14027,12 +14027,22 @@ proc calc::eval_text_signals {text} {
 # INFIX OR RPN, decided by `calc::ix_route` and nothing else, in this order:
 #   1. several space-separated tokens that make a complete postfix expression
 #      (`calc::rpn_stack_fault` answers {}) -> RPN, unchanged;
-#   2. the text does not lex as infix -> RPN (its own refusals follow);
+#   2. the text does not lex as infix -> RPN (its own refusals follow) --
+#      except ONE token starting with a digit or `.`, refused as not a number,
+#      because the engine reads any digit-led token with atof and would answer
+#      its numeric prefix;
 #   3. it parses as infix -> infix;
-#   4. it does not, because two values sit side by side (`v(a) v(b) +` with a
-#      malformed tail) -> RPN; a single token with no operator character in it
-#      -> RPN (a raw name such as `a<3>`); anything else -> refused naming the
-#      fault.
+#   4. it does not, because two values sit side by side, and the text has MORE
+#      THAN ONE space-separated token (`v(a) v(b) +` with a malformed tail) ->
+#      RPN; a single token with no operator character in it whose fault is not
+#      a number's (a raw name such as `a<3>`) -> RPN; anything else -> refused
+#      naming the fault.  So `2(v(a)+1)`, `10k(v(a))`, `1..2*v(a)` and a whole
+#      text `2M` are REFUSED: one token can never be two postfix values, and
+#      handing them to the engine answered `2`, `10000`, `1` and `0.002`
+#      silently (verifier, 2026-10-11).
+# DECLARED LIMIT: division by an operand that is zero answers 0, the engine's
+# deliberate DIVIS hold-previous rule (src/save.c, issue 1628) -- not a
+# refusal and not inf.  Row ET12 `DECLARED` measures it.
 # No text is both a complete postfix expression of two or more tokens and a
 # complete infix one, because a postfix expression of two or more tokens always
 # puts two values side by side, which infix never does -- so the order of 1 and
@@ -14144,6 +14154,12 @@ proc calc::ix_lex {s} {
         if {$c eq ")"} { lappend toks {rp )} ; incr i ; continue }
         if {$c eq ","} { lappend toks {comma ,} ; incr i ; continue }
         if {[regexp {^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?[A-Za-z]*} $rest m]} {
+            if {[string index $rest [string length $m]] eq "."} {
+                regexp {^[0-9.]+(?:[eE][-+]?[0-9]+)?[A-Za-z]*} $rest m
+                lappend toks [list bad $m]
+                incr i [string length $m]
+                continue
+            }
             set r [calc::num_read $m]
             switch -exact -- [lindex $r 0] {
                 ok { lappend toks [list num [lindex $r 1]] }
@@ -14327,23 +14343,24 @@ proc calc::ix_call {} {
 proc calc::ix_marker {k} { return "\u0001$k\u0001" }
 
 # Parse a token list.  Answers `{ok 1 rpn <tokens> subs <texts>}` or
-# `{ok 0 side 0|1 msg <sentence>}`; `side 1` is the two-values-side-by-side
-# fault `calc::ix_route` hands to RPN.
+# `{ok 0 side 0|1 kind <fault> msg <sentence>}`; `side 1` is the
+# two-values-side-by-side fault `calc::ix_route` hands to RPN when the text has
+# more than one token.
 proc calc::ix_parse {toks} {
     variable ix_t $toks
     variable ix_p 0
     variable ix_subs {}
-    if {![llength $toks]} { return [dict create ok 0 side 0 msg [calc::et_msg empty]] }
+    if {![llength $toks]} { return [dict create ok 0 side 0 kind empty msg [calc::et_msg empty]] }
     if {[catch {calc::ix_expr 0} out]} {
         if {[lindex $out 0] ne {IX}} { return -code error $out }
         lassign $out - kind a b
-        return [dict create ok 0 side [expr {$kind eq {side}}] msg [calc::ix_msg $kind $a $b]]
+        return [dict create ok 0 side [expr {$kind eq {side}}] kind $kind msg [calc::ix_msg $kind $a $b]]
     }
     if {$ix_p < [llength $ix_t]} {
         lassign [lindex $ix_t $ix_p] ty tx
-        if {$ty eq {rp}} { return [dict create ok 0 side 0 msg [calc::ix_msg close]] }
-        if {$ty eq {comma}} { return [dict create ok 0 side 0 msg [calc::ix_msg noleft ,]] }
-        return [dict create ok 0 side 1 msg [calc::ix_msg side $tx]]
+        if {$ty eq {rp}} { return [dict create ok 0 side 0 kind close msg [calc::ix_msg close]] }
+        if {$ty eq {comma}} { return [dict create ok 0 side 0 kind noleft msg [calc::ix_msg noleft ,]] }
+        return [dict create ok 0 side 1 kind side msg [calc::ix_msg side $tx]]
     }
     return [dict create ok 1 rpn $out subs $ix_subs]
 }
@@ -14359,13 +14376,19 @@ proc calc::ix_route {text} {
         return [dict create mode rpn rpn $t subs {}]
     }
     set lx [calc::ix_lex $t]
-    if {![dict get $lx ok]} { return [dict create mode rpn rpn $t subs {}] }
+    if {![dict get $lx ok]} {
+        if {[llength $rt] == 1 && [regexp {^[0-9.]} $t]} {
+            return [dict create mode refuse msg [calc::ix_msg number $t]]
+        }
+        return [dict create mode rpn rpn $t subs {}]
+    }
     set p [calc::ix_parse [dict get $lx toks]]
     if {[dict get $p ok]} {
         return [dict create mode infix rpn [join [dict get $p rpn] { }] subs [dict get $p subs]]
     }
-    if {[dict get $p side]} { return [dict create mode rpn rpn $t subs {}] }
-    if {[llength $rt] == 1 && ![regexp {[-+*/^(),]} $t]} {
+    if {[dict get $p side] && [llength $rt] > 1} { return [dict create mode rpn rpn $t subs {}] }
+    if {[llength $rt] == 1 && ![regexp {[-+*/^(),]} $t]
+        && [dict get $p kind] ni {side number capM}} {
         return [dict create mode rpn rpn $t subs {}]
     }
     return [dict create mode refuse msg [dict get $p msg]]

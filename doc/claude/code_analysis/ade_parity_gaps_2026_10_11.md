@@ -64,8 +64,10 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    for ASE-L Outputs (`calc::eval_text`), 2026-10-11:** infix with ADE's operators, precedence,
    functions (`db`, `db20`, `db10`, `log`, `mag`, `pow` mapped exactly; the engine's own by
    name), engineering suffixes and measurement calls as operands, translated to the engine's
-   postfix; postfix still accepted (calculator.md R610). **Still open:** the Calculator
-   window's buffer Eval and Plot take postfix only.
+   postfix; postfix still accepted (calculator.md R610). Malformed one-token infix
+   (`2(Vcc-Vss)`) is refused with a sentence, as ADE-L reports a syntax error. **Still open:**
+   the Calculator window's buffer Eval and Plot take postfix only; `x/0` answers `0` (engine
+   DIVIS rule, issue 1628) where ADE-L gives an infinity — declared, not fixed.
 2. Signal names are xschem net names (`lp`). Cadence slash paths (`/lp`, `/I0/net`) are refused
    (row Q6 of `test_calc_quotes`).
 3. Quotes are accepted but not required. ❓ Cadence requires them.

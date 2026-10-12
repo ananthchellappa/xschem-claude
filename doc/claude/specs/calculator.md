@@ -1657,17 +1657,26 @@ below are the ones a caller cannot answer for itself and so must not have to.
   a measurement's argument. A measurement call's expression arguments may themselves be
   infix (`cross(vt(a)-vt(b), 0.5, 1, rising)`). **Infix or RPN** is decided by
   `calc::ix_route` alone: several space-separated tokens forming a complete postfix
-  expression are RPN, unchanged; a text that does not lex as infix is RPN; one that
-  parses as infix is infix; one that fails because two values sit side by side is RPN;
-  a single token with no operator character is RPN (`a<3>`); anything else is refused
-  naming the fault. A postfix expression of two or more tokens always puts two values
+  expression are RPN, unchanged; a text that does not lex as infix is RPN, except one
+  token starting with a digit or `.`, refused as not a number; one that parses as infix
+  is infix; one of SEVERAL space-separated tokens that fails because two values sit side
+  by side is RPN; a single token with no operator character whose fault is not a
+  number's is RPN (`a<3>`); anything else is refused naming the fault. So `2(v(a)+1)`,
+  `10k(v(a))`, `1..2*v(a)` and a whole text `2M` are refused with a sentence — handed to
+  the engine (which reads a digit-led token with `atof`) they answered `2`, `10000`, `1`
+  and `0.002` silently (verifier, 2026-10-11; row ET12 `MALFORMED`). A postfix expression of two or more tokens always puts two values
   side by side, which infix never does, so no text is both — every committed RPN text
   evaluates byte-identically. Rows: ET12 (routing, values, refusals,
   nesting) and ET9 of `test_calc_eval_text`; OE13 of `test_ase_outputs_eval` proves the
   nine committed ngspice-infix bench rows equal the former `print` path on the registry
   ngspice. **Declared limits:** the Calculator window's buffer Eval and Plot are not
   routed through it (they still take postfix); `?` (the conditional) has no infix form;
-  Cadence slash paths (`/net`) stay refused (Q6).
+  Cadence slash paths (`/net`) stay refused (Q6); **a division by an operand that is
+  zero answers 0** — the engine's deliberate DIVIS hold rule (`src/save.c`, issue
+  1628), now reachable from infix, so `Vcc/I(Vr)` with a zero current shows `0` where
+  ADE-L shows an infinity; measured by row ET12 `DECLARED LIMIT`. OE13's population is
+  derived without the router and carries a `FLOOR: 9` ratchet, so a routing change that
+  stopped reading the committed rows as infix reddens it.
 
 ---
 

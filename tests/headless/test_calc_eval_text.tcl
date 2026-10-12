@@ -506,6 +506,33 @@ group ET12 {
               "Cannot evaluate: '2M': M is milli in SPICE; type m or meg." \
               "Cannot evaluate: '2x' is not a number." \
               "Cannot evaluate: a value is missing before ')'."]
+    # ONE TOKEN IS NEVER TWO POSTFIX VALUES (verifier, 2026-10-11): each of these
+    # was handed to the engine, which reads a digit-led token with atof and
+    # answered 2, 2, 10000, 1, 0.002 and 1 -- a silent wrong number in a Value
+    # cell.  Each is now a sentence; the fixture leg below measures that the
+    # number each USED to give is not the right answer, so the refusal is not
+    # replacing a correct value.
+    set mal {2(v(dcmid)+1) 2(3) 10k(v(dcmid)) 1..2*v(dcmid) 2M 1.5.3 2(V(DCMID)-1)}
+    check "ET12 MALFORMED ONE-TOKEN INFIX IS REFUSED, never routed to the postfix engine: a number against a '(' with no operator, a doubled decimal point, and a whole text '2M' (mode, then the sentence)" \
+        [lmap t $mal {set r [calc::ix_route $t] ; list [dict get $r mode] [et_m $t]}] \
+        [list [list refuse "Cannot evaluate: '(' follows a value with no operator between them."] \
+              [list refuse "Cannot evaluate: '(' follows a value with no operator between them."] \
+              [list refuse "Cannot evaluate: '(' follows a value with no operator between them."] \
+              [list refuse "Cannot evaluate: '1..2' is not a number."] \
+              [list refuse "Cannot evaluate: '2M': M is milli in SPICE; type m or meg."] \
+              [list refuse "Cannot evaluate: '1.5.3' is not a number."] \
+              [list refuse "Cannot evaluate: '(' follows a value with no operator between them."]]
+    check "ET12 MALFORMED fixture: what the postfix engine made of those shapes (2, 10000, 2) is NOT what the user meant (2*(v+1), 10k*v), so the refusal replaces a wrong number, not a right one" \
+        [list [far 2.0 [expr {2 * ($dc + 1)}]] [far 10000.0 [expr {10000 * $dc}]]] {1 1}
+    check "ET12 the multi-token side-by-side shape is STILL handed to RPN (its own sentence follows), and a single bus-style raw name still reads as RPN" \
+        [lmap t {{v(lp) v(dcmid)} a<3>} {dict get [calc::ix_route $t] mode}] {rpn rpn}
+    # DECLARED LIMIT (calculator.md R610): a division by an operand that is zero
+    # answers 0 -- the engine's deliberate DIVIS hold rule, issue 1628 -- not a
+    # refusal and not inf.  Measured here so a change to it reddens this row
+    # and the declaration is revisited; v(lp) is exactly 0 at the operating
+    # point (band ET1's distinctness leg).
+    check "ET12 DECLARED LIMIT, measured: v(dcmid)/v(lp) at the operating point, where v(lp) is exactly 0, answers 0 (engine DIVIS rule), and so does a literal 1/0" \
+        [list [et_v v(lp)] [et_v {v(dcmid)/v(lp)}] [et_v {1/0}]] {0 0 0}
     set cr [et_v {cross(vt(lp), 0.5, 1, rising)} {}]
     set bw [et_v {bandwidth(vf(lp), 3, magnitude, low, 0)} {}]
     set n2 [pcall calc::eval_text {cross(vt(lp), 0.5, 1, rising)*2} $::fixture {}]

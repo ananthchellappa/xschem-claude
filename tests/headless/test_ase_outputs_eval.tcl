@@ -33,7 +33,8 @@
 #   OE11 an infix expression is not a plain signal; its text never reaches
 #        the deck (derived over every committed bench row)
 #   OE12 the no-value note agrees with the cell (a `wave` row is not named)
-#   OE13 REAL ngspice: every committed ngspice-infix bench row (derived) shows
+#   OE13 REAL ngspice: every committed non-plain, non-measurement bench row
+#        (derived without the router, FLOOR 9) routes as infix and shows
 #        the value the former print path gave, on a synthetic circuit built
 #        from the row's own reads with the bench's own analyses
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
@@ -545,7 +546,6 @@ if {$NG eq {}} {
                 set e [string trim [dict get $o expr]]
                 if {[ase::output_is_plain $e]} continue
                 if {[calc::meas_split $e] ne {}} continue
-                if {[dict get [calc::ix_route $e] mode] ne {infix}} continue
                 lappend out [list $fn $o $an]
             }
         }
@@ -587,9 +587,13 @@ if {$NG eq {}} {
         set bad {}
         set far {}
         set said {}
+        set notinfix {}
         foreach row $rows {
             lassign $row fn o an
             incr n
+            if {[dict get [calc::ix_route [dict get $o expr]] mode] ne {infix}} {
+                lappend notinfix "$fn:[dict get $o expr]"
+            }
             set ex [dict get $o expr]
             set reads [calc::eval_text_signals $ex]
             set nl [oe13_circuit $reads $an]
@@ -633,6 +637,14 @@ if {$NG eq {}} {
         foreach l $said { puts "note: OE13 $l" }
         check "OE13 DERIVED over every committed bench row (git ls-files *.state): every ngspice-infix row now shows a VALUE, equal (to print's precision) to what the former print path gave on the registry ngspice for the same circuit and the bench's own analyses (population > 0, misses)" \
             [list [expr {$n > 0}] $bad] {1 {}}
+        # The population is every committed non-plain, non-measurement row --
+        # derived WITHOUT asking the router, so a routing change that stopped
+        # reading these as infix cannot shrink it silently (verifier,
+        # 2026-10-11: a `> 0` population would have stayed green on one row).
+        # FLOOR 9 is a RATCHET over the committed benches, not a baseline: a
+        # bench that adds such a row raises it; one that loses a row reddens.
+        check "OE13 POPULATION: every committed non-plain, non-measurement Outputs row (derived without the router) ROUTES AS INFIX, and there are at least nine of them (FLOOR: 9; count >= floor, then rows that did not route infix)" \
+            [list [expr {$n >= 9}] $notinfix] {1 {}}
         check "OE13 DISCRIMINATION, measured per row: the same text read in the bench's other enabled analysis (its last point) differs, so a value read from the wrong analysis could not pass" \
             $far {}
     }

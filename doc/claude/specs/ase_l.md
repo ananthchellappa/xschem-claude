@@ -806,7 +806,11 @@ They should not influence the input to the simulator."* ADE-L is the floor
   Value cell is painted by `ase::ui::refresh_output_values` writing
   `[ase::format_value $val]`; its Tk half is covered by `test_ase_window`, which
   is not registered. Old state files load unchanged (no field added); their
-  values are now computed rather than printed.
+  values are now computed rather than printed. **A division by an operand that
+  is zero shows `0`** (the engine's DIVIS hold rule, issue 1628; calculator.md
+  R610's declared limit) where ADE-L shows an infinity. Malformed one-token
+  infix (`2(Vcc-Vss)`, `1..2*Vcc`, a whole `2M`) is refused with a sentence in
+  the Value cell, never evaluated as a leading number (row ET12 `MALFORMED`).
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
