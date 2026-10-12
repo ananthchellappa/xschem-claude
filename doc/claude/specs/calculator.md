@@ -1585,7 +1585,35 @@ below are the ones a caller cannot answer for itself and so must not have to.
   worst failure mode of the Cadence original.
 - **R608** **Export to ASE-L** adds the buffer as a row in the current ASE-L session's
   outputs list, with a user-supplied name. Round-trip: the row can be sent back to the
-  buffer.
+  buffer. ⚠ **Amended 2026-10-11:** the row carries the buffer's text as an Outputs
+  **expression** that ASE-L evaluates AFTER the run from the run's results file, through
+  R609 — it is **never** written into the netlist. The user: *"Why would expressions in
+  the outputs pane of ASE-L go to the netlist? They are computations made using the
+  result of the simulation! They should not influence the input to the simulator."* The
+  only netlist effect is that the signals the expression reads are saved (ase_l.md
+  R-OUT3). The button itself is still not built (PLAN row 10.4).
+- **R609** **The pure evaluator.** `calc::eval_text <text> <rawpath> <analysis>
+  ?dataset?` (and `calc::eval_texts`, the same for a list against one file, one read
+  per analysis) answers `{ok 1 kind scalar value V}`, `{ok 1 kind wave value <last
+  point> points N}` or `{ok 0 msg <sentence>}`. It needs **no** Calculator window,
+  buffer, stack, status line, Tk or waveform viewer, and works under `--nogui`. It reads
+  `<rawpath>` itself with `xschem raw read <path> <analysis>` (path AND type), evaluates,
+  clears every slot the read or a wave-valued verb added (by index, highest first),
+  restores the user's slot by name and type, and compares the whole `xschem raw info`
+  text with its snapshot — a mismatch is a refusal, never a silent difference. It
+  accepts plain RPN, quoted forms, `vt()`/`vf()`/`vdc()`/`vs()` (R208c) and measurement
+  calls (`cross(...)`, `bandwidth(...)`, ...), checked by `calc::meas_prepare` — the
+  same check the Eval press uses (`calc::meas_eval`). Analysis: a qualifier's own;
+  else `<analysis>`; else the operating point for plain RPN and the first
+  non-operating-point analysis for a measurement call (`calc::et_default`). Plain RPN is
+  read at the **last point, never a viewer cursor** (`calc::eval_rpn`'s `usecursor` 0);
+  `kind wave` means the answer has more than one point, and its value is not the answer.
+  Declared limits: `<dataset>` reaches plain RPN only (a verb takes its dataset from its
+  own arguments); a wave-valued verb's wave is discarded. The Eval press itself does
+  **not** route through R609, because it reads the selected result's own slot at the
+  cursor and hands waves to the viewer; it shares R609's argument check. Suite:
+  `tests/headless/test_calc_eval_text.tcl`. `calc::eval_text_signals` answers the
+  vectors a text reads, for ASE-L's save list.
 
 ---
 

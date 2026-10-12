@@ -3142,7 +3142,7 @@ proc calc::eval_refusal {msg {dataset 0} {dest {}} {point -1}} {
 # `calc::rpn_bad_token`'s own header carries the mirror-versus-engine
 # disagreements it cannot see, each pinned by a row in band CE13, and this proc
 # answers issue 0325's defined zero with no message for those.
-proc calc::eval_rpn {rpn {dataset 0}} {
+proc calc::eval_rpn {rpn {dataset 0} {usecursor 1}} {
     set rpn [string trim $rpn]
     if {$rpn eq {}} { return [calc::eval_refusal [calc::eval_msg empty] $dataset] }
     # R208c: a qualified token is evaluated ONLY in its own analysis, whoever
@@ -3189,7 +3189,10 @@ proc calc::eval_rpn {rpn {dataset 0}} {
     # R604, resolved BEFORE the engine runs: the cursor if there is one, else
     # the last point of the asked-for dataset.  A cursor index is absolute
     # across datasets (see calc::eval_cursor_point), so the read passes -1.
-    set cp [calc::eval_cursor_point]
+    # `usecursor` 0 is `calc::et_one`'s: an ASE-L Outputs value is the last
+    # point whatever a viewer cursor says.
+    set cp -1
+    if {$usecursor} { set cp [calc::eval_cursor_point] }
     if {[string is integer -strict $cp] && $cp >= 0} {
         set at cursor ; set point $cp ; set rdset -1
     } else {
@@ -13588,17 +13591,278 @@ proc calc::meas_apply {name vals g {src {}}} {
 
 # Eval's measurement arm: parse, refuse legibly, then apply.
 proc calc::meas_eval {m g {src {}}} {
+    set p [calc::meas_prepare $m]
+    if {![dict get $p ok]} { return [dict get $p msg] }
+    return [calc::meas_apply [dict get $m verb] [dict get $p vals] $g $src]
+}
+
+# The parse-and-check half of `calc::meas_eval`, with no database: the
+# arguments zipped onto the formals and every malformed one named.  Answers
+# `{ok 1 vals <vals> msg {}}` or `{ok 0 msg <sentence>}`.  Shared with
+# `calc::eval_texts`, so the buffer and an ASE-L Outputs row are held to one rule.
+proc calc::meas_prepare {m} {
     set name [dict get $m verb]
-    set argl [dict get $m args]
-    set vals [calc::meas_vals $name $argl]
+    set vals [calc::meas_vals $name [dict get $m args]]
     if {[llength $vals] == 0} {
-        return [calc::meas_msg arity $name [llength [calc::meas_formals $name]]]
+        return [dict create ok 0 msg \
+                    [calc::meas_msg arity $name [llength [calc::meas_formals $name]]]]
     }
     set bad [calc::meas_trouble $name $vals]
     if {[llength $bad] > 0} {
-        return [calc::meas_msg fields $name [calc::arg_say $bad]]
+        return [dict create ok 0 msg [calc::meas_msg fields $name [calc::arg_say $bad]]]
     }
-    return [calc::meas_apply $name $vals $g $src]
+    return [dict create ok 1 vals $vals msg {}]
+}
+
+# ---------------------------------------------------------------------------
+# THE PURE EVALUATOR -- `calc::eval_text` / `calc::eval_texts` (calculator.md
+# R609; ASE-L Outputs, ase_l.md R-OUT1..R-OUT6).
+#
+# The user, 2026-10-11: "Why would expressions in the outputs pane of ASE-L go to
+# the netlist?  They are computations made using the result of the simulation!
+# They should not influence the input to the simulator."  So an Outputs row is
+# evaluated AFTER the run, from the run's results file, by the Calculator's own
+# engine and measurement verbs -- through this door.
+#
+# CONTRACT.  `calc::eval_text <text> <rawpath> <analysis> ?dataset?` answers
+#     {ok 1 kind scalar value <number> msg {}}
+#     {ok 1 kind wave   value <last point> points <n> msg {}}
+#     {ok 0 kind {} value {} msg <sentence>}
+# It needs no Calculator window, no buffer, no stack, no status line, no
+# waveform viewer and no display: it reads `<rawpath>` itself.  `kind wave`
+# carries the last point only so a caller can see it is a number; it is not the
+# answer and the Outputs pane does not show it.
+#
+# WHICH ANALYSIS.  A `vt()`/`vf()`/`vdc()`/`vs()` token chooses its own (R208c)
+# and two different ones are refused.  Otherwise `<analysis>` when non-empty;
+# otherwise the file's operating point for plain RPN (the scalar the Value column
+# has always shown, issue 1243) and its first non-operating-point analysis for a
+# measurement call, falling back to whatever the file holds first.
+#
+# THE REGISTRY IS PUT BACK EXACTLY.  The file is read with `xschem raw read
+# <path> <analysis>` -- path AND type -- the evaluation runs, every slot the read
+# or a wave-valued verb added is cleared BY INDEX, highest first, the user's slot
+# is restored by name and type, and the whole `raw info` text is compared with
+# the snapshot; a mismatch is a refusal, never a silent difference.  Same
+# discipline as `calc::aq_run`, except that the file need not be the current one
+# and nothing need be loaded at all.
+#
+# DECLARED LIMITS.  `<dataset>` reaches plain RPN only; a measurement verb takes
+# its dataset from its own arguments.  A plain expression is read at the last
+# point, never at a viewer cursor.  A wave-valued verb's wave is discarded here:
+# plotting it from Outputs is not built.
+proc calc::eval_text {text rawpath analysis {dataset 0}} {
+    return [lindex [calc::eval_texts [list $text] $rawpath $analysis $dataset] 0]
+}
+
+# The same for many texts against one file, with one read per analysis.
+# Answers one dict per text, in order.
+proc calc::eval_texts {texts rawpath analysis {dataset 0}} {
+    set path [string trim $rawpath]
+    if {$path ne {}} { set path [file normalize $path] }
+    set n [llength $texts]
+    if {$path eq {} || ![file isfile $path]} {
+        return [lrepeat $n [calc::et_refuse [calc::et_msg nofile]]]
+    }
+    set have [calc::raw_analyses $path]
+    if {![llength $have]} {
+        return [lrepeat $n [calc::et_refuse [calc::et_msg noplots]]]
+    }
+    set plans {}
+    foreach t $texts { lappend plans [calc::et_plan $t $have $analysis] }
+    set out $plans
+    foreach an $have {
+        set idx {}
+        set grp {}
+        set i 0
+        foreach p $plans {
+            if {[dict get $p ok] && [dict get $p an] eq $an} {
+                lappend idx $i
+                lappend grp $p
+            }
+            incr i
+        }
+        if {![llength $idx]} { continue }
+        foreach i $idx d [calc::et_run $path $an $grp $dataset] {
+            lset out $i $d
+        }
+    }
+    return $out
+}
+
+proc calc::et_refuse {msg} {
+    return [dict create ok 0 kind {} value {} msg $msg]
+}
+
+proc calc::et_answer {kind value {points 1}} {
+    return [dict create ok 1 kind $kind value $value points $points msg {}]
+}
+
+# Builder contract as `calc::aq_msg`'s: three arguments, one `pattern { return
+# ... }` per physical line, and no prose between patterns.
+proc calc::et_msg {kind {a {}} {b {}}} {
+    switch -exact -- $kind {
+        empty { return "Cannot evaluate: the expression is empty" }
+        nofile { return "Cannot evaluate: no results file" }
+        noplots { return "Cannot evaluate: the results file holds no analysis" }
+        restore { return "Cannot evaluate: could not restore the loaded results" }
+    }
+    return {}
+}
+
+# The analysis an unqualified text reads, out of the file's own `$have`.
+proc calc::et_default {have meas} {
+    if {$meas} {
+        foreach a $have { if {$a ne {op}} { return $a } }
+    } elseif {[lsearch -exact $have op] >= 0} {
+        return op
+    }
+    return [lindex $have 0]
+}
+
+# Everything decided BEFORE the registry is touched: the text, the analysis and,
+# for a measurement call, its checked arguments.  A plan that is a refusal never
+# reaches a read.
+proc calc::et_plan {text have analysis} {
+    set t [string trim $text]
+    if {$t eq {}} { return [calc::et_refuse [calc::et_msg empty]] }
+    if {[calc::quote_bad $t]} { return [calc::et_refuse [calc::eval_msg quote]] }
+    set q [calc::aq_plan $t]
+    if {![dict get $q ok]} { return [calc::et_refuse [dict get $q msg]] }
+    set m [calc::meas_split $t]
+    set vals {}
+    if {$m ne {}} {
+        set p [calc::meas_prepare $m]
+        if {![dict get $p ok]} { return [calc::et_refuse [dict get $p msg]] }
+        set vals [dict get $p vals]
+    }
+    set an [dict get $q type]
+    if {$an eq {}} { set an [string trim $analysis] }
+    if {$an eq {}} { set an [calc::et_default $have [expr {$m ne {}}]] }
+    if {[lsearch -exact $have $an] < 0} {
+        return [calc::et_refuse [calc::aq_msg absent $an]]
+    }
+    return [dict create ok 1 an $an meas $m vals $vals text $t]
+}
+
+# The bracket: read `$path`'s `$an`, evaluate every plan in `$plans`, put the
+# registry back exactly.  Answers one dict per plan.
+proc calc::et_run {path an plans dataset} {
+    set n [llength $plans]
+    set info0 [calc::aq_info]
+    set n0 [calc::aq_nslots]
+    set cur [calc::wave_dest_cur]
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    set bound [expr {[string is integer -strict $lv] && $lv >= 0}]
+    set rd 0
+    catch {set rd [xschem raw read $path $an]}
+    set here [calc::wave_dest_cur]
+    set entered 0
+    if {$rd eq {1} && [lindex $here 0] eq $path} {
+        if {[calc::aq_nslots] > $n0} {
+            set entered [expr {[calc::aq_curidx] >= $n0}]
+        } else {
+            set entered [expr {[lindex $here 1] eq $an}]
+        }
+    }
+    set out {}
+    if {$entered} {
+        variable aq_active
+        set aq_active $an
+        foreach p $plans {
+            if {[catch {calc::et_one $p $dataset} d]} {
+                set d [calc::et_refuse [calc::eval_msg engine $d]]
+            }
+            lappend out $d
+        }
+        set aq_active {}
+    }
+    set n1 [calc::aq_nslots]
+    for {set k [expr {$n1 - 1}]} {$k >= $n0} {incr k -1} {
+        catch {xschem raw clear $k}
+    }
+    if {$cur ne {}} { calc::aq_restore [lindex $cur 0] [lindex $cur 1] $bound }
+    if {[calc::aq_info] ne $info0} {
+        return [lrepeat $n [calc::et_refuse [calc::et_msg restore]]]
+    }
+    if {!$entered} {
+        return [lrepeat $n [calc::et_refuse [calc::aq_msg noread $an]]]
+    }
+    return $out
+}
+
+# One plan, inside the bracket.
+proc calc::et_one {p dataset} {
+    set m [dict get $p meas]
+    if {$m eq {}} {
+        set np 0
+        catch {set np [xschem raw points $dataset]}
+        set d [calc::eval_rpn [dict get $p text] $dataset 0]
+        if {![dict get $d ok]} { return [calc::et_refuse [dict get $d msg]] }
+        if {[string is integer -strict $np] && $np > 1} {
+            return [calc::et_answer wave [dict get $d value] $np]
+        }
+        return [calc::et_answer scalar [dict get $d value]]
+    }
+    set name [dict get $m verb]
+    set d {}
+    if {[catch {calc::aq_arg_invoke $name \
+                    [calc::meas_numeric $name [dict get $p vals]]} d]} {
+        return [calc::et_refuse [calc::arg_msg failed $name $d]]
+    }
+    switch -exact -- [calc::fn_sink $d] {
+        buffer { return [calc::et_answer scalar [dict get $d value]] }
+        destination { return [calc::et_answer wave {} 0] }
+        badshape { return [calc::et_refuse [calc::arg_msg badshape $name [calc::et_get $d shape]]] }
+        badvalue { return [calc::et_refuse [calc::arg_msg badvalue $name [calc::et_get $d value]]] }
+    }
+    set msg [calc::et_get $d msg]
+    if {$msg eq {}} { set msg [calc::arg_msg failed $name $d] }
+    return [calc::et_refuse $msg]
+}
+
+proc calc::et_get {d k} {
+    set v {}
+    catch {set v [dict get $d $k]}
+    return $v
+}
+
+# The raw vectors an expression READS, for the save list (ase_l.md R-OUT3): every
+# operand token of a plain RPN text, or of each expression argument of a
+# measurement call, after R208c's qualifiers are rewritten to `v(net)` and the
+# quotes are taken off.  An operator, a `name()` function, a number and the sweep
+# scale (`time`, `frequency`) are not vectors.  No database is read.
+proc calc::eval_text_signals {text} {
+    set t [string trim $text]
+    if {$t eq {} || [calc::quote_bad $t]} { return {} }
+    set exprs {}
+    set m [calc::meas_split $t]
+    if {$m eq {}} {
+        lappend exprs $t
+    } else {
+        set name [dict get $m verb]
+        set vals [calc::meas_vals $name [dict get $m args]]
+        set rpnkeys {rpn}
+        foreach f [calc::fn_argspec $name] {
+            if {[lindex $f 2] eq {rpn}} { lappend rpnkeys [lindex $f 0] }
+        }
+        foreach {k v} $vals {
+            if {[lsearch -exact $rpnkeys $k] >= 0} { lappend exprs $v }
+        }
+    }
+    set ops {+ - * / ** == != > < >= <= ?}
+    set out {}
+    foreach e $exprs {
+        foreach tok [calc::rpn_tokens [calc::rpn_unquote [calc::aq_strip $e]]] {
+            if {[lsearch -exact $ops $tok] >= 0} { continue }
+            if {[string match {*()} $tok]} { continue }
+            if {[regexp {^[-+]?(\d|\.\d)} $tok]} { continue }
+            if {[lsearch -exact {time frequency} [string tolower $tok]] >= 0} { continue }
+            if {[lsearch -exact $out $tok] < 0} { lappend out $tok }
+        }
+    }
+    return $out
 }
 
 # ---------------------------------------------------------------------------

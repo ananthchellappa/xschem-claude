@@ -684,15 +684,27 @@ group SR5 {
     # claim is kept whole by asserting the SECOND hop too: exactly one proc calls
     # `eval_in_ctx`, and it is the one holding the loan.  A press that called
     # either straight from `calc::eval_click` reddens one of the two.
+    #
+    # ⚠ AND RESTATED AGAIN FOR R609 (2026-10-11): there are now TWO doors, and
+    # each is held whole by its second and third hops.  `calc::et_one` is the
+    # pure evaluator's step and runs only inside `calc::et_run`'s bracket, which
+    # reads a NAMED results file and puts the registry back -- so it cannot
+    # evaluate against "whatever raw this window has" either.  The press must
+    # reach neither door directly.
     set callers {}
     set ctxcallers {}
+    set onecallers {}
+    set runcallers {}
     dict for {nm b} $pbody {
         if {$nm eq {eval_rpn}} { continue }
         if {[regexp {calc::eval_rpn} $b]} { lappend callers $nm }
         if {$nm ne {eval_in_ctx} && [regexp {calc::eval_in_ctx} $b]} { lappend ctxcallers $nm }
+        if {$nm ne {et_one} && [regexp {calc::et_one} $b]} { lappend onecallers $nm }
+        if {$nm ne {et_run} && [regexp {calc::et_run} $b]} { lappend runcallers $nm }
     }
-    check "SR5 ...and exactly ONE proc calls eval_rpn, and exactly ONE calls THAT one, the one that holds the context loan" \
-        [list $callers $ctxcallers] {eval_in_ctx eval_in_token}
+    check "SR5 ...and exactly TWO procs call eval_rpn -- the loan's body and the pure evaluator's step -- each reached by exactly one proc: the loan holder, and the file bracket, which only the batch door calls" \
+        [list [lsort $callers] $ctxcallers $onecallers $runcallers] \
+        {{et_one eval_in_ctx} eval_in_token et_run eval_texts}
 }
 
 # =============================================================================
