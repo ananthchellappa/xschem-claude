@@ -698,6 +698,75 @@ group AT17 {
         [list {Cannot plot: v(out) names no analysis; write vt(out)} {Cannot measure: v(out) names no analysis; write vt(out)}]
 }
 # =============================================================================
+# AT18 -- THE WINDOW'S EVAL REFUSES WHAT OUTPUTS REFUSES (R610 parity), AND A
+# CONSTANT IS NOT "AT THE LAST POINT"
+# =============================================================================
+# A SCALAR answer that divided by zero or took ln/log10/db of a value <= 0 is
+# refused in the Calculator window with the very sentence ASE-L Outputs uses
+# (`calc::et_domain`), where the window used to answer the engine's DIVIS 0 or
+# its -700 log floor.  A WAVE is never refused for a zero at some of its points.
+# And an answer that does not vary along the sweep -- a number, a measurement's
+# number times two -- is reported without "(at the last point)", which would
+# claim a point it was not read at.  `at_win` is the window press's own
+# dispatch (`calc::buf_route`, then the loan body with or without measurement
+# operands), run in the current database; the presses themselves are band PG17
+# of tests/headless/test_calc_pick.tcl (display arm).
+proc at_win {text an} {
+    set r [calc::buf_route $text]
+    if {![dict get $r ok]} { return [list 0 [dict get $r msg]] }
+    if {[llength [dict get $r subs]]} {
+        set d [calc::eval_subs [dict get $r rpn] [dict get $r subs] 0]
+    } else {
+        set d [calc::eval_in_ctx [dict get $r rpn] 0 $an]
+    }
+    return [list [fld $d ok] [calc::eval_fmt $d]]
+}
+group AT18 {
+    at_load tran
+    set dz {Cannot evaluate: division by zero}
+    set lz {Cannot evaluate: log of zero or a negative value}
+    check "AT18 the sentences are Outputs' own: the window refuses with `calc::et_msg`'s words, compared against LITERALS here so neither side can drift alone" \
+        [list [pcall calc::et_msg divzero] [pcall calc::et_msg logzero]] [list $dz $lz]
+    set got {}
+    foreach {t an} [list {1/0} {} {1 0 /} {} {ln(0)} {} {db(0)} {} {log10(0-1)} {} \
+                         {value(vt(lp), 1m)/0} {} \
+                         {ln(value(vt(lp), 1m)-value(vt(lp), 1m))} {}] {
+        lappend got [pcall at_win $t $an]
+    }
+    check "AT18 a SCALAR that divides by zero or logs a value <= 0 is REFUSED in the window -- infix and postfix, a bare number and a measurement's number alike -- where it used to answer DIVIS's 0 or the -700 log floor" \
+        $got [list [list 0 $dz] [list 0 $dz] [list 0 $lz] [list 0 $lz] [list 0 $lz] \
+                   [list 0 $dz] [list 0 $lz]]
+    at_load op
+    set opz [pcall at_win {vdc(lp)/0} op]
+    at_load tran
+    check "AT18 an OPERATING-POINT signal is a scalar too (one point): vdc(lp)/0 is refused" \
+        $opz [list 0 $dz]
+    set wz [pcall at_win {vt(lp)/0} tran]
+    check "AT18 a WAVE is NOT refused for a zero divisor: vt(lp)/0 still answers, at the last point -- Outputs does not refuse a wave either" \
+        $wz [list 1 {= 0  (at the last point)}]
+    set par {}
+    foreach t {{1/0} {ln(0)} {vdc(lp)/0}} {
+        lappend par [fld [pcall calc::eval_text $t $::fixture {}] msg]
+    }
+    check "AT18 PARITY, measured: ASE-L Outputs (`calc::eval_text` on the same file) refuses the same three texts with the same two sentences" \
+        $par [list $dz $lz $dz]
+    # --- a constant is not read at a point ------------------------------------
+    set ref [pcall at_win {value(vt(lp), 1m)*1} {}]
+    set c2 [pcall at_win {value(vt(lp), 1m)*2} {}]
+    set k  [pcall at_win {2*3} {}]
+    set k2 [pcall at_win {2 3 *} {}]
+    set w2 [pcall at_win {vt(lp)*2} tran]
+    set v1 NOVAL ; regexp {^= (\S+)} [lindex $ref 1] -> v1
+    set v2 NOVAL ; regexp {^= (\S+)} [lindex $c2 1] -> v2
+    check "AT18 a CONSTANT answer carries no `(at the last point)`: a number, postfix or infix, and a measurement's number times two -- which is still exactly twice that number -- while a signal expression keeps the suffix, because there the point is real" \
+        [list $k $k2 [lindex $c2 0] [string match {*(at *} [lindex $c2 1]] \
+              [expr {[string is double -strict $v1] && [string is double -strict $v2] && $v1 != 0
+                     && abs($v2 - 2.0 * $v1) <= abs($v1) * 1e-6 ? {twice} : "v1=$v1 v2=$v2"}] \
+              $w2] \
+        [list {1 {= 6}} {1 {= 6}} 1 0 twice [list 1 "= [format %.8g [expr {2.0 * [at_ref tran]}]]  (at the last point)"]]
+    at_load tran
+}
+# =============================================================================
 # AT12 -- THE WAVES MENU CUE (display arm): an on-demand read and its clear
 # leave the design window's cue as the user's database says, not grey
 # =============================================================================

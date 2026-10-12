@@ -928,6 +928,25 @@ group PG17 {
         {named clean}
     check "PG17 an infix syntax error is the translator's own sentence, the one Outputs shows" \
         [pg17_eval {vt(lp)*}] [pcall calc::ix_msg noright *]
+    # R610 PARITY: a SCALAR that divides by zero or logs a value <= 0 is refused
+    # with Outputs' own sentence, a WAVE is not, and a constant answer does not
+    # claim "(at the last point)".  Literal sentences, so the window and Outputs
+    # cannot drift together.
+    set dz {Cannot evaluate: division by zero}
+    set lz {Cannot evaluate: log of zero or a negative value}
+    set got [list [pg17_eval {1/0}] [pg17_eval {db(0)}] [pg17_eval {value(vt(lp), 1m)/0}] \
+                  [pg17_eval {vt(lp)/0}]]
+    check "PG17 R610 parity in real Eval presses: 1/0, db(0) and a measured number over zero are REFUSED with Outputs' sentences, while vt(lp)/0 -- a wave -- still answers" \
+        $got [list $dz $lz $dz {= 0  (at the last point)}]
+    set one [pg17_eval {value(vt(lp), 1m)*1}]
+    set two [pg17_eval {value(vt(lp), 1m)*2}]
+    set v1 NOVAL ; regexp {^= (\S+)$} $one -> v1
+    set v2 NOVAL ; regexp {^= (\S+)$} $two -> v2
+    check "PG17 a CONSTANT answer carries no `(at the last point)`: value(vt(lp), 1m)*2 says just its number, which is exactly twice value(vt(lp), 1m)*1, and 2*3 says `= 6`" \
+        [list [pg17_eval {2*3}] \
+              [pg_word [expr {[string is double -strict $v1] && [string is double -strict $v2] && $v1 != 0
+                              && abs($v2 - 2.0 * $v1) <= abs($v1) * 1e-6}] twice "$one / $two"]] \
+        {{= 6} twice}
     pcall calc::stk_set {}
     # PLOT: the same translation, Plot's verb.
     .calc.buf delete 1.0 end

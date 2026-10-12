@@ -3290,6 +3290,7 @@ proc calc::eval_fmt {d} {
     }
     set v {} ; catch {set v [dict get $d value]}
     set at {} ; catch {set at [dict get $d at]}
+    if {$at eq {const}} { return "= $v" }
     return "= $v  ([expr {$at eq {cursor} ? {at the cursor} : {at the last point}}])"
 }
 
@@ -3681,12 +3682,43 @@ proc calc::aq_run {an cmd} {
 
 # Plain Eval inside the loan: the engine step, in the qualifier's analysis.
 proc calc::eval_in_ctx {rpn {dataset 0} {an {}}} {
-    set r [calc::aq_run $an [list calc::eval_rpn $rpn $dataset]]
+    set r [calc::aq_run $an [list calc::eval_win $rpn $dataset]]
     if {![dict get $r ok]} {
         return [calc::eval_refusal [dict get $r msg] $dataset]
     }
     if {[dict get $r rc]} { return -code error [dict get $r value] }
     return [dict get $r value]
+}
+
+# THE WINDOW'S ENGINE STEP: `calc::eval_rpn`, then the two questions ASE-L
+# Outputs asks of the same answer (R610 parity).  Runs inside the loan and the
+# analysis bracket, so every sub-expression is read from the same database.
+#   * A SCALAR answer -- one that does not vary along the sweep, or any answer
+#     of a one-point database -- that divided by zero or took ln/log10/db of a
+#     value <= 0 is refused with Outputs' own sentence (`calc::et_scalar_dom`),
+#     where the engine would answer DIVIS's 0 or the -700 log floor.  A wave is
+#     never refused for a zero at some of its points.
+#   * An answer that does not vary along the sweep is marked `at const`, so
+#     `calc::eval_fmt` does not claim "(at the last point)" for a number that
+#     was not read at any point.
+proc calc::eval_win {rpn {dataset 0}} {
+    set d [calc::eval_rpn $rpn $dataset]
+    if {![dict get $d ok]} { return $d }
+    set dom [calc::et_scalar_dom $rpn $dataset]
+    if {$dom ne {}} { return [calc::eval_refusal $dom $dataset] }
+    if {![calc::et_wavy $rpn]} { dict set d at const }
+    return $d
+}
+
+# Outputs' domain refusal for a SCALAR answer, or {}: the ONE place both doors
+# decide "scalar" (`calc::et_one` for ASE-L Outputs, `calc::eval_win` for the
+# window).  Scalar is "not a wave": a one-point database, or postfix that does
+# not vary along the sweep (`calc::et_wavy`).  Asked in the current database.
+proc calc::et_scalar_dom {rpn dataset} {
+    set np 0
+    catch {set np [xschem raw points $dataset]}
+    if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} { return {} }
+    return [calc::et_domain $rpn $dataset]
 }
 
 # A measurement verb's invocation, with every qualified operand guarded in the
@@ -4031,7 +4063,7 @@ proc calc::et_sub_map {rpn subs} {
 proc calc::eval_subs {rpn subs {dataset 0}} {
     set m [calc::et_sub_map $rpn $subs]
     if {![dict get $m ok]} { return [calc::eval_refusal [dict get $m msg] $dataset] }
-    return [calc::eval_rpn [dict get $m rpn] $dataset]
+    return [calc::eval_win [dict get $m rpn] $dataset]
 }
 
 # `calc::eval_in_token`'s bracket for a text with measurement operands: the
@@ -14508,7 +14540,7 @@ proc calc::et_one {p dataset} {
         if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} {
             return [calc::et_answer wave [dict get $d value] $np]
         }
-        set dom [calc::et_domain $rpn $dataset]
+        set dom [calc::et_scalar_dom $rpn $dataset]
         if {$dom ne {}} { return [calc::et_refuse $dom] }
         return [calc::et_answer scalar [dict get $d value]]
     }
@@ -14534,7 +14566,9 @@ proc calc::et_one {p dataset} {
 # for x/0 (issue 1628's ruled rule, kept: the Calculator window and waveforms
 # depend on it) and `mylog()`/`mylog10()` floor at -35 (issue 1653), so db(0)
 # is -700 -- and an Outputs Value cell must not show it as a result: ngspice's
-# print refused, and ADE-L shows no clamped number either.  So the C engine is
+# print refused, and ADE-L shows no clamped number either.  The Calculator
+# window's Eval asks the same question through `calc::et_scalar_dom`
+# (`calc::eval_win`), so the two doors refuse alike.  So the C engine is
 # left alone and the question is asked HERE, of the engine itself: postfix
 # `$rpn` is split into the self-contained sub-expressions the stack builds, and
 # every divisor (`/`'s top operand) and every log argument (`ln()`, `log10()`,
