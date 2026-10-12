@@ -2274,9 +2274,9 @@ set fnitems [pcall .calc.fn.list find withtag fnentry]
 if {[string match ERR:* $fnitems]} { set fnitems {} }
 set fnnames {}
 foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
-check "S23 the default category renders all 56 of its entries" [llength $fnitems] 56
+check "S23 the default category renders all 57 of its entries" [llength $fnitems] 57
 check "S23 ...and they are the catalogue's names, alphabetically" \
-    [list [llength $fnnames] $fnnames] [list 56 [lsort -dictionary $fnnames]]
+    [list [llength $fnnames] $fnnames] [list 57 [lsort -dictionary $fnnames]]
 set catnames {}
 foreach row [pcall calc::fn_entries {Special Functions}] { lappend catnames [lindex $row 0] }
 check "S23 the rendered names are exactly the table's for that category" \
@@ -2319,7 +2319,7 @@ foreach id $fnitems {
     if {$fg ne $want} { lappend badgrey $nm=$fg }
 }
 check "S23 exactly the N-route and out-of-scope entries are greyed (RULING-3)" \
-    [list [llength $fnitems] $badgrey] [list 56 {}]
+    [list [llength $fnitems] $badgrey] [list 57 {}]
 check_true "S23 the greyed colour is not the live one (or the check above is vacuous)" \
     [expr {$c_disabledfg ne $c_fieldfg}]
 check "S23 all fourteen greyed entries are RENDERED, not removed" \
@@ -2342,7 +2342,7 @@ foreach id $fnitems {
     if {$fg ne $want} { lappend badcouple $nm=route[lindex $row 2]/$fg }
 }
 check "S23 the greying is read off the table's route field, not a second list" \
-    [list [llength $fnitems] $badcouple] [list 56 {}]
+    [list [llength $fnitems] $badcouple] [list 57 {}]
 # ...and the coupling check above only sees a DIVERGENCE, so MAKE one: move the
 # dead-route set at runtime and repaint. If fn_fill reads the table, every
 # T-route special greys out with it; if it carries its own list of names,
@@ -2380,7 +2380,7 @@ foreach id [pcall .calc.fn.list find withtag fnentry] {
 check "S23 moving the dead-route set repaints the greying (the table IS the source)" \
     [list $greybefore $greyafter $greyrestored \
           [expr {[lsearch -exact $greynames clip] >= 0}]] \
-    {14 48 14 1}
+    {14 49 14 1}
 # ⚠ two fn_fill calls have happened, so every canvas item id above is stale.
 # Re-read them, or the per-entry binding and gesture legs below address items
 # that no longer exist and pass over the wreckage.
@@ -2388,9 +2388,9 @@ set fnitems [pcall .calc.fn.list find withtag fnentry]
 if {[string match ERR:* $fnitems]} { set fnitems {} }
 set fnnames {}
 foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
-check "S23 the repaint left the same 56 entries behind" \
+check "S23 the repaint left the same 57 entries behind" \
     [list [llength $fnitems] [lsort -dictionary $fnnames]] \
-    [list 56 [lsort -dictionary $catnames]]
+    [list 57 [lsort -dictionary $catnames]]
 # ...and the refusal a click gives comes from the SAME field, for every dead
 # entry the browser drew — not from a per-name string beside the renderer.
 set badrefuse {}
@@ -2436,7 +2436,7 @@ foreach id $fnitems {
     }
 }
 check "S23 every entry carries its own click and hover binding" \
-    [list [llength $fnitems] $badbind] [list 56 {}]
+    [list [llength $fnitems] $badbind] [list 57 {}]
 
 # R413: hover writes THE TABLE'S help for that entry — and does not record it.
 # ⚠ The no-record half is the crew's phase-1d amendment to R507 and it has
@@ -2708,7 +2708,7 @@ pcall event generate .calc.fn.cat <<ComboboxSelected>>
 update idletasks
 check "S23 the All category shows every row of the table" \
     [list [llength [pcall .calc.fn.list find withtag fnentry]] \
-          [llength [pcall calc::catalogue]]] {108 108}
+          [llength [pcall calc::catalogue]]] {109 109}
 
 # A REPOPULATE MUST ALSO RESET THE VIEW. A canvas keeps its xview/yview across
 # a `delete all`; only the scrollregion changes. Measured before the fix:
@@ -2768,7 +2768,7 @@ foreach id [pcall .calc.fn.list find withtag fnentry] {
 # alphabet is back — before the fix `average` itself was above the top edge.
 check "S23 ...and the head of the alphabet is on screen again" \
     [list $nseen [lsearch -exact $offview average] [lsearch -exact $offview bandwidth] \
-          [lsearch -exact $offview clip]] {56 -1 -1 -1}
+          [lsearch -exact $offview clip]] {57 -1 -1 -1}
 
 # --- S24 the catalogue table (R413's "one table, not two") -------------------
 # ⚠ THE SPEC'S §3.2 TOKEN LIST, WRITTEN OUT HERE. This is the whole point of
@@ -2834,9 +2834,9 @@ check "S24 every row is a well-formed six-field row" $badrow {}
 set catcounts {}
 foreach cat $fncats { lappend catcounts [llength [pcall calc::fn_entries $cat]] }
 check "S24 every §7.1 category has entries, in the spec's numbers" \
-    $catcounts {56 26 12 4 3 3 4 108}
+    $catcounts {57 26 12 4 3 3 4 109}
 check "S24 the DEFAULT category is the one that must not be empty (D1)" \
-    [llength [pcall calc::fn_entries {Special Functions}]] 56
+    [llength [pcall calc::fn_entries {Special Functions}]] 57
 # ...and no row carries a category that is not one of the eight (`All` being
 # synthetic, no row may carry it either)
 set badcat {}
@@ -2846,7 +2846,7 @@ foreach row $rows {
 }
 check "S24 every row's category is a §7.1 value, and never the synthetic All" $badcat {}
 check "S24 All is the union, not a category" \
-    [list [llength [pcall calc::fn_entries All]] [llength $rows]] {108 108}
+    [list [llength [pcall calc::fn_entries All]] [llength $rows]] {109 109}
 
 # NO TWO ROWS SHARE A NAME WITHIN A CATEGORY (and in fact not across the table:
 # calc::fn_row looks a name up globally, so a global duplicate would silently
@@ -2859,7 +2859,7 @@ foreach row $rows {
     set ::seen($key) 1
 }
 check "S24 no two rows share a name within a category" \
-    [list [llength $rows] $dupes] {108 {}}
+    [list [llength $rows] $dupes] {109 {}}
 array unset ::seen ; array set ::seen {}
 set gdupes {}
 foreach row $rows {
@@ -2868,7 +2868,7 @@ foreach row $rows {
     set ::seen($nm) 1
 }
 check "S24 no name is duplicated across the whole table either" \
-    [list [llength $rows] $gdupes] {108 {}}
+    [list [llength $rows] $gdupes] {109 {}}
 
 # THE PRIMITIVES ARE §3.2, EXACTLY: one entry per token, inserting the token
 # verbatim (§7.1: "everything in §3.2 is exposed through the non-Special
@@ -2948,7 +2948,7 @@ foreach row $rows {
     }
 }
 check "S24 P and C rows emit, T/N/X rows emit nothing" \
-    [list [llength $rows] $badempty] {108 {}}
+    [list [llength $rows] $badempty] {109 {}}
 
 # THE THREE AUDITED DEFECTS, each pinned by the row it was found in
 # (recon/catalogue_defects.md D1-D3, D6).
@@ -3016,7 +3016,7 @@ foreach row $rows {
     }
 }
 check "S24 every help line is short enough for the status entry" \
-    [list [llength $rows] $longhelp] {108 {}}
+    [list [llength $rows] $longhelp] {109 {}}
 # ⚠ AND THE STRING fn_click ACTUALLY COMPOSES, which is the one that overflowed.
 # The bound above covers the table's `help` field; the refusal a greyed entry
 # gives is `function <name> is not available: <reason>` and is built at click
@@ -3057,7 +3057,7 @@ update idletasks
 check "S23 a fresh window opens on Special Functions" \
     [pcall .calc.fn.cat get] {Special Functions}
 check "S23 a fresh window renders that category" \
-    [llength [pcall .calc.fn.list find withtag fnentry]] 56
+    [llength [pcall .calc.fn.list find withtag fnentry]] 57
 check "S22 a fresh window still has no digit key" \
     [list [winfo exists .calc.pad.k12] [winfo exists .calc.pad.k13]] {1 0}
 
@@ -4367,7 +4367,7 @@ foreach nm [ad_tnoproc] {
     if {[pcall .calc.stk.list size] != $ad_fallstk} { lappend ad_fallbad $nm=TOUCHED-STACK }
 }
 check "S28 every route-T verb with NO proc falls through legibly: each one speaks, none opens a dialog, and none touches the buffer or the Stack -- the set and the sweep count are both DERIVED from the catalogue and the namespace, so a blanket route-T branch that stranded them would redden here" \
-    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {21 13 {}}
+    [list $ad_nfall [llength [ad_verbs]] $ad_fallbad] {21 14 {}}
 check_true "S28 fixture: the pre-sweep buffer snapshot is real text" \
     [expr {![string match ERR:* $ad_fallbuf]
            && [string match {*INERT SENTINEL*} $ad_fallbuf]}]
@@ -4398,7 +4398,7 @@ foreach nm [ad_verbs] {
     if {[string match {*is not available*} $said]} { lappend ad_liebad $nm=SAYS-UNAVAILABLE }
 }
 check "S28 no verb that IS built is told it is not: no member of the derived clickable set gets `calc::inert`'s phase-5 sentence and none gets `fn_reason`'s \"is not available\" one -- the replacement wording is unratified and deliberately NOT asserted here, so this row says only that the false sentence is gone" \
-    [list $ad_nlie $ad_liebad] {13 {}}
+    [list $ad_nlie $ad_liebad] {14 {}}
 }
 
 # --- S28/2  a REAL pointer gesture on a T entry opens a REAL modal ------------
@@ -4520,7 +4520,7 @@ foreach nm [ad_verbs] {
     set ad_c_stk  [pcall .calc.stk.list size]
 }
 check "S28 R412 Cancel leaves the buffer BYTE-IDENTICAL, measured on FIVE captures and not one: the text, `edit modified` (8.4+, never `edit canundo`), the status history, the status line and the Stack size -- PLUS the undo witness, because a dialog that touched the buffer and undid itself is byte-identical while having spent an undo; the cancelled count and the undo count both ride along, so \"no dialog opened\" and \"four opened and touched nothing\" are different greens" \
-    [list $ad_ncancel $ad_nundo $ad_cbad] {13 13 {}}
+    [list $ad_ncancel $ad_nundo $ad_cbad] {14 14 {}}
 check_true "S28 fixture: the pre-Cancel capture is a real, non-trivial expression and the history was non-empty" \
     [expr {$ad_c_text eq {v(out) v(in) - 2 *}
            && [string is boolean -strict $ad_c_mod]}]
@@ -5337,7 +5337,7 @@ check "S28/6 the RESULT GATE runs BEFORE the dialog: with no simulation result l
     [list [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}] \
           [dg $ad_gate ok] [expr {$ad_gatemsg ne {} ? 1 : 0}] \
           $ad_ngate $ad_gatebad] \
-    {1 0 1 13 {}}
+    {1 0 1 14 {}}
 # ...and the same for an EMPTY buffer, with the gate back to answering `ok`.
 set ad_rr2 0
 if {[info commands ::calc::require_result] ne {} && [info commands ::ad_keep_rr] eq {}} {
@@ -5371,7 +5371,7 @@ if {$ad_rr2} {
 check "S28/6 ...and an EMPTY buffer is refused before the dialog too: a T verb measures the buffer's expression, so there is nothing to measure and nothing to ask about.  The sentence is unratified and NOT asserted; what is asserted is that one was written, that no form opened, and that the buffer stayed empty" \
     [list $ad_nempty $ad_emptybad \
           [expr {[info commands ::ad_keep_rr] eq {} ? 1 : 0}]] \
-    {13 {} 1}
+    {14 {} 1}
 }
 
 # --- S28/8  THE STATUS LINE'S BUDGET, AGAINST THE REAL ENTRY ------------------
@@ -5625,7 +5625,7 @@ foreach nm [ad_verbs] {
 check "S28/E R508 with no window a route-T click is a silent no-op that RETURNS -- it opens no dialog, enters no `tkwait` and raises nothing.  DECLARED PARTLY VACUOUS on the red run, where `fn_click` reaches `calc::has_win` through `calc::inert` anyway: it is a fence for the implementation, and `full_audit.sh` is the reader it protects, since it globs all three Calculator suites and none is in `nogui_tests`" \
     [list [llength [ad_verbs]] $ad_closedbad [expr {[winfo exists .calc.arg] ? 1 : 0}] \
           [grab current]] \
-    {13 {} 0 {}}
+    {14 {} 0 {}}
 }
 
 # --- S28/Z  HYGIENE ----------------------------------------------------------

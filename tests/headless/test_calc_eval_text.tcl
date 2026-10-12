@@ -721,6 +721,69 @@ group ET14 {
 }
 
 # =============================================================================
+# ET15 -- value(wave, x): ADE's `value()`, the wave's value at a sweep point
+# (calculator.md R422).  Linear interpolation between the two samples that
+# bracket x; x outside the sweep is REFUSED with a sentence.  The reference is
+# computed here from the samples the test reads itself, at a point halfway
+# between two samples whose values differ (the distinctness leg), so a verb
+# that answered either neighbour, or the last point, cannot pass.
+# =============================================================================
+group ET15 {
+    et_load tran
+    set xs [pcall xschem raw values time 0]
+    set ys [pcall xschem raw values v(lp) 0]
+    set k 10
+    set x0 [lindex $xs $k] ; set x1 [lindex $xs [expr {$k + 1}]]
+    set y0 [lindex $ys $k] ; set y1 [lindex $ys [expr {$k + 1}]]
+    set xm [expr {($x0 + $x1) / 2.0}]
+    set ym [expr {($y0 + $y1) / 2.0}]
+    set lo [lindex $xs 0] ; set hi [lindex $xs end]
+    check "ET15 DISTINCTNESS, measured: the two transient samples bracketing the midpoint differ by more than the row tolerance, and the midpoint value differs from both and from the last point" \
+        [list [far $y0 $y1] [far $ym $y0] [far $ym $y1] [far $ym [lindex $ys end]]] {1 1 1 1}
+    set dm [pcall calc::value v(lp) $xm 0]
+    set de [pcall calc::value v(lp) $x0 0]
+    set dout [pcall calc::value v(lp) [expr {$hi * 2}] 0]
+    set dneg [pcall calc::value v(lp) -1 0]
+    set dbad [pcall calc::value v(lp) xyz 0]
+    catch {xschem raw clear}
+    check "ET15 calc::value interpolates LINEARLY between the bracketing samples, and answers a sample exactly at its own X" \
+        [list [fld $dm ok] [near [fld $dm value] $ym] [fld $de ok] [near [fld $de value] $y0]] \
+        {1 near 1 near}
+    check "ET15 an X outside the sweep, either side, is REFUSED with a sentence naming the X and the sweep's range; a non-number X likewise" \
+        [list [fld $dout ok] [string match "Value:*[expr {$hi * 2}]*outside*" [fld $dout msg]] \
+              [fld $dneg ok] [string match {Value:*-1*outside*} [fld $dneg msg]] \
+              [fld $dbad ok] [string match {Value:*xyz*} [fld $dbad msg]]] \
+        {0 1 0 1 0 1}
+    et_load op
+    set dop [pcall calc::value v(lp) 0 0]
+    catch {xschem raw clear}
+    check "ET15 on the operating point (one sample, no sweep) value() is REFUSED naming the missing sweep" \
+        [list [fld $dop ok] [string match {Value:*sweep*} [fld $dop msg]]] {0 1}
+    set row [calc::fn_row value]
+    check "ET15 the catalogue carries value: Special Functions, route T, returns scalar; its one field is the X point, so a call is ADE's two-argument value(wave, x)" \
+        [list [lrange $row 0 3] [lmap f [calc::fn_argspec value] {lindex $f 0}] [calc::meas_verb value]] \
+        {{value {Special Functions} T scalar} x 1}
+    set eo [pcall calc::eval_text "value(vt(lp), $xm)" $::fixture {}]
+    set ei [pcall calc::eval_text "value(vt(lp),$xm)*2" $::fixture {}]
+    check "ET15 R609 reads value() as a measurement call in Outputs -- a SCALAR equal to the interpolated reference -- and as an INFIX operand (times two)" \
+        [list [fld $eo kind] [near [fld $eo value] $ym] [fld $ei kind] [near [fld $ei value] [expr {2 * $ym}]]] \
+        {scalar near scalar near}
+    et_load ac
+    set fs [pcall xschem raw values frequency 0]
+    set as [pcall xschem raw values v(lp) 0]
+    catch {xschem raw clear}
+    set fm [expr {([lindex $fs 0] + [lindex $fs 1]) / 2.0}]
+    set am [expr {([lindex $as 0] + [lindex $as 1]) / 2.0}]
+    check "ET15 ...and on the AC analysis through vf(): value(vf(lp), f) between the first two frequencies is their interpolated magnitude" \
+        [list [far [lindex $as 0] [lindex $as 1]] [near [fld [pcall calc::eval_text "value(vf(lp), $fm)" $::fixture {}] value] $am]] \
+        {1 near}
+    check "ET15 the save list reads value()'s wave argument (calc::eval_text_signals), and the Calculator buffer's own split reads it as a measurement call (calc::meas_split)" \
+        [list [et_s "value(vt(lp), 1m)"] [fld [calc::meas_split {value(vt(lp), 1m)}] verb]] \
+        [list v(lp) value]
+    check "ET15 the registry is EMPTY after the band" [et_info] {}
+}
+
+# =============================================================================
 # ET10 -- THE CALCULATOR'S EVAL SHARES THE CHECK (a pure refactor)
 # =============================================================================
 group ET10 {

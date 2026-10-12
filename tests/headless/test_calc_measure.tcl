@@ -4357,7 +4357,7 @@ group MT11 {
         [list [expr {[info procs ::calc::fn_argspec] ne {} ? 1 : 0}] \
               [pcall calc::fn_fields] \
               [llength [pcall calc::catalogue]] $agbadarity] \
-        [list 1 {name category route returns insert help} 108 {}]
+        [list 1 {name category route returns insert help} 109 {}]
     # ⚠ THE CONTROL FOR EVERY `{}` BELOW.  An empty answer and a missing proc are
     # the same empty string to a careless reader; `ag_spec` tells them apart, and
     # without this row the fall-through sweep would be green on a tree with no
@@ -4378,7 +4378,7 @@ group MT11 {
 
     # --- the clickable set, derived -----------------------------------------
     check "MT11 the clickable set is DERIVED from the tree -- every route-T catalogue row that has a proc of its own -- so a verb whose proc lands without its argument spec, or the reverse, reddens here and in the fall-through sweep below rather than composing a call to nothing" \
-        [ag_verbs] {bandwidth cross delay dutyCycle freq frequency gainBwProd gainMargin overshoot phaseMargin riseTime settlingTime slewRate}
+        [ag_verbs] {bandwidth cross delay dutyCycle freq frequency gainBwProd gainMargin overshoot phaseMargin riseTime settlingTime slewRate value}
     set agempty {}
     set agnswept 0
     set agnonempty 0
@@ -4394,7 +4394,7 @@ group MT11 {
         if {[llength $rows] != 0} { lappend agempty $nm=([ag_canon $rows]) }
     }
     check "MT11 the route-T fall-through is LEGIBLE rather than accidental: every catalogue name that is not one of the clickable set answers an EMPTY spec, and each member of that set answers a non-empty one -- swept over the whole table, with both counts riding along so neither direction can be vacuous" \
-        [list $agnswept $agnonempty $agempty] {108 13 {}}
+        [list $agnswept $agnonempty $agempty] {109 14 {}}
 
     # --- the specifications, by literal, ONE ROW EACH ------------------------
     # ⚠ TWO PAIRS OF CATALOGUE NAMES ARE NOW SERVED BY ONE `switch` ARM EACH
@@ -4454,7 +4454,7 @@ group MT11 {
         if {$n != $want} { lappend agbadrpn $agv=$n/want$want }
     }
     check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except the two verbs that take TWO operands and therefore cannot take either from the buffer alone: `delay`, whose B side no ruling supplies, and `gainMargin`, whose second operand is the loop PHASE and has no node-name spelling at all, because `xschem raw add` on an ac database creates one REAL column and no phase sibling" \
-        [list [llength [ag_verbs]] $agbadrpn] {13 {}}
+        [list [llength [ag_verbs]] $agbadrpn] {14 {}}
 
     # --- the keys are the formals, in two directions ------------------------
     set agbadformal {} ; set agnchecked 0
@@ -5216,7 +5216,7 @@ group MT13 {
     check "MT13 ...and the four-way census of those decisions is the shape the catalogue really has: every row decides INSERT, MEASURE or UNAVAILABLE, ZERO rows decide `inert`, and ZERO decide nothing -- so `calc::inert`'s phase-5 promise is UNREACHABLE from a browser click today, which is a derived property of the live table and the reason the `inert` arm is a DEFENSIVE one" \
         [list $ac_cnt(insert) $ac_cnt(measure) $ac_cnt(unavailable) \
               $ac_cnt(inert) $ac_cnt(none) $ac_n] \
-        {60 34 14 0 0 108}
+        {60 35 14 0 0 109}
     # the census above pins four numbers; this row is what keeps the FIRST of
     # them honest against the field it is supposed to be counting, since
     # `insert` is the only one of the six catalogue fields the decision reads.
@@ -9921,6 +9921,7 @@ group MT21 {
         gainBwProd   {drop 3}
         gainMargin   {rpnMag {v(lp)} rpnPh {ph(lp)}}
         phaseMargin  {rpnMag {v(lp)} rpnPh {ph(lp)}}
+        value        {x 0.001}
     }
     # the per-verb legs, plus the `real`-field SPLIT.
     #
@@ -14735,7 +14736,8 @@ proc m28_alias {} { return [list freq frequency] }
 proc m28_open {} {
     return [list cross {@T@ 0.5 0 rising} \
                  dutyCycle {@T@ 0.5} \
-                 overshoot {@T@ 0 0.25}]
+                 overshoot {@T@ 0 0.25} \
+                 value {@R@ @A@}]
 }
 proc m28_freqgate {} {
     return [list bandwidth   {{v(lp)} 3 magnitude low 0} \
@@ -15041,7 +15043,7 @@ group MT28 {
         [list $m28DBAD $m28FBAD [bw_sortg $m28DSAME] \
               [mt_sized $m28DN [llength [dict keys [m28_open]]]] \
               [mt_atleast $m28DN 3] [mt_atleast $m28FN 4]] \
-        [list {} {} {dutyCycle overshoot} sized atleast3 atleast4]
+        [list {} {} {dutyCycle overshoot value} sized atleast3 atleast4]
 
     # --- E: the NO-DATA path is not hijacked, which is why the gate is `eq ac`
     pcall xschem raw clear

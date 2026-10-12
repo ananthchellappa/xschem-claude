@@ -4477,6 +4477,12 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  transient sweep (sim_type $a)." }
         fqnotran   { return "Frequency: a period is a time and needs a transient\
  sweep (sim_type $a)." }
+        valbadx    { return "Value: the X point is not a finite number ($a)." }
+        valempty   { return {Nothing to measure: value was given an empty expression.} }
+        valnosweep { return "Value: that result has no sweep to read an X point on\
+ (sim_type $a)." }
+        valrange   { return "Value: X $a is outside the sweep ($b)." }
+        valnan     { return "Value: the expression has no finite value at X $a." }
         bwnodrop   { return {Bandwidth: the drop in dB must be supplied.} }
         bwbaddrop  { return "Bandwidth: the drop is not a finite number ($a)." }
         bwzerodrop { return "Bandwidth: the drop must be a positive number of dB\
@@ -7294,6 +7300,141 @@ proc calc::overshoot {rpn {initial {}} {final {}} {dataset 0}} {
     }
     return [dict create ok 1 absent 0 value $pct \
                 dataset $dataset dest $dest msg {}]
+}
+
+# ---------------------------------------------------------------------------
+# R422 -- `value(wave, x)`: the wave's value at one point of its sweep.
+#
+# Cadence's `value()`, which the user named on 2026-10-12: *"value(VT("blahblah")
+# time_point) is a number that ADE-L can display in output pane."*  So it is the
+# way an ASE-L Outputs row turns a transient (or AC, or DC sweep) into ONE number
+# for the Value column: `value(vt(out), 1u)`.
+#
+# THE ANSWER IS LINEAR INTERPOLATION between the two samples that bracket `x`
+# on the sweep, and a sample's own value at its own X.  The sweep is read BY
+# NAME from the sim type (`time`, `frequency`) and, for a DC sweep, as the raw's
+# first column -- the swept quantity, whatever ngspice called it.  An operating
+# point has no sweep and is refused: one sample is not a wave to read a point of.
+#
+# ⚠ AN X OUTSIDE THE SWEEP IS REFUSED, never clamped to an end point and never
+# extrapolated: either would be a plausible wrong number, and the sentence names
+# the X and the sweep's range so the user sees which one they mistyped.
+#
+# The decision is the pure `calc::value_at` (samples in, one answer out, no
+# engine); `calc::value` is the act, through the one engine door `calc::cross`
+# uses -- R402's temporary column, minted and deleted -- with its dataset and
+# no-data refusals.  Answers the verbs' own shape: `{ok 1 absent 0 value <y>}`
+# or a `calc::cross_refusal`.  ONE `switch` in each body (band MT14/Q2 of
+# tests/headless/test_calc_measure.tcl), so the answer is an if-ladder.  Band ET15
+# of tests/headless/test_calc_eval_text.tcl; the derived bands of
+# test_calc_measure (MT11, MT13, MT21, MT28) carry it as a clickable verb.
+proc calc::value_at {xs ys X} {
+    set n [llength $xs]
+    if {$n == 0 || [llength $ys] != $n} { return {nan} }
+    set lo {} ; set hi {}
+    foreach x $xs {
+        if {![calc::eval_finite $x]} continue
+        if {$lo eq {} || $x < $lo} { set lo $x }
+        if {$hi eq {} || $x > $hi} { set hi $x }
+    }
+    if {$lo eq {}} { return {nan} }
+    if {$X < $lo || $X > $hi} { return [list range $lo $hi] }
+    for {set i 0} {$i < $n} {incr i} {
+        set xa [lindex $xs $i]
+        if {[calc::eval_finite $xa] && $xa == $X} {
+            set ya [lindex $ys $i]
+            if {![calc::eval_finite $ya]} { return {nan} }
+            return [list ok $ya]
+        }
+    }
+    for {set i 0} {$i < $n - 1} {incr i} {
+        set xa [lindex $xs $i] ; set xb [lindex $xs [expr {$i + 1}]]
+        if {![calc::eval_finite $xa] || ![calc::eval_finite $xb]} continue
+        if {$xa == $xb} continue
+        if {($X - $xa) * ($X - $xb) > 0} continue
+        set ya [lindex $ys $i] ; set yb [lindex $ys [expr {$i + 1}]]
+        if {![calc::eval_finite $ya] || ![calc::eval_finite $yb]} { return {nan} }
+        set y [expr {double($ya) + (double($yb) - double($ya)) * (double($X) - double($xa)) / (double($xb) - double($xa))}]
+        return [list ok $y]
+    }
+    return {nan}
+}
+
+proc calc::value {rpn x {dataset 0}} {
+    if {![calc::eval_finite $x]} {
+        return [calc::cross_refusal [calc::cross_msg valbadx $x] $dataset]
+    }
+    set rpn [string trim $rpn]
+    if {$rpn eq {}} { return [calc::cross_refusal [calc::cross_msg valempty]] }
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [calc::cross_refusal [calc::cross_msg nodata]]
+    }
+    if {![string is integer -strict $dataset]} {
+        return [calc::cross_refusal [calc::cross_msg intdataset $dataset]]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]
+    }
+    if {$dataset >= $nds} {
+        return [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]
+    }
+    set sty {}
+    catch {set sty [string tolower [string trim [xschem raw sim_type]]]}
+    set sweep {}
+    switch -exact -- $sty {
+        tran { set sweep time }
+        ac   { set sweep frequency }
+        dc   { catch {set sweep [lindex [xschem raw list] 0]} }
+    }
+    set np 0
+    catch {set np [xschem raw points $dataset]}
+    set six -1
+    if {$sweep ne {}} { catch {set six [xschem raw index $sweep]} }
+    if {$sweep eq {} || ![string is integer -strict $six] || $six < 0
+        || ![string is integer -strict $np] || $np < 2} {
+        return [calc::cross_refusal [calc::cross_msg valnosweep $sty] $dataset]
+    }
+    set bad [calc::rpn_bad_token $rpn]
+    if {$bad ne {}} {
+        return [calc::cross_refusal [calc::cross_msg badtoken $bad] $dataset]
+    }
+    set dest [calc::tmpvec]
+    if {$dest eq {}} {
+        return [calc::cross_refusal [calc::cross_msg noname] $dataset]
+    }
+    set pre -1
+    catch {set pre [xschem raw index $dest]}
+    if {[string is integer -strict $pre] && $pre >= 0} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    set rc {} ; set ys {} ; set xs {}
+    set err [catch {
+        set rc [xschem raw add $dest $rpn]
+        set ys [string trim [xschem raw values $dest $dataset]]
+        set xs [string trim [xschem raw values $sweep $dataset]]
+    } e]
+    catch {xschem raw del $dest}
+    if {$err} {
+        return [calc::cross_refusal [calc::cross_msg engine $e] $dataset $dest]
+    }
+    if {$rc ne {1}} {
+        return [calc::cross_refusal [calc::cross_msg stale $dest] $dataset $dest]
+    }
+    set got [calc::value_at $xs $ys [expr {double($x)}]]
+    if {[lindex $got 0] eq {ok}} {
+        return [dict create ok 1 absent 0 value [lindex $got 1] \
+                    dataset $dataset dest $dest msg {}]
+    }
+    if {[lindex $got 0] eq {range}} {
+        return [calc::cross_refusal [calc::cross_msg valrange $x \
+                    "[lindex $got 1] to [lindex $got 2]"] $dataset $dest]
+    }
+    return [calc::cross_refusal [calc::cross_msg valnan $x] $dataset $dest]
 }
 
 # ---------------------------------------------------------------------------
@@ -11532,6 +11673,7 @@ proc calc::catalogue {} {
 {delay {Special Functions} T scalar {} {Time from an edge on one signal to an edge on another}}
 {settlingTime {Special Functions} T scalar {} {Time to settle inside a band of +/-tol % of the step}}
 {overshoot {Special Functions} T scalar {} {Percent by which the wave passes its final value}}
+{value {Special Functions} T scalar {} {The wave's value at an X point, interpolated}}
 {dutyCycle {Special Functions} T scalar/wave {} {Fraction of a period the signal spends high}}
 {frequency {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
 {freq {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
@@ -12174,6 +12316,11 @@ proc calc::fn_argspec {name} {
                 {tol       {Tolerance %}             real 1 {}}
                 {start     {Start time}              real 1 {}}
                 {dataset   {Dataset}                 int  0 0}
+            }
+        }
+        value {
+            return {
+                {x {X point} real 1 {}}
             }
         }
         overshoot {

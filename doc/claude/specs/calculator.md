@@ -965,6 +965,7 @@ opcode, **✘** = out of scope v1.
 | `delay` | scalar | edge-to-edge between two signals | T (on `cross`) |
 | `settlingTime` | scalar | time to stay inside a band | T (on `cross`) |
 | `overshoot` | scalar | % past final value | T, **own engine door — NOT on `cross`** (an extremum is not a crossing; see R418c) |
+| `value` | scalar | the wave's value at an X point, interpolated (R422) | T, **own engine door** — refuses an X outside the sweep |
 | `dutyCycle` | scalar/wave | high fraction of a period — one value per cycle (§7.2ab) | T (on `cross`) |
 | `frequency` / `freq` | scalar/wave | frequency from crossings (one per period for `cycle` 0) | T (on `cross`) |
 | `period_jitter` / `freq_jitter` | scalar | period/frequency spread | T |
@@ -1268,6 +1269,30 @@ Decided 2026-10-02. Full reasoning and measurements:
     database. A raw column literally spelled `cross(v(lp), 0.5, 1, rising)` would be taken as a call.
     Checking the inventory there would need a viewer context loan Eval has not taken yet, and
     half-checking it outside the loan would ask the wrong database.
+
+- **R422** (**the user**, 2026-10-12) **`value(wave, x)` — the wave's value at one point of its
+  sweep.** The user: *"value(VT("blahblah") time_point) is a number that ADE-L can display in output
+  pane. For a waveform, it just says "wave"."* So `value` is the way an ASE-L Outputs row, or the
+  Calculator buffer, turns a transient, AC or DC-sweep wave into ONE number:
+  `value(vt(out), 1u)`, `value(vf(out), 1k)*2`.
+  - **The answer** is linear interpolation between the two samples that bracket `x` on the
+    analysis's sweep, and a sample's own value at its own X. The sweep is read by name from the
+    sim type (`time`, `frequency`) and, for a DC sweep, as the raw's first column. Dataset 0 unless
+    the proc is called with one (the call form has ADE's two arguments, so the dialog asks for the
+    X point alone).
+  - **Refused, with a sentence:** an X outside the sweep, either side (*"Value: X 2 is outside the
+    sweep (0 to 0.01)."*) — never clamped to an end point and never extrapolated, either of which
+    would be a plausible wrong number; an X that is not a finite number; an operating point or any
+    one-sample analysis (*"Value: that result has no sweep to read an X point on (sim_type op)."*);
+    no finite sample at X.
+  - **Where it works:** a catalogue entry (Special Functions, route T, returns scalar), so the
+    function browser opens its dialog and OK composes `value(<buffer>, <x>)` (R421a); Eval
+    evaluates a buffer holding the call; R609/R610 read it in an Outputs row as a call or as an
+    infix operand. Its wave argument is a save-list read (`calc::eval_text_signals`).
+  - Code: `calc::value_at` (pure: samples in, one answer out) and `calc::value` (the engine door,
+    R402's temporary column). Fences: band ET15 of `test_calc_eval_text`; the derived bands of
+    `test_calc_measure` (MT11, MT13, MT21, MT28 — the open half: dimensionless on both arms),
+    `test_calc_skeleton` (S23/S24/S28) and `test_calc_widgets` (CW14) carry it as a clickable verb.
 
 ### 7.2a Three corrections this table needed before it could build a catalogue
 
