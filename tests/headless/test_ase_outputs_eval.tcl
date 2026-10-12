@@ -42,6 +42,9 @@
 #        a committed table of {state name old new analysis why}, each old text
 #        read in its analysis equal to its new text, on a synthetic results
 #        file holding all four analyses (hermetic, counted arm)
+#   OE18 a row qualified for another analysis than the viewer shows is refused
+#        with a sentence, never drawn from the shown one (auto_plot), and an
+#        infix row reaches the viewer as postfix
 #   OE14 no output text can stop the run: an unticked leading-zero number or
 #        deep nesting neither raises nor refuses
 #   OE7  REAL ngspice (the registry's): the plain row equals the number the old
@@ -248,6 +251,65 @@ group OE16 {
               [pcall ase::ui::plot_map_expr {VF("x1.n")}] [pcall ase::ui::plot_map_expr {v(out)}]] \
         [list v(out) {i(v1) -1 *} {v(x1.n)} v(out)]
     file delete -force [file join $::scratch oe16_ase.raw]
+}
+
+# =============================================================================
+# OE18 -- A QUALIFIED ROW IS PLOTTED FROM ITS OWN ANALYSIS OR REFUSED
+# =============================================================================
+# The waveform viewer shows ONE analysis (ase::plot_sim_type's), and
+# plot_map_expr rewrites `vf(g)` to the raw's own `v(g)` -- so before this a
+# row qualified for AC was drawn from the transient's `v(g)` with no word.
+# Measured on :99 with the real sky130 tb_ft_test_2 (op+ac+tran, viewer on
+# transient): `vf(g)` drew v(g) under its name, and `db(if(vd)/if(vg))` failed
+# quoting the rewritten `db(i(vd)/i(vg))`.  ase::ui::plot_row_refusal is the
+# decision; auto_plot says it BEFORE the viewer opens, so the counted arm
+# drives the real proc through a session.
+group OE18 {
+    check "OE18 a row qualified for another analysis than the viewer's is refused naming the token and what the viewer shows; one for the viewer's own, a plain one and a ready RPN one are plotted" \
+        [list [pcall ase::ui::plot_row_refusal {vf(g)} tran] \
+              [pcall ase::ui::plot_row_refusal {db(if(vd)/if(vg))} tran] \
+              [pcall ase::ui::plot_row_refusal {vt(g)} ac] \
+              [pcall ase::ui::plot_row_refusal {vt(g)} tran] \
+              [pcall ase::ui::plot_row_refusal {db(if(vd)/if(vg))} ac] \
+              [pcall ase::ui::plot_row_refusal {v(g)} tran] \
+              [pcall ase::ui::plot_row_refusal {i(v1) -1 *} ac]] \
+        [list {Cannot plot vf(): the waveform viewer shows transient} \
+              {Cannot plot if(): the waveform viewer shows transient} \
+              {Cannot plot vt(): the waveform viewer shows AC} {} {} {} {}]
+    check "OE18 ...a row mixing two analyses is refused naming both, in Plot's verb" \
+        [pcall ase::ui::plot_row_refusal {vt(a)-vf(b)} tran] \
+        {Cannot plot: vt() and vf() read different analyses}
+    check "OE18 an ADE-style infix row reaches the viewer as the Calculator's postfix of the raw's own names (R610), so the error never quotes a rewritten infix the viewer cannot read; a measurement call is left as typed" \
+        [list [pcall ase::ui::plot_map_expr {db(if(vd)/if(vg))}] \
+              [pcall ase::ui::plot_map_expr {vt(a)-vt(b)}] \
+              [pcall ase::ui::plot_map_expr {cross(vt(a), 0.5, 1, rising)}]] \
+        [list {i(vd) i(vg) / abs() db20()} {v(a) v(b) -} {cross(v(a), 0.5, 1, rising)}]
+    # THE REAL PROC, on the counted arm: auto_plot refuses before it opens the
+    # viewer, so the recorder below sees exactly what a run's CIW gets.
+    set d [file join $::scratch oe18]
+    file mkdir $d
+    set sf [file join $d oe18.state]
+    set st [oe_state oe18 {{name a expr vf(g) save 1 plot 1}
+                           {name b expr db(if(vd)/if(vg)) save 1 plot 1}
+                           {name c expr vt(g) save 1 plot 1}
+                           {name e expr vf(g) save 1 plot 0}} \
+                {{type op enabled 1} {type dc enabled 0} {type ac enabled 1 start 1 stop 1k points 10}
+                 {type tran enabled 1 stop 10u step 100n}}]
+    dict set st rundir $d
+    ase::state_save $sf $st
+    set key oe/oe18/state18
+    ase::session_open $key $sf
+    set ::oe18_said {}
+    rename ::ase::echo ::ase::oe18_echo_saved
+    proc ::ase::echo {msg args} { lappend ::oe18_said $msg }
+    set rc [catch {ase::ui::auto_plot $key} e]
+    rename ::ase::echo {}
+    rename ::ase::oe18_echo_saved ::ase::echo
+    catch {ase::session_close $key}
+    check "OE18 auto_plot on an op+ac+tran session (the viewer shows transient) says one refusal per PLOTTED row qualified for AC, naming the row as typed, and nothing about the transient row or the unplotted one" \
+        [list $rc [lsearch -all -inline $::oe18_said {*cannot auto-plot*}]] \
+        [list 0 [list {ase: cannot auto-plot 'vf(g)': Cannot plot vf(): the waveform viewer shows transient} \
+                      {ase: cannot auto-plot 'db(if(vd)/if(vg))': Cannot plot if(): the waveform viewer shows transient}]]
 }
 
 # =============================================================================

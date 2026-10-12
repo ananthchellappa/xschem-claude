@@ -2315,11 +2315,38 @@ proc ase::ui::plot_map_expr {ex} {
   ## `-idc(v1)` -- and the waveform viewer reads the raw's own names, so the
   ## qualifiers are rewritten to `v(...)`/`i(...)` before the viewer sees them.
   if {[info commands ::calc::aq_strip] ne {}} { set ex [calc::aq_strip $ex] }
-  if {[llength [regexp -all -inline {\S+} $ex]] != 1} { return $ex }
-  if {[string index $ex 0] eq {-} && [string length $ex] > 1} {
+  set one [expr {[llength [regexp -all -inline {\S+} $ex]] == 1}]
+  if {$one && [string index $ex 0] eq {-} && [string length $ex] > 1} {
     return "[string range $ex 1 end] -1 *"
   }
+  ## R610: an ADE-style infix row (`db(if(vd)/if(vg))`) reaches the viewer as
+  ## the Calculator's own postfix translation, which the viewer's RPN reads; a
+  ## row carrying a measurement call is not a trace and is left as typed.
+  if {[info commands ::calc::ix_route] ne {} && ![catch {calc::ix_route $ex} r]
+      && [dict get $r mode] eq {infix} && ![llength [dict get $r subs]]} {
+    return [dict get $r rpn]
+  }
   return $ex
+}
+
+# THE ANALYSIS A QUALIFIED ROW IS PLOTTED FROM (R208c/R208d; PURE).  The
+# waveform viewer shows ONE analysis (ase::plot_sim_type's), and
+# plot_map_expr's rewrite to the raw's own `v()`/`i()` names would draw a row
+# qualified for another analysis -- `vf(g)`, `db(if(vd)/if(vg))` -- from that
+# analysis's columns, silently.  So such a row is refused with the
+# Calculator's own sentence naming the token and what the viewer shows; a row
+# mixing two analyses is refused naming both.  {} = plot it.
+proc ase::ui::plot_row_refusal {ex sim_t} {
+  if {[info commands ::calc::aq_ids] eq {}} { return {} }
+  set first {}
+  foreach id [calc::aq_ids $ex] {
+    if {$first eq {}} { set first $id ; continue }
+    if {[calc::aq_analysis $id] ne [calc::aq_analysis $first]} {
+      return [calc::aq_msg plotmixed $first $id]
+    }
+  }
+  if {$first eq {} || [calc::aq_analysis $first] eq $sim_t} { return {} }
+  return [calc::aq_msg plot $first $sim_t]
 }
 
 # --- populate ----------------------------------------------------------------
@@ -12439,6 +12466,24 @@ proc ase::ui::auto_plot {key} {
       lappend rows $o
     }
   }
+  set sim_t [ase::plot_sim_type $st]
+  # R208c/R208d: a row qualified for an analysis the viewer does not show is
+  # refused with a sentence (plot_row_refusal), never drawn from the shown one.
+  # Before the viewer opens, so the sentence is said even where it cannot; a
+  # run whose every plot row is refused empties the auto graph like one with
+  # none.
+  if {$sim_t ni {op {}}} {
+    set keep {}
+    foreach o $rows {
+      set why [ase::ui::plot_row_refusal [ase::state_get $o expr] $sim_t]
+      if {$why ne {}} {
+        catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $why" error}
+        continue
+      }
+      lappend keep $o
+    }
+    set rows $keep
+  }
   if {![llength $rows]} {
     if {[wviewer::window_for $key] ne {}} {
       set gi [wviewer::auto_graph_index $key]
@@ -12457,7 +12502,6 @@ proc ase::ui::auto_plot {key} {
     }
     return
   }
-  set sim_t [ase::plot_sim_type $st]
   if {$sim_t eq {op}} {
     catch {::ase::echo "ase: op results have no sweep — nothing to auto-plot"}
     return

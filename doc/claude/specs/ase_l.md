@@ -813,7 +813,12 @@ They should not influence the input to the simulator."* ADE-L is the floor
     (`v(out)`, `out`, `-i(v1)`, `vdc(out)`), is ADE-L's *signal* output — a name to save and
     plot, which ADE-L shows as a wave or a value without an analysis call around it — not an
     expression. It still saves (`.save <signal>`), still plots (the waveform viewer keeps plain
-    `v()`, and a qualified row is plotted as the raw's own name), and its Value is still the
+    `v()`, and a qualified row is plotted as the raw's own name **only when it is qualified for
+    the analysis the viewer shows**: a row qualified for another one — `vf(g)` or
+    `db(if(vd)/if(vg))` on a run whose viewer shows the transient — is refused at auto-plot with
+    *"ase: cannot auto-plot 'vf(g)': Cannot plot vf(): the waveform viewer shows transient"*,
+    never drawn from the shown analysis's columns (`ase::ui::plot_row_refusal`, row OE18; an
+    infix row reaches the viewer as the Calculator's postfix), and its Value is still the
     single-point (operating-point) number, or `wave` when the run has none: the
     single-vector reader is unchanged, and a row the Calculator answers is handed over
     **qualified by R-OUT4's own reading** (`calc::uq_qualify` with `calc::et_default`: the

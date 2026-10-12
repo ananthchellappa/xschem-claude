@@ -3726,6 +3726,7 @@ proc calc::aq_msg {kind {a {}} {b {}}} {
         restore { return "Cannot evaluate: could not return to the [calc::analysis_word $a] analysis" }
         guard { return "Cannot evaluate ${a}(): the loaded analysis is [calc::analysis_word $b]" }
         plot { return "Cannot plot ${a}(): the waveform viewer shows [calc::analysis_word $b]" }
+        plotmixed { return "Cannot plot: ${a}() and ${b}() read different analyses" }
         unqual { return "Cannot evaluate: $a names no analysis; write $b" }
         unqualplot { return "Cannot plot: $a names no analysis; write $b" }
         unqualmeas { return "Cannot measure: $a names no analysis; write $b" }
