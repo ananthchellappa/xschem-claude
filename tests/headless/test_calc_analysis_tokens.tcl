@@ -764,6 +764,28 @@ group AT18 {
                      && abs($v2 - 2.0 * $v1) <= abs($v1) * 1e-6 ? {twice} : "v1=$v1 v2=$v2"}] \
               $w2] \
         [list {1 {= 6}} {1 {= 6}} 1 0 twice [list 1 "= [format %.8g [expr {2.0 * [at_ref tran]}]]  (at the last point)"]]
+    # --- a one-point database is a scalar, so it names no point either -------
+    # The same scalar decision `calc::et_scalar_dom` makes for the refusal
+    # above: an operating point has one point, so "(at the last point)" would
+    # name a sweep that does not exist.  Asked with the op current AND with
+    # tran current (the loan reads op), for a voltage, a signal times two, and
+    # a device current.  Driven on op columns that are NOT zero (v(lp) and
+    # i(@rtop[i]) read exactly 0 there), so the times-two leg discriminates.
+    set rdc [at_ref op v(dcmid)]
+    set rid [at_ref op {i(@rdc1[i])}]
+    at_load op
+    set o1 [pcall at_win {vdc(dcmid)} op]
+    set o2 [pcall at_win {vdc(dcmid)*2} op]
+    set o3 [pcall at_win {idc(@rdc1[i])} op]
+    at_load tran
+    set o4 [pcall at_win {vdc(dcmid)} op]
+    check "AT18 fixture: the op columns this row reads are nonzero, so twice each differs from it" \
+        [list [expr {[string is double -strict $rdc] && $rdc != 0}] \
+              [expr {[string is double -strict $rid] && $rid != 0}]] {1 1}
+    check "AT18 an OPERATING-POINT answer is a scalar (one point) and carries no `(at the last point)`: vdc(dcmid), vdc(dcmid)*2 and a device current with op current, and vdc(dcmid) with tran current" \
+        [list $o1 $o2 $o3 $o4] \
+        [list [list 1 "= [format %.8g $rdc]"] [list 1 "= [format %.8g [expr {2.0 * $rdc}]]"] \
+              [list 1 "= [format %.8g $rid]"] [list 1 "= [format %.8g $rdc]"]]
     at_load tran
 }
 # =============================================================================

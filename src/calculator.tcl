@@ -3698,26 +3698,33 @@ proc calc::eval_in_ctx {rpn {dataset 0} {an {}}} {
 #     value <= 0 is refused with Outputs' own sentence (`calc::et_scalar_dom`),
 #     where the engine would answer DIVIS's 0 or the -700 log floor.  A wave is
 #     never refused for a zero at some of its points.
-#   * An answer that does not vary along the sweep is marked `at const`, so
-#     `calc::eval_fmt` does not claim "(at the last point)" for a number that
-#     was not read at any point.
+#   * A SCALAR answer (the same `calc::et_scalar` decision) is marked
+#     `at const`, so `calc::eval_fmt` does not claim "(at the last point)" for
+#     a number that was not read at a point of any sweep -- a constant, or
+#     anything read from an operating point.
 proc calc::eval_win {rpn {dataset 0}} {
     set d [calc::eval_rpn $rpn $dataset]
     if {![dict get $d ok]} { return $d }
     set dom [calc::et_scalar_dom $rpn $dataset]
     if {$dom ne {}} { return [calc::eval_refusal $dom $dataset] }
-    if {![calc::et_wavy $rpn]} { dict set d at const }
+    if {[calc::et_scalar $rpn $dataset]} { dict set d at const }
     return $d
 }
 
-# Outputs' domain refusal for a SCALAR answer, or {}: the ONE place both doors
-# decide "scalar" (`calc::et_one` for ASE-L Outputs, `calc::eval_win` for the
-# window).  Scalar is "not a wave": a one-point database, or postfix that does
-# not vary along the sweep (`calc::et_wavy`).  Asked in the current database.
-proc calc::et_scalar_dom {rpn dataset} {
+# THE ONE place both doors decide "scalar" (`calc::et_one` for ASE-L Outputs,
+# `calc::eval_win` for the window).  Scalar is "not a wave": a one-point
+# database, or postfix that does not vary along the sweep (`calc::et_wavy`).
+# Asked in the current database.
+proc calc::et_scalar {rpn dataset} {
     set np 0
     catch {set np [xschem raw points $dataset]}
-    if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} { return {} }
+    if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} { return 0 }
+    return 1
+}
+
+# Outputs' domain refusal for a SCALAR answer (`calc::et_scalar`), or {}.
+proc calc::et_scalar_dom {rpn dataset} {
+    if {![calc::et_scalar $rpn $dataset]} { return {} }
     return [calc::et_domain $rpn $dataset]
 }
 
@@ -14537,7 +14544,7 @@ proc calc::et_one {p dataset} {
         catch {set np [xschem raw points $dataset]}
         set d [calc::eval_rpn $rpn $dataset 0]
         if {![dict get $d ok]} { return [calc::et_refuse [dict get $d msg]] }
-        if {[string is integer -strict $np] && $np > 1 && [calc::et_wavy $rpn]} {
+        if {![calc::et_scalar $rpn $dataset]} {
             return [calc::et_answer wave [dict get $d value] $np]
         }
         set dom [calc::et_scalar_dom $rpn $dataset]

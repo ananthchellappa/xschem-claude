@@ -1686,8 +1686,9 @@ below are the ones a caller cannot answer for itself and so must not have to.
   RPN expression is unchanged. Whether the plain case should behave the same way is **open** and
   is recorded at R421a, not here.
 - **R604** Evaluate on a wave-valued expression reports the value at the **current cursor**
-  if one exists, else at the last point, and **says which** in the message. An answer that
-  does not vary along the sweep names no point (R610's parity note, 2026-10-12).
+  if one exists, else at the last point, and **says which** in the message. A scalar answer --
+  one that does not vary along the sweep, or any answer of a one-point database such as an
+  operating point -- names no point (R610's parity note, 2026-10-12).
 - **R605** Evaluate must call the engine **immediately before reading** the scratch column
   (L2), in the same Tcl command, with nothing in between that could evaluate anything else.
 - **R606** **Table** shows X/Y pairs of the evaluated expression in a scrollable dialog,
@@ -1800,10 +1801,12 @@ below are the ones a caller cannot answer for itself and so must not have to.
   Outputs' own sentences (*"Cannot evaluate: division by zero"*, *"Cannot evaluate: log of
   zero or a negative value"*), where it used to answer DIVIS's 0 or the −700 log floor. A
   wave (`vt(lp)/0`) is not refused. One proc decides "scalar" for both doors
-  (`calc::et_scalar_dom`); the window's engine step is `calc::eval_win`. An answer that
-  does not vary along the sweep (`2*3`, `value(vt(lp),1m)*2`) is reported as `= <n>`
-  with no *"(at the last point)"* (R604's suffix names a point, and a constant was read at
-  none). Rows AT18 of `test_calc_analysis_tokens` (counted) and PG17 (the presses).
+  (`calc::et_scalar`, asked by `calc::et_scalar_dom` and `calc::et_one`); the window's
+  engine step is `calc::eval_win`. A scalar answer -- one that does not vary along the sweep
+  (`2*3`, `value(vt(lp),1m)*2`) or any answer of a one-point database (`idc(vd)` at an
+  operating point) -- is reported as `= <n>` with no *"(at the last point)"* (R604's suffix
+  names a point, and a scalar was read at none; the one-point case by the same decision,
+  2026-10-12). Rows AT18 of `test_calc_analysis_tokens` (counted) and PG17 (the presses).
   **Declared limits:** `?` (the conditional) has no infix form;
   Cadence slash paths (`/net`) stay refused (Q6). OE13's population is
   derived without the router and carries a `FLOOR: 9` ratchet, so a routing change that
