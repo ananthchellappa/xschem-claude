@@ -647,8 +647,10 @@ group ET13 {
 # ngspice print path refused it and showed no value; the engine answers 0 for
 # x/0 (its DIVIS rule, issue 1628) and db(0) hits mylog10's floor, so the Value
 # cell showed a confident -700.  A SCALAR answer is refused naming the cause.
-# A WAVE is not refused for a zero at some of its points: the transient's v(lp)
-# starts at exactly 0 (fixture leg below) and db / 1/x of it stay waves.
+# A WAVE is not refused for a zero at some or all of its points.  The check
+# evaluates at the answer's own point (the last sample on a sweep), so the
+# exemption is fenced with waves that are zero THERE -- 1/(vt(lp)-vt(lp)) and
+# db(vt(lp)*0) -- plus a leg showing the check itself would refuse them.
 group ET14 {
     set dz "Cannot evaluate: division by zero"
     set lz "Cannot evaluate: log of zero or a negative value"
@@ -662,6 +664,7 @@ group ET14 {
         {db(i(@m1[id])/v(lp))}  $dz \
         {db(v(lp)/v(lp))}       $dz \
         {1 0 /}                 $dz \
+        {0 1 exch() /}          $dz \
         db(0)                   $lz \
         db(v(lp))               $lz \
         db20(v(lp))             $lz \
@@ -681,8 +684,8 @@ group ET14 {
             lappend bad "$t=[fld $d ok]/[fld $d value]/[fld $d msg]"
         }
     }
-    check "ET14 REFUSED at the operating point, no value: 0/0, x/0 (literal, signal, nested in db), db/db20/db10/ln/log/log10 of zero, ln of a negative, and the same in RPN (rows driven, then the misses)" \
-        [list $n $bad] {17 {}}
+    check "ET14 REFUSED at the operating point, no value: 0/0, x/0 (literal, signal, nested in db), db/db20/db10/ln/log/log10 of zero, ln of a negative, and the same in RPN, exch() included (rows driven, then the misses)" \
+        [list $n $bad] {18 {}}
     check "ET14 fixture: v(lp) is exactly 0 and v(dcmid) is not, at the operating point, so the rows above divide by and take logs of a true zero" \
         [list [et_v v(lp)] [far [et_v v(dcmid)] 0]] {0 1}
     check "ET14 CONTROL: a nonzero division and a log of a positive value still ANSWER -- v(dcmid)/2, 1/v(dcmid), 0/v(dcmid), db(v(dcmid)), ln(v(dcmid)), and RPN 'v(dcmid) 2 /'" \
@@ -690,6 +693,8 @@ group ET14 {
               [near [et_v {0/v(dcmid)}] 0.0] [near [et_v db(v(dcmid))] [expr {20 * log10($dc)}]] \
               [near [et_v ln(v(dcmid))] [expr {log($dc)}]] [near [et_v {v(dcmid) 2 /}] [expr {$dc / 2.0}]]] \
         {near near near near near near}
+    check "ET14 exch() swaps the divisor: '1 0 exch() /' is 0/1 and ANSWERS 0, where '0 1 exch() /' is 1/0 and is refused (row above)" \
+        [list [fld [pcall calc::eval_text {1 0 exch() /} $::fixture op] ok] [near [et_v {1 0 exch() /}] 0.0]] {1 near}
     check "ET14 the CONDITIONAL picks: a division by zero in the branch '?' does NOT take is not a refusal ('1 v(lp) / v(lp) 0 != 7 ?' answers 7), and in the branch it does take, it is ('1 v(lp) / 1 7 ?')" \
         [list [near [et_v {1 v(lp) / v(lp) 0 != 7 ?}] 7.0] [et_m {1 v(lp) / 1 7 ?}]] [list near $dz]
     check "ET14 a NESTED measurement's number divides too: cross(...)/0 on the transient is refused" \
@@ -701,6 +706,15 @@ group ET14 {
     check "ET14 a WAVE is not refused for a zero at some of its points: db(vt(lp)) and 1/vt(lp) on the transient are waves" \
         [list [fld [pcall calc::eval_text db(vt(lp)) $::fixture {}] kind] \
               [fld [pcall calc::eval_text 1/vt(lp) $::fixture {}] kind]] {wave wave}
+    et_load tran
+    set wdom [list [pcall calc::et_domain {1 v(lp) v(lp) - /} 0] [pcall calc::et_domain {v(lp) 0 * abs() db20()} 0]]
+    catch {xschem raw clear}
+    check "ET14 WAVE fixture: the scalar check, applied to these waves, WOULD refuse them -- each is zero at the point it evaluates, so the exemption below is what keeps them" \
+        $wdom [list $dz $lz]
+    check "ET14 a WAVE that is zero at EVERY point is still a wave, not refused: 1/(vt(lp)-vt(lp)), db(vt(lp)*0), and RPN '1 v(lp) v(lp) - /'" \
+        [list [fld [pcall calc::eval_text {1/(vt(lp)-vt(lp))} $::fixture {}] kind] \
+              [fld [pcall calc::eval_text {db(vt(lp)*0)} $::fixture {}] kind] \
+              [fld [pcall calc::eval_text {1 v(lp) v(lp) - /} $::fixture tran] kind]] {wave wave wave}
     set b [pcall calc::eval_texts [list 1/0 v(dcmid)] $::fixture op]
     check "ET14 a refused row in a batch costs only itself, and the registry is EMPTY after the band" \
         [list [fld [lindex $b 0] msg] [near [fld [lindex $b 1] value] $dc] [et_info]] [list $dz near {}]
