@@ -875,6 +875,79 @@ group PG16 {
 }
 
 # =============================================================================
+# PG17 — ADE-STYLE INFIX IN THE BUFFER: Eval and Plot read it as Outputs does
+# =============================================================================
+# The dead end the verifier found: Eval of `v(lp)*2` is refused offering
+# `vt(lp)`, and `vt(lp)*2` was then refused as `unknown token 'v(lp)*2'` --
+# one token, in a spelling the user never typed.  Eval and Plot now hand the
+# buffer to `calc::buf_route`, i.e. `calc::ix_route`, the translator ASE-L
+# Outputs uses (R610); postfix passes through it unchanged.  References are
+# the POSTFIX of the same text evaluated by the same door, so a press that
+# read the infix any other way -- or did not translate it -- cannot pass.
+# =============================================================================
+group PG17 {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    proc pg17_eval {txt} {
+        .calc.buf delete 1.0 end
+        .calc.buf insert end $txt
+        pg_press .calc.mode.eval
+        return [lindex [pcall calc::status_history] 0]
+    }
+    set ref2 [pcall calc::eval_fmt [calc::eval_in_token $::tok {vt(lp) 2 *} 0 tran]]
+    set ref1 [pcall calc::eval_fmt [calc::eval_in_token $::tok {vt(lp)} 0 tran]]
+    set rpn2 [pg17_eval {vt(lp) 2 *}]
+    check "PG17 fixture: the postfix reference answers a number, differs from vt(lp) alone, and a real Eval press on the postfix gives exactly it -- so the rows below compare against a real, discriminating answer" \
+        [list [pg_word [string match {= *} $ref2] number $ref2] [pg_word [expr {$ref1 ne $ref2}] distinct "$ref1 / $ref2"] \
+              [expr {$rpn2 eq $ref2}]] \
+        {number distinct 1}
+    set got [list [pg17_eval {v(lp)*2}] [pg17_eval {vt(lp)*2}] [pg_buf]]
+    check "PG17 the dead end is closed: Eval of v(lp)*2 is refused offering vt(lp), and Eval of vt(lp)*2 then answers EXACTLY what the postfix vt(lp) 2 * answers -- the buffer keeps the text" \
+        $got [list {Cannot evaluate: v(lp) names no analysis; write vt(lp), vf(lp) or vdc(lp)} $ref2 {vt(lp)*2}]
+    set refp [pcall calc::eval_fmt [calc::eval_in_token $::tok {vt(lp) vt(sq) - 2 *} 0 tran]]
+    check "PG17 precedence and parentheses are ADE's: (vt(lp)-vt(sq))*2 answers the postfix vt(lp) vt(sq) - 2 *" \
+        [list [pg17_eval {(vt(lp)-vt(sq))*2}] [pg_word [string match {= *} $refp] number $refp]] [list $refp number]
+    set cx NOREF
+    set c [pg15_viewer {calc::aq_arg_invoke cross [calc::meas_vals cross [dict get [calc::meas_split {cross(vt(lp), 0.5, 1, rising)}] args]]}]
+    catch {set cx [dict get $c value]}
+    set said [pg17_eval {cross(vt(lp), 0.5, 1, rising)*2}]
+    set v NOVAL
+    regexp {^= (\S+)} $said -> v
+    check "PG17 a measurement call as an OPERAND is measured in the same loan and its number used: cross(vt(lp), 0.5, 1, rising)*2 answers twice the crossing (a real finite crossing)" \
+        [list [pg_word [string is double -strict $cx] finite $cx] \
+              [pg_word [expr {[string is double -strict $v] && [string is double -strict $cx] && abs($v - 2.0 * $cx) <= abs($cx) * 1e-6}] twice "said=$said cross=$cx"]] \
+        {finite twice}
+    set bad [pg17_eval {vt(nosuch)*2}]
+    check "PG17 a refusal NEVER quotes a rewritten internal spelling: vt(nosuch)*2 is refused naming vt(nosuch) as typed, and neither v(nosuch) nor the infix as one token appears" \
+        [list [pg_word [string match {*vt(nosuch)*} $bad] named $bad] \
+              [pg_word [expr {[string first {'v(nosuch)} $bad] < 0 && [string first {*2'} $bad] < 0}] clean $bad]] \
+        {named clean}
+    check "PG17 an infix syntax error is the translator's own sentence, the one Outputs shows" \
+        [pg17_eval {vt(lp)*}] [pcall calc::ix_msg noright *]
+    pcall calc::stk_set {}
+    # PLOT: the same translation, Plot's verb.
+    .calc.buf delete 1.0 end
+    .calc.buf insert end {vt(lp)*2}
+    pg_press .calc.mode.plot
+    set pl [lindex [pcall calc::status_history] 0]
+    check "PG17 a real Plot press on vt(lp)*2 PLOTS (the viewer reads the postfix) and the buffer keeps the text" \
+        [list [pg_word [string match {Plotted *} $pl] plotted $pl] [pg_buf]] [list plotted {vt(lp)*2}]
+    set pls {}
+    foreach txt {{vt(nosuch)*2} {vt(lp)*} {cross(vt(lp), 0.5, 1, rising)*2}} {
+        .calc.buf delete 1.0 end
+        .calc.buf insert end $txt
+        pg_press .calc.mode.plot
+        lappend pls [lindex [pcall calc::status_history] 0]
+    }
+    check "PG17 Plot refuses in its OWN verb: an unknown signal named as typed, the translator's sentence as Plot's, and a measurement operand as a number that is not a waveform" \
+        [list [pg_word [expr {[string match {Cannot plot:*vt(nosuch)*} [lindex $pls 0]] && [string first {'v(nosuch)} [lindex $pls 0]] < 0}] named [lindex $pls 0]] \
+              [lindex $pls 1] [lindex $pls 2]] \
+        [list named [pcall calc::ix_plot_say [calc::ix_msg noright *]] \
+              {Cannot plot: cross() answers a number, not a waveform.}]
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
 # PG8 — R201: RE-CLICK DISARMS, ANOTHER SELECTOR SWITCHES
 # =============================================================================
 # The gesture is the real one, on the real radiobutton.

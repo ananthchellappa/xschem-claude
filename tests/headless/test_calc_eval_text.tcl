@@ -820,6 +820,32 @@ group ET16 {
 }
 
 # =============================================================================
+# ET17 -- THE CALCULATOR WINDOW'S BUFFER READS INFIX AS OUTPUTS DOES (R610)
+# =============================================================================
+# The decision under Eval and Plot (`calc::buf_route`), on the counted arm; the
+# presses themselves are band PG17 of tests/headless/test_calc_pick.tcl
+# (display arm).  Postfix is handed on byte-identical; infix is the same
+# translation `calc::et_check` gives an Outputs row; measurement operands come
+# back as `{verb vals}`; a refusal is the translator's own sentence, and Plot
+# says it in its own verb.
+# =============================================================================
+group ET17 {
+    set c [pcall calc::et_check {cross(vt(lp), 0.5, 1, rising)*2}]
+    check "ET17 infix becomes the Outputs translation's postfix and postfix is handed on byte-identical (quotes and all)" \
+        [list [fld [pcall calc::buf_route {vt(lp)*2}] rpn] [fld [pcall calc::buf_route {(vt(lp)-vt(sq))/2}] rpn] \
+              [fld [pcall calc::buf_route {vt("lp") vt("sq") +}] rpn] [fld [pcall calc::buf_route {vf(sq) vf(sq)}] rpn]] \
+        [list {vt(lp) 2 *} {vt(lp) vt(sq) - 2 /} {vt("lp") vt("sq") +} {vf(sq) vf(sq)}]
+    check "ET17 a measurement operand comes back as Outputs' own {verb vals}, a text that IS a call names its verb, and neither carries the call into the postfix" \
+        [list [expr {[fld [pcall calc::buf_route {cross(vt(lp), 0.5, 1, rising)*2}] subs] eq [fld $c subs]}] \
+              [llength [fld $c subs]] \
+              [fld [pcall calc::buf_route {cross(vt(lp), 0.5, 1, rising)}] verb]] \
+        {1 1 cross}
+    check "ET17 a malformed infix is refused with the translator's sentence, and Plot says it in Plot's verb" \
+        [list [fld [pcall calc::buf_route {vt(lp)*}] msg] [pcall calc::ix_plot_say [calc::ix_msg noright *]]] \
+        [list [calc::ix_msg noright *] {Cannot plot: '*' has no value after it.}]
+}
+
+# =============================================================================
 # ET10 -- THE CALCULATOR'S EVAL SHARES THE CHECK (a pure refactor)
 # =============================================================================
 group ET10 {

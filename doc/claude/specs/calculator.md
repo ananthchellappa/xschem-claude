@@ -1713,7 +1713,7 @@ below are the ones a caller cannot answer for itself and so must not have to.
   wave-valued verb's wave is discarded. **The Calculator window's Eval press does not
   route through R609 and keeps its own rule:** it reads the selected result's own slot
   at the cursor, a plain `v()` follows the analysis that result is showing, it hands
-  waves to the viewer, and it does **not** read infix yet (R610's declared limit); it
+  waves to the viewer, and it reads infix through the same translator (R610, 2026-10-12); it
   shares R609's measurement-argument check. ⚠ Amended by R208d: its "plain `v()` follows the
   analysis that result is showing" is gone — Eval refuses an unqualified name. Suite:
   `tests/headless/test_calc_eval_text.tcl`. `calc::eval_text_signals` answers the
@@ -1754,8 +1754,16 @@ below are the ones a caller cannot answer for itself and so must not have to.
   evaluates byte-identically. Rows: ET12 (routing, values, refusals,
   nesting) and ET9 of `test_calc_eval_text`; OE13 of `test_ase_outputs_eval` proves the
   nine committed ngspice-infix bench rows equal the former `print` path on the registry
-  ngspice. **Declared limits:** the Calculator window's buffer Eval and Plot are not
-  routed through it (they still take postfix); `?` (the conditional) has no infix form;
+  ngspice. **The Calculator window's buffer reads it too (2026-10-12):** Eval and Plot hand
+  the buffer to `calc::buf_route` — `calc::ix_route`, then `calc::et_check` for an infix
+  text, the Outputs path exactly — so `vt(lp)*2` answers what `vt(lp) 2 *` answers, a
+  measurement operand is measured inside Eval's own loan (`calc::eval_subs_in_token`), and
+  a text the translator reads as postfix is handed on byte-identical (R607's count and
+  named-token refusals unchanged). Plot refuses a measurement call or operand as *"Cannot
+  plot: cross() answers a number, not a waveform."* and says the translator's refusals in
+  its own verb. No refusal quotes a rewritten spelling: an unknown `vt(nosuch)*2` is named
+  as `vt(nosuch)`. Rows ET17 (counted) and PG17 of `test_calc_pick` (the presses).
+  **Declared limits:** `?` (the conditional) has no infix form;
   Cadence slash paths (`/net`) stay refused (Q6). OE13's population is
   derived without the router and carries a `FLOOR: 9` ratchet, so a routing change that
   stopped reading the committed rows as infix reddens it.

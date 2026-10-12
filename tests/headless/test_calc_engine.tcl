@@ -1354,9 +1354,11 @@ group CE8 {
     # analysis bracket (`calc::aq_run`) is drivable without a viewer.
     # `eval_text`, `eval_texts` and `eval_text_signals` joined in R609: the pure
     # evaluator ASE-L's Outputs pane reads a results file through.
+    # `eval_subs` and `eval_subs_in_token` joined for R610 in the window: the
+    # loan and its body for a buffer text carrying measurement operands.
     check "CE8 ...and the ones whose CODE names no widget path are the engine-side procs, which is why this file can run headless" \
         [lsort $pure] \
-        {eval_cursor_point eval_finite eval_fmt eval_in_ctx eval_in_token eval_msg eval_refusal eval_rpn eval_text eval_text_signals eval_texts plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_opstack rpn_stack_fault rpn_tokens rpn_unquote tmpvec}
+        {eval_cursor_point eval_finite eval_fmt eval_in_ctx eval_in_token eval_msg eval_refusal eval_rpn eval_subs eval_subs_in_token eval_text eval_text_signals eval_texts plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn rpn_bad_token rpn_maxtokens rpn_of_text rpn_opstack rpn_stack_fault rpn_tokens rpn_unquote tmpvec}
 }
 
 # =============================================================================

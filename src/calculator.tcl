@@ -3966,6 +3966,100 @@ proc calc::eval_in_token {tok rpn {dataset 0} {an {}}} {
 # them rather than by a run.  CE12 now asserts limit 1 as it stands and limit 2
 # as CLOSED, so a later phase that moves either one reds a row and has to come
 # back here.
+# R610 IN THE WINDOW: THE BUFFER IS READ AS ASE-L OUTPUTS READ AN EXPRESSION.
+# Eval and Plot hand the buffer text to `calc::ix_route`, the one translator
+# Outputs uses (through `calc::et_check`, ASE-L's own pre-read check), so
+# ADE-style infix (`vt(lp)*2`, `db(vf(out)/vf(in))`) works here and postfix
+# still passes through unchanged.  Before this a qualified infix text reached the
+# engine as ONE token and was refused quoting the stripped spelling (`unknown
+# token 'v(lp)*2'`), right after the R208d refusal of `v(lp)*2` had told the user
+# to write `vt(lp)`.  Answers `{ok 1 rpn <postfix> subs <subs> verb <verb>}` or
+# `{ok 0 msg <sentence>}`.  A text the translator reads as POSTFIX is handed on
+# byte-identical, so the window's own postfix refusals (R607's token count, its
+# named bad token) are unchanged.  `subs` are the measurement calls the text carries as
+# operands, `{verb vals}` each, standing in the postfix as `calc::ix_marker`s,
+# and `verb` names a text that IS one measurement call (empty otherwise).
+proc calc::buf_route {text} {
+    if {![catch {calc::ix_route $text} r] && [dict get $r mode] eq {rpn}} {
+        return [dict create ok 1 rpn $text subs {} verb {}]
+    }
+    set c [calc::et_check $text]
+    if {![dict get $c ok]} { return [dict create ok 0 msg [dict get $c msg]] }
+    set m [dict get $c meas]
+    set verb {}
+    if {$m ne {}} { set verb [dict get $m verb] }
+    return [dict create ok 1 rpn [dict get $c rpn] subs [dict get $c subs] verb $verb]
+}
+
+# The translator's sentences open in Evaluate's verb; a Plot press says its own.
+proc calc::ix_plot_say {msg} {
+    if {[string match {Cannot evaluate: *} $msg]} {
+        return "Cannot plot: [string range $msg 17 end]"
+    }
+    return $msg
+}
+
+# The measurement operands of an infix text, measured in the CURRENT database
+# and each put in place of its marker: `{ok 1 rpn <postfix>}` or
+# `{ok 0 msg <sentence>}`.  Shared by ASE-L's reader (`calc::et_one`) and the
+# window's Eval (`calc::eval_subs`), so one rule says what an operand may answer.
+proc calc::et_sub_map {rpn subs} {
+    set map {}
+    set k 0
+    foreach sub $subs {
+        lassign $sub name vals
+        set d {}
+        if {[catch {calc::aq_arg_invoke $name [calc::et_resolve_vals $name [calc::meas_numeric $name $vals]]} d]} {
+            return [dict create ok 0 msg [calc::arg_msg failed $name $d]]
+        }
+        set sink [calc::fn_sink $d]
+        if {$sink eq {destination}} { return [dict create ok 0 msg [calc::ix_msg nestwave $name]] }
+        if {$sink ne {buffer}} {
+            set msg [calc::et_get $d msg]
+            if {$msg eq {}} { set msg [calc::ix_msg nestbad $name [calc::et_get $d value]] }
+            return [dict create ok 0 msg $msg]
+        }
+        set v [string trim [dict get $d value]]
+        if {![calc::eval_finite $v]} { return [dict create ok 0 msg [calc::ix_msg nestbad $name $v]] }
+        lappend map [calc::ix_marker $k] $v
+        incr k
+    }
+    return [dict create ok 1 rpn [string map $map $rpn]]
+}
+
+# Inside the loan: the operands, then the engine on what they left.
+proc calc::eval_subs {rpn subs {dataset 0}} {
+    set m [calc::et_sub_map $rpn $subs]
+    if {![dict get $m ok]} { return [calc::eval_refusal [dict get $m msg] $dataset] }
+    return [calc::eval_rpn [dict get $m rpn] $dataset]
+}
+
+# `calc::eval_in_token`'s bracket for a text with measurement operands: the
+# same loan, the same analysis door (`calc::aq_run`), so every operand and the
+# expression around it read ONE database.
+proc calc::eval_subs_in_token {tok rpn subs {dataset 0} {an {}}} {
+    if {$tok eq {}} { return [calc::eval_refusal [calc::eval_msg noctx] $dataset] }
+    set ticket {}
+    if {[catch {wviewer::enter_ctx $tok 1} ticket]} {
+        return [calc::eval_refusal [calc::eval_msg busy] $dataset]
+    }
+    if {![lindex $ticket 0]} {
+        return [calc::eval_refusal [calc::eval_msg busy] $dataset]
+    }
+    set d {}
+    if {[catch {calc::aq_run $an [list calc::eval_subs $rpn $subs $dataset]} r]} {
+        set d [calc::eval_refusal [calc::eval_msg engine $r] $dataset]
+    } elseif {![dict get $r ok]} {
+        set d [calc::eval_refusal [dict get $r msg] $dataset]
+    } elseif {[dict get $r rc]} {
+        set d [calc::eval_refusal [calc::eval_msg engine [dict get $r value]] $dataset]
+    } else {
+        set d [dict get $r value]
+    }
+    catch {wviewer::leave_ctx $tok $ticket}
+    return $d
+}
+
 proc calc::eval_click {} {
     if {![calc::has_win .calc.mode.eval]} { return {} }
     set g [calc::require_result]
@@ -3996,10 +4090,16 @@ proc calc::eval_click {} {
     # list, so this ordering is the fence and the gate is not.
     set m [calc::meas_split $rpn]
     if {$m ne {}} { return [calc::status [calc::meas_eval $m $g $rpn]] }
-    if {$an eq {}} {
-        return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn]]]
+    set r [calc::buf_route $rpn]
+    if {![dict get $r ok]} { return [calc::status [dict get $r msg]] }
+    set post [dict get $r rpn]
+    if {[llength [dict get $r subs]]} {
+        return [calc::status [calc::eval_fmt [calc::eval_subs_in_token $tok $post [dict get $r subs] 0 $an]]]
     }
-    return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $rpn 0 $an]]]
+    if {$an eq {}} {
+        return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $post]]]
+    }
+    return [calc::status [calc::eval_fmt [calc::eval_in_token $tok $post 0 $an]]]
 }
 
 # ---------------------------------------------------------------------------
@@ -4073,6 +4173,7 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         empty    { return {Nothing to plot: the buffer is empty.} }
         badtoken { return "Cannot plot: $a." }
+        number   { return "Cannot plot: $a answers a number, not a waveform." }
         noctx    { return {Plot: the result's waveform window is not there to plot into.} }
         busy     { return {Plot: the result's waveform window is busy. Try again.} }
         failed   { return "Plot failed: $a." }
@@ -4379,9 +4480,14 @@ proc calc::plot_click {} {
         catch {set p [dict get $g path]}
         return [calc::status [calc::uq_say $u [calc::raw_analyses $p] unqualplot]]
     }
+    set r [calc::buf_route $rpn]
+    if {![dict get $r ok]} { return [calc::status [calc::ix_plot_say [dict get $r msg]]] }
+    set verb [dict get $r verb]
+    if {$verb eq {} && [llength [dict get $r subs]]} { set verb [lindex [dict get $r subs] 0 0] }
+    if {$verb ne {}} { return [calc::status [calc::plot_msg number "${verb}()"]] }
     set tok {}
     catch {set tok [dict get $g token]}
-    set d [calc::plot_in_token $tok $rpn [calc::plot_dest_req]]
+    set d [calc::plot_in_token $tok [dict get $r rpn] [calc::plot_dest_req]]
     # Never `set m {}`: calc::status records nothing for an empty sentence, so
     # an answer with no msg would make this press silent.  Every plot_in_token
     # arm carries one today; the default is what the user hears if one stops.
@@ -14326,28 +14432,9 @@ proc calc::et_resolve_vals {name vals} {
 proc calc::et_one {p dataset} {
     set m [dict get $p meas]
     if {$m eq {}} {
-        set rpn [dict get $p rpn]
-        set map {}
-        set k 0
-        foreach sub [dict get $p subs] {
-            lassign $sub name vals
-            set d {}
-            if {[catch {calc::aq_arg_invoke $name [calc::et_resolve_vals $name [calc::meas_numeric $name $vals]]} d]} {
-                return [calc::et_refuse [calc::arg_msg failed $name $d]]
-            }
-            set sink [calc::fn_sink $d]
-            if {$sink eq {destination}} { return [calc::et_refuse [calc::ix_msg nestwave $name]] }
-            if {$sink ne {buffer}} {
-                set msg [calc::et_get $d msg]
-                if {$msg eq {}} { set msg [calc::ix_msg nestbad $name [calc::et_get $d value]] }
-                return [calc::et_refuse $msg]
-            }
-            set v [string trim [dict get $d value]]
-            if {![calc::eval_finite $v]} { return [calc::et_refuse [calc::ix_msg nestbad $name $v]] }
-            lappend map [calc::ix_marker $k] $v
-            incr k
-        }
-        set rpn [calc::et_resolve [string map $map $rpn]]
+        set sm [calc::et_sub_map [dict get $p rpn] [dict get $p subs]]
+        if {![dict get $sm ok]} { return [calc::et_refuse [dict get $sm msg]] }
+        set rpn [calc::et_resolve [dict get $sm rpn]]
         set np 0
         catch {set np [xschem raw points $dataset]}
         set d [calc::eval_rpn $rpn $dataset 0]

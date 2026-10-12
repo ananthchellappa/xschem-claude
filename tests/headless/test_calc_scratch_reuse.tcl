@@ -706,7 +706,16 @@ group SR5 {
     # through `et_one` by passing the engine verb as a command prefix was
     # rejected: that hides an `eval_rpn` caller from this very scan instead of
     # fencing it.
+    #
+    # ⚠ AND WIDENED BY ONE MORE FOR R610 IN THE WINDOW (2026-10-12), KEPT WHOLE
+    # THE SAME WAY.  `calc::eval_subs` measures an infix text's measurement
+    # operands and then asks the engine for the expression around them, so it
+    # is the loan's body for a text that carries operands -- and its ONLY
+    # caller is `calc::eval_subs_in_token`, which holds the same loan
+    # `calc::eval_in_token` does and runs it through `calc::aq_run`.  That hop
+    # is asserted below, so a press calling `eval_subs` directly reddens.
     set callers {}
+    set subcallers {}
     set ctxcallers {}
     set onecallers {}
     set runcallers {}
@@ -716,14 +725,15 @@ group SR5 {
         if {$nm eq {eval_rpn}} { continue }
         if {[regexp {calc::eval_rpn} $b]} { lappend callers $nm }
         if {$nm ne {eval_in_ctx} && [regexp {calc::eval_in_ctx} $b]} { lappend ctxcallers $nm }
+        if {$nm ne {eval_subs} && [regexp {calc::eval_subs\M} $b]} { lappend subcallers $nm }
         if {$nm ne {et_one} && [regexp {calc::et_one} $b]} { lappend onecallers $nm }
         if {$nm ne {et_run} && [regexp {calc::et_run} $b]} { lappend runcallers $nm }
         if {$nm ne {et_domain_value} && [regexp {calc::et_domain_value} $b]} { lappend dvcallers $nm }
         if {$nm ne {et_domain} && [regexp {calc::et_domain\M} $b]} { lappend domcallers $nm }
     }
-    check "SR5 ...and exactly THREE procs call eval_rpn -- the loan's body, the pure evaluator's step, and that step's R610 domain probe -- each reached by exactly one proc: the loan holder, the file bracket (which only the batch door calls), and the domain check (which only the step calls)" \
-        [list [lsort $callers] $ctxcallers $onecallers $runcallers $dvcallers $domcallers] \
-        {{et_domain_value et_one eval_in_ctx} eval_in_token et_run eval_texts et_domain et_one}
+    check "SR5 ...and exactly FOUR procs call eval_rpn -- the loan's body, the operand-carrying loan's body, the pure evaluator's step, and that step's R610 domain probe -- each reached by exactly one proc: the two loan holders, the file bracket (which only the batch door calls), and the domain check (which only the step calls)" \
+        [list [lsort $callers] $ctxcallers $subcallers $onecallers $runcallers $dvcallers $domcallers] \
+        {{et_domain_value et_one eval_in_ctx eval_subs} eval_in_token eval_subs_in_token et_run eval_texts et_domain et_one}
 }
 
 # =============================================================================

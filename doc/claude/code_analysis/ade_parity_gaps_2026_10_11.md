@@ -65,8 +65,11 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    functions (`db`, `db20`, `db10`, `log`, `mag`, `pow` mapped exactly; the engine's own by
    name), engineering suffixes and measurement calls as operands, translated to the engine's
    postfix; postfix still accepted (calculator.md R610). Malformed one-token infix
-   (`2(Vcc-Vss)`) is refused with a sentence, as ADE-L reports a syntax error. **Still open:**
-   the Calculator window's buffer Eval and Plot take postfix only. ~~`x/0` answers `0` (engine
+   (`2(Vcc-Vss)`) is refused with a sentence, as ADE-L reports a syntax error. ~~**Still open:**
+   the Calculator window's buffer Eval and Plot take postfix only.~~ **Done 2026-10-12:** the
+   window's Eval and Plot read the buffer through the same translator (`calc::buf_route`), so
+   `vt(lp)*2` — the spelling R208d's refusal of `v(lp)*2` offers — answers instead of being
+   refused as one unknown token; postfix unchanged (calculator.md R610, rows ET17, PG17). ~~`x/0` answers `0` (engine
    DIVIS rule, issue 1628); `ln(0)` answers the engine's clamp (−35).~~ **Done 2026-10-12:**
    a scalar Outputs answer that divided by zero or took a log of a value ≤ 0 is refused with
    a sentence (*division by zero* / *log of zero or a negative value*), as the old `print`
