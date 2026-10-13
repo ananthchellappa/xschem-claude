@@ -58,6 +58,21 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    a run (R-OUT3a, second fix round: an unticked expression's absent signal used to refuse the
    simulation; measured that ngspice ignores an absent `.save` card at rc 0), and the lone-op
    phantom guard counts the cards rather than ticked rows (R-OUT3b).
+   ⚖ **2026-10-13: a save never narrows (ase_l.md R-OUT8).** Every deck with an output card now
+   carries `.save all` ahead of it (one only: the operating-point tier's leader stands in when its
+   block is coming), so nothing is narrowed and the widening, starvation and phantom guards stand
+   down. Measured on real sky130 benches: as committed the op vector counts do not move
+   (184/19/880/124); with device-parameter saving off `test_mos_binning` goes 2 → 14 and
+   `charge_pump` 25 → 100.
+8. **Done 2026-10-13: two tabs, Measures and Saves (ase_l.md R-OUT7..R-OUT10).** The user: *"A
+   'save' will always be v("netname")"*, *"vt(netname) is NOT a save! It's a fetch of the
+   time-domain waveform"*, *"an expression, created by user, can be in the Measures tab. But, make
+   it easy (click on the 'Value' header to push the 'waves' to the bottom"*. The tab is a pure
+   function of the row's text (`ase::output_tab`); state format unchanged; a save typed under
+   Measures, or a non-save under Saves, is refused naming the other tab; a bare node under Saves
+   becomes `v(<node>)`. Clicking the Measures tab's Value header orders numbers, then
+   blank/refusals, then waves (view only). ❓ Not ruled: whether a Saves row should auto-plot (it
+   still does, as every plain signal row did; 1282 of the 1284 rows put back carry a Plot tick).
 
 ### Expression language
 1. ~~Plain arithmetic is postfix (`v(a) v(b) +`), not normal algebra (`v(a) + v(b)`).~~ **Done
@@ -101,6 +116,13 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    Outputs pane (one name, ADE-L's *signal* output) keeps its reading; the waveform viewer's own
    graph expressions keep plain `v()` for now. Device parameters (`@m1[gm]`) have no qualified
    spelling yet — ADE's `OP("inst" "param")` is not built.
+   - ⚖ **2026-10-13: the single-signal half of this migration was put back as saves** (ase_l.md
+     R-OUT7): every committed row whose whole text was one unsigned qualified signal — **1284
+     rows** (sky130A 1233, `test_carry_lookahead` alone 1089; ihp-sg13g2 25; xschem_libraries_oa
+     21; xschem_libs_newsym 5) — is `v(x)`/`i(x)` again (the author's own spelling where it was
+     already one, else by the qualifier's family), derived from git by
+     `tools/migrate/r208d_saves_revert.tcl`. The three `-idc(v1)` rows and the nine composed ones
+     stay migrated.
    - **Committed benches migrated:** every row whose analysis is obvious (1296 rows in 45
      `.state` files, counted by the 2026-10-12 migration: one analysis enabled, or the Plot tick on a single sweep, plus the nine
      infix rows — the eight IHP resistance rows `Vcc/I(Vr)`-shaped are Save-only on an op+DC

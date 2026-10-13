@@ -901,6 +901,10 @@ analysis of the current result's raw file whatever analysis is current.
     tell a node from another bare vector (`Transfer_function`, `onoise_total`) without a
     database, so such a vector inside an expression is refused too; a plain ASE-L Outputs
     row naming it alone is a signal row and is unaffected.
+  - **2026-10-13 (ase_l.md R-OUT7):** in ASE-L a plain `v(x)`/`i(x)` row is a **save** (the
+    Saves tab: no value, analysis-agnostic) and a qualified fetch (`vt(x)`) is a **measure**;
+    R208d's migration of the committed benches' bare single-signal rows was put back as
+    saves (1284 rows).
   - Code: `calc::uq_first` (the decision, pure), `calc::uq_say` / `calc::uq_offer` (the
     sentence), `calc::uq_qualify` (ASE-L's plain signal rows, ase_l.md R-OUT4), arms
     `unqual`/`unqualplot`/`unqualmeas` of `calc::aq_msg`. Fences: band AT17 of
@@ -1705,7 +1709,12 @@ below are the ones a caller cannot answer for itself and so must not have to.
   the outputs pane of ASE-L go to the netlist? They are computations made using the
   result of the simulation! They should not influence the input to the simulator."* The
   only netlist effect is that the signals the expression reads are saved (ase_l.md
-  R-OUT3). The button itself is still not built (PLAN row 10.4).
+  R-OUT3). The button itself is still not built (PLAN row 10.4). ⚠ **Amended 2026-10-13
+  (ase_l.md R-OUT7, R-OUT10):** the Outputs pane is two tabs, Measures and Saves, and the
+  exported row lands in the tab its text names (`ase::output_tab`): a Calculator buffer is
+  an expression or a qualified fetch, so it lands in **Measures**; a plain `v(x)`/`i(x)` would
+  be a save, and the Calculator refuses an unqualified signal anyway (R208d). When built, the
+  button must route through `ase::output_admit measures`, the editor's own door.
 - **R609** **The pure evaluator.** `calc::eval_text <text> <rawpath> <analysis>
   ?dataset?` (and `calc::eval_texts`, the same for a list against one file, one read
   per analysis) answers `{ok 1 kind scalar value V}`, `{ok 1 kind wave value <last

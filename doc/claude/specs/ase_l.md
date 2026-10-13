@@ -725,7 +725,8 @@ They should not influence the input to the simulator."* ADE-L is the floor
   current; `.save v(out)` → the operating point holds **v(out) alone** and the
   transient **time + v(out)** — ANY `.save` keeps only what is listed;
   `.save v(out)` + `.save v(mid)` → those two; `.save all` + `.save v(out)` →
-  everything. ASE-L emits `.save all` only for the Save-All-Voltages tick, a
+  everything. ⚖ **Superseded by R-OUT8 (2026-10-13): every deck with a card now
+  carries `.save all`, so nothing below narrows any more.** ASE-L emitted `.save all` only for the Save-All-Voltages tick, a
   6g-1 widening, the 6g-3 phantom guard, or the operating-point tier's own
   leader (guard G-LEADER, issue 0964: `op_annot::save_cards` puts `.save all`
   above its device cards whenever its block is non-empty), so a default bench
@@ -829,6 +830,15 @@ They should not influence the input to the simulator."* ADE-L is the floor
     point bench's `x1.F1` → `vdc(x1.F1)`, a transient bench's `out` → `vt(out)`, a DC-sweep bench's `i(vr1)` → `is(vr1)`; see
     `doc/claude/code_analysis/ade_parity_gaps_2026_10_11.md`), and the ambiguous ones were
     left for the user.
+    ⚖ **2026-10-13 (R-OUT7): the migrated rows whose WHOLE text was one unsigned qualified
+    signal were put back as saves** — the user: *"Migration's ... bare qualified single-signal
+    rows (vt(clk), -idc(v1) …) revert to v()/i() in Saves"* — **1284 rows** (sky130A 1233, of
+    which `test_carry_lookahead` 1089; ihp-sg13g2 25; xschem_libraries_oa 21;
+    xschem_libs_newsym 5; gf180mcuD 0), derived from git by
+    `tools/migrate/r208d_saves_revert.tcl`: the pre-migration text where it was already a save
+    (42 rows, `I(Vmda)`), else `v(<x>)`/`i(<x>)` by the qualifier's family (1242 rows that were
+    bare names). The three signed rows (`-idc(v1)`, from `-i(v1)`) and the nine composed ones
+    stay migrated; `tests/headless/data/r208d_migration.txt` keeps those twelve for OE17.
   - **A device parameter (`@m1[gm]`) has no qualified spelling** (Cadence's `OP("inst"
     "param")` is not built) and is read as before, in a plain row or an expression.
   - Rows: OE16 of `test_ase_outputs_eval`; OE3/OE4/OE7/OE8/OE15 restated with qualified
@@ -855,6 +865,61 @@ They should not influence the input to the simulator."* ADE-L is the floor
   or all of its points. Malformed one-token
   infix (`2(Vcc-Vss)`, `1..2*Vcc`, a whole `2M`) is refused with a sentence in
   the Value cell, never evaluated as a leading number (row ET12 `MALFORMED`).
+- **R-OUT7 — two tabs, Measures and Saves (user rulings 2026-10-13).** The user:
+  *"A 'save' will always be v("netname") - because 'save' of a net would apply to any
+  analysis."* *"v() is only a save of a node - it can be in the Saves tab and do no harm."*
+  *"vt(netname) is NOT a save! It's a fetch of the time-domain waveform. All the user can do
+  with it is plot it."* *"an expression, created by user, can be in the Measures tab."* The
+  Outputs pane is two tabs over the ONE `outputs` list; **Measures is shown on open and after a
+  state loads** (Load State, Revert). A row's tab is a pure function of its TEXT,
+  `ase::output_tab` (no Tk; counted arm): **Saves** = a plain `v(<node>)`, `v(<a>,<b>)` or
+  `i(<source>)`, either case, Cadence quotes allowed, no sign (`ase::output_is_save`);
+  **Measures** = everything else — an analysis-qualified fetch (`vt(out)`, `vdc(out)`,
+  `idc(v1)`), a signed signal (`-i(v1)`, `-idc(v1)`: a save has no sign, and the author's sign
+  flip is a number they meant to read), a bare name, a device quantity (`@m1[gm]`), a
+  measurement call (`value(vt("net"),120u)`, `cross`, `dutyCycle`), an expression in either
+  syntax, wave-valued ones included (`db(vf(out))`, `vt(a)-vt(b)`). **The state format is
+  unchanged** and an old state sorts itself on load. Judgement calls, recorded: a **bare name**
+  is a Measure because on the committed benches it is as often a `.meas`/`let` result (`GBW`,
+  `Ctot`, `avg`; `GBW` is a `let` in its original testbench) as a node (`TEMPERAT`, `VBG`), and text cannot tell them
+  apart; a **device quantity** is a Measure because it is a number the user reads (and its
+  Save tick still emits its `.save @dev[param]` card, R-OUT3). A Saves row shows **no Value**
+  (columns Name, Plot, Save, Save Options); its Plot tick still auto-plots as a plain signal
+  row always has, in the viewer's analysis. The tree item id is the row's index in the state
+  list in both tabs, so a click, an edit or a delete addresses the state whatever the view
+  order. Suite `test_ase_outputs_tabs` (TC, TW1).
+- **R-OUT8 — a save ADDS and never narrows (driver default 2026-10-13, unobjected).** In
+  ngspice one plain `.save` keeps only what is listed (R-OUT3's measurement), so a deck with any
+  output card now carries **`.save all` ahead of it** — exactly one: when the operating-point
+  tier's block is coming it carries that leader instead (`render_deck`). `ase::saves_narrowed`
+  answers 0 for every state and `ase::saves_all_forced` is 1 whenever there is a card, so the
+  6g-1 widening and its `vecsaves` caution, `saves_resolve`, the 6g-3 phantom guard and
+  `disto_saves` stand down on every real bench; their code and sentences are kept, pinned in
+  the DORMANT world of `test_ase_preflight`'s `pf_narrowed`. Save-All Voltages/Currents keep
+  their meaning. **Measured 2026-10-13** on the registry ngspice (`build-ver_50`), real sky130
+  benches through ASE-L's own netlister and deck: as committed (op tier on) `charge_pump`,
+  `test_mos_binning`, `bandgap`, `montecarlo_mismatch_sim` keep 184/19/880/124 op vectors
+  before and after (the tier's leader already saved everything; the deck gains one line where
+  the outputs need their own); with device-parameter saving off, the narrowed decks of
+  `test_mos_binning` and `charge_pump` held **2 and 25** op vectors before and hold **14 and
+  100** after. Rows TD, OE1, OE7, WD2–WD6 (`test_ase_core`), PF*0-REAL.
+- **R-OUT9 — the Value header sorts the Measures VIEW.** The user: *"click on the 'Value'
+  header to push the 'waves' to the bottom - since user really only wants to SEE the values -
+  real numbers"*. A click orders numbers first (a list of numbers counts as numbers), then
+  rows with no value yet or a refusal's sentence, then `wave`, each group in the user's own
+  order (`ase::ui::value_rank`, `ase::ui::measures_order`, pure); the heading reads
+  `Value ▾` while sorted; a second click restores the user's order. It never reorders the
+  state's list (which is also the evaluation order); new values from a run re-sort a sorted
+  view without dropping the selection. The sort survives a state load (a view preference).
+  Rows TO, TW2, TW3, TW5.
+- **R-OUT10 — each tab keeps its door.** A save typed under Measures is refused with
+  *"ase: v(out) is a save -- add it under Saves"*; anything that is not a save typed under
+  Saves is refused with *"ase: vt(out) is not a save -- add it under Measures"*; the dialog
+  stays open (`ase::output_admit`, CIW error line, the editor's existing refusal style). A
+  **bare node typed under Saves is admitted as `v(<node>)`**. Every other door that adds a row
+  routes by the same classifier because the tab IS the text: Select On Design writes
+  `v(<net>)`/`i(<inst>)` (Saves), the two-port matrix picker writes `S_1_1 db20()` (Measures),
+  and R608's Export (not built) will. Rows TA, TW4.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
