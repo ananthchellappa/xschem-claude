@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
 variables {{name VCC value 1.8} {name FREQ value 100e6} {name PER value {{1/FREQ}}}}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 5u step 100p}}
-outputs {{name CK expr vt(CK) save 1 plot 1} {name A expr vt(A) save 1 plot 1} {name B expr vt(B) save 1 plot 1} {name C expr vt(C) save 1 plot 1} {name D expr vt(D) save 1 plot 1} {name VCC expr vt(VCC) save 1 plot 1} {name HV expr vt(HV) save 1 plot 1} {name HV2 expr vt(HV2) save 1 plot 1} {name HVIDEAL expr vt(HV_IDEAL) save 1 plot 1} {name ivload expr it(vload) save 1 plot 1} {name HVIDEAL2 expr vt(HV_IDEAL2) save 1 plot 1}}
+outputs {{name CK expr v(CK) save 1 plot 1} {name A expr v(A) save 1 plot 1} {name B expr v(B) save 1 plot 1} {name C expr v(C) save 1 plot 1} {name D expr v(D) save 1 plot 1} {name VCC expr v(VCC) save 1 plot 1} {name HV expr v(HV) save 1 plot 1} {name HV2 expr v(HV2) save 1 plot 1} {name HVIDEAL expr v(HV_IDEAL) save 1 plot 1} {name ivload expr i(vload) save 1 plot 1} {name HVIDEAL2 expr v(HV_IDEAL2) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}

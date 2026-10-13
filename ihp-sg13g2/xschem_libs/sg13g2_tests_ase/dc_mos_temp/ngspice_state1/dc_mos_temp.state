@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::MODELS_NGSPICE/cornerMOSlv.lib} section mos_tt} {file {$::MODELS_NGSPICE/cornerMOShv.lib} section mos_tt}}
 variables {{name temp value 27}}
 analyses {{type op enabled 0} {type dc enabled 1 source temp start -40 stop 125 step 1} {type ac enabled 0} {type tran enabled 0}}
-outputs {{name ivm2 expr is(vm2) save 1 plot 1} {name ivm1 expr is(vm1) save 1 plot 1} {name ivm3 expr is(vm3) save 1 plot 1} {name ivm4 expr is(vm4) save 1 plot 1}}
+outputs {{name ivm2 expr i(vm2) save 1 plot 1} {name ivm1 expr i(vm1) save 1 plot 1} {name ivm3 expr i(vm3) save 1 plot 1} {name ivm4 expr i(vm4) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

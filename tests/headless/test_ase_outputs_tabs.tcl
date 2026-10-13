@@ -23,6 +23,8 @@
 #   TO  the Value-header order: numbers, then blank/refusal, then waves, each
 #       group in the user's own order; unsorted is the user's own order
 #   TD  a Saves row never narrows the deck: the deck saves everything first
+#   TM  no committed bench row is a bare analysis-qualified single signal
+#       (R208d's migration put back as saves), derived over every state
 # Bands (display arm -- self-skip with SKIPPED: under --nogui):
 #   TW1 two tabs, Measures shown on open; each tree holds its own rows
 #   TW2 the Value header sorts the VIEW and a second click restores it; the
@@ -170,6 +172,36 @@ group TD {
     check "TD control: Save All voltages ON still gives exactly one leader" \
         [td_saves [pcall [ase::backend_hook ngspice render_deck] [td_state {{expr v(out) save 1}} 1] $::NL]] \
         {{.save all} {.save v(out)}}
+}
+
+# =============================================================================
+# TM -- NO COMMITTED ROW IS A BARE QUALIFIED SINGLE SIGNAL
+# =============================================================================
+group TM {
+    set corpus [test_corpus_files $repo *.state]
+    test_corpus_note $corpus
+    set files [dict get $corpus files]
+    set nst 0 ; set nrows 0 ; set nsave 0 ; set bare {} ; set neg 0
+    foreach f $files {
+        if {[catch {set fh [open $f r]; set t [read $fh]; close $fh}]} continue
+        set outs {}
+        foreach ln [split $t "\n"] { if {[string match {outputs *} $ln]} { set outs [lindex $ln 1] } }
+        incr nst
+        foreach o $outs {
+            if {![dict exists $o expr]} continue
+            incr nrows
+            set e [string trim [dict get $o expr]]
+            if {[ase::output_tab $e] eq {saves}} { incr nsave }
+            if {[regexp -nocase {^(vt|vf|vdc|vs|it|if|idc|is)\([^()]*\)$} $e]} {
+                lappend bare "[file tail $f]: $e"
+            }
+            if {[regexp -nocase {^-(vt|vf|vdc|vs|it|if|idc|is)\([^()]*\)$} $e]} { incr neg }
+        }
+    }
+    check "TM no committed Outputs row is a bare analysis-qualified single signal -- R208d's migration of those rows is put back as saves (rows)" \
+        [lrange $bare 0 9] {}
+    check "TM ...and the scan is not vacuous: states and rows were read, saves exist, and the signed qualified rows (a measure: a save has no sign) are still there (states > 0, saves > 0, signed > 0)" \
+        [list [expr {$nst > 0}] [expr {$nsave > 0}] [expr {$neg > 0}]] {1 1 1}
 }
 
 # =============================================================================

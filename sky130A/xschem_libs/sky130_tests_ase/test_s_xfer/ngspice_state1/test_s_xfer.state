@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 10u step 10n}}
-outputs {{name a expr vt(a) save 1 plot 1} {name b expr vt(b) save 1 plot 1}}
+outputs {{name a expr v(a) save 1 plot 1} {name b expr v(b) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}

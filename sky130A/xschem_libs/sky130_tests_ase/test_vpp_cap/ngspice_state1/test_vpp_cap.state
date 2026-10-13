@@ -6,7 +6,7 @@ temperature 27
 models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
 variables {}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 6u step 10n}}
-outputs {{name g1 expr vt(g1) save 1 plot 1} {name g2 expr vt(g2) save 1 plot 1} {name g3 expr vt(g3) save 1 plot 1} {name g4 expr vt(g4) save 1 plot 1} {name ivc1 expr it(vc1) save 1 plot 1} {name ivc2 expr it(vc2) save 1 plot 1} {name ivc3 expr it(vc3) save 1 plot 1} {name ivc4 expr it(vc4) save 1 plot 1}}
+outputs {{name g1 expr v(g1) save 1 plot 1} {name g2 expr v(g2) save 1 plot 1} {name g3 expr v(g3) save 1 plot 1} {name g4 expr v(g4) save 1 plot 1} {name ivc1 expr i(vc1) save 1 plot 1} {name ivc2 expr i(vc2) save 1 plot 1} {name ivc3 expr i(vc3) save 1 plot 1} {name ivc4 expr i(vc4) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}

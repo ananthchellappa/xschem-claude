@@ -6,7 +6,7 @@ temperature 27
 models {}
 variables {{name VDD value 1.8}}
 analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 2u step 100p}}
-outputs {{name clk expr vt(clk) save 1 plot 1} {name countout3 expr vt(count_out3) save 1 plot 1} {name countout2 expr vt(count_out2) save 1 plot 1} {name countout1 expr vt(count_out1) save 1 plot 1} {name countout0 expr vt(count_out0) save 1 plot 1}}
+outputs {{name clk expr v(clk) save 1 plot 1} {name countout3 expr v(count_out3) save 1 plot 1} {name countout2 expr v(count_out2) save 1 plot 1} {name countout1 expr v(count_out1) save 1 plot 1} {name countout0 expr v(count_out0) save 1 plot 1}}
 save_all_v 1
 save_all_i 0
 options {}
