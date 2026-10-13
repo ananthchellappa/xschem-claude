@@ -9484,20 +9484,48 @@ proc ase::output_tab {ex} {
 # typed under Measures, or anything that is not a save typed under Saves, is
 # refused with a sentence naming the other tab.  A bare node typed under Saves
 # is the save the user meant and is admitted as `v(<node>)`.
-proc ase::output_admit {tab ex} {
+#
+# A BARE NAME typed under Measures is refused only when `nodes` -- the design's
+# top-level node names, ase::output_known_nodes -- says it is a node: text
+# alone cannot tell `out` from a .meas/let result such as `GBW`, which belongs
+# in Measures.  With no netlist in hand (`nodes` empty) it is admitted.
+proc ase::output_admit {tab ex {nodes {}}} {
   set e [string trim $ex]
+  set bare [expr {[regexp {^[A-Za-z_#][A-Za-z0-9_.:#$<>\[\]]*$} $e]
+                  && ![string is double -strict $e]}]
   if {$tab eq {saves}} {
     if {[ase::output_is_save $e]} { return [list ok $e] }
-    if {[regexp {^[A-Za-z_#][A-Za-z0-9_.:#$<>\[\]]*$} $e]
-        && ![string is double -strict $e]} {
-      return [list ok "v($e)"]
-    }
+    if {$bare} { return [list ok "v($e)"] }
     return [list refuse "$e is not a save -- add it under Measures"]
   }
   if {[ase::output_is_save $e]} {
     return [list refuse "$e is a save -- add it under Saves"]
   }
+  if {$bare && [lsearch -exact -nocase $nodes $e] >= 0} {
+    return [list refuse "$e is a node -- add it under Saves"]
+  }
   return [list ok $e]
+}
+
+# The design's top-level node names and its globals (ground excluded), from
+# the netlist facts ASE-L already holds (ase::netlist_facts_cached, which never
+# netlists): {} when no current netlist is in hand.
+proc ase::output_known_nodes {state} {
+  set fx {}
+  catch {set fx [ase::netlist_facts_cached $state]}
+  if {$fx eq {}} { return {} }
+  set out {}
+  catch {
+    if {[dict exists $fx nodes {} nodes]} {
+      foreach n [dict keys [dict get $fx nodes {} nodes]] { lappend out $n }
+    }
+  }
+  catch {
+    foreach n [dict keys [dict get $fx globals]] {
+      if {$n ne {0} && [lsearch -exact $out $n] < 0} { lappend out $n }
+    }
+  }
+  return $out
 }
 
 # The enabled class A types on this bench, in emit order -- {} when nothing

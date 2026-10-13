@@ -1758,7 +1758,11 @@ proc ase::ui::delete_selection {key} {
   variable wins; variable panekeys
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
+  # R-OUT7: only the SHOWN Outputs tab's tree can carry the selection the user
+  # means; the hidden one's is never a target
+  set hidden [expr {[ase::ui::outputs_tab $key] eq {saves} ? {outs} : {saves}}]
   foreach pane {vars ana outs saves} {
+    if {$pane eq $hidden} { continue }
     set tv $top.body.$pane.tv
     if {![winfo exists $tv]} { continue }
     set sel [$tv selection]
@@ -2559,6 +2563,12 @@ proc ase::ui::outputs_tab {key {tab {}}} {
   set o $top.body.outs
   set sv $top.body.saves
   if {![winfo exists $o] || ![winfo exists $sv]} { return $tab }
+  # the hidden tree's selection goes: nothing may act on a row out of sight
+  if {$tab eq {saves}} {
+    catch {$o.tv selection set {}}
+  } else {
+    catch {$sv.tv selection set {}}
+  }
   if {$tab eq {saves}} {
     grid remove $o.tv $o.sb
     grid $sv -in $o -row 0 -column 0 -rowspan 2 -columnspan 2 -sticky nsew
@@ -2899,7 +2909,8 @@ proc ase::ui::output_editor_ok {key} {
   }
   set tab measures
   if {[info exists edrow($key,outtab)]} { set tab $edrow($key,outtab) }
-  lassign [ase::output_admit $tab $ex] verdict ex
+  lassign [ase::output_admit $tab $ex \
+    [ase::output_known_nodes [ase::session_state $key]]] verdict ex
   if {$verdict ne {ok}} {
     catch {::ase::echo "ase: $ex" error}
     return
@@ -3411,6 +3422,8 @@ proc ase::ui::sod_queue {key ex} {
   dict set st outputs $rows
   ase::session_update $key $st
   ase::ui::populate $key
+  # R-OUT10: the row is shown where it lives
+  ase::ui::outputs_tab $key [ase::output_tab $ex]
   incr sod($key,count)
   catch {::ase::echo "ase: queued output '$ex' ($status)"}
 }
@@ -8211,6 +8224,8 @@ proc ase::ui::matrix_ok {key} {
     dict set st outputs $outs
     ase::session_update $key $st
     ase::ui::populate $key
+    # R-OUT10: the rows are shown where they live
+    ase::ui::outputs_tab $key [ase::output_tab [dict get [lindex $outs end] expr]]
   }
   ase::ui::matrix_cancel $key
 }

@@ -508,6 +508,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"

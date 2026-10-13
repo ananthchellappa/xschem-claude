@@ -877,6 +877,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_quotes" \
                  "headless/test_calc_analysis_tokens" \
                  "headless/test_ase_outputs_tabs" \
+                 "headless/test_ase_interact" \
                  "headless/test_fluid_editing" \
                  "headless/test_wave_grid" \
                  "headless/test_del_negative_arg" \

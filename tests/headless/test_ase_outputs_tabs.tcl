@@ -23,15 +23,29 @@
 #   TO  the Value-header order: numbers, then blank/refusal, then waves, each
 #       group in the user's own order; unsorted is the user's own order
 #   TD  a Saves row never narrows the deck: the deck saves everything first
+#   TN  the Measures door refuses a bare name the design's netlist knows as a
+#       node (ase::output_known_nodes, from the cached netlist facts); with no
+#       netlist in hand a bare name is admitted (text cannot tell a node from a
+#       .meas/let result)
 #   TM  no committed bench row is a bare analysis-qualified single signal
 #       (R208d's migration put back as saves), derived over every state
+#   TR  every row the revert put back holds the save tools/migrate's table
+#       says, the table is internally consistent, and its `pre` column is
+#       re-derived from git (1e987ffd^) where the history is present
 # Bands (display arm -- self-skip with SKIPPED: under --nogui):
 #   TW1 two tabs, Measures shown on open; each tree holds its own rows
 #   TW2 the Value header sorts the VIEW and a second click restores it; the
 #       heading says so; the state's order is untouched
 #   TW3 delete and edit on a sorted view hit the right state row
 #   TW4 the editor's doors refuse across tabs and normalise a bare node
-#   TW5 a state load shows Measures again; a run's new values re-sort
+#   TW5 a state load shows Measures again (Load State, the Load State
+#       dialog's commit, Revert); a run's new values re-sort, keeping the
+#       selection
+#   TW6 the strip's delete acts on the SHOWN tab only; switching tabs drops
+#       the hidden tree's selection
+#   TW7 a refused text reaches the CIW as an error line; a bare node the
+#       netlist knows is refused under Measures in the editor too
+#   TW8 a row added by another door (Select On Design) shows its own tab
 #
 # REGISTERED IN BOTH LISTS: the TW bands need a display.
 #
@@ -112,6 +126,36 @@ group TA {
     check "TA an admitted text always classifies into the tab that admitted it" \
         [list [ase::output_tab [lindex [ase::output_admit saves out] 1]] \
               [ase::output_tab [lindex [ase::output_admit measures vt(out)] 1]]] {saves measures}
+}
+
+# =============================================================================
+# TN -- THE MEASURES DOOR KNOWS THE DESIGN'S NODES WHEN THE NETLIST DOES
+# =============================================================================
+group TN {
+    check "TN Measures refuses a bare name the netlist knows as a node, naming Saves" \
+        [list [lindex [ase::output_admit measures out {in out}] 0] \
+              [string match *Saves* [lindex [ase::output_admit measures out {in out}] 1]] \
+              [string match *out* [lindex [ase::output_admit measures out {in out}] 1]]] {refuse 1 1}
+    check "TN ...in either case (ngspice folds node names)" \
+        [lindex [ase::output_admit measures OUT {in out}] 0] refuse
+    check "TN a bare name the netlist does NOT know (a .meas/let result: GBW) is admitted under Measures" \
+        [ase::output_admit measures GBW {in out}] {ok GBW}
+    check "TN with no netlist in hand a bare name is admitted (text alone cannot tell a node from a let)" \
+        [ase::output_admit measures out {}] {ok out}
+    check "TN a qualified fetch of a known node is still a measure" \
+        [ase::output_admit measures vt(out) {in out}] {ok vt(out)}
+    # ase::output_known_nodes reads the cached facts and never netlists
+    rename ::ase::netlist_facts_cached ::tn_facts_real
+    proc ::ase::netlist_facts_cached {state} { return $::tn_facts }
+    set ::tn_facts [dict create nodes [dict create {} [dict create nodes {out 1 in 1} devs {} insts {}] \
+                                         xsub [dict create nodes {deep 1} devs {} insts {}]] \
+                        globals [dict create 0 1 vdd 1]]
+    check "TN ase::output_known_nodes: the top level's nodes and the globals, not ground, not a subcircuit's own" \
+        [lsort [pcall ase::output_known_nodes [ase::state_default]]] {in out vdd}
+    set ::tn_facts {}
+    check "TN ...and nothing when the netlist is cold" [pcall ase::output_known_nodes [ase::state_default]] {}
+    rename ::ase::netlist_facts_cached {}
+    rename ::tn_facts_real ::ase::netlist_facts_cached
 }
 
 # =============================================================================
@@ -205,6 +249,74 @@ group TM {
 }
 
 # =============================================================================
+# TR -- THE REVERT PUT BACK THE RIGHT TEXT (not only "no bare qualified row")
+# =============================================================================
+proc tr_fam {migrated} {
+    regexp -nocase {^(vt|vf|vdc|vs|it|if|idc|is)\(([^()]*)\)$} $migrated -> q inner
+    return "[string tolower [string index $q 0]]($inner)"
+}
+proc tr_outputs {text} {
+    foreach ln [split $text "\n"] { if {[string match {outputs *} $ln]} { return [lindex $ln 1] } }
+    return {}
+}
+group TR {
+    set tf [file join $here data r208d_saves_revert.txt]
+    set fh [open $tf r]; set t [read $fh]; close $fh
+    set rows {}
+    foreach ln [split $t "\n"] {
+        if {[string trim $ln] eq {} || [string index $ln 0] eq {#}} continue
+        lappend rows $ln
+    }
+    set cache [dict create]
+    set wrong {} ; set incons {} ; set nfam 0 ; set npre 0
+    foreach r $rows {
+        lassign $r rel idx name pre migrated reverted
+        if {![dict exists $cache $rel]} {
+            set outs {}
+            catch {set fh [open [file join $repo $rel] r]; set outs [tr_outputs [read $fh]]; close $fh}
+            dict set cache $rel $outs
+        }
+        set o [lindex [dict get $cache $rel] $idx]
+        set got [list [ase::state_get $o name] [ase::state_get $o expr]]
+        if {$got ne [list $name $reverted]} { lappend wrong "$rel#$idx: $got != [list $name $reverted]" }
+        if {[ase::output_is_save $pre]} {
+            incr npre
+            if {$reverted ne $pre} { lappend incons "$rel#$idx: pre $pre was a save, reverted $reverted" }
+        } else {
+            incr nfam
+            if {$reverted ne [tr_fam $migrated]} { lappend incons "$rel#$idx: $migrated -> $reverted, family says [tr_fam $migrated]" }
+        }
+    }
+    check "TR the table is not vacuous: rows put back to the author's own save and rows put back by family both exist (rows>1000, pre>0, family>0)" \
+        [list [expr {[llength $rows] > 1000}] [expr {$npre > 0}] [expr {$nfam > 0}]] {1 1 1}
+    check "TR every committed row the revert touched holds the table's {name save} (first mismatches)" \
+        [list [llength $wrong] [lrange $wrong 0 4]] {0 {}}
+    check "TR the table is consistent with its rule: the author's text when it was a save, else v()/i() by the qualifier's family" \
+        [list [llength $incons] [lrange $incons 0 4]] {0 {}}
+    # `pre` re-derived from git -- the history is the authority, the table its copy
+    set havegit [expr {![catch {exec git -C $repo cat-file -e 1e987ffd^{commit}}]}]
+    if {!$havegit} {
+        puts "skip: TR pre-from-git (no git history for 1e987ffd^ in this checkout)"
+    } else {
+        set gcache [dict create] ; set gwrong {}
+        foreach r $rows {
+            lassign $r rel idx name pre
+            if {![dict exists $gcache $rel]} {
+                set outs {}
+                catch {set outs [tr_outputs [exec git -C $repo show 1e987ffd^:$rel]]}
+                dict set gcache $rel $outs
+            }
+            set po [lindex [dict get $gcache $rel] $idx]
+            if {[list [ase::state_get $po name] [string trim [ase::state_get $po expr]]] ne [list $name $pre]} {
+                lappend gwrong "$rel#$idx: git [list [ase::state_get $po name] [ase::state_get $po expr]] != [list $name $pre]"
+            }
+        }
+        check "TR every table row's `pre` is the row's text at 1e987ffd^, read from git (first mismatches)" \
+            [list [llength $gwrong] [lrange $gwrong 0 4]] {0 {}}
+    }
+}
+
+# =============================================================================
 # TW -- THE WINDOW (display arm)
 # =============================================================================
 proc tw_ids {tv} { return [$tv children {}] }
@@ -213,7 +325,7 @@ proc tw_exprs {key ids} {
     return [lmap i $ids {ase::state_get [lindex $rows $i] expr}]
 }
 if {![info exists ::has_x] || [info commands winfo] eq {}} {
-    puts "SKIPPED: TW1-TW5 window bands (no X)"
+    puts "SKIPPED: TW1-TW8 window bands (no X)"
 } else {
     set key {}
     group TW1 {
@@ -359,6 +471,18 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         update
         check "TW5 a state load shows Measures again" \
             [list [ase::ui::outputs_tab $key] [winfo ismapped $mtv]] {measures 1}
+        ase::ui::outputs_tab $key saves
+        update
+        ase::ui::load_state_commit $key [ase::session_state $key]
+        update
+        check "TW5 ...the Load State dialog's commit (load_state_commit) too" \
+            [list [ase::ui::outputs_tab $key] [winfo ismapped $mtv]] {measures 1}
+        ase::ui::outputs_tab $key saves
+        update
+        ase::ui::revert_state $key
+        update
+        check "TW5 ...and Revert" \
+            [list [ase::ui::outputs_tab $key] [winfo ismapped $mtv]] {measures 1}
         set outs [ase::state_get [ase::session_state $key] outputs]
         set mids [ase::ui::measures_order $outs {} 0]
         uplevel #0 [$mtv heading value -command]
@@ -370,13 +494,96 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
             dict set res [ase::ui::output_result_key $o] [expr {$k % 2 ? {wave} : "[expr {$k + 1}].0"}]
             incr k
         }
+        set picked [lindex [tw_ids $mtv] 0]
+        $mtv selection set $picked
         ase::session_setattr $key results $res
         ase::ui::refresh_output_values $key
         update
         check "TW5 new values from a run re-sort a sorted view (refresh, not only populate)" \
             [tw_ids $mtv] [ase::ui::measures_order $outs $res 1]
+        check "TW5 ...without dropping the user's selection" [$mtv selection] $picked
         uplevel #0 [$mtv heading value -command]
         update
+    }
+    group TW6 {
+        set top [ase::ui::window_for $key]
+        set mtv $top.body.outs.tv
+        set stv $top.body.saves.tv
+        ase::ui::outputs_tab $key measures
+        update
+        set before [ase::state_get [ase::session_state $key] outputs]
+        $mtv selection set [lindex [tw_ids $mtv] 0]
+        ase::ui::outputs_tab $key saves
+        update
+        check "TW6 switching to Saves drops the hidden Measures tree's selection" [$mtv selection] {}
+        $mtv selection set [lindex [tw_ids $mtv] 0]
+        $stv selection set {}
+        ase::ui::delete_selection $key
+        update
+        check "TW6 the strip's delete with Saves shown and nothing selected there deletes NO row (not the hidden Measures one)" \
+            [ase::state_get [ase::session_state $key] outputs] $before
+        $stv selection set [lindex [tw_ids $stv] 0]
+        set gone [lindex [tw_ids $stv] 0]
+        ase::ui::delete_selection $key
+        update
+        set after [ase::state_get [ase::session_state $key] outputs]
+        check "TW6 ...and with a Saves row selected it deletes that row" \
+            [list [llength $after] [expr {[lindex $before $gone] ni $after}]] \
+            [list [expr {[llength $before] - 1}] 1]
+        ase::ui::outputs_tab $key measures
+        update
+        check "TW6 switching back to Measures drops the hidden Saves tree's selection" [$stv selection] {}
+    }
+    group TW7 {
+        set top [ase::ui::window_for $key]
+        set w $top.edout
+        rename ::ase::echo ::tw7_echo_real
+        set ::tw7_said {}
+        proc ::ase::echo {msg {tag {}}} { lappend ::tw7_said [list $msg $tag] }
+        set n0 [llength [ase::state_get [ase::session_state $key] outputs]]
+        ase::ui::outputs_tab $key measures
+        ase::ui::output_editor $key -1
+        update
+        $w.expr insert 0 v(out)
+        ase::ui::output_editor_ok $key
+        update
+        check "TW7 the refusal reaches the CIW as an error line naming Saves" \
+            [list [llength $::tw7_said] [string match *Saves* [lindex $::tw7_said end 0]] [lindex $::tw7_said end 1]] \
+            {1 1 error}
+        ase::ui::output_editor_cancel $key
+        rename ::ase::output_known_nodes ::tw7_known_real
+        proc ::ase::output_known_nodes {state} { return {nodeq7 in} }
+        ase::ui::output_editor $key -1
+        update
+        $w.expr insert 0 nodeq7
+        ase::ui::output_editor_ok $key
+        update
+        check "TW7 a bare node the netlist knows, typed under Measures, is refused in the editor (no row, dialog open)" \
+            [list [llength [ase::state_get [ase::session_state $key] outputs]] [winfo exists $w] \
+                  [string match *Saves* [lindex $::tw7_said end 0]]] [list $n0 1 1]
+        ase::ui::output_editor_cancel $key
+        rename ::ase::output_known_nodes {}
+        rename ::tw7_known_real ::ase::output_known_nodes
+        rename ::ase::echo {}
+        rename ::tw7_echo_real ::ase::echo
+    }
+    group TW8 {
+        set top [ase::ui::window_for $key]
+        ase::ui::outputs_tab $key measures
+        update
+        set ::ase::ui::sod($key,flavor) {plot 1 save 1}
+        set ::ase::ui::sod($key,count) 0
+        ase::ui::sod_queue $key v(picked8)
+        update
+        set outs [ase::state_get [ase::session_state $key] outputs]
+        check "TW8 a net picked on the design (Select On Design) shows the Saves tab, where its row is" \
+            [list [ase::state_get [lindex $outs end] expr] [ase::ui::outputs_tab $key] \
+                  [winfo ismapped $top.body.saves.tv]] {v(picked8) saves 1}
+        catch {unset ::ase::ui::sod($key,flavor)}
+        catch {unset ::ase::ui::sod($key,count)}
+        ase::ui::outputs_tab $key measures
+    }
+    group TWclose {
         ase::ui::close $key
         update
     }
