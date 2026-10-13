@@ -87,7 +87,13 @@ namespace eval ase::ui {
   # is structurally impossible for this pane to show a setting the deck does not
   # carry. See doc/claude/ase_analyses_batch/PLAN.md §1c.
   # pane frame name -> the state list key it views (UI v2: ONLY these three)
-  variable panekeys [dict create vars variables ana analyses outs outputs]
+  variable panekeys [dict create vars variables ana analyses outs outputs \
+                         saves outputs]
+  # outtab(key): the Outputs tab shown, `measures` or `saves` (R-OUT7);
+  # outsort(key): 1 while the Measures tab's Value header sorts the VIEW
+  # (R-OUT9).  Both are view state: neither reaches the session state.
+  variable outtab;  array set outtab {}
+  variable outsort; array set outsort {}
   # selclear(key): suppress flag while pane_selected clears the other panes'
   # selections (the libmgr::suppress_select idiom)
   variable selclear; array set selclear {}
@@ -713,6 +719,9 @@ proc ase::ui::close {key} {
   catch {unset idlebg($key)}
   catch {unset loglen($key)}
   catch {unset selclear($key)}
+  variable outtab; variable outsort
+  catch {unset outtab($key)}
+  catch {unset outsort($key)}
   array unset edrow $key,*
   array unset edchk $key,*
   array unset annot $key,*
@@ -1248,6 +1257,20 @@ proc ase::ui::build {key top} {
   labelframe $top.body.vars -text {Design Variables}
   labelframe $top.body.ana  -text {Analyses}
   labelframe $top.body.outs -text {Outputs}
+  # R-OUT7: the Outputs pane is two tabs, Measures (shown) and Saves.  The tab
+  # pair is the labelframe's own label; the Saves tree is a sibling frame
+  # gridded INTO the labelframe over the Measures tree, so the Measures tree
+  # keeps its path ($top.body.outs.tv) and every reader of it.
+  frame $top.body.outs.tabs
+  radiobutton $top.body.outs.tabs.m -text Measures -indicatoron 0 \
+    -value measures -variable ::ase::ui::outtab($key) \
+    -command [list ase::ui::outputs_tab $key measures]
+  radiobutton $top.body.outs.tabs.s -text Saves -indicatoron 0 \
+    -value saves -variable ::ase::ui::outtab($key) \
+    -command [list ase::ui::outputs_tab $key saves]
+  pack $top.body.outs.tabs.m $top.body.outs.tabs.s -side left
+  $top.body.outs configure -labelwidget $top.body.outs.tabs
+  frame $top.body.saves
   grid $top.body.vars -row 0 -column 0 -rowspan 2 -sticky nsew -padx 2 -pady 2
   grid $top.body.ana  -row 0 -column 1 -sticky nsew -padx 2 -pady 2
   grid $top.body.outs -row 1 -column 1 -sticky nsew -padx 2 -pady 2
@@ -1281,6 +1304,14 @@ proc ase::ui::build {key top} {
     [list Name Value Plot Save {Save Options}] \
     [list name {12 0 w} value {11 1 w} plot {3 0 center} save {3 0 center} \
           saveopts {10 0 w}]
+  # R-OUT7: a save shows no value -- it is not a computation
+  ase::ui::build_pane $key $top saves {name plot save saveopts} \
+    [list Name Plot Save {Save Options}] \
+    [list name {24 1 w} plot {3 0 center} save {3 0 center} saveopts {10 0 w}]
+  # R-OUT9: the Measures tab's Value header sorts the view
+  $top.body.outs.tv heading value \
+    -command [list ase::ui::value_sort_toggle $key]
+  ase::ui::outputs_tab $key measures
   pack $top.body -side top -fill both -expand 1
 
   ase::ui::apply_theme $top
@@ -1374,7 +1405,7 @@ proc ase::ui::retune_columns {top} {
   catch {set sz [list $sz [font measure AseLabelFont 0]]}
   if {[info exists colfont($top)] && $colfont($top) eq $sz} { return }
   set colfont($top) $sz
-  foreach pane {vars ana outs} {
+  foreach pane {vars ana outs saves} {
     set tv $top.body.$pane.tv
     if {![winfo exists $tv] || ![info exists colpolicy($tv)]} { continue }
     lassign $colpolicy($tv) columns headings policy
@@ -1601,7 +1632,13 @@ proc ase::ui::build_pane {key top pane columns headings policy} {
     }
     outs {
       $pf.ctx add command -label "Add\u2026" \
-        -command [list ase::ui::output_editor $key -1]
+        -command [list ase::ui::output_editor $key -1 measures]
+      $pf.ctx add command -label "Edit\u2026" \
+        -command [list ase::ui::edit_output_first $key]
+    }
+    saves {
+      $pf.ctx add command -label "Add\u2026" \
+        -command [list ase::ui::output_editor $key -1 saves]
       $pf.ctx add command -label "Edit\u2026" \
         -command [list ase::ui::edit_output_first $key]
     }
@@ -1625,7 +1662,7 @@ proc ase::ui::pane_selected {key pane} {
   set tv $top.body.$pane.tv
   if {![winfo exists $tv] || [$tv selection] eq {}} { return }
   set selclear($key) 1
-  foreach p {vars ana outs} {
+  foreach p {vars ana outs saves} {
     if {$p eq $pane} { continue }
     set o $top.body.$p.tv
     if {[winfo exists $o] && [$o selection] ne {}} { $o selection set {} }
@@ -1650,7 +1687,7 @@ proc ase::ui::pane_click {key pane x y} {
     ase::ui::toggle_flag $key analyses $item enabled
     return 1
   }
-  if {$pane eq {outs} && ($cname eq {plot} || $cname eq {save})} {
+  if {$pane in {outs saves} && ($cname eq {plot} || $cname eq {save})} {
     ase::ui::toggle_flag $key outputs $item $cname
     return 1
   }
@@ -1686,7 +1723,8 @@ proc ase::ui::pane_dblclick {key pane x y} {
   if {$item eq {}} { return }
   switch -- $pane {
     vars { ase::ui::variable_editor $key $item }
-    outs { ase::ui::output_editor $key $item }
+    outs  { ase::ui::output_editor $key $item }
+    saves { ase::ui::output_editor $key $item }
     ana  {
       set rows [ase::state_get [ase::session_state $key] analyses]
       set type {}
@@ -1720,7 +1758,7 @@ proc ase::ui::delete_selection {key} {
   variable wins; variable panekeys
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
-  foreach pane {vars ana outs} {
+  foreach pane {vars ana outs saves} {
     set tv $top.body.$pane.tv
     if {![winfo exists $tv]} { continue }
     set sel [$tv selection]
@@ -2385,22 +2423,41 @@ proc ase::ui::populate {key} {
       [ase::ui::arg_summary $row [ase::ui::chana_sim $key]]]
     incr i
   }
+  # R-OUT7: each output row goes to the tab its TEXT names (ase::output_tab);
+  # the item id is the row's index into the state's ONE outputs list in both
+  # trees, so a click, an edit or a delete addresses the state directly
+  # whatever order the view shows.  R-OUT9: the Measures order is
+  # ase::ui::measures_order's.
+  variable outsort
+  set srt [expr {[info exists outsort($key)] && $outsort($key)}]
+  set rows [ase::state_get $st outputs]
   set tv $top.body.outs.tv
   $tv delete [$tv children {}]
-  set i 0
-  foreach row [ase::state_get $st outputs] {
-    set val {}
-    set rkey [ase::ui::output_result_key $row]
-    if {$results ne {} && [dict exists $results $rkey]} {
-      set val [dict get $results $rkey]
-    }
+  foreach i [ase::ui::measures_order $rows $results $srt] {
+    set row [lindex $rows $i]
     $tv insert {} end -id $i -values \
-      [list [ase::ui::output_display_name $row] [ase::format_value $val] \
+      [list [ase::ui::output_display_name $row] \
+        [ase::format_value [ase::ui::output_value $row $results]] \
         [ase::ui::chk_glyph [ase::state_get $row plot 0]] \
         [ase::ui::chk_glyph [ase::state_get $row save 0]] \
         [ase::ui::save_options_cell $st $row]]
-    incr i
   }
+  set tv $top.body.saves.tv
+  if {[winfo exists $tv]} {
+    $tv delete [$tv children {}]
+    set i 0
+    foreach row $rows {
+      if {[ase::output_tab [ase::state_get $row expr]] eq {saves}} {
+        $tv insert {} end -id $i -values \
+          [list [ase::ui::output_display_name $row] \
+            [ase::ui::chk_glyph [ase::state_get $row plot 0]] \
+            [ase::ui::chk_glyph [ase::state_get $row save 0]] \
+            [ase::ui::save_options_cell $st $row]]
+      }
+      incr i
+    }
+  }
+  ase::ui::value_heading $key
   $top.tb.temp delete 0 end
   $top.tb.temp insert 0 [ase::state_get $st temperature 27]
   ase::ui::refresh_title $key
@@ -2412,22 +2469,125 @@ proc ase::ui::populate {key} {
 # called by run_finished after a successful run (keeps the selection, unlike
 # a full repopulate).
 proc ase::ui::refresh_output_values {key} {
-  variable wins
+  variable wins; variable outsort
   if {![dict exists $wins $key]} { return }
   set tv [dict get $wins $key].body.outs.tv
   if {![winfo exists $tv]} { return }
   set st [ase::session_state $key]
   set results [ase::session_getattr $key results]
-  set i 0
-  foreach row [ase::state_get $st outputs] {
-    set val {}
-    set rkey [ase::ui::output_result_key $row]
-    if {$results ne {} && [dict exists $results $rkey]} {
-      set val [dict get $results $rkey]
+  set rows [ase::state_get $st outputs]
+  foreach i [$tv children {}] {
+    if {![string is integer -strict $i] || $i >= [llength $rows]} { continue }
+    catch {$tv set $i value \
+      [ase::format_value [ase::ui::output_value [lindex $rows $i] $results]]}
+  }
+  # R-OUT9: a sorted view re-sorts on new values; `move` keeps the selection
+  if {[info exists outsort($key)] && $outsort($key)} {
+    set pos 0
+    foreach i [ase::ui::measures_order $rows $results 1] {
+      if {[$tv exists $i]} { $tv move $i {} $pos ; incr pos }
     }
-    catch {$tv set $i value [ase::format_value $val]}
+  }
+}
+
+# One output row's answer from a `results` dict, or {} (the populate and
+# refresh shape, once).
+proc ase::ui::output_value {row results} {
+  set rkey [ase::ui::output_result_key $row]
+  if {$results ne {} && [dict exists $results $rkey]} {
+    return [dict get $results $rkey]
+  }
+  return {}
+}
+
+# ─── THE TWO TABS AND THE VALUE-HEADER SORT (ase_l.md R-OUT7, R-OUT9) ───────
+#
+# The user: "make it easy (click on the 'Value' header to push the 'waves' to
+# the bottom - since user really only wants to SEE the values - real
+# numbers)".  The sort is a VIEW order: it never reorders the state's outputs
+# list (which is also the evaluation order), and the tree's item ids stay the
+# state indices, so a click, an edit or a delete on a sorted view hits the row
+# the user picked.
+
+# The rank of one Value: 0 a number (or a list of numbers, a measurement's
+# answer per crossing), 2 the word `wave`, 1 anything else -- no value yet, or
+# a refusal's sentence.  Numbers, then those, then waves: a refusal names
+# something to fix and belongs above the waves the user is pushing away.
+proc ase::ui::value_rank {v} {
+  set t [string trim $v]
+  if {$t eq {wave}} { return 2 }
+  if {$t eq {}} { return 1 }
+  if {[catch {llength $t} n] || $n == 0} { return 1 }
+  foreach x $t {
+    if {![string is double -strict $x]} { return 1 }
+  }
+  return 0
+}
+
+# The Measures tab's rows as state indices, in display order: the user's own
+# order, or (sorted) stable by ase::ui::value_rank.  Pure.
+proc ase::ui::measures_order {rows results sorted} {
+  set ids {}
+  set i 0
+  foreach row $rows {
+    if {[ase::output_tab [ase::state_get $row expr]] eq {measures}} {
+      lappend ids $i
+    }
     incr i
   }
+  if {!$sorted} { return $ids }
+  set keyed {}
+  foreach i $ids {
+    lappend keyed [list [ase::ui::value_rank \
+      [ase::ui::output_value [lindex $rows $i] $results]] $i]
+  }
+  # lsort is a merge sort, so equal ranks keep the user's order
+  return [lmap e [lsort -integer -index 0 $keyed] {lindex $e 1}]
+}
+
+# Show (or, with no `tab`, answer) the Outputs tab of session `key`.
+proc ase::ui::outputs_tab {key {tab {}}} {
+  variable wins; variable outtab
+  if {$tab eq {}} {
+    if {[info exists outtab($key)]} { return $outtab($key) }
+    return measures
+  }
+  if {$tab ni {measures saves}} { return -code error "ase: no Outputs tab '$tab'" }
+  set outtab($key) $tab
+  if {![dict exists $wins $key]} { return $tab }
+  set top [dict get $wins $key]
+  set o $top.body.outs
+  set sv $top.body.saves
+  if {![winfo exists $o] || ![winfo exists $sv]} { return $tab }
+  if {$tab eq {saves}} {
+    grid remove $o.tv $o.sb
+    grid $sv -in $o -row 0 -column 0 -rowspan 2 -columnspan 2 -sticky nsew
+    raise $sv
+  } else {
+    grid remove $sv
+    grid $o.tv -row 0 -column 0 -sticky nsew
+    grid $o.sb -row 0 -column 1 -sticky ns
+  }
+  return $tab
+}
+
+# The Measures tab's Value heading: a down-pointing triangle while sorted.
+proc ase::ui::value_heading {key} {
+  variable wins; variable outsort
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.outs.tv
+  if {![winfo exists $tv]} { return }
+  set on [expr {[info exists outsort($key)] && $outsort($key)}]
+  $tv heading value -text [expr {$on ? "Value \u25BE" : {Value}}]
+}
+
+# A click on the Measures tab's Value header: sort, or restore the user's
+# own order.  Repaints from the state (populate), so the selection is dropped.
+proc ase::ui::value_sort_toggle {key} {
+  variable outsort
+  set outsort($key) [expr {[info exists outsort($key)] && $outsort($key) ? 0 : 1}]
+  ase::ui::populate $key
+  return $outsort($key)
 }
 
 # ─── THE VALUE COLUMN READS THE ANSWERS OFF DISK (issue 1498, PLAN.md F2) ────
@@ -2679,7 +2839,10 @@ proc ase::ui::variable_editor_cancel {key} {
 # Add… flavor (idx -1, blank prefill): name (optional) / expr entries +
 # Plot / Save checkbuttons; OK merges name/expr/plot/save over the ORIGINAL
 # row dict (blank name = unnamed output, allowed; expr must be non-empty).
-proc ase::ui::output_editor {key idx} {
+# R-OUT7: the dialog keeps the door of one tab -- the row's own tab for an
+# edit, `tab` (default: the tab shown) for an Add -- and OK refuses a text that
+# belongs to the other (ase::output_admit).
+proc ase::ui::output_editor {key idx {tab {}}} {
   variable wins; variable edrow; variable edchk
   if {![dict exists $wins $key]} { return }
   set rows [ase::state_get [ase::session_state $key] outputs]
@@ -2687,9 +2850,12 @@ proc ase::ui::output_editor {key idx} {
   if {$idx >= 0} {
     if {![string is integer -strict $idx] || $idx >= [llength $rows]} { return }
     set row [lindex $rows $idx]
+    set tab [ase::output_tab [ase::state_get $row expr]]
   } else {
     set idx -1
+    if {$tab eq {}} { set tab [ase::ui::outputs_tab $key] }
   }
+  set edrow($key,outtab) $tab
   # ⚠ THE ADD TITLE IS THE `-->` STRIP BUTTON'S TOOLTIP (issue 1391): the tip
   # names the window the click produces, so the two are one string.
   set w [ase::ui::dialog_frame [dict get $wins $key].edout \
@@ -2731,6 +2897,13 @@ proc ase::ui::output_editor_ok {key} {
     catch {::ase::echo "ase: output expression must not be empty" error}
     return
   }
+  set tab measures
+  if {[info exists edrow($key,outtab)]} { set tab $edrow($key,outtab) }
+  lassign [ase::output_admit $tab $ex] verdict ex
+  if {$verdict ne {ok}} {
+    catch {::ase::echo "ase: $ex" error}
+    return
+  }
   set plot [expr {[info exists edchk($key,plot)] && $edchk($key,plot) ? 1 : 0}]
   set save [expr {[info exists edchk($key,save)] && $edchk($key,save) ? 1 : 0}]
   set idx $edrow($key,out)
@@ -2753,6 +2926,7 @@ proc ase::ui::output_editor_ok {key} {
   ase::session_update $key $st
   ase::ui::populate $key
   catch {unset edrow($key,out)}
+  catch {unset edrow($key,outtab)}
   catch {unset edchk($key,plot)}
   catch {unset edchk($key,save)}
   destroy $w
@@ -2761,6 +2935,7 @@ proc ase::ui::output_editor_ok {key} {
 proc ase::ui::output_editor_cancel {key} {
   variable wins; variable edrow; variable edchk
   catch {unset edrow($key,out)}
+  catch {unset edrow($key,outtab)}
   catch {unset edchk($key,plot)}
   catch {unset edchk($key,save)}
   if {[dict exists $wins $key]} {
@@ -4828,11 +5003,13 @@ proc ase::ui::edit_variable_first {key} {
   ase::ui::variable_editor $key [lindex $sel 0]
 }
 
-# Context Edit… on the outputs pane: editor on the FIRST selected row.
+# Context Edit… on the outputs pane: editor on the FIRST selected row of the
+# tab shown (R-OUT7), in that tab's display order.
 proc ase::ui::edit_output_first {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
-  set tv [dict get $wins $key].body.outs.tv
+  set pane [expr {[ase::ui::outputs_tab $key] eq {saves} ? {saves} : {outs}}]
+  set tv [dict get $wins $key].body.$pane.tv
   set sel {}
   if {[winfo exists $tv]} { set sel [$tv selection] }
   if {$sel eq {}} {
@@ -11483,6 +11660,8 @@ proc ase::ui::load_state_commit {key st} {
   ## from the imported state's own rundir, so a state with no usable raw CLEARS
   ## the column instead of inheriting one.
   ase::ui::results_refill $key
+  # R-OUT7: a state that loads shows the Measures tab
+  ase::ui::outputs_tab $key measures
   return $rc
 }
 
@@ -12119,10 +12298,12 @@ proc ase::ui::save_state {key} {
 proc ase::ui::load_state {key} {
   ase::session_load $key
   ase::ui::populate $key
+  ase::ui::outputs_tab $key measures
 }
 proc ase::ui::revert_state {key} {
   ase::session_revert $key
   ase::ui::populate $key
+  ase::ui::outputs_tab $key measures
 }
 
 # The session design's resolved schematic path ({} when unresolvable);
