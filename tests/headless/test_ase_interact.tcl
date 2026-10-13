@@ -231,8 +231,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set outs [ase::state_get [ase::session_state $key] outputs]
     check_true "I3 direct wire click queues v(d)" \
       [string match "*{name {} expr v(d) plot 0 save 1}*" $outs]
-    check_true "I3 row visible in the Outputs pane immediately" \
-      [expr {[tv_find $top.body.outs.tv name {v(d)}] ne {}}]
+    # ase_l.md R-OUT7: a picked net is a save, so it lands in the Saves tab
+    check_true "I3 row visible in the Outputs pane's Saves tab immediately" \
+      [expr {[tv_find $top.body.saves.tv name {v(d)}] ne {}}]
 
     # I4: net-label click resolves the SAME net -> nochange, no state write
     set before [ase::state_get [ase::session_state $key] outputs]
@@ -400,17 +401,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "WF op analysis still enabled" $open 1
 
-  # WF --> dialog adds the vd=v(d) output (save checked)
+  # WF --> dialog adds the vd=vdc(d) output (save checked). ase_l.md R-OUT7:
+  # the dialog opens on the Measures tab, where a plain v(d) is a save and is
+  # refused; the number the leg reads is the operating point's, vdc(d).
   $top.strip.out invoke
   update
   check_true "WF --> opens the Add Output dialog" [winfo exists $top.edout]
   $top.edout.name insert 0 vd
-  $top.edout.expr insert 0 {v(d)}
+  $top.edout.expr insert 0 {vdc(d)}
   set ::ase::ui::edchk($key,save) 1   ;# the checkbutton variable is product surface
   $top.edout.btns.proceed invoke
   update
-  check_true "WF dialog adds v(d) to the state" \
-    [string match "*{name vd expr v(d) plot 0 save 1}*" \
+  check_true "WF dialog adds vdc(d) to the state" \
+    [string match "*{name vd expr vdc(d) plot 0 save 1}*" \
       [ase::state_get [ase::session_state $key] outputs]]
   check_true "WF vd row in the Outputs pane" \
     [expr {[tv_find $top.body.outs.tv name vd] ne {}}]

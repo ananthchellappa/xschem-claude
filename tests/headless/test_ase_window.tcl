@@ -4146,8 +4146,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                              {name SHORT value 1.8}
                              {name WIDE value WWWWWWWWWWWWWWWWWWWW}
                              {name NARROW value iiiiiiiiiiiiiiiiiiiiii}}
-    dict set uxst outputs {{name VBG expr v(vbg) save 1 plot 0}
-                           {name START expr v(start) save 1 plot 0}}
+    dict set uxst outputs {{name VBG expr vdc(vbg) save 1 plot 0}
+                           {name START expr vdc(start) save 1 plot 0}}
     ase::session_update $uxkey $uxst
     ase::session_save $uxkey
     ase::session_close $uxkey
