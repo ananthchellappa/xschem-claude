@@ -9489,7 +9489,11 @@ proc ase::output_tab {ex} {
 # top-level node names, ase::output_known_nodes -- says it is a node: text
 # alone cannot tell `out` from a .meas/let result such as `GBW`, which belongs
 # in Measures.  With no netlist in hand (`nodes` empty) it is admitted.
-proc ase::output_admit {tab ex {nodes {}}} {
+# `orig` is the row's own text when the door judges an EDIT: a committed bare
+# row (test_ac's `out`) already lives under Measures, so an edit that leaves
+# its text unchanged (a Plot/Save tick, a rename) is admitted; a changed text
+# is judged afresh.  It never re-opens the save refusal.
+proc ase::output_admit {tab ex {nodes {}} {orig {}}} {
   set e [string trim $ex]
   set bare [expr {[regexp {^[A-Za-z_#][A-Za-z0-9_.:#$<>\[\]]*$} $e]
                   && ![string is double -strict $e]}]
@@ -9501,7 +9505,8 @@ proc ase::output_admit {tab ex {nodes {}}} {
   if {[ase::output_is_save $e]} {
     return [list refuse "$e is a save -- add it under Saves"]
   }
-  if {$bare && [lsearch -exact -nocase $nodes $e] >= 0} {
+  if {$bare && [lsearch -exact -nocase $nodes $e] >= 0
+      && $e ne [string trim $orig]} {
     return [list refuse "$e is a node -- add it under Saves"]
   }
   return [list ok $e]

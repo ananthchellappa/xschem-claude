@@ -144,6 +144,19 @@ group TN {
         [ase::output_admit measures out {}] {ok out}
     check "TN a qualified fetch of a known node is still a measure" \
         [ase::output_admit measures vt(out) {in out}] {ok vt(out)}
+    # An EDIT of a committed bare row keeps its text: the door judges the
+    # text the user typed, not a row already in the state, so an unchanged
+    # bare node is admitted and a changed one is judged afresh.
+    check "TN an edit that keeps a committed bare node's text unchanged is admitted (orig = the row's text)" \
+        [ase::output_admit measures out {in out} out] {ok out}
+    check "TN ...surrounding blanks do not count as a change" \
+        [ase::output_admit measures { out } {in out} {out }] {ok out}
+    check "TN an edit that CHANGES the text to another known node is still refused" \
+        [lindex [ase::output_admit measures in {in out} out] 0] refuse
+    check "TN an edit that changes only the case is a change, and refused" \
+        [lindex [ase::output_admit measures OUT {in out} out] 0] refuse
+    check "TN an unchanged text that is a SAVE is still refused under Measures (orig never re-opens the save door)" \
+        [lindex [ase::output_admit measures v(out) {in out} v(out)] 0] refuse
     # ase::output_known_nodes reads the cached facts and never netlists
     rename ::ase::netlist_facts_cached ::tn_facts_real
     proc ::ase::netlist_facts_cached {state} { return $::tn_facts }
@@ -562,6 +575,42 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
             [list [llength [ase::state_get [ase::session_state $key] outputs]] [winfo exists $w] \
                   [string match *Saves* [lindex $::tw7_said end 0]]] [list $n0 1 1]
         ase::ui::output_editor_cancel $key
+        # an EDIT of a committed bare-node row (test_ac's {expr out}) that
+        # keeps its text -- unticking Plot -- must go through: the row sits
+        # under Measures and the user cannot otherwise touch it in place
+        set st7 [ase::session_state $key]
+        set rows7 [ase::state_get $st7 outputs]
+        lappend rows7 [dict create name nodeq7 expr nodeq7 save 1 plot 1]
+        set i7 [expr {[llength $rows7] - 1}]
+        dict set st7 outputs $rows7
+        ase::session_update $key $st7
+        ase::ui::populate $key
+        update
+        set said7 [llength $::tw7_said]
+        ase::ui::output_editor $key $i7
+        update
+        set ::ase::ui::edchk($key,plot) 0
+        ase::ui::output_editor_ok $key
+        update
+        set r7 [lindex [ase::state_get [ase::session_state $key] outputs] $i7]
+        check "TW7 editing a committed bare-node row with its text unchanged (unticking Plot) is applied, not refused" \
+            [list [ase::state_get $r7 expr] [ase::state_get $r7 plot] [winfo exists $w] \
+                  [expr {[llength $::tw7_said] - $said7}]] {nodeq7 0 0 0}
+        ase::ui::output_editor $key $i7
+        update
+        $w.expr delete 0 end
+        $w.expr insert 0 in
+        ase::ui::output_editor_ok $key
+        update
+        check "TW7 ...but changing that row's text to another known node is refused (row unchanged, dialog open)" \
+            [list [ase::state_get [lindex [ase::state_get [ase::session_state $key] outputs] $i7] expr] \
+                  [winfo exists $w] [string match *Saves* [lindex $::tw7_said end 0]]] {nodeq7 1 1}
+        ase::ui::output_editor_cancel $key
+        set st7 [ase::session_state $key]
+        dict set st7 outputs [lrange [ase::state_get $st7 outputs] 0 end-1]
+        ase::session_update $key $st7
+        ase::ui::populate $key
+        update
         rename ::ase::output_known_nodes {}
         rename ::tw7_known_real ::ase::output_known_nodes
         rename ::ase::echo {}

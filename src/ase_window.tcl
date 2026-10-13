@@ -2909,8 +2909,14 @@ proc ase::ui::output_editor_ok {key} {
   }
   set tab measures
   if {[info exists edrow($key,outtab)]} { set tab $edrow($key,outtab) }
+  set orig {}
+  set oidx $edrow($key,out)
+  set orows [ase::state_get [ase::session_state $key] outputs]
+  if {$oidx >= 0 && $oidx < [llength $orows]} {
+    set orig [ase::state_get [lindex $orows $oidx] expr]
+  }
   lassign [ase::output_admit $tab $ex \
-    [ase::output_known_nodes [ase::session_state $key]]] verdict ex
+    [ase::output_known_nodes [ase::session_state $key]] $orig] verdict ex
   if {$verdict ne {ok}} {
     catch {::ase::echo "ase: $ex" error}
     return

@@ -937,7 +937,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
   puts them (Measures): of the 112 on the benches, the 32 with Save off are `.meas`/`let`
   results (`GBW`, `Ctot`, `rseries`, none a net label of its schematic), and d2d25b1c measured
   that a `v()` around a name the circuit lacks turns a running bench into one pre-flight
-  refuses. Every other door that adds a row routes by the same classifier because the tab IS
+  refuses. The door judges the text the user TYPED: an **edit** of a committed bare-node row
+  that leaves its text unchanged (unticking Plot, renaming it) is admitted, and only a changed
+  text is judged afresh (`output_admit`'s `orig`). Every other door that adds a row routes by the same classifier because the tab IS
   the text, and **shows the tab the row landed in**: Select On Design writes
   `v(<net>)`/`i(<inst>)` (Saves), the two-port matrix picker writes `S_1_1 db20()` (Measures),
   and R608's Export (not built) will. Rows TA, TN, TW4, TW7, TW8.
