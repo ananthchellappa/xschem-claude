@@ -831,14 +831,20 @@ They should not influence the input to the simulator."* ADE-L is the floor
     `doc/claude/code_analysis/ade_parity_gaps_2026_10_11.md`), and the ambiguous ones were
     left for the user.
     ⚖ **2026-10-13 (R-OUT7): the migrated rows whose WHOLE text was one unsigned qualified
-    signal were put back as saves** — the user: *"Migration's ... bare qualified single-signal
-    rows (vt(clk), -idc(v1) …) revert to v()/i() in Saves"* — **1284 rows** (sky130A 1233, of
+    signal were put back as saves** — the user: *"A 'save' will always be v("netname")"*; the
+    batch driver's record of that resync (`doc/claude/calc_feedback_batch/BATCH.md` item 13, a
+    summary, not the user's words) asks for the migration's bare qualified single-signal rows
+    to go back to `v()`/`i()` in Saves — **1284 rows** (sky130A 1233, of
     which `test_carry_lookahead` 1089; ihp-sg13g2 25; xschem_libraries_oa 21;
     xschem_libs_newsym 5; gf180mcuD 0), derived from git by
     `tools/migrate/r208d_saves_revert.tcl`: the pre-migration text where it was already a save
     (42 rows, `I(Vmda)`), else `v(<x>)`/`i(<x>)` by the qualifier's family (1242 rows that were
     bare names). The three signed rows (`-idc(v1)`, from `-i(v1)`) and the nine composed ones
-    stay migrated; `tests/headless/data/r208d_migration.txt` keeps those twelve for OE17.
+    stay migrated (the driver's summary also named `-idc(v1)`; a save has no sign, so those
+    stay measures); `tests/headless/data/r208d_migration.txt` keeps those twelve for OE17, and
+    `tests/headless/data/r208d_saves_revert.txt` (the tool's `--from 416051cd^ --table`) holds
+    every reverted row's `{state index name pre migrated reverted}`: band TR of
+    `test_ase_outputs_tabs` holds each committed row to it and re-reads `pre` from git.
   - **A device parameter (`@m1[gm]`) has no qualified spelling** (Cadence's `OP("inst"
     "param")` is not built) and is read as before, in a plain row or an expression.
   - Rows: OE16 of `test_ase_outputs_eval`; OE3/OE4/OE7/OE8/OE15 restated with qualified
@@ -885,10 +891,15 @@ They should not influence the input to the simulator."* ADE-L is the floor
   apart; a **device quantity** is a Measure because it is a number the user reads (and its
   Save tick still emits its `.save @dev[param]` card, R-OUT3). A Saves row shows **no Value**
   (columns Name, Plot, Save, Save Options); its Plot tick still auto-plots as a plain signal
-  row always has, in the viewer's analysis. The tree item id is the row's index in the state
+  row always has, in the viewer's analysis — ⚖ **pending the user's ruling** (owed rule
+  `ase_saves_autoplot`): the batch brief said Saves "never auto-plot", which is not among the
+  user's quoted words, and 1282 of the 1284 put-back rows carry their author's Plot tick. Only
+  the SHOWN tab's tree can carry a selection: switching tabs clears the hidden one's, and the
+  strip's delete never reaches it (TW6). The tree item id is the row's index in the state
   list in both tabs, so a click, an edit or a delete addresses the state whatever the view
   order. Suite `test_ase_outputs_tabs` (TC, TW1).
-- **R-OUT8 — a save ADDS and never narrows (driver default 2026-10-13, unobjected).** In
+- **R-OUT8 — a save ADDS and never narrows (2026-10-13: a driver default stated to the user and
+  unobjected, BATCH.md item 13; the batch brief restates it among the rulings).** In
   ngspice one plain `.save` keeps only what is listed (R-OUT3's measurement), so a deck with any
   output card now carries **`.save all` ahead of it** — exactly one: when the operating-point
   tier's block is coming it carries that leader instead (`render_deck`). `ase::saves_narrowed`
@@ -911,15 +922,25 @@ They should not influence the input to the simulator."* ADE-L is the floor
   `Value ▾` while sorted; a second click restores the user's order. It never reorders the
   state's list (which is also the evaluation order); new values from a run re-sort a sorted
   view without dropping the selection. The sort survives a state load (a view preference).
-  Rows TO, TW2, TW3, TW5.
+  Rows TO, TW2, TW3, TW5 (Load State, the dialog's `load_state_commit`, Revert, the kept
+  selection).
 - **R-OUT10 — each tab keeps its door.** A save typed under Measures is refused with
   *"ase: v(out) is a save -- add it under Saves"*; anything that is not a save typed under
   Saves is refused with *"ase: vt(out) is not a save -- add it under Measures"*; the dialog
   stays open (`ase::output_admit`, CIW error line, the editor's existing refusal style). A
-  **bare node typed under Saves is admitted as `v(<node>)`**. Every other door that adds a row
-  routes by the same classifier because the tab IS the text: Select On Design writes
+  **bare node typed under Saves is admitted as `v(<node>)`**. A **bare name typed under
+  Measures** is refused with *"ase: out is a node -- add it under Saves"* when the design's
+  current netlist names it a top-level node or global (`ase::output_known_nodes`, read from
+  `ase::netlist_facts_cached`, which never netlists); a name the netlist does not know — a
+  `.meas`/`let` result such as `GBW` — is admitted, and with no netlist in hand the text alone
+  cannot tell the two apart, so it is admitted too. Committed bare rows stay where their text
+  puts them (Measures): of the 112 on the benches, the 32 with Save off are `.meas`/`let`
+  results (`GBW`, `Ctot`, `rseries`, none a net label of its schematic), and d2d25b1c measured
+  that a `v()` around a name the circuit lacks turns a running bench into one pre-flight
+  refuses. Every other door that adds a row routes by the same classifier because the tab IS
+  the text, and **shows the tab the row landed in**: Select On Design writes
   `v(<net>)`/`i(<inst>)` (Saves), the two-port matrix picker writes `S_1_1 db20()` (Measures),
-  and R608's Export (not built) will. Rows TA, TW4.
+  and R608's Export (not built) will. Rows TA, TN, TW4, TW7, TW8.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

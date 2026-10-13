@@ -70,7 +70,9 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
    it easy (click on the 'Value' header to push the 'waves' to the bottom"*. The tab is a pure
    function of the row's text (`ase::output_tab`); state format unchanged; a save typed under
    Measures, or a non-save under Saves, is refused naming the other tab; a bare node under Saves
-   becomes `v(<node>)`. Clicking the Measures tab's Value header orders numbers, then
+   becomes `v(<node>)`; a bare name under Measures is refused when the current netlist names it
+   a node, and admitted otherwise (a `.meas`/`let` result such as `GBW` belongs there). Clicking
+   the Measures tab's Value header orders numbers, then
    blank/refusals, then waves (view only). ❓ Not ruled: whether a Saves row should auto-plot (it
    still does, as every plain signal row did; 1282 of the 1284 rows put back carry a Plot tick).
 
