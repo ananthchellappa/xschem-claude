@@ -1010,6 +1010,20 @@ proc ee_binaries {} {
 ## residue, not noise. The noise this section looks for is 1e-3 and up, six
 ## orders above the tolerance, so the tolerance cannot hide it.
 proc ee_zero {v} { return [expr {[string is double -strict $v] && abs($v) < 1e-9}] }
+## ⚠ WHITE NOISE "DOES NOT REPEAT" IS READ OVER SEVERAL SAMPLES, EACH AS ITS
+## DEVIATION FROM THE TRACE'S MEAN. `echo $&var` prints a short mantissa, so one
+## raw sample of a supply whose noise is far below its DC level is quantised coarsely
+## enough that two independent runs sometimes print the same text (measured: it
+## reddened a full T1 once). Subtracting the mean puts the printed digits on the
+## noise itself, and the runs differ if ANY sample differs, so a tie needs every
+## sample to tie at once. Every sample must be a real number in both runs, so a
+## reader that printed nothing cannot pass for "different".
+proc ee_white_differs {a b} {
+  if {[llength $a] != 4 || [llength $b] != 4} { return 0 }
+  foreach v [concat $a $b] { if {![string is double -strict $v]} { return 0 } }
+  foreach x $a y $b { if {$x ne $y} { return 1 } }
+  return 0
+}
 proc ee_run {bin deck} {
   global scratch
   set rc [catch {exec env HOME=$scratch $bin -b $deck 2>@1} out]
@@ -1024,16 +1038,17 @@ proc ee_read {bin raw} {
   foreach {tag plot} {A tran1 B tran2} {
     puts $f "setplot $plot"
     puts $f "let s1 = stddev(v(vdd))\nlet s2 = stddev(v(bias))\nlet m3 = maximum(v(rts))"
-    puts $f "let n0 = length(time)\nlet b100 = v(bias)\[100\]\nlet r3 = mean(v(rts))\nlet w100 = v(vdd)\[100\]"
-    puts $f "echo NZ $tag \$&s1 \$&s2 \$&m3 \$&n0 \$&b100 \$&r3 \$&w100"
+    puts $f "let n0 = length(time)\nlet b100 = v(bias)\[100\]\nlet r3 = mean(v(rts))\nlet wm = mean(v(vdd))"
+    puts $f "let w1 = v(vdd)\[100\] - wm\nlet w2 = v(vdd)\[300\] - wm\nlet w3 = v(vdd)\[500\] - wm\nlet w4 = v(vdd)\[700\] - wm"
+    puts $f "echo NZ $tag \$&s1 \$&s2 \$&m3 \$&n0 \$&b100 \$&r3 \$&w1 \$&w2 \$&w3 \$&w4"
   }
   puts $f ".endc\n.end"
   close $f
   catch {exec env HOME=$scratch $bin -b $rd 2>@1} out
   set r {}
   foreach l [split $out "\n"] {
-    if {[regexp {^NZ ([AB]) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)} $l -> t s1 s2 m3 n0 b100 r3 w100]} {
-      dict set r $t [dict create s1 $s1 s2 $s2 m3 $m3 n0 $n0 b100 $b100 r3 $r3 w100 $w100]
+    if {[regexp {^NZ ([AB]) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)} $l -> t s1 s2 m3 n0 b100 r3 w1 w2 w3 w4]} {
+      dict set r $t [dict create s1 $s1 s2 $s2 m3 $m3 n0 $n0 b100 $b100 r3 $r3 wdev [list $w1 $w2 $w3 $w4]]
     }
   }
   return $r
@@ -1109,7 +1124,7 @@ foreach eepair [ee_binaries] {
     [list $rc2 [s_dget $NSR norepeat] [s_dget $NSR repeat] [s_dget $NSR seeded] \
           [expr {[s_dget $A b100] eq [s_dget $A2 b100] && [s_dget $A b100] ne {MISSING}}] \
           [expr {[s_dget $A r3] eq [s_dget $A2 r3] && [s_dget $A r3] ne {MISSING}}] \
-          [expr {[s_dget $A w100] ne [s_dget $A2 w100]}]] \
+          [ee_white_differs [s_dget $A wdev] [s_dget $A2 wdev]]] \
     {0 white {random rts} 1 1 1 1}
   set AK [s_dget $EEK A]
   set KR [s_ans ase::stimuli_kill_report ngspice $EESTK $EEROWA]
