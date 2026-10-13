@@ -993,6 +993,7 @@ V2 G GND 1.8
 .param Vds=1.0
 .options savecurrents
 .temp 27
+.save all
 .save -i(v1)
 .control
 set appendwrite
@@ -1300,8 +1301,11 @@ set deck5off [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
 set st [nfet_state /models/sky130.lib.spice {}]
 dict set st options {}
 set deck5offi [$render $st $netlist_text]
-check_true "D5 blankets off leave no blanket lines" \
-  [expr {![regexp -line {^\.save all$} $deck5off] &&
+## R-OUT8 (2026-10-13): a ticked save never narrows the deck, so the fixture's
+## ticked -i(v1) brings ONE `.save all` of its own -- not a blanket line.
+check_true "D5 blankets off leave no blanket lines: no savecurrents, and the one\
+ .save all is R-OUT8's leader for the ticked save" \
+  [expr {[regexp -all -line {^\.save all$} $deck5off] == 1 &&
          ![regexp -line {^\.options savecurrents$} $deck5offi]}]
 
 } sderr]} {
@@ -1615,8 +1619,12 @@ cx {ase::op_cards_put $netlist_text $c_block}
 set deckC8on  [$render $stC $netlist_text]
 set deckC8off [$render [dict replace [nfet_state /models/sky130.lib.spice {}] \
                           save_op_params 0] $netlist_text]   ;# 0927: explicit OFF
-check "C8 gate on adds exactly one .save all line (I2 / rule R2)" \
-  [expr {[c_count $deckC8on {^\.save all$}] - [c_count $deckC8off {^\.save all$}]}] 1
+## ⚖ R-OUT8 (2026-10-13): the gate-off deck carries ONE leader too -- the
+## ticked -i(v1) brings it -- and with the block coming that leader stands down
+## for the block's own, so each deck holds exactly one.
+check "C8 gate on: exactly one .save all, the block's own; gate off: exactly one,\
+ R-OUT8's for the ticked save (I2 / rule R2)" \
+  [list [c_count $deckC8on {^\.save all$}] [c_count $deckC8off {^\.save all$}]] {1 1}
 set on_l [split [string trimright $deckC8on "\n"] "\n"]
 check "C8 that .save all precedes the first device card" \
   [expr {[lsearch -exact $on_l {.save all}] >= 0 &&
@@ -11698,19 +11706,21 @@ check "WD1b an unknown type and an unknown simulator answer `netlist`, which is\
   {netlist 0 netlist}
 
 # --- WD2: is the deck's save list narrowed ----------------------------------
-check "WD2 a save list is NARROWED only when a Save tick is set and no blanket\
- is -- a blank expression is not a save, and Save-All is not a narrowing" \
+## ⚖ R-OUT8 (2026-10-13): a save ADDS and never narrows, so no bench's save list
+## is narrowed any more -- every leg answers 0, the ticked one included.
+check "WD2 NO save list is narrowed (R-OUT8): not a Save tick, not Save-All, not\
+ a blank expression" \
   [list [ase::saves_narrowed [wd_state {} $WD1SAVE]] \
         [ase::saves_narrowed [wd_state {} $WD1SAVE {save_all_v 1}]] \
         [ase::saves_narrowed [wd_state {} {}]] \
         [ase::saves_narrowed [wd_state {} {{name a expr {} save 1}}]] \
         [ase::saves_narrowed [wd_state {} {{name a expr v(mid) save 0}}]] \
         [ase::saves_narrowed {}]] \
-  {1 0 0 0 0 0}
+  {0 0 0 0 0 0}
 
 # --- WD3: which types force the widening ------------------------------------
-check "WD3 the widening is forced by the enabled `own` rows, in emit order, and\
- by nothing else" \
+## R-OUT8: with nothing narrowed there is nothing for an `own` row to widen.
+check "WD3 nothing is reported widened (R-OUT8), whatever `own` rows are enabled" \
   [list [ase::saves_widen_types ngspice [wd_state [list $WDNOISE] $WD1SAVE]] \
         [ase::saves_widen_types ngspice [wd_state \
            [list {type sens enabled 1 out {v(mid)}} {type tf enabled 1 out {v(mid)} insrc V1} \
@@ -11719,7 +11729,7 @@ check "WD3 the widening is forced by the enabled `own` rows, in emit order, and\
            {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}} $WD1SAVE]] \
         [ase::saves_widen_types ngspice [wd_state \
            {{type disto enabled 1 points 2 start 1k stop 10k}} $WD1SAVE]]] \
-  [list {noise} {noise tf sens} {} {}]
+  [list {} {} {} {}]
 check "WD3b a DISABLED `own` row forces nothing, and a bench with no narrowing\
  forces nothing however many of them are enabled" \
   [list [ase::saves_widen_types ngspice [wd_state \
@@ -11733,16 +11743,16 @@ check "WD3b a DISABLED `own` row forces nothing, and a bench with no narrowing\
 check "WD3c an unrenderable type in the bench is stepped over rather than raised" \
   [list [catch {ase::saves_widen_types ngspice [wd_state \
            [list {type pss enabled 1} $WDNOISE] $WD1SAVE]} wd3e] $wd3e] \
-  {0 noise}
+  {0 {}}
 
 # --- WD4: the one body the emitter and the preconditions share --------------
-check "WD4 a `.save all` leader is forced by the user's own tick OR by 6g-1, and\
- by neither on an ordinary narrowed bench" \
+check "WD4 a `.save all` leader is forced by any output card (R-OUT8) as well as\
+ by the user's own tick, and by nothing on a bench with no state" \
   [list [ase::saves_all_forced ngspice [wd_state {{type op enabled 1}} $WD1SAVE]] \
         [ase::saves_all_forced ngspice [wd_state {{type op enabled 1}} $WD1SAVE {save_all_v 1}]] \
         [ase::saves_all_forced ngspice [wd_state [list $WDNOISE] $WD1SAVE]] \
         [ase::saves_all_forced ngspice {}]] \
-  {0 1 1 0}
+  {1 1 1 0}
 
 # --- WD5: THE DECK ITSELF ---------------------------------------------------
 check "WD5 the leader reaches the deck for each of the four, ABOVE the\
@@ -11756,25 +11766,29 @@ check "WD5 the leader reaches the deck for each of the four, ABOVE the\
 ## ⚠ THE NON-VACUITY HALF, AND IT IS THE HALF THAT WOULD CATCH A BLANKET WIDEN.
 ## `disto` is measured NOT to be starved by a save list that resolves, and `op`
 ## + `tran` are the shape of every committed bench in this tree.
-check "WD5b a bench with no `own` row keeps its narrowed save list, disto\
- included" \
+check "WD5b a bench with no `own` row gets the leader too (R-OUT8: a save never\
+ narrows), disto included" \
   [list [wd_saves {{type op enabled 1}} $WD1SAVE] \
         [wd_saves {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}} $WD2SAVE] \
         [wd_saves {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} $WD1SAVE]] \
-  [list {{.save v(D)}} {{.save v(D)} {.save v(G)}} {{.save v(D)}}]
+  [list {{.save all} {.save v(D)}} {{.save all} {.save v(D)} {.save v(G)}} \
+        {{.save all} {.save v(D)}}]
 ## ⚠ AND `disto_saves` IS UNMOVED, WHICH IS THE OTHER HALF OF "disto IS NOT IN
 ## 6g-1's CLASS". A save list that resolves to NOTHING still refuses the render
 ## outright -- rc 139 and no log is not something an emission rule may paper
 ## over -- and `v(mid)` is a node this bench does not have.
-check "WD5d disto is still REFUSED outright when the whole save list resolves to\
- nothing, and the refusal is what stops a deck being built at all" \
+## ⚖ R-OUT8: the leader rides with every card, and `.save all` + `.save
+## v(nosuchnode)` + disto is MEASURED rc 0 (see `disto_saves`), so the refusal
+## stands down and the deck is built.
+check "WD5d disto is no longer refused when the whole save list resolves to\
+ nothing: the R-OUT8 leader rescues it, and the deck is built" \
   [list [string match {RAISED:*precondition the simulator exits on*} \
            [wd_deck {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
                     {{name a expr v(mid) save 1 plot 1}}]] \
         [string match {RAISED:*} \
            [wd_deck {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
                     $WD1SAVE]]] \
-  {1 0}
+  {0 0}
 check "WD5c a bench that ticks Save-All gets ONE leader, not two, and a bench\
  with no ticked output gets none at all" \
   [list [wd_saves [list $WDNOISE] $WD1SAVE {save_all_v 1}] \
@@ -11787,8 +11801,9 @@ check "WD5c a bench that ticks Save-All gets ONE leader, not two, and a bench\
 ## `v(all)`, both carrying 7.392094525460902e-01; `.save i(v1)` -> `i(v1)` AND
 ## **`i(all)`**. Two saves are clean, and a `tran` with one save is clean because
 ## `time` is a second vector. The fork writes neither.
-check "WD6 an op plot that would hold exactly one save is the risk, and two\
- saves, no op, a blanket and a widened bench are not" \
+## R-OUT8: no op plot holds a lone save any more -- the leader is ahead of it.
+check "WD6 no bench is a lone-op-save risk (R-OUT8): one save, two saves, no op,\
+ a blanket and a widened bench" \
   [list [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD1SAVE]] \
         [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD2SAVE]] \
         [ase::saves_op_phantom_risk ngspice [wd_state \
@@ -11796,7 +11811,7 @@ check "WD6 an op plot that would hold exactly one save is the risk, and two\
         [ase::saves_op_phantom_risk ngspice [wd_state {{type op enabled 1}} $WD1SAVE {save_all_v 1}]] \
         [ase::saves_op_phantom_risk ngspice [wd_state \
            [list {type op enabled 1} $WDNOISE] $WD1SAVE]]] \
-  {1 0 0 0 0}
+  {0 0 0 0 0}
 ## ⚠ THE GATE'S POLARITY IS THE WHOLE OF D48, AND THE UNMEASURED ROW IS THE ONE
 ## THAT MATTERS. `![ase::caps_is $c one_vector_write 1]` is the natural spelling
 ## and it is TRUE for a binary nobody measured, which inverts D47 -- ASE-L would
@@ -11815,18 +11830,18 @@ if {[info commands ::ase::sim_capabilities] ne {}} {
   rename ::ase::sim_capabilities {}
   rename ::wd_saved_caps ::ase::sim_capabilities
 }
-check "WD6b 6g-3 emits the leader ONLY where the phantom was MEASURED present --\
- measured 1 and never measured at all both leave the deck alone" $WD6CAPS \
-  [list {{.save all} {.save v(D)}} {{.save v(D)}} {{.save v(D)}}]
+check "WD6b the leader is in the deck whatever the capability says -- measured\
+ 0, measured 1, never measured (R-OUT8; 6g-3's own arm is no longer reached)" $WD6CAPS \
+  [list {{.save all} {.save v(D)}} {{.save all} {.save v(D)}} {{.save all} {.save v(D)}}]
 ## ⚠ AND THE UNMEASURED ANSWER IS WHY EVERY DECK GOLDEN IN THIS FILE IS STILL
 ## WHERE IT WAS. `nfet_state` saves exactly one output and enables exactly `op`,
 ## so it IS 6g-3's fixture -- and no suite probes a simulator, so D1 does not
 ## move. That is D47 holding a golden still, not luck.
-check "WD6c the shipped nfet fixture is 6g-3's own shape and its golden is\
- unmoved, because ISO1434 declares the capability UNMEASURED" \
+check "WD6c the shipped nfet fixture is no longer 6g-3's shape: its one save rides\
+ behind the R-OUT8 leader" \
   [list [ase::saves_op_phantom_risk ngspice [nfet_state /models/sky130.lib.spice {}]] \
         [wd_saves {{type op enabled 1}} {{name id expr -i(v1) save 1 plot 0}}]] \
-  [list 1 {{.save -i(v1)}}]
+  [list 0 {{.save all} {.save -i(v1)}}]
 ## ⚠ AND THE OPERATING-POINT TIER'S OWN CARDS STAND 6g-3 DOWN, WHICH A SUITE
 ## OUTSIDE THIS ONE HAD TO ASK FOR. `test_ase_final`'s **F12** asserts that
 ## `.save all` appears EXACTLY ONCE on a real committed bench (invariant I2/R2),
@@ -11845,8 +11860,9 @@ check "WD6c the shipped nfet fixture is 6g-3's own shape and its golden is\
 ## section's own fixtures own that cache.
 set WD6BLK [ase::op_cards_block]
 ase::op_cards_put $::netlist_text ".save all\n.save @m.x1\[id\]"
-check "WD6d a deck that will carry the operating-point tier's own cards is not\
- at risk, and each of the three conditions is separately load-bearing" \
+check "WD6d the operating-point tier's own cards are still detected, each of\
+ saves_op_cards_coming's three conditions separately load-bearing, and the\
+ phantom guard answers 0 with or without them (R-OUT8)" \
   [list [ase::saves_op_phantom_risk ngspice \
            [wd_state {{type op enabled 1}} $WD1SAVE] 1] \
         [ase::saves_op_phantom_risk ngspice \
@@ -11860,7 +11876,7 @@ check "WD6d a deck that will carry the operating-point tier's own cards is not\
         [ase::saves_op_cards_coming [wd_state {{type op enabled 1}} $WD1SAVE] \
            "* a different netlist\n.end\n"] \
         [ase::saves_op_cards_coming {} $::netlist_text]] \
-  {0 1 1 0 0 0 0}
+  {0 0 1 0 0 0 0}
 ## ⚠ AND THE WHOLE POINT, END TO END: the same bench renders WITHOUT a second
 ## leader while the tier is going to emit one, and 6g-3's own arm is still live
 ## for the bench that gets no cards. This is `test_ase_final`'s F12 invariant
@@ -12054,27 +12070,28 @@ set WD10ST [ase::state_default]
 dict set WD10ST simulator wdsim
 dict set WD10ST outputs {{name a expr v(mid) save 1 plot 1}}
 dict set WD10ST analyses {{type wdd enabled 1} {type wda enabled 1}}
-check "WD10 a type that declares `vecsaves` while its result vectors ARE netlist\
- names is passed over, so the widening is never reported against the wrong row" \
+## R-OUT8 (2026-10-13): nothing is narrowed, so no row reports a widening --
+## neither the netlist-names type nor the `own` one.
+check "WD10 no type reports a widening (R-OUT8), the netlist-names one included" \
   [list [ase::needs_eval wdsim wdd vecsaves {type wdd enabled 1} \
            [dict create nodes {} sources {} exact 0] {} $WD10ST] \
         [lindex [ase::needs_eval wdsim wda vecsaves {type wda enabled 1} \
            [dict create nodes {} sources {} exact 0] {} $WD10ST] 0]] \
-  [list {} caution]
+  [list {} {}]
 ## Door two: `ase::analysis_needs` is public and its callers do not all filter
 ## by `enabled` -- `ase::analysis_precheck` does, a per-row grid cell need not.
 ## A `vecsaves` that asked `saves_narrowed` instead of the shared body would
 ## answer the same for every enabled row and the WRONG thing for a disabled one.
 set WD10ST2 [wd_state [list [concat $WDNOISE {enabled 0}]] $WD1SAVE]
-check "WD10b a DISABLED `own` row reports no widening, because the deck it would\
- be rendered into does not widen" \
+check "WD10b no `own` row reports a widening, enabled or disabled, and the bench\
+ is not narrowed (R-OUT8)" \
   [list [wd_ids [ase::analysis_needs ngspice [concat $WDNOISE {enabled 0}] \
            [dict create nodes {} sources {} exact 0] {} $WD10ST2]] \
         [wd_ids [ase::analysis_needs ngspice $WDNOISE \
            [dict create nodes {} sources {} exact 0] {} \
            [wd_state [list $WDNOISE] $WD1SAVE]]] \
         [ase::saves_narrowed $WD10ST2]] \
-  [list 0 1 1]
+  [list 0 0 0]
 
 } wd_err]} {
   check "WD0 section WD ran to the end" "RAISED:$wd_err" {}

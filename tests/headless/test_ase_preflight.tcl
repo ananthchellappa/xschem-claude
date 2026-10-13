@@ -205,6 +205,37 @@ proc check {name ok detail} {
 proc eqcheck {name got want} {
   check $name [expr {$got eq $want}] "(got '$got' want '$want')"
 }
+## ⚖ R-OUT8 (ruling 2026-10-13): a save ADDS to what ngspice keeps and never
+## narrows it, so every deck with an output card carries `.save all` and NO
+## bench is narrowed any more (ase::saves_narrowed answers 0, and
+## ase::saves_all_forced is 1 whenever there is a card). The class A widening,
+## its `vecsaves` caution, `saves_resolve` and `disto_saves` therefore stand
+## down on every real bench -- rows marked REAL below say so.  Their code and
+## their sentences are KEPT for a future "narrow on purpose" switch, and the
+## rows that pin them run in the DORMANT world: `pf_narrowed` puts the two
+## pre-R-OUT8 bodies back for the length of one script, and restores the real
+## ones after it whatever the script does.
+proc pf_narrowed {script} {
+  rename ::ase::saves_narrowed ::pf_real_saves_narrowed
+  rename ::ase::saves_all_forced ::pf_real_saves_all_forced
+  proc ::ase::saves_narrowed {state} {
+    if {$state eq {}} { return 0 }
+    if {[ase::state_get $state save_all_v 0] eq {1}} { return 0 }
+    return [expr {[llength [ase::output_save_cards $state]] > 0}]
+  }
+  proc ::ase::saves_all_forced {sim state} {
+    if {$state eq {}} { return 0 }
+    if {[ase::state_get $state save_all_v 0] eq {1}} { return 1 }
+    if {[ase::saves_widen_types $sim $state] ne {}} { return 1 }
+    return 0
+  }
+  set rc [catch {uplevel 1 $script} r]
+  rename ::ase::saves_narrowed {}
+  rename ::ase::saves_all_forced {}
+  rename ::pf_real_saves_narrowed ::ase::saves_narrowed
+  rename ::pf_real_saves_all_forced ::ase::saves_all_forced
+  return -code $rc $r
+}
 # ABORT-PROOFING (the LEDGER carry-forward from items 1, 2, 5b, 6, 7 and 8): a
 # proc sabotaged away must FAIL a check, never abort the file with no RESULT
 # line — under which every sabotage reads as "nothing went red".
@@ -516,10 +547,18 @@ said_clear
 ## analysis (`no data saved for D.C. Operating point analysis`, rc 1,
 ## `$sim_status` 1, on the fork and on apt 45.2 alike). Turning the save-name
 ## refusal off does not make that stop being true.
-eqcheck PF216f-ase_preflight-0-disables-the-REFUSAL-and-not-the-caution-under-it \
+## ⚖ R-OUT8: that caution is DORMANT (see pf_narrowed): the row pins it in the
+## narrowed world, and PF216f0 says the real world is quiet.
+eqcheck PF216f0-REAL-no-save-list-is-narrowed-so-the-op-caution-is-not-said \
   [list [catch {ase::preflight_gate [mkstate $RD c $TYPO] $NL} e2] \
         [said_count {ase: REFUSED*}] \
-        [said_count {*will not run the op analysis at all*}]] {0 0 1}
+        [said_count {*will not run the op analysis at all*}]] {0 0 0}
+said_clear
+eqcheck PF216f-DORMANT-ase_preflight-0-disables-the-REFUSAL-and-not-the-caution-under-it \
+  [pf_narrowed {
+     list [catch {ase::preflight_gate [mkstate $RD c $TYPO] $NL} e2] \
+          [said_count {ase: REFUSED*}] \
+          [said_count {*will not run the op analysis at all*}]}] {0 0 1}
 ## and the caution is gone the moment the bench has one output that resolves,
 ## so it is the save list it is about and not the escape
 said_clear
@@ -1246,9 +1285,14 @@ if {[auto_execok ngspice] eq {}} {
   ## this leg is defence (b)'s own measurement, and defence (a) would otherwise
   ## refuse before the simulator ever started.
   file delete -force [file join $RD3 rc_ase.raw]
+  ## ⚖ R-OUT8: an Outputs save no longer narrows the deck (it brings `.save
+  ## all`), so the starving save is the NETLIST's own card here -- text ASE-L
+  ## did not write and does not widen -- which keeps this leg measuring the
+  ## guard rather than the leader.
+  putfile [file join $RD3 rcbad.spice] \
+    "* pf real\nv1 in 0 dc 1\nr1 in out 1k\nc1 out 0 1n\n.save v(nosuchnode)\n.end\n"
   set ::ase_preflight 0
-  set idb [pcall ase::run_deck [realstate {{expr v(nosuchnode) save 1}}] \
-             [file join $RD3 rc.spice]]
+  set idb [pcall ase::run_deck [realstate {}] [file join $RD3 rcbad.spice]]
   set ecb [pcall ase::wait $idb]
   set ::ase_preflight 1
   eqcheck PF220b-a-failed-analysis-leaves-NO-ARTEFACT-AT-ALL \
@@ -2474,6 +2518,11 @@ eqcheck PF230f-ac-sensitivity-under-klu-is-suppressed-and-dc-sensitivity-under-k
 ## ("`disto` enabled AND zero saved outputs") would refuse the deck on the last
 ## line here, which was measured to run.
 set MPDROW {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}}
+## REAL: R-OUT8's leader rides with the card, and `.save all` + `.save
+## v(nosuchnode)` + disto is the measured rc 0 above -- so nothing is refused.
+eqcheck PF230g0-REAL-disto-is-not-refused-the-leader-rescues-it \
+  [dict size [pcheckx $MPNL $MPDROW {} {outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]] 0
+pf_narrowed {
 set MPD_BAD [pcheckx $MPNL $MPDROW {} {outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]
 set MPD_TWOBAD [pcheckx $MPNL $MPDROW {} \
   {outputs {{name a expr v(nosuchnode) save 1 plot 1} {name b expr v(alsonone) save 1 plot 1}}}]
@@ -2483,7 +2532,10 @@ set MPD_ALL [pcheckx $MPNL $MPDROW {} \
   {save_all_v 1 outputs {{name a expr v(nosuchnode) save 1 plot 1}}}]
 set MPD_NONE [pcheckx $MPNL $MPDROW {} {outputs {}}]
 set MPD_UNTICKED [pcheckx $MPNL $MPDROW {} {outputs {{name a expr v(nosuchnode) save 0 plot 1}}}]
-eqcheck PF230g-disto-is-refused-only-when-the-WHOLE-save-list-resolves-to-nothing \
+set MPD_CUR [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(Vnope) save 1 plot 1}}}]
+set MPD_CUROK [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(V1) save 1 plot 1}}}]
+}
+eqcheck PF230g-DORMANT-disto-is-refused-only-when-the-WHOLE-save-list-resolves-to-nothing \
   [list [mpv $MPD_BAD disto 0] [mpn $MPD_BAD disto 0] \
         [mpv $MPD_TWOBAD disto 0] \
         [dict size $MPD_MIX] [dict size $MPD_ALL] [dict size $MPD_NONE] \
@@ -2492,7 +2544,7 @@ eqcheck PF230g-disto-is-refused-only-when-the-WHOLE-save-list-resolves-to-nothin
 
 ## ⚠ AND THE SENTENCE SAYS SEGFAULT IN AS MANY WORDS, because the whole point is
 ## that there is no exit status and no log to explain it afterwards.
-eqcheck PF230h-the-disto-refusal-says-what-happens-and-offers-three-ways-out \
+eqcheck PF230h-DORMANT-the-disto-refusal-says-what-happens-and-offers-three-ways-out \
   [list [string match {*SEGFAULT*} [mps $MPD_BAD disto 0]] \
         [string match {*cannot see inside an .include*} [mps $MPD_BAD disto 0]] \
         [string match {*Save all voltages*} [lindex [lindex [dgn $MPD_BAD disto] 0] 3]]] \
@@ -2500,9 +2552,7 @@ eqcheck PF230h-the-disto-refusal-says-what-happens-and-offers-three-ways-out \
 
 ## ⚠ A CURRENT SAVE STARVES IT TOO: `.save i(vnope)` is a branch current of a
 ## source that is not there, and it resolves to nothing exactly as a node does.
-set MPD_CUR [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(Vnope) save 1 plot 1}}}]
-set MPD_CUROK [pcheckx $MPNL $MPDROW {} {outputs {{name a expr i(V1) save 1 plot 1}}}]
-eqcheck PF230i-a-branch-current-of-a-source-that-is-not-there-starves-it-as-well \
+eqcheck PF230i-DORMANT-a-branch-current-of-a-source-that-is-not-there-starves-it-as-well \
   [list [mpv $MPD_CUR disto 0] [dict size $MPD_CUROK]] {fatal 0}
 
 # ===========================================================================
@@ -2528,7 +2578,7 @@ eqcheck PF230i-a-branch-current-of-a-source-that-is-not-there-starves-it-as-well
 ## The third term is the non-vacuity half -- it is the ONLY all-caps run in the
 ## sentence, so a pass that lowercased it reds, and so does one that shouts
 ## something new beside it.
-eqcheck PF234a-SEGFAULTS-is-the-one-shouted-word-ruling-A1-deliberately-kept \
+eqcheck PF234a-DORMANT-SEGFAULTS-is-the-one-shouted-word-ruling-A1-deliberately-kept \
   [list [string match {*ngspice SEGFAULTS,*} [mps $MPD_BAD disto 0]] \
         [string match {*segfaults*} [mps $MPD_BAD disto 0]] \
         [lsort -unique [regexp -all -inline {[A-Z]{2,}} [mps $MPD_BAD disto 0]]]] \
@@ -2703,13 +2753,27 @@ eqcheck PF230k-a-deck-carrying-both-excitations-is-not-reported \
 ## appears; it is the one type whose starvation is silent end to end. `disto`'s
 ## own plot Variables block is `frequency v(in) v(mid) v(out) i(v1)`, netlist
 ## names every one, and `.save v(mid)` + `disto` is rc 0 on both binaries.
+## REAL: R-OUT8 -- nothing is narrowed, so there is no widening to report.
+eqcheck PF230l0-REAL-no-type-reports-a-widening \
+  [list [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPSAVED]] \
+        [dict size [pcheckx $MPNL {{type pz enabled 1 inp in outp mid}} {} $MPSAVED]]] {0 0}
+pf_narrowed {
 set MPVS_N [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPSAVED]
 set MPVS_T [pcheckx $MPNL {{type tf enabled 1 out {v(mid)} insrc V1}} {} $MPSAVED]
 set MPVS_S [pcheckx $MPNL {{type sens enabled 1 out {v(mid)}}} {} $MPSAVED]
 set MPVS_P [pcheckx $MPNL {{type pz enabled 1 inp in outp mid}} {} $MPSAVED]
 set MPVS_D [pcheckx $MPNL {{type disto enabled 1 sweep dec points 2 start 1k stop 10k}} \
                     {} $MPSAVED]
-eqcheck PF230l-noise-tf-sens-AND-pz-report-the-widening-as-a-caution-and-disto-does-not \
+set MPVS_2 [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
+  {outputs {{name a expr v(mid) save 1 plot 1} {name b expr v(in) save 1 plot 1}}}]
+set MPVS_M [list [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPBLANKET]] \
+        [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} {outputs {}}]] \
+        [mpv [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
+           [dict merge $MPSAVED {save_op_params 1}]] noise 0] \
+        [mpv [pcheckx $MPNL [list [concat {type noise enabled 1} $MPGOOD \
+                                   {x {{save all}}}]] {} $MPSAVED] noise 0]]
+}
+eqcheck PF230l-DORMANT-noise-tf-sens-AND-pz-report-the-widening-as-a-caution-and-disto-does-not \
   [list [mpids $MPVS_N noise] [mpv $MPVS_N noise 0] \
         [mpids $MPVS_T tf] [mpids $MPVS_S sens] \
         [mpids $MPVS_P pz] [mpv $MPVS_P pz 0] \
@@ -2725,21 +2789,13 @@ eqcheck PF230l-noise-tf-sens-AND-pz-report-the-widening-as-a-caution-and-disto-d
 ## non-empty. There is nothing left to be false about: the leader is emitted
 ## deterministically, so the only benches with nothing to report are the ones
 ## whose save list was never narrowed.
-eqcheck PF230m-only-a-bench-whose-save-list-was-never-narrowed-has-nothing-to-report \
-  [list [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} $MPBLANKET]] \
-        [dict size [pcheckx $MPNL [mprow {*}$MPGOOD] {} {outputs {}}]] \
-        [mpv [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
-           [dict merge $MPSAVED {save_op_params 1}]] noise 0] \
-        [mpv [pcheckx $MPNL [list [concat {type noise enabled 1} $MPGOOD \
-                                   {x {{save all}}}]] {} $MPSAVED] noise 0]] \
-  {0 0 caution caution}
+eqcheck PF230m-DORMANT-only-a-bench-whose-save-list-was-never-narrowed-has-nothing-to-report \
+  $MPVS_M {0 0 caution caution}
 
 ## ⚠ THE SENTENCE COUNTS, AND A BENCH WITH TWO SAVED OUTPUTS SAYS "ticks".
 ## A sentence that got the plural wrong would be the one thing a user quotes
 ## back.
-set MPVS_2 [pcheckx $MPNL [mprow {*}$MPGOOD] {} \
-  {outputs {{name a expr v(mid) save 1 plot 1} {name b expr v(in) save 1 plot 1}}}]
-eqcheck PF230n-the-widening-sentence-counts-the-ticks-names-the-type-and-offers-both-ways-out \
+eqcheck PF230n-DORMANT-the-widening-sentence-counts-the-ticks-names-the-type-and-offers-both-ways-out \
   [list [string match {*the 1 per-output Save tick on this bench*} [mps $MPVS_N noise 0]] \
         [string match {*the 2 per-output Save ticks on this bench*} [mps $MPVS_2 noise 0]] \
         [string match {*a noise analysis answers in vectors that are not netlist names*} \
@@ -2906,8 +2962,21 @@ set PF32ROWS {{type op enabled 1} \
               {type dc enabled 1 source V1 start 0 stop 1 step 0.1} \
               {type ac enabled 1 sweep dec points 5 start 1k stop 100k} \
               {type tran enabled 1 step 1n stop 1u}}
+## REAL: R-OUT8's leader rescues every type (measured: `.save all` + `.save
+## v(nosuchnode)` runs op/dc/ac/tran/pz/disto at rc 0), so none reports it.
+eqcheck PF232a0-REAL-no-type-reports-the-starvation \
+  [list [dict size [pcheckx $MPNL $PF32ROWS {} $PFBAD]] \
+        [dict size [pcheckx $MPNL $MPDROW {} $PFBAD]]] {0 0}
+pf_narrowed {
 set PF32 [pcheckx $MPNL $PF32ROWS {} $PFBAD]
-eqcheck PF232a-every-renderable-type-reports-the-starvation-not-only-tran \
+set PF32B [pcheckx $MPNL $MPDROW {} $PFBAD]
+set PF32E [list [dict size [pcheckx $MPNL $PF32ROWS {} [dict merge $PFBAD {save_all_v 1}]]] \
+        [mpids [pcheckx $MPNL [concat $PF32ROWS [mprow {*}$MPGOOD]] {} $PFBAD] op] \
+        [dict size [pcheckx $MPNL [concat $MPDROW [mprow {*}$MPGOOD]] {} $PFBAD]] \
+        [mpv [pcheckx $MPNL $MPDROW {} $PFBAD] disto 0]]
+set PF32F [mpids [pcheckx $MPNL [concat $MPDROW [mprow {*}$MPGOOD]] {} $PFBAD] noise]
+}
+eqcheck PF232a-DORMANT-every-renderable-type-reports-the-starvation-not-only-tran \
   [list [mpids $PF32 op] [mpids $PF32 dc] [mpids $PF32 ac] [mpids $PF32 tran]] \
   [list {saves_resolve} {saves_resolve} {saves_resolve} {saves_resolve}]
 ## ⚠ `caution`, NOT `fatal`, AND THE TIER IS THE DECISION. This rests on
@@ -2916,9 +2985,8 @@ eqcheck PF232a-every-renderable-type-reports-the-starvation-not-only-tran \
 ## ngspice. `disto` pays that risk because the alternative is a SIGSEGV with no
 ## log at all; a type that fails honestly at rc 1 must not cost a user their run
 ## over a blind spot.
-eqcheck PF232b-it-is-a-caution-everywhere-and-a-fatal-only-for-disto \
-  [list [mpv $PF32 op 0] [mpv $PF32 tran 0] \
-        [mpv [pcheckx $MPNL $MPDROW {} $PFBAD] disto 0]] \
+eqcheck PF232b-DORMANT-it-is-a-caution-everywhere-and-a-fatal-only-for-disto \
+  [list [mpv $PF32 op 0] [mpv $PF32 tran 0] [mpv $PF32B disto 0]] \
   {caution caution fatal}
 ## the discriminator: a bench whose saves resolve says nothing at all
 eqcheck PF232c-a-bench-whose-saved-outputs-exist-says-nothing \
@@ -2937,18 +3005,13 @@ eqcheck PF232d-one-resolving-output-among-several-is-enough \
 ## + op/dc/ac/tran/pz -> rc 0, on both binaries. Without this a bench carrying a
 ## `noise` row beside a stale Outputs entry would be refused for a crash 6g-1 has
 ## already prevented.
-eqcheck PF232e-a-forced-leader-stands-both-tiers-down \
-  [list [dict size [pcheckx $MPNL $PF32ROWS {} [dict merge $PFBAD {save_all_v 1}]]] \
-        [mpids [pcheckx $MPNL [concat $PF32ROWS [mprow {*}$MPGOOD]] {} $PFBAD] op] \
-        [dict size [pcheckx $MPNL [concat $MPDROW [mprow {*}$MPGOOD]] {} $PFBAD]] \
-        [mpv [pcheckx $MPNL $MPDROW {} $PFBAD] disto 0]] \
-  [list 0 NO:op 1 fatal]
+eqcheck PF232e-DORMANT-a-forced-leader-stands-both-tiers-down \
+  $PF32E [list 0 NO:op 1 fatal]
 ## ⚠ the third leg above is the one that could go vacuous: `disto` + `noise` on a
 ## starving bench must report the WIDENING and not the segfault, so the size is 1
 ## and the id is the noise row's
-eqcheck PF232f-and-what-it-reports-instead-is-the-widening \
-  [mpids [pcheckx $MPNL [concat $MPDROW [mprow {*}$MPGOOD]] {} $PFBAD] noise] \
-  {vecsaves}
+eqcheck PF232f-DORMANT-and-what-it-reports-instead-is-the-widening \
+  $PF32F {vecsaves}
 
 ## ⚠ ONE BODY, TWO TIERS. `ase::saves_unresolved` is what both arms read, so they
 ## cannot disagree about the FACT while disagreeing about the verdict -- and

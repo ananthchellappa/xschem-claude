@@ -458,11 +458,15 @@ check {SL6 the sp row gets a $sim_status guard, a remzerovec, a plotmap record\
 ## no Z in the results file and nothing said.
 set SL7ST [sp_state [list [sp_row]]]
 dict set SL7ST outputs {{name m expr v(mid) save 1 plot 1}}
-check {SL7 an sp row forces the save-everything leader, and says which type did it} \
+## ⚖ R-OUT8 (2026-10-13): no save list is narrowed any more -- the ticked save
+## brings the leader itself -- so the sp row has nothing to widen and is not
+## named, while the leader is still in the deck exactly once.
+check {SL7 an sp row's bench saves everything: the leader is in the deck once,\
+ and no widening is reported because nothing was narrowed (R-OUT8)} \
   [list [s_ans ase::saves_widen_types ngspice $SL7ST] \
         [s_ans ase::saves_all_forced ngspice $SL7ST] \
         [regexp -all -line {^\.save all$} [sp_deck $SL7ST]]] \
-  {sp 1 1}
+  {{} 1 1}
 
 # ===========================================================================
 # SN -- THE PRECONDITIONS

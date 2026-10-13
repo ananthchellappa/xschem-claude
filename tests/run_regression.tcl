@@ -127,6 +127,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_analysis_tokens" \
                  "headless/test_calc_eval_text" \
                  "headless/test_ase_outputs_eval" \
+                 "headless/test_ase_outputs_tabs" \
                  "headless/test_wave_sigbrowser" \
                  "headless/test_wave_grid" \
                  "headless/test_node_token_split" \

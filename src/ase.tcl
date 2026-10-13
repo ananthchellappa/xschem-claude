@@ -9313,10 +9313,16 @@ proc ase::analysis_resultvecs {sim type} {
 # ⚠ ONE BODY, THREE READERS: render_deck's leader, the `vecsaves` caution and
 # the class B preconditions. The drift this prevents is the one this batch keeps
 # paying for -- a precondition refusing a deck the emitter has already fixed.
+#
+# ⚖ NO BENCH IS NARROWED ANY MORE (ase_l.md R-OUT8, ruling 2026-10-13): a Saves
+# row ADDS to what the simulator keeps and never narrows it, so any deck that
+# carries an output card carries the `.save all` leader above it
+# (ase::saves_all_forced).  This answers 0 for every state, and the readers
+# built on it -- the class A widening, its `vecsaves` caution, the op phantom
+# guard -- stand down with it rather than being deleted, so a future
+# "narrow on purpose" switch has one body to turn back on.
 proc ase::saves_narrowed {state} {
-  if {$state eq {}} { return 0 }
-  if {[ase::state_get $state save_all_v 0] eq {1}} { return 0 }
-  return [expr {[llength [ase::output_save_cards $state]] > 0}]
+  return 0
 }
 
 # ─── THE OUTPUTS PANE'S SAVE LIST (ase_l.md R-OUT3, ruling 2026-10-11) ──────
@@ -9445,6 +9451,55 @@ proc ase::output_signal {ex} {
   return [calc::rpn_unquote [calc::aq_strip $e]]
 }
 
+# ─── THE OUTPUTS PANE'S TWO TABS (ase_l.md R-OUT7, rulings 2026-10-13) ───────
+#
+# The user: "A 'save' will always be v("netname") - because 'save' of a net
+# would apply to any analysis."  "vt(netname) is NOT a save! It's a fetch of
+# the time-domain waveform."  "an expression, created by user, can be in the
+# Measures tab."
+#
+# Which tab a row belongs to, from its TEXT alone (pure, no Tk, so the counted
+# arm gates it): `saves` for a plain `v(<node>)`, `v(<a>,<b>)` or
+# `i(<source>)` -- either case, Cadence quotes allowed, no sign -- and
+# `measures` for everything else: an analysis-qualified fetch (`vt(out)`), a
+# signed signal (`-i(v1)`: a save has no sign), a bare name (on the committed
+# benches a bare name is as often a .meas or let result -- GBW, Ctot, avg --
+# as a node, and the text cannot tell them apart), a device quantity
+# (`@m1[gm]`, a number the user reads), a measurement call, an expression in
+# either syntax, a number.  Because the tab is a function of the text, the
+# state format is unchanged and an old state sorts itself on load.
+proc ase::output_is_save {ex} {
+  set e [string trim $ex]
+  set nm {(?:"[^"\s(),]+"|[^"\s(),]+)}
+  if {[regexp -nocase "^v\\(\\s*$nm\\s*(?:,\\s*$nm\\s*)?\\)\$" $e]} { return 1 }
+  if {[regexp -nocase "^i\\(\\s*$nm\\s*\\)\$" $e]} { return 1 }
+  return 0
+}
+
+proc ase::output_tab {ex} {
+  return [expr {[ase::output_is_save $ex] ? {saves} : {measures}}]
+}
+
+# The door each tab keeps: -> {ok <text>} or {refuse <sentence>}.  A save
+# typed under Measures, or anything that is not a save typed under Saves, is
+# refused with a sentence naming the other tab.  A bare node typed under Saves
+# is the save the user meant and is admitted as `v(<node>)`.
+proc ase::output_admit {tab ex} {
+  set e [string trim $ex]
+  if {$tab eq {saves}} {
+    if {[ase::output_is_save $e]} { return [list ok $e] }
+    if {[regexp {^[A-Za-z_#][A-Za-z0-9_.:#$<>\[\]]*$} $e]
+        && ![string is double -strict $e]} {
+      return [list ok "v($e)"]
+    }
+    return [list refuse "$e is not a save -- add it under Measures"]
+  }
+  if {[ase::output_is_save $e]} {
+    return [list refuse "$e is a save -- add it under Saves"]
+  }
+  return [list ok $e]
+}
+
 # The enabled class A types on this bench, in emit order -- {} when nothing
 # forces a widening. Non-empty means the deck gets a `.save all` leader it would
 # not otherwise have.
@@ -9490,6 +9545,8 @@ proc ase::saves_widen_types {sim state} {
 proc ase::saves_all_forced {sim state} {
   if {$state eq {}} { return 0 }
   if {[ase::state_get $state save_all_v 0] eq {1}} { return 1 }
+  # R-OUT8: a deck with any output card saves everything first.
+  if {[llength [ase::output_save_cards $state]] > 0} { return 1 }
   if {[ase::saves_widen_types $sim $state] ne {}} { return 1 }
   return 0
 }
@@ -23981,10 +24038,20 @@ namespace eval ase::backend::ngspice {
     # cannot both be true. (3) is deliberately outside that body -- see its
     # comment.
     set rdsim [ase::state_get $state simulator [ase::default_simulator]]
-    if {[ase::saves_all_forced $rdsim $state]} {
+    #
+    # ⚖ (4) R-OUT8 (ruling 2026-10-13): a save ADDS to what ngspice keeps and
+    # never narrows it, so any output card brings the leader -- unless the
+    # operating-point tier's block is coming, which carries its own at deck
+    # level, and one is enough (F12).  Order among dot cards does not matter:
+    # measured 2026-10-13 on sky130 charge_pump, `.save i(v1)`.. cards ABOVE
+    # the block's leader, and the op plot held all 184 vectors.
+    set rdopc [ase::saves_op_cards_coming $state $netlist_text]
+    if {[ase::state_get $state save_all_v 0] eq {1}
+        || [ase::saves_widen_types $rdsim $state] ne {}} {
       lappend lines ".save all"
-    } elseif {[ase::saves_op_phantom_risk $rdsim $state \
-                 [ase::saves_op_cards_coming $state $netlist_text]]} {
+    } elseif {[llength [ase::output_save_cards $state]] > 0} {
+      if {!$rdopc} { lappend lines ".save all" }
+    } elseif {[ase::saves_op_phantom_risk $rdsim $state $rdopc]} {
       set rdcaps [dict create known 0]
       catch { set rdcaps [ase::sim_capabilities $rdsim] }
       if {[ase::caps_measured_as $rdcaps one_vector_write 0]} {
@@ -24029,6 +24096,9 @@ namespace eval ase::backend::ngspice {
     # TRANSIENT — the plot fell from 6 vectors to 2, `time` and the one named
     # output, silently. So every arm below emits the leader at deck level.
     # Two `.save all` lines in one deck were re-measured harmless.
+    # ⚠ AND IT IS ALSO R-OUT8's LEADER (2026-10-13): a deck whose output cards
+    # need one gets THIS one when the block is coming, so there is exactly one
+    # (F12, I2/R2) -- see the leader block above.
     #
     # ⚠ THE LITERAL THE ARMS BELOW EMIT IS THE BLOCK'S OWN, NOT A SECOND
     # SPELLING OF IT: op_annot::save_cards builds `[linsert $cards 0 {.save

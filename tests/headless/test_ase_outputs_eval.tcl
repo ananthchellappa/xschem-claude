@@ -136,10 +136,10 @@ group OE1 {
     check "OE1 no expression row's text -- nor its measurement verb -- appears anywhere in the deck (rows derived from the state's own non-plain outputs, count then leaks)" \
         [list [llength [lsearch -all -inline -not [lmap o $outs {ase::output_is_plain [dict get $o expr]}] 1]] $leaked] \
         {2 {}}
-    check "OE1 the save list: the ticked plain signal, then every signal the expressions read -- ticked or not -- each once, and nothing else" \
-        [oe_lines $deck {^\.save }] {{.save v(out)} {.save v(mid)} {.save v(in)}}
-    check "OE1 ase::saves_narrowed agrees: this deck IS narrowed" \
-        [ase::saves_narrowed [oe_state oe1 $outs]] 1
+    check "OE1 the save list: save-everything FIRST (R-OUT8: a save never narrows the deck), then the ticked plain signal, then every signal the expressions read -- ticked or not -- each once, and nothing else" \
+        [oe_lines $deck {^\.save }] {{.save all} {.save v(out)} {.save v(mid)} {.save v(in)}}
+    check "OE1 ase::saves_narrowed agrees: this deck is NOT narrowed (R-OUT8)" \
+        [ase::saves_narrowed [oe_state oe1 $outs]] 0
     check "OE1 a plain row's R208c qualifier and Cadence quotes are not ngspice's: vt(out) and v(\"mid\") are saved as v(out) and v(mid)" \
         [ase::output_save_cards [oe_state oe1 {{expr vt(out) save 1} {expr v("mid") save 1}}]] \
         {v(out) v(mid)}
@@ -155,7 +155,7 @@ group OE2 {
     check "OE2 a bench whose only ticked rows are expressions gets NO .save card, so ngspice keeps every signal (measured: any .save keeps only what is listed)" \
         [list [oe_lines $deck {^\.save }] [ase::saves_narrowed [oe_state oe2 $outs]] \
               [ase::output_save_cards [oe_state oe2 $outs]]] {{} 0 {}}
-    check "OE2 control: the same bench plus one ticked plain row IS narrowed, and then carries the expressions' signals too" \
+    check "OE2 control: the same bench plus one ticked plain row gets cards -- behind save-everything (R-OUT8) -- and then carries the expressions' signals too" \
         [ase::output_save_cards [oe_state oe2 [concat $outs {{expr v(out) save 1}}]]] \
         {v(out) v(mid) v(in)}
     check "OE2 an unticked plain row is not saved" \
@@ -507,8 +507,10 @@ group OE10 {
     set r1 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1} {expr {v(out) 2 *} save 1}} $an]]
     set r2 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1} {expr {v(mid) 2 *} save 0}} $an]]
     set r3 [ase::saves_op_phantom_risk ngspice [oe_state oe10 {{expr v(out) save 1}} $an]]
-    check "OE10 one card in the deck is the lone-op-save risk however many rows are ticked; two cards are not; control: a lone ticked plain row is" \
-        [list $r1 $r2 $r3] {1 0 1}
+    # R-OUT8 (2026-10-13): every deck with a card carries `.save all` ahead of
+    # it, so no op plot holds a lone save and the phantom guard never fires.
+    check "OE10 with save-everything ahead of every card (R-OUT8) there is no lone op save to guard: one card, two cards, a lone ticked plain row" \
+        [list $r1 $r2 $r3] {0 0 0}
 }
 
 # =============================================================================
@@ -863,8 +865,8 @@ if {$NG eq {}} {
         xschem raw read $raw op
         set have [split [string trim [xschem raw list]] "\n"]
         catch {xschem raw clear}
-        check "OE7 its operating point holds exactly three vectors (raw list): the ticked v(out) and i(v1), plus the expression's signal v(mid), which was NOT ticked -- the save list narrowed the deck and carried it" \
-            [lsort $have] [lsort {v(out) i(v1) v(mid)}]
+        check "OE7 its operating point holds EVERY node and source current (raw list), the ticked v(out) and i(v1) and the expression's v(mid) among them -- a save adds and never narrows (R-OUT8)" \
+            [lsort $have] [lsort {v(in) v(out) i(v1) v(mid)}]
         set res [pcall [ase::backend_hook ngspice result_probe] $st $log]
         # THE FORMER PRINT, measured on the same netlist by a deck that still
         # carries one -- the number the Value column used to show.

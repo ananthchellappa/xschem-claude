@@ -902,12 +902,14 @@ check {RU4 the suppression predicate is the adapter's, and it names one option} 
 ## issue 1434: `render_deck` forces a `.save all` leader and `vecsaves` is a
 ## `caution` saying the narrowing was overridden. This row CONFIRMS it rather
 ## than duplicating it, so a regression in 1434 reddens here too.
-check {RU5 rule 2 is still the caution issue 1434 shipped, not a refusal} \
+## ⚖ R-OUT8 (2026-10-13): no save list is narrowed any more, so 1434's caution
+## is dormant and rule 2 says nothing -- and it is still not a refusal.
+check {RU5 rule 2 is neither a refusal nor a caution: nothing is narrowed (R-OUT8)} \
   [s_ans apply {{} {
      set st [s_state {} {{type noise enabled 1 out v(mid) insrc v1 sweep dec points 1 start 1k stop 10k}}]
      dict set st outputs {{expr v(mid) save 1}}
      foreach r [s_pre $st] { if {[lindex $r 0] eq {vecsaves}} { return [lindex $r 1] } }
-     return none }}] caution
+     return none }}] none
 
 ## --- rule 3 ---------------------------------------------------------------
 ## MEASURED on both binaries with `lin 3` and `dec 2` beside it as positive
