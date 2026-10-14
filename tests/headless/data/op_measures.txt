@@ -1,0 +1,158 @@
+# Committed benches' plain signal rows on an operating-point bench (ase_l.md
+# R-OUT11), derived from the states at 2e1e4ccb and the real simulator's
+# operating point of each bench by
+#   tclsh tools/migrate/op_measures.tcl . --from 2e1e4ccb --vars <dir> --table <this>
+# (<dir> written by tools/migrate/op_measures_vars.tcl).
+# One Tcl list per candidate row: {state index name old new why}.
+#   old  the row's text before the conversion
+#   new  the measure the committed state holds, or {} when the row stays
+#   why  the evidence the author meant the operating point (op-only, or the
+#        print after op it came from), or why the row stays as it is
+# Read by tests/headless/test_ase_op_measures.tcl.
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/ac_hbt_13g2/ngspice_state1/ac_hbt_13g2.state 0 Vc Vc vdc(Vc) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/ac_hbt_13g2/schematic/ac_hbt_13g2.sch: print Vc Vb I(Vce)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/ac_hbt_13g2/ngspice_state1/ac_hbt_13g2.state 1 Vb Vb vdc(Vb) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/ac_hbt_13g2/schematic/ac_hbt_13g2.sch: print Vc Vb I(Vce)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/ac_hbt_13g2/ngspice_state1/ac_hbt_13g2.state 2 IVce I(Vce) idc(Vce) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/ac_hbt_13g2/schematic/ac_hbt_13g2.sch: print Vc Vb I(Vce)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/ac_hbt_13g2/ngspice_state1/ac_hbt_13g2.state 3 vc vc {} {not obvious: op+ac; the original reads it in: print after op, meas after ac, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_op/ngspice_state1/dc_diode_op.state 0 IVmda I(Vmda) idc(Vmda) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/dc_diode_op/schematic/dc_diode_op.sch: print I(Vmda) I(Vmdp)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_op/ngspice_state1/dc_diode_op.state 1 IVmdp I(Vmdp) idc(Vmdp) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/dc_diode_op/schematic/dc_diode_op.sch: print I(Vmda) I(Vmdp)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_op/ngspice_state1/dc_diode_op.state 2 iVmdp i(Vmdp) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_op/ngspice_state1/dc_diode_op.state 3 iVmda i(Vmda) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_temp/ngspice_state1/dc_diode_temp.state 0 Vd Vd vdc(Vd) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/dc_diode_temp/schematic/dc_diode_temp.sch: print Vd}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_temp/ngspice_state1/dc_diode_temp.state 1 vd vd {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_diode_temp/ngspice_state1/dc_diode_temp.state 2 vdp vdp {} {not obvious: op+dc; the original reads it in: wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2/ngspice_state1/dc_hbt_13g2.state 0 ivc i(vc) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2_5t/ngspice_state1/dc_hbt_13g2_5t.state 0 ivc i(vc) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2_5t/ngspice_state1/dc_hbt_13g2_5t.state 1 ivc1 i(vc1) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2l_5t/ngspice_state1/dc_hbt_13g2l_5t.state 0 ivc i(vc) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2l_5t/ngspice_state1/dc_hbt_13g2l_5t.state 1 ivc1 i(vc1) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2v_5t/ngspice_state1/dc_hbt_13g2v_5t.state 0 ivc i(vc) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hbt_13g2v_5t/ngspice_state1/dc_hbt_13g2v_5t.state 1 ivc1 i(vc1) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hv_nmos/ngspice_state1/dc_hv_nmos.state 0 ivd i(vd) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hv_pmos/ngspice_state1/dc_hv_pmos.state 0 IVd I(Vd) idc(Vd) {print after op in ihp-sg13g2/xschem_libs/sg13g2_tests/dc_hv_pmos/schematic/dc_hv_pmos.sch: print I(Vd)}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_hv_pmos/ngspice_state1/dc_hv_pmos.state 1 ivd i(vd) {} {not obvious: op+dc; the original reads it in: print after op, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_lv_nmos/ngspice_state1/dc_lv_nmos.state 0 ivd i(vd) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_lv_pmos/ngspice_state1/dc_lv_pmos.state 0 ivd i(vd) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_ntap1/ngspice_state1/dc_ntap1.state 1 ivr i(vr) {} {not obvious: op+dc; the original reads it in: print after op, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_pnpMPA/ngspice_state1/dc_pnpMPA.state 0 e1 e1 {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_ptap1/ngspice_state1/dc_ptap1.state 1 ivr i(vr) {} {not obvious: op+dc; the original reads it in: print after op, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_res_temp/ngspice_state1/dc_res_temp.state 3 ivrh i(vrh) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_res_temp/ngspice_state1/dc_res_temp.state 4 ivppd i(vppd) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/dc_res_temp/ngspice_state1/dc_res_temp.state 5 ivsil i(vsil) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/iso_dc_hv_nmos/ngspice_state1/iso_dc_hv_nmos.state 0 ivd i(vd) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/iso_dc_lv_nmos/ngspice_state1/iso_dc_lv_nmos.state 0 ivd i(vd) {} {not obvious: op+dc; the original reads it in: graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/iso_dc_res/ngspice_state1/iso_dc_res.state 3 ivrh i(vrh) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/iso_dc_res/ngspice_state1/iso_dc_res.state 4 ivppd i(vppd) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+ihp-sg13g2/xschem_libs/sg13g2_tests_ase/iso_dc_res/ngspice_state1/iso_dc_res.state 5 ivsil i(vsil) {} {not obvious: op+dc; the original reads it in: print after op, wrdata after dc, graph}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 0 x1F1 x1.F1 {} {not in this circuit: its operating point holds no v(x1.F1) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 1 x1F2 x1.F2 {} {not in this circuit: its operating point holds no v(x1.F2) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 2 x1ADJ2 x1.ADJ2 {} {not in this circuit: its operating point holds no v(x1.ADJ2) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 3 x1ADJ v(x1.ADJ) {} {not in this circuit: its operating point holds no v(x1.ADJ) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 4 CLK v(CLK) vdc(CLK) op-only
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 5 x1zminus x1.zminus {} {not in this circuit: its operating point holds no v(x1.zminus) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 6 x1plus v(x1.plus) {} {not in this circuit: its operating point holds no v(x1.plus) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap/ngspice_state1/bandgap.state 7 x1minus v(x1.minus) {} {not in this circuit: its operating point holds no v(x1.minus) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap_opamp/ngspice_state1/bandgap_opamp.state 0 vbg vbg {} {not in this circuit: its operating point holds no v(vbg) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap_opamp/ngspice_state1/bandgap_opamp.state 1 x1plus x1.plus {} {not in this circuit: its operating point holds no v(x1.plus) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap_opamp/ngspice_state1/bandgap_opamp.state 2 x1minus x1.minus {} {not in this circuit: its operating point holds no v(x1.minus) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/bandgap_opamp/ngspice_state1/bandgap_opamp.state 3 x1adj x1.adj {} {not in this circuit: its operating point holds no v(x1.adj) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 0 hv v(hv) vdc(hv) op-only
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 1 x1HV2A x1.HV2A {} {not in this circuit: its operating point holds no v(x1.HV2A) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 2 x1G3A x1.G3A {} {not in this circuit: its operating point holds no v(x1.G3A) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 3 a v(a) vdc(a) op-only
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 4 b v(b) vdc(b) op-only
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 5 c v(c) vdc(c) op-only
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 6 d v(d) vdc(d) op-only
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 7 x1g2b x1.g2b {} {not in this circuit: its operating point holds no v(x1.g2b) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump/ngspice_state1/charge_pump.state 8 x1g2a x1.g2a {} {not in this circuit: its operating point holds no v(x1.g2a) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump2/ngspice_state1/charge_pump2.state 0 x3GN1 v(x3.GN1) {} {not measured: the bench does not run here (the simulator exited 1: unknown subckt: x12 ck 0 0 vcc vcc net1 sky130_fd_sc_hd__inv_6) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump2/ngspice_state1/charge_pump2.state 1 x3D1 v(x3.D1) {} {not measured: the bench does not run here (the simulator exited 1: unknown subckt: x12 ck 0 0 vcc vcc net1 sky130_fd_sc_hd__inv_6) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump2/ngspice_state1/charge_pump2.state 2 x3GP1 v(x3.GP1) {} {not measured: the bench does not run here (the simulator exited 1: unknown subckt: x12 ck 0 0 vcc vcc net1 sky130_fd_sc_hd__inv_6) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump2/ngspice_state1/charge_pump2.state 3 x3HV1 v(x3.HV1) {} {not measured: the bench does not run here (the simulator exited 1: unknown subckt: x12 ck 0 0 vcc vcc net1 sky130_fd_sc_hd__inv_6) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/charge_pump2/ngspice_state1/charge_pump2.state 4 VCC v(VCC) {} {not measured: the bench does not run here (the simulator exited 1: unknown subckt: x12 ck 0 0 vcc vcc net1 sky130_fd_sc_hd__inv_6) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/cmos_ac_sweep/ngspice_state1/cmos_ac_sweep.state 0 gain15 gain {} {not obvious: op+ac; the original reads it in: let after op, graph}
+sky130A/xschem_libs/sky130_tests_ase/montecarlo_mismatch_sim/ngspice_state1/montecarlo_mismatch_sim.state 0 vvmvcm v(vm,vcm) {} {stays a save: the Calculator reads no vdc(a,b) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/montecarlo_mismatch_sim/ngspice_state1/montecarlo_mismatch_sim.state 1 vdiff vdiff {} {not in this circuit: its operating point holds no v(vdiff) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/montecarlo_mismatch_sim/ngspice_state1/montecarlo_mismatch_sim.state 2 avg avg {} {not in this circuit: its operating point holds no v(avg) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/sky130_mismatch/ngspice_state1/sky130_mismatch.state 0 run run {} {not in this circuit: its operating point holds no v(run) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/sky130_mismatch/ngspice_state1/sky130_mismatch.state 1 vth1 v(vth1) vdc(vth1) op-only
+sky130A/xschem_libs/sky130_tests_ase/sky130_mismatch/ngspice_state1/sky130_mismatch.state 2 vth2 v(vth2) vdc(vth2) op-only
+sky130A/xschem_libs/sky130_tests_ase/sky130_mismatch/ngspice_state1/sky130_mismatch.state 3 f2 f2 {} {not in this circuit: its operating point holds no v(f2) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/sky130_mismatch/ngspice_state1/sky130_mismatch.state 4 f1 f1 {} {not in this circuit: its operating point holds no v(f1) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state 0 VBG VBG {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state 1 ENN EN_N {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state 2 START START {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state 3 Icc i(VCC) {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state 4 TEMPERAT TEMPERAT {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_diff_amp/ngspice_state1/tb_diff_amp.state 0 b b {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_diff_amp/ngspice_state1/tb_diff_amp.state 1 a a {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_diff_amp/ngspice_state1/tb_diff_amp.state 2 z z {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_ft_test/ngspice_state1/tb_ft_test.state 0 ft ft {} {not obvious: op+ac; the original reads it in: let after op, graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_ft_test/ngspice_state1/tb_ft_test.state 1 ivg i(vg) {} {not obvious: op+ac; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_ft_test/ngspice_state1/tb_ft_test.state 2 ivd i(vd) {} {not obvious: op+ac; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/tb_ft_test_2/ngspice_state1/tb_ft_test_2.state 0 ivg i(vg) {} {not obvious: op+ac+tran; the original reads it in: plot after ac}
+sky130A/xschem_libs/sky130_tests_ase/tb_ft_test_2/ngspice_state1/tb_ft_test_2.state 1 ivd i(vd) {} {not obvious: op+ac+tran; the original reads it in: plot after ac}
+sky130A/xschem_libs/sky130_tests_ase/test_ac/ngspice_state1/test_ac.state 0 out out {} {not obvious: op+ac+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_ac/ngspice_state1/test_ac.state 1 minus minus {} {not obvious: op+ac+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_bipolar/ngspice_state1/test_bipolar.state 2 e1 e1 {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_bipolar/ngspice_state1/test_bipolar.state 3 b2 b2 {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 0 saout saout {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 1 cal cal {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 2 ivvcc i(vvcc) {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 3 en en {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 4 plus plus {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 5 minus minus {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 6 temperat temperat {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 7 vcc vcc {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 8 vss vss {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 9 gp1 gp1 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 10 gp2 gp2 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 11 gn1 gn1 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 12 gn2 gn2 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 13 vssi vssi {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 14 outdiff outdiff {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 15 saoutf saoutf {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 16 zero0 zero0 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 17 zero1 zero1 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 18 zero2 zero2 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 19 sn sn {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 20 sp sp {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 21 ivndiff i(vndiff) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 22 ivpdiff i(vpdiff) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 23 iv3 i(v3) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 24 iv2 i(v2) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 25 iv1 i(v1) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 26 iv4 i(v4) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 27 iv5 i(v5) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 28 iv6 i(v6) {} {not obvious: op+tran; the original reads it in: save after reset}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 29 GN1 GN1 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 30 GP1 GP1 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 31 GN2 GN2 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_comparator/ngspice_state1/test_comparator.state 32 GP2 GP2 {} {not obvious: op+tran; the original reads it in: save after reset, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_customplot/ngspice_state1/test_customplot.state 0 b b {} {not obvious: op+tran; the original reads it in: meas after tran, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_customplot/ngspice_state1/test_customplot.state 1 a a {} {not obvious: op+tran; the original reads it in: meas after tran, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_customplot/ngspice_state1/test_customplot.state 2 del del {} {not obvious: op+tran; the original reads it in: let, graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 0 vcc vcc {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 1 rstb rst_b {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 2 data data {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 3 ck ck {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 4 q q {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_hvl_cells/ngspice_state1/test_hvl_cells.state 5 out out {} {not obvious: op+tran; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_mos_binning/ngspice_state1/test_mos_binning.state 0 ivd2 i(vd2) {} {not measured: the bench does not run here (ase: REFUSED — 1 output expression names something this circuit does not have) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/test_mos_binning/ngspice_state1/test_mos_binning.state 1 Id i(curr) {} {not measured: the bench does not run here (ase: REFUSED — 1 output expression names something this circuit does not have) (op-only)}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 17 allvd1branch all.vd1#branch {} {not obvious: op+dc; the original reads it in: plot after dc}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 18 allvd3branch all.vd3#branch {} {not obvious: op+dc; the original reads it in: plot after dc}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 19 allvd5branch all.vd5#branch {} {not obvious: op+dc; the original reads it in: plot after dc}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 20 allvd8branch all.vd8#branch {} {not obvious: op+dc; the original reads it in: plot after dc}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 21 allvd7branch all.vd7#branch {} {not obvious: op+dc; the original reads it in: plot after dc}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 22 o01v8lvt i(vd1) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 23 o01v8 i(vd2) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 24 ivd4 i(vd4) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 25 ivd5 i(vd5) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 26 ivd9 i(vd9) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 27 g1v8 g1v8 {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_nmos/ngspice_state1/test_nmos.state 28 ivd17 i(vd17) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_pmos/ngspice_state1/test_pmos.state 16 ivd1 i(vd1) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_pmos/ngspice_state1/test_pmos.state 17 ivd2 i(vd2) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_pmos/ngspice_state1/test_pmos.state 18 ivd4 i(vd4) {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_pmos/ngspice_state1/test_pmos.state 19 g1v8 g1v8 {} {not obvious: op+dc; the original reads it in: graph}
+sky130A/xschem_libs/sky130_tests_ase/test_sweep_res_l/ngspice_state1/test_sweep_res_l.state 0 iv2 i(v2) idc(v2) op-only

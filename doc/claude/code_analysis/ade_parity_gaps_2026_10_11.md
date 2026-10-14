@@ -125,6 +125,14 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
      already one, else by the qualifier's family), derived from git by
      `tools/migrate/r208d_saves_revert.tcl`. The three `-idc(v1)` rows and the nine composed ones
      stay migrated.
+   - ⚖ **2026-10-13, then: where the author plainly meant the operating point, the row is
+     `vdc(x)`/`idc(x)` again** (ase_l.md R-OUT11; the user: *"proceed with vdc(vbg) and analogues
+     of that in all test-benches where there is an operating point analysis and it is obvious
+     that the intention was to display operating point information"*). Obvious = the bench's only
+     enabled analysis is the operating point, or the original bench `print`s that exact text
+     after `op`; converted only where the real run shows a number. The rows and the reason each
+     other candidate stays are in `tests/headless/data/op_measures.txt` (derived by
+     `tools/migrate/op_measures.tcl`), fenced by `tests/headless/test_ase_op_measures.tcl`.
    - **Committed benches migrated:** every row whose analysis is obvious (1296 rows in 45
      `.state` files, counted by the 2026-10-12 migration: one analysis enabled, or the Plot tick on a single sweep, plus the nine
      infix rows — the eight IHP resistance rows `Vcc/I(Vr)`-shaped are Save-only on an op+DC

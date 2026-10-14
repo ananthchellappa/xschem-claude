@@ -28,10 +28,13 @@
 #       netlist in hand a bare name is admitted (text cannot tell a node from a
 #       .meas/let result)
 #   TM  no committed bench row is a bare analysis-qualified single signal
-#       (R208d's migration put back as saves), derived over every state
+#       (R208d's migration put back as saves), derived over every state,
+#       except R-OUT11's operating-point measures at exactly their text
 #   TR  every row the revert put back holds the save tools/migrate's table
-#       says, the table is internally consistent, and its `pre` column is
-#       re-derived from git (1e987ffd^) where the history is present
+#       says (or, where R-OUT11 later made it an operating-point measure,
+#       tests/headless/data/op_measures.txt's vdc()/idc() of that save), the
+#       table is internally consistent, and its `pre` column is re-derived
+#       from git (1e987ffd^) where the history is present
 # Bands (display arm -- self-skip with SKIPPED: under --nogui):
 #   TW1 two tabs, Measures shown on open; each tree holds its own rows
 #   TW2 the Value header sorts the VIEW and a second click restores it; the
@@ -231,6 +234,20 @@ group TD {
         {{.save all} {.save v(out)}}
 }
 
+# R-OUT11's conversions (tests/headless/data/op_measures.txt): repo-relative
+# "state#index" -> the measure the row now holds.  A row R-OUT11 made a
+# measure on purpose is exempt from TM and supersedes TR's save, but only at
+# exactly the table's text.
+proc tm_opmeasures {} {
+    set out [dict create]
+    set fh [open [file join $::here data op_measures.txt] r] ; set t [read $fh] ; close $fh
+    foreach ln [split $t "\n"] {
+        if {[string trim $ln] eq {} || [string index $ln 0] eq {#}} continue
+        lassign $ln rel idx name old new
+        if {$new ne {}} { dict set out "$rel#$idx" $new }
+    }
+    return $out
+}
 # =============================================================================
 # TM -- NO COMMITTED ROW IS A BARE QUALIFIED SINGLE SIGNAL
 # =============================================================================
@@ -238,25 +255,35 @@ group TM {
     set corpus [test_corpus_files $repo *.state]
     test_corpus_note $corpus
     set files [dict get $corpus files]
-    set nst 0 ; set nrows 0 ; set nsave 0 ; set bare {} ; set neg 0
+    set opm [tm_opmeasures]
+    set nst 0 ; set nrows 0 ; set nsave 0 ; set bare {} ; set neg 0 ; set nopm 0
     foreach f $files {
         if {[catch {set fh [open $f r]; set t [read $fh]; close $fh}]} continue
         set outs {}
         foreach ln [split $t "\n"] { if {[string match {outputs *} $ln]} { set outs [lindex $ln 1] } }
         incr nst
+        set rel [string range [file normalize $f] [string length $repo/] end]
+        set i -1
         foreach o $outs {
+            incr i
             if {![dict exists $o expr]} continue
             incr nrows
             set e [string trim [dict get $o expr]]
             if {[ase::output_tab $e] eq {saves}} { incr nsave }
             if {[regexp -nocase {^(vt|vf|vdc|vs|it|if|idc|is)\([^()]*\)$} $e]} {
+                if {[dict exists $opm "$rel#$i"] && [dict get $opm "$rel#$i"] eq $e} {
+                    incr nopm
+                    continue
+                }
                 lappend bare "[file tail $f]: $e"
             }
             if {[regexp -nocase {^-(vt|vf|vdc|vs|it|if|idc|is)\([^()]*\)$} $e]} { incr neg }
         }
     }
-    check "TM no committed Outputs row is a bare analysis-qualified single signal -- R208d's migration of those rows is put back as saves (rows)" \
+    check "TM no committed Outputs row is a bare analysis-qualified single signal -- R208d's migration of those rows is put back as saves -- except, at exactly its text, a row R-OUT11 made an operating-point measure (rows)" \
         [lrange $bare 0 9] {}
+    check "TM ...and that exemption is not vacuous and admits nothing else: every R-OUT11 measure was found at its own row and text (found, table)" \
+        [list $nopm [dict size $opm]] [list [dict size $opm] [dict size $opm]]
     check "TM ...and the scan is not vacuous: states and rows were read, saves exist, and the signed qualified rows (a measure: a save has no sign) are still there (states > 0, saves > 0, signed > 0)" \
         [list [expr {$nst > 0}] [expr {$nsave > 0}] [expr {$neg > 0}]] {1 1 1}
 }
@@ -281,7 +308,8 @@ group TR {
         lappend rows $ln
     }
     set cache [dict create]
-    set wrong {} ; set incons {} ; set nfam 0 ; set npre 0
+    set opm [tm_opmeasures]
+    set wrong {} ; set incons {} ; set nfam 0 ; set npre 0 ; set nsup 0 ; set supbad {}
     foreach r $rows {
         lassign $r rel idx name pre migrated reverted
         if {![dict exists $cache $rel]} {
@@ -291,7 +319,15 @@ group TR {
         }
         set o [lindex [dict get $cache $rel] $idx]
         set got [list [ase::state_get $o name] [ase::state_get $o expr]]
-        if {$got ne [list $name $reverted]} { lappend wrong "$rel#$idx: $got != [list $name $reverted]" }
+        set want $reverted
+        # R-OUT11 later made this save an operating-point measure
+        if {[dict exists $opm "$rel#$idx"]} {
+            incr nsup
+            set want [dict get $opm "$rel#$idx"]
+            regexp {^(.)\((.*)\)$} $reverted -> f sig
+            if {$want ne "[string tolower $f]dc($sig)"} { lappend supbad "$rel#$idx: $reverted -> $want" }
+        }
+        if {$got ne [list $name $want]} { lappend wrong "$rel#$idx: $got != [list $name $want]" }
         if {[ase::output_is_save $pre]} {
             incr npre
             if {$reverted ne $pre} { lappend incons "$rel#$idx: pre $pre was a save, reverted $reverted" }
@@ -302,8 +338,8 @@ group TR {
     }
     check "TR the table is not vacuous: rows put back to the author's own save and rows put back by family both exist (rows>1000, pre>0, family>0)" \
         [list [expr {[llength $rows] > 1000}] [expr {$npre > 0}] [expr {$nfam > 0}]] {1 1 1}
-    check "TR every committed row the revert touched holds the table's {name save} (first mismatches)" \
-        [list [llength $wrong] [lrange $wrong 0 4]] {0 {}}
+    check "TR every committed row the revert touched holds the table's {name save}, or -- for a row R-OUT11 later made an operating-point measure -- that save's own signal under vdc()/idc() (first mismatches; superseded rows > 0; superseded rows that are not the save's own signal)" \
+        [list [llength $wrong] [lrange $wrong 0 4] [expr {$nsup > 0}] $supbad] {0 {} 1 {}}
     check "TR the table is consistent with its rule: the author's text when it was a save, else v()/i() by the qualifier's family" \
         [list [llength $incons] [lrange $incons 0 4]] {0 {}}
     # `pre` re-derived from git -- the history is the authority, the table its copy

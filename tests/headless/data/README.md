@@ -375,3 +375,15 @@ rows to their qualified spelling (commit `1e987ffd`, less the rows `d2d25b1c` pu
 `new`, and `old` read in `analysis` to evaluate to exactly what `new` does on a synthetic
 four-analysis results file the band writes into its scratch. Edit a migrated bench row and
 its line here together.
+
+## `op_measures.txt`
+
+Not a simulation artefact: ase_l.md R-OUT11's record of the committed benches' plain signal
+rows on an operating-point bench, one `{state index name old new why}` list per candidate row —
+`new` is the `vdc()`/`idc()` measure the row was converted to, or `{}` when it stays, and `why`
+the evidence (`op-only`, or the original's `print` after `op`) or the reason it stays. Derived by
+`tools/migrate/op_measures.tcl . --from 2e1e4ccb --vars <dir>` from the states and each bench's
+real operating point (`tools/migrate/op_measures_vars.tcl`, registry ngspice). Read by
+`tests/headless/test_ase_op_measures.tcl` (all bands) and by bands TM and TR of
+`tests/headless/test_ase_outputs_tabs.tcl`, which exempt a converted row at exactly its `new`.
+Edit a converted bench row and its line here together.
