@@ -10,7 +10,11 @@
 # DERIVED, never a hand list.  A CANDIDATE is an Outputs row of a bench whose
 # operating point is enabled and whose whole text is a save (`v(x)`,
 # `v(a,b)`, `i(x)`) or a bare name.  It is OBVIOUS when
-#   op-only   the bench's ONLY enabled analysis is the operating point; or
+#   op-only   the bench's ONLY enabled analysis is the operating point, and
+#             the cell IS a test bench: its schematic places no port pin
+#             (ipin, opin, iopin).  A cell with ports is a circuit another
+#             bench instantiates; run alone its inputs float, and op-only is
+#             the migration's default for it, not the author's choice; or
 #   print     the bench has other analyses too, and the bench it was migrated
 #             from (<pdk>/xschem_libs/<lib less _ase>/<cell>) has a `print`
 #             line in a .control block, with `op` the last analysis before
@@ -141,6 +145,13 @@ proc sources {orel e} {
   if {$src eq {}} { return {the original names it nowhere} }
   return "the original reads it in: [join $src {, }]"
 }
+# The port pins (ipin, opin, iopin) the bench's own schematic places.
+proc ports {rel} {
+  set p [file split $rel]
+  set sch [file join [lindex $p 0] xschem_libs [lindex $p 2] [lindex $p 3] schematic [lindex $p 3].sch]
+  set s [slurp $sch]
+  return [llength [regexp -all -line -inline {^C \{(?:[^\}/]*/)?(?:ipin|opin|iopin)\}} $s]]
+}
 proc key {rel} { return [string map {/ %} $rel] }
 
 if {$from eq {}} {
@@ -170,6 +181,11 @@ foreach rel $files {
     set why {}
     if {$en eq {op}} {
       set rule {op-only}
+      set np [ports $rel]
+      if {$np > 0} {
+        lappend rows [list $rel $i $nm $e {} "not a test bench: the cell places $np port pins, a circuit for a bench to instantiate, and op-only is the migration's default ($rule)"]
+        continue
+      }
     } else {
       set pl [op_print $orel $e]
       if {$pl eq {}} {

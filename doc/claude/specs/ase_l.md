@@ -949,32 +949,39 @@ They should not influence the input to the simulator."* ADE-L is the floor
   intention was to display operating point information."* The rule, for a committed bench's
   row whose whole text is a save (`v(x)`, `i(x)`) or a bare name, on a bench whose operating
   point is enabled:
-  - **Obvious** means either the bench's **only** enabled analysis is the operating point, or
-    the bench it was migrated from (`<pdk>/xschem_libs/<lib less _ase>/<cell>`) has a `print`
+  - **Obvious** means either the bench's **only** enabled analysis is the operating point
+    **and the cell is a test bench** — its schematic places no port pin (`ipin`, `opin`,
+    `iopin`) — or the bench it was migrated from (`<pdk>/xschem_libs/<lib less _ase>/<cell>`) has a `print`
     in its `.control` block, with `op` the last analysis before it, naming the row's **exact**
     text — the author printed it at the operating point (IHP `ac_hbt_13g2`'s
     `print Vc Vb I(Vce)` after `op`). A bench with other analyses whose row came only from a
     graph, a `plot`, a `save` or a `wrdata` is **not** obvious and the row stays: `tb_bandgap`'s
-    `VBG` is read from a transient graph, so it stays a bare name.
+    `VBG` is read from a transient graph, so it stays a bare name. A cell with ports is a
+    circuit a bench instantiates (`bandgap`, `bandgap_opamp`, `charge_pump`, `charge_pump2`,
+    placed by `tb_bandgap`, `bandgap` and `tb_charge_pump`): run alone its inputs float, its
+    op-only state is the migration's default rather than the author's choice, and its
+    operating point is numerical noise, so its rows stay saves. This is why the user's own
+    example is not converted anywhere: `bandgap_opamp` is such a cell and holds no `vbg` net,
+    and `tb_bandgap`'s `VBG` is the transient row above.
   - **The row becomes `vdc(<x>)` / `idc(<x>)`**, keeping the author's spelling and case of the
     signal (`v(CLK)` → `vdc(CLK)`, `I(Vce)` → `idc(Vce)`, `Vc` → `vdc(Vc)`), so it sorts into
     Measures (R-OUT7) and its Value is the operating-point number. Every other field of the
     row is unchanged.
   - **Only where the number is real.** An obvious row stays as it is when the signal is not in
-    the bench's operating point (the stale `x1.*` rows of `bandgap`, `bandgap_opamp` and
-    `charge_pump`, and `bandgap_opamp`'s `vbg`: `vdc()` of them shows the Calculator's
-    *unknown token* refusal), when it is the two-node form (`montecarlo_mismatch_sim`'s
+    the bench's operating point (`vdc()` of such a name shows the Calculator's *unknown
+    token* refusal; `sky130_mismatch`'s `run`, `f1`, `f2` are `let`/`meas` names), when it is the two-node form (`montecarlo_mismatch_sim`'s
     `v(vm,vcm)`: the Calculator reads no `vdc(a,b)`), or when the bench does not run here
-    (`charge_pump2` needs the `sky130_fd_sc_hd` deck, which is not vendored;
-    `test_mos_binning` is refused by ASE-L's pre-flight before it runs).
+    (`test_mos_binning` is refused by ASE-L's pre-flight before it runs, because its stale
+    `i(curr)` row names nothing in the circuit).
   - Derived by `tools/migrate/op_measures.tcl` from the states at `2e1e4ccb`, the original
     benches, and each bench's real operating point (`tools/migrate/op_measures_vars.tcl`, the
     registry ngspice). `tests/headless/data/op_measures.txt` holds every candidate row as
     `{state index name old new why}` — the converted ones with their evidence, the ones that
     stay with their reason — and `tests/headless/test_ase_op_measures.tcl` holds the tree to
     it: OM2 the committed rows, OM3 the spelling, OM4 the coverage and OM5 the evidence
-    re-derived by its own scan, OM6 only the `expr` fields moved (git), OM7 each converted
-    bench run on the registry ngspice with every converted row's Value a number equal to the
+    re-derived by its own scan (the port pins counted by xschem's own symbol types), OM6 only the `expr` fields moved (git), OM7 each converted
+    bench run on the registry ngspice with every converted row in the Measures tree
+    (ase::ui::measures_order) and the Value it shows a number equal to the
     results file's own vector and to ngspice's own `print` of the author's text. Bands TM and
     TR of `test_ase_outputs_tabs` exempt these rows at exactly the table's text.
 

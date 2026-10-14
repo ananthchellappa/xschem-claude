@@ -4737,7 +4737,14 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   on a form that is part of saved session state, which makes it the user's call and not internal
   engineering. A `rule` debt asks them.
 
-**The next free number is 1660.**
+- **1660** — two operating-point rows the R-OUT11 sweep could not convert:
+  `test_mos_binning`'s stale `i(curr)` makes ASE-L's pre-flight refuse the whole bench, and the
+  Calculator reads no `vdc(a,b)` (`montecarlo_mismatch_sim`'s `v(vm,vcm)`). ⚠ **1661 is taken in
+  `~/dev/xschem-op-wcard`**, whose own pointer then named 1662; run both checks before minting.
+
+~~**The next free number is 1660.**~~
+
+**The next free number is 1662.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

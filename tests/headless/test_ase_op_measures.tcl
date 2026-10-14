@@ -25,12 +25,14 @@
 #   OM4  COVERAGE, re-derived without the tool: the table holds exactly the
 #        plain signal rows of every bench whose operating point is enabled
 #   OM5  OBVIOUSNESS, re-derived without the tool: an `op-only` row's bench
-#        enables nothing else; a `print` row's original prints that exact
-#        text after `op`; no row left as "not obvious" has such a print
+#        enables nothing else and is a test bench (its schematic places no
+#        port pin); a `print` row's original prints that exact text after
+#        `op`; no row left as "not obvious" has such a print
 #   OM6  git: each touched state at 2e1e4ccb with only the converted exprs
 #        replaced is byte-identical to the committed file
 #   OM7  REAL ngspice (the registry's) on the bundled PDK benches: each
-#        converted bench runs, each converted row's Value is a number, the
+#        converted bench runs, each converted row sits in the Measures tree
+#        and the Value that tree shows is a number, the
 #        number is the results file's own vector, and it is what ngspice's
 #        own `print` of the old text gives at the operating point; rows that
 #        stay for a measured reason still have that reason
@@ -223,8 +225,23 @@ proc om5_original {rel} {
     if {![regsub {_ase$} [lindex $p 2] {} olib]} { return {} }
     return [file join [lindex $p 0] xschem_libs $olib [lindex $p 3] schematic [lindex $p 3].sch]
 }
+# The port pins the bench's own schematic places, counted by xschem itself
+# (each instance's symbol `type`), not by a text scan: a cell with ports is a
+# circuit some bench instantiates, and run alone its inputs float.
+proc om5_ports {rel} {
+    if {[dict exists $::om5_pc $rel]} { return [dict get $::om5_pc $rel] }
+    set p [file split $rel]
+    xschem load [file join $::repo [lindex $p 0] xschem_libs [lindex $p 2] [lindex $p 3] schematic [lindex $p 3].sch]
+    set n 0
+    for {set i 0} {$i < [xschem get instances]} {incr i} {
+        if {[xschem getprop instance $i cell::type] in {ipin opin iopin}} { incr n }
+    }
+    dict set ::om5_pc $rel $n
+    return $n
+}
+set ::om5_pc [dict create]
 group OM5 {
-    set bad {} ; set nno 0 ; set npr 0 ; set nop 0
+    set bad {} ; set nno 0 ; set npr 0 ; set nop 0 ; set cellbad {} ; set ncell 0 ; set nbench 0
     foreach r $ROWS {
         lassign $r rel idx name old new why
         set en [om_enabled [om_read $rel]]
@@ -232,6 +249,13 @@ group OM5 {
         if {$why eq {op-only} || [string match {* (op-only)} $why]} {
             incr nop
             if {$en ne {op}} { lappend bad "$rel#$idx says op-only, bench enables $en" }
+            set np [om5_ports $rel]
+            if {[regexp {^not a test bench: the cell places (\d+) port pins} $why -> said]} {
+                incr ncell
+                if {$np == 0 || $said != $np} { lappend cellbad "$rel#$idx says $said port pins, xschem counts $np" }
+            } elseif {$np > 0} {
+                lappend cellbad "$rel#$idx: op-only on a cell with $np port pins, [expr {$new eq {} ? {kept} : {converted}}] as '$why'"
+            } elseif {$new ne {}} { incr nbench }
         } elseif {[string match {print after op in *} $why] || [string match {* (print after op in *} $why]} {
             incr npr
             if {$en eq {op} || {op} ni $en || !$pr} { lappend bad "$rel#$idx says printed after op: enabled $en, printed $pr" }
@@ -246,6 +270,10 @@ group OM5 {
         $bad {}
     check "OM5 ...and every kind was judged (op-only > 0, printed > 0, not obvious > 0)" \
         [list [expr {$nop > 0}] [expr {$npr > 0}] [expr {$nno > 0}]] {1 1 1}
+    check "OM5 an op-only bench is evidence only when the cell IS a test bench: no row converted on op-only alone sits on a cell whose schematic places a port pin (ipin, opin, iopin, counted by xschem's own symbol types), and every row kept as 'not a test bench' sits on one, with the count it states (rows that disagree)" \
+        $cellbad {}
+    check "OM5 ...not vacuous: op-only rows converted on a test bench > 0, rows kept because the cell is not a test bench > 0" \
+        [list [expr {$nbench > 0}] [expr {$ncell > 0}]] {1 1}
 }
 
 # =============================================================================
@@ -372,10 +400,19 @@ if {$NG eq {}} {
             foreach c $conv {
                 lassign $c - idx name old new
                 incr nconv
-                set o [lindex [dict get $r outputs] $idx]
-                set cell ABSENT
-                set rk [ase::ui::output_result_key $o]
-                if {[dict exists $res $rk]} { set cell [dict get $res $rk] }
+                # the cell the Measures tree shows: the row must BE in that
+                # tree (a save has no Value column), and its Value is what
+                # the populate writes there
+                set outs [dict get $r outputs]
+                set o [lindex $outs $idx]
+                if {$idx ni [ase::ui::measures_order $outs $res 0]} {
+                    set cell "NOT IN MEASURES (tab [ase::output_tab [ase::state_get $o expr]])"
+                } else {
+                    # the number the populate hands ase::format_value, whose
+                    # engineering spelling is display only
+                    set cell [ase::ui::output_value $o $res]
+                    if {$cell eq {}} { set cell BLANK }
+                }
                 lappend shown "[lindex [file split $rel] 3] $new=$cell"
                 if {![string is double -strict $cell]} { lappend notnum "$rel#$idx $new: $cell" ; continue }
                 # the results file's own vector, at full precision
@@ -427,7 +464,7 @@ if {$NG eq {}} {
         foreach s $shown { puts "note: OM7 shown $s" }
         check "OM7 every bench holding a converted row RUNS on the registry ngspice -- ASE-L's pre-flight admits each measure, the simulator exits 0 (benches > 0; benches that did not)" \
             [list [expr {$nbench > 0}] $norun] {1 {}}
-        check "OM7 every converted row's Value cell is a NUMBER -- not a refusal, not wave, not blank (rows > 0; rows that are not)" \
+        check "OM7 every converted row is in the MEASURES tree and the Value cell that tree shows is a NUMBER -- not a save without a value, not a refusal, not wave, not blank (rows > 0; rows that are not)" \
             [list [expr {$nconv > 0}] $notnum] {1 {}}
         check "OM7 ...and it is the results file's OWN operating-point vector of that signal (xschem raw values): the Calculator's answer agrees to its eight digits and the cell to its seven (rows that differ)" \
             $rawoff {}
