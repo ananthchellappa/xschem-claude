@@ -131,7 +131,7 @@ treating any of them as fact. Gaps are a snapshot at `1a67a5d4`; re-check before
      that the intention was to display operating point information"*). Obvious = the bench's only
      enabled analysis is the operating point on a test bench (a cell with port pins is a circuit
      another bench instantiates, and its op-only state is a migration default, so its rows stay
-     saves), or the original bench `print`s that exact text
+     saves; owed to the user as rule `R-OUT11_test_bench_cells`), or the original bench `print`s that exact text
      after `op`; converted only where the real run shows a number. The rows and the reason each
      other candidate stays are in `tests/headless/data/op_measures.txt` (derived by
      `tools/migrate/op_measures.tcl`), fenced by `tests/headless/test_ase_op_measures.tcl`.

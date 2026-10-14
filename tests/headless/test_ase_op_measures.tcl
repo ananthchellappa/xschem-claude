@@ -26,7 +26,9 @@
 #        plain signal rows of every bench whose operating point is enabled
 #   OM5  OBVIOUSNESS, re-derived without the tool: an `op-only` row's bench
 #        enables nothing else and is a test bench (its schematic places no
-#        port pin); a `print` row's original prints that exact text after
+#        port pin), and its original's .control runs op alone, where a row
+#        kept as "not a test bench" has an original with no .control (the
+#        migration's default); a `print` row's original prints that exact text after
 #        `op`; no row left as "not obvious" has such a print
 #   OM6  git: each touched state at 2e1e4ccb with only the converted exprs
 #        replaced is byte-identical to the committed file
@@ -239,9 +241,25 @@ proc om5_ports {rel} {
     dict set ::om5_pc $rel $n
     return $n
 }
+# The analyses the original's .control blocks run, in order of first use, or
+# `none` when the original carries no .control block at all -- in which case
+# ase_migrate.py enabled op by default and the author chose nothing.
+proc om5_control_runs {orel} {
+    if {$orel eq {} || ![file isfile [file join $::repo $orel]]} { return missing }
+    set blks [regexp -all -inline -nocase {\.control\M.*?\.endc} [om_read $orel]]
+    if {![llength $blks]} { return none }
+    set runs {}
+    foreach blk $blks {
+        foreach ln [split [string map {"\n+" " "} $blk] "\n"] {
+            set h [string tolower [lindex [regexp -all -inline {\S+} $ln] 0]]
+            if {$h in {op dc ac tran noise pz tf sens disto} && $h ni $runs} { lappend runs $h }
+        }
+    }
+    return $runs
+}
 set ::om5_pc [dict create]
 group OM5 {
-    set bad {} ; set nno 0 ; set npr 0 ; set nop 0 ; set cellbad {} ; set ncell 0 ; set nbench 0
+    set bad {} ; set nno 0 ; set npr 0 ; set nop 0 ; set cellbad {} ; set ncell 0 ; set nbench 0 ; set authbad {}
     foreach r $ROWS {
         lassign $r rel idx name old new why
         set en [om_enabled [om_read $rel]]
@@ -250,12 +268,17 @@ group OM5 {
             incr nop
             if {$en ne {op}} { lappend bad "$rel#$idx says op-only, bench enables $en" }
             set np [om5_ports $rel]
+            set runs [om5_control_runs [om5_original $rel]]
             if {[regexp {^not a test bench: the cell places (\d+) port pins} $why -> said]} {
                 incr ncell
                 if {$np == 0 || $said != $np} { lappend cellbad "$rel#$idx says $said port pins, xschem counts $np" }
+                if {$runs ne {none}} { lappend authbad "$rel#$idx kept as the migration's default, but its original's .control runs '$runs'" }
             } elseif {$np > 0} {
                 lappend cellbad "$rel#$idx: op-only on a cell with $np port pins, [expr {$new eq {} ? {kept} : {converted}}] as '$why'"
-            } elseif {$new ne {}} { incr nbench }
+            } elseif {$new ne {}} {
+                incr nbench
+                if {$runs ne {op}} { lappend authbad "$rel#$idx converted on op-only, but its original's .control runs '$runs', not op alone" }
+            }
         } elseif {[string match {print after op in *} $why] || [string match {* (print after op in *} $why]} {
             incr npr
             if {$en eq {op} || {op} ni $en || !$pr} { lappend bad "$rel#$idx says printed after op: enabled $en, printed $pr" }
@@ -274,6 +297,8 @@ group OM5 {
         $cellbad {}
     check "OM5 ...not vacuous: op-only rows converted on a test bench > 0, rows kept because the cell is not a test bench > 0" \
         [list [expr {$nbench > 0}] [expr {$ncell > 0}]] {1 1}
+    check "OM5 the op-only state is the AUTHOR'S choice on every converted row and the migration's default on every row kept as 'not a test bench': a converted row's original .control runs op and no other analysis, and a kept row's original has no .control block at all (rows that disagree)" \
+        $authbad {}
 }
 
 # =============================================================================

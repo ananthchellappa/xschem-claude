@@ -958,11 +958,17 @@ They should not influence the input to the simulator."* ADE-L is the floor
     graph, a `plot`, a `save` or a `wrdata` is **not** obvious and the row stays: `tb_bandgap`'s
     `VBG` is read from a transient graph, so it stays a bare name. A cell with ports is a
     circuit a bench instantiates (`bandgap`, `bandgap_opamp`, `charge_pump`, `charge_pump2`,
-    placed by `tb_bandgap`, `bandgap` and `tb_charge_pump`): run alone its inputs float, its
-    op-only state is the migration's default rather than the author's choice, and its
-    operating point is numerical noise, so its rows stay saves. This is why the user's own
-    example is not converted anywhere: `bandgap_opamp` is such a cell and holds no `vbg` net,
-    and `tb_bandgap`'s `VBG` is the transient row above.
+    placed by `tb_bandgap`, `bandgap` and `tb_charge_pump`): run alone its inputs float, and
+    its op-only state is the migration's default rather than the author's choice — the
+    original has no `.control` block, and `ase_migrate.py` enables op when it extracts
+    nothing — so its rows stay saves. Where op-only IS the author's choice, the original's
+    `.control` runs `op` and no other analysis: `sky130_mismatch` (a Monte Carlo loop of op
+    points) and `test_sweep_res_l` (an `alterparam` loop of op points) — those authors
+    plotted the loop, and the migrated state runs one op, so the Value is that one point.
+    This is why the user's own example is not converted anywhere: `bandgap_opamp` is such a
+    cell and holds no `vbg` net, and `tb_bandgap`'s `VBG` is the transient row above. ⚖ The
+    test-bench condition narrows the user's *Yes* (14 of the 20 rows the ruling was asked
+    about stay saves) and is owed to the user as rule `R-OUT11_test_bench_cells`.
   - **The row becomes `vdc(<x>)` / `idc(<x>)`**, keeping the author's spelling and case of the
     signal (`v(CLK)` → `vdc(CLK)`, `I(Vce)` → `idc(Vce)`, `Vc` → `vdc(Vc)`), so it sorts into
     Measures (R-OUT7) and its Value is the operating-point number. Every other field of the
@@ -979,7 +985,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
     `{state index name old new why}` — the converted ones with their evidence, the ones that
     stay with their reason — and `tests/headless/test_ase_op_measures.tcl` holds the tree to
     it: OM2 the committed rows, OM3 the spelling, OM4 the coverage and OM5 the evidence
-    re-derived by its own scan (the port pins counted by xschem's own symbol types), OM6 only the `expr` fields moved (git), OM7 each converted
+    re-derived by its own scan (the port pins counted by xschem's own symbol types, and
+    the original's `.control` running op alone on a converted row and absent on a kept
+    cell), OM6 only the `expr` fields moved (git), OM7 each converted
     bench run on the registry ngspice with every converted row in the Measures tree
     (ase::ui::measures_order) and the Value it shows a number equal to the
     results file's own vector and to ngspice's own `print` of the author's text. Bands TM and
