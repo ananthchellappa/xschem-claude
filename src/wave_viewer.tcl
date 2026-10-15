@@ -5753,7 +5753,21 @@ proc wviewer::set_plot_dest {req {token {}}} {
   if {$new eq $cur} { return $cur }
   set dest($token) $new
   wviewer::log_action [list wviewer::set_plot_dest $new $token]
+  wviewer::dest_notify $token
   return $new
+}
+
+# EVERY writer of `dest(token)` calls this after the write, so a control that
+# MIRRORS the destination elsewhere -- the Calculator's W13 -- shows the
+# viewer's current choice without polling and without guessing which side is
+# newer (row SWD16 of test_wave_subwindows derives the writers from the
+# interpreter's own proc bodies). The listener is optional and never raises
+# into the writer.
+proc wviewer::dest_notify {token} {
+  if {[info commands ::calc::viewer_dest] ne {}} {
+    catch {::calc::viewer_dest $token}
+  }
+  return {}
 }
 
 # The WINDOW-level half of the destination policy: everything that must happen
@@ -5802,13 +5816,17 @@ proc wviewer::dest_prepare {token dest {gi {}}} {
 # replay rebuilt an EMPTY subwindow or tab with the plot lost (row SWR2 of
 # test_wave_subwindows, TGR2 of test_wave_tabs). `xschem log_action -suppress`
 # is the C depth counter replay_action_log uses; a suppressed line does not set
-# the dedup flag. Returns the command's result; an error is re-raised after pop.
+# the dedup flag. TRANSPARENT to everything but the log: the depth is popped
+# on every path, then the script's own completion is handed on unchanged -- an
+# error keeps its -errorinfo and -errorcode, and a break, continue or return
+# in the script acts in the CALLER (rows SWU1-SWU4 of test_wave_subwindows).
 proc wviewer::unlogged {cmd} {
   catch {xschem log_action -suppress push}
-  set rc [catch {uplevel 1 $cmd} res]
+  set rc [catch {uplevel 1 $cmd} res opts]
   catch {xschem log_action -suppress pop}
-  if {$rc} { return -code error $res }
-  return $res
+  if {$rc == 0} { return $res }
+  dict incr opts -level
+  return -options $opts $res
 }
 
 # The EFFECTIVE target strip index of `token`: the stored value clamped to the
@@ -8726,7 +8744,13 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   if {![wviewer::dest_prepare $token $dest]} {
     return [list [list {} "cannot open a new tab or subwindow for this plot"]]
   }
-  set land [wviewer::plot_sites $token [llength $exprs] $dest]
+  # The landing runs UNLOGGED, like dest_prepare's window half: plot_sites'
+  # single-mode target move (set_target_strip) self-logs, and that line set the
+  # wrappers' dedup flag, so a typed plot under New Strip never reached the log
+  # and its replay moved the target onto nothing. The gesture's own line
+  # replays all of it (row SWR3 of test_wave_subwindows: 5 destinations x both
+  # modes). ase::ui::auto_plot calls plot_sites directly and is not affected.
+  set land [wviewer::unlogged [list wviewer::plot_sites $token [llength $exprs] $dest]]
   if {![llength $colors]} { set colors [dict get $land colors] }
   set plan [dict create targets [dict get $land targets]]
   set nnew [dict get $land new]
@@ -8744,15 +8768,19 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
     lappend dblist [expr {$i < [llength $dbs] ? [lindex $dbs $i] : {}}]
     lappend swlist [expr {$i < [llength $sweeps] ? [lindex $sweeps $i] : {}}]
   }
-  foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist sw $swlist {
-    set err [wviewer::add_trace $token $gi $ex {} $col $db $sw]
-    if {$err ne {}} { lappend errs [list $ex $err] }
-  }
-  # every add_trace regenerates on success, so the canvas normally already
-  # matches the model; when the whole batch failed (bad exprs, no raw) the
-  # strips created above would otherwise exist only in the model
-  if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
-    wviewer::regenerate $token
+  # ...and so do the traces and the redraw, for the same reason: nothing a
+  # helper below logs may stand in for the gesture's own line
+  wviewer::unlogged {
+    foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist sw $swlist {
+      set err [wviewer::add_trace $token $gi $ex {} $col $db $sw]
+      if {$err ne {}} { lappend errs [list $ex $err] }
+    }
+    # every add_trace regenerates on success, so the canvas normally already
+    # matches the model; when the whole batch failed (bad exprs, no raw) the
+    # strips created above would otherwise exist only in the model
+    if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
+      wviewer::regenerate $token
+    }
   }
   return $errs
 }
@@ -14705,6 +14733,7 @@ proc wviewer::browser_state_apply {token d} {
   catch {wviewer::searchbar_set $f.wvsearch [wviewer::dget $d search {}]}
   catch {wviewer::searchbar_set $f.wvfilter [wviewer::dget $d filter {}]}
   catch {set dest($token) [wviewer::dest_norm [wviewer::dget $d dest append]]}
+  wviewer::dest_notify $token
   # TWO-PANE item 14: R11's two class boxes, restored BEFORE `browser_show`.
   # THE ORDER IS FORCED -- they are CLASS FILTERS, and `browser_show` populates
   # the tree and the sea, so restoring them afterwards would build the sidebar

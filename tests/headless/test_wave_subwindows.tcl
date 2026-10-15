@@ -39,7 +39,13 @@
 #         subwindow) and New SubWin, New Tab.
 #   SWR*  REPLAY, both arms, in a child with its own --logdir: a CIW-typed plot
 #         under New SubWin replays to exactly one subwindow holding the plot
-#         (SWR2); Replace is the control (SWR1).
+#         (SWR2); Replace is the control (SWR1). SWR3: every destination
+#         (Append, New Strip, Replace, New SubWin, New Tab) under both plot
+#         modes -- the typed line reaches the log once and its replay rebuilds
+#         the recorded window, with a non-vacuity leg per cell.
+#   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
+#         -errorcode, break/continue/return act in the caller, and the suppress
+#         depth is balanced on every path (SWU4, in the SWR child).
 #   SWG*  DISPLAY -- the real window: the grid on the canvas (graphbb), the
 #         rect tokens, click-to-target and the in-place frame move, New/Close
 #         SubWin through the menu and keys, plotting into the target
@@ -98,6 +104,14 @@
 #           new_subwin's line set the dedup flag that drops the typed line)
 #   F2 tabs_serialize: inactive tabs written with sharedx 0 and no sw tags
 #        -> display SWG14 ONLY (SWG13 serialises the ACTIVE branch)
+#   F3 plot_signals: plot_sites called LOGGED again (ffdbe643's code)
+#        -> SWR3 single/newstrip ONLY, both arms: set_target_strip's own line
+#           set the dedup flag, the typed plot line never reached the log
+#           (typed 0) and the replay lost the plot. The other nine cells move
+#           no target, which is why SWR1/SWR2 never saw it.
+#   F4 unlogged: the pre-fix `if {$rc} { return -code error $res }`
+#        -> SWU1 errorcode leg (NONE), SWU2 (the continue raised an empty
+#           error and the suite died at that row)
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -258,6 +272,65 @@ check "SWP12 a split never relocates an empty strip out of another subwindow" \
 check "SWP12 sw_same" \
   [list [pcall {wviewer::sw_same $gr 0 1}] [pcall {wviewer::sw_same $gr 1 2}] \
         [pcall {wviewer::sw_same $gr 0 9}]] {1 0 0}
+
+# ============================================================================
+# SWU* -- wviewer::unlogged is TRANSPARENT to everything but the log: a return
+# code, an error's -errorinfo and -errorcode, and a break/continue out of a
+# script run in the caller's loop all arrive as if the script had run bare.
+# The suppress depth is balanced on every path (SWU4, in the SWR child, which
+# has the action log this one lacks: a marker logged after an error, a break
+# and a return through unlogged reaches the file only if every push popped).
+# ============================================================================
+proc swu_raise {} { return -code error -errorcode {SWU INNER} "swu boom" }
+set swu_rc [catch {wviewer::unlogged {swu_raise}} swu_msg swu_opts]
+check "SWU1 an error inside keeps its message and -errorcode" \
+  [list $swu_rc $swu_msg [dict get $swu_opts -errorcode]] {1 {swu boom} {SWU INNER}}
+check_true "SWU1 ...and its -errorinfo still names the raising proc" \
+  [string match {*swu_raise*} [dict get $swu_opts -errorinfo]]
+set swu_seen {}
+foreach swu_i {1 2 3 4} {
+  wviewer::unlogged {
+    if {$swu_i == 2} { continue }
+    if {$swu_i == 4} { break }
+    lappend swu_seen $swu_i
+  }
+}
+check "SWU2 continue and break inside reach the caller's loop" $swu_seen {1 3}
+proc swu_ret {} { wviewer::unlogged { return early } ; return late }
+check "SWU3 a return inside returns from the caller" [swu_ret] early
+proc swu_ok {} { return fine }
+check "SWU3 a plain result passes through" [wviewer::unlogged {swu_ok}] fine
+
+# ============================================================================
+# SWD16 -- every WRITER of the destination notifies its mirror. The writer set
+# is derived from the interpreter's own proc bodies (comment lines dropped), so
+# a new writer joins it by existing; the Calculator's W13 is the listener
+# (band PL5f of test_calc_plot measures the effect, on the display arm).
+# ============================================================================
+set swd16_w {} ; set swd16_bad {}
+foreach pr [lsort [info procs ::wviewer::*]] {
+  set code [join [lmap l [split [info body $pr] \n] {
+    if {[regexp {^\s*#} $l]} { continue } ; set l}] \n]
+  if {![regexp {(^|[\s\[;\{])(set|lappend|append)\s+(::wviewer::)?dest\(} $code]} { continue }
+  lappend swd16_w [namespace tail $pr]
+  if {[string first {wviewer::dest_notify} $code] < 0} { lappend swd16_bad [namespace tail $pr] }
+}
+check "SWD16 the destination's writers were derived (non-vacuity: set_plot_dest and the state restore)" \
+  [expr {[lsearch $swd16_w set_plot_dest] >= 0 && [lsearch $swd16_w browser_state_apply] >= 0}] 1
+check "SWD16 every writer of dest(token) calls wviewer::dest_notify" $swd16_bad {}
+set swd16_got {}
+namespace eval ::calc {}
+set swd16_had [expr {[info commands ::calc::viewer_dest] ne {}}]
+if {$swd16_had} { rename ::calc::viewer_dest ::calc::__swd16_real }
+proc ::calc::viewer_dest {tok} { lappend ::swd16_got $tok ; error "listener raises" }
+dict set ::wviewer::windows __swd16 top .__swd16
+check "SWD16 a change notifies once with the token, and a raising listener does not break the writer" \
+  [list [pcall {wviewer::set_plot_dest newtab __swd16}] [pcall {wviewer::set_plot_dest newtab __swd16}] $swd16_got] \
+  {newtab newtab __swd16}
+rename ::calc::viewer_dest {}
+if {$swd16_had} { rename ::calc::__swd16_real ::calc::viewer_dest }
+dict unset ::wviewer::windows __swd16
+catch {unset ::wviewer::dest(__swd16)}
 
 # ============================================================================
 # SWN* -- no-window guards, both arms
@@ -448,6 +521,11 @@ set swr_inner {
     return {}
   }
   set lf [xschem get actionlog_filename]
+  catch {wviewer::unlogged {error swu}}
+  foreach i {1 2} { wviewer::unlogged { break } }
+  proc swu_ret {} { wviewer::unlogged { return early } ; return late }
+  swu_ret
+  xschem log_action -noecho "#SWU balanced"
   set out {}
   foreach d {newsubwin replace} {
     swr_open
@@ -467,6 +545,45 @@ set swr_inner {
     lappend out [list $d $rec [swr_state] [expr {$rc ? "ERR:$err" : 0}]]
   }
   xschem log_action -noecho "#SWR [list $out]"
+  # SWR3: the whole matrix, 5 destinations x both plot modes. The tab half
+  # needs no Tk here: switch_ctx and the tab bar's widgets are stubbed, the
+  # tab records are the model. Each cell answers {rec replayed rc typed}:
+  # `typed` is how many recorded lines are the typed plot_signals line --
+  # the line an inner self-log would have eaten through the CIW's dedup.
+  foreach p {switch_ctx tabbar_refresh retitle status_refresh tab_drop_transients} {
+    proc ::wviewer::$p args { return 1 }
+  }
+  proc swm_open {m} {
+    swr_open
+    set ::wviewer::mode(__swr) $m
+    foreach a {tabstash curtab tabseq} { array unset ::wviewer::$a __swr }
+    wviewer::tabs_init __swr
+  }
+  proc swm_state {} {
+    list [wviewer::tab_count __swr] [wviewer::tab_index __swr] [swr_state]
+  }
+  set out {}
+  foreach m {single multi} {
+    foreach d {append newstrip replace newsubwin newtab} {
+      swm_open $m
+      set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
+      foreach cmd [list [list wviewer::set_plot_dest $d __swr] {wviewer::plot_signals __swr {p}}] {
+        xschem log_action -reset
+        set code [catch {uplevel #0 $cmd} res]
+        set ::ciw_out_pending {}
+        ciw_log_outcome $code $cmd $res
+      }
+      set rec [swm_state]
+      set fd [open $lf r]; set lines [lrange [split [read $fd] \n] [expr {$before - 1}] end]; close $fd
+      set typed [llength [lsearch -all -glob $lines {*wviewer::plot_signals __swr*}]]
+      set fx [file join [file dirname $lf] fxm_${m}_$d.tcl]
+      set fd [open $fx w]; puts $fd [join $lines \n]; close $fd
+      swm_open $m
+      set rc [catch {replay_action_log $fx} err]
+      lappend out [list $m/$d $rec [swm_state] [expr {$rc ? "ERR:$err" : 0}] $typed]
+    }
+  }
+  xschem log_action -noecho "#SWM [list $out]"
   exit
 }
 set swr_dir [file join $scratch swr]
@@ -486,6 +603,29 @@ check "SWR1 control: a replayed Replace plot rebuilds the recorded window" \
   [lindex $swr 1] {replace {{1 2} {a p}} {{1 2} {a p}} 0}
 check "SWR2 a replayed New SubWin plot makes exactly ONE subwindow, holding the plot" \
   [lindex $swr 0] {newsubwin {{1 2 3} {a b p}} {{1 2 3} {a b p}} 0}
+set swm {}
+if {![catch {set fd [open [file join $swr_dir Xschem.log] r]} ]} {
+  foreach l [split [read $fd] \n] {
+    if {[string match {#SWM *} $l]} { set swm [lindex [string range $l 5 end] 0] }
+  }
+  close $fd
+}
+set swu_bal 0
+if {![catch {set fd [open [file join $swr_dir Xschem.log] r]} ]} {
+  set swu_bal [expr {[string first "#SWU balanced" [read $fd]] >= 0}]
+  close $fd
+}
+check "SWU4 the suppress depth is balanced after an error, a break and a return through unlogged" \
+  $swu_bal 1
+check "SWR3 the matrix ran: ten cells, 5 destinations x 2 modes" [llength $swm] 10
+foreach cell $swm {
+  lassign $cell nm rec rep rc typed
+  check "SWR3 $nm: the typed plot line reached the log once, the replay rebuilds the recorded window" \
+    [list $typed [expr {$rep eq $rec}] $rc] {1 1 0}
+  check "SWR3 $nm: the recorded window holds the plot, in a second tab only under New Tab (non-vacuity)" \
+    [list [expr {[lsearch -exact [concat {*}[lindex $rec 2 1]] p] >= 0}] [lindex $rec 0]] \
+    [list 1 [expr {[string match */newtab $nm] ? 2 : 1}]]
+}
 
 # ============================================================================
 # SWX* -- INDEPENDENT X (spec §7, stage 2): the time axes of different
@@ -1230,7 +1370,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 73 } else { set expect 170 }
+if {$::arm eq {nogui}} { set expect 103 } else { set expect 200 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

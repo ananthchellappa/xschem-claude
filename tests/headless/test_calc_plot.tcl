@@ -96,8 +96,11 @@
 #        Drives the mode, asserts the clear AND the sentence, with a
 #        single-mode control beside it.
 #   PL5e ⚠ A PRESS NEVER TAKES A CHOICE AWAY: a New Tab or New SubWin set in
-#        the viewer since the Calculator last pushed is FOLLOWED (W13 moves to
-#        show it and the plot lands there); a W13 choice made after it wins.
+#        the viewer is FOLLOWED (W13 shows it at once, PL5f, and the plot lands
+#        there); a W13 choice made after it wins.
+#   PL5f ⚠ W13 TRACKS THE VIEWER LIVE: a viewer choice made elsewhere moves W13
+#        with no press and no status line, and after a viewer close/reopen a
+#        choice equal to an old Calculator push still wins the next press.
 #   PL6  `calc::dest_changed` PUSHES: changing W13 moves `wviewer::plot_dest` on
 #        the viewer holding the result, and logs one replayable line.
 #   PL7  R607 on the PLOT path: an unresolvable token is NAMED, an over-long
@@ -945,7 +948,7 @@ group PL5d {
 # `calc::plot_rpn` pushes W13's value at `wviewer::set_plot_dest` on every press
 # (R601).  A destination set in the viewer since the Calculator last pushed --
 # its Options cascade, here `wviewer::set_plot_dest` -- is the newer choice, so
-# the press FOLLOWS it (`calc::plot_dest_follow`): W13 moves to show it and the
+# the press FOLLOWS it: W13 already shows it (live tracking, band PL5f) and the
 # plot lands there.  A W13 choice made after that wins again.  Driven for both
 # window-making destinations, since those are the ones the old three-label W13
 # reset to Append.
@@ -958,8 +961,8 @@ proc pl_sws {} {
 group PL5e {
     destset {Append}
     set nt0 [pl_tabs]
-    check "PL5e fixture: the viewer is set to New Tab from outside the Calculator, while W13 says Append" \
-        [list [pcall wviewer::set_plot_dest {New Tab} $::tok] [pcall calc::plot_dest_req]] {newtab Append}
+    check "PL5e fixture: the viewer is set to New Tab from outside the Calculator, and W13 follows at once (PL5f)" \
+        [list [pcall wviewer::set_plot_dest {New Tab} $::tok] [pcall calc::plot_dest_req]] {newtab {New Tab}}
     pcall bufset {vf(lp)}
     set saide [press .calc.mode.plot]
     check "PL5e ⚠ the press FOLLOWS the viewer: it plots into a new tab, says New Tab, W13 shows New Tab, and the viewer keeps New Tab" \
@@ -983,24 +986,89 @@ group PL5e {
         {1 1 {New SubWin} newsubwin}
     # the decision on its own, on a token that is only an array entry
     set w13 [pcall calc::plot_dest_req]
-    catch {unset ::calc::dest_seen(__pl5e)}
+    set wtok $::calc::w13_tok
     set ::wviewer::dest(__pl5e) newtab
     set f1 [pcall calc::plot_dest_follow __pl5e Append]
-    set ::calc::dest_seen(__pl5e) newtab
+    set f1w [pcall calc::plot_dest_req]
     set f2 [pcall calc::plot_dest_follow __pl5e Append]
     set f3 [pcall calc::plot_dest_follow __pl5e {}]
     unset ::wviewer::dest(__pl5e)
     set f4 [pcall calc::plot_dest_follow __pl5e Replace]
-    catch {unset ::calc::dest_seen(__pl5e)}
+    set ::calc::w13_tok $wtok
     pcall .calc.mode.dest set $w13
-    check "PL5e calc::plot_dest_follow: follows a viewer choice the Calculator never pushed, keeps W13 once it did, follows when W13 has no value, keeps W13 with no viewer choice" \
-        [list $f1 $f2 $f3 $f4] {{New Tab} Append {New Tab} Replace}
+    check "PL5e calc::plot_dest_follow: a press for a token W13 was not showing adopts that viewer's choice (and W13 shows it), then W13 is live and wins, follows when W13 has no value, keeps W13 with no viewer choice" \
+        [list $f1 $f1w $f2 $f3 $f4] {{New Tab} {New Tab} Append {New Tab} Replace}
     set t {}
     if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     if {[lindex $t 0]} {
         catch {wviewer::clear_all $::tok}
         catch {wviewer::leave_ctx $::tok $t}
     }
+    update idletasks
+    destset {Append}
+}
+
+# =============================================================================
+# PL5f ⚠ W13 TRACKS THE VIEWER LIVE
+# =============================================================================
+# `wviewer::set_plot_dest` notifies an open Calculator (`wviewer::dest_notify`
+# -> `calc::viewer_dest`), so W13 shows the viewer's current destination the
+# moment it changes -- no press needed.  That is what makes "a press never takes
+# a choice away" true without bookkeeping: W13 is never older than the viewer.
+# The close/reopen leg is the case the retired `calc::dest_seen` got wrong: a
+# token-keyed memory survived `wviewer::forget`, so a viewer choice made after a
+# reopen that happened to equal the remembered push was taken for the
+# Calculator's own, and the press overrode it with a W13 pick made while the
+# viewer was closed.
+# =============================================================================
+proc pl_reopen {} {
+    catch {wviewer::close $::tok}
+    update idletasks
+    set ok [pcall wviewer::open $::tok]
+    set vtop [pcall wviewer::window_for $::tok]
+    viewer_ready $vtop
+    if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
+    set rd {}
+    if {[lindex $t 0]} {
+        catch {set rd [xschem raw read $::fixture ac]}
+        catch {wviewer::leave_ctx $::tok $t}
+    }
+    update idletasks
+    return [list $ok $rd]
+}
+group PL5f {
+    destset {Append}
+    set said0 [said]
+    set r [pcall wviewer::set_plot_dest {New Strip} $::tok]
+    update idletasks
+    check "PL5f ⚠ a viewer choice made elsewhere moves W13 at once, with no press, and says nothing" \
+        [list $r [pcall calc::plot_dest_req] [expr {[said] eq $said0}]] {newstrip {New Strip} 1}
+    pcall wviewer::set_plot_dest replace $::tok
+    update idletasks
+    check "PL5f ...and again for the next choice (Replace)" [pcall calc::plot_dest_req] Replace
+    # the close/reopen case
+    destset {New Strip}
+    check "PL5f fixture: W13's New Strip reached the viewer" [pcall wviewer::plot_dest $::tok] newstrip
+    catch {wviewer::close $::tok}
+    update idletasks
+    destset {Replace}
+    check "PL5f fixture: with the viewer closed W13 holds Replace (pending)" \
+        [pcall calc::plot_dest_req] Replace
+    check "PL5f fixture: the viewer reopens with the fixture read" [pl_reopen] {1 1}
+    pcall wviewer::set_plot_dest {New Strip} $::tok
+    update idletasks
+    check "PL5f ⚠ after a reopen, a viewer choice equal to an OLD Calculator push still moves W13" \
+        [pcall calc::plot_dest_req] {New Strip}
+    pcall bufset {vf(lp)}
+    set n0 [llength [pcall dict get [pcall wviewer::layout_for $::tok] graphs]]
+    set saidr [press .calc.mode.plot]
+    check "PL5f ⚠ ...and the press plots there: New Strip kept, one more strip, the sentence names it" \
+        [list [pcall wviewer::plot_dest $::tok] \
+              [expr {[llength [pcall dict get [pcall wviewer::layout_for $::tok] graphs]] - $n0}] \
+              [string match {*New Strip*} $saidr]] {newstrip 1 1}
+    check "PL5f the retired bookkeeping is gone: no calc::dest_seen" \
+        [info exists ::calc::dest_seen] 0
+    catch {wviewer::clear_all $::tok}
     update idletasks
     destset {Append}
 }
@@ -1590,7 +1658,7 @@ group PL9 {
     # (if the `.calc` regexp ever matched nothing, every proc would land here);
     # the count is the list's and not the name's.
     check "PL9 ...and the ones whose CODE names no widget path are exactly the procs that take their inputs as arguments" \
-        [lsort $pure] {plot_in_token plot_msg plot_refusal plot_rpn}
+        [lsort $pure] {plot_dest_follow plot_in_token plot_msg plot_refusal plot_rpn}
 }
 
 # teardown: the viewer and the session go away, the dev display is left as found

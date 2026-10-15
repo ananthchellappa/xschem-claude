@@ -1640,9 +1640,17 @@ below are the ones a caller cannot answer for itself and so must not have to.
   destination comes from W13, which offers exactly the viewer's destinations
   (`wviewer::dest_labels`: `Append` / `Replace` / `New Strip` / `New SubWin` / `New Tab`)
   and must reuse `wviewer::set_plot_dest` rather than reimplementing the choice.
-  **A press never takes a choice away** (2026-10-15): a destination set in the viewer
-  since the Calculator last pushed to it is followed -- W13 moves to show it and the
-  plot lands there (`calc::plot_dest_follow`, band PL5e).
+  **A press never takes a choice away** (2026-10-15): **W13 tracks the viewer live.**
+  Every writer of the viewer's destination calls `wviewer::dest_notify`, and an open
+  Calculator moves W13 to show the new choice at once, silently, with no press
+  (`calc::viewer_dest`, bands PL5e/PL5f; the writer set is derived by row SWD16 of
+  `test_wave_subwindows`). So W13 is never older than the viewer and a press pushes W13
+  as it stands. W13 speaks for one session token at a time (`calc::w13_bind`, bound
+  when the Results Dir row is published or W13 is picked); a press for another token
+  first adopts that viewer's choice. A viewer closed and reopened starts with no choice,
+  so W13's own pick is pushed. (This retired `calc::dest_seen`, a per-token memory of
+  the last push that survived the viewer's close and let a press override a newer
+  viewer choice after a reopen.)
 - **R602** Plot with no viewer open opens one (the ASE-L viewer), then plots.
 - **R602a** **A successful plot brings the viewer forward and hands the keyboard straight
   back.** The user's words, 2026-10-07: *"When Plot button takes an action and Waveform

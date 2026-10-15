@@ -167,6 +167,8 @@ namespace eval calc {
     variable optalways {}
     # W05: the -textvariable of .calc.res.path
     variable respath {}
+    # the session token W13 currently speaks for (calc::w13_bind)
+    variable w13_tok {}
     # W03: 1 while the Results Dir row is collapsed to its toggle
     variable rescollapsed 0
     # W33: the -textvariable of .calc.status.msg
@@ -2343,6 +2345,8 @@ proc calc::results_publish {src} {
     if {[calc::has_win .calc.res.path]} {
         catch {balloon .calc.res.path [calc::results_tip $origin $p $detail]}
     }
+    # W13 speaks for the session this row names (calc::w13_bind)
+    catch {calc::w13_bind [lindex $src 2]}
     return $respath
 }
 
@@ -4263,32 +4267,59 @@ proc calc::plot_dest_req {} {
 }
 
 # ⚠ R506: A PRESS NEVER TAKES AWAY A CHOICE THE USER MADE IN THE VIEWER.
-# Answers the LABEL `calc::plot_rpn` pushes: W13's own (`lab`), or the viewer's
-# current destination when the viewer was set from elsewhere -- its Options
-# cascade, the Add Trace dialog, a typed `wviewer::set_plot_dest` -- since the
-# Calculator last pushed to it.  Then W13 is moved to show it (it can: W13
-# offers every `wviewer::dest_labels` entry), so the visible control still says
-# where the next plot goes, which is why R601 pushes at all.
+# W13 TRACKS THE VIEWER LIVE, so that is true by construction rather than by
+# bookkeeping: every writer of `::wviewer::dest` calls `wviewer::dest_notify`,
+# which lands here, and W13 is moved to show the viewer's choice the moment it
+# is made -- its Options cascade, the Add Trace dialog, a typed
+# `wviewer::set_plot_dest`, a restored state.  W13 is therefore never OLDER
+# than the viewer it speaks for, and a press can push W13 as it stands.
 #
-# "Set from elsewhere" is: the viewer HAS an explicit destination (the array
-# entry `wviewer::forget` unsets with the window -- `wviewer::plot_dest`
-# answers `append` for both, so it cannot tell), it differs from W13's, and it
-# is not the one the Calculator last pushed or adopted for this token
-# (`calc::dest_seen`).  A W13 choice made while no viewer was open meets a fresh
-# window with no entry and is pushed, as `calc::dest_changed`'s pending sentence
-# promises.  No W13 value (R508, no window) follows the viewer when it has one.
-# Band PL5e drives both directions.
+# "The viewer it speaks for" is `w13_tok`: the session token W13 last showed
+# (bound by `calc::results_publish`, i.e. whenever the Results Dir row is
+# published, and by a W13 pick).  A notification for any other token is not
+# W13's business.  When the token CHANGES, W13 adopts that viewer's choice if it
+# has one (`wviewer::forget` unsets it with the window, so a fresh viewer has
+# none and W13's own pick is pushed, as `calc::dest_changed`'s pending sentence
+# promises).  The sync is SILENT: it is not a Calculator operation, and the
+# viewer gesture that caused it is the one that speaks.
+#
+# This retires `calc::dest_seen`, a per-token memory of the last push which
+# outlived `wviewer::forget`: after a viewer close/reopen, a viewer choice equal
+# to that memory was taken for the Calculator's own and a press overrode it.
+# Bands PL5e and PL5f of tests/headless/test_calc_plot.tcl.
+proc calc::w13_sync {tok} {
+    if {$tok eq {} || ![info exists ::wviewer::dest($tok)]} { return {} }
+    if {![calc::has_win .calc.mode.dest]} { return {} }
+    set vl $::wviewer::dest($tok)
+    catch {set vl [wviewer::dest_label $::wviewer::dest($tok)]}
+    catch {.calc.mode.dest set $vl}
+    return $vl
+}
+proc calc::w13_bind {tok} {
+    variable w13_tok
+    if {$tok eq {} || $tok eq $w13_tok} { return {} }
+    set w13_tok $tok
+    return [calc::w13_sync $tok]
+}
+# `wviewer::dest_notify`'s callee.  Never raises into the viewer's writer.
+proc calc::viewer_dest {tok} {
+    variable w13_tok
+    if {$tok eq {} || $tok ne $w13_tok} { return {} }
+    return [calc::w13_sync $tok]
+}
+
+# Answers the LABEL `calc::plot_rpn` pushes: W13's own (`lab`), unless the press
+# is for a token W13 has not been showing (it adopts that viewer's choice
+# first, `calc::w13_bind`) or W13 has no value (R508, no window), in which case
+# the viewer's own choice, when it has one, is the answer.
 proc calc::plot_dest_follow {tok lab} {
+    variable w13_tok
+    set was $w13_tok
+    calc::w13_bind $tok
     if {$tok eq {} || ![info exists ::wviewer::dest($tok)]} { return $lab }
-    set prev $::wviewer::dest($tok)
-    set want append
-    if {[string trim $lab] ne {}} { catch {set want [wviewer::dest_norm $lab]} }
-    if {[string trim $lab] ne {} && $prev eq $want} { return $lab }
-    if {[string trim $lab] ne {} && [info exists ::calc::dest_seen($tok)] \
-            && $::calc::dest_seen($tok) eq $prev} { return $lab }
-    set vl $prev
-    catch {set vl [wviewer::dest_label $prev]}
-    if {[calc::has_win .calc.mode.dest]} { catch {.calc.mode.dest set $vl} }
+    if {[string trim $lab] ne {} && $tok eq $was} { return $lab }
+    set vl $::wviewer::dest($tok)
+    catch {set vl [wviewer::dest_label $::wviewer::dest($tok)]}
     return $vl
 }
 
@@ -4350,7 +4381,6 @@ proc calc::plot_rpn {tok rpn dest} {
     set code {}
     catch {set code [wviewer::set_plot_dest $dest $tok]}
     if {$code eq {}} { catch {set code [wviewer::plot_dest $tok]} }
-    if {$code ne {}} { set ::calc::dest_seen($tok) $code }
     set errs [wviewer::plot_signals $tok [list $rpn]]
     if {[llength $errs]} {
         return [calc::plot_refusal [calc::plot_msg failed [lindex [lindex $errs 0] 1]] $code]
@@ -11111,6 +11141,9 @@ proc calc::build_mode {} {
         -values [wviewer::dest_labels] -takefocus 0 \
         -style Calc.Field.TCombobox
     .calc.mode.dest set {Append}
+    # ...unless the viewer W13 speaks for already has a choice (a Calculator
+    # rebuilt over a live viewer): W13 shows the viewer's (calc::w13_sync)
+    catch {calc::w13_sync $::calc::w13_tok}
     bind .calc.mode.dest <Key> {combo_letter_cycle %W %A; break}
     bind .calc.mode.dest <<ComboboxSelected>> {calc::dest_changed}
     pack .calc.mode.dest -side left -padx {6 3} -pady 1
@@ -11157,10 +11190,12 @@ proc calc::dest_changed {} {
     if {$lab eq {}} { return {} }
     set tok [lindex [calc::results_source] 2]
     if {$tok eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
+    # a pick binds W13 to this token WITHOUT adopting the viewer's choice: the
+    # pick is the newer one (calc::w13_bind would overwrite it)
+    set ::calc::w13_tok $tok
     set code {}
     catch {set code [wviewer::set_plot_dest $lab $tok]}
     if {$code eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
-    set ::calc::dest_seen($tok) $code
     # named through `wviewer::dest_menu_label`, as `calc::plot_rpn` does
     set shown $code
     catch {set shown [wviewer::dest_menu_label $tok $code]}
