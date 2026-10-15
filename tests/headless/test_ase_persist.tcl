@@ -28,6 +28,9 @@
 #   G2   Choose Analyses through the REAL dialog: dc V2 0..1.8 step 0.01
 #        enabled via widgets + <Return>; op stays enabled; plot_sim_type dc
 #   G3   REAL <Button-1> on the id row's Plot cell -> state plot 1
+#   G3q  the id row is re-expressed as the DC sweep's current, -is(v1): the
+#        committed op-only bench's -idc(v1) names the operating point, which
+#        the auto-plot refuses against the DC sweep G2 turned on (R208c)
 #   G3s  Outputs > To Be Saved > Select On Design: click the D wire + REAL
 #        ESC -> output row {expr v(d) save 1 plot 0}. WHY this step is part
 #        of the acceptance flow: ngspice restricts the raw to the .save set,
@@ -62,7 +65,10 @@
 # said this suite was not in T1 at all. BOTH WERE OUT OF DATE. It has been an
 # `hcases` entry in tests/run_regression.tcl since issue 1413, so T1 runs it
 # `--nogui`: THE 49 HEADLESS CHECKS BELOW ARE A T1 NUMBER and the 153 display
-# ones are not. Discounting a real T1 result is the expensive direction to be
+# ones are not. Since 2026-10-15 it is in `dcases` too, so the display
+# checks gate as well: that arm had been red from G4 on with nothing running it,
+# because the committed op-only bench's `-idc(v1)` row is refused against the
+# DC sweep G2 turns on (R208c); G3q now re-expresses it as `-is(v1)`. Discounting a real T1 result is the expensive direction to be
 # wrong in, which is why the correction is here rather than left for later.
 # It also runs on full_audit's DEFAULT arm (GUI legs self-SKIP without a usable
 # DISPLAY; run legs additionally self-SKIP without ngspice — the item-14
@@ -76,6 +82,7 @@
 # optional per-row `id` key ON DISK). The display number above read 147 while the
 # arm measured 148 before this group landed; a floor only ever goes up, so it
 # passed while being one behind. Both numbers are re-measured here.
+# ⚠ AND RAISED 153 -> 156 on the display arm with G3q (2026-10-15).
 # Standalone repro from the repo ROOT. ⚠ THE ARMED SPELLING IS THE FIRST ONE:
 # it puts HOME on a throwaway and picks the dev display, so your clipboard,
 # geometry and ~/.xschem/simulations are untouched (CLAUDE.md, "the throwaway
@@ -921,6 +928,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "G3 id row plot 1" [ase::state_get $orow plot] 1
     check "G3 id row save still 1" [ase::state_get $orow save] 1
     } pcerr]} { check {PC0 section G3 ran to the end} "RAISED:$pcerr" {} }
+
+    # --- G3q: the id row names the DC SWEEP's current ----------------------
+    # The committed bench is op-only, so its row reads `-idc(v1)`: the
+    # operating-point current (calc::pick_analyses maps idc to op, vs/is to the
+    # DC sweep, Cadence's VDC/IDC and VS/IS). G2 turned the DC sweep on, and
+    # since R208c the auto-plot refuses a row qualified for an analysis the
+    # viewer does not show (ase::ui::plot_row_refusal), so the row the user
+    # wants plotted from the sweep is `-is(v1)` -- what an ADE-L user writes.
+    if {[catch {
+    check "G3q fixture: -idc(v1) is refused against the DC sweep" \
+      [expr {[ase::ui::plot_row_refusal -idc(v1) dc] ne {}}] 1
+    check "G3q -is(v1) is not" [ase::ui::plot_row_refusal -is(v1) dc] {}
+    set st [ase::session_state $key]
+    set orow [lindex [ase::state_get $st outputs] 0]
+    dict set orow expr -is(v1)
+    dict set st outputs [lreplace [ase::state_get $st outputs] 0 0 $orow]
+    ase::session_update $key $st
+    ase::ui::populate $key
+    update
+    check "G3q id row expr -is(v1), plot still 1" \
+      [list [ase::state_get [lindex [ase::state_get [ase::session_state $key] outputs] 0] expr] \
+            [ase::state_get [lindex [ase::state_get [ase::session_state $key] outputs] 0] plot]] \
+      {-is(v1) 1}
+    } pqerr]} { check {PQ0 section G3q ran to the end} "RAISED:$pqerr" {} }
 
     # --- G3s: mark v(d) To Be Saved through the REAL click mode --------------
     # (see the header: without a `.save v(d)` the dc raw carries no v(d) and

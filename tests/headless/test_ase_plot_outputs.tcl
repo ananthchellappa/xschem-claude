@@ -51,6 +51,12 @@
 #        inserted, a hand-built strip is untouched and the target follows it;
 #        with the viewer closed the viewer's default mode decides; a Direct
 #        Plot never reuses any auto strip
+#   PO15 the auto strips' bookkeeping: when auto strips are removed or
+#        inserted, the target strip and the trace highlights on hand-built
+#        strips move with their strips (never clamped onto a neighbour); with
+#        no auto strip, multi-plot inserts the new ones at the top; a Direct
+#        Plot whose target is ANY auto strip, not only the first, lands
+#        elsewhere
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -756,6 +762,104 @@ group PO14 {
     ## a Direct Plot never reuses ANY auto strip, not only the first
     check "PO14 empty_graph_indices offers no strip carrying the auto marker" \
         [wviewer::empty_graph_indices [list {traces {} auto 1} {traces {}} {traces {} auto 1}] 0] {1}
+}
+
+# =============================================================================
+# PO15 -- THE AUTO STRIPS' BOOKKEEPING (R-OUT14)
+# =============================================================================
+## PO14 drives the whole `~` gesture; these rows drive wviewer::auto_plot_strips
+## and wviewer::plot_signals directly on layouts chosen so that each piece of
+## bookkeeping has an answer only it gives. PO14's "the target followed the hand
+## strip" row cannot tell a target that moved from one that was clamped there,
+## because its hand strip is the LAST strip; here the target sits on a hand
+## strip with another one below it.
+## A hand-built strip holding one trace, and an auto strip holding one.
+proc po15_hand {ex} {
+    dict create traces [list [dict create expr $ex]] logx 0 logy 0 \
+        x1 {} x2 {} y1 {} y2 {}
+}
+proc po15_auto {ex} { dict merge [po15_hand $ex] [dict create auto 1] }
+## Install a layout under `token` with the window's mode, target strip and
+## trace-highlight set, as wviewer::open would leave them.
+proc po15_lay {token mode gs tgt hl} {
+    dict set ::wviewer::layouts $token [dict create sharedx 0 graphs $gs]
+    dict set ::wviewer::windows $token top .po15
+    set ::wviewer::mode($token) $mode
+    set ::wviewer::target($token) $tgt
+    set ::wviewer::wavehl($token) $hl
+}
+proc po15_drop {token} {
+    catch {dict unset ::wviewer::layouts $token}
+    catch {dict unset ::wviewer::windows $token}
+    foreach v {mode target wavehl} { catch {unset ::wviewer::${v}($token)} }
+}
+## The layout as one letter per strip: A = auto, H = hand, top first.
+proc po15_shape {token} {
+    if {[catch {dict get [wviewer::layout_for $token] graphs} gs]} { return ERR:$gs }
+    join [lmap G $gs {expr {[wviewer::dget $G auto 0] eq {1} ? {A} : {H}}}] {}
+}
+group PO15 {
+    set tk po15tok
+    ## {h0, auto, auto, auto, h4, h5} with the target on h4: one signal in
+    ## multi-plot keeps the first auto strip and removes the other two, so h4
+    ## becomes strip 2. A target left at 4 would clamp to 3 (h5), not 2.
+    po15_lay $tk multi [list [po15_hand v(h0)] [po15_auto v(x)] [po15_auto v(y)] \
+                            [po15_auto v(z)] [po15_hand v(h4)] [po15_hand v(h5)]] 4 {}
+    set r [pcall wviewer::auto_plot_strips $tk 1]
+    check "PO15 removal: one signal lands in the one auto strip kept" \
+        [list $r [po15_shape $tk]] {1 HAHH}
+    check "PO15 removal: the target strip moves from h4 to its new index 2, not clamped onto h5" \
+        [list [pcall wviewer::target_index $tk] \
+             [pcall dict get [lindex [dict get [wviewer::layout_for $tk] graphs] 2] traces]] \
+        [list 2 [list [dict create expr v(h4)]]]
+
+    ## the same removal, with a highlight on h4: it follows h4 to strip 2
+    po15_lay $tk multi [list [po15_hand v(h0)] [po15_auto v(x)] [po15_auto v(y)] \
+                            [po15_auto v(z)] [po15_hand v(h4)] [po15_hand v(h5)]] 0 \
+        {{4 0 2} {0 0 1}}
+    pcall wviewer::auto_plot_strips $tk 1
+    check "PO15 removal: a trace highlight on h4 moves with h4 to strip 2; one on h0 stays" \
+        [pcall wviewer::wave_hilights $tk] {{2 0 2} {0 0 1}}
+
+    ## {h0, h1}, no auto strip, multi-plot, two signals: the two new auto
+    ## strips go at the TOP (multi-plot puts new strips at the top), so the
+    ## target on h0 moves to 2 and a highlight on h1 moves to 3
+    po15_lay $tk multi [list [po15_hand v(h0)] [po15_hand v(h1)]] 0 {{1 0 3}}
+    set r [pcall wviewer::auto_plot_strips $tk 2]
+    check "PO15 insert with no auto strip: the new auto strips are 0 and 1, newest signal on top" \
+        [list $r [po15_shape $tk] [pcall wviewer::auto_graph_indices $tk]] \
+        {{1 0} AAHH {0 1}}
+    check "PO15 insert with no auto strip: the target follows h0 to strip 2" \
+        [pcall wviewer::target_index $tk] 2
+    check "PO15 insert with no auto strip: a trace highlight on h1 follows it to strip 3" \
+        [pcall wviewer::wave_hilights $tk] {{3 0 3}}
+
+    ## {h0, auto, h2}, multi-plot, three signals: two auto strips are inserted
+    ## above the existing one, so h2 becomes strip 4 and h0 stays at 0
+    po15_lay $tk multi [list [po15_hand v(h0)] [po15_auto v(x)] [po15_hand v(h2)]] 2 \
+        {{2 0 1} {0 0 2}}
+    set r [pcall wviewer::auto_plot_strips $tk 3]
+    check "PO15 insert above the auto strip: HAAAH, and the target follows h2 to strip 4" \
+        [list $r [po15_shape $tk] [pcall wviewer::target_index $tk]] {{3 2 1} HAAAH 4}
+    check "PO15 insert above the auto strip: a highlight on h2 follows it to 4; one on h0 stays" \
+        [pcall wviewer::wave_hilights $tk] {{4 0 1} {0 0 2}}
+    po15_drop $tk
+
+    ## A Direct Plot whose target is the SECOND auto strip (single-plot, left
+    ## behind by a multi-plot `~` before the user switched back): that strip is
+    ## the tool's and is rebuilt every run, so the signal lands in a new strip
+    ## at the bottom, not in it.
+    po14_stub
+    po15_lay $tk single [list [po15_hand v(h0)] [po15_auto v(x)] [po15_auto v(y)]] 2 {}
+    set ::po14_adds {}
+    set e [pcall wviewer::plot_signals $tk {v(new)}]
+    check "PO15 Direct Plot with the target on the second auto strip: it lands in a new strip, not the auto one" \
+        [list $e $::po14_adds [po15_shape $tk]] {{} {{3 v(new)}} HAAH}
+    check "PO15 ...and the auto strips keep only their own traces" \
+        [lmap G [lrange [dict get [wviewer::layout_for $tk] graphs] 1 2] \
+             {lmap t [dict get $G traces] {dict get $t expr}}] {v(x) v(y)}
+    po14_unstub $tk
+    po15_drop $tk
 }
 
 # =============================================================================

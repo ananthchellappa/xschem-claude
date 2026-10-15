@@ -1080,11 +1080,14 @@ They should not influence the input to the simulator."* ADE-L is the floor
     strip; a strip without the marker (Direct Plot, a hand-built strip) is never touched.
   - **A Direct Plot never lands in any auto strip**: `wviewer::empty_graph_indices` skips every
     strip carrying the marker, and `wviewer::plot_signals` treats a target on any of them as
-    unusable.
+    unusable. For the same reason Delete Empty Strips (`e`) never deletes an auto strip, any of
+    them: `wviewer::empty_strips_to_delete` reads the same `empty_graph_indices`.
   - Not built: an ADE-L-style Append/Replace/New Window selector for `~` and the run-end plot;
     it awaits the user's ruling.
-  - Fenced by band PO14 (both arms; the real `auto_plot` against the viewer model, its Tk doors
-    stood in for) and PR11 (display arm: a real click on `~` and a real `tb_bandgap` run in
+  - Fenced by bands PO14 (both arms; the real `auto_plot` against the viewer model, its Tk doors
+    stood in for), PO15 (both arms; `auto_plot_strips` and `plot_signals` on layouts where the
+    target and the highlights moving, the top insert and the any-auto-strip guard each have an
+    answer only they give) and PR11 (display arm: a real click on `~` and a real `tb_bandgap` run in
     multi-plot, then back to single) of `tests/headless/test_ase_plot_outputs.tcl`.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
