@@ -18019,8 +18019,37 @@ proc ase::run_done {logpath state callback {meta {}}} {
       ::ase::echo "ase: $eline"
     }
   }
-  ::ase::echo "ase: simulation finished (exit $exitcode), log: $logpath"
-  if {$callback ne {}} { uplevel #0 $callback }
+  ## R-OUT13: ONE LINE PER FAILED RUN. A nonzero exit with an after-run
+  ## callback leaves the finish line PENDING; the callback may take it
+  ## (ase::run_finish_note_take) and say something else in its place --
+  ## ase::ui::run_finished says "simulation failed" for a failed run and this
+  ## very line for a Stop -- and a line nobody took is said after the callback
+  ## returns, so a callback that does not know about it (a campaign) loses
+  ## nothing. A clean run, and a run with no callback, say it here as before.
+  variable finish_note
+  set note "ase: simulation finished (exit $exitcode), log: $logpath"
+  if {$callback eq {} || $exitcode == 0} {
+    set finish_note {}
+    ::ase::echo $note
+    if {$callback ne {}} { uplevel #0 $callback }
+    return
+  }
+  set finish_note $note
+  set cbrc [catch {uplevel #0 $callback} cbres cbopts]
+  if {$finish_note ne {}} { ::ase::echo $finish_note }
+  set finish_note {}
+  if {$cbrc} { return -options $cbopts $cbres }
+}
+
+# The finish line ase::run_done left pending for its callback (a nonzero
+# exit), cleared as it is answered, so the callback that takes it decides what
+# is said in its place; {} when nothing is pending.
+proc ase::run_finish_note_take {} {
+  variable finish_note
+  if {![info exists finish_note]} { return {} }
+  set n $finish_note
+  set finish_note {}
+  return $n
 }
 
 # Wait for a run started by ase::run: vwait on execute(pipe,$id) (fires on the

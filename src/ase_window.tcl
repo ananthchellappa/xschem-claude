@@ -12970,8 +12970,14 @@ proc ase::ui::run_finished {key} {
     ase::ui::set_status $key fail
     # R-OUT13: say it failed and where the log is, and let every Value cell
     # say so too, rather than leave the previous run's numbers standing.  A
-    # Stop already said what it cost (do_stop) and is not a failure.
-    if {[ase::session_getattr $key stopped 0] ne {1}} {
+    # Stop already said what it cost (do_stop) and is not a failure.  The
+    # finish line ase::run_done left pending is taken either way: a Stop says
+    # it as it always did, a failure says the failure sentence INSTEAD.
+    set _fn {}
+    catch {set _fn [ase::run_finish_note_take]}
+    if {[ase::session_getattr $key stopped 0] eq {1}} {
+      if {$_fn ne {}} { catch {::ase::echo $_fn} }
+    } else {
       set _rf [ase::run_failed $key]
       if {$_rf eq {}} {
         set _rf [dict create exit $ec log {}]

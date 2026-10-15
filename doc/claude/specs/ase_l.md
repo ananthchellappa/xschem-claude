@@ -1049,11 +1049,17 @@ They should not influence the input to the simulator."* ADE-L is the floor
   - **At run end** (`ase::ui::run_finished`, nonzero exit, not stopped) the CIW says
     *ase: simulation failed (exit N); log: <path>* at error severity, beside the red
     *Status: Error*, and every Value cell reads **Run failed (exit N); see the log**.
+    That is the run's ONLY end line: `ase::run_done` leaves its *ase: simulation finished
+    (exit N), log: <path>* pending for the after-run callback (`ase::run_finish_note_take`),
+    which says the failure sentence in its place. A Stop says the finish line as before; so
+    do a clean run, a run with no callback and a callback that does not take the line (a
+    campaign).
   - **The results reader** (`ase::ui::results_from_disk`, so open, Load State and `~`)
     answers that same sentence for every row and reads nothing from the file.
   - **`~`** says the failure sentence, refills the Values with it, and plots nothing.
-  - Fenced by bands PO8 (both arms) and PF1 (display arm: the shipped draw at `.options
-    seed=35`, run for real) of `tests/headless/test_ase_plot_outputs.tcl`.
+  - Fenced by bands PO8, PO12 (one end line), PO13 (a run after a Stop clears the mark; both
+    arms) and PF1 (display arm: the shipped draw at `.options seed=35`, run for real) of
+    `tests/headless/test_ase_plot_outputs.tcl`.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

@@ -39,6 +39,11 @@
 #        is handed on, and auto_plot says the view has no sweep
 #   PO11 an edit that renames a row and changes its expression together drops
 #        the OLD name's Value as well as the new one's
+#   PO12 a failed run says one line, the failure, and no 'finished (exit'
+#        line; a Stop, a clean run, a callback that does not take the line and
+#        a run with no callback each say today's finish line once
+#   PO13 a run started after a Stop clears the mark: its failure is said, and
+#        every Value says the run failed
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -499,6 +504,85 @@ group PO11 {
 }
 
 # =============================================================================
+# PO12 -- A FAILED RUN SAYS ONE LINE (R-OUT13)
+# =============================================================================
+## Driven through ase::run_done itself, the completion hook a real run fires,
+## with the window's own after-run callback: what the CIW receives is counted.
+proc po_done {key ec callback} {
+    set st [ase::session_state $key]
+    set lf [[ase::backend_hook ngspice log_file] $st]
+    set meta [dict create cell [dict get $st design cell] simulator ngspice \
+                  t0 [clock milliseconds] started [clock seconds]]
+    set ::execute(exitcode,last) $ec
+    set ::execute(data,last) "doAnalyses: TRAN:  Timestep too small\nRUN-FAILED\n"
+    set ::po_echoes {}
+    set ::po_done_rc [pcall ase::run_done $lf $st $callback $meta]
+    catch {unset ::execute(exitcode,last)}
+    catch {unset ::execute(data,last)}
+    return $lf
+}
+proc po_count {pat} { llength [lsearch -all -glob $::po_echoes $pat] }
+proc po_cb {} { lappend ::po_echoes CALLBACK }
+group PO12 {
+    set key [po_session po12 tbpo $::PO_OUTS 1]
+    set cb [list ase::ui::run_finished $key]
+    po_done $key 1 $cb
+    check "PO12 a failed run: exactly one failure line, and no 'finished (exit' line" \
+        [list [po_count {ase: simulation failed (exit 1); log: *}] [po_count {*finished (exit*}]] {1 0}
+    ase::session_setattr $key stopped 1
+    po_done $key 137 $cb
+    check "PO12 a Stopped run: today's finish line once, and no failure line" \
+        [list [po_count {ase: simulation finished (exit 137), log: *}] [po_count {*failed*}]] {1 0}
+    ase::session_setattr $key stopped 0
+    set lf [po_done $key 0 po_cb]
+    check "PO12 control: a clean run says today's finish line once, before its callback" \
+        [lsearch -all -inline -regexp $::po_echoes {finished \(exit|failed|CALLBACK}] \
+        [list "ase: simulation finished (exit 0), log: $lf" CALLBACK]
+    po_done $key 1 po_cb
+    check "PO12 control: a callback that does not take the line still gets it said, once" \
+        [list [po_count {ase: simulation finished (exit 1), log: *}] [po_count {*failed*}]] {1 0}
+    po_done $key 1 {}
+    check "PO12 control: a run with no callback says today's finish line once" \
+        [list [po_count {ase: simulation finished (exit 1), log: *}] [po_count {*failed*}]] {1 0}
+    check "PO12 nothing is left pending after a run" [ase::run_finish_note_take] {}
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PO13 -- A NEW RUN CLEARS THE PREVIOUS RUN'S STOP (R-OUT13)
+# =============================================================================
+## Stop marks the session; the next run must not inherit the mark, or its
+## failure would read as a Stop and say nothing. The kill is stood in for.
+group PO13 {
+    set key [po_session po13 tbpo $::PO_OUTS 1]
+    set ::execute(pipe,9077) po-fake
+    ase::session_setattr $key run_id 9077
+    rename ::kill_running_cmds ::po_krc_orig
+    proc ::kill_running_cmds {args} {}
+    pcall ase::ui::do_stop $key
+    rename ::kill_running_cmds {}
+    rename ::po_krc_orig ::kill_running_cmds
+    unset ::execute(pipe,9077)
+    check "PO13 fixture: Stop left the session marked stopped" \
+        [ase::session_getattr $key stopped 0] 1
+    pcall ase::ui::run_started $key 9078
+    ase::session_setattr $key results {W old}
+    po_done $key 1 [list ase::ui::run_finished $key]
+    check "PO13 the next run fails: run_failed names exit 1" \
+        [pcall dict get [ase::run_failed $key] exit] 1
+    check "PO13 ...and the failure notice is said, once" \
+        [po_count {ase: simulation failed (exit 1); log: *}] 1
+    set want [dict create]
+    foreach o $::PO_OUTS {
+        dict set want [ase::ui::output_result_key $o] {Run failed (exit 1); see the log}
+    }
+    check "PO13 ...and every Value reads 'Run failed (exit 1); see the log'" \
+        [ase::session_getattr $key results] $want
+    ase::session_setattr $key run_id {}
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
 # THE DISPLAY ARM: the real bench
 # =============================================================================
 set NG /home/analog/dev/ngspice/build-ver_50/src/ngspice
@@ -803,6 +887,8 @@ if {!$GUI} {
         set said [ase::ui::lbl_run_failed $f]
         check "PF1 the user is told the run failed, and where the log is" \
             [expr {$said in $::po_echoes}] 1
+        check "PF1 ...once, and with no 'simulation finished (exit' line beside it" \
+            [list [po_count $said] [po_count {*finished (exit*}]] {1 0}
         set stat {}
         catch {set stat [$top.status.stat cget -text]}
         check "PF1 the status segment reads Error" $stat {Status: Error}
