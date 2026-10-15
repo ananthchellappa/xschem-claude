@@ -1061,6 +1061,32 @@ They should not influence the input to the simulator."* ADE-L is the floor
     arms) and PF1 (display arm: the shipped draw at `.options seed=35`, run for real) of
     `tests/headless/test_ase_plot_outputs.tcl`.
 
+- **R-OUT14 — `~` and the run-end auto-plot follow the viewer's plot mode (user
+  2026-10-15).** The user: *"The plot button (~) functionality ignores the multi/single plot
+  mode of the already-up Waveform Viewer and does a single plot mode - dumping all signals
+  onto a single strip."* `ase::ui::auto_plot` (both the `~` press and the after-run
+  `auto_plot_idle`) now asks `wviewer::auto_plot_strips` where each ticked row goes:
+  - **Single-plot**: every row in ONE auto strip (the `auto 1` marker), exactly as before.
+  - **Multi-plot**: one auto strip PER row, newest on top — the last row topmost, which is
+    `wviewer::plan_plot`'s multi rule for any other batch, so `~` and a Direct Plot of the same
+    signals stack them alike. Missing strips are inserted above the first auto strip (at the
+    top when there is none, claiming a lone empty strip as before); surplus ones from a longer
+    earlier batch are removed, never left as blank bands. The target strip and the trace
+    highlights follow any index that moves.
+  - **The mode** is the viewer window's (`wviewer::plot_mode`); a viewer `~` opens is seeded
+    with the viewer's own default (`wviewer_plot_mode`, shipped `single`), as any new viewer is.
+  - **Replace is unchanged**: every auto strip is cleared before a press or a run adds, so a
+    second `~` or a second run never adds a second copy; nothing ticked leaves one empty auto
+    strip; a strip without the marker (Direct Plot, a hand-built strip) is never touched.
+  - **A Direct Plot never lands in any auto strip**: `wviewer::empty_graph_indices` skips every
+    strip carrying the marker, and `wviewer::plot_signals` treats a target on any of them as
+    unusable.
+  - Not built: an ADE-L-style Append/Replace/New Window selector for `~` and the run-end plot;
+    it awaits the user's ruling.
+  - Fenced by band PO14 (both arms; the real `auto_plot` against the viewer model, its Tk doors
+    stood in for) and PR11 (display arm: a real click on `~` and a real `tb_bandgap` run in
+    multi-plot, then back to single) of `tests/headless/test_ase_plot_outputs.tcl`.
+
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
 Stage 6f. A long transient is checkpointed so that stopping it yields the points

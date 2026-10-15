@@ -12792,9 +12792,12 @@ proc ase::ui::plot_outputs {key} {
 
 # Auto-plot after a successful run (item 13, D5): every outputs row with
 # plot==1 is rebuilt into the viewer's dedicated auto graph (the `auto 1`
-# model marker) — v1 ALWAYS-REPLACE policy: the auto graph's traces are
-# cleared and re-added each run, Direct-Plot graphs are never touched
-# (clear-not-remove keeps their indices stable). Zero plot rows -> never
+# model marker), laid out by the viewer's plot mode (R-OUT14): one strip in
+# single-plot, one strip per row in multi-plot -- v1 ALWAYS-REPLACE policy: the
+# auto strips' traces are cleared and re-added each run, Direct-Plot graphs are
+# never touched (an auto strip is cleared, not removed, except when a
+# multi-plot batch needs fewer of them than last time; the target strip and the
+# trace highlights follow any index that moves). Zero plot rows -> never
 # opens a viewer to show nothing (but an already-open viewer's stale auto
 # graph is emptied). op-only results -> notice (no sweep, nothing
 # plottable). Row exprs go through plot_map_expr (D6); the row name is used
@@ -12817,8 +12820,7 @@ proc ase::ui::auto_plot {key} {
   set rows [dict get $t rows]
   if {![llength $rows]} {
     if {[wviewer::window_for $key] ne {}} {
-      set gi [wviewer::auto_graph_index $key]
-      if {$gi >= 0} {
+      if {[llength [wviewer::auto_graph_indices $key]]} {
         # issue 0194: this regenerate carries every OTHER strip forward, so it
         # owes the fold — clear_graph_traces drops the selection of the auto
         # strip alone, and without this the rebuild-from-model would take the
@@ -12826,8 +12828,10 @@ proc ase::ui::auto_plot {key} {
         # same helper, as the twelve sites inside wave_viewer.tcl; it is only
         # the FILE that differs. Must run BEFORE clear_graph_traces (that is
         # the model mutation) and it does its own verified switch_ctx.
+        # R-OUT14: auto_plot_strips with no signals leaves ONE cleared auto
+        # strip, removing any further ones a multi-plot batch made.
         wviewer::capture_live_view_state $key
-        wviewer::clear_graph_traces $key $gi
+        wviewer::auto_plot_strips $key 0
         wviewer::regenerate $key
       }
     }
@@ -12847,8 +12851,12 @@ proc ase::ui::auto_plot {key} {
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
   wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
-  set gi [wviewer::ensure_auto_graph $key]
-  wviewer::clear_graph_traces $key $gi
+  # R-OUT14: the viewer's plot mode decides the strips -- one auto strip in
+  # single-plot, one per row in multi-plot (wviewer::auto_plot_strips). Every
+  # auto strip is cleared first, so a second run or `~` still REPLACES the
+  # previous auto-plot, and no other strip is touched. The issue-0194 fold was
+  # taken by attach_raw just above.
+  set gis [wviewer::auto_plot_strips $key [llength $rows]]
   wviewer::regenerate $key   ;# reflect the clear even if every add fails
   # casemode item 12: map every row FIRST, then repair the batch in ONE pass —
   # wviewer::repair_currents reads the whole database inventory per call, so a
@@ -12861,6 +12869,7 @@ proc ase::ui::auto_plot {key} {
   set ei 0
   foreach o $rows {
     set ex [lindex $exs $ei]
+    set gi [lindex $gis $ei]
     incr ei
     set nm [ase::state_get $o name]
     if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }

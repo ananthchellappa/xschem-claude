@@ -44,6 +44,13 @@
 #        a run with no callback each say today's finish line once
 #   PO13 a run started after a Stop clears the mark: its failure is said, and
 #        every Value says the run failed
+#   PO14 `~` and the run-end auto-plot follow the viewer's plot mode
+#        (R-OUT14): single-plot puts every row in one auto strip as before;
+#        multi-plot gives each row its own auto strip, newest on top; a second
+#        press replaces; surplus auto strips are removed and missing ones
+#        inserted, a hand-built strip is untouched and the target follows it;
+#        with the viewer closed the viewer's default mode decides; a Direct
+#        Plot never reuses any auto strip
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -63,6 +70,10 @@
 #        `~`: no "cannot auto-plot" sentence repeats the Value cell
 #   PR10 renaming a row and changing its expression in the dialog drops the
 #        old name's Value
+#   PR11 R-OUT14 on the real viewer: in multi-plot a real click on `~` gives
+#        each ticked signal its own strip, newest on top; the run-end
+#        auto-plot of a real run replaces them; back in single-plot `~` puts
+#        them in one strip again and the extra strips go
 #   PF1  the SHIPPED Monte Carlo draw, seeded to one that stops the transient
 #        ("Timestep too small", rc 1): the user is told the run failed and
 #        where the log is, the status reads Error, every Value says the run
@@ -583,6 +594,171 @@ group PO13 {
 }
 
 # =============================================================================
+# PO14 -- `~` AND THE RUN-END AUTO-PLOT FOLLOW THE VIEWER'S PLOT MODE (R-OUT14)
+# =============================================================================
+## The user (2026-10-15): "The plot button (~) functionality ignores the
+## multi/single plot mode of the already-up Waveform Viewer and does a single
+## plot mode - dumping all signals onto a single strip."
+## The real ase::ui::auto_plot and the real wviewer model procs run here; only
+## the viewer's Tk doors (open, attach_raw, regenerate, the fold, the trace
+## add) are stood in for, and the add records which strip each signal was
+## handed to and puts it in the model, as the real one does.
+proc po14_stub {} {
+    set ::po14_up 0
+    set ::po14_adds {}
+    foreach p {open window_for attach_raw regenerate capture_live_view_state
+               add_trace repair_currents} {
+        rename ::wviewer::$p ::po14_orig_$p
+    }
+    proc ::wviewer::open {token} {
+        if {!$::po14_up} {
+            dict set ::wviewer::layouts $token \
+                [dict create sharedx 0 graphs [list [wviewer::empty_graph]]]
+            dict set ::wviewer::windows $token top .po14
+            set ::wviewer::mode($token) [wviewer::default_plot_mode]
+            set ::wviewer::target($token) 0
+            set ::po14_up 1
+        }
+        return 1
+    }
+    proc ::wviewer::window_for {token} { expr {$::po14_up ? {.po14} : {}} }
+    proc ::wviewer::attach_raw {args} { return {} }
+    proc ::wviewer::regenerate {args} { return {} }
+    proc ::wviewer::capture_live_view_state {args} { return 0 }
+    proc ::wviewer::repair_currents {token exprs} { list $exprs {} }
+    proc ::wviewer::add_trace {token gi rpn args} {
+        lappend ::po14_adds [list $gi $rpn]
+        set gs [dict get [wviewer::layout_for $token] graphs]
+        set G [lindex $gs $gi]
+        dict lappend G traces [dict create expr $rpn]
+        wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+        return {}
+    }
+}
+proc po14_unstub {key} {
+    foreach p {open window_for attach_raw regenerate capture_live_view_state
+               add_trace repair_currents} {
+        rename ::wviewer::$p {}
+        rename ::po14_orig_$p ::wviewer::$p
+    }
+    catch {dict unset ::wviewer::layouts $key}
+    catch {dict unset ::wviewer::windows $key}
+    catch {unset ::wviewer::mode($key)}
+    catch {unset ::wviewer::target($key)}
+}
+## The viewer's strips as {auto {trace exprs}} pairs, top first, or a sentinel.
+proc po14_strips {key} {
+    if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return ERR:$gs }
+    set out {}
+    foreach G $gs {
+        if {[catch {lmap t [wviewer::dget $G traces {}] {dict get $t expr}} ex]} {
+            return ERR:$ex
+        }
+        lappend out [list [wviewer::dget $G auto 0] $ex]
+    }
+    return $out
+}
+## Tick exactly the named rows' Plot box.
+proc po14_plot {key args} {
+    set st [ase::session_state $key]
+    set outs {}
+    foreach o [ase::state_get $st outputs] {
+        dict set o plot [expr {[ase::state_get $o name] in $args}]
+        lappend outs $o
+    }
+    dict set st outputs $outs
+    ase::session_update $key $st
+}
+group PO14 {
+    set outs {{name A expr v(sq) save 1 plot 1} {name B expr v(lp) save 1 plot 1}
+              {name C expr v(ramp) save 1 plot 1}}
+    set key [po_session po14 tbpo $outs 1]
+    po14_stub
+    set saved_default [expr {[info exists ::wviewer_plot_mode] ? $::wviewer_plot_mode : {}}]
+    set ::wviewer_plot_mode single
+    set ::po_echoes {}
+    pcall ase::ui::plot_outputs $key
+    check "PO14 fixture: ~ handed all three ticked rows to the viewer and nothing was refused" \
+        [list [llength $::po14_adds] [lsearch -all -inline -glob $::po_echoes {*cannot*}]] {3 {}}
+    check "PO14 single-plot (the viewer's default): every row in ONE strip, as before" \
+        [po14_strips $key] {{1 {v(sq) v(lp) v(ramp)}}}
+
+    ## the viewer is UP and the user switches it to multi-plot
+    set ::wviewer::mode($key) multi
+    set ::po14_adds {}
+    pcall ase::ui::plot_outputs $key
+    check "PO14 multi-plot: ~ gives each row its own strip, newest on top (the reported defect)" \
+        [po14_strips $key] {{1 v(ramp)} {1 v(lp)} {1 v(sq)}}
+    check "PO14 ...each signal handed to a different strip" \
+        [llength [lsort -unique [lmap a $::po14_adds {lindex $a 0}]]] 3
+    pcall ase::ui::plot_outputs $key
+    check "PO14 a second ~ in multi-plot REPLACES: the same three strips, no second copy" \
+        [po14_strips $key] {{1 v(ramp)} {1 v(lp)} {1 v(sq)}}
+
+    ## a strip the user built by hand, below them, which they are targeting
+    set gs [dict get [wviewer::layout_for $key] graphs]
+    lappend gs [dict create traces [list [dict create expr v(hand)]] logx 0 logy 0 \
+                    x1 {} x2 {} y1 {} y2 {}]
+    wviewer::set_graphs $key $gs
+    set ::wviewer::target($key) 3
+    po14_plot $key A B
+    pcall ase::ui::plot_outputs $key
+    check "PO14 one row fewer: the surplus auto strip is REMOVED, the hand strip is untouched" \
+        [po14_strips $key] {{1 v(lp)} {1 v(sq)} {0 v(hand)}}
+    check "PO14 ...and the target strip followed the hand strip to its new index" \
+        [wviewer::target_index $key] 2
+    po14_plot $key A B C
+    pcall ase::ui::plot_outputs $key
+    check "PO14 one row more: a strip is inserted above the auto strips, the target follows again" \
+        [list [po14_strips $key] [wviewer::target_index $key]] \
+        [list {{1 v(ramp)} {1 v(lp)} {1 v(sq)} {0 v(hand)}} 3]
+
+    ## the run-end path (run_finished -> after idle -> auto_plot_idle)
+    set ::po14_adds {}
+    pcall ase::ui::auto_plot_idle $key
+    check "PO14 the run-end auto-plot follows the mode too: one strip per row, replaced" \
+        [list [po14_strips $key] [llength [lsort -unique [lmap a $::po14_adds {lindex $a 0}]]]] \
+        [list {{1 v(ramp)} {1 v(lp)} {1 v(sq)} {0 v(hand)}} 3]
+
+    ## nothing ticked: ONE cleared auto strip is left, the rest go
+    po14_plot $key
+    pcall ase::ui::plot_outputs $key
+    check "PO14 nothing ticked in multi-plot: one empty auto strip remains, the hand strip is untouched" \
+        [po14_strips $key] {{1 {}} {0 v(hand)}}
+
+    ## back to single-plot
+    po14_plot $key A B C
+    set ::wviewer::mode($key) multi
+    pcall ase::ui::plot_outputs $key
+    set ::wviewer::mode($key) single
+    pcall ase::ui::plot_outputs $key
+    check "PO14 switched back to single-plot: the rows share ONE auto strip again, no blank bands" \
+        [po14_strips $key] {{1 {v(sq) v(lp) v(ramp)}} {0 v(hand)}}
+
+    ## the viewer NOT up: the viewer's own default mode decides
+    po14_unstub $key
+    po14_stub
+    set ::wviewer_plot_mode multi
+    pcall ase::ui::plot_outputs $key
+    check "PO14 viewer closed, default mode multi: ~ opens it with one strip per row" \
+        [po14_strips $key] {{1 v(ramp)} {1 v(lp)} {1 v(sq)}}
+    po14_unstub $key
+    po14_stub
+    set ::wviewer_plot_mode single
+    pcall ase::ui::plot_outputs $key
+    check "PO14 viewer closed, default mode single: ~ opens it with one strip" \
+        [po14_strips $key] {{1 {v(sq) v(lp) v(ramp)}}}
+    po14_unstub $key
+    if {$saved_default eq {}} { unset -nocomplain ::wviewer_plot_mode } \
+    else { set ::wviewer_plot_mode $saved_default }
+    catch {ase::session_close $key}
+
+    ## a Direct Plot never reuses ANY auto strip, not only the first
+    check "PO14 empty_graph_indices offers no strip carrying the auto marker" \
+        [wviewer::empty_graph_indices [list {traces {} auto 1} {traces {}} {traces {} auto 1}] 0] {1}
+}
+
+# =============================================================================
 # THE DISPLAY ARM: the real bench
 # =============================================================================
 set NG /home/analog/dev/ngspice/build-ver_50/src/ngspice
@@ -852,6 +1028,46 @@ if {!$GUI} {
         set res [ase::session_getattr $key results]
         check "PR10 renamed and re-expressed together: neither the old name nor the new holds a Value" \
             [list [val $res T_1pc_setl_BG] [val $res T_renamed] [pr_cell $key T_renamed]] {ABSENT ABSENT {}}
+    }
+    ## R-OUT14 on the real viewer: the auto strips' trace lists, top first.
+    proc pr_autos {key} {
+        if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return [list ERR:$gs] }
+        ## the marker is read straight off the model, so this reader does not
+        ## depend on the code under test
+        set out {}
+        foreach g $gs {
+            if {[wviewer::dget $g auto 0] ne {1}} { continue }
+            if {[catch {lmap tr [wviewer::dget $g traces {}] {dict get $tr expr}} ex]} { set ex ERR:$ex }
+            lappend out $ex
+        }
+        return $out
+    }
+    group PR11 {
+        set top [ase::ui::window_for $key]
+        check "PR11 fixture: the viewer is UP in single-plot with several ticked signals" \
+            [list [expr {[wviewer::window_for $key] ne {}}] [wviewer::plot_mode $key] \
+                  [expr {[llength $::pr_want] > 1}]] {1 single 1}
+        set n0 [llength [dict get [wviewer::layout_for $key] graphs]]
+        wviewer::set_plot_mode multi $key
+        pr_click $top.strip.plot
+        set per {}
+        foreach e [lreverse $::pr_want] { lappend per [list $e] }
+        check "PR11 multi-plot: a real click on ~ gives each ticked signal its own strip, newest on top" \
+            [pr_autos $key] $per
+        set n1 [llength [dict get [wviewer::layout_for $key] graphs]]
+        check "PR11 ...the viewer grew by exactly the strips the signals needed" \
+            [expr {$n1 - $n0}] [expr {[llength $::pr_want] - 1}]
+        ase::ui::do_run $key
+        set rc [ase::wait [ase::session_getattr $key run_id]]
+        for {set i 0} {$i < 40} {incr i} { update ; after 50 }
+        check "PR11 the run-end auto-plot in multi-plot replaces them: same strips, one signal each" \
+            [list $rc [pr_autos $key] [llength [dict get [wviewer::layout_for $key] graphs]]] \
+            [list 0 $per $n1]
+        wviewer::set_plot_mode single $key
+        pr_click $top.strip.plot
+        check "PR11 back in single-plot, ~ puts them in ONE strip again and the extra strips go" \
+            [list [pr_autos $key] [llength [dict get [wviewer::layout_for $key] graphs]]] \
+            [list [list $::pr_want] $n0]
     }
     ## THE SHIPPED DRAW, SEEDED.  The committed state's own variables and
     ## models (ABSVAR 0.03, VCC by agauss, section tt_mm), plus `.options

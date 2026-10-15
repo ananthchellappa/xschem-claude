@@ -360,12 +360,14 @@ check "GX9 ase_window.tcl has exactly the three known regenerate sites" \
   [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 3
 # auto_plot's no-plottable-rows branch clears the AUTO strip's traces and
 # regenerates — every other strip carries forward, so it owes the fold, and it
-# must take it BEFORE clear_graph_traces (the model mutation).
+# must take it BEFORE the model mutation. Since ase_l.md R-OUT14 that mutation is
+# wviewer::auto_plot_strips with no signals (it clears the one auto strip and
+# removes any further ones a multi-plot batch made).
 set gx_ap [wvproc_body $asrc ase::ui::auto_plot]
 check_true "GX9 auto_plot folds before it clears the auto strip" \
   [expr {[string first {wviewer::capture_live_view_state $key} $gx_ap] >= 0 &&
          [string first {wviewer::capture_live_view_state $key} $gx_ap] <
-         [string first {wviewer::clear_graph_traces $key $gi} $gx_ap]}]
+         [string first {wviewer::auto_plot_strips $key 0} $gx_ap]}]
 # the OTHER site (the re-plot path) is safe transitively: attach_raw captured a
 # few lines above it. Pin that, or a reordering silently reopens the hole.
 check_true "GX9 the re-plot path still regenerates after attach_raw" \

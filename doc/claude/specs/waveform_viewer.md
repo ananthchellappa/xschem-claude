@@ -104,7 +104,10 @@ session (raise-or-open; N sessions → N viewers).
   round-trips it). Rebuild = `clear_graph_traces` + re-add — clear-NOT-remove
   keeps Direct-Plot graph indices stable; Direct-Plot graphs are never
   touched. Zero plot rows never opens a viewer (an open viewer's stale auto
-  graph is emptied).
+  graph is emptied). ⚠ Since ase_l.md R-OUT14 (2026-10-15) that holds in
+  single-plot only: in multi-plot the auto-plot owns one `auto 1` strip per
+  row (`wviewer::auto_plot_strips`), still rebuilt every run, with surplus
+  auto strips removed and missing ones inserted.
 - **op-only results** (`ase::plot_sim_type` = `op`): Direct Plot and
   auto-plot report a ciw_echo notice (no sweep, nothing plottable) and touch
   nothing — no crash, the click mode still exits clean.

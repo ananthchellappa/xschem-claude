@@ -3404,12 +3404,15 @@ proc wviewer::graph_is_empty {G} {
 
 # PURE: the indices of the strips a plot batch may REUSE instead of creating a
 # new one — the strips that hold NO traces and are not the tool-owned auto-plot
-# strip — in index order (issue 0171 follow-up).
+# strip — in index order (issue 0171 follow-up). Every strip carrying the
+# `auto 1` marker is excluded, not only the index `auto` names: under multi-plot
+# the auto-plot owns one strip per signal (ase_l.md R-OUT14).
 proc wviewer::empty_graph_indices {gs {auto -1}} {
   set out {}
   set gi 0
   foreach G $gs {
-    if {$gi != $auto && [wviewer::graph_is_empty $G]} { lappend out $gi }
+    if {$gi != $auto && [wviewer::dget $G auto 0] ne {1}
+        && [wviewer::graph_is_empty $G]} { lappend out $gi }
     incr gi
   }
   return $out
@@ -3717,6 +3720,109 @@ proc wviewer::clear_graph_traces {token gi} {
   set gs [wviewer::markers_sweep_numbers $gs $gone]
   wviewer::set_graphs $token $gs
   return 1
+}
+
+# Every strip of `token`'s layout carrying the `auto 1` marker, ascending. One
+# strip in single-plot mode; under multi-plot the auto-plot owns one strip per
+# plotted signal (ase_l.md R-OUT14), so a reader that needs "is this strip
+# tool-owned" asks this, not auto_graph_index (which answers the FIRST one).
+proc wviewer::auto_graph_indices {token} {
+  set out {}
+  set gi 0
+  foreach G [dict get [wviewer::layout_for $token] graphs] {
+    if {[wviewer::dget $G auto 0] eq {1}} { lappend out $gi }
+    incr gi
+  }
+  return $out
+}
+
+# THE AUTO-PLOT'S STRIPS FOR A BATCH OF `n` SIGNALS (ase_l.md R-OUT14). The
+# user, 2026-10-15: "The plot button (~) functionality ignores the
+# multi/single plot mode of the already-up Waveform Viewer and does a single
+# plot mode - dumping all signals onto a single strip."
+#
+# Readies the tool-owned `auto 1` strips for one rebuild and answers the strip
+# index each signal lands in, in signal order. Model only (no Tk, no xschem):
+# the caller regenerates, then adds the traces.
+#
+#   single -> ONE auto strip, every signal in it: exactly what ensure_auto_graph
+#             plus clear_graph_traces always did (append at the bottom, or claim
+#             a lone empty strip).
+#   multi  -> ONE auto strip PER SIGNAL, newest on top: signal k lands in the
+#             (n-1-k)-th auto strip from the top, which is plan_plot's multi rule
+#             for any other batch, so `~` and Direct Plot of the same signals
+#             stack them the same way. Missing strips are inserted above the
+#             first auto strip (at the top when there is none: multi-plot puts
+#             new strips at the top); surplus ones from a longer earlier batch
+#             are REMOVED, never left as blank bands.
+#
+# The mode is the window's (wviewer::plot_mode); a token with none falls back to
+# wviewer::default_plot_mode, the mode wviewer::open seeds a new window with.
+#
+# REPLACE IS UNCHANGED: every auto strip is cleared before anything lands, and no
+# strip without the marker (Direct Plot, a hand-built strip) is touched. Indices
+# that move because an auto strip was inserted or removed carry the target strip
+# and the trace highlights with them, by the same pure rules delete_empty_strips
+# and plot_signals use.
+proc wviewer::auto_plot_strips {token n} {
+  variable target
+  set mode [wviewer::plot_mode $token]
+  if {$mode eq {}} { set mode [wviewer::default_plot_mode] }
+  set want [expr {($mode eq {multi} && $n > 1) ? $n : 1}]
+  set A [wviewer::auto_graph_indices $token]
+  if {![llength $A]} {
+    set gs [dict get [wviewer::layout_for $token] graphs]
+    if {$mode ne {multi} || ([llength $gs] == 1
+                             && [wviewer::graph_is_empty [lindex $gs 0]])} {
+      set A [list [wviewer::ensure_auto_graph $token]]
+    }
+  }
+  foreach gi $A { wviewer::clear_graph_traces $token $gi }
+  if {[llength $A] > $want} {
+    set kill [lrange $A $want end]
+    set gs [dict get [wviewer::layout_for $token] graphs]
+    # read BEFORE the mutation (delete_empty_strips' rule: target_index clamps
+    # against the live count)
+    set tgt {}
+    if {[info exists target($token)]} {
+      set tgt [wviewer::index_after_removal [wviewer::target_index $token] $kill]
+    }
+    wviewer::wavehl_remap_apply $token \
+      [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
+    wviewer::set_graphs $token [wviewer::remove_graphs $gs $kill]
+    if {$tgt ne {}} { set target($token) $tgt }
+  } elseif {[llength $A] < $want} {
+    set k [expr {$want - [llength $A]}]
+    set at [expr {[llength $A] ? [lindex $A 0] : 0}]
+    set gs [dict get [wviewer::layout_for $token] graphs]
+    set tgt {}
+    if {[info exists target($token)] && [llength $gs]} {
+      set tgt [wviewer::index_after_insert [wviewer::target_index $token] $at $k]
+    }
+    set fresh {}
+    for {set i 0} {$i < $k} {incr i} {
+      lappend fresh [dict merge [wviewer::empty_graph] [dict create auto 1]]
+    }
+    wviewer::set_graphs $token [concat [lrange $gs 0 [expr {$at - 1}]] $fresh \
+                                       [lrange $gs $at end]]
+    if {$tgt ne {}} { set target($token) $tgt }
+    set hl {}
+    foreach e [wviewer::wave_hilights $token] {
+      lassign $e gi ni st
+      lappend hl [list [wviewer::index_after_insert $gi $at $k] $ni $st]
+    }
+    wviewer::wavehl_remap_apply $token $hl
+  }
+  set A [wviewer::auto_graph_indices $token]
+  set out {}
+  for {set i 0} {$i < $n} {incr i} {
+    if {$want == 1} {
+      lappend out [lindex $A 0]
+    } else {
+      lappend out [lindex $A [expr {$want - 1 - $i}]]
+    }
+  }
+  return $out
 }
 
 # GUI: the schematic-coord rect covering the CURRENT visible viewport of the
@@ -7881,6 +7987,12 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   set gs [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
   set auto [wviewer::auto_graph_index $token]
+  # R-OUT14: a multi-plot auto-plot owns SEVERAL strips; a target on any of them
+  # is as unusable as one on the first, so that is the index plan_plot is told
+  # about (empty_graph_indices already skips every auto strip).
+  if {[wviewer::target_index $token] in [wviewer::auto_graph_indices $token]} {
+    set auto [wviewer::target_index $token]
+  }
   set plan [wviewer::plan_plot $mode [llength $gs] \
                                [wviewer::target_index $token] [llength $exprs] \
                                $auto [wviewer::empty_graph_indices $gs $auto] \
