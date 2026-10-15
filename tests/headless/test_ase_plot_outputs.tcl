@@ -29,6 +29,16 @@
 #   PO6  nothing waveform ticked: the button says so; something ticked: it
 #        does not
 #   PO7  a ticked row refused for its analysis: the button SAYS the sentence
+#   PO8  a FAILED last run (R-OUT13): ase::run_failed reads the log's footer;
+#        every Value says the run failed; `~` says so and plots nothing; the
+#        after-run callback says so; a Stop, a clean run and a run in flight
+#        are not failures
+#   PO9  a ticked row whose Value is a refusal sentence is not offered to the
+#        viewer; a ticked row with no Value yet still is
+#   PO10 an operating-point-only view filters nothing: a ticked scalar measure
+#        is handed on, and auto_plot says the view has no sweep
+#   PO11 an edit that renames a row and changes its expression together drops
+#        the OLD name's Value as well as the new one's
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -44,6 +54,14 @@
 #        second copy
 #   PR8  editing a row's expression blanks its Value (never the old
 #        expression's number); `~` then shows the new expression's number
+#   PR9  a ticked row whose Value is a refusal is not handed to the viewer by
+#        `~`: no "cannot auto-plot" sentence repeats the Value cell
+#   PR10 renaming a row and changing its expression in the dialog drops the
+#        old name's Value
+#   PF1  the SHIPPED Monte Carlo draw, seeded to one that stops the transient
+#        ("Timestep too small", rc 1): the user is told the run failed and
+#        where the log is, the status reads Error, every Value says the run
+#        failed (never "has no transient analysis"), and `~` says it again
 #
 # REGISTERED IN `hcases` AND `dcases`.
 #
@@ -83,6 +101,15 @@ set repo [file normalize [file join $here .. ..]]
 set scratch [test_scratch ase_plot_outputs]
 set fixture [file join $here data calc_fixture.raw]
 set GUI [expr {[info commands toplevel] ne {} && [info commands winfo] ne {}}]
+## The display-only bands, derived from this file's own `group` lines, so the
+## skip line names every band it skips.
+set fh [open [file normalize [info script]]]
+set ::po_src [read $fh]
+close $fh
+set ::po_disp {}
+foreach {- b} [regexp -all -inline -line {^\s*group\s+(P[RF][0-9]+)\s} $::po_src] {
+    lappend ::po_disp $b
+}
 
 ## Every ase::echo is recorded, so a sentence the button says (or must not
 ## say) is measured rather than assumed.
@@ -97,7 +124,10 @@ set FX_EX {settlingTime(vt(lp), 2m, 1, 0, 0, 0, time, time)}
 
 # A session on <scratch>/<sub>, results file <cell>_ase.raw copied from the
 # fixture when `raw` is 1.
-proc po_session {sub cell outs raw} {
+proc po_session {sub cell outs raw {an {}}} {
+    if {$an eq {}} {
+        set an {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 10m step 100u}}
+    }
     set d [file join $::scratch $sub]
     file delete -force $d
     file mkdir $d
@@ -109,7 +139,7 @@ proc po_session {sub cell outs raw} {
     puts $f "design {lib po cell $cell view schematic}"
     puts $f "rundir [list $d]"
     puts $f "temperature 27"
-    puts $f "analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 10m step 100u}}"
+    puts $f "analyses [list $an]"
     puts $f "outputs [list $outs]"
     close $f
     set key po/$cell/$sub
@@ -307,13 +337,175 @@ group PO7 {
 }
 
 # =============================================================================
+# PO8 -- A FAILED LAST RUN (R-OUT13)
+# =============================================================================
+## The log is written by the run's own producer (ase::run_log_write), so the
+## footer read here is the one a real run leaves.
+proc po_log {key exitcode} {
+    set st [ase::session_state $key]
+    set lf [[ase::backend_hook ngspice log_file] $st]
+    set meta [dict create cell [dict get $st design cell] simulator ngspice \
+                  t0 [clock milliseconds] started [clock seconds]]
+    ase::run_log_write $lf $meta "doAnalyses: TRAN:  Timestep too small\nRUN-FAILED\n" $exitcode
+    return $lf
+}
+group PO8 {
+    set key [po_session po8 tbpo $::PO_OUTS 1]
+    set lf [po_log $key 1]
+    set f [pcall ase::run_failed $key]
+    check "PO8 a footer reading exit 1 is a failed run, named with its log" \
+        $f [dict create exit 1 log $lf]
+    check "PO8 fixture: the raw is still there and has_results answers 1 (the reported shape)" \
+        [ase::has_results $key] 1
+    set res [ase::ui::results_from_disk $key]
+    set want [dict create]
+    foreach o $::PO_OUTS {
+        dict set want [ase::ui::output_result_key $o] [ase::ui::lbl_run_failed_value $f]
+    }
+    check "PO8 every row's Value says the run failed" $res $want
+    check "PO8 ...and none reads as though the circuit had no transient" \
+        [lsearch -all -inline -glob [dict values $res] {*has no*}] {}
+    check "PO8 the Value sentence" [ase::ui::lbl_run_failed_value $f] \
+        {Run failed (exit 1); see the log}
+    check "PO8 the notice names the exit code and the log" [ase::ui::lbl_run_failed $f] \
+        "ase: simulation failed (exit 1); log: $lf"
+    ase::session_setattr $key results {W old}
+    po_stub_autoplot
+    set ::po_echoes {}
+    set rc [pcall ase::ui::plot_outputs $key]
+    po_unstub_autoplot
+    check "PO8 ~ answers 0, says the run failed (only that), and plots nothing" \
+        [list $rc $::po_echoes [llength $::po_ap]] \
+        [list 0 [list [ase::ui::lbl_run_failed $f]] 0]
+    check "PO8 ...and the Values it leaves say the run failed" \
+        [ase::session_getattr $key results] $want
+    ## the after-run callback, on the exit code the run left
+    ase::session_setattr $key results {W old}
+    set ::execute(exitcode,last) 1
+    set ::execute(data,last) {}
+    set ::po_echoes {}
+    pcall ase::ui::run_finished $key
+    check "PO8 the after-run callback says the run failed" \
+        [expr {[ase::ui::lbl_run_failed $f] in $::po_echoes}] 1
+    check "PO8 ...and replaces the previous run's Values with the sentence" \
+        [ase::session_getattr $key results] $want
+    ## a Stop is not a failure
+    ase::session_setattr $key stopped 1
+    ase::session_setattr $key results {W old}
+    set ::po_echoes {}
+    pcall ase::ui::run_finished $key
+    check "PO8 a Stopped run: run_failed answers {}, nothing says it failed, Values untouched" \
+        [list [ase::run_failed $key] \
+              [lsearch -all -inline -glob $::po_echoes {*failed*}] \
+              [ase::session_getattr $key results]] {{} {} {W old}}
+    ## the mark is set by Stop itself, BEFORE the kill whose EOF fires the
+    ## callback: the kill is stood in for, and records what it saw
+    ase::session_setattr $key stopped 0
+    set ::execute(pipe,9077) po-fake
+    ase::session_setattr $key run_id 9077
+    rename ::kill_running_cmds ::po_krc_orig
+    proc ::kill_running_cmds {args} {
+        set ::po_kill [list $args [ase::session_getattr $::po_stopkey stopped 0]]
+    }
+    set ::po_stopkey $key
+    set ::po_kill {}
+    pcall ase::ui::do_stop $key
+    rename ::kill_running_cmds {}
+    rename ::po_krc_orig ::kill_running_cmds
+    unset ::execute(pipe,9077)
+    check "PO8 Stop marks the session stopped before it kills" $::po_kill {{9077 -9} 1}
+    ase::session_setattr $key run_id {}
+    ase::session_setattr $key stopped 0
+    po_log $key 0
+    check "PO8 control: a footer reading exit 0 is not a failure" [ase::run_failed $key] {}
+    check "PO8 control: a clean run's Values are the results file's, not the sentence" \
+        [val [ase::ui::results_from_disk $key] W] wave
+    ## a run in flight: the header only, no footer yet
+    ase::run_log_write $lf [dict create cell tbpo simulator ngspice] {} {}
+    check "PO8 control: a run in flight (no footer yet) is not a failure" [ase::run_failed $key] {}
+    file delete $lf
+    check "PO8 control: no log at all is not a failure" [ase::run_failed $key] {}
+    check "PO8 an unknown session answers {}" [pcall ase::run_failed po/none/none] {}
+    catch {unset ::execute(exitcode,last)}
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PO9 -- A REFUSAL-VALUED TICKED ROW IS NOT OFFERED TO THE VIEWER
+# =============================================================================
+group PO9 {
+    set outs [list {name W expr vt(lp) save 0 plot 1} \
+                   {name P expr v(sq) save 1 plot 1} \
+                   {name R expr {settlingTime(vt(nosuch), 2m, 1, 0, 0, 0, time, time)} save 0 plot 1} \
+                   {name N expr vt(nosuch) save 0 plot 1} \
+                   {name E expr {average(vt(lp))} save 0 plot 1}]
+    set key [po_session po9 tbpo $outs 1]
+    set res [ase::ui::results_from_disk $key]
+    check "PO9 fixture: the results file answers R and N with a refusal sentence, W with wave" \
+        [list [ase::ui::value_rank [val $res R]] [expr {[string trim [val $res R]] ne {}}] \
+              [ase::ui::value_rank [val $res N]] [expr {[string trim [val $res N]] ne {}}] \
+              [val $res W]] {1 1 1 1 wave}
+    ase::session_setattr $key results $res
+    set t [pcall ase::ui::plot_targets $key]
+    check "PO9 the refusal-valued rows are not offered; the signal and the wave expression are" \
+        [list [po_names $t] [po_nref $t]] {{W P} 0}
+    set res2 [dict remove $res R N]
+    ase::session_setattr $key results $res2
+    check "PO9 control: with no Value yet the same rows ARE offered" \
+        [po_names [pcall ase::ui::plot_targets $key]] {W P R N}
+    ase::session_setattr $key results $res
+    set ::po_echoes {}
+    pcall ase::ui::plot_outputs $key
+    check "PO9 ~ says nothing about the refused rows: the Value cell is the one place" \
+        [lsearch -all -inline -regexp $::po_echoes {nosuch|unknown token}] {}
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PO10 -- AN OPERATING-POINT-ONLY VIEW FILTERS NOTHING
+# =============================================================================
+group PO10 {
+    set an {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+    set outs [list {name P expr v(sq) save 1 plot 1} \
+                   [list name T expr $::FX_EX save 0 plot 1]]
+    set key [po_session po10 tbpo $outs 1 $an]
+    check "PO10 fixture: the view is the operating point" \
+        [ase::plot_sim_type [ase::session_state $key]] op
+    ase::session_setattr $key results {P 1.0 T 2.5e-03}
+    set t [pcall ase::ui::plot_targets $key]
+    check "PO10 every ticked row is handed on, the scalar measure too, and nothing is refused" \
+        [list [po_names $t] [po_nref $t]] {{P T} 0}
+    set ::po_echoes {}
+    pcall ase::ui::auto_plot $key
+    check "PO10 ...and auto_plot says the view has no sweep" \
+        [expr {{ase: op results have no sweep — nothing to auto-plot} in $::po_echoes}] 1
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PO11 -- A RENAME AND A NEW EXPRESSION TOGETHER
+# =============================================================================
+group PO11 {
+    set res {A 1.0 B 2.0 X 3.0}
+    check "PO11 renamed AND re-expressed: the old name's Value and the new name's both go" \
+        [pcall ase::ui::results_drop_edited $res {name A expr e1} {name B expr e2}] {X 3.0}
+    check "PO11 re-expressed under the same name: that Value goes" \
+        [pcall ase::ui::results_drop_edited $res {name A expr e1} {name A expr e2}] {B 2.0 X 3.0}
+    check "PO11 control: the same expression keeps every Value" \
+        [pcall ase::ui::results_drop_edited $res {name A expr e1} {name B expr e1}] $res
+    check "PO11 an unnamed row's key is its expression" \
+        [pcall ase::ui::results_drop_edited {e1 1.0 X 3.0} {expr e1} {expr e2}] {X 3.0}
+}
+
+# =============================================================================
 # THE DISPLAY ARM: the real bench
 # =============================================================================
 set NG /home/analog/dev/ngspice/build-ver_50/src/ngspice
 if {!$GUI} {
-    puts "SKIP: display-only bands PR1-PR6 (no Tk on this arm)"
+    puts "SKIP: display-only bands [join $::po_disp ,] (no Tk on this arm)"
 } elseif {![file executable $NG]} {
-    puts "skip: PR1-PR6 the registry ngspice is not at $NG"
+    puts "skip: [join $::po_disp ,] the registry ngspice is not at $NG"
 } else {
     source [file join $repo tools migrate op_measures_bench.tcl]
     opm::setup $repo $NG
@@ -534,6 +726,105 @@ if {!$GUI} {
         pr_click $top.strip.plot
         check "PR8 after ~ it shows the new expression's number" \
             [pr_cell $key T_1pc_setl_BG] [ase::format_value [format %.6e [dict get $ref10 value]]]
+    }
+    group PR9 {
+        set top [ase::ui::window_for $key]
+        set st [ase::session_state $key]
+        set rex {settlingTime(vt(nosuch), 100u, 1, 0, 0, 0, time, time)}
+        set outs [ase::state_get $st outputs]
+        lappend outs [dict create name R_refused expr $rex save 0 plot 1]
+        dict set st outputs $outs
+        ase::session_update $key $st
+        ase::ui::populate $key
+        set ::po_echoes {}
+        pr_click $top.strip.plot
+        set v [pr_cell $key R_refused]
+        check "PR9 fixture: the row's Value is a refusal sentence" \
+            [list [ase::ui::value_rank $v] [expr {[string trim $v] ne {}}]] {1 1}
+        check "PR9 ~ hands it to no viewer: nothing repeats the Value cell as an error" \
+            [lsearch -all -inline -regexp $::po_echoes {nosuch|unknown token|cannot auto-plot}] {}
+        check "PR9 ...and the ticked signals are still plotted" [lindex [pr_auto $key] 0] $::pr_want
+    }
+    group PR10 {
+        set top [ase::ui::window_for $key]
+        set rows [ase::state_get [ase::session_state $key] outputs]
+        set idx -1
+        set i 0
+        foreach o $rows {
+            if {[ase::state_get $o name] eq {T_1pc_setl_BG}} { set idx $i }
+            incr i
+        }
+        check "PR10 fixture: the row has a Value before the edit" \
+            [expr {[val [ase::session_getattr $key results] T_1pc_setl_BG] ne {ABSENT}}] 1
+        ase::ui::output_editor $key $idx
+        update
+        set w $top.edout
+        $w.name delete 0 end
+        $w.name insert 0 T_renamed
+        $w.expr delete 0 end
+        $w.expr insert 0 $EX
+        ase::ui::output_editor_ok $key
+        update
+        set res [ase::session_getattr $key results]
+        check "PR10 renamed and re-expressed together: neither the old name nor the new holds a Value" \
+            [list [val $res T_1pc_setl_BG] [val $res T_renamed] [pr_cell $key T_renamed]] {ABSENT ABSENT {}}
+    }
+    ## THE SHIPPED DRAW, SEEDED.  The committed state's own variables and
+    ## models (ABSVAR 0.03, VCC by agauss, section tt_mm), plus `.options
+    ## seed=35`, a draw that stops this transient with "Timestep too small".
+    group PF1 {
+        set fh [open [file join $repo $staterel]]
+        set shipped [read $fh]
+        close $fh
+        set st [ase::session_state $key]
+        dict set st variables [dict get $shipped variables]
+        dict set st models [dict get $shipped models]
+        set op [ase::state_get $st options]
+        lappend op [dict create name seed value 35]
+        dict set st options $op
+        ase::session_update $key $st
+        set top [ase::ui::window_for $key]
+        set ::po_echoes {}
+        ase::ui::do_run $key
+        set rc [ase::wait [ase::session_getattr $key run_id]]
+        for {set i 0} {$i < 40} {incr i} { update ; after 50 }
+        set lf [file join $rd tb_bandgap_ase.log]
+        set why {}
+        if {![catch {open $lf} fh]} {
+            set why [lsearch -all -inline -glob [split [read $fh] \n] {*Timestep too small*}]
+            close $fh
+        }
+        check "PF1 fixture: the shipped draw at seed 35 stops the transient (rc 1, Timestep too small)" \
+            [list $rc [expr {[llength $why] > 0}]] {1 1}
+        check "PF1 fixture: the raw is still newer than the deck, so has_results answers 1" \
+            [ase::has_results $key] 1
+        set f [ase::run_failed $key]
+        check "PF1 run_failed names the exit code and the log" $f [dict create exit 1 log $lf]
+        set said [ase::ui::lbl_run_failed $f]
+        check "PF1 the user is told the run failed, and where the log is" \
+            [expr {$said in $::po_echoes}] 1
+        set stat {}
+        catch {set stat [$top.status.stat cget -text]}
+        check "PF1 the status segment reads Error" $stat {Status: Error}
+        set rows [ase::state_get [ase::session_state $key] outputs]
+        set cells {}
+        foreach i [ase::ui::measures_order $rows {} 0] {
+            lappend cells [$top.body.outs.tv set $i value]
+        }
+        set one [ase::ui::lbl_run_failed_value $f]
+        check "PF1 every Measures Value says the run failed" \
+            [lsort -unique $cells] [list $one]
+        puts "note: PF1 the user sees: [list $said] status=[list $stat] value=[list $one]"
+        set ::po_echoes {}
+        pr_click $top.strip.plot
+        set cells2 {}
+        foreach i [ase::ui::measures_order $rows {} 0] {
+            lappend cells2 [$top.body.outs.tv set $i value]
+        }
+        check "PF1 ~ after the failed run says it failed, never that the result has no transient" \
+            [list [expr {$said in $::po_echoes}] \
+                  [lsearch -all -inline -regexp [concat $::po_echoes $cells2] {has no|cannot auto-plot}]] {1 {}}
+        check "PF1 ...and the Values still say the run failed" [lsort -unique $cells2] [list $one]
     }
     catch {wviewer::close $key}
     catch {ase::ui::close $key}

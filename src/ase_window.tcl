@@ -2642,9 +2642,21 @@ proc ase::ui::value_sort_toggle {key} {
 # from the results file -- an expression by the Calculator (ase_l.md R-OUT2).
 proc ase::ui::results_from_disk {key} {
   if {![ase::session_exists $key]} { return [dict create] }
-  if {![ase::has_results $key]}    { return [dict create] }
   set st [ase::session_state $key]
   if {$st eq {}} { return [dict create] }
+  ## R-OUT13: a failed run's file is not read.  Every row says the run failed,
+  ## because the plots a stopped transient leaves make every expression read
+  ## as though the circuit had no transient.
+  set failed [ase::run_failed $key]
+  if {$failed ne {}} {
+    set res [dict create]
+    foreach o [ase::state_get $st outputs] {
+      dict set res [ase::ui::output_result_key $o] \
+        [ase::ui::lbl_run_failed_value $failed]
+    }
+    return $res
+  }
+  if {![ase::has_results $key]}    { return [dict create] }
   set sim [ase::state_get $st simulator ngspice]
   ## No row reads the log any more (2026-10-11): every Value comes from the
   ## results file, by the raw reader or the Calculator (ase_l.md R-OUT2).
@@ -2946,14 +2958,10 @@ proc ase::ui::output_editor_ok {key} {
   # A changed expression's stored Value belongs to the OLD expression: drop
   # it, so the cell is blank until `~` (R-OUT12) or the next run evaluates
   # the new one, rather than showing a number for text the row no longer has.
-  if {[info exists oldrow] && [ase::state_get $oldrow expr] ne $ex} {
+  if {[info exists oldrow]} {
     catch {
-      set res [ase::session_getattr $key results]
-      foreach rk [list [ase::ui::output_result_key $oldrow] \
-                       [ase::ui::output_result_key $row]] {
-        dict unset res $rk
-      }
-      ase::session_setattr $key results $res
+      ase::session_setattr $key results [ase::ui::results_drop_edited \
+        [ase::session_getattr $key results] $oldrow $row]
     }
   }
   ase::ui::populate $key
@@ -2962,6 +2970,19 @@ proc ase::ui::output_editor_ok {key} {
   catch {unset edchk($key,plot)}
   catch {unset edchk($key,save)}
   destroy $w
+}
+
+# The session results with an edited row's stale Value dropped: when the
+# expression changed, both the OLD row's result key and the new one's go (a
+# rename and a new expression together must not leave the old number under the
+# old name).  An unchanged expression keeps everything.  Pure.
+proc ase::ui::results_drop_edited {res oldrow row} {
+  if {[ase::state_get $oldrow expr] eq [ase::state_get $row expr]} { return $res }
+  foreach rk [list [ase::ui::output_result_key $oldrow] \
+                   [ase::ui::output_result_key $row]] {
+    if {[dict exists $res $rk]} { dict unset res $rk }
+  }
+  return $res
 }
 
 proc ase::ui::output_editor_cancel {key} {
@@ -10880,6 +10901,14 @@ proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
 proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values} }
 proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
 proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
+# A failed run (ase_l.md R-OUT13; `f` is ase::run_failed's answer): the notice,
+# and what every Value cell reads instead of a refusal about the analysis.
+proc ase::ui::lbl_run_failed {f} {
+  return "ase: simulation failed (exit [dict get $f exit]); log: [dict get $f log]"
+}
+proc ase::ui::lbl_run_failed_value {f} {
+  return "Run failed (exit [dict get $f exit]); see the log"
+}
 
 # The THREE strip buttons with no menubar twin (`=`, `-->`, `X`), plus the
 # temperature entry, which is not a strip button at all -- four constants, three
@@ -12687,8 +12716,10 @@ proc ase::ui::do_netlist_recreate {key} {
 #   skipped -- an EXPRESSION whose Value is a number (or a list of numbers):
 #              a scalar measure such as `settlingTime(...)` has no trace, and
 #              handing it to the viewer only produced an "unknown token"
-#              error.  A plain signal row is a signal whatever its Value
-#              shows (an op+tran bench's `VBG` reads the operating point and
+#              error.  And ANY row whose Value is a refusal sentence: the
+#              Value cell already says it, and the viewer would only repeat
+#              it as an error.  A plain signal row valued a number is a
+#              signal (an op+tran bench's `VBG` reads the operating point and
 #              plots the transient), and a row with no Value yet is offered.
 # On an operating-point-only view nothing is filtered: auto_plot says that
 # view has no sweep.  -> {rows <rows> refused <pairs>}.  No Tk.
@@ -12709,10 +12740,10 @@ proc ase::ui::plot_targets {key} {
     set ex [ase::state_get $o expr]
     set why [ase::ui::plot_row_refusal $ex $sim_t]
     if {$why ne {}} { lappend refused [list $ex $why] ; continue }
-    if {![ase::output_is_plain $ex] &&
-        [ase::ui::value_rank [ase::ui::output_value $o $results]] == 0} {
-      continue
-    }
+    set v [ase::ui::output_value $o $results]
+    set rank [ase::ui::value_rank $v]
+    if {$rank == 1 && [string trim $v] ne {}} { continue }
+    if {![ase::output_is_plain $ex] && $rank == 0} { continue }
     lappend keep $o
   }
   return [dict create rows $keep refused $refused]
@@ -12728,12 +12759,20 @@ proc ase::ui::plot_targets {key} {
 # (results_refill, the open and Load State path, so a row added after the run
 # gets its number), and only then is the plot asked for, through the after-run
 # auto_plot and its refusal rules.  No results: one sentence, nothing changed.
+# A failed last run (ase::run_failed, R-OUT13): the failure sentence, every
+# Value reads that the run failed, and nothing is plotted.
 # The Measurements dialog is not repainted here: its Values are the
 # simulator's own measurement output, which only a run changes, and
 # run_finished repaints it then.
 # -> 1 when it evaluated, 0 when there was nothing to evaluate against.
 proc ase::ui::plot_outputs {key} {
   if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
+  set failed [ase::run_failed $key]
+  if {$failed ne {}} {
+    catch {::ase::echo [ase::ui::lbl_run_failed $failed] error}
+    ase::ui::results_refill $key
+    return 0
+  }
   if {![ase::has_results $key]} {
     catch {::ase::echo [ase::ui::lbl_plot_outputs_none] error}
     return 0
@@ -12929,6 +12968,19 @@ proc ase::ui::run_finished {key} {
     after idle [list ase::ui::annot_refresh_idle $key]
   } else {
     ase::ui::set_status $key fail
+    # R-OUT13: say it failed and where the log is, and let every Value cell
+    # say so too, rather than leave the previous run's numbers standing.  A
+    # Stop already said what it cost (do_stop) and is not a failure.
+    if {[ase::session_getattr $key stopped 0] ne {1}} {
+      set _rf [ase::run_failed $key]
+      if {$_rf eq {}} {
+        set _rf [dict create exit $ec log {}]
+        catch {dict set _rf log [[ase::backend_hook [ase::state_get \
+          [ase::session_state $key] simulator] log_file] [ase::session_state $key]]}
+      }
+      catch {::ase::echo [ase::ui::lbl_run_failed $_rf] error}
+      catch {ase::ui::results_refill $key}
+    }
   }
   # ── STAGE 10a / issue 1460: THE FAILED OPERATING POINT HAS A NODE LIST, AND
   # UNTIL NOW NOTHING READ IT. ─────────────────────────────────────────────────
@@ -12963,6 +13015,7 @@ proc ase::ui::run_finished {key} {
 # log toplevel (opened + cleared), the live trace, the Running status.
 proc ase::ui::run_started {key id} {
   ase::session_setattr $key run_id $id
+  ase::session_setattr $key stopped 0
   ase::ui::log_open $key
   ase::ui::log_clear $key
   ase::ui::attach_trace $key $id
@@ -13205,6 +13258,8 @@ proc ase::ui::do_stop {key} {
   ## rundir was actually rendered from, resolved once by ase::run_deck.
   set stopckpt {}
   catch {set stopckpt [::ase::state_get [::ase::run_record $id] ckpt {}]}
+  ## R-OUT13: a Stop is not a failure; ase::run_failed reads this mark.
+  catch {::ase::session_setattr $key stopped 1}
   catch {kill_running_cmds $id -9}
   ## STAGE 2e: SAY WHAT THE STOP COST, AND ONLY ON THE PATH THAT KILLED
   ## SOMETHING. The two early returns above keep the sentences they have -- the

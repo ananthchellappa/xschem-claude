@@ -1007,17 +1007,22 @@ They should not influence the input to the simulator."* ADE-L is the floor
     opened if it is not up, the results attached, and the auto graph rebuilt from the ticked
     rows (`ase::ui::plot_targets`). A ticked **expression whose Value is a number** (a scalar
     measure such as `settlingTime(...)`) is not a trace and is not handed to the viewer, after
-    a run either — it used to be, and the viewer answered *unknown token*. A ticked plain
-    signal is always plotted, whatever its Value shows (an op+tran bench's `VBG` reads the
-    operating point and plots the transient); a row with no Value yet is offered.
+    a run either — it used to be, and the viewer answered *unknown token*. Nor is **any
+    ticked row whose Value is a refusal sentence**: the Value cell is the one place that is
+    said, and the viewer only repeated it as an error. A ticked plain signal valued a number
+    is plotted (an op+tran bench's `VBG` reads the operating point and plots the transient);
+    a row with no Value yet is offered. On an operating-point-only view nothing is filtered,
+    and the auto-plot says that view has no sweep.
   - **No results** (`ase::has_results` false): it says *no results; run a simulation first*
     and changes nothing. Ticked waveforms none: it says *no waveform output has Plot ticked*,
     opens no viewer, and an open viewer's auto graph is emptied (the after-run
     always-replace rule). A second press with the viewer up replaces the auto graph's
     traces; it never adds a second copy.
   - **An edited expression's Value is dropped** on the editor's OK
-    (`ase::ui::output_editor_ok`): the cell is blank until `~` or the next run, never the
-    old expression's number.
+    (`ase::ui::output_editor_ok`, `ase::ui::results_drop_edited`): the cell is blank until
+    `~` or the next run, never the old expression's number — under the old name as well as
+    the new one when a rename and a new expression arrive together.
+  - **After a failed run** it says the run failed instead (R-OUT13).
   - The Measurements dialog is not repainted by `~`: its Values are the simulator's own
     measurement output, which only a run changes.
   - The tip reads **Plot outputs and update values**; `Tools > Waveform Viewer` stays the
@@ -1027,6 +1032,28 @@ They should not influence the input to the simulator."* ADE-L is the floor
   - `tests/headless/test_ase_plot_outputs.tcl` (both arms; PR rows on the real `tb_bandgap`
     bench with the registry ngspice, pinned to its nominal corner: the shipped Monte Carlo
     draw stops some transients with *Timestep too small*).
+
+- **R-OUT13 — a failed run says so (2026-10-14).** The shipped `tb_bandgap` draws VCC with
+  `agauss`, and some draws stop its transient (*Timestep too small*, rc 1; measured
+  2026-10-14 on the registry ngspice: `.options seed=` 35 and 37 of 1–60). ngspice still `write`s the operating point, so
+  the results file is newer than the deck and `ase::has_results` answers 1. Before this the
+  status segment turned red and nothing else changed: the Measures Values went on showing
+  the PREVIOUS run's numbers, and `~` then filled every expression with *Cannot evaluate:
+  this result has no transient analysis*, as though the circuit had none.
+  - **`ase::run_failed`** answers `{exit N log <path>}` from the run log's own footer
+    (`=== exit N after T s ===`, written by every run), so it holds across a restart; no
+    log, no footer (a run in flight) or exit 0 answer `{}`.
+  - **A Stop is not a failure**: `ase::ui::do_stop` marks the session `stopped` before it
+    kills, and `run_started` clears it. In memory only: after a restart a stopped run's log
+    reads as a failed one.
+  - **At run end** (`ase::ui::run_finished`, nonzero exit, not stopped) the CIW says
+    *ase: simulation failed (exit N); log: <path>* at error severity, beside the red
+    *Status: Error*, and every Value cell reads **Run failed (exit N); see the log**.
+  - **The results reader** (`ase::ui::results_from_disk`, so open, Load State and `~`)
+    answers that same sentence for every row and reads nothing from the file.
+  - **`~`** says the failure sentence, refills the Values with it, and plots nothing.
+  - Fenced by bands PO8 (both arms) and PF1 (display arm: the shipped draw at `.options
+    seed=35`, run for real) of `tests/headless/test_ase_plot_outputs.tcl`.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

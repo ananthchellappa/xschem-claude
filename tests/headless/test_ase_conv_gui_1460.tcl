@@ -1250,8 +1250,10 @@ set gf_said $::g_echo
 g_echo_off
 check "GF1 a finished run SAYS which nodes did not converge and names the door that lights them -- without lighting anything itself"   [list [expr {[string first {D} [lindex [lindex $gf_said end] 1]] >= 0}]         [expr {[string first [ase::ui::lbl_hilite_menu]                  [lindex [lindex $gf_said end] 1]] >= 0}]]   {1 1}
 check "GF2 and the same event fills the run-health strip from the very log it just read" [g_cfg $gtop.status.health -text]   {Health: 2013 TRAN points, 2012 accepted, 1 rejected, 4045 iterations}
-## THE CONTROL: a clean run says nothing and shows nothing.
+## THE CONTROL: a clean run says nothing and shows nothing.  A clean run
+## exits 0: at exit 1 the callback now says the run failed (ase_l.md R-OUT13).
 g_setlog $GCLEAN
+set ::execute(exitcode,last) 0
 g_echo_on
 set ::g_echo {}
 ase::ui::run_finished $gkey

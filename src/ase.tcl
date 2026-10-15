@@ -18149,6 +18149,45 @@ proc ase::has_results {key} {
   return [expr {[ase::results_stale $key] ? 0 : 1}]
 }
 
+# "Session `key`'s last run FAILED": {exit <code> log <path>}, or {} when it
+# did not, or nothing says (ase_l.md R-OUT13).
+#
+# FROM THE LOG'S OWN FOOTER (ase::run_log_footer, `=== exit N after T s ===`),
+# for the reason ase::results_stale gives: the exit code in ase::run_done's
+# `last_run` is one namespace variable, neither per-session nor persistent.
+# The log is rewritten by every run, header only at launch, so a run in flight
+# answers {} and the footer is always the newest run's.
+#
+# ⚠ WHY has_results CANNOT SAY IT. A transient ngspice stops ("Timestep too
+# small", rc 1) still `write`s the plots that finished, so the raw is newer than
+# the deck and has_results answers 1 -- and every expression then reads that
+# the result "has no transient analysis", as though the circuit had none.
+#
+# No log, no footer, an unreadable file: {} -- no evidence the run failed.
+# A run the user STOPPED is not a failure either: a kill exits nonzero, and
+# ase::ui::do_stop marks the session `stopped` before it kills (in memory only,
+# so after a restart a stopped run's log reads as a failed one).
+proc ase::run_failed {key} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  if {[ase::session_getattr $key stopped 0] eq {1}} { return {} }
+  if {[catch {[ase::backend_hook [ase::state_get $st simulator] log_file] $st} lf]} {
+    return {}
+  }
+  if {$lf eq {} || ![file isfile $lf]} { return {} }
+  if {[catch {::open $lf r} fh]} { return {} }
+  set tail {}
+  catch {
+    fconfigure $fh -translation binary
+    if {[catch {seek $fh -256 end}]} { seek $fh 0 start }
+    set tail [read $fh]
+  }
+  catch {::close $fh}
+  if {![regexp {=== exit (\S+) after [0-9.]+ s ===\s*$} $tail -> ec]} { return {} }
+  if {$ec eq {0}} { return {} }
+  return [dict create exit $ec log $lf]
+}
+
 # "Session `key`'s raw is OLDER than the deck it claims to describe" — issue 0838.
 #
 # A raw file DESCRIBES A DECK. It is usable as this session's results iff it is
