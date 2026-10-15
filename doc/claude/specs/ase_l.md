@@ -1082,13 +1082,20 @@ They should not influence the input to the simulator."* ADE-L is the floor
     strip carrying the marker, and `wviewer::plot_signals` treats a target on any of them as
     unusable. For the same reason Delete Empty Strips (`e`) never deletes an auto strip, any of
     them: `wviewer::empty_strips_to_delete` reads the same `empty_graph_indices`.
-  - Not built: an ADE-L-style Append/Replace/New Window selector for `~` and the run-end plot;
-    it awaits the user's ruling.
+  - The ADE-L-style destination selector for `~` and the run-end plot is R-OUT15 below.
   - Fenced by bands PO14 (both arms; the real `auto_plot` against the viewer model, its Tk doors
     stood in for), PO15 (both arms; `auto_plot_strips` and `plot_signals` on layouts where the
     target and the highlights moving, the top insert and the any-auto-strip guard each have an
     answer only they give) and PR11 (display arm: a real click on `~` and a real `tb_bandgap` run in
     multi-plot, then back to single) of `tests/headless/test_ase_plot_outputs.tcl`.
+
+- **R-OUT15 — the plot destination drop-down (user 2026-10-15; SPECIFIED, not yet
+  built).** A read-only drop-down at the right end of the status bar — `Append`,
+  `Replace`, `New SubWin`, `New Win` — saved as session state key `plot_dest`, used by `~`
+  and the run-end auto-plot; it lands in the active viewer tab's TARGET subwindow. The
+  authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18, §8),
+  which also says what becomes of the `auto 1` strips under each choice. R-OUT14's strip
+  order (last row on top) is unchanged by it.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

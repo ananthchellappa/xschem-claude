@@ -11,6 +11,10 @@ Read first: `doc/claude/code_analysis/waveform_subsystem_reference.md` (the map;
 LMB seam, undo, the selection-as-a-set rules). This document is the authority
 for everything below; §15 "As shipped" records every delta once built.
 
+*Successor (2026-10-15): `doc/claude/specs/waveform_viewer_subwindows.md` —
+tiled SUBWINDOWS inside a tab (a tab is ViVA's New Win, a subwindow its New
+SubWin). It keeps every rule here and adds a tag to the graphs, not a key space.*
+
 ---
 
 ## 1. What is being asked
@@ -721,3 +725,24 @@ sites to the new echo seam (0207's own deferred item 2).
 
 *(filled in at implementation; THIS SECTION IS THE AUTHORITY on every delta
 from the text above.)*
+
+Filled 2026-10-15 at `948f8e86`, from the code and the commits, not from memory.
+
+- **Commits**: `f74f50cf4` (step 1, `forget` unsets `gridshow`), `f134a85c9`
+  (steps 2-8: echo, stash, bar, keys, view cache, copy/paste), `3c95d8d6c` (the
+  suite, nine sabotages S1-S9, each killing exactly its target), `11b163bf8`
+  (eyeball finding: the active tab was invisible; it now carries three cues —
+  `table` background, `accent` foreground, `raised` relief — pinned by TG-BAR).
+- **D6 `tabview`** shipped as the tab record's `view` field
+  (`wviewer::tab_freeze` writes `wviewer::tab_view_read`), not as an array named
+  `tabview`.
+- **D19**: `tabs`/`activetab` are written only when a window has 2+ tabs
+  (`wviewer::tabs_serialize`, `wviewer::restore_tabs`), so a one-tab state is
+  byte-identical to a pre-tabs one.
+- **The suite** publishes 56 checks `--nogui`, 172 under a display, 174 with a
+  `--logdir` (row TZ1 pins all three).
+- ⚠ **It gated nothing until 2026-10-15**: it printed only `RESULT:`, so
+  `banner_complete` answered 0 on both arms and it sat in neither T1 list. It
+  now prints `OVERALL: ok (N checks)` and is registered in BOTH `hcases` and
+  `dcases` (derived delta: cases +2, blocks +2, counted +0, skips +0, `wc -l`
+  +6).

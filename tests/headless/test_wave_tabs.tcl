@@ -722,7 +722,11 @@ if {$fail == 0 && $npass != $wt_expect} {
   incr fail
 }
 
+# The completion sentinel banner_complete (tests/banner_rule.tcl) requires
+# before T1 will score this suite; RESULT: stays LAST because summarize_all
+# publishes a case's last RESULT: line.
 if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
   exit 0
 } else {

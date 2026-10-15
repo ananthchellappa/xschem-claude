@@ -139,7 +139,20 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_add_graph_undo" \
                  "headless/test_utils_install_0458" \
                  "headless/test_sym_path_paren_1605" \
-                 "headless/test_wave_trace_menu"]
+                 "headless/test_wave_trace_menu" \
+                  "headless/test_wave_tabs"]
+## `headless/test_wave_tabs` IS IN BOTH LISTS (waveform viewer subwindows stage 0,
+## doc/claude/specs/waveform_viewer_subwindows.md). It was in NEITHER until then,
+## and could not have been: it printed only `RESULT:`, so `banner_complete` answered
+## 0 on both arms and a registration would have been a standing red (issue 1615's
+## shape); it now prints `OVERALL: ok (N checks)` above its `RESULT:` line. Both
+## arms were captured exactly as the two loops below capture them and scored with
+## `banner_complete` SOURCED from tests/banner_rule.tcl (1 on each,
+## `regression_case_failed` 0 on each), and `summarize_all`, lifted whole out of
+## this file, gave cases +2, blocks +2, counted_failures +0, skips +0, `wc -l` +6:
+## its self-skip announcements are UPPERCASE `SKIPPED:`. WHY BOTH: the counted arm
+## runs the PURE tab-model rows and the no-window guards; the display arm adds
+## every TG* row (real chords, the tab bar, per-tab content surviving a switch).
 ## `headless/test_wave_add_graph_undo` IS IN BOTH LISTS, and both halves were
 ## MEASURED rather than reasoned: each arm was captured exactly as the two loops
 ## below capture it (`env -u DISPLAY ... --nogui --pipe -q` and
@@ -888,7 +901,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_crossdb_trace" \
                  "headless/test_wave_add_graph_undo" \
                  "headless/test_viewjob_silence" \
-                 "headless/test_wave_trace_menu"]
+                 "headless/test_wave_trace_menu" \
+                  "headless/test_wave_tabs"]
 ## `headless/test_viewjob_silence` IS IN THIS LIST ALONE, AND THE ARM WAS CHOSEN BY
 ## MEASUREMENT RATHER THAN BY THE SHAPE OF THE SUITE. Both captures were taken exactly
 ## as the two loops take them -- `env -u DISPLAY ... --nogui` for the counted arm,
