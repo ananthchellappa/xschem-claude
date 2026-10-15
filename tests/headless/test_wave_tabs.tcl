@@ -19,6 +19,9 @@
 #   TN*  no-window guards, both arms: every tab/clipboard command returns
 #        without throwing when no viewer resolves.
 #   TG*  DISPLAY — the real window, real Tk keys through the shipped bindings.
+#        TGR1/TGR2 (display, in a child with its own --logdir): a CIW-typed
+#        plot replays to the window it recorded -- Append, and New Tab with
+#        exactly one new tab holding the plot.
 #
 # FIXTURE DISCIPLINE (probe placement, overnight_batch_2026_08_01/PLAN.md):
 #   * THREE tabs, and strips with DIFFERENT trace counts, so no two index
@@ -62,6 +65,10 @@
 #         runs under a DISPLAY (a viewer needs has_x to open at all). Measured:
 #         the suite stayed at its full count with that guard in place. A
 #         sabotage that cannot fire proves nothing.
+#
+#   S10 regenerate: draw LOGGED again (no wviewer::unlogged bracket)
+#         -> TGR1, TGR2 (the replay aborts on `xschem clear_drawing`: read-only)
+#   S11 dest_prepare: new_tab called LOGGED again -> TGR2 ONLY (the new tab EMPTY)
 #
 # NOT asserted, stated rather than hidden: PIXELS. That the tab bar looks
 # right — button widths, the active tab's colour, where it sits relative to the
@@ -682,6 +689,90 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "TG18 ...and the process is still alive (Ctrl-Q is not quit_xschem)" \
     [expr {[info commands xschem] ne {}}]
 
+  # ---- TGR: REPLAY of a plot under New Tab --------------------------------
+  # In a CHILD with its own --logdir (T1 passes none, and the action log only
+  # exists when one is open), on THIS suite's display (`winfo screen .`, never
+  # an inherited $DISPLAY). The child records two CIW-typed gestures through
+  # the CIW's own seam (`ciw_log_outcome`), reopens the viewer to the state it
+  # started from, replays the recorded lines and prints both end states.
+  # Append has no window half, so TGR1 isolates the OTHER leak: a viewer
+  # redraw's own C line (`xschem clear_drawing`), which aborts a replay.
+  set tgr_inner {
+    set ::XSCHEM_LIBRARY_DEFS @DEFS@
+    set ::library_registry_defs_only 1
+    set ::XSCHEM_LIBRARY_PATH {}
+    set no_recent_files 1
+    set st [ase::state_load @STATE@]
+    dict set st rundir [file join @DIR@ run]
+    set sstate [file join @DIR@ session.state]
+    ase::state_save $sstate $st
+    set tok [ase::session_key sky130_tests test_nfet_final ngspice_state1]
+    ase::session_open $tok $sstate
+    proc tgr_open {tok} {
+      catch {wviewer::close $tok}
+      wviewer::open $tok
+      set top [wviewer::window_for $tok]
+      for {set i 0} {$i < 300} {incr i} {
+        update
+        if {[winfo exists $top.drw] && [winfo ismapped $top.drw]} break
+        after 20
+      }
+      xschem new_schematic switch $top.drw
+      xschem raw new wvtgr.raw dc vsweep 0 1.0 0.1
+      foreach v {a1 a2} { xschem raw add $v "vsweep 1 +" }
+      wviewer::set_plot_mode single $tok
+      set ::wviewer::dest($tok) append
+      wviewer::plot_signals $tok {a1}
+    }
+    proc tgr_state {tok} {
+      list [wviewer::tab_count $tok] [wviewer::tab_index $tok] \
+           [lmap g [dict get [wviewer::layout_for $tok] graphs] {
+              lmap t [wviewer::dget $g traces {}] {dict get $t expr}}]
+    }
+    set lf [xschem get actionlog_filename]
+    set out {}
+    foreach d {append newtab} {
+      tgr_open $tok
+      set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
+      foreach cmd [list [list wviewer::set_plot_dest $d $tok] [list wviewer::plot_signals $tok {a2}]] {
+        xschem log_action -reset
+        set code [catch {uplevel #0 $cmd} res]
+        set ::ciw_out_pending {}
+        ciw_log_outcome $code $cmd $res
+      }
+      set rec [tgr_state $tok]
+      set fd [open $lf r]; set lines [lrange [split [read $fd] \n] [expr {$before - 1}] end]; close $fd
+      set fx [file join [file dirname $lf] fx_$d.tcl]
+      set fd [open $fx w]; puts $fd [join $lines \n]; close $fd
+      tgr_open $tok
+      set rc [catch {replay_action_log $fx} err]
+      lappend out [list $d $rec [tgr_state $tok] [expr {$rc ? "ERR:$err" : 0}]]
+    }
+    catch {wviewer::close $tok}
+    xschem log_action -noecho "#TGR [list $out]"
+    exit
+  }
+  set tgr_dir [file join $scratch tgr]
+  file mkdir $tgr_dir
+  set tgr_sf [file join $tgr_dir inner.tcl]
+  set fd [open $tgr_sf w]
+  puts $fd [string map [list @DEFS@ [list $::XSCHEM_LIBRARY_DEFS] @STATE@ [list $statefile] \
+                             @DIR@ [list $tgr_dir]] $tgr_inner]
+  close $fd
+  catch {exec /usr/bin/env DISPLAY=[winfo screen .] timeout 120 [info nameofexecutable] \
+           --pipe -q --logdir $tgr_dir --script $tgr_sf 2>@1}
+  set tgr {}
+  if {![catch {set fd [open [file join $tgr_dir Xschem.log] r]}]} {
+    foreach l [split [read $fd] \n] {
+      if {[string match {#TGR *} $l]} { set tgr [lindex [string range $l 5 end] 0] }
+    }
+    close $fd
+  }
+  check "TGR1 a replayed Append plot rebuilds the recorded window (no redraw line in the log)" \
+    [lindex $tgr 0] {append {1 0 {{a1 a2}}} {1 0 {{a1 a2}}} 0}
+  check "TGR2 a replayed New Tab plot makes exactly ONE tab, holding the plot" \
+    [lindex $tgr 1] {newtab {2 1 a2} {2 1 a2} 0}
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   if {[info commands ::wt_real_ciw_echo] ne {}} {
@@ -712,9 +803,9 @@ set wt_haslog [expr {[pcall {xschem get actionlog_filename}] ne {}}]
 if {$::arm eq {nogui}} {
   set wt_expect 56
 } elseif {$wt_haslog} {
-  set wt_expect 174
+  set wt_expect 176
 } else {
-  set wt_expect 172
+  set wt_expect 174
 }
 if {$fail == 0 && $npass != $wt_expect} {
   puts "FAIL: TZ1 expected $wt_expect checks on the $::arm arm\

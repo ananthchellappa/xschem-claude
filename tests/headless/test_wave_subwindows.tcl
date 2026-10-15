@@ -37,6 +37,9 @@
 #         confined). SWD10-SWD15 display: the same in the real window with
 #         rects and undo, the Add Trace dialog's Replace (the NAMED graph's
 #         subwindow) and New SubWin, New Tab.
+#   SWR*  REPLAY, both arms, in a child with its own --logdir: a CIW-typed plot
+#         under New SubWin replays to exactly one subwindow holding the plot
+#         (SWR2); Replace is the control (SWR1).
 #   SWG*  DISPLAY -- the real window: the grid on the canvas (graphbb), the
 #         rect tokens, click-to-target and the in-place frame move, New/Close
 #         SubWin through the menu and keys, plotting into the target
@@ -89,6 +92,12 @@
 #   V17 add_trace_ok: no re-read of the target after dest_prepare
 #        -> SWD13 New SubWin row ONLY
 #   V20 dest_menu_label: the old `-> appends` suffix back -> SWD2 ONLY
+# Follow-ups, measured 2026-10-15, each reverted to green:
+#   F1 dest_prepare: new_subwin called LOGGED again (the stage-3 code)
+#        -> SWR2 ONLY (the replay rebuilt an EMPTY subwindow, the plot lost:
+#           new_subwin's line set the dedup flag that drops the typed line)
+#   F2 tabs_serialize: inactive tabs written with sharedx 0 and no sw tags
+#        -> display SWG14 ONLY (SWG13 serialises the ACTIVE branch)
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -369,7 +378,7 @@ if {[catch {
     [list [pcall {wviewer::plot_signals __swd {r s} {} newsubwin}] [swd_tr] [tags [swd_lay]] \
           [wviewer::target_index __swd]] \
     {{} {a b {r s}} {1 2 3} 2}
-  check "SWD7 ...the subwindow it made is logged as one replayable line" \
+  check "SWD7 ...new_subwin reaches the log seam once (in C it is suppressed: SWR2 replays the gesture line)" \
     [lsearch -all -inline -glob $::swd_log {wviewer::new_subwin *}] [list [list wviewer::new_subwin __swd]]
   swd_open [list [G a] [G b]] 0 multi
   check "SWD7 New SubWin under multi: one strip per signal in the NEW subwindow, newest on top" \
@@ -398,6 +407,85 @@ if {[catch {
 } swderr]} { check "SWD* band ran to its end" "ERR:$swderr" ok }
 swd_close
 foreach p $::swd_stubbed { rename ::wviewer::$p {}; rename ::swd_orig_$p ::wviewer::$p }
+
+# ============================================================================
+# SWR* -- REPLAY, both arms: a plot whose destination MAKES something (New
+# SubWin) must replay to the window it recorded, exactly one subwindow. Run in a
+# CHILD with its own --logdir, because T1's hcases loop passes none and the
+# action log only exists when one is open. The child records two CIW-typed
+# gestures through the CIW's own seam (`ciw_log_outcome`, the dedup a typed line
+# rides), resets the model-only window, replays the recorded lines through
+# `replay_action_log` and prints both end states. Replace is the CONTROL: its
+# window half (clear_subwin) was never logged, so it replays right at HEAD too
+# and proves the row compares something real.
+# ============================================================================
+set swr_inner {
+  proc G {nm {sw {}}} {
+    set g [dict create traces [list [dict create expr $nm name $nm vec $nm color 4]] \
+             logx 0 logy 0 x1 {} x2 {} y1 {} y2 {} nm $nm]
+    if {$sw ne {}} { dict set g sw $sw }
+    return $g
+  }
+  proc swr_open {} {
+    dict set ::wviewer::layouts __swr [dict create sharedx 0 graphs [list [G a 1] [G b 2]]]
+    dict set ::wviewer::windows __swr top .__swr
+    set ::wviewer::mode(__swr) single
+    set ::wviewer::target(__swr) 1
+    set ::wviewer::undo_hist(__swr) {}
+    set ::wviewer::dest(__swr) append
+  }
+  proc swr_state {} {
+    set gs [dict get [wviewer::layout_for __swr] graphs]
+    list [lmap g $gs {wviewer::dget $g sw -}] \
+         [lmap g $gs {lmap t [wviewer::dget $g traces {}] {dict get $t expr}}]
+  }
+  foreach p {regenerate capture_live_view_state} { proc ::wviewer::$p args {} }
+  proc ::wviewer::add_trace {token gi rpn args} {
+    set gs [dict get [wviewer::layout_for $token] graphs]
+    set G [lindex $gs $gi]
+    dict lappend G traces [dict create expr $rpn name $rpn vec $rpn color 4]
+    wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+    return {}
+  }
+  set lf [xschem get actionlog_filename]
+  set out {}
+  foreach d {newsubwin replace} {
+    swr_open
+    set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
+    foreach cmd [list [list wviewer::set_plot_dest $d __swr] {wviewer::plot_signals __swr {p}}] {
+      xschem log_action -reset
+      set code [catch {uplevel #0 $cmd} res]
+      set ::ciw_out_pending {}
+      ciw_log_outcome $code $cmd $res
+    }
+    set rec [swr_state]
+    set fd [open $lf r]; set lines [lrange [split [read $fd] \n] [expr {$before - 1}] end]; close $fd
+    set fx [file join [file dirname $lf] fx_$d.tcl]
+    set fd [open $fx w]; puts $fd [join $lines \n]; close $fd
+    swr_open
+    set rc [catch {replay_action_log $fx} err]
+    lappend out [list $d $rec [swr_state] [expr {$rc ? "ERR:$err" : 0}]]
+  }
+  xschem log_action -noecho "#SWR [list $out]"
+  exit
+}
+set swr_dir [file join $scratch swr]
+file mkdir $swr_dir
+set swr_sf [file join $swr_dir inner.tcl]
+set fd [open $swr_sf w]; puts $fd $swr_inner; close $fd
+catch {exec /usr/bin/env -u DISPLAY timeout 120 [info nameofexecutable] \
+         --nogui --pipe -q --logdir $swr_dir --script $swr_sf 2>@1}
+set swr {}
+if {![catch {set fd [open [file join $swr_dir Xschem.log] r]} ]} {
+  foreach l [split [read $fd] \n] {
+    if {[string match {#SWR *} $l]} { set swr [lindex [string range $l 5 end] 0] }
+  }
+  close $fd
+}
+check "SWR1 control: a replayed Replace plot rebuilds the recorded window" \
+  [lindex $swr 1] {replace {{1 2} {a p}} {{1 2} {a p}} 0}
+check "SWR2 a replayed New SubWin plot makes exactly ONE subwindow, holding the plot" \
+  [lindex $swr 0] {newsubwin {{1 2 3} {a b p}} {{1 2 3} {a b p}} 0}
 
 # ============================================================================
 # SWX* -- INDEPENDENT X (spec §7, stage 2): the time axes of different
@@ -1098,6 +1186,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "SWD15 an empty batch under New SubWin / Replace changes nothing in the real window" \
     [list [ltags] [trx 0] $::sw_log] {- p1 {}}
 
+  # ---- SWG14: an INACTIVE subwindowed tab survives save / close / restore ----
+  # SWG13 serialises with the subwindowed tab ACTIVE, which reads the live
+  # arrays; this one reads tabs_serialize's OTHER branch, the stash record. The
+  # tab gets Shared X on first so the layout's sharedx key is witnessed too.
+  pcall {wviewer::select_tab 2 $tok}
+  set swtags [ltags]
+  set ::wviewer::sharedx($tok) 1
+  pcall {wviewer::sharedx_toggle $tok}
+  set swxg [lmap gi [lsearch -all $swtags *] {rprop $gi xgroup}]
+  pcall {wviewer::new_tab $tok}
+  set ntab [llength [wviewer::tab_records $tok]]
+  set inact [lsearch -exact [lmap r [wviewer::tab_records $tok] {wviewer::dget $r id {}}] 2]
+  check "SWG14 fixture: the subwindowed tab is tagged, Shared X, and NOT the active one" \
+    [list [expr {[llength [lsort -unique $swtags]] > 1}] \
+          [expr {$inact >= 0 && $inact != [wviewer::tab_index $tok]}]] {1 1}
+  set snap [pcall {wviewer::snapshot $tok {}}]
+  pcall {wviewer::close $tok}
+  pcall {wviewer::restore $tok $snap {} {}}
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  viewer_ready $vtop
+  pcall {wviewer::select_tab 2 $tok}
+  check "SWG14 restored and selected: the same sw tags, X groups and Shared X" \
+    [list [ltags] [lmap gi [lsearch -all [ltags] *] {rprop $gi xgroup}] \
+          [wviewer::dget [wviewer::layout_for $tok] sharedx 0] \
+          [llength [wviewer::tab_records $tok]]] \
+    [list $swtags $swxg 1 $ntab]
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -1114,7 +1230,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 71 } else { set expect 166 }
+if {$::arm eq {nogui}} { set expect 73 } else { set expect 170 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

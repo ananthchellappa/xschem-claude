@@ -4695,7 +4695,14 @@ proc wviewer::regenerate {token} {
   lassign [wviewer::viewport_rect $wp] vx1 vy1 vx2 vy2
   set rects_ [wviewer::sw_rects $gs $vx1 $vy1 $vx2 $vy2]
   set multisw_ [expr {[llength $runs] > 1}]
-  wviewer::with_edit $token {
+  # UNLOGGED (wviewer::unlogged): this is the viewer redrawing its own read-only
+  # canvas from the model, and the command that changed the model logs its own
+  # line. `xschem clear_drawing` self-logs (Refactor B atom 27), so without the
+  # bracket every regenerate wrote a line that replays as an edit of a read-only
+  # schematic and ABORTS the replay -- and, through the wrappers' self-log dedup,
+  # kept a typed command's own line out of the log (rows TGR1/TGR2 of
+  # test_wave_tabs).
+  wviewer::unlogged {wviewer::with_edit $token {
     xschem clear_drawing
     set gi_ 0
     foreach G_ $gs {
@@ -4724,7 +4731,7 @@ proc wviewer::regenerate {token} {
         incr gi_
       }
     }
-  }
+  }}
   # graphbb feeds over_graph / the a/b/s key gate — build it from the SAME
   # band rects so it matches the placed graphs exactly (D5)
   dict set graphbb $wp $rects_
@@ -5765,7 +5772,8 @@ proc wviewer::set_plot_dest {req {token {}}} {
 #
 # Returns 1 on success (INCLUDING "nothing to do"), 0 when the tab or the
 # subwindow could not be made -- in which case the caller must report and abort
-# rather than plot into the wrong place.
+# rather than plot into the wrong place. NOTHING here is logged
+# (wviewer::unlogged): the gesture's own line replays it.
 #
 # ⚠ MEASURED: new_tab calls tab_drop_transients, which DESTROYS $top.wvadd. Any
 # caller that still needs something out of the Add Trace dialog must have read
@@ -5775,16 +5783,32 @@ proc wviewer::set_plot_dest {req {token {}}} {
 proc wviewer::dest_prepare {token dest {gi {}}} {
   switch -exact -- [wviewer::dest_norm $dest] {
     newtab {
-      if {[wviewer::new_tab $token] eq {}} { return 0 }
+      if {[wviewer::unlogged [list wviewer::new_tab $token]] eq {}} { return 0 }
     }
     newsubwin {
-      if {[wviewer::new_subwin $token] eq {}} { return 0 }
+      if {[wviewer::unlogged [list wviewer::new_subwin $token]] eq {}} { return 0 }
     }
     replace {
       if {[wviewer::clear_subwin $token $gi] eq {}} { return 0 }
     }
   }
   return 1
+}
+
+# A destination's window half runs UNLOGGED, as clear_subwin already is: it is
+# half of a plot gesture, and the gesture's own line (a typed command) re-runs
+# it on replay. Logged, new_tab / new_subwin's line set the wrappers' self-log
+# dedup flag, so the typed gesture's own line never reached the log and a
+# replay rebuilt an EMPTY subwindow or tab with the plot lost (row SWR2 of
+# test_wave_subwindows, TGR2 of test_wave_tabs). `xschem log_action -suppress`
+# is the C depth counter replay_action_log uses; a suppressed line does not set
+# the dedup flag. Returns the command's result; an error is re-raised after pop.
+proc wviewer::unlogged {cmd} {
+  catch {xschem log_action -suppress push}
+  set rc [catch {uplevel 1 $cmd} res]
+  catch {xschem log_action -suppress pop}
+  if {$rc} { return -code error $res }
+  return $res
 }
 
 # The EFFECTIVE target strip index of `token`: the stored value clamped to the

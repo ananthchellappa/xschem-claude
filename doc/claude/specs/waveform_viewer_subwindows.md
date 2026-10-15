@@ -430,9 +430,14 @@ fall-through, like `newtab`.
   Replace or New SubWin the batch lands in the strip `dest_prepare` made the
   target.
 - **Calculator**: its plot goes through `plot_signals`, so Replace there clears
-  the target subwindow. Its own W13 drop-down still offers three destinations
-  (not New SubWin); a New SubWin chosen in the viewer is reported as taken away
-  by `calc::plot_dest_dropped`, as New Tab already was. Not widened here.
+  the target subwindow. Its W13 drop-down offers `wviewer::dest_labels` (all
+  five) since the follow-up to this stage, and a destination set in the viewer
+  since the Calculator last pushed is followed rather than overwritten
+  (`calc::plot_dest_follow`; `calc::plot_dest_dropped` and its sentence are gone).
+- **Replay** (follow-up): `dest_prepare` runs `new_tab` / `new_subwin` unlogged
+  (`wviewer::unlogged`), like `clear_subwin`, and `regenerate` draws unlogged, so
+  a typed plot gesture's own line is the one record and replays to exactly one
+  tab or subwindow (rows SWR2, TGR1/TGR2).
 - **`wviewer::auto_plot_strips` is scoped to the target subwindow**: only ITS
   auto strips are readied, a lone empty strip there is claimed, and a missing
   one is inserted at the subwindow's bottom (single) or top (multi) — fixing
