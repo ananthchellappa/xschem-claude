@@ -5734,7 +5734,8 @@ proc wviewer::plot_dest {{token {}}} {
 # the RESOLVED code, or {} plus a CIW error when the token resolves to no open
 # viewer — the set_plot_mode shape, deliberately.
 #
-# Logs `wviewer::set_plot_dest <code> <token>` ON AN ACTUAL CHANGE ONLY, and
+# Logs `wviewer::set_plot_dest <code> <token>` ON AN ACTUAL CHANGE ONLY (a
+# window with no entry yet counts as a change, whatever the request), and
 # always the resolved CODE (never the label) with an explicit token: the same
 # rule set_plot_mode and set_target_strip follow, so a replay does not fill with
 # redundant lines and does not depend on which window is active at replay time.
@@ -5749,8 +5750,13 @@ proc wviewer::set_plot_dest {req {token {}}} {
     return {}
   }
   set new [wviewer::dest_norm $req]
-  set cur [wviewer::plot_dest $token]
-  if {$new eq $cur} { return $cur }
+  # ⚠ "no change" means an ENTRY equal to the request, NOT plot_dest's answer:
+  # plot_dest DEFAULTS an absent entry to append (a fresh window, or one
+  # reopened after wviewer::forget), so comparing against it made an explicit
+  # Append on such a window write nothing and notify nobody -- and a W13
+  # still showing its own pending pick then pushed that pick over the user's
+  # Append on the next press (R506; row PL5g of test_calc_plot).
+  if {[info exists dest($token)] && $new eq $dest($token)} { return $new }
   set dest($token) $new
   wviewer::log_action [list wviewer::set_plot_dest $new $token]
   wviewer::dest_notify $token
@@ -8768,19 +8774,26 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
     lappend dblist [expr {$i < [llength $dbs] ? [lindex $dbs $i] : {}}]
     lappend swlist [expr {$i < [llength $sweeps] ? [lindex $sweeps $i] : {}}]
   }
-  # ...and so do the traces and the redraw, for the same reason: nothing a
-  # helper below logs may stand in for the gesture's own line
-  wviewer::unlogged {
-    foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist sw $swlist {
-      set err [wviewer::add_trace $token $gi $ex {} $col $db $sw]
-      if {$err ne {}} { lappend errs [list $ex $err] }
-    }
-    # every add_trace regenerates on success, so the canvas normally already
-    # matches the model; when the whole batch failed (bad exprs, no raw) the
-    # strips created above would otherwise exist only in the model
-    if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
-      wviewer::regenerate $token
-    }
+  # The traces and the redraw are NOT wrapped in wviewer::unlogged, and that is
+  # measured rather than assumed (2026-10-15, a real viewer on the display arm,
+  # the typed line through ciw_log_outcome, the context switched away first so
+  # add_trace's switch_ctx really switches; both a good batch and an all-failed
+  # one under New Strip, so the regenerate arm below ran too): nothing between
+  # here and the return logs. add_trace's own C verbs are not perform_action
+  # verbs, so none self-logs, and the only C verb that does -- regenerate's
+  # `xschem clear_drawing` -- is already inside regenerate's own unlogged. A
+  # wrapper here was fenced by nothing and guarded nothing. If a helper below
+  # ever starts logging, TGR1 of test_wave_tabs (a real-window replay through
+  # the real add_trace) loses the typed line and reddens.
+  foreach ex $exprs gi [dict get $plan targets] col $colors db $dblist sw $swlist {
+    set err [wviewer::add_trace $token $gi $ex {} $col $db $sw]
+    if {$err ne {}} { lappend errs [list $ex $err] }
+  }
+  # every add_trace regenerates on success, so the canvas normally already
+  # matches the model; when the whole batch failed (bad exprs, no raw) the
+  # strips created above would otherwise exist only in the model
+  if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
+    wviewer::regenerate $token
   }
   return $errs
 }

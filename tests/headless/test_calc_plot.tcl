@@ -101,6 +101,15 @@
 #   PL5f ⚠ W13 TRACKS THE VIEWER LIVE: a viewer choice made elsewhere moves W13
 #        with no press and no status line, and after a viewer close/reopen a
 #        choice equal to an old Calculator push still wins the next press.
+#   PL5g ⚠ THE FOUR SEAMS W13'S LIVE TRACKING HANGS ON, one row each, every one
+#        of which reddens when its site is removed: an explicit Append on a
+#        REOPENED viewer (no `dest` entry, so `wviewer::plot_dest` already
+#        answered append) still notifies W13 and the press lands there
+#        (`wviewer::set_plot_dest`); a Calculator REBUILT over a viewer showing
+#        New Tab shows New Tab (`calc::w13_sync` in `calc::build_mode`); the
+#        Results Dir row's publish binds W13 to its token
+#        (`calc::w13_bind` in `calc::results_publish`); a W13 pick binds W13
+#        to the token it pushed to (`calc::dest_changed`).
 #   PL6  `calc::dest_changed` PUSHES: changing W13 moves `wviewer::plot_dest` on
 #        the viewer holding the result, and logs one replayable line.
 #   PL7  R607 on the PLOT path: an unresolvable token is NAMED, an over-long
@@ -1070,6 +1079,88 @@ group PL5f {
         [info exists ::calc::dest_seen] 0
     catch {wviewer::clear_all $::tok}
     update idletasks
+    destset {Append}
+}
+
+# =============================================================================
+# PL5g ⚠ THE SEAMS W13'S LIVE TRACKING HANGS ON
+# =============================================================================
+# "W13 is never older than the viewer" is four sites, not one proc, and each
+# row below is the only thing that reddens when its site is removed.
+#   PX1  `wviewer::set_plot_dest` on a window with NO entry: after a reopen
+#        `wviewer::forget` has unset `dest(token)` and `plot_dest` DEFAULTS to
+#        append, so an explicit Append there used to be taken for "no change" --
+#        nothing written, nothing notified, W13 left on its pending pick, and
+#        the next press pushed that pick over the user's Append (R506).
+#   PX3  `calc::w13_sync` in `calc::build_mode`: a Calculator closed and
+#        reopened over a viewer set to New Tab must show New Tab, not the
+#        widget's built-in Append (the publish on open does not resync: the
+#        token is unchanged, so `calc::w13_bind` returns early).
+#   PX4  `calc::w13_bind` in `calc::results_publish`: with no press and no pick
+#        having bound W13, publishing the Results Dir row is what binds it --
+#        so the next viewer choice moves W13.  The fixture UNBINDS W13 first,
+#        which is the state of a session whose first act is the publish.
+#   PX5  `set ::calc::w13_tok` in `calc::dest_changed`: a W13 pick binds W13 to
+#        the token it pushed to (without adopting the viewer's choice), so a
+#        viewer choice made after the pick moves W13.  Same unbound fixture.
+# =============================================================================
+group PL5g {
+    destset {Append}
+    # PX1
+    destset {New Strip}
+    check "PL5g/PX1 fixture: W13's New Strip reached the viewer" \
+        [pcall wviewer::plot_dest $::tok] newstrip
+    check "PL5g/PX1 fixture: the viewer reopens with the fixture read" [pl_reopen] {1 1}
+    check "PL5g/PX1 fixture: the reopened viewer has NO destination entry, so plot_dest already answers append, and W13 still shows its own New Strip" \
+        [list [info exists ::wviewer::dest($::tok)] [pcall wviewer::plot_dest $::tok] \
+              [pcall calc::plot_dest_req]] {0 append {New Strip}}
+    set r [pcall wviewer::set_plot_dest append $::tok]
+    update idletasks
+    check "PL5g/PX1 ⚠ an explicit Append on the reopened viewer WRITES the entry and moves W13 to Append" \
+        [list $r [info exists ::wviewer::dest($::tok)] [pcall calc::plot_dest_req]] {append 1 Append}
+    pcall bufset {vf(lp)}
+    set n0 [llength [pcall dict get [pcall wviewer::layout_for $::tok] graphs]]
+    set saidx [press .calc.mode.plot]
+    check "PL5g/PX1 ⚠ ...and the press lands as Append: no new strip, the viewer keeps append, the sentence says Append" \
+        [list [pcall wviewer::plot_dest $::tok] \
+              [expr {[llength [pcall dict get [pcall wviewer::layout_for $::tok] graphs]] - $n0}] \
+              [string match {*Append*} $saidx] [string match {Plotted*} $saidx]] {append 0 1 1}
+    catch {wviewer::clear_all $::tok}
+    update idletasks
+    # PX3
+    destset {Append}
+    pcall calc::close
+    update idletasks
+    pcall wviewer::set_plot_dest newtab $::tok
+    check "PL5g/PX3 fixture: the Calculator reopens" [pcall calc::open] {.calc}
+    update idletasks
+    check "PL5g/PX3 ⚠ a Calculator REBUILT over a viewer set to New Tab shows New Tab (calc::w13_sync in calc::build_mode)" \
+        [list $::calc::w13_tok [pcall calc::plot_dest_req]] [list $::tok {New Tab}]
+    destset {Append}
+    # PX4
+    set ::calc::w13_tok {}
+    pcall wviewer::set_plot_dest replace $::tok
+    update idletasks
+    check "PL5g/PX4 fixture: unbound, W13 does not follow the viewer's Replace" \
+        [pcall calc::plot_dest_req] Append
+    set g [pcall calc::require_result]
+    update idletasks
+    check "PL5g/PX4 ⚠ publishing the Results Dir row binds W13 to its token and W13 adopts the viewer's Replace (calc::w13_bind in calc::results_publish)" \
+        [list [dg $g ok] $::calc::w13_tok [pcall calc::plot_dest_req]] [list 1 $::tok Replace]
+    pcall wviewer::set_plot_dest newsubwin $::tok
+    update idletasks
+    check "PL5g/PX4 ...and the next viewer choice moves W13 live" \
+        [pcall calc::plot_dest_req] {New SubWin}
+    destset {Append}
+    # PX5
+    set ::calc::w13_tok {}
+    destset {New Strip}
+    check "PL5g/PX5 fixture: the unbound pick still reached the viewer" \
+        [pcall wviewer::plot_dest $::tok] newstrip
+    pcall wviewer::set_plot_dest replace $::tok
+    update idletasks
+    check "PL5g/PX5 ⚠ a W13 pick binds W13 to the token it pushed to, so a viewer choice made after it moves W13 (calc::dest_changed)" \
+        [list $::calc::w13_tok [pcall calc::plot_dest_req]] [list $::tok Replace]
     destset {Append}
 }
 

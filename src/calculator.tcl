@@ -4272,7 +4272,12 @@ proc calc::plot_dest_req {} {
 # which lands here, and W13 is moved to show the viewer's choice the moment it
 # is made -- its Options cascade, the Add Trace dialog, a typed
 # `wviewer::set_plot_dest`, a restored state.  W13 is therefore never OLDER
-# than the viewer it speaks for, and a press can push W13 as it stands.
+# than the viewer it speaks for, and a press can push W13 as it stands.  That
+# needs `wviewer::set_plot_dest` to treat a window with NO entry as a change
+# even when the request is append (which `wviewer::plot_dest` already answers
+# there): after a reopen W13 still shows its own pending pick, and an explicit
+# Append in the viewer that notified nobody was overridden by the next press
+# (band PL5g, row PX1).
 #
 # "The viewer it speaks for" is `w13_tok`: the session token W13 last showed
 # (bound by `calc::results_publish`, i.e. whenever the Results Dir row is
