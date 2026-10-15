@@ -1011,13 +1011,22 @@ They should not influence the input to the simulator."* ADE-L is the floor
     signal is always plotted, whatever its Value shows (an op+tran bench's `VBG` reads the
     operating point and plots the transient); a row with no Value yet is offered.
   - **No results** (`ase::has_results` false): it says *no results; run a simulation first*
-    and changes nothing. Ticked waveforms none: it says *no waveform output has Plot ticked*.
+    and changes nothing. Ticked waveforms none: it says *no waveform output has Plot ticked*,
+    opens no viewer, and an open viewer's auto graph is emptied (the after-run
+    always-replace rule). A second press with the viewer up replaces the auto graph's
+    traces; it never adds a second copy.
+  - **An edited expression's Value is dropped** on the editor's OK
+    (`ase::ui::output_editor_ok`): the cell is blank until `~` or the next run, never the
+    old expression's number.
+  - The Measurements dialog is not repainted by `~`: its Values are the simulator's own
+    measurement output, which only a run changes.
   - The tip reads **Plot outputs and update values**; `Tools > Waveform Viewer` stays the
     raise-or-open door that plots nothing.
   - The Value and the Calculator window's Eval of the same text are the same double
     (`calc::eval_texts` and `calc::meas_in_ctx`), shown `%.6e`.
   - `tests/headless/test_ase_plot_outputs.tcl` (both arms; PR rows on the real `tb_bandgap`
-    bench with the registry ngspice).
+    bench with the registry ngspice, pinned to its nominal corner: the shipped Monte Carlo
+    draw stops some transients with *Timestep too small*).
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

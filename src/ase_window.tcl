@@ -2931,6 +2931,7 @@ proc ase::ui::output_editor_ok {key} {
     lappend rows [dict create name $name expr $ex plot $plot save $save]
   } elseif {$idx < [llength $rows]} {
     set row [lindex $rows $idx]
+    set oldrow $row
     dict set row name $name
     dict set row expr $ex
     dict set row plot $plot
@@ -2942,6 +2943,19 @@ proc ase::ui::output_editor_ok {key} {
   }
   dict set st outputs $rows
   ase::session_update $key $st
+  # A changed expression's stored Value belongs to the OLD expression: drop
+  # it, so the cell is blank until `~` (R-OUT12) or the next run evaluates
+  # the new one, rather than showing a number for text the row no longer has.
+  if {[info exists oldrow] && [ase::state_get $oldrow expr] ne $ex} {
+    catch {
+      set res [ase::session_getattr $key results]
+      foreach rk [list [ase::ui::output_result_key $oldrow] \
+                       [ase::ui::output_result_key $row]] {
+        dict unset res $rk
+      }
+      ase::session_setattr $key results $res
+    }
+  }
   ase::ui::populate $key
   catch {unset edrow($key,out)}
   catch {unset edrow($key,outtab)}
@@ -12714,6 +12728,9 @@ proc ase::ui::plot_targets {key} {
 # (results_refill, the open and Load State path, so a row added after the run
 # gets its number), and only then is the plot asked for, through the after-run
 # auto_plot and its refusal rules.  No results: one sentence, nothing changed.
+# The Measurements dialog is not repainted here: its Values are the
+# simulator's own measurement output, which only a run changes, and
+# run_finished repaints it then.
 # -> 1 when it evaluated, 0 when there was nothing to evaluate against.
 proc ase::ui::plot_outputs {key} {
   if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
@@ -12722,11 +12739,6 @@ proc ase::ui::plot_outputs {key} {
     return 0
   }
   ase::ui::results_refill $key
-  catch {
-    if {[winfo exists [dict get $::ase::ui::wins $key].meas]} {
-      ase::ui::meas_fill $key
-    }
-  }
   set sim_t [ase::plot_sim_type [ase::session_state $key]]
   set t [ase::ui::plot_targets $key]
   if {$sim_t ni {op {}} && ![llength [dict get $t rows]]

@@ -26,8 +26,12 @@
 #   PO4  no results: the button says so and changes nothing
 #   PO5  the Value and the Calculator window's own measurement arm agree at
 #        full precision on the committed fixture
+#   PO6  nothing waveform ticked: the button says so; something ticked: it
+#        does not
+#   PO7  a ticked row refused for its analysis: the button SAYS the sentence
 # Bands (display arm only)
-#   PR1  the real bench runs on the registry ngspice
+#   PR1  the real bench runs on the registry ngspice, pinned to its nominal
+#        corner (ABSVAR 0, section tt) so the run converges every time
 #   PR2  a row added BEFORE the run has its number after the run
 #   PR3  a row added AFTER the run is blank until `~`, then shows its number
 #   PR4  the Calculator window's Eval of the same text gives the same number,
@@ -35,6 +39,11 @@
 #   PR5  with the viewer closed, `~` opens it and plots the ticked signals,
 #        never the scalar measure, and says nothing about it
 #   PR6  the live strip button runs plot_outputs and carries the new tip
+#   PR7  a second `~`, pressed by a real Enter/press/release on the button with
+#        the viewer UP, replaces the auto graph's traces rather than adding a
+#        second copy
+#   PR8  editing a row's expression blanks its Value (never the old
+#        expression's number); `~` then shows the new expression's number
 #
 # REGISTERED IN `hcases` AND `dcases`.
 #
@@ -255,6 +264,49 @@ group PO5 {
 }
 
 # =============================================================================
+# PO6 -- NOTHING WAVEFORM TICKED
+# =============================================================================
+group PO6 {
+    set key [po_session po6 tbpo {{name U expr vt(sq) save 0 plot 0}} 1]
+    po_stub_autoplot
+    set ::po_echoes {}
+    set rc [pcall ase::ui::plot_outputs $key]
+    po_unstub_autoplot
+    check "PO6 nothing ticked: the button evaluates (1) and says no waveform output has Plot ticked" \
+        [list $rc [expr {[ase::ui::lbl_plot_outputs_nowave] in $::po_echoes}]] {1 1}
+    check "PO6 the sentence" [ase::ui::lbl_plot_outputs_nowave] {ase: no waveform output has Plot ticked}
+    catch {ase::session_close $key}
+    set key [po_session po6b tbpo $::PO_OUTS 1]
+    po_stub_autoplot
+    set ::po_echoes {}
+    pcall ase::ui::plot_outputs $key
+    po_unstub_autoplot
+    check "PO6 control: with ticked waveforms the note is not said" \
+        [expr {[ase::ui::lbl_plot_outputs_nowave] in $::po_echoes}] 0
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PO7 -- A REFUSED ROW'S SENTENCE IS SAID
+# =============================================================================
+## auto_plot runs for real here: its refusal sentence is said before any
+## viewer is opened, and with every ticked row refused it opens none.
+group PO7 {
+    set key [po_session po7 tbpo {{name A expr vf(lp) save 0 plot 1}} 1]
+    set why [ase::ui::plot_row_refusal vf(lp) [ase::plot_sim_type [ase::session_state $key]]]
+    check "PO7 fixture: vf(lp) is refused on a transient view" [expr {$why ne {}}] 1
+    set ::po_echoes {}
+    set rc [pcall ase::ui::plot_outputs $key]
+    set said "ase: cannot auto-plot 'vf(lp)': $why"
+    check "PO7 the button says the refusal sentence, and not the nothing-ticked note" \
+        [list $rc [expr {$said in $::po_echoes}] \
+              [expr {[ase::ui::lbl_plot_outputs_nowave] in $::po_echoes}]] {1 1 0}
+    check "PO7 ...and it is said exactly once" \
+        [llength [lsearch -all -exact $::po_echoes $said]] 1
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
 # THE DISPLAY ARM: the real bench
 # =============================================================================
 set NG /home/analog/dev/ngspice/build-ver_50/src/ngspice
@@ -281,6 +333,24 @@ if {!$GUI} {
         set outs [ase::state_get $st outputs]
         lappend outs [dict create name T_before expr $EX save 0 plot 1]
         dict set st outputs $outs
+        ## THE NOMINAL CORNER. The bench as shipped draws VCC with agauss and
+        ## reads the mismatch section, and some draws stop its transient with
+        ## "Timestep too small" (rc 1), which would make this arm a coin flip.
+        ## The claims here are about the button and the two evaluators agreeing
+        ## within one run, not about any draw, so the run is pinned: ABSVAR 0
+        ## and section tt, which converges and repeats bit-exactly.
+        set vs {}
+        foreach v [ase::state_get $st variables] {
+            if {[dict get $v name] eq {ABSVAR}} { dict set v value 0 }
+            lappend vs $v
+        }
+        dict set st variables $vs
+        set ms {}
+        foreach m [ase::state_get $st models] {
+            if {[dict get $m section] eq {tt_mm}} { dict set m section tt }
+            lappend ms $m
+        }
+        dict set st models $ms
         ase::session_update $key $st
         set top [ase::ui::open $key sky130_tests_ase tb_bandgap ngspice_state1]
         update
@@ -288,7 +358,19 @@ if {!$GUI} {
         set id [ase::session_getattr $key run_id]
         set rc [ase::wait $id]
         for {set i 0} {$i < 40} {incr i} { update ; after 50 }
-        check "PR1 tb_bandgap runs on the registry ngspice" $rc 0
+        check "PR1 fixture: the run is pinned to the nominal corner" \
+            [list [lsearch -all -inline -glob [ase::state_get [ase::session_state $key] variables] {name ABSVAR value 0}] \
+                  [lmap m [ase::state_get [ase::session_state $key] models] {dict get $m section}]] \
+            [list {{name ABSVAR value 0}} tt]
+        set why {}
+        if {$rc != 0} {
+            set lf [file join $rd tb_bandgap_ase.log]
+            if {![catch {open $lf} fh]} {
+                set why [lsearch -all -inline -regexp [split [read $fh] \n] {(?i)too small|aborted|error}]
+                close $fh
+            }
+        }
+        check "PR1 tb_bandgap runs on the registry ngspice" [list $rc $why] {0 {}}
     }
     proc pr_cell {key name} {
         set top [ase::ui::window_for $key]
@@ -369,6 +451,7 @@ if {!$GUI} {
         check "PR5 the auto graph holds exactly the ticked signal rows (derived from the state), and no measure" \
             [lmap tr [dict get $g traces] {dict get $tr expr}] $want
         check "PR5 fixture: the bench has ticked signal rows to plot" [expr {[llength $want] > 0}] 1
+        set ::pr_want $want
         check "PR5 nothing was said about plotting the scalar measures" \
             [lsearch -all -inline -glob $::po_echoes {*cannot auto-plot*}] {}
     }
@@ -380,6 +463,77 @@ if {!$GUI} {
         set i [lsearch -exact $scr balloon_show]
         set tip [expr {$i < 0 ? {NO-TIP} : [lindex [lindex $scr [expr {$i + 2}]] 0]}]
         check "PR6 the live tip is the new label" $tip {Plot outputs and update values}
+    }
+    ## The auto graph's trace exprs and the viewer's graph count, or sentinels.
+    proc pr_auto {key} {
+        set gi [wviewer::auto_graph_index $key]
+        if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return [list ERR:$gs ERR] }
+        set g [lindex $gs $gi]
+        if {[catch {dict get $g traces} trs]} { set trs {} }
+        return [list [lmap tr $trs {dict get $tr expr}] [llength $gs]]
+    }
+    ## A real click on a Tk button: Enter, press and release with coordinates,
+    ## then Leave to cancel the tooltip the Enter armed.
+    proc pr_click {b} {
+        event generate $b <Enter> -x 5 -y 5
+        event generate $b <ButtonPress-1> -x 5 -y 5
+        event generate $b <ButtonRelease-1> -x 5 -y 5
+        event generate $b <Leave>
+        for {set i 0} {$i < 40} {incr i} { update ; after 50 }
+    }
+    group PR7 {
+        set top [ase::ui::window_for $key]
+        check "PR7 fixture: the viewer is UP before the second press" \
+            [expr {[wviewer::window_for $key] ne {}}] 1
+        set before [pr_auto $key]
+        check "PR7 fixture: the auto graph already holds the ticked signals" \
+            [lindex $before 0] $::pr_want
+        ## the row's Value is taken away first, so only a press that really
+        ## ran the button can bring it back
+        set res [ase::session_getattr $key results]
+        dict unset res T_1pc_setl_BG
+        ase::session_setattr $key results $res
+        ase::ui::refresh_output_values $key
+        check "PR7 fixture: the row is blank before the click" [pr_cell $key T_1pc_setl_BG] {}
+        set ::po_echoes {}
+        pr_click $top.strip.plot
+        set after [pr_auto $key]
+        check "PR7 a second ~ with the viewer up replaces the traces: no second copy, no new graph" \
+            $after [list $::pr_want [lindex $before 1]]
+        check "PR7 ...the click really ran the button (the Value is back) and nothing was refused" \
+            [list [pr_cell $key T_1pc_setl_BG] \
+                  [lsearch -all -inline -glob $::po_echoes {*cannot auto-plot*}]] \
+            [list [ase::format_value [format %.6e [dict get $::pr_ref value]]] {}]
+    }
+    group PR8 {
+        set top [ase::ui::window_for $key]
+        set rows [ase::state_get [ase::session_state $key] outputs]
+        set idx -1
+        set i 0
+        foreach o $rows {
+            if {[ase::state_get $o name] eq {T_1pc_setl_BG}} { set idx $i }
+            incr i
+        }
+        set ex10 {settlingTime(vt(vbg), 100u, 10, 0, 0, 0, time, time)}
+        set ref10 [calc::eval_text $ex10 [ase::last_rawfile $key] {}]
+        check "PR8 fixture: the 10% band answers a different number from the 1% band" \
+            [expr {[dict get $ref10 value] != [dict get $::pr_ref value]}] 1
+        set old [pr_cell $key T_1pc_setl_BG]
+        check "PR8 fixture: the row shows the 1% number before the edit" \
+            [expr {$old ne {}}] 1
+        ase::ui::output_editor $key $idx
+        update
+        set w $top.edout
+        $w.expr delete 0 end
+        $w.expr insert 0 $ex10
+        ase::ui::output_editor_ok $key
+        update
+        check "PR8 an edited expression's Value is blank, never the old expression's number" \
+            [list [pr_cell $key T_1pc_setl_BG] [val [ase::session_getattr $key results] T_1pc_setl_BG]] \
+            {{} ABSENT}
+        pr_click $top.strip.plot
+        check "PR8 after ~ it shows the new expression's number" \
+            [pr_cell $key T_1pc_setl_BG] [ase::format_value [format %.6e [dict get $ref10 value]]]
     }
     catch {wviewer::close $key}
     catch {ase::ui::close $key}
