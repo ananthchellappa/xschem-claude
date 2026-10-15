@@ -437,6 +437,22 @@ so in the CIW and leaves the window alone. It does not close the window; that is
 <kbd>Ctrl-Q</kbd>.</td>
 <td class="where">whole window</td>
 <td><span class="menu">File &gt; Close Tab</span></td></tr>
+<tr data-seq="Control-Key-N" data-menu="New SubWin" data-accel="Ctrl+Shift+N">
+<td><kbd>Ctrl-Shift-N</kbd></td>
+<td>New subwindow — another plot area in the same tab, with its own strips and
+its own X axis. Subwindows tile in a grid: two sit side by side, three take two
+rows with the bottom-right quarter left empty, four make 2x2. The new one becomes
+the target. Click inside a subwindow to make it the target; while there are two
+or more, the target has a frame. New plots go to the target.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; New SubWin</span></td></tr>
+<tr data-seq="Control-Key-W" data-menu="Close SubWin" data-accel="Ctrl+Shift+W">
+<td><kbd>Ctrl-Shift-W</kbd></td>
+<td>Close the target subwindow and its strips; the rest re-tile. <b>With only one
+subwindow this does nothing</b> — it says so in the CIW. One <kbd>u</kbd> brings it
+back.</td>
+<td class="where">whole window</td>
+<td><span class="menu">Graph &gt; Close SubWin</span></td></tr>
 <tr data-seq="Control-Key-q" data-menu="Close Window" data-accel="Ctrl+Q">
 <td><kbd>Ctrl-Q</kbd></td>
 <td>Close the viewer window. The session and its data are untouched; the

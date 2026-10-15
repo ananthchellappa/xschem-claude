@@ -140,7 +140,20 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_utils_install_0458" \
                  "headless/test_sym_path_paren_1605" \
                  "headless/test_wave_trace_menu" \
-                  "headless/test_wave_tabs"]
+                 "headless/test_wave_tabs" \
+                  "headless/test_wave_subwindows"]
+## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
+## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
+## commit that creates it. Both arms were captured exactly as the two loops below
+## capture them and scored with `banner_complete` SOURCED from
+## tests/banner_rule.tcl (1 on each, `regression_case_failed` 0 on each), and
+## `summarize_all`, lifted whole out of this file, gave cases +2, blocks +2,
+## counted_failures +0, skips +0, `wc -l` +6 -- its only self-skip announcement is
+## UPPERCASE `SKIPPED:`. WHY BOTH: the counted arm runs the PURE subwindow model
+## rows (grid, cells, normalise, frame masks, add/close, the reuse rules) and the
+## no-window guards; the display arm adds every SWG* row (the grid on a real
+## canvas, click-to-target, the frame moved in place, the keys, plot/paste/undo/
+## tabs scoped to the target subwindow).
 ## `headless/test_wave_tabs` IS IN BOTH LISTS (waveform viewer subwindows stage 0,
 ## doc/claude/specs/waveform_viewer_subwindows.md). It was in NEITHER until then,
 ## and could not have been: it printed only `RESULT:`, so `banner_complete` answered
@@ -902,7 +915,9 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_add_graph_undo" \
                  "headless/test_viewjob_silence" \
                  "headless/test_wave_trace_menu" \
-                  "headless/test_wave_tabs"]
+                 "headless/test_wave_tabs" \
+                  "headless/test_wave_subwindows"]
+## `headless/test_wave_subwindows` IS ALSO IN `hcases` -- see the paragraph there.
 ## `headless/test_viewjob_silence` IS IN THIS LIST ALONE, AND THE ARM WAS CHOSEN BY
 ## MEASUREMENT RATHER THAN BY THE SHAPE OF THE SUITE. Both captures were taken exactly
 ## as the two loops take them -- `env -u DISPLAY ... --nogui` for the counted arm,

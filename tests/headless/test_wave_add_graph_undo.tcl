@@ -245,8 +245,12 @@ check "AF2 ...and Add Graph is one of them, bound to wviewer::add_graph" \
 # Built with `list` rather than written as a braced literal, so the expected
 # value carries Tcl's own canonical string representation of the map and the
 # comparison cannot fail on whitespace or on which words needed bracing.
+# New SubWin / Close SubWin (subwindows stage 1, 2026-10-15) each take ONE undo
+# point and log, like Add Graph.
 set ag_want [list \
   {Add Graph}           {1 1} \
+  {New SubWin}          {1 1} \
+  {Close SubWin}        {1 1} \
   {Add Trace...}        {0 0} \
   {Delete...}           {0 0} \
   {Axes...}             {0 0} \

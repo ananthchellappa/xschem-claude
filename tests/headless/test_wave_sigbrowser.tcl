@@ -1186,8 +1186,11 @@ set bt_accs [regexp -all {data-menu="[^"]+" data-accel="[^"]+"} $gsrc]
 # 16/11. The item-9 leg above is UNTOUCHED — it still says item 9's own bodies
 # contribute zero — and the leg below now pins WHERE the one addition came
 # from, so this check cannot be quietly satisfied by some third key appearing.
-check {BT09 ...so the guide carries GH0's sixteen keys and eleven accelerators} \
-  [list $bt_seqs $bt_accs] [list 16 11]
+# ⚠ WIDENED IN PLACE by the subwindows stage 1 (2026-10-15): 16/11 -> 18/13,
+# for Ctrl-Shift-N / Ctrl-Shift-W and their Graph-menu twins. The leg below still
+# ties the guide's counts to the source's bind statements and accelerators.
+check {BT09 ...so the guide carries GH0's eighteen keys and thirteen accelerators} \
+  [list $bt_seqs $bt_accs] [list 18 13]
 set bt_i11 [wvproc_body $wsrc wviewer::install_default_binds]
 set bt_m11 [wvproc_body $wsrc wviewer::build_menubar]
 # count bind STATEMENTS only (test_wave_grid GH2's rule): each one sits under an

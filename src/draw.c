@@ -4858,6 +4858,11 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->active = 0;
   val = get_tok_value(r->prop_ptr,"active", 0);
   if(val[0]) gr->active = atoi(val);
+  /* ASE viewer subwindows: the target-subwindow frame edges. Same early-default
+   * rule as `active` above, for the same shared-graph_struct reason. */
+  gr->swframe = 0;
+  val = get_tok_value(r->prop_ptr,"swframe", 0);
+  if(val[0]) gr->swframe = atoi(val) & 15;
   /* viewer plan item 6: the mid-drag shrink preview. NOT a prop token — it is
    * armed from xctx by draw_graph, which is the only caller that knows the
    * flags. Defaulted here, before the RECT_OUTSIDE early return, for exactly
@@ -9678,6 +9683,37 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       if(xctx->draw_pixmap)
         XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
           (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+    }
+  }
+  /* ASE viewer SUBWINDOWS: the TARGET-subwindow frame
+   * (doc/claude/specs/waveform_viewer_subwindows.md §5). Each strip of the
+   * target subwindow carries the edges of the outline it owns (`swframe`, 1 left
+   * | 2 right | 4 top | 8 bottom) and paints them along its container box in the
+   * active-strip accent, so the union outlines the whole subwindow. Same
+   * on-screen gate as the active-strip marker above, so export never carries
+   * it, and the token is written only while a tab has 2+ subwindows. */
+  if((flags & 16) && gr->swframe && has_x) {
+    double fx1, fy1, fx2, fy2;
+    int e, w = tclgetintvar("graph_active_strip_width");
+    if(w <= 0) w = 5;
+    w = (w + 1) / 2;
+    if(w < 2) w = 2;
+    for(e = 0; e < 4; e++) {
+      if(!(gr->swframe & (1 << e))) continue;
+      fx1 = gr->sx1; fy1 = gr->sy1; fx2 = gr->sx2; fy2 = gr->sy2;
+      if(e == 0) fx2 = gr->sx1 + w;       /* left   */
+      else if(e == 1) fx1 = gr->sx2 - w;  /* right  */
+      else if(e == 2) fy2 = gr->sy1 + w;  /* top    */
+      else fy1 = gr->sy2 - w;             /* bottom */
+      if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                  &fx1, &fy1, &fx2, &fy2)) {
+        if(xctx->draw_window)
+          XFillRectangle(display, xctx->window, xctx->gc_graph_active,
+            (int)fx1, (int)fy1, (unsigned int)(fx2 - fx1), (unsigned int)(fy2 - fy1));
+        if(xctx->draw_pixmap)
+          XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
+            (int)fx1, (int)fy1, (unsigned int)(fx2 - fx1), (unsigned int)(fy2 - fy1));
+      }
     }
   }
   /* Strip drag-reorder affordance (ASE waveform viewer only — the

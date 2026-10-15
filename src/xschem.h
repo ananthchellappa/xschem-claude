@@ -1552,6 +1552,12 @@ typedef struct {
                * `active=1`) -> draw_graph paints the dull-yellow right-edge marker.
                * Only the waveform viewer ever writes the token, so ordinary
                * schematic graphs are unaffected. */
+  int swframe; /* ASE viewer SUBWINDOWS: edge mask of the TARGET-subwindow frame
+                * (prop token `swframe`, 1 left | 2 right | 4 top | 8 bottom), written
+                * by wviewer::graph_props only while a tab has 2+ subwindows, so the
+                * union over the target subwindow's strips outlines it. On-screen only
+                * (draw_graph flags bit 16), like `active`.
+                * doc/claude/specs/waveform_viewer_subwindows.md §5 */
   int reorder_handle; /* strip drag-reorder affordance (prop token `reorder_handle`),
                        * written by the ASE viewer only:
                        *   1 = draw the grip in the right margin (every viewer strip)

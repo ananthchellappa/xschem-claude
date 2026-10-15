@@ -254,11 +254,13 @@ proc wvproc_body {src name} {
 # is attach_raw's documented 0194 case reached by a different gesture. Adding it
 # is what keeps GX4's count claim true AND puts the new site under GX1's
 # capture-before-regenerate order check.
+# ⚠ `new_subwin` / `close_subwin` ADDED BY THE SUBWINDOWS STAGE 1: ordinary
+# content mutations that carry every other strip forward, so gx_must.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok
              select_tab new_tab close_tab paste_traces paste_payload
-             rawbar_load}
+             rawbar_load new_subwin close_subwin}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -425,9 +427,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the sixteen documented viewer keys" \
-  [llength $gh_seqs] 16
-check "GH0 ...and eleven documented menu accelerators" [llength $gh_menus] 11
+check "GH0 the guide's §9.1 carries the eighteen documented viewer keys" \
+  [llength $gh_seqs] 18
+check "GH0 ...and thirteen documented menu accelerators" [llength $gh_menus] 13
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]
@@ -496,7 +498,7 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
 # the browser is ambiguous; write which plan. Both PLAN headers carry the rule.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
-# whole reason GH0's `== 16` above still holds: `data-bseq="` does not contain
+# whole reason GH0's `== 18` above still holds: `data-bseq="` does not contain
 # the substring `data-seq="`, so GH0's unanchored extractor cannot see these
 # rows. GH0 is itself the standing guard on that — pick a colliding name and
 # GH0 goes red, not silently wrong.

@@ -1,7 +1,11 @@
 # ASE Waveform Viewer — SUBWINDOWS
 
-Status: **spec, stage 0** (2026-10-15). Nothing below is built except §12's
-stage 0. Builds on `doc/claude/specs/waveform_viewer_tabs.md` (a tab is a MODEL,
+Status: **stage 1 built** (2026-10-15) — the viewer half: model, grid, target
+and frame, New/Close SubWin, every strip-creation and plot door scoped to the
+target subwindow, the Tcl X gestures confined, tabs/undo/state. NOT yet built:
+the `newsubwin` destination and Replace-clears-the-subwindow (§6), the C
+`xgroup` predicate (§7 C half), the ASE-L drop-down (§8). §13 records what
+stage 1 built and where it departs from the text above it. Builds on `doc/claude/specs/waveform_viewer_tabs.md` (a tab is a MODEL,
 not a context — every rule there still binds) and on the plot-destination policy
 of `doc/claude/specs/waveform_signal_browser.md` (`wviewer::plot_dest`, ruling 24).
 ASE-L side: `doc/claude/specs/ase_l.md` R-OUT14 and R-OUT15.
@@ -286,3 +290,65 @@ Affected suites to re-run at stages 2–6: `test_wave_viewer`,
 `test_wave_drag_preview`, `test_wave_trace_menu`, `test_wave_tabs`,
 `test_wave_grid`, `test_wave_sigbrowser`, `test_calc_plot`,
 `test_ase_plot_outputs`, `test_ase_persist`, `test_ase_window`.
+
+## 13. As built — stage 1 (2026-10-15)
+
+Suite: `tests/headless/test_wave_subwindows.tcl` (the name §12 gave as
+`test_wave_subwin` was not used), registered in BOTH lists: `SWP*` pure rows and
+`SWN*` guards on both arms, `SWG*` on the display arm.
+
+**Departures from §3, each deliberate:**
+
+- **No `subwins` key.** The flat list is contiguous by subwindow, so the order in
+  which the runs appear IS the tiling order; a second copy of it could only
+  disagree with the first. Membership and order both live in the `sw` tags.
+- **Canonical one-subwindow form is UNTAGGED.** `wviewer::sw_normalize` strips
+  every `sw` when one subwindow remains, so a one-subwindow tab's model, its
+  undo snapshots and its saved state are byte-identical to the pre-feature
+  viewer, and every old state already is the canonical form. Two or more tag
+  every strip.
+- **The insert rule.** An untagged strip inside a multi-subwindow list joins the
+  subwindow of the strip ABOVE it (BELOW it when it is first). So a site that
+  inserts below an existing strip (Add Trace dialog's new strip, a trace move's
+  new strip, a split's block, a paste's extra strips) lands in that strip's
+  subwindow with no tagging of its own; a site that inserts at the TOP of a
+  subwindow (multi-plot front insert, the auto-plot's extra strips) tags
+  explicitly. `wviewer::set_graphs` normalises every write.
+- **Ids are stable, not compacted.** Closing subwindow 2 of `{1 2 3}` leaves
+  `{1 3}`; the next id is one above the largest. Ids restart only when the tab
+  collapses back to one subwindow (the untagged form has no id to remember).
+- **The two rect tokens come from `wviewer::sw_props`, appended after
+  `graph_props`' text**, not from new `graph_props` formals: those formals are
+  pinned by row WD4 of `test_calc_wave_dest.tcl`. `xgroup` is WRITTEN now and
+  read by nothing until the C half of §7 lands.
+
+**Keys.** New SubWin `Ctrl-Shift-N`, Close SubWin `Ctrl-Shift-W` (§9 said no key
+in v1; the stage brief asked for one). With Shift held the keysyms are `N`/`W`,
+so they never meet `Ctrl-N`/`Ctrl-W`. Collision check: no ctrl row for keysym
+78/87 in `src/keybindings.csv`; the one rc binding of the chord
+(`cadence_style_rc`, `bind .drw <Control-Shift-Key-N>`) is a widget-level clone
+that `strip_bindings` sweeps off a viewer canvas. Documented in
+`doc/waveform_viewer_guide.html` §9.1 (rows GH0–GH4 of `test_wave_grid` hold the
+guide and the menubar together).
+
+**Scoping as built.** `plot_signals` (every plot door), the Add Trace dialog,
+Graph > Add Graph and paste plan against the target subwindow's strips and
+translate back; `paste_payload`'s replay `sites` are relative to the target
+subwindow. `move_strip` refuses a cross-subwindow pair out loud and
+`strip_drop_index` clamps to the source subwindow. `reuse_strip_for_trace_move`
+and `plan_split` never take an empty strip from another subwindow. Shared X
+copies the FIRST strip of each subwindow; `pan_x`, `wheel_zoom` (all three wheel
+arms) act on the pointed strip's subwindow (the target's when none); View > Fit
+and `f` act on the TARGET subwindow. Close SubWin is on the Graph menu and its
+key only (no trace-menu entry yet).
+
+**Frame.** `swframe=<edges>` is painted by `draw_graph` in the active-strip
+accent, half the active-bar width (min 2 px), on-screen only. Pixels are an
+owed `look`.
+
+**Not built in stage 1:** §6's `newsubwin` destination and Replace-clears-the-
+subwindow (Replace still behaves per ruling 24 inside the target subwindow); the
+C `graph_same_xgroup` (MMB pan, RMB box zoom, axis-margin
+drag and full-X zoom in one subwindow can still move another's X until it lands);
+the ASE-L drop-down; the auto-plot's `ensure_auto_graph` still appends at the
+window's end (it joins the LAST subwindow).

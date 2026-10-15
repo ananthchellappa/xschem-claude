@@ -361,11 +361,16 @@ check {BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE b
 # (build_menubar). Item 12's key is a SCHEMATIC `.drw` bind and its menu entry
 # is on xschem.tcl's Tools cascade, so 16/11 must stay put and the guide must
 # gain no data-seq row — adding one would break GH0 and GH2.
+# ⚠ WIDENED IN PLACE by the subwindows stage 1 (2026-10-15): 16/11 -> 18/13,
+# for TWO REAL VIEWER keys and their menu twins (Ctrl-Shift-N New SubWin,
+# Ctrl-Shift-W Close SubWin, both `bind WaveViewer` defaults in
+# install_default_binds and accelerators in build_menubar). Item 12's own claim
+# is untouched: it still adds nothing to either count.
 set bx_fp [open [file join $repo tests headless test_wave_grid.tcl] r]
 set bx_gsrc [read $bx_fp]; close $bx_fp
-check {BX13 test_wave_grid's GH0 literals are UNCHANGED at 16/11} \
-  [list [regexp {\[llength \$gh_seqs\] 16} $bx_gsrc] \
-        [regexp {\[llength \$gh_menus\] 11} $bx_gsrc]] \
+check {BX13 test_wave_grid's GH0 literals are 18/13 (item 12 added none)} \
+  [list [regexp {\[llength \$gh_seqs\] 18} $bx_gsrc] \
+        [regexp {\[llength \$gh_menus\] 13} $bx_gsrc]] \
   [list 1 1]
 set bx_fp [open [file join $repo doc waveform_viewer_guide.html] r]
 set bx_gd [read $bx_fp]; close $bx_fp

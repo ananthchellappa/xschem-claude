@@ -189,14 +189,18 @@ check {BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
 # cannot tell those apart on their own, because an added row moves the count and
 # an edited literal does not — so the count and the two grid literals are pinned
 # together here, locally, where item 16 is attributed.
-check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide still has
-       sixteen data-seq rows and eleven menu/accel pairs, and test_wave_grid
-       still pins exactly those two numbers} \
+# ⚠ WIDENED IN PLACE by the subwindows stage 1 (2026-10-15): 16/11 -> 18/13,
+# two ADDED rows for two real new keys (Ctrl-Shift-N / Ctrl-Shift-W). Item 16's
+# lockstep claim is unchanged: the count and the two grid literals still move
+# together.
+check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide has
+       eighteen data-seq rows and thirteen menu/accel pairs, and test_wave_grid
+       pins exactly those two numbers} \
   [list [regexp -all {data-seq="} $gsrc] \
         [regexp -all {data-menu="[^"]*" data-accel="[^"]*"} $gsrc] \
-        [regexp {\[llength \$gh_seqs\] 16} $gridsrc] \
-        [regexp {\[llength \$gh_menus\] 11} $gridsrc]] \
-  {16 11 1 1}
+        [regexp {\[llength \$gh_seqs\] 18} $gridsrc] \
+        [regexp {\[llength \$gh_menus\] 13} $gridsrc]] \
+  {18 13 1 1}
 
 # ============================================================================
 # BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the

@@ -1876,7 +1876,11 @@ proc wviewer::layout_for {token} {
 proc wviewer::set_graphs {token gs} {
   variable layouts
   set lay [wviewer::layout_for $token]
-  dict set lay graphs $gs
+  # subwindows: EVERY model write passes the one normaliser, so the list is
+  # contiguous by subwindow and a one-subwindow tab stays untagged
+  # (doc/claude/specs/waveform_viewer_subwindows.md §3). Index-preserving for
+  # every list a creation site builds by the documented insert rule.
+  dict set lay graphs [wviewer::sw_normalize $gs]
   dict set layouts $token $lay
   return {}
 }
@@ -3800,8 +3804,13 @@ proc wviewer::auto_plot_strips {token n} {
       set tgt [wviewer::index_after_insert [wviewer::target_index $token] $at $k]
     }
     set fresh {}
+    # SUBWINDOWS: inserted ABOVE the strip at `at`, so they take ITS subwindow
+    # explicitly (untagged they would join the subwindow above, sw_normalize)
+    set swat [wviewer::gsw [lindex $gs $at]]
     for {set i 0} {$i < $k} {incr i} {
-      lappend fresh [dict merge [wviewer::empty_graph] [dict create auto 1]]
+      set g [dict merge [wviewer::empty_graph] [dict create auto 1]]
+      if {$swat ne {}} { dict set g sw $swat }
+      lappend fresh $g
     }
     wviewer::set_graphs $token [concat [lrange $gs 0 [expr {$at - 1}]] $fresh \
                                        [lrange $gs $at end]]
@@ -3861,6 +3870,268 @@ proc wviewer::band_geometry {i n vx1 vy1 vx2 vy2} {
   set by1 [expr {$vy1 + ($i * $span) / $n}]
   set by2 [expr {$vy1 + (($i + 1) * $span) / $n}]
   return [list $vx1 $by1 $vx2 $by2]
+}
+
+# --- SUBWINDOWS: the pure model layer ----------------------------------------
+# doc/claude/specs/waveform_viewer_subwindows.md §3/§4. A subwindow is a TAG on
+# the graphs a layout already holds (`sw <id>`), never a new array: the graph
+# list stays FLAT and is kept CONTIGUOUS by subwindow, so strip N is still rect N
+# for every `rect 2 $gi` site, and "the strips of subwindow k" is one contiguous
+# index range. The TILING ORDER is the order the runs appear in the flat list,
+# so no separate order key exists that could disagree with it.
+#
+# CANONICAL FORM. A tab with ONE subwindow carries NO `sw` key on any graph --
+# sw_normalize strips them -- so a one-subwindow tab's model and rects are
+# byte-identical to the pre-subwindow viewer, and every saved state from before
+# this feature already IS the canonical one-subwindow form. A tab with two or
+# more tags EVERY graph. An untagged graph inside a multi-subwindow list is a
+# strip some ordinary creation site just inserted, and it joins the subwindow of
+# the strip ABOVE it (the one BELOW it when it is first): an insert below an
+# existing strip therefore lands in that strip's subwindow with no change at the
+# insert site, which is what keeps the many single-purpose creation sites
+# (Add Graph, a trace move's new strip, a split's block) correct unedited.
+# A site that inserts at the TOP of a subwindow must tag the strip itself.
+#
+# The target subwindow is DERIVED (the `sw` of the target strip), so the two can
+# never disagree. Everything here is PURE: literal lists in, lists out.
+
+# PURE: the subwindow tag of graph `G`, {} when it has none (or is not a dict).
+proc wviewer::gsw {G} {
+  if {[catch {dict size $G}]} { return {} }
+  set v [wviewer::dget $G sw {}]
+  if {[string is integer -strict $v] && $v > 0} { return $v }
+  return {}
+}
+
+# PURE: the graph list in canonical subwindow form (see the block comment).
+# Idempotent. Non-dict entries (test sentinels) are carried through untouched and
+# count as untagged.
+proc wviewer::sw_normalize {gs} {
+  set n [llength $gs]
+  set tags {}
+  foreach G $gs { lappend tags [wviewer::gsw $G] }
+  # an untagged strip joins the subwindow above it ...
+  set prev {}
+  for {set i 0} {$i < $n} {incr i} {
+    if {[lindex $tags $i] eq {}} {
+      if {$prev ne {}} { lset tags $i $prev }
+    } else {
+      set prev [lindex $tags $i]
+    }
+  }
+  # ... or, at the head of the list, the one below it
+  set next {}
+  for {set i [expr {$n - 1}]} {$i >= 0} {incr i -1} {
+    if {[lindex $tags $i] eq {}} {
+      if {$next ne {}} { lset tags $i $next }
+    } else {
+      set next [lindex $tags $i]
+    }
+  }
+  set order {}
+  foreach t $tags {
+    if {$t ne {} && [lsearch -exact $order $t] < 0} { lappend order $t }
+  }
+  if {[llength $order] <= 1} {
+    # ONE subwindow (or none): the canonical untagged form
+    set out {}
+    foreach G $gs {
+      if {![catch {dict size $G}] && [dict exists $G sw]} { set G [dict remove $G sw] }
+      lappend out $G
+    }
+    return $out
+  }
+  set out {}
+  foreach id $order {
+    for {set i 0} {$i < $n} {incr i} {
+      if {[lindex $tags $i] ne $id} { continue }
+      set G [lindex $gs $i]
+      if {![catch {dict size $G}]} { dict set G sw $id }
+      lappend out $G
+    }
+  }
+  return $out
+}
+
+# PURE: the subwindow RUNS of a graph list as {{first last} ...}, in tiling
+# order. A run is a maximal block of consecutive strips with one tag (untagged
+# strips join the run above, exactly as sw_normalize would put them), so on a
+# normalised list the runs ARE the subwindows. {} for an empty list.
+proc wviewer::sw_runs {gs} {
+  set out {}
+  set f 0
+  set cur {}
+  set i 0
+  foreach G $gs {
+    set t [wviewer::gsw $G]
+    if {$i == 0} {
+      set cur $t
+    } elseif {$t ne {} && $t ne $cur} {
+      if {$cur eq {}} {
+        # the leading untagged block belongs to the first tagged run
+        set cur $t
+      } else {
+        lappend out [list $f [expr {$i - 1}]]
+        set f $i
+        set cur $t
+      }
+    }
+    incr i
+  }
+  if {$i > 0} { lappend out [list $f [expr {$i - 1}]] }
+  return $out
+}
+
+# PURE: how many subwindows the list tiles into (1 for an empty list: a tab
+# always has one, even before its first strip).
+proc wviewer::sw_count {gs} {
+  set n [llength [wviewer::sw_runs $gs]]
+  return [expr {$n < 1 ? 1 : $n}]
+}
+
+# PURE: the ordinal (0-based tiling position) of the subwindow holding strip
+# `gi`, after clamping `gi` to the list; 0 for an empty list.
+proc wviewer::sw_index {gs gi} {
+  set gi [wviewer::target_clamp $gi [llength $gs]]
+  set k 0
+  foreach r [wviewer::sw_runs $gs] {
+    lassign $r f l
+    if {$gi >= $f && $gi <= $l} { return $k }
+    incr k
+  }
+  return 0
+}
+
+# PURE: {first last} of the subwindow holding strip `gi` (clamped). {0 -1} for
+# an empty list, so `lrange $gs {*}$r` is the empty list there too.
+proc wviewer::sw_range {gs gi} {
+  set runs [wviewer::sw_runs $gs]
+  if {![llength $runs]} { return {0 -1} }
+  return [lindex $runs [wviewer::sw_index $gs $gi]]
+}
+
+# PURE: the grid for n subwindows, {cols rows}. cols = ceil(sqrt(n)),
+# rows = ceil(n/cols): 1 -> 1x1, 2 -> 2x1 (side by side), 3 -> 2x2 with one cell
+# empty, 4 -> 2x2 (the user's rulings); 5+ is our declared extension of the same
+# formula. Integer-exact: the smallest c with c*c >= n, never a float sqrt that
+# could round 4 to 1.9999.
+proc wviewer::sw_grid {n} {
+  if {![string is integer -strict $n] || $n < 1} { set n 1 }
+  set c 1
+  while {$c * $c < $n} { incr c }
+  set r [expr {($n + $c - 1) / $c}]
+  return [list $c $r]
+}
+
+# PURE: the rect of subwindow `k` (0-based, row-major) of `n`, tiling
+# {vx1 vy1 vx2 vy2}. Boundaries are `v1 + j*span/m` like band_geometry, so
+# adjacent cells share one expression and tile exactly. The last row is partial
+# and LEFT-aligned: its cells keep the full-row width and the rest stays empty.
+proc wviewer::sw_cell {k n vx1 vy1 vx2 vy2} {
+  lassign [wviewer::sw_grid $n] cols rows
+  set r [expr {$k / $cols}]
+  set c [expr {$k % $cols}]
+  return [list [wviewer::sw_bound $c $cols $vx1 $vx2] [wviewer::sw_bound $r $rows $vy1 $vy2] \
+               [wviewer::sw_bound [expr {$c + 1}] $cols $vx1 $vx2] \
+               [wviewer::sw_bound [expr {$r + 1}] $rows $vy1 $vy2]]
+}
+
+# PURE: boundary j of m equal divisions of [v1,v2]. The two OUTER boundaries are
+# the inputs THEMSELVES, not `v1 + m*span/m`: in floating point that sum is not
+# always v2 (-0.1 + 0.4 is 0.30000000000000004), and a one-subwindow tab's cell
+# must be the viewport bit for bit so its strips are band_geometry's exactly.
+proc wviewer::sw_bound {j m v1 v2} {
+  if {$j <= 0} { return $v1 }
+  if {$j >= $m} { return $v2 }
+  return [expr {$v1 + ($j * ($v2 - $v1)) / $m}]
+}
+
+# PURE: one rect per STRIP: each subwindow's cell, cut into equal vertical bands
+# by band_geometry. With one subwindow this is exactly band_geometry over the
+# viewport, strip for strip.
+proc wviewer::sw_rects {gs vx1 vy1 vx2 vy2} {
+  set runs [wviewer::sw_runs $gs]
+  set nsw [llength $runs]
+  set out {}
+  set k 0
+  foreach r $runs {
+    lassign $r f l
+    lassign [wviewer::sw_cell $k $nsw $vx1 $vy1 $vx2 $vy2] cx1 cy1 cx2 cy2
+    set m [expr {$l - $f + 1}]
+    for {set i 0} {$i < $m} {incr i} {
+      lappend out [wviewer::band_geometry $i $m $cx1 $cy1 $cx2 $cy2]
+    }
+    incr k
+  }
+  return $out
+}
+
+# PURE: the `swframe` edge mask strip `gi` carries when `target` is the target
+# strip: 1 left | 2 right | 4 top | 8 bottom, so the union over the target
+# subwindow's strips outlines that subwindow. 0 for a strip outside the target
+# subwindow and for EVERY strip while there is only one subwindow (no frame, the
+# issue-0151 rule: nothing to disambiguate).
+proc wviewer::sw_frame {gs gi target} {
+  set runs [wviewer::sw_runs $gs]
+  if {[llength $runs] < 2} { return 0 }
+  lassign [wviewer::sw_range $gs $target] f l
+  if {![string is integer -strict $gi] || $gi < $f || $gi > $l} { return 0 }
+  set m 3
+  if {$gi == $f} { incr m 4 }
+  if {$gi == $l} { incr m 8 }
+  return $m
+}
+
+# PURE: the next free subwindow id: one above the largest tag, 2 when nothing is
+# tagged (the untagged strips are then subwindow 1).
+proc wviewer::sw_next_id {gs} {
+  set mx 1
+  foreach G $gs {
+    set t [wviewer::gsw $G]
+    if {$t ne {} && $t > $mx} { set mx $t }
+  }
+  return [expr {$mx + 1}]
+}
+
+# PURE: `gs` plus a NEW subwindow at the END of the tiling order, holding one
+# empty strip. Answers {graphs index-of-the-new-strip}. Every existing strip
+# keeps its index (the new one is appended), so no stored index moves.
+proc wviewer::sw_add {gs} {
+  set id [wviewer::sw_next_id $gs]
+  if {[llength [wviewer::sw_runs $gs]] <= 1} {
+    # the existing strips become subwindow 1 explicitly, or sw_normalize would
+    # read the untagged block as joining the new strip below it
+    set out {}
+    foreach G $gs {
+      if {![catch {dict size $G}]} { dict set G sw 1 }
+      lappend out $G
+    }
+    set gs $out
+  }
+  lappend gs [dict merge [wviewer::empty_graph] [dict create sw $id]]
+  return [list [wviewer::sw_normalize $gs] [expr {[llength $gs] - 1}]]
+}
+
+# PURE: the strip indices `sw_close` removes for the subwindow holding `gi`, or
+# {} when it is the ONLY subwindow (closing the only one does nothing, the D9a
+# shape: the caller says so).
+proc wviewer::sw_close_indices {gs gi} {
+  if {[llength [wviewer::sw_runs $gs]] < 2} { return {} }
+  lassign [wviewer::sw_range $gs $gi] f l
+  set out {}
+  for {set i $f} {$i <= $l} {incr i} { lappend out $i }
+  return $out
+}
+
+# PURE: confine a strip index range question to one subwindow: the indices of
+# `gs` that share strip `gi`'s subwindow. Used by the reuse rules (a trace move
+# or a split never takes an empty strip from ANOTHER subwindow, which would
+# silently move a strip between subwindows).
+proc wviewer::sw_same {gs a b} {
+  if {![string is integer -strict $a] || ![string is integer -strict $b]} { return 0 }
+  set n [llength $gs]
+  if {$a < 0 || $b < 0 || $a >= $n || $b >= $n} { return 0 }
+  return [expr {[wviewer::sw_range $gs $a] eq [wviewer::sw_range $gs $b]}]
 }
 
 # item 18 (D6): the <Configure> refit. Debounced — coalesce a resize storm into
@@ -4165,6 +4436,21 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
 }
 
+# SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §3/§5/§7): the two
+# rect tokens a strip of a tab with 2+ subwindows carries, appended by regenerate
+# AFTER graph_props' text. Kept OUT of graph_props on purpose: its formals are
+# pinned (row WD4 of test_calc_wave_dest.tcl), and the absent-means-absent rule
+# is the same either way -- `swframe=<edges>` outlines the TARGET subwindow
+# (draw.c paints it), `xgroup=<id>` names the strip's subwindow for the engine's
+# X-link predicate, and NEITHER is emitted with one subwindow, so a
+# one-subwindow tab's rects stay byte-identical. PURE.
+proc wviewer::sw_props {swframe xgroup} {
+  set out {}
+  if {[string is integer -strict $swframe] && $swframe > 0} { append out "swframe=$swframe\n" }
+  if {[string is integer -strict $xgroup] && $xgroup > 0} { append out "xgroup=$xgroup\n" }
+  return $out
+}
+
 # The CURRENT database's own X name — the first raw vector, which is the
 # convention `wviewer::interp_value` already states about the same quantity and
 # the one `new_rawfile()` builds a Calculator destination to match. `{}` when
@@ -4301,13 +4587,20 @@ proc wviewer::regenerate {token} {
   set wp [dict get $windows $token win_path]
   set lay [wviewer::layout_for $token]
   set gs [dict get $lay graphs]
+  # Shared X applies WITHIN each subwindow (spec SW13/SW14): every strip takes
+  # the X range of the FIRST strip of its own subwindow, never another's. With
+  # one subwindow that is strip 0 for all, exactly the old rule.
+  set runs [wviewer::sw_runs $gs]
   if {[wviewer::dget $lay sharedx 0] && [llength $gs] > 1} {
-    set g0 [lindex $gs 0]
-    set sx1 [wviewer::dget $g0 x1 {}]
-    set sx2 [wviewer::dget $g0 x2 {}]
-    for {set i 1} {$i < [llength $gs]} {incr i} {
-      set gg [dict replace [lindex $gs $i] x1 $sx1 x2 $sx2]
-      set gs [lreplace $gs $i $i $gg]
+    foreach r $runs {
+      lassign $r f l
+      set g0 [lindex $gs $f]
+      set sx1 [wviewer::dget $g0 x1 {}]
+      set sx2 [wviewer::dget $g0 x2 {}]
+      for {set i [expr {$f + 1}]} {$i <= $l} {incr i} {
+        set gg [dict replace [lindex $gs $i] x1 $sx1 x2 $sx2]
+        set gs [lreplace $gs $i $i $gg]
+      }
     }
   }
   # item 18: every graph FILLS an equal vertical band of the CURRENT viewport
@@ -4316,19 +4609,27 @@ proc wviewer::regenerate {token} {
   set n [llength $gs]
   # issue 0151: the active-strip marker only exists while there is a choice to
   # make — one strip is unambiguous, so no rect gets the `active` token and a
-  # single-graph viewer renders byte-identically to pre-0151.
+  # single-graph viewer renders byte-identically to pre-0151. SUBWINDOWS (SW6):
+  # the choice is among the strips of the TARGET SUBWINDOW, so the bar needs two
+  # or more strips THERE; with one subwindow that is the old `n > 1`.
+  set tgt_ [wviewer::target_index $token]
   set act_gi -1
-  if {$n > 1} { set act_gi [wviewer::target_index $token] }
+  lassign [wviewer::sw_range $gs $tgt_] tf_ tl_
+  if {$n > 1 && $tl_ > $tf_} { set act_gi $tgt_ }
+  # SW3: the subwindow grid; with one subwindow these ARE band_geometry's bands
   lassign [wviewer::viewport_rect $wp] vx1 vy1 vx2 vy2
+  set rects_ [wviewer::sw_rects $gs $vx1 $vy1 $vx2 $vy2]
+  set multisw_ [expr {[llength $runs] > 1}]
   wviewer::with_edit $token {
     xschem clear_drawing
     set gi_ 0
     foreach G_ $gs {
-      lassign [wviewer::band_geometry $gi_ $n $vx1 $vy1 $vx2 $vy2] \
-        rx1_ ry1_ rx2_ ry2_
+      lassign [lindex $rects_ $gi_] rx1_ ry1_ rx2_ ry2_
       wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ \
-        [wviewer::graph_props $G_ [expr {$gi_ == $act_gi}] \
-           [wviewer::grid_shown $token]]
+        "[wviewer::graph_props $G_ [expr {$gi_ == $act_gi}] \
+            [wviewer::grid_shown $token]][wviewer::sw_props \
+            [wviewer::sw_frame $gs $gi_ $tgt_] \
+            [expr {$multisw_ ? [wviewer::gsw $G_] : {}}]]"
       incr gi_
     }
     # blank (auto) ranges: let the ENGINE compute them into the rect attrs
@@ -4351,11 +4652,7 @@ proc wviewer::regenerate {token} {
   }
   # graphbb feeds over_graph / the a/b/s key gate — build it from the SAME
   # band rects so it matches the placed graphs exactly (D5)
-  set bbs {}
-  for {set i 0} {$i < $n} {incr i} {
-    lappend bbs [wviewer::band_geometry $i $n $vx1 $vy1 $vx2 $vy2]
-  }
-  dict set graphbb $wp $bbs
+  dict set graphbb $wp $rects_
   xschem new_schematic switch $wp
   # THE D4 RE-APPLY BRACKET (doc/claude/specs/wave_trace_hilight.md §4.1). The
   # with_edit block above ran `xschem clear_drawing`, which resets the C
@@ -4733,8 +5030,10 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   variable mode; variable target
   if {![wviewer::open $token]} { return 0 }
   set sx [wviewer::dget $vdict sharedx 0]
+  # subwindows: a state saved before them has no `sw` tags and normalises to
+  # ONE subwindow, the exact old picture (spec §3 back-compat)
   dict set layouts $token \
-    [dict create sharedx $sx graphs [wviewer::dget $vdict graphs {}]]
+    [dict create sharedx $sx graphs [wviewer::sw_normalize [wviewer::dget $vdict graphs {}]]]
   set sharedx($token) $sx
   # issue 0151: mode/target round-trip. Absent keys (every state file written
   # before 0151) fall back to the config default and strip 0, so old states
@@ -5107,11 +5406,103 @@ proc wviewer::add_graph {token} {
   wviewer::capture_live_view_state $token   ;# issue 0194: before the append
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
-  lappend gs [wviewer::empty_graph]
+  # SUBWINDOWS: the new strip goes to the bottom of the TARGET subwindow (it
+  # joins the strip above it, sw_normalize's rule); with one subwindow that is
+  # the bottom of the window, unchanged
+  set at [expr {[lindex [wviewer::sw_range $gs [wviewer::target_index $token]] 1] + 1}]
+  if {$at <= 0 || $at > [llength $gs]} { set at [llength $gs] }
+  set hl {}
+  if {$at < [llength $gs]} {
+    set hl [lmap e [wviewer::wave_hilights $token] {
+              lassign $e hg hn hs
+              list [wviewer::index_after_insert $hg $at 1] $hn $hs}]
+  }
+  set gs [linsert $gs $at [wviewer::empty_graph]]
   wviewer::set_graphs $token $gs
+  if {$at < [llength $gs] - 1} { wviewer::wavehl_remap_apply $token $hl }
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::add_graph $token]
   return 1
+}
+
+# --- SUBWINDOWS: the commands (doc/claude/specs/waveform_viewer_subwindows.md) -
+# Graph > New SubWin (Ctrl-Shift-N) and Graph > Close SubWin (Ctrl-Shift-W).
+# Optional token like every command here ({} = the viewer owning the current
+# context). Each is ONE undo step and ONE replayable log line.
+
+# Add a subwindow at the END of the tiling order, holding one empty strip, and
+# make it the target. Returns the new strip's index, {} when no viewer resolves.
+proc wviewer::new_subwin {{token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window to add a subwindow to" error
+    return {}
+  }
+  wviewer::capture_live_view_state $token   ;# issue 0194: before the change
+  wviewer::push_undo $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_add $gs] gs gi
+  wviewer::set_graphs $token $gs
+  # appended at the end, so no stored index moved; the new strip is the target
+  set target($token) $gi
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::new_subwin $token]
+  return $gi
+}
+
+# Close the subwindow holding strip `gi` (default: the TARGET subwindow) and
+# re-tile the rest. Closing the ONLY subwindow does nothing and says so (the
+# tabs D9a shape). The target moves to the subwindow that took the closed one's
+# slot, else the previous one. Returns the number of strips removed, 0 on the
+# refusal, {} when no viewer resolves.
+proc wviewer::close_subwin {{token {}} {gi {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window to close a subwindow in" error
+    return {}
+  }
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set kill [wviewer::sw_close_indices $gs $gi]
+  if {![llength $kill]} {
+    wviewer::echo "wviewer: only one subwindow -- nothing to close"
+    return 0
+  }
+  wviewer::capture_live_view_state $token
+  wviewer::push_undo $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set gone {}
+  foreach k $kill {
+    foreach m [wviewer::markers_numbers [wviewer::dget [lindex $gs $k] markers {}]] {
+      lappend gone $m
+    }
+  }
+  set tgt [wviewer::index_after_removal [wviewer::target_index $token] $kill]
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
+  wviewer::set_graphs $token \
+    [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
+  set target($token) [wviewer::target_clamp $tgt \
+                        [llength [dict get [wviewer::layout_for $token] graphs]]]
+  wviewer::regenerate $token
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
+  wviewer::log_action [list wviewer::close_subwin $token $gi]
+  return [llength $kill]
+}
+
+proc wviewer::new_subwin_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::new_subwin $token]
+}
+proc wviewer::close_subwin_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::close_subwin $token]
 }
 
 # --- plot mode / target strip: the window-facing surface (issue 0151) --------
@@ -5308,17 +5699,35 @@ proc wviewer::set_target_strip {gi {token {}}} {
 proc wviewer::move_marker {token from to} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
-  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  # SUBWINDOWS (SW5/SW6): the bar lives on the target strip only while ITS
+  # subwindow holds two or more strips, and a move that crosses subwindows
+  # rewrites the `swframe` outline on both -- in place, like the bar, for the
+  # same zoom-preserving reason. With one subwindow both rules reduce to the
+  # old `n > 1` one and no swframe token is ever touched.
+  set fr_ [wviewer::sw_range $gs $from]
+  set tr_ [wviewer::sw_range $gs $to]
+  set ok_from [expr {[string is integer -strict $from] && $from >= 0 && $from < $n}]
+  set ok_to   [expr {[string is integer -strict $to] && $to >= 0 && $to < $n}]
   if {[catch {
     wviewer::with_edit $token {
       if {$n > 1} {
-        if {$from ne $to && $from >= 0 && $from < $n} {
+        if {$from ne $to && $ok_from && [lindex $fr_ 1] > [lindex $fr_ 0]} {
           # empty value CLEARS the token (probe-verified), so an inactive strip
           # reads exactly as regenerate would have written it: no `active` at all
           xschem setprop -fast rect 2 $from active {}
         }
-        if {$to >= 0 && $to < $n} {
+        if {$ok_to && [lindex $tr_ 1] > [lindex $tr_ 0]} {
           xschem setprop -fast rect 2 $to active 1
+        }
+        if {$ok_from && $ok_to && $fr_ ne $tr_ && [wviewer::sw_count $gs] > 1} {
+          for {set i_ [lindex $fr_ 0]} {$i_ <= [lindex $fr_ 1]} {incr i_} {
+            xschem setprop -fast rect 2 $i_ swframe {}
+          }
+          for {set i_ [lindex $tr_ 0]} {$i_ <= [lindex $tr_ 1]} {incr i_} {
+            xschem setprop -fast rect 2 $i_ swframe [wviewer::sw_frame $gs $i_ $to]
+          }
         }
       }
       xschem redraw
@@ -5785,6 +6194,13 @@ proc wviewer::move_strip {from to {token {}}} {
     }
   }
   if {$from == $to} { return $to }
+  # SUBWINDOWS (spec §9, declared limit): a strip moves within its own
+  # subwindow only. A cross-subwindow index (a typed or replayed line) is
+  # refused out loud rather than silently regrouped back by sw_normalize.
+  if {![wviewer::sw_same $gs $from $to]} {
+    wviewer::echo "wviewer: strips $from and $to are in different subwindows -- a strip moves within its own subwindow" error
+    return {}
+  }
   if {![wviewer::switch_ctx $token]} { return {} }
   wviewer::capture_live_graph_state $token
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
@@ -5891,16 +6307,28 @@ proc wviewer::strip_drop_index {canvas py {from -1}} {
     }
     return $best
   }
+  # SUBWINDOWS (spec §9, declared limit): a strip is reordered WITHIN its own
+  # subwindow, so the candidates are that subwindow's strips only and the drop
+  # clamps to its first / last strip. With one subwindow the range is 0..n-1.
+  set lo 0
+  set hi [expr {$n - 1}]
+  set tok_ [wviewer::token_for_canvas $canvas]
+  if {$tok_ ne {}} {
+    set gs_ [dict get [wviewer::layout_for $tok_] graphs]
+    if {[llength $gs_] == $n} {
+      lassign [wviewer::sw_range $gs_ $from] lo hi
+    }
+  }
   if {$py < [lindex $mids $from]} {
-    for {set k 0} {$k < $n} {incr k} {
+    for {set k $lo} {$k <= $hi} {incr k} {
       if {[lindex $mids $k] >= $py} { return $k }
     }
-    return [expr {$n - 1}]
+    return $hi
   }
-  for {set k [expr {$n - 1}]} {$k >= 0} {incr k -1} {
+  for {set k $hi} {$k >= $lo} {incr k -1} {
     if {[lindex $mids $k] <= $py} { return $k }
   }
-  return 0
+  return $lo
 }
 
 # 1 when canvas pixel (px,py) is within `tol` screen pixels of a drawn trace of
@@ -6830,6 +7258,8 @@ proc wviewer::reuse_strip_for_trace_move {gs from_gi {auto -1} {maxdist 0}} {
   # the nearest below it and the LAST one before it is the nearest above
   foreach gi [wviewer::empty_graph_indices $gs $auto] {
     if {$gi == $from_gi} continue        ;# the source has traces; belt and braces
+    # SUBWINDOWS: never take an empty strip from ANOTHER subwindow
+    if {![wviewer::sw_same $gs $gi $from_gi]} continue
     if {$maxdist > 0 && abs($gi - $from_gi) > $maxdist} continue
     if {$gi > $from_gi} {
       if {$below < 0} { set below $gi }
@@ -7075,6 +7505,8 @@ proc wviewer::plan_split {gs gi {auto -1} {maxdist 0}} {
   foreach ci [wviewer::empty_graph_indices $gs $auto] {
     if {$ci == $gi} continue
     if {$maxdist > 0 && abs($ci - $gi) > $maxdist} continue
+    # SUBWINDOWS: a split never relocates an empty strip out of another subwindow
+    if {![wviewer::sw_same $gs $ci $gi]} continue
     if {$ci > $gi} { lappend below $ci } else { set above [linsert $above 0 $ci] }
   }
   set take {}
@@ -7984,22 +8416,51 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   if {![wviewer::dest_prepare $token $dest]} {
     return [list [list {} "cannot open a new tab for this plot"]]
   }
-  set gs [dict get [wviewer::layout_for $token] graphs]
+  set gsall [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
-  set auto [wviewer::auto_graph_index $token]
+  # SUBWINDOWS (spec §6.4, SW7/SW8): the batch lands in the TARGET SUBWINDOW.
+  # plan_plot is handed that subwindow's strips as its whole universe and every
+  # index below is RELATIVE to its first strip `swf`; the plan is translated
+  # back to window indices once, right after. With one subwindow `swf` is 0 and
+  # the universe is the whole list, so nothing below changes.
+  lassign [wviewer::sw_range $gsall [wviewer::target_index $token]] swf swl
+  if {$swl < $swf} { set swf 0; set swl -1 }
+  set swid [wviewer::gsw [lindex $gsall $swf]]
+  set gs [lrange $gsall $swf $swl]
+  set tgtrel [expr {[wviewer::target_index $token] - $swf}]
+  set auto -1
+  set gi_ 0
+  foreach G_ $gs {
+    if {[wviewer::dget $G_ auto 0] eq {1}} { set auto $gi_; break }
+    incr gi_
+  }
   # R-OUT14: a multi-plot auto-plot owns SEVERAL strips; a target on any of them
   # is as unusable as one on the first, so that is the index plan_plot is told
   # about (empty_graph_indices already skips every auto strip).
-  if {[wviewer::target_index $token] in [wviewer::auto_graph_indices $token]} {
-    set auto [wviewer::target_index $token]
+  if {[wviewer::dget [lindex $gs $tgtrel] auto 0] eq {1}} {
+    set auto $tgtrel
   }
   set plan [wviewer::plan_plot $mode [llength $gs] \
-                               [wviewer::target_index $token] [llength $exprs] \
+                               $tgtrel [llength $exprs] \
                                $auto [wviewer::empty_graph_indices $gs $auto] \
                                $dest]
   if {![llength $colors]} {
-    # `gs` is the PRE-batch strip list, which is what plan_colors expects
-    set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
+    # `gs` is the PRE-batch strip list, which is what plan_colors expects. Multi
+    # seeds its `used` set from the whole WINDOW (issue 0153), so it is handed
+    # every strip; the relative targets are shifted past the strips before the
+    # subwindow so they still name the right ones.
+    if {$mode eq {multi}} {
+      set colors [wviewer::plan_colors $gsall $mode \
+                    [lmap t_ [dict get $plan targets] {expr {$t_ < [dict get $plan new] ? [llength $gsall] + $t_ : $t_ - [dict get $plan new] + $swf}}]]
+    } else {
+      set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
+    }
+  }
+  # ...and the plan into WINDOW indices: every landing site moves by `swf`
+  # (multi's new strips are inserted at `swf`, single's at the subwindow's end)
+  dict set plan targets [lmap t_ [dict get $plan targets] {expr {$t_ + $swf}}]
+  if {[dict exists $plan clear]} {
+    dict set plan clear [lmap t_ [dict get $plan clear] {expr {$t_ + $swf}}]
   }
   # create the strips the plan asked for. WHERE they go is mode-dependent and is
   # the other half of plan_plot's index contract: multi-plot puts new strips at
@@ -8010,23 +8471,46 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   set nnew [dict get $plan new]
   if {$nnew > 0} {
     set fresh {}
-    for {set k 0} {$k < $nnew} {incr k} { lappend fresh [wviewer::empty_graph] }
+    # tagged with the target subwindow's id: a FRONT insert would otherwise join
+    # the subwindow above it (sw_normalize's untagged rule)
+    for {set k 0} {$k < $nnew} {incr k} {
+      set g_ [wviewer::empty_graph]
+      if {$swid ne {}} { dict set g_ sw $swid }
+      lappend fresh $g_
+    }
     if {$mode eq {multi}} {
       variable target
       set cur [wviewer::target_index $token]
-      wviewer::set_graphs $token [concat $fresh $gs]
-      if {[llength $gs]} { set target($token) [expr {$cur + $nnew}] }
+      set at_ $swf
+      wviewer::set_graphs $token \
+        [concat [lrange $gsall 0 [expr {$at_ - 1}]] $fresh [lrange $gsall $at_ end]]
+      if {[llength $gsall]} { set target($token) [expr {$cur + $nnew}] }
       # §8: a FRONT insert renumbers every strip already on the canvas, so the
       # highlight set owes the identical +nnew shift the target just took --
       # otherwise a batch plotted into a window with a highlighted trace moves
       # the highlight onto a different strip. After set_graphs, because the
       # remap validates `gi` against the LIVE strip count.
-      if {[llength $gs]} {
+      if {[llength $gsall] && $at_ == 0} {
         wviewer::wavehl_remap_apply $token \
           [wviewer::wavehl_after_prepend [wviewer::wave_hilights $token] $nnew]
+      } elseif {[llength $gsall]} {
+        wviewer::wavehl_remap_apply $token \
+          [lmap e_ [wviewer::wave_hilights $token] {
+             lassign $e_ hg_ hn_ hs_
+             list [wviewer::index_after_insert $hg_ $at_ $nnew] $hn_ $hs_}]
       }
     } else {
-      wviewer::set_graphs $token [concat $gs $fresh]
+      # single appends at the END of the target subwindow (the window's end
+      # with one subwindow); strips of later subwindows move down past it
+      set at_ [expr {$swl + 1}]
+      wviewer::set_graphs $token \
+        [concat [lrange $gsall 0 [expr {$at_ - 1}]] $fresh [lrange $gsall $at_ end]]
+      if {$at_ < [llength $gsall]} {
+        wviewer::wavehl_remap_apply $token \
+          [lmap e_ [wviewer::wave_hilights $token] {
+             lassign $e_ hg_ hn_ hs_
+             list [wviewer::index_after_insert $hg_ $at_ $nnew] $hn_ $hs_}]
+      }
     }
   }
   # single-plot: the strip the batch actually landed in becomes the target, so
@@ -15344,6 +15828,19 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Control-Key-n>] eq {}} {
     bind WaveViewer <Control-Key-n> {wviewer::new_tab_at %W; break}
   }
+  # SUBWINDOWS: Ctrl-Shift-N / Ctrl-Shift-W, the subwindow twins of the tab pair.
+  # With Shift held the keysym is the UPPER-case letter, so these never meet the
+  # Ctrl-N / Ctrl-W bindings above. Collision check (2026-10-15): the C binding
+  # table (src/keybindings.csv) has no ctrl row for keysym 78 or 87, and the one
+  # rc binding of the chord, cadence_style_rc's `bind .drw <Control-Shift-Key-N>`,
+  # is a widget-level clone that strip_bindings sweeps off a viewer canvas -- the
+  # Ctrl-N shape above.
+  if {[bind WaveViewer <Control-Key-N>] eq {}} {
+    bind WaveViewer <Control-Key-N> {wviewer::new_subwin_at %W; break}
+  }
+  if {[bind WaveViewer <Control-Key-W>] eq {}} {
+    bind WaveViewer <Control-Key-W> {wviewer::close_subwin_at %W; break}
+  }
   # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
   # and with only one tab it does NOTHING but say so. It never closes a window
   # any more -- that is Ctrl-Q. The hardcoded key_filter arm that used to
@@ -15989,12 +16486,15 @@ proc wviewer::fit {token} {
   if {![dict exists $windows $token]} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
   set rawok 0
+  # SUBWINDOWS (SW13): Fit acts on the TARGET subwindow; another subwindow's
+  # axes are never touched (with one subwindow: every strip, as before)
+  lassign [wviewer::sw_range $gs [wviewer::target_index $token]] fswf_ fswl_
   wviewer::with_edit $token {
     set rawok [expr {[xschem raw loaded] >= 0}]
     if {$rawok} {
       set gi_ 0
       foreach G_ $gs {
-        if {[llength [dict get $G_ traces]]} {
+        if {$gi_ >= $fswf_ && $gi_ <= $fswl_ && [llength [dict get $G_ traces]]} {
           xschem setprop -fast rect 2 $gi_ fullxzoom
           xschem setprop -fast rect 2 $gi_ fullyzoom
         }
@@ -16006,7 +16506,7 @@ proc wviewer::fit {token} {
     set out {}
     set gi 0
     foreach G $gs {
-      if {[llength [dict get $G traces]]} {
+      if {$gi >= $fswf_ && $gi <= $fswl_ && [llength [dict get $G traces]]} {
         foreach t {x1 x2 y1 y2} {
           catch {set G [dict replace $G $t [xschem getprop rect 2 $gi $t]]}
         }
@@ -16216,7 +16716,11 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
     }
   }
   set changed 0
-  for {set t 0} {$t < $n} {incr t} {
+  # SUBWINDOWS (SW13): the X of OTHER subwindows is never touched -- the loop
+  # runs over the pointed strip's subwindow only (the whole tab with one)
+  set gi_ok [expr {[string is integer -strict $gi] && $gi >= 0 && $gi < $n}]
+  lassign [wviewer::sw_range $gs [expr {$gi_ok ? $gi : [wviewer::target_index $token]}]] swf swl
+  for {set t $swf} {$t <= $swl} {incr t} {
     lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
     set G [lindex $gs $t]
     # D7: freeze every concrete axis first, then zoom the ones this gesture owns
@@ -16275,14 +16779,20 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
 # larger x. Every axis is re-frozen at its read-back value first (D7) so
 # regenerate cannot autozoom an untouched axis away; ONE set_graphs + regenerate
 # for the whole sweep. Returns 1 when anything was written.
-proc wviewer::pan_x {token dir} {
+proc wviewer::pan_x {token dir {gi {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   wviewer::capture_live_view_state $token   ;# issue 0194, as wheel_zoom
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   set changed 0
-  for {set t 0} {$t < $n} {incr t} {
+  # SUBWINDOWS (SW13): pan the pointed strip's subwindow only (the target's
+  # when no strip is pointed); with one subwindow that is every strip
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} {
+    set gi [wviewer::target_index $token]
+  }
+  lassign [wviewer::sw_range $gs $gi] swf swl
+  for {set t $swf} {$t <= $swl} {incr t} {
     lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
     set G [lindex $gs $t]
     foreach {k v} [list x1 $ax1 x2 $ax2 y1 $ay1 y2 $ay2] {
@@ -16326,7 +16836,8 @@ proc wviewer::wheel {token wp dir mods {px {}} {py {}}} {
       # issue 0150: X is the SHARED axis of the stack — pan it on EVERY strip
       # (wviewer::pan_x), never just the pointed one, exactly like the X arm of
       # wheel_zoom (0144). Y stays per-strip (the `default` arm below).
-      return [wviewer::pan_x $token $dir]
+      # SUBWINDOWS (SW13): "every strip" of the pointed SUBWINDOW only.
+      return [wviewer::pan_x $token $dir $gi]
     }
     ctrl {
       # X on every graph + Y on the pointed one, anchored at the pointer pixel
@@ -17311,8 +17822,24 @@ proc wviewer::add_trace_ok {token} {
     set fresh {}
     for {set k 0} {$k < $nnew} {incr k} { lappend fresh [wviewer::empty_graph] }
     # the single arm always appends at the BOTTOM — that is the index its
-    # targets name (plan_plot's newstrip comment)
-    wviewer::set_graphs $token [concat $gs $fresh]
+    # targets name (plan_plot's newstrip comment). SUBWINDOWS: the bottom of the
+    # NAMED graph's subwindow, so the fresh strip joins it (sw_normalize's
+    # untagged-joins-the-strip-above rule); with one subwindow that is the
+    # window's bottom, unchanged.
+    set at_ [expr {[lindex [wviewer::sw_range $gs $gi] 1] + 1}]
+    if {$at_ <= 0 || $at_ > [llength $gs]} { set at_ [llength $gs] }
+    set hl_ {}
+    if {$at_ < [llength $gs]} {
+      dict set plan targets [lmap t_ [dict get $plan targets] {
+        expr {$t_ >= [llength $gs] ? $at_ + $t_ - [llength $gs] : $t_}}]
+      set hl_ [lmap e_ [wviewer::wave_hilights $token] {
+                 lassign $e_ hg_ hn_ hs_
+                 list [wviewer::index_after_insert $hg_ $at_ $nnew] $hn_ $hs_}]
+    }
+    wviewer::set_graphs $token \
+      [concat [lrange $gs 0 [expr {$at_ - 1}]] $fresh [lrange $gs $at_ end]]
+    # after set_graphs: the remap validates against the LIVE strip count
+    if {$at_ < [llength $gs]} { wviewer::wavehl_remap_apply $token $hl_ }
   }
   # CLEAR AFTER creation, BEFORE the adds. Only `replace` ever emits the key,
   # and it never names a strip this plan just made.
@@ -18541,6 +19068,10 @@ proc wviewer::tab_thaw {token rec} {
   variable undo_hist; variable redo_hist
   variable wavehl
   set lay [wviewer::dget $rec layout [dict create sharedx 0 graphs {}]]
+  # subwindows: a frozen or restored record passes the one normaliser
+  if {[dict exists $lay graphs]} {
+    dict set lay graphs [wviewer::sw_normalize [dict get $lay graphs]]
+  }
   dict set layouts $token $lay
   set m [wviewer::resolve_mode single [wviewer::dget $rec mode {}]]
   if {$m eq {}} { set m [wviewer::default_plot_mode] }
@@ -19129,11 +19660,23 @@ proc wviewer::paste_traces {{token {}}} {
     return 0
   }
   wviewer::capture_live_view_state $token
-  set gs   [dict get [wviewer::layout_for $token] graphs]
+  # SUBWINDOWS (SW16): the paste lands in the TARGET subwindow. Its strips are
+  # plan_paste's whole universe, `sites` are RELATIVE to its first strip (so the
+  # replay line paste_payload is too), and the result is spliced back. With one
+  # subwindow the universe is the window and nothing below changes.
+  set gsall [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_range $gsall [wviewer::target_index $token]] swf swl
+  if {$swl < $swf} { set swf 0; set swl -1 }
+  set gs   [lrange $gsall $swf $swl]
   set mode [wviewer::plot_mode $token]
-  set auto [wviewer::auto_graph_index $token]
+  set auto -1
+  set gi_ 0
+  foreach G_ $gs {
+    if {[wviewer::dget $G_ auto 0] eq {1}} { set auto $gi_; break }
+    incr gi_
+  }
   set plan [wviewer::plan_paste $mode [llength $gs] \
-              [wviewer::target_index $token] [llength $groups] $auto \
+              [expr {[wviewer::target_index $token] - $swf}] [llength $groups] $auto \
               [wviewer::empty_graph_indices $gs $auto]]
   set nnew [dict get $plan new]
   set sites [dict get $plan sites]
@@ -19182,7 +19725,7 @@ proc wviewer::paste_traces {{token {}}} {
   # AFTER the capture, BEFORE the mutation: one undo point for the whole paste,
   # so `u` takes it all back rather than one trace at a time.
   wviewer::push_undo $token
-  wviewer::set_graphs $token \
+  wviewer::sw_splice_apply $token $gsall $swf $swl \
     [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
   wviewer::regenerate $token
   wviewer::tabbar_refresh $token
@@ -19206,15 +19749,38 @@ proc wviewer::paste_payload {groups sites colors {token {}}} {
   if {$token eq {} || ![dict exists $windows $token]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }
   wviewer::capture_live_view_state $token
-  set gs [dict get [wviewer::layout_for $token] graphs]
+  # `sites` are relative to the TARGET subwindow's first strip (paste_traces)
+  set gsall [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_range $gsall [wviewer::target_index $token]] swf swl
+  if {$swl < $swf} { set swf 0; set swl -1 }
+  set gs [lrange $gsall $swf $swl]
   set need 0
   foreach s $sites { if {$s >= $need} { set need [expr {$s + 1}] } }
   set ext $gs
   while {[llength $ext] < $need} { lappend ext [wviewer::empty_graph] }
   wviewer::push_undo $token
-  wviewer::set_graphs $token \
+  wviewer::sw_splice_apply $token $gsall $swf $swl \
     [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
   wviewer::regenerate $token
+  return 1
+}
+
+# MODEL: replace strips swf..swl of `gsall` with `sub` (the same strips, possibly
+# grown at its END) and write the result, carrying the trace-highlight set past
+# the growth: strips of later subwindows move down by the number added. The new
+# strips are untagged and join the subwindow above them (sw_normalize).
+proc wviewer::sw_splice_apply {token gsall swf swl sub} {
+  set grow [expr {[llength $sub] - ($swl - $swf + 1)}]
+  set at [expr {$swl + 1}]
+  set hl {}
+  if {$grow > 0 && $at < [llength $gsall]} {
+    set hl [lmap e [wviewer::wave_hilights $token] {
+              lassign $e hg hn hs
+              list [wviewer::index_after_insert $hg $at $grow] $hn $hs}]
+  }
+  wviewer::set_graphs $token \
+    [concat [lrange $gsall 0 [expr {$swf - 1}]] $sub [lrange $gsall $at end]]
+  if {$grow > 0 && $at < [llength $gsall]} { wviewer::wavehl_remap_apply $token $hl }
   return 1
 }
 
@@ -19355,6 +19921,12 @@ proc wviewer::build_menubar {token top} {
   # Graph menu (item 12, live): model editing, always through regenerate
   $mb.graph add command -label {Add Graph} \
     -command [list wviewer::add_graph $token]
+  # subwindows (doc/claude/specs/waveform_viewer_subwindows.md): the menu twins
+  # of the Ctrl-Shift-N / Ctrl-Shift-W bindtag defaults.
+  $mb.graph add command -label {New SubWin} -accelerator Ctrl+Shift+N \
+    -command [list wviewer::new_subwin $token]
+  $mb.graph add command -label {Close SubWin} -accelerator Ctrl+Shift+W \
+    -command [list wviewer::close_subwin $token]
   $mb.graph add command -label {Add Trace...} \
     -command [list wviewer::add_trace_dialog $token]
   $mb.graph add command -label {Delete...} \
