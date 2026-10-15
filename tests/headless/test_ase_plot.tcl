@@ -32,10 +32,12 @@
 #        D in a plain layer color, the v(d) TRACE color equals that same color,
 #        the highlight PERSISTS past ESC, and the two picks differ
 #   P5   `~` strip button: not disabled; invoke raises the SAME viewer (no
-#        new toplevel, no traces added)
-#   P6   re-run -> always-replace: auto graph REBUILT (still 2 traces),
-#        Direct-Plot graph untouched, raw re-read (points/sim_type), redraw
-#        rc 0 over the stale `raw add` interval
+#        new toplevel) and, under the session's default plot destination
+#        Replace (ase_l.md R-OUT15), empties the TARGET subwindow first: the
+#        Direct-Plot graph shared it, so ONE graph is left, the auto graph
+#   P6   re-run -> always-replace: auto graph REBUILT (still 2 traces, still
+#        one graph), raw re-read (points/sim_type), redraw rc 0 over the stale
+#        `raw add` interval
 #   P7   session close closes the viewer (D10) + registry cleaned
 # Hermetic: the committed sky130_tests/test_nfet_final cell is CLONED into a
 # scratch dir (the committed tree is never written); state shaping goes ONLY
@@ -581,8 +583,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check "P5 same viewer toplevel" [wviewer::window_for $key] $vtop
       check "P5 no new toplevel" [toplevel_count] $tls5
-      check "P5 model graph count unchanged (no traces added)" \
-        [llength [dict get [wviewer::layout_for $key] graphs]] $gc5
+      ## R-OUT15 (2026-10-15): the default Replace empties the target
+      ## subwindow, and the Direct-Plot graph is in it (one subwindow), so it
+      ## goes -- Cadence's Replace; Append or New SubWin keep it.
+      set gs5 [dict get [wviewer::layout_for $key] graphs]
+      check "P5 under Replace ~ empties the target subwindow: one graph left, the auto graph with its 2 traces" \
+        [list $gc5 [llength $gs5] [wviewer::auto_graph_index $key] [gtr_n $gs5 0]] {2 1 0 2}
 
       # --- P6: re-run -> always-replace auto graph, Direct-Plot graph intact -
       # make the design current DETERMINISTICALLY first: P5's viewer raise
@@ -599,16 +605,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check "P6 exit 0" $ec6 0
       set gs6 [dict get [wviewer::layout_for $key] graphs]
-      check "P6 model graphs STILL 2 (replace, not append)" [llength $gs6] 2
+      check "P6 model graphs STILL 1 (replace, not append)" [llength $gs6] 1
       set agi6 [wviewer::auto_graph_index $key]
       check "P6 auto graph still present" $agi6 0
       check "P6 auto graph REBUILT with exactly 2 traces" [gtr_n $gs6 $agi6] 2
-      set dtr6 {}
-      catch {set dtr6 [dict get [lindex $gs6 $dpgi] traces]}
-      set dvecs6 {}
-      foreach tr $dtr6 { lappend dvecs6 [wviewer::dget $tr vec {}] }
-      check "P6 Direct-Plot graph untouched (v(d) + i(v1))" \
-        [lsort $dvecs6] [lsort {v(d) i(v1)}]
       xschem new_schematic switch $vdrw
       check "P6 raw re-read: points 181" [rawq {xschem raw points}] 181
       check "P6 raw re-read: sim_type dc" [rawq {xschem raw sim_type}] dc

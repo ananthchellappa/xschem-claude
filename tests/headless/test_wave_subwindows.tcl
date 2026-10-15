@@ -27,6 +27,16 @@
 #         does reach the other rects. SWX13-SWX18 display: the same claims in
 #         the REAL viewer through Tk events on its canvas (MMB, RMB, Ctrl+wheel,
 #         Shift+wheel, Left arrow, f on the target subwindow).
+#   SWD*  DESTINATIONS (stage 3). SWD1-SWD9 both arms: dest_norm / labels
+#         (five, New SubWin), no `-> appends` under multi, plan_plot plans New
+#         SubWin as Append, sw_clear_graphs, and the REAL plot_signals ->
+#         dest_prepare -> clear_subwin / new_subwin -> plot_sites chain on a
+#         model-only window (Replace single and multi empties the target
+#         subwindow only, with one undo point and no per-strip clear; New SubWin
+#         at the end, targeted, logged; empty batches inert; Append / New Strip
+#         confined). SWD10-SWD15 display: the same in the real window with
+#         rects and undo, the Add Trace dialog's Replace (the NAMED graph's
+#         subwindow) and New SubWin, New Tab.
 #   SWG*  DISPLAY -- the real window: the grid on the canvas (graphbb), the
 #         rect tokens, click-to-target and the in-place frame move, New/Close
 #         SubWin through the menu and keys, plotting into the target
@@ -65,6 +75,20 @@
 #   NOT fenced: graph_fullxzoom()'s `master = i` when the stale mouse master is
 #   in another X group. With one raw loaded every group's union is the same
 #   extent, so no fixture here can tell the two apart.
+#
+# Stage 3 (destinations), measured 2026-10-15, each reverted to green:
+#   V1 dest_prepare: drop the replace arm (ruling 24's Replace)
+#        -> nogui SWD5 (x2), SWD6 (x2); display adds SWD10 undo, SWD11 (x2),
+#           SWD12 (x2), SWD13 (x2)
+#   V2 dest_prepare: drop the newsubwin arm -> SWD7 (x3) both arms, SWD12
+#   V4 sw_clear_graphs: clear the WHOLE tab, not the subwindow
+#        -> SWD4 (x2), SWD5, SWD6 (x2), SWD9
+#   V14 plot_signals: no empty-batch guard before dest_prepare -> SWD8 ONLY
+#   V15 sw_clear_graphs: survivor a fresh empty_graph (view lost) -> SWD4 view row
+#   V16 clear_subwin: no push_undo -> SWD5 undo row, SWD9
+#   V17 add_trace_ok: no re-read of the target after dest_prepare
+#        -> SWD13 New SubWin row ONLY
+#   V20 dest_menu_label: the old `-> appends` suffix back -> SWD2 ONLY
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -234,6 +258,146 @@ check "SWN1 new_subwin with no viewer answers {} without throwing" \
 check "SWN1 close_subwin likewise" [pcall {wviewer::close_subwin nosuchtoken}] {}
 check "SWN1 the _at wrappers likewise" \
   [list [pcall {wviewer::new_subwin_at .nosuch}] [pcall {wviewer::close_subwin_at .nosuch}]] {{} {}}
+
+# ============================================================================
+# SWD* -- DESTINATIONS (stage 3, spec §6), both arms. New SubWin is a real
+# destination; Replace empties the TARGET SUBWINDOW in both plot modes (ruling
+# 24's "Replace appends under multi" limit retired); Append and New Strip stay
+# inside the target subwindow; empty batches do nothing.
+# SWD5-SWD9 drive the REAL wviewer::plot_signals -> dest_prepare ->
+# clear_subwin / new_subwin -> plot_sites chain on a model-only window: only
+# the Tk doors (regenerate, the fold, add_trace's raw lookup) are stood in for,
+# and the stand-in add_trace records each landing and puts the trace in the
+# model as the real one does.
+# ============================================================================
+check "SWD1 dest_norm: the five labels, the codes, ViVA's NewSubWin / NewWin, junk" \
+  [lmap v {Append Replace {New Strip} {New SubWin} {New Tab} newsubwin {new subwin} \
+           NewSubWin {New Win} newwin zzz} {wviewer::dest_norm $v}] \
+  {append replace newstrip newsubwin newtab newsubwin newsubwin newsubwin newtab newtab append}
+check "SWD1 the viewer offers five, New SubWin before New Tab, each a distinct code" \
+  [list [wviewer::dest_labels] [llength [lsort -unique [lmap l [wviewer::dest_labels] {wviewer::dest_norm $l}]]]] \
+  {{Append Replace {New Strip} {New SubWin} {New Tab}} 5}
+set ::wviewer::mode(__swd_m) multi
+check "SWD2 under MULTI every menu label is the plain label (no -> appends: Replace clears in both modes)" \
+  [lmap l [wviewer::dest_labels] {wviewer::dest_menu_label __swd_m $l}] [wviewer::dest_labels]
+unset ::wviewer::mode(__swd_m)
+set swd_eq 1
+foreach {m ng t n e} {single 3 1 2 {} multi 3 0 2 {1} single 0 0 1 {} multi 2 1 3 {0 1}} {
+  if {[wviewer::plan_plot $m $ng $t $n -1 $e newsubwin] ne [wviewer::plan_plot $m $ng $t $n -1 $e append]} {
+    set swd_eq 0
+  }
+}
+check "SWD3 plan_plot plans New SubWin as an Append (its window half made the subwindow)" $swd_eq 1
+
+set gq [list [G a 1] [G b 1] [G c 2] [G d 3]]
+lassign [pcall {wviewer::sw_clear_graphs $gq 2}] gc f l
+check "SWD4 clearing subwindow 2 of three: one empty strip in its place, the rest untouched" \
+  [list [names [lreplace $gc 2 2]] [tags $gc] [wviewer::graph_is_empty [lindex $gc 2]] $f $l] \
+  {{a b d} {1 1 2 3} 1 2 2}
+lassign [pcall {wviewer::sw_clear_graphs $gq 1}] gc f l
+check "SWD4 clearing a two-strip subwindow: strips after it move up by one" \
+  [list [names [lrange $gc 1 end]] [tags $gc] [wviewer::graph_is_empty [lindex $gc 0]] $f $l] \
+  {{c d} {1 2 3} 1 0 1}
+lassign [pcall {wviewer::sw_clear_graphs [list [G a] [G b]] 0}] gc f l
+check "SWD4 one subwindow: the WHOLE tab is one empty untagged strip (Cadence's Replace)" \
+  [list [llength $gc] [tags $gc] [wviewer::graph_is_empty [lindex $gc 0]]] {1 - 1}
+set ga [dict replace [G a 1] x1 0.1 x2 0.2]
+set gb [dict replace [G b 1] auto 1 x1 0.3 x2 0.4 markers {1 0 0 0 0 0 0 0 0}]
+lassign [pcall {wviewer::sw_clear_graphs [list $ga $gb [G c 2]] 0}] gc
+set s0 [lindex $gc 0]
+check "SWD4 the survivor keeps the view of the subwindow's first AUTO strip, minus traces, markers and the marker" \
+  [list [wviewer::dget $s0 x1 -] [wviewer::dget $s0 x2 -] [dict exists $s0 auto] \
+        [dict exists $s0 markers] [wviewer::dget $s0 traces -]] {0.3 0.4 0 0 {}}
+check "SWD4 the empty list" [pcall {wviewer::sw_clear_graphs {} 0}] {{} -1 -1}
+
+# a model-only viewer window
+proc swd_open {gs tgt mode} {
+  dict set ::wviewer::layouts __swd [dict create sharedx 0 graphs $gs]
+  dict set ::wviewer::windows __swd top .__swd
+  set ::wviewer::mode(__swd) $mode
+  set ::wviewer::target(__swd) $tgt
+  set ::wviewer::undo_hist(__swd) {}
+  set ::wviewer::dest(__swd) append
+}
+proc swd_close {} {
+  catch {dict unset ::wviewer::layouts __swd}
+  catch {dict unset ::wviewer::windows __swd}
+  foreach v {mode target undo_hist redo_hist dest wavehl} { catch {unset ::wviewer::${v}(__swd)} }
+}
+proc swd_lay {} { dict get [wviewer::layout_for __swd] graphs }
+proc swd_tr {} { lmap g [swd_lay] {lmap t [wviewer::dget $g traces {}] {dict get $t expr}} }
+set ::swd_stubbed {regenerate capture_live_view_state add_trace log_action clear_graph_traces}
+foreach p $::swd_stubbed { rename ::wviewer::$p ::swd_orig_$p }
+proc ::wviewer::regenerate {args} { return {} }
+proc ::wviewer::capture_live_view_state {args} { return 0 }
+proc ::wviewer::log_action {line} { lappend ::swd_log $line }
+proc ::wviewer::clear_graph_traces {args} {
+  lappend ::swd_clears $args
+  return [::swd_orig_clear_graph_traces {*}$args]
+}
+proc ::wviewer::add_trace {token gi rpn args} {
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set G [lindex $gs $gi]
+  dict lappend G traces [dict create expr $rpn name $rpn vec $rpn color 4]
+  wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+  return {}
+}
+if {[catch {
+  set ::swd_log {}; set ::swd_clears {}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 2 single
+  set pre [swd_lay]
+  check "SWD5 Replace (single) into subwindow 2: it is emptied, then holds the batch; subwindow 1 untouched" \
+    [list [pcall {wviewer::plot_signals __swd {p} {} replace}] [swd_tr] [tags [swd_lay]]] \
+    {{} {a b p} {1 1 2}}
+  check "SWD5 ...the plan's own clear list was empty: plot_signals made NO clear_graph_traces call" \
+    [llength $::swd_clears] 0
+  check "SWD5 ...ONE undo point, holding the pre-Replace subwindow" \
+    [list [llength $::wviewer::undo_hist(__swd)] \
+          [expr {[lindex $::wviewer::undo_hist(__swd) 0 0] eq $pre}]] {1 1}
+  swd_open [list [G a 1] [G c 2] [G d 2] [G e 2]] 2 multi
+  check "SWD6 Replace under MULTI empties the target subwindow too (ruling 24's limit retired): one strip per signal, newest on top" \
+    [list [pcall {wviewer::plot_signals __swd {p q} {} replace}] [swd_tr] [tags [swd_lay]]] \
+    {{} {a q p} {1 2 2}}
+  check "SWD6 ...the target stays in the replotted subwindow" \
+    [wviewer::sw_index [swd_lay] [wviewer::target_index __swd]] 1
+  swd_open [list [G a] [G b]] 1 single
+  check "SWD6 one subwindow: Replace clears the whole tab, then plots (the change §6.2 declares)" \
+    [list [pcall {wviewer::plot_signals __swd {p} {} replace}] [swd_tr]] {{} p}
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 2]] 0 single
+  check "SWD7 New SubWin: a third subwindow at the END, made the target, holding the batch" \
+    [list [pcall {wviewer::plot_signals __swd {r s} {} newsubwin}] [swd_tr] [tags [swd_lay]] \
+          [wviewer::target_index __swd]] \
+    {{} {a b {r s}} {1 2 3} 2}
+  check "SWD7 ...the subwindow it made is logged as one replayable line" \
+    [lsearch -all -inline -glob $::swd_log {wviewer::new_subwin *}] [list [list wviewer::new_subwin __swd]]
+  swd_open [list [G a] [G b]] 0 multi
+  check "SWD7 New SubWin under multi: one strip per signal in the NEW subwindow, newest on top" \
+    [list [pcall {wviewer::plot_signals __swd {r s} {} newsubwin}] [swd_tr] [tags [swd_lay]]] \
+    {{} {a b s r} {1 1 2 2}}
+  swd_open [list [G a 1] [G b 2]] 0 single
+  set pre [swd_lay]
+  set ::swd_log {}
+  foreach d {replace newsubwin append newstrip} {
+    pcall {wviewer::plot_signals __swd {} {} $d}
+  }
+  check "SWD8 an EMPTY batch changes nothing under any destination, and logs nothing" \
+    [list [expr {[swd_lay] eq $pre}] $::swd_log [llength $::wviewer::undo_hist(__swd)]] {1 {} 0}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 0 single
+  pcall {wviewer::plot_signals __swd {p} {} append}
+  pcall {wviewer::plot_signals __swd {q} {} newstrip}
+  check "SWD9 Append and New Strip stay inside the target subwindow (1); subwindow 2 untouched" \
+    [list [swd_tr] [tags [swd_lay]]] {{{a p} b q c} {1 1 1 2}}
+  swd_open [list [G a 1] [E 1] [G c 2]] 0 single
+  pcall {wviewer::clear_subwin __swd 1}
+  pcall {wviewer::clear_subwin __swd 0}
+  check "SWD9 clear_subwin on a subwindow that is already one empty strip makes no undo point" \
+    [list [tags [swd_lay]] [llength $::wviewer::undo_hist(__swd)]] {{1 2} 1}
+  check "SWD9 clear_subwin with no viewer answers {} without throwing" \
+    [pcall {wviewer::clear_subwin nosuchtoken}] {}
+} swderr]} { check "SWD* band ran to its end" "ERR:$swderr" ok }
+swd_close
+foreach p $::swd_stubbed { rename ::wviewer::$p {}; rename ::swd_orig_$p ::wviewer::$p }
 
 # ============================================================================
 # SWX* -- INDEPENDENT X (spec §7, stage 2): the time axes of different
@@ -865,6 +1029,75 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall {wviewer::select_tab 2 $tok}
   check "SWG13 ...and a tagged one as two" [ltags] {1 1 1 1 3}
 
+  # ---- SWD10-SWD15: the destinations in the REAL window ----------------------
+  # Tab B (active) is subwindows {1 1 1 1 3}. Every row reads the model AND the
+  # canvas (one graph rect per strip, xgroup per subwindow), because a model
+  # that moved while the rects did not is exactly what regenerate exists to stop.
+  proc nrects {} { xschem new_schematic switch $::vdrw; return [pcall {xschem get graph_rects}] }
+  wviewer::set_plot_mode single $tok
+  wviewer::set_target_strip 4 $tok
+  set sw1before [lmap gi {0 1 2 3} {trx $gi}]
+  pcall {wviewer::plot_signals $tok {p1 p2} {} replace}
+  check "SWD10 Replace in the real viewer empties subwindow 3 and plots into it; subwindow 1 untouched" \
+    [list [ltags] [trx 4] [lmap gi {0 1 2 3} {trx $gi}]] [list {1 1 1 1 3} {p1 p2} $sw1before]
+  check "SWD10 ...one graph rect per strip, and the cleared strip still in its own X group" \
+    [list [nrects] [rprop 4 xgroup] [rprop 0 xgroup]] {5 3 1}
+  pcall {wviewer::undo $tok}
+  check "SWD10 undo brings subwindow 3's previous plot back" \
+    [expr {[trx 4] ne {p1 p2}}] 1
+  pcall {wviewer::redo $tok}
+  wviewer::set_plot_mode multi $tok
+  wviewer::set_target_strip 0 $tok
+  pcall {wviewer::plot_signals $tok {a1 a2 a3} {} replace}
+  check "SWD11 Replace under MULTI empties subwindow 1 (four strips) to one strip per signal, newest on top" \
+    [list [ltags] [trx 0] [trx 1] [trx 2] [trx 3]] {{1 1 1 3} a3 a2 a1 {p1 p2}}
+  check "SWD11 ...rects follow the model" [nrects] 4
+  wviewer::set_plot_mode single $tok
+  set ::sw_log {}
+  pcall {wviewer::set_plot_dest newsubwin $tok}
+  pcall {wviewer::plot_signals $tok {b1}}
+  check "SWD12 New SubWin (the window's own destination): a third subwindow, target, holding the batch" \
+    [list [ltags] [wviewer::target_index $tok] [trx 4] [rprop 4 xgroup] [nrects]] {{1 1 1 3 4} 4 b1 4 5}
+  set bb [wviewer::strip_bands_px $vdrw]
+  set H [winfo height $vdrw]
+  # pcall'd: under a sabotage strip 4 may not exist, and a bare expr on {}
+  # would abort the band and delete every row after it from the verdict
+  check "SWD12 ...the grid re-tiled: three subwindows, the new one bottom-LEFT" \
+    [pcall {list [expr {[lindex $bb 4 0] < 1.5}] [expr {abs([lindex $bb 4 1] - $H / 2.0) < 1.5}]}] {1 1}
+  pcall {wviewer::set_plot_dest append $tok}
+  # the Add Trace dialog names its graph: Replace empties THAT graph's subwindow
+  set w [pcall {wviewer::add_trace_dialog $tok}]
+  if {[winfo exists $w]} {
+    $w.graph set 3
+    $w.dest set Replace
+    $w.expr delete 0 end
+    $w.expr insert 0 c1
+    pcall {wviewer::add_trace_ok $tok}
+  }
+  check "SWD13 Add Trace with Replace on graph 3 empties ITS subwindow (3) and lands there" \
+    [list [ltags] [trx 3] [trx 0] [trx 4]] {{1 1 1 3 4} c1 a3 b1}
+  set w [pcall {wviewer::add_trace_dialog $tok}]
+  if {[winfo exists $w]} {
+    $w.dest set {New SubWin}
+    $w.expr delete 0 end
+    $w.expr insert 0 c2
+    pcall {wviewer::add_trace_ok $tok}
+  }
+  check "SWD13 Add Trace with New SubWin lands in a new subwindow at the end" \
+    [list [ltags] [trx 5] [wviewer::target_index $tok]] {{1 1 1 3 4 5} c2 5}
+  check "SWD13 ...and the dialog's choice persisted for the window (item 7)" \
+    [wviewer::plot_dest $tok] newsubwin
+  pcall {wviewer::set_plot_dest append $tok}
+  set ntabs [llength [wviewer::tab_records $tok]]
+  pcall {wviewer::plot_signals $tok {p1} {} newtab}
+  check "SWD14 New Tab: one more tab, ONE subwindow, holding the batch" \
+    [list [expr {[llength [wviewer::tab_records $tok]] - $ntabs}] [ltags] [trx 0] [nrects]] {1 - p1 1}
+  set ::sw_log {}
+  pcall {wviewer::plot_signals $tok {} {} newsubwin}
+  pcall {wviewer::plot_signals $tok {} {} replace}
+  check "SWD15 an empty batch under New SubWin / Replace changes nothing in the real window" \
+    [list [ltags] [trx 0] $::sw_log] {- p1 {}}
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -881,7 +1114,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 49 } else { set expect 132 }
+if {$::arm eq {nogui}} { set expect 71 } else { set expect 166 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

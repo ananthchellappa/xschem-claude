@@ -725,8 +725,10 @@ set d [ase::state_default]
 ## non-vacuity control in the same loop (one file given a NON-empty sweep
 ## re-serializes DIFFERENTLY, so the loop is comparing rather than agreeing with
 ## itself).
-check "R1 default has exactly the 23 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements opstrategy opstate runhealth options includes pre_commands cosim viewer sweep}]
+## ⚠ AND RAISED 23 -> 24 (subwindows stage 3, R-OUT15). `plot_dest` is the
+## tenth member of ase::omit_if_empty with the same `{}` default (Replace).
+check "R1 default has exactly the 24 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator sim_entry design rundir temperature models variables analyses outputs save_all_v save_all_i save_op_params measurements opstrategy opstate runhealth options includes pre_commands cosim viewer sweep plot_dest}]
 check "R1x 1459's three keys default to empty and are omitted from the serialized form" \
   [list [dict get $d opstrategy] [dict get $d opstate] [dict get $d runhealth] \
         [expr {[string first "opstrategy" [ase::state_serialize $d]] >= 0}] \

@@ -1078,6 +1078,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
   - **Replace is unchanged**: every auto strip is cleared before a press or a run adds, so a
     second `~` or a second run never adds a second copy; nothing ticked leaves one empty auto
     strip; a strip without the marker (Direct Plot, a hand-built strip) is never touched.
+    ⚠ **Amended by R-OUT15 (2026-10-15):** under the default Replace the TARGET SUBWINDOW is
+    emptied first, hand-built strips in it included (Cadence's Replace); a strip in another
+    subwindow or another tab is never touched, and Append touches nothing.
   - **A Direct Plot never lands in any auto strip**: `wviewer::empty_graph_indices` skips every
     strip carrying the marker, and `wviewer::plot_signals` treats a target on any of them as
     unusable. For the same reason Delete Empty Strips (`e`) never deletes an auto strip, any of
@@ -1089,13 +1092,37 @@ They should not influence the input to the simulator."* ADE-L is the floor
     answer only they give) and PR11 (display arm: a real click on `~` and a real `tb_bandgap` run in
     multi-plot, then back to single) of `tests/headless/test_ase_plot_outputs.tcl`.
 
-- **R-OUT15 — the plot destination drop-down (user 2026-10-15; SPECIFIED, not yet
-  built).** A read-only drop-down at the right end of the status bar — `Append`,
-  `Replace`, `New SubWin`, `New Win` — saved as session state key `plot_dest`, used by `~`
-  and the run-end auto-plot; it lands in the active viewer tab's TARGET subwindow. The
-  authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18, §8),
-  which also says what becomes of the `auto 1` strips under each choice. R-OUT14's strip
-  order (last row on top) is unchanged by it.
+- **R-OUT15 — the plot destination drop-down (user 2026-10-15; BUILT 2026-10-15).** A
+  read-only drop-down at the right end of the status bar — `Append`, `Replace`, `New SubWin`,
+  `New Win` — used by `~` and the run-end auto-plot; it lands in the active viewer tab's TARGET
+  subwindow. The authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18,
+  §8, and §15 for what was built). R-OUT14's strip order (last row on top) is unchanged by it.
+  - **The control** is `$top.status.dest`, packed first at the right so a narrow window clips
+    the text segments and never it, driven by `<<ComboboxSelected>>` →
+    `ase::ui::plot_dest_picked` → `ase::ui::set_plot_dest <key> <code>`, which writes the
+    session state, moves the control and logs that one line on a change only. Load State and
+    Revert move it with the state (`ase::ui::refresh_status`).
+  - **The state key** is `plot_dest`, the tenth member of `ase::omit_if_empty`: `{}` (absent)
+    means the default **Replace**, and a Replace chosen in the control is stored as `{}` too,
+    so choosing it back leaves a saved session clean. Any other value is `append`,
+    `newsubwin` or `newtab` (`ase::plot_dest_of`; anything unknown reads Replace). No committed
+    `.state` file changes.
+  - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step; the
+    survivor keeps the run's strip view, so a zoom survives a re-run), then R-OUT14's auto
+    strips. **Append**: the viewer's append rule in the target subwindow
+    (`wviewer::plot_sites`, the batch may land in an auto strip); nothing is cleared, so a
+    second press adds a second copy. **New SubWin** / **New Win**: a new subwindow / viewer tab
+    holds the run's auto strips and the previous plot stays where it was; a viewer the press
+    had to OPEN is already new, so nothing more is made in it.
+  - **Nothing ticked**: under Replace an open viewer's target subwindow is emptied to one
+    empty auto strip, but only when it holds an auto strip (a subwindow `~` never plotted into
+    is not emptied by a press that plots nothing); under the other three nothing changes.
+  - Failed runs, refusals and the op-only notice are unchanged (R-OUT12/R-OUT13), under every
+    choice.
+  - Fenced by band PO16 (both arms) and PR12 (display arm, the real `tb_bandgap` bench, each
+    choice picked by a real `<<ComboboxSelected>>` and `~` pressed by a real click) of
+    `tests/headless/test_ase_plot_outputs.tcl`, and rows PD1-PD6 of
+    `tests/headless/test_ase_window.tcl`.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

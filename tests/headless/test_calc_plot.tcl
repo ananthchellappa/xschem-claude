@@ -79,8 +79,8 @@
 #        the column stays in the in-memory raw for the session.  The viewer's
 #        behaviour, not the Calculator's, and R402's delete is not the answer.
 #   PL5  The three destinations, through the real combobox and the real button:
-#        Append accumulates, Replace empties the landing strip first, New Strip
-#        makes one.  Counts only -- the POLICY is `wviewer::plan_plot`'s and is
+#        Append accumulates, Replace empties the target subwindow first, New
+#        Strip makes one.  Counts only -- the POLICY is `wviewer::plan_plot`'s and is
 #        fenced in test_wave_modes; what is asserted here is that the
 #        Calculator's control reaches it.
 #   PL5b The press-time push, which PL5 does NOT measure: the combobox is set
@@ -91,11 +91,10 @@
 #        reported with the viewer's message and never as "Plotted".  Added for
 #        the same reason -- discarding the failure list reddened nothing, because
 #        R607's pre-flight catches every refusal this file can otherwise reach.
-#   PL5d ⚠ RULING 24, WHICH THE CALCULATOR USED TO ASSERT AWAY.  Under MULTI
-#        plot mode `wviewer::plan_plot` emits no clear key, so a Replace really
-#        is an Append -- the VIEWER is right and the Calculator's claim was
-#        wrong.  Drives the mode, asserts the behaviour AND that the sentence
-#        says so, with a single-mode control beside it.
+#   PL5d RULING 24 RETIRED (subwindows §6.2, 2026-10-15).  Replace now empties
+#        the target subwindow in MULTI plot mode too, and says plain Replace.
+#        Drives the mode, asserts the clear AND the sentence, with a
+#        single-mode control beside it.
 #   PL5e ⚠ W13 CANNOT EXPRESS THE VIEWER'S FOURTH DESTINATION, so a press
 #        overwrites a `New Tab` the user set from the viewer's own Options menu.
 #        Declared, not closed -- what is fenced here is that the press SAYS so
@@ -607,8 +606,8 @@ group PL2 {
     # that, and the Calculator now says it.
     check "PL2 ...and wviewer::dest_norm reads them as THREE DISTINCT codes, so the control is not offering one code under three labels" \
         [list $codes [llength [lsort -unique $codes]]] {{append replace newstrip} 3}
-    check "PL2 ...and the viewer's own label table has a FOURTH the Calculator deliberately omits" \
-        [pcall wviewer::dest_labels] {Append Replace {New Strip} {New Tab}}
+    check "PL2 ...and the viewer's own label table has two more (New SubWin, New Tab) the Calculator deliberately omits" \
+        [pcall wviewer::dest_labels] {Append Replace {New Strip} {New SubWin} {New Tab}}
     pcall .calc.mode.dest set {Replace}
     check "PL2 calc::plot_dest_req returns the LABEL verbatim -- no second label-to-code table in src/calculator.tcl" \
         [pcall calc::plot_dest_req] {Replace}
@@ -765,13 +764,14 @@ group PL5 {
     press .calc.mode.plot
     check "PL5 New Strip forces a fresh strip and lands the trace in it" \
         [list [ngraphs $::tok] [llength [alltraces $::tok]]] {2 3}
-    # Replace: empties the landing strip before adding.  The target is the strip
-    # the last single-mode plot landed in, which New Strip just moved.
+    # Replace: empties the TARGET SUBWINDOW before adding (subwindows §6.2,
+    # 2026-10-15: Cadence's Replace). This window has one subwindow, so both
+    # strips go and one strip is left holding the new trace.
     destset {Replace}
     pcall bufset {vf(ramp)}
     press .calc.mode.plot
-    check "PL5 Replace empties the landing strip first: the strip count holds and the TOTAL trace count falls back" \
-        [list [ngraphs $::tok] [llength [alltraces $::tok]]] {2 3}
+    check "PL5 Replace empties the target subwindow first (one subwindow here: the whole tab): one strip, one trace" \
+        [list [ngraphs $::tok] [llength [alltraces $::tok]]] {1 1}
     # ⚠ THE PER-STRIP COUNTS, not just the last trace's expression.  An earlier
     # revision of this row was named "the strip it landed in holds exactly the
     # one new trace" and asserted only `[lindex [alltraces] end] expr`, which
@@ -781,9 +781,9 @@ group PL5 {
     foreach G [pcall dict get [pcall wviewer::layout_for $::tok] graphs] {
         lappend pl5_counts [llength [pcall dict get $G traces]]
     }
-    check "PL5 ...and the strip it landed in holds exactly the ONE new trace, with the other strip untouched" \
+    check "PL5 ...and the strip it landed in holds exactly the ONE new trace" \
         [list $pl5_counts [pcall dict get [lindex [alltraces $::tok] end] expr]] \
-        {{2 1} v(ramp)}
+        {1 v(ramp)}
     destset {Append}
 }
 
@@ -872,8 +872,15 @@ group PL5c {
 }
 
 # =============================================================================
-# PL5d ⚠ RULING 24: UNDER MULTI PLOT MODE, REPLACE IS AN APPEND
+# PL5d ⚠ RULING 24: UNDER MULTI PLOT MODE, REPLACE WAS AN APPEND
 # =============================================================================
+# ⚠⚠ RETIRED 2026-10-15 (doc/claude/specs/waveform_viewer_subwindows.md §6.2):
+# the user ratified Cadence's Replace, "clear the target subwindow then plot",
+# in BOTH modes, so `wviewer::dest_prepare` empties the target subwindow before
+# planning and `wviewer::dest_menu_label` lost its `-> appends` suffix. The rows
+# below were restated to the new policy -- the single-mode control stays, and the
+# multi leg now asserts the clear and the plain label. The prose under this
+# banner is the record of what shipped before.
 # WARN THE VIEWER IS NOT WRONG HERE AND NOTHING BELOW ASKS IT TO CHANGE.
 # `wviewer::plan_plot`'s own banner declares it: the multi arm lands every
 # signal either in a strip it CREATES or in a reused EMPTY one, so there is by
@@ -918,8 +925,8 @@ group PL5d {
         [pcall wviewer::set_plot_mode multi $::tok] multi
     destset {Append}
     set saidd2 [destset {Replace}]
-    check "PL5d ⚠ R506: choosing Replace in multi mode SAYS it appends, instead of naming a policy the mode does not run" \
-        [list [string match {*Replace*} $saidd2] [string match {*append*} $saidd2]] {1 1}
+    check "PL5d choosing Replace in multi mode names plain Replace, with no 'appends' clause: Replace clears in both modes now" \
+        [list [string match {*Replace*} $saidd2] [string match {*append*} $saidd2]] {1 0}
     # WARN THE TOTAL IS THE WHOLE TEST, and that is not a weaker assertion than
     # a per-strip one: a Replace that cleared its landing strip of k traces
     # before adding one would leave the total at most where it started, for any
@@ -931,11 +938,11 @@ group PL5d {
         [expr {$n0 > 0}] 1
     pcall bufset {vf(dcmid)}
     set saidp [press .calc.mode.plot]
-    check "PL5d ⚠ AND IT REALLY APPENDS: the total trace count GROWS by exactly one, which a Replace that cleared its landing strip could not do" \
-        [expr {[llength [alltraces $::tok]] - $n0}] 1
-    check "PL5d ⚠ ...and the press SAYS so: the Plotted sentence names Replace AND that it appends, so the status line is not asserting a Replace that did not happen" \
+    check "PL5d ⚠ AND IT REALLY CLEARS under multi: the canvas holds exactly the ONE new trace, where ruling 24's Replace grew the total by one" \
+        [list [expr {$n0 > 0}] [llength [alltraces $::tok]]] {1 1}
+    check "PL5d ⚠ ...and the press says plain Replace: the Plotted sentence names Replace and no append" \
         [list [string match {Plotted*} $saidp] [string match {*Replace*} $saidp] \
-              [string match {*append*} $saidp]] {1 1 1}
+              [string match {*append*} $saidp]] {1 1 0}
     # ...and the NON-VACUITY of the sentence rows: Append in multi mode says
     # nothing extra, so the clause above tracks the destination and not the mode.
     set saida [destset {Append}]

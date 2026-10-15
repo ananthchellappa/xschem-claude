@@ -2247,8 +2247,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [pcall $BTVTV selection] g:x1.y3
     pcall $BTVF.tb.plot invoke                    ;# the real route, see above
     update
-    check_true {BT44 under multi, a Replace gesture APPENDS (declared limit D2)} \
-      [expr {[bt_traces $tok] > $bt_n2}]
+    # ⚠ RESTATED 2026-10-15 (subwindows §6.2): ruling 24's limit is RETIRED.
+    # Replace empties the target subwindow first in BOTH modes (one subwindow
+    # here: the whole tab), so the count FALLS to the batch -- the outcome the
+    # comment above names as "a real Replace".
+    check {BT44 under multi, a Replace gesture now CLEARS the target subwindow first: only the batch is left} \
+      [list [expr {$bt_n2 > 1}] [bt_traces $tok]] {1 1}
 
     # --- BT45: the canvas survives a filled sidebar --------------------------
     check {BT45 the canvas is alive, packed, non-zero and still after the sidebar} \
@@ -2679,29 +2683,31 @@ array unset ::wviewer::browserrows __bm_d7
 set bm_codes {}
 foreach bm_l [wviewer::dest_labels] { lappend bm_codes [wviewer::dest_norm $bm_l] }
 check {BM13 every dropdown label normalises to a real, distinct code, in order} \
-  $bm_codes {append replace newstrip newtab}
+  $bm_codes {append replace newstrip newsubwin newtab}
 check {BM13 dest_menu_label round-trips each code back to its plain label off multi} \
   [list [wviewer::dest_menu_label __bm_nope append] \
         [wviewer::dest_menu_label __bm_nope replace] \
         [wviewer::dest_menu_label __bm_nope newstrip] \
+        [wviewer::dest_menu_label __bm_nope newsubwin] \
         [wviewer::dest_menu_label __bm_nope newtab]] \
-  [list Append Replace {New Strip} {New Tab}]
+  [list Append Replace {New Strip} {New SubWin} {New Tab}]
 
-# ⚠ THE DECLARED LIMIT SURFACED IN THE LABEL (ruling 24 / item 9's D2): under
-# multi-plot, `Replace` really Appends. The menu still OFFERS it — dropping the
-# entry would make the cascade disagree with the Add Trace dropdown — and says
-# so instead.
+# SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §6.2): Replace now
+# clears the target SUBWINDOW in BOTH plot modes, so ruling 24's declared limit
+# is retired and the `-> appends` suffix with it. BM14 used to pin the suffix;
+# it now pins its ABSENCE under multi, against a single-mode control.
 set ::wviewer::mode(__bm_multi) multi
 set ::wviewer::mode(__bm_single) single
-check {BM14 under MULTI the Replace label admits it appends} \
-  [wviewer::dest_menu_label __bm_multi replace] {Replace -> appends}
-check {BM14 ...and under SINGLE it does not} \
+check {BM14 under MULTI the Replace label is plain Replace (Replace clears the subwindow in both modes)} \
+  [wviewer::dest_menu_label __bm_multi replace] {Replace}
+check {BM14 ...and under SINGLE it is the same} \
   [wviewer::dest_menu_label __bm_single replace] {Replace}
-check {BM14 the suffix is on Replace ALONE, not on the other three} \
+check {BM14 no label carries a mode suffix under multi} \
   [list [wviewer::dest_menu_label __bm_multi append] \
         [wviewer::dest_menu_label __bm_multi newstrip] \
+        [wviewer::dest_menu_label __bm_multi newsubwin] \
         [wviewer::dest_menu_label __bm_multi newtab]] \
-  [list Append {New Strip} {New Tab}]
+  [list Append {New Strip} {New SubWin} {New Tab}]
 array unset ::wviewer::mode __bm_multi
 array unset ::wviewer::mode __bm_single
 
@@ -3031,16 +3037,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # the previous click's target or on the window's policy by accident.
     check {BM24 the `Plot to` entry really is a cascade pointing at the submenu} \
       [list [pcall $BMSM type 3] [pcall $BMSM entrycget 3 -menu]] [list cascade $BMSS]
-    check {BM24 the submenu carries the four destinations, in dest_labels order} \
+    check {BM24 the submenu carries the five destinations, in dest_labels order} \
       [bm_entries $BMSS] \
       [list {command|Append|normal} {command|Replace|normal} \
-            {command|New Strip|normal} {command|New Tab|normal}]
+            {command|New Strip|normal} {command|New SubWin|normal} \
+            {command|New Tab|normal}]
     check {BM24 every cascade -command is fully resolved: token, target AND code} \
       [list [pcall $BMSS entrycget 0 -command] [pcall $BMSS entrycget 1 -command] \
-            [pcall $BMSS entrycget 2 -command] [pcall $BMSS entrycget 3 -command]] \
+            [pcall $BMSS entrycget 2 -command] [pcall $BMSS entrycget 3 -command] \
+            [pcall $BMSS entrycget 4 -command]] \
       [list [list wviewer::browser_sea_plot_idx wvbm 0 append] \
             [list wviewer::browser_sea_plot_idx wvbm 0 replace] \
             [list wviewer::browser_sea_plot_idx wvbm 0 newstrip] \
+            [list wviewer::browser_sea_plot_idx wvbm 0 newsubwin] \
             [list wviewer::browser_sea_plot_idx wvbm 0 newtab]]
     # the TOP Plot entry passes NO override — it is the window's own policy
     check {BM24 the top Plot entry passes no override at all} \
@@ -3182,14 +3191,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # set_plot_dest — not that the log is empty.
     check {BM31 ...and NO set_plot_dest line reached the action log} \
       [lsearch -glob $::bm_log_calls {*set_plot_dest*}] -1
-    # all four cascade entries, one after another, still leave the policy alone
+    # all five cascade entries, one after another, still leave the policy alone
     set ::bm_plot_calls {}
-    foreach bm_i {0 1 3} { pcall $BMSS invoke $bm_i }
-    check {BM31 the other three cascade entries pass their own codes} \
+    foreach bm_i {0 1 3 4} { pcall $BMSS invoke $bm_i }
+    check {BM31 the other four cascade entries pass their own codes} \
       $::bm_plot_calls \
       [list [list wvbm {v(out)} append] [list wvbm {v(out)} replace] \
-            [list wvbm {v(out)} newtab]]
-    check {BM31 ...and after all four the policy is STILL the untouched default} \
+            [list wvbm {v(out)} newsubwin] [list wvbm {v(out)} newtab]]
+    check {BM31 ...and after all five the policy is STILL the untouched default} \
       [list [pcall ::wviewer::plot_dest wvbm] [info exists ::wviewer::dest(wvbm)] \
             [lsearch -glob $::bm_log_calls {*set_plot_dest*}]] \
       [list append 0 -1]
@@ -3207,8 +3216,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                            [pcall $BMSM entrycget 2 -label]]
     check {BM32 under SINGLE both Replace surfaces read plainly} \
       $bm_lab_single [list Replace {Plot (Append)}]
-    check {BM32 under MULTI both admit the declared limit, from the ONE shared proc} \
-      $bm_lab_multi [list {Replace -> appends} {Plot (Replace -> appends)}]
+    # ruling 24's limit RETIRED (subwindows §6.2): Replace clears the target
+    # subwindow in both modes, so the label carries no suffix under multi
+    check {BM32 under MULTI both Replace surfaces read plainly too, from the ONE shared proc} \
+      $bm_lab_multi [list Replace {Plot (Replace)}]
     array unset ::wviewer::dest wvbm
     array unset ::wviewer::mode wvbm
 
@@ -3539,8 +3550,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       # Tk has already unposted before invoking, so this is safe; a direct
       # `$m invoke` is the one path where it is not, so it is guarded and only
       # the tab count and the untouched policy are asserted.
+      set bm_s0 [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]]
+      pcall $BMVS invoke 3
+      update
+      check {BM44 `Plot to -> New SubWin` added a subwindow on the real model and left the policy alone} \
+        [list [expr {[wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] - $bm_s0}] \
+              [pcall ::wviewer::plot_dest $tok] [info exists ::wviewer::dest($tok)]] \
+        [list 1 append 0]
       set bm_t0 [pcall ::wviewer::tab_count $tok]
-      set bm_nt [pcall $BMVS invoke 3]
+      set bm_nt [pcall $BMVS invoke 4]
       update
       check {BM44 `Plot to -> New Tab` added a tab and still left the policy alone} \
         [list [expr {[pcall ::wviewer::tab_count $tok] == $bm_t0 + 1}] \

@@ -70,7 +70,8 @@ namespace eval ase {
                         variables analyses outputs save_all_v save_all_i
                         save_op_params measurements
                         opstrategy opstate runhealth
-                        options includes pre_commands cosim viewer sweep}
+                        options includes pre_commands cosim viewer sweep
+                        plot_dest}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
   # LATER must not rewrite files that predate it — `state_load` merges over
@@ -122,8 +123,13 @@ namespace eval ase {
   # ALSO THE ONE NAMED EXCEPTION TO D3's "no new top-level keys", which ⚖ R8
   # granted -- and by the time it was granted `measurements` had already proved
   # the mechanism across all 104 committed files.
+  # `plot_dest` (doc/claude/specs/waveform_viewer_subwindows.md SW18, R-OUT15)
+  # is the TENTH member, for the identical reason: `{}` means the default,
+  # Replace, so every committed state serializes exactly as before. A Replace
+  # chosen in the drop-down is stored as `{}` too (ase::ui::set_plot_dest), so
+  # picking the default back never dirties a session.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
-                          opstrategy opstate runhealth sweep}
+                          opstrategy opstate runhealth sweep plot_dest}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -583,7 +589,18 @@ proc ase::state_default {} {
     pre_commands [expr {[info exists ::ASE_DEFAULT_PRE_COMMANDS] ?
                         $::ASE_DEFAULT_PRE_COMMANDS : {}}] \
     cosim     {} \
-    viewer    {}]
+    viewer    {} \
+    plot_dest {}]
+}
+
+# The session's plot destination for `~` and the run-end auto-plot (R-OUT15):
+# append | replace | newsubwin | newtab. `{}`, absent or anything else reads
+# `replace`, the default. PURE.
+proc ase::plot_dest_of {st} {
+  set v {}
+  catch {set v [string tolower [string trim [dict get $st plot_dest]]]}
+  if {$v in {append newsubwin newtab}} { return $v }
+  return replace
 }
 
 # Load a state file -> dict merged OVER the defaults (loaded values win,

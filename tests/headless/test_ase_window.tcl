@@ -1,5 +1,12 @@
 # ASE-L session window (items 03+05+06 of doc/claude/ase_l_batch, spec
 # doc/claude/specs/ase_l.md incl. the UI v2 "ADE-L parity rework"):
+#   PD1-PD6 (display, R-OUT15) the status bar's plot-destination drop-down:
+#          read-only, the four choices, packed at the RIGHT end (by pixels),
+#          Replace on a fresh session, a real <<ComboboxSelected>> writes and
+#          dirties the session and logs one line, Revert moves it back, and a
+#          520px window clips the text segments and never it. Red proofs
+#          (2026-10-15): packed -side left -> PD2 only; refresh_status not
+#          syncing it -> PD5 only.
 #   H1-H3  session model: open/state/update/dirty/save/load/revert (headless)
 #   H4     ase::open_state contract (1 / 0, never an error; session registered)
 #   H5     `xschem allocate_window_number` C seam (monotonic, starts >= 3)
@@ -88,6 +95,10 @@ proc check {name got exp} {
   else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
 }
 proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
+proc pcall_ux {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR:$r" }
+  return $r
+}
 
 # wait for a real, mapped main canvas (WSLg can be slow to map the window);
 # returns 0 when it never becomes usable -> the caller SKIPs, not FAILs
@@ -4295,6 +4306,48 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "UX1499a9c ...and an EMPTY segment owes nothing however it is hovered: health carries no text until a run asks for the counters, so arming it is invisible on every bench that never did" \
       [list [$uxtop.status.health cget -text] \
             [ase::ui::label_tip_text $uxtop.status.health]] {{} {}}
+    ## R-OUT15: THE PLOT DESTINATION DROP-DOWN at the bar's RIGHT end
+    ## (doc/claude/specs/waveform_viewer_subwindows.md SW18).
+    set uxd $uxtop.status.dest
+    update
+    set ux_rx {}
+    foreach _c [winfo children $uxtop.status] {
+      if {$_c ne $uxd && [winfo ismapped $_c] && [winfo width $_c] > 1} {
+        lappend ux_rx [expr {[winfo x $_c] + [winfo width $_c]}]
+      }
+    }
+    check "PD1 the status bar carries a read-only drop-down of exactly the four choices" \
+      [list [winfo exists $uxd] [winfo class $uxd] [pcall_ux {$uxd cget -state}] \
+            [pcall_ux {$uxd cget -values}]] \
+      {1 TCombobox readonly {Append Replace {New SubWin} {New Win}}}
+    check "PD2 it is packed at the RIGHT end: right of every other segment, by pixels" \
+      [list [dict get [pack info $uxd] -side] \
+            [expr {[llength $ux_rx] > 3 && [winfo x $uxd] >= [tcl::mathfunc::max {*}$ux_rx]}]] {right 1}
+    check "PD3 a fresh session shows the default, Replace" [$uxd get] Replace
+    set ::pd_log {}
+    rename ::ase::ui::log_action ::pd_log_orig
+    proc ::ase::ui::log_action {line} { lappend ::pd_log $line }
+    set ux_d0 [ase::session_dirty $uxkey]
+    $uxd set {New SubWin}
+    event generate $uxd <<ComboboxSelected>>
+    update
+    check "PD4 a real selection writes the session state and dirties it (title marked)" \
+      [list $ux_d0 [ase::ui::plot_dest $uxkey] [ase::session_dirty $uxkey] \
+            [string match {* \*} [wm title $uxtop]]] {0 newsubwin 1 1}
+    check "PD4 ...logged as one replayable line" \
+      $::pd_log [list [list ase::ui::set_plot_dest $uxkey newsubwin]]
+    rename ::ase::ui::log_action {}
+    rename ::pd_log_orig ::ase::ui::log_action
+    ase::session_revert $uxkey
+    update
+    check "PD5 Revert puts the drop-down back with the state" \
+      [list [$uxd get] [ase::session_dirty $uxkey]] {Replace 0}
+    catch {wm geometry $uxtop 520x520}
+    update ; after 250 ; update
+    check "PD6 squeezed to 520px the drop-down keeps its full width (the text segments clip first)" \
+      [list [winfo ismapped $uxd] [expr {[winfo width $uxd] >= [winfo reqwidth $uxd]}]] {1 1}
+    catch {wm geometry $uxtop 798x520}
+    update ; after 150 ; update
     ## the Simulators dialog's Program column: a real ngspice path measured
     ## 371px of ink in a 324px column
     set uxsd [ase::ui::simulators_dialog $uxkey]

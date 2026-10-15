@@ -282,11 +282,15 @@ check "R1 state_default has viewer {}" [dict get $d viewer] {}
 ## core's is the schema, and a suite that trusted another suite's row would be
 ## the drift this batch keeps finding. But a third copy would be a defect --
 ## `test_ase_core.tcl`'s NS2 is the precedent for a scan that says so.
-check "R1 exactly the 23 schema keys" [lsort [dict keys $d]] \
+## ⚠ AND RAISED 23 -> 24 (subwindows stage 3, R-OUT15). `plot_dest` is the
+## tenth member of ase::omit_if_empty, `{}` meaning the default Replace, so R2
+## and the committed .state files are unaffected (the 104-file sweep is row
+## PO16f of test_ase_plot_outputs).
+check "R1 exactly the 24 schema keys" [lsort [dict keys $d]] \
   [lsort {version simulator sim_entry design rundir temperature models variables \
           analyses outputs save_all_v save_all_i save_op_params measurements \
           opstrategy opstate runhealth \
-          options includes pre_commands cosim viewer sweep}]
+          options includes pre_commands cosim viewer sweep plot_dest}]
 
 } sderr]} { check {SD0 section R1 ran to the end} "RAISED:$sderr" {} }
 

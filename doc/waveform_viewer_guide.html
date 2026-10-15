@@ -1125,14 +1125,23 @@ bar (<a href="#browser-loc">§11.4</a>) refreshes it for you.</p>
 <p>Right-clicking the tree posts a menu: <b>Plot</b>, a destination cascade,
 <b>Copy names</b>, <b>Send to Add Trace</b> and <b>Descend to here</b>. The
 destination is the same one the Add Trace dialog offers — <b>Append</b>,
-<b>Replace</b>, <b>New Strip</b>, <b>New Tab</b> — and it is remembered per
-window.</p>
+<b>Replace</b>, <b>New Strip</b>, <b>New SubWin</b>, <b>New Tab</b> — and it is
+remembered per window. Every one of them lands in the <b>target subwindow</b>:</p>
 
-<p>In <b>multi-plot</b> mode an entry reads <b>Replace &rarr; appends</b>. That
-is not a slip. Multi-plot always puts each signal in a strip it creates or an
-empty one it reuses, never in an occupied strip, so there is nothing for Replace
-to clear and it behaves exactly like Append. The label says so rather than
-pretending otherwise.</p>
+<ul>
+<li><b>Append</b> adds to the target subwindow, spread over its strips by the
+plot mode.</li>
+<li><b>Replace</b> empties the target subwindow first, in either plot mode, then
+plots into it. Other subwindows are untouched, and one <kbd>u</kbd> brings the
+cleared plots back.</li>
+<li><b>New Strip</b> adds one fresh strip to the target subwindow.</li>
+<li><b>New SubWin</b> adds a subwindow, makes it the target and plots into it.</li>
+<li><b>New Tab</b> opens a new tab and plots into it.</li>
+</ul>
+
+<p>ASE-L has its own drop-down for <kbd>~</kbd> and the after-run plot, at the
+right end of its status bar: <b>Append</b>, <b>Replace</b>, <b>New SubWin</b>,
+<b>New Win</b> (a new tab here). It is saved with the session state.</p>
 
 <h3 id="browser-loc">11.4 The Location bar</h3>
 

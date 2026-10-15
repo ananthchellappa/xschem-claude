@@ -632,7 +632,16 @@ check named "in order" would overstate what it measures (ruling 17).
 Entries: `Plot (<destination>)`, a destination cascade, Copy names, Send to Add Trace,
 `Descend to here`.
 
-### ⚠ `Replace -> appends` is a DELIBERATE SURFACING, not a typo
+### ⚠ SUPERSEDED 2026-10-15 — Replace now clears the target SUBWINDOW in both modes
+
+The user ratified Cadence's Replace for the subwindows work
+(`doc/claude/specs/waveform_viewer_subwindows.md` §6.2): `wviewer::dest_prepare` empties
+the whole target subwindow (`wviewer::clear_subwin`) before planning, in single AND multi
+plot mode, so D2 below is retired, the `-> appends` suffix is gone from
+`wviewer::dest_menu_label`, and the cascade gained `New SubWin`. The text below is kept as
+the record of what shipped before.
+
+### ⚠ `Replace -> appends` is a DELIBERATE SURFACING, not a typo (historical)
 
 Under **multi-plot**, `replace` clears nothing. That is structural: `plan_plot`'s multi arm
 lands every signal either in a strip it CREATES or in a REUSED EMPTY strip, never on an
@@ -1004,7 +1013,7 @@ viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `
 | id | limit | where | issue |
 |---|---|---|---|
 | **D1** | The bars are wider than any sane sidebar; at the derived width the **error label is clipped** (`ismapped 0`). Decision 4 survives only because the message is mirrored into the status line. | §7 | — |
-| **D2** | **Replace does nothing under multi-plot** — a gesture offering Replace in multi mode is really offering Append. Surfaced in the menu label (`Replace -> appends`) rather than hidden. | §9 | — |
+| **D2** | ~~RETIRED 2026-10-15 (subwindows §6.2: Replace clears the target subwindow in both modes).~~ **Replace does nothing under multi-plot** — a gesture offering Replace in multi mode is really offering Append. Surfaced in the menu label (`Replace -> appends`) rather than hidden. | §9 | — |
 | **D3** | **A double-click on a GROUP does not plot** — ttk owns that gesture. MMB and the Plot button do. | §8 | — |
 | **D6** | **The inventory is a SNAPSHOT** taken when the sidebar is SHOWN, not a live read. | §6 | — |
 | **D7** | **"Row order" means RAW-FILE order**, not the tree's visual order — ttk re-parents a late arrival under its group. | §8 | — |

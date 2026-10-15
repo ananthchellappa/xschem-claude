@@ -1,11 +1,10 @@
 # ASE Waveform Viewer — SUBWINDOWS
 
-Status: **stage 1 built** (2026-10-15) — the viewer half: model, grid, target
-and frame, New/Close SubWin, every strip-creation and plot door scoped to the
-target subwindow, the Tcl X gestures confined, tabs/undo/state. NOT yet built:
-the `newsubwin` destination and Replace-clears-the-subwindow (§6), the C
-`xgroup` predicate (§7 C half), the ASE-L drop-down (§8). §13 records what
-stage 1 built and where it departs from the text above it. Builds on `doc/claude/specs/waveform_viewer_tabs.md` (a tab is a MODEL,
+Status: **stages 1-3 built** (2026-10-15) — the viewer model, grid, target
+and frame, New/Close SubWin and the scoped doors (§13); independent X in C and
+Tcl (§14); the destinations — `newsubwin`, Replace clearing the target
+subwindow, and the ASE-L drop-down (§15). NOT yet built: Close SubWin on the
+trace context menu, divider drag, and the §10 limits. Builds on `doc/claude/specs/waveform_viewer_tabs.md` (a tab is a MODEL,
 not a context — every rule there still binds) and on the plot-destination policy
 of `doc/claude/specs/waveform_signal_browser.md` (`wviewer::plot_dest`, ruling 24).
 ASE-L side: `doc/claude/specs/ase_l.md` R-OUT14 and R-OUT15.
@@ -393,3 +392,70 @@ real viewer through Tk events: MMB, RMB, Ctrl+wheel, Shift+wheel, Left, `f`).
 Red proofs are in the suite header. Not fenced by an event row: `Z`/Ctrl-z (the
 same `wheel_zoom` as Ctrl+wheel) and the Up/Down/Right arrows in the viewer
 (Up/Down are Y pans there; Right is the same `pan_x` as Left).
+
+## 15. As built — stage 3 (2026-10-15): destinations
+
+The plan's stages 4 and 6 (§12) shipped together as the third commit.
+
+**Viewer.** `wviewer::dest_norm` learns `newsubwin`/`new subwin`/`NewSubWin`
+and accepts `newwin`/`new win` as `newtab`; `dest_label`/`dest_labels` offer
+five (`Append Replace {New Strip} {New SubWin} {New Tab}`), so the Add Trace
+dialog, the Options cascade and the signal browser's `Plot to` cascade all
+gained New SubWin with no change of their own. `dest_menu_label` lost the
+`-> appends` suffix. `wviewer::dest_prepare token dest ?gi?` is the one window
+half: `newtab` → `new_tab`, `newsubwin` → `new_subwin`, `replace` →
+`clear_subwin` of strip `gi`'s subwindow (default the target). After it
+`plan_plot` plans an Append into the target subwindow, so its pure `clear` key
+is empty there in both modes (row SWD5 counts the `clear_graph_traces` calls:
+zero). `plan_plot` itself is unchanged; `newsubwin` reaches append by
+fall-through, like `newtab`.
+
+- **`wviewer::clear_subwin`** (command, optional token and strip) empties one
+  subwindow to ONE strip holding no trace, which becomes the target. One undo
+  step, not logged (half of a plot gesture). A subwindow that is already one
+  empty plain strip is left alone. The pure half is `wviewer::sw_clear_graphs`.
+- **Departure: the survivor keeps a view.** It is made from the subwindow's
+  first AUTO strip (else the named strip) minus traces, markers, highlights and
+  the `auto` marker, so its X/Y range and log axes survive — what
+  `clear_graph_traces` always kept, and what keeps a user's zoom on the run's
+  plot across a Replace re-run.
+- **An empty batch is a no-op for every destination** in `plot_signals`, now
+  checked BEFORE `dest_prepare` (it used to make a tab under New Tab).
+- **`wviewer::plot_sites token n dest ?autook?`** is the landing half factored
+  out of `plot_signals` unchanged (target-subwindow scoping, `plan_plot`, strip
+  creation, target move, the pure clear loop); `plot_signals` is its caller for
+  every viewer door and ASE-L's Append is the other (`autook 1`: ASE's own
+  batch may land in an auto strip).
+- **Add Trace dialog**: Replace empties the NAMED graph's subwindow, and after
+  Replace or New SubWin the batch lands in the strip `dest_prepare` made the
+  target.
+- **Calculator**: its plot goes through `plot_signals`, so Replace there clears
+  the target subwindow. Its own W13 drop-down still offers three destinations
+  (not New SubWin); a New SubWin chosen in the viewer is reported as taken away
+  by `calc::plot_dest_dropped`, as New Tab already was. Not widened here.
+- **`wviewer::auto_plot_strips` is scoped to the target subwindow**: only ITS
+  auto strips are readied, a lone empty strip there is claimed, and a missing
+  one is inserted at the subwindow's bottom (single) or top (multi) — fixing
+  §13's "joins the LAST subwindow". Another subwindow's auto strips are an
+  earlier run's plot and are kept.
+
+**ASE-L** (spec ase_l.md R-OUT15 has the user-facing text). The drop-down is
+`$top.status.dest`; state key `plot_dest` in `ase::omit_if_empty` (`{}` =
+Replace, and Replace is stored as `{}`); `ase::ui::set_plot_dest` logs
+`ase::ui::set_plot_dest <key> <code>` on a change. `ase::ui::auto_plot` per
+choice: Replace → `clear_subwin` then `auto_plot_strips`; Append →
+`plot_sites ... append 1`; New SubWin / New Win → `new_subwin` / `new_tab` then
+`auto_plot_strips`, EXCEPT when the press itself opened the viewer (that window
+is already new). Zero ticked rows: Replace empties the target subwindow to one
+empty auto strip only when it holds an auto strip.
+
+**Rows.** `test_wave_subwindows` SWD1-SWD9 (both arms; SWD5-SWD9 drive the real
+`plot_signals` chain on a model-only window) and SWD10-SWD15 (display, the real
+window: Replace single and multi with rects and undo, New SubWin re-tiling, the
+Add Trace dialog's Replace and New SubWin, New Tab, empty batches).
+`test_ase_plot_outputs` PO14 reworked (the hand strip lives in a second
+subwindow), PO16 (both arms) and PR12 (display, real bench).
+`test_ase_window` PD1-PD6. Updated for the retired limit: BM13/BM14 of
+`test_wave_sigbrowser`, DS12/DS13 of `test_wave_sigsearch`, R1 of
+`test_ase_core` and `test_ase_persist` (24 keys), GX's `gx_must` of
+`test_wave_grid` (`clear_subwin`). Red proofs are in the suites' headers.

@@ -3487,15 +3487,17 @@ proc wviewer::empty_graph_indices {gs {auto -1}} {
 # `wviewer::dget $plan clear {}` — the graph_props precedent for "emit a key only
 # when it means something".
 #
-# ⚠⚠ REPLACE IS A SINGLE-MODE POLICY, AND THAT IS STRUCTURAL, NOT AN OVERSIGHT.
+# ⚠⚠ THIS PURE `clear` KEY IS A SINGLE-MODE POLICY, AND THAT IS STRUCTURAL.
 # The multi arm below lands every signal either in a strip it CREATES or in a
 # REUSED EMPTY strip — it never lands on an occupied one, for any destination.
-# So under multi-plot there is by construction nothing for `replace` to clear:
-# the `clear` key is present (the shape still tracks the destination) but it is
-# ALWAYS EMPTY, and Replace is behaviourally identical to Append there. Declared,
-# not fixed: making Replace mean "wipe the whole plot area" under multi would be
-# a different policy from "clear the target graph's traces first", which is the
-# one item 7 was given. DS05/DS05b pin it as a differential.
+# So under multi-plot the `clear` key is present but ALWAYS EMPTY. DS05/DS05b
+# pin it as a differential.
+# SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §6.2): the Replace
+# GESTURE no longer relies on this key. dest_prepare empties the whole target
+# subwindow first (clear_subwin), in both modes, so by the time this runs the
+# subwindow is one empty strip and the key is empty in both modes too.
+# `newsubwin`, like `newtab`, reaches the append policy by fall-through: its
+# window half (dest_prepare) already made the subwindow.
 proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}} {dest append}} {
   # FIRST, and it must stay first: an empty gesture is a no-op for EVERY
   # destination — a New Tab / Replace with nothing to plot must not make a tab,
@@ -3773,12 +3775,39 @@ proc wviewer::auto_plot_strips {token n} {
   set mode [wviewer::plot_mode $token]
   if {$mode eq {}} { set mode [wviewer::default_plot_mode] }
   set want [expr {($mode eq {multi} && $n > 1) ? $n : 1}]
-  set A [wviewer::auto_graph_indices $token]
+  # SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §8): the run
+  # plots into the TARGET subwindow, so only ITS auto strips are readied --
+  # another subwindow's are an earlier run's plot (New SubWin) and are kept,
+  # traces and all. With one subwindow the scope is the whole tab, as before.
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_range $gs [wviewer::target_index $token]] f l
+  set A [wviewer::sw_auto_in $gs $f $l]
   if {![llength $A]} {
-    set gs [dict get [wviewer::layout_for $token] graphs]
-    if {$mode ne {multi} || ([llength $gs] == 1
-                             && [wviewer::graph_is_empty [lindex $gs 0]])} {
-      set A [list [wviewer::ensure_auto_graph $token]]
+    if {$l >= $f && $l == $f && [wviewer::graph_is_empty [lindex $gs $f]]} {
+      # ⚠ CLAIM THE LONE EMPTY STRIP (issue 1616; ensure_auto_graph's rule,
+      # scoped to the subwindow): a virgin viewer, a Clear All, a New SubWin,
+      # a New Win and a Replace's cleared subwindow all leave exactly one.
+      set gs [lreplace $gs $f $f [dict merge [lindex $gs $f] [dict create auto 1]]]
+      wviewer::set_graphs $token $gs
+      set A [list $f]
+    } elseif {$mode ne {multi}} {
+      # single-plot: a new auto strip at the BOTTOM of the target subwindow
+      # (the window's bottom with one subwindow -- ensure_auto_graph's append)
+      set at [expr {$l + 1}]
+      set tgt {}
+      if {[info exists target($token)] && [llength $gs]} {
+        set tgt [wviewer::index_after_insert [wviewer::target_index $token] $at 1]
+      }
+      set hl [lmap e [wviewer::wave_hilights $token] {
+        lassign $e hg hn hs
+        list [wviewer::index_after_insert $hg $at 1] $hn $hs}]
+      set g [dict merge [wviewer::empty_graph] [dict create auto 1]]
+      set swat [wviewer::gsw [lindex $gs [expr {$at - 1}]]]
+      if {$swat ne {}} { dict set g sw $swat }
+      wviewer::set_graphs $token [linsert $gs $at $g]
+      if {$tgt ne {}} { set target($token) $tgt }
+      wviewer::wavehl_remap_apply $token $hl
+      set A [list $at]
     }
   }
   foreach gi $A { wviewer::clear_graph_traces $token $gi }
@@ -3797,7 +3826,8 @@ proc wviewer::auto_plot_strips {token n} {
     if {$tgt ne {}} { set target($token) $tgt }
   } elseif {[llength $A] < $want} {
     set k [expr {$want - [llength $A]}]
-    set at [expr {[llength $A] ? [lindex $A 0] : 0}]
+    # above the first auto strip, or at the TOP of the target subwindow
+    set at [expr {[llength $A] ? [lindex $A 0] : $f}]
     set gs [dict get [wviewer::layout_for $token] graphs]
     set tgt {}
     if {[info exists target($token)] && [llength $gs]} {
@@ -3822,7 +3852,13 @@ proc wviewer::auto_plot_strips {token n} {
     }
     wviewer::wavehl_remap_apply $token $hl
   }
-  set A [wviewer::auto_graph_indices $token]
+  # the readied subwindow is the one holding the first auto strip kept (the
+  # removal arm only drops LATER ones) or the first one inserted -- never
+  # re-derived from the target, which a removal may move
+  set anchor [expr {[llength $A] ? [lindex $A 0] : $f}]
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_range $gs $anchor] f l
+  set A [wviewer::sw_auto_in $gs $f $l]
   set out {}
   for {set i 0} {$i < $n} {incr i} {
     if {$want == 1} {
@@ -3830,6 +3866,15 @@ proc wviewer::auto_plot_strips {token n} {
     } else {
       lappend out [lindex $A [expr {$want - 1 - $i}]]
     }
+  }
+  return $out
+}
+
+# PURE: the indices in [f,l] of `gs` whose strip carries the `auto 1` marker.
+proc wviewer::sw_auto_in {gs f l} {
+  set out {}
+  for {set i $f} {$i <= $l && $i < [llength $gs]} {incr i} {
+    if {[wviewer::dget [lindex $gs $i] auto 0] eq {1}} { lappend out $i }
   }
   return $out
 }
@@ -4121,6 +4166,36 @@ proc wviewer::sw_close_indices {gs gi} {
   set out {}
   for {set i $f} {$i <= $l} {incr i} { lappend out $i }
   return $out
+}
+
+# PURE: `gs` with the subwindow holding strip `gi` (clamped) emptied to ONE
+# strip holding no trace. Answers {graphs first last}: `first` is the
+# survivor's index (the subwindow's old first index), `last` the old range end,
+# so strips after it moved up by last-first. {gs -1 -1} for an empty list.
+#
+# The survivor KEEPS the view of the strip it is made from (X/Y range, log
+# axes -- everything but its traces, markers, highlights and the `auto`
+# marker), exactly what clear_graph_traces always kept: a user who zoomed into
+# the run's plot and re-runs under Replace keeps the zoom, as before
+# subwindows. It is made from the subwindow's first AUTO strip when there is
+# one (the run's own plot), else from `gi` itself. The `auto` marker is dropped
+# so a viewer Replace can land in it; ASE-L's auto-plot re-claims the lone
+# empty strip (wviewer::auto_plot_strips).
+proc wviewer::sw_clear_graphs {gs gi} {
+  if {![llength $gs]} { return [list $gs -1 -1] }
+  set gi [wviewer::target_clamp $gi [llength $gs]]
+  lassign [wviewer::sw_range $gs $gi] f l
+  set p $gi
+  for {set i $f} {$i <= $l} {incr i} {
+    if {[wviewer::dget [lindex $gs $i] auto 0] eq {1}} { set p $i; break }
+  }
+  set g [lindex $gs $p]
+  if {[catch {dict size $g}]} { set g [wviewer::empty_graph] }
+  set g [dict remove [dict replace $g traces {}] markers hilight_wave sel_waves auto]
+  set id [wviewer::gsw [lindex $gs $f]]
+  if {$id ne {}} { dict set g sw $id }
+  set out [concat [lrange $gs 0 [expr {$f - 1}]] [list $g] [lrange $gs [expr {$l + 1}] end]]
+  return [list [wviewer::sw_normalize $out] $f $l]
 }
 
 # PURE: confine a strip index range question to one subwindow: the indices of
@@ -5494,6 +5569,58 @@ proc wviewer::close_subwin {{token {}} {gi {}}} {
   return [llength $kill]
 }
 
+# Empty the subwindow holding strip `gi` (default: the TARGET subwindow): every
+# strip in it is replaced by ONE fresh empty strip, which becomes the target.
+# The Replace destination's window half (dest_prepare, and ASE-L's `~` under
+# Replace, ase::ui::auto_plot). Other subwindows, and the tab's other strips,
+# are untouched; strips after the subwindow move up. ONE undo step, so `u`
+# brings the cleared plots back -- Replace is destructive and was not undoable
+# before. Not logged: it is half of a plot gesture, which replays through its
+# own line (the gesture re-runs this). A subwindow that is ALREADY one empty
+# plain strip is left alone (no undo point, no regenerate).
+# Returns the survivor's index, {} when no viewer resolves.
+proc wviewer::clear_subwin {{token {}} {gi {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window to clear a subwindow in" error
+    return {}
+  }
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_clear_graphs $gs $gi] ngs f l
+  if {$f < 0} { return {} }
+  set G [lindex $gs $f]
+  if {$f == $l && [wviewer::graph_is_empty $G] && [wviewer::dget $G auto 0] ne {1}} {
+    set target($token) $f
+    return $f
+  }
+  wviewer::capture_live_view_state $token
+  wviewer::push_undo $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set gone {}
+  for {set k $f} {$k <= $l} {incr k} {
+    foreach m [wviewer::markers_numbers [wviewer::dget [lindex $gs $k] markers {}]] {
+      lappend gone $m
+    }
+  }
+  # highlights: the cleared strips' go, later strips move up by l-f
+  set hl {}
+  foreach e [wviewer::wave_hilights $token] {
+    lassign $e hg hn hs
+    if {$hg >= $f && $hg <= $l} { continue }
+    if {$hg > $l} { set hg [expr {$hg - ($l - $f)}] }
+    lappend hl [list $hg $hn $hs]
+  }
+  wviewer::set_graphs $token [wviewer::markers_sweep_numbers $ngs $gone]
+  wviewer::wavehl_remap_apply $token $hl
+  set target($token) $f
+  wviewer::regenerate $token
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
+  return $f
+}
+
 proc wviewer::new_subwin_at {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
@@ -5623,21 +5750,40 @@ proc wviewer::set_plot_dest {req {token {}}} {
 }
 
 # The WINDOW-level half of the destination policy: everything that must happen
-# BEFORE plan_plot can speak. Today that is exactly `newtab`; the other three
-# destinations have nothing to prepare and succeed trivially.
+# BEFORE plan_plot can speak (doc/claude/specs/waveform_viewer_subwindows.md §6):
+#   newtab    -> a new tab (new_tab), its one strip the target
+#   newsubwin -> a new subwindow at the end of the tab (new_subwin), its one
+#                strip the target
+#   replace   -> the subwindow holding strip `gi` (default: the TARGET strip) is
+#                emptied to one fresh strip, which becomes the target
+#                (clear_subwin) -- in BOTH plot modes, which retires ruling
+#                24's "Replace appends under multi" limit (§6.2)
+#   append / newstrip -> nothing to prepare.
+# After it, plan_plot plans the batch as an Append into the target subwindow:
+# under replace the subwindow is one empty strip, so plan_plot's `clear` key is
+# empty by construction (row SWD5 of test_wave_subwindows measures it).
 #
-# Returns 1 on success (INCLUDING "nothing to do"), 0 when the tab could not be
-# made — in which case the caller must report and abort rather than plot into
-# the wrong tab.
+# Returns 1 on success (INCLUDING "nothing to do"), 0 when the tab or the
+# subwindow could not be made -- in which case the caller must report and abort
+# rather than plot into the wrong place.
 #
 # ⚠ MEASURED: new_tab calls tab_drop_transients, which DESTROYS $top.wvadd. Any
 # caller that still needs something out of the Add Trace dialog must have read
 # it BEFORE calling this, and must guard every widget access afterwards. That is
 # not theoretical — it is why add_trace_ok snapshots its picks by name first and
 # routes its errors through wviewer::echo when the label is gone.
-proc wviewer::dest_prepare {token dest} {
-  if {[wviewer::dest_norm $dest] ne {newtab}} { return 1 }
-  if {[wviewer::new_tab $token] eq {}} { return 0 }
+proc wviewer::dest_prepare {token dest {gi {}}} {
+  switch -exact -- [wviewer::dest_norm $dest] {
+    newtab {
+      if {[wviewer::new_tab $token] eq {}} { return 0 }
+    }
+    newsubwin {
+      if {[wviewer::new_subwin $token] eq {}} { return 0 }
+    }
+    replace {
+      if {[wviewer::clear_subwin $token $gi] eq {}} { return 0 }
+    }
+  }
   return 1
 }
 
@@ -8367,55 +8513,17 @@ proc wviewer::plot_sweeps_take {token} {
   return $v
 }
 
-# Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
-# the window's plot mode — the ONE seam ase::ui::dp_finish calls. Creates the
-# strips plan_plot asks for, then appends one trace per signal at its planned
-# index. Returns a list of {expr error} pairs for the signals that failed
-# (add_trace returns a message, never throws); {} = every signal landed.
-#
-# `colors` (issue 0153) pins one color per signal, in the same order. The Direct
-# Plot picker passes the colors it already painted the schematic nets with. When
-# it is {} the colors are derived here from the same policy (plan_colors), which
-# is what makes multi-plot cycle colors instead of giving every fresh strip the
-# palette head — so any caller gets that fix, not just the picker.
-#
-# `destover` (item 10) is a ONE-SHOT destination override — the browser's
-# `Plot to →` cascade, which must land this ONE batch somewhere else without
-# changing where the NEXT gesture lands. Ruling 24 is intact and this is why it
-# is an ARGUMENT and not a save/restore around `set_plot_dest`: `plot_dest`
-# remains THE accessor for the window's policy, the override never writes
-# `dest($token)`, and a save/restore would log two spurious replay lines and
-# leave the window on the wrong policy if anything below threw. `{}` = use the
-# window's policy, which is every pre-item-10 caller.
-#
-# The per-signal DATABASE (spec §D1 / DEFECT 2) arrives out of band, through
-# `wviewer::plot_dbs_arm` / `plot_dbs_take` — see their header for why it is not
-# a fifth parameter here. It is taken FIRST THING below, so a gesture that arms
-# and then fails before the trace loop cannot leak its list into the next one.
-proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
-  set dbs [wviewer::plot_dbs_take $token]
-  set sweeps [wviewer::plot_sweeps_take $token]
-  variable windows
-  if {![dict exists $windows $token]} {
-    return [list [list {} "unknown viewer window"]]
-  }
-  # issue 0194: the ONE capture for the whole batch, before any strip is
-  # created. add_trace's own capture cannot serve here — it runs after the
-  # strips were added, where the 1:1 rect/model guard refuses it.
-  wviewer::capture_live_view_state $token
-  # item 7: THE window destination governs this seam, and this seam ONLY — it is
-  # the one route every plot gesture (Direct Plot, and item 9's three browser
-  # gestures) shares, so the policy is implemented once here and nowhere else.
-  # The WINDOW half runs first and may replace the whole layout (New Tab), hence
-  # the re-read below.
-  # ⚠ ONE resolution, BEFORE dest_prepare, so the override governs the window
-  # half (New Tab) and plan_plot alike. A second read anywhere below would be a
-  # place the two could disagree.
-  set dest [expr {$destover eq {} ? [wviewer::plot_dest $token]
-                                  : [wviewer::dest_norm $destover]}]
-  if {![wviewer::dest_prepare $token $dest]} {
-    return [list [list {} "cannot open a new tab for this plot"]]
-  }
+# THE LANDING HALF OF A PLOT BATCH (factored out of plot_signals, which is its
+# caller for every viewer door; ase::ui::auto_plot's Append is the other):
+# plans `n` signals into the ACTIVE tab's TARGET subwindow under the plot mode
+# and destination `dest` (dest_prepare has ALREADY run), creates the strips the
+# plan asks for, moves the target, and empties the strips a single-mode replace
+# names. Answers a dict: `targets` (one window strip index per signal, in signal
+# order), `colors` (the derived per-signal colours, plan_colors' policy) and
+# `new` (strips created). Adds NO trace. `autook` 1 lets the batch land in an
+# auto strip (ASE-L's own batch).
+proc wviewer::plot_sites {token n dest {autook 0}} {
+  set colors {}
   set gsall [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
   # SUBWINDOWS (spec §6.4, SW7/SW8): the batch lands in the TARGET SUBWINDOW.
@@ -8440,11 +8548,15 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   if {[wviewer::dget [lindex $gs $tgtrel] auto 0] eq {1}} {
     set auto $tgtrel
   }
+  # ...except for ASE-L's OWN Append batch (`autook`, spec §8): the strips are
+  # the tool's, so its batch may land in one (empty auto strips are still not
+  # REUSED: empty_graph_indices skips them whatever `auto` says).
+  if {$autook} { set auto -1 }
   set plan [wviewer::plan_plot $mode [llength $gs] \
-                               $tgtrel [llength $exprs] \
+                               $tgtrel $n \
                                $auto [wviewer::empty_graph_indices $gs $auto] \
                                $dest]
-  if {![llength $colors]} {
+  if {$n > 0} {
     # `gs` is the PRE-batch strip list, which is what plan_colors expects. Multi
     # seeds its `used` set from the whole WINDOW (issue 0153), so it is handed
     # every strip; the relative targets are shifted past the strips before the
@@ -8528,11 +8640,72 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   # ones) and BEFORE anything is added. The key is present only under `replace`,
   # and it never names a strip this plan just made OR reused because it was
   # already empty, so this loop never makes a no-op clear_graph_traces call —
-  # see plan_replace_clear. Under multi it is therefore always empty (declared
-  # in plan_plot's ⚠⚠: Replace is a single-mode policy).
+  # see plan_replace_clear. SUBWINDOWS: a Replace gesture through dest_prepare
+  # has already emptied the whole target subwindow (clear_subwin), so this list
+  # is empty there in both modes; it still serves a direct caller that plans a
+  # replace without the window half.
   foreach ci [wviewer::dget $plan clear {}] {
     wviewer::clear_graph_traces $token $ci
   }
+  return [dict create targets [dict get $plan targets] colors $colors new $nnew]
+}
+
+# Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
+# the window's plot mode — the ONE seam ase::ui::dp_finish calls. Creates the
+# strips plan_plot asks for, then appends one trace per signal at its planned
+# index. Returns a list of {expr error} pairs for the signals that failed
+# (add_trace returns a message, never throws); {} = every signal landed.
+#
+# `colors` (issue 0153) pins one color per signal, in the same order. The Direct
+# Plot picker passes the colors it already painted the schematic nets with. When
+# it is {} the colors are derived here from the same policy (plan_colors), which
+# is what makes multi-plot cycle colors instead of giving every fresh strip the
+# palette head — so any caller gets that fix, not just the picker.
+#
+# `destover` (item 10) is a ONE-SHOT destination override — the browser's
+# `Plot to →` cascade, which must land this ONE batch somewhere else without
+# changing where the NEXT gesture lands. Ruling 24 is intact and this is why it
+# is an ARGUMENT and not a save/restore around `set_plot_dest`: `plot_dest`
+# remains THE accessor for the window's policy, the override never writes
+# `dest($token)`, and a save/restore would log two spurious replay lines and
+# leave the window on the wrong policy if anything below threw. `{}` = use the
+# window's policy, which is every pre-item-10 caller.
+#
+# The per-signal DATABASE (spec §D1 / DEFECT 2) arrives out of band, through
+# `wviewer::plot_dbs_arm` / `plot_dbs_take` — see their header for why it is not
+# a fifth parameter here. It is taken FIRST THING below, so a gesture that arms
+# and then fails before the trace loop cannot leak its list into the next one.
+proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+  set dbs [wviewer::plot_dbs_take $token]
+  set sweeps [wviewer::plot_sweeps_take $token]
+  variable windows
+  if {![dict exists $windows $token]} {
+    return [list [list {} "unknown viewer window"]]
+  }
+  # issue 0194: the ONE capture for the whole batch, before any strip is
+  # created. add_trace's own capture cannot serve here — it runs after the
+  # strips were added, where the 1:1 rect/model guard refuses it.
+  wviewer::capture_live_view_state $token
+  # item 7: THE window destination governs this seam, and this seam ONLY — it is
+  # the one route every plot gesture (Direct Plot, and item 9's three browser
+  # gestures) shares, so the policy is implemented once here and nowhere else.
+  # The WINDOW half runs first and may replace the whole layout (New Tab), hence
+  # the re-read below.
+  # ⚠ ONE resolution, BEFORE dest_prepare, so the override governs the window
+  # half (New Tab) and plan_plot alike. A second read anywhere below would be a
+  # place the two could disagree.
+  set dest [expr {$destover eq {} ? [wviewer::plot_dest $token]
+                                  : [wviewer::dest_norm $destover]}]
+  # an EMPTY batch is a no-op for every destination (plan_plot's first rule):
+  # it must not make a tab or a subwindow, nor clear one under Replace
+  if {![llength $exprs]} { return {} }
+  if {![wviewer::dest_prepare $token $dest]} {
+    return [list [list {} "cannot open a new tab or subwindow for this plot"]]
+  }
+  set land [wviewer::plot_sites $token [llength $exprs] $dest]
+  if {![llength $colors]} { set colors [dict get $land colors] }
+  set plan [dict create targets [dict get $land targets]]
+  set nnew [dict get $land new]
   set errs {}
   # `dbs` is padded to `exprs`' length rather than relying on `foreach`'s own
   # short-list padding: an empty `dbs` must give EVERY signal `{}` (resolve by
@@ -12252,10 +12425,9 @@ proc wviewer::browser_filter_cb {token args} {
 # (ruling 24: `plot_dest` is THE accessor and nothing re-implements it). Nothing
 # below reads plot_dest, plan_plot or the layout.
 #
-# ⚠ DECLARED LIMIT, INHERITED NOT INTRODUCED (ruling 24): under MULTI-plot a
-# destination of `Replace` really Appends, because plan_plot emits no clear key
-# there. A browser gesture offering Replace in multi mode is therefore offering
-# Append. Surfaced in receipts/09_receipt.md; not item 9's to fix.
+# (The multi-plot "Replace really Appends" limit ruling 24 declared here was
+# RETIRED 2026-10-15: dest_prepare empties the target subwindow in both modes,
+# doc/claude/specs/waveform_viewer_subwindows.md §6.2.)
 
 # Row ids -> {full raw name, database} -> plot_signals. Returns the number of
 # signals plotted, 0 for a refused/empty gesture (which SPEAKS rather than
@@ -17013,17 +17185,20 @@ proc wviewer::sb_type_label {code} {
 }
 
 # --- item 7: the plot-destination codes ---------------------------------------
-# `Append` `Replace` `New Strip` `New Tab` <-> append replace newstrip newtab.
+# `Append` `Replace` `New Strip` `New SubWin` `New Tab` <-> append replace
+# newstrip newsubwin newtab (doc/claude/specs/waveform_viewer_subwindows.md §6.1).
 #
 # dest_norm accepts BOTH spellings ON PURPOSE and case-insensitively: the
 # combobox hands it the LABEL (`New Strip`), while a CIW line, a replayed action
 # log or item 9's toolbar hands it the CODE (`newstrip`). The space forms
-# (`new strip`, `new tab`) are accepted too, since that is what a human types.
+# (`new strip`, `new subwin`, `new tab`) are accepted too, since that is what a
+# human types.
 #
-# ⚠ ViVA's OWN NAMES ARE DELIBERATELY NOT ALIASES. `NewSubWin`/`NewWin` are not
-# accepted, because the mapping is not a rename: ViVA's `NewWin` means a WINDOW
-# and ours means a TAB. Accepting the ViVA spelling would promise a fidelity
-# this does not have.
+# SUBWINDOWS: ViVA's `New SubWin` is now a real destination here (SW10), and
+# its `New Win` is accepted as `newtab` -- the user ratified (2026-10-15) that a
+# viewer TAB is ViVA's New Win, so the mapping is no longer a rename that
+# promises a fidelity it does not have. ASE-L shows that code as `New Win`
+# (ase::ui::plot_dest_labels); the viewer keeps calling it a tab.
 #
 # UNRECOGNISED -> `append`, the same argument sb_type_code's `all` fallback
 # makes: Append is the ONLY policy that destroys nothing, so a value we cannot
@@ -17034,8 +17209,12 @@ proc wviewer::dest_norm {v} {
     replace           { return replace }
     newstrip -
     {new strip}       { return newstrip }
+    newsubwin -
+    {new subwin}      { return newsubwin }
     newtab -
-    {new tab}         { return newtab }
+    {new tab} -
+    newwin -
+    {new win}         { return newtab }
   }
   return append
 }
@@ -17043,38 +17222,28 @@ proc wviewer::dest_norm {v} {
 # code -> the combobox LABEL. Unrecognised -> `Append`, same argument. PURE.
 proc wviewer::dest_label {code} {
   switch -exact -- [string tolower [string trim $code]] {
-    replace  { return Replace }
-    newstrip { return {New Strip} }
-    newtab   { return {New Tab} }
+    replace   { return Replace }
+    newstrip  { return {New Strip} }
+    newsubwin { return {New SubWin} }
+    newtab    { return {New Tab} }
   }
   return Append
 }
 
-# The four labels, in ViVA's order — the combobox's `-values` and the Options
-# cascade's entries read from HERE, so the two can never drift apart.
+# The five labels -- the combobox's `-values` and every cascade's entries read
+# from HERE, so they can never drift apart. `New Strip` is the viewer's own
+# fifth choice (spec §6.3); ASE-L offers the user's four.
 proc wviewer::dest_labels {} {
-  return [list Append Replace {New Strip} {New Tab}]
+  return [list Append Replace {New Strip} {New SubWin} {New Tab}]
 }
 
-# item 10: the label a MENU shows for `code` on THIS window — dest_label plus
-# the one thing a combobox does not have room to say.
-#
-# ⚠ THE DECLARED LIMIT, SURFACED RATHER THAN PRETENDED AWAY (ruling 24, item 9's
-# D2): under MULTI-plot `replace` clears nothing, because plan_plot emits no
-# clear key there — so an entry reading `Replace` really means Append. The
-# browser menu OFFERS the entry anyway (removing it would make the cascade
-# disagree with the Add Trace dialog's dropdown, which offers all four), and
-# says so in the label instead.
-#
-# ONE PLACE, used by BOTH the top `Plot (...)` entry and the cascade's Replace
-# entry, so those two can never drift apart. PURE apart from the mode read.
+# item 10: the label a MENU shows for `code` on THIS window. SUBWINDOWS (spec
+# §6.2): Replace clears the target subwindow in BOTH plot modes now, so the
+# multi-plot `-> appends` suffix ruling 24 needed is gone and this is
+# dest_label. Kept as its own proc because every menu and the Calculator name a
+# destination through it (one place can go stale, two can disagree).
 proc wviewer::dest_menu_label {token code} {
-  set code [wviewer::dest_norm $code]
-  set lab [wviewer::dest_label $code]
-  if {$code eq {replace} && [wviewer::plot_mode $token] eq {multi}} {
-    append lab { -> appends}
-  }
-  return $lab
+  return [wviewer::dest_label [wviewer::dest_norm $code]]
 }
 
 # wviewer::searchbar_build parent ?-command cb? ?-showbutton 0|1? ?-name child?
@@ -17782,10 +17951,14 @@ proc wviewer::add_trace_ok {token} {
   # ⚠ AFTER THIS LINE `$w` MAY BE GONE (New Tab destroys the dialog — MEASURED).
   # Every widget read above is done; every message below goes through
   # atok_report, which survives a vanished dialog.
-  if {![wviewer::dest_prepare $token $dest]} {
-    wviewer::atok_report $w "cannot open a new tab for this plot"
+  # SUBWINDOWS: Replace empties the NAMED graph's subwindow (the dialog names
+  # its graph), New SubWin adds one; either way the batch then lands in the
+  # strip dest_prepare made the target.
+  if {![wviewer::dest_prepare $token $dest $gi]} {
+    wviewer::atok_report $w "cannot open a new tab or subwindow for this plot"
     return
   }
+  if {$dest in {replace newsubwin}} { set gi [wviewer::target_index $token] }
   # RE-READ the strip list: a New Tab replaced the whole layout.
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {$rpn eq {}} {

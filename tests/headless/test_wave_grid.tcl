@@ -256,11 +256,13 @@ proc wvproc_body {src name} {
 # capture-before-regenerate order check.
 # ⚠ `new_subwin` / `close_subwin` ADDED BY THE SUBWINDOWS STAGE 1: ordinary
 # content mutations that carry every other strip forward, so gx_must.
+# ⚠ `clear_subwin` ADDED BY STAGE 3 (the Replace destination): it empties ONE
+# subwindow and carries every other strip forward, so gx_must too.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok
              select_tab new_tab close_tab paste_traces paste_payload
-             rawbar_load new_subwin close_subwin}
+             rawbar_load new_subwin close_subwin clear_subwin}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}

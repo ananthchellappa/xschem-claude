@@ -4336,6 +4336,11 @@ proc calc::plot_dest_dropped {prev code} {
 # vector plotted twice -- the sentence falls back to the expression itself,
 # which is still true and still names what was plotted.
 #
+# ⚠ RULING 24 WAS RETIRED 2026-10-15 (doc/claude/specs/waveform_viewer_subwindows.md
+# section 6.2): Replace now empties the target subwindow in both plot modes and
+# `wviewer::dest_menu_label` carries no suffix. The paragraph below is the record
+# of why the label is still read through that one proc.
+#
 # ⚠⚠ THE DESTINATION IS NAMED BY `wviewer::dest_menu_label`, NOT BY
 # `wviewer::dest_label`, AND THAT IS THE WHOLE OF THIS FILE'S HONESTY ABOUT
 # RULING 24.  Under MULTI plot mode `wviewer::plan_plot` emits no clear key, so
@@ -11161,6 +11166,8 @@ proc calc::build_mode {} {
     # viewer's one place for that clause, and band PL5d drives the mode and
     # asserts both the sentence and the append behaviour.  The fourth
     # destination's own cost is `calc::plot_dest_dropped`'s.
+    # (Ruling 24 was retired 2026-10-15, subwindows spec section 6.2: Replace
+    # now clears the target subwindow in both modes, and PL5d asserts that.)
     ttk::combobox .calc.mode.dest -state readonly -width 10 \
         -values {Append Replace {New Strip}} -takefocus 0 \
         -style Calc.Field.TCombobox

@@ -1182,6 +1182,19 @@ proc ase::ui::build {key top} {
   # `ase::ui::health_refresh` fills it from the finished run's own log.
   label $top.status.sep5  -text {}
   label $top.status.health -text {}
+  # R-OUT15 / doc/claude/specs/waveform_viewer_subwindows.md SW18: the PLOT
+  # DESTINATION of `~` and the run-end auto-plot, at the bar's RIGHT end.
+  # Read-only, driven by <<ComboboxSelected>> and never by -textvariable: the
+  # binding is what writes the session (dirtying it) and logs ONE replayable
+  # `ase::ui::set_plot_dest <key> <code>` line. Packed FIRST so a narrow window
+  # clips the text segments (issue 1499's order) and never the control.
+  ttk::combobox $top.status.dest -state readonly -width 10 \
+    -values [ase::ui::plot_dest_labels]
+  $top.status.dest set [ase::ui::plot_dest_label \
+                          [ase::plot_dest_of [ase::session_state $key]]]
+  bind $top.status.dest <<ComboboxSelected>> [list ase::ui::plot_dest_picked $key]
+  catch {::balloon $top.status.dest [ase::ui::lbl_plot_dest_tip] 1 0 300}
+  pack $top.status.dest -side right -padx {4 2}
   pack $top.status.win $top.status.sep1 $top.status.stat $top.status.sep2 \
        $top.status.temp $top.status.sep3 $top.status.sim $top.status.sep4 \
        $top.status.state $top.status.sep5 $top.status.health -side left
@@ -10899,6 +10912,7 @@ proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
 # The `~` strip button (ase_l.md R-OUT12): its tip, and what it says when there
 # is nothing to measure or plot.
 proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values} }
+proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~ and the run-end plot go} }
 proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
 proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
 # A failed run (ase_l.md R-OUT13; `f` is ase::run_failed's answer): the notice,
@@ -12300,6 +12314,10 @@ proc ase::ui::refresh_status {key} {
   $top.status.sim   configure -text \
     "Simulator: [ase::sim_label [ase::state_get $st simulator]]"
   $top.status.state configure -text "State: $view"
+  # R-OUT15: Load State / Revert move the drop-down with the state
+  if {[winfo exists $top.status.dest]} {
+    $top.status.dest set [ase::ui::plot_dest_label [ase::plot_dest_of $st]]
+  }
 }
 
 # EVERY OPEN SESSION'S BAR, because the registry is PROCESS-GLOBAL while the
@@ -12708,6 +12726,79 @@ proc ase::ui::do_netlist_recreate {key} {
   catch {::ase::echo "ase: netlist written: $nl"}
 }
 
+# --- R-OUT15: the plot destination of `~` and the run-end auto-plot ----------
+# doc/claude/specs/waveform_viewer_subwindows.md SW18 and §8. The four choices
+# are the user's (ADE-L's plotting mode): one code per label, the codes the
+# viewer's own wviewer::dest_norm speaks, so `New Win` is the viewer's `newtab`.
+# ADE-L-side only: the viewer's own destination (wviewer::plot_dest) is a
+# SEPARATE setting serving the viewer's doors.
+
+# The drop-down's labels, in order. PURE.
+proc ase::ui::plot_dest_labels {} {
+  return [list Append Replace {New SubWin} {New Win}]
+}
+# code -> label; unknown -> Replace (the default). PURE.
+proc ase::ui::plot_dest_label {code} {
+  switch -exact -- $code {
+    append    { return Append }
+    newsubwin { return {New SubWin} }
+    newtab    { return {New Win} }
+  }
+  return Replace
+}
+# a label OR a code -> the code; unknown -> {} (the caller refuses). PURE.
+proc ase::ui::plot_dest_code {v} {
+  switch -exact -- [string tolower [string trim $v]] {
+    append                         { return append }
+    replace                        { return replace }
+    newsubwin - {new subwin}       { return newsubwin }
+    newtab - newwin - {new win}    { return newtab }
+  }
+  return {}
+}
+# The session's destination (ase::plot_dest_of its state).
+proc ase::ui::plot_dest {key} {
+  return [ase::plot_dest_of [ase::session_state $key]]
+}
+
+# The replayable-log seam (wviewer::log_action's shape): one catch'd
+# `xschem log_action`, so a suite can rename it and spy.
+proc ase::ui::log_action {line} {
+  catch {xschem log_action $line}
+}
+
+# Set the session's destination. `req` is a label or a code. Writes the state
+# (Replace, the default, as `{}` -- ase::omit_if_empty -- so choosing it back
+# leaves a saved session clean), moves the drop-down, and logs
+# `ase::ui::set_plot_dest <key> <code>` ON A CHANGE ONLY (the set_plot_mode
+# rule). Returns the code, or {} for an unknown session or request.
+proc ase::ui::set_plot_dest {key req} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
+  set code [ase::ui::plot_dest_code $req]
+  if {$code eq {}} {
+    catch {::ase::echo "ase: bad plot destination '$req' (use Append, Replace, New SubWin or New Win)" error}
+    return {}
+  }
+  set cur [ase::ui::plot_dest $key]
+  if {$code eq $cur} { return $cur }
+  set st [ase::session_state $key]
+  dict set st plot_dest [expr {$code eq {replace} ? {} : $code}]
+  ase::session_update $key $st
+  ase::ui::refresh_status $key
+  ase::ui::log_action [list ase::ui::set_plot_dest $key $code]
+  return $code
+}
+
+# <<ComboboxSelected>> on the status bar's drop-down.
+proc ase::ui::plot_dest_picked {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].status.dest
+  if {![winfo exists $w]} { return }
+  ase::ui::set_plot_dest $key [$w get]
+  catch {$w selection clear}
+}
+
 # THE ROWS THE VIEWER IS ASKED TO DRAW (ase_l.md R-OUT12).  Every row with
 # Plot ticked, less two kinds, each decided from what the row IS:
 #   refused -- qualified for an analysis the viewer does not show
@@ -12791,22 +12882,32 @@ proc ase::ui::plot_outputs {key} {
 }
 
 # Auto-plot after a successful run (item 13, D5): every outputs row with
-# plot==1 is rebuilt into the viewer's dedicated auto graph (the `auto 1`
-# model marker), laid out by the viewer's plot mode (R-OUT14): one strip in
-# single-plot, one strip per row in multi-plot -- v1 ALWAYS-REPLACE policy: the
-# auto strips' traces are cleared and re-added each run, Direct-Plot graphs are
-# never touched (an auto strip is cleared, not removed, except when a
-# multi-plot batch needs fewer of them than last time; the target strip and the
-# trace highlights follow any index that moves). Zero plot rows -> never
-# opens a viewer to show nothing (but an already-open viewer's stale auto
-# graph is emptied). op-only results -> notice (no sweep, nothing
-# plottable). Row exprs go through plot_map_expr (D6); the row name is used
-# as the trace name when it is a legal vector name (add_trace's rule), else
-# auto. Reached from run_finished via auto_plot_idle (after idle + catch): a
-# viewer failure must never break the status pipeline.
+# plot==1 is plotted into the viewer's ACTIVE tab, in its TARGET subwindow,
+# under the session's plot destination (R-OUT15, ase::ui::plot_dest; spec
+# doc/claude/specs/waveform_viewer_subwindows.md §8):
+#   Replace    -- the target subwindow is emptied, then the run's rows go into
+#                 fresh `auto 1` strips laid out by the viewer's plot mode
+#                 (R-OUT14: one strip in single-plot, one per row in
+#                 multi-plot, last row on top). The default.
+#   Append     -- the target subwindow keeps everything; the rows land by the
+#                 viewer's own append rule (single: the target strip, an auto
+#                 strip included; multi: new strips on top).
+#   New SubWin -- a new subwindow (made the target) holds the run's auto strips.
+#   New Win    -- a new viewer tab holds them.
+# Under New SubWin and New Win the previous plot is kept where it is, and a
+# viewer this press had to OPEN is already new: nothing more is made in it.
+# Zero plot rows -> never opens a viewer to show nothing; under Replace an
+# already-open viewer's target subwindow is emptied when it holds an auto strip
+# (one empty auto strip is left), and under the other three nothing changes.
+# op-only results -> notice (no sweep, nothing plottable). Row exprs go through
+# plot_map_expr (D6); the row name is used as the trace name when it is a legal
+# vector name (add_trace's rule), else auto. Reached from run_finished via
+# auto_plot_idle (after idle + catch): a viewer failure must never break the
+# status pipeline.
 proc ase::ui::auto_plot {key} {
   set st [ase::session_state $key]
   set sim_t [ase::plot_sim_type $st]
+  set dest [ase::plot_dest_of $st]
   # R208c/R208d: a row qualified for an analysis the viewer does not show is
   # refused with a sentence (plot_row_refusal), never drawn from the shown one.
   # Before the viewer opens, so the sentence is said even where it cannot; a
@@ -12819,18 +12920,15 @@ proc ase::ui::auto_plot {key} {
   }
   set rows [dict get $t rows]
   if {![llength $rows]} {
-    if {[wviewer::window_for $key] ne {}} {
-      if {[llength [wviewer::auto_graph_indices $key]]} {
+    if {$dest eq {replace} && [wviewer::window_for $key] ne {}} {
+      set gs [dict get [wviewer::layout_for $key] graphs]
+      lassign [wviewer::sw_range $gs [wviewer::target_index $key]] f l
+      if {[llength [wviewer::sw_auto_in $gs $f $l]]} {
         # issue 0194: this regenerate carries every OTHER strip forward, so it
-        # owes the fold — clear_graph_traces drops the selection of the auto
-        # strip alone, and without this the rebuild-from-model would take the
-        # user's selection on every other strip with it. Same rule, and the
-        # same helper, as the twelve sites inside wave_viewer.tcl; it is only
-        # the FILE that differs. Must run BEFORE clear_graph_traces (that is
-        # the model mutation) and it does its own verified switch_ctx.
-        # R-OUT14: auto_plot_strips with no signals leaves ONE cleared auto
-        # strip, removing any further ones a multi-plot batch made.
+        # owes the fold BEFORE the model mutation (clear_subwin takes it too).
+        # R-OUT14/R-OUT15: the cleared subwindow keeps ONE empty auto strip.
         wviewer::capture_live_view_state $key
+        wviewer::clear_subwin $key
         wviewer::auto_plot_strips $key 0
         wviewer::regenerate $key
       }
@@ -12841,6 +12939,7 @@ proc ase::ui::auto_plot {key} {
     catch {::ase::echo "ase: op results have no sweep — nothing to auto-plot"}
     return
   }
+  set wasup [expr {[wviewer::window_for $key] ne {}}]
   if {![wviewer::open $key]} { return }
   set rf [ase::last_rawfile $key]
   if {$rf eq {}} {
@@ -12851,13 +12950,13 @@ proc ase::ui::auto_plot {key} {
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
   wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
-  # R-OUT14: the viewer's plot mode decides the strips -- one auto strip in
-  # single-plot, one per row in multi-plot (wviewer::auto_plot_strips). Every
-  # auto strip is cleared first, so a second run or `~` still REPLACES the
-  # previous auto-plot, and no other strip is touched. The issue-0194 fold was
-  # taken by attach_raw just above.
-  set gis [wviewer::auto_plot_strips $key [llength $rows]]
-  wviewer::regenerate $key   ;# reflect the clear even if every add fails
+  # R-OUT15: the destination's window half. A viewer this press opened is one
+  # empty tab, which IS a new window and a new subwindow already.
+  switch -exact -- $dest {
+    newtab    { if {$wasup} { wviewer::new_tab $key } }
+    newsubwin { if {$wasup} { wviewer::new_subwin $key } }
+    replace   { wviewer::clear_subwin $key }
+  }
   # casemode item 12: map every row FIRST, then repair the batch in ONE pass —
   # wviewer::repair_currents reads the whole database inventory per call, so a
   # per-row call would pay that once per output row instead of once per attach.
@@ -12866,6 +12965,19 @@ proc ase::ui::auto_plot {key} {
   set exs {}
   foreach o $rows { lappend exs [ase::ui::plot_map_expr [ase::state_get $o expr]] }
   set exs [ase::ui::repair_currents $key $exs]
+  if {$dest eq {append}} {
+    # the viewer's own append rule, in the target subwindow; ASE's batch may
+    # land in an auto strip (autook)
+    set gis [dict get [wviewer::plot_sites $key [llength $rows] append 1] targets]
+  } else {
+    # R-OUT14: the viewer's plot mode decides the strips -- one auto strip in
+    # single-plot, one per row in multi-plot (wviewer::auto_plot_strips), in the
+    # target subwindow. Every auto strip there is cleared first, so a second run
+    # or `~` still REPLACES the previous auto-plot. The issue-0194 fold was
+    # taken by attach_raw just above.
+    set gis [wviewer::auto_plot_strips $key [llength $rows]]
+  }
+  wviewer::regenerate $key   ;# reflect the clear even if every add fails
   set ei 0
   foreach o $rows {
     set ex [lindex $exs $ei]

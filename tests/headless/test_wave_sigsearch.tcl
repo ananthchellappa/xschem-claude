@@ -2213,6 +2213,9 @@ check {DS11 an empty gesture is a no-op for every destination} \
 # The mapper accepts LABELS (the combobox) and CODES (a CIW line, a replayed log
 # line, item 9's toolbar), case-insensitively, with the space forms; ViVA's own
 # NewSubWin/NewWin are deliberately NOT aliases and land on the fallback.
+# SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §6.1): ViVA's
+# NewSubWin is now a real code and NewWin is the user-ratified alias of a tab,
+# so the two "not aliases" legs below now read newsubwin and newtab.
 check {DS12 dest_norm maps 4 labels + 4 codes + case + space forms; junk -> append} \
   [list [::wviewer::dest_norm Append]    [::wviewer::dest_norm Replace] \
         [::wviewer::dest_norm {New Strip}] [::wviewer::dest_norm {New Tab}] \
@@ -2226,7 +2229,7 @@ check {DS12 dest_norm maps 4 labels + 4 codes + case + space forms; junk -> appe
   [list append replace newstrip newtab \
         append replace newstrip newtab \
         replace newstrip newstrip newtab replace \
-        append append append append]
+        newsubwin newtab append append]
 
 check {DS13 dest_label round-trips every code, and junk -> Append} \
   [list [::wviewer::dest_label append] [::wviewer::dest_label replace] \
@@ -2236,7 +2239,7 @@ check {DS13 dest_label round-trips every code, and junk -> Append} \
         [expr {[::wviewer::dest_norm [::wviewer::dest_label newstrip]] eq {newstrip}}] \
         [expr {[::wviewer::dest_norm [::wviewer::dest_label newtab]] eq {newtab}}]] \
   [list Append Replace {New Strip} {New Tab} Append Append \
-        [list Append Replace {New Strip} {New Tab}] 1 1]
+        [list Append Replace {New Strip} {New SubWin} {New Tab}] 1 1]
 
 # An unknown token gets the HARMLESS policy, and setting on one is a spoken
 # refusal ({}), never a throw.
@@ -2318,10 +2321,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # --- the form ------------------------------------------------------------
   set dsw [ds_open 2 {}] ; update
-  check {DS20 the dialog carries the Destination pair, the 4 labels, default Append} \
+  check {DS20 the dialog carries the Destination pair, the 5 labels, default Append} \
     [list [winfo exists $dsw.ldest] [winfo exists $dsw.dest] \
           [$dsw.dest cget -values] [$dsw.dest get] [$dsw.dest cget -state]] \
-    [list 1 1 [list Append Replace {New Strip} {New Tab}] Append readonly]
+    [list 1 1 [list Append Replace {New Strip} {New SubWin} {New Tab}] Append readonly]
   # the +1 renumber, END TO END and with no hole: nine widgets, rows 0..8.
   check {DS21 every grid row renumbered with no hole: dest 0 ... btns 8} \
     [list [dict get [grid info $dsw.ldest]    -row] \
@@ -2346,13 +2349,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec]] \
     [list {} [list 0 3] [list net1 v(out) i(v1)]]
 
-  # --- REPLACE: the seed is GONE, the strip count does not move ------------
+  # --- REPLACE: the TARGET SUBWINDOW is emptied first ----------------------
+  # ⚠ RESTATED 2026-10-15 (doc/claude/specs/waveform_viewer_subwindows.md §6.2):
+  # Replace is Cadence's "clear the target subwindow then plot". This window is
+  # ONE subwindow, so both strips go and ONE strip is left holding the batch.
+  # The clear is wviewer::clear_subwin, which makes no clear_graph_traces call:
+  # the recorder now reads EMPTY for every Replace, and that is the measurement
+  # that plan_plot's own `clear` key is empty after the window half ran.
   set dsw [ds_open 2 {1 net1}] ; update
   $dsw.dest set Replace
   ds_pick2 $dsw
-  check {DS23 REPLACE empties the target first: exactly the 2 new traces remain, one clear call} \
-    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
-    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
+  check {DS23 REPLACE empties the target subwindow first: one strip, exactly the 2 new traces, no per-strip clear call} \
+    [list [ds_spy_ok] [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list {} [list 2] [list v(out) i(v1)] {}]
 
   # ...and the same gesture onto a target that is ALREADY EMPTY: the traces land
   # identically and NO clear call is made. Counts alone cannot tell these two
@@ -2362,8 +2371,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $dsw.dest set Replace
   ds_pick2 $dsw
   check {DS23b REPLACE onto an ALREADY-EMPTY target lands the same and clears nothing} \
-    [list [ds_spy_ok] [ds_counts] [ms_field 1 vec] $::ds_cgt] \
-    [list {} [list 0 2] [list v(out) i(v1)] {}]
+    [list [ds_spy_ok] [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list {} [list 2] [list v(out) i(v1)] {}]
 
   # --- NEW STRIP: a fresh strip appears and the seed is untouched ----------
   set dsw [ds_open 2 {1 net1}] ; update
@@ -2467,10 +2476,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $dsw.vars selection clear 0 end
   $dsw.vars selection set 2
   $dsw.vars selection set 4
-  check {DS29 REPLACE + a failing pick: the target IS cleared and the message says how far it got} \
-    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 1 vec] \
+  check {DS29 REPLACE + a failing pick: the target subwindow IS cleared and the message says how far it got} \
+    [list [pcall ::wviewer::add_trace_ok wvms] [ds_counts] [ms_field 0 vec] \
           [string match {*added 1 of 2, stopped at 'nosuchvar'*} [ms_err $dsw]]] \
-    [list {} [list 0 1] [list v(out)] 1]
+    [list {} [list 1] [list v(out)] 1]
   destroy $dsw ; update
 
   # --- plot_signals honours the WINDOW destination -------------------------
@@ -2487,16 +2496,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # the POSITIVE control for the recorder: an occupied target IS cleared, once,
   # by index. Without this row the two zero-call checks below would prove only
   # that the recorder never sees anything.
-  check {DS30 plot_signals honours the window destination (Replace empties the target, exactly once)} \
-    [list $dsperrs [ds_counts] [ms_field 1 vec] $::ds_cgt] \
-    [list {} [list 0 2] [list v(out) i(v1)] [list 1]]
+  # (RESTATED 2026-10-15: the target subwindow is emptied by clear_subwin, so
+  # the recorder sees no per-strip clear; the batch is what is left.)
+  check {DS30 plot_signals honours the window destination (Replace empties the target subwindow first)} \
+    [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list {} [list 2] [list v(out) i(v1)] {}]
   # ...and the same seam under append is the unchanged behaviour
   ::wviewer::set_plot_dest append wvms
   set dsperrs [pcall ::wviewer::plot_signals wvms [list net1]]
   update
   check {DS30b plot_signals under append still accumulates} \
-    [list $dsperrs [ds_counts] [ms_field 1 vec]] \
-    [list {} [list 0 3] [list v(out) i(v1) net1]]
+    [list $dsperrs [ds_counts] [ms_field 0 vec]] \
+    [list {} [list 3] [list v(out) i(v1) net1]]
 
   # --- REPLACE under MULTI-plot: the DECLARED limit, exercised LIVE ---------
   # ⚠ The pure DS05/DS05b say the plan carries an empty `clear`. This says what
@@ -2518,9 +2529,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # every count below would still match — it would just do a wavehl remap, a
   # marker sweep and a redraw for nothing, which is exactly what
   # plan_replace_clear's header promises it does not do.
-  check {DS30c REPLACE under multi-plot destroys NOTHING and clears NOTHING (zero calls)} \
-    [list $dsmode $dsperrs [ds_counts] [ms_field 0 vec] [ms_field 1 vec] $::ds_cgt] \
-    [list multi {} [list 1 3] [list v(out)] [list v(out) i(v1) net1] {}]
+  # ⚠ RESTATED 2026-10-15: ruling 24's limit is RETIRED. Under multi a Replace
+  # now empties the target subwindow too, so the occupied strip is gone and
+  # the batch is all that is left.
+  check {DS30c REPLACE under multi-plot now empties the target subwindow too (ruling 24 retired)} \
+    [list $dsmode $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
+    [list multi {} [list 1] [list v(out)] {}]
   pcall ::wviewer::set_plot_mode single wvms
 
   # ...and the SINGLE arm's own no-op case, which is the one a user meets by
@@ -2534,7 +2548,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check {DS30d REPLACE onto an ALREADY-EMPTY target makes no clear call at all} \
     [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
-    [list {} [list 1 0] [list v(out)] {}]
+    [list {} [list 1] [list v(out)] {}]
   rename ds_spy_on {} ; rename ds_spy_off {}
   rename ds_spy_ok {} ; rename ds_spy_plot {}
   catch {unset ::ds_cgt}

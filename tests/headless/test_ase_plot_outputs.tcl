@@ -57,6 +57,17 @@
 #        no auto strip, multi-plot inserts the new ones at the top; a Direct
 #        Plot whose target is ANY auto strip, not only the first, lands
 #        elsewhere
+#   PO16 the plot destination drop-down (R-OUT15): the four labels are the
+#        viewer's codes; set_plot_dest writes the state, dirties, logs once on
+#        a change, stores Replace as the empty default, refuses junk; the key
+#        saves and loads and is never written at its default (every committed
+#        .state file, with a control); Replace empties the target subwindow
+#        (hand strip included) keeping the run's zoom, as one undo step;
+#        Append adds without clearing (single: into the target strip, auto
+#        included; multi: new strips on top); New SubWin adds a targeted
+#        subwindow and keeps the old plot; New Win a tab; a viewer the press
+#        opens is already new; zero rows empty only a Replace target holding an
+#        auto strip; a failed run plots nothing under any choice
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -80,10 +91,29 @@
 #        each ticked signal its own strip, newest on top; the run-end
 #        auto-plot of a real run replaces them; back in single-plot `~` puts
 #        them in one strip again and the extra strips go
+#   PR12 R-OUT15 on the real bench: each choice picked by a real
+#        <<ComboboxSelected>> on the status-bar drop-down, `~` pressed by a real
+#        click, the viewer's tabs / subwindows / strips read back (and the
+#        canvas rects); the run-end auto-plot of a real run under New SubWin
 #   PF1  the SHIPPED Monte Carlo draw, seeded to one that stops the transient
 #        ("Timestep too small", rc 1): the user is told the run failed and
 #        where the log is, the status reads Error, every Value says the run
 #        failed (never "has no transient analysis"), and `~` says it again
+#
+# RED PROOFS for PO14 (reworked) / PO16 / PR12, measured 2026-10-15, each
+# reverted to green:
+#   V4  sw_clear_graphs clears the whole tab -> PO14 (x6), PO16i
+#   V5  auto_plot_strips unscoped (whole tab) -> PO14 (x6), PO16g (x3), PO16i (x2)
+#   V6  ase::plot_dest_of always Replace -> PO16b (x2), c, e (x2), g (x3), i (x2), h (x2)
+#   V7  New SubWin even when the press opened the viewer -> PO16j ONLY
+#   V8  Replace stored as `replace`, not {} -> PO16b clean-session row ONLY
+#   V9  set_plot_dest logs on every call -> PO16b (x2)
+#   V10 plot_dest not in ase::omit_if_empty -> PO16c, PO16f
+#   V13 plot_sites ignores `autook` -> PO16e (x2), g (x3), i
+#   V15 the survivor loses its view -> PO16d zoom row ONLY
+#   V16 clear_subwin pushes no undo point -> PO16d undo row ONLY
+#   V18 zero rows: Replace empties a subwindow with no auto strip -> PO16i ONLY
+#   V19 auto_plot ignores the destination (display arm) -> PO16 (x8), PR12 (x5)
 #
 # REGISTERED IN `hcases` AND `dcases`.
 #
@@ -701,23 +731,26 @@ group PO14 {
     check "PO14 a second ~ in multi-plot REPLACES: the same three strips, no second copy" \
         [po14_strips $key] {{1 v(ramp)} {1 v(lp)} {1 v(sq)}}
 
-    ## a strip the user built by hand, below them, which they are targeting
-    set gs [dict get [wviewer::layout_for $key] graphs]
+    ## a strip the user built by hand, in a SECOND subwindow (R-OUT15: under
+    ## the default Replace `~` empties the TARGET subwindow, so a strip it must
+    ## not touch lives in another one). The target stays on subwindow 1.
+    set gs [lmap g [dict get [wviewer::layout_for $key] graphs] {dict replace $g sw 1}]
     lappend gs [dict create traces [list [dict create expr v(hand)]] logx 0 logy 0 \
-                    x1 {} x2 {} y1 {} y2 {}]
+                    x1 {} x2 {} y1 {} y2 {} sw 2]
     wviewer::set_graphs $key $gs
-    set ::wviewer::target($key) 3
+    set ::wviewer::target($key) 0
     po14_plot $key A B
     pcall ase::ui::plot_outputs $key
-    check "PO14 one row fewer: the surplus auto strip is REMOVED, the hand strip is untouched" \
+    check "PO14 one row fewer: the surplus auto strip is REMOVED, the hand strip in the other subwindow is untouched" \
         [po14_strips $key] {{1 v(lp)} {1 v(sq)} {0 v(hand)}}
-    check "PO14 ...and the target strip followed the hand strip to its new index" \
-        [wviewer::target_index $key] 2
+    check "PO14 ...the two subwindows survive, and the target is still in the replotted one" \
+        [list [lmap g [dict get [wviewer::layout_for $key] graphs] {wviewer::dget $g sw -}] \
+              [wviewer::sw_index [dict get [wviewer::layout_for $key] graphs] [wviewer::target_index $key]]] \
+        {{1 1 2} 0}
     po14_plot $key A B C
     pcall ase::ui::plot_outputs $key
-    check "PO14 one row more: a strip is inserted above the auto strips, the target follows again" \
-        [list [po14_strips $key] [wviewer::target_index $key]] \
-        [list {{1 v(ramp)} {1 v(lp)} {1 v(sq)} {0 v(hand)}} 3]
+    check "PO14 one row more: a strip is inserted above the auto strips, the other subwindow untouched" \
+        [po14_strips $key] {{1 v(ramp)} {1 v(lp)} {1 v(sq)} {0 v(hand)}}
 
     ## the run-end path (run_finished -> after idle -> auto_plot_idle)
     set ::po14_adds {}
@@ -860,6 +893,227 @@ group PO15 {
              {lmap t [dict get $G traces] {dict get $t expr}}] {v(x) v(y)}
     po14_unstub $tk
     po15_drop $tk
+}
+
+# =============================================================================
+# PO16 -- THE PLOT DESTINATION DROP-DOWN (R-OUT15)
+# =============================================================================
+## doc/claude/specs/waveform_viewer_subwindows.md SW18 and §8. The session's
+## `plot_dest` decides where `~` and the run-end auto-plot go, in the viewer's
+## ACTIVE tab and TARGET subwindow. The real ase::ui::auto_plot and the real
+## wviewer model procs run (clear_subwin, new_subwin, auto_plot_strips,
+## plot_sites); PO14's stand-ins cover only the Tk doors, and wviewer::new_tab
+## -- whose tab machinery switches xschem contexts -- is stood in for by one
+## that records the call and starts a fresh one-strip layout, keeping the old
+## one in ::po16_oldtabs. The real new_tab is the display arm's (PR12).
+proc po16_tabstub {} {
+    set ::po16_oldtabs {}
+    rename ::wviewer::new_tab ::po16_orig_new_tab
+    proc ::wviewer::new_tab {{token {}}} {
+        lappend ::po16_oldtabs [dict get [wviewer::layout_for $token] graphs]
+        dict set ::wviewer::layouts $token \
+            [dict create sharedx 0 graphs [list [wviewer::empty_graph]]]
+        set ::wviewer::target($token) 0
+        return [llength $::po16_oldtabs]
+    }
+}
+proc po16_tabunstub {} {
+    rename ::wviewer::new_tab {}
+    rename ::po16_orig_new_tab ::wviewer::new_tab
+}
+## the subwindow tag of every strip, `-` for untagged
+proc po16_tags {key} {
+    if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return ERR:$gs }
+    lmap g $gs {wviewer::dget $g sw -}
+}
+proc po16_tsw {key} {
+    set gs [dict get [wviewer::layout_for $key] graphs]
+    wviewer::sw_index $gs [wviewer::target_index $key]
+}
+group PO16 {
+    ## --- the codes, the labels and the state key --------------------------
+    check "PO16a the drop-down offers exactly the user's four, in order" \
+        [ase::ui::plot_dest_labels] {Append Replace {New SubWin} {New Win}}
+    check "PO16a each label is the viewer's own code (New Win is a viewer tab)" \
+        [lmap l [ase::ui::plot_dest_labels] {ase::ui::plot_dest_code $l}] \
+        [lmap l [ase::ui::plot_dest_labels] {wviewer::dest_norm $l}]
+    check "PO16a ...and those codes are append replace newsubwin newtab, each labelled back" \
+        [lmap c {append replace newsubwin newtab} {ase::ui::plot_dest_label $c}] \
+        [ase::ui::plot_dest_labels]
+    check "PO16a the default, an empty and an unknown value all read Replace" \
+        [list [ase::plot_dest_of [ase::state_default]] [ase::plot_dest_of {plot_dest {}}] \
+              [ase::plot_dest_of {plot_dest newstrip}] [ase::plot_dest_of {}]] \
+        {replace replace replace replace}
+
+    set key [po_session po16 tbpo {{name A expr v(sq) save 1 plot 1} {name B expr v(lp) save 1 plot 1}} 1]
+    set ::po16_log {}
+    rename ::ase::ui::log_action ::po16_log_orig
+    proc ::ase::ui::log_action {line} { lappend ::po16_log $line }
+    check "PO16b fixture: a fresh session is clean and reads Replace" \
+        [list [ase::session_dirty $key] [ase::ui::plot_dest $key]] {0 replace}
+    check "PO16b choosing New SubWin answers its code, writes the state and dirties the session" \
+        [list [pcall ase::ui::set_plot_dest $key {New SubWin}] \
+              [dict get [ase::session_state $key] plot_dest] [ase::session_dirty $key]] \
+        {newsubwin newsubwin 1}
+    check "PO16b ...logged as ONE replayable line with the code" \
+        $::po16_log [list [list ase::ui::set_plot_dest $key newsubwin]]
+    pcall ase::ui::set_plot_dest $key newsubwin
+    check "PO16b the same choice again logs nothing" [llength $::po16_log] 1
+    check "PO16b Replace is stored as the empty default, so choosing it back leaves the session clean" \
+        [list [pcall ase::ui::set_plot_dest $key Replace] \
+              [dict get [ase::session_state $key] plot_dest] [ase::session_dirty $key]] \
+        {replace {} 0}
+    set ::po_echoes {}
+    check "PO16b a bad request is refused, said, and changes nothing" \
+        [list [pcall ase::ui::set_plot_dest $key sideways] [ase::ui::plot_dest $key] \
+              [llength [lsearch -all -glob $::po_echoes {*bad plot destination*}]] \
+              [llength $::po16_log]] \
+        {{} replace 1 2}
+    rename ::ase::ui::log_action {}
+    rename ::po16_log_orig ::ase::ui::log_action
+
+    ## --- saved and restored with the state --------------------------------
+    set sst [dict replace [ase::state_default] plot_dest newtab]
+    set ser [ase::state_serialize $sst]
+    check "PO16c a non-default choice is written as one state line" \
+        [lsearch -all -inline [split $ser \n] {plot_dest *}] {{plot_dest newtab}}
+    check "PO16c the default is not written at all (ase::omit_if_empty)" \
+        [lsearch -all -inline [split [ase::state_serialize [ase::state_default]] \n] {plot_dest*}] {}
+    set sf [file join $::scratch po16 saved.state]
+    ase::state_save $sf $sst
+    check "PO16c ...and reads back from the file" [ase::plot_dest_of [ase::state_load $sf]] newtab
+
+    ## --- Replace (the default): the TARGET subwindow is emptied first -----
+    set saved_default [expr {[info exists ::wviewer_plot_mode] ? $::wviewer_plot_mode : {}}]
+    po14_stub
+    set ::wviewer_plot_mode single
+    pcall ase::ui::plot_outputs $key
+    ## a hand strip in the SAME subwindow as the run's plot, and a zoom the
+    ## user set on the run's strip
+    set gs [dict get [wviewer::layout_for $key] graphs]
+    lset gs 0 [dict replace [lindex $gs 0] x1 0.001 x2 0.002]
+    lappend gs [dict create traces [list [dict create expr v(hand)]] logx 0 logy 0 \
+                    x1 {} x2 {} y1 {} y2 {}]
+    wviewer::set_graphs $key $gs
+    set ::wviewer::target($key) 1
+    set u0 [lindex [wviewer::history_depth $key] 0]
+    pcall ase::ui::plot_outputs $key
+    check "PO16d Replace empties the target subwindow: the hand strip there is gone (Cadence's Replace)" \
+        [po14_strips $key] {{1 {v(sq) v(lp)}}}
+    check "PO16d ...the run's strip keeps the zoom the user set on it" \
+        [list [wviewer::dget [lindex [dict get [wviewer::layout_for $key] graphs] 0] x1 {}] \
+              [wviewer::dget [lindex [dict get [wviewer::layout_for $key] graphs] 0] x2 {}]] {0.001 0.002}
+    check "PO16d ...and the clear is ONE undo step" \
+        [expr {[lindex [wviewer::history_depth $key] 0] - $u0}] 1
+
+    ## --- Append: the target subwindow keeps everything --------------------
+    ase::ui::set_plot_dest $key append
+    pcall ase::ui::plot_outputs $key
+    check "PO16e Append in single-plot adds to the target strip (an auto strip may take it): no clear" \
+        [po14_strips $key] {{1 {v(sq) v(lp) v(sq) v(lp)}}}
+    set ::wviewer::mode($key) multi
+    pcall ase::ui::plot_outputs $key
+    check "PO16e Append in multi-plot: new strips on top, newest first, the old plot kept" \
+        [po14_strips $key] {{0 v(lp)} {0 v(sq)} {1 {v(sq) v(lp) v(sq) v(lp)}}}
+    set ::wviewer::mode($key) single
+
+    ## --- New SubWin: a new subwindow holds the run; the old plot stays -----
+    ase::ui::set_plot_dest $key newsubwin
+    set before [po14_strips $key]
+    pcall ase::ui::plot_outputs $key
+    check "PO16g New SubWin: a second subwindow, made the target, holds the run in an auto strip" \
+        [list [po16_tags $key] [po16_tsw $key] [lindex [po14_strips $key] end]] \
+        {{1 1 1 2} 1 {1 {v(sq) v(lp)}}}
+    check "PO16g ...and the first subwindow is untouched, traces and auto marker included" \
+        [lrange [po14_strips $key] 0 2] $before
+    set ::wviewer::mode($key) multi
+    pcall ase::ui::plot_outputs $key
+    check "PO16g a second press in multi-plot: a THIRD subwindow, one auto strip per row, newest on top" \
+        [list [po16_tags $key] [po16_tsw $key] [lrange [po14_strips $key] end-1 end]] \
+        {{1 1 1 2 3 3} 2 {{1 v(lp)} {1 v(sq)}}}
+    set ::wviewer::mode($key) single
+
+    ## --- zero rows: only Replace empties anything ---------------------------
+    set snap [dict get [wviewer::layout_for $key] graphs]
+    po14_plot $key
+    foreach d {append newsubwin newtab} {
+        ase::ui::set_plot_dest $key $d
+        pcall ase::ui::plot_outputs $key
+    }
+    check "PO16i nothing ticked under Append, New SubWin and New Win changes nothing" \
+        [expr {[dict get [wviewer::layout_for $key] graphs] eq $snap}] 1
+    ase::ui::set_plot_dest $key replace
+    pcall ase::ui::plot_outputs $key
+    check "PO16i ...under Replace the target subwindow is left one empty auto strip, the others kept" \
+        [list [po16_tags $key] [lindex [po14_strips $key] end] \
+              [expr {[lrange [dict get [wviewer::layout_for $key] graphs] 0 3] eq [lrange $snap 0 3]}]] \
+        {{1 1 1 2 3} {1 {}} 1}
+    set ::wviewer::target($key) 0
+    set snap [dict get [wviewer::layout_for $key] graphs]
+    set gs $snap
+    for {set i 0} {$i < 3} {incr i} { lset gs $i [dict remove [lindex $gs $i] auto] }
+    wviewer::set_graphs $key $gs
+    set snap [dict get [wviewer::layout_for $key] graphs]
+    pcall ase::ui::plot_outputs $key
+    check "PO16i ...but a target subwindow `~` never plotted into (no auto strip) is not emptied by a press that plots nothing" \
+        [expr {[dict get [wviewer::layout_for $key] graphs] eq $snap}] 1
+    po14_plot $key A B
+
+    ## --- New Win: a new viewer tab holds the run ----------------------------
+    po16_tabstub
+    ase::ui::set_plot_dest $key newtab
+    set before [dict get [wviewer::layout_for $key] graphs]
+    pcall ase::ui::plot_outputs $key
+    check "PO16h New Win: one new tab, holding the run in one auto strip" \
+        [list [llength $::po16_oldtabs] [po14_strips $key]] {1 {{1 {v(sq) v(lp)}}}}
+    check "PO16h ...the previous tab kept its plot" \
+        [expr {[lindex $::po16_oldtabs 0] eq $before}] 1
+    po16_tabunstub
+
+    ## --- a viewer the press OPENS is already the new window/subwindow ------
+    po14_unstub $key
+    po14_stub
+    po16_tabstub
+    ase::ui::set_plot_dest $key newsubwin
+    pcall ase::ui::plot_outputs $key
+    check "PO16j New SubWin with the viewer closed: it opens with ONE subwindow holding the run" \
+        [list [po16_tags $key] [po14_strips $key]] {- {{1 {v(sq) v(lp)}}}}
+    po14_unstub $key
+    po14_stub
+    ase::ui::set_plot_dest $key newtab
+    pcall ase::ui::plot_outputs $key
+    check "PO16j New Win with the viewer closed: no second tab is made" \
+        [list [llength $::po16_oldtabs] [po14_strips $key]] {0 {{1 {v(sq) v(lp)}}}}
+    po16_tabunstub
+
+    ## --- a failed run plots nothing under any choice (R-OUT13 kept) -------
+    po_log $key 1
+    set n0 [llength [dict get [wviewer::layout_for $key] graphs]]
+    set ::po14_adds {}
+    foreach d {append replace newsubwin newtab} {
+        ase::ui::set_plot_dest $key $d
+        pcall ase::ui::plot_outputs $key
+    }
+    check "PO16k after a failed run no choice plots or makes anything" \
+        [list $::po14_adds [llength [dict get [wviewer::layout_for $key] graphs]] [po16_tags $key]] \
+        [list {} $n0 -]
+    po14_unstub $key
+    catch {ase::session_close $key}
+    unset -nocomplain ::wviewer_plot_mode
+    if {$saved_default ne {}} { set ::wviewer_plot_mode $saved_default }
+
+    ## --- every committed state still serialises without the key -----------
+    set nst 0; set bad {}
+    foreach f [split [exec git -C $::repo ls-files *.state] \n] {
+        if {$f eq {}} { continue }
+        if {[catch {ase::state_load [file join $::repo $f]} s0]} { continue }
+        incr nst
+        if {[string first plot_dest [ase::state_serialize $s0]] >= 0} { lappend bad $f }
+    }
+    check "PO16f no committed .state file gains a plot_dest line on load -> save ($nst files)" \
+        [list [expr {$nst > 50}] $bad] {1 {}}
+    check "PO16f control: the same file with a choice made DOES serialise differently" \
+        [expr {[ase::state_serialize [dict replace $s0 plot_dest append]] ne [ase::state_serialize $s0]}] 1
 }
 
 # =============================================================================
@@ -1172,6 +1426,76 @@ if {!$GUI} {
         check "PR11 back in single-plot, ~ puts them in ONE strip again and the extra strips go" \
             [list [pr_autos $key] [llength [dict get [wviewer::layout_for $key] graphs]]] \
             [list [list $::pr_want] $n0]
+    }
+    ## R-OUT15 on the real bench: the status bar's drop-down, chosen by a real
+    ## <<ComboboxSelected>>, decides where a real click on `~` (and the run-end
+    ## auto-plot) puts the ticked signals: the viewer's tabs, subwindows and
+    ## strips are read back after each press.
+    proc pr_dest {top lab} {
+        $top.status.dest set $lab
+        event generate $top.status.dest <<ComboboxSelected>>
+        update
+    }
+    ## {tabs subwindows target-subwindow {per-strip {auto traces}}} of the active tab
+    proc pr_view {key} {
+        if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return ERR:$gs }
+        set strips {}
+        foreach g $gs {
+            if {[catch {lmap tr [wviewer::dget $g traces {}] {dict get $tr expr}} ex]} { set ex ERR }
+            lappend strips [list [wviewer::dget $g auto 0] $ex]
+        }
+        return [list [llength [wviewer::tab_records $key]] [wviewer::sw_count $gs] \
+                     [wviewer::sw_index $gs [wviewer::target_index $key]] $strips]
+    }
+    proc pr_rects {key} {
+        xschem new_schematic switch [wviewer::window_for $key].drw
+        return [list [pcall xschem get graph_rects] \
+                     [llength [dict get [wviewer::layout_for $key] graphs]]]
+    }
+    group PR12 {
+        set top [ase::ui::window_for $key]
+        check "PR12 fixture: the viewer is up in single-plot, the drop-down reads Replace" \
+            [list [expr {[wviewer::window_for $key] ne {}}] [wviewer::plot_mode $key] \
+                  [$top.status.dest get]] {1 single Replace}
+        set t0 [llength [wviewer::tab_records $key]]
+        pr_dest $top Replace
+        pr_click $top.strip.plot
+        set one [list 1 $::pr_want]
+        check "PR12 Replace: one subwindow, the run's signals in ONE auto strip" \
+            [pr_view $key] [list $t0 1 0 [list $one]]
+        pr_dest $top {New SubWin}
+        check "PR12 the drop-down wrote the session state" [ase::ui::plot_dest $key] newsubwin
+        pr_click $top.strip.plot
+        check "PR12 New SubWin: a second subwindow, made the target, holds the run; the first keeps its plot" \
+            [pr_view $key] [list $t0 2 1 [list $one $one]]
+        check "PR12 ...on the canvas: one graph rect per strip, the two in different X groups" \
+            [list [pr_rects $key] [expr {[pcall xschem getprop rect 2 0 xgroup] ne [pcall xschem getprop rect 2 1 xgroup]}]] \
+            {{2 2} 1}
+        pr_dest $top Append
+        pr_click $top.strip.plot
+        check "PR12 Append: the target subwindow's strip gains the signals again, the first subwindow untouched" \
+            [pr_view $key] [list $t0 2 1 [list $one [list 1 [concat $::pr_want $::pr_want]]]]
+        pr_dest $top {New Win}
+        pr_click $top.strip.plot
+        set recs [wviewer::tab_records $key]
+        check "PR12 New Win: a new viewer tab holding the run in one subwindow" \
+            [pr_view $key] [list [expr {$t0 + 1}] 1 0 [list $one]]
+        if {[catch {wviewer::sw_count [dict get [lindex $recs end-1] layout graphs]} pr_n2]} {
+            set pr_n2 ERR:$pr_n2
+        }
+        check "PR12 ...and the tab it left still holds its two subwindows" $pr_n2 2
+        pr_dest $top {New SubWin}
+        ase::ui::do_run $key
+        set rc [ase::wait [ase::session_getattr $key run_id]]
+        for {set i 0} {$i < 40} {incr i} { update ; after 50 }
+        check "PR12 the run-end auto-plot honours it too: a real run under New SubWin adds a subwindow" \
+            [list $rc [pr_view $key]] [list 0 [list [expr {$t0 + 1}] 2 1 [list $one $one]]]
+        pr_dest $top Replace
+        check "PR12 back on Replace the state holds the default, empty" \
+            [list [ase::ui::plot_dest $key] [dict get [ase::session_state $key] plot_dest]] {replace {}}
+        pr_click $top.strip.plot
+        check "PR12 Replace empties only the TARGET subwindow" \
+            [pr_view $key] [list [expr {$t0 + 1}] 2 1 [list $one $one]]
     }
     ## THE SHIPPED DRAW, SEEDED.  The committed state's own variables and
     ## models (ABSVAR 0.03, VCC by agauss, section tt_mm), plus `.options
