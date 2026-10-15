@@ -17,6 +17,16 @@
 #         and the reuse rules (a trace move / a split never takes an empty
 #         strip from another subwindow).
 #   SWN*  no-window guards, both arms.
+#   SWX*  INDEPENDENT X (stage 2). SWX1-SWX3 both arms: the axis-margin apply
+#         (`xschem graph_axis_zoom`) on an ordinary schematic carrying the
+#         viewer's `xgroup=` tokens, the selected arm, a string compare, and
+#         controls with the tokens stripped. SWX4-SWX12 display: the C gesture
+#         loop through `xschem callback .drw` -- MMB pan, RMB box zoom, the four
+#         arrows, MMB in the X margin, the LMB axis-margin drag, f, and the
+#         selected arm -- each with a tokenless CONTROL proving the gesture
+#         does reach the other rects. SWX13-SWX18 display: the same claims in
+#         the REAL viewer through Tk events on its canvas (MMB, RMB, Ctrl+wheel,
+#         Shift+wheel, Left arrow, f on the target subwindow).
 #   SWG*  DISPLAY -- the real window: the grid on the canvas (graphbb), the
 #         rect tokens, click-to-target and the in-place frame move, New/Close
 #         SubWin through the menu and keys, plotting into the target
@@ -40,6 +50,21 @@
 #   S5 move_marker: skip the swframe rewrite  -> SWG5 frame leg ONLY
 #   S6 plot_signals: drop the `+ $swf` plan translation
 #        -> SWG6 (all six), SWG7, SWG8, SWG9, then the band aborts
+# Stage 2 (independent X), measured 2026-10-15, each reverted to green:
+#   R0 the stage-1 C (draw.c, callback.c, xschem.h at 5cd0ee6d)
+#        -> display SWX1 (x2), SWX2, SWX3, SWX5-SWX12 (x10), SWX14 (x2), SWX15;
+#           nogui SWX1 (x2), SWX2, SWX3
+#   R1 graph_shares_x: drop the graph_same_xgroup test
+#        -> as R0 minus the two SWX8 rows (the arrow X zoom has its own flag)
+#   R2 callback.c xlink_loose: drop its graph_same_xgroup term -> SWX8 (x2) ONLY
+#   R3 graph_shares_x: let a SELECTED rect skip the group test
+#        -> SWX2 (both arms), SWX12
+#   T1 wheel_zoom: scope = every strip -> SWG10 wheel leg, SWX16 Ctrl+wheel
+#   T2 pan_x: scope = every strip -> SWG10 pan leg, SWX16 Shift+wheel, SWX17
+#   T3 fit: scope = every strip -> SWX18 ONLY (no stage-1 row fenced Fit)
+#   NOT fenced: graph_fullxzoom()'s `master = i` when the stale mouse master is
+#   in another X group. With one raw loaded every group's union is the same
+#   extent, so no fixture here can tell the two apart.
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -209,6 +234,256 @@ check "SWN1 new_subwin with no viewer answers {} without throwing" \
 check "SWN1 close_subwin likewise" [pcall {wviewer::close_subwin nosuchtoken}] {}
 check "SWN1 the _at wrappers likewise" \
   [list [pcall {wviewer::new_subwin_at .nosuch}] [pcall {wviewer::close_subwin_at .nosuch}]] {{} {}}
+
+# ============================================================================
+# SWX* -- INDEPENDENT X (spec §7, stage 2): the time axes of different
+# subwindows are ALWAYS independent. The C half is ONE predicate,
+# graph_shares_x() (draw.c), which tests graph_same_xgroup() -- the rects'
+# `xgroup=` token, absent == absent -- before any arm, the `selected` arm
+# included; callback.c's gesture loop reads it (and its arrow-key variant)
+# through two per-rect flags and holds no copy of its own.
+#
+# Fixture: an ORDINARY schematic window (.drw), four graph rects showing one
+# trace. Rects 0,1 carry xgroup=1 and rects 2,3 xgroup=2 -- the exact tokens
+# wviewer::sw_props writes. Every gesture starts on rect 0, so the rows read:
+# rect 1 FOLLOWED (strips inside a subwindow stay linked) and rects 2,3 are
+# BYTE-IDENTICAL. A CONTROL with the tokens stripped shows the same gesture
+# DOES move rects 2,3, so "byte-identical" is a measurement of the predicate and
+# not of a gesture that did nothing.
+#   SWX1-SWX3  both arms: the axis-margin apply (`xschem graph_axis_zoom`,
+#              which the LMB axis-margin drag calls) and its group
+#   SWX4-SWX11 display: the C gesture loop through `xschem callback .drw`
+#              (has_x 0 returns before the loop, so --nogui cannot reach it)
+# ============================================================================
+proc swx_reset {} {
+  catch {xschem unselect_all}
+  catch {xschem select_all}
+  catch {xschem delete}
+  catch {xschem unselect_all}
+  catch {xschem set_modify 0}
+}
+proc swx_x {i} {
+  return [list [xschem getprop rect 2 $i x1] [xschem getprop rect 2 $i x2]]
+}
+proc swx_all {} { lmap i {0 1 2 3} {swx_x $i} }
+# every rect back to x 0..1; `groups` 1 writes the subwindow tokens, 0 strips them
+proc swx_set {groups} {
+  for {set i 0} {$i < 4} {incr i} {
+    foreach {k v} {x1 0 x2 1.0 y1 0 y2 2.5} { xschem setprop -fast rect 2 $i $k $v }
+    if {$groups} {
+      xschem setprop -fast rect 2 $i xgroup [expr {$i < 2 ? 1 : 2}]
+    } else {
+      xschem setprop -fast rect 2 $i xgroup
+    }
+  }
+  catch {xschem unselect_all}
+}
+# rect 0 moved, rect 1 identical to it, rects 2/3 at {0 1.0}: the verdict word
+proc swx_verdict {} {
+  set w [swx_all]
+  set moved [expr {[lindex $w 0] ne {0 1.0}}]
+  set linked [expr {[lindex $w 1] eq [lindex $w 0]}]
+  set alone [expr {[lindex $w 2] eq {0 1.0} && [lindex $w 3] eq {0 1.0}}]
+  return [list moved=$moved linked=$linked others_alone=$alone]
+}
+# the CONTROL verdict: the same gesture with no tokens moves all four together
+proc swx_control {} {
+  set w [swx_all]
+  return [list moved=[expr {[lindex $w 0] ne {0 1.0}}] \
+               all_follow=[expr {[llength [lsort -unique $w]] == 1}]]
+}
+
+if {[catch {
+swx_reset
+pcall {xschem raw clear}
+pcall {xschem raw new swx.raw dc vsweep 0 1.0 0.1}
+pcall {xschem raw add v_a {vsweep 1 +}}
+for {set i 0} {$i < 4} {incr i} {
+  xschem set rectcolor 2
+  xschem rect 0 [expr {$i * 500}] 800 [expr {$i * 500 + 400}] -1 {flags=graph} 0
+  xschem setprop -fast rect 2 $i node v_a
+}
+check "SWX0 four graph rects in the fixture" [pcall {xschem get graph_rects}] 4
+
+# --- SWX1-3: the apply (both arms) -----------------------------------------
+swx_set 1
+check "SWX1 axis apply on rect 0: its subwindow follows, the other is byte-identical" \
+  [pcall {xschem graph_axis_zoom 0 x 0.25 0.75; swx_verdict}] {moved=1 linked=1 others_alone=1}
+swx_set 1
+check "SWX1 ...and from the OTHER side: rect 2 leaves rects 0,1 alone, 3 follows" \
+  [pcall {xschem graph_axis_zoom 2 x 0.25 0.75; swx_all}] {{0 1.0} {0 1.0} {0.25 0.75} {0.25 0.75}}
+swx_set 1
+xschem select rect 2 2
+check "SWX2 a SELECTED rect in another subwindow does not follow either" \
+  [pcall {xschem graph_axis_zoom 0 x 0.25 0.75; swx_verdict}] {moved=1 linked=1 others_alone=1}
+swx_set 0
+xschem setprop -fast rect 2 2 sim_type ac
+xschem setprop -fast rect 2 3 sim_type ac
+xschem select rect 2 2
+check "SWX2 control: with no tokens the selected arm DOES pull rect 2 across\
+ (rect 3, another sim_type, does not)" \
+  [pcall {xschem graph_axis_zoom 0 x 0.25 0.75; lmap i {1 2 3} {swx_x $i}}] \
+  {{0.25 0.75} {0.25 0.75} {0 1.0}}
+xschem setprop -fast rect 2 2 sim_type
+xschem setprop -fast rect 2 3 sim_type
+swx_set 0
+check "SWX3 control: with no tokens (one subwindow, any schematic) all four follow" \
+  [pcall {xschem graph_axis_zoom 0 x 0.25 0.75; swx_control}] {moved=1 all_follow=1}
+swx_set 1
+xschem setprop -fast rect 2 1 xgroup
+check "SWX3 a token is compared as a string: absent vs 1 is a different group" \
+  [pcall {xschem graph_axis_zoom 0 x 0.25 0.75; lindex [swx_all] 1}] {0 1.0}
+
+# --- SWX4-11: the C gesture loop (display only) ------------------------------
+if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .drw]} {
+  # X11 codes: 2 KeyPress, 4 ButtonPress, 5 ButtonRelease, 6 MotionNotify;
+  # masks 256 Button1, 512 Button2, 1024 Button3
+  proc swx_cb {ev x y key btn st} { xschem callback .drw $ev $x $y $key $btn 0 $st }
+  # drop a stale latch (GRAPHPAN freezes graph_master): ESC, releases, a move
+  # to a pixel no strip occupies
+  proc swx_unlatch {} {
+    foreach b {1 2 3} { catch {swx_cb 5 2 2 0 $b 0} }
+    catch {swx_cb 2 2 2 65307 0 0}
+    catch {swx_cb 6 2 2 0 0 0}
+    catch {xschem unselect_all}
+  }
+  # WORLD -> canvas pixel, through the engine's own transform (X_TO_SCREEN)
+  proc swx_px {wx wy} {
+    set z [xschem get zoom]; set xo [xschem get xorigin]; set yo [xschem get yorigin]
+    return [list [expr {int(($wx + $xo) / $z)}] [expr {int(($wy + $yo) / $z)}]]
+  }
+  catch {wm deiconify .}
+  for {set i 0} {$i < 100} {incr i} {
+    catch {update}
+    if {[winfo ismapped .drw]} break
+    after 20
+  }
+  catch {xschem zoom_full}
+  catch {update}
+  # rect 0's plot box, asked of the engine (graph_plotbox_at) along the rect's
+  # mid row / mid column -- never predicted from the rect
+  lassign [swx_px 0 0] ux1 uy1
+  lassign [swx_px 800 400] ux2 uy2
+  set my [expr {($uy1 + $uy2) / 2}]
+  set mx [expr {($ux1 + $ux2) / 2}]
+  set bx1 -1; set bx2 -1; set by1 -1; set by2 -1
+  for {set x $ux1} {$x <= $ux2} {incr x} {
+    if {[xschem get graph_plotbox_at 0 $x $my]} { if {$bx1 < 0} { set bx1 $x }; set bx2 $x }
+  }
+  for {set y $uy1} {$y <= $uy2} {incr y} {
+    if {[xschem get graph_plotbox_at 0 $mx $y]} { if {$by1 < 0} { set by1 $y }; set by2 $y }
+  }
+  set bw [expr {$bx2 - $bx1}]
+  check_true "SWX4 rect 0's plot box was located (box=$bx1 $by1 $bx2 $by2)" \
+    [expr {$bx1 >= 0 && $by1 >= 0 && $bw > 60 && $uy2 - $by2 > 6}]
+  set cx [expr {$bx1 + $bw / 3}]
+  set cy [expr {($by1 + $by2) / 2}]
+  set xmy [expr {($by2 + $uy2) / 2}]         ;# the bottom (X) margin row
+
+  # each gesture: unlatch, put the pointer on rect 0, run the events
+  proc swx_mmb {} {
+    global cx cy bw
+    swx_unlatch
+    swx_cb 6 $cx $cy 0 0 0
+    swx_cb 4 $cx $cy 0 2 0
+    swx_cb 6 [expr {$cx + $bw / 8}] $cy 0 0 512
+    swx_cb 6 [expr {$cx + $bw / 4}] $cy 0 0 512
+    swx_cb 5 [expr {$cx + $bw / 4}] $cy 0 2 512
+  }
+  proc swx_rmb {} {
+    global cx cy bw
+    swx_unlatch
+    swx_cb 6 $cx $cy 0 0 0
+    swx_cb 4 $cx $cy 0 3 0
+    swx_cb 6 [expr {$cx + $bw / 8}] $cy 0 0 1024
+    swx_cb 6 [expr {$cx + $bw / 4}] $cy 0 0 1024
+    swx_cb 5 [expr {$cx + $bw / 4}] $cy 0 3 1024
+  }
+  proc swx_key {n} {
+    global cx cy
+    swx_unlatch
+    swx_cb 6 $cx $cy 0 0 0
+    swx_cb 2 $cx $cy $n 0 0
+  }
+  proc swx_bottom {} {
+    global cx xmy bw
+    swx_unlatch
+    swx_cb 6 $cx $xmy 0 0 0
+    swx_cb 4 $cx $xmy 0 2 0
+    swx_cb 6 [expr {$cx + $bw / 8}] $xmy 0 0 512
+    swx_cb 6 [expr {$cx + $bw / 4}] $xmy 0 0 512
+    swx_cb 5 [expr {$cx + $bw / 4}] $xmy 0 2 512
+  }
+  proc swx_axis {} {
+    global cx xmy bw
+    swx_unlatch
+    swx_cb 6 $cx $xmy 0 0 0
+    swx_cb 4 $cx $xmy 0 1 0
+    swx_cb 6 [expr {$cx + $bw / 8}] $xmy 0 0 256
+    swx_cb 6 [expr {$cx + $bw / 4}] $xmy 0 0 256
+    swx_cb 5 [expr {$cx + $bw / 4}] $xmy 0 1 256
+  }
+  # f wants a window to widen: start every rect at 0.25..0.5
+  proc swx_fit {} {
+    for {set i 0} {$i < 4} {incr i} {
+      xschem setprop -fast rect 2 $i x1 0.25
+      xschem setprop -fast rect 2 $i x2 0.5
+    }
+    swx_key 102
+  }
+  proc swx_fit_verdict {} {
+    set w [swx_all]
+    return [list fit=[expr {[lindex $w 0] ne {0.25 0.5}}] \
+                 linked=[expr {[lindex $w 1] eq [lindex $w 0]}] \
+                 others_alone=[expr {[lindex $w 2] eq {0.25 0.5} && [lindex $w 3] eq {0.25 0.5}}]]
+  }
+  set gestures {
+    SWX5  swx_mmb              {MMB pan}
+    SWX6  swx_rmb              {RMB box zoom}
+    SWX7  {swx_key 65361}      {Left-arrow pan}
+    SWX7  {swx_key 65363}      {Right-arrow pan}
+    SWX8  {swx_key 65364}      {Down-arrow X zoom (the looser locked-or-selected rule)}
+    SWX8  {swx_key 65362}      {Up-arrow X zoom (the looser locked-or-selected rule)}
+    SWX9  swx_bottom           {MMB drag in the X margin (absolute positioning)}
+    SWX10 swx_axis             {LMB axis-margin drag}
+  }
+  foreach {id g what} $gestures {
+    swx_set 0
+    pcall $g
+    set ctl [swx_control]
+    swx_set 1
+    pcall $g
+    check "$id $what on rect 0: its subwindow follows, the other stays byte-identical\
+ (control without tokens: $ctl)" \
+      [list $ctl [swx_verdict]] {{moved=1 all_follow=1} {moved=1 linked=1 others_alone=1}}
+  }
+  swx_set 0
+  pcall swx_fit
+  set ctl [swx_fit_verdict]
+  swx_set 1
+  pcall swx_fit
+  check "SWX11 f (full X) on rect 0 fits its subwindow and leaves the other alone\
+ (control without tokens: $ctl)" \
+    [list $ctl [swx_fit_verdict]] {{fit=1 linked=1 others_alone=0} {fit=1 linked=1 others_alone=1}}
+  # the selected arm through the real loop, not only the apply
+  swx_set 1
+  swx_unlatch
+  xschem select rect 2 2
+  pcall {
+    global cx cy bw
+    swx_cb 6 $cx $cy 0 0 0
+    swx_cb 4 $cx $cy 0 2 0
+    swx_cb 6 [expr {$cx + $bw / 8}] $cy 0 0 512
+    swx_cb 6 [expr {$cx + $bw / 4}] $cy 0 0 512
+    swx_cb 5 [expr {$cx + $bw / 4}] $cy 0 2 512
+  }
+  check "SWX12 a SELECTED rect of the other subwindow does not follow an MMB pan" \
+    [swx_verdict] {moved=1 linked=1 others_alone=1}
+  swx_unlatch
+}
+swx_reset
+pcall {xschem raw clear}
+} swxerr]} { check "SWX* band ran to its end" "ERR:$swxerr" ok }
 
 # ============================================================================
 # SWG* -- the real window. Self-SKIPs without a usable DISPLAY.
@@ -431,6 +706,120 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "SWG10 wheel zoom in subwindow 1 leaves subwindow 2 alone" \
     [list [rprop 4 x1] [rprop 4 x2]] $b4
 
+  # ---- SWX13-SWX18: independent X in the REAL viewer, through Tk events -----
+  # The same claims as SWX5-SWX11, end to end: events generated ON THE VIEWER
+  # CANVAS go through its own bindings (the generic <Button>/<Motion> forward to
+  # C for MMB/RMB, wheel_bind for Ctrl+wheel, key_filter for the arrows and f)
+  # into the subwindow tokens that regenerate wrote. Five strips: 0-3 in
+  # subwindow 1, 4 in subwindow 3. `-when now` delivers synchronously and the
+  # pump runs BEFORE each gesture, never between its motion and its press
+  # (issue 1659: a pumped <Configure> rewrites C's mouse pair). Pixels are the
+  # canvas' own strip bands; event -x/-y are canvas pixels, which is what C's
+  # callback takes.
+  proc swxv_reset {} {
+    wviewer::capture_live_view_state $::tok
+    set gs [lay]
+    for {set i 0} {$i < [llength $gs]} {incr i} {
+      lset gs $i [dict replace [lindex $gs $i] x1 0 x2 1]
+    }
+    wviewer::set_graphs $::tok $gs
+    wviewer::regenerate $::tok
+    update
+  }
+  proc swxv_x {gi} { list [rprop $gi x1] [rprop $gi x2] }
+  # the gesture started in subwindow `from` (strip list), the other is `other`
+  proc swxv_verdict {from other} {
+    set w0 [swxv_x [lindex $from 0]]
+    set moved [expr {$w0 ne {0 1}}]
+    set linked 1
+    foreach gi $from { if {[swxv_x $gi] ne $w0} { set linked 0 } }
+    set alone 1
+    foreach gi $other { if {[swxv_x $gi] ne {0 1}} { set alone 0 } }
+    return [list moved=$moved linked=$linked others_alone=$alone]
+  }
+  proc ev {args} { event generate $::vdrw {*}$args -when now }
+  proc swxv_drag {gi btn} {
+    lassign [mid $gi] px py
+    set mask [expr {$btn == 2 ? 512 : 1024}]
+    set dx [expr {[lindex [lindex [wviewer::strip_bands_px $::vdrw] $gi] 2] -
+                  [lindex [lindex [wviewer::strip_bands_px $::vdrw] $gi] 0]}]
+    set qx [expr {$px + $dx / 6}]
+    update
+    ev <Motion> -x $px -y $py
+    ev <ButtonPress-$btn> -x $px -y $py
+    ev <Motion> -x [expr {($px + $qx) / 2}] -y $py -state $mask
+    ev <Motion> -x $qx -y $py -state $mask
+    ev <ButtonRelease-$btn> -x $qx -y $py -state $mask
+    update
+  }
+  set sw1 {0 1 2 3}; set sw3 {4}
+  set wvs [wviewer::strip_bands_px $vdrw]
+  check_true "SWX13 the viewer holds two subwindows whose strips carry two xgroups" \
+    [expr {[ltags] eq {1 1 1 1 3} && [rprop 0 xgroup] ne [rprop 4 xgroup]
+           && [rprop 0 xgroup] eq [rprop 3 xgroup] && [rprop 0 xgroup] ne {}}]
+  swxv_reset
+  check "SWX13 teeth: the reset really puts every strip's rect on 0..1" \
+    [lsort -unique [lmap gi {0 1 2 3 4} {swxv_x $gi}]] {{0 1}}
+  swxv_drag 1 2
+  check "SWX14 MMB pan in subwindow 1 (strip 1): its strips move together, subwindow 3 is byte-identical" \
+    [swxv_verdict {1 0 2 3} $sw3] {moved=1 linked=1 others_alone=1}
+  swxv_reset
+  swxv_drag 4 2
+  check "SWX14 MMB pan in subwindow 3 leaves all of subwindow 1 byte-identical" \
+    [swxv_verdict $sw3 $sw1] {moved=1 linked=1 others_alone=1}
+  swxv_reset
+  swxv_drag 0 3
+  check "SWX15 RMB box zoom in subwindow 1 leaves subwindow 3 byte-identical" \
+    [swxv_verdict $sw1 $sw3] {moved=1 linked=1 others_alone=1}
+  catch {destroy .wvtracemenu}
+  swxv_reset
+  lassign [mid 0] px py
+  update
+  ev <Motion> -x $px -y $py
+  ev <ButtonPress-4> -x $px -y $py -state 4
+  update
+  check "SWX16 Ctrl+wheel (a real Control-Button-4) in subwindow 1 leaves subwindow 3 alone" \
+    [swxv_verdict $sw1 $sw3] {moved=1 linked=1 others_alone=1}
+  swxv_reset
+  lassign [mid 4] px py
+  update
+  ev <Motion> -x $px -y $py
+  ev <ButtonPress-4> -x $px -y $py -state 1
+  update
+  check "SWX16 Shift+wheel pan in subwindow 3 leaves subwindow 1 alone" \
+    [swxv_verdict $sw3 $sw1] {moved=1 linked=1 others_alone=1}
+  swxv_reset
+  lassign [mid 2] px py
+  update
+  ev <Motion> -x $px -y $py
+  send_key $vdrw <KeyPress-Left> {[rprop 2 x1] != 0}
+  check "SWX17 the Left arrow over subwindow 1 pans it and leaves subwindow 3 alone" \
+    [swxv_verdict {2 0 1 3} $sw3] {moved=1 linked=1 others_alone=1}
+  # f fits the TARGET subwindow: put every strip on a narrow window, target
+  # subwindow 3, press f, and subwindow 1 must keep the narrow window. Fit
+  # skips a traceless strip, so both sides must plot something or the row
+  # would pass with the scoping deleted (teeth leg first).
+  wviewer::set_target_strip 4 $tok
+  if {[trx 4] eq {}} { wviewer::plot_signals $tok {b1} }
+  check_true "SWX18 teeth: every strip of both subwindows plots a trace" \
+    [expr {[lsearch -exact [lmap gi {0 1 2 3 4} {llength [trx $gi]}] 0] < 0}]
+  wviewer::capture_live_view_state $tok
+  set gs [lay]
+  for {set i 0} {$i < [llength $gs]} {incr i} {
+    lset gs $i [dict replace [lindex $gs $i] x1 0.2 x2 0.4]
+  }
+  wviewer::set_graphs $tok $gs
+  wviewer::regenerate $tok
+  wviewer::set_target_strip 4 $tok
+  update
+  lassign [mid 4] px py
+  ev <Motion> -x $px -y $py
+  send_key $vdrw <KeyPress-f> {[rprop 4 x1] != 0.2}
+  check "SWX18 f fits the target subwindow (3) and leaves subwindow 1 on its window" \
+    [list [expr {[swxv_x 4] ne {0.2 0.4}}] [lsort -unique [lmap gi $sw1 {swxv_x $gi}]]] \
+    {1 {{0.2 0.4}}}
+  swxv_reset
+
   # ---- SWG11: the strip reorder clamps inside its subwindow -----------------
   set lastpy [lindex [mid 4] 1]
   check "SWG11 a drag of strip 0 to the far bottom clamps to subwindow 1's last" \
@@ -492,7 +881,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 42 } else { set expect 104 }
+if {$::arm eq {nogui}} { set expect 49 } else { set expect 132 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

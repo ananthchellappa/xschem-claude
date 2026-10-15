@@ -352,3 +352,44 @@ C `graph_same_xgroup` (MMB pan, RMB box zoom, axis-margin
 drag and full-X zoom in one subwindow can still move another's X until it lands);
 the ASE-L drop-down; the auto-plot's `ensure_auto_graph` still appends at the
 window's end (it joins the LAST subwindow).
+
+## 14. As built — stage 2 (2026-10-15): independent X
+
+The plan's stage numbering (§12) put independent X at 3; it shipped second.
+
+**C.** One rule, one function. `graph_same_xgroup(a, b)` (`src/draw.c`)
+compares the two rects' `xgroup=` tokens as strings, absent == absent, so an
+ordinary schematic and a one-subwindow tab answer 1 for every pair and behave
+exactly as before. `graph_shares_x(master, k)` — exported in `xschem.h` — tests
+it right after `k == master` and BEFORE the `selected` / same-`sim_type` arms,
+so no arm crosses a subwindow. Callers:
+
+- `waves_callback`'s gesture loop (`src/callback.c`) computes two per-rect
+  flags and reads nothing else for an X write: `xlink = graph_shares_x(master,
+  i)` (the ten former copies: MMB pan, Left/Right, RMB box zoom, MMB in the X
+  margin, `f` full X, and the rest), and `xlink_loose`, the arrow-key X zoom's
+  historical looser rule `master || selected || locked` (no `sim_type` test),
+  now `&& graph_same_xgroup`. The loop no longer computes `same_sim_type`.
+  §7's "`continue` at the loop head" was NOT used: the loop also redraws every
+  rect on a cursor move (`need_all_redraw`), and cursors A/B are shared across
+  subwindows (§7 limit), so skipping the other subwindow's rects would leave
+  their cursors stale.
+- `graph_axis_zoom()` (the LMB axis-margin drag and `xschem graph_axis_zoom`)
+  and `graph_fullxzoom()`'s joint domain, unchanged, through `graph_shares_x`.
+- `graph_fullxzoom()` also drops a stale mouse master that sits in another X
+  group (`master = i`), so View > Fit on the target subwindow never measures a
+  different subwindow's group. Not fenced: with one raw every group's union is
+  the same extent.
+
+**Tcl.** Stage 1 had already scoped `pan_x`, `wheel_zoom` (plain, Shift and
+Ctrl wheel, the arrows through `arrow_pan`, `Z`/Ctrl-z through `graph_zoom`),
+`fit` (`f`, View > Fit) and Shared X. Stage 2 adds the real-event fences.
+
+**Rows** (`test_wave_subwindows`): `SWX1`–`SWX3` both arms (the apply, the
+selected arm, the string compare, tokenless controls); `SWX4`–`SWX12` display
+(the C loop through `xschem callback .drw`, each gesture with a tokenless
+control showing it does reach the other rects); `SWX13`–`SWX18` display (the
+real viewer through Tk events: MMB, RMB, Ctrl+wheel, Shift+wheel, Left, `f`).
+Red proofs are in the suite header. Not fenced by an event row: `Z`/Ctrl-z (the
+same `wheel_zoom` as Ctrl+wheel) and the Up/Down/Right arrows in the viewer
+(Up/Down are Y pans there; Right is the same `pan_x` as Left).

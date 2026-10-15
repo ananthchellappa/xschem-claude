@@ -3707,7 +3707,33 @@ static void node_db_prev_restore(int prev)
  * three-of-six walkers (issue 0305) -- one copy, three callers.
  *
  * NOT the viewer's `sharedx` flag, which the C engine cannot see. */
-static int graph_shares_x(int master, int k)
+/* SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §7): are graph
+ * rects `a` and `b` in the same X group? The group is the rect's `xgroup=`
+ * property token, which the ASE Waveform Viewer writes on every strip of a tab
+ * holding two or more subwindows (wviewer::sw_props) and on none otherwise.
+ * Compared as STRINGS, absent == absent: every ordinary schematic and every
+ * one-subwindow viewer tab carries no token at all, so for them this answers 1
+ * for every pair and the X-link rule is exactly what it always was. Time axes
+ * of different subwindows are ALWAYS independent (a user ruling, never
+ * lockable), so this is a precondition of every arm of the X-link rule, the
+ * `selected` arm included. An out-of-range index answers 0. */
+int graph_same_xgroup(int a, int b)
+{
+  char *ga = NULL;
+  int same;
+
+  if(!xctx) return 0;
+  if(a < 0 || a >= xctx->rects[GRIDLAYER]) return 0;
+  if(b < 0 || b >= xctx->rects[GRIDLAYER]) return 0;
+  if(a == b) return 1;
+  /* get_tok_value() answers out of a rotating buffer: copy the first token */
+  my_strdup2(_ALLOC_ID_, &ga, get_tok_value(xctx->rect[GRIDLAYER][a].prop_ptr, "xgroup", 0));
+  same = !strcmp(ga, get_tok_value(xctx->rect[GRIDLAYER][b].prop_ptr, "xgroup", 0));
+  my_free(_ALLOC_ID_, &ga);
+  return same;
+}
+
+int graph_shares_x(int master, int k)
 {
   xRect *rm, *rk;
   char *master_sim = NULL;
@@ -3720,6 +3746,8 @@ static int graph_shares_x(int master, int k)
   rk = &xctx->rect[GRIDLAYER][k];
   if(!(rk->flags & 1)) return 0;     /* 1: graph, 3: graph_unlocked */
   if(k == master) return 1;
+  /* SUBWINDOWS: never across an X group, whatever the arms below say */
+  if(!graph_same_xgroup(master, k)) return 0;
   /* get_tok_value() answers out of a rotating buffer, so the master's token has
    * to be copied before the second call can overwrite it */
   my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(rm->prop_ptr, "sim_type", 0));
@@ -3960,6 +3988,10 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
   master = xctx->graph_master;
   if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
   else if(!(xctx->rect[GRIDLAYER][master].flags & 1)) master = i;
+  /* SUBWINDOWS: a stale master in ANOTHER X group (the pointer last rested on a
+   * different subwindow, then View > Fit ran on the target one) would measure
+   * that subwindow's group instead of this rect's. */
+  else if(!graph_same_xgroup(master, i)) master = i;
 
   entry_extra_idx = xctx->extra_idx;
   entry_prev_idx = xctx->extra_prev_idx;

@@ -3255,6 +3255,14 @@ extern double graph_click_tol(void);
  * a graph gesture is view state), one log_action line in the verb form so a
  * replay reproduces the whole propagation. Returns 1 when anything was written. */
 extern int  graph_axis_zoom(int i, int axis, double lo, double hi);
+/* SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §7): the X-link
+ * rule. graph_same_xgroup(): same `xgroup=` token (absent == absent).
+ * graph_shares_x(): does rect k follow rect master's X gesture -- the shipped
+ * `selected || (same sim_type && locked) || master` predicate, never across an
+ * X group. The one predicate behind callback.c's gesture loop, graph_axis_zoom()
+ * and graph_fullxzoom()'s joint domain. */
+extern int  graph_same_xgroup(int a, int b);
+extern int  graph_shares_x(int master, int k);
 extern void draw_graph_snap_cursor(int mx, int my);
 extern void graph_snap_clear(void);
 extern void draw_string(int layer,int what, const char *str, short rot, short flip, int hcenter, int vcenter,

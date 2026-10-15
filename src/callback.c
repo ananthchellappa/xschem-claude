@@ -3173,12 +3173,10 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   }
   /* loop: after having operated on the master graph do the others */
   for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {
-    int same_sim_type = 0;
-    char *curr_sim_type = NULL;
+    int xlink, xlink_loose;
     r = &xctx->rect[GRIDLAYER][i];
     need_redraw = 0;
     if( !(r->flags & 1) ) continue; /* 1: graph; 3: graph_unlocked */
-    my_strdup2(_ALLOC_ID_, &curr_sim_type, get_tok_value(r->prop_ptr, "sim_type", 0));
     gr->gx1 = gr->master_gx1;
     gr->gx2 = gr->master_gx2;
     gr->gw = gr->master_gw;
@@ -3186,13 +3184,18 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     if(gr->dataset >= 0 /* && gr->dataset < xctx->raw->datasets */) dataset =gr->dataset;
     else dataset = -1;
 
-    /* if master graph has unlocked X axis do not zoom/pan any other graphs: same_sim_type = 0 */
-    if(!(xctx->rect[GRIDLAYER][xctx->graph_master].flags & 2) &&
-       !strcmp(curr_sim_type,
-          get_tok_value(xctx->rect[GRIDLAYER][xctx->graph_master].prop_ptr, "sim_type", 0))) {
-      same_sim_type = 1;
-    }
-    my_free(_ALLOC_ID_, &curr_sim_type);
+    /* THE X-LINK RULE, in one place (doc/claude/specs/waveform_viewer_subwindows.md
+     * §7): does rect i follow the master's X gesture? graph_shares_x() is the
+     * historical `selected || (same sim_type && locked) || master` predicate,
+     * with the subwindow group test (graph_same_xgroup) applied FIRST, so no arm
+     * -- not even `selected` -- crosses a subwindow. The arrow-key X zoom
+     * (XK_Up/XK_Down) has always used the looser `selected || locked || master`
+     * (no sim_type test); it gets the same group test. Every X write in this
+     * loop reads one of these two flags and nothing else. Computed per rect,
+     * not hoisted: the arms below write prop_ptr, never `sel`/`flags`/`xgroup`. */
+    xlink = graph_shares_x(xctx->graph_master, i);
+    xlink_loose = (i == xctx->graph_master) ||
+      ((r->sel || !(r->flags & 2)) && graph_same_xgroup(xctx->graph_master, i));
 
     /* THE graph pan: drag the data window. Button2 (MMB), not Button1 — LMB over
      * a strip is reserved for precise interaction and, in the ASE viewer, for
@@ -3238,7 +3241,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         delta = gr->gw;
         delta_threshold = 0.01;
         /* selected or locked or master */
-        if( r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           dbg(1, "moving waves: %d\n", i);
           if(fabs(xctx->mx_double_save - xctx->mousex_snap) > fabs(gr->cx * delta) * delta_threshold) {
             xx1 = gr->gx1 + (xctx->mx_double_save - xctx->mousex_snap) / gr->cx;
@@ -3284,7 +3287,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       /* horizontal move of waveforms with mouse wheel */
       else {
         /* selected or locked or master */
-        if( r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           delta = gr->gw;
           delta_threshold = 0.05;
           xx1 = gr->gx1 - delta * delta_threshold;
@@ -3322,7 +3325,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       /* horizontal move of waveforms with mouse wheel */
       else {
         /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           delta = gr->gw;
           delta_threshold = 0.05;
           xx1 = gr->gx1 + delta * delta_threshold;
@@ -3363,7 +3366,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
       } else {
         /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           double var = 0.2 * gr->gw;
           xx2 = gr->gx2 + var * (1 - zoom_m);
           xx1 = gr->gx1 - var * zoom_m;
@@ -3402,7 +3405,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
       } else {
         /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           double var = 0.2 * gr->gw;
           xx2 = gr->gx2 - var * (1 - zoom_m);
           xx1 = gr->gx1 + var * zoom_m;
@@ -3481,7 +3484,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
           need_redraw = 1;
         }
       } else {
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           delta = gr->gw;
           delta_threshold = 0.05;
           xx1 = gr->gx1 - delta * delta_threshold;
@@ -3508,7 +3511,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
           need_redraw = 1;
         }
       } else {
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
           delta = gr->gw;
           delta_threshold = 0.05;
           xx1 = gr->gx1 + delta * delta_threshold;
@@ -3522,7 +3525,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     else if(event == KeyPress && key == XK_Down) {
       if(!xctx->graph_left) {
         /* selected or locked or master */
-        if(r->sel || !(r->flags & 2) || i == xctx->graph_master) {
+        if(xlink_loose) {
           double var = 0.2 * gr->gw;
           xx2 = gr->gx2 + var * (1 - zoom_m);
           xx1 = gr->gx1 - var * zoom_m;
@@ -3535,7 +3538,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     else if(event == KeyPress && key == XK_Up) {
       if(!xctx->graph_left) {
         /* selected or locked or master */
-        if(r->sel || !(r->flags & 2) || i == xctx->graph_master) {
+        if(xlink_loose) {
           double var = 0.2 * gr->gw;
           xx2 = gr->gx2 - var * (1 - zoom_m);
           xx1 = gr->gx1 + var * zoom_m;
@@ -3553,7 +3556,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
           } /* graph_master */
         } else { /* not graph_left, full X zoom*/
           /* selected or locked or master */
-          if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+          if(xlink) {
             need_redraw = graph_fullxzoom(i, gr, dataset);
           }
         }
@@ -3563,7 +3566,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     else if(event == MotionNotify && (state & Button2Mask) && xctx->graph_bottom ) {
       if(xctx->raw && xctx->raw->values) {
         /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
+        if(xlink) {
 
           /* xx1 and xx2 calculated for master graph above */
           my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
@@ -3587,7 +3590,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         int xmoved = (xctx->mx_double_save != xctx->mousex_snap);
         int ymoved = (xctx->my_double_save != xctx->mousey_snap);
         /* X: selected or locked or master */
-        if(xmoved && (r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master)) {
+        if(xmoved && (xlink)) {
           clear_graphpan_at_end = 1;
           /* xx1 and xx2 calculated for master graph above */
           my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
