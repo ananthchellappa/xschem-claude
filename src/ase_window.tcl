@@ -1108,8 +1108,8 @@ proc ase::ui::build {key top} {
 
   # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
   # — wviewer::open is per-token idempotent (re-open arm raises the existing
-  # toplevel), so a session never gets a second viewer window; same seam the
-  # `~` strip button and Direct Plot use.
+  # toplevel), so a session never gets a second viewer window; same seam
+  # Direct Plot and the `~` strip button's plot half (ase::ui::auto_plot) use.
   #
   # Calculator is LIVE (calculator batch item 13). It was a named placeholder
   # (`-state disabled`, added in 63e10b87) for the same reason the Annotate
@@ -1198,8 +1198,9 @@ proc ase::ui::build {key top} {
   pack $top.status -side bottom -fill x -pady 2
 
   # right vertical action strip (spec "Action strip"): text placeholders,
-  # top-down in spec order; ~ (Plot waveforms, live since item 13) raises or
-  # opens the session's waveform viewer, no traces added.
+  # top-down in spec order; ~ evaluates every output against the current
+  # results and plots the ticked waveforms (ase::ui::plot_outputs, ase_l.md
+  # R-OUT12).
   # Packed AFTER the toolbar + status bar and BEFORE the expanding body (the
   # item-05 packing lesson: the expanding widget must be packed last).
   frame $top.strip
@@ -1220,7 +1221,7 @@ proc ase::ui::build {key top} {
   button $top.strip.stop -text ! -width 5 \
     -command [list ase::ui::do_stop $key]
   button $top.strip.plot -text ~ -width 5 \
-    -command [list ase::ui::open_viewer $key]
+    -command [list ase::ui::plot_outputs $key]
   pack $top.strip.ana $top.strip.var $top.strip.out $top.strip.del \
        $top.strip.netrun $top.strip.run $top.strip.stop $top.strip.plot \
        -side top -padx 2 -pady 1
@@ -1228,9 +1229,9 @@ proc ase::ui::build {key top} {
 
   # --- 1391: EVERY STRIP BUTTON GETS A TIP, FROM ONE TABLE --------------------
   # Eight glyphs and not one word between them; `N&>` and `~` are not guessable
-  # and never were. The strings come from `ase::ui::strip_tips` (~:5477) so the
-  # FIVE with a menubar twin tip with the twin's own label, composed. Five,
-  # not four: `OP,TR` is `Analyses > Choose…` and is twinned like the rest.
+  # and never were. The strings come from `ase::ui::strip_tips` so a button
+  # with a menubar twin tips with the twin's own label, composed: `OP,TR` is
+  # `Analyses > Choose…` and is twinned like the rest.
   #
   # ⚠ ONE LOOP, NOT EIGHT CALLS. The suite asserts that EVERY child of
   # $top.strip carries a tip, so a ninth button added without a `strip_tips`
@@ -10860,6 +10861,11 @@ proc ase::ui::lbl_run              {} { return {Run} }
 proc ase::ui::lbl_stop             {} { return {Stop} }
 proc ase::ui::lbl_tools            {} { return {Tools} }
 proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
+# The `~` strip button (ase_l.md R-OUT12): its tip, and what it says when there
+# is nothing to measure or plot.
+proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values} }
+proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
+proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
 
 # The THREE strip buttons with no menubar twin (`=`, `-->`, `X`), plus the
 # temperature entry, which is not a strip button at all -- four constants, three
@@ -10932,13 +10938,14 @@ proc ase::ui::menu_path_waveform_viewer {} {
 # no tip is a red row, not a gap" enforceable: a ninth button added without an
 # entry here reds W1s2 instead of quietly shipping bare.
 #
-# ⚠ MIXED FORM ON PURPOSE. FIVE tips are a menu path and THREE are a bare
-# action name -- the split the table below actually ships, verified by walking
-# it. That difference is information: it tells the reader whether the action has
-# a MENUBAR route at all. Inventing a path for the three that have none would be
-# prose, which is what the block above exists to forbid.
+# ⚠ MIXED FORM ON PURPOSE. A tip whose action has a menubar twin is that twin's
+# menu path; the others are a bare action name. That difference is information:
+# it tells the reader whether the action has a MENUBAR route at all. Inventing a
+# path for one that has none would be prose, which is what the block above
+# exists to forbid. `~` is bare since ase_l.md R-OUT12: it evaluates and plots,
+# which Tools > Waveform Viewer (raise or open, nothing plotted) does not.
 #
-# ⚠ AND IT IS ONLY ABOUT THE MENUBAR. All three of the bare-named actions DO sit
+# ⚠ AND IT IS ONLY ABOUT THE MENUBAR. Three of the bare-named actions DO sit
 # on a per-pane CONTEXT menu (`Add…` at :854/:866, `Delete` at :872), spelled
 # differently there -- `Add Variable` vs `Add…`, `Delete Selection` vs `Delete`.
 # Those are not built from these constants and the reader hovering a glyph
@@ -10954,7 +10961,7 @@ proc ase::ui::strip_tips {} {
     netrun [ase::ui::menu_path_netlist_and_run] \
     run    [ase::ui::menu_path_run] \
     stop   [ase::ui::menu_path_stop] \
-    plot   [ase::ui::menu_path_waveform_viewer]]
+    plot   [ase::ui::lbl_plot_outputs]]
 }
 
 # --- 0650 / R-0653-d req 3: ONE WRITER FOR THE THREE BLANKETS ----------------
@@ -12658,6 +12665,80 @@ proc ase::ui::do_netlist_recreate {key} {
   catch {::ase::echo "ase: netlist written: $nl"}
 }
 
+# THE ROWS THE VIEWER IS ASKED TO DRAW (ase_l.md R-OUT12).  Every row with
+# Plot ticked, less two kinds, each decided from what the row IS:
+#   refused -- qualified for an analysis the viewer does not show
+#              (plot_row_refusal), answered as {expr sentence} pairs so the
+#              caller says it;
+#   skipped -- an EXPRESSION whose Value is a number (or a list of numbers):
+#              a scalar measure such as `settlingTime(...)` has no trace, and
+#              handing it to the viewer only produced an "unknown token"
+#              error.  A plain signal row is a signal whatever its Value
+#              shows (an op+tran bench's `VBG` reads the operating point and
+#              plots the transient), and a row with no Value yet is offered.
+# On an operating-point-only view nothing is filtered: auto_plot says that
+# view has no sweep.  -> {rows <rows> refused <pairs>}.  No Tk.
+proc ase::ui::plot_targets {key} {
+  set st [ase::session_state $key]
+  set results [ase::session_getattr $key results]
+  set sim_t [ase::plot_sim_type $st]
+  set rows {}
+  foreach o [ase::state_get $st outputs] {
+    if {[ase::state_get $o plot 0] eq {1} && [dict exists $o expr]} {
+      lappend rows $o
+    }
+  }
+  set refused {}
+  if {$sim_t in {op {}}} { return [dict create rows $rows refused $refused] }
+  set keep {}
+  foreach o $rows {
+    set ex [ase::state_get $o expr]
+    set why [ase::ui::plot_row_refusal $ex $sim_t]
+    if {$why ne {}} { lappend refused [list $ex $why] ; continue }
+    if {![ase::output_is_plain $ex] &&
+        [ase::ui::value_rank [ase::ui::output_value $o $results]] == 0} {
+      continue
+    }
+    lappend keep $o
+  }
+  return [dict create rows $keep refused $refused]
+}
+
+# THE `~` STRIP BUTTON (ase_l.md R-OUT12, user 2026-10-14): "if there are
+# outputs that are waveforms that are chosen to be plotted, then, if Waveform
+# Viewer is not already up, it will be launched and those signals will be
+# plotted. More importantly, measures will be calculated and updated values
+# displayed in the Outputs pane (Measures tab)."
+#
+# Values FIRST: every row is re-evaluated from the session's current results
+# (results_refill, the open and Load State path, so a row added after the run
+# gets its number), and only then is the plot asked for, through the after-run
+# auto_plot and its refusal rules.  No results: one sentence, nothing changed.
+# -> 1 when it evaluated, 0 when there was nothing to evaluate against.
+proc ase::ui::plot_outputs {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
+  if {![ase::has_results $key]} {
+    catch {::ase::echo [ase::ui::lbl_plot_outputs_none] error}
+    return 0
+  }
+  ase::ui::results_refill $key
+  catch {
+    if {[winfo exists [dict get $::ase::ui::wins $key].meas]} {
+      ase::ui::meas_fill $key
+    }
+  }
+  set sim_t [ase::plot_sim_type [ase::session_state $key]]
+  set t [ase::ui::plot_targets $key]
+  if {$sim_t ni {op {}} && ![llength [dict get $t rows]]
+      && ![llength [dict get $t refused]]} {
+    catch {::ase::echo [ase::ui::lbl_plot_outputs_nowave] note}
+  }
+  if {[catch {ase::ui::auto_plot $key} err]} {
+    catch {::ase::echo "ase: the waveform viewer could not be opened: $err" error}
+  }
+  return 1
+}
+
 # Auto-plot after a successful run (item 13, D5): every outputs row with
 # plot==1 is rebuilt into the viewer's dedicated auto graph (the `auto 1`
 # model marker) — v1 ALWAYS-REPLACE policy: the auto graph's traces are
@@ -12671,30 +12752,18 @@ proc ase::ui::do_netlist_recreate {key} {
 # viewer failure must never break the status pipeline.
 proc ase::ui::auto_plot {key} {
   set st [ase::session_state $key]
-  set rows {}
-  foreach o [ase::state_get $st outputs] {
-    if {[ase::state_get $o plot 0] eq {1} && [dict exists $o expr]} {
-      lappend rows $o
-    }
-  }
   set sim_t [ase::plot_sim_type $st]
   # R208c/R208d: a row qualified for an analysis the viewer does not show is
   # refused with a sentence (plot_row_refusal), never drawn from the shown one.
   # Before the viewer opens, so the sentence is said even where it cannot; a
   # run whose every plot row is refused empties the auto graph like one with
   # none.
-  if {$sim_t ni {op {}}} {
-    set keep {}
-    foreach o $rows {
-      set why [ase::ui::plot_row_refusal [ase::state_get $o expr] $sim_t]
-      if {$why ne {}} {
-        catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $why" error}
-        continue
-      }
-      lappend keep $o
-    }
-    set rows $keep
+  set t [ase::ui::plot_targets $key]
+  foreach r [dict get $t refused] {
+    lassign $r ex why
+    catch {::ase::echo "ase: cannot auto-plot '$ex': $why" error}
   }
+  set rows [dict get $t rows]
   if {![llength $rows]} {
     if {[wviewer::window_for $key] ne {}} {
       set gi [wviewer::auto_graph_index $key]

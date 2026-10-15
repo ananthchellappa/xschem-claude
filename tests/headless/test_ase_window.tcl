@@ -1990,9 +1990,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # W1s1-W1s6 -- ISSUE 1391: EVERY STRIP BUTTON SAYS WHAT IT DOES, AND SAYS IT
   #              IN THE MENU'S OWN WORDS
   # ==========================================================================
-  # Eight glyphs, no words: `OP,TR = --> X N&> > ! ~`. FIVE of them have a
-  # menubar twin (the brief said three; `OP,TR` -> `Analyses > Choose…` is the
-  # fifth), so the tip is BUILT from the twin's label rather than typed --
+  # Eight glyphs, no words: `OP,TR = --> X N&> > ! ~`. Those with a menubar
+  # twin (`OP,TR` -> `Analyses > Choose…` among them; `~` is not one since
+  # ase_l.md R-OUT12) tip with the twin's label, BUILT rather than typed --
   # the 0661 drift (a printed `Outputs > Save All` beside a menu reading
   # `Outputs > Save All… > Save device OP parameters (gm, gds, vth, ...)`,
   # `string match` 0 against both) is exactly what a hand-typed tip rebuilds.
@@ -2022,7 +2022,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       netrun {N&>}   {ase::ui::menu_path_netlist_and_run} {Simulation > Netlist and Run} \
       run    {>}     {ase::ui::menu_path_run}             {Simulation > Run} \
       stop   {!}     {ase::ui::menu_path_stop}            {Simulation > Stop} \
-      plot   {~}     {ase::ui::menu_path_waveform_viewer} {Tools > Waveform Viewer}] {
+      plot   {~}     {ase::ui::lbl_plot_outputs}          {Plot outputs and update values}] {
     check "W1s1 1391 strip `$glyph` ($sfx) tip is on the LIVE widget and is the\
  shared constant" \
       [list [w_tip $top.strip.$sfx] [w_cx $cexpr]] [list $golden $golden]
@@ -2065,7 +2065,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [expr {[string first {ase::ui::temp_commit} $w1s_fo] >= 0}]] \
     [list {Simulation temperature} {Simulation temperature} 1 1]
 
-  # W1s4: the five menubar twins are BUILT from the constants. Same W1t shape
+  # W1s4: the menubar twins are BUILT from the constants. Same W1t shape
   # as W1r/W1u above -- live `entrycget -label`, the constant, and the golden.
   proc w_mlabel {m cmd} {
     if {![winfo exists $m]} { return NO-MENU }
@@ -2100,8 +2100,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [w_cx {ase::ui::lbl_run}] [w_cx {ase::ui::lbl_stop}]] \
     [list Simulation {Netlist and Run} Run Stop \
           Simulation {Netlist and Run} Run Stop]
-  check "W1s4c 1391 Tools > Waveform Viewer is built from the constants the ~\
- tip reads" \
+  check "W1s4c 1391 Tools > Waveform Viewer is built from its constants (the ~\
+ tip no longer names it: R-OUT12)" \
     [list [w_mcascade $top.mb $top.mb.tools] \
           [w_mlabel $top.mb.tools [list ase::ui::open_viewer $key]] \
           [w_cx {ase::ui::lbl_tools}] [w_cx {ase::ui::lbl_waveform_viewer}]] \

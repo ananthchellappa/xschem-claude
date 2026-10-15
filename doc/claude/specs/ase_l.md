@@ -993,6 +993,32 @@ They should not influence the input to the simulator."* ADE-L is the floor
     results file's own vector and to ngspice's own `print` of the author's text. Bands TM and
     TR of `test_ase_outputs_tabs` exempt these rows at exactly the table's text.
 
+- **R-OUT12 — the `~` strip button updates the Values and plots the ticked waveforms
+  (user 2026-10-14).** The user: *"if there are outputs that are waveforms that are chosen to
+  be plotted, then, if Waveform Viewer is not already up, it will be launched and those
+  signals will be plotted. More importantly, measures will be calculated and updated values
+  displayed in the Outputs pane (Measures tab)."* `ase::ui::plot_outputs`:
+  - **Values first.** Every row is evaluated against the session's current results file by
+    the same reader the open and Load State paths use (`ase::ui::results_refill`, R-OUT2), so a
+    row added or edited after the run gets its number, `wave` or refusal sentence. Before
+    this, the Value column was written only at run end, open and Load State, and the button
+    only raised the viewer: a row added after the run stayed blank.
+  - **Then the plot**, through the after-run auto-plot and its refusal rules: the viewer is
+    opened if it is not up, the results attached, and the auto graph rebuilt from the ticked
+    rows (`ase::ui::plot_targets`). A ticked **expression whose Value is a number** (a scalar
+    measure such as `settlingTime(...)`) is not a trace and is not handed to the viewer, after
+    a run either — it used to be, and the viewer answered *unknown token*. A ticked plain
+    signal is always plotted, whatever its Value shows (an op+tran bench's `VBG` reads the
+    operating point and plots the transient); a row with no Value yet is offered.
+  - **No results** (`ase::has_results` false): it says *no results; run a simulation first*
+    and changes nothing. Ticked waveforms none: it says *no waveform output has Plot ticked*.
+  - The tip reads **Plot outputs and update values**; `Tools > Waveform Viewer` stays the
+    raise-or-open door that plots nothing.
+  - The Value and the Calculator window's Eval of the same text are the same double
+    (`calc::eval_texts` and `calc::meas_in_ctx`), shown `%.6e`.
+  - `tests/headless/test_ase_plot_outputs.tcl` (both arms; PR rows on the real `tb_bandgap`
+    bench with the registry ngspice).
+
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
 Stage 6f. A long transient is checkpointed so that stopping it yields the points
@@ -1445,7 +1471,7 @@ icons welcome where Tk can do them, e.g. unicode ▶ ■)
 - `N&>`   → Netlist and Run
 - `>`     → Run (existing netlist)
 - `!`     → Stop
-- `~`     → Plot waveforms (functionality deferred; button present)
+- `~`     → Plot outputs and update values (R-OUT12)
 
 **Select On Design v1 scope** (item 08; applies to the `-->` choose-from-
 design flow and both Outputs > To Be Saved/Plotted > Select On Design):
@@ -1616,7 +1642,8 @@ the schematic's name, not the simulator's.
   `doc/claude/issues/0682-*.md` and `0684-*.md`.
 - **Tools** — Waveform Viewer (raise-or-open THE waveform viewer bound to
   this ASE-L session — `wviewer::open` is per-token idempotent, so a session
-  never gets two viewer windows; same seam as the `~` strip button);
+  never gets two viewer windows; it plots nothing, where the `~` strip button
+  evaluates and plots, R-OUT12);
   Calculator (**LIVE since the calculator batch's item 13** — `calc::open`,
   with no session key: the Calculator is per-PROCESS idempotent, one window per
   xschem, `doc/claude/specs/calculator.md` R101. It was a disabled placeholder
