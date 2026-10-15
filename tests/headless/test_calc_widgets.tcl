@@ -604,7 +604,7 @@ group CW3 {
     check "W14 Table label" [wcg .calc.mode.table -text] {Table}
 
     # W13 — the plot destination combobox
-    check "W13 values" [wcg .calc.mode.dest -values] {Append Replace {New Strip}}
+    check "W13 values (the viewer's own, wviewer::dest_labels)" [wcg .calc.mode.dest -values] {Append Replace {New Strip} {New SubWin} {New Tab}}
     check "W13 initial" [pcall .calc.mode.dest get] {Append}
     check "W13 readonly" [wcg .calc.mode.dest -state] readonly
     check_expr "W13 a readonly combobox is given the letter-cycle bind" \

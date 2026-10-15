@@ -223,7 +223,7 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 | W10 | `.calc.mode.clip` | checkbutton | variable `calc::clip`, **initial 1** |
 | W11 | `.calc.mode.plot` | button | plot buffer; label **`Plot`** |
 | W12 | `.calc.mode.eval` | button | evaluate buffer; label **`Eval`**. **⚠ Gated since results batch item 10 (U7):** with no result selected it refuses with *"No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L ▸ Results ▸ Select."* and does **not** offer to launch ASE-L; with a refused context loan it says that instead (T-J); with a result it falls through to the phase-3 stub, because item 10 settled WHICH database Evaluate reads and none of WHAT it computes. `Plot` and `Table` are deliberately ungated — the ruling names Evaluate. |
-| W13 | `.calc.mode.dest` | combobox | values `Append Replace {New Strip}`, initial `Append` |
+| W13 | `.calc.mode.dest` | combobox | values `[wviewer::dest_labels]` (`Append Replace {New Strip} {New SubWin} {New Tab}`, the viewer's own list, read at build time), initial `Append` |
 | W14 | `.calc.mode.table` | button | show as table; label **`Table`** |
 | W15 | `.calc.buf` | text | **the buffer**; height 4, editable, `-undo 1`. ⚠ "height 4" is a **rendered** requirement, not just a `-height` option: the pane that holds it must give it at least its requested height at first open (§4.2). Phase 1b shipped `-height 4` in a pane that allotted 29 px of the 72 requested, so the tool's primary work surface drew one and a half lines with `cget -height` reporting 4. |
 | W16 | `.calc.btb` | frame | buffer toolbar |
@@ -1637,8 +1637,12 @@ below are the ones a caller cannot answer for itself and so must not have to.
 ## 9. Actions: plot, evaluate, table, export
 
 - **R601** **Plot** sends the buffer to `wviewer::add_trace <token> <gi> <rpn>`; the
-  destination strip comes from W13 (`Append` / `Replace` / `New Strip`), which must reuse
-  `wviewer::set_plot_dest` rather than reimplementing the choice.
+  destination comes from W13, which offers exactly the viewer's destinations
+  (`wviewer::dest_labels`: `Append` / `Replace` / `New Strip` / `New SubWin` / `New Tab`)
+  and must reuse `wviewer::set_plot_dest` rather than reimplementing the choice.
+  **A press never takes a choice away** (2026-10-15): a destination set in the viewer
+  since the Calculator last pushed to it is followed -- W13 moves to show it and the
+  plot lands there (`calc::plot_dest_follow`, band PL5e).
 - **R602** Plot with no viewer open opens one (the ASE-L viewer), then plots.
 - **R602a** **A successful plot brings the viewer forward and hands the keyboard straight
   back.** The user's words, 2026-10-07: *"When Plot button takes an action and Waveform

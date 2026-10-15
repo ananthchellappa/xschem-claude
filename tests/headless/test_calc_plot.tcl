@@ -64,7 +64,7 @@
 #        (the measurement `calc::plot_in_token`'s "no borrow" decision rests on),
 #        and the context put BACK after the press -- U8: a Calculator gesture
 #        does not drag the waveform viewer with it.
-#   PL2  W13: the three labels it offers are three DISTINCT codes to
+#   PL2  W13 offers exactly `wviewer::dest_labels`, each a DISTINCT code to
 #        `wviewer::dest_norm`, and `calc::plot_dest_req` reads the widget
 #        verbatim rather than translating it.
 #   PL3  PLAN 3.3's ACCEPTANCE, as TRACE DATA.  Type the gain expression, press
@@ -95,10 +95,9 @@
 #        the target subwindow in MULTI plot mode too, and says plain Replace.
 #        Drives the mode, asserts the clear AND the sentence, with a
 #        single-mode control beside it.
-#   PL5e ⚠ W13 CANNOT EXPRESS THE VIEWER'S FOURTH DESTINATION, so a press
-#        overwrites a `New Tab` the user set from the viewer's own Options menu.
-#        Declared, not closed -- what is fenced here is that the press SAYS so
-#        instead of taking the choice away in silence.
+#   PL5e ⚠ A PRESS NEVER TAKES A CHOICE AWAY: a New Tab or New SubWin set in
+#        the viewer since the Calculator last pushed is FOLLOWED (W13 moves to
+#        show it and the plot lands there); a W13 choice made after it wins.
 #   PL6  `calc::dest_changed` PUSHES: changing W13 moves `wviewer::plot_dest` on
 #        the viewer holding the result, and logs one replayable line.
 #   PL7  R607 on the PLOT path: an unresolvable token is NAMED, an over-long
@@ -378,8 +377,7 @@ proc bufset {s} {
 # `calc::status` writes `calc::status_fit` of its sentence -- middle-elided, with
 # a marker -- and records the sentence AS COMPOSED in the history (R509), which
 # is also what it returns.  Both helpers used to read the widget and so could not
-# see past its width: band PL5e's composed `Plotted ... The viewer was set to New
-# Tab ...` line and band PL8's two ruled refusals are all wider than the entry,
+# see past its width: band PL8's two ruled refusals are wider than the entry,
 # and the clause each of those rows is about sat in the part that was cut off.
 # Reading the history is what those rows always meant; `shown` below is the
 # separate question of what the user SEES, and band S28/8 of
@@ -589,25 +587,18 @@ group PL1 {
 }
 
 # =============================================================================
-# PL2 — W13: three labels, three codes, read verbatim
+# PL2 — W13: the viewer's labels, distinct codes, read verbatim
 # =============================================================================
 group PL2 {
-    check "PL2 W13 offers exactly the three labels spec §4 names" \
-        [pcall .calc.mode.dest cget -values] {Append Replace {New Strip}}
+    check "PL2 W13 offers exactly the viewer's own labels, wviewer::dest_labels" \
+        [list [pcall .calc.mode.dest cget -values] [pcall wviewer::dest_labels]] \
+        [list [pcall wviewer::dest_labels] {Append Replace {New Strip} {New SubWin} {New Tab}}]
     set codes {}
     foreach L [pcall .calc.mode.dest cget -values] {
         lappend codes [pcall wviewer::dest_norm $L]
     }
-    # WARN THE ROW NAME USED TO GO ON "...so the control is not offering a
-    # choice the viewer collapses", AND THAT WAS FALSE.  `dest_norm` is pure and
-    # the three labels really are three codes, which is all this row measures;
-    # what the viewer does with `replace` afterwards depends on the PLOT MODE,
-    # and under multi it collapses to an append (ruling 24).  Band PL5d measures
-    # that, and the Calculator now says it.
-    check "PL2 ...and wviewer::dest_norm reads them as THREE DISTINCT codes, so the control is not offering one code under three labels" \
-        [list $codes [llength [lsort -unique $codes]]] {{append replace newstrip} 3}
-    check "PL2 ...and the viewer's own label table has two more (New SubWin, New Tab) the Calculator deliberately omits" \
-        [pcall wviewer::dest_labels] {Append Replace {New Strip} {New SubWin} {New Tab}}
+    check "PL2 ...and wviewer::dest_norm reads them as FIVE DISTINCT codes, so the control is not offering one code under two labels" \
+        [list $codes [llength [lsort -unique $codes]]] {{append replace newstrip newsubwin newtab} 5}
     pcall .calc.mode.dest set {Replace}
     check "PL2 calc::plot_dest_req returns the LABEL verbatim -- no second label-to-code table in src/calculator.tcl" \
         [pcall calc::plot_dest_req] {Replace}
@@ -872,29 +863,13 @@ group PL5c {
 }
 
 # =============================================================================
-# PL5d ⚠ RULING 24: UNDER MULTI PLOT MODE, REPLACE WAS AN APPEND
+# PL5d REPLACE CLEARS THE TARGET SUBWINDOW IN BOTH PLOT MODES
 # =============================================================================
-# ⚠⚠ RETIRED 2026-10-15 (doc/claude/specs/waveform_viewer_subwindows.md §6.2):
-# the user ratified Cadence's Replace, "clear the target subwindow then plot",
-# in BOTH modes, so `wviewer::dest_prepare` empties the target subwindow before
-# planning and `wviewer::dest_menu_label` lost its `-> appends` suffix. The rows
-# below were restated to the new policy -- the single-mode control stays, and the
-# multi leg now asserts the clear and the plain label. The prose under this
-# banner is the record of what shipped before.
-# WARN THE VIEWER IS NOT WRONG HERE AND NOTHING BELOW ASKS IT TO CHANGE.
-# `wviewer::plan_plot`'s own banner declares it: the multi arm lands every
-# signal either in a strip it CREATES or in a reused EMPTY one, so there is by
-# construction nothing for `replace` to clear, and `wviewer::plan_replace_clear`
-# returns empty there for every input.  The viewer SURFACES that, in exactly one
-# place -- `wviewer::dest_menu_label`, which its Options cascade reads.
-#
-# WARN WHAT WAS WRONG WAS THE CALCULATOR'S CLAIM.  It named the destination
-# through `wviewer::dest_label`, so a press in multi mode said "Plotted expr1
-# (Replace)" over an append, and `calc::build_mode`'s own comment asserted the
-# viewer could not collapse the choice.  Both rows below have to hold: the
-# SENTENCE says it appends, and the BEHAVIOUR really is an append.  A fix that
-# only changed the sentence would pass the first and fail the second, and one
-# that changed the viewer would redden test_wave_modes instead.
+# doc/claude/specs/waveform_viewer_subwindows.md §6.2 (2026-10-15) retired ruling
+# 24's multi-mode limit: `wviewer::dest_prepare` empties the target subwindow
+# before planning, and `wviewer::dest_menu_label` names it plain Replace.  Both
+# halves are asserted -- the SENTENCE and the BEHAVIOUR -- with a single-mode
+# control beside the multi leg.
 # =============================================================================
 group PL5d {
     destset {Append}
@@ -965,64 +940,61 @@ group PL5d {
 }
 
 # =============================================================================
-# PL5e ⚠ A PRESS THAT TAKES A CHOICE AWAY SAYS SO
+# PL5e ⚠ A PRESS NEVER TAKES A CHOICE AWAY
 # =============================================================================
-# WARN W13 OFFERS THREE DESTINATIONS AND `wviewer::dest_labels` HAS FOUR, so a
-# user who picked `New Tab` from the viewer's own Options menu loses it to the
-# next Calculator press: `calc::plot_rpn` pushes W13's value at
-# `wviewer::set_plot_dest` on every press, which is R601's requirement, and W13
-# has no spelling that can mean `newtab`.
-#
-# WARN THE LIMIT IS DECLARED, NOT CLOSED.  W13 still offers three (spec §4), so
-# the choice is still taken away; what is fenced here is that the press SAYS so
-# (R506) instead of doing it in silence.  A later phase that adds the fourth
-# entry makes `calc::plot_dest_dropped` answer empty for every press, and the
-# second row below reddens and has to be restated.
+# `calc::plot_rpn` pushes W13's value at `wviewer::set_plot_dest` on every press
+# (R601).  A destination set in the viewer since the Calculator last pushed --
+# its Options cascade, here `wviewer::set_plot_dest` -- is the newer choice, so
+# the press FOLLOWS it (`calc::plot_dest_follow`): W13 moves to show it and the
+# plot lands there.  A W13 choice made after that wins again.  Driven for both
+# window-making destinations, since those are the ones the old three-label W13
+# reset to Append.
 # =============================================================================
+proc pl_tabs {} { llength [pcall wviewer::tab_records $::tok] }
+proc pl_sws {} {
+    llength [lsort -unique [lmap G [pcall dict get [pcall wviewer::layout_for $::tok] graphs] {
+        wviewer::dget $G sw -}]]
+}
 group PL5e {
     destset {Append}
-    check "PL5e fixture: the viewer takes the FOURTH destination from its own Options menu, which W13 cannot express" \
-        [list [pcall wviewer::set_plot_dest {New Tab} $::tok] \
-              [pcall wviewer::plot_dest $::tok]] {newtab newtab}
+    set nt0 [pl_tabs]
+    check "PL5e fixture: the viewer is set to New Tab from outside the Calculator, while W13 says Append" \
+        [list [pcall wviewer::set_plot_dest {New Tab} $::tok] [pcall calc::plot_dest_req]] {newtab Append}
     pcall bufset {vf(lp)}
     set saide [press .calc.mode.plot]
-    check "PL5e ⚠ the press SAYS the New Tab choice is gone, naming it, instead of cancelling it in silence -- read off the HISTORY, which holds the sentence as composed, because this composed line is wider than the status entry and the clause this row is about is exactly what the entry cuts off" \
-        [list [string match {Plotted*} $saide] [string match {*New Tab*} $saide] [shown]] \
-        {1 1 fitted}
-    check "PL5e ...and the measurement behind that sentence: the push really did overwrite the viewer's destination with W13's" \
-        [pcall wviewer::plot_dest $::tok] append
-    # ...and the non-vacuity: an ordinary press, from a destination W13 CAN
-    # express, carries no such clause.
+    check "PL5e ⚠ the press FOLLOWS the viewer: it plots into a new tab, says New Tab, W13 shows New Tab, and the viewer keeps New Tab" \
+        [list [string match {Plotted*} $saide] [string match {*New Tab*} $saide] \
+              [expr {[pl_tabs] - $nt0}] [pcall calc::plot_dest_req] [pcall wviewer::plot_dest $::tok]] \
+        {1 1 1 {New Tab} newtab}
+    catch {wviewer::close_tab {} $::tok}
+    destset {Append}
     pcall bufset {vf(sq)}
     set saidf [press .calc.mode.plot]
-    check "PL5e non-vacuity: a press from a destination W13 DOES offer carries no such clause" \
-        [list [string match {Plotted*} $saidf] [string match {*New Tab*} $saidf] \
-              [string match {*which W13*} $saidf]] {1 0 0}
-    # ...and the proc answers purely, which is what makes it testable at all
-    check "PL5e calc::plot_dest_dropped answers the clause for a destination W13 lacks and nothing for the three it has" \
-        [list [expr {[pcall calc::plot_dest_dropped newtab append] ne {}}] \
-              [pcall calc::plot_dest_dropped append replace] \
-              [pcall calc::plot_dest_dropped replace newstrip] \
-              [pcall calc::plot_dest_dropped newstrip append] \
-              [pcall calc::plot_dest_dropped newtab newtab] \
-              [pcall calc::plot_dest_dropped {} append]] {1 {} {} {} {} {}}
-    # ⚠ AND "W13 DOES NOT OFFER IT" IS READ OFF THE WIDGET, NOT OFF A LIST IN
-    # THE CODE, which the row above cannot tell apart -- a sabotage replacing
-    # `calc::plot_dest_offered` with the three labels written out reddened ZERO.
-    # The difference is what makes the declaration above honest: a later phase
-    # that widens W13 must make this proc answer EMPTY without being edited.  So
-    # the widget is widened HERE, in place, and the proc re-asked; it is put
-    # back and the restore is asserted, because this band is not the one that
-    # owns W13's value list (PL2 is).
-    set pl5e_vals [pcall .calc.mode.dest cget -values]
-    pcall .calc.mode.dest configure -values [concat $pl5e_vals [list {New Tab}]]
-    set widened [pcall calc::plot_dest_dropped newtab append]
-    pcall .calc.mode.dest configure -values $pl5e_vals
-    set narrowed [pcall calc::plot_dest_dropped newtab append]
-    check "PL5e ⚠ ...and it asks the WIDGET: with `New Tab` added to W13's own -values the clause goes away, and comes back when it is removed again -- so a later phase that widens W13 needs no edit here" \
-        [list $widened [expr {$narrowed ne {}}]] {{} 1}
-    check "PL5e ...and W13's value list was put back exactly as PL2 found it" \
-        [pcall .calc.mode.dest cget -values] {Append Replace {New Strip}}
+    check "PL5e ...and a W13 choice made AFTER it wins: Append, no new tab" \
+        [list [string match {*Append*} $saidf] [expr {[pl_tabs] - $nt0}] \
+              [pcall wviewer::plot_dest $::tok]] {1 0 append}
+    set ns0 [pl_sws]
+    pcall wviewer::set_plot_dest newsubwin $::tok
+    pcall bufset {vf(lp)}
+    set saidg [press .calc.mode.plot]
+    check "PL5e ⚠ the same for New SubWin: one more subwindow, the sentence and W13 name it, the viewer keeps it" \
+        [list [string match {*New SubWin*} $saidg] [expr {[pl_sws] - $ns0}] \
+              [pcall calc::plot_dest_req] [pcall wviewer::plot_dest $::tok]] \
+        {1 1 {New SubWin} newsubwin}
+    # the decision on its own, on a token that is only an array entry
+    set w13 [pcall calc::plot_dest_req]
+    catch {unset ::calc::dest_seen(__pl5e)}
+    set ::wviewer::dest(__pl5e) newtab
+    set f1 [pcall calc::plot_dest_follow __pl5e Append]
+    set ::calc::dest_seen(__pl5e) newtab
+    set f2 [pcall calc::plot_dest_follow __pl5e Append]
+    set f3 [pcall calc::plot_dest_follow __pl5e {}]
+    unset ::wviewer::dest(__pl5e)
+    set f4 [pcall calc::plot_dest_follow __pl5e Replace]
+    catch {unset ::calc::dest_seen(__pl5e)}
+    pcall .calc.mode.dest set $w13
+    check "PL5e calc::plot_dest_follow: follows a viewer choice the Calculator never pushed, keeps W13 once it did, follows when W13 has no value, keeps W13 with no viewer choice" \
+        [list $f1 $f2 $f3 $f4] {{New Tab} Append {New Tab} Replace}
     set t {}
     if {[catch {wviewer::enter_ctx $::tok} t]} { set t {0 {}} }
     if {[lindex $t 0]} {
@@ -1618,7 +1590,7 @@ group PL9 {
     # (if the `.calc` regexp ever matched nothing, every proc would land here);
     # the count is the list's and not the name's.
     check "PL9 ...and the ones whose CODE names no widget path are exactly the procs that take their inputs as arguments" \
-        [lsort $pure] {plot_dest_dropped plot_in_token plot_msg plot_refusal plot_rpn}
+        [lsort $pure] {plot_in_token plot_msg plot_refusal plot_rpn}
 }
 
 # teardown: the viewer and the session go away, the dev display is left as found

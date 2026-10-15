@@ -1345,7 +1345,7 @@ pcall .calc.mode.clip invoke
 check "S18 clip toggles back" [nsval ::calc::clip] 1
 
 # W13: the destination combobox. Exactly these three values, initial Append.
-check "S18 dest values"   [pcall .calc.mode.dest cget -values] {Append Replace {New Strip}}
+check "S18 dest values"   [pcall .calc.mode.dest cget -values] {Append Replace {New Strip} {New SubWin} {New Tab}}
 check "S18 dest initial"  [pcall .calc.mode.dest get] {Append}
 check "S18 dest readonly" [pcall .calc.mode.dest cget -state] readonly
 # the house companion: a readonly ttk::combobox does not type-to-cycle by

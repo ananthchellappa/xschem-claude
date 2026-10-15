@@ -4219,7 +4219,6 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
         plotted  { return "Plotted $a ($b)." }
         dest     { return "Plot destination: $a." }
         destpend { return "Plot destination: $a (applied when a waveform viewer is open)." }
-        destdrop { return "The viewer was set to $a, which W13 does not offer, so that choice is gone." }
     }
     return {}
 }
@@ -4249,10 +4248,9 @@ proc calc::plot_refusal {msg {dest {}}} {
 # W13's CURRENT VALUE, as the user sees it.
 #
 # The LABEL is returned verbatim and is never translated here:
-# `wviewer::dest_norm` is the one place that maps a label to a code, and it
-# already accepts all three of W13's spellings (row PL2 asserts that the three
-# the Calculator offers really are three DISTINCT codes to it, so the control
-# cannot be offering a choice the viewer collapses).  R508: with no window there
+# `wviewer::dest_norm` is the one place that maps a label to a code, and W13's
+# labels ARE the viewer's (`wviewer::dest_labels`; row PL2 asserts each one is a
+# DISTINCT code to it).  R508: with no window there
 # is no combobox, so this answers {} -- which `wviewer::dest_norm` reads as
 # `append`, the harmless policy, for the same reason `wviewer::plot_dest`
 # defaults that way rather than returning a policy that destroys traces.
@@ -4264,60 +4262,34 @@ proc calc::plot_dest_req {} {
     return $v
 }
 
-# W13's OFFERED labels, read off the widget.  R508: no window, no list.
+# ⚠ R506: A PRESS NEVER TAKES AWAY A CHOICE THE USER MADE IN THE VIEWER.
+# Answers the LABEL `calc::plot_rpn` pushes: W13's own (`lab`), or the viewer's
+# current destination when the viewer was set from elsewhere -- its Options
+# cascade, the Add Trace dialog, a typed `wviewer::set_plot_dest` -- since the
+# Calculator last pushed to it.  Then W13 is moved to show it (it can: W13
+# offers every `wviewer::dest_labels` entry), so the visible control still says
+# where the next plot goes, which is why R601 pushes at all.
 #
-# The widget is the one place the three labels are written down
-# (`calc::build_mode`), so asking it is the only way to decide "W13 cannot
-# express that" without a second copy of the list living here.  Used by
-# `calc::plot_dest_dropped` and nowhere else.
-proc calc::plot_dest_offered {} {
-    if {![calc::has_win .calc.mode.dest]} { return {} }
-    set v {}
-    catch {set v [.calc.mode.dest cget -values]}
-    return $v
-}
-
-# ⚠ R506: A PRESS THAT TAKES AWAY A CHOICE THE USER MADE ELSEWHERE SAYS SO.
-# Answers the sentence for that, or empty when nothing was taken away.
-#
-# `calc::plot_rpn` pushes W13's value at `wviewer::set_plot_dest` on every
-# press, which is R601's requirement and is right while the two controls offer
-# the same destinations.  They do not: `wviewer::dest_labels` has FOUR entries
-# and W13 offers three, so a user who picked `New Tab` from the viewer's own
-# Options menu lost it to the next Calculator press -- silently, because the
-# "Plotted ... (Append)" sentence names where the plot WENT and not what it
-# overwrote.  MEASURED through a real viewer, band PL5e.
-#
-# DECLARED, NOT CLOSED: W13 still offers three (spec section 4), so the choice
-# is still taken away.  What this removes is the silence.  Adding the fourth
-# entry would make this proc answer empty for every press, which is the shape a
-# later phase that widens W13 should leave behind.
-#
-# `prev` and `code` are both CODES.
-#
-# ⚠ AN EARLIER REVISION OF THIS PARAGRAPH DESCRIBED THE OPPOSITE OF THE CODE
-# BELOW, and it is worth being exact because the two readings differ in what the
-# user is told.  It said "an unrecognised `prev` is treated as expressible
-# (nothing to report) rather than as a loss", reasoning that `wviewer::dest_norm`
-# folds what it cannot parse to `append`.  The code never normalises `prev` --
-# `prev` ARRIVES as a code.  What it normalises is each OFFERED LABEL, and it
-# reports a loss when NONE of them maps to `prev`.  So an unrecognised `prev` is
-# treated as a LOSS and does get a sentence, which is the safer of the two
-# behaviours and the one that makes this proc worth having: a destination W13
-# cannot express is exactly the thing the user should be told about.
-proc calc::plot_dest_dropped {prev code} {
-    if {$prev eq {} || $prev eq $code} { return {} }
-    if {[info commands ::wviewer::dest_norm] eq {}} { return {} }
-    set offered [calc::plot_dest_offered]
-    if {![llength $offered]} { return {} }
-    foreach L $offered {
-        set c $L
-        catch {set c [wviewer::dest_norm $L]}
-        if {$c eq $prev} { return {} }
-    }
-    set lab $prev
-    catch {set lab [wviewer::dest_label $prev]}
-    return [calc::plot_msg destdrop $lab]
+# "Set from elsewhere" is: the viewer HAS an explicit destination (the array
+# entry `wviewer::forget` unsets with the window -- `wviewer::plot_dest`
+# answers `append` for both, so it cannot tell), it differs from W13's, and it
+# is not the one the Calculator last pushed or adopted for this token
+# (`calc::dest_seen`).  A W13 choice made while no viewer was open meets a fresh
+# window with no entry and is pushed, as `calc::dest_changed`'s pending sentence
+# promises.  No W13 value (R508, no window) follows the viewer when it has one.
+# Band PL5e drives both directions.
+proc calc::plot_dest_follow {tok lab} {
+    if {$tok eq {} || ![info exists ::wviewer::dest($tok)]} { return $lab }
+    set prev $::wviewer::dest($tok)
+    set want append
+    if {[string trim $lab] ne {}} { catch {set want [wviewer::dest_norm $lab]} }
+    if {[string trim $lab] ne {} && $prev eq $want} { return $lab }
+    if {[string trim $lab] ne {} && [info exists ::calc::dest_seen($tok)] \
+            && $::calc::dest_seen($tok) eq $prev} { return $lab }
+    set vl $prev
+    catch {set vl [wviewer::dest_label $prev]}
+    if {[calc::has_win .calc.mode.dest]} { catch {.calc.mode.dest set $vl} }
+    return $vl
 }
 
 # The work, INSIDE the selected result's own context.  Answers one dict.
@@ -4336,27 +4308,14 @@ proc calc::plot_dest_dropped {prev code} {
 # vector plotted twice -- the sentence falls back to the expression itself,
 # which is still true and still names what was plotted.
 #
-# ⚠ RULING 24 WAS RETIRED 2026-10-15 (doc/claude/specs/waveform_viewer_subwindows.md
-# section 6.2): Replace now empties the target subwindow in both plot modes and
-# `wviewer::dest_menu_label` carries no suffix. The paragraph below is the record
-# of why the label is still read through that one proc.
+# The destination is named by `wviewer::dest_menu_label`, the one proc every
+# viewer menu names a destination through (one place can go stale, two can
+# disagree).  Replace clears the target subwindow in both plot modes
+# (doc/claude/specs/waveform_viewer_subwindows.md section 6.2, which retired
+# ruling 24's multi-mode limit), so the label is plain; band PL5d measures it.
 #
-# ⚠⚠ THE DESTINATION IS NAMED BY `wviewer::dest_menu_label`, NOT BY
-# `wviewer::dest_label`, AND THAT IS THE WHOLE OF THIS FILE'S HONESTY ABOUT
-# RULING 24.  Under MULTI plot mode `wviewer::plan_plot` emits no clear key, so
-# `replace` clears nothing and a Replace really is an Append -- declared in that
-# proc's own banner and surfaced to the user in exactly ONE place,
-# `wviewer::dest_menu_label`, which the viewer's Options cascade already reads.
-# THE VIEWER IS NOT WRONG HERE: a Calculator that asserted "Plotted expr1
-# (Replace)" in that mode would be, and said so until band PL5d measured it.
-# Reusing the viewer's label proc rather than re-deriving the clause here is the
-# same discipline as reusing `wviewer::dest_norm`: one place can go stale, two
-# can disagree.
-#
-# ⚠ AND A PUSH CAN TAKE A CHOICE AWAY -- see `calc::plot_dest_dropped`.  The
-# previous destination is read BEFORE the push so the sentence can say what was
-# overwritten; the clause is appended to the seam's failure sentence as well,
-# because the push has already happened by then.
+# ⚠ AND A PUSH MUST NOT TAKE A CHOICE AWAY -- `calc::plot_dest_follow` decides,
+# before the push, whether W13 or the viewer holds the newer choice.
 proc calc::plot_rpn {tok rpn dest} {
     # R208c: Plot draws in the database the viewer already shows and never
     # switches it, so a qualified token for ANOTHER analysis is refused rather
@@ -4387,17 +4346,14 @@ proc calc::plot_rpn {tok rpn dest} {
     if {$bad ne {}} {
         return [calc::plot_refusal [calc::plot_msg badtoken $bad] $dest]
     }
-    set prev {}
-    catch {set prev [wviewer::plot_dest $tok]}
+    set dest [calc::plot_dest_follow $tok $dest]
     set code {}
     catch {set code [wviewer::set_plot_dest $dest $tok]}
     if {$code eq {}} { catch {set code [wviewer::plot_dest $tok]} }
-    set drop [calc::plot_dest_dropped $prev $code]
+    if {$code ne {}} { set ::calc::dest_seen($tok) $code }
     set errs [wviewer::plot_signals $tok [list $rpn]]
     if {[llength $errs]} {
-        set fm [calc::plot_msg failed [lindex [lindex $errs 0] 1]]
-        if {$drop ne {}} { append fm " " $drop }
-        return [calc::plot_refusal $fm $code]
+        return [calc::plot_refusal [calc::plot_msg failed [lindex [lindex $errs 0] 1]] $code]
     }
     set nm {}
     catch {
@@ -4411,9 +4367,7 @@ proc calc::plot_rpn {tok rpn dest} {
     if {$nm eq {}} { set nm [string trim $rpn] }
     set lab $code
     catch {set lab [wviewer::dest_menu_label $tok $code]}
-    set pm [calc::plot_msg plotted $nm $lab]
-    if {$drop ne {}} { append pm " " $drop }
-    return [dict create ok 1 name $nm dest $code msg $pm]
+    return [dict create ok 1 name $nm dest $code msg [calc::plot_msg plotted $nm $lab]]
 }
 
 # R601: run the plot inside the context the SELECTED RESULT lives in, and PUT
@@ -11145,31 +11099,16 @@ proc calc::build_mode {} {
     # W13.  The house combobox (recon/widgets.md §1): ttk, readonly, -values at
     # creation, `$w set` for the initial value, and combo_letter_cycle bound
     # because a readonly ttk::combobox does not type-to-cycle by itself
-    # (xschem.tcl:10946).  The three values are the ones R601 hands to
-    # wviewer::set_plot_dest -- `calc::plot_dest_req` reads this widget and
-    # `wviewer::dest_norm` is the only thing that maps a label to a code, so the
-    # LABELS are fixed here and translated nowhere.
-    #
-    # WARN THREE, WHERE `wviewer::dest_labels` HAS FOUR: W13 omits `New Tab` on
-    # purpose (spec section 4).  Row PL2 asserts the three offered here are
-    # three DISTINCT codes to `wviewer::dest_norm`.
-    #
-    # ⚠⚠ AN EARLIER REVISION OF THAT SENTENCE WENT ON TO SAY "so the control
-    # cannot be offering a choice the viewer silently collapses", AND THAT IS
-    # FALSE.  `dest_norm` is pure and does map the three labels to three codes,
-    # which is all row PL2 measures; what the viewer does with `replace`
-    # afterwards is a MODE question, and under multi plot mode
-    # `wviewer::plan_plot` emits no clear key at all, so Replace and Append
-    # behave identically (ruling 24, declared in that proc's own banner).  The
-    # omission the Calculator makes good on instead is to SAY so: both status
-    # sentences name the destination through `wviewer::dest_menu_label`, the
-    # viewer's one place for that clause, and band PL5d drives the mode and
-    # asserts both the sentence and the append behaviour.  The fourth
-    # destination's own cost is `calc::plot_dest_dropped`'s.
-    # (Ruling 24 was retired 2026-10-15, subwindows spec section 6.2: Replace
-    # now clears the target subwindow in both modes, and PL5d asserts that.)
+    # (xschem.tcl:10946).  The values ARE `wviewer::dest_labels`, read at build
+    # time, so W13 offers every destination the viewer's own Options cascade and
+    # Add Trace dialog offer and cannot fall behind them (the user's ruling:
+    # Calculator plots go under the same destinations as every other plot door,
+    # doc/claude/specs/waveform_viewer_subwindows.md).  `calc::plot_dest_req`
+    # reads this widget and `wviewer::dest_norm` is the only thing that maps a
+    # label to a code, so the labels are translated nowhere here.  Row PL2
+    # asserts the two lists are equal and that each label is a distinct code.
     ttk::combobox .calc.mode.dest -state readonly -width 10 \
-        -values {Append Replace {New Strip}} -takefocus 0 \
+        -values [wviewer::dest_labels] -takefocus 0 \
         -style Calc.Field.TCombobox
     .calc.mode.dest set {Append}
     bind .calc.mode.dest <Key> {combo_letter_cycle %W %A; break}
@@ -11221,9 +11160,8 @@ proc calc::dest_changed {} {
     set code {}
     catch {set code [wviewer::set_plot_dest $lab $tok]}
     if {$code eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
-    # `dest_menu_label` and not `dest_label`, for the reason written out in
-    # `calc::plot_rpn`'s header: under multi plot mode `replace` clears nothing,
-    # and the viewer's own label proc is the ONE place that says so.
+    set ::calc::dest_seen($tok) $code
+    # named through `wviewer::dest_menu_label`, as `calc::plot_rpn` does
     set shown $code
     catch {set shown [wviewer::dest_menu_label $tok $code]}
     return [calc::status [calc::plot_msg dest $shown]]
