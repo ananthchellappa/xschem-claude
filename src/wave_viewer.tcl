@@ -7488,9 +7488,13 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
 # User request 2026-10-16: dragging the sole trace of a strip to another
 # subwindow leaves a blank strip taking room for nothing, so that strip is
 # removed. A move WITHIN one subwindow keeps the emptied strip, as it always has
-# (the reason is in node_index_of_trace's header). The auto-plot strip is never
-# removed (D-D). The answer for a source subwindow left with no trace at all is
-# the switch below.
+# (the reason is in node_index_of_trace's header). An auto-plot (`auto 1`)
+# strip is removed too: under multi-plot every strip a run plots carries the
+# marker, so sparing it would leave the user's own case blank. D-D does not
+# apply -- it spares a strip that is traceless BETWEEN runs, and a candidate here
+# held the trace that just left -- and auto_plot_strips re-inserts any auto strip
+# the next run needs. The answer for a source subwindow left with no trace at
+# all is the switch below.
 
 # 1 = a subwindow whose LAST strip a cross-subwindow move empties keeps that
 # strip, empty (the driver's default, pending the user's answer); 0 = the strip
@@ -7501,16 +7505,15 @@ proc wviewer::emptied_subwin_keeps_strip {} { return 1 }
 # of traces off `sources` into strip `to_gi` should remove, ascending. `keep` is
 # emptied_subwin_keeps_strip's answer: with it, a subwindow whose every strip
 # would go keeps its lowest one.
-proc wviewer::emptied_source_strips {gs sources to_gi {auto -1} {keep 1}} {
+proc wviewer::emptied_source_strips {gs sources to_gi {keep 1}} {
   set n [llength $gs]
   if {![string is integer -strict $to_gi] || $to_gi < 0 || $to_gi >= $n} { return {} }
   set cand {}
   foreach gi $sources {
     if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} { continue }
-    if {$gi == $to_gi || $gi == $auto} { continue }
+    if {$gi == $to_gi} { continue }
     if {[lsearch -exact $cand $gi] >= 0} { continue }
-    set G [lindex $gs $gi]
-    if {![wviewer::graph_is_empty $G] || [wviewer::dget $G auto 0] eq {1}} { continue }
+    if {![wviewer::graph_is_empty [lindex $gs $gi]]} { continue }
     if {[wviewer::sw_same $gs $gi $to_gi]} { continue }
     lappend cand $gi
   }
@@ -7534,7 +7537,7 @@ proc wviewer::emptied_source_strips {gs sources to_gi {auto -1} {keep 1}} {
 proc wviewer::drop_emptied_sources {token sources to_gi} {
   set gs [dict get [wviewer::layout_for $token] graphs]
   set kill [wviewer::emptied_source_strips $gs $sources $to_gi \
-              [wviewer::auto_graph_index $token] [wviewer::emptied_subwin_keeps_strip]]
+              [wviewer::emptied_subwin_keeps_strip]]
   if {![llength $kill]} { return $to_gi }
   set gone {}
   foreach gi $kill {

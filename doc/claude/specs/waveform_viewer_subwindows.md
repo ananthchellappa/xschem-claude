@@ -247,12 +247,14 @@ sit at one X across subwindows. **Declared limit** for this version.
   `move_traces` via `wviewer::drop_emptied_sources`, pure half
   `wviewer::emptied_source_strips`), inside the move's one undo point and under
   its one log line (which keeps the pre-move indices). Within one subwindow the
-  emptied strip stays, as before. The auto-plot strip is never removed. A
+  emptied strip stays, as before. An auto-plot (`auto 1`) strip is removed
+  too: under multi-plot every strip a run plots carries the marker, so that is
+  the common case; `auto_plot_strips` re-inserts what the next run needs. A
   subwindow whose LAST strip is emptied keeps it, empty: the switch is
   `wviewer::emptied_subwin_keeps_strip` (1, the driver's default pending the
   user's answer; 0 would remove it and close the subwindow, which is what
-  deleting a subwindow's last strip does). Rows SWP13, SWT1-SWT4 (both arms),
-  SWG15 (a real drag) and SWG12. **Strip** drag-reorder stays within its subwindow in v1 (declared
+  deleting a subwindow's last strip does). Rows SWP13, SWT1-SWT6 (both arms),
+  SWG15 (a real drag, an auto-plot fixture too) and SWG12. **Strip** drag-reorder stays within its subwindow in v1 (declared
   limit): `strip_drop_index` is vertical and is confined to the source range.
 - `wviewer::plan_paste` is handed the target subwindow's range.
 - Undo snapshots the layout, so `sw`/`subwins` ride; `wviewer::tab_freeze` /
