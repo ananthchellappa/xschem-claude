@@ -4745,6 +4745,10 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 - **1662** — the Waveform Viewer's right-click menus posted nothing on a one-trace strip, so in
   multi plot mode (every strip one trace since `7cdb6d709`, R-OUT14) right-click did nothing
   anywhere. Both gates lost the trace-count rung; the entries that need two traces are greyed.
+  ⚠ **1662 is still advertised free in `~/dev/xschem-op-wcard`**, whose own pointer reads "The
+  next free number is 1662." and which has no 1662 file (checked 2026-10-16), so it may be minted
+  there for a different defect; run both checks before minting, and treat a 1662 arriving from
+  that clone as a collision, not as this issue.
 
 ~~**The next free number is 1660.**~~
 

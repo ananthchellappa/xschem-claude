@@ -7549,6 +7549,10 @@ proc wviewer::drop_emptied_sources {token sources to_gi} {
     [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
   wviewer::set_graphs $token \
     [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
+  # a selected marker on a removed strip now points at nothing: clear it, as
+  # delete_empty_strips does (the calling move already switched to this
+  # viewer's context; row SWT6 of test_wave_subwindows)
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
   return [wviewer::index_after_removal $to_gi $kill]
 }
 
@@ -19501,8 +19505,8 @@ proc wviewer::btn3_filter {W T x y b s {rx -1} {ry -1}} {
   if {$had} { set x0 $b3x0($W); set y0 $b3y0($W) }
   set armed [wviewer::b3_marker_armed $W]
   # the record is dropped HERE, on the release, whatever happens next: a second
-  # release with no press of its own (the <Double-Button-3> `{break}` swallows
-  # the second PRESS but not the second release) must not read as a click
+  # release with no press of its own (a replayed lone event, or a press that
+  # went down on another widget) must not read as a click
   unset -nocomplain b3x0($W) b3y0($W) b3mk($W)
   if {!$had || $armed} { return }
   # `s` on a ButtonRelease reports the state BEFORE the release, so Button3Mask
@@ -19607,7 +19611,11 @@ proc wviewer::strip_bindings {wp} {
   # .graphdialog over a read-only viewer.
   bind $wp <Double-Button-1> {wviewer::marker_dblclick_at %W %x %y; break}
   bind $wp <Double-Button-2> {break}
-  bind $wp <Double-Button-3> {break}
+  # a QUICK second right-click is a Tk double: hand its press to btn3_filter
+  # like any press, so its release posts the menu again (item 18 residue R1,
+  # row TG10e of test_wave_trace_menu). Still a plain press to C (never -3),
+  # and still `break`, so D9 holds.
+  bind $wp <Double-Button-3> {wviewer::btn3_filter %W 4 %x %y 3 %s %X %Y; break}
   # issue 0149: kill the canvas-only mouse gestures. Shift+B1 and Alt+B1 are
   # canvas-only (waves_selected skips Shift+B1; Alt sets SET_MODMASK) and mean
   # rubber-band/copy-drag and unselect-at-pointer — pure schematic-object

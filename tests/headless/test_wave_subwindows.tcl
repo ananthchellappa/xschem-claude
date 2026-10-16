@@ -71,6 +71,12 @@
 #         move_trace / move_traces on a model-only window (one undo, one log
 #         line with the pre-move indices; SWT5 auto-plot strips; SWT6 the
 #         target, highlight and marker bookkeeping with a non-last destination).
+#   SWT6  (item 18 residue R2) a removed strip that carried a marker clears the
+#         C marker selection; control: no marker, no clear.
+#   SWK18 DISPLAY (item 18 residue R3): key_filter's own case_keysym call
+#         (Ctrl-z / Ctrl-a in the keysym case the server did NOT report),
+#         case_key's break passed on, and a REAL Caps Lock + Ctrl-g that stops
+#         at the viewer's tag (a toplevel recorder would see a leak).
 #   SWK17 DISPLAY (issue 1662): REAL RMB with the real tk_popup on every strip
 #         of a multi-mode, one-trace-per-strip window, two subwindows then one:
 #         the trace menu (Move greyed, Delete live) and the strip menu (Split
@@ -186,6 +192,12 @@
 #   drop_emptied_sources: no highlight remap -> SWT6 highlight row
 #   drop_emptied_sources: no marker sweep -> SWT6 marker row
 #   move_trace: target set to the stale to_gi -> SWT6 target row
+# Item 18 residue (2026-10-16), measured red at 3137344c (the product before
+# the change) unless marked as a sabotage:
+#   drop_emptied_sources: no marker-selection clear -> SWT6 selection row
+#   sabotage: key_filter without its case_keysym call -> SWK18 (x2)
+#   sabotage: case_key without `return -code break` -> SWK18 break row
+#        (the real-event leg read {grid_toggle_subwin_at leak})
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -1007,7 +1019,23 @@ if {[catch {
   swd_open [list [G a 1] [dict replace [G b 1] markers $mb] [G c 2] \
                  [dict replace [G d 2] markers $md]] 0 single
   set ::wviewer::wavehl(__swd) {{1 0 2} {3 0 1}}
-  set r [pcall {wviewer::move_trace 1 0 2 __swd}]
+  # item 18 residue R2: a removed strip that carried a marker clears the C
+  # marker selection, as delete_empty_strips does (a selected marker there
+  # would point at nothing). `xschem` is a recorder for this one call.
+  proc swt_spy {script} {
+    set ::swt_sel {}
+    rename ::xschem ::swt_orig_xschem
+    proc ::xschem {args} {
+      if {[lrange $args 0 1] eq {graph_marker select}} { lappend ::swt_sel $args ; return {} }
+      return [uplevel 1 [list ::swt_orig_xschem {*}$args]]
+    }
+    set r [pcall [list uplevel 1 $script]]
+    rename ::xschem {}
+    rename ::swt_orig_xschem ::xschem
+    return $r
+  }
+  set r [swt_spy {wviewer::move_trace 1 0 2 __swd}]
+  set swt6_sel $::swt_sel
   check "SWT6 the target is the destination strip, not the stale pre-removal index (destination not last)" \
     [list $r [names [swd_lay]] [swd_tr] [wviewer::target_index __swd]] \
     {1 {a c d} {a {c b} d} 1}
@@ -1018,6 +1046,12 @@ if {[catch {
           [lmap rec [wviewer::markers_decode [wviewer::dget [lindex [swd_lay] 2] markers {}]] \
              {list [dict get $rec num] [dict get $rec prev]}]] \
     {7 {{9 0} {10 7}}}
+  check "SWT6 ...the removed strip carried a marker: the C marker selection is cleared, once" \
+    $swt6_sel {{graph_marker select -none}}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 0 single
+  swt_spy {wviewer::move_trace 1 0 2 __swd}
+  check "SWT6 control: a removed strip with no marker leaves the selection alone" \
+    [list [names [swd_lay]] $::swt_sel] {{a c} {}}
   catch {unset ::wviewer::wavehl(__swd)}
   rename ::wviewer::capture_live_graph_state {}
   rename ::swt_orig_clgs ::wviewer::capture_live_graph_state
@@ -2055,6 +2089,47 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set ::swk_rec {}
   pcall {wviewer::case_key $vdrw D 4 <Control-Key-d> <Control-Shift-Key-D>}
   lappend mv D4 $::swk_rec
+  # SWK18 (item 18 residue R3): key_filter's OWN case_keysym call, which the
+  # matrix above cannot reach -- :99 already hands key_filter the typed case.
+  # The server variant: Caps Lock + Ctrl-z reported as `z` (122) with Lock,
+  # and Shift + Caps Lock + Ctrl-z reported as `Z` (90).
+  set kf {}
+  foreach {N st} {122 6 90 7 122 4 90 5} {
+    set ::swk_rec {}
+    pcall {wviewer::key_filter $vdrw 2 10 10 $N [format %c $N] $st}
+    lappend kf $N/$st $::swk_rec
+  }
+  # ...and the keysym it FORWARDS to C carries the typed case too (Ctrl-a):
+  # `xschem callback` and over_graph are recorders for these four calls only
+  set ::swk_fwd {}
+  rename ::xschem ::swk_orig_xschem
+  proc ::xschem {args} {
+    if {[lindex $args 0] eq {callback}} { lappend ::swk_fwd [lindex $args 5] ; return {} }
+    return [uplevel 1 [list ::swk_orig_xschem {*}$args]]
+  }
+  rename ::wviewer::over_graph ::swk_orig_over_graph
+  proc ::wviewer::over_graph {W} { return 1 }
+  foreach {N st} {97 6 65 7 97 4 65 5} {
+    pcall {wviewer::key_filter $vdrw 2 10 10 $N [format %c $N] $st}
+  }
+  rename ::wviewer::over_graph {}
+  rename ::swk_orig_over_graph ::wviewer::over_graph
+  rename ::xschem {}
+  rename ::swk_orig_xschem ::xschem
+  # case_key passes the base script's `break` on: called directly, and then a
+  # REAL Caps Lock + Ctrl-g with a recorder on the next bindtag (the toplevel),
+  # which only fires if the break was lost
+  bind WaveViewer <Control-Key-F20> {lappend ::swk_rec brk ; break}
+  set ::swk_rec {}
+  set kb [list [catch {wviewer::case_key $vdrw F20 4 <Control-Key-F20> {}} r] $::swk_rec]
+  bind WaveViewer <Control-Key-F20> {}
+  set swk_tl [winfo toplevel $vdrw]
+  set swk_tlb [bind $swk_tl <Control-Lock-Key-G>]
+  bind $swk_tl <Control-Lock-Key-G> {+lappend ::swk_rec leak}
+  set ::swk_rec {}
+  set ok [ks_once $vdrw G 6]
+  lappend kb [expr {$ok ? $::swk_rec : {NOFOCUS}}]
+  bind $swk_tl <Control-Lock-Key-G> $swk_tlb
   foreach p $swk_procs {
     rename ::wviewer::$p {}
     rename ::swk_orig_$p ::wviewer::$p
@@ -2065,6 +2140,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     $mx $want
   check "SWK8 ...and when the server reports the other keysym case (or no Lock bit) the state still decides" \
     $mv {D7 clear_all_at d6 clear_target_subwin_at N7 new_tab_at w6 close_subwin_at D4 clear_target_subwin_at}
+  check "SWK18 key_filter: Caps Lock + Ctrl-z zooms IN and Shift + Caps Lock + Ctrl-Z zooms OUT whichever keysym case the server reports" \
+    $kf {122/6 zoom_in 90/7 zoom_out 122/4 zoom_out 90/5 zoom_in}
+  check "SWK18 ...and Ctrl-a is forwarded to C in the typed case (65 = upper, 97 = lower)" \
+    $::swk_fwd {65 97 97 65}
+  check "SWK18 case_key passes break on (code 3), and a REAL Caps Lock + Ctrl-g stops at the viewer's tag (no leak to the toplevel)" \
+    $kb {3 brk grid_toggle_subwin_at}
   set ub {}
   set cp8 [pcall {wviewer::case_pairs}]
   if {[string match ERR:* $cp8]} { set ub $cp8 ; set cp8 {} }
@@ -2363,7 +2444,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 173 } else { set expect 318 }
+if {$::arm eq {nogui}} { set expect 175 } else { set expect 323 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

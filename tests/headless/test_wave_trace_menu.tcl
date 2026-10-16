@@ -35,6 +35,9 @@
 #        through the PRODUCTION bindings posts the menu
 #   TG10 the gesture's three refusals: a travelled B3 (box zoom — which must
 #        STILL zoom), a modified B3, and a release with no recorded press
+#   TG10e (item 18 residue R1, 2026-10-16) a QUICK second right-click -- a Tk
+#        <Double-Button-3> -- posts the menu again; D9 still holds. Red at
+#        3137344c, where that binding was a bare {break}: {3 0 {}} and {0 0}.
 #   TG11 no collateral damage: the B3 box zoom and the LMB wave-bold click are
 #        unchanged by the new release arm
 #   TB*  (issue 0174) the LMB wave-bold pick is PRECISE and PER-TRACE. This file
@@ -876,9 +879,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     wviewer::btn3_filter $vdrw 5 $tpx $tpy 3 0x400
     check "TG10 the release drops it again" \
       [info exists ::wviewer::b3x0($vdrw)] 0
-    # ... which is also what makes the SECOND release of a double-RMB inert:
-    # <Double-Button-3> is {break}, so the second PRESS never reaches the filter
-    # and the second release finds no record
+    # ... which is also what makes a stray SECOND release inert: a release
+    # whose press never reached the filter finds no record
     set ::tm_popped {}
     tm_ev $vdrw <ButtonPress-3>   -x $tpx -y $tpy
     tm_ev $vdrw <ButtonRelease-3> -x $tpx -y $tpy -state 0x400
@@ -891,6 +893,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     check "TG10 a second release with no press of its own posts nothing" \
       [llength $::tm_popped] 0
+    # TG10e (item 18 residue R1): a QUICK second right-click -- two presses
+    # inside Tk's double-click window, so the second one is <Double-Button-3>
+    # -- posts the menu again. It used to be bound {break}, so the second
+    # press never reached btn3_filter and its release found no record. D9
+    # still holds: no graph dialog, and the double never reaches C as one.
+    set ::tm_popped {}
+    set t0 [expr {$::tmt + 1000}]
+    event generate $vdrw <ButtonPress-3>   -x $tpx -y $tpy -time $t0
+    event generate $vdrw <ButtonRelease-3> -x $tpx -y $tpy -state 0x400 -time [expr {$t0 + 40}]
+    update
+    set tg10e_first [llength $::tm_popped]
+    catch {wviewer::trace_menu_unpost $tok}
+    set ::tm_popped {}
+    event generate $vdrw <ButtonPress-3>   -x $tpx -y $tpy -time [expr {$t0 + 120}]
+    event generate $vdrw <ButtonRelease-3> -x $tpx -y $tpy -state 0x400 -time [expr {$t0 + 160}]
+    update
+    set ::tmt [expr {$t0 + 100000}]
+    check "TG10e a quick second right-click (a Tk double) posts the menu again" \
+      [list $tg10e_first [llength $::tm_popped] [lindex $::tm_popped 0]] \
+      [list 3 3 $vtop.wvtracemenu]
+    catch {wviewer::trace_menu_unpost $tok}
+    check "TG10e ...the double is still swallowed (D9: no graph dialog) and the binding ends in break" \
+      [list [winfo exists .graphdialog] [string match {*; break} [string trim [bind $vdrw <Double-Button-3>]]]] {0 1}
 
     # TG10d: a press that landed while a MARKER drag was armed keeps the whole
     # gesture — the release ABORTS that drag (callback.c ~866) and a menu there
