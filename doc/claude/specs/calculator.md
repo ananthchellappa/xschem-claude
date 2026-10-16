@@ -30,7 +30,7 @@ calculator) that the requirements below assume without restating.
 | RPN expression evaluator over waveform data, ~54 ops | `plot_raw_custom_data()`, `src/save.c:2381` |
 | Expression → new named vector in the loaded raw | `raw_add_vector()`, `src/save.c:1186`; verb `xschem raw add <name> <expr> [sweep_idx]`, `src/scheduler.c` ~`9983` |
 | Plotting an RPN expression as a trace | `wviewer::add_trace {token gi rpn ...}`, `src/wave_viewer.tcl:3750` — the parameter is *literally named* `rpn` |
-| Append / Replace plot destination | `wviewer::plot_dest` / `set_plot_dest`, `src/wave_viewer.tcl:3962/3977` |
+| Plot destination, per call | `wviewer::plot_signals token exprs ?colors? ?destover?` (`destover` = the destination code; the viewer keeps no setting of its own since 2026-10-16) |
 | Per-trace database + dataset syntax | `node_token_split()`, `src/draw.c` ~`3320` |
 | Vector inventory, values, index, datasets, points | `xschem raw index|values|datasets|points|info` |
 
@@ -223,7 +223,7 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
 | W10 | `.calc.mode.clip` | checkbutton | variable `calc::clip`, **initial 1** |
 | W11 | `.calc.mode.plot` | button | plot buffer; label **`Plot`** |
 | W12 | `.calc.mode.eval` | button | evaluate buffer; label **`Eval`**. **⚠ Gated since results batch item 10 (U7):** with no result selected it refuses with *"No simulation results are loaded. Run a simulation, or pick an existing one with ASE-L ▸ Results ▸ Select."* and does **not** offer to launch ASE-L; with a refused context loan it says that instead (T-J); with a result it falls through to the phase-3 stub, because item 10 settled WHICH database Evaluate reads and none of WHAT it computes. `Plot` and `Table` are deliberately ungated — the ruling names Evaluate. |
-| W13 | `.calc.mode.dest` | combobox | values `[wviewer::dest_labels]` (`Append Replace {New Strip} {New SubWin} {New Tab}`, the viewer's own list, read at build time), initial `Append` |
+| W13 | `.calc.mode.dest` | combobox | values `[wviewer::dest_labels]` (`Append Replace {New Strip} {New SubWin} {New Tab}`, the viewer's own list, read at build time), initial the remembered choice (`calc::w13_saved`, `Append` when none) — the Calculator's own setting (R601) |
 | W14 | `.calc.mode.table` | button | show as table; label **`Table`** |
 | W15 | `.calc.buf` | text | **the buffer**; height 4, editable, `-undo 1`. ⚠ "height 4" is a **rendered** requirement, not just a `-height` option: the pane that holds it must give it at least its requested height at first open (§4.2). Phase 1b shipped `-height 4` in a pane that allotted 29 px of the 72 requested, so the tool's primary work surface drew one and a half lines with `cget -height` reporting 4. |
 | W16 | `.calc.btb` | frame | buffer toolbar |
@@ -1636,21 +1636,21 @@ below are the ones a caller cannot answer for itself and so must not have to.
 
 ## 9. Actions: plot, evaluate, table, export
 
-- **R601** **Plot** sends the buffer to `wviewer::add_trace <token> <gi> <rpn>`; the
-  destination comes from W13, which offers exactly the viewer's destinations
-  (`wviewer::dest_labels`: `Append` / `Replace` / `New Strip` / `New SubWin` / `New Tab`)
-  and must reuse `wviewer::set_plot_dest` rather than reimplementing the choice.
-  **A press never takes a choice away** (2026-10-15): **W13 tracks the viewer live.**
-  Every writer of the viewer's destination calls `wviewer::dest_notify`, and an open
-  Calculator moves W13 to show the new choice at once, silently, with no press
-  (`calc::viewer_dest`, bands PL5e/PL5f; the writer set is derived by row SWD16 of
-  `test_wave_subwindows`). So W13 is never older than the viewer and a press pushes W13
-  as it stands. W13 speaks for one session token at a time (`calc::w13_bind`, bound
-  when the Results Dir row is published or W13 is picked); a press for another token
-  first adopts that viewer's choice. A viewer closed and reopened starts with no choice,
-  so W13's own pick is pushed. (This retired `calc::dest_seen`, a per-token memory of
-  the last push that survived the viewer's close and let a press override a newer
-  viewer choice after a reopen.)
+- **R601** **Plot** sends the buffer to `wviewer::plot_signals <token> {<rpn>} {} <code>`;
+  the destination comes from W13, which offers exactly the viewer's destination codes
+  (`wviewer::dest_labels`: `Append` / `Replace` / `New Strip` / `New SubWin` / `New Tab`),
+  and is passed per call; the landing policy is the viewer's and is not reimplemented.
+  **W13 is the Calculator's OWN setting** (user ruling 2026-10-16, a Cadence fact: *"My
+  memory says calculator has its own setting. But ViVA doesn't."*). Choosing it says
+  `Plot destination: <label>.` and stores the label in `::calc_plot_dest` (`set_ne` in
+  `xschem.tcl`, like `calc_font_size`), so a Calculator closed and rebuilt in the same
+  session shows it again (`calc::w13_saved`); an rc may preset it. It does not move the
+  viewer (which has no setting) or ASE-L's status-bar drop-down, and neither of those
+  moves it. The on-disk store R704 names is not built; the destination joins it when it
+  is. (This retired the 2026-10-15 design in which W13 mirrored a per-window viewer
+  destination: `calc::w13_sync`, `calc::w13_bind`, `calc::viewer_dest`,
+  `calc::plot_dest_follow`, and the "applied when a waveform viewer is open" sentence.)
+  Band PL5i of `test_calc_plot` asserts the independence.
 - **R602** Plot with no viewer open opens one (the ASE-L viewer), then plots.
 - **R602a** **A successful plot brings the viewer forward and hands the keyboard straight
   back.** The user's words, 2026-10-07: *"When Plot button takes an action and Waveform

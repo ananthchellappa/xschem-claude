@@ -3667,15 +3667,17 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
     set queue [ase::ui::repair_currents $key $queue]
     lassign [ase::ui::dedupe_plot_queue $queue $qcolors] queue qcolors
   }
-  # issue 0151: WHERE the queued signals land is the viewer window's plot mode
-  # (doc/claude/specs/waveform_viewer_modes.md) — single-plot appends them all
-  # into the target strip, multi-plot gives each one its own new strip. The
-  # whole policy lives in wviewer::plot_signals; this side only reports the
+  # WHERE the batch lands is THIS SESSION's destination (the status-bar
+  # drop-down, R-OUT15; user ruling 2026-10-16: the source owns the choice,
+  # the viewer has none), passed per call. Within the target subwindow the
+  # viewer's plot mode (issue 0151) still decides: single-plot appends them
+  # all into the target strip, multi-plot gives each one its own new strip.
+  # The policy lives in wviewer::plot_signals; this side only reports the
   # per-signal failures it returns.
   # issue 0153: `qcolors` are the colors the picker already painted onto the
   # schematic nets, passed through verbatim so each trace lands in ITS wire's
   # color. Empty (a scripted/replayed call) -> plot_signals derives them itself.
-  foreach pair [wviewer::plot_signals $key $queue $qcolors] {
+  foreach pair [wviewer::plot_signals $key $queue $qcolors [ase::ui::plot_dest $key]] {
     lassign $pair ex err
     catch {::ase::echo "ase: cannot plot '$ex': $err" error}
   }
@@ -10917,7 +10919,7 @@ proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
 # The `~` strip button (ase_l.md R-OUT12, R-OUT16): its tip, and what it says
 # when there is nothing to measure or plot.
 proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values (Ctrl-click: values only)} }
-proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~ and the run-end plot go} }
+proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~, the run-end plot and Direct Plot go} }
 proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
 proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
 # A failed run (ase_l.md R-OUT13; `f` is ase::run_failed's answer): the notice,
@@ -12731,12 +12733,12 @@ proc ase::ui::do_netlist_recreate {key} {
   catch {::ase::echo "ase: netlist written: $nl"}
 }
 
-# --- R-OUT15: the plot destination of `~` and the run-end auto-plot ----------
+# --- R-OUT15: the plot destination of `~`, the run-end auto-plot and Direct Plot
 # doc/claude/specs/waveform_viewer_subwindows.md SW18 and §8. The four choices
 # are the user's (ADE-L's plotting mode): one code per label, the codes the
 # viewer's own wviewer::dest_norm speaks, so `New Win` is the viewer's `newtab`.
-# ADE-L-side only: the viewer's own destination (wviewer::plot_dest) is a
-# SEPARATE setting serving the viewer's doors.
+# ASE-L's OWN setting: the viewer has none (user ruling 2026-10-16) and the
+# Calculator's W13 is a separate one; neither moves the other.
 
 # The drop-down's labels, in order. PURE.
 proc ase::ui::plot_dest_labels {} {

@@ -692,8 +692,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ---- TGR: REPLAY of a plot under New Tab --------------------------------
   # In a CHILD with its own --logdir (T1 passes none, and the action log only
   # exists when one is open), on THIS suite's display (`winfo screen .`, never
-  # an inherited $DISPLAY). The child records two CIW-typed gestures through
-  # the CIW's own seam (`ciw_log_outcome`), reopens the viewer to the state it
+  # an inherited $DISPLAY). The child records ONE CIW-typed plot line, its
+  # destination its fourth argument (the viewer has no destination setting
+  # since the user ruling of 2026-10-16), through the CIW's own seam
+  # (`ciw_log_outcome`), reopens the viewer to the state it
   # started from, replays the recorded lines and prints both end states.
   # Append has no window half, so TGR1 isolates the OTHER leak: a viewer
   # redraw's own C line (`xschem clear_drawing`), which aborts a replay.
@@ -721,7 +723,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       xschem raw new wvtgr.raw dc vsweep 0 1.0 0.1
       foreach v {a1 a2} { xschem raw add $v "vsweep 1 +" }
       wviewer::set_plot_mode single $tok
-      set ::wviewer::dest($tok) append
       wviewer::plot_signals $tok {a1}
     }
     proc tgr_state {tok} {
@@ -734,7 +735,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     foreach d {append newtab} {
       tgr_open $tok
       set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
-      foreach cmd [list [list wviewer::set_plot_dest $d $tok] [list wviewer::plot_signals $tok {a2}]] {
+      foreach cmd [list [list wviewer::plot_signals $tok {a2} {} $d]] {
         xschem log_action -reset
         set code [catch {uplevel #0 $cmd} res]
         set ::ciw_out_pending {}

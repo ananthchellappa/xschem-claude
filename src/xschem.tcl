@@ -20042,6 +20042,12 @@ set_ne rdw_font_size 0
 ## because `calc::save_layout` persists the geometry and a window the user can
 ## neither shrink nor forget has no workaround.
 set_ne calc_font_size 0
+## The Calculator's plot destination (W13): its OWN setting, separate from
+## ASE-L's status-bar drop-down (the viewer has none; user ruling 2026-10-16).
+## Empty = Append. A W13 label or a code (`calc::w13_saved`, src/calculator.tcl);
+## W13 writes it, so the choice survives a Calculator close for the session,
+## and an rc can preset it.
+set_ne calc_plot_dest {}
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES

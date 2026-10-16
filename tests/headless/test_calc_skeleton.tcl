@@ -1393,18 +1393,17 @@ check "S18 both comboboxes are the state the map covers" \
 pcall .calc.mode.dest set {Replace}
 pcall event generate .calc.mode.dest <<ComboboxSelected>>
 update idletasks
-# WARN RESTATED BY calculator_batch PLAN 3.3.  This row asserted
-# `plot destination Replace: not implemented (phase 3)` -- `calc::dest_changed`
-# was a `calc::inert` call site.  It now PUSHES the label at
-# `wviewer::set_plot_dest` on the viewer holding the session's result, and says
-# which of the two happened.  Nothing in this file opens a viewer, so the arm
-# measured here is the no-viewer one, and that is the arm worth having in THIS
-# file: it proves the choice is not silently dropped when there is nowhere to
-# push it.  The push itself is tests/headless/test_calc_plot.tcl's band PL6.
-check "S18 choosing a destination says so, and says the choice is held until there is a viewer" \
-    [pcall .calc.status.msg get] \
-    {Plot destination: Replace (applied when a waveform viewer is open).}
+# WARN RESTATED TWICE.  PLAN 3.3 made `calc::dest_changed` push the label at a
+# viewer-side destination and say "(applied when a waveform viewer is open)"
+# with no viewer.  The user ruling of 2026-10-16 made W13 the Calculator's OWN
+# setting (the viewer has none), so with or without a viewer it stores the
+# pick and says the same plain sentence.  Nothing in this file opens a viewer;
+# band PL6 of tests/headless/test_calc_plot.tcl measures the store.
+check "S18 choosing a destination says so, with no viewer open, and remembers it" \
+    [list [pcall .calc.status.msg get] [pcall set ::calc_plot_dest]] \
+    {{Plot destination: Replace.} Replace}
 pcall .calc.mode.dest set {Append}
+set ::calc_plot_dest {}
 
 # the three action buttons are INERT, and each names itself and its phase.
 #

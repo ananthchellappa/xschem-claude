@@ -605,18 +605,15 @@ namespace eval wviewer {
   # deleting a strip can never leave a dangling target.
   variable mode;    array set mode {}
   variable target;  array set target {}
-  # signal browser batch item 7: per-window PLOT DESTINATION
-  # (append|replace|newstrip|newtab) — ViVA's Append/Replace/NewSubWin/NewWin
-  # mapped onto xschem's model. Keyed by session token like `mode`/`target`
-  # above, and for the same reason: it is a WINDOW property, not a layout key.
-  #
-  # ⚠ DELIBERATELY NOT a per-TAB field, unlike `mode` and `target`, which
-  # tab_freeze/tab_thaw carry in the tab record. The settled wording is
-  # "persisted per WINDOW": ONE destination governs every tab of the window, so
-  # switching tabs cannot silently change where the next plot lands. The
-  # asymmetry with mode/target is intentional — do not "fix" it by adding a
-  # `dest` key to the tab record without changing that decision first.
-  variable dest;    array set dest {}
+  # NO per-window plot DESTINATION (user ruling 2026-10-16, a Cadence fact:
+  # ViVA has no destination setting; a plot lands in the active subwindow
+  # unless its SOURCE says otherwise). Signal browser item 7 kept one here
+  # (`dest`); it is retired. The destination is a per-call argument
+  # (plot_signals' `destover`, dest_prepare, plot_sites, plan_plot), owned by
+  # the source: ASE-L's status-bar drop-down, the Calculator's W13, the Add
+  # Trace dialog and the browser's `Plot to` cascade. Row SWD16 of
+  # tests/headless/test_wave_subwindows.tcl fails on any proc that declares or
+  # writes one again.
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
@@ -891,12 +888,8 @@ proc wviewer::forget {token} {
   # below relies on being true).
   variable gridshow
   variable mode; variable target
-  # item 7: DECLARED here on purpose — see the `gridshow` note just above for
-  # what an undeclared `variable` costs (a silent per-token leak that survives
-  # every close).
-  variable dest
-  # signal-browser item 8: DECLARED here for the same reason `dest` and
-  # `gridshow` are -- an undeclared `variable` makes the unsets below address a
+  # signal-browser item 8: DECLARED here for the same reason `gridshow`
+  # is -- an undeclared `variable` makes the unsets below address a
   # LOCAL array, so the namespace entries survive every close.
   variable browser; variable browsershow
   # signal-browser item 9: the inventory SNAPSHOT and the last row list, same
@@ -1010,7 +1003,6 @@ proc wviewer::forget {token} {
   catch {unset mode($token)}
   catch {unset target($token)}
   catch {unset selected($token)}
-  catch {unset dest($token)}
   catch {unset browser($token)}
   catch {unset browsershow($token)}
   catch {unset browsersigs($token)}
@@ -5953,70 +5945,14 @@ proc wviewer::set_plot_mode {req {token {}}} {
   return $new
 }
 
-# --- item 7: the per-window plot DESTINATION ----------------------------------
-# THE accessor. Everything that decides where a plot gesture lands must call
-# this — the Add Trace dialog, plot_signals, and (item 9) the browser toolbar's
-# three plot gestures. Nothing may re-implement the policy, exactly as nothing
-# may re-implement sig_match.
-#
-# ⚠ Unlike plot_mode, this DEFAULTS rather than returning {} for an unset token:
-# `mode` is seeded at `open` time and its {} truthfully means "no window", but
-# there is no open-time seed for the destination, so the default lives here.
-# `append` is the answer for an unknown token too, and that is deliberate: a
-# caller that asked for the destination of a window that is not there must get
-# the harmless policy, not a policy that destroys traces.
-proc wviewer::plot_dest {{token {}}} {
-  variable dest
-  set token [wviewer::resolve_token $token]
-  if {$token eq {} || ![info exists dest($token)]} { return append }
-  return $dest($token)
-}
-
-# Set the destination. `req` is a LABEL or a CODE (wviewer::dest_norm). Returns
-# the RESOLVED code, or {} plus a CIW error when the token resolves to no open
-# viewer — the set_plot_mode shape, deliberately.
-#
-# Logs `wviewer::set_plot_dest <code> <token>` ON AN ACTUAL CHANGE ONLY (a
-# window with no entry yet counts as a change, whatever the request), and
-# always the resolved CODE (never the label) with an explicit token: the same
-# rule set_plot_mode and set_target_strip follow, so a replay does not fill with
-# redundant lines and does not depend on which window is active at replay time.
-proc wviewer::set_plot_dest {req {token {}}} {
-  variable dest
-  variable windows
-  set token [wviewer::resolve_token $token]
-  if {$token eq {} || ![dict exists $windows $token]} {
-    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
-      ciw_echo "wviewer: no waveform viewer window to set the plot destination on" error
-    }
-    return {}
-  }
-  set new [wviewer::dest_norm $req]
-  # ⚠ "no change" means an ENTRY equal to the request, NOT plot_dest's answer:
-  # plot_dest DEFAULTS an absent entry to append (a fresh window, or one
-  # reopened after wviewer::forget), so comparing against it made an explicit
-  # Append on such a window write nothing and notify nobody -- and a W13
-  # still showing its own pending pick then pushed that pick over the user's
-  # Append on the next press (R506; row PL5g of test_calc_plot).
-  if {[info exists dest($token)] && $new eq $dest($token)} { return $new }
-  set dest($token) $new
-  wviewer::log_action [list wviewer::set_plot_dest $new $token]
-  wviewer::dest_notify $token
-  return $new
-}
-
-# EVERY writer of `dest(token)` calls this after the write, so a control that
-# MIRRORS the destination elsewhere -- the Calculator's W13 -- shows the
-# viewer's current choice without polling and without guessing which side is
-# newer (row SWD16 of test_wave_subwindows derives the writers from the
-# interpreter's own proc bodies). The listener is optional and never raises
-# into the writer.
-proc wviewer::dest_notify {token} {
-  if {[info commands ::calc::viewer_dest] ne {}} {
-    catch {::calc::viewer_dest $token}
-  }
-  return {}
-}
+# --- item 7: the plot DESTINATION is the SOURCE's, never the window's ---------
+# The viewer used to hold a per-window destination (`plot_dest` /
+# `set_plot_dest`, mirrored into the Calculator's W13 by `dest_notify`). User
+# ruling 2026-10-16 retired it: in ViVA a plot lands in the active subwindow
+# unless the source that sent it says otherwise, and the Calculator keeps its
+# own setting. So every destination is a per-call argument and a call with
+# none means `append` -- into the TARGET subwindow, per that subwindow's plot
+# mode (plot_signals). Rows SWD16/SWD17 of test_wave_subwindows.
 
 # The WINDOW-level half of the destination policy: everything that must happen
 # BEFORE plan_plot can speak (doc/claude/specs/waveform_viewer_subwindows.md §6):
@@ -9043,14 +8979,13 @@ proc wviewer::plot_sites {token n dest {autook 0}} {
 # is what makes multi-plot cycle colors instead of giving every fresh strip the
 # palette head — so any caller gets that fix, not just the picker.
 #
-# `destover` (item 10) is a ONE-SHOT destination override — the browser's
-# `Plot to →` cascade, which must land this ONE batch somewhere else without
-# changing where the NEXT gesture lands. Ruling 24 is intact and this is why it
-# is an ARGUMENT and not a save/restore around `set_plot_dest`: `plot_dest`
-# remains THE accessor for the window's policy, the override never writes
-# `dest($token)`, and a save/restore would log two spurious replay lines and
-# leave the window on the wrong policy if anything below threw. `{}` = use the
-# window's policy, which is every pre-item-10 caller.
+# `destover` is the CALL's destination, chosen by the SOURCE (user ruling
+# 2026-10-16: the viewer has no destination setting of its own): ASE-L's
+# Direct Plot passes its session's drop-down, the Calculator its W13, the
+# browser's `Plot to` cascade the entry picked. `{}` = a source with no choice
+# (the browser's Plot, paste, a typed call), which is `append` -- into the
+# TARGET subwindow, per its plot mode. A typed or replayed line carries the
+# destination with it (row SWR3 of test_wave_subwindows).
 #
 # The per-signal DATABASE (spec §D1 / DEFECT 2) arrives out of band, through
 # `wviewer::plot_dbs_arm` / `plot_dbs_take` — see their header for why it is not
@@ -9067,16 +9002,10 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   # created. add_trace's own capture cannot serve here — it runs after the
   # strips were added, where the 1:1 rect/model guard refuses it.
   wviewer::capture_live_view_state $token
-  # item 7: THE window destination governs this seam, and this seam ONLY — it is
-  # the one route every plot gesture (Direct Plot, and item 9's three browser
-  # gestures) shares, so the policy is implemented once here and nowhere else.
-  # The WINDOW half runs first and may replace the whole layout (New Tab), hence
-  # the re-read below.
-  # ⚠ ONE resolution, BEFORE dest_prepare, so the override governs the window
-  # half (New Tab) and plan_plot alike. A second read anywhere below would be a
-  # place the two could disagree.
-  set dest [expr {$destover eq {} ? [wviewer::plot_dest $token]
-                                  : [wviewer::dest_norm $destover]}]
+  # The destination is the call's (`destover`, {} = append), resolved ONCE,
+  # BEFORE dest_prepare, so it governs the window half (New Tab may replace the
+  # whole layout, hence the re-read below) and plan_plot alike.
+  set dest [wviewer::dest_norm $destover]
   # an EMPTY batch is a no-op for every destination (plan_plot's first rule):
   # it must not make a tab or a subwindow, nor clear one under Replace
   if {![llength $exprs]} { return {} }
@@ -11762,7 +11691,7 @@ proc wviewer::browser_sea_menu_build {token idxs} {
     -label [expr {$n == 1 ? [lindex $names 0] : "$n signals"}]
   $m add separator
   $m add command \
-    -label "Plot ([wviewer::dest_menu_label $token [wviewer::plot_dest $token]])" \
+    -label Plot \
     -command [list wviewer::browser_sea_plot_idx $token $idxs]
   set sub [wviewer::ctx_menu_child $m dest]
   if {$sub ne {}} {
@@ -12893,9 +12822,9 @@ proc wviewer::browser_filter_cb {token args} {
 
 # --- item 9: the three plot gestures (ViVA §3.4) ------------------------------
 # double-click, middle-click, and the Plot toolbar button. ALL THREE converge on
-# `wviewer::plot_signals`, which is where item 7's destination policy lives
-# (ruling 24: `plot_dest` is THE accessor and nothing re-implements it). Nothing
-# below reads plot_dest, plan_plot or the layout.
+# `wviewer::plot_signals`, which is where the destination is resolved (from
+# the call's own `destover`; the viewer has no setting). Nothing below reads
+# plan_plot or the layout.
 #
 # (The multi-plot "Replace really Appends" limit ruling 24 declared here was
 # RETIRED 2026-10-15: dest_prepare empties the target subwindow in both modes,
@@ -12915,8 +12844,8 @@ proc wviewer::browser_filter_cb {token args} {
 # `add_trace`, so the trace plotted is the trace pointed at.
 #
 # `destover` (item 10) is handed straight to plot_signals and read NOWHERE here:
-# the one-shot override is plot_signals' business, and BT06's "nothing in the
-# browser re-reads plot_dest / plan_plot / dest_prepare" stays literally true.
+# the destination is plot_signals' business, and BT06's "nothing in the
+# browser re-reads plan_plot / dest_prepare" stays literally true.
 proc wviewer::browser_plot_ids {token ids {destover {}}} {
   variable windows
   variable browserrows
@@ -13092,7 +13021,7 @@ proc wviewer::browser_menu_build {token ids} {
   # the WINDOW's policy, spelled out — a `Plot` that silently means `New Tab`
   # is the same defect as an unlabelled Replace under multi
   $m add command \
-    -label "Plot ([wviewer::dest_menu_label $token [wviewer::plot_dest $token]])" \
+    -label Plot \
     -command [list wviewer::browser_plot_ids $token $ids]
   # the ONE-SHOT override. Entries come from dest_labels (the combobox's own
   # source), never from literals, so the cascade and the Add Trace dropdown
@@ -14873,8 +14802,8 @@ proc wviewer::browser_toggle_at {W} {
 # on). `browser_state_is_default` is the gate.
 #
 # ⚠ EVERYTHING IS READ THROUGH THE OWNING ITEM'S ACCESSOR — `browser_shown`
-# (item 8), `searchbar_get` (items 4/9/14), `plot_dest` (item 7, ruling 24),
-# `rawhist_get` (item 13). Nothing here touches `sbcase(`, `sbcfg(`, `dest(` or
+# (item 8), `searchbar_get` (items 4/9/14), `rawhist_get` (item 13). Nothing
+# here touches `sbcase(`, `sbcfg(` or
 # the RECT MODEL: settled decision 13 says browser state derives from
 # `xschem raw list` / `xschem raw`, never from graph rects (issue 0186 is open).
 #
@@ -14888,8 +14817,10 @@ proc wviewer::browser_toggle_at {W} {
 # drifts in the widgets is a FAILING CHECK (BP41 asserts a real fresh window
 # equals this) instead of a gate that quietly stops emitting.
 #
-# `dest append` is spelled out because item 7 has no open-time seed — `plot_dest`
-# answers `append` for a token it has never heard of, so that IS the default.
+# `dest append` is a FOSSIL KEY, kept so the schema, the key order and the
+# default gate are unchanged: the viewer has no destination setting any more
+# (user ruling 2026-10-16), so the snapshot always writes `append` and the
+# apply ignores whatever a state file carries.
 # The search sub-dict carries `alldbs` and the filter sub-dict does NOT: that is
 # item 14's conditional-key contract (only a bar built `-alldbs 1` has it), and
 # the two shapes must match `searchbar_get`'s output EXACTLY, key order included,
@@ -15105,7 +15036,7 @@ proc wviewer::browser_state {token} {
   set fl {}
   catch {set fl [wviewer::searchbar_get $f.wvfilter]}
   if {$fl ne {}} { dict set d filter $fl }
-  dict set d dest [wviewer::plot_dest $token]
+  dict set d dest append
   set t [wviewer::browser_tree_state $token]
   dict set d open [wviewer::dget $t open {}]
   dict set d sel  [wviewer::dget $t sel  {}]
@@ -15137,23 +15068,20 @@ proc wviewer::browser_state {token} {
 # And both go only when the sidebar restores SHOWN (item 9's D6 — there is no
 # populated tree while it is hidden; declared divergence D-D).
 #
-# ⚠ IT WRITES `dest` AND `browser` DIRECTLY rather than through `set_plot_dest`
-# / `browser_toggle`, which BOTH `log_action`. That is `restore`'s own precedent
-# for `mode`/`target`: a rebuild must not fill the replay log with lines nobody
-# typed. The VALUE still goes through item 7's normaliser, so a garbage `dest`
-# in a hand-edited state lands on the harmless policy. Declared as D-F.
+# ⚠ IT WRITES `browser` DIRECTLY rather than through `browser_toggle`, which
+# `log_action`s. That is `restore`'s own precedent for `mode`/`target`: a
+# rebuild must not fill the replay log with lines nobody typed. Declared as
+# D-F. A `dest` key in the state (every file written before the user ruling of
+# 2026-10-16) is READ PAST: the viewer has no destination setting to restore.
 proc wviewer::browser_state_apply {token d} {
   variable windows
   variable browser
-  variable dest
   if {$d eq {}} { return 0 }
   if {![dict exists $windows $token]} { return 0 }
   set f [dict get $windows $token top].wvbrowser
   if {[catch {winfo exists $f} e] || !$e} { return 0 }
   catch {wviewer::searchbar_set $f.wvsearch [wviewer::dget $d search {}]}
   catch {wviewer::searchbar_set $f.wvfilter [wviewer::dget $d filter {}]}
-  catch {set dest($token) [wviewer::dest_norm [wviewer::dget $d dest append]]}
-  wviewer::dest_notify $token
   # TWO-PANE item 14: R11's two class boxes, restored BEFORE `browser_show`.
   # THE ORDER IS FORCED -- they are CLASS FILTERS, and `browser_show` populates
   # the tree and the sea, so restoring them afterwards would build the sidebar
@@ -16854,7 +16782,7 @@ proc wviewer::set_case_mode {token mode} {
   set pair [wviewer::casemode_refresh $token 1]
   catch {::ase::echo "viewer: [wviewer::casemode_label $pair]"}
   # ACTION LOG. Every other state-changing Options command in this file logs
-  # (set_plot_mode, set_plot_dest, grid_toggle, browser_toggle, 26 sites), and
+  # (set_plot_mode, grid_toggle, browser_toggle, and the rest), and
   # this one changes what a scripted `xschem raw casemode` in this context
   # answers — a replay that skipped it would diverge from the recorded session.
   # Argument order is the PROC'S OWN, so the logged line is directly callable.
@@ -18321,11 +18249,11 @@ proc wviewer::add_trace_dialog {token} {
   # there would detach the scrollbar from the listbox by the label's width.
   # Every free cell in this form is in column >= 2; a new row is the only clean
   # cell there is.
-  # It shows the PERSISTED per-window choice, so reopening the dialog shows what
-  # was chosen last (wviewer::plot_dest, which defaults to Append).
+  # ONE-SHOT: it opens on Append every time and OK uses it for that plot only
+  # (the viewer remembers no destination, user ruling 2026-10-16; row SWD13).
   label $w.ldest -text Destination: -font AseLabelFont -anchor w
   ttk::combobox $w.dest -state readonly -width 10 -values [wviewer::dest_labels]
-  $w.dest set [wviewer::dest_label [wviewer::plot_dest $token]]
+  $w.dest set Append
   grid $w.ldest -row 0 -column 0 -sticky w -padx {8 6} -pady 2
   grid $w.dest  -row 0 -column 1 -sticky w -padx {0 8} -pady 2
   label $w.lgraph -text Graph: -font AseLabelFont -anchor w
@@ -18512,10 +18440,8 @@ proc wviewer::add_trace_ok {token} {
   # exactly like plot_signals reads its own arm — before any early return, so a
   # refused OK cannot leave it to retarget the next gesture.
   lassign [wviewer::atd_db_take $token] atd_nm atd_db
-  # The dropdown IS the setting: choosing it in the dialog and pressing OK
-  # persists it for the window (item 7's "persisted per window").
+  # this plot's destination only: nothing is remembered (row SWD13)
   set dest [wviewer::dest_norm [$w.dest get]]
-  wviewer::set_plot_dest $dest $token
   # SNAPSHOT THE PICKS NOW, BY NAME. Two independent reasons, both measured:
   # item 5's AT14 (a repopulate invalidates listbox indices, names survive it)
   # and item 7's New Tab (dest_prepare DESTROYS this dialog — after that point
@@ -20772,20 +20698,8 @@ proc wviewer::build_menubar {token top} {
   $mb.options.plotmode add command -label {Set Multi-plot Mode} \
     -command [list wviewer::set_plot_mode invert $token]
   $mb.options add cascade -label {Plot Mode} -menu $mb.options.plotmode
-  # item 7: the plot DESTINATION, the menu route to the same per-window setting
-  # the Add Trace dropdown writes.
-  # ⚠ PLAIN COMMANDS, NOT RADIOBUTTONS, and that is not a style choice: Tk
-  # writes a radiobutton's `-variable` BEFORE it fires `-command`, so
-  # set_plot_dest would always see the new value already in place, find "no
-  # change" and never write its replayable log line. The `gridshow` mirror
-  # comment documents the same trap.
-  menu $mb.options.plotdest -tearoff 0 -takefocus 0 \
-    -font AseLabelFont -background $panel -activebackground $header
-  foreach lbl [wviewer::dest_labels] {
-    $mb.options.plotdest add command -label $lbl \
-      -command [list wviewer::set_plot_dest [wviewer::dest_norm $lbl] $token]
-  }
-  $mb.options add cascade -label {Plot Destination} -menu $mb.options.plotdest
+  # NO Options > Plot Destination: the viewer has no destination setting
+  # (user ruling 2026-10-16). Row PL5i of test_calc_plot.
   # CASEMODE ITEM 5 (DECISIONS.md B2a): show what was DETECTED for the loaded
   # database and let the user override it. Entry 0 is the readout, disabled
   # because it is a statement and not a command; the radios below it write the
@@ -20803,9 +20717,8 @@ proc wviewer::build_menubar {token top} {
     -postcommand [list wviewer::casemode_menu_post $token $mb.options.casemode]
   $mb.options.casemode add command -label [wviewer::casemode_label {}] -state disabled
   $mb.options.casemode add separator
-  # RADIOBUTTONS are safe here where Plot Destination's comment says they are
-  # not: the trap there is that Tk writes -variable before firing -command, so a
-  # "did this change?" test inside the command always says no. These commands
+  # RADIOBUTTONS are safe here even though Tk writes -variable before firing
+  # -command (so a "did this change?" test inside the command always says no). These commands
   # take the mode as a LITERAL argument and never read the variable, so the
   # write-first order costs nothing — and the tick is the only way the menu can
   # show which of the four is in force.

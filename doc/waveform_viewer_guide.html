@@ -1151,11 +1151,15 @@ bar (<a href="#browser-loc">§11.4</a>) refreshes it for you.</p>
 
 <h3 id="browser-menu">11.3 Right-click, and where traces land</h3>
 
-<p>Right-clicking the tree posts a menu: <b>Plot</b>, a destination cascade,
-<b>Copy names</b>, <b>Send to Add Trace</b> and <b>Descend to here</b>. The
-destination is the same one the Add Trace dialog offers — <b>Append</b>,
-<b>Replace</b>, <b>New Strip</b>, <b>New SubWin</b>, <b>New Tab</b> — and it is
-remembered per window. Every one of them lands in the <b>target subwindow</b>:</p>
+<p>Right-clicking the tree posts a menu: <b>Plot</b>, a <b>Plot to</b>
+cascade, <b>Copy names</b>, <b>Send to Add Trace</b> and <b>Descend to
+here</b>. The viewer has no destination setting of its own: <b>Plot</b> (like
+a double-click, a middle-click or the toolbar's Plot) adds to the <b>target
+subwindow</b>, and <b>Plot to</b> picks a destination for that one plot. The
+choices are the ones the Add Trace dialog offers — <b>Append</b>,
+<b>Replace</b>, <b>New Strip</b>, <b>New SubWin</b>, <b>New Tab</b> — and none
+is remembered. To send plots somewhere else, click a subwindow to make it the
+target, or make a new subwindow or tab first:</p>
 
 <ul>
 <li><b>Append</b> adds to the target subwindow, spread over its strips by the
@@ -1168,13 +1172,15 @@ cleared plots back.</li>
 <li><b>New Tab</b> opens a new tab and plots into it.</li>
 </ul>
 
-<p>ASE-L has its own drop-down for <kbd>~</kbd> and the after-run plot, at the
-right end of its status bar: <b>Append</b>, <b>Replace</b>, <b>New SubWin</b>,
-<b>New Win</b> (a new tab here). It is saved with the session state.</p>
+<p>ASE-L has its own drop-down for <kbd>~</kbd>, the after-run plot and
+Direct Plot, at the right end of its status bar: <b>Append</b>, <b>Replace</b>,
+<b>New SubWin</b>, <b>New Win</b> (a new tab here). It is saved with the session
+state. Its default is <b>Replace</b>, so each Direct Plot batch clears the
+target subwindow; pick <b>Append</b> to add to it.</p>
 
-<p>The Calculator's Plot drop-down offers the same five as the viewer. If you
-change the viewer's destination after the Calculator's last plot, the next
-Calculator plot uses the viewer's choice and the drop-down updates to show it.</p>
+<p>The Calculator's Plot drop-down is the Calculator's own setting. It offers
+the same five as the viewer, it is remembered while xschem runs, and changing
+it changes nothing in the viewer or in ASE-L (nor do they change it).</p>
 
 <h3 id="browser-loc">11.4 The Location bar</h3>
 
@@ -1358,8 +1364,7 @@ Each has a different remedy, so they are worded differently.</p>
 <p>The browser is part of the saved simulation state (<a
 href="#state">§8</a>): whether the sidebar was shown, its width, the
 <b>split between the two panes</b>, both class boxes (<b>Show device
-internals</b> and <b>Show source currents</b>), both bars' settings, the plot
-destination, which instances were expanded, what was selected, and the raw-file
+internals</b> and <b>Show source currents</b>), both bars' settings, which instances were expanded, what was selected, and the raw-file
 history.</p>
 
 <p>Two of those are kept as <em>proportions</em> rather than as pixels, and the

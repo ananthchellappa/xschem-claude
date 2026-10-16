@@ -1087,8 +1087,9 @@ check {BT05 both bars are packed -fill x (item 4's stated requirement)} \
 check_true {BT05 the filter bar's callback is the filter one, not the search one} \
   [expr {[string first {wviewer::browser_filter_cb $token} $bt_build] >= 0}]
 
-# ruling 24: plot_dest is THE destination accessor and nothing re-implements the
-# policy. All three gestures funnel into plot_signals, which owns it.
+# All three gestures funnel into plot_signals, which resolves the destination
+# from its own `destover` argument (the viewer has no destination setting since
+# the user ruling of 2026-10-16); nothing in the browser re-implements it.
 set bt_pids [wvproc_body $wsrc wviewer::browser_plot_ids]
 set bt_psel [wvproc_body $wsrc wviewer::browser_plot_selection]
 set bt_pat  [wvproc_body $wsrc wviewer::browser_plot_at]
@@ -2202,60 +2203,41 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list $bt_g2 [expr {[bt_traces $tok] - $bt_n1c}]] [list ok 1]
     bt_close $BTVTV $bt_o
 
-    # --- BT44: the DESTINATION is honoured, through plot_signals (ruling 24) --
+    # --- BT44: the browser is a source with NO destination choice: its Plot
+    # lands as Append, into the target (user ruling 2026-10-16 retired the
+    # viewer's own destination setting, which this band used to drive) ------
     set bt_g0 [llength [dict get [wviewer::layout_for $tok] graphs]]
-    pcall ::wviewer::set_plot_dest newstrip $tok
-    check {BT44 the window's destination really is newstrip now} \
-      [pcall ::wviewer::plot_dest $tok] newstrip
+    check {BT44 the viewer has no destination setting to drive (no set_plot_dest, no plot_dest)} \
+      [list [info procs ::wviewer::set_plot_dest] [info procs ::wviewer::plot_dest]] {{} {}}
     # ⚠ ITEM 10 (A): a NODE, not `s:i(x1.x2.net5)`. WHICH signals land is free —
     # this check is about the DESTINATION — but the selection is read back,
     # because a `selection set` that threw leaves the previous selection and
-    # "a new strip appeared" would then be a fact about a different gesture.
+    # "the strip count held" would then be a fact about a different gesture.
     pcall $BTVTV selection set [list {g:x1.x2}]
     check {BT44 (PRECONDITION) the node really is selected, so the button has the target this check names} \
       [pcall $BTVTV selection] g:x1.x2
-    # ⚠ ITEM 10's CARRIED-FORWARD FIX (driver note b), and it is one word per
-    # line. These two checks are NAMED as "gestures" but used to call
-    # `browser_plot_selection` DIRECTLY — the handler, not the Tk route — which
-    # ruling 17 counts as a defect in the NAME even though the coverage was not
-    # missing (BT30/31/32 pin the real `invoke` route, BT43 drives real MMB and
-    # double-click). SWAPPED rather than renamed, because ruling 17 prefers
-    # WIDENING: `$BTVF.tb.plot invoke` is the real button route, is synchronous
-    # with no focus or mapping dependence (so it adds zero WSLg flake), the
-    # selection is already set by the line above so the semantics are
-    # byte-identical, and it closes the exact gap item 9's verifier exposed —
-    # no single check spanned real-button-route -> real-trace. RULING-23
-    # SUPERSET DECLARED: a future sabotage severing the Plot button's -command
-    # now fails BT30/31/32 AND these two, instead of leaving these two green.
+    # the REAL button route (`invoke`), as BT30/31/32 pin it
+    set bt_n1 [bt_traces $tok]
     pcall $BTVF.tb.plot invoke
     update
-    check_true {BT44 a Plot-button gesture under newstrip created a new strip} \
-      [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] > $bt_g0}]
-    # ⚠ THE DECLARED LIMIT, ASSERTED AS A LIMIT (ruling 24). Under MULTI-plot,
-    # `replace` clears nothing — plan_plot emits no clear key there — so a
-    # browser gesture offering Replace in multi mode is really offering Append.
-    # This is INHERITED through plot_signals, not introduced here, and it is
-    # surfaced rather than pretended away.
+    check {BT44 a Plot-button gesture under single plot mode APPENDS: no new strip, the traces land in the target} \
+      [list [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] - $bt_g0}] \
+            [expr {[bt_traces $tok] > $bt_n1}]] {0 1}
+    # ...and under MULTI, Append is one new strip per signal in the target
+    # subwindow, nothing cleared: the count RISES. `g:x1.y3` holds only
+    # `v(x1.y3.net5)`, which BT43 already plotted, so a clearing destination
+    # would make it FALL to one.
     pcall ::wviewer::set_plot_mode multi $tok
-    pcall ::wviewer::set_plot_dest replace $tok
     set bt_n2 [bt_traces $tok]
-    # ⚠ THE SAME SIGNAL ITEM 9's CHECK USED, reached through its node: `g:x1.y3`
-    # holds only `v(x1.y3.net5)`, which BT43's middle-click ALREADY plotted —
-    # and that makes this the STRONGEST form of the claim, not a weaker one.
-    # add_trace appends unconditionally (there is no already-plotted guard), so
-    # a real Replace would leave the strip holding ONE trace and the count would
-    # FALL; an Append adds a second copy and it rises.
+    set bt_g2 [llength [dict get [wviewer::layout_for $tok] graphs]]
     pcall $BTVTV selection set [list {g:x1.y3}]
-    check {BT44 (PRECONDITION) the node really is selected for the replace leg} \
+    check {BT44 (PRECONDITION) the node really is selected for the multi leg} \
       [pcall $BTVTV selection] g:x1.y3
     pcall $BTVF.tb.plot invoke                    ;# the real route, see above
     update
-    # ⚠ RESTATED 2026-10-15 (subwindows §6.2): ruling 24's limit is RETIRED.
-    # Replace empties the target subwindow first in BOTH modes (one subwindow
-    # here: the whole tab), so the count FALLS to the batch -- the outcome the
-    # comment above names as "a real Replace".
-    check {BT44 under multi, a Replace gesture now CLEARS the target subwindow first: only the batch is left} \
-      [list [expr {$bt_n2 > 1}] [bt_traces $tok]] {1 1}
+    check {BT44 under multi, the Plot button appends one strip per signal and clears nothing} \
+      [list [expr {$bt_n2 > 1}] [expr {[bt_traces $tok] - $bt_n2}] \
+            [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] - $bt_g2}]] {1 1 1}
 
     # --- BT45: the canvas survives a filled sidebar --------------------------
     check {BT45 the canvas is alive, packed, non-zero and still after the sidebar} \
@@ -2394,22 +2376,23 @@ check {BM03 the cascade's entries come from dest_labels — one call, zero liter
 check {BM03 ...and each cascade -command carries the CODE, not the label} \
   [regexp -all {browser_plot_ids \$token \$ids \$code} $bm_mb] 1
 
-# ⚠ SABOTAGE (c)'s SOURCE TARGET. A `Plot to` implemented as save / set /
-# restore would put set_plot_dest here and would be invisible to any check that
-# only counted traces.
-check {BM04 the menu build never writes the window's destination (the override is ONE-SHOT)} \
-  [regexp -all {set_plot_dest} $bm_mb] 0
-# ONE shared label proc, so the top `Plot (...)` entry and the cascade's Replace
-# entry can never disagree about the multi-plot limit
-check {BM04 both the Plot entry and the cascade label through dest_menu_label} \
-  [regexp -all {wviewer::dest_menu_label \$token} $bm_mb] 2
+# RESTATED for the user ruling of 2026-10-16: the viewer has no destination
+# policy, so there is nothing a menu build could write. What is pinned is that
+# the menu reads none either: the top entry is plain `Plot` (no destination in
+# its label) and only the cascade names destinations, through dest_menu_label.
+check {BM04 no destination policy exists for the menu build to read or write} \
+  [list [regexp -all {set_plot_dest|plot_dest \$token|dest\(} $bm_mb] \
+        [info procs ::wviewer::set_plot_dest] [info procs ::wviewer::plot_dest]] {0 {} {}}
+check {BM04 ...and only the cascade labels through dest_menu_label; the top entry is plain Plot} \
+  [list [regexp -all {wviewer::dest_menu_label \$token} $bm_mb] \
+        [regexp -all {\-label Plot } $bm_mb]] {1 1}
 
-check {BM05 plot_signals resolves the destination ONCE, defaulting to plot_dest} \
-  [list [regexp -all {wviewer::plot_dest \$token} $bm_ps] \
+check {BM05 plot_signals resolves the destination ONCE, from its own destover (dest_norm maps {} to append), reading no window setting} \
+  [list [regexp -all {wviewer::plot_dest} $bm_ps] \
         [regexp -all {wviewer::dest_norm \$destover} $bm_ps] \
-        [regexp -all {set dest \[expr} $bm_ps]] \
-  [list 1 1 1]
-check_true {BM05 ...and the override is an ARGUMENT that never writes dest($token)} \
+        [pcall wviewer::dest_norm {}]] \
+  [list 0 1 append]
+check_true {BM05 ...and the destination is an ARGUMENT that never writes a dest array} \
   [expr {[regexp -all {set_plot_dest|set dest\(} $bm_ps] == 0}]
 # ⚠⚠ THIS LEG USED TO BE A WHOLE-FILE `string first` FOR THE SIGNATURE LITERAL,
 # AND IT WAS A DEAD PIN THAT READ AS LIVE (issue 1645). `$wsrc` is the raw file,
@@ -3021,7 +3004,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [bm_entries $BMSM] \
       [list {command|v(out)|disabled} \
             {separator||} \
-            {command|Plot (Append)|normal} \
+            {command|Plot|normal} \
             {cascade|Plot to|normal} \
             {command|Send to Add Trace...|normal} \
             {command|Copy name|normal} \
@@ -3054,7 +3037,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
             [list wviewer::browser_sea_plot_idx wvbm 0 newstrip] \
             [list wviewer::browser_sea_plot_idx wvbm 0 newsubwin] \
             [list wviewer::browser_sea_plot_idx wvbm 0 newtab]]
-    # the TOP Plot entry passes NO override — it is the window's own policy
+    # the TOP Plot entry passes NO destination: a source with no choice, Append
     check {BM24 the top Plot entry passes no override at all} \
       [pcall $BMSM entrycget 2 -command] \
       [list wviewer::browser_sea_plot_idx wvbm 0]
@@ -3181,14 +3164,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # and the action log recorded ZERO set_plot_dest lines.
     bm_log_on
     set ::bm_plot_calls {}
-    array unset ::wviewer::dest wvbm
     pcall $BMSS invoke 2
     check {BM31 `Plot to -> New Strip` passes newstrip as a ONE-SHOT override} \
       $::bm_plot_calls [list [list wvbm {v(out)} newstrip]]
-    check {BM31 ...and the window's own destination is untouched, never even created} \
-      [list [pcall ::wviewer::plot_dest wvbm] \
-            [info exists ::wviewer::dest(wvbm)]] \
-      [list append 0]
+    check {BM31 ...and no window destination exists to have been touched} \
+      [list [info procs ::wviewer::plot_dest] [info exists ::wviewer::dest]] \
+      [list {} 0]
     # ⚠ NAME NARROWED TO WHAT IT PINS (ruling 17): the recorder holds every
     # log_action line, and this leg asserts only that none of them is a
     # set_plot_dest — not that the log is empty.
@@ -3201,10 +3182,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       $::bm_plot_calls \
       [list [list wvbm {v(out)} append] [list wvbm {v(out)} replace] \
             [list wvbm {v(out)} newsubwin] [list wvbm {v(out)} newtab]]
-    check {BM31 ...and after all five the policy is STILL the untouched default} \
-      [list [pcall ::wviewer::plot_dest wvbm] [info exists ::wviewer::dest(wvbm)] \
+    check {BM31 ...and after all five still no window destination, and no set_plot_dest line} \
+      [list [info exists ::wviewer::dest] \
             [lsearch -glob $::bm_log_calls {*set_plot_dest*}]] \
-      [list append 0 -1]
+      [list 0 -1]
     bm_log_off
 
     # --- BM32: the multi-plot Replace label, live ---------------------------
@@ -3213,17 +3194,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set bm_lab_single [list [pcall $BMSS entrycget 1 -label] \
                             [pcall $BMSM entrycget 2 -label]]
     set ::wviewer::mode(wvbm) multi
-    pcall ::wviewer::set_plot_dest replace wvbm
     pcall ::wviewer::browser_sea_menu_post wvbm $BMC $bm_x $bm_y 10 10
     set bm_lab_multi [list [pcall $BMSS entrycget 1 -label] \
                            [pcall $BMSM entrycget 2 -label]]
     check {BM32 under SINGLE both Replace surfaces read plainly} \
-      $bm_lab_single [list Replace {Plot (Append)}]
+      $bm_lab_single [list Replace Plot]
     # ruling 24's limit RETIRED (subwindows §6.2): Replace clears the target
     # subwindow in both modes, so the label carries no suffix under multi
-    check {BM32 under MULTI both Replace surfaces read plainly too, from the ONE shared proc} \
-      $bm_lab_multi [list Replace {Plot (Replace)}]
-    array unset ::wviewer::dest wvbm
+    check {BM32 under MULTI both read plainly too: Replace from the ONE shared proc, and the top entry plain Plot (no window destination to name)} \
+      $bm_lab_multi [list Replace Plot]
     array unset ::wviewer::mode wvbm
 
     # --- BM33: Copy really reaches the clipboard ----------------------------
@@ -3544,9 +3523,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check_true {BM44 `Plot to -> New Strip` really created a strip on the real model} \
         [expr {[llength [dict get [wviewer::layout_for $tok] graphs]] > $bm_g0}]
-      check {BM44 ...and the window's own destination is STILL the untouched default} \
-        [list [pcall ::wviewer::plot_dest $tok] [info exists ::wviewer::dest($tok)]] \
-        [list append 0]
+      check {BM44 ...and no window destination exists to have been touched} \
+        [list [info procs ::wviewer::plot_dest] [info exists ::wviewer::dest]] \
+        [list {} 0]
       # ⚠ THE NEW TAB LEG IS pcall-GUARDED ON PURPOSE. Its -command runs
       # dest_prepare -> new_tab -> tab_drop_transients, which now unposts (and
       # DESTROYS) the very menu whose entry is executing. Down the REAL route
@@ -3556,18 +3535,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set bm_s0 [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]]
       pcall $BMVS invoke 3
       update
-      check {BM44 `Plot to -> New SubWin` added a subwindow on the real model and left the policy alone} \
+      check {BM44 `Plot to -> New SubWin` added a subwindow on the real model and remembered nothing} \
         [list [expr {[wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] - $bm_s0}] \
-              [pcall ::wviewer::plot_dest $tok] [info exists ::wviewer::dest($tok)]] \
-        [list 1 append 0]
+              [info exists ::wviewer::dest]] \
+        [list 1 0]
       set bm_t0 [pcall ::wviewer::tab_count $tok]
       set bm_nt [pcall $BMVS invoke 4]
       update
-      check {BM44 `Plot to -> New Tab` added a tab and still left the policy alone} \
+      check {BM44 `Plot to -> New Tab` added a tab and still remembered nothing} \
         [list [expr {[pcall ::wviewer::tab_count $tok] == $bm_t0 + 1}] \
-              [pcall ::wviewer::plot_dest $tok] \
-              [info exists ::wviewer::dest($tok)]] \
-        [list 1 append 0]
+              [info exists ::wviewer::dest]] \
+        [list 1 0]
       # and the teardown really did take the menu with it — BM46's claim,
       # observed on the route that actually calls tab_drop_transients
       # ⚠ BUILT, not POSTED: tk_popup is spied for this whole arm, so what the

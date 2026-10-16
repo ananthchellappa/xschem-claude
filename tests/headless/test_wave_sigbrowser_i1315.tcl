@@ -869,12 +869,16 @@ check {BP03 ...and AFTER the final regenerate, not before it} \
 # The reader composes ONLY through the owning item's accessor. A reader that
 # went to `sbcase(`/`sbcfg(`/`dest(` would be a second spelling of state those
 # items own, and would drift from them silently.
-check {BP04 browser_state reads through the owners' accessors only} \
+# RESTATED for the user ruling of 2026-10-16: the viewer has no destination
+# setting, so the reader has no destination accessor to call (the `dest` key is
+# a fossil it writes as the constant `append`, see BP10).
+check {BP04 browser_state reads through the owners' accessors only, and reads no destination} \
   [list [regexp -all {wviewer::searchbar_get} $bp_state] \
         [regexp -all {wviewer::plot_dest} $bp_state] \
         [regexp -all {wviewer::browser_shown} $bp_state] \
-        [regexp -all {wviewer::rawhist_get} $bp_state]] \
-  [list 2 1 1 1]
+        [regexp -all {wviewer::rawhist_get} $bp_state] \
+        [regexp -all {dict set d dest append} $bp_state]] \
+  [list 2 0 1 1 1]
 check {BP04 ...and reaches into NO other item's internals} \
   [regexp -all {sbcase\(|sbcfg\(|sballdb\(|dest\(} $bp_state] 0
 
@@ -982,9 +986,10 @@ check {BP10 the SEARCH sub-dict carries item 14's conditional alldbs} \
   [dict get $bp_def search] {pattern {} syntax shell case 0 type all alldbs 0}
 check {BP10 ...and the FILTER sub-dict does NOT (BAR11's 4-key contract)} \
   [dict get $bp_def filter] {pattern {} syntax shell case 0 type all}
-# item 7 has no open-time seed: plot_dest answers `append` for an unseen token,
-# so `append` IS the default and the default value must spell it.
-check {BP10 the destination default is item 7's harmless policy} \
+# `dest` is a FOSSIL key since the user ruling of 2026-10-16 (the viewer has
+# no destination setting): kept so the schema and key order are unchanged, and
+# always `append`.
+check {BP10 the fossil destination key's default is append} \
   [dict get $bp_def dest] append
 
 check {BP11 is_default is 1 on the canonical default} \
@@ -1620,7 +1625,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [pcall $BPT exists "${bp_pfx}g:y3"] \
           [pcall $BPT parent {g:}]] \
     [list 0 0 0 "d:$bp_cur"]
-  pcall ::wviewer::set_plot_dest newstrip $tok
   # TWO-PANE ITEM 14: the three persisted fields depart from their defaults HERE
   # so BP45's snapshot legs and the whole BP47+ restore group assert real
   # departures rather than constants. ⚠ ALL THREE, and `srccur` DOWN to 0 —
@@ -1674,7 +1678,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # legs now hold THREE ids — the two born open plus the poked `y3` — which is
   # strictly more evidence than `g:y3` alone: a populate that opened everything
   # and one that opened only what it should are still different values.
-  check {BP43 the non-defaults TOOK: shown/dest/sel/open-set/boxes/sash read back live} \
+  check {BP43 the non-defaults TOOK: shown/sel/open-set/boxes/sash read back live (dest is the fossil append)} \
     [list $bp_open0 \
           [pcall dict get $bs1 shown] [pcall dict get $bs1 dest] \
           [pcall dict get $bs1 sel] [pcall dict get $bs1 open] \
@@ -1682,7 +1686,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [wviewer::dget $bs1 devint {NO-KEY}] \
           [wviewer::dget $bs1 srccur {NO-KEY}] \
           [wviewer::dget $bs1 sash   {NO-KEY}]] \
-    [list [list "d:$bp_cur" {g:}] 1 newstrip g:x1.x2 \
+    [list [list "d:$bp_cur" {g:}] 1 append g:x1.x2 \
           [list "d:$bp_cur" {g:} {g:y3}] \
           [list "d:$bp_cur" {g:} {g:y3}] 1 0 0.35]
   check {BP43 ...and both bars read back exactly what was typed into them} \
@@ -1724,7 +1728,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [dict get $bpg open] \
           [expr {[dict get $bpg hist] eq {NO-KEY} ? {NO-KEY} : {present}}] \
           [dict get $bpg sash] [dict get $bpg devint] [dict get $bpg srccur]] \
-    [list 1 $bpw newstrip g:x1.x2 \
+    [list 1 $bpw append g:x1.x2 \
           {pattern .* syntax regexp case 1 type v alldbs 1} \
           {pattern .* syntax regexp case 1 type v} \
           [list "d:$bp_cur" {g:} {g:y3}] present \
@@ -2152,8 +2156,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BP50 the FILTER bar round-tripped and grew NO alldbs key} \
     [list [pcall dict get $bs3 filter] [dict exists [pcall dict get $bs3 filter] alldbs]] \
     [list {pattern .* syntax regexp case 1 type v} 0]
-  check {BP51 the plot destination round-tripped (ruling 24's accessor)} \
-    [pcall ::wviewer::plot_dest $tok] newstrip
+  # RESTATED: there is no destination to round-trip (user ruling 2026-10-16).
+  # What must hold is that a state written BEFORE the ruling, carrying a
+  # non-default `dest`, still applies without error and is read past.
+  set bp51_r [pcall ::wviewer::browser_state_apply $tok [dict replace $bs3 dest newstrip]]
+  update
+  check {BP51 an old state's non-default dest applies without error and is read past: no destination is remembered} \
+    [list [expr {![string match ERR:* $bp51_r]}] [info exists ::wviewer::dest] \
+          [pcall dict get [pcall ::wviewer::browser_state $tok] dest]] {1 0 append}
   # ⚠ THE SELECTION IS READ THROUGH bp_sel, so "the widget is gone", "nothing is
   # selected" and "this id is selected" are three distinguishable answers — a bare
   # [$BPT selection] makes the first two both read {}. Leg 2 states item 10's fact

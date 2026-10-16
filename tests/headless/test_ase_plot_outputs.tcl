@@ -1167,6 +1167,42 @@ group PO16 {
 }
 
 # =============================================================================
+# PO16k -- DIRECT PLOT FOLLOWS THE SESSION'S DESTINATION TOO (R-OUT15)
+# =============================================================================
+## User ruling 2026-10-16: the SOURCE owns the destination and the viewer has
+## none. ASE-L's drop-down therefore governs Direct Plot as well as `~` and the
+## run-end plot: ase::ui::dp_finish hands the session's code to
+## wviewer::plot_signals per call. The viewer doors are stood in for (open,
+## attach, plot_signals records what it was handed); the claim is the hand-off.
+group PO16k {
+    set key [po_session po16k tbpk {{name A expr v(sq) save 1 plot 1}} 1]
+    set ::po16k_calls {}
+    foreach p {open attach_raw plot_signals} { rename ::wviewer::$p ::po16k_orig_$p }
+    proc ::wviewer::open {args} { return 1 }
+    proc ::wviewer::attach_raw {args} { return 1 }
+    proc ::wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
+        lappend ::po16k_calls [list $token $exprs $destover]
+        return {}
+    }
+    set got {}
+    foreach d {{} append newsubwin newtab replace} {
+        if {$d ne {}} { pcall ase::ui::set_plot_dest $key $d }
+        set ::po16k_calls {}
+        pcall ase::ui::dp_finish $key {v(sq) v(lp)}
+        lappend got [list [ase::ui::plot_dest $key] [lindex $::po16k_calls 0 2] [llength $::po16k_calls]]
+    }
+    foreach p {open attach_raw plot_signals} {
+        rename ::wviewer::$p {}
+        rename ::po16k_orig_$p ::wviewer::$p
+    }
+    check "PO16k Direct Plot hands plot_signals the session's destination, the default Replace included, once per batch" \
+        $got {{replace replace 1} {append append 1} {newsubwin newsubwin 1} {newtab newtab 1} {replace replace 1}}
+    check "PO16k ...and the drop-down's tooltip names Direct Plot" \
+        [string match {*Direct Plot*} [ase::ui::lbl_plot_dest_tip]] 1
+    catch {ase::session_close $key}
+}
+
+# =============================================================================
 # THE DISPLAY ARM: the real bench
 # =============================================================================
 set NG /home/analog/dev/ngspice/build-ver_50/src/ngspice

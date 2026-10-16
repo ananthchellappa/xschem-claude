@@ -71,6 +71,14 @@
 #         move_trace / move_traces on a model-only window (one undo, one log
 #         line with the pre-move indices; SWT5 auto-plot strips; SWT6 the
 #         target, highlight and marker bookkeeping with a non-last destination).
+#   SWD16/SWD17  both arms (user ruling 2026-10-16: the viewer has NO plot
+#         destination setting; the source passes one per call): no wviewer proc
+#         declares or writes a destination (derived from the proc bodies), the
+#         store / accessors / Calculator mirror are gone, plot_signals' formals
+#         and defaults (info args / info default), and a plot with no destover
+#         lands as Append in the TARGET subwindow under both modes. SWD12/SWD13
+#         restated: New SubWin passed per call; the Add Trace Destination is
+#         one-shot. The independence rows proper are test_calc_plot's PL5i.
 #   SWT6  (item 18 residue R2) a removed strip that carried a marker clears the
 #         C marker selection; control: no marker, no clear.
 #   SWK18 DISPLAY (item 18 residue R3): key_filter's own case_keysym call
@@ -192,8 +200,11 @@
 #   drop_emptied_sources: no highlight remap -> SWT6 highlight row
 #   drop_emptied_sources: no marker sweep -> SWT6 marker row
 #   move_trace: target set to the stale to_gi -> SWT6 target row
-# Item 18 residue (2026-10-16), measured red at 3137344c (the product before
-# the change) unless marked as a sabotage:
+# No viewer destination / item 18 residue (2026-10-16), measured red at
+# 3137344c (the product before the change) unless marked as a sabotage:
+#   the per-window dest store, set_plot_dest, the W13 mirror -> SWD16 (x3);
+#        the persisted Add Trace choice -> SWD13 one-shot row and, through
+#        the leaked New SubWin, SWK0-SWK12 (display)
 #   drop_emptied_sources: no marker-selection clear -> SWT6 selection row
 #   sabotage: key_filter without its case_keysym call -> SWK18 (x2)
 #   sabotage: case_key without `return -code break` -> SWK18 break row
@@ -409,35 +420,44 @@ proc swu_ok {} { return fine }
 check "SWU3 a plain result passes through" [wviewer::unlogged {swu_ok}] fine
 
 # ============================================================================
-# SWD16 -- every WRITER of the destination notifies its mirror. The writer set
-# is derived from the interpreter's own proc bodies (comment lines dropped), so
-# a new writer joins it by existing; the Calculator's W13 is the listener
-# (band PL5f of test_calc_plot measures the effect, on the display arm).
+# SWD16 -- THE VIEWER HAS NO DESTINATION SETTING (user ruling 2026-10-16: in
+# ViVA the plot goes to the active subwindow unless the SOURCE says otherwise;
+# the Calculator has its own setting, ViVA does not). This band used to assert
+# that every writer of `dest(token)` notified the Calculator's W13 mirror; the
+# store, its writers and the mirror are gone, so it now asserts their absence
+# and the one behaviour left: a plot from a source with no choice (destover
+# {}) lands in the TARGET subwindow exactly as Append does. The writer scan is
+# kept, derived from the interpreter's own proc bodies (comment lines dropped),
+# so a NEW writer reddens it by existing. The independence rows proper
+# (W13 <-> ASE-L <-> viewer) are band PL5 of test_calc_plot.
 # ============================================================================
-set swd16_w {} ; set swd16_bad {}
+set swd16_w {}
 foreach pr [lsort [info procs ::wviewer::*]] {
   set code [join [lmap l [split [info body $pr] \n] {
     if {[regexp {^\s*#} $l]} { continue } ; set l}] \n]
-  if {![regexp {(^|[\s\[;\{])(set|lappend|append)\s+(::wviewer::)?dest\(} $code]} { continue }
-  lappend swd16_w [namespace tail $pr]
-  if {[string first {wviewer::dest_notify} $code] < 0} { lappend swd16_bad [namespace tail $pr] }
+  if {[regexp {(^|[\s\[;\{])(set|lappend|append|unset)\s+(::wviewer::)?dest\(} $code]} {
+    lappend swd16_w [namespace tail $pr]
+  }
+  if {[regexp {(^|\s)variable\s+dest(\s|$)} $code]} { lappend swd16_w [namespace tail $pr] }
 }
-check "SWD16 the destination's writers were derived (non-vacuity: set_plot_dest and the state restore)" \
-  [expr {[lsearch $swd16_w set_plot_dest] >= 0 && [lsearch $swd16_w browser_state_apply] >= 0}] 1
-check "SWD16 every writer of dest(token) calls wviewer::dest_notify" $swd16_bad {}
-set swd16_got {}
-namespace eval ::calc {}
-set swd16_had [expr {[info commands ::calc::viewer_dest] ne {}}]
-if {$swd16_had} { rename ::calc::viewer_dest ::calc::__swd16_real }
-proc ::calc::viewer_dest {tok} { lappend ::swd16_got $tok ; error "listener raises" }
-dict set ::wviewer::windows __swd16 top .__swd16
-check "SWD16 a change notifies once with the token, and a raising listener does not break the writer" \
-  [list [pcall {wviewer::set_plot_dest newtab __swd16}] [pcall {wviewer::set_plot_dest newtab __swd16}] $swd16_got] \
-  {newtab newtab __swd16}
-rename ::calc::viewer_dest {}
-if {$swd16_had} { rename ::calc::__swd16_real ::calc::viewer_dest }
-dict unset ::wviewer::windows __swd16
-catch {unset ::wviewer::dest(__swd16)}
+check "SWD16 no wviewer proc declares or writes a per-window destination (derived from the proc bodies)" \
+  [lsort -unique $swd16_w] {}
+check "SWD16 the scan's population is real (non-vacuity: it read the viewer's procs)" \
+  [expr {[llength [info procs ::wviewer::*]] > 100}] 1
+check "SWD16 the store and its accessors are gone: dest array, set_plot_dest, plot_dest, dest_notify" \
+  [list [info exists ::wviewer::dest] [info procs ::wviewer::set_plot_dest] \
+        [info procs ::wviewer::plot_dest] [info procs ::wviewer::dest_notify]] {0 {} {} {}}
+check "SWD16 the Calculator's mirror is gone: viewer_dest, w13_sync, w13_bind, plot_dest_follow" \
+  [list [info procs ::calc::viewer_dest] [info procs ::calc::w13_sync] \
+        [info procs ::calc::w13_bind] [info procs ::calc::plot_dest_follow]] {{} {} {} {}}
+check "SWD16 the per-call machinery stays: dest_norm, dest_labels, dest_prepare, plot_sites" \
+  [lmap p {dest_norm dest_labels dest_prepare plot_sites} {expr {[info procs ::wviewer::$p] ne {}}}] \
+  {1 1 1 1}
+check "SWD16 plot_signals' fourth formal is destover and defaults to {} (a source with no choice)" \
+  [list [info args ::wviewer::plot_signals] \
+        [info default ::wviewer::plot_signals destover swd16_dv] $swd16_dv \
+        [info default ::wviewer::plot_signals colors swd16_cv] $swd16_cv] \
+  {{token exprs colors destover} 1 {} 1 {}}
 
 # ============================================================================
 # SWN* -- no-window guards, both arms
@@ -506,12 +526,11 @@ proc swd_open {gs tgt mode} {
   set ::wviewer::mode(__swd) $mode
   set ::wviewer::target(__swd) $tgt
   set ::wviewer::undo_hist(__swd) {}
-  set ::wviewer::dest(__swd) append
 }
 proc swd_close {} {
   catch {dict unset ::wviewer::layouts __swd}
   catch {dict unset ::wviewer::windows __swd}
-  foreach v {mode target undo_hist redo_hist dest wavehl} { catch {unset ::wviewer::${v}(__swd)} }
+  foreach v {mode target undo_hist redo_hist wavehl} { catch {unset ::wviewer::${v}(__swd)} }
 }
 proc swd_lay {} { dict get [wviewer::layout_for __swd] graphs }
 proc swd_tr {} { lmap g [swd_lay] {lmap t [wviewer::dget $g traces {}] {dict get $t expr}} }
@@ -580,6 +599,23 @@ if {[catch {
   pcall {wviewer::plot_signals __swd {q} {} newstrip}
   check "SWD9 Append and New Strip stay inside the target subwindow (1); subwindow 2 untouched" \
     [list [swd_tr] [tags [swd_lay]]] {{{a p} b q c} {1 1 1 2}}
+  # SWD17: a source with NO destination choice (the browser's Plot, paste,
+  # Direct-in-viewer: destover {}) lands exactly as Append, into the TARGET
+  # subwindow -- here subwindow 2, so the row cannot pass by landing in the
+  # first one. Single appends into the target strip, multi adds one strip at
+  # the top of the target subwindow.
+  swd_open [list [G a 1] [G b 2] [G c 2]] 2 single
+  set swd17_r [pcall {wviewer::plot_signals __swd {p}}]
+  set swd17_s [list [swd_tr] [tags [swd_lay]]]
+  swd_open [list [G a 1] [G b 2] [G c 2]] 2 single
+  pcall {wviewer::plot_signals __swd {p} {} append}
+  check "SWD17 no destover = Append into the TARGET subwindow (single: the target strip), equal to an explicit Append" \
+    [list $swd17_r $swd17_s [expr {$swd17_s eq [list [swd_tr] [tags [swd_lay]]]}]] \
+    {{} {{a b {c p}} {1 2 2}} 1}
+  swd_open [list [G a 1] [G b 2] [G c 2]] 1 multi
+  pcall {wviewer::plot_signals __swd {p}}
+  check "SWD17 no destover under multi: one new strip at the top of the TARGET subwindow" \
+    [list [swd_tr] [tags [swd_lay]]] {{a p b c} {1 2 2 2}}
   swd_open [list [G a 1] [E 1] [G c 2]] 0 single
   pcall {wviewer::clear_subwin __swd 1}
   pcall {wviewer::clear_subwin __swd 0}
@@ -1065,8 +1101,9 @@ foreach p $::swm_stubbed { rename ::wviewer::$p {}; rename ::swm_orig_$p ::wview
 # SWR* -- REPLAY, both arms: a plot whose destination MAKES something (New
 # SubWin) must replay to the window it recorded, exactly one subwindow. Run in a
 # CHILD with its own --logdir, because T1's hcases loop passes none and the
-# action log only exists when one is open. The child records two CIW-typed
-# gestures through the CIW's own seam (`ciw_log_outcome`, the dedup a typed line
+# action log only exists when one is open. The child records ONE CIW-typed
+# plot line per cell, its destination its fourth argument (the viewer has no
+# destination setting since the user ruling of 2026-10-16), through the CIW's own seam (`ciw_log_outcome`, the dedup a typed line
 # rides), resets the model-only window, replays the recorded lines through
 # `replay_action_log` and prints both end states. Replace is the CONTROL: its
 # window half (clear_subwin) was never logged, so it replays right at HEAD too
@@ -1085,7 +1122,6 @@ set swr_inner {
     set ::wviewer::mode(__swr) single
     set ::wviewer::target(__swr) 1
     set ::wviewer::undo_hist(__swr) {}
-    set ::wviewer::dest(__swr) append
   }
   proc swr_state {} {
     set gs [dict get [wviewer::layout_for __swr] graphs]
@@ -1110,7 +1146,7 @@ set swr_inner {
   foreach d {newsubwin replace} {
     swr_open
     set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
-    foreach cmd [list [list wviewer::set_plot_dest $d __swr] {wviewer::plot_signals __swr {p}}] {
+    foreach cmd [list [list wviewer::plot_signals __swr {p} {} $d]] {
       xschem log_action -reset
       set code [catch {uplevel #0 $cmd} res]
       set ::ciw_out_pending {}
@@ -1147,7 +1183,7 @@ set swr_inner {
     foreach d {append newstrip replace newsubwin newtab} {
       swm_open $m
       set fd [open $lf r]; set before [llength [split [read $fd] \n]]; close $fd
-      foreach cmd [list [list wviewer::set_plot_dest $d __swr] {wviewer::plot_signals __swr {p}}] {
+      foreach cmd [list [list wviewer::plot_signals __swr {p} {} $d]] {
         xschem log_action -reset
         set code [catch {uplevel #0 $cmd} res]
         set ::ciw_out_pending {}
@@ -1527,7 +1563,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall {xschem raw new wvsub.raw dc vsweep 0 1.0 0.1}
   foreach v {a1 a2 a3 b1 b2 c1 c2 p1 p2} { pcall {xschem raw add $v "vsweep 1 +"} }
   wviewer::set_plot_mode single $tok
-  wviewer::set_plot_dest append $tok
 
   # ---- SWG1: one subwindow is the shipped viewer --------------------------
   wviewer::plot_signals $tok {a1}
@@ -1872,9 +1907,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "SWD11 ...rects follow the model" [nrects] 4
   wviewer::set_plot_mode single $tok
   set ::sw_log {}
-  pcall {wviewer::set_plot_dest newsubwin $tok}
-  pcall {wviewer::plot_signals $tok {b1}}
-  check "SWD12 New SubWin (the window's own destination): a third subwindow, target, holding the batch" \
+  pcall {wviewer::plot_signals $tok {b1} {} newsubwin}
+  check "SWD12 New SubWin (passed by the call: the viewer has no setting of its own): a third subwindow, target, holding the batch" \
     [list [ltags] [wviewer::target_index $tok] [trx 4] [rprop 4 xgroup] [nrects]] {{1 1 1 3 4} 4 b1 4 5}
   set bb [wviewer::strip_bands_px $vdrw]
   set H [winfo height $vdrw]
@@ -1882,7 +1916,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # would abort the band and delete every row after it from the verdict
   check "SWD12 ...the grid re-tiled: three subwindows, the new one bottom-LEFT" \
     [pcall {list [expr {[lindex $bb 4 0] < 1.5}] [expr {abs([lindex $bb 4 1] - $H / 2.0) < 1.5}]}] {1 1}
-  pcall {wviewer::set_plot_dest append $tok}
   # the Add Trace dialog names its graph: Replace empties THAT graph's subwindow
   set w [pcall {wviewer::add_trace_dialog $tok}]
   if {[winfo exists $w]} {
@@ -1903,9 +1936,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "SWD13 Add Trace with New SubWin lands in a new subwindow at the end" \
     [list [ltags] [trx 5] [wviewer::target_index $tok]] {{1 1 1 3 4 5} c2 5}
-  check "SWD13 ...and the dialog's choice persisted for the window (item 7)" \
-    [wviewer::plot_dest $tok] newsubwin
-  pcall {wviewer::set_plot_dest append $tok}
+  # the dialog's Destination is ONE-SHOT (ruling 2026-10-16: the viewer
+  # remembers no destination), so a reopened dialog offers Append again
+  set w [pcall {wviewer::add_trace_dialog $tok}]
+  set swd13_d [pcall {$w.dest get}]
+  catch {destroy $w}
+  check "SWD13 ...and the dialog's choice was one-shot: reopened, it offers Append" $swd13_d Append
   set ntabs [llength [wviewer::tab_records $tok]]
   pcall {wviewer::plot_signals $tok {p1} {} newtab}
   check "SWD14 New Tab: one more tab, ONE subwindow, holding the batch" \
@@ -1966,7 +2002,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   proc stmode {} { lindex [$::vtop.wvstatus.l cget -text] 1 }
   pcall {wviewer::new_tab $tok}
-  pcall {wviewer::set_plot_dest append $tok}
   pcall {wviewer::set_plot_mode single $tok}
   pcall {wviewer::plot_signals $tok {a1}}
   pcall {wviewer::new_subwin $tok}
@@ -2303,7 +2338,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall {xschem raw new wvsub.raw dc vsweep 0 1.0 0.1}
   foreach v {a1 a2 a3 b1 b2 c1 c2 p1 p2} { pcall {xschem raw add $v "vsweep 1 +"} }
   pcall {wviewer::new_tab $tok}
-  pcall {wviewer::set_plot_dest append $tok}
   pcall {wviewer::set_plot_mode multi $tok}
   pcall {wviewer::plot_signals $tok {a1 a2}}
   pcall {wviewer::new_subwin $tok}
@@ -2367,7 +2401,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
   }
   pcall {wviewer::new_tab $tok}
-  pcall {wviewer::set_plot_dest append $tok}
   pcall {wviewer::set_plot_mode multi $tok}
   pcall {wviewer::plot_signals $tok {a1 a2}}
   pcall {wviewer::new_subwin $tok}
@@ -2406,7 +2439,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # add_trace, what ase::ui::auto_plot does), then a New SubWin; every run
   # strip carries `auto 1`
   pcall {wviewer::new_tab $tok}
-  pcall {wviewer::set_plot_dest append $tok}
   pcall {wviewer::set_plot_mode multi $tok}
   set gis [pcall {wviewer::auto_plot_strips $tok 2}]
   pcall {wviewer::regenerate $tok}
@@ -2444,7 +2476,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 175 } else { set expect 323 }
+if {$::arm eq {nogui}} { set expect 180 } else { set expect 328 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

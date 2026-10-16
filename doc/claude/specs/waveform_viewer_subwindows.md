@@ -6,7 +6,8 @@ Tcl (§14); the destinations — `newsubwin`, Replace clearing the target
 subwindow, and the ASE-L drop-down (§15). NOT yet built: Close SubWin on the
 trace context menu, divider drag, and the §10 limits. Builds on `doc/claude/specs/waveform_viewer_tabs.md` (a tab is a MODEL,
 not a context — every rule there still binds) and on the plot-destination policy
-of `doc/claude/specs/waveform_signal_browser.md` (`wviewer::plot_dest`, ruling 24).
+of `doc/claude/specs/waveform_signal_browser.md` (ruling 24; its per-window
+`wviewer::plot_dest` was retired by the user ruling of 2026-10-16, §16).
 ASE-L side: `doc/claude/specs/ase_l.md` R-OUT14 and R-OUT15.
 
 ## 1. What the user ratified (2026-10-15, a practising Cadence user)
@@ -40,7 +41,7 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW4 | Exactly one subwindow per tab is the target. Pressing Button-1 anywhere inside a subwindow makes it the target (and, as today, the pressed strip the target strip). |
 | SW5 | While a tab has 2+ subwindows the target subwindow carries a visible frame; with one subwindow there is no frame (byte-identical rendering to today, the issue 0151 rule). |
 | SW6 | The existing target-strip bar (`active=1`) is drawn on the target strip of the target subwindow only, and only while that subwindow holds 2+ strips. |
-| SW7 | Every plot door — `~`, the run-end auto-plot, Direct Plot, the signal browser, the Add Trace dialog, the Calculator — lands in the ACTIVE tab's TARGET subwindow (or the one its destination creates). |
+| SW7 | Every plot door — `~`, the run-end auto-plot, Direct Plot, the signal browser, the Add Trace dialog, the Calculator — lands in the ACTIVE tab's TARGET subwindow (or the one its destination creates). The destination is the SOURCE's, passed per call; a source with no choice appends (§16). |
 | SW8 | Destination **Append**: add to the target subwindow, spread over its strips by the tab's plot mode (today's append rule, confined to the subwindow). |
 | SW9 | Destination **Replace**: clear the target subwindow (every strip in it), then plot into it by the plot mode. Under BOTH modes — this retires ruling 24's "Replace appends under multi" limit (§6.2). |
 | SW10 | Destination **New SubWin**: add a subwindow at the end of the tab's list, make it the target, plot into it. |
@@ -51,7 +52,7 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW15 | Closing a subwindow (Graph > Close SubWin on the target; deleting its last strip) re-tiles the rest; the target moves to the subwindow that took its slot, else the previous one. Closing the ONLY subwindow does nothing and says so (the D9a shape). |
 | SW16 | A trace can be dragged from a strip in one subwindow to a strip in another; Ctrl-V pastes into the target subwindow. |
 | SW17 | Subwindows (membership, order, target) are saved and restored per tab with the ASE session state; undo/redo and tab freeze/thaw carry them. A state saved before this feature loads as one subwindow per tab. |
-| SW18 | ASE-L status bar: a read-only drop-down at its RIGHT end, labels `Append` `Replace` `New SubWin` `New Win`, a session-state key (`plot_dest`), dirtying the session on change, logged as one replayable line, used by `~` and the run-end auto-plot. |
+| SW18 | ASE-L status bar: a read-only drop-down at its RIGHT end, labels `Append` `Replace` `New SubWin` `New Win`, a session-state key (`plot_dest`), dirtying the session on change, logged as one replayable line, used by `~`, the run-end auto-plot and (since §16) Direct Plot. |
 | SW19 | The multi-plot auto-plot strip ORDER (last Outputs row on top, R-OUT14) is unchanged. A separate user ruling is pending on it; nothing here touches it. |
 | SW20 | Every new gesture/command is logged through `wviewer::log_action`/`wviewer::echo` (tabs R6) and is undoable as ONE step where it mutates the model. |
 | SW21 | (user 2026-10-15) The plot mode (single/multi) and the grid are settings of each SUBWINDOW. "The active subwindow" is the TARGET one. A new subwindow takes the target's settings; with one subwindow nothing changes. |
@@ -59,6 +60,7 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW23 | Ctrl-G (Graph > Grid) flips every subwindow's grid individually: a mixed set stays mixed, inverted. Ctrl-Shift-G (Graph > SubWin Grid) flips the target subwindow's grid only. The Grid checkbutton shows the target subwindow's grid. |
 | SW24 | Closing down to one subwindow, or Clear All, keeps the survivor's / the target's settings as the window's own. |
 | SW25 | The settings are saved and restored with the layout (per tab), and are outside undo like the window's other options. |
+| SW26 | (user 2026-10-16, a Cadence fact) The viewer has NO plot-destination setting: no menu, no remembered value. A plot goes to the target subwindow of the active tab, appended per that subwindow's plot mode, unless its SOURCE says otherwise. ASE-L's drop-down and the Calculator's W13 are each their source's own setting and never move each other (§16). |
 
 ## 3. Data model
 
@@ -231,10 +233,10 @@ sit at one X across subwindows. **Declared limit** for this version.
 
   The zero-ticked-rows path empties the target subwindow under Replace only.
   Direct Plot still never lands in an `auto` strip under Append (R-OUT14).
-- The viewer's own `wviewer::plot_dest` and ASE-L's `plot_dest` are
-  INDEPENDENT settings: the first serves the viewer's doors, the second `~` and
-  the run-end plot (ADE-L's plotting mode is a session option, ViVA's is its
-  own).
+- ASE-L's `plot_dest` governs `~`, the run-end plot AND Direct Plot
+  (`ase::ui::dp_finish` passes it to `plot_signals`, §16). The viewer has no
+  destination setting of its own, and the Calculator's W13 is a separate
+  setting; none moves another.
 
 ## 9. Close, drag, paste, undo, tabs
 
@@ -451,9 +453,8 @@ fall-through, like `newtab`.
   target.
 - **Calculator**: its plot goes through `plot_signals`, so Replace there clears
   the target subwindow. Its W13 drop-down offers `wviewer::dest_labels` (all
-  five) since the follow-up to this stage, and a destination set in the viewer
-  since the Calculator last pushed is followed rather than overwritten
-  (`calc::plot_dest_follow`; `calc::plot_dest_dropped` and its sentence are gone).
+  five) since the follow-up to this stage. (The W13 ↔ viewer mirroring this
+  bullet described, `calc::plot_dest_follow` and its kin, was retired in §16.)
 - **Replay** (follow-up): `dest_prepare` runs `new_tab` / `new_subwin` unlogged
   (`wviewer::unlogged`), like `clear_subwin`, and `regenerate` draws unlogged, so
   a typed plot gesture's own line is the one record and replays to exactly one
@@ -575,3 +576,48 @@ SubWin's `-command` (SWK12), tabs, save and restore, a one-tab grid round trip
 (SWK13)). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
 (`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite
 header.
+
+## 16. As built — the viewer has no destination (2026-10-16)
+
+User ruling (a Cadence fact): *"My memory says calculator has its own setting.
+But ViVA doesn't. In ViVA, you could create a new graph window or a new
+sub-window and click in it to activate it and that's where the plots would come
+unless the source said to create a new window or sub-window, etc.."*
+
+- **Viewer.** The per-window destination is gone: `wviewer::plot_dest`,
+  `wviewer::set_plot_dest`, `wviewer::dest_notify`, the `dest` array and
+  Options > Plot Destination. `wviewer::plot_signals token exprs ?colors?
+  ?destover?` takes the destination from the call; `{}` (a source with no
+  choice: the browser's Plot, paste, a typed call) is `append` into the target
+  subwindow per its plot mode (SW26). The per-call machinery (`dest_norm`,
+  `dest_labels`, `dest_prepare`, `plot_sites`, `plan_plot`) is unchanged. The
+  Add Trace dialog's Destination is one-shot (opens on Append). The browser
+  menus' top entry is plain `Plot`; their `Plot to` cascade is the per-call
+  choice. A typed or replayed plot line carries its destination as the fourth
+  argument (rows SWR3, TGR1/TGR2).
+- **State files.** The browser sub-dict keeps its `dest` key as a FOSSIL: the
+  snapshot always writes `append` and the apply reads past whatever an older
+  file carries (row BP51 of `test_wave_sigbrowser_i1315`). Declared limit: a
+  session saved with a non-default `dest` reads dirty once after loading,
+  because its next snapshot writes `append`.
+- **Action logs.** A log recorded before the ruling that contains
+  `wviewer::set_plot_dest` fails at that line on replay (the proc is gone);
+  no shim is kept, since a silent one would replay a non-Append plot as Append.
+- **ASE-L.** Direct Plot follows the session's drop-down (`ase::ui::dp_finish`
+  passes `ase::ui::plot_dest`), so with ASE-L's default Replace each Direct Plot
+  batch clears the target subwindow; pick Append to accumulate. Tooltip: "Where
+  ~, the run-end plot and Direct Plot go". Row PO16k of `test_ase_plot_outputs`.
+- **Calculator.** W13 is the Calculator's own setting, stored in
+  `::calc_plot_dest` (an rc variable, `set_ne` in `xschem.tcl`, like
+  `calc_font_size`) by `calc::dest_changed` and read back by `calc::w13_saved`
+  when the window is rebuilt. Scope: the session (and an rc preset); there is
+  no on-disk Calculator preference store. `calc::plot_rpn` passes W13's code to
+  `plot_signals`. Retired: `calc::w13_sync`, `calc::w13_bind`, `w13_tok`,
+  `calc::viewer_dest`, `calc::plot_dest_follow`, the `destpend` sentence.
+- **Rows.** `test_wave_subwindows` SWD16 (no proc declares or writes a viewer
+  destination; the mirror is gone; `info args`/`info default` of
+  `plot_signals`), SWD17 (no destover = Append into the target subwindow, both
+  modes), SWD12/SWD13 restated; `test_calc_plot` PL5i (independence: W13 →
+  viewer and ASE-L unaffected; ASE-L → W13 unaffected; W13 survives a rebuild;
+  no Plot Destination menu), PL5b/PL6 restated, PL5e/PL5f/PL5g (PX1-PX5)
+  retired; `test_ase_plot_outputs` PO16k.

@@ -2043,7 +2043,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 # `append` `replace` `newstrip` `newtab` and split in two halves:
 #   the LANDING half  -> wviewer::plan_plot's 7th argument (PURE, DS01-DS13)
 #   the WINDOW half   -> wviewer::dest_prepare (makes the tab; DS26/DS27)
-# plus the per-window accessor pair plot_dest / set_plot_dest (DS14, DS28).
+# The per-window accessor pair plot_dest / set_plot_dest is GONE (user ruling
+# 2026-10-16: the viewer has no destination setting; the source passes one per
+# call), and DS14/DS28/DS30 are restated around that.
 #
 # ⚠ WHAT CARRIES THE REGRESSION CLAIM IS NOT THIS GROUP. Under `append`,
 # plan_plot's answer is BYTE-IDENTICAL to the 6-argument answer it has always
@@ -2241,13 +2243,12 @@ check {DS13 dest_label round-trips every code, and junk -> Append} \
   [list Append Replace {New Strip} {New Tab} Append Append \
         [list Append Replace {New Strip} {New SubWin} {New Tab}] 1 1]
 
-# An unknown token gets the HARMLESS policy, and setting on one is a spoken
-# refusal ({}), never a throw.
-check {DS14 plot_dest defaults to append on an unknown token; set_plot_dest refuses without throwing} \
-  [list [pcall ::wviewer::plot_dest ds_nosuch_token] \
-        [pcall ::wviewer::set_plot_dest replace ds_nosuch_token] \
-        [pcall ::wviewer::plot_dest ds_nosuch_token]] \
-  [list append {} append]
+# No destination accessor exists any more; a call with no destination is the
+# HARMLESS policy, which dest_norm spells.
+check {DS14 there is no per-window destination accessor, and no destination means append} \
+  [list [info procs ::wviewer::plot_dest] [info procs ::wviewer::set_plot_dest] \
+        [::wviewer::dest_norm {}]] \
+  [list {} {} append]
 
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
@@ -2309,8 +2310,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   proc ds_spy_ok {} {
     ds_spy_on ; set r [pcall ::wviewer::add_trace_ok wvms] ; ds_spy_off ; return $r
   }
-  proc ds_spy_plot {exprs} {
-    ds_spy_on ; set r [pcall ::wviewer::plot_signals wvms $exprs] ; ds_spy_off ; return $r
+  proc ds_spy_plot {exprs {dest {}}} {
+    ds_spy_on ; set r [pcall ::wviewer::plot_signals wvms $exprs {} $dest] ; ds_spy_off ; return $r
   }
   # pick rows 2 and 3 of the inventory: v(out) and i(v1)
   proc ds_pick2 {w} {
@@ -2452,18 +2453,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [::wviewer::tab_index wvms] [ds_counts] [ms_field 1 vec]] \
     [list 0 [list 0 1] [list net1]]
 
-  # --- persistence: the dropdown IS the per-window setting -----------------
-  # (the New Tab OK just above already wrote `newtab`, so this also proves the
-  # write happens on the OK of a destination that destroys its own dialog)
-  check {DS28b the window's destination persisted through the New Tab OK} \
-    [::wviewer::plot_dest wvms] newtab
+  # --- the dropdown is ONE-SHOT (user ruling 2026-10-16) -------------------
+  # (the New Tab OK just above is the case that destroys its own dialog)
   set dsw [ds_open 2 {}] ; update
+  check {DS28b after the New Tab OK, a reopened dialog offers Append again: nothing was remembered} \
+    [list [$dsw.dest get] [info exists ::wviewer::dest]] [list Append 0]
   $dsw.dest set Replace
   ds_pick2 $dsw
   pcall ::wviewer::add_trace_ok wvms ; update
   set dsw [ds_open 2 {}] ; update
-  check {DS28 reopening the dialog shows the persisted choice, not the default} \
-    [list [::wviewer::plot_dest wvms] [$dsw.dest get]] [list replace Replace]
+  check {DS28 reopening the dialog after a Replace OK shows Append, the default, not the last choice} \
+    [list [info exists ::wviewer::dest] [$dsw.dest get]] [list 0 Append]
   destroy $dsw ; update
 
   # --- REPLACE + a failing pick: the DECLARED non-rollback -----------------
@@ -2482,7 +2482,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list {} [list 1] [list v(out)] 1]
   destroy $dsw ; update
 
-  # --- plot_signals honours the WINDOW destination -------------------------
+  # --- plot_signals honours the CALL's destination --------------------------
   # THE seam item 9's three browser gestures will come through, so it is pinned
   # independently of the dialog.
   dict set ::wviewer::layouts wvms \
@@ -2490,22 +2490,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   xschem new_schematic switch $SLMAIN
   ::wviewer::add_trace wvms 1 net1 {}
   ::wviewer::set_target_strip 1 wvms
-  ::wviewer::set_plot_dest replace wvms
-  set dsperrs [ds_spy_plot [list v(out) i(v1)]]
+  set dsperrs [ds_spy_plot [list v(out) i(v1)] replace]
   update
   # the POSITIVE control for the recorder: an occupied target IS cleared, once,
   # by index. Without this row the two zero-call checks below would prove only
   # that the recorder never sees anything.
   # (RESTATED 2026-10-15: the target subwindow is emptied by clear_subwin, so
   # the recorder sees no per-strip clear; the batch is what is left.)
-  check {DS30 plot_signals honours the window destination (Replace empties the target subwindow first)} \
+  check {DS30 plot_signals honours the call's destination (Replace empties the target subwindow first)} \
     [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
     [list {} [list 2] [list v(out) i(v1)] {}]
-  # ...and the same seam under append is the unchanged behaviour
-  ::wviewer::set_plot_dest append wvms
+  # ...and the same seam with NO destination (a source with no choice) appends
   set dsperrs [pcall ::wviewer::plot_signals wvms [list net1]]
   update
-  check {DS30b plot_signals under append still accumulates} \
+  check {DS30b plot_signals with no destination accumulates (append)} \
     [list $dsperrs [ds_counts] [ms_field 0 vec]] \
     [list {} [list 3] [list v(out) i(v1) net1]]
 
@@ -2521,8 +2519,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # then used, and its answer asserted, rather than writing the array twice.
   set ::wviewer::mode(wvms) single
   set dsmode [pcall ::wviewer::set_plot_mode multi wvms]
-  ::wviewer::set_plot_dest replace wvms
-  set dsperrs [ds_spy_plot [list v(out)]]
+  set dsperrs [ds_spy_plot [list v(out)] replace]
   update
   # THE ZERO-CALL half is what the trace counts cannot see: the landing strip is
   # a REUSED EMPTY one, so a Replace that listed it would destroy nothing and
@@ -2543,8 +2540,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   dict set ::wviewer::layouts wvms \
     [dict create sharedx 0 graphs [list [::wviewer::empty_graph] [::wviewer::empty_graph]]]
   ::wviewer::set_target_strip 0 wvms
-  ::wviewer::set_plot_dest replace wvms
-  set dsperrs [ds_spy_plot [list v(out)]]
+  set dsperrs [ds_spy_plot [list v(out)] replace]
   update
   check {DS30d REPLACE onto an ALREADY-EMPTY target makes no clear call at all} \
     [list $dsperrs [ds_counts] [ms_field 0 vec] $::ds_cgt] \
@@ -2561,7 +2557,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ::wviewer::tabs_forget wvms
   dict unset ::wviewer::windows wvms
   dict unset ::wviewer::layouts wvms
-  catch {unset ::wviewer::dest(wvms)}
   catch {unset ::wviewer::target(wvms)}
   # DS30c seeded a plot MODE on this token; it did not exist before the DS group
   # and must not outlive it either
@@ -2573,7 +2568,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {DS31 teardown leaves the main context empty and writable, and no tab/dest/mode state} \
     [list [xschem get rects 2] [xschem get readonly] \
           [pcall ::wviewer::tab_count wvms] \
-          [info exists ::wviewer::dest(wvms)] \
+          [info exists ::wviewer::dest] \
           [info exists ::wviewer::mode(wvms)]] \
     [list 0 0 0 0 0]
 

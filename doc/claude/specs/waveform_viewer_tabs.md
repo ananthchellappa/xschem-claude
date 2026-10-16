@@ -746,3 +746,9 @@ Filled 2026-10-15 at `948f8e86`, from the code and the commits, not from memory.
   now prints `OVERALL: ok (N checks)` and is registered in BOTH `hcases` and
   `dcases` (derived delta: cases +2, blocks +2, counted +0, skips +0, `wc -l`
   +6).
+- **The plot destination is per call, never per window (2026-10-16).** The
+  `newtab` destination still opens a tab through `new_tab`, but the viewer no
+  longer keeps a destination setting (user ruling: ViVA has none; the source
+  passes it): `wviewer::plot_signals <token> {exprs} {} newtab` is the one
+  typed line, so rows TGR1/TGR2 record and replay that single line. See
+  `doc/claude/specs/waveform_viewer_subwindows.md` §16.

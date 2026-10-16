@@ -479,6 +479,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       catch {xschem unhilight_all}
 
       # --- P4: Direct Plot -> one new stacked graph with the clicked traces --
+      # Direct Plot follows the session's destination drop-down since the user
+      # ruling of 2026-10-16 (R-OUT15; the viewer has no setting of its own),
+      # and the default is Replace. These rows are about the APPEND landing, so
+      # the session is put on Append for this leg and back on Replace for P5.
+      catch {ase::ui::set_plot_dest $key append}
+      check "P4 fixture: the session's destination is Append for the Direct Plot leg" \
+        [ase::ui::plot_dest $key] append
       set outs_snap [ase::state_get [ase::session_state $key] outputs]
       set g_before [llength [dict get [wviewer::layout_for $key] graphs]]
       set pre_press [bind $cv <ButtonPress-1>]
@@ -575,6 +582,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [rawq {xschem raw index id}] -1
 
       # --- P5: `~` raises the SAME viewer, adds nothing ----------------------
+      catch {ase::ui::set_plot_dest $key replace}
       check_true "P5 ~ strip button not disabled" \
         [expr {[$top.strip.plot cget -state] ne {disabled}}]
       set tls5 [toplevel_count]

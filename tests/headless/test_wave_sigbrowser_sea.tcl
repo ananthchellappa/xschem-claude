@@ -648,7 +648,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check {BQ68 the sea's entry labels are the shipped table's, with the header
          naming the ONE signal the click picked} \
     [list [lindex $bq_seaents 0] [lindex $bq_seaents 1] \
-          [string match {Plot (*)} [lindex $bq_seaents 2]] \
+          [expr {[lindex $bq_seaents 2] eq {Plot}}] \
           [lrange $bq_seaents 3 7]] \
     [list {i(v.x1.x2.v1)} -- 1 \
           [list {Plot to} {Send to Add Trace...} {Copy name} -- {Descend to here}]]

@@ -1094,8 +1094,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
 
 - **R-OUT15 — the plot destination drop-down (user 2026-10-15; BUILT 2026-10-15).** A
   read-only drop-down at the right end of the status bar — `Append`, `Replace`, `New SubWin`,
-  `New Win` — used by `~` and the run-end auto-plot; it lands in the active viewer tab's TARGET
-  subwindow. The authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18,
+  `New Win` — used by `~`, the run-end auto-plot and (since 2026-10-16) **Direct Plot**; it
+  lands in the active viewer tab's TARGET subwindow. It is ASE-L's OWN setting: the viewer has
+  no destination setting (user ruling 2026-10-16: *"ViVA doesn't"*), and the Calculator's W13
+  is a separate one; none moves another. The authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18,
   §8, and §15 for what was built). R-OUT14's strip order (last row on top) is unchanged by it.
   - **The control** is `$top.status.dest`, packed first at the right so a narrow window clips
     the text segments and never it, driven by `<<ComboboxSelected>>` →
@@ -1119,6 +1121,11 @@ They should not influence the input to the simulator."* ADE-L is the floor
     is not emptied by a press that plots nothing); under the other three nothing changes.
   - Failed runs, refusals and the op-only notice are unchanged (R-OUT12/R-OUT13), under every
     choice.
+  - **Direct Plot** (2026-10-16): `ase::ui::dp_finish` passes `ase::ui::plot_dest` to
+    `wviewer::plot_signals` for each batch (one per ESC). ⚠ A user-visible change: under the
+    default Replace each Direct Plot batch now empties the target subwindow first, where it
+    used to append through the viewer's own (now retired) setting; pick Append to accumulate.
+    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k.
   - Fenced by band PO16 (both arms) and PR12 (display arm, the real `tb_bandgap` bench, each
     choice picked by a real `<<ComboboxSelected>>` and `~` pressed by a real click) of
     `tests/headless/test_ase_plot_outputs.tcl`, and rows PD1-PD6 of

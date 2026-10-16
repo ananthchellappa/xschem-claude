@@ -84,7 +84,7 @@ process. Each is SETTLED — a later change needs a new ruling, not a code revie
 | 16 | **The legacy `.graphdialog` matches the STRIPPED name** — the one exception to decision 2 (§4). |
 | 17 | **Where a claim and its coverage disagree, WIDEN THE COVERAGE OR NARROW THE CLAIM — never neither.** A check NAME that overstates what it pins is itself a defect. |
 | 20 | **The search bar KEEPS its Search button**; `-showbutton 0` is the Filter-bar variant. |
-| 24 | **`wviewer::plot_dest <token>` is THE destination accessor.** Nothing re-implements the policy. |
+| 24 | **`wviewer::plot_dest <token>` is THE destination accessor.** Nothing re-implements the policy. ⚠ **Superseded 2026-10-16** (user ruling: ViVA has no destination setting): the accessor and the per-window setting are gone; the destination is `plot_signals`' per-call `destover` and still nothing re-implements the policy (`doc/claude/specs/waveform_viewer_subwindows.md` §16). |
 | 30 | **Every design-window-coupled item gets its own test process** (§16). |
 
 ---
@@ -258,12 +258,13 @@ tag must still classify `devnode`, or the check proves nothing).
 
 ### The destination
 
-- `wviewer::plot_dest` — `{{token {}}}` -> `append` | `replace` | `newstrip` | `newtab`.
-  **THE destination accessor** (ruling 24): the Add Trace dialog, `plot_signals` and the
-  browser's three plot gestures all call it, and nothing re-implements the policy.
-  ⚠ It **DEFAULTS to `append`** for an unset or unknown token rather than returning `{}`,
-  and that is deliberate: a caller asking about a window that is not there must get the
-  **harmless** policy, never one that destroys traces.
+- `wviewer::plot_signals` — `{token exprs {colors {}} {destover {}}}`. **Where the
+  destination is resolved**, from the call's own `destover`: `{}` is `append`, still the
+  **harmless** policy. The browser's three plot gestures pass `{}`; its `Plot to` cascade
+  passes the entry's code. ⚠ The per-window `wviewer::plot_dest` / `set_plot_dest` that
+  this entry used to name were **RETIRED 2026-10-16**: in ViVA a plot lands in the active
+  subwindow unless its source says otherwise (user ruling). See
+  `doc/claude/specs/waveform_viewer_subwindows.md` §16.
 
 ### The search bar megawidget
 

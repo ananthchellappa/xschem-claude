@@ -629,8 +629,10 @@ foreach gs_n $gs_names {                                  ;# spec -> source
 # strip, the tree's row filter, the sea's per-level selector, its two label
 # forms' entry point and the flow layout — chosen so that a rebuild that
 # deleted any of them could not ship with a green suite.
+# `plot_signals` replaced `plot_dest` (2026-10-16): the per-window destination
+# was retired and the destination is resolved from plot_signals' own argument.
 set gs_want {sig_type sig_match sig_split signal_entry signal_list signal_list_all
-             rawinfo_parse db_label attach_raw plot_dest rawbar_load rawbar_commit
+             rawinfo_parse db_label attach_raw plot_signals rawbar_load rawbar_commit
              browser_build browser_show browser_toggle browser_state
              browser_state_apply hier_split hier_common hier_same hier_now
              searchbar_build searchbar_get

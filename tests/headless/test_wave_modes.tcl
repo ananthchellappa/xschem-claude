@@ -1970,6 +1970,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # wviewer::plot_signals would leave the pre-0151 dp_finish body passing.)
   check "MG12 fixture plots as dc, so dp_finish does not abort on op" \
     [pcall {ase::plot_sim_type [ase::session_state $tok]}] dc
+  # Direct Plot follows the session's destination since the user ruling of
+  # 2026-10-16 (R-OUT15; default Replace). These rows pin the APPEND landing
+  # per plot mode, so the session is put on Append for the band.
+  pcall {ase::ui::set_plot_dest $tok append}
+  check "MG12 fixture: the session's destination is Append" \
+    [pcall {ase::ui::plot_dest $tok}] append
   wviewer::set_graphs $tok [list [wviewer::empty_graph] [wviewer::empty_graph]]
   wviewer::regenerate $tok
   pcall {wviewer::set_plot_mode multi $tok}
@@ -2008,6 +2014,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [llength [dict get [lindex $gs 0] traces]] 0
   check "MG12 an empty queue still creates nothing" \
     [llength [dict get [wviewer::layout_for $tok] graphs]] 2
+  pcall {ase::ui::set_plot_dest $tok replace}
 
   # --- MG13: the shipped chord SPELLING actually fires ------------------------
   # A physical Ctrl+Shift+4 arrives as keysym `dollar` on a US layout, so

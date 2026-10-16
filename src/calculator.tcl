@@ -167,8 +167,6 @@ namespace eval calc {
     variable optalways {}
     # W05: the -textvariable of .calc.res.path
     variable respath {}
-    # the session token W13 currently speaks for (calc::w13_bind)
-    variable w13_tok {}
     # W03: 1 while the Results Dir row is collapsed to its toggle
     variable rescollapsed 0
     # W33: the -textvariable of .calc.status.msg
@@ -2345,8 +2343,6 @@ proc calc::results_publish {src} {
     if {[calc::has_win .calc.res.path]} {
         catch {balloon .calc.res.path [calc::results_tip $origin $p $detail]}
     }
-    # W13 speaks for the session this row names (calc::w13_bind)
-    catch {calc::w13_bind [lindex $src 2]}
     return $respath
 }
 
@@ -4149,17 +4145,17 @@ proc calc::eval_click {} {
 # PLAN 3.3 -- PLOT (R601/R602).  Send the buffer to the waveform viewer.
 #
 # WARN NOTHING HERE DECIDES WHERE A PLOT LANDS, AND THAT IS R601'S EXPLICIT
-# REQUIREMENT: "the destination strip comes from W13 (Append / Replace / New
-# Strip), which must reuse `wviewer::set_plot_dest` rather than reimplementing
-# the choice."  The whole landing policy -- strip creation, empty-strip reuse,
+# REQUIREMENT: the destination comes from W13, the Calculator's OWN setting
+# (user ruling 2026-10-16: the Calculator has one, the viewer has none), and is
+# handed to the viewer per call rather than reimplemented.  The whole landing
+# policy -- strip creation, empty-strip reuse,
 # the `replace` clear list, the plot mode, the colour cycle -- lives in
 # `wviewer::plot_signals` -> `wviewer::plan_plot` -> `wviewer::add_trace`, which
 # is the seam the tree's other plot gestures come through -- ASE-L's Direct Plot
 # (`ase::ui::dp_finish`) and the signal browser's plot gestures; the callers are
 # found with `grep -n 'wviewer::plot_signals' src/*.tcl` rather than counted
-# here.  This file pushes the combobox's label
-# at `wviewer::set_plot_dest` and calls that seam.  A second landing rule here
-# would be the same defect as a second validator.
+# here.  This file passes W13's code to that seam as the call's `destover`.  A
+# second landing rule here would be the same defect as a second validator.
 #
 # WARN AND THE TRACE'S DESTINATION COLUMN IS NOT A `__calc_tmp`, SO R402 DOES
 # NOT APPLY TO THIS PATH.  `wviewer::add_trace` materialises a multi-token RPN
@@ -4222,7 +4218,6 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
         failed   { return "Plot failed: $a." }
         plotted  { return "Plotted $a ($b)." }
         dest     { return "Plot destination: $a." }
-        destpend { return "Plot destination: $a (applied when a waveform viewer is open)." }
     }
     return {}
 }
@@ -4234,7 +4229,7 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
 # ⚠⚠ AND THE `dest` KEY MEANS ONE THING, WHICH IT DID NOT BEFORE: the resolved
 # destination CODE, or empty when nothing resolved one.  The refusing paths were
 # handed W13's LABEL (`New Strip`) while the success and seam-failure paths
-# carried `wviewer::set_plot_dest`'s CODE (`newstrip`), so one key meant two
+# carried the resolved CODE (`newstrip`), so one key meant two
 # vocabularies depending on which branch answered -- a trap for any later reader
 # that switches on it.  Normalised HERE rather than at the five call sites, for
 # the same reason the dict is built here.  `wviewer::dest_norm` is the one
@@ -4256,8 +4251,7 @@ proc calc::plot_refusal {msg {dest {}}} {
 # labels ARE the viewer's (`wviewer::dest_labels`; row PL2 asserts each one is a
 # DISTINCT code to it).  R508: with no window there
 # is no combobox, so this answers {} -- which `wviewer::dest_norm` reads as
-# `append`, the harmless policy, for the same reason `wviewer::plot_dest`
-# defaults that way rather than returning a policy that destroys traces.
+# `append`, the harmless policy, rather than a policy that destroys traces.
 proc calc::plot_dest_req {} {
     if {![calc::has_win .calc.mode.dest]} { return {} }
     set v {}
@@ -4266,77 +4260,25 @@ proc calc::plot_dest_req {} {
     return $v
 }
 
-# ⚠ R506: A PRESS NEVER TAKES AWAY A CHOICE THE USER MADE IN THE VIEWER.
-# W13 TRACKS THE VIEWER LIVE, so that is true by construction rather than by
-# bookkeeping: every writer of `::wviewer::dest` calls `wviewer::dest_notify`,
-# which lands here, and W13 is moved to show the viewer's choice the moment it
-# is made -- its Options cascade, the Add Trace dialog, a typed
-# `wviewer::set_plot_dest`, a restored state.  W13 is therefore never OLDER
-# than the viewer it speaks for, and a press can push W13 as it stands.  That
-# needs `wviewer::set_plot_dest` to treat a window with NO entry as a change
-# even when the request is append (which `wviewer::plot_dest` already answers
-# there): after a reopen W13 still shows its own pending pick, and an explicit
-# Append in the viewer that notified nobody was overridden by the next press
-# (band PL5g, row PX1).
-#
-# "The viewer it speaks for" is `w13_tok`: the session token W13 last showed
-# (bound by `calc::results_publish`, i.e. whenever the Results Dir row is
-# published, and by a W13 pick).  A notification for any other token is not
-# W13's business.  When the token CHANGES, W13 adopts that viewer's choice if it
-# has one (`wviewer::forget` unsets it with the window, so a fresh viewer has
-# none and W13's own pick is pushed, as `calc::dest_changed`'s pending sentence
-# promises).  The sync is SILENT: it is not a Calculator operation, and the
-# viewer gesture that caused it is the one that speaks.
-#
-# This retires `calc::dest_seen`, a per-token memory of the last push which
-# outlived `wviewer::forget`: after a viewer close/reopen, a viewer choice equal
-# to that memory was taken for the Calculator's own and a press overrode it.
-# Bands PL5e and PL5f of tests/headless/test_calc_plot.tcl.
-proc calc::w13_sync {tok} {
-    if {$tok eq {} || ![info exists ::wviewer::dest($tok)]} { return {} }
-    if {![calc::has_win .calc.mode.dest]} { return {} }
-    set vl $::wviewer::dest($tok)
-    catch {set vl [wviewer::dest_label $::wviewer::dest($tok)]}
-    catch {.calc.mode.dest set $vl}
-    return $vl
-}
-proc calc::w13_bind {tok} {
-    variable w13_tok
-    if {$tok eq {} || $tok eq $w13_tok} { return {} }
-    set w13_tok $tok
-    return [calc::w13_sync $tok]
-}
-# `wviewer::dest_notify`'s callee.  Never raises into the viewer's writer.
-proc calc::viewer_dest {tok} {
-    variable w13_tok
-    if {$tok eq {} || $tok ne $w13_tok} { return {} }
-    return [calc::w13_sync $tok]
-}
-
-# Answers the LABEL `calc::plot_rpn` pushes: W13's own (`lab`), unless the press
-# is for a token W13 has not been showing (it adopts that viewer's choice
-# first, `calc::w13_bind`) or W13 has no value (R508, no window), in which case
-# the viewer's own choice, when it has one, is the answer.
-proc calc::plot_dest_follow {tok lab} {
-    variable w13_tok
-    set was $w13_tok
-    calc::w13_bind $tok
-    if {$tok eq {} || ![info exists ::wviewer::dest($tok)]} { return $lab }
-    if {[string trim $lab] ne {} && $tok eq $was} { return $lab }
-    set vl $::wviewer::dest($tok)
-    catch {set vl [wviewer::dest_label $::wviewer::dest($tok)]}
-    return $vl
+# W13's REMEMBERED value: `::calc_plot_dest` (an rc variable, `set_ne` in
+# xschem.tcl, like `calc_font_size`), written by `calc::dest_changed` and read
+# by `calc::build_mode`, so the choice survives a Calculator close and rebuild
+# for the session.  It is the Calculator's OWN setting (user ruling 2026-10-16):
+# nothing in the viewer or ASE-L reads or writes it, and the Calculator reads
+# neither of theirs.  Answers a W13 LABEL, `Append` when unset or unrecognised.
+proc calc::w13_saved {} {
+    set v {}
+    if {[info exists ::calc_plot_dest]} { set v $::calc_plot_dest }
+    set lab Append
+    catch {set lab [wviewer::dest_label [wviewer::dest_norm $v]]}
+    return $lab
 }
 
 # The work, INSIDE the selected result's own context.  Answers one dict.
 #
 # Order: R607 first (so a mistyped token is named before anything is written),
-# then the destination push, then the ONE seam.  The destination is pushed
-# rather than passed as `plot_signals`' one-shot `destover` override, and that
-# is a choice with a reason: W13 is a VISIBLE control whose label tells the user
-# where the next plot goes, so the window's own policy must agree with it --
-# and `wviewer::set_plot_dest` logs the change replayably, which a one-shot
-# override deliberately does not.
+# then the ONE seam, handed W13's destination as the call's `destover` (the
+# viewer has no setting of its own to push to).
 #
 # The trace's name is recovered by DIFFING the model's `vec` set across the
 # call, because `wviewer::plot_signals` returns only the failures and the name
@@ -4349,9 +4291,6 @@ proc calc::plot_dest_follow {tok lab} {
 # disagree).  Replace clears the target subwindow in both plot modes
 # (doc/claude/specs/waveform_viewer_subwindows.md section 6.2, which retired
 # ruling 24's multi-mode limit), so the label is plain; band PL5d measures it.
-#
-# ⚠ AND A PUSH MUST NOT TAKE A CHOICE AWAY -- `calc::plot_dest_follow` decides,
-# before the push, whether W13 or the viewer holds the newer choice.
 proc calc::plot_rpn {tok rpn dest} {
     # R208c: Plot draws in the database the viewer already shows and never
     # switches it, so a qualified token for ANOTHER analysis is refused rather
@@ -4382,11 +4321,9 @@ proc calc::plot_rpn {tok rpn dest} {
     if {$bad ne {}} {
         return [calc::plot_refusal [calc::plot_msg badtoken $bad] $dest]
     }
-    set dest [calc::plot_dest_follow $tok $dest]
-    set code {}
-    catch {set code [wviewer::set_plot_dest $dest $tok]}
-    if {$code eq {}} { catch {set code [wviewer::plot_dest $tok]} }
-    set errs [wviewer::plot_signals $tok [list $rpn]]
+    set code append
+    catch {set code [wviewer::dest_norm $dest]}
+    set errs [wviewer::plot_signals $tok [list $rpn] {} $code]
     if {[llength $errs]} {
         return [calc::plot_refusal [calc::plot_msg failed [lindex [lindex $errs 0] 1]] $code]
     }
@@ -11135,20 +11072,16 @@ proc calc::build_mode {} {
     # creation, `$w set` for the initial value, and combo_letter_cycle bound
     # because a readonly ttk::combobox does not type-to-cycle by itself
     # (xschem.tcl:10946).  The values ARE `wviewer::dest_labels`, read at build
-    # time, so W13 offers every destination the viewer's own Options cascade and
-    # Add Trace dialog offer and cannot fall behind them (the user's ruling:
-    # Calculator plots go under the same destinations as every other plot door,
-    # doc/claude/specs/waveform_viewer_subwindows.md).  `calc::plot_dest_req`
-    # reads this widget and `wviewer::dest_norm` is the only thing that maps a
+    # time, so W13 offers every destination the viewer's Add Trace dialog and
+    # `Plot to` cascade offer and cannot fall behind them.  The CHOICE is the
+    # Calculator's own (user ruling 2026-10-16), seeded from `calc::w13_saved`.
+    # `calc::plot_dest_req` reads this widget and `wviewer::dest_norm` is the only thing that maps a
     # label to a code, so the labels are translated nowhere here.  Row PL2
     # asserts the two lists are equal and that each label is a distinct code.
     ttk::combobox .calc.mode.dest -state readonly -width 10 \
         -values [wviewer::dest_labels] -takefocus 0 \
         -style Calc.Field.TCombobox
-    .calc.mode.dest set {Append}
-    # ...unless the viewer W13 speaks for already has a choice (a Calculator
-    # rebuilt over a live viewer): W13 shows the viewer's (calc::w13_sync)
-    catch {calc::w13_sync $::calc::w13_tok}
+    .calc.mode.dest set [calc::w13_saved]
     bind .calc.mode.dest <Key> {combo_letter_cycle %W %A; break}
     bind .calc.mode.dest <<ComboboxSelected>> {calc::dest_changed}
     pack .calc.mode.dest -side left -padx {6 3} -pady 1
@@ -11163,47 +11096,21 @@ proc calc::build_mode {} {
     pack .calc.mode.table -side left -padx {3 0} -pady 1
 }
 
-# W13's selection, PLAN 3.3.  R506: it speaks, and what it says is whether the
-# choice took effect.
-#
-# The widget remembers the value (that is what a combobox is for) and
-# `calc::plot_dest_req` is the one reader of it, so this proc PUSHES rather than
-# stores: with a viewer holding the session's result it hands the label to
-# `wviewer::set_plot_dest` immediately, so the viewer's own Options-menu label
-# agrees with W13 instead of disagreeing silently until the next press.  With no
-# viewer there is nothing to push to and the sentence says so -- `plot_click`
-# pushes again from the same widget, so a destination chosen before a viewer
-# existed still takes effect.
-#
-# WARN THE TOKEN IS READ THROUGH `calc::results_source`, NOT `require_result`,
-# and the difference is deliberate: `require_result` PUBLISHES the Results Dir
-# row as a side effect, which is right for a press that is about to act on the
-# result (U3's one-resolution rule) and wrong for a combobox selection, which
-# has not been asked to re-resolve anything the row shows.
-#
-# WARN `wviewer::set_plot_dest` is NOT called with a {} token: it emits a CIW
-# error when no viewer resolves, and a user picking a destination with no viewer
-# open has done nothing wrong.  That is why the token is tested here first.
+# W13's selection, PLAN 3.3.  R506: it speaks.  The pick is the Calculator's
+# OWN setting (user ruling 2026-10-16): it is stored in `::calc_plot_dest`
+# (`calc::w13_saved` reads it back when the window is rebuilt) and touches no
+# viewer and no ASE-L session, so it says the same sentence whether or not a
+# viewer is open.  `calc::plot_rpn` reads W13 itself at press time.
 #
 # R508: `calc::has_win` and not a bare `winfo exists`.  The bare spelling RAISES
-# `invalid command name "winfo"` under --nogui, which is R508's third case; this
-# proc shipped with it, it was unreachable while the proc was inert, and
-# widening band CE8 to cover PLAN 3.3's entry points is what surfaced it.
+# `invalid command name "winfo"` under --nogui, which is R508's third case.
 proc calc::dest_changed {} {
     if {![calc::has_win .calc.mode.dest]} { return {} }
     set lab [calc::plot_dest_req]
     if {$lab eq {}} { return {} }
-    set tok [lindex [calc::results_source] 2]
-    if {$tok eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
-    # a pick binds W13 to this token WITHOUT adopting the viewer's choice: the
-    # pick is the newer one (calc::w13_bind would overwrite it)
-    set ::calc::w13_tok $tok
-    set code {}
-    catch {set code [wviewer::set_plot_dest $lab $tok]}
-    if {$code eq {}} { return [calc::status [calc::plot_msg destpend $lab]] }
-    # named through `wviewer::dest_menu_label`, as `calc::plot_rpn` does
-    set shown $code
-    catch {set shown [wviewer::dest_menu_label $tok $code]}
+    set ::calc_plot_dest $lab
+    set shown $lab
+    catch {set shown [wviewer::dest_label [wviewer::dest_norm $lab]]}
     return [calc::status [calc::plot_msg dest $shown]]
 }
 

@@ -698,7 +698,7 @@ eqcheck CS95o3-set-case-mode-forces-past-the-cache-1 [pcall wviewer::set_case_mo
 eqcheck CS95o3b-set-case-mode-forces-past-the-cache-2 \
   [pcall wviewer::casemode_cached $tok] {fold explicit}
 # ⚠ THE ACTION LOG. `set_case_mode` is a state-changing menubar command and
-# every sibling in this file logs one line per use (set_plot_mode, set_plot_dest,
+# every sibling in this file logs one line per use (set_plot_mode,
 # grid_toggle, browser_toggle); a replay that skipped it would leave the replayed
 # session answering a different `xschem raw casemode`. Spied by rename, which is
 # the only way to see a `log_action` line without a live action log.
