@@ -16351,6 +16351,25 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Control-Shift-Key-G>] eq {}} {
     bind WaveViewer <Control-Shift-Key-G> {wviewer::grid_toggle_subwin_at %W; break}
   }
+  # ⚠ CAPS LOCK ALIASES. Tk derives the keysym from keycode + state, and with
+  # Lock on the case flips: Lock+Ctrl+d arrives as `D` with no Shift (matches
+  # neither chord above), and Lock+Shift+Ctrl+d arrives as `d` -- which
+  # <Control-Key-d> matches, so Caps Lock turned Ctrl-Shift-D into Clear All
+  # (no undo). Each alias carries its base chord's script, so an rc remap of
+  # the base made before the first viewer open carries over. Both cases of the
+  # Shift+Lock chord are bound: a server that does not flip the case there
+  # would otherwise leave <Control-Lock-Key-D> and <Control-Shift-Key-D>
+  # equally specific. Row SWK8 of test_wave_subwindows sends states 4-7.
+  foreach {alias base} {
+    <Control-Lock-Key-D>       <Control-Key-d>
+    <Control-Lock-Key-G>       <Control-Key-g>
+    <Control-Shift-Lock-Key-d> <Control-Shift-Key-D>
+    <Control-Shift-Lock-Key-D> <Control-Shift-Key-D>
+    <Control-Shift-Lock-Key-g> <Control-Shift-Key-G>
+    <Control-Shift-Lock-Key-G> <Control-Shift-Key-G>
+  } {
+    if {[bind WaveViewer $alias] eq {}} { bind WaveViewer $alias [bind WaveViewer $base] }
+  }
   # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
   # and with only one tab it does NOTHING but say so. It never closes a window
   # any more -- that is Ctrl-Q. The hardcoded key_filter arm that used to

@@ -138,6 +138,15 @@
 #   Si Ctrl-Shift-D bound as <Control-Key-D> (display) -> SWK7, SWK8 Caps Lock
 #        row and its log row
 #   Sj set_graphs: no sw_props_spread (display) -> SWK8 mode, SWK9 (x2), SWK10
+# Verifier follow-ups, measured 2026-10-15, each reverted to green:
+#   AP auto_plot_strips reads base_mode -> SWM9 ONLY
+#   PC predict_colors reads base_mode -> SWM10 ONLY
+#   PT paste_traces reads base_mode -> SWM11 ONLY
+#   D  grid_toggle_from_menu: mixed branch disabled -> SWH7 ONLY
+#   E  clear_all: drop the target-grid carry -> SWH8 ONLY
+#   C  regenerate: no status_refresh / sync_grid_mirror push (display) -> SWK11
+#   K  no Caps Lock aliases (the 720898fe binds) (display) -> SWK8 matrix
+#        (state 6 fired nothing, state 7 fired Clear All / Ctrl-G)
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -622,6 +631,58 @@ if {[catch {
   check "SWM8 an undo does not revert a subwindow's mode (the mode is outside undo)" \
     [list [expr {$u > 0}] [swd_tr] [wviewer::plot_mode __swd]] {1 {a b} multi}
 
+  # ---- SWM9-SWM11: the consumers that read the mode through plot_mode -------
+  # Each is driven in BOTH directions (target multi on a single window, and
+  # target single on a multi window), so a consumer reading the window's own
+  # value instead of the target's reddens one leg whichever way it errs.
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::auto_plot_strips __swd 3}
+  set tg [tags [swd_lay]]
+  set m1 [list [llength [lsearch -all $tg 1]] [llength [lsearch -all $tg 2]]]
+  swd_open [list [G a 1] [G b 2]] 1 multi
+  pcall {wviewer::set_plot_mode single __swd}
+  pcall {wviewer::auto_plot_strips __swd 3}
+  set tg [tags [swd_lay]]
+  set m2 [list [llength [lsearch -all $tg 1]] [llength [lsearch -all $tg 2]]]
+  check "SWM9 auto_plot_strips (ASE-L auto-plot, ~) readies strips by the TARGET's mode: multi 3 auto strips, single 1" \
+    [list $m1 $m2] {{1 4} {1 2}}
+
+  # strip a carries colour 5 so the multi plan (which avoids every strip's
+  # colours) and the single plan (only the target strip's) part ways
+  set pcgs [list [dict replace [G a 1] traces [list [dict create expr a name a vec a color 5]]] [G b 2]]
+  swd_open $pcgs 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  set pcm [pcall {wviewer::predict_colors __swd 2}]
+  swd_open $pcgs 1 multi
+  pcall {wviewer::set_plot_mode single __swd}
+  set pcs [pcall {wviewer::predict_colors __swd 2}]
+  set ::wviewer::mode(__swd) single
+  dict set ::wviewer::layouts __swd graphs $pcgs
+  set pcs0 [pcall {wviewer::predict_colors __swd 2}]
+  set ::wviewer::mode(__swd) multi
+  set pcm0 [pcall {wviewer::predict_colors __swd 2}]
+  check "SWM10 predict_colors follows the TARGET's mode (each answer equals a one-mode window's)" \
+    [list [expr {$pcm eq $pcm0}] [expr {$pcs eq $pcs0}]] {1 1}
+  check "SWM10 ...and the two modes predict DIFFERENT colours here (the row discriminates)" \
+    [expr {$pcm0 ne $pcs0}] 1
+
+  set clipsave $::wviewer::clip
+  set ::wviewer::clip [dict create from {other 1} raw {{} {}} items [list \
+    [dict create gi 0 tr [dict create expr p name p vec p color 4]] \
+    [dict create gi 1 tr [dict create expr q name q vec q color 5]]]]
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::paste_traces __swd}
+  set p1 [list [tags [swd_lay]] [swd_tr]]
+  swd_open [list [G a 1] [G b 2]] 1 multi
+  pcall {wviewer::set_plot_mode single __swd}
+  pcall {wviewer::paste_traces __swd}
+  set p2 [list [tags [swd_lay]] [swd_tr]]
+  set ::wviewer::clip $clipsave
+  check "SWM11 Ctrl-V lands by the TARGET's mode: multi one strip per group, single both in the target strip" \
+    [list $p1 $p2] {{{1 2 2 2} {a b p q}} {{1 2} {a {b p q}}}}
+
   # ---- SWC*: Ctrl-Shift-D, clear the target subwindow only ------------------
   set ::swd_log {}
   swd_open [list [G a 1] [G b 1] [G c 2]] 0 single
@@ -681,6 +742,22 @@ if {[catch {
           [info args wviewer::strip_grids] [info args wviewer::grid_toggle]] \
     {{want token} W {gs base} {want token}}
   check "SWH6 no viewer: {} and no throw" [pcall {wviewer::grid_toggle_subwin {} nosuchtoken}] {}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  set pre [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}]
+  # Tk writes the new checkbutton value BEFORE -command runs: the target is off,
+  # so the click writes 1
+  set ::wviewer::gridshow(__swd) 1
+  pcall {wviewer::grid_toggle_from_menu __swd}
+  check "SWH7 the Grid checkbutton on MIXED subwindows inverts each one (the target ends on)" \
+    [list $pre [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [wviewer::grid_shown __swd]] \
+    {{1 0} {0 1} 1}
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  pcall {wviewer::clear_all __swd}
+  check "SWH8 Clear All keeps the TARGET's grid (off) as the window's own" \
+    [list [llength [swd_lay]] [wviewer::grid_shown __swd] [wviewer::grid_base __swd]] {1 0 0}
 } swmerr]} { check "SWM* band ran to its end" "ERR:$swmerr" ok }
 swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
@@ -1644,9 +1721,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall {$gm entrycget $ix -accelerator}] [pcall {expr {[$gm index {Clear All}] - $ix}}]] {Ctrl+Shift+D 1}
   check "SWK7 Ctrl-Shift-D is a WaveViewer default" \
     [string match {*clear_target_subwin_at %W*} [bind WaveViewer <Control-Shift-Key-D>]] 1
-  set ok [send_ks $vdrw D 6 {0}]
-  check "SWK8 Caps Lock + Ctrl-d (keysym D, no Shift) does NOT clear a subwindow" \
-    [list [ltags] [trx 0]] {{1 2 2 2} a1}
+  # Caps Lock matrix, REAL key events into recorders: Tk recomputes the keysym
+  # from the keycode and state, so Lock+Ctrl gives `D` with no Shift and
+  # Lock+Shift+Ctrl gives `d` on :99. Each chord must reach its own command
+  # whatever Caps Lock says, and exactly one of the two.
+  foreach p {clear_all_at clear_target_subwin_at grid_toggle_at grid_toggle_subwin_at} {
+    rename ::wviewer::$p ::swk_orig_$p
+    proc ::wviewer::$p {W} [list lappend ::swk_rec $p]
+  }
+  set mx {}
+  foreach {ks st} {d 4 D 5 D 6 D 7 g 4 G 5 G 6 G 7} {
+    set ::swk_rec {}
+    send_ks $vdrw $ks $st {[llength $::swk_rec] > 0}
+    update
+    lappend mx $st $::swk_rec
+  }
+  foreach p {clear_all_at clear_target_subwin_at grid_toggle_at grid_toggle_subwin_at} {
+    rename ::wviewer::$p {}
+    rename ::swk_orig_$p ::wviewer::$p
+  }
+  check "SWK8 Caps Lock does not change what Ctrl-D / Ctrl-Shift-D / Ctrl-G / Ctrl-Shift-G do (state 4 5 6 7)" \
+    $mx {4 clear_all_at 5 clear_target_subwin_at 6 clear_all_at 7 clear_target_subwin_at 4 grid_toggle_at 5 grid_toggle_subwin_at 6 grid_toggle_at 7 grid_toggle_subwin_at}
+  check "SWK8 ...and the recorders left the plots alone" [list [ltags] [trx 0]] {{1 2 2 2} a1}
   set ::sw_log {}
   set ok [send_ks $vdrw D 5 {[llength [lay]] == 2}]
   check "SWK8 a REAL Ctrl-Shift-D empties the TARGET subwindow; subwindow 1 untouched; Clear All did NOT fire" \
@@ -1680,6 +1776,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "SWK10 save / close / restore keeps each subwindow's mode and grid" \
     [list [ltags] $modes [lmap i {0 1 2 3} {rprop $i grid}]] [list $swtags {single multi} {{} {} {} {}}]
+  # ---- SWK11: the status bar and Grid checkbutton follow a target that moves
+  # because its subwindow CLOSED (regenerate's push; neither set_target_strip
+  # nor a click is involved)
+  pcall {wviewer::set_target_strip 1 $tok}
+  pcall {wviewer::grid_toggle_subwin 0 $tok}
+  pcall {wviewer::set_target_strip 0 $tok}
+  set pre [list [stmode] $::wviewer::gridshow($tok)]
+  pcall {wviewer::close_subwin $tok 0}
+  check "SWK11 closing the single, grid-on target: the bar and the checkbutton show the survivor (multi, grid off)" \
+    [list $pre [stmode] $::wviewer::gridshow($tok) [wviewer::plot_mode $tok] [wviewer::grid_shown $tok]] \
+    {{single 1} multi 0 multi 0}
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
@@ -1697,7 +1804,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 138 } else { set expect 259 }
+if {$::arm eq {nogui}} { set expect 144 } else { set expect 267 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

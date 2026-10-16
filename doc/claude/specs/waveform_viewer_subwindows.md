@@ -513,14 +513,20 @@ with no new key. An old state (no `swmode`) gives every subwindow its tab's mode
 **Keys.** `<Control-Shift-Key-D>` → `wviewer::clear_target_subwin_at`,
 `<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`, spelled with `Shift-`
 (unlike Ctrl-Shift-N/W) so Caps Lock + Ctrl-d (keysym `D`, no Shift) is never a
-subwindow clear. `wviewer::clear_target_subwin` is the logged door over
+subwindow clear. Caps Lock flips the keysym's case the other way too
+(Lock+Shift+Ctrl+d arrives as `d`, which `<Control-Key-d>` matches), so six
+aliases carry the base chords' scripts: `<Control-Lock-Key-D>`/`-G` (Ctrl-D,
+Ctrl-G) and `<Control-Shift-Lock-Key-d>`/`-D`/`-g`/`-G` (the subwindow chords).
+With Caps Lock on, each chord does what it does with Caps Lock off.
+`wviewer::clear_target_subwin` is the logged door over
 `clear_subwin` (one undo point, logged on every call like `clear_all`). Menu:
 Graph > Clear SubWin (above Clear All) and Graph > SubWin Grid (after the Grid
 checkbutton).
 
-**Rows.** `test_wave_subwindows` SWM1-SWM8, SWC1-SWC3, SWH1-SWH6 (both arms,
-model-only window) and SWK0-SWK10 (display: the Options entry, real clicks, real
-Ctrl-Shift-G / Ctrl-G / Ctrl-Shift-D, Caps Lock, the menu entries, tabs, save and
+**Rows.** `test_wave_subwindows` SWM1-SWM11, SWC1-SWC3, SWH1-SWH8 (both arms,
+model-only window; SWM9-SWM11 drive auto_plot_strips, predict_colors and
+paste) and SWK0-SWK11 (display: the Options entry, real clicks, real
+Ctrl-Shift-G / Ctrl-G / Ctrl-Shift-D, the Caps Lock state 4-7 matrix, the menu entries, tabs, save and
 restore). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
 (`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite
 header.
