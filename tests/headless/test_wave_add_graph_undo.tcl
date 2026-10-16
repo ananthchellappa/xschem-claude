@@ -246,7 +246,8 @@ check "AF2 ...and Add Graph is one of them, bound to wviewer::add_graph" \
 # value carries Tcl's own canonical string representation of the map and the
 # comparison cannot fail on whitespace or on which words needed bracing.
 # New SubWin / Close SubWin (subwindows stage 1, 2026-10-15) each take ONE undo
-# point and log, like Add Graph.
+# point and log, like Add Graph. Clear SubWin (SW22) takes one and logs; SubWin
+# Grid (SW23) is a window option like the Grid checkbutton: it logs, no undo.
 set ag_want [list \
   {Add Graph}           {1 1} \
   {New SubWin}          {1 1} \
@@ -254,10 +255,12 @@ set ag_want [list \
   {Add Trace...}        {0 0} \
   {Delete...}           {0 0} \
   {Axes...}             {0 0} \
+  {Clear SubWin}        {1 1} \
   {Clear All}           {0 1} \
   {Delete All Markers}  {0 1} \
   {Delete Empty Strips} {1 1} \
-  {Split Strip}         {1 1}]
+  {Split Strip}         {1 1} \
+  {SubWin Grid}         {0 1}]
 check "AF3 the whole Graph-menu reach map, derived from the call graph" \
   [q {ag_menu_reach $wvsrc wviewer::build_menubar}] $ag_want
 

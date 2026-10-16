@@ -43,6 +43,17 @@
 #         (Append, New Strip, Replace, New SubWin, New Tab) under both plot
 #         modes -- the typed line reaches the log once and its replay rebuilds
 #         the recorded window, with a non-vacuity leg per cell.
+#   SWM*/SWC*/SWH*  PER-SUBWINDOW SETTINGS (SW21-SW25), both arms, on a
+#         model-only window: sw_prop_get/sw_prop_put, the plot mode of the
+#         TARGET subwindow (set, invert, one-subwindow byte identity, a new
+#         subwindow inherits, close-to-one and Clear All fold, plots follow it,
+#         undo does not revert it), clear_target_subwin (Ctrl-Shift-D), the grid
+#         per subwindow (Ctrl-Shift-G, Ctrl-G inverts each, inherit, fold).
+#   SWK*  DISPLAY -- the same in the real window: Options > Plot Mode and the
+#         status bar following real clicks, real Ctrl-Shift-G / Ctrl-G on the
+#         rect `grid` tokens, the Grid checkbutton, Graph > SubWin Grid and
+#         Clear SubWin, a real Ctrl-Shift-D (and Caps Lock + Ctrl-d clearing
+#         nothing), undo, a new tab, tab switch, save / close / restore.
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -112,6 +123,21 @@
 #   F4 unlogged: the pre-fix `if {$rc} { return -code error $res }`
 #        -> SWU1 errorcode leg (NONE), SWU2 (the continue raised an empty
 #           error and the suite died at that row)
+#
+# Per-subwindow settings, measured 2026-10-15, each reverted to green:
+#   Sa plot_mode answers the window's value (no swmode read)
+#        -> SWM2 (x2), SWM4, SWM6, SWM7, SWM8
+#   Sb set_plot_mode always writes the window's value
+#        -> SWM2 (x4), SWM4, SWM5, SWM7
+#   Sc set_graphs: no fold of the survivor's mode -> SWM5 ONLY
+#   Sd state_apply: no sw_props_carry -> SWM8 ONLY
+#   Se new_subwin: no swmode stamp -> SWM4 ONLY
+#   Sf grid_apply: the target scope treated as all -> SWH1, SWH2, SWH4
+#   Sg regenerate: grid_shown for every strip (display) -> SWK4, SWK5
+#   Sh set_target_strip: no status / mirror push (display) -> SWK2, SWK5
+#   Si Ctrl-Shift-D bound as <Control-Key-D> (display) -> SWK7, SWK8 Caps Lock
+#        row and its log row
+#   Sj set_graphs: no sw_props_spread (display) -> SWK8 mode, SWK9 (x2), SWK10
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -480,6 +506,186 @@ if {[catch {
 } swderr]} { check "SWD* band ran to its end" "ERR:$swderr" ok }
 swd_close
 foreach p $::swd_stubbed { rename ::wviewer::$p {}; rename ::swd_orig_$p ::wviewer::$p }
+
+# ============================================================================
+# SWM* / SWC* / SWH* -- PER-SUBWINDOW SETTINGS (spec SW21-SW25, user
+# 2026-10-15), both arms, on a model-only window. The plot mode and the grid
+# belong to each SUBWINDOW; "the active subwindow" is the TARGET one. Ctrl-Shift-D
+# clears only it, Ctrl-Shift-G flips only its grid, Ctrl-G flips every
+# subwindow's grid individually. The settings are graph keys (`swmode`,
+# `swgrid`) carried only where they differ from the window's own value, so a
+# one-subwindow tab carries none and serialises as before.
+# ============================================================================
+proc swm_keys {k} { lmap g [swd_lay] { wviewer::dget $g $k - } }
+# switch_ctx answers 1 so grid_apply runs; move_marker (the only with_edit
+# caller reached here) is stood in for, or with_edit would mark the MAIN
+# schematic read-only behind the next band
+set ::swm_stubbed {regenerate capture_live_view_state log_action switch_ctx move_marker}
+foreach p $::swm_stubbed { rename ::wviewer::$p ::swm_orig_$p }
+proc ::wviewer::move_marker {args} { return 0 }
+proc ::wviewer::regenerate {args} { return {} }
+proc ::wviewer::capture_live_view_state {args} { return 0 }
+proc ::wviewer::log_action {line} { lappend ::swd_log $line }
+proc ::wviewer::switch_ctx {args} { return 1 }
+if {[catch {
+  set gp [list [G a 1] [G b 1] [G c 2]]
+  check "SWM1 sw_prop_get: no key on the run reads the base" \
+    [list [pcall {wviewer::sw_prop_get $gp 2 swmode single}] [pcall {wviewer::sw_prop_get $gp 0 swmode multi}]] \
+    {single multi}
+  set gq [pcall {wviewer::sw_prop_put $gp 2 swmode multi single}]
+  check "SWM1 sw_prop_put stamps every strip of the run holding gi, and no other" \
+    [list [lmap g $gq {wviewer::dget $g swmode -}] [pcall {wviewer::sw_prop_get $gq 2 swmode single}] \
+          [pcall {wviewer::sw_prop_get $gq 0 swmode single}]] {{- - multi} multi single}
+  set gr [pcall {wviewer::sw_prop_put $gq 2 swmode single single}]
+  check "SWM1 ...and a value equal to the base REMOVES the key (no key where it says nothing)" \
+    [list [lmap g $gr {dict exists $g swmode}] [expr {$gr eq $gp}]] {{0 0 0} 1}
+  set gs2 [list [G a 1] [dict replace [G b 1] swmode multi] [G c 2]]
+  check "SWM1 the first strip of the run CARRYING the key decides (a strip added inside the run has none)" \
+    [pcall {wviewer::sw_prop_get $gs2 0 swmode single}] multi
+  check "SWM1 signatures (info args / info default)" \
+    [list [info args wviewer::sw_prop_get] [info args wviewer::sw_prop_put] \
+          [info args wviewer::set_plot_mode] [info args wviewer::plot_mode]] \
+    {{gs gi key base} {gs gi key val base} {req token} token}
+
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 2]] 1 single
+  set r [pcall {wviewer::set_plot_mode multi __swd}]
+  check "SWM2 set_plot_mode changes the TARGET subwindow only: it reads multi, the other single" \
+    [list $r [wviewer::plot_mode __swd] [swm_keys swmode] \
+          [pcall {wviewer::sw_prop_get [swd_lay] 0 swmode [wviewer::base_mode __swd]}]] \
+    {multi multi {- multi} single}
+  check "SWM2 ...the window's own value is untouched, and one resolved line is logged" \
+    [list $::wviewer::mode(__swd) $::swd_log] [list single [list {wviewer::set_plot_mode multi __swd}]]
+  pcall {wviewer::set_target_strip 0 __swd}
+  check "SWM2 moving the target moves what plot_mode answers" [wviewer::plot_mode __swd] single
+  pcall {wviewer::set_plot_mode invert __swd}
+  pcall {wviewer::set_target_strip 1 __swd}
+  pcall {wviewer::set_plot_mode invert __swd}
+  check "SWM2 invert flips the target only: subwindow 1 multi, subwindow 2 back to single" \
+    [list [wviewer::plot_mode __swd] [swm_keys swmode] $::wviewer::mode(__swd)] {single {multi -} single}
+
+  swd_open [list [G a] [G b]] 0 single
+  set pre [swd_lay]
+  pcall {wviewer::set_plot_mode multi __swd}
+  check "SWM3 ONE subwindow: the window's value changes, the graph list is byte-identical (no key)" \
+    [list [wviewer::plot_mode __swd] $::wviewer::mode(__swd) [expr {[swd_lay] eq $pre}]] {multi multi 1}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::new_subwin __swd}
+  check "SWM4 a new subwindow inherits the TARGET's mode (multi)" \
+    [list [tags [swd_lay]] [wviewer::target_index __swd] [wviewer::plot_mode __swd]] {{1 2 3} 2 multi}
+  pcall {wviewer::set_target_strip 0 __swd}
+  pcall {wviewer::new_subwin __swd}
+  check "SWM4 ...and from a single-plot target, single" \
+    [list [tags [swd_lay]] [wviewer::plot_mode __swd]] {{1 2 3 4} single}
+  swd_open [list [G a] [G b]] 0 multi
+  pcall {wviewer::new_subwin __swd}
+  check "SWM4 the first split: both subwindows read the window's mode" \
+    [list [tags [swd_lay]] [wviewer::plot_mode __swd] \
+          [pcall {wviewer::sw_prop_get [swd_lay] 0 swmode [wviewer::base_mode __swd]}]] {{1 1 2} multi multi}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::close_subwin __swd 0}
+  check "SWM5 closing down to ONE subwindow keeps the survivor's mode, folded into the window (no key left)" \
+    [list [tags [swd_lay]] [wviewer::plot_mode __swd] $::wviewer::mode(__swd) [swm_keys swmode]] \
+    {- multi multi -}
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::close_subwin __swd 1}
+  check "SWM5 ...closing the multi one leaves the single survivor single" \
+    [list [wviewer::plot_mode __swd] $::wviewer::mode(__swd)] {single single}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::clear_all __swd}
+  check "SWM6 Clear All keeps the TARGET's mode (it becomes the window's)" \
+    [list [wviewer::plot_mode __swd] $::wviewer::mode(__swd)] {multi multi}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::plot_signals __swd {p q} {} append}
+  set tg [tags [swd_lay]]
+  check "SWM7 a plot into the multi target subwindow gives each signal a strip THERE" \
+    [list [llength [lsearch -all $tg 1]] [llength [lsearch -all $tg 2]]] {1 3}
+  pcall {wviewer::set_target_strip 0 __swd}
+  pcall {wviewer::plot_signals __swd {r s} {} append}
+  check "SWM7 ...and into the single subwindow both land in its target strip" \
+    [list [lindex [swd_tr] 0] [llength [lsearch -all [tags [swd_lay]] 1]]] {{a r s} 1}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::plot_signals __swd {p} {} replace}
+  set u [llength $::wviewer::undo_hist(__swd)]
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::state_apply __swd [lindex $::wviewer::undo_hist(__swd) end]}
+  check "SWM8 an undo does not revert a subwindow's mode (the mode is outside undo)" \
+    [list [expr {$u > 0}] [swd_tr] [wviewer::plot_mode __swd]] {1 {a b} multi}
+
+  # ---- SWC*: Ctrl-Shift-D, clear the target subwindow only ------------------
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 0 single
+  set r [pcall {wviewer::clear_target_subwin __swd}]
+  check "SWC1 clear_target_subwin empties the TARGET subwindow to one strip; the other is untouched" \
+    [list $r [tags [swd_lay]] [swd_tr] [wviewer::target_index __swd]] {0 {1 2} {{} c} 0}
+  check "SWC1 ...one undo point, and ONE replayable line naming the window" \
+    [list [llength $::wviewer::undo_hist(__swd)] $::swd_log] \
+    [list 1 [list {wviewer::clear_target_subwin __swd}]]
+  swd_open [list [G a] [G b]] 1 single
+  pcall {wviewer::clear_target_subwin __swd}
+  check "SWC2 one subwindow: the tab is cleared to one empty strip" \
+    [list [llength [swd_lay]] [swd_tr]] {1 {{}}}
+  check "SWC3 no viewer: {} and no throw" [pcall {wviewer::clear_target_subwin nosuchtoken}] {}
+  check "SWC3 signatures" \
+    [list [info args wviewer::clear_target_subwin] \
+          [expr {[info default wviewer::clear_target_subwin token d] ? $d : {NODEFAULT}}] \
+          [info args wviewer::clear_target_subwin_at]] {token {} W}
+
+  # ---- SWH*: the grid per subwindow -----------------------------------------
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 2 single
+  set r [pcall {wviewer::grid_toggle_subwin {} __swd}]
+  check "SWH1 Ctrl-Shift-G turns the grid off in the TARGET subwindow only" \
+    [list $r [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [wviewer::grid_shown __swd]] \
+    {0 {1 1 0} 0}
+  check "SWH1 ...and logs one resolved line" $::swd_log [list {wviewer::grid_toggle_subwin 0 __swd}]
+  set ::swd_log {}
+  set r [pcall {wviewer::grid_toggle {} __swd}]
+  check "SWH2 Ctrl-G flips EVERY subwindow individually: mixed stays mixed, inverted" \
+    [list $r [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [wviewer::grid_shown __swd]] \
+    {1 {0 0 1} 1}
+  set r [pcall {wviewer::grid_toggle 1 __swd}]
+  check "SWH3 grid_toggle 1 turns every subwindow on" \
+    [list $r [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [swm_keys swgrid]] \
+    {1 {1 1 1} {- - -}}
+  set ::swd_log {}
+  pcall {wviewer::grid_toggle 1 __swd}
+  check "SWH3 ...a second grid_toggle 1 is a no-op and logs nothing" $::swd_log {}
+  pcall {wviewer::set_target_strip 0 __swd}
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  pcall {wviewer::new_subwin __swd}
+  check "SWH4 a new subwindow inherits the target's grid (off)" \
+    [list [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [wviewer::grid_shown __swd]] \
+    {{0 0 1 0} 0}
+  pcall {wviewer::close_subwin __swd 3}
+  pcall {wviewer::close_subwin __swd 2}
+  check "SWH4 closing down to one folds the survivor's grid into the window" \
+    [list [tags [swd_lay]] [wviewer::grid_base __swd] [swm_keys swgrid]] {{- -} 0 {- -}}
+  swd_open [list [G a] [G b]] 0 single
+  set pre [swd_lay]
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  check "SWH5 one subwindow: Ctrl-Shift-G is Ctrl-G, the window's flag, no key on any strip" \
+    [list [wviewer::grid_base __swd] [expr {[swd_lay] eq $pre}]] {0 1}
+  check "SWH6 signatures" \
+    [list [info args wviewer::grid_toggle_subwin] [info args wviewer::grid_toggle_subwin_at] \
+          [info args wviewer::strip_grids] [info args wviewer::grid_toggle]] \
+    {{want token} W {gs base} {want token}}
+  check "SWH6 no viewer: {} and no throw" [pcall {wviewer::grid_toggle_subwin {} nosuchtoken}] {}
+} swmerr]} { check "SWM* band ran to its end" "ERR:$swmerr" ok }
+swd_close
+check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
+  [list [pcall {wviewer::clear_target_subwin_at .nosuch}] [pcall {wviewer::grid_toggle_subwin_at .nosuch}]] {{} {}}
+foreach p $::swm_stubbed { rename ::wviewer::$p {}; rename ::swm_orig_$p ::wviewer::$p }
 
 # ============================================================================
 # SWR* -- REPLAY, both arms: a plot whose destination MAKES something (New
@@ -1274,8 +1480,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "SWD10 undo brings subwindow 3's previous plot back" \
     [expr {[trx 4] ne {p1 p2}}] 1
   pcall {wviewer::redo $tok}
-  wviewer::set_plot_mode multi $tok
+  # the mode is the TARGET subwindow's (SW22): target first, then the mode
   wviewer::set_target_strip 0 $tok
+  wviewer::set_plot_mode multi $tok
   pcall {wviewer::plot_signals $tok {a1 a2 a3} {} replace}
   check "SWD11 Replace under MULTI empties subwindow 1 (four strips) to one strip per signal, newest on top" \
     [list [ltags] [trx 0] [trx 1] [trx 2] [trx 3]] {{1 1 1 3} a3 a2 a1 {p1 p2}}
@@ -1354,6 +1561,126 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [llength [wviewer::tab_records $tok]]] \
     [list $swtags $swxg 1 $ntab]
 
+  # ---- SWK*: per-subwindow settings in the real window (SW21-SW25) ----------
+  # A fresh tab, two subwindows: strip 0 = a1 in subwindow 1, strip 1 = b1 in
+  # subwindow 2, the target.
+  proc send_ks {w ks st done} {
+    for {set i 0} {$i < 100} {incr i} {
+      update
+      if {[uplevel 1 [list expr $done]]} { return 1 }
+      focus -force [winfo toplevel $w]
+      focus -force $w
+      update
+      if {[focus -displayof $w] eq $w} {
+        event generate $w <KeyPress> -keysym $ks -state $st
+        event generate $w <KeyRelease> -keysym $ks -state $st
+        update
+        if {[uplevel 1 [list expr $done]]} { return 1 }
+      }
+      after 50
+    }
+    return 0
+  }
+  proc stmode {} { lindex [$::vtop.wvstatus.l cget -text] 1 }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_dest append $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::plot_signals $tok {a1}}
+  pcall {wviewer::new_subwin $tok}
+  pcall {wviewer::plot_signals $tok {b1}}
+  check "SWK0 fixture: two subwindows, one strip each, the second the target" \
+    [list [ltags] [trx 0] [trx 1] [wviewer::target_index $tok]] {{1 2} a1 b1 1}
+  set pm $vtop.wvmenubar.options.plotmode
+  pcall {$pm invoke 0}
+  check "SWK1 Options > Plot Mode changes the TARGET subwindow only; the status bar says so" \
+    [list [wviewer::plot_mode $tok] [wviewer::base_mode $tok] [stmode]] {multi single multi}
+  lassign [mid 0] px py
+  pcall {wviewer::click_target $vdrw $px $py}
+  check "SWK2 a click in the other subwindow: the status bar follows the target" \
+    [list [wviewer::target_index $tok] [wviewer::plot_mode $tok] [stmode]] {0 single single}
+  wviewer::plot_mode_menu_post $tok $pm
+  check "SWK2 ...and the Options entry offers the other mode of THIS subwindow" \
+    [pcall {$pm entrycget 0 -label}] {Set Multi-plot Mode}
+  lassign [mid 1] px py
+  pcall {wviewer::click_target $vdrw $px $py}
+  check "SWK2 back in subwindow 2: multi" [stmode] multi
+  pcall {wviewer::plot_signals $tok {p1 p2}}
+  check "SWK3 a plot into the multi subwindow gives each signal its own strip there; subwindow 1 untouched" \
+    [list [ltags] [trx 0]] {{1 2 2 2} a1}
+  pcall {wviewer::new_subwin $tok}
+  check "SWK3 a new subwindow inherits the target's multi" \
+    [list [ltags] [stmode]] {{1 2 2 2 3} multi}
+  pcall {wviewer::close_subwin $tok}
+  # ---- Ctrl-Shift-G / Ctrl-G ----
+  check "SWK4 Ctrl-Shift-G is a WaveViewer default, Ctrl-G unchanged" \
+    [list [string match {*grid_toggle_subwin_at %W*} [bind WaveViewer <Control-Shift-Key-G>]] \
+          [string match {*grid_toggle_at %W*} [bind WaveViewer <Control-Key-g>]]] {1 1}
+  set ::sw_log {}
+  set ok [send_ks $vdrw G 5 {[wviewer::grid_shown $tok] == 0}]
+  check "SWK4 a REAL Ctrl-Shift-G turns the grid off in the target subwindow only (the rect tokens)" \
+    [list $ok [lmap i {0 1 2 3} {rprop $i grid}]] {1 {{} 0 0 0}}
+  check "SWK4 ...logged once, and the Grid checkbutton shows the target's state" \
+    [list [lsearch -all -inline -glob $::sw_log {wviewer::grid_toggle*}] $::wviewer::gridshow($tok)] \
+    [list [list [list wviewer::grid_toggle_subwin 0 $tok]] 0]
+  set ok [send_ks $vdrw g 4 {[wviewer::grid_shown $tok] == 1}]
+  check "SWK5 a REAL Ctrl-G flips every subwindow individually: mixed stays mixed, inverted" \
+    [list $ok [lmap i {0 1 2 3} {rprop $i grid}]] {1 {0 {} {} {}}}
+  lassign [mid 0] px py
+  pcall {wviewer::click_target $vdrw $px $py}
+  check "SWK5 the Grid checkbutton follows the target (subwindow 1: off)" \
+    $::wviewer::gridshow($tok) 0
+  set gm $vtop.wvmenubar.graph
+  set ix [pcall {$gm index {SubWin Grid}}]
+  check "SWK6 Graph > SubWin Grid, with its accelerator" \
+    [pcall {$gm entrycget $ix -accelerator}] Ctrl+Shift+G
+  pcall {$gm invoke $ix}
+  check "SWK6 ...invoking it turns the TARGET subwindow's grid back on only" \
+    [lmap i {0 1 2 3} {rprop $i grid}] {{} {} {} {}}
+  # ---- Ctrl-Shift-D ----
+  lassign [mid 1] px py
+  pcall {wviewer::click_target $vdrw $px $py}
+  set ix [pcall {$gm index {Clear SubWin}}]
+  check "SWK7 Graph > Clear SubWin, with its accelerator, right above Clear All" \
+    [list [pcall {$gm entrycget $ix -accelerator}] [pcall {expr {[$gm index {Clear All}] - $ix}}]] {Ctrl+Shift+D 1}
+  check "SWK7 Ctrl-Shift-D is a WaveViewer default" \
+    [string match {*clear_target_subwin_at %W*} [bind WaveViewer <Control-Shift-Key-D>]] 1
+  set ok [send_ks $vdrw D 6 {0}]
+  check "SWK8 Caps Lock + Ctrl-d (keysym D, no Shift) does NOT clear a subwindow" \
+    [list [ltags] [trx 0]] {{1 2 2 2} a1}
+  set ::sw_log {}
+  set ok [send_ks $vdrw D 5 {[llength [lay]] == 2}]
+  check "SWK8 a REAL Ctrl-Shift-D empties the TARGET subwindow; subwindow 1 untouched; Clear All did NOT fire" \
+    [list $ok [ltags] [trx 0] [trx 1] [wviewer::sw_count [lay]]] {1 {1 2} a1 {} 2}
+  check "SWK8 ...one line, Clear SubWin's" \
+    [lsearch -all -inline -glob $::sw_log {wviewer::clear*}] [list [list wviewer::clear_target_subwin $tok]]
+  check "SWK8 ...the cleared subwindow keeps its mode" [stmode] multi
+  pcall {wviewer::undo $tok}
+  check "SWK8 u brings the cleared plots back" [ltags] {1 2 2 2}
+  # ---- tabs and state ----
+  # select_tab takes a tab ID, not an index
+  set ntab [wviewer::dget [lindex [wviewer::tab_records $tok] [wviewer::tab_index $tok]] id {}]
+  pcall {wviewer::new_tab $tok}
+  check "SWK9 a new tab starts with the target's mode" [stmode] multi
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::select_tab $ntab $tok}
+  check "SWK9 back on the subwindowed tab: its target's mode is in the status bar" \
+    [list [stmode] [wviewer::plot_mode $tok]] {multi multi}
+  set swtags [ltags]
+  set snap [pcall {wviewer::snapshot $tok {}}]
+  pcall {wviewer::close $tok}
+  pcall {wviewer::restore $tok $snap {} {}}
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  viewer_ready $vtop
+  pcall {wviewer::select_tab $ntab $tok}
+  set modes {}
+  foreach gi {0 1} {
+    pcall {wviewer::set_target_strip $gi $tok}
+    lappend modes [wviewer::plot_mode $tok]
+  }
+  check "SWK10 save / close / restore keeps each subwindow's mode and grid" \
+    [list [ltags] $modes [lmap i {0 1 2 3} {rprop $i grid}]] [list $swtags {single multi} {{} {} {} {}}]
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -1370,7 +1697,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 103 } else { set expect 200 }
+if {$::arm eq {nogui}} { set expect 138 } else { set expect 259 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

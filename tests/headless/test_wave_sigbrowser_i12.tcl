@@ -366,11 +366,14 @@ check {BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE b
 # Ctrl-Shift-W Close SubWin, both `bind WaveViewer` defaults in
 # install_default_binds and accelerators in build_menubar). Item 12's own claim
 # is untouched: it still adds nothing to either count.
+# ⚠ WIDENED IN PLACE again by per-subwindow settings (2026-10-15): 18/13 ->
+# 20/15, for Ctrl-Shift-D (Clear SubWin) and Ctrl-Shift-G (SubWin Grid), both
+# `bind WaveViewer` defaults with Graph-menu twins.
 set bx_fp [open [file join $repo tests headless test_wave_grid.tcl] r]
 set bx_gsrc [read $bx_fp]; close $bx_fp
-check {BX13 test_wave_grid's GH0 literals are 18/13 (item 12 added none)} \
-  [list [regexp {\[llength \$gh_seqs\] 18} $bx_gsrc] \
-        [regexp {\[llength \$gh_menus\] 13} $bx_gsrc]] \
+check {BX13 test_wave_grid's GH0 literals are 20/15 (item 12 added none)} \
+  [list [regexp {\[llength \$gh_seqs\] 20} $bx_gsrc] \
+        [regexp {\[llength \$gh_menus\] 15} $bx_gsrc]] \
   [list 1 1]
 set bx_fp [open [file join $repo doc waveform_viewer_guide.html] r]
 set bx_gd [read $bx_fp]; close $bx_fp

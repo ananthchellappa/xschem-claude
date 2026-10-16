@@ -1880,7 +1880,26 @@ proc wviewer::set_graphs {token gs} {
   # contiguous by subwindow and a one-subwindow tab stays untagged
   # (doc/claude/specs/waveform_viewer_subwindows.md §3). Index-preserving for
   # every list a creation site builds by the documented insert rule.
-  dict set lay graphs [wviewer::sw_normalize $gs]
+  set gs [wviewer::sw_props_spread [wviewer::sw_normalize $gs]]
+  # PER-SUBWINDOW SETTINGS (SW24): a tab back at ONE subwindow carries no
+  # setting key; the survivor's values become the window's own, so closing the
+  # other subwindows keeps what the user set in the one that stays.
+  if {[llength [wviewer::sw_runs $gs]] <= 1} {
+    set fm [wviewer::sw_prop_get $gs 0 swmode {}]
+    set fg [wviewer::sw_prop_get $gs 0 swgrid {}]
+    if {$fm ne {} || $fg ne {}} {
+      variable mode
+      set out {}
+      foreach G $gs {
+        if {![catch {dict size $G}]} { set G [dict remove $G swmode swgrid] }
+        lappend out $G
+      }
+      set gs $out
+      if {$fm ne {} && [info exists mode($token)]} { set mode($token) $fm }
+      if {$fg ne {}} { dict set lay grid $fg }
+    }
+  }
+  dict set lay graphs $gs
   dict set layouts $token $lay
   return {}
 }
@@ -4198,6 +4217,105 @@ proc wviewer::sw_clear_graphs {gs gi} {
   return [list [wviewer::sw_normalize $out] $f $l]
 }
 
+# --- PER-SUBWINDOW SETTINGS (spec SW21-SW25, user 2026-10-15) ----------------
+# The plot mode (`swmode`) and the grid (`swgrid`) belong to each SUBWINDOW.
+# They are graph keys on the subwindow's strips, carried ONLY where they differ
+# from the window's own value (`mode($token)` / the layout's `grid` key, the
+# BASE). So a one-subwindow tab carries no key at all and serialises exactly as
+# it did before subwindows had settings, and a subwindow whose strips carry no
+# key reads the base. graph_props never emits either key (it reads only the
+# keys it knows), so neither reaches a rect.
+#
+# Outside undo, like the window's own settings: wviewer::state_apply carries the
+# live values across by subwindow id (sw_props_carry). When a tab goes back to
+# ONE subwindow the survivor's values are folded into the base
+# (wviewer::set_graphs).
+
+# PURE: the value of subwindow setting `key` for the subwindow holding strip
+# `gi`: the first strip of that subwindow carrying the key decides (a strip
+# added inside a subwindow carries none), else `base`.
+proc wviewer::sw_prop_get {gs gi key base} {
+  lassign [wviewer::sw_range $gs $gi] f l
+  for {set i $f} {$i <= $l} {incr i} {
+    set G [lindex $gs $i]
+    if {![catch {dict exists $G $key} e] && $e} { return [dict get $G $key] }
+  }
+  return $base
+}
+
+# PURE: `gs` with setting `key` = `val` on every strip of the subwindow holding
+# strip `gi`, or with the key REMOVED from them when `val` equals `base` (no
+# key where it would say nothing). Other subwindows are untouched.
+proc wviewer::sw_prop_put {gs gi key val base} {
+  lassign [wviewer::sw_range $gs $gi] f l
+  for {set i $f} {$i <= $l} {incr i} {
+    set G [lindex $gs $i]
+    if {[catch {dict size $G}]} { continue }
+    if {$val eq $base} {
+      set G [dict remove $G $key]
+    } else {
+      dict set G $key $val
+    }
+    lset gs $i $G
+  }
+  return $gs
+}
+
+# PURE: `gs` with each subwindow's settings on EVERY one of its strips (the
+# value of its first strip carrying one), so a strip added inside a subwindow
+# carries them too and no later removal of the stamped strip -- a clear, a
+# delete, a trace move -- can lose them. wviewer::set_graphs applies it to
+# every model write. A one-subwindow list is returned unchanged.
+proc wviewer::sw_props_spread {gs} {
+  set runs [wviewer::sw_runs $gs]
+  if {[llength $runs] <= 1} { return $gs }
+  foreach r $runs {
+    set f [lindex $r 0]
+    foreach k {swmode swgrid} {
+      set v [wviewer::sw_prop_get $gs $f $k {}]
+      if {$v ne {}} { set gs [wviewer::sw_prop_put $gs $f $k $v {}] }
+    }
+  }
+  return $gs
+}
+
+# PURE: the effective grid flag (0/1) of every strip of `gs`, `base` being the
+# window's own flag. regenerate hands each strip its own value.
+proc wviewer::strip_grids {gs base} {
+  set out {}
+  foreach r [wviewer::sw_runs $gs] {
+    lassign $r f l
+    set v [expr {[wviewer::sw_prop_get $gs $f swgrid $base] ? 1 : 0}]
+    for {set i $f} {$i <= $l} {incr i} { lappend out $v }
+  }
+  return $out
+}
+
+# PURE: `snap` (a graph list about to come back from the undo history) with the
+# subwindow settings of `live` (the graph list it replaces) carried across, by
+# subwindow ID: a subwindow present in both gets its live values (or loses its
+# keys when the live one has none). A subwindow only in `snap` keeps what it
+# had; an untagged (one-subwindow) side carries nothing.
+proc wviewer::sw_props_carry {live snap} {
+  set lv [dict create]
+  foreach r [wviewer::sw_runs $live] {
+    set f [lindex $r 0]
+    set id [wviewer::gsw [lindex $live $f]]
+    if {$id eq {}} { continue }
+    dict set lv $id [list [wviewer::sw_prop_get $live $f swmode {}] \
+                          [wviewer::sw_prop_get $live $f swgrid {}]]
+  }
+  foreach r [wviewer::sw_runs $snap] {
+    set f [lindex $r 0]
+    set id [wviewer::gsw [lindex $snap $f]]
+    if {$id eq {} || ![dict exists $lv $id]} { continue }
+    lassign [dict get $lv $id] m g
+    set snap [wviewer::sw_prop_put $snap $f swmode $m {}]
+    set snap [wviewer::sw_prop_put $snap $f swgrid $g {}]
+  }
+  return $snap
+}
+
 # PURE: confine a strip index range question to one subwindow: the indices of
 # `gs` that share strip `gi`'s subwindow. Used by the reuse rules (a trace move
 # or a split never takes an empty strip from ANOTHER subwindow, which would
@@ -4695,6 +4813,8 @@ proc wviewer::regenerate {token} {
   lassign [wviewer::viewport_rect $wp] vx1 vy1 vx2 vy2
   set rects_ [wviewer::sw_rects $gs $vx1 $vy1 $vx2 $vy2]
   set multisw_ [expr {[llength $runs] > 1}]
+  # SW23: each strip draws its OWN subwindow's grid
+  set grids_ [wviewer::strip_grids $gs [wviewer::grid_base $token]]
   # UNLOGGED (wviewer::unlogged): this is the viewer redrawing its own read-only
   # canvas from the model, and the command that changed the model logs its own
   # line. `xschem clear_drawing` self-logs (Refactor B atom 27), so without the
@@ -4709,7 +4829,7 @@ proc wviewer::regenerate {token} {
       lassign [lindex $rects_ $gi_] rx1_ ry1_ rx2_ ry2_
       wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ \
         "[wviewer::graph_props $G_ [expr {$gi_ == $act_gi}] \
-            [wviewer::grid_shown $token]][wviewer::sw_props \
+            [lindex $grids_ $gi_]][wviewer::sw_props \
             [wviewer::sw_frame $gs $gi_ $tgt_] \
             [expr {$multisw_ ? [wviewer::gsw $G_] : {}}]]"
       incr gi_
@@ -4753,6 +4873,10 @@ proc wviewer::regenerate {token} {
   # record the canvas pixel size just filled, for the <Configure> refit gate
   catch {set fillwh($token) [list [winfo width $wp] [winfo height $wp]]}
   catch {wviewer::readout_refresh $token}
+  # SW23: almost every move of the target regenerates, so the status bar's
+  # `Plot:` and the Grid checkbutton follow the TARGET subwindow from here
+  catch {wviewer::status_refresh $token}
+  catch {wviewer::sync_grid_mirror $token}
   return 1
 }
 
@@ -4915,7 +5039,7 @@ proc wviewer::tabs_serialize {token} {
     if {$i == $cur} {
       lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
                      layout [wviewer::layout_for $token] \
-                     mode   [wviewer::plot_mode $token] \
+                     mode   [wviewer::base_mode $token] \
                      target [wviewer::target_index $token]]
     } else {
       lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
@@ -5056,11 +5180,14 @@ proc wviewer::snapshot {token prev} {
     if {[string trim $selraw] eq {}} {
       if {[catch {wviewer::dget $prev rawfile {}} selraw]} { set selraw {} }
     }
+    # `mode` is the window's OWN mode (base_mode), not the target subwindow's:
+    # the per-subwindow modes ride the graphs as `swmode` keys (SW25), and a
+    # subwindow with no key reads this value back on restore.
     set d [dict create open 1 \
                        sharedx [wviewer::dget $lay sharedx 0] \
                        rawfile $selraw \
                        graphs  [wviewer::dget $lay graphs {}] \
-                       mode    [wviewer::plot_mode $token] \
+                       mode    [wviewer::base_mode $token] \
                        target  [wviewer::target_index $token]]
     if {[llength $tabs]} {
       dict set d tabs      $tabs
@@ -5525,7 +5652,12 @@ proc wviewer::new_subwin {{token {}}} {
   wviewer::capture_live_view_state $token   ;# issue 0194: before the change
   wviewer::push_undo $token
   set gs [dict get [wviewer::layout_for $token] graphs]
+  # SW24: the new subwindow takes the TARGET's plot mode and grid
+  set imode [wviewer::plot_mode $token]
+  set igrid [wviewer::grid_shown $token]
   lassign [wviewer::sw_add $gs] gs gi
+  set gs [wviewer::sw_prop_put $gs $gi swmode $imode [wviewer::base_mode $token]]
+  set gs [wviewer::sw_prop_put $gs $gi swgrid $igrid [wviewer::grid_base $token]]
   wviewer::set_graphs $token $gs
   # appended at the end, so no stored index moved; the new strip is the target
   set target($token) $gi
@@ -5639,6 +5771,25 @@ proc wviewer::close_subwin_at {W} {
   return [wviewer::close_subwin $token]
 }
 
+# Graph > Clear SubWin (Ctrl-Shift-D, SW22): empty the TARGET subwindow only,
+# the gesture twin of Clear All (Ctrl-D). The work is clear_subwin's (one undo
+# point, the survivor keeps the view, other subwindows untouched); this is the
+# LOGGED door, on every successful call like clear_all -- a clear is
+# destructive, and a replay that skipped a "redundant" one would rebuild a
+# different window. With one subwindow it clears the tab to one empty strip.
+# Returns the survivor's index, {} when no viewer resolves.
+proc wviewer::clear_target_subwin {{token {}}} {
+  set token [wviewer::resolve_token $token]
+  set r [wviewer::clear_subwin $token]
+  if {$r ne {}} { wviewer::log_action [list wviewer::clear_target_subwin $token] }
+  return $r
+}
+proc wviewer::clear_target_subwin_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::clear_target_subwin $token]
+}
+
 # --- plot mode / target strip: the window-facing surface (issue 0151) --------
 # doc/claude/specs/waveform_viewer_modes.md §7. Every command here is
 # CIW-typable, takes an OPTIONAL token (omitted = the viewer window that owns
@@ -5669,20 +5820,40 @@ proc wviewer::resolve_token {token} {
 
 # Current plot mode of a viewer window (single|multi), or {} when the token
 # resolves to no OPEN viewer (mode is per-window state; it does not exist
-# before the window does).
+# before the window does). PER SUBWINDOW (SW21): the answer is the mode of the
+# TARGET subwindow -- its `swmode` key, else the window's own value
+# (base_mode). Every consumer (plot_sites, auto_plot_strips, predict_colors,
+# paste_traces, the status bar, the Options label, ase::plot_mode_for_current)
+# reads it here, so all of them follow the target.
 proc wviewer::plot_mode {{token {}}} {
+  variable mode
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists mode($token)]} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set m [wviewer::sw_prop_get $gs [wviewer::target_index $token] swmode $mode($token)]
+  if {$m ni {single multi}} { return $mode($token) }
+  return $m
+}
+
+# The window's OWN plot mode: what a subwindow with no `swmode` key reads, and
+# what a one-subwindow tab is. {} when no viewer. Serialised as the flat /
+# per-tab `mode` key, so a file stays readable by a build that predates
+# per-subwindow modes.
+proc wviewer::base_mode {{token {}}} {
   variable mode
   set token [wviewer::resolve_token $token]
   if {$token eq {} || ![info exists mode($token)]} { return {} }
   return $mode($token)
 }
 
-# Set / flip the plot mode. `req` is single | multi | invert (case-
-# insensitive). Returns the RESOLVED mode, or {} when the window or the
-# request word is bad. Logs `wviewer::set_plot_mode <resolved> <token>` on an
-# actual change only — the resolved word (never `invert`) and the explicit
-# token, so replay does not depend on the state or the active window at
-# replay time.
+# Set / flip the plot mode of the TARGET subwindow (SW22). `req` is single |
+# multi | invert (case-insensitive). Returns the RESOLVED mode, or {} when the
+# window or the request word is bad. Logs `wviewer::set_plot_mode <resolved>
+# <token>` on an actual change only — the resolved word (never `invert`) and
+# the explicit token, so replay does not depend on the state or the active
+# window at replay time (the target moves are logged by set_target_strip).
+# With one subwindow it writes the window's own value, so the graph list is
+# untouched; with two or more, the target subwindow's `swmode` key.
 proc wviewer::set_plot_mode {req {token {}}} {
   variable mode
   set token [wviewer::resolve_token $token]
@@ -5701,7 +5872,13 @@ proc wviewer::set_plot_mode {req {token {}}} {
     return {}
   }
   if {$new eq $cur} { return $cur }
-  set mode($token) $new
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {[llength [wviewer::sw_runs $gs]] <= 1} {
+    set mode($token) $new
+  } else {
+    wviewer::set_graphs $token [wviewer::sw_prop_put $gs \
+      [wviewer::target_index $token] swmode $new $mode($token)]
+  }
   # item 10: PUSH the status bar from the ONE mutation site, immediately after
   # the model write. The Options-menu label is pull-only (-postcommand); without
   # this push the status bar would go stale whenever the mode changed by any
@@ -5882,6 +6059,10 @@ proc wviewer::set_target_strip {gi {token {}}} {
   if {$new eq $cur} { return $new }
   wviewer::log_action [list wviewer::set_target_strip $new $token]
   wviewer::move_marker $token $cur $new
+  # SW23: the status bar's `Plot:` and the Grid checkbutton describe the TARGET
+  # subwindow, and a click is how the target moves without a regenerate
+  catch {wviewer::status_refresh $token}
+  catch {wviewer::sync_grid_mirror $token}
   return $new
 }
 
@@ -7889,7 +8070,9 @@ proc wviewer::state_snapshot {token} {
 proc wviewer::state_apply {token snap} {
   variable target
   lassign $snap gs tgt
-  wviewer::set_graphs $token $gs
+  # SW25: the per-subwindow settings are outside undo, like the window's own
+  wviewer::set_graphs $token \
+    [wviewer::sw_props_carry [dict get [wviewer::layout_for $token] graphs] $gs]
   if {[string is integer -strict $tgt]} { set target($token) $tgt }
   wviewer::regenerate $token
   return 1
@@ -8839,8 +9022,15 @@ proc wviewer::clear_all {{token {}}} {
     }
     return {}
   }
+  # SW24: the one subwindow left keeps the TARGET's plot mode and grid
+  variable mode
+  set km [wviewer::plot_mode $token]
+  set kg [wviewer::grid_shown $token]
+  set kgb [wviewer::grid_base $token]
+  if {$km ne {}} { set mode($token) $km }
   set lay [wviewer::layout_for $token]
   dict set lay graphs [list [wviewer::empty_graph]]
+  if {$kg != $kgb} { dict set lay grid $kg }
   dict set layouts $token $lay
   set target($token) 0
   # §8: every strip is gone, so the whole highlight set goes with it. Dropped
@@ -8859,19 +9049,31 @@ proc wviewer::clear_all {{token {}}} {
 
 # --- grid on/off (viewer plan item 3) ----------------------------------------
 
-# The live grid flag of `token`'s window: 1 = the dashed grid lines are drawn.
-# A layout that predates item 3 has no `grid` key, so an ABSENT key reads as
-# the rc default rather than as 0 -- a restored saved state must not come back
-# with its grid mysteriously off.
-proc wviewer::grid_shown {token} {
+# The window's OWN grid flag (the BASE, SW21): what a subwindow whose strips
+# carry no `swgrid` key draws, and what a one-subwindow tab is. A layout that
+# predates item 3 has no `grid` key, so an ABSENT key reads as the rc default
+# rather than as 0 -- a restored saved state must not come back with its grid
+# mysteriously off.
+proc wviewer::grid_base {token} {
   if {$token eq {}} { return 1 }
   set lay [wviewer::layout_for $token]
   if {![dict exists $lay grid]} { return [wviewer::default_grid_show] }
   return [expr {[dict get $lay grid] ? 1 : 0}]
 }
 
-# Toggle (or set) the grid of a viewer window. `want` {} = invert, else 0/1.
-# Returns the NEW state, or {} plus a CIW error when no viewer resolves.
+# The live grid flag of `token`'s TARGET subwindow: 1 = the dashed grid lines
+# are drawn there. With one subwindow it is the window's own flag.
+proc wviewer::grid_shown {token} {
+  if {$token eq {}} { return 1 }
+  set b [wviewer::grid_base $token]
+  set gs [wviewer::dget [wviewer::layout_for $token] graphs {}]
+  return [expr {[wviewer::sw_prop_get $gs [wviewer::target_index $token] swgrid $b] ? 1 : 0}]
+}
+
+# Toggle (or set) the grid of EVERY subwindow (Ctrl-G). `want` {} = invert
+# each subwindow's own flag individually (SW23: mixed stays mixed, inverted),
+# else 0/1 for all. Returns the TARGET subwindow's new state, or {} plus a CIW
+# error when no viewer resolves.
 #
 # Lighter than move_strip's contract on purpose, and the difference is
 # principled: this changes a WINDOW OPTION, not the model's content. Window
@@ -8890,8 +9092,20 @@ proc wviewer::grid_shown {token} {
 # still takes no undo point. (set_plot_mode needs neither: it does not
 # regenerate at all.) What it does share with move_strip:
 # refuse-a-no-op-without-logging, verified switch_ctx, ONE regenerate, ONE log
-# line.
+# line. The line is the RESOLVED state when every subwindow ends up alike, and
+# `{}` (invert each) when they do not.
 proc wviewer::grid_toggle {{want {}} {token {}}} {
+  return [wviewer::grid_apply all $want $token]
+}
+
+# Toggle (or set) the grid of the TARGET subwindow only (Ctrl-Shift-G, SW23).
+# With one subwindow this is grid_toggle. Same contract as grid_toggle.
+proc wviewer::grid_toggle_subwin {{want {}} {token {}}} {
+  return [wviewer::grid_apply target $want $token]
+}
+
+# The shared body. `scope` is all | target.
+proc wviewer::grid_apply {scope want token} {
   variable windows
   variable layouts
   set token [wviewer::resolve_token $token]
@@ -8901,32 +9115,58 @@ proc wviewer::grid_toggle {{want {}} {token {}}} {
     }
     return {}
   }
-  set cur [wviewer::grid_shown $token]
-  if {$want eq {}} {
-    set new [expr {$cur ? 0 : 1}]
-  } elseif {[string is boolean -strict $want]} {
-    set new [expr {[string is true -strict $want] ? 1 : 0}]
-  } else {
+  if {$want ne {} && ![string is boolean -strict $want]} {
     if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
       ciw_echo "wviewer: bad grid state '$want' (expected 0/1 or {})" error
     }
     return {}
   }
+  if {$want ne {}} { set want [expr {[string is true -strict $want] ? 1 : 0}] }
+  set base [wviewer::grid_base $token]
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set tgt [wviewer::target_index $token]
+  set runs [wviewer::sw_runs $gs]
+  # the subwindows this call touches, as their first strip
+  set firsts {}
+  if {[llength $runs] <= 1} {
+    lappend firsts 0
+  } elseif {$scope eq {target}} {
+    lappend firsts [lindex [wviewer::sw_range $gs $tgt] 0]
+  } else {
+    foreach r $runs { lappend firsts [lindex $r 0] }
+  }
+  set plan {}
+  set changed 0
+  foreach f $firsts {
+    set cur [expr {[wviewer::sw_prop_get $gs $f swgrid $base] ? 1 : 0}]
+    set new [expr {$want eq {} ? !$cur : $want}]
+    if {$new != $cur} { set changed 1 }
+    lappend plan $f $new
+  }
   # no-op discipline: set_plot_mode's change-only rule (this is a window
   # option, not a destructive gesture like clear_all, so a redundant call is
   # not worth a replay line).
-  if {$new == $cur} { return $cur }
+  if {!$changed} { return [wviewer::grid_shown $token] }
   if {![wviewer::switch_ctx $token]} { return {} }
   # issue 0194: BEFORE the `lay` read below — capture writes through set_graphs,
   # so reading the layout first and writing it back after would revert the fold.
   wviewer::capture_live_view_state $token
   set lay [wviewer::layout_for $token]
-  dict set lay grid $new
-  dict set layouts $token $lay
+  if {[llength $runs] <= 1} {
+    dict set lay grid [lindex $plan 1]
+    dict set layouts $token $lay
+  } else {
+    set gs [dict get $lay graphs]
+    foreach {f new} $plan { set gs [wviewer::sw_prop_put $gs $f swgrid $new $base] }
+    wviewer::set_graphs $token $gs
+  }
   wviewer::sync_grid_mirror $token
   wviewer::regenerate $token
-  wviewer::log_action [list wviewer::grid_toggle $new $token]
-  return $new
+  set vals [lsort -unique [dict values $plan]]
+  set word [expr {[llength $vals] == 1 ? [lindex $vals 0] : {}}]
+  set cmd [expr {$scope eq {target} ? {wviewer::grid_toggle_subwin} : {wviewer::grid_toggle}}]
+  wviewer::log_action [list $cmd $word $token]
+  return [wviewer::grid_shown $token]
 }
 
 # Keep the Graph-menu checkbutton's variable in step with the model, so the
@@ -8943,7 +9183,17 @@ proc wviewer::sync_grid_mirror {token} {
 proc wviewer::grid_toggle_from_menu {token} {
   variable gridshow
   set want [expr {[info exists gridshow($token)] && $gridshow($token) ? 1 : 0}]
-  set r [wviewer::grid_toggle $want $token]
+  # SW23: the checkbutton shows the TARGET subwindow and acts on all of them
+  # like Ctrl-G. When the subwindows differ, every one is inverted (the
+  # target ends at `want`); when they agree, all are set to `want`.
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set b [wviewer::grid_base $token]
+  set vals [lsort -unique [wviewer::strip_grids $gs $b]]
+  if {[llength $vals] > 1} {
+    set r [wviewer::grid_toggle {} $token]
+  } else {
+    set r [wviewer::grid_toggle $want $token]
+  }
   # a refused toggle (busy context) must not leave the checkbutton lying
   if {$r eq {}} { wviewer::sync_grid_mirror $token }
   return $r
@@ -8955,6 +9205,13 @@ proc wviewer::grid_toggle_at {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
   return [wviewer::grid_toggle {} $token]
+}
+
+# The Ctrl-Shift-G binding body: the target subwindow's grid only (SW23).
+proc wviewer::grid_toggle_subwin_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::grid_toggle_subwin {} $token]
 }
 
 # --- the Signal Browser sidebar (signal-browser PLAN item 8) -----------------
@@ -16079,6 +16336,21 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Control-Key-W>] eq {}} {
     bind WaveViewer <Control-Key-W> {wviewer::close_subwin_at %W; break}
   }
+  # PER-SUBWINDOW (SW22/SW23): Ctrl-Shift-D clears the TARGET subwindow, the
+  # twin of Ctrl-D's Clear All; Ctrl-Shift-G flips the target subwindow's grid,
+  # the twin of Ctrl-G. ⚠ SPELLED WITH `Shift-`, unlike Ctrl-Shift-N/W above:
+  # with Caps Lock on, a plain Ctrl-d arrives as keysym `D` with the Lock bit
+  # and no Shift, and a `<Control-Key-D>` would turn the user's Clear All into
+  # a subwindow clear. `<Control-Shift-Key-D>` needs Shift held. Collision
+  # check (2026-10-15): no `bind` of either chord in src/*.tcl or
+  # cadence_style_rc; src/keybindings.csv has no row for keysym 68 or 71; and
+  # neither is in key_filter's `graphkeys`, so nothing is forwarded to C.
+  if {[bind WaveViewer <Control-Shift-Key-D>] eq {}} {
+    bind WaveViewer <Control-Shift-Key-D> {wviewer::clear_target_subwin_at %W; break}
+  }
+  if {[bind WaveViewer <Control-Shift-Key-G>] eq {}} {
+    bind WaveViewer <Control-Shift-Key-G> {wviewer::grid_toggle_subwin_at %W; break}
+  }
   # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
   # and with only one tab it does NOTHING but say so. It never closes a window
   # any more -- that is Ctrl-Q. The hardcoded key_filter arm that used to
@@ -20175,6 +20447,10 @@ proc wviewer::build_menubar {token top} {
   # issue 0171: the menu twin of the Ctrl-D bindtag default. The accelerator
   # LABEL is static text (Tk does not dispatch it) — an rc that remaps the tag
   # binding changes the key, not this label.
+  # SW22: the menu twin of Ctrl-Shift-D -- the TARGET subwindow only. Above
+  # Clear All, which keeps Delete All Markers right after Clear All (MD12).
+  $mb.graph add command -label {Clear SubWin} -accelerator Ctrl+Shift+D \
+    -command [list wviewer::clear_target_subwin $token]
   $mb.graph add command -label {Clear All} -accelerator Ctrl+D \
     -command [list wviewer::clear_all $token]
   # viewer plan item 4: the menu twin of the Ctrl-E bindtag default. Deletes
@@ -20203,6 +20479,11 @@ proc wviewer::build_menubar {token top} {
   $mb.graph add checkbutton -label {Grid} -accelerator Ctrl+G \
     -variable ::wviewer::gridshow($token) \
     -command [list wviewer::grid_toggle_from_menu $token]
+  # SW23: the menu twin of Ctrl-Shift-G. The checkbutton above shows the
+  # TARGET subwindow's grid and acts on every subwindow; this acts on the target
+  # only, so it is a command, not a second checkbutton showing the same state.
+  $mb.graph add command -label {SubWin Grid} -accelerator Ctrl+Shift+G \
+    -command [list wviewer::grid_toggle_subwin {} $token]
   # Cursors menu (item 12, live): engine x-cursors driven absolutely from
   # the Tcl mirrors (D1/D8)
   $mb.cursors add checkbutton -label {Cursor A} \

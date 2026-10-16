@@ -138,8 +138,9 @@ strip.</td></tr>
 </table>
 <p>Switch modes with <span class="menu">Options &gt; Plot Mode</span> (one entry,
 which always offers the <i>other</i> mode), or with <kbd>Ctrl-Shift-4</kbd> on the
-schematic window. The bottom status bar shows the current mode
-(<code>Plot: single</code>). An empty strip left behind by
+schematic window. The mode belongs to each <b>subwindow</b>: both change only the
+target subwindow, and the bottom status bar shows the target subwindow's mode
+(<code>Plot: single</code>). A new subwindow starts with the target's mode. An empty strip left behind by
 <b>Clear All</b> or <b>Add Graph</b> is reused before a new one is appended, in
 both modes. The auto-plot strip is never used as a landing site.</p>
 
@@ -479,6 +480,12 @@ strips; in <b>single</b>-plot mode they all land on the target strip. One
 Shared X, cursors and the loaded raw are kept.</td>
 <td class="where">whole window</td>
 <td><span class="menu">Graph &gt; Clear All</span></td></tr>
+<tr data-seq="Control-Shift-Key-D" data-menu="Clear SubWin" data-accel="Ctrl+Shift+D">
+<td><kbd>Ctrl-Shift-D</kbd></td>
+<td>Clear SubWin — empty the target subwindow to one strip, keeping its zoom.
+The other subwindows are untouched. One <kbd>u</kbd> brings the plots back.</td>
+<td class="where">target subwindow</td>
+<td><span class="menu">Graph &gt; Clear SubWin</span></td></tr>
 <tr data-seq="Control-Key-e" data-menu="Delete All Markers" data-accel="Ctrl+E">
 <td><kbd>Ctrl-E</kbd></td>
 <td>Delete every marker in the window. Strips, traces and ranges survive.</td>
@@ -492,10 +499,18 @@ last strip standing.</td>
 <td><span class="menu">Graph &gt; Delete Empty Strips</span></td></tr>
 <tr data-seq="Control-Key-g" data-menu="Grid" data-accel="Ctrl+G">
 <td><kbd>Ctrl-G</kbd></td>
-<td>Show/hide the dashed grid of this window. The axes, the box, the ticks, the
-axis numbers and the zero lines stay either way.</td>
-<td class="where">whole window</td>
-<td><span class="menu">Graph &gt; Grid</span> (a checkbutton)</td></tr>
+<td>Show/hide the dashed grid. Each subwindow flips its own grid, so a
+subwindow with the grid off turns it on while the others turn theirs off. The
+axes, the box, the ticks, the axis numbers and the zero lines stay either
+way.</td>
+<td class="where">every subwindow</td>
+<td><span class="menu">Graph &gt; Grid</span> (a checkbutton showing the target
+subwindow)</td></tr>
+<tr data-seq="Control-Shift-Key-G" data-menu="SubWin Grid" data-accel="Ctrl+Shift+G">
+<td><kbd>Ctrl-Shift-G</kbd></td>
+<td>Show/hide the dashed grid of the target subwindow only.</td>
+<td class="where">target subwindow</td>
+<td><span class="menu">Graph &gt; SubWin Grid</span></td></tr>
 <tr data-seq="Control-Key-b" data-menu="Signal Browser" data-accel="Ctrl+B">
 <td><kbd>Ctrl-B</kbd></td>
 <td>Show/hide the <b>Signal Browser</b> sidebar down the left of this window. A

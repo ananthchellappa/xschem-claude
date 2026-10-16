@@ -258,8 +258,11 @@ proc wvproc_body {src name} {
 # content mutations that carry every other strip forward, so gx_must.
 # ⚠ `clear_subwin` ADDED BY STAGE 3 (the Replace destination): it empties ONE
 # subwindow and carries every other strip forward, so gx_must too.
+# ⚠ `grid_toggle` became `grid_apply` (SW23, 2026-10-15): Ctrl-G and
+# Ctrl-Shift-G share one body, which is where the capture and the regenerate
+# now are.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
-             plot_signals grid_toggle sharedx_toggle apply_range wheel_zoom
+             plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok
              select_tab new_tab close_tab paste_traces paste_payload
              rawbar_load new_subwin close_subwin clear_subwin}
@@ -342,7 +345,7 @@ check "GX7 skip_ranges gates the ranges and nothing else" \
      [wvproc_body $wsrc wviewer::capture_live_graph_state]] 2
 # a window OPTION captures but must NEVER push undo (spec waveform_viewer_modes
 # §14: window options are outside the snapshot). The fix is "capture, not push".
-foreach p {grid_toggle sharedx_toggle} {
+foreach p {grid_toggle grid_toggle_subwin grid_apply sharedx_toggle} {
   check "GX8 $p captures but takes NO undo point" \
     [regexp -all {wviewer::push_undo} [wvproc_body $wsrc wviewer::$p]] 0
 }
@@ -429,9 +432,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the eighteen documented viewer keys" \
-  [llength $gh_seqs] 18
-check "GH0 ...and thirteen documented menu accelerators" [llength $gh_menus] 13
+check "GH0 the guide's §9.1 carries the twenty documented viewer keys" \
+  [llength $gh_seqs] 20
+check "GH0 ...and fifteen documented menu accelerators" [llength $gh_menus] 15
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]
@@ -500,7 +503,7 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
 # the browser is ambiguous; write which plan. Both PLAN headers carry the rule.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
-# whole reason GH0's `== 18` above still holds: `data-bseq="` does not contain
+# whole reason GH0's `== 20` above still holds: `data-bseq="` does not contain
 # the substring `data-seq="`, so GH0's unanchored extractor cannot see these
 # rows. GH0 is itself the standing guard on that — pick a colliding name and
 # GH0 goes red, not silently wrong.

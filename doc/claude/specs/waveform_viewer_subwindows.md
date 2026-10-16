@@ -54,6 +54,11 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW18 | ASE-L status bar: a read-only drop-down at its RIGHT end, labels `Append` `Replace` `New SubWin` `New Win`, a session-state key (`plot_dest`), dirtying the session on change, logged as one replayable line, used by `~` and the run-end auto-plot. |
 | SW19 | The multi-plot auto-plot strip ORDER (last Outputs row on top, R-OUT14) is unchanged. A separate user ruling is pending on it; nothing here touches it. |
 | SW20 | Every new gesture/command is logged through `wviewer::log_action`/`wviewer::echo` (tabs R6) and is undoable as ONE step where it mutates the model. |
+| SW21 | (user 2026-10-15) The plot mode (single/multi) and the grid are settings of each SUBWINDOW. "The active subwindow" is the TARGET one. A new subwindow takes the target's settings; with one subwindow nothing changes. |
+| SW22 | The status bar's `Plot: single/multi` shows the target subwindow's mode and follows the target (a click, New/Close SubWin, a tab switch). Options > Plot Mode and Ctrl-Shift-4 change the target subwindow only. Ctrl-Shift-D (Graph > Clear SubWin) empties the target subwindow only; Ctrl-D Clear All is unchanged. |
+| SW23 | Ctrl-G (Graph > Grid) flips every subwindow's grid individually: a mixed set stays mixed, inverted. Ctrl-Shift-G (Graph > SubWin Grid) flips the target subwindow's grid only. The Grid checkbutton shows the target subwindow's grid. |
+| SW24 | Closing down to one subwindow, or Clear All, keeps the survivor's / the target's settings as the window's own. |
+| SW25 | The settings are saved and restored with the layout (per tab), and are outside undo like the window's other options. |
 
 ## 3. Data model
 
@@ -251,8 +256,11 @@ sit at one X across subwindows. **Declared limit** for this version.
 Equal cell sizes, no divider drag. Cursors A/B share one X across subwindows.
 Strip reorder stays inside its subwindow. No subwindow drag-reorder, rename or
 tear-off. The n >= 5 grid is our extension of the user's rule. An older build
-reading a new state stacks all strips in one column. The plot mode is per TAB,
-shared by its subwindows.
+reading a new state stacks all strips in one column. The plot mode and the grid
+are per SUBWINDOW (SW21, §16); an older build reading a new state uses the
+window's own value (`mode`, the layout `grid`) for every subwindow. The flat
+(one-tab) state still does not carry the window's own grid flag, as before
+SW21; a subwindow's grid that differs from it does ride its strips.
 
 ## 11. Recon corrections (verified at `948f8e86`)
 
@@ -464,3 +472,55 @@ subwindow), PO16 (both arms) and PR12 (display, real bench).
 `test_wave_sigbrowser`, DS12/DS13 of `test_wave_sigsearch`, R1 of
 `test_ase_core` and `test_ase_persist` (24 keys), GX's `gx_must` of
 `test_wave_grid` (`clear_subwin`). Red proofs are in the suites' headers.
+
+## 16. As built — per-subwindow settings (2026-10-15, SW21-SW25)
+
+**Model.** Two graph keys, `swmode` (single|multi) and `swgrid` (0|1), on the
+strips of a subwindow, carried ONLY where they differ from the window's own value
+(the BASE: `wviewer::base_mode` = `mode($token)`, `wviewer::grid_base` = the
+layout's `grid` key or the rc default). `wviewer::sw_prop_get` reads the first
+strip of the subwindow carrying the key, else the base; `wviewer::sw_prop_put`
+stamps every strip of the subwindow, or removes the key when the value equals the
+base. `wviewer::set_graphs` (every model write) spreads a subwindow's value to all
+of its strips (`sw_props_spread`), and when the list is back to ONE subwindow
+folds the survivor's values into the base and drops the keys, so a one-subwindow
+tab never carries one and serialises byte-identically. `graph_props` never emits
+either key.
+
+**Readers.** `wviewer::plot_mode` answers the TARGET subwindow's mode, so every
+consumer (`plot_sites`, `auto_plot_strips`, `predict_colors`, `paste_traces`, the
+Calculator through `plot_signals`, `ase::plot_mode_for_current`, the status bar,
+the Options label) follows the target with no change of its own.
+`wviewer::grid_shown` answers the target's grid; `regenerate` hands each strip its
+own subwindow's flag (`wviewer::strip_grids`) as `graph_props`' third argument.
+
+**Writers.** `set_plot_mode` writes the base with one subwindow, else the target
+subwindow's key; `grid_toggle` (Ctrl-G) and `grid_toggle_subwin` (Ctrl-Shift-G)
+share `grid_apply`, which logs the resolved state when every touched subwindow
+ends alike and `{}` (invert each) when not. `new_subwin` stamps the new subwindow
+with the target's values; `clear_all` makes the target's values the base.
+`state_apply` carries the live values across by subwindow id
+(`sw_props_carry`), so undo never reverts a setting.
+
+**Push.** `regenerate` and `set_target_strip` end with `status_refresh` and
+`sync_grid_mirror`, so the status bar and the Grid checkbutton follow every
+target move.
+
+**Serialisation.** The flat and per-tab `mode` keys are the BASE; the
+per-subwindow values ride the graphs, so tabs, state files and undo carry them
+with no new key. An old state (no `swmode`) gives every subwindow its tab's mode.
+
+**Keys.** `<Control-Shift-Key-D>` → `wviewer::clear_target_subwin_at`,
+`<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`, spelled with `Shift-`
+(unlike Ctrl-Shift-N/W) so Caps Lock + Ctrl-d (keysym `D`, no Shift) is never a
+subwindow clear. `wviewer::clear_target_subwin` is the logged door over
+`clear_subwin` (one undo point, logged on every call like `clear_all`). Menu:
+Graph > Clear SubWin (above Clear All) and Graph > SubWin Grid (after the Grid
+checkbutton).
+
+**Rows.** `test_wave_subwindows` SWM1-SWM8, SWC1-SWC3, SWH1-SWH6 (both arms,
+model-only window) and SWK0-SWK10 (display: the Options entry, real clicks, real
+Ctrl-Shift-G / Ctrl-G / Ctrl-Shift-D, Caps Lock, the menu entries, tabs, save and
+restore). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
+(`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite
+header.

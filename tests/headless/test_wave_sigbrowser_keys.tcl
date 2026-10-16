@@ -193,14 +193,17 @@ check {BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
 # two ADDED rows for two real new keys (Ctrl-Shift-N / Ctrl-Shift-W). Item 16's
 # lockstep claim is unchanged: the count and the two grid literals still move
 # together.
+# ⚠ WIDENED IN PLACE again by per-subwindow settings (2026-10-15): 18/13 ->
+# 20/15, for Ctrl-Shift-D (Clear SubWin) and Ctrl-Shift-G (SubWin Grid), both
+# `bind WaveViewer` defaults with Graph-menu twins.
 check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide has
-       eighteen data-seq rows and thirteen menu/accel pairs, and test_wave_grid
+       twenty data-seq rows and fifteen menu/accel pairs, and test_wave_grid
        pins exactly those two numbers} \
   [list [regexp -all {data-seq="} $gsrc] \
         [regexp -all {data-menu="[^"]*" data-accel="[^"]*"} $gsrc] \
-        [regexp {\[llength \$gh_seqs\] 18} $gridsrc] \
-        [regexp {\[llength \$gh_menus\] 13} $gridsrc]] \
-  {18 13 1 1}
+        [regexp {\[llength \$gh_seqs\] 20} $gridsrc] \
+        [regexp {\[llength \$gh_menus\] 15} $gridsrc]] \
+  {20 15 1 1}
 
 # ============================================================================
 # BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the
