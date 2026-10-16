@@ -17,7 +17,8 @@
 #          registry ngspice
 #
 # Bands (both arms; pure, no Tk)
-#   PO1  the strip's tip says what the button does, not the viewer's menu path
+#   PO1  the strip's tip says what the button does, not the viewer's menu path,
+#        and names the Ctrl-click (R-OUT16)
 #   PO2  a row added AFTER the run gets its Value from the button: the Value
 #        is evaluated before the plot is asked for
 #   PO3  which ticked rows are plotted: a signal and a wave expression are, a
@@ -68,6 +69,10 @@
 #        subwindow and keeps the old plot; New Win a tab; a viewer the press
 #        opens is already new; zero rows empty only a Replace target holding an
 #        auto strip; a failed run plots nothing under any choice
+#   PO17 the evaluate-only half (R-OUT16): ase::ui::evaluate_outputs
+#        re-evaluates every Value exactly as `~` does and never asks for a
+#        plot; no results, a failed run and an unknown session answer 0 with
+#        `~`'s own sentences
 # Bands (display arm only)
 #   PR1  the real bench runs on the registry ngspice, pinned to its nominal
 #        corner (ABSVAR 0, section tt) so the run converges every time
@@ -95,6 +100,11 @@
 #        <<ComboboxSelected>> on the status-bar drop-down, `~` pressed by a real
 #        click, the viewer's tabs / subwindows / strips read back (and the
 #        canvas rects); the run-end auto-plot of a real run under New SubWin
+#   PR13 R-OUT16 on the real button: a real Ctrl-click (Enter, press and
+#        release carrying the Control bit) with the viewer UP brings the
+#        blanked Value back and leaves the viewer's whole layout and tab list
+#        byte-identical; with the viewer CLOSED it opens none; a plain click
+#        afterwards still plots (the control)
 #   PF1  the SHIPPED Monte Carlo draw, seeded to one that stops the transient
 #        ("Timestep too small", rc 1): the user is told the run failed and
 #        where the log is, the status reads Error, every Value says the run
@@ -235,7 +245,7 @@ proc po_unstub_autoplot {} {
 # =============================================================================
 group PO1 {
     set tip [pcall dict get [ase::ui::strip_tips] plot]
-    check "PO1 the ~ tip says what the button does" $tip {Plot outputs and update values}
+    check "PO1 the ~ tip says what the button does" $tip {Plot outputs and update values (Ctrl-click: values only)}
     check "PO1 ...and is the shared label, not the viewer's menu path" \
         [list [expr {$tip eq [pcall ase::ui::lbl_plot_outputs]}] \
               [expr {$tip eq [ase::ui::menu_path_waveform_viewer]}]] {1 0}
@@ -314,6 +324,46 @@ group PO4 {
     catch {ase::session_close $key}
     check "PO4 an unknown session answers 0 and raises nothing" \
         [pcall ase::ui::plot_outputs po/none/none] 0
+}
+
+# =============================================================================
+# PO17 -- CTRL-CLICK: EVALUATE ONLY (R-OUT16)
+# =============================================================================
+group PO17 {
+    check "PO17 signature (info args)" [pcall info args ase::ui::evaluate_outputs] key
+    set key [po_session po17 tbpo $::PO_OUTS 1]
+    ase::session_setattr $key results [list W old P old U old]
+    set ref [calc::eval_text $::FX_EX $::fixture {}]
+    po_stub_autoplot
+    set ::po_echoes {}
+    set rc [pcall ase::ui::evaluate_outputs $key]
+    po_unstub_autoplot
+    set res [ase::session_getattr $key results]
+    check "PO17 evaluate-only answers 1 and the Values are exactly what ~ and opening the session read" \
+        [list $rc [expr {$res eq [ase::ui::results_from_disk $key]}] [val $res T]] \
+        [list 1 1 [format %.6e [dict get $ref value]]]
+    check "PO17 ...and it never asks for a plot, and says nothing about plotting" \
+        [list [llength $::po_ap] [lsearch -all -inline -regexp $::po_echoes {plot|viewer}]] {0 {}}
+    ## the control: the same session, the same stub, the plain button does ask
+    ase::session_setattr $key results [list W old]
+    po_stub_autoplot
+    pcall ase::ui::plot_outputs $key
+    po_unstub_autoplot
+    check "PO17 (control) the plain ~ on the same session does ask for the plot, once" \
+        [llength $::po_ap] 1
+    catch {ase::session_close $key}
+    set key [po_session po17b tbpo $::PO_OUTS 0]
+    ase::session_setattr $key results {W old}
+    po_stub_autoplot
+    set ::po_echoes {}
+    set rc [pcall ase::ui::evaluate_outputs $key]
+    po_unstub_autoplot
+    check "PO17 no results: 0, ~'s own sentence, the Values left alone, no plot" \
+        [list $rc $::po_echoes [ase::session_getattr $key results] [llength $::po_ap]] \
+        [list 0 [list [ase::ui::lbl_plot_outputs_none]] {W old} 0]
+    catch {ase::session_close $key}
+    check "PO17 an unknown session answers 0 and raises nothing" \
+        [pcall ase::ui::evaluate_outputs po/none/none] 0
 }
 
 # =============================================================================
@@ -1272,7 +1322,7 @@ if {!$GUI} {
         set scr [bind $top.strip.plot <Enter>]
         set i [lsearch -exact $scr balloon_show]
         set tip [expr {$i < 0 ? {NO-TIP} : [lindex [lindex $scr [expr {$i + 2}]] 0]}]
-        check "PR6 the live tip is the new label" $tip {Plot outputs and update values}
+        check "PR6 the live tip is the new label" $tip {Plot outputs and update values (Ctrl-click: values only)}
     }
     ## The auto graph's trace exprs and the viewer's graph count, or sentinels.
     proc pr_auto {key} {
@@ -1314,6 +1364,57 @@ if {!$GUI} {
             [list [pr_cell $key T_1pc_setl_BG] \
                   [lsearch -all -inline -glob $::po_echoes {*cannot auto-plot*}]] \
             [list [ase::format_value [format %.6e [dict get $::pr_ref value]]] {}]
+    }
+    ## A real Ctrl-click: the press and release carry the Control bit.
+    proc pr_ctrl_click {b} {
+        event generate $b <Enter> -x 5 -y 5
+        event generate $b <ButtonPress-1> -x 5 -y 5 -state 4
+        event generate $b <ButtonRelease-1> -x 5 -y 5 -state 4
+        event generate $b <Leave>
+        for {set i 0} {$i < 40} {incr i} { update ; after 50 }
+    }
+    proc pr_blank {key} {
+        set res [ase::session_getattr $key results]
+        dict unset res T_1pc_setl_BG
+        ase::session_setattr $key results $res
+        ase::ui::refresh_output_values $key
+    }
+    group PR13 {
+        set top [ase::ui::window_for $key]
+        check "PR13 the live ~ carries the Ctrl-click binding, which evaluates and breaks" \
+            [bind $top.strip.plot <Control-Button-1>] \
+            "[list ase::ui::evaluate_outputs $key] ; break"
+        check "PR13 fixture: the viewer is UP and holds the plot" \
+            [list [expr {[wviewer::window_for $key] ne {}}] [lindex [pr_auto $key] 0]] \
+            [list 1 $::pr_want]
+        ## a spy on the one plotting door: it still plots, it also counts
+        set ::pr13_ap 0
+        rename ::ase::ui::auto_plot ::pr13_ap_orig
+        proc ::ase::ui::auto_plot {key} { incr ::pr13_ap ; return [::pr13_ap_orig $key] }
+        set lay0 [wviewer::layout_for $key]
+        set tabs0 [wviewer::tab_records $key]
+        set tgt0 [wviewer::target_index $key]
+        pr_blank $key
+        check "PR13 fixture: the row is blank before the Ctrl-click" [pr_cell $key T_1pc_setl_BG] {}
+        pr_ctrl_click $top.strip.plot
+        set want [ase::format_value [format %.6e [dict get $::pr_ref value]]]
+        check "PR13 a real Ctrl-click brings the Value back" [pr_cell $key T_1pc_setl_BG] $want
+        check "PR13 ...never reaches the plot door, and leaves the viewer's layout, tabs and target byte-identical" \
+            [list $::pr13_ap [expr {[wviewer::layout_for $key] eq $lay0}] \
+                  [expr {[wviewer::tab_records $key] eq $tabs0}] \
+                  [expr {[wviewer::target_index $key] == $tgt0}]] {0 1 1 1}
+        catch {wviewer::close $key}
+        update
+        pr_blank $key
+        pr_ctrl_click $top.strip.plot
+        check "PR13 with the viewer CLOSED a Ctrl-click opens none, and still evaluates" \
+            [list [wviewer::window_for $key] [pr_cell $key T_1pc_setl_BG]] [list {} $want]
+        pr_click $top.strip.plot
+        check "PR13 (control) a plain click then reaches the plot door once, opens the viewer and plots" \
+            [list $::pr13_ap [expr {[wviewer::window_for $key] ne {}}] [lindex [pr_auto $key] 0]] \
+            [list 1 1 $::pr_want]
+        rename ::ase::ui::auto_plot {}
+        rename ::pr13_ap_orig ::ase::ui::auto_plot
     }
     group PR8 {
         set top [ase::ui::window_for $key]

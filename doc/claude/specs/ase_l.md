@@ -1025,7 +1025,7 @@ They should not influence the input to the simulator."* ADE-L is the floor
   - **After a failed run** it says the run failed instead (R-OUT13).
   - The Measurements dialog is not repainted by `~`: its Values are the simulator's own
     measurement output, which only a run changes.
-  - The tip reads **Plot outputs and update values**; `Tools > Waveform Viewer` stays the
+  - The tip reads **Plot outputs and update values (Ctrl-click: values only)** (R-OUT16); `Tools > Waveform Viewer` stays the
     raise-or-open door that plots nothing.
   - The Value and the Calculator window's Eval of the same text are the same double
     (`calc::eval_texts` and `calc::meas_in_ctx`), shown `%.6e`.
@@ -1123,6 +1123,22 @@ They should not influence the input to the simulator."* ADE-L is the floor
     choice picked by a real `<<ComboboxSelected>>` and `~` pressed by a real click) of
     `tests/headless/test_ase_plot_outputs.tcl`, and rows PD1-PD6 of
     `tests/headless/test_ase_window.tcl`.
+- **R-OUT16 — Ctrl-click on `~` evaluates only (user 2026-10-15; BUILT 2026-10-15).** "We
+  want Ctrl-click (LMB) to only evaluate and display measures, not do any plotting action."
+  - A Ctrl+LMB click re-evaluates every Outputs row from the session's current results and
+    fills the Value cells exactly as `~` does (R-OUT12's evaluation, `ase::ui::results_refill`),
+    with the same sentences for no results and for a failed run (R-OUT13). It does NO plotting:
+    no viewer is opened, no strip, subwindow or tab is touched, whatever the plot destination
+    (R-OUT15) says. A plain click is unchanged.
+  - Built as `ase::ui::evaluate_outputs <key>` (the first half of `ase::ui::plot_outputs`,
+    which now calls it), reached by an instance binding `<Control-Button-1>` on
+    `$top.strip.plot` that `break`s, so the Button class never arms the button and the release
+    invokes nothing.
+  - The tip names both: **Plot outputs and update values (Ctrl-click: values only)**.
+  - Fenced by band PO17 (both arms) and PR13 (display arm: a real Ctrl-click with the viewer up
+    leaves its layout, tabs and target byte-identical and never reaches `ase::ui::auto_plot`;
+    with the viewer closed it opens none; a plain click is the control) of
+    `tests/headless/test_ase_plot_outputs.tcl`.
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
@@ -1576,7 +1592,7 @@ icons welcome where Tk can do them, e.g. unicode ▶ ■)
 - `N&>`   → Netlist and Run
 - `>`     → Run (existing netlist)
 - `!`     → Stop
-- `~`     → Plot outputs and update values (R-OUT12)
+- `~`     → Plot outputs and update values (Ctrl-click: values only) (R-OUT12, R-OUT16)
 
 **Select On Design v1 scope** (item 08; applies to the `-->` choose-from-
 design flow and both Outputs > To Be Saved/Plotted > Select On Design):

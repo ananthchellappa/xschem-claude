@@ -2033,7 +2033,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       netrun {N&>}   {ase::ui::menu_path_netlist_and_run} {Simulation > Netlist and Run} \
       run    {>}     {ase::ui::menu_path_run}             {Simulation > Run} \
       stop   {!}     {ase::ui::menu_path_stop}            {Simulation > Stop} \
-      plot   {~}     {ase::ui::lbl_plot_outputs}          {Plot outputs and update values}] {
+      plot   {~}     {ase::ui::lbl_plot_outputs}          {Plot outputs and update values (Ctrl-click: values only)}] {
     check "W1s1 1391 strip `$glyph` ($sfx) tip is on the LIVE widget and is the\
  shared constant" \
       [list [w_tip $top.strip.$sfx] [w_cx $cexpr]] [list $golden $golden]

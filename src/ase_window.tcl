@@ -1235,6 +1235,11 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::do_stop $key]
   button $top.strip.plot -text ~ -width 5 \
     -command [list ase::ui::plot_outputs $key]
+  # R-OUT16: Ctrl-click evaluates only. The instance binding runs before the
+  # Button class's <Button-1> and `break`s it, so tk::ButtonDown never arms the
+  # button and the release invokes nothing: no plot.
+  bind $top.strip.plot <Control-Button-1> \
+    "[list ase::ui::evaluate_outputs $key] ; break"
   pack $top.strip.ana $top.strip.var $top.strip.out $top.strip.del \
        $top.strip.netrun $top.strip.run $top.strip.stop $top.strip.plot \
        -side top -padx 2 -pady 1
@@ -10909,9 +10914,9 @@ proc ase::ui::lbl_run              {} { return {Run} }
 proc ase::ui::lbl_stop             {} { return {Stop} }
 proc ase::ui::lbl_tools            {} { return {Tools} }
 proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
-# The `~` strip button (ase_l.md R-OUT12): its tip, and what it says when there
-# is nothing to measure or plot.
-proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values} }
+# The `~` strip button (ase_l.md R-OUT12, R-OUT16): its tip, and what it says
+# when there is nothing to measure or plot.
+proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values (Ctrl-click: values only)} }
 proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~ and the run-end plot go} }
 proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
 proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
@@ -12840,6 +12845,28 @@ proc ase::ui::plot_targets {key} {
   return [dict create rows $keep refused $refused]
 }
 
+# Ctrl-click on `~` (ase_l.md R-OUT16, user 2026-10-15): "only evaluate and
+# display measures, not do any plotting action". The first half of
+# plot_outputs, and the whole of it up to the plot: every row re-evaluated from
+# the session's current results, the same sentences for no results and for a
+# failed run. No viewer is opened, no strip is touched, whatever the plot
+# destination says. -> 1 when it evaluated, 0 otherwise. No Tk.
+proc ase::ui::evaluate_outputs {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
+  set failed [ase::run_failed $key]
+  if {$failed ne {}} {
+    catch {::ase::echo [ase::ui::lbl_run_failed $failed] error}
+    ase::ui::results_refill $key
+    return 0
+  }
+  if {![ase::has_results $key]} {
+    catch {::ase::echo [ase::ui::lbl_plot_outputs_none] error}
+    return 0
+  }
+  ase::ui::results_refill $key
+  return 1
+}
+
 # THE `~` STRIP BUTTON (ase_l.md R-OUT12, user 2026-10-14): "if there are
 # outputs that are waveforms that are chosen to be plotted, then, if Waveform
 # Viewer is not already up, it will be launched and those signals will be
@@ -12857,18 +12884,7 @@ proc ase::ui::plot_targets {key} {
 # run_finished repaints it then.
 # -> 1 when it evaluated, 0 when there was nothing to evaluate against.
 proc ase::ui::plot_outputs {key} {
-  if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
-  set failed [ase::run_failed $key]
-  if {$failed ne {}} {
-    catch {::ase::echo [ase::ui::lbl_run_failed $failed] error}
-    ase::ui::results_refill $key
-    return 0
-  }
-  if {![ase::has_results $key]} {
-    catch {::ase::echo [ase::ui::lbl_plot_outputs_none] error}
-    return 0
-  }
-  ase::ui::results_refill $key
+  if {![ase::ui::evaluate_outputs $key]} { return 0 }
   set sim_t [ase::plot_sim_type [ase::session_state $key]]
   set t [ase::ui::plot_targets $key]
   if {$sim_t ni {op {}} && ![llength [dict get $t rows]]
