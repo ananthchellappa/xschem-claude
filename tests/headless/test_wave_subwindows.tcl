@@ -63,10 +63,18 @@
 #         both arms), undo, a new tab, tab switch, save / close / restore,
 #         Graph > Clear SubWin's -command (SWK12), a one-tab grid round trip
 #         (SWK13).
+#   SWP13/SWT*  both arms: a trace move that empties its strip INTO ANOTHER
+#         subwindow removes that strip (user request 2026-10-16): the pure
+#         emptied_source_strips (same subwindow, auto strip, a subwindow's last
+#         strip and its switch all keep), then move_trace / move_traces on a
+#         model-only window (one undo, one log line with the pre-move indices).
 #   SWK17 DISPLAY (issue 1662): REAL RMB with the real tk_popup on every strip
 #         of a multi-mode, one-trace-per-strip window, two subwindows then one:
 #         the trace menu (Move greyed, Delete live) and the strip menu (Split
 #         greyed) are mapped; a two-trace control strip offers both live.
+#   SWG15 DISPLAY: a REAL LMB drag of a strip's sole trace into another
+#         subwindow removes the strip, one log line, one u; a subwindow's last
+#         strip stays; a drag within one subwindow keeps the emptied strip.
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -161,11 +169,12 @@
 #   K  no Caps Lock aliases (the 720898fe binds) (display) -> SWK8 matrix
 #        (state 6 fired nothing, state 7 fired Clear All / Ctrl-G)
 #        [superseded 2026-10-16: the aliases are gone, the dispatcher decides]
-# Caps Lock / right-click (2026-10-16), each measured red at
+# Caps Lock / right-click / emptied strip (2026-10-16), each measured red at
 # 9beec4c4 (the product before the change):
 #   the six 32e53cd8 Lock aliases, no dispatcher -> SWK8 (x3), SWK14-SWK16
 #   the menu gates' `node_count < 2` rung -> SWK17 (x2); trace_menu TG7 (x2),
 #        split_strip SG7, SG9b
+#   no drop_emptied_sources -> SWP13 (x4), SWT1, SWT4, SWG12, SWG15 drag row
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -326,6 +335,27 @@ check "SWP12 a split never relocates an empty strip out of another subwindow" \
 check "SWP12 sw_same" \
   [list [pcall {wviewer::sw_same $gr 0 1}] [pcall {wviewer::sw_same $gr 1 2}] \
         [pcall {wviewer::sw_same $gr 0 9}]] {1 0 0}
+
+# a strip a trace move EMPTIED into another subwindow goes (user request
+# 2026-10-16); gs is the model after the move
+set ea [dict replace [E 1] auto 1]
+check "SWP13 emptied_source_strips: emptied into ANOTHER subwindow -> removed; same subwindow, auto strip, non-empty -> kept" \
+  [list [pcall {wviewer::emptied_source_strips [list [E 1] [G b 1] [G a 2]] {0} 2}] \
+        [pcall {wviewer::emptied_source_strips [list [E 1] [G b 1] [G a 2]] {0} 1}] \
+        [pcall {wviewer::emptied_source_strips [list $ea [G b 1] [G a 2]] {0} 2}] \
+        [pcall {wviewer::emptied_source_strips [list [G x 1] [G b 1] [G a 2]] {0} 2}] \
+        [pcall {wviewer::emptied_source_strips [list [E] [G a]] {0} 1}]] \
+  {0 {} {} {} {}}
+check "SWP13 ...a subwindow's LAST strip stays with keep 1 and goes with keep 0" \
+  [list [pcall {wviewer::emptied_source_strips [list [E 1] [G a 2]] {0} 1 -1 1}] \
+        [pcall {wviewer::emptied_source_strips [list [E 1] [G a 2]] {0} 1 -1 0}]] {{} 0}
+check "SWP13 ...two emptied strips that ARE the whole subwindow: the lowest stays (keep 1), both go (keep 0)" \
+  [list [pcall {wviewer::emptied_source_strips [list [E 1] [E 1] [G a 2]] {1 0 1} 2 -1 1}] \
+        [pcall {wviewer::emptied_source_strips [list [E 1] [E 1] [G a 2]] {0 1} 2 -1 0}] \
+        [pcall {wviewer::emptied_source_strips [list [E 1] [E 1] [G x 1] [G a 2]] {0 1} 3 -1 1}]] \
+  {1 {0 1} {0 1}}
+check "SWP13 the switch is one proc, and its default keeps the strip" \
+  [pcall {wviewer::emptied_subwin_keeps_strip}] 1
 
 # ============================================================================
 # SWU* -- wviewer::unlogged is TRANSPARENT to everything but the log: a return
@@ -916,6 +946,40 @@ if {[catch {
   set p16 [pcall {wviewer::case_pairs}]
   check "SWK16 case_pairs: every Ctrl-letter pair of the viewer, each with its two base sequences" \
     [lmap {l lo up} $p16 {set l}] {d g n w e u b c q v}
+
+  # ---- SWT1-SWT4: the trace moves on a model-only window (user request
+  # 2026-10-16): a strip emptied INTO ANOTHER subwindow goes, in the same undo
+  # step and under the same one log line
+  rename ::wviewer::capture_live_graph_state ::swt_orig_clgs
+  proc ::wviewer::capture_live_graph_state {args} { return 1 }
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 1] [G c 2]] 0 single
+  set r [pcall {wviewer::move_trace 1 0 2 __swd}]
+  check "SWT1 move_trace of a strip's sole trace into another subwindow: the strip goes, the trace lands there, the target follows" \
+    [list $r [names [swd_lay]] [tags [swd_lay]] [swd_tr] [wviewer::target_index __swd]] \
+    {1 {a c} {1 2} {a {c b}} 1}
+  check "SWT1 ...one log line, carrying the PRE-move indices (a replay re-runs it from there)" \
+    $::swd_log [list {wviewer::move_trace 1 0 2 __swd}]
+  pcall {wviewer::undo __swd}
+  check "SWT2 one undo brings the strip and the trace back" \
+    [list [names [swd_lay]] [tags [swd_lay]] [swd_tr]] {{a b c} {1 1 2} {a b c}}
+  pcall {wviewer::move_trace 1 0 0 __swd}
+  check "SWT2 control: within ONE subwindow the emptied strip stays" \
+    [list [names [swd_lay]] [swd_tr]] {{a b c} {{a b} {} c}}
+  swd_open [list [G a 1] [G c 2]] 1 single
+  pcall {wviewer::move_trace 0 0 1 __swd}
+  check "SWT3 a subwindow's LAST strip stays, empty (emptied_subwin_keeps_strip)" \
+    [list [names [swd_lay]] [tags [swd_lay]] [swd_tr]] {{a c} {1 2} {{} {c a}}}
+  set ::swd_log {}
+  swd_open [list [G a 1] [G b 1] [G x 1] [G c 2]] 0 single
+  set r [pcall {wviewer::move_traces {{0 0} {1 0}} 3 __swd}]
+  check "SWT4 move_traces: both emptied source strips go, the target follows, one log line" \
+    [list $r [names [swd_lay]] [swd_tr] [wviewer::target_index __swd] $::swd_log] \
+    {2 {x c} {x {c a b}} 1 {{wviewer::move_traces {{0 0} {1 0}} 3 __swd}}}
+  pcall {wviewer::undo __swd}
+  check "SWT4 ...and one undo restores all four strips" [names [swd_lay]] {a b x c}
+  rename ::wviewer::capture_live_graph_state {}
+  rename ::swt_orig_clgs ::wviewer::capture_live_graph_state
 } swmerr]} { check "SWM* band ran to its end" "ERR:$swmerr" ok }
 swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
@@ -1664,9 +1728,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # ---- SWG12: a trace moves across subwindows; paste lands in the target ----
   set before4 [trx 4]
+  set gs12 [lay]
   pcall {wviewer::move_trace 0 0 4 $tok}
   check "SWG12 a trace dragged from subwindow 1 lands in subwindow 2's strip" \
-    [trx 4] [concat $before4 c2]
+    [trx 3] [concat $before4 c2]
+  check "SWG12 ...and the strip it was alone on is gone (user request 2026-10-16)" \
+    [ltags] {1 1 1 3}
+  # the rows below were written on the layout a move used to leave (the empty
+  # strip kept): put exactly that back, the pure move with no removal
+  pcall {wviewer::undo $tok}
+  wviewer::set_graphs $tok [wviewer::move_trace_in_graphs $gs12 0 0 4]
+  set ::wviewer::target($tok) 4
+  wviewer::regenerate $tok
   check "SWG12 ...membership is unchanged" [ltags] {1 1 1 1 3}
   # copy strip 2's traces by selecting them on the rect, then paste into sw 2
   xschem new_schematic switch $vdrw
@@ -2139,6 +2212,56 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [lindex [sk_rmb [sk_px 0 1]] 2 0] [lindex [sk_rmb [sk_px 0 0]] 2 0]] \
     {{{Move to Separate Strip} normal} {{Split Strip} normal}}
 
+  # ---- SWG15: dragging a strip's SOLE trace into another subwindow removes
+  # the emptied strip (user request 2026-10-16); a REAL LMB drag, one undo step
+  proc sk_drag {from to} {
+    lassign $from px py
+    lassign $to tx ty
+    sk_ev <ButtonPress-1> -x $px -y $py -button 1
+    sk_ev <B1-Motion> -x [expr {$px + 1}] -y [expr {$py + 1}] -state 0x100
+    update
+    sk_ev <B1-Motion> -x $tx -y $ty -state 0x100
+    update
+    sk_ev <ButtonRelease-1> -x $tx -y $ty -button 1 -state 0x100
+    update
+  }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_dest append $tok}
+  pcall {wviewer::set_plot_mode multi $tok}
+  pcall {wviewer::plot_signals $tok {a1 a2}}
+  pcall {wviewer::new_subwin $tok}
+  pcall {wviewer::plot_signals $tok {b1}}
+  pcall {wviewer::delete_empty_strips $tok}
+  pcall {wviewer::fit $tok}
+  update
+  set pre [list [ltags] [lmap gi [lsearch -all [ltags] *] {trx $gi}]]
+  check "SWG15 fixture: subwindow 1 two one-trace strips, subwindow 2 one" \
+    [list [ltags] [llength [trx 0]] [llength [trx 1]] [trx 2]] {{1 1 2} 1 1 b1}
+  set mov [trx 1]
+  set ::sw_log {}
+  sk_drag [sk_px 1 1] [mid 2]
+  check "SWG15 a REAL drag of strip 2's sole trace into subwindow 2: the emptied strip is gone, the trace is there" \
+    [list [ltags] [trx 1] [lindex [trx 1] end] [wviewer::target_index $tok]] \
+    [list {1 2} [list b1 $mov] $mov 1]
+  check "SWG15 ...one log line, the move itself" \
+    [lsearch -all -inline -glob $::sw_log {wviewer::move*}] [list [list wviewer::move_trace 1 0 2 $tok]]
+  pcall {wviewer::undo $tok}
+  check "SWG15 one u restores the strip and the trace" \
+    [list [ltags] [lmap gi [lsearch -all [ltags] *] {trx $gi}]] $pre
+  # the last strip of its subwindow stays, empty (emptied_subwin_keeps_strip)
+  pcall {wviewer::fit $tok}
+  update
+  sk_drag [sk_px 2 1] [mid 0]
+  check "SWG15 a subwindow's LAST strip emptied into another subwindow stays, empty" \
+    [list [ltags] [trx 2] [wviewer::sw_count [lay]]] {{1 1 2} {} 2}
+  pcall {wviewer::undo $tok}
+  # the control: within ONE subwindow an emptied strip stays
+  pcall {wviewer::fit $tok}
+  update
+  sk_drag [sk_px 1 1] [mid 0]
+  check "SWG15 control: a drag WITHIN a subwindow keeps the emptied strip" \
+    [list [ltags] [trx 1]] {{1 1 2} {}}
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -2155,7 +2278,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 158 } else { set expect 291 }
+if {$::arm eq {nogui}} { set expect 169 } else { set expect 309 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

@@ -242,7 +242,17 @@ sit at one X across subwindows. **Declared limit** for this version.
   entry on the pressed strip's subwindow. One undo step. Logged.
 - Deleting the last strip of a subwindow closes the subwindow when others exist.
 - Trace drag across subwindows: `wviewer::move_trace` and `strip_at_pixel` are
-  already 2-D. **Strip** drag-reorder stays within its subwindow in v1 (declared
+  already 2-D. **A source strip the move leaves EMPTY is removed when the traces
+  went to another subwindow** (user request 2026-10-16; `move_trace` and
+  `move_traces` via `wviewer::drop_emptied_sources`, pure half
+  `wviewer::emptied_source_strips`), inside the move's one undo point and under
+  its one log line (which keeps the pre-move indices). Within one subwindow the
+  emptied strip stays, as before. The auto-plot strip is never removed. A
+  subwindow whose LAST strip is emptied keeps it, empty: the switch is
+  `wviewer::emptied_subwin_keeps_strip` (1, the driver's default pending the
+  user's answer; 0 would remove it and close the subwindow, which is what
+  deleting a subwindow's last strip does). Rows SWP13, SWT1-SWT4 (both arms),
+  SWG15 (a real drag) and SWG12. **Strip** drag-reorder stays within its subwindow in v1 (declared
   limit): `strip_drop_index` is vertical and is confined to the source range.
 - `wviewer::plan_paste` is handed the target subwindow's range.
 - Undo snapshots the layout, so `sw`/`subwins` ride; `wviewer::tab_freeze` /

@@ -320,7 +320,9 @@ space</b>. Crossing another strip's midpoint picks the new slot;
 trace</b> and drag. The pointer becomes a grab hand, the trace shrinks while it
 travels, and the destination strip is framed. Dropping on the source strip or
 outside every strip cancels. If several traces are selected and you grab one of
-them, <b>the whole selection moves</b>.</td></tr>
+them, <b>the whole selection moves</b>. A strip the move leaves empty stays,
+unless the traces went to <b>another subwindow</b>: then the empty strip is
+removed (a subwindow's last strip stays, empty).</td></tr>
 <tr><td>Give one trace a strip of its own</td><td>Right-click the trace &rarr;
 <b>Move to Separate Strip</b>. An existing empty strip near the source is reused
 if there is one. On a strip with one trace the entry is greyed out; <b>Delete

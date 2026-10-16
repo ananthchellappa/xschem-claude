@@ -187,7 +187,8 @@
 # `node_count` / `remap_hilight_after_trace_move` / `move_trace_in_graphs`) under
 # ONE authoritative mutation, `move_trace`, which follows move_strip's ordering
 # contract exactly (capture live state -> mutate -> one regenerate -> one log
-# line). The source strip stays even when it ends up empty. The C verb behind the
+# line). The source strip stays even when it ends up empty, unless the trace went
+# to ANOTHER subwindow (drop_emptied_sources). The C verb behind the
 # pick is `xschem get graph_trace_at` (draw.c graph_wave_at), the same engine
 # machinery as graph_near_wave with the identity of the trace kept.
 #
@@ -7204,9 +7205,11 @@ proc wviewer::set_drag_cursor {W c} {
 # (the 10-px zone around every trace). The two can never both be armed: the press
 # arms exactly one of them, by where it landed.
 #
-# The source strip is left in place even when it ends up empty (deleting it would
-# renumber the stack behind the user's back and lose its axis settings), and the
-# trace lands at the END of the destination's list.
+# Within one subwindow the source strip is left in place even when it ends up
+# empty (deleting it would renumber the stack behind the user's back and lose its
+# axis settings); a move into ANOTHER subwindow removes it (user request
+# 2026-10-16, drop_emptied_sources). The trace lands at the END of the
+# destination's list.
 
 # PURE: the NODE index of model trace `ti` of graph dict `G` — its position in
 # the `node` prop token, which is what the C engine counts (hilight_wave,
@@ -7470,11 +7473,80 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
       [wviewer::wavehl_after_trace_move [wviewer::wave_hilights $token] \
          $from_gi $hl_moved $to_gi $hl_dst]
   }
-  set target($token) $to_gi
+  # a source strip this move emptied INTO ANOTHER SUBWINDOW goes (user request
+  # 2026-10-16), inside this one undo point and under this one log line
+  # (the log line keeps the PRE-move index: a replay re-runs this from there)
+  set dst [wviewer::drop_emptied_sources $token [list $from_gi] $to_gi]
+  set target($token) $dst
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::move_trace $from_gi $from_ti $to_gi $token]
   set dgs [dict get [wviewer::layout_for $token] graphs]
-  return [expr {[llength [wviewer::dget [lindex $dgs $to_gi] traces {}]] - 1}]
+  return [expr {[llength [wviewer::dget [lindex $dgs $dst] traces {}]] - 1}]
+}
+
+# --- a trace move that empties its strip INTO ANOTHER SUBWINDOW --------------
+# User request 2026-10-16: dragging the sole trace of a strip to another
+# subwindow leaves a blank strip taking room for nothing, so that strip is
+# removed. A move WITHIN one subwindow keeps the emptied strip, as it always has
+# (the reason is in node_index_of_trace's header). The auto-plot strip is never
+# removed (D-D). The answer for a source subwindow left with no trace at all is
+# the switch below.
+
+# 1 = a subwindow whose LAST strip a cross-subwindow move empties keeps that
+# strip, empty (the driver's default, pending the user's answer); 0 = the strip
+# goes too, and with it the subwindow.
+proc wviewer::emptied_subwin_keeps_strip {} { return 1 }
+
+# PURE: the strips of `gs` (the model AFTER the move, same indices) that a move
+# of traces off `sources` into strip `to_gi` should remove, ascending. `keep` is
+# emptied_subwin_keeps_strip's answer: with it, a subwindow whose every strip
+# would go keeps its lowest one.
+proc wviewer::emptied_source_strips {gs sources to_gi {auto -1} {keep 1}} {
+  set n [llength $gs]
+  if {![string is integer -strict $to_gi] || $to_gi < 0 || $to_gi >= $n} { return {} }
+  set cand {}
+  foreach gi $sources {
+    if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} { continue }
+    if {$gi == $to_gi || $gi == $auto} { continue }
+    if {[lsearch -exact $cand $gi] >= 0} { continue }
+    set G [lindex $gs $gi]
+    if {![wviewer::graph_is_empty $G] || [wviewer::dget $G auto 0] eq {1}} { continue }
+    if {[wviewer::sw_same $gs $gi $to_gi]} { continue }
+    lappend cand $gi
+  }
+  set cand [lsort -integer $cand]
+  if {!$keep} { return $cand }
+  set out {}
+  foreach gi $cand {
+    lassign [wviewer::sw_range $gs $gi] f l
+    set mine {}
+    foreach c $cand { if {$c >= $f && $c <= $l} { lappend mine $c } }
+    if {[llength $mine] == $l - $f + 1 && $gi == [lindex $mine 0]} { continue }
+    lappend out $gi
+  }
+  return $out
+}
+
+# Remove the strips emptied_source_strips names from `token`'s model, with the
+# bookkeeping delete_empty_strips does (markers swept, highlights remapped). NO
+# capture, undo point, regenerate or log: the calling move owns all four.
+# Returns where `to_gi` sits afterwards.
+proc wviewer::drop_emptied_sources {token sources to_gi} {
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set kill [wviewer::emptied_source_strips $gs $sources $to_gi \
+              [wviewer::auto_graph_index $token] [wviewer::emptied_subwin_keeps_strip]]
+  if {![llength $kill]} { return $to_gi }
+  set gone {}
+  foreach gi $kill {
+    foreach m [wviewer::markers_numbers [wviewer::dget [lindex $gs $gi] markers {}]] {
+      lappend gone $m
+    }
+  }
+  wviewer::wavehl_remap_apply $token \
+    [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
+  wviewer::set_graphs $token \
+    [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
+  return [wviewer::index_after_removal $to_gi $kill]
 }
 
 # PURE: move the MODEL {gi ti} `pairs` to strip `to_gi`, all of them, as one
@@ -7619,7 +7691,9 @@ proc wviewer::move_traces {pairs to_gi {token {}}} {
   wviewer::wavehl_remap_apply $token \
     [wviewer::wavehl_after_traces_move [wviewer::wave_hilights $token] $gs $norm $to_gi]
   wviewer::set_graphs $token [wviewer::move_traces_in_graphs $gs $norm $to_gi]
-  set target($token) $to_gi
+  # the source strips this move emptied into another subwindow go (move_trace)
+  set target($token) [wviewer::drop_emptied_sources $token \
+                        [lsort -unique -integer [lmap p $norm {lindex $p 0}]] $to_gi]
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::move_traces $norm $to_gi $token]
   return [llength $norm]
