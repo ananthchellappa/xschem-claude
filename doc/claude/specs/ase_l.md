@@ -1125,7 +1125,7 @@ They should not influence the input to the simulator."* ADE-L is the floor
     `wviewer::plot_signals` for each batch (one per ESC). ⚠ A user-visible change: under the
     default Replace each Direct Plot batch now empties the target subwindow first, where it
     used to append through the viewer's own (now retired) setting; pick Append to accumulate.
-    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k.
+    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k. Unratified: owed `rule/1663` (issue 1663).
   - Fenced by band PO16 (both arms) and PR12 (display arm, the real `tb_bandgap` bench, each
     choice picked by a real `<<ComboboxSelected>>` and `~` pressed by a real click) of
     `tests/headless/test_ase_plot_outputs.tcl`, and rows PD1-PD6 of

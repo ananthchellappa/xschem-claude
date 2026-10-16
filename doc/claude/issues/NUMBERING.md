@@ -4754,7 +4754,12 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1662.**~~
 
-**The next free number is 1663.**
+- **1663** — Direct Plot now follows ASE-L's destination drop-down (default Replace), so each
+  batch clears the target subwindow where it used to append; owed a user ruling (`rule/1663`).
+
+~~**The next free number is 1663.**~~
+
+**The next free number is 1664.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
