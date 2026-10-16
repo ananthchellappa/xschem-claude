@@ -4755,7 +4755,8 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 ~~**The next free number is 1662.**~~
 
 - **1663** — Direct Plot now follows ASE-L's destination drop-down (default Replace), so each
-  batch clears the target subwindow where it used to append; owed a user ruling (`rule/1663`).
+  batch clears the target subwindow where it used to append. CLOSED 2026-10-16: ruled (a), kept,
+  plus the `ase_plot_dest` rc default and a CIW line naming it.
 
 ~~**The next free number is 1663.**~~
 

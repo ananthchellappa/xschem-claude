@@ -124,10 +124,12 @@ namespace eval ase {
   # granted -- and by the time it was granted `measurements` had already proved
   # the mechanism across all 104 committed files.
   # `plot_dest` (doc/claude/specs/waveform_viewer_subwindows.md SW18, R-OUT15)
-  # is the TENTH member, for the identical reason: `{}` means the default,
-  # Replace, so every committed state serializes exactly as before. A Replace
-  # chosen in the drop-down is stored as `{}` too (ase::ui::set_plot_dest), so
-  # picking the default back never dirties a session.
+  # is the TENTH member, for the identical reason: `{}` means the default
+  # (ase::plot_dest_default: the rc variable `ase_plot_dest`, Replace when
+  # unset), so every committed state serializes exactly as before. A choice
+  # EQUAL to that default is stored as `{}` too (ase::ui::set_plot_dest), so
+  # picking the default back never dirties a session; any other choice is
+  # written out, so a saved session restores its own value whatever the rc says.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
                           opstrategy opstate runhealth sweep plot_dest}
   # simulator name -> hooks dict: the five REQUIRED hooks
@@ -593,14 +595,49 @@ proc ase::state_default {} {
     plot_dest {}]
 }
 
-# The session's plot destination for `~` and the run-end auto-plot (R-OUT15):
-# append | replace | newsubwin | newtab. `{}`, absent or anything else reads
-# `replace`, the default. PURE.
+# A plot destination spelled as a label or a code -> the code
+# (append | replace | newsubwin | newtab), or {} for anything else. PURE. The
+# one table: ase::ui::plot_dest_code and the rc reader below both use it.
+proc ase::plot_dest_norm {v} {
+  switch -exact -- [string tolower [string trim $v]] {
+    append                         { return append }
+    replace                        { return replace }
+    newsubwin - {new subwin}       { return newsubwin }
+    newtab - newwin - {new win}    { return newtab }
+  }
+  return {}
+}
+
+# THE DEFAULT a session with no destination of its own uses (user ruling
+# 2026-10-16: "default is Replace"): the rc variable `::ase_plot_dest`
+# (`set_ne` in xschem.tcl), empty or unset = Replace. Read live, so an
+# xschemrc and a --script rc both work. A value ase::plot_dest_norm does not
+# know falls back to Replace with ONE CIW warning per distinct bad value (it is
+# read on every status refresh, so an unthrottled warning would flood).
+proc ase::plot_dest_default {} {
+  variable plot_dest_warned
+  set raw {}
+  if {[info exists ::ase_plot_dest]} { set raw $::ase_plot_dest }
+  if {[string trim $raw] eq {}} { return replace }
+  set code [ase::plot_dest_norm $raw]
+  if {$code ne {}} { return $code }
+  if {![info exists plot_dest_warned] || $plot_dest_warned ne $raw} {
+    set plot_dest_warned $raw
+    catch {::ase::echo "ase: bad ase_plot_dest '$raw', using Replace (use append, replace, newsubwin or newwin)" error}
+  }
+  return replace
+}
+
+# The session's plot destination for `~`, the run-end auto-plot and Direct
+# Plot (R-OUT15): append | replace | newsubwin | newtab. `{}` or absent means
+# "no choice of its own" and reads ase::plot_dest_default; an unknown value
+# (a hand-edited file) reads the default too.
 proc ase::plot_dest_of {st} {
   set v {}
-  catch {set v [string tolower [string trim [dict get $st plot_dest]]]}
-  if {$v in {append newsubwin newtab}} { return $v }
-  return replace
+  catch {set v [dict get $st plot_dest]}
+  set code [ase::plot_dest_norm $v]
+  if {$code ne {}} { return $code }
+  return [ase::plot_dest_default]
 }
 
 # Load a state file -> dict merged OVER the defaults (loaded values win,

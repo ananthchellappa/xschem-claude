@@ -716,6 +716,136 @@ check "R8e a bench carrying BOTH the committed output row named id and an\
 
 } iderr]} { check {ID0 section R8 ran to the end} "RAISED:$iderr" {} }
 
+# --- RC: ASE-L'S DEFAULT PLOT DESTINATION FROM THE rc (issue 1663's ruling) --
+# User ruling 2026-10-16: "Direct Plot follows the drop-down; default is
+# Replace. When user changes it, ensure there is logging in CIW so user knows
+# what to put in the rc file". The rc variable is `ase_plot_dest`
+# (ase::plot_dest_default). Both arms, no display: sessions are opened with
+# ase::session_open on a scratch copy of the committed-shape state, which
+# carries no plot_dest line (RC0 asserts that, so RC1 cannot pass by reading
+# a saved value). ase::echo is spied by rename for the CIW rows.
+#   RC1  a session with no saved choice starts on the rc value, each spelling
+#   RC2  a session that SAVED a choice keeps it whatever the rc says
+#   RC3  under a non-Replace rc, picking Replace is WRITTEN OUT and survives a
+#        save and reopen; picking the rc value back stores {} (clean)
+#   RC4  a garbage rc value is Replace with ONE CIW warning per bad value
+#   RC5  the CIW line's exact text, and its rc word read back as the rc value
+#        lands on the same destination (the printed advice works)
+#   RC6  a programmatic set and a Revert print NO CIW line
+if {[catch {
+  set rcst [file join $scratch rc_fixture.state]
+  file copy -force $clonestate $rcst
+  set rckey [ase::session_key rc_lib rc_cell rc_view]
+  set f [open $rcst r] ; set rcbody [read $f] ; close $f
+  check "RC0 fixture: the committed-shape state carries no plot_dest line" \
+    [list [string first plot_dest $rcbody] \
+          [expr {[info commands ::ase::ui::set_plot_dest] ne {}}]] {-1 1}
+  set ::rc_said {}
+  rename ::ase::echo ::rc_echo_real
+  proc ::ase::echo {msg {tag {}}} { lappend ::rc_said $msg ; return 1 }
+  proc rc_fresh {raw} {
+    set ::ase_plot_dest $raw
+    catch {ase::session_close $::rckey}
+    ase::session_open $::rckey $::rcst
+    return [ase::ui::plot_dest $::rckey]
+  }
+  set rc1 {}
+  foreach raw {{} append replace newsubwin newwin {New Win} newtab { APPEND }} {
+    lappend rc1 [rc_fresh $raw] [ase::plot_dest_of [ase::state_default]]
+  }
+  check "RC1 a session with no saved choice starts on ase_plot_dest (empty = Replace; codes, labels, any case)" \
+    $rc1 [list replace replace append append replace replace newsubwin newsubwin \
+          newtab newtab newtab newtab newtab newtab append append]
+  check "RC1 ...and no valid value warned" $::rc_said {}
+
+  set rc2 {}
+  foreach saved {newsubwin replace append} {
+    set p [file join $scratch rc_saved_$saved.state]
+    set st [ase::state_load $rcst]
+    dict set st plot_dest $saved
+    ase::state_save $p $st
+    foreach raw {append newwin} {
+      set ::ase_plot_dest $raw
+      catch {ase::session_close $rckey}
+      ase::session_open $rckey $p
+      lappend rc2 [ase::ui::plot_dest $rckey]
+    }
+  }
+  check "RC2 a session that saved a choice keeps it whatever ase_plot_dest says" \
+    $rc2 {newsubwin newsubwin replace replace append append}
+
+  set p3 [file join $scratch rc_rt.state]
+  file copy -force $rcst $p3
+  set ::ase_plot_dest append
+  catch {ase::session_close $rckey}
+  ase::session_open $rckey $p3
+  set a0 [ase::ui::plot_dest $rckey]
+  ase::ui::set_plot_dest $rckey replace
+  set a1 [list [ase::state_get [ase::session_state $rckey] plot_dest] \
+               [ase::session_dirty $rckey]]
+  ase::session_save $rckey
+  catch {ase::session_close $rckey}
+  ase::session_open $rckey $p3
+  set a2 [ase::ui::plot_dest $rckey]
+  ase::ui::set_plot_dest $rckey append
+  set a3 [list [ase::state_get [ase::session_state $rckey] plot_dest] \
+               [ase::session_dirty $rckey]]
+  check "RC3 under ase_plot_dest=append: Replace is WRITTEN OUT, survives save and reopen, and picking Append back stores {} (no plot_dest line, dirty again only against the saved replace)" \
+    [list $a0 $a1 $a2 $a3] {append {replace 1} replace {{} 1}}
+  set ::ase_plot_dest {}
+  catch {ase::session_close $rckey}
+  ase::session_open $rckey $rcst
+  ase::ui::set_plot_dest $rckey append
+  ase::ui::set_plot_dest $rckey replace
+  check "RC3 with no rc value, Replace is still stored as {} and the session is clean" \
+    [list [ase::state_get [ase::session_state $rckey] plot_dest] \
+          [ase::session_dirty $rckey]] {{} 0}
+
+  set ::rc_said {}
+  set g1 [list [rc_fresh bogus] [ase::ui::plot_dest $rckey] \
+               [ase::plot_dest_of [ase::state_default]]]
+  set n1 [llength $::rc_said]
+  set w1 [lindex $::rc_said 0]
+  set g2 [rc_fresh {new tab please}]
+  check "RC4 a garbage ase_plot_dest is Replace" [list $g1 $g2] \
+    {{replace replace replace} replace}
+  check "RC4 ...with ONE CIW warning per distinct bad value, naming the variable and the fallback" \
+    [list $n1 [llength $::rc_said] \
+          [string match "*bad ase_plot_dest 'bogus'*Replace*" $w1]] {1 2 1}
+
+  set rc5 {}
+  set rc5rt {}
+  foreach code {append replace newsubwin newtab} {
+    set m [ase::ui::plot_dest_msg $code]
+    lappend rc5 $m
+    regexp {set ase_plot_dest (\S+)\)$} $m -> word
+    set ::ase_plot_dest $word
+    lappend rc5rt [ase::plot_dest_default]
+  }
+  set ::ase_plot_dest {}
+  check "RC5 the CIW line names the choice and the exact rc line" $rc5 \
+    [list {ase: plot destination = Append (xschemrc: set ase_plot_dest append)} \
+          {ase: plot destination = Replace (xschemrc: set ase_plot_dest replace)} \
+          {ase: plot destination = New SubWin (xschemrc: set ase_plot_dest newsubwin)} \
+          {ase: plot destination = New Win (xschemrc: set ase_plot_dest newwin)}]
+  check "RC5 ...and each printed rc line, set, gives that same destination" \
+    $rc5rt {append replace newsubwin newtab}
+
+  set ::rc_said {}
+  rc_fresh {}
+  set r6 [ase::ui::set_plot_dest $rckey newsubwin]
+  ase::session_revert $rckey
+  check "RC6 a programmatic set (a replayed log, a script) and a Revert print NO CIW line" \
+    [list $r6 [ase::ui::plot_dest $rckey] $::rc_said] {newsubwin replace {}}
+  catch {ase::session_close $rckey}
+  set ::ase_plot_dest {}
+} rcerr]} { check {RC00 section RC ran to the end} "RAISED:$rcerr" {} }
+if {[info commands ::rc_echo_real] ne {}} {
+  catch {rename ::ase::echo {}}
+  rename ::rc_echo_real ::ase::echo
+}
+set ::ase_plot_dest {}
+
 # --- T-E BOOKKEEPING: WHY THE LEGS DID OR DID NOT RUN ------------------------
 # doc/claude/specs/results_selection.md section 12: T-E is the batch's ONE test
 # that can be green BY NOT HAVING RUN -- G10/G11 self-skip without a usable
@@ -1047,8 +1177,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
       # --- G6: Direct Plot on the D wire -> ONE new graph with v(d) ----------
       # Direct Plot follows the session's plot-destination drop-down since
-      # fc4c4ab9 (R-OUT15), and its default is Replace -- a default the user
-      # has NOT ratified (issue 1663, open ruling). G6..G10 are about the
+      # fc4c4ab9 (R-OUT15), and its default is Replace (ratified 2026-10-16,
+      # issue 1663; rc `ase_plot_dest`, band RC). G6..G10 are about the
       # PERSISTENCE of a two-graph layout, not about that default, so the
       # session is put on Append explicitly here (the test_ase_plot P4 /
       # test_wave_modes MG12 idiom) and this row encodes no default at all.

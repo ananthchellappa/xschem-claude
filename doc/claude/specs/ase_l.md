@@ -1105,10 +1105,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
     session state, moves the control and logs that one line on a change only. Load State and
     Revert move it with the state (`ase::ui::refresh_status`).
   - **The state key** is `plot_dest`, the tenth member of `ase::omit_if_empty`: `{}` (absent)
-    means the default **Replace**, and a Replace chosen in the control is stored as `{}` too,
-    so choosing it back leaves a saved session clean. Any other value is `append`,
-    `newsubwin` or `newtab` (`ase::plot_dest_of`; anything unknown reads Replace). No committed
-    `.state` file changes.
+    means the default (the rc's `ase_plot_dest`, **Replace** when unset), and a choice equal
+    to that default is stored as `{}` too, so choosing it back leaves a saved session clean.
+    Any other value is `append`, `replace`, `newsubwin` or `newtab` (`ase::plot_dest_of`;
+    anything unknown reads the default). No committed `.state` file changes.
   - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step; the
     survivor keeps the run's strip view, so a zoom survives a re-run), then R-OUT14's auto
     strips. **Append**: the viewer's append rule in the target subwindow
@@ -1125,7 +1125,20 @@ They should not influence the input to the simulator."* ADE-L is the floor
     `wviewer::plot_signals` for each batch (one per ESC). ⚠ A user-visible change: under the
     default Replace each Direct Plot batch now empties the target subwindow first, where it
     used to append through the viewer's own (now retired) setting; pick Append to accumulate.
-    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k. Unratified: owed `rule/1663` (issue 1663).
+    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k. Ratified by
+    the user 2026-10-16 (issue 1663, option (a)): *"Direct Plot follows the drop-down; default
+    is Replace."*
+  - **The rc default** (user 2026-10-16, issue 1663): `ase_plot_dest` (`set_ne` in
+    `src/xschem.tcl`) = `append` | `replace` | `newsubwin` | `newwin` (labels and any case
+    accepted); empty = Replace; anything else = Replace with ONE CIW warning per bad value
+    (`ase::plot_dest_default`). A session that saved no choice starts on it; a saved choice
+    wins. A choice equal to the rc default is stored as `{}`; any other is written out.
+  - **The CIW line** (user 2026-10-16: *"ensure there is logging in CIW so user knows what to
+    put in the rc file"*): a user change of the drop-down (`ase::ui::plot_dest_picked`) prints
+    one line, `ase: plot destination = <label> (xschemrc: set ase_plot_dest <word>)`.
+    `ase::ui::set_plot_dest` itself (a replayed log, a script), Load State and Revert print
+    none. Band RC of `tests/headless/test_ase_persist.tcl`, rows PD4/PD5 of
+    `tests/headless/test_ase_window.tcl`.
   - Fenced by band PO16 (both arms) and PR12 (display arm, the real `tb_bandgap` bench, each
     choice picked by a real `<<ComboboxSelected>>` and `~` pressed by a real click) of
     `tests/headless/test_ase_plot_outputs.tcl`, and rows PD1-PD6 of

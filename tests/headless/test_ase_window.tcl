@@ -3,7 +3,9 @@
 #   PD1-PD6 (display, R-OUT15) the status bar's plot-destination drop-down:
 #          read-only, the four choices, packed at the RIGHT end (by pixels),
 #          Replace on a fresh session, a real <<ComboboxSelected>> writes and
-#          dirties the session and logs one line, Revert moves it back, and a
+#          dirties the session and logs one line and prints ONE CIW line
+#          carrying the rc line (`set ase_plot_dest <word>`; issue 1663's
+#          ruling), Revert moves it back and prints none, and a
 #          520px window clips the text segments and never it. Red proofs
 #          (2026-10-15): packed -side left -> PD2 only; refresh_status not
 #          syncing it -> PD5 only.
@@ -4327,10 +4329,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set ::pd_log {}
     rename ::ase::ui::log_action ::pd_log_orig
     proc ::ase::ui::log_action {line} { lappend ::pd_log $line }
+    ## The CIW channel (ase::echo) spied too: the user ruling of 2026-10-16
+    ## (issue 1663) asks a user change to say what to put in the rc.
+    set ::pd_said {}
+    rename ::ase::echo ::pd_echo_orig
+    proc ::ase::echo {msg {tag {}}} { lappend ::pd_said $msg ; return 1 }
     set ux_d0 [ase::session_dirty $uxkey]
     $uxd set {New SubWin}
     event generate $uxd <<ComboboxSelected>>
     update
+    set pd_said4 $::pd_said
+    ## the SAME choice again is no change, so it prints nothing
+    event generate $uxd <<ComboboxSelected>>
+    update
+    set pd_said4b $::pd_said
     check "PD4 a real selection writes the session state and dirties it (title marked)" \
       [list $ux_d0 [ase::ui::plot_dest $uxkey] [ase::session_dirty $uxkey] \
             [string match {* \*} [wm title $uxtop]]] {0 newsubwin 1 1}
@@ -4338,10 +4350,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       $::pd_log [list [list ase::ui::set_plot_dest $uxkey newsubwin]]
     rename ::ase::ui::log_action {}
     rename ::pd_log_orig ::ase::ui::log_action
+    set ::pd_said {}
     ase::session_revert $uxkey
     update
+    set pd_said5 $::pd_said
+    rename ::ase::echo {}
+    rename ::pd_echo_orig ::ase::echo
+    check "PD4 ...and prints exactly ONE CIW line naming the choice and the rc line that makes it the default" \
+      $pd_said4 [list {ase: plot destination = New SubWin (xschemrc: set ase_plot_dest newsubwin)}]
+    check "PD4 ...and re-selecting the same choice prints nothing more" \
+      [llength $pd_said4b] 1
     check "PD5 Revert puts the drop-down back with the state" \
       [list [$uxd get] [ase::session_dirty $uxkey]] {Replace 0}
+    check "PD5 ...and a restore prints NO CIW line" $pd_said5 {}
     catch {wm geometry $uxtop 520x520}
     update ; after 250 ; update
     check "PD6 squeezed to 520px the drop-down keeps its full width (the text segments clip first)" \

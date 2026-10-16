@@ -12755,13 +12755,19 @@ proc ase::ui::plot_dest_label {code} {
 }
 # a label OR a code -> the code; unknown -> {} (the caller refuses). PURE.
 proc ase::ui::plot_dest_code {v} {
-  switch -exact -- [string tolower [string trim $v]] {
-    append                         { return append }
-    replace                        { return replace }
-    newsubwin - {new subwin}       { return newsubwin }
-    newtab - newwin - {new win}    { return newtab }
-  }
-  return {}
+  return [ase::plot_dest_norm $v]
+}
+# code -> the word an rc spells it with (`set ase_plot_dest <word>`): the code,
+# except `newtab`, whose label is New Win. PURE.
+proc ase::ui::plot_dest_rc_word {code} {
+  if {$code eq {newtab}} { return newwin }
+  return $code
+}
+# The ONE CIW line a user change of the drop-down prints (user ruling
+# 2026-10-16: "ensure there is logging in CIW so user knows what to put in the
+# rc file"). PURE.
+proc ase::ui::plot_dest_msg {code} {
+  return "ase: plot destination = [ase::ui::plot_dest_label $code] (xschemrc: set ase_plot_dest [ase::ui::plot_dest_rc_word $code])"
 }
 # The session's destination (ase::plot_dest_of its state).
 proc ase::ui::plot_dest {key} {
@@ -12775,10 +12781,13 @@ proc ase::ui::log_action {line} {
 }
 
 # Set the session's destination. `req` is a label or a code. Writes the state
-# (Replace, the default, as `{}` -- ase::omit_if_empty -- so choosing it back
-# leaves a saved session clean), moves the drop-down, and logs
-# `ase::ui::set_plot_dest <key> <code>` ON A CHANGE ONLY (the set_plot_mode
-# rule). Returns the code, or {} for an unknown session or request.
+# (a choice equal to ase::plot_dest_default as `{}` -- ase::omit_if_empty -- so
+# choosing it back leaves a saved session clean; any other choice, Replace
+# included when the rc default is not Replace, written out), moves the
+# drop-down, and logs `ase::ui::set_plot_dest <key> <code>` ON A CHANGE ONLY
+# (the set_plot_mode rule). Prints NO CIW line: that is the user gesture's
+# (ase::ui::plot_dest_picked), so a replayed log, a script and a restore are
+# silent. Returns the code, or {} for an unknown session or request.
 proc ase::ui::set_plot_dest {key req} {
   if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
   set code [ase::ui::plot_dest_code $req]
@@ -12789,20 +12798,25 @@ proc ase::ui::set_plot_dest {key req} {
   set cur [ase::ui::plot_dest $key]
   if {$code eq $cur} { return $cur }
   set st [ase::session_state $key]
-  dict set st plot_dest [expr {$code eq {replace} ? {} : $code}]
+  dict set st plot_dest [expr {$code eq [ase::plot_dest_default] ? {} : $code}]
   ase::session_update $key $st
   ase::ui::refresh_status $key
   ase::ui::log_action [list ase::ui::set_plot_dest $key $code]
   return $code
 }
 
-# <<ComboboxSelected>> on the status bar's drop-down.
+# <<ComboboxSelected>> on the status bar's drop-down: the USER's gesture, so
+# a real change also prints ase::ui::plot_dest_msg, once, in the CIW.
 proc ase::ui::plot_dest_picked {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
   set w [dict get $wins $key].status.dest
   if {![winfo exists $w]} { return }
-  ase::ui::set_plot_dest $key [$w get]
+  set before [ase::ui::plot_dest $key]
+  set code [ase::ui::set_plot_dest $key [$w get]]
+  if {$code ne {} && $code ne $before} {
+    catch {::ase::echo [ase::ui::plot_dest_msg $code]}
+  }
   catch {$w selection clear}
 }
 

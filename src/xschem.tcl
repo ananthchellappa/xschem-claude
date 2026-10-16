@@ -20044,10 +20044,21 @@ set_ne rdw_font_size 0
 set_ne calc_font_size 0
 ## The Calculator's plot destination (W13): its OWN setting, separate from
 ## ASE-L's status-bar drop-down (the viewer has none; user ruling 2026-10-16).
-## Empty = Append. A W13 label or a code (`calc::w13_saved`, src/calculator.tcl);
-## W13 writes it, so the choice survives a Calculator close for the session,
-## and an rc can preset it.
+## Empty = Append. A W13 label or a code -- append, replace, newstrip,
+## newsubwin, newtab (`calc::w13_saved`, src/calculator.tcl); anything else is
+## Append with one CIW warning. W13 writes it, so the choice survives a
+## Calculator close for the session, and an rc can preset it: choosing W13
+## prints the exact line in the CIW, e.g. `set calc_plot_dest replace`.
 set_ne calc_plot_dest {}
+## ASE-L's DEFAULT plot destination for `~`, the run-end auto-plot and Direct
+## Plot (R-OUT15; user ruling 2026-10-16, "default is Replace"): append,
+## replace, newsubwin or newwin. Empty = Replace; anything else is Replace with
+## one CIW warning (`ase::plot_dest_default`, src/ase.tcl). It is the starting
+## value of a session that saved no choice of its own; a session that saved one
+## keeps it. Read live, so an xschemrc or a --script rc may set it. Changing the
+## status-bar drop-down prints the exact line in the CIW, e.g.
+## `set ase_plot_dest append`.
+set_ne ase_plot_dest {}
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES

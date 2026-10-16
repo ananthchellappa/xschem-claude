@@ -1176,11 +1176,17 @@ cleared plots back.</li>
 Direct Plot, at the right end of its status bar: <b>Append</b>, <b>Replace</b>,
 <b>New SubWin</b>, <b>New Win</b> (a new tab here). It is saved with the session
 state. Its default is <b>Replace</b>, so each Direct Plot batch clears the
-target subwindow; pick <b>Append</b> to add to it.</p>
+target subwindow; pick <b>Append</b> to add to it. To start every new session
+on another choice, put it in your <code>xschemrc</code>:</p>
+<pre>set ase_plot_dest append   ;# append, replace, newsubwin or newwin</pre>
+<p>Changing the drop-down prints that exact line in the CIW. A session that saved
+its own choice keeps it.</p>
 
 <p>The Calculator's Plot drop-down is the Calculator's own setting. It offers
 the same five as the viewer, it is remembered while xschem runs, and changing
-it changes nothing in the viewer or in ASE-L (nor do they change it).</p>
+it changes nothing in the viewer or in ASE-L (nor do they change it). Its
+default is <b>Append</b>; changing it prints the rc line in the CIW, e.g.</p>
+<pre>set calc_plot_dest replace ;# append, replace, newstrip, newsubwin or newtab</pre>
 
 <h3 id="browser-loc">11.4 The Location bar</h3>
 

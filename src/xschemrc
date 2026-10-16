@@ -767,6 +767,17 @@
 #### Default: not enabled (0)
 # set fix_mouse_coord 0
 
+###########################################################################
+#### ASE-L AND CALCULATOR PLOT DESTINATION
+###########################################################################
+#### Where ASE-L's ~, run-end plot and Direct Plot go in a new session:
+#### append, replace, newsubwin or newwin. Default: replace.
+#### Changing ASE-L's status-bar drop-down prints this line in the CIW.
+# set ase_plot_dest append
+#### The Calculator's Plot destination: append, replace, newstrip,
+#### newsubwin or newtab. Default: append.
+# set calc_plot_dest replace
+
 #### redefine some variables to emulate Cadence UI / bindkeys
 # source /home/schippes/share/xschem/cadence_style_rc
 

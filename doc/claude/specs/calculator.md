@@ -1642,9 +1642,14 @@ below are the ones a caller cannot answer for itself and so must not have to.
   and is passed per call; the landing policy is the viewer's and is not reimplemented.
   **W13 is the Calculator's OWN setting** (user ruling 2026-10-16, a Cadence fact: *"My
   memory says calculator has its own setting. But ViVA doesn't."*). Choosing it says
-  `Plot destination: <label>.` and stores the label in `::calc_plot_dest` (`set_ne` in
-  `xschem.tcl`, like `calc_font_size`), so a Calculator closed and rebuilt in the same
-  session shows it again (`calc::w13_saved`); an rc may preset it. It does not move the
+  `Plot destination: <label> (xschemrc: set calc_plot_dest <code>).` -- in the status line
+  and, through `calc::ciw_say`, as ONE CIW line, so the user knows what to put in the rc
+  (user ruling 2026-10-16, issue 1663) -- and stores the label in `::calc_plot_dest`
+  (`set_ne` in `xschem.tcl`, like `calc_font_size`), so a Calculator closed and rebuilt in
+  the same session shows it again (`calc::w13_saved`, which prints nothing); an rc may
+  preset it (`append`, `replace`, `newstrip`, `newsubwin`, `newtab`, labels and any case;
+  empty = Append; anything else = Append with ONE CIW warning per bad value). Band PL6 of
+  `test_calc_plot`. It does not move the
   viewer (which has no setting) or ASE-L's status-bar drop-down, and neither of those
   moves it. The on-disk store R704 names is not built; the destination joins it when it
   is. (This retired the 2026-10-15 design in which W13 mirrored a per-window viewer

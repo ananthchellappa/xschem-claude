@@ -727,6 +727,14 @@ unset _ut
 # scientific notation, uncomment:
 # set ase_eng_notation 0
 
+# ASE-L's plot destination for ~, the run-end plot and Direct Plot in a new
+# session (default Replace): append, replace, newsubwin or newwin. The
+# Calculator's (default Append): append, replace, newstrip, newsubwin or newtab.
+# Changing either drop-down prints the matching line in the CIW. Use `set`:
+# xschem.tcl has already run set_ne on both by the time this rc is sourced.
+# set ::ase_plot_dest append
+# set ::calc_plot_dest replace
+
 
 # --- CIW text size ----------------------------------------------------------
 # The CIW is where every notice, echo and command result lands, and it ships at

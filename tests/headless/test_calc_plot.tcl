@@ -104,7 +104,12 @@
 #        close and rebuild (`::calc_plot_dest`).  Retires PL5e/PL5f/PL5g
 #        (rows PX1-PX5), which pinned the W13 <-> viewer mirroring.
 #   PL6  `calc::dest_changed` STORES the pick in `::calc_plot_dest`, says
-#        `Plot destination: X.` with or without a viewer, and logs nothing.
+#        `Plot destination: X (xschemrc: set calc_plot_dest <code>).` with or
+#        without a viewer -- ONE CIW line, the rc line issue 1663's ruling
+#        asks for -- and logs nothing.  A rebuild seeded from
+#        `::calc_plot_dest` (each spelling) starts W13 on it and prints NO
+#        line; a garbage value is Append with ONE CIW warning per bad value;
+#        each printed rc word, set, seeds the same choice.
 #   PL7  R607 on the PLOT path: an unresolvable token is NAMED, an over-long
 #        expression is refused by COUNT (which `wviewer::add_trace` alone does
 #        NOT catch -- it returns success while the engine writes nothing), and
@@ -914,7 +919,9 @@ group PL5d {
               [string match {*append*} $saidp]] {1 1 0}
     # ...and the NON-VACUITY of the sentence rows: Append in multi mode says
     # nothing extra, so the clause above tracks the destination and not the mode.
-    set saida [destset {Append}]
+    # The rc clause (issue 1663's ruling) spells the code `append` itself, so
+    # it is cut before the clause test; the rows above still see it whole.
+    set saida [regsub { \(xschemrc: [^)]*\)} [destset {Append}] {}]
     pcall bufset {vf(div)}
     set saidq [press .calc.mode.plot]
     check "PL5d non-vacuity: Append in the same mode carries NO extra clause, so the clause belongs to Replace and not to multi mode as such" \
@@ -959,7 +966,7 @@ group PL5i {
     check "PL5i ⚠ changing W13 to New Tab: the Calculator says so and remembers it, the ASE-L session's destination is unchanged, and the viewer holds no destination at all" \
         [list $saidw [pcall set ::calc_plot_dest] [pcall ase::ui::plot_dest $::tok] \
               [info exists ::wviewer::dest] [info procs ::wviewer::plot_dest]] \
-        [list {Plot destination: New Tab.} {New Tab} $ase0 0 {}]
+        [list {Plot destination: New Tab (xschemrc: set calc_plot_dest newtab).} {New Tab} $ase0 0 {}]
     # a plot from a source with no choice (the viewer's own door) still appends
     # into the target strip: no new tab, one more trace on the target strip
     set gi [pcall wviewer::target_strip $::tok]
@@ -1050,12 +1057,57 @@ group PL6 {
     pcall rename wviewer::__pl6_real_log wviewer::log_action
     check "PL6 choosing a destination stores it as the Calculator's own (::calc_plot_dest holds the label)" \
         $got Replace
-    check "PL6 ...and says so, naming the destination" \
-        $said {Plot destination: Replace.}
+    check "PL6 ...and says so, naming the destination and the rc line that makes it the default" \
+        $said {Plot destination: Replace (xschemrc: set calc_plot_dest replace).}
     check "PL6 ...and writes no viewer log line: the viewer has no setting to change" \
         $::pl6_log {}
     check "PL6 ...and the sentence table has no 'applied when a viewer is open' arm left" \
         [pcall calc::plot_msg destpend Replace] {}
+    # the CIW: one line per user change, none per rebuild, one per bad rc value
+    set ::pl6_ciw {}
+    pcall rename ::calc::ciw_say ::calc::__pl6_real_ciw
+    proc ::calc::ciw_say {msg} { lappend ::pl6_ciw $msg ; return {} }
+    destset {New SubWin}
+    set ciw1 $::pl6_ciw
+    set ::pl6_ciw {}
+    set seeded {}
+    foreach raw {replace {New SubWin} newtab {new strip} APPEND {}} {
+        set ::calc_plot_dest $raw
+        pcall calc::close
+        update idletasks
+        pcall calc::open
+        update idletasks
+        lappend seeded [pcall .calc.mode.dest get]
+    }
+    set ciw2 $::pl6_ciw
+    set ::pl6_ciw {}
+    set ::calc_plot_dest bogus
+    pcall calc::close ; update idletasks ; pcall calc::open ; update idletasks
+    set g1 [pcall .calc.mode.dest get]
+    pcall calc::close ; update idletasks ; pcall calc::open ; update idletasks
+    set ciw3 $::pl6_ciw
+    set rt {}
+    foreach lab [wviewer::dest_labels] {
+        set m [pcall calc::plot_msg dest $lab [wviewer::dest_norm $lab]]
+        set word {}
+        regexp {set calc_plot_dest (\S+)\)\.$} $m -> word
+        set ::calc_plot_dest $word
+        lappend rt [pcall calc::w13_saved]
+    }
+    pcall rename ::calc::ciw_say {}
+    pcall rename ::calc::__pl6_real_ciw ::calc::ciw_say
+    check "PL6 ...and a user change prints exactly ONE CIW line, the sentence with the rc line" \
+        $ciw1 [list {Plot destination: New SubWin (xschemrc: set calc_plot_dest newsubwin).}]
+    check "PL6 a rebuild starts W13 on ::calc_plot_dest (codes, labels, any case; empty = Append)" \
+        $seeded [list Replace {New SubWin} {New Tab} {New Strip} Append Append]
+    check "PL6 ...and a rebuild prints NO CIW line" $ciw2 {}
+    check "PL6 a garbage calc_plot_dest is Append with ONE CIW warning naming it, however often it is read" \
+        [list $g1 [llength $ciw3] [string match "*calc_plot_dest 'bogus'*Append*" [lindex $ciw3 0]]] \
+        {Append 1 1}
+    check "PL6 each printed rc word, set as calc_plot_dest, seeds that same choice" \
+        $rt [wviewer::dest_labels]
+    set ::calc_plot_dest Append
+    pcall calc::close ; update idletasks ; pcall calc::open ; update idletasks
     destset {Append}
 }
 

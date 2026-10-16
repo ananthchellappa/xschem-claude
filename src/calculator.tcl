@@ -4217,7 +4217,7 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
         busy     { return {Plot: the result's waveform window is busy. Try again.} }
         failed   { return "Plot failed: $a." }
         plotted  { return "Plotted $a ($b)." }
-        dest     { return "Plot destination: $a." }
+        dest     { return "Plot destination: $a (xschemrc: set calc_plot_dest $b)." }
     }
     return {}
 }
@@ -4266,11 +4266,24 @@ proc calc::plot_dest_req {} {
 # for the session.  It is the Calculator's OWN setting (user ruling 2026-10-16):
 # nothing in the viewer or ASE-L reads or writes it, and the Calculator reads
 # neither of theirs.  Answers a W13 LABEL, `Append` when unset or unrecognised.
+#
+# A non-empty value `wviewer::dest_norm` does not know (it folds anything to
+# `append`) is Append with ONE CIW warning per distinct bad value.
 proc calc::w13_saved {} {
+    variable w13_warned
     set v {}
     if {[info exists ::calc_plot_dest]} { set v $::calc_plot_dest }
     set lab Append
-    catch {set lab [wviewer::dest_label [wviewer::dest_norm $v]]}
+    set code append
+    catch {set code [wviewer::dest_norm $v]}
+    catch {set lab [wviewer::dest_label $code]}
+    set t [string tolower [string trim $v]]
+    if {$t ne {} && $code eq {append} && $t ne {append}} {
+        if {![info exists w13_warned] || $w13_warned ne $v} {
+            set w13_warned $v
+            catch {calc::ciw_say "Bad calc_plot_dest '$v', using Append (use append, replace, newstrip, newsubwin or newtab)."}
+        }
+    }
     return $lab
 }
 
@@ -11096,7 +11109,11 @@ proc calc::build_mode {} {
     pack .calc.mode.table -side left -padx {3 0} -pady 1
 }
 
-# W13's selection, PLAN 3.3.  R506: it speaks.  The pick is the Calculator's
+# W13's selection, PLAN 3.3.  R506: it speaks, and the sentence carries the
+# exact rc line that makes the pick the default (user ruling 2026-10-16), so
+# its CIW copy (calc::status -> calc::ciw_say) is the ONE line a user change
+# prints; `.calc.mode.dest set` (a rebuild) fires no <<ComboboxSelected>> and
+# prints none.  The pick is the Calculator's
 # OWN setting (user ruling 2026-10-16): it is stored in `::calc_plot_dest`
 # (`calc::w13_saved` reads it back when the window is rebuilt) and touches no
 # viewer and no ASE-L session, so it says the same sentence whether or not a
@@ -11110,8 +11127,10 @@ proc calc::dest_changed {} {
     if {$lab eq {}} { return {} }
     set ::calc_plot_dest $lab
     set shown $lab
-    catch {set shown [wviewer::dest_label [wviewer::dest_norm $lab]]}
-    return [calc::status [calc::plot_msg dest $shown]]
+    set code $lab
+    catch {set code [wviewer::dest_norm $lab]}
+    catch {set shown [wviewer::dest_label $code]}
+    return [calc::status [calc::plot_msg dest $shown $code]]
 }
 
 # ---------------------------------------------------------------------------

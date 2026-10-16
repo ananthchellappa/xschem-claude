@@ -1401,7 +1401,7 @@ update idletasks
 # band PL6 of tests/headless/test_calc_plot.tcl measures the store.
 check "S18 choosing a destination says so, with no viewer open, and remembers it" \
     [list [pcall .calc.status.msg get] [pcall set ::calc_plot_dest]] \
-    {{Plot destination: Replace.} Replace}
+    {{Plot destination: Replace (xschemrc: set calc_plot_dest replace).} Replace}
 pcall .calc.mode.dest set {Append}
 set ::calc_plot_dest {}
 
