@@ -988,7 +988,7 @@ being drawn in the outgoing raw's window.
 ## 13. Persistence (item 15)
 
 `wviewer::browser_state` / `browser_state_apply` add a gated **`browser`** key to the
-viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `dest`,
+viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `dest` (a fossil, below),
 `open` (expanded node ids), `sel`, `hist`.
 
 * `{}` in, `0` out — the **back-compat arm**: a state file with no `browser` key leaves the
@@ -997,10 +997,13 @@ viewer's `snapshot` / `restore`. Fields: `shown`, `width`, `search`, `filter`, `
   recomputes it); the tree state goes AFTER it too (that call repopulates the tree from
   `xschem raw list` and wipes both fields). Both go only when the sidebar restores **shown**
   — D6 again: there is no populated tree while it is hidden.
-* It writes `dest` and `browser` **directly** rather than through `set_plot_dest` /
-  `browser_toggle`, which both `log_action`: a rebuild must not fill the replay log with
-  lines nobody typed. The VALUE still goes through `dest_norm`, so a garbage `dest` in a
-  hand-edited state file lands on the harmless policy (`append`).
+* It writes `browser` **directly** rather than through `browser_toggle`, which
+  `log_action`s: a rebuild must not fill the replay log with lines nobody typed.
+* `dest` is a **fossil** since the user ruling of 2026-10-16 (ViVA has no destination
+  setting; `doc/claude/specs/waveform_viewer_subwindows.md` §16): `browser_state` always
+  writes it as `append` so older readers still find the key, and `browser_state_apply`
+  **reads past** it, so a state file written before the ruling (whatever its `dest`) loads
+  unchanged and restores no destination, because the viewer has none.
 * `browser_width`'s `want` parameter **widened** the proc, it did not replace it: `{}` is
   literally the pre-item-15 path, and a positive integer replaces the derived base and then
   takes **the same cap and floor**. So a restored width cannot exceed 45% of a toplevel that

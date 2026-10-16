@@ -1046,7 +1046,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       } cuerr]} { check {CU0 section G5 ran to the end} "RAISED:$cuerr" {} }
 
       # --- G6: Direct Plot on the D wire -> ONE new graph with v(d) ----------
+      # Direct Plot follows the session's plot-destination drop-down since
+      # fc4c4ab9 (R-OUT15), and its default is Replace -- a default the user
+      # has NOT ratified (issue 1663, open ruling). G6..G10 are about the
+      # PERSISTENCE of a two-graph layout, not about that default, so the
+      # session is put on Append explicitly here (the test_ase_plot P4 /
+      # test_wave_modes MG12 idiom) and this row encodes no default at all.
+      # The choice is session state, so G7 saves it and G8 restores it.
       if {[catch {
+      catch {ase::ui::set_plot_dest $key append}
+      check "G6 fixture: the session's destination is Append (issue 1663)" \
+        [ase::ui::plot_dest $key] append
       set outs_snap [ase::state_get [ase::session_state $key] outputs]
       set pre_esc [bind $cv <Key-Escape>]
       $top.mb.results invoke {Direct Plot}
