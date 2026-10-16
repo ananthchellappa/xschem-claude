@@ -49,11 +49,19 @@
 #         subwindow inherits, close-to-one and Clear All fold, plots follow it,
 #         undo does not revert it), clear_target_subwin (Ctrl-Shift-D), the grid
 #         per subwindow (Ctrl-Shift-G, Ctrl-G inverts each, inherit, fold).
+#   SWV*/SWS*/SWE*  both arms: undo / redo of a close brings every subwindow
+#         back with its OWN mode and grid (the close folded the survivor's into
+#         the window's own); a change made after the snapshot still wins; a
+#         change is no undo step. The flat state's `grid` key (written only
+#         off the rc default) and its reader. Ctrl-Shift-4's echo names the
+#         target subwindow with two or more.
 #   SWK*  DISPLAY -- the same in the real window: Options > Plot Mode and the
 #         status bar following real clicks, real Ctrl-Shift-G / Ctrl-G on the
 #         rect `grid` tokens, the Grid checkbutton, Graph > SubWin Grid and
 #         Clear SubWin, a real Ctrl-Shift-D (and Caps Lock + Ctrl-d clearing
-#         nothing), undo, a new tab, tab switch, save / close / restore.
+#         nothing), undo, a new tab, tab switch, save / close / restore,
+#         Graph > Clear SubWin's -command (SWK12), a one-tab grid round trip
+#         (SWK13).
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -468,9 +476,12 @@ if {[catch {
     {{} {a b p} {1 1 2}}
   check "SWD5 ...the plan's own clear list was empty: plot_signals made NO clear_graph_traces call" \
     [llength $::swd_clears] 0
+  # the snapshot also stamps each subwindow's mode and grid (SWV*)
+  set u0 [lindex $::wviewer::undo_hist(__swd) 0 0]
   check "SWD5 ...ONE undo point, holding the pre-Replace subwindow" \
     [list [llength $::wviewer::undo_hist(__swd)] \
-          [expr {[lindex $::wviewer::undo_hist(__swd) 0 0] eq $pre}]] {1 1}
+          [expr {[lmap g $u0 {dict remove $g swmode swgrid}] eq $pre}] \
+          [lmap g $u0 {wviewer::dget $g swmode -}]] {1 1 {single single single}}
   swd_open [list [G a 1] [G c 2] [G d 2] [G e 2]] 2 multi
   check "SWD6 Replace under MULTI empties the target subwindow too (ruling 24's limit retired): one strip per signal, newest on top" \
     [list [pcall {wviewer::plot_signals __swd {p q} {} replace}] [swd_tr] [tags [swd_lay]]] \
@@ -758,6 +769,125 @@ if {[catch {
   pcall {wviewer::clear_all __swd}
   check "SWH8 Clear All keeps the TARGET's grid (off) as the window's own" \
     [list [llength [swd_lay]] [wviewer::grid_shown __swd] [wviewer::grid_base __swd]] {1 0 0}
+
+  # ---- SWV*: undo of a close restores each subwindow's OWN settings --------
+  # The close folds the survivor's value into the window's own (outside undo),
+  # so a restored subwindow that carried no key would read the NEW base. The
+  # real undo door (history_step), with the two Tk-side helpers stood in for.
+  foreach p {capture_live_graph_state wave_hilight_clear_set} {
+    rename ::wviewer::$p ::swv_orig_$p
+    proc ::wviewer::$p {args} { return 0 }
+  }
+  proc swv_modes {} {
+    set gs [swd_lay]
+    lmap r [wviewer::sw_runs $gs] {
+      wviewer::sw_prop_get $gs [lindex $r 0] swmode [wviewer::base_mode __swd]}
+  }
+  proc swv_grids {} {
+    set gs [swd_lay]
+    lmap r [wviewer::sw_runs $gs] {
+      wviewer::sw_prop_get $gs [lindex $r 0] swgrid [wviewer::grid_base __swd]}
+  }
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  set d0 [wviewer::history_depth __swd]
+  pcall {wviewer::close_subwin __swd 0}
+  set pre [list [wviewer::base_mode __swd] [swm_keys swmode]]
+  pcall {wviewer::undo __swd}
+  check "SWV1 undo of closing the single subwindow brings it back SINGLE beside the multi survivor" \
+    [list $d0 $pre [tags [swd_lay]] [swv_modes]] {{0 0} {multi -} {1 2} {single multi}}
+  check "SWV1 ...keys only where they differ from the window's own (multi): the restored one carries single" \
+    [list [wviewer::base_mode __swd] [swm_keys swmode]] {multi {single -}}
+  pcall {wviewer::redo __swd}
+  check "SWV2 redo closes it again: one subwindow, multi, no key" \
+    [list [tags [swd_lay]] [wviewer::plot_mode __swd] [swm_keys swmode]] {- multi -}
+  pcall {wviewer::undo __swd}
+  check "SWV2 ...and undo once more restores both as they were" [swv_modes] {single multi}
+
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  pcall {wviewer::close_subwin __swd 0}
+  set pre [wviewer::grid_base __swd]
+  pcall {wviewer::undo __swd}
+  check "SWV3 undo of closing the grid-on subwindow brings it back grid ON beside the grid-off survivor" \
+    [list $pre [swv_grids] [pcall {wviewer::strip_grids [swd_lay] [wviewer::grid_base __swd]}] [swm_keys swgrid]] \
+    {0 {1 0} {1 0} {1 -}}
+
+  # a setting changed AFTER the snapshot still wins for a subwindow present on
+  # both sides (outside undo), over the snapshot's own stamped value
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::set_plot_mode multi __swd}
+  pcall {wviewer::add_graph __swd}
+  set d1 [wviewer::history_depth __swd]
+  pcall {wviewer::set_plot_mode single __swd}
+  pcall {wviewer::grid_toggle_subwin {} __swd}
+  check "SWV4 a mode or grid change is not an undo step" \
+    [list $d1 [wviewer::history_depth __swd]] {{1 0} {1 0}}
+  pcall {wviewer::undo __swd}
+  check "SWV4 undo of a later edit keeps each subwindow's LIVE mode and grid" \
+    [list [tags [swd_lay]] [swv_modes] [swv_grids]] {{1 2} {single single} {1 0}}
+  foreach p {capture_live_graph_state wave_hilight_clear_set} {
+    rename ::wviewer::$p {}
+    rename ::swv_orig_$p ::wviewer::$p
+  }
+
+  # ---- SWS*: the one-tab state carries the window's own grid ----------------
+  # window_for answers for the model-only window (it asks winfo, absent here);
+  # the raw-selection reader wants a real context, and is not what is asserted
+  foreach p {window_for selected_rawfile} { rename ::wviewer::$p ::sws_orig_$p }
+  proc ::wviewer::window_for {token} {
+    if {$token eq {__swd}} { return .__swd }
+    return [::sws_orig_window_for $token]
+  }
+  proc ::wviewer::selected_rawfile {token} {
+    if {$token eq {__swd}} { return {} }
+    return [::sws_orig_selected_rawfile $token]
+  }
+  set rcsave [expr {[info exists ::wviewer_grid_show] ? [list $::wviewer_grid_show] : {}}]
+  set ::wviewer_grid_show 1
+  swd_open [list [G a]] 0 single
+  set s1 [pcall {wviewer::snapshot __swd {}}]
+  pcall {wviewer::grid_toggle 0 __swd}
+  set s0 [pcall {wviewer::snapshot __swd {}}]
+  check "SWS1 a one-tab state saves the window's grid when it differs from the rc default, and only then" \
+    [list [wviewer::dget $s1 open -] [dict exists $s1 grid] [wviewer::dget $s0 open -] [wviewer::dget $s0 grid -]] \
+    {1 0 1 0}
+  set ::wviewer_grid_show 0
+  swd_open [list [G a]] 0 single
+  pcall {wviewer::grid_toggle 1 __swd}
+  set s2 [pcall {wviewer::snapshot __swd {}}]
+  check "SWS1 ...rc default off, window on: grid 1" [wviewer::dget $s2 grid -] 1
+  if {$rcsave eq {}} { unset ::wviewer_grid_show } else { set ::wviewer_grid_show [lindex $rcsave 0] }
+  foreach p {window_for selected_rawfile} {
+    rename ::wviewer::$p {}
+    rename ::sws_orig_$p ::wviewer::$p
+  }
+  check "SWS2 the restore reader: a saved grid comes back, an absent or garbage one is no key (the rc default)" \
+    [lmap v [list [dict create grid 0] [dict create grid 1] [dict create] [dict create grid maybe]] \
+       {pcall {wviewer::state_grid $v}}] {0 1 {} {}}
+
+  # ---- SWE*: Ctrl-Shift-4's CIW echo names the target subwindow -------------
+  if {[info commands ::ase::plot_mode_for_current] ne {}} {
+    rename ::ase::session_for_current ::swe_orig_sfc
+    proc ::ase::session_for_current {args} { return [list __swd] }
+    set have_echo [expr {[info commands ::ase::echo] ne {}}]
+    if {$have_echo} { rename ::ase::echo ::swe_orig_echo }
+    proc ::ase::echo {msg args} { lappend ::swe_said $msg }
+    set ::swe_said {}
+    swd_open [list [G a 1] [G b 2]] 1 single
+    pcall {ase::plot_mode_for_current invert}
+    swd_open [list [G a]] 0 single
+    pcall {ase::plot_mode_for_current invert}
+    check "SWE1 Ctrl-Shift-4's echo says target subwindow with two or more, the old line with one" \
+      $::swe_said [list {ase: waveform viewer target subwindow plot mode = multi (__swd)} \
+                        {ase: waveform viewer plot mode = multi (__swd)}]
+    rename ::ase::echo {}
+    if {$have_echo} { rename ::swe_orig_echo ::ase::echo }
+    rename ::ase::session_for_current {}
+    rename ::swe_orig_sfc ::ase::session_for_current
+  } else {
+    check "SWE1 ase::plot_mode_for_current is loaded" missing present
+  }
 } swmerr]} { check "SWM* band ran to its end" "ERR:$swmerr" ok }
 swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
@@ -1752,6 +1882,18 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "SWK8 ...the cleared subwindow keeps its mode" [stmode] multi
   pcall {wviewer::undo $tok}
   check "SWK8 u brings the cleared plots back" [ltags] {1 2 2 2}
+  # SWK12: the menu entry's own -command, run as Tk would run it, with the
+  # target in subwindow 2 (which holds three strips)
+  lassign [mid 1] px py
+  pcall {wviewer::click_target $vdrw $px $py}
+  set ::sw_log {}
+  set cmd [pcall {$gm entrycget [$gm index {Clear SubWin}] -command}]
+  pcall {uplevel #0 $cmd}
+  check "SWK12 Graph > Clear SubWin's -command empties the TARGET subwindow only; subwindow 1 keeps a1" \
+    [list [ltags] [trx 0] [trx 1] [wviewer::target_index $tok]] {{1 2} a1 {} 1}
+  check "SWK12 ...one line, Clear SubWin's, and u brings the plots back" \
+    [list [lsearch -all -inline -glob $::sw_log {wviewer::clear*}] [pcall {wviewer::undo $tok}] [ltags]] \
+    [list [list [list wviewer::clear_target_subwin $tok]] 1 {1 2 2 2}]
   # ---- tabs and state ----
   # select_tab takes a tab ID, not an index
   set ntab [wviewer::dget [lindex [wviewer::tab_records $tok] [wviewer::tab_index $tok]] id {}]
@@ -1788,6 +1930,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $pre [stmode] $::wviewer::gridshow($tok) [wviewer::plot_mode $tok] [wviewer::grid_shown $tok]] \
     {{single 1} multi 0 multi 0}
 
+  # ---- SWK13: a ONE-tab state keeps the window's own grid (SW25) ----------
+  set rcsave [expr {[info exists ::wviewer_grid_show] ? [list $::wviewer_grid_show] : {}}]
+  set ::wviewer_grid_show 1
+  pcall {wviewer::close $tok}
+  set one [dict create open 1 sharedx 0 graphs [list [G a1]] mode single target 0]
+  pcall {wviewer::restore $tok [dict replace $one grid 0] {} {}}
+  set g0 [list [llength [wviewer::tab_records $tok]] [wviewer::grid_shown $tok]]
+  set snap [pcall {wviewer::snapshot $tok {}}]
+  pcall {wviewer::close $tok}
+  pcall {wviewer::restore $tok $snap {} {}}
+  set g1 [list [wviewer::dget $snap grid -] [wviewer::grid_shown $tok] [rprop 0 grid]]
+  pcall {wviewer::close $tok}
+  pcall {wviewer::restore $tok $one {} {}}
+  set g2 [list [wviewer::grid_shown $tok] [dict exists [pcall {wviewer::snapshot $tok {}}] grid]]
+  if {$rcsave eq {}} { unset ::wviewer_grid_show } else { set ::wviewer_grid_show [lindex $rcsave 0] }
+  check "SWK13 a one-tab state saved with the grid off restores it off; an old state (no key) reads the rc default" \
+    [list $g0 $g1 $g2] {{1 0} {0 0 0} {1 0}}
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -1804,7 +1966,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 144 } else { set expect 267 }
+if {$::arm eq {nogui}} { set expect 155 } else { set expect 281 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

@@ -20700,7 +20700,11 @@ proc ase::plot_mode_for_current {{mode invert}} {
   }
   set new [wviewer::set_plot_mode $mode $key]
   if {$new ne {}} {
-    catch {::ase::echo "ase: waveform viewer plot mode = $new ($key)"}
+    # SW22: with two or more subwindows the mode is the TARGET subwindow's
+    set what {plot mode}
+    if {[catch {wviewer::sw_count [dict get [wviewer::layout_for $key] graphs]} n]} { set n 1 }
+    if {$n > 1} { set what {target subwindow plot mode} }
+    catch {::ase::echo "ase: waveform viewer $what = $new ($key)"}
   }
   return $new
 }

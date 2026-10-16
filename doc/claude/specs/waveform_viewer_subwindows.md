@@ -259,8 +259,8 @@ tear-off. The n >= 5 grid is our extension of the user's rule. An older build
 reading a new state stacks all strips in one column. The plot mode and the grid
 are per SUBWINDOW (SW21, §16); an older build reading a new state uses the
 window's own value (`mode`, the layout `grid`) for every subwindow. The flat
-(one-tab) state still does not carry the window's own grid flag, as before
-SW21; a subwindow's grid that differs from it does ride its strips.
+(one-tab) state carries the window's own grid flag as `grid` only when it
+differs from the rc default (§16, Serialisation).
 
 ## 11. Recon corrections (verified at `948f8e86`)
 
@@ -500,15 +500,36 @@ share `grid_apply`, which logs the resolved state when every touched subwindow
 ends alike and `{}` (invert each) when not. `new_subwin` stamps the new subwindow
 with the target's values; `clear_all` makes the target's values the base.
 `state_apply` carries the live values across by subwindow id
-(`sw_props_carry`), so undo never reverts a setting.
+(`sw_props_carry`), so undo never reverts a setting of a subwindow that is still
+there, and a mode or grid change is never an undo step.
+
+**Undo of a close.** With two or more subwindows `state_snapshot` stamps every
+subwindow's mode and grid explicitly (`sw_props_stamp`), because a close to one
+folds the survivor's values into the window's own, outside undo. A subwindow
+only the snapshot has (the closed one) therefore comes back with its own values
+whatever the base became; `set_graphs` then drops keys equal to the base
+(`sw_props_trim`), so a key is still carried only where it differs. Declared
+limit: after a close to ONE subwindow the survivor has no subwindow id, so an
+undo of that close restores the survivor's values as they were at the close
+(a mode change made after it is not carried).
 
 **Push.** `regenerate` and `set_target_strip` end with `status_refresh` and
 `sync_grid_mirror`, so the status bar and the Grid checkbutton follow every
 target move.
 
 **Serialisation.** The flat and per-tab `mode` keys are the BASE; the
-per-subwindow values ride the graphs, so tabs, state files and undo carry them
-with no new key. An old state (no `swmode`) gives every subwindow its tab's mode.
+per-subwindow values ride the graphs, so tabs, state files and undo carry them.
+The window's own grid flag rides a per-tab record's `layout`; the flat (one-tab)
+state carries it as `grid` (0|1), written by `wviewer::snapshot` only when it
+differs from the rc default (`wviewer_grid_show`) and read by
+`wviewer::state_grid` in `wviewer::restore`. An absent or garbage `grid` leaves
+no layout key, which reads as the rc default, so an old state loads as before
+and a state at the default serialises byte-identically. An old state (no
+`swmode`) gives every subwindow its tab's mode.
+
+**Echo.** Ctrl-Shift-4 (`ase::plot_mode_for_current`) echoes
+`ase: waveform viewer target subwindow plot mode = <m> (<key>)` with two or more
+subwindows, and the old `ase: waveform viewer plot mode = <m> (<key>)` with one.
 
 **Keys.** `<Control-Shift-Key-D>` → `wviewer::clear_target_subwin_at`,
 `<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`, spelled with `Shift-`
@@ -525,8 +546,12 @@ checkbutton).
 
 **Rows.** `test_wave_subwindows` SWM1-SWM11, SWC1-SWC3, SWH1-SWH8 (both arms,
 model-only window; SWM9-SWM11 drive auto_plot_strips, predict_colors and
-paste) and SWK0-SWK11 (display: the Options entry, real clicks, real
-Ctrl-Shift-G / Ctrl-G / Ctrl-Shift-D, the Caps Lock state 4-7 matrix, the menu entries, tabs, save and
-restore). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
+paste), SWV1-SWV4 (undo/redo of a close restores each subwindow's own mode and
+grid; a later change still wins; a change is no undo step), SWS1-SWS2 (the flat
+`grid` key and its reader), SWE1 (the Ctrl-Shift-4 echo) and SWK0-SWK13
+(display: the Options entry, real clicks, real Ctrl-Shift-G / Ctrl-G /
+Ctrl-Shift-D, the Caps Lock state 4-7 matrix, the menu entries, Graph > Clear
+SubWin's `-command` (SWK12), tabs, save and restore, a one-tab grid round trip
+(SWK13)). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
 (`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite
 header.

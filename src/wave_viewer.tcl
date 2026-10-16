@@ -1883,8 +1883,13 @@ proc wviewer::set_graphs {token gs} {
   set gs [wviewer::sw_props_spread [wviewer::sw_normalize $gs]]
   # PER-SUBWINDOW SETTINGS (SW24): a tab back at ONE subwindow carries no
   # setting key; the survivor's values become the window's own, so closing the
-  # other subwindows keeps what the user set in the one that stays.
-  if {[llength [wviewer::sw_runs $gs]] <= 1} {
+  # other subwindows keeps what the user set in the one that stays. With two or
+  # more, a key equal to the window's own value is dropped (an undo snapshot
+  # stamps every subwindow, wviewer::state_snapshot).
+  if {[llength [wviewer::sw_runs $gs]] > 1} {
+    set gs [wviewer::sw_props_trim $gs [wviewer::base_mode $token] \
+              [wviewer::grid_base $token]]
+  } else {
     set fm [wviewer::sw_prop_get $gs 0 swmode {}]
     set fg [wviewer::sw_prop_get $gs 0 swgrid {}]
     if {$fm ne {} || $fg ne {}} {
@@ -4229,7 +4234,10 @@ proc wviewer::sw_clear_graphs {gs gi} {
 # Outside undo, like the window's own settings: wviewer::state_apply carries the
 # live values across by subwindow id (sw_props_carry). When a tab goes back to
 # ONE subwindow the survivor's values are folded into the base
-# (wviewer::set_graphs).
+# (wviewer::set_graphs). An undo snapshot of two or more subwindows stamps every
+# subwindow's values explicitly (sw_props_stamp), so a subwindow that only the
+# snapshot has -- one a close removed -- comes back with its own values whatever
+# the base became; set_graphs then trims keys equal to the base (sw_props_trim).
 
 # PURE: the value of subwindow setting `key` for the subwindow holding strip
 # `gi`: the first strip of that subwindow carrying the key decides (a strip
@@ -4275,6 +4283,44 @@ proc wviewer::sw_props_spread {gs} {
       set v [wviewer::sw_prop_get $gs $f $k {}]
       if {$v ne {}} { set gs [wviewer::sw_prop_put $gs $f $k $v {}] }
     }
+  }
+  return $gs
+}
+
+# PURE: `gs` with every `swmode` / `swgrid` key that equals the window's own
+# value (`bmode` / `bgrid`) removed, so a key is carried only where it differs.
+proc wviewer::sw_props_trim {gs bmode bgrid} {
+  set out {}
+  foreach G $gs {
+    if {![catch {dict size $G}]} {
+      if {[dict exists $G swmode] && [dict get $G swmode] eq $bmode} {
+        set G [dict remove $G swmode]
+      }
+      if {[dict exists $G swgrid] && [string is boolean -strict [dict get $G swgrid]] \
+          && [string is boolean -strict $bgrid] \
+          && ([dict get $G swgrid] ? 1 : 0) == ($bgrid ? 1 : 0)} {
+        set G [dict remove $G swgrid]
+      }
+    }
+    lappend out $G
+  }
+  return $out
+}
+
+# PURE: `gs` with EVERY subwindow's mode and grid written explicitly on its
+# strips (`bmode` / `bgrid` for a subwindow carrying no key). A one-subwindow
+# list is returned unchanged. The undo snapshot form: the window's own values
+# move outside undo (a close folds the survivor's into them), so a subwindow
+# coming back from the history must not depend on them.
+proc wviewer::sw_props_stamp {gs bmode bgrid} {
+  set runs [wviewer::sw_runs $gs]
+  if {[llength $runs] <= 1} { return $gs }
+  foreach r $runs {
+    set f [lindex $r 0]
+    set m [wviewer::sw_prop_get $gs $f swmode $bmode]
+    set g [expr {[wviewer::sw_prop_get $gs $f swgrid $bgrid] ? 1 : 0}]
+    set gs [wviewer::sw_prop_put $gs $f swmode $m {}]
+    set gs [wviewer::sw_prop_put $gs $f swgrid $g {}]
   }
   return $gs
 }
@@ -5189,6 +5235,12 @@ proc wviewer::snapshot {token prev} {
                        graphs  [wviewer::dget $lay graphs {}] \
                        mode    [wviewer::base_mode $token] \
                        target  [wviewer::target_index $token]]
+    # the window's OWN grid flag (SW25), GATED ON BEING NON-DEFAULT like the
+    # browser key below: a window at the rc default serialises as before, and a
+    # build that predates the key ignores it. A per-tab record carries it in its
+    # `layout` already.
+    set gb [wviewer::grid_base $token]
+    if {$gb != [wviewer::default_grid_show]} { dict set d grid $gb }
     if {[llength $tabs]} {
       dict set d tabs      $tabs
       dict set d activetab [wviewer::tab_index $token]
@@ -5206,6 +5258,14 @@ proc wviewer::snapshot {token prev} {
   }
   if {$prev eq {}} { return {} }
   return [dict replace $prev open 0]
+}
+
+# PURE: the window's own grid flag saved in a state `viewer` dict (0/1), or {}
+# when the dict carries none or a garbage one.
+proc wviewer::state_grid {vdict} {
+  set v [wviewer::dget $vdict grid {}]
+  if {![string is boolean -strict $v]} { return {} }
+  return [expr {[string is true -strict $v] ? 1 : 0}]
 }
 
 # Rebuild `token`'s viewer from a state `viewer` dict (ase::ui::viewer_restore
@@ -5243,6 +5303,10 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   # ONE subwindow, the exact old picture (spec §3 back-compat)
   dict set layouts $token \
     [dict create sharedx $sx graphs [wviewer::sw_normalize [wviewer::dget $vdict graphs {}]]]
+  # the window's own grid flag (SW25); absent (every state written before it, or
+  # one at the rc default) leaves no key, which reads as the rc default
+  set gf [wviewer::state_grid $vdict]
+  if {$gf ne {}} { dict set layouts $token grid $gf }
   set sharedx($token) $sx
   # issue 0151: mode/target round-trip. Absent keys (every state file written
   # before 0151) fall back to the config default and strip 0, so old states
@@ -8060,9 +8124,14 @@ proc wviewer::split_target_strip {{token {}}} {
 # Snapshots are taken AFTER capture_live_graph_state, so "what the user was
 # looking at" (a mouse pan/zoom, the bold trace) is what comes back.
 
-# The undoable state of `token`: {graphs target}.
+# The undoable state of `token`: {graphs target}. With two or more subwindows
+# every subwindow's mode and grid are stamped explicitly (sw_props_stamp): a
+# close folds the survivor's values into the window's own, outside undo, and a
+# subwindow brought back by undo must keep what it had, not read the new value.
 proc wviewer::state_snapshot {token} {
-  return [list [dict get [wviewer::layout_for $token] graphs] \
+  return [list [wviewer::sw_props_stamp \
+                  [dict get [wviewer::layout_for $token] graphs] \
+                  [wviewer::base_mode $token] [wviewer::grid_base $token]] \
                [wviewer::target_index $token]]
 }
 
