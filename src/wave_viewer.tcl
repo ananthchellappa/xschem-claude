@@ -5946,13 +5946,14 @@ proc wviewer::set_plot_mode {req {token {}}} {
 }
 
 # --- item 7: the plot DESTINATION is the SOURCE's, never the window's ---------
-# The viewer used to hold a per-window destination (`plot_dest` /
-# `set_plot_dest`, mirrored into the Calculator's W13 by `dest_notify`). User
-# ruling 2026-10-16 retired it: in ViVA a plot lands in the active subwindow
-# unless the source that sent it says otherwise, and the Calculator keeps its
-# own setting. So every destination is a per-call argument and a call with
-# none means `append` -- into the TARGET subwindow, per that subwindow's plot
-# mode (plot_signals). Rows SWD16/SWD17 of test_wave_subwindows.
+# The viewer holds NO destination of its own: user ruling 2026-10-16 retired
+# the per-window store and its accessors and the Calculator mirror that fed
+# them (row SWD16 of test_wave_subwindows asserts, through `info procs`, that
+# none of them exists in this namespace). In ViVA a plot lands in the active
+# subwindow unless the source that sent it says otherwise; each SOURCE owns its
+# setting -- ASE-L's is ase::ui::set_plot_dest, the Calculator's is its own W13
+# -- and hands it over per call. A call with none means `append` -- into the
+# TARGET subwindow, per that subwindow's plot mode (plot_signals). Row SWD17.
 
 # The WINDOW-level half of the destination policy: everything that must happen
 # BEFORE plan_plot can speak (doc/claude/specs/waveform_viewer_subwindows.md §6):

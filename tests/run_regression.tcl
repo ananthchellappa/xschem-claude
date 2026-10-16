@@ -141,6 +141,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_sym_path_paren_1605" \
                  "headless/test_wave_trace_menu" \
                  "headless/test_wave_tabs" \
+                 "headless/test_ase_window" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
 ## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
@@ -873,6 +874,17 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## seen: it opens each derived prompt for real, destroys its toplevel without answering
 ## it, and asks whether the press came back -- which under `--nogui` cannot run at all,
 ## because Tk is not loaded and the band self-skips. Issue 0999.
+## `headless/test_ase_window` IS IN BOTH LISTS, registered in the commit after the
+## one that gave it the plot-destination fences (rows PD1-PD6) and the strip-tooltip
+## rows (W1s*) -- which until then gated nothing, since the suite was in neither list.
+## The shape was MEASURED: both arms were captured exactly as the two loops capture
+## them and scored with `banner_complete` SOURCED from tests/banner_rule.tcl, giving 1
+## and `regression_case_failed` 0 on each. Both arms measure: the counted arm runs the
+## suite's model, run and lint bands (ISO/H/P/RD/L/R rows), and the display arm is the
+## only place the window bands -- PD*, W1s*, the dark-theme and UX rows -- can run,
+## since under --nogui they self-skip behind lines that do not start `skip:`, so the
+## headless entry adds nothing to `skips=`. It sources scratch.tcl, so the in-suite
+## watchdog bounds its event-loop waits (row W20h of test_suite_watchdog_1403).
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
@@ -916,6 +928,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_viewjob_silence" \
                  "headless/test_wave_trace_menu" \
                  "headless/test_wave_tabs" \
+                 "headless/test_ase_window" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_wave_subwindows` IS ALSO IN `hcases` -- see the paragraph there.
 ## `headless/test_viewjob_silence` IS IN THIS LIST ALONE, AND THE ARM WAS CHOSEN BY
