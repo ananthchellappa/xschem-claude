@@ -1261,7 +1261,11 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   scrambles the result).
 - **Ordering: `move_strip`'s contract verbatim**, with the same refusal rule — a
   strip with fewer than two drawn traces is already split, so the command
-  returns without mutating and **without logging**, and the menu gate mirrors it.
+  returns without mutating and **without logging**. ⚠ Since issue 1662 the menu
+  does NOT mirror it at the gate: the strip menu posts on any strip with a drawn
+  trace and greys Split Strip out below two (a two-trace gate made right-click
+  post nothing in multi mode, where every strip holds one trace). The trace
+  menu likewise posts on a one-trace strip with Move to Separate Strip greyed.
 - **The target follows graph IDENTITY** through the new PURE
   `wviewer::index_after_insert` — the **insert** twin of `index_after_removal`,
   and `plot_signals`' multi-plot `cur + nnew` arithmetic generalised to an

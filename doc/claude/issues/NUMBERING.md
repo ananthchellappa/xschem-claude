@@ -4742,9 +4742,15 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   Calculator reads no `vdc(a,b)` (`montecarlo_mismatch_sim`'s `v(vm,vcm)`). ⚠ **1661 is taken in
   `~/dev/xschem-op-wcard`**, whose own pointer then named 1662; run both checks before minting.
 
+- **1662** — the Waveform Viewer's right-click menus posted nothing on a one-trace strip, so in
+  multi plot mode (every strip one trace since `7cdb6d709`, R-OUT14) right-click did nothing
+  anywhere. Both gates lost the trace-count rung; the entries that need two traces are greyed.
+
 ~~**The next free number is 1660.**~~
 
-**The next free number is 1662.**
+~~**The next free number is 1662.**~~
+
+**The next free number is 1663.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

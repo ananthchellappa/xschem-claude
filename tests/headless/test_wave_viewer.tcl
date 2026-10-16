@@ -2012,6 +2012,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $bpy -state 0x400
       update
       check "WB-rmb-click RMB click leaves the bold alone" [wb_bold $vdrw] -1
+      # that click posts a context menu on this one-trace strip since issue
+      # 1662, and a posted menu holds the grab: take it down before the drag
+      catch {wviewer::trace_menu_unpost $tok}
+      catch {wviewer::strip_menu_unpost $tok}
+      update
 
       # WB-rmb-drag: the reported defect in its real form — an RMB press-drag
       # box-zoom must not bold. Asserts the zoom STILL happened, so this cannot

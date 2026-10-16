@@ -19035,15 +19035,20 @@ proc wviewer::b3_marker_armed {W} {
 # switch degrades to the pre-item-7 behaviour (no menu) rather than to a menu
 # aimed at the wrong trace.
 #
-# Three refusals, in cost order:
+# Two refusals, in cost order:
 #   - not inside a strip at all (the bands tile the window, so this is rare,
 #     but a click during a resize storm can land outside every band);
-#   - the strip carries fewer than two DRAWN traces — mirrors
-#     move_trace_to_new_strip's own refusal, because a menu that posts an entry
-#     the command will refuse is worse than no menu;
 #   - no trace within `graph_trace_at`'s tolerance of the pointer AND no LEGEND
 #     entry there either. Between them these keep the menu off empty waveform
 #     space, which item 8 will claim.
+#
+# ⚠ NO TRACE-COUNT RUNG (issue 1662). This gate used to refuse a strip with
+# fewer than two drawn traces, so a menu could never offer a "Move to Separate
+# Strip" the command refuses. Once `~` and the run-end auto-plot gave each
+# signal its own strip in multi mode (7cdb6d70, R-OUT14), EVERY strip had one
+# trace and right-click posted nothing anywhere. The refusal now lives on the
+# ENTRY: trace_menu_build greys out Move to Separate Strip on a one-trace strip
+# and Delete Trace stays live.
 #
 # ⚠ DIGITAL AND BUS STRIPS: NO MENU IN THE BODY, BUT ONE ON THE LEGEND (issue
 # 0178 corrected this entry, which used to say they had no menu at all).
@@ -19074,7 +19079,6 @@ proc wviewer::trace_menu_pick {W px py} {
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {$gi >= [llength $gs]} { return {-1 -1} }
   set G [lindex $gs $gi]
-  if {[wviewer::node_count $G] < 2} { return {-1 -1} }
   set ni [wviewer::trace_at $W $gi $px $py]
   # THE LEGEND IS THE SECOND WAY IN (issue 0178). A trace has two picking
   # surfaces -- its stroke in the body and its name in the legend -- and every
@@ -19101,11 +19105,10 @@ proc wviewer::trace_menu_pick {W px py} {
 #
 # The gate btn3_filter uses to decide that the VIEWER claims an RMB press rather
 # than letting it reach the C engine (issue 0178). Deliberately NOT
-# trace_menu_pick: this question is "is this pixel a legend entry at all", with
-# no `node_count >= 2` rung. A single-trace strip has a legend the C engine would
-# still toggle on, and the viewer has to claim that press too -- otherwise RMB on
-# the legend would keep toggling on exactly the strips where no menu can post,
-# which is the inconsistency being removed, just moved somewhere harder to see.
+# trace_menu_pick: this question is "is this pixel a legend entry at all". (The
+# two answer alike since issue 1662 dropped trace_menu_pick's trace-count rung;
+# before it, a one-trace strip's legend press was swallowed here and then no
+# menu posted on the release, so RMB on that legend did nothing at all.)
 proc wviewer::legend_slot_at {W px py} {
   set gi [wviewer::strip_at_pixel $W $px $py]
   if {$gi < 0} { return {-1 -1} }
@@ -19218,7 +19221,10 @@ proc wviewer::trace_menu_build {token gi ti} {
     $m add command -label $lab -state disabled
     $m add separator
   }
-  $m add command -label {Move to Separate Strip} \
+  # greyed out on a one-trace strip: the trace already has a strip to itself,
+  # and move_trace_to_new_strip refuses it (issue 1662)
+  set mvst [expr {[wviewer::node_count [lindex $gs $gi]] < 2 ? {disabled} : {normal}}]
+  $m add command -label {Move to Separate Strip} -state $mvst \
     -command [list wviewer::move_trace_to_new_strip $gi $ti $token]
   # DELETE, and it costs one line because the authoritative deleter already does
   # everything.  `wviewer::delete_items` pushes ONE undo point, writes ONE log
@@ -19280,8 +19286,9 @@ proc wviewer::trace_menu_unpost {token} {
 #   - inside a strip;
 #   - NO trace under the pointer (that is the trace menu's, and asking it first
 #     is what keeps the two mutually exclusive);
-#   - at least two drawn traces, mirroring split_strip's own refusal — a strip
-#     with one trace is already split.
+#   - at least ONE drawn trace. Split Strip needs two (split_strip's own
+#     refusal), and strip_menu_build greys it out below that; a two-trace rung
+#     here made right-click post nothing on a multi-mode window (issue 1662).
 proc wviewer::strip_menu_pick {W px py} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return -1 }
@@ -19290,7 +19297,7 @@ proc wviewer::strip_menu_pick {W px py} {
   if {![wviewer::plotbox_at $W $gi $px $py]} { return -1 }
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {$gi >= [llength $gs]} { return -1 }
-  if {[wviewer::node_count [lindex $gs $gi]] < 2} { return -1 }
+  if {[wviewer::node_count [lindex $gs $gi]] < 1} { return -1 }
   if {[wviewer::trace_at $W $gi $px $py] >= 0} { return -1 }
   return $gi
 }
@@ -19307,9 +19314,12 @@ proc wviewer::strip_menu_build {token gi} {
   set nc [wviewer::node_count [lindex $gs $gi]]
   set m [wviewer::ctx_menu_widget $token wvstripmenu]
   if {$m eq {}} { return {} }
-  $m add command -label "Strip [expr {$gi + 1}] — $nc traces" -state disabled
+  set noun [expr {$nc == 1 ? {trace} : {traces}}]
+  $m add command -label "Strip [expr {$gi + 1}] — $nc $noun" -state disabled
   $m add separator
+  # greyed out on a one-trace strip, which split_strip refuses (issue 1662)
   $m add command -label {Split Strip} \
+    -state [expr {$nc < 2 ? {disabled} : {normal}}] \
     -command [list wviewer::split_strip $gi $token]
   return $m
 }

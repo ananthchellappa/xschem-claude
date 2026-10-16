@@ -27,7 +27,8 @@
 #        reproduces the state; and the command takes exactly ONE regenerate and
 #        never calls add_graph
 #   TG7  the GATE (trace_menu_pick): a real trace pixel resolves to {gi ti};
-#        empty waveform space and a one-trace strip refuse
+#        empty waveform space refuses; a one-trace strip RESOLVES and its menu
+#        greys out Move to Separate Strip (issue 1662)
 #   TG8  the MENU widget: entries, the disabled header naming the picked trace,
 #        and invoking the command entry performs the move
 #   TG9  the GESTURE: a real no-travel <ButtonPress-3>/<ButtonRelease-3> pair
@@ -684,9 +685,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # a one-trace strip refuses, at the gate as well as at the command
     set hit1 [find_trace_px $vdrw 1]
     if {[llength $hit1]} {
-      check "TG7 a strip with one drawn trace refuses at the gate" \
+      # issue 1662: a one-trace strip gets the menu (multi mode is all
+      # one-trace strips); Move to Separate Strip is greyed out instead
+      check "TG7 a strip with one drawn trace resolves at the gate (issue 1662)" \
         [pcall {wviewer::trace_menu_pick $vdrw [lindex $hit1 0] [lindex $hit1 1]}] \
-        {-1 -1}
+        {1 0}
+      set m1 [pcall {wviewer::trace_menu_build $tok 1 0}]
+      check "TG7 ...its menu greys out Move to Separate Strip and keeps Delete Trace live" \
+        [pcall {list [$m1 entrycget 2 -label] [$m1 entrycget 2 -state] \
+                     [$m1 entrycget 4 -label] [$m1 entrycget 4 -state]}] \
+        {{Move to Separate Strip} disabled {Delete Trace} normal}
+      catch {wviewer::trace_menu_unpost $tok}
     } else {
       puts "SKIPPED: TG7 one-trace-strip leg (no pixel on strip 1's trace)"
     }
@@ -708,8 +717,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
               [lindex [dict get [wviewer::layout_for $tok] graphs] $mgi] traces {}] $mti]] \
             disabled]
     check "TG8 entry 1 is the separator" [$m type 1] separator
-    check "TG8 entry 2 is the command" \
-      [list [$m type 2] [$m entrycget 2 -label]] {command {Move to Separate Strip}}
+    check "TG8 entry 2 is the command, live on a three-trace strip" \
+      [list [$m type 2] [$m entrycget 2 -label] [$m entrycget 2 -state]] \
+      {command {Move to Separate Strip} normal}
     check "TG8 the command is fully resolved (indices + explicit token)" \
       [$m entrycget 2 -command] \
       "wviewer::move_trace_to_new_strip $mgi $mti $tok"

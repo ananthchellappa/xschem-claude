@@ -24,7 +24,8 @@
 #   SG6  replayable logging: one fully-resolved line, replay reproduces; and the
 #        command takes exactly ONE regenerate and never calls add_graph
 #   SG7  the GATE (strip_menu_pick): empty space resolves, a trace pixel refuses
-#        (that is item 7's), a one-trace strip refuses
+#        (that is item 7's), a one-trace strip RESOLVES (issue 1662; SG9b greys
+#        its Split Strip)
 #   SG8  the two menus PARTITION the body — ctx_menu_post offers the trace menu
 #        first, so a trace pixel can never get the strip menu
 #   SG9  the MENU widget: entries, the disabled header, invoking it splits
@@ -644,8 +645,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     set miss1 [find_empty_px $vdrw 1]
     if {[llength $miss1]} {
-      check "SG7 a one-trace strip refuses (already split)" \
-        [pcall {wviewer::strip_menu_pick $vdrw [lindex $miss1 0] [lindex $miss1 1]}] -1
+      # issue 1662: a one-trace strip POSTS (multi mode is all one-trace
+      # strips); its Split Strip entry is greyed out instead (SG9b)
+      check "SG7 a one-trace strip resolves to its strip (issue 1662: the menu posts, Split Strip greyed)" \
+        [pcall {wviewer::strip_menu_pick $vdrw [lindex $miss1 0] [lindex $miss1 1]}] 1
     } else {
       puts "SKIPPED: SG7 one-trace-strip leg (no empty pixel on strip 1)"
     }
@@ -670,6 +673,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list [$m type 2] [$m entrycget 2 -label]] {command {Split Strip}}
     check "SG9 the command is fully resolved (index + explicit token)" \
       [$m entrycget 2 -command] "wviewer::split_strip 0 $tok"
+    check "SG9 Split Strip is live on a three-trace strip" [$m entrycget 2 -state] normal
+    set m1 [pcall {wviewer::strip_menu_build $tok 1}]
+    check "SG9b a one-trace strip's menu: singular header, Split Strip greyed out (issue 1662)" \
+      [list [$m1 entrycget 0 -label] [$m1 entrycget 2 -label] [$m1 entrycget 2 -state]] \
+      {{Strip 2 — 1 trace} {Split Strip} disabled}
+    set m [pcall {wviewer::strip_menu_build $tok 0}]
     $m invoke 2
     check "SG9 invoking the entry splits" [profile $tok] {1 1 1 1}
     check "SG9 unposting removes the widget" [pcall {wviewer::strip_menu_unpost $tok}] 1

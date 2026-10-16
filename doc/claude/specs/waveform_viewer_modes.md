@@ -947,9 +947,10 @@ Six rules that are easy to get wrong and are asserted:
    unmodified press so the engine never sees it. **Selection on the legend is
    LMB's and Ctrl+LMB's alone.** The C arm is untouched, so graphs embedded in a
    SCHEMATIC — which have no context menus — keep the toggle.
-   A single-trace strip posts no menu (the `>= 2 traces` rung, shared with the
-   body) and no longer toggles either: RMB is simply inert there, as it already
-   is on the axis margins.
+   ⚠ Superseded by issue 1662: a single-trace strip used to post no menu (a
+   `>= 2 traces` rung, shared with the body), which made RMB inert on every
+   strip of a multi-mode window. It now posts the trace menu with Move to
+   Separate Strip greyed out.
 5. **Every row above is computed from RAW pixels, and nothing on this canvas is
    grid-quantised** (issue 0177). The viewer window's context carries `no_snap`,
    so `callback()` computes `mousex_snap`/`mousey_snap` as honest copies of

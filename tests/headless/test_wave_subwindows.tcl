@@ -63,6 +63,10 @@
 #         both arms), undo, a new tab, tab switch, save / close / restore,
 #         Graph > Clear SubWin's -command (SWK12), a one-tab grid round trip
 #         (SWK13).
+#   SWK17 DISPLAY (issue 1662): REAL RMB with the real tk_popup on every strip
+#         of a multi-mode, one-trace-per-strip window, two subwindows then one:
+#         the trace menu (Move greyed, Delete live) and the strip menu (Split
+#         greyed) are mapped; a two-trace control strip offers both live.
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -157,9 +161,11 @@
 #   K  no Caps Lock aliases (the 720898fe binds) (display) -> SWK8 matrix
 #        (state 6 fired nothing, state 7 fired Clear All / Ctrl-G)
 #        [superseded 2026-10-16: the aliases are gone, the dispatcher decides]
-# Caps Lock (2026-10-16), each measured red at
+# Caps Lock / right-click (2026-10-16), each measured red at
 # 9beec4c4 (the product before the change):
 #   the six 32e53cd8 Lock aliases, no dispatcher -> SWK8 (x3), SWK14-SWK16
+#   the menu gates' `node_count < 2` rung -> SWK17 (x2); trace_menu TG7 (x2),
+#        split_strip SG7, SG9b
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -2032,6 +2038,106 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list $g0 $g1 $g2] {{1 0} {0 0 0} {1 0}}
   set vtop [wviewer::window_for $tok]
   set vdrw $vtop.drw
+  viewer_ready $vtop
+
+  # ---- SWK17: RIGHT-CLICK MENUS ON ONE-TRACE STRIPS (issue 1662) -----------
+  # Multi mode gives each signal its own strip, and both menu gates used to
+  # refuse a strip with fewer than two traces, so right-click posted nothing
+  # anywhere. REAL ButtonPress-3 / ButtonRelease-3 on the canvas and the REAL
+  # tk_popup (no spy), on every strip, with two subwindows and then one.
+  proc sk_ev {seq args} {
+    set ::skt [expr {$::skt + 1000}]
+    event generate $::vdrw $seq -time $::skt {*}$args
+  }
+  set ::skt 500000000
+  # {px py} on strip gi's trace (want 1) or on its empty plot body (want 0)
+  proc sk_px {gi want} {
+    lassign [lindex [wviewer::strip_bands_px $::vdrw] $gi] x1 y1 x2 y2
+    if {$x2 eq {}} { return {} }
+    foreach fx {0.5 0.4 0.6 0.3 0.7 0.2 0.8} {
+      set px [expr {int($x1 + $fx * ($x2 - $x1))}]
+      for {set py [expr {int($y1) + 2}]} {$py < $y2 - 1} {incr py 2} {
+        if {[wviewer::strip_at_pixel $::vdrw $px $py] != $gi} { continue }
+        set on [expr {[wviewer::trace_at $::vdrw $gi $px $py] >= 0}]
+        if {$want && $on} { return [list $px $py] }
+        if {!$want && !$on && [wviewer::plotbox_at $::vdrw $gi $px $py]} { return [list $px $py] }
+      }
+    }
+    return {}
+  }
+  # right-click at {px py}; answers {mapped entries} of whichever menu posted,
+  # each entry {label state} (a separator reads `-`), then takes it down
+  proc sk_rmb {xy} {
+    if {![llength $xy]} { return NOPIXEL }
+    lassign $xy px py
+    foreach n {wvtracemenu wvstripmenu} { catch {destroy $::vtop.$n} }
+    sk_ev <Motion> -x $px -y $py
+    update
+    sk_ev <ButtonPress-3>   -x $px -y $py -button 3
+    sk_ev <ButtonRelease-3> -x $px -y $py -button 3 -state 0x400
+    update
+    set out NOMENU
+    foreach n {wvtracemenu wvstripmenu} {
+      set m $::vtop.$n
+      if {![winfo exists $m]} { continue }
+      set ents {}
+      for {set i 0} {$i <= [$m index end]} {incr i} {
+        if {[$m type $i] eq {separator}} { lappend ents - ; continue }
+        lappend ents [list [$m entrycget $i -label] [$m entrycget $i -state]]
+      }
+      set out [list $n [winfo ismapped $m] [lrange $ents 2 end]]
+    }
+    catch {wviewer::trace_menu_unpost $::tok}
+    catch {wviewer::strip_menu_unpost $::tok}
+    update
+    return $out
+  }
+  # SWK13 closed and restored the window, so its context holds no raw: load
+  # the fixture's again, or nothing is drawn and no pixel is on a trace
+  xschem new_schematic switch $vdrw
+  pcall {xschem raw new wvsub.raw dc vsweep 0 1.0 0.1}
+  foreach v {a1 a2 a3 b1 b2 c1 c2 p1 p2} { pcall {xschem raw add $v "vsweep 1 +"} }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_dest append $tok}
+  pcall {wviewer::set_plot_mode multi $tok}
+  pcall {wviewer::plot_signals $tok {a1 a2}}
+  pcall {wviewer::new_subwin $tok}
+  pcall {wviewer::plot_signals $tok {b1 b2}}
+  pcall {wviewer::delete_empty_strips $tok}
+  pcall {wviewer::fit $tok}
+  update
+  set sk_tm {{Move to Separate Strip} disabled} ; set sk_sm {{Split Strip} disabled}
+  set sk_twant [list wvtracemenu 1 [list $sk_tm - {{Delete Trace} normal}]]
+  check "SWK17 fixture: multi mode, two subwindows, every strip ONE trace" \
+    [list [wviewer::sw_count [lay]] [lsort -unique [lmap g [lay] {llength [wviewer::dget $g traces {}]}]]] {2 1}
+  set got {}; set want {}
+  for {set gi 0} {$gi < [llength [lay]]} {incr gi} {
+    lappend got $gi [sk_rmb [sk_px $gi 1]] [sk_rmb [sk_px $gi 0]]
+    lappend want $gi $sk_twant [list wvstripmenu 1 [list $sk_sm]]
+  }
+  check "SWK17 a REAL right-click posts the trace menu on every one-trace strip of both subwindows (Move greyed, Delete live), and the strip menu on its empty space (Split greyed)" \
+    $got $want
+  check "SWK17 ...and posting changed nothing" \
+    [list [wviewer::sw_count [lay]] [lmap g [lay] {llength [wviewer::dget $g traces {}]}]] \
+    [list 2 [lrepeat [llength [lay]] 1]]
+  pcall {wviewer::close_subwin $tok}
+  pcall {wviewer::fit $tok}
+  update
+  set got {}; set want {}
+  for {set gi 0} {$gi < [llength [lay]]} {incr gi} {
+    lappend got $gi [sk_rmb [sk_px $gi 1]] [sk_rmb [sk_px $gi 0]]
+    lappend want $gi $sk_twant [list wvstripmenu 1 [list $sk_sm]]
+  }
+  check "SWK17 ...and with ONE subwindow" [list [wviewer::sw_count [lay]] $got] [list 1 $want]
+  # the control: a two-trace strip still offers live entries
+  pcall {wviewer::set_target_strip 0 $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::plot_signals $tok {c1}}
+  pcall {wviewer::fit $tok}
+  update
+  check "SWK17 control: on a two-trace strip both entries are live" \
+    [list [lindex [sk_rmb [sk_px 0 1]] 2 0] [lindex [sk_rmb [sk_px 0 0]] 2 0]] \
+    {{{Move to Separate Strip} normal} {{Split Strip} normal}}
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
@@ -2049,7 +2155,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 158 } else { set expect 286 }
+if {$::arm eq {nogui}} { set expect 158 } else { set expect 291 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail
