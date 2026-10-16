@@ -20059,6 +20059,18 @@ set_ne calc_plot_dest {}
 ## status-bar drop-down prints the exact line in the CIW, e.g.
 ## `set ase_plot_dest append`.
 set_ne ase_plot_dest {}
+## The rc file a CIW hint should name (`<name>: set <var> <value>`): the
+## --script file this launch ran (C mirrors it as ::cli_opt_script), else
+## `xschemrc`. Run from the source tree xschem sources neither ./xschemrc nor
+## ~/.xschem/xschemrc, so for the PDK launcher (`--script <pdk>/cadence_style_rc`)
+## that rc is the only one a user line reaches. PURE.
+namespace eval ::xschem {}
+proc ::xschem::rc_name {} {
+  set s {}
+  catch {set s $::cli_opt_script}
+  if {[string trim $s] ne {}} { return [file tail $s] }
+  return xschemrc
+}
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
 # C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
 # harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES

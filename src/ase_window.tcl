@@ -12765,9 +12765,11 @@ proc ase::ui::plot_dest_rc_word {code} {
 }
 # The ONE CIW line a user change of the drop-down prints (user ruling
 # 2026-10-16: "ensure there is logging in CIW so user knows what to put in the
-# rc file"). PURE.
+# rc file"), naming the rc this launch read (xschem::rc_name). PURE.
 proc ase::ui::plot_dest_msg {code} {
-  return "ase: plot destination = [ase::ui::plot_dest_label $code] (xschemrc: set ase_plot_dest [ase::ui::plot_dest_rc_word $code])"
+  set rc xschemrc
+  catch {set rc [::xschem::rc_name]}
+  return "ase: plot destination = [ase::ui::plot_dest_label $code] ($rc: set ase_plot_dest [ase::ui::plot_dest_rc_word $code])"
 }
 # The session's destination (ase::plot_dest_of its state).
 proc ase::ui::plot_dest {key} {

@@ -1135,7 +1135,11 @@ They should not influence the input to the simulator."* ADE-L is the floor
     wins. A choice equal to the rc default is stored as `{}`; any other is written out.
   - **The CIW line** (user 2026-10-16: *"ensure there is logging in CIW so user knows what to
     put in the rc file"*): a user change of the drop-down (`ase::ui::plot_dest_picked`) prints
-    one line, `ase: plot destination = <label> (xschemrc: set ase_plot_dest <word>)`.
+    one line, `ase: plot destination = <label> (<rc>: set ase_plot_dest <word>)`, where `<rc>`
+    names the rc this launch read (`xschem::rc_name`): the `--script` file's name -- the PDK
+    launcher's `cadence_style_rc`, since run from the source tree xschem sources neither
+    `./xschemrc` nor `~/.xschem/xschemrc` -- else `xschemrc`. C mirrors `--script` as
+    `::cli_opt_script` (rows RC7/RC8).
     `ase::ui::set_plot_dest` itself (a replayed log, a script), Load State and Revert print
     none. Band RC of `tests/headless/test_ase_persist.tcl`, rows PD4/PD5 of
     `tests/headless/test_ase_window.tcl`.

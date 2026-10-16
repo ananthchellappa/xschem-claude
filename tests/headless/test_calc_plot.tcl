@@ -318,6 +318,11 @@ set here    [file normalize [file dirname [info script]]]
 set repo    [file normalize [file join $here .. ..]]
 source [file join $here scratch.tcl]
 set scratch [test_scratch calcplot]
+## The rc clause of a destination sentence names the rc FILE this launch read
+## (::cli_opt_script, exported by C from --script -- this suite's own path
+## under every driver). Pinned empty so those rows read `xschemrc`;
+## test_ase_persist RC7/RC8 and PL6 below fence the named-file arm.
+set ::cli_opt_script {}
 
 set fixture [file join $repo tests headless data calc_fixture.raw]
 
@@ -1106,6 +1111,13 @@ group PL6 {
         {Append 1 1}
     check "PL6 each printed rc word, set as calc_plot_dest, seeds that same choice" \
         $rt [wviewer::dest_labels]
+    set ::cli_opt_script /some/where/sky130A/cadence_style_rc
+    set rcf [pcall calc::plot_msg dest Append append]
+    set ::cli_opt_script {}
+    check "PL6 the rc clause names the rc file the launch read: the --script rc's name, else xschemrc" \
+        [list $rcf [pcall calc::plot_msg dest Append append]] \
+        [list {Plot destination: Append (cadence_style_rc: set calc_plot_dest append).} \
+              {Plot destination: Append (xschemrc: set calc_plot_dest append).}]
     set ::calc_plot_dest Append
     pcall calc::close ; update idletasks ; pcall calc::open ; update idletasks
     destset {Append}

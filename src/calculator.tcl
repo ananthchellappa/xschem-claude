@@ -4217,7 +4217,7 @@ proc calc::plot_msg {kind {a {}} {b {}}} {
         busy     { return {Plot: the result's waveform window is busy. Try again.} }
         failed   { return "Plot failed: $a." }
         plotted  { return "Plotted $a ($b)." }
-        dest     { return "Plot destination: $a (xschemrc: set calc_plot_dest $b)." }
+        dest     { return "Plot destination: $a ([calc::rc_name]: set calc_plot_dest $b)." }
     }
     return {}
 }
@@ -4258,6 +4258,14 @@ proc calc::plot_dest_req {} {
     catch {set v [.calc.mode.dest get]}
     if {[string trim $v] eq {}} { return {} }
     return $v
+}
+
+# The rc file W13's sentence names (xschem::rc_name: the --script rc this
+# launch ran, else `xschemrc`); `xschemrc` if that helper is absent.
+proc calc::rc_name {} {
+    set rc xschemrc
+    catch {set rc [::xschem::rc_name]}
+    return $rc
 }
 
 # W13's REMEMBERED value: `::calc_plot_dest` (an rc variable, `set_ne` in

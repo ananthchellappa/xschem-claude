@@ -265,6 +265,11 @@ set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
 source [file join $here scratch.tcl]
+## The rc clause of a destination sentence names the rc FILE this launch read
+## (::cli_opt_script, exported by C from --script -- this suite's own path
+## under every driver). Pinned empty so those rows read `xschemrc`;
+## test_ase_persist RC7/RC8 and test_calc_plot PL6 fence the named-file arm.
+set ::cli_opt_script {}
 set scratch [test_scratch ase_window]
 
 ## ISOLATION FROM WHOEVER'S ~/.xschem/ase_simulators IS LIVE (issue 1377).

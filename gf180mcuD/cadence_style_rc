@@ -89,4 +89,11 @@ if {[info exists ::has_x]} {
 # scientific notation, uncomment:
 # set ase_eng_notation 0
 
+# ASE-L's plot destination for ~, the run-end plot and Direct Plot in a new
+# session (default Replace): append, replace, newsubwin or newwin. The
+# Calculator's (default Append): append, replace, newstrip, newsubwin or newtab.
+# Changing either drop-down prints the matching line in the CIW.
+# set ase_plot_dest append
+# set calc_plot_dest replace
+
 unset _ws

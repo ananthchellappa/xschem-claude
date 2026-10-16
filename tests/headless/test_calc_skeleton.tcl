@@ -153,6 +153,11 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
 # scratch.tcl offers is taken: `test_scratch` is never called, so no directory
 # is created, and `test_sim_registry_isolate` is opt-in.
 source [file join [file dirname [info script]] scratch.tcl]
+## The rc clause of a destination sentence names the rc FILE this launch read
+## (::cli_opt_script, exported by C from --script -- this suite's own path
+## under every driver). Pinned empty so those rows read `xschemrc`;
+## test_ase_persist RC7/RC8 and test_calc_plot PL6 fence the named-file arm.
+set ::cli_opt_script {}
 
 if {[catch {
 

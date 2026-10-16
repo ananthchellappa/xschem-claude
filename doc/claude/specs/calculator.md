@@ -1642,7 +1642,8 @@ below are the ones a caller cannot answer for itself and so must not have to.
   and is passed per call; the landing policy is the viewer's and is not reimplemented.
   **W13 is the Calculator's OWN setting** (user ruling 2026-10-16, a Cadence fact: *"My
   memory says calculator has its own setting. But ViVA doesn't."*). Choosing it says
-  `Plot destination: <label> (xschemrc: set calc_plot_dest <code>).` -- in the status line
+  `Plot destination: <label> (<rc>: set calc_plot_dest <code>).` (`<rc>` = `xschem::rc_name`:
+  the `--script` rc's name, e.g. `cadence_style_rc`, else `xschemrc`) -- in the status line
   and, through `calc::ciw_say`, as ONE CIW line, so the user knows what to put in the rc
   (user ruling 2026-10-16, issue 1663) -- and stores the label in `::calc_plot_dest`
   (`set_ne` in `xschem.tcl`, like `calc_font_size`), so a Calculator closed and rebuilt in

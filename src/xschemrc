@@ -773,6 +773,8 @@
 #### Where ASE-L's ~, run-end plot and Direct Plot go in a new session:
 #### append, replace, newsubwin or newwin. Default: replace.
 #### Changing ASE-L's status-bar drop-down prints this line in the CIW.
+#### Run from the source tree (src/xschem), ~/.xschem/xschemrc is not read:
+#### put these in the --script rc you launch with (e.g. cadence_style_rc).
 # set ase_plot_dest append
 #### The Calculator's Plot destination: append, replace, newstrip,
 #### newsubwin or newtab. Default: append.

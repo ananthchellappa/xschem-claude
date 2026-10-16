@@ -3234,6 +3234,11 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
  /* mirror --nolog so xschem.tcl can skip the CIW auto-open (issue 0002) */
  tclsetvar("cli_opt_nolog", cli_opt_nolog ? "1" : "0");
+ /* mirror --script so a CIW hint can name the rc this launch read (issue 1663's
+  * ruling): run in-tree, xschem sources neither ./xschemrc nor ~/.xschem/xschemrc,
+  * so for the PDK launcher (--script <pdk>/cadence_style_rc) that file is the rc.
+  * Read by xschem::rc_name in xschem.tcl. */
+ tclsetvar("cli_opt_script", cli_opt_tcl_script);
  Tcl_CreateExitHandler(tclexit, 0);
 #ifdef __unix__
  /* ROBUST XSCHEM_SHAREDIR DETECTION */

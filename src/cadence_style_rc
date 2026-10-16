@@ -730,7 +730,9 @@ unset _ut
 # ASE-L's plot destination for ~, the run-end plot and Direct Plot in a new
 # session (default Replace): append, replace, newsubwin or newwin. The
 # Calculator's (default Append): append, replace, newstrip, newsubwin or newtab.
-# Changing either drop-down prints the matching line in the CIW. Use `set`:
+# Changing either drop-down prints the matching line in the CIW, naming this
+# file (the --script rc; run from the source tree, ~/.xschem/xschemrc is not
+# read). Use `set`:
 # xschem.tcl has already run set_ne on both by the time this rc is sourced.
 # set ::ase_plot_dest append
 # set ::calc_plot_dest replace

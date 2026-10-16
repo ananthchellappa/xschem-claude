@@ -732,6 +732,10 @@ check "R8e a bench carrying BOTH the committed output row named id and an\
 #   RC5  the CIW line's exact text, and its rc word read back as the rc value
 #        lands on the same destination (the printed advice works)
 #   RC6  a programmatic set and a Revert print NO CIW line
+#   RC7  the line names the rc FILE the launch read (--script's name, else
+#        xschemrc): in-tree, ~/.xschem/xschemrc is never sourced
+#   RC8  C exports --script as ::cli_opt_script
+set rc_self [info script]
 if {[catch {
   set rcst [file join $scratch rc_fixture.state]
   file copy -force $clonestate $rcst
@@ -813,6 +817,11 @@ if {[catch {
     [list $n1 [llength $::rc_said] \
           [string match "*bad ase_plot_dest 'bogus'*Replace*" $w1]] {1 2 1}
 
+  ## the CIW names the rc FILE this launch read (::cli_opt_script, set by C
+  ## from --script; RC7/RC8): pinned empty here so RC5 reads `xschemrc`
+  set rc_cli_saved {}
+  catch {set rc_cli_saved $::cli_opt_script}
+  set ::cli_opt_script {}
   set rc5 {}
   set rc5rt {}
   foreach code {append replace newsubwin newtab} {
@@ -838,8 +847,26 @@ if {[catch {
   check "RC6 a programmatic set (a replayed log, a script) and a Revert print NO CIW line" \
     [list $r6 [ase::ui::plot_dest $rckey] $::rc_said] {newsubwin replace {}}
   catch {ase::session_close $rckey}
+
+  ## RC7: a launch through `src/xschem --script sky130A/cadence_style_rc` (the
+  ## PDK launcher's own argv) runs IN the source tree, where xschem sources
+  ## neither ./xschemrc nor ~/.xschem/xschemrc -- so advice naming `xschemrc`
+  ## does nothing there. The line must name the rc this launch actually read.
+  set ::cli_opt_script /some/where/sky130A/cadence_style_rc
+  set rc7 [list [ase::ui::plot_dest_msg append] [ase::ui::plot_dest_msg newtab]]
+  set ::cli_opt_script {}
+  lappend rc7 [ase::ui::plot_dest_msg append]
+  check "RC7 the CIW line names the rc file the launch read: the --script rc's name, else xschemrc" \
+    $rc7 [list {ase: plot destination = Append (cadence_style_rc: set ase_plot_dest append)} \
+               {ase: plot destination = New Win (cadence_style_rc: set ase_plot_dest newwin)} \
+               {ase: plot destination = Append (xschemrc: set ase_plot_dest append)}]
+  ## RC8: C really exports the --script path (this suite IS one)
+  check "RC8 C exports --script as ::cli_opt_script (this suite's own file)" \
+    [file tail $rc_cli_saved] [file tail $rc_self]
+  set ::cli_opt_script $rc_cli_saved
   set ::ase_plot_dest {}
 } rcerr]} { check {RC00 section RC ran to the end} "RAISED:$rcerr" {} }
+if {[info exists rc_cli_saved]} { set ::cli_opt_script $rc_cli_saved }
 if {[info commands ::rc_echo_real] ne {}} {
   catch {rename ::ase::echo {}}
   rename ::rc_echo_real ::ase::echo

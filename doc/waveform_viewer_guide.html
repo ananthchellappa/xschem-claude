@@ -1177,9 +1177,12 @@ Direct Plot, at the right end of its status bar: <b>Append</b>, <b>Replace</b>,
 <b>New SubWin</b>, <b>New Win</b> (a new tab here). It is saved with the session
 state. Its default is <b>Replace</b>, so each Direct Plot batch clears the
 target subwindow; pick <b>Append</b> to add to it. To start every new session
-on another choice, put it in your <code>xschemrc</code>:</p>
+on another choice, put it in your rc file: the <code>--script</code> rc you
+launch with (a PDK workarea's <code>cadence_style_rc</code>), else your
+<code>xschemrc</code>. Run from the source tree, xschem does not read
+<code>~/.xschem/xschemrc</code>.</p>
 <pre>set ase_plot_dest append   ;# append, replace, newsubwin or newwin</pre>
-<p>Changing the drop-down prints that exact line in the CIW. A session that saved
+<p>Changing the drop-down prints that exact line in the CIW, naming the rc file. A session that saved
 its own choice keeps it.</p>
 
 <p>The Calculator's Plot drop-down is the Calculator's own setting. It offers
