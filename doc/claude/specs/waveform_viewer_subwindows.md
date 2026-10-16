@@ -532,13 +532,20 @@ and a state at the default serialises byte-identically. An old state (no
 subwindows, and the old `ase: waveform viewer plot mode = <m> (<key>)` with one.
 
 **Keys.** `<Control-Shift-Key-D>` → `wviewer::clear_target_subwin_at`,
-`<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`, spelled with `Shift-`
-(unlike Ctrl-Shift-N/W) so Caps Lock + Ctrl-d (keysym `D`, no Shift) is never a
-subwindow clear. Caps Lock flips the keysym's case the other way too
-(Lock+Shift+Ctrl+d arrives as `d`, which `<Control-Key-d>` matches), so six
-aliases carry the base chords' scripts: `<Control-Lock-Key-D>`/`-G` (Ctrl-D,
-Ctrl-G) and `<Control-Shift-Lock-Key-d>`/`-D`/`-g`/`-G` (the subwindow chords).
-With Caps Lock on, each chord does what it does with Caps Lock off.
+`<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`.
+**Caps Lock (user ruling 2026-10-16): the case of the letter as typed decides a
+Ctrl shortcut.** Caps Lock + Ctrl-d is Ctrl-Shift-D (Clear SubWin) and Caps Lock +
+Ctrl-Shift-D is Ctrl-D (Clear All); likewise G, N, W, E, U, Z, and B/C/Q/V (whose
+upper case has no shortcut). Upper case = Shift XOR Lock, read from the event
+STATE, because whether Shift+Lock arrives as keysym `d` or `D` is the keymap's
+business (`d` on Xvfb, measured with real XTest input). `wviewer::case_pairs`
+lists each letter's two base sequences; `wviewer::install_case_binds` binds every
+Lock chord in both keysym cases (plus `<Control-Shift-Key-d>` and, where it is
+not itself a base, `<Control-Key-D>`) to `wviewer::case_key`, which runs the base
+script for the typed case, so an rc remap of a base carries over. `key_filter`
+applies the same rule (`wviewer::case_keysym`) to the keysym it acts on or
+forwards to C (z, a). This replaces the six Lock aliases of `32e53cd8`, which
+made Caps Lock change nothing.
 `wviewer::clear_target_subwin` is the logged door over
 `clear_subwin` (one undo point, logged on every call like `clear_all`). Menu:
 Graph > Clear SubWin (above Clear All) and Graph > SubWin Grid (after the Grid
@@ -550,7 +557,8 @@ paste), SWV1-SWV4 (undo/redo of a close restores each subwindow's own mode and
 grid; a later change still wins; a change is no undo step), SWS1-SWS2 (the flat
 `grid` key and its reader), SWE1 (the Ctrl-Shift-4 echo) and SWK0-SWK13
 (display: the Options entry, real clicks, real Ctrl-Shift-G / Ctrl-G /
-Ctrl-Shift-D, the Caps Lock state 4-7 matrix, the menu entries, Graph > Clear
+Ctrl-Shift-D, the Caps Lock state 4-7 matrix over every Ctrl-letter pair
+(plus SWK14-SWK16, both arms: `typed_upper`, `case_keysym`, `case_pairs`), the menu entries, Graph > Clear
 SubWin's `-command` (SWK12), tabs, save and restore, a one-tab grid round trip
 (SWK13)). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
 (`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite

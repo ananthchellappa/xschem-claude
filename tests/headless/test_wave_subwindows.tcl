@@ -58,8 +58,9 @@
 #   SWK*  DISPLAY -- the same in the real window: Options > Plot Mode and the
 #         status bar following real clicks, real Ctrl-Shift-G / Ctrl-G on the
 #         rect `grid` tokens, the Grid checkbutton, Graph > SubWin Grid and
-#         Clear SubWin, a real Ctrl-Shift-D (and Caps Lock + Ctrl-d clearing
-#         nothing), undo, a new tab, tab switch, save / close / restore,
+#         Clear SubWin, a real Ctrl-Shift-D (and the Caps Lock matrix over every
+#         Ctrl-letter pair: the case as typed decides; SWK14-16 its pure layer,
+#         both arms), undo, a new tab, tab switch, save / close / restore,
 #         Graph > Clear SubWin's -command (SWK12), a one-tab grid round trip
 #         (SWK13).
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
@@ -155,6 +156,10 @@
 #   C  regenerate: no status_refresh / sync_grid_mirror push (display) -> SWK11
 #   K  no Caps Lock aliases (the 720898fe binds) (display) -> SWK8 matrix
 #        (state 6 fired nothing, state 7 fired Clear All / Ctrl-G)
+#        [superseded 2026-10-16: the aliases are gone, the dispatcher decides]
+# Caps Lock (2026-10-16), each measured red at
+# 9beec4c4 (the product before the change):
+#   the six 32e53cd8 Lock aliases, no dispatcher -> SWK8 (x3), SWK14-SWK16
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from.
@@ -888,6 +893,23 @@ if {[catch {
   } else {
     check "SWE1 ase::plot_mode_for_current is loaded" missing present
   }
+
+  # ---- SWK14-SWK16: CAPS LOCK, the case as typed decides (ruling 2026-10-16)
+  # Pure, both arms. States: 4 Ctrl, 5 Ctrl+Shift, 6 Ctrl+Lock, 7 all three.
+  # Both keysym cases at every state, because whether Shift+Lock arrives as `d`
+  # or `D` is the keymap's business; with no Lock bit an upper keysym counts.
+  set m14 {}
+  foreach st {4 5 6 7} { foreach K {d D} { lappend m14 $K$st [pcall {wviewer::typed_upper $K $st}] } }
+  check "SWK14 typed_upper: Shift XOR Lock, either keysym case; no Lock bit -> Shift or an upper keysym" \
+    $m14 {d4 0 D4 1 d5 1 D5 1 d6 1 D6 1 d7 0 D7 0}
+  set m15 {}
+  foreach N {122 90} { foreach st {0 1 4 5 6 7} { lappend m15 [pcall {wviewer::case_keysym $N $st}] } }
+  lappend m15 [pcall {wviewer::case_keysym 65361 6}] [pcall {wviewer::case_keysym 49 7}]
+  check "SWK15 case_keysym: under Ctrl a letter takes the typed case (z: 4 out, 5/6 in, 7 out); no Ctrl or a non-letter unchanged" \
+    $m15 {122 122 122 90 90 122 90 90 90 90 90 122 65361 49}
+  set p16 [pcall {wviewer::case_pairs}]
+  check "SWK16 case_pairs: every Ctrl-letter pair of the viewer, each with its two base sequences" \
+    [lmap {l lo up} $p16 {set l}] {d g n w e u b c q v}
 } swmerr]} { check "SWM* band ran to its end" "ERR:$swmerr" ok }
 swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
@@ -1851,27 +1873,88 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [list [pcall {$gm entrycget $ix -accelerator}] [pcall {expr {[$gm index {Clear All}] - $ix}}]] {Ctrl+Shift+D 1}
   check "SWK7 Ctrl-Shift-D is a WaveViewer default" \
     [string match {*clear_target_subwin_at %W*} [bind WaveViewer <Control-Shift-Key-D>]] 1
-  # Caps Lock matrix, REAL key events into recorders: Tk recomputes the keysym
-  # from the keycode and state, so Lock+Ctrl gives `D` with no Shift and
-  # Lock+Shift+Ctrl gives `d` on :99. Each chord must reach its own command
-  # whatever Caps Lock says, and exactly one of the two.
-  foreach p {clear_all_at clear_target_subwin_at grid_toggle_at grid_toggle_subwin_at} {
+  # Caps Lock matrix, REAL key events into recorders, for EVERY Ctrl-letter
+  # pair of the viewer (ruling 2026-10-16: the case as typed decides). Tk
+  # recomputes the keysym from the keycode and the state, so Lock+Ctrl gives
+  # `D` and Lock+Shift+Ctrl gives `d` on :99 (the same with real XTest input).
+  # Expected: state 4 the lower chord, 5 and 6 the upper, 7 the lower.
+  set swk_procs {clear_all_at clear_target_subwin_at grid_toggle_at grid_toggle_subwin_at
+    new_tab_at new_subwin_at close_tab_at close_subwin_at delete_all_markers_at
+    browser_descend_at undo_at redo_at browser_toggle_at copy_traces_at
+    close_window_at paste_traces_at}
+  foreach p $swk_procs {
     rename ::wviewer::$p ::swk_orig_$p
     proc ::wviewer::$p {W} [list lappend ::swk_rec $p]
   }
-  set mx {}
-  foreach {ks st} {d 4 D 5 D 6 D 7 g 4 G 5 G 6 G 7} {
-    set ::swk_rec {}
-    send_ks $vdrw $ks $st {[llength $::swk_rec] > 0}
-    update
-    lappend mx $st $::swk_rec
+  rename ::wviewer::graph_zoom ::swk_orig_graph_zoom
+  proc ::wviewer::graph_zoom {token dir args} { lappend ::swk_rec zoom_$dir }
+  proc ks_once {w ks st} {
+    for {set i 0} {$i < 100} {incr i} {
+      focus -force [winfo toplevel $w]
+      focus -force $w
+      update
+      if {[focus -displayof $w] eq $w} {
+        event generate $w <KeyPress> -keysym $ks -state $st
+        event generate $w <KeyRelease> -keysym $ks -state $st
+        update
+        return 1
+      }
+      after 50
+    }
+    return 0
   }
-  foreach p {clear_all_at clear_target_subwin_at grid_toggle_at grid_toggle_subwin_at} {
+  set swk_pairs {
+    d clear_all_at clear_target_subwin_at   g grid_toggle_at grid_toggle_subwin_at
+    n new_tab_at new_subwin_at              w close_tab_at close_subwin_at
+    e delete_all_markers_at browser_descend_at  u undo_at redo_at
+    z zoom_out zoom_in                      b browser_toggle_at {}
+    c copy_traces_at {}                     q close_window_at {}
+    v paste_traces_at {}
+  }
+  set mx {}; set want {}
+  foreach {l lo up} $swk_pairs {
+    foreach st {4 5 6 7} {
+      set ::swk_rec {}
+      set ks [expr {$st == 5 || $st == 6 ? [string toupper $l] : $l}]
+      set ok [ks_once $vdrw $ks $st]
+      lappend mx $l$st [expr {$ok ? $::swk_rec : {NOFOCUS}}]
+      lappend want $l$st [expr {$st == 4 || $st == 7 ? $lo : $up}]
+    }
+  }
+  # the server variant :99 cannot produce: Shift+Lock reported as `D`, Lock as
+  # `d`, and Caps Lock with no Lock bit (`D` at state 4) -- the dispatcher itself
+  set mv {}
+  foreach {K st lo up} {D 7 <Control-Key-d> <Control-Shift-Key-D>
+                        d 6 <Control-Key-d> <Control-Shift-Key-D>
+                        N 7 <Control-Key-n> <Control-Key-N>
+                        w 6 <Control-Key-w> <Control-Key-W>} {
+    set ::swk_rec {}
+    pcall {wviewer::case_key $vdrw $K $st $lo $up}
+    lappend mv $K$st $::swk_rec
+  }
+  set ::swk_rec {}
+  pcall {wviewer::case_key $vdrw D 4 <Control-Key-d> <Control-Shift-Key-D>}
+  lappend mv D4 $::swk_rec
+  foreach p $swk_procs {
     rename ::wviewer::$p {}
     rename ::swk_orig_$p ::wviewer::$p
   }
-  check "SWK8 Caps Lock does not change what Ctrl-D / Ctrl-Shift-D / Ctrl-G / Ctrl-Shift-G do (state 4 5 6 7)" \
-    $mx {4 clear_all_at 5 clear_target_subwin_at 6 clear_all_at 7 clear_target_subwin_at 4 grid_toggle_at 5 grid_toggle_subwin_at 6 grid_toggle_at 7 grid_toggle_subwin_at}
+  rename ::wviewer::graph_zoom {}
+  rename ::swk_orig_graph_zoom ::wviewer::graph_zoom
+  check "SWK8 Caps Lock: the case as typed decides every Ctrl-letter pair (d g n w e u z b c q v, state 4 5 6 7)" \
+    $mx $want
+  check "SWK8 ...and when the server reports the other keysym case (or no Lock bit) the state still decides" \
+    $mv {D7 clear_all_at d6 clear_target_subwin_at N7 new_tab_at w6 close_subwin_at D4 clear_target_subwin_at}
+  set ub {}
+  set cp8 [pcall {wviewer::case_pairs}]
+  if {[string match ERR:* $cp8]} { set ub $cp8 ; set cp8 {} }
+  foreach {l lo up} $cp8 {
+    foreach seq [list <Control-Lock-Key-$l> <Control-Lock-Key-[string toupper $l]> \
+                      <Control-Shift-Lock-Key-$l> <Control-Shift-Lock-Key-[string toupper $l]>] {
+      if {![string match {wviewer::case_key %W %K %s *} [bind WaveViewer $seq]]} { lappend ub $seq }
+    }
+  }
+  check "SWK8 ...every Lock chord of every pair, both keysym cases, is the dispatcher" $ub {}
   check "SWK8 ...and the recorders left the plots alone" [list [ltags] [trx 0]] {{1 2 2 2} a1}
   set ::sw_log {}
   set ok [send_ks $vdrw D 5 {[llength [lay]] == 2}]
@@ -1966,7 +2049,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 155 } else { set expect 281 }
+if {$::arm eq {nogui}} { set expect 158 } else { set expect 286 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

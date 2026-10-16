@@ -16407,10 +16407,9 @@ proc wviewer::install_default_binds {} {
   }
   # PER-SUBWINDOW (SW22/SW23): Ctrl-Shift-D clears the TARGET subwindow, the
   # twin of Ctrl-D's Clear All; Ctrl-Shift-G flips the target subwindow's grid,
-  # the twin of Ctrl-G. ⚠ SPELLED WITH `Shift-`, unlike Ctrl-Shift-N/W above:
-  # with Caps Lock on, a plain Ctrl-d arrives as keysym `D` with the Lock bit
-  # and no Shift, and a `<Control-Key-D>` would turn the user's Clear All into
-  # a subwindow clear. `<Control-Shift-Key-D>` needs Shift held. Collision
+  # the twin of Ctrl-G. These two are the BASE scripts of their letters' upper
+  # case; what Caps Lock does to them is decided by wviewer::case_key below,
+  # not by how they are spelled. Collision
   # check (2026-10-15): no `bind` of either chord in src/*.tcl or
   # cadence_style_rc; src/keybindings.csv has no row for keysym 68 or 71; and
   # neither is in key_filter's `graphkeys`, so nothing is forwarded to C.
@@ -16419,25 +16418,6 @@ proc wviewer::install_default_binds {} {
   }
   if {[bind WaveViewer <Control-Shift-Key-G>] eq {}} {
     bind WaveViewer <Control-Shift-Key-G> {wviewer::grid_toggle_subwin_at %W; break}
-  }
-  # ⚠ CAPS LOCK ALIASES. Tk derives the keysym from keycode + state, and with
-  # Lock on the case flips: Lock+Ctrl+d arrives as `D` with no Shift (matches
-  # neither chord above), and Lock+Shift+Ctrl+d arrives as `d` -- which
-  # <Control-Key-d> matches, so Caps Lock turned Ctrl-Shift-D into Clear All
-  # (no undo). Each alias carries its base chord's script, so an rc remap of
-  # the base made before the first viewer open carries over. Both cases of the
-  # Shift+Lock chord are bound: a server that does not flip the case there
-  # would otherwise leave <Control-Lock-Key-D> and <Control-Shift-Key-D>
-  # equally specific. Row SWK8 of test_wave_subwindows sends states 4-7.
-  foreach {alias base} {
-    <Control-Lock-Key-D>       <Control-Key-d>
-    <Control-Lock-Key-G>       <Control-Key-g>
-    <Control-Shift-Lock-Key-d> <Control-Shift-Key-D>
-    <Control-Shift-Lock-Key-D> <Control-Shift-Key-D>
-    <Control-Shift-Lock-Key-g> <Control-Shift-Key-G>
-    <Control-Shift-Lock-Key-G> <Control-Shift-Key-G>
-  } {
-    if {[bind WaveViewer $alias] eq {}} { bind WaveViewer $alias [bind WaveViewer $base] }
   }
   # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
   # and with only one tab it does NOTHING but say so. It never closes a window
@@ -16456,6 +16436,104 @@ proc wviewer::install_default_binds {} {
   }
   if {[bind WaveViewer <Control-Key-v>] eq {}} {
     bind WaveViewer <Control-Key-v> {wviewer::paste_traces_at %W; break}
+  }
+  wviewer::install_case_binds
+  return 1
+}
+
+# ---- CAPS LOCK: THE CASE OF THE LETTER AS TYPED DECIDES A Ctrl SHORTCUT ------
+# User ruling 2026-10-16: with Caps Lock ON, Ctrl-d does what
+# Ctrl-Shift-D does and Ctrl-Shift-d does what Ctrl-d does, for every Ctrl-letter
+# pair in the viewer. Upper case = Shift XOR Lock (wviewer::typed_upper).
+#
+# Why a dispatcher and not more keysym spellings: Tk derives the keysym from the
+# keycode and the state, and whether Shift+Lock arrives as `d` or `D` is the
+# keymap's business (on Xvfb it is `d`, measured with real XTest input). The
+# STATE bits are the one thing every server reports the same way, so every Lock
+# chord, in both keysym cases, is bound to wviewer::case_key, which reads %s and
+# runs the base chord's CURRENT script -- so an rc remap of a base chord carries
+# over. A Lock sequence carries more modifiers than its base, so Tk prefers it.
+#
+# The pairs: letter, the lower-case base sequence, the upper-case base sequence
+# ({} = that case has no viewer shortcut, so the key goes on to the next tag as
+# it always did). E and U are listed with the bare-key bindings their Ctrl
+# chords actually reach today. z and a are not bindings: key_filter applies the
+# same rule to the keysym it acts on or forwards (wviewer::case_keysym).
+proc wviewer::case_pairs {} {
+  return {
+    d <Control-Key-d> <Control-Shift-Key-D>
+    g <Control-Key-g> <Control-Shift-Key-G>
+    n <Control-Key-n> <Control-Key-N>
+    w <Control-Key-w> <Control-Key-W>
+    e <Control-Key-e> <Key-E>
+    u <Key-u>         <Key-U>
+    b <Control-Key-b> {}
+    c <Control-Key-c> {}
+    q <Control-Key-q> {}
+    v <Control-Key-v> {}
+  }
+}
+
+# PURE: 1 when keysym `K` with state `s` was typed as an UPPER-case letter.
+# Lock reported: Shift XOR Lock. No Lock bit: Shift, or an upper-case keysym
+# (a server that applies Caps Lock to the keysym without reporting the bit).
+proc wviewer::typed_upper {K s} {
+  if {![string is integer -strict $s]} { return 0 }
+  set shift [expr {($s & 1) != 0}]
+  if {$s & 2} { return [expr {!$shift}] }
+  if {$shift} { return 1 }
+  return [expr {[string length $K] == 1 && [string is upper $K]}]
+}
+
+# PURE: keysym number `N` with the case wviewer::typed_upper gives it, for a
+# Latin letter under Control; any other key comes back unchanged.
+proc wviewer::case_keysym {N s} {
+  if {![string is integer -strict $N] || ![string is integer -strict $s]} { return $N }
+  if {!($s & 4)} { return $N }
+  if {$N >= 97 && $N <= 122} {
+    set K [format %c $N]
+  } elseif {$N >= 65 && $N <= 90} {
+    set K [format %c $N]
+  } else {
+    return $N
+  }
+  set lo [scan [string tolower $K] %c]
+  # the keysym's own case says nothing here: decide from the state alone,
+  # except when no Lock bit came (then an upper keysym is the evidence)
+  set up [wviewer::typed_upper $K $s]
+  return [expr {$up ? $lo - 32 : $lo}]
+}
+
+# The dispatcher bound to every Lock chord (and to the odd keysym spellings) of
+# the letters in case_pairs. Runs the base script for the case as typed with %W
+# substituted (other %-fields are not), and passes its `break` on.
+proc wviewer::case_key {W K s lo up} {
+  set seq [expr {[wviewer::typed_upper $K $s] ? $up : $lo}]
+  if {$seq eq {}} { return }
+  set script [bind WaveViewer $seq]
+  if {$script eq {}} { return }
+  set script [string map [list %% % %W $W] $script]
+  set code [catch {uplevel #0 $script} res opts]
+  if {$code == 3} { return -code break }
+  if {$code == 1} { return -options $opts $res }
+  return $res
+}
+
+# Bind the dispatcher. Sequences: every Lock state in both keysym cases, Ctrl +
+# Shift with a lower-case keysym, and Ctrl with an upper-case one unless that is
+# itself the upper base. A sequence something already bound is left alone.
+proc wviewer::install_case_binds {} {
+  foreach {l lo up} [wviewer::case_pairs] {
+    set U [string toupper $l]
+    set seqs [list <Control-Lock-Key-$l> <Control-Lock-Key-$U> \
+                   <Control-Shift-Lock-Key-$l> <Control-Shift-Lock-Key-$U> \
+                   <Control-Shift-Key-$l>]
+    if {$up ne "<Control-Key-$U>"} { lappend seqs <Control-Key-$U> }
+    foreach seq $seqs {
+      if {[bind WaveViewer $seq] eq {}} {
+        bind WaveViewer $seq [list wviewer::case_key %W %K %s $lo $up]
+      }
+    }
   }
   return 1
 }
@@ -18758,6 +18836,11 @@ proc wviewer::key_filter {W T x y N K s} {
   # View>Zoom — X on every strip, Y on the pointed strip (0145), anchored at the
   # KeyPress pointer %x/%y (0146, like the schematic's view_zoom).
   # token {} (unknown canvas) falls through to the old forward.
+  #
+  # CAPS LOCK (user ruling 2026-10-16): under Control the letter's case as
+  # typed (Shift XOR Lock) decides, so Caps Lock + Ctrl-z zooms in like
+  # Ctrl-Shift-Z, and a letter forwarded to C carries that case too.
+  set N [wviewer::case_keysym $N $s]
   set tok19 [wviewer::token_for_canvas $W]
   if {$tok19 ne {}} {
     if {$N == 102} {                                  ;# f = fit (x+y)
