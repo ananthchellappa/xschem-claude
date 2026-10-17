@@ -488,10 +488,11 @@ bind .drw <Alt-Shift-Key-6>     {cadence::annot_tran;             break}
 # drawn at the same size and in bold. Both are viewer-only (per-rect prop
 # tokens written by the viewer's own strip generator), so schematics with
 # embedded graphs render exactly as before.
-#   wviewer_legend_textmag  multiplier on the legend text size. 1.63 is the
-#                           value that matches the Y-axis numbers at the
-#                           viewer's divy=5; clamped to 0.25 .. 6.0, anything
-#                           else falls back to the default.
+#   wviewer_legend_textmag  RETIRED for viewer strips (item 22): every viewer
+#                           strip now draws ALL its text at wviewer_text_size,
+#                           so the legend matches the axis numbers by
+#                           construction and this multiplier changes nothing
+#                           (a non-default value prints one CIW warning).
 #   wviewer_legend_bold     0 = DEFAULT: bold marks the SELECTED trace only
 #                           (click a trace to bold it), which is the
 #                           long-standing behaviour -- only the SIZE changed.
@@ -736,6 +737,14 @@ unset _ut
 # xschem.tcl has already run set_ne on both by the time this rc is sourced.
 # set ::ase_plot_dest append
 # set ::calc_plot_dest replace
+
+# Waveform-viewer text size in points (default 14), fixed whatever the strip
+# height. The aA button in a sub-window's top-right corner (shown when the
+# pointer is in that corner, or flicks towards it) changes that sub-window
+# only; new sub-windows in the same window then start at the new size.
+# The CIW prints this line when you change it (wviewer_legend_textmag no longer
+# affects viewer strips):
+# set ::wviewer_text_size 14
 
 
 # --- CIW text size ----------------------------------------------------------

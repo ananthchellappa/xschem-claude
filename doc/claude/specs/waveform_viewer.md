@@ -846,6 +846,23 @@ strip-template time and folded into a new per-rect prop token `griddash`.
 
 ## Legend text size + weight (viewer plan item 1, 2026-07-29)
 
+> **⚠ SUPERSEDED FOR SIZE BY ITEM 22 (2026-10-16).** Every viewer strip now
+> carries `textpx=<device pixels>` (written by `wviewer::font_props` from
+> `wviewer_text_size` points times `tk scaling`, per sub-window), and
+> `setup_graph_data` then takes a FIXED branch on a strip that is neither
+> digital nor vlegend: with `m` the screen mooz (frozen across an export by
+> `save_restore_zoom`), `H = textpx/m` and `S = textpx/(52*cairo_font_scale*m)`,
+> all five text sizes are `S` (so `legendmag`, `xlabmag` and `ylabmag` are
+> ignored for size), `bottom` solves `b = b/10 + 5S + 2.4H + 0.15H`,
+> `top = 60S + 0.96H + 0.6H + 0.15H`, `left = bottom/10 + 5S + 8*0.62H + 0.3H`
+> and `right = max(2H, (GRAPH_REORDER_HANDLE_W+4)/m)`, with a floor scaling
+> top+bottom (and left+right) down together when they would exceed 80 % of the
+> strip. The legend therefore matches the axis numbers by construction and
+> `wviewer_legend_textmag` no longer changes viewer strips (one CIW warning per
+> process for a non-default value). `legendbold` is unaffected. Schematic graphs
+> carry no `textpx` and are unchanged. Spec: `waveform_viewer_subwindows.md`
+> SW27-SW31 and §17; rows: band GF of `test_wave_grid`.
+
 **The viewer legend is drawn at the size of the Y-axis numbers and in the bold
 face.** Two rc-overridable vars, `wviewer_legend_textmag` (default **1.63**) and
 `wviewer_legend_bold` (default **0**), read lazily at strip-template time and

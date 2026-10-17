@@ -4988,12 +4988,27 @@ v_c} {2 3}]
   check "MX6 press: the STRIP reorder did not arm" [pcall {set ::wviewer::drag_from($tok)}] -1
   check "MX6 press: no cursor was grabbed (graph_flags 16|32|512|1024 all clear)" \
     [pcall {expr {[xschem get graph_flags] & (16|32|512|1024)}}] 0
-  foreach mx6d {20 40 60} {
-    wb_ev $vdrw <B1-Motion> -x [expr {[mk_px $mxA 0] + $mx6d}] -y [mk_px $mxA 1] -state 0x100
+  # ⚠ THE TRAVEL IS DERIVED FROM THE PLOT BOX, NOT A PIXEL CONSTANT. It used to
+  # be a flat 60 px, which crossed a sample boundary only because the box
+  # happened to be narrow enough for one segment (box width / 10: 11 samples)
+  # to be shorter than that. Item 22's fixed viewer text gave the box a smaller
+  # left margin, one segment became ~97 px, and the same 60 px drag stayed
+  # inside the anchor's segment -- correct product behaviour (issue 0193: the
+  # anchor is constant along a segment) reported as "did not move". So the box
+  # is scanned along the anchor's row and the drag travels 1.5 segments.
+  set mx6x0 [mk_px $mxA 0] ; set mx6y0 [mk_px $mxA 1]
+  set mx6l $mx6x0 ; set mx6r $mx6x0
+  while {$mx6l > $mx6x0 - 4000 && [pcall {wviewer::plotbox_at $vdrw 0 [expr {$mx6l - 1}] $mx6y0}] == 1} { incr mx6l -1 }
+  while {$mx6r < $mx6x0 + 4000 && [pcall {wviewer::plotbox_at $vdrw 0 [expr {$mx6r + 1}] $mx6y0}] == 1} { incr mx6r }
+  set mx6seg [expr {($mx6r - $mx6l) / 10.0}]
+  check_true "MX6 the plot box was scanned along the anchor's row (one segment = box/10 > 5 px)" \
+    [pexpr {$mx6seg > 5}]
+  foreach mx6f {0.5 1.0 1.5} {
+    wb_ev $vdrw <B1-Motion> -x [expr {$mx6x0 + int($mx6f * $mx6seg)}] -y $mx6y0 -state 0x100
   }
   check "MX6 the model is NOT mutated mid-drag (the scratch is)" \
     [lindex [pcall {mk_list 0}] 0] $mx6before
-  wb_ev $vdrw <ButtonRelease-1> -x [expr {[mk_px $mxA 0] + 60}] -y [mk_px $mxA 1] -state 0x100
+  wb_ev $vdrw <ButtonRelease-1> -x [expr {$mx6x0 + int(1.5 * $mx6seg)}] -y $mx6y0 -state 0x100
   set mx6after [lindex [pcall {mk_list 0}] 0]
   check "MX6 the drag arm is torn down on release" \
     [pcall {xschem new_schematic switch $vdrw; xschem get graph_marker_drag}] 0
@@ -5908,7 +5923,9 @@ v_c} {2 3}]
 # 2026-08-02, issue 0193: +4 on the DISPLAY arm (MX6b, the short-drag leg a
 # surviving sabotage forced). The --nogui arm is unchanged -- MX6b is a real Tk
 # drag, so it lives in the DISPLAY half only.
-set ::mk_expect_x     981   ;# DISPLAY arm: MK + MS + MR + MF + MP + MD + MQ + MR-viewer + MX
+# 2026-10-16, item 22: +1 on the DISPLAY arm (MX6's box scan, the derived drag
+# travel that replaced a 60 px constant the fixed viewer text broke).
+set ::mk_expect_x     982   ;# DISPLAY arm: MK + MS + MR + MF + MP + MD + MQ + MR-viewer + MX
 set ::mk_expect_nogui 435   ;# --nogui arm: MK + MS + MP + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]

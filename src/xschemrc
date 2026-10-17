@@ -779,6 +779,12 @@
 #### The Calculator's Plot destination: append, replace, newstrip,
 #### newsubwin or newtab. Default: append.
 # set calc_plot_dest replace
+#### Waveform-viewer text size in points (default 14), fixed whatever the
+#### strip height. The aA button in a sub-window's top-right corner changes
+#### that sub-window only; new sub-windows then start at the new size. The CIW
+#### prints this line when you change it. wviewer_legend_textmag no longer
+#### affects viewer strips.
+# set wviewer_text_size 14
 
 #### redefine some variables to emulate Cadence UI / bindkeys
 # source /home/schippes/share/xschem/cadence_style_rc

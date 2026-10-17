@@ -646,8 +646,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "TG15 <$wt_seq> is NOT bound on the canvas widget" \
       [bind $vdrw <$wt_seq>] {}
   }
-  check "TG15 the WaveViewer tag is still at bindtags index 1" \
-    [lindex [bindtags $vdrw] 1] WaveViewer
+  # the WIDGET's position is derived: item 22's aA gesture tag (WvFszCanvas)
+  # sits at index 0, ahead of the widget, and never breaks, so the claim is
+  # "right after the widget", which index 1 only happened to be before it
+  check "TG15 the WaveViewer tag is still right after the widget" \
+    [lindex [bindtags $vdrw] [expr {[lsearch -exact [bindtags $vdrw] $vdrw] + 1}]] WaveViewer
   check "TG15 ...exactly once" \
     [llength [lsearch -all -exact [bindtags $vdrw] WaveViewer]] 1
 

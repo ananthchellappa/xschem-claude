@@ -350,6 +350,28 @@ remaining strip, so a window showing one empty strip is left alone.</td></tr>
 <span class="menu">Graph &gt; Clear All</span>.</td></tr>
 </table>
 
+<h3 id="textsize">aA — text size</h3>
+<p>All the text in a strip — the legend, the axis numbers and the cursor labels —
+is drawn at <b>one fixed size</b>, 14&nbsp;pt by default, whatever the height of
+the strip. Each sub-window has its own size and its own <b>aA</b> button in its
+top-right corner. The button stays hidden until you need it: move the pointer
+into that corner, or flick the pointer quickly up and to the right inside the
+sub-window, and it appears (for 3 seconds after a flick).</p>
+<ul>
+<li><b>Click</b> aA: one point larger. <b><kbd>Ctrl</kbd>+click</b>: one point
+smaller. The range is 6 to 20; at either end the CIW says
+<code>Font size: already the largest (20).</code> and nothing changes. This is
+the Calculator's aA, the same gesture and the same words.</li>
+<li>It changes <b>only that sub-window</b>. Once you have changed a size, every
+<b>new</b> sub-window and tab in that window starts at it.</li>
+<li>Closing down to one sub-window keeps the survivor's size, and Clear All keeps
+the target sub-window's. Sizes are saved with the layout and are not undo
+steps.</li>
+<li>Each change prints the line that makes it your default, for example
+<code>Font size: 16 (cadence_style_rc: set wviewer_text_size 16).</code></li>
+</ul>
+<p>Schematics with graphs embedded in them are not affected.</p>
+
 <h3>Clear All is not "close and reopen"</h3>
 <p><b>Clear All</b> drops every strip and every trace and leaves one empty strip.
 It deliberately <b>keeps</b> the plot mode, Shared X, the cursors and — the point
@@ -689,6 +711,12 @@ reorder grip wins over all of them.</p>
 <tr><td>LMB press</td><td>Makes that strip the <b>target strip</b>.</td>
 <td class="where">anywhere in a strip</td></tr>
 
+<tr><td>Pointer into the top-right corner, or a quick flick up and to the
+right (no button held)</td><td>Shows that sub-window's <b>aA</b> text-size
+button (<a href="#textsize">§6</a>); a flick shows it for 3 s. A drag never
+does.</td>
+<td class="where">any sub-window</td></tr>
+
 <tr><td>LMB click (no travel)</td><td><b>Select</b> that trace; the selection
 becomes exactly it.</td>
 <td class="where">within 10 px of a trace</td></tr>
@@ -914,7 +942,7 @@ remap the label is the one thing that goes stale. Change it in your rc too if it
 bothers you, or use the menu.</p>
 
 <h3 id="rebind-vars">10.2 Config variables — behaviour without rebinding</h3>
-<p>All of these are read <b>lazily</b>, so setting them in an rc works. The three
+<p>All of these are read <b>lazily</b>, so setting them in an rc works. The
 appearance ones are written as per-strip properties by the viewer's own strip
 generator, so schematics with embedded graphs are not affected by any of
 them.</p>
@@ -930,9 +958,23 @@ is not a boolean reads as 1.</td></tr>
 <tr><td><code>wviewer_grid_dash_off</code></td><td><code>3</code></td>
 <td>The off-run of the grid dash against a 1-pixel on-run: 3 gives a quarter of
 the pixels lit, 0 restores the older, heavier grid. Clamped 0..32.</td></tr>
+<tr><td><code>wviewer_text_size</code></td><td><code>14</code></td>
+<td>The text size, in points, of a new viewer window's strips: legend, axis
+numbers and cursor labels alike, fixed whatever the strip height. 6..20; anything
+else reads 14 with one CIW warning. The aA button changes it per sub-window
+(<a href="#textsize">§6</a>).</td></tr>
+<tr><td><code>wviewer_aa_flick_px</code>, <code>wviewer_aa_flick_deg</code>,
+<code>wviewer_aa_flick_tol</code>, <code>wviewer_aa_flick_ms</code></td>
+<td><code>100</code>, <code>45</code>, <code>15</code>, <code>400</code></td>
+<td>The flick that reveals aA: more than this many pixels, in this direction
+(degrees, 0 = right, 90 = up) give or take this many, within this many
+milliseconds.</td></tr>
+<tr><td><code>wviewer_aa_reveal_ms</code></td><td><code>3000</code></td>
+<td>How long a flick shows aA.</td></tr>
 <tr><td><code>wviewer_legend_textmag</code></td><td><code>1.63</code></td>
-<td>Size multiplier for the legend text. 1.63 is what matches the Y-axis numbers
-at the viewer's default axis divisions. Clamped 0.25..6.0.</td></tr>
+<td><b>No longer affects viewer strips</b>: their legend is drawn at
+<code>wviewer_text_size</code> like everything else. A non-default value prints
+one CIW warning.</td></tr>
 <tr><td><code>wviewer_legend_bold</code></td><td><code>0</code></td>
 <td>0 = bold marks the <i>selected</i> trace only. 1 = every legend entry is
 bold, and the selected one is then bold italic.</td></tr>
@@ -942,6 +984,7 @@ turns the effect off without disabling the drag; anything outside (0,&nbsp;1]
 falls back to the default.</td></tr>
 </table>
 <pre>set wviewer_plot_mode multi
+set wviewer_text_size 12
 set wviewer_grid_dash_off 0
 set wviewer_legend_bold 1</pre>
 

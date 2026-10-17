@@ -463,8 +463,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
   # --- EG8: the binding seam -------------------------------------------------
   set btags [bindtags $vdrw]
+  # the WIDGET's position is derived: item 22's aA gesture tag (WvFszCanvas)
+  # sits at index 0, ahead of the widget, and never breaks, so the claim is
+  # "right after the widget", which index 1 only happened to be before it
   check "EG8 the tag sits right AFTER the widget (filters keep first refusal)" \
-    [lindex $btags 1] WaveViewer
+    [lindex $btags [expr {[lsearch -exact $btags $vdrw] + 1}]] WaveViewer
   check_true "EG8 bare `e` is bound on the tag by default" \
     [expr {[bind WaveViewer <Key-e>] ne {}}]
   check_true "EG8 the default calls delete_empty_strips_at with the event's canvas" \

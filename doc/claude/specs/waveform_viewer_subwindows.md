@@ -61,6 +61,11 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW24 | Closing down to one subwindow, or Clear All, keeps the survivor's / the target's settings as the window's own. |
 | SW25 | The settings are saved and restored with the layout (per tab), and are outside undo like the window's other options. |
 | SW26 | (user 2026-10-16, a Cadence fact) The viewer has NO plot-destination setting: no menu, no remembered value. A plot goes to the target subwindow of the active tab, appended per that subwindow's plot mode, unless its SOURCE says otherwise. ASE-L's drop-down and the Calculator's W13 are each their source's own setting and never move each other (§16). |
+| SW27 | (user 2026-10-16, ViVA-like) Viewer text is FIXED in size whatever the strip height: one size, in points, for the legend, the axis numbers and the cursor labels. Default 14 pt, rc `wviewer_text_size` (6..20). Schematic graphs are unchanged. |
+| SW28 | Each sub-window has an aA button at its top-right corner, HIDDEN unless needed: shown while the pointer is in that corner's zone, and for 3 s after the pointer flicks towards the top-right inside the sub-window (net > 100 px, 45° ± 15°, within 400 ms, no LMB or RMB held). No fade. It never takes focus. |
+| SW29 | aA is the Calculator's control exactly: click = one point larger, Ctrl+click = one point smaller, range 6..20, the same tip and the same sentences (`Font size: already the largest (20).`). It changes ONLY its own sub-window. |
+| SW30 | Once the user changed a size in a viewer window, NEW sub-windows and tabs in that window start at that size, else at the rc default. Closing down to one sub-window and Clear All keep the survivor's / the target's size. The sizes are saved with the layout (per tab, per sub-window), are outside undo, and an undone close brings each sub-window's size back. |
+| SW31 | A size change made with aA prints the CIW line naming the rc to set (`Font size: 15 (<rc>: set wviewer_text_size 15).`, the `ase_plot_dest` hint's shape); a replayed, scripted or restored change prints nothing. |
 
 ## 3. Data model
 
@@ -621,3 +626,138 @@ unless the source said to create a new window or sub-window, etc.."*
   viewer and ASE-L unaffected; ASE-L → W13 unaffected; W13 survives a rebuild;
   no Plot Destination menu), PL5b/PL6 restated, PL5e/PL5f/PL5g (PX1-PX5)
   retired; `test_ase_plot_outputs` PO16k.
+
+## 17. As built — text size (2026-10-16, SW27-SW31, item 22)
+
+**C.** A per-rect token `textpx=<device pixels>`, written only by the viewer
+(`wviewer::font_props`, appended after `sw_props` in `regenerate`, so
+`graph_props`' pinned formals are untouched). `setup_graph_data` honours it
+(3..400 px, anything else 0) on a strip that is neither digital nor vlegend and
+then sizes every text of the strip from that one height with mooz divided out;
+`legendmag`/`xlabmag`/`ylabmag` are ignored for size. `save_restore_zoom`
+freezes the screen mooz for the length of an export so exported text keeps its
+on-screen proportion. Read-only getter: `xschem get graph_text_metrics <gi>`.
+Formulas: `waveform_viewer.md`, the item-22 note under "Legend text size".
+Schematic graphs carry no token and are unchanged (band GF of
+`test_wave_grid`: GF3's gold over every graph rect in the library).
+
+**Points, not pixels, in Tcl.** `wviewer_text_size` (points, default 14, 6..20,
+`set_ne` in `wave_viewer.tcl`) is converted by `wviewer::tk_points_scale`
+(`tk scaling`, else 96/72 under `--nogui`), because C's cached `tk_scaling` is
+1.0 under `--nogui`: converting in C would make the two arms disagree.
+
+**Model (three layers).** The layout's `font` key is the tab's own size (absent
+= the rc default; `wviewer::font_base`, the `grid_base` shape). A per-sub-window
+`swfont` graph key, written only where it differs from the base, carried by the
+same helpers as `swmode`/`swgrid`: `variable sw_setting_keys {swmode swgrid
+swfont}` drives `sw_props_spread` and `sw_props_carry`; `sw_props_trim` and
+`sw_props_stamp` take a trailing `{bfont {}}` (numeric compare; `{}` leaves
+`swfont` alone, so the three-argument callers are unchanged). `set_graphs`
+trims against `font_base` and, back at one sub-window, folds the survivor's
+`swfont` into the layout's `font`. `textlast($token)` is the last size the user
+chose in that viewer window; `wviewer::text_inherit` answers it, else the rc
+default. `new_subwin` stamps the new sub-window with `text_inherit` (NOT the
+target's size: a click changes only its own sub-window); `new_tab` writes `font`
+= `text_inherit` when it differs from the default; `clear_all` keeps the
+target's size as `font`. A click in a tab with one sub-window writes `font`;
+with two or more, the sub-window's `swfont`. The base never moves under a
+multi-sub-window click, which is what keeps every other sub-window still.
+
+**The door and the click.** `wviewer::set_text_size pt ?token? ?gi?` (gi
+default: the target) is the replayable door: refuse a size outside 6..20
+(`wviewer::_accept_text_size`, a copy of `calc::_accept_size`: it refuses and
+canonicalises, never clamps), change-only, `switch_ctx`, the issue-0194
+`capture_live_view_state` BEFORE the layout read, no undo point (a window
+option, like the grid), one `regenerate`, one resolved log line
+`wviewer::set_text_size <pt> <token> <first strip>`, and no CIW line.
+`wviewer::text_step token k dir` is the click on sub-window `k` (its `sw` tag, 1
+for a one-sub-window tab): `Font size: already the largest (20).` /
+`... smallest (6).` at the ends (the Calculator's sentences, through
+`wviewer::echo`, logged nothing), else the door plus
+`Font size: <pt> (<rc>: set wviewer_text_size <pt>).` (`wviewer::text_size_msg`,
+`xschem::rc_name`).
+
+**Persistence and undo.** `snapshot` writes flat `font` only off the rc default
+and `fontlast` once the user has chosen a size (so MG9's fixed key list holds
+for an untouched window); a per-tab record carries `font` inside its `layout`;
+sub-window sizes ride the graphs. `restore` reads both through
+`wviewer::state_font`. `state_snapshot` stamps every sub-window's size, so an
+undone close brings the closed one back at its own size; a size change is no
+undo step. `forget` declares and drops `textlast`, the gesture arrays and the
+reveal timers.
+
+**The aA button.** One per sub-window, `<canvas>.fsz<k>`, a CHILD of the canvas
+placed `-anchor ne` at the sub-window's top-right corner, inset
+`(graph_active_strip_width+1)/2 + 2` px. ⚠ The plan asked for a SIBLING;
+row SWA14 measured that a sibling mapped over the canvas partially obscures it,
+the canvas' toplevel-tag `<Visibility>` binding then runs `raise_dialog`, and a
+`.graphdialog` behind the viewer is raised above it on every hover. X computes
+visibility ignoring a window's own subwindows, so a child triggers nothing. The
+button's options are `.calc.btb.fsz`'s (aA, `-takefocus 0`, padx 3, pady 0, the
+palette's colours, no `-font`); bindtags `{$b WvFsz Button all}` (no toplevel
+tag); `<Control-Button-1> {text_step … -1 ; break}`; the Calculator's tip
+(`wviewer::_font_tip`) at 300 ms. Never `focus`, `raise` or `grab`.
+`wviewer::fsz_sync`, called at the end of every `regenerate` and after a tab's
+view is applied, creates or destroys buttons only as sub-windows appear or go
+(so a second click without moving still finds its button), caches the pixel
+cells, re-asks the hover of the new cells at the last pointer position, and
+keeps a shown button only while the pointer is on it, in its zone, or its
+reveal timer runs.
+
+**The gesture.** On its own bindtag `WvFszCanvas`, index 0 of the canvas
+(`strip_bindings`), so the widget-level `<B1-Motion>`'s `break` cannot starve
+it; no binding there breaks. `<Motion>` → `wviewer::fsz_motion token x y %s %t`:
+a state with Button1 or Button3 (`wviewer::flick_state_ok`, mask 1280) clears
+the buffer; the X time `%t` (else `clock milliseconds`) feeds the ring buffer
+(`wviewer::flick_push`: a backwards time clears it, older than `ms` drops, cap
+32); `wviewer::flick_test` takes the first sample with `0 <= t-ts <= ms`, a NET
+displacement of at least `px` and a direction within `tol` of `deg`
+(screen y flipped, the difference normalised to (-180, 180]) and answers its
+start; the reveal goes to the cell holding that START (else the end), for
+`wviewer_aa_reveal_ms`, a repeat flick re-arming the timer. `<Button>`,
+`<ButtonRelease>` and `<Leave>` clear the buffer (a re-entry elsewhere is a jump,
+not a flick); `<Enter>` updates the hover only. The cells are re-read live only
+when the current context is the viewer's (no context switch in a motion
+handler). Parameters: `wviewer_aa_flick_px 100`, `_deg 45`, `_tol 15`, `_ms 400`
+(user ruling: 400 ms), `wviewer_aa_reveal_ms 3000`; the zone is
+`variable fsz_zone {64 40}`.
+
+**Declared side effects (owed a look).** The pointer moving onto a shown button
+gives the canvas a `<Leave>`: xschem erases the crosshair, snap diamond and hover
+outline and `graph_show_measure` stops. Coming back runs the canvas `<Enter>`,
+which closes a posted `.ctxmenu` (and focuses the window only when
+`autofocus_mainwindow` is set). Hiding the button exposes the canvas, which
+repaints from its pixmap. At sizes below about 10 pt the top margin is shorter
+than the button, so a shown button overlaps the plot. Narrow 2x2 sub-windows can
+overrun legend slots at a fixed size; very short strips hit the margin floor and
+text overlaps. Synthesised events prove nothing about the real flick's feel.
+
+**Retired.** `wviewer_legend_textmag` no longer changes viewer strips
+(`legendmag=` is still written, so the rect text keeps its shape); a non-default
+value prints one CIW warning per process (`wviewer::legend_textmag_retired`).
+
+**Rows.** `test_wave_subwindows`: SWZ1-SWZ12 (both arms: `flick_test` edges at
+30/60 deg, 99/100/101 px (strict, per the ruling's "net > 100 px": exactly 100
+is no flick), 400/401 ms, the state mask, the y sign, net vs path, the angle
+normalisation, `flick_push`, `flick_params`, the cells, the zone and the shipped
+`fsz_zone` value, and
+`fsz_motion` on a model-only window: start-cell reveal, end fallback, Leave/
+press clears, a B1 motion clears, a bad `%t`), SWF1-SWF14 (both arms: the rc
+default and its admission test, `font_props`, `strip_fonts`, per-sub-window
+isolation, inheritance, the fold on close and Clear All, undo of a close, the
+saved keys, the refusals and the logged line and its replay, the CIW wording,
+the tip derived from `calc::_font_tip`, the key carriers, no undo point),
+SWA1-SWA14 (display: hidden by default, hover, flick and its timer, re-arm,
+B1 held and a real B1 drag, the click and Ctrl+click and a second click without
+moving, focus and stacking, a `.graphdialog` behind the viewer, the canvas
+bindings and an X-axis-margin drag with and without the tag, position across
+Configure / add / close / Fit, a 2x2 tab and a second tab) plus the display
+halves of SWF3/SWF4/SWF6/SWF9/SWF12. Added by the verify round: SWF6b (a
+size changed in one viewer window never reaches another's new sub-window or new
+tab, both arms), SWF9b (display: a one-tab, one-sub-window window round-trips
+its size through the flat `font` key), SWA2b (display: just inside and outside
+each edge of the shipped 64 x 40 zone) and SWA8b (display: a canvas zoom with no
+regenerate, then one motion re-places a shown button). `test_wave_grid` band GF
+(the C half; GF2h the width floor, GF2i the left recompute after the height
+floor, GF5c the export freeze measured in png rasters at two sizes),
+GX1/GX4 (`set_text_size` is a capture-before-regenerate site).

@@ -9,8 +9,10 @@
 # untouched.
 #
 # ⚠ WHAT THIS SUITE CANNOT SEE, stated rather than hidden: the PIXELS. There is
-# no C->Tcl getter for a Graph_ctx field and no way to read back an X GC's dash
-# list, so "the grid looks lighter" is EYEBALL-ONLY. Asserted here is everything
+# no C->Tcl getter for the grid's dash and no way to read back an X GC's dash
+# list, so "the grid looks lighter" is EYEBALL-ONLY. (Item 22 added one getter,
+# `xschem get graph_text_metrics`, for the text sizes and margins only: the GF
+# band below.) Asserted here is everything
 # up to the renderer's door — the clamp, the token, that it reaches the rects
 # and survives a round trip, and the blast radius.
 #
@@ -261,11 +263,14 @@ proc wvproc_body {src name} {
 # ⚠ `grid_toggle` became `grid_apply` (SW23, 2026-10-15): Ctrl-G and
 # Ctrl-Shift-G share one body, which is where the capture and the regenerate
 # now are.
+# ⚠ `set_text_size` ADDED BY ITEM 22 (the aA button): a window option like the
+# grid, so no undo point, but it regenerates every strip from the model, so the
+# selection must be folded first -- grid_apply's issue-0194 case exactly.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok
              select_tab new_tab close_tab paste_traces paste_payload
-             rawbar_load new_subwin close_subwin clear_subwin}
+             rawbar_load new_subwin close_subwin clear_subwin set_text_size}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -1407,6 +1412,407 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 } else {
   puts "SKIPPED: GG* GUI legs (no DISPLAY)"
 }
+
+# ============================================================================
+# GF* — item 22, the C half: a FIXED text size per viewer strip (`textpx`)
+# ============================================================================
+# The token is the viewer's (doc/claude/calc_feedback_batch item 22; the Tcl
+# writer is wviewer::font_props). These rows drive the ENGINE directly, on
+# sheets of graph rects this band writes itself, so they do not depend on the
+# viewer writing the token. Read back through `xschem get
+# graph_text_metrics <gi>` (scheduler.c; draw.c graph_text_metrics).
+# ⚠ GF3/GF4 are the D-G fence: every graph rect in every committed
+# xschem_library schematic must answer what the HEAD binary answered. The gold
+# file names how it was captured; GF_CAPTURE=<file> re-captures it from
+# whatever binary runs this suite.
+# There is no GF7 here: the measures-row / Y-number overlap needs real text extents and no
+# getter exposes them, so it is owed to the eye, not claimed.
+# Verify round (2026-10-16): four C sabotages left every GF row green and now
+# each reddens its own row, measured: dropping the export freeze in
+# save_restore_zoom, or ignoring graph_txt_mooz in setup_graph_data -> GF5c
+# (display arm only; png export writes nothing under --nogui); no width floor
+# -> GF2h (x2); no left recompute after the height floor -> GF2i (x2).
+set gf_dir [file join $scratch gf]
+file mkdir $gf_dir
+proc gf_props {extra} {
+  set p "flags=graph\ny1=-1\ny2=1\ndivy=5\nx1=0\nx2=1e-3\ndivx=5\nnode=\"\""
+  foreach {k v} $extra { append p "\n$k=$v" }
+  return $p
+}
+# n stacked strips filling 0..W x 0..Ht, each with the extra tokens
+proc gf_sheet {path n extra {W 1000} {Ht 1200}} {
+  set fp [open $path w]
+  puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+  puts $fp "G {}\nK {}\nV {}\nS {}\nE {}"
+  set h [expr {double($Ht)/$n}]
+  for {set i 0} {$i < $n} {incr i} {
+    puts $fp "B 2 0 [expr {$i*$h}] $W [expr {($i+1)*$h}] {[gf_props $extra]}"
+  }
+  close $fp
+  return $path
+}
+proc gf_load {path {box {0 0 1000 1200}}} {
+  xschem load -nohist $path
+  xschem zoom_box {*}$box 1.0
+}
+proc gf_m {gi} { return [pcall {xschem get graph_text_metrics $gi}] }
+proc gf_get {m k} {
+  if {[catch {dict get $m $k} v]} { return "NOKEY:$k" }
+  return $v
+}
+# relative closeness, sentinel-safe: answers 1/0, never raises
+proc gf_near {a b {rel 1e-9}} {
+  if {![string is double -strict $a] || ![string is double -strict $b]} { return 0 }
+  set s [expr {max(abs($a), abs($b), 1e-300)}]
+  return [expr {abs($a - $b) <= $rel * $s}]
+}
+# a < b - d, sentinel-safe: answers 1/0, never raises (a band that aborts
+# deletes its rows from the verdict instead of reddening them)
+proc gf_lt {a b {d 0.0}} {
+  if {![string is double -strict $a] || ![string is double -strict $b]} { return 0 }
+  return [expr {$a < $b - $d}]
+}
+proc gf_ratio_bt {m} {
+  set t [gf_get $m top_px]; set b [gf_get $m bottom_px]; set p [gf_get $m plot_h_px]
+  if {![string is double -strict $t] || ![string is double -strict $b] ||
+      ![string is double -strict $p]} { return -1 }
+  return [expr {($t + $b) / ($t + $b + $p)}]
+}
+# metrics minus the parsed textpx field (the only field a refused value may move)
+proc gf_strip_tp {m} {
+  if {[catch {dict remove $m textpx} r]} { return $m }
+  return $r
+}
+set gf_tp 18.6667
+
+# ---- GF1: the text is textpx screen pixels at any strip count and any zoom --
+set gf1_bad {}
+set gf1_n 0
+foreach {n box} {1 {0 0 1000 1200} 6 {0 0 1000 1200} 1 {0 0 500 600} 1 {-500 -600 1500 1800}} {
+  gf_load [gf_sheet [file join $gf_dir gf1_$n.sch] $n [list textpx $gf_tp]] $box
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set m [gf_m $gi]
+    incr gf1_n
+    if {[gf_get $m fixed] ne "1" || ![gf_near [gf_get $m em_px] $gf_tp]} {
+      lappend gf1_bad "n=$n box=$box gi=$gi fixed=[gf_get $m fixed] em=[gf_get $m em_px]"
+    }
+  }
+}
+check "GF1 every fixed strip draws its text at textpx px, n=1/6 and zoomed in/out (none differ)" \
+  [list $gf1_n $gf1_bad] [list 9 {}]
+# distinctness control: the SAME sheets without the token move with n, so the
+# instrument can see a size change at all
+gf_load [gf_sheet [file join $gf_dir gf1p_1.sch] 1 {}]
+set gf1p1 [gf_get [gf_m 0] em_px]
+gf_load [gf_sheet [file join $gf_dir gf1p_6.sch] 6 {}]
+set gf1p6 [gf_get [gf_m 0] em_px]
+check "GF1b control: without textpx em_px at n=1 and n=6 differ (proportional) and fixed=0" \
+  [list [expr {[string is double -strict $gf1p1] && [string is double -strict $gf1p6] &&
+               ![gf_near $gf1p1 $gf1p6 1e-3]}] [gf_get [gf_m 0] fixed]] {1 0}
+# D3: one size for every text, and xlabmag/ylabmag/legendmag ignored for size
+set gf_mags {xlabmag 2 ylabmag 3 legendmag 1.63}
+gf_load [gf_sheet [file join $gf_dir gf1m.sch] 1 [concat [list textpx $gf_tp] $gf_mags]]
+set gf1m [gf_m 0]
+gf_load [gf_sheet [file join $gf_dir gf1_1.sch] 1 [list textpx $gf_tp]]
+set gf1f [gf_m 0]
+check "GF1c fixed: txtsizelab = txtsizex = txtsizey = txtsizelegend" \
+  [llength [lsort -unique [list [gf_get $gf1f txtsizelab] [gf_get $gf1f txtsizex] \
+     [gf_get $gf1f txtsizey] [gf_get $gf1f txtsizelegend]]]] 1
+check "GF1d fixed: the three mag tokens change nothing at all" \
+  [expr {$gf1m eq $gf1f && [string match "fixed 1 *" $gf1f]}] 1
+gf_load [gf_sheet [file join $gf_dir gf1pm.sch] 1 $gf_mags]
+set gf1pm [gf_m 0]
+gf_load [file join $gf_dir gf1p_1.sch]
+check "GF1e control: the same mags DO move a proportional strip" \
+  [expr {[gf_get $gf1pm txtsizex] ne [gf_get [gf_m 0] txtsizex]}] 1
+
+# ---- GF2: margins are fixed pixels; the floor keeps text size, not margins --
+set gf2 {}
+foreach {tag n box} {a 1 {0 0 1000 1200} b 2 {0 0 1000 1200} c 1 {0 0 500 600} d 1 {-500 -600 1500 1800}} {
+  gf_load [gf_sheet [file join $gf_dir gf2_$n.sch] $n [list textpx $gf_tp]] $box
+  dict set gf2 $tag [gf_m 0]
+}
+set gf2_pre {}
+foreach tag {a b c d} {
+  set r [gf_ratio_bt [dict get $gf2 $tag]]
+  if {!($r > 0 && $r < 0.79)} { lappend gf2_pre "$tag:$r" }
+}
+check "GF2a precondition: none of n=1, n=2, zoom-in, zoom-out reaches the 80% floor" $gf2_pre {}
+set gf2_bad {}
+foreach tag {b c d} {
+  foreach k {top_px bottom_px left_px right_px} {
+    if {![gf_near [gf_get [dict get $gf2 a] $k] [gf_get [dict get $gf2 $tag] $k]]} {
+      lappend gf2_bad "$tag.$k=[gf_get [dict get $gf2 $tag] $k] vs [gf_get [dict get $gf2 a] $k]"
+    }
+  }
+}
+check "GF2b top/bottom/left/right pixel margins are equal across n=1, n=2, zoom-in, zoom-out" \
+  $gf2_bad {}
+gf_load [gf_sheet [file join $gf_dir gf2_12.sch] 12 [list textpx $gf_tp]]
+set gf2f [gf_m 0]
+check "GF2c n=12: top+bottom is exactly 80% of the strip (the floor engaged)" \
+  [gf_near [gf_ratio_bt $gf2f] 0.8] 1
+check "GF2d n=12: the plot box keeps a height and the text keeps its size" \
+  [list [gf_lt 0 [gf_get $gf2f plot_h_px]] [gf_near [gf_get $gf2f em_px] $gf_tp]] {1 1}
+check "GF2e n=12: the floor really shrank the margins (non-vacuity)" \
+  [gf_lt [gf_get $gf2f top_px] [gf_get [dict get $gf2 a] top_px] 1.0] 1
+# right margin: 2 em, never narrower than the reorder grip column + 4 px. The
+# grip width is READ from xschem.h, not restated.
+set fp [open [file join $repo src xschem.h] r]; set gf_hdr [read $fp]; close $fp
+set gf_gripw [expr {[regexp {#define GRAPH_REORDER_HANDLE_W\s+(\d+)} $gf_hdr -> w] ? $w : "NOGRIP"}]
+check "GF2f right margin at textpx=$gf_tp is 2 em" \
+  [gf_near [gf_get [dict get $gf2 a] right_px] [expr {2.0 * $gf_tp}]] 1
+gf_load [gf_sheet [file join $gf_dir gf2_6px.sch] 1 {textpx 6}]
+check "GF2g right margin at textpx=6 is the grip column + 4 px ($gf_gripw + 4), not 2 em" \
+  [gf_near [gf_get [gf_m 0] right_px] [expr {$gf_gripw + 4.0}]] 1
+# GF2h: the WIDTH floor. Every other GF sheet is 1000 wide, where left+right is
+# far under 80% of the strip, so `if(left + right > 0.8 * gr->rw)` was reached by
+# no row. A 100-unit-wide strip at the same zoom is narrower than the natural
+# left+right (measured as GF2's own n=1 margins, not restated), so without the
+# floor the plot width goes <= 0 and the transforms divide by it. rw in pixels
+# is the sheet's 100 units times the live mooz (1/zoom).
+gf_load [gf_sheet [file join $gf_dir gf2_narrow.sch] 1 [list textpx $gf_tp] 100 1200]
+set gf2n [gf_m 0]
+set gf2n_rw [expr {[catch {xschem get zoom} z] || ![string is double -strict $z] || $z <= 0
+                   ? "NOZOOM" : 100.0 / $z}]
+proc gf_sum {m a b} {
+  set x [gf_get $m $a]; set y [gf_get $m $b]
+  if {![string is double -strict $x] || ![string is double -strict $y]} { return "NAN" }
+  return [expr {$x + $y}]
+}
+proc gf_div {a b} {
+  if {![string is double -strict $a] || ![string is double -strict $b] || $b == 0} { return "NAN" }
+  return [expr {double($a) / $b}]
+}
+set gf2n_nat [gf_sum [dict get $gf2 a] left_px right_px]
+set gf2n_lr [gf_sum $gf2n left_px right_px]
+set gf2n_pw [expr {[string is double -strict [gf_get $gf2n box_x1]] &&
+                   [string is double -strict [gf_get $gf2n box_x2]]
+                   ? [gf_get $gf2n box_x2] - [gf_get $gf2n box_x1] : "NAN"}]
+check "GF2h precondition: the narrow strip's natural left+right exceeds 80% of its width" \
+  [gf_lt [expr {[string is double -strict $gf2n_rw] ? 0.8 * $gf2n_rw : "NAN"}] $gf2n_nat] 1
+check "GF2h narrow strip: (left+right)/rw is exactly 0.8, the plot keeps a width, text keeps textpx" \
+  [list [gf_near [gf_div $gf2n_lr $gf2n_rw] 0.8] [gf_lt 0 $gf2n_pw] \
+     [gf_near [gf_get $gf2n em_px] $gf_tp]] {1 1 1}
+check "GF2h non-vacuity: the width floor really shrank the left margin" \
+  [gf_lt [gf_get $gf2n left_px] [gf_get [dict get $gf2 a] left_px] 1.0] 1
+# GF2i: after the HEIGHT floor the left margin is recomputed from the shrunken
+# bottom (its tick-mark term is bottom/10), so left - bottom/10 is the same on
+# the floored n=12 strip as on the unfloored n=1 one, while left itself moved.
+proc gf_lmb {m} {
+  set l [gf_get $m left_px]; set b [gf_get $m bottom_px]
+  if {![string is double -strict $l] || ![string is double -strict $b]} { return "NAN" }
+  return [expr {$l - $b / 10.0}]
+}
+check "GF2i n=12: left is recomputed from the floored bottom (left - bottom/10 unchanged)" \
+  [gf_near [gf_lmb $gf2f] [gf_lmb [dict get $gf2 a]]] 1
+check "GF2i distinctness: the n=12 left margin really differs from n=1's (by > 0.5 px)" \
+  [gf_lt [gf_get $gf2f left_px] [gf_get [dict get $gf2 a] left_px] 0.5] 1
+
+# ---- GF3: every committed schematic graph answers what HEAD answered --------
+# The population is DERIVED each run (every *.sch under xschem_library holding
+# flags=graph, editor backups *~.sch excluded) and must equal the gold file's.
+proc gf_find_sch {dir} {
+  set out {}
+  foreach f [glob -nocomplain -directory $dir -types f *.sch] {
+    if {[string match {*~.sch} $f]} continue
+    set fp [open $f r]; set t [read $fp]; close $fp
+    if {[string first "flags=graph" $t] >= 0} { lappend out $f }
+  }
+  foreach d [glob -nocomplain -directory $dir -types d *] { lappend out {*}[gf_find_sch $d] }
+  return $out
+}
+proc gf_rel {repo f} { return [string range $f [expr {[string length $repo] + 1}] end] }
+proc gf_view_box {f} {
+  set fp [open $f r]; set t [read $fp]; close $fp
+  set bx {}
+  foreach {- a b c d} [regexp -all -inline -line {^B 2 (\S+) (\S+) (\S+) (\S+) } $t] {
+    if {$bx eq {}} { set bx [list $a $b $c $d]; continue }
+    lassign $bx p q r s
+    set bx [list [expr {min($p,$a)}] [expr {min($q,$b)}] [expr {max($r,$c)}] [expr {max($s,$d)}]]
+  }
+  return $bx
+}
+set gf_keys {fixed txtsizelab txtsizex txtsizey txtsizelegend digtxtsizelab box_x1 box_y1 box_x2 box_y2}
+proc gf_gold_of {m keys} {
+  set o {}
+  foreach k $keys { lappend o $k [gf_get $m $k] }
+  return $o
+}
+set gf_files [lsort [lmap f [gf_find_sch [file join $repo xschem_library]] {gf_rel $repo $f}]]
+set gf_live {}
+foreach f $gf_files {
+  set bx [gf_view_box [file join $repo $f]]
+  gf_load [file join $repo $f] $bx
+  set n [xschem get rects 2]
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set m [gf_m $gi]
+    if {$m eq {}} continue
+    dict set gf_live "$f $gi" [gf_gold_of $m $gf_keys]
+  }
+}
+if {[info exists ::env(GF_CAPTURE)]} {
+  set fp [open $::env(GF_CAPTURE) w]
+  dict for {k v} $gf_live { puts $fp "$k $v" }
+  close $fp
+  puts "note: GF3 gold captured to $::env(GF_CAPTURE)"
+}
+set gf_gold {}
+set gf_goldf [file join $here fixtures graph_text_metrics gold.txt]
+if {![catch {open $gf_goldf r} fp]} {
+  while {[gets $fp line] >= 0} {
+    if {$line eq {} || [string index $line 0] eq "#"} continue
+    dict set gf_gold "[lindex $line 0] [lindex $line 1]" [lrange $line 2 end]
+  }
+  close $fp
+}
+set gf_gfiles [lsort -unique [lmap k [dict keys $gf_gold] {lindex $k 0}]]
+check "GF3a the derived graph-schematic population equals the gold file's" \
+  [list [llength $gf_files] [expr {$gf_files eq $gf_gfiles}]] [list [llength $gf_gfiles] 1]
+check_true "GF3b non-vacuity: the gold holds over 100 graph rects, a digital one among them" \
+  [expr {[dict size $gf_gold] > 100 &&
+         [llength [lsearch -all -glob [dict keys $gf_gold] {xschem_library/rom8k/*}]] > 0}]
+set gf3_bad {}
+dict for {k want} $gf_gold {
+  if {![dict exists $gf_live $k]} { lappend gf3_bad "$k MISSING"; continue }
+  set got [dict get $gf_live $k]
+  foreach kk $gf_keys {
+    set a [gf_get $got $kk]; set b [gf_get $want $kk]
+    if {$a ne $b && ![gf_near $a $b 1e-12]} { lappend gf3_bad "$k $kk=$a want $b" }
+  }
+}
+check "GF3c every schematic graph's text sizes and plot box equal HEAD's, fixed=0 (none differ)" \
+  [list [dict size $gf_live] [lrange $gf3_bad 0 4]] [list [dict size $gf_gold] {}]
+
+# ---- GF4: refused or inapplicable textpx values are exactly "absent" --------
+set gf4_bad {}; set gf4_n 0; set gf4_dig 0; set gf4_live 0
+foreach f $gf_files {
+  gf_load [file join $repo $f] [gf_view_box [file join $repo $f]]
+  set n [xschem get rects 2]
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set base [gf_m $gi]
+    if {$base eq {}} continue
+    set vals {0 -1 1e9 nan junk 2.99 400.01}
+    set dig [xschem getprop rect 2 $gi digital]
+    if {$dig eq "1"} { lappend vals $gf_tp; incr gf4_dig }
+    foreach v $vals {
+      xschem setprop -fast rect 2 $gi textpx $v
+      set m [gf_m $gi]
+      xschem setprop -fast rect 2 $gi textpx
+      incr gf4_n
+      if {[gf_strip_tp $m] ne [gf_strip_tp $base]} { lappend gf4_bad "$f $gi textpx=$v" }
+    }
+    # the instrument CAN see a honoured token on an analog rect
+    if {$dig ne "1" && $gf4_live == 0} {
+      xschem setprop -fast rect 2 $gi textpx $gf_tp
+      if {[string match "fixed 1 *" [gf_m $gi]]} { incr gf4_live }
+      xschem setprop -fast rect 2 $gi textpx
+    }
+  }
+  xschem set_modify 0
+}
+check "GF4a refused textpx (0 -1 1e9 nan junk 2.99 400.01) and textpx on a digital rect change no metric" \
+  [list [expr {$gf4_n > 800}] [expr {$gf4_dig > 0}] [lrange $gf4_bad 0 4]] {1 1 {}}
+check "GF4b control: a valid textpx on an analog schematic rect IS honoured" $gf4_live 1
+# vlegend: no committed schematic has one, so a sheet is written here
+gf_load [gf_sheet [file join $gf_dir gf4v.sch] 1 {vlegend 1}]
+set gf4v0 [gf_m 0]
+gf_load [gf_sheet [file join $gf_dir gf4vt.sch] 1 [list vlegend 1 textpx $gf_tp]]
+check "GF4c textpx on a vlegend strip changes no metric (fixed=0)" \
+  [list [string match "fixed 0 *" $gf4v0] [expr {[gf_strip_tp [gf_m 0]] eq [gf_strip_tp $gf4v0]}]] {1 1}
+
+# ---- GF5: an export freezes the text scale and the restore thaws it ---------
+gf_load [gf_sheet [file join $gf_dir gf5.sch] 1 [list textpx $gf_tp]]
+set gf5a [gf_m 0]
+set gf5_rc {}
+foreach fmt {svg png} {
+  lappend gf5_rc $fmt [catch {xschem print $fmt [file join $gf_dir gf5.$fmt] 640 480 0 0 1000 1200} e]
+}
+set gf5b [gf_m 0]
+xschem zoom_box 0 0 500 600 1.0
+set gf5c [gf_m 0]
+check "GF5a metrics after print svg/png equal those before (a fixed strip)" \
+  [expr {$gf5a eq $gf5b && [string match "fixed 1 *" $gf5a]}] 1
+check "GF5b after the exports a zoom still gives textpx px (the freeze was released)" \
+  [list [gf_get $gf5c fixed] [gf_near [gf_get $gf5c em_px] $gf_tp] \
+     [expr {[gf_get $gf5c txtsizex] ne [gf_get $gf5a txtsizex]}]] {1 1 1}
+# GF5c: DURING an export the text scale is the SCREEN's, so a raster twice the
+# size draws every margin twice as many pixels deep. GF5a/b only read state
+# after the export, so dropping the freeze (save_restore_zoom) or ignoring
+# graph_txt_mooz (setup_graph_data) left them green. The instrument: the first
+# and last LONG horizontal line (a row lit across more than half the sampled
+# columns -- the plot box edges; the 1-on/3-off grid never reaches half) in a
+# png at 520x220 and at 1040x440 of the same export box (the `note:` line
+# prints them each run). With the freeze dropped the 1x top edge moves DOWN and
+# the 2x one barely moves, far outside the 2 px slack. The proportional sheet is
+# the control that the instrument scales at all. Display arm only:
+# `xschem print png` writes nothing under --nogui.
+proc gf_hlines {f} {
+  if {[catch {image create photo -file $f} img]} { return "NOIMG" }
+  set w [image width $img]; set h [image height $img]
+  set bg [$img get 1 1]
+  set cols {}
+  for {set x 2} {$x < $w - 2} {incr x 3} { lappend cols $x }
+  set need [expr {[llength $cols] / 2}]
+  set rows {}
+  for {set y 0} {$y < $h} {incr y} {
+    set n 0
+    foreach x $cols { if {[$img get $x $y] ne $bg} { incr n } }
+    if {$n > $need} { lappend rows $y }
+  }
+  image delete $img
+  if {[llength $rows] < 2} { return "NOLINES:$rows" }
+  return [list [lindex $rows 0] [lindex $rows end]]
+}
+if {[info commands image] ne {} && [info commands winfo] ne {}} {
+  set gf5c_got {}
+  foreach {tag extra} [list fixed [list textpx $gf_tp] prop {}] {
+    gf_load [gf_sheet [file join $gf_dir gf5c_$tag.sch] 1 $extra 1000 400] {-20 -20 1020 420}
+    set ln {}
+    foreach s {1 2} {
+      set f [file join $gf_dir gf5c_${tag}_$s.png]
+      file delete $f
+      catch {xschem print png $f [expr {520*$s}] [expr {220*$s}] -20 -20 1020 420}
+      lappend ln [gf_hlines $f]
+    }
+    set ok [expr {[llength [lindex $ln 0]] == 2 && [llength [lindex $ln 1]] == 2}]
+    if {$ok} {
+      foreach i {0 1} {
+        set a [lindex $ln 0 $i]; set b [lindex $ln 1 $i]
+        if {![string is integer -strict $a] || ![string is integer -strict $b] ||
+            abs($b - 2*$a) > 2} { set ok 0 }
+      }
+    }
+    lappend gf5c_got $tag $ok
+    puts "note: GF5c $tag lines 1x/2x = $ln"
+  }
+  check "GF5c a fixed strip exported at 2x raster draws its plot-box edges at 2x the pixels (the freeze)" \
+    [dict get $gf5c_got fixed] 1
+  check "GF5c control: a proportional strip's edges scale 2x as well (the instrument scales)" \
+    [dict get $gf5c_got prop] 1
+} else {
+  puts "SKIPPED: GF5c (png export needs a display)"
+}
+
+# ---- GF6: a fixed strip's pixel margins are the same on every arm ----------
+# The left margin's Y-number width is ANALYTIC (8 chars at 0.62 em), not a
+# text_bbox measurement, so the plot box cannot depend on which text path or
+# cairo face is live: the --nogui arm (no cairo text) and a display arm must
+# give the same pixels. The literals were MEASURED at this commit on both arms
+# (--nogui and :99, 1920x1080, openbox) and are pinned on purpose: a
+# measured-width margin gave left_px 103.883 on :99 against 105.470 here, and
+# no query-vs-draw comparison could see it, because the face live at query time
+# never changed in any state this tree reaches (measured across bold-legend
+# draws and four cairo_font_name values). A deliberate change to the fixed
+# margins re-measures these four numbers.
+gf_load [gf_sheet [file join $gf_dir gf6.sch] 1 [list textpx $gf_tp]]
+set gf6 [gf_m 0]
+set gf6_bad {}
+foreach {k want} {top_px 53.458556999999992 bottom_px 54.883288888888828
+                  left_px 105.47004588888889 right_px 37.333400000000005} {
+  if {![gf_near [gf_get $gf6 $k] $want]} { lappend gf6_bad "$k=[gf_get $gf6 $k] want $want" }
+}
+check "GF6 the 18.6667 px strip's pixel margins equal the values measured on both arms" $gf6_bad {}
 
 if {$save_gd ne {}} { set ::wviewer_grid_dash_off $save_gd }
 

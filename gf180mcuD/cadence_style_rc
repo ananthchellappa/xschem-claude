@@ -96,4 +96,12 @@ if {[info exists ::has_x]} {
 # set ase_plot_dest append
 # set calc_plot_dest replace
 
+# Waveform-viewer text size in points (default 14), fixed whatever the strip
+# height. The aA button in a sub-window's top-right corner (shown when the
+# pointer is in that corner, or flicks towards it) changes that sub-window
+# only; new sub-windows in the same window then start at the new size.
+# The CIW prints this line when you change it (wviewer_legend_textmag no longer
+# affects viewer strips):
+# set wviewer_text_size 14
+
 unset _ws

@@ -244,7 +244,38 @@ set_ne wviewer_plot_mode single
 # so ONLY viewer strips are affected: draw_graph_variables is shared with every
 # embedded schematic graph in the tree (~127 of them ship), and decision D-G is
 # that they must not move.
+#
+# ⚠ ITEM 22 RETIRED THIS VAR FOR VIEWER STRIPS. Every viewer strip now carries
+# `textpx=` (wviewer_text_size below), and setup_graph_data then sizes ALL its
+# text from that one pixel height and ignores `legendmag`, `xlabmag` and
+# `ylabmag` (spec SW27). The legend therefore matches the axis numbers by
+# construction. `legendmag=` is still written, so a strip's rect text keeps its
+# shape, but a non-default value here changes nothing on screen and prints one
+# CIW warning per process (wviewer::legend_textmag_retired).
 set_ne wviewer_legend_textmag 1.63
+
+# ---- viewer text size (item 22, doc/claude/specs/waveform_viewer_subwindows.md
+# SW27-SW31) -----------------------------------------------------------------
+# The size, in POINTS, of every piece of text in a viewer strip: the legend,
+# the axis numbers, the cursor labels. FIXED whatever the strip height (the
+# ViVA rule, user ruling 2026-10-16): Tcl converts it to device pixels
+# (`pt * [tk scaling]`) and writes it as the per-rect `textpx=` token, which
+# only viewer strips carry. The aA button in a sub-window's top-right corner
+# changes THAT sub-window only (6..20, one point per click); a new sub-window or
+# tab then starts at the last size the user chose in that window, else at this.
+# Read LAZILY, so an rc or a --script can still set it. A value outside 6..20 or
+# not an integer reads 14, with one CIW warning per process.
+set_ne wviewer_text_size 14
+# The aA reveal gesture (SW28): the button is hidden until the pointer is in the
+# sub-window's top-right corner zone, or until the pointer FLICKS towards the
+# top-right: a net displacement of more than `px` pixels at `deg` +- `tol`
+# degrees (0 = right, 90 = up) within `ms` milliseconds, no LMB or RMB held.
+# A flick shows the button for `reveal_ms`. Each bad value reads its default.
+set_ne wviewer_aa_flick_px 100
+set_ne wviewer_aa_flick_deg 45
+set_ne wviewer_aa_flick_tol 15
+set_ne wviewer_aa_flick_ms 400
+set_ne wviewer_aa_reveal_ms 3000
 # 1 = draw EVERY legend entry in the bold face (prop token `legendbold=1`).
 #
 # DEFAULT 0, BY REVIEW 2026-07-29. The plan's recorded decision was "both size
@@ -308,6 +339,13 @@ namespace eval wviewer {
   # the viewer canvas holds ONLY wviewer-created graph rects, so the registry
   # is authoritative.
   variable graphbb [dict create]
+  # item 22 (SW30): the per-sub-window setting keys a graph carries where they
+  # differ from the tab's own value. sw_props_spread / sw_props_carry iterate
+  # this list, so a new key joins every carrier by being named here.
+  variable sw_setting_keys {swmode swgrid swfont}
+  # item 22 (SW28): the aA hot zone, width and height in screen pixels, at the
+  # top-right corner of each sub-window.
+  variable fsz_zone {64 40}
   # keysyms of the waves_callback key set (a b d s m t A B M) — forwarded ONLY
   # over a graph; outside graphs these are editor verbs (m=move, t=text ...)
   # and must do nothing, silently.
@@ -949,6 +987,10 @@ proc wviewer::forget {token} {
   # above -- an undeclared `variable` would make the `unset` below address a
   # LOCAL array and leak one entry per closed window forever.
   variable selected
+  # item 22: the window's last user text size and the aA gesture's state, same
+  # rule -- declared, or the unsets below address LOCAL arrays and leak.
+  variable textlast; variable flick; variable fszafter; variable fszcells
+  variable fszshown; variable fszhover; variable fszover; variable fszlast
   if {[dict exists $windows $token]} {
     set wp_ [dict get $windows $token win_path]
     # item 7: take down a posted context menu BEFORE the window goes, so its
@@ -1040,6 +1082,12 @@ proc wviewer::forget {token} {
   if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
   catch {unset cfgafter($token)}
   catch {unset fillwh($token)}
+  foreach id [array names fszafter ${token},*] {
+    catch {after cancel $fszafter($id)}
+    catch {unset fszafter($id)}
+  }
+  array unset fszshown ${token},*
+  foreach a {textlast flick fszcells fszhover fszover fszlast} { catch {unset ${a}($token)} }
   return {}
 }
 
@@ -1881,20 +1929,23 @@ proc wviewer::set_graphs {token gs} {
   # stamps every subwindow, wviewer::state_snapshot).
   if {[llength [wviewer::sw_runs $gs]] > 1} {
     set gs [wviewer::sw_props_trim $gs [wviewer::base_mode $token] \
-              [wviewer::grid_base $token]]
+              [wviewer::grid_base $token] [wviewer::font_base $token]]
   } else {
     set fm [wviewer::sw_prop_get $gs 0 swmode {}]
     set fg [wviewer::sw_prop_get $gs 0 swgrid {}]
-    if {$fm ne {} || $fg ne {}} {
+    set ff [wviewer::sw_prop_get $gs 0 swfont {}]
+    if {$fm ne {} || $fg ne {} || $ff ne {}} {
       variable mode
       set out {}
       foreach G $gs {
-        if {![catch {dict size $G}]} { set G [dict remove $G swmode swgrid] }
+        if {![catch {dict size $G}]} { set G [dict remove $G swmode swgrid swfont] }
         lappend out $G
       }
       set gs $out
       if {$fm ne {} && [info exists mode($token)]} { set mode($token) $fm }
       if {$fg ne {}} { dict set lay grid $fg }
+      # item 22: the survivor's text size becomes the tab's own (SW30)
+      if {[wviewer::_accept_text_size $ff] ne {}} { dict set lay font [wviewer::_accept_text_size $ff] }
     }
   }
   dict set lay graphs $gs
@@ -4270,9 +4321,10 @@ proc wviewer::sw_prop_put {gs gi key val base} {
 proc wviewer::sw_props_spread {gs} {
   set runs [wviewer::sw_runs $gs]
   if {[llength $runs] <= 1} { return $gs }
+  variable sw_setting_keys
   foreach r $runs {
     set f [lindex $r 0]
-    foreach k {swmode swgrid} {
+    foreach k $sw_setting_keys {
       set v [wviewer::sw_prop_get $gs $f $k {}]
       if {$v ne {}} { set gs [wviewer::sw_prop_put $gs $f $k $v {}] }
     }
@@ -4280,14 +4332,22 @@ proc wviewer::sw_props_spread {gs} {
   return $gs
 }
 
-# PURE: `gs` with every `swmode` / `swgrid` key that equals the window's own
-# value (`bmode` / `bgrid`) removed, so a key is carried only where it differs.
-proc wviewer::sw_props_trim {gs bmode bgrid} {
+# PURE: `gs` with every `swmode` / `swgrid` / `swfont` key that equals the
+# window's own value (`bmode` / `bgrid` / `bfont`) removed, so a key is carried
+# only where it differs. `bfont` {} (the three-argument callers) leaves every
+# `swfont` alone rather than comparing it with nothing; the size compares
+# NUMERICALLY, so a 16 and a 16.0 are one size.
+proc wviewer::sw_props_trim {gs bmode bgrid {bfont {}}} {
   set out {}
   foreach G $gs {
     if {![catch {dict size $G}]} {
       if {[dict exists $G swmode] && [dict get $G swmode] eq $bmode} {
         set G [dict remove $G swmode]
+      }
+      if {$bfont ne {} && [dict exists $G swfont] \
+          && [string is double -strict [dict get $G swfont]] && [string is double -strict $bfont] \
+          && [dict get $G swfont] == $bfont} {
+        set G [dict remove $G swfont]
       }
       if {[dict exists $G swgrid] && [string is boolean -strict [dict get $G swgrid]] \
           && [string is boolean -strict $bgrid] \
@@ -4305,7 +4365,9 @@ proc wviewer::sw_props_trim {gs bmode bgrid} {
 # list is returned unchanged. The undo snapshot form: the window's own values
 # move outside undo (a close folds the survivor's into them), so a subwindow
 # coming back from the history must not depend on them.
-proc wviewer::sw_props_stamp {gs bmode bgrid} {
+# `bfont` (item 22) stamps each sub-window's text size the same way; {} (the
+# three-argument callers) stamps none.
+proc wviewer::sw_props_stamp {gs bmode bgrid {bfont {}}} {
   set runs [wviewer::sw_runs $gs]
   if {[llength $runs] <= 1} { return $gs }
   foreach r $runs {
@@ -4314,6 +4376,9 @@ proc wviewer::sw_props_stamp {gs bmode bgrid} {
     set g [expr {[wviewer::sw_prop_get $gs $f swgrid $bgrid] ? 1 : 0}]
     set gs [wviewer::sw_prop_put $gs $f swmode $m {}]
     set gs [wviewer::sw_prop_put $gs $f swgrid $g {}]
+    if {$bfont ne {}} {
+      set gs [wviewer::sw_prop_put $gs $f swfont [wviewer::sw_font_of $gs $f $bfont] {}]
+    }
   }
   return $gs
 }
@@ -4336,21 +4401,21 @@ proc wviewer::strip_grids {gs base} {
 # keys when the live one has none). A subwindow only in `snap` keeps what it
 # had; an untagged (one-subwindow) side carries nothing.
 proc wviewer::sw_props_carry {live snap} {
+  variable sw_setting_keys
   set lv [dict create]
   foreach r [wviewer::sw_runs $live] {
     set f [lindex $r 0]
     set id [wviewer::gsw [lindex $live $f]]
     if {$id eq {}} { continue }
-    dict set lv $id [list [wviewer::sw_prop_get $live $f swmode {}] \
-                          [wviewer::sw_prop_get $live $f swgrid {}]]
+    dict set lv $id [lmap k $sw_setting_keys {wviewer::sw_prop_get $live $f $k {}}]
   }
   foreach r [wviewer::sw_runs $snap] {
     set f [lindex $r 0]
     set id [wviewer::gsw [lindex $snap $f]]
     if {$id eq {} || ![dict exists $lv $id]} { continue }
-    lassign [dict get $lv $id] m g
-    set snap [wviewer::sw_prop_put $snap $f swmode $m {}]
-    set snap [wviewer::sw_prop_put $snap $f swgrid $g {}]
+    foreach k $sw_setting_keys v [dict get $lv $id] {
+      set snap [wviewer::sw_prop_put $snap $f $k $v {}]
+    }
   }
   return $snap
 }
@@ -4854,6 +4919,11 @@ proc wviewer::regenerate {token} {
   set multisw_ [expr {[llength $runs] > 1}]
   # SW23: each strip draws its OWN subwindow's grid
   set grids_ [wviewer::strip_grids $gs [wviewer::grid_base $token]]
+  # item 22 (SW27): each strip's FIXED text size, in device pixels. Appended
+  # after sw_props, like it, because graph_props' formals are pinned (WD4).
+  set fonts_ [wviewer::strip_fonts $gs [wviewer::font_base $token]]
+  set sc_ [wviewer::tk_points_scale]
+  catch {wviewer::legend_textmag_retired}
   # UNLOGGED (wviewer::unlogged): this is the viewer redrawing its own read-only
   # canvas from the model, and the command that changed the model logs its own
   # line. `xschem clear_drawing` self-logs (Refactor B atom 27), so without the
@@ -4870,7 +4940,8 @@ proc wviewer::regenerate {token} {
         "[wviewer::graph_props $G_ [expr {$gi_ == $act_gi}] \
             [lindex $grids_ $gi_]][wviewer::sw_props \
             [wviewer::sw_frame $gs $gi_ $tgt_] \
-            [expr {$multisw_ ? [wviewer::gsw $G_] : {}}]]"
+            [expr {$multisw_ ? [wviewer::gsw $G_] : {}}]][wviewer::font_props \
+            [lindex $fonts_ $gi_] $sc_]"
       incr gi_
     }
     # blank (auto) ranges: let the ENGINE compute them into the rect attrs
@@ -4916,6 +4987,9 @@ proc wviewer::regenerate {token} {
   # `Plot:` and the Grid checkbutton follow the TARGET subwindow from here
   catch {wviewer::status_refresh $token}
   catch {wviewer::sync_grid_mirror $token}
+  # item 22 (SW28): the aA buttons follow the sub-windows that now exist, and a
+  # shown one moves to its sub-window's new corner. The context is the viewer's.
+  catch {wviewer::fsz_sync $token}
   return 1
 }
 
@@ -5234,6 +5308,14 @@ proc wviewer::snapshot {token prev} {
     # `layout` already.
     set gb [wviewer::grid_base $token]
     if {$gb != [wviewer::default_grid_show]} { dict set d grid $gb }
+    # item 22 (SW30): the tab's own text size, gated on being non-default like
+    # `grid`, and the window's last user size once the user has chosen one
+    # (what a new sub-window starts at). A per-tab record carries `font` in
+    # its `layout` already; sub-window sizes ride the graphs as `swfont`.
+    set fb [wviewer::font_base $token]
+    if {$fb != [wviewer::default_text_size]} { dict set d font $fb }
+    variable textlast
+    if {[info exists textlast($token)]} { dict set d fontlast $textlast($token) }
     if {[llength $tabs]} {
       dict set d tabs      $tabs
       dict set d activetab [wviewer::tab_index $token]
@@ -5300,6 +5382,12 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   # one at the rc default) leaves no key, which reads as the rc default
   set gf [wviewer::state_grid $vdict]
   if {$gf ne {}} { dict set layouts $token grid $gf }
+  # item 22 (SW30): the tab's own text size and the window's last user size
+  set ff [wviewer::state_font $vdict]
+  if {$ff ne {}} { dict set layouts $token font $ff }
+  variable textlast
+  set fl [wviewer::state_font $vdict fontlast]
+  if {$fl ne {}} { set textlast($token) $fl } else { catch {unset textlast($token)} }
   set sharedx($token) $sx
   # issue 0151: mode/target round-trip. Absent keys (every state file written
   # before 0151) fall back to the config default and strip 0, so old states
@@ -5715,6 +5803,9 @@ proc wviewer::new_subwin {{token {}}} {
   lassign [wviewer::sw_add $gs] gs gi
   set gs [wviewer::sw_prop_put $gs $gi swmode $imode [wviewer::base_mode $token]]
   set gs [wviewer::sw_prop_put $gs $gi swgrid $igrid [wviewer::grid_base $token]]
+  # item 22 (SW30): the new sub-window starts at the window's last user size,
+  # else the rc default -- NOT the target's (a click changes only its own)
+  set gs [wviewer::sw_prop_put $gs $gi swfont [wviewer::text_inherit $token] [wviewer::font_base $token]]
   wviewer::set_graphs $token $gs
   # appended at the end, so no stored index moved; the new strip is the target
   set target($token) $gi
@@ -6644,8 +6735,15 @@ proc wviewer::strip_bands_px {wp} {
   if {$zoom == 0} { return {} }
   set xo [xschem get xorigin]
   set yo [xschem get yorigin]
+  return [wviewer::bands_px [dict get $graphbb $wp] $xo $yo $zoom]
+}
+
+# PURE: schematic-unit bboxes -> canvas pixels, the X_TO_SCREEN transform
+# (src/xschem.h). strip_bands_px's body, split out so the aA gesture can reuse
+# it on a motion without switching the xschem context (item 22).
+proc wviewer::bands_px {bbs xo yo zoom} {
   set out {}
-  foreach bb [dict get $graphbb $wp] {
+  foreach bb $bbs {
     lassign $bb bx1 by1 bx2 by2
     lappend out [list [expr {($bx1 + $xo) / $zoom}] [expr {($by1 + $yo) / $zoom}] \
                       [expr {($bx2 + $xo) / $zoom}] [expr {($by2 + $yo) / $zoom}]]
@@ -8178,7 +8276,8 @@ proc wviewer::split_target_strip {{token {}}} {
 proc wviewer::state_snapshot {token} {
   return [list [wviewer::sw_props_stamp \
                   [dict get [wviewer::layout_for $token] graphs] \
-                  [wviewer::base_mode $token] [wviewer::grid_base $token]] \
+                  [wviewer::base_mode $token] [wviewer::grid_base $token] \
+                  [wviewer::font_base $token]] \
                [wviewer::target_index $token]]
 }
 
@@ -9136,10 +9235,13 @@ proc wviewer::clear_all {{token {}}} {
   set km [wviewer::plot_mode $token]
   set kg [wviewer::grid_shown $token]
   set kgb [wviewer::grid_base $token]
+  set kf [wviewer::font_shown $token]
   if {$km ne {}} { set mode($token) $km }
   set lay [wviewer::layout_for $token]
   dict set lay graphs [list [wviewer::empty_graph]]
   if {$kg != $kgb} { dict set lay grid $kg }
+  # item 22 (SW30): ...and the target's text size
+  if {$kf ne {}} { dict set lay font $kf }
   dict set layouts $token $lay
   set target($token) 0
   # §8: every strip is gone, so the whole highlight set goes with it. Dropped
@@ -9321,6 +9423,659 @@ proc wviewer::grid_toggle_subwin_at {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
   return [wviewer::grid_toggle_subwin {} $token]
+}
+
+# --- viewer text size and the aA button (item 22, spec SW27-SW31) ------------
+#
+# THE MODEL, three layers (spec §17):
+#   * the tab's OWN size: the layout's `font` key, absent = the rc default
+#     (`wviewer_text_size`, read lazily). The grid_base shape.
+#   * a per-sub-window `swfont` graph key, written only where it differs from
+#     the tab's own -- the `swgrid` shape, carried by the same helpers
+#     (sw_setting_keys). A one-sub-window tab carries none; its size IS the base.
+#   * `textlast($token)`: the last size the user chose ANYWHERE in that viewer
+#     window. A new sub-window or a new tab starts there, else at the rc default.
+# A click changes ONLY its own sub-window, so it never moves the base of a tab
+# with two or more: moving the base would silently resize every sub-window
+# carrying no key.
+#
+# C never converts points: it takes `textpx=` in DEVICE PIXELS, because its
+# cached `tk_scaling` stays 1.0 under --nogui where Tcl falls back to 96/72 --
+# converting in C would make the two arms disagree. setup_graph_data then sizes
+# every text of the strip from that one height, mooz divided out, and ignores
+# legendmag/xlabmag/ylabmag (draw.c; the C half of item 22).
+#
+# Like the grid, the size is a WINDOW OPTION and stays outside undo; an undo
+# snapshot stamps every sub-window's size (sw_props_stamp), so undoing a close
+# brings the closed one back at its own size.
+
+# The range, in points: the Calculator's and the RDW's, one step = one point.
+proc wviewer::text_limits {} { return {6 20} }
+
+# THE ONE ADMISSION TEST, copied from calc::_accept_size: it REFUSES and never
+# clamps, and it canonicalises (` 8 `, `+8`, `0x10` come back as plain
+# decimals). Answers the integer, or {}.
+proc wviewer::_accept_text_size {n} {
+  if {![string is integer -strict $n]} { return {} }
+  if {[catch {expr {$n + 0}} v]} { return {} }
+  if {![string is integer -strict $v]} { return {} }
+  lassign [wviewer::text_limits] lo hi
+  if {$v < $lo || $v > $hi} { return {} }
+  return $v
+}
+
+# The rc default, read lazily. A bad value reads 14 and says so ONCE per
+# process (a warning per regenerate would flood the CIW).
+proc wviewer::default_text_size {} {
+  variable text_size_warned
+  if {![info exists ::wviewer_text_size]} { return 14 }
+  set v [wviewer::_accept_text_size [string trim $::wviewer_text_size]]
+  if {$v ne {}} { return $v }
+  if {![info exists text_size_warned]} {
+    set text_size_warned 1
+    lassign [wviewer::text_limits] lo hi
+    catch {wviewer::echo "wviewer: wviewer_text_size '$::wviewer_text_size' is not an integer $lo..$hi; using 14" warning}
+  }
+  return 14
+}
+
+# Item 22 retires wviewer_legend_textmag for viewer strips (setup_graph_data
+# ignores legendmag on a `textpx` strip). A non-default value is somebody's rc
+# expecting an effect it no longer has: say so, once per process.
+proc wviewer::legend_textmag_retired {} {
+  variable legend_textmag_warned
+  if {[info exists legend_textmag_warned]} { return 0 }
+  if {![info exists ::wviewer_legend_textmag]} { return 0 }
+  set v [string trim $::wviewer_legend_textmag]
+  if {[string is double -strict $v] && $v == 1.63} { return 0 }
+  set legend_textmag_warned 1
+  catch {wviewer::echo "wviewer: wviewer_legend_textmag no longer changes viewer strips; set wviewer_text_size (points) instead" warning}
+  return 1
+}
+
+# Points -> device pixels: `tk scaling` (pixels per point) when Tk is loaded,
+# else 96/72, the X default -- so a --nogui row and a 96-dpi Xvfb agree.
+proc wviewer::tk_points_scale {} {
+  if {[info commands ::tk] ne {} && ![catch {tk scaling} s] \
+      && [string is double -strict $s] && $s > 0} { return $s }
+  return [expr {96.0 / 72}]
+}
+
+# PURE: the rect token for size `pt` at scaling `sc`, appended by regenerate.
+proc wviewer::font_props {pt sc} {
+  return "textpx=[format %.4g [expr {$pt * $sc}]]\n"
+}
+
+# The tab's OWN size (the base): the layout's `font` key, else the rc default.
+proc wviewer::font_base {token} {
+  if {$token eq {}} { return [wviewer::default_text_size] }
+  set lay [wviewer::layout_for $token]
+  if {[dict exists $lay font]} {
+    set v [wviewer::_accept_text_size [dict get $lay font]]
+    if {$v ne {}} { return $v }
+  }
+  return [wviewer::default_text_size]
+}
+
+# PURE: the size of the sub-window holding strip `gi`: its `swfont` (when
+# admissible), else `base`.
+proc wviewer::sw_font_of {gs gi base} {
+  set v [wviewer::_accept_text_size [wviewer::sw_prop_get $gs $gi swfont {}]]
+  if {$v eq {}} { return $base }
+  return $v
+}
+
+# The size of `token`'s TARGET sub-window ({} when no viewer resolves).
+proc wviewer::font_shown {token} {
+  if {$token eq {}} { return {} }
+  set gs [wviewer::dget [wviewer::layout_for $token] graphs {}]
+  return [wviewer::sw_font_of $gs [wviewer::target_index $token] [wviewer::font_base $token]]
+}
+
+# PURE: every strip's size, `base` being the tab's own (strip_grids' shape).
+proc wviewer::strip_fonts {gs base} {
+  set out {}
+  foreach r [wviewer::sw_runs $gs] {
+    lassign $r f l
+    set v [wviewer::sw_font_of $gs $f $base]
+    for {set i $f} {$i <= $l} {incr i} { lappend out $v }
+  }
+  return $out
+}
+
+# What a NEW sub-window or tab of `token` starts at: the last size the user
+# chose in that window, else the rc default (SW30, user ruling 2026-10-16).
+proc wviewer::text_inherit {token} {
+  variable textlast
+  if {[info exists textlast($token)]} {
+    set v [wviewer::_accept_text_size $textlast($token)]
+    if {$v ne {}} { return $v }
+  }
+  return [wviewer::default_text_size]
+}
+
+# PURE: a size saved in a state `viewer` dict under `key` (`font` = the tab's
+# own, `fontlast` = the window's last user size), or {} when absent or bad.
+proc wviewer::state_font {vdict {key font}} {
+  return [wviewer::_accept_text_size [wviewer::dget $vdict $key {}]]
+}
+
+# PURE: the first strip of sub-window `k` (its `sw` tag; 1 = an untagged,
+# one-sub-window tab), else -1.
+proc wviewer::sw_first_strip {gs k} {
+  if {![string is integer -strict $k]} { return -1 }
+  set runs [wviewer::sw_runs $gs]
+  if {[llength $runs] <= 1} { return [expr {$k == 1 && [llength $gs] ? 0 : -1}] }
+  foreach r $runs {
+    set f [lindex $r 0]
+    if {[wviewer::gsw [lindex $gs $f]] == $k} { return $f }
+  }
+  return -1
+}
+
+# THE REPLAYABLE DOOR: set the size of the sub-window holding strip `gi`
+# (default: the target) to `pt`. Window option, so -- like grid_apply -- no
+# push_undo, but the issue-0194 capture BEFORE the layout read (a regenerate
+# re-places every rect from the model). Change-only, one regenerate, one
+# resolved log line. Prints NO CIW line: that is the click's (text_step), so a
+# replay, a script and a restore are silent (the ase::ui::set_plot_dest rule).
+# Returns the size, or {} when refused.
+proc wviewer::set_text_size {pt {token {}} {gi {}}} {
+  variable windows
+  variable layouts
+  variable textlast
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to set the font size in" error
+    }
+    return {}
+  }
+  set v [wviewer::_accept_text_size $pt]
+  if {$v eq {}} {
+    lassign [wviewer::text_limits] lo hi
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad font size '$pt' (expected an integer $lo..$hi)" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} { return {} }
+  set base [wviewer::font_base $token]
+  if {[wviewer::sw_font_of $gs $gi $base] == $v} { return $v }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_view_state $token
+  set lay [wviewer::layout_for $token]
+  set gs [dict get $lay graphs]
+  if {[llength [wviewer::sw_runs $gs]] <= 1} {
+    dict set lay font $v
+    dict set layouts $token $lay
+  } else {
+    wviewer::set_graphs $token [wviewer::sw_prop_put $gs $gi swfont $v $base]
+  }
+  set textlast($token) $v
+  wviewer::regenerate $token
+  set f [lindex [wviewer::sw_range $gs $gi] 0]
+  wviewer::log_action [list wviewer::set_text_size $v $token $f]
+  return $v
+}
+
+# THE CLICK (aA in sub-window `k`; `dir` 1 = click, -1 = Ctrl+click). The
+# Calculator's sentences, through the CIW (wviewer::echo: the viewer's own
+# status label is rewritten on every motion and cannot carry them). Returns 1
+# on a change.
+proc wviewer::text_step {token k dir} {
+  if {$dir ne {1} && $dir ne {-1}} { return 0 }
+  set gs [wviewer::dget [wviewer::layout_for $token] graphs {}]
+  set gi [wviewer::sw_first_strip $gs $k]
+  if {$gi < 0} { return 0 }
+  lassign [wviewer::text_limits] lo hi
+  set want [expr {[wviewer::sw_font_of $gs $gi [wviewer::font_base $token]] + $dir}]
+  if {[wviewer::_accept_text_size $want] eq {}} {
+    set edge [expr {$dir > 0 ? $hi : $lo}]
+    set word [expr {$dir > 0 ? {largest} : {smallest}}]
+    catch {wviewer::echo "Font size: already the $word ($edge)."}
+    return 0
+  }
+  if {[wviewer::set_text_size $want $token $gi] eq {}} { return 0 }
+  catch {wviewer::echo [wviewer::text_size_msg $want]}
+  return 1
+}
+
+# PURE: the success sentence, naming the rc line that makes `pt` the default
+# (the ase::ui::plot_dest_msg precedent; xschem::rc_name names the --script rc
+# this launch read, else xschemrc).
+proc wviewer::text_size_msg {pt} {
+  set rc xschemrc
+  catch {set rc [::xschem::rc_name]}
+  return "Font size: $pt ($rc: set wviewer_text_size $pt)."
+}
+
+# The Calculator's and the RDW's sentence, verbatim: one gesture, one wording.
+proc wviewer::_font_tip {} {
+  return {click to increase font one unit. Ctrl+click to decrease font one unit}
+}
+
+# --- the aA reveal gesture: the PURE half ------------------------------------
+
+# The gesture parameters {px deg tol ms reveal_ms}, each read live from its rc
+# variable; a bad value reads its default.
+proc wviewer::flick_params {} {
+  set out {}
+  foreach {v d kind} {wviewer_aa_flick_px 100 pos wviewer_aa_flick_deg 45 num
+                      wviewer_aa_flick_tol 15 tol wviewer_aa_flick_ms 400 int
+                      wviewer_aa_reveal_ms 3000 int} {
+    set x $d
+    if {[info exists ::$v]} {
+      set s [string trim [set ::$v]]
+      switch -- $kind {
+        pos { if {[string is double -strict $s] && $s > 0} { set x $s } }
+        num { if {[string is double -strict $s] && $s >= -360 && $s <= 360} { set x $s } }
+        tol { if {[string is double -strict $s] && $s >= 0 && $s <= 180} { set x $s } }
+        int { if {[string is integer -strict $s] && $s > 0} { set x [expr {$s + 0}] } }
+      }
+    }
+    lappend out $x
+  }
+  return $out
+}
+
+# PURE: 1 when an X event state allows the gesture -- no Button1 (256) or
+# Button3 (1024) held. MMB and modifier keys do not stop it.
+proc wviewer::flick_state_ok {s} {
+  if {![string is integer -strict $s]} { return 0 }
+  return [expr {($s & 1280) == 0}]
+}
+
+# PURE: is the motion to (x,y) at time t a flick? `samples` are {xs ys ts},
+# oldest first. The first sample with 0 <= t-ts <= ms, a NET displacement of
+# MORE than px pixels (the ruling's "net > 100 px": exactly px is no flick) and
+# a direction within tol of deg wins, and its {xs ys} is the answer ({} = no
+# flick). Screen y grows DOWN, so the y term is ys-y. The
+# angle difference is normalised to (-180, 180], so any tuned deg works.
+proc wviewer::flick_test {samples x y t px deg tol ms} {
+  set eps 1e-9
+  foreach s $samples {
+    lassign $s xs ys ts
+    set dt [expr {$t - $ts}]
+    if {$dt < 0 || $dt > $ms} { continue }
+    set dx [expr {double($x - $xs)}]
+    set dy [expr {double($ys - $y)}]
+    if {hypot($dx, $dy) <= $px + $eps} { continue }
+    set d [expr {atan2($dy, $dx) * 180.0 / acos(-1) - $deg}]
+    while {$d > 180} { set d [expr {$d - 360}] }
+    while {$d <= -180} { set d [expr {$d + 360}] }
+    if {abs($d) <= $tol + $eps} { return [list $xs $ys] }
+  }
+  return {}
+}
+
+# PURE: the ring buffer step. A sample from the past (a 32-bit X time wrap, or
+# a clock source change) clears it; samples older than `ms` go; at most `cap`.
+proc wviewer::flick_push {buf x y t ms {cap 32}} {
+  if {[llength $buf] && $t < [lindex $buf end 2]} { set buf {} }
+  lappend buf [list $x $y $t]
+  set out {}
+  foreach s $buf { if {$t - [lindex $s 2] <= $ms} { lappend out $s } }
+  if {[llength $out] > $cap} { set out [lrange $out end-[expr {$cap - 1}] end] }
+  return $out
+}
+
+# PURE: one cell per sub-window, the union of its strips' pixel bands:
+# {k {x1 y1 x2 y2} ...}, k the `sw` tag (1 for a one-sub-window tab).
+proc wviewer::fsz_cells_px {gs bands} {
+  set out [dict create]
+  set multi [expr {[llength [wviewer::sw_runs $gs]] > 1}]
+  set i 0
+  foreach G $gs {
+    set b [lindex $bands $i]
+    incr i
+    if {[llength $b] != 4} { continue }
+    set k [expr {$multi ? [wviewer::gsw $G] : 1}]
+    if {$k eq {}} { continue }
+    lassign $b x1 y1 x2 y2
+    if {[dict exists $out $k]} {
+      lassign [dict get $out $k] a1 b1 a2 b2
+      set x1 [expr {min($x1, $a1)}] ; set y1 [expr {min($y1, $b1)}]
+      set x2 [expr {max($x2, $a2)}] ; set y2 [expr {max($y2, $b2)}]
+    }
+    dict set out $k [list $x1 $y1 $x2 $y2]
+  }
+  return $out
+}
+
+# PURE: is (x,y) in the hot zone of `cell`, the top-right zw x zh pixels,
+# clipped to the cell, edges included?
+proc wviewer::fsz_zone_hit {cell x y zw zh} {
+  lassign $cell x1 y1 x2 y2
+  set zx1 [expr {max($x1, $x2 - $zw)}]
+  set zy2 [expr {min($y2, $y1 + $zh)}]
+  return [expr {$x >= $zx1 && $x <= $x2 && $y >= $y1 && $y <= $zy2}]
+}
+
+# PURE: the sub-window whose hot zone holds (x,y), else {}.
+proc wviewer::fsz_zone_at {cells x y zw zh} {
+  dict for {k c} $cells { if {[wviewer::fsz_zone_hit $c $x $y $zw $zh]} { return $k } }
+  return {}
+}
+
+# PURE: the sub-window whose cell holds (x,y), else {}.
+proc wviewer::fsz_cell_at {cells x y} {
+  dict for {k c} $cells {
+    lassign $c x1 y1 x2 y2
+    if {$x >= $x1 && $x <= $x2 && $y >= $y1 && $y <= $y2} { return $k }
+  }
+  return {}
+}
+
+# --- the aA button: the Tk half -----------------------------------------------
+#
+# One button per sub-window, `<canvas>.fsz<k>`, a CHILD of the canvas placed at
+# the sub-window's top-right corner. Hidden unless the pointer is in that
+# corner's zone, or for `reveal_ms` after a flick towards it. Never `focus`,
+# `raise` or `grab` (user rule: never steal focus).
+#
+# ⚠ A CHILD, NOT THE SIBLING THE PLAN ASKED FOR, AND THE REASON WAS MEASURED
+# (row SWA14 of tests/headless/test_wave_subwindows.tcl). The canvas carries
+# the toplevel's bindtag, where set_bindings binds `<Visibility> raise_dialog`.
+# A SIBLING mapped over the canvas partially obscures it, so the canvas gets a
+# VisibilityNotify and raise_dialog lifts a .graphdialog / .dialog / .load that
+# sat behind the viewer above it -- on every hover. X computes a window's
+# visibility IGNORING ITS OWN SUBWINDOWS, so a child obscures nothing and the
+# canvas sees no Visibility event at all. The C drawing is clipped by children
+# (the GC's default ClipByChildren), so it cannot paint over the button.
+# The button's own bindtags leave out the toplevel's tag for the same reason
+# (its own map would fire raise_dialog, and a <FocusIn> retitle).
+#
+# DECLARED SIDE EFFECTS (owed a look, spec §17): the pointer moving onto a shown
+# button gives the canvas a <Leave> (xschem erases the crosshair, snap diamond
+# and hover outline); coming back gives it an <Enter> (which closes a posted
+# .ctxmenu, and focuses the window only when autofocus_mainwindow is set);
+# hiding the button exposes the canvas, which repaints from its pixmap.
+
+proc wviewer::fsz_button {token k} {
+  variable windows
+  if {![dict exists $windows $token win_path]} { return {} }
+  return "[dict get $windows $token win_path].fsz$k"
+}
+
+# (token k) of an aA button path, or {}.
+proc wviewer::fsz_owner {b} {
+  variable windows
+  if {![regexp {^(.*)\.fsz([0-9]+)$} $b -> wp k]} { return {} }
+  dict for {tok rec} $windows {
+    if {[dict exists $rec win_path] && [dict get $rec win_path] eq $wp} { return [list $tok $k] }
+  }
+  return {}
+}
+
+# The two class-free tags, bound once per process.
+proc wviewer::fsz_install_tags {} {
+  if {[info commands bind] eq {}} { return 0 }
+  if {[bind WvFszCanvas <Motion>] eq {}} {
+    bind WvFszCanvas <Motion> {wviewer::fsz_motion_at %W %x %y %s %t}
+    bind WvFszCanvas <ButtonPress> {wviewer::fsz_clear_at %W}
+    bind WvFszCanvas <ButtonRelease> {wviewer::fsz_clear_at %W}
+    bind WvFszCanvas <Leave> {wviewer::fsz_canvas_leave %W}
+    bind WvFszCanvas <Enter> {wviewer::fsz_hover_at %W %x %y}
+  }
+  if {[bind WvFsz <Enter>] eq {}} {
+    bind WvFsz <Enter> {wviewer::fsz_enter %W}
+    bind WvFsz <Leave> {wviewer::fsz_leave %W}
+  }
+  return 1
+}
+
+proc wviewer::fsz_build {token k} {
+  set b [wviewer::fsz_button $token $k]
+  if {$b eq {} || [winfo exists $b]} { return $b }
+  set dfg [option get . disabledForeground DisabledForeground]
+  if {$dfg eq {}} { set dfg [ase::palette disabledfg] }
+  # the Calculator's .calc.btb.fsz, option for option (no -font: it has none)
+  button $b -text {aA} -takefocus 0 -padx 3 -pady 0 \
+    -background [ase::palette panel] \
+    -activebackground [ase::palette header] \
+    -foreground [ase::palette fieldfg] \
+    -activeforeground [ase::palette fieldfg] \
+    -disabledforeground $dfg \
+    -command [list wviewer::text_step $token $k 1]
+  bindtags $b [list $b WvFsz Button all]
+  # ⚠ THE `break` IS LOAD-BEARING (the Calculator's measurement): it cancels the
+  # Button class's <Button-1>, so exactly ONE arm fires under Control,
+  # Control+NumLock and Control+CapsLock alike.
+  bind $b <Control-Button-1> "[list wviewer::text_step $token $k -1] ; break"
+  # `balloon` re-binds <Enter>/<Leave> on the widget's own tag, so the hide
+  # check lives on WvFsz. 300 ms, matching the Calculator and the RDW.
+  catch {balloon $b [wviewer::_font_tip] 1 0 300}
+  return $b
+}
+
+# Recompute the cells from the canvas (the context must be the viewer's).
+proc wviewer::fsz_cells_now {token} {
+  variable windows
+  variable graphbb
+  variable fszcells
+  set wp [wviewer::dget [wviewer::dget $windows $token {}] win_path {}]
+  if {$wp eq {} || ![dict exists $graphbb $wp]} {
+    return [expr {[info exists fszcells($token)] ? $fszcells($token) : {}}]
+  }
+  if {[catch {xschem get current_win_path} cw] || $cw ne $wp} {
+    return [expr {[info exists fszcells($token)] ? $fszcells($token) : {}}]
+  }
+  set zoom [xschem get zoom]
+  if {$zoom == 0} { return [expr {[info exists fszcells($token)] ? $fszcells($token) : {}}] }
+  set gs [wviewer::dget [wviewer::layout_for $token] graphs {}]
+  set fszcells($token) [wviewer::fsz_cells_px $gs \
+    [wviewer::bands_px [dict get $graphbb $wp] [xschem get xorigin] [xschem get yorigin] $zoom]]
+  return $fszcells($token)
+}
+
+# After every regenerate: one button per sub-window that exists (created or
+# destroyed only as sub-windows appear or go -- a button under the pointer must
+# survive the click's own regenerate, or a second click lands on the canvas),
+# the cells cached, a shown button moved to its corner or hidden.
+proc wviewer::fsz_sync {token} {
+  variable windows
+  variable fszshown
+  variable fszafter
+  if {[info commands winfo] eq {}} { return 0 }
+  if {![dict exists $windows $token win_path]} { return 0 }
+  set wp [dict get $windows $token win_path]
+  if {![winfo exists $wp]} { return 0 }
+  set gs [wviewer::dget [wviewer::layout_for $token] graphs {}]
+  set runs [wviewer::sw_runs $gs]
+  if {[llength $runs] <= 1} { set ids {1} } else {
+    set ids [lmap r $runs {wviewer::gsw [lindex $gs [lindex $r 0]]}]
+  }
+  foreach w [winfo children $wp] {
+    if {![regexp {\.fsz([0-9]+)$} $w -> k]} { continue }
+    if {$k ni $ids} {
+      if {[info exists fszafter($token,$k)]} { catch {after cancel $fszafter($token,$k)} ; unset fszafter($token,$k) }
+      catch {unset fszshown($token,$k)}
+      destroy $w
+    }
+  }
+  foreach k $ids { wviewer::fsz_build $token $k }
+  set cells [wviewer::fsz_cells_now $token]
+  # the hover is re-asked of the NEW cells at the last pointer position: after
+  # a tab switch or a re-tile, a zone that held the pointer may be elsewhere
+  variable fszhover; variable fszlast; variable fsz_zone
+  if {[info exists fszlast($token)]} {
+    lassign $fsz_zone zw zh
+    set fszhover($token) [wviewer::fsz_zone_at $cells {*}$fszlast($token) $zw $zh]
+  }
+  foreach k $ids {
+    if {[wviewer::fsz_keep $token $k]} { wviewer::fsz_show $token $k } else { wviewer::fsz_hide $token $k }
+  }
+  return 1
+}
+
+# Should button k stay up: shown already AND (pointer on it, pointer in its
+# zone, or a live reveal timer)?
+proc wviewer::fsz_keep {token k} {
+  variable fszshown; variable fszafter; variable fszhover; variable fszover
+  if {![info exists fszshown($token,$k)]} { return 0 }
+  if {[info exists fszafter($token,$k)]} { return 1 }
+  if {[info exists fszover($token)] && $fszover($token) eq $k} { return 1 }
+  if {[info exists fszhover($token)] && $fszhover($token) eq $k} { return 1 }
+  return 0
+}
+
+proc wviewer::fsz_show {token k} {
+  variable fszcells; variable fszshown; variable windows
+  if {[info commands winfo] eq {}} { return 0 }
+  set b [wviewer::fsz_button $token $k]
+  if {$b eq {} || ![winfo exists $b]} { return 0 }
+  if {![info exists fszcells($token)] || ![dict exists $fszcells($token) $k]} { return 0 }
+  lassign [dict get $fszcells($token) $k] x1 y1 x2 y2
+  set w 5
+  catch {set w [expr {int($::graph_active_strip_width)}]}
+  set inset [expr {($w + 1) / 2 + 2}]
+  place $b -in [dict get $windows $token win_path] -anchor ne \
+    -x [expr {int(round($x2)) - $inset}] -y [expr {int(round($y1)) + $inset}]
+  set fszshown($token,$k) 1
+  return 1
+}
+
+proc wviewer::fsz_hide {token k} {
+  variable fszshown
+  catch {unset fszshown($token,$k)}
+  if {[info commands winfo] eq {}} { return 0 }
+  set b [wviewer::fsz_button $token $k]
+  if {$b eq {} || ![winfo exists $b]} { return 0 }
+  catch {place forget $b}
+  catch {destroy $b.balloon}
+  return 1
+}
+
+# A flick reveal: show k for reveal_ms; a repeat flick re-arms the timer.
+proc wviewer::fsz_reveal {token k} {
+  variable fszafter
+  if {[info exists fszafter($token,$k)]} { catch {after cancel $fszafter($token,$k)} }
+  if {[info commands winfo] eq {}} { return $k }
+  set ms [lindex [wviewer::flick_params] 4]
+  set fszafter($token,$k) [after $ms [list wviewer::fsz_expire $token $k]]
+  wviewer::fsz_show $token $k
+  return $k
+}
+
+proc wviewer::fsz_expire {token k} {
+  variable fszafter
+  catch {unset fszafter($token,$k)}
+  if {![wviewer::fsz_keep $token $k]} { wviewer::fsz_hide $token $k }
+  return {}
+}
+
+# The canvas motion (WvFszCanvas). Answers the sub-window a flick revealed, or
+# {}. Usable on a model-only window with preset cells: every Tk step is guarded.
+proc wviewer::fsz_motion {token x y s t} {
+  variable flick
+  if {![wviewer::flick_state_ok $s]} { set flick($token) {} ; return {} }
+  if {![string is integer -strict $t] || $t <= 0} { set t [clock milliseconds] }
+  lassign [wviewer::flick_params] px deg tol ms
+  set buf [expr {[info exists flick($token)] ? $flick($token) : {}}]
+  set buf [wviewer::flick_push $buf $x $y $t $ms]
+  set cells [wviewer::fsz_cells_now $token]
+  set k {}
+  set win [wviewer::flick_test $buf $x $y $t $px $deg $tol $ms]
+  if {$win ne {}} {
+    set k [wviewer::fsz_cell_at $cells {*}$win]
+    if {$k eq {}} { set k [wviewer::fsz_cell_at $cells $x $y] }
+    set buf {}
+    if {$k ne {}} { wviewer::fsz_reveal $token $k }
+  }
+  set flick($token) $buf
+  wviewer::fsz_hover $token $cells $x $y
+  return $k
+}
+
+# The hover half: show the button whose zone holds (x,y), hide every shown one
+# with no reason to stay, and move the rest to their cells' corners (a wheel
+# zoom moves the strips with no regenerate).
+proc wviewer::fsz_hover {token cells x y} {
+  variable fszhover; variable fsz_zone; variable fszshown; variable fszlast
+  set fszlast($token) [list $x $y]
+  lassign $fsz_zone zw zh
+  set hk [wviewer::fsz_zone_at $cells $x $y $zw $zh]
+  set fszhover($token) $hk
+  if {$hk ne {}} { wviewer::fsz_show $token $hk }
+  foreach id [array names fszshown ${token},*] {
+    set kk [lindex [split $id ,] end]
+    if {![wviewer::fsz_keep $token $kk]} { wviewer::fsz_hide $token $kk } \
+    elseif {$kk ne $hk} { wviewer::fsz_show $token $kk }
+  }
+  return $hk
+}
+
+# The canvas <Enter>: the hover only. NOT a gesture sample -- the buffer was
+# cleared on the <Leave>, and the re-entry point starts a new gesture with the
+# next motion.
+proc wviewer::fsz_hover_at {W x y} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::fsz_hover $token [wviewer::fsz_cells_now $token] $x $y]
+}
+
+proc wviewer::fsz_clear {token} {
+  variable flick
+  set flick($token) {}
+  return {}
+}
+
+proc wviewer::fsz_motion_at {W x y s t} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::fsz_motion $token $x $y $s $t]
+}
+
+proc wviewer::fsz_clear_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token ne {}} { wviewer::fsz_clear $token }
+  return {}
+}
+
+# The canvas <Leave>: clear the buffer (a re-entry elsewhere is a JUMP, not a
+# flick) and drop the hover; the hide check waits for the idle point, by which
+# time an <Enter> on the button the pointer moved onto has been seen.
+proc wviewer::fsz_canvas_leave {W} {
+  variable fszhover
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  wviewer::fsz_clear $token
+  set fszhover($token) {}
+  variable fszlast
+  catch {unset fszlast($token)}
+  after idle [list wviewer::fsz_recheck $token]
+  return {}
+}
+
+proc wviewer::fsz_recheck {token} {
+  variable fszshown
+  foreach id [array names fszshown ${token},*] {
+    set k [lindex [split $id ,] end]
+    if {![wviewer::fsz_keep $token $k]} { wviewer::fsz_hide $token $k }
+  }
+  return {}
+}
+
+proc wviewer::fsz_enter {W} {
+  variable fszover
+  set o [wviewer::fsz_owner $W]
+  if {$o eq {}} { return {} }
+  lassign $o token k
+  set fszover($token) $k
+  return {}
+}
+
+proc wviewer::fsz_leave {W} {
+  variable fszover
+  set o [wviewer::fsz_owner $W]
+  if {$o eq {}} { return {} }
+  lassign $o token k
+  if {[info exists fszover($token)] && $fszover($token) eq $k} { unset fszover($token) }
+  after idle [list wviewer::fsz_recheck $token]
+  return {}
 }
 
 # --- the Signal Browser sidebar (signal-browser PLAN item 8) -----------------
@@ -19509,6 +20264,14 @@ proc wviewer::strip_bindings {wp} {
   if {[lsearch -exact [bindtags $wp] WaveViewer] < 0} {
     bindtags $wp [linsert [bindtags $wp] 1 WaveViewer]
   }
+  # item 22 (SW28): the aA reveal gesture lives on its OWN tag at index 0, so the
+  # widget-level <B1-Motion> (more specific, ending in `break`) cannot starve
+  # it: in a separate tag <Motion> also matches a held-button motion, which is
+  # what lets the %s filter see a drag and clear the buffer. No `break` there.
+  wviewer::fsz_install_tags
+  if {[lsearch -exact [bindtags $wp] WvFszCanvas] < 0} {
+    bindtags $wp [linsert [bindtags $wp] 0 WvFszCanvas]
+  }
   bind $wp <KeyPress>   {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <KeyRelease> {wviewer::key_filter %W %T %x %y %N %K %s}
   # %X/%Y (ROOT pixels) are passed for the item-7 context menu, which tk_popup
@@ -20029,6 +20792,8 @@ proc wviewer::select_tab {id {token {}}} {
   wviewer::tab_thaw $token $rec
   wviewer::regenerate $token
   wviewer::tab_view_apply $token [wviewer::dget $rec view {}]
+  # item 22: the view just applied may have moved the strips on the canvas
+  catch {wviewer::fsz_sync $token}
   wviewer::tabbar_refresh $token
   wviewer::retitle $token
   catch {wviewer::status_refresh $token}
@@ -20072,6 +20837,10 @@ proc wviewer::new_tab {{token {}}} {
   }
   set lay [dict create sharedx $inherit_sx grid $inherit_grid \
                        graphs [list [wviewer::empty_graph]]]
+  # item 22 (SW30): a new tab starts at the window's last user size, else the rc
+  # default; the key is omitted at the default, so the tab reads it lazily
+  set inherit_font [wviewer::text_inherit $token]
+  if {$inherit_font != [wviewer::default_text_size]} { dict set lay font $inherit_font }
   set rec [dict create id $id name "Tab $id" layout $lay \
              mode [wviewer::plot_mode $token] target 0 \
              cva 0 cvb 0 cvr [expr {[info exists ::wviewer::cvr($token)] \
@@ -20155,6 +20924,8 @@ proc wviewer::close_tab {{id {}} {token {}}} {
   wviewer::tab_thaw $token $rec
   wviewer::regenerate $token
   wviewer::tab_view_apply $token [wviewer::dget $rec view {}]
+  # item 22: the view just applied may have moved the strips on the canvas
+  catch {wviewer::fsz_sync $token}
   wviewer::tabbar_refresh $token
   wviewer::retitle $token
   catch {wviewer::status_refresh $token}

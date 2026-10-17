@@ -9,9 +9,18 @@
 # per-rect prop tokens emitted only by the viewer's own strip template, so the
 # ~127 shipped schematics with embedded graphs are untouched (decision D-G).
 #
+# ⚠ ITEM 22 (2026-10-16) RE-RULED THE SIZE HALF: viewer strips now draw ALL
+# their text at the fixed `wviewer_text_size` (`textpx=`), and setup_graph_data
+# ignores `legendmag` there, so the legend matches the axis numbers by
+# construction. The tokens this suite pins are still emitted (LP*, LG*), but
+# `wviewer_legend_textmag` no longer resizes a viewer legend: row LP28 asserts
+# the retirement warning, and GF1d of test_wave_grid.tcl measures that the mag
+# tokens change no text size on a `textpx` strip.
+#
 # ⚠ WHAT THIS SUITE CANNOT SEE, said plainly rather than hidden: the PIXELS.
-# There is no C->Tcl getter for any Graph_ctx txtsize field and the ASE legend
-# is not hit-tested (edit_wave_attributes only hit-tests the vlegend strip and
+# This suite reads no Graph_ctx txtsize field (item 22's `xschem get
+# graph_text_metrics` now exposes them; band GF of test_wave_grid.tcl is where
+# they are asserted) and the ASE legend is not hit-tested (edit_wave_attributes only hit-tests the vlegend strip and
 # the digital labels), so "the text is bigger" and "the text is bold italic"
 # are EYEBALL-ONLY. What is asserted is everything up to the renderer's door:
 # the clamp, the emitted tokens, that they reach the rects, and the blast
@@ -157,6 +166,32 @@ check "LP26 the axis mags are untouched (only the LEGEND was too small)" \
   [list [tokof $props xlabmag] [tokof $props ylabmag]] {1.0 1.0}
 check "LP27 divy is still 5 — the value 1.63 is derived from it" \
   [tokof $props divy] 5
+
+# ---- LP28: item 22 RETIRED the size half for viewer strips ------------------
+# Every viewer strip now also carries `textpx=` (wviewer_text_size), and on such
+# a strip setup_graph_data sizes ALL text from that one height and ignores
+# `legendmag` -- measured by row GF1d of test_wave_grid.tcl (the mag tokens
+# change no getter metric on a textpx strip, and its control shows the same mags
+# DO move a proportional strip). LP23-LP27 above still hold, because the tokens
+# are still written; what they no longer do is resize a viewer legend. So a
+# non-default wviewer_legend_textmag is somebody's rc expecting an effect it no
+# longer has, and the viewer says so once per process.
+set lp28_saved [expr {[info exists ::wviewer_legend_textmag] ? [list $::wviewer_legend_textmag] : {}}]
+rename wviewer::echo wviewer::__lp28_echo
+proc wviewer::echo {msg {tag {}}} { lappend ::lp28_said $msg ; return 1 }
+set ::lp28_said {}
+catch {unset ::wviewer::legend_textmag_warned}
+set ::wviewer_legend_textmag 1.63
+set lp28 [list [pcall {wviewer::legend_textmag_retired}] [llength $::lp28_said]]
+set ::wviewer_legend_textmag 3.0
+lappend lp28 [pcall {wviewer::legend_textmag_retired}] [pcall {wviewer::legend_textmag_retired}] [llength $::lp28_said]
+check "LP28 wviewer_legend_textmag is retired for viewer strips: the default says nothing, a non-default value warns ONCE, naming wviewer_text_size" \
+  [list $lp28 [string match {*wviewer_text_size*} [lindex $::lp28_said 0]]] {{0 0 1 0 1} 1}
+check "LP28 ...and every viewer strip is handed textpx (14 pt at 96/72 under no Tk)" \
+  [pcall {wviewer::font_props 14 [expr {96.0/72}]}] "textpx=18.67\n"
+rename wviewer::echo {}
+rename wviewer::__lp28_echo wviewer::echo
+if {$lp28_saved eq {}} { catch {unset ::wviewer_legend_textmag} } else { set ::wviewer_legend_textmag [lindex $lp28_saved 0] }
 
 # ============================================================================
 # LS* — issue 0175: the SELECTION CUE's plumbing (pure, runs in BOTH arms)

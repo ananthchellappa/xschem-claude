@@ -98,6 +98,24 @@
 #   SWG16 DISPLAY: a REAL `e` after a multi-plot run deletes the emptied run
 #         strip in the target subwindow, an emptied strip in another and an
 #         empty subwindow; Caps Lock + e is typed E, as Shift-e is.
+#   SWZ*  both arms: the aA reveal gesture's pure layer -- flick_test (the
+#         30/60 deg, 100 px and 400/401 ms edges, the y sign, net displacement,
+#         the angle normalisation), flick_state_ok (the B1/B3 mask), flick_push
+#         (backwards time, the window, the cap), flick_params, the cells and the
+#         hot zone -- and fsz_motion on a model-only window (start-cell reveal,
+#         end fallback, Leave/press clears, a B1 motion clears, a bad %t).
+#   SWF*  both arms: the text-size model -- the rc default and its admission
+#         test, font_props, strip_fonts, per-sub-window isolation, inheritance by
+#         a new sub-window, the fold on close and Clear All, undo of a close, the
+#         saved keys, the refusals / logged line / replay, the CIW wording, the
+#         tip, the key carriers, no undo point. Display halves: SWF3/SWF4/SWF6/
+#         SWF9/SWF12 on the real rects and the real button.
+#   SWA*  DISPLAY: the aA button through real events -- hidden by default,
+#         hover, flick and its timer, re-arm, B1 held / a real B1 drag, the click
+#         and Ctrl+click and a second click without moving, focus and stacking, a
+#         .graphdialog behind the viewer, the canvas bindtags and an X-axis drag
+#         with and without the gesture tag, position across Configure / add /
+#         close / Fit, a 2x2 tab and a second tab.
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -219,9 +237,36 @@
 # that row read {{1 1 1 2} {2 0 1 2} ...}: the empty strip in subwindow 2 and
 # the empty subwindow went, the emptied run strip stayed, the report verbatim.
 #        (the real-event leg read {grid_toggle_subwin_at leak})
+# TEXT SIZE / aA (item 22, spec SW27-SW31 and §17), 2026-10-16. RED FIRST, measured
+# on the product before the change (src/wave_viewer.tcl at HEAD, the C half in the
+# tree): --nogui 60 FAILED (188 passed), display 97 FAILED (343 passed). The rows
+# that pass there pass for a stated reason: SWF8's "no undo step" and SWF11's
+# "the door prints nothing" (nothing happens at all), SWA2's mousex round trip (a
+# fixture precondition) and SWA7 (no click lands). Then each sabotage below was
+# MEASURED red on the named rows and reverted to green:
+#   N1 flick_test: dy = y - ys (screen y not flipped) -> SWZ1-SWZ4, SWZ6, SWZ7, SWZ11 (x2)
+#   N2 fsz_motion reveals the END cell             -> SWZ11 start-cell row ONLY
+#   N3 new_subwin inherits the TARGET's size        -> SWF5 (x2)
+#   N4 sw_props_stamp ignores bfont                 -> SWD5, SWF8, SWF13 stamp
+#   N5 set_text_size: no capture_live_view_state    -> SWF14 ONLY
+#   N6 text_step: no success sentence               -> SWF10 success row ONLY
+#   N7 snapshot writes `font` at the default too    -> SWF9 ONLY
+#   N8 set_text_size: no textlast write             -> SWF5 (x2), SWF9
+#   D1 fsz_sync destroys and rebuilds every button  -> SWA6, SWA11, SWA14, SWA8 (x4), SWA10
+#   D2 the button keeps the toplevel's bindtag      -> SWA1 bindtags, SWA14
+#   D3 WvFszCanvas after the widget (index 1)       -> SWA5, SWA12, SWA13, SWA9
+#   D5 the canvas <Leave> does not clear the buffer -> SWA13 ONLY
+#   D6 the reveal timer never expires               -> SWA3 (x2), SWA4, SWA5, SWA12, SWA13, SWA6, SWA11, SWA8 (x2)
+# SWA14's own control is the plan's SIBLING placement, measured: a sibling mapped
+# over the canvas lifts a .graphdialog that sat behind the viewer (raise_dialog on
+# the canvas' <Visibility>), which is why the button is a CHILD of the canvas.
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
-# debt); what IS asserted is the token that draw.c paints from.
+# debt); what IS asserted is the token that draw.c paints from. Likewise the aA
+# button's look, its corner on the real X server and the FEEL of the flick
+# (synthesised events prove nothing about real pointer cadence) are owed a look
+# (owed.sh look wviewer_aa_textsize) and the gesture rows a :0 run (owed.sh
+# suite test_wave_subwindows).
 #
 # Standalone repro from the repo ROOT (armed spelling):
 #   tests/headless/run_suites.sh test_wave_subwindows
@@ -569,12 +614,14 @@ if {[catch {
     {{} {a b p} {1 1 2}}
   check "SWD5 ...the plan's own clear list was empty: plot_signals made NO clear_graph_traces call" \
     [llength $::swd_clears] 0
-  # the snapshot also stamps each subwindow's mode and grid (SWV*)
+  # the snapshot also stamps each subwindow's mode, grid and text size (SWV*,
+  # SWF8), so all three are stripped for the compare and the sizes asserted
   set u0 [lindex $::wviewer::undo_hist(__swd) 0 0]
   check "SWD5 ...ONE undo point, holding the pre-Replace subwindow" \
     [list [llength $::wviewer::undo_hist(__swd)] \
-          [expr {[lmap g $u0 {dict remove $g swmode swgrid}] eq $pre}] \
-          [lmap g $u0 {wviewer::dget $g swmode -}]] {1 1 {single single single}}
+          [expr {[lmap g $u0 {dict remove $g swmode swgrid swfont}] eq $pre}] \
+          [lmap g $u0 {wviewer::dget $g swmode -}] [lmap g $u0 {wviewer::dget $g swfont -}]] \
+    {1 1 {single single single} {14 14 14}}
   swd_open [list [G a 1] [G c 2] [G d 2] [G e 2]] 2 multi
   check "SWD6 Replace under MULTI empties the target subwindow too (ruling 24's limit retired): one strip per signal, newest on top" \
     [list [pcall {wviewer::plot_signals __swd {p q} {} replace}] [swd_tr] [tags [swd_lay]]] \
@@ -1106,6 +1153,408 @@ swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
   [list [pcall {wviewer::clear_target_subwin_at .nosuch}] [pcall {wviewer::grid_toggle_subwin_at .nosuch}]] {{} {}}
 foreach p $::swm_stubbed { rename ::wviewer::$p {}; rename ::swm_orig_$p ::wviewer::$p }
+
+# ============================================================================
+# SWZ* / SWF* -- THE VIEWER TEXT SIZE (spec SW27-SW31, item 22), both arms.
+# SWZ*: the aA reveal gesture's PURE layer (flick_test, flick_state_ok,
+# flick_push, the cells and the hot zone) and fsz_motion on a model-only window
+# with preset cells (no Tk needed: it answers the sub-window it revealed).
+# SWF*: the size model -- the rc default and its admission test, the textpx
+# token, per-sub-window isolation, inheritance by new sub-windows, the fold on
+# close and Clear All, undo of a close, the saved keys, the CIW wording, the
+# replayable door, and the key-carrying helpers deriving from sw_setting_keys.
+# ============================================================================
+set ::swf_stubbed {regenerate capture_live_view_state log_action switch_ctx move_marker echo}
+foreach p $::swf_stubbed { rename ::wviewer::$p ::swf_orig_$p }
+proc ::wviewer::move_marker {args} { return 0 }
+proc ::wviewer::regenerate {args} { lappend ::swf_trace regenerate ; return {} }
+proc ::wviewer::capture_live_view_state {args} { lappend ::swf_trace capture ; return 0 }
+proc ::wviewer::log_action {line} { lappend ::swd_log $line }
+proc ::wviewer::switch_ctx {args} { return 1 }
+proc ::wviewer::echo {msg {tag {}}} { lappend ::swf_said $msg ; return 1 }
+proc swsig {p} { if {[catch {info args $p} r]} { return "ERR:$r" } ; return $r }
+proc swdef {p a} {
+  if {[catch {info default $p $a v} r]} { return "ERR:$r" }
+  return [list $r [expr {$r ? $v : {}}]]
+}
+proc swf_buf {} { if {[info exists ::wviewer::flick(__swd)]} { return $::wviewer::flick(__swd) } ; return NOBUF }
+proc swf_fonts {} { pcall {wviewer::strip_fonts [swd_lay] [wviewer::font_base __swd]} }
+proc swf_reset {} {
+  set ::swd_log {} ; set ::swf_said {} ; set ::swf_trace {}
+  catch {unset ::wviewer::textlast(__swd)}
+  catch {unset ::wviewer::flick(__swd)}
+  catch {unset ::wviewer::fszcells(__swd)}
+}
+set swf_rc_saved [expr {[info exists ::wviewer_text_size] ? [list $::wviewer_text_size] : {}}]
+set swf_cli_saved [expr {[info exists ::cli_opt_script] ? $::cli_opt_script : {}}]
+if {[catch {
+  # ---- SWZ1-SWZ8: flick_test / flick_state_ok / flick_push, literal args ----
+  # flick_test {samples x y t px deg tol ms}: samples {xs ys ts} oldest first;
+  # it answers the WINNING START POINT {xs ys}, or {} for no flick.
+  set P {100 45 15 400}
+  check "SWZ1 a flick up-right: (0,100)@1000 -> (80,20)@1200, 113 px at 45 deg in 200 ms, answers its start" \
+    [pcall {wviewer::flick_test {{0 100 1000}} 80 20 1200 {*}$P}] {0 100}
+  set pi_ [expr {acos(-1)}]
+  set z2 {}
+  foreach a {30 60 29.5 60.5} {
+    set ex [expr {200 * cos($a * $pi_ / 180)}] ; set ey [expr {-200 * sin($a * $pi_ / 180)}]
+    lappend z2 $a [expr {[pcall {wviewer::flick_test {{0 0 0}} $ex $ey 100 {*}$P}] ne {}}]
+  }
+  check "SWZ2 the angle edges: 30 and 60 deg are inside 45 +- 15, 29.5 and 60.5 are not" \
+    $z2 {30 1 60 1 29.5 0 60.5 0}
+  set z3 {}
+  foreach d {99 100 101} {
+    set e [expr {$d / sqrt(2.0)}]
+    lappend z3 $d [expr {[pcall {wviewer::flick_test {{0 0 0}} $e [expr {-$e}] 100 {*}$P}] ne {}}]
+  }
+  # the ruling is "net > 100 px": STRICT, so exactly 100 is no flick
+  check "SWZ3 the distance edge is strict: 99 and 100 px are no flick, 101 px is" $z3 {99 0 100 0 101 1}
+  check "SWZ4 the time edge: 400 ms is a flick, 401 ms is not" \
+    [list [expr {[pcall {wviewer::flick_test {{0 100 1000}} 80 20 1400 {*}$P}] ne {}}] \
+          [expr {[pcall {wviewer::flick_test {{0 100 1000}} 80 20 1401 {*}$P}] ne {}}]] {1 0}
+  check "SWZ4 a sample from the FUTURE (t before ts) never counts" \
+    [pcall {wviewer::flick_test {{0 100 1300}} 80 20 1200 {*}$P}] {}
+  check "SWZ5 the state mask: Button1 (256) and Button3 (1024) refuse, Button2 (512), Shift (1), Ctrl (4) and none do not" \
+    [lmap s {256 1024 1280 260 512 1 4 0 junk} {pcall {wviewer::flick_state_ok $s}}] {0 0 0 0 1 1 1 1 0}
+  check "SWZ6 the y sign: down-right and up-left are no flick (screen y grows DOWN)" \
+    [list [pcall {wviewer::flick_test {{0 0 0}} 80 80 100 {*}$P}] \
+          [pcall {wviewer::flick_test {{100 100 0}} 20 20 100 {*}$P}]] {{} {}}
+  check "SWZ7 net displacement, not path: a zigzag netting 113 px is a flick from its first sample" \
+    [pcall {wviewer::flick_test {{0 0 0} {60 -10 50} {10 -50 100} {70 -40 150}} 80 -80 200 {*}$P}] {0 0}
+  check "SWZ7 ...and a long path netting 49.5 px is not" \
+    [pcall {wviewer::flick_test {{0 0 0} {200 -200 50} {0 -300 100}} 35 -35 150 {*}$P}] {}
+  check "SWZ7 the angle is normalised: a tuned direction of 180 deg (left) accepts 175 and -175" \
+    [list [expr {[pcall {wviewer::flick_test {{200 0 0}} [expr {200 - 150*cos(5*$pi_/180)}] [expr {-150*sin(5*$pi_/180)}] 100 100 180 15 400}] ne {}}] \
+          [expr {[pcall {wviewer::flick_test {{200 0 0}} [expr {200 - 150*cos(5*$pi_/180)}] [expr {150*sin(5*$pi_/180)}] 100 100 180 15 400}] ne {}}]] {1 1}
+  # flick_push {buf x y t ms ?cap?}: the ring buffer step
+  check "SWZ8 a timestamp running BACKWARDS clears the buffer (32-bit wrap / mixed sources)" \
+    [pcall {wviewer::flick_push {{0 0 1000} {5 5 1100}} 9 9 900 400}] {{9 9 900}}
+  check "SWZ8 ...entries older than the window are dropped, newer kept, the new one appended" \
+    [pcall {wviewer::flick_push {{0 0 1000} {5 5 1500} {6 6 1700}} 9 9 1900 400}] {{5 5 1500} {6 6 1700} {9 9 1900}}
+  set big {}
+  for {set i 0} {$i < 40} {incr i} { lappend big [list $i 0 [expr {1000 + $i}]] }
+  set capd [pcall {wviewer::flick_push $big 99 0 1040 400}]
+  check "SWZ8 ...capped at 32 samples, the newest kept" \
+    [list [llength $capd] [lindex $capd end] [lindex $capd 0]] {32 {99 0 1040} {9 0 1009}}
+  check "SWZ8 the parameters read the rc, a bad value its default (400 ms, user ruling)" \
+    [list [pcall {wviewer::flick_params}] \
+          [apply {{} { set had [info exists ::wviewer_aa_flick_ms]
+                       if {$had} { set s $::wviewer_aa_flick_ms }
+                       set ::wviewer_aa_flick_ms junk
+                       set r [pcall {wviewer::flick_params}]
+                       if {$had} { set ::wviewer_aa_flick_ms $s } else { unset ::wviewer_aa_flick_ms }
+                       set r }}]] \
+    {{100 45 15 400 3000} {100 45 15 400 3000}}
+
+  # ---- SWZ9-SWZ12: the cells, the zone and fsz_motion on a model-only window
+  set gz [list [G a 1] [G b 1] [G c 2]]
+  set bandz {{0 0 400 100} {0 100 400 200} {400 0 800 200}}
+  check "SWZ9 fsz_cells_px: one cell per sub-window, the union of its strips' bands" \
+    [pcall {wviewer::fsz_cells_px $gz $bandz}] {1 {0 0 400 200} 2 {400 0 800 200}}
+  check "SWZ9 ...a one-sub-window tab is cell 1 over every strip" \
+    [pcall {wviewer::fsz_cells_px [list [G a] [G b]] {{0 0 400 100} {0 100 400 200}}}] {1 {0 0 400 200}}
+  set zh {}
+  foreach {x y} {400 0 336 0 335 0 400 40 400 41 370 20 401 20} {
+    lappend zh [pcall {wviewer::fsz_zone_hit {0 0 400 200} $x $y 64 40}]
+  }
+  check "SWZ10 the hot zone: the top-right 64 x 40 px of the cell, edges included" $zh {1 1 0 1 0 1 0}
+  # the rows above pass the zone as literals; this pins the SHIPPED zone (SWA2b
+  # drives it on the real canvas)
+  check "SWZ10 the shipped zone is 64 x 40 px (fsz_zone)" [pcall {set ::wviewer::fsz_zone}] {64 40}
+  check "SWZ10 ...clipped to the cell (a 30 px tall cell has a 30 px zone)" \
+    [list [pcall {wviewer::fsz_zone_hit {0 0 400 30} 390 30 64 40}] [pcall {wviewer::fsz_zone_hit {0 0 400 30} 390 31 64 40}]] {1 0}
+  check "SWZ10 fsz_zone_at / fsz_cell_at name the sub-window" \
+    [list [pcall {wviewer::fsz_zone_at {1 {0 0 400 200} 2 {400 0 800 200}} 790 10 64 40}] \
+          [pcall {wviewer::fsz_zone_at {1 {0 0 400 200} 2 {400 0 800 200}} 300 10 64 40}] \
+          [pcall {wviewer::fsz_cell_at {1 {0 0 400 200} 2 {400 0 800 200}} 300 150}] \
+          [pcall {wviewer::fsz_cell_at {1 {0 0 400 200} 2 {400 0 800 200}} 900 150}]] {2 {} 1 {}}
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 0 single
+  # stacked cells so a flick can cross from one into the one above
+  set ::wviewer::fszcells(__swd) {1 {0 0 400 200} 2 {0 200 400 400}}
+  set r1 [pcall {wviewer::fsz_motion __swd 100 260 0 5000}]
+  set r2 [pcall {wviewer::fsz_motion __swd 210 150 0 5100}]
+  check "SWZ11 a flick that starts in sub-window 2 and ends in 1 reveals 2 (its START), and the buffer is cleared" \
+    [list $r1 $r2 [swf_buf]] {{} 2 {}}
+  pcall {wviewer::fsz_motion __swd -50 260 0 6000}
+  check "SWZ11 ...a start outside every cell falls back to the END cell" \
+    [pcall {wviewer::fsz_motion __swd 60 150 0 6100}] 1
+  pcall {wviewer::fsz_motion __swd 100 260 0 7000}
+  set nb [llength [swf_buf]]
+  pcall {wviewer::fsz_clear __swd}
+  check "SWZ12 a canvas Leave / button press / release clears the buffer, so a jump across it is no flick" \
+    [list $nb [llength [swf_buf]] [pcall {wviewer::fsz_motion __swd 210 150 0 7100}]] {1 0 {}}
+  pcall {wviewer::fsz_motion __swd 100 260 0 8000}
+  check "SWZ12 a motion with Button1 held clears the buffer and reveals nothing (a B1 drag up-right is no flick)" \
+    [list [pcall {wviewer::fsz_motion __swd 210 150 256 8100}] [llength [swf_buf]] \
+          [pcall {wviewer::fsz_motion __swd 215 145 0 8150}]] {{} 0 {}}
+  check "SWZ12 a %t that is not a positive integer falls back to the clock (no throw, sample taken)" \
+    [list [pcall {wviewer::fsz_motion __swd 5 5 0 {}}] [llength [swf_buf]]] {{} 1}
+  check "SWZ12 signatures (info args / info default)" \
+    [list [swsig wviewer::flick_test] [swsig wviewer::flick_push] [swdef wviewer::flick_push cap] \
+          [swsig wviewer::fsz_motion] [swsig wviewer::fsz_cells_px] [swsig wviewer::fsz_zone_hit]] \
+    {{samples x y t px deg tol ms} {buf x y t ms cap} {1 32} {token x y s t} {gs bands} {cell x y zw zh}}
+
+  # ---- SWF1-SWF2: the rc default, its admission test, the token -------------
+  swf_reset
+  catch {unset ::wviewer::text_size_warned}
+  check "SWF1 the range and the admission test: refuses (never clamps), canonicalises" \
+    [list [pcall {wviewer::text_limits}] \
+          [lmap v {6 20 5 21 14.0 abc { 8 } +8 0x10 {}} {pcall {wviewer::_accept_text_size $v}}]] \
+    {{6 20} {6 20 {} {} {} {} 8 8 16 {}}}
+  set s1 {}
+  foreach v {14 16 6 20} { set ::wviewer_text_size $v ; lappend s1 [pcall {wviewer::default_text_size}] }
+  check "SWF1 default_text_size reads wviewer_text_size lazily" $s1 {14 16 6 20}
+  set ::wviewer_text_size 30
+  set w1 [list [pcall {wviewer::default_text_size}] [llength $::swf_said]]
+  set ::wviewer_text_size junk
+  lappend w1 [pcall {wviewer::default_text_size}] [llength $::swf_said]
+  check "SWF1 a bad value reads 14 with ONE CIW warning per process, naming the variable" \
+    [list $w1 [string match {*wviewer_text_size*} [lindex $::swf_said 0]]] {{14 1 14 1} 1}
+  unset ::wviewer_text_size
+  check "SWF1 ...unset reads 14" [pcall {wviewer::default_text_size}] 14
+  set ::wviewer_text_size 14
+  check "SWF2 font_props: textpx in device pixels, pt * scaling, exact text" \
+    [list [pcall {wviewer::font_props 14 [expr {96.0/72}]}] [pcall {wviewer::font_props 20 1.0}] \
+          [pcall {wviewer::font_props 6 2}]] [list "textpx=18.67\n" "textpx=20\n" "textpx=12\n"]
+  set sc_want [expr {96.0/72}]
+  if {[info commands ::tk] ne {} && ![catch {tk scaling} tks]} { set sc_want $tks }
+  check "SWF2 tk_points_scale: tk scaling when Tk is there, else 96/72" [pcall {wviewer::tk_points_scale}] $sc_want
+
+  # ---- SWF3: the per-strip sizes ---------------------------------------------
+  check "SWF3 strip_fonts: each strip its sub-window's size (the first strip carrying swfont decides), else the base" \
+    [list [pcall {wviewer::strip_fonts [list [G a 1] [dict replace [G b 1] swfont 16] [G c 2]] 14}] \
+          [pcall {wviewer::strip_fonts [list [G a] [G b]] 12}] \
+          [pcall {wviewer::strip_fonts [list [dict replace [G a 1] swfont 99] [G c 2]] 14}]] \
+    {{16 16 14} {12 12} {14 14}}
+  swd_open [list [G a] [G b]] 0 single
+  check "SWF3 a one-sub-window tab: no swfont key, every strip at the base (the rc default)" \
+    [list [swm_keys swfont] [pcall {wviewer::font_base __swd}] [swf_fonts]] {{- -} 14 {14 14}}
+
+  # ---- SWF4: a step changes ONLY its own sub-window ---------------------------
+  swf_reset
+  swd_open [list [G a 1] [G b 2] [G c 3]] 0 single
+  set r [pcall {wviewer::text_step __swd 2 1}]
+  check "SWF4 aA in sub-window 2 changes sub-window 2 ONLY; the base and the others stay" \
+    [list $r [swf_fonts] [swm_keys swfont] [pcall {wviewer::font_base __swd}] [wviewer::target_index __swd]] \
+    {1 {14 15 14} {- 15 -} 14 0}
+  pcall {wviewer::text_step __swd 2 -1}
+  check "SWF4 ...Ctrl (-1) back to the base removes the key (no key where it says nothing)" \
+    [list [swf_fonts] [swm_keys swfont]] {{14 14 14} {- - -}}
+  swd_open [list [G a] [G b]] 0 single
+  pcall {wviewer::text_step __swd 1 1}
+  check "SWF4 one sub-window: the click writes the tab's base (that sub-window IS the base), no swfont key" \
+    [list [pcall {wviewer::font_base __swd}] [swm_keys swfont] [swf_fonts]] {15 {- -} {15 15}}
+  check "SWF4 a sub-window id the tab does not have does nothing" \
+    [list [pcall {wviewer::text_step __swd 7 1}] [pcall {wviewer::text_step __swd 1 2}] [swf_fonts]] {0 0 {15 15}}
+
+  # ---- SWF5-SWF6: inheritance by a new sub-window --------------------------
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::new_subwin __swd}
+  check "SWF5 before any change a new sub-window starts at the rc default: no key AND its size is 14" \
+    [list [tags [swd_lay]] [swm_keys swfont] [lindex [swf_fonts] end] \
+          [pcall {wviewer::font_props [lindex [swf_fonts] end] [expr {96.0/72}]}]] \
+    [list {1 2 3} {- - -} 14 "textpx=18.67\n"]
+  pcall {wviewer::text_step __swd 1 1}
+  pcall {wviewer::text_step __swd 1 1}
+  pcall {wviewer::new_subwin __swd}
+  check "SWF5 after a change (16 in sub-window 1) a new sub-window starts at 16, the others unmoved" \
+    [list [tags [swd_lay]] [swf_fonts] [pcall {wviewer::text_inherit __swd}]] {{1 2 3 4} {16 14 14 16} 16}
+  swd_open [list [G a]] 0 single
+  pcall {wviewer::new_subwin __swd}
+  check "SWF5 the first split after a change elsewhere in the window: the original keeps the base, the new one starts at the last user size" \
+    [list [tags [swd_lay]] [swf_fonts] [swm_keys swfont]] {{1 2} {14 16} {- 16}}
+  catch {unset ::wviewer::textlast(__swd)}
+  set ::wviewer_text_size 12
+  check "SWF6 text_inherit: the window's last user size, else the rc default (read live)" \
+    [pcall {wviewer::text_inherit __swd}] 12
+  set ::wviewer_text_size 14
+  # SWF6b: "in that window". A size changed in viewer A must not reach a fresh
+  # viewer B. textlast is emptied first so A's entry is the ONLY one: a reader
+  # taking ANY window's last size then answers A's, deterministically.
+  set swf6b_saved [array get ::wviewer::textlast]
+  array unset ::wviewer::textlast
+  swd_open [list [G a]] 0 single
+  pcall {wviewer::text_step __swd 1 1}
+  pcall {wviewer::text_step __swd 1 1}
+  dict set ::wviewer::layouts __swe [dict create sharedx 0 graphs [list [G a]]]
+  dict set ::wviewer::windows __swe top .__swe
+  set ::wviewer::mode(__swe) single
+  set ::wviewer::target(__swe) 0
+  set ::wviewer::undo_hist(__swe) {}
+  pcall {wviewer::new_subwin __swe}
+  set swe_gs [dict get [wviewer::layout_for __swe] graphs]
+  check "SWF6b a size changed in window A (16) never reaches a fresh window B: B's new sub-window and inherit are the rc default" \
+    [list [pcall {wviewer::text_inherit __swd}] [pcall {wviewer::text_inherit __swe}] \
+          [pcall {wviewer::strip_fonts $swe_gs [wviewer::font_base __swe]}] \
+          [lmap g $swe_gs {wviewer::dget $g swfont -}]] {16 14 {14 14} {- -}}
+  catch {dict unset ::wviewer::layouts __swe}
+  catch {dict unset ::wviewer::windows __swe}
+  foreach v {mode target undo_hist redo_hist textlast} { catch {unset ::wviewer::${v}(__swe)} }
+  array unset ::wviewer::textlast
+  array set ::wviewer::textlast $swf6b_saved
+
+  # ---- SWF7: close-to-one and Clear All keep the survivor's size ------------
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::text_step __swd 2 1}
+  pcall {wviewer::text_step __swd 2 1}
+  pcall {wviewer::close_subwin __swd 0}
+  check "SWF7 closing down to one sub-window folds the survivor's size into the tab's base (no key left)" \
+    [list [tags [swd_lay]] [swm_keys swfont] [pcall {wviewer::font_base __swd}] [swf_fonts]] {- - 16 16}
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::text_step __swd 2 -1}
+  pcall {wviewer::clear_all __swd}
+  check "SWF7 Clear All keeps the TARGET's size (13) as the tab's own" \
+    [list [llength [swd_lay]] [pcall {wviewer::font_base __swd}] [pcall {wviewer::font_shown __swd}]] {1 13 13}
+
+  # ---- SWF8: undo of a close brings the closed sub-window's size back -------
+  foreach p {capture_live_graph_state wave_hilight_clear_set} {
+    rename ::wviewer::$p ::swf8_orig_$p
+    proc ::wviewer::$p {args} { return 0 }
+  }
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 1 single
+  pcall {wviewer::text_step __swd 2 1}
+  pcall {wviewer::text_step __swd 2 1}
+  pcall {wviewer::close_subwin __swd 0}
+  set pre [list [pcall {wviewer::font_base __swd}] [swf_fonts]]
+  pcall {wviewer::undo __swd}
+  check "SWF8 undo of closing the 14 pt sub-window brings it back at 14 beside the 16 pt survivor" \
+    [list $pre [tags [swd_lay]] [swf_fonts] [swm_keys swfont]] {{16 16} {1 2} {14 16} {14 -}}
+  pcall {wviewer::text_step __swd 1 1}
+  check "SWF8 a size change is no undo step" [pcall {wviewer::history_depth __swd}] {0 1}
+  foreach p {capture_live_graph_state wave_hilight_clear_set} {
+    rename ::wviewer::$p {}
+    rename ::swf8_orig_$p ::wviewer::$p
+  }
+
+  # ---- SWF9: the saved keys ---------------------------------------------------
+  foreach p {window_for selected_rawfile} { rename ::wviewer::$p ::swf9_orig_$p }
+  proc ::wviewer::window_for {token} {
+    if {$token eq {__swd}} { return .__swd }
+    return [::swf9_orig_window_for $token]
+  }
+  proc ::wviewer::selected_rawfile {token} {
+    if {$token eq {__swd}} { return {} }
+    return [::swf9_orig_selected_rawfile $token]
+  }
+  swf_reset
+  swd_open [list [G a]] 0 single
+  set s0 [pcall {wviewer::snapshot __swd {}}]
+  pcall {wviewer::text_step __swd 1 1}
+  set s1 [pcall {wviewer::snapshot __swd {}}]
+  pcall {wviewer::text_step __swd 1 -1}
+  set s2 [pcall {wviewer::snapshot __swd {}}]
+  check "SWF9 the default writes no key; a non-default base writes font, a user change writes fontlast" \
+    [list [dict exists $s0 font] [dict exists $s0 fontlast] [wviewer::dget $s1 font -] [wviewer::dget $s1 fontlast -] \
+          [dict exists $s2 font] [wviewer::dget $s2 fontlast -]] {0 0 15 15 0 14}
+  foreach p {window_for selected_rawfile} {
+    rename ::wviewer::$p {}
+    rename ::swf9_orig_$p ::wviewer::$p
+  }
+  check "SWF9 the restore reader: a saved size comes back, an absent or out-of-range one is no key" \
+    [lmap v [list [dict create font 16] [dict create font 21] [dict create] [dict create font x] \
+                  [dict create fontlast 7]] {pcall {wviewer::state_font $v}}] {16 {} {} {} {}}
+  check "SWF9 ...and the fontlast key through the same reader" \
+    [pcall {wviewer::state_font [dict create fontlast 7] fontlast}] 7
+
+  # ---- SWF10: refusals, the logged line, replay -------------------------------
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 0 single
+  pcall {wviewer::set_text_size 20 __swd 1}
+  set ::swd_log {} ; set ::swf_said {}
+  set rr [pcall {wviewer::text_step __swd 2 1}]
+  pcall {wviewer::set_text_size 6 __swd 0}
+  set ::swd_log {}
+  lappend rr [pcall {wviewer::text_step __swd 1 -1}]
+  check "SWF10 the range ends refuse with the Calculator's sentences and log nothing" \
+    [list $rr $::swf_said $::swd_log [swf_fonts]] \
+    [list {0 0} {{Font size: already the largest (20).} {Font size: already the smallest (6).}} {} {6 20}]
+  set ::cli_opt_script {}
+  set ::swf_said {}
+  pcall {wviewer::text_step __swd 1 1}
+  check "SWF10 a success echoes the Calculator's sentence with the rc hint, and logs ONE resolved line" \
+    [list $::swf_said $::swd_log] \
+    [list {{Font size: 7 (xschemrc: set wviewer_text_size 7).}} [list {wviewer::set_text_size 7 __swd 0}]]
+  set line [lindex $::swd_log 0]
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 0 single
+  pcall {wviewer::set_text_size 20 __swd 1}
+  catch {uplevel #0 $line}
+  check "SWF10 replaying the logged line rebuilds the size" [swf_fonts] {7 20}
+  set ::swd_log {}
+  check "SWF10 set_text_size: a no-op is no log line; a bad size or strip is refused" \
+    [list [pcall {wviewer::set_text_size 7 __swd 0}] $::swd_log [pcall {wviewer::set_text_size 21 __swd 0}] \
+          [pcall {wviewer::set_text_size 8 __swd 9}] [pcall {wviewer::set_text_size 8 nosuchtoken}] [swf_fonts]] \
+    {7 {} {} {} {} {7 20}}
+
+  # ---- SWF11: the CIW wording; the door itself is silent -----------------------
+  set ::cli_opt_script /x/sky130A/cadence_style_rc
+  set m11 [list [pcall {wviewer::text_size_msg 15}]]
+  set ::cli_opt_script {}
+  lappend m11 [pcall {wviewer::text_size_msg 15}]
+  check "SWF11 the CIW line names the rc the launch read (the --script rc's name, else xschemrc)" \
+    $m11 {{Font size: 15 (cadence_style_rc: set wviewer_text_size 15).} {Font size: 15 (xschemrc: set wviewer_text_size 15).}}
+  set ::swf_said {}
+  pcall {wviewer::set_text_size 9 __swd 0}
+  check "SWF11 set_text_size alone (replay, script, restore) prints nothing" $::swf_said {}
+
+  # ---- SWF12: the tip is the Calculator's sentence, derived -----------------
+  set calc_tip {}
+  if {[info commands ::calc::_font_tip] ne {}} {
+    set calc_tip [calc::_font_tip]
+  } else {
+    set cf [open [file join $repo src calculator.tcl]] ; set ct [read $cf] ; close $cf
+    if {[regexp {proc calc::_font_tip \{\} \{\s*return \{([^\}]*)\}} $ct -> calc_tip]} {
+    } else { puts "skip: SWF12 calc::_font_tip not loaded and not found in src/calculator.tcl" }
+  }
+  check "SWF12 the aA tip is calc::_font_tip's sentence verbatim" [pcall {wviewer::_font_tip}] $calc_tip
+
+  # ---- SWF13: the key-carrying helpers derive from sw_setting_keys ----------
+  check "SWF13 sw_setting_keys" [pcall {set ::wviewer::sw_setting_keys}] {swmode swgrid swfont}
+  set g13 [pcall {wviewer::sw_props_spread [list [dict replace [G a 1] swfont 16] [G b 1] [G c 2]]}]
+  check "SWF13 spread carries swfont onto every strip of its sub-window" \
+    [lmap g $g13 {wviewer::dget $g swfont -}] {16 16 -}
+  set t13 [list [dict replace [G a 1] swfont 16] [dict replace [G c 2] swfont 14]]
+  check "SWF13 trim drops a swfont equal to the base (numerically), and skips swfont when no base is given" \
+    [list [lmap g [pcall {wviewer::sw_props_trim $t13 single 1 14.0}] {wviewer::dget $g swfont -}] \
+          [lmap g [pcall {wviewer::sw_props_trim $t13 single 1}] {wviewer::dget $g swfont -}]] {{16 -} {16 14}}
+  check "SWF13 stamp writes every sub-window's size explicitly (the base where none)" \
+    [lmap g [pcall {wviewer::sw_props_stamp [list [G a 1] [dict replace [G c 2] swfont 16]] single 1 14}] \
+       {wviewer::dget $g swfont -}] {14 16}
+  check "SWF13 carry takes the LIVE size of a sub-window present on both sides" \
+    [lmap g [pcall {wviewer::sw_props_carry [list [dict replace [G a 1] swfont 18] [G c 2]] \
+                     [list [dict replace [G a 1] swfont 15] [dict replace [G c 2] swfont 16]]}] \
+       {wviewer::dget $g swfont -}] {18 -}
+  swd_open [list [G a 1] [G b 2]] 0 single
+  pcall {wviewer::set_graphs __swd [list [dict replace [G a 1] swfont 14] [dict replace [G b 2] swfont 17]]}
+  check "SWF13 set_graphs trims a swfont equal to the tab's base" [swm_keys swfont] {- 17}
+  check "SWF13 signatures (info args / info default)" \
+    [list [swsig wviewer::sw_props_trim] [swdef wviewer::sw_props_trim bfont] \
+          [swsig wviewer::sw_props_stamp] [swdef wviewer::sw_props_stamp bfont] \
+          [swsig wviewer::sw_props_carry] [swsig wviewer::set_text_size] \
+          [swdef wviewer::set_text_size token] [swdef wviewer::set_text_size gi] \
+          [swsig wviewer::text_step] [swsig wviewer::font_props] [swsig wviewer::state_font] \
+          [swdef wviewer::state_font key] [swsig wviewer::strip_fonts]] \
+    [list {gs bmode bgrid bfont} {1 {}} {gs bmode bgrid bfont} {1 {}} {live snap} {pt token gi} {1 {}} {1 {}} \
+          {token k dir} {pt sc} {vdict key} {1 font} {gs base}]
+
+  # ---- SWF14: the step keeps the view state and takes no undo point ----------
+  swf_reset
+  swd_open [list [G a 1] [G b 2]] 0 single
+  set d0 [pcall {wviewer::history_depth __swd}]
+  pcall {wviewer::text_step __swd 2 1}
+  check "SWF14 a step folds the live view state (selection) BEFORE the write, regenerates once, pushes no undo" \
+    [list $::swf_trace [expr {$d0 eq [pcall {wviewer::history_depth __swd}]}] [llength $::wviewer::undo_hist(__swd)]] \
+    {{capture regenerate} 1 0}
+} swferr]} { check "SWF* band ran to its end" "ERR:$swferr" ok }
+swd_close
+swf_reset
+if {$swf_rc_saved eq {}} { catch {unset ::wviewer_text_size} } else { set ::wviewer_text_size [lindex $swf_rc_saved 0] }
+set ::cli_opt_script $swf_cli_saved
+foreach p $::swf_stubbed { rename ::wviewer::$p {}; rename ::swf_orig_$p ::wviewer::$p }
 
 # ---- SWE*: `e` (Delete Empty Strips) with subwindows and multi-plot run strips
 # User report 2026-10-16: "e key to delete empty strips is not working anymore
@@ -2541,6 +2990,536 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   rename wviewer::browser_descend_at {}
   rename wviewer::__sg16_real_descend wviewer::browser_descend_at
 
+  # ==========================================================================
+  # SWA* -- THE aA BUTTON in the real window (spec SW28-SW31, item 22). Real
+  # <Motion> events through the canvas' own bindtags, with `update` BEFORE each
+  # `-when now` motion and never between a motion and what reads it (issue
+  # 1659), and an explicit `-time` on every one (with none, Tk stamps every
+  # event alike and any sequence would pass). Clicks are Enter -> press ->
+  # release with coordinates (S29k's lesson). Waits are `vwait` on an `after`.
+  # ==========================================================================
+  set ::swa_t 900000000
+  proc swa_mot {x y {s 0} {dt 50}} {
+    set ::swa_t [expr {$::swa_t + $dt}]
+    set ::swa_last [list $x $y]
+    update
+    event generate $::vdrw <Motion> -x $x -y $y -state $s -time $::swa_t -when now
+  }
+  # a fresh gesture: time moves well past the window, the buffer is emptied
+  proc swa_gap {} { set ::swa_t [expr {$::swa_t + 5000}] ; pcall {wviewer::fsz_clear $::tok} }
+  proc fszb {k} { return $::vdrw.fsz$k }
+  proc placed {k} {
+    set b [fszb $k]
+    if {![winfo exists $b]} { return NOBUTTON }
+    return [expr {[llength [place info $b]] > 0}]
+  }
+  proc placed_all {} {
+    set out {}
+    foreach w [lsort [winfo children $::vdrw]] {
+      if {[regexp {\.fsz([0-9]+)$} $w -> k]} { lappend out $k [placed $k] }
+    }
+    return $out
+  }
+  # every helper answers a sentinel rather than raising, so a missing proc
+  # reddens its own rows instead of aborting the band
+  proc swa_cells {} {
+    return [pcall {wviewer::fsz_cells_px [lay] [wviewer::strip_bands_px $::vdrw]}]
+  }
+  proc swa_cell {k} {
+    set c [swa_cells]
+    if {[catch {dict get $c $k} r] || [llength $r] != 4} { return {0 0 0 0} }
+    return $r
+  }
+  # the corner a shown button must sit at, derived from the canvas' own bands
+  proc swa_inset {} { return [expr {(int($::graph_active_strip_width) + 1) / 2 + 2}] }
+  proc swa_corner {k} {
+    set c [swa_cell $k]
+    return [list [expr {int(round([lindex $c 2])) - [swa_inset]}] [expr {int(round([lindex $c 1])) + [swa_inset]}]]
+  }
+  # where the button really is: its top-right, in canvas pixels, from winfo
+  proc swa_at {k} {
+    update
+    set b [fszb $k]
+    if {![winfo exists $b]} { return NOBUTTON }
+    return [list [expr {[winfo rootx $b] + [winfo width $b] - [winfo rootx $::vdrw]}] \
+                 [expr {[winfo rooty $b] - [winfo rooty $::vdrw]}]]
+  }
+  proc swa_zone_px {k} {
+    set c [swa_cell $k]
+    return [list [expr {int([lindex $c 2]) - 10}] [expr {int([lindex $c 1]) + 10}]]
+  }
+  proc swa_mid {k} {
+    set c [swa_cell $k]
+    return [list [expr {int(([lindex $c 0] + [lindex $c 2]) / 2)}] [expr {int(([lindex $c 1] + [lindex $c 3]) / 2)}]]
+  }
+  # a flick of n steps of (+d,-d) every 50 ms from {x y}
+  proc swa_flick {xy {n 6} {d 20} {s 0}} {
+    lassign $xy x y
+    swa_mot $x $y $s
+    for {set i 1} {$i <= $n} {incr i} { swa_mot [expr {$x + $i * $d}] [expr {$y - $i * $d}] $s }
+  }
+  proc swa_wait {ms} {
+    set ::swa_done 0
+    after $ms {set ::swa_done 1}
+    vwait ::swa_done
+  }
+  proc swa_click {k {ctrl 0}} {
+    set b [fszb $k]
+    if {$ctrl} {
+      pcall {event generate $b <Enter> -x 5 -y 5}
+      pcall {event generate $b <Control-Button-1> -x 5 -y 5}
+      pcall {event generate $b <ButtonRelease-1> -x 5 -y 5 -state 4}
+    } else {
+      pcall {event generate $b <Enter> -x 5 -y 5}
+      pcall {event generate $b <Button-1> -x 5 -y 5}
+      pcall {event generate $b <ButtonRelease-1> -x 5 -y 5}
+    }
+    update
+  }
+  proc swa_fonts {} { pcall {wviewer::strip_fonts [lay] [wviewer::font_base $::tok]} }
+  proc swa_px {pt} { string trim [string map {textpx= {}} [pcall {wviewer::font_props $pt [tk scaling]}]] }
+  proc swa_cget {k opt} { pcall [list [fszb $k] cget $opt] }
+
+  set ::wviewer_text_size 14
+  catch {unset ::wviewer::textlast($tok)}
+  set swa_reveal_saved [expr {[info exists ::wviewer_aa_reveal_ms] ? $::wviewer_aa_reveal_ms : 3000}]
+  if {[catch {
+  xschem new_schematic switch $vdrw
+  pcall {xschem raw new wvsub.raw dc vsweep 0 1.0 0.1}
+  foreach v {a1 a2 a3 b1 b2 c1 c2 p1 p2} { pcall {xschem raw add $v "vsweep 1 +"} }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::plot_signals $tok {a1}}
+  pcall {wviewer::add_graph $tok}
+  update
+
+  # ---- SWF3 (display): the rect tokens ----------------------------------------
+  check "SWF3 one sub-window: every viewer strip carries textpx = 14 pt at tk scaling, no swfont key" \
+    [list [lmap i {0 1} {rprop $i textpx}] [lmap g [lay] {wviewer::dget $g swfont -}]] \
+    [list [list [swa_px 14] [swa_px 14]] {- -}]
+
+  # ---- SWA1: hidden by default ---------------------------------------------------
+  check "SWA1 one sub-window: one aA button, built and hidden; the canvas is untouched" \
+    [list [placed_all] [winfo exists $vdrw] [winfo ismapped $vdrw]] {{1 0} 1 1}
+  check "SWA1 the button mirrors the Calculator's: aA, no focus, padx 3, pady 0, the palette's colours" \
+    [lmap o {-text -takefocus -padx -pady -background -activebackground -foreground} {swa_cget 1 $o}] \
+    [list aA 0 3 0 [ase::palette panel] [ase::palette header] [ase::palette fieldfg]]
+  check "SWA1 ...its bindtags leave out the toplevel (no raise_dialog / retitle on map)" \
+    [pcall {bindtags [fszb 1]}] [list [fszb 1] WvFsz Button all]
+  check "SWF12 the gesture binding: Ctrl+click steps -1 and breaks; the plain click is -command +1" \
+    [list [string match {*text_step*-1*break*} [pcall {bind [fszb 1] <Control-Button-1>}]] [swa_cget 1 -command]] \
+    [list 1 [list wviewer::text_step $tok 1 1]]
+  pcall {wviewer::new_subwin $tok}
+  update
+  check "SWA1 a new sub-window gets its own button, hidden" [placed_all] {1 0 2 0}
+
+  # ---- SWA2: hover -----------------------------------------------------------------
+  swa_gap
+  lassign [swa_zone_px 2] zx zy
+  swa_mot $zx $zy
+  set mx [xschem get mousex] ; set my [xschem get mousey]
+  set wantx [expr {$zx * [xschem get zoom] - [xschem get xorigin]}]
+  set wanty [expr {$zy * [xschem get zoom] - [xschem get yorigin]}]
+  check "SWA2 the zone pixel round-trips through the canvas (xschem get mousex/mousey)" \
+    [list [expr {abs($mx - $wantx) < 1e-6 * max(1.0, abs($wantx))}] [expr {abs($my - $wanty) < 1e-6 * max(1.0, abs($wanty))}]] {1 1}
+  check "SWA2 the pointer in sub-window 2's corner zone shows button 2 ONLY" [placed_all] {1 0 2 1}
+  check "SWA2 ...at the sub-window's top-right corner, inset clear of the frame (derived, and where winfo puts it)" \
+    [list [swa_at 2] [swa_corner 2]] [list [swa_corner 2] [swa_corner 2]]
+  lassign [swa_mid 1] cx cy
+  swa_mot $cx $cy
+  update
+  check "SWA2 leaving the zone hides it" [placed_all] {1 0 2 0}
+  # SWA2b: the SHIPPED zone's edges on the real canvas. The legs above move far
+  # outside any zone, and SWZ10 passes 64/40 as literals, so a zone of any size
+  # passed them. Just inside and just outside each edge of 64 x 40, from the
+  # cell's own corner.
+  set c2 [swa_cell 2]
+  set zx2 [expr {int(floor([lindex $c2 2]))}]
+  set zy1 [expr {int(ceil([lindex $c2 1]))}]
+  set e {}
+  foreach {x y} [list [expr {$zx2 - 10}] [expr {$zy1 + 10}] [expr {$zx2 - 66}] [expr {$zy1 + 10}] \
+                      [expr {$zx2 - 62}] [expr {$zy1 + 38}] [expr {$zx2 - 10}] [expr {$zy1 + 42}]] {
+    swa_gap
+    swa_mot $x $y
+    lappend e [placed 2]
+  }
+  check "SWA2b the shipped zone on the real canvas: in 10 px from the corner, out 66 px left, in at 62/38, out 42 px down" \
+    $e {1 0 1 0}
+  swa_gap
+  swa_mot $cx $cy
+
+  # ---- SWA3: a flick reveals for reveal_ms, then hides -------------------------
+  set ::wviewer_aa_reveal_ms 300
+  swa_gap
+  lassign [swa_mid 1] cx cy
+  swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]]
+  check "SWA3 a flick up-right (120 px, 45 deg, 300 ms) in sub-window 1 reveals button 1 only, timer armed" \
+    [list [placed_all] [info exists ::wviewer::fszafter($tok,1)]] {{1 1 2 0} 1}
+  check "SWA3 ...at its corner" [swa_at 1] [swa_corner 1]
+  swa_wait 450
+  check "SWA3 ...and after reveal_ms it hides by itself" [list [placed_all] [info exists ::wviewer::fszafter($tok,1)]] {{1 0 2 0} 0}
+  swa_gap
+  swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]] 3 20
+  check "SWA3 control: 85 px is too short, nothing shows" [placed_all] {1 0 2 0}
+
+  # ---- SWA4: a repeat flick re-arms the timer ------------------------------------
+  set ::wviewer_aa_reveal_ms 400
+  swa_gap
+  swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]]
+  swa_wait 250
+  swa_gap
+  swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]]
+  swa_wait 250
+  set mid [placed_all]
+  swa_wait 400
+  check "SWA4 a second flick re-arms: still shown 250 ms after it (500 ms after the first), gone after" \
+    [list $mid [placed_all]] {{1 1 2 0} {1 0 2 0}}
+
+  # ---- SWA5 / SWA12: a held LMB is no flick ---------------------------------------
+  if {[info commands wviewer::fsz_motion] eq {}} { proc wviewer::fsz_motion {args} {} }
+  rename wviewer::fsz_motion wviewer::__swa_fsz_motion
+  proc wviewer::fsz_motion {token x y s t} {
+    lappend ::swa_states $s
+    return [wviewer::__swa_fsz_motion $token $x $y $s $t]
+  }
+  set ::swa_states {}
+  swa_gap
+  swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]] 6 20 256
+  check "SWA5 Button1 held: the up-right drag motion REACHES the gesture (state 256 seen) and reveals nothing" \
+    [list [expr {[lsearch -exact $::swa_states 256] >= 0}] [placed_all]] {1 {1 0 2 0}}
+  # SWA12: the real press / drag / release, then motion inside the window
+  set ::swa_states {}
+  swa_gap
+  set sx [expr {$cx - 60}] ; set sy [expr {$cy + 60}]
+  swa_mot $sx $sy
+  set ::swa_t [expr {$::swa_t + 20}]
+  event generate $vdrw <ButtonPress-1> -x $sx -y $sy -button 1 -time $::swa_t -when now
+  for {set i 1} {$i <= 5} {incr i} { swa_mot [expr {$sx + $i * 20}] [expr {$sy - $i * 20}] 256 }
+  set ::swa_t [expr {$::swa_t + 20}]
+  event generate $vdrw <ButtonRelease-1> -x [expr {$sx + 100}] -y [expr {$sy - 100}] -button 1 -state 256 -time $::swa_t -when now
+  swa_mot [expr {$sx + 110}] [expr {$sy - 110}] 0 20
+  check "SWA12 a B1 drag up-right, released, then a motion within 400 ms does not reveal (the drag reached the tag)" \
+    [list [expr {[lsearch -exact $::swa_states 256] >= 0}] [placed_all]] {1 {1 0 2 0}}
+  rename wviewer::fsz_motion {}
+  rename wviewer::__swa_fsz_motion wviewer::fsz_motion
+  pcall {wviewer::fit $tok}
+  update
+
+  # ---- SWA13: a Leave/Enter jump is no flick -------------------------------------
+  lassign [swa_mid 1] cx cy
+  swa_gap
+  swa_mot [expr {$cx - 60}] [expr {$cy + 60}]
+  set ::swa_t [expr {$::swa_t + 20}]
+  event generate $vdrw <Leave> -x [expr {$cx - 60}] -y [expr {$cy + 60}] -time $::swa_t -when now
+  set ::swa_t [expr {$::swa_t + 20}]
+  event generate $vdrw <Enter> -x [expr {$cx + 60}] -y [expr {$cy - 60}] -time $::swa_t -when now
+  swa_mot [expr {$cx + 60}] [expr {$cy - 60}]
+  update
+  set jump [placed_all]
+  swa_gap
+  swa_mot [expr {$cx - 60}] [expr {$cy + 60}]
+  swa_mot [expr {$cx + 60}] [expr {$cy - 60}]
+  set ctl [placed_all]
+  swa_wait 450
+  check "SWA13 leaving and re-entering 170 px up-right is no flick; the same jump with no Leave between is one (control)" \
+    [list $jump $ctl] {{1 0 2 0} {1 1 2 0}}
+
+  # ---- SWA6 / SWA11 / SWA7 / SWF4 (display): the click ----------------------------
+  pcall {wviewer::set_target_strip 0 $tok}
+  update
+  focus -force $vdrw
+  update
+  set foc0 [focus]
+  set stk0 [wm stackorder .]
+  swa_gap
+  lassign [swa_zone_px 2] zx zy
+  swa_mot $zx $zy
+  set ::sw_echo {}
+  set ::sw_log {}
+  swa_click 2
+  check "SWA6 a REAL click on aA in sub-window 2 raises THAT sub-window by one; the button stays up" \
+    [list [swa_fonts] [placed_all] [lmap i [lsearch -all [ltags] 2] {rprop $i textpx}]] \
+    [list {14 14 15} {1 0 2 1} [list [swa_px 15]]]
+  check "SWA6 ...one resolved log line and the Calculator's sentence with the rc hint" \
+    [list [lsearch -all -inline -glob $::sw_log {wviewer::set_text_size*}] [lindex $::sw_echo end]] \
+    [list [list [list wviewer::set_text_size 15 $tok 2]] [pcall {wviewer::text_size_msg 15}]]
+  swa_click 2
+  check "SWA11 a second click without moving finds the button still there and steps again" \
+    [list [swa_fonts] [placed_all]] {{14 14 16} {1 0 2 1}}
+  swa_click 2 1
+  check "SWA6 Ctrl+click lowers by one, and exactly one arm fires" [swa_fonts] {14 14 15}
+  check "SWF4 (display) only sub-window 2's rects moved: sub-window 1 still at 14 pt" \
+    [lmap i {0 1} {rprop $i textpx}] [list [swa_px 14] [swa_px 14]]
+  check "SWA7 the click took no focus and moved no toplevel" [list [focus] [wm stackorder .]] [list $foc0 $stk0]
+  pcall {event generate [fszb 2] <Leave>}
+  swa_mot [lindex [swa_mid 1] 0] [lindex [swa_mid 1] 1]
+  update
+
+  # ---- SWA14: mapping the button restacks no dialog -----------------------------
+  catch {destroy .graphdialog}
+  toplevel .graphdialog
+  # ⚠ NEVER OVER THE VIEWER. Measured: openbox places the viewer differently
+  # from run to run (+1+250 on one, over +50+50 on others), and when the dialog
+  # overlaps the viewer's canvas, the `lower` below EXPOSES the canvas, whose
+  # Visibility binding runs raise_dialog and puts the dialog straight back on
+  # top -- so the precondition (below0) failed on every run in one session and
+  # passed on every run in another. Stacking order is global, so a dialog that
+  # overlaps nothing still answers `isbelow`; the first corner of the screen
+  # clear of the viewer's frame (with room for decoration) is used.
+  set gx 50 ; set gy 50
+  set vx1 [expr {[winfo rootx $vtop] - 40}] ; set vy1 [expr {[winfo rooty $vtop] - 60}]
+  set vx2 [expr {[winfo rootx $vtop] + [winfo width $vtop] + 40}]
+  set vy2 [expr {[winfo rooty $vtop] + [winfo height $vtop] + 40}]
+  set sw [winfo screenwidth .] ; set sh [winfo screenheight .]
+  foreach {cx cy} [list 10 10 [expr {$sw - 260}] 10 10 [expr {$sh - 160}] [expr {$sw - 260}] [expr {$sh - 160}]] {
+    if {$cx + 240 < $vx1 || $cx > $vx2 || $cy + 140 < $vy1 || $cy > $vy2} { set gx $cx ; set gy $cy ; break }
+  }
+  wm geometry .graphdialog 200x100+$gx+$gy
+  update ; after 300 ; update
+  catch {lower .graphdialog $vtop}
+  update ; after 300 ; update
+  set below0 [pcall {wm stackorder .graphdialog isbelow $vtop}]
+  swa_gap
+  lassign [swa_zone_px 1] zx zy
+  swa_mot $zx $zy
+  update ; after 300 ; update
+  set mapped14 [placed 1]
+  set below1 [pcall {wm stackorder .graphdialog isbelow $vtop}]
+  # the control: a SIBLING mapped over the canvas, which is what the plan asked
+  # for -- it obscures the canvas, whose Visibility binding runs raise_dialog
+  frame $vtop.swactl -width 20 -height 20
+  place $vtop.swactl -in $vdrw -x 0 -y 0
+  update ; after 300 ; update
+  set below2 [pcall {wm stackorder .graphdialog isbelow $vtop}]
+  destroy $vtop.swactl
+  destroy .graphdialog
+  check "SWA14 a .graphdialog behind the viewer stays behind when the button (a CHILD of the canvas) maps; a SIBLING mapped over the canvas raises it (control)" \
+    [list $below0 $mapped14 $below1 $below2 [string match *raise_dialog* [bind $vtop <Visibility>]]] {1 1 1 0 1}
+  lassign [swa_mid 1] cx cy
+  swa_mot $cx $cy
+  update
+
+  # ---- SWA9: the canvas bindings -------------------------------------------------
+  set bt [bindtags $vdrw]
+  set stray {}
+  foreach seq [bind $vdrw] { if {[string match *fsz* [bind $vdrw $seq]]} { lappend stray $seq } }
+  set brk {}
+  foreach seq [bind WvFszCanvas] { if {[string match *break* [bind WvFszCanvas $seq]]} { lappend brk $seq } }
+  check "SWA9 the gesture tag is first, the canvas' own bindings carry none of it, and no tag binding breaks" \
+    [list [lindex $bt 0] [lindex $bt 1] $stray $brk [lsort [bind WvFszCanvas]]] \
+    [list WvFszCanvas $vdrw {} {} [lsort {<Motion> <Button> <ButtonRelease> <Leave> <Enter>}]]
+  # a REAL LMB drag along the X axis margin zooms the same with and without it
+  proc swa_axis_py {gi} {
+    lassign [lindex [wviewer::strip_bands_px $::vdrw] $gi] x1 y1 x2 y2
+    set px [expr {int(($x1 + $x2) / 2)}]
+    # the MIDDLE of the rows answering x: the outermost rows are the graph
+    # rect's 5-pixel inner border, which waves_selected does not route
+    set rows {}
+    for {set py [expr {int($y2) - 1}]} {$py > $y1} {incr py -1} {
+      if {[pcall {xschem get graph_axis_at $gi $px $py}] eq {x}} { lappend rows $py }
+    }
+    if {![llength $rows]} { return {} }
+    return [list $px [lindex $rows [expr {[llength $rows] / 2}]]]
+  }
+  proc swa_axis_drag {} {
+    pcall {wviewer::set_target_strip 0 $::tok}
+    xschem new_schematic switch $::vdrw
+    set g0 [lindex [lay] 0]
+    wviewer::set_graphs $::tok [lreplace [lay] 0 0 [dict replace $g0 x1 0 x2 1]]
+    wviewer::regenerate $::tok
+    update
+    set xy [swa_axis_py 0]
+    if {$xy eq {}} { return NOAXIS }
+    lassign $xy px py
+    lassign [lindex [wviewer::strip_bands_px $::vdrw] 0] bx1 by1 bx2 by2
+    set q [expr {int(($bx2 - $bx1) / 4)}]
+    # test_wave_axis_zoom's ax_ev cadence: a second between events
+    swa_mot $px $py 0 1000
+    set ::swa_t [expr {$::swa_t + 1000}]
+    event generate $::vdrw <ButtonPress-1> -x $px -y $py -button 1 -time $::swa_t
+    update
+    swa_mot [expr {$px + $q}] $py 256 1000
+    update
+    set ::swa_t [expr {$::swa_t + 1000}]
+    event generate $::vdrw <ButtonRelease-1> -x [expr {$px + $q}] -y $py -button 1 -state 256 -time $::swa_t
+    update
+    return [list [rprop 0 x1] [rprop 0 x2]]
+  }
+  set with [swa_axis_drag]
+  bindtags $vdrw [lsearch -all -inline -not -exact $bt WvFszCanvas]
+  set without [swa_axis_drag]
+  bindtags $vdrw $bt
+  check "SWA9 a REAL LMB X-axis-margin drag zooms identically with and without the gesture tag (and does zoom)" \
+    [list [expr {$with eq $without}] [expr {$with ne {0 1}}]] {1 1}
+
+  # ---- SWA8: the position tracks Configure, add/close, fit and a tab switch ---
+  set ::wviewer_aa_reveal_ms 3000
+  proc swa_reveal {k} {
+    swa_gap
+    lassign [swa_mid $k] cx cy
+    swa_flick [list [expr {$cx - 60}] [expr {$cy + 60}]]
+  }
+  swa_reveal 2
+  set geo0 [wm geometry $vtop]
+  lassign [split [lindex [split $geo0 +] 0] x] gw gh
+  wm geometry $vtop [expr {$gw - 120}]x[expr {$gh - 60}]
+  update ; after 200 ; update
+  check "SWA8 a <Configure> resize: the revealed button follows its sub-window's corner" \
+    [list [placed 2] [swa_at 2]] [list 1 [swa_corner 2]]
+  # the ruling's "fixed whatever the window size": the engine's own read-back
+  # of strip 0's text height after the resize equals that strip's textpx
+  xschem new_schematic switch $vdrw
+  set em8 {}
+  catch {set em8 [dict get [xschem get graph_text_metrics 0] em_px]}
+  set px8 [rprop 0 textpx]
+  check "SWA8 ...and after the resize strip 0's text is still its textpx pixels (graph_text_metrics em_px)" \
+    [expr {[string is double -strict $em8] && [string is double -strict $px8] &&
+           abs($em8 - $px8) <= 1e-9 * max(1.0, abs($px8))}] 1
+  wm geometry $vtop $geo0
+  update ; after 200 ; update
+  pcall {wviewer::new_subwin $tok}
+  update
+  check "SWA8 a new sub-window (three): button 2 still revealed, at its new corner; button 3 built hidden" \
+    [list [placed_all] [swa_at 2]] [list {1 0 2 1 3 0} [swa_corner 2]]
+  pcall {wviewer::close_subwin $tok [lindex [lsearch -all [ltags] 3] 0]}
+  update
+  check "SWA8 closing sub-window 3 destroys its button; 2 stays at its corner" \
+    [list [placed_all] [swa_at 2]] [list {1 0 2 1} [swa_corner 2]]
+  pcall {wviewer::fit $tok}
+  update
+  check "SWA8 View > Fit: still at the corner" [swa_at 2] [swa_corner 2]
+  # SWA8b: a canvas zoom moves the strips with NO regenerate, so only the
+  # hover's re-place (fsz_hover) can move a shown button to the new corner.
+  swa_reveal 2
+  set c0 [swa_corner 2]
+  xschem new_schematic switch $vdrw
+  set zrc [catch {xschem zoom_out} ze]
+  update
+  set c1 [swa_corner 2]
+  swa_gap
+  lassign [swa_mid 1] cx cy
+  swa_mot $cx $cy
+  check "SWA8b a canvas zoom (no regenerate) moves the corner, and the next motion re-places the shown button there" \
+    [list $zrc [expr {$c1 ne $c0}] [placed 2] [swa_at 2]] [list 0 1 1 $c1]
+  pcall {wviewer::fit $tok}
+  update
+
+  # ---- SWA10 / SWF6: a 2x2 layout across two tabs ---------------------------------
+  pcall {wviewer::new_subwin $tok}
+  pcall {wviewer::new_subwin $tok}
+  update
+  set hov {}
+  set pos {}
+  foreach k {1 2 3 4} {
+    swa_gap
+    foreach j {1 2 3 4} { pcall {wviewer::fsz_hide $tok $j} ; catch {unset ::wviewer::fszafter($tok,$j)} }
+    lassign [swa_zone_px $k] zx zy
+    swa_mot $zx $zy
+    lappend hov $k [placed_all]
+    lappend pos [expr {[swa_at $k] eq [swa_corner $k]}]
+  }
+  check "SWA10 a 2x2 tab: each corner zone shows its own button only, at its own corner" \
+    [list $hov $pos] [list {1 {1 1 2 0 3 0 4 0} 2 {1 0 2 1 3 0 4 0} 3 {1 0 2 0 3 1 4 0} 4 {1 0 2 0 3 0 4 1}} {1 1 1 1}]
+  set tab1 [wviewer::dget [lindex [wviewer::tab_records $tok] [wviewer::tab_index $tok]] id {}]
+  set fonts1 [swa_fonts]
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::new_subwin $tok}
+  update
+  check "SWF6 a new tab starts at the window's last user size (15, from SWA6), the base key written" \
+    [list [pcall {wviewer::font_base $tok}] [swa_fonts] [rprop 0 textpx]] [list 15 {15 15} [swa_px 15]]
+  check "SWA10 the second tab (two sub-windows): buttons 1 and 2 only, hidden" [placed_all] {1 0 2 0}
+  set hov {}
+  foreach k {1 2} {
+    swa_gap
+    lassign [swa_zone_px $k] zx zy
+    swa_mot $zx $zy
+    lappend hov [placed_all] [expr {[swa_at $k] eq [swa_corner $k]}]
+  }
+  check "SWA10 ...each corner shows its own" $hov {{1 1 2 0} 1 {1 0 2 1} 1}
+  pcall {wviewer::select_tab $tab1 $tok}
+  update
+  # the pointer has not moved since the second tab's corner 2, which is ALSO
+  # the 2x2 tab's corner 2 (both are the canvas' top-right): the hover is
+  # re-asked of the NEW cells, so the expected set is derived, not assumed
+  set hk [pcall {wviewer::fsz_zone_at [swa_cells] {*}$::swa_last {*}$::wviewer::fsz_zone}]
+  check "SWA10 back to the 2x2 tab: four buttons, shown only where the unmoved pointer's zone now is, each sub-window's size kept" \
+    [list $hk [placed_all] [swa_fonts]] \
+    [list 2 [concat {*}[lmap k {1 2 3 4} {list $k [expr {$k == $hk}]}]] $fonts1]
+  lassign [swa_mid 3] cx cy
+  swa_mot $cx $cy
+  check "SWA10 ...and a motion out of it hides it" [placed_all] {1 0 2 0 3 0 4 0}
+
+  # ---- SWF9 (display): save / close / restore keeps the sizes --------------------
+  set snap [pcall {wviewer::snapshot $tok {}}]
+  set pre [list [swa_fonts] [pcall {wviewer::text_inherit $tok}]]
+  pcall {wviewer::close $tok}
+  pcall {wviewer::restore $tok $snap {} {}}
+  update
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  check "SWF9 save / close / restore keeps every sub-window's size and the window's last user size" \
+    [list [swa_fonts] [pcall {wviewer::text_inherit $tok}] [wviewer::dget $snap fontlast -]] [concat $pre 15]
+
+  # ---- SWF6b / SWF9b (display): a SECOND viewer window ------------------------
+  # SWF6b: the ruling's "in that window" -- window A's last user size must not
+  # reach a fresh window B's new sub-window or new tab. SWF9b: a ONE-tab,
+  # one-sub-window window serialises only the flat `font` key (no `tabs`), which
+  # is the path SWF9's multi-tab round trip never takes.
+  set inhA [pcall {wviewer::text_inherit $tok}]
+  set sstateB [file join $scratch sessionB.state]
+  file copy -force $sstate $sstateB
+  set ::tokB [ase::session_key sky130_tests test_nfet_final ngspice_stateB]
+  ase::session_open $::tokB $sstateB
+  set okB [pcall {wviewer::open $::tokB}]
+  set ::vdrwB [wviewer::window_for $::tokB].drw
+  update
+  proc layB {} { wviewer::dget [wviewer::layout_for $::tokB] graphs {} }
+  proc fontsB {} { pcall {wviewer::strip_fonts [layB] [wviewer::font_base $::tokB]} }
+  proc rpropB {gi k} {
+    if {[catch {xschem new_schematic switch $::vdrwB} e]} { return "ERR:$e" }
+    return [pcall {xschem getprop rect 2 $gi $k}]
+  }
+  catch {xschem new_schematic switch $::vdrwB}
+  pcall {xschem raw new wvsubB.raw dc vsweep 0 1.0 0.1}
+  pcall {xschem raw add a1 "vsweep 1 +"}
+  pcall {wviewer::set_plot_mode single $::tokB}
+  pcall {wviewer::plot_signals $::tokB {a1}}
+  pcall {wviewer::new_subwin $::tokB}
+  update
+  set subB [list [fontsB] [rpropB [expr {[llength [layB]] - 1}] textpx]]
+  pcall {wviewer::new_tab $::tokB}
+  update
+  set tabB [list [pcall {wviewer::font_base $::tokB}] [rpropB 0 textpx]]
+  check "SWF6b precondition: window A's last user size is not the rc default; B is fresh" \
+    [list $okB [expr {$inhA ne {14}}] [info exists ::wviewer::textlast($::tokB)]] {1 1 0}
+  check "SWF6b a fresh window B ignores A's last size: B's new sub-window and B's new tab start at the rc default" \
+    [list $subB $tabB] [list [list {14 14} [swa_px 14]] [list 14 [swa_px 14]]]
+  pcall {wviewer::close_tab {} $::tokB}
+  pcall {wviewer::close_subwin $::tokB [lindex [lsearch -all [tags [layB]] 2] 0]}
+  update
+  pcall {wviewer::set_text_size 16 $::tokB}
+  update
+  set snapB [pcall {wviewer::snapshot $::tokB {}}]
+  # sentinel-safe: a snapshot that raised is a red row, never a band abort
+  proc swb_key {d k} {
+    if {[catch {dict exists $d $k} e]} { return "NOTDICT" }
+    if {!$e} { return 0 }
+    return [dict get $d $k]
+  }
+  pcall {wviewer::close $::tokB}
+  pcall {wviewer::restore $::tokB $snapB {} {}}
+  update
+  set ::vdrwB [wviewer::window_for $::tokB].drw
+  check "SWF9b a ONE-tab, one-sub-window window: size 16 survives save / close / restore (the flat font key)" \
+    [list [swb_key $snapB tabs] [swb_key $snapB font] [llength [layB]] \
+          [pcall {wviewer::font_base $::tokB}] [rpropB 0 textpx]] [list 0 16 1 16 [swa_px 16]]
+  catch {wviewer::close $::tokB}
+  catch {unset ::wviewer::textlast($::tokB)}
+  } swaerr]} { check "SWA* band ran to its end" "ERR:$swaerr" ok }
+
+  set ::wviewer_aa_reveal_ms $swa_reveal_saved
+  catch {unset ::wviewer::textlast($tok)}
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -2557,9 +3536,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 185 } else { set expect 339 }
+if {$::arm eq {nogui}} { set expect 250 } else { set expect 448 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
-  puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
+  puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail
 }
 if {$fail == 0} {

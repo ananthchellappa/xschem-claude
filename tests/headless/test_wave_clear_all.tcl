@@ -299,8 +299,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set btags [bindtags $vdrw]
   check_true "CG4 the WaveViewer bindtag is on the viewer canvas" \
     [expr {[lsearch -exact $btags WaveViewer] >= 0}]
+  # the WIDGET's position is derived: item 22's aA gesture tag (WvFszCanvas)
+  # sits at index 0, ahead of the widget, and never breaks, so the claim is
+  # "right after the widget", which index 1 only happened to be before it
   check "CG4 the tag sits right AFTER the widget (filters keep first refusal)" \
-    [lindex $btags 1] WaveViewer
+    [lindex $btags [expr {[lsearch -exact $btags $vdrw] + 1}]] WaveViewer
   check_true "CG4 Ctrl-D is bound on the tag by default" \
     [expr {[bind WaveViewer <Control-Key-d>] ne {}}]
   check_true "CG4 the default calls clear_all_at with the event's canvas" \
