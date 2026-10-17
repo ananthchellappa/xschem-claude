@@ -4934,6 +4934,16 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->grid = 1;
   val = get_tok_value(r->prop_ptr,"grid", 0);
   if(val[0]) gr->grid = atoi(val) ? 1 : 0;
+  /* item 22: FIXED text size in device pixels (prop token `textpx`), written by the
+   * ASE viewer only. Same early-default rule as the tokens above (shared
+   * xctx->graph_struct, off-screen early return). Accepted only in [3, 400]: 3 px
+   * is draw_string's own "too small" cull, and the >=/<= form also rejects nan.
+   * Anything else -- absent, 0, negative, huge, junk -- is 0, the shipped
+   * proportional sizing. */
+  gr->textpx = 0.0;
+  val = get_tok_value(r->prop_ptr,"textpx", 0);
+  if(val[0]) gr->textpx = atof(val);
+  if(!(gr->textpx >= 3.0 && gr->textpx <= 400.0)) gr->textpx = 0.0;
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;
@@ -5074,55 +5084,121 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   val = get_tok_value(r->prop_ptr,"dataset", 0);
   if(val[0]) gr->dataset = atoi(val);
   gr->gh = gr->gy2 - gr->gy1;
-  /* set margins */
-  tmp = gr->rw * 0.14;
-  gr->marginx = tmp;
-  tmp = gr->rh * 0.14;
-  gr->marginy = tmp;
-  /* calculate graph bounding box (container - margin)
-   * This is the box where plot is done */
-  gr->x1 =  gr->rx1 + gr->marginx;
-  gr->x2 =  gr->rx2 - gr->marginx * 0.35; /* less space for right margin */
-  if(gr->digital) gr->y1 = gr->ry1 + gr->marginy * 0.4; /* less top space for digital graphs */
-  else {
-    if(gr->vlegend) gr->y1 =  gr->ry1 + gr->marginy / 3.0;
-    else            gr->y1 =  gr->ry1 + gr->marginy;
+  /* item 22: a `textpx` strip draws ALL its text at one fixed device-pixel size
+   * whatever the strip's height or the canvas zoom (the ViVA reading), and its
+   * margins are derived from that size instead of being 14% of the container.
+   * Honoured only when the strip is neither digital nor vlegend: the viewer emits
+   * neither, so those arms would be untested, and both draw text (bus values,
+   * vlegend measures) whose size still scales with the strip. Every other graph
+   * -- every embedded schematic graph in the tree -- takes the else arm, which is
+   * the shipped block byte for byte.
+   *
+   * All lengths below are SCHEMATIC units. m is the screen mooz (frozen for the
+   * length of an export by save_restore_zoom, so a raster export keeps the
+   * on-screen proportion). H = textpx/m is the em; S is the xscale draw_string /
+   * text_bbox turn into S*52*cairo_font_scale*mooz = textpx screen pixels, i.e.
+   * mooz is divided out exactly here. Without cairo the same S is used and glyphs
+   * come out at about 0.68*textpx, the ratio every non-cairo text already has;
+   * it is deliberately not special-cased.
+   *   bottom b: tick mark b/10 + the 5*S gap + the X numbers (1.2H) + the sweep /
+   *             cursor label row above ry2 (1.2H) + 0.15H air, solved for b
+   *             because draw_graph_grid's mark_size is marginy/10;
+   *   top:      the show_node_measures row at ry1 + 60*S, 0.8x a 1.2H line, then
+   *             the half-height overhang of the topmost (vcentred) Y number
+   *             (0.6H) + 0.15H air;
+   *   left:     tick mark + 5*S + an ANALYTIC width for the widest Y number
+   *             (8 chars, dtoa_eng(...,5), at 0.62H each) + 0.3H. Analytic and
+   *             not text_bbox, whose answer depends on whatever cairo face was
+   *             last set, so a draw and a query would disagree about x1;
+   *   right:    half the last centred X number (2H), never less than the reorder
+   *             grip column plus 4 px.
+   * Floor: when a pair of margins would take more than 80% of the container they
+   * are scaled down together (the text never shrinks), so w and h stay > 0 and
+   * the transforms below never divide by zero. Text may overlap on a very short
+   * strip; that is accepted. */
+  if(gr->textpx > 0.0 && !gr->digital && !gr->vlegend) {
+    double m = xctx->graph_txt_mooz > 0.0 ? xctx->graph_txt_mooz : xctx->mooz;
+    double H = gr->textpx / m;
+    double S = gr->textpx / (52.0 * cairo_font_scale * m);
+    double top, bottom, left, right, k;
+
+    bottom = (5.0 * S + 2.55 * H) / 0.9;
+    top = 60.0 * S + 0.96 * H + 0.6 * H + 0.15 * H;
+    left = bottom / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
+    right = 2.0 * H;
+    if(right < (GRAPH_REORDER_HANDLE_W + 4) / m) right = (GRAPH_REORDER_HANDLE_W + 4) / m;
+    if(top + bottom > 0.8 * gr->rh) {
+      k = 0.8 * gr->rh / (top + bottom);
+      top *= k; bottom *= k;
+      left = bottom / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
+    }
+    if(left + right > 0.8 * gr->rw) {
+      k = 0.8 * gr->rw / (left + right);
+      left *= k; right *= k;
+    }
+    gr->marginx = left;
+    gr->marginy = bottom;
+    gr->x1 = gr->rx1 + left;
+    gr->x2 = gr->rx2 - right;
+    gr->y1 = gr->ry1 + top;
+    gr->y2 = gr->ry2 - bottom;
+    gr->w = gr->x2 - gr->x1;
+    gr->h = gr->y2 - gr->y1;
+    /* one size for everything; xlabmag / ylabmag / legendmag are ignored for size
+     * (graph_marker_textmag still scales the marker callouts downstream) */
+    gr->txtsizelab = gr->txtsizex = gr->txtsizey = gr->txtsizelegend = S;
+    gr->digtxtsizelab = S;
+  } else {
+    /* set margins */
+    tmp = gr->rw * 0.14;
+    gr->marginx = tmp;
+    tmp = gr->rh * 0.14;
+    gr->marginy = tmp;
+    /* calculate graph bounding box (container - margin)
+     * This is the box where plot is done */
+    gr->x1 =  gr->rx1 + gr->marginx;
+    gr->x2 =  gr->rx2 - gr->marginx * 0.35; /* less space for right margin */
+    if(gr->digital) gr->y1 = gr->ry1 + gr->marginy * 0.4; /* less top space for digital graphs */
+    else {
+      if(gr->vlegend) gr->y1 =  gr->ry1 + gr->marginy / 3.0;
+      else            gr->y1 =  gr->ry1 + gr->marginy;
+    }
+    gr->y2 =  gr->ry2 - gr->marginy;
+    gr->w = gr->x2 - gr->x1;
+    gr->h = gr->y2 - gr->y1;
+
+    /* label text size calculations */
+    gr->txtsizelab = gr->marginy * 0.006;
+    /*
+     * tmp =  gr->w * 0.00044;
+     * if(tmp < gr->txtsizelab) gr->txtsizelab = tmp;
+     */
+    tmp = gr->posh;
+    if(tmp < gr->gh * 1.4) tmp = gr->gh * 1.4; /* limit value so wave labels don't grow too much in size */
+    if(xctx->graph_flags & 2)
+      gr->digtxtsizelab = 0.000900 * fabs( gr->h / tmp * gr->gh );
+    else
+      gr->digtxtsizelab = 0.001200 * fabs( gr->h / tmp * gr->gh );
+    gr->txtsizelab *= gr->maglegend;
+
+    /* x axis, y axis text sizes */
+    gr->txtsizey = gr->h / gr->divy * 0.0095;
+    tmp = gr->marginx * 0.004;
+    if(tmp < gr->txtsizey) gr->txtsizey = tmp;
+    /* tmp = gr->marginy * 0.02;
+     * if(tmp < gr->txtsizey) gr->txtsizey = tmp;
+     */
+    gr->txtsizey *= gr->magy;
+
+    gr->txtsizex = gr->w / gr->divx * 0.0070;
+    tmp = gr->marginy * 0.0065;
+    if(tmp < gr->txtsizex) gr->txtsizex = tmp;
+    gr->txtsizex *= gr->magx;
+
+    /* signal names (vertical legend) size. */
+    gr->txtsizelegend = gr->h * 0.00095;
+    gr->txtsizelegend *= gr->maglegend;
   }
-  gr->y2 =  gr->ry2 - gr->marginy;
-  gr->w = gr->x2 - gr->x1;
-  gr->h = gr->y2 - gr->y1;
-
-  /* label text size calculations */
-  gr->txtsizelab = gr->marginy * 0.006;
-  /*
-   * tmp =  gr->w * 0.00044;
-   * if(tmp < gr->txtsizelab) gr->txtsizelab = tmp;
-   */
-  tmp = gr->posh;
-  if(tmp < gr->gh * 1.4) tmp = gr->gh * 1.4; /* limit value so wave labels don't grow too much in size */
-  if(xctx->graph_flags & 2)
-    gr->digtxtsizelab = 0.000900 * fabs( gr->h / tmp * gr->gh );
-  else
-    gr->digtxtsizelab = 0.001200 * fabs( gr->h / tmp * gr->gh );
-  gr->txtsizelab *= gr->maglegend;
-
-  /* x axis, y axis text sizes */
-  gr->txtsizey = gr->h / gr->divy * 0.0095;
-  tmp = gr->marginx * 0.004;
-  if(tmp < gr->txtsizey) gr->txtsizey = tmp;
-  /* tmp = gr->marginy * 0.02;
-   * if(tmp < gr->txtsizey) gr->txtsizey = tmp;
-   */
-  gr->txtsizey *= gr->magy;
-
-  gr->txtsizex = gr->w / gr->divx * 0.0070;
-  tmp = gr->marginy * 0.0065;
-  if(tmp < gr->txtsizex) gr->txtsizex = tmp;
-  gr->txtsizex *= gr->magx;
-
-  /* signal names (vertical legend) size. */
-  gr->txtsizelegend = gr->h * 0.00095;
-  gr->txtsizelegend *= gr->maglegend;
   dbg(1, "setup_graph_data(): txtsizelegend=%g, maglegend=%g\n", gr->txtsizelegend, gr->maglegend);
 
   /* cache coefficients for faster graph --> xschem coord transformations */
@@ -6280,6 +6356,58 @@ int graph_plotbox_at(int i, double px, double py)
   if(ax1 > ax2) { t = ax1; ax1 = ax2; ax2 = t; }
   if(ay1 > ay2) { t = ay1; ay1 = ay2; ay2 = t; }
   return (px >= ax1 && px <= ax2 && py >= ay1 && py <= ay2);
+}
+
+/* item 22: THE TEXT-SIZE AND MARGIN READ-BACK of graph `i`, for
+ * `xschem get graph_text_metrics` (scheduler.c). Writes 17 doubles to out[]:
+ *   0 fixed (1 when the `textpx` branch of setup_graph_data was taken)
+ *   1 textpx as parsed (0 when absent or refused)
+ *   2 em_px = txtsizex*52*cairo_font_scale*mooz, the X-number text height in
+ *     screen pixels (equals textpx on a fixed strip, at any zoom)
+ *   3..6 top/bottom/left/right margin in screen pixels ((y1-ry1)*mooz, ...)
+ *   7 plot_h_px = h*mooz
+ *   8..12 txtsizelab, txtsizex, txtsizey, txtsizelegend, digtxtsizelab (the
+ *     xscale values, schematic units)
+ *   13..16 the plot box x1, y1, x2, y2 in SCHEMATIC units -- zoom-independent
+ *     in the proportional branch, so a golden capture holds on either arm
+ * Returns 0 (out untouched) for a bad index, a non-graph rect or an off-screen
+ * graph (setup_graph_data's RECT_OUTSIDE early return leaves no transform).
+ * A QUERY: a LOCAL, memset Graph_ctx and the graph_flags 128|256 bracket
+ * (landmines 11 and 37), exactly as graph_axis_at. */
+int graph_text_metrics(int i, double *out)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0; /* off-screen */
+  out[0] = (gr->textpx > 0.0 && !gr->digital && !gr->vlegend) ? 1.0 : 0.0;
+  out[1] = gr->textpx;
+  out[2] = gr->txtsizex * 52.0 * cairo_font_scale * xctx->mooz;
+  out[3] = (gr->y1 - gr->ry1) * xctx->mooz;
+  out[4] = (gr->ry2 - gr->y2) * xctx->mooz;
+  out[5] = (gr->x1 - gr->rx1) * xctx->mooz;
+  out[6] = (gr->rx2 - gr->x2) * xctx->mooz;
+  out[7] = gr->h * xctx->mooz;
+  out[8] = gr->txtsizelab;
+  out[9] = gr->txtsizex;
+  out[10] = gr->txtsizey;
+  out[11] = gr->txtsizelegend;
+  out[12] = gr->digtxtsizelab;
+  out[13] = gr->x1;
+  out[14] = gr->y1;
+  out[15] = gr->x2;
+  out[16] = gr->y2;
+  return 1;
 }
 
 /* ---- axis-region drag zoom (issue 0190) ----------------------------------

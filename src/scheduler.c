@@ -4859,6 +4859,34 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "-1", TCL_STATIC);
             }
           }
+          /* xschem get graph_text_metrics <graph_idx>
+           * Item 22: the text sizes and plot-box margins setup_graph_data gives
+           * graph <graph_idx>, as a dict:
+           *   fixed textpx em_px top_px bottom_px left_px right_px plot_h_px
+           *   txtsizelab txtsizex txtsizey txtsizelegend digtxtsizelab
+           *   box_x1 box_y1 box_x2 box_y2
+           * (fixed = 1 when the viewer's `textpx` branch was taken; the *_px
+           * values are screen pixels at the current zoom; the txtsize* values are
+           * xscales and box_* the plot box, both in schematic units). "" for a bad index, a non-graph rect or
+           * an off-screen graph. Read-only (draw.c graph_text_metrics). */
+          else if(!strcmp(argv[2], "graph_text_metrics")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(argc > 3) {
+              double v[17];
+              if(graph_text_metrics(atoi(argv[3]), v)) {
+                char res[900];
+                my_snprintf(res, S(res),
+                  "fixed %d textpx %.17g em_px %.17g top_px %.17g bottom_px %.17g "
+                  "left_px %.17g right_px %.17g plot_h_px %.17g txtsizelab %.17g "
+                  "txtsizex %.17g txtsizey %.17g txtsizelegend %.17g digtxtsizelab %.17g "
+                  "box_x1 %.17g box_y1 %.17g box_x2 %.17g box_y2 %.17g",
+                  (int)v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9],
+                  v[10], v[11], v[12], v[13], v[14], v[15], v[16]);
+                Tcl_SetResult(interp, res, TCL_VOLATILE);
+              }
+            }
+          }
           /* ---- axis-region drag zoom, issue 0190 -------------------------
            * doc/claude/specs/waveform_viewer_modes.md §17. Three getters, all
            * FAIL SOFT (a sentinel + TCL_OK, never an error): the ASE viewer

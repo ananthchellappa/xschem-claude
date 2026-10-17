@@ -6973,9 +6973,23 @@ void set_viewport_size(int w, int h, double lw)
     xctx->areah = xctx->areay2-xctx->areay1;
 }
 
+/* item 22: the save also FREEZES the screen mooz a fixed-size (`textpx`) graph
+ * sizes its text by (xctx->graph_txt_mooz), and the matching restore thaws it, so
+ * an export that rescales mooz to a raster draws that text at its on-screen
+ * proportion to the strip. A depth counter, because create_ps(fullzoom) nests
+ * ps_embedded_graph's pair inside its own: only the OUTERMOST save captures, only
+ * the outermost restore clears. Every caller pairs save and restore with no early
+ * return between them (svg_embedded_graph, ps_embedded_graph, create_ps, the six
+ * `xschem print` arms, spice_netlist.c's hier_psprint bracket) -- keep it so, or
+ * the text scale stays frozen until the next export's restore.
+ * ⚠ The nesting is UNOBSERVABLE today: its only nested caller is create_ps, and
+ * ps_embedded_graph draws a graph only under HAS_LIBJPEG, which this build lacks,
+ * so no row can tell the depth counter from an unconditional clear. It is kept
+ * because the inner restore would otherwise thaw the outer export mid-page. */
 void save_restore_zoom(int save, Zoom_info *zi)
 {
   if(save) {
+    if(xctx->graph_txt_mooz_depth++ == 0) xctx->graph_txt_mooz = xctx->mooz;
     dbg(1, "save_restore_zoom: save width= %d, height=%d\n", xctx->xrect[0].width, xctx->xrect[0].height);
     dbg(1, "                   zoom=%g\n", xctx->zoom);
     zi->savew = xctx->xrect[0].width;
@@ -7002,6 +7016,8 @@ void save_restore_zoom(int save, Zoom_info *zi)
     xctx->zoom = zi->savezoom;
     xctx->mooz = 1 / zi->savezoom;
     dbg(1, "                   zoom=%g\n", xctx->zoom);
+    if(xctx->graph_txt_mooz_depth > 0 && --xctx->graph_txt_mooz_depth == 0)
+      xctx->graph_txt_mooz = 0.0;
   }
 }
 

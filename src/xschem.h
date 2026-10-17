@@ -1603,6 +1603,15 @@ typedef struct {
                      * export. Defaulted to -1 in setup_graph_data BEFORE the
                      * RECT_OUTSIDE early return, and that is still load-bearing
                      * (landmine 11: gr is the shared xctx->graph_struct). */
+  double textpx;  /* item 22 (doc/claude/calc_feedback_batch): FIXED text size in
+                   * device PIXELS (prop token `textpx=<px>`), written by the ASE
+                   * viewer only (wviewer::font_props). 0 = the shipped
+                   * proportional sizing, which every embedded schematic graph keeps
+                   * because none carries the token -- the D-G reason it is a
+                   * per-rect token and not a global. Honoured only on a strip that
+                   * is neither digital nor vlegend (setup_graph_data). Pixels, not
+                   * points: C's cached tk_scaling is 1.0 under --nogui while Tcl
+                   * falls back to 96/72, so Tcl converts and C never does. */
 } Graph_ctx;
 
 /* ONE CACHED TRACE ENVELOPE (doc/claude/specs/wave_trace_hilight.md §5.2).
@@ -2234,6 +2243,12 @@ typedef struct {
   int mem_undo_initialized;
   /* graph context struct */
   Graph_ctx graph_struct;
+  /* item 22: the SCREEN mooz a fixed-size (`textpx`) graph sizes its text by, frozen
+   * by save_restore_zoom(1, ...) for the length of an export (which rescales mooz to
+   * a raster), so exported text keeps its on-screen proportion to the strip. 0 =
+   * not frozen (use xctx->mooz). The depth makes nested save/restore pairs safe. */
+  double graph_txt_mooz;
+  int graph_txt_mooz_depth;
 
   Raw *raw; /* spice simulation data struct pointer */
 
@@ -3215,6 +3230,7 @@ extern int  graph_plotbox_at(int i, double px, double py);
  * ARE the left margin). Fails closed on a bad index / non-graph rect /
  * off-screen graph. */
 extern int  graph_axis_at(int i, double px, double py);
+extern int  graph_text_metrics(int i, double *out); /* item 22: 17 doubles */
 /* THE MAP, in one place. `p0`/`p1` are canvas pixels along `axis` (px for X, py
  * for Y): the press and the release. Writes the new data window to *lo/*hi and
  * returns 1; returns 0 for a bad index / no transform / travel <= `clicktol`
