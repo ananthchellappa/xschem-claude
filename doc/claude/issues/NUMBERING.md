@@ -4760,7 +4760,13 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1663.**~~
 
-**The next free number is 1664.**
+- **1664** — `test_wave_sigbrowser_keys` (BK22 both arms, BK29/BK31 display) and
+  `test_wave_sigbrowser_0312` (BF21a/BF24a display) red at `c240d0a65`, registered in no T1 list;
+  cause not diagnosed.
+
+~~**The next free number is 1664.**~~
+
+**The next free number is 1665.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
