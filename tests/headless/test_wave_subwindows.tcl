@@ -92,6 +92,12 @@
 #   SWG15 DISPLAY: a REAL LMB drag of a strip's sole trace into another
 #         subwindow removes the strip, one log line, one u; a subwindow's last
 #         strip stays; a drag within one subwindow keeps the emptied strip.
+#   SWE*  `e` (empty_strips_to_delete) with subwindows: a run strip the user
+#         emptied goes, every subwindow is in scope, D-D spares only the first
+#         auto strip of a subwindow whose run plot holds no trace.
+#   SWG16 DISPLAY: a REAL `e` after a multi-plot run deletes the emptied run
+#         strip in the target subwindow, an emptied strip in another and an
+#         empty subwindow; Caps Lock + e is typed E, as Shift-e is.
 #   SWU*  wviewer::unlogged is transparent: an error keeps -errorinfo and
 #         -errorcode, break/continue/return act in the caller, and the suppress
 #         depth is balanced on every path (SWU4, in the SWR child).
@@ -208,6 +214,10 @@
 #   drop_emptied_sources: no marker-selection clear -> SWT6 selection row
 #   sabotage: key_filter without its case_keysym call -> SWK18 (x2)
 #   sabotage: case_key without `return -code break` -> SWK18 break row
+# `e` after a multi-plot run (user report 2026-10-16), measured red at 410387cf
+# (the product before the fix): SWE1, SWE2, SWE3, SWE5, SWG16 Caps-Lock-off row --
+# that row read {{1 1 1 2} {2 0 1 2} ...}: the empty strip in subwindow 2 and
+# the empty subwindow went, the emptied run strip stayed, the report verbatim.
 #        (the real-event leg read {grid_toggle_subwin_at leak})
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
@@ -1096,6 +1106,25 @@ swd_close
 check "SWC3/SWH6 the two key wrappers on a canvas no viewer owns: {} and no throw" \
   [list [pcall {wviewer::clear_target_subwin_at .nosuch}] [pcall {wviewer::grid_toggle_subwin_at .nosuch}]] {{} {}}
 foreach p $::swm_stubbed { rename ::wviewer::$p {}; rename ::swm_orig_$p ::wviewer::$p }
+
+# ---- SWE*: `e` (Delete Empty Strips) with subwindows and multi-plot run strips
+# User report 2026-10-16: "e key to delete empty strips is not working anymore
+# for empty strips. It's only deleting empty sub-windows." Since R-OUT14
+# (7cdb6d70) every strip a multi-plot run plots carries `auto 1`, and the rule
+# spared EVERY such strip; D-D now spares only the first auto strip of a
+# subwindow whose run plot holds no trace (wviewer::empty_strips_to_delete).
+proc A {nm sw} { dict replace [G $nm $sw] auto 1 }
+proc AE {sw} { dict replace [E $sw] auto 1 }
+check "SWE1 a run strip the user emptied, beside run strips still holding traces, is deleted" \
+  [pcall {wviewer::empty_strips_to_delete [list [A a 1] [AE 1] [A c 1]] 0}] {1}
+check "SWE2 every subwindow: the emptied run strip, a plain empty strip in another subwindow, and an empty subwindow" \
+  [pcall {wviewer::empty_strips_to_delete [list [A a 1] [AE 1] [G c 2] [E 2] [E 3]] 0}] {1 3 4}
+check "SWE3 D-D: a run plot with no trace left (between runs) keeps its FIRST auto strip, the rest go" \
+  [pcall {wviewer::empty_strips_to_delete [list [AE 1] [AE 1] [G c 2]] 0}] {1}
+check "SWE4 D-D is per subwindow: a live run plot elsewhere does not unspare this subwindow's empty one" \
+  [pcall {wviewer::empty_strips_to_delete [list [A a 1] [AE 2] [G c 2]] 0}] {}
+check "SWE5 the FIRST run strip emptied while a later run strip is live is deleted" \
+  [pcall {wviewer::empty_strips_to_delete [list [AE 1] [A b 1]] 0}] {0}
 
 # ============================================================================
 # SWR* -- REPLAY, both arms: a plot whose destination MAKES something (New
@@ -2460,6 +2489,58 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [lsearch -all -inline -glob $::sw_log {wviewer::move*}]] \
     [list {1 2} [list b1 $mov] 1 [list [list wviewer::move_trace 1 0 2 $tok]]]
 
+  # ---- SWG16: a REAL `e` (user report 2026-10-16). The user's path: a
+  # multi-plot run (auto_plot_strips + add_trace, as ase::ui::auto_plot does),
+  # two New SubWins, a trace dragged onto its neighbour in the TARGET subwindow
+  # and another in a NON-target one, the last subwindow left empty. One `e`
+  # removes all three empty strips, in every subwindow.
+  proc sg16_fixture {} {
+    pcall {wviewer::new_tab $::tok}
+    pcall {wviewer::set_plot_mode multi $::tok}
+    set gis [pcall {wviewer::auto_plot_strips $::tok 3}]
+    pcall {wviewer::regenerate $::tok}
+    foreach gi $gis ex {a1 a2 a3} { pcall {wviewer::add_trace $::tok $gi $ex} }
+    pcall {wviewer::new_subwin $::tok}
+    pcall {wviewer::plot_signals $::tok {b1 b2}}
+    pcall {wviewer::new_subwin $::tok}
+    pcall {wviewer::move_trace 4 0 3 $::tok}
+    pcall {wviewer::move_trace 1 0 0 $::tok}
+    pcall {wviewer::set_target_strip 0 $::tok}
+    pcall {wviewer::fit $::tok}
+    update
+  }
+  proc sg16_state {} {
+    list [ltags] [lmap G [lay] {llength [wviewer::dget $G traces {}]}] \
+         [lmap G [lay] {wviewer::dget $G auto 0}] [wviewer::target_index $::tok]
+  }
+  sg16_fixture
+  set pre [sg16_state]
+  check "SWG16 fixture: an emptied run strip in the target subwindow, an emptied strip in another, an empty subwindow" \
+    $pre {{1 1 1 2 2 3} {2 0 1 2 0 0} {1 1 1 0 0 0} 0}
+  set ::sw_log {}
+  set ok [send_ks $vdrw e 0 {[llength [lay]] == 3}]
+  check "SWG16 a REAL `e` (Caps Lock off) deletes all three, the empty subwindow with them" \
+    [list $ok [sg16_state] [wviewer::sw_count [lay]]] {1 {{1 1 2} {2 1 2} {1 1 0} 0} 2}
+  check "SWG16 ...one log line" \
+    [lsearch -all -inline -glob $::sw_log {wviewer::delete_empty*}] [list [list wviewer::delete_empty_strips $tok]]
+  pcall {wviewer::undo $tok}
+  check "SWG16 one u restores every strip" [sg16_state] $pre
+  # Caps Lock on: the letter as typed is upper case, so `e` is `E`, exactly as
+  # Shift-e is (the user's case ruling of 2026-10-16) -- it does not delete.
+  # The Shift-e twin is the control: both must reach the same binding.
+  rename wviewer::browser_descend_at wviewer::__sg16_real_descend
+  proc wviewer::browser_descend_at {W} { lappend ::sg16_desc $W }
+  foreach {st what} {2 {Caps Lock + e} 1 {Shift-e}} {
+    set ::sg16_desc {}
+    set ::sw_log {}
+    set ok [send_ks $vdrw e $st {[llength $::sg16_desc] > 0}]
+    check "SWG16 a REAL $what (state $st) is typed E: Descend runs, no strip is deleted" \
+      [list $ok [llength $::sg16_desc] [sg16_state] \
+            [lsearch -all -inline -glob $::sw_log {wviewer::delete_empty*}]] [list 1 1 $pre {}]
+  }
+  rename wviewer::browser_descend_at {}
+  rename wviewer::__sg16_real_descend wviewer::browser_descend_at
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   rename wviewer::echo {}
@@ -2476,7 +2557,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 180 } else { set expect 328 }
+if {$::arm eq {nogui}} { set expect 185 } else { set expect 339 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWZ1 expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

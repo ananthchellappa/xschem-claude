@@ -6284,8 +6284,37 @@ proc wviewer::index_after_insert {index at {count 1}} {
 # Consequence, and the intended one: `e` on a window holding a single empty
 # strip returns an EMPTY kill list, which the mutating proc treats as a no-op
 # and does not log.
+#
+# D-D IS SCOPED TO A SUBWINDOW WHOSE RUN PLOT IS EMPTY (user report 2026-10-16,
+# "e ... is not working anymore for empty strips. It's only deleting empty
+# sub-windows"). D-D was decided when a run owned ONE strip. Since R-OUT14
+# (7cdb6d70) a multi-plot run gives every signal its own `auto 1` strip, and the
+# same commit made this rule skip EVERY such strip, so a strip the user emptied
+# by moving or deleting a run trace could never be tidied -- while a New SubWin's
+# plain empty strip still went, which is the report. The spared strip is now the
+# one D-D describes: in a subwindow where NO auto strip holds a trace (the run
+# plot is between runs), its FIRST auto strip. Where an auto strip still holds
+# the run's traces, the empty ones beside it were emptied by the user and go;
+# auto_plot_strips re-inserts whatever the next run needs (the argument
+# 3137344c made for a drag). `auto` is still honoured as an index for a strip
+# with no marker. Scope stays the whole window, every subwindow, as before.
 proc wviewer::empty_strips_to_delete {gs {auto -1}} {
-  set kill [wviewer::empty_graph_indices $gs $auto]
+  set kill {}
+  foreach run [wviewer::sw_runs $gs] {
+    lassign $run f l
+    set first {}
+    set live 0
+    for {set i $f} {$i <= $l} {incr i} {
+      set G [lindex $gs $i]
+      if {$i != $auto && [wviewer::dget $G auto 0] ne {1}} { continue }
+      if {$first eq {}} { set first $i }
+      if {![catch {dict size $G}] && ![wviewer::graph_is_empty $G]} { set live 1 }
+    }
+    set spare [expr {$live ? {} : $first}]
+    for {set i $f} {$i <= $l} {incr i} {
+      if {$i ne $spare && [wviewer::graph_is_empty [lindex $gs $i]]} { lappend kill $i }
+    }
+  }
   if {[llength $kill] > 0 && [llength $kill] >= [llength $gs]} {
     set kill [lrange $kill 1 end]
   }

@@ -950,6 +950,12 @@ CIW error when no viewer resolves.
     is legitimately traceless *between* runs. Deleting it would destroy tool
     state the user cannot see. `empty_graph_indices` already takes the exclusion
     as its `auto` argument.
+    **Scope (2026-10-16):** since R-OUT14 a multi-plot run gives every signal
+    its own `auto 1` strip, so "the auto-plot strip" is the run plot of a
+    subwindow. It is spared only when NO auto strip in that subwindow holds a
+    trace (the run plot is between runs), and then only its first auto strip;
+    an empty auto strip beside one that still holds the run's traces was
+    emptied by the user and is deleted (`empty_strips_to_delete`).
   - **the last strip standing (D-C).** Right after `Ctrl-D` the model is exactly
     one empty strip, so a literal reading would empty the window. That would not
     crash — `regenerate` handles `n == 0` and `graphs {}` is the legal fresh-open
