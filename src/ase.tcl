@@ -6950,10 +6950,13 @@ proc ase::predeck_plan {sim state} {
   set argv {} ; set flines {} ; set refused {} ; set filewhy {}
   ## The file half's two refusals, evaluated once. Both NAME what they are
   ## refusing over, because a refusal the user cannot act on is a silence with
-  ## extra words.
+  ## extra words. The menu path is TYPED, because this file may not depend on
+  ## src/ase_window.tcl; row RD-L of tests/headless/test_ase_rundir_1665.tcl
+  ## holds it equal to `ase::ui::menu_path_run_dir` (issue 1391's drift).
   if {[ase::rundir_is_shared $state]} {
     set filewhy "this bench names no run directory, so the file would go in one\
- shared with every other cell; set a run directory first"
+ shared with every other cell; set a run directory first (Setup > Run\
+ Directory\u2026)"
   } elseif {[ase::sim_nospiceinit $sim]} {
     set filewhy "the simulator entry is set to skip start-up files, so this\
  file would be ignored in silence"
@@ -14688,6 +14691,243 @@ proc ase::rundir {state} {
   return [set_netlist_dir 0]
 }
 
+# --- THE RUN-DIRECTORY DOOR (issue 1665) --------------------------------------
+# Setup > Run Directory… in src/ase_window.tcl is the door; these are the pure
+# halves it is built on, kept here so every decision counts on the headless
+# arm. NONE of them calls `ase::rundir` or `set_netlist_dir 0`: both create a
+# directory, and the second rewrites the global `::netlist_dir` (the R602e
+# reason). Choosing a directory is SESSION STATE -- the dialog's OK writes the
+# `rundir` key (plus the `viewer.rawfile` rebase `ase::rundir_set` does), the
+# session goes dirty, and Save State is what reaches disk. The pane refresh
+# that follows OK may create the directory through `ase::rundir`.
+
+# Is TEXT acceptable as a bench's run directory? Answers `{disposition value
+# notes}`:
+#   clear   value {}  -- empty or blank text, or a path that IS the shared
+#                       default (`ase::rundir_default_preview`): stored as {},
+#                       so the bench stays honestly shared and the shared-
+#                       directory refusals (`sharedrundir`, the predeck
+#                       `filewhy`) still see it. Never refused.
+#   ok      value = the ABSOLUTE path to store; notes = advisory sentences
+#   refuse  value {}  -- notes = the one sentence saying why
+#
+# ⚠ THE STORED FORM IS ABSOLUTE. Every reader of the key (`ase::rundir`,
+# `ase::op_dump_dir`, the results-selection resolvers, the viewer's rawfile
+# relativisation) resolves a relative value against the PROCESS cwd, so a
+# relative key would mean a different directory depending on where xschem was
+# started. A relative input is therefore resolved here, once, against [pwd].
+#
+# ⚠ EXPANSION PRECEDES EVERY CHARACTER TEST, or `$HOME/sim` would be refused for
+# the `$` the backend refuses. `~` is expanded by `file normalize`.
+#
+# ⚠ THE CHARACTER RULE IS THE BACKEND'S OWN PREDICATES, CALLED, NEVER RE-SPELLED:
+# `path_quoted` (what a control line can carry) and `shell_word` (what the one
+# line handed to /bin/sh can carry). They apply whichever simulator is chosen,
+# because the bench's simulator can change later and the failure at run time
+# is silent artifact loss.
+#
+# ⚠ ADE-L IS A FLOOR: upper case, spaces and other symbols the simulator CAN
+# carry are accepted with a note, never refused. `state`, when given, adds the
+# relative-model note (models and includes resolve against the run directory,
+# because the simulator runs with it as cwd).
+proc ase::rundir_validate {text {state {}}} {
+  set t [string trim $text]
+  if {$t eq {}} { return [list clear {} {}] }
+  if {[catch {file normalize [ase::expand_path $t]} p]} {
+    return [list refuse {} [ase::rundir_reword $p]]
+  }
+  if {[ase::rundir_is_default_path $p]} {
+    return [list clear {} [list "That is the shared default; the bench stays\
+ shared."]]
+  }
+  foreach probe {path_quoted shell_word} {
+    set cmd ::ase::backend::ngspice::$probe
+    if {[info commands $cmd] eq {}} { continue }
+    set a [list $p]
+    if {$probe eq {shell_word}} { lappend a rd }
+    if {[catch {$cmd {*}$a} m]} {
+      return [list refuse {} [ase::rundir_reword $m]]
+    }
+  }
+  if {[file exists $p]} {
+    if {![file isdirectory $p]} {
+      return [list refuse {} "`$p` is a file, not a directory."]
+    }
+    if {![file writable $p]} {
+      return [list refuse {} "`$p` is not writable."]
+    }
+  } else {
+    set a [file dirname $p]
+    while {![file exists $a]} {
+      set up [file dirname $a]
+      if {$up eq $a} { break }
+      set a $up
+    }
+    if {![file isdirectory $a]} {
+      return [list refuse {} "cannot create `$p`: `$a` is a file, not a directory."]
+    }
+    if {![file writable $a]} {
+      return [list refuse {} "cannot create `$p`: `$a` is not writable."]
+    }
+  }
+  set notes {}
+  if {[catch {ase::op_dump_reachable_dir $p} ok] || !$ok} {
+    lappend notes "Upper case, spaces or symbols in the path: OP annotation\
+ takes the slower route."
+  }
+  if {$state ne {} && [llength [ase::rundir_relative_inputs $state]] &&
+      ![ase::rundir_same_path [ase::state_get $state rundir] $p]} {
+    lappend notes "Relative model/include paths now resolve against the new\
+ directory."
+  }
+  return [list ok $p $notes]
+}
+
+# Do A and B name the same directory? Both normalized (a relative value
+# against [pwd], `~` expanded) and compared component-wise, so a trailing slash
+# or a doubled separator is not a difference. An empty side is never equal to
+# a non-empty one. Never raises.
+proc ase::rundir_same_path {a b} {
+  if {[string trim $a] eq {} || [string trim $b] eq {}} {
+    return [expr {[string trim $a] eq [string trim $b]}]
+  }
+  if {[catch {file split [file normalize [ase::expand_path $a]]} al]} { return 0 }
+  if {[catch {file split [file normalize [ase::expand_path $b]]} bl]} { return 0 }
+  return [expr {$al eq $bl}]
+}
+
+# Is P the shared fallback an empty key resolves to? Read only, through
+# `ase::rundir_default_preview`.
+proc ase::rundir_is_default_path {p} {
+  set d [ase::rundir_default_preview]
+  if {$d eq {}} { return 0 }
+  return [ase::rundir_same_path $p $d]
+}
+
+# A backend or expansion refusal, said for this door: the `ase: ` prefix is the
+# CIW's (the caller adds it back there), and "move the bench" is the remedy for
+# a path the user does not choose here.
+proc ase::rundir_reword {m} {
+  if {[string match {ase: *} $m]} { set m [string range $m 5 end] }
+  return [string map [list \
+    "Move the bench to a path without one of them." "Choose another run directory." \
+    "Move the bench to a path without them." "Choose another run directory." \
+    "cannot expand model path" "cannot expand path"] $m]
+}
+
+# The `models` and `includes` paths of STATE that are relative after variable
+# expansion -- the ones a run-directory change re-points, because the simulator
+# runs with the run directory as its cwd. Never raises.
+proc ase::rundir_relative_inputs {state} {
+  set out {}
+  set files {}
+  foreach m [ase::state_get $state models] {
+    if {![catch {dict get $m file} f]} { lappend files $f }
+  }
+  foreach inc [ase::state_get $state includes] {
+    if {[llength $inc] >= 2 && ![catch {dict get $inc file} f]} {
+      lappend files $f
+    } else {
+      lappend files $inc
+    }
+  }
+  foreach f $files {
+    if {[string trim $f] eq {}} { continue }
+    if {[catch {ase::expand_path $f} x]} { continue }
+    if {[catch {file pathtype $x} pt]} { continue }
+    if {$pt ne {absolute}} { lappend out $f }
+  }
+  return $out
+}
+
+# R602's stored form for a results file: PATH relative to RUNDIR when it is
+# UNDER it, otherwise PATH exactly as given. Component-wise, not a string prefix
+# -- `<rundir>bis/x.raw` is not under `<rundir>`. An already-relative PATH is a
+# fixed point (R602d) and an empty RUNDIR relativises nothing (R602e: the key is
+# QUERIED, never resolved through `ase::rundir`). Never raises. The ONE
+# predicate: `ase::ui::viewer_rawfile_relative` and `ase::rundir_set` both call
+# it.
+proc ase::rawfile_relative {path rundir} {
+  if {[string trim $path] eq {}} { return $path }
+  if {[catch {file pathtype $path} pt]} { return $path }
+  if {$pt ne {absolute}} { return $path }
+  if {[catch {file normalize $path} np]} { return $path }
+  if {[string trim $rundir] eq {}} { return $path }
+  if {[catch {file normalize $rundir} rd]} { return $path }
+  set rdl [file split $rd]
+  set npl [file split $np]
+  if {[llength $npl] <= [llength $rdl]} { return $path }
+  if {[lrange $npl 0 [expr {[llength $rdl] - 1}]] ne $rdl} { return $path }
+  set tail [lrange $npl [llength $rdl] end]
+  if {[catch {file join {*}$tail} rel]} { return $path }
+  if {[string trim $rel] eq {}} { return $path }
+  return $rel
+}
+
+# STATE with its run directory set to PATH: a NEW dict, only `rundir` moved --
+# except that a stored `viewer.rawfile` is REBASED so it keeps naming the same
+# file. That value is relative to the OLD run directory when the file sat under
+# it (R602), and the read side resolves a relative value against the CURRENT
+# one, so without the rebase the selection silently re-points into the new
+# directory (R602f keeps the stale value through every later save). A relative
+# value under an EMPTY old key is left alone: R602e never relativised against
+# one, so such a value is not this proc's to reinterpret.
+proc ase::rundir_set {state path} {
+  set old [ase::state_get $state rundir]
+  set new [dict replace $state rundir $path]
+  if {[catch {ase::state_get [ase::state_get $state viewer] rawfile} rf]} {
+    return $new
+  }
+  if {[string trim $rf] eq {}} { return $new }
+  if {[catch {file pathtype $rf} pt]} { return $new }
+  if {$pt ne {absolute}} {
+    if {[string trim $old] eq {}} { return $new }
+    if {[catch {file join [file normalize $old] $rf} rf]} { return $new }
+  }
+  set vd [ase::state_get $state viewer]
+  dict set vd rawfile [ase::rawfile_relative $rf $path]
+  dict set new viewer $vd
+  return $new
+}
+
+# WHY THIS SESSION'S RUN DIRECTORY MAY NOT CHANGE NOW: `run`, `campaign`, or {}
+# when it may. The window's run predicates re-derive the lock key from the
+# CURRENT state, so a change mid-run would let a second Run through, make Stop
+# answer "no simulation running" over a live one, and send the finished run's
+# results and log path to the new directory. Three arms:
+#   the window's own lock predicate (`ase::ui::run_busy`, when that file is
+#   loaded); the session's `run_id` attr with its pipe still open -- the first
+#   arm of `ase::ui::do_stop`, which catches a run whose lock key has already
+#   diverged; and a running campaign, read from the dialog record through
+#   `info exists` so a headless caller with no window answers {}.
+proc ase::rundir_busy {key} {
+  if {[info commands ::ase::ui::run_busy] ne {}} {
+    if {![catch {ase::ui::run_busy $key} lk] && $lk ne {}} { return run }
+  }
+  set id [ase::session_getattr $key run_id {}]
+  if {[string is integer -strict $id] && [info exists ::execute(pipe,$id)]} {
+    return run
+  }
+  if {[info exists ::ase::ui::dlg($key,camp,running)] &&
+      [string is true -strict $::ase::ui::dlg($key,camp,running)]} {
+    return campaign
+  }
+  return {}
+}
+
+# The shared fallback an empty `rundir` resolves to, READ ONLY: `set_netlist_dir
+# 2` is the spelling that makes nothing (the `ase::op_dump_dir` precedent), and
+# the documented default stands in when it answers {}. For the dialog's "Empty
+# = shared" hint, which must not create the directory it describes.
+proc ase::rundir_default_preview {} {
+  set d {}
+  catch {set d [set_netlist_dir 2]}
+  if {$d eq {} && [info exists ::USER_CONF_DIR]} {
+    set d [file join $::USER_CONF_DIR simulations]
+  }
+  return $d
+}
+
 # <rundir>/<cell>_ase.spice — the deck ase::run writes immediately before it
 # launches the simulator (:995 renders into exactly this path, through this
 # proc, so the two cannot drift). Named because issue 0838 needs to COMPARE it
@@ -22400,10 +22640,12 @@ proc ase::campaign_refusals {sim state} {
   ## it and write a `.spiceinit` there. A crew's single run in that directory
   ## once destroyed this user's 20502-point rawfile; N runs building a directory
   ## tree in it is the same accident with a multiplier.
+  ## The remedy's menu path is typed for the reason `ase::predeck_plan` gives;
+  ## row RD-L holds it equal to `ase::ui::menu_path_run_dir`.
   if {[ase::rundir_is_shared $state]} {
     lappend out [list sharedrundir refuse "this bench names no run directory, so\
  a campaign would build its shards in the directory every other cell shares" \
-      "set a run directory for this bench first"]
+      "set one in Setup > Run Directory\u2026"]
   }
   if {[ase::n_enabled_analyses $state] < 1} {
     lappend out [list noanalysis refuse "no analysis is enabled, so every shard\

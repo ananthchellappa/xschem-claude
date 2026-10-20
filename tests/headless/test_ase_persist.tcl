@@ -23,6 +23,9 @@
 #        the five named load->save byte-identity rows and R3 is the
 #        old-state-compat row: the new key is governed by exactly those two
 #        rules. Pure schema, both arms, no display, no registry.
+#   R9   the `rundir` key ON DISK (issue 1665, Setup > Run Directory…): an
+#        absolute value round-trips byte-identically, and empty stays the
+#        schema default `rundir {}`. Both arms.
 #   G1   fresh session on the committed-shape state: window up, NO viewer
 #        auto-open (viewer {})
 #   G2   Choose Analyses through the REAL dialog: dc V2 0..1.8 step 0.01
@@ -83,6 +86,8 @@
 # arm measured 148 before this group landed; a floor only ever goes up, so it
 # passed while being one behind. Both numbers are re-measured here.
 # ⚠ AND RAISED 153 -> 156 on the display arm with G3q (2026-10-15).
+# ⚠ AND RAISED by two on EACH arm with R9 (issue 1665, the `rundir` key on
+# disk); the arms' own RESULT lines carry the current counts.
 # Standalone repro from the repo ROOT. ⚠ THE ARMED SPELLING IS THE FIRST ONE:
 # it puts HOME on a throwaway and picks the dev display, so your clipboard,
 # geometry and ~/.xschem/simulations are untouched (CLAUDE.md, "the throwaway
@@ -872,6 +877,38 @@ if {[info commands ::rc_echo_real] ne {}} {
   rename ::rc_echo_real ::ase::echo
 }
 set ::ase_plot_dest {}
+
+# --- R9: THE `rundir` KEY ON DISK (issue 1665) ---------------------------------
+# Setup > Run Directory… writes `rundir` as an ABSOLUTE path, and Save State is
+# what puts it in the file, so the key is governed by R2's byte-identity rule
+# exactly as `sim_entry` is (R7). `rundir` is NOT in ase::omit_if_empty: an
+# empty value is written as `rundir {}`, the default every committed state
+# already carries, so the empty case must stay that line and read back empty.
+# Pure schema over ase::state_save / ase::state_load: both arms, no display.
+if {[catch {
+  set r9abs [file normalize [file join $scratch r9 run dir]]
+  set r9st [ase::state_default]
+  dict set r9st rundir $r9abs
+  set r9a [file join $scratch r9_abs.state]
+  set r9b [file join $scratch r9_absb.state]
+  ase::state_save $r9a $r9st
+  set r9back [ase::state_load $r9a]
+  ase::state_save $r9b $r9back
+  set r9e  [file join $scratch r9_empty.state]
+  set r9e2 [file join $scratch r9_emptyb.state]
+  ase::state_save $r9e [ase::state_default]
+  set r9eback [ase::state_load $r9e]
+  ase::state_save $r9e2 $r9eback
+  check "R9a an absolute rundir round-trips save->load->save byte-identically, value unchanged" \
+    [list [ase::state_get $r9back rundir] [expr {[r7_bytes $r9a] eq [r7_bytes $r9b]}] \
+          [lsearch -inline -glob [r7_lines $r9a] {rundir *}]] \
+    [list $r9abs 1 [list rundir $r9abs]]
+  check "R9b an empty rundir stays the schema default on disk and reads back empty" \
+    [list [lsearch -inline -glob [r7_lines $r9e] {rundir *}] [ase::state_get $r9eback rundir] \
+          [expr {[r7_bytes $r9e] eq [r7_bytes $r9e2]}] \
+          [ase::rundir_is_shared $r9eback]] \
+    {{rundir {}} {} 1 1}
+} r9err]} { check {R90 section R9 ran to the end} "RAISED:$r9err" {} }
 
 # --- T-E BOOKKEEPING: WHY THE LEGS DID OR DID NOT RUN ------------------------
 # doc/claude/specs/results_selection.md section 12: T-E is the batch's ONE test

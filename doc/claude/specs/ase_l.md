@@ -1756,7 +1756,10 @@ the schematic's name, not the simulator's.
   (the simulator-registry dialog, issue 0937: the registered simulators with
   the reason any one of them cannot be started, Add / Edit / Remove, and
   which one is in force — or none of them, which means the program the
-  system finds on the PATH).
+  system finds on the PATH); Run Directory… (modeless dialog: path,
+  Browse…, Use Default, OK/Cancel; empty = shared default; session state,
+  dirties, saved by Save State; refused while a run or campaign is live —
+  issue 1665, see "Run directory" below).
 - **Analyses** — Choose… (Choose Analyses dialog).
 - **Variables** — Edit… (variables editor).
 - **Outputs** — To Be Saved > Select On Design; To Be Plotted > Select On
@@ -1793,6 +1796,48 @@ the schematic's name, not the simulator's.
   with no session key: the Calculator is per-PROCESS idempotent, one window per
   xschem, `doc/claude/specs/calculator.md` R101. It was a disabled placeholder
   only until the window existed).
+
+### Run directory (issue 1665)
+The state's `rundir` key names where the deck, raw, log and every other run
+artifact go; empty means the shared fallback (`set_netlist_dir`'s
+`$USER_CONF_DIR/simulations`), one directory every bench shares. Setup > Run
+Directory… is its door. The decisions are pure engine procs in `src/ase.tcl`
+(`ase::rundir_validate`, `ase::rundir_set`, `ase::rundir_busy`,
+`ase::rundir_default_preview`); the dialog and `ase::ui::set_rundir` are the act.
+
+- **Storage form: absolute.** Every reader resolves a relative key against the
+  process cwd, so a typed relative path is resolved once against `[pwd]` and
+  stored absolute. `$VAR`/`${VAR}` and `~` are expanded first. A legacy
+  relative value in an old .state file is shown verbatim and keeps working as
+  before.
+- **Validation classes.** Empty clears (never refused), and so does a path
+  that IS the shared fallback (typed or browsed to): it is stored as `{}`, so
+  the bench stays shared and the shared-directory refusals still apply.
+  Browse… starts at the entry's directory or HOME, never the shared one.
+  Refused: a character
+  the backend's own `path_quoted`/`shell_word` probes reject (control
+  characters, `$`, backquote, braces, `"`, `\`), an existing file, an
+  unwritable directory, or a path whose nearest existing ancestor is not
+  writable. Accepted with a note: upper case, spaces or other symbols (the
+  fast OP dump falls back to its slower route), and relative model/include
+  paths in the bench (they resolve against the run directory). Nothing is
+  created by the check; `ase::rundir` creates the directory on first use.
+- **Session state.** OK writes the key, the session goes dirty, the close and
+  quit prompts follow, Save State persists it. OK on the directory already
+  stored (however spelled) changes nothing and stays clean. OK is refused
+  while a run or a campaign is live, because the window's run predicates
+  re-derive the lock key from the current state; the refusal names the stop
+  control, and OK stays enabled, so it works once the run ends. Reopening the
+  open dialog raises it and keeps what was typed.
+- **Rawfile rebase.** A stored `viewer.rawfile` relative to the old directory
+  is rebased so it keeps naming the same file: relative to the new directory
+  if it sits under it, absolute otherwise (one predicate,
+  `ase::rawfile_relative`, shared with R602's relativiser). A relative value
+  under an empty old key is left alone (R602e).
+- **Stale results.** Nothing is deleted or moved. The panes re-read from disk,
+  so a fresh directory shows no results; waves already plotted stay attached.
+  Run (existing netlist) in a fresh directory fails with its own message;
+  Netlist and Run works.
 
 ### Log window (not a pane)
 Kicking off a run opens a NEW toplevel showing the live log (existing

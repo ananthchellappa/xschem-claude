@@ -902,6 +902,12 @@ proc ase::ui::build {key top} {
   # entry's own -command, and a second call would double every line.
   $top.mb.setup add command -label "Simulators\u2026" \
     -command [list ase::ui::simulators_dialog $key]
+  # Run Directory… = the `rundir` key's door (issue 1665): the key existed and
+  # was read everywhere, while only a hand-edited .state file could set it. The
+  # label is a constant because the engine's refusals name this path. No log
+  # call, for the reason given above the Simulators entry.
+  $top.mb.setup add command -label [ase::ui::lbl_run_dir_menu] \
+    -command [list ase::ui::rundir_dialog $key]
 
   menu $top.mb.analyses -tearoff 0
   $top.mb add cascade -label [ase::ui::lbl_analyses] -menu $top.mb.analyses
@@ -9334,6 +9340,185 @@ proc ase::ui::design_cancel {key} {
   }
 }
 
+# --- Setup > Run Directory… (issue 1665) --------------------------------------
+# The door for the state's `rundir` key. MODELESS (no grab, no tkwait), built
+# on the scaffold like Setup > Design. Choosing a directory is SESSION STATE,
+# the 1395 rule the simulator choice follows: OK writes the key through
+# `ase::ui::set_rundir`, the session goes dirty, the close and quit prompts
+# follow from `ase::session_dirty`, and only Save State reaches the .state file.
+# The decisions are the engine's pure procs (`ase::rundir_validate`,
+# `ase::rundir_set`, `ase::rundir_busy`, `ase::rundir_default_preview`), so
+# they count on the headless arm; this half is only the act.
+#
+# ⚠ REFUSALS ARE SAID IN THE DIALOG, on `$w.status`, as well as in the CIW:
+# `simulators_dialog`'s header records why ("silence is this area's failure
+# mode"). Never `alert_`.
+#
+# ⚠ THE ENTRY IS PREFILLED WITH THE RAW KEY, verbatim -- a legacy relative value
+# included -- and never with `ase::rundir`, which creates the directory and,
+# for an empty key, rewrites `::netlist_dir` (R602e).
+#
+# ⚠ OK IS NEVER DISABLED. A run in flight is said on `$w.status` at open, and
+# `rundir_ok` re-asks `ase::rundir_busy` at every press, so the same OK works
+# once the run ends -- the dialog is modeless and runs are long.
+#
+# ⚠ A SECOND OPEN RAISES THE OPEN DIALOG (no focus taken) instead of rebuilding
+# it, so text the user typed survives a re-pick of the menu entry.
+#
+# Widgets: $w.path entry, $w.browse, $w.hint, $w.default, $w.status,
+# $w.btns.proceed / $w.btns.cancel, where $w = <session toplevel>.rundir.
+proc ase::ui::rundir_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::rundir_win $key]
+  if {$w ne {}} {
+    catch {wm deiconify $w}
+    catch {raise $w}
+    return $w
+  }
+  set w [ase::ui::dialog_frame [dict get $wins $key].rundir {Run Directory}]
+  set e [ase::ui::dialog_row $w 0 Directory: path]
+  $e configure -width 48
+  $e insert 0 [ase::state_get [ase::session_state $key] rundir]
+  button $w.browse -text "Browse…" -command [list ase::ui::rundir_browse $key]
+  grid $w.browse -row 0 -column 2 -sticky w -padx {0 8} -pady 2
+  label $w.hint -font AseLabelFont -anchor w -justify left \
+    -text "Empty = shared: [ase::rundir_default_preview]"
+  grid $w.hint -row 1 -column 0 -columnspan 3 -sticky we -padx 8 -pady 2
+  button $w.default -text {Use Default} -command [list ase::ui::rundir_use_default $key]
+  grid $w.default -row 2 -column 0 -columnspan 3 -sticky w -padx 8 -pady 2
+  label $w.status -font AseLabelFont -anchor w -justify left -wraplength 560 -text {}
+  grid $w.status -row 3 -column 0 -columnspan 3 -sticky we -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 4 [list ase::ui::rundir_ok $key] \
+    [list ase::ui::rundir_cancel $key]
+  grid configure $w.btns -columnspan 3
+  bind $e <Return> [list ase::ui::rundir_ok $key]
+  ase::ui::dialog_close_protocol $w [list ase::ui::rundir_cancel $key]
+  ## the tip family reads a widget's -text, so the hint label is what can carry
+  ## one when a long shared path is cut off; the entry scrolls by itself
+  ase::ui::tip_attach $w.hint
+  set why [ase::rundir_busy $key]
+  if {$why ne {}} {
+    $w.status configure -text [ase::ui::rundir_busy_msg $why]
+  }
+  ase::ui::apply_theme $w
+  focus $e
+  return $w
+}
+
+# The refusal for a run or campaign in flight, naming the way out.
+proc ase::ui::rundir_busy_msg {why} {
+  if {$why eq {campaign}} {
+    return "A campaign is running; stop it first\
+ ([ase::ui::lbl_simulation] > [ase::ui::lbl_camp_menu] > [ase::ui::lbl_camp_stop])."
+  }
+  return "A run is in progress; stop it first ([ase::ui::menu_path_stop])."
+}
+
+# The dialog window for KEY, or {} when it is not open.
+proc ase::ui::rundir_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].rundir
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+# Say a refusal in the dialog and in the CIW.
+proc ase::ui::rundir_refuse {key text} {
+  set w [ase::ui::rundir_win $key]
+  if {$w ne {}} { catch {$w.status configure -text $text} }
+  catch {::ase::echo "ase: $text" error}
+}
+
+# Browse…: the modal chooser fills the ENTRY only; nothing commits before OK.
+# An empty answer is the chooser's Cancel and leaves the entry alone. It starts
+# at the entry's directory when that exists, else at HOME -- never at the
+# shared default, whose acceptance would only be cleared back to {} by
+# `ase::rundir_validate`.
+proc ase::ui::rundir_browse {key} {
+  set w [ase::ui::rundir_win $key]
+  if {$w eq {}} { return }
+  set cur [string trim [$w.path get]]
+  set init [pwd]
+  catch {set init [file normalize ~]}
+  if {$cur ne {} && ![catch {file normalize $cur} n] && [file isdirectory $n]} {
+    set init $n
+  }
+  set d [tk_chooseDirectory -parent $w -mustexist 0 -initialdir $init \
+           -title [ase::ui::lbl_run_dir_menu]]
+  if {$d eq {}} { return }
+  $w.path delete 0 end
+  $w.path insert 0 $d
+}
+
+# Use Default: empty the entry, which OK reads as "the shared default". It
+# commits nothing by itself.
+proc ase::ui::rundir_use_default {key} {
+  set w [ase::ui::rundir_win $key]
+  if {$w eq {}} { return }
+  $w.path delete 0 end
+}
+
+proc ase::ui::rundir_ok {key} {
+  set w [ase::ui::rundir_win $key]
+  if {$w eq {}} { return }
+  ## re-asked at OK: a run started after the dialog opened must refuse too
+  set why [ase::rundir_busy $key]
+  if {$why ne {}} {
+    ase::ui::rundir_refuse $key [ase::ui::rundir_busy_msg $why]
+    return
+  }
+  set old [ase::state_get [ase::session_state $key] rundir]
+  lassign [ase::rundir_validate [$w.path get] [ase::session_state $key]] \
+    disp val notes
+  if {$disp eq {refuse}} {
+    ase::ui::rundir_refuse $key $notes
+    return
+  }
+  ## an untouched OK on a non-canonical key (`dir/`, `~/x`, a legacy relative
+  ## value) names the directory already stored: no write, no dirty, no notes
+  set changed [expr {![ase::rundir_same_path $old $val]}]
+  if {$changed} { ase::ui::set_rundir $key $val }
+  ase::ui::rundir_cancel $key
+  ## the dialog is gone, so an advisory goes to the CIW
+  if {$changed} {
+    foreach n $notes { catch {::ase::echo "ase: $n"} }
+  }
+}
+
+proc ase::ui::rundir_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,rd*
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].rundir}
+  }
+}
+
+# SET THE SESSION'S RUN DIRECTORY -- the scriptable, replayable door, shaped
+# like `ase::ui::set_plot_dest`. PATH is stored as given (the dialog passes
+# `ase::rundir_validate`'s absolute answer, or {} for the shared default). Does
+# NOT refuse a busy session: the dialog's OK does that, and a script is trusted
+# the way the CIW is. Logs `ase::ui::set_rundir <key> <path>` on a change only.
+#
+# After a change the panes are re-read from disk in `load_state_commit`'s
+# order (results, then populate; issue 1498: the Value column reads the run
+# directory). Nothing is deleted or moved: a fresh directory shows no results,
+# which is true, and waves already plotted stay attached, because the viewer
+# holds absolute paths. Returns the stored value, or {} for an unknown session.
+proc ase::ui::set_rundir {key path} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
+  set st [ase::session_state $key]
+  if {[ase::state_get $st rundir] eq $path} { return $path }
+  ase::session_update $key [ase::rundir_set $st $path]
+  catch {ase::ui::results_refill $key}
+  catch {ase::ui::populate $key}
+  ## caught whole: `camp_win` asks `winfo`, which is absent under --nogui
+  catch {if {[ase::ui::camp_win $key] ne {}} { ase::ui::camp_sync $key }}
+  ase::ui::log_action [list ase::ui::set_rundir $key $path]
+  return $path
+}
+
 # --- (c)+(g) Model Files / Simulation Options: the shared list dialog --------
 
 # Setup > Model Files…: one row per `models` entry {file section} — the
@@ -10993,6 +11178,13 @@ proc ase::ui::menu_path_run {} {
 proc ase::ui::menu_path_stop {} {
   return "[ase::ui::lbl_simulation] > [ase::ui::lbl_stop]"
 }
+# Setup > Run Directory… (issue 1665). src/ase.tcl TYPES this path into two
+# refusals (`ase::predeck_plan`, `ase::campaign_refusals`) because the engine
+# may not depend on this file; row RD-L of test_ase_rundir_1665 holds them equal.
+proc ase::ui::lbl_run_dir_menu {} { return "Run Directory\u2026" }
+proc ase::ui::menu_path_run_dir {} {
+  return "Setup > [ase::ui::lbl_run_dir_menu]"
+}
 proc ase::ui::menu_path_waveform_viewer {} {
   return "[ase::ui::lbl_tools] > [ase::ui::lbl_waveform_viewer]"
 }
@@ -11422,8 +11614,9 @@ proc ase::ui::save_all_discarded {key} {
   return $out
 }
 
-# One-line registrar for a dialog's window-manager close button. Called ONLY
-# from save_all_dialog (see the comment there for why not from dialog_frame).
+# One-line registrar for a dialog's window-manager close button. Called per
+# dialog, by save_all_dialog and rundir_dialog (see save_all_dialog's comment
+# for why not from dialog_frame).
 proc ase::ui::dialog_close_protocol {w cmd} {
   catch {wm protocol $w WM_DELETE_WINDOW $cmd}
 }
@@ -12062,23 +12255,13 @@ proc ase::ui::viewer_snapshot {key} {
 proc ase::ui::viewer_rawfile_relative {vd st} {
   if {[catch {ase::state_get $vd rawfile} rf]} { return $vd }
   if {[string trim $rf] eq {}} { return $vd }
-  # R602d: already in the stored form -> nothing to do. Never `file join
-  # $rundir $rf` first either: that would silently re-absolutise a value whose
-  # meaning was ALREADY rundir-relative, which is a different behaviour change.
-  if {[catch {file pathtype $rf} pt]} { return $vd }
-  if {$pt ne {absolute}} { return $vd }
-  if {[catch {file normalize $rf} np]} { return $vd }
-  # R602e: query only.
+  # R602e: query only -- the key, never `ase::rundir`.
   if {[catch {ase::state_get $st rundir} rd]} { return $vd }
-  if {[string trim $rd] eq {}} { return $vd }
-  if {[catch {file normalize $rd} rd]} { return $vd }
-  set rdl [file split $rd]
-  set npl [file split $np]
-  if {[llength $npl] <= [llength $rdl]} { return $vd }
-  if {[lrange $npl 0 [expr {[llength $rdl] - 1}]] ne $rdl} { return $vd }
-  set tail [lrange $npl [llength $rdl] end]
-  if {[catch {eval [linsert $tail 0 file join]} rel]} { return $vd }
-  if {[string trim $rel] eq {}} { return $vd }
+  # The predicate itself (R602d, the component-wise test) is the engine's
+  # `ase::rawfile_relative`, shared with `ase::rundir_set`'s rebase (issue
+  # 1665) so the two cannot disagree about what "under the rundir" means.
+  set rel [ase::rawfile_relative $rf $rd]
+  if {$rel eq $rf} { return $vd }
   dict set vd rawfile $rel
   return $vd
 }

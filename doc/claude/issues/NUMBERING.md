@@ -4766,7 +4766,13 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1664.**~~
 
-**The next free number is 1665.**
+~~**The next free number is 1665.**~~
+
+- **1665** — ASE-L had no door for the run directory: the `rundir` key was read
+  everywhere and written by nothing but a hand-edited `.state` file. Setup > Run
+  Directory… added.
+
+**The next free number is 1666.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
