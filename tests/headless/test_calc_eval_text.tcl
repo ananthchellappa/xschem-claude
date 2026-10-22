@@ -142,8 +142,16 @@ group ET1 {
               [fld $t ok] [fld $t kind] [near [fld $t value] $rt] \
               [fld $o ok] [fld $o kind] [near [fld $o value] $ro]] \
         {1 wave near 1 wave near 1 scalar near}
-    check "ET1 the literal values the brief named: 0.4472136, 0.99830244, 0" \
-        [list [fld $f value] [fld $t value] [fld $o value]] {0.4472136 0.99830244 0}
+    # FAQ Q92 (calc::eval_rpn's `full`): an answer is the FULL double, so the
+    # brief's literals are its %.8g spelling -- re-derived, not edited to match.
+    set lit {}
+    foreach v [list [fld $f value] [fld $t value] [fld $o value]] {
+        if {[string is double -strict $v]} { lappend lit [format %.8g $v] } else { lappend lit $v }
+    }
+    check "ET1 the literal values the brief named, at %.8g: 0.4472136, 0.99830244, 0" \
+        $lit {0.4472136 0.99830244 0}
+    check "ET1 ...and the answers carry MORE than %.8g where the double needs it (FAQ Q92: the full double, never an 8-digit read)" \
+        [list [fld $f value] [fld $t value]] {0.4472135954999581 0.9983024443762069}
     et_load ac
     set pa [pcall xschem raw points 0]
     et_load tran

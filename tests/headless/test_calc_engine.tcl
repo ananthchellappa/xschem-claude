@@ -923,8 +923,9 @@ group CE3 {
     # the dict's own shape, once, by name -- so a later phase that adds a key
     # cannot quietly rename one of these.
     set d [pcall calc::eval_rpn {v(ramp) 2 /} 0]
-    check "CE3 the answer dict names its ok, value, at, point, dataset, dest and msg" \
-        [lsort [pcall dict keys $d]] {at dataset dest msg ok point value}
+    # `full` (FAQ Q92) landed with its row CE15, in the same commit.
+    check "CE3 the answer dict names its ok, value, full, at, point, dataset, dest and msg" \
+        [lsort [pcall dict keys $d]] {at dataset dest full msg ok point value}
     check "CE3 ...and reports the point it read and the dataset it read it from" \
         [list [dg $d point] [dg $d dataset] [dg $d ok] [dg $d msg]] {100 0 1 {}}
     # an empty expression is refused by NAME, not evaluated to nothing.
@@ -2640,6 +2641,64 @@ group CE14 {
 ## this one, never as well.
 ##
 ## ⚠ ONLY THE SUCCESS PATH CLAIMS COMPLETION.
+# ---------------------------------------------------------------------------
+# CE15 -- FAQ Q92: a plain POSTFIX answer through calc::eval_texts carries the
+# FULL double, not dtoa's %.8g.  The Outputs pane formats it %.6e and the
+# optimizer export (ase::optexport_measure) hands it to Python verbatim, so an
+# 8-digit read made the pane's sixth digit a rounding of a rounding and gave an
+# optimizer 8 digits.  calc::eval_rpn keeps `value` (%.8g, the window's) and
+# adds `full`; calc::et_one answers from `full`.
+#
+# The vector is DERIVED: the first op-point vector of the fixture whose %.8g
+# print reads back as a DIFFERENT double from its %.16g print -- so the row
+# could not pass with the 8-digit read (distinctness leg).  The reference is
+# `xschem raw values` (%.16g), a different accessor from the `full` arm the
+# product reads, and agreement is to 2e-16 relative (%.16g is not always a
+# round-trip; `full` is).
+# ---------------------------------------------------------------------------
+group CE15 {
+    catch {xschem raw clear}
+    set pick {}
+    if {![catch {xschem raw read $::fixture op}]} {
+        foreach v [split [string trim [xschem raw list]] "\n"] {
+            set e8 [xschem raw value $v 0 0]
+            set e16 [lindex [xschem raw values $v 0] 0]
+            if {![string is double -strict $e8] || ![string is double -strict $e16]} continue
+            if {double($e8) == double($e16)} continue
+            if {[regexp {^v\((.*)\)$} $v -> n]} { set t "vdc($n) 1 *"
+            } elseif {[regexp {^i\((.*)\)$} $v -> n]} { set t "idc($n) 1 *"
+            } else { set t "$v 1 *" }
+            set pick [list $v $t $e8 $e16]
+            break
+        }
+    }
+    catch {xschem raw clear}
+    check "CE15 a fixture op vector exists whose %.8g and %.16g prints are DIFFERENT doubles (derived; the row is not vacuous)" \
+        [expr {[llength $pick] == 4}] 1
+    if {[llength $pick] == 4} {
+        lassign $pick v t e8 e16
+        set d [pcall calc::eval_text $t $::fixture {}]
+        set ok 0 ; set kind {} ; set val {}
+        catch {set ok [dict get $d ok]} ; catch {set kind [dict get $d kind]}
+        catch {set val [dict get $d value]}
+        check "CE15 eval_text {$t} answers a scalar" [list $ok $kind] {1 scalar}
+        set agree [expr {[string is double -strict $val] &&
+                         abs($val - $e16) <= abs($e16) * 2e-16}]
+        check "CE15 its value is the FULL double ($val vs raw values $e16), not dtoa's %.8g ($e8)" \
+            [list $agree [expr {[string is double -strict $val] && double($val) != double($e8)}]] {1 1}
+        check "CE15 the value reads back as itself at %.17g (it is a complete spelling of one double)" \
+            [expr {[string is double -strict $val] && double([format %.17g $val]) == double($val)}] 1
+        catch {xschem raw clear}
+        catch {xschem raw read $::fixture op}
+        set r [pcall calc::eval_rpn "$v 1 *" 0 0]
+        set rv {} ; set rf {}
+        catch {set rv [dict get $r value]} ; catch {set rf [dict get $r full]}
+        check "CE15 calc::eval_rpn itself: `value` stays dtoa's %.8g (the window's text, unmoved) and `full` is the same point at full precision" \
+            [list [expr {$rv eq $e8}] [expr {[string is double -strict $rf] && abs($rf - $e16) <= abs($e16) * 2e-16}]] {1 1}
+    }
+    catch {xschem raw clear}
+}
+
 # ---------------------------------------------------------------------------
 # THE BAND-ABORT GUARD.  Last, because it is a claim about every band above it.
 #

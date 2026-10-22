@@ -3247,6 +3247,13 @@ proc calc::eval_rpn {rpn {dataset 0} {usecursor 1}} {
     if {$rc ne {1}} {
         return [calc::eval_refusal [calc::eval_msg stale $dest] $dataset $dest $point]
     }
+    # FAQ Q92: the SAME point read again at full precision (`full`, the
+    # shortest spelling that reads back as the identical double).  `value`
+    # stays dtoa's %.8g, so the Calculator window and every reader of `value`
+    # are unmoved; calc::et_one -- the Outputs pane and the optimizer export --
+    # takes `full`, so its %.6e is never a rounding of a rounding.
+    set full {}
+    catch {set full [xschem raw value $dest $point $rdset full]}
     # R402: deleted before returning, on this path and on the one below it.
     catch {xschem raw del $dest}
     if {![string is double -strict $val]} {
@@ -3270,7 +3277,8 @@ proc calc::eval_rpn {rpn {dataset 0} {usecursor 1}} {
     if {![calc::eval_finite $val]} {
         return [calc::eval_refusal [calc::eval_msg nonfinite $val] $dataset $dest $point]
     }
-    return [dict create ok 1 value $val at $at point $point dataset $rdset \
+    if {![string is double -strict $full]} { set full $val }
+    return [dict create ok 1 value $val full $full at $at point $point dataset $rdset \
                 dest $dest msg {}]
 }
 
@@ -14463,12 +14471,15 @@ proc calc::et_one {p dataset} {
         catch {set np [xschem raw points $dataset]}
         set d [calc::eval_rpn $rpn $dataset 0]
         if {![dict get $d ok]} { return [calc::et_refuse [dict get $d msg]] }
+        # `full` (calc::eval_rpn, FAQ Q92) is the same point at full precision.
+        set v [dict get $d value]
+        if {[dict exists $d full]} { set v [dict get $d full] }
         if {![calc::et_scalar $rpn $dataset]} {
-            return [calc::et_answer wave [dict get $d value] $np]
+            return [calc::et_answer wave $v $np]
         }
         set dom [calc::et_scalar_dom $rpn $dataset]
         if {$dom ne {}} { return [calc::et_refuse $dom] }
-        return [calc::et_answer scalar [dict get $d value]]
+        return [calc::et_answer scalar $v]
     }
     set name [dict get $m verb]
     set d {}

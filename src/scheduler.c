@@ -10975,8 +10975,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   xschem raw datasets
      *     get number of datasets (simulation runs)
      *
-     *   xschem raw value node n [dset]
-     *     return n-th value of 'node' in raw file
+     *   xschem raw value node n [dset] [full]
+     *     return n-th value of 'node' in raw file ('full': the shortest of
+     *     %.15g/%.16g/%.17g that reads back as the same double, else %.8g)
      *     dset is the dataset to look into in case of multiple runs (first run = 0).
      *     if dset = -1 consider n as the absolute position into the whole data file
      *     (all datasets combined).
@@ -11487,24 +11488,41 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * is its ONE consumer. ⚠ It belongs on THIS arm for the same reason the
          * annot_p term does -- the numbered-point read above is data inspection
          * and must keep answering 0 for a dims=0 column. */
+        /* ⚠ `xschem raw value node point dataset full` (FAQ Q92, the export
+         * for an optimizer): the SAME read, printed as the shortest of %.15g /
+         * %.16g / %.17g that reads back as the identical double, instead of
+         * dtoa()'s %.8g. Without it a Calculator postfix answer carries 8
+         * significant digits and the Outputs pane's %.6e is a rounding of a
+         * rounding. The default stays %.8g: every existing reader is unmoved. */
         else if(argc > 4 && !strcmp(argv[2], "value")) {
           int dataset = -1;
           int point = argv[4][0] ? atoi(argv[4]) : -1;
           const char *node = argv[3];
           int idx = -1;
+          int full = (argc > 6 && !strcmp(argv[6], "full"));
           if(argc > 5) dataset = atoi(argv[5]);
           idx = get_raw_index(node, NULL);
           if(idx >= 0) {
             double val;
+            int have = 0;
             if( (dataset >=0 && point >= 0 && point < raw->npoints[dataset]) ||
                 (dataset == -1 && point >= 0 && point < raw->allpoints)
               ) {
               val = get_raw_value(dataset, idx, point);
-              Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
+              have = 1;
             } else if(raw->cursor_b_val && raw->annot_p >= 0 &&
                       !raw_vector_absent(raw, idx)) {
               val = raw->cursor_b_val[idx];
+              have = 1;
+            }
+            if(have && !full) {
               Tcl_SetResult(interp, dtoa(val), TCL_VOLATILE);
+            } else if(have) {
+              char fs[40];
+              my_snprintf(fs, S(fs), "%.15g", val);
+              if(strtod(fs, NULL) != val) my_snprintf(fs, S(fs), "%.16g", val);
+              if(strtod(fs, NULL) != val) my_snprintf(fs, S(fs), "%.17g", val);
+              Tcl_SetResult(interp, fs, TCL_VOLATILE);
             }
           }
         } else if(argc > 3 && !strcmp(argv[2], "del")) {
