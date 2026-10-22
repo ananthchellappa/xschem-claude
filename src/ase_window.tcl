@@ -14315,6 +14315,7 @@ proc ase::ui::optexport {key} {
   if {$init eq {} || ![file isdirectory $init]} {
     set init {}
     set rd [ase::state_get $st rundir]
+    if {$rd eq {}} { set rd [ase::rundir_default_preview] }
     if {$rd ne {} && [file isdirectory [file dirname $rd]]} { set init [file dirname $rd] }
   }
   if {$init eq {}} { catch {set init [file normalize ~]} }

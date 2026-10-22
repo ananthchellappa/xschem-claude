@@ -24621,6 +24621,9 @@ proc ase::optexport_dir_verdict {state dir} {
   if {[string trim $dir] eq {}} { return [list refuse "no directory was given"] }
   set p [ase::optexport_dir_norm $dir]
   set rd [ase::state_get $state rundir]
+  # An empty rundir is the shared default: resolved READ ONLY (the preview
+  # creates nothing), because the next Run deletes and rewrites there too.
+  if {$rd eq {}} { set rd [ase::rundir_default_preview] }
   if {$rd ne {}} {
     set rd [file normalize $rd]
     if {$p eq $rd || [string first "$rd/" $p] == 0} {
@@ -24841,22 +24844,25 @@ proc ase::optexport_varlines {state deck tdeck} {
 }
 
 # The manifest's measures, in pane order: every Outputs row with an expr, then
-# every enabled Measurements row. A name used twice (case-folded: ngspice folds
-# measurement names) refuses: the optimizer gets ONE value per name.
+# every enabled Measurements row. A name used twice refuses: the optimizer gets
+# ONE value per name. Outputs names compare exactly (the pane keys them so, and
+# so do JSON and Python); a Measurements name compares CASE-FOLDED against
+# every other name, because ngspice folds measurement names.
 proc ase::optexport_measures {state} {
   set sim [ase::state_get $state simulator ngspice]
   set have [ase::optexport_have $state]
   set out {}
   set seen [dict create]
+  set folded [dict create]
   set dup {}
   foreach o [ase::state_get $state outputs] {
     if {![dict exists $o expr]} { continue }
     set ex [dict get $o expr]
     set key $ex
     if {[dict exists $o name] && [dict get $o name] ne {}} { set key [dict get $o name] }
-    set lk [string tolower $key]
-    if {[dict exists $seen $lk]} { lappend dup [list [dict get $seen $lk] $key] }
-    dict set seen $lk $key
+    if {[dict exists $seen $key]} { lappend dup [list $key $key exact] }
+    dict set seen $key $key
+    dict lappend folded [string tolower $key] $key
     lassign [ase::optexport_predict $ex $have] t an
     set rd [expr {[ase::result_source $sim $ex] eq {raw} ? {raw} : {calc}}]
     lappend out [dict create name $key source calc reader $rd expr $ex text $t \
@@ -24867,8 +24873,10 @@ proc ase::optexport_measures {state} {
     set nm [ase::meas_name $r]
     if {![ase::meas_enabled $r]} { lappend off $nm ; continue }
     set lk [string tolower $nm]
-    if {[dict exists $seen $lk]} { lappend dup [list [dict get $seen $lk] $nm] }
-    dict set seen $lk $nm
+    if {[dict exists $folded $lk]} {
+      lappend dup [list [lindex [dict get $folded $lk] 0] $nm folded]
+    }
+    dict lappend folded $lk $nm
     set v [ase::meas_verdict $sim $state $r]
     set kind [string trim [ase::state_get $r kind]]
     lappend out [dict create name $nm source meas kind $kind \
@@ -24877,10 +24885,14 @@ proc ase::optexport_measures {state} {
                    yields [ase::meas_kind_yields $sim $kind]]
   }
   if {[llength $dup]} {
-    set d [lindex $dup 0]
-    return -code error "'[lindex $d 0]' and '[lindex $d 1]' are the same name\
- (measurement names ignore case); rename one: the optimizer gets one value per\
- name"
+    lassign [lindex $dup 0] a b how
+    if {$how eq {exact}} {
+      return -code error "two Outputs rows are both named '$a'; rename one: the\
+ optimizer gets one value per name"
+    }
+    return -code error "'$a' and the Measurements row '$b' are the same name\
+ (ngspice ignores case in measurement names); rename one: the optimizer gets\
+ one value per name"
   }
   return [list $out $off]
 }
@@ -25055,7 +25067,7 @@ proc ase::optexport_manifest {state c vl measures off meta warnings} {
     enabled [ase::json_str [expr {[ase::campaign_enabled $state] ? {true} : {false}}]] \
     exported_point [ase::json_str nominal]]]
   set lim [ase::json_obj [list \
-    datasets [ase::json_str "Calculator rows are evaluated on dataset 0, as the Outputs pane is. measures.py reports each analysis's dataset count and warns per row when it is above 1."] \
+    datasets [ase::json_str "Calculator rows are evaluated on dataset 0, as the Outputs pane is. When the deck itself runs an analysis type more than once, measures.py reports each analysis's dataset count and warns per row (measures_detail, --json --detail). Results holding more than one RUN raise MixedResults."] \
     meas_precision [ase::json_str "ngspice prints .meas values with 6 significant digits; that is the value ASE-L shows too."] \
     calc_precision [ase::json_str "Calculator values carry the full double (the shortest spelling that reads back as it)."] \
     paths [ase::json_str "Model and .include paths in the deck are absolute paths on the exporting machine."]]]
@@ -25109,19 +25121,27 @@ proc ase::optexport_readme {state c vl measures} {
 Files: [dict get $names deck] (the deck)$pre, manifest.json,
 measures.py, measures.tcl, measures_state.tcl.
 
-Per evaluation:
+Per evaluation (RUN: any directory OUTSIDE this one):
   1. python3 measures.py --prepare RUN$ex1
-     It deletes the last run's results in RUN first: ngspice APPENDS to them otherwise.
-  2. cd RUN && <the ngspice argv from: python3 measures.py --command --rundir RUN>
+     It deletes the last run's results in RUN first: ngspice APPENDS to them
+     otherwise. If you edit the deck yourself, still delete the files listed
+     under delete_before_run in manifest.json before every run; results of
+     two runs in one directory make measures.py refuse (MixedResults).
+  2. cd RUN && <the ngspice argv from: python3 measures.py --command --rundir RUN> > ngspice.log 2>&1
      Run ngspice IN RUN: the deck writes its results next to itself.
-  3. python3 measures.py --rundir RUN --json
-     Exit 0: every measure is a number; 1: some are not; 2: the harness failed.
+  3. python3 measures.py --rundir RUN --json --log RUN/ngspice.log
+     Exit 0: every measure is a number (or a wave); 1: some measure has no
+     number; 2: the harness failed, or the results are stale or mixed.
+     --log lets it see a run that switched to case-sensitive names, as the
+     Outputs pane does; --detail (with --json) adds datasets and warnings.
 
 Python:
   import measures            # this directory on sys.path
   deck = measures.prepare_rundir(run, $ex2)
   subprocess.run(measures.ngspice_command(run), cwd=run, check=True)
-  vals = measures.measures(run)    # {name: float | measures.NonNumeric}
+  vals = measures.measures(run, log=ngspice_log)  # {name: float | measures.NonNumeric}
+  # or: vals = measures.run(run, $ex2)   (all three steps; raises
+  #     measures.SimulationFailed when ngspice exits nonzero)
 
 Design variables (change them ONLY through --set / write_deck / prepare_rundir):
 [join $vtxt "\n"]
@@ -25135,7 +25155,8 @@ code computes them. A wave, a refusal or a missing value is never a number:
 it comes back as a measures.NonNumeric (CLI: !<status>).
 
 Limits: Calculator rows are evaluated on dataset 0 only, as the Outputs pane
-does (measures.py warns when an analysis holds more); .meas values carry
+does (when the deck runs an analysis type twice, measures.py warns: stderr,
+measures_detail(), --json --detail); .meas values carry
 ngspice's 6 printed digits; model and .include paths in the deck are absolute
 paths on this machine; a campaign is exported at its nominal point.
 Never delete the \"write\" lines from the deck: without them no results appear.

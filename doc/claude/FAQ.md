@@ -20,7 +20,15 @@ Newest entries on top.
 - **Project state:** branch `fluid-editing` at `cf166befb`. This records the design
   discussion. **Built since** as ASE-L `Tools > Export for Optimizer…`
   (`ase::optexport` in `src/ase.tcl`, `src/optexport_measures.py`,
-  `src/optexport_measures.tcl`; suite `tests/headless/test_ase_optexport.tcl`). Blog version:
+  `src/optexport_measures.tcl`; suite `tests/headless/test_ase_optexport.tcl`).
+  Found while building it: ngspice **appends** to an earlier run's results
+  (`set appendwrite`), so an optimizer that edits the deck in place and re-runs
+  without deleting them gets Calculator rows from the first run and `.meas` rows
+  from the last; `measures.py` refuses that (`MixedResults`, counted from the
+  deck's own `PLOT`/`ASE-MEAS` echo lines). And the dataset limit below is
+  narrower than it reads: only a postfix row honours `calc::eval_texts`'
+  `dataset` argument, a verb answers from dataset 0 whatever it is passed
+  (row OX8 of the suite is the tripwire). Blog version:
   `doc/claude/blog/where-waveform-measurements-happen-xschem-ase-l.html`.
 
 **There are two kinds of measurement, computed in two places.**

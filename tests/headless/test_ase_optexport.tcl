@@ -31,6 +31,13 @@
 #   OX9   README.txt names what the manifest names
 #   OX10  the .spiceinit path equals what a Run writes; prepare_rundir copies it
 #   OX11  a second run in the same directory reports the second run (M11)
+#   OX12  the Measurements-only path (no xschem launched) equals ase::meas_results
+#   OX12b exit 0 when every measure is a number or a wave; --log carries the
+#         case rule (casemode=distinguish) exactly as the Outputs pane applies it
+#   OX13  a second ngspice run over un-deleted results raises MixedResults;
+#         run() raises SimulationFailed on a nonzero ngspice exit
+#   OX14  harness failures: a broken measures_state.tcl names xschem's error,
+#         and a crashing first launch is retried once and said (issue 1706)
 #
 # REGISTERED IN `hcases`: nothing here needs a display. ngspice is the ASE-L
 # registry's (read-only from the real HOME, as test_ase_outputs_eval's OE7);
@@ -58,7 +65,8 @@ proc pcall {args} {
 }
 set ::abortnames {}
 proc group {name script} {
-    if {[catch {uplevel 1 $script} e]} {
+    # code 2 is a band's own `return` (a self-skip), not an abort
+    if {[catch {uplevel 1 $script} e] == 1} {
         puts "FAIL: group $name ABORTED -> $e : FAIL"
         puts $::errorInfo
         lappend ::abortnames $name
@@ -148,6 +156,33 @@ if isinstance(v, list): sys.stdout.write(' '.join(t(x) for x in v))
 elif isinstance(v, dict): sys.stdout.write(' '.join(q(k) + ' ' + t(x) for k, x in v.items()))
 else: sys.stdout.write(t(v))}
 close $f
+# The op plot's value of one variable, by Python's struct: a reader that
+# shares no code with ase::raw_scalars or xschem's raw loader.
+set ::ox_rawop [file join $scratch rawop.py]
+set f [open $::ox_rawop w]
+puts $f {import struct, sys
+data = open(sys.argv[1], 'rb').read()
+want = sys.argv[2].lower()
+pos = 0
+while pos < len(data):
+    end = data.index(b'Binary:\n', pos)
+    head = data[pos:end].decode('latin-1').split('\n')
+    body = end + len(b'Binary:\n')
+    nv = np = 0; names = []; name = ''; cx = False; invars = False
+    for l in head:
+        if l.startswith('Plotname:'): name = l[9:].strip()
+        elif l.startswith('Flags:'): cx = 'complex' in l
+        elif l.startswith('No. Variables:'): nv = int(l[14:])
+        elif l.startswith('No. Points:'): np = int(l[11:])
+        elif l.startswith('Variables:'): invars = True
+        elif invars and l.strip(): names.append(l.split()[1].lower())
+    size = nv * np * (16 if cx else 8)
+    if name == 'Operating Point' and want in names:
+        print(repr(struct.unpack_from('<%dd' % nv, data, body)[names.index(want)]))
+        sys.exit(0)
+    pos = body + size
+sys.exit(1)}
+close $f
 proc ox_json {path} {
     lassign [ox_run {} [list $::PY $::ox_j2t $path]] rc out err
     if {$rc} { return "ERR:$err" }
@@ -171,7 +206,9 @@ proc ox_read {p} {
 }
 
 # ─── the fixture bench ───────────────────────────────────────────────────────
-set NL "* ox\nv1 in 0 dc 1 pulse(0 1 1u 100n 100n 3u 8u)\nr1 in mid 1k\nr2 mid out 1k\nr3 out 0 {rr}\nc1 out 0 1n\n.param rr=1k\n.end\n"
+# r1 is 1.3k so the op values are not short decimals: a value rounded
+# anywhere on its way out differs from the double (OX4's precision legs).
+set NL "* ox\nv1 in 0 dc 1 pulse(0 1 1u 100n 100n 3u 8u)\nr1 in mid 1.3k\nr2 mid out 1k\nr3 out 0 {rr}\nc1 out 0 1n\n.param rr=1k\n.end\n"
 proc ox_state {cell rundir} {
     set s [ase::state_default]
     dict set s simulator ngspice
@@ -220,8 +257,8 @@ group OX1 {
         [regexp -line {^echo ASE-MEAS >> ox7_ase\.meas$} $deck] 1
     set left [glob -nocomplain -directory [ase::optexport_sentinel_base] asexp_[pid]_*]
     check "OX1 the scratch sentinel directory no longer exists" $left {}
-    check "OX1 the export did not touch the bench's run directory" \
-        [glob -nocomplain -directory $::R *] {}
+    check "OX1 the export did not touch the bench's run directory, dotfiles included" \
+        [lsearch -all -inline -not -regexp [glob -nocomplain -tails -directory $::R * .*] {^\.\.?$}] {}
 }
 
 # =============================================================================
@@ -244,6 +281,7 @@ group OX1r {
 # =============================================================================
 set MAN {}
 group OX2 {
+    if {$::PY eq {}} { return }
     set m [ox_json [file join $::E manifest.json]]
     set ::MAN $m
     check "OX2 manifest.json is JSON (Python's json.load) of protocol asexp-manifest/1" \
@@ -307,6 +345,18 @@ group OX2c {
     check "OX2c an Outputs name equal, case-folded, to a Measurements name refuses with a sentence naming both, and writes no file" \
         [list [string match ERR:* $r] [expr {[string first VMAX $r] >= 0 && [string first vmax $r] >= 0}] \
               [glob -nocomplain -directory $d *]] {1 1 {}}
+    set s $::ST
+    dict set s outputs [linsert [dict get $s outputs] end {name OUT expr {vdc(in) 3 *} save 0 plot 0}]
+    set ms [pcall ase::optexport_measures $s]
+    set nm {}
+    if {![string match ERR:* $ms]} { foreach x [lindex $ms 0] { lappend nm [dict get $x name] } }
+    check "OX2c two OUTPUTS rows differing only in case ('out', 'OUT') are two measures: JSON keys, Python keys and the pane's keys are case-sensitive" \
+        [list [string match ERR:* $ms] [lsearch -all -inline -nocase $nm out]] {0 {out OUT}}
+    set s $::ST
+    dict set s outputs [linsert [dict get $s outputs] end {name out expr {vdc(in) 3 *} save 0 plot 0}]
+    set r [pcall ase::optexport_measures $s]
+    check "OX2c two Outputs rows with the SAME name refuse, saying so" \
+        [list [string match ERR:* $r] [expr {[string first {both named 'out'} $r] >= 0}]] {1 1}
 }
 
 # =============================================================================
@@ -325,6 +375,15 @@ group OX2d {
     }
     check "OX2d the verdict refuses R, a path under R and a directory with a foreign file; accepts an empty, a missing and a previous export's directory" \
         $ok {R refuse under refuse foreign refuse empty ok previous ok missing ok}
+    set sd $::ST
+    dict set sd rundir {}
+    set dflt [ase::rundir_default_preview]
+    set existed [file exists $dflt]
+    check "OX2d a bench on the SHARED default run directory ($dflt) refuses it and a path under it, without creating it" \
+        [list [expr {$dflt ne {}}] [lindex [ase::optexport_dir_verdict $sd $dflt] 0] \
+              [lindex [ase::optexport_dir_verdict $sd [file join $dflt sub]] 0] \
+              [lindex [ase::optexport_dir_verdict $sd [file join $::scratch elsewhere]] 0] \
+              [expr {[file exists $dflt] == $existed}]] {1 refuse refuse ok 1}
     set before [lsort [glob -nocomplain -tails -directory $::E * .*]]
     set t0 [file mtime [file join $::E manifest.json]]
     after 1100
@@ -423,7 +482,7 @@ group OX3m {
 }
 
 # Real-run rows
-set ngrows {OX4 OX5 OX6 OX7 OX8 OX10 OX11}
+set ngrows {OX4 OX5 OX6 OX7 OX8 OX10 OX11 OX12 OX12b OX13 OX14}
 if {$NG eq {} && $PY ne {}} {
     lappend skipped "$ngrows -- no executable ngspice registered in [file join [test_real_home] .xschem ase_simulators]"
 }
@@ -500,6 +559,21 @@ group OX4 {
               [expr {"num:calc:other" in $kinds}] [expr {"meas:num" in $kinds}] \
               [expr {"wave" in $kinds}] [expr {"refused" in $kinds}] [expr {"meas:failed" in $kinds}]] \
         {1 1 1 1 1 1 1 1 1}
+    # PRECISION, against comparands that do NOT go through result_answers: the
+    # raw-reader row against the raw's own double (Python's struct, a second
+    # reader), the verb row against calc::eval_texts called directly.
+    set rawp [file join $G ox7_ase.raw]
+    lassign [ox_py {} -I $::ox_rawop $rawp v(out)] rrc rawv rerr
+    set man {}
+    foreach x [ox_get $::MAN measures] { if {[ox_get $x name] eq {cr}} { set man $x } }
+    set et [lindex [calc::eval_texts [list [ox_get $man text]] $rawp [ox_get $man analysis] 0] 0]
+    catch {xschem raw clear}
+    set pout [ox_get $py out] ; set pcr [ox_get $py cr]
+    check "OX4 FULL PRECISION: 'out' is bit-equal to the raw's own op double ($rawv, read by a second reader) and 'cr' to calc::eval_texts called directly ([ox_get $et value]); both differ from their own %.8g" \
+        [list [expr {[string is double -strict $rawv] && [string is double -strict $pout] && $pout == $rawv}] \
+              [expr {[dict get $et ok] && [string is double -strict $pcr] && $pcr == [dict get $et value]}] \
+              [expr {[string is double -strict $pout] && $pout != [format %.8g $pout]}] \
+              [expr {[string is double -strict $pcr] && $pcr != [format %.8g $pcr]}]] {1 1 1 1}
     check "OX4 the CLI exits 1 (the fixture has non-numbers by construction)" $mrc 1
     check "OX4 G holds the raw and the .meas, and neither E nor F does: the relative paths landed where ngspice ran" \
         [list [file isfile [file join $G ox7_ase.raw]] [file isfile [file join $G ox7_ase.meas]] \
@@ -529,6 +603,9 @@ group OX5 {
     set ln [ox_get [lindex [ox_get $::MAN variables] 0] deck_line]
     check "OX5 --prepare --set rr=500 changes exactly the variable's deck line" \
         [list $prc $diff] [list 0 [list $ln {.param rr=500}]]
+    check "OX5 the written deck keeps the exported deck's permissions (not mkstemp's 0600)" \
+        [file attributes [file join $G2 ox7_ase.spice] -permissions] \
+        [file attributes [file join $::F ox7_ase.spice] -permissions]
     ox_ngrun $G2
     ox_gap
     lassign [ox_py {} [file join $::F measures.py] --rundir $G2 --json] mrc mout merr
@@ -652,7 +729,8 @@ group OX8 {
     dict set s analyses {{type op enabled 0} {type tran enabled 1 stop 20u step 10n}
                          {type tran enabled 1 stop 10u step 10n}}
     dict set s outputs {{name c8 expr {cross(vt(out), 0.5, 1, rising)} save 0 plot 0}
-                        {name w8 expr {vt(out) 2 *} save 0 plot 0}}
+                        {name w8 expr {vt(out) 2 *} save 0 plot 0}
+                        {name a8 expr {value(vt(out), 15u)} save 0 plot 0}}
     set e8 [file join $::scratch e8]
     set r [pcall ase::optexport $s $e8 [dict create netlist_text $nl8]]
     set g8 [file join $::scratch g8]
@@ -663,14 +741,14 @@ group OX8 {
     ox_gap
     set code {import sys, json; sys.path.insert(0, sys.argv[1]); import measures
 r = measures.measures_detail(sys.argv[2])
-print(json.dumps({"ds": r.datasets, "w": r.warnings, "c8": repr(r.values["c8"])}))}
+print(json.dumps({"ds": r.datasets, "w": r.warnings, "c8": repr(r.values["c8"]), "a8": repr(r.values["a8"])}))}
     lassign [ox_py {} -I -c $code $e8 $g8] rc out err
     set j [ox_jtext $out]
     set n [ox_get $j ds tran]
     set ws [ox_get $j w]
     set named {}
     foreach k {c8 w8} {
-        foreach w $ws { if {[string match "$k: evaluated on dataset 0 of $n (tran)*" $w]} { lappend named $k } }
+        foreach w $ws { if {[string match "$k: evaluated on dataset 0 of $n (tran*" $w]} { lappend named $k } }
     }
     check "OX8 the results report more than one dataset for tran ($n; two transient analyses in one run) and the warning names both rows and the count (rc $rc $err)" \
         [list [expr {[string is integer -strict $n] && $n > 1}] $named] {1 {c8 w8}}
@@ -681,6 +759,29 @@ print(json.dumps({"ds": r.datasets, "w": r.warnings, "c8": repr(r.values["c8"])}
     check "OX8 the value is result_answers' (dataset 0): [ox_get $j c8]" \
         [expr {[dict get $c8 status] eq {number} && [string is double -strict [ox_get $j c8]]
                && double([ox_get $j c8]) == double([dict get $c8 value])}] 1
+    # DATASET 0. Measured: only a POSTFIX row honours calc::eval_texts'
+    # dataset argument, and on a multi-point analysis a postfix row is a wave,
+    # which exports no value; a verb answers from dataset 0 whatever the
+    # argument (value at 15u, past dataset 1's 10u stop, is identical for 0
+    # and 1). So no exported number can depend on the dataset today. The
+    # third leg is a TRIPWIRE: if a verb ever honours the argument it reddens,
+    # and the dataset-0 claim then needs a row whose datasets differ.
+    set raw8 [file join $g8 ox8_ase.raw]
+    set e0 [lindex [calc::eval_texts [list {value(vt(out), 15u)}] $raw8 tran 0] 0]
+    set e1 [lindex [calc::eval_texts [list {value(vt(out), 15u)}] $raw8 tran 1] 0]
+    catch {xschem raw clear}
+    set v0 [dict get $e0 value] ; set v1 [dict get $e1 value] ; set a8 [ox_get $j a8]
+    check "OX8 the export's verb row equals calc::eval_texts on dataset 0 ($a8), and (TRIPWIRE) a verb still ignores the dataset argument (ds0 $v0, ds1 $v1)" \
+        [list [dict get $e0 ok] [dict get $e0 kind] \
+              [expr {[dict get $e1 ok] && $v1 eq $v0}] \
+              [expr {[string is double -strict $a8] && $a8 == $v0}]] {1 scalar 1 1}
+    lassign [ox_py {} [file join $e8 measures.py] --rundir $g8 --json --detail] drc dout derr
+    set dj [ox_jtext $dout]
+    set dn 0
+    foreach w [ox_get $dj warnings] { if {[string match "*dataset 0 of $n (tran*" $w]} { incr dn } }
+    check "OX8 --json --detail carries values, datasets and the per-row warnings (stdout, not only stderr)" \
+        [list [lsort [pcall dict keys $dj]] [ox_get $dj datasets tran] $dn [ox_get $dj values a8]] \
+        [list {datasets values warnings} $n 3 $a8]
 }
 
 # =============================================================================
@@ -693,6 +794,8 @@ group OX10 {
     dict set s rundir $r10
     set e10 [file join $::scratch e10]
     set res [pcall ase::optexport $s $e10 [dict create netlist_text $::NL]]
+    check "OX10 exporting a bench WITH pre-deck options writes nothing into its run directory (no .spiceinit there)" \
+        [file exists $r10] 0
     file mkdir $r10
     set plan [ase::predeck_plan ngspice $s]
     ase::predeck_deliver ngspice $s $plan
@@ -745,6 +848,146 @@ print(json.dumps({"ds": r.datasets, "dbl": r.values["dbl"], "vmax": r.values["vm
     check "OX11 the second run's values are the second run's (equal to a fresh directory's at rr=500: dbl [ox_get $j dbl], vmax [ox_get $j vmax]), one dataset per analysis" \
         [list [ox_get $j ds] [expr {[ox_get $j dbl] eq [ox_get $::P2 dbl]}] [expr {[ox_get $j vmax] eq [ox_get $::P2 vmax]}]] \
         {{op 1 tran 1} 1 1}
+}
+
+# Export `st` to `e`, prepare `g` with its measures.py and run ngspice in g.
+proc ox_bench {st e g} {
+    file delete -force $e $g
+    set r [pcall ase::optexport $st $e [dict create netlist_text $::NL]]
+    lassign [ox_py {} [file join $e measures.py] --prepare $g] prc pout perr
+    lassign [ox_py [list ASEXP_NGSPICE=$::NG] [file join $e measures.py] --command --rundir $g] crc argv cerr
+    lassign [ox_run {} [split [string trim $argv] "\n"] $g 120] nrc nout nerr
+    set f [open [file join $g ngspice.log] w] ; puts -nonewline $f "$nout$nerr" ; close $f
+    return [list [expr {[string match ERR:* $r] ? $r : {ok}}] $prc $nrc]
+}
+
+# =============================================================================
+# OX12 -- THE MEASUREMENTS-ONLY PATH: NO XSCHEM, SAME ANSWERS
+# =============================================================================
+group OX12 {
+    set s [ox_state ox12 [file join $::scratch r12]]
+    dict set s outputs {}
+    dict set s measurements [lrange [dict get $s measurements] 0 2]
+    set e12 [file join $::scratch e12]
+    set g12 [file join $::scratch g12]
+    check "OX12 a bench with no Outputs rows exports, prepares and runs" [ox_bench $s $e12 $g12] {ok 0 0}
+    lassign [ox_py [list ASEXP_XSCHEM=/bin/false] [file join $e12 measures.py] --rundir $g12 --json] mrc mout merr
+    set py [ox_jtext $mout]
+    dict set s rundir $g12
+    set bad {} ; set kinds {}
+    foreach e [ase::meas_results ngspice $s] {
+        lassign $e nm verdict val why
+        if {$verdict eq {off}} continue
+        set v [ox_get $py $nm]
+        if {$verdict eq {ok}} {
+            if {![string is double -strict $v] || $v != double($val)} { lappend bad "$nm: $v vs $val" }
+            lappend kinds num
+        } else {
+            if {[ox_get $v status] ne $verdict || [ox_get $v msg] ne $why} { lappend bad "$nm: $v vs $verdict/$why" }
+            lappend kinds $verdict
+        }
+    }
+    check "OX12 with xschem made unlaunchable (/bin/false), every row equals ase::meas_results: numbers as doubles, the failed row by status and message ($kinds; exit $mrc $merr)" \
+        [list $mrc [llength [dict keys $py]] [lsort $kinds] $bad] {1 3 {failed num num} {}}
+    set ::G12 $g12 ; set ::E12 $e12
+}
+
+# =============================================================================
+# OX12b -- EXIT 0 WITH A WAVE; --log CARRIES THE CASE RULE
+# =============================================================================
+group OX12b {
+    set s [ox_state ox12b [file join $::scratch r12b]]
+    dict set s outputs {{name cr expr {cross(vt(out), 0.1, 1, rising)} save 0 plot 0}
+                        {name w expr {vt(out) 2 *} save 0 plot 0}
+                        {name uc expr V(OUT) save 0 plot 0}}
+    dict set s measurements [lrange [dict get $s measurements] 0 0]
+    set e [file join $::scratch e12b]
+    set g [file join $::scratch g12b]
+    check "OX12b the bench exports, prepares and runs" [ox_bench $s $e $g] {ok 0 0}
+    ox_gap
+    lassign [ox_py {} [file join $e measures.py] --rundir $g --json] rc out err
+    set j [ox_jtext $out]
+    check "OX12b every measure a number except one wave: exit 0, and the wave is still a !wave marker, never a number" \
+        [list $rc [ox_get $j w status] [string is double -strict [ox_get $j cr]] [string is double -strict [ox_get $j uc]]] \
+        {0 wave 1 1}
+    set lg [file join $::scratch distinguish.log]
+    set f [open $lg w] ; puts $f "Note: casemode=distinguish is in effect" ; close $f
+    ox_gap
+    lassign [ox_py {} [file join $e measures.py] --rundir $g --json --log $lg] rc2 out2 err2
+    set j2 [ox_jtext $out2]
+    dict set s rundir $g
+    set fold {} ; set dist {}
+    ase::quiet {
+        foreach r [ase::backend::ngspice::result_answers $s fold] { if {[dict get $r key] eq {uc}} { set fold $r } }
+        foreach r [ase::backend::ngspice::result_answers $s distinguish] { if {[dict get $r key] eq {uc}} { set dist $r } }
+    }
+    check "OX12b a log saying casemode=distinguish turns the wrongly-cased raw row V(OUT) into what the pane shows under that rule (status [ox_get $dist status]), and without --log it is the fold answer; exit 1 then" \
+        [list [dict get $fold status] [expr {[ox_get $j uc] == [dict get $fold value]}] \
+              [dict get $dist status] [ox_get $j2 uc status] $rc2] {number 1 novalue novalue 1}
+    set ::G12b $g ; set ::E12b $e
+}
+
+# =============================================================================
+# OX14 -- HARNESS FAILURES ARE NAMED; A CRASHED FIRST LAUNCH IS RETRIED, SAID
+# =============================================================================
+group OX14 {
+    set e14 [file join $::scratch e14]
+    file delete -force $e14
+    file copy $::E12b $e14
+    set f [open [file join $e14 measures_state.tcl] w] ; puts $f "state \{ broken" ; close $f
+    ox_gap
+    lassign [ox_py {} [file join $e14 measures.py] --rundir $::G12b --json] rc out err
+    check "OX14 a broken measures_state.tcl: exit 2 with xschem's own failure (the results file's error), no stdout" \
+        [list $rc [expr {[string first {xschem failed:} $err] >= 0}] $out] {2 1 {}}
+    set mark [file join $::scratch segv.mark]
+    file delete -force $mark
+    set stub [file join $::scratch segv_once.sh]
+    set f [open $stub w]
+    puts $f "#!/bin/sh\nif \[ ! -e '$mark' \]; then : > '$mark'; kill -SEGV \$\$; fi\nexec '$::XS' \"\$@\""
+    close $f
+    file attributes $stub -permissions 0755
+    ox_gap
+    set code {import sys, json; sys.path.insert(0, sys.argv[1]); import measures
+r = measures.measures_detail(sys.argv[2])
+print(json.dumps({"w": r.warnings, "cr": repr(r.values["cr"])}))}
+    lassign [ox_py [list ASEXP_XSCHEM=$stub] -I -c $code $::E12b $::G12b] rc out err
+    set j [ox_jtext $out]
+    set said 0
+    foreach w [ox_get $j w] { if {[string match {*retried*issue 1706*} $w]} { set said 1 } }
+    check "OX14 an xschem that crashes (SIGSEGV) on its first launch is retried once, the retry answers, and a warning says so (rc $rc $err)" \
+        [list $rc [file exists $mark] $said [string is double -strict [ox_get $j cr]]] {0 1 1 1}
+}
+
+# =============================================================================
+# OX13 -- RESULTS OF TWO RUNS ARE REFUSED; A FAILED SIMULATION RAISES
+# =============================================================================
+# The optimizer edits the deck itself; ngspice APPENDS under `set appendwrite`,
+# so a second run over un-deleted results leaves dataset 0 (the Calculator's)
+# from the FIRST run and the .meas rows from the LAST -- one dict, two design
+# points. The deck says how many PLOT lines and ASE-MEAS markers one run writes.
+group OX13 {
+    set out {}
+    foreach {e g} [list $::E12b $::G12b $::E12 $::G12] {
+        set deck [file join $g [file tail [lindex [glob -directory $g *_ase.spice] 0]]]
+        set f [open $deck r] ; set t [read $f] ; close $f
+        set f [open $deck w] ; puts -nonewline $f [string map {{.param rr=2k} {.param rr=500}} $t] ; close $f
+        lassign [ox_py [list ASEXP_NGSPICE=$::NG] [file join $e measures.py] --command --rundir $g] crc argv cerr
+        ox_run {} [split [string trim $argv] "\n"] $g 120
+        ox_gap
+        lassign [ox_py {} [file join $e measures.py] --rundir $g --json] rc mout err
+        lappend out [list $rc [expr {[string first MixedResults $err] >= 0}] $mout]
+    }
+    check "OX13 a second ngspice run over un-deleted results (deck edited in place, the optimizer's own flow) is refused with MixedResults, exit 2, nothing on stdout -- with Calculator rows and Measurements-only" \
+        $out {{2 1 {}} {2 1 {}}}
+    set code {import sys; sys.path.insert(0, sys.argv[1]); import measures
+try:
+    measures.run(sys.argv[2])
+    print("returned")
+except measures.SimulationFailed as e:
+    print("SimulationFailed", isinstance(e, measures.MeasuresError))}
+    lassign [ox_py [list ASEXP_NGSPICE=/bin/false] -I -c $code $::E12 [file join $::scratch g13f]] rc out err
+    check "OX13 run() raises SimulationFailed (a MeasuresError) when ngspice exits nonzero, never a dict of partial results" \
+        [string trim $out] {SimulationFailed True}
 }
 }
 

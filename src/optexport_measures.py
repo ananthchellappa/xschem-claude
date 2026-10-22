@@ -19,11 +19,16 @@ Per evaluation:
     subprocess.run(ngspice_command(run), cwd=run, check=True)
     vals = measures(run)                          # {name: float | NonNumeric}
 
+ngspice APPENDS to the results of an earlier run in the same directory, so a
+directory must be emptied of them before every run (prepare_rundir does it).
+Results holding more than one run raise MixedResults rather than answer.
+
 CLI:
-    python3 measures.py [--rundir DIR] [--json] [--log FILE]
+    python3 measures.py [--rundir DIR] [--json [--detail]] [--log FILE]
     python3 measures.py --prepare DIR [--set NAME=VALUE ...]
     python3 measures.py --command [--rundir DIR]
-Exit: 0 every measure is a number, 1 some are not, 2 the harness failed.
+Exit: 0 every measure is a number (or a wave: a row kept to plot), 1 some
+measure has no number, 2 the harness failed or the results are stale/mixed.
 
 Python 3.8+, standard library only. See README.txt and manifest.json.
 """
@@ -43,7 +48,8 @@ MANIFEST_PROTOCOL = "asexp-manifest/1"
 RESULTS_PROTOCOL = "asexp-results/1"
 PREDECK_MARKER = "* ASE-L pre-deck settings -- rewritten every run, deleted every run"
 
-__all__ = ["NonNumeric", "MeasuresError", "StaleResults", "DeckMismatch",
+__all__ = ["NonNumeric", "MeasuresError", "StaleResults", "MixedResults",
+           "SimulationFailed", "DeckMismatch",
            "manifest", "measures", "measures_detail", "parse_meas", "write_deck",
            "prepare_rundir", "ngspice_command", "run", "Result"]
 
@@ -56,6 +62,18 @@ class MeasuresError(Exception):
 class StaleResults(MeasuresError):
     """The results in the run directory are older than its deck: ngspice did
     not (re)write them, so reading them would report an earlier run."""
+
+
+class MixedResults(StaleResults):
+    """The run directory holds the results of MORE THAN ONE run: ngspice
+    appends, so a second run over un-deleted results adds to them, and the
+    Calculator rows (dataset 0) would report the first run while the .meas
+    rows report the last. Delete the results before every run (prepare_rundir,
+    or the manifest's delete_before_run list)."""
+
+
+class SimulationFailed(MeasuresError):
+    """ngspice exited nonzero (run() only): the results are partial at best."""
 
 
 class DeckMismatch(ValueError):
@@ -153,7 +171,10 @@ def _value_text(v):
 def write_deck(dest, overrides=None, *, base=None, export_dir=HERE):
     """Write the exported deck to `dest` with design-variable overrides
     {name: value}. Only the variables' own `.param` lines change; every other
-    line is copied byte for byte. Returns dest."""
+    line is copied byte for byte. Returns dest.
+
+    It does NOT delete an earlier run's results beside `dest`; ngspice appends
+    to them. Use prepare_rundir() to write the deck into a run directory."""
     m = manifest(export_dir)
     if base is None:
         base = os.path.join(export_dir, m["deck"])
@@ -175,10 +196,12 @@ def write_deck(dest, overrides=None, *, base=None, export_dir=HERE):
                                % (n, base, v["deck_text"]))
         lines[n - 1] = (".param %s=%s" % (name, _value_text(value))).encode("utf-8")
     d = os.path.dirname(os.path.abspath(dest)) or "."
+    mode = os.stat(base).st_mode & 0o777
     fd, tmp = tempfile.mkstemp(prefix=".deck.", dir=d)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(b"\n".join(lines))
+        os.chmod(tmp, mode)            # mkstemp's 0600 would hide it from others
         os.replace(tmp, dest)
     except BaseException:
         try:
@@ -310,6 +333,36 @@ def _check_fresh(m, rundir):
                                % (p, deck))
 
 
+def _lines(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read().split("\n")
+    except OSError:
+        return None
+
+
+def _check_single_run(m, rundir, export_dir):
+    """Raise MixedResults when the results hold more than one run. The deck
+    (the one in rundir, else the exported one) says how many PLOT lines and
+    ASE-MEAS markers ONE run writes; ngspice appends, so more means more runs."""
+    deck = _lines(os.path.join(rundir, m["deck"]))
+    if deck is None:
+        deck = _lines(os.path.join(export_dir, m["deck"])) or []
+    want_plot = sum(1 for l in deck if l.startswith('echo "PLOT '))
+    want_meas = sum(1 for l in deck if l.startswith("echo ASE-MEAS >>"))
+    pm = _lines(os.path.join(rundir, m["artifacts"]["plotmap"])) or []
+    plots = [l.strip() for l in pm if l.strip().startswith("PLOT ")]
+    mt = _lines(os.path.join(rundir, m["artifacts"]["meas"])) or []
+    marks = sum(1 for l in mt if l.strip() == "ASE-MEAS")
+    if len(plots) > want_plot or len(set(plots)) < len(plots) or marks > want_meas:
+        raise MixedResults(
+            "%s holds the results of more than one run (%d PLOT lines and %d"
+            " ASE-MEAS markers where one run of the deck writes %d and %d):"
+            " ngspice appends, so delete the earlier results before every run"
+            " (prepare_rundir / --prepare, or the manifest's delete_before_run)"
+            % (rundir, len(plots), marks, want_plot, want_meas))
+
+
 def measures_detail(rundir=".", *, log=None, timeout=120.0, check_fresh=True,
                     export_dir=HERE):
     """Like measures(), plus the per-row records, the dataset counts, the
@@ -319,6 +372,7 @@ def measures_detail(rundir=".", *, log=None, timeout=120.0, check_fresh=True,
     warnings = []
     if check_fresh:
         _check_fresh(m, rundir)
+        _check_single_run(m, rundir, export_dir)
     rawp = os.path.join(rundir, m["artifacts"]["raw"])
     measp = os.path.join(rundir, m["artifacts"]["meas"])
     if not os.path.exists(rawp) and not os.path.exists(measp):
@@ -355,8 +409,9 @@ def measures_detail(rundir=".", *, log=None, timeout=120.0, check_fresh=True,
             an = r.get("analysis") or ""
             n = datasets.get(an)
             if an and n and n.isdigit() and int(n) > 1:
-                warnings.append("%s: evaluated on dataset 0 of %s (%s); the Outputs"
-                                " pane shows the same" % (x["name"], n, an))
+                warnings.append("%s: evaluated on dataset 0 of %s (%s analyses in"
+                                " one run); the others are not read"
+                                % (x["name"], n, an))
         xm = {}
         for r in res.get("meas", []):
             xm[r["name"].lower()] = r
@@ -410,13 +465,17 @@ def measures(rundir=".", *, log=None, timeout=120.0, check_fresh=True,
 
 
 def run(rundir, overrides=None, *, timeout=None, export_dir=HERE):
-    """Convenience: prepare_rundir + ngspice + measures. Returns the dict."""
+    """Convenience: prepare_rundir + ngspice + measures. Returns the dict.
+    Raises SimulationFailed when ngspice exits nonzero (its log is
+    rundir/ngspice.log)."""
     prepare_rundir(rundir, overrides, export_dir=export_dir)
     logp = os.path.join(rundir, "ngspice.log")
     with open(logp, "wb") as lf:
-        subprocess.run(ngspice_command(rundir, export_dir=export_dir), cwd=rundir,
-                       stdin=subprocess.DEVNULL, stdout=lf, stderr=subprocess.STDOUT,
-                       timeout=timeout)
+        p = subprocess.run(ngspice_command(rundir, export_dir=export_dir),
+                           cwd=rundir, stdin=subprocess.DEVNULL, stdout=lf,
+                           stderr=subprocess.STDOUT, timeout=timeout)
+    if p.returncode != 0:
+        raise SimulationFailed("ngspice exited %s; see %s" % (p.returncode, logp))
     return measures(rundir, log=logp, export_dir=export_dir)
 
 
@@ -427,6 +486,8 @@ def _main(argv):
         " 2 harness failure)"))
     ap.add_argument("--rundir", default=".")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--detail", action="store_true",
+                    help="with --json: {values, datasets, warnings}")
     ap.add_argument("--log")
     ap.add_argument("--prepare", metavar="DIR")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
@@ -458,7 +519,8 @@ def _main(argv):
         return 2
     for w in r.warnings:
         sys.stderr.write("measures.py: warning: %s\n" % w)
-    allnum = all(not isinstance(v, NonNumeric) for v in r.values.values())
+    allnum = all(not isinstance(v, NonNumeric) or v.status == "wave"
+                 for v in r.values.values())
     if a.json:
         obj = {}
         for k, v in r.values.items():
@@ -468,6 +530,8 @@ def _main(argv):
                 obj[k] = {"status": "number", "text": repr(v)}
             else:
                 obj[k] = v
+        if a.detail:
+            obj = {"values": obj, "datasets": r.datasets, "warnings": r.warnings}
         sys.stdout.write(json.dumps(obj, allow_nan=False, indent=1) + "\n")
     else:
         for k, v in r.values.items():
