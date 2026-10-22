@@ -547,8 +547,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {set l [$top.mb.results entrycget $i -label]}
     lappend rf_labels [expr {$l eq {} ? [$top.mb.results type $i] : $l}]
   }
+  # issue 1666: the expected list is the menu owner's own, `--` spelled as the
+  # entry type this loop reads back.
+  set rf_want {}
+  foreach l [ase::ui::results_menu_labels] {
+    lappend rf_want [expr {$l eq {--} ? {separator} : $l}]
+  }
   eqcheck SEL389-RF-Select-is-the-first-Results-entry-above-Direct-Plot \
-    $rf_labels [list "Select…" separator {Direct Plot} Annotate]
+    $rf_labels $rf_want
   eqcheck SEL390-RF-Select-is-wired-to-the-dialog-and-enabled \
     [list [$top.mb.results entrycget "Select…" -command] \
           [$top.mb.results entrycget "Select…" -state]] \
@@ -569,14 +575,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   #     of them really managed and really mapped (the anti-vacuity rule:
   #     existence + class + cget is not proof a control is on screen).
   set rf_order {}
-  foreach child [list $w.loaded $w.recent $w.path $w.status $w.btns] {
+  # issue 1666 (R919): the Saved region now sits ABOVE Loaded.
+  foreach child [list $w.saved $w.loaded $w.recent $w.path $w.status $w.btns] {
     lappend rf_order [list [winfo exists $child] [winfo manager $child] \
                         [winfo ismapped $child] [dict get [grid info $child] -row]]
   }
-  eqcheck SEL393-RF-the-five-regions-are-gridded-mapped-and-IN-ORDER \
-    $rf_order {{1 grid 1 0} {1 grid 1 1} {1 grid 1 2} {1 grid 1 3} {1 grid 1 4}}
-  eqcheck SEL394-RF-Loaded-is-the-FIRST-slave-of-the-dialog \
-    [lindex [grid slaves $w -row 0] 0] $w.loaded
+  eqcheck SEL393-RF-the-six-regions-are-gridded-mapped-and-IN-ORDER \
+    $rf_order {{1 grid 1 0} {1 grid 1 1} {1 grid 1 2} {1 grid 1 3} {1 grid 1 4} {1 grid 1 5}}
+  eqcheck SEL394-RF-Saved-is-the-FIRST-slave-and-Loaded-the-second \
+    [list [lindex [grid slaves $w -row 0] 0] [lindex [grid slaves $w -row 1] 0]] \
+    [list $w.saved $w.loaded]
   # the two tables and their scrollbars are packed inside their regions
   eqcheck SEL395-RF-both-lists-are-mapped-treeviews-with-a-scrollbar \
     [list [winfo class $w.loaded.tv] [winfo ismapped $w.loaded.tv] \

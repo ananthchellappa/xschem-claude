@@ -3770,9 +3770,22 @@ proc op_annot::opdump_devices {path} {
 ## raw gets its freshness check from `ase::results_stale`; the sidecar gets this
 ## one, against the raw it claims to belong to. Equal mtimes pass -- one run
 ## writes both, and on a coarse filesystem clock they land on the same second.
+## ISSUE 1666 (results_selection.md R903b): WHERE THE DUMP OF RAWPATH IS. The
+## simulator is handed the LOWERCASED name (opdump_path, unchanged), so that is
+## tried first; a saved result keeps the CASE of its folder (`TT_27C`), so its
+## copy sits at the case-kept sibling `[file rootname $raw].opinfo`. The first
+## that exists, else the lowercased spelling.
+proc op_annot::opdump_find {rawpath} {
+  set lo [op_annot::opdump_path $rawpath]
+  if {[file isfile $lo]} { return $lo }
+  set kept [file rootname $rawpath].opinfo
+  if {[file isfile $kept]} { return $kept }
+  return $lo
+}
+
 proc op_annot::opdump_merge {rawpath} {
   set dump {}
-  if {[catch {::op_annot::opdump_path $rawpath} dump]} { return {} }
+  if {[catch {::op_annot::opdump_find $rawpath} dump]} { return {} }
   if {$dump eq {} || ![file isfile $dump]} { return {} }
   set rt 0 ; set dt 0
   if {[catch {file mtime $rawpath} rt]} { return {} }

@@ -1053,8 +1053,15 @@ proc ase::ui::build {key top} {
   # ⚠ ASE-L ONLY (user ruling U5) and NO CASCADE IS ADDED TO THE WAVEFORM
   # VIEWER'S MENUBAR (R504/D12) -- tests/headless/test_wave_viewer.tcl G2
   # freezes that cascade set at {File View Graph Cursors Options}.
-  $top.mb.results add command -label "Select\u2026" \
+  # ISSUE 1666 (R917): ADE-L's three Results forms grouped, Save first. The
+  # whole menu's label list is `ase::ui::results_menu_labels`, which the rows
+  # GM2 (test_ase_conv_gui_1460), SEL389 (test_results_dialog) and SVR40 read.
+  $top.mb.results add command -label [ase::ui::lbl_rsave_menu] \
+    -command [list ase::ui::rsave_dialog $key]
+  $top.mb.results add command -label [ase::ui::lbl_rsel_menu] \
     -command [list ase::ui::rsel_dialog $key]
+  $top.mb.results add command -label [ase::ui::lbl_rdel_menu] \
+    -command [list ase::ui::rdel_dialog $key]
   $top.mb.results add separator
   $top.mb.results add command -label {Direct Plot} \
     -command [list ase::ui::direct_plot $key]
@@ -2666,7 +2673,9 @@ proc ase::ui::value_sort_toggle {key} {
 # from the results file -- an expression by the Calculator (ase_l.md R-OUT2).
 proc ase::ui::results_from_disk {key} {
   if {![ase::session_exists $key]} { return [dict create] }
-  set st [ase::session_state $key]
+  ## ISSUE 1666 (R913): the CURRENT Outputs rows, evaluated against the result
+  ## in view (`rundir` swapped to a saved folder under a saved view).
+  set st [ase::result_state $key]
   if {$st eq {}} { return [dict create] }
   ## R-OUT13: a failed run's file is not read.  Every row says the run failed,
   ## because the plots a stopped transient leaves make every expression read
@@ -3903,12 +3912,37 @@ proc ase::ui::annot_goto_design {key} {
 #              current, so every other gold in every suite is satisfied while
 #              the trace the user was looking at has been unloaded from under
 #              their waveform window.
-proc ase::ui::annot_ensure_loaded {key} {
+# ISSUE 1666: "current" also needs the attached database to BE the candidate
+# when the attached one is THIS SESSION'S OWN other result -- its live raw or a
+# saved folder's -- because that one's freshness stamp would otherwise answer
+# current for a different file and paint the previous view's numbers under the
+# new one (SVR51). A database from anywhere else keeps the first-sight trust
+# `db_current` documents (issue 0908), unless FORCE: a change of the result in
+# view, which the user asked for.
+proc ase::ui::annot_ensure_loaded {key {force 0}} {
   set path {}
   catch {set path [ase::last_rawfile $key]}
   set ann 0
   catch {set ann [::op_annot::_annotated]}
-  if {[::op_annot::db_current $path]} { return }
+  set same 1
+  set att {} ; set na {} ; set np {}
+  catch {set att [xschem raw rawfile]}
+  if {$att ne {}} { catch {set na [file normalize $att]} }
+  if {$path ne {}} { catch {set np [file normalize $path]} }
+  if {$na ne {} && $np ne {} && $na ne $np} {
+    set ours $force
+    if {!$ours} {
+      set lr {}
+      catch {set lr [ase::live_rawfile $key]}
+      if {$lr ne {} && [file normalize $lr] eq $na} {
+        set ours 1
+      } elseif {[ase::saved_meta [file dirname $na]] ne {}} {
+        set ours 1
+      }
+    }
+    if {$ours} { set same 0 }
+  }
+  if {$same && [::op_annot::db_current $path]} { return }
   if {$ann} { ::op_annot::db_detach }
   if {$path eq {}} { return }
   # ⚠ issue 0838: A STALE RAW IS NOT ATTACHED. `last_rawfile` answers "the raw
@@ -3994,7 +4028,7 @@ proc ase::ui::annot_ensure_loaded {key} {
 #              when the verification is removed. Row F33 of
 #              tests/headless/test_annot_stale_0684.tcl is the single-window
 #              floor only: it cannot reach this branch, and says so.
-proc ase::ui::annot_refresh_after_run {key} {
+proc ase::ui::annot_refresh_after_run {key {force 0}} {
   set win [ase::ui::annot_design_win $key]
   if {$win eq {}} { return 0 }
   set cur {}
@@ -4009,7 +4043,7 @@ proc ase::ui::annot_refresh_after_run {key} {
     set back 1
   }
   set did 0
-  catch {set did [ase::ui::annot_refresh_here $key]}
+  catch {set did [ase::ui::annot_refresh_here $key $force]}
   if {$back} { catch {xschem new_schematic switch $cur} }
   return $did
 }
@@ -4022,12 +4056,12 @@ proc ase::ui::annot_refresh_after_run {key} {
 # ones this session just produced" -- and one body answers it, so the 0838
 # staleness refusal, the level resolution and the single failure sentence cannot
 # drift between the two doors.
-proc ase::ui::annot_refresh_here {key} {
+proc ase::ui::annot_refresh_here {key {force 0}} {
   set m 0
   catch {set m [xschem get annot_show]}
   if {![string is integer -strict $m]} { set m 0 }
   if {($m & 3) == 0} { return 0 }
-  ase::ui::annot_ensure_loaded $key
+  ase::ui::annot_ensure_loaded $key $force
   catch {xschem update_all_sym_bboxes}
   catch {xschem redraw}
   return 1
@@ -4721,6 +4755,27 @@ proc ase::ui::rsel_commit {key} {
   # region can no longer disagree about the same file.
   set opts [ase::ui::rsel_resolve_input $key $path]
   set abs [ase::ui::rsel_abs $key $path $opts]
+  # ISSUE 1666 (R911): the view BEFORE anything moves it. `results::select`
+  # reaches `results::persist`, which records the new selection itself when a
+  # viewer is open -- read afterwards, `was` would already equal `now` and the
+  # Outputs, title and status would never repaint (SVR45b).
+  set was {}
+  catch {set was [ase::result_view $key]}
+  set ckind [ase::state_get $cand kind]
+  set opts [ase::ui::rsel_saved_opts $key $ckind $abs $opts]
+  if {$ckind eq {saved}} {
+    if {![file isfile $abs] && [ase::saved_meta [file dirname $abs]] ne {}} {
+      # R909a: a saved failed run with no results file -- the view moves (its
+      # log answers), nothing is read into the registry.
+      ase::ui::rsel_release $key $b
+      ase::result_sel_note $key $abs
+      ase::ui::rsel_status $key [ase::ui::lbl_rsel_noraw \
+        [ase::state_get [ase::saved_meta [file dirname $abs]] name]]
+      catch {ase::ui::result_view_changed $key}
+      ase::ui::rsel_fill $key
+      return 1
+    }
+  }
   if {![file isfile $abs]} {
     ase::ui::rsel_release $key $b
     ase::ui::rsel_status $key "No such result file '[file tail $path]' —\
@@ -4754,11 +4809,36 @@ proc ase::ui::rsel_commit {key} {
     set msg "Could not select [file tail $path] — nothing was loaded and the\
  previous result is unchanged."
   }
+  # ISSUE 1666 (R911): the session's view follows what was selected, whatever
+  # the row; `Last run` (or any non-saved raw) means the live run.
+  if {$how ne {refused}} {
+    if {$ckind eq {lastrun}} {
+      ase::result_sel_note $key {}
+    } else {
+      ase::result_sel_note $key $abs
+    }
+    set now {}
+    catch {set now [ase::result_view $key]}
+    if {$now ne $was} { catch {ase::ui::result_view_changed $key} }
+  }
   ase::ui::rsel_status $key $msg
   # R406: the dialog STAYS OPEN and refreshes -- the current-slot mark has
   # moved, and a first select of a new file has added a row to both lists.
   ase::ui::rsel_fill $key
   return [expr {$how eq {refused} ? 0 : 1}]
+}
+
+# ISSUE 1666 (R910) -- the select options for a row of KIND bound to ABS. A
+# SAVED row binds through the same door with no `netlist` (the live
+# `<cell>.spice` would call every saved result stale), its own folder as
+# `rundir`, and the LIVE raw as the fallback; `Last run` is the live raw
+# (R912a), never the result in view. Pure, so the counted arm fences it (SVR25b).
+proc ase::ui::rsel_saved_opts {key kind abs opts} {
+  if {$kind ne {saved}} { return $opts }
+  catch {dict unset opts netlist}
+  dict set opts rundir [file dirname $abs]
+  dict set opts derived [ase::live_rawfile $key]
+  return $opts
 }
 
 # ---------------------------------------------------------------------------
@@ -4772,7 +4852,16 @@ proc ase::ui::rsel_fill {key} {
   set w [dict get $wins $key].rsel
   if {![winfo exists $w]} { return 0 }
   set data [ase::ui::rsel_rows $key]
-  array unset dlg $key,rselmap,*
+  # ONLY this form's maps: Delete's `rdel-saved` rows live in the same array,
+  # and a blanket unset left its list unmapped -- "Nothing selected." with rows
+  # highlighted (SVR47b).
+  array unset dlg $key,rselmap,loaded,*
+  array unset dlg $key,rselmap,recent,*
+  # ISSUE 1666: the Saved region, from the Directory field (re-list only)
+  if {[winfo exists $w.saved.list.tv]} {
+    catch {ase::ui::saved_tv_fill $key rsel $w.saved.list.tv \
+             [ase::ui::rsel_saved_rows $key [ase::ui::rsel_saved_dir $key rsel]]}
+  }
   foreach which {loaded recent} {
     set tv $w.$which.tv
     if {![winfo exists $tv]} continue
@@ -4839,6 +4928,7 @@ proc ase::ui::rsel_pick {key which} {
   set dlg($key,rselsupp) 1
   set other [expr {$which eq {loaded} ? {recent} : {loaded}}]
   if {[winfo exists $w.$other.tv]} { catch {$w.$other.tv selection set {}} }
+  if {[winfo exists $w.saved.list.tv]} { catch {$w.saved.list.tv selection set {}} }
   set dlg($key,rselsupp) 0
   set id [lindex $sel 0]
   if {![info exists dlg($key,rselmap,$which,$id)]} { return {} }
@@ -4940,7 +5030,9 @@ proc ase::ui::rsel_close {key} {
     catch {destroy $w}
   }
   ase::ui::rsel_preview_cancel $key
-  array unset dlg $key,rselmap,*
+  array unset dlg $key,rselmap,loaded,*
+  array unset dlg $key,rselmap,recent,*
+  array unset dlg $key,rselmap,rsel-saved,*
   catch {unset dlg($key,rselcand)}
   catch {unset dlg($key,rselsupp)}
   catch {unset dlg($key,rseltip)}
@@ -4978,16 +5070,24 @@ proc ase::ui::rsel_dialog {key} {
   wm title $w [expr {$cell eq {} ? {Select Results} : "Select Results — $cell"}]
   grid columnconfigure $w 0 -weight 1
 
-  # --- R405: LOADED FIRST. This is the primary control, not the chooser.
+  # --- ISSUE 1666 (R919): SAVED, above Loaded -- ADE-L's Select lists the
+  # saved results, and choosing one is the point of saving it.
+  set stv [ase::ui::saved_region $key $w rsel browse]
+  grid $w.saved -row 0 -column 0 -sticky nsew -padx 6 -pady {6 2}
+  grid rowconfigure $w 0 -weight 2
+  bind $stv <<TreeviewSelect>> [list ase::ui::rsel_pick_saved $key]
+  bind $stv <Double-1> [list ase::ui::rsel_dblclick_saved $key]
+
+  # --- R405: LOADED FIRST of the registry lists. The primary control there.
   labelframe $w.loaded -text {Loaded}
   ase::ui::rsel_build_list $key $w loaded
-  grid $w.loaded -row 0 -column 0 -sticky nsew -padx 6 -pady {6 2}
-  grid rowconfigure $w 0 -weight 2
+  grid $w.loaded -row 1 -column 0 -sticky nsew -padx 6 -pady 2
+  grid rowconfigure $w 1 -weight 2
 
   labelframe $w.recent -text {Recent}
   ase::ui::rsel_build_list $key $w recent
-  grid $w.recent -row 1 -column 0 -sticky nsew -padx 6 -pady 2
-  grid rowconfigure $w 1 -weight 1
+  grid $w.recent -row 2 -column 0 -sticky nsew -padx 6 -pady 2
+  grid rowconfigure $w 2 -weight 1
 
   frame $w.path
   label $w.path.l -text {Path:} -anchor w
@@ -4997,11 +5097,11 @@ proc ase::ui::rsel_dialog {key} {
   pack $w.path.l -side left -padx {0 4}
   pack $w.path.browse -side right -padx {6 0}
   pack $w.path.e -side left -fill x -expand 1
-  grid $w.path -row 2 -column 0 -sticky we -padx 6 -pady 2
+  grid $w.path -row 3 -column 0 -sticky we -padx 6 -pady 2
 
   # R404's Status region: ONE line, and it is the resolver's sentence.
   label $w.status -anchor w -justify left -text {}
-  grid $w.status -row 3 -column 0 -sticky we -padx 6 -pady 2
+  grid $w.status -row 4 -column 0 -sticky we -padx 6 -pady 2
 
   # R404: `Select` and `Close`, and NO OK/Apply pair -- selecting is not a
   # form submission, and the dialog does not close on it (R406).
@@ -5010,7 +5110,7 @@ proc ase::ui::rsel_dialog {key} {
   button $w.btns.close -text Close -command [list ase::ui::rsel_close $key]
   pack $w.btns.select -side left -padx 5
   pack $w.btns.close -side right -padx 5
-  grid $w.btns -row 4 -column 0 -sticky we -padx 6 -pady {2 6}
+  grid $w.btns -row 5 -column 0 -sticky we -padx 6 -pady {2 6}
 
   bind $w.path.e <Return> [list ase::ui::rsel_commit $key]
   bind $w.path.e <KeyRelease> [list ase::ui::rsel_preview_soon $key %K]
@@ -5021,12 +5121,15 @@ proc ase::ui::rsel_dialog {key} {
   ase::ui::apply_theme $w
   # tag colours AFTER apply_theme (which sets the Ase.Treeview style) and
   # through the single accessor only -- R403 / the Calculator's RULING-1.
+  catch {$stv tag configure cur -foreground [ase::theme accent]}
+  catch {$stv tag configure plain -foreground [ase::theme fieldfg]}
   foreach which {loaded recent} {
     catch {$w.$which.tv tag configure cur -foreground [ase::theme accent]}
     catch {$w.$which.tv tag configure inreg -foreground [ase::theme accent]}
     catch {$w.$which.tv tag configure plain -foreground [ase::theme fieldfg]}
   }
   ase::ui::rsel_fill $key
+  focus $stv
   return $w
 }
 
@@ -5054,6 +5157,539 @@ proc ase::ui::rsel_build_list {key w which} {
   bind $f.tv <Motion> [list ase::ui::rsel_tip $key $which %W %x %y]
   bind $f.tv <Leave> [list ase::ui::rsel_tip_cancel $key %W]
   return $f.tv
+}
+
+
+# ═══ ISSUE 1666: Results > Save… / Select… (Saved) / Delete… ══════════════════
+# doc/claude/specs/results_selection.md §20.6-§20.7. The engine half is the pure
+# layer in src/ase.tcl (`ase::saved_*`, `ase::result_view`); everything here is
+# the forms and the repaint. Modeless, no grab, ESC = Cancel/Close; the user
+# opened the form, so it takes focus (Save focuses `Save As` with the default
+# selected); echoes raise and focus nothing.
+
+proc ase::ui::saved_fmt_time {t} {
+  if {![string is integer -strict $t]} { return {} }
+  return [clock format $t -format {%Y-%m-%d %H:%M}]
+}
+
+# " — <name>" while a saved result is in view, else {} (R914).
+proc ase::ui::result_view_suffix {key} {
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {$v eq {}} { return {} }
+  set m [ase::saved_meta $v]
+  if {$m eq {}} { return {} }
+  return " — [ase::state_get $m name]"
+}
+
+# R913a/R914 -- the view changed: repaint every reader quietly, then say once
+# which result is in view. Raises and focuses nothing.
+# The schematic's numbers follow too: with Annotate on, the design window is
+# re-attached to the result now in view (FORCE: the database already attached
+# is the PREVIOUS view's, and its freshness stamp would call it current).
+# Deferred for `run_finished`'s reason: this can be reached inside a borrowed
+# viewer context.
+proc ase::ui::result_view_changed {key} {
+  variable viewpainted
+  set v {}
+  catch {set v [ase::result_view $key]}
+  dict set viewpainted $key $v
+  catch {ase::quiet [list ase::ui::results_refill $key]}
+  catch {ase::ui::meas_fill $key}
+  catch {ase::ui::health_refresh $key}
+  catch {ase::ui::annot_menu_sync $key}
+  catch {ase::ui::refresh_title $key}
+  catch {ase::ui::refresh_status $key}
+  catch {ase::ui::rsave_refresh $key}
+  catch {after idle [list ase::ui::annot_view_idle $key]}
+  if {$v eq {}} {
+    catch {::ase::echo [ase::ui::lbl_results_live]}
+  } else {
+    set m [ase::saved_meta $v]
+    catch {::ase::echo [ase::ui::lbl_results_view [ase::state_get $m name] \
+                         [ase::ui::saved_fmt_time [ase::state_get $m saved]]]}
+  }
+  return $v
+}
+
+# What `result_view_changed` last painted, per session (absent = never).
+namespace eval ase::ui {
+  variable viewpainted
+  if {![info exists viewpainted]} { set viewpainted [dict create] }
+}
+
+# A door that moved the view WITHOUT the dialog (the viewer's own select
+# doors, through `results::persist`) asks for this at idle: repaint unless the
+# view now showing is the one last painted (SVR27e).
+proc ase::ui::result_view_sync {key} {
+  variable viewpainted
+  if {![ase::session_exists $key]} { return 0 }
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {[dict exists $viewpainted $key] && [dict get $viewpainted $key] eq $v} { return 0 }
+  catch {ase::ui::result_view_changed $key}
+  return 1
+}
+
+proc ase::ui::annot_view_idle {key} {
+  catch {ase::ui::annot_refresh_after_run $key 1}
+}
+
+# --- Save… --------------------------------------------------------------------
+
+proc ase::ui::rsave_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].rsave
+  if {[info commands winfo] eq {} || ![winfo exists $w]} { return {} }
+  return $w
+}
+
+# The directory the form shows: `results_dir`, else the default `<rundir>/saved`.
+proc ase::ui::rsave_dir_default {key} {
+  set st [ase::session_state $key]
+  set d [string trim [ase::state_get $st results_dir]]
+  if {$d ne {}} { return $d }
+  return [ase::saved_default_base $st]
+}
+
+# The Source line: the result in view.
+proc ase::ui::rsave_source_text {key} {
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {$v ne {}} {
+    return [ase::ui::lbl_rsave_source_saved [ase::state_get [ase::saved_meta $v] name]]
+  }
+  set t {}
+  set rf [ase::live_rawfile $key]
+  if {$rf ne {}} { catch {set t [ase::ui::saved_fmt_time [file mtime $rf]]} }
+  return [ase::ui::lbl_rsave_source_live $t]
+}
+
+proc ase::ui::rsave_status {key msg} {
+  variable dlg
+  set dlg($key,rsavestatus) $msg
+  set w [ase::ui::rsave_win $key]
+  if {$w ne {}} { catch {$w.status configure -text $msg} }
+  return $msg
+}
+
+# Re-derive what the form shows that depends on the run: OK enabled unless the
+# live run is being written, the Source line, and the busy sentence. Called by
+# the form itself and by run_finished (SVR44).
+proc ase::ui::rsave_refresh {key} {
+  set w [ase::ui::rsave_win $key]
+  if {$w eq {}} { return {} }
+  set live 1
+  catch {set live [expr {[ase::result_view $key] eq {}}]}
+  set busy {}
+  if {$live} { catch {set busy [ase::rundir_busy $key]} }
+  catch {$w.src configure -text [ase::ui::rsave_source_text $key]}
+  if {$busy eq {run}} {
+    catch {$w.btns.proceed configure -state disabled}
+    ase::ui::rsave_status $key [ase::ui::lbl_rsave_busy]
+  } else {
+    catch {$w.btns.proceed configure -state normal}
+    variable dlg
+    if {[info exists dlg($key,rsavestatus)] &&
+        $dlg($key,rsavestatus) eq [ase::ui::lbl_rsave_busy]} {
+      ase::ui::rsave_status $key {}
+    }
+  }
+  return $busy
+}
+
+proc ase::ui::rsave_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  if {[info commands winfo] eq {}} { return {} }
+  set w [ase::ui::rsave_win $key]
+  if {$w ne {}} {
+    catch {wm deiconify $w}
+    catch {raise $w}
+    ase::ui::rsave_refresh $key
+    return $w
+  }
+  set w [ase::ui::dialog_frame [dict get $wins $key].rsave [ase::ui::lbl_rsave_title]]
+  set e [ase::ui::dialog_row $w 0 {Save As} name]
+  $e configure -width 40
+  $e insert 0 [ase::saved_default_name $key]
+  label $w.lcomment -text Comment -font AseLabelFont -anchor nw
+  text $w.comment -height 3 -width 40 -font AseEntryFont -wrap word
+  grid $w.lcomment -row 1 -column 0 -sticky nw -padx {8 6} -pady 2
+  grid $w.comment -row 1 -column 1 -sticky we -padx {0 8} -pady 2
+  set d [ase::ui::dialog_row $w 2 Directory dir]
+  $d configure -width 40
+  $d insert 0 [ase::ui::rsave_dir_default $key]
+  button $w.browse -text "Browse…" -command [list ase::ui::rsave_browse $key]
+  grid $w.browse -row 2 -column 2 -sticky w -padx {0 8} -pady 2
+  label $w.lsrc -text Source -font AseLabelFont -anchor w
+  label $w.src -font AseLabelFont -anchor w -text [ase::ui::rsave_source_text $key]
+  grid $w.lsrc -row 3 -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.src -row 3 -column 1 -columnspan 2 -sticky we -padx {0 8} -pady 2
+  label $w.status -font AseLabelFont -anchor w -justify left -wraplength 480 -text {}
+  grid $w.status -row 4 -column 0 -columnspan 3 -sticky we -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 5 [list ase::ui::rsave_ok $key] \
+    [list ase::ui::rsave_close $key]
+  grid configure $w.btns -columnspan 3
+  bind $e <Return> [list ase::ui::rsave_ok $key]
+  bind $d <Return> [list ase::ui::rsave_ok $key]
+  catch {ase::ui::dialog_close_protocol $w [list ase::ui::rsave_close $key]}
+  ase::ui::apply_theme $w
+  ase::ui::rsave_refresh $key
+  focus $e
+  $e selection range 0 end
+  $e icursor end
+  return $w
+}
+
+proc ase::ui::rsave_browse {key} {
+  set w [ase::ui::rsave_win $key]
+  if {$w eq {}} { return {} }
+  set p {}
+  if {[catch {tk_chooseDirectory -parent $w -initialdir [$w.dir get] \
+                -title [ase::ui::lbl_rsave_title]} p]} { return {} }
+  if {[string trim $p] eq {}} { return {} }
+  $w.dir delete 0 end
+  $w.dir insert 0 $p
+  return $p
+}
+
+proc ase::ui::rsave_close {key} {
+  variable dlg
+  set w [ase::ui::rsave_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+  catch {unset dlg($key,rsavestatus)}
+  return 1
+}
+
+# OK (and the confirm's OK, with CONFIRMED 1). One path for both.
+proc ase::ui::rsave_ok {key {confirmed 0}} {
+  set w [ase::ui::rsave_win $key]
+  if {$w eq {}} { return {} }
+  if {[$w.btns.proceed cget -state] eq {disabled}} { return {} }
+  set name [string trim [$w.name get]]
+  set comment [string trimright [$w.comment get 1.0 end] "\n"]
+  set dir [string trim [$w.dir get]]
+  set ddef [ase::saved_default_base [ase::session_state $key]]
+  set r [ase::saved_save $key $name $comment $dir $confirmed]
+  set how [ase::state_get $r how refused]
+  if {$how eq {needconfirm}} {
+    ase::ui::confirm $key [ase::ui::lbl_rsave_title] [ase::state_get $r msg] \
+      [list ase::ui::rsave_ok $key 1]
+    return $r
+  }
+  if {![ase::state_get $r ok 0]} {
+    ase::ui::rsave_status $key [ase::state_get $r msg]
+    return $r
+  }
+  # R901: a Directory other than the current one becomes the session's
+  # `results_dir` (session state: it dirties, Save State writes it); the
+  # default spelled out is stored as {}.
+  set st [ase::session_state $key]
+  set cur [string trim [ase::state_get $st results_dir]]
+  set want $dir
+  if {$dir eq {} || [ase::rundir_same_path $dir $ddef]} { set want {} }
+  if {$want ne {} && ![catch {file normalize [ase::expand_path $want]} n]} { set want $n }
+  if {!(($want eq {} && $cur eq {}) || ($want ne {} && [ase::rundir_same_path $want $cur]))} {
+    dict set st results_dir $want
+    ase::session_update $key $st
+  }
+  set note [ase::state_get $r note]
+  catch {::ase::echo "ase: [ase::state_get $r msg]"}
+  if {$note ne {}} { catch {::ase::echo "ase: $note"} }
+  ase::ui::rsave_close $key
+  catch {ase::ui::rsel_fill $key}
+  catch {ase::ui::rdel_fill $key}
+  return $r
+}
+
+# --- Select…: the Saved region (R919) -------------------------------------------
+
+# The directory Select's (or Delete's) Directory field names, or {} for the
+# session's own (R917: these fields only RE-LIST; they never dirty).
+proc ase::ui::rsel_saved_dir {key {form rsel}} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set e [dict get $wins $key].$form.saved.dirf.e
+  if {[info commands winfo] eq {} || ![winfo exists $e]} { return {} }
+  set d [string trim [$e get]]
+  if {$d eq {} || [ase::rundir_same_path $d [ase::ui::rsave_dir_default $key]]} {
+    return {}
+  }
+  return $d
+}
+
+# The Saved rows, widget-free: `Last run` first (LASTRUN 1), then every saved
+# result newest first. Each {kind path type label name saved comment dir}.
+proc ase::ui::rsel_saved_rows {key {dir {}} {lastrun 1}} {
+  set out {}
+  if {$lastrun} {
+    lappend out [dict create kind lastrun path [ase::live_rawfile $key] type {} \
+                   label [ase::ui::lbl_rsel_lastrun] name {} saved {} comment {} dir {}]
+  }
+  set cell [lindex [ase::saved_design [ase::session_state $key]] 1]
+  foreach r [ase::saved_list $key $dir] {
+    set d [ase::state_get $r dir]
+    lappend out [dict create kind saved path [file join $d ${cell}_ase.raw] \
+                   type [ase::state_get $r viewtype] label [ase::state_get $r name] \
+                   name [ase::state_get $r name] \
+                   saved [ase::ui::saved_fmt_time [ase::state_get $r saved]] \
+                   comment [ase::state_get $r comment] dir $d]
+  }
+  return $out
+}
+
+# Fill a Saved treeview (Select's or Delete's) and its map.
+proc ase::ui::saved_tv_fill {key form tv rows} {
+  variable dlg
+  array unset dlg $key,rselmap,$form-saved,*
+  catch {$tv delete [$tv children {}]}
+  set v {}
+  catch {set v [ase::result_view $key]}
+  set i 0
+  foreach row $rows {
+    set id S$i ; incr i
+    set cur 0
+    if {[ase::state_get $row kind] eq {lastrun}} {
+      set cur [expr {$v eq {}}]
+    } elseif {$v ne {} && [ase::state_get $row dir] eq $v} {
+      set cur 1
+    }
+    set c1 [lindex [split [ase::state_get $row comment] "\n"] 0]
+    $tv insert {} end -id $id \
+      -values [list [expr {$cur ? "•" : {}}] [ase::state_get $row label] \
+                 [ase::state_get $row saved] $c1] \
+      -tags [expr {$cur ? {cur} : {plain}}]
+    set dlg($key,rselmap,$form-saved,$id) $row
+  }
+  return $i
+}
+
+proc ase::ui::saved_comment_show {key form row} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set t [dict get $wins $key].$form.saved.comment
+  if {![winfo exists $t]} { return }
+  catch {
+    $t configure -state normal
+    $t delete 1.0 end
+    $t insert end [ase::state_get $row comment]
+    $t configure -state disabled
+  }
+}
+
+# The Saved region of a form W (Select's or Delete's).
+proc ase::ui::saved_region {key w form mode} {
+  labelframe $w.saved -text [ase::ui::lbl_rsel_saved]
+  frame $w.saved.dirf
+  label $w.saved.dirf.l -text Directory -font AseLabelFont -anchor w
+  entry $w.saved.dirf.e -width 40 -font AseEntryFont
+  $w.saved.dirf.e insert 0 [ase::ui::rsave_dir_default $key]
+  button $w.saved.dirf.b -text "Browse…" \
+    -command [list ase::ui::saved_dir_browse $key $form]
+  pack $w.saved.dirf.l -side left -padx {0 4}
+  pack $w.saved.dirf.b -side right -padx {6 0}
+  pack $w.saved.dirf.e -side left -fill x -expand 1
+  pack $w.saved.dirf -side top -fill x -padx 2 -pady 2
+  set f $w.saved.list
+  frame $f
+  ttk::treeview $f.tv -columns {mark name saved comment} -show headings \
+    -selectmode $mode -height 5 -style Ase.Treeview -yscrollcommand [list $f.sb set]
+  $f.tv heading mark -text {}
+  $f.tv heading name -text Name
+  $f.tv heading saved -text Saved
+  $f.tv heading comment -text Comment
+  $f.tv column mark -width [ase::ui::colw 2 {}] -minwidth [ase::ui::colw 2 {}] \
+    -anchor center -stretch 0
+  $f.tv column name -width [ase::ui::colw 18 Name] -minwidth [ase::ui::colw 0 Name] \
+    -anchor w -stretch 1
+  $f.tv column saved -width [ase::ui::colw 16 Saved] -minwidth [ase::ui::colw 0 Saved] \
+    -anchor w -stretch 0
+  $f.tv column comment -width [ase::ui::colw 22 Comment] \
+    -minwidth [ase::ui::colw 0 Comment] -anchor w -stretch 1
+  scrollbar $f.sb -orient vertical -command [list $f.tv yview]
+  pack $f.sb -side right -fill y
+  pack $f.tv -side left -fill both -expand 1
+  pack $f -side top -fill both -expand 1 -padx 2
+  text $w.saved.comment -height 3 -width 40 -font AseEntryFont -wrap word \
+    -state disabled
+  pack $w.saved.comment -side top -fill x -padx 2 -pady 2
+  bind $w.saved.dirf.e <Return> [list ase::ui::saved_relist $key $form]
+  bind $w.saved.dirf.e <FocusOut> [list ase::ui::saved_relist $key $form]
+  return $f.tv
+}
+
+proc ase::ui::saved_dir_browse {key form} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set e [dict get $wins $key].$form.saved.dirf.e
+  if {![winfo exists $e]} { return {} }
+  set p {}
+  if {[catch {tk_chooseDirectory -parent [winfo toplevel $e] -initialdir [$e get]} p]} {
+    return {}
+  }
+  if {[string trim $p] eq {}} { return {} }
+  $e delete 0 end
+  $e insert 0 $p
+  ase::ui::saved_relist $key $form
+  return $p
+}
+
+proc ase::ui::saved_relist {key form} {
+  if {$form eq {rsel}} { return [ase::ui::rsel_fill $key] }
+  return [ase::ui::rdel_fill $key]
+}
+
+# A Saved row was picked in Select: arm it like any other row, and show its
+# whole comment.
+proc ase::ui::rsel_pick_saved {key} {
+  variable wins; variable dlg
+  if {[info exists dlg($key,rselsupp)] && $dlg($key,rselsupp)} { return {} }
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].rsel
+  set tv $w.saved.list.tv
+  if {![winfo exists $tv]} { return {} }
+  set sel [$tv selection]
+  if {$sel eq {}} { return {} }
+  set dlg($key,rselsupp) 1
+  foreach o {loaded recent} {
+    if {[winfo exists $w.$o.tv]} { catch {$w.$o.tv selection set {}} }
+  }
+  set dlg($key,rselsupp) 0
+  set id [lindex $sel 0]
+  if {![info exists dlg($key,rselmap,rsel-saved,$id)]} { return {} }
+  set row $dlg($key,rselmap,rsel-saved,$id)
+  ase::ui::saved_comment_show $key rsel $row
+  ase::ui::rsel_arm $key [ase::state_get $row path] [ase::state_get $row type] \
+    [ase::state_get $row kind]
+  set dlg($key,rselcand) [dict merge $dlg($key,rselcand) \
+    [dict create dir [ase::state_get $row dir] name [ase::state_get $row name]]]
+  catch {ase::ui::rsel_preview $key}
+  return $row
+}
+
+proc ase::ui::rsel_dblclick_saved {key} {
+  if {[ase::ui::rsel_pick_saved $key] eq {}} { return 0 }
+  return [ase::ui::rsel_commit $key]
+}
+
+# --- Delete… --------------------------------------------------------------------
+
+proc ase::ui::rdel_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].rdel
+  if {[info commands winfo] eq {} || ![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::rdel_fill {key} {
+  set w [ase::ui::rdel_win $key]
+  if {$w eq {}} { return 0 }
+  set rows [ase::ui::rsel_saved_rows $key [ase::ui::rsel_saved_dir $key rdel] 0]
+  ase::ui::saved_tv_fill $key rdel $w.saved.list.tv $rows
+  ase::ui::saved_comment_show $key rdel {}
+  return 1
+}
+
+proc ase::ui::rdel_pick {key} {
+  variable dlg
+  set w [ase::ui::rdel_win $key]
+  if {$w eq {}} { return {} }
+  set sel [$w.saved.list.tv selection]
+  set row {}
+  if {[llength $sel] == 1 && [info exists dlg($key,rselmap,rdel-saved,[lindex $sel 0])]} {
+    set row $dlg($key,rselmap,rdel-saved,[lindex $sel 0])
+  }
+  ase::ui::saved_comment_show $key rdel $row
+  return $row
+}
+
+# The names highlighted in Delete's list.
+proc ase::ui::rdel_names {key} {
+  variable dlg
+  set w [ase::ui::rdel_win $key]
+  if {$w eq {}} { return {} }
+  set out {}
+  foreach id [$w.saved.list.tv selection] {
+    if {[info exists dlg($key,rselmap,rdel-saved,$id)]} {
+      lappend out [ase::state_get $dlg($key,rselmap,rdel-saved,$id) name]
+    }
+  }
+  return $out
+}
+
+proc ase::ui::rdel_status {key msg} {
+  set w [ase::ui::rdel_win $key]
+  if {$w ne {}} { catch {$w.status configure -text $msg} }
+  return $msg
+}
+
+# Delete: confirm first (R918), with the count spelled.
+proc ase::ui::rdel_delete {key} {
+  set names [ase::ui::rdel_names $key]
+  if {![llength $names]} {
+    ase::ui::rdel_status $key [ase::ui::lbl_rdel_none]
+    return {}
+  }
+  return [ase::ui::confirm $key [ase::ui::lbl_rdel_title] \
+            [ase::ui::lbl_rdel_confirm [llength $names]] \
+            [list ase::ui::rdel_go $key $names [ase::ui::rsel_saved_dir $key rdel]]]
+}
+
+proc ase::ui::rdel_go {key names dir} {
+  set r [ase::saved_delete $key $names $dir]
+  ase::ui::rdel_status $key [ase::state_get $r msg]
+  if {[ase::state_get $r ok 0]} { catch {::ase::echo "ase: [ase::state_get $r msg]"} }
+  catch {ase::ui::rdel_fill $key}
+  catch {ase::ui::rsel_fill $key}
+  return $r
+}
+
+proc ase::ui::rdel_close {key} {
+  variable dlg
+  set w [ase::ui::rdel_win $key]
+  if {$w ne {}} { catch {destroy $w} }
+  array unset dlg $key,rselmap,rdel-saved,*
+  return 1
+}
+
+proc ase::ui::rdel_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  if {[info commands winfo] eq {}} { return {} }
+  set w [ase::ui::rdel_win $key]
+  if {$w ne {}} {
+    catch {wm deiconify $w}
+    catch {raise $w}
+    ase::ui::rdel_fill $key
+    return $w
+  }
+  set w [dict get $wins $key].rdel
+  toplevel $w
+  wm title $w [ase::ui::lbl_rdel_title]
+  grid columnconfigure $w 0 -weight 1
+  set tv [ase::ui::saved_region $key $w rdel extended]
+  grid $w.saved -row 0 -column 0 -sticky nsew -padx 6 -pady {6 2}
+  grid rowconfigure $w 0 -weight 1
+  label $w.status -anchor w -justify left -text {}
+  grid $w.status -row 1 -column 0 -sticky we -padx 6 -pady 2
+  frame $w.btns
+  button $w.btns.delete -text Delete -command [list ase::ui::rdel_delete $key]
+  button $w.btns.close -text Close -command [list ase::ui::rdel_close $key]
+  pack $w.btns.delete -side left -padx 5
+  pack $w.btns.close -side right -padx 5
+  grid $w.btns -row 2 -column 0 -sticky we -padx 6 -pady {2 6}
+  bind $tv <<TreeviewSelect>> [list ase::ui::rdel_pick $key]
+  ase::ui::bind_dialog_esc $w [list ase::ui::rdel_close $key]
+  wm protocol $w WM_DELETE_WINDOW [list ase::ui::rdel_close $key]
+  ase::ui::apply_theme $w
+  catch {$tv tag configure cur -foreground [ase::theme accent]}
+  catch {$tv tag configure plain -foreground [ase::theme fieldfg]}
+  ase::ui::rdel_fill $key
+  focus $tv
+  return $w
 }
 
 # The Add/Edit Output dialog's "From Design…" button: flavor = the dialog's
@@ -6829,6 +7465,15 @@ proc ase::ui::nz_names {key type field fn} {
   return $v
 }
 
+# The stimulus vector count of the result in view, its plotmap read against
+# the run state it was written for (R906); {} under a saved view with no run
+# state. Window-free, so the counted arm fences it (SVR23b).
+proc ase::ui::nz_nvec {key sim type} {
+  set _pst [ase::result_plotmap_state $key]
+  if {$_pst eq {}} { return {} }
+  return [ase::stimuli_nvec $sim $_pst [ase::ui::chana_row_idx $key $type]]
+}
+
 # BUILD (OR REMOVE) THE SECTION. Called by `chana_show` on every rebuild.
 proc ase::ui::nz_build {key} {
   variable wins; variable dlg
@@ -6866,7 +7511,9 @@ proc ase::ui::nz_build {key} {
   set st [ase::session_state $key]
   set dlg($key,nzfacts) [ase::netlist_facts_cached $st]
   set dlg($key,nztext) [ase::facts_netlist_text $st]
-  set dlg($key,nznvec) [ase::stimuli_nvec $sim $st [ase::ui::chana_row_idx $key $type]]
+  ## ISSUE 1666 (R906): the plotmap of the result in view, read against the
+  ## run state it was written for; {} under a saved view with no run state.
+  set dlg($key,nznvec) [ase::ui::nz_nvec $key $sim $type]
   label $w.cap -text [ase::ui::lbl_nz_caption $sim $type] -anchor w -justify left \
     -wraplength 600
   grid $w.cap -row 1 -column 0 -sticky w
@@ -8447,7 +9094,7 @@ proc ase::ui::meas_state {key} {
 # is shown immediately -- which is the half worth having before a run.
 proc ase::ui::meas_ran {key} {
   set p {}
-  if {[catch {ase::meas_path [ase::session_state $key]} p]} { return 0 }
+  if {[catch {ase::meas_path [ase::result_state $key]} p]} { return 0 }   ;# 1666 R913
   return [expr {[file isfile $p] ? 1 : 0}]
 }
 
@@ -8490,7 +9137,11 @@ proc ase::ui::meas_value_cell {e ran} {
 proc ase::ui::meas_results_list {key} {
   set out {}
   catch {
-    set out [ase::meas_results [ase::ui::meas_sim $key] [ase::ui::meas_state $key]]
+    ## ISSUE 1666 (R913): the sidecar of the result in view; the ROWS are the
+    ## form's (meas_state), only `rundir` follows the view.
+    set _ms [ase::ui::meas_state $key]
+    dict set _ms rundir [ase::state_get [ase::result_state $key] rundir]
+    set out [ase::meas_results [ase::ui::meas_sim $key] $_ms]
   }
   return $out
 }
@@ -9510,7 +10161,10 @@ proc ase::ui::set_rundir {key path} {
   if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
   set st [ase::session_state $key]
   if {[ase::state_get $st rundir] eq $path} { return $path }
+  set pin {}
+  catch {set pin [ase::rundir_set_pins $st $path]}
   ase::session_update $key [ase::rundir_set $st $path]
+  if {$pin ne {}} { catch {::ase::echo [ase::ui::lbl_rsave_pinned $pin]} }
   catch {ase::ui::results_refill $key}
   catch {ase::ui::populate $key}
   ## caught whole: `camp_win` asks `winfo`, which is absent under --nogui
@@ -11150,6 +11804,63 @@ proc ase::ui::lbl_sim_temperature  {} { return {Simulation temperature} }
 # arm it did not come to change. Only `lbl_overwrite_state` is new copy, and it
 # is the USER'S ruling (their words: "Just confirm if overwriting an existing
 # state"), recorded on the ledger as a rule debt, not a crew's wording.
+
+# --- ISSUE 1666: saved results (results_selection.md §20.9) -------------------
+# Every sentence the saved-results layer says. Terse, acronyms uppercase,
+# plurals spelled. A sentence shown on a form's Status line is bare and the
+# echo adds `ase:`; the three that only ever go to the CIW (`lbl_results_view`,
+# `lbl_results_live`, `lbl_rsave_pinned`) carry the prefix themselves.
+proc ase::ui::lbl_rsave_menu {} { return "Save…" }
+proc ase::ui::lbl_rsel_menu {} { return "Select…" }
+proc ase::ui::lbl_rdel_menu {} { return "Delete…" }
+# R917: the Results menu, ONE list read by the builder's rows (GM2, SEL389,
+# SVR40). `--` is a separator.
+proc ase::ui::results_menu_labels {} {
+  return [list [ase::ui::lbl_rsave_menu] [ase::ui::lbl_rsel_menu] \
+            [ase::ui::lbl_rdel_menu] -- {Direct Plot} Annotate -- \
+            [ase::ui::lbl_hilite_menu]]
+}
+proc ase::ui::lbl_rsave_title {} { return {Save Results} }
+proc ase::ui::lbl_rdel_title {} { return {Delete Results} }
+proc ase::ui::lbl_rsave_badname {} { return "Name: 1 to 64 characters, no / or \\." }
+proc ase::ui::lbl_rsave_nosession {} { return "No ASE-L session." }
+proc ase::ui::lbl_rsave_busy {} { return "Run in progress." }
+proc ase::ui::lbl_rsave_campaign {} {
+  return "Campaign results are not saved; saving the single run."
+}
+proc ase::ui::lbl_rsave_noraw {} { return "No results to save." }
+proc ase::ui::lbl_rsave_empty {} { return "The results file holds no simulation data." }
+proc ase::ui::lbl_rsave_badroot {} { return "Directory overlaps the run directory." }
+proc ase::ui::lbl_rsave_notsaved {name} { return "$name exists and is not a saved result." }
+proc ase::ui::lbl_rsave_self {name} { return "$name is the result being saved." }
+proc ase::ui::lbl_rsave_changed {} { return "Results changed during save." }
+proc ase::ui::lbl_rsave_space {} { return "Not enough disk space." }
+proc ase::ui::lbl_rsave_failed {why} { return "Save failed: [string trim $why]" }
+proc ase::ui::lbl_rsave_overwrite {name} { return "$name exists. Overwrite?" }
+proc ase::ui::lbl_rsave_done {name} { return "Saved $name." }
+proc ase::ui::lbl_rsave_source_live {when} { return "Last run, $when" }
+proc ase::ui::lbl_rsave_source_saved {name} { return "$name (saved)" }
+proc ase::ui::lbl_rdel_confirm {n} {
+  if {$n == 1} { return "Delete 1 saved result?" }
+  return "Delete $n saved results?"
+}
+proc ase::ui::lbl_rdel_done {n} {
+  if {$n == 1} { return "Deleted 1 saved result." }
+  return "Deleted $n saved results."
+}
+proc ase::ui::lbl_rdel_none {} { return "Nothing selected." }
+proc ase::ui::lbl_rsel_lastrun {} { return {Last run} }
+proc ase::ui::lbl_rsel_saved {} { return {Saved} }
+proc ase::ui::lbl_rsel_noraw {name} {
+  return "Selected $name: it has no results file, only its log."
+}
+proc ase::ui::lbl_results_view {name date} { return "ase: results: $name (saved $date)." }
+proc ase::ui::lbl_results_live {} { return "ase: results: last run." }
+proc ase::ui::lbl_rundir_in_saved {} {
+  return "That is a saved result; choose another run directory."
+}
+proc ase::ui::lbl_rsave_pinned {dir} { return "ase: saved results stay in $dir." }
+
 proc ase::ui::lbl_overwrite_state {lib cell view} {
   return "State $lib/$cell/$view exists. Overwrite?"
 }
@@ -11932,6 +12643,7 @@ proc ase::ui::do_load_state_from {key path} {
 # the echo family raising into its caller.
 proc ase::ui::load_state_commit {key st} {
   set rc [ase::session_update $key $st]
+  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
   if {!$rc} {
     catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
  was NOT imported." error}
@@ -12211,6 +12923,31 @@ proc ase::ui::viewer_snapshot {key} {
   if {$st eq {}} { return 0 }
   set prev [ase::state_get $st viewer]
   set vd [wviewer::snapshot $key $prev]
+  ## ISSUE 1666 (R915): with no viewer window the snapshot cannot ask the
+  ## engine what is selected, so the session's own record (Results > Select…)
+  ## is what reaches `viewer.rawfile`: a saved result by its path, and back to
+  ## {} when the user returned to the live run from a stored saved view.
+  set haswv 0
+  catch {set haswv [expr {[wviewer::window_for $key] ne {}}]}
+  if {!$haswv} {
+    lassign [ase::result_sel_get $key] has p
+    if {$has} {
+      if {$p ne {} && [ase::saved_name_of $p] ne {}} {
+        dict set vd rawfile $p
+      } elseif {$p eq {}} {
+        set old {}
+        catch {set old [ase::state_get $vd rawfile]}
+        if {$old ne {}} {
+          set oa $old
+          if {[catch {file pathtype $old} pt] == 0 && $pt ne {absolute} &&
+              [string trim [ase::state_get $st rundir]] ne {}} {
+            set oa [file join [ase::state_get $st rundir] $old]
+          }
+          if {[ase::saved_name_of $oa] ne {}} { dict set vd rawfile {} }
+        }
+      }
+    }
+  }
   set vd [ase::ui::viewer_rawfile_relative $vd $st]
   if {$vd eq $prev} { return 0 }
   dict set st viewer $vd
@@ -12332,6 +13069,14 @@ proc ase::ui::viewer_restore {key} {
     catch {::ase::echo "ase: [ase::state_get $res msg]"}
   }
   set sim_t [ase::plot_sim_type $st]
+  ## ISSUE 1666 (R915): a saved view restores as the type it was saved as
+  catch {
+    set _sv [ase::result_view $key]
+    if {$_sv ne {}} {
+      set _vt [ase::state_get [ase::saved_meta $_sv] viewtype]
+      if {$_vt ne {}} { set sim_t $_vt }
+    }
+  }
   # spec §D1 (DEFECT 1, 2026-08-09): THE DIGITAL DATABASES GO IN TOO. This was
   # the ONE attach site of the three that did not pass them — `dp_finish`
   # (:2014) and `auto_plot` (:3570) both hand `ase::last_vcdfiles` to
@@ -12478,6 +13223,7 @@ proc ase::ui::refresh_title {key} {
   set top [dict get $wins $key]
   if {![winfo exists $top]} { return }
   set t "Analog Sim Environment [ase::ui::design_cell_name $key]"
+  append t [ase::ui::result_view_suffix $key]   ;# issue 1666 R914
   if {[ase::session_getattr $key untitled 0] eq {1}} { append t { (unsaved)} }
   if {[ase::session_dirty $key]} { append t { *} }
   wm title $top $t
@@ -12503,7 +13249,7 @@ proc ase::ui::refresh_status {key} {
   $top.status.temp  configure -text "T=[ase::state_get $st temperature 27] C"
   $top.status.sim   configure -text \
     "Simulator: [ase::sim_label [ase::state_get $st simulator]]"
-  $top.status.state configure -text "State: $view"
+  $top.status.state configure -text "State: $view[ase::ui::result_view_suffix $key]"
   # R-OUT15: Load State / Revert move the drop-down with the state
   if {[winfo exists $top.status.dest]} {
     $top.status.dest set [ase::ui::plot_dest_label [ase::plot_dest_of $st]]
@@ -13228,6 +13974,10 @@ proc ase::ui::auto_plot_idle {key} {
 # the live run id.
 proc ase::ui::run_finished {key} {
   variable loglen
+  # ISSUE 1666 (R911a): the finished run is what the user is waiting for. A
+  # saved result selected WHILE it ran must not hide it from the Outputs, the
+  # auto-plot and the annotation below (SVR27f).
+  catch {ase::result_view_reset $key}
   if {[info exists loglen($key)]} {
     set data {}
     if {[info exists ::execute(data,last)]} { set data $::execute(data,last) }
@@ -13353,11 +14103,17 @@ proc ase::ui::run_finished {key} {
   # it can never go on describing the run before last.
   catch {ase::ui::health_refresh $key}
   ase::session_setattr $key run_id {}
+  ## ISSUE 1666 (SVR44): Save's OK comes back, and Select's list moves
+  catch {after idle [list catch [list ase::ui::rsave_refresh $key]]}
+  catch {ase::ui::rsel_fill $key}
 }
 
 # Wire a successfully started run into the window: run id bookkeeping, the
 # log toplevel (opened + cleared), the live trace, the Running status.
 proc ase::ui::run_started {key id} {
+  ## ISSUE 1666 (R911a): a launch that SUCCEEDED returns the view to the live
+  ## run; both Run doors reach here only after `ase::run*` returned an id.
+  catch {ase::result_view_reset $key}
   ase::session_setattr $key run_id $id
   ase::session_setattr $key stopped 0
   ase::ui::log_open $key
@@ -13812,7 +14568,7 @@ proc ase::ui::conv_op_type {} { return {op} }
 proc ase::ui::conv_logtext {key} {
   set txt {}
   catch {
-    set st [ase::session_state $key]
+    set st [ase::result_state $key]   ;# issue 1666 R913: the result in view
     set h [ase::backend_hook [ase::state_get $st simulator ngspice] log_file]
     set p [$h $st]
     set f [::open $p r]
@@ -13829,7 +14585,7 @@ proc ase::ui::conv_logtext {key} {
 proc ase::ui::conv_netlist_text {key} {
   set txt {}
   catch {
-    set st [ase::session_state $key]
+    set st [ase::result_state $key]   ;# issue 1666 R913: the result in view
     set p [file join [ase::rundir $st] [dict get $st design cell].spice]
     set f [::open $p r]
     set txt [::read $f]
@@ -15700,6 +16456,7 @@ proc ase::ui::camp_run {key} {
     return [dict create status nonetlist ran 0 of 0]
   }
   set dlg($key,camp,running) 1
+  catch {ase::result_view_reset $key}   ;# issue 1666 R911a: the launch is committed
   set dlg($key,camp,stop) 0
   set dlg($key,camp,at) 0
   set dlg($key,camp,ok) 0

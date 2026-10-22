@@ -71,7 +71,7 @@ namespace eval ase {
                         save_op_params measurements
                         opstrategy opstate runhealth
                         options includes pre_commands cosim viewer sweep
-                        plot_dest}
+                        plot_dest results_dir}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
   # LATER must not rewrite files that predate it — `state_load` merges over
@@ -130,8 +130,11 @@ namespace eval ase {
   # EQUAL to that default is stored as `{}` too (ase::ui::set_plot_dest), so
   # picking the default back never dirties a session; any other choice is
   # written out, so a saved session restores its own value whatever the rc says.
+  # `results_dir` (issue 1666, results_selection.md R901) is the ELEVENTH, for
+  # the identical reason: `{}` means the default `<rundir>/saved`.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
-                          opstrategy opstate runhealth sweep plot_dest}
+                          opstrategy opstate runhealth sweep plot_dest
+                          results_dir}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -14749,6 +14752,17 @@ proc ase::rundir_validate {text {state {}}} {
       return [list refuse {} [ase::rundir_reword $m]]
     }
   }
+  ## ISSUE 1666 (R901b): never a saved result, nor a path inside one -- the
+  ## next Run would delete and rewrite that copy.
+  set probe $p
+  while {1} {
+    if {[ase::saved_meta $probe] ne {}} {
+      return [list refuse {} [ase::saved_say rundir_in_saved]]
+    }
+    set up [file dirname $probe]
+    if {$up eq $probe} { break }
+    set probe $up
+  }
   if {[file exists $p]} {
     if {![file isdirectory $p]} {
       return [list refuse {} "`$p` is a file, not a directory."]
@@ -14872,9 +14886,29 @@ proc ase::rawfile_relative {path rundir} {
 # directory (R602f keeps the stale value through every later save). A relative
 # value under an EMPTY old key is left alone: R602e never relativised against
 # one, so such a value is not this proc's to reinterpret.
+#
+# ISSUE 1666 (R901c): when `results_dir` is empty and the OLD default results
+# directory (`<old rundir>/saved`) holds saved results, `results_dir` is pinned
+# to it, so results saved before the move stay listed. The caller says so
+# (`ase::rundir_set_pins` answers the directory it would pin).
+proc ase::rundir_set_pins {state path} {
+  if {[string trim [ase::state_get $state results_dir]] ne {}} { return {} }
+  if {[ase::rundir_same_path [ase::state_get $state rundir] $path]} { return {} }
+  set base [ase::saved_default_base $state]
+  if {$base eq {} || ![file isdirectory $base]} { return {} }
+  lassign [ase::saved_design $state] lib cell
+  if {$lib eq {}} { set lib _ }
+  set root [file join $base $lib $cell]
+  foreach d [glob -nocomplain -types d -directory $root *] {
+    if {[ase::saved_meta $d] ne {}} { return $base }
+  }
+  return {}
+}
 proc ase::rundir_set {state path} {
   set old [ase::state_get $state rundir]
   set new [dict replace $state rundir $path]
+  set pin [ase::rundir_set_pins $state $path]
+  if {$pin ne {}} { dict set new results_dir $pin }
   if {[catch {ase::state_get [ase::state_get $state viewer] rawfile} rf]} {
     return $new
   }
@@ -16266,7 +16300,7 @@ proc ase::op_report_missing {state meta exitcode} {
 # spelling first, so an all-lowercase dump answers on rung 1 and is byte for
 # byte what it always was, then the folded alias.
 proc ase::op_report_missing_dump {sim path raw devs} {
-  set dump [::op_annot::opdump_path $raw]
+  set dump [::op_annot::opdump_find $raw]   ;# issue 1666 R903b
   if {![file isfile $dump] || [file size $dump] == 0} {
     ase::sim_say op_dump_missing $sim $path $dump error
     return op_dump_missing
@@ -17389,6 +17423,10 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## the wrong placement. Caught for ase::meas_path's raise on a state with no
   ## design cell, the shape the five lines above already tolerate.
   catch {file delete -- [ase::meas_path $state]}
+  ## --- ISSUE 1666 (R906): AND THE RUN-STATE SNAPSHOT, for the same reason:
+  ## Save copies it as the description of THIS run, so one left by the previous
+  ## run must not survive a run that dies before writing its own.
+  catch {file delete -- [ase::runstate_path $state]}
   ## --- 1465 (Stage 12): AND THE EVENT VCDs, for the co-simulation VCDs' reason
   ## four lines up the proc. They are written by a command that runs AFTER the
   ## analog `write`, so the analog half can succeed while the digital half
@@ -17609,6 +17647,14 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set f [open $deckpath w]
   puts -nonewline $f $deck
   close $f
+  ## ISSUE 1666 (R906): the state this deck was rendered from, beside it, so a
+  ## saved copy of the run can say what its plotmap rows meant. Caught: a
+  ## missing snapshot only costs a saved result its mapping.
+  catch {
+    set f [open [ase::runstate_path $state] w]
+    puts $f [ase::state_serialize $state]
+    close $f
+  }
 
   set logpath [$log_file $state]
   set cmd [$run_cmd $state $deckpath]
@@ -18437,8 +18483,12 @@ proc ase::plot_sim_type_reason {state} {
 # runs overwrite it in place, so file existence == "this session has
 # simulation results"; it also lets a fresh xschem session attach a PREVIOUS
 # run's raw (the waveform_viewer.md saved-results seam).
+#
+# ⚠ ISSUE 1666 (R913): it follows the RESULT IN VIEW. Under a saved view
+# `ase::result_state` points `rundir` at the saved folder, so this answers the
+# saved raw; the live run's raw is `ase::live_rawfile`.
 proc ase::last_rawfile {key} {
-  set state [ase::session_state $key]
+  set state [ase::result_state $key]
   if {$state eq {}} { return {} }
   set sim [ase::state_get $state simulator]
   if {[catch {[ase::backend_hook $sim raw_file] $state} rf]} { return {} }
@@ -18491,9 +18541,16 @@ proc ase::has_results {key} {
 # ase::ui::do_stop marks the session `stopped` before it kills (in memory only,
 # so after a restart a stopped run's log reads as a failed one).
 proc ase::run_failed {key} {
-  set st [ase::session_state $key]
+  ## ISSUE 1666 (R913): the result in view. Under a saved view the saved log's
+  ## footer and the meta's `stopped` answer; the session's live `stopped`
+  ## attribute describes the live run and is ignored there.
+  set st [ase::result_state $key]
   if {$st eq {}} { return {} }
-  if {[ase::session_getattr $key stopped 0] eq {1}} { return {} }
+  set sv {}
+  catch {set sv [ase::result_view $key]}
+  if {$sv ne {}} {
+    if {[ase::state_get [ase::saved_meta $sv] stopped 0] eq {1}} { return {} }
+  } elseif {[ase::session_getattr $key stopped 0] eq {1}} { return {} }
   if {[catch {[ase::backend_hook [ase::state_get $st simulator] log_file] $st} lf]} {
     return {}
   }
@@ -18560,7 +18617,7 @@ proc ase::run_failed {key} {
 #   the `6` chord      -- holds a real path from a real session and must not
 #                         refuse it on an inability to look up a state dict.
 proc ase::results_stale {key} {
-  set state [ase::session_state $key]
+  set state [ase::result_state $key]   ;# ISSUE 1666 (R913): the result in view
   if {$state eq {}} { return 0 }
   set rf {}
   if {[catch {ase::last_rawfile $key} rf]} { return 0 }
@@ -18572,6 +18629,1009 @@ proc ase::results_stale {key} {
   if {[catch {file mtime $rf} rt]}   { return 0 }
   if {[catch {file mtime $deck} dt]} { return 0 }
   return [expr {$rt < $dt}]
+}
+
+# ═══ ISSUE 1666: SAVED RESULTS ═══════════════════════════════════════════════
+# doc/claude/specs/results_selection.md §20. Runs keep writing where they always
+# wrote (`<rundir>/<cell>_ase.*`, overwritten in place). `Results > Save…`
+# COPIES the result in view into `<results_dir>/<lib>/<cell>/<folder>/` under
+# the SAME file names, plus a `result.meta`; a saved result is then read by
+# presenting the session's state with `rundir` pointed at that folder
+# (`ase::result_state`), the trick `ase::campaign_shard_state` already plays.
+#
+# THREE INVARIANTS (each fenced by a row of test_ase_saved_results_1666):
+#   I-W  every proc that WRITES or deletes run artifacts resolves paths from
+#        `ase::session_state`, never from `ase::result_state`;
+#   I-L  listing and Save's destination resolve from `ase::session_state`;
+#   I-C  nothing here creates a directory on a READ: paths come from the state's
+#        own `rundir` key or `set_netlist_dir 2` (`ase::op_dump_dir`'s shape),
+#        never from `ase::rundir` (which mkdirs).
+#
+# Every user-visible sentence comes from an `ase::ui::lbl_rsave_*` /
+# `lbl_rdel_*` proc (src/ase_window.tcl), reached through `ase::saved_say` so a
+# missing label degrades to its token instead of raising.
+
+namespace eval ase {
+  # session key -> the raw the user selected for this session, normalized, or
+  # {} for "the live run". ABSENT means "nothing recorded since the state was
+  # loaded", and `ase::result_view` then derives from the state's own
+  # `viewer.rawfile` (R911).
+  variable resultsel
+  if {![info exists resultsel]} { set resultsel [dict create] }
+}
+
+proc ase::saved_say {lbl args} {
+  set p ::ase::ui::lbl_$lbl
+  if {[info commands $p] eq {}} { return $lbl }
+  if {[catch {$p {*}$args} m]} { return $lbl }
+  return $m
+}
+
+# Every component resolved, the last one included (`file normalize` leaves the
+# final component unresolved). Never raises; a dangling link answers its own
+# normalized spelling.
+proc ase::saved_realpath {p} {
+  if {[catch {file normalize $p} n]} { return $p }
+  for {set i 0} {$i < 40} {incr i} {
+    if {[catch {file type $n} t] || $t ne {link}} { return $n }
+    if {[catch {file readlink $n} l]} { return $n }
+    if {[catch {file normalize [file join [file dirname $n] $l]} n]} { return $p }
+  }
+  return $n
+}
+
+# Is P equal to DIR or inside it? Component-wise, never a string prefix.
+proc ase::saved_under {p dir} {
+  if {$p eq {} || $dir eq {}} { return 0 }
+  set pl [file split $p]
+  set dl [file split $dir]
+  if {[llength $pl] < [llength $dl]} { return 0 }
+  return [expr {[lrange $pl 0 [expr {[llength $dl] - 1}]] eq $dl}]
+}
+
+proc ase::saved_design {state} {
+  set d {}
+  catch {set d [ase::state_get $state design]}
+  set l {} ; set c {} ; set v {}
+  catch {set l [ase::state_get $d lib]}
+  catch {set c [ase::state_get $d cell]}
+  catch {set v [ase::state_get $d view]}
+  return [list $l $c $v]
+}
+
+# The default results directory of STATE, read only: `<rundir>/saved`.
+proc ase::saved_default_base {state} {
+  set rd [ase::op_dump_dir $state]
+  if {$rd eq {}} { return {} }
+  return [file join $rd saved]
+}
+
+# R901: `<dir or results_dir or rundir/saved>/<lib>/<cell>`, from the SESSION
+# state (I-L). Creates nothing (I-C). {} when the session has no cell.
+proc ase::saved_root {key {dir {}}} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  lassign [ase::saved_design $st] lib cell
+  if {[string trim $cell] eq {}} { return {} }
+  if {[string trim $lib] eq {}} { set lib _ }
+  set base {}
+  if {[string trim $dir] ne {}} {
+    if {[catch {file normalize [ase::expand_path [string trim $dir]]} base]} { return {} }
+  } elseif {[string trim [ase::state_get $st results_dir]] ne {}} {
+    if {[catch {file normalize \
+                 [ase::expand_path [string trim [ase::state_get $st results_dir]]]} base]} {
+      return {}
+    }
+  } else {
+    set base [ase::saved_default_base $st]
+    if {$base eq {}} { return {} }
+  }
+  return [file join $base $lib $cell]
+}
+
+# R905 -- {1 {}} or {0 <sentence>}. Any printable text, 1-64 characters, no
+# `/`, `\` or control character, not all blank.
+proc ase::saved_name_ok {name} {
+  if {[string trim $name] eq {}} { return [list 0 [ase::saved_say rsave_badname]] }
+  if {[string length $name] > 64} { return [list 0 [ase::saved_say rsave_badname]] }
+  if {[regexp {[/\\]} $name]} { return [list 0 [ase::saved_say rsave_badname]] }
+  if {[regexp {[\x00-\x1f\x7f]} $name]} { return [list 0 [ase::saved_say rsave_badname]] }
+  return [list 1 {}]
+}
+
+# R905 -- the folder for NAME under ROOT: unsafe characters become `_`, a
+# leading `.`/`-` is prefixed, a trailing `.` dropped, Windows reserved stems
+# suffixed, then `-2`, `-3`, ... until free CASE-INSENSITIVELY among everything
+# already in ROOT.
+proc ase::saved_folder_for {root name} {
+  set f [regsub -all {[^A-Za-z0-9_.+-]} $name _]
+  if {[regexp {^[.-]} $f]} { set f _$f }
+  set f [string trimright $f .]
+  if {$f eq {}} { set f _ }
+  set dot [string first . $f]
+  set stem [expr {$dot < 0 ? $f : [string range $f 0 [expr {$dot - 1}]]}]
+  if {[regexp -nocase {^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$} $stem]} {
+    set f "${stem}_[string range $f [string length $stem] end]"
+  }
+  set taken {}
+  if {$root ne {} && [file isdirectory $root]} {
+    foreach t [glob -nocomplain -tails -directory $root * .*] {
+      lappend taken [string tolower $t]
+    }
+  }
+  set cand $f
+  set n 2
+  while {[lsearch -exact $taken [string tolower $cand]] >= 0} {
+    set cand "$f-$n"
+    incr n
+  }
+  return $cand
+}
+
+# R904 -- the meta of saved folder DIR, or {}. DIR must be a real directory
+# (not a symlink) holding a `result.meta` that parses as a dict -- read with
+# dict operations only, never `source`d or `eval`ed -- with `format 1` and a
+# `folder` equal to FOLDER (default: DIR's own tail).
+proc ase::saved_meta {dir {folder {}}} {
+  if {[string trim $dir] eq {}} { return {} }
+  if {[catch {file type $dir} t] || $t ne {directory}} { return {} }
+  set mf [file join $dir result.meta]
+  if {[catch {file type $mf} mt] || $mt ne {file}} { return {} }
+  if {[catch {open $mf r} f]} { return {} }
+  set txt {}
+  catch {fconfigure $f -encoding utf-8}
+  catch {set txt [read $f]}
+  catch {close $f}
+  if {[catch {dict size $txt}]} { return {} }
+  if {![dict exists $txt format] || [dict get $txt format] ne {1}} { return {} }
+  if {$folder eq {}} { set folder [file tail [file normalize $dir]] }
+  if {![dict exists $txt folder] || [dict get $txt folder] ne $folder} { return {} }
+  return $txt
+}
+
+# R916 -- the saved name of a file inside a saved folder, or {}.
+proc ase::saved_name_of {path} {
+  if {[string trim $path] eq {}} { return {} }
+  if {[catch {file dirname [file normalize $path]} d]} { return {} }
+  set m [ase::saved_meta $d]
+  if {$m eq {}} { return {} }
+  return [ase::state_get $m name]
+}
+
+# Does META belong to the session state ST (cell and design)?
+proc ase::saved_meta_matches {m st} {
+  lassign [ase::saved_design $st] lib cell view
+  if {[ase::state_get $m cell] ne $cell} { return 0 }
+  if {[ase::state_get $m design] ne [list $lib $cell $view]} { return 0 }
+  return 1
+}
+
+# R908c -- dead staging folders under ROOT. `.<folder>.partial.<pid>` is
+# deleted; `.<folder>.old.<pid>` whose `<folder>` is missing and whose meta is
+# valid is renamed back (a crash between Save's two renames). Live pids are
+# left alone; where /proc is absent only folders older than a day go.
+proc ase::saved_sweep {root} {
+  if {$root eq {} || ![file isdirectory $root]} { return 0 }
+  set haveproc [file isdirectory /proc/self]
+  set now [clock seconds]
+  set n 0
+  foreach p [glob -nocomplain -types {d hidden} -directory $root .*] {
+    set t [file tail $p]
+    if {![regexp {^\.(.+)\.(partial|old)\.([0-9]+)$} $t -> folder kind pid]} { continue }
+    if {$haveproc} {
+      if {[file exists /proc/$pid]} { continue }
+    } else {
+      if {[catch {file mtime $p} mt] || $now - $mt < 86400} { continue }
+    }
+    if {$kind eq {old}} {
+      set orig [file join $root $folder]
+      if {![file exists $orig] && [ase::saved_meta $p $folder] ne {}} {
+        if {![catch {file rename -- $p $orig}]} { incr n ; continue }
+      }
+    }
+    if {![catch {file delete -force -- $p}]} { incr n }
+  }
+  return $n
+}
+
+# R904/R919 -- the saved results of session KEY, newest `saved` first, each
+# {name folder dir saved ran comment exit stopped viewtype types state_source}.
+# Only folders passing the R904 predicate whose `cell` and `design` match the
+# session are listed. Sweeps dead staging first.
+proc ase::saved_list {key {dir {}}} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  set root [ase::saved_root $key $dir]
+  if {$root eq {} || ![file isdirectory $root]} { return {} }
+  catch {ase::saved_sweep $root}
+  set rows {}
+  foreach d [glob -nocomplain -types d -directory $root *] {
+    if {[catch {file type $d} t] || $t ne {directory}} { continue }
+    set m [ase::saved_meta $d]
+    if {$m eq {}} { continue }
+    if {![ase::saved_meta_matches $m $st]} { continue }
+    set row [dict create]
+    foreach k {name folder saved ran comment exit stopped viewtype types state_source} {
+      dict set row $k [ase::state_get $m $k]
+    }
+    dict set row dir [file normalize $d]
+    lappend rows $row
+  }
+  return [lsort -command ase::saved_cmp $rows]
+}
+
+proc ase::saved_cmp {a b} {
+  set sa [ase::state_get $a saved 0]
+  set sb [ase::state_get $b saved 0]
+  if {![string is integer -strict $sa]} { set sa 0 }
+  if {![string is integer -strict $sb]} { set sb 0 }
+  if {$sa != $sb} { return [expr {$sa > $sb ? -1 : 1}] }
+  return [string compare [ase::state_get $a folder] [ase::state_get $b folder]]
+}
+
+# The listed row whose name equals NAME case-insensitively, or {}.
+proc ase::saved_find {key name {dir {}}} {
+  foreach r [ase::saved_list $key $dir] {
+    if {[string equal -nocase [string trim [ase::state_get $r name]] [string trim $name]]} {
+      return $r
+    }
+  }
+  return {}
+}
+
+# R918 -- may FOLDER under ROOT be overwritten or deleted? {1 {}} or
+# {0 <sentence>}: a plain name (no separator, not `.`/`..`, not dot-prefixed),
+# a real directory (not a symlink), the R904 predicate, its fully resolved
+# path a DIRECT child of the resolved ROOT, and neither equal to nor containing
+# LIVEDIR (the live run directory) when one is given.
+proc ase::saved_target_ok {root folder {livedir {}}} {
+  set no [list 0 [ase::saved_say rsave_notsaved $folder]]
+  if {[string trim $folder] eq {} || [regexp {[/\\]} $folder]} { return $no }
+  if {$folder in {. ..} || [string index $folder 0] eq {.}} { return $no }
+  if {[string trim $root] eq {}} { return $no }
+  set p [file join $root $folder]
+  if {[catch {file type $p} t] || $t ne {directory}} { return $no }
+  if {[ase::saved_meta $p] eq {}} { return $no }
+  set rr [ase::saved_realpath $root]
+  set rp [ase::saved_realpath $p]
+  if {[file dirname $rp] ne $rr} { return [list 0 [ase::saved_say rsave_badroot]] }
+  if {[string trim $livedir] ne {}} {
+    set lr [ase::saved_realpath $livedir]
+    if {[ase::saved_under $lr $rp]} { return [list 0 [ase::saved_say rsave_badroot]] }
+  }
+  return [list 1 {}]
+}
+
+# The path of the run-state snapshot `ase::run_deck` writes beside the deck
+# (R906). A WRITER's path: `ase::rundir`, from the state it is handed.
+proc ase::runstate_path {state} {
+  if {![dict exists $state design cell]} {
+    return -code error "ase: state design has no cell (runstate_path)"
+  }
+  set cell [dict get $state design cell]
+  return [file join [ase::rundir $state] ${cell}_ase.runstate]
+}
+
+# R906 -- the `.runstate` of saved folder DIR, two ways: VIEW with `rundir`
+# replaced by DIR (for readers; without the swap the plotmap would resolve the
+# LIVE one) and RAW byte-for-byte as run (for Load Setup). {} when absent or
+# when the meta says it was synthesised from the current state (`state_source
+# current`), because then it does not describe the run.
+proc ase::saved_runstate_raw {dir} {
+  set m [ase::saved_meta $dir]
+  if {$m eq {}} { return {} }
+  set cell [ase::state_get $m cell]
+  set p [file join $dir ${cell}_ase.runstate]
+  if {![file isfile $p]} { return {} }
+  if {[catch {open $p r} f]} { return {} }
+  set txt {}
+  catch {set txt [read $f]}
+  catch {close $f}
+  if {[catch {dict size $txt}]} { return {} }
+  return [dict merge [ase::state_default] $txt]
+}
+proc ase::saved_runstate_view {dir} {
+  set m [ase::saved_meta $dir]
+  if {$m eq {} || [ase::state_get $m state_source] ne {run}} { return {} }
+  set st [ase::saved_runstate_raw $dir]
+  if {$st eq {}} { return {} }
+  dict set st rundir [file normalize $dir]
+  return $st
+}
+
+# Plot type of a raw plot name, for `types` (R904). Declared table: the plot
+# names ngspice writes for the analyses ASE-L runs.
+proc ase::saved_plot_type {plotname} {
+  set p [string tolower [string trim $plotname]]
+  foreach {pat ty} {
+    {transient*} tran  {ac analysis*} ac  {dc transfer*} dc
+    {operating point*} op  {noise*} noise  {s-param*} sp  {pole-zero*} pz
+    {distortion*} disto  {transfer function*} tf  {sensitivity*} sens
+  } {
+    if {[string match $pat $p]} { return $ty }
+  }
+  return {}
+}
+
+# The plot types RAW actually holds, in file order, distinct.
+proc ase::saved_raw_types {raw} {
+  set out {}
+  if {[catch {ase::cap_raw_plots $raw} pls]} { return {} }
+  foreach pl $pls {
+    set ty [ase::saved_plot_type [lindex $pl 0]]
+    if {$ty ne {} && $ty ni $out} { lappend out $ty }
+  }
+  return $out
+}
+
+# The best-ranked type present in TYPES: the session's own preference
+# (`ase::plot_sim_type`) when present, else the registry's viewrank, else the
+# fixed fall-back order.
+proc ase::saved_viewtype {state types} {
+  if {![llength $types]} { return {} }
+  set pref {}
+  catch {set pref [ase::plot_sim_type $state]}
+  if {$pref ne {} && $pref in $types} { return $pref }
+  set sim [ase::state_get $state simulator ngspice]
+  set best {} ; set bestrank {}
+  foreach ty $types {
+    set e {}
+    catch {set e [ase::analysis_entry $sim $ty]}
+    if {$e eq {} || ![dict exists $e viewrank]} { continue }
+    set vr [dict get $e viewrank]
+    if {$bestrank eq {} || $vr > $bestrank} { set bestrank $vr ; set best $ty }
+  }
+  if {$best ne {}} { return $best }
+  foreach ty {tran ac dc noise sp op} { if {$ty in $types} { return $ty } }
+  return [lindex $types 0]
+}
+
+# The exit code in LOG's footer, or {}.
+proc ase::saved_log_exit {log} {
+  if {$log eq {} || ![file isfile $log]} { return {} }
+  if {[catch {::open $log r} fh]} { return {} }
+  set tail {}
+  catch {
+    fconfigure $fh -translation binary
+    if {[catch {seek $fh -256 end}]} { seek $fh 0 start }
+    set tail [read $fh]
+  }
+  catch {::close $fh}
+  if {![regexp {=== exit (\S+) after [0-9.]+ s ===\s*$} $tail -> ec]} { return {} }
+  return $ec
+}
+
+# R903 -- what Save copies out of the run directory of STATE (the SOURCE: the
+# live run, or a saved folder through `ase::result_state`). Answers
+#   {dir <src dir> raw <raw or {}> log <log or {}> copy {{src tail} ...}
+#    skipped {{tail reason} ...} vcdmap {<normalized src vcd> <dest tail> ...}}
+# Two co-simulation VCDs with one file name in different directories get
+# distinct destination tails (`<root>-2.vcd`, ...), and `vcdmap` says which, so
+# the saved map points each block at its OWN waveforms (SVR13b).
+# THE CLASSIFICATION IS DECLARED HERE AND NOWHERE ELSE; row SVR-D2 derives the
+# population it must cover. Fresh-only artifacts (R903a) are those the pre-run
+# cleanup does NOT delete; each is copied only when its mtime lies in
+# [mtime(deck) - 1, mtime(raw or log) + 1]. Read only: creates nothing.
+proc ase::saved_artifacts {state} {
+  set out [dict create dir {} raw {} log {} copy {} skipped {} vcdmap {}]
+  set dir [ase::op_dump_dir $state]
+  lassign [ase::saved_design $state] lib cell
+  if {$dir eq {} || $cell eq {} || ![file isdirectory $dir]} { return $out }
+  dict set out dir $dir
+  set copy {} ; set skipped {}
+  set raw [file join $dir ${cell}_ase.raw]
+  set log [file join $dir ${cell}_ase.log]
+  set deck [file join $dir ${cell}_ase.spice]
+  if {[file isfile $raw]} { dict set out raw $raw }
+  if {[file isfile $log]} { dict set out log $log }
+  # always, when present
+  foreach ext {raw log plotmap meas spice runstate raw.ckpt effective cosim} {
+    set p [file join $dir ${cell}_ase.$ext]
+    if {[file isfile $p]} { lappend copy [list $p [file tail $p]] }
+  }
+  foreach p [lsort [glob -nocomplain -types f -directory $dir ${cell}_ase_evt.vcd \
+                      ${cell}_ase_evt_*.vcd]] {
+    lappend copy [list $p [file tail $p]]
+  }
+  # the co-simulation VCDs the map names, wherever they live
+  set cf [file join $dir ${cell}_ase.cosim]
+  if {[file isfile $cf]} {
+    set st2 $state
+    dict set st2 rundir $dir
+    set vmap {}
+    foreach e [ase::cosim_load_map $st2] {
+      set v [ase::state_get $e vcd]
+      if {$v eq {} || ![file isfile $v]} { continue }
+      set vn [file normalize $v]
+      if {[dict exists $vmap $vn]} { continue }
+      set i [lsearch -index 0 -exact $copy $v]
+      if {$i < 0} { set i [lsearch -index 0 -exact $copy $vn] }
+      if {$i >= 0} {
+        dict set vmap $vn [lindex $copy $i 1]
+        continue
+      }
+      set t [file tail $v]
+      set n 2
+      while {[lsearch -index 1 -exact $copy $t] >= 0} {
+        set t "[file rootname [file tail $v]]-$n[file extension $v]"
+        incr n
+      }
+      lappend copy [list $v $t]
+      dict set vmap $vn $t
+    }
+    dict set out vcdmap $vmap
+  }
+  # fresh only (R903a)
+  set lo {} ; set hi {}
+  if {[file isfile $deck]} { catch {set lo [expr {[file mtime $deck] - 1}]} }
+  if {[file isfile $raw]} {
+    catch {set hi [expr {[file mtime $raw] + 1}]}
+  } elseif {[file isfile $log]} {
+    catch {set hi [expr {[file mtime $log] + 1}]}
+  }
+  # The netlist has NO lower bound: `ase::run_existing` wraps a new deck round
+  # an OLDER `<cell>.spice`, and that older file is what was simulated. Only one
+  # written AFTER the run (newer than the raw) is not this run's (SVR12b).
+  set fresh {}
+  set nolo [list ${cell}.spice]
+  foreach p [list [file join $dir ${cell}.spice] [file join $dir ${cell}_ase.s2p] \
+                  [file join $dir .spiceinit]] {
+    if {[file isfile $p]} { lappend fresh [list $p [file tail $p]] }
+  }
+  foreach p [lsort [glob -nocomplain -types f -directory $dir ${cell}_ase_sp*.s2p]] {
+    lappend fresh [list $p [file tail $p]]
+  }
+  # the OP dump: source is the name the simulator was GIVEN (lowercased, see
+  # op_annot::opdump_path), destination keeps the case (R903b)
+  set od {}
+  if {[info commands ::op_annot::opdump_find] ne {}} {
+    catch {set od [::op_annot::opdump_find $raw]}
+  }
+  if {$od ne {} && [file isfile $od]} {
+    lappend fresh [list $od [file tail [file rootname $raw]].opinfo]
+  }
+  foreach e $fresh {
+    lassign $e p t
+    set mt {}
+    if {[catch {file mtime $p} mt]} { lappend skipped [list $t unreadable] ; continue }
+    if {($lo ne {} && $mt < $lo && $t ni $nolo) || ($hi ne {} && $mt > $hi)} {
+      lappend skipped [list $t stale]
+      continue
+    }
+    lappend copy [list $p $t]
+  }
+  dict set out copy $copy
+  dict set out skipped $skipped
+  return $out
+}
+
+# Available kilobytes on the filesystem holding DIR, or {} when `df` cannot
+# say (R908d: the check is skipped then, never fatal).
+proc ase::saved_df_kb {dir} {
+  if {[auto_execok df] eq {}} { return {} }
+  if {[catch {exec df -Pk $dir 2>/dev/null} out]} { return {} }
+  set lines [split [string trim $out] "\n"]
+  if {[llength $lines] < 2} { return {} }
+  set f [lindex [lindex $lines end] 3]
+  if {![string is integer -strict $f]} { return {} }
+  return $f
+}
+
+# The copy primitive, a proc so a suite can make it fail (SVR18).
+proc ase::saved_copy_file {src dst} {
+  file copy -force -- $src $dst
+}
+
+# Write META as text to PATH; the close is checked (a full disk raises there).
+proc ase::saved_write_meta {path meta} {
+  set f [open $path w]
+  fconfigure $f -encoding utf-8
+  set body {}
+  dict for {k v} $meta { append body "$k [list $v]\n" }
+  puts -nonewline $f $body
+  close $f
+}
+
+# R910/R907a -- drop every loaded results slot whose file lies inside DIR, in
+# the CURRENT xschem context only (`results::list` sees no other), so a later
+# select there reads the disk again. A viewer window's own registry keeps its
+# slot (declared limit, issue 1666).
+proc ase::saved_registry_drop {dir} {
+  set dn [ase::saved_realpath $dir]
+  set n 0
+  if {[catch {results::list} rows]} { return 0 }
+  foreach row $rows {
+    set p [ase::state_get $row path]
+    if {$p eq {}} { continue }
+    if {[catch {file normalize $p} pn]} { continue }
+    if {[ase::saved_under $pn $dn] || [ase::saved_under $pn [file normalize $dir]]} {
+      if {![catch {xschem raw clear $p [ase::state_get $row type]}]} { incr n }
+    }
+  }
+  return $n
+}
+
+# R903-R909 -- SAVE the result in view of session KEY as NAME. Answers
+#   {ok 0|1 how saved|overwritten|needconfirm|refused name .. dir .. msg ..
+#    skipped {{tail reason} ...} note ..}
+# Never throws. CONFIRMED must be 1 to overwrite an existing name.
+proc ase::saved_save {key name comment {dir {}} {confirmed 0}} {
+  set r [dict create ok 0 how refused name $name dir {} msg {} skipped {} note {}]
+  if {[catch {ase::saved_save_body $key $name $comment $dir $confirmed} res]} {
+    dict set r msg [ase::saved_say rsave_failed $res]
+    return $r
+  }
+  return $res
+}
+
+proc ase::saved_save_body {key name comment dir confirmed} {
+  set r [dict create ok 0 how refused name $name dir {} msg {} skipped {} note {}]
+  set st [ase::session_state $key]
+  if {$st eq {} || ![ase::session_exists $key]} {
+    dict set r msg [ase::saved_say rsave_nosession]
+    return $r
+  }
+  set name [string trim $name]
+  dict set r name $name
+  lassign [ase::saved_name_ok $name] nok nmsg
+  if {!$nok} { dict set r msg $nmsg ; return $r }
+  # the SOURCE: the result in view (R903)
+  set view [ase::result_view $key]
+  set src [ase::result_state $key]
+  set islive [expr {$view eq {}}]
+  set busy {}
+  if {$islive} { catch {set busy [ase::rundir_busy $key]} }
+  if {$busy eq {run}} { dict set r msg [ase::saved_say rsave_busy] ; return $r }
+  set art [ase::saved_artifacts $src]
+  set raw [dict get $art raw]
+  set log [dict get $art log]
+  lassign [ase::saved_design $st] lib cell view_
+  set exit [ase::saved_log_exit $log]
+  set ckpt [file join [dict get $art dir] ${cell}_ase.raw.ckpt]
+  set stopped 0
+  if {$islive} {
+    set stopped [expr {[ase::session_getattr $key stopped 0] eq {1} ? 1 : 0}]
+  } else {
+    set stopped [ase::state_get [ase::saved_meta $view] stopped 0]
+  }
+  if {$raw eq {}} {
+    # R909a: a failed or stopped run with no raw is still saveable
+    if {!(($exit ne {} && $exit ne {0}) || [file isfile $ckpt] || $stopped)} {
+      dict set r msg [ase::saved_say rsave_noraw]
+      return $r
+    }
+    if {$log eq {} && ![file isfile $ckpt]} {
+      dict set r msg [ase::saved_say rsave_noraw]
+      return $r
+    }
+  } else {
+    set v {}
+    catch {set v [ase::raw_content_verdict $raw]}
+    if {$v ne {} && [ase::state_get $v ok 1] eq {0}} {
+      dict set r msg [ase::saved_say rsave_empty]
+      return $r
+    }
+  }
+  # the destination (I-L)
+  set root [ase::saved_root $key $dir]
+  if {$root eq {}} { dict set r msg [ase::saved_say rsave_nosession] ; return $r }
+  set live [ase::op_dump_dir $st]
+  set lr [expr {$live eq {} ? {} : [ase::saved_realpath $live]}]
+  set existing [ase::saved_find $key $name $dir]
+  if {$existing ne {}} {
+    set folder [ase::state_get $existing folder]
+  } else {
+    set folder [ase::saved_folder_for $root $name]
+  }
+  set dest [file join $root $folder]
+  # R901a containment, every component resolved
+  if {$lr ne {}} {
+    set rdest [ase::saved_realpath $dest]
+    set nlive [file normalize $live]
+    # the destination is, or is an ancestor of, the run directory; or it lies
+    # in the campaign tree
+    if {[ase::saved_under $lr $rdest] || [ase::saved_under $rdest [file join $lr campaign]]} {
+      dict set r msg [ase::saved_say rsave_badroot]
+      return $r
+    }
+    # a symlinked level that leads into the run directory: the resolved path
+    # is inside it while the spelled one is not
+    if {[ase::saved_under $rdest $lr] &&
+        ![ase::saved_under $dest $nlive] && ![ase::saved_under $dest $lr]} {
+      dict set r msg [ase::saved_say rsave_badroot]
+      return $r
+    }
+  }
+  if {$existing ne {}} {
+    if {!$confirmed} {
+      dict set r how needconfirm
+      dict set r dir $dest
+      dict set r msg [ase::saved_say rsave_overwrite $name]
+      return $r
+    }
+    lassign [ase::saved_target_ok $root $folder $live] tok tmsg
+    if {!$tok} { dict set r msg $tmsg ; return $r }
+    if {!$islive && [ase::saved_realpath $dest] eq [ase::saved_realpath $view]} {
+      dict set r msg [ase::saved_say rsave_self $name]
+      return $r
+    }
+  } elseif {[file exists $dest] || ![catch {file type $dest}]} {
+    dict set r msg [ase::saved_say rsave_notsaved $folder]
+    return $r
+  }
+  # campaign note (R909): not refused
+  if {$islive && $busy eq {campaign}} {
+    dict set r note [ase::saved_say rsave_campaign]
+  }
+  # stat every source BEFORE copying (R903d)
+  set items {}
+  set total 0
+  foreach e [dict get $art copy] {
+    lassign $e s t
+    set real [ase::saved_realpath $s]
+    if {[catch {file size $real} sz] || [catch {file mtime $real} mt]} {
+      dict set r msg [ase::saved_say rsave_changed]
+      return $r
+    }
+    lappend items [list $s $real $t $sz $mt]
+    incr total $sz
+  }
+  file mkdir $root
+  catch {ase::saved_sweep $root}
+  set avail [ase::saved_df_kb $root]
+  if {$avail ne {} && $avail * 1024 < $total * 1.1} {
+    dict set r msg [ase::saved_say rsave_space]
+    return $r
+  }
+  set pid [pid]
+  set stage [file join $root .$folder.partial.$pid]
+  catch {file delete -force -- $stage}
+  file mkdir $stage
+  set files {}
+  set ok 1 ; set why {}
+  foreach it $items {
+    lassign $it s real t sz mt
+    set d [file join $stage $t]
+    if {[catch {ase::saved_copy_file $real $d} err]} { set ok 0 ; set why $err ; break }
+    catch {file mtime $d $mt}
+    lappend files $t
+  }
+  if {$ok} {
+    # the copy is what was recorded, and the source did not move under us
+    foreach it $items {
+      lassign $it s real t sz mt
+      set d [file join $stage $t]
+      if {[catch {file size $d} dsz] || $dsz != $sz} { set ok 0 ; set why changed ; break }
+      if {[catch {file size $real} ssz] || [catch {file mtime $real} smt] ||
+          $ssz != $sz || $smt != $mt} {
+        set ok 0 ; set why changed ; break
+      }
+    }
+  }
+  if {!$ok} {
+    catch {file delete -force -- $stage}
+    if {$why eq {changed}} {
+      dict set r msg [ase::saved_say rsave_changed]
+    } else {
+      dict set r msg [ase::saved_say rsave_failed $why]
+    }
+    return $r
+  }
+  # the co-simulation map's VCD fields point INTO the saved folder (SVR13)
+  set cft ${cell}_ase.cosim
+  if {$cft in $files} {
+    set cp [file join $stage $cft]
+    set map {}
+    set st2 $src
+    dict set st2 rundir $stage
+    catch {set map [ase::cosim_load_map $st2]}
+    set nm {}
+    set vmap [dict get $art vcdmap]
+    foreach e $map {
+      set v [ase::state_get $e vcd]
+      if {$v ne {}} {
+        set vt [file tail $v]
+        if {[dict exists $vmap [file normalize $v]]} {
+          set vt [dict get $vmap [file normalize $v]]
+        }
+        dict set e vcd [file join $root $folder $vt]
+      }
+      lappend nm $e
+    }
+    set cmt {}
+    catch {set cmt [file mtime $cp]}
+    if {[catch {
+      set f [open $cp w]
+      puts $f "# xschem ASE-L co-simulation map -- generated, do not edit."
+      foreach e $nm { puts $f [list $e] }
+      close $f
+    } err]} {
+      catch {file delete -force -- $stage}
+      dict set r msg [ase::saved_say rsave_failed $err]
+      return $r
+    }
+    if {$cmt ne {}} { catch {file mtime $cp $cmt} }
+  }
+  # the run state (R906)
+  set rst ${cell}_ase.runstate
+  set ssrc run
+  # A saved source whose run state was SYNTHESISED keeps saying so: copying
+  # that file does not make it the run's own (SVR31b).
+  if {!$islive && [ase::state_get [ase::saved_meta $view] state_source] ne {run}} {
+    set ssrc current
+  }
+  if {$rst ni $files} {
+    set ssrc current
+    if {$islive || [ase::state_get [ase::saved_meta $view] state_source] ne {run}} {
+      if {[catch {
+        set f [open [file join $stage $rst] w]
+        puts $f [ase::state_serialize $st]
+        close $f
+      } err]} {
+        catch {file delete -force -- $stage}
+        dict set r msg [ase::saved_say rsave_failed $err]
+        return $r
+      }
+      lappend files $rst
+    }
+  }
+  # the meta, LAST
+  set ran {}
+  if {$raw ne {}} { catch {set ran [file mtime $raw]} } elseif {$log ne {}} { catch {set ran [file mtime $log]} }
+  if {$ran eq {}} { set ran [clock seconds] }
+  set types {}
+  if {$raw ne {}} { set types [ase::saved_raw_types $raw] }
+  set meta [dict create format 1 name $name folder $folder comment $comment \
+              saved [clock seconds] ran $ran cell $cell \
+              design [list $lib $cell $view_] \
+              simulator [ase::state_get $src simulator] \
+              source [dict get $art dir] exit $exit stopped $stopped \
+              types $types viewtype [ase::saved_viewtype $src $types] \
+              state_source $ssrc files $files skipped [dict get $art skipped]]
+  if {[catch {ase::saved_write_meta [file join $stage result.meta] $meta} err]} {
+    catch {file delete -force -- $stage}
+    dict set r msg [ase::saved_say rsave_failed $err]
+    return $r
+  }
+  # into place (R908a)
+  set how saved
+  if {$existing ne {}} {
+    set old [file join $root .$folder.old.$pid]
+    catch {file delete -force -- $old}
+    if {[catch {ase::saved_rename $dest $old} err]} {
+      catch {file delete -force -- $stage}
+      dict set r msg [ase::saved_say rsave_failed $err]
+      return $r
+    }
+    if {[catch {ase::saved_rename $stage $dest} err]} {
+      catch {ase::saved_rename $old $dest}
+      catch {file delete -force -- $stage}
+      dict set r msg [ase::saved_say rsave_failed $err]
+      return $r
+    }
+    # Out of the sweep's RESTORE namespace before it is deleted: a delete that
+    # fails part-way must leave a `.partial` (swept away), never an `.old` the
+    # sweep would rename back over a later Delete (SVR18e).
+    set gone [file join $root .$folder.partial.$pid]
+    if {[catch {ase::saved_rename $old $gone}]} { set gone $old }
+    catch {ase::saved_rmtree $gone}
+    set how overwritten
+    catch {ase::saved_registry_drop $dest}
+  } else {
+    if {[catch {ase::saved_rename $stage $dest} err]} {
+      catch {file delete -force -- $stage}
+      dict set r msg [ase::saved_say rsave_failed $err]
+      return $r
+    }
+  }
+  dict set r ok 1
+  dict set r how $how
+  dict set r dir [file normalize $dest]
+  dict set r skipped [dict get $art skipped]
+  dict set r msg [ase::saved_say rsave_done $name]
+  return $r
+}
+
+# The rename primitive, a proc so a suite can make it fail (SVR18).
+proc ase::saved_rename {from to} {
+  file rename -- $from $to
+}
+
+# The tree-delete primitive, a proc so a suite can make it fail (SVR18e).
+proc ase::saved_rmtree {p} {
+  file delete -force -- $p
+}
+
+# R918 -- delete saved results by NAME (mapped through the listing, so a
+# path-shaped string reaches nothing). {ok 0|1 deleted {names} refused
+# {{name sentence} ...} msg ..}. Never throws. A deleted folder that was in
+# view drops its registry slots and the view falls back to the live run.
+proc ase::saved_delete {key names {dir {}}} {
+  set r [dict create ok 0 deleted {} refused {} msg {}]
+  if {![ase::session_exists $key]} {
+    dict set r msg [ase::saved_say rsave_nosession]
+    return $r
+  }
+  set st [ase::session_state $key]
+  set root [ase::saved_root $key $dir]
+  set live [ase::op_dump_dir $st]
+  set view {}
+  catch {set view [ase::result_view $key]}
+  set deleted {} ; set refused {}
+  set wasview 0
+  foreach n $names {
+    set row [ase::saved_find $key $n $dir]
+    if {$row eq {}} {
+      lappend refused [list $n [ase::saved_say rsave_notsaved $n]]
+      continue
+    }
+    set folder [ase::state_get $row folder]
+    lassign [ase::saved_target_ok $root $folder $live] ok why
+    if {!$ok} { lappend refused [list $n $why] ; continue }
+    set p [file join $root $folder]
+    set isview [expr {$view ne {} && [ase::saved_realpath $view] eq [ase::saved_realpath $p]}]
+    catch {ase::saved_registry_drop $p}
+    if {[catch {ase::saved_rmtree $p} err]} {
+      lappend refused [list $n [ase::saved_say rsave_failed $err]]
+      continue
+    }
+    # an `.old` left by an interrupted overwrite would be renamed back by the
+    # sweep now that the folder is missing: a deleted result must stay deleted
+    foreach o [glob -nocomplain -types {d hidden} -directory $root .$folder.old.*] {
+      catch {ase::saved_rmtree $o}
+    }
+    if {$isview} { set wasview 1 }
+    lappend deleted [ase::state_get $row name]
+  }
+  # the folder is already gone, so `result_view_reset`'s own was/now test
+  # cannot see that the view moved: the repaint is forced (SVR29b)
+  if {$wasview} {
+    catch {ase::result_view_reset $key 1}
+  }
+  dict set r ok [expr {[llength $deleted] > 0 ? 1 : 0}]
+  dict set r deleted $deleted
+  dict set r refused $refused
+  if {[llength $deleted]} {
+    dict set r msg [ase::saved_say rdel_done [llength $deleted]]
+  } elseif {[llength $refused]} {
+    dict set r msg [lindex [lindex $refused 0] 1]
+  } else {
+    dict set r msg [ase::saved_say rdel_none]
+  }
+  return $r
+}
+
+# R905a -- `<cell>_<YYYYMMDD>_<HHMM>` from when the run in view HAPPENED (the
+# raw's mtime, else the log's, else NOW), then `_2`, `_3`, ... until no listed
+# name equals it case-insensitively.
+proc ase::saved_default_name {key {now {}}} {
+  set st [ase::session_state $key]
+  lassign [ase::saved_design $st] lib cell
+  if {$cell eq {}} { set cell result }
+  set t {}
+  set art {}
+  catch {set art [ase::saved_artifacts [ase::result_state $key]]}
+  foreach k {raw log} {
+    set p [ase::state_get $art $k]
+    if {$p ne {} && ![catch {file mtime $p} mt]} { set t $mt ; break }
+  }
+  if {$t eq {}} { set t [expr {$now eq {} ? [clock seconds] : $now}] }
+  set base "${cell}_[clock format $t -format %Y%m%d_%H%M]"
+  set names {}
+  foreach r [ase::saved_list $key] { lappend names [string tolower [ase::state_get $r name]] }
+  set cand $base
+  set n 2
+  while {[string tolower $cand] in $names} {
+    set cand "${base}_$n"
+    incr n
+  }
+  return $cand
+}
+
+# --- THE RESULT IN VIEW (R911-R912a) ------------------------------------------
+
+# Record PATH as session KEY's selection ({} = the live run). Called by every
+# select door that knows the session (`results::persist`, the dialog's commit)
+# and by `ase::result_view_reset`.
+proc ase::result_sel_note {key path} {
+  variable resultsel
+  if {![ase::session_exists $key]} { return 0 }
+  if {[string trim $path] eq {}} {
+    dict set resultsel $key {}
+    return 1
+  }
+  if {[catch {file normalize $path} p]} { set p $path }
+  dict set resultsel $key $p
+  return 1
+}
+
+# Forget KEY's record (a state was loaded, reverted or the session closed), so
+# the derivation goes back to the state's own `viewer.rawfile`.
+proc ase::result_sel_forget {key} {
+  variable resultsel
+  if {[dict exists $resultsel $key]} { dict unset resultsel $key }
+  return 1
+}
+
+# KEY's recorded selection: {has path}.
+proc ase::result_sel_get {key} {
+  variable resultsel
+  if {[dict exists $resultsel $key]} { return [list 1 [dict get $resultsel $key]] }
+  return [list 0 {}]
+}
+
+# R911 -- the saved folder session KEY is viewing, or {} for the live run.
+# DERIVED, never stored: the recorded selection, else the state's
+# `viewer.rawfile`, names a raw whose folder passes the R904 predicate with this
+# session's cell and design. Creates nothing; never throws.
+proc ase::result_view {key} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  lassign [ase::result_sel_get $key] has path
+  if {!$has} {
+    set path {}
+    catch {set path [ase::state_get [ase::state_get $st viewer] rawfile]}
+    if {[string trim $path] eq {}} { return {} }
+    if {[catch {file pathtype $path} pt]} { return {} }
+    if {$pt ne {absolute}} {
+      set rd [ase::state_get $st rundir]
+      if {[string trim $rd] eq {}} { return {} }
+      if {[catch {file join [file normalize $rd] $path} path]} { return {} }
+    }
+  }
+  if {[string trim $path] eq {}} { return {} }
+  if {[catch {file dirname [file normalize $path]} d]} { return {} }
+  set m [ase::saved_meta $d]
+  if {$m eq {}} { return {} }
+  if {![ase::saved_meta_matches $m $st]} { return {} }
+  return $d
+}
+
+# R912 -- session KEY's state with `rundir` replaced by the saved folder in view;
+# the plain session state for the live run. READERS ONLY (I-W).
+proc ase::result_state {key} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {$v eq {}} { return $st }
+  dict set st rundir $v
+  return $st
+}
+
+# R912a -- the LIVE run's raw, always from the session state (the `Last run`
+# row, the resolver's fallback, `result_view_reset`).
+proc ase::live_rawfile {key} {
+  set state [ase::session_state $key]
+  if {$state eq {}} { return {} }
+  set sim [ase::state_get $state simulator]
+  if {[catch {[ase::backend_hook $sim raw_file] $state} rf]} { return {} }
+  if {$rf ne {} && [file isfile $rf]} { return $rf }
+  return {}
+}
+
+# R911a -- back to the live run. Every launch door calls this AFTER the launch
+# succeeded; Delete calls it when the deleted result was in view.
+# FORCE 1 repaints even when the was/now test cannot see the move (Delete
+# removed the folder in view before calling this).
+proc ase::result_view_reset {key {force 0}} {
+  set was {}
+  catch {set was [ase::result_view $key]}
+  ase::result_sel_note $key {}
+  if {($was ne {} || $force) && [info commands ::ase::ui::result_view_changed] ne {}} {
+    catch {ase::ui::result_view_changed $key}
+  }
+  return 1
+}
+
+# The state a plotmap is read against (R906/R913): the live session state, or
+# under a saved view the saved `.runstate` with `rundir` swapped; {} when a
+# saved result carries no run state of its own ("no mapping").
+proc ase::result_plotmap_state {key} {
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {$v eq {}} { return [ase::session_state $key] }
+  return [ase::saved_runstate_view $v]
 }
 
 # --- Mixed-signal co-simulation (spec section E) -----------------------------
@@ -19618,7 +20678,7 @@ proc ase::raw_current {} {
 # ase::last_rawfile uses. A `multi 1` entry is EXCLUDED: two shims writing one
 # file produce an interleaved VCD that must not be presented as data.
 proc ase::last_vcdfiles {key} {
-  set state [ase::session_state $key]
+  set state [ase::result_state $key]   ;# ISSUE 1666 (R913): the result in view
   if {$state eq {}} { return {} }
   if {[ase::cosim_policy $state attach 1] eq {0}} { return {} }
   set out {}
@@ -20437,6 +21497,7 @@ proc ase::session_open {key path} {
   }
   set st [ase::state_load $path]
   dict set sessions $key [dict create path $path state $st saved $st]
+  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
   return $key
 }
 
@@ -20528,6 +21589,7 @@ proc ase::session_load {key} {
   set st [ase::state_load [dict get $sessions $key path]]
   dict set sessions $key state $st
   dict set sessions $key saved $st
+  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
   ase::session_notify_fire $key
   return 1
 }
@@ -20538,6 +21600,7 @@ proc ase::session_revert {key} {
   variable sessions
   if {![dict exists $sessions $key]} { return 0 }
   dict set sessions $key state [dict get $sessions $key saved]
+  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
   ase::session_notify_fire $key
   return 1
 }
@@ -20566,6 +21629,7 @@ proc ase::session_close {key} {
   variable sessions
   if {![dict exists $sessions $key]} { return 0 }
   dict unset sessions $key
+  catch {ase::result_sel_forget $key}
   return 1
 }
 

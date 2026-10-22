@@ -329,7 +329,10 @@ foreach line [split $wg_asetcl "\n"] {
 }
 set wg_door_label 0 ; set wg_door_cmd 0
 foreach l $wg_asecode {
-  if {[string first {add command -label "Select} $l] >= 0} { incr wg_door_label }
+  # BOTH SPELLINGS: issue 1666 moved the label behind `ase::ui::lbl_rsel_menu`
+  # (the Results menu's labels are built once, `ase::ui::results_menu_labels`).
+  if {[string first {add command -label "Select} $l] >= 0 ||
+      [string first {add command -label [ase::ui::lbl_rsel_menu]} $l] >= 0} { incr wg_door_label }
   if {[string first {ase::ui::rsel_dialog $key} $l] >= 0} { incr wg_door_cmd }
 }
 # ...AND IT IS FOLLOWABLE FROM WHERE THE USER IS STANDING. `Results > Select...`

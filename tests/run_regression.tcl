@@ -27,6 +27,8 @@ set tcases [list "create_save" "open_close" "netlisting"]
 # test_ase_rundir_1665 is in BOTH lists (issue 1665): its validator, setter,
 # dirty, quit-prompt and busy rows are counted here, and its dialog rows run only
 # on the display arm, self-skipping here behind an uppercase `SKIP:` line.
+# test_ase_saved_results_1666 is in BOTH lists for the same reason (issue 1666):
+# its pure-layer rows count here, its form rows run only on the display arm.
 set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "hilight_xwin_sync_headless" "buried_hilight" \
                  "headless/test_ase_preflight" \
@@ -76,6 +78,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_descend_doors_1228" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_rundir_1665" \
+                 "headless/test_ase_saved_results_1666" \
                  "headless/test_suite_watchdog_1403" \
                  "headless/test_ase_core" \
                  "headless/test_ase_dialogs" \
@@ -896,6 +899,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_rundir_1665" \
+                 "headless/test_ase_saved_results_1666" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_campaign_gui_1464" \

@@ -2,9 +2,10 @@
 
 **Status:** SPEC. No code yet. No companion PLAN.md yet.
 **§17 was RULED by the user on 2026-08-18** — ten decisions, the result model
-(§17.1) and the `cadence_compat` gate (§17.2). Two questions remain open (§17.1
-and §17.2 are not among them): how much C v1 needs, and whether a run history is
-wanted.
+(§17.1) and the `cadence_compat` gate (§17.2). One question remains open (§17.1
+and §17.2 are not among them): how much C v1 needs. **Whether a run history is
+wanted was RULED on 2026-10-21** (§17 Q2): the user asked for named saved results
+— designed in **§20**.
 **Owner branch:** `fluid-editing`
 **Audience:** Claude Code, in a future session, asked to build xschem's answer to
 Cadence ADE-L's **`Results ▸ Select…`** — the command that binds a saved
@@ -48,6 +49,7 @@ copy one without re-grepping it.
 > | the rulings, and the result model they correct | §17, §17.1, §17.2 |
 > | what is deliberately NOT here | §18 |
 > | the `v(out)` -> `VT(out)` move, and why it is not here | §19 |
+> | saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1666) | §20 |
 
 ---
 
@@ -2217,6 +2219,11 @@ the honest answer to "select a saved result" and it is a separate feature with
 R703's read-side migration in front of it. v1 ships selection over *what exists*:
 loaded databases, the MRU, and any file the user points at. §17 Q2 asks the
 driver whether to schedule the run history at all.
+**AMENDED 2026-10-21: superseded by §20.** The user ruled Q2 by asking for
+ADE-L's `Results ▸ Save`. §20 does it **without** per-run directories: runs keep
+overwriting `<rundir>/<cell>_ase.*` in place (R701 unchanged), and Save **copies**
+the finished result aside under a name. R703's read-side migration is therefore
+not in front of it and stays unneeded.
 
 **R705 — but v1 makes the MRU tell the truth.** Issue **0216**:
 `attach_raw` — the path every ASE run takes — never pushes to `raw_history`, so
@@ -2502,7 +2509,7 @@ source is proved by **moving** the source, not by re-reading it.
 | Cadence | Here | Why |
 |---|---|---|
 | `Results ▸ Select` picks a **data file**; the Results Browser Location field takes a **directory** — two mechanisms | one mechanism over `.raw` **files** | ngspice writes one file, not a directory (F1, calculator.md §13) |
-| `Results ▸ Save` names a run into a history | absent in v1 | nothing varies the output path per run (R701); R704 defers it |
+| `Results ▸ Save` names a run into a history | **built by §20** as a named *copy*, not a per-run directory | runs still overwrite in place (R701); Save copies aside, so R703's migration is not needed |
 | Selection is independent of the schematic on screen | selection is bound to the cell it was read against, and says so | `raw->schname` is the existing data model (F4); R804 makes the coupling visible rather than pretending it is not there |
 | `Update` vs `Reload` vs `Clear` distinction | one `Select`, which re-binds — and re-reads only a file not already in the registry (R301) | xschem has no frozen-graph concept for `Reload` to spare |
 | Selection form is modal with OK | modeless, `Select` + `Close`, stays open | comparing two runs means selecting twice (R406); and ASE's dialogs are modeless to stay test-drivable |
@@ -2511,7 +2518,8 @@ source is proved by **moving** the source, not by re-reading it.
 
 ## 16. Non-goals for v1
 
-- **Per-run result directories / a run history.** R704, D7.
+- **Per-run result directories.** R704, D7. (Named saved results are NOT a
+  non-goal any more: §20, by copy.)
 - **Independently selecting a VCD or table database.** R102.
 - **A PSF reader.** Not a ViVA format question — xschem does not read PSF at all
   and this spec does not change that.
@@ -2538,7 +2546,10 @@ bold. **Nothing here is an assumption any more.**
    (`src/scheduler.c:12275-12297`), so a v1 with **zero C change** is possible.
    **NOT RULED — still open.** Assumption stands: R110 plus the new verb.
 2. **Is a run history (per-run result directories) wanted at all, and when?**
-   (R704, D7.) **NOT RULED — still open.** Assumption stands: not in v1. Note
+   (R704, D7.) **RULED 2026-10-21 by the user: YES, now** — they asked, unprompted,
+   for ADE-L's "save the current result under a meaningful name so it can be
+   loaded later". Built as named **copies** (§20), not per-run directories, so
+   the paragraph below stops being a blocker. Original note, kept: Note
    R703's correction: the 390 bare relative `write` lines are *not* the blocker
    (a per-run cwd moves them for free); the ~293
    `raw_read $netlist_dir/<cell>.raw` launcher sites are.
@@ -2869,3 +2880,625 @@ Also note the analysis type is already recorded, just elsewhere: graph rects
 carry `sim_type=` (tracked schematics: 100 `tran`, 35 `ac`, 26 `dc`, 3 `op`) and
 node tokens can carry `%<dataset> <rawfile>`. The accessors move that fact into
 the expression.
+
+---
+
+## 20. Saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1666)
+
+**Status:** IMPLEMENTED 2026-10-21 (uncommitted at the time of writing) from
+**revision 2** of this spec (after three reviews; every point is either folded
+in or rejected with a one-line reason in §20.13). Fence:
+`tests/headless/test_ase_saved_results_1666.tcl`, both T1 lists. **Not built:**
+SVR48/SVR49 (Plot Outputs / Direct Plot / Annotate under a saved view still
+attach through `wviewer::attach_raw`, which clears other loaded slots), step 13
+(`Load Setup`), and R907a's drop in contexts other than the current one. The
+resolver's `key` fallback was left on `ase::last_rawfile` (two registered
+suites pin it); the doors that need the live raw pass `derived` explicitly.
+**Ruled by the user** (§17 Q2): they asked for ADE-L's "save the current result
+under a meaningful name so it can be loaded later". Everything below that is not
+marked as a question is internal engineering, decided here. ADE-L is a
+**floor** (`Save` / `Select` / `Delete` with Save As, Comment and Directory);
+where this goes past it, §20.12 says so.
+
+**The one idea.** Runs keep writing exactly where they write today —
+`<rundir>/<cell>_ase.*`, overwritten in place (R701 stands). **Save copies** the
+finished result's artifacts into a named folder, keeping the **same file names**.
+Because every ASE path proc is `file join [ase::rundir $state] <cell>_ase.<ext>`,
+a saved result is then read by presenting the session's state with `rundir`
+pointed at the saved folder — the trick `ase::campaign_shard_state` already
+plays for a campaign shard. No reader learns a new argument; the readers that
+must follow a selection learn to ask for **one** state (§20.6).
+
+**Three invariants every rule below serves** (each has a fence row):
+
+- **I-W (writers never move).** Every proc that writes or deletes run artifacts
+  resolves paths from `ase::session_state`, never from `ase::result_state`. A
+  writer on `result_state` would delete a saved copy on the next Run. (SVR21, SVR-D1)
+- **I-L (listing never moves).** `saved_root`, `saved_list`, Save's destination
+  and Delete's population resolve from `ase::session_state` (plus the form's
+  Directory), never from `result_state` — otherwise "Save As" from a selected
+  result nests `<saved>/saved/…` and the lists come up empty. (SVR3b)
+- **I-C (read paths create nothing).** No proc in this section, and no reader
+  under a saved view, calls `ase::rundir` or `set_netlist_dir 0` on a saved
+  path: both `mkdir` (and the second rewrites `::netlist_dir`). They use the
+  read-only `ase::op_dump_dir` shape (`state_get rundir`, else `set_netlist_dir
+  2`). A deleted saved folder must stay deleted. (SVR3, SVR22b)
+
+### 20.1 Storage layout and location
+
+**R901 — the folder.** A saved result lives at
+
+    <results_dir>/<lib>/<cell>/<folder>/
+
+- `<results_dir>` defaults to **`<rundir>/saved`**, `<rundir>` read with I-C's
+  read-only spelling from **`ase::session_state`** (I-L). A non-default value is
+  kept in a new state key **`results_dir`**, added to `ase::schema_keys` **and**
+  `ase::omit_if_empty` so no committed `.state` file moves a byte (SVR5). It is
+  session state (the `rundir` class, issue 1665): set from Save's Directory, it
+  dirties the session and is written at Save State. Select's and Delete's
+  Directory fields only **re-list** and never dirty (R917).
+- **`<lib>/<cell>` are path levels.** `<cell>` keeps two cells apart in the
+  shared fallback (`set_netlist_dir`, e.g. `~/.xschem/simulations`); `<lib>`
+  keeps apart the same cell name in two libraries (the bundled sky130A / ihp /
+  gf180 work areas all carry `tb_*` benches). Listing additionally requires
+  meta `design` to equal the session's `lib cell view` (R904), so a hand-moved
+  folder from another design is never listed, selected or overwritten.
+- `<folder>` is derived from the user's name (R905); the name itself lives in
+  the meta.
+- **Containment (R901a).** Save refuses (`lbl_rsave_badroot`) when the
+  destination folder **equals, contains, or is inside** the live rundir's
+  run namespace — precisely: when the normalized destination is an ancestor of,
+  or equal to, `<rundir>`; or lies inside `<rundir>/campaign`. Paths are
+  compared after resolving **every** component (`file normalize` leaves the last
+  one unresolved, so a `file readlink` loop finishes it), and a `<results_dir>`,
+  `<lib>` or `<cell>` level that is a symlink into the rundir is refused.
+  `<rundir>/saved/<lib>/<cell>/<folder>` itself is fine: the pre-run cleanup in
+  `ase::run_deck` deletes **named files** at `<rundir>/<cell>_ase.*`, never a
+  directory (SVR20).
+- **R901b — the rundir door refuses a saved folder.** `ase::rundir_validate`
+  (issue 1665) refuses a path that **is or lies inside** a saved result (the
+  R904 predicate tried on the path and each parent): the next Run would delete
+  and rewrite that copy. Sentence `lbl_rundir_in_saved`. (SVR20b)
+- **R901c — moving the rundir.** When `ase::rundir_set` changes `rundir` while
+  `results_dir` is empty **and** the old default root holds saved results, it
+  pins `results_dir` to the old default (already a dirtying edit) and echoes
+  `ase: saved results stay in <dir>.` Results saved before the move stay listed,
+  and a `viewer.rawfile` pointing at one stays a saved view. (SVR20c)
+
+**R902 — inside the folder.** The copied artifacts under their **original
+names** (R903), plus `result.meta` (R904) and `<cell>_ase.runstate` (R906).
+Dot-prefixed siblings (`.<folder>.partial.<pid>`, `.<folder>.old.<pid>`) are
+staging (R908): never listed, swept when dead (R908c).
+
+### 20.2 What is copied
+
+**R903** The **source** is the result the window is showing (`ase::result_state`,
+§20.6): normally the live run, or — when a saved result is in view — that saved
+folder, so Save of a viewed saved result is Save As. One proc,
+`ase::saved_artifacts {state}` → `{path …}` of what exists, feeds the copier
+and the meta's `files`. The table is a **declared classification** and row
+SVR-D2 derives the population it must cover (every file in the live rundir
+matching `<cell>_ase*`, `<cell>.spice` or `.spiceinit`, plus every
+`proc ase::*_path {state …}` and backend `*_file` hook): an unclassified artifact
+reds the suite until somebody classifies it.
+
+| artifact | copied | why |
+|---|---|---|
+| `<cell>_ase.raw` | **required**, unless R909a's failed-run case | the data (issue 0929) |
+| `<cell>_ase.log` | if present | `run_failed` footer, convergence, case mode |
+| `<cell>_ase.plotmap` | if present | row↔plot mapping |
+| `<cell>_ase.meas` | if present | Measurements values |
+| `<cell>_ase.spice` (deck) | if present | provenance; `results_stale`'s comparand |
+| `<cell>_ase.runstate` | if present, else synthesised (R906) | Outputs / plotmap meaning |
+| `<cell>_ase.raw.ckpt` | if present | a stopped run's partial data |
+| `<cell>_ase_evt.vcd`, `_evt_N.vcd` | if present | event nodes |
+| `<cell>_ase.cosim` + every VCD it names | if present | co-sim; the copy's absolute `vcd` fields are **rewritten** into the saved folder |
+| `<cell>_ase.effective` | if present | provenance |
+| `<cell>.spice` (xschem netlist) | **fresh only** (R903a) | `conv_netlist_text`, `op_annot`'s `sch_path` index |
+| `<cell>_ase.s2p`, `<cell>_ase_sp*.s2p` | **fresh only** — **both** spellings `ase::backend::ngspice::s2p_file` writes | Touchstone exports |
+| `.spiceinit` | **fresh only** | provenance |
+| the OP dump | **fresh only**; source `op_annot::opdump_path <live raw>` (lowercased, the name the simulator was given), destination `[file rootname <saved raw>].opinfo` **case kept** (R903b) | device OP annotation |
+| `facts_design_path`, `opstate_path` files | **never** | inputs, not results |
+| `.so`/`.stamp`, `_evtprobe.spice`, `.ase_probe/`, `.ckpt.tmp` | **never** | builds and probes |
+| `campaign/` | **never in v1** | §20.12 |
+
+- **R903a — freshness.** An artifact the pre-run cleanup does **not** delete
+  (`<cell>.spice` — a Netlist with no Run rewrites it; stale `.s2p` from a
+  removed `sp` row; the OP dump; `.spiceinit`) is copied only if its mtime lies
+  in `[mtime(deck) − 1 s, mtime(raw) + 1 s]`; otherwise it goes to `skipped`
+  as `{tail stale}`. One rule, one proc. (SVR12)
+- **R903b — the OP dump.** `op_annot::opdump_path` lowercases the whole path
+  because the simulator is handed that lowercased name; it is **left
+  unchanged**, as is `opdump_request`. A new `op_annot::opdump_find {raw}`
+  tries the lowercased path first, then the case-kept sibling
+  `[file rootname $raw].opinfo`; `opdump_merge` and
+  `ase::op_report_missing_dump` use it. So saved names like `TT_27C` keep their
+  annotation. (SVR14 drives an uppercase **and** a lowercase name and asserts
+  the annotation loader finds the OP data after select.)
+- **R903c — a real copy of real bytes.** Each source is resolved to its target
+  (`file readlink` loop) and the **target's contents** copied; Tcl `file copy`
+  of a symlink copies the link, which in issue 0916's results-area setup would
+  point at data that keeps changing. mtimes are kept (`file mtime` set from the
+  source after copy, not assumed). Every copy is `file type` `file`. (SVR10, SVR11)
+- **R903d — the bytes did not move under us.** `(size, mtime)` of every source
+  is recorded before copying; afterwards each copy's size must equal it and the
+  source is re-statted. Any difference aborts with `lbl_rsave_changed`
+  ("Results changed during save.") and removes staging. This covers another
+  xschem process or a script on the shared fallback, which `rundir_busy`
+  cannot see. The copy is synchronous; if it ever becomes asynchronous,
+  `run_deck` must refuse while a save holds the source. (SVR18b)
+
+### 20.3 Metadata
+
+**R904** `result.meta` is one Tcl dict written as text and read back **with
+`dict` operations only — never `source`d or `eval`ed**. The write's `close` is
+checked (a full disk raises there). Keys, in order:
+
+| key | value |
+|---|---|
+| `format` | `1` |
+| `name` | the user's name as typed (R905) |
+| `folder` | the folder tail |
+| `comment` | free text, may be multi-line |
+| `saved` | `clock seconds` at Save |
+| `ran` | the raw's mtime (or the log's, R909a) — when the run happened |
+| `cell`, `design` | the `<cell>` level; `lib cell view` of the session |
+| `simulator` | of the run state |
+| `source` | absolute folder copied from |
+| `exit` | log footer exit code, or `{}` |
+| `stopped` | 1 if the run was stopped by the user (the session's `stopped` attribute **at Save**, or the source meta's) |
+| `types` | plot types the raw actually contains (`xschem raw` listing at Save) |
+| `viewtype` | the best-ranked `plot_sim_type` candidate **present in `types`**, or `{}` for a typeless select |
+| `state_source` | `run` (`.runstate` existed) or `current` (R906 fallback) |
+| `files`, `skipped` | tails copied; `{tail reason}` pairs |
+
+**The predicate.** A folder is a saved result **iff** it is not a symlink and
+`result.meta` parses as a dict with `format 1` and `folder` equal to the folder
+tail. Listing additionally requires `cell` and `design` to match the session.
+Anything else in `<results_dir>/<lib>/<cell>/` is never listed, never
+overwritten, never deleted.
+
+### 20.4 The run-time state
+
+**R906** `ase::run_deck` writes **`<cell>_ase.runstate`** (`ase::state_serialize`
+of the state it rendered) next to the deck; its pre-run cleanup deletes the old
+one with the others (SVR32). Save copies it. With none (a pre-1666 run, a
+hand-copied folder), the **current** session state is written and
+`state_source current` says so — and then the saved **plotmap is treated as
+unusable**: plotmap readers report "no mapping" rather than map against today's
+rows (SVR24b).
+
+Two readers, never one:
+
+- `ase::saved_runstate_view {dir}` — the `.runstate` with `rundir` **replaced
+  by the saved folder**, for readers (plotmap, design variables of Outputs).
+  Without the swap, `plotmap_path` would resolve the **live** plotmap.
+- `ase::saved_runstate_raw {dir}` — byte-for-byte as run, for Load Setup.
+
+### 20.5 Name, overwrite, refusal
+
+**R905 — names and folders.** The **name** is any printable text, 1–64
+characters, no `/`, `\` or control characters, not all blank — so `TT 27C after
+fix` is a name. Uniqueness is **case-insensitive** among the listed names (two
+names that differ only in case would be one folder on NTFS / `/mnt/c`). The
+**folder** is derived (`ase::saved_folder_for {root name}`): characters outside
+`[A-Za-z0-9_.+-]` become `_`, a leading `.` or `-` is prefixed with `_`, a
+trailing `.` dropped, Windows reserved stems (`CON PRN AUX NUL COM1…9 LPT1…9`)
+suffixed `_`, then `-2`, `-3`, … until free **case-insensitively**. Overwrite
+reuses the existing name's folder.
+
+**R905a — default name.** `<cell>_<YYYYMMDD>_<HHMM>` from **`ran`** (the
+raw's mtime), not the clock — after a campaign the top-level raw is an older
+single run, and the name must not imply otherwise. If that name exists, `_2`,
+`_3`, … (pure, `ase::saved_default_name`). Whether ADE-L uses a different
+default is asked of the user (§20.12).
+
+**R907 — overwrite is confirmed with the window's existing idiom.** OK on an
+existing name opens `ase::ui::confirm $key [lbl_rsave_title] [lbl_rsave_overwrite
+$name] <go>` — the same modeless confirm Save State's overwrite uses
+(`lbl_overwrite_state`); no arm/disarm state in the form. The pure layer takes
+`?confirmed?`: without it an existing name answers `how needconfirm` and writes
+nothing. Overwrite proceeds **only** if the existing folder passes the R904
+predicate **and** R901a containment **and** is not the live rundir or the
+source folder; otherwise `lbl_rsave_notsaved` ("<name> exists and is not a saved
+result.") and nothing is touched (SVR17b). Overwriting the result currently in
+view **is allowed**: `xschem raw read` holds the data in memory, not the file.
+After the rename, R907a runs.
+
+**R907a — the registry follows the disk.** After an overwrite or a delete,
+every registry slot whose normalized path lies inside that folder is dropped
+(`xschem raw clear`, in **every** context — the engine's same-path select
+returns the in-memory copy without reading disk, which would show the old
+waveforms). Sessions viewing it then re-resolve: an overwritten one re-selects
+the new copy; a deleted one resolves `invalid` and falls back to the last run
+(R302), and the session that acted echoes `ase: results: last run.` (SVR17c,
+SVR29b)
+
+**R908 — atomic.** (a) Copy into `<root>/.<folder>.partial.<pid>/`, write
+`result.meta` **last**, `file rename` into place; for an overwrite, rename the
+old to `.<folder>.old.<pid>`, rename the new in, delete the old. Any failure
+removes staging and leaves the old result intact. (b) A crash between the two
+renames is recovered: a `.<folder>.old.<pid>` with valid meta whose `<folder>`
+is missing and whose pid is dead is renamed back. (c) Dot-folders whose pid has
+no `/proc/<pid>` are swept at Save and at `saved_list` (the `T1_VERDICT_KEEP`
+pattern; where `/proc` is absent, sweep only by age > 1 day). (d) Before
+copying, free space is checked with `df -Pk` (skipped if unavailable) against
+the total size plus 10 %, so a save cannot fill the disk the next Run needs:
+`lbl_rsave_space`. (SVR18, SVR18c, SVR18d)
+
+**R909 — refusals** (each returns a value and one sentence; nothing throws;
+all sentences are `lbl_rsave_*` procs, echo text prefixed `ase:`):
+
+| condition | sentence (via) |
+|---|---|
+| no session | `lbl_rsave_nosession` |
+| source is the live run **and** `rundir_busy` answers `run` | `lbl_rsave_busy` — "Run in progress." |
+| `rundir_busy` answers `campaign` | **not refused**: a campaign writes under `<rundir>/campaign`, so the top-level files are still; Status says `lbl_rsave_campaign` — "Campaign results are not saved; saving the single run." — whenever a campaign is running (as built: a fixed sentence, no time, no index-versus-raw test) |
+| source is a saved folder | never busy-refused: nothing writes there |
+| no raw and not R909a | `lbl_rsave_noraw` — "No results to save." |
+| `ase::raw_content_verdict` refuses the raw | `lbl_rsave_empty` |
+| bad name | `lbl_rsave_badname` |
+| destination containment (R901a) / not a saved result (R907) | `lbl_rsave_badroot` / `lbl_rsave_notsaved` |
+| bytes moved, disk short, copy failed | `lbl_rsave_changed` / `lbl_rsave_space` / `lbl_rsave_failed <reason>` |
+
+**R909a — failed runs are saveable, including ones with no raw.** A run that
+failed or was stopped before its first write leaves only a log and maybe a
+`.raw.ckpt`. When the log footer is nonzero **or** a `.raw.ckpt` exists, the raw
+is optional; `exit`/`stopped` are recorded, `ran` comes from the log. Selecting
+such a result shows R-OUT13's "run failed" values from the saved log; a typeless
+or `types`-ranked select (R904 `viewtype`) means a run that died after `op`
+still selects. (SVR30, SVR30b)
+
+### 20.6 Selecting a saved result — what it binds
+
+**R910 — the engine half is the existing door.** Select commits through
+`ase::ui::rsel_commit` → `results::select <saved raw> <viewtype> {host ase token
+$key rundir <saved folder> derived [ase::live_rawfile $key]}` — **no
+`netlist`** (the live `<cell>.spice` would call every saved result `stale`).
+Never through `ase::attach_dbs` (L8: it clears every other slot). If `viewtype`
+is `{}`, a typeless select.
+
+**R911 — the view is DERIVED, not stored.** There is no `result_view`
+attribute. `ase::result_view {key}` answers the saved folder iff the session's
+**recorded selection** — `wviewer::selected($key)` written by
+`wviewer::selection_record` on every `results::persist`, else the state's
+`viewer.rawfile` when nothing is recorded yet (a just-loaded state) — names a
+raw whose folder passes the R904 predicate with matching `cell` and `design`.
+Consequences, all by construction:
+
+- every door — Saved list, Loaded, Recent, Path, Browse, the wave viewer, the
+  Calculator, as long as it records against this session's token — gives the
+  same answer for the same path; the view can never disagree with the
+  waveforms (SVR27 commits one saved raw through each door). A door found in
+  step 7 **not** to record against the ASE token is listed in the commit and
+  fenced as "not a saved view";
+- persistence needs no key and no `viewer open` (R915);
+- nothing has to remember to clear it.
+
+**R911a — Run returns to the live result.** One proc,
+`ase::result_view_reset {key}`, records the live raw as the selection; it is
+called by **every** launch door (`do_run`, `do_run_existing`, campaign start —
+the set derived in SVR27b from callers of `ase::run`/`ase::run_existing`/the
+campaign start in `src/ase_window.tcl`) **after the launch succeeds**: a refused
+Run (already running, precheck, preflight) leaves the view alone (SVR27c).
+
+**R912 — `ase::result_state {key}`.** The session state with `rundir` replaced
+by `ase::result_view`, when that is non-empty; otherwise the plain session
+state. Pure, never throws, creates nothing (I-C). **Readers only** (I-W).
+
+**R912a — `ase::live_rawfile {key}`.** Always from `session_state`. Used by the
+`Last run` row, R910's `derived`, `results::resolve`'s fallback for an
+`invalid` selection, and `result_view_reset` — so choosing `Last run` under a
+saved view can never re-bind the saved raw (SVR27d asserts the bound path).
+
+**R913 — readers, classified, not hand-listed.** The population is derived
+(row SVR-D1): every caller in `src/ase.tcl`, `src/ase_window.tcl`,
+`src/wave_viewer.tcl`, `src/op_annot.tcl`, `src/calculator.tcl` of `raw_file`,
+`log_file`, `plotmap_path`, `meas_path`, `deck_file`, `cosim_file`,
+`event_vcd_files`, `s2p_file`, `ckpt_path`, `last_rawfile`, `last_vcdfiles` or
+`session_state`, each classified in one table in the suite as **reader**
+(→ `result_state` / `last_rawfile`), **writer** (→ `session_state`, I-W),
+**listing** (I-L) or **neither**; an unclassified caller fails, and a caller
+classified writer that reaches `result_state` fails. The scan is textual: its
+limits (a computed proc name, an alias) are declared in the row. Decisions
+already taken:
+
+| reader | under a saved view |
+|---|---|
+| `last_rawfile`, `has_results`, `results_stale` | the saved files (switch `session_state` → `result_state`) |
+| `run_failed` | saved log footer, and meta `stopped` — the session's live `stopped` attribute is **ignored** under a saved view |
+| `last_vcdfiles` (`cosim_load_map`, `event_vcd_files`) | the saved VCDs — callers `viewer_restore`, `dp_finish`, `auto_plot` and the four in `wave_viewer.tcl` follow |
+| Outputs values (`results_from_disk`, `evaluate_outputs` → `result_probe`) | the **current** Outputs rows evaluated against the saved raw; design variables from `saved_runstate_view` when `state_source run` |
+| Measurements (`meas_read`/`meas_results`/`meas_fill`) | the saved `.meas` |
+| plotmap readers (`reconcile_report`, `stimuli_nvec`) | the saved `.plotmap` against `saved_runstate_view`; "no mapping" under `state_source current` (R906) |
+| run-health strip (`health_refresh` via `conv_logtext`), Convergence (`conv_logtext`, `conv_netlist_text`) | the saved log and `<cell>.spice` |
+| Annotate (`annot_ensure_loaded`, `6`, `annot_menu_sync`), `matrix_dialog` | the saved raw, OP dump via `opdump_find` |
+| Plot Outputs (`~`, `plot_outputs` → `auto_plot`) and Direct Plot (`dp_finish`) | under a saved view: `results::select` (R910 shape) + `xschem raw read` of the saved VCDs, meta `viewtype`; **never** `wviewer::attach_raw`/`attach_dbs`. Live view: unchanged |
+| `ckpt_report` | run completion only — n/a |
+| Campaign Results | live, unchanged (v1) |
+| Calculator, waveform viewer | already follow `results::current` / `results::select` |
+
+**R913a — every change of view repaints.** After any select or return (and
+after R907a), quietly through `ase::quiet`: `evaluate_outputs` /
+`results_from_disk`, `results_refill`, `meas_fill`, `health_refresh`,
+`annot_menu_sync`, `refresh_title`. One proc, `ase::ui::result_view_changed
+{key}`, called from `rsel_commit`, `result_view_reset`, R907a and load-state.
+(display row SVR45: an Outputs value differs between live and saved.)
+
+**R914 — saying which result you are looking at.** One echo sentence
+(`lbl_results_view`): `ase: results: <name> (saved <date>).` / `ase: results:
+last run.` `refresh_title` **derives** the suffix from `ase::result_view` every
+time, in the order `Analog Sim Environment <cell> — <name> (unsaved) *`, and the
+status bar's `State:` segment carries `— <name>` too. Nothing raises a window or
+takes focus.
+
+**R915 — persistence.** No new key. Save State already writes `viewer.rawfile`
+(rundir-relative when under it). On load, R911's derivation reads it whether or
+not the viewer was open, and readers follow at once; the waveform half
+(`viewer_restore`, still `open`-gated) uses meta `viewtype` and the saved VCDs
+when the path is a saved view. A saved result deleted since resolves `invalid`
+and falls back (R302). (SVR28 drives viewer-open **and** viewer-closed.)
+
+**R916 — labels.** `ase::saved_name_of {path}` (R904 predicate on the dirname)
+feeds `results::_label` and `wviewer::db_label`: a saved raw labels as
+**`<name> <type>`**; the engine keeps separate slots (R302a), so two overlay.
+
+### 20.7 The forms
+
+**R917 — menu.** ASE-L's Results menu becomes `Save…`, `Select…`, `Delete…`,
+separator, `Direct Plot`, `Annotate`, separator, `<hilite>` — the three ADE-L
+forms grouped, Save first (the order is also asked of the user, §20.12). The
+labels are `lbl_*` procs and the expected list is built **once**
+(`ase::ui::results_menu_labels`), read by row `GM2` of
+`test_ase_conv_gui_1460` (registered, both lists — **updated in the same
+commit**), `SEL389` of `test_results_dialog`, and SVR40. Hand-built Tk (R401).
+
+**Focus.** The three forms are opened by the user, so they take focus like every
+other ASE form (`variable_editor`, the meas form): Save focuses `Save As` with
+the default **selected** so typing replaces it; Select focuses the Saved list;
+Delete focuses its list. The never-steal rule applies to echoes and notices,
+which raise and focus nothing.
+
+**Save… (`ase::ui::rsave_dialog`)** — modeless, one per session, no grab:
+
+    Save As    [tb_bandgap_20261021_1432        ]
+    Comment    [                                ]   (Text, 3 lines)
+    Directory  [<rundir>/saved            ] [Browse…]
+    Source     last run, <ran>  |  <name> (saved)    (read-only)
+    Status     <one sentence>
+               [OK] [Cancel]
+
+OK calls `ase::saved_save`; on `needconfirm` it opens R907's confirm; on success
+the form closes and echoes `lbl_rsave_done`. Directory goes through
+`ase::rundir_validate`'s advisory path (RD8 precedent: an uppercase directory
+warns). While a live run is busy, OK is disabled with `lbl_rsave_busy`;
+`run_finished`/`run_done` call `ase::ui::rsave_refresh` and
+`ase::ui::rsel_refresh_saved`, which re-enable OK and refresh Source, the
+default name and Select's list (SVR43, SVR44).
+
+**Select…** — `rsel_dialog` gains, above `Loaded`, a `Saved` region: an
+editable `Directory` [Browse…] (re-lists `<dir>/<lib>/<cell>`, does not dirty),
+a treeview (`Name`, `Saved`, `Comment` first line; first row `Last run`), and a
+read-only multi-line **Comment** area showing the highlighted row's full
+comment. Rows from `ase::saved_list $key ?dir?`, newest first, kept in
+`dlg($key,rselmap,saved,<id>)`, committed by `rsel_commit` (R910). The viewed
+row is marked. `Load Setup` on a saved row loads `saved_runstate_raw` through
+`load_state_commit` (dirty/confirm inherited); results stay as selected.
+
+**Delete… (`ase::ui::rdel_dialog`)** — modeless; editable Directory, the Saved
+list (no `Last run`), the same Comment area, extended selection, `Delete` +
+`Close`. Delete opens `ase::ui::confirm` with `lbl_rdel_confirm $n`
+(pluralised properly: "Delete 1 saved result?" / "Delete 3 saved results?").
+
+**R918 — delete safety**, run **before** every overwrite as well as every
+delete (one proc, `ase::saved_target_ok {root folder}`): R904 predicate; not a
+symlink; normalized (every component resolved) path a **direct child** of the
+root shown in the form; not the live rundir, not containing it. The viewed one
+**may** be deleted (R907a). `saved_delete` takes **names** and maps them
+through the listing, so `../x`, `a/../../b`, absolute paths and dot-folders are
+not names it can reach; the containment check stays as defence-in-depth and is
+tested on its own (SVR29c).
+
+### 20.8 Pure layer (`src/ase.tcl`, namespace `ase`, headless-callable)
+
+| proc | contract |
+|---|---|
+| `saved_root {key ?dir?}` | `<dir or results_dir or rundir/saved>/<lib>/<cell>` from `session_state` (I-L); creates nothing (I-C) |
+| `saved_default_name {key ?now?}` | R905a |
+| `saved_name_ok {name}` / `saved_folder_for {root name}` | `{ok msg}` / R905 folder |
+| `saved_artifacts {state}` | R903 list with R903a applied → `{copy skipped}` |
+| `saved_meta {dir}` | the dict or `{}` (R904 predicate) |
+| `saved_name_of {path}` | name or `{}` |
+| `saved_target_ok {root folder}` | R918 |
+| `saved_list {key ?dir?}` | `{name folder dir saved ran comment exit viewtype}` dicts, newest by `saved`; sweeps (R908c) |
+| `saved_save {key name comment ?dir? ?confirmed?}` | `{ok how name dir msg skipped}`; `how` ∈ `saved overwritten needconfirm refused` |
+| `saved_delete {key names ?dir?}` | `{ok deleted refused msg}` |
+| `saved_runstate_view {dir}` / `saved_runstate_raw {dir}` | R906 |
+| `result_view {key}` / `result_state {key}` / `live_rawfile {key}` / `result_view_reset {key}` | R911–R912a |
+| `op_annot::opdump_find {raw}` | R903b |
+
+### 20.9 Messages (R801 discipline)
+
+Every user-visible string is an `ase::ui::lbl_rsave_*`, `lbl_rdel_*`,
+`lbl_results_view` or `lbl_rundir_in_saved` proc; echo sentences start `ase:`;
+plurals are spelled, never `(s)`; acronyms uppercase. Channels: the form's
+Status label and `ase::echo`. No `alert_`, no `tk_messageBox`; confirmations use
+`ase::ui::confirm`.
+
+### 20.10 Test plan — red first
+
+**Suite: `tests/headless/test_ase_saved_results_1666.tcl`**, registered in
+**both** `hcases` (pure layer) and `dcases` (forms). It sources
+`tests/headless/scratch.tcl` **before its first `update`** (watchdog, `W20h`),
+ends `RESULT: …` then `OVERALL: ok (N checks)` (the `test_ase_rundir_1665`
+epilogue, checked against `banner_complete`, not `run_suites.sh`), and prints
+**no lowercase `^skip:` line on either arm** — display-only rows self-skip as
+one `RESULT: SKIP`-style uppercase line. Every verb call goes through `pcall` or
+an accessor (a band that aborts deletes its rows); the epilogue reports
+`expected=<n> missing=0`, and `missing=0` under each sabotage is an acceptance
+test.
+
+**Fixture — synthesised, never simulated** (no ngspice dependency, so no
+`skip:` in a home without the fork ngspice). Built under the suite's scratch:
+`tests/headless/data/calc_fixture.raw` copied as the live raw and a **different**
+committed raw as the second run; a hand-written log with an `=== exit N after T
+s ===` footer; a plotmap, a meas, a deck, a `.runstate`, a `.cosim` + VCD, an
+OP dump under its lowercased name, a `<cell>.spice`, both `.s2p` spellings, a
+`.raw.ckpt`, excluded files, and **planted hazards**: a `<cell>.spice` newer
+than the raw, an `.s2p` older than the deck, a symlinked raw. Row SVR0 asserts
+every planted file exists and that live and second-run raws differ **byte-wise
+and in the values the rows compare** (the adjacent-pair rule) before any row
+reads them. Shims: `select_raw` (L1), `::update_recent_files` (L11).
+
+| row | asserts | sabotage it must catch |
+|---|---|---|
+| SVR0 | fixture present and distinct (above) | — (fixture leg) |
+| SVR1 | `saved_name_ok` accepts `TT_27C`, `TT 27C after fix`; refuses `''`, blanks, `a/b`, 65 chars, control chars — table-driven, count rides | bound dropped; `/` allowed |
+| SVR1b | `saved_folder_for`: space→`_`, `.x`→`_.x`, `CON`→`CON_`, `tt` beside `TT` → `tt-2` | reserved names; case-sensitive collision |
+| SVR2 | default name from `ran`, passes SVR1; existing → `_2`; two same-minute saves get distinct names | clock instead of mtime; collision on default |
+| SVR3 | `saved_root` defaults / honours `results_dir` / `?dir?`; with a rundir and `results_dir` that do not exist, **neither appears** | `ase::rundir` (mkdir) inside; lib/cell level dropped |
+| SVR3b | select a saved result, then `saved_root`, `saved_list` and Save As destination are unchanged (I-L) | listing from `result_state` |
+| SVR4 | two cells, and the same cell in two libraries, sharing one fallback: each lists only its own; a meta with another `design` is not listed | lib level dropped; design check missing |
+| SVR5 | `results_dir` in `schema_keys` + `omit_if_empty`; **every** committed `*.state` (count asserted > 0) load→serialize byte-identical | omit missing |
+| SVR10 | folder holds a **literal** expected set built from the fixture (not `saved_artifacts`' answer), `files` equals it; each copy byte-, size- and mtime-equal and `file type` `file` (the symlinked raw included) | dropping `.meas`; link copied; mtime lost |
+| SVR11 | deleting the live files (simulated cleanup) leaves the saved copy readable and byte-equal | link instead of copy |
+| SVR12 | excluded files not copied; stale `<cell>.spice` and old `.s2p` land in `skipped` as `stale`; fresh ones copied, **both** s2p spellings | freshness rule dropped; one spelling |
+| SVR13 | `.cosim` copy's `vcd` fields point inside the saved folder, files exist | rewrite skipped |
+| SVR14 | names `TT_27C` and `tt_27c`: dump lands at case-kept `rootname.opinfo`; after select `opdump_find` / the annotation loader **finds the OP data** for both | lowercased destination; lookup unchanged |
+| SVR15 | meta parses with `dict`, every R904 key, `viewtype` ∈ `types`; a meta holding `[set ::svr15_pwned 1]` is read and `::svr15_pwned` stays unset | `source`/`eval` |
+| SVR16 | refusals (busy-live, no raw, empty raw, bad name) — `ok 0`, exact `lbl_*` sentence, **no folder, no dot-folder** | refusal after partial copy; throw |
+| SVR16b | busy with a **campaign**: saves, Status carries `lbl_rsave_campaign`; source a saved folder while a run is busy: saves | over-strict busy |
+| SVR17 | existing name: unconfirmed → `needconfirm`, unchanged; confirmed → `overwritten`, contents now the **second run's** (sources' difference asserted first) | silent overwrite; no-op overwrite |
+| SVR17b | overwrite target that is not a saved result (meta-less folder; the live rundir via a crafted Directory/name; a symlink) → `lbl_rsave_notsaved`/`badroot`, target byte-identical | R918 checks skipped on overwrite |
+| SVR17c | select A, return to Last run, overwrite A, select A → values are the new ones | registry slot not cleared |
+| SVR18 | shim `file copy` to raise on the 3rd file (shim fired ≥ 3 asserted, fixture ≥ 3 artifacts) and, separately, `file rename` old→`.old` to fail: old result intact, no dot-folder | non-atomic |
+| SVR18b | shim copy that touches the source midway → `lbl_rsave_changed`, nothing left | no stat compare |
+| SVR18c | planted `.x.partial.<deadpid>` swept; `.x.old.<deadpid>` with valid meta and no `x` restored | no sweep/recovery |
+| SVR18d | `df` shim reporting too little → `lbl_rsave_space`; `df` missing → saves | space check fatal when absent |
+| SVR19 | `saved_list` ignores dot-folders, meta-less, wrong `folder`, symlinks; order by `saved` on metas planted opposite to alphabetical **and** creation order (precondition asserted) | glob order |
+| SVR20 | `ase::run_deck` driven with a stub simulator (the `test_ase_core` / `test_ase_events_1465` precedent) leaves `<rundir>/saved/` byte-identical; the recorded sabotage globs `<rundir>/*` with **`-force`** and reds | cleanup reaching directories |
+| SVR20b | `rundir_validate` refuses a saved folder and a path inside one | rundir into saved |
+| SVR20c | `rundir_set` with saved results under the old default pins `results_dir` and echoes | results orphaned |
+| SVR21 | under a saved view, **every write door** — `run_deck` called **directly**, `netlist_in_place`, `run_existing`, a campaign shard, the s2p/effective/OP writers — leaves the saved folder's bytes and mtimes unchanged and replaces the live files | writer on `result_state` |
+| SVR-D1 | derived caller classification (R913): no unclassified caller; no writer reaches `result_state`; no listing proc reaches it; limits declared | new reader left on `session_state`; writer switched |
+| SVR-D2 | derived artifact classification (R903): every planted/known artifact copied or declared never | new artifact unclassified |
+| SVR22 | `result_state` swaps only `rundir`; a stale/meta-less/other-design view yields the plain state | trusting a stale path |
+| SVR22b | a deleted saved folder plus every reader call: the folder is **not** recreated | `ase::rundir` on a saved path |
+| SVR23 | per reader decided in R913 (`last_rawfile`, `has_results`, `results_stale`, `run_failed` incl. `stopped`, `last_vcdfiles`, Outputs values, `meas_read`, `conv_logtext`, `conv_netlist_text`, plotmap): saved under a saved view, live otherwise — data distinct (SVR0) | any reader left live |
+| SVR24 | plotmap reader uses `saved_runstate_view`: live rows edited after Save still reconcile, **and** the live and saved plotmaps differ (asserted) | `.runstate` unswapped (reads live plotmap) |
+| SVR24b | `state_source current` → plotmap reported unusable | mapping against today's rows |
+| SVR25 | `results::select` with R910 opts: `status ok`, not `stale`; the live slot survives | `netlist` passed; `attach_dbs` |
+| SVR26 | `saved_name_of` / `results::_label` give `<name> <type>`; `wviewer::db_label` half asserted only after `info commands wviewer::db_label` is non-empty (else that leg is a display row) | label unconsulted |
+| SVR27 | the same saved raw committed via Saved, Loaded, Recent, Path → `result_view` equal each time | door-dependent view |
+| SVR27b | launch-door set derived from callers; each calls `result_view_reset` | door missing the reset |
+| SVR27c | a refused Run keeps the view; a successful launch resets it | reset before launch |
+| SVR27d | under a saved view choose `Last run`: the **bound path** is the live raw | `Last run` via `last_rawfile` |
+| SVR28 | Save State → close → Load State with a saved selection, viewer open **and** closed: view restored, readers saved; with the folder deleted, live | `open`-gated derivation |
+| SVR29 | `saved_delete` deletes a good one; refuses meta-less, symlinked (target survives), other-design | symlink followed |
+| SVR29b | delete the viewed one: allowed, slot dropped, view falls back, echo `last run` | refusal; dangling slot |
+| SVR29c | `saved_target_ok` alone, with `../x`, `a/../../b`, absolute, `.x.partial.1` and a valid saved result planted at each escape target: all refused, target intact; through `saved_delete` names they are unreachable | containment missing |
+| SVR30 | failed run with raw: saved, `exit` recorded, select gives R-OUT13 values | failed refused |
+| SVR30b | failed/stopped run with **no raw** (log + `.raw.ckpt`): saved; a raw missing its top-ranked type selects via `types` | raw required; `viewtype` absent |
+| SVR31 | save from a viewed saved result under a new name copies the saved folder | source hard-wired live |
+| SVR32 | `run_deck` (stub) writes `.runstate` equal to the rendered state and its cleanup removes the old one; none → `state_source current` | `.runstate` never written |
+| SVR33 | `lbl_*` coverage: every sentence the pure layer returns is produced by an `lbl_*` proc; echo text starts `ase:`; plurals for 1 and 3 | inline text; `(s)` |
+
+**Display rows** (one id per claim; buttons driven by Enter → press → release
+with `-x/-y` then Leave, or `invoke` where only `-command` is claimed and said
+so; text entered with `insert`, never `event generate <KeyPress>`, which hangs
+the display arm; busy driven by a renamed `ase::ui::run_busy` shim):
+
+| row | asserts |
+|---|---|
+| SVR40 | Results menu equals `results_menu_labels` |
+| SVR41 | Save opens with focus in `Save As` and the default selected (focus first parked on a known widget, asserted non-empty) |
+| SVR42 | OK on an existing name opens the confirm; its OK overwrites; its Cancel leaves the folder unchanged |
+| SVR43 | OK disabled while busy, and invoking it saves nothing |
+| SVR44 | `run_done` re-enables OK and refreshes Source / default / Select's list |
+| SVR45 | committing a saved row changes an Outputs value and the title gains ` — <name>` in the R914 order; `Last run` restores both |
+| SVR46 | Select's Directory edit re-lists without dirtying; Comment area shows the full multi-line comment |
+| SVR47 | Delete's confirm text pluralises; its OK deletes, Cancel does not |
+| SVR48 | Plot Outputs and Direct Plot under a saved view keep a second loaded result's slot and load the saved VCDs |
+| SVR49 | Annotate under a saved view annotates from the saved OP dump |
+| SVR50 | echoes raise and focus nothing |
+
+**Also updated in the same commits:** `GM2` of `test_ase_conv_gui_1460`
+(registered; reads `results_menu_labels`), `SEL389` of `test_results_dialog`
+(unregistered, issue 1638 family; fixed while edited, not registered here).
+
+**Trailer, derived before the gate**: capture both arms exactly as T1 takes
+them, lift `summarize_all` whole (discovered procs, `banner_complete` sourced
+from `tests/banner_rule.tcl`), score the captures, and splice them into the
+last real verdict. Expected *shape* `cases` +2, `blocks` +2, `counted_failures`
+0, `skips` unmoved, `wc -l` +6 — accepted only if the derivation and
+`planned_cases` agree.
+
+### 20.11 Implementation order
+
+Each step lands its rows **and** its producer in one commit (a registered red
+suite is a red gate); the red-first run of each step's rows is taken locally,
+before the producer, and must show the named reds with `missing=0`.
+
+1. Mint **issue 1666** (two-check procedure; `1666` was found free), file
+   `doc/claude/issues/1666-ase-saved-results.md` with a `**STAMP:**` line in
+   its first 12 lines (`tree=` an ancestor of HEAD containing an `a`–`f`
+   letter; no stamp-shaped example in the body), record in `NUMBERING.md`,
+   `tclsh tests/headless/issue_stamp.tcl` → `ok`.
+2. Suite skeleton + fixture (SVR0, SVR33 harness) + registration in `hcases` and
+   `dcases`, green on its fixture rows only.
+3. `results_dir` key; `saved_root`, `saved_name_ok`, `saved_folder_for`,
+   `saved_default_name`, `saved_meta`, `saved_name_of`, `saved_target_ok`,
+   `saved_list` with sweep (SVR1–5, 19, 18c, 29c).
+4. `run_deck` writes/cleans `.runstate`; `saved_runstate_view/raw` (SVR32, 20).
+5. `saved_artifacts` (freshness, both s2p, OP dump, symlink resolve),
+   `saved_save` (staging, confirm, stat compare, space, cosim rewrite),
+   `opdump_find` + its two callers (SVR10–18d, 30, 30b, 31, D2).
+6. `rundir_validate` refusal and `rundir_set` pin (SVR20b, 20c).
+7. `result_view`, `result_state`, `live_rawfile`, `result_view_reset`; the
+   SVR-D1 classification and every reader routed; `run_failed`'s `stopped`;
+   `last_vcdfiles`; launch doors (SVR21–24b, 27–27d, D1). Verify which select
+   doors record against the ASE token; declare any that do not.
+8. Registry follow-through R907a; `saved_delete` (SVR17c, 29, 29b).
+9. Labels (SVR26); `lbl_*` procs (SVR33).
+10. Select region, `rsel_commit` R910, `result_view_changed` repaint, R914 echo,
+    title and status suffix, R915 load path (SVR25, 28, 45, 46).
+11. Save… and Delete… forms, `results_menu_labels`, menu, `GM2`, `SEL389`
+    (SVR40–44, 47, 50).
+12. Plot Outputs / Direct Plot / `viewer_restore` under a saved view (SVR48, 49).
+13. `Load Setup` (separable; drop if it slips).
+14. Derive the trailer; gate T1 in `~/gc26` under `setsid`, poll for
+    `T1-RUN-END`, read `results.<pid>.log`. `owed.sh add look` for the three
+    forms and `owed.sh add suite` for a `:0` run.
+
+### 20.12 Beyond / short of ADE-L, and open points
+
+- **Beyond:** saving a failed (even raw-less) run; Save As from a viewed saved
+  result; `Load Setup`; names with spaces; per-lib/cell scoping that makes the
+  shared fallback safe; deleting the viewed result.
+- **Short of:** campaigns are not saved in v1 (ADE-L has none; ADE-XL
+  histories are a different feature).
+- **Asked of the user, one at a time, not blocking** (none written here as a
+  Cadence fact): (1) does ADE-L's Select also restore the setup — decides
+  whether `Load Setup` is a convenience or the expected behaviour; (2) ADE-L's
+  default Save As text; (3) the order of Save / Select / Delete in ADE-L's
+  Results menu. A different answer to (2) or (3) changes one proc each
+  (`saved_default_name`, `results_menu_labels`).
+
+### 20.13 Review points rejected or narrowed (one line each)
+
+- *Refuse overwrite/delete while any session views the folder* (review 0 #10):
+  rejected in favour of allowing it (review 1 #7) — the data is in memory, and
+  R907a drops every slot so the derived view (R911) re-resolves correctly.
+- *Fix `opdump_path` first, under its own issue* (review 2 #4): rejected — the
+  simulator is handed the lowercased name, so the write side must keep it; the
+  lookup side (`opdump_find`) is what changes. Its test half is adopted (SVR14).
+- *Revision 1's "uppercase rundir already loses `.opinfo` for the live run"*:
+  withdrawn as false — `ase::op_dump_reachable_dir` refuses mixed case and the
+  tier falls back to shape c (issue 1334); no issue is filed.
+- *Two-press arm/disarm overwrite and delete*: replaced by `ase::ui::confirm`
+  (review 1 #6), which also removes review 2 #18's "any edit disarms" trap.
+- *Name regexp refusing spaces*: replaced by free names + derived folders
+  (review 1 #13), which also absorbs review 0 #15.
+- *`result_view` as a stored attribute*: replaced by derivation (review 0 #6),
+  which retires the clear-site list, SVR27's impossible close leg (review 2 #9)
+  and review 1 #2/#3.

@@ -4772,7 +4772,13 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   everywhere and written by nothing but a hand-edited `.state` file. Setup > Run
   Directory… added.
 
-**The next free number is 1666.**
+~~**The next free number is 1666.**~~
+
+- **1666** — ASE-L could not save a result under a name: every run overwrote
+  `<rundir>/<cell>_ase.*` in place. Results > Save…, Select… (saved list) and
+  Delete… added.
+
+**The next free number is 1667.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
