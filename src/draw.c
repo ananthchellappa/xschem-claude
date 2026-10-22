@@ -4750,12 +4750,338 @@ static void draw_graph_points(int idx, int first, int last,
   }
 }
 
-static void draw_graph_grid(Graph_ctx *gr, void *ct)
+/* item 22: is graph `gr` on the fixed-text (`textpx`) arm of setup_graph_data?
+ * The one predicate for every draw that must place text differently there. */
+static int graph_fixed_text(const Graph_ctx *gr)
+{
+  return gr->textpx > 0.0 && !gr->digital && !gr->vlegend;
+}
+
+/* item 22: how many MAJOR Y grid lines draw_graph_grid will visit (the same
+ * loop, the same within-range / end tests, nothing drawn). Capped at 100000. */
+static int graph_ylab_visible(Graph_ctx *gr, double *first, double *last)
+{
+  double deltay, starty, wy;
+  int j, n = 0;
+  *first = *last = 0.0;
+  if(gr->digital || gr->gy1 != gr->gy1 || gr->gy2 != gr->gy2) return 0;
+  deltay = axis_increment(gr->gy1, gr->gy2, gr->divy, gr->logy);
+  starty = axis_start(gr->gy1, deltay, gr->divy);
+  for(j = -1; n < 100000; ++j) {
+    wy = starty + j * deltay;
+    if(!axis_within_range(wy, gr->gy1, gr->gy2, deltay, gr->subdivy)) continue;
+    if(axis_end(wy, deltay, gr->gy2)) break;
+    if(!n) *first = wy;
+    *last = wy;
+    n++;
+  }
+  return n;
+}
+
+/* item 22, the user's report of 2026-10-21: on a fixed-text strip the Y numbers
+ * keep their size whatever the plot height, so on a short strip divy+1 of them
+ * were drawn on top of one another (the proportional arm shrinks them with the
+ * box and never overlaps). Answers the label STRIDE draw_graph_grid uses --
+ * label every k-th visible Y line counting from the bottom one, every grid line
+ * and tick still drawn; *pitch gets one division's height in schematic units.
+ * k is the smallest stride that puts two labels at least ONE em apart centre to
+ * centre (so they cannot overlap) AND divides the visible span, so the TOP
+ * visible line is labelled as well as the bottom one and the labels stay evenly
+ * spaced: a strip keeps a scale (two numbers) whenever its top and bottom lines
+ * clear each other, and shows the bottom one alone only when they do not.
+ * 1 on every other graph, which is therefore unchanged. Read back by
+ * graph_text_metrics and by the draw record (graph_drawn). */
+static int graph_ylab_stride(Graph_ctx *gr, double *pitch)
+{
+  double deltay, p, em, f, l;
+  int k, span;
+  *pitch = 0.0;
+  if(gr->digital || gr->gh == 0.0 || gr->gy1 != gr->gy1 || gr->gy2 != gr->gy2) return 1;
+  deltay = axis_increment(gr->gy1, gr->gy2, gr->divy, gr->logy);
+  p = fabs(gr->h / gr->gh * deltay);
+  *pitch = p;
+  if(!graph_fixed_text(gr)) return 1;
+  em = gr->txtsizey * 52.0 * cairo_font_scale;
+  if(!(p > 0.0) || !(em > 0.0)) return 1;
+  k = (int)ceil(em / p - 1e-9);
+  if(k <= 1) return 1;
+  span = graph_ylab_visible(gr, &f, &l) - 1;
+  if(span < 1) return 1;
+  if(k > span) return span + 1; /* top does not clear bottom: the bottom label only */
+  while(span % k) k++;          /* terminates at k == span at the latest */
+  return k;
+}
+
+/* item 22, D7: THE DRAW RECORD. For a fixed-text graph drawn ON SCREEN (draw_graph
+ * flags bit 16), every text box the draw places -- Y numbers, X numbers, sweep
+ * names, legend names, cursor-A read-outs, cursor X tags -- is measured with
+ * text_bbox in the face it is drawn in and kept here, in screen pixels, so a test
+ * can ask what the draw DID rather than what a helper says it would do
+ * (`xschem get graph_drawn <i>`). Measurement only: nothing here draws, and no
+ * non-fixed graph is ever recorded, so embedded schematic graphs are untouched.
+ * A record belongs to the xctx that drew it; a query from another context gets
+ * nothing. Graphs past GRAPH_REC_GRAPHS and boxes past GRAPH_REC_BOXES per kind
+ * are not recorded (the count still is). */
+#define GRAPH_REC_GRAPHS 32
+#define GRAPH_REC_BOXES 48
+enum { GREC_YLAB, GREC_XLAB, GREC_SWEEP, GREC_LEGEND, GREC_READOUT, GREC_CURSOR, GREC_YLINE,
+       GREC_YINK, GREC_LINK, GREC_KINDS };
+static const char *grec_kind_name[GREC_KINDS] =
+  {"ylab", "xlab", "sweep", "legend", "readout", "cursor", "yline", "ylab_ink", "legend_ink"};
+typedef struct {
+  void *owner;
+  int valid;
+  double rect[4], box[4];
+  int yvis, ystride, readout_row, sweep_row, tags_inside;
+  double ypitch, ybot, ytop;
+  int n[GREC_KINDS];
+  double b[GREC_KINDS][GRAPH_REC_BOXES][4];
+} Graph_rec;
+static Graph_rec graph_rec[GRAPH_REC_GRAPHS];
+static Graph_rec *graph_rec_cur = NULL;
+
+/* item 22 (F1): the INK box of a one-line, unrotated graph text: text_bbox's
+ * line box (ascent + descent + gap) cut down vertically to the glyphs' own
+ * extent, from the font's metrics in the face drawn (cairo_font_extents'
+ * ascent puts the baseline, cairo_text_extents' y_bearing and height the ink
+ * on it). A rotated or multi-line text, or no cairo, keeps the line box. */
+static void graph_ink_box(const char *str, double s, short rot, short flip, int hc, int vc,
+                          double x, double y, double b[4])
+{
+  double dt;
+  int tt;
+  text_bbox(str, s, s, rot, flip, hc, vc, x, y, &b[0], &b[1], &b[2], &b[3], &tt, &dt);
+#if HAS_CAIRO==1
+  if(rot == 0 && xctx->cairo_ctx && !strchr(str, '\n')) {
+    cairo_font_extents_t fext;
+    cairo_text_extents_t ext;
+    double top;
+    /* text_bbox left the font at this text's size */
+    cairo_font_extents(xctx->cairo_ctx, &fext);
+    cairo_text_extents(xctx->cairo_ctx, str, &ext);
+    if(ext.height > 0.0) {
+      top = b[1] + (fext.ascent + ext.y_bearing) * xctx->zoom;
+      b[1] = top;
+      b[3] = top + ext.height * xctx->zoom;
+    }
+  }
+#endif
+}
+
+static void grec_box(int kind, const double *b)
+{
+  int k = graph_rec_cur->n[kind]++;
+  if(k >= GRAPH_REC_BOXES) return;
+  graph_rec_cur->b[kind][k][0] = X_TO_SCREEN(b[0]);
+  graph_rec_cur->b[kind][k][1] = Y_TO_SCREEN(b[1]);
+  graph_rec_cur->b[kind][k][2] = X_TO_SCREEN(b[2]);
+  graph_rec_cur->b[kind][k][3] = Y_TO_SCREEN(b[3]);
+}
+
+static void grec_text(int kind, const char *str, short rot, short flip, int hc, int vc,
+                      double x, double y, double xs, double ys)
+{
+  double b[4], dtmp;
+  int tmp;
+  if(!graph_rec_cur || !str || !str[0]) return;
+  text_bbox(str, xs, ys, rot, flip, hc, vc, x, y, &b[0], &b[1], &b[2], &b[3], &tmp, &dtmp);
+  grec_box(kind, b);
+  /* F1: the Y numbers' and legend names' ink, for the rows about them */
+  if(kind == GREC_YLAB || kind == GREC_LEGEND) {
+    graph_ink_box(str, xs, rot, flip, hc, vc, x, y, b);
+    grec_box(kind == GREC_YLAB ? GREC_YINK : GREC_LINK, b);
+  }
+}
+
+/* item 22 (F2): THE ONE WAY a graph text that the draw record covers is put on
+ * screen: it draws the string and records its box from the SAME arguments, so
+ * the record cannot describe a place the text was not drawn. Every recorded
+ * site calls this; nothing calls grec_text beside a draw_string. Off the record
+ * (no fixed-text on-screen draw) it is exactly draw_string(layer, NOW, ...). */
+/* item 22 (R1, R2): THE TOP TEXT of the fixed-text graph being drawn -- every
+ * legend name and cursor-A read-out box the draw placed (schematic units,
+ * text_bbox in the face drawn), kept whether or not the draw is recorded, so
+ * the texts drawn after them (the cursor X tags, the Y numbers deferred by
+ * draw_graph_grid) can stay off them. Reset by graph_keep_begin at the top of
+ * every draw_graph; only a fixed-text draw keeps anything. A box past
+ * GRAPH_KEEP_BOXES is not kept, and then gkeep_full makes every later test
+ * answer "hit", so a lost box can only cost a text, never cover one. */
+#define GRAPH_KEEP_BOXES 64
+static int gkeep_on = 0, gkeep_n = 0, gkeep_full = 0;
+static int gkeep_kind[GRAPH_KEEP_BOXES];
+static double gkeep_b[GRAPH_KEEP_BOXES][4], gkeep_ink[GRAPH_KEEP_BOXES][4];
+
+static void graph_text(int kind, int layer, const char *str, short rot, short flip, int hc, int vc,
+                       double x, double y, double xs, double ys)
+{
+  draw_string(layer, NOW, str, rot, flip, hc, vc, x, y, xs, ys);
+  if(graph_rec_cur) grec_text(kind, str, rot, flip, hc, vc, x, y, xs, ys);
+  if(gkeep_on && (kind == GREC_LEGEND || kind == GREC_READOUT) && str && str[0]) {
+    double dt;
+    int tt;
+    if(gkeep_n >= GRAPH_KEEP_BOXES) { gkeep_full = 1; return; }
+    text_bbox(str, xs, ys, rot, flip, hc, vc, x, y, &gkeep_b[gkeep_n][0], &gkeep_b[gkeep_n][1],
+              &gkeep_b[gkeep_n][2], &gkeep_b[gkeep_n][3], &tt, &dt);
+    graph_ink_box(str, xs, rot, flip, hc, vc, x, y, gkeep_ink[gkeep_n]);
+    gkeep_kind[gkeep_n++] = kind;
+  }
+}
+
+/* item 22: does box {x1 y1 x2 y2} (schematic units) overlap a kept top-text box
+ * of kind `kind` (-1: legend or read-out)? Touching is not overlapping. */
+static int graph_keep_hit(int kind, double x1, double y1, double x2, double y2)
+{
+  int j;
+  if(!gkeep_on) return 0;
+  if(gkeep_full) return 1;
+  for(j = 0; j < gkeep_n; j++) {
+    if(kind >= 0 && gkeep_kind[j] != kind) continue;
+    if(!(x2 <= gkeep_b[j][0] || gkeep_b[j][2] <= x1 || y2 <= gkeep_b[j][1] || gkeep_b[j][3] <= y1)) return 1;
+  }
+  return 0;
+}
+
+/* item 22 (F1): does INK box {x1 y1 x2 y2} overlap the ink of a kept legend
+ * name? Touching is not overlapping. */
+static int graph_keep_hit_ink(double x1, double y1, double x2, double y2)
+{
+  int j;
+  if(!gkeep_on) return 0;
+  if(gkeep_full) return 1;
+  for(j = 0; j < gkeep_n; j++) {
+    if(gkeep_kind[j] != GREC_LEGEND) continue;
+    if(!(x2 <= gkeep_ink[j][0] || gkeep_ink[j][2] <= x1 || y2 <= gkeep_ink[j][1] || gkeep_ink[j][3] <= y1)) return 1;
+  }
+  return 0;
+}
+
+/* item 22 (R2): the Y numbers draw_graph_grid could not place yet -- those
+ * whose box reaches up into the cursor-A read-out row's band. Drawn by
+ * graph_ydefer_flush once the read-outs are drawn, each only if it meets no
+ * read-out box and its ink meets no legend name's ink the draw actually drew:
+ * a number far to the right of a short value stays, one a value or a name
+ * would be printed over goes. A label past
+ * GRAPH_YDEFER is not drawn (never overprinted). */
+#define GRAPH_YDEFER 32
+static int gydef_n = 0;
+static struct { char lab[100]; double x, y, s; } gydef[GRAPH_YDEFER];
+
+static void graph_ydefer_flush(void)
+{
+  int j, tt;
+  double t1, u1, t2, u2, dt, ink[4];
+  for(j = 0; j < gydef_n; j++) {
+    text_bbox(gydef[j].lab, gydef[j].s, gydef[j].s, 0, 1, 0, 1, gydef[j].x, gydef[j].y,
+              &t1, &u1, &t2, &u2, &tt, &dt);
+    /* a read-out: no overlap of the boxes at all; a legend name (the row
+     * above): no overlap of the INK (F1: the line boxes' blank leading and
+     * descent may meet; comparing them dropped numbers no name was near) */
+    graph_ink_box(gydef[j].lab, gydef[j].s, 0, 1, 0, 1, gydef[j].x, gydef[j].y, ink);
+    if(graph_keep_hit(GREC_READOUT, t1, u1, t2, u2) || graph_keep_hit_ink(ink[0], ink[1], ink[2], ink[3]))
+      continue;
+    graph_text(GREC_YLAB, 3, gydef[j].lab, 0, 1, 0, 1, gydef[j].x, gydef[j].y, gydef[j].s, gydef[j].s);
+  }
+  gydef_n = 0;
+}
+
+/* item 22: start the top-text keep and the Y-number deferral for one draw */
+static void graph_keep_begin(int flags, const Graph_ctx *gr)
+{
+  gkeep_on = (flags & 8) && graph_fixed_text(gr);
+  gkeep_n = gkeep_full = 0;
+  gydef_n = 0;
+}
+
+/* item 22 (F1): the same for the Y axis marks: draws the mark and records the
+ * line it drew (as a box {x1 y x2 y}), so a test learns where the visible Y grid
+ * lines ARE from the draw, not from the stride code that chooses labels. */
+static void graph_line(int kind, int layer, double x1, double y1, double x2, double y2, void *ct)
+{
+  int k;
+  drawline(layer, ADD, x1, y1, x2, y2, 0.0, 0, ct);
+  if(!graph_rec_cur) return;
+  k = graph_rec_cur->n[kind]++;
+  if(k >= GRAPH_REC_BOXES) return;
+  graph_rec_cur->b[kind][k][0] = X_TO_SCREEN(x1);
+  graph_rec_cur->b[kind][k][1] = Y_TO_SCREEN(y1);
+  graph_rec_cur->b[kind][k][2] = X_TO_SCREEN(x2);
+  graph_rec_cur->b[kind][k][3] = Y_TO_SCREEN(y2);
+}
+
+static void grec_begin(int i, int flags, Graph_ctx *gr)
+{
+  Graph_rec *g;
+  graph_rec_cur = NULL;
+  if(!(flags & 16) || !(flags & 8) || i < 0 || i >= GRAPH_REC_GRAPHS) return;
+  g = &graph_rec[i];
+  if(!graph_fixed_text(gr)) { /* an on-screen draw that records nothing voids the old record */
+    if(g->owner == (void *)xctx) g->valid = 0;
+    return;
+  }
+  memset(g, 0, sizeof(*g));
+  g->owner = (void *)xctx;
+  g->valid = 1;
+  g->rect[0] = gr->sx1; g->rect[1] = gr->sy1; g->rect[2] = gr->sx2; g->rect[3] = gr->sy2;
+  g->box[0] = X_TO_SCREEN(gr->x1); g->box[1] = Y_TO_SCREEN(gr->y1);
+  g->box[2] = X_TO_SCREEN(gr->x2); g->box[3] = Y_TO_SCREEN(gr->y2);
+  g->yvis = graph_ylab_visible(gr, &g->ybot, &g->ytop);
+  g->ybot = Y_TO_SCREEN(W_Y(g->ybot));
+  g->ytop = Y_TO_SCREEN(W_Y(g->ytop));
+  g->ystride = graph_ylab_stride(gr, &g->ypitch);
+  g->ypitch *= xctx->mooz;
+  g->readout_row = gr->fx_readout_row;
+  g->sweep_row = gr->fx_sweep_row;
+  g->tags_inside = gr->fx_tags_inside;
+  graph_rec_cur = g;
+}
+
+/* `xschem get graph_drawn <i>`: the record as a dict string, malloc'd into *res
+ * (caller frees). 0 when graph i has no record from this context. */
+int graph_drawn_get(int i, char **res)
+{
+  Graph_rec *g;
+  char buf[200];
+  int k, j, n;
+  if(i < 0 || i >= GRAPH_REC_GRAPHS) return 0;
+  g = &graph_rec[i];
+  if(!g->valid || g->owner != (void *)xctx) return 0;
+  my_snprintf(buf, S(buf), "rect {%.6g %.6g %.6g %.6g} box {%.6g %.6g %.6g %.6g} ",
+    g->rect[0], g->rect[1], g->rect[2], g->rect[3], g->box[0], g->box[1], g->box[2], g->box[3]);
+  my_strcat(_ALLOC_ID_, res, buf);
+  my_snprintf(buf, S(buf), "ylab_visible %d ylab_stride %d ylab_pitch_px %.6g ylab_bottom_y %.6g "
+    "ylab_top_y %.6g readout_row %d sweep_row %d tags_inside %d",
+    g->yvis, g->ystride, g->ypitch, g->ybot, g->ytop, g->readout_row, g->sweep_row, g->tags_inside);
+  my_strcat(_ALLOC_ID_, res, buf);
+  for(k = 0; k < GREC_KINDS; k++) {
+    my_snprintf(buf, S(buf), " n_%s %d %s {", grec_kind_name[k], g->n[k], grec_kind_name[k]);
+    my_strcat(_ALLOC_ID_, res, buf);
+    n = g->n[k] < GRAPH_REC_BOXES ? g->n[k] : GRAPH_REC_BOXES;
+    for(j = 0; j < n; j++) {
+      my_snprintf(buf, S(buf), "%s{%.6g %.6g %.6g %.6g}", j ? " " : "",
+        g->b[k][j][0], g->b[k][j][1], g->b[k][j][2], g->b[k][j][3]);
+      my_strcat(_ALLOC_ID_, res, buf);
+    }
+    my_strcat(_ALLOC_ID_, res, "}");
+  }
+  return 1;
+}
+
+static void graph_sweep0_name(xRect *r, Graph_ctx *gr, char *buf, size_t sz);
+static void draw_graph_grid(xRect *r, Graph_ctx *gr, void *ct)
 {
   double deltax, startx, deltay, starty, wx,wy,  dash_size;
   int j, k;
   int dash_on, dash_off;
   double mark_size = gr->marginy/10.0;
+  double ylab_pitch, xly;
+  int ylab_stride, ylab_n = 0;
+  int fixed = graph_fixed_text(gr);
+  char lab[100];
+  /* item 22, fixed-text arm only: the slot-0 sweep name's box (swb, when
+   * swbox) and the bottom of the cursor-A read-out row (ro_bot), measured here
+   * in the face they are drawn in, so the tick numbers can yield to them */
+  double swb[4] = {0.0, 0.0, 0.0, 0.0}, ro_bot = -1e300, em = 0.0;
+  int swbox = 0;
 
   /* calculate dash length for grid lines */
   dash_size = 1.5 * xctx->mooz;
@@ -4781,6 +5107,22 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
     dash_off = gr->griddash;
   }
 
+  if(fixed) {
+    double d1, d2, d3, dt;
+    int tt;
+    char nm[1024];
+    em = gr->txtsizex * 52.0 * cairo_font_scale;
+    graph_sweep0_name(r, gr, nm, sizeof(nm));
+    if(nm[0]) {
+      text_bbox(nm, gr->txtsizelab, gr->txtsizelab, 2, 1, 0, 0, gr->rx1 + 2, gr->ry2 - 2,
+                &swb[0], &swb[1], &swb[2], &swb[3], &tt, &dt);
+      swbox = 1;
+    }
+    /* show_node_measures' row: text at ry1 + 60*txtsizelab, 0.8 size, top-left */
+    if(gr->fx_readout_row)
+      text_bbox("0", gr->txtsizelab * 0.8, gr->txtsizelab * 0.8, 0, 0, 0, 0,
+                gr->rx1 + 2, gr->ry1 + gr->txtsizelab * 60, &d1, &d2, &d3, &ro_bot, &tt, &dt);
+  }
   /* clipping everything outside container area */
   /* background */
   filledrect(0, NOW, gr->rx1, gr->ry1, gr->rx2, gr->ry2, 2, -1, -1);
@@ -4813,18 +5155,35 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
       drawline_duty(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy2), W_X(wx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
     drawline(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy1), W_X(wx),   W_Y(gr->gy1) + mark_size, 0.0, 0, ct); /* axis marks */
     /* X-axis labels */
-    if(gr->logx)
-      draw_string(3, NOW, dtoa_eng(pow(10, wx) * gr->unitx, 5), 0, 0, 1, 0, W_X(wx),
-                gr->y2 + mark_size + 5 * gr->txtsizex, gr->txtsizex, gr->txtsizex);
-    else
-      draw_string(3, NOW, dtoa_eng(wx * gr->unitx, 5), 0, 0, 1, 0, W_X(wx), gr->y2 + mark_size + 5 * gr->txtsizex,
-                gr->txtsizex, gr->txtsizex);
+    my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logx ? pow(10, wx) : wx) * gr->unitx, 5));
+    xly = gr->y2 + mark_size + 5 * gr->txtsizex;
+    if(fixed) {
+      /* item 22: on a fixed-text strip whose bottom margin is smaller than the
+       * X-number row (setup_graph_data's last resort, the margins scaled) the
+       * numbers ride up so they end at the strip's bottom edge instead of being
+       * cut by it; fx_xnum_top tells draw_cursor where the row now starts */
+      double t1, u1, t2, u2, dt;
+      int tt;
+      text_bbox(lab, gr->txtsizex, gr->txtsizex, 0, 0, 1, 0, W_X(wx), xly, &t1, &u1, &t2, &u2, &tt, &dt);
+      if(u2 > gr->ry2) { dt = u2 - gr->ry2; xly -= dt; u1 -= dt; u2 -= dt; }
+      /* the slot-0 sweep name in a second bottom row squeezed below its floor
+       * (setup_graph_data: a strip too short for it) would sit on this number:
+       * the axis name is kept and the tick number yields. In a row at its floor
+       * the boxes meet by at most about 0.15 em, the numbers' blank descent. */
+      if(swbox && t1 < swb[2] && swb[0] < t2 &&
+         (u2 < swb[3] ? u2 : swb[3]) - (u1 > swb[1] ? u1 : swb[1]) > 0.2 * em) continue;
+      if(u1 < gr->fx_xnum_top) gr->fx_xnum_top = u1;
+    }
+    graph_text(GREC_XLAB, 3, lab, 0, 0, 1, 0, W_X(wx), xly, gr->txtsizex, gr->txtsizex);
   }
   /* first and last vertical box delimiters */
   drawline(GRIDLAYER, ADD, W_X(gr->gx1),   W_Y(gr->gy2), W_X(gr->gx1),   W_Y(gr->gy1), 0.0, 0, ct);
   drawline(GRIDLAYER, ADD, W_X(gr->gx2),   W_Y(gr->gy2), W_X(gr->gx2),   W_Y(gr->gy1), 0.0, 0, ct);
   /* horizontal grid lines */
   if(!gr->digital) {
+    double ytop_w = 0.0;
+    int nvis = 0, nplaced = 0, swyield = 0;
+    ylab_stride = graph_ylab_stride(gr, &ylab_pitch);
     deltay = axis_increment(gr->gy1, gr->gy2, gr->divy, gr->logy);
     starty = axis_start(gr->gy1, deltay, gr->divy);
     /* start one interval before to allow sub grids at beginning */
@@ -4845,14 +5204,62 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
       if(axis_end(wy, deltay, gr->gy2)) break;
       if(gr->grid)
         drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(wy),   W_X(gr->gx2), W_Y(wy), 0.0, dash_on, dash_off, ct);
-      drawline(GRIDLAYER, ADD, W_X(gr->gx1) - mark_size, W_Y(wy),   W_X(gr->gx1), W_Y(wy), 0.0, 0, ct); /* axis marks */
-      /* Y-axis labels */
-      if(gr->logy)
-        draw_string(3, NOW, dtoa_eng(pow(10, wy) * gr->unity, 5), 0, 1, 0, 1,
-                  gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(wy), gr->txtsizey, gr->txtsizey);
-      else
-        draw_string(3, NOW, dtoa_eng(wy * gr->unity, 5), 0, 1, 0, 1, gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(wy),
-                  gr->txtsizey, gr->txtsizey);
+      /* axis marks (recorded: the visible Y lines, for the draw record) */
+      graph_line(GREC_YLINE, GRIDLAYER, W_X(gr->gx1) - mark_size, W_Y(wy),   W_X(gr->gx1), W_Y(wy), ct);
+      /* Y-axis labels: every ylab_stride-th from the bottom (graph_ylab_stride;
+       * always 1 off the fixed-text arm) */
+      ytop_w = wy; nvis++;
+      if((ylab_n++) % ylab_stride) continue;
+      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, wy) : wy) * gr->unity, 5));
+      if(fixed) {
+        double t1, u1, t2, u2, dt;
+        int tt;
+        text_bbox(lab, gr->txtsizey, gr->txtsizey, 0, 1, 0, 1, gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(wy),
+                  &t1, &u1, &t2, &u2, &tt, &dt);
+        /* item 22 (R4): a slot-0 sweep name squeezed up beside the box (the
+         * second bottom row below its floor) sits on the bottom Y number: the
+         * axis name is kept and the number yields, as the X numbers do */
+        if(swbox && t1 < swb[2] && swb[0] < t2 &&
+           (u2 < swb[3] ? u2 : swb[3]) - (u1 > swb[1] ? u1 : swb[1]) > 0.2 * em) { swyield = 1; continue; }
+        nplaced++;
+        /* item 22 (DEF-D, R2): with the cursor-A read-out row on, a Y number
+         * whose box reaches up into that row's band waits for the read-outs
+         * (graph_ydefer_flush) and is drawn only if no read-out or legend box
+         * drawn there meets it: the value the user put the cursor there for
+         * beats a tick number, but a number clear of every value stays. */
+        if(ro_bot > -1e300 && u1 < ro_bot) {
+          if(gydef_n < GRAPH_YDEFER) {
+            my_snprintf(gydef[gydef_n].lab, S(gydef[gydef_n].lab), "%s", lab);
+            gydef[gydef_n].x = gr->x1 - mark_size - 5 * gr->txtsizey;
+            gydef[gydef_n].y = W_Y(wy);
+            gydef[gydef_n].s = gr->txtsizey;
+            gydef_n++;
+          }
+          continue;
+        }
+      }
+      graph_text(GREC_YLAB, 3, lab, 0, 1, 0, 1, gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(wy),
+                 gr->txtsizey, gr->txtsizey);
+    }
+    /* item 22 (R4): every labelled line yielded to the sweep name (a strip
+     * whose stride labels the bottom line alone): the strip keeps a number on
+     * its TOP visible line instead, if the sweep name is clear of it -- through
+     * the deferral, so it is drawn only if no legend name's ink or read-out
+     * drawn there meets it either. */
+    if(fixed && swyield && !nplaced && nvis >= 2 && gydef_n < GRAPH_YDEFER) {
+      double t1, u1, t2, u2, dt;
+      int tt;
+      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, ytop_w) : ytop_w) * gr->unity, 5));
+      text_bbox(lab, gr->txtsizey, gr->txtsizey, 0, 1, 0, 1, gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(ytop_w),
+                &t1, &u1, &t2, &u2, &tt, &dt);
+      if(!(t1 < swb[2] && swb[0] < t2 &&
+           (u2 < swb[3] ? u2 : swb[3]) - (u1 > swb[1] ? u1 : swb[1]) > 0.2 * em)) {
+        my_snprintf(gydef[gydef_n].lab, S(gydef[gydef_n].lab), "%s", lab);
+        gydef[gydef_n].x = gr->x1 - mark_size - 5 * gr->txtsizey;
+        gydef[gydef_n].y = W_Y(ytop_w);
+        gydef[gydef_n].s = gr->txtsizey;
+        gydef_n++;
+      }
     }
   }
   /* first and last horizontal box delimiters */
@@ -4867,6 +5274,213 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
     drawline(GRIDLAYER, ADD, W_X(0),   W_Y(gr->gy2), W_X(0),   W_Y(gr->gy1), 0.0, 0, ct);
   drawline(GRIDLAYER, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, ct);
   bbox(END, 0.0, 0.0, 0.0, 0.0);
+}
+
+static int graph_marker_font_install(void);
+static void graph_marker_font_restore(int installed);
+
+/* item 22: does any slot AFTER the first carry its own `sweep=` token? Those
+ * names are drawn at that slot's x on the row below the X numbers
+ * (draw_graph_variables), which therefore has to be reserved. Tokenised exactly
+ * as draw_graph walks node= / sweep=. */
+static int graph_sweep_beyond_slot0(xRect *r)
+{
+  char *sweep = NULL, *sptr, *saves = NULL;
+  const char *stok;
+  int n_nodes, w = 0, found = 0;
+  n_nodes = count_items(get_tok_value(r->prop_ptr, "node", 0), "\n", "\"");
+  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr, "sweep", 0));
+  sptr = sweep;
+  while(w < n_nodes && (stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves))) {
+    sptr = NULL;
+    if(w > 0 && stok[0]) { found = 1; break; }
+    w++;
+  }
+  my_free(_ALLOC_ID_, &sweep);
+  return found;
+}
+
+/* item 22: the slot-0 sweep name as draw_graph_variables will draw it, into
+ * buf ("" when nothing will be drawn). The column is resolved from the first
+ * `sweep=` token as draw_graph does (by name, 0 when absent or unknown), in the
+ * CURRENT raw: a strip whose first trace switches raw (`rawfile=` / `%<raw>`)
+ * is measured in the raw that is current here, which can differ. It reads a
+ * column NAME only, never values[], so it is not one of the sampling node=
+ * walkers that test_node_token_split's NDR2/NDR3 count. */
+static void graph_sweep0_name(xRect *r, Graph_ctx *gr, char *buf, size_t sz)
+{
+  char *sweep = NULL, *saves = NULL;
+  const char *stok, *name = NULL;
+  int idx = 0;
+  char tmp[1024];
+  buf[0] = '\0';
+  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr, "sweep", 0));
+  stok = my_strtok_r(sweep, "\t\n ", "\"", 0, &saves);
+  if(sch_waves_loaded() >= 0) {
+    if(stok && stok[0]) idx = get_raw_index(stok, NULL);
+    name = xctx->raw->names[(idx > 0 && idx < xctx->raw->nvars) ? idx : 0];
+  } else name = stok;
+  if(name && name[0]) {
+    if(gr->unitx != 1.0) my_snprintf(tmp, S(tmp), "%s[%c]", name, gr->unitx_suffix);
+    else my_snprintf(tmp, S(tmp), "%s", name);
+    my_snprintf(buf, sz, "%s", str_replace(tmp, "\\ ", " ", 0, -1));
+  }
+  my_free(_ALLOC_ID_, &sweep);
+}
+
+/* item 22: do two schematic-unit boxes come within (cx, cy) of each other? */
+static int graph_boxes_near(double a1, double b1, double a2, double b2,
+                            double c1, double d1, double c2, double d2, double cx, double cy)
+{
+  return !(a2 + cx <= c1 || c2 + cx <= a1 || b2 + cy <= d1 || d2 + cy <= b1);
+}
+
+/* item 22: on a strip laid out WITHOUT the second bottom row, does the slot-0
+ * sweep name fit in the left column on the X-number row -- clear (by half an em
+ * sideways, a tenth vertically) of the first X number and of the bottom Y
+ * number? Measured with text_bbox, the function the draw's own extents come
+ * from, in the face draw_graph_all installs; gr's box (x1..y2, w, h) must be set.
+ * The label strings and positions are draw_graph_grid's. */
+static int graph_sweep0_fits(xRect *r, Graph_ctx *gr, double H)
+{
+  char name[1024], lab[100];
+  double n1, m1, n2, m2, t1, u1, t2, u2, dtmp, delta, start, wv, pos, mark;
+  int tmp, j, font, fits = 1;
+  graph_sweep0_name(r, gr, name, sizeof(name));
+  if(!name[0]) return 1;
+  mark = gr->marginy / 10.0;
+  font = graph_marker_font_install();
+  text_bbox(name, gr->txtsizelab, gr->txtsizelab, 2, 1, 0, 0, gr->rx1 + 2, gr->ry2 - 2,
+            &n1, &m1, &n2, &m2, &tmp, &dtmp);
+  /* the first X number */
+  delta = axis_increment(gr->gx1, gr->gx2, gr->divx, gr->logx);
+  start = axis_start(gr->gx1, delta, gr->divx);
+  for(j = -1; j < 100000; ++j) {
+    wv = start + j * delta;
+    if(!axis_within_range(wv, gr->gx1, gr->gx2, delta, gr->subdivx)) continue;
+    if(axis_end(wv, delta, gr->gx2)) break;
+    my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logx ? pow(10, wv) : wv) * gr->unitx, 5));
+    pos = gr->x1 + (wv - gr->gx1) * gr->w / gr->gw;
+    text_bbox(lab, gr->txtsizex, gr->txtsizex, 0, 0, 1, 0, pos, gr->y2 + mark + 5 * gr->txtsizex,
+              &t1, &u1, &t2, &u2, &tmp, &dtmp);
+    if(graph_boxes_near(n1, m1, n2, m2, t1, u1, t2, u2, 0.5 * H, 0.1 * H)) fits = 0;
+    break;
+  }
+  /* the bottom Y number (always labelled, graph_ylab_stride) */
+  if(fits && gr->gy1 == gr->gy1 && gr->gy2 == gr->gy2 && gr->gh != 0.0) {
+    delta = axis_increment(gr->gy1, gr->gy2, gr->divy, gr->logy);
+    start = axis_start(gr->gy1, delta, gr->divy);
+    for(j = -1; j < 100000; ++j) {
+      wv = start + j * delta;
+      if(!axis_within_range(wv, gr->gy1, gr->gy2, delta, gr->subdivy)) continue;
+      if(axis_end(wv, delta, gr->gy2)) break;
+      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, wv) : wv) * gr->unity, 5));
+      pos = gr->y2 - (wv - gr->gy1) * gr->h / gr->gh;
+      text_bbox(lab, gr->txtsizey, gr->txtsizey, 0, 1, 0, 1, gr->x1 - mark - 5 * gr->txtsizey, pos,
+                &t1, &u1, &t2, &u2, &tmp, &dtmp);
+      if(graph_boxes_near(n1, m1, n2, m2, t1, u1, t2, u2, 0.5 * H, 0.1 * H)) fits = 0;
+      break;
+    }
+  }
+  graph_marker_font_restore(font);
+  return fits;
+}
+
+/* item 22: take up to *over out of the parts p[0..n-1] together, in proportion
+ * to their sizes; *over keeps what they could not give. */
+static void graph_squeeze(double *over, double **p, int n)
+{
+  double sum = 0.0, k;
+  int j;
+  if(*over <= 0.0) return;
+  for(j = 0; j < n; j++) sum += *p[j];
+  if(sum <= 0.0) return;
+  if(*over >= sum) { k = 0.0; *over -= sum; }
+  else { k = 1.0 - *over / sum; *over = 0.0; } /* exactly 0: no rounding residue */
+  for(j = 0; j < n; j++) *p[j] *= k;
+}
+
+/* item 22: the fixed-text margins (schematic units) for a strip of height rh,
+ * with or without the cursor-A read-out row (ro); sw: the sweep names need the
+ * second bottom row; tags: a cursor is on, so that row also carries the cursor
+ * X tags and is a REQUIRED row. *inside answers 1 when the tag row cannot be
+ * had beside the X numbers: the tags are then drawn inside the plot box, and
+ * the row is reserved only if the sweep names need it. See the block comment
+ * in setup_graph_data. */
+static void graph_fixed_margins(Graph_ctx *gr, double H, double S, double m, int ro, int sw, int tags,
+                                double *top, double *bottom, double *left, double *right, double *my,
+                                int *inside)
+{
+  double bx = (5.0 * S + 1.35 * H) / 0.9;  /* tick + gap + X numbers + air: the tick basis */
+  double top_fix = 1.2 * H;                /* legend row */
+  double bot_fix = bx - 0.15 * H;          /* tick + gap + X numbers */
+  /* a second-row text (tag or sweep name, about 1.15 em tall, its bottom 1-2
+   * units above the strip's edge) in a row narrower than this would reach more
+   * than about 0.15 em into the X-number box, i.e. past the numbers' blank
+   * descent. Never more than the unsqueezed row. */
+  double tag_min = 0.95 * H + 1.0 < 1.35 * H ? 0.95 * H + 1.0 : 1.35 * H;
+  double fl = tag_min < 1.2 * H ? tag_min : 1.2 * H;
+  /* the sweep names sit one unit higher (ry2 - 2) than the tags (ry2 - 1) */
+  double fls = tag_min + 1.0 < 1.2 * H ? tag_min + 1.0 : 1.2 * H;
+  double budget = 0.8 * gr->rh, k, over, c, want, bfull;
+  double air_t, air_b, ovh, row_t, row_b;
+  double *pp[2];
+  int rowb;
+  /* THE DECISION, taken once and from the fixed rows alone: the tag row is had
+   * iff the legend row, the X-number row and the tag row at its floor fit the
+   * budget. Every term grows with H and the budget is the strip's, so it is
+   * monotonic in the text size (inside at some size => inside at every larger
+   * one) and no rounding in the squeeze below can flip it. */
+  *inside = tags && top_fix + bot_fix + fl > budget;
+  rowb = sw || (tags && !*inside);
+  air_t = 0.15 * H; air_b = 0.15 * H; ovh = 0.6 * H;
+  row_t = ro ? 0.96 * H : 0.0;
+  row_b = rowb ? 1.2 * H : 0.0;
+  bfull = bot_fix + row_b + air_b;
+  *my = bx;
+  over = top_fix + bot_fix + air_t + air_b + ovh + row_t + row_b - budget;
+  if(over > 0.0) {
+    /* the squeeze, in this order: the air above and below, the top Y number's
+     * overhang, then the on-demand rows together (read-out; sweep names / cursor
+     * tags); the second bottom row, though, stops at its floor while the
+     * read-out row gives the rest, and only then goes below it (only when the
+     * sweep names need a row the budget cannot hold). The legend and X-number
+     * rows are never squeezed. */
+    pp[0] = &air_t; pp[1] = &air_b; graph_squeeze(&over, pp, 2);
+    pp[0] = &ovh; graph_squeeze(&over, pp, 1);
+    pp[0] = &row_t; pp[1] = &row_b; graph_squeeze(&over, pp, 2);
+    if(rowb) {
+      c = sw ? fls : fl;
+      if(row_b < c) { over += c - row_b; row_b = c; }
+      pp[0] = &row_t; graph_squeeze(&over, pp, 1);
+      pp[0] = &row_b; graph_squeeze(&over, pp, 1);
+    }
+  }
+  *top = top_fix + row_t + ovh + air_t;
+  *bottom = bot_fix + row_b + air_b;
+  if(over > 0.0) {
+    /* not even the legend and X-number rows fit: everything else is gone and
+     * those two are scaled down together (the text never shrinks; draw_graph_grid
+     * lifts the X numbers to the strip's edge) */
+    k = budget / (top_fix + bot_fix);
+    *top = top_fix * k; *bottom = bot_fix * k;
+    *my = *bottom; /* the tick basis is the floored bottom, as before item 22's rows */
+  } else if(!ro && !rowb && *top + *bottom > budget - 1e-9 * budget) {
+    /* squeezed, no on-demand row: the bottom never gets less than its share of
+     * the last resort above (nor more than it asked for), so the X-number row's
+     * room grows monotonically with the text size into and through that
+     * regime. (With a row on either side the rows' order above rules.) */
+    c = budget * bot_fix / (top_fix + bot_fix);
+    want = c < bfull ? c : bfull;
+    if(*bottom < want) { *top -= want - *bottom; *bottom = want; }
+  }
+  *left = *my / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
+  *right = 2.0 * H;
+  if(*right < (GRAPH_REORDER_HANDLE_W + 4) / m) *right = (GRAPH_REORDER_HANDLE_W + 4) / m;
+  if(*left + *right > 0.8 * gr->rw) {
+    k = 0.8 * gr->rw / (*left + *right);
+    *left *= k; *right *= k;
+  }
 }
 
 void setup_graph_data(int i, int skip, Graph_ctx *gr)
@@ -4941,6 +5555,8 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
    * Anything else -- absent, 0, negative, huge, junk -- is 0, the shipped
    * proportional sizing. */
   gr->textpx = 0.0;
+  gr->fx_readout_row = gr->fx_sweep_row = gr->fx_tags_inside = 0;
+  gr->fx_xnum_top = 1e300;
   val = get_tok_value(r->prop_ptr,"textpx", 0);
   if(val[0]) gr->textpx = atof(val);
   if(!(gr->textpx >= 3.0 && gr->textpx <= 400.0)) gr->textpx = 0.0;
@@ -5100,54 +5716,81 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
    * mooz is divided out exactly here. Without cairo the same S is used and glyphs
    * come out at about 0.68*textpx, the ratio every non-cairo text already has;
    * it is deliberately not special-cased.
-   *   bottom b: tick mark b/10 + the 5*S gap + the X numbers (1.2H) + the sweep /
-   *             cursor label row above ry2 (1.2H) + 0.15H air, solved for b
-   *             because draw_graph_grid's mark_size is marginy/10;
-   *   top:      the show_node_measures row at ry1 + 60*S, 0.8x a 1.2H line, then
-   *             the half-height overhang of the topmost (vcentred) Y number
-   *             (0.6H) + 0.15H air;
-   *   left:     tick mark + 5*S + an ANALYTIC width for the widest Y number
-   *             (8 chars, dtoa_eng(...,5), at 0.62H each) + 0.3H. Analytic and
-   *             not text_bbox, whose answer depends on whatever cairo face was
-   *             last set, so a draw and a query would disagree about x1;
-   *   right:    half the last centred X number (2H), never less than the reorder
-   *             grip column plus 4 px.
-   * Floor: when a pair of margins would take more than 80% of the container they
-   * are scaled down together (the text never shrinks), so w and h stay > 0 and
-   * the transforms below never divide by zero. Text may overlap on a very short
-   * strip; that is accepted. */
+   * The rows are reserved ON DEMAND (the user's report of 2026-10-21: two rows
+   * reserved on every strip and used by none unless a cursor was on were about
+   * half a short strip, empty). graph_fixed_margins:
+   *   bottom: tick mark bx/10 + the 5*S gap + the X numbers (1.2H) + 0.15H air,
+   *           bx = (5S + 1.35H)/0.9 -- the tick basis (marginy), which does NOT
+   *           grow with the optional row, so the left margin and the ticks stay
+   *           put when it comes and goes; PLUS, only when fx_sweep_row, the
+   *           second row (1.2H) where draw_graph_variables puts the sweep names
+   *           (ry2-2) and draw_cursor / draw_cursor_difference the cursor X tags
+   *           (ry2-1). It is reserved when a cursor (A or B) is on, when a slot
+   *           after the first carries its own sweep name, or when the slot-0 name
+   *           does not fit in the empty left column beside the X numbers
+   *           (graph_sweep0_fits, measured with text_bbox); otherwise "time"
+   *           sits in that column on the X-number row;
+   *   top:    the legend row at ry1 (1.2H); PLUS, only when fx_readout_row
+   *           (cursor A on with waves loaded -- draw_graph's condition for
+   *           show_node_measures), the read-out row under the names (0.96H, its
+   *           text drawn at ry1 + 60S at 0.8 size as always); then the
+   *           half-height overhang of the topmost (vcentred) Y number (0.6H) +
+   *           0.15H air. So the plot box changes height when a cursor is toggled;
+   *   left:   tick mark + 5*S + an ANALYTIC width for the widest Y number
+   *           (8 chars, dtoa_eng(...,5), at 0.62H each) + 0.3H. Analytic and not
+   *           text_bbox, whose answer depends on whatever cairo face was last
+   *           set, so a draw and a query would disagree about x1;
+   *   right:  half the last centred X number (2H), never less than the reorder
+   *           grip column plus 4 px.
+   * Squeeze (graph_fixed_margins): when top + bottom exceed 80% of the
+   * container, the legend row and the X-number row keep what they need and the
+   * rest gives way in this order: the air, then the top Y number's overhang,
+   * then the on-demand rows together -- except that a cursor's TAG row stops at
+   * the height that keeps the tags off the X numbers while the read-out row gives
+   * the rest; when even that cannot be had, no tag row is reserved at all and
+   * the tags are drawn INSIDE the plot box along its bottom edge
+   * (fx_tags_inside), never over the numbers. With no on-demand row the bottom
+   * never gets less than its last-resort share, so it grows monotonically with
+   * the text size. The last resort, when even the legend and X-number rows do
+   * not fit: everything else is gone and those two are scaled down together
+   * (the text never shrinks), so w and h stay > 0 and the transforms below
+   * never divide by zero; draw_graph_grid then lifts the X numbers to end at
+   * the strip's edge rather than be cut by it. Text may overlap on such a
+   * strip (the numbers reach into the plot box); that is accepted. */
   if(gr->textpx > 0.0 && !gr->digital && !gr->vlegend) {
     double m = xctx->graph_txt_mooz > 0.0 ? xctx->graph_txt_mooz : xctx->mooz;
     double H = gr->textpx / m;
     double S = gr->textpx / (52.0 * cairo_font_scale * m);
-    double top, bottom, left, right, k;
+    double top, bottom, left, right, my;
+    int pass, sw, tags, inside = 0;
 
-    bottom = (5.0 * S + 2.55 * H) / 0.9;
-    top = 60.0 * S + 0.96 * H + 0.6 * H + 0.15 * H;
-    left = bottom / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
-    right = 2.0 * H;
-    if(right < (GRAPH_REORDER_HANDLE_W + 4) / m) right = (GRAPH_REORDER_HANDLE_W + 4) / m;
-    if(top + bottom > 0.8 * gr->rh) {
-      k = 0.8 * gr->rh / (top + bottom);
-      top *= k; bottom *= k;
-      left = bottom / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
-    }
-    if(left + right > 0.8 * gr->rw) {
-      k = 0.8 * gr->rw / (left + right);
-      left *= k; right *= k;
-    }
-    gr->marginx = left;
-    gr->marginy = bottom;
-    gr->x1 = gr->rx1 + left;
-    gr->x2 = gr->rx2 - right;
-    gr->y1 = gr->ry1 + top;
-    gr->y2 = gr->ry2 - bottom;
-    gr->w = gr->x2 - gr->x1;
-    gr->h = gr->y2 - gr->y1;
+    gr->fx_readout_row = (xctx->graph_flags & 2) && gr->legend && sch_waves_loaded() != -1;
+    tags = (xctx->graph_flags & (2 | 4)) ? 1 : 0;
+    /* the sweep names' need for the row, independent of where the tags go */
+    sw = graph_sweep_beyond_slot0(r);
     /* one size for everything; xlabmag / ylabmag / legendmag are ignored for size
      * (graph_marker_textmag still scales the marker callouts downstream) */
     gr->txtsizelab = gr->txtsizex = gr->txtsizey = gr->txtsizelegend = S;
     gr->digtxtsizelab = S;
+    for(pass = 0; pass < 2; pass++) {
+      graph_fixed_margins(gr, H, S, m, gr->fx_readout_row, sw, tags,
+                          &top, &bottom, &left, &right, &my, &inside);
+      gr->marginx = left;
+      gr->marginy = my;
+      gr->x1 = gr->rx1 + left;
+      gr->x2 = gr->rx2 - right;
+      gr->y1 = gr->ry1 + top;
+      gr->y2 = gr->ry2 - bottom;
+      gr->w = gr->x2 - gr->x1;
+      gr->h = gr->y2 - gr->y1;
+      /* with the row reserved (sweep names or cursor tags) slot 0 has it too;
+       * without it, slot 0's name must fit beside the X numbers or it needs
+       * the row itself -- whether or not the tags went inside the box */
+      if(sw || (tags && !inside) || graph_sweep0_fits(r, gr, H)) break;
+      sw = 1;
+    }
+    gr->fx_tags_inside = inside;
+    gr->fx_sweep_row = sw || (tags && !inside);
   } else {
     /* set margins */
     tmp = gr->rw * 0.14;
@@ -5220,6 +5863,76 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->dsdy = (gr->ddy + xctx->yorigin) * xctx->mooz;
 }
 
+/* item 22: where the cursor X tag `str` (drawn rot 2, `flip`, `hc`, at x, size
+ * ts; its text's bottom anchored at the answer) goes. In the tag row under the
+ * X numbers (ry2 - 1) as always. On a fixed-text strip too short for that row
+ * beside the X numbers (setup_graph_data's fx_tags_inside): on the plot box's
+ * bottom edge, never below the top of the X-number row the grid drew
+ * (fx_xnum_top: the numbers may have ridden up into the box) -- if the tag box
+ * stays inside the strip and meets no legend name or read-out the draw put
+ * there (graph_keep_hit; R1: a tag taller than a short box ran up into the
+ * legend row and its background hid a name and its value). A tag taller than
+ * the box reaches up into the top margin there, which is fine where that
+ * margin holds no name or value under it. Else HEAD's place, the strip's
+ * bottom edge (over the X numbers, on the tag's background box: a legible
+ * cursor value beats a legible tick number; a strip shorter than the tag gets
+ * it top-aligned, else centred), again only if it meets no legend name or
+ * read-out. Returns 0 when neither place is clear: the tag is not drawn (never
+ * over a name or a value). */
+static int graph_cursor_tag_y(Graph_ctx *gr, const char *str, short flip, int hc, double x, double ts,
+                              double *ty)
+{
+  double y, th, tx1, ty1, tx2, ty2, dt;
+  int tt;
+  if(!gr->fx_tags_inside) { *ty = gr->ry2 - 1; return 1; }
+  y = gr->y2;
+  if(gr->fx_xnum_top < y) y = gr->fx_xnum_top;
+  y -= 1;
+  text_bbox(str, ts, ts, 2, flip, hc, 0, x, y, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+  th = ty2 - ty1;
+  if(ty1 >= gr->ry1 && !graph_keep_hit(-1, tx1, ty1, tx2, ty2)) { *ty = y; return 1; }
+  y = gr->ry2 - 1;
+  if(y - th < gr->ry1) y = gr->ry1 + th;
+  if(y > gr->ry2) y = (gr->ry1 + gr->ry2 + th) * 0.5;
+  text_bbox(str, ts, ts, 2, flip, hc, 0, x, y, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+  if(!graph_keep_hit(-1, tx1, ty1, tx2, ty2)) { *ty = y; return 1; }
+  return 0;
+}
+
+/* item 22 (F2): the A-B difference tag is never dropped. Where
+ * graph_cursor_tag_y finds both its places taken by a legend name or a
+ * read-out, the tag slides sideways along the same two rows (the first row
+ * before the second, nearest first in each, its box kept inside the plot's x
+ * range) to the first clear spot; with none,
+ * it goes to HEAD's place (the strip's bottom edge, over the X numbers, on its
+ * background box). *x is the tag's centre, in and out. */
+static void graph_diff_tag_place(Graph_ctx *gr, const char *str, double ts, double *x, double *ty)
+{
+  double y[2], w, step, d, xc, tx1, ty1, tx2, ty2, dt, x0 = *x;
+  int r, sgn, tt, ny = 0;
+  if(graph_cursor_tag_y(gr, str, 0, 1, x0, ts, ty)) return;
+  text_bbox(str, ts, ts, 2, 0, 1, 0, x0, gr->ry2 - 1, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+  w = tx2 - tx1;
+  /* the two rows graph_cursor_tag_y tried, in its order */
+  y[0] = (gr->fx_xnum_top < gr->y2 ? gr->fx_xnum_top : gr->y2) - 1;
+  text_bbox(str, ts, ts, 2, 0, 1, 0, x0, y[0], &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+  if(ty1 >= gr->ry1) ny = 1;
+  y[ny] = gr->ry2 - 1;
+  if(y[ny] - (ty2 - ty1) < gr->ry1) y[ny] = gr->ry1 + (ty2 - ty1);
+  if(y[ny] > gr->ry2) y[ny] = (gr->ry1 + gr->ry2 + (ty2 - ty1)) * 0.5;
+  ny++;
+  step = w / 8.0;
+  if(step > 0.0) for(r = 0; r < ny; r++) for(d = step; d <= gr->x2 - gr->x1; d += step) {
+    for(sgn = -1; sgn <= 1; sgn += 2) {
+      xc = x0 + sgn * d;
+      if(xc - w / 2 < gr->x1 || xc + w / 2 > gr->x2) continue;
+      text_bbox(str, ts, ts, 2, 0, 1, 0, xc, y[r], &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+      if(!graph_keep_hit(-1, tx1, ty1, tx2, ty2)) { *x = xc; *ty = y[r]; return; }
+    }
+  }
+  *ty = y[ny - 1]; /* HEAD's place */
+}
+
 static void draw_cursor(double active_cursorx, double other_cursorx, int cursor_color, Graph_ctx *gr)
 {
 
@@ -5230,6 +5943,7 @@ static void draw_cursor(double active_cursorx, double other_cursorx, int cursor_
   double txtsize = gr->txtsizex;
   short flip = (other_cursorx > active_cursorx) ? 0 : 1;
   int xoffs = flip ? 3 : -3;
+  double ty;
 
   if(gr->logx) pos = mylog10(pos);
   xx = W_X(pos);
@@ -5243,9 +5957,10 @@ static void draw_cursor(double active_cursorx, double other_cursorx, int cursor_
                gr->unitx * active_cursorx , gr->unitx_suffix);
     else
        my_snprintf(tmpstr, S(tmpstr), "%s",  dtoa_eng(active_cursorx, 5));
-    text_bbox(tmpstr, txtsize, txtsize, 2, flip, 0, 0, xx + xoffs, gr->ry2-1, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
+    if(!graph_cursor_tag_y(gr, tmpstr, flip, 0, xx + xoffs, txtsize, &ty)) return;
+    text_bbox(tmpstr, txtsize, txtsize, 2, flip, 0, 0, xx + xoffs, ty, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
     filledrect(0, NOW,  tx1, ty1, tx2, ty2, 2, -1, -1);
-    draw_string(cursor_color, NOW, tmpstr, 2, flip, 0, 0, xx + xoffs, gr->ry2-1, txtsize, txtsize);
+    graph_text(GREC_CURSOR, cursor_color, tmpstr, 2, flip, 0, 0, xx + xoffs, ty, txtsize, txtsize);
   }
 }
 
@@ -5264,7 +5979,7 @@ static void draw_cursor_difference(double c1, double c2, Graph_ctx *gr)
   double diff = fabs(b - a);
   double diffw;
   double xx = ( a + b ) * 0.5;
-  double yy = gr->ry2 - 1;
+  double yy;
   double dtmp;
   double yline;
 
@@ -5280,15 +5995,20 @@ static void draw_cursor_difference(double c1, double c2, Graph_ctx *gr)
              gr->unitx * diffw , gr->unitx_suffix);
   else
      my_snprintf(tmpstr, S(tmpstr), "%s",  dtoa_eng(diffw, 5));
+  graph_diff_tag_place(gr, tmpstr, txtsize, &xx, &yy);
   text_bbox(tmpstr, txtsize, txtsize, 2, 0, 1, 0, xx, yy, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp);
   if( tx2 - tx1 < diff ) {
-    draw_string(3, NOW, tmpstr, 2, 0, 1, 0, xx, yy, txtsize, txtsize);
+    /* item 22: inside the plot box the tag sits on the traces, so it gets the
+     * background box draw_cursor's tags always have */
+    if(gr->fx_tags_inside) filledrect(0, NOW, tx1, ty1, tx2, ty2, 2, -1, -1);
+    graph_text(GREC_CURSOR, 3, tmpstr, 2, 0, 1, 0, xx, yy, txtsize, txtsize);
     if( a > b) {
       dtmp = a; a = b; b = dtmp;
     }
     yline = (ty1 + ty2) * 0.5;
-    if( tx1 - a > 4.0) drawline(3, NOW, a + 2, yline, tx1 - 2, yline, 0.0, 1, NULL);
-    if( b - tx2 > 4.0) drawline(3, NOW, tx2 + 2, yline, b - 2, yline, 0.0, 1, NULL);
+    /* a tag slid out of [a, b] (graph_diff_tag_place) dashes only up to b or from a */
+    if( (tx1 < b ? tx1 : b) - a > 4.0) drawline(3, NOW, a + 2, yline, (tx1 < b ? tx1 : b) - 2, yline, 0.0, 1, NULL);
+    if( b - (tx2 > a ? tx2 : a) > 4.0) drawline(3, NOW, (tx2 > a ? tx2 : a) + 2, yline, b - 2, yline, 0.0, 1, NULL);
   }
 }
 
@@ -5383,7 +6103,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
     if(gr->unitx != 1.0) my_snprintf(tmpstr, S(tmpstr), "%s[%c]", stok ? stok : "" , gr->unitx_suffix);
     else  my_snprintf(tmpstr, S(tmpstr), "%s", stok ? stok : "");
     my_snprintf(tmpstr, S(tmpstr), "%s", str_replace(tmpstr, "\\ ", " ", 0, -1));
-    draw_string(wave_color, NOW, tmpstr, 2, 1, 0, 0,
+    graph_text(GREC_SWEEP, wave_color, tmpstr, 2, 1, 0, 0,
        gr->rx1 + 2 + gr->rw / n_nodes * wcnt, gr->ry2-2, gr->txtsizelab, gr->txtsizelab);
   }
 
@@ -5497,7 +6217,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
       }
       #endif
       my_snprintf(tmpstr, S(tmpstr), "%s", str_replace(tmpstr, "\\ ", " ", 0, -1));
-      draw_string(wave_color, NOW, tmpstr, 0, 0, 0, 0,
+      graph_text(GREC_LEGEND, wave_color, tmpstr, 0, 0, 0, 0,
           gr->rx1 + 2 + gr->rw / n_nodes * wcnt, gr->ry1, gr->txtsizelab, gr->txtsizelab);
       #if HAS_CAIRO == 1
       if(gr->legendbold || wave_is_hilighted(gr, wcnt)) {
@@ -5615,7 +6335,7 @@ static void show_node_measures(int measure_p, double measure_x, double measure_p
       }
       #endif
     } else if(!bus_msb && !gr->digital) {
-      draw_string(wave_color, NOW, tmpstr, 0, 0, 0, 0,
+      graph_text(GREC_READOUT, wave_color, tmpstr, 0, 0, 0, 0,
          gr->rx1 + 2 + gr->rw / n_nodes * wcnt, gr->ry1 + gr->txtsizelab * 60,
           gr->txtsizelab * 0.8, gr->txtsizelab * 0.8);
       dbg(1, "node: %s, x=%g, value=%g\n", ntok, measure_x, yy);
@@ -6359,7 +7079,7 @@ int graph_plotbox_at(int i, double px, double py)
 }
 
 /* item 22: THE TEXT-SIZE AND MARGIN READ-BACK of graph `i`, for
- * `xschem get graph_text_metrics` (scheduler.c). Writes 17 doubles to out[]:
+ * `xschem get graph_text_metrics` (scheduler.c). Writes 22 doubles to out[]:
  *   0 fixed (1 when the `textpx` branch of setup_graph_data was taken)
  *   1 textpx as parsed (0 when absent or refused)
  *   2 em_px = txtsizex*52*cairo_font_scale*mooz, the X-number text height in
@@ -6370,6 +7090,13 @@ int graph_plotbox_at(int i, double px, double py)
  *     xscale values, schematic units)
  *   13..16 the plot box x1, y1, x2, y2 in SCHEMATIC units -- zoom-independent
  *     in the proportional branch, so a golden capture holds on either arm
+ *   17 ylab_stride: draw_graph_grid labels every k-th Y division
+ *     (graph_ylab_stride; 1 off the fixed-text arm)
+ *   18 ylab_pitch_px: one Y division's height in screen pixels
+ *   19 readout_row, 20 sweep_row: the on-demand rows setup_graph_data reserved
+ *     (Graph_ctx fx_readout_row / fx_sweep_row; 0 off the fixed-text arm)
+ *   21 tags_inside: a cursor is on and its X tags go inside the plot box
+ *     (Graph_ctx fx_tags_inside; 0 off the fixed-text arm)
  * Returns 0 (out untouched) for a bad index, a non-graph rect or an off-screen
  * graph (setup_graph_data's RECT_OUTSIDE early return leaves no transform).
  * A QUERY: a LOCAL, memset Graph_ctx and the graph_flags 128|256 bracket
@@ -6390,7 +7117,7 @@ int graph_text_metrics(int i, double *out)
   setup_graph_data(i, 0, gr);
   xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
   if(gr->scx == 0.0 || gr->scy == 0.0) return 0; /* off-screen */
-  out[0] = (gr->textpx > 0.0 && !gr->digital && !gr->vlegend) ? 1.0 : 0.0;
+  out[0] = graph_fixed_text(gr) ? 1.0 : 0.0;
   out[1] = gr->textpx;
   out[2] = gr->txtsizex * 52.0 * cairo_font_scale * xctx->mooz;
   out[3] = (gr->y1 - gr->ry1) * xctx->mooz;
@@ -6407,6 +7134,14 @@ int graph_text_metrics(int i, double *out)
   out[14] = gr->y1;
   out[15] = gr->x2;
   out[16] = gr->y2;
+  {
+    double pitch;
+    out[17] = (double)graph_ylab_stride(gr, &pitch);
+    out[18] = pitch * xctx->mooz;
+  }
+  out[19] = (double)gr->fx_readout_row;
+  out[20] = (double)gr->fx_sweep_row;
+  out[21] = (double)gr->fx_tags_inside;
   return 1;
 }
 
@@ -9442,6 +10177,9 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   dbg(0, "draw_graph(): i = %d, flags = %d graph_flags=%d\n", i, flags, xctx->graph_flags);
   #endif
 
+  /* item 22: the draw record of a fixed-text graph drawn on screen (D7) */
+  grec_begin(i, flags, gr);
+  graph_keep_begin(flags, gr);
   /* draw stuff */
   if(flags & 8) {
     int autoload = 0;
@@ -9458,7 +10196,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     if(autoload == 0) autoload = 2; /* 2: switch */
     else if(autoload == 1) autoload = 33; /* 1: read, 32: no_warning */
     /* graph box, gridlines and axes */
-    draw_graph_grid(gr, ct);
+    draw_graph_grid(r, gr, ct);
     /* get data to plot */
     my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr,"node", 0));
     my_strdup2(_ALLOC_ID_, &color, get_tok_value(r->prop_ptr,"color", 0));
@@ -9779,12 +10517,16 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     bbox(START, 0.0, 0.0, 0.0, 0.0);
     bbox(ADD, gr->rx1, gr->ry1, gr->rx2, gr->ry2);
     bbox(SET_INSIDE, 0.0, 0.0, 0.0, 0.0);
+    /* item 22 (R2): the Y numbers that waited for the read-outs */
+    graph_ydefer_flush();
     /* cursor1 */
     if((flags & 2)) draw_cursor(cursor1, cursor2, 1, gr);
     /* cursor2 */
     if((flags & 4)) draw_cursor(cursor2, cursor1, 3, gr);
     /* difference between cursors */
     if((flags & 2) && (flags & 4)) draw_cursor_difference(cursor1, cursor2, gr);
+    graph_rec_cur = NULL;
+    gkeep_on = 0;
     /* difference between hcursors */
     if((flags & 128) && (flags & 256)) draw_hcursor_difference(gr->hcursor1_y, gr->hcursor2_y, gr);
     /* hcursor1 */

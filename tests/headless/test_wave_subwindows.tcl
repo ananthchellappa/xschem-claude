@@ -3517,6 +3517,1014 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {unset ::wviewer::textlast($::tokB)}
   } swaerr]} { check "SWA* band ran to its end" "ERR:$swaerr" ok }
 
+  # ==========================================================================
+  # SWL* -- THE SPACE A VIEWER STRIP SPENDS OUTSIDE ITS PLOT BOX (the user's
+  # report of 2026-10-21: "a lot of space in the waveform viewer is being
+  # wasted ... gives the tool a very amateurish feel", after item 22). Named
+  # SWL, not SWS: SWS1/SWS2 are the one-tab-state rows earlier in this file.
+  # setup_graph_data reserves the cursor-A read-out row and the second bottom
+  # row (sweep names, cursor X tags) ON DEMAND (see its block comment), and
+  # thins the Y numbers to a stride that keeps them one em apart and keeps the
+  # top one. The fixture is the user's picture: ONE sub-window, five stacked
+  # strips in a 1070x700 window, one strip holding TWO traces.
+  # Two instruments, never a pixel literal:
+  #   * graph_text_metrics: the margins setup_graph_data chose (and its
+  #     readout_row / sweep_row decisions);
+  #   * graph_drawn: what the last on-screen draw DREW -- every Y number, X
+  #     number, sweep name, legend name, read-out and cursor tag as a text_bbox
+  #     box in screen px. So a row about the Y numbers is about the labels the
+  #     draw placed, not about a helper's opinion of them (D7: deleting the line
+  #     in draw_graph_grid that applies the stride left the getter-only row
+  #     green).
+  # Upper bounds are in Tk linespaces of a pixel-sized Sans at the strip's
+  # textpx; collision bounds are the drawn boxes themselves; the on-demand row
+  # heights are the em multiples the layout defines (0.96 em, 1.2 em).
+  # ==========================================================================
+  proc swl_m {gi} {
+    xschem new_schematic switch $::vdrw
+    return [pcall {xschem get graph_text_metrics $gi}]
+  }
+  proc swl_d {gi} {
+    xschem new_schematic switch $::vdrw
+    return [pcall {xschem get graph_drawn $gi}]
+  }
+  proc swl_get {m k} {
+    if {[catch {dict get $m $k} v]} { return "NOKEY:$k" }
+    return $v
+  }
+  proc swl_ls {tp} {
+    if {![string is double -strict $tp]} { return "NOTP:$tp" }
+    return [pcall {font metrics [list Sans [expr {-int(round($tp))}]] -linespace}]
+  }
+  proc swl_redraw {} {
+    xschem new_schematic switch $::vdrw
+    xschem redraw
+    update ; after 100 ; update
+  }
+  proc swl_nstrips {} { llength [lay] }
+  # a box list's extreme: which 0..3, op min/max; "" for none
+  proc swl_ext {boxes which op} {
+    set r {}
+    foreach b $boxes {
+      if {[llength $b] != 4} { continue }
+      set v [lindex $b $which]
+      if {$r eq {} || ($op eq {min} && $v < $r) || ($op eq {max} && $v > $r)} { set r $v }
+    }
+    return $r
+  }
+  # do boxes a and b come closer than cx sideways AND cy vertically (overlap = 0 0)
+  proc swl_hit {a b {cx 0} {cy 0}} {
+    lassign $a a1 b1 a2 b2 ; lassign $b c1 d1 c2 d2
+    return [expr {!($a2 + $cx <= $c1 || $c2 + $cx <= $a1 || $b2 + $cy <= $d1 || $d2 + $cy <= $b1)}]
+  }
+  proc swl_desc {tp} {
+    if {![string is double -strict $tp]} { return 0 }
+    set d [pcall {font metrics [list Sans [expr {-int(round($tp))}]] -descent}]
+    return [expr {[string is double -strict $d] ? $d : 0}]
+  }
+  # every strip whose key k exceeds f x linespace
+  proc swl_over {k f} {
+    set bad {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set m [swl_m $gi]
+      set ls [swl_ls [swl_get $m textpx]]
+      set v [swl_get $m $k]
+      if {![string is double -strict $v] || ![string is double -strict $ls] ||
+          $v > $f * $ls} { lappend bad "$gi:$v>$f*$ls" }
+    }
+    return $bad
+  }
+  # SWL3 -- the Y numbers the draw placed, against a label set DERIVED from what
+  # the draw drew and NOT from the product's stride code (F1: a row that took
+  # the record's ylab_pitch_px / ylab_visible -- the stride function's own inputs
+  # -- stayed green when that function was told half the real pitch, and the
+  # strips showed one lone "0" again). The inputs here are the Y axis marks the
+  # draw RECORDED (n_yline/yline: one per visible major line, graph_line) and the
+  # em from graph_text_metrics. The rule is the spec's, re-derived: label every
+  # k-th line from the bottom, k the smallest stride that puts labels >= 1 em
+  # apart AND divides the span, so the top line is labelled too; the bottom one
+  # alone when even that stride does not fit. The row asserts the EXACT label
+  # set (each drawn label centred on its derived line, none elsewhere), the gaps,
+  # and that a strip whose top and bottom lines clear by an em shows two numbers.
+  # Returns the bad strips and the total drawn.
+  proc swl_ylabs {} {
+    set bad {} ; set tot 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set em [swl_get $m em_px]
+      set n [swl_get $d n_ylab] ; set nl [swl_get $d n_yline]
+      if {![string is integer -strict $n] || ![string is integer -strict $nl] ||
+          ![string is double -strict $em] || $nl < 1} {
+        lappend bad "$gi:norecord n=$n lines=$nl" ; continue
+      }
+      incr tot $n
+      # the drawn lines, bottom (largest screen y) first
+      set ly [lsort -real -decreasing [lmap b [swl_get $d yline] {lindex $b 1}]]
+      set span [expr {[llength $ly] - 1}]
+      set want [list 0]
+      if {$span >= 1} {
+        set q [expr {([lindex $ly 0] - [lindex $ly end]) / double($span)}]
+        set k [expr {$q > 0 ? int(ceil($em / $q - 1e-6)) : $span + 1}]
+        if {$k < 1} { set k 1 }
+        if {$k <= $span} {
+          while {$span % $k} { incr k }
+          set want {}
+          for {set j 0} {$j <= $span} {incr j $k} { lappend want $j }
+        }
+      }
+      set wy [lmap j $want {lindex $ly $j}]
+      set cs [lsort -real -decreasing [lmap b [swl_get $d ylab] {expr {([lindex $b 1] + [lindex $b 3]) / 2.0}}]]
+      if {[llength $cs] != [llength $wy]} {
+        lappend bad "$gi:drew [llength $cs] labels, the drawn lines call for [llength $wy] (lines $ly em $em)"
+      } else {
+        foreach c $cs y $wy {
+          if {abs($c - $y) > 0.5} { lappend bad "$gi:label at $c, derived line at $y" }
+        }
+      }
+      for {set j 1} {$j < [llength $cs]} {incr j} {
+        set g [expr {[lindex $cs [expr {$j - 1}]] - [lindex $cs $j]}]
+        if {$g < $em - 1e-6} { lappend bad "$gi:gap=$g<em=$em" }
+      }
+      if {$span >= 1 && [lindex $ly 0] - [lindex $ly end] >= $em - 1e-6 && [llength $cs] < 2} {
+        lappend bad "$gi:top and bottom lines clear by an em but [llength $cs] number(s) drawn"
+      }
+    }
+    return [list $bad $tot]
+  }
+  # SWL16/17 -- the cursor X tags against the numbers: no tag box comes onto an
+  # X or Y number box by more than one descent (the line boxes may meet in the
+  # numbers' blank descent), every strip draws A, B and A-B; and a tag the
+  # layout put INSIDE the plot box (tags_inside) ends at or above the box's
+  # bottom edge. Returns {bad n_cursor-list tags_inside-list}.
+  proc swl_tags {} {
+    set bad {} ; set nc {} ; set ti {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set desc [swl_desc [swl_get $m textpx]]
+      lappend nc [swl_get $d n_cursor] ; lappend ti [swl_get $m tags_inside]
+      set box [swl_get $d box]
+      foreach a [swl_get $d cursor] {
+        foreach o [concat [swl_get $d xlab] [swl_get $d ylab]] {
+          if {[swl_hit $a $o 0 [expr {-$desc}]]} { lappend bad "$gi:cursor {$a} on {$o} (descent $desc)" }
+        }
+        if {[swl_get $m tags_inside] eq 1 && [lindex $a 3] > [lindex $box 3] + 0.5} {
+          lappend bad "$gi:inside tag {$a} below the box bottom [lindex $box 3]"
+        }
+      }
+    }
+    return [list $bad $nc $ti]
+  }
+  # SWL14/15 -- the last resort (not even the legend and X-number rows fit):
+  # every X number whole inside its strip, and the X-number row keeps at least
+  # half of the margins (the legend row is the other half; DEF-1: scaling the
+  # UNSQUEEZED margins gave it 45% and cut the numbers HEAD drew whole). Returns
+  # {bad bottom_px-list}.
+  proc swl_degrade {} {
+    set bad {} ; set bots {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set rect [swl_get $d rect]
+      set t [swl_get $m top_px] ; set b [swl_get $m bottom_px] ; set em [swl_get $m em_px]
+      lappend bots $b
+      if {![string is double -strict $t] || ![string is double -strict $b] || [llength $rect] != 4} {
+        lappend bad "$gi:norecord" ; continue
+      }
+      # fixture: really the last resort -- the margins hold less than the
+      # legend row (1.2 em) plus the X-number row (tick + gap + 1.2 em, over
+      # 1.4 em)
+      if {$t + $b >= 2.6 * $em} { lappend bad "$gi:not degraded: top+bottom=[expr {$t + $b}] >= 2.6 em" }
+      if {$b < 0.5 * ($t + $b)} { lappend bad "$gi:X-number row $b < half of [expr {$t + $b}]" }
+      if {[swl_get $d n_xlab] < 2} { lappend bad "$gi:n_xlab=[swl_get $d n_xlab]" }
+      foreach x [swl_get $d xlab] {
+        if {[lindex $x 1] < [lindex $rect 1] - 0.5 || [lindex $x 3] > [lindex $rect 3] + 0.5} {
+          lappend bad "$gi:xlab {$x} not inside the strip {$rect}"
+        }
+      }
+    }
+    return [list $bad $bots]
+  }
+  # non-decreasing, per strip, over a list of per-pt lists
+  proc swl_monotone {seq} {
+    set bad {}
+    for {set j 1} {$j < [llength $seq]} {incr j} {
+      foreach a [lindex $seq [expr {$j - 1}]] b [lindex $seq $j] {
+        if {![string is double -strict $a] || ![string is double -strict $b] || $b < $a - 1e-9} {
+          lappend bad "step $j: $a -> $b"
+        }
+      }
+    }
+    return $bad
+  }
+  # SWL23 (R1) -- no cursor tag box the draw drew meets a legend name or a
+  # read-out box the draw drew (strict: boxes may touch, not overlap; 0.01 px
+  # of rounding). A tag the plot box cannot hold goes back to the strip's
+  # bottom edge, or is not drawn, rather than cover a name or a value.
+  # Returns {bad tags-drawn-total legend+readout-total}.
+  proc swl_tag_text {} {
+    set bad {} ; set nt 0 ; set nl 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi]
+      set tops [concat [swl_get $d legend] [swl_get $d readout]]
+      incr nl [llength $tops]
+      foreach a [swl_get $d cursor] {
+        incr nt
+        foreach o $tops {
+          if {[swl_hit $a $o -0.01 -0.01]} { lappend bad "$gi:tag {$a} on {$o}" }
+        }
+      }
+    }
+    return [list $bad $nt $nl]
+  }
+  # SWL24 (R2) -- with cursor A on, a Y number yields to a read-out only where
+  # a read-out the draw drew is on it: every strip whose drawn Y lines span an
+  # em (so the stride labels top and bottom, SWL3's derivation) draws two or
+  # more Y numbers, no Y-number box meets a read-out box, and none meets a
+  # legend name by more than one descent (the blank under the name meeting
+  # the blank above the digits). Returns {bad strips-allowing-two}.
+  proc swl_ylab_ro {} {
+    set bad {} ; set n2 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set em [swl_get $m em_px] ; set desc [swl_desc [swl_get $m textpx]]
+      set ly [lsort -real -decreasing [lmap b [swl_get $d yline] {lindex $b 1}]]
+      if {![string is double -strict $em] || [llength $ly] < 1} { lappend bad "$gi:norecord" ; continue }
+      if {[llength $ly] >= 2 && [lindex $ly 0] - [lindex $ly end] >= $em - 1e-6} {
+        incr n2
+        if {[swl_get $d n_ylab] < 2} {
+          lappend bad "$gi:lines span [expr {[lindex $ly 0] - [lindex $ly end]}] >= em $em but n_ylab=[swl_get $d n_ylab]"
+        }
+      }
+      foreach o [swl_get $d ylab] {
+        foreach a [swl_get $d readout] {
+          if {[swl_hit $a $o -0.01 -0.01]} { lappend bad "$gi:ylab {$o} on readout {$a}" }
+        }
+        foreach a [swl_get $d legend] {
+          if {[swl_hit $a $o -0.01 [expr {-$desc}]]} { lappend bad "$gi:ylab {$o} on legend {$a} (descent $desc)" }
+        }
+      }
+    }
+    return [list $bad $n2]
+  }
+  # SWL4 -- above the box: no legend name or read-out reaches a Y number or the
+  # plot box, and no read-out sits on a legend name (D1: a value placed after
+  # its name ran into the next trace's name); below it: every X number lies
+  # between the box and the strip's bottom edge; no sweep name or cursor tag
+  # touches an X or Y number.
+  proc swl_collide {} {
+    set bad {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi]
+      set box [swl_get $d box] ; set rect [swl_get $d rect]
+      if {[llength $box] != 4 || [llength $rect] != 4} { lappend bad "$gi:norecord" ; continue }
+      set ytop [swl_ext [swl_get $d ylab] 1 min]
+      foreach k {legend readout} {
+        set lb [swl_ext [swl_get $d $k] 3 max]
+        if {$lb eq {}} { continue }
+        if {$lb > [lindex $box 1]} { lappend bad "$gi:$k.y2=$lb>box.y1=[lindex $box 1]" }
+        if {$ytop ne {} && $lb > $ytop} { lappend bad "$gi:$k.y2=$lb>ylab.y1=$ytop" }
+      }
+      foreach b [swl_get $d xlab] {
+        if {[lindex $b 1] < [lindex $box 3] || [lindex $b 3] > [lindex $rect 3] + 0.5} {
+          lappend bad "$gi:xlab {$b} outside {[lindex $box 3] [lindex $rect 3]}"
+        }
+      }
+      # a box is the font's whole line (ascent + descent + gap), so two rows of
+      # numbers may overlap by up to one descent with no ink touching: the
+      # upper line's descent area meets the lower line's blank ascent. That
+      # allowance (Tk -descent of the strip's pixel size) is vertical only.
+      set desc [swl_desc [swl_get [swl_m $gi] textpx]]
+      foreach a [swl_get $d readout] {
+        foreach o [swl_get $d legend] {
+          if {[swl_hit $a $o 0 [expr {-$desc}]]} { lappend bad "$gi:readout {$a} on legend {$o}" }
+        }
+      }
+      foreach k {sweep cursor} {
+        foreach a [swl_get $d $k] {
+          foreach o [concat [swl_get $d xlab] [swl_get $d ylab]] {
+            if {[swl_hit $a $o 0 [expr {-$desc}]]} { lappend bad "$gi:$k {$a} on {$o}" }
+          }
+        }
+      }
+    }
+    return $bad
+  }
+  set sws_geo [wm geometry $vtop]
+  if {[catch {
+  wm geometry $vtop 1070x700
+  update ; after 200 ; update
+  xschem new_schematic switch $vdrw
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {xschem raw new wvsws.raw tran time 0 200e-6 0.5e-6}
+  foreach {v e} {TEMPERAT "27 time 1e4 * +" Icc "time 2e5 * sin 50e-6 * 60e-6 +"
+                 START "time 25e-6 < 1.8 *" ENN "time 5e3 *" VBG "time 4e3 * 0.9 min"} {
+    pcall [list xschem raw add $v $e]
+  }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::plot_signals $tok {TEMPERAT}}
+  foreach k {1 2 3 4} sig {{Icc START} ENN VBG TEMPERAT} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok $sig}
+  }
+  update ; after 200 ; update
+  set sws_h [lmap b [pcall {wviewer::strip_bands_px $vdrw}] {expr {int(round([lindex $b 3] - [lindex $b 1]))}}]
+  check "SWL0 fixture: one sub-window, five strips (strip 1 two traces), all fixed text, each under 140 px tall" \
+    [list [wviewer::sw_count [lay]] [lmap g [lay] {llength [wviewer::dget $g traces {}]}] \
+          [lmap gi {0 1 2 3 4} {swl_get [swl_m $gi] fixed}] \
+          [llength [lsearch -all -inline -not -regexp $sws_h {^(1[0-3][0-9]|[1-9][0-9])$}]]] \
+    {1 {1 2 1 1 1} {1 1 1 1 1} 0}
+  foreach pt {14 10 16 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    check "SWL1 $pt pt, cursors off: no strip's band above the plot box is taller than legend + Y-number overhang (1.75 linespace)" \
+      [swl_over top_px 1.75] {}
+    check "SWL1 $pt pt, cursors off: no strip's band below the plot box is taller than the X-number row (1.5 linespace)" \
+      [swl_over bottom_px 1.5] {}
+    check "SWL2 $pt pt, cursors off: no strip reserves the read-out row or the second bottom row" \
+      [lmap gi {0 1 2 3 4} {list [swl_get [swl_m $gi] readout_row] [swl_get [swl_m $gi] sweep_row]}] \
+      [lrepeat 5 {0 0}]
+    lassign [swl_ylabs] yb ytot
+    check "SWL3 $pt pt: the Y numbers DRAWN are exactly the set derived from the Y lines the draw drew and the em (every k-th from the bottom, k the least stride >= 1 em dividing the span), >= 1 em apart, two wherever top and bottom clear, five strips' worth drawn" \
+      [list $yb [expr {$ytot >= 5}]] {{} 1}
+    check "SWL4 $pt pt: legend clears the Y numbers and the box; X numbers whole inside the strip; 'time' touches no number" \
+      [swl_collide] {}
+  }
+  # ---- cursors: the rows come with them and go with them ----------------------
+  # At 10 pt nothing is squeezed, so the deltas are exactly the rows; at 14 pt
+  # cursor-on hits the 80% budget on this layout and the AIR gives way first
+  # (setup_graph_data), so there the rows are asserted by flag and by collision.
+  pcall {wviewer::set_text_size 10 $tok}
+  swl_redraw
+  set swl_off [lmap gi {0 1 2 3 4} {set m [swl_m $gi]; list [swl_get $m top_px] [swl_get $m bottom_px]}]
+  set swl_tp [swl_get [swl_m 0] em_px]
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 70e-6}
+  swl_redraw
+  set swl_bad {}
+  foreach gi {0 1 2 3 4} o $swl_off {
+    set m [swl_m $gi]
+    set dt [expr {[swl_get $m top_px] - [lindex $o 0]}] ; set db [expr {[swl_get $m bottom_px] - [lindex $o 1]}]
+    if {abs($dt - 0.96 * $swl_tp) > 1e-6 * $swl_tp || abs($db - 1.2 * $swl_tp) > 1e-6 * $swl_tp ||
+        [swl_get $m readout_row] ne 1 || [swl_get $m sweep_row] ne 1} {
+      lappend swl_bad "$gi:dtop=$dt dbot=$db rows=[swl_get $m readout_row],[swl_get $m sweep_row]"
+    }
+  }
+  check "SWL5 10 pt, cursor A on: every strip gains exactly the read-out row (0.96 em) above and the tag row (1.2 em) below" \
+    $swl_bad {}
+  pcall {xschem cursor 1 0}
+  swl_redraw
+  check "SWL5b 10 pt, cursor A off again: every strip's margins are back to the cursor-off values exactly" \
+    [lmap gi {0 1 2 3 4} {set m [swl_m $gi]; list [swl_get $m top_px] [swl_get $m bottom_px]}] $swl_off
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  set swl_off [lmap gi {0 1 2 3 4} {set m [swl_m $gi]; list [swl_get $m top_px] [swl_get $m bottom_px]}]
+  set swl_tp [swl_get [swl_m 0] em_px]
+  # the drawn width of "time" at 14 pt, for SWL13's non-vacuity leg
+  set swl_tw [pcall {set b [lindex [swl_get [swl_d 0] sweep] 0]; expr {[lindex $b 2] - [lindex $b 0]}}]
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 70e-6}
+  swl_redraw
+  check "SWL6 14 pt, cursor A on: both rows reserved, a read-out drawn on every strip, nothing collides" \
+    [list [lmap gi {0 1 2 3 4} {list [swl_get [swl_m $gi] readout_row] [swl_get [swl_m $gi] sweep_row]}] \
+          [lmap gi {0 1 2 3 4} {expr {[swl_get [swl_d $gi] n_readout] >= 1}}] [swl_collide]] \
+    [list [lrepeat 5 {1 1}] {1 1 1 1 1} {}]
+  # SWL24 (R2): the user's own layout, cursor A on, as the text grows into the
+  # squeeze -- the read-out row gives way first and its band reaches the top Y
+  # numbers, which yield only where a value is really printed on them (the
+  # read-out of slot 0 ends tens of pixels left of the Y numbers here). Non-
+  # vacuity: strips allowing two are counted, and a read-out is drawn on each.
+  set swl_n2 {}
+  foreach pt {14 15 16 17 18 19} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_ylab_ro] rb rn2
+    lappend swl_n2 $rn2
+    check "SWL24 1070x700, five strips, $pt pt, cursor A on: every strip whose Y lines span an em draws two or more Y numbers, none on a read-out, none on a legend name beyond one descent (fixture: a read-out drawn on every strip)" \
+      [list $rb [lmap gi {0 1 2 3 4} {expr {[swl_get [swl_d $gi] n_readout] >= 1}}]] \
+      [list {} {1 1 1 1 1}]
+  }
+  check "SWL24 fixture: at 14..18 pt at least three of the five strips have Y lines spanning an em (so the rows above asserted two numbers somewhere)" \
+    [lmap n [lrange $swl_n2 0 4] {expr {[string is integer -strict $n] && $n >= 3}}] {1 1 1 1 1}
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  # D1: five traces in one strip, cursor A on -- each value under its own name
+  pcall {wviewer::set_target_strip 0 $tok}
+  pcall {wviewer::plot_signals $tok {Icc START ENN VBG}}
+  swl_redraw
+  check "SWL6b 14 pt, cursor A on, five traces in strip 0: five names, five read-outs, no read-out on a name" \
+    [list [llength [wviewer::dget [lindex [lay] 0] traces {}]] [swl_get [swl_d 0] n_legend] \
+          [swl_get [swl_d 0] n_readout] [swl_collide]] {5 5 5 {}}
+  pcall {xschem cursor 2 1} ; pcall {xschem set cursor2_x 140e-6}
+  swl_redraw
+  check "SWL7 14 pt, cursors A+B on: three tags per strip (A, B, A-B), none on an X or Y number" \
+    [list [lmap gi {0 1 2 3 4} {swl_get [swl_d $gi] n_cursor}] [swl_collide]] [list {3 3 3 3 3} {}]
+  pcall {xschem cursor 1 0}
+  swl_redraw
+  check "SWL8 cursor B alone: the tag row stays, the read-out row goes" \
+    [lmap gi {0 1 2 3 4} {list [swl_get [swl_m $gi] readout_row] [swl_get [swl_m $gi] sweep_row]}] \
+    [lrepeat 5 {0 1}]
+  pcall {xschem cursor 2 0}
+  swl_redraw
+  check "SWL9 14 pt, both cursors off again: every strip's margins are back to the cursor-off values exactly" \
+    [lmap gi {0 1 2 3 4} {set m [swl_m $gi]; list [swl_get $m top_px] [swl_get $m bottom_px]}] $swl_off
+  # ---- the cursor tags on the user's layout as the text grows (DEF-2) ----------
+  # The tag row is a REQUIRED row once a cursor is on: the air, the overhang
+  # and the read-out row give way first. Before, at 17-20 pt it was squeezed
+  # with the read-out row and the tags were drawn over the X numbers ("50u" ->
+  # "5(69.443u").
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 70e-6}
+  pcall {xschem cursor 2 1} ; pcall {xschem set cursor2_x 140e-6}
+  foreach pt {14 17 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_tags] tb tn tti
+    check "SWL16 $pt pt, cursors A+B on, five strips: three tags per strip, kept in their own row under the X numbers (not moved inside), none on an X or Y number beyond one descent" \
+      [list $tn $tti [lmap gi {0 1 2 3 4} {swl_get [swl_m $gi] sweep_row}] $tb] \
+      [list {3 3 3 3 3} {0 0 0 0 0} {1 1 1 1 1} {}]
+  }
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  # ---- a second sweep name (Calculator wave destination's sweep= per trace) ---
+  # The viewer canvas is read-only; the prop is written straight onto the rect,
+  # which is what wviewer::graph_props would emit for a per-trace sweep list.
+  set swl_ro [pcall {xschem get readonly}]
+  pcall {xschem set readonly 0}
+  set swl_p1 [pcall {xschem getprop rect 2 1 sweep}]
+  pcall {xschem setprop rect 2 1 sweep {time time} fast}
+  swl_redraw
+  set m1 [swl_m 1]
+  check "SWL10 strip with two sweep tokens: reserves the second bottom row (+1.2 em), draws both names, neither on a number" \
+    [list [swl_get $m1 sweep_row] \
+          [expr {abs([swl_get $m1 bottom_px] - [lindex $swl_off 1 1] - 1.2 * $swl_tp) <= 1e-6 * $swl_tp}] \
+          [swl_get [swl_d 1] n_sweep] [swl_collide]] {1 1 2 {}}
+  pcall {xschem setprop rect 2 1 sweep $swl_p1 fast}
+  catch {xschem set readonly $swl_ro}
+  swl_redraw
+  check "SWL10b fixture: the sweep token is restored and strip 1 drops the row again" \
+    [swl_get [swl_m 1] sweep_row] 0
+  # ---- the last resort on a short window: 1070x400, five strips (DEF-1) --------
+  wm geometry $vtop 1070x400
+  update ; after 200 ; update
+  set swl_bseq {}
+  foreach pt {14 15 17 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_degrade] db dbots
+    lappend swl_bseq $dbots
+    if {$pt in {17 20}} {
+      check "SWL14 1070x400, $pt pt, five strips in the last resort: every X number whole inside its strip, the X-number row at least half the margins" \
+        [list [swl_nstrips] $db] {5 {}}
+    }
+  }
+  check "SWL14b 1070x400, five strips: every strip's bottom margin is non-decreasing in the text size across 14, 15, 17 and 20 pt" \
+    [swl_monotone $swl_bseq] {}
+  wm geometry $vtop 1070x700
+  update ; after 200 ; update
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  # ---- the squeeze: ten strips, 14 pt -----------------------------------------
+  foreach k {5 6 7 8 9} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok ENN}
+  }
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  set swl_sq {}
+  for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+    set m [swl_m $gi]
+    lappend swl_sq [expr {[swl_get $m top_px] + [swl_get $m bottom_px] > 0.79 * ([swl_get $m top_px] + [swl_get $m bottom_px] + [swl_get $m plot_h_px]) ? 1 : 0}]
+  }
+  check "SWL11 fixture: ten strips, every one in the squeeze (margins at the 80% budget)" \
+    [list [swl_nstrips] [lsort -unique $swl_sq]] {10 1}
+  set swl_xb {}
+  for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+    set d [swl_d $gi] ; set box [swl_get $d box] ; set rect [swl_get $d rect]
+    if {[swl_get $d n_xlab] < 2} { lappend swl_xb "$gi:n_xlab=[swl_get $d n_xlab]" }
+    foreach b [swl_get $d xlab] {
+      if {[lindex $b 1] < [lindex $box 3] || [lindex $b 3] > [lindex $rect 3] + 0.5} {
+        lappend swl_xb "$gi:{$b} not in {[lindex $box 3] [lindex $rect 3]}"
+      }
+    }
+  }
+  check "SWL12 squeezed: every X number drawn whole between its plot box and its strip's bottom edge" $swl_xb {}
+  # ---- the last resort: ten strips, 15-20 pt (DEF-1) ---------------------------
+  # 11-14 pt are the squeeze, 15-20 the last resort, so the sequence crosses
+  # from one into the other. graph_fixed_margins' floor on the bottom (its
+  # last-resort share) only matters inside the narrow band where the air alone
+  # is giving way, which no integer size of this geometry lands in -- deleting
+  # that floor leaves this row green; SWL19 fences it on window heights that do.
+  set swl_bseq {}
+  foreach pt {11 12 13 14} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lappend swl_bseq [lmap gi [lsearch -all [lay] *] {swl_get [swl_m $gi] bottom_px}]
+  }
+  foreach pt {15 17 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_degrade] db dbots
+    lappend swl_bseq $dbots
+    check "SWL15 1070x700, $pt pt, ten strips in the last resort: every X number whole inside its strip, the X-number row at least half the margins" \
+      [list [swl_nstrips] $db] {10 {}}
+  }
+  check "SWL15b ten strips: every strip's bottom margin is non-decreasing in the text size across 11, 12, 13, 14, 15, 17 and 20 pt" \
+    [swl_monotone $swl_bseq] {}
+  # ---- ten strips, 12 pt, cursors on: no room for the tag row (DEF-2) ---------
+  pcall {wviewer::set_text_size 12 $tok}
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 70e-6}
+  pcall {xschem cursor 2 1} ; pcall {xschem set cursor2_x 140e-6}
+  swl_redraw
+  lassign [swl_tags] tb tn tti
+  check "SWL17 12 pt, cursors A+B on, ten strips: the tag row does not fit beside the X numbers, so the three tags go INSIDE each plot box along its bottom edge, none on an X or Y number beyond one descent" \
+    [list $tn $tti $tb] [list [lrepeat 10 3] [lrepeat 10 1] {}]
+  # SWL23 (R1): ten strips, A+B, sizes where the plot box is shorter than a tag
+  # and the tags are inside: before, the A-B tag centred under strip 1's
+  # second name ran up out of the box and its background hid 'START' and its
+  # value. Non-vacuity: tags and top texts are drawn (A and B on every strip).
+  foreach pt {14 17 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_tag_text] rb rt rl
+    check "SWL23 1070x700, ten strips, $pt pt, cursors A+B: no cursor tag box meets a legend name or a read-out box (fixture: tags inside, 20+ tags and 20+ names/values drawn)" \
+      [list $rb [lsort -unique [lmap gi [lsearch -all [lay] *] {swl_get [swl_m $gi] tags_inside}]] [expr {$rt >= 20}] [expr {$rl >= 20}]] [list {} 1 1 1]
+  }
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {wviewer::set_text_size 14 $tok}
+  swl_redraw
+  # ---- an AC database: 'frequency' in the X-number row ------------------------
+  pcall {xschem raw new wvsws_ac.raw ac frequency 1 1e6 100}
+  foreach {v e} {TEMPERAT "27 frequency 1e-2 * +" Icc "frequency 1e-6 *" START "frequency 1e-6 *"
+                 ENN "frequency 1e-6 *" VBG "frequency 1e-6 *"} {
+    pcall [list xschem raw add $v $e]
+  }
+  swl_redraw
+  set swl_ac {}
+  for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+    set d [swl_d $gi]
+    set sw [swl_get $d sweep]
+    if {[llength $sw] < 1} { lappend swl_ac "$gi:nosweep" ; continue }
+    # non-vacuity: the name drawn is wider than "time" was, i.e. the AC
+    # database really is current and this measures "frequency"
+    set w [expr {[lindex $sw 0 2] - [lindex $sw 0 0]}]
+    if {![string is double -strict $swl_tw] || $w <= $swl_tw} { lappend swl_ac "$gi:width $w <= time $swl_tw" }
+    if {[swl_get $d sweep_row] == 1} { continue }
+    foreach o [concat [swl_get $d xlab] [swl_get $d ylab]] {
+      if {[swl_hit [lindex $sw 0] $o [expr {0.5 * $swl_tp}] 0]} { lappend swl_ac "$gi:{[lindex $sw 0]} near {$o}" }
+    }
+  }
+  check "SWL13 AC: 'frequency' is drawn on every strip and either has its own row or clears every number by half an em" \
+    $swl_ac {}
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::close_tab {} $tok}
+  # ---- SWL18-SWL22: where the cursor tags, the sweep names and the read-out
+  # go as the text grows (round 4). Fresh tabs, so the strip counts can start
+  # at five again. tags_inside is read from graph_text_metrics (the layout's
+  # decision); every position is read from graph_drawn (what the draw drew).
+  # tags_inside per strip
+  proc swl_ti {} {
+    set r {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} { lappend r [swl_get [swl_m $gi] tags_inside] }
+    return $r
+  }
+  # SWL18 -- over a list of per-size tags_inside lists (sizes ascending): no
+  # strip's tags come back into the row at a larger size once they went
+  # inside (DEF-A: the decision was a rounding coin-flip, row/inside/row at
+  # 18/19/20 pt on the user's own layout, the plot box jumping ~25 px).
+  proc swl_ti_mono {seq pts} {
+    set bad {}
+    set n [llength [lindex $seq 0]]
+    for {set st 0} {$st < $n} {incr st} {
+      set was 0
+      foreach row $seq pt $pts {
+        set v [lindex $row $st]
+        if {$v ni {0 1}} { lappend bad "strip $st at $pt pt: tags_inside=$v" ; continue }
+        if {$was && $v == 0} { lappend bad "strip $st: inside, then back in the row at $pt pt" }
+        if {$v} { set was 1 }
+      }
+    }
+    return $bad
+  }
+  # SWL20 -- every cursor tag box the draw drew lies wholly inside its strip
+  # (half a pixel of rounding); a strip SHORTER than the box (the box is the
+  # font's whole line) gets it centred, each end out by no more than one Tk
+  # descent of the strip's size -- blank line space, the digits' ink inside.
+  # Returns {bad n_cursor-list tag-height-list}.
+  proc swl_tagbox_in {} {
+    set bad {} ; set nc {} ; set th {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi]
+      lassign [swl_get $d rect] rx1 ry1 rx2 ry2
+      set desc [swl_desc [swl_get [swl_m $gi] textpx]]
+      lappend nc [swl_get $d n_cursor]
+      set h 0
+      foreach a [swl_get $d cursor] {
+        lassign $a x1 y1 x2 y2
+        if {$y2 - $y1 > $h} { set h [expr {$y2 - $y1}] }
+        set tol [expr {$y2 - $y1 > $ry2 - $ry1 ? 0.5 + $desc : 0.5}]
+        if {$y1 < $ry1 - $tol || $y2 > $ry2 + $tol || $x1 < $rx1 - 0.5 || $x2 > $rx2 + 0.5 ||
+            ($y2 - $y1 > $ry2 - $ry1 && abs(($y1 + $y2) - ($ry1 + $ry2)) > 1.0)} {
+          lappend bad "$gi:tag {$a} not wholly inside the strip {$rx1 $ry1 $rx2 $ry2} (descent $desc)"
+        }
+      }
+      lappend th $h
+    }
+    return [list $bad $nc $th]
+  }
+  set swl_pts {10 11 12 13 14 15 16 17 18 19 20}
+  wm geometry $vtop 1070x700
+  update ; after 200 ; update
+  xschem new_schematic switch $vdrw
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {xschem raw new wvsws2.raw tran time 0 200e-6 0.5e-6}
+  foreach {v e} {TEMPERAT "27 time 1e4 * +" Icc "time 2e5 * sin 50e-6 * 60e-6 +"
+                 START "time 25e-6 < 1.8 *" ENN "time 5e3 *" VBG "time 4e3 * 0.9 min"} {
+    pcall [list xschem raw add $v $e]
+  }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::plot_signals $tok {TEMPERAT}}
+  foreach k {1 2 3 4} sig {{Icc START} ENN VBG TEMPERAT} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok $sig}
+  }
+  # SWL19 (d7) -- cursors off, five strips, at window heights where some
+  # integer size lands in the narrow band where only the AIR is giving way:
+  # there the bottom margin would SHRINK as the text grows without
+  # graph_fixed_margins' floor on it (measured: 0.02-0.24 px at one size step
+  # per height). Non-vacuity: each height's sweep crosses from unsqueezed to
+  # squeezed (margins at the 80% budget).
+  set swl_d7 {}
+  foreach h {360 420 480 540 600} {
+    wm geometry $vtop 1070x$h
+    update ; after 200 ; update
+    set seq {} ; set sq {}
+    foreach pt $swl_pts {
+      pcall {wviewer::set_text_size $pt $tok}
+      swl_redraw
+      lappend seq [lmap gi [lsearch -all [lay] *] {swl_get [swl_m $gi] bottom_px}]
+      set m [swl_m 0]
+      set t [swl_get $m top_px] ; set b [swl_get $m bottom_px] ; set ph [swl_get $m plot_h_px]
+      lappend sq [expr {[string is double -strict $t] && [string is double -strict $b] &&
+                        [string is double -strict $ph] && $t + $b > 0.79 * ($t + $b + $ph) ? 1 : 0}]
+    }
+    foreach x [swl_monotone $seq] { lappend swl_d7 "h=$h $x" }
+    if {[lsort -unique $sq] ne {0 1}} { lappend swl_d7 "h=$h fixture: squeeze flags $sq do not cross" }
+  }
+  check "SWL19 cursors off, five strips, window 1070x360..600: every strip's bottom margin is non-decreasing in the text size over every integer size 10..20 pt, each sweep crossing into the squeeze" \
+    $swl_d7 {}
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 70e-6}
+  pcall {xschem cursor 2 1} ; pcall {xschem set cursor2_x 140e-6}
+  foreach {geo want} {1070x700 {0} 1070x400 {0 1}} {
+    wm geometry $vtop $geo
+    update ; after 200 ; update
+    set seq {}
+    foreach pt $swl_pts {
+      pcall {wviewer::set_text_size $pt $tok}
+      swl_redraw
+      lappend seq [swl_ti]
+      if {$geo eq {1070x400} && $pt in {16 20}} {
+        lassign [swl_tag_text] rb rt rl
+        check "SWL23 1070x400, five strips, $pt pt, cursors A+B: no cursor tag box meets a legend name or a read-out box (fixture: tags inside, 10+ tags and 10+ names/values drawn)" \
+          [list $rb [lsort -unique [swl_ti]] [expr {$rt >= 10}] [expr {$rl >= 10}]] [list {} 1 1 1]
+      }
+    }
+    check "SWL18 $geo, five strips, cursors A+B, every integer size 10..20 pt: once a strip's tags go inside its plot box they stay inside at every larger size (and the sweep visits [expr {$want eq {0} ? {only the row} : {both the row and inside}}])" \
+      [list [swl_ti_mono $seq $swl_pts] [lsort -unique [concat {*}$seq]]] [list {} $want]
+  }
+  wm geometry $vtop 1070x700
+  update ; after 200 ; update
+  foreach k {5 6 7 8 9} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok ENN}
+  }
+  set seq {}
+  set swl_pts6 [concat {6 7 8 9} $swl_pts]
+  foreach pt $swl_pts6 {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lappend seq [swl_ti]
+  }
+  check "SWL18 1070x700, ten strips, cursors A+B, every integer size 6..20 pt: once a strip's tags go inside its plot box they stay inside at every larger size (and the sweep visits both the row and inside)" \
+    [list [swl_nstrips] [swl_ti_mono $seq $swl_pts6] [lsort -unique [concat {*}$seq]]] [list 10 {} {0 1}]
+  # SWL20 (DEF-B) -- twelve strips in a 1070x400 window: each plot box is
+  # shorter than a cursor tag, so a tag inside it would stick out above the
+  # strip and be cut by the strip's clip. The tags go back to the strip's
+  # bottom edge (on their background box) and every one is whole.
+  wm geometry $vtop 1070x400
+  update ; after 200 ; update
+  foreach k {10 11} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok VBG}
+  }
+  foreach pt {12 16 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_tagbox_in] tb tn th
+    set fx {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set ph [swl_get [swl_m $gi] plot_h_px]
+      if {![string is double -strict $ph] || [lindex $th $gi] <= $ph} { lappend fx "$gi:plot $ph tag [lindex $th $gi]" }
+    }
+    check "SWL20 1070x400, twelve strips, $pt pt, cursors A+B: every cursor tag box wholly inside its strip, at least the A and B tags on every strip (fixture: tags_inside on every strip, each plot box shorter than a tag)" \
+      [list [swl_nstrips] $tb [lsort -unique [lmap n $tn {expr {[string is integer -strict $n] && $n >= 2}}]] [lsort -unique [swl_ti]] $fx] \
+      [list 12 {} 1 1 {}]
+  }
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::close_tab {} $tok}
+  # ---- AC again, a fresh tab: 'frequency' does not fit beside the X numbers --
+  wm geometry $vtop 1070x700
+  update ; after 200 ; update
+  xschem new_schematic switch $vdrw
+  pcall {xschem raw new wvsws2_ac.raw ac frequency 1 1e6 100}
+  foreach {v e} {TEMPERAT "27 frequency 1e-2 * +" Icc "frequency 1e-6 *" START "frequency 1e-6 *"
+                 ENN "frequency 1e-6 *" VBG "frequency 1e4 * 27 +"} {
+    pcall [list xschem raw add $v $e]
+  }
+  pcall {wviewer::new_tab $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::plot_signals $tok {VBG}}
+  foreach k {1 2 3 4} sig {{Icc START} ENN VBG TEMPERAT} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok $sig}
+  }
+  pcall {xschem cursor 1 1} ; pcall {xschem set cursor1_x 333333}
+  pcall {xschem cursor 2 1} ; pcall {xschem set cursor2_x 8e5}
+  # SWL22 (DEF-D) -- five AC strips, cursor A on, squeezed: the read-out row
+  # gives way before the tag row, so a Y number on the box's top edge reaches
+  # up into it; a Y number that would is not drawn (the value beats the tick
+  # number) and no read-out box meets a Y-number box at all. Non-vacuity: Y
+  # numbers are still drawn on these strips (a strip short enough loses all
+  # of its own, so the count is over the five).
+  foreach pt {16 17 18} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    set bad {} ; set fx {} ; set ny 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      if {[string is integer -strict [swl_get $d n_ylab]]} { incr ny [swl_get $d n_ylab] }
+      if {[swl_get $m readout_row] ne 1 || ![string is integer -strict [swl_get $d n_readout]] ||
+          [swl_get $d n_readout] < 1} {
+        lappend fx "$gi:ro=[swl_get $m readout_row] n_readout=[swl_get $d n_readout]"
+      }
+      foreach a [swl_get $d readout] {
+        foreach o [swl_get $d ylab] {
+          if {[swl_hit $a $o 0 0]} { lappend bad "$gi:readout {$a} on ylab {$o}" }
+        }
+      }
+    }
+    check "SWL22 AC, five strips, $pt pt, cursors A+B: no read-out box meets a Y-number box (fixture: the read-out row on and a read-out drawn on every strip, Y numbers drawn)" \
+      [list [swl_nstrips] $bad $fx [expr {$ny >= 3}]] {5 {} {} 1}
+  }
+  # SWL21 (DEF-C) -- twelve AC strips in 1070x700, cursors A+B, at sizes where
+  # the tag row cannot be had and the tags go inside: the sweep name still
+  # needs (and gets) the second bottom row, and it is on no X number beyond
+  # one descent (an X number squeezed under it yields to it).
+  foreach k {5 6 7 8 9 10 11} {
+    pcall {wviewer::add_graph $tok}
+    pcall {wviewer::set_target_strip $k $tok}
+    pcall {wviewer::plot_signals $tok VBG}
+  }
+  foreach pt {10 11 12} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    set bad {} ; set sr {} ; set nx {}
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set desc [swl_desc [swl_get $m textpx]]
+      lappend sr [swl_get $m sweep_row]
+      lappend nx [expr {[string is integer -strict [swl_get $d n_xlab]] && [swl_get $d n_xlab] >= 2 &&
+                        [string is integer -strict [swl_get $d n_sweep]] && [swl_get $d n_sweep] >= 1}]
+      foreach a [swl_get $d sweep] {
+        foreach o [swl_get $d xlab] {
+          if {[swl_hit $a $o 0 [expr {-$desc}]]} { lappend bad "$gi:sweep {$a} on xlab {$o} (descent $desc)" }
+        }
+      }
+      # here the read-out row lies inside the plot box: even the bottom Y
+      # number yields to it rather than be overprinted
+      foreach a [swl_get $d readout] {
+        foreach o [swl_get $d ylab] {
+          if {[swl_hit $a $o 0 0]} { lappend bad "$gi:readout {$a} on ylab {$o}" }
+        }
+      }
+    }
+    check "SWL21 AC, twelve strips, $pt pt, cursors A+B, tags inside: every strip keeps the sweep row, draws its sweep name and two or more X numbers, no sweep name is on an X number beyond one descent, and no read-out box meets a Y-number box" \
+      [list [swl_nstrips] [lsort -unique [swl_ti]] [lsort -unique $sr] [lsort -unique $nx] $bad] {12 1 1 1 {}}
+    # SWL21m (R3): the row is really RESERVED, not only flagged. With tags
+    # inside, the sweep row is always squeezed below its floor (the tag floor
+    # is the smaller of the two and already did not fit), so the leg is the
+    # room the margin leaves UNDER the drawn X numbers: rect bottom minus the
+    # lowest X-number box bottom, at least 0.15 em. Without the row
+    # (sweep_row still claimed) the numbers fill the margin to the strip's
+    # edge but for the air, which the squeeze takes first. At 12 pt the
+    # squeezed row is itself about 0.1 em, so the leg runs at 10 and 11 pt.
+    if {$pt in {10 11}} {
+      set mb {}
+      for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+        set d [swl_d $gi] ; set m [swl_m $gi]
+        set desc [swl_desc [swl_get $m textpx]]
+        set xb [swl_ext [swl_get $d xlab] 3 max] ; set rect [swl_get $d rect] ; set box [swl_get $d box]
+        if {$xb eq {} || [llength $rect] != 4 || [llength $box] != 4} { lappend mb "$gi:norecord" ; continue }
+        set room [expr {[lindex $rect 3] - $xb}]
+        # the bottom margin is the X-number row (box bottom to the lowest
+        # number's bottom) plus that room
+        set xrow [expr {$xb - [lindex $box 3]}]
+        set em [swl_get $m em_px]
+        if {![string is double -strict $em] || $room < 0.15 * $em || abs([swl_get $m bottom_px] - ($xrow + $room)) > 0.5} {
+          lappend mb "$gi:room under the X numbers $room < 0.15 em $em (bottom_px [swl_get $m bottom_px], X-number row $xrow)"
+        }
+      }
+      check "SWL21m AC, twelve strips, $pt pt, cursors A+B, tags inside: the sweep row is reserved -- the bottom margin is the drawn X-number row plus at least 0.15 em of room under it" \
+        $mb {}
+    }
+  }
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  # SWL25 (R4): the same twelve AC strips, cursors OFF: 'frequency' squeezed
+  # up beside the box sat on the bottom Y number ('0'); the number yields to
+  # the axis name as the X numbers do. Non-vacuity: a sweep name is drawn on
+  # every strip and Y numbers are still drawn on the strips.
+  foreach pt {10 11 12} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    set bad {} ; set ns {} ; set ny 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set m [swl_m $gi]
+      set desc [swl_desc [swl_get $m textpx]]
+      lappend ns [expr {[string is integer -strict [swl_get $d n_sweep]] && [swl_get $d n_sweep] >= 1}]
+      if {[string is integer -strict [swl_get $d n_ylab]]} { incr ny [swl_get $d n_ylab] }
+      foreach a [swl_get $d sweep] {
+        foreach o [swl_get $d ylab] {
+          if {[swl_hit $a $o 0 [expr {-$desc}]]} { lappend bad "$gi:sweep {$a} on ylab {$o} (descent $desc)" }
+        }
+      }
+    }
+    check "SWL25 AC, twelve strips, $pt pt, cursors off: no sweep name is on a Y number beyond one descent (fixture: a sweep name on every strip, Y numbers drawn)" \
+      [list [swl_nstrips] $bad [lsort -unique $ns] [expr {$ny >= 6}]] {12 {} 1 1}
+  }
+  pcall {wviewer::set_text_size 14 $tok}
+  pcall {wviewer::close_tab {} $tok}
+  # ---- SWL26-SWL28 (round 9): INK, not line boxes, decides whether a Y number
+  # yields to a legend name (F1), and the A-B tag is never dropped (F2). -----
+  # A fresh tab per fixture: `geo` window, strip k plotting names[k mod n].
+  # The caller closes the tab when done with it.
+  proc swl_fix {geo n names} {
+    wm geometry $::vtop $geo
+    update ; after 200 ; update
+    xschem new_schematic switch $::vdrw
+    pcall {wviewer::new_tab $::tok}
+    pcall {wviewer::set_plot_mode single $::tok}
+    pcall {wviewer::set_text_size 14 $::tok}
+    pcall {wviewer::plot_signals $::tok [lindex $names 0]}
+    for {set k 1} {$k < $n} {incr k} {
+      pcall {wviewer::add_graph $::tok}
+      pcall {wviewer::set_target_strip $k $::tok}
+      pcall {wviewer::plot_signals $::tok [lindex $names [expr {$k % [llength $names]}]]}
+    }
+    # a new tab starts with its cursors off
+    xschem new_schematic switch $::vdrw
+    foreach {c x} $::swl_cur {
+      if {$x eq {}} { pcall [list xschem cursor $c 0] } else { pcall [list xschem cursor $c 1] ; pcall [list xschem set cursor${c}_x $x] }
+    }
+  }
+  # F1 -- per strip: no Y number's INK meets a legend name's INK (strict, 0.01
+  # px of rounding). The ink boxes come from the draw record (ylab_ink,
+  # legend_ink); a leg keeps them honest: one per drawn line box, inside it,
+  # and no shorter than 0.4 of it (digits and capitals fill most of the
+  # ascent; an ink box collapsed to a line would let any overprint through).
+  # Also counts the Y numbers the OLD rule -- the line boxes, the number's cut
+  # by 0.2 em top and bottom -- would have withheld for meeting a legend name:
+  # a kept number of that kind is the ink rule at work. Returns
+  # {bad n_ylab-list old-rule-would-drop}.
+  proc swl_ink {} {
+    set bad {} ; set ny {} ; set olddrop 0
+    for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+      set d [swl_d $gi] ; set em [swl_get [swl_m $gi] em_px]
+      lappend ny [swl_get $d n_ylab]
+      foreach {k ki} {ylab ylab_ink legend legend_ink} {
+        set lb [swl_get $d $k] ; set ib [swl_get $d $ki]
+        if {[llength $lb] != [llength $ib]} { lappend bad "$gi:[llength $lb] $k boxes, [llength $ib] $ki" ; continue }
+        foreach l $lb i $ib {
+          lassign $l x1 y1 x2 y2 ; lassign $i a1 b1 a2 b2
+          if {$b1 < $y1 - 0.5 || $b2 > $y2 + 0.5 || $b2 - $b1 < 0.4 * ($y2 - $y1)} {
+            lappend bad "$gi:$ki {$i} not the ink of {$l}"
+          }
+        }
+      }
+      foreach o [swl_get $d ylab_ink] {
+        foreach a [swl_get $d legend_ink] {
+          if {[swl_hit $a $o -0.01 -0.01]} { lappend bad "$gi:ylab ink {$o} on legend ink {$a}" }
+        }
+      }
+      if {![string is double -strict $em]} { continue }
+      foreach o [swl_get $d ylab] {
+        lassign $o x1 y1 x2 y2
+        foreach a [swl_get $d legend] {
+          if {[swl_hit $a [list $x1 [expr {$y1 + 0.2 * $em}] $x2 [expr {$y2 - 0.2 * $em}]] -0.01 -0.01]} { incr olddrop ; break }
+        }
+      }
+    }
+    return [list $bad $ny $olddrop]
+  }
+  xschem new_schematic switch $vdrw
+  pcall {xschem raw new wvsws3.raw tran time 0 200e-6 0.5e-6}
+  foreach {v e} {TEMPERAT "27 time 1e4 * +" Icc "time 2e5 * sin 50e-6 * 60e-6 + -1 *"
+                 START "time 25e-6 < 1.8 *" ENN "time 5e3 *" VBG "time 4e3 * 0.9 min"
+                 LONGV "time -1.37e5 * 12.3456 +"} {
+    pcall [list xschem raw add $v $e]
+  }
+  set swl_cur {1 80e-6 2 {}}
+  # SWL26 (F1, the number stays): ten strips at 1070x700, cursor A on. At
+  # these sizes the TEMPERAT strips' '27' sits under the name with the line
+  # boxes overlapping but the ink clear; the box rule dropped it, leaving
+  # those strips with no Y number at all. Non-vacuity: at least two kept
+  # numbers are ones the box rule withholds.
+  swl_fix 1070x700 10 {TEMPERAT {Icc START} ENN VBG TEMPERAT ENN VBG ENN VBG ENN}
+  foreach pt {9 18 19} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_ink] ib iny iold
+    check "SWL26 1070x700, ten strips, $pt pt, cursor A on: every strip draws a Y number, no Y number's ink on a legend name's ink (fixture: 2+ kept numbers the line-box rule would withhold)" \
+      [list [swl_nstrips] $ib [lsort -unique [lmap n $iny {expr {[string is integer -strict $n] && $n >= 1}}]] [expr {$iold >= 2}]] \
+      {10 {} 1 1}
+  }
+  # SWL27 (F1, the overprint is still prevented): a long negative-range slot-0
+  # trace (LONGV) puts a wide Y number right under its name; at the larger
+  # sizes their ink meets and the number yields (with no legend test it is
+  # drawn over the name), at 16-17 pt it is clear and stays (the box rule
+  # left every strip empty there; non-vacuity: those kept numbers are ones the
+  # box rule withholds). Twelve strips at 1070x400: the TEMPERAT name covers
+  # its number's ink from 9 pt up; at 8 pt it is clear and stays. Non-
+  # vacuity: names with ink drawn on every strip.
+  pcall {wviewer::close_tab {} $tok}
+  swl_fix 1070x700 10 {{LONGV START}}
+  foreach pt {16 17 18 19 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_ink] ib iny iold
+    set nl [lmap gi [lsearch -all [lay] *] {expr {[llength [swl_get [swl_d $gi] legend_ink]] >= 2}}]
+    check "SWL27 1070x700, ten LONGV strips, $pt pt, cursor A on: no Y number's ink on a legend name's ink[expr {$pt < 18 ? {, and every strip keeps its Y number (10 of them ones the box rule withholds)} : {}}] (fixture: two names' ink on every strip)" \
+      [list [swl_nstrips] $ib [lsort -unique $nl] \
+            [expr {$pt < 18 ? [list [lsort -unique [lmap n $iny {expr {[string is integer -strict $n] && $n >= 1}}]] [expr {$iold >= 10}]] : {1 1}}]] \
+      {10 {} 1 {1 1}}
+  }
+  pcall {wviewer::close_tab {} $tok}
+  swl_fix 1070x400 12 {TEMPERAT {Icc START} ENN VBG TEMPERAT ENN VBG ENN VBG ENN}
+  foreach pt {8 9 12 16 20} {
+    pcall {wviewer::set_text_size $pt $tok}
+    swl_redraw
+    lassign [swl_ink] ib iny iold
+    set nl [lmap gi [lsearch -all [lay] *] {expr {[llength [swl_get [swl_d $gi] legend_ink]] >= 1}}]
+    check "SWL27 1070x400, twelve strips, $pt pt, cursor A on: no Y number's ink on a legend name's ink[expr {$pt == 8 ? {, and every strip keeps its Y number (3 of them ones the box rule withholds)} : {}}] (fixture: a name's ink on every strip)" \
+      [list [swl_nstrips] $ib [lsort -unique $nl] \
+            [expr {$pt == 8 ? [list [lsort -unique [lmap n $iny {expr {[string is integer -strict $n] && $n >= 1}}]] [expr {$iold >= 3}]] : {1 1}}]] \
+      {12 {} 1 {1 1}}
+  }
+  # SWL28 (F2): every strip {Icc START}, A at 40u and B at 160u, where the
+  # tags go inside and the A-B tag's centred places both meet the START name
+  # or its read-out: the tag slides along its row to a clear spot instead of
+  # being dropped. On every strip: three tags, the A-B tag (drawn last) inside
+  # the plot box's x range and on no legend name or read-out box. Non-
+  # vacuity: tags inside, and the A-B tag NOT centred between the cursors (it
+  # really slid) on every strip.
+  set swl_cur {1 40e-6 2 160e-6}
+  pcall {wviewer::close_tab {} $tok}
+  foreach {geo n pts} {1070x700 10 {14 17 20} 1070x400 5 {16 18 20}} {
+    swl_fix $geo $n {{Icc START}}
+    foreach pt $pts {
+      pcall {wviewer::set_text_size $pt $tok}
+      swl_redraw
+      set bad {} ; set slid {}
+      for {set gi 0} {$gi < [swl_nstrips]} {incr gi} {
+        set d [swl_d $gi] ; set c [swl_get $d cursor] ; set box [swl_get $d box]
+        if {[llength $c] != 3 || [llength $box] != 4} { lappend bad "$gi:n_cursor=[swl_get $d n_cursor]" ; continue }
+        set t [lindex $c 2]
+        lassign $box x1 y1 x2 y2
+        if {[lindex $t 0] < $x1 - 0.5 || [lindex $t 2] > $x2 + 0.5} { lappend bad "$gi:A-B tag {$t} outside x $x1..$x2" }
+        foreach o [concat [swl_get $d legend] [swl_get $d readout]] {
+          if {[swl_hit $t $o -0.01 -0.01]} { lappend bad "$gi:A-B tag {$t} on {$o}" }
+        }
+        set mid [expr {$x1 + 0.5 * ($x2 - $x1)}]
+        lappend slid [expr {abs(([lindex $t 0] + [lindex $t 2]) / 2.0 - $mid) > 2.0}]
+      }
+      check "SWL28 $geo, $n strips of {Icc START}, $pt pt, cursors A+B: the A-B tag is drawn on every strip, inside the plot's x range, on no legend name or read-out (fixture: tags inside, the tag slid off centre on every strip)" \
+        [list [swl_nstrips] $bad [lsort -unique [swl_ti]] [lsort -unique $slid]] [list $n {} 1 1]
+    }
+    pcall {wviewer::close_tab {} $tok}
+  }
+  pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+  pcall {wviewer::set_text_size 14 $tok}
+  } swserr]} { check "SWL* band ran to its end" "ERR:$swserr" ok }
+  catch {wm geometry $vtop $sws_geo}
+  update
+
   set ::wviewer_aa_reveal_ms $swa_reveal_saved
   catch {unset ::wviewer::textlast($tok)}
 
@@ -3536,7 +4544,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 250 } else { set expect 448 }
+if {$::arm eq {nogui}} { set expect 250 } else { set expect 541 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

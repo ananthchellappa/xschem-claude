@@ -4864,25 +4864,47 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
            * graph <graph_idx>, as a dict:
            *   fixed textpx em_px top_px bottom_px left_px right_px plot_h_px
            *   txtsizelab txtsizex txtsizey txtsizelegend digtxtsizelab
-           *   box_x1 box_y1 box_x2 box_y2
+           *   box_x1 box_y1 box_x2 box_y2 ylab_stride ylab_pitch_px
+           *   readout_row sweep_row tags_inside
            * (fixed = 1 when the viewer's `textpx` branch was taken; the *_px
            * values are screen pixels at the current zoom; the txtsize* values are
            * xscales and box_* the plot box, both in schematic units). "" for a bad index, a non-graph rect or
            * an off-screen graph. Read-only (draw.c graph_text_metrics). */
+          /* item 22 (D7): xschem get graph_drawn <graph_idx>
+           * what the LAST ON-SCREEN draw of fixed-text (`textpx`) graph <idx>
+           * drew, as a dict: rect / box (container and plot box, screen px),
+           * ylab_visible ylab_stride ylab_pitch_px ylab_bottom_y ylab_top_y (the
+           * bottom and top visible Y grid lines, screen y) readout_row sweep_row
+           * tags_inside, and for each kind in ylab xlab sweep legend readout
+           * cursor yline: n_<kind> (count
+           * drawn) and <kind> (a list of {x1 y1 x2 y2} text boxes, screen px,
+           * measured by text_bbox in the face drawn). "" when there is no record
+           * from this window (not fixed-text, not drawn on screen, idx >= 32). */
+          else if(!strcmp(argv[2], "graph_drawn")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(argc > 3) {
+              char *res = NULL;
+              if(graph_drawn_get(atoi(argv[3]), &res) && res) Tcl_SetResult(interp, res, TCL_VOLATILE);
+              my_free(_ALLOC_ID_, &res);
+            }
+          }
           else if(!strcmp(argv[2], "graph_text_metrics")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_ResetResult(interp);
             if(argc > 3) {
-              double v[17];
+              double v[22];
               if(graph_text_metrics(atoi(argv[3]), v)) {
-                char res[900];
+                char res[1200];
                 my_snprintf(res, S(res),
                   "fixed %d textpx %.17g em_px %.17g top_px %.17g bottom_px %.17g "
                   "left_px %.17g right_px %.17g plot_h_px %.17g txtsizelab %.17g "
                   "txtsizex %.17g txtsizey %.17g txtsizelegend %.17g digtxtsizelab %.17g "
-                  "box_x1 %.17g box_y1 %.17g box_x2 %.17g box_y2 %.17g",
+                  "box_x1 %.17g box_y1 %.17g box_x2 %.17g box_y2 %.17g "
+                  "ylab_stride %d ylab_pitch_px %.17g readout_row %d sweep_row %d tags_inside %d",
                   (int)v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9],
-                  v[10], v[11], v[12], v[13], v[14], v[15], v[16]);
+                  v[10], v[11], v[12], v[13], v[14], v[15], v[16], (int)v[17], v[18],
+                  (int)v[19], (int)v[20], (int)v[21]);
                 Tcl_SetResult(interp, res, TCL_VOLATILE);
               }
             }

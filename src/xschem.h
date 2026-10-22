@@ -1612,6 +1612,26 @@ typedef struct {
                    * is neither digital nor vlegend (setup_graph_data). Pixels, not
                    * points: C's cached tk_scaling is 1.0 under --nogui while Tcl
                    * falls back to 96/72, so Tcl converts and C never does. */
+  int fx_readout_row; /* item 22, fixed-text arm only (setup_graph_data): 1 when
+                       * the cursor-A read-out row is reserved above the box
+                       * (cursor A on), else 0. Always 0 off that arm. */
+  int fx_sweep_row;   /* item 22, fixed-text arm only: 1 when the second row below
+                       * the X numbers (sweep names, cursor X tags) is reserved --
+                       * a cursor is on, a sweep name sits in a slot after the
+                       * first, or the slot-0 name does not fit beside the X
+                       * numbers. Always 0 off that arm. */
+  int fx_tags_inside; /* item 22, fixed-text arm only: 1 when a cursor is on but
+                       * the legend row, the X-number row and the tag row at its
+                       * floor do not fit the strip's 80% budget (decided once,
+                       * from those alone, so it is monotonic in the text size):
+                       * draw_cursor / draw_cursor_difference put the X tags
+                       * inside the plot box along its bottom edge, or back at
+                       * the strip's bottom edge when the box cannot hold them
+                       * (graph_cursor_tag_y). The second bottom row is then
+                       * reserved only if the sweep names need it. */
+  double fx_xnum_top; /* item 22: top of the X-number row as draw_graph_grid drew
+                       * it (schematic units; huge until drawn) -- the tags never
+                       * go below it. Only read when fx_tags_inside. */
 } Graph_ctx;
 
 /* ONE CACHED TRACE ENVELOPE (doc/claude/specs/wave_trace_hilight.md §5.2).
@@ -3230,7 +3250,10 @@ extern int  graph_plotbox_at(int i, double px, double py);
  * ARE the left margin). Fails closed on a bad index / non-graph rect /
  * off-screen graph. */
 extern int  graph_axis_at(int i, double px, double py);
-extern int  graph_text_metrics(int i, double *out); /* item 22: 17 doubles */
+extern int  graph_text_metrics(int i, double *out); /* item 22: 22 doubles */
+/* item 22: what the last on-screen draw of fixed-text graph `i` drew (text
+ * boxes by kind), as a Tcl dict string; "" when nothing is recorded. */
+extern int  graph_drawn_get(int i, char **res);
 /* THE MAP, in one place. `p0`/`p1` are canvas pixels along `axis` (px for X, py
  * for Y): the press and the release. Writes the new data window to *lo/*hi and
  * returns 1; returns 0 for a bad index / no transform / travel <= `clicktol`

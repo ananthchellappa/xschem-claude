@@ -2888,10 +2888,15 @@ group WD12 {
     }
     set wdboth {}
     foreach s $wdcarry { if {[lsearch -exact $wdonce $s] >= 0} { lappend wdboth $s } }
+    # graph_sweep0_name / graph_sweep_beyond_slot0 (item 22's on-demand bottom
+    # row, 2026-10-21) are READ-ONCE by design: the first reads token 0, the
+    # second asks whether a slot after the first has its OWN token, which is
+    # draw_graph_variables' own condition for drawing a name there -- a carried
+    # name is never drawn, so carrying it forward would be the wrong answer.
     check "WD12 the `sweep=` reader population is DERIVED over the enclosing C symbol of every line in src/*.c that reads the token, and PARTITIONED by whether the body assigns the token-walk variable out of the walk -- the assignment my_strtok_r never undoes -- so the carry-forward set and the read-it-once set are two measured sets rather than a sentence, the two partitions are disjoint, and a new walker lands in one of them or reddens naming itself.  Four copies of prose in this tree said all seven walkers carry it forward, and the first name on that list does not" \
         [list $wdcarry $wdonce $wdboth] \
         [list {draw_graph find_closest_wave graph_fullyzoom graph_point_at graph_wave_resolve wave_hilight_envelope} \
-              {backannotate_cursor_b_in_db graph_fullxzoom graph_x_extent graph_x_union_add graph_x_union_rect waves_callback} \
+              {backannotate_cursor_b_in_db graph_fullxzoom graph_sweep0_name graph_sweep_beyond_slot0 graph_x_extent graph_x_union_add graph_x_union_rect waves_callback} \
               {}]
     check "WD12 ...and the scanner the row above leans on is not vacuous: it finds hundreds of C symbols across src/*.c, it found the two walkers this band actually drives, and it found the one in a DIFFERENT file from the other eleven -- so an empty or near-empty partition cannot pass as agreement" \
         [list [expr {[string is integer -strict $wdnsym] && $wdnsym > 200 ? {many} : "nsym=$wdnsym"}] \

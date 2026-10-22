@@ -1425,8 +1425,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 # xschem_library schematic must answer what the HEAD binary answered. The gold
 # file names how it was captured; GF_CAPTURE=<file> re-captures it from
 # whatever binary runs this suite.
-# There is no GF7 here: the measures-row / Y-number overlap needs real text extents and no
-# getter exposes them, so it is owed to the eye, not claimed.
+# There is no GF7 here: whether the cursor-A read-out row clears the legend and
+# the Y numbers needs real text extents, which only a display arm draws; rows
+# SWL4/SWL6 of test_wave_subwindows.tcl assert it there, from the boxes the draw
+# recorded (`xschem get graph_drawn`).
 # Verify round (2026-10-16): four C sabotages left every GF row green and now
 # each reddens its own row, measured: dropping the export freeze in
 # save_restore_zoom, or ignoring graph_txt_mooz in setup_graph_data -> GF5c
@@ -1598,16 +1600,22 @@ check "GF2h non-vacuity: the width floor really shrank the left margin" \
   [gf_lt [gf_get $gf2n left_px] [gf_get [dict get $gf2 a] left_px] 1.0] 1
 # GF2i: after the HEIGHT floor the left margin is recomputed from the shrunken
 # bottom (its tick-mark term is bottom/10), so left - bottom/10 is the same on
-# the floored n=12 strip as on the unfloored n=1 one, while left itself moved.
+# the floored strip as on the unfloored n=1 one, while left itself moved.
+# n=20, not n=12: since 2026-10-21 the last resort scales only the legend and
+# X-number rows (the air and overhang are gone first), so the X-number row keeps
+# more of a short strip than it did and n=12's left moved by under the 0.5 px
+# the distinctness leg asks; twenty strips floor it well past that.
+gf_load [gf_sheet [file join $gf_dir gf2_20.sch] 20 [list textpx $gf_tp]]
+set gf2t [gf_m 0]
 proc gf_lmb {m} {
   set l [gf_get $m left_px]; set b [gf_get $m bottom_px]
   if {![string is double -strict $l] || ![string is double -strict $b]} { return "NAN" }
   return [expr {$l - $b / 10.0}]
 }
-check "GF2i n=12: left is recomputed from the floored bottom (left - bottom/10 unchanged)" \
-  [gf_near [gf_lmb $gf2f] [gf_lmb [dict get $gf2 a]]] 1
-check "GF2i distinctness: the n=12 left margin really differs from n=1's (by > 0.5 px)" \
-  [gf_lt [gf_get $gf2f left_px] [gf_get [dict get $gf2 a] left_px] 0.5] 1
+check "GF2i n=20: left is recomputed from the floored bottom (left - bottom/10 unchanged)" \
+  [gf_near [gf_lmb $gf2t] [gf_lmb [dict get $gf2 a]]] 1
+check "GF2i distinctness: the n=20 left margin really differs from n=1's (by > 0.5 px)" \
+  [gf_lt [gf_get $gf2t left_px] [gf_get [dict get $gf2 a] left_px] 0.5] 1
 
 # ---- GF3: every committed schematic graph answers what HEAD answered --------
 # The population is DERIVED each run (every *.sch under xschem_library holding
@@ -1805,14 +1813,32 @@ if {[info commands image] ne {} && [info commands winfo] ne {}} {
 # never changed in any state this tree reaches (measured across bold-legend
 # draws and four cairo_font_name values). A deliberate change to the fixed
 # margins re-measures these four numbers.
+# Re-measured 2026-10-21 on both arms when the cursor read-out row and the
+# second bottom row became ON-DEMAND rows (the user's "a lot of space is being
+# wasted" report): with no cursor and no second sweep name neither is reserved,
+# and the tick basis no longer grows with the bottom row, which moved left_px.
+# GF6b below and rows SWL* of test_wave_subwindows.tcl fence the rows.
 gf_load [gf_sheet [file join $gf_dir gf6.sch] 1 [list textpx $gf_tp]]
 set gf6 [gf_m 0]
 set gf6_bad {}
-foreach {k want} {top_px 53.458556999999992 bottom_px 54.883288888888828
-                  left_px 105.47004588888889 right_px 37.333400000000005} {
+foreach {k want} {top_px 36.400064999999991 bottom_px 29.994355555555579
+                  left_px 102.98115255555554 right_px 37.333400000000005} {
   if {![gf_near [gf_get $gf6 $k] $want]} { lappend gf6_bad "$k=[gf_get $gf6 $k] want $want" }
 }
 check "GF6 the 18.6667 px strip's pixel margins equal the values measured on both arms" $gf6_bad {}
+# GF6b: a cursor brings the second bottom row (cursor X tags), exactly 1.2 em,
+# and leaves top / left alone -- no raw is loaded here, so cursor A's read-out
+# row (which needs waves, as show_node_measures does) is NOT reserved. Same on
+# both arms: no text extent is involved.
+pcall {xschem cursor 1 1} ; pcall {xschem cursor 2 1}
+set gf6c [gf_m 0]
+pcall {xschem cursor 1 0} ; pcall {xschem cursor 2 0}
+set gf6o [gf_m 0]
+check "GF6b cursors on: sweep_row 1, readout_row 0 (no waves), bottom +1.2 em, top and left unchanged; off restores" \
+  [list [gf_get $gf6c sweep_row] [gf_get $gf6c readout_row] \
+        [gf_near [expr {[gf_get $gf6c bottom_px] - [gf_get $gf6 bottom_px]}] [expr {1.2 * [gf_get $gf6 em_px]}] 1e-9] \
+        [gf_near [gf_get $gf6c top_px] [gf_get $gf6 top_px]] [gf_near [gf_get $gf6c left_px] [gf_get $gf6 left_px]] \
+        [expr {$gf6o eq $gf6}]] {1 0 1 1 1 1}
 
 if {$save_gd ne {}} { set ::wviewer_grid_dash_off $save_gd }
 
