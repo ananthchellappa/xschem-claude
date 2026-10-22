@@ -1,0 +1,99 @@
+<h2>Keeping the schematic tool out of the optimizer loop: where do waveform measurements actually happen?</h2>
+
+<p>I'm setting up a circuit optimization in our xschem fork. The topology is fixed; only device sizes and resistor values change from one iteration to the next. So the optimizer can edit the SPICE netlist directly, run ngspice, and never touch the schematic editor. That leaves one question: <em>how does the optimizer get the measurements back?</em> The phase margin, rise time and crossing times we define in ASE-L (our ADE-L-style simulation environment) have to come from somewhere.</p>
+
+<p>My first idea was a menu item, <code>Tools &gt; Write measures.py</code>, that turns the ASE-L setup into a standalone Python script. Before building it, I asked how measurements are computed today. The answer changed the design.</p>
+
+<h3>Two kinds of measurement, computed in two different places</h3>
+
+<p><strong>1. Measurements ngspice understands.</strong> Rows defined under <code>Outputs &gt; Measurements</code> are written into the netlist as ngspice <code>meas</code> lines. ngspice computes them during the run and writes plain <code>name = value</code> lines to a <code>.meas</code> file next to the raw file. The schematic tool only reads that file back. These rows cover:</p>
+<ul>
+  <li>delay between two edges (<code>TRIG … TARG</code>);</li>
+  <li>the value of a signal at a time, or when another signal crosses a level;</li>
+  <li>the time of the <em>n</em>-th rising, falling or either-way crossing of a value;</li>
+  <li>average, RMS, min, max, peak-to-peak and integral over a window;</li>
+  <li>unwrapped phase, Fourier/THD, and expressions over other measurements.</li>
+</ul>
+
+<p><strong>2. Measurements only the Calculator knows.</strong> ngspice has no built-in idea of a Cadence-style <code>riseTime</code>, <code>slewRate</code>, <code>settlingTime</code>, <code>overshoot</code>, <code>dutyCycle</code>, <code>frequency</code>, <code>bandwidth</code>, <code>gainBwProd</code>, <code>gainMargin</code> or <code>phaseMargin</code>. The same goes for <code>cross</code> as the Calculator defines it (every crossing, or a chosen one, with its own edge rules), and for any ASE-L Outputs expression built from these. You could approximate some of them with chains of <code>meas</code> lines, but they would not agree with the Calculator to the last digit. That matters when the optimizer is chasing a spec you also check by eye in ASE-L.</p>
+
+<p>For this second kind, nothing outside the editor is involved. After a run, the xschem process reads the raw file into memory and evaluates every Outputs row itself.</p>
+
+<h3>The architecture, in one picture</h3>
+
+<pre>
+                       ┌──────────────────── xschem process ────────────────────┐
+ ASE-L Outputs pane ──►│ result_probe ──► calc::eval_texts  (plans each row)    │
+ Calculator window  ──►│                     │                                  │
+                       │                     ▼                                  │
+                       │   calc::riseTime / cross / phaseMargin …   (Tcl)       │
+                       │        │ build a column        ▲ samples                │
+                       │        ▼                       │                        │
+                       │   ┌──── `xschem raw …` commands (scheduler.c) ───────┐ │
+                       │   │ raw read    raw add    raw values    raw index   │ │
+                       │   └────┬───────────┬──────────────▲──────────────────┘ │
+                       │        ▼           ▼              │              (C)   │
+                       │   raw_read    expression engine (plot_raw_custom_data) │
+                       │   (save.c) ──► the raw file as arrays of doubles in RAM│
+                       └───────▲────────────────────────────────────────────────┘
+                               │ reads
+   netlist ──► ngspice ──► &lt;cell&gt;_ase.raw
+                    └────► &lt;cell&gt;_ase.meas   (ngspice's own `meas` results)
+</pre>
+
+<p>There are three layers in two languages:</p>
+<ul>
+  <li><strong>A raw-file reader</strong> in C (<code>src/save.c</code>). It loads ngspice's output into memory, splitting AC data into magnitude, phase, real and imaginary columns.</li>
+  <li><strong>An expression engine</strong> in C, also in <code>save.c</code>. It does point-by-point maths that builds new columns, such as <code>v(out)/v(in)</code>, <code>db20()</code> and <code>integ()</code>.</li>
+  <li><strong>The measurement verbs</strong> in Tcl (<code>src/calculator.tcl</code>). They ask the engine for a column, pull its samples into Tcl, and do the crossing, interpolation and margin arithmetic there. The only way they reach the data is through the <code>xschem raw …</code> commands.</li>
+</ul>
+
+<h3>Why not a standalone Python script?</h3>
+
+<p>A Python <code>measures.py</code> that recomputes everything would be a second copy of the raw reader, the expression engine and about 4,600 lines of measurement code. This code has edge cases that already took several careful fixes in our own tree:</p>
+<ul>
+  <li>a threshold that lands exactly on a rail inventing a crossing;</li>
+  <li>a rise-time edge pairing up with the wrong transition;</li>
+  <li>stateful functions such as <code>integ()</code> leaking across sweep boundaries.</li>
+</ul>
+<p>A second copy drifts, and then the optimizer and the GUI disagree about whether a design meets spec.</p>
+
+<h3>Why not call just the measurement part?</h3>
+
+<p>That was my next question, and today the honest answer is that you can't. The Tcl measurement code only reaches the data through C commands compiled into the editor, and those keep their data in the editor's global state. Carving it out is possible:</p>
+<ol>
+  <li>Build the raw reader, the expression engine and the <code>raw</code> command into a small Tcl extension.</li>
+  <li>Move the measurement procs into a file that loads without any GUI.</li>
+  <li>Load both from Python through the window-less Tcl interpreter that ships with Python (<code>tkinter.Tcl()</code>).</li>
+</ol>
+<p>The editor would compile the same files, so the numbers would still match.</p>
+
+<p>But it is a refactor of the file every simulation result passes through, and one measurement makes it unnecessary for now. <strong>Headless xschem starts and exits in about 0.06 seconds, using about 21 MB</strong> (three runs, no display). Any simulation worth optimizing takes far longer. So "launch the editor headless" really is "run the measurement part" plus about 60 ms. It reads the raw file once; it loads no GUI, schematic or display.</p>
+
+<h3>The plan</h3>
+
+<p>A menu item, <code>Tools &gt; Export for optimizer</code>, writes three things:</p>
+<ol>
+  <li><strong>The netlist ASE-L would run</strong>, with the design variables marked for substitution. It keeps the <code>write</code> lines that produce the raw file and the <code>meas</code> block.</li>
+  <li><strong>A manifest</strong> saying where the raw and <code>.meas</code> files land, and where each measurement comes from.</li>
+  <li><strong>A small <code>measures.py</code></strong> that the optimizer calls after each ngspice run. It returns one dictionary of name → value:
+    <ul>
+      <li>ngspice-native rows are parsed from the <code>.meas</code> file, with no xschem involved;</li>
+      <li>Calculator-only rows are evaluated by <code>xschem --nogui --pipe --script measures.tcl &lt;raw&gt;</code>, which runs the same code the Outputs pane uses.</li>
+    </ul>
+  </li>
+</ol>
+<p>The export also lists which rows need the Calculator, so anything ngspice can compute can be moved over.</p>
+
+<p>If 60 ms per iteration ever matters, or the optimizer has to run where xschem isn't installed, the measurement layer can be carved out later behind the same <code>measures.py</code> interface, and the optimizer won't notice.</p>
+
+<h3>If you're doing this with an AI coding assistant</h3>
+
+<p>The useful move was asking where the numbers come from before asking for the script. Prompts that got me there:</p>
+<ul>
+  <li><em>"Before you build it: how are these measurements computed today? Is the waveform loaded into memory by the tool, or does an external script produce the number?"</em></li>
+  <li><em>"Which measurements can the simulator compute itself, and which exist only in our Calculator?"</em></li>
+  <li><em>"Where is that code, which files? And why can't I call just that part?"</em></li>
+  <li><em>"Measure the cost of the simple option before proposing a refactor."</em> The 60 ms figure settled the design in one line.</li>
+  <li><em>"Draw the architecture as an ASCII block diagram."</em></li>
+</ul>

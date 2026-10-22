@@ -14,6 +14,84 @@ Newest entries on top.
 
 ---
 
+## Q92. Where are waveform measurements computed, and how does an optimizer that edits the netlist itself get them?
+
+- **Asked:** 2026-10-22
+- **Project state:** branch `fluid-editing` at `cf166befb`. Nothing below is built
+  yet; this records the design discussion. Blog version:
+  `doc/claude/blog/where-waveform-measurements-happen-xschem-ase-l.html`.
+
+**There are two kinds of measurement, computed in two places.**
+
+1. **Outputs > Measurements rows are ngspice's.** `ase::backend::ngspice::meas_line`
+   / `meas_block` write them as `meas` lines (or `let` for `param` and `cphase`)
+   into the deck's `.control` block. ngspice computes them during the run and
+   appends `name = value` lines to `<rundir>/<cell>_ase.meas`, which opens with an
+   `ASE-MEAS` marker. xschem only reads that file back, through `ase::meas_parse`
+   and `ase::meas_result`. The kinds on offer are in
+   `ase::backend::ngspice::meas_kinds`: delay (`TRIG … TARG`), value at a point,
+   when-crosses with an edge and edge number, the window statistics, `param`,
+   `cphase` and Fourier. Campaigns (issue 1462) fill `index.tsv` from these files.
+2. **Everything else is computed inside xschem.** That means every ASE-L Outputs
+   row and every Calculator verb ngspice has no equivalent for (`cross` as the
+   Calculator defines it, `riseTime`, `slewRate`, `settlingTime`, `overshoot`,
+   `dutyCycle`, `frequency`, `bandwidth`, `gainBwProd`, `gainMargin`,
+   `phaseMargin`).
+   - The path: `ase::backend::ngspice::result_probe` → `result_probe_calc` →
+     `calc::eval_texts`, then `calc::et_run` → `xschem raw read`.
+   - The C reader `raw_read`/`read_dataset` (`src/save.c`) loads the whole
+     analysis into `xctx->raw` as doubles.
+   - Point-wise expressions go through `raw_add_vector` →
+     `plot_raw_custom_data`, also in `save.c`.
+   - The verbs in `src/calculator.tcl` pull the samples back with
+     `xschem raw values` (`%.16g`) and do the crossing, interpolation and margin
+     arithmetic in Tcl.
+   - The Tcl layer's only door to the data is the `raw` arm of the `xschem`
+     dispatcher in `src/scheduler.c`.
+   - Outputs values are never written to disk: not to the state file, not to
+     Saved Results. They are recomputed from the raw file every time.
+
+**Why not a standalone Python `measures.py`?** It would be a second copy of the
+raw reader, the expression engine and the Tcl measurement code. This tree has
+already fixed edge cases in each:
+- issue 1650, stateful opcodes carried across dataset boundaries;
+- `riseTime`'s rail-crossing defect;
+- `riseTime`'s end-pairing defect.
+
+A copy would drift, and the optimizer and ASE-L would then disagree about a spec.
+
+**Why not call just the measurement component?** Today it can't be called on
+its own. The Tcl verbs reach data only through `xschem raw …`, which is C code
+keeping its state in `xctx`. Carving it out would take three steps:
+1. Build the raw reader, the expression engine and the `raw` arm into a Tcl
+   extension, untangled from `xctx`, `annot_data_changed()` and the `my_*`
+   allocators.
+2. Move the measurement procs out of `calculator.tcl` (which also builds the
+   window) into a file that loads without Tk.
+3. Load both from Python's window-less `tkinter.Tcl()`.
+
+It is feasible, but it refactors `save.c` for a small gain. Measured
+2026-10-22: headless `./src/xschem --nogui --pipe -q --script <exit>` starts and
+exits in **0.06 s, about 21 MB** (three runs, `DISPLAY` unset, throwaway HOME).
+
+**The proposed shape** is `Tools > Export for optimizer`, which writes three things:
+- the deck `render_deck` produces, with design variables marked, the `write <raw>`
+  lines and the `meas` block kept;
+- a manifest;
+- a `measures.py`. It parses `.meas` for ngspice-native rows and runs
+  `xschem --nogui --pipe --script measures.tcl <raw>` (`calc::eval_texts`) for
+  Calculator-only rows, so its numbers match the Outputs pane by construction.
+
+The export also lists which rows need the Calculator. Carve out the extension
+later, behind the same `measures.py` interface, only if per-iteration startup or
+running without xschem installed ever matters. Two limits to carry forward:
+- `result_probe_calc` evaluates **dataset 0 only**. `calc::eval_texts` itself
+  takes a `dataset` argument, so corners and Monte Carlo need it passed through.
+- An optimizer that rewrites the deck must keep the `write` lines, or no raw file
+  appears.
+
+---
+
 ## Q91. Why did a tooltip with four green rows never appear on screen?
 
 - **Asked:** 2026-09-08
