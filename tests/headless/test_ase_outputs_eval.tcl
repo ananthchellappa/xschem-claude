@@ -88,6 +88,7 @@ set no_recent_files 1
 set here [file normalize [file dirname [info script]]]
 set scratch [test_scratch ase_outputs_eval]
 set fixture [file join $here data calc_fixture.raw]
+set ::oea_real {}   ;# OE7's real-run {state log}, for band OE-A
 
 # A state whose results file is <scratch>/<cell>_ase.raw.
 proc oe_state {cell outs {analyses {}}} {
@@ -868,6 +869,7 @@ if {$NG eq {}} {
         check "OE7 its operating point holds EVERY node and source current (raw list), the ticked v(out) and i(v1) and the expression's v(mid) among them -- a save adds and never narrows (R-OUT8)" \
             [lsort $have] [lsort {v(in) v(out) i(v1) v(mid)}]
         set res [pcall [ase::backend_hook ngspice result_probe] $st $log]
+        set ::oea_real [list $st $log]
         # THE FORMER PRINT, measured on the same netlist by a deck that still
         # carries one -- the number the Value column used to show.
         set pf [file join $d oe7p.cir]
@@ -1051,6 +1053,91 @@ if {$NG eq {}} {
         check "OE13 DISCRIMINATION, measured per OPERATING-POINT row: the same text read in the bench's other enabled analysis (its last point) differs, so a value read from the wrong analysis could not pass" \
             $far {}
     }
+}
+
+# =============================================================================
+# OE-A -- FAQ Q92: result_probe IS result_answers FORMATTED, key for key
+# =============================================================================
+# The optimizer export (ase::optexport_measure) reads `result_answers`; the
+# Outputs pane reads `result_probe`.  They agree BY CONSTRUCTION only if the
+# second is the first formatted, which this row measures over every state
+# below: the hook's dict equals result_answer_text over the records whose
+# status is not novalue; every Outputs row with an expr has exactly ONE record;
+# the novalue keys are exactly the keys result_probe omits.  Population is
+# printed and must be > 0, with each status the layer can produce present.
+# ::oea_real is set by OE7 (the real run), initialised at the top.
+proc oea_measure {st log} {
+    set h [ase::backend_hook ngspice result_probe]
+    set probe [pcall $h $st $log]
+    set mode [ase::backend::ngspice::result_casemode $st $log]
+    set recs [pcall [ase::backend_hook ngspice result_answers] $st $mode]
+    set bad {}
+    set want [dict create]
+    set nexpr 0
+    foreach o [ase::state_get $st outputs] { if {[dict exists $o expr]} { incr nexpr } }
+    if {[catch {llength $recs} nr] || $nr != $nexpr} { lappend bad "records=$recs vs rows=$nexpr" ; return [list $bad {}] }
+    set statuses {}
+    foreach r $recs {
+        lappend statuses [dict get $r status]
+        if {[dict get $r status] eq {novalue}} continue
+        dict set want [dict get $r key] [ase::backend::ngspice::result_answer_text $r]
+    }
+    if {[catch {dict size $probe}]} { lappend bad "probe=$probe" ; return [list $bad $statuses] }
+    foreach k [lsort [dict keys $probe]] {
+        if {![dict exists $want $k]} { lappend bad "probe-only $k" } \
+        elseif {[dict get $want $k] ne [dict get $probe $k]} { lappend bad "$k: [dict get $probe $k] vs [dict get $want $k]" }
+    }
+    foreach k [lsort [dict keys $want]] { if {![dict exists $probe $k]} { lappend bad "answers-only $k" } }
+    foreach r $recs {
+        if {[dict get $r status] eq {novalue} && [dict exists $probe [dict get $r key]]} {
+            lappend bad "novalue but shown: [dict get $r key]"
+        }
+    }
+    return [list $bad $statuses]
+}
+group OE-A {
+    set pop 0
+    set allst {}
+    set allbad {}
+    file copy -force $::fixture [file join $::scratch oea1_ase.raw]
+    set outs1 {{name lp expr v(lp) save 1}
+               {name dc expr v(dcmid) save 1}
+               {name gm expr @m1[gm] save 1}
+               {name nid expr -i(@m1[id]) save 1}
+               {name w expr vt(lp) save 1}
+               {name x expr {cross(vt(lp), 0.5, 1, rising)} save 1}
+               {name y expr {vdc(dcmid) 2 * 1 +} save 1}
+               {name bad expr {vdc(nosuch) 2 *} save 1}
+               {name infix expr {vdc(dcmid)*2} save 1}
+               {name ghost expr v(nosuchnode) save 1}}
+    oe_tran_only [file join $::scratch oea2_ase.raw]
+    set outs2 {{name lp expr v(lp) save 1}
+               {name ghost expr v(nosuchnode) save 1}
+               {name e expr {vt(lp) 2 *} save 1}}
+    foreach {cell outs} [list oea1 $outs1 oea2 $outs2 oea3 $outs1] {
+        lassign [oea_measure [oe_state $cell $outs] {}] bad st
+        incr pop [llength $st]
+        set allst [concat $allst $st]
+        foreach b $bad { lappend allbad "$cell: $b" }
+    }
+    if {$::oea_real ne {}} {
+        lassign [oea_measure {*}$::oea_real] bad st
+        incr pop [llength $st]
+        set allst [concat $allst $st]
+        foreach b $bad { lappend allbad "oe7(real): $b" }
+    }
+    check "OE-A result_probe equals result_answer_text over result_answers, key for key; one record per Outputs row; novalue keys are exactly the omitted ones (population $pop, real run [expr {$::oea_real ne {} ? {included} : {absent}}])" \
+        [list [expr {$pop > 0}] $allbad] {1 {}}
+    set seen [lsort -unique $allst]
+    check "OE-A the population is not vacuous: number, wave, refused and novalue records all occur (seen: $seen)" \
+        [list [expr {"number" in $seen}] [expr {"wave" in $seen}] [expr {"refused" in $seen}] [expr {"novalue" in $seen}]] {1 1 1 1}
+    set recs [pcall [ase::backend_hook ngspice result_answers] [oe_state oea1 $outs1] fold]
+    set y {} ; set gm {}
+    foreach r $recs { if {[dict get $r key] eq {y}} { set y $r } ; if {[dict get $r key] eq {dc}} { set gm $r } }
+    check "OE-A a calc record carries the text handed to the Calculator, its analysis and the UNFORMATTED value; a raw record the file's number" \
+        [list [dict get $y reader] [dict get $y text] [dict get $y analysis] [dict get $y value] [dict get $gm reader] [expr {double([dict get $gm value])}]] \
+        {calc {vdc(dcmid) 2 * 1 +} op 7 raw 3.0}
+    file delete -force [file join $::scratch oea1_ase.raw] [file join $::scratch oea2_ase.raw]
 }
 
 catch {xschem raw clear}

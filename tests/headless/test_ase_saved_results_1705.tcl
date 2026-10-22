@@ -1135,6 +1135,7 @@ group SVR-D1 {
     log_file neither  meas_block neither  predeck_file neither  predeck_write writer
     raw_file neither  render_deck writer  result_probe neither  result_probe_calc neither
     result_probe_raw neither  s2p_file neither  sp_export_lines writer
+    result_probe_raw_answers neither  result_probe_calc_answers neither  result_answers neither
     ase::ui::annot_ensure_loaded reader  ase::ui::auto_plot reader  ase::ui::conv_logtext reader
     ase::ui::dp_finish reader  ase::ui::matrix_dialog reader  ase::ui::meas_ran reader
     ase::ui::run_finished neither  ase::ui::show_log neither  ase::ui::viewer_restore reader

@@ -26898,10 +26898,17 @@ namespace eval ase::backend::ngspice {
   #
   # ⚠ IT IS NOT A READER. If ⚖ R3 is later ruled A or B, this proc stays and
   # loses one caller.
-  proc result_casemode {state logtext} {
+  # `requested`, when given, replaces the registry lookup (FAQ Q92): the
+  # optimizer export's measures.tcl runs under a throwaway HOME whose registry
+  # is empty, so it hands in the casemode the EXPORTING session requested.
+  proc result_casemode {state logtext {requested {}}} {
     set mode fold
-    catch {set mode [ase::sim_casemode_requested \
-                      [ase::state_get $state simulator ngspice]]}
+    if {$requested ne {}} {
+      set mode $requested
+    } else {
+      catch {set mode [ase::sim_casemode_requested \
+                        [ase::state_get $state simulator ngspice]]}
+    }
     if {$mode eq {}} { set mode fold }
     if {$mode ne {distinguish} && [regexp -nocase \
           {casemode[ =]'?distinguish|differs only in case} $logtext]} {
@@ -26950,7 +26957,11 @@ namespace eval ase::backend::ngspice {
   # that differ are a question this reader cannot answer, and the sidecar that
   # could is Stage 6c's and is not built. It declines and says so, exactly as
   # the log reader declines on a case collision (D2).
-  proc result_probe_raw {state {mode fold} {missvar {}}} {
+  # FAQ Q92: the reader's ANSWER half.  key -> {status number value <the
+  # file's number, unformatted> msg {}}, or {status novalue value {} msg
+  # <sentence>} for a row two different numbers match.  result_probe_raw is
+  # its FORMAT half, unchanged in arguments and return.
+  proc result_probe_raw_answers {state {mode fold} {missvar {}}} {
     if {$missvar ne {}} { upvar 1 $missvar miss ; set miss {} }
     set results [dict create]
     set path {}
@@ -26989,13 +27000,15 @@ namespace eval ase::backend::ngspice {
         if {[lsearch -exact $pls [lindex $h 0]] < 0} { lappend pls [lindex $h 0] }
       }
       if {[llength $vals] > 1} {
-        ::ase::echo "ase: result -- output '$ex' matches [llength $vals]\
+        set clash "ase: result -- output '$ex' matches [llength $vals]\
  different numbers in the results file ([join [lsort $pls] {, }]), so no value\
  is recorded for it: which one it means cannot be known, and a guess would put\
- a wrong number in the Outputs pane." error
+ a wrong number in the Outputs pane."
+        ::ase::echo $clash error
+        dict set results $rkey [dict create status novalue value {} msg $clash]
         continue
       }
-      dict set results $rkey [raw_scalar_format [lindex $vals 0]]
+      dict set results $rkey [dict create status number value [lindex $vals 0] msg {}]
     }
     # ⚠ ONLY WHEN THERE IS A FILE. A results file that is not there at all is
     # already reported, loudly, by ase::attach_dbs and ase::raw_content_verdict;
@@ -27010,6 +27023,24 @@ namespace eval ase::backend::ngspice {
       ::ase::echo [missing_note $missing] note
     }
     return $results
+  }
+
+  # The FORMAT half of the rawfile reader (FAQ Q92): the Value-cell text of
+  # every row result_probe_raw_answers answered with a number.
+  proc result_probe_raw {state {mode fold} {missvar {}}} {
+    if {$missvar ne {}} {
+      upvar 1 $missvar miss
+      set ans [result_probe_raw_answers $state $mode miss]
+    } else {
+      set ans [result_probe_raw_answers $state $mode]
+    }
+    set out [dict create]
+    dict for {k rec} $ans {
+      if {[dict get $rec status] eq {number}} {
+        dict set out $k [raw_scalar_format [dict get $rec value]]
+      }
+    }
+    return $out
   }
 
   # The note for single-vector rows the results file holds no value for.
@@ -27077,7 +27108,10 @@ namespace eval ase::backend::ngspice {
   # ⚠ NOTHING IS RECORDED WHEN THERE IS NO RESULTS FILE, as the raw reader
   # records nothing: ase::attach_dbs and ase::raw_content_verdict already say
   # so, and a sentence per row would be noise.
-  proc result_probe_calc {state} {
+  # FAQ Q92: the Calculator reader's ANSWER half.  key -> {text <what was
+  # handed to calc::eval_texts> analysis <calc::et_plan's an, or {}> answer
+  # <the calc::eval_text dict>}.  result_probe_calc is its FORMAT half.
+  proc result_probe_calc_answers {state} {
     set results [dict create]
     set rows [ase::state_get $state outputs]
     if {![llength $rows]} { return $results }
@@ -27087,8 +27121,10 @@ namespace eval ase::backend::ngspice {
     if {$path eq {} || ![file isfile $path]} { return $results }
     set texts {}
     set dflt {}
+    set have {}
     if {[info commands ::calc::uq_qualify] ne {}} {
-      set dflt [calc::et_default [calc::raw_analyses $path] 0]
+      set have [calc::raw_analyses $path]
+      set dflt [calc::et_default $have 0]
     }
     foreach o $rows {
       set ex [dict get $o expr]
@@ -27102,14 +27138,48 @@ namespace eval ase::backend::ngspice {
       if {$dflt ne {} && [ase::output_is_plain $ex]} { set t [calc::uq_qualify $t $dflt] }
       lappend texts $t
     }
-    foreach o $rows d [calc::eval_texts $texts $path {}] {
+    foreach o $rows t $texts d [calc::eval_texts $texts $path {}] {
       set rkey [dict get $o expr]
       if {[dict exists $o name] && [dict get $o name] ne {}} {
         set rkey [dict get $o name]
       }
-      dict set results $rkey [output_value_text $d]
+      set an {}
+      catch {
+        set pl [calc::et_plan $t $have {}]
+        if {[dict get $pl ok]} { set an [dict get $pl an] }
+      }
+      dict set results $rkey [dict create text $t analysis $an answer $d]
     }
     return $results
+  }
+
+  proc result_probe_calc {state} {
+    set results [dict create]
+    dict for {k rec} [result_probe_calc_answers $state] {
+      dict set results $k [output_value_text [dict get $rec answer]]
+    }
+    return $results
+  }
+
+  # FAQ Q92: one calc::eval_text answer as a typed record half: {status value
+  # msg}.  status is number | wave | refused | nonnumeric -- an `ok` scalar
+  # whose value is not ONE number (a future list) is never read as a number.
+  proc calc_answer_status {d} {
+    set ok 0
+    catch {set ok [dict get $d ok]}
+    if {$ok ne {1}} {
+      set m {}
+      catch {set m [dict get $d msg]}
+      return [dict create status refused value {} msg $m]
+    }
+    if {[dict get $d kind] eq {wave}} {
+      return [dict create status wave value {} msg {}]
+    }
+    set v [dict get $d value]
+    if {[string is double -strict $v]} {
+      return [dict create status number value $v msg {}]
+    }
+    return [dict create status nonnumeric value $v msg {}]
   }
 
   # One `calc::eval_text` answer as the Value cell's text.
@@ -27141,46 +27211,55 @@ namespace eval ase::backend::ngspice {
   proc result_probe {state logtext} {
     set mode [result_casemode $state $logtext]
     set sim [ase::state_get $state simulator ngspice]
-    set rawrows {}
-    set calcrows {}
+    set nraw 0
+    set ncalc 0
     foreach o [ase::state_get $state outputs] {
       if {![dict exists $o expr]} { continue }
       if {[ase::result_source $sim [dict get $o expr]] eq {raw}} {
-        lappend rawrows $o
+        incr nraw
       } else {
-        lappend calcrows $o
+        incr ncalc
       }
     }
-    if {[llength $rawrows] || [llength $calcrows]} {
+    if {$nraw || $ncalc} {
       ::ase::echo "ase: results -- a row naming one signal reads its\
  single-point value from the results file; every other row is evaluated by\
- the Calculator on the results file. This run: [llength $rawrows] signal,\
- [llength $calcrows] expression." note
+ the Calculator on the results file. This run: $nraw signal,\
+ $ncalc expression." note
     }
-    set missing {}
-    set results [result_probe_raw [dict set state outputs $rawrows] $mode missing]
-    foreach {k v} [result_probe_calc [dict set state outputs $calcrows]] {
+    set recs [result_answers $state $mode]
+    # The FORMAT half.  The file reader wins a key clash, as before: raw-group
+    # numbers first, then the Calculator group's answers where the key is
+    # still free, then a raw-group row's `wave` where it is still free.
+    set results [dict create]
+    foreach r $recs {
+      if {[dict get $r group] eq {raw} && [dict get $r reader] eq {raw}
+          && [dict get $r status] ne {novalue}} {
+        dict set results [dict get $r key] [result_answer_text $r]
+      }
+    }
+    set cres [dict create]
+    foreach r $recs {
+      if {[dict get $r group] eq {calc} && [dict get $r status] ne {novalue}} {
+        dict set cres [dict get $r key] [result_answer_text $r]
+      }
+    }
+    dict for {k v} $cres {
       if {![dict exists $results $k]} { dict set results $k $v }
     }
-    # A single vector the file holds no single-point value for is asked of the
-    # Calculator too, and only its `wave` is taken: a transient-only run's
-    # `v(out)` is a waveform, and the cell says so.  Anything else stays as the
-    # raw reader left it -- NO value, with its note on screen -- so a run that
-    # computed nothing still shows nothing (rows RD4, RD5).
-    set again {}
-    foreach o $rawrows {
-      if {[lsearch -exact $missing [dict get $o expr]] >= 0} { lappend again $o }
-    }
-    foreach {k v} [result_probe_calc [dict set state outputs $again]] {
-      if {$v eq {wave} && ![dict exists $results $k]} { dict set results $k $v }
+    set still {}
+    foreach r $recs {
+      if {[dict get $r group] ne {raw} || [dict get $r reader] ne {calc}} { continue }
+      set k [dict get $r key]
+      if {[dict get $r status] eq {wave} && ![dict exists $results $k]} {
+        dict set results $k wave
+      }
     }
     # ...and only the rows that are STILL without a value are named on screen
     # (ase_l.md R-OUT5): a row whose cell now reads `wave` has one.
-    set still {}
-    foreach o $again {
-      set rkey [dict get $o expr]
-      if {[dict exists $o name] && [dict get $o name] ne {}} { set rkey [dict get $o name] }
-      if {![dict exists $results $rkey]} { lappend still [dict get $o expr] }
+    foreach r $recs {
+      if {[dict get $r group] ne {raw} || ![dict get $r fellback]} { continue }
+      if {![dict exists $results [dict get $r key]]} { lappend still [dict get $r expr] }
     }
     set path {}
     catch {set path [raw_file $state]}
@@ -27188,6 +27267,102 @@ namespace eval ase::backend::ngspice {
       ::ase::echo [missing_note $still] note
     }
     return $results
+  }
+
+  # ─── FAQ Q92: THE TYPED ANSWER LAYER UNDER result_probe ───────────────────
+  # ONE record per Outputs row that has an `expr`, in pane order:
+  #   key expr group reader text analysis status value msg fellback
+  # group    raw|calc -- ase::result_source's routing of the row
+  # reader   raw|calc -- who actually answered (a raw-group row the file holds
+  #          no single-point value for is asked of the Calculator, for its
+  #          `wave` only, exactly as result_probe always did)
+  # status   number | wave | refused | novalue | nonnumeric
+  # value    the UNFORMATTED value text (a number at full precision)
+  # result_probe is this list formatted (result_answer_text), so the Outputs
+  # pane and the optimizer export (ase::optexport_measure) read one answer.
+  # Echoes: only the rawfile reader's own clash sentence; the rule note and
+  # the missing note are result_probe's.
+  proc result_answers {state mode} {
+    set sim [ase::state_get $state simulator ngspice]
+    set rawrows {}
+    set calcrows {}
+    set order {}
+    foreach o [ase::state_get $state outputs] {
+      if {![dict exists $o expr]} { continue }
+      if {[ase::result_source $sim [dict get $o expr]] eq {raw}} {
+        lappend rawrows $o
+        lappend order raw
+      } else {
+        lappend calcrows $o
+        lappend order calc
+      }
+    }
+    set missing {}
+    set rawans [result_probe_raw_answers [dict set state outputs $rawrows] $mode missing]
+    set calcans [result_probe_calc_answers [dict set state outputs $calcrows]]
+    set again {}
+    foreach o $rawrows {
+      if {[lsearch -exact $missing [dict get $o expr]] >= 0} { lappend again $o }
+    }
+    set againans [result_probe_calc_answers [dict set state outputs $again]]
+    set path {}
+    catch {set path [raw_file $state]}
+    set out {}
+    set ir 0
+    set ic 0
+    foreach g $order {
+      if {$g eq {raw}} {
+        set o [lindex $rawrows $ir] ; incr ir
+      } else {
+        set o [lindex $calcrows $ic] ; incr ic
+      }
+      set ex [dict get $o expr]
+      set key $ex
+      if {[dict exists $o name] && [dict get $o name] ne {}} { set key [dict get $o name] }
+      set rec [dict create key $key expr $ex group $g reader $g text {} \
+                 analysis {} status novalue value {} msg {} fellback 0]
+      if {$g eq {raw}} {
+        if {[lsearch -exact $missing $ex] >= 0} {
+          dict set rec fellback 1
+          dict set rec msg [missing_note [list $ex]]
+          if {[dict exists $againans $key]} {
+            set ca [dict get $againans $key]
+            set st [calc_answer_status [dict get $ca answer]]
+            if {[dict get $st status] eq {wave}} {
+              dict set rec reader calc
+              dict set rec text [dict get $ca text]
+              dict set rec analysis [dict get $ca analysis]
+              dict set rec status wave
+              dict set rec msg {}
+            }
+          }
+        } elseif {[dict exists $rawans $key]} {
+          set ra [dict get $rawans $key]
+          dict set rec status [dict get $ra status]
+          dict set rec value [dict get $ra value]
+          dict set rec msg [dict get $ra msg]
+        }
+      } elseif {[dict exists $calcans $key]} {
+        set ca [dict get $calcans $key]
+        dict set rec text [dict get $ca text]
+        dict set rec analysis [dict get $ca analysis]
+        set rec [dict merge $rec [calc_answer_status [dict get $ca answer]]]
+      }
+      lappend out $rec
+    }
+    return $out
+  }
+
+  # The Value-cell text of one result_answers record.  novalue -> {} (and
+  # result_probe sets no key for it).
+  proc result_answer_text {rec} {
+    switch -exact -- [dict get $rec status] {
+      number     { return [raw_scalar_format [dict get $rec value]] }
+      wave       { return wave }
+      refused    { return [dict get $rec msg] }
+      nonnumeric { return [dict get $rec value] }
+    }
+    return {}
   }
 
   # WHAT THIS BUILD OF NGSPICE CAN ACTUALLY DO (issue 0948). Two probe runs of
@@ -33526,6 +33701,7 @@ $_leg
     run_cmd      ::ase::backend::ngspice::run_cmd \
     log_file     ::ase::backend::ngspice::log_file \
     result_probe ::ase::backend::ngspice::result_probe \
+    result_answers ::ase::backend::ngspice::result_answers \
     raw_file     ::ase::backend::ngspice::raw_file \
     capabilities ::ase::backend::ngspice::capabilities \
     op_param_set        ::ase::backend::ngspice::op_param_set \
