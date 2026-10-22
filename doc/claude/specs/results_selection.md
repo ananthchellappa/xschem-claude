@@ -3465,7 +3465,8 @@ before the producer, and must show the named reds with `missing=0`.
 11. Save… and Delete… forms, `results_menu_labels`, menu, `GM2`, `SEL389`
     (SVR40–44, 47, 50).
 12. Plot Outputs / Direct Plot / `viewer_restore` under a saved view (SVR48, 49).
-13. `Load Setup` (separable; drop if it slips).
+13. `Load Setup` (separable; drop if it slips). Not ADE-L behaviour (§20.12 (1),
+    answered 2026-10-21), so not owed for parity.
 14. Derive the trailer; gate T1 in `~/gc26` under `setsid`, poll for
     `T1-RUN-END`, read `results.<pid>.log`. `owed.sh add look` for the three
     forms and `owed.sh add suite` for a `:0` run.
@@ -3478,8 +3479,11 @@ before the producer, and must show the named reds with `missing=0`.
 - **Short of:** campaigns are not saved in v1 (ADE-L has none; ADE-XL
   histories are a different feature).
 - **Asked of the user, one at a time, not blocking** (none written here as a
-  Cadence fact): (1) does ADE-L's Select also restore the setup — decides
-  whether `Load Setup` is a convenience or the expected behaviour; (2) ADE-L's
+  Cadence fact): (1) does ADE-L's Select also restore the setup? **ANSWERED by
+  the user 2026-10-21: no — selecting a saved result in ADE-L does not load
+  that run's settings.** So the shipped behaviour (Select binds results only,
+  the session setup is untouched) IS ADE-L parity, and `Load Setup` is a
+  beyond-ADE-L convenience, not a gap; step 13 stays optional; (2) ADE-L's
   default Save As text; (3) the order of Save / Select / Delete in ADE-L's
   Results menu. A different answer to (2) or (3) changes one proc each
   (`saved_default_name`, `results_menu_labels`).
