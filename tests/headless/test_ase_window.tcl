@@ -1176,7 +1176,40 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   for {set i 0} {$i <= [$top.mb.tools index end]} {incr i} {
     lappend tlabels [$top.mb.tools entrycget $i -label]
   }
-  check "W1m Tools menu entries" $tlabels {{Waveform Viewer} Calculator}
+  # Export for Optimizer… (FAQ Q92) widened this list in the same commit that
+  # added the entry; the label is compared to its lbl_ proc, never a literal.
+  check "W1m Tools menu entries" $tlabels \
+    [list {Waveform Viewer} Calculator [ase::ui::lbl_export_optimizer]]
+  check "W1m Tools Export for Optimizer command acts on THIS session" \
+    [$top.mb.tools entrycget 2 -command] [list ase::ui::optexport $key]
+  check "W1m Tools Export for Optimizer label is terse, ends in an ellipsis, and its menu path names it" \
+    [list [ase::ui::lbl_export_optimizer] [ase::ui::menu_path_export_optimizer]] \
+    [list "Export for Optimizer\u2026" "Tools > Export for Optimizer\u2026"]
+  # W1mx: the entry PRESSED. The modal chooser is replaced by a recorder that
+  # answers a scratch directory and ::ase::echo by a recorder (the notice
+  # channel); the export then really runs on this session's design.
+  set ::w_oxdir [file join $scratch oxexport]
+  set ::w_oxargs {} ; set ::w_oxsaid {}
+  rename ::tk_chooseDirectory ::w_saved_tkcd
+  proc ::tk_chooseDirectory {args} { lappend ::w_oxargs $args ; return $::w_oxdir }
+  if {[info commands ::ase::echo] ne {}} { rename ::ase::echo ::w_saved_ox_echo }
+  proc ::ase::echo {msg {tag {}}} { lappend ::w_oxsaid [list $tag $msg] ; return 1 }
+  set w_oxdirty0 [ase::session_dirty $key]
+  set w_oxrc [catch {$top.mb.tools invoke 2} w_oxerr]
+  rename ::ase::echo {}
+  if {[info commands ::w_saved_ox_echo] ne {}} { rename ::w_saved_ox_echo ::ase::echo }
+  rename ::tk_chooseDirectory {}
+  rename ::w_saved_tkcd ::tk_chooseDirectory
+  set w_oxnote {}
+  foreach e $::w_oxsaid {
+    if {[lindex $e 0] eq {note} && [string match "ase: exported for optimizer to *" [lindex $e 1]]} { set w_oxnote [lindex $e 1] }
+  }
+  check "W1mx pressing Tools > Export for Optimizer asks for a directory titled by its label, exports into it, says so on the notice channel, leaves the session's dirty state alone and remembers the directory (said: $::w_oxsaid)" \
+    [list $w_oxrc [llength $::w_oxargs] [expr {[lsearch -exact [lindex $::w_oxargs 0] [ase::ui::lbl_export_optimizer]] >= 0}] \
+          [file isfile [file join $::w_oxdir manifest.json]] [file isfile [file join $::w_oxdir measures.py]] \
+          [expr {$w_oxnote ne {}}] [expr {[ase::session_dirty $key] == $w_oxdirty0}] \
+          [ase::session_getattr $key optexport_dir {}]] \
+    [list 0 1 1 1 1 1 1 [file normalize $::w_oxdir]]
   check_true "W1m Tools Waveform Viewer NOT disabled" \
     [expr {[$top.mb.tools entrycget {Waveform Viewer} -state] ne {disabled}}]
   check "W1m Tools Waveform Viewer command" \

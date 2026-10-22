@@ -1144,6 +1144,10 @@ proc ase::ui::build {key top} {
   $top.mb.tools add command -label [ase::ui::lbl_waveform_viewer] \
     -command [list ase::ui::open_viewer $key]
   $top.mb.tools add command -label Calculator -command calc::open
+  # Export for Optimizer… (FAQ Q92): the deck, a manifest and measures.py for an
+  # external optimizer that runs ngspice itself. Acts on THIS session.
+  $top.mb.tools add command -label [ase::ui::lbl_export_optimizer] \
+    -command [list ase::ui::optexport $key]
 
   # toolbar row under the menubar: the simulation-temperature entry (state
   # key `temperature`, commit-validated numeric -> `.temp <T>` in the deck)
@@ -11755,6 +11759,10 @@ proc ase::ui::lbl_run              {} { return {Run} }
 proc ase::ui::lbl_stop             {} { return {Stop} }
 proc ase::ui::lbl_tools            {} { return {Tools} }
 proc ase::ui::lbl_waveform_viewer  {} { return {Waveform Viewer} }
+proc ase::ui::lbl_export_optimizer {} { return "Export for Optimizer\u2026" }
+proc ase::ui::menu_path_export_optimizer {} {
+  return "[ase::ui::lbl_tools] > [ase::ui::lbl_export_optimizer]"
+}
 # The `~` strip button (ase_l.md R-OUT12, R-OUT16): its tip, and what it says
 # when there is nothing to measure or plot.
 proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values (Ctrl-click: values only)} }
@@ -14290,6 +14298,52 @@ proc ase::ui::do_run {key} {
 # Simulation > Run: run on the EXISTING netlist artifact — never re-netlists
 # (hand-edited decks survive), so it needs no current-schematic routing and
 # works with the design window closed.
+# Tools > Export for Optimizer… (FAQ Q92). Refuses while a run is in flight
+# (the precheck can start the simulator, as do_run's can), reaches the design
+# as do_run does, asks for a directory, and exports the session's state AS
+# SHOWN. Choosing where to export is not part of the bench, so it does not
+# dirty the session; the last directory is a per-session attribute.
+# Notices go through ::ase::echo, the tree's notice channel -- never alert_.
+proc ase::ui::optexport {key} {
+  set busy [ase::ui::run_busy $key]
+  if {$busy ne {}} { ase::run_refuse $busy ; return }
+  if {![ase::ui::route_design $key]} { return }
+  set st [ase::session_state $key]
+  set w [ase::ui::window_for $key]
+  if {$w eq {} || ![winfo exists $w]} { set w . }
+  set init [ase::session_getattr $key optexport_dir {}]
+  if {$init eq {} || ![file isdirectory $init]} {
+    set init {}
+    set rd [ase::state_get $st rundir]
+    if {$rd ne {} && [file isdirectory [file dirname $rd]]} { set init [file dirname $rd] }
+  }
+  if {$init eq {}} { catch {set init [file normalize ~]} }
+  set d [tk_chooseDirectory -parent $w -mustexist 0 -initialdir $init \
+           -title [ase::ui::lbl_export_optimizer]]
+  if {$d eq {}} { return }
+  set v [ase::optexport_dir_verdict $st $d]
+  if {[lindex $v 0] ne {ok}} {
+    catch {::ase::echo "ase: Export for Optimizer: [lindex $v 1]" error}
+    return
+  }
+  ase::session_setattr $key optexport_dir [file normalize $d]
+  set meta [dict create session $key state_file [ase::session_path $key] \
+              dirty [ase::session_dirty $key]]
+  if {[catch {ase::optexport $st $d [dict create meta $meta]} r]} {
+    catch {::ase::echo "ase: Export for Optimizer failed: $r" error}
+    return
+  }
+  set c [dict get $r counts]
+  set nv [dict get $c variables]
+  catch {::ase::echo "ase: exported for optimizer to [dict get $r dir]:\
+ [dict get $c measures] measures ([dict get $c meas] ngspice,\
+ [dict get $c calc] Calculator), $nv design\
+ variable[expr {$nv == 1 ? {} : {s}}]. See README.txt." note}
+  foreach wn [dict get $r warnings] {
+    catch {::ase::echo "ase: Export for Optimizer: $wn" note}
+  }
+}
+
 proc ase::ui::do_run_existing {key} {
   ## 1389: the same refusal, and the same reason it is not left to the catch
   ## below -- that arm calls `set_status $key fail`, which would recolour a
