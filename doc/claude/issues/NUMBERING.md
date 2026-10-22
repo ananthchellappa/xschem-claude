@@ -4768,17 +4768,29 @@ to a checkout this branch cannot see. Do not "reclaim" them.
 
 ~~**The next free number is 1665.**~~
 
-- **1665** — ASE-L had no door for the run directory: the `rundir` key was read
+- **1665**, **1666** — **NOT this clone's.** Both were minted here (2026-10-19 and
+  2026-10-21) for the two ASE-L issues below, but `~/private/xschem-private` had already
+  minted them on 2026-10-17 (its 1665 = the ASE-Integrator GUI shell batch, its 1666 = the
+  integ UI core errorcode issue). The minting check globbed only `~/dev/*` and could not see
+  that clone. **Renumbered here on 2026-10-21: 1665 → 1704, 1666 → 1705.** Commits
+  `6500f6d0c`, `0f4053072` and `3da226f25` predate the rename and still cite 1665/1666 in
+  their messages; read those as 1704/1705. **1667–1703 are taken in
+  `~/private/xschem-private` too**; this clone skips them.
+
+~~**The next free number is 1667.**~~
+
+- **1704** (was 1665) — ASE-L had no door for the run directory: the `rundir` key was read
   everywhere and written by nothing but a hand-edited `.state` file. Setup > Run
   Directory… added.
 
-~~**The next free number is 1666.**~~
-
-- **1666** — ASE-L could not save a result under a name: every run overwrote
+- **1705** (was 1666) — ASE-L could not save a result under a name: every run overwrote
   `<rundir>/<cell>_ase.*` in place. Results > Save…, Select… (saved list) and
   Delete… added.
+  ⚠ `~/private/xschem-private`'s own pointer read **1704** on 2026-10-21 (20:26), so it
+  advertises 1704 and 1705 as free there; run both checks before minting, and treat a
+  1704/1705 arriving from that clone as a collision, not as these issues.
 
-**The next free number is 1667.**
+**The next free number is 1706.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

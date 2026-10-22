@@ -547,7 +547,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {set l [$top.mb.results entrycget $i -label]}
     lappend rf_labels [expr {$l eq {} ? [$top.mb.results type $i] : $l}]
   }
-  # issue 1666: the expected list is the menu owner's own, `--` spelled as the
+  # issue 1705: the expected list is the menu owner's own, `--` spelled as the
   # entry type this loop reads back.
   set rf_want {}
   foreach l [ase::ui::results_menu_labels] {
@@ -575,7 +575,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   #     of them really managed and really mapped (the anti-vacuity rule:
   #     existence + class + cget is not proof a control is on screen).
   set rf_order {}
-  # issue 1666 (R919): the Saved region now sits ABOVE Loaded.
+  # issue 1705 (R919): the Saved region now sits ABOVE Loaded.
   foreach child [list $w.saved $w.loaded $w.recent $w.path $w.status $w.btns] {
     lappend rf_order [list [winfo exists $child] [winfo manager $child] \
                         [winfo ismapped $child] [dict get [grid info $child] -row]]

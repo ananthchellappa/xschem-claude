@@ -1708,17 +1708,20 @@ n=$(/usr/bin/grep 'next free number' "$N" | /usr/bin/grep -v '~~' | tail -n1 |
 awk -v n="$n" -F'|' '/^\| \*\*[0-9]/{gsub(/[^0-9]/," ",$2); split($2,b," ")
   if (n>=b[1] && n<=b[2]) print "!! "n" is in RESERVED band "b[1]"-"b[2]}' "$N"
 
-set -- ~/dev/*/doc/claude/issues/NUMBERING.md      # EVERY clone on this machine
-[ -e "$1" ] || echo "!! glob matched nothing -- fix the path, not the number"
-ls ~/dev/*/doc/claude/issues/"$n"-* 2>/dev/null    # a file in ANY checkout here
+set -- ~/dev/*/doc/claude/issues/NUMBERING.md \
+       ~/private/*/doc/claude/issues/NUMBERING.md  # EVERY clone on this machine
+for f; do [ -e "$f" ] || echo "!! $f matched nothing -- fix the path, not the number"; done
+ls ~/dev/*/doc/claude/issues/"$n"-* ~/private/*/doc/claude/issues/"$n"-* 2>/dev/null
 /usr/bin/grep -lw "$n" "$@"                        # or a reservation with no file
 ```
 
 - A free candidate prints only this clone's `NUMBERING.md` (its pointer line names it);
   an issue file or any other `NUMBERING.md` means taken (a reserved number often has no
   file yet). `n=1550` shows the band check catching what every grep misses.
-- `~/dev/*` is every checkout today; add any clone living elsewhere. `[ -e "$1" ]`
-  catches a glob matching nothing (grep would exit 2 with silent stdout, reading "free").
+- `~/dev/*` plus `~/private/*` is every checkout today; add any clone living elsewhere
+  (globbing `~/dev/*` alone missed `~/private/xschem-private` and cost the 2026-10-21
+  renumbering of 1665/1666 to 1704/1705). The `[ -e "$f" ]` loop catches a glob matching
+  nothing (grep would exit 2 with silent stdout, reading "free").
 - **Use `/usr/bin/grep`, never the bare `grep`**: here `grep` is a function routing to
   ugrep, which misses forms like `-lE "(^|[^0-9])$n([^0-9]|$)"`.
 - **`1500–1599` is reserved for the op-wcard branch: after 1499 the next number here

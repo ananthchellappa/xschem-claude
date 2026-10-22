@@ -1,4 +1,4 @@
-# tests/headless/test_ase_saved_results_1666.tcl -- ISSUE 1666: SAVE A RESULT
+# tests/headless/test_ase_saved_results_1705.tcl -- ISSUE 1705: SAVE A RESULT
 # UNDER A NAME, SELECT IT LATER, DELETE IT (ADE-L's Results > Save / Select /
 # Delete). Spec: doc/claude/specs/results_selection.md §20.
 #
@@ -47,8 +47,8 @@
 #   context only.
 #
 # Arms (the armed spelling keeps your HOME and screen untouched):
-#   tests/headless/run_suites.sh --nogui test_ase_saved_results_1666
-#   tests/headless/run_suites.sh test_ase_saved_results_1666
+#   tests/headless/run_suites.sh --nogui test_ase_saved_results_1705
+#   tests/headless/run_suites.sh test_ase_saved_results_1705
 
 set fail 0; set npass 0
 set ::seen {}
@@ -120,7 +120,7 @@ proc tree {dir} {
 set here [file normalize [file dirname [info script]]]
 set repo [file normalize [file join $here .. ..]]
 source [file join $here scratch.tcl]
-set scratch [test_scratch saved_1666]
+set scratch [test_scratch saved_1705]
 test_sim_registry_isolate
 
 set NDSAVE [expr {[info exists ::netlist_dir] ? $::netlist_dir : {ZZUNSET}}]
@@ -1214,7 +1214,7 @@ group SVR-D2 {
 }
 
 # =============================================================================
-# SVR2b-SVR51: the hardening rows (issue 1666's verify round). Each names the
+# SVR2b-SVR51: the hardening rows (issue 1705's verify round). Each names the
 # defect or the sabotage it was built against; every one was re-run with that
 # sabotage in place and reddened.
 # =============================================================================

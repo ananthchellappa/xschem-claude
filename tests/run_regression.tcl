@@ -24,10 +24,10 @@ set tcases [list "create_save" "open_close" "netlisting"]
 # Headless (--nogui) xschem-script self-checks: no gold folder needed; each prints
 # "ok - ..." per pass and "... : FAIL" per failure and exits nonzero on any failure.
 # summarize_all greps FAIL$, so failures are counted like the golden cases.
-# test_ase_rundir_1665 is in BOTH lists (issue 1665): its validator, setter,
+# test_ase_rundir_1704 is in BOTH lists (issue 1704): its validator, setter,
 # dirty, quit-prompt and busy rows are counted here, and its dialog rows run only
 # on the display arm, self-skipping here behind an uppercase `SKIP:` line.
-# test_ase_saved_results_1666 is in BOTH lists for the same reason (issue 1666):
+# test_ase_saved_results_1705 is in BOTH lists for the same reason (issue 1705):
 # its pure-layer rows count here, its form rows run only on the display arm.
 set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "hilight_xwin_sync_headless" "buried_hilight" \
@@ -77,8 +77,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_descend_doors_1228" \
                  "headless/test_ase_simdlg_0937" \
-                 "headless/test_ase_rundir_1665" \
-                 "headless/test_ase_saved_results_1666" \
+                 "headless/test_ase_rundir_1704" \
+                 "headless/test_ase_saved_results_1705" \
                  "headless/test_suite_watchdog_1403" \
                  "headless/test_ase_core" \
                  "headless/test_ase_dialogs" \
@@ -898,8 +898,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_ase_simdlg_0937" \
-                 "headless/test_ase_rundir_1665" \
-                 "headless/test_ase_saved_results_1666" \
+                 "headless/test_ase_rundir_1704" \
+                 "headless/test_ase_saved_results_1705" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_campaign_gui_1464" \

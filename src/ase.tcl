@@ -130,7 +130,7 @@ namespace eval ase {
   # EQUAL to that default is stored as `{}` too (ase::ui::set_plot_dest), so
   # picking the default back never dirties a session; any other choice is
   # written out, so a saved session restores its own value whatever the rc says.
-  # `results_dir` (issue 1666, results_selection.md R901) is the ELEVENTH, for
+  # `results_dir` (issue 1705, results_selection.md R901) is the ELEVENTH, for
   # the identical reason: `{}` means the default `<rundir>/saved`.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
                           opstrategy opstate runhealth sweep plot_dest
@@ -6954,7 +6954,7 @@ proc ase::predeck_plan {sim state} {
   ## The file half's two refusals, evaluated once. Both NAME what they are
   ## refusing over, because a refusal the user cannot act on is a silence with
   ## extra words. The menu path is TYPED, because this file may not depend on
-  ## src/ase_window.tcl; row RD-L of tests/headless/test_ase_rundir_1665.tcl
+  ## src/ase_window.tcl; row RD-L of tests/headless/test_ase_rundir_1704.tcl
   ## holds it equal to `ase::ui::menu_path_run_dir` (issue 1391's drift).
   if {[ase::rundir_is_shared $state]} {
     set filewhy "this bench names no run directory, so the file would go in one\
@@ -14694,7 +14694,7 @@ proc ase::rundir {state} {
   return [set_netlist_dir 0]
 }
 
-# --- THE RUN-DIRECTORY DOOR (issue 1665) --------------------------------------
+# --- THE RUN-DIRECTORY DOOR (issue 1704) --------------------------------------
 # Setup > Run Directory… in src/ase_window.tcl is the door; these are the pure
 # halves it is built on, kept here so every decision counts on the headless
 # arm. NONE of them calls `ase::rundir` or `set_netlist_dir 0`: both create a
@@ -14752,7 +14752,7 @@ proc ase::rundir_validate {text {state {}}} {
       return [list refuse {} [ase::rundir_reword $m]]
     }
   }
-  ## ISSUE 1666 (R901b): never a saved result, nor a path inside one -- the
+  ## ISSUE 1705 (R901b): never a saved result, nor a path inside one -- the
   ## next Run would delete and rewrite that copy.
   set probe $p
   while {1} {
@@ -14887,7 +14887,7 @@ proc ase::rawfile_relative {path rundir} {
 # value under an EMPTY old key is left alone: R602e never relativised against
 # one, so such a value is not this proc's to reinterpret.
 #
-# ISSUE 1666 (R901c): when `results_dir` is empty and the OLD default results
+# ISSUE 1705 (R901c): when `results_dir` is empty and the OLD default results
 # directory (`<old rundir>/saved`) holds saved results, `results_dir` is pinned
 # to it, so results saved before the move stay listed. The caller says so
 # (`ase::rundir_set_pins` answers the directory it would pin).
@@ -16300,7 +16300,7 @@ proc ase::op_report_missing {state meta exitcode} {
 # spelling first, so an all-lowercase dump answers on rung 1 and is byte for
 # byte what it always was, then the folded alias.
 proc ase::op_report_missing_dump {sim path raw devs} {
-  set dump [::op_annot::opdump_find $raw]   ;# issue 1666 R903b
+  set dump [::op_annot::opdump_find $raw]   ;# issue 1705 R903b
   if {![file isfile $dump] || [file size $dump] == 0} {
     ase::sim_say op_dump_missing $sim $path $dump error
     return op_dump_missing
@@ -17423,7 +17423,7 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## the wrong placement. Caught for ase::meas_path's raise on a state with no
   ## design cell, the shape the five lines above already tolerate.
   catch {file delete -- [ase::meas_path $state]}
-  ## --- ISSUE 1666 (R906): AND THE RUN-STATE SNAPSHOT, for the same reason:
+  ## --- ISSUE 1705 (R906): AND THE RUN-STATE SNAPSHOT, for the same reason:
   ## Save copies it as the description of THIS run, so one left by the previous
   ## run must not survive a run that dies before writing its own.
   catch {file delete -- [ase::runstate_path $state]}
@@ -17647,7 +17647,7 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   set f [open $deckpath w]
   puts -nonewline $f $deck
   close $f
-  ## ISSUE 1666 (R906): the state this deck was rendered from, beside it, so a
+  ## ISSUE 1705 (R906): the state this deck was rendered from, beside it, so a
   ## saved copy of the run can say what its plotmap rows meant. Caught: a
   ## missing snapshot only costs a saved result its mapping.
   catch {
@@ -18484,7 +18484,7 @@ proc ase::plot_sim_type_reason {state} {
 # simulation results"; it also lets a fresh xschem session attach a PREVIOUS
 # run's raw (the waveform_viewer.md saved-results seam).
 #
-# ⚠ ISSUE 1666 (R913): it follows the RESULT IN VIEW. Under a saved view
+# ⚠ ISSUE 1705 (R913): it follows the RESULT IN VIEW. Under a saved view
 # `ase::result_state` points `rundir` at the saved folder, so this answers the
 # saved raw; the live run's raw is `ase::live_rawfile`.
 proc ase::last_rawfile {key} {
@@ -18541,7 +18541,7 @@ proc ase::has_results {key} {
 # ase::ui::do_stop marks the session `stopped` before it kills (in memory only,
 # so after a restart a stopped run's log reads as a failed one).
 proc ase::run_failed {key} {
-  ## ISSUE 1666 (R913): the result in view. Under a saved view the saved log's
+  ## ISSUE 1705 (R913): the result in view. Under a saved view the saved log's
   ## footer and the meta's `stopped` answer; the session's live `stopped`
   ## attribute describes the live run and is ignored there.
   set st [ase::result_state $key]
@@ -18617,7 +18617,7 @@ proc ase::run_failed {key} {
 #   the `6` chord      -- holds a real path from a real session and must not
 #                         refuse it on an inability to look up a state dict.
 proc ase::results_stale {key} {
-  set state [ase::result_state $key]   ;# ISSUE 1666 (R913): the result in view
+  set state [ase::result_state $key]   ;# ISSUE 1705 (R913): the result in view
   if {$state eq {}} { return 0 }
   set rf {}
   if {[catch {ase::last_rawfile $key} rf]} { return 0 }
@@ -18631,7 +18631,7 @@ proc ase::results_stale {key} {
   return [expr {$rt < $dt}]
 }
 
-# ═══ ISSUE 1666: SAVED RESULTS ═══════════════════════════════════════════════
+# ═══ ISSUE 1705: SAVED RESULTS ═══════════════════════════════════════════════
 # doc/claude/specs/results_selection.md §20. Runs keep writing where they always
 # wrote (`<rundir>/<cell>_ase.*`, overwritten in place). `Results > Save…`
 # COPIES the result in view into `<results_dir>/<lib>/<cell>/<folder>/` under
@@ -18639,7 +18639,7 @@ proc ase::results_stale {key} {
 # presenting the session's state with `rundir` pointed at that folder
 # (`ase::result_state`), the trick `ase::campaign_shard_state` already plays.
 #
-# THREE INVARIANTS (each fenced by a row of test_ase_saved_results_1666):
+# THREE INVARIANTS (each fenced by a row of test_ase_saved_results_1705):
 #   I-W  every proc that WRITES or deletes run artifacts resolves paths from
 #        `ase::session_state`, never from `ase::result_state`;
 #   I-L  listing and Save's destination resolve from `ase::session_state`;
@@ -19135,7 +19135,7 @@ proc ase::saved_write_meta {path meta} {
 # R910/R907a -- drop every loaded results slot whose file lies inside DIR, in
 # the CURRENT xschem context only (`results::list` sees no other), so a later
 # select there reads the disk again. A viewer window's own registry keeps its
-# slot (declared limit, issue 1666).
+# slot (declared limit, issue 1705).
 proc ase::saved_registry_drop {dir} {
   set dn [ase::saved_realpath $dir]
   set n 0
@@ -20678,7 +20678,7 @@ proc ase::raw_current {} {
 # ase::last_rawfile uses. A `multi 1` entry is EXCLUDED: two shims writing one
 # file produce an interleaved VCD that must not be presented as data.
 proc ase::last_vcdfiles {key} {
-  set state [ase::result_state $key]   ;# ISSUE 1666 (R913): the result in view
+  set state [ase::result_state $key]   ;# ISSUE 1705 (R913): the result in view
   if {$state eq {}} { return {} }
   if {[ase::cosim_policy $state attach 1] eq {0}} { return {} }
   set out {}
@@ -21497,7 +21497,7 @@ proc ase::session_open {key path} {
   }
   set st [ase::state_load $path]
   dict set sessions $key [dict create path $path state $st saved $st]
-  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
+  catch {ase::result_sel_forget $key}   ;# issue 1705: the view derives anew
   return $key
 }
 
@@ -21589,7 +21589,7 @@ proc ase::session_load {key} {
   set st [ase::state_load [dict get $sessions $key path]]
   dict set sessions $key state $st
   dict set sessions $key saved $st
-  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
+  catch {ase::result_sel_forget $key}   ;# issue 1705: the view derives anew
   ase::session_notify_fire $key
   return 1
 }
@@ -21600,7 +21600,7 @@ proc ase::session_revert {key} {
   variable sessions
   if {![dict exists $sessions $key]} { return 0 }
   dict set sessions $key state [dict get $sessions $key saved]
-  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
+  catch {ase::result_sel_forget $key}   ;# issue 1705: the view derives anew
   ase::session_notify_fire $key
   return 1
 }

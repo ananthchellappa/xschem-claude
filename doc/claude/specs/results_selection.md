@@ -49,7 +49,7 @@ copy one without re-grepping it.
 > | the rulings, and the result model they correct | §17, §17.1, §17.2 |
 > | what is deliberately NOT here | §18 |
 > | the `v(out)` -> `VT(out)` move, and why it is not here | §19 |
-> | saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1666) | §20 |
+> | saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1705) | §20 |
 
 ---
 
@@ -2883,12 +2883,12 @@ the expression.
 
 ---
 
-## 20. Saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1666)
+## 20. Saved results — `Results ▸ Save…` / `Select…` / `Delete…` (issue 1705)
 
 **Status:** IMPLEMENTED 2026-10-21 (uncommitted at the time of writing) from
 **revision 2** of this spec (after three reviews; every point is either folded
 in or rejected with a one-line reason in §20.13). Fence:
-`tests/headless/test_ase_saved_results_1666.tcl`, both T1 lists. **Not built:**
+`tests/headless/test_ase_saved_results_1705.tcl`, both T1 lists. **Not built:**
 SVR48/SVR49 (Plot Outputs / Direct Plot / Annotate under a saved view still
 attach through `wviewer::attach_raw`, which clears other loaded slots), step 13
 (`Load Setup`), and R907a's drop in contexts other than the current one. The
@@ -2934,7 +2934,7 @@ must follow a selection learn to ask for **one** state (§20.6).
   read-only spelling from **`ase::session_state`** (I-L). A non-default value is
   kept in a new state key **`results_dir`**, added to `ase::schema_keys` **and**
   `ase::omit_if_empty` so no committed `.state` file moves a byte (SVR5). It is
-  session state (the `rundir` class, issue 1665): set from Save's Directory, it
+  session state (the `rundir` class, issue 1704): set from Save's Directory, it
   dirties the session and is written at Save State. Select's and Delete's
   Directory fields only **re-list** and never dirty (R917).
 - **`<lib>/<cell>` are path levels.** `<cell>` keeps two cells apart in the
@@ -2956,7 +2956,7 @@ must follow a selection learn to ask for **one** state (§20.6).
   `ase::run_deck` deletes **named files** at `<rundir>/<cell>_ase.*`, never a
   directory (SVR20).
 - **R901b — the rundir door refuses a saved folder.** `ase::rundir_validate`
-  (issue 1665) refuses a path that **is or lies inside** a saved result (the
+  (issue 1704) refuses a path that **is or lies inside** a saved result (the
   R904 predicate tried on the path and each parent): the next Run would delete
   and rewrite that copy. Sentence `lbl_rundir_in_saved`. (SVR20b)
 - **R901c — moving the rundir.** When `ase::rundir_set` changes `rundir` while
@@ -3062,7 +3062,7 @@ overwritten, never deleted.
 
 **R906** `ase::run_deck` writes **`<cell>_ase.runstate`** (`ase::state_serialize`
 of the state it rendered) next to the deck; its pre-run cleanup deletes the old
-one with the others (SVR32). Save copies it. With none (a pre-1666 run, a
+one with the others (SVR32). Save copies it. With none (a pre-1705 run, a
 hand-copied folder), the **current** session state is written and
 `state_source current` says so — and then the saved **plotmap is treated as
 unusable**: plotmap readers report "no mapping" rather than map against today's
@@ -3327,10 +3327,10 @@ Status label and `ase::echo`. No `alert_`, no `tk_messageBox`; confirmations use
 
 ### 20.10 Test plan — red first
 
-**Suite: `tests/headless/test_ase_saved_results_1666.tcl`**, registered in
+**Suite: `tests/headless/test_ase_saved_results_1705.tcl`**, registered in
 **both** `hcases` (pure layer) and `dcases` (forms). It sources
 `tests/headless/scratch.tcl` **before its first `update`** (watchdog, `W20h`),
-ends `RESULT: …` then `OVERALL: ok (N checks)` (the `test_ase_rundir_1665`
+ends `RESULT: …` then `OVERALL: ok (N checks)` (the `test_ase_rundir_1704`
 epilogue, checked against `banner_complete`, not `run_suites.sh`), and prints
 **no lowercase `^skip:` line on either arm** — display-only rows self-skip as
 one `RESULT: SKIP`-style uppercase line. Every verb call goes through `pcall` or
@@ -3439,8 +3439,9 @@ Each step lands its rows **and** its producer in one commit (a registered red
 suite is a red gate); the red-first run of each step's rows is taken locally,
 before the producer, and must show the named reds with `missing=0`.
 
-1. Mint **issue 1666** (two-check procedure; `1666` was found free), file
-   `doc/claude/issues/1666-ase-saved-results.md` with a `**STAMP:**` line in
+1. Mint **issue 1705** (two-check procedure; minted as 1666, renumbered 1705
+   on 2026-10-21 after colliding with another clone's 1666), file
+   `doc/claude/issues/1705-ase-saved-results.md` with a `**STAMP:**` line in
    its first 12 lines (`tree=` an ancestor of HEAD containing an `a`–`f`
    letter; no stamp-shaped example in the body), record in `NUMBERING.md`,
    `tclsh tests/headless/issue_stamp.tcl` → `ok`.

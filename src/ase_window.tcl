@@ -902,7 +902,7 @@ proc ase::ui::build {key top} {
   # entry's own -command, and a second call would double every line.
   $top.mb.setup add command -label "Simulators\u2026" \
     -command [list ase::ui::simulators_dialog $key]
-  # Run Directory… = the `rundir` key's door (issue 1665): the key existed and
+  # Run Directory… = the `rundir` key's door (issue 1704): the key existed and
   # was read everywhere, while only a hand-edited .state file could set it. The
   # label is a constant because the engine's refusals name this path. No log
   # call, for the reason given above the Simulators entry.
@@ -1053,7 +1053,7 @@ proc ase::ui::build {key top} {
   # ⚠ ASE-L ONLY (user ruling U5) and NO CASCADE IS ADDED TO THE WAVEFORM
   # VIEWER'S MENUBAR (R504/D12) -- tests/headless/test_wave_viewer.tcl G2
   # freezes that cascade set at {File View Graph Cursors Options}.
-  # ISSUE 1666 (R917): ADE-L's three Results forms grouped, Save first. The
+  # ISSUE 1705 (R917): ADE-L's three Results forms grouped, Save first. The
   # whole menu's label list is `ase::ui::results_menu_labels`, which the rows
   # GM2 (test_ase_conv_gui_1460), SEL389 (test_results_dialog) and SVR40 read.
   $top.mb.results add command -label [ase::ui::lbl_rsave_menu] \
@@ -2673,7 +2673,7 @@ proc ase::ui::value_sort_toggle {key} {
 # from the results file -- an expression by the Calculator (ase_l.md R-OUT2).
 proc ase::ui::results_from_disk {key} {
   if {![ase::session_exists $key]} { return [dict create] }
-  ## ISSUE 1666 (R913): the CURRENT Outputs rows, evaluated against the result
+  ## ISSUE 1705 (R913): the CURRENT Outputs rows, evaluated against the result
   ## in view (`rundir` swapped to a saved folder under a saved view).
   set st [ase::result_state $key]
   if {$st eq {}} { return [dict create] }
@@ -3912,7 +3912,7 @@ proc ase::ui::annot_goto_design {key} {
 #              current, so every other gold in every suite is satisfied while
 #              the trace the user was looking at has been unloaded from under
 #              their waveform window.
-# ISSUE 1666: "current" also needs the attached database to BE the candidate
+# ISSUE 1705: "current" also needs the attached database to BE the candidate
 # when the attached one is THIS SESSION'S OWN other result -- its live raw or a
 # saved folder's -- because that one's freshness stamp would otherwise answer
 # current for a different file and paint the previous view's numbers under the
@@ -4755,7 +4755,7 @@ proc ase::ui::rsel_commit {key} {
   # region can no longer disagree about the same file.
   set opts [ase::ui::rsel_resolve_input $key $path]
   set abs [ase::ui::rsel_abs $key $path $opts]
-  # ISSUE 1666 (R911): the view BEFORE anything moves it. `results::select`
+  # ISSUE 1705 (R911): the view BEFORE anything moves it. `results::select`
   # reaches `results::persist`, which records the new selection itself when a
   # viewer is open -- read afterwards, `was` would already equal `now` and the
   # Outputs, title and status would never repaint (SVR45b).
@@ -4809,7 +4809,7 @@ proc ase::ui::rsel_commit {key} {
     set msg "Could not select [file tail $path] — nothing was loaded and the\
  previous result is unchanged."
   }
-  # ISSUE 1666 (R911): the session's view follows what was selected, whatever
+  # ISSUE 1705 (R911): the session's view follows what was selected, whatever
   # the row; `Last run` (or any non-saved raw) means the live run.
   if {$how ne {refused}} {
     if {$ckind eq {lastrun}} {
@@ -4828,7 +4828,7 @@ proc ase::ui::rsel_commit {key} {
   return [expr {$how eq {refused} ? 0 : 1}]
 }
 
-# ISSUE 1666 (R910) -- the select options for a row of KIND bound to ABS. A
+# ISSUE 1705 (R910) -- the select options for a row of KIND bound to ABS. A
 # SAVED row binds through the same door with no `netlist` (the live
 # `<cell>.spice` would call every saved result stale), its own folder as
 # `rundir`, and the LIVE raw as the fallback; `Last run` is the live raw
@@ -4857,7 +4857,7 @@ proc ase::ui::rsel_fill {key} {
   # highlighted (SVR47b).
   array unset dlg $key,rselmap,loaded,*
   array unset dlg $key,rselmap,recent,*
-  # ISSUE 1666: the Saved region, from the Directory field (re-list only)
+  # ISSUE 1705: the Saved region, from the Directory field (re-list only)
   if {[winfo exists $w.saved.list.tv]} {
     catch {ase::ui::saved_tv_fill $key rsel $w.saved.list.tv \
              [ase::ui::rsel_saved_rows $key [ase::ui::rsel_saved_dir $key rsel]]}
@@ -5070,7 +5070,7 @@ proc ase::ui::rsel_dialog {key} {
   wm title $w [expr {$cell eq {} ? {Select Results} : "Select Results — $cell"}]
   grid columnconfigure $w 0 -weight 1
 
-  # --- ISSUE 1666 (R919): SAVED, above Loaded -- ADE-L's Select lists the
+  # --- ISSUE 1705 (R919): SAVED, above Loaded -- ADE-L's Select lists the
   # saved results, and choosing one is the point of saving it.
   set stv [ase::ui::saved_region $key $w rsel browse]
   grid $w.saved -row 0 -column 0 -sticky nsew -padx 6 -pady {6 2}
@@ -5160,7 +5160,7 @@ proc ase::ui::rsel_build_list {key w which} {
 }
 
 
-# ═══ ISSUE 1666: Results > Save… / Select… (Saved) / Delete… ══════════════════
+# ═══ ISSUE 1705: Results > Save… / Select… (Saved) / Delete… ══════════════════
 # doc/claude/specs/results_selection.md §20.6-§20.7. The engine half is the pure
 # layer in src/ase.tcl (`ase::saved_*`, `ase::result_view`); everything here is
 # the forms and the repaint. Modeless, no grab, ESC = Cancel/Close; the user
@@ -7511,7 +7511,7 @@ proc ase::ui::nz_build {key} {
   set st [ase::session_state $key]
   set dlg($key,nzfacts) [ase::netlist_facts_cached $st]
   set dlg($key,nztext) [ase::facts_netlist_text $st]
-  ## ISSUE 1666 (R906): the plotmap of the result in view, read against the
+  ## ISSUE 1705 (R906): the plotmap of the result in view, read against the
   ## run state it was written for; {} under a saved view with no run state.
   set dlg($key,nznvec) [ase::ui::nz_nvec $key $sim $type]
   label $w.cap -text [ase::ui::lbl_nz_caption $sim $type] -anchor w -justify left \
@@ -9094,7 +9094,7 @@ proc ase::ui::meas_state {key} {
 # is shown immediately -- which is the half worth having before a run.
 proc ase::ui::meas_ran {key} {
   set p {}
-  if {[catch {ase::meas_path [ase::result_state $key]} p]} { return 0 }   ;# 1666 R913
+  if {[catch {ase::meas_path [ase::result_state $key]} p]} { return 0 }   ;# 1705 R913
   return [expr {[file isfile $p] ? 1 : 0}]
 }
 
@@ -9137,7 +9137,7 @@ proc ase::ui::meas_value_cell {e ran} {
 proc ase::ui::meas_results_list {key} {
   set out {}
   catch {
-    ## ISSUE 1666 (R913): the sidecar of the result in view; the ROWS are the
+    ## ISSUE 1705 (R913): the sidecar of the result in view; the ROWS are the
     ## form's (meas_state), only `rundir` follows the view.
     set _ms [ase::ui::meas_state $key]
     dict set _ms rundir [ase::state_get [ase::result_state $key] rundir]
@@ -9991,7 +9991,7 @@ proc ase::ui::design_cancel {key} {
   }
 }
 
-# --- Setup > Run Directory… (issue 1665) --------------------------------------
+# --- Setup > Run Directory… (issue 1704) --------------------------------------
 # The door for the state's `rundir` key. MODELESS (no grab, no tkwait), built
 # on the scaffold like Setup > Design. Choosing a directory is SESSION STATE,
 # the 1395 rule the simulator choice follows: OK writes the key through
@@ -11805,7 +11805,7 @@ proc ase::ui::lbl_sim_temperature  {} { return {Simulation temperature} }
 # is the USER'S ruling (their words: "Just confirm if overwriting an existing
 # state"), recorded on the ledger as a rule debt, not a crew's wording.
 
-# --- ISSUE 1666: saved results (results_selection.md §20.9) -------------------
+# --- ISSUE 1705: saved results (results_selection.md §20.9) -------------------
 # Every sentence the saved-results layer says. Terse, acronyms uppercase,
 # plurals spelled. A sentence shown on a form's Status line is bare and the
 # echo adds `ase:`; the three that only ever go to the CIW (`lbl_results_view`,
@@ -11889,9 +11889,9 @@ proc ase::ui::menu_path_run {} {
 proc ase::ui::menu_path_stop {} {
   return "[ase::ui::lbl_simulation] > [ase::ui::lbl_stop]"
 }
-# Setup > Run Directory… (issue 1665). src/ase.tcl TYPES this path into two
+# Setup > Run Directory… (issue 1704). src/ase.tcl TYPES this path into two
 # refusals (`ase::predeck_plan`, `ase::campaign_refusals`) because the engine
-# may not depend on this file; row RD-L of test_ase_rundir_1665 holds them equal.
+# may not depend on this file; row RD-L of test_ase_rundir_1704 holds them equal.
 proc ase::ui::lbl_run_dir_menu {} { return "Run Directory\u2026" }
 proc ase::ui::menu_path_run_dir {} {
   return "Setup > [ase::ui::lbl_run_dir_menu]"
@@ -12643,7 +12643,7 @@ proc ase::ui::do_load_state_from {key path} {
 # the echo family raising into its caller.
 proc ase::ui::load_state_commit {key st} {
   set rc [ase::session_update $key $st]
-  catch {ase::result_sel_forget $key}   ;# issue 1666: the view derives anew
+  catch {ase::result_sel_forget $key}   ;# issue 1705: the view derives anew
   if {!$rc} {
     catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
  was NOT imported." error}
@@ -12923,7 +12923,7 @@ proc ase::ui::viewer_snapshot {key} {
   if {$st eq {}} { return 0 }
   set prev [ase::state_get $st viewer]
   set vd [wviewer::snapshot $key $prev]
-  ## ISSUE 1666 (R915): with no viewer window the snapshot cannot ask the
+  ## ISSUE 1705 (R915): with no viewer window the snapshot cannot ask the
   ## engine what is selected, so the session's own record (Results > Select…)
   ## is what reaches `viewer.rawfile`: a saved result by its path, and back to
   ## {} when the user returned to the live run from a stored saved view.
@@ -12996,7 +12996,7 @@ proc ase::ui::viewer_rawfile_relative {vd st} {
   if {[catch {ase::state_get $st rundir} rd]} { return $vd }
   # The predicate itself (R602d, the component-wise test) is the engine's
   # `ase::rawfile_relative`, shared with `ase::rundir_set`'s rebase (issue
-  # 1665) so the two cannot disagree about what "under the rundir" means.
+  # 1704) so the two cannot disagree about what "under the rundir" means.
   set rel [ase::rawfile_relative $rf $rd]
   if {$rel eq $rf} { return $vd }
   dict set vd rawfile $rel
@@ -13069,7 +13069,7 @@ proc ase::ui::viewer_restore {key} {
     catch {::ase::echo "ase: [ase::state_get $res msg]"}
   }
   set sim_t [ase::plot_sim_type $st]
-  ## ISSUE 1666 (R915): a saved view restores as the type it was saved as
+  ## ISSUE 1705 (R915): a saved view restores as the type it was saved as
   catch {
     set _sv [ase::result_view $key]
     if {$_sv ne {}} {
@@ -13223,7 +13223,7 @@ proc ase::ui::refresh_title {key} {
   set top [dict get $wins $key]
   if {![winfo exists $top]} { return }
   set t "Analog Sim Environment [ase::ui::design_cell_name $key]"
-  append t [ase::ui::result_view_suffix $key]   ;# issue 1666 R914
+  append t [ase::ui::result_view_suffix $key]   ;# issue 1705 R914
   if {[ase::session_getattr $key untitled 0] eq {1}} { append t { (unsaved)} }
   if {[ase::session_dirty $key]} { append t { *} }
   wm title $top $t
@@ -13974,7 +13974,7 @@ proc ase::ui::auto_plot_idle {key} {
 # the live run id.
 proc ase::ui::run_finished {key} {
   variable loglen
-  # ISSUE 1666 (R911a): the finished run is what the user is waiting for. A
+  # ISSUE 1705 (R911a): the finished run is what the user is waiting for. A
   # saved result selected WHILE it ran must not hide it from the Outputs, the
   # auto-plot and the annotation below (SVR27f).
   catch {ase::result_view_reset $key}
@@ -14103,7 +14103,7 @@ proc ase::ui::run_finished {key} {
   # it can never go on describing the run before last.
   catch {ase::ui::health_refresh $key}
   ase::session_setattr $key run_id {}
-  ## ISSUE 1666 (SVR44): Save's OK comes back, and Select's list moves
+  ## ISSUE 1705 (SVR44): Save's OK comes back, and Select's list moves
   catch {after idle [list catch [list ase::ui::rsave_refresh $key]]}
   catch {ase::ui::rsel_fill $key}
 }
@@ -14111,7 +14111,7 @@ proc ase::ui::run_finished {key} {
 # Wire a successfully started run into the window: run id bookkeeping, the
 # log toplevel (opened + cleared), the live trace, the Running status.
 proc ase::ui::run_started {key id} {
-  ## ISSUE 1666 (R911a): a launch that SUCCEEDED returns the view to the live
+  ## ISSUE 1705 (R911a): a launch that SUCCEEDED returns the view to the live
   ## run; both Run doors reach here only after `ase::run*` returned an id.
   catch {ase::result_view_reset $key}
   ase::session_setattr $key run_id $id
@@ -14568,7 +14568,7 @@ proc ase::ui::conv_op_type {} { return {op} }
 proc ase::ui::conv_logtext {key} {
   set txt {}
   catch {
-    set st [ase::result_state $key]   ;# issue 1666 R913: the result in view
+    set st [ase::result_state $key]   ;# issue 1705 R913: the result in view
     set h [ase::backend_hook [ase::state_get $st simulator ngspice] log_file]
     set p [$h $st]
     set f [::open $p r]
@@ -14585,7 +14585,7 @@ proc ase::ui::conv_logtext {key} {
 proc ase::ui::conv_netlist_text {key} {
   set txt {}
   catch {
-    set st [ase::result_state $key]   ;# issue 1666 R913: the result in view
+    set st [ase::result_state $key]   ;# issue 1705 R913: the result in view
     set p [file join [ase::rundir $st] [dict get $st design cell].spice]
     set f [::open $p r]
     set txt [::read $f]
@@ -16456,7 +16456,7 @@ proc ase::ui::camp_run {key} {
     return [dict create status nonetlist ran 0 of 0]
   }
   set dlg($key,camp,running) 1
-  catch {ase::result_view_reset $key}   ;# issue 1666 R911a: the launch is committed
+  catch {ase::result_view_reset $key}   ;# issue 1705 R911a: the launch is committed
   set dlg($key,camp,stop) 0
   set dlg($key,camp,at) 0
   set dlg($key,camp,ok) 0

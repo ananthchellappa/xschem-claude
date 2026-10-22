@@ -665,7 +665,7 @@ for {set i 0} {$i <= [$gtop.mb.results index end]} {incr i} {
 check "GM2 the highlight door is the LAST entry of Results, below Annotate --\
  annotation shows a run that worked, this shows one that did not" \
   $gm_res [ase::ui::results_menu_labels]
-check "GM2c and that list ends in the highlight door, below Annotate (issue 1666\
+check "GM2c and that list ends in the highlight door, below Annotate (issue 1705\
  put Save/Select/Delete at its head; the list is built once, by the menu's owner)" \
   [lrange [ase::ui::results_menu_labels] end-2 end] [list Annotate -- [ase::ui::lbl_hilite_menu]]
 check "GM2b and it is wired to the door proc" \

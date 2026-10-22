@@ -114,7 +114,7 @@ proc results::resolve {state} {
   # already existence-gated (src/ase.tcl:1952 returns {} unless the file is
   # there); an explicitly passed `derived` gets the same gate, so that T-H's
   # "the derived path when one exists on disk and {} otherwise" holds either way.
-  # ISSUE 1666: `ase::last_rawfile` follows the result in view. A door that
+  # ISSUE 1705: `ase::last_rawfile` follows the result in view. A door that
   # must fall back to the LIVE run (Results > Select…'s saved rows, R910)
   # passes `derived` = `ase::live_rawfile` explicitly, which outranks this.
   if {$derived eq {} && $key ne {}} {
@@ -637,7 +637,7 @@ proc results::persist {path type opts} {
   set tok [results::_get $opts token]
   if {$tok eq {}} { set tok [results::_get $opts key] }
   if {$tok eq {}} { return 0 }
-  # ISSUE 1666 (R911): an ASE session's view is DERIVED from what it selected,
+  # ISSUE 1705 (R911): an ASE session's view is DERIVED from what it selected,
   # whichever door it came through -- recorded against the session key. A view
   # that MOVED repaints the session's window at idle (this can run inside a
   # borrowed viewer context); `result_view_sync` skips it when the dialog that

@@ -1,4 +1,4 @@
-# tests/headless/test_ase_rundir_1665.tcl -- ISSUE 1665: ASE-L HAD NO DOOR FOR
+# tests/headless/test_ase_rundir_1704.tcl -- ISSUE 1704: ASE-L HAD NO DOOR FOR
 # THE RUN DIRECTORY.
 #
 # The state has always carried a `rundir` key, and the engine reads it in
@@ -34,8 +34,8 @@
 #   window's own predicates read.
 #
 # Arms (the armed spelling keeps your HOME and screen untouched):
-#   tests/headless/run_suites.sh --nogui test_ase_rundir_1665
-#   tests/headless/run_suites.sh test_ase_rundir_1665
+#   tests/headless/run_suites.sh --nogui test_ase_rundir_1704
+#   tests/headless/run_suites.sh test_ase_rundir_1704
 
 set fail 0; set npass 0
 proc check {name got exp} {

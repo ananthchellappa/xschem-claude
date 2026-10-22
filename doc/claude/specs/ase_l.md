@@ -1759,7 +1759,7 @@ the schematic's name, not the simulator's.
   system finds on the PATH); Run Directory… (modeless dialog: path,
   Browse…, Use Default, OK/Cancel; empty = shared default; session state,
   dirties, saved by Save State; refused while a run or campaign is live —
-  issue 1665, see "Run directory" below).
+  issue 1704, see "Run directory" below).
 - **Analyses** — Choose… (Choose Analyses dialog).
 - **Variables** — Edit… (variables editor).
 - **Outputs** — To Be Saved > Select On Design; To Be Plotted > Select On
@@ -1797,7 +1797,7 @@ the schematic's name, not the simulator's.
   xschem, `doc/claude/specs/calculator.md` R101. It was a disabled placeholder
   only until the window existed).
 
-### Run directory (issue 1665)
+### Run directory (issue 1704)
 The state's `rundir` key names where the deck, raw, log and every other run
 artifact go; empty means the shared fallback (`set_netlist_dir`'s
 `$USER_CONF_DIR/simulations`), one directory every bench shares. Setup > Run

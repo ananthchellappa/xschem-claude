@@ -1,6 +1,10 @@
-# 1666 — ASE-L could not save a result under a name
+# 1705 — ASE-L could not save a result under a name
 
 **STAMP:** `v1 claim=fixed tree=6500f6d0c stamped=2026-10-21 fix=taken open=0 by=driver`
+
+*Renumbered 1666 → 1705 on 2026-10-21: 1666 was first minted here, but the clone
+`~/private/xschem-private` had already minted 1666 (2026-10-17) for an unrelated
+issue. Commits made before the rename cite it as 1666.*
 
 The user asked (2026-10-21): "We have the ability to load a past result? Do we
 have the ability to save the current result as a certain meaningful name (like
@@ -23,7 +27,7 @@ lists saved results and selecting one presents the session's state with `rundir`
 pointed at the saved folder (`ase::result_state`), so the readers follow without
 learning a new argument; `Results > Delete…` removes saved results.
 
-Fence: `tests/headless/test_ase_saved_results_1666.tcl`, registered in both T1
+Fence: `tests/headless/test_ase_saved_results_1705.tcl`, registered in both T1
 lists.
 
 ## Verify round (2026-10-21)

@@ -952,7 +952,7 @@ check {RF1 a bench with no campaign is refused nothing at all} \
 ## ⚠ ⚖ R2 CONDITION 4, AND THE STANDING RULE BEHIND IT. With no run directory
 ## `ase::rundir` answers the ONE directory every cell of every library shares,
 ## and a campaign would build a tree in it and write a `.spiceinit` there.
-## The remedy names the door issue 1665 added (Setup > Run Directory…).
+## The remedy names the door issue 1704 added (Setup > Run Directory…).
 check {RF2 a bench with no run directory is refused, and told what to do} \
   [apply {{} {
     set st [c_state rundir {} sweep [c_sweep enabled 1 axes {{kind temp values {27}}}]]

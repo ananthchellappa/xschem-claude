@@ -1,6 +1,10 @@
-# 1665 — ASE-L had no door for the run directory
+# 1704 — ASE-L had no door for the run directory
 
 **STAMP:** `v1 claim=fixed tree=47c687ef4 stamped=2026-10-19 fix=taken open=0 by=driver`
+
+*Renumbered 1665 → 1704 on 2026-10-21: 1665 was first minted here, but the clone
+`~/private/xschem-private` had already minted 1665 (2026-10-17) for an unrelated
+issue. Commits made before the rename cite it as 1665.*
 
 The user asked (2026-10-19) whether ASE-L lets them set the run directory, and to
 add it if not: "Cadence's ADE-L lets the user do it on the same form that chooses
@@ -60,6 +64,6 @@ remedy — a gesture that did not exist.
 
 ## Fences
 
-`tests/headless/test_ase_rundir_1665.tcl` (both T1 lists), plus R9 of
+`tests/headless/test_ase_rundir_1704.tcl` (both T1 lists), plus R9 of
 `test_ase_persist` (the key on disk) and RF2 of `test_ase_campaign_1462` (the
 new remedy text).

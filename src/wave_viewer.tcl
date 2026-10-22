@@ -2801,7 +2801,7 @@ proc wviewer::db_label {path type} {
   set t $type
   if {$t eq {<NULL>}} { set t {} }
   set tail [file tail $path]
-  # ISSUE 1666 (R916): a saved result labels by its NAME.
+  # ISSUE 1705 (R916): a saved result labels by its NAME.
   if {[info commands ::ase::saved_name_of] ne {}} {
     set sn {}
     catch {set sn [::ase::saved_name_of $path]}

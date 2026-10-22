@@ -23,7 +23,7 @@
 #        the five named load->save byte-identity rows and R3 is the
 #        old-state-compat row: the new key is governed by exactly those two
 #        rules. Pure schema, both arms, no display, no registry.
-#   R9   the `rundir` key ON DISK (issue 1665, Setup > Run Directory…): an
+#   R9   the `rundir` key ON DISK (issue 1704, Setup > Run Directory…): an
 #        absolute value round-trips byte-identically, and empty stays the
 #        schema default `rundir {}`. Both arms.
 #   G1   fresh session on the committed-shape state: window up, NO viewer
@@ -86,7 +86,7 @@
 # arm measured 148 before this group landed; a floor only ever goes up, so it
 # passed while being one behind. Both numbers are re-measured here.
 # ⚠ AND RAISED 153 -> 156 on the display arm with G3q (2026-10-15).
-# ⚠ AND RAISED by two on EACH arm with R9 (issue 1665, the `rundir` key on
+# ⚠ AND RAISED by two on EACH arm with R9 (issue 1704, the `rundir` key on
 # disk); the arms' own RESULT lines carry the current counts.
 # Standalone repro from the repo ROOT. ⚠ THE ARMED SPELLING IS THE FIRST ONE:
 # it puts HOME on a throwaway and picks the dev display, so your clipboard,
@@ -878,7 +878,7 @@ if {[info commands ::rc_echo_real] ne {}} {
 }
 set ::ase_plot_dest {}
 
-# --- R9: THE `rundir` KEY ON DISK (issue 1665) ---------------------------------
+# --- R9: THE `rundir` KEY ON DISK (issue 1704) ---------------------------------
 # Setup > Run Directory… writes `rundir` as an ABSOLUTE path, and Save State is
 # what puts it in the file, so the key is governed by R2's byte-identity rule
 # exactly as `sim_entry` is (R7). `rundir` is NOT in ase::omit_if_empty: an
