@@ -1071,6 +1071,8 @@ set G2ALLOW {
     "a PRODUCT launcher for the gf180mcuD workarea: it opens xschem for a person to use, in their own HOME on purpose"
   ihp-sg13g2/run.sh {exec "$repo/src/xschem"}
     "a PRODUCT launcher for the ihp-sg13g2 workarea: it opens xschem for a person to use, in their own HOME on purpose"
+  src/optexport_measures.py *
+    "a PRODUCT tool copied into a user's export directory (ASE-L Tools > Export for Optimizer, FAQ Q92): it starts xschem with DISPLAY removed and its own throwaway HOME by design; fenced by test_ase_optexport OX6"
   tools/migrate/ase_migrate.py *
     "a migration TOOL a person runs on their own library: --verify starts their own xschem on purpose; its test, tools/migrate/test_ase_migrate.py, is armed"
   tools/migrate/build_ihp_sg13g2.sh {XSCHEM_SRC=$SRC/xschem}

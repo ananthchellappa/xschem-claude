@@ -24520,6 +24520,719 @@ proc ase::campaign_export_text {rows {fmt tsv}} {
   }
   return "[join $out \n]\n"
 }
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EXPORT FOR OPTIMIZER (FAQ Q92)
+# ═════════════════════════════════════════════════════════════════════════════
+# Tools > Export for Optimizer… writes, into a directory the user picks, what an
+# external optimizer needs to keep xschem OUT of its loop: the deck a Run would
+# write (artifact names made relative to the directory ngspice runs in), the
+# pre-deck file a Run would write, a manifest, and measures.py/measures.tcl --
+# which compute the Outputs pane's values for a raw file by calling the SAME
+# procs the pane does (ase::optexport_measure -> the backend's result_answers
+# hook -> calc::eval_texts), so the optimizer and ASE-L agree by construction.
+#
+# ⚠ THE DECK IS RENDERED, NEVER REWRITTEN. The state's rundir is pointed at a
+# unique sentinel directory, render_deck runs unchanged, and "<sentinel>/" is
+# removed. Any sentinel left after that is a defect of the export and refuses
+# (rewriting absolute paths after the fact would have to know every quoting
+# form render_deck uses, and the next artifact would add one).
+#
+# ⚠ THE COMPOSITION FOLLOWS ase::run_deck, CALLING ITS PROCS IN ITS ORDER. It is
+# not a refactor of run_deck; test_ase_optexport row OX1r keeps the two decks
+# byte-equal on a real run, which is the drift fence.
+#
+# ⚠ DATASET 0 ONLY, as the Outputs pane: a measurement verb takes its dataset
+# from its own arguments, so a `--dataset N` would silently answer dataset 0
+# for every verb row under a label saying N. The results file reports each
+# analysis's dataset count and measures.py warns per row instead.
+#
+# Spec: doc/claude/FAQ.md Q92. Suite: tests/headless/test_ase_optexport.tcl.
+
+proc ase::optexport_protocol {} { return asexp-manifest/1 }
+proc ase::optexport_results_protocol {} { return asexp-results/1 }
+
+# The files an export writes besides the deck and .spiceinit.
+proc ase::optexport_fixed_files {} {
+  return {manifest.json measures.py measures.tcl measures_state.tcl README.txt}
+}
+
+# ─── A MINIMAL JSON WRITER ────────────────────────────────────────────────────
+# Every scalar is a STRING (or null): a number travels as its Tcl text and
+# Python converts it, so no Tcl double formatting is ever involved.
+proc ase::json_str {s} {
+  variable json_map
+  if {![info exists json_map]} {
+    set json_map [list "\\" "\\\\" "\"" "\\\""]
+    for {set c 0} {$c < 32} {incr c} {
+      lappend json_map [format %c $c] [format "\\u%04x" $c]
+    }
+  }
+  return "\"[string map $json_map $s]\""
+}
+proc ase::json_null {} { return null }
+# A string, or null when empty.
+proc ase::json_strn {s} {
+  if {$s eq {}} { return null }
+  return [ase::json_str $s]
+}
+# items: already-rendered JSON values.
+proc ase::json_list {items} {
+  if {![llength $items]} { return {[]} }
+  set out "\[\n"
+  set n [llength $items]
+  set i 0
+  foreach it $items {
+    incr i
+    append out "  [string map [list "\n" "\n  "] $it]"
+    if {$i < $n} { append out "," }
+    append out "\n"
+  }
+  append out "\]"
+  return $out
+}
+# kv: key, already-rendered JSON value, ...
+proc ase::json_obj {kv} {
+  if {![llength $kv]} { return "{}" }
+  set out "\{\n"
+  set n [expr {[llength $kv] / 2}]
+  set i 0
+  foreach {k v} $kv {
+    incr i
+    append out "  [ase::json_str $k]: [string map [list "\n" "\n  "] $v]"
+    if {$i < $n} { append out "," }
+    append out "\n"
+  }
+  append out "\}"
+  return $out
+}
+proc ase::json_strs {lst} {
+  set o {}
+  foreach s $lst { lappend o [ase::json_str $s] }
+  return [ase::json_list $o]
+}
+
+# ─── THE TARGET DIRECTORY ─────────────────────────────────────────────────────
+# {ok} or {refuse <why>}. Refused: the bench's own run directory or anything
+# inside it (a later Run deletes and rewrites the deck and .spiceinit there); a
+# path inside a Saved Result; a directory holding anything but a previous
+# export's own files. A missing or empty directory is fine.
+proc ase::optexport_dir_verdict {state dir} {
+  if {[string trim $dir] eq {}} { return [list refuse "no directory was given"] }
+  set p [ase::optexport_dir_norm $dir]
+  set rd [ase::state_get $state rundir]
+  if {$rd ne {}} {
+    set rd [file normalize $rd]
+    if {$p eq $rd || [string first "$rd/" $p] == 0} {
+      return [list refuse "`$p` is this bench's run directory or inside it, and\
+ the next Run would delete and rewrite the exported deck there; choose another\
+ directory"]
+    }
+  }
+  set probe $p
+  while {1} {
+    if {[ase::saved_meta $probe] ne {}} {
+      return [list refuse "`$p` is inside a Saved Result, which must stay as it\
+ was saved; choose another directory"]
+    }
+    set up [file dirname $probe]
+    if {$up eq $probe} { break }
+    set probe $up
+  }
+  if {![file exists $p]} { return [list ok] }
+  if {![file isdirectory $p]} { return [list refuse "`$p` is a file, not a directory"] }
+  if {![file writable $p]} { return [list refuse "`$p` is not writable"] }
+  set have [lsort [glob -nocomplain -tails -directory $p * .*]]
+  set have [lsearch -all -inline -not -regexp $have {^\.\.?$}]
+  if {![llength $have]} { return [list ok] }
+  set prev [ase::optexport_previous $p]
+  if {$prev eq {}} {
+    return [list refuse "`$p` already holds files that are not an earlier\
+ export ([join [lrange $have 0 4] {, }][expr {[llength $have] > 5 ? {, ...} : {}}]);\
+ choose an empty directory"]
+  }
+  set allowed [concat [ase::optexport_fixed_files] [list .spiceinit __pycache__ [dict get $prev deck]]]
+  set foreign {}
+  foreach f $have { if {$f ni $allowed} { lappend foreign $f } }
+  if {[llength $foreign]} {
+    return [list refuse "`$p` holds an earlier export and other files\
+ ([join [lrange $foreign 0 4] {, }]); choose an empty directory"]
+  }
+  return [list ok]
+}
+
+proc ase::optexport_dir_norm {dir} {
+  set t [string trim $dir]
+  if {[catch {ase::expand_path $t} e]} { set e $t }
+  return [file normalize $e]
+}
+
+# A previous export in `dir`: {deck <name>} read from its manifest, or {}.
+proc ase::optexport_previous {dir} {
+  set mf [file join $dir manifest.json]
+  if {![file isfile $mf]} { return {} }
+  if {[catch {open $mf r} f]} { return {} }
+  fconfigure $f -encoding utf-8
+  set t [read $f]
+  close $f
+  if {![regexp {"protocol":\s*"asexp-manifest/1"} $t]} { return {} }
+  if {![regexp {\n  "deck":\s*"([^"\\]+)"} $t -> deck]} { return {} }
+  if {[string first / $deck] >= 0} { return {} }
+  return [dict create deck $deck]
+}
+
+# A unique, bare-spelled directory the deck is rendered against.
+proc ase::optexport_sentinel_base {} {
+  set base /tmp
+  foreach v {TMPDIR TEMP TMP} {
+    if {[info exists ::env($v)] && [file isdirectory $::env($v)]} {
+      set base [file normalize $::env($v)] ; break
+    }
+  }
+  if {![ase::backend::ngspice::path_bare_ok $base 1]} { set base /tmp }
+  return $base
+}
+proc ase::optexport_sentinel {} {
+  set d [file join [ase::optexport_sentinel_base] asexp_[pid]_[clock microseconds]]
+  file mkdir $d
+  return $d
+}
+
+# The enabled analysis types, as calc::raw_analyses names them.
+proc ase::optexport_have {state} {
+  set have {}
+  foreach a [ase::state_get $state analyses] {
+    if {[ase::state_get $a enabled 0] ne {1}} { continue }
+    set t [string tolower [ase::state_get $a type]]
+    if {$t eq {sp}} { set t ac }
+    if {$t in {op dc ac tran noise} && $t ni $have} { lappend have $t }
+  }
+  return $have
+}
+
+# The Calculator text and PREDICTED analysis of one Outputs row, by the same
+# et_default + uq_qualify + et_plan result_probe_calc_answers uses.
+proc ase::optexport_predict {ex have} {
+  set t [ase::output_calc_text $ex]
+  set an {}
+  catch {
+    set dflt [calc::et_default $have 0]
+    if {$dflt ne {} && [ase::output_is_plain $ex]} { set t [calc::uq_qualify $t $dflt] }
+    set pl [calc::et_plan $t $have {}]
+    if {[dict get $pl ok]} { set an [dict get $pl an] }
+  }
+  return [list $t $an]
+}
+
+# ─── THE DECK, COMPOSED AS A RUN COMPOSES IT ──────────────────────────────────
+# Runs ase::run_deck's composition steps, in its order, with rundir pointed at
+# `sentinel`. Also renders the variable-token deck (ase::optexport_varlines)
+# under the same arming. Raises a sentence on refusal.
+proc ase::optexport_compose {state netlist_text sentinel} {
+  set sim [ase::state_get $state simulator]
+  if {$sim eq {}} { return -code error "this bench names no simulator" }
+  set ah {}
+  catch {set ah [ase::backend_hook $sim result_answers]}
+  if {$ah eq {}} {
+    return -code error "the '$sim' backend has no typed answer layer, so its\
+ Outputs cannot be computed outside ASE-L"
+  }
+  set render [ase::backend_hook $sim render_deck]
+  set run_cmd [ase::backend_hook $sim run_cmd]
+  set sstate $state
+  dict set sstate rundir $sentinel
+  ase::sim_apply_choice $sstate
+  if {[ase::run_composes_registry $sim]} { ase::run_precheck $sstate }
+  if {$netlist_text eq {}} {
+    set nf [ase::netlist $sstate]
+    set f [open $nf r]
+    set netlist_text [read $f]
+    close $f
+  }
+  set notes [ase::preflight_notes $sstate $netlist_text]
+  ase::preflight_gate $sstate $netlist_text
+  if {[llength [ase::cosim_map $sstate $netlist_text]]} {
+    return -code error "Export for Optimizer does not carry co-simulation\
+ (d_cosim) models"
+  }
+  set predeck {}
+  set plan [ase::predeck_plan $sim $sstate]
+  ase::predeck_deliver $sim $sstate $plan
+  set pf [file join $sentinel .spiceinit]
+  if {[file isfile $pf]} {
+    set f [open $pf r] ; set predeck [read $f] ; close $f
+  }
+  set tok $sstate
+  set vars {}
+  set i 0
+  foreach v [ase::state_get $state variables] {
+    lappend vars [dict replace $v value ASEXPV${i}Q]
+    incr i
+  }
+  dict set tok variables $vars
+  ase::op_tier_arm
+  catch {ase::op_tier_report $sim $sstate $netlist_text}
+  set rc [catch {
+    set deck [$render $sstate $netlist_text]
+    set tdeck [$render $tok $netlist_text]
+  } err opts]
+  ase::op_tier_disarm
+  if {$rc} { return -options $opts $err }
+  set cell [dict get $state design cell]
+  set names [dict create \
+    deck [file tail [ase::deck_file $sstate]] \
+    raw [file tail [[ase::backend_hook $sim raw_file] $sstate]] \
+    meas [file tail [ase::meas_path $sstate]] \
+    plotmap [file tail [ase::plotmap_path $sstate]] \
+    ckpt [file tail [ase::ckpt_path $sstate]] \
+    ckpt_tmp [file tail [ase::ckpt_tmp_path $sstate]]]
+  set argv [$run_cmd $sstate [dict get $names deck] 1]
+  if {[lindex $argv end] eq {2>@1}} { set argv [lrange $argv 0 end-1] }
+  set argv [lrange $argv 0 end-1]
+  set st [ase::sim_status $sim]
+  set req {}
+  catch {set req [ase::sim_casemode_requested $sim]}
+  set map [list "$sentinel/" {}]
+  return [dict create deck [string map $map $deck] tdeck [string map $map $tdeck] \
+            predeck $predeck argv $argv exe [dict get $st exe] \
+            resolved [dict get $st resolved] casemode $req names $names \
+            notes $notes netlist_text $netlist_text]
+}
+
+# Each design variable's deck line: name -> {line <1-based or {}> text <line>}.
+# The token deck must have the same line count and differ ONLY on lines equal to
+# `.param <name>=ASEXPV<i>Q`, exactly one per variable.
+proc ase::optexport_varlines {state deck tdeck} {
+  set a [split $deck "\n"]
+  set b [split $tdeck "\n"]
+  set out [dict create]
+  set vars [ase::state_get $state variables]
+  set whole [expr {[llength $a] == [llength $b]}]
+  set hits [dict create]
+  set stray 0
+  if {$whole} {
+    set n 0
+    foreach la $a lb $b {
+      incr n
+      if {$la eq $lb} { continue }
+      if {[regexp {^\.param ([^=\s]+)=ASEXPV([0-9]+)Q$} $lb -> nm i]} {
+        dict lappend hits $i $n
+      } else {
+        incr stray
+      }
+    }
+  }
+  set i 0
+  foreach v $vars {
+    set nm [dict get $v name]
+    set ln {}
+    if {$whole && !$stray && [dict exists $hits $i] && [llength [dict get $hits $i]] == 1} {
+      set k [dict get $hits $i]
+      if {[lindex $b [expr {$k - 1}]] eq ".param $nm=ASEXPV${i}Q"} { set ln $k }
+    }
+    if {$ln ne {}} {
+      dict set out $nm [dict create line $ln text [lindex $a [expr {$ln - 1}]]]
+    } else {
+      dict set out $nm [dict create line {} text {}]
+    }
+    incr i
+  }
+  return $out
+}
+
+# The manifest's measures, in pane order: every Outputs row with an expr, then
+# every enabled Measurements row. A name used twice (case-folded: ngspice folds
+# measurement names) refuses: the optimizer gets ONE value per name.
+proc ase::optexport_measures {state} {
+  set sim [ase::state_get $state simulator ngspice]
+  set have [ase::optexport_have $state]
+  set out {}
+  set seen [dict create]
+  set dup {}
+  foreach o [ase::state_get $state outputs] {
+    if {![dict exists $o expr]} { continue }
+    set ex [dict get $o expr]
+    set key $ex
+    if {[dict exists $o name] && [dict get $o name] ne {}} { set key [dict get $o name] }
+    set lk [string tolower $key]
+    if {[dict exists $seen $lk]} { lappend dup [list [dict get $seen $lk] $key] }
+    dict set seen $lk $key
+    lassign [ase::optexport_predict $ex $have] t an
+    set rd [expr {[ase::result_source $sim $ex] eq {raw} ? {raw} : {calc}}]
+    lappend out [dict create name $key source calc reader $rd expr $ex text $t \
+                   analysis $an]
+  }
+  set off {}
+  foreach r [ase::meas_rows $state] {
+    set nm [ase::meas_name $r]
+    if {![ase::meas_enabled $r]} { lappend off $nm ; continue }
+    set lk [string tolower $nm]
+    if {[dict exists $seen $lk]} { lappend dup [list [dict get $seen $lk] $nm] }
+    dict set seen $lk $nm
+    set v [ase::meas_verdict $sim $state $r]
+    set kind [string trim [ase::state_get $r kind]]
+    lappend out [dict create name $nm source meas kind $kind \
+                   analysis [string trim [ase::state_get $r analysis]] \
+                   verdict [lindex $v 0] why [lindex $v 1] \
+                   yields [ase::meas_kind_yields $sim $kind]]
+  }
+  if {[llength $dup]} {
+    set d [lindex $dup 0]
+    return -code error "'[lindex $d 0]' and '[lindex $d 1]' are the same name\
+ (measurement names ignore case); rename one: the optimizer gets one value per\
+ name"
+  }
+  return [list $out $off]
+}
+
+# ─── THE EXPORT ───────────────────────────────────────────────────────────────
+# opts: netlist_text (empty: netlist the design), meta {session state_file
+# dirty}. Returns {dir files counts warnings}; raises one sentence.
+proc ase::optexport {state dir {opts {}}} {
+  set v [ase::optexport_dir_verdict $state $dir]
+  if {[lindex $v 0] ne {ok}} { return -code error [lindex $v 1] }
+  set dir [ase::optexport_dir_norm $dir]
+  set share {}
+  if {[info exists ::XSCHEM_SHAREDIR]} { set share $::XSCHEM_SHAREDIR }
+  set srcpy [file join $share optexport_measures.py]
+  set srctcl [file join $share optexport_measures.tcl]
+  foreach f [list $srcpy $srctcl] {
+    if {![file isfile $f]} {
+      return -code error "this installation lacks $f, which the export copies"
+    }
+  }
+  if {![dict exists $state design cell]} { return -code error "this bench names no design" }
+  lassign [ase::optexport_measures $state] measures off
+  set nl {}
+  if {[dict exists $opts netlist_text]} { set nl [dict get $opts netlist_text] }
+  set meta {}
+  if {[dict exists $opts meta]} { set meta [dict get $opts meta] }
+  set sen [ase::optexport_sentinel]
+  set rc [catch {ase::optexport_compose $state $nl $sen} c opt]
+  catch {file delete -force -- $sen}
+  if {$rc} { return -options $opt $c }
+  foreach k {deck tdeck predeck} {
+    if {[string first $sen [dict get $c $k]] >= 0} {
+      return -code error "the exported deck still names the scratch directory\
+ $sen: this is a defect of Export for Optimizer, not of the bench"
+    }
+  }
+  set deck [dict get $c deck]
+  set vl [ase::optexport_varlines $state $deck [dict get $c tdeck]]
+  set warnings {}
+  dict for {nm e} $vl {
+    if {[dict get $e line] eq {}} {
+      lappend warnings "design variable '$nm' has no line of its own in the\
+ deck, so measures.py cannot override it"
+    }
+  }
+  if {[ase::campaign_enabled $state]} {
+    lappend warnings "this bench's campaign is exported at its nominal point\
+ only"
+  }
+  if {[dict exists $meta dirty] && [dict get $meta dirty] eq {1}} {
+    lappend warnings "this session has unsaved changes; it was exported as\
+ currently shown"
+  }
+  set names [dict get $c names]
+  # Write: a previous export's deck and .spiceinit go first, then the files.
+  file mkdir $dir
+  set prev [ase::optexport_previous $dir]
+  if {$prev ne {}} { catch {file delete -- [file join $dir [dict get $prev deck]]} }
+  set psi [file join $dir .spiceinit]
+  if {[file isfile $psi]} {
+    set first {}
+    catch {set f [open $psi r] ; set first [gets $f] ; close $f}
+    if {[string trim $first] eq [string trim [ase::backend::ngspice::predeck_marker]]} {
+      file delete -- $psi
+    }
+  }
+  set files {}
+  ase::optexport_write [file join $dir [dict get $names deck]] $deck
+  lappend files [dict get $names deck]
+  if {[dict get $c predeck] ne {}} {
+    ase::optexport_write $psi [dict get $c predeck]
+    lappend files .spiceinit
+  }
+  file copy -force -- $srcpy [file join $dir measures.py]
+  file copy -force -- $srctcl [file join $dir measures.tcl]
+  lappend files measures.py measures.tcl
+  set fstate $state
+  dict set fstate rundir {}
+  ase::optexport_write [file join $dir measures_state.tcl] \
+    "[list state $fstate casemode_requested [dict get $c casemode] \
+           manifest_protocol [ase::optexport_protocol]]\n"
+  lappend files measures_state.tcl
+  set man [ase::optexport_manifest $state $c $vl $measures $off $meta $warnings]
+  ase::optexport_write [file join $dir manifest.json] "$man\n"
+  lappend files manifest.json
+  ase::optexport_write [file join $dir README.txt] \
+    [ase::optexport_readme $state $c $vl $measures]
+  lappend files README.txt
+  set nm 0 ; set nc 0 ; set nr 0
+  foreach m $measures {
+    if {[dict get $m source] eq {meas}} { incr nm } else {
+      incr nc
+      if {[dict get $m reader] eq {raw}} { incr nr }
+    }
+  }
+  return [dict create dir $dir files $files warnings $warnings \
+            counts [dict create measures [llength $measures] calc $nc raw $nr \
+                      meas $nm variables [dict size $vl]]]
+}
+
+proc ase::optexport_write {path text} {
+  set tmp $path.part[pid]
+  set f [open $tmp w]
+  fconfigure $f -encoding utf-8 -translation lf
+  puts -nonewline $f $text
+  close $f
+  file rename -force -- $tmp $path
+}
+
+proc ase::optexport_manifest {state c vl measures off meta warnings} {
+  set names [dict get $c names]
+  set d [dict get $state design]
+  set sch {}
+  catch {
+    set sch [xschem cellview_path [dict get $d lib]/[dict get $d cell] \
+               [ase::state_get $d view schematic]]
+  }
+  set ver {}
+  catch {set ver [xschem get version]}
+  set src [ase::json_obj [list \
+    session [ase::json_strn [ase::state_get $meta session]] \
+    state_file [ase::json_strn [ase::state_get $meta state_file]] \
+    dirty [ase::json_str [expr {[ase::state_get $meta dirty 0] eq {1} ? {true} : {false}}]] \
+    lib [ase::json_str [ase::state_get $d lib]] \
+    cell [ase::json_str [ase::state_get $d cell]] \
+    view [ase::json_str [ase::state_get $d view schematic]] \
+    schematic [ase::json_strn $sch] \
+    bench_rundir [ase::json_strn [ase::state_get $state rundir]] \
+    xschem_version [ase::json_strn $ver]]]
+  set argv [dict get $c argv]
+  set sim [ase::json_obj [list \
+    name [ase::json_str [ase::state_get $state simulator]] \
+    exe [ase::json_str [dict get $c exe]] \
+    resolved [ase::json_strn [dict get $c resolved]] \
+    args [ase::json_strs [lrange $argv 1 end]] \
+    deck_last [ase::json_str true] \
+    casemode_requested [ase::json_strn [dict get $c casemode]]]]
+  set art [ase::json_obj [list \
+    raw [ase::json_str [dict get $names raw]] \
+    meas [ase::json_str [dict get $names meas]] \
+    plotmap [ase::json_str [dict get $names plotmap]] \
+    checkpoint [ase::json_str [dict get $names ckpt]]]]
+  set del [list [dict get $names raw] [dict get $names meas] \
+             [dict get $names plotmap] [dict get $names ckpt] \
+             [dict get $names ckpt_tmp] .spiceinit]
+  set vars {}
+  foreach v [ase::state_get $state variables] {
+    set nm [dict get $v name]
+    set e [dict get $vl $nm]
+    lappend vars [ase::json_obj [list name [ase::json_str $nm] \
+      nominal [ase::json_str [dict get $v value]] \
+      deck_line [ase::json_strn [dict get $e line]] \
+      deck_text [ase::json_strn [dict get $e text]]]]
+  }
+  set ms {}
+  foreach m $measures {
+    if {[dict get $m source] eq {calc}} {
+      lappend ms [ase::json_obj [list name [ase::json_str [dict get $m name]] \
+        source [ase::json_str calc] reader [ase::json_str [dict get $m reader]] \
+        expr [ase::json_str [dict get $m expr]] text [ase::json_str [dict get $m text]] \
+        analysis [ase::json_strn [dict get $m analysis]] \
+        analysis_basis [ase::json_str predicted]]]
+    } else {
+      lappend ms [ase::json_obj [list name [ase::json_str [dict get $m name]] \
+        source [ase::json_str meas] kind [ase::json_str [dict get $m kind]] \
+        analysis [ase::json_strn [dict get $m analysis]] \
+        verdict [ase::json_str [dict get $m verdict]] why [ase::json_str [dict get $m why]] \
+        yields [ase::json_str [dict get $m yields]] digits [ase::json_str 6]]]
+    }
+  }
+  set camp [ase::json_obj [list \
+    enabled [ase::json_str [expr {[ase::campaign_enabled $state] ? {true} : {false}}]] \
+    exported_point [ase::json_str nominal]]]
+  set lim [ase::json_obj [list \
+    datasets [ase::json_str "Calculator rows are evaluated on dataset 0, as the Outputs pane is. measures.py reports each analysis's dataset count and warns per row when it is above 1."] \
+    meas_precision [ase::json_str "ngspice prints .meas values with 6 significant digits; that is the value ASE-L shows too."] \
+    calc_precision [ase::json_str "Calculator values carry the full double (the shortest spelling that reads back as it)."] \
+    paths [ase::json_str "Model and .include paths in the deck are absolute paths on the exporting machine."]]]
+  return [ase::json_obj [list \
+    protocol [ase::json_str [ase::optexport_protocol]] \
+    exported [ase::json_str [clock format [clock seconds] -format {%Y-%m-%dT%H:%M:%S%z}]] \
+    source $src \
+    xschem [ase::json_str [file normalize [info nameofexecutable]]] \
+    run_cwd [ase::json_str "every relative path below is relative to the directory ngspice runs in"] \
+    deck [ase::json_str [dict get $names deck]] \
+    predeck_file [ase::json_strn [expr {[dict get $c predeck] ne {} ? {.spiceinit} : {}}]] \
+    simulator $sim \
+    artifacts $art \
+    delete_before_run [ase::json_strs $del] \
+    variables [ase::json_list $vars] \
+    measures [ase::json_list $ms] \
+    disabled_measurements [ase::json_strs $off] \
+    campaign $camp \
+    limits $lim \
+    warnings [ase::json_strs $warnings]]]
+}
+
+proc ase::optexport_readme {state c vl measures} {
+  set d [dict get $state design]
+  set names [dict get $c names]
+  set calc {} ; set meas {}
+  foreach m $measures {
+    if {[dict get $m source] eq {meas}} { lappend meas [dict get $m name] } \
+    else { lappend calc [dict get $m name] }
+  }
+  set vtxt {}
+  foreach v [ase::state_get $state variables] {
+    set nm [dict get $v name]
+    set ln [dict get $vl $nm line]
+    lappend vtxt "  $nm = [dict get $v value]  ([expr {$ln eq {} ? {NOT overridable: no deck line of its own} : "deck line $ln"}])"
+  }
+  if {![llength $vtxt]} { lappend vtxt "  (none)" }
+  set ex1 {}
+  set ex2 {}
+  if {[llength [ase::state_get $state variables]]} {
+    set v0 [lindex [ase::state_get $state variables] 0]
+    set ex1 " --set [dict get $v0 name]=VALUE"
+    set ex2 "\{\"[dict get $v0 name]\": VALUE\}"
+  } else {
+    set ex2 None
+  }
+  set pre [expr {[dict get $c predeck] ne {} ? ", .spiceinit" : {}}]
+  return "ASE-L export for an optimizer -- [ase::state_get $d lib]/[ase::state_get $d cell],\
+ [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S %z}]
+
+Files: [dict get $names deck] (the deck)$pre, manifest.json,
+measures.py, measures.tcl, measures_state.tcl.
+
+Per evaluation:
+  1. python3 measures.py --prepare RUN$ex1
+     It deletes the last run's results in RUN first: ngspice APPENDS to them otherwise.
+  2. cd RUN && <the ngspice argv from: python3 measures.py --command --rundir RUN>
+     Run ngspice IN RUN: the deck writes its results next to itself.
+  3. python3 measures.py --rundir RUN --json
+     Exit 0: every measure is a number; 1: some are not; 2: the harness failed.
+
+Python:
+  import measures            # this directory on sys.path
+  deck = measures.prepare_rundir(run, $ex2)
+  subprocess.run(measures.ngspice_command(run), cwd=run, check=True)
+  vals = measures.measures(run)    # {name: float | measures.NonNumeric}
+
+Design variables (change them ONLY through --set / write_deck / prepare_rundir):
+[join $vtxt "\n"]
+
+Measures:
+  Calculator (computed by xschem [file normalize [info nameofexecutable]]): [expr {[llength $calc] ? [join $calc {, }] : {(none)}}]
+  ngspice .meas: [expr {[llength $meas] ? [join $meas {, }] : {(none)}}]
+
+Values match the ASE-L Outputs pane for the same results, because the same
+code computes them. A wave, a refusal or a missing value is never a number:
+it comes back as a measures.NonNumeric (CLI: !<status>).
+
+Limits: Calculator rows are evaluated on dataset 0 only, as the Outputs pane
+does (measures.py warns when an analysis holds more); .meas values carry
+ngspice's 6 printed digits; model and .include paths in the deck are absolute
+paths on this machine; a campaign is exported at its nominal point.
+Never delete the \"write\" lines from the deck: without them no results appear.
+"
+}
+
+# ─── THE MEASURE ENTRY POINT (measures.tcl calls this) ───────────────────────
+# The results JSON (protocol asexp-results/1) for the raw and .meas files in
+# `rundir`: outputs[] is the backend's result_answers verbatim, meas[] is
+# ase::meas_results verbatim (`off` rows dropped). Echoes are silenced.
+proc ase::optexport_measure {state rundir logtext requested} {
+  set rundir [file normalize $rundir]
+  dict set state rundir $rundir
+  set sim [ase::state_get $state simulator ngspice]
+  set recs {}
+  set meas {}
+  ase::quiet {
+    set mode fold
+    set cm ::ase::backend::${sim}::result_casemode
+    if {[info commands $cm] ne {}} { set mode [$cm $state $logtext $requested] }
+    set recs [[ase::backend_hook $sim result_answers] $state $mode]
+    set meas [ase::meas_results $sim $state]
+  }
+  set raw [[ase::backend_hook $sim raw_file] $state]
+  set mp [ase::meas_path $state]
+  set ds {}
+  foreach {an n} [ase::optexport_datasets $raw] {
+    lappend ds $an [ase::json_str $n]
+  }
+  set outs {}
+  foreach r $recs {
+    lappend outs [ase::json_obj [list key [ase::json_str [dict get $r key]] \
+      expr [ase::json_str [dict get $r expr]] text [ase::json_str [dict get $r text]] \
+      reader [ase::json_str [dict get $r reader]] \
+      analysis [ase::json_str [dict get $r analysis]] \
+      status [ase::json_str [dict get $r status]] \
+      value [ase::json_str [dict get $r value]] msg [ase::json_str [dict get $r msg]]]]
+  }
+  set ms {}
+  foreach e $meas {
+    lassign $e nm verdict val why
+    if {$verdict eq {off}} { continue }
+    lappend ms [ase::json_obj [list name [ase::json_str $nm] verdict [ase::json_str $verdict] \
+      value [ase::json_str $val] why [ase::json_str $why]]]
+  }
+  set home {}
+  catch {set home $::env(HOME)}
+  return [ase::json_obj [list \
+    protocol [ase::json_str [ase::optexport_results_protocol]] \
+    xschem [ase::json_str [file normalize [info nameofexecutable]]] \
+    rundir [ase::json_str $rundir] \
+    raw_file [ase::json_str $raw] raw_exists [ase::json_str [expr {[file isfile $raw] ? {true} : {false}}]] \
+    meas_file [ase::json_str $mp] meas_exists [ase::json_str [expr {[file isfile $mp] ? {true} : {false}}]] \
+    env [ase::json_obj [list display [ase::json_str [expr {[info exists ::env(DISPLAY)] ? {true} : {false}}]] \
+                             home [ase::json_str $home]]] \
+    datasets [ase::json_obj $ds] \
+    outputs [ase::json_list $outs] \
+    meas [ase::json_list $ms] \
+    complete [ase::json_str true]]]
+}
+
+# The results file measures.tcl writes when optexport_measure raised: still a
+# complete file, carrying the error.
+proc ase::optexport_failure_json {err {info {}}} {
+  return [ase::json_obj [list \
+    protocol [ase::json_str [ase::optexport_results_protocol]] \
+    error [ase::json_str $err] errorinfo [ase::json_str $info] \
+    complete [ase::json_str true]]]
+}
+
+# analysis -> dataset count, for every analysis the raw holds. Each read goes
+# into a slot of its own that is cleared by index and the current one put
+# back, the same discipline as calc::et_run.
+proc ase::optexport_datasets {raw} {
+  set out {}
+  if {$raw eq {} || ![file isfile $raw]} { return $out }
+  if {[info commands ::calc::raw_analyses] eq {}} { return $out }
+  foreach an [calc::raw_analyses $raw] {
+    set al [calc::et_alias $raw]
+    if {![llength $al]} { continue }
+    set n0 [calc::aq_nslots]
+    set cur [calc::wave_dest_cur]
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    set bound [expr {[string is integer -strict $lv] && $lv >= 0}]
+    set nds {}
+    if {![catch {xschem raw read [lindex $al 0] $an} rd] && $rd eq {1}} {
+      catch {set nds [xschem raw datasets]}
+    }
+    set n1 [calc::aq_nslots]
+    for {set k [expr {$n1 - 1}]} {$k >= $n0} {incr k -1} { catch {xschem raw clear $k} }
+    if {$cur ne {}} { calc::aq_restore [lindex $cur 0] [lindex $cur 1] $bound }
+    if {[lindex $al 1] ne {}} { catch {file delete -force [lindex $al 1]} }
+    lappend out $an $nds
+  }
+  return $out
+}
 proc ase::campaign_export_formats {} { return {tsv csv} }
 
 # ─── RE-RUNNING ONE POINT (§11b: "re-runnable point by point") ──────────────

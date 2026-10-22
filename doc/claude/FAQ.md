@@ -17,8 +17,10 @@ Newest entries on top.
 ## Q92. Where are waveform measurements computed, and how does an optimizer that edits the netlist itself get them?
 
 - **Asked:** 2026-10-22
-- **Project state:** branch `fluid-editing` at `cf166befb`. Nothing below is built
-  yet; this records the design discussion. Blog version:
+- **Project state:** branch `fluid-editing` at `cf166befb`. This records the design
+  discussion. **Built since** as ASE-L `Tools > Export for Optimizer…`
+  (`ase::optexport` in `src/ase.tcl`, `src/optexport_measures.py`,
+  `src/optexport_measures.tcl`; suite `tests/headless/test_ase_optexport.tcl`). Blog version:
   `doc/claude/blog/where-waveform-measurements-happen-xschem-ase-l.html`.
 
 **There are two kinds of measurement, computed in two places.**

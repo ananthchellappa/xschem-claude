@@ -134,6 +134,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_calc_analysis_tokens" \
                  "headless/test_calc_eval_text" \
                  "headless/test_ase_outputs_eval" \
+                 "headless/test_ase_optexport" \
                  "headless/test_ase_outputs_tabs" \
                  "headless/test_ase_op_measures" \
                  "headless/test_ase_plot_outputs" \
