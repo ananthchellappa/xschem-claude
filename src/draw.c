@@ -5863,10 +5863,29 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->dsdy = (gr->ddy + xctx->yorigin) * xctx->mooz;
 }
 
+/* The two offsets a cursor X tag is placed by: how far its text's bottom sits
+ * above the line it is anchored to, and how far its near edge stands off the
+ * cursor line. HEAD wrote both in SCHEMATIC units (1 and 3), and a native
+ * graph keeps them. A fixed-text strip is laid out in pixels, and there a unit
+ * is 1/mooz pixels -- in the waveform viewer, whatever zoom the canvas
+ * inherited when it was created (it follows the window it was opened from,
+ * whose size the geometry file restores) and never reset. So one pixel layout
+ * put the tags a different sub-pixel distance from the line run to run, and
+ * graph_cursor_tag_y's in-box / HEAD's-place choice, where the clearance to the
+ * legend row is a fraction of a pixel, followed the HOME the run had rather
+ * than the layout (row SWL17z of test_wave_subwindows). In pixels on that arm,
+ * the choice depends on the pixel layout alone. */
+#define GRAPH_TAG_GAP_PX 3.0
+#define GRAPH_TAG_XOFF_PX 10.0
+static double graph_tag_gap(const Graph_ctx *gr)
+{
+  return graph_fixed_text(gr) ? GRAPH_TAG_GAP_PX * xctx->zoom : 1.0;
+}
+
 /* item 22: where the cursor X tag `str` (drawn rot 2, `flip`, `hc`, at x, size
  * ts; its text's bottom anchored at the answer) goes. In the tag row under the
- * X numbers (ry2 - 1) as always. On a fixed-text strip too short for that row
- * beside the X numbers (setup_graph_data's fx_tags_inside): on the plot box's
+ * X numbers (ry2 - graph_tag_gap) as always. On a fixed-text strip too short
+ * for that row beside the X numbers (setup_graph_data's fx_tags_inside): on the plot box's
  * bottom edge, never below the top of the X-number row the grid drew
  * (fx_xnum_top: the numbers may have ridden up into the box) -- if the tag box
  * stays inside the strip and meets no legend name or read-out the draw put
@@ -5882,16 +5901,16 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
 static int graph_cursor_tag_y(Graph_ctx *gr, const char *str, short flip, int hc, double x, double ts,
                               double *ty)
 {
-  double y, th, tx1, ty1, tx2, ty2, dt;
+  double y, th, tx1, ty1, tx2, ty2, dt, gap = graph_tag_gap(gr);
   int tt;
-  if(!gr->fx_tags_inside) { *ty = gr->ry2 - 1; return 1; }
+  if(!gr->fx_tags_inside) { *ty = gr->ry2 - gap; return 1; }
   y = gr->y2;
   if(gr->fx_xnum_top < y) y = gr->fx_xnum_top;
-  y -= 1;
+  y -= gap;
   text_bbox(str, ts, ts, 2, flip, hc, 0, x, y, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
   th = ty2 - ty1;
   if(ty1 >= gr->ry1 && !graph_keep_hit(-1, tx1, ty1, tx2, ty2)) { *ty = y; return 1; }
-  y = gr->ry2 - 1;
+  y = gr->ry2 - gap;
   if(y - th < gr->ry1) y = gr->ry1 + th;
   if(y > gr->ry2) y = (gr->ry1 + gr->ry2 + th) * 0.5;
   text_bbox(str, ts, ts, 2, flip, hc, 0, x, y, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
@@ -5908,16 +5927,16 @@ static int graph_cursor_tag_y(Graph_ctx *gr, const char *str, short flip, int hc
  * background box). *x is the tag's centre, in and out. */
 static void graph_diff_tag_place(Graph_ctx *gr, const char *str, double ts, double *x, double *ty)
 {
-  double y[2], w, step, d, xc, tx1, ty1, tx2, ty2, dt, x0 = *x;
+  double y[2], w, step, d, xc, tx1, ty1, tx2, ty2, dt, x0 = *x, gap = graph_tag_gap(gr);
   int r, sgn, tt, ny = 0;
   if(graph_cursor_tag_y(gr, str, 0, 1, x0, ts, ty)) return;
-  text_bbox(str, ts, ts, 2, 0, 1, 0, x0, gr->ry2 - 1, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
+  text_bbox(str, ts, ts, 2, 0, 1, 0, x0, gr->ry2 - gap, &tx1, &ty1, &tx2, &ty2, &tt, &dt);
   w = tx2 - tx1;
   /* the two rows graph_cursor_tag_y tried, in its order */
-  y[0] = (gr->fx_xnum_top < gr->y2 ? gr->fx_xnum_top : gr->y2) - 1;
+  y[0] = (gr->fx_xnum_top < gr->y2 ? gr->fx_xnum_top : gr->y2) - gap;
   text_bbox(str, ts, ts, 2, 0, 1, 0, x0, y[0], &tx1, &ty1, &tx2, &ty2, &tt, &dt);
   if(ty1 >= gr->ry1) ny = 1;
-  y[ny] = gr->ry2 - 1;
+  y[ny] = gr->ry2 - gap;
   if(y[ny] - (ty2 - ty1) < gr->ry1) y[ny] = gr->ry1 + (ty2 - ty1);
   if(y[ny] > gr->ry2) y[ny] = (gr->ry1 + gr->ry2 + (ty2 - ty1)) * 0.5;
   ny++;
@@ -5942,7 +5961,7 @@ static void draw_cursor(double active_cursorx, double other_cursorx, int cursor_
   char tmpstr[100];
   double txtsize = gr->txtsizex;
   short flip = (other_cursorx > active_cursorx) ? 0 : 1;
-  int xoffs = flip ? 3 : -3;
+  double xoffs = (flip ? 1.0 : -1.0) * (graph_fixed_text(gr) ? GRAPH_TAG_XOFF_PX * xctx->zoom : 3.0);
   double ty;
 
   if(gr->logx) pos = mylog10(pos);

@@ -4039,6 +4039,70 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   lassign [swl_tags] tb tn tti
   check "SWL17 12 pt, cursors A+B on, ten strips: the tag row does not fit beside the X numbers, so the three tags go INSIDE each plot box along its bottom edge, none on an X or Y number beyond one descent" \
     [list $tn $tti $tb] [list [lrepeat 10 3] [lrepeat 10 1] {}]
+  # SWL17z: the SAME pixel layout at another canvas zoom draws every tag in the
+  # same pixels. The viewer canvas keeps whatever zoom it inherited when it was
+  # created (it follows the window it was opened from, whose size the geometry
+  # file in HOME restores) and wviewer::regenerate re-places the rects in that
+  # zoom's units, so the pixel layout never depends on it -- but the tags were
+  # offset by fixed SCHEMATIC units, so their pixels did, and on this layout the
+  # A-B tag's in-box place clears strip 1's legend row by a fraction of a pixel:
+  # a T1 run whose shared HOME carried another window's geometry drew it over
+  # the X numbers (SWL17 red) while every fresh-HOME run passed. Here the zoom
+  # is moved by hand both ways (zoom_box, exact, origin kept) and restored.
+  # Fixtures: the zoom really moved by the factor asked (px per unit, from the
+  # plot box's width in graph_text_metrics' units against graph_drawn's px), and
+  # it is back exactly afterwards.
+  proc swl_pxu {} {
+    set bu [pcall {expr {[swl_get [swl_m 0] box_x2] - [swl_get [swl_m 0] box_x1]}}]
+    set b [swl_get [swl_d 0] box]
+    if {![string is double -strict $bu] || $bu <= 0 || [llength $b] != 4} { return "NOPXU:$bu:$b" }
+    return [expr {([lindex $b 2] - [lindex $b 0]) / $bu}]
+  }
+  proc swl_zoom_to {z} {
+    xschem new_schematic switch $::vdrw
+    set xo [xschem get xorigin] ; set yo [xschem get yorigin]
+    pcall [list xschem zoom_box [expr {-$xo}] [expr {-$yo}] [expr {-$xo + 1000.0}] [expr {-$yo}]]
+    set a [expr {1000.0 / [xschem get zoom]}]
+    pcall [list xschem zoom_box [expr {-$xo}] [expr {-$yo}] [expr {-$xo + $z * $a}] [expr {-$yo}]]
+    pcall {wviewer::regenerate $::tok}
+    swl_redraw
+  }
+  proc swl_tagboxes {} {
+    lmap gi [lsearch -all [lay] *] {swl_get [swl_d $gi] cursor}
+  }
+  # the largest coordinate difference between two tag-box sets, or why not comparable
+  proc swl_boxdiff {a b} {
+    if {[llength $a] != [llength $b]} { return "SHAPE:[llength $a]/[llength $b]" }
+    set m 0.0
+    foreach sa $a sb $b {
+      if {[llength $sa] != [llength $sb]} { return "SHAPE:{$sa}/{$sb}" }
+      foreach ba $sa bb $sb {
+        if {[llength $ba] != 4 || [llength $bb] != 4} { return "SHAPE:{$ba}/{$bb}" }
+        foreach u $ba v $bb { set m [expr {max($m, abs($u - $v))}] }
+      }
+    }
+    return $m
+  }
+  xschem new_schematic switch $vdrw
+  set swl_z0 [xschem get zoom]
+  set swl_u0 [swl_pxu]
+  set swl_t0 [swl_tagboxes]
+  foreach k {1.1 0.8} {
+    swl_zoom_to [expr {$swl_z0 / $k}]
+    set uk [swl_pxu]
+    lassign [swl_tags] tb tn tti
+    set dk [swl_boxdiff $swl_t0 [swl_tagboxes]]
+    check "SWL17z ten strips, 12 pt, cursors A+B, canvas zoom moved so a schematic unit is ${k}x the pixels: every cursor tag drawn in the same pixels as at the inherited zoom, and SWL17's verdict unchanged (fixture: the zoom moved by exactly that factor)" \
+      [list [expr {[string is double -strict $uk] && [string is double -strict $swl_u0] && abs($uk / $swl_u0 - $k) < 1e-6}] \
+            [expr {[string is double -strict $dk] && $dk < 0.01 ? 1 : $dk}] $tn $tti $tb] \
+      [list 1 1 [lrepeat 10 3] [lrepeat 10 1] {}]
+  }
+  swl_zoom_to $swl_z0
+  set uk [swl_pxu]
+  check "SWL17z fixture: the inherited zoom is restored exactly and the tags are back where they were" \
+    [list [expr {[string is double -strict $uk] && abs($uk / $swl_u0 - 1.0) < 1e-9}] \
+          [set d [swl_boxdiff $swl_t0 [swl_tagboxes]]; expr {[string is double -strict $d] && $d < 0.01 ? 1 : $d}]] \
+    [list 1 1]
   # SWL23 (R1): ten strips, A+B, sizes where the plot box is shorter than a tag
   # and the tags are inside: before, the A-B tag centred under strip 1's
   # second name ran up out of the box and its background hid 'START' and its
@@ -4544,7 +4608,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 250 } else { set expect 541 }
+if {$::arm eq {nogui}} { set expect 250 } else { set expect 544 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail
