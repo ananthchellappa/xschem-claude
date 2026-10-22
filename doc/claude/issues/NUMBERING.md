@@ -4790,7 +4790,14 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   advertises 1704 and 1705 as free there; run both checks before minting, and treat a
   1704/1705 arriving from that clone as a collision, not as these issues.
 
-**The next free number is 1706.**
+~~**The next free number is 1706.**~~
+
+- **1706** — xschem processes started in the same second share temp-dir names
+  (`random_string()` seeds with the wall-clock second; `sizeof` of a pointer limits the
+  alphabet to 7 characters), and when `create_tmpdir()` gives up, `init_undo()` still marks
+  undo initialised with a NULL `undo_dirname`, so `delete_undo()` SIGSEGVs. Filed, not fixed.
+
+**The next free number is 1707.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
