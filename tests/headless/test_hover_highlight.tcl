@@ -116,14 +116,25 @@ motion_to 200 100
 check "HV7 hover works while another object is selected" \
   [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
 
-# --- HV8 — no hover outline on an object that is ALREADY selected ------------
-# The hover (dashed yellow) and the selection highlight would fight on the same
-# object, so hovering the selected object itself reports nothing.
+# --- HV8 — hovering an object that is ALREADY selected still shows the cue ---
+# The hover outline is the editor answering the pointer; it must not go silent
+# because the object under it happens to be selected (Cadence draws it too). The
+# selection outline shows through the dash gaps, so the two overlays coexist.
 xschem unselect_all
 xschem select wire 0
 motion_to 200 100
-check "HV8 no hover on an already-selected object" \
-  [expr {[hov_type] eq ""}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+check "HV8a hover reports an already-selected wire" \
+  [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+xschem unselect_all
+xschem select instance R1
+motion_to $cx $cy
+check "HV8b hover reports an already-selected instance" \
+  [expr {[hov_type] eq "instance"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+# moving off the selected object erases the cue and leaves the selection alone
+motion_to 5000 5000
+check "HV8c moving off clears the hover and keeps the selection" \
+  [expr {[hov_type] eq "" && [llength [xschem selected_set]] == 1}] \
+  "(=> hov=[hov_type] selected=[xschem selected_set])"
 xschem unselect_all
 
 # --- HV9 — a motion re-establishes hover after the pointer-inside flag was
@@ -157,6 +168,6 @@ motion_to 200 100
 check "HV10b hover works during interactive net-unhighlight (key 8)" \
   [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
 
-if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
+if {$fail == 0} { puts "OVERALL: ok"; puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
