@@ -2764,6 +2764,132 @@ proc rdw::open {} {
 # click on the window's X is the worse failure.  Every block is self-labelling
 # (its own header, its own incompleteness line), so a stale one cannot be
 # mistaken for a fresh one.  Rule debt 1245_B3_dumps_survive_close.
+# ---------------------------------------------------------------------------
+# THE HELP BUTTON: WHICH KEYS SHOW OP INFO.  The KEYS are read from the live
+# bindings -- the design canvas's (`.drw`, bound by cadence_style_rc) and this
+# window's own -- and only the SENTENCES are written here, keyed by the command
+# a binding runs.  So a key remapped in the profile shows as remapped, and a
+# session without the profile says the canvas keys are unbound instead of
+# listing keys that do nothing.  Rows HL1-HL6 of tests/headless/test_rdw_help.tcl.
+proc rdw::_help_actions {} {
+    return {
+        {rdw::key annotation\M}           {Device's annotation parameters into this window}
+        {rdw::key summary\M}              {Device's summary parameters into this window}
+        {rdw::key all\M}                  {All of the device's parameters into this window}
+        {rdw::key refresh\M}              {Keep only the latest dump}
+        {cadence::annot_mode op\M}        {Show OP info on the schematic}
+        {cadence::annot_mode opvolt\M}    {Show OP node voltages on the schematic}
+        {cadence::annot_mode none\M}      {Hide OP annotation on the schematic}
+        {cadence::annot_declutter\M}      {Declutter toggle: devices show name and OP values only}
+        {cadence::annot_tran\M}           {TRAN node voltages at the waveform cursor}
+        {rdw::pick_end\M}                 {End a device pick}
+        {rdw::copy\M}                     {Copy the selected text}
+    }
+}
+
+# `<Control-Alt-Key-6>` -> `Ctrl+Alt+6`, modifiers always in Ctrl, Alt, Shift
+# order and a letter in capitals.  A shifted keysym keeps its own name
+# (`asciicircum` -> `^`), because which key produces it depends on the layout.
+proc rdw::_help_key {ev} {
+    set mods {} ; set key {}
+    foreach t [split [string trim $ev <>] -] {
+        switch -- $t {
+            Key - KeyPress {}
+            Control     { lappend mods Ctrl }
+            Alt - Shift { lappend mods $t }
+            Escape      { set key Esc }
+            asciicircum { set key ^ }
+            default     { set key [expr {[string length $t] == 1 ? [string toupper $t] : $t}] }
+        }
+    }
+    set out {}
+    foreach m {Ctrl Alt Shift} { if {$m in $mods} { lappend out $m } }
+    lappend out $key
+    return [join $out +]
+}
+
+# {event script ...} -> one {keys sentence} row per action that some event
+# runs, in table order; keys joined with ", ".  A digit bound through
+# `rdw::_digit <kind>` (this window's map) counts as `rdw::key <kind>`.
+proc rdw::_help_rows {pairs} {
+    set rows {}
+    foreach {pat text} [rdw::_help_actions] {
+        set keys {}
+        foreach {ev scr} $pairs {
+            if {[string match {<<*>>} $ev]} continue
+            regsub -all {rdw::_digit (\w+)} $scr {rdw::key \1} scr
+            if {[regexp -- $pat $scr]} {
+                set k [rdw::_help_key $ev]
+                if {[lsearch -exact $keys $k] < 0} { lappend keys $k }
+            }
+        }
+        if {[llength $keys]} { lappend rows [list [join $keys {, }] $text] }
+    }
+    return $rows
+}
+
+# The live {event script ...} pairs of widget $w, empty without Tk or $w.
+proc rdw::_help_bindings {w} {
+    set pairs {}
+    if {![llength [info commands bind]] || [catch {winfo exists $w} e] || !$e} { return {} }
+    foreach ev [bind $w] { lappend pairs $ev [bind $w $ev] }
+    return $pairs
+}
+
+# The help as plain text: two sections, canvas keys then this window's keys.
+proc rdw::help_text {{canvas {}} {win {}}} {
+    if {$canvas eq {}} { set canvas [rdw::_help_bindings .drw] }
+    if {$win eq {}}    { set win    [rdw::_help_bindings .rdw] }
+    set out "OP INFO KEYS\n\nOn the schematic:\n"
+    set rows [rdw::_help_rows $canvas]
+    if {![llength $rows]} {
+        append out "  (none bound - the Cadence-style profile binds them)\n"
+    }
+    set w 0
+    foreach r [concat $rows [rdw::_help_rows $win]] {
+        if {[string length [lindex $r 0]] > $w} { set w [string length [lindex $r 0]] }
+    }
+    foreach r $rows { append out [format "  %-*s  %s\n" $w {*}$r] }
+    append out "\nIn this window:\n"
+    foreach r [rdw::_help_rows $win] { append out [format "  %-*s  %s\n" $w {*}$r] }
+    append out "\n1, 2 or 3 with one device selected dumps that device.\n"
+    append out "With nothing selected they start a pick: click devices, Esc to end.\n"
+    return $out
+}
+
+# The Help button: a separate small window (not a child of .rdw, so this
+# window's digit and Escape bindings do not ride into it), rebuilt and raised on
+# every press.  It takes no keyboard: focus goes back to the canvas, the
+# window's own rule (issue 1308).
+proc rdw::help {} {
+    set txt [rdw::help_text]
+    if {![rdw::have_tk]} { return $txt }
+    set w .rdwhelp
+    if {![winfo exists $w]} {
+        toplevel $w -background [rdw::color panel]
+        wm title $w {Results Display Window - Help}
+        text $w.t -font [rdw::_font pane] -wrap none -borderwidth 1 -relief sunken \
+            -background [rdw::color field] -foreground [rdw::color fieldfg] \
+            -takefocus 0 -padx 6 -pady 4
+        ::button $w.close -text {Close} -width 8 -takefocus 0 -command [list destroy $w]
+        pack $w.close -side bottom -anchor e -padx 4 -pady 4
+        pack $w.t -side top -fill both -expand true
+        wm protocol $w WM_DELETE_WINDOW [list destroy $w]
+        bind $w <Key-Escape> [list destroy $w]
+    }
+    $w.t configure -state normal -font [rdw::_font pane]
+    $w.t delete 1.0 end
+    $w.t insert end $txt
+    set lines [llength [split [string trimright $txt \n] \n]]
+    set cols 0
+    foreach l [split $txt \n] { if {[string length $l] > $cols} { set cols [string length $l] } }
+    $w.t configure -state disabled -height $lines -width [expr {$cols + 1}]
+    wm deiconify $w
+    raise $w
+    rdw::_focus_canvas
+    return $txt
+}
+
 proc rdw::close {} {
     if {![rdw::have_tk]} { return {} }
     # Item R3: the remembered selection is a pair of indices into a buffer that
@@ -3254,6 +3380,10 @@ proc rdw::build {} {
     ## Unratified -- rule debt 1368.
     catch {::balloon .rdw.b.fontsize [rdw::_font_tip] 1 0 300}
     pack .rdw.b.fontsize -side bottom -fill x -padx 4 -pady {8 2}
+    # Help sits above `aA`: another control that is not a list action, so it is
+    # not in `rdw::_buttons` either (see `aA` above for why that matters).
+    ::button .rdw.b.help -text {Help} -width 8 -command rdw::help
+    pack .rdw.b.help -side bottom -fill x -padx 4 -pady {8 2}
     pack .rdw.b -side right -fill y
 
     # The pane.  Read-only, selectable, exporting the X selection.

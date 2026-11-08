@@ -150,6 +150,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_trace_menu" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
+                 "headless/test_rdw_help" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
 ## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
@@ -940,6 +941,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
                  "headless/test_hover_highlight" \
+                 "headless/test_rdw_help" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_hover_highlight` IS IN THIS LIST ALONE: it drives `.drw` (focus, Enter,
 ## motion) and has no counted-arm subject. Registered once HV10b (hover in key-8 pick mode)
