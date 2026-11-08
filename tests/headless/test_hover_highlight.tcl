@@ -13,6 +13,8 @@
 #
 # Run under X with --pipe:
 #   ./src/xschem --pipe -q --script tests/headless/test_hover_highlight.tcl
+# scratch.tcl arms the in-suite watchdog (a vwait/update hang exits 124, named)
+source [file join [file dirname [info script]] scratch.tcl]
 update idletasks
 focus -force .drw
 update idletasks

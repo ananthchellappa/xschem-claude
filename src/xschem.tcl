@@ -17150,7 +17150,11 @@ proc pack_widgets { { topwin {} } } {
     pack $topwin.statusbar.11 -side left
     pack $topwin.statusbar.9 -side left
     pack $topwin.statusbar.8 -side left
-    pack $topwin.statusbar.1 -side left -fill x
+    # .statusbar.1 (coordinate readout, statusmsg) requests ~no width and EXPANDS into what is
+    # left, so its text can never raise the bar's reqwidth past the window's: a mode prompt
+    # plus a longer readout used to grow an unsized toplevel by 12 px on every motion, and the
+    # resulting <Configure> overwrote mousex/mousey (issue 1659's mechanism), killing hover.
+    pack $topwin.statusbar.1 -side left -fill x -expand true
     pack $topwin.statusbar -side bottom -fill x
     pack $topwin.statusbar.12 -side left
     pack $topwin.drw -side right -fill both -expand true
@@ -19097,7 +19101,7 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
   }
 
   frame $topwin.statusbar   -takefocus 0
-  label $topwin.statusbar.1 -text "STATUS BAR 1"
+  label $topwin.statusbar.1 -text "STATUS BAR 1" -width 1 -anchor w
   label $topwin.statusbar.2 -text "SNAP:"
   entry $topwin.statusbar.3 -width 7 -foreground black -takefocus 0
   balloon  $topwin.statusbar.2 "Mouse coordinates are snapped\nat multiples of this number"

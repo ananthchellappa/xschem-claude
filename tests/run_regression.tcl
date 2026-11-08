@@ -939,7 +939,11 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_wave_trace_menu" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
+                 "headless/test_hover_highlight" \
                   "headless/test_wave_subwindows"]
+## `headless/test_hover_highlight` IS IN THIS LIST ALONE: it drives `.drw` (focus, Enter,
+## motion) and has no counted-arm subject. Registered once HV10b (hover in key-8 pick mode)
+## went green, i.e. once the status-bar readout stopped growing the window (issue 1659).
 ## `headless/test_wave_subwindows` IS ALSO IN `hcases` -- see the paragraph there.
 ## `headless/test_viewjob_silence` IS IN THIS LIST ALONE, AND THE ARM WAS CHOSEN BY
 ## MEASUREMENT RATHER THAN BY THE SHAPE OF THE SUITE. Both captures were taken exactly
