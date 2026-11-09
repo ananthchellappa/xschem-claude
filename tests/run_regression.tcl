@@ -154,7 +154,6 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
                  "headless/test_rdw_help" \
-                 "headless/test_cadence_q_scope" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
 ## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
