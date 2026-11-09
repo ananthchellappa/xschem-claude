@@ -4824,10 +4824,12 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   set gdash [wviewer::grid_dash_off]
   set gshow [expr {$grid ? {} : "grid=0\n"}]
   # AC axes (wviewer::axis_apply): a log X gets the decade minor lines 2..9
-  # (subdivx 8, the Graph dialog's own choice for Log X), and the model's
+  # (subdivx 8, the Graph dialog's own choice for Log X; a log Y likewise gets
+  # subdivy 8, set from the axis menu or the Axes dialog), and the model's
   # `yunit` is written as the rect token draw.c appends to each Y number.
   # Both only when set, so every linear strip's rect text is byte-identical.
   set sdx [expr {$logx eq {1} ? 8 : 1}]
+  set sdy [expr {$logy eq {1} ? 8 : 1}]
   set yu [wviewer::dget $G yunit {}]
   set yut [expr {[regexp {^[A-Za-z]{1,8}$} $yu] ? "yunit=$yu\n" : {}}]
   # viewer plan item 3: grid on/off is a WINDOW property, not a strip property,
@@ -4840,7 +4842,7 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # window's rects byte-identical to pre-item-3 (the hilight_wave/markers
   # "absent means absent" rule; unlike legendbold, whose 0 must be written
   # because its default is the non-shipped value).
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=$sdx\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${yut}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=$sdy\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=$sdx\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${yut}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
 }
 
 # SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §3/§5/§7): the two
@@ -20246,6 +20248,146 @@ proc wviewer::strip_menu_unpost {token} {
   return [wviewer::ctx_menu_drop $token wvstripmenu]
 }
 
+# --- RMB context menu on an AXIS MARGIN -> Linear / Log ----------------------
+# The user (2026-11-09): "We need a context menu on both axes (right click)
+# that lets user easily switch between linear and logarithmic scale for the
+# axes." A no-travel RMB click in a strip's bottom (X number) margin posts
+# {Linear X, Log X}; in its left (Y number) margin {Linear Y, Log Y}. The
+# wording is the Axes dialog's own (`Log X` / `Log Y` checkbuttons). Same
+# gesture plumbing as the trace and strip menus (btn3_filter's release gate).
+#
+# The region is the ENGINE's answer (`xschem get graph_axis_at`, draw.c
+# graph_axis_at), the one the Ctrl+wheel axis zoom and the LMB axis drag use, so
+# the three margin gestures cannot disagree about where an axis is. That query
+# refuses the plot box and every legend pixel, so this menu is disjoint from the
+# strip menu (plot box only) and from the trace menu's legend half by
+# construction; the body keeps exactly the menus it had.
+#
+# Before this, a no-travel RMB click in either margin did nothing: the press
+# latched GRAPHPAN in C and the release, having not moved, cleared it
+# (callback.c, the Button3 release arms), and neither menu gate accepted a
+# pixel outside the plot box and off the legend. An RMB DRAG there still zooms
+# exactly as before, because the menu posts only on a release at the press
+# pixel (b3_click_tol).
+
+# Which axis margin of strip `gi` canvas pixel (px,py) is in: x, y or {}.
+# Fails closed to {} like every other picking query here.
+proc wviewer::axis_at {wp gi px py} {
+  if {[catch {xschem new_schematic switch $wp}]} { return {} }
+  set r {}
+  catch {set r [xschem get graph_axis_at $gi $px $py]}
+  if {$r ne {x} && $r ne {y}} { return {} }
+  return $r
+}
+
+# The GATE: {gi axis} for an RMB click at canvas pixel (px,py), or {-1 {}}.
+proc wviewer::axis_menu_pick {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {-1 {}} }
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return {-1 {}} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi >= [llength $gs]} { return {-1 {}} }
+  set ax [wviewer::axis_at $W $gi $px $py]
+  if {$ax eq {}} { return {-1 {}} }
+  return [list $gi $ax]
+}
+
+# PURE. The strips one axis-scale flip of strip `gi` acts on: Y is per strip;
+# X is the strip alone unless the layout shares X (`sharedx`), when it is every
+# strip of gi's subwindow -- the strips regenerate gives one X range, which must
+# be in one unit (a log range is stored in log10 units). {} for a bad index.
+proc wviewer::axis_scale_targets {lay gi axis} {
+  set gs [wviewer::dget $lay graphs {}]
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
+    return {}
+  }
+  if {$axis ne {x} || ![wviewer::dget $lay sharedx 0]} { return [list $gi] }
+  lassign [wviewer::sw_range $gs $gi] f l
+  set out {}
+  for {set i $f} {$i <= $l} {incr i} { lappend out $i }
+  return $out
+}
+
+# PURE. The graph list of layout `lay` after setting `axis` (x|y) of strip `gi`
+# to log (`log` 1) or linear (0). A strip whose scale changes gets that axis's
+# range blanked to auto, because a log range is stored in log10 units and a kept
+# one would be read in the wrong unit. A strip already at that scale is left
+# byte-identical. Refusals return the list unchanged: a bad index or axis, and
+# Log Y on a digital strip (its Y is a band position, not a value).
+proc wviewer::axis_scale_graphs {lay gi axis log} {
+  set gs [wviewer::dget $lay graphs {}]
+  if {$axis ni {x y}} { return $gs }
+  set log [expr {$log ? 1 : 0}]
+  set k [expr {$axis eq {x} ? {logx} : {logy}}]
+  set lo [expr {$axis eq {x} ? {x1} : {y1}}]
+  set hi [expr {$axis eq {x} ? {x2} : {y2}}]
+  foreach i [wviewer::axis_scale_targets $lay $gi $axis] {
+    set G [lindex $gs $i]
+    if {$axis eq {y} && $log && [wviewer::dget $G digital 0]} { continue }
+    if {[wviewer::dget $G $k 0] == $log} { continue }
+    set gs [lreplace $gs $i $i [dict replace $G $k $log $lo {} $hi {}]]
+  }
+  return $gs
+}
+
+# THE ACT: set the scale and regenerate (the Axes dialog's own write path,
+# wviewer::axes_ok). Returns 1 when anything changed, 0 for a no-op/refusal.
+proc wviewer::set_axis_scale {token gi axis log} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set lay [wviewer::layout_for $token]
+  set gs [dict get $lay graphs]
+  if {[wviewer::axis_scale_graphs $lay $gi $axis $log] eq $gs} { return 0 }
+  # issue 0194, as in axes_ok: every other strip's selection survives
+  wviewer::capture_live_view_state $token
+  set lay [wviewer::layout_for $token]
+  wviewer::set_graphs $token [wviewer::axis_scale_graphs $lay $gi $axis $log]
+  wviewer::regenerate $token
+  return 1
+}
+
+# Build (do not post) the axis menu for strip `gi`, `axis` x|y. Two radiobuttons
+# reflecting the strip's current scale. Log Y is greyed out on a digital strip.
+proc wviewer::axis_menu_build {token gi axis} {
+  variable windows
+  variable axl
+  if {![dict exists $windows $token]} { return {} }
+  if {$axis ni {x y}} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
+    return {}
+  }
+  set G [lindex $gs $gi]
+  set m [wviewer::ctx_menu_widget $token wvaxismenu]
+  if {$m eq {}} { return {} }
+  set A [string toupper $axis]
+  set v ::wviewer::axl($token,m$axis)
+  set $v [wviewer::dget $G log$axis 0]
+  set lst normal
+  if {$axis eq {y} && [wviewer::dget $G digital 0]} { set lst disabled }
+  $m add radiobutton -label "Linear $A" -variable $v -value 0 \
+    -command [list wviewer::set_axis_scale $token $gi $axis 0]
+  $m add radiobutton -label "Log $A" -variable $v -value 1 -state $lst \
+    -command [list wviewer::set_axis_scale $token $gi $axis 1]
+  return $m
+}
+
+# Post the axis menu for an RMB click. Same contract and test seam as
+# trace_menu_post: 1 when posted, 0 when the gate refused.
+proc wviewer::axis_menu_post {W px py {rx -1} {ry -1}} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  lassign [wviewer::axis_menu_pick $W $px $py] gi ax
+  if {$gi < 0} { return 0 }
+  return [wviewer::ctx_menu_popup $W \
+            [wviewer::axis_menu_build $token $gi $ax] $px $py $rx $ry]
+}
+
+proc wviewer::axis_menu_unpost {token} {
+  return [wviewer::ctx_menu_drop $token wvaxismenu]
+}
+
 # The ONE context-menu entry point of the RMB click. Returns 1 when either menu
 # posted.
 #
@@ -20264,6 +20406,11 @@ proc wviewer::strip_menu_unpost {token} {
 # rung that widened the strip gate would otherwise silently start swallowing
 # trace clicks.
 proc wviewer::ctx_menu_post {W px py {rx -1} {ry -1}} {
+  # the axis margins first: graph_axis_at refuses the plot box and the legend,
+  # so this cannot take a pixel either menu below would; asked first so a trace
+  # stroke within trace_at's tolerance of the plot edge cannot claim a click on
+  # the axis numbers
+  if {[wviewer::axis_menu_post $W $px $py $rx $ry]} { return 1 }
   if {[wviewer::trace_menu_post $W $px $py $rx $ry]} { return 1 }
   return [wviewer::strip_menu_post $W $px $py $rx $ry]
 }

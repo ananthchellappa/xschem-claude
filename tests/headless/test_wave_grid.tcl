@@ -266,9 +266,11 @@ proc wvproc_body {src name} {
 # ⚠ `set_text_size` ADDED BY ITEM 22 (the aA button): a window option like the
 # grid, so no undo point, but it regenerates every strip from the model, so the
 # selection must be folded first -- grid_apply's issue-0194 case exactly.
+# ⚠ `set_axis_scale` ADDED BY THE AXIS CONTEXT MENU (2026-11-09): the RMB
+# Linear/Log menu's act, axes_ok's write path for one axis, so gx_must like it.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
-             pan_x axes_ok
+             pan_x axes_ok set_axis_scale
              select_tab new_tab close_tab paste_traces paste_payload
              rawbar_load new_subwin close_subwin clear_subwin set_text_size}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip

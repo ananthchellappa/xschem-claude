@@ -3775,6 +3775,15 @@ int graph_shares_x(int master, int k)
  * walker: a column NUMBER belongs to the database it was resolved in, and
  * subscripting a three-column VCD with a five-column raw's column 4 is an
  * out-of-bounds read. */
+/* The smallest POSITIVE sweep value graph_x_extent() has seen since
+ * graph_fullxzoom() last reset it: a log X needs it, because mylog10() maps a
+ * value <= 0 to -35 and a transient's time axis starts at 0 (row AG7 of
+ * tests/headless/test_wave_axis_menu.tcl). A file-static rather than one more
+ * out-parameter through the union walk; graph_fullxzoom() is its only reader
+ * and resets it before every walk. */
+static double graph_x_pos_lo = 0.0;
+static int graph_x_pos_got = 0;
+
 static int graph_x_extent(const char *sweep_name, int dataset, double *lo, double *hi)
 {
   Raw *raw;
@@ -3817,6 +3826,10 @@ static int graph_x_extent(const char *sweep_name, int dataset, double *lo, doubl
   for(k = 0; k < np; k++) {
     double v = get_raw_value(dset, idx, k);
     if(v != v) continue;              /* NaN has no ordering, so it is no extent */
+    if(v > 0.0 && (!graph_x_pos_got || v < graph_x_pos_lo)) {
+      graph_x_pos_lo = v;
+      graph_x_pos_got = 1;
+    }
     if(first) { xx1 = xx2 = v; first = 0; }
     else {
       if(v < xx1) xx1 = v;
@@ -3995,6 +4008,7 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
 
   entry_extra_idx = xctx->extra_idx;
   entry_prev_idx = xctx->extra_prev_idx;
+  graph_x_pos_got = 0;
 
   /* ONE x quantity for the whole union, and it is the TARGET rect's: see the
    * `sweep_name` paragraph on graph_x_union_rect(). Copied because
@@ -4033,6 +4047,9 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
 
   if(!got) return 0;
   if(gr && gr->logx) {
+    /* a sweep reaching 0 or below starts the log window at its smallest
+     * positive value instead of at mylog10()'s -35 */
+    if(xx1 <= 0.0 && graph_x_pos_got && graph_x_pos_lo < xx2) xx1 = graph_x_pos_lo;
     xx1 = mylog10(xx1);
     xx2 = mylog10(xx2);
   }
@@ -4251,6 +4268,13 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
       double val, start, end;
       double min=0.0, max=0.0;
       int firstyval = 1;
+      /* log Y: the range of the POSITIVE samples alone. mylog10() maps a value
+       * <= 0 to -35, so one zero in the data used to pull the auto range down
+       * to 1e-35 and squeeze the trace into the top of the strip (row AG7 of
+       * tests/headless/test_wave_axis_menu.tcl). Used only when some sample is
+       * positive; with none, the old all-samples range stands. */
+      double pmin = 0.0, pmax = 0.0;
+      int firstpos = 1;
       char *saves, *sptr, *stok, *sweep = NULL, *saven, *nptr, *ntok, *node = NULL;
       int node_dataset = -1; /* dataset specified as %<n> after node/bus/expression name */
       char *ntok_copy = NULL; /* copy of ntok without %<n> */
@@ -4421,6 +4445,11 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
                   if(firstyval || val < min) min = val;
                   if(firstyval || val > max) max = val;
                   firstyval = 0;
+                  if(gr->logy && raw->values[v][p] > 0.0) {
+                    if(firstpos || val < pmin) pmin = val;
+                    if(firstpos || val > pmax) pmax = val;
+                    firstpos = 0;
+                  }
                 }
               }
               if(xx >= start && xx <= end) {
@@ -4444,6 +4473,7 @@ int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset)
         raw = xctx->raw;
 
       } /* while( (ntok = my_strtok_r(nptr, "\n\t ", "\"", 0, &saven)) ) */
+      if(gr->logy && !firstpos) { min = pmin; max = pmax; }
       if(max == min) max += 0.01;
       min = floor_to_n_digits(min, 2);
       max = ceil_to_n_digits(max, 2);

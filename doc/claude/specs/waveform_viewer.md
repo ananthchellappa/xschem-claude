@@ -1344,6 +1344,38 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   unconditional went red at `SP11` by moving a trace *into* a non-dict sentinel —
   that is how the fail-open `graph_is_empty` bug was caught for real.)
 
+## Axis context menu — RMB on an axis margin → Linear / Log (2026-11-09)
+
+The user: "We need a context menu on both axes (right click) that lets user
+easily switch between linear and logarithmic scale for the axes."
+
+- A no-travel RMB click in a strip's bottom (X number) margin posts
+  `Linear X` / `Log X`; in its left (Y number) margin `Linear Y` / `Log Y`.
+  Radiobuttons showing the strip's current scale; the wording is the Axes
+  dialog's (`Log X` / `Log Y`).
+- The region is the engine's `xschem get graph_axis_at` (draw.c
+  `graph_axis_at`), the same answer the Ctrl+wheel axis zoom and the LMB axis
+  drag use. It refuses the plot box and every legend pixel, so the menu is
+  disjoint from the trace and strip menus; `ctx_menu_post` asks it first.
+- Before this, a no-travel RMB in either margin did nothing (GRAPHPAN latched on
+  the press and cleared on the unmoved release). An RMB drag there still zooms.
+- The act is the Axes dialog's: set `logx`/`logy` in the strip model, blank that
+  axis's range to auto (a log range is stored in log10 units), `set_graphs`,
+  `regenerate`. Y is per strip. X is per strip unless `sharedx`, when it is
+  every strip of the subwindow (they share one X range, which must be in one
+  unit). Log Y is greyed out on a digital strip. A later plot into the strip
+  never overrides `logy` (nothing sets it but the user).
+- `graph_props` writes `subdivy=8` for a log Y (the decade minor lines), as it
+  writes `subdivx=8` for a log X.
+- Data <= 0: `mylog10()` maps it to -35 (1e-35). The log Y auto range is taken
+  over the positive samples only (`graph_fullyzoom`), and a log X window over a
+  sweep reaching 0 starts at the sweep's smallest positive value
+  (`graph_fullxzoom`); before, one zero pulled either range down to -35 decades.
+  All-non-positive data keeps the old range (nothing to show).
+- Code: `wviewer::axis_at`, `axis_menu_pick`, `axis_scale_targets`,
+  `axis_scale_graphs` (pure), `set_axis_scale`, `axis_menu_build/post/unpost`.
+  Suite: `tests/headless/test_wave_axis_menu.tcl` (both T1 lists).
+
 ## Mid-drag shrink preview (viewer plan item 6, 2026-07-29)
 
 **While a trace is being dragged to another strip it is drawn shrunk in BOTH
