@@ -152,6 +152,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
                  "headless/test_rdw_help" \
+                 "headless/test_cadence_q_scope" \
                   "headless/test_wave_subwindows"]
 ## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
 ## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
@@ -943,7 +944,11 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_window" \
                  "headless/test_hover_highlight" \
                  "headless/test_rdw_help" \
+                 "headless/test_cadence_q_scope" \
                   "headless/test_wave_subwindows"]
+## `headless/test_cadence_q_scope` IS IN THIS LIST ALONE: it drives the cadence_style_rc
+## q / Alt-Shift-Q bindings with `event generate` and reads the property form; under
+## --nogui it self-skips to zero checks, so a counted entry would measure nothing.
 ## `headless/test_hover_highlight` IS IN THIS LIST ALONE: it drives `.drw` (focus, Enter,
 ## motion) and has no counted-arm subject. Registered once HV10b (hover in key-8 pick mode)
 ## went green, i.e. once the status-bar readout stopped growing the window (issue 1659).

@@ -1018,6 +1018,13 @@ proc slickprop::scope_value {label} {
 # Also refreshes the "values differ" warning, which depends on the scope.
 proc slickprop::apply_scope_greying {args} {
   variable cur
+  # keep the dropdown in step with the canonical value: a write from outside the
+  # form (`xschem edit_prop <scope>` while it is open, e.g. a scoped key in
+  # cadence_style_rc) would otherwise leave it showing a scope Apply ignores.
+  if {[winfo exists .dialog.fscope.cb] && [info exists ::slickprop_apply_scope]} {
+    set lbl [slickprop::scope_label $::slickprop_apply_scope]
+    if {[.dialog.fscope.cb get] ne $lbl} { .dialog.fscope.cb set $lbl }
+  }
   slickprop::update_warning
   slickprop::update_highlight
   if {![info exists cur(entry,name)] || ![winfo exists $cur(entry,name)]} return

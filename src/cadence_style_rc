@@ -309,6 +309,44 @@ bind .drw <Alt-Shift-Key-C>     {cadence::capture_lcv;            break}
 # write the last Alt-E location as a "inst/inst/..." note you place; a note that starts
 # with such a path -> descend there (same engine as Alt-X).
 bind .drw <Control-Alt-Key-d>   {cadence::deeploc_note;           break}
+# q / Alt-Shift-Q : Edit Properties with a FIXED "Apply to" scope, Cadence style.
+#   q            opens the form at "Only Current", whatever it was left at last time
+#   Alt-Shift-Q  opens it at "All Selected"
+# The dropdown can still be changed by hand while the form is open. Natively (no
+# profile) the scope is sticky across opens; here each key pins it first, then
+# runs the native q (`edit_property(0)`) through the C dispatcher, so the
+# semaphore guard, read-only viewing and child-window routing are the native
+# ones. Letter case as typed decides (Shift XOR Lock): Caps Lock + Alt-q is
+# Alt-Shift-Q, Caps Lock + Shift-q is q. Every other chord on the letter (Shift-Q
+# edit in editor, Ctrl-q quit, Ctrl-Q view, Alt-q edit file) goes to the native
+# dispatcher with the case as typed. Alt-Shift-Q had no native action.
+# To use another scope or key: `cadence::q_key` is the dispatcher, and
+# `xschem edit_prop current|selected|all` opens the form at a given scope.
+# tests/headless/test_cadence_q_scope.tcl.
+namespace eval cadence {}
+proc cadence::q_key {W T x y N s} {
+  set shift [expr {($s & 1) != 0}]
+  if {$s & 2} {
+    set up [expr {!$shift}]
+  } else {
+    set up [expr {$shift || $N == 81}]
+  }
+  set mods [expr {$s & 0x4c}]   ;# Control | Mod1 (Alt) | Mod4 (Super)
+  set scope {}
+  if {!$up && $mods == 0} { set scope current }
+  if {$up && $mods == 8}  { set scope selected }
+  if {$scope ne {}} {
+    if {[xschem get semaphore] >= 2} return
+    set ::slickprop_apply_scope $scope
+    xschem callback $W $T $x $y 113 0 0 0
+    return
+  }
+  set N [expr {$up ? 81 : 113}]
+  set s [expr {($s & ~3) | ($up ? 1 : 0)}]
+  xschem callback $W $T $x $y $N 0 0 $s
+}
+bind .drw <Key-q> {cadence::q_key %W %T %x %y %N %s; break}
+bind .drw <Key-Q> {cadence::q_key %W %T %x %y %N %s; break}
 # Ctrl-2 / Ctrl-Shift-2 : make the current view Editable / Read Only.
 # GOTCHA: with Shift held, the number-row "2" key emits its SHIFTED keysym, not
 # "2" -- so <Control-Shift-Key-2> never matches. On a US layout Shift-2 is "@"
