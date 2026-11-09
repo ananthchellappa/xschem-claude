@@ -5210,7 +5210,7 @@ static void draw_graph_grid(xRect *r, Graph_ctx *gr, void *ct)
        * always 1 off the fixed-text arm) */
       ytop_w = wy; nvis++;
       if((ylab_n++) % ylab_stride) continue;
-      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, wy) : wy) * gr->unity, 5));
+      my_snprintf(lab, S(lab), "%s%s", dtoa_eng((gr->logy ? pow(10, wy) : wy) * gr->unity, 5), gr->yunit);
       if(fixed) {
         double t1, u1, t2, u2, dt;
         int tt;
@@ -5249,7 +5249,7 @@ static void draw_graph_grid(xRect *r, Graph_ctx *gr, void *ct)
     if(fixed && swyield && !nplaced && nvis >= 2 && gydef_n < GRAPH_YDEFER) {
       double t1, u1, t2, u2, dt;
       int tt;
-      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, ytop_w) : ytop_w) * gr->unity, 5));
+      my_snprintf(lab, S(lab), "%s%s", dtoa_eng((gr->logy ? pow(10, ytop_w) : ytop_w) * gr->unity, 5), gr->yunit);
       text_bbox(lab, gr->txtsizey, gr->txtsizey, 0, 1, 0, 1, gr->x1 - mark_size - 5 * gr->txtsizey, W_Y(ytop_w),
                 &t1, &u1, &t2, &u2, &tt, &dt);
       if(!(t1 < swb[2] && swb[0] < t2 &&
@@ -5374,7 +5374,7 @@ static int graph_sweep0_fits(xRect *r, Graph_ctx *gr, double H)
       wv = start + j * delta;
       if(!axis_within_range(wv, gr->gy1, gr->gy2, delta, gr->subdivy)) continue;
       if(axis_end(wv, delta, gr->gy2)) break;
-      my_snprintf(lab, S(lab), "%s", dtoa_eng((gr->logy ? pow(10, wv) : wv) * gr->unity, 5));
+      my_snprintf(lab, S(lab), "%s%s", dtoa_eng((gr->logy ? pow(10, wv) : wv) * gr->unity, 5), gr->yunit);
       pos = gr->y2 - (wv - gr->gy1) * gr->h / gr->gh;
       text_bbox(lab, gr->txtsizey, gr->txtsizey, 0, 1, 0, 1, gr->x1 - mark - 5 * gr->txtsizey, pos,
                 &t1, &u1, &t2, &u2, &tmp, &dtmp);
@@ -5474,7 +5474,7 @@ static void graph_fixed_margins(Graph_ctx *gr, double H, double S, double m, int
     want = c < bfull ? c : bfull;
     if(*bottom < want) { *top -= want - *bottom; *bottom = want; }
   }
-  *left = *my / 10.0 + 5.0 * S + 8.0 * 0.62 * H + 0.3 * H;
+  *left = *my / 10.0 + 5.0 * S + (8.0 + (double)strlen(gr->yunit)) * 0.62 * H + 0.3 * H;
   *right = 2.0 * H;
   if(*right < (GRAPH_REORDER_HANDLE_W + 4) / m) *right = (GRAPH_REORDER_HANDLE_W + 4) / m;
   if(*left + *right > 0.8 * gr->rw) {
@@ -5495,6 +5495,7 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->divx = gr->divy = 5;
   gr->subdivx = gr->subdivy = 0;
   gr->logx = gr->logy = 0;
+  gr->yunit[0] = '\0';
   gr->digital = 0;
   gr->rainbow = 0;
   /* issue 0151: ASE viewer target-strip marker. Defaulted (and parsed) HERE,
@@ -5655,6 +5656,16 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   } else {
     gr->unity_suffix = val[0];
     gr->unity = get_unit(val);
+  }
+  /* AC axes: the Y unit appended to each Y number (wviewer::axis_apply); letters
+   * only, at most 8, so it can neither overflow a label nor carry a format */
+  val = get_tok_value(r->prop_ptr,"yunit", 0);
+  gr->yunit[0] = '\0';
+  {
+    size_t k, n = strlen(val);
+    int ok = n > 0 && n <= 8;
+    for(k = 0; ok && k < n; ++k) if(!isalpha((unsigned char)val[k])) ok = 0;
+    if(ok) my_snprintf(gr->yunit, S(gr->yunit), "%s", val);
   }
   val = get_tok_value(r->prop_ptr,"xlabmag", 0);
   if(val[0]) gr->magx = atof(val);

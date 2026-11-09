@@ -141,6 +141,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_plot_outputs" \
                  "headless/test_wave_sigbrowser" \
                  "headless/test_wave_grid" \
+                 "headless/test_wave_ac_axes" \
                  "headless/test_node_token_split" \
                  "headless/test_raw_ascii_point_bounds" \
                  "headless/test_del_negative_arg" \
@@ -935,6 +936,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_persist" \
                  "headless/test_fluid_editing" \
                  "headless/test_wave_grid" \
+                 "headless/test_wave_ac_axes" \
                  "headless/test_del_negative_arg" \
                  "headless/test_wave_crossdb_trace" \
                  "headless/test_wave_add_graph_undo" \

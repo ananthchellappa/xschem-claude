@@ -4571,6 +4571,103 @@ proc wviewer::predict_colors {token n} {
 # "name;vec" token whose inner quotes are BACKSLASH-escaped (the IN-MEMORY
 # prop form — save.c doubles the backslashes on file write); color = space-
 # separated per-trace color layer indices, count == trace count.
+# --- AC axis defaults (THE DECISION; PURE, no Tk, no xschem) -----------------
+# The user (2026-11-09): an AC result sent to the viewer should get a log
+# frequency axis, and a trace that is in dB should read in dB. ASE-L's
+# auto-plot and wviewer::plot_signals (Direct Plot, the Calculator) both add
+# traces through wviewer::add_trace (rows AR2 and AR5 of
+# tests/headless/test_wave_ac_axes.tcl), which applies this decision to the
+# strip model (see wviewer::axis_apply); graph_props then
+# writes the model's `logx` and `yunit` keys into the rect, where the C engine
+# draws them. The model keys are what any later control (a context menu, the
+# Axes dialog) reads and flips.
+
+# The Y unit one trace's expression is in: `dB`, `deg` or {} (linear/unknown).
+# `ex` is what add_trace stores: a raw column name, a postfix RPN string, or an
+# un-translated infix call.
+#   dB   RPN ending `db20()` or `log10() 10 *` / `log10() 20 *` (the
+#        Calculator's dB20/dB10 translations); an infix db/dB20/dB10/vdb call
+#   deg  a `ph(...)` raw column (the AC reader writes degrees); RPN ending
+#        `cph()`; an infix ph/phase/phaseDeg/vp/cph call
+proc wviewer::trace_yunit {ex} {
+  set ex [string trim $ex]
+  set toks [regexp -all -inline {\S+} $ex]
+  if {[llength $toks] > 1} {
+    set last [string tolower [lindex $toks end]]
+    if {$last eq {db20()}} { return dB }
+    if {$last eq {cph()}} { return deg }
+    if {[llength $toks] >= 3 && $last eq {*}
+        && [string tolower [lindex $toks end-2]] eq {log10()}
+        && [lindex $toks end-1] in {10 20}} { return dB }
+  }
+  if {[regexp {^([A-Za-z_][A-Za-z0-9_]*)\s*\(.*\)$} $ex -> fn]} {
+    set fn [string tolower $fn]
+    if {$fn in {db db20 db10 vdb idb}} { return dB }
+    if {$fn in {ph phase phasedeg vp ip cph}} { return deg }
+  }
+  return {}
+}
+
+# The axes a strip holding `exprs` should get, given the analysis `simtype` the
+# traces come from: {logx 0|1 yunit {}|dB|deg}. Only an `ac` result is
+# touched: X is frequency on a log axis, and Y carries a unit when EVERY trace
+# shares one. A trace drawn against its own X column (`sweeps` non-empty, a
+# Calculator wave destination) does not have frequency on X, so it gets no log
+# X. Anything else answers {logx 0 yunit {}}: non-AC plots are unchanged.
+proc wviewer::axis_hint {simtype exprs {sweeps {}}} {
+  set logx 0
+  set yunit {}
+  if {$simtype eq {ac} && [llength $exprs]} {
+    set own 0
+    foreach s $sweeps { if {[string trim $s] ne {}} { set own 1 } }
+    if {!$own} { set logx 1 }
+    set us [lsort -unique [lmap e $exprs {wviewer::trace_yunit $e}]]
+    if {[llength $us] == 1} { set yunit [lindex $us 0] }
+  }
+  return [dict create logx $logx yunit $yunit]
+}
+
+# PURE. Strip model `G` after trace `trd` was appended to it (`fresh` = the
+# strip held no trace before), the traces' analysis being `simtype`. A fresh
+# strip takes the hint outright, so an auto strip reused by an AC run after a
+# transient one (or the reverse) is re-axed; a range kept from the other axis
+# kind is blanked to auto. A strip that already held traces keeps the user's
+# `logx` whatever it is, and loses its `yunit` when the new trace does not share
+# it (a mixed strip has no single unit).
+proc wviewer::axis_apply {G fresh simtype} {
+  set trs [wviewer::dget $G traces {}]
+  set exs [lmap t $trs {wviewer::dget $t expr {}}]
+  set sws [lmap t $trs {wviewer::dget $t sweep {}}]
+  set h [wviewer::axis_hint $simtype $exs $sws]
+  if {$fresh} {
+    set lx [dict get $h logx]
+    if {$lx != [wviewer::dget $G logx 0]} {
+      set G [dict replace $G logx $lx x1 {} x2 {}]
+    }
+    set yu [dict get $h yunit]
+    if {$yu ne [wviewer::dget $G yunit {}]} { set G [dict replace $G y1 {} y2 {}] }
+    if {$yu ne {}} { dict set G yunit $yu } else { set G [dict remove $G yunit] }
+  } elseif {[wviewer::dget $G yunit {}] ne {} &&
+            [dict get $h yunit] ne [dict get $G yunit]} {
+    set G [dict remove $G yunit]
+  }
+  return $G
+}
+
+# The analysis of the database a trace is plotted from: the foreign database's
+# type when add_trace resolved one (`trdb`), else the current database's.
+# {} when no raw is loaded.
+proc wviewer::trace_simtype {trdb} {
+  if {$trdb ne {}} { return [wviewer::dget $trdb type {}] }
+  set info {}
+  if {[catch {xschem raw info} info]} { return {} }
+  set ri [wviewer::rawinfo_parse $info]
+  foreach d [dict get $ri dbs] {
+    if {[dict get $d idx] == [dict get $ri cur]} { return [dict get $d type] }
+  }
+  return {}
+}
+
 proc wviewer::graph_props {G {active 0} {grid 1}} {
   set x1 [wviewer::dget $G x1 {}]
   if {$x1 eq {}} { set x1 0 }
@@ -4726,6 +4823,13 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   }
   set gdash [wviewer::grid_dash_off]
   set gshow [expr {$grid ? {} : "grid=0\n"}]
+  # AC axes (wviewer::axis_apply): a log X gets the decade minor lines 2..9
+  # (subdivx 8, the Graph dialog's own choice for Log X), and the model's
+  # `yunit` is written as the rect token draw.c appends to each Y number.
+  # Both only when set, so every linear strip's rect text is byte-identical.
+  set sdx [expr {$logx eq {1} ? 8 : 1}]
+  set yu [wviewer::dget $G yunit {}]
+  set yut [expr {[regexp {^[A-Za-z]{1,8}$} $yu] ? "yunit=$yu\n" : {}}]
   # viewer plan item 3: grid on/off is a WINDOW property, not a strip property,
   # so it arrives as an ARGUMENT (like `active`) rather than being read out of
   # the graph dict -- and explicitly NOT out of a namespace global, which would
@@ -4736,7 +4840,7 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # window's rects byte-identical to pre-item-3 (the hilight_wave/markers
   # "absent means absent" rule; unlike legendbold, whose 0 must be written
   # because its default is the non-shipped value).
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=$sdx\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}${yut}${swp}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
 }
 
 # SUBWINDOWS (doc/claude/specs/waveform_viewer_subwindows.md §3/§5/§7): the two
@@ -5718,8 +5822,13 @@ cannot be carried in a graph node= token (it contains whitespace or one of % \" 
   # R419/R421: the trace's OWN X column, same "absent means absent" rule as the
   # two keys above — a trace on the database's own sweep carries no key at all.
   if {[string trim $sweep] ne {}} { dict set trd sweep [string trim $sweep] }
+  set fresh [expr {![llength $trs]}]
   lappend trs $trd
   set G [dict replace $G traces $trs]
+  # AC axes: the decision is wviewer::axis_hint's; this only applies it.
+  if {$rawok} {
+    set G [wviewer::axis_apply $G $fresh [wviewer::trace_simtype $trdb]]
+  }
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
   wviewer::regenerate $token
   return {}

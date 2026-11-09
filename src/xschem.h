@@ -1525,6 +1525,8 @@ typedef struct {
   double unitx, unity;
   int unitx_suffix; /* 'n' or 'u' or 'M' or 'k' ... */
   int unity_suffix;
+  char yunit[16]; /* AC axes: prop token `yunit` (e.g. dB, deg), appended to every Y
+                   * number. Written only by wviewer::graph_props; "" = none. */
   int mode; /* default:0   0:Line, 1:HistoV, 2:HistoH */
   double txtsizelab, digtxtsizelab, txtsizey, txtsizex, txtsizelegend;
   int dataset;
