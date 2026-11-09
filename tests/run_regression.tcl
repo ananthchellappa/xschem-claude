@@ -121,6 +121,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_selflog_grep_guard" \
                  "headless/test_registered_banner_1626" \
                  "headless/test_divis_zero_1628" \
+                 "headless/test_upstream_memsafety_port" \
                  "headless/test_calc_engine" \
                  "headless/test_calc_scratch_reuse" \
                  "headless/test_calc_cross" \

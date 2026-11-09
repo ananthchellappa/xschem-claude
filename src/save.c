@@ -6114,9 +6114,17 @@ static void read_xschem_file(FILE *fd)
       break;
      case '[':
       found=0;
-      my_strdup(_ALLOC_ID_, &xctx->inst[xctx->instances-1].prop_ptr,
-                subst_token(xctx->inst[xctx->instances-1].prop_ptr, "embed", "true"));
-      if(xctx->inst[xctx->instances-1].name) {
+      /* upstream e29af39c6: an embedded symbol block with no preceding instance
+       * indexed inst[-1]. Upstream skips only the '[' line, which would load the
+       * block's own v/K/... records into THIS schematic; here the orphan block
+       * goes through the same whole-block skip loop below as an unnamed one. */
+      if(xctx->instances <= 0) {
+        dbg(0, "read_xschem_file(): embedded symbol block with no preceding instance; skipping\n");
+      } else {
+        my_strdup(_ALLOC_ID_, &xctx->inst[xctx->instances-1].prop_ptr,
+                  subst_token(xctx->inst[xctx->instances-1].prop_ptr, "embed", "true"));
+      }
+      if(xctx->instances > 0 && xctx->inst[xctx->instances-1].name) {
         my_snprintf(name_embedded, S(name_embedded), "%s/.xschem_embedded_%d_%s",
                     tclgetvar("XSCHEM_TMP_DIR"), getpid(), get_cell_w_ext(xctx->inst[xctx->instances-1].name, 0));
         for(i=0;i<xctx->symbols; ++i)
@@ -6880,7 +6888,11 @@ void delete_undo(void)
   char diff_name[PATH_MAX]; /* overflow safe 20161122 */
 
   dbg(1, "delete_undo(): undo_initialized = %d\n", xctx->undo_initialized);
-  if(!xctx->undo_initialized) return;
+  if(!xctx->undo_initialized) {
+    /* upstream 0fa7b0ed7: never leak the dir name on the early-return path */
+    my_free(_ALLOC_ID_, &xctx->undo_dirname);
+    return;
+  }
   clear_undo();
   for(i=0; i<MAX_UNDO; ++i) {
     my_snprintf(diff_name, S(diff_name), "%s/undo%d",xctx->undo_dirname, i);

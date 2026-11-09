@@ -7340,12 +7340,20 @@ const char *translate(int inst, const char* s)
       }
       token_pos = 0;
       if(c == '@' || c == '%') s--;
-      else result[result_pos++]=(char)c;
+      else {
+        /* upstream c4233c1f9: room for this char AND the '\0' that may follow */
+        STR_ALLOC(&result, 1 + result_pos, &size);
+        result[result_pos++]=(char)c;
+      }
       state=TOK_BEGIN;
     } /* else if(state==TOK_SEP) */
-    else if(state==TOK_BEGIN) result[result_pos++]=(char)c;
+    else if(state==TOK_BEGIN) {
+      STR_ALLOC(&result, 1 + result_pos, &size);
+      result[result_pos++]=(char)c;
+    }
     if(c=='\0')
     {
+      STR_ALLOC(&result, 1 + result_pos, &size);
       result[result_pos]='\0';
       break;
     }

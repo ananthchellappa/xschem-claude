@@ -99,6 +99,11 @@ void clear_expandlabel_data(void)
   my_free(_ALLOC_ID_, &dest_string.str);
 }
 
+/* upstream ff88b2a1b: a parse error returns from yyparse() before the lexer
+ * reaches <<EOF>>, so its start condition (parse_index, parse_mult, ...) would
+ * leak into the NEXT expandlabel() call and mis-tokenize a valid label. */
+void reset_lexer(void);
+
 static void str_char_replace(char s[], char chr, char repl_chr)
 {
      int i=0;
@@ -145,6 +150,10 @@ const char *expandlabel(const char *s, int *m)
  buf=yy_scan_string(s);
  yyparse();
  yy_delete_buffer(buf);
+ /* After ANY failed parse, not only the first one: yyparse_error stays -1 after
+  * the first error (one message per netlist run), so gating this on the
+  * error-message branch would leave every later failure's state in place. */
+ reset_lexer();
  if(yyparse_error==1) {
    char *cmd = NULL;
    size_t l;
@@ -157,7 +166,6 @@ const char *expandlabel(const char *s, int *m)
      "-message {Syntax error in identifier expansion: %s\nschematic:\n%s}", s, xctx->sch[xctx->currsch]);
    if(has_x) tcleval(cmd);
    my_free(_ALLOC_ID_, &cmd);
-
  }
  if(parselabel_debug >= 3)
    fprintf(errfp, "expandlabel(): returning %s  from %s mult=%d\n",dest_string.str, s, dest_string.m);
@@ -169,6 +177,7 @@ const char *expandlabel(const char *s, int *m)
    }
  } else {
    *m=-1;
+   dest_string.m = -1;
    my_strdup2(_ALLOC_ID_, &dest_string.str, s);
  }
  return dest_string.str;
@@ -367,3 +376,8 @@ ID_EXT_PARENTHESIS ([-~"#+/=_a-zA-Z][-#!@\\/:.=_+a-zA-Z0-9]*\([-~"#!@\\/:.=_+a-z
                         }
 %%
 
+void reset_lexer(void)
+{
+  YY_FLUSH_BUFFER;
+  BEGIN(INITIAL);
+}

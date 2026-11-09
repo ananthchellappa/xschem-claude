@@ -61,9 +61,11 @@ extern int yyparse_error;
 
 static void yyerror (const char *s)  /* Called by yyparse on error */
 {
-  if(yyparse_error == 0 ) yyparse_error = 1;
-  dbg(0, "yyerror(): yyparse():%s\n", s);
-  dbg(0, "    schematic: %s\n", xctx->sch[xctx->currsch]);
+  if(yyparse_error == 0 ) {
+    yyparse_error = 1;
+    dbg(0, "yyerror(): yyparse():%s\n", s);
+    dbg(0, "    schematic: %s\n", xctx->sch[xctx->currsch]);
+  }
 }
 
 static char *expandlabel_strdup(char *src)
@@ -245,8 +247,8 @@ static void check_idx(int **ptr,int n)
 {
  if(n>=idxsize)
  {
-  idxsize*=2;
-  dbg(3, "check_idx(): reallocating idx array: size=%d\n",idxsize);
+  while(idxsize <= n) idxsize*=2;
+  dbg(3, "check_idx(): reallocating idx array: idxsize=%d, n=%d\n",idxsize, n);
   my_realloc(_ALLOC_ID_, ptr, idxsize*sizeof(int));
  }
 }
@@ -449,12 +451,12 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
                          /* start : end : extend : repetitions */
                          int r, i, sign, offset;
                          sign = XSIGN($3-$1);
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          offset = 0;
                          for(r=0; r < $7; r++) {
                            for(i = $1;; i += sign) {
-                             check_idx(&$$,++$$[0]);
+                             ++$$[0]; check_idx(&$$, $$[0]);
                              $$[$$[0]] = i + offset;
                              if(i == $3) break;
                            }
@@ -467,11 +469,11 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
                          int sign;
 
                          sign = XSIGN($3-$1);
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          for(i=$1;;i+=sign*$5)
                          {
-                          check_idx(&$$,++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
 
                           if(sign==1 && i + $5 > $3) break;
@@ -481,19 +483,19 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
         | B_IDXNUM ':' B_IDXNUM
                         {
                          int i;
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          for(i=$1;;i+=XSIGN($3-$1))
                          {
-                          check_idx(&$$,++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(i==$3) break;
                          }
                         }
         | B_IDXNUM      {
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                          $$[$$[0]]=$1;
                         }
         | index ',' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
@@ -504,7 +506,7 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
                          offset = 0;
                          for(r=0; r < $9; r++) {
                            for(i = $3;; i += sign) {
-                             check_idx(&$$,++$$[0]);
+                             ++$$[0]; check_idx(&$$, $$[0]);
                              $$[$$[0]] = i + offset;
                              if(i == $5) break;
                            }
@@ -519,7 +521,7 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
                          sign = XSIGN($5-$3);
                          for(i=$3;;i+=sign*$7)
                          {
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(sign==1 && i + $7 > $5) break;
                           if(sign==-1 && i - $7 < $5) break;
@@ -530,14 +532,14 @@ index:    B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM ':' B_IDXNUM
                          int i;
                          for(i=$3;;i+=XSIGN($5-$3))
                          {
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(i==$5) break;
                          }
                         }
         | index ',' B_IDXNUM
                         {
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                          $$[$$[0]]=$3;
                         }
 ;
@@ -546,12 +548,12 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
                          /* start .. end .. offset .. repetitions */
                          int r, i, sign, offset;
                          sign = XSIGN($3-$1);
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          offset = 0;
                          for(r=0; r < $7; r++) {
                            for(i = $1;; i += sign) {
-                             check_idx(&$$,++$$[0]);
+                             ++$$[0]; check_idx(&$$, $$[0]);
                              $$[$$[0]] = i + offset;
                              if(i == $3) break;
                            }
@@ -564,11 +566,11 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
                          int sign;
 
                          sign = XSIGN($3-$1);
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          for(i=$1;;i+=sign*$5)
                          {
-                          check_idx(&$$,++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
 
                           if(sign==1 && i + $5 > $3) break;
@@ -578,11 +580,11 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
 	| B_IDXNUM B_DOUBLEDOT B_IDXNUM
                         {
                          int i;
-                         $$=my_malloc(_ALLOC_ID_, INITIALIDXSIZE*sizeof(int));
+                         $$=my_malloc(_ALLOC_ID_, idxsize*sizeof(int));
                          $$[0]=0;
                          for(i=$1;;i+=XSIGN($3-$1))
                          {
-                          check_idx(&$$,++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(i==$3) break;
                          }
@@ -595,7 +597,7 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
                          offset = 0;
                          for(r=0; r < $9; r++) {
                            for(i = $3;; i += sign) {
-                             check_idx(&$$,++$$[0]);
+                             ++$$[0]; check_idx(&$$, $$[0]);
                              $$[$$[0]] = i + offset;
                              if(i == $5) break;
                            }
@@ -610,7 +612,7 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
                          sign = XSIGN($5-$3);
                          for(i=$3;;i+=sign*$7)
                          {
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(sign==1 && i + $7 > $5) break;
                           if(sign==-1 && i - $7 < $5) break;
@@ -621,14 +623,14 @@ index_nobracket: B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT B_IDXNUM B_DOUBLEDOT 
                          int i;
                          for(i=$3;;i+=XSIGN($5-$3))
                          {
-                          check_idx(&$$, ++$$[0]);
+                          ++$$[0]; check_idx(&$$, $$[0]);
                           $$[$$[0]]=i;
                           if(i==$5) break;
                          }
                         }
 	| index_nobracket ',' B_IDXNUM
                         {
-                         check_idx(&$$, ++$$[0]);
+                         ++$$[0]; check_idx(&$$, $$[0]);
                          $$[$$[0]]=$3;
                         }
 %%
