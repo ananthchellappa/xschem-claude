@@ -105,8 +105,9 @@
 #        blanked Value back and leaves the viewer's whole layout and tab list
 #        byte-identical; with the viewer CLOSED it opens none; a plain click
 #        afterwards still plots (the control)
-#   PF1  the SHIPPED Monte Carlo draw, seeded to one that stops the transient
-#        ("Timestep too small", rc 1): the user is told the run failed and
+#   PF1  the SHIPPED bench and Monte Carlo draw (seed 35) with `reltol=1e-12`,
+#        which stops the transient ("Timestep too small", rc 1) after the op
+#        point was written: the user is told the run failed and
 #        where the log is, the status reads Error, every Value says the run
 #        failed (never "has no transient analysis"), and `~` says it again
 #
@@ -1634,9 +1635,26 @@ if {!$GUI} {
         check "PR12 Replace empties only the TARGET subwindow" \
             [pr_view $key] [list [expr {$t0 + 1}] 2 1 [list $one $one]]
     }
-    ## THE SHIPPED DRAW, SEEDED.  The committed state's own variables and
-    ## models (ABSVAR 0.03, VCC by agauss, section tt_mm), plus `.options
-    ## seed=35`, a draw that stops this transient with "Timestep too small".
+    ## THE SHIPPED DRAW, SEEDED, AND A TOLERANCE NO SOLVER MEETS.  The
+    ## committed state's own variables and models (ABSVAR 0.03, VCC by agauss,
+    ## section tt_mm), `.options seed=35`, and `.options reltol=1e-12`.
+    ##
+    ## ⚠ UNTIL 2026-10-26 SEED 35 ALONE STOPPED THIS TRANSIENT, AND THE CAUSE WAS
+    ## A SIMULATOR DEFECT, NOT THE DRAW. Measured 2026-10-27 on the deck this
+    ## group renders, with binaries built at each ver_51 commit: 45.2 and the
+    ## fork at ae2223e41 stop with "Timestep too small" (rc 1) at ~60-80 ns on a
+    ## `sky130_fd_pr__pnp` node; from fork commit 4e614b4da ("Carry the R model
+    ## through the R->B rewrite", which names sky130 xhigh_po resistors) on, the
+    ## same deck runs to 200 us with rc 0. The draw itself did not move (VCC
+    ## reads 1.81022 at the op point on 45.2, ae2223e41, 4e614b4da and the
+    ## registry fork), and seeds 1-60 ALL run clean on the registry fork, so no
+    ## re-chosen seed is a fixture. What this group fences is the product's
+    ## answer to a transient that stops after the op point was written, so the
+    ## stop is now asked for by name: `reltol=1e-12` stops it at the 25 us START
+    ## edge ("Timestep too small; ... trouble with node vcc#branch") on the
+    ## registry fork, on 45.2 and on ae2223e41 alike -- independent of the draw
+    ## and of the defect. The first fixture row still asserts the stop, so a
+    ## simulator that one day meets the tolerance reddens HERE, by name.
     group PF1 {
         set fh [open [file join $repo $staterel]]
         set shipped [read $fh]
@@ -1646,6 +1664,7 @@ if {!$GUI} {
         dict set st models [dict get $shipped models]
         set op [ase::state_get $st options]
         lappend op [dict create name seed value 35]
+        lappend op [dict create name reltol value 1e-12]
         dict set st options $op
         ase::session_update $key $st
         set top [ase::ui::window_for $key]
@@ -1659,7 +1678,7 @@ if {!$GUI} {
             set why [lsearch -all -inline -glob [split [read $fh] \n] {*Timestep too small*}]
             close $fh
         }
-        check "PF1 fixture: the shipped draw at seed 35 stops the transient (rc 1, Timestep too small)" \
+        check "PF1 fixture: the shipped draw at seed 35 under reltol=1e-12 stops the transient (rc 1, Timestep too small)" \
             [list $rc [expr {[llength $why] > 0}]] {1 1}
         check "PF1 fixture: the raw is still newer than the deck, so has_results answers 1" \
             [ase::has_results $key] 1

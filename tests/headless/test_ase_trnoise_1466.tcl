@@ -921,12 +921,12 @@ check {NS1 each entry names its live kinds, which a seed repeats and which\
 set NS2ROW [nz_row {{src vdd func trnoise na 1m ts 10u} {net bias func trrandom dist 2 ts 100u td 1n param1 1m} \
                     {src vrts func trnoise rtsam 5m rtscapt 18u rtsemt 30u}}]
 set NS2R [s_ans ase::stimuli_seed_report ngspice [nz_state [list $NS2ROW]] $NS2ROW]
-check {NS2 the seed report splits by kind: white does not repeat, a random source\
+check {NS2 the seed report splits by kind: white does not follow the seed, a random source\
  and RTS do, and there is no seed on this bench} \
   [list [s_dget $NS2R present] [s_dget $NS2R norepeat] [s_dget $NS2R repeat] \
         [s_dget $NS2R seeded] [s_dget $NS2R sentences]] \
   [list {white random rts} white {random rts} 0 \
-        [list {White noise does not repeat from run to run: the simulator seeds it from its process ID, and no seed reaches it.} \
+        [list {White noise does not follow the seed: no seed set here reaches it, so ngspice 45.2 draws it afresh on every run and a build that seeds its start-up stream from rndseed draws the same noise on every run, whatever the seed.} \
               {Random sources and RTS noise repeat only when a seed is set.}]]
 
 ## ⚠ A SENTENCE ABOUT "NOISE" IN GENERAL WOULD BE FALSE FOR HALF THE ROWS, so a
@@ -938,7 +938,7 @@ check {NS3 a white-and-1/f row gets only the does-not-repeat sentence and an RTS
  row only the repeats sentence} \
   [list [s_dget [s_ans ase::stimuli_seed_report ngspice [nz_state [list $NS3W]] $NS3W] sentences] \
         [s_dget [s_ans ase::stimuli_seed_report ngspice [nz_state [list $NS3R]] $NS3R] sentences]] \
-  [list [list {White noise and 1/f noise do not repeat from run to run: the simulator seeds them from its process ID, and no seed reaches them.}] \
+  [list [list {White noise and 1/f noise do not follow the seed: no seed set here reaches them, so ngspice 45.2 draws them afresh on every run and a build that seeds its start-up stream from rndseed draws the same noise on every run, whatever the seed.}] \
         [list {RTS noise repeats only when a seed is set.}]]
 
 set NS4A [nz_state [list $NS3R] {} options {{name seed value 5}}]
@@ -1024,6 +1024,38 @@ proc ee_white_differs {a b} {
   foreach x $a y $b { if {$x ne $y} { return 1 } }
   return 0
 }
+## The converse, held to the same standard: all four samples real numbers in
+## both runs and every one of them identical.
+proc ee_white_same {a b} {
+  if {[llength $a] != 4 || [llength $b] != 4} { return 0 }
+  foreach v [concat $a $b] { if {![string is double -strict $v]} { return 0 } }
+  foreach x $a y $b { if {$x ne $y} { return 0 } }
+  return 1
+}
+## ⚠ AND IT READS THE WHITE NOISE AT FIXED TIMES (`wt`: differences of `meas
+## ... find v(vdd) at=` over five times), NEVER BY SAMPLE INDEX. The random and
+## RTS sources place their own breakpoints, so a different seed moves the whole
+## time grid (measured on a deck of this shape: 1339 vs 1518 points under seeds
+## 5 and 6) and `v(vdd)[100]` lands at a different time -- which read as "the
+## seed reaches white noise" on the fork, where the noise itself, read at fixed
+## times, is identical. Differences rather than raw values keep the printed
+## digits on the noise (the DC level is 1.8 V), for the reason
+## `ee_white_differs` gives. The random source's "moves with the seed" leg reads
+## it at a fixed time (`bt`) for the same reason.
+## ⚠ WHAT "THE SEED DOES NOT REACH WHITE NOISE" LOOKS LIKE DEPENDS ON THE BINARY,
+## so the row names the SHAPE and holds each binary to its own. Three runs: two
+## under seed 5 (`a`, `b`) and one under seed 6 (`c`).
+##   perrun  white differs between a and b          (45.2: Wallace pool from getpid())
+##   fixed   white identical in a, b AND c          (ver_51 fork, 5243f8e3b: pool from rndseed)
+##   seeded  identical in a and b, different in c   (the seed DOES reach it -- the report is wrong)
+##   broken  anything unreadable
+proc ee_white_shape {a b c} {
+  if {[ee_white_differs $a $b]} { return perrun }
+  if {![ee_white_same $a $b]} { return broken }
+  if {[ee_white_same $a $c]} { return fixed }
+  if {[ee_white_differs $a $c]} { return seeded }
+  return broken
+}
 proc ee_run {bin deck} {
   global scratch
   set rc [catch {exec env HOME=$scratch $bin -b $deck 2>@1} out]
@@ -1041,14 +1073,34 @@ proc ee_read {bin raw} {
     puts $f "let n0 = length(time)\nlet b100 = v(bias)\[100\]\nlet r3 = mean(v(rts))\nlet wm = mean(v(vdd))"
     puts $f "let w1 = v(vdd)\[100\] - wm\nlet w2 = v(vdd)\[300\] - wm\nlet w3 = v(vdd)\[500\] - wm\nlet w4 = v(vdd)\[700\] - wm"
     puts $f "echo NZ $tag \$&s1 \$&s2 \$&m3 \$&n0 \$&b100 \$&r3 \$&w1 \$&w2 \$&w3 \$&w4"
+    if {$tag eq {A}} {
+      set k 0
+      foreach t {205u 705u 1203u 1607u 1905u} {
+        incr k
+        puts $f "meas tran wt$k find v(vdd) at=$t"
+      }
+      puts $f "meas tran bt find v(bias) at=1250u"
+      puts $f "let t1 = wt1 - wt2\nlet t2 = wt2 - wt3\nlet t3 = wt3 - wt4\nlet t4 = wt4 - wt5"
+      puts $f "echo NZT $tag \$&t1 \$&t2 \$&t3 \$&t4 \$&bt"
+    }
   }
   puts $f ".endc\n.end"
   close $f
   catch {exec env HOME=$scratch $bin -b $rd 2>@1} out
-  set r {}
+  set r {} ; set wt {} ; set btd {}
   foreach l [split $out "\n"] {
     if {[regexp {^NZ ([AB]) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)} $l -> t s1 s2 m3 n0 b100 r3 w1 w2 w3 w4]} {
       dict set r $t [dict create s1 $s1 s2 $s2 m3 $m3 n0 $n0 b100 $b100 r3 $r3 wdev [list $w1 $w2 $w3 $w4]]
+    }
+    if {[regexp {^NZT ([AB]) (\S+) (\S+) (\S+) (\S+) (\S+)} $l -> t t1 t2 t3 t4 bt]} {
+      dict set wt $t [list $t1 $t2 $t3 $t4]
+      dict set btd $t $bt
+    }
+  }
+  foreach t [dict keys $wt] {
+    if {[dict exists $r $t]} {
+      dict set r $t wt [dict get $wt $t]
+      dict set r $t bt [dict get $btd $t]
     }
   }
   return $r
@@ -1062,6 +1114,9 @@ set EEROWB {type tran enabled 1 step 10u stop 2m}
 set EEST [nz_state [list $EEROWA $EEROWB] $EERUN options {{name seed value 5}}]
 set EESTK [dict replace $EEST options {{name seed value 5} {name notrnoise}}]
 set EEDECK [file join $EERUN nzbench_ase.spice]
+set EEST6 [nz_state [list $EEROWA $EEROWB] $EERUN options {{name seed value 6}}]
+set EEDECK6 [file join $EERUN nzbench_seed6.spice]
+set eef [open $EEDECK6 w] ; puts -nonewline $eef [nz_deck $EEST6] ; close $eef
 set EEDECKK [file join $EERUN nzbench_kill.spice]
 set EERAW [ase::backend::ngspice::raw_file $EEST]
 set EEMAP [ase::plotmap_path $EEST]
@@ -1085,6 +1140,9 @@ foreach eepair [ee_binaries] {
     if {[file isfile $EEMAP]} { set mf [open $EEMAP r] ; set eemap [string trim [read $mf]] ; close $mf }
     lappend EEV [list $eerc $eemap [ee_read $eebin $EERAW] $eeout]
   }
+  file delete -force $EERAW $EEMAP
+  lassign [ee_run $eebin $EEDECK6] eerc6 eeout6
+  set r6 [ee_read $eebin $EERAW]
   file delete -force $EERAW $EEMAP
   lassign [ee_run $eebin $EEDECKK] eerck eeoutk
   set EEK [ee_read $eebin $EERAW]
@@ -1115,17 +1173,45 @@ foreach eepair [ee_binaries] {
     [expr {[string is double -strict [s_dget $A n0]] && [string is double -strict $EEEST] \
            && [s_dget $A n0] >= $EEEST / 2.0 && [s_dget $A n0] <= $EEEST * 2.0}] 1
   ## ⚠ THE SEED SENTENCE's LOGIC, CHECKED AGAINST THE SIMULATOR. The report says
-  ## white does not repeat and random/RTS do; two runs under `.options seed=5`
-  ## must agree with it kind by kind.
+  ## a seed repeats random and RTS and does not reach white; runs under
+  ## `.options seed=5` (twice) and `seed=6` must agree with it kind by kind:
+  ## random and RTS repeat under 5 and MOVE under 6, and white does not follow
+  ## the seed.
+  ##
+  ## ⚠ ver_51 CHANGED HOW "DOES NOT FOLLOW THE SEED" LOOKS, NOT WHETHER IT HOLDS.
+  ## Until 2026-10-26 this row read "white does not repeat" as two runs under
+  ## seed 5 differing, which is 45.2's symptom: `initw()` filled the Wallace pool
+  ## from `getpid()`. Fork commit 5243f8e3b ("Seed the startup random stream from
+  ## rndseed, not the process id") fills it from the start-up stream (`setseed 1`)
+  ## instead, so on the fork white noise is the SAME on every run -- and, as
+  ## this row now measures, the same under seed 6 too, which is what "no seed set
+  ## here reaches it" means. MEASURED 2026-10-27 through this very row with
+  ## ASE_NZ_NGSPICE naming binaries built at each ver_51 commit: 45.2,
+  ## ae2223e41, 4e614b4da and 1c58365bd `perrun`; 5243f8e3b, a269a8a54,
+  ## f8f0f60d5, 3beb0f2a1 and the registry fork `fixed`. So 45.2 must answer
+  ## `perrun`, the fork `fixed`, and a binary named only by ASE_NZ_NGSPICE either
+  ## of the two -- never `seeded`, which would make the report's split false.
   set A2 [s_dget $r2 A]
+  set A6 [s_dget $r6 A]
   set NSR [s_ans ase::stimuli_seed_report ngspice $EEST $EEROWA]
+  set wshape [ee_white_shape [s_dget $A wt] [s_dget $A2 wt] [s_dget $A6 wt]]
+  switch -exact -- $eetag {
+    apt     { set wwant perrun }
+    fork    { set wwant fixed }
+    default { set wwant [expr {$wshape in {perrun fixed} ? $wshape : {perrun|fixed}}] }
+  }
   check "EE5/$eetag under the bench's seed the random source and the RTS source repeat\
- run to run and the white noise does not -- as the seed report says" \
-    [list $rc2 [s_dget $NSR norepeat] [s_dget $NSR repeat] [s_dget $NSR seeded] \
+ run to run and move with the seed, and the seed does not reach the white noise\
+ -- as the seed report says" \
+    [list $rc2 $eerc6 [s_dget $NSR norepeat] [s_dget $NSR repeat] [s_dget $NSR seeded] \
           [expr {[s_dget $A b100] eq [s_dget $A2 b100] && [s_dget $A b100] ne {MISSING}}] \
           [expr {[s_dget $A r3] eq [s_dget $A2 r3] && [s_dget $A r3] ne {MISSING}}] \
-          [ee_white_differs [s_dget $A wdev] [s_dget $A2 wdev]]] \
-    {0 white {random rts} 1 1 1 1}
+          [expr {[string is double -strict [s_dget $A6 bt]] && [s_dget $A bt] eq [s_dget $A2 bt] && [s_dget $A bt] ne [s_dget $A6 bt]}] \
+          [expr {[string is double -strict [s_dget $A6 r3]] && [s_dget $A r3] ne [s_dget $A6 r3]}] \
+          $wshape] \
+    [list 0 0 white {random rts} 1 1 1 1 1 $wwant]
+  puts "note: EE5/$eetag white noise under seeds 5, 5, 6: $wshape ([file normalize $eebin])"
+  if {$eerc6} { puts "  EE5/$eetag seed-6 output: $eeout6" }
   set AK [s_dget $EEK A]
   set KR [s_ans ase::stimuli_kill_report ngspice $EESTK $EEROWA]
   check "EE6/$eetag with notrnoise the white noise is gone while the random source and\

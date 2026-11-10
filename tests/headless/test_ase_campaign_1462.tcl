@@ -1787,7 +1787,7 @@ check {NT5 a seeded campaign is told the per-shard rule, and both of the seed's 
   [lrange [c_ans ase::campaign_notes ngspice \
     [c_state sweep [c_sweep enabled 1 seed 500 axes {{kind temp values {27}}}]]] 1 end] \
   [list {campaign: seeded from 500; shard N is seeded 500+N, so a single point can be re-run on its own and give the same answer} \
-        {campaign: transient white and 1/f noise sources are not covered by it: their generator is seeded from the process id, so a `trnoise` source draws differently on every run whatever the seed says} \
+        {campaign: transient white and 1/f noise sources are not covered by it: the seed never reaches their generator, so a `trnoise` source draws differently on every run under ngspice 45.2 and draws the same noise on every shard under a build that seeds its start-up stream from rndseed, whatever the seed says} \
         {campaign: it is set as a deck option, so re-running a single point by hand from its own directory reproduces that point exactly}]
 
 # ============================================================================
@@ -1951,16 +1951,35 @@ foreach {eetag eebin} $EEBINS {
     }} $eebin $eedir $eetag] \
     [expr {$eetag eq {apt} ? {1 0} : {0 1}}]
 
-  ## ⚠ AND THE SIXTH ACCEPTED-AND-INERT CASE, ON THE REAL BINARY: `setseed` in
-  ## `<rundir>/.spiceinit` is accepted, says nothing, and seeds nothing.
-  check "EE6/$eetag `setseed` in .spiceinit is accepted and does nothing, while the same line in .control works" \
+  ## ⚠ AND THE SIXTH ACCEPTED-AND-INERT CASE, ON THE REAL BINARY: on 45.2
+  ## `setseed` in `<rundir>/.spiceinit` is accepted, says nothing, and seeds
+  ## nothing, because `initw()` re-seeded from `getpid()` after the start-up file.
+  ##
+  ## ⚠ ver_51 MADE IT LIVE ON THE FORK, AND THIS ROW NOW HOLDS EACH BINARY TO ITS
+  ## OWN ANSWER. Fork commit 5243f8e3b ("Seed the startup random stream from
+  ## rndseed, not the process id") stopped `initw()` seeding, so the start-up
+  ## file's `setseed 12345` survives and draws exactly what the same line in
+  ## `.control` draws. Fork commit 1c58365bd ("Warn once when .option seed=
+  ## overrides setseed") makes `.options seed=` -- the campaign's seed -- say on
+  ## stderr that it overrides it. MEASURED 2026-10-27 on binaries built at each
+  ## ver_51 commit: init-file draw differs run to run on 45.2, ae2223e41,
+  ## 4e614b4da and 1c58365bd and equals the `.control` draw from 5243f8e3b on;
+  ## the warning is absent at ae2223e41/4e614b4da and present from 1c58365bd on.
+  ## What did NOT move, on either binary, is the property the campaign relies
+  ## on: a deck's `.options seed=` beats the start-up file's `setseed`, so a
+  ## shard's draw is its own seed's whatever a user's `.spiceinit` says.
+  ## Legs: {init-file draw differs run to run} {.control draw repeats}
+  ##       {numeric} {init-file draw equals the .control draw}
+  ##       {.options seed= wins over the init-file setseed} {and says so}
+  check "EE6/$eetag `setseed` in .spiceinit is inert on 45.2 and live on ver_51, the .control line works on both, and .options seed= beats it on both" \
     [apply {{bin dir} {
-      proc ee_tr {bin dir where} {
+      proc ee_tr {bin dir where {opt {}}} {
         set p [file join $dir seed.cir]
         set f [open $p w]
         puts $f "* seed probe"
         puts $f "v1 1 0 trrandom(2 1m 0 1)"
         puts $f "r1 1 0 1k"
+        if {$opt ne {}} { puts $f ".options seed=$opt" }
         puts $f ".control"
         if {$where eq {control}} { puts $f "setseed 12345" }
         puts $f "tran 1m 5m"
@@ -1978,18 +1997,23 @@ foreach {eetag eebin} $EEBINS {
         catch {exec $bin -b $p 2>@1} out
         cd $save
         file delete -force $ini
+        set warned [expr {[string first {overrides 'setseed'} $out] >= 0}]
         foreach l [split $out "\n"] {
-          if {[regexp {^v\(1\)\[1\] *= *(\S+)} $l -> v]} { return $v }
+          if {[regexp {^v\(1\)\[1\] *= *(\S+)} $l -> v]} { return [list $v $warned] }
         }
-        return NOVAL
+        return [list NOVAL $warned]
       }
-      set i1 [ee_tr $bin $dir init]
-      set i2 [ee_tr $bin $dir init]
-      set c1 [ee_tr $bin $dir control]
-      set c2 [ee_tr $bin $dir control]
+      set i1 [lindex [ee_tr $bin $dir init] 0]
+      set i2 [lindex [ee_tr $bin $dir init] 0]
+      set c1 [lindex [ee_tr $bin $dir control] 0]
+      set c2 [lindex [ee_tr $bin $dir control] 0]
+      lassign [ee_tr $bin $dir init 7] o1 ow
+      set o2 [lindex [ee_tr $bin $dir none 7] 0]
       return [list [expr {$i1 ne $i2}] [expr {$c1 eq $c2}] \
-                   [expr {[string is double -strict $c1]}]]
-    }} $eebin $eedir] {1 1 1}
+                   [expr {[string is double -strict $c1] && [string is double -strict $o1]}] \
+                   [expr {$i1 eq $c1}] [expr {$o1 eq $o2 && $o1 ne $i1}] $ow]
+    }} $eebin $eedir] \
+    [expr {$eetag eq {apt} ? {1 1 1 0 1 0} : {0 1 1 1 1 1}}]
 
   ## ⚠ 1469 ON THE REAL BINARY. A campaign seeded at the TOP of the range whose two
   ## points differ ONLY by their seed (the resistor is the simulator's own

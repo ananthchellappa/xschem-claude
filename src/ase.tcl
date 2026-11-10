@@ -34155,8 +34155,11 @@ $_leg
   # `agauss(1.8, 'ABSVAR', 1)` in its `variables`, so it is exactly the case
   # `setseed` would leave unseeded and silent.
   #
-  # ⚠ AND `setseed` IN `<rundir>/.spiceinit` DOES NOTHING WHATEVER -- rc 0,
-  # nothing on either stream, a different number every run on both binaries.
+  # ⚠ AND `setseed` IN `<rundir>/.spiceinit` DOES NOTHING WHATEVER ON 45.2 -- rc 0,
+  # nothing on either stream, a different number every run (and so on the fork
+  # before ver_51). Since fork 5243f8e3b it DOES seed the startup stream; it is
+  # still not the alternative, because `.options seed=` re-seeds at parse and
+  # wins (row EE6 of test_ase_campaign_1462 measures both binaries).
   # `main.c` reads the start-up file at `:1266-1330` and calls `initw()`
   # (`srand(getpid()); TausSeed();`, `wallace.c:76-86`) at `:1371`, AFTER it.
   proc campaign_seed_option {} { return seed }
@@ -34187,11 +34190,16 @@ $_leg
 
   # WHAT THE SEED DOES NOT REPRODUCE. Two clauses, both measured, and they are
   # the difference between a reproducible campaign and one that only looks it.
+  # ⚠ The first names BOTH symptoms since ver_51 (fork 5243f8e3b): the white
+  # pool is filled before the deck is read on either binary, from the pid on
+  # 45.2 and from rndseed on the fork, so every shard of a fork campaign carries
+  # the SAME white noise -- see `noise_kinds`.
   proc campaign_seed_notes {} {
     return [list \
-      "transient white and 1/f noise sources are not covered by it: their\
- generator is seeded from the process id, so a `trnoise` source draws\
- differently on every run whatever the seed says" \
+      "transient white and 1/f noise sources are not covered by it: the seed\
+ never reaches their generator, so a `trnoise` source draws differently on every\
+ run under ngspice 45.2 and draws the same noise on every shard under a build\
+ that seeds its start-up stream from rndseed, whatever the seed says" \
       "it is set as a deck option, so re-running a single point by hand from its\
  own directory reproduces that point exactly"]
   }
@@ -34272,6 +34280,10 @@ $_leg
   #                                                source untouched
   #   .options seed=5 (or setseed 5)            -> RTS and trrandom repeat run to
   #                                                run; white noise does not
+  #                                                follow the seed (45.2: differs
+  #                                                every run; ver_51 fork from
+  #                                                5243f8e3b: same every run,
+  #                                                whatever the seed)
 
   proc noise_contract {} {
     return [dict create \
@@ -34434,6 +34446,18 @@ $_leg
   # `setseed 5` the RTS mean and the `trrandom` mean were identical run to run
   # and the white mean was not.
   #
+  # ⚠ ver_51 (fork commit 5243f8e3b, "Seed the startup random stream from
+  # rndseed, not the process id") KEEPS THE SPLIT AND FLIPS ITS SYMPTOM. initw()
+  # no longer seeds from getpid(), so the Wallace pool is filled from the startup
+  # stream (= `setseed 1`, or a `setseed` in `.spiceinit`) BEFORE the deck is
+  # read. MEASURED 2026-10-27, one trnoise+trrandom deck per binary: on 45.2 and
+  # on the fork at 1c58365bd the white sample differs on every run, seeded or not;
+  # from 5243f8e3b on it is the SAME on every run and the same under
+  # `.options seed=5`, `seed=6` and `setseed` in `.control`, while `trrandom`
+  # follows each seed. So white and 1/f are still not repeated BY the seed --
+  # `repeat` stays `rts` -- and the sentence says so without claiming either
+  # symptom. Row EE5 of test_ase_trnoise_1466 holds each binary to its own.
+  #
   # ⚠ `killed` IS SPLIT TOO, and not the way the option's name reads. Measured
   # on both binaries, inline and through `alter`: `notrnoise` zeroes white and
   # 1/f, zeroes RTS only on a source whose noise timestep is above 0 (an RTS-only
@@ -34490,8 +34514,10 @@ $_leg
     set many [expr {[llength $norepeat] > 1}]
     if {[llength $norepeat]} {
       lappend out "[noise_kind_phrase $norepeat] [expr {$many ? {do} : {does}}] not\
- repeat from run to run: the simulator seeds [expr {$many ? {them} : {it}}] from\
- its process ID, and no seed reaches [expr {$many ? {them} : {it}}]."
+ follow the seed: no seed set here reaches [expr {$many ? {them} : {it}}], so\
+ ngspice 45.2 draws [expr {$many ? {them} : {it}}] afresh on every run and a build\
+ that seeds its start-up stream from rndseed draws the same noise on every run,\
+ whatever the seed."
     }
     if {[llength $repeat]} {
       set one [expr {[llength $repeat] == 1 && [lindex $repeat 0] ne {random}}]

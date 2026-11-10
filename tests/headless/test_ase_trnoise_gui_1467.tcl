@@ -909,7 +909,7 @@ proc g_foot {opts} {
 set GS1 [g_foot {}]
 check "GS1 the seed sentences are core's report, verbatim, split by kind" \
   [list [expr {[lindex $GS1 0] eq [lindex $GS1 1]}] \
-        [string match {White noise does not repeat*} [lindex $GS1 0]] \
+        [string match {White noise does not follow the seed*} [lindex $GS1 0]] \
         [string match {*repeat only when a seed is set.} [lindex $GS1 0]]] {1 1 1}
 set GS2 [g_foot {{name seed value 5}}]
 check "GS2 with a seed on the bench they say what repeats exactly" \
