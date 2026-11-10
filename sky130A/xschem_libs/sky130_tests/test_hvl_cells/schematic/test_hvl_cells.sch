@@ -111,8 +111,8 @@ value=".option savecurrents
   write test_hvl_cells.raw
 .endc
 " }
-C {sky130_stdcells/dfrtp_1} 500 -190 0 0 {name=x1 VGND=0 VNB=0 VPB=VCC VPWR=VCC prefix=sky130_fd_sc_hvl__ }
-C {sky130_stdcells/and2_1} 720 -230 0 0 {name=x2 VGND=0 VNB=0 VPB=VCC VPWR=VCC prefix=sky130_fd_sc_hvl__ }
+C {sky130_hvl_stdcells/dfrtp_1} 500 -190 0 0 {name=x1 VGND=0 VNB=0 VPB=VCC VPWR=VCC }
+C {sky130_hvl_stdcells/and2_1} 720 -230 0 0 {name=x2 VGND=0 VNB=0 VPB=VCC VPWR=VCC }
 C {devices/lab_wire} 610 -210 0 1 {name=p1 lab=Q  }
 C {devices/lab_pin} 810 -230 0 1 {name=p3 lab=OUT  }
 C {devices/lab_pin} 70 -480 0 0 {name=p4 lab=0  }
@@ -131,7 +131,7 @@ C {devices/code} 1000 -210 0 0 {name=TT_MODELS_STDCELLS
 only_toplevel=true
 format="tcleval(@value )"
 value=".lib $::SKYWATER_MODELS/sky130.lib.spice tt
-.include $PDK_ROOT/$PDK/libs.ref/sky130_fd_sc_hvl/spice/sky130_fd_sc_hvl.spice
+.include $::SKYWATER_HVL_STDCELLS/sky130_fd_sc_hvl.spice
 "
 spice_ignore=false
 place=header}

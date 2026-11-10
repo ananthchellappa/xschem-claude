@@ -261,7 +261,7 @@ eqcheck CS157t-an-unset-variable-is-still-an-ERROR-not-a-silent-empty-path \
 # have passed every other row in this file and broken those benches.
 set cs157had {}
 set cs157vars {MODELS_NGSPICE SG13G2_OSDI SKYWATER_MODELS 180MCU_MODELS
-               SKYWATER_STDCELLS PDK_ROOT PDK}
+               SKYWATER_STDCELLS SKYWATER_HVL_STDCELLS PDK_ROOT PDK}
 foreach v $cs157vars {
   if {[info exists ::$v]} { dict set cs157had $v [set ::$v] }
   set ::$v "/CS157/$v"
@@ -273,6 +273,7 @@ foreach shape {
   {$::180MCU_MODELS/sm141064.ngspice}
   {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}
   {$PDK_ROOT/$PDK/libs.ref/sky130_fd_sc_hvl/spice/sky130_fd_sc_hvl.spice}
+  {$::SKYWATER_HVL_STDCELLS/sky130_fd_sc_hvl.spice}
   {pre_osdi $::SG13G2_OSDI/psp103.osdi}
   {pre_set auto_bridge_d_in = ( ".model auto_adc adc_bridge(in_low = 0.6 in_high = 1.2)" "auto_bridge%d [ %s ] [ %s ] auto_adc" )}
 } {

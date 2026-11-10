@@ -7,6 +7,7 @@ DEFINE ngspice_verilog_cosim ../../xschem_libs_newsym/ngspice_verilog_cosim
 DEFINE xschem_simulator ../../xschem_libs_newsym/xschem_simulator
 DEFINE sky130_fd_pr sky130_fd_pr
 DEFINE sky130_stdcells sky130_stdcells
+DEFINE sky130_hvl_stdcells sky130_hvl_stdcells
 DEFINE sky130_tests sky130_tests
 DEFINE mips_cpu mips_cpu
 DEFINE stdcells stdcells

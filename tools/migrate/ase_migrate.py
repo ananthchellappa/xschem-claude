@@ -193,7 +193,8 @@ class Pdk(object):
 
 
 PDKS = {
-    # SKYWATER_STDCELLS / PDK_ROOT / PDK are set unconditionally by
+    # SKYWATER_STDCELLS / SKYWATER_HVL_STDCELLS / PDK_ROOT / PDK are set
+    # unconditionally by
     # sky130A/cadence_style_rc ("3b. Standard-cell SPICE decks") — seven benches
     # include a stdcell deck from an open_pdks install rather than a model .lib,
     # and dropping those includes would only trade `no such variable` for
@@ -201,7 +202,8 @@ PDKS = {
     "sky130": Pdk("sky130", "SKYWATER_MODELS",
                   corner_lib="$::SKYWATER_MODELS/sky130.lib.spice",
                   corner_default="tt",
-                  env_vars=("SKYWATER_STDCELLS", "PDK_ROOT", "PDK"),
+                  env_vars=("SKYWATER_STDCELLS", "SKYWATER_HVL_STDCELLS",
+                            "PDK_ROOT", "PDK"),
                   device_libs=("sky130_fd_pr",)),
     # gf180 embeds `.include design.ngspice` + `.lib sm141064 typical` in a
     # code_shown block already in portable $::180MCU_MODELS form, so there is no

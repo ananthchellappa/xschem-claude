@@ -61,8 +61,8 @@ C {devices/lab_pin} 70 -110 0 0 {name=p17 lab=0  }
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"  }
 C {devices/vsource} 70 -140 0 0 {name=VVCC value="pwl 0 0 3n 5"}
 C {devices/lab_pin} 100 -200 0 1 {name=p2 lab=VCC  }
-C {sky130_stdcells/dfrtp_1} 500 -190 0 0 {name=x1 VGND=0 VNB=0 VPB=VCC VPWR=VCC prefix=sky130_fd_sc_hvl__ }
-C {sky130_stdcells/and2_1} 720 -230 0 0 {name=x2 VGND=0 VNB=0 VPB=VCC VPWR=VCC prefix=sky130_fd_sc_hvl__ }
+C {sky130_hvl_stdcells/dfrtp_1} 500 -190 0 0 {name=x1 VGND=0 VNB=0 VPB=VCC VPWR=VCC }
+C {sky130_hvl_stdcells/and2_1} 720 -230 0 0 {name=x2 VGND=0 VNB=0 VPB=VCC VPWR=VCC }
 C {devices/lab_wire} 610 -210 0 1 {name=p1 lab=Q  }
 C {devices/lab_pin} 810 -230 0 1 {name=p3 lab=OUT  }
 C {devices/lab_pin} 70 -480 0 0 {name=p4 lab=0  }

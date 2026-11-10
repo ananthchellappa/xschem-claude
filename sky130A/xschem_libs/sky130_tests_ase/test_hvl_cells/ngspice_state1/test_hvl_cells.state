@@ -10,6 +10,6 @@ outputs {{name vcc expr vcc save 1 plot 1} {name rstb expr rst_b save 1 plot 1} 
 save_all_v 1
 save_all_i 0
 options {{name savecurrents value 1}}
-includes {{file {$PDK_ROOT/$PDK/libs.ref/sky130_fd_sc_hvl/spice/sky130_fd_sc_hvl.spice}}}
+includes {{file {$::SKYWATER_HVL_STDCELLS/sky130_fd_sc_hvl.spice}}}
 pre_commands {}
 viewer {}

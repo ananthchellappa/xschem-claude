@@ -46,10 +46,12 @@ foreach pair [library_list] {
 set names [lsort $names]
 # sky130_tests_ase joined the registry in 15bb25ef (the migrated ASE-L testbench
 # library); this expectation was left at the pre-15bb25ef set of 11.
+# sky130_hvl_stdcells (the 5 V sky130_fd_sc_hvl cells) joined it with the
+# vendored hvl deck (sky130A/models/libs.ref/sky130_fd_sc_hvl).
 set expect [lsort {devices sky130_fd_pr sky130_stdcells sky130_tests mips_cpu stdcells \
-                   sky130_tests_ase \
+                   sky130_tests_ase sky130_hvl_stdcells \
                    analyses examples ngspice ngspice_verilog_cosim xschem_simulator}]
-check "library_list = exactly the 12 intended libs" $names $expect
+check "library_list = exactly the 13 intended libs" $names $expect
 
 # --- devices wired to the repo's already-migrated newsym copy (not duplicated) ---
 check_true "devices -> xschem_libs_newsym/devices" \
@@ -73,6 +75,26 @@ foreach L {analyses examples ngspice ngspice_verilog_cosim xschem_simulator} {
     [expr {[info exists libpath($L)] && [string match *xschem_libs_newsym/$L $libpath($L)] \
            && ![string match */sky130A/* $libpath($L)]}]
 }
+# 69 = every .subckt in the vendored deck; each one has a symbol, and no symbol
+# is left on the hd prefix.
+set hvldeck [file join $repo sky130A models libs.ref sky130_fd_sc_hvl spice sky130_fd_sc_hvl.spice]
+set hvlsubckts {}
+if {[file isfile $hvldeck]} {
+  set f [open $hvldeck r]
+  foreach ln [split [read $f] \n] {
+    if {[regexp -nocase {^\.subckt\s+sky130_fd_sc_hvl__(\S+)} $ln -> c]} { lappend hvlsubckts $c }
+  }
+  close $f
+}
+check "vendored hvl deck has 69 subckts" [llength $hvlsubckts] 69
+set hvlcells [lsort [lmap d [glob -nocomplain -type d [file join $libpath(sky130_hvl_stdcells) *]] {file tail $d}]]
+check "sky130_hvl_stdcells cells = the deck's subckts" $hvlcells [lsort $hvlsubckts]
+set hdleft {}
+foreach c $hvlcells {
+  set f [open [symfile $libpath(sky130_hvl_stdcells) $c] r]; set t [read $f]; close $f
+  if {[string first sky130_fd_sc_hd__ $t] >= 0 || [string first sky130_fd_sc_hvl__ $t] < 0} { lappend hdleft $c }
+}
+check "every hvl symbol carries the hvl prefix and no hd one" $hdleft {}
 check_true "sky130_stdcells has 437 cell dirs" \
   [expr {[llength [glob -nocomplain -type d [file join $libpath(sky130_stdcells) *]]] == 437}]
 
@@ -84,6 +106,8 @@ check_true "rc sets library_registry_defs_only 1" \
   [expr {[regexp {library_registry_defs_only\s+1} $rc]}]
 check_true "rc sets SKYWATER_MODELS under models/" \
   [expr {[regexp {SKYWATER_MODELS.*models} $rc]}]
+check_true "rc defaults SKYWATER_HVL_STDCELLS to the vendored hvl deck" \
+  [expr {[regexp {set ::SKYWATER_HVL_STDCELLS \\\s*\n\s*\[file join \$_ws models libs.ref sky130_fd_sc_hvl spice\]} $rc]}]
 
 # --- verdict ---
 if {$fail == 0} {
