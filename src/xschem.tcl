@@ -14403,6 +14403,344 @@ proc infowindow {} {
   return {}
 }
 
+## Check and Save: the Virtuoso Schematic Composer gesture. Runs the checks below on the
+## current level, saves, and lists what it found in one window where each line selects the
+## culprit. The checks never block the save, which is what Virtuoso does too.
+##   own symbol   the schematic's ipin/opin/iopin set against its OWN .sym (names and directions)
+##   placed cells every placed subcircuit's symbol against its schematic, plus the netlister's
+##                ERC (shorted nets, overlapped instances, missing names): `xschem check_schematic`
+##   connectivity unconnected pins, nets with a single connection, labels on nothing
+##   symbols      placed symbols whose file is missing
+##   names        duplicate instance names
+## A finding is a dict: sev (error|warning), text, and optionally inst (instance names),
+## sym (a symbol name: click selects its instances) and net (click highlights it).
+namespace eval chksave {}
+
+# The symbol file that belongs to schematic file $sch: lib/cell/symbol/cell.sym in the
+# cellview layout (the schematic sits in lib/cell/schematic/), else cell.sym beside it.
+proc chksave::own_symbol {sch} {
+  set dir [file dirname $sch]
+  set cell [file rootname [file tail $sch]]
+  if {[file tail $dir] eq {schematic}} {
+    set f [file join [file dirname $dir] symbol $cell.sym]
+  } else {
+    set f [file join $dir $cell.sym]
+  }
+  if {[file isfile $f]} { return $f }
+  return {}
+}
+
+# name -> dir for every pin box (layer 5) of symbol file $f.
+proc chksave::sym_pins {f} {
+  set r [dict create]
+  if {[catch {open $f} fd]} { return $r }
+  set t [read $fd]
+  close $fd
+  foreach {- attrs} [regexp -all -inline {(?:^|\n)B 5 [^\{\n]*\{([^\}]*)\}} $t] {
+    set n [xschem get_tok $attrs name]
+    if {$n eq {}} continue
+    dict set r $n [xschem get_tok $attrs dir]
+  }
+  return $r
+}
+
+# The instances of the current level as {name symbol type} triples.
+proc chksave::instances {} {
+  set r {}
+  foreach line [split [xschem instance_list] \n] {
+    if {[llength $line] == 3} { lappend r $line }
+  }
+  return $r
+}
+
+# name -> {dir instance} for the schematic's own pins (ipin/opin/iopin instances).
+proc chksave::sch_pins {} {
+  set r [dict create]
+  foreach i [chksave::instances] {
+    lassign $i name sym type
+    if {$type ni {ipin opin iopin}} continue
+    set dir [dict get {ipin in opin out iopin inout} $type]
+    set lab [xschem getprop instance $name lab]
+    if {$lab ne {}} { dict set r $lab [list $dir $name] }
+  }
+  return $r
+}
+
+proc chksave::own_symbol_findings {sch} {
+  set f [chksave::own_symbol $sch]
+  if {$f eq {}} { return {} }
+  set cell [file rootname [file tail $f]]
+  set sp [chksave::sym_pins $f]
+  set cp [chksave::sch_pins]
+  set r {}
+  dict for {n v} $cp {
+    lassign $v dir inst
+    if {![dict exists $sp $n]} {
+      lappend r [dict create sev error inst [list $inst] \
+        text "Pin $n is in the schematic but not on symbol $cell"]
+    } elseif {[dict get $sp $n] ne {} && [dict get $sp $n] ne $dir} {
+      lappend r [dict create sev error inst [list $inst] \
+        text "Pin $n is $dir in the schematic but [dict get $sp $n] on symbol $cell"]
+    }
+  }
+  dict for {n dir} $sp {
+    if {![dict exists $cp $n]} {
+      lappend r [dict create sev error \
+        text "Pin $n is on symbol $cell but not in the schematic"]
+    }
+  }
+  return $r
+}
+
+# A bus-like or wildcard name is not counted: its bits do not appear under its own spelling.
+proc chksave::plain_net {n} {
+  return [expr {$n ne {} && ![regexp {[\[\],:*]} $n]}]
+}
+
+proc chksave::global_net {n inst_globals} {
+  if {$n eq {0} || [string index $n end] eq {!}} { return 1 }
+  return [expr {[lsearch -exact $inst_globals $n] >= 0}]
+}
+
+proc chksave::connectivity_findings {} {
+  set count [dict create]
+  set where [dict create]
+  set ports {}
+  set globals {}
+  set labels {}
+  foreach i [chksave::instances] {
+    lassign $i name sym type
+    if {$type eq {label}} {
+      set lab [xschem getprop instance $name lab]
+      lappend labels [list $name $lab]
+      if {[xschem getprop instance $name cell::global] in {true 1}} { lappend globals $lab }
+      continue
+    }
+    set map [lrange [xschem instance_nodemap $name] 1 end]
+    foreach {pin net} $map {
+      if {$net eq {}} continue
+      dict incr count $net
+      dict lappend where $net [list $name $pin]
+      if {$type in {ipin opin iopin}} { lappend ports $net }
+    }
+  }
+  set r {}
+  dict for {net n} $count {
+    if {$n != 1 || $net in $ports || ![chksave::plain_net $net]} continue
+    if {[chksave::global_net $net $globals]} continue
+    lassign [lindex [dict get $where $net] 0] inst pin
+    if {[string index $net 0] eq {#}} {
+      lappend r [dict create sev warning inst [list $inst] \
+        text "Pin $pin of $inst is unconnected"]
+    } else {
+      lappend r [dict create sev warning inst [list $inst] net $net \
+        text "Net $net has one connection ($inst $pin)"]
+    }
+  }
+  set pinat [chksave::pin_coords]
+  foreach l $labels {
+    lassign $l name lab
+    if {![chksave::plain_net $lab] || [dict exists $count $lab]} continue
+    if {[chksave::global_net $lab $globals]} continue
+    if {[chksave::label_touches $name $pinat]} continue
+    lappend r [dict create sev warning inst [list $name] \
+      text "Label $lab connects to nothing"]
+  }
+  return $r
+}
+
+# "x y" -> instances with a pin exactly there, for every instance of the current level.
+proc chksave::pin_coords {} {
+  set r [dict create]
+  foreach i [chksave::instances] {
+    set n [lindex $i 0]
+    foreach pin [xschem instance_pins $n] {
+      set c [lrange [xschem instance_pin_coord $n name $pin] 1 2]
+      if {[llength $c] == 2} { dict lappend r [join $c] $n }
+    }
+  }
+  return $r
+}
+
+# Whether label instance $name's pin sits on a wire or on another instance's pin.
+proc chksave::label_touches {name pinat} {
+  set c [lrange [xschem instance_pin_coord $name name [lindex [xschem instance_pins $name] 0]] 1 2]
+  if {[llength $c] != 2} { return 0 }
+  lassign $c x y
+  if {[dict exists $pinat "$x $y"]} {
+    foreach o [dict get $pinat "$x $y"] { if {$o ne $name} { return 1 } }
+  }
+  set nw [xschem get wires]
+  for {set i 0} {$i < $nw} {incr i} {
+    lassign [xschem wire_coord $i] x1 y1 x2 y2
+    if {$x < min($x1,$x2) || $x > max($x1,$x2) || $y < min($y1,$y2) || $y > max($y1,$y2)} continue
+    if {abs(($x2 - $x1) * ($y - $y1) - ($y2 - $y1) * ($x - $x1)) < 1e-9} { return 1 }
+  }
+  return 0
+}
+
+proc chksave::name_findings {} {
+  set seen [dict create]
+  foreach i [chksave::instances] { dict incr seen [lindex $i 0] }
+  set r {}
+  dict for {n c} $seen {
+    if {$c > 1 && $n ne {}} {
+      lappend r [dict create sev error inst [list $n] text "Instance name $n is used $c times"]
+    }
+  }
+  return $r
+}
+
+proc chksave::symbol_findings {} {
+  set r {}
+  foreach line [split [xschem check_symbols] \n] {
+    if {[regexp {^Warning: symbol (.*) not found$} $line -> p]} {
+      lappend r [dict create sev error text "Symbol $p not found"]
+    }
+  }
+  return $r
+}
+
+# The netlister's ERC text, one finding per message; an indented line continues the last one.
+proc chksave::erc_findings {text} {
+  set r {}
+  foreach line [split $text \n] {
+    set line [string trimright $line]
+    if {$line eq {}} continue
+    if {[regexp {^(Error|Warning):\s*(.*)$} $line -> kind body]} {
+      set d [dict create sev [string tolower $kind] text $body]
+      if {[regexp {shorted: (\S+) - (\S+)} $body -> n1 n2]} { dict set d net $n1 }
+      if {[regexp {overlapped instance found: ([^(\s]+)\(.*-> (\S+)} $body -> i1 i2]} {
+        dict set d inst [list $i1 $i2]
+      } elseif {[regexp {instance:? ([^\s,:(]+)} $body -> i1]} {
+        dict set d inst [list $i1]
+      }
+      if {[regexp {^Symbol ([^\s:]+)} $body -> s]} { dict set d sym $s }
+      lappend r $d
+    } elseif {[llength $r] && [string is space [string index $line 0]]} {
+      set d [lindex $r end]
+      dict append d text " [string trim $line]"
+      lset r end $d
+    }
+  }
+  return $r
+}
+
+# Every finding for the current level, errors first.
+proc chksave::run {} {
+  set sch [xschem get schname]
+  set all [concat \
+    [chksave::own_symbol_findings $sch] \
+    [chksave::erc_findings [xschem check_schematic]] \
+    [chksave::symbol_findings] \
+    [chksave::name_findings] \
+    [chksave::connectivity_findings]]
+  set e {} ; set w {} ; set seen [dict create]
+  foreach d $all {
+    set key [list [dict get $d sev] [dict get $d text]]
+    if {[dict exists $seen $key]} continue
+    dict set seen $key 1
+    if {[dict get $d sev] eq {error}} { lappend e $d } else { lappend w $d }
+  }
+  return [concat $e $w]
+}
+
+proc chksave::summary {findings saved} {
+  set ne 0 ; set nw 0
+  foreach d $findings { if {[dict get $d sev] eq {error}} { incr ne } else { incr nw } }
+  set s "Check and Save: $ne error[expr {$ne == 1 ? {} : {s}}], $nw warning[expr {$nw == 1 ? {} : {s}}]"
+  if {$saved} { append s ", saved" } else { append s ", NOT saved" }
+  return $s
+}
+
+# Select, and zoom to, what finding $d points at.
+proc chksave::show {d} {
+  xschem unselect_all
+  set any 0
+  if {[dict exists $d inst]} {
+    foreach i [dict get $d inst] {
+      if {![catch {xschem select instance $i}]} { set any 1 }
+    }
+  }
+  if {[dict exists $d sym]} {
+    foreach i [chksave::instances] {
+      if {[file rootname [lindex $i 1]] eq [file rootname [dict get $d sym]]} {
+        catch {xschem select instance [lindex $i 0]}
+        set any 1
+      }
+    }
+  }
+  if {$any} { catch {xschem zoom_selected} }
+  if {[dict exists $d net]} { catch {xschem hilight_netname [dict get $d net]} }
+}
+
+proc chksave::report {findings summary} {
+  global has_x
+  if {![info exists has_x]} return
+  set w .chksave
+  set old [focus]
+  if {![winfo exists $w]} {
+    toplevel $w
+    wm title $w {Check and Save}
+    frame $w.b
+    button $w.b.close -text Close -command [list destroy $w]
+    pack $w.b.close -side right
+    label $w.sum -anchor w
+    text $w.t -width 80 -height 14 -wrap word -cursor arrow \
+      -yscrollcommand [list $w.sb set]
+    scrollbar $w.sb -command [list $w.t yview]
+    pack $w.sum -side top -fill x
+    pack $w.b -side bottom -fill x
+    pack $w.sb -side right -fill y
+    pack $w.t -side left -fill both -expand 1
+    $w.t tag configure error -foreground red3
+    $w.t tag configure warning -foreground darkorange3
+    $w.t tag configure hover -underline 1
+  }
+  $w.sum configure -text $summary
+  $w.t configure -state normal
+  $w.t delete 1.0 end
+  set k 0
+  foreach d $findings {
+    set tag f$k
+    $w.t insert end "[string toupper [dict get $d sev]]: [dict get $d text]\n" \
+      [list [dict get $d sev] $tag]
+    $w.t tag bind $tag <Button-1> [list chksave::show $d]
+    $w.t tag bind $tag <Enter> [list $w.t tag add hover $tag.first $tag.last]
+    $w.t tag bind $tag <Leave> [list $w.t tag remove hover 1.0 end]
+    incr k
+  }
+  $w.t configure -state disabled
+  wm deiconify $w
+  raise $w
+  # never take the keyboard away from the canvas the user is working in
+  if {$old ne {}} { after idle [list catch [list focus $old]] }
+}
+
+# Check and Save (Virtuoso's Shift+X). Returns the findings.
+proc check_and_save {} {
+  if {[xschem get readonly]} {
+    catch {xschem statusmsg -hold {Check and Save: read-only, NOT saved}}
+    return {}
+  }
+  if {[file extension [xschem get schname]] eq {.sym}} {
+    xschem save
+    catch {xschem statusmsg -hold {Check and Save: symbol saved (checks apply to schematics)}}
+    return {}
+  }
+  set findings [chksave::run]
+  xschem save
+  set saved [expr {![xschem get modified]}]
+  set s [chksave::summary $findings $saved]
+  catch {xschem statusmsg -hold $s}
+  if {[llength $findings]} {
+    chksave::report $findings $s
+  } elseif {[info commands winfo] ne {} && [winfo exists .chksave]} {
+    destroy .chksave
+  }
+  return $findings
+}
+
 proc editdata {{data {}} {title {Edit data}} {wrap {none}} {ro 1}} {
   global text_tabs_setting tabstop
   set window .editdata

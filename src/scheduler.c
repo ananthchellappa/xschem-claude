@@ -2960,6 +2960,29 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, win_path, TCL_VOLATILE);
     }
 
+    /* check_schematic
+     *   Run the netlister's ERC on the current level WITHOUT writing a netlist, and return
+     *   the ERC messages (one per line, the same text the ERC info window shows): shorted
+     *   nets, instances with no name or type, reserved or malformed net names, perfectly
+     *   overlapped instances, and every placed subcircuit's symbol-vs-schematic pin check.
+     *   The ERC window's previous text is replaced. Offending instances and nets are
+     *   highlighted exactly as a netlist run highlights them. The Check and Save command
+     *   (check_and_save in xschem.tcl) is the caller. */
+    else if(!strcmp(argv[1], "check_schematic"))
+    {
+      int saved_count;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      saved_count = xctx->netlist_count;
+      statusmsg("", 2);                 /* clear the ERC window text, as a netlist run does */
+      xctx->netlist_count = 0;          /* first ERC-bearing pass: print_erc in netlist.c */
+      xctx->prep_net_structs = 0;       /* force a fresh for-netlist extraction */
+      prepare_netlist_structs(1);
+      warning_overlapped_symbols(0);
+      sym_vs_sch_pins(-1);
+      xctx->netlist_count = saved_count;
+      Tcl_SetResult(interp, xctx->infowindow_text ? xctx->infowindow_text : "", TCL_VOLATILE);
+    }
+
     /* check_symbols
      *   List all used symbols in current schematic and warn if some symbol is newer */
     else if(!strcmp(argv[1], "check_symbols"))

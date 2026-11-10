@@ -41,6 +41,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wire_split" \
                  "headless/test_label_strand_oracle" \
                  "headless/test_label_ride" \
+                 "headless/test_check_and_save" \
                  "headless/test_signal_short_nohier_0230" \
                  "headless/test_sch_add_pin" \
                  "headless/test_add_pin_lib_symbol_view" \
@@ -910,6 +911,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## headless entry adds nothing to `skips=`. It sources scratch.tcl, so the in-suite
 ## watchdog bounds its event-loop waits (row W20h of test_suite_watchdog_1403).
 set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
+                 "headless/test_check_and_save" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_lib_new_path_guards_0799" \

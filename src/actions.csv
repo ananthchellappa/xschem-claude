@@ -50,6 +50,7 @@ file.delete_files,command,file,Delete files,Shift-D,xschem delete_files,,,Delete
 file.save,command,file,Save,Ctrl+S,xschem save,,,Save the current schematic or symbol,
 file.merge,command,file,Merge,B,xschem merge,,,Merge another file into the current one,,1
 file.reload,command,file,Reload,Alt+S,action_reload,,,Reload the current file from disk (discard changes),,1
+file.check_and_save,command,file,Check and Save,,check_and_save,,,Check pins against the symbol and placed cells and connectivity then save,,1
 file.save_as,command,file,Save as,Ctrl+Shift+S,xschem saveas,,,Save under a new name,,1
 file.save_as_symbol,command,file,Save as symbol,Ctrl+Alt+S,xschem saveas {} symbol,,,Save the current cell as a symbol,,1
 file.image_export,cascade,file,Image export,,,file.im_exp,,Export the drawing as an image (EPS/PDF/PNG/SVG),
